@@ -23,7 +23,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Validate Genkai scripts
-        run: tests/test_scripts.sh
+        run: |
+          echo "hostname=$(hostname)"
+          echo "workspace=${GITHUB_WORKSPACE}"
+          echo "head=$(git rev-parse HEAD)"
+          command -v pjsub
+          tests/test_scripts.sh
 
       - name: Show skipped benchmark
         if: >-
