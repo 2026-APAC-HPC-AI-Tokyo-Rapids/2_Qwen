@@ -3,10 +3,14 @@ set -euo pipefail
 mode="${1:-throughput}"
 root="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 source "${root}/configs/default.env"
+if [[ -n "${EXPERIMENT_FILE:-}" ]]; then
+  test -f "$EXPERIMENT_FILE" || { echo "Missing experiment file: $EXPERIMENT_FILE" >&2; exit 2; }
+  source "$EXPERIMENT_FILE"
+fi
 : "${MODEL_PATH:?Set MODEL_PATH to a local Qwen 3.5 checkpoint/config directory}"
 : "${LOAD_FORMAT:=dummy}" "${NUM_PROMPTS:=128}" "${RANDOM_INPUT_LEN:=1024}"
 : "${RANDOM_OUTPUT_LEN:=256}" "${TP_SIZE:=1}" "${TRIALS:=3}"
-: "${WARMUP_PROMPTS:=8}" "${MEM_FRACTION_STATIC:=0.85}" "${PROFILE_STEPS:=5}" "${SEED:=42}"
+: "${MEM_FRACTION_STATIC:=0.85}" "${PROFILE_STEPS:=5}" "${SEED:=42}"
 test -f "${MODEL_PATH}/config.json" || { echo "Missing ${MODEL_PATH}/config.json" >&2; exit 2; }
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -29,7 +33,7 @@ if [[ -n "${EXTRA_ARGS:-}" ]]; then read -r -a extra <<<"$EXTRA_ARGS"; common+=(
 case "$mode" in
   smoke) "${common[@]}" --num-prompts 2 2>&1 | tee "$out/smoke.log" ;;
   throughput)
-    "${common[@]}" --num-prompts "$WARMUP_PROMPTS" >"$out/warmup.log" 2>&1
+    # SGLang performs its own warmup inside each offline benchmark invocation.
     for ((i=1; i<=TRIALS; i++)); do "${common[@]}" --num-prompts "$NUM_PROMPTS" 2>&1 | tee "$out/trial-${i}.log"; done ;;
   torch-profile)
     export SGLANG_TORCH_PROFILER_DIR="$out/torch-profiler"; mkdir -p "$SGLANG_TORCH_PROFILER_DIR"

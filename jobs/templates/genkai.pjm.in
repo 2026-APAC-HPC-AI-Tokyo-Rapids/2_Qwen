@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#PJM -L rscgrp=@RSCGRP@
+#PJM -L elapse=@ELAPSE@
+#PJM -L gpu=@GPU_COUNT@
+#PJM -j
+#PJM -S
+set -euo pipefail
+
+repo_dir=@REPO_DIR_Q@
+experiment_file=@EXPERIMENT_FILE_Q@
+image=@IMAGE_Q@
+model_path=@MODEL_PATH_Q@
+experiment_name=@EXPERIMENT_NAME_Q@
+result_root=@RESULT_ROOT_Q@
+run_id="${PJM_JOBID:-manual}-$(date -u +%Y%m%dT%H%M%SZ)-${experiment_name}"
+result_dir="${result_root}/${run_id}"
+mkdir -p "$result_dir"
+
+module purge
+module load cuda/12.8.1 singularity-ce/4.1.3
+export SINGULARITY_CACHEDIR=/fast/PROJECT/.singularity-cache
+export SINGULARITY_TMPDIR=/dev/shm
+
+cp "$experiment_file" "$result_dir/experiment.env"
+cp "$0" "$result_dir/job.pjm"
+git -C "$repo_dir" rev-parse HEAD >"$result_dir/git-commit.txt" 2>/dev/null || true
+git -C "$repo_dir" diff --no-ext-diff >"$result_dir/git-diff.patch" 2>/dev/null || true
+
+{
+  echo "job_id=${PJM_JOBID:-manual}"
+  echo "experiment_name=$experiment_name"
+  echo "hostname=$(hostname)"
+  echo "started_at=$(date -u +%FT%TZ)"
+  module list 2>&1
+  nvidia-smi --query-gpu=index,name,uuid,memory.total,driver_version --format=csv
+  singularity --version
+} >"$result_dir/environment.log"
+
+set +e
+singularity exec --oci --nv --cleanenv \
+  --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1 \
+  --env RESULTS_ROOT="$result_dir",MODEL_PATH="$model_path",EXPERIMENT_FILE="$experiment_file" \
+  --bind "$repo_dir:$repo_dir,$model_path:$model_path,$result_dir:$result_dir" \
+  "$image" "$repo_dir/scripts/run-experiment.sh" @MODE_Q@ \
+  2>&1 | tee "$result_dir/job.log"
+status=${PIPESTATUS[0]}
+set -e
+echo "$status" >"$result_dir/exit-code.txt"
+echo "finished_at=$(date -u +%FT%TZ)" >>"$result_dir/environment.log"
+exit "$status"
