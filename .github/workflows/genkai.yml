@@ -47,8 +47,10 @@ jobs:
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'throughput' }}
           LOAD_FORMAT: dummy
         run: |
-          test -n "${MODEL_PATH}"
           echo "Submission is intentionally disabled. Planned command:"
           echo "pjsub -x REPO_DIR=<workspace>,MODEL_PATH=<configured>,SGLANG_IMAGE=<configured>,MODE=${MODE},LOAD_FORMAT=${LOAD_FORMAT} jobs/genkai-qwen.pjm"
+          if [[ -z "${MODEL_PATH}" ]]; then
+            echo "QWEN_MODEL_PATH is not configured yet; it will be required before pjsub is enabled."
+          fi
           # Safety lock: uncomment only after the Genkai smoke configuration is reviewed.
           # pjsub -x "REPO_DIR=${REPO_DIR},MODEL_PATH=${MODEL_PATH},SGLANG_IMAGE=${SGLANG_IMAGE},MODE=${MODE},LOAD_FORMAT=${LOAD_FORMAT}" jobs/genkai-qwen.pjm
