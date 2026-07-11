@@ -1,6 +1,7 @@
 # SGLang Qwen experiments on Genkai
 
 このリポジトリは、Qwen 3.5のSGLang推論をGenkai上で高速化するための実験基盤です。
+対象モデル系列はQwen 3.5に固定し、別系列の設定はジョブ生成時と実行時に拒否します。
 性能値だけでなく、実験設定、Git commit、ジョブスクリプト、GPU環境、SGLang出力を同じ結果ディレクトリへ保存します。
 
 ## 実験の流れ
