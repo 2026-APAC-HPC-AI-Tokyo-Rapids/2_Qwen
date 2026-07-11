@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse, os, shlex
 from pathlib import Path
 
-REQUIRED = {"EXPERIMENT_NAME", "MODEL_PATH", "IMAGE", "MODE", "RSCGRP", "GPU_COUNT", "ELAPSE"}
+REQUIRED = {"EXPERIMENT_NAME", "MODEL_FAMILY", "MODEL_PATH", "IMAGE", "MODE", "RSCGRP", "GPU_COUNT", "ELAPSE"}
 
 def read_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
@@ -32,6 +32,10 @@ def main() -> None:
     args = ap.parse_args()
     exp = args.experiment.resolve()
     cfg = read_env(exp)
+    if cfg["MODEL_FAMILY"] != "qwen3.5":
+        raise SystemExit("MODEL_FAMILY must be qwen3.5")
+    if "qwen3.5" not in cfg["MODEL_PATH"].lower():
+        raise SystemExit("MODEL_PATH must point to a Qwen 3.5 checkpoint")
     output = args.output or root / "build" / "jobs" / f"{cfg['EXPERIMENT_NAME']}.pjm"
     replacements = {
         "RSCGRP": cfg["RSCGRP"], "ELAPSE": cfg["ELAPSE"], "GPU_COUNT": cfg["GPU_COUNT"],

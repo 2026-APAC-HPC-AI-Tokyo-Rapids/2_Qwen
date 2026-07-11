@@ -12,6 +12,14 @@ fi
 : "${RANDOM_OUTPUT_LEN:=256}" "${TP_SIZE:=1}" "${TRIALS:=3}"
 : "${MEM_FRACTION_STATIC:=0.85}" "${PROFILE_STEPS:=5}" "${SEED:=42}"
 test -f "${MODEL_PATH}/config.json" || { echo "Missing ${MODEL_PATH}/config.json" >&2; exit 2; }
+python - "$MODEL_PATH/config.json" <<'PY'
+import json, sys
+config = json.load(open(sys.argv[1]))
+model_type = str(config.get("model_type", ""))
+architectures = " ".join(config.get("architectures") or [])
+if not (model_type.startswith("qwen3_5") and "Qwen3_5" in architectures):
+    raise SystemExit(f"Only Qwen 3.5 is supported: model_type={model_type!r}, architectures={architectures!r}")
+PY
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 sha="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo nogit)"
