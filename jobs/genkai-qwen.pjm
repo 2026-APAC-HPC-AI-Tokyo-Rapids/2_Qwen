@@ -8,17 +8,18 @@ set -euo pipefail
 : "${REPO_DIR:?Set REPO_DIR to the checked-out repository on Genkai}"
 : "${MODEL_PATH:?Set MODEL_PATH to an existing local model directory}"
 : "${MODE:=throughput}" "${LOAD_FORMAT:=dummy}"
+: "${RESULTS_ROOT:=/fast/PROJECT/Qwen/results}"
 module purge
 module load cuda/12.8.1 singularity-ce/4.1.3
 cd "$REPO_DIR"
 export LOAD_FORMAT MODEL_PATH
+mkdir -p "$RESULTS_ROOT"
 if [[ -n "${SGLANG_IMAGE:-}" ]]; then
   test -f "$SGLANG_IMAGE"
   singularity exec --nv --cleanenv \
-    --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,MODEL_PATH="$MODEL_PATH",LOAD_FORMAT="$LOAD_FORMAT" \
-    --bind "$REPO_DIR:$REPO_DIR,$MODEL_PATH:$MODEL_PATH" "$SGLANG_IMAGE" \
+    --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1,MODEL_PATH="$MODEL_PATH",LOAD_FORMAT="$LOAD_FORMAT",RESULTS_ROOT="$RESULTS_ROOT" \
+    --bind "$REPO_DIR:$REPO_DIR,$MODEL_PATH:$MODEL_PATH,$RESULTS_ROOT:$RESULTS_ROOT" "$SGLANG_IMAGE" \
     "$REPO_DIR/scripts/run-experiment.sh" "$MODE"
 else
   scripts/run-experiment.sh "$MODE"
 fi
-
