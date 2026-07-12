@@ -1,59 +1,240 @@
-name: Qwen on Genkai
+name: SGLang Qwen 3.5 on Genkai
+
 on:
-  push:
   workflow_dispatch:
     inputs:
-      submit:
-        description: "Actually submit the Genkai job"
+      require_build:
+        description: Build from source instead of reusing the nearest successful SIF from the first-parent history
         required: true
         default: false
         type: boolean
-      mode:
-        type: choice
-        options: [smoke, throughput, torch-profile, nsys]
-        default: smoke
+  push:
+    paths-ignore:
+      - '**/.md'
+
 permissions:
+  actions: read
   contents: read
-concurrency:
-  group: genkai-qwen
-  cancel-in-progress: false
+
+env:
+  SIF_ARCHIVE_DIR: /fast/pj26000080/sglang-sifs
+  MODEL_PATH: /fast/pj26000080/Qwen/Qwen3.5-35B-A3B-FP8
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
-  submit:
+  build:
+    name: Build SGLang SIF
     runs-on: [self-hosted, genkai]
+
+    # SIF archive names are global to this repository's workflow runs.
+    concurrency:
+      group: genkai-sglang-build
+      cancel-in-progress: false
+
+    env:
+      SKIP_BUILD: ${{ (github.event_name == 'push' && !contains(github.event.head_commit.message, '[require-build]')) || (github.event_name == 'workflow_dispatch' && !inputs.require_build) }}
+
     steps:
-      - uses: actions/checkout@v6
-      - name: Validate Genkai scripts
-        run: |
-          echo "hostname=$(hostname)"
-          echo "workspace=${GITHUB_WORKSPACE}"
-          echo "head=$(git rev-parse HEAD)"
-          command -v pjsub
-          module purge
-          module load python/3.12.11
-          python --version
-          tests/test_scripts.sh
+      - name: Checkout repository history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Show skipped benchmark
-        if: >-
-          github.event_name == 'push' &&
-          !contains(github.event.head_commit.message, '[run-qwen]')
-        run: echo "Skipping Qwen benchmark; add [run-qwen] to the commit message to request it."
-
-      - name: Prepare Qwen benchmark submission
-        if: >-
-          (github.event_name == 'push' && contains(github.event.head_commit.message, '[run-qwen]')) ||
-          (github.event_name == 'workflow_dispatch' && inputs.submit)
+      - name: Link previous SGLang SIF
+        if: ${{ fromJSON(env.SKIP_BUILD) }}
         env:
-          REPO_DIR: ${{ github.workspace }}
-          MODEL_PATH: ${{ vars.QWEN_MODEL_PATH }}
-          SGLANG_IMAGE: ${{ vars.SGLANG_IMAGE }}
-          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'throughput' }}
-          LOAD_FORMAT: dummy
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "Submission is intentionally disabled. Planned command:"
-          echo "pjsub -x REPO_DIR=<workspace>,MODEL_PATH=<configured>,SGLANG_IMAGE=<configured>,MODE=${MODE},LOAD_FORMAT=${LOAD_FORMAT} jobs/genkai-qwen.pjm"
-          if [[ -z "${MODEL_PATH}" ]]; then
-            echo "QWEN_MODEL_PATH is not configured yet; it will be required before pjsub is enabled."
-          fi
-          # Safety lock: uncomment only after the Genkai smoke configuration is reviewed.
-          # pjsub -x "REPO_DIR=${REPO_DIR},MODEL_PATH=${MODEL_PATH},SGLANG_IMAGE=${SGLANG_IMAGE},MODE=${MODE},LOAD_FORMAT=${LOAD_FORMAT}" jobs/genkai-qwen.pjm
+          commit="${GITHUB_SHA}"
+          # Compatibility is a caller decision.  Only a SIF produced by an
+          # actual successful build on the first-parent history is reusable.
+          while parent_commit="$(git rev-parse "${commit}^" 2>/dev/null)"
+          do
+            run_info="$(gh run list --workflow genkai.yml --commit "${parent_commit}" --status success --limit 1 --json databaseId,number --jq '(.[0] // empty) | [.databaseId, .number] | @tsv')"
+            if [[ -n "${run_info}" ]]; then
+              read -r run_id run_number <<< "${run_info}"
+              source_sif="${SIF_ARCHIVE_DIR}/${run_number}.sif"
+              build_steps="$(gh run view "${run_id}" --json jobs --jq '[.jobs[].steps[] | select(.name == "Archive SGLang SIF" and .conclusion == "success")] | length')"
+              if [[ "${build_steps}" -gt 0 && -s "${source_sif}" ]]; then
+                echo "Reusing ${source_sif}"
+                ln -f "${source_sif}" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
+                exit 0
+              fi
+            fi
+            commit="${parent_commit}"
+          done
+          echo "No reusable SGLang SIF was found in the first-parent history" >&2
+          exit 1
+
+      - name: Prepare build workspace
+        if: ${{ ! fromJSON(env.SKIP_BUILD) }}
+        id: prepare_build_workspace
+        run: |
+          install -d -m 2775 "${SIF_ARCHIVE_DIR}"
+          build_dir="$(mktemp -d "/tmp/sglang-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          mkdir -p "${build_dir}/logs"
+          {
+            echo "BUILD_DIR=${build_dir}"
+            echo "SIF_TMP=${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
+          } >> "${GITHUB_ENV}"
+
+      - name: Build SGLang SIF from recipe
+        if: ${{ ! fromJSON(env.SKIP_BUILD) }}
+        run: |
+          module purge
+          module load singularity-ce/4.1.3
+          singularity --version
+          cd "${GITHUB_WORKSPACE}"
+          singularity build --fakeroot "${SIF_TMP}" containers/sglang.def \
+            2>&1 | tee "${BUILD_DIR}/logs/build.log"
+
+      - name: Archive SGLang SIF
+        if: ${{ ! fromJSON(env.SKIP_BUILD) }}
+        run: mv "${SIF_TMP}" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
+
+      - name: Upload SGLang build log
+        if: always() && steps.prepare_build_workspace.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sglang-build-log-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.BUILD_DIR }}/logs
+          if-no-files-found: warn
+          compression-level: 1
+
+      - name: Cleanup build workspace
+        if: always() && steps.prepare_build_workspace.outcome == 'success'
+        run: |
+          rm -f -- "${SIF_TMP:?}"
+          rm -rf -- "${BUILD_DIR:?}"
+
+  provision:
+    name: Provision SGLang runtime
+    needs: build
+    runs-on: [self-hosted, genkai]
+
+    outputs:
+      runtime_dir: ${{ steps.provision_runtime.outputs.runtime_dir }}
+
+    steps:
+      - name: Checkout runtime files
+        uses: actions/checkout@v6
+
+      - name: Provision SGLang runtime
+        id: provision_runtime
+        run: |
+          sif="${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
+          test -s "${sif}"
+          test -r "${MODEL_PATH}/config.json"
+
+          module purge
+          module load python/3.12.11 singularity-ce/4.1.3
+          python - "${MODEL_PATH}/config.json" <<'PY'
+          import json
+          import sys
+
+          config = json.load(open(sys.argv[1]))
+          model_type = str(config.get("model_type", ""))
+          architectures = " ".join(config.get("architectures") or [])
+          if not (model_type.startswith("qwen3_5") and "Qwen3_5" in architectures):
+              raise SystemExit(f"Not a Qwen 3.5 checkpoint: {model_type=!r}, {architectures=!r}")
+          PY
+          singularity exec --containall --cleanenv "${sif}" \
+            /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
+
+          install -d -m 2775 /fast/pj26000080/sglang-runs
+          runtime_dir="$(mktemp -d "/fast/pj26000080/sglang-runs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          cleanup_failed_provision() {
+            status=$?
+            trap - EXIT
+            if [[ "${status}" -ne 0 ]]; then
+              rm -rf -- "${runtime_dir:?}"
+            fi
+            exit "${status}"
+          }
+          trap cleanup_failed_provision EXIT
+          mkdir -p "${runtime_dir}/scripts" "${runtime_dir}/logs" "${runtime_dir}/results"
+          ln "${sif}" "${runtime_dir}/sglang.sif"
+          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.sh" "${runtime_dir}/scripts/"
+          printf '%s\n' "${MODEL_PATH}" > "${runtime_dir}/model-path"
+          echo "runtime_dir=${runtime_dir}" >> "${GITHUB_OUTPUT}"
+          trap - EXIT
+
+  run:
+    name: Run Qwen 3.5 with SGLang
+    needs: provision
+    runs-on: [self-hosted, genkai]
+
+    env:
+      RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
+
+    steps:
+      - name: Submit and wait for Qwen 3.5 inference
+        run: |
+          job_output="$(pjsub /dev/stdin <<PJM
+          #!/usr/bin/env bash
+          #PJM -L rscgrp=b-batch
+          #PJM -L node=1
+          #PJM -L elapse=02:00:00
+          #PJM -L gpu=1
+          #PJM -j
+          #PJM -o ${RUNTIME_DIR}/logs/%j.log
+          #PJM -N qwen35_sglang
+
+          set -euo pipefail
+          run_dir="${RUNTIME_DIR}/results/\${PJM_JOBID}"
+          mkdir -p "\${run_dir}"
+          MODEL_PATH="\$(<"${RUNTIME_DIR}/model-path")" \
+            "${RUNTIME_DIR}/scripts/run-qwen35.sh" "${RUNTIME_DIR}" "\${run_dir}"
+          touch "${RUNTIME_DIR}/run-success"
+          PJM
+          )"
+          printf '%s\n' "${job_output}"
+          job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
+          test -n "${job_id}"
+          log_file="${RUNTIME_DIR}/logs/${job_id}.log"
+          while [[ ! -e "${log_file}" ]]; do
+            if ! pjstat "${job_id}" | grep -q "^${job_id}[[:space:]]"; then
+              echo "Qwen 3.5 job ${job_id} did not create a scheduler log" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          tail -n +1 -F "${log_file}" &
+          tail_pid=$!
+          stop_log_stream() {
+            kill "${tail_pid}" 2>/dev/null || true
+            wait "${tail_pid}" 2>/dev/null || true
+          }
+          trap stop_log_stream EXIT
+          while pjstat "${job_id}" | grep -q "^${job_id}[[:space:]]"; do
+            sleep 10
+          done
+          sleep 1
+          stop_log_stream
+          trap - EXIT
+          test -e "${RUNTIME_DIR}/run-success"
+
+      - name: Upload Qwen execution log
+        if: ${{ always() && needs.provision.outputs.runtime_dir != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen35-sglang-log-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.RUNTIME_DIR }}/logs
+          if-no-files-found: warn
+          compression-level: 1
+
+      - name: Upload Qwen inference results
+        if: ${{ success() && needs.provision.outputs.runtime_dir != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen35-sglang-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.RUNTIME_DIR }}/results
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Cleanup provisioned runtime
+        if: ${{ always() && needs.provision.outputs.runtime_dir != '' }}
+        run: rm -rf -- "${RUNTIME_DIR:?}"
