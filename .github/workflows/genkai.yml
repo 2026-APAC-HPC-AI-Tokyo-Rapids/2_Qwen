@@ -1,0 +1,59 @@
+name: Qwen on Genkai
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      submit:
+        description: "Actually submit the Genkai job"
+        required: true
+        default: false
+        type: boolean
+      mode:
+        type: choice
+        options: [smoke, throughput, torch-profile, nsys]
+        default: smoke
+permissions:
+  contents: read
+concurrency:
+  group: genkai-qwen
+  cancel-in-progress: false
+jobs:
+  submit:
+    runs-on: [self-hosted, genkai]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate Genkai scripts
+        run: |
+          echo "hostname=$(hostname)"
+          echo "workspace=${GITHUB_WORKSPACE}"
+          echo "head=$(git rev-parse HEAD)"
+          command -v pjsub
+          module purge
+          module load python/3.12.11
+          python --version
+          tests/test_scripts.sh
+
+      - name: Show skipped benchmark
+        if: >-
+          github.event_name == 'push' &&
+          !contains(github.event.head_commit.message, '[run-qwen]')
+        run: echo "Skipping Qwen benchmark; add [run-qwen] to the commit message to request it."
+
+      - name: Prepare Qwen benchmark submission
+        if: >-
+          (github.event_name == 'push' && contains(github.event.head_commit.message, '[run-qwen]')) ||
+          (github.event_name == 'workflow_dispatch' && inputs.submit)
+        env:
+          REPO_DIR: ${{ github.workspace }}
+          MODEL_PATH: ${{ vars.QWEN_MODEL_PATH }}
+          SGLANG_IMAGE: ${{ vars.SGLANG_IMAGE }}
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'throughput' }}
+          LOAD_FORMAT: dummy
+        run: |
+          echo "Submission is intentionally disabled. Planned command:"
+          echo "pjsub -x REPO_DIR=<workspace>,MODEL_PATH=<configured>,SGLANG_IMAGE=<configured>,MODE=${MODE},LOAD_FORMAT=${LOAD_FORMAT} jobs/genkai-qwen.pjm"
+          if [[ -z "${MODEL_PATH}" ]]; then
+            echo "QWEN_MODEL_PATH is not configured yet; it will be required before pjsub is enabled."
+          fi
+          # Safety lock: uncomment only after the Genkai smoke configuration is reviewed.
+          # pjsub -x "REPO_DIR=${REPO_DIR},MODEL_PATH=${MODEL_PATH},SGLANG_IMAGE=${SGLANG_IMAGE},MODE=${MODE},LOAD_FORMAT=${LOAD_FORMAT}" jobs/genkai-qwen.pjm
