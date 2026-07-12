@@ -90,7 +90,7 @@ jobs:
           job_output="$(pjsub /dev/stdin <<PJM
           #!/usr/bin/env bash
           #PJM -L rscgrp=a-batch
-          #PJM -L node=1
+          #PJM -L vnode-core=8
           #PJM -L elapse=02:00:00
           #PJM -j
           #PJM -o ${BUILD_DIR}/logs/%j.log
@@ -190,7 +190,7 @@ jobs:
           model_type = str(config.get("model_type", ""))
           architectures = " ".join(config.get("architectures") or [])
           if not (model_type.startswith("qwen3_5") and "Qwen3_5" in architectures):
-              raise SystemExit(f"Not a Qwen 3.5 checkpoint: {model_type=!r}, {architectures=!r}")
+              raise SystemExit("Not a Qwen 3.5 checkpoint: {!r}, {!r}".format(model_type, architectures))
           PY
           singularity exec --containall --cleanenv "${sif}" \
             /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
