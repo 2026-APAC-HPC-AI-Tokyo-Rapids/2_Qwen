@@ -27,14 +27,15 @@ From: lmsysorg/sglang:latest-cu130
     git -C /opt/sglang/source rev-parse HEAD > /opt/sglang/sglang-commit.txt
 
     cd /opt/sglang/source/python
-    export UV_CACHE_DIR=/tmp/uv-cache
+    mkdir -p /opt/sglang/uv-cache
+    export UV_CACHE_DIR=/opt/sglang/uv-cache
     uv lock
     uv venv --system-site-packages /opt/sglang/venv
     UV_PROJECT_ENVIRONMENT=/opt/sglang/venv uv sync --frozen --no-dev
     /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
     /opt/sglang/venv/bin/python -m compileall -q /opt/sglang/source/python/sglang
 
-    rm -rf /opt/sglang/source/.git /tmp/sglang-patches /tmp/uv-cache
+    rm -rf /opt/sglang/source/.git /tmp/sglang-patches /opt/sglang/uv-cache
 
 %environment
     export PATH=/opt/sglang/venv/bin:/usr/local/bin:${PATH}

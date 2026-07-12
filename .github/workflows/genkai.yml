@@ -74,13 +74,11 @@ jobs:
         id: prepare_build_workspace
         run: |
           install -d -m 2775 "${SIF_ARCHIVE_DIR}"
-          build_dir="$(mktemp -d "/tmp/sglang-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
-          install -d -m 2775 /fast/PROJECT/sglang-tmp
-          singularity_tmpdir="$(mktemp -d "/fast/PROJECT/sglang-tmp/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
-          mkdir -p "${build_dir}/logs"
+          run_tmpdir="$(mktemp -d "/dev/shm/sglang-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          mkdir -p "${run_tmpdir}/logs" "${run_tmpdir}/singularity"
           {
-            echo "BUILD_DIR=${build_dir}"
-            echo "SINGULARITY_TMPDIR=${singularity_tmpdir}"
+            echo "RUN_TMPDIR=${run_tmpdir}"
+            echo "SINGULARITY_TMPDIR=${run_tmpdir}/singularity"
             echo "SIF_TMP=${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
           } >> "${GITHUB_ENV}"
 
@@ -92,7 +90,7 @@ jobs:
           singularity --version
           cd "${GITHUB_WORKSPACE}"
           singularity build --fakeroot "${SIF_TMP}" containers/sglang.def \
-            2>&1 | tee "${BUILD_DIR}/logs/build.log"
+            2>&1 | tee "${RUN_TMPDIR}/logs/build.log"
 
       - name: Archive SGLang SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
@@ -103,7 +101,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sglang-build-log-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.BUILD_DIR }}/logs
+          path: ${{ env.RUN_TMPDIR }}/logs
           if-no-files-found: warn
           compression-level: 1
 
@@ -111,8 +109,7 @@ jobs:
         if: always() && steps.prepare_build_workspace.outcome == 'success'
         run: |
           rm -f -- "${SIF_TMP:?}"
-          rm -rf -- "${SINGULARITY_TMPDIR:?}"
-          rm -rf -- "${BUILD_DIR:?}"
+          rm -rf -- "${RUN_TMPDIR:?}"
 
   provision:
     name: Provision SGLang runtime
