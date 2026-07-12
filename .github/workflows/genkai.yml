@@ -109,7 +109,7 @@ jobs:
           trap cleanup EXIT
           export SINGULARITY_TMPDIR="\${singularity_tmpdir}"
           cd "${BUILD_DIR}/source"
-          singularity build --fakeroot "${SIF_TMP}" containers/sglang.def
+          singularity build --fakeroot --no-setgroups "${SIF_TMP}" containers/sglang.def
           touch "${BUILD_DIR}/build-success"
           PJM
           )"
