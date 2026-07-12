@@ -14,6 +14,9 @@
 hardlink、実行スクリプト、model path、logs、resultsが一つのdirectoryに揃うため、
 `run`はrepository checkoutやbuild directoryを参照しません。GPU jobの完了後、logsと
 resultsをActions artifactへ回収して、この一時runtime directoryを削除します。
+Python bytecodeはbuild時に生成し、model config、tokenizer、benchmark moduleなどGPUを
+必要としないmodel依存の初期化はprovision時に済ませます。GPU architectureやdeviceを
+必要とするTriton、DeepGEMMなどのJITだけがcompute job側に残ります。
 
 SGLangを変更する場合は`patches/sglang/`にpatchを追加し、commit messageに
 `[require-build]`を付けてpushします。recipeや依存関係を変えた場合も同様です。
