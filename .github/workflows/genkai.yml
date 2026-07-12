@@ -100,9 +100,9 @@ jobs:
           singularity_builder=/fast/PROJECT/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
           test -x "\${singularity_builder}"
           "\${singularity_builder}" --version
-          # Compute-node /dev/shm is noexec. Its local 120 GB XFS /tmp is the
-          # executable high-speed filesystem intended for container rootfs.
-          singularity_tmpdir="\$(mktemp -d /tmp/sglang-sif.XXXXXXXXXX)"
+          # Compute-node /dev/shm is noexec and /tmp has a small user quota.
+          # /var/tmp is the executable node-local 371 GB filesystem.
+          singularity_tmpdir="\$(mktemp -d /var/tmp/sglang-sif.XXXXXXXXXX)"
           cleanup() {
             status=\$?
             rm -rf -- "\${singularity_tmpdir:?}"
