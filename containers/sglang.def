@@ -1,0 +1,44 @@
+Bootstrap: docker
+From: lmsysorg/sglang:latest-cu130
+
+%files
+    patches/sglang /tmp/sglang-patches
+
+%labels
+    org.opencontainers.image.title "Source-built SGLang runtime"
+    org.opencontainers.image.description "SGLang main with repository patches, built with uv"
+    org.opencontainers.image.uv-version "0.11.28"
+
+%post -c /bin/bash
+    set -euxo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends build-essential git patch pkg-config
+    rm -rf /var/lib/apt/lists/*
+    python3 -m pip install --no-cache-dir "uv==0.11.28"
+
+    mkdir -p /opt/sglang
+    git clone --depth=1 --branch main https://github.com/sgl-project/sglang.git /opt/sglang/source
+    shopt -s nullglob
+    for patch_file in /tmp/sglang-patches/*.patch
+    do
+        patch -d /opt/sglang/source -p1 < "${patch_file}"
+    done
+    git -C /opt/sglang/source rev-parse HEAD > /opt/sglang/sglang-commit.txt
+
+    cd /opt/sglang/source/python
+    export UV_CACHE_DIR=/tmp/uv-cache
+    uv lock
+    uv venv --system-site-packages /opt/sglang/venv
+    UV_PROJECT_ENVIRONMENT=/opt/sglang/venv uv sync --frozen --no-dev
+    /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
+
+    rm -rf /opt/sglang/source/.git /tmp/sglang-patches /tmp/uv-cache
+
+%environment
+    export PATH=/opt/sglang/venv/bin:/usr/local/bin:${PATH}
+    export PIP_DISABLE_PIP_VERSION_CHECK=1
+
+%test
+    /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
+    uv --version

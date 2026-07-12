@@ -1,75 +1,25 @@
-# SGLang Qwen experiments on Genkai
+# Qwen 3.5 with SGLang on Genkai
 
-このリポジトリは、Qwen 3.5のSGLang推論をGenkai上で高速化するための実験基盤です。
-対象モデル系列はQwen 3.5に固定し、別系列の設定はジョブ生成時と実行時に拒否します。
-性能値だけでなく、実験設定、Git commit、ジョブスクリプト、GPU環境、SGLang出力を同じ結果ディレクトリへ保存します。
+このリポジトリは、SGLangの変更をpushするたびに同じQwen 3.5 benchmarkを実行し、
+変更の影響を比較するためのものです。workflowは成果物の寿命に合わせて`build`、
+`provision`、`run`に分かれます。
 
-## 実験の流れ
+`build`の成果物は、recipe、upstream SGLang `main`、`patches/sglang/*.patch`から
+生成した完成済みSIFです。SIFは`/fast/PROJECT/sglang-sifs/<run number>.sif`
+として保存されます。commit messageに`[require-build]`を含めたpushと、手動実行で
+`require_build`を指定した場合だけ新しくbuildします。それ以外では第一親履歴を遡り、
+最も近い実build済みSIFをhardlinkします。
 
-実験条件は `experiments/*.env` に置きます。
-最初は既存のbaselineを複製し、一つの最適化だけを変更します。
+`provision`は今回の実行だけに必要な束を共有filesystem上へ作ります。検証済みSIFの
+hardlink、実行スクリプト、model path、logs、resultsが一つのdirectoryに揃うため、
+`run`はrepository checkoutやbuild directoryを参照しません。GPU jobの完了後、logsと
+resultsをActions artifactへ回収して、この一時runtime directoryを削除します。
 
-```bash
-cp experiments/qwen35-fp8-baseline.env experiments/qwen35-fp8-cuda-graph.env
-$EDITOR experiments/qwen35-fp8-cuda-graph.env
-```
+SGLangを変更する場合は`patches/sglang/`にpatchを追加し、commit messageに
+`[require-build]`を付けてpushします。recipeや依存関係を変えた場合も同様です。
+benchmark条件だけを変える場合は`scripts/run-qwen35.sh`を編集して通常のpushを行えば、
+親のSIFを再利用して新しい条件だけを速く検証できます。
 
-ジョブ生成はローカルでも実行できます。
-このコマンドは `pjsub` を呼びません。
-
-```bash
-python3 scripts/submit.py experiments/qwen35-fp8-baseline.env
-bash -n build/jobs/qwen35-fp8-baseline.pjm
-```
-
-Genkaiでの投入には明示的な `--submit` と、実験名の再入力が必要です。
-
-```bash
-python3 scripts/submit.py experiments/qwen35-fp8-baseline.env --submit
-```
-
-## 実行モード
-
-| mode | 測定対象 | 主な出力 |
-|---|---|---|
-| `smoke` | 起動、モデル互換性、OOM | `smoke.log` |
-| `throughput` | HTTPを介さない最大throughput | `results.jsonl`、trial log |
-| `torch-profile` | PyTorch演算とCUDA kernel | profiler trace |
-| `nsys` | kernel、同期、CPU/GPU並行性 | `.nsys-rep` |
-
-throughput測定には `python -m sglang.benchmark.offline_throughput` を使います。
-モデル取得を測定へ混ぜないため、Hugging Faceのオンラインアクセスは無効です。
-
-## 結果の比較
-
-結果ディレクトリから中央値をCSVへ集約します。
-
-```bash
-python3 scripts/summarize.py \
-  /fast/PROJECT/qwen-results/<baseline> \
-  /fast/PROJECT/qwen-results/<candidate> \
-  --output summary.csv
-
-python3 scripts/compare.py summary.csv \
-  --baseline baseline \
-  --candidate candidate
-```
-
-判定方法は [実験の判定基準](docs/experiment-policy.md) に定めています。
-
-## GitHub Actions
-
-pushごとにGenkaiのself-hosted runnerでスクリプトを検証します。
-コミットメッセージに `[run-qwen]` がある場合だけ投入準備へ進みます。
-現在のworkflowでは `pjsub` をコメントアウトしているため、Actionsからジョブは投入されません。
-
-## 構成
-
-```text
-experiments/        比較対象となる実験設定
-jobs/templates/     設定からPJMを生成するtemplate
-scripts/            実行、生成、投入、集約、比較
-docs/               測定と採用の規則
-results/            ローカル結果（Git管理外）
-tests/              shellと集約処理の回帰テスト
-```
+コンテナは`--containall`で起動し、hostからはmodel、JIT cache、実行スクリプト、今回の
+出力directoryだけを明示的にbind mountします。推論引数は環境変数にせず、
+`scripts/run-qwen35.sh`のcommandとして版管理します。
