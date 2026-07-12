@@ -75,10 +75,12 @@ jobs:
         run: |
           install -d -m 2775 "${SIF_ARCHIVE_DIR}"
           run_tmpdir="$(mktemp -d "/dev/shm/sglang-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
-          mkdir -p "${run_tmpdir}/logs" "${run_tmpdir}/singularity"
+          install -d -m 2775 /fast/pj26000080/sglang-tmp
+          singularity_tmpdir="$(mktemp -d "/fast/pj26000080/sglang-tmp/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          mkdir -p "${run_tmpdir}/logs"
           {
             echo "RUN_TMPDIR=${run_tmpdir}"
-            echo "SINGULARITY_TMPDIR=${run_tmpdir}/singularity"
+            echo "SINGULARITY_TMPDIR=${singularity_tmpdir}"
             echo "SIF_TMP=${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
           } >> "${GITHUB_ENV}"
 
@@ -109,6 +111,7 @@ jobs:
         if: always() && steps.prepare_build_workspace.outcome == 'success'
         run: |
           rm -f -- "${SIF_TMP:?}"
+          rm -rf -- "${SINGULARITY_TMPDIR:?}"
           rm -rf -- "${RUN_TMPDIR:?}"
 
   provision:
