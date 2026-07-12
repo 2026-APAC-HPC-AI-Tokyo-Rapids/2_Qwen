@@ -46,7 +46,10 @@ From: lmsysorg/sglang@sha256:c190b06bae3c717da83fd0820a704a4875cbf0e7b297f0d1f48
     uv pip install --python /opt/sglang/venv/bin/python -e .
     # The base image's system copy otherwise satisfies the unpinned cubin
     # dependency even when flashinfer-python has advanced on master.
-    uv pip install --python /opt/sglang/venv/bin/python --upgrade flashinfer-cubin==0.6.14
+    uv pip install --python /opt/sglang/venv/bin/python --upgrade \
+        --index-url https://flashinfer.ai/whl flashinfer-cubin==0.6.14
+    uv pip install --python /opt/sglang/venv/bin/python --upgrade \
+        --index-url https://flashinfer.ai/whl/cu130 flashinfer-jit-cache==0.6.14
     /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
     /opt/sglang/venv/bin/python -m compileall -q /opt/sglang/source/python/sglang
 
