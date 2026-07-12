@@ -74,25 +74,71 @@ jobs:
         id: prepare_build_workspace
         run: |
           install -d -m 2775 "${SIF_ARCHIVE_DIR}"
-          run_tmpdir="$(mktemp -d "/dev/shm/sglang-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
-          install -d -m 2775 /fast/pj26000080/sglang-tmp
-          singularity_tmpdir="$(mktemp -d "/fast/pj26000080/sglang-tmp/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
-          mkdir -p "${run_tmpdir}/logs"
+          install -d -m 2775 /fast/pj26000080/sglang-build-jobs
+          build_dir="$(mktemp -d "/fast/pj26000080/sglang-build-jobs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          mkdir -p "${build_dir}/source/containers" "${build_dir}/source/patches" "${build_dir}/logs"
+          cp "${GITHUB_WORKSPACE}/containers/sglang.def" "${build_dir}/source/containers/"
+          cp -a "${GITHUB_WORKSPACE}/patches/sglang" "${build_dir}/source/patches/"
           {
-            echo "RUN_TMPDIR=${run_tmpdir}"
-            echo "SINGULARITY_TMPDIR=${singularity_tmpdir}"
+            echo "BUILD_DIR=${build_dir}"
             echo "SIF_TMP=${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
           } >> "${GITHUB_ENV}"
 
       - name: Build SGLang SIF from recipe
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
         run: |
+          job_output="$(pjsub /dev/stdin <<PJM
+          #!/usr/bin/env bash
+          #PJM -L rscgrp=a-batch
+          #PJM -L node=1
+          #PJM -L elapse=02:00:00
+          #PJM -j
+          #PJM -o ${BUILD_DIR}/logs/%j.log
+          #PJM -N sglang_sif_build
+
+          set -euo pipefail
           module purge
           module load singularity-ce/4.1.3
           singularity --version
-          cd "${GITHUB_WORKSPACE}"
-          singularity build --fakeroot "${SIF_TMP}" containers/sglang.def \
-            2>&1 | tee "${RUN_TMPDIR}/logs/build.log"
+          singularity_tmpdir="\$(mktemp -d /dev/shm/sglang-sif.XXXXXXXXXX)"
+          cleanup() {
+            status=\$?
+            rm -rf -- "\${singularity_tmpdir:?}"
+            exit "\${status}"
+          }
+          trap cleanup EXIT
+          export SINGULARITY_TMPDIR="\${singularity_tmpdir}"
+          cd "${BUILD_DIR}/source"
+          singularity build --fakeroot "${SIF_TMP}" containers/sglang.def
+          touch "${BUILD_DIR}/build-success"
+          PJM
+          )"
+          printf '%s\n' "${job_output}"
+          job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
+          test -n "${job_id}"
+          log_file="${BUILD_DIR}/logs/${job_id}.log"
+          while [[ ! -e "${log_file}" ]]; do
+            if ! pjstat "${job_id}" | grep -q "^${job_id}[[:space:]]"; then
+              echo "SGLang SIF build ${job_id} did not create a scheduler log" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          tail -n +1 -F "${log_file}" &
+          tail_pid=$!
+          stop_log_stream() {
+            kill "${tail_pid}" 2>/dev/null || true
+            wait "${tail_pid}" 2>/dev/null || true
+          }
+          trap stop_log_stream EXIT
+          while pjstat "${job_id}" | grep -q "^${job_id}[[:space:]]"; do
+            sleep 10
+          done
+          sleep 1
+          stop_log_stream
+          trap - EXIT
+          test -e "${BUILD_DIR}/build-success"
+          test -s "${SIF_TMP}"
 
       - name: Archive SGLang SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
@@ -103,7 +149,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sglang-build-log-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.RUN_TMPDIR }}/logs
+          path: ${{ env.BUILD_DIR }}/logs
           if-no-files-found: warn
           compression-level: 1
 
@@ -111,8 +157,7 @@ jobs:
         if: always() && steps.prepare_build_workspace.outcome == 'success'
         run: |
           rm -f -- "${SIF_TMP:?}"
-          rm -rf -- "${SINGULARITY_TMPDIR:?}"
-          rm -rf -- "${RUN_TMPDIR:?}"
+          rm -rf -- "${BUILD_DIR:?}"
 
   provision:
     name: Provision SGLang runtime
