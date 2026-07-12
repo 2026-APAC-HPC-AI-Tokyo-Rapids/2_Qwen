@@ -41,10 +41,12 @@ From: lmsysorg/sglang@sha256:c190b06bae3c717da83fd0820a704a4875cbf0e7b297f0d1f48
     export UV_CACHE_DIR=/opt/sglang/uv-cache
     uv lock
     uv venv --system-site-packages /opt/sglang/venv
-    # Dependencies are already in the pinned base image.  Installing them a
-    # second time would duplicate the CUDA stack and make SquashFS creation
-    # exceed the runner's memory limit.
+    # Reuse compatible packages exposed by --system-site-packages and let uv
+    # add dependencies introduced since the pinned runtime image was built.
     uv pip install --python /opt/sglang/venv/bin/python -e .
+    # The base image's system copy otherwise satisfies the unpinned cubin
+    # dependency even when flashinfer-python has advanced on master.
+    uv pip install --python /opt/sglang/venv/bin/python --upgrade flashinfer-cubin==0.6.14
     /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
     /opt/sglang/venv/bin/python -m compileall -q /opt/sglang/source/python/sglang
 
