@@ -15,20 +15,22 @@ exec > >(tee -a "${run_dir}/launcher.log") 2>&1
 set -x
 test -s "${sif_path}"
 jit_cache="${HOME}/.cache/sglang-jit"
+singularity=/fast/pj26000080/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
 mkdir -p "${jit_cache}/deep-gemm" "${jit_cache}/torchinductor" "${jit_cache}/triton"
 module purge
-module load cuda/12.8.1 singularity-ce/4.1.3
+module load cuda/12.8.1
+test -x "${singularity}"
 
 {
   echo "job_id=${PJM_JOBID:-manual}"
   echo "mode=${mode}"
   echo "started_at=$(date -u +%FT%TZ)"
   echo "model_path=${MODEL_PATH}"
-  singularity exec --containall --cleanenv "${sif_path}" /bin/cat /opt/sglang/sglang-commit.txt
-  singularity inspect "${sif_path}"
+  "${singularity}" exec --containall --cleanenv "${sif_path}" /bin/cat /opt/sglang/sglang-commit.txt
+  "${singularity}" inspect "${sif_path}"
   module list 2>&1
   nvidia-smi --query-gpu=index,name,uuid,memory.total,driver_version --format=csv
-  singularity --version
+  "${singularity}" --version
 } >"${run_dir}/environment.log" 2>&1
 
 command=(python -m sglang.benchmark.offline_throughput
@@ -48,7 +50,7 @@ printf '%q ' "${command[@]}" >>"${run_dir}/command.txt"
 printf '\n' >>"${run_dir}/command.txt"
 
 set +e
-singularity exec --nv --cleanenv \
+"${singularity}" exec --nv --cleanenv \
   --containall \
   --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1 \
   --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton \
