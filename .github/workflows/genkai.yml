@@ -81,7 +81,7 @@ jobs:
           cp -a "${GITHUB_WORKSPACE}/patches/sglang" "${build_dir}/source/patches/"
           {
             echo "BUILD_DIR=${build_dir}"
-            echo "SANDBOX_DIR=${build_dir}/sandbox"
+            echo "ROOTFS_TAR=${build_dir}/rootfs.tar"
             echo "SIF_TMP=${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
           } >> "${GITHUB_ENV}"
 
@@ -90,25 +90,26 @@ jobs:
         run: |
           singularity_builder=/fast/PROJECT/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
           test -x "${singularity_builder}"
-          tmpdir="${BUILD_DIR}/singularity-tmp"
-          sandbox_tmp="${BUILD_DIR}/sandbox.tmp"
-          mkdir -p "${tmpdir}"
-          cleanup_failed_provision() {
+          provision_tmp="$(mktemp -d /dev/shm/sglang-provision.XXXXXXXXXX)"
+          cleanup_provision() {
             status=$?
             trap - EXIT
-            if [[ "${status}" -ne 0 ]]; then
-              rm -rf -- "${sandbox_tmp}"
-            fi
+            rm -rf -- "${provision_tmp:?}"
             exit "${status}"
           }
-          trap cleanup_failed_provision EXIT
-          export SINGULARITY_TMPDIR="${tmpdir}"
+          trap cleanup_provision EXIT
+          mkdir -p "${provision_tmp}/tmp"
+          export SINGULARITY_TMPDIR="${provision_tmp}/tmp"
           cd "${BUILD_DIR}/source"
           "${singularity_builder}" build --fakeroot --sandbox \
-            "${sandbox_tmp}" containers/sglang.def 2>&1 \
+            "${provision_tmp}/sandbox" containers/sglang.def 2>&1 \
             | tee "${BUILD_DIR}/logs/provision.log"
-          mv "${sandbox_tmp}" "${SANDBOX_DIR}"
-          trap - EXIT
+          # A plain tar is the immutable hand-off between login provisioning
+          # and compute-node packing.  It avoids millions of shared-FS files
+          # without spending CPU on compression on the login node.
+          tar -C "${provision_tmp}/sandbox" -cf "${ROOTFS_TAR}" .
+          test -s "${ROOTFS_TAR}"
+          cleanup_provision
 
       - name: Pack provisioned sandbox into SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
@@ -136,8 +137,9 @@ jobs:
           }
           trap cleanup EXIT
           export SINGULARITY_TMPDIR="\${singularity_tmpdir}"
-          test -d "${SANDBOX_DIR}"
-          "\${singularity_builder}" build --fakeroot "${SIF_TMP}" "${SANDBOX_DIR}"
+          mkdir "\${singularity_tmpdir}/sandbox"
+          tar --no-same-owner -C "\${singularity_tmpdir}/sandbox" -xf "${ROOTFS_TAR}"
+          "\${singularity_builder}" build --fakeroot "${SIF_TMP}" "\${singularity_tmpdir}/sandbox"
           touch "${BUILD_DIR}/build-success"
           PJM
           )"
