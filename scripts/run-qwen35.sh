@@ -43,7 +43,7 @@ command=(python -m sglang.benchmark.offline_throughput
   --model-path /model
   --load-format auto
   --tp-size 1
-  --dataset-name random
+  --dataset-name random-ids
   --random-input-len 1024
   --random-output-len 256
   --num-prompts 32
