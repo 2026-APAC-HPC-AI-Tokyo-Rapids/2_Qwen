@@ -43,10 +43,12 @@ command=(python -m sglang.benchmark.offline_throughput
   --model-path /model
   --load-format auto
   --tp-size 1
-  --dataset-name random-ids
-  --random-input-len 1024
-  --random-output-len 256
-  --num-prompts 32
+  --dataset-name generated-shared-prefix
+  --gsp-num-groups 1
+  --gsp-prompts-per-group 32
+  --gsp-system-prompt-len 768
+  --gsp-question-len 256
+  --gsp-output-len 256
   --seed 42
   --mem-fraction-static 0.85
   --result-filename /output/results.jsonl)
