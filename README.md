@@ -13,9 +13,10 @@ imageを親にしません。SIFは`/fast/pj26000080/sglang-sifs/<run number>.si
 最も近い実build済みSIFをhardlinkします。
 
 新規buildは二段階です。ログインノードでは並列数を抑えてrecipeをsandboxまで
-provisionし、課金対象のA計算ノードでは完成済みsandboxをSIFへ圧縮する処理だけを
-行います。共有ログインノードの1プロセスCPU時間・メモリ制限を越える処理はせず、
-圧縮のCPU負荷だけをbatch jobへ隔離します。
+provisionし、非圧縮rootfs tarを引き渡します。課金対象のA計算ノードではtarを
+node-local filesystemへ展開してSIFへ圧縮する処理だけを行います。共有ログイン
+ノードの1プロセスCPU時間・メモリ制限を越える処理はせず、圧縮のCPU負荷だけを
+batch jobへ隔離します。
 
 `provision`は今回の実行だけに必要な束を共有filesystem上へ作ります。検証済みSIFの
 hardlink、実行スクリプト、model path、logs、resultsが一つのdirectoryに揃うため、
