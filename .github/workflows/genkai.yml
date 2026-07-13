@@ -49,13 +49,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           commit="${GITHUB_SHA}"
-          # Compatibility is a caller decision.  Only a SIF produced by an
-          # actual successful build on the first-parent history is reusable.
+          # Compatibility is a caller decision.  A later provision/run failure
+          # does not invalidate an already archived, immutable build result.
           while parent_commit="$(git rev-parse "${commit}^" 2>/dev/null)"
           do
-            run_info="$(gh run list --workflow genkai.yml --commit "${parent_commit}" --status success --limit 1 --json databaseId,number --jq '(.[0] // empty) | [.databaseId, .number] | @tsv')"
-            if [[ -n "${run_info}" ]]; then
-              read -r run_id run_number <<< "${run_info}"
+            while IFS=$'\t' read -r run_id run_number
+            do
+              [[ -n "${run_id}" ]] || continue
               source_sif="${SIF_ARCHIVE_DIR}/${run_number}.sif"
               build_steps="$(gh run view "${run_id}" --json jobs --jq '[.jobs[].steps[] | select(.name == "Archive SGLang SIF" and .conclusion == "success")] | length')"
               if [[ "${build_steps}" -gt 0 && -s "${source_sif}" ]]; then
@@ -63,7 +63,7 @@ jobs:
                 ln -f "${source_sif}" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
                 exit 0
               fi
-            fi
+            done < <(gh run list --workflow genkai.yml --commit "${parent_commit}" --limit 20 --json databaseId,number --jq '.[] | [.databaseId, .number] | @tsv')
             commit="${parent_commit}"
           done
           echo "No reusable SGLang SIF was found in the first-parent history" >&2
@@ -246,7 +246,6 @@ jobs:
           job_output="$(pjsub /dev/stdin <<PJM
           #!/usr/bin/env bash
           #PJM -L rscgrp=b-batch
-          #PJM -L node=1
           #PJM -L elapse=02:00:00
           #PJM -L gpu=1
           #PJM -j
