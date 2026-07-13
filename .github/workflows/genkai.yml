@@ -108,11 +108,16 @@ jobs:
           # and compute-node packing.  It avoids millions of shared-FS files
           # without spending CPU on compression on the login node.
           : > "${ROOTFS_TAR}"
-          "${singularity_builder}" exec --fakeroot --cleanenv \
+          # Do not let Singularity's convenience binds leak the login node's
+          # home, cwd, or temporary files into the rootfs hand-off.
+          "${singularity_builder}" exec --fakeroot --containall --cleanenv \
+            --no-mount home,cwd,tmp,hostfs \
             --bind "${ROOTFS_TAR}:/rootfs.tar" \
             "${provision_tmp}/sandbox" \
             tar --numeric-owner -C / \
-              --exclude=./dev --exclude=./proc --exclude=./rootfs.tar --exclude=./sys \
+              --exclude=./dev --exclude=./fast --exclude=./home \
+              --exclude=./proc --exclude=./rootfs.tar --exclude=./run \
+              --exclude=./sys --exclude=./tmp --exclude=./var/tmp \
               -cf /rootfs.tar .
           test -s "${ROOTFS_TAR}"
           cleanup_provision
