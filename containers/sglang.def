@@ -2,7 +2,7 @@ Bootstrap: docker
 From: lmsysorg/sglang@sha256:c190b06bae3c717da83fd0820a704a4875cbf0e7b297f0d1f48b622d080442a6
 
 %files
-    patches/sglang /tmp/sglang-patches
+    patches/sglang /opt/sglang-patches
 
 %labels
     org.opencontainers.image.title "Source-built SGLang runtime"
@@ -32,7 +32,7 @@ From: lmsysorg/sglang@sha256:c190b06bae3c717da83fd0820a704a4875cbf0e7b297f0d1f48
     while IFS= read -r patch_file
     do
         patch -d /opt/sglang/source -p1 < "${patch_file}"
-    done < <(find /tmp/sglang-patches -type f -name '*.patch' -print | sort)
+    done < <(find /opt/sglang-patches -type f -name '*.patch' -print | sort)
     grep -Fq 'random_sample=False' \
         /opt/sglang/source/python/sglang/benchmark/offline_throughput.py
     git -C /opt/sglang/source rev-parse HEAD > /opt/sglang/sglang-commit.txt
@@ -54,7 +54,7 @@ From: lmsysorg/sglang@sha256:c190b06bae3c717da83fd0820a704a4875cbf0e7b297f0d1f48
     /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
     /opt/sglang/venv/bin/python -m compileall -q /opt/sglang/source/python/sglang
 
-    rm -rf /opt/sglang/source/.git /tmp/sglang-patches /opt/sglang/uv-cache \
+    rm -rf /opt/sglang/source/.git /opt/sglang-patches /opt/sglang/uv-cache \
         /opt/cargo /opt/rustup
 
 %environment
