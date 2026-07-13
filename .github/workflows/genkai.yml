@@ -107,7 +107,13 @@ jobs:
           # A plain tar is the immutable hand-off between login provisioning
           # and compute-node packing.  It avoids millions of shared-FS files
           # without spending CPU on compression on the login node.
-          tar -C "${provision_tmp}/sandbox" -cf "${ROOTFS_TAR}" .
+          : > "${ROOTFS_TAR}"
+          "${singularity_builder}" exec --fakeroot --cleanenv \
+            --bind "${ROOTFS_TAR}:/rootfs.tar" \
+            "${provision_tmp}/sandbox" \
+            tar --numeric-owner -C / \
+              --exclude=./dev --exclude=./proc --exclude=./rootfs.tar --exclude=./sys \
+              -cf /rootfs.tar .
           test -s "${ROOTFS_TAR}"
           cleanup_provision
 
