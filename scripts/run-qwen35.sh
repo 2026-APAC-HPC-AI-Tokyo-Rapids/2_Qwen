@@ -11,6 +11,8 @@ mode=throughput
 : "${MODEL_PATH:?Set MODEL_PATH to a local Qwen 3.5 checkpoint directory}"
 
 mkdir -p "${run_dir}"
+exec > >(tee -a "${run_dir}/launcher.log") 2>&1
+set -x
 test -s "${sif_path}"
 jit_cache="${HOME}/.cache/sglang-jit"
 mkdir -p "${jit_cache}/deep-gemm" "${jit_cache}/torchinductor" "${jit_cache}/triton"
