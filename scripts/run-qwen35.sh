@@ -12,7 +12,6 @@ mode=throughput
 
 mkdir -p "${run_dir}"
 exec > >(tee -a "${run_dir}/launcher.log") 2>&1
-set -x
 test -s "${sif_path}"
 jit_cache="${HOME}/.cache/sglang-jit"
 singularity=/fast/pj26000080/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
@@ -32,7 +31,6 @@ export SINGULARITY_TMPDIR="${singularity_tmpdir}"
   echo "mode=${mode}"
   echo "started_at=$(date -u +%FT%TZ)"
   echo "model_path=${MODEL_PATH}"
-  "${singularity}" exec --containall --cleanenv "${sif_path}" /bin/cat /opt/sglang/sglang-commit.txt
   "${singularity}" inspect "${sif_path}"
   module list 2>&1
   nvidia-smi --query-gpu=index,name,uuid,memory.total,driver_version --format=csv
