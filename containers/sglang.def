@@ -29,11 +29,12 @@ From: lmsysorg/sglang@sha256:c190b06bae3c717da83fd0820a704a4875cbf0e7b297f0d1f48
 
     mkdir -p /opt/sglang
     git clone --depth=1 --branch main https://github.com/sgl-project/sglang.git /opt/sglang/source
-    shopt -s nullglob
-    for patch_file in /tmp/sglang-patches/*.patch
+    while IFS= read -r patch_file
     do
         patch -d /opt/sglang/source -p1 < "${patch_file}"
-    done
+    done < <(find /tmp/sglang-patches -type f -name '*.patch' -print | sort)
+    grep -Fq 'random_sample=False' \
+        /opt/sglang/source/python/sglang/benchmark/offline_throughput.py
     git -C /opt/sglang/source rev-parse HEAD > /opt/sglang/sglang-commit.txt
 
     cd /opt/sglang/source/python
