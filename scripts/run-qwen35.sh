@@ -20,6 +20,12 @@ mkdir -p "${jit_cache}/deep-gemm" "${jit_cache}/torchinductor" "${jit_cache}/tri
 module purge
 module load cuda/12.8.1
 test -x "${singularity}"
+singularity_tmpdir="$(mktemp -d /var/tmp/sglang-run.XXXXXXXXXX)"
+cleanup() {
+  rm -rf -- "${singularity_tmpdir:?}"
+}
+trap cleanup EXIT
+export SINGULARITY_TMPDIR="${singularity_tmpdir}"
 
 {
   echo "job_id=${PJM_JOBID:-manual}"
