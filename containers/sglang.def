@@ -64,7 +64,7 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
         --index-url https://flashinfer.ai/whl/cu130 "flashinfer-jit-cache==0.6.14"
     /opt/sglang/venv/bin/python -m compileall -q /opt/sglang/source/python/sglang
 
-    rm -rf /var/lib/apt/lists/* /opt/sglang/source/.git \
+    rm -rf /var/lib/apt/lists/* /root/.cache /opt/sglang/source/.git \
         /opt/sglang-patches /opt/sglang/uv-cache /opt/cargo /opt/rustup
 
 %environment
@@ -74,7 +74,8 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 %test
+    export XDG_CACHE_HOME=/tmp/sglang-recipe-test-cache
+    export UV_CACHE_DIR=/tmp/sglang-recipe-test-cache/uv
     /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
     /opt/sglang/venv/bin/python -c 'import torch; print(torch.__version__)'
     uv --version
-    rm -rf /root/.cache
