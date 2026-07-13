@@ -81,10 +81,36 @@ jobs:
           cp -a "${GITHUB_WORKSPACE}/patches/sglang" "${build_dir}/source/patches/"
           {
             echo "BUILD_DIR=${build_dir}"
+            echo "SANDBOX_DIR=${build_dir}/sandbox"
             echo "SIF_TMP=${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
           } >> "${GITHUB_ENV}"
 
-      - name: Build SGLang SIF from recipe
+      - name: Provision SGLang sandbox on login node
+        if: ${{ ! fromJSON(env.SKIP_BUILD) }}
+        run: |
+          singularity_builder=/fast/pj26000080/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
+          test -x "${singularity_builder}"
+          tmpdir="${BUILD_DIR}/singularity-tmp"
+          sandbox_tmp="${BUILD_DIR}/sandbox.tmp"
+          mkdir -p "${tmpdir}"
+          cleanup_failed_provision() {
+            status=$?
+            trap - EXIT
+            if [[ "${status}" -ne 0 ]]; then
+              rm -rf -- "${sandbox_tmp}"
+            fi
+            exit "${status}"
+          }
+          trap cleanup_failed_provision EXIT
+          export SINGULARITY_TMPDIR="${tmpdir}"
+          cd "${BUILD_DIR}/source"
+          "${singularity_builder}" build --fakeroot --sandbox \
+            "${sandbox_tmp}" containers/sglang.def 2>&1 \
+            | tee "${BUILD_DIR}/logs/provision.log"
+          mv "${sandbox_tmp}" "${SANDBOX_DIR}"
+          trap - EXIT
+
+      - name: Pack provisioned sandbox into SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
         run: |
           job_output="$(pjsub /dev/stdin <<PJM
@@ -110,8 +136,8 @@ jobs:
           }
           trap cleanup EXIT
           export SINGULARITY_TMPDIR="\${singularity_tmpdir}"
-          cd "${BUILD_DIR}/source"
-          "\${singularity_builder}" build --fakeroot "${SIF_TMP}" containers/sglang.def
+          test -d "${SANDBOX_DIR}"
+          "\${singularity_builder}" build --fakeroot "${SIF_TMP}" "${SANDBOX_DIR}"
           touch "${BUILD_DIR}/build-success"
           PJM
           )"
