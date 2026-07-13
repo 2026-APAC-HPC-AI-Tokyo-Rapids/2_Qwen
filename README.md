@@ -5,10 +5,17 @@
 `provision`、`run`に分かれます。
 
 `build`の成果物は、recipe、upstream SGLang `main`、`patches/sglang/*.patch`から
-生成した完成済みSIFです。SIFは`/fast/PROJECT/sglang-sifs/<run number>.sif`
+生成した完成済みSIFです。recipeはupstream `docker/Dockerfile`のCUDA 13.0.1、
+Ubuntu 24.04、Python 3.12、GPU JIT向けruntime構成を基準にし、公開済みSGLang
+imageを親にしません。SIFは`/fast/PROJECT/sglang-sifs/<run number>.sif`
 として保存されます。commit messageに`[require-build]`を含めたpushと、手動実行で
 `require_build`を指定した場合だけ新しくbuildします。それ以外では第一親履歴を遡り、
 最も近い実build済みSIFをhardlinkします。
+
+新規buildは二段階です。ログインノードでは並列数を抑えてrecipeをsandboxまで
+provisionし、課金対象のA計算ノードでは完成済みsandboxをSIFへ圧縮する処理だけを
+行います。共有ログインノードの1プロセスCPU時間・メモリ制限を越える処理はせず、
+圧縮のCPU負荷だけをbatch jobへ隔離します。
 
 `provision`は今回の実行だけに必要な束を共有filesystem上へ作ります。検証済みSIFの
 hardlink、実行スクリプト、model path、logs、resultsが一つのdirectoryに揃うため、

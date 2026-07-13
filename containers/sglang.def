@@ -1,31 +1,48 @@
 Bootstrap: docker
-From: lmsysorg/sglang@sha256:c190b06bae3c717da83fd0820a704a4875cbf0e7b297f0d1f48b622d080442a6
+From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
 
 %files
     patches/sglang /opt/sglang-patches
 
 %labels
     org.opencontainers.image.title "Source-built SGLang runtime"
-    org.opencontainers.image.description "SGLang main with repository patches, built with uv"
+    org.opencontainers.image.description "SGLang main built with uv on the upstream CUDA runtime layout"
+    org.opencontainers.image.source "https://github.com/sgl-project/sglang"
     org.opencontainers.image.uv-version "0.11.28"
 
 %post -c /bin/bash
     set -euxo pipefail
-    export PATH=/usr/local/bin:${PATH}
-    # Start from the runtime image, which excludes the upstream build cache.
-    # Install only the tools needed to apply and build our source checkout.
     export DEBIAN_FRONTEND=noninteractive
+    export CUDA_HOME=/usr/local/cuda
+    export PATH=/usr/local/cuda/bin:/usr/local/bin:${PATH}
+
+    # This is the minimal intersection of upstream docker/Dockerfile's build
+    # and runtime stages needed by a source checkout, GPU JIT, and Qwen 3.5.
     apt-get update
     apt-get install -y --no-install-recommends \
-        build-essential ca-certificates curl git patch pkg-config protobuf-compiler
-    rm -rf /var/lib/apt/lists/*
-    python3 -m pip install --no-cache-dir --force-reinstall "uv==0.11.28"
-    uv --version
+        build-essential ca-certificates curl ffmpeg git libfabric1 \
+        libibverbs1 libnccl-dev libnccl2 libnl-3-200 libnl-route-3-200 \
+        libnuma1 libopenmpi3 librdmacm1 linux-libc-dev ninja-build \
+        patch pkg-config protobuf-compiler python3.12-dev python3.12-full
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 2
+    update-alternatives --set python3 /usr/bin/python3.12
+    ln -sf /usr/bin/python3.12 /usr/bin/python
+    curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
+    python3 /tmp/get-pip.py --break-system-packages
+    rm /tmp/get-pip.py
+    python3 -m pip install --break-system-packages --no-cache-dir "uv==0.11.28"
+
     export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
     curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain 1.88.0
     export PATH=/opt/cargo/bin:${PATH}
-    rustc --version
+
+    # The login node provisions this sandbox.  Keep its shared-node load
+    # bounded; SIF compression is performed later by an A compute node.
+    export UV_CONCURRENT_DOWNLOADS=4
+    export UV_CONCURRENT_BUILDS=2
+    export UV_CONCURRENT_INSTALLS=2
+    export CARGO_BUILD_JOBS=2
 
     mkdir -p /opt/sglang
     git clone --depth=1 --branch main https://github.com/sgl-project/sglang.git /opt/sglang/source
@@ -35,32 +52,28 @@ From: lmsysorg/sglang@sha256:c190b06bae3c717da83fd0820a704a4875cbf0e7b297f0d1f48
     done < <(find /opt/sglang-patches -type f -name '*.patch' -print | sort)
     grep -Fq 'random_sample=False' \
         /opt/sglang/source/python/sglang/benchmark/offline_throughput.py
-    git -C /opt/sglang/source rev-parse HEAD > /opt/sglang/sglang-commit.txt
+    git -C /opt/sglang/source rev-parse HEAD | tee /opt/sglang/sglang-commit.txt
 
     cd /opt/sglang/source/python
-    mkdir -p /opt/sglang/uv-cache
     export UV_CACHE_DIR=/opt/sglang/uv-cache
-    uv lock
-    uv venv --system-site-packages /opt/sglang/venv
-    # Reuse compatible packages exposed by --system-site-packages and let uv
-    # add dependencies introduced since the pinned runtime image was built.
+    uv venv /opt/sglang/venv
     uv pip install --python /opt/sglang/venv/bin/python -e .
-    # The base image's system copy otherwise satisfies the unpinned cubin
-    # dependency even when flashinfer-python has advanced on master.
     uv pip install --python /opt/sglang/venv/bin/python --upgrade \
-        --index-url https://flashinfer.ai/whl flashinfer-cubin==0.6.14
+        --index-url https://flashinfer.ai/whl "flashinfer-cubin==0.6.14"
     uv pip install --python /opt/sglang/venv/bin/python --upgrade \
-        --index-url https://flashinfer.ai/whl/cu130 flashinfer-jit-cache==0.6.14
-    /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
+        --index-url https://flashinfer.ai/whl/cu130 "flashinfer-jit-cache==0.6.14"
     /opt/sglang/venv/bin/python -m compileall -q /opt/sglang/source/python/sglang
 
-    rm -rf /opt/sglang/source/.git /opt/sglang-patches /opt/sglang/uv-cache \
-        /opt/cargo /opt/rustup
+    rm -rf /var/lib/apt/lists/* /opt/sglang/source/.git \
+        /opt/sglang-patches /opt/sglang/uv-cache /opt/cargo /opt/rustup
 
 %environment
-    export PATH=/opt/sglang/venv/bin:/usr/local/bin:${PATH}
+    export CUDA_HOME=/usr/local/cuda
+    export PATH=/opt/sglang/venv/bin:/usr/local/cuda/bin:/usr/local/bin:${PATH}
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
     export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 %test
     /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
+    /opt/sglang/venv/bin/python -c 'import torch; print(torch.__version__)'
     uv --version
