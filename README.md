@@ -19,7 +19,7 @@ node-local filesystemへ展開してSIFへ圧縮する処理だけを行いま�
 batch jobへ隔離します。
 
 `provision`は今回の実行だけに必要な束を共有filesystem上へ作ります。検証済みSIFの
-hardlink、実行スクリプト、model path、logs、resultsが一つのdirectoryに揃うため、
+hardlink、実行スクリプト、model path、dataset path、logs、resultsが一つのdirectoryに揃うため、
 `run`はrepository checkoutやbuild directoryを参照しません。GPU jobの完了後、logsと
 resultsをActions artifactへ回収して、この一時runtime directoryを削除します。
 Python bytecodeはbuild時に生成し、model config、tokenizer、benchmark moduleなどGPUを
@@ -31,6 +31,12 @@ SGLangを変更する場合は`patches/sglang/`にpatchを追加し、commit mes
 benchmark条件だけを変える場合は`scripts/run-qwen35.sh`を編集して通常のpushを行えば、
 親のSIFを再利用して新しい条件だけを速く検証できます。
 
-コンテナは`--containall`で起動し、hostからはmodel、JIT cache、実行スクリプト、今回の
-出力directoryだけを明示的にbind mountします。推論引数は環境変数にせず、
+入力はSGLangが標準で参照するShareGPTを使います。最初に玄界のログインノードで
+`scripts/fetch-sharegpt.sh`を一度実行すると、dataset repositoryのrevisionとSHA-256を
+検証して`/fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered/<revision>/`へ原子的に
+配置します。datasetはSIFへ封入せず、`provision`と`run`で同じJSONだけを
+`/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro`へ明示的にbindします。
+
+コンテナは`--containall`で起動し、hostからはmodel、ShareGPT、JIT cache、実行スクリプト、
+今回の出力directoryだけを明示的にbind mountします。推論引数は環境変数にせず、
 `scripts/run-qwen35.sh`のcommandとして版管理します。

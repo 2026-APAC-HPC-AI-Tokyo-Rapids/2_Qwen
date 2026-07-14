@@ -5,6 +5,7 @@ set -euo pipefail
 runtime_dir="${1:?usage: run-qwen35.sh RUNTIME_DIR RUN_DIR}"
 run_dir="${2:?usage: run-qwen35.sh RUNTIME_DIR RUN_DIR}"
 sif_path="${runtime_dir}/sglang.sif"
+dataset_path="$(<"${runtime_dir}/dataset-path")"
 script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
 mode=throughput
 
@@ -13,6 +14,7 @@ mode=throughput
 mkdir -p "${run_dir}"
 exec > >(tee -a "${run_dir}/launcher.log") 2>&1
 test -s "${sif_path}"
+test -r "${dataset_path}"
 jit_cache="${HOME}/.cache/sglang-jit"
 singularity=/fast/PROJECT/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
 mkdir -p "${jit_cache}/deep-gemm" "${jit_cache}/torchinductor" "${jit_cache}/triton"
@@ -41,12 +43,11 @@ command=(python -m sglang.benchmark.offline_throughput
   --model-path /model
   --load-format auto
   --tp-size 1
-  --dataset-name generated-shared-prefix
-  --gsp-num-groups 1
-  --gsp-prompts-per-group 32
-  --gsp-system-prompt-len 768
-  --gsp-question-len 256
-  --gsp-output-len 256
+  --dataset-name sharegpt
+  --dataset-path /dataset/ShareGPT_V3_unfiltered_cleaned_split.json
+  --num-prompts 32
+  --sharegpt-output-len 256
+  --sharegpt-context-len 262144
   --seed 42
   --mem-fraction-static 0.85
   --result-filename /output/results.jsonl)
@@ -60,7 +61,7 @@ set +e
   --containall \
   --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1 \
   --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton \
-  --bind "${MODEL_PATH}:/model:ro,${jit_cache}:/jit-cache,${script_dir}:/workspace/scripts:ro,${run_dir}:/output" \
+  --bind "${MODEL_PATH}:/model:ro,${dataset_path}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro,${jit_cache}:/jit-cache,${script_dir}:/workspace/scripts:ro,${run_dir}:/output" \
   "${sif_path}" /opt/sglang/venv/bin/python "${command[@]:1}" 2>&1 | tee "${run_dir}/${mode}.log"
 status=${PIPESTATUS[0]}
 set -e
