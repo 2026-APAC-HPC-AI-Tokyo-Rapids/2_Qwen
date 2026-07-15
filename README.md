@@ -31,6 +31,11 @@ SGLangを変更する場合は`patches/sglang/`にpatchを追加し、commit mes
 benchmark条件だけを変える場合は`scripts/run-qwen35.sh`を編集して通常のpushを行えば、
 親のSIFを再利用して新しい条件だけを速く検証できます。
 
+`scripts/run-qwen35.sh`はコンテナ内でSGLang benchmarkを起動することだけを担当します。
+PJM resource指定、CUDA module、Singularity起動、bind mount、JIT cache、実行環境の記録は
+workflow側の責務です。GPU jobの投入からnode割当までと、割当後の実行監視も別stepにし、
+長いqueue待ちと実行時間をActions画面から判別できるようにしています。
+
 入力はSGLangが標準で参照するShareGPTを使います。最初に玄界のログインノードで
 `scripts/fetch-sharegpt.sh`を一度実行すると、dataset repositoryのrevisionとSHA-256を
 検証して`/fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered/<revision>/`へ原子的に
