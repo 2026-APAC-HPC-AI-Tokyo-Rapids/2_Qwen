@@ -120,7 +120,9 @@ jobs:
       - name: Pack provisioned sandbox into SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
         run: |
-          job_output="$(pjsub /dev/stdin <<PJM
+          job_script="$(mktemp "${TMPDIR}/sglang-sif-build.XXXXXXXXXX")"
+          trap 'rm -f -- "${job_script}"' EXIT
+          cat > "${job_script}" <<PJM
           #!/usr/bin/env bash
           #PJM -L rscgrp=a-batch
           #PJM -L vnode-core=8
@@ -146,7 +148,7 @@ jobs:
           printf 'BUILD_TIMING phase=sif-pack seconds=%d\n' "\$((SECONDS - phase_started))" | tee -a "${BUILD_DIR}/logs/build-timings.log"
           touch "${BUILD_DIR}/build-success"
           PJM
-          )"
+          job_output="$(pjsub "${job_script}")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
           test -n "${job_id}"
@@ -227,7 +229,9 @@ jobs:
     steps:
       - name: Submit and wait for a Qwen node
         run: |
-          job_output="$(pjsub /dev/stdin <<PJM
+          job_script="$(mktemp "${TMPDIR}/qwen35-sglang.XXXXXXXXXX")"
+          trap 'rm -f -- "${job_script}"' EXIT
+          cat > "${job_script}" <<PJM
           #!/usr/bin/env bash
           #PJM -L rscgrp=b-batch
           #PJM -L elapse=00:10:00
@@ -241,7 +245,7 @@ jobs:
           export DATASET_PATH='${DATASET_PATH}'
           exec "${RUNTIME_DIR}/scripts/run-qwen35.sh" "${RUNTIME_DIR}"
           PJM
-          )"
+          job_output="$(pjsub "${job_script}")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
           test -n "${job_id}"
