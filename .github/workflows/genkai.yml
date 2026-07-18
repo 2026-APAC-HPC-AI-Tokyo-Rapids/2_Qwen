@@ -90,9 +90,10 @@ jobs:
         run: |
           singularity_builder=/fast/PROJECT/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
           provision_tmp="$(mktemp -d /dev/shm/sglang-provision.XXXXXXXXXX)"
-          trap 'rm -rf -- "${provision_tmp:?}"' EXIT
+          trap 'rm -rf -- "${provision_tmp:?}" 2>/dev/null || true' EXIT
           mkdir -p "${provision_tmp}/tmp"
           export SINGULARITY_TMPDIR="${provision_tmp}/tmp"
+          export TMPDIR="${provision_tmp}/tmp"
           cd "${BUILD_DIR}/source"
           phase_started=${SECONDS}
           "${singularity_builder}" build --fakeroot --sandbox "${provision_tmp}/sandbox" containers/sglang.def 2>&1 | tee "${BUILD_DIR}/logs/provision.log"
