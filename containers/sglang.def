@@ -9,21 +9,38 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     org.opencontainers.image.description "SGLang main built with uv on the upstream CUDA runtime layout"
     org.opencontainers.image.source "https://github.com/sgl-project/sglang"
     org.opencontainers.image.uv-version "0.11.28"
+    ai.sglang.deepep-commit "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+    ai.sglang.mooncake-version "0.3.11.post1"
+    ai.sglang.mscclpp-version "sglang-v0.9.1"
 
 %post -c /bin/bash
     set -euxo pipefail
     export DEBIAN_FRONTEND=noninteractive
     export CUDA_HOME=/usr/local/cuda
     export PATH=/usr/local/cuda/bin:/usr/local/bin:${PATH}
+    mkdir -p /opt/sglang
+    timing_log=/opt/sglang/build-timings.log
+    phase_started=${SECONDS}
+    mark_phase() {
+        printf 'BUILD_TIMING phase=%s seconds=%d\n' "$1" "$((SECONDS - phase_started))" | tee -a "${timing_log}"
+        phase_started=${SECONDS}
+    }
 
-    # Keep the upstream build/runtime surface needed for source modification
-    # and GPU JIT.  This image is intentionally not benchmark-only.
+    # Keep symbols, communication stacks, and the build surface used by GPU JIT.
+    # Profilers, debuggers, kernel drivers, and hardware diagnostics stay on the host.
     apt-get update
     apt-get install -y --no-install-recommends --allow-change-held-packages \
-        build-essential ca-certificates curl ffmpeg git libfabric1 \
-        libibverbs1 libnccl-dev libnccl2 libnl-3-200 libnl-route-3-200 \
-        libnuma1 libopenmpi3 librdmacm1 linux-libc-dev ninja-build \
-        patch pkg-config protobuf-compiler python3.12-dev python3.12-full
+        build-essential ca-certificates cmake curl ffmpeg git git-lfs \
+        ibverbs-providers libc6-dbg libboost-all-dev libcurl4-openssl-dev \
+        libczmq-dev libfabric-dev libgoogle-glog-dev libgrpc++-dev \
+        libhiredis-dev libhwloc-dev \
+        libibumad3 libibverbs-dev libnccl-dev libnccl2 libnl-3-dev \
+        libnl-route-3-dev libnuma-dev libopenmpi-dev libpmix-dev \
+        libprotobuf-dev librdmacm-dev libssl-dev libucx-dev libunwind-dev \
+        linux-libc-dev ninja-build numactl openmpi-bin patch patchelf perl \
+        pkg-config protobuf-compiler protobuf-compiler-grpc pybind11-dev \
+        python3.12-dev python3.12-full rdma-core ucx-utils unzip wget
+    mark_phase apt
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 2
     update-alternatives --set python3 /usr/bin/python3.12
     ln -sf /usr/bin/python3.12 /usr/bin/python
@@ -31,11 +48,13 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     python3 /tmp/get-pip.py --break-system-packages
     rm /tmp/get-pip.py
     python3 -m pip install --break-system-packages --no-cache-dir "uv==0.11.28"
+    mark_phase python-toolchain
 
     export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
     curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain 1.88.0
     export PATH=/opt/cargo/bin:${PATH}
+    mark_phase rust-toolchain
 
     # The login node provisions this sandbox.  Keep its shared-node load
     # bounded; SIF compression is performed later by an A compute node.
@@ -44,26 +63,62 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     export UV_CONCURRENT_INSTALLS=2
     export CARGO_BUILD_JOBS=2
 
-    mkdir -p /opt/sglang
     git clone --depth=1 --branch main https://github.com/sgl-project/sglang.git /opt/sglang/source
     while IFS= read -r patch_file
     do
         patch -d /opt/sglang/source -p1 < "${patch_file}"
     done < <(find /opt/sglang-patches -type f -name '*.patch' -print | sort)
     git -C /opt/sglang/source rev-parse HEAD | tee /opt/sglang/sglang-commit.txt
+    mark_phase clone-and-patch
 
     cd /opt/sglang/source/python
     export UV_CACHE_DIR=/opt/sglang/uv-cache
+    # Preserve symbols in the SGLang Rust extension for gdb and offline symbolization.
+    export CARGO_PROFILE_RELEASE_DEBUG=2
+    export CARGO_PROFILE_RELEASE_STRIP=none
     uv venv /opt/sglang/venv
+    uv pip install --python /opt/sglang/venv/bin/python setuptools wheel
     uv pip install --python /opt/sglang/venv/bin/python -e .
     uv pip install --python /opt/sglang/venv/bin/python --upgrade \
         --index-url https://flashinfer.ai/whl "flashinfer-cubin==0.6.14"
     uv pip install --python /opt/sglang/venv/bin/python --upgrade \
         --index-url https://flashinfer.ai/whl/cu130 "flashinfer-jit-cache==0.6.14"
+    mark_phase sglang-and-dependencies
+
+    # Build the Hopper DeepEP backend used by expert parallelism.
+    deepep_commit=9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee
+    curl -fsSL -o /tmp/deepep.zip "https://github.com/deepseek-ai/DeepEP/archive/${deepep_commit}.zip"
+    unzip -q /tmp/deepep.zip -d /tmp
+    mv "/tmp/DeepEP-${deepep_commit}" /opt/DeepEP
+    sed -i "/^    include_dirs = \['csrc\/'\]/a\\    include_dirs.append('${CUDA_HOME}/include/cccl')" /opt/DeepEP/setup.py
+    TORCH_CUDA_ARCH_LIST=9.0 MAX_JOBS=2 uv pip install --python /opt/sglang/venv/bin/python --no-build-isolation /opt/DeepEP
+    rm /tmp/deepep.zip
+    mark_phase deepep
+
+    # Install optional communication backends used by EP and disaggregated serving.
+    uv pip install --python /opt/sglang/venv/bin/python "mooncake-transfer-engine-cuda13==0.3.11.post1"
+    uv pip install --python /opt/sglang/venv/bin/python --no-deps nixl nixl-cu13
+    git clone --depth=1 --branch sglang-v0.9.1 https://github.com/microsoft/mscclpp.git /tmp/mscclpp
+    CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=90" \
+        uv pip install --python /opt/sglang/venv/bin/python "/tmp/mscclpp[cuda13]"
+    rm -rf /tmp/mscclpp
+    mark_phase communication-backends
+
+    # Make kernel artifacts available when the runtime is forced offline.
+    cd /opt/sglang/source
+    /opt/sglang/venv/bin/kernels lock python
+    /opt/sglang/venv/bin/kernels download python
+    mark_phase kernel-artifacts
+
+    # The nixl shim currently declares nixl-cu12 even when paired with the
+    # official CUDA 13 binary, so pip check would report that known mismatch.
+    uv pip freeze --python /opt/sglang/venv/bin/python > /opt/sglang/requirements-frozen.txt
     /opt/sglang/venv/bin/python -m compileall -q /opt/sglang/source/python/sglang
+    mark_phase validate-and-compile
 
     rm -rf /var/lib/apt/lists/* /root/.cache /opt/sglang/source/.git \
-        /opt/sglang-patches /opt/sglang/uv-cache /opt/cargo /opt/rustup
+        /opt/sglang-patches /opt/sglang/uv-cache /opt/cargo /opt/rustup /opt/DeepEP/.git
+    mark_phase cleanup
 
 %environment
     export CUDA_HOME=/usr/local/cuda
@@ -76,4 +131,7 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     export UV_CACHE_DIR=/tmp/sglang-recipe-test-cache/uv
     /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
     /opt/sglang/venv/bin/python -c 'import torch; print(torch.__version__)'
+    /opt/sglang/venv/bin/python -c 'import deep_ep, mooncake, mscclpp, nixl; print("optional backends imported")'
+    mpirun --version
+    ucx_info -v
     uv --version
