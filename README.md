@@ -14,7 +14,8 @@ imageを親にしません。SIFは`/fast/pj26000080/sglang-sifs/<run number>.si
 
 新規buildは二段階です。ログインノードでは並列数を抑えてrecipeをsandboxまで
 provisionし、非圧縮rootfs tarを引き渡します。課金対象のA計算ノードではtarを
-node-local filesystemへ展開してSIFへ圧縮する処理だけを行います。共有ログイン
+node-local filesystemへ展開してSquashFSへ圧縮する処理だけを行い、ログインノードで
+recipe、metadata、SquashFSをSIFへ格納します。共有ログイン
 ノードの1プロセスCPU時間・メモリ制限を越える処理はせず、圧縮のCPU負荷だけを
 batch jobへ隔離します。圧縮はGenkai上の実測で速度とサイズのバランスが最も良かった
 gzip level 1を60 coreで実行します。

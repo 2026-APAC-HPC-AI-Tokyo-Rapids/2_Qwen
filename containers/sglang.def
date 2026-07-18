@@ -21,12 +21,6 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     export TMPDIR=/var/tmp/sglang-build
     mkdir -p "${TMPDIR}"
     mkdir -p /opt/sglang
-    timing_log=/opt/sglang/build-timings.log
-    phase_started=${SECONDS}
-    mark_phase() {
-        printf 'BUILD_TIMING phase=%s seconds=%d\n' "$1" "$((SECONDS - phase_started))" | tee -a "${timing_log}"
-        phase_started=${SECONDS}
-    }
 
     # Keep symbols, communication stacks, and the build surface used by GPU JIT.
     # Profilers, debuggers, kernel drivers, and hardware diagnostics stay on the host.
@@ -42,7 +36,6 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
         linux-libc-dev ninja-build numactl openmpi-bin patch patchelf perl \
         pkg-config protobuf-compiler protobuf-compiler-grpc pybind11-dev \
         python3.12-dev python3.12-full rdma-core ucx-utils unzip wget
-    mark_phase apt
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 2
     update-alternatives --set python3 /usr/bin/python3.12
     ln -sf /usr/bin/python3.12 /usr/bin/python
@@ -50,13 +43,11 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     python3 "${TMPDIR}/get-pip.py" --break-system-packages
     rm "${TMPDIR}/get-pip.py"
     python3 -m pip install --break-system-packages --no-cache-dir "uv==0.11.28"
-    mark_phase python-toolchain
 
     export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
     curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain 1.88.0
     export PATH=/opt/cargo/bin:${PATH}
-    mark_phase rust-toolchain
 
     # The login node provisions this sandbox.  Keep its shared-node load
     # bounded; SIF compression is performed later by an A compute node.
@@ -71,7 +62,6 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
         patch -d /opt/sglang/source -p1 < "${patch_file}"
     done < <(find /opt/sglang-patches -type f -name '*.patch' -print | sort)
     git -C /opt/sglang/source rev-parse HEAD | tee /opt/sglang/sglang-commit.txt
-    mark_phase clone-and-patch
 
     cd /opt/sglang/source/python
     export UV_CACHE_DIR=/opt/sglang/uv-cache
@@ -85,7 +75,6 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
         --index-url https://flashinfer.ai/whl "flashinfer-cubin==0.6.14"
     uv pip install --python /opt/sglang/venv/bin/python --upgrade \
         --index-url https://flashinfer.ai/whl/cu130 "flashinfer-jit-cache==0.6.14"
-    mark_phase sglang-and-dependencies
 
     # Build the Hopper DeepEP backend used by expert parallelism.
     deepep_commit=9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee
@@ -95,7 +84,6 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     sed -i "/^    include_dirs = \['csrc\/'\]/a\\    include_dirs.append('${CUDA_HOME}/include/cccl')" /opt/DeepEP/setup.py
     TORCH_CUDA_ARCH_LIST=9.0 MAX_JOBS=2 uv pip install --python /opt/sglang/venv/bin/python --no-build-isolation /opt/DeepEP
     rm "${TMPDIR}/deepep.zip"
-    mark_phase deepep
 
     # Install optional communication backends used by EP and disaggregated serving.
     uv pip install --python /opt/sglang/venv/bin/python "mooncake-transfer-engine-cuda13==0.3.11.post1"
@@ -104,24 +92,20 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=90" \
         uv pip install --python /opt/sglang/venv/bin/python "${TMPDIR}/mscclpp[cuda13]"
     rm -rf "${TMPDIR}/mscclpp"
-    mark_phase communication-backends
 
     # Make kernel artifacts available when the runtime is forced offline.
     cd /opt/sglang/source
     /opt/sglang/venv/bin/kernels lock python
     /opt/sglang/venv/bin/kernels download python
-    mark_phase kernel-artifacts
 
     # The nixl shim currently declares nixl-cu12 even when paired with the
     # official CUDA 13 binary, so pip check would report that known mismatch.
     uv pip freeze --python /opt/sglang/venv/bin/python > /opt/sglang/requirements-frozen.txt
     /opt/sglang/venv/bin/python -m compileall -q /opt/sglang/source/python/sglang
-    mark_phase validate-and-compile
 
     rm -rf /var/lib/apt/lists/* /root/.cache /opt/sglang/source/.git \
         /opt/sglang-patches /opt/sglang/uv-cache /opt/cargo /opt/rustup \
         /opt/DeepEP/.git "${TMPDIR}"
-    mark_phase cleanup
 
 %environment
     export CUDA_HOME=/usr/local/cuda

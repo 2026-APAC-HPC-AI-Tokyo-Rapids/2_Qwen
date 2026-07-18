@@ -75,18 +75,15 @@ jobs:
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
         id: prepare_build_workspace
         run: |
-          find /tmp -xdev -mindepth 1 -maxdepth 1 -user "$(id -u)" -mtime +1 -exec rm -rf -- {} +
           install -d -m 2775 "${SIF_ARCHIVE_DIR}" /fast/pj26000080/sglang-build-jobs
           build_dir="$(mktemp -d "/fast/pj26000080/sglang-build-jobs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
           mkdir -p "${build_dir}/source/containers" "${build_dir}/source/patches" "${build_dir}/logs"
           cp "${GITHUB_WORKSPACE}/containers/sglang.def" "${build_dir}/source/containers/"
           cp -a "${GITHUB_WORKSPACE}/patches/sglang" "${build_dir}/source/patches/"
-          install -m 0755 "${GITHUB_WORKSPACE}/scripts/mksquashfs-gzip1.sh" "${build_dir}/"
-          singularity_builder=/fast/pj26000080/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
-          "${singularity_builder}" config global --dry-run --set "mksquashfs path" "${build_dir}/mksquashfs-gzip1.sh" > "${build_dir}/singularity.conf"
           {
             echo "BUILD_DIR=${build_dir}"
             echo "ROOTFS_TAR=${build_dir}/rootfs.tar"
+            echo "ROOTFS_SQSH=${build_dir}/rootfs.sqsh"
             echo "SIF_TMP=${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
           } >> "${GITHUB_ENV}"
 
@@ -100,16 +97,14 @@ jobs:
           export SINGULARITY_TMPDIR="${provision_tmp}/tmp"
           export TMPDIR="${provision_tmp}/tmp"
           cd "${BUILD_DIR}/source"
-          phase_started=${SECONDS}
           "${singularity_builder}" build --fakeroot --sandbox "${provision_tmp}/sandbox" containers/sglang.def 2>&1 | tee "${BUILD_DIR}/logs/provision.log"
-          printf 'BUILD_TIMING phase=sandbox-build seconds=%d\n' "$((SECONDS - phase_started))" | tee -a "${BUILD_DIR}/logs/build-timings.log"
+          "${singularity_builder}" inspect --json "${provision_tmp}/sandbox" > metadata.json
           # A plain tar is the immutable hand-off between login provisioning
           # and compute-node packing.  It avoids millions of shared-FS files
           # without spending CPU on compression on the login node.
           : > "${ROOTFS_TAR}"
           # Do not let Singularity's convenience binds leak the login node's
           # home, cwd, or temporary files into the rootfs hand-off.
-          phase_started=${SECONDS}
           "${singularity_builder}" exec --fakeroot --containall --cleanenv \
             --no-mount home,cwd,tmp,hostfs \
             --bind "${ROOTFS_TAR}:/rootfs.tar" \
@@ -119,7 +114,6 @@ jobs:
               --exclude=./proc --exclude=./rootfs.tar --exclude=./run \
               --exclude=./sys --exclude=./tmp --exclude=./var/tmp \
               -cf /rootfs.tar .
-          printf 'BUILD_TIMING phase=rootfs-tar seconds=%d\n' "$((SECONDS - phase_started))" | tee -a "${BUILD_DIR}/logs/build-timings.log"
 
       - name: Pack provisioned sandbox into SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
@@ -136,20 +130,11 @@ jobs:
           #PJM -N sglang_sif_build
 
           set -euo pipefail
-          singularity_builder=/fast/pj26000080/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
-          "\${singularity_builder}" --version
-          # Compute-node /dev/shm is noexec and /tmp has a small user quota.
-          # /var/tmp is the executable node-local 371 GB filesystem.
-          singularity_tmpdir="\$(mktemp -d /var/tmp/sglang-sif.XXXXXXXXXX)"
-          trap 'rm -rf -- "\${singularity_tmpdir:?}"' EXIT
-          export SINGULARITY_TMPDIR="\${singularity_tmpdir}"
-          mkdir "\${singularity_tmpdir}/sandbox"
-          phase_started=\${SECONDS}
-          tar --no-same-owner -C "\${singularity_tmpdir}/sandbox" -xf "${ROOTFS_TAR}"
-          printf 'BUILD_TIMING phase=rootfs-extract seconds=%d\n' "\$((SECONDS - phase_started))" | tee -a "${BUILD_DIR}/logs/build-timings.log"
-          phase_started=\${SECONDS}
-          "\${singularity_builder}" --config "${BUILD_DIR}/singularity.conf" build --fakeroot "${SIF_TMP}" "\${singularity_tmpdir}/sandbox"
-          printf 'BUILD_TIMING phase=sif-pack seconds=%d\n' "\$((SECONDS - phase_started))" | tee -a "${BUILD_DIR}/logs/build-timings.log"
+          pack_dir="\$(mktemp -d /var/tmp/sglang-sif.XXXXXXXXXX)"
+          trap 'rm -rf -- "\${pack_dir:?}"' EXIT
+          mkdir "\${pack_dir}/sandbox"
+          tar --no-same-owner -C "\${pack_dir}/sandbox" -xf "${ROOTFS_TAR}"
+          /usr/sbin/mksquashfs "\${pack_dir}/sandbox" "${ROOTFS_SQSH}" -noappend -no-xattrs -no-progress -processors 60 -comp gzip -Xcompression-level 1
           touch "${BUILD_DIR}/build-success"
           PJM
           job_output="$(pjsub "${job_script}")"
@@ -178,6 +163,12 @@ jobs:
           stop_log_stream
           trap - EXIT
           test -e "${BUILD_DIR}/build-success"
+          singularity_builder=/fast/pj26000080/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
+          "${singularity_builder}" sif new "${SIF_TMP}"
+          "${singularity_builder}" sif add "${SIF_TMP}" "${BUILD_DIR}/source/containers/sglang.def" --datatype 1 --groupid 1
+          "${singularity_builder}" sif add "${SIF_TMP}" "${BUILD_DIR}/source/metadata.json" --datatype 6 --groupid 1
+          "${singularity_builder}" sif add "${SIF_TMP}" "${ROOTFS_SQSH}" --datatype 4 --parttype 1 --partfs 1 --partarch 2 --groupid 1
+          "${singularity_builder}" sif setprim 3 "${SIF_TMP}"
 
       - name: Archive SGLang SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
