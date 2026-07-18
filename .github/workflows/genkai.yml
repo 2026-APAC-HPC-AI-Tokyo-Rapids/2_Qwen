@@ -99,6 +99,9 @@ jobs:
           cd "${BUILD_DIR}/source"
           "${singularity_builder}" build --fakeroot --sandbox "${provision_tmp}/sandbox" containers/sglang.def 2>&1 | tee "${BUILD_DIR}/logs/provision.log"
           "${singularity_builder}" inspect --json "${provision_tmp}/sandbox" > metadata.json
+          curl -fsSL https://github.com/plougher/squashfs-tools/archive/refs/tags/4.7.5.tar.gz | tar -xz -C "${provision_tmp}"
+          make -C "${provision_tmp}/squashfs-tools-4.7.5/squashfs-tools" -j2 mksquashfs GZIP_SUPPORT=1 XZ_SUPPORT=0 LZO_SUPPORT=0 LZ4_SUPPORT=0 ZSTD_SUPPORT=0 XATTR_SUPPORT=0
+          install -m 0755 "${provision_tmp}/squashfs-tools-4.7.5/squashfs-tools/mksquashfs" "${BUILD_DIR}/sqfstar"
           # A plain tar is the immutable hand-off between login provisioning
           # and compute-node packing.  It avoids millions of shared-FS files
           # without spending CPU on compression on the login node.
@@ -110,9 +113,9 @@ jobs:
             --bind "${ROOTFS_TAR}:/rootfs.tar" \
             "${provision_tmp}/sandbox" \
             tar --numeric-owner -C / \
-              --exclude=./dev --exclude=./fast --exclude=./home \
-              --exclude=./proc --exclude=./rootfs.tar --exclude=./run \
-              --exclude=./sys --exclude=./tmp --exclude=./var/tmp \
+              '--exclude=./dev/*' '--exclude=./fast/*' '--exclude=./home/*' \
+              '--exclude=./proc/*' --exclude=./rootfs.tar '--exclude=./run/*' \
+              '--exclude=./sys/*' '--exclude=./tmp/*' '--exclude=./var/tmp/*' \
               -cf /rootfs.tar .
 
       - name: Pack provisioned sandbox into SIF
@@ -130,11 +133,7 @@ jobs:
           #PJM -N sglang_sif_build
 
           set -euo pipefail
-          pack_dir="\$(mktemp -d /var/tmp/sglang-sif.XXXXXXXXXX)"
-          trap 'rm -rf -- "\${pack_dir:?}"' EXIT
-          mkdir "\${pack_dir}/sandbox"
-          tar --no-same-owner -C "\${pack_dir}/sandbox" -xf "${ROOTFS_TAR}"
-          /usr/sbin/mksquashfs "\${pack_dir}/sandbox" "${ROOTFS_SQSH}" -all-root -noappend -no-xattrs -no-progress -processors 60 -comp gzip -Xcompression-level 1
+          "${BUILD_DIR}/sqfstar" -root-uid 0 -root-gid 0 -root-mode 0755 -no-xattrs -processors 60 -comp gzip -Xcompression-level 1 "${ROOTFS_SQSH}" < "${ROOTFS_TAR}"
           touch "${BUILD_DIR}/build-success"
           PJM
           job_output="$(pjsub "${job_script}")"
