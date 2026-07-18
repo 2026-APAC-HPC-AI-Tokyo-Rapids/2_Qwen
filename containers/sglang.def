@@ -130,8 +130,10 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 %test
+    set -euo pipefail
     export XDG_CACHE_HOME=/var/tmp/sglang-recipe-test-cache
     export UV_CACHE_DIR=${XDG_CACHE_HOME}/uv
+    export CUPY_CACHE_DIR=${XDG_CACHE_HOME}/cupy
     /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
     /opt/sglang/venv/bin/python -c 'import torch; print(torch.__version__)'
     /opt/sglang/venv/bin/python -c 'import deep_ep, mooncake, mscclpp, nixl; print("optional backends imported")'
