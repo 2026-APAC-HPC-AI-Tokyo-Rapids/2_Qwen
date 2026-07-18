@@ -18,6 +18,8 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     export DEBIAN_FRONTEND=noninteractive
     export CUDA_HOME=/usr/local/cuda
     export PATH=/usr/local/cuda/bin:/usr/local/bin:${PATH}
+    export TMPDIR=/var/tmp/sglang-build
+    mkdir -p "${TMPDIR}"
     mkdir -p /opt/sglang
     timing_log=/opt/sglang/build-timings.log
     phase_started=${SECONDS}
@@ -117,7 +119,8 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     mark_phase validate-and-compile
 
     rm -rf /var/lib/apt/lists/* /root/.cache /opt/sglang/source/.git \
-        /opt/sglang-patches /opt/sglang/uv-cache /opt/cargo /opt/rustup /opt/DeepEP/.git
+        /opt/sglang-patches /opt/sglang/uv-cache /opt/cargo /opt/rustup \
+        /opt/DeepEP/.git "${TMPDIR}"
     mark_phase cleanup
 
 %environment
