@@ -14,14 +14,17 @@ imageを親にしません。SIFは`/fast/PROJECT/sglang-sifs/<run number>.sif`
 
 新規buildは二段階です。ログインノードでは並列数を抑えてrecipeをsandboxまで
 provisionし、非圧縮rootfs tarを引き渡します。課金対象のA計算ノードではtarを
-node-local filesystemへ展開してSIFへ圧縮する処理だけを行います。共有ログイン
+公式SquashFS Tools 4.7.5の`sqfstar`へ直接入力してSquashFSへ圧縮し、ログインノードで
+recipe、metadata、SquashFSをSIFへ格納します。共有ログイン
 ノードの1プロセスCPU時間・メモリ制限を越える処理はせず、圧縮のCPU負荷だけを
-batch jobへ隔離します。
+batch jobへ隔離します。圧縮はGenkai上の実測で速度とサイズのバランスが最も良かった
+gzip level 1を60 coreで実行します。
 
 `provision`は今回の実行だけに必要な束を共有filesystem上へ作ります。検証済みSIFの
-hardlink、実行スクリプト、model path、dataset path、logs、resultsが一つのdirectoryに揃うため、
-`run`はrepository checkoutやbuild directoryを参照しません。GPU jobの完了後、logsと
-resultsをActions artifactへ回収して、この一時runtime directoryを削除します。
+hardlink、実行スクリプト、logs、resultsが一つのdirectoryに揃うため、`run`はrepository
+checkoutやbuild directoryを参照しません。固定されたmodelとdatasetのpathはworkflow全体の
+`MODEL_PATH`、`DATASET_PATH`で定義し、補助ファイルには書き出しません。GPU jobの完了後、
+logsとresultsをActions artifactへ回収して、この一時runtime directoryを削除します。
 Python bytecodeはbuild時に生成し、model config、tokenizer、benchmark moduleなどGPUを
 必要としないmodel依存の初期化はprovision時に済ませます。GPU architectureやdeviceを
 必要とするTriton、DeepGEMMなどのJITだけがcompute job側に残ります。
@@ -31,10 +34,31 @@ SGLangを変更する場合は`patches/sglang/`にpatchを追加し、commit mes
 benchmark条件だけを変える場合は`scripts/run-qwen35.sh`を編集して通常のpushを行えば、
 親のSIFを再利用して新しい条件だけを速く検証できます。
 
-`scripts/run-qwen35.sh`はコンテナ内でSGLang benchmarkを起動することだけを担当します。
-PJM resource指定、CUDA module、Singularity起動、bind mount、JIT cache、実行環境の記録は
-workflow側の責務です。GPU jobの投入からnode割当までと、割当後の実行監視も別stepにし、
-長いqueue待ちと実行時間をActions画面から判別できるようにしています。
+workflowはActions、PJM、SIFと一時runtimeの寿命、artifact回収を担当します。
+`scripts/provision-qwen35.sh`は引数を取らず、`MODEL_PATH`、`DATASET_PATH`、
+`SIF_ARCHIVE_DIR`、`GITHUB_RUN_NUMBER`からSIFとJIT cacheを導出し、model type、SGLang、
+`ModelConfig`、tokenizer、ShareGPT samplingを検証します。`scripts/run-qwen35.sh`は動的な
+runtime directoryだけを引数に取り、PJMから渡された`MODEL_PATH`と`DATASET_PATH`を使って
+CUDA module、Singularity、一時領域、bind mount、環境記録、benchmark実行を担当します。
+GPU jobの投入からnode割当までと、割当後の実行監視は別stepなので、長いqueue待ちと
+計算ノード実行時間をActions画面から判別できます。
+
+benchmarkコマンドは`scripts/exec-profiler.sh`を経由します。現時点のwrapperは受け取った
+引数をそのまま実行するだけです。将来nsysなどを導入するときは、このwrapperへprofilerの
+起動設定を追加すればbenchmark本体やworkflowを変更せずに測定できます。
+
+SIFにはlibc debug symbolsと、NCCL、OpenMPI、UCX、PMIx、libfabric、RDMAのuser-space
+library、header、providerを含めます。SGLangのRust extensionもdebug symbolsを保持し、解決済み
+Python dependencyは`/opt/sglang/requirements-frozen.txt`へ記録します。gdb、nsys/ncu、strace、
+perf、hardware診断CLI、GPU・RDMAのkernel driverは計算ノード側の責務であり、SIFには封入しません。
+将来の高速化用にDeepEP、MSCCL++、Mooncake、NIXLとHopper向けSGLang kernel artifactsも
+build時に導入します。通常のTP、expert parallelism、prefill/decode分離で必要なbackendを、
+実行引数やSGLang本体を変更した時点ですぐ比較できる構成です。
+
+結果はruntimeの`results/`直下に集約します。`throughput.log`には実行コマンド、benchmarkの
+標準出力・標準エラー、最後に`exit_code=N`を記録します。`environment.log`はジョブ、module、
+GPU、containerなどの環境情報、`results.jsonl`はbenchmarkの構造化結果です。benchmarkの
+終了コードは実行スクリプトからPJMへ伝播し、成功markerが作られないためActionsも失敗します。
 
 入力はSGLangが標準で参照するShareGPTを使います。最初に玄界のログインノードで
 `scripts/fetch-sharegpt.sh`を一度実行すると、dataset repositoryのrevisionとSHA-256を
@@ -42,6 +66,6 @@ workflow側の責務です。GPU jobの投入からnode割当までと、割当�
 配置します。datasetはSIFへ封入せず、`provision`と`run`で同じJSONだけを
 `/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro`へ明示的にbindします。
 
-コンテナは`--containall`で起動し、hostからはmodel、ShareGPT、JIT cache、実行スクリプト、
-今回の出力directoryだけを明示的にbind mountします。推論引数は環境変数にせず、
+コンテナは`--containall`で起動し、hostからはmodel、ShareGPT、JIT cache、今回の出力directory
+だけを明示的にbind mountします。推論引数は環境変数にせず、
 `scripts/run-qwen35.sh`のcommandとして版管理します。
