@@ -134,7 +134,7 @@ jobs:
           trap 'rm -rf -- "\${pack_dir:?}"' EXIT
           mkdir "\${pack_dir}/sandbox"
           tar --no-same-owner -C "\${pack_dir}/sandbox" -xf "${ROOTFS_TAR}"
-          /usr/sbin/mksquashfs "\${pack_dir}/sandbox" "${ROOTFS_SQSH}" -noappend -no-xattrs -no-progress -processors 60 -comp gzip -Xcompression-level 1
+          /usr/sbin/mksquashfs "\${pack_dir}/sandbox" "${ROOTFS_SQSH}" -all-root -noappend -no-xattrs -no-progress -processors 60 -comp gzip -Xcompression-level 1
           touch "${BUILD_DIR}/build-success"
           PJM
           job_output="$(pjsub "${job_script}")"
