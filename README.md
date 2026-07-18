@@ -16,7 +16,8 @@ imageを親にしません。SIFは`/fast/PROJECT/sglang-sifs/<run number>.sif`
 provisionし、非圧縮rootfs tarを引き渡します。課金対象のA計算ノードではtarを
 node-local filesystemへ展開してSIFへ圧縮する処理だけを行います。共有ログイン
 ノードの1プロセスCPU時間・メモリ制限を越える処理はせず、圧縮のCPU負荷だけを
-batch jobへ隔離します。
+batch jobへ隔離します。圧縮はGenkai上の実測で速度とサイズのバランスが最も良かった
+gzip level 1を60 coreで実行します。
 
 `provision`は今回の実行だけに必要な束を共有filesystem上へ作ります。検証済みSIFの
 hardlink、実行スクリプト、logs、resultsが一つのdirectoryに揃うため、`run`はrepository

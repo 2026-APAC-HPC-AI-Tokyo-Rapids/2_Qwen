@@ -81,6 +81,9 @@ jobs:
           mkdir -p "${build_dir}/source/containers" "${build_dir}/source/patches" "${build_dir}/logs"
           cp "${GITHUB_WORKSPACE}/containers/sglang.def" "${build_dir}/source/containers/"
           cp -a "${GITHUB_WORKSPACE}/patches/sglang" "${build_dir}/source/patches/"
+          install -m 0755 "${GITHUB_WORKSPACE}/scripts/mksquashfs-gzip1.sh" "${build_dir}/"
+          singularity_builder=/fast/PROJECT/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
+          "${singularity_builder}" config global --dry-run --set "mksquashfs path" "${build_dir}/mksquashfs-gzip1.sh" > "${build_dir}/singularity.conf"
           {
             echo "BUILD_DIR=${build_dir}"
             echo "ROOTFS_TAR=${build_dir}/rootfs.tar"
@@ -126,7 +129,7 @@ jobs:
           cat > "${job_script}" <<PJM
           #!/usr/bin/env bash
           #PJM -L rscgrp=a-batch
-          #PJM -L vnode-core=8
+          #PJM -L vnode-core=60
           #PJM -L elapse=02:00:00
           #PJM -j
           #PJM -o ${BUILD_DIR}/logs/%j.log
@@ -145,7 +148,7 @@ jobs:
           tar --no-same-owner -C "\${singularity_tmpdir}/sandbox" -xf "${ROOTFS_TAR}"
           printf 'BUILD_TIMING phase=rootfs-extract seconds=%d\n' "\$((SECONDS - phase_started))" | tee -a "${BUILD_DIR}/logs/build-timings.log"
           phase_started=\${SECONDS}
-          "\${singularity_builder}" build --fakeroot "${SIF_TMP}" "\${singularity_tmpdir}/sandbox"
+          "\${singularity_builder}" --config "${BUILD_DIR}/singularity.conf" build --fakeroot "${SIF_TMP}" "\${singularity_tmpdir}/sandbox"
           printf 'BUILD_TIMING phase=sif-pack seconds=%d\n' "\$((SECONDS - phase_started))" | tee -a "${BUILD_DIR}/logs/build-timings.log"
           touch "${BUILD_DIR}/build-success"
           PJM
