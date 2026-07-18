@@ -17,7 +17,6 @@ permissions:
   contents: read
 
 env:
-  TMPDIR: /dev/shm
   SIF_ARCHIVE_DIR: /fast/PROJECT/sglang-sifs
   MODEL_PATH: /fast/PROJECT/Qwen/Qwen3.5-35B-A3B-FP8
   DATASET_PATH: /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered/192ab2185289094fc556ec8ce5ce1e8e587154ca/ShareGPT_V3_unfiltered_cleaned_split.json
@@ -120,7 +119,7 @@ jobs:
       - name: Pack provisioned sandbox into SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
         run: |
-          job_script="$(mktemp "${TMPDIR}/sglang-sif-build.XXXXXXXXXX")"
+          job_script="$(mktemp /dev/shm/sglang-sif-build.XXXXXXXXXX)"
           trap 'rm -f -- "${job_script}"' EXIT
           cat > "${job_script}" <<PJM
           #!/usr/bin/env bash
@@ -229,7 +228,7 @@ jobs:
     steps:
       - name: Submit and wait for a Qwen node
         run: |
-          job_script="$(mktemp "${TMPDIR}/qwen35-sglang.XXXXXXXXXX")"
+          job_script="$(mktemp /dev/shm/qwen35-sglang.XXXXXXXXXX)"
           trap 'rm -f -- "${job_script}"' EXIT
           cat > "${job_script}" <<PJM
           #!/usr/bin/env bash
