@@ -17,8 +17,10 @@ permissions:
   contents: read
 
 env:
+  TMPDIR: /dev/shm
   SIF_ARCHIVE_DIR: /fast/pj26000080/sglang-sifs
   MODEL_PATH: /fast/pj26000080/Qwen/Qwen3.5-35B-A3B-FP8
+  DATASET_PATH: /fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered/192ab2185289094fc556ec8ce5ce1e8e587154ca/ShareGPT_V3_unfiltered_cleaned_split.json
 
 defaults:
   run:
@@ -55,10 +57,10 @@ jobs:
           do
             while IFS=$'\t' read -r run_id run_number
             do
-              [[ -n "${run_id}" ]] || continue
               source_sif="${SIF_ARCHIVE_DIR}/${run_number}.sif"
+              [[ -s "${source_sif}" ]] || continue
               build_steps="$(gh run view "${run_id}" --json jobs --jq '[.jobs[].steps[] | select(.name == "Archive SGLang SIF" and .conclusion == "success")] | length')"
-              if [[ "${build_steps}" -gt 0 && -s "${source_sif}" ]]; then
+              if [[ "${build_steps}" -gt 0 ]]; then
                 echo "Reusing ${source_sif}"
                 ln -f "${source_sif}" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
                 exit 0
@@ -73,8 +75,7 @@ jobs:
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
         id: prepare_build_workspace
         run: |
-          install -d -m 2775 "${SIF_ARCHIVE_DIR}"
-          install -d -m 2775 /fast/pj26000080/sglang-build-jobs
+          install -d -m 2775 "${SIF_ARCHIVE_DIR}" /fast/pj26000080/sglang-build-jobs
           build_dir="$(mktemp -d "/fast/pj26000080/sglang-build-jobs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
           mkdir -p "${build_dir}/source/containers" "${build_dir}/source/patches" "${build_dir}/logs"
           cp "${GITHUB_WORKSPACE}/containers/sglang.def" "${build_dir}/source/containers/"
@@ -82,6 +83,7 @@ jobs:
           {
             echo "BUILD_DIR=${build_dir}"
             echo "ROOTFS_TAR=${build_dir}/rootfs.tar"
+            echo "ROOTFS_SQSH=${build_dir}/rootfs.sqsh"
             echo "SIF_TMP=${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
           } >> "${GITHUB_ENV}"
 
@@ -89,21 +91,17 @@ jobs:
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
         run: |
           singularity_builder=/fast/pj26000080/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
-          test -x "${singularity_builder}"
           provision_tmp="$(mktemp -d /dev/shm/sglang-provision.XXXXXXXXXX)"
-          cleanup_provision() {
-            status=$?
-            trap - EXIT
-            rm -rf -- "${provision_tmp:?}"
-            exit "${status}"
-          }
-          trap cleanup_provision EXIT
+          trap 'rm -rf -- "${provision_tmp:?}" 2>/dev/null || true' EXIT
           mkdir -p "${provision_tmp}/tmp"
           export SINGULARITY_TMPDIR="${provision_tmp}/tmp"
+          export TMPDIR="${provision_tmp}/tmp"
           cd "${BUILD_DIR}/source"
-          "${singularity_builder}" build --fakeroot --sandbox \
-            "${provision_tmp}/sandbox" containers/sglang.def 2>&1 \
-            | tee "${BUILD_DIR}/logs/provision.log"
+          "${singularity_builder}" build --fakeroot --sandbox "${provision_tmp}/sandbox" containers/sglang.def 2>&1 | tee "${BUILD_DIR}/logs/provision.log"
+          "${singularity_builder}" inspect --json "${provision_tmp}/sandbox" > metadata.json
+          curl -fsSL https://github.com/plougher/squashfs-tools/archive/refs/tags/4.7.5.tar.gz | tar -xz -C "${provision_tmp}"
+          make -C "${provision_tmp}/squashfs-tools-4.7.5/squashfs-tools" -j2 mksquashfs GZIP_SUPPORT=1 XZ_SUPPORT=0 LZO_SUPPORT=0 LZ4_SUPPORT=0 ZSTD_SUPPORT=0 XATTR_SUPPORT=0
+          install -m 0755 "${provision_tmp}/squashfs-tools-4.7.5/squashfs-tools/mksquashfs" "${BUILD_DIR}/sqfstar"
           # A plain tar is the immutable hand-off between login provisioning
           # and compute-node packing.  It avoids millions of shared-FS files
           # without spending CPU on compression on the login node.
@@ -115,45 +113,30 @@ jobs:
             --bind "${ROOTFS_TAR}:/rootfs.tar" \
             "${provision_tmp}/sandbox" \
             tar --numeric-owner -C / \
-              --exclude=./dev --exclude=./fast --exclude=./home \
-              --exclude=./proc --exclude=./rootfs.tar --exclude=./run \
-              --exclude=./sys --exclude=./tmp --exclude=./var/tmp \
+              '--exclude=./dev/*' '--exclude=./fast/*' '--exclude=./home/*' \
+              '--exclude=./proc/*' --exclude=./rootfs.tar '--exclude=./run/*' \
+              '--exclude=./sys/*' '--exclude=./tmp/*' '--exclude=./var/tmp/*' \
               -cf /rootfs.tar .
-          test -s "${ROOTFS_TAR}"
-          cleanup_provision
 
       - name: Pack provisioned sandbox into SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
         run: |
-          job_output="$(pjsub /dev/stdin <<PJM
+          job_script="$(mktemp /dev/shm/sglang-sif-build.XXXXXXXXXX)"
+          trap 'rm -f -- "${job_script}"' EXIT
+          cat > "${job_script}" <<PJM
           #!/usr/bin/env bash
           #PJM -L rscgrp=a-batch
-          #PJM -L vnode-core=8
+          #PJM -L vnode-core=60
           #PJM -L elapse=02:00:00
           #PJM -j
           #PJM -o ${BUILD_DIR}/logs/%j.log
           #PJM -N sglang_sif_build
 
           set -euo pipefail
-          singularity_builder=/fast/pj26000080/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
-          test -x "\${singularity_builder}"
-          "\${singularity_builder}" --version
-          # Compute-node /dev/shm is noexec and /tmp has a small user quota.
-          # /var/tmp is the executable node-local 371 GB filesystem.
-          singularity_tmpdir="\$(mktemp -d /var/tmp/sglang-sif.XXXXXXXXXX)"
-          cleanup() {
-            status=\$?
-            rm -rf -- "\${singularity_tmpdir:?}"
-            exit "\${status}"
-          }
-          trap cleanup EXIT
-          export SINGULARITY_TMPDIR="\${singularity_tmpdir}"
-          mkdir "\${singularity_tmpdir}/sandbox"
-          tar --no-same-owner -C "\${singularity_tmpdir}/sandbox" -xf "${ROOTFS_TAR}"
-          "\${singularity_builder}" build --fakeroot "${SIF_TMP}" "\${singularity_tmpdir}/sandbox"
+          "${BUILD_DIR}/sqfstar" -root-uid 0 -root-gid 0 -root-mode 0755 -no-xattrs -processors 60 -comp gzip -Xcompression-level 1 "${ROOTFS_SQSH}" < "${ROOTFS_TAR}"
           touch "${BUILD_DIR}/build-success"
           PJM
-          )"
+          job_output="$(pjsub "${job_script}")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
           test -n "${job_id}"
@@ -179,7 +162,12 @@ jobs:
           stop_log_stream
           trap - EXIT
           test -e "${BUILD_DIR}/build-success"
-          test -s "${SIF_TMP}"
+          singularity_builder=/fast/pj26000080/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
+          "${singularity_builder}" sif new "${SIF_TMP}"
+          "${singularity_builder}" sif add "${SIF_TMP}" "${BUILD_DIR}/source/containers/sglang.def" --datatype 1 --groupid 1
+          "${singularity_builder}" sif add "${SIF_TMP}" "${BUILD_DIR}/source/metadata.json" --datatype 6 --groupid 1
+          "${singularity_builder}" sif add "${SIF_TMP}" "${ROOTFS_SQSH}" --datatype 4 --parttype 1 --partfs 1 --partarch 2 --groupid 1
+          "${singularity_builder}" sif setprim 3 "${SIF_TMP}"
 
       - name: Archive SGLang SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
@@ -191,7 +179,6 @@ jobs:
         with:
           name: sglang-build-log-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.BUILD_DIR }}/logs
-          if-no-files-found: warn
           compression-level: 1
 
       - name: Cleanup build workspace
@@ -216,76 +203,14 @@ jobs:
         id: provision_runtime
         run: |
           sif="${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
-          sharegpt_dataset=/fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered/192ab2185289094fc556ec8ce5ce1e8e587154ca/ShareGPT_V3_unfiltered_cleaned_split.json
-          test -s "${sif}"
-          test -r "${MODEL_PATH}/config.json"
-          test -r "${sharegpt_dataset}"
-
-          module purge
-          module load python/3.12.11 singularity-ce/4.1.3
-          python - "${MODEL_PATH}/config.json" <<'PY'
-          import json
-          import sys
-
-          config = json.load(open(sys.argv[1]))
-          model_type = str(config.get("model_type", ""))
-          architectures = " ".join(config.get("architectures") or [])
-          if not (model_type.startswith("qwen3_5") and "Qwen3_5" in architectures):
-              raise SystemExit("Not a Qwen 3.5 checkpoint: {!r}, {!r}".format(model_type, architectures))
-          PY
-          singularity exec --containall --cleanenv "${sif}" \
-            /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
-
-          # Do every model-dependent initialization that does not require a GPU
-          # before entering the measured compute job.
-          jit_cache="${HOME}/.cache/sglang-jit"
-          mkdir -p "${jit_cache}/deep-gemm" "${jit_cache}/torchinductor" "${jit_cache}/triton"
-          singularity exec --containall --cleanenv \
-            --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1 \
-            --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton \
-            --bind "${MODEL_PATH}:/model:ro,${sharegpt_dataset}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro,${jit_cache}:/jit-cache" \
-            "${sif}" /opt/sglang/venv/bin/python - <<'PY'
-          import random
-
-          from sglang.benchmark.utils import get_tokenizer
-          from sglang.benchmark.datasets.sharegpt import sample_sharegpt_requests
-          from sglang.srt.configs.model_config import ModelConfig
-          import sglang.benchmark.offline_throughput
-
-          model_config = ModelConfig("/model")
-          tokenizer = get_tokenizer("/model")
-          tokenizer("SGLang provision check")
-          random.seed(42)
-          requests = sample_sharegpt_requests(
-              "/dataset/ShareGPT_V3_unfiltered_cleaned_split.json",
-              32,
-              tokenizer,
-              fixed_output_len=256,
-              context_len=262144,
-          )
-          if len(requests) != 32:
-              raise SystemExit(f"ShareGPT yielded only {len(requests)} requests")
-          print(model_config.hf_config.model_type, type(tokenizer).__name__, len(requests))
-          PY
+          "${GITHUB_WORKSPACE}/scripts/provision-qwen35.sh"
 
           install -d -m 2775 /fast/pj26000080/sglang-runs
           runtime_dir="$(mktemp -d "/fast/pj26000080/sglang-runs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
-          cleanup_failed_provision() {
-            status=$?
-            trap - EXIT
-            if [[ "${status}" -ne 0 ]]; then
-              rm -rf -- "${runtime_dir:?}"
-            fi
-            exit "${status}"
-          }
-          trap cleanup_failed_provision EXIT
           mkdir -p "${runtime_dir}/scripts" "${runtime_dir}/logs" "${runtime_dir}/results"
           ln "${sif}" "${runtime_dir}/sglang.sif"
-          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.sh" "${runtime_dir}/scripts/"
-          printf '%s\n' "${MODEL_PATH}" > "${runtime_dir}/model-path"
-          printf '%s\n' "${sharegpt_dataset}" > "${runtime_dir}/dataset-path"
+          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/"
           echo "runtime_dir=${runtime_dir}" >> "${GITHUB_OUTPUT}"
-          trap - EXIT
 
   run:
     name: Run Qwen 3.5 with SGLang
@@ -298,7 +223,9 @@ jobs:
     steps:
       - name: Submit and wait for a Qwen node
         run: |
-          job_output="$(pjsub /dev/stdin <<PJM
+          job_script="$(mktemp /dev/shm/qwen35-sglang.XXXXXXXXXX)"
+          trap 'rm -f -- "${job_script}"' EXIT
+          cat > "${job_script}" <<PJM
           #!/usr/bin/env bash
           #PJM -L rscgrp=b-batch
           #PJM -L elapse=00:10:00
@@ -308,62 +235,15 @@ jobs:
           #PJM -N qwen35_sglang
 
           set -euo pipefail
-          run_dir="${RUNTIME_DIR}/results/\${PJM_JOBID}"
-          model_path="\$(<"${RUNTIME_DIR}/model-path")"
-          dataset_path="\$(<"${RUNTIME_DIR}/dataset-path")"
-          sif_path="${RUNTIME_DIR}/sglang.sif"
-          singularity=/fast/pj26000080/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
-          jit_cache="\${HOME}/.cache/sglang-jit"
-          mkdir -p "\${run_dir}" "\${jit_cache}/deep-gemm" \
-            "\${jit_cache}/torchinductor" "\${jit_cache}/triton"
-          test -s "\${sif_path}"
-          test -r "\${dataset_path}"
-          test -x "\${singularity}"
-
-          module purge
-          module load cuda/12.8.1
-          singularity_tmpdir="\$(mktemp -d /dev/shm/sglang-run.XXXXXXXXXX)"
-          cleanup() {
-            rm -rf -- "\${singularity_tmpdir:?}"
-          }
-          trap cleanup EXIT
-          export SINGULARITY_TMPDIR="\${singularity_tmpdir}"
-
-          {
-            echo "job_id=\${PJM_JOBID}"
-            echo "started_at=\$(date -u +%FT%TZ)"
-            echo "model_path=\${model_path}"
-            echo "dataset_path=\${dataset_path}"
-            "\${singularity}" inspect "\${sif_path}"
-            module list 2>&1
-            nvidia-smi --query-gpu=index,name,uuid,memory.total,driver_version --format=csv
-            "\${singularity}" --version
-          } >"\${run_dir}/environment.log" 2>&1
-
-          set +e
-          "\${singularity}" exec --nv --cleanenv --containall \
-            --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1 \
-            --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton \
-            --bind "\${model_path}:/model:ro,\${dataset_path}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro,\${jit_cache}:/jit-cache,${RUNTIME_DIR}/scripts:/workspace/scripts:ro,\${run_dir}:/output" \
-            "\${sif_path}" /workspace/scripts/run-qwen35.sh /output \
-            2>&1 | tee "\${run_dir}/throughput.log"
-          status=\${PIPESTATUS[0]}
-          set -e
-          printf '%s\n' "\${status}" >"\${run_dir}/exit-code.txt"
-          echo "finished_at=\$(date -u +%FT%TZ)" >>"\${run_dir}/environment.log"
-          if [[ "\${status}" -eq 0 ]]; then
-            touch "${RUNTIME_DIR}/run-success"
-          fi
-          exit "\${status}"
+          export MODEL_PATH='${MODEL_PATH}'
+          export DATASET_PATH='${DATASET_PATH}'
+          exec "${RUNTIME_DIR}/scripts/run-qwen35.sh" "${RUNTIME_DIR}"
           PJM
-          )"
+          job_output="$(pjsub "${job_script}")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
           test -n "${job_id}"
-          {
-            echo "PJM_JOB_ID=${job_id}"
-            echo "PJM_LOG_FILE=${RUNTIME_DIR}/logs/${job_id}.log"
-          } >> "${GITHUB_ENV}"
+          echo "PJM_JOB_ID=${job_id}" >> "${GITHUB_ENV}"
           log_file="${RUNTIME_DIR}/logs/${job_id}.log"
           while [[ ! -e "${log_file}" ]]; do
             if ! pjstat "${job_id}" | grep -q "^${job_id}[[:space:]]"; then
@@ -375,8 +255,7 @@ jobs:
 
       - name: Monitor Qwen 3.5 execution
         run: |
-          test -n "${PJM_JOB_ID}"
-          log_file="${PJM_LOG_FILE}"
+          log_file="${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"
           tail -n +1 -F "${log_file}" &
           tail_pid=$!
           stop_log_stream() {
@@ -393,23 +272,21 @@ jobs:
           test -e "${RUNTIME_DIR}/run-success"
 
       - name: Upload Qwen execution log
-        if: ${{ always() && needs.provision.outputs.runtime_dir != '' }}
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: qwen35-sglang-log-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.RUNTIME_DIR }}/logs
-          if-no-files-found: warn
           compression-level: 1
 
       - name: Upload Qwen inference results
-        if: ${{ always() && needs.provision.outputs.runtime_dir != '' }}
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: qwen35-sglang-results-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.RUNTIME_DIR }}/results
-          if-no-files-found: warn
           compression-level: 0
 
       - name: Cleanup provisioned runtime
-        if: ${{ always() && needs.provision.outputs.runtime_dir != '' }}
+        if: always()
         run: rm -rf -- "${RUNTIME_DIR:?}"
