@@ -19,6 +19,7 @@ permissions:
 env:
   TMPDIR: /dev/shm
   SIF_ARCHIVE_DIR: /fast/pj26000080/sglang-sifs
+  SQFSTAR: /home/pj26000080/ku60000563/.local/bin/sqfstar
   MODEL_PATH: /fast/pj26000080/Qwen/Qwen3.5-35B-A3B-FP8
   DATASET_PATH: /fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered/192ab2185289094fc556ec8ce5ce1e8e587154ca/ShareGPT_V3_unfiltered_cleaned_split.json
 
@@ -99,9 +100,6 @@ jobs:
           cd "${BUILD_DIR}/source"
           "${singularity_builder}" build --fakeroot --sandbox "${provision_tmp}/sandbox" containers/sglang.def 2>&1 | tee "${BUILD_DIR}/logs/provision.log"
           "${singularity_builder}" inspect --json "${provision_tmp}/sandbox" > metadata.json
-          curl -fsSL https://github.com/plougher/squashfs-tools/archive/refs/tags/4.7.5.tar.gz | tar -xz -C "${provision_tmp}"
-          make -C "${provision_tmp}/squashfs-tools-4.7.5/squashfs-tools" -j2 mksquashfs GZIP_SUPPORT=1 XZ_SUPPORT=0 LZO_SUPPORT=0 LZ4_SUPPORT=0 ZSTD_SUPPORT=0 XATTR_SUPPORT=0
-          install -m 0755 "${provision_tmp}/squashfs-tools-4.7.5/squashfs-tools/mksquashfs" "${BUILD_DIR}/sqfstar"
           # A plain tar is the immutable hand-off between login provisioning
           # and compute-node packing.  It avoids millions of shared-FS files
           # without spending CPU on compression on the login node.
@@ -133,7 +131,7 @@ jobs:
           #PJM -N sglang_sif_build
 
           set -euo pipefail
-          "${BUILD_DIR}/sqfstar" -root-uid 0 -root-gid 0 -root-mode 0755 -no-xattrs -processors 60 -comp gzip -Xcompression-level 1 "${ROOTFS_SQSH}" < "${ROOTFS_TAR}"
+          "${SQFSTAR}" -root-uid 0 -root-gid 0 -root-mode 0755 -no-xattrs -processors 60 -comp gzip -Xcompression-level 1 "${ROOTFS_SQSH}" < "${ROOTFS_TAR}"
           touch "${BUILD_DIR}/build-success"
           PJM
           job_output="$(pjsub "${job_script}")"
