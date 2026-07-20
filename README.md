@@ -36,10 +36,9 @@ benchmark条件だけを変える場合は`scripts/run-qwen35.sh`を編集して
 親のSIFを再利用して新しい条件だけを速く検証できます。
 
 workflowはActions、PJM、SIFと一時runtimeの寿命、artifact回収を担当します。
-`scripts/provision-qwen35.sh`は引数を取らず、`MODEL_PATH`、`SIF_ARCHIVE_DIR`、
-`GITHUB_RUN_NUMBER`からSIFを導出し、Qwen 3.5 config、最新Hub revisionに対するcheckpoint
-完全性、SGLang環境を検証します。Hub側のmodelが更新された場合は既存checkpointが検証に
-失敗します。`scripts/run-qwen35.sh`は計算ノード用の固定PJM要求を持ち、workflowから
+`scripts/provision-qwen35.sh`は引数を取らず、`MODEL_PATH`からQwen 3.5 configと最新Hub
+revisionに対するcheckpoint完全性を検証します。Hub側のmodelが更新された場合は既存checkpointが
+検証に失敗します。`scripts/run-qwen35.sh`は計算ノード用の固定PJM要求を持ち、workflowから
 `pjsub -x`で渡される`RUNTIME_DIR`、`MODEL_PATH`、`DATASET_PATH`を使ってCUDA module、
 Singularity、一時領域、bind mount、環境記録、benchmark実行を担当します。
 `scripts/pjm-job.sh`はbuildとrunで共通のPJM log待機、監視、cancel、終了待ち、cleanupを担当します。
