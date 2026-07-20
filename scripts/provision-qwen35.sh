@@ -27,5 +27,13 @@ module load singularity-ce/4.1.3
 
 # This reports SGLang, PyTorch and dependency information without binding or
 # loading the model.  It intentionally runs without --nv on the login node.
+# check_env only catches a non-zero nvidia-smi exit, not an absent executable.
+# Supply a temporary stub so it reports unavailable topology instead of failing.
+check_env_bin="$(mktemp -d /dev/shm/sglang-check-env.XXXXXXXXXX)"
+trap 'rm -rf -- "${check_env_bin:?}"' EXIT
+printf '#!/bin/sh\nexit 1\n' > "${check_env_bin}/nvidia-smi"
+chmod 0755 "${check_env_bin}/nvidia-smi"
 singularity exec --containall --cleanenv \
+  --bind "${check_env_bin}:/check-env-bin:ro" \
+  --env PATH=/check-env-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   "${sif_path}" /opt/sglang/venv/bin/python -m sglang.check_env
