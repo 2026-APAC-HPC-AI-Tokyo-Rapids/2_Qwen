@@ -119,22 +119,10 @@ jobs:
       - name: Pack provisioned sandbox into SIF
         if: ${{ ! fromJSON(env.SKIP_BUILD) }}
         run: |
-          job_script="$(mktemp /dev/shm/sglang-sif-build.XXXXXXXXXX)"
-          trap 'rm -f -- "${job_script}"' EXIT
-          cat > "${job_script}" <<PJM
-          #!/usr/bin/env bash
-          #PJM -L rscgrp=a-batch
-          #PJM -L vnode-core=60
-          #PJM -L elapse=02:00:00
-          #PJM -j
-          #PJM -o ${BUILD_DIR}/logs/%j.log
-          #PJM -N sglang_sif_build
-
-          set -euo pipefail
-          "${SQFSTAR}" -root-uid 0 -root-gid 0 -root-mode 0755 -no-xattrs -processors 60 -comp gzip -Xcompression-level 1 "${ROOTFS_SQSH}" < "${ROOTFS_TAR}"
-          touch "${BUILD_DIR}/build-success"
-          PJM
-          job_output="$(pjsub "${job_script}")"
+          job_output="$(pjsub \
+            -x "ROOTFS_TAR=${ROOTFS_TAR},ROOTFS_SQSH=${ROOTFS_SQSH},BUILD_DIR=${BUILD_DIR},SQFSTAR=${SQFSTAR}" \
+            -o "${BUILD_DIR}/logs/%j.log" \
+            "${GITHUB_WORKSPACE}/scripts/pack-sglang-sif-job.sh")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
           test -n "${job_id}"
