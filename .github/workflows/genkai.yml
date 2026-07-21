@@ -24,7 +24,7 @@ env:
 
 defaults:
   run:
-    shell: bash -euo pipefail {0}
+    shell: bash --login -eo pipefail -c 'set -u; source "$1"' bash {0}
 
 jobs:
   select-sif:
@@ -46,7 +46,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          export PATH="${HOME}/.local/bin:${PATH}"
           if [[ '${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[require-build]')) || (github.event_name == 'workflow_dispatch' && inputs.require_build) }}' == true ]]; then
             echo "A new SIF build was explicitly requested"
             echo "action=build" >> "${GITHUB_OUTPUT}"
@@ -132,7 +131,6 @@ jobs:
       - name: Provision SGLang runtime
         id: provision_runtime
         run: |
-          export PATH="${HOME}/.local/bin:${PATH}"
           test -s "${MODEL_PATH}/config.json"
           jq -e '(.model_type | strings | startswith("qwen3_5")) and ((.architectures // []) | any(.[]?; type == "string" and startswith("Qwen3_5")))' "${MODEL_PATH}/config.json" >/dev/null
           uvx --from 'huggingface_hub>=1.0' hf cache verify Qwen/Qwen3.5-35B-A3B-FP8 --local-dir "${MODEL_PATH}" --fail-on-missing-files
