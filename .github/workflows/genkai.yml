@@ -131,6 +131,7 @@ jobs:
       - name: Provision SGLang runtime
         id: provision_runtime
         run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
           test -s "${MODEL_PATH}/config.json"
           jq -e '(.model_type | strings | startswith("qwen3_5")) and ((.architectures // []) | any(.[]?; type == "string" and startswith("Qwen3_5")))' "${MODEL_PATH}/config.json" >/dev/null
           uvx --from 'huggingface_hub>=1.0' hf cache verify Qwen/Qwen3.5-35B-A3B-FP8 --local-dir "${MODEL_PATH}" --fail-on-missing-files
