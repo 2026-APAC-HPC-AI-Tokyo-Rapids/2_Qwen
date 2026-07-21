@@ -19,26 +19,21 @@ permissions:
 env:
   TMPDIR: /dev/shm
   SIF_ARCHIVE_DIR: /fast/PROJECT/sglang-sifs
-  SQFSTAR: /home/ACCOUNT/ku60000563/.local/bin/sqfstar
   MODEL_PATH: /fast/PROJECT/Qwen/Qwen3.5-35B-A3B-FP8
-  DATASET_PATH: /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered/192ab2185289094fc556ec8ce5ce1e8e587154ca/ShareGPT_V3_unfiltered_cleaned_split.json
+  DATASET_PATH: /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
 
 defaults:
   run:
     shell: bash --noprofile --norc -euo pipefail {0}
 
 jobs:
-  build:
-    name: Build SGLang SIF
+  select-sif:
+    name: Select SGLang SIF
     runs-on: [self-hosted, genkai]
 
-    # SIF archive names are global to this repository's workflow runs.
-    concurrency:
-      group: genkai-sglang-build
-      cancel-in-progress: false
-
-    env:
-      SKIP_BUILD: ${{ (github.event_name == 'push' && !contains(github.event.head_commit.message, '[require-build]')) || (github.event_name == 'workflow_dispatch' && !inputs.require_build) }}
+    outputs:
+      action: ${{ steps.select.outputs.action }}
+      source_run_number: ${{ steps.select.outputs.source_run_number }}
 
     steps:
       - name: Checkout repository history
@@ -46,116 +41,84 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Link previous SGLang SIF
-        if: ${{ fromJSON(env.SKIP_BUILD) }}
+      - name: Select an existing SIF or a new build
+        id: select
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ '${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[require-build]')) || (github.event_name == 'workflow_dispatch' && inputs.require_build) }}' == true ]]; then
+            echo "A new SIF build was explicitly requested"
+            echo "action=build" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
           commit="${GITHUB_SHA}"
-          # Compatibility is a caller decision.  A later provision/run failure
-          # does not invalidate an already archived, immutable build result.
           while parent_commit="$(git rev-parse "${commit}^" 2>/dev/null)"
           do
-            while IFS=$'\t' read -r run_id run_number
+            while read -r run_number
             do
-              source_sif="${SIF_ARCHIVE_DIR}/${run_number}.sif"
-              [[ -s "${source_sif}" ]] || continue
-              build_steps="$(gh run view "${run_id}" --json jobs --jq '[.jobs[].steps[] | select(.name == "Archive SGLang SIF" and .conclusion == "success")] | length')"
-              if [[ "${build_steps}" -gt 0 ]]; then
-                echo "Reusing ${source_sif}"
-                ln -f "${source_sif}" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
-                exit 0
-              fi
-            done < <(gh run list --workflow genkai.yml --commit "${parent_commit}" --limit 20 --json databaseId,number --jq '.[] | [.databaseId, .number] | @tsv')
+              [[ -s "${SIF_ARCHIVE_DIR}/${run_number}.sif" ]] || continue
+              echo "Selected ${SIF_ARCHIVE_DIR}/${run_number}.sif"
+              echo "action=reuse" >> "${GITHUB_OUTPUT}"
+              echo "source_run_number=${run_number}" >> "${GITHUB_OUTPUT}"
+              exit 0
+            done < <(gh run list --workflow genkai.yml --commit "${parent_commit}" --limit 20 --json number --jq '.[].number')
             commit="${parent_commit}"
           done
-          echo "No reusable SGLang SIF was found in the first-parent history" >&2
-          exit 1
+          echo "No reusable SIF was found; falling back to a new build"
+          echo "action=build" >> "${GITHUB_OUTPUT}"
 
-      - name: Prepare build workspace
-        if: ${{ ! fromJSON(env.SKIP_BUILD) }}
-        id: prepare_build_workspace
-        run: |
-          install -d -m 2775 "${SIF_ARCHIVE_DIR}" /fast/PROJECT/sglang-build-jobs
-          build_dir="$(mktemp -d "/fast/PROJECT/sglang-build-jobs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
-          mkdir -p "${build_dir}/source/containers" "${build_dir}/source/patches" "${build_dir}/logs"
-          cp "${GITHUB_WORKSPACE}/containers/sglang.def" "${build_dir}/source/containers/"
-          cp -a "${GITHUB_WORKSPACE}/patches/sglang" "${build_dir}/source/patches/"
-          {
-            echo "BUILD_DIR=${build_dir}"
-            echo "ROOTFS_TAR=${build_dir}/rootfs.tar"
-            echo "ROOTFS_SQSH=${build_dir}/rootfs.sqsh"
-            echo "SIF_TMP=${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
-          } >> "${GITHUB_ENV}"
+  reuse-sif:
+    name: Reuse SGLang SIF
+    needs: select-sif
+    if: needs.select-sif.outputs.action == 'reuse'
+    runs-on: [self-hosted, genkai]
 
-      - name: Provision SGLang sandbox on login node
-        if: ${{ ! fromJSON(env.SKIP_BUILD) }}
-        run: |
-          singularity_builder=/fast/PROJECT/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
-          provision_tmp="$(mktemp -d /dev/shm/sglang-provision.XXXXXXXXXX)"
-          trap 'rm -rf -- "${provision_tmp:?}" 2>/dev/null || true' EXIT
-          mkdir -p "${provision_tmp}/tmp"
-          export SINGULARITY_TMPDIR="${provision_tmp}/tmp"
-          export TMPDIR="${provision_tmp}/tmp"
-          cd "${BUILD_DIR}/source"
-          "${singularity_builder}" build --fakeroot --sandbox "${provision_tmp}/sandbox" containers/sglang.def 2>&1 | tee "${BUILD_DIR}/logs/provision.log"
-          "${singularity_builder}" inspect --json "${provision_tmp}/sandbox" > metadata.json
-          # A plain tar is the immutable hand-off between login provisioning
-          # and compute-node packing.  It avoids millions of shared-FS files
-          # without spending CPU on compression on the login node.
-          : > "${ROOTFS_TAR}"
-          # Do not let Singularity's convenience binds leak the login node's
-          # home, cwd, or temporary files into the rootfs hand-off.
-          "${singularity_builder}" exec --fakeroot --containall --cleanenv \
-            --no-mount home,cwd,tmp,hostfs \
-            --bind "${ROOTFS_TAR}:/rootfs.tar" \
-            "${provision_tmp}/sandbox" \
-            tar --numeric-owner -C / \
-              '--exclude=./dev/*' '--exclude=./fast/*' '--exclude=./home/*' \
-              '--exclude=./proc/*' --exclude=./rootfs.tar '--exclude=./run/*' \
-              '--exclude=./sys/*' '--exclude=./tmp/*' '--exclude=./var/tmp/*' \
-              -cf /rootfs.tar .
+    steps:
+      - name: Hardlink the selected SIF
+        run: ln -f -- "${SIF_ARCHIVE_DIR}/${{ needs.select-sif.outputs.source_run_number }}.sif" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
 
-      - name: Pack provisioned sandbox into SIF
-        if: ${{ ! fromJSON(env.SKIP_BUILD) }}
-        run: |
-          job_output="$(pjsub \
-            -x "ROOTFS_TAR=${ROOTFS_TAR},ROOTFS_SQSH=${ROOTFS_SQSH},BUILD_DIR=${BUILD_DIR},SQFSTAR=${SQFSTAR}" \
-            -o "${BUILD_DIR}/logs/%j.log" \
-            "${GITHUB_WORKSPACE}/scripts/pack-sglang-sif-job.sh")"
-          printf '%s\n' "${job_output}"
-          job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
-          test -n "${job_id}"
-          echo "PJM_BUILD_JOB_ID=${job_id}" >> "${GITHUB_ENV}"
-          log_file="${BUILD_DIR}/logs/${job_id}.log"
-          "${GITHUB_WORKSPACE}/scripts/pjm-job.sh" wait-for-log "${job_id}" "${log_file}"
-          "${GITHUB_WORKSPACE}/scripts/pjm-job.sh" monitor "${job_id}" "${log_file}" "${BUILD_DIR}/build-success"
-          singularity_builder=/fast/PROJECT/sglang-tools/singularity-ce-4.1.3-no-xattrs/bin/singularity
-          "${singularity_builder}" sif new "${SIF_TMP}"
-          "${singularity_builder}" sif add "${SIF_TMP}" "${BUILD_DIR}/source/containers/sglang.def" --datatype 1 --groupid 1
-          "${singularity_builder}" sif add "${SIF_TMP}" "${BUILD_DIR}/source/metadata.json" --datatype 6 --groupid 1
-          "${singularity_builder}" sif add "${SIF_TMP}" "${ROOTFS_SQSH}" --datatype 4 --parttype 1 --partfs 1 --partarch 2 --groupid 1
-          "${singularity_builder}" sif setprim 3 "${SIF_TMP}"
+  build-sif:
+    name: Build SGLang SIF on Ubuntu
+    needs: select-sif
+    if: needs.select-sif.outputs.action == 'build'
+    runs-on: [self-hosted, archive-host]
 
-      - name: Archive SGLang SIF
-        if: ${{ ! fromJSON(env.SKIP_BUILD) }}
-        run: mv "${SIF_TMP}" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
+    concurrency:
+      group: sglang-sif-build
+      cancel-in-progress: false
+
+    env:
+      BUILD_DIR: /ssd_raid/build_sglang/run-${{ github.run_id }}-${{ github.run_attempt }}
+      GENKAI_HOST: ku60000563@genkai.hpc.kyushu-u.ac.jp
+
+    steps:
+      - name: Checkout build inputs
+        uses: actions/checkout@v6
+
+      - name: Build and publish SGLang SIF
+        run: "${GITHUB_WORKSPACE}/scripts/build-sglang-sif.sh"
 
       - name: Upload SGLang build log
-        if: always() && steps.prepare_build_workspace.outcome == 'success'
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: sglang-build-log-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.BUILD_DIR }}/logs
           compression-level: 1
 
-      - name: Cleanup build workspace
-        if: always() && steps.prepare_build_workspace.outcome == 'success'
-        run: "${GITHUB_WORKSPACE}/scripts/pjm-job.sh cleanup \"${PJM_BUILD_JOB_ID:-}\" \"${SIF_TMP:?}\" \"${BUILD_DIR:?}\""
+      - name: Cleanup SGLang build log
+        if: always()
+        run: rm -rf -- "${BUILD_DIR:?}"
 
   provision:
     name: Provision SGLang runtime
-    needs: build
+    needs: [select-sif, reuse-sif, build-sif]
+    if: >-
+      always() &&
+      needs.select-sif.result == 'success' &&
+      ((needs.select-sif.outputs.action == 'reuse' && needs.reuse-sif.result == 'success') ||
+       (needs.select-sif.outputs.action == 'build' && needs.build-sif.result == 'success'))
     runs-on: [self-hosted, genkai]
 
     outputs:
@@ -168,14 +131,17 @@ jobs:
       - name: Provision SGLang runtime
         id: provision_runtime
         run: |
-          sif="${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
-          "${GITHUB_WORKSPACE}/scripts/provision-qwen35.sh"
+          test -s "${MODEL_PATH}/config.json"
+          jq -e '(.model_type | strings | startswith("qwen3_5")) and ((.architectures // []) | any(.[]?; type == "string" and startswith("Qwen3_5")))' "${MODEL_PATH}/config.json" >/dev/null
+          uvx --from 'huggingface_hub>=1.0' hf cache verify Qwen/Qwen3.5-35B-A3B-FP8 --local-dir "${MODEL_PATH}" --fail-on-missing-files
+          uvx --from 'huggingface_hub>=1.0' hf download anon8231489123/ShareGPT_Vicuna_unfiltered --repo-type dataset --include ShareGPT_V3_unfiltered_cleaned_split.json --local-dir /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered
 
           install -d -m 2775 /fast/PROJECT/sglang-runs
           runtime_dir="$(mktemp -d "/fast/PROJECT/sglang-runs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
-          mkdir -p "${runtime_dir}/scripts" "${runtime_dir}/logs" "${runtime_dir}/results"
-          ln "${sif}" "${runtime_dir}/sglang.sif"
-          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${GITHUB_WORKSPACE}/scripts/pjm-job.sh" "${runtime_dir}/scripts/"
+          cd "${runtime_dir}"
+          mkdir scripts logs results
+          ln "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
+          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${GITHUB_WORKSPACE}/scripts/pjm-job.sh" scripts/
           echo "runtime_dir=${runtime_dir}" >> "${GITHUB_OUTPUT}"
 
   run:
@@ -190,12 +156,7 @@ jobs:
     steps:
       - name: Submit and wait for a Qwen node
         run: |
-          job_output="$(pjsub \
-            -x "RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH}" \
-            -o "${RUNTIME_DIR}/logs/%j.log" \
-            -j \
-            -N qwen35_sglang \
-            "${RUNTIME_DIR}/scripts/run-qwen35.sh")"
+          job_output="$(pjsub -x "RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.sh")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
           test -n "${job_id}"

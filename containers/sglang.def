@@ -25,17 +25,7 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     # Keep symbols, communication stacks, and the build surface used by GPU JIT.
     # Profilers, debuggers, kernel drivers, and hardware diagnostics stay on the host.
     apt-get update
-    apt-get install -y --no-install-recommends --allow-change-held-packages \
-        build-essential ca-certificates cmake curl ffmpeg git git-lfs \
-        ibverbs-providers libc6-dbg libboost-all-dev libcurl4-openssl-dev \
-        libczmq-dev libfabric-dev libgoogle-glog-dev libgrpc++-dev \
-        libhiredis-dev libhwloc-dev \
-        libibumad3 libibverbs-dev libnccl-dev libnccl2 libnl-3-dev \
-        libnl-route-3-dev libnuma-dev libopenmpi-dev libpmix-dev \
-        libprotobuf-dev librdmacm-dev libssl-dev libucx-dev libunwind-dev \
-        linux-libc-dev ninja-build numactl openmpi-bin patch patchelf perl \
-        pkg-config protobuf-compiler protobuf-compiler-grpc pybind11-dev \
-        python3.12-dev python3.12-full rdma-core ucx-utils unzip wget
+    apt-get install -y --no-install-recommends --allow-change-held-packages build-essential ca-certificates cmake curl ffmpeg git git-lfs ibverbs-providers libc6-dbg libboost-all-dev libcurl4-openssl-dev libczmq-dev libfabric-dev libgoogle-glog-dev libgrpc++-dev libhiredis-dev libhwloc-dev libibumad3 libibverbs-dev libnccl-dev libnccl2 libnl-3-dev libnl-route-3-dev libnuma-dev libopenmpi-dev libpmix-dev libprotobuf-dev librdmacm-dev libssl-dev libucx-dev libunwind-dev linux-libc-dev ninja-build numactl openmpi-bin patch patchelf perl pkg-config protobuf-compiler protobuf-compiler-grpc pybind11-dev python3.12-dev python3.12-full rdma-core ucx-utils unzip wget
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 2
     update-alternatives --set python3 /usr/bin/python3.12
     ln -sf /usr/bin/python3.12 /usr/bin/python
@@ -45,12 +35,10 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     python3 -m pip install --break-system-packages --no-cache-dir "uv==0.11.28"
 
     export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
-    curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain 1.88.0
+    curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0
     export PATH=/opt/cargo/bin:${PATH}
 
-    # The login node provisions this sandbox.  Keep its shared-node load
-    # bounded; SIF compression is performed later by an A compute node.
+    # Keep source-build parallelism bounded on the self-hosted builder.
     export UV_CONCURRENT_DOWNLOADS=4
     export UV_CONCURRENT_BUILDS=2
     export UV_CONCURRENT_INSTALLS=2
@@ -71,10 +59,8 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     uv venv /opt/sglang/venv
     uv pip install --python /opt/sglang/venv/bin/python setuptools wheel
     uv pip install --python /opt/sglang/venv/bin/python -e .
-    uv pip install --python /opt/sglang/venv/bin/python --upgrade \
-        --index-url https://flashinfer.ai/whl "flashinfer-cubin==0.6.14"
-    uv pip install --python /opt/sglang/venv/bin/python --upgrade \
-        --index-url https://flashinfer.ai/whl/cu130 "flashinfer-jit-cache==0.6.14"
+    uv pip install --python /opt/sglang/venv/bin/python --upgrade --index-url https://flashinfer.ai/whl "flashinfer-cubin==0.6.14"
+    uv pip install --python /opt/sglang/venv/bin/python --upgrade --index-url https://flashinfer.ai/whl/cu130 "flashinfer-jit-cache==0.6.14"
 
     # Build the Hopper DeepEP backend used by expert parallelism.
     deepep_commit=9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee
@@ -89,8 +75,9 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     uv pip install --python /opt/sglang/venv/bin/python "mooncake-transfer-engine-cuda13==0.3.11.post1"
     uv pip install --python /opt/sglang/venv/bin/python --no-deps nixl nixl-cu13
     git clone --depth=1 --branch sglang-v0.9.1 https://github.com/microsoft/mscclpp.git "${TMPDIR}/mscclpp"
-    CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=90" \
-        uv pip install --python /opt/sglang/venv/bin/python "${TMPDIR}/mscclpp[cuda13]"
+    export CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=90"
+    uv pip install --python /opt/sglang/venv/bin/python "${TMPDIR}/mscclpp[cuda13]"
+    unset CMAKE_ARGS
     rm -rf "${TMPDIR}/mscclpp"
 
     # Make kernel artifacts available when the runtime is forced offline.
@@ -103,9 +90,7 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     uv pip freeze --python /opt/sglang/venv/bin/python > /opt/sglang/requirements-frozen.txt
     /opt/sglang/venv/bin/python -m compileall -q /opt/sglang/source/python/sglang
 
-    rm -rf /var/lib/apt/lists/* /root/.cache /opt/sglang/source/.git \
-        /opt/sglang-patches /opt/sglang/uv-cache /opt/cargo /opt/rustup \
-        /opt/DeepEP/.git "${TMPDIR}"
+    rm -rf /var/lib/apt/lists/* /root/.cache /opt/sglang/source/.git /opt/sglang-patches /opt/sglang/uv-cache /opt/cargo /opt/rustup /opt/DeepEP/.git "${TMPDIR}"
 
 %environment
     export CUDA_HOME=/usr/local/cuda
