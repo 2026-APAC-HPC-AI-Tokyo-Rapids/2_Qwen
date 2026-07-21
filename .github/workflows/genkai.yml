@@ -24,7 +24,7 @@ env:
 
 defaults:
   run:
-    shell: bash --noprofile --norc -euo pipefail {0}
+    shell: bash -euo pipefail {0}
 
 jobs:
   select-sif:
@@ -149,6 +149,7 @@ jobs:
   run:
     name: Run Qwen 3.5 with SGLang
     needs: provision
+    if: always() && needs.provision.result == 'success'
     runs-on: [self-hosted, genkai]
     timeout-minutes: 7200
 
