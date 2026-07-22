@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 env:
-  TMPDIR: /dev/shm
+  TMPDIR: /var/tmp
   SIF_ARCHIVE_DIR: /fast/pj26000080/sglang-sifs
   MODEL_PATH: /fast/pj26000080/Qwen/Qwen3.5-35B-A3B-FP8
   DATASET_PATH: /fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
@@ -85,11 +85,11 @@ jobs:
     runs-on: [self-hosted, genkai]
 
     concurrency:
-      group: sglang-sif-build
+      group: sglang-sif-build-var-tmp
       cancel-in-progress: false
 
     env:
-      BUILD_DIR: /dev/shm/qwen-sglang-build/run-${{ github.run_id }}-${{ github.run_attempt }}
+      BUILD_DIR: /var/tmp/qwen-sglang-build/run-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout build inputs
