@@ -22,7 +22,7 @@ wait_for_log() {
   local log_file="$2"
   trap 'cancel_and_wait "${job_id}"; exit 143' INT TERM
   while [[ ! -e "${log_file}" ]]; do
-    if ! job_is_active "${job_id}"; then
+    if status="$(pjstat "${job_id}" 2>&1)" && ! grep -q "^${job_id}[[:space:]]" <<<"${status}"; then
       echo "PJM job ${job_id} did not create a scheduler log" >&2
       exit 1
     fi
@@ -43,7 +43,8 @@ monitor() {
   }
   trap stop_log_stream EXIT
   trap 'cancel_and_wait "${job_id}"; exit 143' INT TERM
-  while job_is_active "${job_id}"; do
+  while ! { status="$(pjstat "${job_id}" 2>&1)" &&
+             ! grep -q "^${job_id}[[:space:]]" <<<"${status}"; }; do
     sleep 10
   done
   sleep 1
