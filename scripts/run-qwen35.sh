@@ -71,7 +71,7 @@ benchmark=(/opt/sglang/venv/bin/python -m sglang.benchmark.offline_throughput
   --seed 42
   --mem-fraction-static 0.85
   --result-filename /output/results.jsonl)
-command=(singularity exec --nv --cleanenv --containall
+command=(singularity exec --userns --nv --cleanenv --containall
   --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1
   --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton
   --bind "${MODEL_PATH}:/model:ro,${DATASET_PATH}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro,${jit_cache}:/jit-cache,${RUNTIME_DIR}/results:/output"
