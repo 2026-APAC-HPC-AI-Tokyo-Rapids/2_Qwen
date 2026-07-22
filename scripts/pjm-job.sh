@@ -2,17 +2,39 @@
 # Monitor, cancel, and clean up a PJM job with its scheduler log.
 set -euo pipefail
 
-job_is_active() {
-  pjstat "$1" | grep -q "^$1[[:space:]]"
+job_state() {
+  local job_id="$1"
+  local output status=0
+  output="$(pjstat "${job_id}" 2>&1)" || status=$?
+
+  if [[ "${status}" -ne 0 || "${output}" == *"PJM daemon is not present"* ]]; then
+    echo "PJM status query failed for job ${job_id}; retrying: ${output}" >&2
+    return 2
+  fi
+  if grep -q "^${job_id}[[:space:]]" <<< "${output}"; then
+    return 0
+  fi
+  return 1
 }
 
 cancel_and_wait() {
   local job_id="$1"
-  if job_is_active "${job_id}"; then
-    echo "Cancelling PJM job ${job_id}" >&2
-    pjdel "${job_id}" || true
-  fi
-  while job_is_active "${job_id}"; do
+  local state
+  local cancel_requested=false
+  while :; do
+    if job_state "${job_id}"; then
+      state=0
+    else
+      state=$?
+    fi
+    if [[ "${state}" -eq 1 ]]; then
+      return
+    fi
+    if [[ "${cancel_requested}" == false ]]; then
+      echo "Cancelling PJM job ${job_id}" >&2
+      pjdel "${job_id}" || true
+      cancel_requested=true
+    fi
     sleep 1
   done
 }
@@ -20,9 +42,15 @@ cancel_and_wait() {
 wait_for_log() {
   local job_id="$1"
   local log_file="$2"
+  local state
   trap 'cancel_and_wait "${job_id}"; exit 143' INT TERM
   while [[ ! -e "${log_file}" ]]; do
-    if ! job_is_active "${job_id}"; then
+    if job_state "${job_id}"; then
+      :
+    else
+      state=$?
+    fi
+    if [[ "${state:-0}" -eq 1 ]]; then
       echo "PJM job ${job_id} did not create a scheduler log" >&2
       exit 1
     fi
@@ -35,6 +63,7 @@ monitor() {
   local job_id="$1"
   local log_file="$2"
   local success_marker="$3"
+  local state
   tail -n +1 -F "${log_file}" &
   local tail_pid=$!
   stop_log_stream() {
@@ -43,7 +72,15 @@ monitor() {
   }
   trap stop_log_stream EXIT
   trap 'cancel_and_wait "${job_id}"; exit 143' INT TERM
-  while job_is_active "${job_id}"; do
+  while :; do
+    if job_state "${job_id}"; then
+      sleep 10
+      continue
+    fi
+    state=$?
+    if [[ "${state}" -eq 1 ]]; then
+      break
+    fi
     sleep 10
   done
   sleep 1
