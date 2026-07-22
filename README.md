@@ -13,7 +13,7 @@ imageを親にしません。SIFは`/fast/pj26000080/sglang-sifs/<run number>.si
 最も近い実build済みSIFをhardlinkします。
 
 新規buildは`genkai`ラベルのself-hosted runnerからlogin node上で実行します。
-作業領域、Singularity cache、一時領域にはnode-localな`/var/tmp/qwen-sglang-build`を使い、
+作業領域、Singularity cache、一時領域にはnode-localな`/dev/shm/qwen-sglang-build`を使い、
 Singularity CE 4.1.3でdefinition fileから完成SIFを直接buildします。完成後は共有filesystem上の
 一時ファイルへcopyし、`/fast/pj26000080/sglang-sifs/<run number>.sif`へatomicにrenameします。
 PJMと計算ノードはbuildには使いません。
