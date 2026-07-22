@@ -12,11 +12,11 @@ imageを親にしません。SIFは`/fast/pj26000080/sglang-sifs/<run number>.si
 `require_build`を指定した場合だけ新しくbuildします。それ以外では第一親履歴を遡り、
 最も近い実build済みSIFをhardlinkします。
 
-新規buildは`tomokazu-ubuntu-server`ラベルのself-hosted runnerで実行します。
-作業領域、Singularity cache、一時領域には`/ssd_raid/build_sglang`を使い、host標準の
-Singularity CEでdefinition fileから完成SIFを直接buildします。完成後はSSHでGenkaiの
-一時ファイルへ転送し、`/fast/pj26000080/sglang-sifs/<run number>.sif`へatomicに
-renameします。GenkaiのカスタムSingularityやPJMはbuildには使いません。
+新規buildは`genkai`ラベルのself-hosted runnerからlogin node上で実行します。
+作業領域、Singularity cache、一時領域にはnode-localな`/var/tmp/qwen-sglang-build`を使い、
+Singularity CE 4.1.3でdefinition fileから完成SIFを直接buildします。完成後は共有filesystem上の
+一時ファイルへcopyし、`/fast/pj26000080/sglang-sifs/<run number>.sif`へatomicにrenameします。
+PJMと計算ノードはbuildには使いません。
 
 `provision`は今回の実行だけに必要な束を共有filesystem上へ作ります。検証済みSIFの
 hardlink、実行スクリプト、logs、resultsが一つのdirectoryに揃うため、`run`はrepository
@@ -38,9 +38,9 @@ workflowはActions、PJM、SIFと一時runtimeの寿命、artifact回収を担�
 `scripts/run-qwen35.sh`は計算ノード用の固定PJM要求を持ち、workflowから
 `pjsub -x`で渡される`RUNTIME_DIR`、`MODEL_PATH`、`DATASET_PATH`を使ってCUDA module、
 Singularity、一時領域、bind mount、環境記録、benchmark実行を担当します。
-`scripts/pjm-job.sh`はrunのPJM log待機、監視、cancel、終了待ち、cleanupを担当します。
-GPU jobの投入からnode割当までと、割当後の実行監視は別stepなので、長いqueue待ちと
-計算ノード実行時間をActions画面から判別できます。
+workflowは`pjsub`でGPU jobを投入し、標準の`pjwait`で終了を待ちます。完了後は
+`run-success` markerでbenchmarkの成功を確認し、失敗やcancel時には`pjdel`してから
+一時runtime directoryを削除します。
 
 SGLang JIT cacheの永続先は共有filesystemですが、benchmark中は計算ノードの`/dev/shm`へ
 stagingしたcacheをbindします。staging時は共有`flock`、成功時の`rsync`書き戻しは排他
