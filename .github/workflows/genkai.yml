@@ -79,18 +79,17 @@ jobs:
         run: ln -f -- "${SIF_ARCHIVE_DIR}/${{ needs.select-sif.outputs.source_run_number }}.sif" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
 
   build-sif:
-    name: Build SGLang SIF on Ubuntu
+    name: Build SGLang SIF on Genkai login node
     needs: select-sif
     if: needs.select-sif.outputs.action == 'build'
-    runs-on: [self-hosted, home-lab]
+    runs-on: [self-hosted, genkai]
 
     concurrency:
       group: sglang-sif-build
       cancel-in-progress: false
 
     env:
-      BUILD_DIR: /ssd_raid/build_sglang/run-${{ github.run_id }}-${{ github.run_attempt }}
-      GENKAI_HOST: ku60000563@genkai.hpc.kyushu-u.ac.jp
+      BUILD_DIR: /var/tmp/qwen-sglang-build/run-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout build inputs
@@ -141,7 +140,7 @@ jobs:
           cd "${runtime_dir}"
           mkdir scripts logs results
           ln "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
-          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${GITHUB_WORKSPACE}/scripts/pjm-job.sh" scripts/
+          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" scripts/
           echo "runtime_dir=${runtime_dir}" >> "${GITHUB_OUTPUT}"
 
   run:
@@ -155,17 +154,18 @@ jobs:
       RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
 
     steps:
-      - name: Submit and wait for a Qwen node
+      - name: Submit Qwen job
         run: |
           job_output="$(pjsub -x "RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.sh")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
           test -n "${job_id}"
           echo "PJM_JOB_ID=${job_id}" >> "${GITHUB_ENV}"
-          "${RUNTIME_DIR}/scripts/pjm-job.sh" wait-for-log "${job_id}" "${RUNTIME_DIR}/logs/${job_id}.log"
 
-      - name: Monitor Qwen 3.5 execution
-        run: "${RUNTIME_DIR}/scripts/pjm-job.sh monitor \"${PJM_JOB_ID}\" \"${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log\" \"${RUNTIME_DIR}/run-success\""
+      - name: Wait for Qwen job
+        run: |
+          pjwait "${PJM_JOB_ID}"
+          test -e "${RUNTIME_DIR}/run-success"
 
       - name: Upload Qwen execution log
         if: always()
@@ -185,4 +185,10 @@ jobs:
 
       - name: Cleanup provisioned runtime
         if: always()
-        run: "${RUNTIME_DIR}/scripts/pjm-job.sh cleanup \"${PJM_JOB_ID:-}\" \"${RUNTIME_DIR:?}\""
+        run: |
+          if [[ -n "${PJM_JOB_ID:-}" ]]; then
+            pjdel "${PJM_JOB_ID}" 2>/dev/null || true
+            pjwait -z "${PJM_JOB_ID}" || true
+          fi
+          [[ "${RUNTIME_DIR}" == /fast/PROJECT/sglang-runs/run-* ]]
+          rm -rf -- "${RUNTIME_DIR}"
