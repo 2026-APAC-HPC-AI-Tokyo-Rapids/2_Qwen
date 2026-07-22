@@ -11,7 +11,7 @@ set -euo pipefail
 [[ "${GITHUB_RUN_ID}" =~ ^[0-9]+$ ]]
 [[ "${GITHUB_RUN_ATTEMPT}" =~ ^[0-9]+$ ]]
 [[ "${GITHUB_RUN_NUMBER}" =~ ^[0-9]+$ ]]
-[[ "${BUILD_DIR}" == "/var/tmp/qwen-sglang-build/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" ]]
+[[ "${BUILD_DIR}" == "/dev/shm/qwen-sglang-build/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" ]]
 
 publish_tmp="${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
 
@@ -26,12 +26,12 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 rm -rf -- "${BUILD_DIR}"
-install -d -m 2775 /var/tmp/qwen-sglang-build/cache "${BUILD_DIR}/containers" "${BUILD_DIR}/patches" "${BUILD_DIR}/logs" "${BUILD_DIR}/tmp"
+install -d -m 2775 /dev/shm/qwen-sglang-build/cache "${BUILD_DIR}/containers" "${BUILD_DIR}/patches" "${BUILD_DIR}/logs" "${BUILD_DIR}/tmp"
 cp "${GITHUB_WORKSPACE}/containers/sglang.def" "${BUILD_DIR}/containers/"
 cp -a "${GITHUB_WORKSPACE}/patches/sglang" "${BUILD_DIR}/patches/"
 cd "${BUILD_DIR}"
 module load singularity-ce/4.1.3
-export SINGULARITY_CACHEDIR=/var/tmp/qwen-sglang-build/cache
+export SINGULARITY_CACHEDIR=/dev/shm/qwen-sglang-build/cache
 export SINGULARITY_TMPDIR="${BUILD_DIR}/tmp"
 
 singularity --version | tee logs/build.log
