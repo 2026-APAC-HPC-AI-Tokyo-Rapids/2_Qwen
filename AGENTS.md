@@ -1,3 +1,4 @@
-# Repository Instructions
+# リポジトリに関する指示
 
-- Unless the user explicitly requests otherwise, perform all work directly on `main`. Do not create a branch or pull request by default.
+- ユーザーから明示的な指示がない限り、すべての作業は直接 `main` ブランチ上で行ってください。デフォルトでは、ブランチやプルリクエストを作成しないでください。
+- ユーザーから明示的な支持が無い限り、既に実行中のActionsは停止しないでください。
