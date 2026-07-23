@@ -35,11 +35,7 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0
     export PATH=/opt/cargo/bin:${PATH}
 
-    # Keep source-build parallelism bounded on the self-hosted builder.
-    export UV_CONCURRENT_DOWNLOADS=4
-    export UV_CONCURRENT_BUILDS=2
-    export UV_CONCURRENT_INSTALLS=2
-    export CARGO_BUILD_JOBS=2
+    expert MAX_JOBS=40
 
     git clone --depth=1 --branch main https://github.com/sgl-project/sglang.git /opt/sglang/source
     while IFS= read -r patch_file
@@ -65,7 +61,7 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     unzip -q "${TMPDIR}/deepep.zip" -d "${TMPDIR}"
     mv "${TMPDIR}/DeepEP-${deepep_commit}" /opt/DeepEP
     sed -i "/^    include_dirs = \['csrc\/'\]/a\\    include_dirs.append('${CUDA_HOME}/include/cccl')" /opt/DeepEP/setup.py
-    TORCH_CUDA_ARCH_LIST=9.0 MAX_JOBS=2 uv pip install --python /opt/sglang/venv/bin/python --no-build-isolation /opt/DeepEP
+    TORCH_CUDA_ARCH_LIST=9.0 uv pip install --python /opt/sglang/venv/bin/python --no-build-isolation /opt/DeepEP
     rm "${TMPDIR}/deepep.zip"
 
     # Install optional communication backends used by EP and disaggregated serving.
