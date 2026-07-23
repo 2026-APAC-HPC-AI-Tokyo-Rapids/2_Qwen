@@ -42,7 +42,7 @@ export SINGULARITY_TMPDIR="${BUILD_DIR}/tmp"
 
 singularity --version | tee logs/build.log
 command -v mksquashfs | tee -a logs/build.log
-singularity build --fakeroot --sandbox "${rootfs_dir}" containers/sglang.def 2>&1 | tee -a logs/build.log
+singularity build --fakeroot --writable-tmpfs --sandbox "${rootfs_dir}" containers/sglang.def 2>&1 | tee -a logs/build.log
 singularity inspect --json "${rootfs_dir}" > "${metadata_path}"
 singularity exec --fakeroot --bind "${BUILD_DIR}:${BUILD_DIR}" "${rootfs_dir}" tar --numeric-owner --xattrs --xattrs-include='*' --acls --sparse -C "${rootfs_dir}" -cf - . |
   mksquashfs - "${squashfs_path}" -tar -numeric-owner -default-uid 0 -default-gid 0 -default-mode 0755 -noappend -comp gzip -Xcompression-level 2 -processors 32 -mem 64G 2>&1 |
@@ -56,7 +56,7 @@ rm -f -- "${squashfs_path}"
 
 singularity sif list sglang.sif | tee logs/sif-list.txt
 singularity inspect --json sglang.sif > logs/inspect.json
-singularity test sglang.sif 2>&1 | tee logs/runtime-test.log
+singularity test --writable-tmpfs sglang.sif 2>&1 | tee logs/runtime-test.log
 
 install -d -m 2775 "${SIF_ARCHIVE_DIR}"
 cp sglang.sif "${publish_tmp}"
