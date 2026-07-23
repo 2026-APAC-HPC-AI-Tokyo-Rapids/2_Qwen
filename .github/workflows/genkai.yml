@@ -171,7 +171,19 @@ jobs:
 
       - name: Wait for Qwen job
         run: |
+          job_log="${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"
+          tail --lines=+1 --retry --follow=name "${job_log}" &
+          tail_pid=$!
+          stop_tail() {
+            kill "${tail_pid}" 2>/dev/null || true
+            wait "${tail_pid}" 2>/dev/null || true
+          }
+          trap stop_tail EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+
           pjwait "${PJM_JOB_ID}"
+          sleep 1
           test -e "${RUNTIME_DIR}/run-success"
 
       - name: Upload Qwen execution log
