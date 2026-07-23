@@ -52,8 +52,11 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     uv venv /opt/sglang/venv
     uv pip install --python /opt/sglang/venv/bin/python setuptools wheel
     uv pip install --python /opt/sglang/venv/bin/python -e .
-    uv pip install --python /opt/sglang/venv/bin/python --upgrade --index-url https://flashinfer.ai/whl "flashinfer-cubin==0.6.14"
-    uv pip install --python /opt/sglang/venv/bin/python --upgrade --index-url https://flashinfer.ai/whl/cu130 "flashinfer-jit-cache==0.6.14"
+    # SGLang pins flashinfer-python in pyproject.toml.  Keep its companion
+    # artifacts at the identical release so FlashInfer's runtime check passes.
+    flashinfer_version="$(/opt/sglang/venv/bin/python -c 'from importlib.metadata import version; print(version("flashinfer-python"))')"
+    uv pip install --python /opt/sglang/venv/bin/python --upgrade --index-url https://flashinfer.ai/whl "flashinfer-cubin==${flashinfer_version}"
+    uv pip install --python /opt/sglang/venv/bin/python --upgrade --index-url https://flashinfer.ai/whl/cu130 "flashinfer-jit-cache==${flashinfer_version}"
 
     # Build the Hopper DeepEP backend used by expert parallelism.
     deepep_commit=9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee
@@ -98,6 +101,7 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     export CUPY_CACHE_DIR=${XDG_CACHE_HOME}/cupy
     /opt/sglang/venv/bin/python -c 'import sglang; print(sglang.__file__)'
     /opt/sglang/venv/bin/python -c 'import torch; print(torch.__version__)'
+    /opt/sglang/venv/bin/python -c 'from importlib.metadata import version; packages = ("flashinfer-python", "flashinfer-cubin", "flashinfer-jit-cache"); versions = {package: version(package).split("+", 1)[0] for package in packages}; assert len(set(versions.values())) == 1, versions; import flashinfer, sgl_kernel; print(versions)'
     /opt/sglang/venv/bin/python -c 'from importlib.metadata import version; print({p: version(p) for p in ("deep-ep", "mooncake-transfer-engine-cuda13", "mscclpp", "nixl", "nixl-cu13")})'
     mpirun --version
     ucx_info -v

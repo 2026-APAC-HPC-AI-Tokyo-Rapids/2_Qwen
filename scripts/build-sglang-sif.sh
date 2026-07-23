@@ -56,7 +56,7 @@ rm -f -- "${squashfs_path}"
 
 singularity sif list sglang.sif | tee logs/sif-list.txt
 singularity inspect --json sglang.sif > logs/inspect.json
-singularity exec sglang.sif /opt/sglang/venv/bin/python -c 'import torch, sglang; print(torch.__version__); print(sglang.__file__)' 2>&1 | tee logs/import-test.log
+singularity test sglang.sif 2>&1 | tee logs/runtime-test.log
 
 install -d -m 2775 "${SIF_ARCHIVE_DIR}"
 cp sglang.sif "${publish_tmp}"
