@@ -86,7 +86,7 @@ jobs:
 
     concurrency:
       group: sglang-sif-build-dev-shm
-      cancel-in-progress: false
+      queue: max
 
     env:
       BUILD_DIR: /dev/shm/qwen-sglang-build/run-${{ github.run_id }}-${{ github.run_attempt }}
@@ -106,9 +106,16 @@ jobs:
           path: ${{ env.BUILD_DIR }}/logs
           compression-level: 1
 
-      - name: Cleanup SGLang build log
+      - name: Cleanup SGLang build directory
         if: always()
-        run: rm -rf -- "${BUILD_DIR:?}"
+        run: |
+          expected_build_dir="/dev/shm/qwen-sglang-build/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          [[ "${BUILD_DIR}" == "${expected_build_dir}" ]]
+          [[ -d "${BUILD_DIR}" ]] || exit 0
+
+          module load singularity-ce/4.1.3
+          singularity exec --fakeroot --containall --bind "${BUILD_DIR}:/cleanup" docker://busybox:1.36.1-musl /bin/sh -c 'rm -rf -- /cleanup/* /cleanup/.[!.]* /cleanup/..?*'
+          rmdir -- "${BUILD_DIR}"
 
   provision:
     name: Provision SGLang runtime
