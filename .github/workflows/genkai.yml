@@ -169,10 +169,25 @@ jobs:
           test -n "${job_id}"
           echo "PJM_JOB_ID=${job_id}" >> "${GITHUB_ENV}"
 
-      - name: Wait for Qwen job
+      - name: Wait for Qwen job to start
         run: |
           job_log="${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"
-          tail --lines=+1 --retry --follow=name "${job_log}" &
+          while [[ ! -e "${job_log}" ]]; do
+            wait_status="$(pjwait -w waitnone "${PJM_JOB_ID}")"
+            pjm_code="$(awk 'NR == 1 { print $2 }' <<< "${wait_status}")"
+            if [[ -n "${pjm_code}" && "${pjm_code}" != X ]]; then
+              printf '%s\n' "${wait_status}"
+              echo "PJM job ended before creating ${job_log}" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "PJM job log is ready: ${job_log}"
+
+      - name: Stream Qwen execution log
+        run: |
+          job_log="${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"
+          tail --lines=+1 --follow=name "${job_log}" &
           tail_pid=$!
           stop_tail() {
             kill "${tail_pid}" 2>/dev/null || true
@@ -182,8 +197,12 @@ jobs:
           trap 'exit 130' INT
           trap 'exit 143' TERM
 
-          pjwait "${PJM_JOB_ID}"
+          pjwait -z "${PJM_JOB_ID}"
           sleep 1
+
+      - name: Verify Qwen job completion
+        run: |
+          pjwait "${PJM_JOB_ID}"
           test -e "${RUNTIME_DIR}/run-success"
 
       - name: Upload Qwen execution log
