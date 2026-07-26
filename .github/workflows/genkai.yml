@@ -17,7 +17,6 @@ permissions:
   contents: read
 
 env:
-  TMPDIR: /dev/shm
   SIF_ARCHIVE_DIR: /fast/pj26000080/sglang-sifs
   MODEL_PATH: /fast/pj26000080/Qwen/Qwen3.5-35B-A3B-FP8
   DATASET_PATH: /fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
@@ -46,24 +45,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ '${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[require-build]')) || (github.event_name == 'workflow_dispatch' && inputs.require_build) }}' == true ]]; then
+          if [[ '${{ (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) || (github.event_name == 'workflow_dispatch' && inputs.require_build) }}' == true ]]; then
             echo "A new SIF build was explicitly requested"
             echo "action=build" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
           commit="${GITHUB_SHA}"
-          while parent_commit="$(git rev-parse "${commit}^" 2>/dev/null)"
+          while [[ -n "${commit}" ]]
           do
-            while read -r run_number
+            while IFS=$'\t' read -r run_id run_number
             do
+              [[ "${run_id}" != "${GITHUB_RUN_ID}" ]] || continue
               [[ -s "${SIF_ARCHIVE_DIR}/${run_number}.sif" ]] || continue
+              if ! archive_step_count="$(gh run view "${run_id}" --json jobs --jq '[.jobs[].steps[] | select((.name == "Build and publish SGLang SIF" or .name == "Hardlink the selected SIF") and .conclusion == "success")] | length' 2>/dev/null)"; then
+                continue
+              fi
+              [[ "${archive_step_count}" -gt 0 ]] || continue
               echo "Selected ${SIF_ARCHIVE_DIR}/${run_number}.sif"
               echo "action=reuse" >> "${GITHUB_OUTPUT}"
               echo "source_run_number=${run_number}" >> "${GITHUB_OUTPUT}"
               exit 0
-            done < <(gh run list --workflow genkai.yml --commit "${parent_commit}" --limit 20 --json number --jq '.[].number')
-            commit="${parent_commit}"
+            done < <(gh run list --workflow genkai.yml --commit "${commit}" --limit 20 --json databaseId,number --jq '.[] | [.databaseId, .number] | @tsv')
+            commit="$(git rev-parse "${commit}^" 2>/dev/null || true)"
           done
           echo "No reusable SIF was found; falling back to a new build"
           echo "action=build" >> "${GITHUB_OUTPUT}"
@@ -109,13 +113,12 @@ jobs:
       - name: Cleanup SGLang build directory
         if: always()
         run: |
-          expected_build_dir="/dev/shm/qwen-sglang-build/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          [[ "${BUILD_DIR}" == "${expected_build_dir}" ]]
+          : "${BUILD_DIR:?}"
           [[ -d "${BUILD_DIR}" ]] || exit 0
 
           module load singularity-ce/4.1.3
-          singularity exec --fakeroot --containall --bind "${BUILD_DIR}:/cleanup" docker://busybox:1.36.1-musl /bin/sh -c 'rm -rf -- /cleanup/* /cleanup/.[!.]* /cleanup/..?*'
-          rmdir -- "${BUILD_DIR}"
+          singularity exec --fakeroot --containall --bind "${BUILD_DIR:?}:/cleanup" docker://busybox:1.36.1-musl /bin/sh -c 'rm -rf -- /cleanup/* /cleanup/.[!.]* /cleanup/..?*'
+          rmdir -- "${BUILD_DIR:?}"
 
   provision:
     name: Provision SGLang runtime
@@ -126,6 +129,9 @@ jobs:
       ((needs.select-sif.outputs.action == 'reuse' && needs.reuse-sif.result == 'success') ||
        (needs.select-sif.outputs.action == 'build' && needs.build-sif.result == 'success'))
     runs-on: [self-hosted, genkai]
+
+    env:
+      SIF_SOURCE_RUN_NUMBER: ${{ needs.select-sif.outputs.source_run_number }}
 
     outputs:
       runtime_dir: ${{ steps.provision_runtime.outputs.runtime_dir }}
@@ -144,11 +150,19 @@ jobs:
 
           install -d -m 2775 /fast/pj26000080/sglang-runs
           runtime_dir="$(mktemp -d "/fast/pj26000080/sglang-runs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          echo "runtime_dir=${runtime_dir}" >> "${GITHUB_OUTPUT}"
+          source_run_number="${SIF_SOURCE_RUN_NUMBER:-${GITHUB_RUN_NUMBER}}"
           cd "${runtime_dir}"
           mkdir scripts logs results
           ln "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
-          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" scripts/
-          echo "runtime_dir=${runtime_dir}" >> "${GITHUB_OUTPUT}"
+          printf '%s\n' "${source_run_number}" > sif-source-run.txt
+          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.pjm" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" scripts/
+
+      - name: Cleanup failed SGLang provisioning
+        if: failure() && steps.provision_runtime.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.provision_runtime.outputs.runtime_dir }}
+        run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
     name: Run Qwen 3.5 with SGLang
@@ -163,7 +177,7 @@ jobs:
     steps:
       - name: Submit Qwen job
         run: |
-          job_output="$(pjsub -x "RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.sh")"
+          job_output="$(pjsub -x "RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH},GITHUB_RUN_ID=${GITHUB_RUN_ID},GITHUB_SHA=${GITHUB_SHA}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.pjm")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
           test -n "${job_id}"
@@ -171,23 +185,21 @@ jobs:
 
       - name: Wait for Qwen job to start
         run: |
-          job_log="${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"
-          while [[ ! -e "${job_log}" ]]; do
+          while [[ ! -e "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" ]]; do
             wait_status="$(pjwait -w waitnone "${PJM_JOB_ID}")"
             pjm_code="$(awk 'NR == 1 { print $2 }' <<< "${wait_status}")"
             if [[ -n "${pjm_code}" && "${pjm_code}" != X ]]; then
               printf '%s\n' "${wait_status}"
-              echo "PJM job ended before creating ${job_log}" >&2
+              echo "PJM job ended before creating ${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" >&2
               exit 1
             fi
             sleep 2
           done
-          echo "PJM job log is ready: ${job_log}"
+          echo "PJM job log is ready: ${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"
 
       - name: Stream Qwen execution log
         run: |
-          job_log="${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"
-          tail --lines=+1 --follow=name "${job_log}" &
+          tail --lines=+1 --follow=name "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" &
           tail_pid=$!
           stop_tail() {
             kill "${tail_pid}" 2>/dev/null || true
@@ -228,5 +240,4 @@ jobs:
             pjdel "${PJM_JOB_ID}" 2>/dev/null || true
             pjwait -z "${PJM_JOB_ID}" || true
           fi
-          [[ "${RUNTIME_DIR}" == /fast/pj26000080/sglang-runs/run-* ]]
-          rm -rf -- "${RUNTIME_DIR}"
+          rm -rf -- "${RUNTIME_DIR:?}"
