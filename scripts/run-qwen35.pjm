@@ -10,7 +10,11 @@ set -euo pipefail
 : "${MODEL_PATH:?MODEL_PATH is required}"
 : "${DATASET_PATH:?DATASET_PATH is required}"
 
-jit_cache="$(mktemp -d /dev/shm/sglang-jit.XXXXXXXXXX)"
+workflow_run_id="${GITHUB_RUN_ID:-manual}"
+git_sha="${GITHUB_SHA:-unknown}"
+profile_label=qwen35-offline-throughput-tp1-n32
+
+jit_cache="$(mktemp -d /tmp/sglang-jit.XXXXXXXXXX)"
 jit_lock_fd=""
 singularity_tmpdir="$(mktemp -d /dev/shm/sglang-run.XXXXXXXXXX)"
 
@@ -33,13 +37,14 @@ trap cleanup EXIT
 
 cd "${RUNTIME_DIR}"
 mkdir -p results "${HOME}/.cache/sglang-jit"
+sif_source_run_number="$(cat sif-source-run.txt 2>/dev/null || printf 'unknown')"
 
 # The shared filesystem is reliable for storing the cache but occasionally
 # fails while SGLang reads it.  Stage a consistent snapshot on the compute
 # node instead.  Shared locks keep a writer from modifying that snapshot while
 # it is copied; an exclusive lock serializes the later merge back to shared
 # storage.
-exec {jit_lock_fd}>>"${HOME}/.cache/sglang-jit.lock"
+exec {jit_lock_fd} >>"${HOME}/.cache/sglang-jit.lock"
 echo "Staging shared SGLang JIT cache in ${jit_cache}"
 flock -s "${jit_lock_fd}" rsync -a -- "${HOME}/.cache/sglang-jit/" "${jit_cache}/"
 
@@ -47,13 +52,21 @@ module purge
 module load cuda/13.2.0
 module load singularity-ce/4.1.3
 export SINGULARITY_TMPDIR="${singularity_tmpdir}"
+sglang_commit="$(singularity exec sglang.sif cat /opt/sglang/sglang-commit.txt 2>/dev/null || printf 'unknown')"
 
 {
   echo "job_id=${PJM_JOBID:-unknown}"
+  echo "workflow_run_id=${workflow_run_id}"
+  echo "git_sha=${git_sha}"
+  echo "sif_source_run_number=${sif_source_run_number}"
+  echo "profile_label=${profile_label}"
   echo "started_at=$(date -u +%FT%TZ)"
   echo "model_path=${MODEL_PATH}"
   echo "dataset_path=${DATASET_PATH}"
+  echo "sglang_commit=${sglang_commit}"
+  echo "runtime_dir=${RUNTIME_DIR}"
   singularity inspect sglang.sif
+  singularity sif list sglang.sif
   module list 2>&1
   nvidia-smi --query-gpu=index,name,uuid,memory.total,driver_version --format=csv
   singularity --version
@@ -91,6 +104,7 @@ printf 'exit_code=%d\n' "${status}" | tee -a results/throughput.log
 echo "finished_at=$(date -u +%FT%TZ)" >>results/environment.log
 
 if [[ "${status}" -eq 0 ]]; then
+  test -s results/results.jsonl
   touch run-success
 fi
 exit "${status}"
