@@ -1,74 +1,10 @@
 # Qwen 3.5 with SGLang on Genkai
 
-このリポジトリは、SGLangの変更をpushするたびに同じQwen 3.5 benchmarkを実行し、
-変更の影響を比較するためのものです。workflowは最初に既存SIFを再利用できるか判定し、
-`reuse-sif`または`build-sif`へ分岐した後、`provision`、`run`へ合流します。
+Genkai 上で同じ Qwen 3.5 benchmark を実行し、SGLang の変更による影響を比較するためのリポジトリです。
 
-`build`の成果物は、recipe、upstream SGLang `main`、`patches/sglang/*.patch`から
-生成した完成済みSIFです。recipeはupstream `docker/Dockerfile`のCUDA 13.0.1、
-Ubuntu 24.04、Python 3.12、GPU JIT向けruntime構成を基準にし、公開済みSGLang
-imageを親にしません。SIFは`/fast/PROJECT/sglang-sifs/<run number>.sif`
-として保存されます。commit messageの先頭に`[require-build]`を付けたpushと、手動実行で
-`require_build`を指定した場合だけ新しくbuildします。それ以外では現在コミットから第一親履歴を遡り、
-SIFの存在とbuildまたはhardlink stepの成功を確認したうえで、最も近い実build済みSIFをhardlinkします。
+調査内容と現行構成は以下に分けて記録しています。
 
-新規buildは`genkai`ラベルのself-hosted runnerからlogin node上で実行します。
-作業領域、Singularity cache、一時領域にはnode-localな`/dev/shm/qwen-sglang-build`を使い、
-Singularity CE 4.1.3でdefinition fileから完成SIFを直接buildします。完成後は共有filesystem上の
-一時ファイルへcopyし、`/fast/PROJECT/sglang-sifs/<run number>.sif`へatomicにrenameします。
-PJMと計算ノードはbuildには使いません。SIFにはSGLang commit、recipe hash、patch hash、
-CUDA base image、Singularity version、Workflow runを含むbuild provenanceも格納します。
+- [SGLang SIF のビルド](research/build-performance/README.md)
+- [Qwen 3.5 benchmark の実行](research/runtime-performance/README.md)
 
-`provision`は今回の実行だけに必要な束を共有filesystem上へ作ります。検証済みSIFの
-hardlink、実行スクリプト、logs、resultsが一つのdirectoryに揃うため、`run`はrepository
-checkoutやbuild directoryを参照しません。固定されたmodelとdatasetのpathはworkflow全体の
-`MODEL_PATH`、`DATASET_PATH`で定義し、補助ファイルには書き出しません。GPU jobの完了後、
-logsとresultsをActions artifactへ回収して、この一時runtime directoryを削除します。
-provisionではmodelをloadせず、host側の`jq`でmodel configを検証し、`uvx hf cache verify`で
-ローカルcheckpointをHugging Face Hubの最新revisionと照合します。GPU architectureや
-deviceを必要とするTriton、DeepGEMMなどのJITはcompute job側だけで実行します。
-
-SGLangを変更する場合は`patches/sglang/`にpatchを追加し、commit messageの先頭に
-`[require-build]`を付けてpushします。recipeや依存関係を変えた場合も同様です。
-benchmark条件だけを変える場合は`scripts/run-qwen35.pjm`を編集して通常のpushを行えば、
-親のSIFを再利用して新しい条件だけを速く検証できます。
-
-workflowはActions、PJM、SIFと一時runtimeの寿命、artifact回収を担当します。
-`provision` jobは`MODEL_PATH`からQwen 3.5 configと最新Hub revisionに対するcheckpoint
-完全性を検証します。Hub側のmodelが更新された場合は既存checkpointが検証に失敗します。
-`scripts/run-qwen35.pjm`は計算ノード用の固定PJM要求を持ち、workflowから
-`pjsub -x`で渡される`RUNTIME_DIR`、`MODEL_PATH`、`DATASET_PATH`、Workflow metadataを使ってCUDA module、
-Singularity、一時領域、bind mount、環境記録、benchmark実行を担当します。
-workflowは`pjsub`でGPU jobを投入し、標準の`pjwait`で終了を待ちます。完了後は
-`run-success` markerでbenchmarkの成功を確認し、失敗やcancel時には`pjdel`してから
-一時runtime directoryを削除します。
-
-SGLang JIT cacheの永続先は共有filesystemですが、benchmark中は計算ノードの`/tmp`へ
-stagingしたcacheをbindします。staging時は共有`flock`、成功時の`rsync`書き戻しは排他
-`flock`で保護します。失敗またはcancelされたjobのlocal cacheは書き戻さず、終了時に削除します。
-
-benchmarkコマンドは`scripts/exec-profiler.sh`を経由します。現時点のwrapperは受け取った
-引数をそのまま実行するだけです。将来nsysなどを導入するときは、このwrapperへprofilerの
-起動設定を追加すればbenchmark本体やworkflowを変更せずに測定できます。
-
-SIFにはlibc debug symbolsと、NCCL、OpenMPI、UCX、PMIx、libfabric、RDMAのuser-space
-library、header、providerを含めます。SGLangのRust extensionもdebug symbolsを保持し、解決済み
-Python dependencyは`/opt/sglang/requirements-frozen.txt`へ記録します。gdb、nsys/ncu、strace、
-perf、hardware診断CLI、GPU・RDMAのkernel driverは計算ノード側の責務であり、SIFには封入しません。
-将来の高速化用にDeepEP、MSCCL++、Mooncake、NIXLとHopper向けSGLang kernel artifactsも
-build時に導入します。通常のTP、expert parallelism、prefill/decode分離で必要なbackendを、
-実行引数やSGLang本体を変更した時点ですぐ比較できる構成です。
-
-結果はruntimeの`results/`直下に集約します。`throughput.log`には実行コマンド、benchmarkの
-標準出力・標準エラー、最後に`exit_code=N`を記録します。`environment.log`はジョブ、module、
-GPU、containerなどの環境情報、`results.jsonl`はbenchmarkの構造化結果です。benchmarkの
-終了コードは実行スクリプトからPJMへ伝播し、成功markerが作られないためActionsも失敗します。
-
-入力はSGLangが標準で参照するShareGPTを使います。`provision` jobの`hf download`がHubの最新datasetを
-`/fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered/`へ取得します。
-datasetはSIFへ封入せず、`provision`と`run`で同じJSONだけを
-`/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro`へ明示的にbindします。
-
-コンテナは`--containall`で起動し、hostからはmodel、ShareGPT、node-local JIT cache、今回の
-出力directoryだけを明示的にbind mountします。推論引数は環境変数にせず、
-`scripts/run-qwen35.pjm`のcommandとして版管理します。
+実装は [Genkai workflow](.github/workflows/genkai.yml)、[SIF recipe](containers/sglang.def)、[実行スクリプト](scripts/run-qwen35.pjm)を参照してください。
