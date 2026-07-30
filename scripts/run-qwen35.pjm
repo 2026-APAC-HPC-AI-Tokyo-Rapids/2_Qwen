@@ -44,7 +44,7 @@ sif_source_run_number="$(cat sif-source-run.txt 2>/dev/null || printf 'unknown')
 # node instead.  Shared locks keep a writer from modifying that snapshot while
 # it is copied; an exclusive lock serializes the later merge back to shared
 # storage.
-exec {jit_lock_fd} >>"${HOME}/.cache/sglang-jit.lock"
+exec {jit_lock_fd}>>"${HOME}/.cache/sglang-jit.lock"
 echo "Staging shared SGLang JIT cache in ${jit_cache}"
 flock -s "${jit_lock_fd}" rsync -a -- "${HOME}/.cache/sglang-jit/" "${jit_cache}/"
 
