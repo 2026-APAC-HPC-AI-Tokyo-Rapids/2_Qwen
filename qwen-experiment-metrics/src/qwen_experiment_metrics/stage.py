@@ -185,8 +185,22 @@ def event_metrics(event: object) -> list[Metric]:
             Metric(target, str(payload.get(source, "")))
             for source, target in RESULT_KEYS.items()
         ]
-        if "output_hashes" in payload:
-            result.extend(flatten("result.output", payload["output_hashes"]))
+        output_hashes = payload.get("output_hashes")
+        if isinstance(output_hashes, dict):
+            result.append(
+                Metric(
+                    "result.output.request_count",
+                    str(output_hashes.get("request_count", "")),
+                )
+            )
+            if "request" in output_hashes:
+                result.extend(flatten("result.output", output_hashes["request"]))
+            result.append(
+                Metric(
+                    "result.output.manifest_sha256",
+                    str(output_hashes.get("manifest_sha256", "")),
+                )
+            )
         return result
     raise ValueError(f"unknown event type: {event['type']}")
 
