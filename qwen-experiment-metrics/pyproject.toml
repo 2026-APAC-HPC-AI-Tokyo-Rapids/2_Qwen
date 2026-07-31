@@ -1,0 +1,32 @@
+[project]
+name = "qwen-experiment-metrics"
+version = "0.1.0"
+description = "Run-level BigQuery metrics for Qwen and SGLang experiments"
+requires-python = ">=3.11"
+dependencies = ["google-auth>=2.40.0"]
+
+[project.scripts]
+qwen-experiment-metrics = "qwen_experiment_metrics.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.4.0", "ruff>=0.12.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.uv]
+package = true
+
+[tool.qwen-experiment-metrics.bigquery]
+project = "apac-hpc-ai-tokyo-rapids-26"
+dataset = "qwen_experiment_metrics"
+table = "qwen_metrics"
+location = "asia-northeast1"
