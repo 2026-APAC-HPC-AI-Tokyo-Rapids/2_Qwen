@@ -355,7 +355,9 @@ def run_stage(run: str, name: str, socket_dir: Path, command: list[str]) -> int:
         sampler.stop()
         sampler.join(timeout=5)
         receiver.stop()
-        receiver.join(timeout=5)
+        # The receiver may still be completing the last BigQuery request.  Wait
+        # for it so the main thread never uses the credentials concurrently.
+        receiver.join()
     elapsed = (time.monotonic_ns() - started) / 1_000_000_000
     send(run, aggregate_gpu(sampler.samples, sampler.interval))
     if "sglang.benchmark_result" not in receiver.received:
