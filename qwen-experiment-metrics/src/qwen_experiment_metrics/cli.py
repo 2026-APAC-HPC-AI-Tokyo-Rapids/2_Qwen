@@ -22,6 +22,7 @@ def parser() -> argparse.ArgumentParser:
             "static-gpu",
             "source",
             "artifact",
+            "log-artifact",
             "scheduler",
         ),
     )
@@ -62,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
                 batch = collectors.source_artifacts(runtime_dir)
             case "artifact":
                 batch = collectors.result_artifacts(runtime_dir)
+            case "log-artifact":
+                batch = collectors.log_artifact(runtime_dir, arguments.job_id or "")
             case "scheduler":
                 batch = collectors.scheduler(arguments.job_id or "")
             case _:

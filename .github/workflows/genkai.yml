@@ -247,6 +247,10 @@ jobs:
           EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
         run: |
           "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" \
+            collect log-artifact \
+            --runtime-dir "${RUNTIME_DIR}" \
+            --job-id "${PJM_JOB_ID}"
+          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" \
             collect scheduler \
             --runtime-dir "${RUNTIME_DIR}" \
             --job-id "${PJM_JOB_ID}"
