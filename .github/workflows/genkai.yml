@@ -18,6 +18,7 @@ permissions:
 
 env:
   SIF_ARCHIVE_DIR: /fast/PROJECT/sglang-sifs
+  GIT_MIRROR_DIR: /fast/PROJECT/git-mirror
   MODEL_PATH: /fast/PROJECT/Qwen/Qwen3.5-35B-A3B-FP8
   DATASET_PATH: /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
 
@@ -39,6 +40,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Update shared SGLang source mirror
+        run: "${GITHUB_WORKSPACE}/scripts/update-sglang-source-mirror.sh"
 
       - name: Select an existing SIF or a new build
         id: select

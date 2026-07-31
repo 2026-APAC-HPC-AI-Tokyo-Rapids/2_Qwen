@@ -3,11 +3,12 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
 
 %files
     patches/sglang /opt/sglang-patches
+    sglang-source /opt/sglang/source
 
 %labels
     org.opencontainers.image.title "Source-built SGLang runtime"
     org.opencontainers.image.description "SGLang main built with uv on the upstream CUDA runtime layout"
-    org.opencontainers.image.source "https://github.com/sgl-project/sglang"
+    org.opencontainers.image.source "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src"
     ai.sglang.deepep-commit "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
     ai.sglang.mooncake-version "0.3.11.post1"
     ai.sglang.mscclpp-version "sglang-v0.9.1"
@@ -37,7 +38,6 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
 
     export MAX_JOBS=40
 
-    git clone --depth=1 --branch main https://github.com/sgl-project/sglang.git /opt/sglang/source
     while IFS= read -r patch_file
     do
         patch -d /opt/sglang/source -p1 < "${patch_file}"

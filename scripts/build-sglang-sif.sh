@@ -6,6 +6,7 @@ set -euo pipefail
 : "${GITHUB_RUN_ATTEMPT:?}"
 : "${GITHUB_RUN_NUMBER:?}"
 : "${GITHUB_WORKSPACE:?}"
+: "${GIT_MIRROR_DIR:?}"
 : "${SIF_ARCHIVE_DIR:?}"
 
 [[ "${GITHUB_RUN_ID}" =~ ^[0-9]+$ ]]
@@ -16,6 +17,9 @@ ROOTFS_DIR="${BUILD_DIR}/sglang-rootfs"
 PUBLISH_TMP="${SIF_ARCHIVE_DIR}/.${GITHUB_RUN_NUMBER}.sif.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
 PATCH_MANIFEST="${BUILD_DIR}/patches.sha256"
 PROVENANCE_FILE="${BUILD_DIR}/build-provenance.txt"
+SGLANG_MIRROR="${GIT_MIRROR_DIR}/5_SGLang_Src.git"
+SGLANG_MIRROR_LOCK="${GIT_MIRROR_DIR}/5_SGLang_Src.lock"
+SGLANG_SOURCE_DIR="${BUILD_DIR}/sglang-source"
 
 cleanup() {
   status=$?
@@ -34,6 +38,16 @@ rm -rf -- "${BUILD_DIR:?}"
 install -d -m 2775 /dev/shm/qwen-sglang-build/cache "${BUILD_DIR}/containers" "${BUILD_DIR}/patches" "${BUILD_DIR}/logs" "${BUILD_DIR}/tmp"
 cp "${GITHUB_WORKSPACE}/containers/sglang.def" "${BUILD_DIR}/containers/"
 cp -a "${GITHUB_WORKSPACE}/patches/sglang" "${BUILD_DIR}/patches/"
+
+# Take a consistent snapshot of the organization-managed main branch from the
+# shared mirror. The exclusive updater uses the same repository lock.
+exec {sglang_mirror_lock_fd}>>"${SGLANG_MIRROR_LOCK}"
+flock -s "${sglang_mirror_lock_fd}"
+git clone --no-checkout "${SGLANG_MIRROR}" "${SGLANG_SOURCE_DIR}"
+git -C "${SGLANG_SOURCE_DIR}" checkout --detach refs/heads/main
+flock -u "${sglang_mirror_lock_fd}"
+exec {sglang_mirror_lock_fd}>&-
+
 cd "${BUILD_DIR}"
 
 recipe_sha256="$(sha256sum "${GITHUB_WORKSPACE}/containers/sglang.def" | awk '{ print $1 }')"

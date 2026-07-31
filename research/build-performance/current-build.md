@@ -7,7 +7,7 @@
 SIF は次の三つを入力として作る。
 
 - `containers/sglang.def`
-- recipe が取得する upstream SGLang `main`
+- 共有 bare mirror から取得する Org 管理の `5_SGLang_Src/main`
 - `patches/sglang/*.patch`
 
 base image は `nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04` である。Python 3.12 と `uv` を使い、SGLang は editable install する。GPU JIT を実行時に利用できるよう、CUDA development environment と build tool も残す。
@@ -35,7 +35,9 @@ SIF には libc debug symbols と、NCCL、OpenMPI、UCX、PMIx、libfabric、RD
 
 ## login node でのビルド
 
-新規ビルドは `genkai` label の self-hosted runner から login node 上で行う。作業領域は run ごとの `/dev/shm/qwen-sglang-build/run-<run-id>-<attempt>`、共通の Singularity cache は `/dev/shm/qwen-sglang-build/cache` である。
+新規ビルドは `genkai` label の self-hosted runner から login node 上で行う。workflow は `/fast/PROJECT/git-mirror/5_SGLang_Src.git` を Org 側から毎回更新する。更新は repository 単位の排他 lock、clone は共有 lock の下で行い、同時 run が不完全な ref を参照しないようにする。作業領域は run ごとの `/dev/shm/qwen-sglang-build/run-<run-id>-<attempt>`、共通の Singularity cache は `/dev/shm/qwen-sglang-build/cache` である。
+
+build script は共有 mirror から run 固有の source tree を作り、`main` の先端を detached checkout する。recipe はこの tree を `%files` で `/opt/sglang/source` へ取り込む。DeepEP はこの経路を使わず、従来どおり公式リポジトリの固定 commit archive を直接取得する。
 
 Singularity CE 4.1.3 で recipe から sandbox を作り、root filesystem を SquashFS に変換して SIF を組み立てる。SIF の test は GPU に依存せず、主要 Python package、通信 backend、MPI、UCX、`uv` を検証する。
 
@@ -46,7 +48,7 @@ Singularity CE 4.1.3 で recipe から sandbox を作り、root filesystem を S
 SIF 内の `build-provenance.txt` には次を記録する。
 
 - workflow run ID、attempt、run number
-- upstream SGLang commit
+- SGLang commit
 - recipe SHA-256
 - patch manifest の SHA-256
 - CUDA base image
