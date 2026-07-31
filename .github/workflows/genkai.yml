@@ -157,10 +157,25 @@ jobs:
           echo "runtime_dir=${runtime_dir}" >> "${GITHUB_OUTPUT}"
           source_run_number="${SIF_SOURCE_RUN_NUMBER:-${GITHUB_RUN_NUMBER}}"
           cd "${runtime_dir}"
-          mkdir scripts logs results
+          mkdir scripts logs results metrics-socket
           ln "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
           printf '%s\n' "${source_run_number}" > sif-source-run.txt
           install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.pjm" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" scripts/
+          cp -a "${GITHUB_WORKSPACE}/qwen-experiment-metrics" qwen-experiment-metrics
+          uv sync --project qwen-experiment-metrics --frozen --no-dev
+          jq -n \
+            --arg sif_source_workflow_run_number "${source_run_number}" \
+            --arg sif_sha256 "$(sha256sum sglang.sif | awk '{print $1}')" \
+            --arg sif_size_bytes "$(stat --format=%s sglang.sif)" \
+            --arg dataset_sha256 "$(sha256sum "${DATASET_PATH}" | awk '{print $1}')" \
+            --arg dataset_size_bytes "$(stat --format=%s "${DATASET_PATH}")" \
+            --arg model_config_sha256 "$(sha256sum "${MODEL_PATH}/config.json" | awk '{print $1}')" \
+            --arg requirements_frozen_sha256 "$(singularity exec sglang.sif cat /opt/sglang/requirements-frozen.txt | sha256sum | awk '{print $1}')" \
+            --arg run_script_sha256 "$(sha256sum scripts/run-qwen35.pjm | awk '{print $1}')" \
+            --arg profiler_script_sha256 "$(sha256sum scripts/exec-profiler.sh | awk '{print $1}')" \
+            '{sif: {source_workflow_run_number: $sif_source_workflow_run_number, sha256: $sif_sha256, size_bytes: $sif_size_bytes, requirements_frozen: {sha256: $requirements_frozen_sha256}}, dataset: {sha256: $dataset_sha256, size_bytes: $dataset_size_bytes}, model: {config: {sha256: $model_config_sha256}}, runtime_script: {run_qwen35: {sha256: $run_script_sha256}, exec_profiler: {sha256: $profiler_script_sha256}}}' \
+            > metrics-artifacts.json
+          test -x qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics
 
       - name: Cleanup failed SGLang provisioning
         if: failure() && steps.provision_runtime.outputs.runtime_dir != ''
@@ -180,8 +195,13 @@ jobs:
 
     steps:
       - name: Submit Qwen job
+        env:
+          EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
         run: |
-          job_output="$(pjsub -x "RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH},GITHUB_RUN_ID=${GITHUB_RUN_ID},GITHUB_SHA=${GITHUB_SHA}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.pjm")"
+          test -n "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON}"
+          credentials_base64="$(printf '%s' "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON}" | base64 --wrap=0)"
+          job_environment="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH},GITHUB_RUN_ID=${GITHUB_RUN_ID},GITHUB_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT},GITHUB_REPOSITORY=${GITHUB_REPOSITORY},GITHUB_SHA=${GITHUB_SHA},EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_BASE64=${credentials_base64}"
+          job_output="$(pjsub -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.pjm")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
           test -n "${job_id}"
@@ -220,6 +240,16 @@ jobs:
         run: |
           pjwait "${PJM_JOB_ID}"
           test -e "${RUNTIME_DIR}/run-success"
+
+      - name: Collect PJM accounting metrics
+        if: always() && env.PJM_JOB_ID != ''
+        env:
+          EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" \
+            collect scheduler \
+            --runtime-dir "${RUNTIME_DIR}" \
+            --job-id "${PJM_JOB_ID}"
 
       - name: Upload Qwen execution log
         if: always()
