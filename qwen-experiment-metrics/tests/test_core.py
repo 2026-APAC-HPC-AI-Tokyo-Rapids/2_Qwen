@@ -1,6 +1,7 @@
 import enum
 from pathlib import Path
 
+from qwen_experiment_metrics.collectors import log_artifact
 from qwen_experiment_metrics.core import Metric, _rows, flatten, load_config, scalar
 
 
@@ -30,3 +31,12 @@ def test_config() -> None:
     config = load_config(path)
     assert config.dataset == "qwen_experiment_metrics"
     assert config.table == "qwen_metrics"
+
+
+def test_log_artifact(tmp_path) -> None:
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "123.log").write_text("complete\n")
+    values = {metric.key: metric.value for metric in log_artifact(tmp_path, "123")}
+    assert values["artifact.pjm_log.path"] == "logs/123.log"
+    assert values["artifact.pjm_log.size_bytes"] == "9"
+    assert len(values["artifact.pjm_log.sha256"]) == 64

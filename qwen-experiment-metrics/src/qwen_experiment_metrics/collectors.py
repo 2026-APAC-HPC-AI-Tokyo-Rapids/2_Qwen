@@ -252,6 +252,21 @@ def result_artifacts(runtime_dir: Path) -> list[Metric]:
     return result
 
 
+def log_artifact(runtime_dir: Path, job_id: str) -> list[Metric]:
+    relative = f"logs/{job_id}.log"
+    path = runtime_dir / relative
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        size = str(path.stat().st_size)
+    except OSError:
+        digest = size = ""
+    return [
+        Metric("artifact.pjm_log.path", relative),
+        Metric("artifact.pjm_log.size_bytes", size),
+        Metric("artifact.pjm_log.sha256", digest),
+    ]
+
+
 PJM_FIELDS = (
     "jid",
     "st",
