@@ -161,12 +161,19 @@ def event_metrics(event: object) -> list[Metric]:
         for source, prefix in (
             ("bench_args", "sglang.benchmark_arg"),
             ("server_args", "sglang.server_arg"),
-            ("server_info", "sglang.runtime"),
             ("environment", "sglang.env"),
-            ("model_config", "model.config"),
         ):
             if source in payload:
                 result.extend(flatten(prefix, payload[source]))
+        model_config = payload.get("model_config")
+        if isinstance(model_config, dict):
+            model_config = dict(model_config)
+            quantization_config = model_config.get("quantization_config")
+            if isinstance(quantization_config, dict):
+                quantization_config = dict(quantization_config)
+                quantization_config.pop("modules_to_not_convert", None)
+                model_config["quantization_config"] = quantization_config
+            result.extend(flatten("model.config", model_config))
         workload = payload.get("workload")
         if isinstance(workload, dict):
             result.append(

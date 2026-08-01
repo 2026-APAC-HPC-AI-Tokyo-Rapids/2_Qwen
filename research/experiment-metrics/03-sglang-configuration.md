@@ -32,21 +32,17 @@ sglang.benchmark_arg.seed
 
 CLIで省略したdefaultも含める。
 
-### 実効server引数とruntime state
+### 実効server引数
 
-Engine初期化後の`backend.get_server_info()`を取得し、次へ展開する。
+Engine初期化前に解決済みの`ServerArgs`を次へ展開する。
 
 ```text
 sglang.server_arg.<field>
 sglang.server_arg.<field>.<nested-key-or-index>
-sglang.runtime.scheduler.<field>
-sglang.runtime.dp.<dp-index>.<derived-field>
 ```
 
-`internal_states`内の`last_gen_throughput`, `memory_usage`,
-`effective_max_running_requests_per_dp`等はruntime由来として分ける。
-同じServerArgsの複製は避けるが、DP rank間で実効値が異なる設計へ拡張した場合は
-`sglang.runtime.dp.<index>.server_arg.*`としてrank別に保存する。
+`backend.get_server_info()`は`ServerArgs`の複製とSGLangのprivateな
+`internal_states`を大量に含むため保存しない。`sglang.runtime.*`は生成しない。
 
 ## dict/listのscalar展開規則
 
@@ -122,6 +118,9 @@ model.config.num_hidden_layers
 model.config.quantization_config.<field>
 ...
 ```
+
+`model.config.quantization_config.modules_to_not_convert`はモデル内部のmodule名を
+数百行へ展開する一方、実験比較に不要なので保存しない。
 
 file全体を1つのJSON valueとして保存しない。tokenizerやgeneration configは別の正本
 なので、必要になった時点で`model.tokenizer_config.*`,
