@@ -13,7 +13,7 @@ LLM benchmark 結果である。
 
 - raw table は `run STRING NOT NULL`, `key STRING NOT NULL`,
   `value STRING NOT NULL` の3列だけにする。
-- 1つの `value` は必ず1つの scalar とし、JSON、配列、object、CSVを保存しない。
+- dictはscalar keyへ展開し、list/tupleは1つのcompact JSON文字列として保存する。
 - 通常の成功 run では `(run, key)` を一意にする。
 - 同じ取得元から同時に得た値を1 batchにし、取得後すぐ BigQuery へ送る。
 - transport 用一時ファイル、disk queue、spoolは作らない。
@@ -69,12 +69,14 @@ argparse.Namespace
 
 SGLang 側の小さな instrumentation patch が、Engine初期化直後とbenchmark終了直後に
 構造化eventを Unix domain socketへ送る。host側 collectorはeventを受信し、
-dict/listを再帰的にscalar recordへ展開して直ちにBigQueryへ送る。
+dictを再帰的にscalar recordへ展開し、list/tupleは1つのcompact JSON valueとして
+直ちにBigQueryへ送る。
 `backend.get_server_info()`由来の`sglang.runtime.*`と、
 `model.config.quantization_config.modules_to_not_convert.*`は保存しない。
 
 socketはprocess間通信endpointであり、metric dataをdiskへ保存する一時ファイルではない。
-JSONはsocket上の内部transport encodingにだけ使い、BigQueryの`value`には保存しない。
+JSON object全体はBigQueryの`value`へ保存しない。list/tupleだけは行数を抑えるため
+compact JSON配列として保存する。
 `results.jsonl`は従来どおり人間とActions向けのbenchmark成果物として残す。
 
 ## GPU計測の境界

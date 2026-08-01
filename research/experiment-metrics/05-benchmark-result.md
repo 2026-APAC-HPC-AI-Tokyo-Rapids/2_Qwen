@@ -40,14 +40,14 @@ prompt本文・生成本文をBigQueryへ保存せず、SGLang instrumentation�
 
 ```text
 result.output.request_count
-result.output.<request-index>.text_sha256
-result.output.<request-index>.token_count
+result.output
 result.output.manifest_sha256
 ```
 
 可能なら生成token ID列をcanonical byte encodingしてhashする。backendがtoken IDを
 返さない場合はUTF-8生成textをhashし、keyを`text_sha256`として意味を偽らない。
-manifestはrequest indexと個別hashを固定順で連結してSHA-256を取る。
+`result.output`はrequest順を維持したhashとtoken countのlistをcompact JSON配列として
+1行に保存する。manifestはrequest indexと個別hashを固定順で連結してSHA-256を取る。
 
 hash差をaccuracy failureとは判定しない。temperature 0と固定seedでも、kernelや
 floating-point reductionの差で出力が変わる可能性がある。BigQuery側で同条件runを
