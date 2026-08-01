@@ -26,11 +26,11 @@ qwen-manual-<PJM_JOBID>-<YYYYMMDDTHHMMSSffffffZ>
 | `run.outcome` | enum | supervisor |
 | `run.exit_code` | int | benchmark pipeline |
 | `run.signal` | int | signal終了時 |
-| `run.command.executable` | string | 実argvの要素0 |
-| `run.command.arg.<number>` | string | 実argvの要素1以降 |
+| `run.command` | string | 実argvを`shlex.join()`したshell表現 |
 
-`run.outcome`は`succeeded`, `failed`, `cancelled`だけを使う。commandはshell文字列を
-再解析せず、PJM scriptが構築したarrayをそのままcollectorへ渡す。
+`run.outcome`は`succeeded`, `failed`, `cancelled`だけを使う。PJM scriptが構築した
+arrayをcollectorへ渡し、空白や引用符を含む引数も復元できるよう`shlex.join()`で
+単一のshell表現へ変換する。
 
 ## software source
 

@@ -14,7 +14,7 @@ Qwen 3.5向けにもmodel architectureとGPU capabilityに応じたoverrideが�
 
 ### 実argv
 
-`run.command.*`にSingularityを含む完全なargvを保存する。これはユーザーが何を
+`run.command`にSingularityを含む完全なargvのshell表現を保存する。これはユーザーが何を
 指定したかの正本である。
 
 ### benchmark引数
