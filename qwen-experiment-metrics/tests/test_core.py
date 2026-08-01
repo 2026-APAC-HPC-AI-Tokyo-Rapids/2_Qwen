@@ -20,6 +20,24 @@ def test_scalar_and_flatten() -> None:
     assert flatten("root", [{"z": 1, "a": 2}]) == [Metric("root", '[{"a":2,"z":1}]')]
 
 
+def test_cuda_graph_batch_sizes_are_one_metric_per_list() -> None:
+    metrics = flatten(
+        "sglang.server_arg",
+        {
+            "cuda_graph_config": {
+                "prefill": {"bs": [4, 8, 12]},
+                "decode": {"bs": [1, 2, 4]},
+            }
+        },
+    )
+
+    assert metrics == [
+        Metric("sglang.server_arg.cuda_graph_config.prefill.bs", "[4,8,12]"),
+        Metric("sglang.server_arg.cuda_graph_config.decode.bs", "[1,2,4]"),
+    ]
+    assert not any(metric.key.rsplit(".", 1)[-1].isdigit() for metric in metrics)
+
+
 def test_rows_have_only_three_columns() -> None:
     rows = _rows("qwen-run", [Metric("a", "1")])
     assert set(rows[0]["json"]) == {"run", "key", "value"}
