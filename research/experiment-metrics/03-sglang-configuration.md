@@ -104,26 +104,14 @@ sglang.workload.requested_output_tokens.p95
 
 requestごとに異なる値を「代表値」へ潰さず、分布の集約であることが分かるkeyにする。
 
-## model config
+## model
 
-実際にSGLangが読む`/model/config.json`も同じflattenerで次へ展開する。
+`model.config.*`は保存しない。モデル名からmodel repositoryの設定をたどれるため、
+hostの`MODEL_PATH`末尾を次の1キーだけに保存する。
 
 ```text
-model.config.model_type
-model.config.architectures
-model.config.hidden_size
-model.config.num_hidden_layers
-model.config.quantization_config.<field>
-...
+model.name
 ```
-
-`model.config.quantization_config.modules_to_not_convert`はモデル内部のmodule名を
-数百行へ展開する一方、実験比較に不要なので保存しない。
-
-file全体を1つのJSON valueとして保存しない。tokenizerやgeneration configは別の正本
-なので、必要になった時点で`model.tokenizer_config.*`,
-`model.generation_config.*`として分離する。model configの値とServerArgsの値が
-一致するかはcollectorでは照合しない。
 
 ## process間transport
 

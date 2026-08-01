@@ -40,7 +40,7 @@ dataset は Tokyo (`asia-northeast1`)、table は ingestion-time で日次 parti
 |---|---|---|---|
 | [01-run-and-source.md](experiment-metrics/01-run-and-source.md) | `run_source` | `run.*`, `software.*`, `artifact.*` | 開始・終了 |
 | [02-platform-and-scheduler.md](experiment-metrics/02-platform-and-scheduler.md) | `platform`, `scheduler_pjm` | `env.*`, `system.*`, `hardware.cpu.*`, `scheduler.*` | 開始前・PJM終了後 |
-| [03-sglang-configuration.md](experiment-metrics/03-sglang-configuration.md) | `sglang_event` | `sglang.*`, `model.config.*` | Engine初期化後 |
+| [03-sglang-configuration.md](experiment-metrics/03-sglang-configuration.md) | `sglang_event` | `sglang.*`, `model.name` | 開始前・Engine初期化後 |
 | [04-gpu-telemetry.md](experiment-metrics/04-gpu-telemetry.md) | `nvidia_gpu` | `hardware.gpu.*`, `resource.stage.benchmark.gpu.*` | 開始前・benchmark終了後 |
 | [05-benchmark-result.md](experiment-metrics/05-benchmark-result.md) | `benchmark_result` | `perf.*`, `result.*` | benchmark終了直後 |
 | [06-lifecycle-and-artifacts.md](experiment-metrics/06-lifecycle-and-artifacts.md) | `stage_runner`, `artifact` | `run.stage.*`, `artifact.*` | 各値の確定直後 |
@@ -71,8 +71,8 @@ SGLang 側の小さな instrumentation patch が、Engine初期化直後とbench
 構造化eventを Unix domain socketへ送る。host側 collectorはeventを受信し、
 dictを再帰的にscalar recordへ展開し、list/tupleは1つのcompact JSON valueとして
 直ちにBigQueryへ送る。
-`backend.get_server_info()`由来の`sglang.runtime.*`と、
-`model.config.quantization_config.modules_to_not_convert.*`は保存しない。
+`backend.get_server_info()`由来の`sglang.runtime.*`と`model.config.*`は保存せず、
+モデルはhostの`MODEL_PATH`末尾から得る`model.name`だけを保存する。
 
 socketはprocess間通信endpointであり、metric dataをdiskへ保存する一時ファイルではない。
 JSON object全体はBigQueryの`value`へ保存しない。list/tupleだけは行数を抑えるため

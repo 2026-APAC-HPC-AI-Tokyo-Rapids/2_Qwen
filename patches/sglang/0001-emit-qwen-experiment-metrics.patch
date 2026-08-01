@@ -52,17 +52,8 @@ diff --git a/python/sglang/benchmark/offline_throughput.py b/python/sglang/bench
 +        }
 +    except Exception as error:
 +        logging.warning("Could not hash benchmark outputs for metrics: %s", error)
-@@ -461,0 +510,30 @@ def throughput_test(
+@@ -461,0 +510,19 @@ def throughput_test(
 +    try:
-+        server_info = backend.get_server_info()
-+        if inspect.isawaitable(server_info):
-+            server_info = asyncio.run(server_info)
-+        model_config = {}
-+        try:
-+            with open(os.path.join(server_args.model_path, "config.json")) as stream:
-+                model_config = json.load(stream)
-+        except (OSError, json.JSONDecodeError) as error:
-+            logging.warning("Could not read model config for metrics: %s", error)
 +        input_lengths = [request.prompt_len for request in input_requests]
 +        output_lengths = [request.output_len for request in input_requests]
 +        _send_metrics_event(
@@ -70,9 +61,7 @@ diff --git a/python/sglang/benchmark/offline_throughput.py b/python/sglang/bench
 +            {
 +                "bench_args": dataclasses.asdict(bench_args),
 +                "server_args": dataclasses.asdict(server_args),
-+                "server_info": server_info,
 +                "environment": dict(os.environ),
-+                "model_config": model_config,
 +                "workload": {
 +                    "request_count": len(input_requests),
 +                    "input_tokens": input_lengths,
@@ -83,5 +72,5 @@ diff --git a/python/sglang/benchmark/offline_throughput.py b/python/sglang/bench
 +    except Exception as error:
 +        logging.warning("Could not collect SGLang configuration metrics: %s", error)
 +
-@@ -499,0 +579 @@ def throughput_test(
+@@ -499,0 +568 @@ def throughput_test(
 +    _send_metrics_event("sglang.benchmark_result", result)

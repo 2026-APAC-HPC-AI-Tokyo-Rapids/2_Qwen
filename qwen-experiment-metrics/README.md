@@ -9,5 +9,5 @@ Qwen/SGLang実験のrun-level値を、BigQueryの`run`, `key`, `value`の3列へ
 `EXPERIMENT_METRICS_SINK=stdout`を指定するとBigQueryへ送らずJSON Linesを出力する。
 
 SGLangのprivate状態や重複した実効設定は保存しない。具体的には
-`sglang.runtime.*`と
-`model.config.quantization_config.modules_to_not_convert.*`を送信対象外とする。
+`sglang.runtime.*`と`model.config.*`を送信対象外とし、モデルは`model.name`だけを
+保存する。

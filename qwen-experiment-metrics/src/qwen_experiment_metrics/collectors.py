@@ -82,6 +82,8 @@ def platform_metrics() -> list[Metric]:
             decoded = base64.b64encode(value).decode("ascii")
             key = f"env.bytes.{name_token}"
         result.append(Metric(key, decoded))
+    model_path = os.environ.get("MODEL_PATH", "")
+    result.append(Metric("model.name", Path(model_path).name if model_path else ""))
     os_release = platform.freedesktop_os_release()
     result.extend(
         [
