@@ -33,25 +33,8 @@ run.stage.benchmark.result_present
 `results.jsonl`がないことやJSON parse失敗を成功値へ置き換えない。予定したresult keyを
 空文字で送り、warningを出す。benchmark終了codeは元のprocessからそのまま伝播する。
 
-## 出力の変化検出
-
-throughputだけでは、速くても異なる出力を生成したrunを区別できない。
-prompt本文・生成本文をBigQueryへ保存せず、SGLang instrumentationで次を生成する。
-
-```text
-result.output.request_count
-result.output
-result.output.manifest_sha256
-```
-
-可能なら生成token ID列をcanonical byte encodingしてhashする。backendがtoken IDを
-返さない場合はUTF-8生成textをhashし、keyを`text_sha256`として意味を偽らない。
-`result.output`はrequest順を維持したhashとtoken countのlistをcompact JSON配列として
-1行に保存する。manifestはrequest indexと個別hashを固定順で連結してSHA-256を取る。
-
-hash差をaccuracy failureとは判定しない。temperature 0と固定seedでも、kernelや
-floating-point reductionの差で出力が変わる可能性がある。BigQuery側で同条件runを
-比較するための観測値として保存する。
+requestごとの出力hashやtoken数は保存しない。入出力は
+`result.token.input.total`と`result.token.output.total`のrun全体値だけを使う。
 
 ## artifact
 

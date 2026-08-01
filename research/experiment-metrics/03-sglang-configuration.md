@@ -78,31 +78,10 @@ sglang.server_arg.cuda_graph_config.decode.max_bs = 64
 sglang.server_arg.cuda_graph_config.batch_sizes = [1,2,4]
 ```
 
-## actual request dict
+## workload
 
-`offline_throughput`はrequestごとに`sampling_params` dictを作る。prompt本文や
-requestごとのobjectそのものは保存せず、実際に構築された値を次へ縮約する。
-
-```text
-sglang.request_arg.temperature
-sglang.request_arg.ignore_eos
-sglang.request_arg.extra.<field>
-sglang.workload.request_count
-sglang.workload.input_tokens.total
-sglang.workload.input_tokens.min
-sglang.workload.input_tokens.max
-sglang.workload.input_tokens.mean
-sglang.workload.input_tokens.p50
-sglang.workload.input_tokens.p95
-sglang.workload.requested_output_tokens.total
-sglang.workload.requested_output_tokens.min
-sglang.workload.requested_output_tokens.max
-sglang.workload.requested_output_tokens.mean
-sglang.workload.requested_output_tokens.p50
-sglang.workload.requested_output_tokens.p95
-```
-
-requestごとに異なる値を「代表値」へ潰さず、分布の集約であることが分かるkeyにする。
+requestごとのtoken数やその分布は保存しない。benchmark完了時にSGLang resultから得る
+`result.token.input.total`と`result.token.output.total`だけを保存する。
 
 ## model
 

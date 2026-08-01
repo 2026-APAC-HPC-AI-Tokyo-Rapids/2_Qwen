@@ -23,6 +23,11 @@ def test_configuration_event() -> None:
                         "modules_to_not_convert": ["model.visual"],
                     },
                 },
+                "workload": {
+                    "request_count": 1,
+                    "input_tokens": [100],
+                    "requested_output_tokens": [40],
+                },
             },
         }
     )
@@ -31,6 +36,7 @@ def test_configuration_event() -> None:
     assert values["sglang.server_arg.attention_backend"] == "flashinfer"
     assert not any(key.startswith("sglang.runtime.") for key in values)
     assert not any(key.startswith("model.config.") for key in values)
+    assert not any(key.startswith("sglang.workload.") for key in values)
 
 
 def test_result_event_mapping() -> None:
@@ -40,6 +46,8 @@ def test_result_event_mapping() -> None:
             "payload": {
                 "backend": "engine",
                 "successful_requests": 2,
+                "total_input_tokens": 100,
+                "total_output_tokens": 40,
                 "output_hashes": {
                     "request_count": 1,
                     "request": [{"text_sha256": "def", "token_count": 4}],
@@ -50,10 +58,9 @@ def test_result_event_mapping() -> None:
     )
     values = {metric.key: metric.value for metric in metrics}
     assert values["result.benchmark.backend"] == "engine"
-    assert values["result.output.manifest_sha256"] == "abc"
-    assert json.loads(values["result.output"]) == [
-        {"text_sha256": "def", "token_count": 4}
-    ]
+    assert values["result.token.input.total"] == "100"
+    assert values["result.token.output.total"] == "40"
+    assert not any(key.startswith("result.output") for key in values)
 
 
 def test_event_receiver_sends_batch(tmp_path, monkeypatch) -> None:

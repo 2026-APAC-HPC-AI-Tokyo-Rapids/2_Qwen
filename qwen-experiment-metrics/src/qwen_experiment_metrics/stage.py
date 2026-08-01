@@ -165,41 +165,12 @@ def event_metrics(event: object) -> list[Metric]:
         ):
             if source in payload:
                 result.extend(flatten(prefix, payload[source]))
-        workload = payload.get("workload")
-        if isinstance(workload, dict):
-            result.append(
-                Metric(
-                    "sglang.workload.request_count",
-                    str(workload.get("request_count", "")),
-                )
-            )
-            for source in ("input_tokens", "requested_output_tokens"):
-                values = workload.get(source)
-                if isinstance(values, list):
-                    result.extend(_distribution(f"sglang.workload.{source}", values))
         return result
     if event["type"] == "sglang.benchmark_result":
-        result = [
+        return [
             Metric(target, str(payload.get(source, "")))
             for source, target in RESULT_KEYS.items()
         ]
-        output_hashes = payload.get("output_hashes")
-        if isinstance(output_hashes, dict):
-            result.append(
-                Metric(
-                    "result.output.request_count",
-                    str(output_hashes.get("request_count", "")),
-                )
-            )
-            if "request" in output_hashes:
-                result.extend(flatten("result.output", output_hashes["request"]))
-            result.append(
-                Metric(
-                    "result.output.manifest_sha256",
-                    str(output_hashes.get("manifest_sha256", "")),
-                )
-            )
-        return result
     raise ValueError(f"unknown event type: {event['type']}")
 
 
@@ -226,33 +197,6 @@ def _percentile(values: list[float], quantile: float) -> float | None:
         return ordered[lower]
     fraction = position - lower
     return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
-
-
-def _distribution(prefix: str, raw_values: list[object]) -> list[Metric]:
-    values: list[float] = []
-    for raw in raw_values:
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if math.isfinite(value):
-            values.append(value)
-    if not values:
-        return [
-            Metric(f"{prefix}.{name}", "")
-            for name in ("total", "min", "max", "mean", "p50", "p95")
-        ]
-    summaries = {
-        "total": sum(values),
-        "min": min(values),
-        "max": max(values),
-        "mean": statistics.fmean(values),
-        "p50": _percentile(values, 0.50),
-        "p95": _percentile(values, 0.95),
-    }
-    return [
-        Metric(f"{prefix}.{name}", repr(value)) for name, value in summaries.items()
-    ]
 
 
 def aggregate_gpu(samples: dict[str, list[Sample]], interval: float) -> list[Metric]:

@@ -1,8 +1,6 @@
 diff --git a/python/sglang/benchmark/offline_throughput.py b/python/sglang/benchmark/offline_throughput.py
 --- a/python/sglang/benchmark/offline_throughput.py
 +++ b/python/sglang/benchmark/offline_throughput.py
-@@ -18,0 +19 @@ import dataclasses
-+import hashlib
 @@ -23,0 +25,2 @@ import random
 +import socket
 +import struct
@@ -27,50 +25,18 @@ diff --git a/python/sglang/benchmark/offline_throughput.py b/python/sglang/bench
 +        logging.warning("Could not emit Qwen experiment metrics: %s", error)
 +
 +
-@@ -302,0 +326,24 @@ def throughput_test_once(
+@@ -461,0 +485,12 @@ def throughput_test(
 +    try:
-+        output_hashes = []
-+        for output in gen_out:
-+            text = output.get("text", "")
-+            if not isinstance(text, str):
-+                text = str(text)
-+            output_hashes.append(
-+                {
-+                    "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-+                    "token_count": output.get("meta_info", {}).get(
-+                        "completion_tokens", ""
-+                    ),
-+                }
-+            )
-+        manifest_bytes = json.dumps(
-+            output_hashes, sort_keys=True, separators=(",", ":")
-+        ).encode()
-+        measurement_results["output_hashes"] = {
-+            "request_count": len(output_hashes),
-+            "request": output_hashes,
-+            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-+        }
-+    except Exception as error:
-+        logging.warning("Could not hash benchmark outputs for metrics: %s", error)
-@@ -461,0 +510,19 @@ def throughput_test(
-+    try:
-+        input_lengths = [request.prompt_len for request in input_requests]
-+        output_lengths = [request.output_len for request in input_requests]
 +        _send_metrics_event(
 +            "sglang.configuration",
 +            {
 +                "bench_args": dataclasses.asdict(bench_args),
 +                "server_args": dataclasses.asdict(server_args),
 +                "environment": dict(os.environ),
-+                "workload": {
-+                    "request_count": len(input_requests),
-+                    "input_tokens": input_lengths,
-+                    "requested_output_tokens": output_lengths,
-+                },
 +            },
 +        )
 +    except Exception as error:
 +        logging.warning("Could not collect SGLang configuration metrics: %s", error)
 +
-@@ -499,0 +568 @@ def throughput_test(
+@@ -499,0 +536 @@ def throughput_test(
 +    _send_metrics_event("sglang.benchmark_result", result)
