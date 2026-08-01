@@ -29,13 +29,8 @@ def test_configuration_event() -> None:
     values = {metric.key: metric.value for metric in metrics}
     assert values["sglang.benchmark_arg.num_prompts"] == "2"
     assert values["sglang.server_arg.attention_backend"] == "flashinfer"
-    assert values["model.config.model_type"] == "qwen3_5_moe"
-    assert values["model.config.quantization_config.quant_method"] == "fp8"
     assert not any(key.startswith("sglang.runtime.") for key in values)
-    assert not any(
-        key.startswith("model.config.quantization_config.modules_to_not_convert.")
-        for key in values
-    )
+    assert not any(key.startswith("model.config.") for key in values)
 
 
 def test_result_event_mapping() -> None:
