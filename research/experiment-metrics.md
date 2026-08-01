@@ -61,7 +61,6 @@ argparse.Namespace
        └─ ServerArgs.__post_init__() でモデル・GPU依存の既定値を解決
             └─ dataclasses.asdict(server_args)
                  └─ Engine(**kwargs)
-                      └─ Engine.get_server_info() で実効設定・内部状態を取得
 ```
 
 したがって、PJM scriptに書かれた command lineだけでなく、次の3層を別々に保存する。
@@ -73,6 +72,8 @@ argparse.Namespace
 SGLang 側の小さな instrumentation patch が、Engine初期化直後とbenchmark終了直後に
 構造化eventを Unix domain socketへ送る。host側 collectorはeventを受信し、
 dict/listを再帰的にscalar recordへ展開して直ちにBigQueryへ送る。
+`backend.get_server_info()`由来の`sglang.runtime.*`と、
+`model.config.quantization_config.modules_to_not_convert.*`は保存しない。
 
 socketはprocess間通信endpointであり、metric dataをdiskへ保存する一時ファイルではない。
 JSONはsocket上の内部transport encodingにだけ使い、BigQueryの`value`には保存しない。

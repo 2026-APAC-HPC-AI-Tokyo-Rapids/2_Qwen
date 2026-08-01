@@ -108,7 +108,6 @@ upstream sourceへのpatchを最小限で追加する。
 - Genkaiのdriverが受け付ける`nvidia-smi --query-gpu` field名
 - full H100 jobでDCGM profilingがuser権限から利用可能か
 - Singularity bind越しのUnix socket通信
-- `backend.get_server_info()`のRay/runtime各backendでの返却schema
 - model local metadataからHugging Face commitを確実に得られるか
 
 これらは設計を未確定にする理由ではない。unsupported時は空文字にする契約を維持し、
