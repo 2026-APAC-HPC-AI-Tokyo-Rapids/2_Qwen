@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,11 +50,7 @@ def _command(argv: list[str], timeout: float = 60) -> tuple[int, str]:
 def run_start(command: list[str]) -> list[Metric]:
     result = [Metric("run.started_at", datetime.now(UTC).isoformat())]
     if command:
-        result.append(Metric("run.command.executable", command[0]))
-        result.extend(
-            Metric(f"run.command.arg.{index}", value)
-            for index, value in enumerate(command[1:])
-        )
+        result.append(Metric("run.command", shlex.join(command)))
     return result
 
 

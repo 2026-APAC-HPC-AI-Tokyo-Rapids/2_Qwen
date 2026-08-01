@@ -65,7 +65,7 @@ argparse.Namespace
 
 したがって、PJM scriptに書かれた command lineだけでなく、次の3層を別々に保存する。
 
-1. `run.command.*`: 実際に起動した argv
+1. `run.command`: 実際に起動したargvのshell表現
 2. `sglang.benchmark_arg.*`: defaultを含む `BenchArgs`
 3. `sglang.server_arg.*`: Engine初期化後の実効 `ServerArgs`
 
