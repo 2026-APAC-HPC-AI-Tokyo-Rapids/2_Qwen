@@ -64,8 +64,8 @@ generic flattenerは次の規則にする。
 ```python
 {
     "cuda_graph_config": {
-        "decode": {"backend": "full", "max_bs": 64},
-        "batch_sizes": [1, 2, 4],
+        "decode": {"backend": "full", "max_bs": 64, "bs": [1, 2, 4]},
+        "prefill": {"bs": [4, 8, 12]},
     }
 }
 ```
@@ -75,7 +75,8 @@ generic flattenerは次の規則にする。
 ```text
 sglang.server_arg.cuda_graph_config.decode.backend = full
 sglang.server_arg.cuda_graph_config.decode.max_bs = 64
-sglang.server_arg.cuda_graph_config.batch_sizes = [1,2,4]
+sglang.server_arg.cuda_graph_config.decode.bs = [1,2,4]
+sglang.server_arg.cuda_graph_config.prefill.bs = [4,8,12]
 ```
 
 ## workload
