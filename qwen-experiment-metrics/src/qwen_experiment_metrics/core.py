@@ -76,6 +76,22 @@ def _key_part(value: object) -> str:
     return f"encoded.{text.encode('utf-8').hex()}"
 
 
+def _json_value(value: object) -> object:
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        value = dataclasses.asdict(value)
+    if isinstance(value, Mapping):
+        return {str(key): _json_value(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(child) for child in value]
+    if isinstance(value, enum.Enum):
+        return _json_value(value.value)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
 def flatten(prefix: str, value: object) -> list[Metric]:
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         value = dataclasses.asdict(value)
@@ -87,12 +103,13 @@ def flatten(prefix: str, value: object) -> list[Metric]:
             result.extend(flatten(f"{prefix}.{_key_part(key)}", child))
         return result
     if isinstance(value, (list, tuple)):
-        if not value:
-            return [Metric(prefix, "")]
-        result = []
-        for index, child in enumerate(value):
-            result.extend(flatten(f"{prefix}.{index}", child))
-        return result
+        encoded = json.dumps(
+            _json_value(value),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return [Metric(prefix, encoded)]
     return [Metric(prefix, scalar(value))]
 
 

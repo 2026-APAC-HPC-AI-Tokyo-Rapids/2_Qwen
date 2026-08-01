@@ -6,7 +6,7 @@
 - Qwen専用dataset/tableは`qwen_experiment_metrics.qwen_metrics`とする。
 - collectorは独立uv projectとしてruntime bundleへcopyする。
 - SGLangの実効引数はcommand lineから再構築せず、Engine内のobjectから取得する。
-- nested objectはscalar keyへ再帰展開し、JSON valueを保存しない。
+- nested dictはscalar keyへ再帰展開し、list/tupleはcompact JSON valueへまとめる。
 - GPU raw sampleは保存せず、1秒samplingのrun-level集約だけを送る。
 - 第1段階は`nvidia-smi`、DCGMは実機利用可能性確認後の第2段階にする。
 - 通常benchmarkの成否をmetrics失敗で変えない。
@@ -18,7 +18,7 @@
    config loader, REST sender, `CommandRunner`, `pjstat` readerを移植する。
 3. package名、CLI名、BigQuery設定をQwen用に変更する。
 4. stdout sinkとunit testを移植する。
-5. generic nested scalar flattenerを追加し、dict/list/None/Enum/invalid keyのtestを書く。
+5. generic nested flattenerを追加し、dict/list/None/Enum/invalid keyのtestを書く。
 
 このphaseはSIFを変更しない。
 

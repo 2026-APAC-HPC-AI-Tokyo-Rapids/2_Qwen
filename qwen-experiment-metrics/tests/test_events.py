@@ -56,8 +56,9 @@ def test_result_event_mapping() -> None:
     values = {metric.key: metric.value for metric in metrics}
     assert values["result.benchmark.backend"] == "engine"
     assert values["result.output.manifest_sha256"] == "abc"
-    assert values["result.output.0.text_sha256"] == "def"
-    assert values["result.output.0.token_count"] == "4"
+    assert json.loads(values["result.output"]) == [
+        {"text_sha256": "def", "token_count": 4}
+    ]
 
 
 def test_event_receiver_sends_batch(tmp_path, monkeypatch) -> None:

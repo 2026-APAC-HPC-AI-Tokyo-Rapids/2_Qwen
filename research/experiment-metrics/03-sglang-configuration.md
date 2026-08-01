@@ -38,24 +38,24 @@ Engine初期化前に解決済みの`ServerArgs`を次へ展開する。
 
 ```text
 sglang.server_arg.<field>
-sglang.server_arg.<field>.<nested-key-or-index>
+sglang.server_arg.<field>.<nested-key>
 ```
 
 `backend.get_server_info()`は`ServerArgs`の複製とSGLangのprivateな
 `internal_states`を大量に含むため保存しない。`sglang.runtime.*`は生成しない。
 
-## dict/listのscalar展開規則
+## dict/listの展開規則
 
 generic flattenerは次の規則にする。
 
 - dataclassはfield名のdictへ変換する。
 - dictはkeyを1階層として再帰展開する。
-- list/tupleは`.0`, `.1`の0始まりindexへ展開する。
+- list/tupleは展開せず、そのfieldのcompact JSON配列として1行に保存する。
 - `None`は空文字にする。
 - boolは`true`/`false`、有限数はcanonical decimalにする。
 - Enumはそのscalar valueを使う。
-- 1つのcontainer全体をJSON文字列にして保存しない。
-- 空dict/listは、そのfield自体を空文字で保存して「存在した空container」を表す。
+- dict全体をJSON文字列にせず、keyごとに展開する。
+- 空dictは空文字、空list/tupleは`[]`として保存する。
 - 通常property名に使えないdict keyはUTF-8 byte列をhex化し、
   `encoded.<hex>`として可逆に表す。
 
@@ -75,9 +75,7 @@ generic flattenerは次の規則にする。
 ```text
 sglang.server_arg.cuda_graph_config.decode.backend = full
 sglang.server_arg.cuda_graph_config.decode.max_bs = 64
-sglang.server_arg.cuda_graph_config.batch_sizes.0 = 1
-sglang.server_arg.cuda_graph_config.batch_sizes.1 = 2
-sglang.server_arg.cuda_graph_config.batch_sizes.2 = 4
+sglang.server_arg.cuda_graph_config.batch_sizes = [1,2,4]
 ```
 
 ## actual request dict
@@ -112,7 +110,7 @@ requestごとに異なる値を「代表値」へ潰さず、分布の集約で�
 
 ```text
 model.config.model_type
-model.config.architectures.0
+model.config.architectures
 model.config.hidden_size
 model.config.num_hidden_layers
 model.config.quantization_config.<field>

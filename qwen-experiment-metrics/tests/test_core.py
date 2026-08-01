@@ -13,11 +13,11 @@ def test_scalar_and_flatten() -> None:
     assert scalar(True) == "true"
     assert scalar(float("nan")) == ""
     assert flatten("root", {"nested": [1, None, Choice.VALUE]}) == [
-        Metric("root.nested.0", "1"),
-        Metric("root.nested.1", ""),
-        Metric("root.nested.2", "selected"),
+        Metric("root.nested", '[1,null,"selected"]'),
     ]
     assert flatten("root", {}) == [Metric("root", "")]
+    assert flatten("root", []) == [Metric("root", "[]")]
+    assert flatten("root", [{"z": 1, "a": 2}]) == [Metric("root", '[{"a":2,"z":1}]')]
 
 
 def test_rows_have_only_three_columns() -> None:
