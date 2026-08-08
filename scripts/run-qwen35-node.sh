@@ -114,7 +114,21 @@ while kill -0 "${engine_pid}" 2>/dev/null; do
   sleep 1
 done
 
-wait "${engine_pid}" || node_status=$?
+engine_status=0
+wait "${engine_pid}" || engine_status=$?
 engine_pid=""
+
+# The rank-zero benchmark tears down all distributed workers before its
+# Singularity process returns. Rank one can therefore observe SIGKILL (137)
+# shortly before rank zero publishes the authoritative benchmark status.
+for _ in {1..300}; do
+  if [[ -s "${completion_file}" ]]; then
+    node_status="$(<"${completion_file}")"
+    exit "${node_status}"
+  fi
+  sleep 0.1
+done
+
+node_status="${engine_status}"
 echo "node_rank=1 exited before node_rank=0 completed (status=${node_status})" >&2
 exit "${node_status}"
