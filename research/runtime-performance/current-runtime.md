@@ -39,7 +39,7 @@ benchmark の終了 code は profiler wrapper、PJM script、workflow へ伝播�
 
 ## 計算ノード上の実行環境
 
-PJM script は NVIDIA HPC SDK 25.11、HPC-X 2.25.1、CUDA 13.2.0、Singularity CE 4.1.3をloadする。Open MPIはCPU bindingを無効化して各ノードに1プロセスを配置し、それぞれのcontainerが4 GPUを担当する。SGLangは`tp_size=8`、`nnodes=2`としてノード間tensor parallelismを構成する。containerは`--nv --cleanenv --containall`で起動し、計算ノードで利用可能な通常のSingularity mount経路を使う。次だけを明示的にbind mountする。
+PJM script は NVIDIA HPC SDK 25.11、HPC-X 2.25.1、CUDA 13.2.0、Singularity CE 4.1.3をloadする。Open MPIはCPU bindingを無効化して各ノードに1プロセスを配置し、それぞれのcontainerが4 GPUを担当する。SGLangは`tp_size=8`、`nnodes=2`としてノード間tensor parallelismを構成する。Genkai計算ノードでは通常のcontainer process生成が許可されないため、containerは`--userns --nv --cleanenv --containall`で起動する。FUSE mountも許可されない場合はSingularityの一時sandbox展開へfallbackする。次だけを明示的にbind mountする。
 
 - model: `/model:ro`
 - dataset の単一 JSON: `/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro`
