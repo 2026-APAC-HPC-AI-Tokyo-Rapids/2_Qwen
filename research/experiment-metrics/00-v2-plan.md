@@ -77,8 +77,11 @@ key    STRING NOT NULL
 value  STRING NOT NULL
 ```
 
-`run`は全producerが共有するglobally uniqueでimmutableなIDである。Actions経路では
-repository、run ID、attempt、PJM job IDを含め、manual経路ではclusterを含むUUIDを使う。
+`run`は全producerが共有するglobally uniqueでimmutableなIDである。Actions経路ではjob投入前に
+repository、Actions run ID、attemptと各submissionで必須の128-bit random nonceから固定する。nonceは
+OS CSPRNGの16 byteを32文字のlowercase hexで表す。manual経路では
+clusterを含むUUIDをjob投入前に生成する。`pjsub`返却後にしか分からないPJM job IDはrun IDへ
+含めず、immutableなsubmission bindingと`scheduler.job_id`で結ぶ。初期run manifestを書き換えない。
 raw relationは次のfunctional dependencyを満たす。
 
 ```text
@@ -91,9 +94,11 @@ raw relationは次のfunctional dependencyを満たす。
 - 既存runの値を訂正しない。訂正測定は新しいrunとして残す。
 - row不在は未観測、`value=""`は実際に観測した空文字、`"0"`は真のゼロを表す。
 - 取得不能や非該当をplaceholder空文字にしない。
-- collector lifecycle keyはsupervisorだけが所有する。collector呼出し前に
-  `collector.<name>.started`を耐久appendし、呼出しから戻った後にstatusとerror countを持つ
-  `collector.<name>.final`を一度だけappendする。どちらのkeyも更新しない。
+- collector lifecycle keyはsupervisorだけが所有する。collector data fragmentとは独立した
+  `lifecycle/<producer>.jsonl`へ、呼出し前に`collector.<name>.started`を耐久appendし、呼出しから
+  戻った後にstatusとerror countを持つ`collector.<name>.final`を一度だけappendする。どちらのkeyも
+  更新しない。lifecycle journalはatomic sealを要求せず、mergeはvalidなcomplete JSON lineを必ず
+  回収し、末尾のpartial lineだけを破棄して`fragment_complete=false`をrunner fragmentへ記録する。
 - startedなしは未到達、startedあり/finalなしは中断、finalのfailedは処理済み失敗とする。
   finalがあってもrequired keyがなければ別理由のincompleteとし、viewで混同しない。
 
@@ -147,28 +152,78 @@ effective、plannedとobserved、rank 0とrank 1、別phaseの時間は独立事
 `metrics.jsonl`はBigQueryと同じ`run/key/value`を持つwrite-ahead logである。別event
 envelope、型別value列、ack queueは作らない。
 
+target programの薄いhookが出すversion付きdomain recordは、local adapterへの入力または
+diagnostic/source logであって第二の送達queueではない。単発factはadapterが直ちにregistryで検証して
+WAL化する。反復eventを最終的に一arrayへするfamilyは、fsync済みappend-only domain journalを
+artifactとして残し、terminal後のpure reducerが一度だけFactへ変換する。registryはどちらか一方を
+familyごとに固定し、BigQueryへの耐久送達の正本は`run/key/value` WALだけにする。
+
 ```text
 compute producer
   -> node別のmetrics JSONLへ耐久append
   -> node別fragmentをatomic completion
-  -> runnerがexpected nodeを検証・merge
-  -> runnerがBigQueryへ全行をat-least-once送信
-  -> fragment、merged JSONL、全logをarchive
-  -> remote保存を検証してからruntimeを削除
+  -> runnerがexpected nodeとfragmentを検証し、log/sample/fragmentのrun bundleを作成
+  -> bundle identityをfinalizer fragmentへappendして最終merge
+  -> run bundleとmerged JSONL sidecarをarchiveしchecksum/manifestで検証
+  -> runnerがBigQueryへ全行をat-least-once送信またはreplay待ちに登録
+  -> archive検証後にruntimeを削除
 ```
 
 - 一つの完全なJSON lineを`O_APPEND`またはlock下で書き、flush/fsync後に完了とする。
-- expected producer集合はscheduler allocationから固定する。
+- expected producer集合はGit管理protocolとrun manifestからjob投入前に固定する。scheduler
+  accountingとobserved placementは、その期待集合が実際に成立したかを後から検証するsourceである。
 - mergeはrun ID、JSON、owner、expected node、一意性を検査し、欠損や異値競合を隠さない。
 - BigQuery `insertId`はbest-effortの補助にすぎない。logical viewが完全一致rowをdeduplicate
   し、異値競合を隔離する。
 - replayは常に同じrowを全件送ってよい。送信成功後もJSONLをtruncateしない。
 - archive/upload失敗時はruntimeをquarantineし、後続reconcilerが回収する。
+- publish失敗時は検証済みarchiveをreplay pendingにし、raw JSONLから再送する。
 - remote checksumとmanifest確認前に唯一のlocal copyやGitHub artifactを削除しない。
+
+artifact identityの自己参照を避ける。まずlog、raw GPU sample、producer fragmentからrun bundleを
+作ってhashし、そのdeterministic URI、bundle hash、manifest identityをrunner finalizer fragmentへ
+appendする。その後に最終mergeした`metrics.jsonl`をbundleとは別のsidecarとして同じarchive
+prefixへ保存する。bundleとsidecarの両方をremoteで検証してからpublish/cleanupする。metrics
+sidecar自身のhashをsidecar内のmetricにはしない。
 
 timed benchmark中はBigQueryへ接続しない。送信用credentialはrunnerだけが保持するため、
 PJM processの性能条件へ混入しない。各snapshotはそのscopeに実在する環境をfilterなしで
 保存し、機密値も例外扱いしない。
+
+## 最小の実装境界
+
+対象programへ計測システムの都合を持ち込まないため、責務を次の六境界へ固定する。
+
+1. domain probe/parserは`Fact(key, logical_value)`だけを返すpure functionとする。run ID、文字列化、
+   filesystem、BigQueryを知らない。
+2. `Recorder`だけがpersist済みrun manifest、registry、canonical encoder、fact/lifecycleの
+   append/fsync、data fragmentのatomic completionを所有する。producerはこの一つの出力境界だけを見る。
+3. `StageRunner`だけがspawnするactual argv、monotonic timer、signal、child wait statusを所有し、
+   観測したfactを`Recorder`へ渡す。
+4. runner側`merge`がexpected producer、run ID、owner、一意性、required key、fragment完了を検証し、
+   archive対象のmerged JSONLを作る。node-scoped full factをrun-scopedへ変換しない。
+5. `ArtifactStore/RunFinalizer`がrun bundle/outer manifestのfsync、seal、put/remote verify、quarantine、reconcileを
+   所有する。delivery receiptはrun WALへ戻さず外側のdelivery ledgerへappendする。
+6. runner側`publish`だけがBigQuery credential、retry、replayを所有する。collector、SGLang、PJM
+   processはnetwork送信をしない。
+
+SGLang本体へ必要なhookは、version付きlocal structured eventを定義済み境界でだけ書く薄いadapterとする。
+metrics packageやBigQuery clientをimportせず、送達、再試行、key展開を知らない。実装上は
+`domain.py`、`journal.py`、`stage_runner.py`、`merge.py`、`artifact_store.py`、`publish.py`、domain別
+probe/parserを深いmodule境界にし、CLIはそのcomposition rootに限定する。
+
+Qwenの唯一のdomain-specific durability境界として、rank 0の`PrimaryResultWriter`だけは
+`backend.generate` return後にprimary artifactをatomic write+fsync+renameする。これはWAL writerでも
+bundle storeでもなく、metrics keyを知らないsource-artifact writerである。schemaはcontract、run、
+invocation ID、generation duration、returned/error count、observed input/output totals、validation
+reasonsに固定し、runnerのprimary-result parserだけが対応raw keyのownerになる。
+
+fixtureを両repositoryで満たし、interfaceが安定してから、canonical encoder、registry validator、
+merge validatorだけを抽出する。domain collectorやpipeline固有の失敗処理は共通化しない。
+
+各factの権威source、producer、取得時点、raw key/artifact、validation、欠損時の扱いは
+[観測マップ](./01-v2-observation-map.md)を正本とする。sourceと取得時点をそこへ特定できない候補は
+key registryへ追加しない。
 
 ## 環境snapshot
 
@@ -176,7 +231,10 @@ PJM processの性能条件へ混入しない。各snapshotはそのscopeに実�
 
 - `env.job_entry.*`: PJM entry直後、module操作やunsetより前の全環境
 - `env.host.node.<node_rank>.*`: module設定後、各nodeのbenchmark exec直前の全環境
-- `sglang.env.node.<node_rank>.*`: 各container内、SGLang初期化直前の全環境
+- `sglang.env.node.<node_rank>.*`: 各container内、`_set_envs_and_config`等の解決後、scheduler
+  process launch直前の全環境
+- `sglang.worker.env.rank.<global_rank>.*`: 各workerがruntime初期化を完了しreadyを通知する直前の
+  全環境
 
 名前と値はbyte-exactに取得する。nameの各byteは`[A-Za-z0-9_]`だけをそのまま使い、それ以外は
 `~HH`の大文字hexでescapeするため単射になる。valueはUTF-8可否にかかわらず全件をRFC 4648の
@@ -228,28 +286,42 @@ socket endpointは各node localに作り、各nodeのeventはそのnodeのWALへ
   producerになる。
 - 各nodeはresolved args、environment、actual argv、affinity、GPU mapping、telemetryを
   node scopeで出す。
-- mergeはfull node snapshotからrank-invariantなcommon fieldsとnode-specific deltaを
-  losslessly構成する。common値と同じ値をnode deltaへ再掲しない。
-- expected rank集合、distinct hostname、GPU UUID集合をschedulerと照合する。
-- rank 1のcoordinated teardownと、generation前の異常終了をphase/result有無で区別する。
+- rawはnode/rank-scoped full factを正本として保持する。viewだけが全expected scopeの一致を
+  検証したfieldをcommon表示し、rawにcommon/deltaの第二表現を作らない。
+- expected node rank `{0,1}`、global scheduler rank `{0..7}`、distinct hostname、GPU UUID集合を
+  manifestとschedulerへ照合する。
+- rank 1のcoordinated teardownと早期終了は、rank 1 node-local clock上のchild exitとdurable
+  `shutdown.start` receiptの前後で区別する。
 
 rank 1の`Engine()` constructorはdistributed completionまで内部でblockするため、constructor後を
 configuration producerにしない。SGLang内部で最終runtime値を解決した後、rank 1がwaitへ入る
-直前のhookからnode fragmentをemitする。generationのnode-local markerもoffline driverからでは
-なく、各worker/scheduler内部hookでemitする。内部hookを置けない版だけはrank 0から各node-local
-samplerへcontrolを送り、そのlocal receipt時刻をmarkerにする。いずれもexpected node全ての
-start/endを要求する。
+直前のhookからnode fragmentをemitする。GPU phase markerはSGLang worker内部へ広げず、benchmark
+開始前に接続済みの小さなcontrol forwarderを使う。rank 0 offline hookが`invocation_id`、phase、
+start/end、sequenceを各node monitorへbroadcastし、各monitorがnode-local receipt時刻をappendして
+ACKする。sender/receipt/ACKをartifactへ残し、異なるnodeのmonotonic値同士を減算しない。このlane
+ではnative-worker markerとcontrol-forwarder markerを同じmetricへ混在させない。
+
+generation順序は`start broadcast -> expected 2 node durable ACK -> rank0 timer start -> generate ->
+timer end -> end broadcast -> expected ACK`へ固定する。start ACK完了からgenerate開始までのleadと、
+generate終了からend ACK完了までのtrailをrank 0 clockでartifactへ残すため、GPU receipt windowが
+generationの保守的supersetであることを判定できる。shutdownも`shutdown.start(invocation_id)`を
+両nodeへbroadcastし、durable ACK後に`backend.shutdown()`を呼ぶ。
 
 metricは次の形にする。
 
 - `run.launch_argv`: stageが起動したouter MPI argvのcanonical JSON配列
 - `parallel.node.<node_rank>.benchmark_argv`: 各nodeのSingularity/SGLang argv
-- `sglang.benchmark_arg.*`: rank間一致を確認したcommon resolved BenchArgs
-- `sglang.server_arg.*`: rank間一致を確認したcommon resolved ServerArgs
+- `parallel.node.<node_rank>.sglang.benchmark_arg.*`: 各nodeのresolved BenchArgs
+- `parallel.node.<node_rank>.sglang.server_arg.*`: 各nodeのlaunch-effective ServerArgs
 - `parallel.node.<node_rank>.*`: node rank、dist init、MPI rank、affinity、GPU mapping、
-  node固有resolved delta
+  runtime-observed state
+- `parallel.node.<node_rank>.process_lifecycle`: child start/end、raw wait status/signal、supervisor
+  termination reason、shutdown invocation IDのJSON object
 
 shell表示はviewで作る。同じnode固有fieldをrun-scoped keyへ送らない。
+rank 1 node内の同じclockで、local `shutdown.start` receiptより前のchild exitをearly failure、
+同じinvocationのreceipt後をcoordinated teardownと判定する。rank 0側timestampと直接比較せず、
+rank 0 completion file到着だけでrank 1の早期死を上書きしない。
 
 ## Qwen/SGLangで保存する原始事実
 
@@ -258,12 +330,16 @@ shell表示はviewで作る。同じnode固有fieldをrun-scoped keyへ送らな
 - `run.started_at`、`run.finished_at`、`run.elapsed_sec`
 - `run.outcome`、`run.exit_code`
 - `run.launch_argv`とnode別actual benchmark argv
-- `perf.stage.benchmark.wall_time_sec`とstage exit code
-- `scheduler.allocation`: requested/allocated node、host、process、GPUのJSON object
-- `hardware.nodes`: hostnameごとのCPU、NUMA、cpuset、GPU UUIDと静的構成のJSON配列
+- `perf.stage.benchmark.wall_time_sec`とexit/signal/spawn errorを区別するstage termination object
+- `scheduler.request`: runner submit boundaryのlane、PJM script identity、exact `pjsub` argv
+- `scheduler.accounting`: 固定した`pjstat --history -S --choose ... --data --delimiter`の結果
+- `hardware.cpu_numa.nodes`: hostnameごとのhost-invariantなCPU、NUMA、memory構成
+- `hardware.gpu.nodes`: hostnameごとのGPU UUID、PCI、memory、driver等の静的構成
+- worker affinity/cpusetは`worker_ready`のglobal-rank-scoped runtime fact
 
-started/finishedとelapsedは、現実装ではclockと範囲が一致せず厳密な派生関係ではないため
-残す。timer範囲を統一した後も、運用・Sheets用の意図的な索引として扱う。
+started/finishedはUTC wall clock、elapsedは同じsupervisor境界のmonotonic clockで取得するため、
+wall-clock jumpとtimestamp精度の影響を受けず厳密な派生関係ではない間だけ残す。同一scope、clock、
+precisionへ統一した時点でelapsedまたはtimestamp pairの一方をview派生へ移す。
 
 ### SIF、model、dataset provenance
 
@@ -276,6 +352,10 @@ SIF内manifestにはbuild inputsとして次を固定する。
 
 SIF完成後に実際の参照先binaryをSHA-256で検証し、そのcontent identityとembedded manifestの
 identityをatomic sidecarへ保存する。SIF全体hashをSIF自身へ埋め込む自己参照にはしない。
+recipeの`From:`はdigest-pinned referenceにし、buildが消費したOCI manifest/config/layer digestを
+sidecarへ記録する。archiveとsidecarは二file同時にatomicにはならないため、SIFをversion directoryへ
+renameし、SIF hashを持つsidecarを最後のcommit markerとしてrenameする。consumerは両者一致時だけ
+reuseする。
 
 modelは全shardのimmutable manifest、datasetはpinned repository revisionまたはfile manifest、
 tokenizerとchat templateはmodel artifact identityへ含める。共有pathだけをidentityにしない。
@@ -289,8 +369,8 @@ raw tableは比較groupとartifact到達に必要なcommit、manifest identity�
 rank 0は、実際に選ばれたrequest順序を持つcanonical manifestをartifactへ残す。各recordは
 少なくとも次を含む。
 
-- dataset source IDまたはrow ID
-- prompt token content digest
+- dataset manifest identityと元JSON array indexから作るsource row ID
+- canonical token-ID arrayのSHA-256であるprompt token content digest
 - input token length
 - requested output length
 - sampling parameter
@@ -298,28 +378,44 @@ rank 0は、実際に選ばれたrequest順序を持つcanonical manifestをarti
 
 prompt本文と生成本文はBigQueryへ保存しない。BigQueryには次だけを索引化する。
 
-- `artifact.workload.manifest_sha256`
+- `artifact.workload.measured.manifest_sha256`
 - `workload.request.selected_count`
 - `workload.token.input.planned_total`
 - `workload.token.output.requested_total`
+- `artifact.workload.warmup.manifest_sha256`
+- `workload.warmup.request.selected_count`
+- `workload.warmup.token.input.planned_total`
+- `workload.warmup.token.output.requested_total`
+- `workload.warmup.mode`
 
-このcountとtoken totalsはresult completenessをartifact読取なしで判定するためのjustified index
+warmup manifest/modeもmeasured前のcache/stateを変える一致必須条件にする。これらのcountとtoken
+totalsはresult completenessをartifact読取なしで判定するためのjustified index
 である。総token数が等しくてもrequest順序や長さ分布が異なればmanifest identityが変わる。
 
 ### benchmark結果の原始観測値
 
 - `result.request.returned_count`
-- `result.request.failed_count`
+- `result.request.error_count`
 - `result.token.input.total`
 - `result.token.output.total`
 - `perf.benchmark.generation.wall_time_sec`
-- `run.stage.benchmark.result_present`
 
-returned/failed countは実際に返ったresponseを検証して作る。generation開始前の予定request数を
+returned/error countは実際に返ったresponse配列と各objectを検証して作る。返らなかった件数は
+viewで`selected_count - returned_count`として導出する。generation開始前の予定request数を
 `successful_requests`と呼ばない。result fileは存在だけでなく、非空、valid JSON、期待row数、
 有限で正のlatency、token整合を検査する。
 
-benchmark validityは少なくとも`failed_count = 0`、`returned_count = selected_count`、observed
+runtime backendの文字列出力はgenerate return直後にdecodeし、各responseの
+`meta_info.prompt_tokens`と`completion_tokens`からobserved totalsを作る。malformed/error responseは
+`error_count`へ分類し、returned過多、token field欠損も別validation reasonにする。generate全体が
+例外ならreturned/error/token countを0と捏造せず、generation lifecycle failedとkey不在で表す。
+
+minimal primary resultの唯一のdurability sourceはrank 0がこの検証直後に作るatomic artifactとする。
+temporary fileをwrite+fsyncし、rename後にdirectoryをfsyncしてからprofile finalize、
+`get_server_info()`、shutdownへ進む。後段の通常`result_filename`は診断artifactであり、同じraw factの
+第二正本にしない。runner parserがprimary artifactを`Fact`へ変換する。
+
+benchmark validityは少なくとも`error_count = 0`、`returned_count = selected_count`、observed
 input totalとplanned input totalの一致、有限かつ正のgeneration wall timeを要求する。現在の
 `ignore_eos`固定protocolではobserved output totalとrequested output totalの一致も要求する。
 
@@ -337,6 +433,11 @@ request/input/output/total throughputは上記の原始値からviewで計算す
 - `perf.benchmark.generation.wall_time_sec`
 - `perf.phase.engine_shutdown.wall_time_sec`
 
+distributed engine initはrank 0 processの同じclockで`Engine(...)`呼出し直前からconstructor return
+直後までとする。各worker-ready timestampを引き算へ混ぜず、ready eventはglobal rank cardinalityと
+runtime completenessだけに使う。input prepareはmeasured request object完成時にtimerを閉じ、
+workload manifestのhash/fsyncはtimer外かつgenerate前に行う。
+
 純粋なmodel loadは全worker内の境界を観測できた場合だけ追加する。JITは複数phaseにまたがる
 ため、根拠なく`jit_and_warmup`という一時間へまとめない。timed pathではWAL appendだけを
 行い、BigQuery送信待ちをstage時間へ混入させない。
@@ -353,10 +454,13 @@ run後にcacheを共有領域へmergeしても、そのrunのinput identityは�
 
 ### GPU telemetry
 
-各nodeのsamplerはsampleを実行中に圧縮可能なJSONLへ追記し、SIGKILLでも途中まで残す。
-sampleはnode-local monotonic timestamp、GPU UUID、logical index、値、poll errorを持つ。
-phase markerも各nodeの同じclock domainへ渡す。expected nodeのgeneration start/endが一つでも
-欠ければgeneration aggregateを作らない。
+各nodeのsamplerはshared durable runtime上のnode-owned JSONLへ一行ずつ`O_APPEND`し、各sampleを
+`fdatasync`して
+SIGKILLでも直前まで残す。圧縮する場合は独立zstd frameごとにsyncし、sequence gapと未完成frameを
+検出できる形に限る。sampleはnode-local monotonic timestamp、wall anchor、sequence、GPU UUID、
+logical index、値、poll errorを持つ。control markerを各nodeの同じnode-local clockで受け、expected
+nodeのstart/endが一つでも欠ければgeneration aggregateを作らない。node GPU windowは同じ
+`invocation_id`のlocal receipt `[start,end)`とし、broadcast/ACK latencyを別artifactで監査する。
 
 BigQueryにはphase/node/GPU scopeを明示して、次だけを集約する。
 
@@ -366,7 +470,12 @@ BigQueryにはphase/node/GPU scopeを明示して、次だけを集約する。
 - energyとpower-valid duration
 - temperature max、SM clock min
 
-power meanはenergy/durationからviewで導出する。phase markerが欠けた場合はgeneration aggregateを
+gauge sampleは取得時刻から次sample、phase end、または`2 * nominal_interval`の最小時刻まで
+有効なstep functionとして扱い、それより長いgapはcoverageへ入れない。meanはvalid duration
+weighted mean、p95は値を昇順に並べたweighted nearest-rank、energyはpowerの同じstep-function
+積分とする。最後のpre-start sampleもその有効区間がphase `[start,end)`と交差する部分には使う。
+coverageはvalid observed duration / phase durationである。power meanは
+energy/power-valid durationからviewで導出する。phase markerが欠けた場合はgeneration aggregateを
 作らず、stage全体値で代用しない。raw sampleと集約の一致をfixtureで確認する。
 
 ## validity、completeness、comparison eligibility
@@ -406,19 +515,35 @@ workload/SIF/model/dataset/cache identity、主要effective args、topology、pr
 phase時間、GPU集約、反復数、median、MAD、CV、baseline ratioを固定列で表示する。full env
 差分は別tabにする。
 
+## 決定状態
+
+| 状態 | 決定 |
+|---|---|
+| 確定 | raw relationは`run/key/value`の三列、compound valueはcanonical JSON |
+| 確定 | 定義した各process scopeの環境変数は機密値を含めfilterせずbyte-exactに全件保存 |
+| 確定 | native object/structured sourceを優先し、log regexはfixture付きの最終手段 |
+| 確定 | compute側はlocal WALだけ、archive/verify/publish/replayはrunner側 |
+| 確定 | observed totalsから派生するthroughputやnode full factsのcommon copyをrawへ重複保存しない |
+| 未決定 | score runへ許すinstrumentation overheadの統計的上限 |
+| 未決定 | durable archiveの最終保存先、retention期間、quarantineの容量上限 |
+
 ## 実装順序
 
-1. 現行key、producer、consumer、artifact保存先をinventory化し、key registryと
-   `run.metrics_contract`を作る。
+1. 現行key、producer、consumer、artifact保存先をinventory化し、key registry、expected producer
+   graph、`run.metrics_contract`を作る。contractなしはlegacy、run内のproducer version混在はinvalid、
+   v2 viewはexact contractだけを読む。
 2. clean checkout、remote到達性、SIF/model/dataset sidecar manifest、manual provenance
    gateを作る。
-3. BigQuery credentialをrunnerだけへ移したうえで、現行metric集合のままJSONL WAL、node
-   merge、runner replay、archive/reconcilerを導入する。
-4. `raw_distinct`、conflict、completeness、v2 comparison viewを旧collectorと並行して作る。
-5. node-local event endpoint、rank 0 ownership、common/delta mergeを実装し、397B runの
-   configuration欠落と競合を修正する。
-6. workload/cache manifestとresult validationを追加し、2 node TP=8 completenessを確認する。
-7. observable phase eventとnode-local raw GPU sampleを追加し、timed pathからBigQueryを外す。
+3. BigQuery credentialをrunnerだけへ移したうえで、現行metric集合のまま`Fact`、`Recorder`、
+   JSONL WAL、runner merge/publish、archive/reconcilerを導入する。
+4. `raw_distinct`、conflict、completeness、exact-contract v2 comparison viewを旧collectorと並行して作る。
+5. node-local event endpoint、rank 0 result ownership、node-scoped full configurationを実装し、
+   397B runのconfiguration欠落と競合を修正する。manifestが固定したexact contractだけをv2 viewへ
+   入れ、contractなしはlegacy、異なるcontractのproducer混在はinvalidにする。
+6. warmup/measured workload、cache manifest、atomic primary result validatorを追加し、2 node TP=8、
+   global worker rank 0..7のcompletenessを確認する。
+7. persistent control-forwarder phase eventとnode-local raw GPU sampleを追加し、timed pathから
+   BigQueryを外す。
 8. Connected Sheetsをv2 viewへ切り替え、旧key consumerがなくなってからthroughput、model名、
    GPU総数等の派生・部分集合keyの新規生成を止める。
 9. retention期間後もarchive済みJSONLだけから空tableへ完全replayできることを確認して旧viewを
@@ -434,8 +559,9 @@ phase時間、GPU集約、反復数、median、MAD、CV、baseline ratioを固�
 - 正当な空文字、未観測、collector失敗、collector未到達、真のゼロをfixtureで区別できる。
 - canonical JSONがprocessやobject挿入順に依存せず同じbyte列になる。
 - 各key patternのownerが一意で、distinct後のrun/key conflictがゼロである。
-- 実2 node runでnode-local eventが届き、common値とnode deltaをlosslessに復元できる。
-- expected rank、host、GPU UUID、TP、nnodes、MPI processの不一致を理由別に検出できる。
+- 実2 node runでnode-scoped full configが届き、viewが一致fieldとnode差をlosslessに表示できる。
+- expected node rank、global worker rank 0..7、host、GPU UUID、TP、nnodes、MPI processの不一致を
+  理由別に検出できる。
 - prompt順序だけが違う同token総数workloadをmanifest identityで分離できる。
 - result欠損、不正JSON、returned count/token不一致、非有限時間をcomparison対象外にできる。
 - viewの四つの代数的throughputがSGLang artifactと許容誤差内で一致する。
