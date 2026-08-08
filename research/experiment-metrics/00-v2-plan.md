@@ -397,9 +397,14 @@ recipeの`From:`はdigest-pinned referenceにし、buildが消費したOCI manif
 sidecarへ記録する。build scriptがSIFとsidecarを書き終えて成功した後だけcacheへ公開し、reuse時に
 両者のidentity一致を検査する。任意のcrash境界から二fileを復旧するtransactionは作らない。
 
-modelは全shardのimmutable manifest、datasetはpinned repository revisionまたはfile manifest、
-tokenizerとchat templateはmodel artifact identityへ含める。共有pathだけをidentityにしない。
-provision時にmanifestと実体の一致を検証する。
+modelは`source/model-manifest.json`へ、repository/revisionが分かればその値、`config.json`と
+`model.safetensors.index.json`のSHA-256、indexが参照するsorted unique shardのrelative path/size、tokenizer/
+chat-template fileのpath/size/SHA-256を保存する。400 GBのshard本文はrunごとに再hashしない。datasetはworkflowで
+repository revisionをpinし、`source/dataset-manifest.json`へrepository/revision、relative file name、size、
+SHA-256を保存する。共有pathだけをidentityにしない。provision時にmanifestと実体の一致を検証する。
+
+raw索引は`artifact.model.manifest_sha256`、`artifact.dataset.manifest_sha256`と各artifact URIだけを持つ。
+repository/revision/memberはmanifest内の完全recordが正本であり、個別raw keyへ再掲しない。
 
 raw tableは比較groupとartifact到達に必要なcommit、manifest identity、artifact URIだけを
 索引化する。SIFや全model shardを各benchmark runで再hashしない。
@@ -977,7 +982,16 @@ instrumented runはaudit-only、profile runは常にaudit-onlyとする。
 採用し、文書から調べられる事実を先に閉じた後、結果を変える未決定事項だけを一回に一問聞く。各回答は
 `decision_id/question/recommended option/alternatives/user answer/decided_at/affected contract fields and
 views/reopen trigger`をGit管理decision recordへ残す。未回答を推奨値で埋めず、依存するviewのdecisionはNULL、
-release gateは未通過のままにする。現在の未決定質問はinstrumentation overhead criterionだけである。
+release gateは未通過のままにする。
+
+コード監査で、D-001とは別にprofile tool contract D-004が残っていることが分かった。現行
+`scripts/exec-profiler.sh`はtransparent wrapperであり、SGLang側にはTorch Profilerと
+`CUDA_PROFILER`/Nsight系の複数経路があるため、tool、activity、step範囲、required raw file集合はコードだけでは
+一意に決まらない。D-004では初版profileでprofilerを必須にするか、必須ならどのtoolとstep範囲をcanonical
+protocolにするかを一問で決める。未回答の間はtransparent wrapperをprofile protocolとしてreleaseしない。
+
+プロジェクト全体の質問順は、OpenFOAM lane scope D-003、Qwen profile contract D-004、確定したscore laneの
+instrumentation overhead D-001とする。D-003はD-001の対象laneを決めるため先行する。
 
 ## 決定状態
 
@@ -991,6 +1005,7 @@ release gateは未通過のままにする。現在の未決定質問はinstrume
 | 確定 | bench/profileを分離し、profile専用familyはbenchで値だけNULL、原因/status/Evidenceなしとする。profile runはscore比較へ混ぜない |
 | 確定 | artifact移管はOpenFOAMのGitHub Artifact -> Tailscale/SSH -> home RAIDを基準とし、Qwenへ同じ経路を移植する |
 | 確定 | home artifactは自動expireせず、容量が実際に問題になった時だけ手動整理する。専用quarantineは作らない |
+| 未決定 | D-004: 初版profileで必須にするprofiler、activity、step範囲、required raw file集合 |
 | 未決定 | score runへ許すinstrumentation overheadの統計的上限 |
 
 ## 実装ハンドオフ
@@ -1149,12 +1164,11 @@ qualification OFF/ON:
 qualification OFFへscore observation/primary flagを渡さず、qualification ONはnative estimandとprimary reliability
 artifactの両方を書く。normal bench/profileへnative result pathを渡さない。argv allowlist testでvariant間の境界を固定する。
 
-node-agent間control transport、advertise addressのmachine-readable source、port allocation、connect timeoutは
-lane contractへ固定する。rank 0 wrapperは`node-agent --control-listen <address>:<port-or-0>`でcoordinatorを
-起動し、実際にbindしたaddress/port、run ID、nonce、protocol versionを
-`control/lifecycle/rendezvous.json`へ通常writeする。rank 1 wrapperはこのfileのrun ID/
-versionとfreshnessを検証し、`--coordinator-address <address>:<port>`を明示してparticipantを起動する。
-address/portを環境変数、DNS推測、任意file探索から導出しない。
+初版laneは現行実行へ合わせ、rank 0 MPI wrapperが取得した`hostname`をadvertise address、SGLang distributed
+portを`25000`、node-agent control portを`25001`、rendezvous待ちを60秒、ready待ちを120秒に固定する。
+rank 0はaddress、固定port、run ID、protocol versionを`control/lifecycle/rendezvous.json`へ一度writeし、rank 1は
+その一fileだけを待って明示endpointへ接続する。port衝突やtimeoutはrun failureとして再実行し、動的port allocator、
+複数discovery source、自動fallbackは作らない。
 
 coordinatorはexpected node `{0,1}`のidentity付きready ACKをmemory上で集めてからcontainer開始を許可し、
 最終summaryだけをfileへ書く。bind/connect/ready timeout、stale/wrong-run messageはsolverを開始しない
@@ -1192,6 +1206,8 @@ runとsubmission subjectを分け、run側は次の固定layoutにする。任�
   domain/sglang/node-<node>.jsonl
   domain/worker/global-rank-<rank>.jsonl
   source/sif-sidecar.json
+  source/model-manifest.json
+  source/dataset-manifest.json
   source/env/job-entry.snapshot
   source/env/host-node-<node>.snapshot
   source/env/sglang-node-<node>.snapshot         # score bundleだけ
@@ -1265,7 +1281,7 @@ artifact-manifest.json  # file path、size、SHA-256、contract
 
 bundle memberはrun variant別のmanifest駆動exact allowlistとする。regularは`control/`のmanifest、contract、
 protocol、submission raw stdout/stderr、実在するresult/failed outcome、binding、job-entry、scheduler-terminalを
-含む。さらに全runでSIF sidecar、該当するenvironment/cache/topology、PJM accounting raw/version、PJM batch
+含む。さらに全runでSIF sidecar、model/dataset manifest、該当するenvironment/cache/topology、PJM accounting raw/version、PJM batch
 log、benchmark stdout/stderr、purpose別authoritative result/workloadをexpected fileとして列挙する。qualification
 childはparent-owned memberを含めず、`qualification-parent-ref.json`だけを含む。
 profileだけphase/telemetry、
@@ -1300,7 +1316,7 @@ artifact移管の基準はOpenFOAMの`actions/upload-artifact`、GitHub-hosted a
 
 ```text
 run -> build log、execution log、results、metrics.jsonlをGitHub Artifactへupload
-    -> profileならraw GPU telemetry/profiler traceも別artifactへupload
+    -> profileならraw GPU telemetryと、D-004でapplicableになった場合だけprofiler traceを別artifactへupload
     -> /hdd_raid/samba/net_share/qwen-artifacts/<run>/<attempt>/ へscp
     -> SCP commandが成功した時だけ、そのworkflow runのGitHub Artifactを削除
 ```
@@ -1311,9 +1327,10 @@ remote再読取checksum、全境界crash recovery、独立backupは実装しな�
 現行どおりcleanupしてよい。
 
 normal benchのPrimaryResultWriter、qualification OFF/ONのnative result、parent/child/canary evidenceを必ず
-results artifactへ含める。Qwen profileではprofiler wrapperへ明示引数
-`--profile-output-dir <runtime>/runs/<run>/profile/raw`を渡し、exact profiler argv、tool metadata、trace rawを
-`profile-raw.tar.zst`へまとめてuploadする。現在のtransparentな`exec-profiler.sh`のままprofile protocolをreleaseしない。
+results artifactへ含める。Qwen profileのprofiler familyはD-004でapplicableと確定したprotocolだけrequiredにする。
+その場合はprofiler wrapperへ明示引数`--profile-output-dir <runtime>/runs/<run>/profile/raw`を渡し、exact profiler
+argv、tool metadata、trace rawを`profile-raw.tar.zst`へまとめてuploadする。D-004がprofiler非必須と決めたprotocolや
+未回答中のrunでprofiler file/placeholderを要求せず、現在のtransparentな`exec-profiler.sh`を「取得済みprofiler」と扱わない。
 bench/qualificationではprofile producer、artifact、placeholder、absence eventを作らず、対応consumerは
 原因/status/Evidenceなしの`NULL`だけである。
 
@@ -1425,7 +1442,9 @@ rollbackはlaneのprotocol contractを直前版へ戻して新しいrunを投入
 
 - 性能に影響する変更がすべてremote到達可能なcommitにあり、commit bodyから仮説が分かる。
 - SIF reuseでもsource-track head/base、original build commit、SGLang commit、content identityをrole付きで区別できる。
-- model shard、dataset、tokenizer、cache、workloadの1 byte/order変更をmanifestが検出する。
+- modelはpinned revisionまたは事前作成manifestへ結び、config/index/tokenizerの1 byte変更とshard membership/path/size
+  不一致を検出する。400 GB shard本文の同size byte変更はrunごとの検出対象にしない。dataset、cache、workloadの
+  1 byte/order変更は各manifestが検出する。
 - 正当な空文字、未観測、collector失敗、collector未到達、真のゼロをfixtureで区別できる。
 - canonical JSONがprocessやobject挿入順に依存せず同じbyte列になる。
 - 各key patternのownerが一意で、distinct後のrun/key conflictがゼロである。

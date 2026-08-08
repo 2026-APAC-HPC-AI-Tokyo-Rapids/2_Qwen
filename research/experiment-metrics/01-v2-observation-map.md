@@ -104,8 +104,8 @@ consumerでNULLを返すだけで、raw key、family status、Evidence、reason�
 | qualification allocation | Git管理paired scheduleとrunnerが一度作るparent manifest | `runner.manifest` / pair submit前、`pjm.supervisor` / entry、`runner.postrun` / terminal後 | allocation ID、scheduler binding/accounting、job-entry env、pair/ordered child IDs、OFF/ON order、common lane/node/GPU binding | 一allocation一pair、二childの独立manifest/log/metrics、child parent ref、block ID=allocation ID、同じartifact set、pair間は別allocation | arm間crash/未起動/未完成は回収できたfileだけ保存しpair不適格。片armを別allocationへ再pairしない |
 | SGLang source | SIF build時のcheckout済み`5_SGLang_Src` full commit | `build.packager` / source checkout直後 | SIF build sidecarとsource commit索引 | branch名ではなくfull commit、embedded valueとの一致 | SIFを公開しない |
 | SIF/toolchain | digest-pinned `From:`が消費したOCI manifest/config/layer、完成SIF、package/toolchain、実参照binary | `build.packager` / SIF完成・test後 | `source/sif-sidecar.json`、artifact identity/URI索引 | SIF hashは完成後sidecarへ書き、reuse時に実体と一致確認 | reuse禁止 |
-| model/tokenizer/template | pinned model manifest、全shard identity、tokenizer files、chat template | `provision.verifier` / node copy前 | immutable manifest artifactとidentity索引 | pathではなく全member/order、実体との一致 | provision失敗 |
-| dataset | pinned repository revisionまたはdataset file manifest | `provision.verifier` / node copy前 | dataset manifest artifactとidentity索引 | shared pathだけで同一視せずbyte identity検査 | provision失敗 |
+| model/tokenizer/template | pinned model manifest、index参照shard、tokenizer files、chat template | `provision.verifier` / node copy前 | `source/model-manifest.json`と`artifact.model.manifest_sha256` | repository/revision、config/index hash、sorted shard path/size、small metadata file hash。400 GB shard本文はrunごとにhashしない | provision失敗 |
+| dataset | pinned repository revisionとdataset file | `provision.verifier` / node copy前 | `source/dataset-manifest.json`と`artifact.dataset.manifest_sha256` | repository/revision、relative path、size、SHA-256をshared pathと独立に照合 | provision失敗 |
 | full job-entry environment | `os.environb`相当のbyte environment | `pjm.supervisor` / script entry直後、module/unset前 | regularは`env.job_entry.*`と`source/env/job-entry.snapshot`、qualificationはparent snapshotとallocation env projection | byte-exact name escapeと全value Base64。child rawへ複写せずEnvironmentがblock/allocation join | applicable snapshot collector failed |
 | full host exec environment | node wrapperのbyte environment | `node.wrapper` / module/cache staging後、container exec直前 | `env.host.node.<node_rank>.*`と`source/env/host-node-<node>.snapshot` | byte-exact、expected node全件、raw scope保持 | configuration incomplete |
 | full SGLang launch environment（score bundle） | container内のbyte environment | bench/profile/qualification ONの`sglang.engine` / `_set_envs_and_config`等の解決後、scheduler launch直前 | `sglang.env.node.<node_rank>.*`と`source/env/sglang-node-<node>.snapshot` | `--cleanenv`後かつSGLang mutation後の全件、raw scope保持 | applicable runではconfiguration incomplete。qualification OFF consumerはNULLだけ |
@@ -141,7 +141,7 @@ consumerでNULLを返すだけで、raw key、family status、Evidence、reason�
 | raw GPU telemetry（profile only） | node-local periodic `nvidia-smi` sampleとpoll error | profile `node-agent` / process実行中にnode別JSONLへbuffered append | node別raw JSONL | 一定間隔と正常終了時にflush、monotonic/wall anchor/UUID/index/value/error/sequence gap | profileでは読めるsampleだけ保存してtelemetry incomplete。bench consumerはNULLだけを返す |
 | GPU phase markers（profile only） | persistent coordinatorからのcontrol message | profile `node-agent` / warmup・generation message受信時 | node/invocation/sequence別phase summary | expected node `{0,1}`、local `[start,end)`、順序、latency。native markerと混在禁止 | profileでは対象aggregateを作らない。bench consumerはNULLだけを返す |
 | GPU aggregate（profile only） | raw sampleとphase marker | `runner.postrun` / profile run後 | phase/node/GPU scoped count、coverage duration、util mean/p95、memory max、energy/power-valid duration、temp max、clock min | `[start,end)`交差、pre-start sample可、`2*interval` gap cutoff、duration-weighted mean/nearest-rank p95/energy | profileではtelemetry incomplete。bench consumerはNULLだけを返す |
-| artifact identity | localで作ったrun bundle、profileだけのraw telemetry/trace tar、SIF/build sidecar | `runner.packager` / GitHub Artifact upload前 | artifact URI、bundle/profile hash、SIF source/hash、`artifact-manifest.json` | SIF/env/cache/topology/PJM raw+version/`logs/pjm-job.log`/benchmark stdout/stderr/result/workloadを列挙し、profileは明示出力先`<runtime>/runs/<run>/profile/raw`からtrace/tool metadata/exact argvも回収。benchではprofile artifact/placeholder/absence recordを作らない | uploadできなければrun-level archive failure。benchのprofile consumerは理由なしNULLだけ |
+| artifact identity | localで作ったrun bundle、profileだけのraw telemetry/trace tar、SIF/build sidecar | `runner.packager` / GitHub Artifact upload前 | artifact URI、bundle/profile hash、SIF source/hash、`artifact-manifest.json` | SIF/model/dataset/env/cache/topology/PJM raw+version/`logs/pjm-job.log`/benchmark stdout/stderr/result/workloadを列挙。profileはGPU telemetryを回収し、D-004でprofiler familyがapplicableなprotocolだけ固定出力先のtrace/tool metadata/exact argvもrequiredにする。benchではprofile artifact/placeholder/absence recordを作らない | uploadできなければrun-level archive failure。benchのprofile consumerは理由なしNULLだけ |
 | archive/publish result | GitHub Artifact upload結果、SCP結果、BigQuery response | workflow archive job/`Publisher` / upload・転送・送信後 | workflow logとData Status | SCP成功後だけGitHub Artifactを削除。失敗はArtifactを残してjob failure | scientific familyへ理由を伝播せず、run-level状態だけにする |
 
 ## SGLang hookの正確な位置
@@ -202,7 +202,9 @@ consumerでNULLを返すだけで、raw key、family status、Evidence、reason�
 
 `experiments/lanes/qwen-genkai-2node-tp8.toml`は2 PJM nodes、2 MPI node processes、4 GPU/node、
 TP=8、expected node rank `{0,1}`、expected global scheduler rank `{0..7}`、required producer、
-instrumentation modeを固定する。runnerはlane、PJM script identity、exact `pjsub` argvを
+instrumentation modeに加え、rank 0 `hostname`をadvertise source、SGLang port `25000`、control port
+`25001`、rendezvous timeout 60秒、ready timeout 120秒を固定する。port衝突/timeoutはrun failureとして
+再実行し、動的allocatorやfallback discoveryは作らない。runnerはlane、PJM script identity、exact `pjsub` argvを
 `scheduler.request`へsealし、job内のOMPI state、worker-ready、GPU UUID、accounting `nnumu`と照合する。
 
 全variantで各node wrapperがcommon lifecycle node-agentを起動する。bench/profile/qualification ONだけが
@@ -252,6 +254,9 @@ eligibility、result artifactとの代数的parityを検査する。
 ## 未決定事項
 
 bench/profile分離と、benchのprofile-only metricは値をNULLにするだけで原因/status/Evidenceを作らないことは
-ユーザー確定済みである。score runに許す最小bench bundleの統計上限D-001はユーザー確認待ちである。決まるまではGPU
+ユーザー確定済みである。初版profileで必須にするprofiler/activity/step範囲/required raw file集合D-004と、
+score runに許す最小bench bundleの統計上限D-001はユーザー確認待ちである。プロジェクト全体ではOpenFOAMの
+lane scope D-003を先に決め、D-004、D-001の順に一問ずつ確認する。決まるまではGPU
 polling/aggregate、phase control marker、profiler、verbose backend trace、full placement診断はprofile-only、
-未qualificationのinline eventはaudit-onlyとする。閾値を文書へ仮置きしてscore/qualification eligibleへ混入させない。
+未qualificationのinline eventはaudit-onlyとする。profiler toolや閾値を文書へ仮置きして
+profile/score/qualification eligibleへ混入させない。
