@@ -11,12 +11,16 @@ LLM benchmark 結果である。
 
 ## 継承する契約
 
+- BigQueryへ送るのは検索・比較できる実測値、実効設定、識別子、成否などのscalarを
+  基本とし、artifact本文やその代理となるcontent hashをmetricにしない。
 - raw table は `run STRING NOT NULL`, `key STRING NOT NULL`,
   `value STRING NOT NULL` の3列だけにする。
-- dictはscalar keyへ展開し、list/tupleは1つのcompact JSON文字列として保存する。
+- dictはscalar keyへ展開する。list/tupleは順序を持つ設定値を欠落させないための
+  限定的な例外として、1つのcompact JSON文字列にする。
 - 通常の成功 run では `(run, key)` を一意にする。
 - 同じ取得元から同時に得た値を1 batchにし、取得後すぐ BigQuery へ送る。
-- transport 用一時ファイル、disk queue、spoolは作らない。
+- BigQuery transport用のdisk queueやspoolは作らない。複数nodeからrank 0へ渡す
+  GPU集約batchだけは共有runtime directoryを一時handoffに使い、読取後すぐ削除する。
 - 取得・送信失敗は benchmark の終了 codeを変更せず、取得不能値は空文字にする。
 - collector は値同士の照合、baseline判定、pass/fail判定をしない。
 - 計算環境の環境変数は問答無用で全件保存する。
@@ -41,7 +45,7 @@ dataset は Tokyo (`asia-northeast1`)、table は ingestion-time で日次 parti
 | [01-run-and-source.md](experiment-metrics/01-run-and-source.md) | `run_source` | `run.*`, `software.*`, `artifact.*` | 開始・終了 |
 | [02-platform-and-scheduler.md](experiment-metrics/02-platform-and-scheduler.md) | `platform`, `scheduler_pjm` | `env.*`, `system.*`, `hardware.cpu.*`, `scheduler.*` | 開始前・PJM終了後 |
 | [03-sglang-configuration.md](experiment-metrics/03-sglang-configuration.md) | `sglang_event` | `sglang.*`, `model.name` | 開始前・Engine初期化後 |
-| [04-gpu-telemetry.md](experiment-metrics/04-gpu-telemetry.md) | `nvidia_gpu` | `hardware.gpu.*`, `resource.stage.benchmark.gpu.*` | 開始前・benchmark終了後 |
+| [04-gpu-telemetry.md](experiment-metrics/04-gpu-telemetry.md) | `nvidia_gpu` | `hardware.node.*.gpu.*`, `resource.stage.benchmark.node.*.gpu.*` | benchmark終了後 |
 | [05-benchmark-result.md](experiment-metrics/05-benchmark-result.md) | `benchmark_result` | `perf.*`, `result.*` | benchmark終了直後 |
 | [06-lifecycle-and-artifacts.md](experiment-metrics/06-lifecycle-and-artifacts.md) | `stage_runner`, `artifact` | `run.stage.*`, `artifact.*` | 各値の確定直後 |
 | [07-implementation-plan.md](experiment-metrics/07-implementation-plan.md) | 全体 | 実装順序、テスト、導入条件 | 実装前 |
@@ -69,14 +73,14 @@ argparse.Namespace
 
 SGLang 側の小さな instrumentation patch が、Engine初期化直後とbenchmark終了直後に
 構造化eventを Unix domain socketへ送る。host側 collectorはeventを受信し、
-dictを再帰的にscalar recordへ展開し、list/tupleは1つのcompact JSON valueとして
-直ちにBigQueryへ送る。
+dictを再帰的にscalar recordへ展開し、list/tupleは順序を持つ実設定値として1つの
+compact JSON valueにして、直ちにBigQueryへ送る。
 `backend.get_server_info()`由来の`sglang.runtime.*`と`model.config.*`は保存せず、
 モデルはhostの`MODEL_PATH`末尾から得る`model.name`だけを保存する。
 
 socketはprocess間通信endpointであり、metric dataをdiskへ保存する一時ファイルではない。
-JSON object全体はBigQueryの`value`へ保存しない。list/tupleだけは行数を抑えるため
-compact JSON配列として保存する。
+JSON object全体はBigQueryの`value`へ保存しない。list/tupleだけは設定値の順序と
+要素境界を保持しつつ行数を抑えるため、compact JSON配列として保存する。
 `results.jsonl`は従来どおり人間とActions向けのbenchmark成果物として残す。
 
 ## GPU計測の境界
@@ -103,8 +107,8 @@ SGLangが報告する`total_latency`はtimed generationだけなので、両者�
 - baselineとの差、合否、性能回帰判定
 - 公称hardware値を実測値として代入した値
 
-生成結果の変化検出には本文を保存せず、request順の出力hashとcanonical manifest hashを
-使う。hashの一致・不一致を評価するのは参照query側であり、collectorではない。
+生成結果の本文はBigQueryへ保存しない。必要な比較はActions artifactの
+`results.jsonl`を対象に行い、collector側で内容識別子を生成しない。
 
 ## 現行構成に対して必要になる変更
 

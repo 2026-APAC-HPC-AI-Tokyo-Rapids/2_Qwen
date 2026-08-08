@@ -33,6 +33,12 @@ class Metric:
     key: str
     value: str
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str) or not self.key:
+            raise TypeError("metric key must be a non-empty string")
+        if not isinstance(self.value, str):
+            raise TypeError("metric value must be a scalar string")
+
 
 @dataclass(frozen=True, slots=True)
 class BigQueryConfig:

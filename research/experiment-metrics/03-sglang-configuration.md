@@ -50,7 +50,8 @@ generic flattenerは次の規則にする。
 
 - dataclassはfield名のdictへ変換する。
 - dictはkeyを1階層として再帰展開する。
-- list/tupleは展開せず、そのfieldのcompact JSON配列として1行に保存する。
+- list/tupleは順序を持つ設定値に限り展開せず、そのfieldのcompact JSON配列として
+  1つの文字列scalarに保存する。artifactやログ本文をこの方式で格納しない。
 - `None`は空文字にする。
 - boolは`true`/`false`、有限数はcanonical decimalにする。
 - Enumはそのscalar valueを使う。

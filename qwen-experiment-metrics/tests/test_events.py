@@ -48,11 +48,6 @@ def test_result_event_mapping() -> None:
                 "successful_requests": 2,
                 "total_input_tokens": 100,
                 "total_output_tokens": 40,
-                "output_hashes": {
-                    "request_count": 1,
-                    "request": [{"text_sha256": "def", "token_count": 4}],
-                    "manifest_sha256": "abc",
-                },
             },
         }
     )
