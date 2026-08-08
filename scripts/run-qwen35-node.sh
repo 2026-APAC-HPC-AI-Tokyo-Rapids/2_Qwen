@@ -88,7 +88,7 @@ benchmark=(/opt/sglang/venv/bin/python -m sglang.benchmark.offline_throughput
   --seed 42
   --mem-fraction-static 0.85
   --result-filename /output/results.jsonl)
-command=(singularity exec --userns --nv --cleanenv --containall
+command=(singularity exec --nv --cleanenv --containall
   --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1
   --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton
   --env QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock
