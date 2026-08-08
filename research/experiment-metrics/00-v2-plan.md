@@ -261,6 +261,9 @@ shutdown、process lifecycle全体のwall timeとする。結果を見て指標�
 - `experiment.block_id`
 - `experiment.block_order`
 - `experiment.replicate_index`
+- `experiment.pair_id`: 欠損・置換後もA/B対応を推測しないprotocol割当ID
+- `experiment.planned_replicate_group_id`: submit前に割り当てる非NULL arm/group ID
+- `experiment.planned_comparison_set_id`: submit前に割り当てる非NULL比較集合ID
 
 既定は各条件5 attemptとし、同じ時間block内でA/Bを交互または事前乱数化順に投入する。
 有効runが3未満なら環境差を確定しない。invalid/failed runを遅かったという理由で除外・
@@ -274,11 +277,21 @@ shutdown、process lifecycle全体のwall timeとする。結果を見て指標�
 - nuisance: hostname、GPU UUID、開始日時、queue待ち、個別node identity
 - outcome: throughput、phase時間、resource値
 
-protocol commitはtreatmentにするkey集合と一致必須key集合を事前宣言する。viewは次の二つを
-導出し、fingerprint自体はrawへ保存しない。
+protocol commitはtreatmentにするkey集合と一致必須key集合を事前宣言し、runner manifestがexact policyと
+`dimension_policy_hash`をsealする。contractはdimensionごとのallowed classだけを制約し、protocolごとに
+変わり得るclassを固定しない。viewは次の二つを導出し、fingerprint自体はrawへ保存しない。hash入力は
+contract ID/hash、protocol commit/hash、dimension policy hash、dimension name、logical type、canonical
+valueのsorted tupleである。required dimensionがmissing/conflictingならfingerprintを作らずreasonを返す。
 
-- `replicate_fingerprint`: 一致必須条件とtreatment値を含み、同一条件の反復統計に使う。
-- `comparison_set_fingerprint`: 宣言済みtreatment次元だけを除き、A/B ratioの候補を束ねる。
+- `observed_replicate_fingerprint`: 実観測した一致必須条件とtreatment値を含むnullable検証結果。
+- `observed_comparison_set_fingerprint`: 実観測値から宣言済みtreatment次元だけを除いたnullable検証結果。
+
+attempted countのgroupにはnullableなobserved fingerprintを使わない。pre-run protocol assignmentが必ず
+非NULLのplanned group/set IDをsealし、failed/invalid runもそこへ残す。eligible countだけが、実観測
+fingerprintとplanned policyの一致を要求する。
+`planned_replicate_group_id`はcontract hash、protocol hash、dimension policy hash、planned must-matchと
+planned treatment dimensionのcanonical tupleから生成する。`planned_comparison_set_id`は同じnamespaceで
+宣言treatmentだけを除いたplanned tupleから生成する。`group-1`等の任意labelは表示属性にすぎない。
 
 commit、artifact、cluster等がtreatmentならcomparison set内では差を許すが、replicate groupは
 必ず分離する。nuisanceとoutcomeはどちらにも含めない。競技提出用bestと、環境比較用の全点、
@@ -509,23 +522,187 @@ comparison eligibleにはしない。
 
 ## BigQuery viewとスプレッドシート
 
-Git管理SQLは次の順でviewを作る。
+logical schemaを増やさず、raw tableはdaily ingestion-time partition、cluster順`run,key`で作り、
+`require_partition_filter=false`とする。`_PARTITIONTIME`はUTC delivery partition bucketであってrun時刻にも
+exact publish時刻にもならず、replayで変わり、streaming write-optimized storageでは一時的にNULLにも
+なり得るためcomparison/freshness factへ使わない。partition expirationはdurable retention決定まで
+設定しない。recent delivery監査だけ`(_PARTITIONDATE >= ... OR _PARTITIONTIME IS NULL)`を使い、run lookupは
+cluster filterを使う。semanticなdedupe/conflict/comparisonは正しさのため全partitionを対象にする。
 
-1. `raw_distinct`: 完全一致rowをdeduplicate
-2. `run_key_conflicts`: 同じrun/keyの異値を隔離
-3. `run_completeness`: validityと各completenessを理由別に表示
-4. `qwen_run_facts_v2`: 固定列のrun比較表
-5. `qwen_run_diff_v2`: 二run間の比較関連差分
-6. `qwen_env_diff_v2`: 全環境変数差分
+Git管理SQLは次の非二乗relationを作る。
 
-Gitから生成するcommit dimensionをjoinし、subject、body、commit URLを表示できるようにする。
-commit messageをrun metricへ複製しない。Connected Sheetsはraw tableではなくversioned consumer
-viewだけを見る。
+| object | row grain | 役割 |
+|---|---|---|
+| `raw_distinct` | unique `(run,key,value)` | 完全一致retryだけをdeduplicate |
+| `run_key_singletons` | `(run,key)` | distinct valueが一つだけのtyped pivot入力。異値keyを通さない |
+| `run_key_conflicts` | `(run,key,value)` | 異値が二つ以上あるkeyの各distinct valueを一行ずつ保持し、値を選ばない |
+| `qwen_run_reason_items_v2` | `(run,reason_item_id)` | class/code/subject/canonical detail JSONを持つ全理由の唯一のlong relation |
+| `qwen_run_facts_v2` | one row per run | conflict-free factだけをtyped固定列へpivot |
+| `qwen_run_evidence_items_v2` | `(run,family,evidence_item_id)` | producer/capture/scope/raw key/artifact member/valueごとの決定的evidence |
+| `qwen_run_family_status_v2` | `(run,family)` | evidence itemsからexpected/observed/status/reasonを集約 |
+| `qwen_comparison_dimensions_v2` | `(run,dimension)` | `must_match/treatment/nuisance/outcome`とcanonical value |
+| `qwen_replicate_points_v2` | `(run,estimand_id)` | protocol/group/treatment、attempt/order/value、eligible/reasonsを全点表示 |
+| `qwen_replicate_stats_v2` | `(contract_hash,protocol_hash,dimension_policy_hash,planned_replicate_group_id,estimand_id)` | attempted全件とobserved一致済みeligible n、median、MAD、CV。bestとは別 |
+| `qwen_paired_points_v2` | `(contract_hash,protocol_hash,dimension_policy_hash,planned_comparison_set_id,pair_id,estimand_id,baseline_treatment_id,candidate_treatment_id)` | protocol指定pairの左右run/value/eligibility |
+| `qwen_paired_comparisons_v2` | `(contract_hash,protocol_hash,dimension_policy_hash,planned_comparison_set_id,estimand_id,baseline_treatment_id,candidate_treatment_id,estimator_id)` | ratio方向、pair数、interval、decision、reason。未決定基準はNULL |
+| `qwen_env_facts_v2` | `(run,scope_kind,scope_instance,escaped_name)` | 各scopeのraw full snapshotだけをdecodeしたbyte-exact name/value |
+| `qwen_run_diff_v2(left_run,right_run)` | table function、一expected dimensionまたはsentinel一行 | 二runのvalue/equality/class/blocking reason |
+| `qwen_env_diff_v2(left_run,right_run)` | table function、一scope/nameまたはsentinel一行 | full outer diffのadded/removed/changed/sameと左右値 |
+| `qwen_delivery_events_v2` | `(event_id)` | receipt URIとhash-chain順を持つdurable storeのimmutable event projection |
+| `qwen_delivery_run_status_v2` | `(run,destination)` | eventから導出する最新operational state。科学的eligibilityを変えない |
+| `qwen_sheet_status_v2(delivery_destination)` | table function、one row | SQL/contract identity、query時刻、delivery sync/high-watermark/latest publish、issue件数 |
 
-標準Sheetは少なくともrun、時刻、outcome、completeness、commit、artifact/log link、
-workload/SIF/model/dataset/cache identity、主要effective args、topology、primary throughput、
-phase時間、GPU集約、反復数、median、MAD、CV、baseline ratioを固定列で表示する。full env
-差分は別tabにする。
+environmentの`scope_kind`はcontract enum `job_entry|host_exec_node|sglang_launch_node|worker_global_rank`、
+`scope_instance`はnullable node/global rank等をfield名付きcanonical JSONにしたinjective IDで、Sheetにはtyped
+scope列も出す。display hostnameだけをjoin keyにしない。`escaped_name`はbyte nameの単射表現であり、同名でも
+scopeが違えば別rowである。
+
+delivery relationはraw metric tableではなく、durable delivery storeから同期するoperational relationで
+ある。immutable eventは`event_id/previous_event_id/event_kind/event_sequence/run/destination/receipt URI/
+metrics hash/attempt/outcome/timestamp`だけを持つ。同run/destinationではattemptを単調増加、各attemptの
+sequenceを0始まり連続、previous linkを一本のchainにし、destination別FSMの許可transitionを検証する。
+branch/gap/duplicate sequenceならstatusをinvalidにし、timestampの`MAX`や`ANY_VALUE`でlatestを選ばない。
+run statusは検証済みchainから導出し、性能/config factを複製しない。sync receiptは
+`projection_synced_at`、`event_high_watermark_id`、`event_high_watermark_at`を持ち、
+`event_high_watermark_at`、`latest_publish_succeeded_at`を別々に表示し、同期停止を最新publishと誤認させない。
+family statusはevidence itemのaggregateであって同じgrainのsubsetではない。別の保存表やproducerを作らず、
+run facts/statusのmissing/incomplete countも同じaggregateを使う。
+`reason_item_id`はreason class/code、`subject_kind=raw_key|consumer_column|family|contract|dimension|evaluator`、
+subject ID、nullable raw key、`detail_sha256`から決定的に作る。`detail_json`はexpected/actual、evaluator、
+source locator等を持つcanonical typed JSONで、hashだけで内容を捨てない。blocking booleanも持つ。
+
+上表は独立した保存メトリクス集合ではなく、rawを唯一の科学的正本とするlogical query interfaceである。
+相互に列が重なるprojectionも別のraw producerやscheduled copyを作らない。非NULL`expected_locator`は
+contract field/key patternまたはartifact fieldとexpected scope instanceを一意に表す。`source_instance_id`は
+contract hash、expected locator、producer、capture、expected scope instanceだけから作る観測非依存IDである。
+`evidence_item_id`はsource instance ID、evidence kind、nullable concrete raw keyまたはartifact content
+identity/member、nullable value hashまたはmissing sentinelから決定的に作る。mirror URIは表示locatorであり
+IDへ入れない。manifestの
+expected node/rank/source graphからmissing instanceも行として展開し、artifact-only証拠はraw keyをNULLに
+する。同一source instanceの異値はvalue hashごとに別itemとしstatusをconflictingにするが、familyのexpected/
+observed countはdistinct source instance IDを数えて水増ししない。全valueは`run_key_conflicts`へ戻せる。
+
+`qwen-v2.toml`にはraw contractと同じcommitで`[[consumer.run_column]]`を置く。各固定列はexact
+`name/type/unit/source family/raw pattern|artifact field/scope-cardinality/reducer/conflict rule/
+transform_id/null-reason/dimension name/allowed classes`を宣言する。複数sourceの派生列はordered source listを持つ。
+生成SQL、Evidence lineage、Sheet headerだけがこれを読み、「主要field」の手動選択や手書きpivotを許さない。
+contract testは各consumer列についてexactly one definitionと、input evidence patternへの到達を検査する。
+
+同じcontract/protocolに`[[consumer.estimand]]`を置き、`estimand_id`、source/transform、logical type、unit、
+改善方向、eligibility rule ID、許すstatistic/estimator/intervalを固定する。point viewはrunとprotocolが
+宣言した全estimandの直積を展開し、source欠損も行を落とさずNULL value+reasonにする。protocolは一次・二次
+estimandとdecision対象を事前指定し、view実装者が結果を見て選ばない。
+
+全run pairのdiffを通常viewとしてmaterializeしない。agent/SQL利用者とConnected Sheetsは二つのcell
+parameterを持つcustom query `SELECT * FROM dataset.qwen_run_diff_v2(@LEFT_RUN,@RIGHT_RUN)`、同env diffを
+直接呼ぶ。table functionはNULL、同一、存在しないrunを`selection_status`で拒否し、full outer joinで
+片側欠損を落とさない。invalid selectionはzero rowにせず、`row_kind=selection_error`のsentinelを必ず一行
+返す。valid config diffは左右contract/protocolのdeclared dimension gridのunionから始め、左右のdefinition
+hash、logical type/unit/transform、policy classを表示する。definition/policy互換性を別判定し、互換な行だけ
+equalityを計算する。非互換、片側undeclared、観測missingも固有`value_status`で残す。
+
+env diffは左右manifestのexpected scope gridとscope-level family statusを先にjoinする。同scopeの両snapshotが
+completeな場合だけvariableを`added/removed/changed/same`とし、片側collector/snapshot欠損は
+`unknown_left|unknown_right|unknown_both`、片側でscope非該当なら`not_expected_left|not_expected_right`の
+scope sentinelを返す。absence、未観測、非該当を混同しない。UI filter/
+pivotだけで二run制約を実現しない。Sheetのfilterなしでfull environment extractを作らない。値はユーザー
+指示どおり内部利用者へmask/redactせず表示するが、Sheetとdatasetの共有先を
+同じ内部ACLへ限定する。
+
+`qwen_run_facts_v2`は少なくとも次の固定列を持つ。ここで挙げる名前をcontractのconsumer projectionへ
+個別登録し、概念名だけの列を作らない。aggregate統計をrun rowへ複写せず、replicate viewを別tabにする。
+
+| group | columns |
+|---|---|
+| identity/protocol | `run_id`、`contract_id`、`contract_hash`、`protocol_id`、`protocol_hash`、`dimension_policy_hash`、`planned_replicate_group_id`、`planned_comparison_set_id`、`planned_attempts`、`max_attempts`、`stopping_rule_id`、`block_id`、`block_order`、`pair_id`、`replicate_index`、`lane_id`、`instrumentation_mode`、`started_at`、`finished_at` |
+| source/artifact | `experiment_commit`、`sglang_commit`、Git joinのsubject/body/URL、`sif_manifest_identity`、`model_manifest_identity`、`dataset_manifest_identity`、`measured_workload_manifest_identity`、`warmup_workload_manifest_identity`、`cache_manifest_identity`、`bundle_uri`、`bundle_hash`、contract列挙log member |
+| quality | `benchmark_complete`、`benchmark_valid`、`configuration_complete`、`provenance_complete`、`topology_complete`、`telemetry_complete`、`missing_family_count`、`incomplete_family_count`、`conflicting_key_count`、`cast_failure_count`、sorted `reason_codes`、`comparison_eligible` |
+| termination | `run_outcome`、`run_exit_code`、`benchmark_termination_kind`、`benchmark_exit_code`、`benchmark_signal`、`engine_termination_kind`、`engine_exit_code`、`engine_signal`、`worker_termination_status`、`scheduler_terminal_state`、`scheduler_exit_code` |
+| workload validity | `measured_selected_count`、`planned_input_tokens`、`requested_output_tokens`、`returned_count`、`error_count`、`missing_response_count`、`observed_input_tokens`、`observed_output_tokens`、`warmup_mode` |
+| topology/hardware | `expected_node_count`、`observed_node_count`、`distinct_host_count`、`expected_mpi_process_count`、`observed_mpi_process_count`、`expected_global_rank_count`、`observed_global_rank_count`、`expected_gpu_per_node`、`expected_gpu_total`、`observed_gpu_record_count`、`observed_gpu_per_node_min`、`observed_gpu_per_node_max`、`unique_gpu_uuid_count`、`effective_tp`、`effective_nnodes`、`placement_valid`、`affinity_valid`、`cpu_model_consensus`、`cpu_numa_node_count_consensus`、`cpu_memory_bytes_consensus`、`gpu_model_consensus`、`gpu_memory_bytes_consensus`、`gpu_driver_consensus`、`hardware_consensus_reason_codes` |
+| effective args | `bench_args_identity`、`server_args_identity`と、contractがcurrent dataclassの比較関連scalar leafをexact nameで列挙した列、`runtime_backend_consensus`、`runtime_transport_consensus`。`主要field`という自由選択は置かない |
+| outcome | `request_throughput`、`input_token_throughput`、`output_token_throughput`、`total_token_throughput`、`run_elapsed_sec`、`stage_benchmark_wall_sec`、`init_wall_sec`、`prepare_wall_sec`、`warmup_wall_sec`、`measured_generation_wall_sec`、`shutdown_wall_sec` |
+| GPU projection | `generation_aggregate_present_gpu_count`、`generation_utilization_valid_gpu_count`、`generation_power_valid_gpu_count`、`generation_memory_valid_gpu_count`、`generation_temperature_valid_gpu_count`、`generation_clock_valid_gpu_count`、`generation_energy_included_gpu_count`、`generation_coverage_min`、`generation_power_coverage_min`、`generation_valid_sample_count_min`、`generation_valid_duration_sec_min`、`generation_fleet_utilization_mean`、`generation_gpu_utilization_mean_min`、`generation_gpu_utilization_mean_median`、`generation_gpu_utilization_mean_max`、`generation_gpu_utilization_p95_min`、`generation_gpu_utilization_p95_median`、`generation_gpu_utilization_p95_max`、`observed_generation_energy_j_sum`、`generation_memory_bytes_max`、`generation_temperature_c_max`、`generation_sm_clock_mhz_min`、`generation_gpu_aggregate_complete`、`generation_gpu_aggregate_reason` |
+
+current SGLang commitからBenchArgs/ServerArgs dataclass field inventoryを生成し、contractへcommitしたinventoryと
+byte比較する。追加・削除・rename・type/default変更が未分類ならreleaseを止める。全scalar leafを
+`comparison_dimensions`へ出し、各fieldをmust-match/treatment/nuisanceへ分類する。Runsのwide列はその中から
+contractがexact nameで列挙したものだけであり、実装者判断で増減しない。
+
+`benchmark_complete`はrequired result sourceの存在とparse completeness、`benchmark_valid`はerror count、
+selected/returned count、planned/observed token、正有限generation timeの整合であり、別のNULL/reason ruleを持つ。
+env factsはmapの各scope full snapshotだけから作り、common/delta/removedはraw sourceにせずenv diffの
+query-time statusだけにする。
+
+GPU projectionは`phase=measured_generation`とlane/manifestのexpected `(node_rank,local_gpu_slot)` Cartesian
+gridを母集団にしてraw aggregateへleft joinする。observed topologyは各slotへexactly one unique GPU UUIDを
+対応付ける。missing/duplicate mappingでもexpected slotを落とさずcoverage 0、projection incompleteにする。
+expected/observed GPU countはtopology列だけが所有し、GPU groupへ複写しない。aggregate present countと
+各metricのvalid GPU countを分け、全expected GPUがlane所定coverageを満たさない比較用fleet/per-GPU projectionはNULL+reasonにし、
+observed-only診断値には`observed_` prefixとincluded GPU countを付ける。energyはmissing intervalへ外挿しない。
+fleet utilization meanは`sum(utilization_integral) / sum(valid_duration)`で、per-GPU meanの単純平均にしない。
+lane contractがnominal interval、minimum telemetry coverage、minimum power coverageを固定する。
+
+GPU view projectionはper-node/GPU raw aggregateからquery時に導出し、raw keyを追加しない。typed columnは
+`run_key_singletons`だけを入力にしてcontract typeから`SAFE_CAST`/JSON validationし、cast失敗をNULLと
+`run_reason_items`へ出す。複数値を`MAX`、`ANY_VALUE`等で隠さず、conflict keyはwide列をNULL、runを
+comparison-ineligibleにする。missing/conflict/cast-invalidを同じNULLだけへ潰さない。reason itemsはfact
+issue、family status、benchmark validity、comparison evaluator、protocol/dimension validatorをUNIONする。
+Sheet用`reason_codes`はこのrelationだけをlexicographic sortして`;`区切りSTRINGへ投影し、code自体に`;`を
+禁止する。`comparison_eligible=false`でblocking reasonが0件のrunをcontract testで拒否する。commit
+dimensionはGitから生成してjoinし、subject、body、URLを表示するが、commit messageをrun metricへ
+複製しない。
+
+replicate pointsはfailed/invalidも削除せずNULL value+reason付きで全estimandを残し、protocol、planned/max
+attempt、stopping rule、planned group/set ID、pair/block ID、nullable observed fingerprintを持つ。statsは
+planned groupでattempted nを数え、事前protocolのeligible ruleとobserved fingerprint一致を満たす点だけを
+eligible nへ数える。treatment IDは宣言した全treatment dimensionのname/type/canonical value sorted tupleの
+hashで、canonical JSONを表示属性にする。paired pointsはprotocolが割り当てたpair IDだけを対応付け、
+欠損・置換後にblock/orderから推測しない。aggregateはbaseline/candidateを順序付きで保持しratioを
+`candidate / baseline`と定義し、attempted/eligible pair count、interval method/level、decision criterion
+ID/reasonを併記する。estimator/intervalはprotocolが事前指定した方法だけを使い、
+`instrumentation_overhead_decision`は現在未決定のcriterionを確定するまでNULLにする。暫定式を埋めない。
+breakingなcolumn/type/meaning変更は
+既存v2 viewを書き換えずv3 objectを作る。
+
+Connected Sheetsは次のtabだけをversioned consumer objectへ接続する。
+
+1. `Runs`: one run/rowの固定列。JSON展開なしでquality、config、一次結果、artifactへ到達する。
+2. `Replicates`: point viewとstats/comparison viewを別tableとして全点とrobust statisticsを示す。競技bestを同じ列で置換しない。
+3. `Evidence`: 選択runのfamily/evidence itemごとに、scope、raw key、値hash、source、artifact member、欠損理由を示す。
+4. `Config Diff`: 左右run cell parameterからtable functionを直接呼ぶ。
+5. `Environment`: 左右run cell parameterからscope-aware diffを直接呼び、full byte-exact envをmask/redactせず比較する。
+6. `Data Status`: contract/SQL identity、各query時刻、delivery sync/high-watermark/latest publish、issue件数を常時表示する。
+
+Connected Sheetsは自動同期されないため、deployment checklistにrefresh owner、backup owner、schedule、
+data source変更後の再開確認を記録する。workbookは非NULLの一`delivery_destination` parameterへ固定し、
+status TVFが不存在destinationをsentinelで拒否する。各Connected object自身のqueryで
+`query_generated_at`を出し、Data StatusのSheet-local rangeが各tabのtimestamp cellを参照する。BigQueryの
+status queryが他objectのrefresh時刻を知るとはみなさない。同tabで`projection_synced_at`、
+`event_high_watermark_at`、`latest_publish_succeeded_at`も別表示し、snapshotとdelivery projection双方の
+freshnessを判断できるようにする。preview/extract/pivotは事前filter後の
+row数とresult byteを検査し、保守的な内部budget（pivot 80,000 result/8 MB未満、extract 400,000 row/
+8 MB未満かつ4 million cells以下）を超えたらscope単位に決定的分割する。`LIMIT`で先頭だけを
+表示しない。
+標準tabへraw tableやunbounded env relationを直接接続しない。
+
+consumer relationはまずlogical viewとtable functionだけで実装し、同じprojectionのscheduled tableを
+先回りして複製しない。実測したrefresh latency/bytesが運用budgetを超えた場合だけ、rawから完全再生成
+できるcache tableを別contractで導入する。
+
+この物理設計はBigQueryの[ingestion-time partitioning](https://docs.cloud.google.com/bigquery/docs/partitioned-tables)、
+[STRING clustering](https://cloud.google.com/bigquery/docs/creating-clustered-tables)、consumer運用は
+[Connected Sheetsのrefreshとresult制約](https://support.google.com/docs/answer/9703214)、
+[cell parameter付きcustom query](https://support.google.com/docs/answer/9703000)を前提にする。
+
+## 未決定事項と質問protocol
+
+[Grill with Docs](https://github.com/mattpocock/skills/blob/main/docs/engineering/grill-with-docs.md)の進め方を
+採用し、文書から調べられる事実を先に閉じた後、結果を変える未決定事項だけを一回に一問聞く。各回答は
+`decision_id/question/recommended option/alternatives/user answer/decided_at/affected contract fields and
+views/reopen trigger`をGit管理decision recordへ残す。未回答を推奨値で埋めず、依存するviewのdecisionはNULL、
+release gateは未通過のままにする。現在はinstrumentation overhead criterionを先に、durable archive/
+retention/quarantineを次に聞く。
 
 ## 決定状態
 
@@ -856,7 +1033,8 @@ submission-binding -> scheduler-terminal ---------------------+-> post-terminal 
 | G7 Qwen意味 | `test_observation_contract.py`、`test_primary_result.py`、`test_distributed_events.py` | contract source/時点/owner、primary crash/既存同異値、node/rank cardinality |
 | G8 GPU phase | `test_gpu_reducer.py`、2-node `test_phase_protocol.py` | rank 0/1 node-agent、共有UDS不使用、wrong-run/stale rendezvous、bind/connect timeout、ready直後crash、ACK順、shutdown receipt単一owner、marker欠損、gap cutoff、weighted mean/p95/energy |
 | G9 workflow移行 | legacy/canary workflow integration fixture | legacy CLIとv2 CLI、timeout後全source salvage、finalize/publish再開 |
-| G10 非擾乱 | lane別hook on/off paired run | workload/result同値性と、未決定のoverhead採用基準を同時に満たすこと |
+| G10 consumer contract | contract生成SQL fixture、BigQuery golden rows、Sheet parameter/refresh smoke test | 全列lineage、reason detail/evidence、失敗attempt残存、protocol分離、pair/estimand、definition非互換・片側env欠損TVF、delivery FSM/freshness/size |
+| G11 非擾乱 | lane別hook on/off paired run | workload/result同値性と、未決定のoverhead採用基準を同時に満たすこと |
 
 `test_observation_contract.py`はcontractのschemaとowner/source/capture/absenceの完全性を検査し、
 生成した観測マップ表がcommit済み表とbyte一致することを検査する。これが「この値はどこから取るか」
@@ -887,7 +1065,9 @@ rollbackはlaneのprotocol contractを直前版へ戻して新しいrunを投入
    gateを作る。
 3. BigQuery credentialをrunnerだけへ移したうえで、現行metric集合のまま`Fact`、`Recorder`、
    JSONL WAL、runner merge/publish、archive/reconcilerを導入する。
-4. `raw_distinct`、conflict、completeness、exact-contract v2 comparison viewを旧collectorと並行して作る。
+4. ingestion-time partition/`run,key` clusterのraw table、distinct/singleton/conflict/reason items、evidence
+   item/family status、delivery event/status、exact-contract run/dimension/point/stats/paired view、二run table
+   functionをconsumer column contractから生成しfixtureを通す。
 5. node-local event endpoint、rank 0 result ownership、node-scoped full configurationを実装し、
    397B runのconfiguration欠落と競合を修正する。manifestが固定したexact contractだけをv2 viewへ
    入れ、contractなしはlegacy、異なるcontractのproducer混在はinvalidにする。
@@ -895,7 +1075,8 @@ rollbackはlaneのprotocol contractを直前版へ戻して新しいrunを投入
    global worker rank 0..7のcompletenessを確認する。
 7. persistent control-forwarder phase eventとnode-local raw GPU sampleを追加し、timed pathから
    BigQueryを外す。
-8. Connected Sheetsをv2 viewへ切り替え、旧key consumerがなくなってからthroughput、model名、
+8. Connected SheetsのRuns/Replicates/Evidence/Config Diff/Environment/Data Statusをbounded consumerへ
+   切り替え、freshness/result-size smoke testを通す。旧key consumerがなくなってからthroughput、model名、
    GPU総数等の派生・部分集合keyの新規生成を止める。
 9. retention期間後もarchive済みJSONLだけから空tableへ完全replayできることを確認して旧viewを
    廃止する。
@@ -918,11 +1099,24 @@ rollbackはlaneのprotocol contractを直前版へ戻して新しいrunを投入
 - viewの四つの代数的throughputがSGLang artifactと許容誤差内で一致する。
 - phaseへ既知delayを入れたfixtureでinit、prepare、warmup、generation、shutdownを分離できる。
 - generation marker欠損時にGPU aggregateを全stage値で代用しない。
+- expected GPU gridの一台欠損をcoverage 0とし、比較用fleet projectionをNULL+reasonにできる。
 - count/sizeが同じ別cacheをmanifest identityで区別できる。
 - BigQuery停止、append直後crash、部分fragment、二重replay後もJSONLとlogical row集合が一致する。
 - upload失敗時にruntimeが消えず、成功・失敗・timeout runのlog、GPU sample、JSONLを回収できる。
 - instrumentation on/offの一次指標差が事前閾値内、またはscore runから分離される。
-- 同一protocolの反復が実行順とblockを含め復元でき、全点、median、MADがSheetに表示される。
+- 同一protocolの反復がpair ID、実行順、blockを含め復元でき、全estimand点、median、MADがSheetに表示される。
 - treatment値を含む同一条件だけが同じreplicate groupへ入り、宣言したtreatment差だけが同じ
   comparison set内で許される。
+- required dimensionが欠けたfailed/invalid runもpre-run planned groupのattempted nへ一度だけ入り、NULL
+  fingerprint groupへ脱落・混入しない。
+- 別protocolが同じhuman group labelを使ってもcontract/protocol/policy namespaceにより統計が混ざらない。
+- 各run/evidence/Sheet列がcontract raw keyまたはGit/artifact dimensionへ一意に遡れ、cast失敗や異値競合を
+  aggregateが隠さない。
+- 二run diffがcell parameter付きtable functionで計算され、NULL/同一/不存在runを拒否し、全run pairを
+  materializeせず、full envをparameterなしでSheetへextractしない。
+- config definition/policy非互換をequality NULLで表示し、片側env snapshot欠損をadded/removedでなく
+  unknownとして表示する。
+- Data Statusが各objectのquery時刻、delivery projection sync、event high-watermark、最新durable publish、
+  SQL/contract identity、conflict/incomplete件数を別々に表示し、
+  scheduled refreshのowner変更・停止とresult-size超過をsmoke testで検出できる。
 - Sheets利用者がJSON展開なしでcommit、completeness、一次結果、反復統計、artifactへ到達できる。
