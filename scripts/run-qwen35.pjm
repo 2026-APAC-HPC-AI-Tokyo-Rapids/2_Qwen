@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #PJM -L rscgrp=b-batch
-#PJM -L elapse=00:10:00
+#PJM -L elapse=00:30:00
 #PJM -L node=2
 #PJM --mpi proc=2
 
@@ -70,7 +70,7 @@ sglang_commit="$(singularity exec sglang.sif cat /opt/sglang/sglang-commit.txt 2
   singularity --version
 } >results/environment.log 2>&1
 
-command=(mpirun -n 2 --map-by ppr:1:node "${RUNTIME_DIR}/scripts/run-qwen35-node.sh")
+command=(mpirun -n 2 --map-by ppr:1:node --bind-to none "${RUNTIME_DIR}/scripts/run-qwen35-node.sh")
 
 metrics_collect run-start --command "${command[@]}"
 metrics_collect platform
