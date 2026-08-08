@@ -146,7 +146,12 @@ jobs:
         run: |
           test -s "${MODEL_PATH}/config.json"
           jq -e '(.model_type | strings | startswith("qwen3_5")) and ((.architectures // []) | any(.[]?; type == "string" and startswith("Qwen3_5")))' "${MODEL_PATH}/config.json" >/dev/null
-          uvx --from 'huggingface_hub>=1.0' hf cache verify Qwen/Qwen3.5-397B-A17B-FP8 --local-dir "${MODEL_PATH}" --fail-on-missing-files
+          weight_index="${MODEL_PATH}/model.safetensors.index.json"
+          test -s "${weight_index}"
+          jq -e '.weight_map | type == "object" and length > 0' "${weight_index}" >/dev/null
+          while IFS= read -r shard; do
+            test -s "${MODEL_PATH}/${shard}"
+          done < <(jq -r '.weight_map[]' "${weight_index}" | sort -u)
           uvx --from 'huggingface_hub>=1.0' hf download anon8231489123/ShareGPT_Vicuna_unfiltered --repo-type dataset --include ShareGPT_V3_unfiltered_cleaned_split.json --local-dir /fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered
 
           install -d -m 2775 /fast/pj26000080/sglang-runs
@@ -155,7 +160,7 @@ jobs:
           source_run_number="${SIF_SOURCE_RUN_NUMBER:-${GITHUB_RUN_NUMBER}}"
           cd "${runtime_dir}"
           mkdir scripts logs results metrics-socket
-          ln "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
+          ln -s "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
           printf '%s\n' "${source_run_number}" > sif-source-run.txt
           install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.pjm" "${GITHUB_WORKSPACE}/scripts/run-qwen35-node.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" scripts/
           cp -a "${GITHUB_WORKSPACE}/qwen-experiment-metrics" qwen-experiment-metrics

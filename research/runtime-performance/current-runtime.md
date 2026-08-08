@@ -11,7 +11,7 @@ MODEL_PATH=/fast/pj26000080/Qwen/Qwen3.5-397B-A17B-FP8
 DATASET_PATH=/fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
 ```
 
-`provision` job は GPU を使わず、host の `jq` で model config が Qwen 3.5 であることを確認する。さらに `uvx hf cache verify` で local checkpoint を Hugging Face Hub の最新 revision と照合する。Hub 側が更新され、local checkpoint に不足があれば provision は失敗する。
+`provision` job は GPU を使わず、host の `jq` で model config が Qwen 3.5 であることを確認する。さらにsafetensors indexを読み、列挙された全shardが存在し、空でないことを確認する。巨大なcheckpoint全体を読み直すchecksum検証は行わない。
 
 ShareGPT は `hf download` により上記の path へ取得する。model と dataset は SIF に封入しない。
 
@@ -25,7 +25,7 @@ logs/
 results/
 ```
 
-SIF は archive の hardlink であり、script はその workflow の checkout から copy する。PJM script の内容と出力先は repository checkout や build directory に依存しない。ただし、後述のとおり、現行の投入 cwd には checkout への依存が残っている。
+SIF は別ファイルシステム上のarchiveを指すsymbolic linkであり、scriptはそのworkflowのcheckoutからcopyする。PJM scriptの内容と出力先はrepository checkoutやbuild directoryに依存しない。ただし、後述のとおり、現行の投入cwdにはcheckoutへの依存が残っている。
 
 ## PJM job の lifecycle
 

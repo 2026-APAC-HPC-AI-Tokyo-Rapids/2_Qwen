@@ -8,7 +8,7 @@
 
 そのため、共有 filesystem 上の run 固有 directory に次をまとめる。
 
-- 選択済み SIF の hardlink
+- 選択済み SIF への symbolic link
 - その workflow revision の PJM script と profiler wrapper
 - SIF の再利用元 run number
 - logs
@@ -20,7 +20,7 @@ model と dataset は大きく、複数実行で共通なので bundle へ copy�
 
 入力 dataset は SGLang の標準的な ShareGPT workload とし、SIFには入れない。`provision` で Hugging Face Hub の最新 datasetを共有 pathへ取得し、実行時は単一 JSONだけを bindする。
 
-modelは単に `config.json` の存在を見るだけでなく、Qwen 3.5の model type / architectureであることを hostの `jq` で検査する。さらに `hf cache verify` により local checkpointをHubの最新 revisionと照合する。
+modelは単に `config.json` の存在を見るだけでなく、Qwen 3.5の model type / architectureであることを hostの `jq` で検査する。さらにsafetensors indexに列挙された全shardが存在し、空でないことを検査する。巨大なcheckpoint全体を読み直すchecksum検証は行わない。
 
 この設計ではHub側の repositoryが更新されると、以前は完全だった local checkpointも不足扱いになることがある。これは「固定済みlocal copyを永久に使う」設計ではなく、「実行時点の最新Hub revisionに対して完全であることを要求する」設計上の選択である。性能比較では model revisionが変わっていないことも確認する必要がある。
 
