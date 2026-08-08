@@ -40,19 +40,23 @@ Actions runner
   create and fsync run-manifest.json
   verify source/artifact sidecars
   seal scheduler request from lane, PJM script identity, and exact pjsub argv
+  fsync submission intent with scheduler-searchable run nonce
   submit PJM without BigQuery credentials
-  fsync immutable run-to-PJM submission binding
+  after definite response or nonce recovery, fsync immutable binding/outcome
 
 PJM supervisor
   snapshot job-entry environment
-  verify job binding/runtime state
+  seal run ID and PJM_JOBID in job-entry-receipt without waiting for binding
   let StageRunner record the actual outer argv
   launch one node wrapper per allocated node
 
-node wrapper / node-local monitor
+node wrapper / node-agent
+  rank 0 seals run-bound control rendezvous; rank 1 validates and connects
+  wait for expected-node durable protocol-ready before starting containers
   verify cache staging and write input manifest
   snapshot host/container launch state and actual argv
   append raw GPU samples and local phase markers
+  flush/seal all node evidence before the PJM script exits
 
 SGLang Engine hook (each node)
   emit launch-effective ServerArgs before scheduler launch
@@ -81,9 +85,9 @@ completeness reasonで説明する。
 | fact family | authoritative source | producer / capture moment | raw keyまたはartifact | validation | 欠損時の扱い |
 |---|---|---|---|---|---|
 | run identity | runnerが一度生成してfsyncした`run-manifest.json` | `runner.manifest` / provision前 | raw tableの`run`列、manifest artifact | repository、Actions run/attempt、submissionごとの128-bit nonceと全fragmentのrun一致。PJM job IDを含めない | manifestなしでは投入しない |
-| metrics contract | Git管理registry/schema/expected producer graph | `runner.manifest` / provision前 | `run.metrics_contract` | exact producer version、view compatibility、mixed contract禁止 | comparison不適格 |
-| scheduler binding | `pjsub`の成功応答とPJM job ID | `runner.submission` / submit直後 | `scheduler.job_id`、immutable submission-binding artifact | run ID、submit response、job entryの`PJM_JOBID`一致 | jobを追跡不能として停止 |
-| producer lifecycle | supervisorのcollector/child境界 | `pjm.supervisor`または`StageRunner` / 呼出し前とreturn後、`Recorder`が永続化 | 独立`lifecycle/<producer>.jsonl`のstarted/final | complete line salvage、末尾partial破棄、data fragmentと別owner | startedのみを中断、journalなしを未到達 |
+| metrics contract | Git管理`qwen-v2.toml`とlaneが選んだexpected producer graph | `runner.manifest` / provision前 | `run.metrics_contract`、contract/protocol artifact | contract ID/content hash、exact producer version、view compatibility、mixed contract禁止 | comparison不適格 |
+| scheduler binding | pre-submit intent、`pjsub`応答またはnonce検索、PJM側の独立job-entry receipt | `runner.submission` / pjsub前後、および`pjm.supervisor` / entry直後 | `scheduler.job_id`、submission intent/result/binding、`control/job-entry-receipt.json` artifact | jobはbindingを待たない。曖昧応答をblind retryせず検索し、terminal後finalizerがrun ID、submit response、entry receiptの`PJM_JOBID`一致を要求 | reject/unknownを別receipt化。片方欠損または不一致はartifactを保全して`invalid-quarantine` |
+| producer lifecycle | supervisorのcollector/child境界 | `pjm.supervisor`、`StageRunner`、node agent / 呼出し前とreturn後、`LifecycleJournal`が永続化 | 独立`lifecycle/<producer>.jsonl`のstarted/final | complete line salvage、末尾partial破棄、data fragmentと別owner | startedのみを中断、journalなしを未到達 |
 | protocol assignment | Git管理protocolとrunnerの割当record | `runner.manifest` / job投入前 | `experiment.block_id`、`block_order`、`replicate_index` | protocol commit、予定attempt、laneへのmembership | comparison不適格、推測しない |
 | experiment source | checkout済み`2_Qwen`の`git rev-parse HEAD`とclean/reachability check | `runner.manifest` / provision前 | repository/full commit | dirty tree拒否、remote到達または耐久bundleを要求 | jobを投入しない |
 | SGLang source | SIF build時のcheckout済み`5_SGLang_Src` full commit | `build.finalizer` / source checkout直後 | SIF build sidecarとsource commit索引 | branch名ではなくfull commit、embedded valueとの一致 | SIFを公開しない |
@@ -97,7 +101,8 @@ completeness reasonで説明する。
 | scheduler request | Git管理lane、PJM script identity、runnerが実行するexact `pjsub` argv | `runner.submission` / submit直前 | `scheduler.request` | 2 nodes、2 MPI processes、resource group、override照合 | invalid protocol assignment |
 | scheduler accounting | `pjstat --history -S --choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut --data --delimiter "\t" <job>` | `runner.finalizer` / terminal state後 | `scheduler.accounting`、stdout/stderr/PJM version artifact | field/unit/job ID固定、requestとの一致はview | 取得fieldだけ欠損扱い。host/rankを捏造しない |
 | observed node topology | 同じMPI launch内のOMPI rank/size/local rank、hostname | `node.wrapper` / container exec直前 | node/rank placement record | rank `{0,1}`、2 distinct host、一rank一node | topology incomplete |
-| GPU topology | `nvidia-smi --query-gpu=index,name,uuid,pci.bus_id,memory.total,driver_version --format=csv,noheader,nounits`とcontainer-visible device query | `node.monitor` / benchmark前 | `hardware.gpu.nodes`、raw outputs | 4 GPU/node、8 unique UUID、PCI/logical index mapping | topology incomplete |
+| control rendezvous | lane contractのtransport/address source/port strategyとrank 0 node-agentが実際にbindしたendpoint | `node-agent coordinator` / container開始前 | `control/phase/rendezvous.json`、`protocol-ready.json` artifact | run/nonce/version/freshness、rank 1 explicit endpoint、expected node identity ACK。env/DNS/任意探索禁止 | containerを開始せずconfiguration failure |
+| GPU topology | `nvidia-smi --query-gpu=index,name,uuid,pci.bus_id,memory.total,driver_version --format=csv,noheader,nounits`とcontainer-visible device query | `node-agent` / benchmark前 | `hardware.gpu.nodes`、raw outputs | 4 GPU/node、8 unique UUID、PCI/logical index mapping | topology incomplete |
 | node CPU/NUMA hardware | `LC_ALL=C lscpu --json`、`/sys/devices/system/cpu/online`、`/sys/devices/system/node/online`、各nodeの`cpulist`/`meminfo`、`/proc/meminfo` | `node.auditor` / benchmark後、各node | `hardware.cpu_numa.nodes`、raw files | observed hostname集合、exact membership/parser fixture | hardware completenessだけfalse |
 | outer actual argv | stage wrapperが`subprocess.Popen`へ渡すargv配列 | `StageRunner` / spawn直前 | `run.launch_argv` | shell表示ではなく配列、profiler wrapperを含む実spawn値 | stage未開始またはconfiguration incomplete |
 | node actual argv | node wrapperの`command`配列 | `node.wrapper` / Singularity exec直前 | `parallel.node.<node_rank>.benchmark_argv` | bind/env/benchmark argvを順序保持、node rankとの整合 | node configuration incomplete |
@@ -113,16 +118,16 @@ completeness reasonで説明する。
 | distributed init phase | rank 0 processの`Engine(...)`呼出し | `rank0.offline` / constructor直前からreturn直後 | `perf.phase.distributed_engine_init.wall_time_sec` | rank 0同一monotonic clockだけ。worker-readyはcardinality検証専用 | phase incomplete |
 | warmup generation | warmupの`backend.generate`直前・return直後 | `rank0.offline` + control forwarder / warmup中 | `perf.phase.warmup_generation.wall_time_sec`、node receipt artifact | measuredと別invocation、expected node start/end/ACK | benchmark valueは保持しphase incomplete |
 | measured generation | measured `backend.generate`直前・return直後 | `rank0.offline`がtimer値をprimary artifactへ、runner parserがterminal後にFact化 | `perf.benchmark.generation.wall_time_sec`、node receipt artifact | rank0 `time.perf_counter`、正/有限、同じinvocation ID、forward lead/trail | benchmark invalid |
-| observed responses | decode/validate済み`gen_out` | `PrimaryResultWriter` / generate return直後、runner parser / terminal後 | atomic primary artifactからreturned/error count、prompt/completion totals | schema固定、`len(gen_out)`、meta tokens、malformed/over-return reason。raw key ownerはparserだけ | generate例外ではcountを捏造せずkey不在 |
+| observed responses | decode/validate済み`gen_out` | `PrimaryResultWriter` / generate return直後、runner parser / terminal後 | atomic primary artifactからreturned/error count、prompt/completion totals | schema固定、`len(gen_out)`、meta tokens、malformed/over-return reason。O_EXCL temporary、no-replace rename、既存同byteだけ冪等。raw key ownerはparserだけ | generate例外またはwrite/fsync/rename失敗ではcountを捏造せずkey不在、stage nonzero |
 | primary outcome | observed count/tokensとgeneration duration | BigQuery view / query時 | throughput派生値はrawへ重複保存しない | request/input/output/total throughputをartifactの代数値と許容誤差比較 | source不足ならNULLと理由 |
 | internal last-generation stat | `get_server_info()["internal_states"]` | rank0 result artifact / generate結果fsync後 | full result artifactのみ | 一次estimandに使わず、API failureでprimary resultを失わない | raw metric不要 |
-| node process lifecycle | wrapper child start/end、raw wait status/signal、termination reason、local shutdown receipt | `node.wrapper` / child境界とcontrol receipt | `parallel.node.<node_rank>.process_lifecycle` | rank1同一clockでreceipt前exit=early、同invocation receipt後=coordinated | topology/run incomplete |
+| node process lifecycle | wrapper child start/end、raw wait status/signal、termination reason | `node.wrapper` / child境界 | `parallel.node.<node_rank>.process_lifecycle` | shutdown receiptを複写しない。phase reducerがinvocation/sequence/node一意性を検証後、viewがvalid receiptとrun/nodeでjoinし、同一`CLOCK_MONOTONIC` clock IDの時だけreceipt前exit=early、receipt後=coordinatedを導出 | receipt 0/複数、invocation/clock不一致は分類NULLとreason。topology/run incomplete |
 | shutdown phase | shutdown開始・全child終了のrank0 monotonic boundaries | `rank0.offline` / shutdown前後 | `perf.phase.engine_shutdown.wall_time_sec`、shutdown invocation ID | node lifecycleと照合 | phase incomplete |
-| raw GPU telemetry | node-local periodic `nvidia-smi` sampleとpoll error | `node.monitor` / process実行中にshared durable runtimeへ逐次append+sync | node別raw JSONLまたは独立zstd-frame artifact | O_APPEND、per-sample/frame fdatasync、monotonic/wall anchor/UUID/index/value/error/sequence gap | 途中まで保存、telemetry incomplete |
-| GPU phase markers | persistent coordinatorからのcontrol message | `node.monitor` / warmup・generation receipt時 | node/invocation/sequence別sender・receipt・ACK artifact | expected node `{0,1}`、local `[start,end)`、順序、latency。native markerと混在禁止 | 対象phase aggregateを作らない |
+| raw GPU telemetry | node-local periodic `nvidia-smi` sampleとpoll error | `node-agent` / process実行中にshared durable runtimeへ逐次append+sync | node別raw JSONLまたは独立zstd-frame artifact | O_APPEND、per-sample/frame fdatasync、monotonic/wall anchor/UUID/index/value/error/sequence gap | 途中まで保存、telemetry incomplete |
+| GPU phase markers | persistent coordinatorからのcontrol message | `node-agent` / warmup・generation receipt時 | node/invocation/sequence別sender・receipt・ACK artifact | expected node `{0,1}`、local `[start,end)`、順序、latency。native markerと混在禁止 | 対象phase aggregateを作らない |
 | GPU aggregate | raw sampleとphase marker | `runner.finalizer` / run後 | phase/node/GPU scoped count、coverage duration、util mean/p95、memory max、energy/power-valid duration、temp max、clock min | `[start,end)`交差、pre-start sample可、`2*interval` gap cutoff、duration-weighted mean/nearest-rank p95/energy | telemetry completenessのみfalse |
-| artifact identity | localでsealしたrun bundleとdeterministic archive URI | `runner.finalizer` / final merge前 | artifact URI、bundle hash、manifest identity | bundle対象固定、metrics sidecar自身を含めない | bundleをsealせずquarantine |
-| delivery receipt | remote PUT/checksum verify、BigQuery publish response | `ArtifactStore`/`Publisher` / run WAL seal後 | run WAL外のdelivery ledger/outer manifest | run/bundle hash/attempt一致、replay冪等 | retry pending。run WALへ書き戻さない |
+| artifact identity | localでsealしたrun bundleとdeterministic archive URI | `runner.finalizer` / final merge前 | artifact URI、bundle hash、manifest identity | bundle対象固定、metrics sidecar自身を含めない | bundleをsealできなければ`archive-retry-pending` |
+| delivery receipt | remote PUT/checksum verify、BigQuery publish response | `ArtifactStore`/`Publisher` / run WAL seal後 | run WAL外かつrunner workspace外のdurable append-only delivery store/outer manifest | run/bundle hash/attempt一致、put-if-absent、replay冪等 | retry pending。run WALへ書き戻さない |
 
 ## SGLang hookの正確な位置
 
@@ -173,7 +178,7 @@ completeness reasonで説明する。
 | `scripts/run-qwen35-node.sh` | 全nodeが同じ共有socket pathをbindし、cache manifestがない | node-local endpointとstaging直後cache manifest |
 | 同node script | node別実argvをartifact/metricへ残さない | Singularity exec直前の配列をnode producerが記録 |
 | `scripts/run-qwen35.pjm` | credentialをPJMへ持ち込み、outer commandはshell表示だけ | runner-only credential、spawn配列を`StageRunner`が取得 |
-| `.github/workflows/genkai.yml` | credentialを`pjsub -x`で渡し、runtimeを無条件cleanupし得る | archive/checksum verify後cleanup、失敗時quarantine |
+| `.github/workflows/genkai.yml` | credentialを`pjsub -x`で渡し、runtimeを無条件cleanupし得る | archive/checksum verify後cleanup、失敗時`archive-retry-pending` |
 | `scripts/build-sglang-sif.sh` | base image tag、部分的provenance、完成SIF sidecarなし | digest-pinned OCI、dependency manifest、SIF rename後sidecar commit marker |
 | `offline_throughput.py` | 予定件数をsuccessfulと命名し、primary result durabilityが後続処理より遅い | return decode/検証後すぐatomic result artifactをfsyncし、throughputはview派生 |
 | `sharegpt.py`の`DatasetRow` | source ID/token identityを失う | selection時にordered workload manifest用identityを保持 |
@@ -185,8 +190,10 @@ TP=8、expected node rank `{0,1}`、expected global scheduler rank `{0..7}`、re
 instrumentation modeを固定する。runnerはlane、PJM script identity、exact `pjsub` argvを
 `scheduler.request`へsealし、job内のOMPI state、worker-ready、GPU UUID、accounting `nnumu`と照合する。
 
-各node wrapperはbenchmark前にnode-local GPU monitor/control receiverを起動する。rank 0 nodeの
-coordinatorは両receiverへpersistent connectionを確立し、ready ACKを確認してからcontainerを始める。
+各node wrapperはbenchmark前にnode-agentのGPU sampler/local control receiverを起動する。rank 0
+coordinatorはlane規定sourceから得たaddressへbindしてrun-bound rendezvousをsealし、rank 1 participantが
+その明示endpointへ接続する。coordinatorは両nodeのidentity付きready ACKとprotocol-ready receiptを
+確認してからcontainerを始める。
 container内rank 0 offline hookはbind済みlocal endpointへphase messageを送り、coordinatorが同じ
 messageを両receiverへbroadcastする。messageはrun、invocation ID、warmup/measured、start/end、sequenceを
 持ち、sender、node receipt、ACK時刻をartifactへ残す。start/end間では新規接続、DNS、filesystem pollを
@@ -196,8 +203,9 @@ GPU aggregateは各node自身のreceipt windowを使う。
 各generateは`start broadcast -> node 0/1 durable ACK -> rank0 timer start -> backend.generate ->
 timer end -> end broadcast -> node 0/1 durable ACK`の順にする。rank0同一clockでACK-to-generate leadと
 generate-to-ACK trailを記録する。shutdownは同じforwarderで`shutdown.start(invocation_id)`を送り、
-両nodeのlifecycle journalへのdurable receipt ACK後に`backend.shutdown()`を呼ぶ。rank 1のearly/
-coordinated判定はrank 1 node-local receiptとchild exitだけを比較する。
+両nodeのcontrol journalへのdurable receipt ACK後に`backend.shutdown()`を呼ぶ。phase reducerがshutdown
+invocationの一意性を検証し、rank 1のearly/coordinated判定は同じclock IDのnode-local receiptとchild
+exitをviewで比較する。
 
 ## validation fixture
 

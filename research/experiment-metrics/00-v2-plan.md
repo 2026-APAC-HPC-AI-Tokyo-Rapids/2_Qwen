@@ -82,6 +82,8 @@ repository、Actions run ID、attemptと各submissionで必須の128-bit random 
 OS CSPRNGの16 byteを32文字のlowercase hexで表す。manual経路では
 clusterを含むUUIDをjob投入前に生成する。`pjsub`返却後にしか分からないPJM job IDはrun IDへ
 含めず、immutableなsubmission bindingと`scheduler.job_id`で結ぶ。初期run manifestを書き換えない。
+run IDはUTF-8で`^[a-z0-9][a-z0-9._-]{0,199}$`を満たすよう生成し、同じ値を安全なruntime path
+componentとして使う。任意のrepository名やuser入力を未escapeで連結しない。
 raw relationは次のfunctional dependencyを満たす。
 
 ```text
@@ -176,7 +178,7 @@ compute producer
 - BigQuery `insertId`はbest-effortの補助にすぎない。logical viewが完全一致rowをdeduplicate
   し、異値競合を隔離する。
 - replayは常に同じrowを全件送ってよい。送信成功後もJSONLをtruncateしない。
-- archive/upload失敗時はruntimeをquarantineし、後続reconcilerが回収する。
+- archive/upload失敗時はruntimeを`archive-retry-pending`とし、後続reconcilerが回収する。
 - publish失敗時は検証済みarchiveをreplay pendingにし、raw JSONLから再送する。
 - remote checksumとmanifest確認前に唯一のlocal copyやGitHub artifactを削除しない。
 
@@ -196,8 +198,9 @@ PJM processの性能条件へ混入しない。各snapshotはそのscopeに実�
 
 1. domain probe/parserは`Fact(key, logical_value)`だけを返すpure functionとする。run ID、文字列化、
    filesystem、BigQueryを知らない。
-2. `Recorder`だけがpersist済みrun manifest、registry、canonical encoder、fact/lifecycleの
-   append/fsync、data fragmentのatomic completionを所有する。producerはこの一つの出力境界だけを見る。
+2. `journal.py`の`Recorder`と`LifecycleJournal`だけがpersist済みrun manifest、registry、canonical
+   encoder、fact/lifecycleのappend/fsync、data fragmentのatomic completionを所有する。probeは
+   `Recorder`、その外側のsupervisor/node-agentは`LifecycleJournal`だけを見る。
 3. `StageRunner`だけがspawnするactual argv、monotonic timer、signal、child wait statusを所有し、
    観測したfactを`Recorder`へ渡す。
 4. runner側`merge`がexpected producer、run ID、owner、一意性、required key、fragment完了を検証し、
@@ -205,14 +208,16 @@ PJM processの性能条件へ混入しない。各snapshotはそのscopeに実�
 5. `ArtifactStore/RunFinalizer`がrun bundle/outer manifestのfsync、seal、put/remote verify、quarantine、reconcileを
    所有する。delivery receiptはrun WALへ戻さず外側のdelivery ledgerへappendする。
 6. runner側`publish`だけがBigQuery credential、retry、replayを所有する。collector、SGLang、PJM
-   processはnetwork送信をしない。
+   processはBigQuery、artifact upload、HTTP/cloud client等の外部送達networkを使わない。唯一、
+   `node-agent`だけがlane contractで許可した明示rendezvous endpointへのrun内control transportを使える。
+   credential、DNS discovery、外部egressを許可しない。
 
 SGLang本体へ必要なhookは、version付きlocal structured eventを定義済み境界でだけ書く薄いadapterとする。
 metrics packageやBigQuery clientをimportせず、送達、再試行、key展開を知らない。実装上は
-`domain.py`、`journal.py`、`stage_runner.py`、`merge.py`、`artifact_store.py`、`publish.py`、domain別
+`domain.py`、`journal.py`、`submission.py`、`stage_runner.py`、`merge.py`、`artifact_store.py`、`publish.py`、domain別
 probe/parserを深いmodule境界にし、CLIはそのcomposition rootに限定する。
 
-Qwenの唯一のdomain-specific durability境界として、rank 0の`PrimaryResultWriter`だけは
+QwenのSGLang patch内で唯一のatomic result writerとして、rank 0の`PrimaryResultWriter`だけは
 `backend.generate` return後にprimary artifactをatomic write+fsync+renameする。これはWAL writerでも
 bundle storeでもなく、metrics keyを知らないsource-artifact writerである。schemaはcontract、run、
 invocation ID、generation duration、returned/error count、observed input/output totals、validation
@@ -221,9 +226,10 @@ reasonsに固定し、runnerのprimary-result parserだけが対応raw keyのown
 fixtureを両repositoryで満たし、interfaceが安定してから、canonical encoder、registry validator、
 merge validatorだけを抽出する。domain collectorやpipeline固有の失敗処理は共通化しない。
 
-各factの権威source、producer、取得時点、raw key/artifact、validation、欠損時の扱いは
-[観測マップ](./01-v2-observation-map.md)を正本とする。sourceと取得時点をそこへ特定できない候補は
-key registryへ追加しない。
+実装開始前の設計正本として、各factの権威source、producer、取得時点、raw key/artifact、validation、
+欠損時の扱いは[観測マップ](./01-v2-observation-map.md)に置く。最初の実装sliceでこれらを一つの
+機械可読contractへ移し、以後は観測マップの表をcontractから生成する。sourceと取得時点をcontractへ
+特定できない候補は追加しない。
 
 ## 環境snapshot
 
@@ -316,12 +322,17 @@ metricは次の形にする。
 - `parallel.node.<node_rank>.*`: node rank、dist init、MPI rank、affinity、GPU mapping、
   runtime-observed state
 - `parallel.node.<node_rank>.process_lifecycle`: child start/end、raw wait status/signal、supervisor
-  termination reason、shutdown invocation IDのJSON object
+  termination reason、`CLOCK_MONOTONIC` clock IDだけのJSON object
 
 shell表示はviewで作る。同じnode固有fieldをrun-scoped keyへ送らない。
-rank 1 node内の同じclockで、local `shutdown.start` receiptより前のchild exitをearly failure、
-同じinvocationのreceipt後をcoordinated teardownと判定する。rank 0側timestampと直接比較せず、
-rank 0 completion file到着だけでrank 1の早期死を上書きしない。
+wrapperはshutdown receiptや分類結果を自身のfragmentへ複写しない。`shutdown.start` receiptはnode-agentの
+control journalだけ、child lifecycleはwrapper fragmentだけを正本にする。control receiptはrun、node
+rank、invocation ID、sequence、local monotonic timestamp、`CLOCK_MONOTONIC` clock IDを持つ。phase reducerが
+sender/receipt/ACK間のshutdown invocation ID一致とnodeごとの一意性を先に検証し、viewはそのvalidな一件と
+child lifecycleをrun/node rankでjoinする。clock IDも一致する時だけreceiptより前のchild exitをearly
+failure、receipt後をcoordinated teardownと導出する。receipt 0/複数、invocation/clock不一致では分類を
+作らずreasonを返す。rank 0側timestampを直接比較せず、rank 0 completion file到着だけでrank 1の早期死を
+上書きしない。
 
 ## Qwen/SGLangで保存する原始事実
 
@@ -526,6 +537,345 @@ phase時間、GPU集約、反復数、median、MAD、CV、baseline ratioを固�
 | 確定 | observed totalsから派生するthroughputやnode full factsのcommon copyをrawへ重複保存しない |
 | 未決定 | score runへ許すinstrumentation overheadの統計的上限 |
 | 未決定 | durable archiveの最終保存先、retention期間、quarantineの容量上限 |
+
+## 実装ハンドオフ
+
+### 公開面とfile境界
+
+実装者が新しい抽象を増やさないよう、package内部の依存方向を次に固定する。
+
+```text
+SGLang hook -> version付きdomain record / primary artifact
+                                      -> pure parser/reducer ---\
+I/O probe ----> structured source value -> pure parser --------+-> Fact -> Recorder
+StageRunner ---------------------------------------------------/
+
+runner: merge -> ArtifactStore/RunFinalizer -> publish
+```
+
+hookはmetric keyや`Fact`を知らず、version付きsource recordまたはprimary artifactだけを書く。
+
+公開するdomain型はimmutableな`Fact`と`Termination`だけにする。`Fact`はrun ID、owner、encoded
+stringを持たず、`Termination`は`exit`、`signal`、`spawn_error`をunionとして表す。最低限のcall
+surfaceは次で足りる。
+
+```python
+Fact(key: str, logical_value: LogicalValue)
+init_run(protocol_path, contract_path, runtime_root, identity) -> ManifestPath
+Recorder.open(manifest_path, registry_path, producer_id, runtime_dir)
+Recorder.append_many(facts)
+Recorder.seal()
+LifecycleJournal.open(manifest_path, producer_id, runtime_dir)
+LifecycleJournal.append_started()
+LifecycleJournal.append_final(status, error_count)
+collect_once(manifest_path, runtime_dir, producer_id, probe) -> CollectorOutcome
+submit_run(manifest_path, runtime_dir, lane_adapter, pjsub_argv) -> SubmissionOutcome
+run_stage(stage_name, argv, *, cwd, recorder, lifecycle) -> Termination
+finalize_run(manifest_path, runtime_dir, archive_target) -> ArchiveReceipt
+publish_run(archive_receipt_path, destination) -> PublishReceipt
+reconcile_run(manifest_path, runtime_dir, archive_target, delivery_store) -> ReconcileOutcome
+```
+
+`Recorder.open`はpersist済みmanifestとregistryをread-onlyで検証し、runを生成・推測しない。
+`LogicalValue`はstring、bytes、bool、int、finite float、Decimal、UTC timestamp、またはJSON treeに
+限定する。top-level `None`は禁止し、bytes/Decimal/timestampとcompound JSONのencodingはregistryの
+logical typeが決める。
+`append_many`だけがlogical valueをcanonical stringへ変換し、一行ずつ`run/key/value`へfsyncする。
+`seal`だけがdata fragmentをatomic renameして親directoryもfsyncする。`LifecycleJournal`はcanonical
+append/fsyncだけを行い、semantic ownerはprobe外側のsupervisor、`StageRunner`、またはnode agentで
+ある。data fragmentのappend/sealが失敗しても`append_final`を試せる構造にし、lifecycleはsealを
+待たず回収する。registry loading、canonical encoding、manifest validationは
+`journal.py`のprivate collaboratorとし、それぞれを薄いpublic moduleへ分割しない。
+
+log pathはstage nameとruntimeから内部導出し、signalはchild process groupへforwardしてraw wait statusを
+保存する。`finalize_run`は唯一のrunner orchestratorであり、privateなpre-bundle merge、bundle作成/
+検証、finalizer fact、final merge、metrics sidecar検証を順に行う。別のpublic `merge_run`と二重に
+orchestrationしない。
+
+`ArchiveReceipt`はmemory上だけの値ではなく`receipts/archive-verified.json`へsealする。最低限
+`schema/run/contract/bundle URI/hash/size/metrics URI/hash/size/target/attempt/started_at/finished_at/outcome/error`を持つ。`PublishReceipt`は
+`schema/run/contract/metrics hash/destination/attempt/outcome/response digest`、内部`MergeReport`は
+`schema/run/contract/input manifest hash/row counts/conflicts/completeness/output hash`を持ち、いずれも
+process再起動後にfileから再構成できる。
+
+`init_run`と`collect_once`は`journal.py`、`submit_run`は`submission.py`、`run_stage`は
+`stage_runner.py`、`finalize_run`と`reconcile_run`は`artifact_store.py`、`publish_run`は`publish.py`が
+所有する。`cli.py`はargument parseとhandler dispatchだけを行い、manifest生成、scheduler subprocess、
+probe lifecycle、quarantine探索を実装しない。
+
+use-case outcomeもclosed schemaにする。`CollectorOutcome`は`status/error_count/fragment_path/complete`、
+`SubmissionOutcome`は`bound|failed|unknown|recovered`、receipt path、nullable job ID、`ReconcileOutcome`はreason class、
+input receipt、実行action、output receiptを持つ。これらはraw metricではなく、対応するimmutable evidenceを
+指すcontrol-plane return valueである。
+
+現行fileからの移行先は次の通りとする。
+
+| 現行 | 移行後の責務 |
+|---|---|
+| `core.py` | `domain.py`の`Fact`、`journal.py`、runner-only `publish.py`へ分割。空文字fallbackとcredential captureをcompute pathから廃止 |
+| `collectors.py` | I/O probeとpure parserを分け、どちらも最後は`Fact`列を返す |
+| `stage.py` | outer MPI processだけを待つ`StageRunner`とpure reducerへ分離。`EventReceiver`から`send()`を除く |
+| `cli.py` | 下記use caseを配線するcomposition rootだけにする |
+| 新規Qwen固有`node_agent.py` | 各node wrapperが一つ起動するGPU sampler、local Recorder、SGLang event endpoint、phase control receiver/ACKを所有 |
+| SGLang patch | version付きlocal recordと`PrimaryResultWriter`だけを実装し、metric key、BigQuery、retryを知らない |
+| `scripts/run-qwen35-node.sh` | node rank、manifest、node-local endpointを明示する薄いadapterにする |
+| `scripts/run-qwen35.pjm` | manifest/runtime pathを明示してcompute collectorとstageだけを呼ぶ |
+| `.github/workflows/genkai.yml` | pre-submit manifest、submission binding、terminal後finalize/archive/publishを所有 |
+
+実装fileは計画済みの`domain.py`、`journal.py`、`submission.py`、`stage_runner.py`、`merge.py`、
+`artifact_store.py`、`publish.py`とdomain別probe/parserに限定する。`manager`、`service`、汎用event
+bus、DI frameworkは追加しない。`submission.py`はintent、scheduler adapter、曖昧結果照合を隠す一つの
+深いmoduleであり、collectorやpublisherをimportしない。Qwen固有fileは`node_agent.py`、pureな`sglang_events.py`、
+`source_artifacts.py`、`gpu_telemetry.py`だけを許可する。node control protocolを`node_agent.py`へ閉じ、
+共通基盤へ漏らさない。
+
+同じfamilyをsource journalとmetric fragmentの両方へ書かない。durability ownerとraw ownerを次へ固定する。
+
+| family | durability source / single writer | Fact owner |
+|---|---|---|
+| job/host probe、stage termination、node child lifecycle | 対応producerの`Recorder`へ即時append | 各compute/wrapper producer |
+| SGLang node config、worker-ready | node agentがnode/global-rank domain journalへappend | terminal `sglang_events` reducer |
+| phase sender/receipt/ACK | coordinator/node agentが各control journalへappend | phase reducer |
+| GPU sample | node agent内samplerがnode telemetry journalへappend | `gpu_telemetry` reducer |
+| primary result | rank 0 `PrimaryResultWriter`のatomic artifact | `source_artifacts` parser |
+| warmup/measured workload | rank 0 manifest writerのatomic artifact | `source_artifacts` parser |
+
+`PrimaryResultWriter`はtargetと同じdirectoryへ`O_CREAT|O_EXCL`でtemporary fileを作り、write、file fsync、
+no-replace rename、directory fsyncを行う。target既存時はcanonical byte完全一致だけをidempotent success、
+異値をconflictとして上書きしない。いずれかが失敗したらbest-effort shutdown後にstageをnonzeroとし、
+primary result由来のraw keyは作らない。workload manifest writerも同じno-replace規則を使う。
+
+機械可読正本は`qwen-experiment-metrics/contracts/qwen-v2.toml`一fileにする。contract ID、producer
+定義、key pattern、owner、logical type、unit、cardinality、source、scope、capture、required、
+missing、validation、正当な重複のjustificationを同じentryに置く。lane/protocolはこのcontractに
+定義済みのproducer IDからexpected graphを選ぶ。runtime manifestにはcontract IDとcontent hashを
+sealし、raw tableにはroutingに必要なcontract IDだけを索引化する。観測マップの表はこのTOMLから
+生成し、手書きproseだけを別に保つ。したがってregistryとMarkdown表の二つを正本にしない。
+
+### CLIと設定境界
+
+CLIは次の七orchestration use caseと一つのQwen固有internal entrypointだけを持つ。behaviorを環境変数で
+切り替えず、manifest、runtime、archiveは
+明示引数、比較条件はGit管理protocol、BigQuery宛先はrunner側のGit管理設定から読む。
+
+```text
+init-run       runnerがnonce、protocol、expected producerをrun-manifest.jsonへseal
+submit         intentをsealしてexact pjsub argvを実行し、result/bindingを耐久化
+collect        compute producerを一度実行しlifecycle/data fragmentへ記録
+stage          target argvをspawnしterminationと時間を記録
+finalize       terminal後にdurable sourceを回収/reduceし、merge、archive、remote verifyまで実行
+publish        verify済みarchiveのmetrics sidecarだけをBigQueryへ送達
+reconcile      invalid監査、archive-retry、replay-pendingをreason別に冪等処理
+
+internal node-agent  各node wrapperが起動しnode-local event/control/telemetryを耐久記録
+```
+
+`init-run`以外は`--manifest`を必須にし、`EXPERIMENT_METRICS_RUN`、PID、PJM IDからrunを再構成しない。
+`collect`、`stage`、`node-agent`はBigQuery設定やcredentialをimportしない。outer `StageRunner`は
+`mpiexec`を一度だけspawnするためremote node agentを直接起動しない。各MPI rankで実行される
+`run-qwen35-node.sh`が、そのnodeのcontainerより前に`node-agent --node-rank ...`を起動しdurable readyを
+待つ。これによりrank 1にもsamplerとcontrol receiverが確実に存在する。`finalize`と`publish`を分け、
+送信障害を理由にcomputeやarchiveを再実行しない。
+
+`submit`は`pjsub`前にexact argvとrun nonceを`submission-intent.json`へfsyncし、stdout/stderrを耐久fileへ
+直接redirectする。nonceはlane adapterが保証するscheduler検索可能なjob name/comment/request fieldにも
+入れる。明示rejectは`submission-failed.json`、成功はresultとbindingをsealする。応答を確定できない
+crashではblind retryせず、nonceでscheduler/accountingを検索する。exact 1 jobだけをbinding化し、0件で
+検索完了または複数件、検索不能なら`submission-unknown.json`をsealして人手確認まで停止する。後に
+exact 1 jobへ解決した場合もunknownを消さず、`submission-recovery.json`とbindingを追加sealする。この
+検索fieldと照合commandを提供できないlaneはunattended v2 submitをreleaseしない。
+
+node wrapperはnode-local filesystemに一意なendpoint directoryを作り、`node-agent --manifest ...
+--runtime ... --node-rank ... --local-endpoint-dir ... --role coordinator|participant`を起動する。共有runtimeへ
+Unix socketを作らない。containerにはlocal endpointだけを`/run/qwen-observation`へbindし、SGLang patchへ
+次の明示引数を渡す。
+
+```text
+--qwen-observation-socket /run/qwen-observation/events.sock
+--qwen-primary-result-path /run/qwen-source/primary-result.json
+--qwen-run-manifest /run/qwen-control/run-manifest.json
+```
+
+node-agent間control transport、advertise addressのmachine-readable source、port allocation、connect timeoutは
+lane contractへ固定する。rank 0 wrapperは`node-agent --control-listen <address>:<port-or-0>`でcoordinatorを
+起動し、実際にbindしたaddress/port、run ID、nonce、protocol versionを
+`control/phase/rendezvous.json`へatomic no-replace sealする。rank 1 wrapperはこのreceiptのrun/nonce/
+versionとfreshnessを検証し、`--coordinator-address <address>:<port>`を明示してparticipantを起動する。
+address/portを環境変数、DNS推測、任意file探索から導出しない。
+
+coordinatorはexpected node `{0,1}`のidentity付きdurable ready ACKを集め、
+`control/phase/protocol-ready.json`をsealする。両wrapperはこのreceiptを検証してからcontainerを開始する。
+bind/connect/ready timeout、stale/wrong-run receiptはsolverを開始しないconfiguration failureである。
+
+primary result pathはrank 0だけwrite可能にbindする。allocation内producerはnode agent停止時にdomain/
+control/telemetryをshared durable runtimeへflush/sealしてからPJM scriptを終了する。runnerの`finalize`は
+node/GPU/workerを再観測せず、terminal accountingと既存sourceのpure parser/reducerだけを実行する。
+
+### runtimeとarchive layout
+
+一runのruntimeは次の固定layoutにする。任意file探索や「最後に見つかったJSON」を禁止する。
+
+```text
+<runtime>/<run>/
+  control/run-manifest.json                    # pre-submit immutable
+  control/contract.toml                        # 実使用contractのimmutable copy
+  control/protocol.toml                        # 実使用protocol/laneのimmutable copy
+  control/submission-intent.json
+  control/submission.stdout
+  control/submission.stderr
+  control/submission-result.json               # raw subprocess outcome when available
+  control/submission-failed.json               # explicit rejectionの場合だけ
+  control/submission-unknown.json              # ambiguous outcomeの場合だけ
+  control/submission-recovery.json             # ambiguous outcomeを後で解決した場合だけ
+  control/submission-binding.json              # post-submit immutable
+  control/job-entry-receipt.json               # PJM側がbindingを待たずにseal
+  control/phase/rendezvous.json
+  control/phase/protocol-ready.json
+  control/phase/sender.jsonl
+  control/phase/node-<node>/receipts.jsonl
+  control/phase/node-<node>/acks.jsonl
+  metrics/lifecycle/<producer>.jsonl            # partial末尾も回収
+  metrics/fragments/<producer>.partial          # append中
+  metrics/fragments/<producer>.jsonl            # seal済みrename先
+  metrics/fragments/runner-finalizer.partial
+  metrics/fragments/runner-finalizer.jsonl
+  domain/sglang/node-<node>.jsonl
+  domain/worker/global-rank-<rank>.jsonl
+  source/primary-result.json
+  source/workload-warmup.json
+  source/workload-measured.json
+  telemetry/node-<node>/gpu-samples.jsonl
+  logs/<stage>.stdout
+  logs/<stage>.stderr
+  receipts/scheduler-terminal.json
+  receipts/archive-verified.json
+  merge/metrics.pre-finalizer.jsonl
+  merge/pre-bundle-report.json
+  merge/metrics.jsonl
+  archive-staging/bundle.tar.zst
+  archive-staging/bundle.outer.json
+  archive-staging/metrics.outer.json
+```
+
+manifestにexpected pathを列挙し、node/global rankをfilenameから推測せずrecord内部との一致も検査する。
+node-local ephemeral endpointはshared layoutに含めず、node wrapperが作ったdirectory内の
+`events.sock`と`control.sock`に限定する。job終了時にsocketをarchiveせず、対応するdurable receiptと
+lifecycleをarchiveする。
+archiveは次の四objectを同じrun prefixへ置く。
+
+```text
+bundle.tar.zst       # 下記exact allowlistの事故証拠とsource
+bundle.outer.json    # bundleのhash、size、manifest identity
+metrics.jsonl        # bundle identityを含む最終raw sidecar
+metrics.outer.json   # metrics sidecarのhash、size、contract
+```
+
+`bundle.outer.json`はbundle外、`metrics.outer.json`はmetrics外に置くため自己参照しない。remoteで
+四objectの存在、hash、sizeを再読取検証して初めてarchive済みとする。
+
+bundle memberはmanifest駆動のexact allowlistとし、`control/`のmanifest、contract、protocol、submission
+intent、raw stdout/stderr、実在するresult/failed/unknown/recovery outcome、binding、job-entry/phase receipt、
+pre-bundle expected producerの`metrics/lifecycle/`、sealedおよびpartial producer
+fragment、`domain/`、`source/`、`telemetry/`、`logs/`、scheduler-terminal receipt、
+`merge/pre-bundle-report.json`、自己を除くmember path/hash/sizeを持つ`bundle.manifest.json`を含める。
+最終`metrics.jsonl`、outer manifest、archive/delivery receipt、`runner-finalizer` fragment/lifecycle、一時
+`metrics.pre-finalizer.jsonl`は含めない。producer fragmentとはpre-bundle mergeが消費したcompute/
+runner source fragmentの固定集合を指す。これによりcleanup後もrun identity、expected graph、partial failure、replay根拠を失わず、
+finalizer factとのhash cycleも作らない。
+
+runner finalizerはcollector lifecycle keyを作らず、そのstarted/outcome/errorは外側の
+`archive-verified`または`archive-retry-pending` receiptだけを正本にする。これによりbundle seal後に
+bundle memberが増えない。
+
+`bundle.tar.zst`はpathをbyte順に並べ、tar headerのuid/gid/owner/mtime/modeとzstd parameterを固定して
+決定的に作る。保存が必要な元metadataはbundle manifestの値として記録する。同じ入力集合のretryが
+同じbundle byte/hashになることをfixtureで保証し、compressor versionもouter manifestへ残す。
+最終`metrics.jsonl`は完全一致rowを一件へし、異値conflictは全rowを残したまま`(run,key,value)`の
+UTF-8 byte順にsortする。各lineはobject member順`run`,`key`,`value`、空白なし、UTF-8、LF終端へ固定する。
+
+localのmanifest、report、outer、receiptはすべて同directoryの`.partial`へwrite/fsyncし、no-replace
+rename後に親directoryをfsyncする。remote四objectは`put-if-absent`とし、既存objectはremote bytes/hash/
+sizeがexact一致する時だけ成功扱いにする。異値objectをoverwriteせずcollision quarantineへ送る。
+
+BigQuery attemptはrun archiveとは別namespaceのdurable append-only delivery storeへ
+`archive-verified`、`publish-attempt`、`succeeded`、`replay-pending`をimmutable receiptとして保存する。
+local `archive-verified.json`はこのreceiptのstaging copyであり、durable copyの確認前にcleanupしない。
+runner workspaceはstagingにすぎず正本にしない。invalid inputは`invalid-quarantine`、通信・archive障害は
+`archive-retry-pending`に分け、reason classをreceiptへ持たせる。durable delivery/quarantine backend、
+retention、容量上限が確定していない間はproduction cutoverのrelease blockerとし、そこへ退避できない
+runのruntimeをcleanupしたりworkflowを成功扱いしたりしない。
+
+### 状態と失敗規則
+
+`pjsub`成功応答とjob開始には順序保証がない。PJM supervisorはsubmission bindingを待たず、entry直後に
+manifest run IDと自身の`PJM_JOBID`を`job-entry-receipt.json`へO_EXCL相当でsealしてcomputeを続ける。
+runnerは`pjsub`返却後または曖昧応答の照合後にbindingをsealし、terminal後のmergeが両receiptのrun/job IDを照合する。
+bindingをjob entryの前提条件にしない。
+
+mutableな`status.json`は作らず、次のimmutable evidence DAGから状態を導出する。
+
+```text
+run-manifest -> submission-intent -> submit outcome -> submission-binding
+                         |                    \-> failed/unknown -> optional recovery/binding
+                         +-> job-entry -> compute lifecycle/source/fragments ---\
+submission-binding -> scheduler-terminal ---------------------+-> post-terminal reducers
+                                                              -> pre-bundle merge
+                                                              -> bundle verify
+                                                              -> finalizer fragment/final merge
+                                                              -> metrics verify/archive receipt
+                                                              -> durable delivery receipt
+```
+
+- lifecycle、metric `.partial`、SGLang domain journal、phase journal、GPU JSONLの各validatorはcomplete
+  line/frameのvalid prefixを回収し、末尾の不完全line/frameだけを破棄する。partialからfactを回収しても
+  fragment completenessはtrueに戻さない。required key欠損、expected node/rank欠損は、回収できたvalid factを保持して
+  completeness reasonを付ける。空文字やzeroで補わない。
+- 同一run/keyの異値は両方を保持し、conflictとしてpublishしてcomparisonから隔離する。
+- foreign run、unknown key、owner違反、canonical encoding違反は入力をbundleへ保全するが、信頼できる
+  metrics sidecarを作らず`invalid-quarantine`へ送る。
+- process timeout、signal、spawn errorでもrunnerはscheduler terminal後にprimary result、domain event、
+  GPU sampleをreduceしてfinalizeする。再実行は既存receiptを検証し、同じbyte列なら成功、異なれば
+  競合として止める。
+- terminal後にもsubmission bindingとjob-entry receiptの片方が欠ける、またはjob IDが異なるrunは、
+  compute結果をbundleへ保全するがpublishせずtracking failureとして`invalid-quarantine`へ送る。
+- cleanupはverified archive receiptの後だけ許し、publish失敗は`replay-pending`であってcompute失敗に
+  戻さない。
+
+### gateを証明するtest
+
+| gate | 必須test/fixture | 証明すること |
+|---|---|---|
+| G0 依存境界 | `test_dependency_boundaries.py`、CLI subprocess import trace/egress guard | domain/probe/journal/collect/stageはpublisher/credential/networkをimportせず、node-agentはapproved control transport以外のnetwork client、credential、DNS、外部egressを使わない |
+| G1 値契約 | `test_domain.py`、RFC 8785/decimal/env byte fixture | 空、zero、欠損、非有限拒否、単射escape、canonical byte |
+| G2 submit/binding | `test_submission.py`、binding前job-entry/crash fixture | intent先行、曖昧成功でblind retryなし、0/1/複数job照合、entry/binding join |
+| G3 local durability | `test_journal.py`、全journal/artifactの各byte crash matrix | lifecycle/metric/domain/phase/GPU valid prefix、primary no-replace、seal/directory fsyncの冪等性 |
+| G4 ownership/merge | `test_merge.py`、全producer graph fixture | owner一意性、family routing、exact dedupe、異値conflict、required欠損 |
+| G5 process観測 | `test_stage_runner.py` | actual argv/cwd、process-group signal forwarding、exit/signal/spawn error、monotonic境界 |
+| G6 archive/送達 | `test_artifact_store.py`、`test_publish.py`、各PUT/verify/BQ accept直後crash matrix | exact bundle allowlist、deterministic bundle、put-if-absent、receipt再開、remote verify前cleanup禁止、二重replay同値 |
+| G7 Qwen意味 | `test_observation_contract.py`、`test_primary_result.py`、`test_distributed_events.py` | contract source/時点/owner、primary crash/既存同異値、node/rank cardinality |
+| G8 GPU phase | `test_gpu_reducer.py`、2-node `test_phase_protocol.py` | rank 0/1 node-agent、共有UDS不使用、wrong-run/stale rendezvous、bind/connect timeout、ready直後crash、ACK順、shutdown receipt単一owner、marker欠損、gap cutoff、weighted mean/p95/energy |
+| G9 workflow移行 | legacy/canary workflow integration fixture | legacy CLIとv2 CLI、timeout後全source salvage、finalize/publish再開 |
+| G10 非擾乱 | lane別hook on/off paired run | workload/result同値性と、未決定のoverhead採用基準を同時に満たすこと |
+
+`test_observation_contract.py`はcontractのschemaとowner/source/capture/absenceの完全性を検査し、
+生成した観測マップ表がcommit済み表とbyte一致することを検査する。これが「この値はどこから取るか」
+を、一つの正本から人間向け表と実行時validationの双方へ機械的に保証する。
+
+### release単位
+
+移行はkeyごとに二重化せず、run contract単位で行う。
+
+1. legacyのcollector event/result/GPU集約をgolden fixtureとして凍結する。
+2. 専用canary protocolだけでpre-submit manifestとlocal WALを導入し、legacy runの送信経路は触らない。
+3. canaryでrunner finalize/archive/publish/reconcileとfault injectionを通す。
+4. node-local endpoint、worker-ready、workload manifest、atomic primary result、phase control、raw GPU
+   sampleをv2へ追加する。
+5. 2 node TP=8で意味・result同値性・非擾乱gateを通してから、run単位でv2を既定にする。
+6. v2 viewとSheetを切り替え、legacy-only consumerがゼロになってから旧`send()`、fallback result、
+   throughput等のsubset keyを削除する。
+
+rollbackはlaneのprotocol contractを直前版へ戻して新しいrunを投入する。既存runのmanifestやrowを
+書き換えず、一run内でlegacy producerとv2 producerを混在させない。
 
 ## 実装順序
 
