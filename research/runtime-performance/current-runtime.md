@@ -7,7 +7,7 @@
 workflow 全体で model と dataset の共有 filesystem 上の path を定義する。
 
 ```text
-MODEL_PATH=/fast/pj26000080/Qwen/Qwen3.5-35B-A3B-FP8
+MODEL_PATH=/fast/pj26000080/Qwen/Qwen3.5-397B-A17B-FP8
 DATASET_PATH=/fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
 ```
 
@@ -29,7 +29,7 @@ SIF は archive の hardlink であり、script はその workflow の checkout 
 
 ## PJM job の lifecycle
 
-workflow は `pjsub -x` で `RUNTIME_DIR`、`MODEL_PATH`、`DATASET_PATH`、workflow metadata を渡し、1 GPU、10 分の PJM job を投入する。標準の `pjwait` で開始と終了を待ち、実行中の log を Actions に stream する。
+workflow は `pjsub -x` で `RUNTIME_DIR`、`MODEL_PATH`、`DATASET_PATH`、workflow metadata を渡し、Node Group B の2ノード（各ノードH100 4 GPU、合計8 GPU）、10 分の PJM job を投入する。標準の `pjwait` で開始と終了を待ち、実行中の log を Actions に stream する。
 
 benchmark の終了 code は profiler wrapper、PJM script、workflow へ伝播する。成功時だけ `results.jsonl` の存在を確認して `run-success` marker を作る。workflow は job 終了後にこの marker を検証する。
 
@@ -39,7 +39,7 @@ benchmark の終了 code は profiler wrapper、PJM script、workflow へ伝播�
 
 ## 計算ノード上の実行環境
 
-PJM script は CUDA 13.2.0 と Singularity CE 4.1.3 を load する。container は `--userns --nv --cleanenv --containall` で起動し、次だけを明示的に bind mount する。
+PJM script は NVIDIA HPC SDK 25.11、HPC-X 2.25.1、CUDA 13.2.0、Singularity CE 4.1.3をloadする。Open MPIは各ノードに1プロセスを配置し、それぞれのcontainerが4 GPUを担当する。SGLangは`tp_size=8`、`nnodes=2`としてノード間tensor parallelismを構成する。container は `--userns --nv --cleanenv --containall` で起動し、次だけを明示的に bind mount する。
 
 - model: `/model:ro`
 - dataset の単一 JSON: `/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro`
@@ -50,9 +50,13 @@ Hugging Face、Transformers、Datasets は offline mode にする。GPU architec
 
 ## JIT cache
 
-永続 cache は共有 filesystem の `${HOME}/.cache/sglang-jit` に置く。ただし benchmark 中に共有 filesystem を直接読まず、計算ノードの `/tmp/sglang-jit.*` へ snapshot を staging して bind mount する。
+永続 cache は共有 filesystem の `${HOME}/.cache/sglang-jit` に置く。ただし benchmark 中に共有 filesystem を直接読まず、各計算ノードの `/tmp/sglang-jit.*` へ snapshot を staging して bind mount する。
 
 staging は共有 lock、成功後の `rsync` による書き戻しは排他 lock で保護する。benchmark が失敗または cancel された場合は local cache を書き戻さない。node-local JIT cache と Singularity の一時 directory は終了時に削除する。
+
+GPU構成と1秒間隔のtelemetryは各ノードで取得し、raw sampleをdiskへ保存せずmemory上で
+GPUごとのscalarへ集約する。rank 0のcollectorが2ノード分をBigQueryへ送り、
+`hardware.gpu.count`は各ノードの実測GPU数の合計とする。
 
 ## 固定 benchmark command
 
@@ -61,7 +65,7 @@ staging は共有 lock、成功後の `rsync` による書き戻しは排他 loc
 | 項目 | 値 |
 |---|---|
 | load format | `auto` |
-| tensor parallel size | 1 |
+| tensor parallel size | 8 |
 | dataset | ShareGPT |
 | prompt 数 | 32 |
 | output length | 256 |

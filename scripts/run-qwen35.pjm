@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #PJM -L rscgrp=b-batch
 #PJM -L elapse=00:10:00
-#PJM -L gpu=1
+#PJM -L node=2
+#PJM --mpi proc=2
 
-# Run the Qwen 3.5 benchmark on a Genkai compute node.
+# Run the Qwen 3.5 benchmark across two Genkai compute nodes.
 set -euo pipefail
 
 : "${RUNTIME_DIR:?RUNTIME_DIR is required}"
@@ -30,26 +31,11 @@ metrics_collect() {
 
 workflow_run_id="${GITHUB_RUN_ID:-manual}"
 git_sha="${GITHUB_SHA:-unknown}"
-profile_label=qwen35-offline-throughput-tp1-n32
-
-jit_cache="$(mktemp -d /tmp/sglang-jit.XXXXXXXXXX)"
-jit_lock_fd=""
-singularity_tmpdir="$(mktemp -d /dev/shm/sglang-run.XXXXXXXXXX)"
 
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
-  if [[ "${status}" -eq 0 && -n "${jit_lock_fd}" ]]; then
-    echo "Merging local SGLang JIT cache back to ${HOME}/.cache/sglang-jit"
-    if ! flock -x "${jit_lock_fd}" rsync -a -- "${jit_cache}/" "${HOME}/.cache/sglang-jit/"; then
-      echo "Failed to merge the local SGLang JIT cache" >&2
-      if [[ "${status}" -eq 0 ]]; then
-        status=1
-      fi
-    fi
-  fi
   metrics_collect run-end --exit-code "${status}" --elapsed-sec "$((SECONDS - PIPELINE_STARTED_SECONDS))"
-  rm -rf -- "${singularity_tmpdir:?}" "${jit_cache:?}"
   exit "${status}"
 }
 trap cleanup EXIT
@@ -60,19 +46,11 @@ cd "${RUNTIME_DIR}"
 mkdir -p results "${HOME}/.cache/sglang-jit"
 sif_source_run_number="$(cat sif-source-run.txt 2>/dev/null || printf 'unknown')"
 
-# The shared filesystem is reliable for storing the cache but occasionally
-# fails while SGLang reads it.  Stage a consistent snapshot on the compute
-# node instead.  Shared locks keep a writer from modifying that snapshot while
-# it is copied; an exclusive lock serializes the later merge back to shared
-# storage.
-exec {jit_lock_fd}>>"${HOME}/.cache/sglang-jit.lock"
-echo "Staging shared SGLang JIT cache in ${jit_cache}"
-flock -s "${jit_lock_fd}" rsync -a -- "${HOME}/.cache/sglang-jit/" "${jit_cache}/"
-
 module purge
+module load nvidia/25.11
+module load nvhpcx/2.25.1-cuda13.0
 module load cuda/13.2.0
 module load singularity-ce/4.1.3
-export SINGULARITY_TMPDIR="${singularity_tmpdir}"
 sglang_commit="$(singularity exec sglang.sif cat /opt/sglang/sglang-commit.txt 2>/dev/null || printf 'unknown')"
 
 {
@@ -80,7 +58,6 @@ sglang_commit="$(singularity exec sglang.sif cat /opt/sglang/sglang-commit.txt 2
   echo "workflow_run_id=${workflow_run_id}"
   echo "git_sha=${git_sha}"
   echo "sif_source_run_number=${sif_source_run_number}"
-  echo "profile_label=${profile_label}"
   echo "started_at=$(date -u +%FT%TZ)"
   echo "model_path=${MODEL_PATH}"
   echo "dataset_path=${DATASET_PATH}"
@@ -93,29 +70,11 @@ sglang_commit="$(singularity exec sglang.sif cat /opt/sglang/sglang-commit.txt 2
   singularity --version
 } >results/environment.log 2>&1
 
-benchmark=(/opt/sglang/venv/bin/python -m sglang.benchmark.offline_throughput
-  --model-path /model
-  --load-format auto
-  --tp-size 1
-  --dataset-name sharegpt
-  --dataset-path /dataset/ShareGPT_V3_unfiltered_cleaned_split.json
-  --num-prompts 32
-  --sharegpt-output-len 256
-  --sharegpt-context-len 262144
-  --seed 42
-  --mem-fraction-static 0.85
-  --result-filename /output/results.jsonl)
-command=(singularity exec --userns --nv --cleanenv --containall
-  --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1
-  --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton
-  --env QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock
-  --bind "${MODEL_PATH}:/model:ro,${DATASET_PATH}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro,${jit_cache}:/jit-cache,${jit_cache}:/root/.cache,${RUNTIME_DIR}/results:/output,${RUNTIME_DIR}/metrics-socket:/metrics"
-  sglang.sif "${benchmark[@]}")
+command=(mpirun -n 2 --map-by ppr:1:node "${RUNTIME_DIR}/scripts/run-qwen35-node.sh")
 
 metrics_collect run-start --command "${command[@]}"
 metrics_collect platform
 metrics_collect source
-metrics_collect static-gpu
 PIPELINE_STARTED_SECONDS=${SECONDS}
 
 {
@@ -125,7 +84,10 @@ PIPELINE_STARTED_SECONDS=${SECONDS}
 } >results/throughput.log
 
 set +e
-metrics_cli stage --socket-dir "${RUNTIME_DIR}/metrics-socket" benchmark -- \
+metrics_cli stage \
+  --socket-dir "${RUNTIME_DIR}/metrics-socket" \
+  --node-gpu-dir "${RUNTIME_DIR}/results" \
+  benchmark -- \
   scripts/exec-profiler.sh "${command[@]}" 2>&1 | tee -a results/throughput.log
 status=${PIPESTATUS[0]}
 set -e

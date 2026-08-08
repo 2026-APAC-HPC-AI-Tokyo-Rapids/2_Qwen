@@ -34,20 +34,35 @@ def parser() -> argparse.ArgumentParser:
     stage = commands.add_parser("stage")
     stage.add_argument("name")
     stage.add_argument("--socket-dir", required=True)
+    stage.add_argument("--node-gpu-dir")
     stage.add_argument("command", nargs=argparse.REMAINDER)
+    monitor = commands.add_parser("monitor-node-gpu")
+    monitor.add_argument("--node-rank", type=int, required=True)
+    monitor.add_argument("--output", type=Path, required=True)
+    monitor.add_argument("--ready", type=Path, required=True)
     return root
 
 
 def main(argv: list[str] | None = None) -> int:
     capture_credentials()
     arguments = parser().parse_args(argv)
+    if arguments.action == "monitor-node-gpu":
+        from .stage import monitor_node_gpu
+
+        return monitor_node_gpu(arguments.node_rank, arguments.output, arguments.ready)
     run = make_run(arguments.job_id if hasattr(arguments, "job_id") else None)
     if arguments.action == "stage":
         command = _without_separator(arguments.command)
         if not command:
             warning("stage command is empty")
             return 127
-        return run_stage(run, arguments.name, Path(arguments.socket_dir), command)
+        return run_stage(
+            run,
+            arguments.name,
+            Path(arguments.socket_dir),
+            command,
+            Path(arguments.node_gpu_dir) if arguments.node_gpu_dir else None,
+        )
     runtime_dir = Path(arguments.runtime_dir).resolve()
     try:
         match arguments.collector:

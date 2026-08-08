@@ -279,15 +279,131 @@ def aggregate_gpu(samples: dict[str, list[Sample]], interval: float) -> list[Met
     return result
 
 
-def run_stage(run: str, name: str, socket_dir: Path, command: list[str]) -> int:
+def _node_gpu_metrics(
+    node_rank: int,
+    hostname: str,
+    static_metrics: list[Metric],
+    runtime_metrics: list[Metric],
+) -> list[Metric]:
+    result = [Metric(f"hardware.node.{node_rank}.hostname", hostname)]
+    for metric in static_metrics:
+        if metric.key == "hardware.gpu.count":
+            key = f"hardware.node.{node_rank}.gpu.count"
+        elif metric.key.startswith("hardware.gpu."):
+            key = metric.key.replace(
+                "hardware.gpu.", f"hardware.node.{node_rank}.gpu.", 1
+            )
+        else:
+            continue
+        result.append(Metric(key, metric.value))
+    for metric in runtime_metrics:
+        if metric.key.startswith("resource.stage.benchmark.gpu."):
+            key = metric.key.replace(
+                "resource.stage.benchmark.gpu.",
+                f"resource.stage.benchmark.node.{node_rank}.gpu.",
+                1,
+            )
+            result.append(Metric(key, metric.value))
+    return result
+
+
+def monitor_node_gpu(node_rank: int, output: Path, ready: Path) -> int:
+    from .collectors import static_gpu
+
+    stop_requested = threading.Event()
+
+    def stop(_signum: int, _frame: object) -> None:
+        stop_requested.set()
+
+    old_handlers = {
+        signum: signal.signal(signum, stop)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+    sampler = GpuSampler()
+    static_metrics = static_gpu()
+    sampler.start()
+    ready.parent.mkdir(parents=True, exist_ok=True)
+    ready.touch()
+    try:
+        while not stop_requested.wait(0.2):
+            pass
+    finally:
+        sampler.stop()
+        sampler.join(timeout=5)
+        for signum, handler in old_handlers.items():
+            signal.signal(signum, handler)
+        metrics = _node_gpu_metrics(
+            node_rank,
+            socket.gethostname(),
+            static_metrics,
+            aggregate_gpu(sampler.samples, sampler.interval),
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps(
+                [{"key": metric.key, "value": metric.value} for metric in metrics],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        temporary.replace(output)
+        ready.unlink(missing_ok=True)
+    return 0
+
+
+def load_node_gpu_metrics(directory: Path) -> list[Metric]:
+    result: list[Metric] = []
+    total_gpu_count = 0
+    observed_nodes = 0
+    for path in sorted(directory.glob("node-rank-*-gpu-metrics.json")):
+        try:
+            payload = json.loads(path.read_text())
+            metrics = [Metric(item["key"], item["value"]) for item in payload]
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+            warning(f"could not read node GPU metrics from {path}: {error}")
+            continue
+        observed_nodes += 1
+        result.extend(metrics)
+        for metric in metrics:
+            if metric.key.endswith(".gpu.count"):
+                try:
+                    total_gpu_count += int(metric.value)
+                except ValueError:
+                    pass
+        path.unlink(missing_ok=True)
+    expected_nodes = 0
+    try:
+        expected_nodes = int(os.environ.get("PJM_NODE", "0"))
+    except ValueError:
+        pass
+    complete = expected_nodes in {0, observed_nodes}
+    result.extend(
+        [
+            Metric("hardware.node_count.observed", str(observed_nodes)),
+            Metric("hardware.gpu.count.observed", str(total_gpu_count)),
+            Metric("hardware.gpu.count", str(total_gpu_count) if complete else ""),
+        ]
+    )
+    return result
+
+
+def run_stage(
+    run: str,
+    name: str,
+    socket_dir: Path,
+    command: list[str],
+    node_gpu_dir: Path | None = None,
+) -> int:
     socket_dir.mkdir(parents=True, exist_ok=True)
     socket_path = socket_dir / "events.sock"
     receiver = EventReceiver(socket_path, run)
-    sampler = GpuSampler()
+    sampler = GpuSampler() if node_gpu_dir is None else None
     receiver.start()
     if not receiver.ready.wait(5):
         warning("SGLang event receiver did not become ready")
-    sampler.start()
+    if sampler is not None:
+        sampler.start()
     started = time.monotonic_ns()
     process: subprocess.Popen[bytes] | None = None
 
@@ -308,14 +424,19 @@ def run_stage(run: str, name: str, socket_dir: Path, command: list[str]) -> int:
     finally:
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
-        sampler.stop()
-        sampler.join(timeout=5)
+        if sampler is not None:
+            sampler.stop()
+            sampler.join(timeout=5)
         receiver.stop()
         # The receiver may still be completing the last BigQuery request.  Wait
         # for it so the main thread never uses the credentials concurrently.
         receiver.join()
     elapsed = (time.monotonic_ns() - started) / 1_000_000_000
-    send(run, aggregate_gpu(sampler.samples, sampler.interval))
+    if node_gpu_dir is None:
+        assert sampler is not None
+        send(run, aggregate_gpu(sampler.samples, sampler.interval))
+    else:
+        send(run, load_node_gpu_metrics(node_gpu_dir))
     if "sglang.benchmark_result" not in receiver.received:
         send(run, fallback_result(Path("results/results.jsonl")))
     stage_metrics = [

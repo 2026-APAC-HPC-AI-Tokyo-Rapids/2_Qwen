@@ -6,7 +6,8 @@
 - Qwen専用dataset/tableは`qwen_experiment_metrics.qwen_metrics`とする。
 - collectorは独立uv projectとしてruntime bundleへcopyする。
 - SGLangの実効引数はcommand lineから再構築せず、Engine内のobjectから取得する。
-- nested dictはscalar keyへ再帰展開し、list/tupleはcompact JSON valueへまとめる。
+- nested dictはscalar keyへ再帰展開し、順序を持つ設定list/tupleだけを限定的に
+  compact JSON文字列へまとめる。
 - GPU raw sampleは保存せず、1秒samplingのrun-level集約だけを送る。
 - 第1段階は`nvidia-smi`、DCGMは実機利用可能性確認後の第2段階にする。
 - 通常benchmarkの成否をmetrics失敗で変えない。
@@ -28,7 +29,7 @@
 2. host platform、全環境変数、CPU、memory collectorを移植・拡張する。
 3. static NVIDIA GPU query parserを実装する。
 4. PJM scheduler collectorを移植する。
-5. SIF、script、model config、dataset、result artifactのreader/hashを実装する。
+5. SIF、dataset、result artifactのpath、size、正規のsource identifierを収集する。
 6. 現行`results.jsonl` parserとbenchmark result mappingを実装する。
 
 fixtureだけで全parserをtestし、login nodeにGPUがないことをtest失敗理由にしない。
@@ -50,7 +51,7 @@ upstream sourceへのpatchを最小限で追加する。
 
 1. Engine初期化後に`BenchArgs`, 実効`ServerArgs`, container env,
    workload shapeをconfiguration eventとして送る。
-2. benchmark終了後にresult dictとoutput hashをresult eventとして送る。
+2. benchmark終了後にresult dictをresult eventとして送る。
 3. socket未設定・接続失敗・collector切断時はwarningだけで通常動作を続ける。
 4. `backend=engine`, `runtime`, Ray proxyでevent取得経路が壊れないようtestする。
 5. patch適用後のSGLang commitとevent schemaをSIF testで確認する。

@@ -49,8 +49,8 @@ SIF内SGLangはrepository commitと独立しているため、次を個別に保
 | `software.singularity.version` | host `singularity --version` |
 
 packageを問答無用で全件展開するとrun当たりのrow数とversion差分noiseが大きくなるため、
-`requirements-frozen.txt`全体はhashで同一性を表し、性能に直接関係する主要packageだけを
-個別キーにする。
+性能に直接関係する主要packageだけを個別キーにする。SIFは生成元workflow run番号、
+SGLang commit、主要package versionで識別する。
 
 ## 入力とartifact
 
@@ -58,20 +58,8 @@ packageを問答無用で全件展開するとrun当たりのrow数とversion差
 |---|---|
 | `artifact.sif.source_workflow_run_number` | `sif-source-run.txt` |
 | `artifact.sif.size_bytes` | `stat` |
-| `artifact.sif.sha256` | SIF file |
-| `artifact.sif.requirements_frozen.sha256` | SIF内file |
-| `artifact.runtime_script.run_qwen35.sha256` | runtime bundle |
-| `artifact.runtime_script.exec_profiler.sha256` | runtime bundle |
-| `artifact.model.config.sha256` | model `config.json` |
-| `artifact.dataset.sha256` | ShareGPT JSON |
 | `artifact.dataset.size_bytes` | `stat` |
 
-巨大SIFとdatasetのSHA-256をrunごとに計算すると共有filesystem I/Oが増える。
-実装時はprovision段階で一度計算しruntime bundleへscalarとして渡すか、同じ
-hardlink/source runに対するcacheを共有filesystem上に置く。ただしcacheを使う場合も
-`size`, `mtime`, inodeだけで内容一致を断定せず、hashの正本を明確にする。
-
-modelは複数fileの集合なので、`config.json`だけではcheckpoint全体を識別できない。
-Hugging Face local metadataからcommitを機械的に得られる場合は
-`model.huggingface.commit`を追加する。得られない場合は公称repository revisionを
-代入せず空文字にし、将来canonical manifest hashを追加する。
+artifact hashを実験条件の代理にしない。runtime scriptは`env.GITHUB_SHA`と
+`run.command`、SIFは生成元workflow run番号、modelとdatasetはSGLang実引数および
+workflow環境から識別する。sizeは成果物の存在と回収状態を診断する補助値である。

@@ -35,13 +35,13 @@ SIF には libc debug symbols と、NCCL、OpenMPI、UCX、PMIx、libfabric、RD
 
 ## login node でのビルド
 
-新規ビルドは `genkai` label の self-hosted runner から login node 上で行う。workflow は `/fast/pj26000080/git-mirror/5_SGLang_Src.git` を Org 側から毎回更新する。更新は repository 単位の排他 lock、clone は共有 lock の下で行い、同時 run が不完全な ref を参照しないようにする。作業領域は run ごとの `/dev/shm/qwen-sglang-build/run-<run-id>-<attempt>`、共通の Singularity cache は `/dev/shm/qwen-sglang-build/cache` である。
+新規ビルドは `genkai` label の self-hosted runner から login node 上で行う。`/fast/pj26000080/git-mirror/5_SGLang_Src.git` は Org 管理の `5_SGLang_Src` が push 後に自身の workflow から更新し、このリポジトリは読み取り専用で利用する。作業領域は run ごとの `/dev/shm/qwen-sglang-build/run-<run-id>-<attempt>`、共通の Singularity cache は `/dev/shm/qwen-sglang-build/cache` である。
 
 build script は共有 mirror から run 固有の source tree を作り、`main` の先端を detached checkout する。recipe はこの tree を `%files` で `/opt/sglang/source` へ取り込む。DeepEP はこの経路を使わず、従来どおり公式リポジトリの固定 commit archive を直接取得する。
 
 Singularity CE 4.1.3 で recipe から sandbox を作り、root filesystem を SquashFS に変換して SIF を組み立てる。SIF の test は GPU に依存せず、主要 Python package、通信 backend、MPI、UCX、`uv` を検証する。
 
-完成後は共有 filesystem 上の一時ファイルへ copy し、`${SIF_ARCHIVE_DIR}/<run-number>.sif` へ rename する。既定の保存先は `/fast/pj26000080/sglang-sifs` である。build directory は成功・失敗にかかわらず、その run 固有の directory だけを cleanup する。
+完成後は共有 filesystem 上の一時ファイルへ copy し、`${SIF_ARCHIVE_DIR}/<run-number>.sif` へ rename する。既定の保存先は `/home/pj26000080/share/sglang-sifs` である。build directory は成功・失敗にかかわらず、その run 固有の directory だけを cleanup する。
 
 ## provenance
 

@@ -13,8 +13,8 @@ def test_run_start_records_one_round_trippable_command() -> None:
 
 
 def test_platform_records_model_name(monkeypatch) -> None:
-    monkeypatch.setenv("MODEL_PATH", "/models/Qwen3.5-35B-A3B-FP8")
+    monkeypatch.setenv("MODEL_PATH", "/models/Qwen3.5-397B-A17B-FP8")
 
     values = {metric.key: metric.value for metric in platform_metrics()}
 
-    assert values["model.name"] == "Qwen3.5-35B-A3B-FP8"
+    assert values["model.name"] == "Qwen3.5-397B-A17B-FP8"

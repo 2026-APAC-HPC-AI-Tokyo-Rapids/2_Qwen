@@ -33,7 +33,7 @@ run.stage.benchmark.result_present
 `results.jsonl`がないことやJSON parse失敗を成功値へ置き換えない。予定したresult keyを
 空文字で送り、warningを出す。benchmark終了codeは元のprocessからそのまま伝播する。
 
-requestごとの出力hashやtoken数は保存しない。入出力は
+requestごとの出力本文やtoken数は保存しない。入出力は
 `result.token.input.total`と`result.token.output.total`のrun全体値だけを使う。
 
 ## artifact
@@ -48,5 +48,5 @@ logs/<PJM_JOBID>.log
 ```
 
 BigQuery transportのためにこれらを生成するのではない。利用者がrunを診断できる
-一次成果物である。各artifactは少なくともpath、size、SHA-256を送る。
+一次成果物である。各artifactはpathとsizeを送り、内容はActions artifact本体で確認する。
 巨大なprofiler traceが将来追加された場合、内容をscalarへ展開せずmanifestにだけ載せる。

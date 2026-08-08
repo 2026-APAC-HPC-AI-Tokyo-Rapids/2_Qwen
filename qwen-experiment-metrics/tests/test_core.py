@@ -1,6 +1,8 @@
 import enum
 from pathlib import Path
 
+import pytest
+
 from qwen_experiment_metrics.collectors import log_artifact
 from qwen_experiment_metrics.core import Metric, _rows, flatten, load_config, scalar
 
@@ -44,6 +46,11 @@ def test_rows_have_only_three_columns() -> None:
     assert len(rows[0]["insertId"]) == 64
 
 
+def test_metric_rejects_composite_values() -> None:
+    with pytest.raises(TypeError, match="scalar string"):
+        Metric("invalid", [1, 2])  # type: ignore[arg-type]
+
+
 def test_config() -> None:
     path = Path(__file__).parents[1] / "pyproject.toml"
     config = load_config(path)
@@ -57,4 +64,4 @@ def test_log_artifact(tmp_path) -> None:
     values = {metric.key: metric.value for metric in log_artifact(tmp_path, "123")}
     assert values["artifact.pjm_log.path"] == "logs/123.log"
     assert values["artifact.pjm_log.size_bytes"] == "9"
-    assert len(values["artifact.pjm_log.sha256"]) == 64
+    assert not any(key.endswith(".sha256") for key in values)

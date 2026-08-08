@@ -17,9 +17,9 @@ permissions:
   contents: read
 
 env:
-  SIF_ARCHIVE_DIR: /fast/pj26000080/sglang-sifs
+  SIF_ARCHIVE_DIR: /home/pj26000080/share/sglang-sifs
   GIT_MIRROR_DIR: /fast/pj26000080/git-mirror
-  MODEL_PATH: /fast/pj26000080/Qwen/Qwen3.5-35B-A3B-FP8
+  MODEL_PATH: /fast/pj26000080/Qwen/Qwen3.5-397B-A17B-FP8
   DATASET_PATH: /fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
 
 defaults:
@@ -40,9 +40,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: Update shared SGLang source mirror
-        run: "${GITHUB_WORKSPACE}/scripts/update-sglang-source-mirror.sh"
 
       - name: Select an existing SIF or a new build
         id: select
@@ -149,7 +146,7 @@ jobs:
         run: |
           test -s "${MODEL_PATH}/config.json"
           jq -e '(.model_type | strings | startswith("qwen3_5")) and ((.architectures // []) | any(.[]?; type == "string" and startswith("Qwen3_5")))' "${MODEL_PATH}/config.json" >/dev/null
-          uvx --from 'huggingface_hub>=1.0' hf cache verify Qwen/Qwen3.5-35B-A3B-FP8 --local-dir "${MODEL_PATH}" --fail-on-missing-files
+          uvx --from 'huggingface_hub>=1.0' hf cache verify Qwen/Qwen3.5-397B-A17B-FP8 --local-dir "${MODEL_PATH}" --fail-on-missing-files
           uvx --from 'huggingface_hub>=1.0' hf download anon8231489123/ShareGPT_Vicuna_unfiltered --repo-type dataset --include ShareGPT_V3_unfiltered_cleaned_split.json --local-dir /fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered
 
           install -d -m 2775 /fast/pj26000080/sglang-runs
@@ -160,20 +157,14 @@ jobs:
           mkdir scripts logs results metrics-socket
           ln "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
           printf '%s\n' "${source_run_number}" > sif-source-run.txt
-          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.pjm" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" scripts/
+          install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.pjm" "${GITHUB_WORKSPACE}/scripts/run-qwen35-node.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" scripts/
           cp -a "${GITHUB_WORKSPACE}/qwen-experiment-metrics" qwen-experiment-metrics
           uv sync --project qwen-experiment-metrics --frozen --no-dev
           jq -n \
             --arg sif_source_workflow_run_number "${source_run_number}" \
-            --arg sif_sha256 "$(sha256sum sglang.sif | awk '{print $1}')" \
             --arg sif_size_bytes "$(stat --format=%s sglang.sif)" \
-            --arg dataset_sha256 "$(sha256sum "${DATASET_PATH}" | awk '{print $1}')" \
             --arg dataset_size_bytes "$(stat --format=%s "${DATASET_PATH}")" \
-            --arg model_config_sha256 "$(sha256sum "${MODEL_PATH}/config.json" | awk '{print $1}')" \
-            --arg requirements_frozen_sha256 "$(singularity exec sglang.sif cat /opt/sglang/requirements-frozen.txt | sha256sum | awk '{print $1}')" \
-            --arg run_script_sha256 "$(sha256sum scripts/run-qwen35.pjm | awk '{print $1}')" \
-            --arg profiler_script_sha256 "$(sha256sum scripts/exec-profiler.sh | awk '{print $1}')" \
-            '{sif: {source_workflow_run_number: $sif_source_workflow_run_number, sha256: $sif_sha256, size_bytes: $sif_size_bytes, requirements_frozen: {sha256: $requirements_frozen_sha256}}, dataset: {sha256: $dataset_sha256, size_bytes: $dataset_size_bytes}, model: {config: {sha256: $model_config_sha256}}, runtime_script: {run_qwen35: {sha256: $run_script_sha256}, exec_profiler: {sha256: $profiler_script_sha256}}}' \
+            '{sif: {source_workflow_run_number: $sif_source_workflow_run_number, size_bytes: $sif_size_bytes}, dataset: {size_bytes: $dataset_size_bytes}}' \
             > metrics-artifacts.json
           test -x qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics
 

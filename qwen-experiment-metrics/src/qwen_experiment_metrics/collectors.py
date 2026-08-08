@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import csv
-import hashlib
 import json
 import os
 import platform
@@ -237,15 +236,13 @@ def result_artifacts(runtime_dir: Path) -> list[Metric]:
         path = runtime_dir / relative
         prefix = f"artifact.{relative.replace('/', '.')}"
         try:
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
             size = str(path.stat().st_size)
         except OSError:
-            digest = size = ""
+            size = ""
         result.extend(
             [
                 Metric(f"{prefix}.path", relative),
                 Metric(f"{prefix}.size_bytes", size),
-                Metric(f"{prefix}.sha256", digest),
             ]
         )
     return result
@@ -255,14 +252,12 @@ def log_artifact(runtime_dir: Path, job_id: str) -> list[Metric]:
     relative = f"logs/{job_id}.log"
     path = runtime_dir / relative
     try:
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
         size = str(path.stat().st_size)
     except OSError:
-        digest = size = ""
+        size = ""
     return [
         Metric("artifact.pjm_log.path", relative),
         Metric("artifact.pjm_log.size_bytes", size),
-        Metric("artifact.pjm_log.sha256", digest),
     ]
 
 
