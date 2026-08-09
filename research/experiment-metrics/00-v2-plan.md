@@ -973,6 +973,45 @@ release gateは未通過のままにする。
 一意に決まらない。D-004では初版profileでprofilerを必須にするか、必須ならどのtoolとstep範囲をcanonical
 protocolにするかを一問で決める。未回答の間はtransparent wrapperをprofile protocolとしてreleaseしない。
 
+2026-08-09にSGLang `5ffba99b631f1f442371cc7a7d79391409197724`を再監査した。`offline_throughput`が直接公開するのは
+`--profile`、`--profile-activities`、`--profile-steps`であり、通常warmupは常にprofile外、measured generation直前に
+profileを開始する。stepはrequest数でなくscheduler forward数である。現行経路はoutput directoryを
+`SGLANG_TORCH_PROFILER_DIR`から読み、stack/shapeは何も指定しないとともにtrue、profile IDはtimestamp、mergeと
+stage別profileはfalseになる。legacy Torch Profilerは一つのprofile requestを全schedulerへfan-outし、現在の
+DP/PP/EP=1 laneではglobal TP rankごとに一つのgzip Chrome traceを書く。従ってexpected trace数は現在のTP=8という
+固定値でなく`lane.tensor_parallel_size`から展開する。
+
+独立したQwen、artifact、情報設計監査はいずれもP0なしで、次をP1とした。(1) timestamp filenameとoutput directoryを
+offline CLIで固定できず、事前展開するsource path contractを閉じられない、(2) 現行monitorは最初の一traceだけで終了し、
+0件では待ち続けるため全rank completenessの正本にならない、(3) `SGLANG_PROFILE_V2=true`のmanual start/stopは未実装、
+(4) traceをraw tarへ置くだけではBigQueryからSheetへ診断値を渡せない、である。推奨option Rは次の一つである。
+
+```text
+tool                     = SGLang built-in PyTorch Profiler (legacy path)
+activities               = [CPU, GPU]
+window                   = warmup外、measured generation先頭5 scheduler forward
+with_stack               = false
+record_shapes            = false
+merge/profile-by-stage   = false
+required raw grain       = global TP rank
+required raw set         = lane.tensor_parallel_size件のgzip Chrome trace
+```
+
+profile overlayは`output_dir`と`profile_id`だけを`offline_throughput`から明示できる小変更にし、profile IDを
+`qwen-profile`、pathを`profile/raw/torch/qwen-profile-TP-<global_rank>.trace.json.gz`へ固定する。
+`SGLANG_PROFILE_V2=0`、`SGLANG_PROFILE_WITH_STACK=0`、`SGLANG_PROFILE_RECORD_SHAPES=0`もprotocolで明示する。
+backend終了後のfinalizerがlaneから展開したpathを一度検査し、現行の任意一file monitorは正しさに使わない。
+全traceをmergeした派生trace、Nsight Systems/Compute、CUDA profiler、memory snapshot、CUDA graph capture trace、
+別tool fallback、retryは初版へ入れない。
+
+opaque traceとrun/global rankを結ぶため、実在する各traceについてだけclosed `profiler-capture/v1`
+`{schema_version,run_id,global_rank,invocation_id,source_member,size_bytes,sha256}`をrun bundleに一件置く。
+tool/version/argv/outcome/reason/statusやexpected rank集合は複写しない。publisherはtraceから一度だけ
+`(run,global_rank,activity,event_category,event_name,call_count,inclusive_duration_sum_ns,source_member,source_sha256)` grainの
+`qwen_profiler_events_raw_v2`を作る。per-event trace本文、平均、構成比、rank合計、top-N、CPU/GPU/NCCL分類、run-wide
+summaryは保存せずquery時に導出し、bounded `Profiler` Sheet tabがprofile run同士を比較する。trace欠損時は既存
+`collection_complete=false`、固定幅consumerはNULL、long relationは実在rowだけとし、profiler専用complete/reason/placeholderを作らない。
+
 D-003は2026-08-09にユーザー回答「基本的にはマルチノード対応型の収集。Qwen推論も同じ」で確定した。
 質問はQwen collectorを現在の2-node条件へ固定するか、node/worker/GPU cardinalityをlaneから展開するか、
 推奨・採用回答とも後者である。affected fields/viewsはlane resolved object、scheduler request、producer node/global-rank
@@ -1315,8 +1354,10 @@ applicableな`domain/`、`source/`、`logs/`、自己を除くmember path/hash/s
 `archive-staging/bundle.manifest.json`を作り、tar rootの`bundle.manifest.json`として含める。
 最終`metrics.jsonl`、artifact manifest、merge元fragmentはbundle内へ重複収録しない。
 
-`telemetry/**`は`profile-raw.tar.zst`だけが所有する。D-004でprofilerがapplicableなら同じtarへprofiler trace、
-tool metadata、exact argvも加え、非適用ならGPU telemetryだけを収録する。run bundleへ同じraw byteを重複収録しない。
+`telemetry/**`は`profile-raw.tar.zst`だけが所有する。D-004でprofilerがapplicableなら同じtarへprofiler trace rawだけを加え、
+非適用ならGPU telemetryだけを収録する。actual profiler argv/cwd/outcomeは既存のstage launch/termination、wrapperの
+実体/hashはprofile instrumentation bundle、SGLang/PyTorchのruntime identity/versionはSIF provenanceとprocess
+snapshotがそれぞれ一度所有するため、profile rawへmetadata copyを作らない。run bundleへ同じraw byteを重複収録しない。
 
 `run-artifacts.tar.zst`はmanifestで列挙したmemberを収録し、作成後の実byte列をhashする。再実行時にtar headerや
 compressor versionまで同一にして同じbundle hashを再現することは要求しない。同一run attemptでは既に作った
@@ -1356,8 +1397,8 @@ remote再読取checksum、全境界crash recovery、独立backupは実装しな�
 
 normal benchのPrimaryResultWriter、qualification OFF/ONのneutral qualification result、parent/child artifactを必ず
 results artifactへ含める。Qwen profileのprofiler familyはD-004でapplicableと確定したprotocolだけrequiredにする。
-その場合はprofiler wrapperへ明示引数`--profile-output-dir <runtime>/runs/<run>/profile/raw`を渡し、exact profiler
-argv、tool metadata、trace rawを`profile-raw.tar.zst`へまとめてuploadする。D-004がprofiler非必須と決めたprotocolや
+その場合は選択したprofilerの出力先を`<runtime>/runs/<run>/profile/raw`へ一度固定し、trace rawだけを
+`profile-raw.tar.zst`へまとめてuploadする。actual argv/tool identity/versionは上記の既存ownerから参照する。D-004がprofiler非必須と決めたprotocolや
 未回答中のrunでprofiler file/placeholderを要求せず、現在のtransparentな`exec-profiler.sh`を「取得済みprofiler」と扱わない。
 bench/qualificationではprofile producer、artifact、欠損用eventを作らず、対応consumerは`NULL`だけである。
 
