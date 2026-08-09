@@ -3,7 +3,8 @@
 ## この文書の役割
 
 この文書は、各factについて「どこにある値を、誰が、いつ取得するか」を固定する実装契約で
-ある。[概要計画](./00-v2-plan.md)が情報モデルと比較規則を定め、本書が実コード・command・
+ある。[概要計画](./00-v2-plan.md)が情報モデルと比較規則、
+[contract schema handoff](./02-v2-contract-schemas.md)がfield-level shapeを定め、本書が実コード・command・
 artifactへの配線を定める。
 
 key registryへ入れるには、次の六項目を全て埋めなければならない。
@@ -13,11 +14,12 @@ key registryへ入れるには、次の六項目を全て埋めなければな�
 3. capture moment: 値が確定し、まだ失われていない時点
 4. raw destination: `run/key/value`または耐久artifact
 5. validation: 誤読、scope混同、部分取得を検出する規則
-6. absence semantics: 非該当、未到達、取得失敗のどれか
+6. applicability: どのrun variantで取得するか
 
 sourceの優先順位は、native object/API、machine-readable command/file、専用structured marker、
-stable log parser、汎用text regexの順とする。下位sourceを使う場合はfixtureと上位sourceの照合を
-必須にする。CLI defaultや入力fileに書いた値を、実効値や実測結果として扱ってはならない。
+stable log parser、汎用text regexの順とする。選んだsourceをfixtureで確認する。通常runで同じ値を
+上位・下位sourceから二重取得する必要はない。CLI defaultや入力fileに書いた値を、実効値や実測結果として
+扱ってはならない。
 
 ## 値の段階とscope
 
@@ -56,27 +58,28 @@ node wrapper / node-agent
   verify cache staging and write input manifest
   all variants: snapshot exact outer/node argv and common host launch state
   bench/profile/qualification ON: additionally snapshot score config/container state
-  qualification OFF: do not start score config/result producers; retain common lifecycle/topology/native result only
+  qualification OFF: consume the parent actual workload; do not start score config/primary-result producers
   in profile only, append raw GPU samples and local phase markers
-  flush/close all node evidence before the PJM script exits
+  flush/close all node source files before the PJM script exits
 
 SGLang score hook (bench/profile/qualification ON, each node)
   emit launch-effective ServerArgs before scheduler launch
   emit runtime worker-ready facts after initialization
 
 rank-0 score result hook (bench/profile/qualification ON)
-  persist warmup/measured workload manifests
+  bench/profile: persist warmup/measured workload manifests
+  qualification ON: consume the parent-owned manifests without copying them
   write the sole authoritative primary-result artifact through temporary file and rename
   in profile only, emit distributed GPU phase boundaries
 
-rank-0 native qualification writer (qualification OFF/ON)
-  write the common native result used only by the D-001 estimand
+rank-0 neutral qualification writer (qualification OFF/ON)
+  validate the actual response array and write the common D-001 estimand result
 
 Actions runner
-  after PJM terminal state, parse/reduce saved source best effort after timeout/failure
+  after PJM terminal state, parse/reduce completed saved source files
   verify expected node and global-worker scoped facts without scope reduction
-  regular: merge -> validate expected files -> GitHub Artifact upload -> publish
-  qualification: package parent evidence and both child source/log/metrics in one artifact set
+  regular: merge -> validate expected files -> GitHub Artifact upload -> publish metrics and artifact projections
+  qualification: package allocation source and each non-null child source/log/metrics in one artifact set
 ```
 
 `run-manifest.json`で生成したrun IDを全producerが読む。各processで再計算しない。node間で共有
@@ -86,62 +89,60 @@ metrics key、BigQuery、retryを知らない。
 
 ## fact別の取得契約
 
-表の「欠損」はraw valueへ空文字を入れる意味ではない。keyを出さず、post-runのexpected-file検証と
-`collection-status.json`のcompleteness reasonで説明する。
-これはapplicableかつexpectedなfamilyだけの規則である。bench/qualificationでprofile-onlyとなる列は
-consumerでNULLを返すだけで、raw key、family status、Evidence、reasonを作らない。
+表の「欠損」はraw valueへ空文字を入れる意味ではない。keyを出さず、consumerは`NULL`を返す。
+required sourceならrun-level `collection_complete=false`とするだけで、原因、family status、欠損用placeholderを
+作らない。非適用のprofile-only列も同じく`NULL`だけだが、`collection_complete`の判定対象にはしない。
 
 | fact family | authoritative source | producer / capture moment | raw keyまたはartifact | validation | 欠損時の扱い |
 |---|---|---|---|---|---|
-| run/subject identity | runnerが一度生成したsubject/child manifests | `runner.manifest` / provision前 | raw tableの`run`列、run/allocation manifest artifact | regular subject ID=run ID、qualification subject ID=allocation ID、ordered child/arm、全fragmentのrun一致。run/allocation IDはglobal unique/safe path。PJM job IDを含めない | manifestなしでは投入しない |
-| metrics contract | Git管理`qwen-v2.toml`とlane/run variantが選んだexpected producer graph | `runner.manifest` / provision前 | `run.metrics_contract`、contract/protocol artifact | contract ID/content hash、exact producer version、view compatibility、mixed contract禁止、family/列の`applicable_run_variants`、applicable missing policyとinapplicable projection policyの分離 | required familyならcomparison不適格。非適用列はconsumerでNULLだけを返す |
-| source track | Gitのscore reference/profile base、実checkout head、purpose/qualification arm | `runner.manifest` / provision前 | tagged-union canonical source-track artifact、content hash、`control/source-track-validation.json` | benchはreference/head、profileはprofile base/head、qualification OFFはhead=score reference、ONはreference ancestorかつcanonical tree diff=SIF/bundleのinstrumentation patch identity。diff algorithm/version/base/head/expected patch/passをsubmit前にsealしquery時Git参照なし。clean HEAD/tree、reachability/source archive、submodule/mode/symlink/LFSも検証。moving branch名をidentityにせずdiff/hashをrawへ保存しない | jobを投入しない |
-| instrumentation bundle | Git管理bundle manifest、SIF sidecar、実launch設定 | `runner.manifest` / submit前、`runner.postrun` / run後照合 | canonical manifest artifact。consumer hashはartifact contentから導出 | hook/event/sample設定、wrapper/node-agent executable hash、contract version、env capture scope、SIF patchの列挙と実activation一致。labelだけで同一視しない | benchのrequired bundleならcomparison不適格。profile-only bundleはbenchでproducerを持たない |
-| instrumentation qualification decision | Git管理D-001 decision record | `runner.manifest` / bench submit前 | manifest fields、`control/instrumentation-qualification-decision.json`、Runsのdecision hash/status | canonical hash、adopt/reject、qualification protocol、reference/candidate tuple、bundle/SIF/workload/runtime、response canary result、evidence一致。通常bench tupleを再構成して照合 | 未存在/未回答はpendingでaudit-only、reject/異値はrejected/invalidでscore不適格。無計測normal v2 benchは作らない |
-| scheduler binding | `pjsub` argv/stdout/stderr/responseとPJM側job-entry file | `runner.submission` / pjsub前後、および`pjm.supervisor` / entry直後 | normal runまたはqualification allocationのsubmission result/binding、`control/job-entry.json` | normalはrun ID、qualificationはallocation ID+ordered child IDsをrunner responseと`PJM_JOBID`へ照合。childへ共通値を複写せずparent join | reject、応答不明、片方欠損、不一致はattempt/comparison不適格。自動復旧しない |
-| producer completion | producerのnormal close、node-agent summary、StageRunnerのchild outcome | supervisor/node-agent/StageRunner / return後 | producer fragment、stage termination、post-run collection status | variant別expected producer/file/keyを一度検査 | 欠損はcollection incomplete。失敗runのpartialはbest effort回収 |
-| protocol assignment | Git管理protocolとrunnerの割当record | `runner.manifest` / job投入前 | `experiment.block_id`、`experiment.block_order`、`experiment.replicate_index`、`experiment.pair_id`、`experiment.planned_replicate_group_id`、`experiment.planned_comparison_set_id`、qualification armを含むplanned treatment tuple | contract/protocol/policy hash込みcanonical tupleからgroup/set IDを再計算、run purpose、予定/max attempt、stopping rule、lane membership、pair IDの一意性 | purpose別comparison不適格。attempted groupやpairを観測値・順序から推測しない |
-| qualification allocation | Git管理paired scheduleとrunnerが一度作るparent manifest | `runner.manifest` / pair submit前、`pjm.supervisor` / entry、`runner.postrun` / terminal後 | allocation ID、scheduler binding/accounting、job-entry env、pair/ordered child IDs、OFF/ON order、common lane/node/GPU binding | 一allocation一pair、二childの独立manifest/log/metrics、child parent ref、block ID=allocation ID、同じartifact set、pair間は別allocation | arm間crash/未起動/未完成は回収できたfileだけ保存しpair不適格。片armを別allocationへ再pairしない |
-| SGLang source | SIF build時のcheckout済み`5_SGLang_Src` full commit | `build.packager` / source checkout直後 | SIF build sidecarとsource commit索引 | branch名ではなくfull commit、embedded valueとの一致 | SIFを公開しない |
-| SIF/toolchain | digest-pinned `From:`が消費したOCI manifest/config/layer、完成SIF、package/toolchain、実参照binary | `build.packager` / SIF完成・test後 | `source/sif-sidecar.json`、artifact identity/URI索引 | SIF hashは完成後sidecarへ書き、reuse時に実体と一致確認 | reuse禁止 |
-| model/tokenizer/template | pinned model manifest、index参照shard、tokenizer files、chat template | `provision.verifier` / node copy前 | `source/model-manifest.json`と`artifact.model.manifest_sha256` | repository/revision、config/index hash、sorted shard path/size、small metadata file hash。400 GB shard本文はrunごとにhashしない | provision失敗 |
-| dataset | pinned repository revisionとdataset file | `provision.verifier` / node copy前 | `source/dataset-manifest.json`と`artifact.dataset.manifest_sha256` | repository/revision、relative path、size、SHA-256をshared pathと独立に照合 | provision失敗 |
-| full job-entry environment | `os.environb`相当のbyte environment | `pjm.supervisor` / script entry直後、module/unset前 | regularは`env.job_entry.*`と`source/env/job-entry.snapshot`、qualificationはparent snapshotとallocation env projection | byte-exact name escapeと全value Base64。child rawへ複写せずEnvironmentがblock/allocation join | applicable snapshot collector failed |
-| full host exec environment | node wrapperのbyte environment | `node.wrapper` / module/cache staging後、container exec直前 | `env.host.node.<node_rank>.*`と`source/env/host-node-<node>.snapshot` | byte-exact、expected node全件、raw scope保持 | configuration incomplete |
-| full SGLang launch environment（score bundle） | container内のbyte environment | bench/profile/qualification ONの`sglang.engine` / `_set_envs_and_config`等の解決後、scheduler launch直前 | `sglang.env.node.<node_rank>.*`と`source/env/sglang-node-<node>.snapshot` | `--cleanenv`後かつSGLang mutation後の全件、raw scope保持 | applicable runではconfiguration incomplete。qualification OFF consumerはNULLだけ |
-| full worker environment（score bundle） | scheduler processのbyte environment | bench/profile/qualification ONの`sglang.worker_ready` / ready通知直前 | `sglang.worker.env.rank.<global_rank>.*`と`source/env/worker-rank-<rank>.snapshot` | byte-exact、global rank `{0..7}`、device event一致 | applicable runではruntime incomplete。qualification OFF consumerはNULLだけ |
-| scheduler request | Git管理lane、PJM script identity、runnerが実行するexact `pjsub` argv | `runner.submission` / submit直前 | regularは`run`の`scheduler.request`、qualificationはparent evidence artifact/allocation projection | 2 nodes、2 MPI processes、resource group、override照合。child rawへ複写しない | invalid protocol assignment |
-| scheduler accounting | `pjstat --history -S --choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut --data --delimiter "\t" <job>` | `runner.postrun` / terminal state後 | regularは`scheduler.accounting`と`source/scheduler/pjstat.{stdout,stderr}`/`pjstat-version.txt`、qualificationはparent raw/allocation projection | field/unit/job ID固定、requestとの一致はview。childはallocation IDでjoin | 取得fieldだけ欠損扱い。host/rankを捏造しない |
-| observed node topology | 同じMPI launch内のOMPI rank/size/local rank、hostname | `node.wrapper` / container exec直前 | node/rank placement record | rank `{0,1}`、2 distinct host、一rank一node | topology incomplete |
-| lifecycle control | lane contractのtransport/address source/port strategy、rank 0 node-agent endpoint、startup ready、shutdown start | `node-agent coordinator` / container開始前とgeneration後 | `control/lifecycle/rendezvous.json`と最終`summary.json` | run/version/freshness、rank 1 explicit endpoint、expected node identity ACK、shutdown一意性。env/DNS/任意探索禁止 | containerを開始せず、またはtermination分類不能でconfiguration/lifecycle failure |
-| GPU topology | `nvidia-smi --query-gpu=index,name,uuid,pci.bus_id,memory.total,driver_version --format=csv,noheader,nounits`とcontainer-visible device query | `node-agent` / model load前に一度 | `hardware.gpu.nodes`、raw outputs | 4 GPU/node、8 unique UUID、PCI/logical index mapping | topology incomplete |
-| node CPU/NUMA hardware（profile only） | `LC_ALL=C lscpu --json`、`/sys/devices/system/cpu/online`、`/sys/devices/system/node/online`、各nodeの`cpulist`/`meminfo`、`/proc/meminfo` | profile `node.auditor` / benchmark後、各node | `hardware.cpu_numa.nodes`、raw files | observed hostname集合、exact membership/parser fixture | profileではhardware incomplete。bench consumerはNULLだけを返す |
-| outer actual argv | stage wrapperが`subprocess.Popen`へ渡すargv配列 | `StageRunner` / spawn直前 | `run.launch_argv` | shell表示ではなく配列、profiler wrapperを含む実spawn値 | stage未開始またはconfiguration incomplete |
-| node actual argv | node wrapperの`command`配列 | `node.wrapper` / Singularity exec直前 | `parallel.node.<node_rank>.benchmark_argv` | bind/env/benchmark argvを順序保持、node rankとの整合 | node configuration incomplete |
-| run timing/outcome | supervisorのUTC clock、monotonic clock、最終status | `pjm.supervisor` / entry時とcompute回収終了時 | `run.started_at`、`run.finished_at`、`run.elapsed_sec`、outcome/exit | runner archive時刻を混ぜず、wallとmonotonicを別clockとして保持 | 保存できたterminationとstage outcomeから中断を表す |
+| run/subject identity | runnerが一度生成したsubject/child manifests | `runner.manifest` / provision前 | raw tableの`run`列、regularは`control/run-manifest.json`、qualificationはparent `control/qualification-allocation-manifest.json`とchild manifest | manifestに汎用subject IDは保存せず、projection時にregular/child subject ID=run ID、allocation subject ID=allocation IDと導出。parent ordered childとchild armを照合し、block/order/replicateはallocation/protocol/array offsetから導出。PJM job IDを含めない | manifestなしでは投入しない |
+| metrics contract | Git管理`qwen-v2.toml`とlane/run variantが選んだexpected producer graph | `runner.manifest` / provision前 | `run.metrics_contract`、`control/contract.toml`、resolved laneと元lane path/SHA-256を含む`control/protocol.toml` | contract ID/content hash、exact producer version、view compatibility、mixed contract禁止、family/列の`applicable_run_variants` | required family欠損なら`collection_complete=false`。非適用列はNULL |
+| source track / control plane | Gitのscore reference/profile base、実checkout head、purpose/qualification arm、protocol列挙control fileの実blob | `runner.manifest` / provision前、publisher / archive後 | compact source-track projection。実control-plane JCS hashはregular manifestまたはqualification parent manifest/allocation projectionが一度所有。qualification ONだけ`control/source-track-diff.json` | base/head規則、ON diff path集合=score bundle paths。control-plane filesは実checkoutからprotocol path順にhashし、protocol/contextの配列hashへ照合。childへ配列/hashを複写せずparent join | jobを投入しない |
+| instrumentation bundle | Git管理purpose-neutral semantic bundle、SIF sidecar | `runner.manifest` / submit前 | `control/instrumentation-bundle.json`とsubject manifestのbundle SHA-256。actual argv/sinkはstage/artifact source | hook/event/sample設定、wrapper/node-agent hash、contract、env scope、source path allowlist、relative argv template、sink source ID。sink path templateはcontract source registryだけが所有。v1 hookはbuild-definition repositoryに限定し、hook pathをbundle source pathsとSIF score treeへ含める。referenceはempty、qualification ONと採用後benchは同じscore bytes | required source欠損なら`collection_complete=false`。profile-only bundleはbenchでproducerを持たない |
+| instrumentation qualification decision | Git管理D-001 decision record | `runner.manifest` / bench submit前 | manifestのdecision ID/hashからdecision context viewへexact join。artifact copyは作らない | namespace protocolがlane/reference/workload/reference+score bundle/control-plane blobs/5-pair scheduleを所有し、decisionがqualified source diff、observed SIF-semantic pair、eligible parentで一値のruntime launcher semantic、verdictを所有。対象subsetをdecisionへ再掲しない | 未回答はdecision NULL。profileはscoreへ混ぜない |
+| scheduler join | `pjsub` argv/stdout/stderr/responseとPJM側job-entry file | `runner.submission` / pjsub前後、`pjm.supervisor` / entry直後、finalizer / terminal後 | regularは`scheduler.submit_job_id`と`scheduler.job_entry_job_id`、qualificationはallocation projection | normalは二scalar、qualificationはallocation ID+ordered child IDsをquery時照合。完全導出できるbinding fileは作らずchildへ共通値を複写しない | reject、応答不明、片方欠損、不一致はattempt/comparison不適格。自動復旧しない |
+| producer completion | producerのnormal close、node-agent summary、StageRunnerのchild outcome | supervisor/node-agent/StageRunner / return後 | 完成producer fragment、stage termination | immutable contract/bundleからexpected fragment/fileを一回導出し`collection_complete`を決める。merge後fragmentは削除 | 欠損値はNULL。partial/tmpは手元に残り得るがartifact/mergeへ入れない |
+| protocol assignment | Git管理protocolとrunnerの割当record | `runner.manifest` / job投入前 | regularはplanned-treatmentのblock ID/order、replicate index、planned group/set ID、dimensions。qualification childはtop-level pair/arm、planned set/dimensionsだけ | closed namespace+purpose+dimensionsからgroup/set IDを再計算。qualificationのblock ID/order/replicateはallocation ID、parent/set child offset、protocol pair offsetから導出しchildへ複写しない | purpose別comparison不適格。attempted groupやpairを観測値・順序から推測しない |
+| qualification allocation | Git管理paired scheduleとrunnerが一度作るparent manifest | `runner.manifest` / pair submit前、`pjm.supervisor` / entry、`runner.postrun` / terminal後 | namespace、allocation ID、submission/job-entryの二job ID、scheduler request/accounting/terminal、observed control-plane hash、nullable job-entry env、minimal hardware、ordered workload、pair/ordered child IDs、OFF/ON order | parent/set/projectionのordered IDs、job-entryは実在時だけ照合。protocol pair arm order/offset、child arm/parent hash、parent↔child namespace/lane、OFF/ON bundle、request↔parentを一回照合。hardware/workloadはparent relationが一度所有 | arm間crash/未起動/未完成はsetのchild artifactをNULLにしてpair不適格。片armを別allocationへ再pairしない |
+| Qwen/SGLang source | SIF build時の二checkoutで各一回実行する`git rev-parse --show-object-format`と`git rev-parse HEAD` | `build.packager` / source checkout直後 | `source/sif-sidecar.json`のordered source commits、`qwen_sif_provenance_raw_v2` | fixed repository ID、`sha1|sha256`、algorithm別40/64-hex full OID、embedded valueとの一致 | SIFを公開しない |
+| SIF/toolchain | digest-pinned `From:`が消費したOCI manifest/config/layer、完成SIF、score source tree、embedded manifest、role付き実参照runtime file | `build.packager` / SIF完成・test後、publisher / archive後 | `source/sif-sidecar.json`、`qwen_sif_provenance_raw_v2`、artifact identity/URI索引 | 完成SIF hash、score bundle pathごとのabsent/mode/blob state、embedded identity、python/SGLang/CUDA/NCCL role別realpath/hashをseal。ON diff new stateとも照合 | 欠損値はNULL。正常build/reuse pathは続行しない |
+| runtime MPI/container launcher | 実run entryの`mpirun`/`singularity` resolved realpath、byte hash、absolute-path `--version` | `pjm.supervisor` / launch前、publisher / archive後 | regular `source/runtime-launchers.json`、qualification parent同member、`qwen_runtime_launchers_raw_v2` | role順exact 2、全outer MPI/container launchは検査済みabsolute path。semantic hashをqualification/adopted benchで照合 | 欠損値はNULL。正常launchは続行しない |
+| model/tokenizer/template | full Hub revisionまたは一度だけ作るper-shard hash付きprebuilt record、tokenizer/template allowlist | `provision.verifier` / node copy前 | regularは`source/model-manifest.json`と`artifact.model.manifest_sha256`、qualificationはparent manifest roleからchildへjoin | schemaのexact allowlist。prebuilt shard path/size/hashは同じsource recordだけが所有し、導出manifest IDを複写しない。400 GB本文はrunごとに再hashしない | 欠損値はNULL。正常provision pathは続行しない |
+| dataset | tracked protocolがpinしたfull repository revisionとdataset file | `provision.verifier` / `hf download --revision <full-revision>`後 | regularは`source/dataset-manifest.json`と`artifact.dataset.manifest_sha256`、qualificationはparent manifest roleからchildへjoin | repository/full revision、relative path、size、SHA-256をshared pathと独立に照合。moving `main`禁止 | provision失敗 |
+| full job-entry environment | `os.environb`相当のbyte environment | `pjm.supervisor` / script entry直後、module/unset前 | regularは`env.job_entry.*`と`source/env/job-entry.snapshot`、qualificationはparent snapshotとallocation env projection | byte-exact name escapeと全value Base64。child rawへ複写せずEnvironmentがblock/allocation join | 欠損値はNULL、requiredなら`collection_complete=false` |
+| full host exec environment | node wrapperのbyte environment | `node.wrapper` / module/cache staging後、container exec直前 | `env.host.node.<node_rank>.*`と`source/env/host-node-<node-rank>.snapshot` | byte-exact、expected node全件、raw scope保持 | 欠損値はNULL |
+| full SGLang launch environment（score bundle） | container内のbyte environment | bench/profile/qualification ONの`sglang.engine` / `_set_envs_and_config`等の解決後、scheduler launch直前 | `sglang.env.node.<node_rank>.*`と`source/env/sglang-node-<node-rank>.snapshot` | `--cleanenv`後かつSGLang mutation後の全件、raw scope保持 | 欠損値とqualification OFF consumerはNULL |
+| full worker environment（score bundle） | scheduler processのbyte environment | bench/profile/qualification ONの`sglang.worker_ready` / ready通知直前 | `sglang.worker.env.rank.<global_rank>.*`と`source/env/worker-rank-<rank>.snapshot` | byte-exact、global rank `{0..7}`、device event一致 | 欠損値とqualification OFF consumerはNULL。requiredなら`collection_complete=false` |
+| scheduler request | Git管理lane、PJM script identity、runnerが実行するexact `pjsub` argv | `runner.submission` / submit直前 | regularは`run`の`scheduler.request`、qualificationはallocation artifact/raw projection | 2 nodes、2 MPI processes、resource group、override照合。child rawへ複写しない | 欠損値はNULL。invalidなら投入しない |
+| scheduler accounting | `pjstat --history -S --choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut --data --delimiter "\t" <job>` | `runner.postrun` / terminal state後 | regularは`scheduler.accounting`と`source/scheduler/pjstat.{stdout,stderr}`/`pjstat-version.txt`、qualificationはparent raw/allocation projection | field/unit/job ID固定、requestとの一致はview。childはallocation IDでjoin | 取得できないfieldはNULL。host/rankを捏造しない |
+| minimal CPU hardware/settings | allocated nodeごとの`LC_ALL=C lscpu --json`とkernel/cpufreq/boost/NUMA/memory設定 | node wrapper。regularはcontainer前、qualificationはparentがarm 1前に一度。publisher / archive後 | `source/hardware/node-<node-rank>.json`とsubject-keyed `qwen_minimal_hardware_raw_v2` | CPU identityに加えkernel、online/isolated CPU、memory/hugepage、NUMA balancing、boost、policy別governor/driver/min/max。regular runまたはallocationが一度所有しchild rawへ複写しない | 欠損値はNULL、requiredなら`collection_complete=false` |
+| observed node topology/launch | 同じMPI launch内のOMPI rank/size/local rank、hostname、node wrapper/container argv、host affinity | `node.wrapper` / container exec直前、publisher / archive後 | `source/topology/node-<node-rank>.json`と`qwen_node_launch_raw_v2` | rank `{0,1}`、2 distinct host、一rank一node。StageRunnerはouter MPI argv、node launch relationはnode wrapper/Singularity/SGLang argvを所有 | 欠損値はNULL |
+| lifecycle control | lane contractのtransport/address source/port strategy、rank 0 node-agent endpoint、startup ready、shutdown start | `node-agent coordinator` / container開始前とgeneration後、publisher / archive後 | `control/lifecycle/rendezvous.json`、最終`summary.json`、`qwen_lifecycle_summaries_raw_v2` | run/version/freshness、rank 1 explicit endpoint、expected node identity ACK、shutdown一意性。env/DNS/任意探索禁止 | 欠損値はNULL。ready不成立ならcontainerを開始せずnonzero終了 |
+| GPU topology/settings | host/containerのfixed `nvidia-smi --query-gpu`とhost `nvidia-smi topo -m` | `node-agent` / model load前に一度、publisher / archive後 | node別host/container query stdout/stderr、host topology matrix stdout/stderr、node topology JSON、`qwen_topology_raw_v2` | UUID/PCI/memory/driverに加えpersistence、compute mode、power limit、max clocks、MIG/ECC。4 GPU/node、8 unique UUID。parsed copyをsource JSONへ作らない | 欠損値はNULL |
+| node CPU/NUMA detail（profile only） | minimal hardwareに含まれない各NUMA nodeの`cpulist`/`meminfo`とpost-run `/proc/meminfo` | profile `node.auditor` / benchmark後、各node、publisher / archive後 | `profile/raw/hardware/node-<node-rank>/{proc-meminfo.txt,numa/...,capture.json}`と`qwen_profile_hardware_raw_v2` | hostname付きcaptureをminimal hardwareの`(node_rank,hostname)`と照合。meminfo key/kB→bytes、cpulist canonicalization、exact membership、source member/hashを固定 | 欠損値はNULL。bench consumerもNULL |
+| outer actual launch | stage wrapperが`subprocess.Popen`へ渡すargv/cwd/stderr mode | `StageRunner` / spawn直前 | `run.stage.benchmark.launch` | shell表示ではなくclosed object。profiler wrapperを含む実spawn値 | stage未開始ならNULL |
+| run timing/outcome | supervisorのUTC clock、monotonic clock、最終exit | `pjm.supervisor` / regularはPJM entry→compute回収終了、qualificationは各child orchestration直前→そのchild回収終了 | `run.started_at`、`run.finished_at`、`run.elapsed_sec`、`run.exit_code` | wall/monotonicを別clockで保持。`run_outcome`はexit codeからview導出。allocation共通のscheduler request/accounting/terminalは親projだけが所有し、別allocation lifecycleは作らない | 保存できたterminationとstage outcomeから中断を表す |
 | stage outcome | supervisorの同じmonotonic clockとraw child wait status | `StageRunner` / spawn直前とwait直後 | `perf.stage.benchmark.wall_time_sec`、`run.stage.benchmark.termination` | exit/signal/spawn_errorを区別し、publish/GPU集計をtimer外へ | termination objectで中断を表現 |
-| cache input | shared cacheのnode-local rsync完了直後のcanonical member manifest | `node.wrapper` / monitor/container開始前 | `cache.node.<node_rank>.input_manifest_sha256`、`source/cache/node-<node>-input-manifest.json` | path/type/size/content/order、SIF/model/backend互換dimension | 欠損ならprovenance incomplete |
-| BenchArgs（score bundle） | `BenchArgs.from_cli_args(args)`が返すdataclass | bench/profile/qualification ONの各node `sglang.cli` / CLI parse直後、`Engine()`前 | `parallel.node.<node_rank>.sglang.benchmark_arg.*` | default込み、node `{0,1}`のfull object一致をview検証 | applicable runではconfiguration incomplete。qualification OFF consumerはNULLだけ |
-| launch-effective ServerArgs（score bundle） | `_set_envs_and_config`、`check_server_args`、auto parser解決後の`ServerArgs` | bench/profile/qualification ONの各node `sglang.engine` / scheduler/daemon launch直前 | `parallel.node.<node_rank>.sglang.server_arg.*` | raw full object、TP/nnodes/node_rank/dist address invariant | applicable runではconfiguration incomplete。qualification OFF consumerはNULLだけ |
-| runtime backend/transport（score bundle） | `run_scheduler_process()`で`Scheduler(...)`構築後、`pipe_writer.send(scheduler.get_init_info())`直前のactual state | bench/profile/qualification ONの`sglang.worker_ready` / global workerごと | `parallel.worker.<global_rank>.runtime` | global rank `{0..7}`、node rank、GPU ID/UUID、affinity、actual attention/communication backend | applicable runではtopology/runtime incomplete。qualification OFF consumerはNULLだけ |
-| planned qualification workload | Git管理protocolのdataset/filter/seed/argv/sampling policy | `runner.manifest` / qualification submit前 | protocol artifactとplanned workload identity | OFF/ON同一、source-diff gateがselection codeを変更しない。native totalsとも照合 | qualification arm不適格 |
-| measured workload（score bundle） | ShareGPT shuffle/filter/chat-template/tokenize後のordered `DatasetRow`とsampling params | bench/profile/qualification ONの`rank0.offline` / generate前 | measured manifest、hash/count/planned totals索引 | dataset manifest+元array index、canonical token-ID array SHA-256、length/output/sampling/order | applicable variantではprovenance/benchmark incomplete。qualification OFFは非適用でNULLだけ |
-| warmup workload（score bundle） | random warmup request作成後のordered requestsとsampling params | bench/profile/qualification ONの`rank0.offline` / warmup generate前 | warmup manifest hash/count/planned totals、`workload.warmup.mode` | measured manifestへ混ぜずcomparison fingerprint必須 | applicable variantではwarmup incomplete。qualification OFFは非適用でNULLだけ |
-| input prepare phase | tokenizer取得、dataset load/sample/tokenizeのmonotonic boundaries | `rank0.offline` / request object完成まで | `perf.phase.input_prepare.wall_time_sec` | 同一clock。manifest hash/writeはtimer終了後、generate前 | phase incomplete |
-| distributed init phase | rank 0 processの`Engine(...)`呼出し | `rank0.offline` / constructor直前からreturn直後 | `perf.phase.distributed_engine_init.wall_time_sec` | rank 0同一monotonic clockだけ。worker-readyはcardinality検証専用 | phase incomplete |
-| warmup generation | warmupの`backend.generate`直前・return直後 | `rank0.offline`、profileだけ追加control forwarder / warmup中 | `perf.phase.warmup_generation.wall_time_sec`、profileだけphase summary | rank0同一clock。profileでは別invocationとexpected node start/end/ACKも検証 | rank0 timer欠損はphase incomplete。benchはsummary列NULLだけ |
-| measured generation | measured `backend.generate`直前・return直後 | `rank0.offline`がlocal timer値をauthoritative resultへ、runner parserがterminal後にFact化 | `perf.benchmark.generation.wall_time_sec`、profileだけphase summary | rank0 `time.perf_counter`、正/有限。profileでは同じinvocation IDとforward lead/trailも検証 | benchmark invalid。benchはsummary列NULLだけ |
-| observed responses | decode/validate済み`gen_out` | bench/profile/qualification ONの`PrimaryResultWriter` / generate return直後、runner parser / terminal後 | primary artifactからreturned/error count、prompt/completion totals | schema固定、`len(gen_out)`、meta tokens、malformed/over-return reason。temporary write/close後にrename。raw key ownerはparserだけ | applicable runではstage nonzero。qualification OFFの列はNULLだけ |
-| native qualification result | SGLang標準`result_filename`のnative JSON | qualification OFF/ONのrank0 native writer / generation後、qualification parser / terminal後 | `source/native-qualification-result.json`とpair estimand point | OFF/ON同じschema/parser、正有限native throughput/time、workload identity一致。normal bench/profileでは生成しない | arm eligibility false。normal bench/profile consumerは非適用 |
-| primary outcome | purpose別authoritative resultとgeneration duration | BigQuery view / query時 | throughput派生値はrawへ重複保存しない | bench/profileはprimary artifact、qualification OFF/ONは共通native resultからthroughputを導出。ON primaryはreliability照合だけ | applicable source不足ならNULLと理由 |
-| qualification response canary | timed pairとは別`analysis_role=response_canary` allocationの両SIF共通canary result | runner-side canary validator / 両child result検証後 | qualification artifact内`response-canary-result.json`、decisionのartifact hash | subject manifest、両child result hash、returned/error、ordered request ID、per-request token、generation token-ID digest、両SIF/harness/workload/result identity。timed pairはprotocolの同一result hashをjoin | tupleをadoptしない。timed pair内で再実行しない |
-| internal last-generation stat（profile only） | `get_server_info()["internal_states"]` | profile rank0 result artifact / primary結果完成後 | full result artifactのみ | 一次estimandに使わず、API failureでprimary resultを失わない | bench/qualification consumerはNULLだけ |
-| node process lifecycle | wrapper child start/end、raw wait status/signal、termination reason | `node.wrapper` / child境界 | `parallel.node.<node_rank>.process_lifecycle` | shutdown受信を複写しない。lifecycle reducerがsummaryのinvocation/sequence/node一意性を検証後、同一`CLOCK_MONOTONIC` clock IDの時だけshutdown前exit=early、後=coordinatedを導出 | summary欠損、invocation/clock不一致は分類NULLとreason。topology/run incomplete |
-| shutdown phase | shutdown開始・全child終了のrank0 monotonic boundaries | `rank0.offline` / shutdown前後 | `perf.phase.engine_shutdown.wall_time_sec`、shutdown invocation ID | node lifecycleと照合 | phase incomplete |
-| raw GPU telemetry（profile only） | node-local periodic `nvidia-smi` sampleとpoll error | profile `node-agent` / process実行中にnode別JSONLへbuffered append | node別raw JSONL | 一定間隔と正常終了時にflush、monotonic/wall anchor/UUID/index/value/error/sequence gap | profileでは読めるsampleだけ保存してtelemetry incomplete。bench consumerはNULLだけを返す |
-| GPU phase markers（profile only） | persistent coordinatorからのcontrol message | profile `node-agent` / warmup・generation message受信時 | node/invocation/sequence別phase summary | expected node `{0,1}`、local `[start,end)`、順序、latency。native markerと混在禁止 | profileでは対象aggregateを作らない。bench consumerはNULLだけを返す |
-| GPU aggregate（profile only） | raw sampleとphase marker | `runner.postrun` / profile run後 | phase/node/GPU scoped count、coverage duration、util mean/p95、memory max、energy/power-valid duration、temp max、clock min | `[start,end)`交差、pre-start sample可、`2*interval` gap cutoff、duration-weighted mean/nearest-rank p95/energy | profileではtelemetry incomplete。bench consumerはNULLだけを返す |
-| artifact identity | localで作ったrun bundle、profileだけのraw telemetry/trace tar、SIF/build sidecar | `runner.packager` / GitHub Artifact upload前 | artifact URI、bundle/profile hash、SIF source/hash、`artifact-manifest.json` | SIF/model/dataset/env/cache/topology/PJM raw+version/`logs/pjm-job.log`/benchmark stdout/stderr/result/workloadを列挙。profileはGPU telemetryを回収し、D-004でprofiler familyがapplicableなprotocolだけ固定出力先のtrace/tool metadata/exact argvもrequiredにする。benchではprofile artifact/placeholder/absence recordを作らない | uploadできなければrun-level archive failure。benchのprofile consumerは理由なしNULLだけ |
+| cache input | shared cacheのnode-local rsync完了直後のcanonical member manifest | `node.wrapper` / monitor/container開始前 | `cache.node.<node_rank>.input_manifest_sha256`、`source/cache/node-<node-rank>-input-manifest.json` | relative path byte順。fileはtype/path/size/SHA-256、symlinkはtype/path/target bytes。mtime/uidは除外 | 欠損値はNULL、requiredなら`collection_complete=false` |
+| BenchArgs（score bundle） | `BenchArgs.from_cli_args(args)`が返すdataclass | bench/profile/qualification ONの各node `sglang.cli` / CLI parse直後、`Engine()`前 | node eventの`config-snapshot/v1` full typed field array | event type `bench_args_effective`、definition source blob、default込み全field、node `{0,1}`一致をview検証 | 欠損値とqualification OFF consumerはNULL。requiredなら`collection_complete=false` |
+| launch-effective ServerArgs（score bundle） | `_set_envs_and_config`、`check_server_args`、auto parser解決後の`ServerArgs` | bench/profile/qualification ONの各node `sglang.engine` / scheduler/daemon launch直前 | node eventの`config-snapshot/v1` full typed field array | event type `server_args_effective`、definition source blob、TP/nnodes/node_rank/dist address invariant | 欠損値とqualification OFF consumerはNULL。requiredなら`collection_complete=false` |
+| runtime backend/transport（score bundle） | `run_scheduler_process()`で`Scheduler(...)`構築後、`pipe_writer.send(scheduler.get_init_info())`直前のactual state | bench/profile/qualification ONの`sglang.worker_ready` / global workerごと | `parallel.worker.<global_rank>.runtime` | global rank `{0..7}`、node rank、GPU ID/UUID、affinity、actual attention/communication backend | 欠損値とqualification OFF consumerはNULL。requiredなら`collection_complete=false` |
+| qualification common workload | ShareGPT selection後のmeasured/warmup ordered requestsとactual sampling params | allocation parent neutral harness / arm 1前、publisher / archive後 | parent `source/workload-{measured,warmup}.json`、subject=allocationのworkload manifest/request relations | OFF/ONが同じmanifest byteを順番通り消費し、neutral qualification resultと照合。child/allocation raw rowへpayloadを複写しない | 欠損値はNULL、pair不適格 |
+| measured workload | ShareGPT shuffle/filter/chat-template後のordered `DatasetRow`とsampling params | regular bench/profileの`rank0.offline` / generate前、qualificationは上記parent、publisher / archive後 | `source/workload-measured.json`、manifest hash、`qwen_workload_manifests_raw_v2`、`qwen_workload_requests_raw_v2` | dataset manifest+元array index、実prompt text+observed input token countまたはtoken-ID payload、requested output/sampling/order。source member/hashはmanifest relationだけが所有 | 欠損値はNULL。requiredなら`collection_complete=false` |
+| warmup workload | random/dataset warmup request作成後のordered requestsとsampling params | regular bench/profileの`rank0.offline` / warmup generate前、qualificationは上記parent、publisher / archive後 | `source/workload-warmup.json`、`qwen_workload_manifests_raw_v2`、`qwen_workload_requests_raw_v2` | top-level modeはmanifest relationだけ、request payloadはrequest relationだけが所有。measured manifestへ混ぜない | 欠損値はNULL。requiredなら`collection_complete=false` |
+| input prepare phase | tokenizer取得、dataset load/sample/tokenizeのmonotonic boundaries | `rank0.offline` / request object完成まで | `perf.phase.input_prepare.wall_time_sec` | 同一clock。manifest hash/writeはtimer終了後、generate前 | 欠損値はNULL |
+| distributed init phase | rank 0 processの`Engine(...)`呼出し | `rank0.offline` / constructor直前からreturn直後 | `perf.phase.distributed_engine_init.wall_time_sec` | rank 0同一monotonic clockだけ。worker-readyはcardinality検証専用 | 欠損値はNULL |
+| warmup generation | warmupの`backend.generate`直前・return直後 | `rank0.offline`、profileだけ追加control forwarder / warmup中 | `perf.phase.warmup_generation.wall_time_sec`、profileだけphase summary | rank0同一clock。profileでは別invocationとexpected node start/end/ACKも検証 | 欠損値とbenchのprofile summary列はNULL |
+| measured generation | measured `backend.generate`直前・return直後 | `rank0.offline`がlocal timer値をauthoritative resultへ、runner parserがterminal後にFact化 | `perf.benchmark.generation.wall_time_sec`、profileだけphase summary | rank0 `time.perf_counter`、正/有限。profileでは同じinvocation IDとforward lead/trailも検証 | 欠損値とbenchのprofile summary列はNULL |
+| observed responses | decode済み`gen_out` | bench/profile/qualification ONの`PrimaryResultWriter` / generate return直後、runner parser / terminal後 | `source/primary-result.json`からreturned/error count、prompt/completion totals | schema固定。malformed responseはerrorへ数え、取れないtokenを0で補わない。temporary write/close後にrename | 欠損値はNULL。qualification OFFもNULL |
+| neutral qualification result | 共通benchmark harnessが検証した実response array | qualification OFF/ONのrank0 `QualificationResultWriter` / generate return直後 | `source/qualification-result.json`とpair estimand point | `qualification-result/v1`のactual returned/error/token totalsとwall、parent workload request/token整合。予定件数・throughput・verdictは保存しない | 欠損値はNULL。normal bench/profileもNULL |
+| primary outcome | purpose別authoritative resultとgeneration duration | BigQuery view / query時 | throughput派生値はrawへ重複保存しない | bench/profileはprimary artifact、qualification OFF/ONは共通neutral resultからthroughputを導出。ON primaryとの重複はwriter検証として明示 | source不足ならNULL |
+| node process lifecycle | wrapper child start/end、raw wait statusまたはspawn error | `node_agent.py`のchild supervisor / child境界と`os.waitpid` | `parallel.node.<node_rank>.process_lifecycle` | exit/signal/kindやshutdown受信をrawへ複写しない。同じ`<boot_id>:CLOCK_MONOTONIC`内だけshutdown前後をview導出 | source不足なら分類NULL |
+| shutdown phase | shutdown開始・全child終了のrank0 monotonic boundaries | `rank0.offline` / shutdown前後 | `perf.phase.engine_shutdown.wall_time_sec`、shutdown invocation ID | node lifecycleと照合 | 欠損値はNULL |
+| raw GPU telemetry（profile only） | node-local periodic `nvidia-smi` sample | profile `node-agent` / process実行中にnode別JSONLへbuffered append、publisher / archive後 | `telemetry/node-<node-rank>/gpu-samples.jsonl`と`qwen_gpu_samples_raw_v2` | 1.0秒間隔、monotonic/wall anchor/UUID/index/nullable values。sequenceはnode poll-frame ordinalで、expected UUIDが一件ずつ揃うcomplete frameだけをprojection。publisherがsource member/hash付きで転記し、poll status/reason fieldなし | 読めるcomplete frameだけ保存。欠損値とbench consumerはNULL |
+| GPU phase markers（profile only） | persistent coordinatorからのcontrol message | profile `node-agent` / warmup・generation message受信時、publisher / archive後 | `control/phase/summary.json`と`qwen_phase_summaries_raw_v2` | expected node `{0,1}`、node-local clock ID、start/end sequence、local `[start,end)`に加え、rank 0同一clockのbroadcast/全ACK受領/generation境界6時刻の順序。別markerと混在禁止 | 欠損値とbench consumerはNULL |
+| GPU aggregate（profile only） | deduped raw sampleとphase summary projection | BigQuery `gpu-phase/v1` reducer/view / query時 | raw keyへ保存せず、phase/node/GPUとfleet consumerだけ | same-node clock ID、`[start,end)`交差、2 interval gap cutoff、duration-weighted mean/nearest-rank p95/step energy。complete booleanなし | 欠損値とbench consumerはNULL |
+| artifact identity | localで作ったrun bundle、qualification allocation archive/set manifest、profileだけのraw telemetry/trace tar、SIF sidecar | `runner.packager` / GitHub Artifact upload前 | bundle/artifact/set manifests | OpenFOAM基準の外側pathでallocation/childを分離。profile rawは同じlogical artifact setの別outer file。同じbyteを重複しない | uploadできなければworkflow failure。consumer値はNULL |
 | archive/publish result | GitHub Artifact upload結果、SCP結果、BigQuery response | workflow archive job/`Publisher` / upload・転送・送信後 | workflow logとData Status | SCP成功後だけGitHub Artifactを削除。失敗はArtifactを残してjob failure | scientific familyへ理由を伝播せず、run-level状態だけにする |
 
 ## SGLang hookの正確な位置
@@ -169,16 +170,17 @@ consumerでNULLを返すだけで、raw key、family status、Evidence、reason�
 
 - ShareGPTは`benchmark/datasets/sharegpt.py`でshuffle後、chat template適用、tokenize、length filterを
   行って`DatasetRow`を作る。現状recordにsource row IDとtoken IDがないため、この地点でsource IDと
-  prompt-token digestを保持できるようにする。source IDはdataset manifest+元JSON array index、digestは
-  canonical token-ID arrayのSHA-256とする。
+  exact prompt payloadを保持できるようにする。現行はtextであり、token-ID入力へ勝手に変更しない。source IDは
+  dataset manifest+元JSON array indexとする。
 - sampling paramsは`offline_throughput.py`の`throughput_test_once`で`DatasetRow`から構成される。
   manifestはこの構成後、`backend.generate`前にsealする。
 - generation timerは同関数の`time.perf_counter()`から`backend.generate` returnまでを使う。
 - 現在の`successful_requests = len(reqs)`は予定件数であって成功実測ではない。実際の返却配列を
   decodeし、returned count、malformed/error count、response meta_infoのprompt/completion tokensを作る。
-- primary resultは唯一のartifactとしてtemporary write/close後にrenameする。
+- normal bench/profileのprimary resultは唯一のartifactとしてtemporary write/close後にrenameする。
   後続の`get_server_info()`、profile finalize、shutdown失敗で失ってはならない。eventとartifactを
-  二重正本にせず、通常の`result_filename`は診断用とする。
+  二重正本にしない。qualificationは同じresponse validationを持つcommon harnessがneutral resultを作り、
+  ON primaryとの一致でbench採用予定writerを検証する。
 
 ## 現実装からの変更点
 
@@ -188,7 +190,7 @@ consumerでNULLを返すだけで、raw key、family status、Evidence、reason�
 | `core.py::send` | compute側packageがBigQuery credential/retryを所有する | `publish.py`へ隔離しPJM bundle/環境からcredentialを除去 |
 | `stage.py::EventReceiver` | 共有socketを両nodeへbindし、node rankなしでrun-scoped keyを直接sendする | node-local endpoint -> node-local Recorder、node/rank scopeを保持 |
 | `stage.py::run_stage` | receiverのBigQuery完了待ちと集計をstage elapsedへ含める | child waitでtimerを閉じ、merge/publishはrunnerへ移す |
-| `stage.py::fallback_result` | missing/Noneを空文字化し、予定`successful_requests`も受け入れる | primary-result artifactのpure parser。欠損keyは出さずreasonを残す |
+| `stage.py::fallback_result` | missing/Noneを空文字化し、予定`successful_requests`も受け入れる | primary-result artifactのpure parser。欠損keyは出さずconsumerをNULLにする |
 | `stage.py::GpuSampler` | memoryへ蓄積し終了時集計だけを送る | raw node JSONLへbuffered append/periodic flushし、後処理で集計 |
 | `scripts/run-qwen35-node.sh` | 全nodeが同じ共有socket pathをbindし、cache manifestがない | node-local endpointとstaging直後cache manifest |
 | 同node script | node別実argvをartifact/metricへ残さない | Singularity exec直前の配列をnode producerが記録 |
@@ -237,24 +239,25 @@ exitをviewで比較する。
 - returned count不足/過多、malformed response、prompt/completion token欠損、generate例外、NaN/zero duration
 - warmup成功/measured失敗、generate成功/get_server_info失敗、rank1 coordinated kill/early death
 - cache count/sizeは同じでcontentが違う二manifest
-- variant applicability grid：profile-only collectorのprofile失敗はreasonあり、benchは理由/status/EvidenceなしNULL、qualification OFFのON専用列は同じNULL、qualification ONの同collector失敗はreasonあり
-- tagged-union source trackのbench/profile/qualification OFF/ON、base非ancestor、instrumentation以外の差分、checkout tree不一致、同bundleでbase/workload/runtimeだけ変更、moving branch名が同じでもcommitが異なるfixture
+- variant applicability grid：profile-only collectorのprofile失敗、bench非適用、qualification OFF非適用はいずれもconsumer値がNULL。required source欠損時だけrun-level `collection_complete=false`
+- compact source trackのbench/profile/qualification OFF/ON、base非ancestor、score bundle source path外差分、control-plane blob差、checkout tree不一致、同bundleでbase/workload/runtimeだけ変更、moving branch名が同じでもcommitが異なるfixture
 - qualification allocationの一pair二child、二pair混入を全pair reject、child順/arm不一致、別allocationへの再pair、arm間crash、片child未起動/metrics未完成fixture
 - bench lifecycle ready/shutdownだけ、profile lifecycle+phase、benchへphase summaryを誤生成するfixture
-- instrumentation bundleのhook/sample interval一つだけを変えたhash差とactual activation不一致fixture
-- D-001 decisionの未存在、non-adopt、hash不一致、candidate/canary result不一致、adopt完全一致fixture
+- instrumentation bundleのhook/sample interval一つだけを変えたhash差fixture
+- D-001 decisionの未存在、non-adopt、対象pair不一致、adopt完全一致fixture
 - GPU sampleのsequence gap、unfinished frame、poll error、marker欠損、pre-start sample、既知p95/energy系列
-- 正常close、program failure、途中JSON line、missing node fragment、異値conflict
+- 正常close、program failure、完成node fragment欠損、異値conflict。途中fileはmerge/artifactへ入れない
 - contract欠損legacy、expected producer version混在、exact v2 contract
 - OpenFOAM方式を移植したhappy path、GitHub upload失敗、SCP失敗
 
-全fixtureで、node/rank full snapshotのscope保持、raw row集合、completeness reason、comparison
+全fixtureで、node/rank full snapshotのscope保持、raw row集合、`collection_complete`、comparison
 eligibility、result artifactとの代数的parityを検査する。
 
 ## 未決定事項
 
-bench/profile分離と、benchのprofile-only metricは値をNULLにするだけで原因/status/Evidenceを作らないことは
-ユーザー確定済みである。初版profileで必須にするprofiler/activity/step範囲/required raw file集合D-004と、
+bench/profile分離と、取得できなかった値およびprofile-only metricは値をNULLにするだけで原因/status/欠損用recordを
+作らないこと、極稀な失敗を救う多段safeguardは作らないことはユーザー確定済みである。
+初版profileで必須にするprofiler/activity/step範囲/required raw file集合D-004と、
 score runに許す最小bench bundleの統計上限D-001はユーザー確認待ちである。プロジェクト全体ではOpenFOAMの
 lane scope D-003を先に決め、D-004、D-001の順に一問ずつ確認する。決まるまではGPU
 polling/aggregate、phase control marker、profiler、verbose backend trace、full placement診断はprofile-only、
