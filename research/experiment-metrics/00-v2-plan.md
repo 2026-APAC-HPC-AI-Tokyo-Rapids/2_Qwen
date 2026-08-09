@@ -155,7 +155,7 @@ Pythonの`str(list)`は使用しない。logical typeとunitはvalueから推測
 常に一意かつ損失なく復元でき、comparison viewの利用性も失わない場合だけである。
 
 単に値が等しい、名前が似る、またはlogに存在するだけでは削除しない。requestedと
-effective、plannedとobserved、rank 0とrank 1、別phaseの時間は独立事実である。公式producer
+effective、plannedとobserved、異なるnode rank、別phaseの時間は独立事実である。公式producer
 との照合、schema routing、保存層をまたぐmanifest索引などの正当な重複は、registryの
 `duplication_justification`へ理由と検証式を書く。
 
@@ -347,18 +347,18 @@ socket endpointは各node localに作り、各nodeのeventはそのnodeのJSONL�
   node scopeで出す。
 - rawはnode/rank-scoped full factを正本として保持する。viewだけが全expected scopeの一致を
   検証したfieldをcommon表示し、rawにcommon/deltaの第二表現を作らない。
-- expected node rank `{0,1}`、global scheduler rank `{0..7}`、distinct hostname、GPU UUID集合を
+- expected node rank `0..lane.nodes-1`、global worker rank `0..lane.tensor_parallel_size-1`、distinct hostname、GPU UUID集合を
   manifestとschedulerへ照合する。
-- rank 1のcoordinated teardownと早期終了は、rank 1 node-local clock上のchild exitと
+- 各nonzero node rankのcoordinated teardownと早期終了は、そのnode-local clock上のchild exitと
   `lifecycle.shutdown.start`受信時刻の前後で区別する。
 
-controlを二familyへ分ける。`lifecycle control`は2-node実行を正しく終了させる共通correctness harnessとして
+controlを二familyへ分ける。`lifecycle control`はlane指定のmulti-node実行を正しく終了させる共通correctness harnessとして
 bench/profileとqualification両armで共通にし、startup readyと`lifecycle.shutdown.start`の通常handshakeを
 最終summary logへ記録する。`GPU phase control`はprofile-onlyで、warmup/measured start/endとnode受信時刻を
 profile summaryへ記録する。両者のproducer/completenessを混ぜない。
 
-rank 1の`Engine()` constructorはdistributed completionまで内部でblockするため、constructor後を
-configuration producerにしない。SGLang内部で最終runtime値を解決した後、rank 1がwaitへ入る
+nonzero node rankの`Engine()` constructorはdistributed completionまで内部でblockするため、constructor後を
+configuration producerにしない。SGLang内部で最終runtime値を解決した後、各participantがwaitへ入る
 直前のhookからnode fragmentをemitする。以下のGPU phase marker/control forwarderはprofile protocolだけで
 起動し、benchではproducer graphから外してNULLにする。profileではmarkerをSGLang worker内部へ広げず、benchmark
 開始前に接続済みの小さなcontrol forwarderを使う。rank 0 offline hookが`invocation_id`、phase、
@@ -366,13 +366,13 @@ start/end、sequenceを各node monitorへbroadcastし、各monitorがnode-local�
 ACKする。最終summaryをartifactへ残し、異なるnodeのmonotonic値同士を減算しない。このlane
 ではnative-worker markerとcontrol-forwarder markerを同じmetricへ混在させない。
 
-profileのgeneration順序は`start broadcast -> expected 2 node ACK -> rank0 timer start -> generate ->
+profileのgeneration順序は`start broadcast -> expected lane.nodes ACK -> rank0 timer start -> generate ->
 timer end -> end broadcast -> expected ACK`へ固定する。start ACK完了からgenerate開始までのleadと、
 generate終了からend ACK完了までのtrailをrank 0 clockでartifactへ残すため、GPU observation windowが
 generationの保守的supersetであることを判定できる。warmup/measuredのsummaryは通常result writerと同じ
 rank 0 monotonic-ns境界を使い、保存済みwall-time scalarをexact `(end-start)/1e9`で検証する。scalarは全variant共通
 result、timestamp pairはprofile window containmentのためだけに併存し、別timerを二重取得しない。全purposeでgeneration timer終了後に
-`lifecycle.shutdown.start(invocation_id)`を両nodeへ一度だけbroadcastし、通常ACK後に
+`lifecycle.shutdown.start(invocation_id)`を全expected nodeへ一度だけbroadcastし、通常ACK後に
 `backend.shutdown()`を呼ぶ。この一往復のstage-wall影響はD-001 bundleに含める。
 
 保存raw factは次の形にする。
@@ -390,7 +390,7 @@ wrapper fragmentをchild lifecycleの正本にする。summaryはrun、node rank
 monotonic timestamp、`CLOCK_MONOTONIC` clock IDを持つ。reducerがshutdown invocation ID一致とnodeごとの一意性を検証し、viewはそのvalidな一件と
 child lifecycleをrun/node rankでjoinする。clock IDも一致する時だけshutdown受信より前のchild exitをearly
 failure、受信後をcoordinated teardownと導出する。受信record 0/複数、invocation/clock不一致では分類を
-作らずNULLにする。rank 0側timestampを直接比較せず、rank 0 completion file到着だけでrank 1の早期死を
+作らずNULLにする。別nodeのtimestampを直接比較せず、rank 0 completion file到着だけでnonzero node rankの早期死を
 上書きしない。
 
 ## Qwen/SGLangで保存する原始事実
@@ -577,9 +577,9 @@ viewは`collection_complete`、`benchmark_valid`、`score_comparison_eligible`�
 作らず、個々の値はRunsまたはSourcesで直接確認する。profile telemetryはsample/valid duration/coverageと
 nullable aggregate値だけを表示し、complete booleanを作らない。
 
-telemetry欠損だけをbenchmark failureへ読み替えない。現在の2 node TP=8 laneでは、少なくとも
-rank `{0,1}`、2 distinct hosts、4 GPU/node、8 unique GPU UUID、TP=8、nnodes=2、MPI process=2を
-照合する。configuration eventやworkload manifestが欠けた成功runはthroughput値を残すが、
+telemetry欠損だけをbenchmark failureへ読み替えない。各laneでnode rank `0..nodes-1`、distinct host数、
+GPU/node、unique GPU UUID数、TP、nnodes、MPI process数をlane resolved objectへ照合する。現在の具体laneは
+2 nodes、1 MPI process/node、4 GPU/node、TP=8である。configuration eventやworkload manifestが欠けた成功runはthroughput値を残すが、
 score comparison eligibleにはしない。
 
 `run_purpose`はplanned/observed双方の必須比較次元で、planned group/set IDのhash入力にも必ず含める。
@@ -708,7 +708,9 @@ Git管理SQLは次の非二乗relationを作る。
 | `qwen_workload_requests_raw_v2` | `(subject_kind,subject_id,workload_kind,ordinal)` | ordered requestのtagged source、exact prompt payload、requested output count、sampling paramsを保持。identityはparent manifest join |
 | `qwen_minimal_hardware_raw_v2` | `(subject_kind,subject_id,node_rank)` | regular runまたはqualification allocationのfull minimal hardwareとsource member/hashを一度だけ保持 |
 | `qwen_node_launch_raw_v2` | `(run,node_rank)` | node wrapper/Singularity/SGLang argv、rank placement、host affinityを一度だけ保持 |
+| `qwen_node_configs_v2` | `(run,node_rank,config_kind,field_name)` | node-scoped BenchArgs/ServerArgs Factのtyped field arrayをlosslessに展開する唯一のlong consumer。別raw copyを作らない |
 | `qwen_topology_raw_v2` | `(run,node_rank,scope,gpu_index)` | node topology artifactからhost/container別GPU identity/settingsをqueryableに転記。source member/hashを保持 |
+| `qwen_participant_terminations_v2` | `(run,node_rank)` | nonzero node rankのunique lifecycleと、waitedの場合だけ同node shutdownを結んだ観測済み終了分類。Runsへのarray/aggregateやmissing placeholderを作らない |
 | `qwen_gpu_samples_raw_v2` | `(run,node_rank,sequence,gpu_uuid)` | profile raw tarのsampleをexact schemaでqueryableに転記。source member/hashを保持 |
 | `qwen_profile_hardware_raw_v2` | `(run,node_rank,record_kind,numa_node_id)` | profile hardware artifactのnode summary/NUMA nodeをqueryableに転記。source member/hashを保持 |
 | `qwen_lifecycle_summaries_raw_v2` | `(run)` | lifecycle summaryのnode ready/shutdown recordを一つのclosed rowとして保持 |
@@ -800,9 +802,9 @@ pivotだけで二run制約を実現しない。Sheetのfilterなしでfull envir
 | identity/protocol | `run_id`、`contract_id`、`contract_hash`、`protocol_id`、`protocol_hash`、`dimension_policy_hash`、`planned_replicate_group_id`、`planned_comparison_set_id`、`planned_attempts`、`max_attempts`、`stopping_rule_id`、`block_id`、`block_order`、`pair_id`、`replicate_index`、`lane_id`、`run_purpose`、`qualification_arm`、`instrumentation_mode`、`instrumentation_bundle_hash`、`instrumentation_decision_id`、`instrumentation_decision_sha256`、`started_at`、`finished_at`。qualificationでは`block_id=allocation ID`を唯一のparent join keyにする |
 | source/artifact | `source_track_head_commit`、`score_reference_commit`、`profile_base_commit`、`source_track_manifest_hash`、SIF projection由来の`sglang_commit`、`sif_manifest_identity`、`sif_artifact_sha256`、run時`runtime_launcher_identity`、`model_manifest_identity`、`dataset_manifest_identity`、`measured_workload_manifest_identity`、`warmup_workload_manifest_identity`、`cache_manifest_identity`、qualification childだけallocation projectionからjoinする`qualification_parent_archive_hash`。bundle hashはartifact dimension、URIはworkflow operational joinが所有しraw metricへ戻さない |
 | quality | `collection_complete`、`benchmark_valid`、`score_comparison_eligible`、`qualification_arm_eligible`。欠損原因やsubsystem別statusは列にしない |
-| termination | `run_outcome`、`run_exit_code`、`benchmark_termination_kind`、`benchmark_exit_code`、`benchmark_signal`、`engine_termination_kind`、`engine_exit_code`、`engine_signal`、`worker_termination_status`、`scheduler_terminal_state`、`scheduler_exit_code` |
+| termination | `run_outcome`、`run_exit_code`、`benchmark_termination_kind`、`benchmark_exit_code`、`benchmark_signal`、`engine_termination_kind`、`engine_exit_code`、`engine_signal`、`scheduler_terminal_state`、`scheduler_exit_code`。participantはlong relationだけで表示 |
 | workload validity | `measured_selected_count`、`planned_input_tokens`、`requested_output_tokens`、`returned_count`、`error_count`、`missing_response_count`、`observed_input_tokens`、`observed_output_tokens`、`warmup_mode` |
-| topology/hardware | bench coreの`expected_node_count`、`observed_node_count`、`distinct_host_count`、`expected_mpi_process_count`、`observed_mpi_process_count`、`expected_global_rank_count`、`observed_global_rank_count`、`expected_gpu_per_node`、`expected_gpu_total`、`observed_gpu_record_count`、`observed_gpu_per_node_min`、`observed_gpu_per_node_max`、`unique_gpu_uuid_count`、`effective_tp`、`effective_nnodes`、`placement_valid`、`affinity_valid`、`gpu_model_consensus`、`gpu_memory_bytes_consensus`、`gpu_driver_consensus`、`gpu_power_limit_w_consensus`、`gpu_max_sm_clock_mhz_consensus`、`gpu_compute_mode_consensus`、`gpu_mig_mode_consensus`、`cpu_model_consensus`、`kernel_release_consensus`、`cpu_numa_node_count_consensus`、`cpu_memory_bytes_consensus`、`cpu_governor_consensus`、`cpu_boost_enabled_consensus`と、profile-onlyの`numa_cpu_layout_identity`、`postrun_memory_available_bytes_min`。profile-only列はbenchでNULL |
+| topology/hardware | bench coreの独立lane値`lane_node_count`、`lane_gpu_per_node`、実観測の`observed_node_count`、`distinct_host_count`、`observed_mpi_process_count`、`observed_global_rank_count`、`observed_gpu_record_count`、`observed_gpu_per_node_min`、`observed_gpu_per_node_max`、`unique_gpu_uuid_count`、`effective_tp`、`effective_nnodes`、`placement_valid`、`affinity_valid`、`gpu_model_consensus`、`gpu_memory_bytes_consensus`、`gpu_driver_consensus`、`gpu_power_limit_w_consensus`、`gpu_max_sm_clock_mhz_consensus`、`gpu_compute_mode_consensus`、`gpu_mig_mode_consensus`、`cpu_model_consensus`、`kernel_release_consensus`、`cpu_numa_node_count_consensus`、`cpu_memory_bytes_consensus`、`cpu_governor_consensus`、`cpu_boost_enabled_consensus`と、profile-onlyの`numa_cpu_layout_identity`、`postrun_memory_available_bytes_min`。`expected_mpi_process_count`、`expected_global_rank_count`、`expected_gpu_total`はv1 lane値から完全導出できるため列にしない。profile-only列はbenchでNULL |
 | effective args | `bench_args_identity`、`server_args_identity`と、contractがcurrent dataclassの比較関連scalar leafをexact nameで列挙した列、`runtime_backend_consensus`、`runtime_transport_consensus`。`主要field`という自由選択は置かない |
 | outcome | `request_throughput`、`input_token_throughput`、`output_token_throughput`、`total_token_throughput`、`run_elapsed_sec`、`stage_benchmark_wall_sec`、`init_wall_sec`、`prepare_wall_sec`、`warmup_wall_sec`、`measured_generation_wall_sec`、`shutdown_wall_sec` |
 | GPU projection | `generation_aggregate_present_gpu_count`、`generation_utilization_valid_gpu_count`、`generation_power_valid_gpu_count`、`generation_memory_valid_gpu_count`、`generation_temperature_valid_gpu_count`、`generation_clock_valid_gpu_count`、`generation_energy_included_gpu_count`、`generation_utilization_coverage_min`、`generation_power_coverage_min`、`generation_valid_sample_count_min`、`generation_utilization_valid_duration_sec_min`、`generation_power_valid_duration_sec_min`、`generation_fleet_utilization_mean`、`generation_gpu_utilization_mean_min`、`generation_gpu_utilization_mean_median`、`generation_gpu_utilization_mean_max`、`generation_gpu_utilization_p95_min`、`generation_gpu_utilization_p95_median`、`generation_gpu_utilization_p95_max`、`observed_generation_energy_j_sum`、`generation_memory_bytes_max`、`generation_temperature_c_max`、`generation_sm_clock_mhz_min`。入力不足の値はNULL |
@@ -877,7 +879,9 @@ Connected Sheetsは次のtabだけをversioned consumer objectへ接続する。
 3. `Sources`: 選択runで実在する各表示列について、raw key、source、artifact member、transformを示す。
 4. `Config Diff`: 左右run cell parameterからtable functionを直接呼ぶ。
 5. `Environment`: 左右run cell parameterからscope-aware diffを直接呼び、full byte-exact envをmask/redactせず比較する。
-6. `Data Status`: contract/SQL identity、各query時刻、latest publish/archive、未移管Artifact数、home空き容量を表示する。
+6. `Node Config`: 選択runの`qwen_node_configs_v2`をnode/config kind/field grainでlosslessに表示する。
+7. `Participant Termination`: 選択runの`qwen_participant_terminations_v2`をnonzero node rank grainで表示する。1-node runと未観測nodeのplaceholder行は作らない。
+8. `Data Status`: contract/SQL identity、各query時刻、latest publish/archive、未移管Artifact数、home空き容量を表示する。
 
 Connected Sheetsは自動同期されないため、deployment checklistにrefresh ownerとscheduleを記録する。
 各Connected object自身のqueryで
@@ -966,7 +970,12 @@ release gateは未通過のままにする。
 一意に決まらない。D-004では初版profileでprofilerを必須にするか、必須ならどのtoolとstep範囲をcanonical
 protocolにするかを一問で決める。未回答の間はtransparent wrapperをprofile protocolとしてreleaseしない。
 
-instrumentation overhead D-001とする。D-003はD-001の対象laneを決めるため先行する。
+D-003は2026-08-09にユーザー回答「基本的にはマルチノード対応型の収集。Qwen推論も同じ」で確定した。
+質問はQwen collectorを現在の2-node条件へ固定するか、node/worker/GPU cardinalityをlaneから展開するか、
+推奨・採用回答とも後者である。affected fields/viewsはlane resolved object、scheduler request、producer node/global-rank
+axes、topology/host/GPU consensus、lifecycle/phase ACK集合、participant termination、collection/score eligibilityである。
+reopen triggerはSGLangまたはschedulerの配置意味が変わり、v1の一node一MPI wrapper/full-GPU TP制約で表せなくなった時だけとする。
+残る質問順はQwen profile contract D-004、確定したscore laneのinstrumentation overhead D-001とする。
 
 ## 決定状態
 
@@ -980,6 +989,7 @@ instrumentation overhead D-001とする。D-003はD-001の対象laneを決める
 | 確定 | bench/profileを分離し、取得できなかった値とprofile専用familyは値だけNULL、原因/status/欠損用recordなしとする。run-level statusは`collection_complete`だけ |
 | 確定 | 実験用途として多段retry、fallback source、field別reason registry、formalな大規模qualification campaignは作らない |
 | 確定 | home artifactは自動expireせず、容量が実際に問題になった時だけ手動整理する。専用quarantineは作らない |
+| 確定 | D-003: Qwen collectorはlane-driven multi-node対応とし、expected node/worker/GPU集合をlaneから展開する。現在の実機laneは2 node、4 GPU/node、TP=8 |
 | 未決定 | D-004: 初版profileで必須にするprofiler、activity、step範囲、required raw file集合 |
 | 未決定 | D-001: 固定5 pairの簡素screenで許すinstrumentation overhead閾値。推奨はthroughput/stage wallとも1%以内 |
 
@@ -1151,13 +1161,16 @@ qualification OFF/ON:
 qualification OFFへscore observation/primary flagを渡さず、qualification ONはneutral estimandとprimary reliability
 artifactの両方を書く。normal bench/profileへqualification result pathを渡さない。argv allowlist testでvariant間の境界を固定する。
 
-初版laneは現行実行へ合わせ、rank 0 MPI wrapperが取得した`hostname`をadvertise address、SGLang distributed
-portを`25000`、node-agent control portを`25001`、rendezvous待ちを60秒、ready待ちを120秒に固定する。
-rank 0はaddress、固定port、run ID、protocol versionを`control/lifecycle/rendezvous.json`へ一度writeし、rank 1は
-その一fileだけを待って明示endpointへ接続する。port衝突やtimeoutはrun failureとして再実行し、動的port allocator、
-複数discovery source、自動fallbackは作らない。
+収集器はlaneのpositive `nodes`、`mpi_processes`、`gpus_per_node`、`tensor_parallel_size`からexpected producer
+cardinalityを展開する。v1は`mpi_processes = nodes`かつ
+`tensor_parallel_size = nodes * gpus_per_node`の一node一MPI wrapper/full-GPU TPに限定する。現在の実機laneは
+2 nodes、2 MPI processes、4 GPU/node、TP=8である。rank 0 MPI wrapperが取得した`hostname`をadvertise address、
+SGLang distributed portを`25000`、node-agent control portを`25001`、rendezvous待ちを60秒、ready待ちを120秒に固定する。
+rank 0はaddress、固定port、run ID、protocol versionを`control/lifecycle/rendezvous.json`へ一度writeし、
+全nonzero node rankはその一fileだけを待って明示endpointへ接続する。port衝突やtimeoutはそのrunを失敗とし、
+自動retry、動的port allocator、複数discovery source、自動fallbackは作らない。
 
-coordinatorはexpected node `{0,1}`のidentity付きready ACKをmemory上で集めてからcontainer開始を許可し、
+coordinatorはexpected node `0..lane.nodes-1`のidentity付きready ACKをmemory上で集めてからcontainer開始を許可し、
 最終summaryだけをfileへ書く。bind/connect/ready timeout、stale/wrong-run messageではsolverを開始せず、
 runはnonzeroで終了する。別のfailure classificationは保存しない。
 
@@ -1389,8 +1402,8 @@ allocation manifest -> submit result/job-entry -> child OFF source/log/metrics
 | G4 ownership/merge | `test_merge.py`、variant別producer graph fixture | owner一意性、family routing、exact dedupe、異値conflict、required欠損、qualification parentのjob envを二childへjoinしてraw複写しない。欠損・非適用のconsumer値はNULL、required欠損時だけ`collection_complete=false` |
 | G5 process観測 | `test_stage_runner.py` | actual argv/cwd、process-group signal forwarding、exit/signal/spawn error、monotonic境界 |
 | G6 archive/送達 | workflow integration fixture | happy pathで全expected artifactがhomeにあり、upload失敗はattempt failure、SCP失敗ではGitHub Artifactが残る。homeのartifact setをBigQueryへ再送できる |
-| G7 Qwen意味 | `test_observation_contract.py`、`test_primary_result.py`、`test_distributed_events.py`、`test_lifecycle_control.py`、variant argv/source-diff fixture | purpose別authoritative result、OFF/ONがparentの同一actual workloadを順番通り消費、ONはneutral qualification result+primary、primary欠損、node/rank cardinality、lifecycle単一owner、qualification ONの差分がinstrumentation patchだけであること |
-| G8 GPU phase | profile用`test_gpu_reducer.py`、2-node `test_phase_protocol.py` | benchではsampler/phase messageなし、profileではrank 0/1 phase receiver、共有UDS不使用、wrong-run/stale message、ACK順、marker欠損、gap cutoff、weighted mean/p95/energy |
+| G7 Qwen意味 | `test_observation_contract.py`、`test_primary_result.py`、`test_distributed_events.py`、`test_lifecycle_control.py`、variant argv/source-diff fixture | purpose別authoritative result、OFF/ONがparentの同一actual workloadを順番通り消費、ONはneutral qualification result+primary、primary欠損、node/MPI/worker/GPU bijection、1-node participant 0行、4-node participant別終了分類、lifecycle単一owner、qualification ONの差分がinstrumentation patchだけであること |
+| G8 GPU phase | profile用`test_gpu_reducer.py`、1/2/4-node cardinalityの`test_phase_protocol.py` | benchではsampler/phase messageなし、profileでは全expected nodeのphase receiver、共有UDS不使用、wrong-run/stale message、node-local ACK/clock順、marker欠損、gap cutoff、weighted mean/p95/energy |
 | G10 consumer contract | contract生成SQL fixture、variant別BigQuery golden rows、Sheet parameter/refresh smoke test | 全列lineage、profile attemptのscore統計除外、非適用・欠損列がNULL、pair-grain eligibility、失敗attempt残存、protocol分離、estimand、片側env欠損、freshness/size |
 | G11 非擾乱 | D-001のreference OFF/final ON固定5 pair | 個々のthroughput/stage wall、median、result totals、identity一致を表示し簡素screenを再現できること |
 
@@ -1406,7 +1419,7 @@ allocation manifest -> submit result/job-entry -> child OFF source/log/metrics
 2. pre-submit manifest、local metrics export、node-local endpoint、worker-ready、workload manifest、primary resultを
    一つのv2 fixtureと最初のv2 runで通す。phase control、
    raw GPU sampleをprofile purposeへ追加する。
-3. benchへ必要な最小bundleだけD-001へ掛け、2 node TP=8で意味・result同値性・非擾乱screenを通したbundleだけbenchへ追加する。
+3. benchへ必要な最小bundleだけD-001へ掛け、現在の2-node TP=8 score laneで意味・result同値性・非擾乱screenを通したbundleだけbenchへ追加する。
 4. v2 viewとSheetを切り替え、legacy-only consumerがゼロになってから旧`send()`、fallback result、
    throughput等のsubset keyを削除する。
 
@@ -1428,11 +1441,11 @@ rollbackはlaneのprotocol contractを直前版へ戻して新しいrunを投入
 5. node-local event endpoint、rank 0 result ownership、node-scoped full configurationを実装し、
    397B runのconfiguration欠落と競合を修正する。manifestが固定したexact contractだけをv2 viewへ
    入れ、contractなしはlegacy、異なるcontractのproducer混在はinvalidにする。
-6. warmup/measured workload、cache manifest、primary result validatorを追加し、2 node TP=8、
-   global worker rank 0..7のcompletenessを確認する。
+6. warmup/measured workload、cache manifest、primary result validatorを追加し、laneから展開したnode/worker/GPU
+   cardinalityを1/2/4-node fixtureで確認し、現在の2-node TP=8 laneでglobal worker rank 0..7を実機確認する。
 7. profile purposeだけにpersistent control-forwarder phase eventとnode-local raw GPU sampleを追加し、
    benchでは対応consumer列を理由なしのNULLにする。どちらのtimed pathからもBigQueryを外す。
-8. Connected SheetsのRuns/Replicates/Sources/Config Diff/Environment/Data Statusをbounded consumerへ
+8. Connected SheetsのRuns/Replicates/Sources/Config Diff/Environment/Node Config/Participant Termination/Data Statusをbounded consumerへ
    切り替え、freshness/result-size smoke testを通す。旧key consumerがなくなってからthroughput、model名、
    GPU総数等の派生・部分集合keyの新規生成を止める。
 9. homeのrun artifact tree、qualification parent artifact、Git管理source/contract/protocol/decision/SQLから
@@ -1450,9 +1463,9 @@ rollbackはlaneのprotocol contractを直前版へ戻して新しいrunを投入
 - 正当な空文字、未観測、collector失敗、collector未到達、真のゼロをfixtureで区別できる。
 - canonical JSONがprocessやobject挿入順に依存せず同じbyte列になる。
 - 各key patternのownerが一意で、distinct後のrun/key conflictがゼロである。
-- 実2 node runでnode-scoped full configが届き、viewが一致fieldとnode差をlosslessに表示できる。
-- expected node rank、global worker rank 0..7、host、GPU UUID、TP、nnodes、MPI processの不一致を
-  理由別に検出できる。
+- synthetic 1/2/4-node fixtureで同じcollector graphがlane指定のexpected node/worker/GPU集合を展開でき、
+  現在の実2-node TP=8 runでnode-scoped full configが届き、viewが一致fieldとnode差をlosslessに表示できる。
+- expected node rank、global worker rank、host、GPU UUID、TP、nnodes、MPI processの不一致を検出できる。
 - prompt順序だけが違う同token総数workloadをmanifest identityで分離できる。
 - result欠損、不正JSON、returned count/token不一致、非有限時間をcomparison対象外にできる。
 - viewの四つの代数的throughputがSGLang artifactと許容誤差内で一致する。
