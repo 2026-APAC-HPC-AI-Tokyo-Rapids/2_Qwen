@@ -513,6 +513,8 @@ ONのPrimaryResultはbench採用予定writer自体を検証するためだけに
 benchmark validityは少なくとも`error_count = 0`、`returned_count = workload.requests.length`、observed
 input totalとplanned input totalの一致、有限かつ正のgeneration wall timeを要求する。現在の
 `ignore_eos`固定protocolではobserved output totalとrequested output totalの一致も要求する。
+nullableなordered output identityは通常bench/profileの`benchmark_valid`へ追加せず、D-001 qualificationの
+evidence presence/result equivalenceにだけ要求する。
 
 request/input/output/total throughputは上記の原始値からviewで計算する。資格確認/primary artifact内へ
 代数的throughputを複写しない。一次比較に使わない`last_gen_throughput`も取得・保存しない。
@@ -713,6 +715,7 @@ Git管理SQLは次の非二乗relationを作る。
 | `qwen_participant_terminations_v2` | `(run,node_rank)` | nonzero node rankのunique lifecycleと、waitedの場合だけ同node shutdownを結んだ観測済み終了分類。Runsへのarray/aggregateやmissing placeholderを作らない |
 | `qwen_gpu_samples_raw_v2` | `(run,node_rank,sequence,gpu_uuid)` | profile raw tarのsampleをexact schemaでqueryableに転記。source member/hashを保持 |
 | `qwen_profile_hardware_raw_v2` | `(run,node_rank,record_kind,numa_node_id)` | profile hardware artifactのnode summary/NUMA nodeをqueryableに転記。source member/hashを保持 |
+| `qwen_profiler_events_raw_v2` | `(run,global_rank,activity,event_category,event_name)` | profileのrank別Torch traceからcall countとinclusive duration sumだけを転記。trace本文、平均、構成比、rank/run summaryを複写しない |
 | `qwen_lifecycle_summaries_raw_v2` | `(run)` | lifecycle summaryのnode ready/shutdown recordを一つのclosed rowとして保持 |
 | `qwen_phase_summaries_raw_v2` | `(run,invocation_id)` | profile phase summaryのrank 0 boundaryとordered node-local windowsを一つのclosed rowとして保持 |
 | `qwen_qualification_allocations_raw_v2` | `(allocation_id)` | parent artifactのscheduler、decoded env、二job IDとfull bundle member arrayを保持。hardware/workloadはsubject-keyed relationへ分離 |
@@ -803,7 +806,7 @@ pivotだけで二run制約を実現しない。Sheetのfilterなしでfull envir
 | source/artifact | `source_track_head_commit`、`score_reference_commit`、`profile_base_commit`、`source_track_manifest_hash`、SIF projection由来の`sglang_commit`、`sif_manifest_identity`、`sif_artifact_sha256`、run時`runtime_launcher_identity`、`model_manifest_identity`、`dataset_manifest_identity`、`measured_workload_manifest_identity`、`warmup_workload_manifest_identity`、`cache_manifest_identity`、qualification childだけallocation projectionからjoinする`qualification_parent_archive_hash`。bundle hashはartifact dimension、URIはworkflow operational joinが所有しraw metricへ戻さない |
 | quality | `collection_complete`、`benchmark_valid`、`score_comparison_eligible`、`qualification_arm_eligible`。欠損原因やsubsystem別statusは列にしない |
 | termination | `run_outcome`、`run_exit_code`、`benchmark_termination_kind`、`benchmark_exit_code`、`benchmark_signal`、`engine_termination_kind`、`engine_exit_code`、`engine_signal`、`scheduler_terminal_state`、`scheduler_exit_code`。participantはlong relationだけで表示 |
-| workload validity | `measured_selected_count`、`planned_input_tokens`、`requested_output_tokens`、`returned_count`、`error_count`、`missing_response_count`、`observed_input_tokens`、`observed_output_tokens`、`warmup_mode` |
+| workload validity | `measured_selected_count`、`planned_input_tokens`、`requested_output_tokens`、`returned_count`、`error_count`、`missing_response_count`、`observed_input_tokens`、`observed_output_tokens`、`ordered_output_token_ids_sha256`、`warmup_mode` |
 | topology/hardware | bench coreの独立lane値`lane_node_count`、`lane_gpu_per_node`、実観測の`observed_node_count`、`distinct_host_count`、`observed_mpi_process_count`、`observed_global_rank_count`、`observed_gpu_record_count`、`observed_gpu_per_node_min`、`observed_gpu_per_node_max`、`unique_gpu_uuid_count`、`effective_tp`、`effective_nnodes`、`placement_valid`、`affinity_valid`、`gpu_model_consensus`、`gpu_memory_bytes_consensus`、`gpu_driver_consensus`、`gpu_power_limit_w_consensus`、`gpu_max_sm_clock_mhz_consensus`、`gpu_compute_mode_consensus`、`gpu_mig_mode_consensus`、`cpu_model_consensus`、`kernel_release_consensus`、`cpu_numa_node_count_consensus`、`cpu_memory_bytes_consensus`、`cpu_governor_consensus`、`cpu_boost_enabled_consensus`と、profile-onlyの`numa_cpu_layout_identity`、`postrun_memory_available_bytes_min`。`expected_mpi_process_count`、`expected_global_rank_count`、`expected_gpu_total`はv1 lane値から完全導出できるため列にしない。profile-only列はbenchでNULL |
 | effective args | `bench_args_identity`、`server_args_identity`と、contractがcurrent dataclassの比較関連scalar leafをexact nameで列挙した列、`runtime_backend_consensus`、`runtime_transport_consensus`。`主要field`という自由選択は置かない |
 | outcome | `request_throughput`、`input_token_throughput`、`output_token_throughput`、`total_token_throughput`、`run_elapsed_sec`、`stage_benchmark_wall_sec`、`init_wall_sec`、`prepare_wall_sec`、`warmup_wall_sec`、`measured_generation_wall_sec`、`shutdown_wall_sec` |
@@ -868,7 +871,10 @@ block/orderから推測しない。scoreは`score_comparison_eligible`、qualifi
 `candidate / baseline`と定義し、planned/attempted/eligible pair count、median、MAD、protocolが明示した場合だけの
 interval、decisionを併記する。これらはpoint rowとversioned protocolからquery時に導出し、rawへaggregateの
 第二正本を作らない。estimator/intervalはprotocolが事前指定した方法だけを使い、
-`instrumentation_overhead_decision`は現在未決定のcriterionを確定するまでNULLにする。暫定式を埋めない。
+`instrumentation_overhead_decision`は該当D-001 decisionがまだ存在しない間だけNULLにする。暫定式を埋めない。
+D-001 screenだけは、既知のarm/result不成立をeligible filterで消して残存pairだけを採用する選択バイアスを避けるため、
+`qualification_pair_eligible`をpre-filterに使わない。planned skeletonからquery-onlyの共通evaluable集合`E`を直接作り、
+取得済みgateのfalseを保持する。
 breakingなcolumn/type/meaning変更は
 既存v2 viewを書き換えずv3 objectを作る。
 
@@ -881,7 +887,8 @@ Connected Sheetsは次のtabだけをversioned consumer objectへ接続する。
 5. `Environment`: 左右run cell parameterからscope-aware diffを直接呼び、full byte-exact envをmask/redactせず比較する。
 6. `Node Config`: 選択runの`qwen_node_configs_v2`をnode/config kind/field grainでlosslessに表示する。
 7. `Participant Termination`: 選択runの`qwen_participant_terminations_v2`をnonzero node rank grainで表示する。1-node runと未観測nodeのplaceholder行は作らない。
-8. `Data Status`: contract/SQL identity、各query時刻、latest publish/archive、未移管Artifact数、home空き容量を表示する。
+8. `Profiler`: 選択profile runの`qwen_profiler_events_raw_v2`をrank/activity/category/event grainで表示する。benchにはplaceholder行を作らない。
+9. `Data Status`: contract/SQL identity、各query時刻、latest publish/archive、未移管Artifact数、home空き容量を表示する。
 
 Connected Sheetsは自動同期されないため、deployment checklistにrefresh ownerとscheduleを記録する。
 各Connected object自身のqueryで
@@ -913,11 +920,18 @@ primary-result writerにも負荷はある。したがって「profile branchを
 成功や反復throughput比較を確立していない。従って2-node TP=8 laneのpaired分散を既存runから仮定できない。
 初版ではsample sizeやCIを導入せず、固定5 pairの簡素screenとしてのみ使う。
 
-### 推奨する簡素な判定（ユーザー回答待ち）
+### 確定した簡素な判定
 
 初版はlaneごとに固定5 pairだけを事前commitし、同一allocation内でOFF/ONを隣接実行する。順序は
-OFF→ONとON→OFFを交互にする。pilot、sample-size再計算、TOST、sequential stopping、replacement slot、別response
-canaryは作らない。稀な失敗pairは欠測として残し、自動再投入しない。3 pair未満しか有効でなければ単に未決定とする。
+exact `[OFF→ON, ON→OFF, OFF→ON, ON→OFF, OFF→ON]`とする。pilot、sample-size再計算、TOST、sequential stopping、replacement slot、別response
+canaryは作らない。稀な失敗pairは欠測として残し、自動再投入しない。3 pair未満しか評価可能でなければ単に未決定とする。
+評価可能pair集合は二metricで共通の一集合`E`をquery時に一度だけ導出する。planned pairに両child、parent binding、namespace、
+各arm gateを評価するためのapplicable source、model/dataset/actual ordered workload/cache/topologyと
+instrumentation対象外runtimeのidentity値、正有限な両performance値、result-equivalenceを評価するsourceが
+すべて存在するpairだけを`E`へ入れる。ここで必要なのは証拠の存在であり、`qualification_arm_eligible`、
+identity equality、benchmark/placement validityまたはresult equivalenceのtruth値ではない。取得済み証拠からfalseを
+導出できるpairは`E`に残して後段のreject材料にし、証拠自体が欠けるpairだけを欠測にする。metric別集合、
+pair別reason/status、persistする`d001_pair_evaluable` booleanは作らない。
 
 OFF/ONは次だけを変える。
 
@@ -934,41 +948,76 @@ ONにだけ必要なbundle宣言済みwrapper、event sink、patchはtreatment�
 affinity/runtime backendの一致は判定条件にせず、ON専用列はOFFでNULLにする。SIF copy、cache refresh、profile polling、
 archiveはarm間に挟まない。片armが失敗しても保存できたlogを残し、そのpairの値をNULLにするだけで別runと再pairしない。
 
-判定は有効pairについて次を人間とagentが同じSheetで直接確認する。
+判定は評価可能pairについて次を人間とagentが同じSheetで直接確認する。
 
 - neutral qualification resultから導出したtotal-token throughputの `throughput_ON / throughput_OFF` median
 - stage benchmark wallの `wall_ON / wall_OFF` median
-- neutral qualification resultとON primary resultのreturned/error/token totals一致
+- OFF/ON neutral qualification resultのordered output token-ID identity一致
+- ONのneutral qualification resultとprimary resultのinvocation ID、returned/error/token totals、output identity、wall一致
 - model/dataset/workload/cache/topology identity一致
 - ONで必要なsource fileが正常pathでは揃うこと
 
+生成結果identityは、すでに返ったresponse arrayの順序付き`output_ids`から一つのJCS SHA-256をresult writerが作る。
+各array長は同じresponseの`completion_tokens`、全長の和は`observed_output_tokens`と一致させる。
+生成本文、per-request hash、別response canary、第三のequality raw factは作らない。同じ共通workloadへ各armがvalidであることから
+returned/error/input/output totalsのarm間一致は導出できるため、D-001の独立criterionとして複写しない。
+
+exact qualification protocolの`qualification_target.screen`が次を一度だけ所有する。decision record、
+raw row、child manifestへ閾値やeligible数を複写しない。
+closed `protocol/v1`ではscreenをqualification時required、bench/profile時absentとし、decision contextはprotocolからjoinして露出する。
+
+```text
+criterion_id: const "median-pair-ratio-screen/v1"
+minimum_evaluable_pairs: const 3
+require_both_arm_orders: const true
+pair_set: const "common-evaluable-pairs"
+median: {kind:const "continuous", even:const "mean-middle-two"}
+criteria:
+  - {response_id:const "total_token_throughput", ratio:const "on/off",
+     lower_bound_inclusive:const 0.99}
+  - {response_id:const "perf.stage.benchmark.wall_time_sec", ratio:const "on/off",
+     upper_bound_inclusive:const 1.01}
+result_equivalence_policy_id: const "qwen-qualification-result-equivalence/v1"
+```
+
+両`response_id`は同じcontractの既存`consumer.estimand.estimand_id`を参照し、screen専用generic metricを増やさない。
+ratioとmedianはBigQueryの通常の数値演算で計算し、偶数個なら中央二値の算術平均を使う。Sheetの表示丸め前の値を
+0.99/1.01と比較すれば十分とし、専用の数値型や境界補正は実装しない。
+
+`qwen-qualification-result-equivalence/v1`のevidence presentは、OFF/ON neutral qualification resultと
+ON primary resultが存在し、三resultのordered output identityがnon-nullで、全比較fieldを読めることを意味する。
+result equivalenceはOFF/ON neutralのordered output identityがexact一致し、さらにON neutralとprimaryの
+invocation ID、returned/error count、observed input/output totals、ordered output identity、generation wallがすべて
+exact一致する時だけtrueである。model/dataset/workload/cache/topology identityはこのpolicyへ重ねず`E`の
+preconditionで比較する。evidence-presentとequivalenceのnullable truth値はquery時に別々に導出し、raw equality booleanを保存しない。
+
 判定対象はqualificationのexact contract/protocol/policy namespaceが所有するlane、reference source、workload、
 reference/score bundle path/SHA-256、control-plane file blob集合、exact 5-pair scheduleと、build後に初めて決まる
-qualified source diff SHA-256、reference/final SIF semantic pair、eligible parentで一値のruntime launcher semanticである。
-採否recordは`decision_id`、qualification namespace、qualified source diff SHA-256、observed SIF semantic pair、
-observed runtime launcher semantic、`adopt|reject|inconclusive`をGit管理する。final head commitは
+qualified source diff SHA-256、reference/final SIF semantic pair、評価可能parentで一値のruntime launcher semanticである。
+採否recordは`decision_id`、qualification namespace、`adopt|reject|inconclusive`をGit管理し、adopt/rejectだけ
+qualified source diff SHA-256、observed SIF semantic pair、observed runtime launcher semanticを持つ。inconclusiveは
+一値のevidenceを捏造せずそれらをabsentにする。final head commitは
 無関係な変更を含み得るためdecision identityにしない。instrumentation、bundle、実行control-plane file、runtime launcherのどれかが
 変わった時だけ再判定し、driverや無関係なcommitが変わるたびに巨大なtupleを再qualificationしない。
 
-推奨初期値は「throughput低下1%以内かつstage wall増加1%以内、result totals一致」であるが、閾値はD-001の
-回答で確定する。これはformalな非擾乱証明ではなく、実験projectで明らかな計測負荷をbenchへ持ち込まないための
-screenである。5 pairの個々の値とmedianを表示し、CI、power、closed reason enumは作らない。
+確定規則は、まず同じ`E`について`|E| >= 3`、両arm orderを一件以上含むこと、pair内および`E`全体の
+比較identityとpost-run semantic identityが一値に定まることをpreconditionとする。どれかが不成立なら、他gateの値にかかわらず
+`inconclusive`である。precondition成立後、BigQueryで得た未表示丸めのratio medianについて
+`median(throughput_ON / throughput_OFF) >= 0.99`、`median(wall_ON / wall_OFF) <= 1.01`、全pairの
+result equivalenceと各arm gateがtrueなら`adopt`、いずれかがfalseなら`reject`とする。これはformalな非擾乱証明ではなく、
+実験projectで明らかな計測負荷をbenchへ持ち込まないためのscreenである。5 pairの個々の値とmedianを表示し、個々のratioへ
+1% gateを掛けない。CI、power、MAD、closed reason enumはgateにせず、retry/replacementも作らない。
 
-D-001未回答中はinstrumented benchのoverhead decisionをNULLにする。profile runはscore比較へ混ぜない。
+D-001 qualificationをまだ実行しておらずdecision recordが存在しない間は、instrumented benchのoverhead decisionを
+NULLにする。profile runはscore比較へ混ぜない。
 
-## 未決定事項と質問protocol
-
-[Grill with Docs](https://github.com/mattpocock/skills/blob/main/docs/engineering/grill-with-docs.md)の進め方を
-採用し、文書から調べられる事実を先に閉じた後、結果を変える未決定事項だけを一回に一問聞く。各回答は
-`decision_id/question/recommended option/alternatives/user answer/decided_at/affected contract fields and
-views/reopen trigger`をGit管理decision recordへ残す。未回答を推奨値で埋めず、依存するviewのdecisionはNULL、
-release gateは未通過のままにする。
+## 決定事項と再open条件
 
 コード監査で、D-001とは別にprofile tool contract D-004が残っていることが分かった。現行
 `scripts/exec-profiler.sh`はtransparent wrapperであり、SGLang側にはTorch Profilerと
 `CUDA_PROFILER`/Nsight系の複数経路があるため、tool、activity、step範囲、required raw file集合はコードだけでは
-一意に決まらない。D-004では初版profileでprofilerを必須にするか、必須ならどのtoolとstep範囲をcanonical
-protocolにするかを一問で決める。未回答の間はtransparent wrapperをprofile protocolとしてreleaseしない。
+一意に決まらないためD-004で初版profileのprofilerを次の最小contractへ固定した。transparent wrapperだけを
+「profiler取得済み」とは扱わない。
 
 2026-08-09にSGLang `5ffba99b631f1f442371cc7a7d79391409197724`を再監査した。`offline_throughput`が直接公開するのは
 `--profile`、`--profile-activities`、`--profile-steps`であり、通常warmupは常にprofile外、measured generation直前に
@@ -978,10 +1027,10 @@ stage別profileはfalseになる。legacy Torch Profilerは一つのprofile requ
 DP/PP/EP=1 laneではglobal TP rankごとに一つのgzip Chrome traceを書く。従ってexpected trace数は現在のTP=8という
 固定値でなく`lane.tensor_parallel_size`から展開する。
 
-独立したQwen、artifact、情報設計監査はいずれもP0なしで、次をP1とした。(1) timestamp filenameとoutput directoryを
+コード・artifact・情報設計の監査では次が不足していた。(1) timestamp filenameとoutput directoryを
 offline CLIで固定できず、事前展開するsource path contractを閉じられない、(2) 現行monitorは最初の一traceだけで終了し、
 0件では待ち続けるため全rank completenessの正本にならない、(3) `SGLANG_PROFILE_V2=true`のmanual start/stopは未実装、
-(4) traceをraw tarへ置くだけではBigQueryからSheetへ診断値を渡せない、である。推奨option Rは次の一つである。
+(4) traceをraw tarへ置くだけではBigQueryからSheetへ診断値を渡せない、である。採用する初版contractは次である。
 
 ```text
 tool                     = SGLang built-in PyTorch Profiler (legacy path)
@@ -1002,19 +1051,23 @@ backend終了後のfinalizerがlaneから展開したpathを一度検査し、�
 別tool fallback、retryは初版へ入れない。
 
 opaque traceとrun/global rankを結ぶため、実在する各traceについてだけclosed `profiler-capture/v1`
-`{schema_version,run_id,global_rank,invocation_id,source_member,size_bytes,sha256}`をrun bundleに一件置く。
+`{schema_version,run_id,global_rank,invocation_id,source_member,size_bytes,sha256}`を同じprofile rawに一件置く。
 tool/version/argv/outcome/reason/statusやexpected rank集合は複写しない。publisherはtraceから一度だけ
 `(run,global_rank,activity,event_category,event_name,call_count,inclusive_duration_sum_ns,source_member,source_sha256)` grainの
 `qwen_profiler_events_raw_v2`を作る。per-event trace本文、平均、構成比、rank合計、top-N、CPU/GPU/NCCL分類、run-wide
 summaryは保存せずquery時に導出し、bounded `Profiler` Sheet tabがprofile run同士を比較する。trace欠損時は既存
 `collection_complete=false`、固定幅consumerはNULL、long relationは実在rowだけとし、profiler専用complete/reason/placeholderを作らない。
 
+D-004のreopen triggerは、固定したSGLang commitでlegacy profiler経路が削除されるか、global TP rankとtraceの
+一対一対応が成立しなくなった時だけとする。profile traceの稀な欠損は再設計理由にせず、通常どおりNULL/0 rowで残す。
+
 D-003は2026-08-09にユーザー回答「基本的にはマルチノード対応型の収集。Qwen推論も同じ」で確定した。
 質問はQwen collectorを現在の2-node条件へ固定するか、node/worker/GPU cardinalityをlaneから展開するか、
 推奨・採用回答とも後者である。affected fields/viewsはlane resolved object、scheduler request、producer node/global-rank
 axes、topology/host/GPU consensus、lifecycle/phase ACK集合、participant termination、collection/score eligibilityである。
 reopen triggerはSGLangまたはschedulerの配置意味が変わり、v1の一node一MPI wrapper/full-GPU TP制約で表せなくなった時だけとする。
-残る質問順はQwen profile contract D-004、確定したscore laneのinstrumentation overhead D-001とする。
+D-001は固定5 pair、最低3評価可能pair、throughput低下1%以内、stage wall増加1%以内の簡素screenで確定した。
+reopen triggerは一次estimandまたはbenchへ常時入れるinstrumentation bundleの意味が変わった時だけとする。
 
 ## 決定状態
 
@@ -1029,8 +1082,8 @@ reopen triggerはSGLangまたはschedulerの配置意味が変わり、v1の一n
 | 確定 | 実験用途として多段retry、fallback source、field別reason registry、formalな大規模qualification campaignは作らない |
 | 確定 | home artifactは自動expireせず、容量が実際に問題になった時だけ手動整理する。専用quarantineは作らない |
 | 確定 | D-003: Qwen collectorはlane-driven multi-node対応とし、expected node/worker/GPU集合をlaneから展開する。現在の実機laneは2 node、4 GPU/node、TP=8 |
-| 未決定 | D-004: 初版profileで必須にするprofiler、activity、step範囲、required raw file集合 |
-| 未決定 | D-001: 固定5 pairの簡素screenで許すinstrumentation overhead閾値。推奨はthroughput/stage wallとも1%以内 |
+| 確定 | D-004: profileはSGLang legacy PyTorch ProfilerのCPU+GPU、warmup外の先頭5 scheduler forward、stack/shape/mergeなし、global TP rank別traceを使う |
+| 確定 | D-001: 固定5 pair、最低3評価可能pair、throughput低下1%以内かつstage wall増加1%以内の簡素screen |
 
 ## 実装ハンドオフ
 
@@ -1348,8 +1401,8 @@ applicableな`domain/`、`source/`、`logs/`、自己を除くmember path/hash/s
 `archive-staging/bundle.manifest.json`を作り、tar rootの`bundle.manifest.json`として含める。
 最終`metrics.jsonl`、artifact manifest、merge元fragmentはbundle内へ重複収録しない。
 
-`telemetry/**`は`profile-raw.tar.zst`だけが所有する。D-004でprofilerがapplicableなら同じtarへprofiler trace rawだけを加え、
-非適用ならGPU telemetryだけを収録する。actual profiler argv/cwd/outcomeは既存のstage launch/termination、wrapperの
+`telemetry/**`は`profile-raw.tar.zst`だけが所有する。profileでは同じtarへD-004のprofiler traceとcaptureを加える。
+actual profiler argv/cwd/outcomeは既存のstage launch/termination、wrapperの
 実体/hashはprofile instrumentation bundle、SGLang/PyTorchのruntime identity/versionはSIF provenanceとprocess
 snapshotがそれぞれ一度所有するため、profile rawへmetadata copyを作らない。run bundleへ同じraw byteを重複収録しない。
 
@@ -1375,7 +1428,7 @@ BigQuery publishはhomeのsubject artifact setまたは同じGitHub Artifactか�
 
 ```text
 run -> build log、execution log、results、metrics.jsonlをGitHub Artifactへupload
-    -> profileなら同じlogical artifact setの別outer fileへraw GPU telemetryと、D-004でapplicableになった場合だけprofiler traceを収録
+    -> profileなら同じlogical artifact setの別outer fileへraw GPU telemetryとD-004 profiler traceを収録
     -> /srv/qwen-artifacts/<github_run_id>/attempt-<github_run_attempt>/ へscp
     -> SCP commandが成功した時だけ、そのworkflow runのGitHub Artifactを削除
 ```
@@ -1386,10 +1439,10 @@ remote再読取checksum、全境界crash recovery、独立backupは実装しな�
 現行どおりcleanupしてよい。
 
 normal benchのPrimaryResultWriter、qualification OFF/ONのneutral qualification result、parent/child artifactを必ず
-results artifactへ含める。Qwen profileのprofiler familyはD-004でapplicableと確定したprotocolだけrequiredにする。
-その場合は選択したprofilerの出力先を`<runtime>/runs/<run>/profile/raw`へ一度固定し、trace rawだけを
-`profile-raw.tar.zst`へまとめてuploadする。actual argv/tool identity/versionは上記の既存ownerから参照する。D-004がprofiler非必須と決めたprotocolや
-未回答中のrunでprofiler file/placeholderを要求せず、現在のtransparentな`exec-profiler.sh`を「取得済みprofiler」と扱わない。
+results artifactへ含める。Qwen profileではD-004のprofiler familyをrequiredにする。
+profilerの出力先を`<runtime>/runs/<run>/profile/raw`へ一度固定し、traceとcaptureだけを
+`profile-raw.tar.zst`へまとめてuploadする。actual argv/tool identity/versionは上記の既存ownerから参照する。
+bench/qualificationでprofiler file/placeholderを要求せず、現在のtransparentな`exec-profiler.sh`だけを「取得済みprofiler」と扱わない。
 bench/qualificationではprofile producer、artifact、欠損用eventを作らず、対応consumerは`NULL`だけである。
 
 model約400 GBとSIFをhomeへ複写することは必須にしない。model/dataset/tokenizer/cacheのmanifest、SIF source
@@ -1443,10 +1496,10 @@ allocation manifest -> submit result/job-entry -> child OFF source/log/metrics
 | G4 ownership/merge | `test_merge.py`、variant別producer graph fixture | owner一意性、family routing、exact dedupe、異値conflict、required欠損、qualification parentのjob envを二childへjoinしてraw複写しない。欠損・非適用のconsumer値はNULL、required欠損時だけ`collection_complete=false` |
 | G5 process観測 | `test_stage_runner.py` | actual argv/cwd、process-group signal forwarding、exit/signal/spawn error、monotonic境界 |
 | G6 archive/送達 | workflow integration fixture | happy pathで全expected artifactがhomeにあり、upload失敗はattempt failure、SCP失敗ではGitHub Artifactが残る。homeのartifact setをBigQueryへ再送できる |
-| G7 Qwen意味 | `test_observation_contract.py`、`test_primary_result.py`、`test_distributed_events.py`、`test_lifecycle_control.py`、variant argv/source-diff fixture | purpose別authoritative result、OFF/ONがparentの同一actual workloadを順番通り消費、ONはneutral qualification result+primary、primary欠損、node/MPI/worker/GPU bijection、1-node participant 0行、4-node participant別終了分類、lifecycle単一owner、qualification ONの差分がinstrumentation patchだけであること |
+| G7 Qwen意味 | `test_observation_contract.py`、`test_primary_result.py`、`test_distributed_events.py`、`test_lifecycle_control.py`、variant argv/source-diff fixture | purpose別authoritative result、ordered output-ID identity、OFF/ONがparentの同一actual workloadを順番通り消費、ONはneutral qualification result+primary、primary欠損、node/MPI/worker/GPU bijection、1-node participant 0行、4-node participant別終了分類、lifecycle単一owner、qualification ONの差分がinstrumentation patchだけであること |
 | G8 GPU phase | profile用`test_gpu_reducer.py`、1/2/4-node cardinalityの`test_phase_protocol.py` | benchではsampler/phase messageなし、profileでは全expected nodeのphase receiver、共有UDS不使用、wrong-run/stale message、node-local ACK/clock順、marker欠損、gap cutoff、weighted mean/p95/energy |
 | G10 consumer contract | contract生成SQL fixture、variant別BigQuery golden rows、Sheet parameter/refresh smoke test | 全列lineage、profile attemptのscore統計除外、非適用・欠損列がNULL、pair-grain eligibility、失敗attempt残存、protocol分離、estimand、片側env欠損、freshness/size |
-| G11 非擾乱 | D-001のreference OFF/final ON固定5 pair | 個々のthroughput/stage wall、median、result totals、identity一致を表示し簡素screenを再現できること |
+| G11 非擾乱 | D-001のreference OFF/final ON固定5 pair | 二metric共通E、両arm order、continuous median、inclusive 0.99/1.01境界、output identityを使いadopt/reject/inconclusiveを再現できること |
 
 `test_observation_contract.py`はcontractのschemaとowner/source/capture/applicability/validatorの完全性を検査し、
 生成した観測マップ表がcommit済み表とbyte一致することを検査する。これが「この値はどこから取るか」

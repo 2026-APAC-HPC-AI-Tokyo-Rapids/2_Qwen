@@ -164,7 +164,7 @@ laneへ複写しない。
 
 `control/protocol.toml`はGit管理された実byteをそのままcopyする。subject manifestの`protocol_sha256`はこのfileの
 実byte SHA-256であり、protocol definition commitやlane fileだけのhashではない。全table/field required、
-`additionalProperties=false`相当のclosed `protocol/v1`は次である。`qualification_target`だけpurpose依存である。
+`additionalProperties=false`相当のclosed `protocol/v1`は次である。`qualification_target`と`profiler`だけpurpose依存である。
 
 ```text
 schema_version: const "protocol/v1"
@@ -180,6 +180,12 @@ lane: {lane_id:nonempty string,source:{repository_path:repository-relative POSIX
        resolved:lane-schema/v1}
 workload: {workload_id:nonempty string,expected_workload_identity:sha256}
 sampling?: {planned_attempts:positive uint,max_attempts:positive uint,stopping_rule_id:nonempty string}
+profiler?: {tool:const "sglang-pytorch-profiler-legacy",
+  activities:exact ["CPU","GPU"],profile_steps:const 5,warmup_included:const false,
+  with_stack:const false,record_shapes:const false,merge:const false,profile_by_stage:const false,
+  profile_id:const "qwen-profile",
+  trace_path_template:const "profile/raw/torch/qwen-profile-TP-{global_rank}.trace.json.gz",
+  required_raw_grain:const "global-tp-rank"}
 dimension_policy: {entries:sorted unique [{name:nonempty string,
   class:enum "must_match"|"treatment"|"nuisance"|"outcome",logical_type:contract type ID}]}
 planned_value_policy: {
@@ -192,13 +198,26 @@ qualification_target?: {
   bundles:{reference:{path:repository-relative POSIX path,sha256:sha256},
            score:{path:repository-relative POSIX path,sha256:sha256}},
   pairs:exactly 5 [{pair_id:unique nonempty string,
-                    arm_order:exact ["off","on"]|["on","off"]}]
+                    arm_order:exact ["off","on"]|["on","off"]}],
+  screen:{criterion_id:const "median-pair-ratio-screen/v1",
+          minimum_evaluable_pairs:const 3,
+          require_both_arm_orders:const true,
+          pair_set:const "common-evaluable-pairs",
+          median:{kind:const "continuous",even:const "mean-middle-two"},
+          criteria:exact [
+            {response_id:const "total_token_throughput",ratio:const "on/off",
+             lower_bound_inclusive:const 0.99},
+            {response_id:const "perf.stage.benchmark.wall_time_sec",ratio:const "on/off",
+             upper_bound_inclusive:const 1.01}],
+          result_equivalence_policy_id:const "qwen-qualification-result-equivalence/v1"}
 }
 ```
 
-qualificationではtarget requiredかつsampling absent、bench/profileではtarget absentかつsampling requiredである。
+qualificationではtarget requiredかつsampling/profiler absent、benchではtarget/profiler absentかつsampling required、
+profileではtarget absentかつsampling/profiler requiredである。
 pair replicate indexはarray offsetから導出し、初版arm orderは
-offset 0からOFF→ON / ON→OFFを交互にする。top-level `control_plane_files[].path`はscore bundle `source_paths`と非重複で、
+offset 0からexact `[OFF,ON],[ON,OFF],[OFF,ON],[ON,OFF],[OFF,ON]`とし、cross-field validatorとfixtureで
+array offset parityを検査する。別のorder fieldは作らない。top-level `control_plane_files[].path`はscore bundle `source_paths`と非重複で、
 各blob OIDはreference/final treeとparent実行checkoutでexact一致する。protocol/bundle metadata pathはscore `source_paths`へ
 含めてよいが、runner/PJM/control executable pathはcontrol-plane filesにだけ置く。lane source fileのclosed parse結果は
 `lane.resolved`とexact一致し、別resolved lane fileは作らない。
@@ -207,6 +226,18 @@ offset 0からOFF→ON / ON→OFFを交互にする。top-level `control_plane_f
 `planned_treatment.dimensions`はmust-match valuesと選択したexactly one treatment tupleだけを合成する。
 nuisance/outcomeはpre-run valueがないためplanned value policyへ入れない。qualification treatment IDは`off|on`に固定し、
 protocol pair scheduleのarmから一意に選ぶ。
+profileは`SGLANG_PROFILE_V2=0`、`SGLANG_PROFILE_WITH_STACK=0`、`SGLANG_PROFILE_RECORD_SHAPES=0`を使い、
+warmup後のmeasured generation先頭5 scheduler forwardだけをCPU+GPU activityで記録する。expected trace集合は
+laneのglobal TP rank `0..tensor_parallel_size-1`とpath templateから展開し、expected countを別fieldへ複写しない。
+screen criteriaのresponse IDは同contractの`consumer.estimand`をexact参照する。ratio/medianはBigQueryの通常の数値演算、
+偶数medianは中央二値の算術平均とし、Sheet表示丸め前にinclusive boundと比較する。
+result-equivalence policyはOFF/ON neutral resultのordered output identity一致と、ON neutral/primaryの
+invocation ID、returned/error count、observed token totals、ordered output identity、generation wallのexact一致を要求する。
+判定用booleanやreasonをrawへ追加しない。
+screenはplanned skeletonから両metric共通の評価可能集合`E`をquery時に作る。両armの比較値、identity、arm gate、
+result-equivalenceを評価するsourceの存在だけをmembershipに使い、取得済みfalseをEから落とさない。
+`|E|<3`、片方のarm order欠如、identity conflictは`inconclusive`、それ以外で閾値/result/arm gateのどれかがfalseなら
+`reject`、すべてtrueなら`adopt`とする。
 `expected_workload_identity=SHA-256(JCS({warmup:<ordered-workload warmup source SHA-256>,
 measured:<ordered-workload measured source SHA-256>}))`である。regularは自身、qualificationはallocation parentが所有する
 二manifestの実file SHA-256を同じfield順で合成し、planned identityへ照合する。二hashをFactへ別名で複写しない。
@@ -613,6 +644,24 @@ kBを1024倍してbytesへ変換する。duplicate key、非uint、overflow、un
 最小range表記へcanonicalizeする。空fileは空string、read不能/parse不能値だけNULLにする。minimal hardwareにある
 CPU identity/settingsを再収録しない。
 
+profileのTorch Profilerはglobal TP rankごとに
+`profile/raw/torch/qwen-profile-TP-<global-rank>.trace.json.gz`と同stemの`.capture.json`を一件ずつ作る。
+captureは全field required、`additionalProperties=false`のclosed
+`profiler-capture/v1={schema_version:const "profiler-capture/v1",run_id:run ID,global_rank:uint,
+invocation_id:nonempty string,source_member:relative POSIX path,size_bytes:uint,sha256:sha256}`である。
+`global_rank`はfilename、trace metadata、laneの`0..tensor_parallel_size-1`と一致させ、source memberは対応gzip traceを指す。
+capture自身を別raw relationへ投影せず、traceとのlineageにだけ使う。全rank traceが揃わなければ既存
+`collection_complete=false`とし、欠損rankのplaceholder、profiler専用status/reason、retryを作らない。
+
+publisherは実在traceを一度parseし、complete duration eventを
+`(run,global_rank,activity,event_category,event_name)`でgroup化したclosed
+`profiler-event-projection/v1={schema_version:const "profiler-event-projection/v1",run_id:run ID,
+global_rank:uint,activity:enum "CPU"|"GPU",event_category:string,event_name:string,
+call_count:positive uint,inclusive_duration_sum_ns:nonnegative decimal,
+source_member:relative POSIX path,source_sha256:sha256}`として`qwen_profiler_events_raw_v2`へ転記する。
+平均、構成比、rank/run合計、top-N、分類summaryは保存せずquery時に導出する。bench/qualificationはこのrelationへ行を作らず、
+固定幅consumerはNULLだけにする。
+
 GPU aggregateはraw factへ保存しない。`gpu-phase/v1` reducer/viewは`phase,node_rank,gpu_uuid` grainで次のclosed列を返す。
 
 ```text
@@ -683,11 +732,15 @@ manifestだけがordered requestのraw正本である。selected count、planned
 ```text
 schema_version: const "primary-result/v1", run_id:nonempty string, invocation_id:nonempty string,
 generation_wall_sec:positive finite decimal, returned_count:uint, error_count:uint,
-observed_input_tokens:uint|null, observed_output_tokens:uint|null
+observed_input_tokens:uint|null, observed_output_tokens:uint|null,
+ordered_output_token_ids_sha256:sha256|null
 ```
 
 parse不能responseは`error_count`へ数え、取れないtoken totalを0で補わない。generate例外時はprimary resultを
-捏造しない。`benchmark_valid`はerror=0、returned=workload requests length、input observed=workload由来planned total、generation wallが正有限、
+捏造しない。output identityはresponse array順を保持した`[[uint token_id,...],...]`のJCS SHA-256で、全responseの
+`output_ids`がnonnegative integer arrayとして読め、各array長が同じresponseの`completion_tokens`、全長の和が
+`observed_output_tokens`と一致する時だけnon-nullにする。生成本文、per-request hash、同じhashの別Factは作らない。
+`benchmark_valid`はerror=0、returned=workload requests length、input observed=workload由来planned total、generation wallが正有限、
 `ignore_eos`固定時はoutput observed=requestedであることだけから導出する。
 
 view formulasは次で、throughputをrawへ保存しない。
@@ -705,11 +758,13 @@ qualificationだけの`source/qualification-result.json`は、score referenceと
 ```text
 schema_version: const "qualification-result/v1", run_id:nonempty string, invocation_id:nonempty string,
 generation_wall_sec:positive finite decimal, returned_count:uint, error_count:uint,
-observed_input_tokens:uint|null, observed_output_tokens:uint|null
+observed_input_tokens:uint|null, observed_output_tokens:uint|null,
+ordered_output_token_ids_sha256:sha256|null
 ```
 
 予定request count、backend、throughput、verdictは保存しない。eligibilityとthroughputは共通workloadと上記原始値から
-導出する。ONでは`primary-result/v1`とのreturned/error/token/wall一致を検査してwriter自体をqualificationする。
+導出する。output identityのcanonical inputとnull規則はprimary resultと同じである。ONでは`primary-result/v1`との
+invocation ID/returned/error/token/output identity/wall一致を検査してwriter自体をqualificationする。
 二sourceを持つのはONだけで、contractの`duplication_justification`にこの独立writer検証を記す。
 
 ## control、merge、package
@@ -789,15 +844,21 @@ qualification childではそのchild orchestration開始直前からそのsource
 二childは別々のUTC wall/monotonic boundaryを持ち、allocation-wideのPJM entry/accounting/terminalは
 `qwen_qualification_allocations_raw_v2`だけが所有しchild Factへ複写しない。別のallocation lifecycle objectは作らない。
 
-Git管理の`instrumentation-decision/v1`はclosed
+Git管理の`instrumentation-decision/v1`は共通base
 `{schema_version:const "instrumentation-decision/v1",decision_id:nonempty string,qualification_namespace:
 {contract_id:nonempty string,contract_sha256:sha256,protocol_id:nonempty string,protocol_sha256:sha256,
-dimension_policy_hash:sha256},qualified_source_diff_sha256:sha256,
-observed_sif_pair:{reference_sif_semantic_sha256:sha256,
-final_sif_semantic_sha256:sha256},observed_runtime_launcher_semantic_sha256:sha256,
-decision:enum "adopt"|"reject"|"inconclusive"}`を持つ。
+dimension_policy_hash:sha256}}`に次のclosed tagged unionを加える。
+
+```text
+{decision:enum "adopt"|"reject",qualified_source_diff_sha256:sha256,
+ observed_sif_pair:{reference_sif_semantic_sha256:sha256,final_sif_semantic_sha256:sha256},
+ observed_runtime_launcher_semantic_sha256:sha256}
+{decision:const "inconclusive"}
+```
+
+`inconclusive`は評価可能pair不足または一値のobserved identityを構成できない時に使い、欠損field、reason、statusを持たない。
 このnamespaceのexact protocol relationが`lane_id`、reference source object、
-workload identity、reference/score bundle path/SHA-256、control-plane file blob集合、protocol順のexactly 5 pair scheduleを一行で所有する。
+workload identity、reference/score bundle path/SHA-256、control-plane file blob集合、protocol順のexactly 5 pair scheduleとscreenを一行で所有する。
 decisionへこれらの
 完全な部分集合を複写しない。
 
@@ -820,16 +881,16 @@ runtime_files: exactly 4 role/realpath/size_bytes/sha256 objects in declared rol
 `sif_build_definition` commit、完成SIF byte hash、embedded manifest identity、outer sidecar path/hashは除外する。
 pairの二hashは各qualification childがFact `artifact.sif_manifest_sha256`でjoinしたSIF provenanceから再計算し、
 採用後benchも同じsemantic値を`final_sif_semantic_sha256`へ一致させる。
-採否に使うeligible pair（最低3 pair）の実在OFF childは同一reference SIF semantic hash、実在ON childは同一final SIF semantic hashと同一
+採否に使うD-001の評価可能pair（最低3 pair）の実在OFF childは同一reference SIF semantic hash、実在ON childは同一final SIF semantic hashと同一
 `SHA-256(JCS(source-track-diff/v2.entries))`を持ち、そのdiff hashはdecision `qualified_source_diff_sha256`、その順序付き一pairが
 decision `observed_sif_pair`と一致する。欠損/conflict/異なるSIFの混入があれば`adopt`にできない。
-未起動/null childはpairを欠測にするだけで、他の3–4 eligible pairによるdecisionを妨げない。
+未起動/null childはpairを欠測にするだけで、他の3–4評価可能pairによるdecisionを妨げない。
 各qualification childのcontract/protocol/policy composite keyはqualification namespaceとexact一致させる。採用後benchは
 別のscore protocolでもよいが、manifestのdecision ID/hashでこの不変record全体をexact joinする。
 
 Git管理relation `qwen_instrumentation_decisions_v2`はrecord全fieldと
 `decision_sha256=SHA-256(JCS(record))`を一行に持ち、grainは`(decision_id,decision_sha256)`である。adopt済みscore benchだけ
-run manifestのID/hashでexact joinし、profile/qualificationや未回答benchはNULLにする。
+run manifestのID/hashでexact joinし、profile/qualificationやdecision未存在benchはNULLにする。
 run artifactへdecision recordのimmutable copyは作らない。authoring時の一時JSONはGit-managed relationに取り込んだ後、
 runの参照sourceにしない。
 
@@ -905,7 +966,7 @@ runtimeで`archive-staging/bundle.manifest.json`を作り、tar rootの`bundle.m
 `profile-raw.tar.zst`を追加する。
 
 - `run-artifacts.tar.zst`: control/source/domain/log/result。telemetry rawを含めない
-- `profile-raw.tar.zst`: `telemetry/**`とprofile-only hardware raw、D-004で適用と決まったprofiler rawだけ。
+- `profile-raw.tar.zst`: `telemetry/**`、profile-only hardware raw、D-004で確定したprofiler rawだけ。
   run file三点と同じGitHub logical artifact set内の別outer fileである
 - `artifact-manifest.json`: outer file identityだけ
 - workflow operational row: GitHub run ID/attempt、artifact ID、home destination、upload/SCP/publish outcome
@@ -954,13 +1015,14 @@ v1 entryは次である。
 | `qwen.topology` / `qwen_topology_raw_v2` | `node-topology/v1`+stdout -> `topology-projection/v1` | run, node, scope, GPU index | run: all variants |
 | `qwen.gpu_sample` / `qwen_gpu_samples_raw_v2` | `gpu-sample/v1` -> `gpu-sample-projection/v1` | run, node, sequence, GPU UUID | profile |
 | `qwen.profile_hardware` / `qwen_profile_hardware_raw_v2` | `profile-hardware-capture/v1` -> `profile-hardware-projection/v1` | run, node, kind, NUMA ID | profile |
+| `qwen.profiler_event` / `qwen_profiler_events_raw_v2` | `profiler-capture/v1` + referenced gzip Chrome trace -> `profiler-event-projection/v1` | run, global rank, activity, category, event name | profile |
 | `qwen.lifecycle_summary` / `qwen_lifecycle_summaries_raw_v2` | `lifecycle-summary/v1` -> same closed row + source member/hash | run | run: all variants |
 | `qwen.phase_summary` / `qwen_phase_summaries_raw_v2` | `phase-summary/v1` -> one invocation + source member/hash | run, invocation ID | profile |
 | `qwen.qualification_allocation` / `qwen_qualification_allocations_raw_v2` | `qualification-set-manifest/v1` + hash-verified referenced allocation archive -> `qualification-allocation-projection/v1` | allocation ID | qualification allocation |
 
 direct entryのsource-instance grainはsource track=`run + subject manifest member`、SIF provenance=`source_sha256`、runtime launcher=`subject kind/ID + launcher member`、workload manifest=`subject kind/ID/kind + manifest member`、minimal hardware=
 `subject kind/ID/node + node member`、node launch/topology=`run/node + topology member`、GPU sample=
-`run/node + JSONL member`、profile hardware=`run/node + capture member`、lifecycle/phase=`run + summary member`、
+`run/node + JSONL member`、profile hardware=`run/node + capture member`、profiler event=`run/global rank + trace member`、lifecycle/phase=`run + summary member`、
 qualification allocation=`allocation ID`で、instance hashはsource trackのsubject manifest、SIF sidecar、各run member、
 またはqualification set manifestのSHA-256に固定する。
 topology member自体が参照する全stdout/stderr hashをsealするため、そのmember hashがparse入力集合もidentity化する。workload requestはconflict-free manifest
@@ -969,6 +1031,8 @@ parentへjoinするためdirect source-instance fieldを持たない。
 `source_sha256_field=source_instance_sha256_field=source_sha256`に固定する。
 profile hardware entryは`source_member_field=source_members[role="capture"].path`、
 `source_sha256_field=source_instance_sha256_field=source_members[role="capture"].sha256`という一意selectorに固定する。
+profiler event entryは`source_member_field=source_member`、`source_sha256_field=source_instance_sha256_field=source_sha256`とし、
+captureがsealしたtrace SHA-256を使う。
 qualification allocation entryは`source_member_field=set_manifest_member`、
 `source_sha256_field=source_instance_sha256_field=set_manifest_sha256`に固定する。set manifestがallocation archive hashをsealする。
 

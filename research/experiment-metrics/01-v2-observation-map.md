@@ -99,7 +99,7 @@ required sourceならrun-level `collection_complete=false`とするだけで、�
 | metrics contract | Git管理`qwen-v2.toml`とlane/run variantが選んだexpected producer graph | `runner.manifest` / provision前 | `run.metrics_contract`、`control/contract.toml`、resolved laneと元lane path/SHA-256を含む`control/protocol.toml` | contract ID/content hash、exact producer version、view compatibility、mixed contract禁止、family/列の`applicable_run_variants` | required family欠損なら`collection_complete=false`。非適用列はNULL |
 | source track / control plane | Gitのscore reference/profile base、実checkout head、purpose/qualification arm、protocol列挙control fileの実blob | `runner.manifest` / provision前、publisher / archive後 | compact source-track projection。実control-plane JCS hashはregular manifestまたはqualification parent manifest/allocation projectionが一度所有。qualification ONだけ`control/source-track-diff.json` | base/head規則、ON diff path集合=score bundle paths。control-plane filesは実checkoutからprotocol path順にhashし、protocol/contextの配列hashへ照合。childへ配列/hashを複写せずparent join | jobを投入しない |
 | instrumentation bundle | Git管理purpose-neutral semantic bundle、SIF sidecar | `runner.manifest` / submit前 | `control/instrumentation-bundle.json`とsubject manifestのbundle SHA-256。actual argv/sinkはstage/artifact source | hook/event/sample設定、wrapper/node-agent hash、contract、env scope、source path allowlist、relative argv template、sink source ID。sink path templateはcontract source registryだけが所有。v1 hookはbuild-definition repositoryに限定し、hook pathをbundle source pathsとSIF score treeへ含める。referenceはempty、qualification ONと採用後benchは同じscore bytes | required source欠損なら`collection_complete=false`。profile-only bundleはbenchでproducerを持たない |
-| instrumentation qualification decision | Git管理D-001 decision record | `runner.manifest` / bench submit前 | manifestのdecision ID/hashからdecision context viewへexact join。artifact copyは作らない | namespace protocolがlane/reference/workload/reference+score bundle/control-plane blobs/5-pair scheduleを所有し、decisionがqualified source diff、observed SIF-semantic pair、eligible parentで一値のruntime launcher semantic、verdictを所有。対象subsetをdecisionへ再掲しない | 未回答はdecision NULL。profileはscoreへ混ぜない |
+| instrumentation qualification decision | Git管理D-001 decision record | `runner.manifest` / bench submit前 | manifestのdecision ID/hashからdecision context viewへexact join。artifact copyは作らない | namespace protocolがlane/reference/workload/reference+score bundle/control-plane blobs/5-pair schedule/screenを所有し、decisionがqualified source diff、observed SIF-semantic pair、評価可能parentで一値のruntime launcher semantic、verdictを所有。対象subsetをdecisionへ再掲しない | decision未作成はNULL。profileはscoreへ混ぜない |
 | scheduler join | `pjsub` argv/stdout/stderr/responseとPJM側job-entry file | `runner.submission` / pjsub前後、`pjm.supervisor` / entry直後、finalizer / terminal後 | regularは`scheduler.submit_job_id`と`scheduler.job_entry_job_id`、qualificationはallocation projection | normalは二scalar、qualificationはallocation ID+ordered child IDsをquery時照合。完全導出できるbinding fileは作らずchildへ共通値を複写しない | reject、応答不明、片方欠損、不一致はattempt/comparison不適格。自動復旧しない |
 | producer completion | producerのnormal close、node-agent summary、StageRunnerのchild outcome | supervisor/node-agent/StageRunner / return後 | 完成producer fragment、stage termination | immutable contract/bundleからexpected fragment/fileを一回導出し`collection_complete`を決める。merge後fragmentは削除 | 欠損値はNULL。partial/tmpは手元に残り得るがartifact/mergeへ入れない |
 | protocol assignment | Git管理protocolとrunnerの割当record | `runner.manifest` / job投入前 | regularはplanned-treatmentのblock ID/order、replicate index、planned group/set ID、dimensions。qualification childはtop-level pair/arm、planned set/dimensionsだけ | closed namespace+purpose+dimensionsからgroup/set IDを再計算。qualificationのblock ID/order/replicateはallocation ID、parent/set child offset、protocol pair offsetから導出しchildへ複写しない | purpose別comparison不適格。attempted groupやpairを観測値・順序から推測しない |
@@ -120,6 +120,7 @@ required sourceならrun-level `collection_complete=false`とするだけで、�
 | lifecycle control | lane contractのtransport/address source/port strategy、rank 0 node-agent endpoint、startup ready、shutdown start | `node-agent coordinator` / container開始前とgeneration後、publisher / archive後 | `control/lifecycle/rendezvous.json`、最終`summary.json`、`qwen_lifecycle_summaries_raw_v2` | run/version/freshness、全nonzero node rankのexplicit endpoint接続、expected node identity ACK、shutdown一意性。env/DNS/任意探索禁止 | 欠損値はNULL。ready不成立ならcontainerを開始せずnonzero終了 |
 | GPU topology/settings | host/containerのfixed `nvidia-smi --query-gpu`とhost `nvidia-smi topo -m` | `node-agent` / model load前に一度、publisher / archive後 | node別host/container query stdout/stderr、host topology matrix stdout/stderr、node topology JSON、`qwen_topology_raw_v2` | UUID/PCI/memory/driverに加えpersistence、compute mode、power limit、max clocks、MIG/ECC。各node `lane.gpus_per_node`、全体 `lane.tensor_parallel_size` unique UUID。parsed copyをsource JSONへ作らない | 欠損値はNULL |
 | node CPU/NUMA detail（profile only） | minimal hardwareに含まれない各NUMA nodeの`cpulist`/`meminfo`とpost-run `/proc/meminfo` | profile `node.auditor` / benchmark後、各node、publisher / archive後 | `profile/raw/hardware/node-<node-rank>/{proc-meminfo.txt,numa/...,capture.json}`と`qwen_profile_hardware_raw_v2` | hostname付きcaptureをminimal hardwareの`(node_rank,hostname)`と照合。meminfo key/kB→bytes、cpulist canonicalization、exact membership、source member/hashを固定 | 欠損値はNULL。bench consumerもNULL |
+| Torch profiler trace（profile only） | SGLang built-in legacy PyTorch ProfilerのCPU/GPU Chrome trace | scheduler / warmup後、measured generation先頭5 forward。publisher / archive後 | global TP rank別`profile/raw/torch/qwen-profile-TP-<rank>.trace.json.gz`とcapture、`qwen_profiler_events_raw_v2` | lane TP rank集合、固定profile ID/path、stack/shape/merge無効。complete duration eventをcategory/nameでcount・duration sumへ一度集約 | trace欠損はNULL/long rowなしと既存`collection_complete=false`だけ。bench/qualificationは非適用 |
 | outer actual launch | stage wrapperが`subprocess.Popen`へ渡すargv/cwd/stderr mode | `StageRunner` / spawn直前 | `run.stage.benchmark.launch` | shell表示ではなくclosed object。profiler wrapperを含む実spawn値 | stage未開始ならNULL |
 | run timing/outcome | supervisorのUTC clock、monotonic clock、最終exit | `pjm.supervisor` / regularはPJM entry→compute回収終了、qualificationは各child orchestration直前→そのchild回収終了 | `run.started_at`、`run.finished_at`、`run.elapsed_sec`、`run.exit_code` | wall/monotonicを別clockで保持。`run_outcome`はexit codeからview導出。allocation共通のscheduler request/accounting/terminalは親projだけが所有し、別allocation lifecycleは作らない | 保存できたterminationとstage outcomeから中断を表す |
 | stage outcome | supervisorの同じmonotonic clockとraw child wait status | `StageRunner` / spawn直前とwait直後 | `perf.stage.benchmark.wall_time_sec`、`run.stage.benchmark.termination` | exit/signal/spawn_errorを区別し、publish/GPU集計をtimer外へ | termination objectで中断を表現 |
@@ -134,8 +135,8 @@ required sourceならrun-level `collection_complete=false`とするだけで、�
 | distributed init phase | rank 0 processの`Engine(...)`呼出し | `rank0.offline` / constructor直前からreturn直後 | `perf.phase.distributed_engine_init.wall_time_sec` | rank 0同一monotonic clockだけ。worker-readyはcardinality検証専用 | 欠損値はNULL |
 | warmup generation | warmupの`backend.generate`直前・return直後 | `rank0.offline`、profileだけ追加control forwarder / warmup中 | `perf.phase.warmup_generation.wall_time_sec`、profileだけphase summary | rank0同一clock。profileでは別invocationとexpected node start/end/ACKも検証 | 欠損値とbenchのprofile summary列はNULL |
 | measured generation | measured `backend.generate`直前・return直後 | `rank0.offline`がlocal timer値をauthoritative resultへ、runner parserがterminal後にFact化 | `perf.benchmark.generation.wall_time_sec`、profileだけphase summary | rank0 `time.perf_counter`、正/有限。profileでは同じinvocation IDとforward lead/trailも検証 | 欠損値とbenchのprofile summary列はNULL |
-| observed responses | decode済み`gen_out` | bench/profile/qualification ONの`PrimaryResultWriter` / generate return直後、runner parser / terminal後 | `source/primary-result.json`からreturned/error count、prompt/completion totals | schema固定。malformed responseはerrorへ数え、取れないtokenを0で補わない。temporary write/close後にrename | 欠損値はNULL。qualification OFFもNULL |
-| neutral qualification result | 共通benchmark harnessが検証した実response array | qualification OFF/ONのrank0 `QualificationResultWriter` / generate return直後 | `source/qualification-result.json`とpair estimand point | `qualification-result/v1`のactual returned/error/token totalsとwall、parent workload request/token整合。予定件数・throughput・verdictは保存しない | 欠損値はNULL。normal bench/profileもNULL |
+| observed responses | decode済み`gen_out` | bench/profile/qualification ONの`PrimaryResultWriter` / generate return直後、runner parser / terminal後 | `source/primary-result.json`からreturned/error count、prompt/completion totals、ordered output token-ID SHA-256 | schema固定。response順の`output_ids` array全体を一度hashし、各lengthをcompletion tokens、length sumをobserved output totalへ照合する。本文/per-request hashを作らない。malformed responseはerrorへ数え、取れないtokenを0で補わない。temporary write/close後にrename | 欠損値はNULL。qualification OFFもNULL |
+| neutral qualification result | 共通benchmark harnessが検証した実response array | qualification OFF/ONのrank0 `QualificationResultWriter` / generate return直後 | `source/qualification-result.json`とpair estimand point | `qualification-result/v1`のactual returned/error/token totals、ordered output token-ID SHA-256、wall、parent workload request/token整合。ON primaryとはinvocation/result identity/wallを照合。予定件数・throughput・verdictは保存しない | 欠損値はNULL。normal bench/profileもNULL |
 | primary outcome | purpose別authoritative resultとgeneration duration | BigQuery view / query時 | throughput派生値はrawへ重複保存しない | bench/profileはprimary artifact、qualification OFF/ONは共通neutral resultからthroughputを導出。ON primaryとの重複はwriter検証として明示 | source不足ならNULL |
 | node process lifecycle | wrapper child start/end、raw wait statusまたはspawn error | `node_agent.py`のchild supervisor / child境界と`os.waitpid` | `parallel.node.<node_rank>.process_lifecycle`、nonzero nodeはconsumer `qwen_participant_terminations_v2` | exit/signal/kindやshutdown受信をrawへ複写しない。同じ`<boot_id>:CLOCK_MONOTONIC`内だけshutdown前後をnode別long viewで導出 | source不足なら当該consumer rowなし |
 | shutdown phase | shutdown開始・全child終了のrank0 monotonic boundaries | `rank0.offline` / shutdown前後 | `perf.phase.engine_shutdown.wall_time_sec`、shutdown invocation ID | node lifecycleと照合 | 欠損値はNULL |
@@ -242,7 +243,7 @@ child exitをviewで比較する。
 - 1-node participant relation 0行、4-node rank 1/2/3のearly/coordinated/spawn error、任意participant source欠損時に他nodeの有効rowを保持
 - token総数は同じだがrequest順序またはlength分布が違うworkload
 - dataset row/chat template/tokenizerが1 byteだけ違うworkload
-- returned count不足/過多、malformed response、prompt/completion token欠損、generate例外、NaN/zero duration
+- returned count不足/過多、malformed response、prompt/completion token欠損、output IDs欠損/順序差、generate例外、NaN/zero duration
 - warmup成功/measured失敗、generate成功/get_server_info失敗、nonzero node rankのcoordinated kill/early death
 - cache count/sizeは同じでcontentが違う二manifest
 - variant applicability grid：profile-only collectorのprofile失敗、bench非適用、qualification OFF非適用はいずれもconsumer値がNULL。required source欠損時だけrun-level `collection_complete=false`
@@ -251,7 +252,8 @@ child exitをviewで比較する。
 - bench lifecycle ready/shutdownだけ、profile lifecycle+phase、benchへphase summaryを誤生成するfixture
 - lifecycle/phase ACKのnode-local timestamp逆転とclock不一致
 - instrumentation bundleのhook/sample interval一つだけを変えたhash差fixture
-- D-001 decisionの未存在、non-adopt、対象pair不一致、adopt完全一致fixture
+- D-004の1/2/4-node synthetic laneでTP rank trace集合、固定path/profile ID、stack/shape/merge無効、trace一件欠損時のNULL/0-row fixture
+- D-001 decisionの未存在、inconclusive union、対象pair不一致、共通Eとmetric別Eの差、取得済みarm/result false、片arm orderだけ残る欠測、0.99/1.01境界、evaluable=4の連続median、semantic identity conflict、output identity不一致、adopt完全一致fixture
 - GPU sampleのsequence gap、unfinished frame、poll error、marker欠損、pre-start sample、既知p95/energy系列
 - 正常close、program failure、完成node fragment欠損、異値conflict。途中fileはmerge/artifactへ入れない
 - contract欠損legacy、expected producer version混在、exact v2 contract
@@ -259,13 +261,12 @@ child exitをviewで比較する。
 全fixtureで、node/rank full snapshotのscope保持、raw row集合、`collection_complete`、comparison
 eligibility、result artifactとの代数的parityを検査する。
 
-## 未決定事項
+## 確定事項
 
 bench/profile分離と、取得できなかった値およびprofile-only metricは値をNULLにするだけで原因/status/欠損用recordを
 作らないこと、極稀な失敗を救う多段safeguardは作らないことはユーザー確定済みである。
 モデルが適合する2-node TP=8 laneで行い、synthetic 1/2/4-node fixtureでcardinality非固定を検証する。
-初版profileで必須にするprofiler/activity/step範囲/required raw file集合D-004と、score runに許す最小bench bundleの
-統計上限D-001はユーザー確認待ちであり、この順に一問ずつ確認する。決まるまではGPU
-polling/aggregate、phase control marker、profiler、verbose backend trace、full placement診断はprofile-only、
-未qualificationのinline eventはaudit-onlyとする。profiler toolや閾値を文書へ仮置きして
-profile/score/qualification eligibleへ混入させない。
+D-004はSGLang legacy PyTorch ProfilerのCPU+GPU、warmup外の先頭5 scheduler forward、stack/shape/mergeなし、
+global TP rank別traceで確定した。D-001は固定5 pair、最低3評価可能pair、throughput/stage wall 1%以内の簡素screenで確定した。
+GPU polling/aggregate、phase control marker、profiler、verbose backend trace、full placement診断はprofile-only、
+D-001 decision未作成のinline eventはaudit-onlyとする。
