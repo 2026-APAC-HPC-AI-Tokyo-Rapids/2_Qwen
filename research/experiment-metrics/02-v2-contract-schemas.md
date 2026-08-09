@@ -140,6 +140,28 @@ ON diffのalgorithm/base/head = ON source-track algorithm/base/head = protocol r
 `artifact_manifest`がnon-nullなchildだけ、両arm equalityは両childがmaterializeしたpairだけに行う。null childを持つsetも
 parent evidenceとしてpublish可能だが、そのpairはeligibleにしない。
 
+`lane-schema/v1`は全field required、`additionalProperties=false`のclosed objectである。
+
+```text
+schema_version: const "lane-schema/v1"
+nodes: positive uint
+mpi_processes: positive uint
+gpus_per_node: positive uint
+tensor_parallel_size: positive uint
+resource_group: nonempty string
+transport_policy: nonempty string
+advertise_source: const "rank0_hostname"
+sglang_port: uint in 1..65535
+node_agent_port: uint in 1..65535
+rendezvous_timeout_sec: positive uint
+ready_timeout_sec: positive uint
+```
+
+両portは異なる。v1は`mpi_processes = nodes`、`tensor_parallel_size = nodes * gpus_per_node`を要求し、
+expected node rankは`0..nodes-1`、expected global worker rankは`0..tensor_parallel_size-1`としてこのobjectからだけ
+展開する。required producerはcontractのvariant applicability、instrumentation modeはprotocol/bundle selectionが所有し、
+laneへ複写しない。
+
 `control/protocol.toml`はGit管理された実byteをそのままcopyする。subject manifestの`protocol_sha256`はこのfileの
 実byte SHA-256であり、protocol definition commitやlane fileだけのhashではない。全table/field required、
 `additionalProperties=false`相当のclosed `protocol/v1`は次である。`qualification_target`だけpurpose依存である。
@@ -155,7 +177,7 @@ repository: {repository_id:const "apac2026-qwen",object_hash_algorithm:enum "sha
 control_plane_files:nonempty sorted unique [{path:repository-relative POSIX path,
   blob_oid:repository algorithm-constrained full OID}]
 lane: {lane_id:nonempty string,source:{repository_path:repository-relative POSIX path,sha256:sha256},
-       resolved:contract lane-schema object}
+       resolved:lane-schema/v1}
 workload: {workload_id:nonempty string,expected_workload_identity:sha256}
 sampling?: {planned_attempts:positive uint,max_attempts:positive uint,stopping_rule_id:nonempty string}
 dimension_policy: {entries:sorted unique [{name:nonempty string,
@@ -178,7 +200,8 @@ qualificationではtarget requiredかつsampling absent、bench/profileではtar
 pair replicate indexはarray offsetから導出し、初版arm orderは
 offset 0からOFF→ON / ON→OFFを交互にする。top-level `control_plane_files[].path`はscore bundle `source_paths`と非重複で、
 各blob OIDはreference/final treeとparent実行checkoutでexact一致する。protocol/bundle metadata pathはscore `source_paths`へ
-含めてよいが、runner/PJM/control executable pathはcontrol-plane filesにだけ置く。別resolved lane fileは作らない。
+含めてよいが、runner/PJM/control executable pathはcontrol-plane filesにだけ置く。lane source fileのclosed parse結果は
+`lane.resolved`とexact一致し、別resolved lane fileは作らない。
 `dimension_policy_hash=SHA-256(JCS(dimension_policy))`である。planned value policyのmust-match namesはpolicyの同classを、
 各treatment valuesはpolicyのtreatment namesをexactly once持ち、logical typeはpolicyから取る。subject
 `planned_treatment.dimensions`はmust-match valuesと選択したexactly one treatment tupleだけを合成する。
@@ -190,9 +213,9 @@ measured:<ordered-workload measured source SHA-256>}))`である。regularは自
 `observed_control_plane_sha256=SHA-256(JCS([{path,blob_oid},...]))`はregularの実行checkout、qualification parentの
 実行checkoutからprotocol path順に一度観測する。protocol arrayの同hashとの一致だけをeligibilityへ使い、actual arrayを
 別artifact/Factsへ複写しない。
-初版laneは2 PJM nodes、2 MPI node processes、4 GPU/node、TP=8、rank 0 hostname advertise、SGLang port
-25000、node-agent port 25001、rendezvous 60秒、ready 120秒である。別resolved-lane file、port allocator、
-fallback discoveryを作らない。
+現在の具体laneは2 PJM nodes、2 MPI node processes、4 GPU/node、TP=8、rank 0 hostname advertise、SGLang port
+25000、node-agent port 25001、rendezvous 60秒、ready 120秒である。別resolved-lane file、node数別collector、
+port allocator、fallback discoveryを作らない。
 
 `control/instrumentation-bundle.json`は全field required、`additionalProperties=false`の次のclosed objectである。
 
@@ -462,7 +485,25 @@ event_type="worker_ready", payload={
 }
 ```
 
-expected global rankは0..7、node rankは0..1である。値をServerArgsから推測しない。
+expected global rankは`0..lane.tensor_parallel_size-1`、node rankは`0..lane.nodes-1`である。値をServerArgsから推測しない。
+
+`qwen-placement/v1` reducerは新しいrawやreason fieldを作らず、resolved lane、scheduler request、全node launch、
+container GPU topologyを全variant共通部分として一度だけ照合し、bench/profile/qualification ONだけ各nodeの
+`server_args_effective`と全worker-readyを追加照合する。scheduler requestの
+lane ID/nodes/MPI processes/resource group/transport policyはresolved laneとexact一致する。node launchはnode rankと
+outer MPI global rankがともにexact `0..lane.nodes-1`、各recordで`global_rank=node_rank`、`local_rank=0`、
+`size=lane.mpi_processes`、hostnameが全nodeでdistinctでなければならない。common container topologyは各expected nodeで
+exact `lane.gpus_per_node`件とindex集合`0..lane.gpus_per_node-1`を持ち、全nodeでexact
+`lane.tensor_parallel_size`件のglobal-unique UUIDを持たなければならない。各ServerArgsは`tp_size`、`nnodes`、
+`node_rank`がそれぞれlane TP、lane nodes、当該node rankと一致し、distributed addressはlaneのrank 0 advertise/port
+contractと一致する。worker envelopeはglobal rankと`payload.tp_rank`がともにexact
+`0..lane.tensor_parallel_size-1`で一対一に一致し、各nodeにexact `lane.gpus_per_node`件を持つ。
+各workerの`gpu_id/gpu_uuid`は同じnodeのcontainer topology `(index,uuid)`へbijectionし、全nodeのworker UUIDもuniqueとする。
+必要sourceはvariantごとの上記集合だけで、欠ければ既存`placement_valid`はNULL、揃って一つでも不一致ならfalse、
+それ以外だけtrueにする。qualification OFFはServerArgs/worker-readyを必要sourceにせず、共通部分だけでtrue/falseを決める。
+`benchmark_valid`はresult整合だけを表す既存意味から変えない。benchの`score_comparison_eligible`とqualificationの
+`qualification_arm_eligible`だけが、各variantに適用可能な`placement_valid=true`を要求する。profileは値を表示するが
+score統計へ入れず、原因列やvalidation artifactは作らない。
 
 ## event、lifecycle、phase
 
@@ -472,9 +513,12 @@ producer内sequenceは0から連続増加する。clock IDはLinux boot IDとclo
 `<boot_id>:CLOCK_MONOTONIC`で、別nodeのmonotonic値を減算しない。
 
 `control/lifecycle/rendezvous.json`は`schema_version:const "lifecycle-rendezvous/v1"/run_id/protocol_version/rank0_hostname/address/
-port=25001/created_at`、summaryは`schema_version="lifecycle-summary/v1"/run_id/nodes`を持つ。node entryは
+port=lane.node_agent_port/created_at`、summaryは`schema_version="lifecycle-summary/v1"/run_id/nodes`を持つ。node entryは
 `node_rank:uint/ready:{sequence:uint,clock_id:string,received_monotonic_ns:uint,ack_monotonic_ns:uint}/
 shutdown:{sequence:uint,invocation_id:string,clock_id:string,received_monotonic_ns:uint,ack_monotonic_ns:uint}|null`である。
+`nodes`はnode-rank順のexact `lane.nodes`件で、rank集合は`0..lane.nodes-1`と一致する。
+各entryで`ready.received_monotonic_ns <= ready.ack_monotonic_ns`を要求する。shutdownがnon-nullならreadyと同じ
+clock IDで、`ready.ack_monotonic_ns <= shutdown.received_monotonic_ns <= shutdown.ack_monotonic_ns`を要求する。
 node-agent summaryがshutdown受信の唯一のsource、wrapper lifecycleが
 child exitの唯一のsourceである。固定port衝突/timeoutはrun失敗とし、自動再試行しない。
 `lifecycle-summary-projection/v1`はこのclosed summaryへ
@@ -506,6 +550,9 @@ early/coordinated分類を複写しない。
 `{clock_id,start_broadcast_ns,all_start_acks_received_ns,generation_start_ns,generation_end_ns,
 end_broadcast_ns,all_end_acks_received_ns}`、node-rank順の
 `{node_rank,clock_id,start_sequence,end_sequence,start_received_ns,start_ack_ns,end_received_ns,end_ack_ns}`を持つ。
+node arrayはnode-rank順のexact `lane.nodes`件で、rank集合は`0..lane.nodes-1`と一致する。
+各entryは一つのclock ID上で
+`start_received_ns <= start_ack_ns <= end_received_ns <= end_ack_ns`を要求する。
 rank 0の6 timestampは記載順にnondecreasingで同じclock IDを使う。start/end sequenceは同node control stream上で
 strict increasing、GPU sampleとnode windowのclock_idは一致必須である。
 GPU phase windowは同nodeの`[start_received_ns,end_received_ns)`で、ACK時刻はlead/trail診断だけに使う。
@@ -675,7 +722,7 @@ observed_input_tokens:uint|null, observed_output_tokens:uint|null
 ```text
 scheduler-request/v1 = {
   schema_version:const "scheduler-request/v1",subject_manifest_sha256:sha256,
-  lane_id:nonempty string,nodes:const 2,mpi_processes:const 2,
+  lane_id:nonempty string,nodes:positive uint,mpi_processes:positive uint,
   resource_group:nonempty string,transport_policy:nonempty string,
   pjm_script:{repository_path:repository-relative POSIX path,sha256:sha256},argv:nonempty string[]
 }
@@ -709,6 +756,10 @@ artifact-manifest/v1 = {
           size_bytes:uint,sha256:sha256}, ...]
 }
 ```
+
+`scheduler-request/v1`はsubmit時にlaneから解決して実argvへ入れたrequested snapshotであり、lane objectの予定値を
+別名で複写したものではない。lane ID、nodes、MPI processes、resource group、transport policyをresolved laneへ
+exact照合し、v1では`mpi_processes = nodes`を要求する。
 
 `member-with-role`は`member`へcontract registryのclosed source-roleを一つ加えたobjectで、path byte順uniqueにsortする。
 bundle manifestはself/outer sidecarを含めない。artifact filesは記載role順uniqueで、bench/qualification childは
@@ -983,6 +1034,10 @@ v1 routingは次に固定する。
 | `result.*` | purpose-authoritative result artifact | `primary_result/v1`または`qualification_result/v1` |
 | `parallel.node.<node_rank>.process_lifecycle` | wrapper lifecycle | `node_lifecycle/v1` |
 
+`qwen_node_configs_v2`は二つの`sglang.node.<node_rank>.*_effective` Factに含まれる
+`config-snapshot/v1.fields`を`(run,node_rank,config_kind,field_name)`へ一度だけUNNESTし、declared typeとcanonical
+valueをlosslessに表示する。これはconsumer viewであり、新しいFactやartifact projectionを作らない。
+
 consumer columnは`name/type/unit/source_refs/scope_cardinality/reducer_id/conflict_rule/transform_id/
 applicable_run_variants/dimension_name/allowed_classes`で閉じる。`source_refs`はordered
 `[{kind="fact"|"projection"|"dimension",id,json_path?,bindings?},...]`で、異種sourceの混合とreducer入力順を明示する。
@@ -1002,7 +1057,8 @@ exact `(contract_id,contract_hash) -> (contract_id,contract_sha256)`、protocol 
 IDだけによるfallback joinは許さない。
 decision relationはexact `(instrumentation_decision_id,instrumentation_decision_sha256) ->
 (decision_id,decision_sha256)`でjoinし、artifact内copyやlatest decisionをSQLから探索しない。
-sourceが欠損または非適用なら`NULL`だけを返す。Sources tabは実在値のlineageだけを表示し、missing rowを生成しない。
+固定幅consumer columnでsourceが欠損または非適用なら`NULL`だけを返す。source grainのlong relationは実在source rowだけを
+表示し、欠損/非適用row、reason、placeholderを生成しない。Sources tabも実在値のlineageだけを表示する。
 
 termination consumerは次のexact contractで閉じ、`ANY_VALUE`や多数決を使わない。
 
@@ -1010,8 +1066,9 @@ termination consumerは次のexact contractで閉じ、`ANY_VALUE`や多数決�
 |---|---|---|
 | `benchmark_termination_kind|benchmark_exit_code|benchmark_signal` | Fact `run.stage.benchmark.termination`、runにつきexactly 1 | `stage-termination/v1` unionをそのまま列へ分解する。kindに非該当のcode/signalはNULL |
 | `engine_termination_kind|engine_exit_code|engine_signal` | Fact `parallel.node.<node_rank>.process_lifecycle`の`node_rank=0`、runにつきexactly 1 | `spawn_error`、またはraw wait statusからPOSIX `exit|signal`と`WEXITSTATUS|WTERMSIG`を一度導出する。非該当のcode/signalはNULL |
-| `worker_termination_status` | ordered [Fact `parallel.node.<node_rank>.process_lifecycle`の`node_rank=1`, projection `qwen.lifecycle_summary`の`nodes[node_rank=1].shutdown`]、各exactly 1 | lifecycleが`spawn_error`なら`spawn_error`。それ以外はraw statusからexit/signalを導出し、同じclock IDでchild finishがshutdown receive未満なら`early_exit|early_signal`、以上なら`coordinated_exit|coordinated_signal`。source欠損、競合、shutdown null、invocation不一致、clock不一致はNULL |
+| `qwen_participant_terminations_v2.status` | 各`node_rank=1..lane.nodes-1`のFact `parallel.node.<node_rank>.process_lifecycle`、`waited`の場合だけprojection `qwen.lifecycle_summary.nodes[node_rank].shutdown` | `(run,node_rank)`のlong relation。unique lifecycleが`spawn_error`ならshutdown不要で`spawn_error`を返す。`waited`はraw statusからexit/signalを導出し、unique shutdownのinvocation/clockが一致する場合だけchild finishがshutdown receive未満なら`early_exit|early_signal`、以上なら`coordinated_exit|coordinated_signal`を返す。必要sourceの欠損/競合、shutdown null、不一致は当該nodeのrowを出さない |
 
 lifecycle summaryのshutdown invocation IDはpurpose-authoritative result artifactの`invocation_id`と一致させてから
-worker reducerへ渡す。qualification ONの二result writerは先に同一invocation IDであることを検証する。上表はrankを
-固定するためnode集合から暗黙にworst statusを選ばない。
+participant reducerへ渡す。qualification ONの二result writerは先に同一invocation IDであることを検証する。
+1-node laneのparticipant relationは0行であり、missing placeholderを作らない。Runsへarray/aggregate/worst statusを
+複写せず、long relationだけをSheet/agent consumerへ出す。
