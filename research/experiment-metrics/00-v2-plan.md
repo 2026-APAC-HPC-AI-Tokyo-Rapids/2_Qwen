@@ -332,9 +332,8 @@ median、MAD、ratio、不確実性を分ける。
 上記は通常の性能比較policyである。計測擾乱専用protocolだけは、`instrumentation_mode`、
 score bundle、qualified source diff、reference/final SIF semanticだけをtreatmentへ
 再分類する。これを行わずにon/offを同じcomparison setへ入れたり、通常比較でmode差を許したりしない。
-adopt済みscore benchのenvironment比較ではdecision contextのreference、final SIF semantic、runtime launcher semantic、score bundle、
-control-plane blobsをmust-matchとし、current `source_track_head_commit`、`sif_manifest_identity`、`sif_artifact_sha256`、
-outer sidecar hash、build-definition commitはlineage/nuisanceにする。これにより同じruntime semanticの文書commit/repackageだけでgroupを分割しない。
+通常benchのenvironment比較では、各run自身が記録したsource、SIF semantic、runtime launcher semantic、score bundle、
+control-plane blobsを通常のcomparison policyで扱う。D-001の一回限りの受入結果をmust-match dimensionへ加えない。
 
 ## 分散producer契約
 
@@ -585,8 +584,9 @@ GPU/node、unique GPU UUID数、TP、nnodes、MPI process数をlane resolved obj
 score comparison eligibleにはしない。
 
 `run_purpose`はplanned/observed双方の必須比較次元で、planned group/set IDのhash入力にも必ず含める。
-`score_comparison_eligible`は`run_purpose=bench`かつlane/bundleに対応するD-001 decisionがadoptの場合だけ
-trueになり、`qualification_arm_eligible`は`run_purpose=qualification`の一runだけから導出する。
+`score_comparison_eligible`は`run_purpose=bench`と通常のresult/source/placement gateだけから導出し、
+D-001 decisionをrunごとにjoinして判定しない。`qualification_arm_eligible`は、実装時に一度だけ行う
+`run_purpose=qualification`の受入試験runから導出する。
 `qualification_pair_eligible`はrun列やraw factへ複写せず、両arm、parent allocation binding、model/dataset/workloadと
 instrumentation対象外runtimeの一致をjoinしたpair grainで一度だけ導出する。reference/final sourceとSIFは宣言済みtreatmentであり
 common-source一致へ含めない。
@@ -613,7 +613,7 @@ field別status、欠損用placeholder、reasonを作らない。required source�
 | family | bench | profile | benchで取らない時のRuns値 |
 |---|---|---|---|
 | source/SIF/model/dataset/workload/cache、exact outer/node argv、job/node env、scheduler、termination、purpose-authoritative result/throughput、rank/host/CPU/GPU/TP topology、common lifecycle control | required | required | 欠損ならbench不適格 |
-| container launch/worker env、effective-config event、PrimaryResultWriter | 全v2 benchでrequired。decision pending中はaudit-only、adoptedだけscore | required | 欠損ならapplicable bench/profile不適格 |
+| container launch/worker env、effective-config event、PrimaryResultWriter | 全v2 benchでrequired。D-001初回adopt前だけaudit-only、adopt後は通常contractとして固定 | required | 欠損ならapplicable bench/profile不適格 |
 | GPU polling/aggregate、phase control marker、profiler、verbose backend trace、full placement dump | not expected | protocol指定時required | `NULL` |
 
 benchで取得しないprofile専用familyはexpected producer graphから外し、raw key、status、placeholderを作らず、
@@ -633,10 +633,9 @@ protocol指定のtreatment ID/paired contrastにだけ反映する。
 両armはinstrumentation対象外のneutral request-manifest harnessから同じmanifest byteを順番通り消費する。
 manifestはparent allocation artifactが一度所有し、child rawへ複写せずallocation IDでjoinする。
 
-両armともprofile-only列はNULLだけを返す。OFFでON専用列も同じくNULLだけとする。最終benchはlane ID、
-reference source object、decisionのqualification evidence、final SIF semantic、workload、実score bundle SHA-256と
-実control-plane file blob集合がadopt済みD-001 decision contextと
-一致し、profile-only producer IDを含まない時だけそのbundleを選べる。
+両armともprofile-only列はNULLだけを返す。OFFでON専用列も同じくNULLだけとする。D-001合格後のbenchは
+profile-only producer IDを含まないbench用bundleを通常contractから選ぶ。qualification evidenceやdecision contextを
+各benchへbindせず、D-001をrun eligibilityや環境比較dimensionにしない。
 
 Git運用はlong-livedな相互mergeではなく、`bench -> profile`を基本方向にする。profile側はbenchの更新を
 merge/rebaseして追従する。profileで見つけた最適化はprofile hookを含まない独立commitとしてbenchへ実装し、
@@ -653,7 +652,7 @@ manifest top-levelが所有し、nested recordへ複写しない。
 
 `source_track_manifest_hash = SHA-256(canonical source-track record)`をsource-track projectionのidentityにする。hashをrecord自身へ入れて
 再帰させない。全v2 benchはscore bundleを持ち、score referenceがbench headのancestorであることを要求する。
-decision pending中のbenchもaudit-onlyで同じbundle/source validationを行う。profileではprofile baseがprofile headの
+D-001の初回判定が終わるまではbenchをaudit-onlyにする。合格後はこの制限を固定解除する。profileではprofile baseがprofile headの
 ancestor、qualification OFFではhead=score referenceを要求する。
 qualification ONではscore referenceがsource headのancestorであり、そのbaseからheadへ
 qualification validation時にcanonical tree diff v2を計算する。このvariantだけがdecoded path集合をscore bundleの
@@ -664,11 +663,10 @@ profiler flag、workload変更やcontrol-plane実装変更はdiffに含めない
 `control/source-track-diff.json`へ一度sealする。entriesのJCS SHA-256は採否decisionのcross-run join anchorへ一度だけ置き、
 source artifactへhash/一致booleanを複写しない。
 
-SIF生産時はclean checkoutのHEAD/treeをsidecar `sif_build_definition` OIDと検査する。adopt decisionを使わない
-bench/profile/qualificationでは、そのOIDをrunのsource-track headとも一致させる。採用済みSIFを再利用する
-score benchは実行runnerの現在HEADとsidecarの一致を要求せず、decisionのfinal SIF semantic SHA-256、
-score bundle SHA-256、qualification時と同じcontrol-plane file blobsをexact照合する。qualified source diff SHA-256は
-qualification evidenceとしてjoinするが、benchのcurrent HEADから再計算しない。submodule pointer、file mode、symlink、LFS object
+SIF生産時はclean checkoutのHEAD/treeをsidecar `sif_build_definition` OIDと検査する。bench/profile/qualificationでは、
+そのOIDをrunのsource-track headとも一致させる。D-001合格後も通常のsource/SIF provenance検査だけを行い、
+qualification時のSIF semantic、score bundle、control-plane blobまたはsource diffを各benchへ再照合しない。
+submodule pointer、file mode、symlink、LFS object
 identityもqualification diff検証対象にする。全variantのhead/base commitはremote reachableでなければ投入しない。
 base/headから決定的に計算できるdiff hashはrawへ重複保存しない。
 
@@ -679,7 +677,8 @@ labelだけでは同一視しない。`source_track_head_commit`、`score_refere
 導出し、同じcommit tupleを別raw keyへ複写しない。profile runはprofile baseが同じでもbundle、SIF、argv、
 environmentを独立に保存し、「profileで速かった」をbenchの性能値へ読み替えない。
 score bundle hashはpurpose/arm/run ID/absolute runtime rootを含まないsemantic identityで、sinkとargvはrelative
-templateにする。qualification ONと採用後benchは同じbundle bytesを参照し、actual argv/sinkはrun sourceで観測する。
+templateにする。qualification ONは受入対象のbundle bytesを参照する。合格後のbenchは通常contractで選んだbundleを使い、
+D-001 evidenceとの継続的なbyte照合は行わない。actual argv/sinkはrun sourceで観測する。
 
 ## BigQuery viewとスプレッドシート
 
@@ -720,8 +719,8 @@ Git管理SQLは次の非二乗relationを作る。
 | `qwen_phase_summaries_raw_v2` | `(run,invocation_id)` | profile phase summaryのrank 0 boundaryとordered node-local windowsを一つのclosed rowとして保持 |
 | `qwen_qualification_allocations_raw_v2` | `(allocation_id)` | parent artifactのscheduler、decoded env、二job IDとfull bundle member arrayを保持。hardware/workloadはsubject-keyed relationへ分離 |
 | `qwen_qualification_allocations_v2` | `(allocation_id)` | parent manifest/artifactからnamespace、ordered child IDs、binding、scheduler request/accounting/terminal、observed control-plane hash、job-entry envを一度だけ投影。同じ`(namespace,pair_id)`が複数なら全候補をconflictへ出しskeleton joinへ0行を返す |
-| `qwen_instrumentation_decisions_v2` | `(decision_id,decision_sha256)` | Git管理のclosed decision record。adopt済みscore benchだけmanifest ID/hashでexact join |
-| `qwen_instrumentation_decision_context_v2` | `(decision_id,decision_sha256)` | decision namespaceから元qualification protocolへexact joinしたplanned target+observed evidence view。保存copyなし |
+| `qwen_instrumentation_decisions_v2` | `(decision_id,decision_sha256)` | 実装時に一度だけ行ったD-001受入試験のclosed記録。通常benchからjoinしない |
+| `qwen_instrumentation_decision_context_v2` | `(decision_id,decision_sha256)` | 一回限りの受入試験を確認するため、decision namespaceからqualification protocolへjoinしたevidence view。通常runのdimensionではない |
 | `qwen_comparison_dimensions_v2` | `(run,dimension)` | `must_match/treatment/nuisance/outcome`とcanonical value |
 | `qwen_qualification_estimand_points_v2` | `(contract_hash,protocol_hash,dimension_policy_hash,planned_comparison_set_id,pair_id,arm,estimand_id)` | protocol schedule基底のplanned skeleton。allocation/run/valueはnullable payloadとしてLEFT JOIN |
 | `qwen_replicate_points_v2` | `(run,estimand_id)` | 実bench runを直接基底にし、protocol/group/treatment、attempt/order/value、eligibleを全点表示 |
@@ -763,16 +762,14 @@ dimension_name,allowed_classes`を宣言する。`source_refs`はordered tagged 
 `artifact.sif_manifest_sha256 -> source_sha256`を明示する。sourceが欠損または当該variantで
 非適用ならRuns列を`NULL`にする。複数sourceの
 派生列はordered source listを持つ。
-`dimension`はGit管理のclosed `contract|protocol|instrumentation_decision_context` relation、projectionは
+`dimension`はGit管理のclosed `contract|protocol` relation、projectionは
 conflict-free logical relationを入力にし、archiveをSQLから直接読まない。
 dimension bindingはcontractならfact pivotの`(contract_id,contract_hash)`からdimensionの
 `(contract_id,contract_sha256)`へ、protocolなら
 `(contract_id,contract_hash,protocol_id,protocol_hash,dimension_policy_hash)`から
 `(contract_id,contract_sha256,protocol_id,protocol_sha256,dimension_policy_hash)`へexact joinする。
 branch、latest、IDだけへのfallbackは作らない。
-adopt済みinstrumentation decisionはrun manifestの`(instrumentation_decision_id,instrumentation_decision_sha256)`から
-Git-managed decision context viewの`(decision_id,decision_sha256)`へ一段exact joinする。contextはdecision namespaceから元qualification
-protocolへexact join済みで、artifact内copyをSQLから読まない。
+instrumentation decision contextは一回限りのD-001 reportだけが読み、run manifestや通常benchのdimensionへjoinしない。
 生成SQL、Sources lineage、Sheet headerだけがこれを読み、「主要field」の手動選択や手書きpivotを許さない。
 contract testは各consumer列についてexactly one definition、variant applicability、input sourceへの到達を検査する。
 
@@ -802,7 +799,7 @@ pivotだけで二run制約を実現しない。Sheetのfilterなしでfull envir
 
 | group | columns |
 |---|---|
-| identity/protocol | `run_id`、`contract_id`、`contract_hash`、`protocol_id`、`protocol_hash`、`dimension_policy_hash`、`planned_replicate_group_id`、`planned_comparison_set_id`、`planned_attempts`、`max_attempts`、`stopping_rule_id`、`block_id`、`block_order`、`pair_id`、`replicate_index`、`lane_id`、`run_purpose`、`qualification_arm`、`instrumentation_mode`、`instrumentation_bundle_hash`、`instrumentation_decision_id`、`instrumentation_decision_sha256`、`started_at`、`finished_at`。qualificationでは`block_id=allocation ID`を唯一のparent join keyにする |
+| identity/protocol | `run_id`、`contract_id`、`contract_hash`、`protocol_id`、`protocol_hash`、`dimension_policy_hash`、`planned_replicate_group_id`、`planned_comparison_set_id`、`planned_attempts`、`max_attempts`、`stopping_rule_id`、`block_id`、`block_order`、`pair_id`、`replicate_index`、`lane_id`、`run_purpose`、`qualification_arm`、`instrumentation_mode`、`instrumentation_bundle_hash`、`started_at`、`finished_at`。qualificationでは`block_id=allocation ID`を唯一のparent join keyにする。D-001 decision ID/hashは通常run列に置かない |
 | source/artifact | `source_track_head_commit`、`score_reference_commit`、`profile_base_commit`、`source_track_manifest_hash`、SIF projection由来の`sglang_commit`、`sif_manifest_identity`、`sif_artifact_sha256`、run時`runtime_launcher_identity`、`model_manifest_identity`、`dataset_manifest_identity`、`measured_workload_manifest_identity`、`warmup_workload_manifest_identity`、`cache_manifest_identity`、qualification childだけallocation projectionからjoinする`qualification_parent_archive_hash`。bundle hashはartifact dimension、URIはworkflow operational joinが所有しraw metricへ戻さない |
 | quality | `collection_complete`、`benchmark_valid`、`score_comparison_eligible`、`qualification_arm_eligible`。欠損原因やsubsystem別statusは列にしない |
 | termination | `run_outcome`、`run_exit_code`、`benchmark_termination_kind`、`benchmark_exit_code`、`benchmark_signal`、`engine_termination_kind`、`engine_exit_code`、`engine_signal`、`scheduler_terminal_state`、`scheduler_exit_code`。participantはlong relationだけで表示 |
@@ -871,7 +868,7 @@ block/orderから推測しない。scoreは`score_comparison_eligible`、qualifi
 `candidate / baseline`と定義し、planned/attempted/eligible pair count、median、MAD、protocolが明示した場合だけの
 interval、decisionを併記する。これらはpoint rowとversioned protocolからquery時に導出し、rawへaggregateの
 第二正本を作らない。estimator/intervalはprotocolが事前指定した方法だけを使い、
-`instrumentation_overhead_decision`は該当D-001 decisionがまだ存在しない間だけNULLにする。暫定式を埋めない。
+`instrumentation_overhead_decision`は一回限りのD-001 reportにだけ表示し、通常runや通常比較へ複写しない。
 D-001 screenだけは、既知のarm/result不成立をeligible filterで消して残存pairだけを採用する選択バイアスを避けるため、
 `qualification_pair_eligible`をpre-filterに使わない。planned skeletonからquery-onlyの共通evaluable集合`E`を直接作り、
 取得済みgateのfalseを保持する。
@@ -908,7 +905,7 @@ consumer relationはまずlogical viewとtable functionだけで実装し、同�
 [Connected Sheetsのrefreshとresult制約](https://support.google.com/docs/answer/9703214)、
 [cell parameter付きcustom query](https://support.google.com/docs/answer/9703000)を前提にする。
 
-## D-001: bench側計測の非擾乱qualification
+## D-001: 実装時に一度だけ行うbench側計測の非擾乱確認
 
 ### 調査結果
 
@@ -922,7 +919,13 @@ primary-result writerにも負荷はある。したがって「profile branchを
 
 ### 確定した簡素な判定
 
-初版はlaneごとに固定5 pairだけを事前commitし、同一allocation内でOFF/ONを隣接実行する。順序は
+D-001はメトリクス収集処理を実装した時点の受入試験として一度だけ実施する。初回が`reject`または
+`inconclusive`なら実装を直してから再度試験してよいが、最初の`adopt`を得た時点で完了とする。その後の
+通常benchでは判定を決め打ちし、定期実行、lane別実行、環境変更時の再実行、commit/bundle/runtime変更を契機とする
+再qualificationは行わない。D-001の結果は実装時の確認記録であり、個々のbench runのeligibility条件ではない。
+
+初版はQwen collector実装に対して一度だけ、現在の代表score laneである2-node TP=8で固定5 pairを事前commitし、
+同一allocation内でOFF/ONを隣接実行する。順序は
 exact `[OFF→ON, ON→OFF, OFF→ON, ON→OFF, OFF→ON]`とする。pilot、sample-size再計算、TOST、sequential stopping、replacement slot、別response
 canaryは作らない。稀な失敗pairは欠測として残し、自動再投入しない。3 pair未満しか評価可能でなければ単に未決定とする。
 評価可能pair集合は二metricで共通の一集合`E`をquery時に一度だけ導出する。planned pairに両child、parent binding、namespace、
@@ -997,8 +1000,8 @@ qualified source diff SHA-256、reference/final SIF semantic pair、評価可能
 採否recordは`decision_id`、qualification namespace、`adopt|reject|inconclusive`をGit管理し、adopt/rejectだけ
 qualified source diff SHA-256、observed SIF semantic pair、observed runtime launcher semanticを持つ。inconclusiveは
 一値のevidenceを捏造せずそれらをabsentにする。final head commitは
-無関係な変更を含み得るためdecision identityにしない。instrumentation、bundle、実行control-plane file、runtime launcherのどれかが
-変わった時だけ再判定し、driverや無関係なcommitが変わるたびに巨大なtupleを再qualificationしない。
+無関係な変更を含み得るためdecision identityにしない。この採否recordは一度だけ行った実装受入試験の記録として残す。
+合格後は変更検知による自動再openや再判定を行わず、通常benchからこのrecordへのbindingも要求しない。
 
 確定規則は、まず同じ`E`について`|E| >= 3`、両arm orderを一件以上含むこと、pair内および`E`全体の
 比較identityとpost-run semantic identityが一値に定まることをpreconditionとする。どれかが不成立なら、他gateの値にかかわらず
@@ -1008,8 +1011,8 @@ result equivalenceと各arm gateがtrueなら`adopt`、いずれかがfalseな�
 実験projectで明らかな計測負荷をbenchへ持ち込まないためのscreenである。5 pairの個々の値とmedianを表示し、個々のratioへ
 1% gateを掛けない。CI、power、MAD、closed reason enumはgateにせず、retry/replacementも作らない。
 
-D-001 qualificationをまだ実行しておらずdecision recordが存在しない間は、instrumented benchのoverhead decisionを
-NULLにする。profile runはscore比較へ混ぜない。
+D-001をまだ実行していない間はbenchをaudit-onlyにする。最初の`adopt`後は実装受入済みとして固定し、
+通常benchへoverhead decision列を持たせたり、runごとにdecisionを再評価したりしない。profile runはscore比較へ混ぜない。
 
 ## 決定事項と再open条件
 
@@ -1066,8 +1069,8 @@ D-003は2026-08-09にユーザー回答「基本的にはマルチノード対�
 推奨・採用回答とも後者である。affected fields/viewsはlane resolved object、scheduler request、producer node/global-rank
 axes、topology/host/GPU consensus、lifecycle/phase ACK集合、participant termination、collection/score eligibilityである。
 reopen triggerはSGLangまたはschedulerの配置意味が変わり、v1の一node一MPI wrapper/full-GPU TP制約で表せなくなった時だけとする。
-D-001は固定5 pair、最低3評価可能pair、throughput低下1%以内、stage wall増加1%以内の簡素screenで確定した。
-reopen triggerは一次estimandまたはbenchへ常時入れるinstrumentation bundleの意味が変わった時だけとする。
+D-001はcollector実装時に一度だけ、固定5 pair、最低3評価可能pair、throughput低下1%以内、stage wall増加1%以内の
+簡素screenを行うことで確定した。最初の`adopt`後は結果を決め打ちし、reopen triggerは設けない。
 
 ## 決定状態
 
@@ -1083,7 +1086,7 @@ reopen triggerは一次estimandまたはbenchへ常時入れるinstrumentation b
 | 確定 | home artifactは自動expireせず、容量が実際に問題になった時だけ手動整理する。専用quarantineは作らない |
 | 確定 | D-003: Qwen collectorはlane-driven multi-node対応とし、expected node/worker/GPU集合をlaneから展開する。現在の実機laneは2 node、4 GPU/node、TP=8 |
 | 確定 | D-004: profileはSGLang legacy PyTorch ProfilerのCPU+GPU、warmup外の先頭5 scheduler forward、stack/shape/mergeなし、global TP rank別traceを使う |
-| 確定 | D-001: 固定5 pair、最低3評価可能pair、throughput低下1%以内かつstage wall増加1%以内の簡素screen |
+| 確定 | D-001: collector実装時に代表2-node TP=8 laneで一度だけ、固定5 pair、最低3評価可能pair、throughput低下1%以内かつstage wall増加1%以内の簡素screen。最初のadopt後は決め打ち |
 
 ## 実装ハンドオフ
 
@@ -1499,7 +1502,7 @@ allocation manifest -> submit result/job-entry -> child OFF source/log/metrics
 | G7 Qwen意味 | `test_observation_contract.py`、`test_primary_result.py`、`test_distributed_events.py`、`test_lifecycle_control.py`、variant argv/source-diff fixture | purpose別authoritative result、ordered output-ID identity、OFF/ONがparentの同一actual workloadを順番通り消費、ONはneutral qualification result+primary、primary欠損、node/MPI/worker/GPU bijection、1-node participant 0行、4-node participant別終了分類、lifecycle単一owner、qualification ONの差分がinstrumentation patchだけであること |
 | G8 GPU phase | profile用`test_gpu_reducer.py`、1/2/4-node cardinalityの`test_phase_protocol.py` | benchではsampler/phase messageなし、profileでは全expected nodeのphase receiver、共有UDS不使用、wrong-run/stale message、node-local ACK/clock順、marker欠損、gap cutoff、weighted mean/p95/energy |
 | G10 consumer contract | contract生成SQL fixture、variant別BigQuery golden rows、Sheet parameter/refresh smoke test | 全列lineage、profile attemptのscore統計除外、非適用・欠損列がNULL、pair-grain eligibility、失敗attempt残存、protocol分離、estimand、片側env欠損、freshness/size |
-| G11 非擾乱 | D-001のreference OFF/final ON固定5 pair | 二metric共通E、両arm order、continuous median、inclusive 0.99/1.01境界、output identityを使いadopt/reject/inconclusiveを再現できること |
+| G11 非擾乱 | collector実装時に一度だけ行うD-001のreference OFF/final ON固定5 pair | 二metric共通E、両arm order、continuous median、inclusive 0.99/1.01境界、output identityを使いadopt/reject/inconclusiveを再現し、最初のadopt後は再実行しないこと |
 
 `test_observation_contract.py`はcontractのschemaとowner/source/capture/applicability/validatorの完全性を検査し、
 生成した観測マップ表がcommit済み表とbyte一致することを検査する。これが「この値はどこから取るか」
@@ -1513,7 +1516,8 @@ allocation manifest -> submit result/job-entry -> child OFF source/log/metrics
 2. pre-submit manifest、local metrics export、node-local endpoint、worker-ready、workload manifest、primary resultを
    一つのv2 fixtureと最初のv2 runで通す。phase control、
    raw GPU sampleをprofile purposeへ追加する。
-3. benchへ必要な最小bundleだけD-001へ掛け、現在の2-node TP=8 score laneで意味・result同値性・非擾乱screenを通したbundleだけbenchへ追加する。
+3. benchへ必要な最小bundleだけを、collector実装時に現在の2-node TP=8 score laneで一度D-001へ掛ける。
+   意味・result同値性・非擾乱screenがadoptになったらbenchへ追加し、他laneや以後の変更では再実行しない。
 4. v2 viewとSheetを切り替え、legacy-only consumerがゼロになってから旧`send()`、fallback result、
    throughput等のsubset keyを削除する。
 

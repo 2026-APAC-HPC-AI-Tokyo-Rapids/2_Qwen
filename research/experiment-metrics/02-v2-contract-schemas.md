@@ -83,7 +83,6 @@ parent_manifest_sha256?, run_purpose, qualification_arm?, pair_id?,
 ordered_child_run_ids?, repository_id, source_track?, contract_id,
 contract_sha256, protocol_id, protocol_sha256, dimension_policy_hash, lane_id,
 observed_control_plane_sha256?,
-instrumentation_decision_id?, instrumentation_decision_sha256?,
 instrumentation_bundle_sha256?, planned_treatment?
 ```
 
@@ -93,7 +92,6 @@ instrumentation_bundle_sha256?, planned_treatment?
 allocation parentではabsentである。projectionはこのembedded recordをrun/child manifestから読む。
 `observed_control_plane_sha256`はregular/allocation parentでrequired、qualification childではabsentで、childはallocation IDから親へjoinする。
 `pair_id`はqualification allocation/childでrequired、paired bench protocolだけregularにも存在し、その他ではabsentである。
-decision ID/hashはadopt済みscore benchだけrequiredでprofile/qualificationではabsentである。
 `instrumentation_bundle_sha256`はregular/childでrequired、allocation parentではabsentである。
 `planned_treatment`はregular/childでrequired、allocation parentではabsentのclosed objectである。
 expected producer/file集合はmanifestへ複写せず、immutable contractのvariant applicability、protocol、bundle selectionから
@@ -298,8 +296,8 @@ executable/samplerのargv第0 argumentはexactly一つの`component_executable` 
 shellを介さずargv arrayを直接spawnする。hookの`source_path`はbundle `source_paths`に存在し、SIF sidecarの
 同path `score_source_tree` entryとexact一致することを検査する。v1のinstrumentation sourceはbuild-definition repositoryだけに置き、
 upstream `sglang_source`を変更する場合は別contractでそのrepositoryのdiff/treeを追加する。最終runtime byte identityはSIF semantic hashが所有し、
-bundleへcommit OIDを複写しない。qualification ONと採用後benchはscore bundleの同一
-実byte/SHA-256を使う。実argv/cwdはStageRunner Fact、sink path templateはsource registry、実byteを含むouter file identityは
+bundleへcommit OIDを複写しない。qualification ONは受入対象のscore bundle byte/SHA-256を使う。合格後のbenchは
+通常contractのscore bundleを使い、D-001 evidenceとの継続照合は行わない。実argv/cwdはStageRunner Fact、sink path templateはsource registry、実byteを含むouter file identityは
 artifact manifestがそれぞれ一度所有する。
 post-runの第二activation判定、fallback bundle、曖昧な軽量labelは作らない。
 
@@ -395,7 +393,7 @@ stderr_member:relative POSIX path,stderr_b64:base64},...],source_member:relative
 `runtime-launcher-semantic/v1`はpath/member locatorを除いたordered
 `{schema_version:const "runtime-launcher-semantic/v1",launchers:[{role,sha256,outcome,stdout_b64,stderr_b64},...]}`で、
 consumer identityは`SHA-256(JCS(object))`とする。採否に使うeligible 3–5 pairのparent projectionで一値に一致したhashだけを
-decision `observed_runtime_launcher_semantic_sha256`へ置き、adopted benchもexact一致させる。
+decision `observed_runtime_launcher_semantic_sha256`へ置く。通常benchはこの受入時hashへ一致させない。
 
 ## model、dataset、cache
 
@@ -844,7 +842,9 @@ qualification childではそのchild orchestration開始直前からそのsource
 二childは別々のUTC wall/monotonic boundaryを持ち、allocation-wideのPJM entry/accounting/terminalは
 `qwen_qualification_allocations_raw_v2`だけが所有しchild Factへ複写しない。別のallocation lifecycle objectは作らない。
 
-Git管理の`instrumentation-decision/v1`は共通base
+Git管理の`instrumentation-decision/v1`はcollector実装時に一度だけ行うD-001受入試験の記録である。
+最初の`adopt`後は判定を固定し、通常bench manifestへのbinding、変更検知による再open、
+lane/環境/commit/bundle別の再実行は行わない。recordは共通base
 `{schema_version:const "instrumentation-decision/v1",decision_id:nonempty string,qualification_namespace:
 {contract_id:nonempty string,contract_sha256:sha256,protocol_id:nonempty string,protocol_sha256:sha256,
 dimension_policy_hash:sha256}}`に次のclosed tagged unionを加える。
@@ -879,28 +879,28 @@ runtime_files: exactly 4 role/realpath/size_bytes/sha256 objects in declared rol
 ```
 
 `sif_build_definition` commit、完成SIF byte hash、embedded manifest identity、outer sidecar path/hashは除外する。
-pairの二hashは各qualification childがFact `artifact.sif_manifest_sha256`でjoinしたSIF provenanceから再計算し、
-採用後benchも同じsemantic値を`final_sif_semantic_sha256`へ一致させる。
+pairの二hashは各qualification childがFact `artifact.sif_manifest_sha256`でjoinしたSIF provenanceから
+D-001 report用に再計算する。通常benchはこの値へ一致させない。
 採否に使うD-001の評価可能pair（最低3 pair）の実在OFF childは同一reference SIF semantic hash、実在ON childは同一final SIF semantic hashと同一
 `SHA-256(JCS(source-track-diff/v2.entries))`を持ち、そのdiff hashはdecision `qualified_source_diff_sha256`、その順序付き一pairが
 decision `observed_sif_pair`と一致する。欠損/conflict/異なるSIFの混入があれば`adopt`にできない。
 未起動/null childはpairを欠測にするだけで、他の3–4評価可能pairによるdecisionを妨げない。
-各qualification childのcontract/protocol/policy composite keyはqualification namespaceとexact一致させる。採用後benchは
-別のscore protocolでもよいが、manifestのdecision ID/hashでこの不変record全体をexact joinする。
+各qualification childのcontract/protocol/policy composite keyはqualification namespaceとexact一致させる。
+この照合は一回限りのD-001 report内だけで行い、通常benchへ引き継がない。
 
 Git管理relation `qwen_instrumentation_decisions_v2`はrecord全fieldと
-`decision_sha256=SHA-256(JCS(record))`を一行に持ち、grainは`(decision_id,decision_sha256)`である。adopt済みscore benchだけ
-run manifestのID/hashでexact joinし、profile/qualificationやdecision未存在benchはNULLにする。
+`decision_sha256=SHA-256(JCS(record))`を一行に持ち、grainは`(decision_id,decision_sha256)`である。
+これはcollector実装時に一度だけ行うD-001受入試験の記録であり、最初の`adopt`後は判定を固定する。
+一回限りのD-001 reportだけが読み、runnerと通常run manifestはID/hashを参照しない。
 run artifactへdecision recordのimmutable copyは作らない。authoring時の一時JSONはGit-managed relationに取り込んだ後、
 runの参照sourceにしない。
 
 logical `qwen_instrumentation_decision_context_v2`はdecisionの`qualification_namespace` composite keyを
 Git管理qualification protocol relationの`contract_id/hash,protocol_id/hash,dimension_policy_hash`へexact inner joinし、
 decision fieldsとprotocolのlane/reference/workload/reference+score bundles/control-plane files/5-pair scheduleを一行で露出する。
-これは保存copyでなくviewで、grainはdecision ID/hashである。adopted benchはmanifestのdecision ID/hashからこのviewへ一段joinし、
-actual contract/policy、lane、reference、workload、score bundle、control-plane blobs、final SIF semantic、runtime launcher semanticを照合する。
-qualified source diff hashはqualification evidenceとしてcontextに残すが、unrelated later commitを許すadopted benchのcurrent HEAD diffへ
-再照合しない。
+これは保存copyでなくviewで、grainはdecision ID/hashである。一回限りのD-001 reportがqualification evidenceを確認するために使い、
+通常benchのcontract、eligibility、comparison dimensionまたはcurrent HEADへjoinしない。合格後は変更検知による再open、
+lane/環境/commit/bundle別の再実行を行わない。
 
 
 ```text
@@ -1103,7 +1103,7 @@ valueをlosslessに表示する。これはconsumer viewであり、新しいFac
 consumer columnは`name/type/unit/source_refs/scope_cardinality/reducer_id/conflict_rule/transform_id/
 applicable_run_variants/dimension_name/allowed_classes`で閉じる。`source_refs`はordered
 `[{kind="fact"|"projection"|"dimension",id,json_path?,bindings?},...]`で、異種sourceの混合とreducer入力順を明示する。
-`dimension`は同じGit releaseで作る`contract|protocol|instrumentation_decision_context` relationのclosed union、
+`dimension`は同じGit releaseで作る`contract|protocol` relationのclosed union、
 projectionはconflict-free logical relationをqueryする。
 archive memberを直接読む`artifact` refは許さず、lineageだけprojectionのsource member/hashから辿る。
 projection refの`bindings`はnonempty
@@ -1117,8 +1117,7 @@ exact `(contract_id,contract_hash) -> (contract_id,contract_sha256)`、protocol 
 `(contract_id,contract_hash,protocol_id,protocol_hash,dimension_policy_hash) ->
 (contract_id,contract_sha256,protocol_id,protocol_sha256,dimension_policy_hash)`を使う。branch、最新release、
 IDだけによるfallback joinは許さない。
-decision relationはexact `(instrumentation_decision_id,instrumentation_decision_sha256) ->
-(decision_id,decision_sha256)`でjoinし、artifact内copyやlatest decisionをSQLから探索しない。
+instrumentation decision relationは通常consumer columnへjoinせず、一回限りのD-001 reportだけが読む。
 固定幅consumer columnでsourceが欠損または非適用なら`NULL`だけを返す。source grainのlong relationは実在source rowだけを
 表示し、欠損/非適用row、reason、placeholderを生成しない。Sources tabも実在値のlineageだけを表示する。
 
