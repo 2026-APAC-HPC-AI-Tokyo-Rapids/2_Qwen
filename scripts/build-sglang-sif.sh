@@ -72,8 +72,8 @@ sglang_object_format="$(git -C "${SGLANG_SOURCE_DIR}" rev-parse --show-object-fo
 qwen_commit="$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)"
 sglang_source_commit="$(git -C "${SGLANG_SOURCE_DIR}" rev-parse HEAD)"
 recipe_blob_oid="$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD:containers/sglang.def)"
-lock_size_bytes="$(stat --format=%s "${SGLANG_SOURCE_DIR}/uv.lock")"
-lock_sha256="$(sha256sum "${SGLANG_SOURCE_DIR}/uv.lock" | awk '{ print $1 }')"
+lock_size_bytes="$(stat --format=%s "${SGLANG_SOURCE_DIR}/python/uv.lock")"
+lock_sha256="$(sha256sum "${SGLANG_SOURCE_DIR}/python/uv.lock" | awk '{ print $1 }')"
 patch_records="$({
   while IFS= read -r -d '' patch_file
   do
@@ -93,7 +93,7 @@ jq -cS -n \
   --argjson base_oci "$(jq 'del(.inspect_raw)' "${BUILD_DIR}/sif-metadata/base-oci.json")" \
   --arg lock_size_bytes "${lock_size_bytes}" \
   --arg lock_sha256 "${lock_sha256}" \
-  '{schema_version:"sif-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"sif_build_definition",object_hash_algorithm:$qwen_object_hash_algorithm,oid:$qwen_commit},{repository_id:"apac2026-sglang",commit_role:"sglang_source",object_hash_algorithm:$sglang_object_hash_algorithm,oid:$sglang_commit}],recipe:{path:"containers/sglang.def",blob_oid:$recipe_blob_oid},applied_patches:$patches,base_oci:$base_oci,lock_manifest:{path:"uv.lock",size_bytes:($lock_size_bytes|tonumber),sha256:$lock_sha256}}' \
+  '{schema_version:"sif-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"sif_build_definition",object_hash_algorithm:$qwen_object_hash_algorithm,oid:$qwen_commit},{repository_id:"apac2026-sglang",commit_role:"sglang_source",object_hash_algorithm:$sglang_object_hash_algorithm,oid:$sglang_commit}],recipe:{path:"containers/sglang.def",blob_oid:$recipe_blob_oid},applied_patches:$patches,base_oci:$base_oci,lock_manifest:{path:"python/uv.lock",size_bytes:($lock_size_bytes|tonumber),sha256:$lock_sha256}}' \
   >"${BUILD_DIR}/containers/apac-manifest.json"
 cp "${BUILD_DIR}/containers/apac-manifest.json" "${BUILD_DIR}/sif-metadata/embedded-manifest.json"
 

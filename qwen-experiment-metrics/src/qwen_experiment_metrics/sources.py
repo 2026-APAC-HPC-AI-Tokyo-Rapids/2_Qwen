@@ -704,7 +704,7 @@ def create_sif_sidecar(
         ),
         key=lambda item: item.encode(),
     )
-    lock_path = sglang_source / "uv.lock"
+    lock_path = sglang_source / "python/uv.lock"
     if not lock_path.is_file():
         raise FileNotFoundError(lock_path)
     build_sources = output.parent / "sif-build"
@@ -736,7 +736,7 @@ def create_sif_sidecar(
         for relative in patch_paths
     ]
     lock_manifest = {
-        "path": "uv.lock",
+        "path": "python/uv.lock",
         "size_bytes": lock_path.stat().st_size,
         "sha256": _sha256(lock_path),
     }
