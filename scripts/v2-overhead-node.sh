@@ -4,14 +4,17 @@ set -euo pipefail
 : "${CHECK_DIR:?}"
 : "${MODEL_PATH:?}"
 : "${DATASET_PATH:?}"
+: "${DATASET_SHA256:?}"
 : "${OMPI_COMM_WORLD_RANK:?}"
 
 arm=${1:?arm is required}
+trial=${2:?trial is required}
 [[ "${arm}" == off || "${arm}" == on ]]
+[[ "${trial}" =~ ^[0-9]+$ ]]
 node_rank="${OMPI_COMM_WORLD_RANK}"
 [[ "${OMPI_COMM_WORLD_SIZE}" -eq 2 ]]
 
-arm_dir="${CHECK_DIR}/${arm}"
+arm_dir="${CHECK_DIR}/trial-${trial}-${arm}"
 control_dir="${arm_dir}/control"
 node_dir="$(mktemp -d "/dev/shm/qwen-overhead-${arm}.XXXXXXXXXX")"
 jit_cache="$(mktemp -d "/tmp/qwen-overhead-jit-${arm}.XXXXXXXXXX")"
@@ -38,6 +41,19 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+finish_drain() {
+  if [[ -z "${drain_pid}" ]]; then
+    return 0
+  fi
+  kill -TERM "${drain_pid}" 2>/dev/null || true
+  set +e
+  wait "${drain_pid}"
+  local status=$?
+  set -e
+  drain_pid=""
+  return "${status}"
+}
+
 if [[ -d "${HOME}/.cache/sglang-jit" ]]; then
   rsync -a -- "${HOME}/.cache/sglang-jit/" "${jit_cache}/"
 fi
@@ -52,12 +68,14 @@ else
 fi
 master_host="$(<"${master_file}")"
 
-run_id=r-00000000000000000000000000000002
+printf -v run_id 'r-%032x' "$((trial + 2))"
 if [[ "${arm}" == on ]]; then
-  run_id=r-00000000000000000000000000000003
   socket_path="${node_dir}/events.sock"
   ready_file="${node_dir}/events.ready"
-  "${CHECK_DIR}/scripts/v2-overhead-event-drain.py" "${socket_path}" "${ready_file}" &
+  event_summary="${arm_dir}/event-summary-node-${node_rank}.json"
+  "${CHECK_DIR}/scripts/v2-overhead-event-drain.py" \
+    "${socket_path}" "${ready_file}" "${event_summary}" \
+    "${run_id}" "${node_rank}" &
   drain_pid=$!
   while [[ ! -e "${ready_file}" ]]; do
     kill -0 "${drain_pid}"
@@ -84,14 +102,18 @@ metrics_env=(
   --env QWEN_EXPERIMENT_METRICS_RUN_ID="${run_id}"
   --env QWEN_EXPERIMENT_METRICS_NODE_RANK="${node_rank}"
   --env QWEN_EXPERIMENT_METRICS_SOURCE_DIR=/source-output
+  --env QWEN_EXPERIMENT_METRICS_DATASET_MANIFEST_SHA256="${DATASET_SHA256}"
 )
 metrics_bind=()
 if [[ "${arm}" == on ]]; then
-  source_blob_oid="$(singularity exec "${CHECK_DIR}/sglang.sif" \
+  bench_args_blob_oid="$(singularity exec "${CHECK_DIR}/sglang.sif" \
     cat /opt/sglang/offline-throughput-source-blob-oid.txt | tr -d '[:space:]')"
+  server_args_blob_oid="$(singularity exec "${CHECK_DIR}/sglang.sif" \
+    cat /opt/sglang/server-args-source-blob-oid.txt | tr -d '[:space:]')"
   metrics_env+=(
     --env QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock
-    --env QWEN_EXPERIMENT_METRICS_SOURCE_BLOB_OID="${source_blob_oid}"
+    --env QWEN_EXPERIMENT_METRICS_BENCH_ARGS_BLOB_OID="${bench_args_blob_oid}"
+    --env QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID="${server_args_blob_oid}"
   )
   metrics_bind=(--bind "${node_dir}:/metrics")
 fi
@@ -110,10 +132,17 @@ if [[ "${node_rank}" -eq 0 ]]; then
   status=$?
   set -e
   printf '%s\n' "${status}" >"${completion_file}"
+  drain_status=0
+  finish_drain || drain_status=$?
+  if [[ "${status}" -eq 0 && "${drain_status}" -ne 0 ]]; then
+    status="${drain_status}"
+  fi
+  printf '%s\n' "${status}" >"${completion_file}"
   exit "${status}"
 fi
 
-setsid "${command[@]}" >"${CHECK_DIR}/logs/${arm}.node-rank-1.log" 2>&1 &
+setsid "${command[@]}" \
+  >"${CHECK_DIR}/logs/trial-${trial}-${arm}.node-rank-1.log" 2>&1 &
 engine_pid=$!
 while kill -0 "${engine_pid}" 2>/dev/null; do
   if [[ -s "${completion_file}" ]]; then
@@ -121,6 +150,11 @@ while kill -0 "${engine_pid}" 2>/dev/null; do
     kill -TERM -- "-${engine_pid}" 2>/dev/null || true
     wait "${engine_pid}" 2>/dev/null || true
     engine_pid=""
+    drain_status=0
+    finish_drain || drain_status=$?
+    if [[ "${status}" -eq 0 && "${drain_status}" -ne 0 ]]; then
+      status="${drain_status}"
+    fi
     exit "${status}"
   fi
   sleep 1
@@ -131,6 +165,11 @@ status=$?
 set -e
 engine_pid=""
 if [[ -s "${completion_file}" ]]; then
-  exit "$(<"${completion_file}")"
+  status="$(<"${completion_file}")"
+fi
+drain_status=0
+finish_drain || drain_status=$?
+if [[ "${status}" -eq 0 && "${drain_status}" -ne 0 ]]; then
+  status="${drain_status}"
 fi
 exit "${status}"
