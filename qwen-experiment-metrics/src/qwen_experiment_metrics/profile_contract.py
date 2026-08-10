@@ -538,6 +538,8 @@ def project_gpu_phase(
         try:
             first = load_json_strict(raw.splitlines()[0])
             clock_id = first["clock_id"]
+            if clock_id != node.clock_id:
+                raise ProfileValidationError("GPU sample and phase clocks differ")
             samples = parse_gpu_samples_jsonl(
                 raw,
                 run_id=run_id,
@@ -649,8 +651,8 @@ def _validate_phase_order(rank0: PhaseRank0, nodes: Sequence[PhaseNode]) -> None
             <= node.end_received_ns <= node.end_ack_ns
         ):
             raise ProfileValidationError("node phase window is invalid")
-        if node.clock_id != rank0.clock_id:
-            raise ProfileValidationError("phase clock IDs differ")
+        if node.node_rank == 0 and node.clock_id != rank0.clock_id:
+            raise ProfileValidationError("rank zero phase clock IDs differ")
 
 
 def _trace_activity(category: str, name: str) -> str:

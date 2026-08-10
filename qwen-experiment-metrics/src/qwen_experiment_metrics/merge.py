@@ -5,14 +5,25 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from .canonical import fact_row_bytes, load_json_strict, validate_encoded_value
 from .domain import Fact
+from .event_sources import validate_event_archive
 from .events import parse_primary_result
 from .gpu import parse_gpu_samples_jsonl
 from .manifest import load_manifest
 from .profile_contract import project_profiler_events
+from .profile_sources import validate_profile_hardware_capture
+from .projections import (
+    ProjectionError,
+    project_gpu_phases,
+    project_gpu_samples,
+    project_phase_summary_row,
+    project_profile_hardware,
+    project_profiler_events_raw,
+)
 from .recording import RecorderError, producer_from_fragment
 from .registry import Registry, RegistryError, load_registry
 from .sources import (
@@ -309,6 +320,7 @@ def _missing_execution_files(
         "source/workload-measured.json",
         "source/primary-result.json",
         *(f"source/topology/node-{node}.json" for node in range(settings.nodes)),
+        *(f"source/events/node-{node}.jsonl" for node in range(settings.nodes)),
         *(f"source/hardware/node-{node}.json" for node in range(settings.nodes)),
         *(
             f"source/hardware/node-{node}.lscpu.stderr"
@@ -351,6 +363,7 @@ def _missing_execution_files(
             ]
         )
     if purpose == "profile":
+        required.append("control/phase/summary.json")
         for rank in range(settings.tensor_parallel_size):
             required.extend(
                 [
@@ -358,6 +371,10 @@ def _missing_execution_files(
                     f"profile/raw/torch/qwen-profile-TP-{rank}.capture.json",
                 ]
             )
+        required.extend(
+            f"profile/raw/hardware/node-{node}/capture.json"
+            for node in range(settings.nodes)
+        )
     missing = [relative for relative in required if not (runtime_dir / relative).is_file()]
     job_entry = runtime_dir / "control/job-entry.json"
     if job_entry.is_file():
@@ -404,6 +421,19 @@ def _missing_execution_files(
             validate_runtime_launchers(launcher_path, runtime_dir)
         except (OSError, ValueError, TypeError):
             missing.append("source/runtime-launchers.json:invalid")
+    for node_rank in range(settings.nodes):
+        relative = f"source/events/node-{node_rank}.jsonl"
+        path = runtime_dir / relative
+        if path.is_file():
+            try:
+                validate_event_archive(
+                    path,
+                    runtime_dir,
+                    run_id=run_id,
+                    node_rank=node_rank,
+                )
+            except (OSError, ValueError, TypeError):
+                missing.append(f"{relative}:invalid")
     for node_rank in range(settings.nodes):
         relative = f"source/cache/node-{node_rank}-input-manifest.json"
         path = runtime_dir / relative
@@ -513,6 +543,34 @@ def _missing_execution_files(
         except (OSError, ValueError, TypeError):
             missing.append("control/lifecycle/summary.json:invalid")
     if purpose == "profile":
+        phase_path = runtime_dir / "control/phase/summary.json"
+        try:
+            phase_row = project_phase_summary_row(
+                runtime_dir, run_id, settings.nodes
+            )
+            phase_columns = dict(phase_row.columns)
+            rank0 = phase_columns["rank0"]
+            if not isinstance(rank0, dict):
+                raise TypeError("phase rank zero projection is not an object")
+            primary_value = load_json_strict(
+                (runtime_dir / "source/primary-result.json").read_bytes()
+            )
+            if not isinstance(primary_value, dict):
+                raise TypeError("primary result is not an object")
+            elapsed = Decimal(
+                rank0["generation_end_ns"] - rank0["generation_start_ns"]
+            ) / Decimal(1_000_000_000)
+            if Decimal(str(primary_value["generation_wall_sec"])) != elapsed:
+                raise ValueError("primary and phase generation durations differ")
+        except (
+            ArithmeticError,
+            KeyError,
+            OSError,
+            ProjectionError,
+            TypeError,
+            ValueError,
+        ):
+            missing.append("control/phase/summary.json:invalid")
         for node_rank in range(settings.nodes):
             completion = f"control/gpu/node-{node_rank}.complete"
             if not (runtime_dir / completion).is_file():
@@ -537,8 +595,47 @@ def _missing_execution_files(
                 )
                 if not parsed:
                     raise ValueError("GPU raw contains no complete frame")
+                sample_rows = project_gpu_samples(
+                    runtime_dir, run_id, node_rank, expected_gpus[node_rank]
+                )
+                if not sample_rows:
+                    raise ValueError("GPU raw projection is empty")
             except (KeyError, OSError, ValueError, TypeError):
                 missing.append(f"{relative}:invalid")
+            hardware_relative = (
+                f"profile/raw/hardware/node-{node_rank}/capture.json"
+            )
+            hardware_path = runtime_dir / hardware_relative
+            if hardware_path.is_file():
+                try:
+                    capture = validate_profile_hardware_capture(
+                        hardware_path, runtime_dir, run_id, node_rank
+                    )
+                    minimal = load_json_strict(
+                        (
+                            runtime_dir / f"source/hardware/node-{node_rank}.json"
+                        ).read_bytes()
+                    )
+                    if (
+                        not isinstance(minimal, dict)
+                        or capture["hostname"] != minimal.get("hostname")
+                    ):
+                        raise ValueError("profile/minimal hardware hostname differs")
+                    if not project_profile_hardware(runtime_dir, run_id, node_rank):
+                        raise ValueError("profile hardware projection is empty")
+                except (OSError, ProjectionError, TypeError, ValueError):
+                    missing.append(f"{hardware_relative}:invalid")
+        if phase_path.is_file() and len(expected_gpus) == settings.nodes:
+            try:
+                phase_rows = project_gpu_phases(
+                    runtime_dir, run_id, phase_path, expected_gpus
+                )
+                if len(phase_rows) != (
+                    settings.nodes * settings.gpus_per_node
+                ):
+                    raise ValueError("GPU phase projection cardinality differs")
+            except (OSError, ProjectionError, TypeError, ValueError):
+                missing.append("profile/raw/gpu:phase-invalid")
         try:
             profiler = project_profiler_events(
                 runtime_dir,
@@ -552,8 +649,25 @@ def _missing_execution_files(
                 or profiler.conflicts
             ):
                 missing.append("profile/raw/torch:invalid")
-        except (OSError, ValueError, TypeError):
+            projected_profiler = project_profiler_events_raw(
+                runtime_dir,
+                run_id,
+                "measured-generation",
+                settings.tensor_parallel_size,
+            )
+            if not projected_profiler.require_conflict_free():
+                raise ValueError("profiler event projection is empty")
+        except (OSError, ProjectionError, ValueError, TypeError):
             missing.append("profile/raw/torch:invalid")
+    if not missing:
+        from .projection_router import project_run_archive
+
+        try:
+            projected = project_run_archive(runtime_dir, run_id)
+            if not projected.require_conflict_free():
+                raise ValueError("run archive projection batch is empty")
+        except (OSError, ProjectionError, TypeError, ValueError):
+            missing.append("run-archive-projections:invalid")
     return missing
 
 

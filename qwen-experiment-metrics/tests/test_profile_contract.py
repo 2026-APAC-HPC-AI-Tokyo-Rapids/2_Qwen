@@ -101,6 +101,26 @@ def test_phase_summary_is_closed_and_orders_windows(tmp_path: Path) -> None:
         parse_phase_summary(path, run_id=RUN_ID, expected_nodes=1)
 
 
+def test_phase_summary_keeps_each_remote_node_clock_domain(tmp_path: Path) -> None:
+    value = _phase()
+    value["nodes"].append(  # type: ignore[union-attr]
+        {
+            "node_rank": 1,
+            "clock_id": "remote-boot:mono",
+            "start_sequence": 1,
+            "end_sequence": 2,
+            "start_received_ns": 15,
+            "start_ack_ns": 16,
+            "end_received_ns": 70,
+            "end_ack_ns": 71,
+        }
+    )
+    path = tmp_path / "control/phase/summary.json"
+    _write_json(path, value)
+    summary = parse_phase_summary(path, run_id=RUN_ID, expected_nodes=2)
+    assert summary.nodes[1].clock_id == "remote-boot:mono"
+
+
 def test_profiler_overlay_and_dcgm_optional_contract() -> None:
     assert PROFILE_ID == "qwen-profile"
     assert PROFILE_ACTIVITIES == ("CPU", "GPU")

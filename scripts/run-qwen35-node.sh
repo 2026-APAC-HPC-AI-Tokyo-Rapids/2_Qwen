@@ -94,6 +94,7 @@ event_ready="${node_metrics_dir}/events.ready"
 "${metrics_cli}" serve-events \
   --manifest "${manifest}" \
   --runtime-dir "${RUNTIME_DIR}" \
+  --node-rank "${node_rank}" \
   --socket "${event_socket}" \
   --ready-file "${event_ready}" &
 event_server_pid=$!
@@ -154,6 +155,7 @@ if [[ "${run_purpose}" == profile ]]; then
   profile_env_args=(
     --env SGLANG_TORCH_PROFILER_DIR=/profile
     --env SGLANG_PROFILE_ID=qwen-profile
+    --env QWEN_EXPERIMENT_METRICS_PHASE_SOCKET=/metrics/phase.sock
     --env SGLANG_PROFILE_WITH_STACK=0,SGLANG_PROFILE_RECORD_SHAPES=0)
   profile_bind_args=(
     --bind "${RUNTIME_DIR}/profile/raw/torch:/profile"
@@ -196,12 +198,17 @@ jq -n --args '$ARGS.positional' -- "${sglang_command[@]}" >"${argv_dir}/sglang.j
   --singularity-launcher "${SINGULARITY_LAUNCHER}" \
   --sif "${RUNTIME_DIR}/sglang.sif"
 
+phase_agent_args=()
+if [[ "${run_purpose}" == profile ]]; then
+  phase_agent_args=(--phase-socket "${node_metrics_dir}/phase.sock")
+fi
 node_agent=("${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/python"
   -m qwen_experiment_metrics.node_agent
   --manifest "${manifest}"
   --runtime-dir "${RUNTIME_DIR}"
   --node-rank "${node_rank}"
   --master-host "${master_host}"
+  "${phase_agent_args[@]}"
   -- "${command[@]}")
 set +e
 if [[ "${node_rank}" -eq 0 ]]; then
@@ -212,6 +219,18 @@ else
   node_status=$?
 fi
 set -e
+
+if [[ "${run_purpose}" == profile ]]; then
+  kill -TERM "${gpu_sampler_pid}"
+  gpu_sampler_status=0
+  wait "${gpu_sampler_pid}" || gpu_sampler_status=$?
+  gpu_sampler_pid=""
+  [[ "${gpu_sampler_status}" -eq 0 ]]
+  "${metrics_cli}" capture-profile-hardware \
+    --manifest "${manifest}" \
+    --runtime-dir "${RUNTIME_DIR}" \
+    --node-rank "${node_rank}"
+fi
 
 sglang_snapshot="${RUNTIME_DIR}/source/environment/sglang-${node_rank}.snapshot"
 if [[ -s "${sglang_snapshot}" ]]; then

@@ -9,6 +9,15 @@ import urllib.request
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .physical_publish import (
+        PhysicalPublisherConfig,
+        PhysicalPublishReport,
+        RequestSender,
+    )
+    from .projections import ProjectionBatch
 
 from .artifact_store import ROLE_FILENAMES
 from .canonical import load_json_strict
@@ -125,6 +134,62 @@ def publish_metrics(
             )
         published += len(chunk)
     return published
+
+
+def verify_artifact_binding(
+    metrics_path: Path,
+    artifact_manifest: Path,
+    *,
+    expected_run: str,
+) -> None:
+    """Verify the immutable publish set before either physical or raw writes."""
+
+    rows = read_metrics(metrics_path, expected_run=expected_run)
+    if rows[0].run != expected_run:
+        raise ValueError("metrics run binding failed")
+    _verify_artifact_binding(metrics_path, artifact_manifest, expected_run)
+
+
+def publish_metrics_with_projections(
+    path: Path,
+    raw_config: BigQueryConfig,
+    projections: ProjectionBatch,
+    physical_config: PhysicalPublisherConfig,
+    *,
+    artifact_manifest: Path,
+    expected_run: str,
+    raw_request: Callable[[urllib.request.Request], bytes] | None = None,
+    projection_sender: RequestSender | None = None,
+) -> tuple[PhysicalPublishReport, int]:
+    """Publish conflict-free physical rows first and raw facts last."""
+
+    from .physical_publish import publish_projection_batch
+
+    verify_artifact_binding(
+        path, artifact_manifest, expected_run=expected_run
+    )
+    projections.require_conflict_free()
+    authenticated_sender = None
+    if projection_sender is None or raw_request is None:
+        token = _access_token()
+
+        def authenticated_sender(request: urllib.request.Request) -> bytes:
+            request.add_header("Authorization", f"Bearer {token}")
+            return _urlopen(request)
+
+    physical_report = publish_projection_batch(
+        projections,
+        physical_config,
+        sender=projection_sender or authenticated_sender,
+    )
+    raw_count = publish_metrics(
+        path,
+        raw_config,
+        artifact_manifest=artifact_manifest,
+        expected_run=expected_run,
+        request=raw_request or authenticated_sender,
+    )
+    return physical_report, raw_count
 
 
 def _verify_artifact_binding(

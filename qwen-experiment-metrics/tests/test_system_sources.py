@@ -9,9 +9,10 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import RUN_ID
+from conftest import RUN_ID, make_manifest
 
 from qwen_experiment_metrics.canonical import jcs_bytes
+from qwen_experiment_metrics.profile_contract import parse_phase_summary
 from qwen_experiment_metrics.system_sources import (
     capture_environment_snapshot,
     create_scheduler_accounting,
@@ -252,3 +253,83 @@ def test_participant_waits_for_shutdown_after_its_child_exits(
     )
     assert participant.returncode == 0
     assert coordinator.wait(timeout=10) == 0
+
+
+def test_profile_node_agents_broadcast_measured_phase(
+    runtime: Path, tmp_path: Path
+) -> None:
+    manifest_path = make_manifest(runtime, "profile")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    settings_path = runtime / "control/execution-settings.json"
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    settings["node_agent_port"] = port
+    settings["rendezvous_timeout_sec"] = 5
+    settings["ready_timeout_sec"] = 5
+    settings_path.write_bytes(jcs_bytes(settings) + b"\n")
+    phase_socket = tmp_path / "phase.sock"
+    child = """
+import json, socket, sys, time
+def request(value):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+        stream.connect(sys.argv[1])
+        stream.sendall(json.dumps(value, separators=(\",\", \":\")).encode() + b\"\\n\")
+        payload = b\"\"
+        while not payload.endswith(b\"\\n\"):
+            payload += stream.recv(4096)
+        return json.loads(payload)
+identity = {\"invocation_id\": \"measured-generation\", \"kind\": \"measured\"}
+assert request({\"type\": \"phase_start\", \"sequence\": 0, **identity})[\"type\"] == \"phase_start_ack\"
+started = time.monotonic_ns()
+time.sleep(0.01)
+finished = time.monotonic_ns()
+assert request({\"type\": \"phase_end\", \"sequence\": 1, **identity, \"generation_start_ns\": started, \"generation_end_ns\": finished})[\"type\"] == \"phase_end_ack\"
+"""
+    common = [
+        sys.executable,
+        "-m",
+        "qwen_experiment_metrics.node_agent",
+        "--manifest",
+        str(manifest_path),
+        "--runtime-dir",
+        str(runtime),
+        "--master-host",
+        "127.0.0.1",
+    ]
+    coordinator = subprocess.Popen(
+        [
+            *common,
+            "--node-rank",
+            "0",
+            "--phase-socket",
+            str(phase_socket),
+            "--",
+            sys.executable,
+            "-c",
+            child,
+            str(phase_socket),
+        ]
+    )
+    time.sleep(0.1)
+    participant = subprocess.run(
+        [
+            *common,
+            "--node-rank",
+            "1",
+            "--",
+            "/bin/sh",
+            "-c",
+            "trap 'exit 0' TERM; while :; do sleep 0.1; done",
+        ],
+        check=False,
+        timeout=10,
+    )
+    assert participant.returncode == 0
+    assert coordinator.wait(timeout=10) == 0
+    phase = parse_phase_summary(
+        runtime / "control/phase/summary.json", run_id=RUN_ID, expected_nodes=2
+    )
+    assert phase.invocation_id == "measured-generation"
+    assert phase.kind == "measured"
+    assert all(node.clock_id for node in phase.nodes)

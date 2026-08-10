@@ -974,7 +974,7 @@ def project_validated_sources(runtime_dir: Path, run_id: str) -> ProjectionBatch
     if lifecycle.is_file():
         summary = load_json_strict(lifecycle.read_bytes())
         if isinstance(summary, dict) and isinstance(summary.get("nodes"), list):
-            rows.append(project_lifecycle(runtime_dir, run_id, len(summary["nodes"])))
+            rows.extend(project_lifecycle(runtime_dir, run_id, len(summary["nodes"])))
     phase_summary = runtime_dir / "control/phase/summary.json"
     if phase_summary.is_file():
         phase_value = load_json_strict(phase_summary.read_bytes())
