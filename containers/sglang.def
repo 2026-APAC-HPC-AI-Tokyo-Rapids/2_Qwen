@@ -10,7 +10,7 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     org.opencontainers.image.description "SGLang main built with uv on the upstream CUDA runtime layout"
     org.opencontainers.image.source "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src"
     ai.sglang.nccl-tests-source "https://github.com/NVIDIA/nccl-tests"
-    ai.sglang.nccl-tests-ref "master"
+    ai.sglang.nccl-tests-ref "717b68318278e93f371d8ffb46b076069d7c7851"
     ai.sglang.deepep-commit "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
     ai.sglang.mooncake-version "0.3.11.post1"
     ai.sglang.mscclpp-version "sglang-v0.9.1"
@@ -40,9 +40,9 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
 
     export MAX_JOBS=40
 
-    # Build the MPI-enabled NCCL communication benchmarks for Genkai's Hopper GPUs.
-    # Follow upstream master while recording the commit resolved by each SIF build.
-    git clone --depth=1 --branch master https://github.com/NVIDIA/nccl-tests.git "${TMPDIR}/nccl-tests"
+    # Build the reviewed MPI-enabled NCCL communication benchmarks.
+    git clone https://github.com/NVIDIA/nccl-tests.git "${TMPDIR}/nccl-tests"
+    git -C "${TMPDIR}/nccl-tests" checkout --detach 717b68318278e93f371d8ffb46b076069d7c7851
     git -C "${TMPDIR}/nccl-tests" rev-parse HEAD | tee /opt/sglang/nccl-tests-commit.txt
     make -C "${TMPDIR}/nccl-tests" \
         -j "${MAX_JOBS}" \
@@ -61,6 +61,10 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     do
         patch -d /opt/sglang/source -p1 < "${patch_file}"
     done < <(find /opt/sglang-patches -type f -name '*.patch' -print | sort)
+    git -C /opt/sglang/source hash-object \
+      python/sglang/benchmark/offline_throughput.py \
+      | tee /opt/sglang/offline-throughput-source-blob-oid.txt
+    printf '2\n' > /opt/sglang/qwen-experiment-metrics-hook-version.txt
     git -C /opt/sglang/source rev-parse HEAD | tee /opt/sglang/sglang-commit.txt
 
     cd /opt/sglang/source/python
@@ -126,6 +130,9 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     /opt/sglang/venv/bin/python -c 'from importlib.metadata import version; print({p: version(p) for p in ("deep-ep", "mooncake-transfer-engine-cuda13", "mscclpp", "nixl", "nixl-cu13")})'
     mpirun --version
     test "$(find /opt/nccl-tests/bin -maxdepth 1 -type f -name '*_perf' | wc -l)" -eq 11
+    test "$(cat /opt/sglang/nccl-tests-commit.txt)" = 717b68318278e93f371d8ffb46b076069d7c7851
+    test "$(cat /opt/sglang/qwen-experiment-metrics-hook-version.txt)" = 2
+    test -s /opt/sglang/offline-throughput-source-blob-oid.txt
     ! ldd /opt/nccl-tests/bin/all_reduce_perf | grep -q 'not found'
     ucx_info -v
     uv --version
