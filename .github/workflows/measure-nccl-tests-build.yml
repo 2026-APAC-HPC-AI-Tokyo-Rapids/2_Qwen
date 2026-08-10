@@ -6,7 +6,7 @@ on:
       sif_run_number:
         description: Workflow run number whose existing SGLang SIF supplies CUDA, NCCL, and OpenMPI
         required: true
-        default: '110'
+        default: '117'
         type: string
 
 permissions:
@@ -42,6 +42,7 @@ jobs:
 
       - name: Clone nccl-tests master and measure a clean build
         run: |
+          module load singularity-ce/4.1.3
           install -d -m 2775 "${MEASURE_DIR}/logs"
           sif_path="${SIF_ARCHIVE_DIR}/${{ inputs.sif_run_number }}.sif"
 
