@@ -416,6 +416,18 @@ jobs:
           uv sync \
             --project "${RUNTIME_DIR}/qwen-experiment-metrics" \
             --frozen --no-dev --extra publish
+          credentials_file="$(mktemp "${RUNNER_TEMP}/qwen-bq-credentials.XXXXXXXXXX.json")"
+          chmod 0600 "${credentials_file}"
+          trap 'rm -f -- "${credentials_file}"' EXIT
+          printf '%s' "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON}" >"${credentials_file}"
+          GOOGLE_APPLICATION_CREDENTIALS="${credentials_file}" uv run \
+            --project "${RUNTIME_DIR}/qwen-experiment-metrics" \
+            --frozen --no-dev python \
+            "${GITHUB_WORKSPACE}/scripts/deploy-qwen-projections.py" \
+            --project apac-hpc-ai-tokyo-rapids-26 \
+            --dataset qwen_experiment_metrics \
+            --location asia-northeast1 \
+            --apply
           "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" publish \
             --metrics "${RUNTIME_DIR}/metrics.jsonl" \
             --artifact-manifest "${RUNTIME_DIR}/artifact-manifest.json" \

@@ -122,7 +122,7 @@ def test_worker_ready_is_closed_and_bound_to_global_rank() -> None:
 def test_local_socket_routes_to_atomic_local_fragment(
     manifest_path: Path, runtime: Path, tmp_path: Path
 ) -> None:
-    adapter = LocalEventFragmentRecorder(manifest_path, runtime)
+    adapter = LocalEventFragmentRecorder(manifest_path, runtime, node_rank=0)
     socket_path = tmp_path / "events.sock"
     server = UnixEventServer(socket_path, adapter)
     thread = threading.Thread(target=server.serve_forever)
@@ -140,6 +140,18 @@ def test_local_socket_routes_to_atomic_local_fragment(
     assert len(paths) == 1 and paths[0].exists()
     rows = [load_json_strict(line) for line in paths[0].read_bytes().splitlines()]
     assert len(rows) == 2
+    archive = runtime / "source/events/node-0.jsonl"
+    assert archive.read_bytes() == payload + b"\n"
+
+
+def test_local_event_archive_rejects_foreign_node(
+    manifest_path: Path, runtime: Path
+) -> None:
+    adapter = LocalEventFragmentRecorder(manifest_path, runtime, node_rank=1)
+    with pytest.raises(ValueError, match="another node"):
+        adapter.record_bytes(jcs_bytes(_configuration_event()))
+    adapter.abort()
+    assert not (runtime / "source/events/node-1.jsonl").exists()
 
 
 def test_local_recorder_rejects_sequence_gaps(

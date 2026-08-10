@@ -57,6 +57,7 @@ def parser() -> argparse.ArgumentParser:
     _common_runtime_arguments(serve)
     serve.add_argument("--socket", type=Path, required=True)
     serve.add_argument("--ready-file", type=Path)
+    serve.add_argument("--node-rank", type=int, required=True)
 
     gpu = commands.add_parser("sample-gpu")
     _common_runtime_arguments(gpu)
@@ -140,6 +141,10 @@ def parser() -> argparse.ArgumentParser:
     hardware = commands.add_parser("capture-hardware")
     _common_runtime_arguments(hardware)
     hardware.add_argument("--node-rank", type=int, required=True)
+
+    profile_hardware = commands.add_parser("capture-profile-hardware")
+    _common_runtime_arguments(profile_hardware)
+    profile_hardware.add_argument("--node-rank", type=int, required=True)
 
     topology = commands.add_parser("capture-topology")
     _common_runtime_arguments(topology)
@@ -235,6 +240,8 @@ def main(argv: list[str] | None = None) -> int:
         return _record_accounting(arguments)
     if arguments.action == "capture-hardware":
         return _capture_hardware(arguments)
+    if arguments.action == "capture-profile-hardware":
+        return _capture_profile_hardware(arguments)
     if arguments.action == "capture-topology":
         return _capture_topology(arguments)
     if arguments.action == "record-workload":
@@ -317,7 +324,10 @@ def _run_stage(arguments: argparse.Namespace) -> int:
 
 def _record_event(arguments: argparse.Namespace) -> int:
     recorder = LocalEventFragmentRecorder(
-        arguments.manifest, arguments.runtime_dir, arguments.registry
+        arguments.manifest,
+        arguments.runtime_dir,
+        arguments.registry,
+        node_rank=arguments.node_rank,
     )
     try:
         recorder.record_bytes(sys.stdin.buffer.read())
@@ -633,6 +643,17 @@ def _capture_hardware(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _capture_profile_hardware(arguments: argparse.Namespace) -> int:
+    from .profile_sources import capture_profile_hardware
+
+    capture_profile_hardware(
+        arguments.manifest,
+        arguments.runtime_dir,
+        node_rank=arguments.node_rank,
+    )
+    return 0
+
+
 def _capture_topology(arguments: argparse.Namespace) -> int:
     from .canonical import load_json_strict
     from .system_sources import create_node_topology, validate_node_topology
@@ -783,38 +804,32 @@ def _package(arguments: argparse.Namespace) -> int:
 
 
 def _publish(arguments: argparse.Namespace) -> int:
-    from .publish import BigQueryConfig, publish_metrics
+    from .physical_publish import PhysicalPublisherConfig
+    from .projection_router import project_run_archive
+    from .publish import BigQueryConfig, publish_metrics_with_projections
 
     expected_manifest = arguments.metrics.resolve().parent / "control/run-manifest.json"
     if arguments.manifest.resolve() != expected_manifest:
         raise ValueError("publish manifest must be the metrics runtime manifest")
     manifest = load_manifest(arguments.manifest)
-    if manifest.run_purpose == "profile":
-        from .profile_contract import project_profiler_events
-        from .sources import load_execution_settings
-
-        settings = load_execution_settings(
-            arguments.metrics.parent / "control/execution-settings.json"
-        )
-        projection = project_profiler_events(
-            arguments.metrics.parent,
-            run_id=manifest.run_id,
-            invocation_id="measured-generation",
-            expected_ranks=settings.tensor_parallel_size,
-        )
-        if (
-            projection.missing_ranks
-            or projection.partial_ranks
-            or projection.conflicts
-        ):
-            raise ValueError("profile raw artifacts are incomplete or conflicting")
-    count = publish_metrics(
+    raw_config = BigQueryConfig.load(arguments.pyproject)
+    projections = project_run_archive(arguments.metrics.parent, manifest.run_id)
+    report, count = publish_metrics_with_projections(
         arguments.metrics,
-        BigQueryConfig.load(arguments.pyproject),
+        raw_config,
+        projections,
+        PhysicalPublisherConfig(
+            raw_config.project, raw_config.dataset, raw_config.location
+        ),
         artifact_manifest=arguments.artifact_manifest,
         expected_run=manifest.run_id,
     )
-    print(jcs_text({"published_rows": count, "run_id": manifest.run_id}))
+    print(jcs_text({
+        "physical_published_rows": report.relation_rows,
+        "physical_requests": report.request_count,
+        "published_rows": count,
+        "run_id": manifest.run_id,
+    }))
     return 0
 
 
