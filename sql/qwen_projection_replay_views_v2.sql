@@ -83,6 +83,7 @@ ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_nccl_network_results_v2`
 
 -- Each logical view keeps one exact payload per grain.  The conflict view
 -- retains every payload for grains with more than one payload hash.
+BEGIN
 DECLARE relation STRING;
 FOR record IN (
   SELECT relation FROM UNNEST([
@@ -146,3 +147,4 @@ DO
     relation, relation, relation
   );
 END FOR;
+END;
