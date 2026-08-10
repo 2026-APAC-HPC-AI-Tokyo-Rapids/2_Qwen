@@ -19,7 +19,7 @@ jobs:
   compare:
     name: Compare instrumentation OFF and ON
     runs-on: [self-hosted, genkai]
-    timeout-minutes: 120
+    timeout-minutes: 240
     env:
       SIF_ARCHIVE_DIR: /home/pj26000080/share/sglang-sifs
       CHECK_ROOT: /fast/pj26000080/qwen-overhead-checks
@@ -34,7 +34,9 @@ jobs:
         id: provision
         run: |
           sif="${SIF_ARCHIVE_DIR}/${{ inputs.sif_run_number }}.sif"
+          sidecar="${SIF_ARCHIVE_DIR}/${{ inputs.sif_run_number }}.metadata/sif-sidecar.json"
           test -s "${sif}"
+          test -s "${sidecar}"
           test -s "${MODEL_PATH}/config.json"
           test -s "${DATASET_PATH}"
           install -d -m 2775 "${CHECK_ROOT}"
@@ -42,6 +44,21 @@ jobs:
           printf 'check_dir=%s\n' "${check_dir}" >> "${GITHUB_OUTPUT}"
           install -d "${check_dir}/scripts" "${check_dir}/logs"
           ln -s "${sif}" "${check_dir}/sglang.sif"
+          jq -n \
+            --arg repository_commit "${GITHUB_SHA}" \
+            --arg sif_run_number '${{ inputs.sif_run_number }}' \
+            --arg sif_sha256 "$(jq -er '.sif_artifact.sha256' "${sidecar}")" \
+            '{
+              schema_version:"qwen-v2-overhead-input/v1",
+              repository_commit:$repository_commit,
+              sif_run_number:$sif_run_number,
+              sif_sha256:$sif_sha256,
+              order:["off","on","off","on"],
+              differential_under_test:"AF_UNIX v2 event emission",
+              common_source_writers_enabled:true,
+              primary_measure:"generation_wall_sec",
+              max_overhead_ratio:"1.05"
+            }' >"${check_dir}/comparison-input.json"
           install -m 0755 scripts/v2-overhead-check.pjm scripts/v2-overhead-node.sh \
             scripts/v2-overhead-event-drain.py "${check_dir}/scripts/"
 
@@ -76,6 +93,24 @@ jobs:
           printf '%s\n' 'QWEN_V2_OVERHEAD_CHECK_BEGIN'
           cat "${check_dir}/summary.txt"
           printf '%s\n' 'QWEN_V2_OVERHEAD_CHECK_END'
+
+      - name: Upload fixed comparison evidence
+        if: always() && steps.provision.outputs.check_dir != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen-v2-overhead-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.provision.outputs.check_dir }}/comparison-input.json
+            ${{ steps.provision.outputs.check_dir }}/comparison-order.txt
+            ${{ steps.provision.outputs.check_dir }}/observations.tsv
+            ${{ steps.provision.outputs.check_dir }}/summary.json
+            ${{ steps.provision.outputs.check_dir }}/summary.txt
+            ${{ steps.provision.outputs.check_dir }}/trial-*/stage-wall-sec
+            ${{ steps.provision.outputs.check_dir }}/trial-*/source/primary-result.json
+            ${{ steps.provision.outputs.check_dir }}/trial-*/event-summary-node-*.json
+            ${{ steps.provision.outputs.check_dir }}/logs/*.log
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Discard comparison data
         if: always()
