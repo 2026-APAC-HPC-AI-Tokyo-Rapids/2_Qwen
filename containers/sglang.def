@@ -9,6 +9,8 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     org.opencontainers.image.title "Source-built SGLang runtime"
     org.opencontainers.image.description "SGLang main built with uv on the upstream CUDA runtime layout"
     org.opencontainers.image.source "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src"
+    ai.sglang.nccl-tests-source "https://github.com/NVIDIA/nccl-tests"
+    ai.sglang.nccl-tests-ref "master"
     ai.sglang.deepep-commit "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
     ai.sglang.mooncake-version "0.3.11.post1"
     ai.sglang.mscclpp-version "sglang-v0.9.1"
@@ -37,6 +39,23 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     export PATH=/opt/cargo/bin:${PATH}
 
     export MAX_JOBS=40
+
+    # Build the MPI-enabled NCCL communication benchmarks for Genkai's Hopper GPUs.
+    # Follow upstream master while recording the commit resolved by each SIF build.
+    git clone --depth=1 --branch master https://github.com/NVIDIA/nccl-tests.git "${TMPDIR}/nccl-tests"
+    git -C "${TMPDIR}/nccl-tests" rev-parse HEAD | tee /opt/sglang/nccl-tests-commit.txt
+    make -C "${TMPDIR}/nccl-tests" \
+        -j "${MAX_JOBS}" \
+        CC=/usr/bin/gcc \
+        CXX=/usr/bin/g++ \
+        MPI=1 \
+        MPI_HOME=/usr/lib/x86_64-linux-gnu/openmpi \
+        NVCC_GENCODE='-gencode=arch=compute_90,code=sm_90'
+    install -d -m 0755 /opt/nccl-tests/bin
+    find "${TMPDIR}/nccl-tests/build" -maxdepth 1 -type f -name '*_perf' -exec install -m 0755 '{}' /opt/nccl-tests/bin/ \;
+    install -m 0644 "${TMPDIR}/nccl-tests/LICENSE.txt" /opt/nccl-tests/LICENSE.txt
+    test "$(find /opt/nccl-tests/bin -maxdepth 1 -type f -name '*_perf' | wc -l)" -eq 11
+    rm -rf "${TMPDIR}/nccl-tests"
 
     while IFS= read -r patch_file
     do
@@ -91,7 +110,7 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
 
 %environment
     export CUDA_HOME=/usr/local/cuda
-    export PATH=/opt/sglang/venv/bin:/usr/local/cuda/bin:/usr/local/bin:${PATH}
+    export PATH=/opt/sglang/venv/bin:/opt/nccl-tests/bin:/usr/local/cuda/bin:/usr/local/bin:${PATH}
     export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
     export PIP_DISABLE_PIP_VERSION_CHECK=1
 
@@ -106,6 +125,8 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     /opt/sglang/venv/bin/python -c 'from importlib.metadata import version; packages = ("flashinfer-python", "flashinfer-cubin", "flashinfer-jit-cache"); versions = {package: version(package).split("+", 1)[0] for package in packages}; assert len(set(versions.values())) == 1, versions; print(versions)'
     /opt/sglang/venv/bin/python -c 'from importlib.metadata import version; print({p: version(p) for p in ("deep-ep", "mooncake-transfer-engine-cuda13", "mscclpp", "nixl", "nixl-cu13")})'
     mpirun --version
+    test "$(find /opt/nccl-tests/bin -maxdepth 1 -type f -name '*_perf' | wc -l)" -eq 11
+    ! ldd /opt/nccl-tests/bin/all_reduce_perf | grep -q 'not found'
     ucx_info -v
     uv --version
     rm -rf "${XDG_CACHE_HOME}"
