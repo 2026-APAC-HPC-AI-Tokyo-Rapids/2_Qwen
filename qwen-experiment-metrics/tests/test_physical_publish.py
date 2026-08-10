@@ -211,7 +211,8 @@ def test_ddl_has_every_allowlisted_closed_field() -> None:
         assert set(names) == set(expected), relation
         assert len(names) == len(expected), relation
     replay = (Path(__file__).resolve().parents[2] / "sql/qwen_projection_replay_views_v2.sql").read_text(encoding="utf-8")
-    assert replay.count("ALTER TABLE IF EXISTS") == 25
+    assert replay.count("ALTER TABLE `") == 25
+    assert "ALTER TABLE IF EXISTS" not in replay
     assert replay.count("_row_grain_key STRING") == 25
     assert replay.count("_payload_sha256 STRING") == 25
     assert "BEGIN\nDECLARE relation STRING;" in replay

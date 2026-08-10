@@ -5,79 +5,79 @@
 -- script uses stored SHA-256 metadata rather than relying on BigQuery JSON
 -- equality or object-key ordering.
 
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_source_track_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_source_track_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_sif_provenance_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_sif_provenance_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_runtime_launchers_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_runtime_launchers_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_model_manifests_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_model_manifests_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_dataset_manifests_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_dataset_manifests_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_cache_manifests_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_cache_manifests_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_workload_manifests_raw_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_workload_manifests_raw_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_workload_requests_raw_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_workload_requests_raw_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_minimal_hardware_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_minimal_hardware_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_node_launch_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_node_launch_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_topology_raw_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_topology_raw_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_environment_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_environment_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_lifecycle_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_lifecycle_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_node_lifecycle_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_node_lifecycle_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_primary_results_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_primary_results_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_phase_summaries_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_phase_summaries_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_gpu_samples_raw_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_gpu_samples_raw_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_gpu_phases_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_gpu_phases_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_profile_hardware_raw_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_profile_hardware_raw_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_profiler_events_raw_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_profiler_events_raw_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_config_snapshots_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_config_snapshots_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_placement_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_placement_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_artifacts_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_artifacts_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_mpi_network_results_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_mpi_network_results_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
-ALTER TABLE IF EXISTS `__PROJECT__.__DATASET__.qwen_nccl_network_results_v2`
+ALTER TABLE `__PROJECT__.__DATASET__.qwen_nccl_network_results_v2`
   ADD COLUMN IF NOT EXISTS _row_grain_key STRING,
   ADD COLUMN IF NOT EXISTS _payload_sha256 STRING;
 
