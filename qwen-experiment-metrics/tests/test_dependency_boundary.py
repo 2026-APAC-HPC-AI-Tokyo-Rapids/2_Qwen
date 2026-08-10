@@ -19,6 +19,20 @@ def test_sif_build_uses_uv_python_for_oci_resolver() -> None:
     assert '\npython3 "${GITHUB_WORKSPACE}/scripts/resolve-oci.py"' not in script
 
 
+def test_sif_build_consumes_the_tracked_sglang_lock() -> None:
+    script = (ROOT / "scripts/build-sglang-sif.sh").read_text(encoding="utf-8")
+    recipe = (ROOT / "containers/sglang.def").read_text(encoding="utf-8")
+
+    assert '${SGLANG_SOURCE_DIR}/python/uv.lock' in script
+    assert 'lock_manifest:{path:"python/uv.lock"' in script
+    assert "UV_PROJECT_ENVIRONMENT=/opt/sglang/venv" in recipe
+    assert (
+        "uv sync --project /opt/sglang/source/python --locked "
+        "--no-install-project"
+    ) in recipe
+    assert "uv pip install --python /opt/sglang/venv/bin/python --no-deps -e ." in recipe
+
+
 def test_compute_core_has_no_bigquery_or_network_client_dependency() -> None:
     root = Path(__file__).parents[1]
     with (root / "pyproject.toml").open("rb") as stream:

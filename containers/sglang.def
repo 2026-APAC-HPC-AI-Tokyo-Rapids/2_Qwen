@@ -70,12 +70,13 @@ From: nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41
 
     cd /opt/sglang/source/python
     export UV_CACHE_DIR=/opt/sglang/uv-cache
+    export UV_PROJECT_ENVIRONMENT=/opt/sglang/venv
     # Preserve symbols in the SGLang Rust extension for gdb and offline symbolization.
     export CARGO_PROFILE_RELEASE_DEBUG=2
     export CARGO_PROFILE_RELEASE_STRIP=none
-    uv venv /opt/sglang/venv
+    uv sync --project /opt/sglang/source/python --locked --no-install-project
     uv pip install --python /opt/sglang/venv/bin/python setuptools wheel
-    uv pip install --python /opt/sglang/venv/bin/python -e .
+    uv pip install --python /opt/sglang/venv/bin/python --no-deps -e .
     # SGLang pins flashinfer-python in pyproject.toml.  Keep its companion
     # artifacts at the identical release so FlashInfer's runtime check passes.
     flashinfer_version="$(/opt/sglang/venv/bin/python -c 'from importlib.metadata import version; print(version("flashinfer-python"))')"
