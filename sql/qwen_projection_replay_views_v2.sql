@@ -84,7 +84,6 @@ ALTER TABLE `__PROJECT__.__DATASET__.qwen_nccl_network_results_v2`
 -- Each logical view keeps one exact payload per grain.  The conflict view
 -- retains every payload for grains with more than one payload hash.
 BEGIN
-DECLARE relation STRING;
 FOR record IN (
   SELECT relation FROM UNNEST([
     'qwen_source_track_v2', 'qwen_sif_provenance_v2',
@@ -114,14 +113,14 @@ DO
          SELECT source_table.*,
            ROW_NUMBER() OVER (
              PARTITION BY _row_grain_key, _payload_sha256
-             ORDER BY source_sha256, source_member
+             ORDER BY _payload_sha256
            ) AS _replay_row_number
          FROM `__PROJECT__.__DATASET__.%s` AS source_table
          WHERE _row_grain_key IN (SELECT _row_grain_key FROM conflicted)
        )
        SELECT * EXCEPT (_replay_row_number)
        FROM ranked
-       WHERE _replay_row_number = 1''', relation, relation, relation
+       WHERE _replay_row_number = 1''', record.relation, record.relation, record.relation
   );
   EXECUTE IMMEDIATE FORMAT(
     '''CREATE OR REPLACE VIEW `__PROJECT__.__DATASET__.%s_logical` AS
@@ -135,7 +134,7 @@ DO
          SELECT source_table.*,
            ROW_NUMBER() OVER (
              PARTITION BY _row_grain_key, _payload_sha256
-             ORDER BY source_sha256, source_member
+             ORDER BY _payload_sha256
            ) AS _replay_row_number
          FROM `__PROJECT__.__DATASET__.%s` AS source_table
          WHERE _row_grain_key IS NOT NULL AND _payload_sha256 IS NOT NULL
@@ -144,7 +143,7 @@ DO
        FROM ranked
        WHERE _replay_row_number = 1
          AND _row_grain_key NOT IN (SELECT _row_grain_key FROM conflicted)''',
-    relation, relation, relation
+    record.relation, record.relation, record.relation
   );
 END FOR;
 END;

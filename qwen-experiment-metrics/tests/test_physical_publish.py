@@ -215,5 +215,8 @@ def test_ddl_has_every_allowlisted_closed_field() -> None:
     assert "ALTER TABLE IF EXISTS" not in replay
     assert replay.count("_row_grain_key STRING") == 25
     assert replay.count("_payload_sha256 STRING") == 25
-    assert "BEGIN\nDECLARE relation STRING;" in replay
+    assert "DECLARE relation STRING;" not in replay
+    assert replay.count("record.relation") == 6
+    assert "ORDER BY source_sha256, source_member" not in replay
+    assert replay.count("ORDER BY _payload_sha256") == 2
     assert replay.rstrip().endswith("END;")
