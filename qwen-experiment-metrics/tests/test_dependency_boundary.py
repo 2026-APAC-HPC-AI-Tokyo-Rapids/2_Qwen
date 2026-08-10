@@ -4,6 +4,20 @@ import ast
 import tomllib
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_sif_build_uses_uv_python_for_oci_resolver() -> None:
+    script = (ROOT / "scripts/build-sglang-sif.sh").read_text(encoding="utf-8")
+    resolver_line = next(
+        line
+        for line in script.splitlines()
+        if '"${GITHUB_WORKSPACE}/scripts/resolve-oci.py"' in line
+    )
+    assert resolver_line.lstrip().startswith("python ")
+    assert 'uv run --project "${GITHUB_WORKSPACE}/qwen-experiment-metrics"' in script
+    assert '\npython3 "${GITHUB_WORKSPACE}/scripts/resolve-oci.py"' not in script
+
 
 def test_compute_core_has_no_bigquery_or_network_client_dependency() -> None:
     root = Path(__file__).parents[1]
