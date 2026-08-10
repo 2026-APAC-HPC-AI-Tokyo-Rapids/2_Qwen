@@ -1,6 +1,8 @@
 # Qwen v2 physical projections
 
 `qwen_projection_tables_v2.sql` declares the 25 allowlisted physical tables.
+`qwen_projection_replay_views_v2.sql` additively migrates replay metadata and
+creates one `_logical` and one `_conflicts` view per table.
 The nested and repeated contract records use BigQuery `JSON` columns so the
 source schema is retained; they are not reduced to scalar summaries.
 
@@ -30,5 +32,8 @@ publish_projection_batch(
 
 Rows are sent with `skipInvalidRows=false`, `ignoreUnknownValues=false`,
 deterministic `insertId`s, and at most 500 rows per `insertAll` request.
-Partial `insertErrors` fail the call.  Replaying the same closed row produces
-the same insert ID.
+Each row also stores publisher-owned `_row_grain_key` and `_payload_sha256`.
+The logical view removes exact replay duplicates and excludes conflicting
+grains; the conflicts view retains every differing payload. Partial
+`insertErrors` fail the call. Replaying the same closed row produces the same
+insert ID and payload hashes.

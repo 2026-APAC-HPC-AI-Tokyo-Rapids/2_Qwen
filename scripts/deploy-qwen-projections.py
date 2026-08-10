@@ -15,6 +15,7 @@ from pathlib import Path
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]+$")
 _ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_DDL = _ROOT / "sql/qwen_projection_tables_v2.sql"
+_DEFAULT_REPLAY = _ROOT / "sql/qwen_projection_replay_views_v2.sql"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -23,6 +24,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--location", default="asia-northeast1")
     parser.add_argument("--ddl", type=Path, default=_DEFAULT_DDL)
+    parser.add_argument("--replay-sql", type=Path)
     parser.add_argument("--apply", action="store_true")
     return parser
 
@@ -43,6 +45,15 @@ def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     ddl = arguments.ddl.read_text(encoding="utf-8")
     rendered = render(ddl, project=arguments.project, dataset=arguments.dataset)
+    replay_path = arguments.replay_sql
+    if replay_path is None and arguments.ddl.resolve() == _DEFAULT_DDL.resolve():
+        replay_path = _DEFAULT_REPLAY
+    if replay_path is not None:
+        replay = replay_path.read_text(encoding="utf-8")
+        rendered = "\n".join((
+            rendered,
+            render(replay, project=arguments.project, dataset=arguments.dataset),
+        ))
     if not arguments.apply:
         print(rendered, end="")
         return 0
