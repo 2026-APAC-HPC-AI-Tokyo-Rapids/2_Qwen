@@ -101,7 +101,88 @@ def facts_from_event(value: object, *, expected_run_id: str) -> ParsedEvent:
             sequence=event.sequence,
             facts=facts,
         )
+    if event.event_type == "worker_ready":
+        if event.global_rank is None:
+            raise DomainEventError("worker_ready requires global_rank")
+        facts = parse_worker_ready_payload(
+            event.payload,
+            node_rank=event.node_rank,
+            global_rank=event.global_rank,
+        )
+        return ParsedEvent(
+            producer_instance=f"worker:global-rank-{event.global_rank}",
+            envelope_producer_id=event.producer_id,
+            sequence=event.sequence,
+            facts=facts,
+        )
     raise DomainEventError(f"unsupported domain event type: {event.event_type}")
+
+
+def parse_worker_ready_payload(
+    value: object, *, node_rank: int, global_rank: int
+) -> tuple[Fact, ...]:
+    """Validate the closed worker-ready payload without inferring placement."""
+
+    if not isinstance(value, dict):
+        raise DomainEventError("worker_ready payload must be an object")
+    expected = {
+        "tp_rank",
+        "gpu_id",
+        "gpu_uuid",
+        "cpu_affinity",
+        "numa_mems",
+        "prefill_attention_backend",
+        "decode_attention_backend",
+        "torch_distributed_backend",
+        "transport_backend",
+    }
+    _closed_fields(value, expected, set(), "worker_ready payload")
+    tp_rank = _uint(value["tp_rank"], "tp_rank")
+    gpu_id = _uint(value["gpu_id"], "gpu_id")
+    if tp_rank != global_rank:
+        raise DomainEventError("worker tp_rank must equal envelope global_rank")
+    affinity = value["cpu_affinity"]
+    if (
+        not isinstance(affinity, list)
+        or any(isinstance(item, bool) or not isinstance(item, int) or item < 0 for item in affinity)
+        or affinity != sorted(set(affinity))
+    ):
+        raise DomainEventError("worker cpu_affinity must be sorted unique uints")
+    strings = {
+        name: _string(value[name], name)
+        for name in (
+            "gpu_uuid",
+            "numa_mems",
+            "prefill_attention_backend",
+            "decode_attention_backend",
+            "torch_distributed_backend",
+            "transport_backend",
+        )
+    }
+    if any(not child for child in strings.values()):
+        raise DomainEventError("worker_ready string fields must be nonempty")
+    prefix = f"parallel.worker.{global_rank}"
+    return (
+        Fact(f"{prefix}.node_rank", node_rank),
+        Fact(f"{prefix}.tp_rank", tp_rank),
+        Fact(f"{prefix}.gpu_id", gpu_id),
+        Fact(f"{prefix}.gpu_uuid", strings["gpu_uuid"]),
+        Fact(f"{prefix}.cpu_affinity", affinity),
+        Fact(f"{prefix}.numa_mems", strings["numa_mems"]),
+        Fact(
+            f"{prefix}.attention.prefill_backend",
+            strings["prefill_attention_backend"],
+        ),
+        Fact(
+            f"{prefix}.attention.decode_backend",
+            strings["decode_attention_backend"],
+        ),
+        Fact(
+            f"{prefix}.torch_distributed_backend",
+            strings["torch_distributed_backend"],
+        ),
+        Fact(f"{prefix}.transport_backend", strings["transport_backend"]),
+    )
 
 
 def parse_configuration_payload(

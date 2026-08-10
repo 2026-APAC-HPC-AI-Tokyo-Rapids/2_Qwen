@@ -1,0 +1,47 @@
+--- a/python/sglang/benchmark/offline_throughput.py
++++ b/python/sglang/benchmark/offline_throughput.py
+@@ -431,21 +431,6 @@
+     )
+     latency = time.perf_counter() - st
+ 
+-    if profile:
+-        dir = os.getenv("SGLANG_TORCH_PROFILER_DIR")
+-        if not profile_steps:
+-            known_files = set(os.listdir(dir))
+-        # With --profile-steps the scheduler auto-stops mid-run after N steps, so
+-        # a second stop here raises "not in progress"; a run shorter than N steps
+-        # never hit the target and still needs this explicit stop. Either way we
+-        # must stop before monitor_trace_file, which loops forever waiting for a
+-        # trace that would otherwise never be finalized.
+-        try:
+-            backend.stop_profile()
+-        except RuntimeError:
+-            pass
+-        monitor_trace_file(known_files, dir)
+-
+     if backend_name == "runtime":
+         gen_out = json.loads(gen_out)
+ 
+@@ -469,6 +454,22 @@
+             error_count,
+             observed_output_tokens,
+         )
++
++    if profile:
++        dir = os.getenv("SGLANG_TORCH_PROFILER_DIR")
++        if not profile_steps:
++            known_files = set(os.listdir(dir))
++        # With --profile-steps the scheduler auto-stops mid-run after N steps, so
++        # a second stop here raises "not in progress"; a run shorter than N steps
++        # never hit the target and still needs this explicit stop. Either way we
++        # must stop before monitor_trace_file, which loops forever waiting for a
++        # trace that would otherwise never be finalized.
++        try:
++            backend.stop_profile()
++        except RuntimeError:
++            pass
++        monitor_trace_file(known_files, dir)
++
+     if observed_output_tokens is None:
+         raise ValueError("one or more generation responses are not parseable")
+     measurement_results["total_output_tokens"] = observed_output_tokens

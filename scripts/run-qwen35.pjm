@@ -43,6 +43,30 @@ mv -- "${job_entry_tmp}" "${job_entry}"
 "${metrics_cli}" record-job-entry \
   --manifest "${manifest}" \
   --runtime-dir "${RUNTIME_DIR}"
+"${metrics_cli}" record-environment \
+  --manifest "${manifest}" \
+  --runtime-dir "${RUNTIME_DIR}" \
+  --scope job-entry
+"${metrics_cli}" start-run-lifecycle \
+  --manifest "${manifest}" \
+  --runtime-dir "${RUNTIME_DIR}"
+
+finish_run_lifecycle() {
+  local status=$?
+  trap - EXIT
+  set +e
+  "${metrics_cli}" finish-run-lifecycle \
+    --manifest "${manifest}" \
+    --runtime-dir "${RUNTIME_DIR}" \
+    --exit-code "${status}"
+  local lifecycle_status=$?
+  set -e
+  if [[ "${lifecycle_status}" -ne 0 ]]; then
+    exit "${lifecycle_status}"
+  fi
+  exit "${status}"
+}
+trap finish_run_lifecycle EXIT
 
 module purge
 module load nvidia/25.11

@@ -1,0 +1,80 @@
+--- a/python/sglang/benchmark/offline_throughput.py
++++ b/python/sglang/benchmark/offline_throughput.py
+@@ -131,7 +131,11 @@
+ 
+ 
+ def _emit_primary_result(
+-    gen_out, measurement_results, latency, error_count, observed_output_tokens
++    gen_out,
++    latency,
++    error_count,
++    observed_input_tokens,
++    observed_output_tokens,
+ ):
+     try:
+         if int(os.getenv("QWEN_EXPERIMENT_METRICS_NODE_RANK", "-1")) != 0:
+@@ -144,7 +148,7 @@
+             "generation_wall_sec": latency,
+             "returned_count": len(gen_out),
+             "error_count": error_count,
+-            "observed_input_tokens": measurement_results["total_input_tokens"],
++            "observed_input_tokens": observed_input_tokens,
+             "observed_output_tokens": observed_output_tokens,
+             "ordered_output_token_ids_sha256": _ordered_output_identity(
+                 gen_out, observed_output_tokens
+@@ -435,23 +439,49 @@
+         gen_out = json.loads(gen_out)
+ 
+     measurement_results["total_latency"] = latency
++    prompt_counts = []
+     completion_counts = []
++    response_errors = []
+     for output in gen_out:
+         meta_info = output.get("meta_info") if isinstance(output, dict) else None
+-        count = meta_info.get("completion_tokens") if isinstance(meta_info, dict) else None
+-        completion_counts.append(
+-            count if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else None
++        prompt_count = (
++            meta_info.get("prompt_tokens") if isinstance(meta_info, dict) else None
+         )
+-    error_count = sum(count is None for count in completion_counts)
++        completion_count = (
++            meta_info.get("completion_tokens") if isinstance(meta_info, dict) else None
++        )
++        prompt_count = (
++            prompt_count
++            if isinstance(prompt_count, int)
++            and not isinstance(prompt_count, bool)
++            and prompt_count >= 0
++            else None
++        )
++        completion_count = (
++            completion_count
++            if isinstance(completion_count, int)
++            and not isinstance(completion_count, bool)
++            and completion_count >= 0
++            else None
++        )
++        prompt_counts.append(prompt_count)
++        completion_counts.append(completion_count)
++        response_errors.append(prompt_count is None or completion_count is None)
++    error_count = sum(response_errors)
++    observed_input_tokens = (
++        sum(prompt_counts) if all(count is not None for count in prompt_counts) else None
++    )
+     observed_output_tokens = (
+-        sum(completion_counts) if error_count == 0 else None
++        sum(completion_counts)
++        if all(count is not None for count in completion_counts)
++        else None
+     )
+     if metrics_kind == "measured":
+         _emit_primary_result(
+             gen_out,
+-            measurement_results,
+             latency,
+             error_count,
++            observed_input_tokens,
+             observed_output_tokens,
+         )
+ 
