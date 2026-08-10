@@ -1,0 +1,90 @@
+name: Temporary Qwen v2 overhead check
+
+on:
+  workflow_dispatch:
+    inputs:
+      sif_run_number:
+        description: Exact SGLang SIF archive run number
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash --login -eo pipefail {0}
+
+jobs:
+  compare:
+    name: Compare instrumentation OFF and ON
+    runs-on: [self-hosted, genkai]
+    timeout-minutes: 120
+    env:
+      SIF_ARCHIVE_DIR: /home/ACCOUNT/share/sglang-sifs
+      CHECK_ROOT: /fast/PROJECT/qwen-overhead-checks
+      MODEL_PATH: /fast/PROJECT/Qwen/Qwen3.5-397B-A17B-FP8
+      DATASET_PATH: /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
+
+    steps:
+      - name: Checkout comparison inputs
+        uses: actions/checkout@v6
+
+      - name: Provision exact SIF and scripts
+        id: provision
+        run: |
+          sif="${SIF_ARCHIVE_DIR}/${{ inputs.sif_run_number }}.sif"
+          test -s "${sif}"
+          test -s "${MODEL_PATH}/config.json"
+          test -s "${DATASET_PATH}"
+          install -d -m 2775 "${CHECK_ROOT}"
+          check_dir="$(mktemp -d "${CHECK_ROOT}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          printf 'check_dir=%s\n' "${check_dir}" >> "${GITHUB_OUTPUT}"
+          install -d "${check_dir}/scripts" "${check_dir}/logs"
+          ln -s "${sif}" "${check_dir}/sglang.sif"
+          install -m 0755 scripts/v2-overhead-check.pjm scripts/v2-overhead-node.sh \
+            scripts/v2-overhead-event-drain.py "${check_dir}/scripts/"
+
+      - name: Submit isolated comparison
+        run: |
+          check_dir='${{ steps.provision.outputs.check_dir }}'
+          job_environment="CHECK_DIR=${check_dir},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH}"
+          job_output="$(pjsub -x "${job_environment}" -o "${check_dir}/logs/%j.log" -j \
+            -N qwen_v2_overhead "${check_dir}/scripts/v2-overhead-check.pjm")"
+          printf '%s\n' "${job_output}"
+          job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
+          test -n "${job_id}"
+          printf 'PJM_JOB_ID=%s\n' "${job_id}" >> "${GITHUB_ENV}"
+
+      - name: Wait for comparison
+        run: |
+          check_dir='${{ steps.provision.outputs.check_dir }}'
+          log="${check_dir}/logs/${PJM_JOB_ID}.log"
+          while [[ ! -e "${log}" ]]; do
+            status="$(pjwait -w waitnone "${PJM_JOB_ID}")"
+            code="$(awk 'NR == 1 { print $2 }' <<< "${status}")"
+            [[ -z "${code}" || "${code}" == X ]] || { printf '%s\n' "${status}"; exit 1; }
+            sleep 2
+          done
+          tail --lines=+1 --follow=name "${log}" &
+          tail_pid=$!
+          trap 'kill "${tail_pid}" 2>/dev/null || true' EXIT
+          pjwait -z "${PJM_JOB_ID}"
+          sleep 1
+          pjwait "${PJM_JOB_ID}"
+          test -s "${check_dir}/summary.txt"
+          printf '%s\n' 'QWEN_V2_OVERHEAD_CHECK_BEGIN'
+          cat "${check_dir}/summary.txt"
+          printf '%s\n' 'QWEN_V2_OVERHEAD_CHECK_END'
+
+      - name: Discard comparison data
+        if: always()
+        run: |
+          if [[ -n "${PJM_JOB_ID:-}" ]]; then
+            pjdel "${PJM_JOB_ID}" 2>/dev/null || true
+            pjwait -z "${PJM_JOB_ID}" || true
+          fi
+          check_dir='${{ steps.provision.outputs.check_dir }}'
+          if [[ -n "${check_dir}" ]]; then
+            rm -rf -- "${check_dir:?}"
+          fi
