@@ -1,0 +1,407 @@
+schema_version = "qwen-metrics-registry/v1"
+
+[[producers]]
+id = "runner"
+instance_pattern = "^runner$"
+applicability = ["bench", "profile"]
+required = true
+
+[[producers]]
+id = "stage"
+instance_pattern = "^stage:[a-z0-9][a-z0-9._-]{0,99}$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "configuration"
+instance_pattern = "^configuration:node-[0-9]+$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "result"
+instance_pattern = "^result$"
+applicability = ["bench", "profile"]
+required = true
+
+[[producers]]
+id = "merge"
+instance_pattern = "^merge$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "network"
+instance_pattern = "^network$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "gpu-sampler"
+instance_pattern = "^gpu-sampler:node-[0-9]+$"
+applicability = ["profile"]
+required = false
+
+[[facts]]
+id = "run_id"
+key_pattern = "^run\\.identity\\.run_id$"
+owner = "runner"
+logical_type = "string"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "control/run-manifest.json run_id"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "must equal the persisted manifest run_id"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "run_purpose"
+key_pattern = "^run\\.identity\\.run_purpose$"
+owner = "runner"
+logical_type = "string"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "control/run-manifest.json run_purpose"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "enum bench or profile and equal to manifest"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "instrumentation_bundle_sha256"
+key_pattern = "^run\\.identity\\.instrumentation_bundle_sha256$"
+owner = "runner"
+logical_type = "sha256"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "control/run-manifest.json instrumentation_bundle_sha256"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "must equal the persisted manifest instrumentation bundle SHA-256"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "repository_id"
+key_pattern = "^run\\.identity\\.repository_id$"
+owner = "runner"
+logical_type = "string"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "control/run-manifest.json repository_id"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "must equal apac2026-qwen"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "stage_launch"
+key_pattern = "^run\\.stage\\.[a-z0-9][a-z0-9._-]{0,99}\\.launch$"
+owner = "stage"
+logical_type = "jcs"
+unit = "none"
+cardinality = "one per stage invocation"
+authoritative_source = "StageRunner subprocess boundary"
+capture_moment = "immediately before spawn"
+raw_destination = "run/key/value fact"
+validation = "closed argv/cwd/stderr_mode object"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "stage_termination"
+key_pattern = "^run\\.stage\\.[a-z0-9][a-z0-9._-]{0,99}\\.termination$"
+owner = "stage"
+logical_type = "jcs"
+unit = "none"
+cardinality = "one per stage invocation"
+authoritative_source = "StageRunner child wait outcome"
+capture_moment = "after spawn failure or child terminal state"
+raw_destination = "run/key/value fact"
+validation = "closed exit, signal, or spawn_error union"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "stage_wall"
+key_pattern = "^perf\\.stage\\.[a-z0-9][a-z0-9._-]{0,99}\\.wall_time_sec$"
+owner = "stage"
+logical_type = "decimal"
+unit = "second"
+cardinality = "one per stage invocation"
+authoritative_source = "StageRunner monotonic clock"
+capture_moment = "spawn boundary through terminal wait"
+raw_destination = "run/key/value fact"
+validation = "finite nonnegative elapsed seconds"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "bench_args_effective"
+key_pattern = "^sglang\\.node\\.[0-9]+\\.bench_args_effective\\.(?:[A-Za-z0-9_-]+|encoded\\.[0-9a-f]+)$"
+owner = "configuration"
+logical_type = "jcs"
+unit = "declared by SGLang field"
+cardinality = "one per node and BenchArgs field"
+authoritative_source = "SGLang config-snapshot/v1 domain event"
+capture_moment = "after defaults and auto resolution"
+raw_destination = "run/key/value fact"
+validation = "closed event, sorted unique fields, source blob binding"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "server_args_effective"
+key_pattern = "^sglang\\.node\\.[0-9]+\\.server_args_effective\\.(?:[A-Za-z0-9_-]+|encoded\\.[0-9a-f]+)$"
+owner = "configuration"
+logical_type = "jcs"
+unit = "declared by SGLang field"
+cardinality = "one per node and ServerArgs field"
+authoritative_source = "SGLang config-snapshot/v1 domain event"
+capture_moment = "after defaults and auto resolution"
+raw_destination = "run/key/value fact"
+validation = "closed event, sorted unique fields, source blob binding"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "generation_wall"
+key_pattern = "^perf\\.benchmark\\.generation\\.wall_time_sec$"
+owner = "result"
+logical_type = "decimal"
+unit = "second"
+cardinality = "one per primary result"
+authoritative_source = "source/primary-result.json"
+capture_moment = "immediately after generate returns"
+raw_destination = "run/key/value fact"
+validation = "positive finite decimal"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "returned_count"
+key_pattern = "^result\\.request\\.returned_count$"
+owner = "result"
+logical_type = "uint"
+unit = "request"
+cardinality = "one per primary result"
+authoritative_source = "validated primary-result/v1"
+capture_moment = "immediately after response validation"
+raw_destination = "run/key/value fact"
+validation = "nonnegative integer"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "error_count"
+key_pattern = "^result\\.request\\.error_count$"
+owner = "result"
+logical_type = "uint"
+unit = "request"
+cardinality = "one per primary result"
+authoritative_source = "validated primary-result/v1"
+capture_moment = "immediately after response validation"
+raw_destination = "run/key/value fact"
+validation = "nonnegative integer"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "observed_input_tokens"
+key_pattern = "^result\\.token\\.input\\.total$"
+owner = "result"
+logical_type = "uint"
+unit = "token"
+cardinality = "zero or one per primary result"
+authoritative_source = "validated primary-result/v1"
+capture_moment = "immediately after response validation"
+raw_destination = "run/key/value fact"
+validation = "absent when source field is null"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "observed_output_tokens"
+key_pattern = "^result\\.token\\.output\\.total$"
+owner = "result"
+logical_type = "uint"
+unit = "token"
+cardinality = "zero or one per primary result"
+authoritative_source = "validated primary-result/v1"
+capture_moment = "immediately after response validation"
+raw_destination = "run/key/value fact"
+validation = "absent when source field is null"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "ordered_output_identity"
+key_pattern = "^result\\.token\\.output\\.ordered_token_ids_sha256$"
+owner = "result"
+logical_type = "sha256"
+unit = "none"
+cardinality = "zero or one per primary result"
+authoritative_source = "validated primary-result/v1"
+capture_moment = "immediately after response validation"
+raw_destination = "run/key/value fact"
+validation = "absent unless all ordered output token ids validate"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "collection_complete"
+key_pattern = "^collection_complete$"
+owner = "merge"
+logical_type = "bool"
+unit = "none"
+cardinality = "one per finalized run"
+authoritative_source = "merge expected-versus-observed validation"
+capture_moment = "once after all producers are terminal"
+raw_destination = "merged run/key/value JSONL"
+validation = "false on missing, invalid, ownership error, or conflict"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "imb_process_count"
+key_pattern = "^network\\.imb_mpi1\\.process_count$"
+owner = "network"
+logical_type = "uint"
+unit = "process"
+cardinality = "one per run when IMB executes"
+authoritative_source = "IMB section process count validated against argv"
+capture_moment = "after complete IMB parse"
+raw_destination = "run/key/value fact"
+validation = "positive and identical across required sections"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "imb_message_size"
+key_pattern = "^network\\.imb_mpi1\\.message_size\\.(?:min_bytes|max_bytes)$"
+owner = "network"
+logical_type = "uint"
+unit = "byte"
+cardinality = "two per run when IMB executes"
+authoritative_source = "validated IMB result sizes and argv"
+capture_moment = "after complete IMB parse"
+raw_destination = "run/key/value fact"
+validation = "protocol bounds 0 through 4194304"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "imb_iteration_uint"
+key_pattern = "^network\\.imb_mpi1\\.iteration\\.(?:max_per_sample|time_limit_sec)$"
+owner = "network"
+logical_type = "uint"
+unit = "iteration or second as named"
+cardinality = "two per run when IMB executes"
+authoritative_source = "validated IMB rows and exact argv"
+capture_moment = "after complete IMB parse"
+raw_destination = "run/key/value fact"
+validation = "positive protocol values"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "imb_iteration_policy"
+key_pattern = "^network\\.imb_mpi1\\.iteration\\.policy$"
+owner = "network"
+logical_type = "string"
+unit = "none"
+cardinality = "one per run when IMB executes"
+authoritative_source = "exact IMB argv"
+capture_moment = "at network stage launch"
+raw_destination = "run/key/value fact"
+validation = "const dynamic"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "imb_version"
+key_pattern = "^software\\.imb_mpi1\\.version$"
+owner = "network"
+logical_type = "string"
+unit = "none"
+cardinality = "zero or one per run"
+authoritative_source = "IMB-MPI1 stdout version marker"
+capture_moment = "after complete IMB parse"
+raw_destination = "run/key/value fact"
+validation = "nonempty when present"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "nccl_process_grid"
+key_pattern = "^network\\.nccl_tests\\.(?:mpi_process_count|gpus_per_process|total_gpu_count)$"
+owner = "network"
+logical_type = "uint"
+unit = "process or GPU as named"
+cardinality = "three per run when NCCL executes"
+authoritative_source = "exact argv and nccl-tests config devices"
+capture_moment = "after complete NCCL parse"
+raw_destination = "run/key/value fact"
+validation = "positive and multiplicatively consistent"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "nccl_message_size"
+key_pattern = "^network\\.nccl_tests\\.message_size\\.(?:min_bytes|max_bytes|factor)$"
+owner = "network"
+logical_type = "uint"
+unit = "byte or ratio as named"
+cardinality = "three per run when NCCL executes"
+authoritative_source = "exact argv and nccl-tests config"
+capture_moment = "after complete NCCL parse"
+raw_destination = "run/key/value fact"
+validation = "8 bytes through 1 GiB with factor two"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "nccl_iterations"
+key_pattern = "^network\\.nccl_tests\\.(?:warmup_iterations|timed_iterations|check_iterations|rank_average_mode)$"
+owner = "network"
+logical_type = "uint"
+unit = "iteration or mode as named"
+cardinality = "four per run when NCCL executes"
+authoritative_source = "exact argv and nccl-tests config"
+capture_moment = "after complete NCCL parse"
+raw_destination = "run/key/value fact"
+validation = "protocol fixed values 5, 20, 1, and 1"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "nccl_tests_commit"
+key_pattern = "^software\\.nccl_tests\\.commit$"
+owner = "network"
+logical_type = "string"
+unit = "none"
+cardinality = "one per run when NCCL executes"
+authoritative_source = "SIF sidecar nccl-tests source commit"
+capture_moment = "before network stage launch"
+raw_destination = "run/key/value fact"
+validation = "const 717b68318278e93f371d8ffb46b076069d7c7851"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "nccl_runtime_version"
+key_pattern = "^software\\.nccl\\.version$"
+owner = "network"
+logical_type = "string"
+unit = "none"
+cardinality = "one per run when NCCL executes"
+authoritative_source = "nccl-tests runtime nccl_version"
+capture_moment = "after complete NCCL parse"
+raw_destination = "run/key/value fact"
+validation = "nonempty runtime version"
+applicability = ["bench", "profile"]
+required = false

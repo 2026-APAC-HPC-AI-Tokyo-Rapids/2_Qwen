@@ -1,102 +1,117 @@
 #!/usr/bin/env bash
 #PJM -L rscgrp=b-batch
-#PJM -L elapse=00:30:00
+#PJM -L elapse=00:45:00
 #PJM -L node=2
 #PJM --mpi proc=2
 
-# Run the Qwen 3.5 benchmark across two Genkai compute nodes.
+# Compute-side execution is local-only: no credentials, HTTP clients, upload,
+# merge, or BigQuery publication are permitted in this script.
 set -euo pipefail
 
 : "${RUNTIME_DIR:?RUNTIME_DIR is required}"
 : "${MODEL_PATH:?MODEL_PATH is required}"
 : "${DATASET_PATH:?DATASET_PATH is required}"
 : "${PJM_JOBID:?PJM_JOBID is required}"
-: "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_BASE64:?}"
-
-METRICS_CREDENTIALS_BASE64="${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_BASE64}"
-unset EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_BASE64
-EXPERIMENT_METRICS_CLI="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
-PIPELINE_STARTED_SECONDS=${SECONDS}
-
-metrics_cli() {
-  EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_BASE64="${METRICS_CREDENTIALS_BASE64}" \
-    "${EXPERIMENT_METRICS_CLI}" "$@"
-}
-
-metrics_collect() {
-  local collector=$1
-  shift
-  metrics_cli collect "${collector}" --runtime-dir "${RUNTIME_DIR}" "$@" || true
-}
-
-workflow_run_id="${GITHUB_RUN_ID:-manual}"
-git_sha="${GITHUB_SHA:-unknown}"
-
-cleanup() {
-  local status=$?
-  trap - EXIT INT TERM
-  metrics_collect run-end --exit-code "${status}" --elapsed-sec "$((SECONDS - PIPELINE_STARTED_SECONDS))"
-  exit "${status}"
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
 cd "${RUNTIME_DIR}"
-mkdir -p results "${HOME}/.cache/sglang-jit"
-sif_source_run_number="$(cat sif-source-run.txt 2>/dev/null || printf 'unknown')"
+metrics_cli="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
+manifest="${RUNTIME_DIR}/control/run-manifest.json"
+test -s "${manifest}"
+mkdir -p logs results source/network/imb-mpi1 source/network/nccl-tests
 
 module purge
 module load nvidia/25.11
 module load nvhpcx/2.25.1-cuda13.0
 module load cuda/13.2.0
 module load singularity-ce/4.1.3
-sglang_commit="$(singularity exec sglang.sif cat /opt/sglang/sglang-commit.txt 2>/dev/null || printf 'unknown')"
 
 {
-  echo "job_id=${PJM_JOBID:-unknown}"
-  echo "workflow_run_id=${workflow_run_id}"
-  echo "git_sha=${git_sha}"
-  echo "sif_source_run_number=${sif_source_run_number}"
+  echo "job_id=${PJM_JOBID}"
   echo "started_at=$(date -u +%FT%TZ)"
-  echo "model_path=${MODEL_PATH}"
-  echo "dataset_path=${DATASET_PATH}"
-  echo "sglang_commit=${sglang_commit}"
-  echo "runtime_dir=${RUNTIME_DIR}"
-  singularity inspect sglang.sif
-  singularity sif list sglang.sif
   module list 2>&1
   nvidia-smi --query-gpu=index,name,uuid,memory.total,driver_version --format=csv
   singularity --version
-} >results/environment.log 2>&1
+  singularity inspect sglang.sif
+  singularity sif list sglang.sif
+} >logs/environment.log 2>&1
 
-command=(mpirun -n 2 --map-by ppr:1:node --bind-to none "${RUNTIME_DIR}/scripts/run-qwen35-node.sh")
-
-metrics_collect run-start --command "${command[@]}"
-metrics_collect platform
-metrics_collect source
-PIPELINE_STARTED_SECONDS=${SECONDS}
-
-{
-  printf 'command='
-  printf '%q ' "${command[@]}"
-  printf '\n'
-} >results/throughput.log
-
+benchmark_command=(mpirun -n 2 --map-by ppr:1:node --bind-to none "${RUNTIME_DIR}/scripts/run-qwen35-node.sh")
 set +e
-metrics_cli stage \
-  --socket-dir "${RUNTIME_DIR}/metrics-socket" \
-  --node-gpu-dir "${RUNTIME_DIR}/results" \
-  benchmark -- \
-  scripts/exec-profiler.sh "${command[@]}" 2>&1 | tee -a results/throughput.log
-status=${PIPESTATUS[0]}
+"${metrics_cli}" run-stage \
+  --manifest "${manifest}" \
+  --runtime-dir "${RUNTIME_DIR}" \
+  --name benchmark \
+  --cwd "${RUNTIME_DIR}" \
+  --stderr-mode stdout \
+  --stdout-path "${RUNTIME_DIR}/logs/benchmark.log" \
+  -- "${benchmark_command[@]}"
+benchmark_status=$?
 set -e
-printf 'exit_code=%d\n' "${status}" | tee -a results/throughput.log
-echo "finished_at=$(date -u +%FT%TZ)" >>results/environment.log
-metrics_collect artifact
+printf 'exit_code=%d\n' "${benchmark_status}" >>logs/benchmark.log
 
-if [[ "${status}" -eq 0 ]]; then
-  test -s results/results.jsonl
+run_capture_stage() {
+  local stage_name=$1
+  local artifact_dir=$2
+  shift 2
+  local argv=("$@")
+  mkdir -p "${artifact_dir}"
+  jq -n --args '$ARGS.positional' -- "${argv[@]}" >"${artifact_dir}/argv.json"
+  : >"${artifact_dir}/stderr.txt"
+  set +e
+  "${metrics_cli}" run-stage \
+    --manifest "${manifest}" \
+    --runtime-dir "${RUNTIME_DIR}" \
+    --name "${stage_name}" \
+    --cwd "${RUNTIME_DIR}" \
+    --stderr-mode stdout \
+    --stdout-path "${artifact_dir}/stdout.txt" \
+    -- "${argv[@]}"
+  local status=$?
+  set -e
+  return "${status}"
+}
+
+if [[ "${benchmark_status}" -eq 0 && -s source/primary-result.json ]]; then
+  nccl_tests_commit="$(singularity exec sglang.sif cat /opt/sglang/nccl-tests-commit.txt 2>/dev/null | tr -d '[:space:]')"
+  jq -n \
+    --arg commit "${nccl_tests_commit}" \
+    '{schema_version:"nccl-tests-sidecar/v1",commit:$commit}' \
+    >source/network/nccl-tests/sidecar.json
+  imb_dir="${RUNTIME_DIR}/source/network/imb-mpi1"
+  imb_command=(mpirun -n 2 --map-by ppr:1:node --bind-to none IMB-MPI1
+    -npmin 2 -msglog 0:22 -iter 1000 -time 1 -iter_policy dynamic
+    PingPong Sendrecv Allreduce)
+  run_capture_stage network_imb_mpi1 "${imb_dir}" "${imb_command[@]}" || true
+
+  for collective in all_reduce all_gather reduce_scatter; do
+    nccl_dir="${RUNTIME_DIR}/source/network/nccl-tests/${collective}"
+    mkdir -p "${nccl_dir}"
+    nccl_command=(mpirun -n 2 --map-by ppr:1:node --bind-to none
+      singularity exec --userns --nv --cleanenv --containall
+      --bind "${nccl_dir}:/network"
+      "${RUNTIME_DIR}/sglang.sif" "/opt/nccl-tests/bin/${collective}_perf"
+      -b 8 -e 1G -f 2 -w 5 -n 20 -m 1 -N 1 -d float -c 1 -a 1 -T 300
+      -g 4 -J /network/result.json)
+    run_capture_stage "network_nccl_${collective}" "${nccl_dir}" "${nccl_command[@]}" || true
+  done
+
+  imb_version="$(sed -n '1{s/^[#[:space:]]*//;p;q;}' "${imb_dir}/stdout.txt")"
+  "${metrics_cli}" record-network \
+    --manifest "${manifest}" \
+    --runtime-dir "${RUNTIME_DIR}" \
+    --imb-stdout "${imb_dir}/stdout.txt" \
+    --imb-version "${imb_version:-unknown}" \
+    --nccl-all-reduce "${RUNTIME_DIR}/source/network/nccl-tests/all_reduce/result.json" \
+    --nccl-all-gather "${RUNTIME_DIR}/source/network/nccl-tests/all_gather/result.json" \
+    --nccl-reduce-scatter "${RUNTIME_DIR}/source/network/nccl-tests/reduce_scatter/result.json" \
+    --nccl-tests-commit "${nccl_tests_commit:-unknown}" \
+    --expected-mpi-processes 2 \
+    --expected-gpus-per-process 4 || true
+fi
+
+echo "finished_at=$(date -u +%FT%TZ)" >>logs/environment.log
+if [[ "${benchmark_status}" -eq 0 ]]; then
+  test -s source/primary-result.json
   touch run-success
 fi
-exit "${status}"
+exit "${benchmark_status}"

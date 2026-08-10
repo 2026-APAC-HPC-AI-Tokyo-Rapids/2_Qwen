@@ -70,7 +70,7 @@ cuda_base_image="$(awk '$1 == "From:" { print $2; exit }' "${GITHUB_WORKSPACE}/c
   printf 'workflow_run_attempt=%s\n' "${GITHUB_RUN_ATTEMPT}"
   printf 'workflow_run_number=%s\n' "${GITHUB_RUN_NUMBER}"
   printf 'sglang_commit=%s\n' "${sglang_commit}"
-  printf 'nccl_tests_ref=master\n'
+  printf 'nccl_tests_ref=717b68318278e93f371d8ffb46b076069d7c7851\n'
   printf 'nccl_tests_commit=%s\n' "${nccl_tests_commit}"
   printf 'recipe_sha256=%s\n' "${recipe_sha256}"
   printf 'patches_sha256=%s\n' "${patches_sha256}"

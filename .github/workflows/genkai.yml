@@ -8,6 +8,14 @@ on:
         required: true
         default: false
         type: boolean
+      run_purpose:
+        description: Run as an official benchmark or a diagnostic profile
+        required: true
+        default: bench
+        type: choice
+        options:
+          - bench
+          - profile
   push:
     paths-ignore:
       - '**/.md'
@@ -21,6 +29,7 @@ env:
   GIT_MIRROR_DIR: /fast/PROJECT/git-mirror
   MODEL_PATH: /fast/PROJECT/Qwen/Qwen3.5-397B-A17B-FP8
   DATASET_PATH: /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
+  RUN_PURPOSE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_purpose || 'bench' }}
 
 defaults:
   run:
@@ -46,6 +55,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          module load singularity-ce/4.1.3
           if [[ '${{ (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) || (github.event_name == 'workflow_dispatch' && inputs.require_build) }}' == true ]]; then
             echo "A new SIF build was explicitly requested"
             echo "action=build" >> "${GITHUB_OUTPUT}"
@@ -59,6 +69,10 @@ jobs:
             do
               [[ "${run_id}" != "${GITHUB_RUN_ID}" ]] || continue
               [[ -s "${SIF_ARCHIVE_DIR}/${run_number}.sif" ]] || continue
+              if ! singularity exec "${SIF_ARCHIVE_DIR}/${run_number}.sif" sh -c \
+                'test "$(cat /opt/sglang/nccl-tests-commit.txt)" = 717b68318278e93f371d8ffb46b076069d7c7851 && test "$(cat /opt/sglang/qwen-experiment-metrics-hook-version.txt)" = 2 && test -s /opt/sglang/offline-throughput-source-blob-oid.txt'; then
+                continue
+              fi
               if ! archive_step_count="$(gh run view "${run_id}" --json jobs --jq '[.jobs[].steps[] | select((.name == "Build and publish SGLang SIF" or .name == "Hardlink the selected SIF") and .conclusion == "success")] | length' 2>/dev/null)"; then
                 continue
               fi
@@ -159,7 +173,7 @@ jobs:
           echo "runtime_dir=${runtime_dir}" >> "${GITHUB_OUTPUT}"
           source_run_number="${SIF_SOURCE_RUN_NUMBER:-${GITHUB_RUN_NUMBER}}"
           cd "${runtime_dir}"
-          mkdir scripts logs results metrics-socket
+          mkdir -p scripts logs results source control domain/fragments profile/raw
           ln -s "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
           printf '%s\n' "${source_run_number}" > sif-source-run.txt
           install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.pjm" "${GITHUB_WORKSPACE}/scripts/run-qwen35-node.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" scripts/
@@ -172,6 +186,29 @@ jobs:
             '{sif: {source_workflow_run_number: $sif_source_workflow_run_number, size_bytes: $sif_size_bytes}, dataset: {size_bytes: $dataset_size_bytes}}' \
             > metrics-artifacts.json
           test -x qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics
+          control_plane_sha256="$({
+            find "${GITHUB_WORKSPACE}/.github/workflows" "${GITHUB_WORKSPACE}/scripts" -type f -print0
+          } | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          instrumentation_bundle_sha256="$(
+            find "${GITHUB_WORKSPACE}/qwen-experiment-metrics" -type f \
+              ! -path '*/.venv/*' ! -path '*/dist/*' ! -path '*/.pytest_cache/*' ! -path '*/.ruff_cache/*' -print0 |
+              sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+          )"
+          object_hash_algorithm="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-object-format)"
+          if [[ "${RUN_PURPOSE}" == profile ]]; then
+            base_role=profile_base
+          else
+            base_role=score_reference
+          fi
+          qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics init-run \
+            --runtime-dir "${runtime_dir}" \
+            --purpose "${RUN_PURPOSE}" \
+            --object-hash-algorithm "${object_hash_algorithm}" \
+            --base-role "${base_role}" \
+            --base-commit "${GITHUB_SHA}" \
+            --head-commit "${GITHUB_SHA}" \
+            --control-plane-sha256 "${control_plane_sha256}" \
+            --instrumentation-bundle-sha256 "${instrumentation_bundle_sha256}"
 
       - name: Cleanup failed SGLang provisioning
         if: failure() && steps.provision_runtime.outputs.runtime_dir != ''
@@ -191,12 +228,9 @@ jobs:
 
     steps:
       - name: Submit Qwen job
-        env:
-          EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
         run: |
-          test -n "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON}"
-          credentials_base64="$(printf '%s' "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON}" | base64 --wrap=0)"
-          job_environment="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH},GITHUB_RUN_ID=${GITHUB_RUN_ID},GITHUB_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT},GITHUB_REPOSITORY=${GITHUB_REPOSITORY},GITHUB_SHA=${GITHUB_SHA},EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_BASE64=${credentials_base64}"
+          test -s "${RUNTIME_DIR}/control/run-manifest.json"
+          job_environment="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH}"
           job_output="$(pjsub -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.pjm")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
@@ -237,38 +271,74 @@ jobs:
           pjwait "${PJM_JOB_ID}"
           test -e "${RUNTIME_DIR}/run-success"
 
-      - name: Collect PJM accounting metrics
+      - name: Capture PJM accounting source
         if: always() && env.PJM_JOB_ID != ''
+        run: |
+          mkdir -p "${RUNTIME_DIR}/source/scheduler"
+          pjwait "${PJM_JOB_ID}" >"${RUNTIME_DIR}/source/scheduler/accounting.txt" 2>&1 || true
+
+      - name: Merge and package v2 artifacts
+        if: always()
+        run: |
+          metrics_cli="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
+          manifest="${RUNTIME_DIR}/control/run-manifest.json"
+          test -s "${manifest}"
+          "${metrics_cli}" merge \
+            --manifest "${manifest}" \
+            --runtime-dir "${RUNTIME_DIR}" || true
+          test -s "${RUNTIME_DIR}/metrics.jsonl"
+
+          package_args=()
+          while IFS= read -r -d '' member; do
+            relative="${member#${RUNTIME_DIR}/}"
+            role="${relative%%/*}"
+            package_args+=(--member "${role}=${relative}")
+          done < <(
+            find "${RUNTIME_DIR}/control" "${RUNTIME_DIR}/domain" "${RUNTIME_DIR}/logs" "${RUNTIME_DIR}/results" "${RUNTIME_DIR}/source" \
+              -type f -print0 | sort -z
+          )
+          profile_args=()
+          if [[ "$(jq -er '.run_purpose' "${manifest}")" == profile ]]; then
+            while IFS= read -r -d '' member; do
+              profile_args+=(--profile-member "${member#${RUNTIME_DIR}/}")
+            done < <(find "${RUNTIME_DIR}/profile/raw" -type f -print0 | sort -z)
+          fi
+          "${metrics_cli}" package \
+            --manifest "${manifest}" \
+            --runtime-dir "${RUNTIME_DIR}" \
+            "${package_args[@]}" "${profile_args[@]}"
+
+      - name: Upload fixed v2 artifact set
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen35-sglang-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.RUNTIME_DIR }}/run-artifacts.tar.zst
+            ${{ env.RUNTIME_DIR }}/metrics.jsonl
+            ${{ env.RUNTIME_DIR }}/artifact-manifest.json
+            ${{ env.RUNTIME_DIR }}/profile-raw.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish v2 facts to BigQuery
+        if: always() && steps.upload.outcome == 'success'
         env:
           EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
         run: |
-          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" \
-            collect log-artifact \
-            --runtime-dir "${RUNTIME_DIR}" \
-            --job-id "${PJM_JOB_ID}"
-          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" \
-            collect scheduler \
-            --runtime-dir "${RUNTIME_DIR}" \
-            --job-id "${PJM_JOB_ID}"
-
-      - name: Upload Qwen execution log
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: qwen35-sglang-log-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.RUNTIME_DIR }}/logs
-          compression-level: 1
-
-      - name: Upload Qwen inference results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: qwen35-sglang-results-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.RUNTIME_DIR }}/results
-          compression-level: 0
+          test -n "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON}"
+          uv sync \
+            --project "${RUNTIME_DIR}/qwen-experiment-metrics" \
+            --frozen --no-dev --extra publish
+          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" publish \
+            --metrics "${RUNTIME_DIR}/metrics.jsonl" \
+            --artifact-manifest "${RUNTIME_DIR}/artifact-manifest.json" \
+            --pyproject "${RUNTIME_DIR}/qwen-experiment-metrics/pyproject.toml" \
+            --manifest "${RUNTIME_DIR}/control/run-manifest.json"
 
       - name: Cleanup provisioned runtime
-        if: always()
+        if: always() && steps.upload.outcome == 'success'
         run: |
           if [[ -n "${PJM_JOB_ID:-}" ]]; then
             pjdel "${PJM_JOB_ID}" 2>/dev/null || true

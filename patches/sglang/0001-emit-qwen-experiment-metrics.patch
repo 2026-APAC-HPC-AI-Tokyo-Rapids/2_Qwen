@@ -1,42 +1,185 @@
 diff --git a/python/sglang/benchmark/offline_throughput.py b/python/sglang/benchmark/offline_throughput.py
 --- a/python/sglang/benchmark/offline_throughput.py
 +++ b/python/sglang/benchmark/offline_throughput.py
-@@ -23,0 +25,2 @@ import random
+@@ -18,8 +18,11 @@ import asyncio
+ import dataclasses
++import hashlib
+ import inspect
+ import json
+ import logging
+ import os
+ import random
 +import socket
 +import struct
-@@ -34,0 +38,20 @@ from sglang.srt.server_args import ServerArgs
-+def _send_metrics_event(event_type, payload):
-+    """Emit optional metrics without making observability affect a benchmark."""
+ import time
+ from typing import Dict, List, Optional, Tuple
+@@ -32,6 +35,135 @@ from sglang.benchmark.utils import get_tokenizer, set_ulimit
+ from sglang.lang.backend.runtime_endpoint import Runtime
+ from sglang.srt.entrypoints.engine import Engine
+ from sglang.srt.server_args import ServerArgs
++
++
++_metrics_sequence = 0
++
++
++def _send_metrics_event(event_type, payload, global_rank=None):
++    """Send a closed v2 event over the node-local AF_UNIX socket."""
++    global _metrics_sequence
 +    socket_path = os.getenv("QWEN_EXPERIMENT_METRICS_SOCKET")
-+    if not socket_path:
++    run_id = os.getenv("QWEN_EXPERIMENT_METRICS_RUN_ID")
++    raw_node_rank = os.getenv("QWEN_EXPERIMENT_METRICS_NODE_RANK")
++    if not socket_path or not run_id or raw_node_rank is None:
 +        return
 +    try:
++        node_rank = int(raw_node_rank)
++        event = {
++            "schema_version": "qwen-domain-event/v1",
++            "run_id": run_id,
++            "producer_id": f"sglang-node-{node_rank}",
++            "node_rank": node_rank,
++            "sequence": _metrics_sequence,
++            "event_type": event_type,
++            "payload": payload,
++        }
++        if global_rank is not None:
++            event["global_rank"] = global_rank
 +        encoded = json.dumps(
-+            {"type": event_type, "payload": payload},
++            event,
 +            ensure_ascii=False,
++            allow_nan=False,
 +            separators=(",", ":"),
-+            default=str,
 +        ).encode()
 +        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
 +            stream.settimeout(5)
 +            stream.connect(socket_path)
 +            stream.sendall(struct.pack(">I", len(encoded)) + encoded)
++        _metrics_sequence += 1
 +    except Exception as error:
 +        logging.warning("Could not emit Qwen experiment metrics: %s", error)
 +
 +
-@@ -461,0 +485,12 @@ def throughput_test(
++def _emit_config_snapshot(config, config_type, event_type):
++    if not os.getenv("QWEN_EXPERIMENT_METRICS_SOCKET"):
++        return
 +    try:
++        source_blob_oid = os.environ["QWEN_EXPERIMENT_METRICS_SOURCE_BLOB_OID"]
++        values = dataclasses.asdict(config)
++        fields = []
++        definitions = {
++            field.name: str(field.type) for field in dataclasses.fields(config)
++        }
++        for name in sorted(values, key=lambda item: item.encode("utf-8")):
++            fields.append(
++                {
++                    "name": name,
++                    "declared_type": definitions[name],
++                    "value": values[name],
++                }
++            )
 +        _send_metrics_event(
-+            "sglang.configuration",
++            event_type,
 +            {
-+                "bench_args": dataclasses.asdict(bench_args),
-+                "server_args": dataclasses.asdict(server_args),
-+                "environment": dict(os.environ),
++                "schema_version": "config-snapshot/v1",
++                "config_type": config_type,
++                "definition": {
++                    "source_path": "python/sglang/benchmark/offline_throughput.py",
++                    "class_name": config_type,
++                    "source_blob_oid": source_blob_oid,
++                },
++                "fields": fields,
 +            },
 +        )
 +    except Exception as error:
-+        logging.warning("Could not collect SGLang configuration metrics: %s", error)
++        logging.warning("Could not emit Qwen configuration metrics: %s", error)
 +
-@@ -499,0 +536 @@ def throughput_test(
-+    _send_metrics_event("sglang.benchmark_result", result)
++
++def _ordered_output_identity(gen_out, observed_output_tokens):
++    ordered = []
++    for output in gen_out:
++        token_ids = output.get("output_ids")
++        completion_tokens = output.get("meta_info", {}).get("completion_tokens")
++        if (
++            not isinstance(token_ids, list)
++            or any(not isinstance(token, int) or token < 0 for token in token_ids)
++            or completion_tokens != len(token_ids)
++        ):
++            return None
++        ordered.append(token_ids)
++    if sum(len(tokens) for tokens in ordered) != observed_output_tokens:
++        return None
++    encoded = json.dumps(ordered, separators=(",", ":"), ensure_ascii=False).encode()
++    return hashlib.sha256(encoded).hexdigest()
++
++
++def _emit_primary_result(gen_out, measurement_results, latency):
++    try:
++        if int(os.getenv("QWEN_EXPERIMENT_METRICS_NODE_RANK", "-1")) != 0:
++            return
++        source_dir = os.environ["QWEN_EXPERIMENT_METRICS_SOURCE_DIR"]
++        payload = {
++            "schema_version": "primary-result/v1",
++            "run_id": os.environ["QWEN_EXPERIMENT_METRICS_RUN_ID"],
++            "invocation_id": "measured-generation",
++            "generation_wall_sec": latency,
++            "returned_count": len(gen_out),
++            "error_count": 0,
++            "observed_input_tokens": measurement_results["total_input_tokens"],
++            "observed_output_tokens": measurement_results["total_output_tokens"],
++            "ordered_output_token_ids_sha256": _ordered_output_identity(
++                gen_out, measurement_results["total_output_tokens"]
++            ),
++        }
++        os.makedirs(source_dir, exist_ok=True)
++        destination = os.path.join(source_dir, "primary-result.json")
++        temporary = destination + f".tmp-{os.getpid()}"
++        with open(temporary, "x", encoding="utf-8") as stream:
++            json.dump(
++                payload,
++                stream,
++                ensure_ascii=False,
++                allow_nan=False,
++                separators=(",", ":"),
++            )
++            stream.write("\n")
++            stream.flush()
++        os.replace(temporary, destination)
++        _send_metrics_event("primary_result", payload, global_rank=0)
++    except Exception as error:
++        logging.warning("Could not emit Qwen primary-result metrics: %s", error)
++
++
+-
+-
+ @dataclasses.dataclass
+@@ -234,3 +366,4 @@ def throughput_test_once(
+     return_logprob: bool = False,
+     logprob_start_len: int = -1,
++    metrics_kind: str = "warmup",
+ ):
+@@ -304,6 +437,8 @@ def throughput_test_once(
+     measurement_results["total_output_tokens"] = sum(
+         o["meta_info"]["completion_tokens"] for o in gen_out
+     )
++    if metrics_kind == "measured":
++        _emit_primary_result(gen_out, measurement_results, latency)
+     measurement_results["request_throughput"] = (
+         measurement_results["successful_requests"] / latency
+     )
+@@ -432,4 +567,7 @@ def throughput_test(
+     server_args: ServerArgs,
+     bench_args: BenchArgs,
+ ):
++    _emit_config_snapshot(bench_args, "BenchArgs", "bench_args_effective")
++    _emit_config_snapshot(server_args, "ServerArgs", "server_args_effective")
++
+     if bench_args.backend == "engine":
+@@ -482,3 +620,4 @@ def throughput_test(
+             return_logprob=bench_args.return_logprob,
+             logprob_start_len=bench_args.logprob_start_len,
++            metrics_kind="warmup",
+         )
+@@ -497,3 +636,4 @@ def throughput_test(
+         return_logprob=bench_args.return_logprob,
+         logprob_start_len=bench_args.logprob_start_len,
++        metrics_kind="measured",
+     )
