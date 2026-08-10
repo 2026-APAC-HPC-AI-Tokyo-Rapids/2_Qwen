@@ -33,6 +33,13 @@ def test_sif_build_consumes_the_tracked_sglang_lock() -> None:
     assert "uv pip install --python /opt/sglang/venv/bin/python --no-deps -e ." in recipe
 
 
+def test_sif_recipe_tests_the_shared_v2_event_emitter() -> None:
+    recipe = (ROOT / "containers/sglang.def").read_text(encoding="utf-8")
+
+    assert "from sglang.srt.qwen_experiment_metrics import send_event" in recipe
+    assert "from sglang.benchmark.offline_throughput import _send_metrics_event" not in recipe
+
+
 def test_genkai_workflow_captures_closed_accounting_source() -> None:
     workflow = (ROOT / ".github/workflows/genkai.yml").read_text(encoding="utf-8")
     assert "pjstat --history -S" in workflow
