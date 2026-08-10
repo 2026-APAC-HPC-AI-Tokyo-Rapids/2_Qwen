@@ -1,9 +1,10 @@
 Bootstrap: docker
-From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
+From: nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41cfc5d037f
 
 %files
     patches/sglang /opt/sglang-patches
     sglang-source /opt/sglang/source
+    containers/apac-manifest.json /opt/apac/manifest.json
 
 %labels
     org.opencontainers.image.title "Source-built SGLang runtime"
@@ -130,9 +131,13 @@ From: nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
     /opt/sglang/venv/bin/python -c 'from importlib.metadata import version; print({p: version(p) for p in ("deep-ep", "mooncake-transfer-engine-cuda13", "mscclpp", "nixl", "nixl-cu13")})'
     mpirun --version
     test "$(find /opt/nccl-tests/bin -maxdepth 1 -type f -name '*_perf' | wc -l)" -eq 11
+    for binary in all_reduce_perf all_gather_perf reduce_scatter_perf; do
+        /opt/nccl-tests/bin/${binary} -h 2>&1 | grep -q -- '-J'
+    done
     test "$(cat /opt/sglang/nccl-tests-commit.txt)" = 717b68318278e93f371d8ffb46b076069d7c7851
     test "$(cat /opt/sglang/qwen-experiment-metrics-hook-version.txt)" = 2
     test -s /opt/sglang/offline-throughput-source-blob-oid.txt
+    test -s /opt/apac/manifest.json
     ! ldd /opt/nccl-tests/bin/all_reduce_perf | grep -q 'not found'
     ucx_info -v
     uv --version

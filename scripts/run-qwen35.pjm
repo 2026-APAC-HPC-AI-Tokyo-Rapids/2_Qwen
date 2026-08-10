@@ -16,26 +16,55 @@ set -euo pipefail
 cd "${RUNTIME_DIR}"
 metrics_cli="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
 manifest="${RUNTIME_DIR}/control/run-manifest.json"
+execution_settings="${RUNTIME_DIR}/control/execution-settings.json"
 test -s "${manifest}"
+test -s "${execution_settings}"
+[[ "$(jq -er '.run_purpose' "${execution_settings}")" == "$(jq -er '.run_purpose' "${manifest}")" ]]
 mkdir -p logs results source/network/imb-mpi1 source/network/nccl-tests
+mpi_processes="$(jq -er '.mpi_processes' "${execution_settings}")"
+gpus_per_node="$(jq -er '.gpus_per_node' "${execution_settings}")"
+[[ "$(jq -er '.nodes' "${execution_settings}")" -eq 2 ]]
+[[ "${mpi_processes}" -eq 2 ]]
+[[ "$(jq -er '.resource_group' "${execution_settings}")" == b-batch ]]
+
+# Capture the scheduler-side identity at the first PJM boundary, before module
+# operations mutate the job-entry environment.  This source is immutable for the
+# run; submission/accounting equality remains a runner-side validation.
+job_entry="${RUNTIME_DIR}/control/job-entry.json"
+job_entry_tmp="${job_entry}.tmp-${BASHPID}"
+test ! -e "${job_entry}"
+jq -n \
+  --arg run_id "$(jq -er '.run_id' "${manifest}")" \
+  --arg pj_job_id "${PJM_JOBID}" \
+  --arg entered_at "$(date -u +%FT%TZ)" \
+  '{schema_version:"job-entry/v1",run_id:$run_id,pj_job_id:$pj_job_id,entered_at:$entered_at}' \
+  >"${job_entry_tmp}"
+mv -- "${job_entry_tmp}" "${job_entry}"
+"${metrics_cli}" record-job-entry \
+  --manifest "${manifest}" \
+  --runtime-dir "${RUNTIME_DIR}"
 
 module purge
 module load nvidia/25.11
 module load nvhpcx/2.25.1-cuda13.0
 module load cuda/13.2.0
 module load singularity-ce/4.1.3
+"${metrics_cli}" capture-runtime-launchers --runtime-dir "${RUNTIME_DIR}"
+mpirun_launcher="$(jq -er '.executables[] | select(.role == "mpirun") | .resolved_realpath' source/runtime-launchers.json)"
+export SINGULARITY_LAUNCHER
+SINGULARITY_LAUNCHER="$(jq -er '.executables[] | select(.role == "singularity") | .resolved_realpath' source/runtime-launchers.json)"
 
 {
   echo "job_id=${PJM_JOBID}"
   echo "started_at=$(date -u +%FT%TZ)"
   module list 2>&1
   nvidia-smi --query-gpu=index,name,uuid,memory.total,driver_version --format=csv
-  singularity --version
-  singularity inspect sglang.sif
-  singularity sif list sglang.sif
+  "${SINGULARITY_LAUNCHER}" --version
+  "${SINGULARITY_LAUNCHER}" inspect sglang.sif
+  "${SINGULARITY_LAUNCHER}" sif list sglang.sif
 } >logs/environment.log 2>&1
 
-benchmark_command=(mpirun -n 2 --map-by ppr:1:node --bind-to none "${RUNTIME_DIR}/scripts/run-qwen35-node.sh")
+benchmark_command=("${mpirun_launcher}" -n "${mpi_processes}" --map-by ppr:1:node --bind-to none "${RUNTIME_DIR}/scripts/run-qwen35-node.sh")
 set +e
 "${metrics_cli}" run-stage \
   --manifest "${manifest}" \
@@ -72,26 +101,26 @@ run_capture_stage() {
 }
 
 if [[ "${benchmark_status}" -eq 0 && -s source/primary-result.json ]]; then
-  nccl_tests_commit="$(singularity exec sglang.sif cat /opt/sglang/nccl-tests-commit.txt 2>/dev/null | tr -d '[:space:]')"
+  nccl_tests_commit="$("${SINGULARITY_LAUNCHER}" exec sglang.sif cat /opt/sglang/nccl-tests-commit.txt 2>/dev/null | tr -d '[:space:]')"
   jq -n \
     --arg commit "${nccl_tests_commit}" \
     '{schema_version:"nccl-tests-sidecar/v1",commit:$commit}' \
     >source/network/nccl-tests/sidecar.json
   imb_dir="${RUNTIME_DIR}/source/network/imb-mpi1"
-  imb_command=(mpirun -n 2 --map-by ppr:1:node --bind-to none IMB-MPI1
-    -npmin 2 -msglog 0:22 -iter 1000 -time 1 -iter_policy dynamic
+  imb_command=("${mpirun_launcher}" -n "${mpi_processes}" --map-by ppr:1:node --bind-to none IMB-MPI1
+    -npmin "${mpi_processes}" -msglog 0:22 -iter 1000 -time 1 -iter_policy dynamic
     PingPong Sendrecv Allreduce)
   run_capture_stage network_imb_mpi1 "${imb_dir}" "${imb_command[@]}" || true
 
   for collective in all_reduce all_gather reduce_scatter; do
     nccl_dir="${RUNTIME_DIR}/source/network/nccl-tests/${collective}"
     mkdir -p "${nccl_dir}"
-    nccl_command=(mpirun -n 2 --map-by ppr:1:node --bind-to none
-      singularity exec --userns --nv --cleanenv --containall
+    nccl_command=("${mpirun_launcher}" -n "${mpi_processes}" --map-by ppr:1:node --bind-to none
+      "${SINGULARITY_LAUNCHER}" exec --userns --nv --cleanenv --containall
       --bind "${nccl_dir}:/network"
       "${RUNTIME_DIR}/sglang.sif" "/opt/nccl-tests/bin/${collective}_perf"
       -b 8 -e 1G -f 2 -w 5 -n 20 -m 1 -N 1 -d float -c 1 -a 1 -T 300
-      -g 4 -J /network/result.json)
+      -g "${gpus_per_node}" -J /network/result.json)
     run_capture_stage "network_nccl_${collective}" "${nccl_dir}" "${nccl_command[@]}" || true
   done
 
@@ -105,8 +134,8 @@ if [[ "${benchmark_status}" -eq 0 && -s source/primary-result.json ]]; then
     --nccl-all-gather "${RUNTIME_DIR}/source/network/nccl-tests/all_gather/result.json" \
     --nccl-reduce-scatter "${RUNTIME_DIR}/source/network/nccl-tests/reduce_scatter/result.json" \
     --nccl-tests-commit "${nccl_tests_commit:-unknown}" \
-    --expected-mpi-processes 2 \
-    --expected-gpus-per-process 4 || true
+    --expected-mpi-processes "${mpi_processes}" \
+    --expected-gpus-per-process "${gpus_per_node}" || true
 fi
 
 echo "finished_at=$(date -u +%FT%TZ)" >>logs/environment.log

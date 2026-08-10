@@ -35,6 +35,8 @@ def parser() -> argparse.ArgumentParser:
     initialize.add_argument("--head-commit", required=True)
     initialize.add_argument("--control-plane-sha256", required=True)
     initialize.add_argument("--instrumentation-bundle-sha256", required=True)
+    initialize.add_argument("--execution-settings", type=Path, required=True)
+    initialize.add_argument("--repository", type=Path, required=True)
     initialize.add_argument("--run-id")
     initialize.add_argument("--registry", type=Path)
 
@@ -77,6 +79,49 @@ def parser() -> argparse.ArgumentParser:
     network.add_argument("--expected-mpi-processes", type=int, required=True)
     network.add_argument("--expected-gpus-per-process", type=int, required=True)
 
+    inputs = commands.add_parser("prepare-inputs")
+    inputs.add_argument("--runtime-dir", type=Path, required=True)
+    inputs.add_argument("--model-path", type=Path, required=True)
+    inputs.add_argument("--model-repository", required=True)
+    inputs.add_argument("--model-revision", required=True)
+    inputs.add_argument("--dataset-path", type=Path, required=True)
+    inputs.add_argument("--dataset-repository", required=True)
+    inputs.add_argument("--dataset-revision", required=True)
+    inputs.add_argument("--dataset-relative-path", required=True)
+
+    provenance = commands.add_parser("record-provenance")
+    _common_runtime_arguments(provenance)
+
+    submission = commands.add_parser("prepare-submission")
+    _common_runtime_arguments(submission)
+    submission.add_argument("--pjm-script", type=Path, required=True)
+    submission.add_argument("--repository-path", required=True)
+    submission.add_argument("command", nargs=argparse.REMAINDER)
+
+    submission_result = commands.add_parser("record-submission-result")
+    _common_runtime_arguments(submission_result)
+    submission_result.add_argument("--job-id", required=True)
+
+    job_entry = commands.add_parser("record-job-entry")
+    _common_runtime_arguments(job_entry)
+
+    cache = commands.add_parser("record-cache")
+    _common_runtime_arguments(cache)
+    cache.add_argument("--node-rank", type=int, required=True)
+    cache.add_argument("--cache-root", type=Path, required=True)
+
+    launchers = commands.add_parser("capture-runtime-launchers")
+    launchers.add_argument("--runtime-dir", type=Path, required=True)
+
+    sif_sidecar = commands.add_parser("create-sif-sidecar")
+    sif_sidecar.add_argument("--workspace", type=Path, required=True)
+    sif_sidecar.add_argument("--sglang-source", type=Path, required=True)
+    sif_sidecar.add_argument("--sif", type=Path, required=True)
+    sif_sidecar.add_argument("--base-oci", type=Path, required=True)
+    sif_sidecar.add_argument("--embedded-manifest", type=Path, required=True)
+    sif_sidecar.add_argument("--runtime-inventory", type=Path, required=True)
+    sif_sidecar.add_argument("--output", type=Path, required=True)
+
     merge = commands.add_parser("merge")
     _common_runtime_arguments(merge)
     merge.add_argument("--output", type=Path)
@@ -113,6 +158,22 @@ def main(argv: list[str] | None = None) -> int:
         return _sample_gpu(arguments)
     if arguments.action == "record-network":
         return _record_network(arguments)
+    if arguments.action == "prepare-inputs":
+        return _prepare_inputs(arguments)
+    if arguments.action == "record-provenance":
+        return _record_provenance(arguments)
+    if arguments.action == "prepare-submission":
+        return _prepare_submission(arguments)
+    if arguments.action == "record-submission-result":
+        return _record_submission_result(arguments)
+    if arguments.action == "record-job-entry":
+        return _record_job_entry(arguments)
+    if arguments.action == "record-cache":
+        return _record_cache(arguments)
+    if arguments.action == "capture-runtime-launchers":
+        return _capture_runtime_launchers(arguments)
+    if arguments.action == "create-sif-sidecar":
+        return _create_sif_sidecar(arguments)
     if arguments.action == "merge":
         return _merge(arguments)
     if arguments.action == "package":
@@ -123,16 +184,32 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _init_run(arguments: argparse.Namespace) -> int:
+    from .sources import (
+        execution_facts,
+        install_execution_settings,
+        validate_source_track_repository,
+    )
+
     runtime_dir = arguments.runtime_dir.resolve()
+    execution_path = install_execution_settings(
+        arguments.execution_settings, runtime_dir
+    )
+    from .sources import load_execution_settings
+
+    settings = load_execution_settings(execution_path)
+    if settings.run_purpose != arguments.purpose:
+        raise ValueError("execution settings purpose differs from requested run purpose")
+    source_track = SourceTrack(
+        object_hash_algorithm=arguments.object_hash_algorithm,
+        base_role=arguments.base_role,
+        base_commit=arguments.base_commit,
+        head_commit=arguments.head_commit,
+    )
+    validate_source_track_repository(arguments.repository, source_track)
     manifest_path = create_run_manifest(
         runtime_dir,
         run_purpose=arguments.purpose,
-        source_track=SourceTrack(
-            object_hash_algorithm=arguments.object_hash_algorithm,
-            base_role=arguments.base_role,
-            base_commit=arguments.base_commit,
-            head_commit=arguments.head_commit,
-        ),
+        source_track=source_track,
         observed_control_plane_sha256=arguments.control_plane_sha256,
         instrumentation_bundle_sha256=arguments.instrumentation_bundle_sha256,
         run_id=arguments.run_id,
@@ -142,6 +219,7 @@ def _init_run(arguments: argparse.Namespace) -> int:
         manifest_path, arguments.registry, "runner", runtime_dir
     ) as recorder:
         recorder.record_many(manifest_facts(manifest))
+        recorder.record_many(execution_facts(settings))
     print(jcs_text({"manifest_path": str(manifest_path), "run_id": manifest.run_id}))
     return 0
 
@@ -271,6 +349,135 @@ def _record_network(arguments: argparse.Namespace) -> int:
         expected_mpi_processes=arguments.expected_mpi_processes,
         expected_gpus_per_process=arguments.expected_gpus_per_process,
         registry_path=arguments.registry,
+    )
+    return 0
+
+
+def _prepare_inputs(arguments: argparse.Namespace) -> int:
+    from .sources import create_input_manifests
+
+    model, dataset = create_input_manifests(
+        arguments.runtime_dir,
+        model_path=arguments.model_path,
+        model_repository=arguments.model_repository,
+        model_revision=arguments.model_revision,
+        dataset_path=arguments.dataset_path,
+        dataset_repository=arguments.dataset_repository,
+        dataset_revision=arguments.dataset_revision,
+        dataset_relative_path=arguments.dataset_relative_path,
+    )
+    print(jcs_text({"dataset_manifest": str(dataset), "model_manifest": str(model)}))
+    return 0
+
+
+def _record_provenance(arguments: argparse.Namespace) -> int:
+    from .sources import provenance_facts
+
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        "provenance",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record_many(provenance_facts(arguments.runtime_dir))
+    return 0
+
+
+def _prepare_submission(arguments: argparse.Namespace) -> int:
+    from .sources import create_submission_request
+
+    _, facts = create_submission_request(
+        arguments.manifest,
+        arguments.runtime_dir,
+        pjm_script=arguments.pjm_script,
+        repository_path=arguments.repository_path,
+        argv=_without_separator(arguments.command),
+    )
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        "submission-request",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record_many(facts)
+    return 0
+
+
+def _record_submission_result(arguments: argparse.Namespace) -> int:
+    from .sources import create_submission_result
+
+    _, fact = create_submission_result(
+        arguments.manifest, arguments.runtime_dir, arguments.job_id
+    )
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        "submission-result",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record(fact)
+    return 0
+
+
+def _record_job_entry(arguments: argparse.Namespace) -> int:
+    from .sources import job_entry_fact
+
+    manifest = load_manifest(arguments.manifest)
+    fact = job_entry_fact(
+        arguments.runtime_dir / "control/job-entry.json", manifest.run_id
+    )
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        "job-entry",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record(fact)
+    return 0
+
+
+def _record_cache(arguments: argparse.Namespace) -> int:
+    from .sources import create_cache_manifest
+
+    producer = f"cache:node-{arguments.node_rank}"
+    _, fact = create_cache_manifest(
+        arguments.manifest,
+        arguments.runtime_dir,
+        node_rank=arguments.node_rank,
+        cache_root=arguments.cache_root,
+    )
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        producer,
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record(fact)
+    return 0
+
+
+def _capture_runtime_launchers(arguments: argparse.Namespace) -> int:
+    from .sources import capture_runtime_launchers
+
+    print(str(capture_runtime_launchers(arguments.runtime_dir)))
+    return 0
+
+
+def _create_sif_sidecar(arguments: argparse.Namespace) -> int:
+    from .sources import create_sif_sidecar
+
+    print(
+        str(
+            create_sif_sidecar(
+                workspace=arguments.workspace,
+                sglang_source=arguments.sglang_source,
+                sif=arguments.sif,
+                base_oci=arguments.base_oci,
+                embedded_manifest=arguments.embedded_manifest,
+                runtime_inventory=arguments.runtime_inventory,
+                output=arguments.output,
+            )
+        )
     )
     return 0
 

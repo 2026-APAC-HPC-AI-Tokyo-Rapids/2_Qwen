@@ -51,7 +51,35 @@ def test_packager_creates_fixed_bench_artifact_set(
         text=True,
         capture_output=True,
     ).stdout.splitlines()
-    assert members == ["logs/benchmark.log", "bundle.manifest.json"]
+    assert members == [
+        "logs/benchmark.log",
+        "metrics.jsonl",
+        "bundle.manifest.json",
+    ]
+
+    bundle_manifest = json.loads(
+        subprocess.run(
+            [
+                "tar",
+                "-I",
+                "zstd",
+                "-xOf",
+                runtime / "run-artifacts.tar.zst",
+                "bundle.manifest.json",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout
+    )
+    assert [item["path"] for item in bundle_manifest["members"]] == [
+        "logs/benchmark.log",
+        "metrics.jsonl",
+    ]
+    assert [item["role"] for item in bundle_manifest["members"]] == [
+        "benchmark_log",
+        "metrics",
+    ]
 
 
 def test_packager_rejects_member_escape(runtime: Path, manifest_path: Path) -> None:
@@ -61,4 +89,16 @@ def test_packager_rejects_member_escape(runtime: Path, manifest_path: Path) -> N
             manifest_path,
             runtime,
             run_members=(("../outside", "invalid"),),
+        )
+
+
+def test_packager_rejects_caller_supplied_metrics_member(
+    runtime: Path, manifest_path: Path
+) -> None:
+    (runtime / "metrics.jsonl").write_text("not-empty\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="path-unique"):
+        RunPackager().package(
+            manifest_path,
+            runtime,
+            run_members=(("metrics.jsonl", "unexpected-duplicate"),),
         )

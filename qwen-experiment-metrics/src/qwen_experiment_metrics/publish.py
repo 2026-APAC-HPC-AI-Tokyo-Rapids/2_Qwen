@@ -60,8 +60,8 @@ def read_metrics(path: Path, *, expected_run: str | None = None) -> tuple[RawRow
     rows: list[RawRow] = []
     for number, encoded in enumerate(raw.splitlines(), start=1):
         try:
-            item = json.loads(encoded)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            item = load_json_strict(encoded)
+        except (UnicodeDecodeError, ValueError) as error:
             raise ValueError(f"invalid metrics row {number}") from error
         if not isinstance(item, dict) or list(item) != ["run", "key", "value"]:
             raise ValueError(f"metrics row {number} must contain ordered run/key/value")

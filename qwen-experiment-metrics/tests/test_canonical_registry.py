@@ -33,7 +33,11 @@ def test_decimal_contract_is_distinct_from_jcs_float() -> None:
 def test_machine_registry_has_complete_observation_contract() -> None:
     registry = load_registry()
     assert registry.schema_version == "qwen-metrics-registry/v1"
-    assert registry.default_required_producers("bench") == {"runner", "result"}
+    assert registry.default_required_producers("bench") == {
+        "provenance",
+        "result",
+        "runner",
+    }
     for fact in registry.facts:
         assert fact.authoritative_source
         assert fact.capture_moment
