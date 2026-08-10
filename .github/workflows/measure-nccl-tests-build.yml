@@ -53,11 +53,14 @@ jobs:
 
           build_start_ns="$(date +%s%N)"
           singularity exec \
+            --cleanenv \
             --writable-tmpfs \
             --bind "${MEASURE_DIR}:${MEASURE_DIR}" \
             "${sif_path}" \
             make -C "${MEASURE_DIR}/source" \
               -j 40 \
+              CC=/usr/bin/gcc \
+              CXX=/usr/bin/g++ \
               MPI=1 \
               MPI_HOME=/usr/lib/x86_64-linux-gnu/openmpi \
               NVCC_GENCODE='-gencode=arch=compute_90,code=sm_90' \
