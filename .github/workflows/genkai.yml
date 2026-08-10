@@ -69,10 +69,31 @@ jobs:
             do
               [[ "${run_id}" != "${GITHUB_RUN_ID}" ]] || continue
               [[ -s "${SIF_ARCHIVE_DIR}/${run_number}.sif" ]] || continue
+              [[ -s "${SIF_ARCHIVE_DIR}/${run_number}.metadata/sif-sidecar.json" ]] || continue
+              sidecar="${SIF_ARCHIVE_DIR}/${run_number}.metadata/sif-sidecar.json"
+              sif="${SIF_ARCHIVE_DIR}/${run_number}.sif"
+              sif_sha256="$(sha256sum "${sif}" | awk '{print $1}')"
+              jq -e --arg sha256 "${sif_sha256}" '.sif_artifact.sha256 == $sha256' "${sidecar}" >/dev/null || continue
               if ! singularity exec "${SIF_ARCHIVE_DIR}/${run_number}.sif" sh -c \
                 'test "$(cat /opt/sglang/nccl-tests-commit.txt)" = 717b68318278e93f371d8ffb46b076069d7c7851 && test "$(cat /opt/sglang/qwen-experiment-metrics-hook-version.txt)" = 2 && test -s /opt/sglang/offline-throughput-source-blob-oid.txt'; then
                 continue
               fi
+              embedded_sha256="$(singularity exec "${sif}" cat /opt/apac/manifest.json | sha256sum | awk '{print $1}')"
+              jq -e --arg sha256 "${embedded_sha256}" '.embedded_manifest.sha256 == $sha256' "${sidecar}" >/dev/null || continue
+              inventory_dir="$(mktemp -d)"
+              if ! singularity exec \
+                --bind "${GITHUB_WORKSPACE}/scripts/inventory-sif-runtime.py:/inventory-sif-runtime.py:ro,${inventory_dir}:/metadata" \
+                "${sif}" /opt/sglang/venv/bin/python /inventory-sif-runtime.py; then
+                rm -rf -- "${inventory_dir:?}"
+                continue
+              fi
+              if ! jq -e --slurpfile inventory "${inventory_dir}/runtime-inventory.json" \
+                '.runtime_files == $inventory[0].runtime_files and .nccl_tests.binaries == $inventory[0].nccl_binaries' \
+                "${sidecar}" >/dev/null; then
+                rm -rf -- "${inventory_dir:?}"
+                continue
+              fi
+              rm -rf -- "${inventory_dir:?}"
               if ! archive_step_count="$(gh run view "${run_id}" --json jobs --jq '[.jobs[].steps[] | select((.name == "Build and publish SGLang SIF" or .name == "Hardlink the selected SIF") and .conclusion == "success")] | length' 2>/dev/null)"; then
                 continue
               fi
@@ -95,7 +116,11 @@ jobs:
 
     steps:
       - name: Hardlink the selected SIF
-        run: ln -f -- "${SIF_ARCHIVE_DIR}/${{ needs.select-sif.outputs.source_run_number }}.sif" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
+        run: |
+          source_number='${{ needs.select-sif.outputs.source_run_number }}'
+          ln -f -- "${SIF_ARCHIVE_DIR}/${source_number}.sif" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
+          test ! -e "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.metadata"
+          cp -a "${SIF_ARCHIVE_DIR}/${source_number}.metadata" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.metadata"
 
   build-sif:
     name: Build SGLang SIF on Genkai login node
@@ -166,7 +191,19 @@ jobs:
           while IFS= read -r shard; do
             test -s "${MODEL_PATH}/${shard}"
           done < <(jq -r '.weight_map[]' "${weight_index}" | sort -u)
-          uvx --from 'huggingface_hub>=1.0' hf download anon8231489123/ShareGPT_Vicuna_unfiltered --repo-type dataset --include ShareGPT_V3_unfiltered_cleaned_split.json --local-dir /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered
+          model_repository=Qwen/Qwen3.5-397B-A17B-FP8
+          dataset_repository=anon8231489123/ShareGPT_Vicuna_unfiltered
+          model_revision="$(curl --fail --location --silent --show-error "https://huggingface.co/api/models/${model_repository}" | jq -er '.sha | select(test("^[0-9a-f]{40,64}$"))')"
+          dataset_revision="$(curl --fail --location --silent --show-error "https://huggingface.co/api/datasets/${dataset_repository}" | jq -er '.sha | select(test("^[0-9a-f]{40,64}$"))')"
+          uvx --from 'huggingface_hub>=1.0' hf download "${model_repository}" \
+            --revision "${model_revision}" \
+            --include config.json model.safetensors.index.json tokenizer.json tokenizer_config.json special_tokens_map.json generation_config.json chat_template.json \
+            --local-dir "${MODEL_PATH}"
+          uvx --from 'huggingface_hub>=1.0' hf download "${dataset_repository}" \
+            --repo-type dataset \
+            --revision "${dataset_revision}" \
+            --include ShareGPT_V3_unfiltered_cleaned_split.json \
+            --local-dir /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered
 
           install -d -m 2775 /fast/PROJECT/sglang-runs
           runtime_dir="$(mktemp -d "/fast/PROJECT/sglang-runs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
@@ -175,10 +212,21 @@ jobs:
           cd "${runtime_dir}"
           mkdir -p scripts logs results source control domain/fragments profile/raw
           ln -s "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
+          cp "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.metadata/sif-sidecar.json" source/sif-sidecar.json
+          cp -a "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.metadata/sif-build" source/
           printf '%s\n' "${source_run_number}" > sif-source-run.txt
           install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35.pjm" "${GITHUB_WORKSPACE}/scripts/run-qwen35-node.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" scripts/
           cp -a "${GITHUB_WORKSPACE}/qwen-experiment-metrics" qwen-experiment-metrics
           uv sync --project qwen-experiment-metrics --frozen --no-dev
+          qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics prepare-inputs \
+            --runtime-dir "${runtime_dir}" \
+            --model-path "${MODEL_PATH}" \
+            --model-repository "${model_repository}" \
+            --model-revision "${model_revision}" \
+            --dataset-path "${DATASET_PATH}" \
+            --dataset-repository "${dataset_repository}" \
+            --dataset-revision "${dataset_revision}" \
+            --dataset-relative-path ShareGPT_V3_unfiltered_cleaned_split.json
           jq -n \
             --arg sif_source_workflow_run_number "${source_run_number}" \
             --arg sif_size_bytes "$(stat --format=%s sglang.sif)" \
@@ -186,14 +234,12 @@ jobs:
             '{sif: {source_workflow_run_number: $sif_source_workflow_run_number, size_bytes: $sif_size_bytes}, dataset: {size_bytes: $dataset_size_bytes}}' \
             > metrics-artifacts.json
           test -x qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics
-          control_plane_sha256="$({
-            find "${GITHUB_WORKSPACE}/.github/workflows" "${GITHUB_WORKSPACE}/scripts" -type f -print0
-          } | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
-          instrumentation_bundle_sha256="$(
-            find "${GITHUB_WORKSPACE}/qwen-experiment-metrics" -type f \
-              ! -path '*/.venv/*' ! -path '*/dist/*' ! -path '*/.pytest_cache/*' ! -path '*/.ruff_cache/*' -print0 |
-              sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
-          )"
+          git -C "${GITHUB_WORKSPACE}" diff --quiet
+          git -C "${GITHUB_WORKSPACE}" diff --cached --quiet
+          git -C "${GITHUB_WORKSPACE}" cat-file -e "${GITHUB_SHA}^{commit}"
+          git -C "${GITHUB_WORKSPACE}" merge-base --is-ancestor "${GITHUB_SHA}" "${GITHUB_SHA}"
+          control_plane_sha256="$(git -C "${GITHUB_WORKSPACE}" ls-tree -r --full-tree "${GITHUB_SHA}" -- .github/workflows scripts configs | LC_ALL=C sort | sha256sum | awk '{print $1}')"
+          instrumentation_bundle_sha256="$(git -C "${GITHUB_WORKSPACE}" ls-tree -r --full-tree "${GITHUB_SHA}" -- qwen-experiment-metrics | LC_ALL=C sort | sha256sum | awk '{print $1}')"
           object_hash_algorithm="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-object-format)"
           if [[ "${RUN_PURPOSE}" == profile ]]; then
             base_role=profile_base
@@ -208,7 +254,12 @@ jobs:
             --base-commit "${GITHUB_SHA}" \
             --head-commit "${GITHUB_SHA}" \
             --control-plane-sha256 "${control_plane_sha256}" \
-            --instrumentation-bundle-sha256 "${instrumentation_bundle_sha256}"
+            --instrumentation-bundle-sha256 "${instrumentation_bundle_sha256}" \
+            --execution-settings "${GITHUB_WORKSPACE}/configs/qwen-v2-${RUN_PURPOSE}.json" \
+            --repository "${GITHUB_WORKSPACE}"
+          qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics record-provenance \
+            --manifest "${runtime_dir}/control/run-manifest.json" \
+            --runtime-dir "${runtime_dir}"
 
       - name: Cleanup failed SGLang provisioning
         if: failure() && steps.provision_runtime.outputs.runtime_dir != ''
@@ -230,11 +281,24 @@ jobs:
       - name: Submit Qwen job
         run: |
           test -s "${RUNTIME_DIR}/control/run-manifest.json"
+          metrics_cli="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
+          manifest="${RUNTIME_DIR}/control/run-manifest.json"
           job_environment="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH}"
-          job_output="$(pjsub -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.pjm")"
+          submission_argv=(pjsub -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.pjm")
+          "${metrics_cli}" prepare-submission \
+            --manifest "${manifest}" \
+            --runtime-dir "${RUNTIME_DIR}" \
+            --pjm-script "${RUNTIME_DIR}/scripts/run-qwen35.pjm" \
+            --repository-path scripts/run-qwen35.pjm \
+            -- "${submission_argv[@]}"
+          job_output="$("${submission_argv[@]}")"
           printf '%s\n' "${job_output}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
           test -n "${job_id}"
+          "${metrics_cli}" record-submission-result \
+            --manifest "${manifest}" \
+            --runtime-dir "${RUNTIME_DIR}" \
+            --job-id "${job_id}"
           echo "PJM_JOB_ID=${job_id}" >> "${GITHUB_ENV}"
 
       - name: Wait for Qwen job to start

@@ -7,17 +7,25 @@ set -euo pipefail
 : "${MODEL_PATH:?MODEL_PATH is required}"
 : "${DATASET_PATH:?DATASET_PATH is required}"
 : "${OMPI_COMM_WORLD_RANK:?OMPI_COMM_WORLD_RANK is required}"
-
-node_rank="${OMPI_COMM_WORLD_RANK}"
-[[ "${OMPI_COMM_WORLD_SIZE}" -eq 2 ]]
-[[ "${node_rank}" -eq 0 || "${node_rank}" -eq 1 ]]
+: "${SINGULARITY_LAUNCHER:?SINGULARITY_LAUNCHER is required}"
 
 cd "${RUNTIME_DIR}"
 metrics_cli="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
 manifest="${RUNTIME_DIR}/control/run-manifest.json"
+execution_settings="${RUNTIME_DIR}/control/execution-settings.json"
 run_id="$(jq -er '.run_id' "${manifest}")"
 run_purpose="$(jq -er '.run_purpose' "${manifest}")"
-source_blob_oid="$(singularity exec sglang.sif cat /opt/sglang/offline-throughput-source-blob-oid.txt | tr -d '[:space:]')"
+nodes="$(jq -er '.nodes' "${execution_settings}")"
+mpi_processes="$(jq -er '.mpi_processes' "${execution_settings}")"
+gpus_per_node="$(jq -er '.gpus_per_node' "${execution_settings}")"
+tensor_parallel_size="$(jq -er '.tensor_parallel_size' "${execution_settings}")"
+sglang_port="$(jq -er '.sglang_port' "${execution_settings}")"
+rendezvous_timeout_sec="$(jq -er '.rendezvous_timeout_sec' "${execution_settings}")"
+ready_timeout_sec="$(jq -er '.ready_timeout_sec' "${execution_settings}")"
+node_rank="${OMPI_COMM_WORLD_RANK}"
+[[ "${OMPI_COMM_WORLD_SIZE}" -eq "${mpi_processes}" ]]
+[[ "${node_rank}" -ge 0 && "${node_rank}" -lt "${nodes}" ]]
+source_blob_oid="$("${SINGULARITY_LAUNCHER}" exec sglang.sif cat /opt/sglang/offline-throughput-source-blob-oid.txt | tr -d '[:space:]')"
 jit_cache="$(mktemp -d /tmp/sglang-jit.XXXXXXXXXX)"
 singularity_tmpdir="$(mktemp -d /dev/shm/sglang-run.XXXXXXXXXX)"
 node_metrics_dir="$(mktemp -d /dev/shm/qwen-metrics.XXXXXXXXXX)"
@@ -57,6 +65,11 @@ trap 'exit 143' TERM
 exec {jit_lock_fd}>>"${HOME}/.cache/sglang-jit.lock"
 echo "node_rank=${node_rank}: staging shared SGLang JIT cache in ${jit_cache}"
 flock -s "${jit_lock_fd}" rsync -a -- "${HOME}/.cache/sglang-jit/" "${jit_cache}/"
+"${metrics_cli}" record-cache \
+  --manifest "${manifest}" \
+  --runtime-dir "${RUNTIME_DIR}" \
+  --node-rank "${node_rank}" \
+  --cache-root "${jit_cache}"
 
 master_host_file="${RUNTIME_DIR}/control/master-host.txt"
 completion_file="${RUNTIME_DIR}/control/rank-zero-status"
@@ -64,7 +77,9 @@ if [[ "${node_rank}" -eq 0 ]]; then
   rm -f -- "${completion_file}"
   hostname > "${master_host_file}"
 else
+  wait_started="${SECONDS}"
   while [[ ! -s "${master_host_file}" ]]; do
+    (( SECONDS - wait_started < rendezvous_timeout_sec ))
     sleep 0.1
   done
 fi
@@ -113,7 +128,7 @@ if [[ "${run_purpose}" == profile ]]; then
     index="${index//[[:space:]]/}"
     gpu_args+=(--expected-gpu "${uuid}=${index}")
   done < <(nvidia-smi --query-gpu=uuid,index --format=csv,noheader,nounits)
-  [[ "${#gpu_args[@]}" -eq 4 ]]
+  [[ "$(( ${#gpu_args[@]} / 2 ))" -eq "${gpus_per_node}" ]]
   "${metrics_cli}" sample-gpu \
     --manifest "${manifest}" \
     --runtime-dir "${RUNTIME_DIR}" \
@@ -134,10 +149,10 @@ fi
 benchmark=(/opt/sglang/venv/bin/python -m sglang.benchmark.offline_throughput
   --model-path /model
   --load-format auto
-  --tp-size 8
-  --nnodes 2
+  --tp-size "${tensor_parallel_size}"
+  --nnodes "${nodes}"
   --node-rank "${node_rank}"
-  --dist-init-addr "${master_host}:25000"
+  --dist-init-addr "${master_host}:${sglang_port}"
   --dataset-name sharegpt
   --dataset-path /dataset/ShareGPT_V3_unfiltered_cleaned_split.json
   --num-prompts 32
@@ -157,7 +172,7 @@ if [[ "${run_purpose}" == profile ]]; then
   profile_bind_args=(--bind "${RUNTIME_DIR}/profile/raw/torch:/profile")
 fi
 
-command=(singularity exec --userns --nv --cleanenv --containall
+command=("${SINGULARITY_LAUNCHER}" exec --userns --nv --cleanenv --containall
   --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1
   --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton
   --env QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock
@@ -191,7 +206,7 @@ done
 engine_status=0
 wait "${engine_pid}" || engine_status=$?
 engine_pid=""
-for _ in {1..300}; do
+for ((attempt=0; attempt<ready_timeout_sec*10; attempt++)); do
   if [[ -s "${completion_file}" ]]; then
     node_status="$(<"${completion_file}")"
     exit "${node_status}"

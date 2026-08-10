@@ -42,6 +42,36 @@ instance_pattern = "^gpu-sampler:node-[0-9]+$"
 applicability = ["profile"]
 required = false
 
+[[producers]]
+id = "provenance"
+instance_pattern = "^provenance$"
+applicability = ["bench", "profile"]
+required = true
+
+[[producers]]
+id = "cache"
+instance_pattern = "^cache:node-[0-9]+$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "submission-request"
+instance_pattern = "^submission-request$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "submission-result"
+instance_pattern = "^submission-result$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "job-entry"
+instance_pattern = "^job-entry$"
+applicability = ["bench", "profile"]
+required = false
+
 [[facts]]
 id = "run_id"
 key_pattern = "^run\\.identity\\.run_id$"
@@ -95,6 +125,258 @@ authoritative_source = "control/run-manifest.json repository_id"
 capture_moment = "before submission"
 raw_destination = "run/key/value fact"
 validation = "must equal apac2026-qwen"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "source_track_head"
+key_pattern = "^source\\.track\\.head_commit$"
+owner = "runner"
+logical_type = "string"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "control/run-manifest.json source_track.head_commit"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "full Git OID equal to the persisted source track"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "source_track_score_reference"
+key_pattern = "^source\\.track\\.score_reference_commit$"
+owner = "runner"
+logical_type = "string"
+unit = "none"
+cardinality = "one per bench run"
+authoritative_source = "control/run-manifest.json source_track.base_commit"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "full Git OID with score_reference role"
+applicability = ["bench"]
+required = true
+
+[[facts]]
+id = "source_track_profile_base"
+key_pattern = "^source\\.track\\.profile_base_commit$"
+owner = "runner"
+logical_type = "string"
+unit = "none"
+cardinality = "one per profile run"
+authoritative_source = "control/run-manifest.json source_track.base_commit"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "full Git OID with profile_base role"
+applicability = ["profile"]
+required = true
+
+[[facts]]
+id = "source_track_manifest_sha256"
+key_pattern = "^source\\.track\\.manifest_sha256$"
+owner = "runner"
+logical_type = "sha256"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "JCS source_track object in control/run-manifest.json"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "SHA-256 of canonical source_track record"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "source_track_source_sha256"
+key_pattern = "^source\\.track\\.source_sha256$"
+owner = "runner"
+logical_type = "sha256"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "control/run-manifest.json bytes"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "SHA-256 of canonical persisted run manifest source"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "scheduler_request_uint"
+key_pattern = "^scheduler\\.request\\.(?:nodes|mpi_processes|gpus_per_node|tensor_parallel_size|sglang_port|node_agent_port|rendezvous_timeout_sec|ready_timeout_sec)$"
+owner = "runner"
+logical_type = "uint"
+unit = "count, port, or second as named"
+cardinality = "eight independent fields per run"
+authoritative_source = "control/execution-settings.json"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "closed settings and multiplicatively consistent process/GPU grid"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "scheduler_request_string"
+key_pattern = "^scheduler\\.request\\.(?:resource_group|transport_policy|advertise_source)$"
+owner = "runner"
+logical_type = "string"
+unit = "none"
+cardinality = "three independent fields per run"
+authoritative_source = "control/execution-settings.json"
+capture_moment = "before submission"
+raw_destination = "run/key/value fact"
+validation = "nonempty execution setting"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "sif_manifest_sha256"
+key_pattern = "^artifact\\.sif_manifest_sha256$"
+owner = "provenance"
+logical_type = "sha256"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "source/sif-sidecar.json"
+capture_moment = "after provision validation"
+raw_destination = "run/key/value fact"
+validation = "SHA-256 of validated closed SIF sidecar"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "model_manifest_sha256"
+key_pattern = "^artifact\\.model\\.manifest_sha256$"
+owner = "provenance"
+logical_type = "sha256"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "source/model-manifest.json"
+capture_moment = "after provision validation"
+raw_destination = "run/key/value fact"
+validation = "SHA-256 of validated closed model manifest"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "dataset_manifest_sha256"
+key_pattern = "^artifact\\.dataset\\.manifest_sha256$"
+owner = "provenance"
+logical_type = "sha256"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "source/dataset-manifest.json"
+capture_moment = "after provision validation"
+raw_destination = "run/key/value fact"
+validation = "SHA-256 of validated closed dataset manifest"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "sglang_commit"
+key_pattern = "^source\\.sglang\\.commit$"
+owner = "provenance"
+logical_type = "string"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "source/sif-sidecar.json source_commits sglang_source"
+capture_moment = "after provision validation"
+raw_destination = "run/key/value fact"
+validation = "algorithm-constrained full Git OID"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "cache_input_manifest_sha256"
+key_pattern = "^cache\\.node\\.[0-9]+\\.input_manifest_sha256$"
+owner = "cache"
+logical_type = "sha256"
+unit = "none"
+cardinality = "one per expected node"
+authoritative_source = "source/cache/node-<node>-input-manifest.json"
+capture_moment = "after staging and before benchmark"
+raw_destination = "run/key/value fact"
+validation = "SHA-256 of subject-free canonical cache members"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "submission_subject_manifest"
+key_pattern = "^scheduler\\.request\\.subject_manifest_sha256$"
+owner = "submission-request"
+logical_type = "sha256"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "control/submission-request.json subject_manifest"
+capture_moment = "immediately before pjsub"
+raw_destination = "run/key/value fact"
+validation = "must bind the immutable control/run-manifest.json bytes"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "submission_pjm_path"
+key_pattern = "^scheduler\\.request\\.pjm_script\\.repository_path$"
+owner = "submission-request"
+logical_type = "string"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "control/submission-request.json pjm_script"
+capture_moment = "immediately before pjsub"
+raw_destination = "run/key/value fact"
+validation = "safe repository-relative POSIX path"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "submission_pjm_sha256"
+key_pattern = "^scheduler\\.request\\.pjm_script\\.sha256$"
+owner = "submission-request"
+logical_type = "sha256"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "control/submission-request.json pjm_script"
+capture_moment = "immediately before pjsub"
+raw_destination = "run/key/value fact"
+validation = "SHA-256 of the submitted PJM script bytes"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "submission_argv"
+key_pattern = "^scheduler\\.request\\.argv$"
+owner = "submission-request"
+logical_type = "jcs"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "control/submission-request.json argv"
+capture_moment = "immediately before pjsub"
+raw_destination = "run/key/value fact"
+validation = "nonempty exact argument vector"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "submission_job_id"
+key_pattern = "^scheduler\\.submit_job_id$"
+owner = "submission-result"
+logical_type = "string"
+unit = "none"
+cardinality = "one per successful submission"
+authoritative_source = "control/submission-result.json job_id"
+capture_moment = "after successful pjsub parse"
+raw_destination = "run/key/value fact"
+validation = "decimal PJM job ID"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "job_entry_job_id"
+key_pattern = "^scheduler\\.job_entry_job_id$"
+owner = "job-entry"
+logical_type = "string"
+unit = "none"
+cardinality = "one per entered job"
+authoritative_source = "control/job-entry.json pj_job_id"
+capture_moment = "first compute-side boundary"
+raw_destination = "run/key/value fact"
+validation = "decimal PJM job ID bound to the run manifest"
 applicability = ["bench", "profile"]
 required = true
 

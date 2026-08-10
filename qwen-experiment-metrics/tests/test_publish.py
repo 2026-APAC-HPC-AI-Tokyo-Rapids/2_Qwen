@@ -95,6 +95,16 @@ def test_publish_rejects_foreign_or_rejected_rows(tmp_path: Path) -> None:
         )
 
 
+def test_read_metrics_rejects_duplicate_json_members(tmp_path: Path) -> None:
+    path = tmp_path / "metrics.jsonl"
+    path.write_text(
+        '{"run":"r-one","run":"r-two","key":"x","value":"1"}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="invalid metrics row 1"):
+        read_metrics(path)
+
+
 def test_publish_rejects_tampered_artifact_binding(tmp_path: Path) -> None:
     path = tmp_path / "metrics.jsonl"
     _write(path, [{"run": "r-3", "key": "a", "value": "1"}])

@@ -60,11 +60,17 @@ class RunPackager:
         metrics = run_dir / ROLE_FILENAMES["metrics"]
         if not metrics.is_file():
             raise FileNotFoundError(metrics)
+        # metrics.jsonl is both the publishable sidecar and a required member of
+        # the self-contained run bundle.  Keep a single caller-independent owner
+        # for that duplication so workflows cannot accidentally omit it.
         members = tuple(
             sorted(
                 (
-                    Member.from_file(run_dir, relative, role)
-                    for relative, role in run_members
+                    *(
+                        Member.from_file(run_dir, relative, role)
+                        for relative, role in run_members
+                    ),
+                    Member.from_file(run_dir, ROLE_FILENAMES["metrics"], "metrics"),
                 ),
                 key=lambda item: item.path.encode(),
             )

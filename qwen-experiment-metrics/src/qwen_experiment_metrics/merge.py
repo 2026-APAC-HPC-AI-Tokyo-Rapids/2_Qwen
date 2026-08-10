@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from .canonical import fact_row_bytes, load_json_strict, validate_encoded_value
@@ -11,6 +13,16 @@ from .gpu import parse_gpu_samples_jsonl
 from .manifest import load_manifest
 from .recording import RecorderError, producer_from_fragment
 from .registry import Registry, RegistryError, load_registry
+from .sources import (
+    ExecutionSettings,
+    load_execution_settings,
+    validate_cache_manifest,
+    validate_dataset_manifest,
+    validate_model_manifest,
+    validate_runtime_launchers,
+    validate_sif_sidecar,
+    validate_submission_request,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,11 +52,18 @@ def merge_run(
 ) -> MergeOutcome:
     manifest = load_manifest(manifest_path)
     registry = load_registry(registry_path)
+    settings = load_execution_settings(runtime_dir / "control/execution-settings.json")
+    if settings.run_purpose != manifest.run_purpose:
+        raise ValueError("execution settings purpose differs from run manifest")
     required_producers = registry.default_required_producers(manifest.run_purpose)
     network_required = _has_valid_primary_result(runtime_dir, manifest.run_id)
-    required_producers.update(_execution_producers(network_required))
+    required_producers.update(_execution_producers(settings, network_required))
     missing_required_files = _missing_execution_files(
-        runtime_dir, manifest.run_purpose, manifest.run_id, network_required
+        runtime_dir,
+        manifest.run_purpose,
+        manifest.run_id,
+        settings,
+        network_required,
     )
 
     fragment_dir = runtime_dir / "domain" / "fragments"
@@ -78,8 +97,11 @@ def merge_run(
             )
 
     invalid_fragments.extend(
-        _configuration_axis_errors(facts_by_producer, observed_producers)
+        _configuration_axis_errors(
+            facts_by_producer, observed_producers, settings.nodes
+        )
     )
+    invalid_fragments.extend(_runner_contract_errors(facts_by_producer, manifest.run_purpose))
 
     missing_producers = sorted(required_producers - observed_producers)
     missing_required_facts: list[str] = []
@@ -198,12 +220,17 @@ def _read_fragment(
     return rows
 
 
-def _execution_producers(network_required: bool) -> set[str]:
+def _execution_producers(
+    settings: ExecutionSettings, network_required: bool
+) -> set[str]:
     result = {
         "stage:benchmark",
-        "configuration:node-0",
-        "configuration:node-1",
         "result",
+        *(f"configuration:node-{node}" for node in range(settings.nodes)),
+        *(f"cache:node-{node}" for node in range(settings.nodes)),
+        "submission-request",
+        "submission-result",
+        "job-entry",
     }
     if network_required:
         result.update(
@@ -219,12 +246,28 @@ def _execution_producers(network_required: bool) -> set[str]:
 
 
 def _missing_execution_files(
-    runtime_dir: Path, purpose: str, run_id: str, network_required: bool
+    runtime_dir: Path,
+    purpose: str,
+    run_id: str,
+    settings: ExecutionSettings,
+    network_required: bool,
 ) -> list[str]:
     required = [
+        "control/job-entry.json",
+        "control/execution-settings.json",
+        "control/submission-request.json",
+        "control/submission-result.json",
+        "source/sif-sidecar.json",
+        "source/model-manifest.json",
+        "source/dataset-manifest.json",
+        "source/runtime-launchers.json",
+        "source/scheduler/accounting.txt",
         "source/primary-result.json",
-        "source/topology/node-0.json",
-        "source/topology/node-1.json",
+        *(f"source/topology/node-{node}.json" for node in range(settings.nodes)),
+        *(
+            f"source/cache/node-{node}-input-manifest.json"
+            for node in range(settings.nodes)
+        ),
         "logs/benchmark.log",
     ]
     primary = runtime_dir / "source/primary-result.json"
@@ -245,17 +288,72 @@ def _missing_execution_files(
             ]
         )
     missing = [relative for relative in required if not (runtime_dir / relative).is_file()]
+    job_entry = runtime_dir / "control/job-entry.json"
+    if job_entry.is_file():
+        try:
+            _validate_job_entry(job_entry, run_id)
+        except (OSError, ValueError, TypeError):
+            missing.append("control/job-entry.json:invalid")
+    submission_request = runtime_dir / "control/submission-request.json"
+    if submission_request.is_file():
+        try:
+            validate_submission_request(
+                submission_request,
+                runtime_dir / "control/run-manifest.json",
+                run_id,
+            )
+        except (OSError, ValueError, TypeError):
+            missing.append("control/submission-request.json:invalid")
+    submission_result = runtime_dir / "control/submission-result.json"
+    if submission_result.is_file():
+        try:
+            _validate_submission_result(submission_result, run_id)
+        except (OSError, ValueError, TypeError):
+            missing.append("control/submission-result.json:invalid")
+    validators = (
+        (
+            "source/sif-sidecar.json",
+            lambda path: validate_sif_sidecar(
+                path, member_root=runtime_dir / "source"
+            ),
+        ),
+        ("source/model-manifest.json", validate_model_manifest),
+        ("source/dataset-manifest.json", validate_dataset_manifest),
+    )
+    for relative, validator in validators:
+        path = runtime_dir / relative
+        if path.is_file():
+            try:
+                validator(path)
+            except (OSError, ValueError, TypeError):
+                missing.append(f"{relative}:invalid")
+    launcher_path = runtime_dir / "source/runtime-launchers.json"
+    if launcher_path.is_file():
+        try:
+            validate_runtime_launchers(launcher_path, runtime_dir)
+        except (OSError, ValueError, TypeError):
+            missing.append("source/runtime-launchers.json:invalid")
+    for node_rank in range(settings.nodes):
+        relative = f"source/cache/node-{node_rank}-input-manifest.json"
+        path = runtime_dir / relative
+        if path.is_file():
+            try:
+                validate_cache_manifest(path, run_id, node_rank)
+            except (OSError, ValueError, TypeError):
+                missing.append(f"{relative}:invalid")
     expected_gpus: dict[int, dict[str, int]] = {}
-    for node_rank in range(2):
+    for node_rank in range(settings.nodes):
         relative = f"source/topology/node-{node_rank}.json"
         path = runtime_dir / relative
         if path.is_file():
             try:
-                expected_gpus[node_rank] = _validate_topology(path, run_id, node_rank)
+                expected_gpus[node_rank] = _validate_topology(
+                    path, run_id, node_rank, settings.gpus_per_node
+                )
             except (OSError, ValueError, TypeError):
                 missing.append(f"{relative}:invalid")
     if purpose == "profile":
-        for node_rank in range(2):
+        for node_rank in range(settings.nodes):
             completion = f"control/gpu/node-{node_rank}.complete"
             if not (runtime_dir / completion).is_file():
                 missing.append(completion)
@@ -284,6 +382,47 @@ def _missing_execution_files(
     return missing
 
 
+def _validate_job_entry(path: Path, run_id: str) -> None:
+    document = load_json_strict(path.read_bytes())
+    if not isinstance(document, dict) or set(document) != {
+        "schema_version",
+        "run_id",
+        "pj_job_id",
+        "entered_at",
+    }:
+        raise ValueError("job entry is not closed")
+    job_id = document["pj_job_id"]
+    entered_at = document["entered_at"]
+    if (
+        document["schema_version"] != "job-entry/v1"
+        or document["run_id"] != run_id
+        or not isinstance(job_id, str)
+        or re.fullmatch(r"[0-9]+", job_id) is None
+        or not isinstance(entered_at, str)
+        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", entered_at)
+        is None
+    ):
+        raise ValueError("job entry identity is invalid")
+    datetime.fromisoformat(entered_at.removesuffix("Z") + "+00:00")
+
+
+def _validate_submission_result(path: Path, run_id: str) -> None:
+    document = load_json_strict(path.read_bytes())
+    if not isinstance(document, dict) or set(document) != {
+        "schema_version",
+        "run_id",
+        "job_id",
+    }:
+        raise ValueError("submission result is not closed")
+    if (
+        document["schema_version"] != "submission-result/v1"
+        or document["run_id"] != run_id
+        or not isinstance(document["job_id"], str)
+        or re.fullmatch(r"[0-9]+", document["job_id"]) is None
+    ):
+        raise ValueError("submission result identity is invalid")
+
+
 def _has_valid_primary_result(runtime_dir: Path, run_id: str) -> bool:
     path = runtime_dir / "source/primary-result.json"
     if not path.is_file():
@@ -295,7 +434,9 @@ def _has_valid_primary_result(runtime_dir: Path, run_id: str) -> bool:
     return True
 
 
-def _validate_topology(path: Path, run_id: str, node_rank: int) -> dict[str, int]:
+def _validate_topology(
+    path: Path, run_id: str, node_rank: int, gpus_per_node: int
+) -> dict[str, int]:
     document = load_json_strict(path.read_bytes())
     if not isinstance(document, dict) or set(document) != {
         "schema_version",
@@ -314,8 +455,8 @@ def _validate_topology(path: Path, run_id: str, node_rank: int) -> dict[str, int
     ):
         raise ValueError("topology identity mismatch")
     gpus = document["gpus"]
-    if not isinstance(gpus, list) or len(gpus) != 4:
-        raise ValueError("topology must contain four GPUs")
+    if not isinstance(gpus, list) or len(gpus) != gpus_per_node:
+        raise ValueError("topology has the wrong GPU cardinality")
     result: dict[str, int] = {}
     for row in gpus:
         if not isinstance(row, dict) or set(row) != {
@@ -337,7 +478,7 @@ def _validate_topology(path: Path, run_id: str, node_rank: int) -> dict[str, int
         ):
             raise ValueError("invalid topology GPU binding")
         result[uuid] = index
-    if set(result.values()) != set(range(4)):
+    if set(result.values()) != set(range(gpus_per_node)):
         raise ValueError("topology logical indices are not contiguous")
     return result
 
@@ -354,12 +495,18 @@ def _validate_instance_axis(producer_id: str, key: str, line_number: int) -> Non
         node = producer_id.removeprefix("configuration:node-")
         if not key.startswith(f"sglang.node.{node}."):
             raise ValueError(f"line {line_number} configuration node/key mismatch")
+    if producer_id.startswith("cache:node-"):
+        node = producer_id.removeprefix("cache:node-")
+        if key != f"cache.node.{node}.input_manifest_sha256":
+            raise ValueError(f"line {line_number} cache node/key mismatch")
 
 
 def _configuration_axis_errors(
-    facts_by_producer: dict[str, list[str]], observed_producers: set[str]
+    facts_by_producer: dict[str, list[str]],
+    observed_producers: set[str],
+    nodes: int,
 ) -> list[str]:
-    producers = ("configuration:node-0", "configuration:node-1")
+    producers = tuple(f"configuration:node-{node}" for node in range(nodes))
     if not all(item in observed_producers for item in producers):
         return []
     normalized = []
@@ -371,6 +518,45 @@ def _configuration_axis_errors(
                 for key in facts_by_producer.get(producer, ())
             }
         )
-    return [] if normalized[0] == normalized[1] and normalized[0] else [
-        "configuration snapshots have different or empty leaf sets"
+    return [] if normalized and normalized[0] and all(
+        item == normalized[0] for item in normalized[1:]
+    ) else ["configuration snapshots have different or empty leaf sets"]
+
+
+def _runner_contract_errors(
+    facts_by_producer: dict[str, list[str]], purpose: str
+) -> list[str]:
+    observed = set(facts_by_producer.get("runner", ()))
+    expected = {
+        "run.identity.run_id",
+        "run.identity.run_purpose",
+        "run.identity.repository_id",
+        "run.identity.instrumentation_bundle_sha256",
+        "source.track.head_commit",
+        "source.track.manifest_sha256",
+        "source.track.source_sha256",
+        *{
+            f"scheduler.request.{name}"
+            for name in (
+                "nodes",
+                "mpi_processes",
+                "gpus_per_node",
+                "tensor_parallel_size",
+                "resource_group",
+                "transport_policy",
+                "advertise_source",
+                "sglang_port",
+                "node_agent_port",
+                "rendezvous_timeout_sec",
+                "ready_timeout_sec",
+            )
+        },
+        (
+            "source.track.score_reference_commit"
+            if purpose == "bench"
+            else "source.track.profile_base_commit"
+        ),
+    }
+    return [] if observed == expected else [
+        "runner fragment does not contain the exact manifest/settings fact set"
     ]
