@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import subprocess
@@ -130,6 +131,56 @@ def test_dry_run_renders_ddl_without_network() -> None:
     assert result.stdout.count("CREATE TABLE IF NOT EXISTS") == 25
     assert "__PROJECT__" not in result.stdout
     assert "__DATASET__" not in result.stdout
+
+
+def test_apply_streams_ddl_to_bq_stdin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    script = root / "scripts/deploy-qwen-projections.py"
+    specification = importlib.util.spec_from_file_location(
+        "deploy_qwen_projections", script
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    ddl = tmp_path / "tables.sql"
+    ddl.write_text(
+        "CREATE TABLE `__PROJECT__.__DATASET__.fixture` (value STRING);\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> None:
+        calls.append((argv, kwargs))
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    assert module.main(
+        [
+            "--project",
+            "project",
+            "--dataset",
+            "dataset",
+            "--ddl",
+            str(ddl),
+            "--apply",
+        ]
+    ) == 0
+    assert calls == [
+        (
+            [
+                "bq",
+                "query",
+                "--project_id=project",
+                "--location=asia-northeast1",
+                "--use_legacy_sql=false",
+            ],
+            {
+                "input": b"CREATE TABLE `project.dataset.fixture` (value STRING);\n",
+                "check": True,
+            },
+        )
+    ]
 
 
 def test_ddl_has_every_allowlisted_closed_field() -> None:

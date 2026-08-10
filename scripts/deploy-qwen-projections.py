@@ -50,13 +50,11 @@ def main(argv: list[str] | None = None) -> int:
         [
             "bq",
             "query",
-            "--project_id",
-            arguments.project,
-            "--location",
-            arguments.location,
+            f"--project_id={arguments.project}",
+            f"--location={arguments.location}",
             "--use_legacy_sql=false",
-            rendered,
         ],
+        input=rendered.encode("utf-8"),
         check=True,
     )
     return 0
