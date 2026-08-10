@@ -60,7 +60,8 @@ recipe_sha256="$(sha256sum "${GITHUB_WORKSPACE}/containers/sglang.def" | awk '{ 
 patches_sha256="$(sha256sum "${PATCH_MANIFEST}" | awk '{ print $1 }')"
 
 base_reference="$(awk '$1 == "From:" { print $2; exit }' "${GITHUB_WORKSPACE}/containers/sglang.def")"
-python3 "${GITHUB_WORKSPACE}/scripts/resolve-oci.py" "${base_reference}" \
+uv run --project "${GITHUB_WORKSPACE}/qwen-experiment-metrics" --frozen --no-dev \
+  python "${GITHUB_WORKSPACE}/scripts/resolve-oci.py" "${base_reference}" \
   --raw-output "${BUILD_DIR}/sif-metadata/sif-build/oci-inspect.raw.json" \
   >"${BUILD_DIR}/sif-metadata/base-oci.json"
 resolved_base_reference="$(jq -er '.reference' "${BUILD_DIR}/sif-metadata/base-oci.json")"
