@@ -46,7 +46,7 @@ def test_packager_creates_fixed_bench_artifact_set(
         "metrics",
     ]
     members = subprocess.run(
-        ["tar", "--zstd", "-tf", runtime / "run-artifacts.tar.zst"],
+        ["tar", "-I", "zstd", "-tf", runtime / "run-artifacts.tar.zst"],
         check=True,
         text=True,
         capture_output=True,

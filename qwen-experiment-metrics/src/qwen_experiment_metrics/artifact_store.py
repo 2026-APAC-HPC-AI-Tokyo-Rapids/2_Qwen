@@ -160,7 +160,7 @@ def _tar_zstd(
     ) as stream:
         temporary = Path(stream.name)
     temporary.unlink()
-    argv = ["tar", "--zstd", "-cf", str(temporary), "-C", str(root), *members]
+    argv = ["tar", "-I", "zstd", "-cf", str(temporary), "-C", str(root), *members]
     if bundle_manifest is not None:
         argv.extend(
             [
