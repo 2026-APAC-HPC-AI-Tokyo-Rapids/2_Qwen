@@ -74,10 +74,33 @@ def projection_json_row(row: ProjectionRow) -> dict[str, object]:
     return value
 
 
+def row_grain_key(row: ProjectionRow) -> str:
+    """Hash the table-qualified logical grain for cross-run replay views."""
+
+    identity = jcs_bytes([row.relation_id, list(row.grain())])
+    return hashlib.sha256(identity).hexdigest()
+
+
+def payload_sha256(row: ProjectionRow) -> str:
+    """Hash the exact closed projection payload, including lineage."""
+
+    return hashlib.sha256(jcs_bytes(projection_json_row(row))).hexdigest()
+
+
+def physical_json_row(row: ProjectionRow) -> dict[str, object]:
+    """Return contract fields plus publisher-owned replay metadata."""
+
+    return {
+        **projection_json_row(row),
+        "_row_grain_key": row_grain_key(row),
+        "_payload_sha256": payload_sha256(row),
+    }
+
+
 def deterministic_insert_id(row: ProjectionRow) -> str:
     """Derive a replay-stable insertId from table identity and row bytes."""
 
-    identity = jcs_bytes([physical_table_name(row.relation_id), projection_json_row(row)])
+    identity = jcs_bytes([physical_table_name(row.relation_id), row_grain_key(row), payload_sha256(row)])
     return hashlib.sha256(identity).hexdigest()
 
 
@@ -92,7 +115,7 @@ def build_insert_body(rows: Iterable[ProjectionRow]) -> bytes:
         "skipInvalidRows": False,
         "ignoreUnknownValues": False,
         "rows": [
-            {"insertId": deterministic_insert_id(row), "json": projection_json_row(row)}
+            {"insertId": deterministic_insert_id(row), "json": physical_json_row(row)}
             for row in values
         ],
     }

@@ -15,9 +15,12 @@ from qwen_experiment_metrics.physical_publish import (
     PhysicalPublishError,
     build_insert_body,
     deterministic_insert_id,
+    payload_sha256,
+    physical_json_row,
     physical_table_name,
     projection_json_row,
     publish_projection_batch,
+    row_grain_key,
 )
 from qwen_experiment_metrics.projections import (
     RELATION_REGISTRY,
@@ -71,6 +74,9 @@ def test_allowlist_and_closed_row_boundary() -> None:
     assert value["schema_version"] == "workload-request-projection/v1"
     assert "source_member" not in value
     assert deterministic_insert_id(row) == deterministic_insert_id(row)
+    physical = json.loads(build_insert_body((row,)))["rows"][0]["json"]
+    assert physical["_row_grain_key"] == row_grain_key(row)
+    assert physical["_payload_sha256"] == payload_sha256(row)
 
 
 def test_insert_body_has_strict_flags_and_deterministic_id() -> None:
@@ -78,7 +84,7 @@ def test_insert_body_has_strict_flags_and_deterministic_id() -> None:
     body = json.loads(build_insert_body((row,)))
     assert body["skipInvalidRows"] is False
     assert body["ignoreUnknownValues"] is False
-    assert body["rows"] == [{"insertId": deterministic_insert_id(row), "json": projection_json_row(row)}]
+    assert body["rows"] == [{"insertId": deterministic_insert_id(row), "json": physical_json_row(row)}]
 
 
 def test_publisher_chunks_at_500_and_replays_stably() -> None:
@@ -131,6 +137,8 @@ def test_dry_run_renders_ddl_without_network() -> None:
     assert result.stdout.count("CREATE TABLE IF NOT EXISTS") == 25
     assert "__PROJECT__" not in result.stdout
     assert "__DATASET__" not in result.stdout
+    assert result.stdout.count("CREATE OR REPLACE VIEW") == 2
+    assert "_row_grain_key" in result.stdout
 
 
 def test_apply_streams_ddl_to_bq_stdin(
@@ -202,3 +210,7 @@ def test_ddl_has_every_allowlisted_closed_field() -> None:
             expected.extend(("source_member", "source_sha256"))
         assert set(names) == set(expected), relation
         assert len(names) == len(expected), relation
+    replay = (Path(__file__).resolve().parents[2] / "sql/qwen_projection_replay_views_v2.sql").read_text(encoding="utf-8")
+    assert replay.count("ALTER TABLE IF EXISTS") == 25
+    assert replay.count("_row_grain_key STRING") == 25
+    assert replay.count("_payload_sha256 STRING") == 25
