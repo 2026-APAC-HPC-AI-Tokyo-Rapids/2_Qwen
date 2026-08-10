@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
+from typing import Self
 
 from .artifact_store import ROLE_FILENAMES
 from .canonical import jcs_bytes, load_json_strict
@@ -252,6 +253,21 @@ RELATION_FIELDS = {name: spec.fields for name, spec in RELATION_REGISTRY.items()
 RELATION_GRAIN = {name: spec.grain for name, spec in RELATION_REGISTRY.items()}
 
 
+class ProjectionColumns(tuple[tuple[str, object], ...]):
+    """Ordered columns with tuple semantics and convenient name lookup."""
+
+    def __new__(cls, values: Iterable[tuple[str, object]]) -> Self:
+        return super().__new__(cls, values)
+
+    def __getitem__(self, key: int | slice | str) -> object:
+        if isinstance(key, str):
+            for name, value in self:
+                if name == key:
+                    return value
+            raise KeyError(key)
+        return super().__getitem__(key)
+
+
 @dataclass(frozen=True, slots=True)
 class ProjectionRow:
     relation_id: str
@@ -291,7 +307,13 @@ class ProjectionRow:
             missing = sorted(expected - set(values))
             extra = sorted(set(values) - expected)
             raise ProjectionError(f"{relation_id} closed fields differ: missing={missing}, extra={extra}")
-        return cls(relation_id, run_id, source_member, source_sha256, tuple(sorted(values.items(), key=lambda item: item[0].encode())))
+        return cls(
+            relation_id,
+            run_id,
+            source_member,
+            source_sha256,
+            ProjectionColumns(sorted(values.items(), key=lambda item: item[0].encode())),
+        )
 
     def as_dict(self) -> dict[str, object]:
         """Return the exact closed object plus a non-contract relation tag."""
