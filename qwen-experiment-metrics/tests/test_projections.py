@@ -64,6 +64,7 @@ def test_registry_is_closed_sorted_and_declares_contract_applicability() -> None
         assert spec.fields == tuple(dict.fromkeys(spec.fields))
         assert spec.applicability in (("bench", "profile"), ("profile",))
         assert spec.grain
+        assert all(name == "run" or name in spec.fields for name in spec.grain)
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -95,6 +96,9 @@ def test_projection_rows_dedupe_exact_values_and_report_conflicts() -> None:
     batch = deduplicate_rows((first, duplicate))
     assert batch.conflicts == ()
     assert batch.rows == (first,)
+    assert first.grain() == (RUN_ID, "PingPong", 2, 8)
+    assert "run" not in first.to_bigquery_row()
+    assert first.to_projection_object()["run_id"] == RUN_ID
 
     conflict = ProjectionRow.from_mapping(
         "qwen_mpi_network_results_v2",
