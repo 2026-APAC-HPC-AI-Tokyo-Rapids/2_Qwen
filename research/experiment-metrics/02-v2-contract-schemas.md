@@ -20,295 +20,67 @@ field別reason/status/欠損用placeholderを作らない。run-level statusは`
 | 項目 | v1定義 |
 |---|---|
 | repository ID | fixed string `apac2026-qwen`。runtime Git remote URLはidentityに使わない |
-| regular run ID | `r-` + OS CSPRNG 16 byteのlowercase hex 32文字 |
-| allocation ID | `a-` + OS CSPRNG 16 byteのlowercase hex 32文字 |
-| qualification child ID | `q-` + OS CSPRNG 16 byteのlowercase hex 32文字。allocation/armをIDへencodeしない |
+| run ID | `r-` + OS CSPRNG 16 byteのlowercase hex 32文字 |
 | JSON canonical bytes | RFC 8785 JCS、UTF-8。duplicate key、NaN、Infinity禁止 |
 | committed TOML identity | checkoutしたfileの実byte列のSHA-256 |
-| Git object identity | `{object_hash_algorithm:enum "sha1"|"sha256",oid}`。oidはalgorithmに応じexact lowercase 40-hexまたは64-hex |
+| Git object identity | `{object_hash_algorithm:enum "sha1"|"sha256",oid}` |
 | artifact member path | archive rootからのrelative POSIX path。absolute、`..`、空componentは禁止 |
-| member reference | closed `{path:relative POSIX path,size_bytes:uint,sha256:sha256}` |
+| member reference | closed `{path,size_bytes,sha256}` |
 | environment snapshot | name byte順の`name\0value\0`反復。最後もNUL |
 
 manifest自身のhashは本文へ入れず、参照側またはouter manifestに置く。
 
-## source-track diff v2
+## source track v1
 
-qualification ONだけが`control/source-track-diff.json`へ次を一度記録する。
-
-1. clean checkoutは`git status --porcelain=v2 -z`がemptyで確認する。
-2. `git rev-parse --show-object-format`と`git rev-parse HEAD`を同じcheckoutで各一回実行し、algorithm/full OIDを得る。
-3. ancestryは`git merge-base --is-ancestor <base> <head>`で確認する。
-4. diff sourceは`git diff-tree --no-commit-id -r --raw -z --no-renames <base> <head>`である。
-5. 各entryを`old_mode/new_mode/old_oid/new_oid/status/path_b64`へ変換し、Git pathの実byte順にsortする。
-6. decoded path集合をscore bundleの`source_paths`とexact一致させる。protocolの`control_plane_files`はbase/headで
-   同じblob OIDを持ちdiffへ現れないことを検査する。
-
-recordは全field required、`additionalProperties=false`の
-`{schema_version:const "source-track-diff/v2",repository_id:const "apac2026-qwen",
-object_hash_algorithm:enum "sha1"|"sha256",base_oid:oid,head_oid:oid,
-diff_algorithm:const "git-diff-tree-raw-z-no-renames+exact-source-path-set/v2",entries:entry[]}`である。
-entryは`additionalProperties=false`の
-`{old_mode:^[0-7]{6}$,new_mode:^[0-7]{6}$,old_oid:oid-or-zero,new_oid:oid-or-zero,
-status:enum "A"|"D"|"M"|"T",path_b64:base64}`、decoded path byte順uniqueである。Aはold、Dはnewのmode/OIDを
-algorithm長のall-zero、M/Tは両OID nonzeroにする。diff-derived hashと一致booleanはentriesから完全導出できるため
-保存しない。bench/profile/qualification OFFはこのfile/schemaをexpected集合へ入れない。
-branch名をidentityにしない。
-
-`source-track-projection/v1`は全field required、`additionalProperties=false`の
-`{schema_version:const "source-track-projection/v1",run_id,run_purpose:enum "bench"|"profile"|"qualification",qualification_arm:enum "off"|"on"|null,
-repository_identity:const "apac2026-qwen",object_hash_algorithm:enum "sha1"|"sha256",
-score_reference_commit:oid|null,profile_base_commit:oid|null,source_head_commit:oid,
-source_track_manifest_sha256:sha256,source_member:relative POSIX path,source_sha256:sha256}`である。benchはscore reference、
-profileはprofile base、qualificationはscore reference+armを持ち、非適用fieldだけnullにする。record hashはcanonical
-source-track record、source SHAはそれを内包するrun manifest bytesのlineageである。
-
-subject manifestにembedするrecord自身は全field required、`additionalProperties=false`の
-`{schema_version:const "source-track/v1",object_hash_algorithm:enum "sha1"|"sha256",
-base_role:enum "score_reference"|"profile_base",base_commit:algorithm-constrained full OID,
-head_commit:algorithm-constrained full OID}`だけを持つ。bench/qualificationはscore reference、profileはprofile baseを選ぶ。
-purpose、qualification arm、repository IDはsubject manifest top-levelが所有しrecordへ複写しない。
-validatorはtop-level variantと同じrepository/object algorithmで、benchは`base_role=score_reference`かつbaseがheadのancestor、
-profileは`base_role=profile_base`かつbaseがheadのancestor、qualification OFFは`base_role=score_reference`かつ
-`head_commit=base_commit`、qualification ONは同roleかつbaseがheadのancestorを要求する。full OIDが存在しない、
-別repository/algorithm、non-clean checkout、non-ancestorはjob投入前にrejectする。
-
-## subject、contract、protocol
-
-`control/run-manifest.json`、allocation parent、qualification child manifestは次を持つ。
+`control/run-manifest.json`へ、全field requiredかつ`additionalProperties=false`の
+`source_track`を埋め込む。
 
 ```text
-schema_version: enum "run-manifest/v1"|"allocation-manifest/v1", subject_kind, run_id?, allocation_id?,
-parent_manifest_sha256?, run_purpose, qualification_arm?, pair_id?,
-ordered_child_run_ids?, repository_id, source_track?, contract_id,
-contract_sha256, protocol_id, protocol_sha256, dimension_policy_hash, lane_id,
-observed_control_plane_sha256?,
-instrumentation_bundle_sha256?, planned_treatment?
+schema_version: const "source-track/v1"
+object_hash_algorithm: enum "sha1"|"sha256"
+base_role: enum "score_reference"|"profile_base"
+base_commit: algorithm-constrained full OID
+head_commit: algorithm-constrained full OID
 ```
 
-`subject_kind`は`regular_run|qualification_allocation|qualification_child`、`run_purpose`は
-`bench|profile|qualification`、armは`off|on`である。非該当fieldはnullでなくabsentにする。
-`source_track=<source-track/v1>`はregular/qualification childでrequired、
-allocation parentではabsentである。projectionはこのembedded recordをrun/child manifestから読む。
-`observed_control_plane_sha256`はregular/allocation parentでrequired、qualification childではabsentで、childはallocation IDから親へjoinする。
-`pair_id`はqualification allocation/childでrequired、paired bench protocolだけregularにも存在し、その他ではabsentである。
-`instrumentation_bundle_sha256`はregular/childでrequired、allocation parentではabsentである。
-`planned_treatment`はregular/childでrequired、allocation parentではabsentのclosed objectである。
-expected producer/file集合はmanifestへ複写せず、immutable contractのvariant applicability、protocol、bundle selectionから
-finalizerが一回導出する。
+benchはscore reference、profileはprofile baseを選ぶ。validatorは同じrepository/object algorithm、
+clean checkout、full OIDの存在、baseがheadのancestorであることをjob投入前に確認する。branch名はidentityにしない。
+projectionはrun ID、purpose、repository identity、base/head commit、manifest/member hashを一度だけ公開する。
+
+## run manifestと実行設定
+
+`control/run-manifest.json`は通常runだけを表し、次を持つ。
 
 ```text
-schema_version: const "planned-treatment/v1"
-block_id?: nonempty string
-block_order?: uint
-replicate_index?: uint
-planned_replicate_group_id?: nonempty string
-planned_comparison_set_id?: nonempty string
-dimensions: sorted unique [{name:nonempty string, logical_type:contract type ID, canonical_value:JCS value}, ...]
+schema_version: const "run-manifest/v1"
+run_id: run ID
+run_purpose: enum "bench"|"profile"
+repository_id: const "apac2026-qwen"
+source_track: source-track/v1
+observed_control_plane_sha256
+instrumentation_bundle_sha256
 ```
 
-regularは`block_id/block_order/replicate_index`をrequired、qualification childは三fieldをabsentにする。childのblock IDは
-allocation ID、replicate indexはprotocol pair array offset、arm orderはparent/set array offsetから導出する。
-benchはgroup/set、qualification childはsetだけrequired、profileは両方absentにする。bench/profileのattempt/max/stoppingは
-protocol dimensionだけが所有しmanifestへ複写しない。qualificationはprotocol pair arrayのoffsetがreplicate indexを所有する。
-dimensionsはdimension policyで当該purposeにapplicableな
-`must_match|treatment`をexactly once、name UTF-8 byte順に持ち、valueはlogical typeのcanonical JCS表現にする。
-top-levelのrun purpose、arm、pair ID、contract/protocol/policy hashをtupleへ複写しない。bench replicate-groupは
-`SHA-256(JCS({namespace,purpose,must_match,treatment}))`、bench/qualification comparison-setは
-`SHA-256(JCS({namespace,purpose,must_match}))`とする。`namespace`はclosed
-`{contract_id,contract_sha256,protocol_id,protocol_sha256,dimension_policy_hash}`、dimension arrayは
-`planned_treatment.dimensions`と同じcanonical entryのname byte順である。armはqualificationのprotocol指定treatmentとして
-treatment ID/paired contrastには使うが、arm/pair/block/order/replicateをcomparison-set hashへ入れない。
-group/set IDはpre-run join anchorとして意図的に保存する。
+nodes、MPI processes、GPU/node、tensor parallel size、resource group、transport、address source、portなどの実行設定は
+実行設定文書の独立fieldであり、束ねるID/objectを作らない。
 
-manifestへ汎用`subject_id`は保存しない。projection/package時だけregular/childは`run_id`、allocationは
-`allocation_id`から導出する。qualification package validatorは、(a) parent ordered child IDs = set/projection IDs、
-job-entryが実在する時だけそのordered IDsも一致、(b) parent pair IDがprotocol `pairs`のexactly one entryを選び、
-set/projectionのarray順armがその`arm_order`、各childのrun ID/armがarray entry/index、(c) child allocation/pair ID =
-parent、child parent hash = archived parent-manifest member SHA-256、(d)両childのcomparison-set/must-match
-dimensionsが一致し、差はprotocol指定treatmentとtop-level armだけ、(e) parentと両childの
-contract ID/hash、protocol ID/hash、dimension policy hash、lane IDが一致する、(f) scheduler requestのmanifest SHA-256/
-lane IDがarchived parent manifest SHA-256/lane IDと一致する、(g) OFF/ON childのbundle hashとarchived bundle bytesが
-protocol `bundles.reference/score`のpath/hashへそれぞれ一致し、両bundleの`contract_id/contract_sha256`が
-namespace contract ID/hashと一致する、
-(h) OFF SIF sidecar `sif_build_definition` OID = OFF source-track head = protocol reference OID、
-ON diffのalgorithm/base/head = ON source-track algorithm/base/head = protocol reference OID/ON SIF sidecar
-`sif_build_definition` OID、を一回検査する。
-ここでparent/set/protocol scheduleとscheduler requestの検査は常に行う。child manifest/bundle/source/SIFの検査は
-`artifact_manifest`がnon-nullなchildだけ、両arm equalityは両childがmaterializeしたpairだけに行う。null childを持つsetも
-parent evidenceとしてpublish可能だが、そのpairはeligibleにしない。
+実行設定文書の`run_purpose`は`bench|profile`だけである。共通部はsource reference、
+個別実行設定、workload、artifact policy、bundle path/hashを持つ。profileはprofiler設定を持つ。
+用途不一致のfieldはabsentにする。
 
-`lane-schema/v1`は全field required、`additionalProperties=false`のclosed objectである。
+実control-plane hashは、source track、bundle、および実行設定文書が列挙するcontrol fileの
+実blob OIDから計算する。設定文書に書いた期待値を観測値として複写しない。
 
-```text
-schema_version: const "lane-schema/v1"
-nodes: positive uint
-mpi_processes: positive uint
-gpus_per_node: positive uint
-tensor_parallel_size: positive uint
-resource_group: nonempty string
-transport_policy: nonempty string
-advertise_source: const "rank0_hostname"
-sglang_port: uint in 1..65535
-node_agent_port: uint in 1..65535
-rendezvous_timeout_sec: positive uint
-ready_timeout_sec: positive uint
-```
+## instrumentation bundle
 
-両portは異なる。v1は`mpi_processes = nodes`、`tensor_parallel_size = nodes * gpus_per_node`を要求し、
-expected node rankは`0..nodes-1`、expected global worker rankは`0..tensor_parallel_size-1`としてこのobjectからだけ
-展開する。required producerはcontractのvariant applicability、instrumentation modeはprotocol/bundle selectionが所有し、
-laneへ複写しない。
+bundleはpurpose-neutralなsemantic definitionであり、hook、event、sample、wrapper、node-agent、
+environment scope、source path allowlist、argv template、sink source IDをclosed schemaで持つ。
+runnerは`score -> bench`、`profile -> profile`の固定写像で一つ選び、manifestへbundle SHA-256を保存する。
+実argv/cwdはStageRunner fact、sink path templateはsource registry、実byteを含むfile identityはartifactが所有する。
 
-`control/protocol.toml`はGit管理された実byteをそのままcopyする。subject manifestの`protocol_sha256`はこのfileの
-実byte SHA-256であり、protocol definition commitやlane fileだけのhashではない。全table/field required、
-`additionalProperties=false`相当のclosed `protocol/v1`は次である。`qualification_target`と`profiler`だけpurpose依存である。
-
-```text
-schema_version: const "protocol/v1"
-protocol_id: nonempty string
-contract_id: nonempty string
-contract_sha256: sha256
-dimension_policy_hash: sha256
-run_purpose: enum "bench"|"profile"|"qualification"
-repository: {repository_id:const "apac2026-qwen",object_hash_algorithm:enum "sha1"|"sha256"}
-control_plane_files:nonempty sorted unique [{path:repository-relative POSIX path,
-  blob_oid:repository algorithm-constrained full OID}]
-lane: {lane_id:nonempty string,source:{repository_path:repository-relative POSIX path,sha256:sha256},
-       resolved:lane-schema/v1}
-workload: {workload_id:nonempty string,expected_workload_identity:sha256}
-sampling?: {planned_attempts:positive uint,max_attempts:positive uint,stopping_rule_id:nonempty string}
-profiler?: {tool:const "sglang-pytorch-profiler-legacy",
-  activities:exact ["CPU","GPU"],profile_steps:const 5,warmup_included:const false,
-  with_stack:const false,record_shapes:const false,merge:const false,profile_by_stage:const false,
-  profile_id:const "qwen-profile",
-  trace_path_template:const "profile/raw/torch/qwen-profile-TP-{global_rank}.trace.json.gz",
-  required_raw_grain:const "global-tp-rank"}
-dimension_policy: {entries:sorted unique [{name:nonempty string,
-  class:enum "must_match"|"treatment"|"nuisance"|"outcome",logical_type:contract type ID}]}
-planned_value_policy: {
-  must_match:sorted unique [{name:nonempty string,canonical_value:JCS value}],
-  treatments:nonempty [{treatment_id:nonempty unique string,
-                        values:sorted unique [{name:nonempty string,canonical_value:JCS value}]}]
-}
-qualification_target?: {
-  reference_source_oid:repository algorithm-constrained full OID,
-  bundles:{reference:{path:repository-relative POSIX path,sha256:sha256},
-           score:{path:repository-relative POSIX path,sha256:sha256}},
-  pairs:exactly 5 [{pair_id:unique nonempty string,
-                    arm_order:exact ["off","on"]|["on","off"]}],
-  screen:{criterion_id:const "median-pair-ratio-screen/v1",
-          minimum_evaluable_pairs:const 3,
-          require_both_arm_orders:const true,
-          pair_set:const "common-evaluable-pairs",
-          median:{kind:const "continuous",even:const "mean-middle-two"},
-          criteria:exact [
-            {response_id:const "total_token_throughput",ratio:const "on/off",
-             lower_bound_inclusive:const 0.99},
-            {response_id:const "perf.stage.benchmark.wall_time_sec",ratio:const "on/off",
-             upper_bound_inclusive:const 1.01}],
-          result_equivalence_policy_id:const "qwen-qualification-result-equivalence/v1"}
-}
-```
-
-qualificationではtarget requiredかつsampling/profiler absent、benchではtarget/profiler absentかつsampling required、
-profileではtarget absentかつsampling/profiler requiredである。
-pair replicate indexはarray offsetから導出し、初版arm orderは
-offset 0からexact `[OFF,ON],[ON,OFF],[OFF,ON],[ON,OFF],[OFF,ON]`とし、cross-field validatorとfixtureで
-array offset parityを検査する。別のorder fieldは作らない。top-level `control_plane_files[].path`はscore bundle `source_paths`と非重複で、
-各blob OIDはreference/final treeとparent実行checkoutでexact一致する。protocol/bundle metadata pathはscore `source_paths`へ
-含めてよいが、runner/PJM/control executable pathはcontrol-plane filesにだけ置く。lane source fileのclosed parse結果は
-`lane.resolved`とexact一致し、別resolved lane fileは作らない。
-`dimension_policy_hash=SHA-256(JCS(dimension_policy))`である。planned value policyのmust-match namesはpolicyの同classを、
-各treatment valuesはpolicyのtreatment namesをexactly once持ち、logical typeはpolicyから取る。subject
-`planned_treatment.dimensions`はmust-match valuesと選択したexactly one treatment tupleだけを合成する。
-nuisance/outcomeはpre-run valueがないためplanned value policyへ入れない。qualification treatment IDは`off|on`に固定し、
-protocol pair scheduleのarmから一意に選ぶ。
-profileは`SGLANG_PROFILE_V2=0`、`SGLANG_PROFILE_WITH_STACK=0`、`SGLANG_PROFILE_RECORD_SHAPES=0`を使い、
-warmup後のmeasured generation先頭5 scheduler forwardだけをCPU+GPU activityで記録する。expected trace集合は
-laneのglobal TP rank `0..tensor_parallel_size-1`とpath templateから展開し、expected countを別fieldへ複写しない。
-screen criteriaのresponse IDは同contractの`consumer.estimand`をexact参照する。ratio/medianはBigQueryの通常の数値演算、
-偶数medianは中央二値の算術平均とし、Sheet表示丸め前にinclusive boundと比較する。
-result-equivalence policyはOFF/ON neutral resultのordered output identity一致と、ON neutral/primaryの
-invocation ID、returned/error count、observed token totals、ordered output identity、generation wallのexact一致を要求する。
-判定用booleanやreasonをrawへ追加しない。
-screenはplanned skeletonから両metric共通の評価可能集合`E`をquery時に作る。両armの比較値、identity、arm gate、
-result-equivalenceを評価するsourceの存在だけをmembershipに使い、取得済みfalseをEから落とさない。
-`|E|<3`、片方のarm order欠如、identity conflictは`inconclusive`、それ以外で閾値/result/arm gateのどれかがfalseなら
-`reject`、すべてtrueなら`adopt`とする。
-`expected_workload_identity=SHA-256(JCS({warmup:<ordered-workload warmup source SHA-256>,
-measured:<ordered-workload measured source SHA-256>}))`である。regularは自身、qualificationはallocation parentが所有する
-二manifestの実file SHA-256を同じfield順で合成し、planned identityへ照合する。二hashをFactへ別名で複写しない。
-`observed_control_plane_sha256=SHA-256(JCS([{path,blob_oid},...]))`はregularの実行checkout、qualification parentの
-実行checkoutからprotocol path順に一度観測する。protocol arrayの同hashとの一致だけをeligibilityへ使い、actual arrayを
-別artifact/Factsへ複写しない。
-現在の具体laneは2 PJM nodes、2 MPI node processes、4 GPU/node、TP=8、rank 0 hostname advertise、SGLang port
-25000、node-agent port 25001、rendezvous 60秒、ready 120秒である。別resolved-lane file、node数別collector、
-port allocator、fallback discoveryを作らない。
-
-`control/instrumentation-bundle.json`は全field required、`additionalProperties=false`の次のclosed objectである。
-
-```text
-schema_version: const "instrumentation-bundle/v1"
-bundle_track: enum "reference" | "score" | "profile"
-contract_id: nonempty string
-contract_sha256: sha256
-source_paths: sorted unique repository-relative POSIX paths
-components: component[]
-environment_capture_scopes: sorted unique subset of ["job_entry", "host_exec_node", "sglang_launch_node", "worker_global_rank"]
-sink_bindings: [{sink_id:nonempty string, source_id:existing source registry ID,
- buffering_mode:enum "line_buffered"|"stage_buffered"}, ...]
-```
-
-`component`は全field requiredの
-`{component_id:nonempty string,sink_ids:sorted unique string[],activation:activation}`で、
-component ID UTF-8 byte順uniqueとする。`activation`は`kind`でtagした
-次の五つだけで、各union memberは全field required、`additionalProperties=false`である。
-
-```text
-{kind:"in_process_hook", source_commit_role:const "sif_build_definition",
- source_path:repository-relative POSIX path, symbol:nonempty string, event_schema_id:nonempty string}
-{kind:"executable", artifact_relative_path:relative POSIX path, content_sha256:sha256,
- argv_template:nonempty argv-argument-template array}
-{kind:"sampler", artifact_relative_path:relative POSIX path, content_sha256:sha256,
- argv_template:nonempty argv-argument-template array, sample_interval_sec:positive finite decimal}
-{kind:"control", control_id:nonempty contract-registry ID, timeout_sec:positive finite decimal}
-{kind:"postrun_parser", parser_id:nonempty string, source_schema_id:nonempty string}
-```
-
-template segmentはclosed union `{literal:nonempty string}`、
-`{token:enum "runtime_root"|"artifact_root"|"model_path"|"cache_root"|"component_executable"|"node_rank"|
-"global_rank"|"invocation_id"}`、`{token:const "sink_path",sink_id:nonempty string}`とする。argv argument
-templateはnonempty segment arrayでadjacent literalを一つに結合する。sink pathはbinding `source_id`のregistry
-`path_template`だけから得る。`artifact_root`は
-source-track headのclean checkoutから作るread-only instrumentation payload root、`artifact_relative_path`はそのroot基準である。
-runnerはactivate直前にrealpathがroot外へ出ないことと実fileのsize/content SHA-256をbundle宣言へ一致させ、
-`component_executable`をその検査済みabsolute realpathだけへ展開する。executable/samplerで別root、PATH検索、
-hash不一致fallbackを許さない。
-runnerは`reference -> qualification_off`、`score -> bench|qualification_on`、`profile -> profile`の固定写像でbundleを一つ選び、
-その全componentを一度activateする。component別applicabilityはこの写像の完全な複写になるため保存しない。
-`sink_bindings`はsink ID byte順uniqueかつsource ID uniqueで、全component `sink_ids`のunionとbinding ID集合は
-exact一致する。各binding sourceのproducer activationはそのsink IDを持つcomponent IDの`bundle_component`とexact一致する。
-sink token/componentのIDは対応bindingに存在する。runnerはactivate前に当該
-variant/laneのcontractから展開した全producer instance `(sink_id,node_rank,global_rank,stage_name,invocation_id)`でsinkをrenderし、
-全pathがrelative-safeかつglobal uniqueなことを検査する。同一single-instance bindingだけは一pathでよい。
-executable/samplerのargv第0 argumentはexactly一つの`component_executable` segment、同tokenはtemplate内exactly onceとし、
-shellを介さずargv arrayを直接spawnする。hookの`source_path`はbundle `source_paths`に存在し、SIF sidecarの
-同path `score_source_tree` entryとexact一致することを検査する。v1のinstrumentation sourceはbuild-definition repositoryだけに置き、
-upstream `sglang_source`を変更する場合は別contractでそのrepositoryのdiff/treeを追加する。最終runtime byte identityはSIF semantic hashが所有し、
-bundleへcommit OIDを複写しない。qualification ONは受入対象のscore bundle byte/SHA-256を使う。合格後のbenchは
-通常contractのscore bundleを使い、D-001 evidenceとの継続照合は行わない。実argv/cwdはStageRunner Fact、sink path templateはsource registry、実byteを含むouter file identityは
-artifact manifestがそれぞれ一度所有する。
-post-runの第二activation判定、fallback bundle、曖昧な軽量labelは作らない。
-
-reference bundleは`source_paths=[]`、`components=[]`、`environment_capture_scopes=[]`、`sink_bindings=[]`に固定する。
-score/profile bundleは`source_paths`と`components`をnonemptyにする。共通の外側timer/log/neutral resultはcontract graphが
-所有し、reference bundleの疑似componentにしない。
-contractはclosed `source_path_policy={score_allowed:sorted unique repository-relative POSIX paths,
-profile_only:sorted unique repository-relative POSIX paths}`を一度所有し、両集合をdisjointにする。score `source_paths`は
-`score_allowed`のsubset、profileは両集合のunionのsubsetである。score allowlistはinstrumentation実装とそのbundle/protocol
-metadataだけを列挙し、model/dataset/workload/lane/PJM/common runner、profile-only pathを含めない。
-
+experiment-metrics-v2の実装中に行う計測なし／あり比較は一時的な非回帰確認である。結果は確認後に破棄し、
+専用purpose、arm、pair、allocation、manifest、artifact、metric key、relation、Sheet列、eligibility、
+decision recordを定義しない。
 ## SIF sidecar v1
 
 `source/sif-sidecar.json`はbuild終了後に作る、全field required、`additionalProperties=false`のclosed objectである。
@@ -333,6 +105,11 @@ embedded_manifest: {member_path:const "/opt/apac/manifest.json",size_bytes:uint,
   manifest_identity:sha256}
 runtime_files: exactly 4 [{role:enum "python_executable"|"sglang_package_entry"|"cuda_runtime"|"nccl_runtime",
   realpath:container absolute path,size_bytes:uint,sha256:sha256}]
+nccl_tests: {commit:const "717b68318278e93f371d8ffb46b076069d7c7851",mpi_enabled:const true,
+  json_output_enabled:const true,
+  binaries:exactly 3 [{role:enum "all_reduce_perf"|"all_gather_perf"|"reduce_scatter_perf",
+    realpath:container absolute path,size_bytes:uint,sha256:sha256}],
+  build_test:{outcome:process-outcome,stdout:member,stderr:member}}
 ```
 
 source commits、toolchain commands、runtime filesは各記載role順にeach exactly onceである。roleからrepository IDへの
@@ -373,12 +150,11 @@ recipe/patch blobのalgorithmは`source_commits[role="sif_build_definition"]`か
 operational relationだけが所有し、このscientific projectionへ複写しない。`source_sha256`はsidecar identityであり、
 run Fact `artifact.sif_manifest_sha256`がこの一rowへのjoin anchorになる。
 `score_source_tree`のpath集合はbuild時に選んだscore bundle `source_paths`とexact一致し、reference bundleでは`[]`である。
-entry OIDのalgorithmは`sif_build_definition` commitから継承する。qualification ONではdiff entryのnew stateとexact一致させ、
-A/M/Tはpresentのnew mode/blob、Dはabsentとする。
+entry OIDのalgorithmは`sif_build_definition` commitから継承する。
 
 ## runtime launcher validation v1
 
-regularはrun bundle、qualificationはallocation parent bundleが`source/runtime-launchers.json`を一度所有する。closed sourceは
+run bundleが`source/runtime-launchers.json`を一度所有する。closed sourceは
 `{schema_version:const "runtime-launcher-validation/v1",
 executables:exactly 2 [{role:enum "mpirun"|"singularity",requested_path:string,resolved_realpath:absolute POSIX path,
 size_bytes:uint,sha256:sha256}],versions:exactly 2 [{role:enum "mpirun"|"singularity",
@@ -386,14 +162,12 @@ argv:exact [same-role resolved realpath,"--version"],outcome:process-outcome,std
 各role exactly onceである。outer MPI stageとnode wrapperはこのresolved absolute pathを使い、PATH検索しない。
 
 publisher projectionは全field requiredの
-`{schema_version:const "runtime-launcher-projection/v1",subject_kind:enum "regular_run"|"qualification_allocation",
-subject_id:string,executables:[{role,requested_path,resolved_realpath,size_bytes,sha256},...],
+`{schema_version:const "runtime-launcher-projection/v1",run_id:string,executables:[{role,requested_path,resolved_realpath,size_bytes,sha256},...],
 versions:[{role,argv,outcome,stdout_member:relative POSIX path,stdout_b64:base64,
 stderr_member:relative POSIX path,stderr_b64:base64},...],source_member:relative POSIX path,source_sha256:sha256}`である。
 `runtime-launcher-semantic/v1`はpath/member locatorを除いたordered
 `{schema_version:const "runtime-launcher-semantic/v1",launchers:[{role,sha256,outcome,stdout_b64,stderr_b64},...]}`で、
-consumer identityは`SHA-256(JCS(object))`とする。採否に使うeligible 3–5 pairのparent projectionで一値に一致したhashだけを
-decision `observed_runtime_launcher_semantic_sha256`へ置く。通常benchはこの受入時hashへ一致させない。
+consumer identityは`SHA-256(JCS(object))`とする。
 
 ## model、dataset、cache
 
@@ -445,7 +219,7 @@ source file byte hashはartifact lineageだけに使う。semantic identityだ�
 単射escape、valueをRFC 4648 Base64にする。scopeは`job_entry|host_exec_node|sglang_launch_node|
 worker_global_rank`で、full snapshotを保持する。common/deltaの第二raw表現は作らない。
 
-minimal CPU hardwareはregularではnode wrapperが各nodeで一度、qualificationではparentがarm 1前に一度だけ
+minimal CPU hardwareはnode wrapperが各nodeで一度だけ
 `LC_ALL=C lscpu --json`を実行する。`source/hardware/node-<node-rank>.json`は`hardware-node/v1`で、
 `schema_version:const "hardware-node/v1"/node_rank:uint/hostname:string`、`commands={lscpu:{argv:["lscpu","--json"],exit_code:int,
 stderr_member:relative POSIX path}}`、`lscpu_json:object|null`、closed
@@ -465,13 +239,12 @@ cpufreq `related_cpus`はASCII whitespace区切りuintをstrictly increasing uni
 whitespace trim後のliteral `(null)`も`[]`へcanonicalizeする。
 
 `minimal-hardware-projection/v1`は全field requiredの
-`{schema_version:const "minimal-hardware-projection/v1",subject_kind:enum "regular_run"|"qualification_allocation",subject_id:string,node_rank:uint,
+`{schema_version:const "minimal-hardware-projection/v1",run_id:string,node_rank:uint,
 hostname:string,cpu_identity:{architecture,model_name,vendor_id,cpu_family,model,stepping:string|null,
 physical_cores:uint|null,numa_nodes:uint|null},platform_settings:<hardware-node/v1のclosed settings>,
 source_member:relative POSIX path,source_sha256:sha256}`である。CPU identityはlscpu label
 `Architecture/Model name/Vendor ID/CPU family/Model/Stepping/Socket(s)/Core(s) per socket/NUMA node(s)`を
-`field`のASCII末尾colonをexactly oneつ除去して照合し、physical coresはsocket数×core/socketとする。regularとallocationは
-同じrelationを使い、allocation projectionやchild Factへhardware objectを複写しない。
+`field`のASCII末尾colonをexactly oneつ除去して照合し、physical coresはsocket数×core/socketとする。
 
 `source/topology/node-<node-rank>.json`は次のclosed source recordを持つ。
 
@@ -514,24 +287,23 @@ event_type="worker_ready", payload={
 }
 ```
 
-expected global rankは`0..lane.tensor_parallel_size-1`、node rankは`0..lane.nodes-1`である。値をServerArgsから推測しない。
+expected global rankは`0..protocol.tensor_parallel_size-1`、node rankは`0..protocol.nodes-1`である。値をServerArgsから推測しない。
 
-`qwen-placement/v1` reducerは新しいrawやreason fieldを作らず、resolved lane、scheduler request、全node launch、
-container GPU topologyを全variant共通部分として一度だけ照合し、bench/profile/qualification ONだけ各nodeの
+`qwen-placement/v1` reducerは新しいrawやreason fieldを作らず、protocolの個別実行設定、scheduler request、全node launch、
+container GPU topologyを一度だけ照合し、bench/profileの各nodeの
 `server_args_effective`と全worker-readyを追加照合する。scheduler requestの
-lane ID/nodes/MPI processes/resource group/transport policyはresolved laneとexact一致する。node launchはnode rankと
-outer MPI global rankがともにexact `0..lane.nodes-1`、各recordで`global_rank=node_rank`、`local_rank=0`、
-`size=lane.mpi_processes`、hostnameが全nodeでdistinctでなければならない。common container topologyは各expected nodeで
-exact `lane.gpus_per_node`件とindex集合`0..lane.gpus_per_node-1`を持ち、全nodeでexact
-`lane.tensor_parallel_size`件のglobal-unique UUIDを持たなければならない。各ServerArgsは`tp_size`、`nnodes`、
-`node_rank`がそれぞれlane TP、lane nodes、当該node rankと一致し、distributed addressはlaneのrank 0 advertise/port
+nodes/MPI processes/resource group/transport policyはprotocolの各fieldとexact一致する。node launchはnode rankと
+outer MPI global rankがともにexact `0..protocol.nodes-1`、各recordで`global_rank=node_rank`、`local_rank=0`、
+`size=protocol.mpi_processes`、hostnameが全nodeでdistinctでなければならない。common container topologyは各expected nodeで
+exact `protocol.gpus_per_node`件とindex集合`0..protocol.gpus_per_node-1`を持ち、全nodeでexact
+`protocol.tensor_parallel_size`件のglobal-unique UUIDを持たなければならない。各ServerArgsは`tp_size`、`nnodes`、
+`node_rank`がそれぞれprotocolのTP、nodes、当該node rankと一致し、distributed addressはprotocolのrank 0 advertise/port
 contractと一致する。worker envelopeはglobal rankと`payload.tp_rank`がともにexact
-`0..lane.tensor_parallel_size-1`で一対一に一致し、各nodeにexact `lane.gpus_per_node`件を持つ。
+`0..protocol.tensor_parallel_size-1`で一対一に一致し、各nodeにexact `protocol.gpus_per_node`件を持つ。
 各workerの`gpu_id/gpu_uuid`は同じnodeのcontainer topology `(index,uuid)`へbijectionし、全nodeのworker UUIDもuniqueとする。
-必要sourceはvariantごとの上記集合だけで、欠ければ既存`placement_valid`はNULL、揃って一つでも不一致ならfalse、
-それ以外だけtrueにする。qualification OFFはServerArgs/worker-readyを必要sourceにせず、共通部分だけでtrue/falseを決める。
-`benchmark_valid`はresult整合だけを表す既存意味から変えない。benchの`score_comparison_eligible`とqualificationの
-`qualification_arm_eligible`だけが、各variantに適用可能な`placement_valid=true`を要求する。profileは値を表示するが
+必要sourceが欠ければ既存`placement_valid`はNULL、揃って一つでも不一致ならfalse、
+それ以外だけtrueにする。`benchmark_valid`はresult整合だけを表す既存意味から変えない。benchの
+`score_comparison_eligible`だけが`placement_valid=true`を要求する。profileは値を表示するが
 score統計へ入れず、原因列やvalidation artifactは作らない。
 
 ## event、lifecycle、phase
@@ -541,11 +313,11 @@ score統計へ入れず、原因列やvalidation artifactは作らない。
 producer内sequenceは0から連続増加する。clock IDはLinux boot IDとclock名を組み合わせた
 `<boot_id>:CLOCK_MONOTONIC`で、別nodeのmonotonic値を減算しない。
 
-`control/lifecycle/rendezvous.json`は`schema_version:const "lifecycle-rendezvous/v1"/run_id/protocol_version/rank0_hostname/address/
-port=lane.node_agent_port/created_at`、summaryは`schema_version="lifecycle-summary/v1"/run_id/nodes`を持つ。node entryは
+`control/lifecycle/rendezvous.json`は`schema_version:const "lifecycle-rendezvous/v1"/run_id/rank0_hostname/address/
+port=protocol.node_agent_port/created_at`、summaryは`schema_version="lifecycle-summary/v1"/run_id/nodes`を持つ。node entryは
 `node_rank:uint/ready:{sequence:uint,clock_id:string,received_monotonic_ns:uint,ack_monotonic_ns:uint}/
 shutdown:{sequence:uint,invocation_id:string,clock_id:string,received_monotonic_ns:uint,ack_monotonic_ns:uint}|null`である。
-`nodes`はnode-rank順のexact `lane.nodes`件で、rank集合は`0..lane.nodes-1`と一致する。
+`nodes`はnode-rank順のexact `protocol.nodes`件で、rank集合は`0..protocol.nodes-1`と一致する。
 各entryで`ready.received_monotonic_ns <= ready.ack_monotonic_ns`を要求する。shutdownがnon-nullならreadyと同じ
 clock IDで、`ready.ack_monotonic_ns <= shutdown.received_monotonic_ns <= shutdown.ack_monotonic_ns`を要求する。
 node-agent summaryがshutdown受信の唯一のsource、wrapper lifecycleが
@@ -579,7 +351,7 @@ early/coordinated分類を複写しない。
 `{clock_id,start_broadcast_ns,all_start_acks_received_ns,generation_start_ns,generation_end_ns,
 end_broadcast_ns,all_end_acks_received_ns}`、node-rank順の
 `{node_rank,clock_id,start_sequence,end_sequence,start_received_ns,start_ack_ns,end_received_ns,end_ack_ns}`を持つ。
-node arrayはnode-rank順のexact `lane.nodes`件で、rank集合は`0..lane.nodes-1`と一致する。
+node arrayはnode-rank順のexact `protocol.nodes`件で、rank集合は`0..protocol.nodes-1`と一致する。
 各entryは一つのclock ID上で
 `start_received_ns <= start_ack_ns <= end_received_ns <= end_ack_ns`を要求する。
 rank 0の6 timestampは記載順にnondecreasingで同じclock IDを使う。start/end sequenceは同node control stream上で
@@ -647,7 +419,7 @@ profileのTorch Profilerはglobal TP rankごとに
 captureは全field required、`additionalProperties=false`のclosed
 `profiler-capture/v1={schema_version:const "profiler-capture/v1",run_id:run ID,global_rank:uint,
 invocation_id:nonempty string,source_member:relative POSIX path,size_bytes:uint,sha256:sha256}`である。
-`global_rank`はfilename、trace metadata、laneの`0..tensor_parallel_size-1`と一致させ、source memberは対応gzip traceを指す。
+`global_rank`はfilename、trace metadata、protocolの`0..tensor_parallel_size-1`と一致させ、source memberは対応gzip traceを指す。
 capture自身を別raw relationへ投影せず、traceとのlineageにだけ使う。全rank traceが揃わなければ既存
 `collection_complete=false`とし、欠損rankのplaceholder、profiler専用status/reason、retryを作らない。
 
@@ -657,7 +429,7 @@ publisherは実在traceを一度parseし、complete duration eventを
 global_rank:uint,activity:enum "CPU"|"GPU",event_category:string,event_name:string,
 call_count:positive uint,inclusive_duration_sum_ns:nonnegative decimal,
 source_member:relative POSIX path,source_sha256:sha256}`として`qwen_profiler_events_raw_v2`へ転記する。
-平均、構成比、rank/run合計、top-N、分類summaryは保存せずquery時に導出する。bench/qualificationはこのrelationへ行を作らず、
+平均、構成比、rank/run合計、top-N、分類summaryは保存せずquery時に導出する。benchはこのrelationへ行を作らず、
 固定幅consumerはNULLだけにする。
 
 GPU aggregateはraw factへ保存しない。`gpu-phase/v1` reducer/viewは`phase,node_rank,gpu_uuid` grainで次のclosed列を返す。
@@ -690,7 +462,7 @@ min/median/max、energy sumをquery時に導出する。complete/status boolean�
 
 `source/workload-{warmup,measured}.json`は
 `schema_version:const "ordered-workload/v1"/dataset_manifest_sha256/kind/requests`を持つ。`kind`は`warmup|measured`、warmupだけ`mode` enum
-`random|dataset`を追加する。run/allocation IDはsemantic workload bytesへ入れず、subject bundle manifestとpublisher
+`random|dataset`を追加する。run IDはsemantic workload bytesへ入れず、run bundle manifestとpublisher
 projectionだけがbindingを所有する。このため同じactual workloadはrunを跨いでも同じsource SHA-256になる。
 requestsは実generate順で、各要素は次を持つ。
 
@@ -709,19 +481,18 @@ prompt payloadを含む。generated本文は保存しない。publisherはmanife
 manifest relationだけが所有し、request relationはmanifest identityでjoinする。
 
 `workload-manifest-projection/v1`は全field required、`additionalProperties=false`の
-`{schema_version:const "workload-manifest-projection/v1",subject_kind:enum "regular_run"|"qualification_allocation",subject_id:string,
+`{schema_version:const "workload-manifest-projection/v1",run_id:string,
 workload_kind:enum "warmup"|"measured",dataset_manifest_sha256:sha256,warmup_mode:enum "random"|"dataset"|null,
 source_member:relative POSIX path,source_sha256:sha256}`を持つ。measuredのmodeはnullで、
 `source_sha256`がsubject bindingを除いたcanonical workload fileのsemantic manifest identityを兼ねる。
 `workload-request-projection/v1`は全field requiredの
-`{schema_version:const "workload-request-projection/v1",subject_kind,subject_id,workload_kind,ordinal:uint,request:<上記request closed object>}`を持ち、親manifest projectionを
-`subject_kind/subject_id/workload_kind`でjoinする。manifest hashとsource lineageをrequest rowへ複写しない。
+`{schema_version:const "workload-request-projection/v1",run_id,workload_kind,ordinal:uint,request:<上記request closed object>}`を持ち、親manifest projectionを
+`run_id/workload_kind`でjoinする。manifest hashとsource lineageをrequest rowへ複写しない。
 
 `ordinal`はordered `requests` arrayの0-based offsetからpublisherがnormalization時に一度だけ付与し、source itemへは複写しない。
 
 manifestだけがordered requestのraw正本である。selected count、planned input/output token total、warmup modeの
-別raw keyを作らず、consumerがarrayから導出する。qualificationではparentがarm 1前にmanifestを一度生成し、OFF/ON
-両方のneutral request-manifest harnessが同じbyteを入力として順番通り送る。childへmanifest byteを複写しない。
+別raw keyを作らず、consumerがarrayから導出する。
 
 ### primary result v1
 
@@ -750,388 +521,91 @@ output_token_throughput = observed_output_tokens / generation_wall_sec
 total_token_throughput = (observed_input_tokens + observed_output_tokens) / generation_wall_sec
 ```
 
-qualificationだけの`source/qualification-result.json`は、score referenceとfinalの両方に入る共通
-`QualificationResultWriter`がresponse validation直後にwrite/renameする。closed schemaは次である。
+## network captureとprojection v1
 
 ```text
-schema_version: const "qualification-result/v1", run_id:nonempty string, invocation_id:nonempty string,
-generation_wall_sec:positive finite decimal, returned_count:uint, error_count:uint,
-observed_input_tokens:uint|null, observed_output_tokens:uint|null,
-ordered_output_token_ids_sha256:sha256|null
+mpi-network-result/v2 = {
+  run_id:string, benchmark:enum "PingPong"|"Sendrecv"|"Allreduce",
+  process_count:uint>0, message_bytes:uint, iterations:uint>0,
+  time_min_us:finite number|null,time_avg_us:finite number|null,time_max_us:finite number|null,
+  bandwidth_mbytes_per_sec:finite number>=0|null,source_member:relative POSIX path
+}
+
+nccl-network-result/v2 = {
+  run_id:string,collective:enum "all_reduce"|"all_gather"|"reduce_scatter",
+  message_bytes:uint>0,element_count:uint>0,data_type:const "float",
+  reduction_op:enum "sum"|null,buffer_mode:enum "out_of_place"|"in_place",
+  mpi_process_count:uint>0,gpu_count:uint>0,time_us:finite number>=0,
+  algorithm_bandwidth_gbps:finite number>=0,bus_bandwidth_gbps:finite number>=0,
+  error_count:uint,source_member:relative POSIX path
+}
 ```
 
-予定request count、backend、throughput、verdictは保存しない。eligibilityとthroughputは共通workloadと上記原始値から
-導出する。output identityのcanonical inputとnull規則はprimary resultと同じである。ONでは`primary-result/v1`との
-invocation ID/returned/error/token/output identity/wall一致を検査してwriter自体をqualificationする。
-二sourceを持つのはONだけで、contractの`duplication_justification`にこの独立writer検証を記す。
+IMB source membershipは`source/network/imb-mpi1/{argv.json,stdout.txt,stderr.txt}`、NCCLはcollectiveごとの
+`{argv.json,result.json,stdout.txt,stderr.txt}`に固定する。IMB parserはcompleteな全sectionだけをacceptし、NCCL parserは
+`-J` JSONだけを正本とするpure functionである。truncated/parse不能sourceから部分rowを作らない。
+
+`mpi_network_results_v2`のgrainは`(run_id,benchmark,process_count,message_bytes)`、
+`nccl_network_results_v2`は`(run_id,collective,message_bytes,buffer_mode)`である。各rowはsource member pathだけを持ち、
+artifact hashはmanifest/projection lineageだけが所有する。algbw/busbwを再計算せず、summary row/keyを追加しない。
+`all_reduce`と`reduce_scatter`の`reduction_op`は`sum`、`all_gather`はNULLに固定する。JSON内のsize/count/type、
+out-of-place/in-place、time、algbw、busbw、errorをlosslessに写し、8 byteから1 GiBまでfactor 2の実在sizeだけをacceptする。
+SIF sidecarの`nccl_tests.binaries`は記載role順each exactly once、build testはsuccessでなければSIFを公開しない。
 
 ## control、merge、package
 
-以下はすべて全記載field required、`additionalProperties=false`である。`member`はclosed
-`{path:relative POSIX path,size_bytes:uint,sha256:sha256}`、`process-outcome`はclosed union
-`{kind:const "exit",code:int}` | `{kind:const "signal",signal:positive int}` |
-`{kind:const "spawn_error"}`である。rare failure用のretry counter、reason、代替sourceは追加しない。
+PJM entryは通常runだけを扱う。
 
 ```text
-scheduler-request/v1 = {
-  schema_version:const "scheduler-request/v1",subject_manifest_sha256:sha256,
-  lane_id:nonempty string,nodes:positive uint,mpi_processes:positive uint,
-  resource_group:nonempty string,transport_policy:nonempty string,
-  pjm_script:{repository_path:repository-relative POSIX path,sha256:sha256},argv:nonempty string[]
-}
-submission-result/v1 = {
-  schema_version:const "submission-result/v1",request_sha256:sha256,
-  outcome:process-outcome,stdout:member,stderr:member,parsed_job_id:nonempty string|null
-}
-job-entry/v1 =
-  {schema_version:const "job-entry/v1",subject_kind:const "regular_run",run_id:run ID,
-   pjm_job_id:nonempty string,entry_utc:RFC3339 UTC,environment_snapshot:member} |
-  {schema_version:const "job-entry/v1",subject_kind:const "qualification_allocation",allocation_id:allocation ID,
-   ordered_child_run_ids:exactly 2 run IDs,pjm_job_id:nonempty string,entry_utc:RFC3339 UTC,
-   environment_snapshot:member}
-scheduler-terminal/v1 = {
-  schema_version:const "scheduler-terminal/v1",argv:nonempty string[],outcome:process-outcome,
-  stdout:member,stderr:member,observed_terminal_utc:RFC3339 UTC
-}
-stage-launch/v1 = {
-  schema_version:const "stage-launch/v1",argv:nonempty string[],cwd:string,
-  stderr_mode:enum "stdout"|"separate"
-}
-stage-termination/v1 = {schema_version:const "stage-termination/v1",outcome:process-outcome}
-bundle-manifest/v1 =
-  {schema_version:const "bundle-manifest/v1",subject_kind:enum "regular_run"|"qualification_child",
-   run_id:run ID,contract_sha256:sha256,members:member-with-role[]} |
-  {schema_version:const "bundle-manifest/v1",subject_kind:const "qualification_allocation",
-   allocation_id:allocation ID,contract_sha256:sha256,members:member-with-role[]}
-artifact-manifest/v1 = {
-  schema_version:const "artifact-manifest/v1",logical_artifact_name:nonempty string,
-  files:[{role:enum "run_bundle"|"metrics"|"profile_raw",
-          size_bytes:uint,sha256:sha256}, ...]
-}
+job-entry/v1:
+  schema_version, run_id, pj_job_id, entered_at
+bundle-manifest/v1:
+  schema_version, run_id, members[]
 ```
 
-`scheduler-request/v1`はsubmit時にlaneから解決して実argvへ入れたrequested snapshotであり、lane objectの予定値を
-別名で複写したものではない。lane ID、nodes、MPI processes、resource group、transport policyをresolved laneへ
-exact照合し、v1では`mpi_processes = nodes`を要求する。
+runnerはsubmit前後のexact argv/stdout/stderr/response、PJM側job ID、terminal accountingを保存する。
+manifest run IDとjob-entry run ID、submit/job-entry/accountingのjob IDが一致しなければpublishしない。
+通常run bundleは`control/`、`source/`、`logs/`、`metrics.jsonl`、profile時だけ`profile/raw/`を持つ。
+artifact filesはrole順uniqueとし、outer manifest自身をmemberへ含めない。
 
-`member-with-role`は`member`へcontract registryのclosed source-roleを一つ加えたobjectで、path byte順uniqueにsortする。
-bundle manifestはself/outer sidecarを含めない。artifact filesは記載role順uniqueで、bench/qualification childは
-`run_bundle,metrics`、profileは`run_bundle,metrics,profile_raw`をexactly once持つ。filenameはroleから
-`run-artifacts.tar.zst|metrics.jsonl|profile-raw.tar.zst`へ固定導出し、manifestへ複写しない。
-artifact manifest自身とupload IDは含めない。途中失敗でこの集合を作れないchildはset manifestで
-`artifact_manifest=null`だけとし、partial manifest、placeholder、reasonを作らない。compute/collectorが失敗してもsupervisorが
-finalizerまで到達できたchildは、完成済みlog/sourceと`collection_complete=false`を持つ通常artifact setを一度作る。
-nullにするのはfinalizer前のcrashまたはpackage失敗でmanifestが存在しない場合だけで、両者を区別する原因fieldは持たない。
-`request_sha256`は実scheduler request file bytes、terminal argv末尾job IDはsubmission/job-entryの一致済みIDである。
-
-`scheduler-accounting/v1`は固定`pjstat --history -S --choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut
---data --delimiter "\t" <source-specific-job-id>`の一rowをclosed
-`{schema_version:const "scheduler-accounting/v1",jid:string,st:string,sdt:string,elp:{lexeme:string,seconds:finite decimal|null},
-ec:{lexeme:string,value:int|null},sn:{lexeme:string,value:int|null},pc:{lexeme:string,value:int|null},
-nnumu:{lexeme:string,value:int|null},mmszu:{lexeme:string,bytes:uint|null},
-uctmut:{lexeme:string,seconds:finite decimal|null},sctmut:{lexeme:string,seconds:finite decimal|null}}`で持つ。
-返却`jid`はargv末尾IDと一致必須である。`elp.seconds`は括弧内decimal seconds、CPU timeはmillisecondを
-`decimal / 1000`、memoryは括弧内decimalをbytesへparseし、parse不能時はnumericだけnullにする。
-
-field別missing/reason/issue count、collection validation fileは持たない。finalizerはimmutable contract/protocol/bundleから
-導出したexpected setとobserved setをメモリ上で一回照合し、raw fact `collection_complete:bool`と
-merge済み`metrics.jsonl`を作る。
-
-`run-lifecycle/v1`の境界は、regularではPJM script entry直後からcompute source/log回収終了まで、
-qualification childではそのchild orchestration開始直前からそのsource/log回収終了までとする。
-二childは別々のUTC wall/monotonic boundaryを持ち、allocation-wideのPJM entry/accounting/terminalは
-`qwen_qualification_allocations_raw_v2`だけが所有しchild Factへ複写しない。別のallocation lifecycle objectは作らない。
-
-Git管理の`instrumentation-decision/v1`はcollector実装時に一度だけ行うD-001受入試験の記録である。
-最初の`adopt`後は判定を固定し、通常bench manifestへのbinding、変更検知による再open、
-lane/環境/commit/bundle別の再実行は行わない。recordは共通base
-`{schema_version:const "instrumentation-decision/v1",decision_id:nonempty string,qualification_namespace:
-{contract_id:nonempty string,contract_sha256:sha256,protocol_id:nonempty string,protocol_sha256:sha256,
-dimension_policy_hash:sha256}}`に次のclosed tagged unionを加える。
-
-```text
-{decision:enum "adopt"|"reject",qualified_source_diff_sha256:sha256,
- observed_sif_pair:{reference_sif_semantic_sha256:sha256,final_sif_semantic_sha256:sha256},
- observed_runtime_launcher_semantic_sha256:sha256}
-{decision:const "inconclusive"}
-```
-
-`inconclusive`は評価可能pair不足または一値のobserved identityを構成できない時に使い、欠損field、reason、statusを持たない。
-このnamespaceのexact protocol relationが`lane_id`、reference source object、
-workload identity、reference/score bundle path/SHA-256、control-plane file blob集合、protocol順のexactly 5 pair scheduleとscreenを一行で所有する。
-decisionへこれらの
-完全な部分集合を複写しない。
-
-SIF semantic SHA-256はprovenanceから次のclosed objectを構成し、`SHA-256(JCS(object))`で得る。
-
-```text
-schema_version: const "sif-semantic/v1"
-sglang_source: {repository_id:const "apac2026-sglang",object_hash_algorithm:enum "sha1"|"sha256",
- oid:algorithm-constrained full OID}
-score_source_tree: score source entries above
-recipe: {path:relative POSIX path,blob_oid:algorithm-constrained full OID}
-applied_patches: sorted [{path:relative POSIX path,blob_oid:algorithm-constrained full OID}, ...]
-base_oci: {reference:string,manifest_digest:string,config_digest:string,layer_digests:[string, ...]}
-lock_manifest: {path:relative POSIX path,sha256:sha256}
-build_command: nonempty string[]
-toolchain_observations: exactly 4 role/outcome/stdout_b64/stderr_b64 objects in declared role order
-runtime_files: exactly 4 role/realpath/size_bytes/sha256 objects in declared role order
-```
-
-`sif_build_definition` commit、完成SIF byte hash、embedded manifest identity、outer sidecar path/hashは除外する。
-pairの二hashは各qualification childがFact `artifact.sif_manifest_sha256`でjoinしたSIF provenanceから
-D-001 report用に再計算する。通常benchはこの値へ一致させない。
-採否に使うD-001の評価可能pair（最低3 pair）の実在OFF childは同一reference SIF semantic hash、実在ON childは同一final SIF semantic hashと同一
-`SHA-256(JCS(source-track-diff/v2.entries))`を持ち、そのdiff hashはdecision `qualified_source_diff_sha256`、その順序付き一pairが
-decision `observed_sif_pair`と一致する。欠損/conflict/異なるSIFの混入があれば`adopt`にできない。
-未起動/null childはpairを欠測にするだけで、他の3–4評価可能pairによるdecisionを妨げない。
-各qualification childのcontract/protocol/policy composite keyはqualification namespaceとexact一致させる。
-この照合は一回限りのD-001 report内だけで行い、通常benchへ引き継がない。
-
-Git管理relation `qwen_instrumentation_decisions_v2`はrecord全fieldと
-`decision_sha256=SHA-256(JCS(record))`を一行に持ち、grainは`(decision_id,decision_sha256)`である。
-これはcollector実装時に一度だけ行うD-001受入試験の記録であり、最初の`adopt`後は判定を固定する。
-一回限りのD-001 reportだけが読み、runnerと通常run manifestはID/hashを参照しない。
-run artifactへdecision recordのimmutable copyは作らない。authoring時の一時JSONはGit-managed relationに取り込んだ後、
-runの参照sourceにしない。
-
-logical `qwen_instrumentation_decision_context_v2`はdecisionの`qualification_namespace` composite keyを
-Git管理qualification protocol relationの`contract_id/hash,protocol_id/hash,dimension_policy_hash`へexact inner joinし、
-decision fieldsとprotocolのlane/reference/workload/reference+score bundles/control-plane files/5-pair scheduleを一行で露出する。
-これは保存copyでなくviewで、grainはdecision ID/hashである。一回限りのD-001 reportがqualification evidenceを確認するために使い、
-通常benchのcontract、eligibility、comparison dimensionまたはcurrent HEADへjoinしない。合格後は変更検知による再open、
-lane/環境/commit/bundle別の再実行を行わない。
-
-qualificationはOpenFOAM基準と同じ外側artifact setにする。
-
-```text
-qualification/<allocation-id>/qualification-set-manifest.json
-qualification/<allocation-id>/allocation/allocation-artifacts.tar.zst
-qualification/<allocation-id>/runs/<off-child-id>/{run-artifacts.tar.zst,metrics.jsonl,artifact-manifest.json} # off artifact_manifest non-null時だけ
-qualification/<allocation-id>/runs/<on-child-id>/{run-artifacts.tar.zst,metrics.jsonl,artifact-manifest.json}   # on artifact_manifest non-null時だけ
-```
-
-`qualification-set-manifest/v1`は全field required、`additionalProperties=false`のclosed objectである。
-
-```text
-schema_version: const "qualification-set-manifest/v1"
-allocation_id: allocation ID
-allocation_archive: {path:relative POSIX path,size_bytes:uint,sha256:sha256}
-ordered_children: exactly 2 [{run_id:run ID,arm:enum "off"|"on",artifact_manifest:member|null}]
-```
-
-array offsetが実行ordinalを所有し、同値integerをchild entryへ複写しない。childのrun bundle/metrics/profile
-outer identityは実在する各`artifact-manifest.json`だけが所有し、set manifestへ再掲しない。未起動またはpackage前に
-失敗したchildは`artifact_manifest=null`だけとし、reason/placeholder artifactを作らない。allocation archiveは
-parent manifest、contract、protocol、submission result、job-entry、
-scheduler request/accounting/terminal、job-entry snapshot、runtime launcher validation、node別minimal hardware、model/dataset manifest、共通measured/warmup workload manifest、
-PJM log、tar root bundle manifestを一度だけ収録する。publisherはこれをallocation-grain
-`qwen_qualification_allocations_raw_v2`へ次のclosed `qualification-allocation-projection/v1`として一row投入する。
-
-```text
-schema_version: const "qualification-allocation-projection/v1"
-allocation_id, lane_id, pair_id: nonempty string
-contract_id, protocol_id: nonempty string
-contract_sha256, protocol_sha256, dimension_policy_hash: sha256
-ordered_children: exactly 2 [{arm:enum "off"|"on", run_id:nonempty string}]
-scheduler_request: scheduler-request/v1
-submission_job_id: string|null
-job_entry_job_id: string|null
-scheduler_accounting: scheduler-accounting/v1|null
-scheduler_terminal: scheduler-terminal/v1|null
-observed_control_plane_sha256: sha256
-job_entry_environment: [{name_b64:base64, value_b64:base64}, ...] | null
-bundle_members: bundle-manifest/v1 members array
-bundle_manifest_member: relative POSIX path
-bundle_manifest_sha256: sha256
-allocation_archive_member, set_manifest_member: relative POSIX path
-allocation_archive_sha256, set_manifest_sha256: sha256
-```
-
-`bundle_members`はarchive内`bundle.manifest.json`のfull member arrayを順序も含めて一度転記し、選択subsetを作らない。
-normal pathでは`allocation_manifest/contract/protocol/scheduler_request/runtime_launchers/model_manifest/dataset_manifest/
-workload_warmup/workload_measured` roleをexactly 1持ち、optional sourceは実在時だけ一memberを持つ。
-`bundle_manifest_member/hash`はarchive内manifest自身のlocatorで、selfを`bundle_members`へ入れない。
-`allocation_archive_member/set_manifest_member`はouter setからarchiveへ辿るlineageで、tar内の`bundle_members`へ
-重ねない。job-entry snapshotが実在してenvironmentが空なら`[]`、member欠損またはdecode失敗なら`null`にする。
-`ordered_children`のarray offset 0/1がordinalを所有し、arm off/onを各一件持つ。parent manifest/set/projectionの
-ordered run IDsを常に一致させ、job-entryが実在する時だけそのIDsも照合する。各childのrun ID/arm/
-childのtop-level armはset/projection entryと一致させる。
-childのparent hashは`bundle_members[role="allocation_manifest"].sha256`と一致させる。二job IDのequalityはviewだけが導出する。
-minimal hardwareはsubject-keyed hardware projection、ordered warmup/measured workload payloadは
-`qwen_workload_requests_raw_v2`が`subject_kind="qualification_allocation"/subject_id=allocation ID`で一度だけ所有し、
-allocation rowへ複写しない。child queryはallocation IDでjoinし、親を擬似runにしない。
-
-runtimeで`archive-staging/bundle.manifest.json`を作り、tar rootの`bundle.manifest.json`にする。GitHub Artifact内の
-基本fileは`run-artifacts.tar.zst`、`metrics.jsonl`、`artifact-manifest.json`である。profileでは
-`profile-raw.tar.zst`を追加する。
-
-- `run-artifacts.tar.zst`: control/source/domain/log/result。telemetry rawを含めない
-- `profile-raw.tar.zst`: `telemetry/**`、profile-only hardware raw、D-004で確定したprofiler rawだけ。
-  run file三点と同じGitHub logical artifact set内の別outer fileである
-- `artifact-manifest.json`: outer file identityだけ
-- workflow operational row: GitHub run ID/attempt、artifact ID、home destination、upload/SCP/publish outcome
-
-同じ実byteを二tarへ入れない。qualification allocation archive/set manifestもpackage ownershipに含む。
-merge後のproducer fragmentは`metrics.jsonl`の完全な部分集合なのでartifactへ入れず削除する。merge前の
-partial/tmpは失敗診断で手元に残り得るが、publisherのFact入力にしない。
-bundle URIはraw metricへ戻さずworkflow operational rowからjoinする。home pathは
-`/hdd_raid/samba/net_share/qwen-artifacts/<github_run_id>/attempt-<github_run_attempt>/`へ固定する。OpenFOAMと同様、
-GitHub Artifact upload後にruntimeをcleanupし、SCP成功時だけGitHub Artifactを削除する。remote transaction、
-reconciler、delivery ledgerは作らない。
+mergeは実装とpurposeからexpected producer/file集合を一度導出する。完成fragmentだけを読み、
+同一ownerのbyte-identical factだけをdedupeし、異値はconflictとしてrunをincompleteにする。
+取得不能と非適用はconsumerでNULLとし、欠損reason/status/placeholder keyを作らない。
 
 ## artifact projection registry v1
 
-artifactをBigQueryでqueryableにする転記は`[[artifact_projection]]`で閉じる。各entryのcanonical fieldは
-次だけである。
+source instanceのowner scopeは`run`または`build`だけである。run ownerはrun ID、build ownerはbuild identityを
+持ち、一つのsource instanceを一つのprojection parserへだけrouteする。
 
-```text
-id, base_table_id, relation_id, conflict_relation_id,
-source_artifact_id, source_schema_id, row_schema_id, row_grain,
-subject_scopes, publisher_id, transform_id,
-conflict_rule, source_member_field?, source_sha256_field?,
-source_instance_grain?, source_instance_sha256_field?, parent_projection_id?, parent_join_columns?,
-duplication_justification
-```
+主なprojectionは次である。
 
-`subject_scopes`はtagged arrayで、run ownerは
-`{owner_scope="run",applicable_run_variants=[...]}`、allocation ownerは
-`{owner_scope="qualification_allocation"}`、build ownerは`{owner_scope="build"}`とし、後二者へrun variantを置かない。publisherは一source instanceを一つの
-BigQuery load jobでphysical base tableへappendする。`relation_id`は全列完全一致を一件へdedupeする。
-同じ`source_instance_grain`に異なるinstance hashがあればそのinstanceの全rowを、次に同じ`row_grain`へ異なるpayloadが
-あればその全rowを`conflict_relation_id`へ残してconsumerから外す。再publishしたGPU sampleやworkload requestを
-二重計数しない。direct lineageの二field、または`parent_projection_id`と明示的`parent_join_columns`の組の
-どちらか一方だけを必須にする。workload requestはmanifest projectionをparentにし、join mappingは
-`subject_kind=subject_kind,subject_id=subject_id,workload_kind=workload_kind`である。
-v1 entryは次である。
+| source/relation | grain | applicability |
+|---|---|---|
+| source track | run ID | bench/profile |
+| runtime launcher | run ID、role | bench/profile |
+| SIF provenance | SIF manifest identity | bench/profile |
+| model/dataset/cache manifest | run ID、kind | bench/profile |
+| workload manifest/request | run ID、kind、ordinal | bench/profile |
+| minimal hardware | run ID、node rank | bench/profile |
+| topology/placement | run ID、node/global rank | bench/profile |
+| environment | run ID、scope、name | bench/profile |
+| lifecycle/result | run IDまたはinvocation ID | bench/profile |
+| GPU samples/phases | run ID、node rank、sequence | profile only |
+| artifact index | run ID、role | bench/profile |
+| IMB network | run ID、benchmark、process count、message bytes | bench/profile、generation成功時 |
+| NCCL network | run ID、collective、message bytes、buffer mode | bench/profile、generation成功時 |
 
-| id / relation | source -> row schema | grain | applicability |
-|---|---|---|---|
-| `qwen.source_track` / `qwen_source_tracks_raw_v2` | subject manifest source-track record -> `source-track-projection/v1` | run | run: all variants |
-| `qwen.sif_provenance` / `qwen_sif_provenance_raw_v2` | `sif-sidecar/v1`+referenced raw -> `qwen-sif-provenance-projection/v1` | source SHA-256 | build |
-| `qwen.runtime_launcher` / `qwen_runtime_launchers_raw_v2` | `runtime-launcher-validation/v1` -> `runtime-launcher-projection/v1` | subject kind/ID | run: bench/profile; qualification allocation |
-| `qwen.workload_manifest` / `qwen_workload_manifests_raw_v2` | `workload/v1` -> `workload-manifest-projection/v1` | subject kind/ID, kind | run: bench/profile; qualification allocation |
-| `qwen.workload_request` / `qwen_workload_requests_raw_v2` | `workload/v1` -> `workload-request-projection/v1` | subject kind/ID, kind, ordinal | run: bench/profile; qualification allocation; parent manifest join above |
-| `qwen.minimal_hardware` / `qwen_minimal_hardware_raw_v2` | `hardware-node/v1` -> `minimal-hardware-projection/v1` | subject kind/ID, node rank | run: bench/profile; qualification allocation |
-| `qwen.node_launch` / `qwen_node_launch_raw_v2` | `node-topology/v1` -> `node-launch-projection/v1` | run, node | run: all variants |
-| `qwen.topology` / `qwen_topology_raw_v2` | `node-topology/v1`+stdout -> `topology-projection/v1` | run, node, scope, GPU index | run: all variants |
-| `qwen.gpu_sample` / `qwen_gpu_samples_raw_v2` | `gpu-sample/v1` -> `gpu-sample-projection/v1` | run, node, sequence, GPU UUID | profile |
-| `qwen.profile_hardware` / `qwen_profile_hardware_raw_v2` | `profile-hardware-capture/v1` -> `profile-hardware-projection/v1` | run, node, kind, NUMA ID | profile |
-| `qwen.profiler_event` / `qwen_profiler_events_raw_v2` | `profiler-capture/v1` + referenced gzip Chrome trace -> `profiler-event-projection/v1` | run, global rank, activity, category, event name | profile |
-| `qwen.lifecycle_summary` / `qwen_lifecycle_summaries_raw_v2` | `lifecycle-summary/v1` -> same closed row + source member/hash | run | run: all variants |
-| `qwen.phase_summary` / `qwen_phase_summaries_raw_v2` | `phase-summary/v1` -> one invocation + source member/hash | run, invocation ID | profile |
-| `qwen.qualification_allocation` / `qwen_qualification_allocations_raw_v2` | `qualification-set-manifest/v1` + hash-verified referenced allocation archive -> `qualification-allocation-projection/v1` | allocation ID | qualification allocation |
-
-direct entryのsource-instance grainはsource track=`run + subject manifest member`、SIF provenance=`source_sha256`、runtime launcher=`subject kind/ID + launcher member`、workload manifest=`subject kind/ID/kind + manifest member`、minimal hardware=
-`subject kind/ID/node + node member`、node launch/topology=`run/node + topology member`、GPU sample=
-`run/node + JSONL member`、profile hardware=`run/node + capture member`、profiler event=`run/global rank + trace member`、lifecycle/phase=`run + summary member`、
-qualification allocation=`allocation ID`で、instance hashはsource trackのsubject manifest、SIF sidecar、各run member、
-またはqualification set manifestのSHA-256に固定する。
-topology member自体が参照する全stdout/stderr hashをsealするため、そのmember hashがparse入力集合もidentity化する。workload requestはconflict-free manifest
-parentへjoinするためdirect source-instance fieldを持たない。
-以下のoverrideを除くdirect entryは`source_member_field=source_member`、
-`source_sha256_field=source_instance_sha256_field=source_sha256`に固定する。
-profile hardware entryは`source_member_field=source_members[role="capture"].path`、
-`source_sha256_field=source_instance_sha256_field=source_members[role="capture"].sha256`という一意selectorに固定する。
-profiler event entryは`source_member_field=source_member`、`source_sha256_field=source_instance_sha256_field=source_sha256`とし、
-captureがsealしたtrace SHA-256を使う。
-qualification allocation entryは`source_member_field=set_manifest_member`、
-`source_sha256_field=source_instance_sha256_field=set_manifest_sha256`に固定する。set manifestがallocation archive hashをsealする。
-
-## producer/source registry v1
-
-contractの`[[producer]]`は共通field
-`id:nonempty unique string/activation/instances`に、次のclosed ownership unionを加える。
-
-```text
-{owner_scope:const "run", applicable_run_variants:nonempty unique variant[]}
-{owner_scope:const "qualification_allocation"}
-```
-
-allocation ownerにrun variantを置かず、activationは`{kind:"always"}`だけにする。run ownerのactivationは
-`{kind:"always"}`または`{kind:"bundle_component",component_id:nonempty string}`で、後者のcomponent IDは各applicable variantが
-選ぶbundleにexactly one存在する。`instances`は`{kind:"singleton"}`または
-`{kind:"cartesian",axes:nonempty sorted unique subset of ["node_rank","global_rank","invocation_id","stage_name"]}`である。
-axis expected集合はresolved lane、protocol schedule、contract stage setだけから得る。GPU UUIDはruntime topology record内の値であり、
-expected source pathを決めるaxisにしない。
-
-`path-template`はnonempty segment arrayで、segmentは`{literal:nonempty string}`または
-`{token:enum "node_rank"|"global_rank"|"invocation_id"|"stage_name"}`のclosed unionである。adjacent literalを一つに結合し、
-render後はrelative POSIX pathとする。templateのtokenはproducer axesのsubsetだけを使う。
-
-`[[source]]`は全field requiredの
-`{id:nonempty unique string,producer_id:existing producer ID,source_role:nonempty contract role,
-storage:enum "fact_fragment"|"run_bundle"|"profile_raw"|"allocation_bundle",
-path_template:path-template,schema_id:nonempty schema ID,required_when_applicable:bool}`である。同じstorage内で展開後pathをglobal uniqueにする。
-producerごとの`storage="fact_fragment"` sourceは0-or-1件とし、そのsource `path_template`だけをwriter/finalizerの正本にする。
-producerへ同じtemplateを複写しない。各`[[fact]].source_id`はexactly one source、`member-with-role.role`はexactly one registry roleへ解決する。
-finalizerはvariant/bundleからproducerを選び、instanceを一度展開し、
-source path集合とrequired fragment集合を得る。別のcode-side expected table、fallback discovery、manifestへのexpected集合copyを作らない。
+metric familyやprojection instanceを専用の非擾乱確認用namespaceへ複製しない。
 
 ## factとconsumer routing
 
-各`[[fact]]`は
-`id/key_pattern/source_id/schema_id/logical_type/unit/cardinality/capture_id/validator_id/reducer_id/duplication_justification?`を持つ。
-sourceからproducer、owner scope、applicable variant、requirednessを一意にjoinし、factへ複写しない。
-`(source.schema_id,fact.schema_id,validator_id,reducer_id)`はcontractのclosed reducer signature catalogにexactly one存在し、
-同じvariantで有効なfact key pattern同士をoverlapさせない。
+scalar/compound factは`run/key/value`だけへ出す。完全recordをartifact/projectionが所有する場合、
+first/last/count/average、構成比、rank/run合計、top-Nなどのsubset/summary keyは保存せずquery時に導出する。
+source artifactとfactの二重ownershipを禁止する。
 
-v1 routingは次に固定する。
+consumerはkeyとpurposeによりprojectionを選ぶ。用途別applicabilityを評価してから
+expected locator/gridを生成し、profile-only列はbenchで理由なしのNULLにする。benchの比較適格性は通常runの
+source/workload/result/placement/completenessだけから導出し、開発時の非擾乱確認をjoinしない。
 
-| family | source | reducer |
-|---|---|---|
-| `run.identity.*`, `experiment.*`, protocol | subject/contract/protocol manifests | `identity_projection/v1` |
-| `run.metrics_contract` | immutable contract copy and manifest binding | `manifest_identity/v1` |
-| `run.started_at|finished_at|elapsed_sec|exit_code` | supervisor clock/exit record | `run_lifecycle/v1`。`run_outcome`はexit code 0/非0からview導出 |
-| `run.stage.<name>.launch|termination`, `perf.stage.<name>.wall_time_sec` | StageRunner spawn/wait | `stage_record/v1` |
-| `perf.phase.*.wall_time_sec` | rank 0 monotonic boundaries | `finite_seconds/v1`。profile warmupはphase pairとのexact equalityを持つuniform-result重複 |
-| `perf.benchmark.generation.wall_time_sec` | purpose-authoritative result artifact | `finite_seconds/v1`。profile measuredはphase pairとのexact equalityを持つuniform-result重複 |
-| `collection_complete` | finalizerのin-memory expected-vs-observed set | `completeness/v1` |
-| `artifact.sif_manifest_sha256|artifact.model.manifest_sha256|artifact.dataset.manifest_sha256|instrumentation_bundle_sha256` | package/source manifests | `manifest_projection/v1` |
-| `cache.node.<node_rank>.input_manifest_sha256` | cache semantic member manifest | `identity/v1`。consumer `cache_nodes/v1`はexpected node順のclosed arrayへreduce |
-| `scheduler.request` | submission request | `scheduler_request/v1` |
-| `scheduler.accounting` | fixed pjstat raw | `scheduler_accounting/v1` |
-| `scheduler.submit_job_id|scheduler.job_entry_job_id` | submission result + job-entry | `identity/v1`、欠損時key absent |
-| `env.*` | scope別snapshot | `environment_decode/v1` |
-| `sglang.node.<node_rank>.bench_args_effective|server_args_effective` | node event JCS object | `node_config/v1` |
-| `parallel.worker.<global_rank>.runtime` | global-rank event | `worker_ready/v1` |
-| `result.*` | purpose-authoritative result artifact | `primary_result/v1`または`qualification_result/v1` |
-| `parallel.node.<node_rank>.process_lifecycle` | wrapper lifecycle | `node_lifecycle/v1` |
-
-`qwen_node_configs_v2`は二つの`sglang.node.<node_rank>.*_effective` Factに含まれる
-`config-snapshot/v1.fields`を`(run,node_rank,config_kind,field_name)`へ一度だけUNNESTし、declared typeとcanonical
-valueをlosslessに表示する。これはconsumer viewであり、新しいFactやartifact projectionを作らない。
-
-consumer columnは`name/type/unit/source_refs/scope_cardinality/reducer_id/conflict_rule/transform_id/
-applicable_run_variants/dimension_name/allowed_classes`で閉じる。`source_refs`はordered
-`[{kind="fact"|"projection"|"dimension",id,json_path?,bindings?},...]`で、異種sourceの混合とreducer入力順を明示する。
-`dimension`は同じGit releaseで作る`contract|protocol` relationのclosed union、
-projectionはconflict-free logical relationをqueryする。
-archive memberを直接読む`artifact` refは許さず、lineageだけprojectionのsource member/hashから辿る。
-projection refの`bindings`はnonempty
-`[{applicable_run_variants,consumer_field,projection_field,projection_subject_kind}]`でvariant集合を重複なく覆い、
-run-keyed projectionは`run_id -> run_id`、regular subject-keyed projectionは
-`run_id -> subject_id, regular_run`、qualification childはsubject-keyed projectionへ
-`block_id -> subject_id, qualification_allocation`、allocation projectionへ`block_id -> allocation_id`、build projectionは
-Fact `artifact.sif_manifest_sha256 -> source_sha256, build`を明記する。
-dimension refの`bindings`はordered nonempty `[{consumer_field,dimension_field},...]`である。contract relationは
-exact `(contract_id,contract_hash) -> (contract_id,contract_sha256)`、protocol relationはexact
-`(contract_id,contract_hash,protocol_id,protocol_hash,dimension_policy_hash) ->
-(contract_id,contract_sha256,protocol_id,protocol_sha256,dimension_policy_hash)`を使う。branch、最新release、
-IDだけによるfallback joinは許さない。
-instrumentation decision relationは通常consumer columnへjoinせず、一回限りのD-001 reportだけが読む。
-固定幅consumer columnでsourceが欠損または非適用なら`NULL`だけを返す。source grainのlong relationは実在source rowだけを
-表示し、欠損/非適用row、reason、placeholderを生成しない。Sources tabも実在値のlineageだけを表示する。
-
-termination consumerは次のexact contractで閉じ、`ANY_VALUE`や多数決を使わない。
-
-| consumer | ordered source refs / scope cardinality | reducer and precedence |
-|---|---|---|
-| `benchmark_termination_kind|benchmark_exit_code|benchmark_signal` | Fact `run.stage.benchmark.termination`、runにつきexactly 1 | `stage-termination/v1` unionをそのまま列へ分解する。kindに非該当のcode/signalはNULL |
-| `engine_termination_kind|engine_exit_code|engine_signal` | Fact `parallel.node.<node_rank>.process_lifecycle`の`node_rank=0`、runにつきexactly 1 | `spawn_error`、またはraw wait statusからPOSIX `exit|signal`と`WEXITSTATUS|WTERMSIG`を一度導出する。非該当のcode/signalはNULL |
-| `qwen_participant_terminations_v2.status` | 各`node_rank=1..lane.nodes-1`のFact `parallel.node.<node_rank>.process_lifecycle`、`waited`の場合だけprojection `qwen.lifecycle_summary.nodes[node_rank].shutdown` | `(run,node_rank)`のlong relation。unique lifecycleが`spawn_error`ならshutdown不要で`spawn_error`を返す。`waited`はraw statusからexit/signalを導出し、unique shutdownのinvocation/clockが一致する場合だけchild finishがshutdown receive未満なら`early_exit|early_signal`、以上なら`coordinated_exit|coordinated_signal`を返す。必要sourceの欠損/競合、shutdown null、不一致は当該nodeのrowを出さない |
-
-lifecycle summaryのshutdown invocation IDはpurpose-authoritative result artifactの`invocation_id`と一致させてから
-participant reducerへ渡す。qualification ONの二result writerは先に同一invocation IDであることを検証する。
-1-node laneのparticipant relationは0行であり、missing placeholderを作らない。Runsへarray/aggregate/worst statusを
-複写せず、long relationだけをSheet/agent consumerへ出す。
+実装中の計測なし／あり比較は公開契約の外で行い、出力を破棄する。そのため、このcontractには専用schema、
+source、writer、parser、projection、relation、artifact role、metric keyを追加しない。
