@@ -106,23 +106,24 @@ RELATION_REGISTRY: dict[str, RelationSpec] = {
         "run_purpose", "repository_id", "source_track", "source_track_sha256",
     ),
     "qwen_sif_provenance_v2": _spec(
-        "qwen_sif_provenance_v2", "qwen-sif-provenance-projection/v1", ("run",), _ALL,
+        "qwen_sif_provenance_v2", "qwen-sif-provenance-projection/v1", ("sif_artifact_sha256",), _ALL,
         "sif_artifact_sha256", "source_commits", "score_source_tree", "recipe",
         "applied_patches", "base_oci", "lock_manifest", "build_command",
         "toolchain_observations", "embedded_manifest_identity", "runtime_files",
     ),
     "qwen_runtime_launchers_v2": _spec(
         "qwen_runtime_launchers_v2", "runtime-launcher-projection/v1", ("run", "role"), _ALL,
-        "executables", "versions",
+        "role", "requested_path", "resolved_realpath", "size_bytes", "sha256", "argv", "outcome",
+        "stdout_member", "stdout_b64", "stderr_member", "stderr_b64",
     ),
     "qwen_model_manifests_v2": _spec(
         "qwen_model_manifests_v2", "model-manifest-projection/v1", ("run", "kind"), _ALL,
-        "source_kind", "repository", "revision", "prebuilt_shards", "small_metadata",
+        "kind", "source_kind", "repository", "revision", "prebuilt_shards", "small_metadata",
         "manifest_sha256",
     ),
     "qwen_dataset_manifests_v2": _spec(
-        "qwen_dataset_manifests_v2", "dataset-manifest-projection/v1", ("run",), _ALL,
-        "repository", "full_revision", "relative_path", "size_bytes", "content_sha256",
+        "qwen_dataset_manifests_v2", "dataset-manifest-projection/v1", ("run", "kind"), _ALL,
+        "kind", "repository", "full_revision", "relative_path", "size_bytes", "content_sha256",
         "manifest_sha256",
     ),
     "qwen_cache_manifests_v2": _spec(
@@ -293,19 +294,9 @@ class ProjectionRow:
         return cls(relation_id, run_id, source_member, source_sha256, tuple(sorted(values.items(), key=lambda item: item[0].encode())))
 
     def as_dict(self) -> dict[str, object]:
-        """Append-adapter row; relation and lineage remain explicit."""
+        """Return the exact closed object plus a non-contract relation tag."""
 
-        spec = _relation(self.relation_id)
-        row: dict[str, object] = {
-            "projection_relation": self.relation_id,
-            "schema_version": spec.schema_version,
-            "run": self.run_id,
-            "run_id": self.run_id,
-            "source_member": self.source_member,
-            "source_sha256": self.source_sha256,
-        }
-        row.update({name: _json_value(value, name, normalise=True) for name, value in self.columns})
-        return row
+        return {"projection_relation": self.relation_id, **self.to_projection_object()}
 
     def to_projection_object(self) -> dict[str, object]:
         spec = _relation(self.relation_id)
@@ -324,8 +315,16 @@ class ProjectionRow:
 
     def grain(self) -> tuple[object, ...]:
         spec = _relation(self.relation_id)
-        row = self.as_dict()
-        return tuple(row.get(name, self.run_id) for name in spec.grain)
+        row = self.to_projection_object()
+        values: list[object] = []
+        for name in spec.grain:
+            if name == "run":
+                values.append(self.run_id)
+            elif name not in row:
+                raise ProjectionError(f"grain field {name!r} is absent from {self.relation_id}")
+            else:
+                values.append(row[name])
+        return tuple(values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,6 +473,7 @@ def project_model_manifest(runtime_dir: Path, run_id: str) -> ProjectionRow:
     return ProjectionRow.from_mapping(
         "qwen_model_manifests_v2", run_id, member, digest,
         {
+            "kind": source["kind"],
             "source_kind": source["kind"],
             "repository": source.get("repository"),
             "revision": source.get("revision"),
@@ -489,7 +489,7 @@ def project_dataset_manifest(runtime_dir: Path, run_id: str) -> ProjectionRow:
     value = validate_dataset_manifest(path)
     return ProjectionRow.from_mapping(
         "qwen_dataset_manifests_v2", run_id, member, digest,
-        {"repository": value["repository"], "full_revision": value["full_revision"],
+        {"kind": "dataset", "repository": value["repository"], "full_revision": value["full_revision"],
          "relative_path": value["relative_path"], "size_bytes": value["size_bytes"],
          "content_sha256": value["sha256"], "manifest_sha256": digest},
     )
@@ -515,10 +515,23 @@ def project_cache_manifests(runtime_dir: Path, run_id: str) -> tuple[ProjectionR
 def project_runtime_launchers(runtime_dir: Path, run_id: str) -> tuple[ProjectionRow, ...]:
     path, member, digest = _source_file(runtime_dir, "source/runtime-launchers.json")
     value = validate_runtime_launchers(path, runtime_dir)
-    return (ProjectionRow.from_mapping(
-        "qwen_runtime_launchers_v2", run_id, member, digest,
-        {"executables": value["executables"], "versions": value["versions"]},
-    ),)
+    versions = {item["role"]: item for item in value["versions"]}
+    rows = []
+    for executable in value["executables"]:
+        version = versions[executable["role"]]
+        stdout = version["stdout"]
+        stderr = version["stderr"]
+        stdout_path = _member_path(runtime_dir, stdout["path"])
+        stderr_path = _member_path(runtime_dir, stderr["path"])
+        rows.append(ProjectionRow.from_mapping(
+            "qwen_runtime_launchers_v2", run_id, member, digest,
+            {"role": executable["role"], "requested_path": executable["requested_path"],
+             "resolved_realpath": executable["resolved_realpath"], "size_bytes": executable["size_bytes"],
+             "sha256": executable["sha256"], "argv": version["argv"], "outcome": version["outcome"],
+             "stdout_member": stdout["path"], "stdout_b64": base64.b64encode(stdout_path.read_bytes()).decode("ascii"),
+             "stderr_member": stderr["path"], "stderr_b64": base64.b64encode(stderr_path.read_bytes()).decode("ascii")},
+        ))
+    return tuple(rows)
 
 
 def project_source_track(runtime_dir: Path, run_id: str) -> ProjectionRow:
@@ -680,7 +693,7 @@ def project_environment(runtime_dir: Path, run_id: str, scope: str) -> tuple[Pro
     _, member, digest = _source_file(runtime_dir, path.relative_to(runtime_dir).as_posix())
     rows = []
     for name, raw in validate_environment_snapshot(path):
-        decoded_name = name.decode("utf-8", errors="strict")
+        decoded_name = _escape_environment_name(name)
         rows.append(ProjectionRow.from_mapping(
             "qwen_environment_v2", run_id, member, digest,
             {"scope": scope, "name": decoded_name, "value_base64": base64.b64encode(raw).decode("ascii")},
@@ -693,6 +706,57 @@ def project_primary_result(runtime_dir: Path, run_id: str) -> ProjectionRow:
         runtime_dir, "qwen_primary_results_v2", "source/primary-result.json",
         run_id=run_id, expected_schema_version="primary-result/v1",
         transform=lambda value: {name: value[name] for name in RELATION_FIELDS["qwen_primary_results_v2"]},
+    )
+
+
+def project_config_snapshot(
+    run_id: str,
+    payload: Mapping[str, object],
+    *,
+    source_member: str,
+    source_sha256: str,
+) -> ProjectionRow:
+    """Project a validated BenchArgs/ServerArgs config-snapshot event payload."""
+
+    expected = {"schema_version", "config_type", "definition", "fields"}
+    if set(payload) != expected or payload["schema_version"] != "config-snapshot/v1":
+        raise ProjectionError("configuration snapshot is not closed")
+    fields = payload["fields"]
+    if not isinstance(fields, list):
+        raise ProjectionError("configuration snapshot fields are not an array")
+    names = [item.get("name") for item in fields if isinstance(item, dict)]
+    if names != sorted(names, key=lambda item: item.encode()) or len(names) != len(set(names)):
+        raise ProjectionError("configuration snapshot fields are not byte-sorted unique")
+    return ProjectionRow.from_mapping(
+        "qwen_config_snapshots_v2", run_id, source_member, source_sha256,
+        {"config_type": payload["config_type"], "definition": payload["definition"], "fields": fields},
+    )
+
+
+def project_placement(
+    run_id: str,
+    *,
+    node_rank: int,
+    global_rank: int,
+    server_args: Mapping[str, object],
+    worker_ready: Mapping[str, object],
+    topology: Sequence[Mapping[str, object]],
+    source_member: str,
+    source_sha256: str,
+) -> ProjectionRow:
+    """Build the placement join row from validated independent records."""
+
+    if node_rank < 0 or global_rank < 0:
+        raise ProjectionError("placement ranks must be nonnegative")
+    if not isinstance(server_args, Mapping) or not isinstance(worker_ready, Mapping):
+        raise ProjectionError("placement records must be objects")
+    if not isinstance(topology, Sequence) or isinstance(topology, (str, bytes)):
+        raise ProjectionError("placement topology must be an array")
+    return ProjectionRow.from_mapping(
+        "qwen_placement_v2", run_id, source_member, source_sha256,
+        {"node_rank": node_rank, "global_rank": global_rank,
+         "server_args": dict(server_args), "worker_ready": dict(worker_ready),
+         "topology": list(topology)},
     )
 
 
@@ -746,6 +810,21 @@ def project_gpu_phases(runtime_dir: Path, run_id: str, phase_path: Path, expecte
             value.source_member, value.source_sha256,
             {name: data[name] for name in RELATION_FIELDS["qwen_gpu_phases_v2"]}))
     return tuple(rows)
+
+
+def project_phase_summary_row(runtime_dir: Path, run_id: str, expected_nodes: int) -> ProjectionRow:
+    from .profile_contract import parse_phase_summary
+
+    path, member, digest = _source_file(runtime_dir, "control/phase/summary.json")
+    try:
+        summary = parse_phase_summary(path, run_id=run_id, expected_nodes=expected_nodes)
+    except ProfileValidationError as error:
+        raise ProjectionError("phase summary validation failed") from error
+    return ProjectionRow.from_mapping(
+        "qwen_phase_summaries_v2", run_id, member, digest,
+        {"invocation_id": summary.invocation_id, "kind": summary.kind,
+         "rank0": summary.as_dict()["rank0"], "nodes": summary.as_dict()["nodes"]},
+    )
 
 
 def project_profiler_events_raw(runtime_dir: Path, run_id: str, invocation_id: str, expected_ranks: int) -> ProjectionBatch:
@@ -874,6 +953,11 @@ def project_validated_sources(runtime_dir: Path, run_id: str) -> ProjectionBatch
         summary = load_json_strict(lifecycle.read_bytes())
         if isinstance(summary, dict) and isinstance(summary.get("nodes"), list):
             rows.append(project_lifecycle(runtime_dir, run_id, len(summary["nodes"])))
+    phase_summary = runtime_dir / "control/phase/summary.json"
+    if phase_summary.is_file():
+        phase_value = load_json_strict(phase_summary.read_bytes())
+        if isinstance(phase_value, dict) and isinstance(phase_value.get("nodes"), list):
+            rows.append(project_phase_summary_row(runtime_dir, run_id, len(phase_value["nodes"])))
     for path in sorted((runtime_dir / "source/lifecycle").glob("node-*.json")):
         match = re.fullmatch(r"node-([0-9]+)\.json", path.name)
         if match:
@@ -984,6 +1068,12 @@ def _sha256(value: object, label: str) -> str:
 
 def _sha256_bytes(value: object) -> str:
     return hashlib.sha256(jcs_bytes(value)).hexdigest()
+
+
+def _escape_environment_name(value: bytes) -> str:
+    if re.fullmatch(rb"[A-Za-z0-9_-]+", value):
+        return value.decode("ascii")
+    return f"encoded.{value.hex()}"
 
 
 def _run_id(value: object) -> str:
