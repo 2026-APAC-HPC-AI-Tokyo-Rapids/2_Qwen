@@ -72,6 +72,60 @@ instance_pattern = "^job-entry$"
 applicability = ["bench", "profile"]
 required = false
 
+[[producers]]
+id = "environment"
+instance_pattern = "^environment:(?:job-entry|host-node-[0-9]+|sglang-node-[0-9]+|worker-rank-[0-9]+)$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "run-lifecycle"
+instance_pattern = "^run-lifecycle$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "scheduler-accounting"
+instance_pattern = "^scheduler-accounting$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "hardware"
+instance_pattern = "^hardware:node-[0-9]+$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "topology"
+instance_pattern = "^topology:node-[0-9]+$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "workload"
+instance_pattern = "^workload:(?:warmup|measured)$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "worker"
+instance_pattern = "^worker:global-rank-[0-9]+$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "node-lifecycle"
+instance_pattern = "^node-lifecycle:node-[0-9]+$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "lifecycle-control"
+instance_pattern = "^lifecycle-control$"
+applicability = ["bench", "profile"]
+required = false
+
 [[facts]]
 id = "run_id"
 key_pattern = "^run\\.identity\\.run_id$"
@@ -687,3 +741,465 @@ raw_destination = "run/key/value fact"
 validation = "nonempty runtime version"
 applicability = ["bench", "profile"]
 required = false
+
+[[facts]]
+id = "environment_value_base64"
+key_pattern = '^environment\.(?:job_entry|host_exec_node\.[0-9]+|sglang_launch_node\.[0-9]+|worker_global_rank\.[0-9]+)\.(?:[A-Za-z0-9_-]+|encoded\.[0-9a-f]+)$'
+owner = "environment"
+logical_type = "string"
+unit = "RFC4648 base64"
+cardinality = "one per environment name per scope instance"
+authoritative_source = "name-NUL-value-NUL environment snapshot"
+capture_moment = "at the named execution scope boundary"
+raw_destination = "source/environment/<scope>.snapshot"
+validation = "byte-sorted unique names and NUL-terminated pairs"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "run_lifecycle_timestamp"
+key_pattern = '^run\.(?:started_at|finished_at)$'
+owner = "run-lifecycle"
+logical_type = "string"
+unit = "RFC3339 UTC"
+cardinality = "two per run"
+authoritative_source = "source/run-lifecycle.json"
+capture_moment = "PJM job entry and exit"
+raw_destination = "run/key/value fact"
+validation = "closed lifecycle and ordered wall timestamps"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "run_lifecycle_elapsed"
+key_pattern = '^run\.elapsed_sec$'
+owner = "run-lifecycle"
+logical_type = "decimal"
+unit = "second"
+cardinality = "one per run"
+authoritative_source = "source/run-lifecycle.json monotonic timestamps"
+capture_moment = "PJM job exit"
+raw_destination = "run/key/value fact"
+validation = "exact monotonic difference"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "run_lifecycle_exit"
+key_pattern = '^run\.exit_code$'
+owner = "run-lifecycle"
+logical_type = "int"
+unit = "exit status"
+cardinality = "one per run"
+authoritative_source = "source/run-lifecycle.json"
+capture_moment = "PJM job exit"
+raw_destination = "run/key/value fact"
+validation = "integer exit code"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "scheduler_accounting_identity"
+key_pattern = '^scheduler\.accounting\.(?:jid|st|sdt)$'
+owner = "scheduler-accounting"
+logical_type = "string"
+unit = "none"
+cardinality = "three per run"
+authoritative_source = "source/scheduler/accounting.txt"
+capture_moment = "terminal scheduler accounting"
+raw_destination = "run/key/value fact"
+validation = "exact single pjstat TSV row"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "scheduler_accounting_lexeme"
+key_pattern = '^scheduler\.accounting\.(?:elp|ec|sn|pc|nnumu|mmszu|uctmut|sctmut)\.lexeme$'
+owner = "scheduler-accounting"
+logical_type = "string"
+unit = "source lexeme"
+cardinality = "eight per run"
+authoritative_source = "source/scheduler/accounting.txt"
+capture_moment = "terminal scheduler accounting"
+raw_destination = "run/key/value fact"
+validation = "lossless source lexeme"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "scheduler_accounting_int"
+key_pattern = '^scheduler\.accounting\.(?:ec|sn|pc|nnumu)\.value$'
+owner = "scheduler-accounting"
+logical_type = "int"
+unit = "count or status as named"
+cardinality = "zero or four per run"
+authoritative_source = "validated scheduler lexeme"
+capture_moment = "terminal scheduler accounting"
+raw_destination = "run/key/value fact"
+validation = "strict integer when scheduler value is not null"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "scheduler_accounting_memory"
+key_pattern = '^scheduler\.accounting\.mmszu\.bytes$'
+owner = "scheduler-accounting"
+logical_type = "uint"
+unit = "byte"
+cardinality = "zero or one per run"
+authoritative_source = "validated mmszu scheduler lexeme"
+capture_moment = "terminal scheduler accounting"
+raw_destination = "run/key/value fact"
+validation = "exact byte conversion when scheduler value is not null"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "scheduler_accounting_time"
+key_pattern = '^scheduler\.accounting\.(?:elp|uctmut|sctmut)\.seconds$'
+owner = "scheduler-accounting"
+logical_type = "decimal"
+unit = "second"
+cardinality = "zero through three per run"
+authoritative_source = "validated scheduler time lexeme"
+capture_moment = "terminal scheduler accounting"
+raw_destination = "run/key/value fact"
+validation = "exact duration conversion when scheduler value is not null"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "hardware_hostname"
+key_pattern = '^hardware\.node\.[0-9]+\.hostname$'
+owner = "hardware"
+logical_type = "string"
+unit = "none"
+cardinality = "one per expected node"
+authoritative_source = "source/hardware/node-<node>.json"
+capture_moment = "node wrapper entry"
+raw_destination = "run/key/value fact"
+validation = "nonempty gethostname value"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "hardware_string"
+key_pattern = '^hardware\.node\.[0-9]+\.(?:kernel\.release|cpu_boost\.(?:source_path|raw)|cpufreq_policy\.[0-9]+\.(?:driver|governor))$'
+owner = "hardware"
+logical_type = "string"
+unit = "none"
+cardinality = "zero or more per node"
+authoritative_source = "closed platform_settings source"
+capture_moment = "node wrapper entry"
+raw_destination = "run/key/value fact"
+validation = "validated nonempty source value"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "hardware_cpu_identity"
+key_pattern = '^hardware\.node\.[0-9]+\.cpu\.(?:architecture|model_name|vendor_id|cpu_family|model|stepping)$'
+owner = "hardware"
+logical_type = "string"
+unit = "none"
+cardinality = "zero through six per node"
+authoritative_source = "source/hardware/node-<node>.json lscpu_json"
+capture_moment = "minimal hardware projection"
+raw_destination = "run/key/value fact"
+validation = "exact lscpu labels with one trailing colon removed"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "hardware_cpu_counts"
+key_pattern = '^hardware\.node\.[0-9]+\.cpu\.(?:physical_cores|numa_nodes)$'
+owner = "hardware"
+logical_type = "uint"
+unit = "count"
+cardinality = "zero through two per node"
+authoritative_source = "source/hardware/node-<node>.json lscpu_json"
+capture_moment = "minimal hardware projection"
+raw_destination = "run/key/value fact"
+validation = "strict uint; physical cores is sockets times cores per socket"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "hardware_array"
+key_pattern = '^hardware\.node\.[0-9]+\.(?:cpu\.(?:online|isolated|nohz_full)|cpufreq_policy\.[0-9]+\.related_cpus)$'
+owner = "hardware"
+logical_type = "jcs"
+unit = "CPU index array"
+cardinality = "zero or more per node"
+authoritative_source = "closed platform_settings source"
+capture_moment = "node wrapper entry"
+raw_destination = "run/key/value fact"
+validation = "sorted unique uint array"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "hardware_bool"
+key_pattern = '^hardware\.node\.[0-9]+\.(?:numa_balancing_enabled|cpu_boost\.enabled)$'
+owner = "hardware"
+logical_type = "bool"
+unit = "none"
+cardinality = "zero through two per node"
+authoritative_source = "closed platform_settings source"
+capture_moment = "node wrapper entry"
+raw_destination = "run/key/value fact"
+validation = "strict bool"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "hardware_uint"
+key_pattern = '^hardware\.node\.[0-9]+\.(?:memory\.(?:total_bytes|hugepage_size_bytes|hugepages_total)|cpufreq_policy\.[0-9]+\.(?:min_hz|max_hz))$'
+owner = "hardware"
+logical_type = "uint"
+unit = "byte, count, or hertz as named"
+cardinality = "zero or more per node"
+authoritative_source = "closed platform_settings source"
+capture_moment = "node wrapper entry"
+raw_destination = "run/key/value fact"
+validation = "nonnegative integer"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "topology_outer_uint"
+key_pattern = '^parallel\.node\.[0-9]+\.(?:global_rank|local_rank|size)$'
+owner = "topology"
+logical_type = "uint"
+unit = "rank or process count"
+cardinality = "three per expected node"
+authoritative_source = "source/topology/node-<node>.json outer_mpi"
+capture_moment = "outer MPI node wrapper entry"
+raw_destination = "run/key/value fact"
+validation = "closed node topology"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "topology_outer_string"
+key_pattern = '^parallel\.node\.[0-9]+\.(?:hostname|numa_mems)$'
+owner = "topology"
+logical_type = "string"
+unit = "none"
+cardinality = "one or two per expected node"
+authoritative_source = "source/topology/node-<node>.json"
+capture_moment = "outer MPI node wrapper entry"
+raw_destination = "run/key/value fact"
+validation = "nonempty source string"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "topology_outer_array"
+key_pattern = '^parallel\.node\.[0-9]+\.(?:node_wrapper_argv|singularity_argv|sglang_argv|cpu_affinity)$'
+owner = "topology"
+logical_type = "jcs"
+unit = "none"
+cardinality = "four per expected node"
+authoritative_source = "source/topology/node-<node>.json"
+capture_moment = "outer MPI node wrapper entry"
+raw_destination = "run/key/value fact"
+validation = "actual argv or CPU affinity array"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "topology_gpu_string"
+key_pattern = '^hardware\.node\.[0-9]+\.gpu\.[0-9]+\.(?:name|uuid|pci_bus_id|driver_version|persistence_mode|compute_mode|mig_mode|ecc_mode|scope)$'
+owner = "topology"
+logical_type = "string"
+unit = "none"
+cardinality = "zero or more per expected GPU"
+authoritative_source = "sealed container nvidia-smi stdout"
+capture_moment = "before SGLang launch"
+raw_destination = "run/key/value fact"
+validation = "strict CSV reducer"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "topology_gpu_memory"
+key_pattern = '^hardware\.node\.[0-9]+\.gpu\.[0-9]+\.memory\.total_bytes$'
+owner = "topology"
+logical_type = "uint"
+unit = "byte"
+cardinality = "zero or one per expected GPU"
+authoritative_source = "sealed container nvidia-smi stdout"
+capture_moment = "before SGLang launch"
+raw_destination = "run/key/value fact"
+validation = "integral MiB to bytes conversion"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "topology_gpu_index"
+key_pattern = '^hardware\.node\.[0-9]+\.gpu\.[0-9]+\.index$'
+owner = "topology"
+logical_type = "uint"
+unit = "logical GPU index"
+cardinality = "one per expected GPU"
+authoritative_source = "sealed container nvidia-smi stdout"
+capture_moment = "before SGLang launch"
+raw_destination = "run/key/value fact"
+validation = "path index and value are identical"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "topology_gpu_decimal"
+key_pattern = '^hardware\.node\.[0-9]+\.gpu\.[0-9]+\.(?:power_limit_watt|clock\.(?:sm_max_mhz|memory_max_mhz))$'
+owner = "topology"
+logical_type = "decimal"
+unit = "watt or megahertz as named"
+cardinality = "zero through three per expected GPU"
+authoritative_source = "sealed container nvidia-smi stdout"
+capture_moment = "before SGLang launch"
+raw_destination = "run/key/value fact"
+validation = "finite decimal or omitted for N/A"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "workload_manifest_sha256"
+key_pattern = '^workload\.(?:warmup|measured)\.manifest_sha256$'
+owner = "workload"
+logical_type = "sha256"
+unit = "none"
+cardinality = "one per workload kind"
+authoritative_source = "source/workload-<kind>.json"
+capture_moment = "immediately before corresponding generate call"
+raw_destination = "run/key/value fact"
+validation = "SHA-256 of closed canonical ordered workload"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "worker_ready_uint"
+key_pattern = '^parallel\.worker\.[0-9]+\.(?:node_rank|tp_rank|gpu_id)$'
+owner = "worker"
+logical_type = "uint"
+unit = "rank or logical GPU index"
+cardinality = "three per expected global rank"
+authoritative_source = "worker_ready event"
+capture_moment = "worker initialization complete"
+raw_destination = "run/key/value fact"
+validation = "closed worker event and envelope axis"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "worker_ready_string"
+key_pattern = '^parallel\.worker\.[0-9]+\.(?:gpu_uuid|numa_mems|attention\.(?:prefill_backend|decode_backend)|torch_distributed_backend|transport_backend)$'
+owner = "worker"
+logical_type = "string"
+unit = "none"
+cardinality = "six per expected global rank"
+authoritative_source = "worker_ready event"
+capture_moment = "worker initialization complete"
+raw_destination = "run/key/value fact"
+validation = "nonempty actual worker value"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "worker_ready_affinity"
+key_pattern = '^parallel\.worker\.[0-9]+\.cpu_affinity$'
+owner = "worker"
+logical_type = "jcs"
+unit = "CPU index array"
+cardinality = "one per expected global rank"
+authoritative_source = "worker_ready event"
+capture_moment = "worker initialization complete"
+raw_destination = "run/key/value fact"
+validation = "sorted unique uint array"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "node_process_clock_kind"
+key_pattern = '^parallel\.node\.[0-9]+\.process\.(?:clock_id|termination\.kind)$'
+owner = "node-lifecycle"
+logical_type = "string"
+unit = "none"
+cardinality = "two per expected node"
+authoritative_source = "source/lifecycle/node-<node>.json"
+capture_moment = "node child wait boundary"
+raw_destination = "run/key/value fact"
+validation = "closed node-lifecycle/v1"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "node_process_uint"
+key_pattern = '^parallel\.node\.[0-9]+\.process\.(?:spawn_attempt_ns|child_started_ns|child_finished_ns|termination\.raw_wait_status)$'
+owner = "node-lifecycle"
+logical_type = "uint"
+unit = "monotonic nanosecond or raw POSIX wait status"
+cardinality = "one through four per expected node"
+authoritative_source = "source/lifecycle/node-<node>.json"
+capture_moment = "node child wait boundary"
+raw_destination = "run/key/value fact"
+validation = "ordered timestamps and terminal raw wait status"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "lifecycle_rendezvous_string"
+key_pattern = '^lifecycle\.rendezvous\.(?:rank0_hostname|address|created_at)$'
+owner = "lifecycle-control"
+logical_type = "string"
+unit = "none"
+cardinality = "three per run"
+authoritative_source = "control/lifecycle/rendezvous.json"
+capture_moment = "node-agent coordinator bind"
+raw_destination = "run/key/value fact"
+validation = "closed rendezvous identity"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "lifecycle_rendezvous_port"
+key_pattern = '^lifecycle\.rendezvous\.port$'
+owner = "lifecycle-control"
+logical_type = "uint"
+unit = "TCP port"
+cardinality = "one per run"
+authoritative_source = "control/lifecycle/rendezvous.json"
+capture_moment = "node-agent coordinator bind"
+raw_destination = "run/key/value fact"
+validation = "execution-settings node-agent port"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "lifecycle_mark_string"
+key_pattern = '^lifecycle\.node\.[0-9]+\.(?:ready|shutdown)\.(?:clock_id|invocation_id)$'
+owner = "lifecycle-control"
+logical_type = "string"
+unit = "none"
+cardinality = "one or two per lifecycle mark"
+authoritative_source = "control/lifecycle/summary.json"
+capture_moment = "node-agent ready or shutdown ACK"
+raw_destination = "run/key/value fact"
+validation = "closed ordered lifecycle mark"
+applicability = ["bench", "profile"]
+required = false
+
+[[facts]]
+id = "lifecycle_mark_uint"
+key_pattern = '^lifecycle\.node\.[0-9]+\.(?:ready|shutdown)\.(?:sequence|received_ns|ack_ns)$'
+owner = "lifecycle-control"
+logical_type = "uint"
+unit = "sequence or monotonic nanosecond"
+cardinality = "three per lifecycle mark"
+authoritative_source = "control/lifecycle/summary.json"
+capture_moment = "node-agent ready or shutdown ACK"
+raw_destination = "run/key/value fact"
+validation = "closed ordered lifecycle mark"
+applicability = ["bench", "profile"]
+required = true

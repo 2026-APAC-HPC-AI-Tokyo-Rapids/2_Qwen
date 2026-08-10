@@ -25,13 +25,14 @@ ready_timeout_sec="$(jq -er '.ready_timeout_sec' "${execution_settings}")"
 node_rank="${OMPI_COMM_WORLD_RANK}"
 [[ "${OMPI_COMM_WORLD_SIZE}" -eq "${mpi_processes}" ]]
 [[ "${node_rank}" -ge 0 && "${node_rank}" -lt "${nodes}" ]]
-source_blob_oid="$("${SINGULARITY_LAUNCHER}" exec sglang.sif cat /opt/sglang/offline-throughput-source-blob-oid.txt | tr -d '[:space:]')"
+bench_args_blob_oid="$("${SINGULARITY_LAUNCHER}" exec sglang.sif cat /opt/sglang/offline-throughput-source-blob-oid.txt | tr -d '[:space:]')"
+server_args_blob_oid="$("${SINGULARITY_LAUNCHER}" exec sglang.sif cat /opt/sglang/server-args-source-blob-oid.txt | tr -d '[:space:]')"
+dataset_manifest_sha256="$(sha256sum "${RUNTIME_DIR}/source/dataset-manifest.json" | awk '{ print $1 }')"
 jit_cache="$(mktemp -d /tmp/sglang-jit.XXXXXXXXXX)"
 singularity_tmpdir="$(mktemp -d /dev/shm/sglang-run.XXXXXXXXXX)"
 node_metrics_dir="$(mktemp -d /dev/shm/qwen-metrics.XXXXXXXXXX)"
 export SINGULARITY_TMPDIR="${singularity_tmpdir}"
 jit_lock_fd=""
-engine_pid=""
 event_server_pid=""
 gpu_sampler_pid=""
 node_status=1
@@ -39,10 +40,6 @@ node_status=1
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
-  if [[ -n "${engine_pid}" ]]; then
-    kill -- "-${engine_pid}" 2>/dev/null || true
-    wait "${engine_pid}" 2>/dev/null || true
-  fi
   if [[ -n "${gpu_sampler_pid}" ]]; then
     kill -TERM "${gpu_sampler_pid}" 2>/dev/null || true
     wait "${gpu_sampler_pid}" 2>/dev/null || true
@@ -70,11 +67,18 @@ flock -s "${jit_lock_fd}" rsync -a -- "${HOME}/.cache/sglang-jit/" "${jit_cache}
   --runtime-dir "${RUNTIME_DIR}" \
   --node-rank "${node_rank}" \
   --cache-root "${jit_cache}"
+"${metrics_cli}" record-environment \
+  --manifest "${manifest}" \
+  --runtime-dir "${RUNTIME_DIR}" \
+  --scope host-node \
+  --index "${node_rank}"
+"${metrics_cli}" capture-hardware \
+  --manifest "${manifest}" \
+  --runtime-dir "${RUNTIME_DIR}" \
+  --node-rank "${node_rank}"
 
 master_host_file="${RUNTIME_DIR}/control/master-host.txt"
-completion_file="${RUNTIME_DIR}/control/rank-zero-status"
 if [[ "${node_rank}" -eq 0 ]]; then
-  rm -f -- "${completion_file}"
   hostname > "${master_host_file}"
 else
   wait_started="${SECONDS}"
@@ -84,25 +88,6 @@ else
   done
 fi
 master_host="$(<"${master_host_file}")"
-
-topology_path="${RUNTIME_DIR}/source/topology/node-${node_rank}.json"
-topology_tmp="${topology_path}.tmp-${BASHPID}"
-mkdir -p "${RUNTIME_DIR}/source/topology"
-gpu_rows="$(nvidia-smi \
-  --query-gpu=index,uuid,pci.bus_id,name,memory.total \
-  --format=csv,noheader,nounits | \
-  jq -R -s '
-    split("\n") | map(select(length > 0)) |
-    map(split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) |
-      {logical_index:(.[0]|tonumber),uuid:.[1],pci_bus_id:.[2],model:.[3],memory_total_mib:(.[4]|tonumber)})')"
-jq -n \
-  --arg run_id "${run_id}" \
-  --argjson node_rank "${node_rank}" \
-  --arg hostname "$(hostname)" \
-  --argjson gpus "${gpu_rows}" \
-  '{schema_version:"topology/v1",run_id:$run_id,node_rank:$node_rank,hostname:$hostname,gpus:$gpus}' \
-  >"${topology_tmp}"
-mv -- "${topology_tmp}" "${topology_path}"
 
 event_socket="${node_metrics_dir}/events.sock"
 event_ready="${node_metrics_dir}/events.ready"
@@ -160,16 +145,21 @@ benchmark=(/opt/sglang/venv/bin/python -m sglang.benchmark.offline_throughput
   --sharegpt-context-len 262144
   --seed 42
   --mem-fraction-static 0.85)
-if [[ "${run_purpose}" == profile ]]; then
-  mkdir -p "${RUNTIME_DIR}/profile/raw/torch"
-  benchmark+=(--profile --profile-activities CPU GPU --profile-steps 5)
-fi
+sglang_command=("${benchmark[@]}")
 
 profile_env_args=()
 profile_bind_args=()
 if [[ "${run_purpose}" == profile ]]; then
-  profile_env_args=(--env SGLANG_TORCH_PROFILER_DIR=/profile)
-  profile_bind_args=(--bind "${RUNTIME_DIR}/profile/raw/torch:/profile")
+  mkdir -p "${RUNTIME_DIR}/profile/raw/torch"
+  profile_env_args=(
+    --env SGLANG_TORCH_PROFILER_DIR=/profile
+    --env SGLANG_PROFILE_ID=qwen-profile
+    --env SGLANG_PROFILE_WITH_STACK=0,SGLANG_PROFILE_RECORD_SHAPES=0)
+  profile_bind_args=(
+    --bind "${RUNTIME_DIR}/profile/raw/torch:/profile"
+    --bind "${RUNTIME_DIR}/scripts/qwen-profile-wrapper.py:/qwen-profile-wrapper.py:ro")
+  sglang_command=(/opt/sglang/venv/bin/python /qwen-profile-wrapper.py
+    --output-dir /profile -- "${benchmark[@]}")
 fi
 
 command=("${SINGULARITY_LAUNCHER}" exec --userns --nv --cleanenv --containall
@@ -177,43 +167,79 @@ command=("${SINGULARITY_LAUNCHER}" exec --userns --nv --cleanenv --containall
   --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton
   --env QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock
   --env QWEN_EXPERIMENT_METRICS_RUN_ID="${run_id}",QWEN_EXPERIMENT_METRICS_NODE_RANK="${node_rank}"
-  --env QWEN_EXPERIMENT_METRICS_SOURCE_BLOB_OID="${source_blob_oid}"
+  --env QWEN_EXPERIMENT_METRICS_BENCH_ARGS_BLOB_OID="${bench_args_blob_oid}"
+  --env QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID="${server_args_blob_oid}"
+  --env QWEN_EXPERIMENT_METRICS_DATASET_MANIFEST_SHA256="${dataset_manifest_sha256}"
   --env QWEN_EXPERIMENT_METRICS_SOURCE_DIR=/source-output
   "${profile_env_args[@]}"
   "${profile_bind_args[@]}"
   --bind "${MODEL_PATH}:/model:ro,${DATASET_PATH}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro,${jit_cache}:/jit-cache,${jit_cache}:/root/.cache,${node_metrics_dir}:/metrics,${RUNTIME_DIR}/source:/source-output"
-  sglang.sif "${benchmark[@]}")
+  sglang.sif /opt/sglang/venv/bin/python -c
+  'import os,sys; p=sys.argv[1]; os.makedirs(os.path.dirname(p),exist_ok=True); f=open(p,"xb"); f.write(b"".join(k+b"\0"+v+b"\0" for k,v in sorted(os.environb.items()))); f.close(); os.execvpe(sys.argv[2],sys.argv[2:],os.environ)'
+  "/source-output/environment/sglang-${node_rank}.snapshot" "${sglang_command[@]}")
 
+argv_dir="${node_metrics_dir}/argv"
+mkdir -p "${argv_dir}"
+jq -n --args '$ARGS.positional' -- "$0" "$@" >"${argv_dir}/node-wrapper.json"
+jq -n --args '$ARGS.positional' -- "${command[@]}" >"${argv_dir}/singularity.json"
+jq -n --args '$ARGS.positional' -- "${sglang_command[@]}" >"${argv_dir}/sglang.json"
+"${metrics_cli}" capture-topology \
+  --manifest "${manifest}" \
+  --runtime-dir "${RUNTIME_DIR}" \
+  --node-rank "${node_rank}" \
+  --global-rank "${OMPI_COMM_WORLD_RANK}" \
+  --local-rank "${OMPI_COMM_WORLD_LOCAL_RANK:-0}" \
+  --size "${OMPI_COMM_WORLD_SIZE}" \
+  --node-wrapper-argv "${argv_dir}/node-wrapper.json" \
+  --singularity-argv "${argv_dir}/singularity.json" \
+  --sglang-argv "${argv_dir}/sglang.json" \
+  --singularity-launcher "${SINGULARITY_LAUNCHER}" \
+  --sif "${RUNTIME_DIR}/sglang.sif"
+
+node_agent=("${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/python"
+  -m qwen_experiment_metrics.node_agent
+  --manifest "${manifest}"
+  --runtime-dir "${RUNTIME_DIR}"
+  --node-rank "${node_rank}"
+  --master-host "${master_host}"
+  -- "${command[@]}")
+set +e
 if [[ "${node_rank}" -eq 0 ]]; then
-  set +e
-  "${command[@]}"
+  "${node_agent[@]}"
   node_status=$?
-  set -e
-  printf '%s\n' "${node_status}" > "${completion_file}"
-  exit "${node_status}"
+else
+  "${node_agent[@]}" >"${RUNTIME_DIR}/logs/node-rank-${node_rank}.log" 2>&1
+  node_status=$?
 fi
+set -e
 
-setsid "${command[@]}" >"${RUNTIME_DIR}/logs/node-rank-1.log" 2>&1 &
-engine_pid=$!
-while kill -0 "${engine_pid}" 2>/dev/null; do
-  if [[ -s "${completion_file}" ]]; then
-    node_status="$(<"${completion_file}")"
-    exit "${node_status}"
+sglang_snapshot="${RUNTIME_DIR}/source/environment/sglang-${node_rank}.snapshot"
+if [[ -s "${sglang_snapshot}" ]]; then
+  "${metrics_cli}" record-environment \
+    --manifest "${manifest}" \
+    --runtime-dir "${RUNTIME_DIR}" \
+    --scope sglang-node \
+    --index "${node_rank}" \
+    --source "${sglang_snapshot}"
+fi
+for ((local_rank=0; local_rank<gpus_per_node; local_rank++)); do
+  global_rank=$(( node_rank * gpus_per_node + local_rank ))
+  worker_snapshot="${RUNTIME_DIR}/source/environment/worker-${global_rank}.snapshot"
+  if [[ -s "${worker_snapshot}" ]]; then
+    "${metrics_cli}" record-environment \
+      --manifest "${manifest}" \
+      --runtime-dir "${RUNTIME_DIR}" \
+      --scope worker-rank \
+      --index "${global_rank}" \
+      --source "${worker_snapshot}"
   fi
-  sleep 1
 done
-
-engine_status=0
-wait "${engine_pid}" || engine_status=$?
-engine_pid=""
-for ((attempt=0; attempt<ready_timeout_sec*10; attempt++)); do
-  if [[ -s "${completion_file}" ]]; then
-    node_status="$(<"${completion_file}")"
-    exit "${node_status}"
-  fi
-  sleep 0.1
-done
-
-node_status="${engine_status}"
-echo "node_rank=1 exited before node_rank=0 completed (status=${node_status})" >&2
+if [[ "${node_rank}" -eq 0 && -s "${RUNTIME_DIR}/source/workload-warmup.json" ]]; then
+  "${metrics_cli}" record-workload \
+    --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" \
+    --kind warmup --source "${RUNTIME_DIR}/source/workload-warmup.json"
+  "${metrics_cli}" record-workload \
+    --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" \
+    --kind measured --source "${RUNTIME_DIR}/source/workload-measured.json"
+fi
 exit "${node_status}"

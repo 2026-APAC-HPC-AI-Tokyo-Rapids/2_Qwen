@@ -65,6 +65,9 @@ From: nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41
     git -C /opt/sglang/source hash-object \
       python/sglang/benchmark/offline_throughput.py \
       | tee /opt/sglang/offline-throughput-source-blob-oid.txt
+    git -C /opt/sglang/source hash-object \
+      python/sglang/srt/server_args.py \
+      | tee /opt/sglang/server-args-source-blob-oid.txt
     printf '2\n' > /opt/sglang/qwen-experiment-metrics-hook-version.txt
     git -C /opt/sglang/source rev-parse HEAD | tee /opt/sglang/sglang-commit.txt
 
@@ -138,6 +141,7 @@ From: nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41
     test "$(cat /opt/sglang/nccl-tests-commit.txt)" = 717b68318278e93f371d8ffb46b076069d7c7851
     test "$(cat /opt/sglang/qwen-experiment-metrics-hook-version.txt)" = 2
     test -s /opt/sglang/offline-throughput-source-blob-oid.txt
+    test -s /opt/sglang/server-args-source-blob-oid.txt
     test -s /opt/apac/manifest.json
     ! ldd /opt/nccl-tests/bin/all_reduce_perf | grep -q 'not found'
     ucx_info -v

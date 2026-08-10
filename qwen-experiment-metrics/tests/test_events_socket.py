@@ -79,6 +79,46 @@ def test_primary_result_parser_preserves_null_as_absent() -> None:
     assert "result.token.output.ordered_token_ids_sha256" in keys
 
 
+def test_worker_ready_is_closed_and_bound_to_global_rank() -> None:
+    event = {
+        "schema_version": "qwen-domain-event/v1",
+        "run_id": RUN_ID,
+        "producer_id": "sglang-worker-3",
+        "node_rank": 0,
+        "global_rank": 3,
+        "sequence": 0,
+        "event_type": "worker_ready",
+        "payload": {
+            "tp_rank": 3,
+            "gpu_id": 3,
+            "gpu_uuid": "GPU-3",
+            "cpu_affinity": [0, 2],
+            "numa_mems": "0",
+            "prefill_attention_backend": "flashinfer",
+            "decode_attention_backend": "flashinfer",
+            "torch_distributed_backend": "nccl",
+            "transport_backend": "nccl",
+        },
+    }
+    parsed = facts_from_event(event, expected_run_id=RUN_ID)
+    assert parsed.producer_instance == "worker:global-rank-3"
+    assert {fact.key for fact in parsed.facts} == {
+        "parallel.worker.3.node_rank",
+        "parallel.worker.3.tp_rank",
+        "parallel.worker.3.gpu_id",
+        "parallel.worker.3.gpu_uuid",
+        "parallel.worker.3.cpu_affinity",
+        "parallel.worker.3.numa_mems",
+        "parallel.worker.3.attention.prefill_backend",
+        "parallel.worker.3.attention.decode_backend",
+        "parallel.worker.3.torch_distributed_backend",
+        "parallel.worker.3.transport_backend",
+    }
+    event["payload"]["tp_rank"] = 2  # type: ignore[index]
+    with pytest.raises(DomainEventError, match="global_rank"):
+        facts_from_event(event, expected_run_id=RUN_ID)
+
+
 def test_local_socket_routes_to_atomic_local_fragment(
     manifest_path: Path, runtime: Path, tmp_path: Path
 ) -> None:

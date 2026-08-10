@@ -113,6 +113,59 @@ def parser() -> argparse.ArgumentParser:
     launchers = commands.add_parser("capture-runtime-launchers")
     launchers.add_argument("--runtime-dir", type=Path, required=True)
 
+    environment = commands.add_parser("record-environment")
+    _common_runtime_arguments(environment)
+    environment.add_argument(
+        "--scope",
+        choices=("job-entry", "host-node", "sglang-node", "worker-rank"),
+        required=True,
+    )
+    environment.add_argument("--index", type=int)
+    environment.add_argument("--source", type=Path)
+
+    run_start = commands.add_parser("start-run-lifecycle")
+    _common_runtime_arguments(run_start)
+
+    run_finish = commands.add_parser("finish-run-lifecycle")
+    _common_runtime_arguments(run_finish)
+    run_finish.add_argument("--exit-code", type=int, required=True)
+
+    accounting = commands.add_parser("record-accounting")
+    _common_runtime_arguments(accounting)
+    accounting.add_argument("--job-id", required=True)
+    accounting.add_argument("--stdout", type=Path, required=True)
+    accounting.add_argument("--stderr", type=Path, required=True)
+    accounting.add_argument("--exit-code", type=int, required=True)
+
+    hardware = commands.add_parser("capture-hardware")
+    _common_runtime_arguments(hardware)
+    hardware.add_argument("--node-rank", type=int, required=True)
+
+    topology = commands.add_parser("capture-topology")
+    _common_runtime_arguments(topology)
+    topology.add_argument("--node-rank", type=int, required=True)
+    topology.add_argument("--global-rank", type=int, required=True)
+    topology.add_argument("--local-rank", type=int, required=True)
+    topology.add_argument("--size", type=int, required=True)
+    topology.add_argument("--node-wrapper-argv", type=Path, required=True)
+    topology.add_argument("--singularity-argv", type=Path, required=True)
+    topology.add_argument("--sglang-argv", type=Path, required=True)
+    topology.add_argument("--singularity-launcher", type=Path, required=True)
+    topology.add_argument("--sif", type=Path, required=True)
+
+    workload = commands.add_parser("record-workload")
+    _common_runtime_arguments(workload)
+    workload.add_argument("--kind", choices=("warmup", "measured"), required=True)
+    workload.add_argument("--source", type=Path, required=True)
+
+    node_lifecycle = commands.add_parser("record-node-lifecycle")
+    _common_runtime_arguments(node_lifecycle)
+    node_lifecycle.add_argument("--node-rank", type=int, required=True)
+    node_lifecycle.add_argument("--source", type=Path, required=True)
+
+    lifecycle_control = commands.add_parser("record-lifecycle-control")
+    _common_runtime_arguments(lifecycle_control)
+
     sif_sidecar = commands.add_parser("create-sif-sidecar")
     sif_sidecar.add_argument("--workspace", type=Path, required=True)
     sif_sidecar.add_argument("--sglang-source", type=Path, required=True)
@@ -172,6 +225,24 @@ def main(argv: list[str] | None = None) -> int:
         return _record_cache(arguments)
     if arguments.action == "capture-runtime-launchers":
         return _capture_runtime_launchers(arguments)
+    if arguments.action == "record-environment":
+        return _record_environment(arguments)
+    if arguments.action == "start-run-lifecycle":
+        return _start_run_lifecycle(arguments)
+    if arguments.action == "finish-run-lifecycle":
+        return _finish_run_lifecycle(arguments)
+    if arguments.action == "record-accounting":
+        return _record_accounting(arguments)
+    if arguments.action == "capture-hardware":
+        return _capture_hardware(arguments)
+    if arguments.action == "capture-topology":
+        return _capture_topology(arguments)
+    if arguments.action == "record-workload":
+        return _record_workload(arguments)
+    if arguments.action == "record-node-lifecycle":
+        return _record_node_lifecycle(arguments)
+    if arguments.action == "record-lifecycle-control":
+        return _record_lifecycle_control(arguments)
     if arguments.action == "create-sif-sidecar":
         return _create_sif_sidecar(arguments)
     if arguments.action == "merge":
@@ -463,6 +534,209 @@ def _capture_runtime_launchers(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _record_environment(arguments: argparse.Namespace) -> int:
+    from .system_sources import (
+        capture_environment_snapshot,
+        environment_facts,
+        validate_environment_snapshot,
+    )
+
+    scope = arguments.scope
+    if scope == "job-entry":
+        if arguments.index is not None:
+            raise ValueError("job-entry environment has no index")
+        producer = "environment:job-entry"
+        relative = "source/environment/job-entry.snapshot"
+        prefix = "environment.job_entry"
+    else:
+        if arguments.index is None or arguments.index < 0:
+            raise ValueError("indexed environment scope requires nonnegative --index")
+        stem = {"host-node": "host", "sglang-node": "sglang", "worker-rank": "worker"}[scope]
+        producer = f"environment:{scope}-{arguments.index}"
+        relative = f"source/environment/{stem}-{arguments.index}.snapshot"
+        prefix = {
+            "host-node": "environment.host_exec_node",
+            "sglang-node": "environment.sglang_launch_node",
+            "worker-rank": "environment.worker_global_rank",
+        }[scope] + f".{arguments.index}"
+    destination = arguments.runtime_dir / relative
+    if arguments.source is None:
+        capture_environment_snapshot(destination)
+    else:
+        if arguments.source.resolve() != destination.resolve():
+            raise ValueError("environment source must use its canonical runtime path")
+        validate_environment_snapshot(destination)
+    with Recorder.open(
+        arguments.manifest, arguments.registry, producer, arguments.runtime_dir
+    ) as recorder:
+        recorder.record_many(environment_facts(destination, key_prefix=prefix))
+    return 0
+
+
+def _start_run_lifecycle(arguments: argparse.Namespace) -> int:
+    from .system_sources import start_run_lifecycle
+
+    start_run_lifecycle(arguments.manifest, arguments.runtime_dir)
+    return 0
+
+
+def _finish_run_lifecycle(arguments: argparse.Namespace) -> int:
+    from .system_sources import finish_run_lifecycle
+
+    _, facts = finish_run_lifecycle(
+        arguments.manifest, arguments.runtime_dir, arguments.exit_code
+    )
+    with Recorder.open(
+        arguments.manifest, arguments.registry, "run-lifecycle", arguments.runtime_dir
+    ) as recorder:
+        recorder.record_many(facts)
+    return 0
+
+
+def _record_accounting(arguments: argparse.Namespace) -> int:
+    from .system_sources import create_scheduler_accounting
+
+    _, facts = create_scheduler_accounting(
+        arguments.manifest,
+        arguments.runtime_dir,
+        job_id=arguments.job_id,
+        stdout_path=arguments.stdout,
+        stderr_path=arguments.stderr,
+        exit_code=arguments.exit_code,
+    )
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        "scheduler-accounting",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record_many(facts)
+    return 0
+
+
+def _capture_hardware(arguments: argparse.Namespace) -> int:
+    from .system_sources import create_minimal_hardware, validate_minimal_hardware
+
+    path = create_minimal_hardware(
+        arguments.runtime_dir, node_rank=arguments.node_rank
+    )
+    facts = validate_minimal_hardware(
+        path, arguments.runtime_dir, arguments.node_rank
+    )
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        f"hardware:node-{arguments.node_rank}",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record_many(facts)
+    return 0
+
+
+def _capture_topology(arguments: argparse.Namespace) -> int:
+    from .canonical import load_json_strict
+    from .system_sources import create_node_topology, validate_node_topology
+
+    def argv(path: Path) -> list[str]:
+        value = load_json_strict(path.read_bytes())
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise TypeError("argv source must be a JSON string array")
+        return value
+
+    path = create_node_topology(
+        arguments.manifest,
+        arguments.runtime_dir,
+        node_rank=arguments.node_rank,
+        global_rank=arguments.global_rank,
+        local_rank=arguments.local_rank,
+        size=arguments.size,
+        node_wrapper_argv=argv(arguments.node_wrapper_argv),
+        singularity_argv=argv(arguments.singularity_argv),
+        sglang_argv=argv(arguments.sglang_argv),
+        singularity_launcher=arguments.singularity_launcher,
+        sif=arguments.sif,
+    )
+    facts = validate_node_topology(
+        path, arguments.runtime_dir, load_manifest(arguments.manifest).run_id,
+        arguments.node_rank
+    )
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        f"topology:node-{arguments.node_rank}",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record_many(facts)
+    return 0
+
+
+def _record_workload(arguments: argparse.Namespace) -> int:
+    import hashlib
+
+    from .workload import validate_ordered_workload
+
+    dataset = arguments.runtime_dir / "source/dataset-manifest.json"
+    identity = hashlib.sha256(dataset.read_bytes()).hexdigest()
+    facts = validate_ordered_workload(
+        arguments.source, kind=arguments.kind, dataset_manifest_sha256=identity
+    )
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        f"workload:{arguments.kind}",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record_many(facts)
+    return 0
+
+
+def _record_node_lifecycle(arguments: argparse.Namespace) -> int:
+    from .system_sources import validate_node_lifecycle
+
+    facts = validate_node_lifecycle(arguments.source, node_rank=arguments.node_rank)
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        f"node-lifecycle:node-{arguments.node_rank}",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record_many(facts)
+    return 0
+
+
+def _record_lifecycle_control(arguments: argparse.Namespace) -> int:
+    from .sources import load_execution_settings
+    from .system_sources import (
+        validate_lifecycle_rendezvous,
+        validate_lifecycle_summary,
+    )
+
+    manifest = load_manifest(arguments.manifest)
+    settings = load_execution_settings(
+        arguments.runtime_dir / "control/execution-settings.json"
+    )
+    facts = (
+        *validate_lifecycle_rendezvous(
+            arguments.runtime_dir / "control/lifecycle/rendezvous.json",
+            manifest.run_id,
+            settings.node_agent_port,
+        ),
+        *validate_lifecycle_summary(
+            arguments.runtime_dir / "control/lifecycle/summary.json",
+            manifest.run_id,
+            settings.nodes,
+        ),
+    )
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        "lifecycle-control",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record_many(facts)
+    return 0
+
+
 def _create_sif_sidecar(arguments: argparse.Namespace) -> int:
     from .sources import create_sif_sidecar
 
@@ -515,6 +789,25 @@ def _publish(arguments: argparse.Namespace) -> int:
     if arguments.manifest.resolve() != expected_manifest:
         raise ValueError("publish manifest must be the metrics runtime manifest")
     manifest = load_manifest(arguments.manifest)
+    if manifest.run_purpose == "profile":
+        from .profile_contract import project_profiler_events
+        from .sources import load_execution_settings
+
+        settings = load_execution_settings(
+            arguments.metrics.parent / "control/execution-settings.json"
+        )
+        projection = project_profiler_events(
+            arguments.metrics.parent,
+            run_id=manifest.run_id,
+            invocation_id="measured-generation",
+            expected_ranks=settings.tensor_parallel_size,
+        )
+        if (
+            projection.missing_ranks
+            or projection.partial_ranks
+            or projection.conflicts
+        ):
+            raise ValueError("profile raw artifacts are incomplete or conflicting")
     count = publish_metrics(
         arguments.metrics,
         BigQueryConfig.load(arguments.pyproject),

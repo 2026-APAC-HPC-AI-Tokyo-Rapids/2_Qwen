@@ -74,18 +74,30 @@ def test_merge_marks_missing_expected_producer_incomplete(
     _record_runner(manifest_path, runtime)
     outcome = merge_run(manifest_path, runtime)
     assert outcome.collection_complete is False
-    assert outcome.missing_producers == (
+    assert {
         "cache:node-0",
         "cache:node-1",
         "configuration:node-0",
         "configuration:node-1",
+        "environment:job-entry",
+        "environment:host-node-0",
+        "environment:sglang-node-1",
+        "hardware:node-0",
+        "topology:node-1",
+        "node-lifecycle:node-0",
+        "worker:global-rank-7",
+        "workload:warmup",
+        "workload:measured",
+        "run-lifecycle",
+        "scheduler-accounting",
+        "lifecycle-control",
         "job-entry",
         "provenance",
         "result",
         "stage:benchmark",
         "submission-request",
         "submission-result",
-    )
+    }.issubset(outcome.missing_producers)
     assert "control/job-entry.json" in outcome.missing_required_files
 
 

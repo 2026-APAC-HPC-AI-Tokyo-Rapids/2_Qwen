@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from .domain import Fact
 from .events import parse_primary_result
 from .gpu import parse_gpu_samples_jsonl
 from .manifest import load_manifest
+from .profile_contract import project_profiler_events
 from .recording import RecorderError, producer_from_fragment
 from .registry import Registry, RegistryError, load_registry
 from .sources import (
@@ -23,6 +25,18 @@ from .sources import (
     validate_sif_sidecar,
     validate_submission_request,
 )
+from .system_sources import (
+    topology_gpu_bindings,
+    validate_environment_snapshot,
+    validate_lifecycle_rendezvous,
+    validate_lifecycle_summary,
+    validate_minimal_hardware,
+    validate_node_lifecycle,
+    validate_node_topology,
+    validate_run_lifecycle,
+    validate_scheduler_accounting,
+)
+from .workload import validate_ordered_workload
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +83,7 @@ def merge_run(
     fragment_dir = runtime_dir / "domain" / "fragments"
     observed_by_key: dict[str, list[_Observed]] = {}
     facts_by_producer: dict[str, list[str]] = {}
+    values_by_producer: dict[str, dict[str, str]] = {}
     observed_producers: set[str] = set()
     invalid_fragments: list[str] = []
     completed_fragment_paths = sorted(fragment_dir.glob("*.jsonl"))
@@ -90,8 +105,10 @@ def merge_run(
             continue
         observed_producers.add(producer_id)
         producer_keys = facts_by_producer.setdefault(producer_id, [])
+        producer_values = values_by_producer.setdefault(producer_id, {})
         for key, value in rows:
             producer_keys.append(key)
+            producer_values[key] = value
             observed_by_key.setdefault(key, []).append(
                 _Observed(producer_id, value, path)
             )
@@ -102,6 +119,9 @@ def merge_run(
         )
     )
     invalid_fragments.extend(_runner_contract_errors(facts_by_producer, manifest.run_purpose))
+    invalid_fragments.extend(
+        _placement_axis_errors(values_by_producer, observed_producers, settings)
+    )
 
     missing_producers = sorted(required_producers - observed_producers)
     missing_required_facts: list[str] = []
@@ -231,6 +251,22 @@ def _execution_producers(
         "submission-request",
         "submission-result",
         "job-entry",
+        "environment:job-entry",
+        "run-lifecycle",
+        "scheduler-accounting",
+        "workload:warmup",
+        "workload:measured",
+        "lifecycle-control",
+        *(f"environment:host-node-{node}" for node in range(settings.nodes)),
+        *(f"environment:sglang-node-{node}" for node in range(settings.nodes)),
+        *(f"hardware:node-{node}" for node in range(settings.nodes)),
+        *(f"topology:node-{node}" for node in range(settings.nodes)),
+        *(f"node-lifecycle:node-{node}" for node in range(settings.nodes)),
+        *(
+            f"environment:worker-rank-{rank}"
+            for rank in range(settings.tensor_parallel_size)
+        ),
+        *(f"worker:global-rank-{rank}" for rank in range(settings.tensor_parallel_size)),
     }
     if network_required:
         result.update(
@@ -262,8 +298,35 @@ def _missing_execution_files(
         "source/dataset-manifest.json",
         "source/runtime-launchers.json",
         "source/scheduler/accounting.txt",
+        "source/scheduler/accounting.stderr",
+        "source/scheduler/accounting.json",
+        "source/run-lifecycle.json",
+        "control/lifecycle/run-start.json",
+        "control/lifecycle/rendezvous.json",
+        "control/lifecycle/summary.json",
+        "source/environment/job-entry.snapshot",
+        "source/workload-warmup.json",
+        "source/workload-measured.json",
         "source/primary-result.json",
         *(f"source/topology/node-{node}.json" for node in range(settings.nodes)),
+        *(f"source/hardware/node-{node}.json" for node in range(settings.nodes)),
+        *(
+            f"source/hardware/node-{node}.lscpu.stderr"
+            for node in range(settings.nodes)
+        ),
+        *(f"source/lifecycle/node-{node}.json" for node in range(settings.nodes)),
+        *(
+            f"source/environment/host-{node}.snapshot"
+            for node in range(settings.nodes)
+        ),
+        *(
+            f"source/environment/sglang-{node}.snapshot"
+            for node in range(settings.nodes)
+        ),
+        *(
+            f"source/environment/worker-{rank}.snapshot"
+            for rank in range(settings.tensor_parallel_size)
+        ),
         *(
             f"source/cache/node-{node}-input-manifest.json"
             for node in range(settings.nodes)
@@ -287,6 +350,14 @@ def _missing_execution_files(
                 ],
             ]
         )
+    if purpose == "profile":
+        for rank in range(settings.tensor_parallel_size):
+            required.extend(
+                [
+                    f"profile/raw/torch/qwen-profile-TP-{rank}.trace.json.gz",
+                    f"profile/raw/torch/qwen-profile-TP-{rank}.capture.json",
+                ]
+            )
     missing = [relative for relative in required if not (runtime_dir / relative).is_file()]
     job_entry = runtime_dir / "control/job-entry.json"
     if job_entry.is_file():
@@ -347,11 +418,100 @@ def _missing_execution_files(
         path = runtime_dir / relative
         if path.is_file():
             try:
-                expected_gpus[node_rank] = _validate_topology(
-                    path, run_id, node_rank, settings.gpus_per_node
+                validate_node_topology(
+                    path,
+                    runtime_dir,
+                    run_id,
+                    node_rank,
+                    expected_gpus=settings.gpus_per_node,
+                )
+                expected_gpus[node_rank] = topology_gpu_bindings(path, runtime_dir)
+            except (OSError, ValueError, TypeError):
+                missing.append(f"{relative}:invalid")
+    environment_members = [
+        "source/environment/job-entry.snapshot",
+        *(f"source/environment/host-{node}.snapshot" for node in range(settings.nodes)),
+        *(f"source/environment/sglang-{node}.snapshot" for node in range(settings.nodes)),
+        *(
+            f"source/environment/worker-{rank}.snapshot"
+            for rank in range(settings.tensor_parallel_size)
+        ),
+    ]
+    for relative in environment_members:
+        path = runtime_dir / relative
+        if path.is_file():
+            try:
+                validate_environment_snapshot(path)
+            except (OSError, ValueError, TypeError):
+                missing.append(f"{relative}:invalid")
+    for node_rank in range(settings.nodes):
+        for relative, validator in (
+            (
+                f"source/hardware/node-{node_rank}.json",
+                lambda path, node=node_rank: validate_minimal_hardware(
+                    path, runtime_dir, node
+                ),
+            ),
+            (
+                f"source/lifecycle/node-{node_rank}.json",
+                lambda path, node=node_rank: validate_node_lifecycle(
+                    path, node_rank=node
+                ),
+            ),
+        ):
+            path = runtime_dir / relative
+            if path.is_file():
+                try:
+                    validator(path)
+                except (OSError, ValueError, TypeError):
+                    missing.append(f"{relative}:invalid")
+    lifecycle = runtime_dir / "source/run-lifecycle.json"
+    if lifecycle.is_file():
+        try:
+            validate_run_lifecycle(
+                lifecycle,
+                run_id,
+                start_path=runtime_dir / "control/lifecycle/run-start.json",
+            )
+        except (OSError, ValueError, TypeError):
+            missing.append("source/run-lifecycle.json:invalid")
+    accounting = runtime_dir / "source/scheduler/accounting.json"
+    if accounting.is_file():
+        try:
+            validate_scheduler_accounting(accounting, runtime_dir, run_id)
+            _validate_scheduler_job_identity(runtime_dir)
+        except (OSError, ValueError, TypeError):
+            missing.append("source/scheduler/accounting.json:invalid")
+    try:
+        dataset_identity = hashlib.sha256(
+            (runtime_dir / "source/dataset-manifest.json").read_bytes()
+        ).hexdigest()
+    except OSError:
+        dataset_identity = ""
+    for kind in ("warmup", "measured"):
+        relative = f"source/workload-{kind}.json"
+        path = runtime_dir / relative
+        if path.is_file():
+            try:
+                validate_ordered_workload(
+                    path, kind=kind, dataset_manifest_sha256=dataset_identity
                 )
             except (OSError, ValueError, TypeError):
                 missing.append(f"{relative}:invalid")
+    rendezvous = runtime_dir / "control/lifecycle/rendezvous.json"
+    summary = runtime_dir / "control/lifecycle/summary.json"
+    if rendezvous.is_file():
+        try:
+            validate_lifecycle_rendezvous(
+                rendezvous, run_id, settings.node_agent_port
+            )
+        except (OSError, ValueError, TypeError):
+            missing.append("control/lifecycle/rendezvous.json:invalid")
+    if summary.is_file():
+        try:
+            validate_lifecycle_summary(summary, run_id, settings.nodes)
+        except (OSError, ValueError, TypeError):
+            missing.append("control/lifecycle/summary.json:invalid")
     if purpose == "profile":
         for node_rank in range(settings.nodes):
             completion = f"control/gpu/node-{node_rank}.complete"
@@ -379,6 +539,21 @@ def _missing_execution_files(
                     raise ValueError("GPU raw contains no complete frame")
             except (KeyError, OSError, ValueError, TypeError):
                 missing.append(f"{relative}:invalid")
+        try:
+            profiler = project_profiler_events(
+                runtime_dir,
+                run_id=run_id,
+                invocation_id="measured-generation",
+                expected_ranks=settings.tensor_parallel_size,
+            )
+            if (
+                profiler.missing_ranks
+                or profiler.partial_ranks
+                or profiler.conflicts
+            ):
+                missing.append("profile/raw/torch:invalid")
+        except (OSError, ValueError, TypeError):
+            missing.append("profile/raw/torch:invalid")
     return missing
 
 
@@ -434,55 +609,6 @@ def _has_valid_primary_result(runtime_dir: Path, run_id: str) -> bool:
     return True
 
 
-def _validate_topology(
-    path: Path, run_id: str, node_rank: int, gpus_per_node: int
-) -> dict[str, int]:
-    document = load_json_strict(path.read_bytes())
-    if not isinstance(document, dict) or set(document) != {
-        "schema_version",
-        "run_id",
-        "node_rank",
-        "hostname",
-        "gpus",
-    }:
-        raise ValueError("topology is not closed")
-    if (
-        document["schema_version"] != "topology/v1"
-        or document["run_id"] != run_id
-        or document["node_rank"] != node_rank
-        or not isinstance(document["hostname"], str)
-        or not document["hostname"]
-    ):
-        raise ValueError("topology identity mismatch")
-    gpus = document["gpus"]
-    if not isinstance(gpus, list) or len(gpus) != gpus_per_node:
-        raise ValueError("topology has the wrong GPU cardinality")
-    result: dict[str, int] = {}
-    for row in gpus:
-        if not isinstance(row, dict) or set(row) != {
-            "logical_index",
-            "uuid",
-            "pci_bus_id",
-            "model",
-            "memory_total_mib",
-        }:
-            raise ValueError("topology GPU is not closed")
-        index = row["logical_index"]
-        uuid = row["uuid"]
-        if (
-            isinstance(index, bool)
-            or not isinstance(index, int)
-            or not isinstance(uuid, str)
-            or not uuid
-            or uuid in result
-        ):
-            raise ValueError("invalid topology GPU binding")
-        result[uuid] = index
-    if set(result.values()) != set(range(gpus_per_node)):
-        raise ValueError("topology logical indices are not contiguous")
-    return result
-
-
 def _validate_instance_axis(producer_id: str, key: str, line_number: int) -> None:
     if producer_id.startswith("stage:"):
         name = producer_id.removeprefix("stage:")
@@ -499,6 +625,41 @@ def _validate_instance_axis(producer_id: str, key: str, line_number: int) -> Non
         node = producer_id.removeprefix("cache:node-")
         if key != f"cache.node.{node}.input_manifest_sha256":
             raise ValueError(f"line {line_number} cache node/key mismatch")
+    instance_axes = (
+        ("hardware:node-", "hardware.node."),
+        ("node-lifecycle:node-", "parallel.node."),
+        ("worker:global-rank-", "parallel.worker."),
+    )
+    for producer_prefix, key_prefix in instance_axes:
+        if producer_id.startswith(producer_prefix):
+            index = producer_id.removeprefix(producer_prefix)
+            if not key.startswith(f"{key_prefix}{index}."):
+                raise ValueError(f"line {line_number} producer/key axis mismatch")
+    if producer_id.startswith("topology:node-"):
+        index = producer_id.removeprefix("topology:node-")
+        if not key.startswith(
+            (f"parallel.node.{index}.", f"hardware.node.{index}.gpu.")
+        ):
+            raise ValueError(f"line {line_number} topology node/key mismatch")
+    if producer_id.startswith("workload:"):
+        kind = producer_id.removeprefix("workload:")
+        if key != f"workload.{kind}.manifest_sha256":
+            raise ValueError(f"line {line_number} workload kind/key mismatch")
+
+
+def _validate_scheduler_job_identity(runtime_dir: Path) -> None:
+    accounting = load_json_strict(
+        (runtime_dir / "source/scheduler/accounting.json").read_bytes()
+    )
+    job_entry = load_json_strict((runtime_dir / "control/job-entry.json").read_bytes())
+    submission = load_json_strict(
+        (runtime_dir / "control/submission-result.json").read_bytes()
+    )
+    if not all(isinstance(item, dict) for item in (accounting, job_entry, submission)):
+        raise TypeError("scheduler identity sources must be objects")
+    job_ids = {accounting["row"]["jid"], job_entry["pj_job_id"], submission["job_id"]}
+    if len(job_ids) != 1:
+        raise ValueError("submission, job-entry, and accounting job IDs differ")
 
 
 def _configuration_axis_errors(
@@ -560,3 +721,95 @@ def _runner_contract_errors(
     return [] if observed == expected else [
         "runner fragment does not contain the exact manifest/settings fact set"
     ]
+
+
+def _placement_axis_errors(
+    values: dict[str, dict[str, str]],
+    observed: set[str],
+    settings: ExecutionSettings,
+) -> list[str]:
+    topology_producers = {
+        f"topology:node-{node}" for node in range(settings.nodes)
+    }
+    worker_producers = {
+        f"worker:global-rank-{rank}"
+        for rank in range(settings.tensor_parallel_size)
+    }
+    configuration_producers = {
+        f"configuration:node-{node}" for node in range(settings.nodes)
+    }
+    if not (
+        topology_producers | worker_producers | configuration_producers
+    ).issubset(observed):
+        return []
+    errors: list[str] = []
+    topology_bindings: dict[int, dict[int, str]] = {}
+    hostnames: list[str] = []
+    for node in range(settings.nodes):
+        rows = values[f"topology:node-{node}"]
+        prefix = f"parallel.node.{node}"
+        if (
+            rows.get(f"{prefix}.global_rank") != str(node)
+            or rows.get(f"{prefix}.local_rank") != "0"
+            or rows.get(f"{prefix}.size") != str(settings.mpi_processes)
+        ):
+            errors.append(f"placement node {node} outer MPI grid differs")
+        hostname = rows.get(f"{prefix}.hostname")
+        if hostname is not None:
+            hostnames.append(hostname)
+        bindings: dict[int, str] = {}
+        for key, value in rows.items():
+            match = re.fullmatch(
+                rf"hardware\.node\.{node}\.gpu\.([0-9]+)\.uuid", key
+            )
+            if match is not None:
+                bindings[int(match.group(1))] = value
+        if set(bindings) != set(range(settings.gpus_per_node)):
+            errors.append(f"placement node {node} container GPU grid differs")
+        topology_bindings[node] = bindings
+    if len(hostnames) != settings.nodes or len(set(hostnames)) != settings.nodes:
+        errors.append("placement node hostnames are missing or duplicated")
+    worker_uuids: set[str] = set()
+    workers_per_node = {node: 0 for node in range(settings.nodes)}
+    for rank in range(settings.tensor_parallel_size):
+        rows = values[f"worker:global-rank-{rank}"]
+        prefix = f"parallel.worker.{rank}"
+        try:
+            node = int(rows[f"{prefix}.node_rank"])
+            tp_rank = int(rows[f"{prefix}.tp_rank"])
+            gpu_id = int(rows[f"{prefix}.gpu_id"])
+            gpu_uuid = rows[f"{prefix}.gpu_uuid"]
+        except (KeyError, ValueError):
+            errors.append(f"placement worker {rank} identity is incomplete")
+            continue
+        if node not in workers_per_node or tp_rank != rank:
+            errors.append(f"placement worker {rank} rank grid differs")
+            continue
+        workers_per_node[node] += 1
+        if topology_bindings[node].get(gpu_id) != gpu_uuid:
+            errors.append(f"placement worker {rank} GPU binding differs")
+        if gpu_uuid in worker_uuids:
+            errors.append(f"placement worker {rank} GPU UUID is duplicated")
+        worker_uuids.add(gpu_uuid)
+    if any(count != settings.gpus_per_node for count in workers_per_node.values()):
+        errors.append("placement worker count per node differs")
+    for node in range(settings.nodes):
+        rows = values[f"configuration:node-{node}"]
+        prefix = f"sglang.node.{node}.server_args_effective"
+        expected = {
+            "tp_size": settings.tensor_parallel_size,
+            "nnodes": settings.nodes,
+            "node_rank": node,
+        }
+        for name, wanted in expected.items():
+            encoded = rows.get(f"{prefix}.{name}")
+            if encoded is None or load_json_strict(encoded) != wanted:
+                errors.append(f"placement ServerArgs node {node} {name} differs")
+        address = rows.get(f"{prefix}.dist_init_addr")
+        if (
+            address is None
+            or not hostnames
+            or load_json_strict(address) != f"{hostnames[0]}:{settings.sglang_port}"
+        ):
+            errors.append(f"placement ServerArgs node {node} address differs")
+    return errors

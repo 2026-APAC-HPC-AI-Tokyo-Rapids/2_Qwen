@@ -33,6 +33,58 @@ def test_sif_build_consumes_the_tracked_sglang_lock() -> None:
     assert "uv pip install --python /opt/sglang/venv/bin/python --no-deps -e ." in recipe
 
 
+def test_genkai_workflow_captures_closed_accounting_source() -> None:
+    workflow = (ROOT / ".github/workflows/genkai.yml").read_text(encoding="utf-8")
+    assert "pjstat --history -S" in workflow
+    assert (
+        "--choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut"
+        in workflow
+    )
+    assert "--data --delimiter '\\t'" in workflow
+    assert 'source/scheduler/accounting.stderr"' in workflow
+    assert '"${metrics_cli}" record-accounting' in workflow
+
+
+def test_node_launcher_connects_closed_sources_and_fixed_profile_overlay() -> None:
+    script = (ROOT / "scripts/run-qwen35-node.sh").read_text(encoding="utf-8")
+    for command in (
+        "record-environment",
+        "capture-hardware",
+        "capture-topology",
+        "qwen_experiment_metrics.node_agent",
+        "record-workload",
+    ):
+        assert command in script
+    assert "SGLANG_PROFILE_ID=qwen-profile" in script
+    assert "qwen-profile-wrapper.py:/qwen-profile-wrapper.py:ro" in script
+    assert "QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID" in script
+
+
+def test_sglang_patches_close_primary_config_worker_and_profile_sources() -> None:
+    patch = (
+        ROOT / "patches/sglang/0002-close-qwen-v2-observation-sources.patch"
+    ).read_text(encoding="utf-8")
+    ordering = (
+        ROOT / "patches/sglang/0003-record-primary-before-profiler-finalization.patch"
+    ).read_text(encoding="utf-8")
+    observed_counts = (
+        ROOT / "patches/sglang/0004-observe-primary-token-counts-from-responses.patch"
+    ).read_text(encoding="utf-8")
+    assert '+            "error_count": 0' not in patch
+    assert "--- a/python/sglang/srt/entrypoints/engine.py" in patch
+    assert '+            "python/sglang/srt/server_args.py",' in patch
+    assert 'producer_id=f"sglang-worker-{global_rank}"' in patch
+    assert 'expected = f"qwen-profile-TP-{global_rank}.trace.json.gz"' in patch
+    assert "capture_profiler_trace(trace_path, self.ps.tp_rank)" in patch
+    assert ordering.index("observed_output_tokens,\n         )") < ordering.index(
+        "+    if profile:"
+    )
+    assert '+            "observed_input_tokens": observed_input_tokens,' in (
+        observed_counts
+    )
+    assert '+            meta_info.get("prompt_tokens")' in observed_counts
+
+
 def test_compute_core_has_no_bigquery_or_network_client_dependency() -> None:
     root = Path(__file__).parents[1]
     with (root / "pyproject.toml").open("rb") as stream:
