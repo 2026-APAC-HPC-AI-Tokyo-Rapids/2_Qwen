@@ -176,14 +176,14 @@ singularity_runtime_args=(--nv --cleanenv --containall
   "${profile_env_args[@]}"
   "${profile_bind_args[@]}"
   --bind "${MODEL_PATH}:/model:ro,${DATASET_PATH}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro,${jit_cache}:/jit-cache,${jit_cache}:/root/.cache,${node_metrics_dir}:/metrics,${RUNTIME_DIR}/source:/source-output")
-singularity_namespace_args=(--userns)
-if ! "${SINGULARITY_LAUNCHER}" exec "${singularity_namespace_args[@]}" "${singularity_runtime_args[@]}" sglang.sif true; then
+singularity_namespace_args=()
+if ! "${SINGULARITY_LAUNCHER}" exec "${singularity_runtime_args[@]}" sglang.sif true; then
   # Genkai has alternated between requiring the user-namespace fallback and
   # rejecting user namespace creation.  Select a working mode before the
   # benchmark with the exact namespace-affecting options and binds so a
   # namespace-policy change cannot consume the measured run.
-  "${SINGULARITY_LAUNCHER}" exec "${singularity_runtime_args[@]}" sglang.sif true
-  singularity_namespace_args=()
+  singularity_namespace_args=(--userns)
+  "${SINGULARITY_LAUNCHER}" exec "${singularity_namespace_args[@]}" "${singularity_runtime_args[@]}" sglang.sif true
 fi
 
 command=("${SINGULARITY_LAUNCHER}" exec "${singularity_namespace_args[@]}" "${singularity_runtime_args[@]}"
