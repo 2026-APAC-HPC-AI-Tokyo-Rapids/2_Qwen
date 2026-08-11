@@ -164,7 +164,16 @@ if [[ "${run_purpose}" == profile ]]; then
     --output-dir /profile -- "${benchmark[@]}")
 fi
 
-command=("${SINGULARITY_LAUNCHER}" exec --userns --nv --cleanenv --containall
+singularity_namespace_args=(--userns)
+if ! "${SINGULARITY_LAUNCHER}" exec --userns sglang.sif true; then
+  # Genkai has alternated between requiring the user-namespace fallback and
+  # rejecting user namespace creation.  Select a working mode before the
+  # benchmark so a namespace-policy change cannot consume the measured run.
+  "${SINGULARITY_LAUNCHER}" exec sglang.sif true
+  singularity_namespace_args=()
+fi
+
+command=("${SINGULARITY_LAUNCHER}" exec "${singularity_namespace_args[@]}" --nv --cleanenv --containall
   --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1
   --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton
   --env QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock
