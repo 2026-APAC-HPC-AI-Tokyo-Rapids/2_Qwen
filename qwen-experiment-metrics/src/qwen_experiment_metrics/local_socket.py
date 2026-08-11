@@ -128,10 +128,16 @@ class UnixEventServer:
                 server.listen(8)
                 server.settimeout(0.2)
                 self.ready.set()
-                while not self.stop_requested.is_set():
+                # A producer's sendall can complete while its connection is still
+                # queued in the listen backlog.  After shutdown is requested,
+                # keep accepting until one empty interval proves the queue was
+                # drained so completed workload events are not discarded.
+                while True:
                     try:
                         connection, _ = server.accept()
                     except TimeoutError:
+                        if self.stop_requested.is_set():
+                            break
                         continue
                     with connection:
                         try:

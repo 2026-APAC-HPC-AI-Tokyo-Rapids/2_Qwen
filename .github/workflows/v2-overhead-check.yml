@@ -32,6 +32,8 @@ jobs:
 
       - name: Provision exact SIF and scripts
         id: provision
+        env:
+          METRICS_CREDENTIAL_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
         run: |
           sif="${SIF_ARCHIVE_DIR}/${{ inputs.sif_run_number }}.sif"
           sidecar="${SIF_ARCHIVE_DIR}/${{ inputs.sif_run_number }}.metadata/sif-sidecar.json"
@@ -44,7 +46,13 @@ jobs:
           check_dir="$(mktemp -d "${CHECK_ROOT}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
           printf 'check_dir=%s\n' "${check_dir}" >> "${GITHUB_OUTPUT}"
           install -d "${check_dir}/scripts" "${check_dir}/logs" "${check_dir}/control"
+          test -n "${METRICS_CREDENTIAL_JSON}"
+          credential_file="${check_dir}/control/bigquery-credential.json"
+          install -m 0600 /dev/null "${credential_file}"
+          printf '%s' "${METRICS_CREDENTIAL_JSON}" >"${credential_file}"
           ln -s "${sif}" "${check_dir}/sglang.sif"
+          cp -a qwen-experiment-metrics "${check_dir}/qwen-experiment-metrics"
+          uv sync --project "${check_dir}/qwen-experiment-metrics" --frozen --no-dev --extra publish
           bench_args_blob_oid="$(singularity exec "${sif}" cat /opt/sglang/offline-throughput-source-blob-oid.txt | tr -d '[:space:]')"
           server_args_blob_oid="$(singularity exec "${sif}" cat /opt/sglang/server-args-source-blob-oid.txt | tr -d '[:space:]')"
           [[ "${bench_args_blob_oid}" =~ ^[0-9a-f]{40,64}$ ]]
@@ -70,18 +78,47 @@ jobs:
                 server_args:$server_args_blob_oid
               },
               order:["off","on","off","on"],
-              differential_under_test:"AF_UNIX v2 event emission",
+              differential_under_test:"v2 event collection, atomic fragments, and direct BigQuery send",
               common_source_writers_enabled:true,
               primary_measure:"generation_wall_sec",
               max_overhead_ratio:"1.05"
             }' >"${check_dir}/comparison-input.json"
+          control_plane_sha256="$(git ls-tree -r --full-tree "${GITHUB_SHA}" -- .github/workflows scripts configs | LC_ALL=C sort | sha256sum | awk '{print $1}')"
+          instrumentation_bundle_sha256="$(git ls-tree -r --full-tree "${GITHUB_SHA}" -- qwen-experiment-metrics | LC_ALL=C sort | sha256sum | awk '{print $1}')"
+          for trial in 1 3; do
+            printf -v run_id 'r-%032x' "$((trial + 2))"
+            trial_dir="${check_dir}/trial-${trial}-on"
+            install -d "${trial_dir}/control"
+            jq -n \
+              --arg run_id "${run_id}" \
+              --arg commit "${GITHUB_SHA}" \
+              --arg control_plane_sha256 "${control_plane_sha256}" \
+              --arg instrumentation_bundle_sha256 "${instrumentation_bundle_sha256}" \
+              '{
+                schema_version:"run-manifest/v1",
+                run_id:$run_id,
+                run_purpose:"bench",
+                repository_id:"apac2026-qwen",
+                source_track:{
+                  schema_version:"source-track/v1",
+                  object_hash_algorithm:"sha1",
+                  base_role:"score_reference",
+                  base_commit:$commit,
+                  head_commit:$commit
+                },
+                observed_control_plane_sha256:$control_plane_sha256,
+                instrumentation_bundle_sha256:$instrumentation_bundle_sha256
+              }' >"${trial_dir}/control/run-manifest.json"
+          done
           install -m 0755 scripts/v2-overhead-check.pjm scripts/v2-overhead-node.sh \
-            scripts/v2-overhead-event-drain.py "${check_dir}/scripts/"
+            scripts/v2-overhead-event-summary.py "${check_dir}/scripts/"
 
       - name: Submit isolated comparison
         run: |
           check_dir='${{ steps.provision.outputs.check_dir }}'
-          job_environment="CHECK_DIR=${check_dir},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH}"
+          credential_file="${check_dir}/control/bigquery-credential.json"
+          metrics_config="${check_dir}/qwen-experiment-metrics/pyproject.toml"
+          job_environment="CHECK_DIR=${check_dir},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH},EXPERIMENT_METRICS_DIRECT_SEND=1,EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE=${credential_file},EXPERIMENT_METRICS_BIGQUERY_CONFIG=${metrics_config}"
           job_output="$(pjsub -x "${job_environment}" -o "${check_dir}/logs/%j.log" -j \
             -N qwen_v2_overhead "${check_dir}/scripts/v2-overhead-check.pjm")"
           printf '%s\n' "${job_output}"
@@ -123,8 +160,11 @@ jobs:
             ${{ steps.provision.outputs.check_dir }}/summary.json
             ${{ steps.provision.outputs.check_dir }}/summary.txt
             ${{ steps.provision.outputs.check_dir }}/trial-*/stage-wall-sec
+            ${{ steps.provision.outputs.check_dir }}/trial-*/producer-finalize-wall-sec-node-*
             ${{ steps.provision.outputs.check_dir }}/trial-*/source/primary-result.json
             ${{ steps.provision.outputs.check_dir }}/trial-*/event-summary-node-*.json
+            ${{ steps.provision.outputs.check_dir }}/trial-*/source/events/node-*.jsonl
+            ${{ steps.provision.outputs.check_dir }}/trial-*/domain/fragments/producer--*.jsonl
             ${{ steps.provision.outputs.check_dir }}/logs/*.log
           if-no-files-found: warn
           retention-days: 30
