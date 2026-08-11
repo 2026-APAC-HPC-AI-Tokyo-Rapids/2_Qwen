@@ -74,9 +74,9 @@ module load nvhpcx/2.25.1-cuda13.0
 module load cuda/13.2.0
 module load singularity-ce/4.1.3
 "${metrics_cli}" capture-runtime-launchers --runtime-dir "${RUNTIME_DIR}"
-mpirun_launcher="$(jq -er '.executables[] | select(.role == "mpirun") | .resolved_realpath' source/runtime-launchers.json)"
+mpirun_launcher="$(jq -er '.executables[] | select(.role == "mpirun") | .requested_path' source/runtime-launchers.json)"
 export SINGULARITY_LAUNCHER
-SINGULARITY_LAUNCHER="$(jq -er '.executables[] | select(.role == "singularity") | .resolved_realpath' source/runtime-launchers.json)"
+SINGULARITY_LAUNCHER="$(jq -er '.executables[] | select(.role == "singularity") | .requested_path' source/runtime-launchers.json)"
 
 {
   echo "job_id=${PJM_JOBID}"

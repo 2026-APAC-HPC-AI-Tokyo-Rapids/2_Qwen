@@ -539,6 +539,12 @@ def capture_runtime_launchers(runtime_dir: Path) -> Path:
         requested = shutil.which(role)
         if requested is None:
             raise FileNotFoundError(role)
+        # Keep the executable spelling selected by PATH.  Some launchers are
+        # multicall symlinks whose behavior depends on argv[0] (HPC-X mpirun
+        # is a symlink to env.sh, for example), so invoking the resolved target
+        # is not equivalent to invoking the requested launcher.  The resolved
+        # regular file remains the immutable content-hash boundary.
+        requested = str(Path(requested).absolute())
         resolved = Path(requested).resolve(strict=True)
         executables.append(
             {
@@ -551,11 +557,11 @@ def capture_runtime_launchers(runtime_dir: Path) -> Path:
         )
         stdout = source_dir / f"{role}.version.stdout"
         stderr = source_dir / f"{role}.version.stderr"
-        outcome = _capture_command([str(resolved), "--version"], stdout, stderr)
+        outcome = _capture_command([requested, "--version"], stdout, stderr)
         versions.append(
             {
                 "role": role,
-                "argv": [str(resolved), "--version"],
+                "argv": [requested, "--version"],
                 "outcome": {"exit_code": outcome},
                 "stdout": _member(stdout, stdout.relative_to(runtime_dir).as_posix()),
                 "stderr": _member(stderr, stderr.relative_to(runtime_dir).as_posix()),
@@ -598,7 +604,7 @@ def validate_runtime_launchers(path: Path, runtime_dir: Path) -> dict[str, objec
         "singularity",
     ]:
         raise ValueError("runtime launcher version roles differ")
-    resolved_by_role: dict[str, str] = {}
+    requested_by_role: dict[str, str] = {}
     for row in executables:
         if not isinstance(row, dict) or set(row) != {
             "role",
@@ -609,13 +615,21 @@ def validate_runtime_launchers(path: Path, runtime_dir: Path) -> dict[str, objec
         }:
             raise ValueError("runtime executable record is not closed")
         role = _nonempty_string(row["role"], "launcher role")
-        _nonempty_string(row["requested_path"], "requested launcher path")
+        requested = Path(
+            _nonempty_string(row["requested_path"], "requested launcher path")
+        )
         resolved = Path(_nonempty_string(row["resolved_realpath"], "launcher realpath"))
-        if not resolved.is_absolute() or not resolved.is_file():
+        if (
+            not requested.is_absolute()
+            or not requested.is_file()
+            or requested.resolve(strict=True) != resolved
+            or not resolved.is_absolute()
+            or not resolved.is_file()
+        ):
             raise ValueError("runtime launcher is not an absolute regular file")
         if resolved.stat().st_size != _uint(row["size_bytes"], "launcher size") or _sha256(resolved) != row["sha256"]:
             raise ValueError("runtime launcher hash binding failed")
-        resolved_by_role[role] = str(resolved)
+        requested_by_role[role] = str(requested)
     for row in versions:
         if not isinstance(row, dict) or set(row) != {
             "role",
@@ -625,7 +639,7 @@ def validate_runtime_launchers(path: Path, runtime_dir: Path) -> dict[str, objec
             "stderr",
         }:
             raise ValueError("runtime version record is not closed")
-        if row["argv"] != [resolved_by_role[row["role"]], "--version"]:
+        if row["argv"] != [requested_by_role[row["role"]], "--version"]:
             raise ValueError("runtime version argv is invalid")
         outcome = row["outcome"]
         if not isinstance(outcome, dict) or set(outcome) != {"exit_code"}:

@@ -113,6 +113,44 @@ def test_runtime_launcher_source_binds_resolved_files_and_outputs(
         validate_runtime_launchers(source, runtime)
 
 
+def test_runtime_launcher_invokes_multicall_symlink_without_resolving_argv0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launchers = tmp_path / "bin"
+    launchers.mkdir()
+    wrapper = launchers / "env.sh"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        "case $0 in\n"
+        "  */mpirun|*/singularity) printf '%s version\\n' \"${0##*/}\" ;;\n"
+        "  *) exit 127 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    for role in ("mpirun", "singularity"):
+        (launchers / role).symlink_to(wrapper.name)
+    monkeypatch.setattr(
+        "qwen_experiment_metrics.sources.shutil.which",
+        lambda role: str(launchers / role),
+    )
+
+    runtime = tmp_path / "run"
+    source = capture_runtime_launchers(runtime)
+    value = validate_runtime_launchers(source, runtime)
+
+    assert all(
+        row["requested_path"].endswith(f"/{row['role']}")
+        and row["resolved_realpath"].endswith("/env.sh")
+        for row in value["executables"]
+    )
+    assert all(
+        row["argv"][0].endswith(f"/{row['role']}")
+        and row["outcome"] == {"exit_code": 0}
+        for row in value["versions"]
+    )
+
+
 def test_submission_request_binds_manifest_script_and_exact_argv(
     tmp_path: Path,
 ) -> None:

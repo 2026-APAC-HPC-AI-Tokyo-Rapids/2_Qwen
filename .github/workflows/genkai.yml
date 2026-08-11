@@ -347,9 +347,9 @@ jobs:
           manifest="${RUNTIME_DIR}/control/run-manifest.json"
           mkdir -p "${RUNTIME_DIR}/source/scheduler"
           set +e
-          pjstat --history -S \
+          pjstat --history -s \
             --choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut \
-            --data --delimiter '\t' "${PJM_JOB_ID}" \
+            --data --delimiter $'\t' "${PJM_JOB_ID}" \
             >"${RUNTIME_DIR}/source/scheduler/accounting.txt" \
             2>"${RUNTIME_DIR}/source/scheduler/accounting.stderr"
           accounting_status=$?
