@@ -164,6 +164,14 @@ wait "${engine_pid}"
 status=$?
 set -e
 engine_pid=""
+# The coordinator can tear down the distributed participant just before it
+# persists the authoritative rank-zero status.  Preserve genuine participant
+# failures, but give the coordinator a bounded window to classify a normal
+# coordinated shutdown before returning the child's signal-derived status.
+for _ in {1..60}; do
+  [[ ! -s "${completion_file}" ]] || break
+  sleep 1
+done
 if [[ -s "${completion_file}" ]]; then
   status="$(<"${completion_file}")"
 fi
