@@ -34,17 +34,13 @@ def record_network_sources(
     manifest = load_manifest(manifest_path)
     if set(nccl_results) != set(_COLLECTIVES):
         raise ValueError("all three NCCL collective results are required")
-    _validate_network_capture(
-        runtime_dir, imb_stdout, nccl_results, nccl_tests_commit
-    )
+    _validate_network_capture(runtime_dir, imb_stdout, nccl_results, nccl_tests_commit)
     imb_source = _relative_member(runtime_dir, imb_stdout)
     imb = parse_imb_mpi1(imb_stdout.read_text(encoding="utf-8"))
     process_counts = {row.process_count for row in imb}
     if not imb or process_counts != {expected_mpi_processes}:
         raise ValueError("IMB source is incomplete or has the wrong process grid")
-    mpi_rows = project_mpi_network_results_v2(
-        manifest.run_id, imb, imb_source
-    )
+    mpi_rows = project_mpi_network_results_v2(manifest.run_id, imb, imb_source)
     if not mpi_rows:
         raise ValueError("IMB projection is empty")
 
@@ -64,9 +60,7 @@ def record_network_sources(
         )
         if not rows:
             raise ValueError(f"NCCL {collective} projection is empty")
-        if {
-            (row.mpi_process_count, row.gpu_count) for row in rows
-        } != {
+        if {(row.mpi_process_count, row.gpu_count) for row in rows} != {
             (
                 expected_mpi_processes,
                 expected_mpi_processes * expected_gpus_per_process,

@@ -5,10 +5,9 @@ import os
 from pathlib import Path
 from typing import BinaryIO, Self
 
-from .canonical import fact_row_bytes
+from .canonical import encode_logical_value, fact_row_bytes
 from .domain import Fact
 from .manifest import RunManifest, load_manifest
-from .registry import Registry, load_registry
 
 
 class RecorderError(RuntimeError):
@@ -21,19 +20,18 @@ class Recorder:
     def __init__(
         self,
         manifest: RunManifest,
-        registry: Registry,
         producer_id: str,
         temporary_path: Path,
         completed_path: Path,
         stream: BinaryIO,
     ) -> None:
         self.manifest = manifest
-        self.registry = registry
         self.producer_id = producer_id
         self.temporary_path = temporary_path
         self.completed_path = completed_path
         self._stream = stream
         self._closed = False
+        self._rows: list[dict[str, str]] = []
 
     @classmethod
     def open(
@@ -44,8 +42,6 @@ class Recorder:
         runtime_dir: Path,
     ) -> Recorder:
         manifest = load_manifest(manifest_path)
-        registry = load_registry(registry_path)
-        registry.producer(producer_id, manifest.run_purpose)
         directory = runtime_dir / "domain" / "fragments"
         directory.mkdir(parents=True, exist_ok=True)
         token = _producer_token(producer_id)
@@ -61,7 +57,6 @@ class Recorder:
             ) from error
         return cls(
             manifest,
-            registry,
             producer_id,
             temporary_path,
             completed_path,
@@ -84,11 +79,12 @@ class Recorder:
             and fact.logical_value != manifest_values[fact.key]
         ):
             raise RecorderError(f"{fact.key} does not match the persisted manifest")
-        encoded = self.registry.encode(
-            self.producer_id, self.manifest.run_purpose, fact
-        )
+        encoded = encode_logical_value(fact.logical_value)
         self._stream.write(
             fact_row_bytes(self.manifest.run_id, fact.key, encoded) + b"\n"
+        )
+        self._rows.append(
+            {"run": self.manifest.run_id, "key": fact.key, "value": encoded}
         )
 
     def record_many(self, facts: object) -> None:
@@ -104,6 +100,10 @@ class Recorder:
         self._stream.close()
         os.replace(self.temporary_path, self.completed_path)
         self._closed = True
+        if os.environ.get("EXPERIMENT_METRICS_DIRECT_SEND") == "1":
+            from .publish import send_raw
+
+            send_raw(self.manifest.run_id, self._rows)
         return self.completed_path
 
     def abort(self) -> Path:

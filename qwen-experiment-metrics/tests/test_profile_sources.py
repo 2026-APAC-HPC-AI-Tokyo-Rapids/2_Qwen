@@ -9,12 +9,9 @@ from qwen_experiment_metrics.profile_sources import (
     capture_profile_hardware,
     validate_profile_hardware_capture,
 )
-from qwen_experiment_metrics.projections import project_profile_hardware
 
 
-def test_profile_hardware_capture_is_closed_and_projectable(
-    runtime: Path, tmp_path: Path
-) -> None:
+def test_profile_hardware_capture_is_closed(runtime: Path, tmp_path: Path) -> None:
     manifest = make_manifest(runtime, "profile")
     proc = tmp_path / "proc"
     sys_nodes = tmp_path / "sys/devices/system/node"
@@ -46,14 +43,6 @@ def test_profile_hardware_capture_is_closed_and_projectable(
         "numa_meminfo",
         "numa_meminfo",
     ]
-    rows = project_profile_hardware(runtime, RUN_ID, 1)
-    columns = [dict(row.columns) for row in rows]
-    assert [(row["record_kind"], row["numa_node_id"]) for row in columns] == [
-        ("node_summary", None),
-        ("numa_node", 0),
-        ("numa_node", 2),
-    ]
-    assert columns[0]["postrun_memory_available_bytes"] == 75 * 1024
 
 
 def test_profile_hardware_capture_rejects_bench(runtime: Path, tmp_path: Path) -> None:

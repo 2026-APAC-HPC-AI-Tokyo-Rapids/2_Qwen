@@ -12,7 +12,6 @@ from .manifest import load_manifest
 
 ROLE_FILENAMES = {
     "run_bundle": "run-artifacts.tar.zst",
-    "metrics": "metrics.jsonl",
     "profile_raw": "profile-raw.tar.zst",
 }
 
@@ -57,20 +56,11 @@ class RunPackager:
         run_dir = runtime_dir.resolve()
         if manifest_path.resolve() != run_dir / "control/run-manifest.json":
             raise ValueError("manifest must be the runtime control manifest")
-        metrics = run_dir / ROLE_FILENAMES["metrics"]
-        if not metrics.is_file():
-            raise FileNotFoundError(metrics)
-        # metrics.jsonl is both the publishable sidecar and a required member of
-        # the self-contained run bundle.  Keep a single caller-independent owner
-        # for that duplication so workflows cannot accidentally omit it.
         members = tuple(
             sorted(
                 (
-                    *(
-                        Member.from_file(run_dir, relative, role)
-                        for relative, role in run_members
-                    ),
-                    Member.from_file(run_dir, ROLE_FILENAMES["metrics"], "metrics"),
+                    Member.from_file(run_dir, relative, role)
+                    for relative, role in run_members
                 ),
                 key=lambda item: item.path.encode(),
             )
@@ -100,7 +90,6 @@ class RunPackager:
         )
         outputs: list[tuple[str, Path]] = [
             ("run_bundle", run_bundle),
-            ("metrics", metrics),
         ]
         if manifest.run_purpose == "profile":
             if not profile_members:

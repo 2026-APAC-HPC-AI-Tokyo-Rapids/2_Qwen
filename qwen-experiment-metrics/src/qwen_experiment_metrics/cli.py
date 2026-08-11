@@ -5,7 +5,8 @@ import signal
 import sys
 from pathlib import Path
 
-from .canonical import jcs_text
+from .canonical import jcs_bytes, jcs_text, load_json_strict
+from .domain import Fact
 from .local_socket import LocalEventFragmentRecorder, UnixEventServer
 from .manifest import (
     SourceTrack,
@@ -13,7 +14,6 @@ from .manifest import (
     load_manifest,
     manifest_facts,
 )
-from .merge import merge_run
 from .recording import Recorder
 from .stage_runner import StageRunner
 
@@ -146,6 +146,10 @@ def parser() -> argparse.ArgumentParser:
     _common_runtime_arguments(profile_hardware)
     profile_hardware.add_argument("--node-rank", type=int, required=True)
 
+    profile_results = commands.add_parser("record-profile-results")
+    _common_runtime_arguments(profile_results)
+    profile_results.add_argument("--expected-ranks", type=int, required=True)
+
     topology = commands.add_parser("capture-topology")
     _common_runtime_arguments(topology)
     topology.add_argument("--node-rank", type=int, required=True)
@@ -180,10 +184,6 @@ def parser() -> argparse.ArgumentParser:
     sif_sidecar.add_argument("--runtime-inventory", type=Path, required=True)
     sif_sidecar.add_argument("--output", type=Path, required=True)
 
-    merge = commands.add_parser("merge")
-    _common_runtime_arguments(merge)
-    merge.add_argument("--output", type=Path)
-
     package = commands.add_parser("package")
     _common_runtime_arguments(package)
     package.add_argument(
@@ -194,11 +194,10 @@ def parser() -> argparse.ArgumentParser:
     )
     package.add_argument("--profile-member", action="append", default=[])
 
-    publish = commands.add_parser("publish")
-    publish.add_argument("--metrics", type=Path, required=True)
-    publish.add_argument("--artifact-manifest", type=Path, required=True)
-    publish.add_argument("--pyproject", type=Path, required=True)
-    publish.add_argument("--manifest", type=Path, required=True)
+    smoke = commands.add_parser("smoke-send")
+    smoke.add_argument("--run", required=True)
+    smoke.add_argument("--source", choices=["runner", "compute"], required=True)
+
     return root
 
 
@@ -242,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
         return _capture_hardware(arguments)
     if arguments.action == "capture-profile-hardware":
         return _capture_profile_hardware(arguments)
+    if arguments.action == "record-profile-results":
+        return _record_profile_results(arguments)
     if arguments.action == "capture-topology":
         return _capture_topology(arguments)
     if arguments.action == "record-workload":
@@ -252,12 +253,25 @@ def main(argv: list[str] | None = None) -> int:
         return _record_lifecycle_control(arguments)
     if arguments.action == "create-sif-sidecar":
         return _create_sif_sidecar(arguments)
-    if arguments.action == "merge":
-        return _merge(arguments)
     if arguments.action == "package":
         return _package(arguments)
-    if arguments.action == "publish":
-        return _publish(arguments)
+    if arguments.action == "smoke-send":
+        from .publish import send_raw
+
+        return (
+            0
+            if send_raw(
+                arguments.run,
+                [
+                    {
+                        "run": arguments.run,
+                        "key": f"smoke.{arguments.source}",
+                        "value": "true",
+                    }
+                ],
+            )
+            else 1
+        )
     raise AssertionError(arguments.action)
 
 
@@ -276,7 +290,9 @@ def _init_run(arguments: argparse.Namespace) -> int:
 
     settings = load_execution_settings(execution_path)
     if settings.run_purpose != arguments.purpose:
-        raise ValueError("execution settings purpose differs from requested run purpose")
+        raise ValueError(
+            "execution settings purpose differs from requested run purpose"
+        )
     source_track = SourceTrack(
         object_hash_algorithm=arguments.object_hash_algorithm,
         base_role=arguments.base_role,
@@ -372,29 +388,6 @@ def _serve_events(arguments: argparse.Namespace) -> int:
     return 1 if server.errors else 0
 
 
-def _merge(arguments: argparse.Namespace) -> int:
-    outcome = merge_run(
-        arguments.manifest,
-        arguments.runtime_dir,
-        registry_path=arguments.registry,
-        output_path=arguments.output,
-    )
-    print(
-        jcs_text(
-            {
-                "collection_complete": outcome.collection_complete,
-                "conflicting_keys": list(outcome.conflicting_keys),
-                "invalid_fragments": list(outcome.invalid_fragments),
-                "missing_producers": list(outcome.missing_producers),
-                "missing_required_facts": list(outcome.missing_required_facts),
-                "missing_required_files": list(outcome.missing_required_files),
-                "output_path": str(outcome.output_path),
-            }
-        )
-    )
-    return 0 if outcome.collection_complete else 1
-
-
 def _sample_gpu(arguments: argparse.Namespace) -> int:
     from .orchestration import run_gpu_sampler
 
@@ -404,7 +397,7 @@ def _sample_gpu(arguments: argparse.Namespace) -> int:
         if not separator or not uuid or uuid in expected:
             raise ValueError("expected GPU bindings must use unique UUID=INDEX values")
         expected[uuid] = int(raw_index)
-    return run_gpu_sampler(
+    status = run_gpu_sampler(
         arguments.manifest,
         arguments.output,
         node_rank=arguments.node_rank,
@@ -414,6 +407,25 @@ def _sample_gpu(arguments: argparse.Namespace) -> int:
         ready_file=arguments.ready_file,
         completion_file=arguments.completion_file,
     )
+    if status == 0:
+        rows = [
+            load_json_strict(line)
+            for line in arguments.output.read_bytes().splitlines()
+        ]
+        with Recorder.open(
+            arguments.manifest,
+            arguments.registry,
+            f"gpu-raw:node-{arguments.node_rank}",
+            arguments.runtime_dir,
+        ) as recorder:
+            for index, row in enumerate(rows):
+                recorder.record(
+                    Fact(
+                        f"profile.gpu.raw.node.{arguments.node_rank}.sample.{index}",
+                        row,
+                    )
+                )
+    return status
 
 
 def _record_network(arguments: argparse.Namespace) -> int:
@@ -564,7 +576,9 @@ def _record_environment(arguments: argparse.Namespace) -> int:
     else:
         if arguments.index is None or arguments.index < 0:
             raise ValueError("indexed environment scope requires nonnegative --index")
-        stem = {"host-node": "host", "sglang-node": "sglang", "worker-rank": "worker"}[scope]
+        stem = {"host-node": "host", "sglang-node": "sglang", "worker-rank": "worker"}[
+            scope
+        ]
         producer = f"environment:{scope}-{arguments.index}"
         relative = f"source/environment/{stem}-{arguments.index}.snapshot"
         prefix = {
@@ -630,12 +644,8 @@ def _record_accounting(arguments: argparse.Namespace) -> int:
 def _capture_hardware(arguments: argparse.Namespace) -> int:
     from .system_sources import create_minimal_hardware, validate_minimal_hardware
 
-    path = create_minimal_hardware(
-        arguments.runtime_dir, node_rank=arguments.node_rank
-    )
-    facts = validate_minimal_hardware(
-        path, arguments.runtime_dir, arguments.node_rank
-    )
+    path = create_minimal_hardware(arguments.runtime_dir, node_rank=arguments.node_rank)
+    facts = validate_minimal_hardware(path, arguments.runtime_dir, arguments.node_rank)
     with Recorder.open(
         arguments.manifest,
         arguments.registry,
@@ -657,13 +667,94 @@ def _capture_profile_hardware(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _record_profile_results(arguments: argparse.Namespace) -> int:
+    import hashlib
+
+    from .profile_contract import (
+        project_gpu_phase,
+        project_phase_summary,
+        project_profiler_events,
+    )
+
+    manifest = load_manifest(arguments.manifest)
+    phase = project_phase_summary(
+        arguments.runtime_dir,
+        run_id=manifest.run_id,
+        expected_nodes=len(
+            list((arguments.runtime_dir / "profile/raw/gpu").glob("node-*.jsonl"))
+        ),
+    )[0]
+    expected_gpus: dict[int, dict[str, int]] = {}
+    for path in sorted(
+        (arguments.runtime_dir / "profile/raw/gpu").glob("node-*.jsonl")
+    ):
+        node_rank = int(path.stem.removeprefix("node-"))
+        bindings: dict[str, int] = {}
+        for line in path.read_bytes().splitlines():
+            row = load_json_strict(line)
+            bindings[str(row["gpu_uuid"])] = int(row["logical_index"])
+        expected_gpus[node_rank] = bindings
+    gpu_rows = project_gpu_phase(
+        arguments.runtime_dir,
+        run_id=manifest.run_id,
+        phase=phase,
+        expected_gpus=expected_gpus,
+    )
+    profiler = project_profiler_events(
+        arguments.runtime_dir,
+        run_id=manifest.run_id,
+        invocation_id="measured-generation",
+        expected_ranks=arguments.expected_ranks,
+    ).require_conflict_free()
+    with Recorder.open(
+        arguments.manifest, arguments.registry, "profile-reducer", arguments.runtime_dir
+    ) as recorder:
+        recorder.record(Fact("profile.phase.summary", phase.as_dict()))
+        for row in gpu_rows:
+            value = row.as_dict()
+            recorder.record(
+                Fact(
+                    f"profile.gpu.aggregate.node.{value['node_rank']}.index.{value['logical_index']}",
+                    value,
+                )
+            )
+        for capture in profiler.captures:
+            recorder.record(
+                Fact(
+                    f"profile.profiler.capture.rank.{capture.global_rank}",
+                    capture.as_dict(),
+                )
+            )
+        for row in profiler.profiler_rows:
+            value = row.as_dict()
+            identity = hashlib.sha256(
+                jcs_bytes(
+                    [row.global_rank, row.activity, row.event_category, row.event_name]
+                )
+            ).hexdigest()
+            recorder.record(Fact(f"profile.profiler.event.{identity}", value))
+        recorder.record(
+            Fact(
+                "profile.profiler.coverage",
+                {
+                    "expected_ranks": arguments.expected_ranks,
+                    "missing_ranks": list(profiler.missing_ranks),
+                    "partial_ranks": list(profiler.partial_ranks),
+                },
+            )
+        )
+    return 0
+
+
 def _capture_topology(arguments: argparse.Namespace) -> int:
     from .canonical import load_json_strict
     from .system_sources import create_node_topology, validate_node_topology
 
     def argv(path: Path) -> list[str]:
         value = load_json_strict(path.read_bytes())
-        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) for item in value
+        ):
             raise TypeError("argv source must be a JSON string array")
         return value
 
@@ -681,8 +772,10 @@ def _capture_topology(arguments: argparse.Namespace) -> int:
         sif=arguments.sif,
     )
     facts = validate_node_topology(
-        path, arguments.runtime_dir, load_manifest(arguments.manifest).run_id,
-        arguments.node_rank
+        path,
+        arguments.runtime_dir,
+        load_manifest(arguments.manifest).run_id,
+        arguments.node_rank,
     )
     with Recorder.open(
         arguments.manifest,
@@ -803,36 +896,6 @@ def _package(arguments: argparse.Namespace) -> int:
             }
         )
     )
-    return 0
-
-
-def _publish(arguments: argparse.Namespace) -> int:
-    from .physical_publish import PhysicalPublisherConfig
-    from .projection_router import project_run_archive
-    from .publish import BigQueryConfig, publish_metrics_with_projections
-
-    expected_manifest = arguments.metrics.resolve().parent / "control/run-manifest.json"
-    if arguments.manifest.resolve() != expected_manifest:
-        raise ValueError("publish manifest must be the metrics runtime manifest")
-    manifest = load_manifest(arguments.manifest)
-    raw_config = BigQueryConfig.load(arguments.pyproject)
-    projections = project_run_archive(arguments.metrics.parent, manifest.run_id)
-    report, count = publish_metrics_with_projections(
-        arguments.metrics,
-        raw_config,
-        projections,
-        PhysicalPublisherConfig(
-            raw_config.project, raw_config.dataset, raw_config.location
-        ),
-        artifact_manifest=arguments.artifact_manifest,
-        expected_run=manifest.run_id,
-    )
-    print(jcs_text({
-        "physical_published_rows": report.relation_rows,
-        "physical_requests": report.request_count,
-        "published_rows": count,
-        "run_id": manifest.run_id,
-    }))
     return 0
 
 

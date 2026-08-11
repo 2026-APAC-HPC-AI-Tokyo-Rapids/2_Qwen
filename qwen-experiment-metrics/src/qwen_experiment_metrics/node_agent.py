@@ -81,7 +81,11 @@ def _coordinator(
             connection, _ = server.accept()
             hello = _receive(connection, timeout)
             node_rank = _uint(hello.get("node_rank"), "node rank")
-            if node_rank == 0 or node_rank >= settings.nodes or node_rank in connections:
+            if (
+                node_rank == 0
+                or node_rank >= settings.nodes
+                or node_rank in connections
+            ):
                 connection.close()
                 raise ValueError("node-agent ready rank is invalid or duplicated")
             _send(connection, {"type": "ready", "sequence": 0})
@@ -180,7 +184,9 @@ def _participant(
     try:
         child_pid = os.fork()
     except OSError:
-        _write_lifecycle(arguments.runtime_dir, arguments.node_rank, attempt, None, None, None)
+        _write_lifecycle(
+            arguments.runtime_dir, arguments.node_rank, attempt, None, None, None
+        )
         _record_node(arguments, arguments.node_rank)
         raise
     if child_pid == 0:
@@ -215,10 +221,7 @@ def _participant(
             )
             if raw_status is None:
                 os.killpg(child_pid, signal.SIGTERM)
-        if (
-            shutdown_deadline is not None
-            and time.monotonic() >= shutdown_deadline
-        ):
+        if shutdown_deadline is not None and time.monotonic() >= shutdown_deadline:
             raise TimeoutError("node-agent shutdown timed out after child exit")
     connection.close()
     if raw_status is None:
@@ -316,9 +319,7 @@ class _PhaseCoordinator:
             self._closed_request(end, "phase_end", sequence=1)
             if end["invocation_id"] != invocation_id or end["kind"] != kind:
                 raise ValueError("phase invocation identity changed")
-            generation_start = _uint(
-                end.get("generation_start_ns"), "generation start"
-            )
+            generation_start = _uint(end.get("generation_start_ns"), "generation start")
             generation_end = _uint(end.get("generation_end_ns"), "generation end")
             if not all_start_acks <= generation_start <= generation_end:
                 raise ValueError("phase generation timestamps are reversed")
@@ -356,9 +357,7 @@ class _PhaseCoordinator:
                         "clock_id": start_marks[node]["clock_id"],
                         "start_sequence": start_marks[node]["sequence"],
                         "end_sequence": end_marks[node]["sequence"],
-                        "start_received_ns": start_marks[node][
-                            "received_monotonic_ns"
-                        ],
+                        "start_received_ns": start_marks[node]["received_monotonic_ns"],
                         "start_ack_ns": start_marks[node]["ack_monotonic_ns"],
                         "end_received_ns": end_marks[node]["received_monotonic_ns"],
                         "end_ack_ns": end_marks[node]["ack_monotonic_ns"],
@@ -432,11 +431,12 @@ class _PhaseCoordinator:
             raise ValueError("phase request is not the fixed measured invocation")
 
 
-def _handle_phase_control(
-    connection: socket.socket, value: dict[str, object]
-) -> None:
+def _handle_phase_control(connection: socket.socket, value: dict[str, object]) -> None:
     if set(value) != {"type", "sequence", "invocation_id", "kind"} or (
-        value["type"], value["sequence"], value["invocation_id"], value["kind"]
+        value["type"],
+        value["sequence"],
+        value["invocation_id"],
+        value["kind"],
     ) not in {
         ("phase_start", 0, "measured-generation", "measured"),
         ("phase_end", 1, "measured-generation", "measured"),
@@ -458,9 +458,7 @@ def _run_child(command: list[str], runtime_dir: Path, node_rank: int) -> int:
     started = time.monotonic_ns()
     _, raw_status = os.waitpid(child_pid, 0)
     finished = time.monotonic_ns()
-    _write_lifecycle(
-        runtime_dir, node_rank, attempt, started, finished, raw_status
-    )
+    _write_lifecycle(runtime_dir, node_rank, attempt, started, finished, raw_status)
     return raw_status
 
 
@@ -501,7 +499,9 @@ def _record_node(arguments: argparse.Namespace, node_rank: int) -> None:
         recorder.record_many(facts)
 
 
-def _local_mark(sequence: int, *, invocation_id: str | None = None) -> dict[str, object]:
+def _local_mark(
+    sequence: int, *, invocation_id: str | None = None
+) -> dict[str, object]:
     received = time.monotonic_ns()
     mark: dict[str, object] = {
         "sequence": sequence,

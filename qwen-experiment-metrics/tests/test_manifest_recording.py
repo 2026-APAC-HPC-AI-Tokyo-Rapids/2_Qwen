@@ -97,12 +97,11 @@ def test_recorder_leaves_aborted_fragment_unmergeable(
     assert not recorder.completed_path.exists()
 
 
-def test_recorder_enforces_manifest_binding_and_ownership(
+def test_recorder_enforces_manifest_binding_without_ownership_registry(
     manifest_path: Path, runtime: Path
 ) -> None:
     recorder = Recorder.open(manifest_path, None, "runner", runtime)
     with pytest.raises(RecorderError, match="persisted manifest"):
         recorder.record(Fact("run.identity.run_id", "r-" + "f" * 32))
-    with pytest.raises(ValueError, match="cannot own"):
-        recorder.record(Fact("result.request.returned_count", 1))
+    recorder.record(Fact("unregistered.producer.key", 1))
     recorder.abort()

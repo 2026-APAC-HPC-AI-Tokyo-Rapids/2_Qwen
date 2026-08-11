@@ -55,6 +55,12 @@ def capture_environment_snapshot(
     values = os.environb if environment is None else environment
     rows = []
     for name, value in values.items():
+        if name in {
+            b"EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE",
+            b"EXPERIMENT_METRICS_BIGQUERY_CONFIG",
+            b"EXPERIMENT_METRICS_DIRECT_SEND",
+        }:
+            continue
         if not name or b"\0" in name or b"=" in name or b"\0" in value:
             raise ValueError("environment contains an invalid name or NUL value")
         rows.append((name, value))
@@ -150,9 +156,7 @@ def finish_run_lifecycle(
     }
     destination = runtime_dir / "source/run-lifecycle.json"
     _exclusive_json(destination, source)
-    facts = validate_run_lifecycle(
-        destination, manifest.run_id, start_path=start_path
-    )
+    facts = validate_run_lifecycle(destination, manifest.run_id, start_path=start_path)
     return destination, facts
 
 
@@ -266,7 +270,10 @@ def validate_scheduler_accounting(
         "row",
     }:
         raise ValueError("scheduler accounting is not closed")
-    if value["schema_version"] != "scheduler-accounting/v1" or value["run_id"] != run_id:
+    if (
+        value["schema_version"] != "scheduler-accounting/v1"
+        or value["run_id"] != run_id
+    ):
         raise ValueError("scheduler accounting identity differs")
     if value["columns"] != list(_ACCOUNTING_COLUMNS):
         raise ValueError("scheduler accounting columns differ")
@@ -538,7 +545,9 @@ def topology_gpu_bindings(path: Path, runtime_dir: Path) -> dict[str, int]:
     if not isinstance(value, dict):
         raise TypeError("node topology must be an object")
     commands = value.get("gpu_commands")
-    if not isinstance(commands, dict) or not isinstance(commands.get("container"), dict):
+    if not isinstance(commands, dict) or not isinstance(
+        commands.get("container"), dict
+    ):
         raise TypeError("node topology has no container GPU command")
     command = commands["container"]
     _validate_source_command(command, runtime_dir)
@@ -550,9 +559,7 @@ def topology_gpu_bindings(path: Path, runtime_dir: Path) -> dict[str, int]:
     }
 
 
-def validate_node_lifecycle(
-    path: Path, *, node_rank: int
-) -> tuple[Fact, ...]:
+def validate_node_lifecycle(path: Path, *, node_rank: int) -> tuple[Fact, ...]:
     value = load_json_strict(path.read_bytes())
     if not isinstance(value, dict) or set(value) != {
         "schema_version",
@@ -671,9 +678,7 @@ def validate_lifecycle_summary(
                 raise ValueError("lifecycle node clocks differ")
             if ready["ack_monotonic_ns"] > shutdown_value["received_monotonic_ns"]:
                 raise ValueError("shutdown precedes ready ACK")
-            facts.extend(
-                _lifecycle_mark_facts(node, "shutdown", shutdown_value)
-            )
+            facts.extend(_lifecycle_mark_facts(node, "shutdown", shutdown_value))
     return tuple(facts)
 
 
@@ -699,8 +704,7 @@ def _parse_accounting_stdout(payload: bytes) -> dict[str, str]:
 
 def _accounting_facts(row: dict[str, str]) -> tuple[Fact, ...]:
     facts = [
-        Fact(f"scheduler.accounting.{name}", row[name])
-        for name in ("jid", "st", "sdt")
+        Fact(f"scheduler.accounting.{name}", row[name]) for name in ("jid", "st", "sdt")
     ]
     elapsed = _duration_seconds(row["elp"])
     facts.append(Fact("scheduler.accounting.elp.lexeme", row["elp"]))
@@ -763,9 +767,7 @@ def _platform_settings() -> dict[str, object]:
             "hugepage_size_bytes": _meminfo_bytes(meminfo, "Hugepagesize"),
             "hugepages_total": _meminfo_uint(meminfo, "HugePages_Total"),
         },
-        "numa_balancing_enabled": _bool_file(
-            Path("/proc/sys/kernel/numa_balancing")
-        ),
+        "numa_balancing_enabled": _bool_file(Path("/proc/sys/kernel/numa_balancing")),
         "boost": boost,
         "cpufreq_policies": policies,
     }
@@ -926,7 +928,9 @@ def _capture_source_command(
 ) -> dict[str, object]:
     try:
         with stdout.open("xb") as out, stderr.open("xb") as err:
-            status = subprocess.run(argv, stdout=out, stderr=err, check=False).returncode
+            status = subprocess.run(
+                argv, stdout=out, stderr=err, check=False
+            ).returncode
     except OSError as error:
         stdout.write_bytes(b"")
         stderr.write_text(str(error), encoding="utf-8")
@@ -1067,9 +1071,7 @@ def _validate_lifecycle_mark(
     return value
 
 
-def _lifecycle_mark_facts(
-    node: int, kind: str, value: dict[str, object]
-) -> list[Fact]:
+def _lifecycle_mark_facts(node: int, kind: str, value: dict[str, object]) -> list[Fact]:
     mapping = {
         "sequence": "sequence",
         "clock_id": "clock_id",
@@ -1149,7 +1151,11 @@ def _boost_settings() -> dict[str, object]:
         if raw is None:
             continue
         if raw not in {"0", "1"}:
-            return {"source_path": path.as_posix().lstrip("/"), "raw": raw, "enabled": None}
+            return {
+                "source_path": path.as_posix().lstrip("/"),
+                "raw": raw,
+                "enabled": None,
+            }
         enabled = raw == "1"
         return {
             "source_path": path.as_posix().lstrip("/"),
@@ -1255,9 +1261,10 @@ def _validate_member(value: object) -> str:
         raise ValueError("member is not closed")
     relative = _relative(value["path"], "member path")
     _uint(value["size_bytes"], "member size")
-    if not isinstance(value["sha256"], str) or re.fullmatch(
-        r"[0-9a-f]{64}", value["sha256"]
-    ) is None:
+    if (
+        not isinstance(value["sha256"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is None
+    ):
         raise ValueError("member SHA-256 is invalid")
     return relative
 
@@ -1299,7 +1306,9 @@ def _sha256(path: Path) -> str:
 
 
 def _clock_id() -> str:
-    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+    boot_id = (
+        Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+    )
     return f"{boot_id}:CLOCK_MONOTONIC"
 
 
@@ -1318,7 +1327,11 @@ def _rfc3339(value: object, label: str) -> datetime:
 
 
 def _escape_environment_name(value: bytes) -> str:
-    return value.decode("ascii") if _SAFE_KEY.fullmatch(value) else f"encoded.{value.hex()}"
+    return (
+        value.decode("ascii")
+        if _SAFE_KEY.fullmatch(value)
+        else f"encoded.{value.hex()}"
+    )
 
 
 def _relative(value: object, label: str) -> str:
@@ -1330,8 +1343,10 @@ def _relative(value: object, label: str) -> str:
 
 
 def _string_array(value: object, label: str) -> list[str]:
-    if not isinstance(value, list) or not value or any(
-        not isinstance(item, str) or not item for item in value
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(item, str) or not item for item in value)
     ):
         raise ValueError(f"{label} must be a nonempty string array")
     return value

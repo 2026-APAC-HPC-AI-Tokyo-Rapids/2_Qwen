@@ -1,0 +1,32 @@
+-- Destructive one-time migration. Run before enabling direct producer sends.
+DROP VIEW IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_run_consumer_v2`;
+DROP VIEW IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_run_fact_conflicts_v2`;
+DROP VIEW IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_run_facts_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_artifacts_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_cache_manifests_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_config_snapshots_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_dataset_manifests_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_environment_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_gpu_phases_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_gpu_samples_raw_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_lifecycle_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_minimal_hardware_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_model_manifests_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_mpi_network_results_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_nccl_network_results_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_node_launch_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_node_lifecycle_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_phase_summaries_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_placement_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_primary_results_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_profile_hardware_raw_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_profiler_events_raw_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_runtime_launchers_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_sif_provenance_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_source_track_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_topology_raw_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_workload_manifests_raw_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_workload_requests_raw_v2`;
+DROP TABLE IF EXISTS `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_metrics`;
+CREATE TABLE `apac-hpc-ai-tokyo-rapids-26.qwen_experiment_metrics.qwen_metrics`
+(run STRING NOT NULL, key STRING NOT NULL, value STRING NOT NULL);

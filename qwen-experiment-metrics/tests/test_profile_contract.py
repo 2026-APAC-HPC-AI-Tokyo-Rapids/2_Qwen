@@ -67,7 +67,9 @@ def _trace_bytes(*events: dict[str, object]) -> bytes:
     return gzip.compress(jcs_bytes({"traceEvents": list(events)}))
 
 
-def _write_trace(runtime: Path, rank: int, events: tuple[dict[str, object], ...]) -> None:
+def _write_trace(
+    runtime: Path, rank: int, events: tuple[dict[str, object], ...]
+) -> None:
     torch = runtime / "profile/raw/torch"
     torch.mkdir(parents=True, exist_ok=True)
     trace = torch / f"qwen-profile-TP-{rank}.trace.json.gz"
@@ -133,9 +135,7 @@ def test_profiler_overlay_and_dcgm_optional_contract() -> None:
     validate_profiler_overlay(profiler_overlay_args(), profiler_environment())
     with pytest.raises(ProfileValidationError):
         validate_profiler_overlay(("--profile",), profiler_environment())
-    assert dcgm_supported_fields(("engine_active_ratio",)) == (
-        "engine_active_ratio",
-    )
+    assert dcgm_supported_fields(("engine_active_ratio",)) == ("engine_active_ratio",)
     assert dcgm_supported_fields(()) == ()
     with pytest.raises(ProfileValidationError):
         dcgm_supported_fields(("unknown",))
@@ -163,7 +163,7 @@ def test_profiler_projection_preserves_capture_lineage_and_partial_rank(
     )
     assert projection.missing_ranks == (2,)
     assert projection.partial_ranks == (1,)
-    assert not projection.collection_complete
+    assert not projection.is_complete
     assert {(row.global_rank, row.activity) for row in projection.profiler_rows} == {
         (0, "CPU"),
         (0, "GPU"),

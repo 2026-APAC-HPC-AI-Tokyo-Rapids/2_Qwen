@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Launch one SGLang process per node. Observability remains node-local until
-# completed fragments and source files are merged by the Actions runner.
+# Launch one SGLang process per node. Each completed producer fragment is sent
+# directly while source files remain local diagnostic evidence.
 set -euo pipefail
 
 : "${RUNTIME_DIR:?RUNTIME_DIR is required}"

@@ -23,31 +23,32 @@ def test_sif_build_consumes_the_tracked_sglang_lock() -> None:
     script = (ROOT / "scripts/build-sglang-sif.sh").read_text(encoding="utf-8")
     recipe = (ROOT / "containers/sglang.def").read_text(encoding="utf-8")
 
-    assert '${SGLANG_SOURCE_DIR}/python/uv.lock' in script
+    assert "${SGLANG_SOURCE_DIR}/python/uv.lock" in script
     assert 'lock_manifest:{path:"python/uv.lock"' in script
     assert "UV_PROJECT_ENVIRONMENT=/opt/sglang/venv" in recipe
     assert (
-        "uv sync --project /opt/sglang/source/python --locked "
-        "--no-install-project"
+        "uv sync --project /opt/sglang/source/python --locked --no-install-project"
     ) in recipe
-    assert "uv pip install --python /opt/sglang/venv/bin/python --no-deps -e ." in recipe
+    assert (
+        "uv pip install --python /opt/sglang/venv/bin/python --no-deps -e ." in recipe
+    )
 
 
 def test_sif_recipe_tests_the_shared_v2_event_emitter() -> None:
     recipe = (ROOT / "containers/sglang.def").read_text(encoding="utf-8")
 
     assert "from sglang.srt.qwen_experiment_metrics import send_event" in recipe
-    assert "from sglang.benchmark.offline_throughput import _send_metrics_event" not in recipe
+    assert (
+        "from sglang.benchmark.offline_throughput import _send_metrics_event"
+        not in recipe
+    )
 
 
 def test_genkai_workflow_captures_closed_accounting_source() -> None:
     workflow = (ROOT / ".github/workflows/genkai.yml").read_text(encoding="utf-8")
     assert "Checkout runner publication files" in workflow
     assert "pjstat --history -s" in workflow
-    assert (
-        "--choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut"
-        in workflow
-    )
+    assert "--choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut" in workflow
     assert "--data --delimiter $'\\t'" in workflow
     assert 'source/scheduler/accounting.stderr"' in workflow
     assert '"${metrics_cli}" record-accounting' in workflow
@@ -65,10 +66,14 @@ def test_node_launcher_connects_closed_sources_and_fixed_profile_overlay() -> No
         assert command in script
     assert "singularity_namespace_args=()" in script
     assert "singularity_namespace_args=(--userns)" in script
-    assert '"${singularity_namespace_args[@]}" "${singularity_runtime_args[@]}"' in script
-    assert script.index("singularity_namespace_args=()") < script.index(
-        'exec "${singularity_runtime_args[@]}" sglang.sif true'
-    ) < script.index("singularity_namespace_args=(--userns)")
+    assert (
+        '"${singularity_namespace_args[@]}" "${singularity_runtime_args[@]}"' in script
+    )
+    assert (
+        script.index("singularity_namespace_args=()")
+        < script.index('exec "${singularity_runtime_args[@]}" sglang.sif true')
+        < script.index("singularity_namespace_args=(--userns)")
+    )
     assert "SGLANG_PROFILE_ID=qwen-profile" in script
     assert "qwen-profile-wrapper.py:/qwen-profile-wrapper.py:ro" in script
     assert "QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID" in script
@@ -115,7 +120,6 @@ def test_compute_core_has_no_bigquery_or_network_client_dependency() -> None:
         "events.py",
         "local_socket.py",
         "manifest.py",
-        "merge.py",
         "recording.py",
         "registry.py",
         "stage_runner.py",

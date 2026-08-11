@@ -1,24 +1,16 @@
 # qwen-experiment-metrics v2
 
-Qwen/SGLang実験のメトリクスを、計算ノードではローカルfragment/sourceへだけ記録する
-v2完全実装です。通常依存にはcredential・HTTP clientを含めず、外部送達はrunnerが
-`publish` optional dependencyを明示して使う時だけ有効になります。
+各producerは取得完了時に診断用JSONL fragmentをatomic renameで確定し、同じ
+`run`, `key`, `value`行をBigQueryへ直ちに送信します。500行chunk、`insertId`
+なし、retryなし、重複許容です。送信失敗はwarningとなり、benchmarkやPJMの
+結果を変更しません。
 
-公開する責務は次に限定します。
+GPU sampler、GPU profiler/reducer、SGLang request/token/stage/configuration、
+IMB-MPI1、NCCL testsの収集は維持します。NCCL/IMBはgeneration後の独立stageで、
+generation性能値には含めません。fragmentは診断artifactであり再送queueでは
+ありません。中央merge、`metrics.jsonl`、physical projection、consumer view、
+conflict tableはありません。
 
-- machine-readable key/producer registry
-- RFC 8785 JCSに基づく`Fact` encoding
-- CSPRNG run IDを持つclosed run manifest
-- buffered fragmentを正常終了時だけatomic renameする`Recorder`
-- exact argv/cwd、structured termination、monotonic timingを記録する`StageRunner`
-- ownership、required producer/fact、dedupe、conflictを検査するmerge
-- Qwen configuration/primary-result domain recordのpure parser
-- length-prefixed Unix domain socketからlocal fragmentへ記録するadapter
-- IMB-MPI1/nccl-testsのstrict parserとnetwork projection
-- profile-only node GPU raw samplerとmeasured-generation reducer
-- fixed run artifact setのpackager
-- artifact manifestのrun/role/size/hashを検証してから送るrunner-only publisher
-
-workflowはsubmit前にmanifestを作成し、compute終了後にrunner上で
-merge → package → GitHub Artifact upload → BigQuery publishを順に実行します。
-compute processはcredential、BigQuery、HTTP、artifact uploadを使用しません。
+workflowはrun内にmode 0600のcredential fileを作り、PJMへはpathだけを渡します。
+credential transport変数はenvironment snapshotとartifactから除外し、cleanupで
+fileを削除します。高コスト処理前にrunner/compute双方からsmoke行を送ります。

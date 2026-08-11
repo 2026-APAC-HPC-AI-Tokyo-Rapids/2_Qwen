@@ -11,7 +11,9 @@ from qwen_experiment_metrics.canonical import load_json_strict
 from qwen_experiment_metrics.cli import main
 
 
-def test_cli_composes_init_stage_and_merge(tmp_path: Path, capsys: object) -> None:
+def test_cli_composes_init_and_direct_fragment_stage(
+    tmp_path: Path, capsys: object
+) -> None:
     runtime = tmp_path / "runtime"
     run_id = "r-" + "1" * 32
     settings = tmp_path / "execution-settings.json"
@@ -92,25 +94,13 @@ def test_cli_composes_init_stage_and_merge(tmp_path: Path, capsys: object) -> No
         )
         == 0
     )
-    assert (
-        main(
-            [
-                "merge",
-                "--manifest",
-                str(manifest),
-                "--runtime-dir",
-                str(runtime),
-            ]
-        )
-        == 1
-    )
     rows = [
         load_json_strict(line)
-        for line in (runtime / "metrics.jsonl").read_bytes().splitlines()
+        for fragment in (runtime / "domain/fragments").glob("producer--*.jsonl")
+        for line in fragment.read_bytes().splitlines()
     ]
     assert {row["key"] for row in rows} >= {
         "run.stage.smoke.launch",
         "run.stage.smoke.termination",
         "perf.stage.smoke.wall_time_sec",
-        "collection_complete",
     }

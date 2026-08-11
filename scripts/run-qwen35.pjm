@@ -5,8 +5,8 @@
 #PJM -L jobenv=singularity
 #PJM --mpi proc=2
 
-# Compute-side execution is local-only: no credentials, HTTP clients, upload,
-# merge, or BigQuery publication are permitted in this script.
+# Compute producers use only the mode-0600 credential file path supplied by the
+# runner. They append raw rows directly; artifact upload remains runner-owned.
 set -euo pipefail
 
 : "${RUNTIME_DIR:?RUNTIME_DIR is required}"
@@ -20,6 +20,8 @@ manifest="${RUNTIME_DIR}/control/run-manifest.json"
 execution_settings="${RUNTIME_DIR}/control/execution-settings.json"
 test -s "${manifest}"
 test -s "${execution_settings}"
+run_id="$(jq -er '.run_id' "${manifest}")"
+"${metrics_cli}" smoke-send --run "${run_id}" --source compute
 [[ "$(jq -er '.run_purpose' "${execution_settings}")" == "$(jq -er '.run_purpose' "${manifest}")" ]]
 mkdir -p logs results source/network/imb-mpi1 source/network/nccl-tests
 mpi_processes="$(jq -er '.mpi_processes' "${execution_settings}")"
