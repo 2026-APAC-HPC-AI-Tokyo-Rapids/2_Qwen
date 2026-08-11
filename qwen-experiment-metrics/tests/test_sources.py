@@ -83,7 +83,9 @@ def test_cache_identity_excludes_run_binding(tmp_path: Path) -> None:
         source, fact = create_cache_manifest(
             manifest, runtime, node_rank=0, cache_root=cache
         )
-        validate_cache_manifest(source, load_json_strict(manifest.read_bytes())["run_id"], 0)
+        validate_cache_manifest(
+            source, load_json_strict(manifest.read_bytes())["run_id"], 0
+        )
         facts.append(fact.logical_value)
     assert facts[0] == facts[1]
 

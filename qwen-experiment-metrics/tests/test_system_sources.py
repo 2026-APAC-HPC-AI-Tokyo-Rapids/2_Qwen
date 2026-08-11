@@ -35,9 +35,10 @@ def test_environment_snapshot_is_byte_sorted_nul_pairs(tmp_path: Path) -> None:
         (b"A", b"first"),
         (b"Z", b"last"),
     )
-    assert [(fact.key, fact.logical_value) for fact in environment_facts(
-        path, key_prefix="environment.job_entry"
-    )] == [
+    assert [
+        (fact.key, fact.logical_value)
+        for fact in environment_facts(path, key_prefix="environment.job_entry")
+    ] == [
         ("environment.job_entry.A", "Zmlyc3Q="),
         ("environment.job_entry.Z", "bGFzdA=="),
     ]
@@ -195,9 +196,7 @@ def test_two_node_agent_records_ready_shutdown_and_raw_wait(
         "--master-host",
         "127.0.0.1",
     ]
-    coordinator = subprocess.Popen(
-        [*common, "--node-rank", "0", "--", "/bin/true"]
-    )
+    coordinator = subprocess.Popen([*common, "--node-rank", "0", "--", "/bin/true"])
     time.sleep(0.1)
     participant = subprocess.run(
         [

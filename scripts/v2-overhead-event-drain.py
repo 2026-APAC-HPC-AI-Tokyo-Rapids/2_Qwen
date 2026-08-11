@@ -81,10 +81,14 @@ def main(argv=None):
             server.listen(16)
             server.settimeout(0.5)
             ready_path.touch(exist_ok=False)
-            while state["running"]:
+            # After SIGTERM, drain connections already queued by completed
+            # clients. Exit only after the first empty accept interval.
+            while True:
                 try:
                     stream, _ = server.accept()
                 except socket.timeout:
+                    if not state["running"]:
+                        break
                     continue
                 with stream:
                     size = struct.unpack(">I", read_exact(stream, 4))[0]

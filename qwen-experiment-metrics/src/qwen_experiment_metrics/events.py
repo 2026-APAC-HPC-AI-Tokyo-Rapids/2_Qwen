@@ -144,7 +144,10 @@ def parse_worker_ready_payload(
     affinity = value["cpu_affinity"]
     if (
         not isinstance(affinity, list)
-        or any(isinstance(item, bool) or not isinstance(item, int) or item < 0 for item in affinity)
+        or any(
+            isinstance(item, bool) or not isinstance(item, int) or item < 0
+            for item in affinity
+        )
         or affinity != sorted(set(affinity))
     ):
         raise DomainEventError("worker cpu_affinity must be sorted unique uints")

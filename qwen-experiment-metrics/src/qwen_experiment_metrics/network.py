@@ -334,7 +334,9 @@ def _parse_nccl_document(
         "graph": 0,
         "per_iter_skip": 0,
     }
-    if any(_uint(config[name]) != expected for name, expected in expected_config.items()):
+    if any(
+        _uint(config[name]) != expected for name, expected in expected_config.items()
+    ):
         raise ValueError("NCCL run config differs from the fixed protocol")
     for name in ("blocking_collectives", "per_iter_timing", "parallel_init"):
         if config[name] not in {"true", "false"}:
@@ -401,7 +403,9 @@ def _parse_nccl_document(
         if not _is_power_of_two(message_bytes) or not 8 <= message_bytes <= 1 << 30:
             raise ValueError("invalid NCCL result size")
         element_count = _uint(result["count"], positive=True)
-        count_multiplier = ngpus if collective in {"all_gather", "reduce_scatter"} else 1
+        count_multiplier = (
+            ngpus if collective in {"all_gather", "reduce_scatter"} else 1
+        )
         if element_count * 4 * count_multiplier != message_bytes:
             raise ValueError("NCCL float count does not match message size")
         if result["type"] != "float" or result["redop"] != expected_op:

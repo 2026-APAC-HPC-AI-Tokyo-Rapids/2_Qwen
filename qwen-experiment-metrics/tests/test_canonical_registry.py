@@ -6,6 +6,7 @@ import pytest
 
 from qwen_experiment_metrics.canonical import (
     CanonicalizationError,
+    encode_logical_value,
     encode_value,
     jcs_text,
     load_json_strict,
@@ -28,6 +29,15 @@ def test_decimal_contract_is_distinct_from_jcs_float() -> None:
     assert encode_value("decimal", 1e-7) == "1e-7"
     with pytest.raises(CanonicalizationError, match="non-canonical"):
         encode_value("decimal", "01.0")
+
+
+def test_registry_free_value_encoding() -> None:
+    assert encode_logical_value("text") == "text"
+    assert encode_logical_value(True) == "true"
+    assert encode_logical_value(12) == "12"
+    assert encode_logical_value(Decimal("12.3400")) == "12.34"
+    assert encode_logical_value(b"binary") == "YmluYXJ5"
+    assert encode_logical_value({"z": 1, "a": [True]}) == '{"a":[true],"z":1}'
 
 
 def test_machine_registry_has_complete_observation_contract() -> None:

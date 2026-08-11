@@ -99,27 +99,36 @@ for trial in "${!arms[@]}"; do
     test ! -e "${trial_dir}/event-summary-node-0.json"
     test ! -e "${trial_dir}/event-summary-node-1.json"
   fi
-  printf '%s\t%s\t%s\t%s\n' \
+  generation_wall="$(jq -er '.generation_wall_sec' "${result}")"
+  output_tokens="$(jq -er '.observed_output_tokens' "${result}")"
+  throughput="$(awk -v tokens="${output_tokens}" -v wall="${generation_wall}" \
+    'BEGIN { printf "%.9f", tokens / wall }')"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
     "${trial}" "${arm}" \
-    "$(jq -er '.generation_wall_sec' "${result}")" \
+    "${generation_wall}" \
     "$(<"${trial_dir}/stage-wall-sec")" \
+    "${throughput}" \
     >>"${CHECK_DIR}/observations.tsv"
 done
 
 read -r off_generation_mean on_generation_mean generation_ratio \
-  off_stage_mean on_stage_mean stage_ratio < <(
+  off_stage_mean on_stage_mean stage_ratio \
+  off_throughput_mean on_throughput_mean throughput_ratio < <(
     awk -F '\t' '
-      $2 == "off" { off_generation += $3; off_stage += $4; off_count += 1 }
-      $2 == "on" { on_generation += $3; on_stage += $4; on_count += 1 }
+      $2 == "off" { off_generation += $3; off_stage += $4; off_throughput += $5; off_count += 1 }
+      $2 == "on" { on_generation += $3; on_stage += $4; on_throughput += $5; on_count += 1 }
       END {
         if (off_count != 2 || on_count != 2) exit 1
         off_generation /= off_count
         on_generation /= on_count
         off_stage /= off_count
         on_stage /= on_count
-        printf "%.9f %.9f %.9f %.9f %.9f %.9f\n",
+        off_throughput /= off_count
+        on_throughput /= on_count
+        printf "%.9f %.9f %.9f %.9f %.9f %.9f %.9f %.9f %.9f\n",
           off_generation, on_generation, on_generation / off_generation,
-          off_stage, on_stage, on_stage / off_stage
+          off_stage, on_stage, on_stage / off_stage,
+          off_throughput, on_throughput, on_throughput / off_throughput
       }' "${CHECK_DIR}/observations.tsv"
   )
 
@@ -130,6 +139,9 @@ jq -n \
   --arg off_stage_wall_sec_mean "${off_stage_mean}" \
   --arg on_stage_wall_sec_mean "${on_stage_mean}" \
   --arg on_over_off_stage_ratio "${stage_ratio}" \
+  --arg off_throughput_tokens_per_sec_mean "${off_throughput_mean}" \
+  --arg on_throughput_tokens_per_sec_mean "${on_throughput_mean}" \
+  --arg on_over_off_throughput_ratio "${throughput_ratio}" \
   --arg ordered_output_token_ids_sha256 "${reference_identity}" \
   --arg workload_identity_sha256 "${reference_workload_identity}" \
   '{
@@ -146,6 +158,9 @@ jq -n \
     off_stage_wall_sec_mean:$off_stage_wall_sec_mean,
     on_stage_wall_sec_mean:$on_stage_wall_sec_mean,
     on_over_off_stage_ratio:$on_over_off_stage_ratio,
+    off_throughput_tokens_per_sec_mean:$off_throughput_tokens_per_sec_mean,
+    on_throughput_tokens_per_sec_mean:$on_throughput_tokens_per_sec_mean,
+    on_over_off_throughput_ratio:$on_over_off_throughput_ratio,
     ordered_output_identity_equal:true,
     ordered_output_token_ids_sha256:$ordered_output_token_ids_sha256,
     workload_identity_equal:true,

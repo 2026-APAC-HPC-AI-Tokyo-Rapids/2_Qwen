@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import math
 import re
 from decimal import Decimal
@@ -73,6 +74,22 @@ def encode_value(logical_type: str, value: object) -> str:
     if logical_type == "jcs":
         return jcs_text(value)
     raise CanonicalizationError(f"unknown logical type: {logical_type}")
+
+
+def encode_logical_value(value: object) -> str:
+    """Encode a producer value without owner/type registry coupling."""
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, Decimal):
+        return _encode_decimal(value)
+    if isinstance(value, bytes):
+        return base64.b64encode(value).decode("ascii")
+    return jcs_text(value)
 
 
 def validate_encoded_value(logical_type: str, value: str) -> None:

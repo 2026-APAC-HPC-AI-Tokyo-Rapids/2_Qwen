@@ -182,6 +182,8 @@ jobs:
 
       - name: Provision SGLang runtime
         id: provision_runtime
+        env:
+          METRICS_CREDENTIAL_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
         run: |
           test -s "${MODEL_PATH}/config.json"
           jq -e '(.model_type | strings | startswith("qwen3_5")) and ((.architectures // []) | any(.[]?; type == "string" and startswith("Qwen3_5")))' "${MODEL_PATH}/config.json" >/dev/null
@@ -211,6 +213,13 @@ jobs:
           source_run_number="${SIF_SOURCE_RUN_NUMBER:-${GITHUB_RUN_NUMBER}}"
           cd "${runtime_dir}"
           mkdir -p scripts logs results source control domain/fragments profile/raw
+          test -n "${METRICS_CREDENTIAL_JSON}"
+          credential_file="${runtime_dir}/control/bigquery-credential.json"
+          install -m 0600 /dev/null "${credential_file}"
+          printf '%s' "${METRICS_CREDENTIAL_JSON}" >"${credential_file}"
+          export EXPERIMENT_METRICS_DIRECT_SEND=1
+          export EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE="${credential_file}"
+          export EXPERIMENT_METRICS_BIGQUERY_CONFIG="${runtime_dir}/qwen-experiment-metrics/pyproject.toml"
           ln -s "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
           cp "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.metadata/sif-sidecar.json" source/sif-sidecar.json
           cp -a "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.metadata/sif-build" source/
@@ -222,7 +231,7 @@ jobs:
             "${GITHUB_WORKSPACE}/scripts/qwen-profile-wrapper.py" \
             scripts/
           cp -a "${GITHUB_WORKSPACE}/qwen-experiment-metrics" qwen-experiment-metrics
-          uv sync --project qwen-experiment-metrics --frozen --no-dev
+          uv sync --project qwen-experiment-metrics --frozen --no-dev --extra publish
           qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics prepare-inputs \
             --runtime-dir "${runtime_dir}" \
             --model-path "${MODEL_PATH}" \
@@ -286,12 +295,28 @@ jobs:
       - name: Checkout runner publication files
         uses: actions/checkout@v6
 
+      - name: Configure direct BigQuery producer sends
+        run: |
+          credential_file="${RUNTIME_DIR}/control/bigquery-credential.json"
+          test -s "${credential_file}"
+          test "$(stat -c '%a' "${credential_file}")" = 600
+          printf 'EXPERIMENT_METRICS_DIRECT_SEND=1\n' >>"${GITHUB_ENV}"
+          printf 'EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE=%s\n' "${credential_file}" >>"${GITHUB_ENV}"
+          printf 'EXPERIMENT_METRICS_BIGQUERY_CONFIG=%s\n' \
+            "${RUNTIME_DIR}/qwen-experiment-metrics/pyproject.toml" >>"${GITHUB_ENV}"
+
+      - name: Verify runner BigQuery connectivity
+        run: |
+          run_id="$(jq -er '.run_id' "${RUNTIME_DIR}/control/run-manifest.json")"
+          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" \
+            smoke-send --run "${run_id}" --source runner
+
       - name: Submit Qwen job
         run: |
           test -s "${RUNTIME_DIR}/control/run-manifest.json"
           metrics_cli="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
           manifest="${RUNTIME_DIR}/control/run-manifest.json"
-          job_environment="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH}"
+          job_environment="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH},EXPERIMENT_METRICS_DIRECT_SEND=${EXPERIMENT_METRICS_DIRECT_SEND},EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE=${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE},EXPERIMENT_METRICS_BIGQUERY_CONFIG=${EXPERIMENT_METRICS_BIGQUERY_CONFIG}"
           submission_argv=(pjsub -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.pjm")
           "${metrics_cli}" prepare-submission \
             --manifest "${manifest}" \
@@ -365,17 +390,23 @@ jobs:
             --stderr "${RUNTIME_DIR}/source/scheduler/accounting.stderr" \
             --exit-code "${accounting_status}"
 
-      - name: Merge and package v2 artifacts
+      - name: Reduce and send Qwen profile results
+        if: always()
+        run: |
+          manifest="${RUNTIME_DIR}/control/run-manifest.json"
+          if [[ "$(jq -er '.run_purpose' "${manifest}")" == profile ]]; then
+            expected_ranks="$(jq -er '.tensor_parallel_size' "${RUNTIME_DIR}/control/execution-settings.json")"
+            "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" \
+              record-profile-results --manifest "${manifest}" \
+              --runtime-dir "${RUNTIME_DIR}" --expected-ranks "${expected_ranks}"
+          fi
+
+      - name: Package producer fragment artifacts
         if: always()
         run: |
           metrics_cli="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
           manifest="${RUNTIME_DIR}/control/run-manifest.json"
           test -s "${manifest}"
-          "${metrics_cli}" merge \
-            --manifest "${manifest}" \
-            --runtime-dir "${RUNTIME_DIR}" || true
-          test -s "${RUNTIME_DIR}/metrics.jsonl"
-
           package_args=()
           while IFS= read -r -d '' member; do
             relative="${member#${RUNTIME_DIR}/}"
@@ -383,7 +414,7 @@ jobs:
             package_args+=(--member "${role}=${relative}")
           done < <(
             find "${RUNTIME_DIR}/control" "${RUNTIME_DIR}/domain" "${RUNTIME_DIR}/logs" "${RUNTIME_DIR}/results" "${RUNTIME_DIR}/source" \
-              -type f -print0 | sort -z
+              -type f ! -name 'bigquery-credential.json' -print0 | sort -z
           )
           profile_args=()
           if [[ "$(jq -er '.run_purpose' "${manifest}")" == profile ]]; then
@@ -404,30 +435,17 @@ jobs:
           name: qwen35-sglang-v2-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ env.RUNTIME_DIR }}/run-artifacts.tar.zst
-            ${{ env.RUNTIME_DIR }}/metrics.jsonl
             ${{ env.RUNTIME_DIR }}/artifact-manifest.json
             ${{ env.RUNTIME_DIR }}/profile-raw.tar.zst
           if-no-files-found: error
           compression-level: 0
 
-      - name: Publish v2 facts to BigQuery
-        if: always() && steps.upload.outcome == 'success'
-        env:
-          EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
-        run: |
-          test -n "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON}"
-          uv sync \
-            --project "${RUNTIME_DIR}/qwen-experiment-metrics" \
-            --frozen --no-dev --extra publish
-          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" publish \
-            --metrics "${RUNTIME_DIR}/metrics.jsonl" \
-            --artifact-manifest "${RUNTIME_DIR}/artifact-manifest.json" \
-            --pyproject "${RUNTIME_DIR}/qwen-experiment-metrics/pyproject.toml" \
-            --manifest "${RUNTIME_DIR}/control/run-manifest.json"
-
       - name: Cleanup provisioned runtime
-        if: always() && steps.upload.outcome == 'success'
+        if: always()
         run: |
+          if [[ -n "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE:-}" ]]; then
+            rm -f -- "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE}"
+          fi
           if [[ -n "${PJM_JOB_ID:-}" ]]; then
             pjdel "${PJM_JOB_ID}" 2>/dev/null || true
             pjwait -z "${PJM_JOB_ID}" || true

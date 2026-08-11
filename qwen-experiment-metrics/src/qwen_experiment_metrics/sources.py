@@ -82,9 +82,7 @@ def load_execution_settings(path: Path) -> ExecutionSettings:
             raise ValueError("execution port exceeds 65535")
     if uints["mpi_processes"] != uints["nodes"]:
         raise ValueError("one outer MPI process per node is required")
-    if uints["tensor_parallel_size"] != (
-        uints["nodes"] * uints["gpus_per_node"]
-    ):
+    if uints["tensor_parallel_size"] != (uints["nodes"] * uints["gpus_per_node"]):
         raise ValueError("tensor parallel size must cover the full GPU grid")
     strings = {
         name: _nonempty_string(value[name], name)
@@ -114,7 +112,10 @@ def validate_source_track_repository(
     checkout = repository.resolve(strict=True)
     if _git(checkout, "status", "--porcelain=v1", "--untracked-files=all"):
         raise ValueError("source checkout is not clean")
-    if _git(checkout, "rev-parse", "--show-object-format") != source_track.object_hash_algorithm:
+    if (
+        _git(checkout, "rev-parse", "--show-object-format")
+        != source_track.object_hash_algorithm
+    ):
         raise ValueError("source checkout object algorithm differs")
     for role, oid in (
         ("base", source_track.base_commit),
@@ -184,9 +185,7 @@ def create_input_manifests(
         candidate = model_root / relative
         if candidate.is_file():
             metadata.append(_member(candidate, relative, role=role))
-    if not {"configuration", "index"}.issubset(
-        {item["role"] for item in metadata}
-    ):
+    if not {"configuration", "index"}.issubset({item["role"] for item in metadata}):
         raise ValueError("model manifest requires config and weight index")
     model = {
         "schema_version": "model-manifest/v1",
@@ -248,12 +247,10 @@ def validate_model_manifest(path: Path) -> dict[str, object]:
         shards = source["shards"]
         if not isinstance(shards, list) or not shards:
             raise ValueError("prebuilt model shards must be nonempty")
-        shard_paths = [
-            _validate_member(row, require_role=False) for row in shards
-        ]
-        if shard_paths != sorted(
-            shard_paths, key=lambda item: item.encode()
-        ) or len(shard_paths) != len(set(shard_paths)):
+        shard_paths = [_validate_member(row, require_role=False) for row in shards]
+        if shard_paths != sorted(shard_paths, key=lambda item: item.encode()) or len(
+            shard_paths
+        ) != len(set(shard_paths)):
             raise ValueError("prebuilt model shards must be sorted and unique")
     else:
         raise ValueError("unknown model source kind")
@@ -335,9 +332,7 @@ def create_submission_request(
     request = {
         "schema_version": "submission-request/v1",
         "run_id": manifest.run_id,
-        "subject_manifest": _member(
-            manifest_path, "control/run-manifest.json"
-        ),
+        "subject_manifest": _member(manifest_path, "control/run-manifest.json"),
         "pjm_script": {
             "repository_path": repository_path,
             "size_bytes": script.stat().st_size,
@@ -394,8 +389,10 @@ def validate_submission_request(
     _uint(script["size_bytes"], "PJM script size")
     _require_sha256(script["sha256"], "PJM script sha256")
     argv = value["argv"]
-    if not isinstance(argv, list) or not argv or any(
-        not isinstance(item, str) or not item for item in argv
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or any(not isinstance(item, str) or not item for item in argv)
     ):
         raise ValueError("submission argv is invalid")
     return value
@@ -448,7 +445,9 @@ def create_cache_manifest(
         raise ValueError("node rank must be nonnegative")
     root = cache_root.resolve(strict=True)
     members: list[dict[str, object]] = []
-    for candidate in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix().encode()):
+    for candidate in sorted(
+        root.rglob("*"), key=lambda item: item.relative_to(root).as_posix().encode()
+    ):
         relative = candidate.relative_to(root).as_posix()
         _safe_relative(relative)
         if candidate.is_symlink():
@@ -456,7 +455,9 @@ def create_cache_manifest(
                 {
                     "type": "symlink",
                     "path": relative,
-                    "target_b64": base64.b64encode(os.fsencode(os.readlink(candidate))).decode(),
+                    "target_b64": base64.b64encode(
+                        os.fsencode(os.readlink(candidate))
+                    ).decode(),
                 }
             )
         elif candidate.is_file():
@@ -482,12 +483,12 @@ def create_cache_manifest(
         raise FileExistsError(destination)
     _atomic_bytes(destination, jcs_bytes(source) + b"\n")
     validate_cache_manifest(destination, manifest.run_id, node_rank)
-    return destination, Fact(
-        f"cache.node.{node_rank}.input_manifest_sha256", identity
-    )
+    return destination, Fact(f"cache.node.{node_rank}.input_manifest_sha256", identity)
 
 
-def validate_cache_manifest(path: Path, run_id: str, node_rank: int) -> dict[str, object]:
+def validate_cache_manifest(
+    path: Path, run_id: str, node_rank: int
+) -> dict[str, object]:
     value = load_json_strict(path.read_bytes())
     if not isinstance(value, dict) or set(value) != {
         "schema_version",
@@ -524,8 +525,12 @@ def validate_cache_manifest(path: Path, run_id: str, node_rank: int) -> dict[str
             _uint(row["size_bytes"], "cache member size")
             _require_sha256(row["sha256"], "cache member sha256")
         else:
-            base64.b64decode(_nonempty_string(row["target_b64"], "symlink target"), validate=True)
-    if paths != sorted(paths, key=lambda item: item.encode()) or len(paths) != len(set(paths)):
+            base64.b64decode(
+                _nonempty_string(row["target_b64"], "symlink target"), validate=True
+            )
+    if paths != sorted(paths, key=lambda item: item.encode()) or len(paths) != len(
+        set(paths)
+    ):
         raise ValueError("cache members must be path-byte sorted and unique")
     return value
 
@@ -627,7 +632,10 @@ def validate_runtime_launchers(path: Path, runtime_dir: Path) -> dict[str, objec
             or not resolved.is_file()
         ):
             raise ValueError("runtime launcher is not an absolute regular file")
-        if resolved.stat().st_size != _uint(row["size_bytes"], "launcher size") or _sha256(resolved) != row["sha256"]:
+        if (
+            resolved.stat().st_size != _uint(row["size_bytes"], "launcher size")
+            or _sha256(resolved) != row["sha256"]
+        ):
             raise ValueError("runtime launcher hash binding failed")
         requested_by_role[role] = str(requested)
     for row in versions:
@@ -784,16 +792,30 @@ def create_sif_sidecar(
         )
     }
     toolchain_commands = [
-        _build_observation(output.parent, "singularity_version", ["singularity", "--version"]),
+        _build_observation(
+            output.parent, "singularity_version", ["singularity", "--version"]
+        ),
         _build_observation(
             output.parent,
             "python_version",
-            ["singularity", "exec", "sglang.sif", "/opt/sglang/venv/bin/python", "--version"],
+            [
+                "singularity",
+                "exec",
+                "sglang.sif",
+                "/opt/sglang/venv/bin/python",
+                "--version",
+            ],
         ),
         _build_observation(
             output.parent,
             "cuda_version",
-            ["singularity", "exec", "sglang.sif", "/usr/local/cuda/bin/nvcc", "--version"],
+            [
+                "singularity",
+                "exec",
+                "sglang.sif",
+                "/usr/local/cuda/bin/nvcc",
+                "--version",
+            ],
         ),
         _build_observation(
             output.parent,
@@ -872,12 +894,16 @@ def validate_sif_sidecar(
         raise ValueError("SIF sidecar is not a closed v1 object")
     if value["schema_version"] != "sif-sidecar/v1":
         raise ValueError("unsupported SIF sidecar")
-    _validate_member(value["sif_artifact"], require_role=False, path_name="artifact_relative_path")
+    _validate_member(
+        value["sif_artifact"], require_role=False, path_name="artifact_relative_path"
+    )
     commits = value["source_commits"]
     if not isinstance(commits, list) or len(commits) != 2:
         raise ValueError("SIF sidecar requires two source commits")
     expected_roles = ["sif_build_definition", "sglang_source"]
-    if [row.get("commit_role") for row in commits if isinstance(row, dict)] != expected_roles:
+    if [
+        row.get("commit_role") for row in commits if isinstance(row, dict)
+    ] != expected_roles:
         raise ValueError("SIF source commit roles differ")
     if [row.get("repository_id") for row in commits if isinstance(row, dict)] != [
         "apac2026-qwen",
@@ -894,7 +920,12 @@ def validate_sif_sidecar(
             raise ValueError("SIF source commit is not closed")
         algorithm = row["object_hash_algorithm"]
         oid = row["oid"]
-        if algorithm not in {"sha1", "sha256"} or not isinstance(oid, str) or len(oid) != (40 if algorithm == "sha1" else 64) or re.fullmatch(r"[0-9a-f]+", oid) is None:
+        if (
+            algorithm not in {"sha1", "sha256"}
+            or not isinstance(oid, str)
+            or len(oid) != (40 if algorithm == "sha1" else 64)
+            or re.fullmatch(r"[0-9a-f]+", oid) is None
+        ):
             raise ValueError("SIF source object identity is invalid")
     score_tree = value["score_source_tree"]
     if not isinstance(score_tree, list):
@@ -912,7 +943,12 @@ def validate_sif_sidecar(
             raise ValueError("SIF score source entry is not closed")
         score_paths.append(_validated_relative(row["path"], "score source path"))
         if row["state"] == "present":
-            if re.fullmatch(r"[0-7]{6}", _nonempty_string(row["mode"], "score source mode")) is None:
+            if (
+                re.fullmatch(
+                    r"[0-7]{6}", _nonempty_string(row["mode"], "score source mode")
+                )
+                is None
+            ):
                 raise ValueError("SIF score source mode is invalid")
             _algorithm_oid(row["blob_oid"], commits[0]["object_hash_algorithm"])
     _require_sorted_unique(score_paths, "SIF score source paths")
@@ -947,16 +983,22 @@ def validate_sif_sidecar(
         raise ValueError("OCI reference is not digest pinned")
     _validate_member_binding(base["inspect_raw"], member_root)
     for name in ("manifest_digest", "config_digest"):
-        if re.fullmatch(r"sha256:[0-9a-f]{64}", _nonempty_string(base[name], name)) is None:
+        if (
+            re.fullmatch(r"sha256:[0-9a-f]{64}", _nonempty_string(base[name], name))
+            is None
+        ):
             raise ValueError(f"invalid OCI {name}")
-    if base["inspect_raw"]["sha256"] != base["manifest_digest"].removeprefix(
-        "sha256:"
-    ):
+    if base["inspect_raw"]["sha256"] != base["manifest_digest"].removeprefix("sha256:"):
         raise ValueError("OCI raw manifest hash differs from manifest digest")
     layers = base["layer_digests"]
-    if not isinstance(layers, list) or not layers or any(
-        not isinstance(item, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", item) is None
-        for item in layers
+    if (
+        not isinstance(layers, list)
+        or not layers
+        or any(
+            not isinstance(item, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", item) is None
+            for item in layers
+        )
     ):
         raise ValueError("invalid OCI layers")
     lock_manifest = value["lock_manifest"]
@@ -964,8 +1006,10 @@ def validate_sif_sidecar(
         raise TypeError("SIF lock manifest is invalid")
     _validate_member(lock_manifest, require_role=False)
     build_command = value["build_command"]
-    if not isinstance(build_command, list) or not build_command or any(
-        not isinstance(item, str) or not item for item in build_command
+    if (
+        not isinstance(build_command, list)
+        or not build_command
+        or any(not isinstance(item, str) or not item for item in build_command)
     ):
         raise ValueError("SIF build command is invalid")
     toolchain = value["toolchain_commands"]
@@ -975,9 +1019,11 @@ def validate_sif_sidecar(
         "cuda_version",
         "compiler_version",
     ]
-    if not isinstance(toolchain, list) or [
-        row.get("role") for row in toolchain if isinstance(row, dict)
-    ] != toolchain_roles:
+    if (
+        not isinstance(toolchain, list)
+        or [row.get("role") for row in toolchain if isinstance(row, dict)]
+        != toolchain_roles
+    ):
         raise ValueError("SIF toolchain command roles differ")
     for row in toolchain:
         _validate_observation(row, member_root)
@@ -993,9 +1039,7 @@ def validate_sif_sidecar(
         raise ValueError("SIF embedded manifest member path differs")
     _uint(embedded["size_bytes"], "embedded manifest size")
     _require_sha256(embedded["sha256"], "embedded manifest sha256")
-    _require_sha256(
-        embedded["manifest_identity"], "embedded manifest identity"
-    )
+    _require_sha256(embedded["manifest_identity"], "embedded manifest identity")
     embedded_semantic = {
         "source_commits": value["source_commits"],
         "recipe": value["recipe"],
@@ -1011,12 +1055,15 @@ def validate_sif_sidecar(
         },
         "lock_manifest": value["lock_manifest"],
     }
-    if hashlib.sha256(jcs_bytes(embedded_semantic)).hexdigest() != embedded[
-        "manifest_identity"
-    ]:
+    if (
+        hashlib.sha256(jcs_bytes(embedded_semantic)).hexdigest()
+        != embedded["manifest_identity"]
+    ):
         raise ValueError("embedded manifest semantic identity differs")
     runtime_files = value["runtime_files"]
-    if not isinstance(runtime_files, list) or [row.get("role") for row in runtime_files if isinstance(row, dict)] != [
+    if not isinstance(runtime_files, list) or [
+        row.get("role") for row in runtime_files if isinstance(row, dict)
+    ] != [
         "python_executable",
         "sglang_package_entry",
         "cuda_runtime",
@@ -1034,7 +1081,11 @@ def validate_sif_sidecar(
         "build_test",
     }:
         raise ValueError("SIF nccl-tests record is not closed")
-    if nccl.get("commit") != "717b68318278e93f371d8ffb46b076069d7c7851" or nccl.get("mpi_enabled") is not True or nccl.get("json_output_enabled") is not True:
+    if (
+        nccl.get("commit") != "717b68318278e93f371d8ffb46b076069d7c7851"
+        or nccl.get("mpi_enabled") is not True
+        or nccl.get("json_output_enabled") is not True
+    ):
         raise ValueError("SIF nccl-tests binding is invalid")
     binaries = nccl["binaries"]
     if not isinstance(binaries, list) or [
@@ -1054,8 +1105,12 @@ def _build_observation(
     return {
         "role": role,
         "argv": argv,
-        "stdout": _member(prefix.with_suffix(".stdout"), f"sif-build/toolchain/{role}.stdout"),
-        "stderr": _member(prefix.with_suffix(".stderr"), f"sif-build/toolchain/{role}.stderr"),
+        "stdout": _member(
+            prefix.with_suffix(".stdout"), f"sif-build/toolchain/{role}.stdout"
+        ),
+        "stderr": _member(
+            prefix.with_suffix(".stderr"), f"sif-build/toolchain/{role}.stderr"
+        ),
         "outcome": _exit_outcome(prefix.with_suffix(".exit-code")),
     }
 
@@ -1105,8 +1160,10 @@ def _validate_process_source(
         raise ValueError("process source is not closed")
     if has_argv:
         argv = value["argv"]
-        if not isinstance(argv, list) or not argv or any(
-            not isinstance(item, str) or not item for item in argv
+        if (
+            not isinstance(argv, list)
+            or not argv
+            or any(not isinstance(item, str) or not item for item in argv)
         ):
             raise ValueError("process argv is invalid")
     outcome = value["outcome"]
@@ -1155,9 +1212,10 @@ def _algorithm_oid(value: object, algorithm: object) -> str:
     if algorithm not in {"sha1", "sha256"}:
         raise ValueError("unknown Git object algorithm")
     expected = 40 if algorithm == "sha1" else 64
-    if not isinstance(value, str) or re.fullmatch(
-        rf"[0-9a-f]{{{expected}}}", value
-    ) is None:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(rf"[0-9a-f]{{{expected}}}", value) is None
+    ):
         raise ValueError("algorithm-constrained Git object ID is invalid")
     return value
 
@@ -1205,8 +1263,12 @@ def _member(path: Path, relative: str, *, role: str | None = None) -> dict[str, 
     return result
 
 
-def _validate_member(value: object, *, require_role: bool, path_name: str = "path") -> str:
-    expected = {path_name, "size_bytes", "sha256"} | ({"role"} if require_role else set())
+def _validate_member(
+    value: object, *, require_role: bool, path_name: str = "path"
+) -> str:
+    expected = {path_name, "size_bytes", "sha256"} | (
+        {"role"} if require_role else set()
+    )
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError("member reference is not closed")
     relative = _nonempty_string(value[path_name], "member path")
@@ -1252,7 +1314,9 @@ def _sha256(path: Path) -> str:
 
 
 def _atomic_bytes(path: Path, payload: bytes) -> None:
-    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as stream:
+    with tempfile.NamedTemporaryFile(
+        dir=path.parent, prefix=f".{path.name}.", delete=False
+    ) as stream:
         stream.write(payload)
         temporary = Path(stream.name)
     os.replace(temporary, path)

@@ -35,7 +35,9 @@ def capture_profile_hardware(
     destination.mkdir(parents=True, exist_ok=False)
     members: list[dict[str, object]] = []
 
-    def capture(role: str, numa_node_id: int | None, source: Path, relative: str) -> None:
+    def capture(
+        role: str, numa_node_id: int | None, source: Path, relative: str
+    ) -> None:
         payload = source.read_bytes()
         path = destination / relative
         path.parent.mkdir(parents=True, exist_ok=True)

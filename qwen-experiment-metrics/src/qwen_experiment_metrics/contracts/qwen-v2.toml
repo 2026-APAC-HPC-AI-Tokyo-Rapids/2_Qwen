@@ -25,12 +25,6 @@ applicability = ["bench", "profile"]
 required = true
 
 [[producers]]
-id = "merge"
-instance_pattern = "^merge$"
-applicability = ["bench", "profile"]
-required = false
-
-[[producers]]
 id = "network"
 instance_pattern = "^network$"
 applicability = ["bench", "profile"]
@@ -585,20 +579,6 @@ authoritative_source = "validated primary-result/v1"
 capture_moment = "immediately after response validation"
 raw_destination = "run/key/value fact"
 validation = "absent unless all ordered output token ids validate"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "collection_complete"
-key_pattern = "^collection_complete$"
-owner = "merge"
-logical_type = "bool"
-unit = "none"
-cardinality = "one per finalized run"
-authoritative_source = "merge expected-versus-observed validation"
-capture_moment = "once after all producers are terminal"
-raw_destination = "merged run/key/value JSONL"
-validation = "false on missing, invalid, ownership error, or conflict"
 applicability = ["bench", "profile"]
 required = false
 

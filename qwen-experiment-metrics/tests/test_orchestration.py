@@ -29,9 +29,7 @@ def _closed_network_capture(runtime: Path) -> tuple[Path, dict[str, Path]]:
     nccl_root = runtime / "source/network/nccl-tests"
     nccl_root.mkdir()
     (nccl_root / "sidecar.json").write_text(
-        json.dumps(
-            {"schema_version": "nccl-tests-sidecar/v1", "commit": NCCL_COMMIT}
-        )
+        json.dumps({"schema_version": "nccl-tests-sidecar/v1", "commit": NCCL_COMMIT})
     )
     results = {}
     fixtures = {
@@ -112,14 +110,10 @@ def test_workflow_and_pjm_enforce_runner_compute_boundary() -> None:
 
     assert "#PJM -L jobenv=singularity" in pjm
     assert workflow.index("init-run") < workflow.index("pjsub")
-    assert workflow.index('"${metrics_cli}" merge') < workflow.index(
-        '"${metrics_cli}" package'
-    )
-    assert workflow.index("Upload fixed v2 artifact set") < workflow.index(
-        'qwen-experiment-metrics" publish'
-    )
+    assert '"${metrics_cli}" merge' not in workflow
+    assert 'qwen-experiment-metrics" publish' not in workflow
     assert "deploy-qwen-projections.py" not in workflow
-    assert "EXPERIMENT_METRICS_GOOGLE_CREDENTIALS" not in pjm
+    assert "smoke-send --run" in pjm
     assert " publish " not in pjm and " merge " not in pjm
     assert "collect " not in pjm and "monitor-node-gpu" not in node
     assert "serve-events" in node and "sample-gpu" in node

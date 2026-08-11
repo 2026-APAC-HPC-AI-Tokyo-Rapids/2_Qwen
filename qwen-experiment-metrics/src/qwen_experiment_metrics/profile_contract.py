@@ -216,7 +216,7 @@ class ProfileProjection:
     conflicts: tuple[ProjectionConflict, ...] = ()
 
     @property
-    def collection_complete(self) -> bool:
+    def is_complete(self) -> bool:
         return not self.missing_ranks and not self.conflicts
 
     def require_conflict_free(self) -> ProfileProjection:
@@ -256,7 +256,9 @@ def profiler_overlay_args() -> tuple[str, ...]:
     )
 
 
-def validate_profiler_overlay(argv: Sequence[str], environment: Mapping[str, str]) -> None:
+def validate_profiler_overlay(
+    argv: Sequence[str], environment: Mapping[str, str]
+) -> None:
     expected = profiler_overlay_args()
     if tuple(argv[-len(expected) :]) != expected:
         raise ProfileValidationError("profiler argv does not use the fixed overlay")
@@ -294,7 +296,9 @@ def parse_phase_summary(
         raise ProfileValidationError("phase node order differs")
     _validate_phase_order(rank0, nodes)
     member = _relative_member(path, path.parent.parent.parent)
-    return PhaseSummary(run_id, invocation_id, kind, rank0, nodes, member, _sha256_file(path))
+    return PhaseSummary(
+        run_id, invocation_id, kind, rank0, nodes, member, _sha256_file(path)
+    )
 
 
 def project_phase_summary(
@@ -372,9 +376,17 @@ def parse_chrome_trace(
     _sha256(source_sha256)
     try:
         document = json.loads(gzip.decompress(trace_path.read_bytes()))
-    except (OSError, EOFError, gzip.BadGzipFile, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (
+        OSError,
+        EOFError,
+        gzip.BadGzipFile,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as error:
         raise ProfileValidationError("profiler trace is not valid gzip JSON") from error
-    if not isinstance(document, dict) or not isinstance(document.get("traceEvents"), list):
+    if not isinstance(document, dict) or not isinstance(
+        document.get("traceEvents"), list
+    ):
         raise ProfileValidationError("profiler trace has no traceEvents array")
     grouped: dict[tuple[str, str, str], list[Decimal]] = defaultdict(list)
     for event in document["traceEvents"]:
@@ -440,9 +452,7 @@ def project_profiler_events(
             elif capture_match:
                 captures[_parse_rank(capture_match.group(1))] = path
             else:
-                raise ProfileValidationError(
-                    f"unexpected profiler member: {path.name}"
-                )
+                raise ProfileValidationError(f"unexpected profiler member: {path.name}")
     for rank in (*traces, *captures):
         if rank >= expected_ranks:
             raise ProfileValidationError("profiler rank is outside expected range")
@@ -509,7 +519,12 @@ def dedupe_gpu_rows(
 ) -> tuple[tuple[GpuProjectionRow, ...], tuple[ProjectionConflict, ...]]:
     unique, conflicts = _dedupe(
         rows,
-        key=lambda row: (row.run_id, row.phase.node_rank, row.phase.gpu_uuid, row.phase.phase),
+        key=lambda row: (
+            row.run_id,
+            row.phase.node_rank,
+            row.phase.gpu_uuid,
+            row.phase.phase,
+        ),
     )
     return unique, conflicts  # type: ignore[return-value]
 
@@ -605,24 +620,41 @@ def _as_dict(value: object) -> dict[str, object]:
 
 def _phase_rank0(value: object) -> PhaseRank0:
     if not isinstance(value, dict) or set(value) != {
-        "clock_id", "start_broadcast_ns", "all_start_acks_received_ns",
-        "generation_start_ns", "generation_end_ns", "end_broadcast_ns",
+        "clock_id",
+        "start_broadcast_ns",
+        "all_start_acks_received_ns",
+        "generation_start_ns",
+        "generation_end_ns",
+        "end_broadcast_ns",
         "all_end_acks_received_ns",
     }:
         raise ProfileValidationError("phase rank0 object is not closed")
     return PhaseRank0(
         _string(value["clock_id"], "clock_id"),
-        *(_uint(value[name], name) for name in (
-            "start_broadcast_ns", "all_start_acks_received_ns", "generation_start_ns",
-            "generation_end_ns", "end_broadcast_ns", "all_end_acks_received_ns",
-        )),
+        *(
+            _uint(value[name], name)
+            for name in (
+                "start_broadcast_ns",
+                "all_start_acks_received_ns",
+                "generation_start_ns",
+                "generation_end_ns",
+                "end_broadcast_ns",
+                "all_end_acks_received_ns",
+            )
+        ),
     )
 
 
 def _phase_node(value: object) -> PhaseNode:
     names = {
-        "node_rank", "clock_id", "start_sequence", "end_sequence",
-        "start_received_ns", "start_ack_ns", "end_received_ns", "end_ack_ns",
+        "node_rank",
+        "clock_id",
+        "start_sequence",
+        "end_sequence",
+        "start_received_ns",
+        "start_ack_ns",
+        "end_received_ns",
+        "end_ack_ns",
     }
     if not isinstance(value, dict) or set(value) != names:
         raise ProfileValidationError("phase node object is not closed")
@@ -640,15 +672,20 @@ def _phase_node(value: object) -> PhaseNode:
 
 def _validate_phase_order(rank0: PhaseRank0, nodes: Sequence[PhaseNode]) -> None:
     if not (
-        rank0.start_broadcast_ns <= rank0.all_start_acks_received_ns
-        <= rank0.generation_start_ns <= rank0.generation_end_ns
-        <= rank0.end_broadcast_ns <= rank0.all_end_acks_received_ns
+        rank0.start_broadcast_ns
+        <= rank0.all_start_acks_received_ns
+        <= rank0.generation_start_ns
+        <= rank0.generation_end_ns
+        <= rank0.end_broadcast_ns
+        <= rank0.all_end_acks_received_ns
     ):
         raise ProfileValidationError("rank0 phase timestamps are not ordered")
     for node in nodes:
         if node.start_sequence >= node.end_sequence or not (
-            node.start_received_ns <= node.start_ack_ns
-            <= node.end_received_ns <= node.end_ack_ns
+            node.start_received_ns
+            <= node.start_ack_ns
+            <= node.end_received_ns
+            <= node.end_ack_ns
         ):
             raise ProfileValidationError("node phase window is invalid")
         if node.node_rank == 0 and node.clock_id != rank0.clock_id:
