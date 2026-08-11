@@ -42,6 +42,7 @@ def test_sif_recipe_tests_the_shared_v2_event_emitter() -> None:
 
 def test_genkai_workflow_captures_closed_accounting_source() -> None:
     workflow = (ROOT / ".github/workflows/genkai.yml").read_text(encoding="utf-8")
+    assert "Checkout runner publication files" in workflow
     assert "pjstat --history -s" in workflow
     assert (
         "--choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut"
@@ -62,6 +63,9 @@ def test_node_launcher_connects_closed_sources_and_fixed_profile_overlay() -> No
         "record-workload",
     ):
         assert command in script
+    assert "singularity_namespace_args=(--userns)" in script
+    assert 'exec --userns sglang.sif true' in script
+    assert 'exec "${singularity_namespace_args[@]}" --nv' in script
     assert "SGLANG_PROFILE_ID=qwen-profile" in script
     assert "qwen-profile-wrapper.py:/qwen-profile-wrapper.py:ro" in script
     assert "QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID" in script

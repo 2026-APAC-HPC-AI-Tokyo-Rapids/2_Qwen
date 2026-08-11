@@ -283,6 +283,9 @@ jobs:
       RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
 
     steps:
+      - name: Checkout runner publication files
+        uses: actions/checkout@v6
+
       - name: Submit Qwen job
         run: |
           test -s "${RUNTIME_DIR}/control/run-manifest.json"
