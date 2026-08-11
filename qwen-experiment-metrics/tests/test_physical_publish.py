@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -157,12 +158,14 @@ def test_apply_streams_ddl_to_bq_stdin(
         "CREATE TABLE `__PROJECT__.__DATASET__.fixture` (value STRING);\n",
         encoding="utf-8",
     )
-    calls: list[tuple[list[str], dict[str, object]]] = []
+    calls: list[urllib.request.Request] = []
 
-    def fake_run(argv: list[str], **kwargs: object) -> None:
-        calls.append((argv, kwargs))
+    def fake_send(request: urllib.request.Request) -> bytes:
+        calls.append(request)
+        return b'{"jobComplete":true}'
 
-    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module, "_urlopen", fake_send)
+    monkeypatch.setattr(module, "_access_token", lambda: "token")
     assert module.main(
         [
             "--project",
@@ -174,21 +177,17 @@ def test_apply_streams_ddl_to_bq_stdin(
             "--apply",
         ]
     ) == 0
-    assert calls == [
-        (
-            [
-                "bq",
-                "query",
-                "--project_id=project",
-                "--location=asia-northeast1",
-                "--use_legacy_sql=false",
-            ],
-            {
-                "input": b"CREATE TABLE `project.dataset.fixture` (value STRING);\n",
-                "check": True,
-            },
-        )
-    ]
+    assert len(calls) == 1
+    request = calls[0]
+    assert request.full_url.endswith("/projects/project/queries")
+    assert request.method == "POST"
+    assert request.get_header("Authorization") == "Bearer token"
+    assert json.loads(request.data) == {
+        "query": "CREATE TABLE `project.dataset.fixture` (value STRING);\n",
+        "useLegacySql": False,
+        "location": "asia-northeast1",
+        "timeoutMs": 200_000,
+    }
 
 
 def test_ddl_has_every_allowlisted_closed_field() -> None:

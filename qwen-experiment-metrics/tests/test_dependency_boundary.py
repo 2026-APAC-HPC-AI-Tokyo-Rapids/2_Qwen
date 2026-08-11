@@ -64,8 +64,8 @@ def test_node_launcher_connects_closed_sources_and_fixed_profile_overlay() -> No
     ):
         assert command in script
     assert "singularity_namespace_args=(--userns)" in script
-    assert 'exec --userns sglang.sif true' in script
-    assert 'exec "${singularity_namespace_args[@]}" --nv' in script
+    assert '"${singularity_namespace_args[@]}" "${singularity_runtime_args[@]}"' in script
+    assert 'exec "${singularity_runtime_args[@]}" sglang.sif true' in script
     assert "SGLANG_PROFILE_ID=qwen-profile" in script
     assert "qwen-profile-wrapper.py:/qwen-profile-wrapper.py:ro" in script
     assert "QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID" in script
