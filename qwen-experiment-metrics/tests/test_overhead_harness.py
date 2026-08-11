@@ -20,6 +20,7 @@ def test_overhead_harness_is_alternating_and_gates_primary_time() -> None:
     pjm = (ROOT / "scripts/v2-overhead-check.pjm").read_text(encoding="utf-8")
     node = (ROOT / "scripts/v2-overhead-node.sh").read_text(encoding="utf-8")
 
+    assert "#PJM -L jobenv=singularity" in pjm
     assert "arms=(off on off on)" in pjm
     assert 'primary_measure:"generation_wall_sec"' in pjm
     assert "on_generation / off_generation" in pjm

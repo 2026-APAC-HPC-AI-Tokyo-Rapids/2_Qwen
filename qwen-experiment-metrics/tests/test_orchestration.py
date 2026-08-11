@@ -105,6 +105,7 @@ def test_workflow_and_pjm_enforce_runner_compute_boundary() -> None:
     pjm = (repository / "scripts/run-qwen35.pjm").read_text()
     node = (repository / "scripts/run-qwen35-node.sh").read_text()
 
+    assert "#PJM -L jobenv=singularity" in pjm
     assert workflow.index("init-run") < workflow.index("pjsub")
     assert workflow.index('"${metrics_cli}" merge') < workflow.index(
         '"${metrics_cli}" package'
