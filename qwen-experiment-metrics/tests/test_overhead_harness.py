@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import json
-import signal
-import socket
-import struct
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 from conftest import RUN_ID
@@ -35,9 +31,12 @@ def test_overhead_harness_is_alternating_and_gates_primary_time() -> None:
     assert "control/instrumentation-source-blob-oids.json" in node
     assert "for _ in {1..60}" in node
     assert '[[ ! -s "${completion_file}" ]] || break' in node
+    assert "qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" in node
+    assert "serve-events" in node
+    assert "producer-finalize-wall-sec-node-" in node
 
 
-def test_overhead_workflow_archives_fixed_evidence_and_has_no_bq_boundary() -> None:
+def test_overhead_workflow_archives_direct_send_evidence_without_credentials() -> None:
     workflow = (ROOT / ".github/workflows/v2-overhead-check.yml").read_text(
         encoding="utf-8"
     )
@@ -56,43 +55,28 @@ def test_overhead_workflow_archives_fixed_evidence_and_has_no_bq_boundary() -> N
         "summary.json",
         "primary-result.json",
         "event-summary-node-*.json",
+        "domain/fragments/producer--*.jsonl",
+        "producer-finalize-wall-sec-node-*",
     ):
         assert member in workflow[upload:discard]
     assert "workload-warmup.json" not in workflow[upload:discard]
     lowered = workflow.lower()
-    assert "bigquery" not in lowered
-    assert "google_credentials" not in lowered
+    assert "bigquery-credential.json" not in workflow[upload:discard]
+    assert "EXPERIMENT_METRICS_DIRECT_SEND=1" in workflow[:upload]
+    assert "EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE" in workflow[:upload]
     assert "qwen-experiment-metrics publish" not in lowered
 
 
-def test_event_drain_validates_envelopes_and_writes_closed_counts(
+def test_event_summary_reports_recorder_archive_counts(
     tmp_path: Path,
 ) -> None:
-    script = ROOT / "scripts/v2-overhead-event-drain.py"
-    socket_path = tmp_path / "events.sock"
-    ready = tmp_path / "ready"
+    script = ROOT / "scripts/v2-overhead-event-summary.py"
+    archive = tmp_path / "events.jsonl"
     summary = tmp_path / "summary.json"
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            str(script),
-            str(socket_path),
-            str(ready),
-            str(summary),
-            RUN_ID,
-            "0",
-        ]
-    )
-    try:
-        deadline = time.monotonic() + 3
-        while not ready.exists():
-            assert process.poll() is None
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
-        for sequence, event_type in enumerate(
-            ("bench_args_effective", "primary_result")
-        ):
-            value = {
+    values = []
+    for sequence, event_type in enumerate(("bench_args_effective", "primary_result")):
+        values.append(
+            {
                 "schema_version": "qwen-domain-event/v1",
                 "run_id": RUN_ID,
                 "producer_id": "sglang-node-0",
@@ -101,17 +85,14 @@ def test_event_drain_validates_envelopes_and_writes_closed_counts(
                 "event_type": event_type,
                 "payload": {},
             }
-            payload = jcs_bytes(value)
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.connect(str(socket_path))
-                client.sendall(struct.pack(">I", len(payload)) + payload)
-        process.send_signal(signal.SIGTERM)
-        assert process.wait(timeout=3) == 0
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
+        )
+    archive.write_bytes(b"".join(jcs_bytes(value) + b"\n" for value in values))
+    subprocess.run(
+        [sys.executable, str(script), str(archive), str(summary), RUN_ID, "0"],
+        check=True,
+    )
     value = json.loads(summary.read_text(encoding="utf-8"))
+    assert value["schema_version"] == "overhead-event-summary/v2"
     assert set(value) == {
         "schema_version",
         "run_id",

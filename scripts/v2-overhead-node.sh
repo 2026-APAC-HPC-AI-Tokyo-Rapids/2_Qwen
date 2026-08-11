@@ -20,7 +20,7 @@ node_dir="$(mktemp -d "/dev/shm/qwen-overhead-${arm}.XXXXXXXXXX")"
 jit_cache="$(mktemp -d "/tmp/qwen-overhead-jit-${arm}.XXXXXXXXXX")"
 singularity_tmp="$(mktemp -d "/dev/shm/qwen-overhead-singularity-${arm}.XXXXXXXXXX")"
 export SINGULARITY_TMPDIR="${singularity_tmp}"
-drain_pid=""
+metrics_pid=""
 engine_pid=""
 
 cleanup() {
@@ -30,9 +30,9 @@ cleanup() {
     kill -- "-${engine_pid}" 2>/dev/null || true
     wait "${engine_pid}" 2>/dev/null || true
   fi
-  if [[ -n "${drain_pid}" ]]; then
-    kill -TERM "${drain_pid}" 2>/dev/null || true
-    wait "${drain_pid}" 2>/dev/null || true
+  if [[ -n "${metrics_pid}" ]]; then
+    kill -TERM "${metrics_pid}" 2>/dev/null || true
+    wait "${metrics_pid}" 2>/dev/null || true
   fi
   rm -rf -- "${node_dir:?}" "${jit_cache:?}" "${singularity_tmp:?}"
   exit "${status}"
@@ -41,16 +41,22 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-finish_drain() {
-  if [[ -z "${drain_pid}" ]]; then
+finish_metrics() {
+  if [[ -z "${metrics_pid}" ]]; then
     return 0
   fi
-  kill -TERM "${drain_pid}" 2>/dev/null || true
+  local started ended
+  started="$(date +%s%N)"
+  kill -TERM "${metrics_pid}" 2>/dev/null || true
   set +e
-  wait "${drain_pid}"
+  wait "${metrics_pid}"
   local status=$?
   set -e
-  drain_pid=""
+  ended="$(date +%s%N)"
+  awk -v delta="$((ended - started))" \
+    'BEGIN { printf "%.9f\n", delta / 1000000000 }' \
+    >"${arm_dir}/producer-finalize-wall-sec-node-${node_rank}"
+  metrics_pid=""
   return "${status}"
 }
 
@@ -73,12 +79,16 @@ if [[ "${arm}" == on ]]; then
   socket_path="${node_dir}/events.sock"
   ready_file="${node_dir}/events.ready"
   event_summary="${arm_dir}/event-summary-node-${node_rank}.json"
-  "${CHECK_DIR}/scripts/v2-overhead-event-drain.py" \
-    "${socket_path}" "${ready_file}" "${event_summary}" \
-    "${run_id}" "${node_rank}" &
-  drain_pid=$!
+  metrics_cli="${CHECK_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
+  manifest="${arm_dir}/control/run-manifest.json"
+  test -s "${manifest}"
+  "${metrics_cli}" serve-events \
+    --manifest "${manifest}" --runtime-dir "${arm_dir}" \
+    --socket "${socket_path}" --ready-file "${ready_file}" \
+    --node-rank "${node_rank}" &
+  metrics_pid=$!
   while [[ ! -e "${ready_file}" ]]; do
-    kill -0 "${drain_pid}"
+    kill -0 "${metrics_pid}"
     sleep 0.1
   done
 fi
@@ -131,10 +141,15 @@ if [[ "${node_rank}" -eq 0 ]]; then
   status=$?
   set -e
   printf '%s\n' "${status}" >"${completion_file}"
-  drain_status=0
-  finish_drain || drain_status=$?
-  if [[ "${status}" -eq 0 && "${drain_status}" -ne 0 ]]; then
-    status="${drain_status}"
+  metrics_status=0
+  finish_metrics || metrics_status=$?
+  if [[ "${status}" -eq 0 && "${metrics_status}" -ne 0 ]]; then
+    status="${metrics_status}"
+  fi
+  if [[ "${status}" -eq 0 && "${arm}" == on ]]; then
+    "${CHECK_DIR}/scripts/v2-overhead-event-summary.py" \
+      "${arm_dir}/source/events/node-${node_rank}.jsonl" \
+      "${event_summary}" "${run_id}" "${node_rank}"
   fi
   printf '%s\n' "${status}" >"${completion_file}"
   exit "${status}"
@@ -149,10 +164,15 @@ while kill -0 "${engine_pid}" 2>/dev/null; do
     kill -TERM -- "-${engine_pid}" 2>/dev/null || true
     wait "${engine_pid}" 2>/dev/null || true
     engine_pid=""
-    drain_status=0
-    finish_drain || drain_status=$?
-    if [[ "${status}" -eq 0 && "${drain_status}" -ne 0 ]]; then
-      status="${drain_status}"
+    metrics_status=0
+    finish_metrics || metrics_status=$?
+    if [[ "${status}" -eq 0 && "${metrics_status}" -ne 0 ]]; then
+      status="${metrics_status}"
+    fi
+    if [[ "${status}" -eq 0 && "${arm}" == on ]]; then
+      "${CHECK_DIR}/scripts/v2-overhead-event-summary.py" \
+        "${arm_dir}/source/events/node-${node_rank}.jsonl" \
+        "${event_summary}" "${run_id}" "${node_rank}"
     fi
     exit "${status}"
   fi
@@ -174,9 +194,14 @@ done
 if [[ -s "${completion_file}" ]]; then
   status="$(<"${completion_file}")"
 fi
-drain_status=0
-finish_drain || drain_status=$?
-if [[ "${status}" -eq 0 && "${drain_status}" -ne 0 ]]; then
-  status="${drain_status}"
+metrics_status=0
+finish_metrics || metrics_status=$?
+if [[ "${status}" -eq 0 && "${metrics_status}" -ne 0 ]]; then
+  status="${metrics_status}"
+fi
+if [[ "${status}" -eq 0 && "${arm}" == on ]]; then
+  "${CHECK_DIR}/scripts/v2-overhead-event-summary.py" \
+    "${arm_dir}/source/events/node-${node_rank}.jsonl" \
+    "${event_summary}" "${run_id}" "${node_rank}"
 fi
 exit "${status}"
