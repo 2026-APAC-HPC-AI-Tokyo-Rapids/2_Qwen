@@ -112,6 +112,7 @@ def test_workflow_and_pjm_enforce_runner_compute_boundary() -> None:
     assert workflow.index("Upload fixed v2 artifact set") < workflow.index(
         'qwen-experiment-metrics" publish'
     )
+    assert "deploy-qwen-projections.py" not in workflow
     assert "EXPERIMENT_METRICS_GOOGLE_CREDENTIALS" not in pjm
     assert " publish " not in pjm and " merge " not in pjm
     assert "collect " not in pjm and "monitor-node-gpu" not in node
