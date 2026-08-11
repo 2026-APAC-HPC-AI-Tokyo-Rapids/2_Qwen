@@ -141,11 +141,13 @@ if [[ "${benchmark_status}" -eq 0 && -s source/primary-result.json ]]; then
     nccl_dir="${RUNTIME_DIR}/source/network/nccl-tests/${collective}"
     mkdir -p "${nccl_dir}"
     nccl_command=("${mpirun_launcher}" -n "${mpi_processes}" --map-by ppr:1:node --bind-to none
-      "${SINGULARITY_LAUNCHER}" exec --userns --nv --cleanenv --containall
+      bash -c
+      'json_args=(); if [[ "${OMPI_COMM_WORLD_RANK:?}" -eq 0 ]]; then json_args=(-J /network/result.json); fi; exec "$@" "${json_args[@]}"'
+      bash "${SINGULARITY_LAUNCHER}" exec --userns --nv --cleanenv --containall
       --bind "${nccl_dir}:/network"
       "${RUNTIME_DIR}/sglang.sif" "/opt/nccl-tests/bin/${collective}_perf"
-      -b 8 -e 1G -f 2 -w 5 -n 20 -m 1 -N 1 -d float -c 1 -a 1 -T 300
-      -g "${gpus_per_node}" -J /network/result.json)
+      -b 64 -e 1G -f 2 -w 5 -n 20 -m 1 -N 1 -d float -c 1 -a 1 -T 300
+      -g "${gpus_per_node}")
     run_capture_stage "network_nccl_${collective}" "${nccl_dir}" "${nccl_command[@]}" || true
   done
 

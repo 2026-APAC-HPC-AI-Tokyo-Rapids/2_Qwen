@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from pathlib import Path
 
@@ -38,6 +39,26 @@ def test_imb_truncated_or_inconsistent_capture_is_zero_rows() -> None:
     assert (
         parse_imb_mpi1(complete.replace("# Benchmarking Sendrecv", "# skipped")) == ()
     )
+
+
+def test_imb_accepts_real_detailed_sendrecv_header() -> None:
+    compact = (FIXTURES / "imb-mpi1-complete.txt").read_text()
+    detailed = compact.replace(
+        "#bytes #repetitions t[usec] Mbytes/sec\n0 1000 1.1e-1 0.0\n"
+        "1 1000 2.6e-1 3.1e+0\n# Benchmarking Allreduce",
+        "#bytes #repetitions t_min[usec] t_max[usec] t_avg[usec] Mbytes/sec\n"
+        "0 1000 1.0e-1 3.0e-1 2.0e-1 0.0\n"
+        "1 1000 2.0e-1 4.0e-1 3.0e-1 4.0\n# Benchmarking Allreduce",
+    )
+    rows = parse_imb_mpi1(detailed)
+    sendrecv = [row for row in rows if row.benchmark == "Sendrecv"]
+    assert len(sendrecv) == 2
+    assert (
+        sendrecv[1].time_min_us,
+        sendrecv[1].time_avg_us,
+        sendrecv[1].time_max_us,
+        sendrecv[1].bandwidth_mbytes_per_sec,
+    ) == (Decimal("0.2"), Decimal("0.3"), Decimal("0.4"), Decimal("4.0"))
 
 
 def test_imb_raw_to_relation_round_trip_and_grain() -> None:
@@ -117,6 +138,23 @@ def test_nccl_preserves_numeric_fields_losslessly_as_decimals() -> None:
     assert first.algorithm_bandwidth_gbps == Decimal("0.000064")
     assert first.bus_bandwidth_gbps == Decimal("0.000056")
     assert rows[-1].error_count == 1
+
+
+def test_nccl_rank_zero_writer_uses_closed_external_process_grid() -> None:
+    document = json.loads((FIXTURES / "nccl-all-reduce.json").read_text())
+    document["config"]["ngpus"] = 4
+    document["config"]["devices"] = document["config"]["devices"][:1]
+    document["errors"] = [""]
+    rows = parse_nccl_tests_json(
+        json.dumps(document),
+        run_id=RUN_ID,
+        collective="all_reduce",
+        source_member="source/network/nccl-tests/all_reduce/result.json",
+        expected_mpi_processes=2,
+        expected_gpus_per_process=4,
+    )
+    assert {row.mpi_process_count for row in rows} == {2}
+    assert {row.gpu_count for row in rows} == {8}
 
 
 def test_nccl_partial_truncated_duplicate_or_semantic_mismatch_is_zero_rows() -> None:
