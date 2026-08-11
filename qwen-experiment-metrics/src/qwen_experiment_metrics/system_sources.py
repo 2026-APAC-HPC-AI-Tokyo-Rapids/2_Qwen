@@ -227,12 +227,12 @@ def create_scheduler_accounting(
     argv = [
         "pjstat",
         "--history",
-        "-S",
+        "-s",
         "--choose",
         ",".join(_ACCOUNTING_COLUMNS),
         "--data",
         "--delimiter",
-        "\\t",
+        "\t",
         job_id,
     ]
     value = {
@@ -274,12 +274,12 @@ def validate_scheduler_accounting(
     if not isinstance(argv, list) or argv[:-1] != [
         "pjstat",
         "--history",
-        "-S",
+        "-s",
         "--choose",
         ",".join(_ACCOUNTING_COLUMNS),
         "--data",
         "--delimiter",
-        "\\t",
+        "\t",
     ]:
         raise ValueError("scheduler accounting argv differs")
     outcome = value["outcome"]
@@ -682,13 +682,19 @@ def _parse_accounting_stdout(payload: bytes) -> dict[str, str]:
         text = payload.decode("utf-8")
     except UnicodeDecodeError as error:
         raise ValueError("scheduler accounting is not UTF-8") from error
-    lines = [line for line in text.splitlines() if line]
-    if len(lines) != 1:
-        raise ValueError("scheduler accounting must contain exactly one data row")
-    fields = lines[0].split("\t")
-    if len(fields) != len(_ACCOUNTING_COLUMNS):
+    lines = text.splitlines()
+    if len(lines) != 2:
+        raise ValueError("scheduler accounting must contain one header and data row")
+    header = lines[0].split("\t")
+    fields = lines[1].split("\t")
+    if (
+        len(header) != len(_ACCOUNTING_COLUMNS) + 1
+        or header[0] != "H"
+        or len(fields) != len(_ACCOUNTING_COLUMNS) + 1
+        or fields[0] != ""
+    ):
         raise ValueError("scheduler accounting column count differs")
-    return dict(zip(_ACCOUNTING_COLUMNS, fields, strict=True))
+    return dict(zip(_ACCOUNTING_COLUMNS, fields[1:], strict=True))
 
 
 def _accounting_facts(row: dict[str, str]) -> tuple[Fact, ...]:
@@ -1081,17 +1087,20 @@ def _duration_seconds(value: str) -> Decimal | None:
     if _is_null_lexeme(value):
         return None
     match = re.fullmatch(
-        r"(?:(?P<days>[0-9]+)-)?(?P<hours>[0-9]+):(?P<minutes>[0-5][0-9]):(?P<seconds>[0-5][0-9](?:\.[0-9]+)?)",
+        r"(?:(?P<days>[0-9]+)-)?(?P<hours>[0-9]+):(?P<minutes>[0-5][0-9]):(?P<seconds>[0-5][0-9](?:\.[0-9]+)?)(?: \((?P<total>[0-9]+)\))?",
         value,
     )
     if match is None:
         raise ValueError("invalid scheduler elapsed lexeme")
-    return (
+    elapsed = (
         Decimal(match.group("days") or 0) * 86400
         + Decimal(match.group("hours")) * 3600
         + Decimal(match.group("minutes")) * 60
         + Decimal(match.group("seconds"))
     )
+    if match.group("total") is not None and elapsed != Decimal(match.group("total")):
+        raise ValueError("scheduler elapsed display and total differ")
+    return elapsed
 
 
 def _nullable_int_lexeme(value: str) -> int | None:
@@ -1105,7 +1114,7 @@ def _nullable_int_lexeme(value: str) -> int | None:
 def _memory_bytes(value: str) -> int | None:
     if _is_null_lexeme(value):
         return None
-    match = re.search(r"\(([0-9]+)\s+bytes\)\s*$", value)
+    match = re.search(r"\(([0-9]+)(?:\s+bytes)?\)\s*$", value)
     if match is None:
         raise ValueError("invalid scheduler memory lexeme")
     return int(match.group(1))
@@ -1114,8 +1123,11 @@ def _memory_bytes(value: str) -> int | None:
 def _milliseconds_seconds(value: str) -> Decimal | None:
     if _is_null_lexeme(value):
         return None
+    numeric = value.removesuffix(" ms")
+    if numeric == value:
+        raise ValueError("invalid scheduler CPU-time lexeme")
     try:
-        milliseconds = Decimal(value)
+        milliseconds = Decimal(numeric)
     except Exception as error:
         raise ValueError("invalid scheduler CPU-time lexeme") from error
     if not milliseconds.is_finite() or milliseconds < 0:

@@ -62,7 +62,11 @@ def test_scheduler_accounting_binds_exact_tsv_and_job(
     stdout = scheduler / "accounting.txt"
     stderr = scheduler / "accounting.stderr"
     stdout.write_text(
-        "123\tCOMPLETED\t2026-08-10T00:00:00\t00:01:02\t0\t2\t2\t16\t(4096 bytes)\t12\t3\n",
+        "H\tJOB ID\tSTATE\tJOB START DATE\tELAPSE TIME (USE)\tEXIT CODE\t"
+        "SIGNAL NO\tPJM CODE\tNODE NUM (USE)\tMAX MEMORY SIZE (USE)\t"
+        "USER CPU TIME (USE)\tSYSTEM CPU TIME (USE)\n"
+        "\t123\tEXT\t2026/08/10 09:00:00\t00:01:02 (62)\t0\t-\t0\t2\t"
+        "4.0 KiB (4096)\t12000 ms\t3000 ms\n",
         encoding="utf-8",
     )
     stderr.write_bytes(b"")

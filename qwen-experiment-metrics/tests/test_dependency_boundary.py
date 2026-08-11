@@ -42,12 +42,12 @@ def test_sif_recipe_tests_the_shared_v2_event_emitter() -> None:
 
 def test_genkai_workflow_captures_closed_accounting_source() -> None:
     workflow = (ROOT / ".github/workflows/genkai.yml").read_text(encoding="utf-8")
-    assert "pjstat --history -S" in workflow
+    assert "pjstat --history -s" in workflow
     assert (
         "--choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut"
         in workflow
     )
-    assert "--data --delimiter '\\t'" in workflow
+    assert "--data --delimiter $'\\t'" in workflow
     assert 'source/scheduler/accounting.stderr"' in workflow
     assert '"${metrics_cli}" record-accounting' in workflow
 
