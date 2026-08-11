@@ -49,9 +49,14 @@ def _closed_network_capture(runtime: Path) -> tuple[Path, dict[str, Path]]:
         (directory / "argv.json").write_text(
             json.dumps(
                 [
+                    "mpirun",
+                    "-n",
+                    "2",
+                    "bash",
+                    "json_args=(-J /network/result.json)",
                     f"/opt/nccl-tests/bin/{collective}_perf",
-                    "-J",
-                    "/network/result.json",
+                    "-g",
+                    "1",
                 ]
             )
         )

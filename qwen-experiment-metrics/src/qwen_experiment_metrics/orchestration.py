@@ -59,6 +59,8 @@ def record_network_sources(
             run_id=manifest.run_id,
             collective=collective,
             source_member=source_member,
+            expected_mpi_processes=expected_mpi_processes,
+            expected_gpus_per_process=expected_gpus_per_process,
         )
         if not rows:
             raise ValueError(f"NCCL {collective} projection is empty")
@@ -98,7 +100,10 @@ def record_network_sources(
         Fact("network.nccl_tests.mpi_process_count", expected_mpi_processes),
         Fact("network.nccl_tests.gpus_per_process", expected_gpus_per_process),
         Fact("network.nccl_tests.total_gpu_count", total_gpus),
-        Fact("network.nccl_tests.message_size.min_bytes", 8),
+        Fact(
+            "network.nccl_tests.message_size.min_bytes",
+            min(row.message_bytes for row in nccl_rows),
+        ),
         Fact("network.nccl_tests.message_size.max_bytes", 1 << 30),
         Fact("network.nccl_tests.message_size.factor", 2),
         Fact("network.nccl_tests.warmup_iterations", 5),
@@ -216,9 +221,17 @@ def _validate_network_capture(
         }:
             raise ValueError(f"NCCL {collective} membership is not closed")
         argv = load_json_strict((directory / "argv.json").read_bytes())
+        json_owner_closed = isinstance(argv, list) and (
+            argv[-2:] == ["-J", "/network/result.json"]
+            or any(
+                isinstance(item, str) and "-J /network/result.json" in item
+                for item in argv
+            )
+        )
         if (
             not isinstance(argv, list)
             or f"/opt/nccl-tests/bin/{collective}_perf" not in argv
-            or argv[-2:] != ["-J", "/network/result.json"]
+            or not json_owner_closed
+            or "-g" not in argv
         ):
             raise ValueError(f"NCCL {collective} argv is inconsistent")

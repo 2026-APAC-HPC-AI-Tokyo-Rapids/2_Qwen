@@ -152,13 +152,22 @@ def parse_nccl_tests_json(
     run_id: str,
     collective: str,
     source_member: str,
+    expected_mpi_processes: int | None = None,
+    expected_gpus_per_process: int | None = None,
 ) -> tuple[NcclNetworkResultV2, ...]:
     """Project a complete nccl-tests v3 ``-J`` document, otherwise zero rows."""
 
     try:
         document = load_json_strict(data)
         _validate_binding(run_id, source_member)
-        return _parse_nccl_document(document, run_id, collective, source_member)
+        return _parse_nccl_document(
+            document,
+            run_id,
+            collective,
+            source_member,
+            expected_mpi_processes=expected_mpi_processes,
+            expected_gpus_per_process=expected_gpus_per_process,
+        )
     except (CanonicalizationError, ValueError, InvalidOperation, TypeError):
         return ()
 
@@ -188,11 +197,22 @@ def _parse_imb_section(benchmark: str, lines: list[str]) -> list[ImbResult]:
     process_count: int | None = None
     header: tuple[str, ...] | None = None
     rows: list[ImbResult] = []
-    expected_header = (
-        ("bytes", "repetitions", "t_min[usec]", "t_max[usec]", "t_avg[usec]")
-        if benchmark == "Allreduce"
-        else ("bytes", "repetitions", "t[usec]", "mbytes/sec")
+    compact_header = ("bytes", "repetitions", "t[usec]", "mbytes/sec")
+    reduction_header = (
+        "bytes",
+        "repetitions",
+        "t_min[usec]",
+        "t_max[usec]",
+        "t_avg[usec]",
     )
+    sendrecv_header = (*reduction_header, "mbytes/sec")
+    expected_headers = {
+        "PingPong": (compact_header,),
+        # IMB 2018 emits the detailed header, while newer compatible builds may
+        # emit the compact latency/bandwidth form.
+        "Sendrecv": (sendrecv_header, compact_header),
+        "Allreduce": (reduction_header,),
+    }[benchmark]
     for line in lines[1:]:
         if match := _IMB_PROCESSES.fullmatch(line):
             if process_count is not None:
@@ -202,7 +222,7 @@ def _parse_imb_section(benchmark: str, lines: list[str]) -> list[ImbResult]:
         stripped = line.strip()
         if stripped.startswith("#") and "bytes" in stripped.lower():
             candidate = tuple(token.lstrip("#").lower() for token in stripped.split())
-            if candidate != expected_header or header is not None:
+            if candidate not in expected_headers or header is not None:
                 raise ValueError("unexpected IMB header")
             header = candidate
             continue
@@ -220,7 +240,7 @@ def _parse_imb_section(benchmark: str, lines: list[str]) -> list[ImbResult]:
         iterations = _uint_token(columns["repetitions"])
         if iterations == 0:
             raise ValueError("zero iterations")
-        if benchmark == "Allreduce":
+        if benchmark == "Allreduce" or header == sendrecv_header:
             minimum = _finite_decimal(columns["t_min[usec]"])
             maximum = _finite_decimal(columns["t_max[usec]"])
             average = _finite_decimal(columns["t_avg[usec]"])
@@ -235,7 +255,11 @@ def _parse_imb_section(benchmark: str, lines: list[str]) -> list[ImbResult]:
                     minimum,
                     average,
                     maximum,
-                    None,
+                    (
+                        _finite_decimal(columns["mbytes/sec"])
+                        if benchmark == "Sendrecv"
+                        else None
+                    ),
                 )
             )
         else:
@@ -261,7 +285,13 @@ def _parse_imb_section(benchmark: str, lines: list[str]) -> list[ImbResult]:
 
 
 def _parse_nccl_document(
-    document: Any, run_id: str, collective: str, source_member: str
+    document: Any,
+    run_id: str,
+    collective: str,
+    source_member: str,
+    *,
+    expected_mpi_processes: int | None,
+    expected_gpus_per_process: int | None,
 ) -> tuple[NcclNetworkResultV2, ...]:
     if collective not in _NCCL_COLLECTIVES:
         raise ValueError("unknown collective")
@@ -273,7 +303,9 @@ def _parse_nccl_document(
     _string_list(root["args"])
     _string_list(root["env"])
     _uint(root["nccl_version"], positive=True)
-    if _string_list(root["errors"]):
+    # nccl-tests v3 serializes a successful fixed-size error buffer as either
+    # [] or [""], depending on the build.
+    if any(_string_list(root["errors"])):
         raise ValueError("nccl-tests reported runtime errors")
     summary = _object_with_keys(root["out_of_bounds"], {"count", "okay"}, "summary")
     _uint(summary["count"])
@@ -323,10 +355,28 @@ def _parse_nccl_document(
         _uint(device["device"])
         for name in ("hostname", "device_hex", "device_info"):
             _string(device[name])
-    gpu_count = len(devices)
-    if ranks != set(range(gpu_count)) or gpu_count % (nthreads * ngpus):
-        raise ValueError("inconsistent NCCL device grid")
-    mpi_process_count = gpu_count // (nthreads * ngpus)
+    observed_device_count = len(devices)
+    if ranks != set(range(observed_device_count)):
+        raise ValueError("inconsistent NCCL device ranks")
+    if (expected_mpi_processes is None) != (expected_gpus_per_process is None):
+        raise ValueError("NCCL grid expectations must be supplied together")
+    if expected_mpi_processes is None:
+        if observed_device_count % (nthreads * ngpus):
+            raise ValueError("inconsistent NCCL device grid")
+        gpu_count = observed_device_count
+        mpi_process_count = gpu_count // (nthreads * ngpus)
+    else:
+        assert expected_gpus_per_process is not None
+        if expected_mpi_processes <= 0 or expected_gpus_per_process <= 0:
+            raise ValueError("NCCL grid expectations must be positive")
+        gpu_count = expected_mpi_processes * expected_gpus_per_process
+        mpi_process_count = expected_mpi_processes
+        if nthreads * ngpus != expected_gpus_per_process:
+            raise ValueError("NCCL local GPU grid differs")
+        # nccl-tests v3 may serialize either the full device grid or only the
+        # rank-zero writer identity.  The fixed mpirun/-g argv closes the grid.
+        if observed_device_count not in {1, gpu_count}:
+            raise ValueError("NCCL serialized device membership differs")
 
     results = root["results"]
     if not isinstance(results, list) or not results:
@@ -351,7 +401,8 @@ def _parse_nccl_document(
         if not _is_power_of_two(message_bytes) or not 8 <= message_bytes <= 1 << 30:
             raise ValueError("invalid NCCL result size")
         element_count = _uint(result["count"], positive=True)
-        if element_count * 4 != message_bytes:
+        count_multiplier = ngpus if collective in {"all_gather", "reduce_scatter"} else 1
+        if element_count * 4 * count_multiplier != message_bytes:
             raise ValueError("NCCL float count does not match message size")
         if result["type"] != "float" or result["redop"] != expected_op:
             raise ValueError("NCCL datatype or reduction op mismatch")

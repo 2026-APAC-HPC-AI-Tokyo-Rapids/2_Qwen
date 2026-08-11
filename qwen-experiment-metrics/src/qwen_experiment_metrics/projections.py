@@ -446,7 +446,15 @@ def project_sif_provenance(runtime_dir: Path, run_id: str) -> ProjectionRow:
     artifact = value["sif_artifact"]
     if not isinstance(artifact, dict):
         raise ProjectionError("SIF artifact record is not an object")
-    sif_path = _member_path(runtime_dir, artifact["artifact_relative_path"])
+    relative_sif = artifact["artifact_relative_path"]
+    if not isinstance(relative_sif, str):
+        raise ProjectionError("SIF artifact path is invalid")
+    _safe_member(relative_sif)
+    # The provisioned SIF is intentionally a hardlink-selected archive symlink.
+    # It is not an archived source member; its sidecar digest closes its bytes.
+    sif_path = runtime_dir / Path(*PurePosixPath(relative_sif).parts)
+    if not sif_path.is_file():
+        raise ProjectionError("SIF artifact is not a readable file")
     if _file_digest(sif_path) != artifact["sha256"] or sif_path.stat().st_size != artifact["size_bytes"]:
         raise ProjectionError("SIF artifact lineage does not match sidecar")
     commits = value["source_commits"]
@@ -802,7 +810,28 @@ def project_imb_results(runtime_dir: Path, run_id: str, *, source_member: str = 
 def project_nccl_result(runtime_dir: Path, run_id: str, collective: str) -> tuple[ProjectionRow, ...]:
     source_member = f"source/network/nccl-tests/{collective}/result.json"
     path, member, digest = _source_file(runtime_dir, source_member)
-    results = parse_nccl_tests_json(path.read_bytes(), run_id=run_id, collective=collective, source_member=member)
+    argv_path = path.with_name("argv.json")
+    expected: dict[str, int] = {}
+    if argv_path.is_file():
+        argv = load_json_strict(argv_path.read_bytes())
+        if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
+            raise ProjectionError("NCCL argv is invalid")
+        try:
+            mpi_index = argv.index("-n")
+            gpu_index = argv.index("-g")
+            expected = {
+                "expected_mpi_processes": int(argv[mpi_index + 1]),
+                "expected_gpus_per_process": int(argv[gpu_index + 1]),
+            }
+        except (ValueError, IndexError) as error:
+            raise ProjectionError("NCCL argv does not close its process grid") from error
+    results = parse_nccl_tests_json(
+        path.read_bytes(),
+        run_id=run_id,
+        collective=collective,
+        source_member=member,
+        **expected,
+    )
     return tuple(_nccl_row(row, digest) for row in results)
 
 

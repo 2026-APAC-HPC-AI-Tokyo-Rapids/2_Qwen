@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import signal
 import socket
 import struct
+import subprocess
+import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -142,6 +146,44 @@ def test_local_socket_routes_to_atomic_local_fragment(
     assert len(rows) == 2
     archive = runtime / "source/events/node-0.jsonl"
     assert archive.read_bytes() == payload + b"\n"
+
+
+def test_serve_events_cli_closes_node_archive_on_sigterm(
+    manifest_path: Path, runtime: Path, tmp_path: Path
+) -> None:
+    socket_path = tmp_path / "events.sock"
+    ready = tmp_path / "events.ready"
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "qwen_experiment_metrics.cli",
+            "serve-events",
+            "--manifest",
+            str(manifest_path),
+            "--runtime-dir",
+            str(runtime),
+            "--node-rank",
+            "0",
+            "--socket",
+            str(socket_path),
+            "--ready-file",
+            str(ready),
+        ]
+    )
+    deadline = time.monotonic() + 5
+    while not ready.exists():
+        assert process.poll() is None
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    payload = jcs_bytes(_configuration_event())
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(str(socket_path))
+        client.sendall(struct.pack(">I", len(payload)) + payload)
+    time.sleep(0.1)
+    process.send_signal(signal.SIGTERM)
+    assert process.wait(timeout=5) == 0
+    assert (runtime / "source/events/node-0.jsonl").read_bytes() == payload + b"\n"
 
 
 def test_local_event_archive_rejects_foreign_node(

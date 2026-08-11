@@ -340,7 +340,10 @@ def _record_event(arguments: argparse.Namespace) -> int:
 
 def _serve_events(arguments: argparse.Namespace) -> int:
     recorder = LocalEventFragmentRecorder(
-        arguments.manifest, arguments.runtime_dir, arguments.registry
+        arguments.manifest,
+        arguments.runtime_dir,
+        arguments.registry,
+        node_rank=arguments.node_rank,
     )
     server = UnixEventServer(arguments.socket, recorder)
     previous_handlers = {
