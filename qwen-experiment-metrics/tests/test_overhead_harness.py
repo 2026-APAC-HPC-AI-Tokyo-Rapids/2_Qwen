@@ -30,6 +30,8 @@ def test_overhead_harness_is_alternating_and_gates_primary_time() -> None:
     assert "QWEN_EXPERIMENT_METRICS_BENCH_ARGS_BLOB_OID" in node
     assert "QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID" in node
     assert "QWEN_EXPERIMENT_METRICS_SOURCE_BLOB_OID" not in node
+    assert 'singularity exec "${CHECK_DIR}/sglang.sif"' not in node
+    assert 'control/instrumentation-source-blob-oids.json' in node
     assert "for _ in {1..60}" in node
     assert '[[ ! -s "${completion_file}" ]] || break' in node
 
@@ -43,8 +45,11 @@ def test_overhead_workflow_archives_fixed_evidence_and_has_no_bq_boundary() -> N
     discard = workflow.index("Discard comparison data")
     assert upload < discard
     assert "if: always()" in workflow[upload:discard]
+    assert "offline-throughput-source-blob-oid.txt" in workflow[:upload]
+    assert "server-args-source-blob-oid.txt" in workflow[:upload]
     for member in (
         "comparison-input.json",
+        "instrumentation-source-blob-oids.json",
         "comparison-order.txt",
         "observations.tsv",
         "summary.json",

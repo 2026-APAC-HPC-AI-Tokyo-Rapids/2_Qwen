@@ -106,10 +106,9 @@ metrics_env=(
 )
 metrics_bind=()
 if [[ "${arm}" == on ]]; then
-  bench_args_blob_oid="$(singularity exec "${CHECK_DIR}/sglang.sif" \
-    cat /opt/sglang/offline-throughput-source-blob-oid.txt | tr -d '[:space:]')"
-  server_args_blob_oid="$(singularity exec "${CHECK_DIR}/sglang.sif" \
-    cat /opt/sglang/server-args-source-blob-oid.txt | tr -d '[:space:]')"
+  blob_oids="${CHECK_DIR}/control/instrumentation-source-blob-oids.json"
+  bench_args_blob_oid="$(jq -er '.bench_args | select(test("^[0-9a-f]{40,64}$"))' "${blob_oids}")"
+  server_args_blob_oid="$(jq -er '.server_args | select(test("^[0-9a-f]{40,64}$"))' "${blob_oids}")"
   metrics_env+=(
     --env QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock
     --env QWEN_EXPERIMENT_METRICS_BENCH_ARGS_BLOB_OID="${bench_args_blob_oid}"
