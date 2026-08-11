@@ -164,16 +164,7 @@ if [[ "${run_purpose}" == profile ]]; then
     --output-dir /profile -- "${benchmark[@]}")
 fi
 
-singularity_namespace_args=(--userns)
-if ! "${SINGULARITY_LAUNCHER}" exec --userns sglang.sif true; then
-  # Genkai has alternated between requiring the user-namespace fallback and
-  # rejecting user namespace creation.  Select a working mode before the
-  # benchmark so a namespace-policy change cannot consume the measured run.
-  "${SINGULARITY_LAUNCHER}" exec sglang.sif true
-  singularity_namespace_args=()
-fi
-
-command=("${SINGULARITY_LAUNCHER}" exec "${singularity_namespace_args[@]}" --nv --cleanenv --containall
+singularity_runtime_args=(--nv --cleanenv --containall
   --env HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1,HF_DATASETS_OFFLINE=1
   --env SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm,TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor,TRITON_CACHE_DIR=/jit-cache/triton
   --env QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock
@@ -184,7 +175,18 @@ command=("${SINGULARITY_LAUNCHER}" exec "${singularity_namespace_args[@]}" --nv 
   --env QWEN_EXPERIMENT_METRICS_SOURCE_DIR=/source-output
   "${profile_env_args[@]}"
   "${profile_bind_args[@]}"
-  --bind "${MODEL_PATH}:/model:ro,${DATASET_PATH}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro,${jit_cache}:/jit-cache,${jit_cache}:/root/.cache,${node_metrics_dir}:/metrics,${RUNTIME_DIR}/source:/source-output"
+  --bind "${MODEL_PATH}:/model:ro,${DATASET_PATH}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro,${jit_cache}:/jit-cache,${jit_cache}:/root/.cache,${node_metrics_dir}:/metrics,${RUNTIME_DIR}/source:/source-output")
+singularity_namespace_args=(--userns)
+if ! "${SINGULARITY_LAUNCHER}" exec "${singularity_namespace_args[@]}" "${singularity_runtime_args[@]}" sglang.sif true; then
+  # Genkai has alternated between requiring the user-namespace fallback and
+  # rejecting user namespace creation.  Select a working mode before the
+  # benchmark with the exact namespace-affecting options and binds so a
+  # namespace-policy change cannot consume the measured run.
+  "${SINGULARITY_LAUNCHER}" exec "${singularity_runtime_args[@]}" sglang.sif true
+  singularity_namespace_args=()
+fi
+
+command=("${SINGULARITY_LAUNCHER}" exec "${singularity_namespace_args[@]}" "${singularity_runtime_args[@]}"
   sglang.sif /opt/sglang/venv/bin/python -c
   'import os,sys; p=sys.argv[1]; os.makedirs(os.path.dirname(p),exist_ok=True); f=open(p,"xb"); f.write(b"".join(k+b"\0"+v+b"\0" for k,v in sorted(os.environb.items()))); f.close(); os.execvpe(sys.argv[2],sys.argv[2:],os.environ)'
   "/source-output/environment/sglang-${node_rank}.snapshot" "${sglang_command[@]}")
