@@ -68,7 +68,13 @@ required = false
 
 [[producers]]
 id = "environment"
-instance_pattern = "^environment:(?:job-entry|host-node-[0-9]+|sglang-node-[0-9]+|worker-rank-[0-9]+)$"
+instance_pattern = "^environment:(?:job-entry|runtime)$"
+applicability = ["bench", "profile"]
+required = false
+
+[[producers]]
+id = "runtime-launchers"
+instance_pattern = "^runtime-launchers$"
 applicability = ["bench", "profile"]
 required = false
 
@@ -149,20 +155,6 @@ applicability = ["bench", "profile"]
 required = true
 
 [[facts]]
-id = "instrumentation_bundle_sha256"
-key_pattern = "^run\\.identity\\.instrumentation_bundle_sha256$"
-owner = "runner"
-logical_type = "sha256"
-unit = "none"
-cardinality = "one per run"
-authoritative_source = "control/run-manifest.json instrumentation_bundle_sha256"
-capture_moment = "before submission"
-raw_destination = "run/key/value fact"
-validation = "must equal the persisted manifest instrumentation bundle SHA-256"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
 id = "repository_id"
 key_pattern = "^run\\.identity\\.repository_id$"
 owner = "runner"
@@ -187,62 +179,6 @@ authoritative_source = "control/run-manifest.json source_track.head_commit"
 capture_moment = "before submission"
 raw_destination = "run/key/value fact"
 validation = "full Git OID equal to the persisted source track"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
-id = "source_track_score_reference"
-key_pattern = "^source\\.track\\.score_reference_commit$"
-owner = "runner"
-logical_type = "string"
-unit = "none"
-cardinality = "one per bench run"
-authoritative_source = "control/run-manifest.json source_track.base_commit"
-capture_moment = "before submission"
-raw_destination = "run/key/value fact"
-validation = "full Git OID with score_reference role"
-applicability = ["bench"]
-required = true
-
-[[facts]]
-id = "source_track_profile_base"
-key_pattern = "^source\\.track\\.profile_base_commit$"
-owner = "runner"
-logical_type = "string"
-unit = "none"
-cardinality = "one per profile run"
-authoritative_source = "control/run-manifest.json source_track.base_commit"
-capture_moment = "before submission"
-raw_destination = "run/key/value fact"
-validation = "full Git OID with profile_base role"
-applicability = ["profile"]
-required = true
-
-[[facts]]
-id = "source_track_manifest_sha256"
-key_pattern = "^source\\.track\\.manifest_sha256$"
-owner = "runner"
-logical_type = "sha256"
-unit = "none"
-cardinality = "one per run"
-authoritative_source = "JCS source_track object in control/run-manifest.json"
-capture_moment = "before submission"
-raw_destination = "run/key/value fact"
-validation = "SHA-256 of canonical source_track record"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
-id = "source_track_source_sha256"
-key_pattern = "^source\\.track\\.source_sha256$"
-owner = "runner"
-logical_type = "sha256"
-unit = "none"
-cardinality = "one per run"
-authoritative_source = "control/run-manifest.json bytes"
-capture_moment = "before submission"
-raw_destination = "run/key/value fact"
-validation = "SHA-256 of canonical persisted run manifest source"
 applicability = ["bench", "profile"]
 required = true
 
@@ -275,44 +211,58 @@ applicability = ["bench", "profile"]
 required = true
 
 [[facts]]
-id = "sif_manifest_sha256"
-key_pattern = "^artifact\\.sif_manifest_sha256$"
+id = "build_provenance"
+key_pattern = "^build\\.provenance$"
 owner = "provenance"
-logical_type = "sha256"
+logical_type = "jcs"
 unit = "none"
 cardinality = "one per run"
-authoritative_source = "source/sif-sidecar.json"
+authoritative_source = "validated SIF sidecar and selected archive run"
 capture_moment = "after provision validation"
 raw_destination = "run/key/value fact"
-validation = "SHA-256 of validated closed SIF sidecar"
+validation = "SIF bytes, digest-pinned base OCI, toolchain output, and nccl-tests commit"
 applicability = ["bench", "profile"]
 required = true
 
 [[facts]]
-id = "model_manifest_sha256"
-key_pattern = "^artifact\\.model\\.manifest_sha256$"
+id = "model_input"
+key_pattern = "^input\\.model$"
 owner = "provenance"
-logical_type = "sha256"
+logical_type = "jcs"
 unit = "none"
 cardinality = "one per run"
 authoritative_source = "source/model-manifest.json"
 capture_moment = "after provision validation"
 raw_destination = "run/key/value fact"
-validation = "SHA-256 of validated closed model manifest"
+validation = "validated repository revision and small model metadata members"
 applicability = ["bench", "profile"]
 required = true
 
 [[facts]]
-id = "dataset_manifest_sha256"
-key_pattern = "^artifact\\.dataset\\.manifest_sha256$"
+id = "dataset_input"
+key_pattern = "^input\\.dataset$"
 owner = "provenance"
-logical_type = "sha256"
+logical_type = "jcs"
 unit = "none"
 cardinality = "one per run"
 authoritative_source = "source/dataset-manifest.json"
 capture_moment = "after provision validation"
 raw_destination = "run/key/value fact"
-validation = "SHA-256 of validated closed dataset manifest"
+validation = "validated repository revision, path, byte size, and SHA-256"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "qwen_sif_build_commit"
+key_pattern = "^source\\.sif_build\\.qwen_commit$"
+owner = "provenance"
+logical_type = "string"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "source/sif-sidecar.json source_commits sif_build_definition"
+capture_moment = "after provision validation"
+raw_destination = "run/key/value fact"
+validation = "algorithm-constrained full Git OID"
 applicability = ["bench", "profile"]
 required = true
 
@@ -724,15 +674,29 @@ required = false
 
 [[facts]]
 id = "environment_value_base64"
-key_pattern = '^environment\.(?:job_entry|host_exec_node\.[0-9]+|sglang_launch_node\.[0-9]+|worker_global_rank\.[0-9]+)\.(?:[A-Za-z0-9_-]+|encoded\.[0-9a-f]+)$'
+key_pattern = '^environment\.(?:job_entry|runtime)\.(?:[A-Za-z0-9_-]+|encoded\.[0-9a-f]+)$'
 owner = "environment"
 logical_type = "string"
 unit = "RFC4648 base64"
-cardinality = "one per environment name per scope instance"
+cardinality = "one per environment name at job entry and common runtime"
 authoritative_source = "name-NUL-value-NUL environment snapshot"
 capture_moment = "at the named execution scope boundary"
 raw_destination = "source/environment/<scope>.snapshot"
 validation = "byte-sorted unique names and NUL-terminated pairs"
+applicability = ["bench", "profile"]
+required = true
+
+[[facts]]
+id = "runtime_launchers"
+key_pattern = "^runtime\\.launchers$"
+owner = "runtime-launchers"
+logical_type = "jcs"
+unit = "none"
+cardinality = "one per run"
+authoritative_source = "source/runtime-launchers.json and version command outputs"
+capture_moment = "after runtime modules are loaded"
+raw_destination = "run/key/value fact"
+validation = "resolved executable hashes and successful version commands"
 applicability = ["bench", "profile"]
 required = true
 

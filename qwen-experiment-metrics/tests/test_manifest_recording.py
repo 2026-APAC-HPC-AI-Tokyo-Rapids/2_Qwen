@@ -78,11 +78,7 @@ def test_recorder_only_publishes_normal_close(
         "run.identity.run_id",
         "run.identity.run_purpose",
         "run.identity.repository_id",
-        "run.identity.instrumentation_bundle_sha256",
         "source.track.head_commit",
-        "source.track.manifest_sha256",
-        "source.track.score_reference_commit",
-        "source.track.source_sha256",
     }
 
 

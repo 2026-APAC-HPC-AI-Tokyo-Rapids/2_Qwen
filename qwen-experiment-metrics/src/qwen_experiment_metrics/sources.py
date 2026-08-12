@@ -306,11 +306,11 @@ def validate_dataset_manifest(path: Path) -> dict[str, object]:
 def input_manifest_facts(runtime_dir: Path) -> tuple[Fact, ...]:
     model = runtime_dir / "source/model-manifest.json"
     dataset = runtime_dir / "source/dataset-manifest.json"
-    validate_model_manifest(model)
-    validate_dataset_manifest(dataset)
+    model_value = validate_model_manifest(model)
+    dataset_value = validate_dataset_manifest(dataset)
     return (
-        Fact("artifact.model.manifest_sha256", _sha256(model)),
-        Fact("artifact.dataset.manifest_sha256", _sha256(dataset)),
+        Fact("input.model", model_value),
+        Fact("input.dataset", dataset_value),
     )
 
 
@@ -667,6 +667,30 @@ def validate_runtime_launchers(path: Path, runtime_dir: Path) -> dict[str, objec
     return value
 
 
+def runtime_launcher_facts(path: Path, runtime_dir: Path) -> tuple[Fact, ...]:
+    value = validate_runtime_launchers(path, runtime_dir)
+    versions = []
+    for row in value["versions"]:
+        stdout = runtime_dir / row["stdout"]["path"]
+        stderr = runtime_dir / row["stderr"]["path"]
+        versions.append(
+            {
+                "role": row["role"],
+                "stdout": stdout.read_text(encoding="utf-8").strip(),
+                "stderr": stderr.read_text(encoding="utf-8").strip(),
+            }
+        )
+    return (
+        Fact(
+            "runtime.launchers",
+            {
+                "executables": value["executables"],
+                "versions": versions,
+            },
+        ),
+    )
+
+
 def provenance_facts(runtime_dir: Path) -> tuple[Fact, ...]:
     sidecar = runtime_dir / "source/sif-sidecar.json"
     value = validate_sif_sidecar(sidecar, member_root=runtime_dir / "source")
@@ -678,11 +702,50 @@ def provenance_facts(runtime_dir: Path) -> tuple[Fact, ...]:
     ):
         raise ValueError("provisioned SIF does not match its sidecar")
     source_commits = value["source_commits"]
+    qwen = next(
+        row for row in source_commits if row["commit_role"] == "sif_build_definition"
+    )
     sglang = next(
         row for row in source_commits if row["commit_role"] == "sglang_source"
     )
+    source_run_number = (runtime_dir / "sif-source-run.txt").read_text(
+        encoding="utf-8"
+    ).strip()
+    if re.fullmatch(r"[0-9]+", source_run_number) is None:
+        raise ValueError("SIF source workflow run number is invalid")
+    source_run = int(source_run_number)
+    toolchain = []
+    for row in value["toolchain_commands"]:
+        stdout = runtime_dir / "source" / row["stdout"]["path"]
+        stderr = runtime_dir / "source" / row["stderr"]["path"]
+        toolchain.append(
+            {
+                "role": row["role"],
+                "stdout": stdout.read_text(encoding="utf-8").strip(),
+                "stderr": stderr.read_text(encoding="utf-8").strip(),
+            }
+        )
+    base_oci = value["base_oci"]
     return (
-        Fact("artifact.sif_manifest_sha256", _sha256(sidecar)),
+        Fact(
+            "build.provenance",
+            {
+                "sif": {
+                    "sha256": value["sif_artifact"]["sha256"],
+                    "size_bytes": value["sif_artifact"]["size_bytes"],
+                    "source_workflow_run_number": source_run,
+                },
+                "base_oci": {
+                    "reference": base_oci["reference"],
+                    "manifest_digest": base_oci["manifest_digest"],
+                    "config_digest": base_oci["config_digest"],
+                    "layer_digests": base_oci["layer_digests"],
+                },
+                "toolchain": toolchain,
+                "nccl_tests_commit": value["nccl_tests"]["commit"],
+            },
+        ),
+        Fact("source.sif_build.qwen_commit", qwen["oid"]),
         Fact("source.sglang.commit", sglang["oid"]),
         *input_manifest_facts(runtime_dir),
     )

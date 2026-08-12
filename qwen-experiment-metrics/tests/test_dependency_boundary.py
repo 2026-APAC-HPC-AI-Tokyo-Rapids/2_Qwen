@@ -54,10 +54,21 @@ def test_genkai_workflow_captures_closed_accounting_source() -> None:
     assert '"${metrics_cli}" record-accounting' in workflow
 
 
+def test_all_workflow_jobs_use_the_five_day_timeout() -> None:
+    workflows = ROOT / ".github/workflows"
+    expected_jobs = {
+        "genkai.yml": 5,
+        "measure-nccl-tests-build.yml": 1,
+        "v2-overhead-check.yml": 1,
+    }
+    for name, job_count in expected_jobs.items():
+        workflow = (workflows / name).read_text(encoding="utf-8")
+        assert workflow.count("timeout-minutes: 7200") == job_count
+
+
 def test_node_launcher_connects_closed_sources_and_fixed_profile_overlay() -> None:
     script = (ROOT / "scripts/run-qwen35-node.sh").read_text(encoding="utf-8")
     for command in (
-        "record-environment",
         "capture-hardware",
         "capture-topology",
         "qwen_experiment_metrics.node_agent",
@@ -77,6 +88,26 @@ def test_node_launcher_connects_closed_sources_and_fixed_profile_overlay() -> No
     assert "SGLANG_PROFILE_ID=qwen-profile" in script
     assert "qwen-profile-wrapper.py:/qwen-profile-wrapper.py:ro" in script
     assert "QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID" in script
+    assert "record-environment" not in script
+    assert "worker_snapshot" not in script
+    assert "sglang_snapshot" not in script
+
+
+def test_pjm_launcher_records_only_common_environments_and_launchers() -> None:
+    script = (ROOT / "scripts/run-qwen35.pjm").read_text(encoding="utf-8")
+    assert script.count("record-environment") == 2
+    assert "--scope job-entry" in script
+    assert "--scope runtime" in script
+    assert "capture-runtime-launchers" in script
+    assert script.index("capture-runtime-launchers") < script.index(
+        '--manifest "${manifest}"', script.index("capture-runtime-launchers")
+    )
+
+    patch = (
+        ROOT / "patches/sglang/0006-remove-worker-environment-snapshots.patch"
+    ).read_text(encoding="utf-8")
+    assert "-        capture_worker_environment(global_rank)" in patch
+    assert "-def capture_worker_environment(global_rank):" in patch
 
 
 def test_sglang_patches_close_primary_config_worker_and_profile_sources() -> None:
