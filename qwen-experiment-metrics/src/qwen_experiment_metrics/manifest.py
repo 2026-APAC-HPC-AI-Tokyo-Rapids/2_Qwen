@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import secrets
@@ -179,31 +178,11 @@ def validate_manifest(manifest: RunManifest) -> None:
 
 
 def manifest_facts(manifest: RunManifest) -> tuple[Fact, ...]:
-    source_track_bytes = jcs_bytes(manifest.source_track.to_object())
-    manifest_bytes = jcs_bytes(manifest.to_object()) + b"\n"
-    base_key = (
-        "source.track.score_reference_commit"
-        if manifest.run_purpose == "bench"
-        else "source.track.profile_base_commit"
-    )
     return (
         Fact("run.identity.run_id", manifest.run_id),
         Fact("run.identity.run_purpose", manifest.run_purpose),
         Fact("run.identity.repository_id", manifest.repository_id),
-        Fact(
-            "run.identity.instrumentation_bundle_sha256",
-            manifest.instrumentation_bundle_sha256,
-        ),
         Fact("source.track.head_commit", manifest.source_track.head_commit),
-        Fact(base_key, manifest.source_track.base_commit),
-        Fact(
-            "source.track.manifest_sha256",
-            hashlib.sha256(source_track_bytes).hexdigest(),
-        ),
-        Fact(
-            "source.track.source_sha256",
-            hashlib.sha256(manifest_bytes).hexdigest(),
-        ),
     )
 
 

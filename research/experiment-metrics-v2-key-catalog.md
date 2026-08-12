@@ -20,8 +20,7 @@ raw relation、consumer column の名前が異なる箇所では、検索・比�
 
 | キー | 意味 | 収集方法（コマンド／関数） | 適用・種別 |
 |---|---|---|---|
-| `run.identity.{run_id,run_purpose,repository_id}` | run ID、用途、repository | runner が Git 管理の run manifest を読み `identity_projection/v1` で投影 | bench/profile、raw |
-| `run.identity.instrumentation_bundle_sha256` | 適用 instrumentation bundle identity | run manifest と bundle manifest を照合 | bench/profile、raw |
+| `run.identity.{run_id,run_purpose,repository_id}` | run ID、用途、repository | runner が Git 管理の run manifest から直接送信 | bench/profile、raw |
 | `run.{started_at,finished_at}` | run の開始・終了 UTC 時刻 | supervisor wall clock | 全 variant、raw |
 | `run.elapsed_sec` | supervisor 範囲の経過秒 | monotonic clock の開始・終了差 | 全 variant、raw |
 | `run.exit_code` | run 終了コード | supervisor の pipeline outcome | 全 variant、raw |
@@ -30,13 +29,13 @@ raw relation、consumer column の名前が異なる箇所では、検索・比�
 | `run.stage.<name>.termination.{kind,code,signal}` | stage の `exit` / `signal` / `spawn_error` | `StageRunner` の spawn/wait closed union。非該当 code/signal は absent | 対象 stage、raw |
 | `perf.stage.<name>.wall_time_sec` | stage 外側 wall time | spawn 直前から child wait 完了までを monotonic 計時 | 対象 stage、raw |
 | `collection_complete` | 必要なproducer/fileの完全性 | finalizer が実装上のexpected setとobserved setを比較 | bench/profile、raw bool。理由別fieldは作らない |
-| `artifact.sif_manifest_sha256` | SIF provenance manifest identity | SIF sidecar と参照 raw file を canonical hash | 全 variant、raw lineage |
-| `artifact.model.manifest_sha256` | model member manifest identity | local model の exact member manifest を JCS SHA-256 | bench/profile、raw |
-| `artifact.dataset.manifest_sha256` | dataset member manifest identity | workload source dataset manifest を JCS SHA-256 | bench/profile、raw |
-| `artifact.instrumentation_bundle_sha256` | instrumentation bundle identity | packager が bundle manifest を SHA-256 | bench/profile、raw lineage |
+| `build.provenance` | SIF本体、base OCI、toolchain、nccl-testsの来歴 | 検証済みSIF sidecarと実ファイルからJSONを直接送信 | 全 variant、raw provenance |
+| `input.model` | model repository/revisionとsmall metadata | 検証済みmodel manifestをJSONで直接送信。weight全体の再hashはしない | bench/profile、raw |
+| `input.dataset` | dataset repository/revision/path/size/SHA | 検証済みdataset manifestをJSONで直接送信 | bench/profile、raw |
 | `cache.node.<node>.input_manifest_sha256` | staging 後 node cache 内容の semantic identity | node wrapper が relative path byte 順に file/symlink member manifest を作り、subject binding を除いて JCS SHA-256 | bench/profile、raw lineage |
-| `source.track.{head_commit,score_reference_commit,profile_base_commit,manifest_sha256,source_sha256}` | source track の Git provenance、canonical record hash、包含 manifest lineage hash | subject manifest の role 付き commit を Git object と照合し projection | variant 依存、raw projection。2つの hash を統合しない |
-| `source.sglang.commit` | SIF に含まれる SGLang source commit | SIF sidecar の role=`sglang_source` commit を Git object と照合して projection | 全 run、raw provenance |
+| `source.track.head_commit` | 実行したQwen commit | run manifestのcommitをGit objectと照合して直接送信 | 全 run、raw provenance |
+| `source.sif_build.qwen_commit` | 再利用SIFを構築したQwen commit | SIF sidecar の role=`sif_build_definition` commit | 全 run、raw provenance |
+| `source.sglang.commit` | SIF に含まれるSGLang source commit | SIF sidecar の role=`sglang_source` commit | 全 run、raw provenance |
 
 `<name>` の stage 集合は少なくとも node launch、engine、benchmark、artifact finalize を含み、
 profile では warmup/measured generation、GPU sampler、profile hardware、profiler capture を追加する。
@@ -60,10 +59,9 @@ generation成功後は`network_imb_mpi1`、`network_nccl_all_reduce`、`network_
 | `scheduler.accounting.{ec,sn,pc,nnumu}.{lexeme,value}` | exit、signal/status、PJM code、node 数 | 同 parser | 同上、raw nullable numeric |
 | `scheduler.accounting.mmszu.{lexeme,bytes}` | 最大 RSS | 同 parser、括弧内 bytes を parse | 同上、raw nullable numeric |
 | `scheduler.accounting.{uctmut,sctmut}.{lexeme,seconds}` | user/system CPU time | 同 parser、millisecond を秒へ変換 | 同上、raw nullable numeric |
-| `env.job_entry.<escaped_name>` | job-entry 環境 | name/value を byte-exact snapshot、name byte 順、value は Base64 | bench/profile、raw dynamic family |
-| `env.host.node.<node>.<escaped_name>` | host executor node 環境 | node wrapper の full snapshot | 全 run、raw dynamic family |
-| `sglang.env.node.<node>.<escaped_name>` | SGLang launch 時 node 環境 | SGLang launch 直前の full snapshot | bench/profile、raw dynamic family |
-| `sglang.worker.env.rank.<rank>.<escaped_name>` | worker global rank の実効環境 | `worker_ready` producer が rank scope snapshot | bench/profile、raw dynamic family |
+| `environment.job_entry.<escaped_name>` | job-entry共通環境 | name/valueをbyte-exact snapshot、name byte順、valueはBase64 | bench/profile、raw dynamic family |
+| `environment.runtime.<escaped_name>` | module適用後の共通runtime環境 | `mpirun`前にrunner processから一度だけsnapshot | bench/profile、raw dynamic family |
+| `runtime.launchers` | 実使用MPI/Singularity launcher | 解決済みpath、realpath、size、SHA、version出力をJSONで直接送信 | bench/profile、raw provenance |
 
 ## 3. SGLang configuration、worker placement、process lifecycle
 

@@ -112,17 +112,15 @@ def parser() -> argparse.ArgumentParser:
     cache.add_argument("--cache-root", type=Path, required=True)
 
     launchers = commands.add_parser("capture-runtime-launchers")
-    launchers.add_argument("--runtime-dir", type=Path, required=True)
+    _common_runtime_arguments(launchers)
 
     environment = commands.add_parser("record-environment")
     _common_runtime_arguments(environment)
     environment.add_argument(
         "--scope",
-        choices=("job-entry", "host-node", "sglang-node", "worker-rank"),
+        choices=("job-entry", "runtime"),
         required=True,
     )
-    environment.add_argument("--index", type=int)
-    environment.add_argument("--source", type=Path)
 
     run_start = commands.add_parser("start-run-lifecycle")
     _common_runtime_arguments(run_start)
@@ -553,9 +551,17 @@ def _record_cache(arguments: argparse.Namespace) -> int:
 
 
 def _capture_runtime_launchers(arguments: argparse.Namespace) -> int:
-    from .sources import capture_runtime_launchers
+    from .sources import capture_runtime_launchers, runtime_launcher_facts
 
-    print(str(capture_runtime_launchers(arguments.runtime_dir)))
+    source = capture_runtime_launchers(arguments.runtime_dir)
+    with Recorder.open(
+        arguments.manifest,
+        arguments.registry,
+        "runtime-launchers",
+        arguments.runtime_dir,
+    ) as recorder:
+        recorder.record_many(runtime_launcher_facts(source, arguments.runtime_dir))
+    print(str(source))
     return 0
 
 
@@ -563,36 +569,14 @@ def _record_environment(arguments: argparse.Namespace) -> int:
     from .system_sources import (
         capture_environment_snapshot,
         environment_facts,
-        validate_environment_snapshot,
     )
 
     scope = arguments.scope
-    if scope == "job-entry":
-        if arguments.index is not None:
-            raise ValueError("job-entry environment has no index")
-        producer = "environment:job-entry"
-        relative = "source/environment/job-entry.snapshot"
-        prefix = "environment.job_entry"
-    else:
-        if arguments.index is None or arguments.index < 0:
-            raise ValueError("indexed environment scope requires nonnegative --index")
-        stem = {"host-node": "host", "sglang-node": "sglang", "worker-rank": "worker"}[
-            scope
-        ]
-        producer = f"environment:{scope}-{arguments.index}"
-        relative = f"source/environment/{stem}-{arguments.index}.snapshot"
-        prefix = {
-            "host-node": "environment.host_exec_node",
-            "sglang-node": "environment.sglang_launch_node",
-            "worker-rank": "environment.worker_global_rank",
-        }[scope] + f".{arguments.index}"
+    producer = f"environment:{scope}"
+    relative = f"source/environment/{scope}.snapshot"
+    prefix = f"environment.{scope.replace('-', '_')}"
     destination = arguments.runtime_dir / relative
-    if arguments.source is None:
-        capture_environment_snapshot(destination)
-    else:
-        if arguments.source.resolve() != destination.resolve():
-            raise ValueError("environment source must use its canonical runtime path")
-        validate_environment_snapshot(destination)
+    capture_environment_snapshot(destination)
     with Recorder.open(
         arguments.manifest, arguments.registry, producer, arguments.runtime_dir
     ) as recorder:

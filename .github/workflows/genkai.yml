@@ -39,6 +39,7 @@ jobs:
   select-sif:
     name: Select SGLang SIF
     runs-on: [self-hosted, genkai]
+    timeout-minutes: 7200
 
     outputs:
       action: ${{ steps.select.outputs.action }}
@@ -113,6 +114,7 @@ jobs:
     needs: select-sif
     if: needs.select-sif.outputs.action == 'reuse'
     runs-on: [self-hosted, genkai]
+    timeout-minutes: 7200
 
     steps:
       - name: Hardlink the selected SIF
@@ -127,6 +129,7 @@ jobs:
     needs: select-sif
     if: needs.select-sif.outputs.action == 'build'
     runs-on: [self-hosted, genkai]
+    timeout-minutes: 7200
 
     concurrency:
       group: sglang-sif-build-dev-shm
@@ -169,6 +172,7 @@ jobs:
       ((needs.select-sif.outputs.action == 'reuse' && needs.reuse-sif.result == 'success') ||
        (needs.select-sif.outputs.action == 'build' && needs.build-sif.result == 'success'))
     runs-on: [self-hosted, genkai]
+    timeout-minutes: 7200
 
     env:
       SIF_SOURCE_RUN_NUMBER: ${{ needs.select-sif.outputs.source_run_number }}

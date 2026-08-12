@@ -67,11 +67,6 @@ flock -s "${jit_lock_fd}" rsync -a -- "${HOME}/.cache/sglang-jit/" "${jit_cache}
   --runtime-dir "${RUNTIME_DIR}" \
   --node-rank "${node_rank}" \
   --cache-root "${jit_cache}"
-"${metrics_cli}" record-environment \
-  --manifest "${manifest}" \
-  --runtime-dir "${RUNTIME_DIR}" \
-  --scope host-node \
-  --index "${node_rank}"
 "${metrics_cli}" capture-hardware \
   --manifest "${manifest}" \
   --runtime-dir "${RUNTIME_DIR}" \
@@ -187,9 +182,7 @@ if ! "${SINGULARITY_LAUNCHER}" exec "${singularity_runtime_args[@]}" sglang.sif 
 fi
 
 command=("${SINGULARITY_LAUNCHER}" exec "${singularity_namespace_args[@]}" "${singularity_runtime_args[@]}"
-  sglang.sif /opt/sglang/venv/bin/python -c
-  'import os,sys; p=sys.argv[1]; os.makedirs(os.path.dirname(p),exist_ok=True); f=open(p,"xb"); f.write(b"".join(k+b"\0"+v+b"\0" for k,v in sorted(os.environb.items()))); f.close(); os.execvpe(sys.argv[2],sys.argv[2:],os.environ)'
-  "/source-output/environment/sglang-${node_rank}.snapshot" "${sglang_command[@]}")
+  sglang.sif "${sglang_command[@]}")
 
 argv_dir="${node_metrics_dir}/argv"
 mkdir -p "${argv_dir}"
@@ -243,27 +236,6 @@ if [[ "${run_purpose}" == profile ]]; then
     --node-rank "${node_rank}"
 fi
 
-sglang_snapshot="${RUNTIME_DIR}/source/environment/sglang-${node_rank}.snapshot"
-if [[ -s "${sglang_snapshot}" ]]; then
-  "${metrics_cli}" record-environment \
-    --manifest "${manifest}" \
-    --runtime-dir "${RUNTIME_DIR}" \
-    --scope sglang-node \
-    --index "${node_rank}" \
-    --source "${sglang_snapshot}"
-fi
-for ((local_rank=0; local_rank<gpus_per_node; local_rank++)); do
-  global_rank=$(( node_rank * gpus_per_node + local_rank ))
-  worker_snapshot="${RUNTIME_DIR}/source/environment/worker-${global_rank}.snapshot"
-  if [[ -s "${worker_snapshot}" ]]; then
-    "${metrics_cli}" record-environment \
-      --manifest "${manifest}" \
-      --runtime-dir "${RUNTIME_DIR}" \
-      --scope worker-rank \
-      --index "${global_rank}" \
-      --source "${worker_snapshot}"
-  fi
-done
 if [[ "${node_rank}" -eq 0 && -s "${RUNTIME_DIR}/source/workload-warmup.json" ]]; then
   "${metrics_cli}" record-workload \
     --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" \
