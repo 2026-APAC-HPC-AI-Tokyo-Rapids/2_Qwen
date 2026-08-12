@@ -34,6 +34,8 @@ def test_overhead_harness_is_alternating_and_gates_primary_time() -> None:
     assert "qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" in node
     assert "serve-events" in node
     assert "producer-finalize-wall-sec-node-" in node
+    assert "--seed 42" in node
+    assert "--random-seed 42" in node
 
 
 def test_overhead_workflow_archives_direct_send_evidence_without_credentials() -> None:
