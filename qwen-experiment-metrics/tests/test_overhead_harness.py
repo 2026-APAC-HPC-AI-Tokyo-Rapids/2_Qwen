@@ -35,7 +35,9 @@ def test_overhead_harness_is_alternating_and_gates_primary_time() -> None:
     assert "serve-events" in node
     assert "producer-finalize-wall-sec-node-" in node
     assert "--seed 42" in node
-    assert "--random-seed 42" in node
+    assert "--random-seed" not in node
+    assert 'ordered_output_identity_required:false' in pjm
+    assert 'test "${identity}"' not in pjm
 
 
 def test_overhead_workflow_archives_direct_send_evidence_without_credentials() -> None:
