@@ -106,7 +106,6 @@ benchmark=(/opt/sglang/venv/bin/python -m sglang.benchmark.offline_throughput
   --sharegpt-output-len 256
   --sharegpt-context-len 262144
   --seed 42
-  --random-seed 42
   --mem-fraction-static 0.85)
 
 metrics_env=(

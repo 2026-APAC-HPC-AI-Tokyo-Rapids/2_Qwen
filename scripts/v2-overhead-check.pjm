@@ -52,9 +52,9 @@ for trial in "${!arms[@]}"; do
   run_arm "${trial}" "${arms[trial]}"
 done
 
-reference_identity=""
 reference_counts=""
 reference_workload_identity=""
+ordered_output_hashes=()
 : >"${CHECK_DIR}/observations.tsv"
 for trial in "${!arms[@]}"; do
   arm="${arms[trial]}"
@@ -69,17 +69,16 @@ for trial in "${!arms[@]}"; do
      (.ordered_output_token_ids_sha256 | strings | test("^[0-9a-f]{64}$"))' \
     "${result}" >/dev/null
   identity="$(jq -er '.ordered_output_token_ids_sha256' "${result}")"
+  ordered_output_hashes+=("${identity}")
   counts="$(jq -c '[.returned_count,.error_count,.observed_input_tokens,.observed_output_tokens]' "${result}")"
   workload_identity="$({
     sha256sum "${trial_dir}/source/workload-warmup.json" | awk '{ print $1 }'
     sha256sum "${trial_dir}/source/workload-measured.json" | awk '{ print $1 }'
   } | sha256sum | awk '{ print $1 }')"
-  if [[ -z "${reference_identity}" ]]; then
-    reference_identity="${identity}"
+  if [[ -z "${reference_counts}" ]]; then
     reference_counts="${counts}"
     reference_workload_identity="${workload_identity}"
   else
-    test "${identity}" = "${reference_identity}"
     test "${counts}" = "${reference_counts}"
     test "${workload_identity}" = "${reference_workload_identity}"
   fi
@@ -148,6 +147,10 @@ read -r off_generation_mean on_generation_mean generation_ratio \
       }' "${CHECK_DIR}/observations.tsv"
   )
 
+ordered_output_hashes_json="$(
+  printf '%s\n' "${ordered_output_hashes[@]}" | jq -Rsc 'split("\n")[:-1]'
+)"
+
 jq -n \
   --arg off_generation_wall_sec_mean "${off_generation_mean}" \
   --arg on_generation_wall_sec_mean "${on_generation_mean}" \
@@ -159,10 +162,10 @@ jq -n \
   --arg on_throughput_tokens_per_sec_mean "${on_throughput_mean}" \
   --arg on_over_off_throughput_ratio "${throughput_ratio}" \
   --arg on_producer_finalize_wall_sec_mean "${on_producer_finalize_mean}" \
-  --arg ordered_output_token_ids_sha256 "${reference_identity}" \
+  --argjson ordered_output_token_ids_sha256_by_trial "${ordered_output_hashes_json}" \
   --arg workload_identity_sha256 "${reference_workload_identity}" \
   '{
-    schema_version:"qwen-v2-overhead-summary/v1",
+    schema_version:"qwen-v2-overhead-summary/v2",
     order:["off","on","off","on"],
     repeats_per_arm:2,
     differential_under_test:"v2 event collection, atomic fragments, and direct BigQuery send",
@@ -179,8 +182,9 @@ jq -n \
     on_throughput_tokens_per_sec_mean:$on_throughput_tokens_per_sec_mean,
     on_over_off_throughput_ratio:$on_over_off_throughput_ratio,
     on_producer_finalize_wall_sec_mean:$on_producer_finalize_wall_sec_mean,
-    ordered_output_identity_equal:true,
-    ordered_output_token_ids_sha256:$ordered_output_token_ids_sha256,
+    ordered_output_identity_required:false,
+    ordered_output_identity_equal:(($ordered_output_token_ids_sha256_by_trial | unique | length) == 1),
+    ordered_output_token_ids_sha256_by_trial:$ordered_output_token_ids_sha256_by_trial,
     workload_identity_equal:true,
     workload_identity_sha256:$workload_identity_sha256,
     gate_passed:(($on_over_off_generation_ratio | tonumber) <= 1.05)
