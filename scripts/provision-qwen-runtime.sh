@@ -38,7 +38,7 @@ cp -a --no-preserve=ownership,xattr "${GITHUB_WORKSPACE}/qwen-experiment-metrics
 cp -a --no-preserve=ownership,xattr "${ENROOT_SYSCONF_PATH}/." "${runtime_dir}/enroot-system/"
 nvidia_hook="${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
 test -x "${nvidia_hook}"
-sed -i 's|--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)|--ldconfig=/sbin/ldconfig|' "${nvidia_hook}"
+sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${nvidia_hook}"
 grep -Fq -- '--ldconfig=/sbin/ldconfig' "${nvidia_hook}"
 if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh" ]]; then chmod -x "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh"; fi
 uv sync --project "${runtime_dir}/qwen-experiment-metrics" --frozen --no-dev --extra publish
