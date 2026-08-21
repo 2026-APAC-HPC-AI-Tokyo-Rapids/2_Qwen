@@ -16,7 +16,8 @@ def test_container_build_uses_all_rootless_tools() -> None:
     assert "STORAGE_DRIVER=vfs" in script
     assert "STORAGE_OPTS=vfs.ignore_chown_errors=true" in script
     assert 'storage_root="/var/tmp/apac-qwen-buildah-$(id -u)"' in script
-    assert "--layers --squash" in script
+    assert "--layers" in script
+    assert "--squash" not in script
     assert "--layers=false" not in script
     assert "rmi --all" not in script
     assert 'test_container="$(buildah ' in script
