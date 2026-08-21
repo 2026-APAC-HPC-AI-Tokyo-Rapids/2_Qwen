@@ -21,6 +21,7 @@ sidecar_archive="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.jso
 archive_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.sqsh.${GITHUB_RUN_ATTEMPT}.tmp"
 sidecar_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.container-sidecar.json.${GITHUB_RUN_ATTEMPT}.tmp"
 storage_root="/var/tmp/apac-qwen-buildah-$(id -u)"
+squashfs_work="/var/tmp/apac-qwen-sglang-$(id -u)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sqsh"
 run_root="${BUILD_DIR}/runroot"
 context="${BUILD_DIR}/context"
 source_dir="${BUILD_DIR}/sglang-source"
@@ -32,7 +33,7 @@ cleanup() {
   status=$?
   trap - EXIT INT TERM
   buildah --root "${storage_root}" --runroot "${run_root}" rm --all >/dev/null 2>&1 || true
-  rm -f -- "${archive_temporary}" "${sidecar_temporary}"
+  rm -f -- "${archive_temporary}" "${sidecar_temporary}" "${squashfs_work}"
   exit "${status}"
 }
 trap cleanup EXIT
@@ -40,6 +41,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 rm -rf -- "${BUILD_DIR:?}"
+rm -f -- "${squashfs_work}"
 install -d -m 2775 "${BUILD_DIR}" "${BUILD_DIR}/logs" "${context}/containers" "${context}/patches" "${context}/sglang-project-metadata/python" "${CONTAINER_ARCHIVE_DIR}" "${storage_root}"
 storage_fstype="$(stat -f -c '%T' "${storage_root}")"
 case "${storage_fstype}" in lustre|nfs|nfs4) printf 'Buildah cache must be on a node-local filesystem, not %s: %s\n' "${storage_fstype}" "${storage_root}" >&2; exit 1;; esac
@@ -74,15 +76,15 @@ skopeo copy "oci:${oci_build}:sglang" "oci:${oci_runtime}:sglang" 2>&1 | tee "${
 skopeo inspect --raw "oci:${oci_runtime}:sglang" >"${BUILD_DIR}/logs/oci-manifest.json"
 umoci stat --json --image "${oci_runtime}:sglang" | tee "${BUILD_DIR}/logs/umoci-stat.json"
 jq -e '.history | length > 0' "${BUILD_DIR}/logs/umoci-stat.json" >/dev/null
-buildah --root "${storage_root}" --runroot "${run_root}" unshare --mount "${test_container}" bash -c 'set -euo pipefail; storage_root=$1; run_root=$2; test_container=$3; context=$4; build_dir=$5; rootfs="$(buildah --root "${storage_root}" --runroot "${run_root}" inspect --type container --format "{{.MountPoint}}" "${test_container}")"; cmp "${rootfs}/opt/apac/manifest.json" "${context}/apac-manifest.json"; test "$(cat "${rootfs}/opt/sglang/qwen-experiment-metrics-hook-version.txt")" = 2; mksquashfs "${rootfs}" "${build_dir}/sglang.sqsh" -noappend -all-root -no-xattrs -no-duplicates -comp gzip -Xcompression-level 2 -processors 4 -mem 2G 2>&1 | tee "${build_dir}/logs/mksquashfs.log"' bash "${storage_root}" "${run_root}" "${test_container}" "${context}" "${BUILD_DIR}"
+buildah --root "${storage_root}" --runroot "${run_root}" unshare --mount "${test_container}" bash -c 'set -euo pipefail; storage_root=$1; run_root=$2; test_container=$3; context=$4; build_dir=$5; squashfs_work=$6; rootfs="$(buildah --root "${storage_root}" --runroot "${run_root}" inspect --type container --format "{{.MountPoint}}" "${test_container}")"; cmp "${rootfs}/opt/apac/manifest.json" "${context}/apac-manifest.json"; test "$(cat "${rootfs}/opt/sglang/qwen-experiment-metrics-hook-version.txt")" = 2; mksquashfs "${rootfs}" "${squashfs_work}" -noappend -all-root -no-xattrs -no-duplicates -no-fragments -comp gzip -Xcompression-level 2 -processors 1 -mem 256M 2>&1 | tee "${build_dir}/logs/mksquashfs.log"' bash "${storage_root}" "${run_root}" "${test_container}" "${context}" "${BUILD_DIR}" "${squashfs_work}"
 buildah --root "${storage_root}" --runroot "${run_root}" rm "${test_container}"
 
-container_sha256="$(sha256sum "${BUILD_DIR}/sglang.sqsh" | awk '{print $1}')"
-container_size="$(stat -c '%s' "${BUILD_DIR}/sglang.sqsh")"
+container_sha256="$(sha256sum "${squashfs_work}" | awk '{print $1}')"
+container_size="$(stat -c '%s' "${squashfs_work}")"
 oci_manifest_sha256="$(sha256sum "${BUILD_DIR}/logs/oci-manifest.json" | awk '{print $1}')"
 jq -n --arg artifact_path "sglang.sqsh" --argjson size_bytes "${container_size}" --arg sha256 "${container_sha256}" --arg oci_manifest_sha256 "${oci_manifest_sha256}" --arg qwen_commit "${GITHUB_SHA}" --arg sglang_commit "${sglang_commit}" --arg buildah_version "$(buildah --version)" --arg skopeo_version "$(skopeo --version)" --arg umoci_version "$(umoci --version | head -n 1)" '{schema_version:"container-sidecar/v1",container_artifact:{artifact_relative_path:$artifact_path,size_bytes:$size_bytes,sha256:$sha256},oci_manifest:{sha256:$oci_manifest_sha256},source_commits:{qwen:$qwen_commit,sglang:$sglang_commit},toolchain:{buildah:$buildah_version,skopeo:$skopeo_version,umoci:$umoci_version}}' >"${BUILD_DIR}/container-sidecar.json"
 
-cp --reflink=auto --sparse=always "${BUILD_DIR}/sglang.sqsh" "${archive_temporary}"
+cp --reflink=auto --sparse=always "${squashfs_work}" "${archive_temporary}"
 cp "${BUILD_DIR}/container-sidecar.json" "${sidecar_temporary}"
 test "$(stat -c '%s' "${archive_temporary}")" = "${container_size}"
 test "$(sha256sum "${archive_temporary}" | awk '{print $1}')" = "${container_sha256}"
