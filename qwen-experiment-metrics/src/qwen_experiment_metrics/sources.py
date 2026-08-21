@@ -777,11 +777,12 @@ def provenance_facts(runtime_dir: Path) -> tuple[Fact, ...]:
         "input_length",
         "output_length",
         "range_ratio",
+        "source",
     }:
         raise ValueError("dummy dataset manifest is not closed")
     if (
         dataset["schema_version"] != "dummy-random-dataset/v1"
-        or dataset["dataset_name"] != "random-ids"
+        or dataset["dataset_name"] != "random"
     ):
         raise ValueError("dummy dataset manifest differs")
     for name in (
@@ -792,6 +793,25 @@ def provenance_facts(runtime_dir: Path) -> tuple[Fact, ...]:
         "range_ratio",
     ):
         _uint(dataset[name], f"dataset {name}")
+    dataset_source = dataset["source"]
+    if not isinstance(dataset_source, dict) or set(dataset_source) != {
+        "kind",
+        "relative_path",
+        "sha256",
+    }:
+        raise ValueError("dummy dataset source is not closed")
+    if dataset_source["kind"] != "generated_sharegpt_fixture":
+        raise ValueError("dummy dataset source kind differs")
+    relative_path = _nonempty_string(
+        dataset_source["relative_path"], "dummy dataset relative path"
+    )
+    _safe_relative(relative_path)
+    expected_fixture_sha256 = _require_sha256(
+        dataset_source["sha256"], "dummy dataset sha256"
+    )
+    fixture_path = runtime_dir / relative_path
+    if not fixture_path.is_file() or _sha256(fixture_path) != expected_fixture_sha256:
+        raise ValueError("dummy dataset fixture differs")
     return (
         Fact(
             "build.provenance",

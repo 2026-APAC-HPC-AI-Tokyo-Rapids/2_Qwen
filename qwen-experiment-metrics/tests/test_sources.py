@@ -204,14 +204,21 @@ def test_provenance_facts_expose_container_and_dummy_input_details(
         "weights_present": False,
         "load_format": "dummy",
     }
+    fixture = b'[{"conversations":[{"from":"human","value":"dummy"},{"from":"gpt","value":"dummy"}]}]\n'
+    (source / "dummy-sharegpt.json").write_bytes(fixture)
     dataset = {
         "schema_version": "dummy-random-dataset/v1",
-        "dataset_name": "random-ids",
+        "dataset_name": "random",
         "seed": 42,
         "num_prompts": 8,
         "input_length": 1024,
         "output_length": 128,
         "range_ratio": 1,
+        "source": {
+            "kind": "generated_sharegpt_fixture",
+            "relative_path": "source/dummy-sharegpt.json",
+            "sha256": hashlib.sha256(fixture).hexdigest(),
+        },
     }
     (source / "model-metadata.json").write_bytes(jcs_bytes(model) + b"\n")
     (source / "dataset-manifest.json").write_bytes(jcs_bytes(dataset) + b"\n")
@@ -224,6 +231,10 @@ def test_provenance_facts_expose_container_and_dummy_input_details(
     assert facts["build.provenance"]["toolchain"] == sidecar["toolchain"]
     assert facts["input.model"] == model
     assert facts["input.dataset"] == dataset
+
+    (source / "dummy-sharegpt.json").write_bytes(b"tampered\n")
+    with pytest.raises(ValueError, match="dummy dataset fixture differs"):
+        provenance_facts(runtime)
 
 
 def test_submission_request_binds_manifest_script_and_exact_argv(
