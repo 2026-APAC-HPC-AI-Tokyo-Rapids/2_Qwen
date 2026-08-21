@@ -540,7 +540,7 @@ def capture_runtime_launchers(runtime_dir: Path) -> Path:
     source_dir.mkdir(parents=True, exist_ok=True)
     executables = []
     versions = []
-    for role in ("mpirun", "singularity"):
+    for role in ("mpirun", "enroot"):
         requested = shutil.which(role)
         if requested is None:
             raise FileNotFoundError(role)
@@ -562,11 +562,14 @@ def capture_runtime_launchers(runtime_dir: Path) -> Path:
         )
         stdout = source_dir / f"{role}.version.stdout"
         stderr = source_dir / f"{role}.version.stderr"
-        outcome = _capture_command([requested, "--version"], stdout, stderr)
+        version_argv = (
+            [requested, "version"] if role == "enroot" else [requested, "--version"]
+        )
+        outcome = _capture_command(version_argv, stdout, stderr)
         versions.append(
             {
                 "role": role,
-                "argv": [requested, "--version"],
+                "argv": version_argv,
                 "outcome": {"exit_code": outcome},
                 "stdout": _member(stdout, stdout.relative_to(runtime_dir).as_posix()),
                 "stderr": _member(stderr, stderr.relative_to(runtime_dir).as_posix()),
@@ -601,12 +604,12 @@ def validate_runtime_launchers(path: Path, runtime_dir: Path) -> dict[str, objec
         raise TypeError("runtime launcher arrays are invalid")
     if [row.get("role") for row in executables if isinstance(row, dict)] != [
         "mpirun",
-        "singularity",
+        "enroot",
     ]:
         raise ValueError("runtime launcher executable roles differ")
     if [row.get("role") for row in versions if isinstance(row, dict)] != [
         "mpirun",
-        "singularity",
+        "enroot",
     ]:
         raise ValueError("runtime launcher version roles differ")
     requested_by_role: dict[str, str] = {}
@@ -647,7 +650,12 @@ def validate_runtime_launchers(path: Path, runtime_dir: Path) -> dict[str, objec
             "stderr",
         }:
             raise ValueError("runtime version record is not closed")
-        if row["argv"] != [requested_by_role[row["role"]], "--version"]:
+        expected_argv = (
+            [requested_by_role[row["role"]], "version"]
+            if row["role"] == "enroot"
+            else [requested_by_role[row["role"]], "--version"]
+        )
+        if row["argv"] != expected_argv:
             raise ValueError("runtime version argv is invalid")
         outcome = row["outcome"]
         if not isinstance(outcome, dict) or set(outcome) != {"exit_code"}:
@@ -692,583 +700,112 @@ def runtime_launcher_facts(path: Path, runtime_dir: Path) -> tuple[Fact, ...]:
 
 
 def provenance_facts(runtime_dir: Path) -> tuple[Fact, ...]:
-    sidecar = runtime_dir / "source/sif-sidecar.json"
-    value = validate_sif_sidecar(sidecar, member_root=runtime_dir / "source")
-    sif = runtime_dir / value["sif_artifact"]["artifact_relative_path"]
+    sidecar = load_json_strict(
+        (runtime_dir / "source/container-sidecar.json").read_bytes()
+    )
+    if not isinstance(sidecar, dict) or set(sidecar) != {
+        "schema_version",
+        "container_artifact",
+        "oci_manifest",
+        "source_commits",
+        "toolchain",
+    }:
+        raise ValueError("container sidecar is not closed")
+    if sidecar["schema_version"] != "container-sidecar/v1":
+        raise ValueError("unsupported container sidecar")
+    artifact = sidecar["container_artifact"]
+    if not isinstance(artifact, dict) or set(artifact) != {
+        "artifact_relative_path",
+        "size_bytes",
+        "sha256",
+    }:
+        raise ValueError("container artifact record is not closed")
+    if artifact["artifact_relative_path"] != "sglang.sqsh":
+        raise ValueError("container artifact path differs")
+    image = runtime_dir / artifact["artifact_relative_path"]
     if (
-        not sif.is_file()
-        or sif.stat().st_size != value["sif_artifact"]["size_bytes"]
-        or _sha256(sif) != value["sif_artifact"]["sha256"]
+        not image.is_file()
+        or image.stat().st_size != _uint(artifact["size_bytes"], "container size")
+        or _sha256(image) != _require_sha256(artifact["sha256"], "container sha256")
     ):
-        raise ValueError("provisioned SIF does not match its sidecar")
-    source_commits = value["source_commits"]
-    qwen = next(
-        row for row in source_commits if row["commit_role"] == "sif_build_definition"
+        raise ValueError("provisioned container does not match its sidecar")
+    oci_manifest = sidecar["oci_manifest"]
+    if not isinstance(oci_manifest, dict) or set(oci_manifest) != {"sha256"}:
+        raise ValueError("OCI manifest record is not closed")
+    _require_sha256(oci_manifest["sha256"], "OCI manifest sha256")
+    commits = sidecar["source_commits"]
+    if not isinstance(commits, dict) or set(commits) != {"qwen", "sglang"}:
+        raise ValueError("container source commits are not closed")
+    qwen_commit = _algorithm_oid(commits["qwen"], "sha1")
+    sglang_commit = _algorithm_oid(commits["sglang"], "sha1")
+    toolchain = sidecar["toolchain"]
+    if not isinstance(toolchain, dict) or set(toolchain) != {
+        "buildah",
+        "skopeo",
+        "umoci",
+    }:
+        raise ValueError("container toolchain is not closed")
+    for name, version in toolchain.items():
+        _nonempty_string(version, f"{name} version")
+    model = load_json_strict((runtime_dir / "source/model-metadata.json").read_bytes())
+    if not isinstance(model, dict) or set(model) != {
+        "schema_version",
+        "repository",
+        "revision",
+        "path",
+        "weights_present",
+        "load_format",
+    }:
+        raise ValueError("dummy model metadata is not closed")
+    if (
+        model["schema_version"] != "model-metadata/v1"
+        or model["weights_present"] is not False
+        or model["load_format"] != "dummy"
+    ):
+        raise ValueError("dummy model metadata differs")
+    _nonempty_string(model["repository"], "model repository")
+    _algorithm_oid(model["revision"], "sha1")
+    _nonempty_string(model["path"], "model path")
+    dataset = load_json_strict(
+        (runtime_dir / "source/dataset-manifest.json").read_bytes()
     )
-    sglang = next(
-        row for row in source_commits if row["commit_role"] == "sglang_source"
-    )
-    source_run_number = (runtime_dir / "sif-source-run.txt").read_text(
-        encoding="utf-8"
-    ).strip()
-    if re.fullmatch(r"[0-9]+", source_run_number) is None:
-        raise ValueError("SIF source workflow run number is invalid")
-    source_run = int(source_run_number)
-    toolchain = []
-    for row in value["toolchain_commands"]:
-        stdout = runtime_dir / "source" / row["stdout"]["path"]
-        stderr = runtime_dir / "source" / row["stderr"]["path"]
-        toolchain.append(
-            {
-                "role": row["role"],
-                "stdout": stdout.read_text(encoding="utf-8").strip(),
-                "stderr": stderr.read_text(encoding="utf-8").strip(),
-            }
-        )
-    base_oci = value["base_oci"]
+    if not isinstance(dataset, dict) or set(dataset) != {
+        "schema_version",
+        "dataset_name",
+        "seed",
+        "num_prompts",
+        "input_length",
+        "output_length",
+        "range_ratio",
+    }:
+        raise ValueError("dummy dataset manifest is not closed")
+    if (
+        dataset["schema_version"] != "dummy-random-dataset/v1"
+        or dataset["dataset_name"] != "random"
+    ):
+        raise ValueError("dummy dataset manifest differs")
+    for name in (
+        "seed",
+        "num_prompts",
+        "input_length",
+        "output_length",
+        "range_ratio",
+    ):
+        _uint(dataset[name], f"dataset {name}")
     return (
         Fact(
             "build.provenance",
             {
-                "sif": {
-                    "sha256": value["sif_artifact"]["sha256"],
-                    "size_bytes": value["sif_artifact"]["size_bytes"],
-                    "source_workflow_run_number": source_run,
-                },
-                "base_oci": {
-                    "reference": base_oci["reference"],
-                    "manifest_digest": base_oci["manifest_digest"],
-                    "config_digest": base_oci["config_digest"],
-                    "layer_digests": base_oci["layer_digests"],
-                },
+                "container": artifact,
+                "oci_manifest": oci_manifest,
                 "toolchain": toolchain,
-                "nccl_tests_commit": value["nccl_tests"]["commit"],
             },
         ),
-        Fact("source.sif_build.qwen_commit", qwen["oid"]),
-        Fact("source.sglang.commit", sglang["oid"]),
-        *input_manifest_facts(runtime_dir),
+        Fact("source.container_build.qwen_commit", qwen_commit),
+        Fact("source.sglang.commit", sglang_commit),
+        Fact("input.model", model),
+        Fact("input.dataset", dataset),
     )
-
-
-def create_sif_sidecar(
-    *,
-    workspace: Path,
-    sglang_source: Path,
-    sif: Path,
-    base_oci: Path,
-    embedded_manifest: Path,
-    runtime_inventory: Path,
-    output: Path,
-) -> Path:
-    workspace = workspace.resolve(strict=True)
-    sglang_source = sglang_source.resolve(strict=True)
-    sif = sif.resolve(strict=True)
-    base = load_json_strict(base_oci.read_bytes())
-    if not isinstance(base, dict) or set(base) != {
-        "reference",
-        "inspect_raw",
-        "manifest_digest",
-        "config_digest",
-        "layer_digests",
-    }:
-        raise ValueError("base OCI resolution is not closed")
-    inventory = load_json_strict(runtime_inventory.read_bytes())
-    if not isinstance(inventory, dict) or set(inventory) != {
-        "runtime_files",
-        "nccl_binaries",
-    }:
-        raise ValueError("runtime inventory is not closed")
-    qwen_algorithm = _git(workspace, "rev-parse", "--show-object-format")
-    sglang_algorithm = _git(sglang_source, "rev-parse", "--show-object-format")
-    recipe_path = "containers/sglang.def"
-    patch_paths = sorted(
-        (
-            path.relative_to(workspace).as_posix()
-            for path in (workspace / "patches/sglang").glob("*.patch")
-        ),
-        key=lambda item: item.encode(),
-    )
-    lock_path = sglang_source / "python/uv.lock"
-    if not lock_path.is_file():
-        raise FileNotFoundError(lock_path)
-    build_sources = output.parent / "sif-build"
-    if not build_sources.is_dir():
-        raise FileNotFoundError(build_sources)
-    source_commits = [
-        {
-            "repository_id": "apac2026-qwen",
-            "commit_role": "sif_build_definition",
-            "object_hash_algorithm": qwen_algorithm,
-            "oid": _git(workspace, "rev-parse", "HEAD"),
-        },
-        {
-            "repository_id": "apac2026-sglang",
-            "commit_role": "sglang_source",
-            "object_hash_algorithm": sglang_algorithm,
-            "oid": _git(sglang_source, "rev-parse", "HEAD"),
-        },
-    ]
-    recipe = {
-        "path": recipe_path,
-        "blob_oid": _git(workspace, "rev-parse", f"HEAD:{recipe_path}"),
-    }
-    applied_patches = [
-        {
-            "path": relative,
-            "blob_oid": _git(workspace, "rev-parse", f"HEAD:{relative}"),
-        }
-        for relative in patch_paths
-    ]
-    lock_manifest = {
-        "path": "python/uv.lock",
-        "size_bytes": lock_path.stat().st_size,
-        "sha256": _sha256(lock_path),
-    }
-    embedded = load_json_strict(embedded_manifest.read_bytes())
-    expected_embedded = {
-        "schema_version": "sif-embedded-manifest/v1",
-        "source_commits": source_commits,
-        "recipe": recipe,
-        "applied_patches": applied_patches,
-        "base_oci": {
-            name: base[name]
-            for name in (
-                "reference",
-                "manifest_digest",
-                "config_digest",
-                "layer_digests",
-            )
-        },
-        "lock_manifest": lock_manifest,
-    }
-    if embedded != expected_embedded:
-        raise ValueError("embedded SIF manifest differs from resolved build inputs")
-    embedded_semantic = {
-        name: embedded[name]
-        for name in (
-            "source_commits",
-            "recipe",
-            "applied_patches",
-            "base_oci",
-            "lock_manifest",
-        )
-    }
-    toolchain_commands = [
-        _build_observation(
-            output.parent, "singularity_version", ["singularity", "--version"]
-        ),
-        _build_observation(
-            output.parent,
-            "python_version",
-            [
-                "singularity",
-                "exec",
-                "sglang.sif",
-                "/opt/sglang/venv/bin/python",
-                "--version",
-            ],
-        ),
-        _build_observation(
-            output.parent,
-            "cuda_version",
-            [
-                "singularity",
-                "exec",
-                "sglang.sif",
-                "/usr/local/cuda/bin/nvcc",
-                "--version",
-            ],
-        ),
-        _build_observation(
-            output.parent,
-            "compiler_version",
-            ["singularity", "exec", "sglang.sif", "/usr/bin/gcc", "--version"],
-        ),
-    ]
-    source = {
-        "schema_version": "sif-sidecar/v1",
-        "sif_artifact": {
-            "artifact_relative_path": "sglang.sif",
-            "size_bytes": sif.stat().st_size,
-            "sha256": _sha256(sif),
-        },
-        "source_commits": source_commits,
-        "score_source_tree": [],
-        "recipe": recipe,
-        "applied_patches": applied_patches,
-        "base_oci": base,
-        "lock_manifest": lock_manifest,
-        "build_command": [
-            "singularity",
-            "build",
-            "--fakeroot",
-            "--writable-tmpfs",
-            "--sandbox",
-            "sglang-rootfs",
-            "containers/sglang.def",
-        ],
-        "toolchain_commands": toolchain_commands,
-        "embedded_manifest": {
-            "member_path": "/opt/apac/manifest.json",
-            "size_bytes": embedded_manifest.stat().st_size,
-            "sha256": _sha256(embedded_manifest),
-            "manifest_identity": hashlib.sha256(
-                jcs_bytes(embedded_semantic)
-            ).hexdigest(),
-        },
-        "runtime_files": inventory["runtime_files"],
-        "nccl_tests": {
-            "commit": "717b68318278e93f371d8ffb46b076069d7c7851",
-            "mpi_enabled": True,
-            "json_output_enabled": True,
-            "binaries": inventory["nccl_binaries"],
-            "build_test": _build_test_observation(output.parent),
-        },
-    }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists():
-        raise FileExistsError(output)
-    _atomic_bytes(output, jcs_bytes(source) + b"\n")
-    validate_sif_sidecar(output, member_root=output.parent)
-    return output
-
-
-def validate_sif_sidecar(
-    path: Path, *, member_root: Path | None = None
-) -> dict[str, object]:
-    value = load_json_strict(path.read_bytes())
-    expected = {
-        "schema_version",
-        "sif_artifact",
-        "source_commits",
-        "score_source_tree",
-        "recipe",
-        "applied_patches",
-        "base_oci",
-        "lock_manifest",
-        "build_command",
-        "toolchain_commands",
-        "embedded_manifest",
-        "runtime_files",
-        "nccl_tests",
-    }
-    if not isinstance(value, dict) or set(value) != expected:
-        raise ValueError("SIF sidecar is not a closed v1 object")
-    if value["schema_version"] != "sif-sidecar/v1":
-        raise ValueError("unsupported SIF sidecar")
-    _validate_member(
-        value["sif_artifact"], require_role=False, path_name="artifact_relative_path"
-    )
-    commits = value["source_commits"]
-    if not isinstance(commits, list) or len(commits) != 2:
-        raise ValueError("SIF sidecar requires two source commits")
-    expected_roles = ["sif_build_definition", "sglang_source"]
-    if [
-        row.get("commit_role") for row in commits if isinstance(row, dict)
-    ] != expected_roles:
-        raise ValueError("SIF source commit roles differ")
-    if [row.get("repository_id") for row in commits if isinstance(row, dict)] != [
-        "apac2026-qwen",
-        "apac2026-sglang",
-    ]:
-        raise ValueError("SIF source repository roles differ")
-    for row in commits:
-        if not isinstance(row, dict) or set(row) != {
-            "repository_id",
-            "commit_role",
-            "object_hash_algorithm",
-            "oid",
-        }:
-            raise ValueError("SIF source commit is not closed")
-        algorithm = row["object_hash_algorithm"]
-        oid = row["oid"]
-        if (
-            algorithm not in {"sha1", "sha256"}
-            or not isinstance(oid, str)
-            or len(oid) != (40 if algorithm == "sha1" else 64)
-            or re.fullmatch(r"[0-9a-f]+", oid) is None
-        ):
-            raise ValueError("SIF source object identity is invalid")
-    score_tree = value["score_source_tree"]
-    if not isinstance(score_tree, list):
-        raise TypeError("SIF score source tree is invalid")
-    score_paths: list[str] = []
-    for row in score_tree:
-        if not isinstance(row, dict) or row.get("state") not in {"absent", "present"}:
-            raise ValueError("SIF score source entry is invalid")
-        expected_entry = (
-            {"path", "state"}
-            if row["state"] == "absent"
-            else {"path", "state", "mode", "blob_oid"}
-        )
-        if set(row) != expected_entry:
-            raise ValueError("SIF score source entry is not closed")
-        score_paths.append(_validated_relative(row["path"], "score source path"))
-        if row["state"] == "present":
-            if (
-                re.fullmatch(
-                    r"[0-7]{6}", _nonempty_string(row["mode"], "score source mode")
-                )
-                is None
-            ):
-                raise ValueError("SIF score source mode is invalid")
-            _algorithm_oid(row["blob_oid"], commits[0]["object_hash_algorithm"])
-    _require_sorted_unique(score_paths, "SIF score source paths")
-
-    recipe = value["recipe"]
-    if not isinstance(recipe, dict) or set(recipe) != {"path", "blob_oid"}:
-        raise ValueError("SIF recipe is not closed")
-    _validated_relative(recipe["path"], "SIF recipe path")
-    _algorithm_oid(recipe["blob_oid"], commits[0]["object_hash_algorithm"])
-    patches = value["applied_patches"]
-    if not isinstance(patches, list):
-        raise TypeError("SIF patch list is invalid")
-    patch_paths: list[str] = []
-    for row in patches:
-        if not isinstance(row, dict) or set(row) != {"path", "blob_oid"}:
-            raise ValueError("SIF patch record is not closed")
-        patch_paths.append(_validated_relative(row["path"], "SIF patch path"))
-        _algorithm_oid(row["blob_oid"], commits[0]["object_hash_algorithm"])
-    _require_sorted_unique(patch_paths, "SIF patch paths")
-
-    base = value["base_oci"]
-    if not isinstance(base, dict) or set(base) != {
-        "reference",
-        "inspect_raw",
-        "manifest_digest",
-        "config_digest",
-        "layer_digests",
-    }:
-        raise ValueError("SIF base OCI record is not closed")
-    reference = _nonempty_string(base["reference"], "OCI reference")
-    if "@sha256:" not in reference:
-        raise ValueError("OCI reference is not digest pinned")
-    _validate_member_binding(base["inspect_raw"], member_root)
-    for name in ("manifest_digest", "config_digest"):
-        if (
-            re.fullmatch(r"sha256:[0-9a-f]{64}", _nonempty_string(base[name], name))
-            is None
-        ):
-            raise ValueError(f"invalid OCI {name}")
-    if base["inspect_raw"]["sha256"] != base["manifest_digest"].removeprefix("sha256:"):
-        raise ValueError("OCI raw manifest hash differs from manifest digest")
-    layers = base["layer_digests"]
-    if (
-        not isinstance(layers, list)
-        or not layers
-        or any(
-            not isinstance(item, str)
-            or re.fullmatch(r"sha256:[0-9a-f]{64}", item) is None
-            for item in layers
-        )
-    ):
-        raise ValueError("invalid OCI layers")
-    lock_manifest = value["lock_manifest"]
-    if not isinstance(lock_manifest, dict):
-        raise TypeError("SIF lock manifest is invalid")
-    _validate_member(lock_manifest, require_role=False)
-    build_command = value["build_command"]
-    if (
-        not isinstance(build_command, list)
-        or not build_command
-        or any(not isinstance(item, str) or not item for item in build_command)
-    ):
-        raise ValueError("SIF build command is invalid")
-    toolchain = value["toolchain_commands"]
-    toolchain_roles = [
-        "singularity_version",
-        "python_version",
-        "cuda_version",
-        "compiler_version",
-    ]
-    if (
-        not isinstance(toolchain, list)
-        or [row.get("role") for row in toolchain if isinstance(row, dict)]
-        != toolchain_roles
-    ):
-        raise ValueError("SIF toolchain command roles differ")
-    for row in toolchain:
-        _validate_observation(row, member_root)
-    embedded = value["embedded_manifest"]
-    if not isinstance(embedded, dict) or set(embedded) != {
-        "member_path",
-        "size_bytes",
-        "sha256",
-        "manifest_identity",
-    }:
-        raise ValueError("SIF embedded manifest is not closed")
-    if embedded["member_path"] != "/opt/apac/manifest.json":
-        raise ValueError("SIF embedded manifest member path differs")
-    _uint(embedded["size_bytes"], "embedded manifest size")
-    _require_sha256(embedded["sha256"], "embedded manifest sha256")
-    _require_sha256(embedded["manifest_identity"], "embedded manifest identity")
-    embedded_semantic = {
-        "source_commits": value["source_commits"],
-        "recipe": value["recipe"],
-        "applied_patches": value["applied_patches"],
-        "base_oci": {
-            name: base[name]
-            for name in (
-                "reference",
-                "manifest_digest",
-                "config_digest",
-                "layer_digests",
-            )
-        },
-        "lock_manifest": value["lock_manifest"],
-    }
-    if (
-        hashlib.sha256(jcs_bytes(embedded_semantic)).hexdigest()
-        != embedded["manifest_identity"]
-    ):
-        raise ValueError("embedded manifest semantic identity differs")
-    runtime_files = value["runtime_files"]
-    if not isinstance(runtime_files, list) or [
-        row.get("role") for row in runtime_files if isinstance(row, dict)
-    ] != [
-        "python_executable",
-        "sglang_package_entry",
-        "cuda_runtime",
-        "nccl_runtime",
-    ]:
-        raise ValueError("SIF runtime file roles differ")
-    for row in runtime_files:
-        _validate_runtime_file(row)
-    nccl = value["nccl_tests"]
-    if not isinstance(nccl, dict) or set(nccl) != {
-        "commit",
-        "mpi_enabled",
-        "json_output_enabled",
-        "binaries",
-        "build_test",
-    }:
-        raise ValueError("SIF nccl-tests record is not closed")
-    if (
-        nccl.get("commit") != "717b68318278e93f371d8ffb46b076069d7c7851"
-        or nccl.get("mpi_enabled") is not True
-        or nccl.get("json_output_enabled") is not True
-    ):
-        raise ValueError("SIF nccl-tests binding is invalid")
-    binaries = nccl["binaries"]
-    if not isinstance(binaries, list) or [
-        row.get("role") for row in binaries if isinstance(row, dict)
-    ] != ["all_reduce_perf", "all_gather_perf", "reduce_scatter_perf"]:
-        raise ValueError("SIF nccl-tests binary roles differ")
-    for row in binaries:
-        _validate_runtime_file(row)
-    _validate_process_source(nccl["build_test"], member_root, has_argv=False)
-    return value
-
-
-def _build_observation(
-    metadata_root: Path, role: str, argv: list[str]
-) -> dict[str, object]:
-    prefix = metadata_root / f"sif-build/toolchain/{role}"
-    return {
-        "role": role,
-        "argv": argv,
-        "stdout": _member(
-            prefix.with_suffix(".stdout"), f"sif-build/toolchain/{role}.stdout"
-        ),
-        "stderr": _member(
-            prefix.with_suffix(".stderr"), f"sif-build/toolchain/{role}.stderr"
-        ),
-        "outcome": _exit_outcome(prefix.with_suffix(".exit-code")),
-    }
-
-
-def _build_test_observation(metadata_root: Path) -> dict[str, object]:
-    root = metadata_root / "sif-build"
-    return {
-        "outcome": _exit_outcome(root / "build-test.exit-code"),
-        "stdout": _member(root / "build-test.stdout", "sif-build/build-test.stdout"),
-        "stderr": _member(root / "build-test.stderr", "sif-build/build-test.stderr"),
-    }
-
-
-def _exit_outcome(path: Path) -> dict[str, object]:
-    raw = path.read_text(encoding="ascii").strip()
-    if re.fullmatch(r"[0-9]+", raw) is None:
-        raise ValueError(f"invalid exit code source: {path}")
-    return {"kind": "exit", "code": int(raw)}
-
-
-def _validate_observation(value: object, member_root: Path | None) -> None:
-    if not isinstance(value, dict) or set(value) != {
-        "role",
-        "argv",
-        "stdout",
-        "stderr",
-        "outcome",
-    }:
-        raise ValueError("toolchain observation is not closed")
-    _nonempty_string(value["role"], "toolchain role")
-    _validate_process_source(value, member_root, has_argv=True, allow_role=True)
-
-
-def _validate_process_source(
-    value: object,
-    member_root: Path | None,
-    *,
-    has_argv: bool,
-    allow_role: bool = False,
-) -> None:
-    expected = {"outcome", "stdout", "stderr"}
-    if has_argv:
-        expected.add("argv")
-    if allow_role:
-        expected.add("role")
-    if not isinstance(value, dict) or set(value) != expected:
-        raise ValueError("process source is not closed")
-    if has_argv:
-        argv = value["argv"]
-        if (
-            not isinstance(argv, list)
-            or not argv
-            or any(not isinstance(item, str) or not item for item in argv)
-        ):
-            raise ValueError("process argv is invalid")
-    outcome = value["outcome"]
-    if not isinstance(outcome, dict) or set(outcome) != {"kind", "code"}:
-        raise ValueError("process outcome is not a closed exit outcome")
-    if outcome["kind"] != "exit":
-        raise ValueError("build observation did not reach an exit outcome")
-    if _uint(outcome["code"], "process exit code") != 0:
-        raise ValueError("build observation was not successful")
-    for name in ("stdout", "stderr"):
-        _validate_member_binding(value[name], member_root)
-
-
-def _validate_member_binding(value: object, member_root: Path | None) -> str:
-    relative = _validate_member(value, require_role=False)
-    if member_root is not None:
-        candidate = member_root / relative
-        if (
-            not candidate.is_file()
-            or candidate.stat().st_size != value["size_bytes"]
-            or _sha256(candidate) != value["sha256"]
-        ):
-            raise ValueError(f"member hash binding failed: {relative}")
-    return relative
-
-
-def _validate_runtime_file(value: object) -> None:
-    if not isinstance(value, dict) or set(value) != {
-        "role",
-        "realpath",
-        "size_bytes",
-        "sha256",
-    }:
-        raise ValueError("SIF runtime file record is not closed")
-    _nonempty_string(value["role"], "runtime file role")
-    realpath = PurePosixPath(
-        _nonempty_string(value["realpath"], "runtime file realpath")
-    )
-    if not realpath.is_absolute() or ".." in realpath.parts:
-        raise ValueError("runtime file realpath is not absolute")
-    _uint(value["size_bytes"], "runtime file size")
-    _require_sha256(value["sha256"], "runtime file sha256")
 
 
 def _algorithm_oid(value: object, algorithm: object) -> str:
@@ -1287,13 +824,6 @@ def _validated_relative(value: object, label: str) -> str:
     result = _nonempty_string(value, label)
     _safe_relative(result)
     return result
-
-
-def _require_sorted_unique(values: list[str], label: str) -> None:
-    if values != sorted(values, key=lambda item: item.encode()) or len(values) != len(
-        set(values)
-    ):
-        raise ValueError(f"{label} must be path-byte sorted and unique")
 
 
 def _execution_object(settings: ExecutionSettings) -> dict[str, object]:

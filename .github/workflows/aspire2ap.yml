@@ -1,0 +1,219 @@
+name: ASPIRE 2A+でQwenを実行
+
+on:
+  workflow_call:
+    inputs:
+      node_count:
+        required: true
+        type: string
+      profile:
+        required: true
+        type: boolean
+      require_build:
+        required: true
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/apacsc14/sglang-containers
+  GIT_MIRROR_DIR: /scratch/users/industry/ai-hpc/apacsc14/git-mirror
+  MODEL_CACHE_ROOT: /scratch/users/industry/ai-hpc/apacsc14/models/Qwen3.5-397B-A17B-FP8-metadata
+  RUNTIME_ROOT: /scratch/users/industry/ai-hpc/apacsc14/sglang-runs
+
+defaults:
+  run:
+    shell: bash --login -eo pipefail {0}
+
+jobs:
+  select-container:
+    name: OCIコンテナを選択
+    runs-on: [self-hosted, aspire2ap]
+    timeout-minutes: 7200
+    outputs:
+      action: ${{ steps.select.outputs.action }}
+      source_run_id: ${{ steps.select.outputs.source_run_id }}
+    steps:
+      - name: リポジトリ履歴を取得
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: コンテナツールを確認
+        run: buildah --version && skopeo --version && umoci --version && enroot version && nvidia-container-cli --version
+
+      - name: 既存成果物の再利用または新規ビルドを選択
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ '${{ inputs.require_build }}' == true ]]; then printf 'action=build\n' >>"${GITHUB_OUTPUT}"; exit 0; fi
+          commit="${GITHUB_SHA}"
+          while [[ -n "${commit}" ]]; do
+            while IFS= read -r run_id; do
+              [[ "${run_id}" != "${GITHUB_RUN_ID}" ]] || continue
+              archive="${CONTAINER_ARCHIVE_DIR}/${run_id}.sqsh"
+              sidecar="${CONTAINER_ARCHIVE_DIR}/${run_id}.container-sidecar.json"
+              [[ -s "${archive}" && -s "${sidecar}" ]] || continue
+              expected_size="$(jq -er 'select(.schema_version == "container-sidecar/v1") | .container_artifact.size_bytes' "${sidecar}" 2>/dev/null)" || continue
+              expected_sha256="$(jq -er '.container_artifact.sha256' "${sidecar}" 2>/dev/null)" || continue
+              [[ "$(stat -c '%s' "${archive}")" == "${expected_size}" ]] || continue
+              [[ "$(sha256sum "${archive}" | awk '{print $1}')" == "${expected_sha256}" ]] || continue
+              printf 'action=reuse\nsource_run_id=%s\n' "${run_id}" >>"${GITHUB_OUTPUT}"
+              exit 0
+            done < <(gh run list --workflow qwen.yml --commit "${commit}" --limit 100 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
+            commit="$(git rev-parse "${commit}^" 2>/dev/null || true)"
+          done
+          printf 'action=build\n' >>"${GITHUB_OUTPUT}"
+
+  reuse-container:
+    name: OCIコンテナを再利用
+    needs: select-container
+    if: needs.select-container.outputs.action == 'reuse'
+    runs-on: [self-hosted, aspire2ap]
+    timeout-minutes: 7200
+    steps:
+      - name: 選択した成果物をハードリンク
+        run: |
+          source_run_id='${{ needs.select-container.outputs.source_run_id }}'
+          ln -f -- "${CONTAINER_ARCHIVE_DIR}/${source_run_id}.sqsh" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
+          ln -f -- "${CONTAINER_ARCHIVE_DIR}/${source_run_id}.container-sidecar.json" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
+
+  build-container:
+    name: OCIコンテナをビルド
+    needs: select-container
+    if: needs.select-container.outputs.action == 'build'
+    runs-on: [self-hosted, aspire2ap]
+    timeout-minutes: 7200
+    concurrency:
+      group: aspire2ap-qwen-container-build
+    env:
+      BUILD_DIR: /dev/shm/qwen-sglang-container/run-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: ビルド入力を取得
+        uses: actions/checkout@v7
+
+      - name: buildah、skopeo、umociでコンテナを構築・保存
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: '"${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"'
+
+      - name: コンテナビルドログを保存
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen-aspire2ap-container-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.BUILD_DIR }}/logs
+          if-no-files-found: warn
+          compression-level: 1
+
+      - name: コンテナビルド領域を削除
+        if: always()
+        run: chmod -R u+rwX "${BUILD_DIR}" 2>/dev/null || true; rm -rf -- "${BUILD_DIR:?}"
+
+  provision:
+    name: Enroot実行環境を配備
+    needs: [select-container, reuse-container, build-container]
+    if: ${{ always() && needs.select-container.result == 'success' && ((needs.select-container.outputs.action == 'reuse' && needs.reuse-container.result == 'success') || (needs.select-container.outputs.action == 'build' && needs.build-container.result == 'success')) }}
+    runs-on: [self-hosted, aspire2ap]
+    timeout-minutes: 7200
+    outputs:
+      model_path: ${{ steps.provision.outputs.model_path }}
+      run_id: ${{ steps.provision.outputs.run_id }}
+      runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
+    steps:
+      - name: 実行用ファイルを取得
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: dummy model用メタデータと実行環境を配備
+        id: provision
+        env:
+          CLUSTER_NAME: aspire2ap
+          CONTAINER_ARCHIVE: ${{ env.CONTAINER_ARCHIVE_DIR }}/${{ github.run_id }}.sqsh
+          CONTAINER_SIDECAR: ${{ env.CONTAINER_ARCHIVE_DIR }}/${{ github.run_id }}.container-sidecar.json
+          GPUS_PER_NODE: 8
+          NODE_COUNT: ${{ inputs.node_count }}
+          RESOURCE_GROUP: aiq2
+          RUN_PURPOSE: ${{ inputs.profile && 'profile' || 'bench' }}
+        run: |
+          export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
+          "${GITHUB_WORKSPACE}/scripts/provision-qwen-runtime.sh"
+          runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          install -m 0755 "${GITHUB_WORKSPACE}/platforms/aspire2ap/run-qwen35.pbs" "${runtime_dir}/scripts/run-qwen35.pbs"
+
+      - name: 配備失敗時の実行環境を削除
+        if: failure() && steps.provision.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+        run: rm -rf -- "${RUNTIME_DIR:?}"
+
+  run:
+    name: Enrootでdummy modelを実行
+    needs: provision
+    if: always() && needs.provision.result == 'success'
+    runs-on: [self-hosted, aspire2ap]
+    timeout-minutes: 7200
+    env:
+      MODEL_PATH: ${{ needs.provision.outputs.model_path }}
+      RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
+    steps:
+      - name: PBSジョブを投入
+        id: submit
+        run: |
+          variables="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh,GPUS_PER_NODE=8"
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=${{ inputs.node_count }}:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -j oe -N qwen35_dummy "${RUNTIME_DIR}/scripts/run-qwen35.pbs")"
+          [[ "${job_id}" =~ ^[0-9]+([.][A-Za-z0-9.-]+)?$ ]]
+          printf 'PBS_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+
+      - name: PBSジョブの終了を待機
+        run: |
+          while /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; do sleep 10; done
+          /opt/pbs/bin/qstat -x -f "${PBS_JOB_ID}" >"${RUNTIME_DIR}/logs/pbs-accounting.txt"
+          cat "${RUNTIME_DIR}/logs/pbs.log"
+          exit_status="$(awk -F= '/^[[:space:]]*Exit_status =/{gsub(/[[:space:]]/, "", $2); print $2}' "${RUNTIME_DIR}/logs/pbs-accounting.txt")"
+          test "${exit_status}" = 0
+          test -e "${RUNTIME_DIR}/run-success"
+
+      - name: ログインrunnerから計測断片を送信
+        env:
+          METRICS_CREDENTIAL_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          credential_file="$(mktemp /dev/shm/qwen-bigquery.XXXXXXXXXX)"
+          trap 'rm -f -- "${credential_file}"' EXIT
+          chmod 0600 "${credential_file}"
+          printf '%s' "${METRICS_CREDENTIAL_JSON}" >"${credential_file}"
+          export EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE="${credential_file}"
+          export EXPERIMENT_METRICS_BIGQUERY_CONFIG="${RUNTIME_DIR}/qwen-experiment-metrics/pyproject.toml"
+          run_id="$(jq -er '.run_id' "${RUNTIME_DIR}/control/run-manifest.json")"
+          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" send-fragments --run "${run_id}" --runtime-dir "${RUNTIME_DIR}"
+
+      - name: 公式形式で実行成果物を梱包
+        if: always() && steps.submit.outputs.job_id != ''
+        run: |
+          package_args=()
+          while IFS= read -r -d '' member; do relative="${member#${RUNTIME_DIR}/}"; package_args+=(--member "${relative%%/*}=${relative}"); done < <(find "${RUNTIME_DIR}/control" "${RUNTIME_DIR}/domain" "${RUNTIME_DIR}/logs" "${RUNTIME_DIR}/results" "${RUNTIME_DIR}/source" -type f -print0 | sort -z)
+          [[ ! -e "${RUNTIME_DIR}/run-success" ]] || package_args+=(--member success=run-success)
+          profile_args=()
+          if [[ '${{ inputs.profile }}' == true ]]; then while IFS= read -r -d '' member; do profile_args+=(--profile-member "${member#${RUNTIME_DIR}/}"); done < <(find "${RUNTIME_DIR}/profile/raw" -type f -print0 | sort -z); fi
+          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" package --manifest "${RUNTIME_DIR}/control/run-manifest.json" --runtime-dir "${RUNTIME_DIR}" "${package_args[@]}" "${profile_args[@]}"
+
+      - name: 固定構成の成果物を保存
+        if: always() && steps.submit.outputs.job_id != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen-aspire2ap-dummy-${{ needs.provision.outputs.run_id }}
+          path: |
+            ${{ env.RUNTIME_DIR }}/run-artifacts.tar.zst
+            ${{ env.RUNTIME_DIR }}/artifact-manifest.json
+            ${{ env.RUNTIME_DIR }}/profile-raw.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: 実行環境を削除
+        if: always()
+        run: if [[ -n "${PBS_JOB_ID:-}" ]] && /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; then /opt/pbs/bin/qdel "${PBS_JOB_ID}"; fi; rm -rf -- "${RUNTIME_DIR:?}"

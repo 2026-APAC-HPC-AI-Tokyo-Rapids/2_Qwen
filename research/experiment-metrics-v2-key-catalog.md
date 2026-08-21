@@ -29,13 +29,13 @@ raw relation、consumer column の名前が異なる箇所では、検索・比�
 | `run.stage.<name>.termination.{kind,code,signal}` | stage の `exit` / `signal` / `spawn_error` | `StageRunner` の spawn/wait closed union。非該当 code/signal は absent | 対象 stage、raw |
 | `perf.stage.<name>.wall_time_sec` | stage 外側 wall time | spawn 直前から child wait 完了までを monotonic 計時 | 対象 stage、raw |
 | `collection_complete` | 必要なproducer/fileの完全性 | finalizer が実装上のexpected setとobserved setを比較 | bench/profile、raw bool。理由別fieldは作らない |
-| `build.provenance` | SIF本体、base OCI、toolchain、nccl-testsの来歴 | 検証済みSIF sidecarと実ファイルからJSONを直接送信 | 全 variant、raw provenance |
+| `build.provenance` | SquashFS本体、OCI manifest、Buildah/Skopeo/Umociの来歴 | 検証済みcontainer sidecarと実ファイルからJSONを直接送信 | 全 variant、raw provenance |
 | `input.model` | model repository/revisionとsmall metadata | 検証済みmodel manifestをJSONで直接送信。weight全体の再hashはしない | bench/profile、raw |
 | `input.dataset` | dataset repository/revision/path/size/SHA | 検証済みdataset manifestをJSONで直接送信 | bench/profile、raw |
 | `cache.node.<node>.input_manifest_sha256` | staging 後 node cache 内容の semantic identity | node wrapper が relative path byte 順に file/symlink member manifest を作り、subject binding を除いて JCS SHA-256 | bench/profile、raw lineage |
 | `source.track.head_commit` | 実行したQwen commit | run manifestのcommitをGit objectと照合して直接送信 | 全 run、raw provenance |
-| `source.sif_build.qwen_commit` | 再利用SIFを構築したQwen commit | SIF sidecar の role=`sif_build_definition` commit | 全 run、raw provenance |
-| `source.sglang.commit` | SIF に含まれるSGLang source commit | SIF sidecar の role=`sglang_source` commit | 全 run、raw provenance |
+| `source.container_build.qwen_commit` | 再利用SquashFSを構築したQwen commit | container sidecar の`source_commits.qwen` | 全 run、raw provenance |
+| `source.sglang.commit` | SquashFSに含まれるSGLang source commit | container sidecar の`source_commits.sglang` | 全 run、raw provenance |
 
 `<name>` の stage 集合は少なくとも node launch、engine、benchmark、artifact finalize を含み、
 profile では warmup/measured generation、GPU sampler、profile hardware、profiler capture を追加する。
@@ -61,7 +61,7 @@ generation成功後は`network_imb_mpi1`、`network_nccl_all_reduce`、`network_
 | `scheduler.accounting.{uctmut,sctmut}.{lexeme,seconds}` | user/system CPU time | 同 parser、millisecond を秒へ変換 | 同上、raw nullable numeric |
 | `environment.job_entry.<escaped_name>` | job-entry共通環境 | name/valueをbyte-exact snapshot、name byte順、valueはBase64 | bench/profile、raw dynamic family |
 | `environment.runtime.<escaped_name>` | module適用後の共通runtime環境 | `mpirun`前にrunner processから一度だけsnapshot | bench/profile、raw dynamic family |
-| `runtime.launchers` | 実使用MPI/Singularity launcher | 解決済みpath、realpath、size、SHA、version出力をJSONで直接送信 | bench/profile、raw provenance |
+| `runtime.launchers` | 実使用MPI/Enroot launcher | 解決済みpath、realpath、size、SHA、version出力をJSONで直接送信 | bench/profile、raw provenance |
 
 ## 3. SGLang configuration、worker placement、process lifecycle
 
@@ -75,7 +75,7 @@ generation成功後は`network_imb_mpi1`、`network_nccl_all_reduce`、`network_
 | `parallel.worker.<rank>.numa_mems` | worker の NUMA memory policy | `/proc/self/status` の `Mems_allowed_list` | 同上、raw nullable |
 | `parallel.worker.<rank>.runtime.{prefill_attention_backend,decode_attention_backend,torch_distributed_backend,transport_backend}` | worker が実際に使った attention/distributed/transport backend | `worker_ready` payload。ServerArgs から推測しない | 同上、raw |
 | `parallel.node.<node>.{global_rank,local_rank,size,hostname}` | outer MPI node launch placement | `node-topology/v1` の outer MPI context | 全 variant、raw |
-| `parallel.node.<node>.{node_wrapper_argv,singularity_argv,sglang_argv}` | node wrapper、container、SGLang の実 argv | node wrapper が launch 直前に配列で記録 | 全 variant、raw control/configuration |
+| `parallel.node.<node>.{node_wrapper_argv,container_argv,sglang_argv}` | node wrapper、Enroot container、SGLang の実 argv | node wrapper が launch 直前に配列で記録 | 全 variant、raw control/configuration |
 | `parallel.node.<node>.{cpu_affinity,numa_mems}` | node wrapper の CPU/NUMA binding | `os.sched_getaffinity(0)` と `/proc/self/status` | 全 variant、raw |
 | `parallel.node.<node>.process.clock_id` | lifecycle timestamp の clock identity | boot ID + `CLOCK_MONOTONIC` | 全 variant、raw |
 | `parallel.node.<node>.process.{spawn_attempt_ns,child_started_ns,child_finished_ns}` | child spawn 試行、開始、終了時刻 | `node_agent.py` の Python supervisor | 全 variant、raw。spawn error 時の child 時刻は null |
@@ -123,7 +123,7 @@ generation成功後は`network_imb_mpi1`、`network_nccl_all_reduce`、`network_
 | `network.nccl_tests.total_gpu_count` | communicator総GPU数 | MPI process数×GPU/processを実launchと照合 | bench/profile、raw scalar |
 | `network.nccl_tests.message_size.{min_bytes,max_bytes,factor}` | NCCL message範囲/倍率 | `-b 8 -e 1G -f 2` | bench/profile、raw scalar |
 | `network.nccl_tests.{warmup_iterations,timed_iterations,check_iterations,rank_average_mode}` | warmup/timed/check/rank average設定 | `-w 5 -n 20 -c 1 -a 1` | bench/profile、raw scalar |
-| `software.nccl_tests.commit` | nccl-tests source commit | SIF sidecarの固定値`717b68318278e93f371d8ffb46b076069d7c7851` | bench/profile、raw provenance |
+| `software.nccl_tests.commit` | nccl-tests source commit | container内の固定値`717b68318278e93f371d8ffb46b076069d7c7851` | bench/profile、raw provenance |
 | `software.nccl.version` | 実NCCL library version | runtime version query | bench/profile、raw scalar |
 
 `mpi_network_results_v2`は`(run_id,benchmark,process_count,message_bytes)` grainで
@@ -207,7 +207,7 @@ bus_bandwidth_gbps,error_count,source_member`を持つ。実在rowだけを返�
 | `resource.job.memory.max_rss_bytes` | job 最大 RSS | `scheduler.accounting.mmszu.bytes` を projection |
 | `resource.job.cpu.{user_time_sec,system_time_sec}` | job user/system CPU time | `uctmut.seconds` / `sctmut.seconds` を projection |
 | `scheduler.terminal.{state,exit_code}` | scheduler terminal state と exit code | scheduler terminal/accounting source を projection |
-| `artifact.{sif_artifact_sha256,runtime_launcher_identity}` | SIF bytes と実 launcher の consumer identity | SIF sidecar/runtime-launcher validation | consumer projection |
+| `artifact.{container_artifact_sha256,runtime_launcher_identity}` | SquashFS bytes と実 launcher の consumer identity | container sidecar/runtime-launcher validation | consumer projection |
 | `artifact.{model_manifest_identity,dataset_manifest_identity}` | model/dataset semantic identity | parent-owned manifest projection を regular/child runへ join | consumer projection |
 | `workload.{measured_manifest_identity,warmup_manifest_identity}` | measured/warmup ordered workload identity | workload manifest projection | consumer projection |
 | `cache.manifest_identity` | expected node 順の cache identity 集合 | `[{node_rank,manifest_sha256},...]` を `cache_nodes/v1` で reduce。再 hash しない | consumer projection nullable |

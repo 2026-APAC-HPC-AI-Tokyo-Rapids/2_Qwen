@@ -1,4 +1,6 @@
-# 現在の Qwen 3.5 実行構成
+# 旧Qwen 3.5 runtime構成
+
+この文書はOCI / Enroot移行前の正本を履歴として残したものである。現行構成は [OCI / Enroot移行記録](../container-runtime-migration.md) を参照する。
 
 ここでいう「現在」は `main` の [Genkai workflow](../../.github/workflows/genkai.yml) と [PJM script](../../scripts/run-qwen35.pjm) を指す。
 
