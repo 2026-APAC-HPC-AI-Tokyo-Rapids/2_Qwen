@@ -65,7 +65,7 @@ def test_packager_derives_members_and_profile_from_manifest(tmp_path: Path, run_
     for relative in ("control", "domain", "logs", "results", "source", "profile/raw", "qwen-experiment-metrics/.venv/bin"):
         (runtime / relative).mkdir(parents=True, exist_ok=True)
     (runtime / "control/run-manifest.json").write_text(json.dumps({"run_purpose": run_purpose}), encoding="utf-8")
-    for relative in ("domain/fragment.jsonl", "logs/benchmark.log", "results/result.json", "source/model.json", "profile/raw/trace.json"):
+    for relative in ("domain/fragment.jsonl", "logs/pbs-accounting.txt", "results/result.json", "source/model.json", "profile/raw/trace.json"):
         (runtime / relative).write_text("fixture\n", encoding="utf-8")
     (runtime / "run-success").touch()
     cli = runtime / "qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
@@ -75,7 +75,8 @@ def test_packager_derives_members_and_profile_from_manifest(tmp_path: Path, run_
     assert arguments[0] == "package"
     assert "control=control/run-manifest.json" in arguments
     assert "domain=domain/fragment.jsonl" in arguments
-    assert "logs=logs/benchmark.log" in arguments
+    assert "logs=logs/pbs-accounting.txt" in arguments
+    assert "logs=logs/pbs.log" not in arguments
     assert "results=results/result.json" in arguments
     assert "source=source/model.json" in arguments
     assert "success=run-success" in arguments

@@ -147,6 +147,7 @@ jobs:
       - name: PJMジョブを投入
         id: submit
         run: |
+          cd "${RUNTIME_DIR}"
           job_environment="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh,GPUS_PER_NODE=4"
           submission="$(pjsub -L "node=${{ inputs.node_count }}" --mpi "proc=${{ inputs.node_count }}" -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_dummy "${RUNTIME_DIR}/scripts/run-qwen35.pjm")"
           printf '%s\n' "${submission}"

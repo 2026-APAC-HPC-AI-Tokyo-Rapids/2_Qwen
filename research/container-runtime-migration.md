@@ -36,7 +36,11 @@ ASPIRE 2A+のhome Lustreでは、既存の`.local/.setenv`や`.gitconfig`に対�
 
 両クラスタともEnrootではhostの`/dev`全体をrecursive bindせず、`ENROOT_RESTRICT_DEV=yes`で最小device filesystemを作る。NVIDIAとMellanoxのhookは保持し、GPU計算時だけ必要なdeviceとdriverを注入する。玄界ではPJM cgroup pathとEnroot 4.2.0の`10-cgroups.sh`が整合しなかったため、このuser-local hookだけを無効化し、資源制御をPJMに委ねる。
 
-read-onlyなSquashFSから起動するため、計算nodeごとに`/dev/shm`へ一時的なruntime homeを作り、containerの`HOME=/runtime-home`と`XDG_CACHE_HOME=/runtime-home/.cache`へbindする。JIT libraryが標準cache pathへ書く場合もこの単一の書込み境界へ収容し、libraryごとにhost home配下の例外mountを増やさない。FlashInfer、DeepGEMM、TorchInductor、Tritonの明示的なworkspaceも同じnode-local一時領域へ置き、job終了時にまとめて削除する。玄界PJM job `6552532`では2ノード8 GPUのdummy初期化が完了した後、`tvm-ffi`がhost由来のread-onlyな`$HOME/.cache`へJIT出力を書こうとして失敗したため、この境界を追加した。
+read-onlyなSquashFSから起動するため、計算nodeごとに一時的なruntime homeを作り、containerの`HOME=/runtime-home`と`XDG_CACHE_HOME=/runtime-home/.cache`へbindする。JIT libraryが標準cache pathへ書く場合もこの単一の書込み境界へ収容し、libraryごとにhost home配下の例外mountを増やさない。実行可能な共有libraryを生成するruntime homeとFlashInfer、DeepGEMM、TorchInductor、Tritonのworkspaceは、schedulerが`TMPDIR`、`TEMPDIR`、`TEMP`の順で示すnode-local disk、未指定時は`/tmp`へ置く。socketと短命なtelemetryだけは`/dev/shm`へ残し、用途の異なる一時領域を分ける。job終了時は両方を削除する。
+
+玄界PJM job `6552532`では2ノード8 GPUのdummy初期化が完了した後、`tvm-ffi`がhost由来のread-onlyな`$HOME/.cache`へJIT出力を書こうとして失敗した。runtime homeを一旦`/dev/shm`へ移したjob `6554500`では書込み自体は成功したが、全rankが生成済み`.so`を`failed to map segment from shared object`でloadできなかった。過去のSingularity経路でも玄界計算nodeの`/dev/shm`は実効`noexec`と確認済みであるため、JITをnode-local diskへ戻した。
+
+ASPIRE PBS job `203640.pbs111`は`resources_used.walltime=0`、`Exit_status=-2`、`Stageout_status=1`でscript本体の前に終了し、`PBS_O_WORKDIR`はephemeral runnerのcheckoutを指していた。ASPIREのPBS 2025.2.2は`qsub -d`を実装していないため、`qsub`前にrun固有scratchへ`cd`して投入時working directoryをruntime lifecycleへ固定する。玄界も同じ理由で`pjsub`前にruntime directoryへ移動する。また、provision用`uvx`のmanaged Pythonはrunner一時領域を使う一方、後続jobでも使う計測CLIのmanaged Pythonはruntime directory内へ配置し、venvのinterpreterをrun lifecycleと同じ寿命にする。PBS logが生成されない起動前失敗でもaccountingを先に保存・表示し、成果物へ回収する。
 
 玄界の直近成功runでhost driver 595.71.05を確認した。一方、固定CUDA 13.0.1 base imageの`NVIDIA_REQUIRE_CUDA`は既知の575系driverまでしか列挙していない。新しいdriverはCUDA 13を満たすため、GPU実行時は`NVIDIA_DISABLE_REQUIRE=1`をEnrootへ明示して古いimage内制約だけを無効化する。device、driver library、GPU topologyは引き続きNVIDIA hookとcontainer内`nvidia-smi`で検証する。container内GPU topologyのsource schemaも`singularity_argv`からruntime非依存の`container_argv`へ移行した。
 

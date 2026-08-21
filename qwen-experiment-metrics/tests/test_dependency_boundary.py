@@ -115,6 +115,10 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "XDG_CACHE_HOME=/runtime-home/.cache" in node
     assert '"${container_home}:/runtime-home"' in node
     assert "FLASHINFER_WORKSPACE_BASE=/jit-cache" in node
+    assert 'jit_temporary_root="${TMPDIR:-${TEMPDIR:-${TEMP:-/tmp}}}"' in node
+    assert 'jit_temporary="$(mktemp -d "${jit_temporary_root%/}/qwen-jit.XXXXXXXXXX")"' in node
+    assert 'jit_cache="${jit_temporary}/cache"' in node
+    assert 'rm -rf -- "${jit_temporary:?}"' in node
     assert "enroot start -e NVIDIA_VISIBLE_DEVICES=void" not in node
     assert '"qwen-runtime-source-oids/v1"' in provision
     assert "runtime-source-oids.json" in node
@@ -125,6 +129,8 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert '"dummy-random-dataset/v1"' in provision
     assert 'export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"' in provision
     assert 'export UV_PYTHON_INSTALL_DIR="${RUNNER_TEMP}/uv-python"' in provision
+    assert 'export UV_PYTHON_INSTALL_DIR="${runtime_dir}/qwen-experiment-metrics/.uv-python"' in provision
+    assert "--managed-python --frozen" in provision
     for pattern in ("*.json", "*.txt", "*.model", "*.tiktoken"):
         assert f"--include '{pattern}'" in provision
     for pattern in ("*.safetensors", "*.bin"):
@@ -168,7 +174,16 @@ def test_aspire_uses_authorized_budget_project_and_default_routing() -> None:
         workflow.index("PBSジョブを投入") : workflow.index("PBSジョブの終了を待機")
     ]
     assert "/opt/pbs/bin/qsub -P 59010014" in submit
+    assert submit.index('cd "${RUNTIME_DIR}"') < submit.index("/opt/pbs/bin/qsub ")
     assert "-q aiq2" not in submit
+    assert 'cat "${RUNTIME_DIR}/logs/pbs-accounting.txt"' in workflow
+    assert 'if [[ -e "${RUNTIME_DIR}/logs/pbs.log" ]]' in workflow
+
+
+def test_scheduler_submission_uses_persistent_runtime_working_directory() -> None:
+    genkai = (ROOT / ".github/workflows/genkai.yml").read_text(encoding="utf-8")
+    submit = genkai[genkai.index("PJMジョブを投入") : genkai.index("PJMジョブの開始を待機")]
+    assert submit.index('cd "${RUNTIME_DIR}"') < submit.index("pjsub ")
 
 
 def test_credentials_stop_at_login_runner() -> None:

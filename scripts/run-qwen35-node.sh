@@ -23,8 +23,11 @@ node_rank="${OMPI_COMM_WORLD_RANK}"
 [[ "${node_rank}" -ge 0 && "${node_rank}" -lt "${nodes}" ]]
 
 node_temporary="$(mktemp -d /dev/shm/qwen-enroot-node.XXXXXXXXXX)"
-container_home="${node_temporary}/home"
-jit_cache="${node_temporary}/jit-cache"
+jit_temporary_root="${TMPDIR:-${TEMPDIR:-${TEMP:-/tmp}}}"
+[[ "${jit_temporary_root}" == /* && -d "${jit_temporary_root}" && -w "${jit_temporary_root}" ]]
+jit_temporary="$(mktemp -d "${jit_temporary_root%/}/qwen-jit.XXXXXXXXXX")"
+container_home="${jit_temporary}/home"
+jit_cache="${jit_temporary}/cache"
 node_metrics_dir="${node_temporary}/metrics"
 mkdir -p "${container_home}/.cache" "${jit_cache}" "${node_metrics_dir}"
 event_server_pid=""
@@ -37,6 +40,7 @@ cleanup() {
   if [[ -n "${gpu_sampler_pid}" ]]; then kill -TERM "${gpu_sampler_pid}" 2>/dev/null || true; wait "${gpu_sampler_pid}" 2>/dev/null || true; fi
   if [[ -n "${event_server_pid}" ]]; then kill -TERM "${event_server_pid}" 2>/dev/null || true; wait "${event_server_pid}" 2>/dev/null || true; fi
   rm -rf -- "${node_temporary:?}"
+  rm -rf -- "${jit_temporary:?}"
   exit "${status}"
 }
 trap cleanup EXIT
