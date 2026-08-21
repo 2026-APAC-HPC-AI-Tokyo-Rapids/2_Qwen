@@ -57,7 +57,11 @@ uv sync --project "${runtime_dir}/qwen-experiment-metrics" --managed-python --fr
 tensor_parallel_size="$(( NODE_COUNT * GPUS_PER_NODE ))"
 jq -n --arg purpose "${RUN_PURPOSE}" --argjson nodes "${NODE_COUNT}" --argjson gpus_per_node "${GPUS_PER_NODE}" --argjson tensor_parallel_size "${tensor_parallel_size}" --arg resource_group "${RESOURCE_GROUP}" --arg transport_policy "${CLUSTER_NAME}-host-mpi-enroot" '{schema_version:"qwen-execution-settings/v1",run_purpose:$purpose,nodes:$nodes,mpi_processes:$nodes,gpus_per_node:$gpus_per_node,tensor_parallel_size:$tensor_parallel_size,resource_group:$resource_group,transport_policy:$transport_policy,advertise_source:"mpi-rank-zero-hostname",sglang_port:25000,node_agent_port:25001,rendezvous_timeout_sec:300,ready_timeout_sec:300}' >"${runtime_dir}/control/execution-settings-input.json"
 jq -n --arg repository "${model_repository}" --arg revision "${model_revision}" --arg path "${model_path}" '{schema_version:"model-metadata/v1",repository:$repository,revision:$revision,path:$path,weights_present:false,load_format:"dummy"}' >"${runtime_dir}/source/model-metadata.json"
-jq -n '{schema_version:"dummy-random-dataset/v1",dataset_name:"random-ids",seed:42,num_prompts:8,input_length:1024,output_length:128,range_ratio:1}' >"${runtime_dir}/source/dataset-manifest.json"
+dataset_fixture="${runtime_dir}/source/dummy-sharegpt.json"
+jq -n '[range(8) as $index | {conversations:[{from:"human",value:("deterministic dummy prompt " + ($index | tostring))},{from:"gpt",value:"deterministic dummy response"}]}]' >"${dataset_fixture}"
+jq -e 'type == "array" and length == 8 and all(.[]; (.conversations | type == "array" and length == 2 and all(.[]; (.value | type == "string" and length > 0))))' "${dataset_fixture}" >/dev/null
+dataset_fixture_sha256="$(sha256sum "${dataset_fixture}" | awk '{print $1}')"
+jq -n --arg fixture_sha256 "${dataset_fixture_sha256}" '{schema_version:"dummy-random-dataset/v1",dataset_name:"random",seed:42,num_prompts:8,input_length:1024,output_length:128,range_ratio:1,source:{kind:"generated_sharegpt_fixture",relative_path:"source/dummy-sharegpt.json",sha256:$fixture_sha256}}' >"${runtime_dir}/source/dataset-manifest.json"
 
 object_hash_algorithm="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-object-format)"
 base_commit="$(git -C "${GITHUB_WORKSPACE}" rev-parse "${GITHUB_SHA}^" 2>/dev/null || printf '%s' "${GITHUB_SHA}")"

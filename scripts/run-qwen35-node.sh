@@ -74,7 +74,7 @@ if [[ "${run_purpose}" == profile ]]; then
 fi
 
 # Qwen3.5 397B FP8のdummy初期化にもweight相当のVRAMが必要なため、玄界は2ノード8 GPUで実行する。
-benchmark=(/opt/sglang/venv/bin/python -m sglang.benchmark.offline_throughput --model-path /model --load-format dummy --tp-size "${tensor_parallel_size}" --nnodes "${nodes}" --node-rank "${node_rank}" --dist-init-addr "${master_host}:${sglang_port}" --dataset-name random-ids --random-input-len 1024 --random-output-len 128 --random-range-ratio 1 --num-prompts 8 --seed 42 --mem-fraction-static 0.80)
+benchmark=(/opt/sglang/venv/bin/python -m sglang.benchmark.offline_throughput --model-path /model --load-format dummy --tp-size "${tensor_parallel_size}" --nnodes "${nodes}" --node-rank "${node_rank}" --dist-init-addr "${master_host}:${sglang_port}" --dataset-name random --dataset-path /source-output/dummy-sharegpt.json --random-input-len 1024 --random-output-len 128 --random-range-ratio 1 --num-prompts 8 --seed 42 --mem-fraction-static 0.80)
 sglang_command=("${benchmark[@]}")
 profile_mounts=()
 profile_environ=()
