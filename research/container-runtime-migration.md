@@ -56,7 +56,7 @@ ASPIRE 2A+ではPBS job `203570.pbs111`を1 GPU compute node `a2ap-dgx037`へ投
 
 ## dummy実行と計測境界
 
-モデル重みは取得しない。ログインrunnerはHugging Faceから固定revisionのmodel JSON、tokenizer、text metadataだけを取得し、ShareGPTは固定revision `192ab2185289094fc556ec8ce5ce1e8e587154ca`の単一JSONをクラスタごとの共有dataset cacheへ取得する。計算ジョブは`--load-format dummy`、固定seedの`random` datasetで分散SGLangを起動し、同JSONをEnrootへread-only mountしてwarmupと本計測の両方で使う。datasetのrepository、revision、filename、host path、size、SHA-256をmanifestへ記録・検証する。dummy runはcontainer、GPU injection、MPI/NCCL、SGLang分散起動、計測、成果物回収を確認するための診断であり、公式モデル性能ではない。
+モデル重みは取得しない。ログインrunnerはHugging Faceから固定revisionのmodel JSON、tokenizer、text metadataだけを取得し、ShareGPTは固定revision `192ab2185289094fc556ec8ce5ce1e8e587154ca`の単一JSONをクラスタごとの共有dataset cacheへ取得する。計算ジョブは`--load-format dummy`、固定seedの`random` datasetで分散SGLangを起動する。Enrootの`-m`はcolon区切りfstabであるため、`none:x-create=file,bind,ro,nosuid,nodev`を明示して単一JSONのtargetを作成し、read-only mountしてwarmupと本計測の両方で使う。datasetのrepository、revision、filename、host path、size、SHA-256をmanifestへ記録・検証する。dummy runはcontainer、GPU injection、MPI/NCCL、SGLang分散起動、計測、成果物回収を確認するための診断であり、公式モデル性能ではない。
 
 玄界PJM job `6555945`ではnode-local disk上のJITと2ノード8 GPUのCUDA graph captureが完了し、従来の`failed to map segment`は解消した。その後、SGLang `7ec0eb3d7a01f872d0bd2f5095f792c0c1792320`の`random` datasetがShareGPTを暗黙に取得しようとし、計算nodeの`HF_HUB_OFFLINE=1`境界で終了した。
 
