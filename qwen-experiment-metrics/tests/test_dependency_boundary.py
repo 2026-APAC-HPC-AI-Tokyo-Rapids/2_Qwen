@@ -114,12 +114,14 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "NVIDIA_DISABLE_REQUIRE=1" in node
     assert "MELLANOX_VISIBLE_DEVICES=all" in node
     assert "NVIDIA_VISIBLE_DEVICES=void" in node
+    assert "FLASHINFER_WORKSPACE_BASE=/jit-cache" in node
     assert "capture-topology" in node
     assert "--container-argv" in node
     assert "--container-launcher" in node
     assert "--container-image" in node
     assert '"dummy-random-dataset/v1"' in provision
     assert 'export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"' in provision
+    assert 'export UV_PYTHON_INSTALL_DIR="${RUNNER_TEMP}/uv-python"' in provision
     for pattern in ("*.json", "*.txt", "*.model", "*.tiktoken"):
         assert f"--include '{pattern}'" in provision
     for pattern in ("*.safetensors", "*.bin"):
