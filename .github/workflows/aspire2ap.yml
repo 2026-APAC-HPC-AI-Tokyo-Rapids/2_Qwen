@@ -30,7 +30,7 @@ defaults:
 jobs:
   select-container:
     name: OCIコンテナを選択
-    runs-on: [self-hosted, aspire2ap]
+    runs-on: [self-hosted, aspire2p]
     timeout-minutes: 7200
     outputs:
       action: ${{ steps.select.outputs.action }}
@@ -72,7 +72,7 @@ jobs:
     name: OCIコンテナを再利用
     needs: select-container
     if: needs.select-container.outputs.action == 'reuse'
-    runs-on: [self-hosted, aspire2ap]
+    runs-on: [self-hosted, aspire2p]
     timeout-minutes: 7200
     steps:
       - name: 選択した成果物をハードリンク
@@ -85,7 +85,7 @@ jobs:
     name: OCIコンテナをビルド
     needs: select-container
     if: needs.select-container.outputs.action == 'build'
-    runs-on: [self-hosted, aspire2ap]
+    runs-on: [self-hosted, aspire2p]
     timeout-minutes: 7200
     concurrency:
       group: aspire2ap-qwen-container-build
@@ -117,7 +117,7 @@ jobs:
     name: Enroot実行環境を配備
     needs: [select-container, reuse-container, build-container]
     if: ${{ always() && needs.select-container.result == 'success' && ((needs.select-container.outputs.action == 'reuse' && needs.reuse-container.result == 'success') || (needs.select-container.outputs.action == 'build' && needs.build-container.result == 'success')) }}
-    runs-on: [self-hosted, aspire2ap]
+    runs-on: [self-hosted, aspire2p]
     timeout-minutes: 7200
     outputs:
       model_path: ${{ steps.provision.outputs.model_path }}
@@ -155,7 +155,7 @@ jobs:
     name: Enrootでdummy modelを実行
     needs: provision
     if: always() && needs.provision.result == 'success'
-    runs-on: [self-hosted, aspire2ap]
+    runs-on: [self-hosted, aspire2p]
     timeout-minutes: 7200
     env:
       MODEL_PATH: ${{ needs.provision.outputs.model_path }}
