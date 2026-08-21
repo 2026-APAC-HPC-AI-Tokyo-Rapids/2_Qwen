@@ -2,6 +2,7 @@
 set -euxo pipefail
 
 export CARGO_HOME=/opt/cargo
+export RUSTUP_HOME=/opt/rustup
 export CARGO_PROFILE_RELEASE_DEBUG=2
 export CARGO_PROFILE_RELEASE_STRIP=none
 export CUDA_HOME=/usr/local/cuda
