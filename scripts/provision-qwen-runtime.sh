@@ -19,7 +19,7 @@ model_repository=Qwen/Qwen3.5-397B-A17B-FP8
 model_revision="$(curl --fail --location --silent --show-error "https://huggingface.co/api/models/${model_repository}" | jq -er '.sha | select(test("^[0-9a-f]{40,64}$"))')"
 model_path="${MODEL_CACHE_ROOT}/${model_revision}"
 install -d -m 2775 "${model_path}" "${RUNTIME_ROOT}"
-uvx --from 'huggingface_hub>=1.0' hf download "${model_repository}" --revision "${model_revision}" --include '*.json' '*.txt' '*.model' '*.tiktoken' --exclude '*.safetensors' '*.bin' --local-dir "${model_path}"
+uvx --from 'huggingface_hub>=1.0' hf download "${model_repository}" --revision "${model_revision}" --include '*.json' --include '*.txt' --include '*.model' --include '*.tiktoken' --exclude '*.safetensors' --exclude '*.bin' --local-dir "${model_path}"
 test -s "${model_path}/config.json"
 test -s "${model_path}/tokenizer_config.json"
 

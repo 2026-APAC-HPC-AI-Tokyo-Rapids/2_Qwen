@@ -112,6 +112,10 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "--container-launcher" in node
     assert "--container-image" in node
     assert '"dummy-random-dataset/v1"' in provision
+    for pattern in ("*.json", "*.txt", "*.model", "*.tiktoken"):
+        assert f"--include '{pattern}'" in provision
+    for pattern in ("*.safetensors", "*.bin"):
+        assert f"--exclude '{pattern}'" in provision
     assert "record-provenance" in provision
     assert "capture-runtime-launchers" in job
     assert "start-run-lifecycle" in job and "finish-run-lifecycle" in job
