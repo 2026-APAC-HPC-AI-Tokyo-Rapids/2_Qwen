@@ -29,7 +29,10 @@ def test_container_build_uses_all_rootless_tools() -> None:
     assert '"container-sidecar/v1"' in script
     assert "-all-root -no-xattrs" in script
     assert "-no-duplicates" in script
-    assert "-processors 4 -mem 2G" in script
+    assert "-no-fragments" in script
+    assert "-processors 1 -mem 256M" in script
+    assert 'squashfs_work="/var/tmp/' in script
+    assert '"${BUILD_DIR}/sglang.sqsh"' not in script
     assert "singularity" not in script.lower()
 
 
