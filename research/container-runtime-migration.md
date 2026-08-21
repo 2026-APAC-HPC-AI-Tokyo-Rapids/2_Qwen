@@ -10,6 +10,8 @@ rootless BuildahのgraphrootはLustre上へ置かず、runner hostごとのlocal
 
 Enroot 4.2.0はDocker archiveやOCI archiveを直接importできない。このため、Buildah VFS working containerのroot filesystemを`mksquashfs`でEnroot imageへ変換する。ASPIRE 2A+では巨大OCIを`umoci unpack --rootless`すると、squashの有無にかかわらずlayer適用中にexit 137となった。OCI内容はSkopeoと`umoci stat --json`で検証し、既にBuildah chroot buildとcontainer内検査を通った同一imageのVFS treeを再利用することで、root filesystemの二重展開とそのmemory peakを避ける。ログインノードではSquashFS mountや`/dev`のrecursive bindが制限される場合があるため、Enrootの最終確認はGPU計算ノードで行う。
 
+ASPIRE 2A+の`mksquashfs`はlogin host全体のmemoryから既定cacheを128865 MiBと計算し、runnerの実効制約を超えてexit 137となった。圧縮cacheを2 GiB、workerを4に固定し、不要なduplicate探索を無効化する。これは元ownershipやxattrと同様に厳密なbit-for-bit最小化よりlogin nodeでの安定した変換を優先する境界であり、完成したSquashFS自体のsizeとSHA-256はsidecarで引き続き検証する。
+
 完成物は`<workflow-run-id>.sqsh`と`<workflow-run-id>.container-sidecar.json`である。sidecarはSquashFSのsizeとSHA-256を持つ。`[require-build]`がない実行はGitの第一親を順番に遡り、対応するworkflow runの成果物についてsizeとSHA-256だけを照合し、最初の有効なものを再利用する。コンテナ内部検査や過去Actions stepの成否は再利用条件にしない。
 
 ## クラスタ差
