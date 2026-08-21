@@ -50,7 +50,9 @@ mapfile -t runtime_source_oids < <(ENROOT_SYSCONF_PATH="${runtime_dir}/enroot-sy
 [[ "${#runtime_source_oids[@]}" -eq 2 ]]
 [[ "${runtime_source_oids[0]}" =~ ^[0-9a-f]{40,64}$ && "${runtime_source_oids[1]}" =~ ^[0-9a-f]{40,64}$ ]]
 jq -n --arg bench_args_blob_oid "${runtime_source_oids[0]}" --arg server_args_blob_oid "${runtime_source_oids[1]}" '{schema_version:"qwen-runtime-source-oids/v1",bench_args_blob_oid:$bench_args_blob_oid,server_args_blob_oid:$server_args_blob_oid}' >"${runtime_dir}/source/runtime-source-oids.json"
-uv sync --project "${runtime_dir}/qwen-experiment-metrics" --frozen --no-dev --extra publish
+export UV_PYTHON_INSTALL_DIR="${runtime_dir}/qwen-experiment-metrics/.uv-python"
+install -d -m 0700 "${UV_PYTHON_INSTALL_DIR}"
+uv sync --project "${runtime_dir}/qwen-experiment-metrics" --managed-python --frozen --no-dev --extra publish
 
 tensor_parallel_size="$(( NODE_COUNT * GPUS_PER_NODE ))"
 jq -n --arg purpose "${RUN_PURPOSE}" --argjson nodes "${NODE_COUNT}" --argjson gpus_per_node "${GPUS_PER_NODE}" --argjson tensor_parallel_size "${tensor_parallel_size}" --arg resource_group "${RESOURCE_GROUP}" --arg transport_policy "${CLUSTER_NAME}-host-mpi-enroot" '{schema_version:"qwen-execution-settings/v1",run_purpose:$purpose,nodes:$nodes,mpi_processes:$nodes,gpus_per_node:$gpus_per_node,tensor_parallel_size:$tensor_parallel_size,resource_group:$resource_group,transport_policy:$transport_policy,advertise_source:"mpi-rank-zero-hostname",sglang_port:25000,node_agent_port:25001,rendezvous_timeout_sec:300,ready_timeout_sec:300}' >"${runtime_dir}/control/execution-settings-input.json"
