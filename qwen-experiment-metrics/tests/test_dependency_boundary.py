@@ -119,6 +119,7 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "--container-launcher" in node
     assert "--container-image" in node
     assert '"dummy-random-dataset/v1"' in provision
+    assert 'export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"' in provision
     for pattern in ("*.json", "*.txt", "*.model", "*.tiktoken"):
         assert f"--include '{pattern}'" in provision
     for pattern in ("*.safetensors", "*.bin"):

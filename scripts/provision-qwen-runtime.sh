@@ -12,8 +12,12 @@ set -euo pipefail
 : "${NODE_COUNT:?node count is required}"
 : "${PROVISION_OUTPUT:?GitHub output file is required}"
 : "${RESOURCE_GROUP:?scheduler resource group is required}"
+: "${RUNNER_TEMP:?GitHub runner temporary directory is required}"
 : "${RUN_PURPOSE:?run purpose is required}"
 : "${RUNTIME_ROOT:?runtime root is required}"
+
+export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"
+install -d -m 0700 "${UV_CACHE_DIR}"
 
 model_repository=Qwen/Qwen3.5-397B-A17B-FP8
 model_revision="$(curl --fail --location --silent --show-error "https://huggingface.co/api/models/${model_repository}" | jq -er '.sha | select(test("^[0-9a-f]{40,64}$"))')"
