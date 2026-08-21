@@ -4,6 +4,7 @@ set -euo pipefail
 : "${CLUSTER_NAME:?cluster name is required}"
 : "${CONTAINER_ARCHIVE:?container archive is required}"
 : "${CONTAINER_SIDECAR:?container sidecar is required}"
+: "${DATASET_CACHE_ROOT:?dataset cache root is required}"
 : "${ENROOT_SYSCONF_PATH:?Enroot system configuration path is required}"
 : "${GITHUB_SHA:?workflow commit is required}"
 : "${GITHUB_WORKSPACE:?workflow workspace is required}"
@@ -23,6 +24,10 @@ install -d -m 0700 "${UV_CACHE_DIR}" "${UV_PYTHON_INSTALL_DIR}"
 model_repository=Qwen/Qwen3.5-397B-A17B-FP8
 model_revision="$(curl --fail --location --silent --show-error "https://huggingface.co/api/models/${model_repository}" | jq -er '.sha | select(test("^[0-9a-f]{40,64}$"))')"
 model_path="${MODEL_CACHE_ROOT}/${model_revision}"
+dataset_repository=anon8231489123/ShareGPT_Vicuna_unfiltered
+dataset_revision=192ab2185289094fc556ec8ce5ce1e8e587154ca
+dataset_filename=ShareGPT_V3_unfiltered_cleaned_split.json
+dataset_path="$("${GITHUB_WORKSPACE}/scripts/fetch-sharegpt.sh" "${DATASET_CACHE_ROOT}")"
 install -d -m 2775 "${model_path}" "${RUNTIME_ROOT}"
 uvx --from 'huggingface_hub>=1.0' hf download "${model_repository}" --revision "${model_revision}" --include '*.json' --include '*.txt' --include '*.model' --include '*.tiktoken' --exclude '*.safetensors' --exclude '*.bin' --local-dir "${model_path}"
 test -s "${model_path}/config.json"
@@ -57,11 +62,9 @@ uv sync --project "${runtime_dir}/qwen-experiment-metrics" --managed-python --fr
 tensor_parallel_size="$(( NODE_COUNT * GPUS_PER_NODE ))"
 jq -n --arg purpose "${RUN_PURPOSE}" --argjson nodes "${NODE_COUNT}" --argjson gpus_per_node "${GPUS_PER_NODE}" --argjson tensor_parallel_size "${tensor_parallel_size}" --arg resource_group "${RESOURCE_GROUP}" --arg transport_policy "${CLUSTER_NAME}-host-mpi-enroot" '{schema_version:"qwen-execution-settings/v1",run_purpose:$purpose,nodes:$nodes,mpi_processes:$nodes,gpus_per_node:$gpus_per_node,tensor_parallel_size:$tensor_parallel_size,resource_group:$resource_group,transport_policy:$transport_policy,advertise_source:"mpi-rank-zero-hostname",sglang_port:25000,node_agent_port:25001,rendezvous_timeout_sec:300,ready_timeout_sec:300}' >"${runtime_dir}/control/execution-settings-input.json"
 jq -n --arg repository "${model_repository}" --arg revision "${model_revision}" --arg path "${model_path}" '{schema_version:"model-metadata/v1",repository:$repository,revision:$revision,path:$path,weights_present:false,load_format:"dummy"}' >"${runtime_dir}/source/model-metadata.json"
-dataset_fixture="${runtime_dir}/source/dummy-sharegpt.json"
-jq -n '[range(8) as $index | {conversations:[{from:"human",value:("deterministic dummy prompt " + ($index | tostring))},{from:"gpt",value:"deterministic dummy response"}]}]' >"${dataset_fixture}"
-jq -e 'type == "array" and length == 8 and all(.[]; (.conversations | type == "array" and length == 2 and all(.[]; (.value | type == "string" and length > 0))))' "${dataset_fixture}" >/dev/null
-dataset_fixture_sha256="$(sha256sum "${dataset_fixture}" | awk '{print $1}')"
-jq -n --arg fixture_sha256 "${dataset_fixture_sha256}" '{schema_version:"dummy-random-dataset/v1",dataset_name:"random",seed:42,num_prompts:8,input_length:1024,output_length:128,range_ratio:1,source:{kind:"generated_sharegpt_fixture",relative_path:"source/dummy-sharegpt.json",sha256:$fixture_sha256}}' >"${runtime_dir}/source/dataset-manifest.json"
+dataset_size="$(stat -c '%s' "${dataset_path}")"
+dataset_sha256="$(sha256sum "${dataset_path}" | awk '{print $1}')"
+jq -n --arg repository "${dataset_repository}" --arg revision "${dataset_revision}" --arg filename "${dataset_filename}" --arg path "${dataset_path}" --argjson size_bytes "${dataset_size}" --arg sha256 "${dataset_sha256}" '{schema_version:"dummy-random-dataset/v1",dataset_name:"random",seed:42,num_prompts:8,input_length:1024,output_length:128,range_ratio:1,source:{kind:"hub_file",repository:$repository,revision:$revision,filename:$filename,path:$path,size_bytes:$size_bytes,sha256:$sha256}}' >"${runtime_dir}/source/dataset-manifest.json"
 
 object_hash_algorithm="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-object-format)"
 base_commit="$(git -C "${GITHUB_WORKSPACE}" rev-parse "${GITHUB_SHA}^" 2>/dev/null || printf '%s' "${GITHUB_SHA}")"

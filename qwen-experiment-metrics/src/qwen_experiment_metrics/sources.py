@@ -796,22 +796,36 @@ def provenance_facts(runtime_dir: Path) -> tuple[Fact, ...]:
     dataset_source = dataset["source"]
     if not isinstance(dataset_source, dict) or set(dataset_source) != {
         "kind",
-        "relative_path",
+        "repository",
+        "revision",
+        "filename",
+        "path",
+        "size_bytes",
         "sha256",
     }:
         raise ValueError("dummy dataset source is not closed")
-    if dataset_source["kind"] != "generated_sharegpt_fixture":
+    if (
+        dataset_source["kind"] != "hub_file"
+        or dataset_source["repository"]
+        != "anon8231489123/ShareGPT_Vicuna_unfiltered"
+        or dataset_source["filename"]
+        != "ShareGPT_V3_unfiltered_cleaned_split.json"
+    ):
         raise ValueError("dummy dataset source kind differs")
-    relative_path = _nonempty_string(
-        dataset_source["relative_path"], "dummy dataset relative path"
-    )
-    _safe_relative(relative_path)
-    expected_fixture_sha256 = _require_sha256(
+    _algorithm_oid(dataset_source["revision"], "sha1")
+    dataset_path = Path(_nonempty_string(dataset_source["path"], "dataset path"))
+    if not dataset_path.is_absolute():
+        raise ValueError("dataset path must be absolute")
+    expected_size = _positive_uint(dataset_source["size_bytes"], "dataset size")
+    expected_sha256 = _require_sha256(
         dataset_source["sha256"], "dummy dataset sha256"
     )
-    fixture_path = runtime_dir / relative_path
-    if not fixture_path.is_file() or _sha256(fixture_path) != expected_fixture_sha256:
-        raise ValueError("dummy dataset fixture differs")
+    if (
+        not dataset_path.is_file()
+        or dataset_path.stat().st_size != expected_size
+        or _sha256(dataset_path) != expected_sha256
+    ):
+        raise ValueError("dummy dataset file differs")
     return (
         Fact(
             "build.provenance",

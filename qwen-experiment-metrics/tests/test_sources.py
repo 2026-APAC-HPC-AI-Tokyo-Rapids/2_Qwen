@@ -204,8 +204,8 @@ def test_provenance_facts_expose_container_and_dummy_input_details(
         "weights_present": False,
         "load_format": "dummy",
     }
-    fixture = b'[{"conversations":[{"from":"human","value":"dummy"},{"from":"gpt","value":"dummy"}]}]\n'
-    (source / "dummy-sharegpt.json").write_bytes(fixture)
+    dataset_file = tmp_path / "ShareGPT_V3_unfiltered_cleaned_split.json"
+    dataset_file.write_bytes(b"sharegpt\n")
     dataset = {
         "schema_version": "dummy-random-dataset/v1",
         "dataset_name": "random",
@@ -215,9 +215,13 @@ def test_provenance_facts_expose_container_and_dummy_input_details(
         "output_length": 128,
         "range_ratio": 1,
         "source": {
-            "kind": "generated_sharegpt_fixture",
-            "relative_path": "source/dummy-sharegpt.json",
-            "sha256": hashlib.sha256(fixture).hexdigest(),
+            "kind": "hub_file",
+            "repository": "anon8231489123/ShareGPT_Vicuna_unfiltered",
+            "revision": "b" * 40,
+            "filename": "ShareGPT_V3_unfiltered_cleaned_split.json",
+            "path": str(dataset_file),
+            "size_bytes": dataset_file.stat().st_size,
+            "sha256": hashlib.sha256(dataset_file.read_bytes()).hexdigest(),
         },
     }
     (source / "model-metadata.json").write_bytes(jcs_bytes(model) + b"\n")
@@ -232,8 +236,8 @@ def test_provenance_facts_expose_container_and_dummy_input_details(
     assert facts["input.model"] == model
     assert facts["input.dataset"] == dataset
 
-    (source / "dummy-sharegpt.json").write_bytes(b"tampered\n")
-    with pytest.raises(ValueError, match="dummy dataset fixture differs"):
+    dataset_file.write_bytes(b"tampered\n")
+    with pytest.raises(ValueError, match="dummy dataset file differs"):
         provenance_facts(runtime)
 
 

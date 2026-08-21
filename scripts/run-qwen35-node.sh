@@ -14,6 +14,7 @@ manifest="${RUNTIME_DIR}/control/run-manifest.json"
 execution_settings="${RUNTIME_DIR}/control/execution-settings.json"
 run_id="$(jq -er '.run_id' "${manifest}")"
 run_purpose="$(jq -er '.run_purpose' "${manifest}")"
+dataset_path="$(jq -er '.source.path' "${RUNTIME_DIR}/source/dataset-manifest.json")"
 nodes="$(jq -er '.nodes' "${execution_settings}")"
 tensor_parallel_size="$(jq -er '.tensor_parallel_size' "${execution_settings}")"
 sglang_port="$(jq -er '.sglang_port' "${execution_settings}")"
@@ -74,7 +75,7 @@ if [[ "${run_purpose}" == profile ]]; then
 fi
 
 # Qwen3.5 397B FP8のdummy初期化にもweight相当のVRAMが必要なため、玄界は2ノード8 GPUで実行する。
-benchmark=(/opt/sglang/venv/bin/python -m sglang.benchmark.offline_throughput --model-path /model --load-format dummy --tp-size "${tensor_parallel_size}" --nnodes "${nodes}" --node-rank "${node_rank}" --dist-init-addr "${master_host}:${sglang_port}" --dataset-name random --dataset-path /source-output/dummy-sharegpt.json --random-input-len 1024 --random-output-len 128 --random-range-ratio 1 --num-prompts 8 --seed 42 --mem-fraction-static 0.80)
+benchmark=(/opt/sglang/venv/bin/python -m sglang.benchmark.offline_throughput --model-path /model --load-format dummy --tp-size "${tensor_parallel_size}" --nnodes "${nodes}" --node-rank "${node_rank}" --dist-init-addr "${master_host}:${sglang_port}" --dataset-name random --dataset-path /dataset/ShareGPT_V3_unfiltered_cleaned_split.json --random-input-len 1024 --random-output-len 128 --random-range-ratio 1 --num-prompts 8 --seed 42 --mem-fraction-static 0.80)
 sglang_command=("${benchmark[@]}")
 profile_mounts=()
 profile_environ=()
@@ -84,7 +85,7 @@ runtime_source_oids="${RUNTIME_DIR}/source/runtime-source-oids.json"
 bench_args_blob_oid="$(jq -er 'select(.schema_version == "qwen-runtime-source-oids/v1") | .bench_args_blob_oid' "${runtime_source_oids}")"
 server_args_blob_oid="$(jq -er '.server_args_blob_oid' "${runtime_source_oids}")"
 container_environment=(-e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e HF_DATASETS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/jit-cache -e SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor -e TRITON_CACHE_DIR=/jit-cache/triton -e QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock -e "QWEN_EXPERIMENT_METRICS_RUN_ID=${run_id}" -e "QWEN_EXPERIMENT_METRICS_NODE_RANK=${node_rank}" -e "QWEN_EXPERIMENT_METRICS_BENCH_ARGS_BLOB_OID=${bench_args_blob_oid}" -e "QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID=${server_args_blob_oid}" -e QWEN_EXPERIMENT_METRICS_SOURCE_DIR=/source-output)
-container_mounts=(-m "${MODEL_PATH}:/model" -m "${container_home}:/runtime-home" -m "${jit_cache}:/jit-cache" -m "${node_metrics_dir}:/metrics" -m "${RUNTIME_DIR}/source:/source-output")
+container_mounts=(-m "${MODEL_PATH}:/model" -m "${dataset_path}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro" -m "${container_home}:/runtime-home" -m "${jit_cache}:/jit-cache" -m "${node_metrics_dir}:/metrics" -m "${RUNTIME_DIR}/source:/source-output")
 command=(enroot start "${container_environment[@]}" "${profile_environ[@]}" "${container_mounts[@]}" "${profile_mounts[@]}" "${CONTAINER_IMAGE}" "${sglang_command[@]}")
 
 argv_dir="${node_metrics_dir}/argv"
