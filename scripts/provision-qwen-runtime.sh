@@ -17,7 +17,8 @@ set -euo pipefail
 : "${RUNTIME_ROOT:?runtime root is required}"
 
 export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"
-install -d -m 0700 "${UV_CACHE_DIR}"
+export UV_PYTHON_INSTALL_DIR="${RUNNER_TEMP}/uv-python"
+install -d -m 0700 "${UV_CACHE_DIR}" "${UV_PYTHON_INSTALL_DIR}"
 
 model_repository=Qwen/Qwen3.5-397B-A17B-FP8
 model_revision="$(curl --fail --location --silent --show-error "https://huggingface.co/api/models/${model_repository}" | jq -er '.sha | select(test("^[0-9a-f]{40,64}$"))')"
