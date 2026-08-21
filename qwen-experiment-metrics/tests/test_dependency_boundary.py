@@ -28,6 +28,8 @@ def test_container_build_uses_all_rootless_tools() -> None:
     assert "--no-preserve=ownership,xattr" in script
     assert '"container-sidecar/v1"' in script
     assert "-all-root -no-xattrs" in script
+    assert "-no-duplicates" in script
+    assert "-processors 4 -mem 2G" in script
     assert "singularity" not in script.lower()
 
 
