@@ -60,4 +60,6 @@ ASPIRE 2A+ではPBS job `203570.pbs111`を1 GPU compute node `a2ap-dgx037`へ投
 
 玄界PJM job `6555945`ではnode-local disk上のJITと2ノード8 GPUのCUDA graph captureが完了し、従来の`failed to map segment`は解消した。その後、SGLang `7ec0eb3d7a01f872d0bd2f5095f792c0c1792320`の`random` datasetがShareGPTを暗黙に取得しようとし、計算nodeの`HF_HUB_OFFLINE=1`境界で終了した。同revisionの`random-ids`は同じ固定長・固定seedの条件を保ちながらtoken IDをローカル生成するため、dummy診断ではこちらを使う。dataset manifestにも実引数と同じ`random-ids`を記録する。これはruntime引数とprovenanceだけの変更であり、container再ビルドを必要としない。
 
+最初の再検証Actions run `32536408333`はPJM投入前のprovisionで、計測ライブラリのclosed-schema検証だけが旧`random`値を要求していたため`dummy dataset manifest differs`となった。manifest生成、検証、provenance fixture、実行引数をすべて`random-ids`へ一致させる。過去runのmanifestとartifactは書き換えず、各runが記録した当時の入力条件として保持する。
+
 計算ジョブへBigQuery資格情報を渡さない。各producerは共有runtime directoryの`domain/fragments`へ完了済みJSONLをatomicに書く。scheduler terminal状態と`run-success`を確認した後だけ、ログインrunnerがmode 0600の一時資格情報を`/dev/shm`へ作り、全fragmentを一度送信する。資格情報はruntime directoryやActions artifactへ入れない。

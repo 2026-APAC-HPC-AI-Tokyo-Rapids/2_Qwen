@@ -781,7 +781,7 @@ def provenance_facts(runtime_dir: Path) -> tuple[Fact, ...]:
         raise ValueError("dummy dataset manifest is not closed")
     if (
         dataset["schema_version"] != "dummy-random-dataset/v1"
-        or dataset["dataset_name"] != "random"
+        or dataset["dataset_name"] != "random-ids"
     ):
         raise ValueError("dummy dataset manifest differs")
     for name in (

@@ -206,7 +206,7 @@ def test_provenance_facts_expose_container_and_dummy_input_details(
     }
     dataset = {
         "schema_version": "dummy-random-dataset/v1",
-        "dataset_name": "random",
+        "dataset_name": "random-ids",
         "seed": 42,
         "num_prompts": 8,
         "input_length": 1024,
