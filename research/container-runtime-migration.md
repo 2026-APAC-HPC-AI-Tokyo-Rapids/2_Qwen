@@ -56,10 +56,10 @@ ASPIRE 2A+ではPBS job `203570.pbs111`を1 GPU compute node `a2ap-dgx037`へ投
 
 ## dummy実行と計測境界
 
-モデル重みは取得しない。ログインrunnerはHugging Faceから固定revisionのJSON、tokenizer、text metadataだけを取得し、計算ジョブは`--load-format dummy`、run内の決定的なShareGPT形式fixtureを読む`random` dataset、固定seedで分散SGLangを起動する。fixtureのrelative pathとSHA-256をdataset manifestへ記録し、同じsource treeをcontainerへmountしてwarmupと本計測の両方で使う。dummy runはcontainer、GPU injection、MPI/NCCL、SGLang分散起動、計測、成果物回収を確認するための診断であり、公式モデル性能ではない。
+モデル重みは取得しない。ログインrunnerはHugging Faceから固定revisionのmodel JSON、tokenizer、text metadataだけを取得し、ShareGPTは固定revision `192ab2185289094fc556ec8ce5ce1e8e587154ca`の単一JSONをクラスタごとの共有dataset cacheへ取得する。計算ジョブは`--load-format dummy`、固定seedの`random` datasetで分散SGLangを起動し、同JSONをEnrootへread-only mountしてwarmupと本計測の両方で使う。datasetのrepository、revision、filename、host path、size、SHA-256をmanifestへ記録・検証する。dummy runはcontainer、GPU injection、MPI/NCCL、SGLang分散起動、計測、成果物回収を確認するための診断であり、公式モデル性能ではない。
 
 玄界PJM job `6555945`ではnode-local disk上のJITと2ノード8 GPUのCUDA graph captureが完了し、従来の`failed to map segment`は解消した。その後、SGLang `7ec0eb3d7a01f872d0bd2f5095f792c0c1792320`の`random` datasetがShareGPTを暗黙に取得しようとし、計算nodeの`HF_HUB_OFFLINE=1`境界で終了した。
 
-最初の再検証Actions run `32536408333`はPJM投入前のprovisionで、計測ライブラリのclosed-schema検証だけが旧`random`値を要求していたため`dummy dataset manifest differs`となった。これを同期したPJM job `6556998`では、dataset registryに存在する`random-ids`を`offline_throughput.py`のCLI choicesが受理せずexit 2となった。また同CLIは選択datasetと無関係にShareGPT由来のrandom warmupを先に構築するため、`generated-shared-prefix`へ変えるだけでも暗黙downloadは残る。コンテナpatchや外部dataset downloadを追加せず、provision時に8会話の決定的なfixtureを生成して公式`random`経路へ明示する。RandomDatasetはこの非空promptを固定長へ反復・切詰めするため、入力1024、出力128、8 promptの診断条件を維持する。これはruntime入力とprovenanceだけの変更であり、container再ビルドを必要としない。過去runのmanifestとartifactは書き換えない。
+最初の再検証Actions run `32536408333`はPJM投入前のprovisionで、計測ライブラリのclosed-schema検証だけが旧`random`値を要求していたため`dummy dataset manifest differs`となった。これを同期したPJM job `6556998`では、dataset registryに存在する`random-ids`を`offline_throughput.py`のCLI choicesが受理せずexit 2となった。また同CLIは選択datasetと無関係にShareGPT由来のrandom warmupを先に構築するため、`generated-shared-prefix`へ変えるだけでも暗黙downloadは残る。ShareGPTをlogin nodeで事前取得して公式`random`経路へ明示することで、計算nodeのoffline境界を保ちながら入力1024、出力128、8 promptの診断条件を維持する。これはruntime入力とprovenanceだけの変更であり、container再ビルドを必要としない。過去runのmanifestとartifactは書き換えない。
 
 計算ジョブへBigQuery資格情報を渡さない。各producerは共有runtime directoryの`domain/fragments`へ完了済みJSONLをatomicに書く。scheduler terminal状態と`run-success`を確認した後だけ、ログインrunnerがmode 0600の一時資格情報を`/dev/shm`へ作り、全fragmentを一度送信する。資格情報はruntime directoryやActions artifactへ入れない。

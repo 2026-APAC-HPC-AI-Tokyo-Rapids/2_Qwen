@@ -102,13 +102,19 @@ def test_entry_workflow_keeps_push_and_dispatch_controls_closed() -> None:
 def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     node = (ROOT / "scripts/run-qwen35-node.sh").read_text(encoding="utf-8")
     provision = (ROOT / "scripts/provision-qwen-runtime.sh").read_text(encoding="utf-8")
+    fetch_dataset = (ROOT / "scripts/fetch-sharegpt.sh").read_text(encoding="utf-8")
     job = (ROOT / "scripts/run-qwen35-job.sh").read_text(encoding="utf-8")
     assert "enroot start" in node
     assert "--load-format dummy" in node
     assert "--dataset-name random" in node
-    assert "--dataset-path /source-output/dummy-sharegpt.json" in node
+    assert "--dataset-path /dataset/ShareGPT_V3_unfiltered_cleaned_split.json" in node
     assert 'dataset_name:"random"' in provision
-    assert 'kind:"generated_sharegpt_fixture"' in provision
+    assert 'kind:"hub_file"' in provision
+    assert '"${dataset_path}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro"' in node
+    assert 'scripts/fetch-sharegpt.sh" "${DATASET_CACHE_ROOT}"' in provision
+    assert "revision=192ab2185289094fc556ec8ce5ce1e8e587154ca" in fetch_dataset
+    assert "expected_sha256=35f0e213ce091ed9b9af2a1f0755e9d39f9ccec34ab281cd4ca60d70f6479ba4" in fetch_dataset
+    assert 'mv -T "${staging_dir}" "${target_dir}"' in fetch_dataset
     assert "singularity exec" not in node
     assert "NVIDIA_VISIBLE_DEVICES=all" in node
     assert "NVIDIA_DISABLE_REQUIRE=1" in node
