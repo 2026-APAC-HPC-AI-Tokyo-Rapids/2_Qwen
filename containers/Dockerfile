@@ -1,4 +1,4 @@
-FROM nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41cfc5d037f
+FROM docker.io/nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41cfc5d037f
 
 LABEL org.opencontainers.image.title="Source-built SGLang runtime"
 LABEL org.opencontainers.image.description="SGLang main built with uv for rootless OCI and Enroot execution"
