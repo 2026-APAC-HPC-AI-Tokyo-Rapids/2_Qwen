@@ -105,7 +105,8 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     job = (ROOT / "scripts/run-qwen35-job.sh").read_text(encoding="utf-8")
     assert "enroot start" in node
     assert "--load-format dummy" in node
-    assert "--dataset-name random" in node
+    assert "--dataset-name random-ids" in node
+    assert 'dataset_name:"random-ids"' in provision
     assert "singularity exec" not in node
     assert "NVIDIA_VISIBLE_DEVICES=all" in node
     assert "NVIDIA_DISABLE_REQUIRE=1" in node
