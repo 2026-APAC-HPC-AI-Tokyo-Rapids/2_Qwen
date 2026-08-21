@@ -36,6 +36,8 @@ ASPIRE 2A+のhome Lustreでは、既存の`.local/.setenv`や`.gitconfig`に対�
 
 両クラスタともEnrootではhostの`/dev`全体をrecursive bindせず、`ENROOT_RESTRICT_DEV=yes`で最小device filesystemを作る。NVIDIAとMellanoxのhookは保持し、GPU計算時だけ必要なdeviceとdriverを注入する。玄界ではPJM cgroup pathとEnroot 4.2.0の`10-cgroups.sh`が整合しなかったため、このuser-local hookだけを無効化し、資源制御をPJMに委ねる。
 
+read-onlyなSquashFSから起動するため、計算nodeごとに`/dev/shm`へ一時的なruntime homeを作り、containerの`HOME=/runtime-home`と`XDG_CACHE_HOME=/runtime-home/.cache`へbindする。JIT libraryが標準cache pathへ書く場合もこの単一の書込み境界へ収容し、libraryごとにhost home配下の例外mountを増やさない。FlashInfer、DeepGEMM、TorchInductor、Tritonの明示的なworkspaceも同じnode-local一時領域へ置き、job終了時にまとめて削除する。玄界PJM job `6552532`では2ノード8 GPUのdummy初期化が完了した後、`tvm-ffi`がhost由来のread-onlyな`$HOME/.cache`へJIT出力を書こうとして失敗したため、この境界を追加した。
+
 玄界の直近成功runでhost driver 595.71.05を確認した。一方、固定CUDA 13.0.1 base imageの`NVIDIA_REQUIRE_CUDA`は既知の575系driverまでしか列挙していない。新しいdriverはCUDA 13を満たすため、GPU実行時は`NVIDIA_DISABLE_REQUIRE=1`をEnrootへ明示して古いimage内制約だけを無効化する。device、driver library、GPU topologyは引き続きNVIDIA hookとcontainer内`nvidia-smi`で検証する。container内GPU topologyのsource schemaも`singularity_argv`からruntime非依存の`container_argv`へ移行した。
 
 ASPIRE 2A+にはsystemの`nvidia-container-cli` 1.17.4がある。玄界には配置されていなかったため、NVIDIA公式RPM repositoryの署名を検証し、`libnvidia-container1`と`libnvidia-container-tools` 1.20.0を`~/.local`へ展開した。これによりroot権限を使わずEnrootのNVIDIA hookがhost driverとdeviceをcontainerへ注入できる。
