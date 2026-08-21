@@ -121,6 +121,8 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "start-run-lifecycle" in job and "finish-run-lifecycle" in job
     assert 'ENROOT_SYSCONF_PATH="${RUNTIME_DIR}/enroot-system"' in job
     assert "--ldconfig=/sbin/ldconfig" in provision
+    assert "sed -i 's%--ldconfig=" in provision
+    assert "sed -i 's|--ldconfig=" not in provision
     assert "10-cgroups.sh" in provision
     assert "--no-preserve=ownership,xattr" in provision
 
