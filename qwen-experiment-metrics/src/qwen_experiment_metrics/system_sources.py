@@ -401,10 +401,10 @@ def create_node_topology(
     local_rank: int,
     size: int,
     node_wrapper_argv: list[str],
-    singularity_argv: list[str],
+    container_argv: list[str],
     sglang_argv: list[str],
-    singularity_launcher: Path,
-    sif: Path,
+    container_launcher: Path,
+    container_image: Path,
 ) -> Path:
     manifest = load_manifest(manifest_path)
     topology_dir = runtime_dir / "source/topology"
@@ -418,10 +418,15 @@ def create_node_topology(
         runtime_dir,
     )
     container_query_argv = [
-        str(singularity_launcher),
-        "exec",
-        "--nv",
-        str(sif),
+        str(container_launcher),
+        "start",
+        "-e",
+        "NVIDIA_VISIBLE_DEVICES=all",
+        "-e",
+        "NVIDIA_DRIVER_CAPABILITIES=all",
+        "-e",
+        "NVIDIA_DISABLE_REQUIRE=1",
+        str(container_image),
         *query_argv,
     ]
     container_query = _capture_source_command(
@@ -453,7 +458,7 @@ def create_node_topology(
             "host_topology": host_topology,
         },
         "node_wrapper_argv": node_wrapper_argv,
-        "singularity_argv": singularity_argv,
+        "container_argv": container_argv,
         "sglang_argv": sglang_argv,
         "cpu_affinity": sorted(os.sched_getaffinity(0)),
         "numa_mems": _numa_mems(),
@@ -480,7 +485,7 @@ def validate_node_topology(
         "outer_mpi",
         "gpu_commands",
         "node_wrapper_argv",
-        "singularity_argv",
+        "container_argv",
         "sglang_argv",
         "cpu_affinity",
         "numa_mems",
@@ -526,7 +531,7 @@ def validate_node_topology(
         _validate_source_command(record, runtime_dir)
         if record["exit_code"] != 0:
             raise ValueError("topology source command did not succeed")
-    for name in ("node_wrapper_argv", "singularity_argv", "sglang_argv"):
+    for name in ("node_wrapper_argv", "container_argv", "sglang_argv"):
         _string_array(value[name], name)
     affinity = _uint_array(value["cpu_affinity"], "node CPU affinity")
     if affinity != sorted(set(affinity)):
@@ -986,7 +991,7 @@ def _topology_facts(
         Fact(f"{prefix}.{name}", value[name])
         for name in (
             "node_wrapper_argv",
-            "singularity_argv",
+            "container_argv",
             "sglang_argv",
             "cpu_affinity",
         )

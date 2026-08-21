@@ -81,84 +81,30 @@ runnerは`score -> bench`、`profile -> profile`の固定写像で一つ選び�
 experiment-metrics-v2の実装中に行う計測なし／あり比較は一時的な非回帰確認である。結果は確認後に破棄し、
 専用purpose、arm、pair、allocation、manifest、artifact、metric key、relation、Sheet列、eligibility、
 decision recordを定義しない。
-## SIF sidecar v1
+## container sidecar v1
 
-`source/sif-sidecar.json`はbuild終了後に作る、全field required、`additionalProperties=false`のclosed objectである。
-
-```text
-schema_version: const "sif-sidecar/v1"
-sif_artifact: {artifact_relative_path:relative POSIX path,size_bytes:uint,sha256:sha256}
-source_commits: exactly 2 [{repository_id:enum "apac2026-qwen"|"apac2026-sglang",
-  commit_role:enum "sif_build_definition"|"sglang_source",object_hash_algorithm:enum "sha1"|"sha256",
-  oid:algorithm-constrained full OID}]
-score_source_tree: sorted unique [{path:repository-relative POSIX path,state:const "absent"} |
-  {path:repository-relative POSIX path,state:const "present",mode:^[0-7]{6}$,blob_oid:algorithm-constrained full OID}]
-recipe: {path:relative POSIX path,blob_oid:algorithm-constrained full OID}
-applied_patches: sorted unique [{path:relative POSIX path,blob_oid:algorithm-constrained full OID}]
-base_oci: {reference:nonempty digest-pinned string,inspect_raw:member,
-  manifest_digest:string,config_digest:string,layer_digests:string[]}
-lock_manifest: {path:relative POSIX path,size_bytes:uint,sha256:sha256}
-build_command: nonempty string[]
-toolchain_commands: exactly 4 [{role:enum "singularity_version"|"python_version"|"cuda_version"|"compiler_version",
-  argv:nonempty string[],stdout:member,stderr:member,outcome:process-outcome}]
-embedded_manifest: {member_path:const "/opt/apac/manifest.json",size_bytes:uint,sha256:sha256,
-  manifest_identity:sha256}
-runtime_files: exactly 4 [{role:enum "python_executable"|"sglang_package_entry"|"cuda_runtime"|"nccl_runtime",
-  realpath:container absolute path,size_bytes:uint,sha256:sha256}]
-nccl_tests: {commit:const "717b68318278e93f371d8ffb46b076069d7c7851",mpi_enabled:const true,
-  json_output_enabled:const true,
-  binaries:exactly 3 [{role:enum "all_reduce_perf"|"all_gather_perf"|"reduce_scatter_perf",
-    realpath:container absolute path,size_bytes:uint,sha256:sha256}],
-  build_test:{outcome:process-outcome,stdout:member,stderr:member}}
-```
-
-source commits、toolchain commands、runtime filesは各記載role順にeach exactly onceである。roleからrepository IDへの
-対応も記載順に固定し、source OIDは各build checkoutの`rev-parse`から取る。recipe/patch blobのalgorithmは
-`sif_build_definition` commitから継承する。
-
-OCI identityはbuild前の固定command `skopeo inspect --raw docker://<digest-pinned-reference>`のraw JSONと
-そのSHA-256から得る。roleを持たない曖昧なbinary hashは追加しない。SIF内部manifestとouter sidecarはSIF SHA-256を
-自己参照させず、outer sidecarだけが完成byteをhashする。reuse時は実際にlaunchするSIF byteとsidecar hash、
-embedded manifest/runtime file hashを照合する。`manifest_identity`はembedded fileから抽出した
-commit/OCI/patch/lock closed tupleのJCS SHA-256で、build/reuse時にouter canonical tupleのSHA-256と一度照合する。
-tuple自身はsidecarへ再掲しない。GitHub workflow run/attemptはoperational relationだけが所有する。
-
-PublisherがBigQueryへ一度転記する`qwen-sif-provenance-projection/v1`は、全field required、
-`additionalProperties=false`の次の一rowである。
+`source/container-sidecar.json`はBuildah、Skopeo、Umociによるbuild完了後に作るclosed objectである。
 
 ```text
-schema_version: const "qwen-sif-provenance-projection/v1"
-sif_artifact_sha256: sha256
-source_commits: exactly 2 sidecar source commit objects in declared role order
-score_source_tree: sidecar score source entries in path-byte order
-recipe: {path:relative POSIX path, blob_oid:algorithm-constrained full OID}
-applied_patches: sorted [{path:relative POSIX path, blob_oid:algorithm-constrained full OID}, ...]
-base_oci: {reference:string, manifest_digest:string, config_digest:string, layer_digests:[string, ...]}
-lock_manifest: {path:relative POSIX path, sha256:sha256}
-build_command: nonempty string array
-toolchain_observations: exactly 4 [{role:enum "singularity_version"|"python_version"|"cuda_version"|"compiler_version",
-  outcome:process-outcome,stdout_member:relative POSIX path,stdout_b64:base64,
-  stderr_member:relative POSIX path,stderr_b64:base64}, ...] in declared role order
-embedded_manifest_identity: sha256
-runtime_files: exactly 4 [{role:enum "python_executable"|"sglang_package_entry"|"cuda_runtime"|"nccl_runtime",
-  realpath:string, size_bytes:uint, sha256:sha256}, ...] in declared role order
-source_member: relative POSIX path
-source_sha256: sha256
+schema_version: const "container-sidecar/v1"
+container_artifact: {artifact_relative_path:const "sglang.sqsh",size_bytes:uint,sha256:sha256}
+oci_manifest: {sha256:sha256}
+source_commits: {qwen:full Git OID,sglang:full Git OID}
+toolchain: {buildah:nonempty version string,skopeo:nonempty version string,umoci:nonempty version string}
 ```
 
-recipe/patch blobのalgorithmは`source_commits[role="sif_build_definition"]`から継承する。workflow run/attemptは
-operational relationだけが所有し、このscientific projectionへ複写しない。`source_sha256`はsidecar identityであり、
-run Fact `artifact.sif_manifest_sha256`がこの一rowへのjoin anchorになる。
-`score_source_tree`のpath集合はbuild時に選んだscore bundle `source_paths`とexact一致し、reference bundleでは`[]`である。
-entry OIDのalgorithmは`sif_build_definition` commitから継承する。
+provision時は実際にlaunchするSquashFS byteのsizeとSHA-256をsidecarへ照合する。検証済みの値は
+`build.provenance`、`source.container_build.qwen_commit`、`source.sglang.commit`としてrun factへ記録する。
+モデルとdatasetは、それぞれ`source/model-metadata.json`と`source/dataset-manifest.json`を正本とし、
+重みなしのdummy loadとrandom datasetの実引数を閉じる。workflow run/attemptはoperational relationだけが所有する。
 
 ## runtime launcher validation v1
 
 run bundleが`source/runtime-launchers.json`を一度所有する。closed sourceは
 `{schema_version:const "runtime-launcher-validation/v1",
-executables:exactly 2 [{role:enum "mpirun"|"singularity",requested_path:string,resolved_realpath:absolute POSIX path,
-size_bytes:uint,sha256:sha256}],versions:exactly 2 [{role:enum "mpirun"|"singularity",
-argv:exact [same-role resolved realpath,"--version"],outcome:process-outcome,stdout:member,stderr:member}]}`で、両arrayは記載role順、
+executables:exactly 2 [{role:enum "mpirun"|"enroot",requested_path:string,resolved_realpath:absolute POSIX path,
+size_bytes:uint,sha256:sha256}],versions:exactly 2 [{role:enum "mpirun"|"enroot",
+argv:exact [same-role requested path,"--version"|"version"],outcome:{exit_code:uint},stdout:member,stderr:member}]}`で、両arrayは記載role順、
 各role exactly onceである。outer MPI stageとnode wrapperはこのresolved absolute pathを使い、PATH検索しない。
 
 publisher projectionは全field requiredの
@@ -256,14 +202,14 @@ source_member:relative POSIX path,source_sha256:sha256}`である。CPU identity
   のhost/container別`{argv:string[],exit_code:int,stdout_member,stdout_size_bytes:uint,stdout_sha256:sha256,
   stderr_member,stderr_size_bytes:uint,stderr_sha256:sha256}`
 - host `nvidia-smi topo -m`の同じhash-sealed command record
-- node別actual `node_wrapper_argv`、`singularity_argv`、`sglang_argv`のstring array、host CPU affinity uint array、NUMA mems string
+- node別actual `node_wrapper_argv`、`container_argv`、`sglang_argv`のstring array、host CPU affinity uint array、NUMA mems string
 
 GPU arrayはraw stdoutから`topology/v1` reducerが一度parseし、node-rank/GPU index順の
 `{node_rank,index,name,uuid,pci_bus_id,memory_total_bytes,driver_version,persistence_mode,compute_mode,power_limit_w,
 max_sm_clock_mhz,max_memory_clock_mhz,mig_mode,ecc_mode,scope=host|container}`としてBigQueryへ
 投影する。source JSON内へparsed copyを持たず、node argvや`hardware.gpu.nodes`の第二raw factも作らない。
 `node-launch-projection/v1`は`schema_version:const "node-launch-projection/v1"/run_id/node_rank/global_rank/local_rank/size/hostname/node_wrapper_argv/
-singularity_argv/sglang_argv/cpu_affinity/numa_mems/source_member/source_sha256`を持つ。
+container_argv/sglang_argv/cpu_affinity/numa_mems/source_member/source_sha256`を持つ。
 `topology-projection/v1`は上記GPU recordに`schema_version:const "topology-projection/v1"/run_id/source_member/source_sha256`を加える。
 
 BenchArgs/ServerArgs event payloadは`config-snapshot/v1`で、`config_type=BenchArgs|ServerArgs`、
@@ -550,7 +496,7 @@ IMB source membershipは`source/network/imb-mpi1/{argv.json,stdout.txt,stderr.tx
 artifact hashはmanifest/projection lineageだけが所有する。algbw/busbwを再計算せず、summary row/keyを追加しない。
 `all_reduce`と`reduce_scatter`の`reduction_op`は`sum`、`all_gather`はNULLに固定する。JSON内のsize/count/type、
 out-of-place/in-place、time、algbw、busbw、errorをlosslessに写し、8 byteから1 GiBまでfactor 2の実在sizeだけをacceptする。
-SIF sidecarの`nccl_tests.binaries`は記載role順each exactly once、build testはsuccessでなければSIFを公開しない。
+container buildでは11個のNCCL test binary、JSON出力用`-J`、主要3 collectiveの起動可能性をBuildahの作業container内で確認し、成功しなければSquashFSを公開しない。
 
 ## control、merge、package
 
@@ -583,7 +529,7 @@ source instanceのowner scopeは`run`または`build`だけである。run owner
 |---|---|---|
 | source track | run ID | bench/profile |
 | runtime launcher | run ID、role | bench/profile |
-| SIF provenance | SIF manifest identity | bench/profile |
+| container provenance | SquashFS SHA-256 | bench/profile |
 | model/dataset/cache manifest | run ID、kind | bench/profile |
 | workload manifest/request | run ID、kind、ordinal | bench/profile |
 | minimal hardware | run ID、node rank | bench/profile |

@@ -1,4 +1,6 @@
-# Genkai における Qwen 3.5 benchmark の調査記録
+# GenkaiにおけるQwen 3.5 benchmarkの調査記録（旧構成）
+
+この記録は実モデルとSIFを使った従来経路の履歴である。現行の両クラスタdummy経路は [OCI / Enroot移行記録](../container-runtime-migration.md) を参照する。
 
 このディレクトリは、Genkai の GPU 計算ノードで Qwen 3.5 を SGLang により実行し、変更の影響を比較するための固定条件と運用方法を記録する。
 

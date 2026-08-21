@@ -1,0 +1,68 @@
+name: Qwen
+
+on:
+  push:
+    paths-ignore:
+      - "research/**"
+      - "**/*.md"
+  workflow_dispatch:
+    inputs:
+      run_genkai:
+        description: 玄界で実行する
+        required: true
+        default: true
+        type: boolean
+      run_aspire2ap:
+        description: ASPIRE 2A+で実行する
+        required: true
+        default: true
+        type: boolean
+      node_count:
+        description: 実行ノード数
+        required: true
+        default: "2"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "4"
+      profile:
+        description: 通常計測の代わりにプロファイルを取得する
+        required: true
+        default: false
+        type: boolean
+      require_build:
+        description: 既存成果物を再利用せず新しいOCIコンテナをビルドする
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  validate:
+    name: 制御処理を検証
+    uses: ./.github/workflows/validate.yml
+
+  genkai:
+    name: 玄界
+    needs: validate
+    if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:genkai]')) || (github.event_name == 'workflow_dispatch' && inputs.run_genkai) }}
+    uses: ./.github/workflows/genkai.yml
+    with:
+      node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
+      profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
+      require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
+    secrets: inherit
+  aspire2ap:
+    name: ASPIRE 2A+
+    needs: validate
+    if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap) }}
+    uses: ./.github/workflows/aspire2ap.yml
+    with:
+      node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
+      profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
+      require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
+    secrets: inherit

@@ -1,442 +1,222 @@
-name: SGLang Qwen 3.5 on Genkai
+name: 玄界でQwenを実行
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      require_build:
-        description: Build from source instead of reusing the nearest successful SIF from the first-parent history
+      node_count:
         required: true
-        default: false
+        type: string
+      profile:
+        required: true
         type: boolean
-      run_purpose:
-        description: Run as an official benchmark or a diagnostic profile
+      require_build:
         required: true
-        default: bench
-        type: choice
-        options:
-          - bench
-          - profile
-  push:
-    paths-ignore:
-      - '**/.md'
+        type: boolean
 
 permissions:
   actions: read
   contents: read
 
 env:
-  SIF_ARCHIVE_DIR: /home/ACCOUNT/share/sglang-sifs
+  CONTAINER_ARCHIVE_DIR: /home/ACCOUNT/share/sglang-containers
   GIT_MIRROR_DIR: /fast/PROJECT/git-mirror
-  MODEL_PATH: /fast/PROJECT/Qwen/Qwen3.5-397B-A17B-FP8
-  DATASET_PATH: /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
-  RUN_PURPOSE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_purpose || 'bench' }}
+  MODEL_CACHE_ROOT: /fast/PROJECT/Qwen/Qwen3.5-397B-A17B-FP8-metadata
+  RUNTIME_ROOT: /fast/PROJECT/sglang-runs
 
 defaults:
   run:
     shell: bash --login -eo pipefail {0}
 
 jobs:
-  select-sif:
-    name: Select SGLang SIF
+  select-container:
+    name: OCIコンテナを選択
     runs-on: [self-hosted, genkai]
     timeout-minutes: 7200
-
     outputs:
       action: ${{ steps.select.outputs.action }}
-      source_run_number: ${{ steps.select.outputs.source_run_number }}
-
+      source_run_id: ${{ steps.select.outputs.source_run_id }}
     steps:
-      - name: Checkout repository history
-        uses: actions/checkout@v6
+      - name: リポジトリ履歴を取得
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Select an existing SIF or a new build
+      - name: コンテナツールを確認
+        run: buildah --version && skopeo --version && umoci --version && enroot version && nvidia-container-cli --version
+
+      - name: 既存成果物の再利用または新規ビルドを選択
         id: select
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          module load singularity-ce/4.1.3
-          if [[ '${{ (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) || (github.event_name == 'workflow_dispatch' && inputs.require_build) }}' == true ]]; then
-            echo "A new SIF build was explicitly requested"
-            echo "action=build" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
+          if [[ '${{ inputs.require_build }}' == true ]]; then printf 'action=build\n' >>"${GITHUB_OUTPUT}"; exit 0; fi
           commit="${GITHUB_SHA}"
-          while [[ -n "${commit}" ]]
-          do
-            while IFS=$'\t' read -r run_id run_number
-            do
+          while [[ -n "${commit}" ]]; do
+            while IFS= read -r run_id; do
               [[ "${run_id}" != "${GITHUB_RUN_ID}" ]] || continue
-              [[ -s "${SIF_ARCHIVE_DIR}/${run_number}.sif" ]] || continue
-              [[ -s "${SIF_ARCHIVE_DIR}/${run_number}.metadata/sif-sidecar.json" ]] || continue
-              sidecar="${SIF_ARCHIVE_DIR}/${run_number}.metadata/sif-sidecar.json"
-              sif="${SIF_ARCHIVE_DIR}/${run_number}.sif"
-              sif_sha256="$(sha256sum "${sif}" | awk '{print $1}')"
-              jq -e --arg sha256 "${sif_sha256}" '.sif_artifact.sha256 == $sha256' "${sidecar}" >/dev/null || continue
-              if ! singularity exec "${SIF_ARCHIVE_DIR}/${run_number}.sif" sh -c \
-                'test "$(cat /opt/sglang/nccl-tests-commit.txt)" = 717b68318278e93f371d8ffb46b076069d7c7851 && test "$(cat /opt/sglang/qwen-experiment-metrics-hook-version.txt)" = 2 && test -s /opt/sglang/offline-throughput-source-blob-oid.txt'; then
-                continue
-              fi
-              embedded_sha256="$(singularity exec "${sif}" cat /opt/apac/manifest.json | sha256sum | awk '{print $1}')"
-              jq -e --arg sha256 "${embedded_sha256}" '.embedded_manifest.sha256 == $sha256' "${sidecar}" >/dev/null || continue
-              inventory_dir="$(mktemp -d)"
-              if ! singularity exec \
-                --bind "${GITHUB_WORKSPACE}/scripts/inventory-sif-runtime.py:/inventory-sif-runtime.py:ro,${inventory_dir}:/metadata" \
-                "${sif}" /opt/sglang/venv/bin/python /inventory-sif-runtime.py; then
-                rm -rf -- "${inventory_dir:?}"
-                continue
-              fi
-              if ! jq -e --slurpfile inventory "${inventory_dir}/runtime-inventory.json" \
-                '.runtime_files == $inventory[0].runtime_files and .nccl_tests.binaries == $inventory[0].nccl_binaries' \
-                "${sidecar}" >/dev/null; then
-                rm -rf -- "${inventory_dir:?}"
-                continue
-              fi
-              rm -rf -- "${inventory_dir:?}"
-              if ! archive_step_count="$(gh run view "${run_id}" --json jobs --jq '[.jobs[].steps[] | select((.name == "Build and publish SGLang SIF" or .name == "Hardlink the selected SIF") and .conclusion == "success")] | length' 2>/dev/null)"; then
-                continue
-              fi
-              [[ "${archive_step_count}" -gt 0 ]] || continue
-              echo "Selected ${SIF_ARCHIVE_DIR}/${run_number}.sif"
-              echo "action=reuse" >> "${GITHUB_OUTPUT}"
-              echo "source_run_number=${run_number}" >> "${GITHUB_OUTPUT}"
+              archive="${CONTAINER_ARCHIVE_DIR}/${run_id}.sqsh"
+              sidecar="${CONTAINER_ARCHIVE_DIR}/${run_id}.container-sidecar.json"
+              [[ -s "${archive}" && -s "${sidecar}" ]] || continue
+              expected_size="$(jq -er 'select(.schema_version == "container-sidecar/v1") | .container_artifact.size_bytes' "${sidecar}" 2>/dev/null)" || continue
+              expected_sha256="$(jq -er '.container_artifact.sha256' "${sidecar}" 2>/dev/null)" || continue
+              [[ "$(stat -c '%s' "${archive}")" == "${expected_size}" ]] || continue
+              [[ "$(sha256sum "${archive}" | awk '{print $1}')" == "${expected_sha256}" ]] || continue
+              printf 'action=reuse\nsource_run_id=%s\n' "${run_id}" >>"${GITHUB_OUTPUT}"
               exit 0
-            done < <(gh run list --workflow genkai.yml --commit "${commit}" --limit 20 --json databaseId,number --jq '.[] | [.databaseId, .number] | @tsv')
+            done < <(gh run list --workflow qwen.yml --commit "${commit}" --limit 100 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
             commit="$(git rev-parse "${commit}^" 2>/dev/null || true)"
           done
-          echo "No reusable SIF was found; falling back to a new build"
-          echo "action=build" >> "${GITHUB_OUTPUT}"
+          printf 'action=build\n' >>"${GITHUB_OUTPUT}"
 
-  reuse-sif:
-    name: Reuse SGLang SIF
-    needs: select-sif
-    if: needs.select-sif.outputs.action == 'reuse'
+  reuse-container:
+    name: OCIコンテナを再利用
+    needs: select-container
+    if: needs.select-container.outputs.action == 'reuse'
     runs-on: [self-hosted, genkai]
     timeout-minutes: 7200
-
     steps:
-      - name: Hardlink the selected SIF
+      - name: 選択した成果物をハードリンク
         run: |
-          source_number='${{ needs.select-sif.outputs.source_run_number }}'
-          ln -f -- "${SIF_ARCHIVE_DIR}/${source_number}.sif" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif"
-          test ! -e "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.metadata"
-          cp -a "${SIF_ARCHIVE_DIR}/${source_number}.metadata" "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.metadata"
+          source_run_id='${{ needs.select-container.outputs.source_run_id }}'
+          ln -f -- "${CONTAINER_ARCHIVE_DIR}/${source_run_id}.sqsh" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
+          ln -f -- "${CONTAINER_ARCHIVE_DIR}/${source_run_id}.container-sidecar.json" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
 
-  build-sif:
-    name: Build SGLang SIF on Genkai login node
-    needs: select-sif
-    if: needs.select-sif.outputs.action == 'build'
+  build-container:
+    name: OCIコンテナをビルド
+    needs: select-container
+    if: needs.select-container.outputs.action == 'build'
     runs-on: [self-hosted, genkai]
     timeout-minutes: 7200
-
     concurrency:
-      group: sglang-sif-build-dev-shm
-      queue: max
-
+      group: genkai-qwen-container-build
     env:
-      BUILD_DIR: /dev/shm/qwen-sglang-build/run-${{ github.run_id }}-${{ github.run_attempt }}
-
+      BUILD_DIR: /dev/shm/qwen-sglang-container/run-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - name: Checkout build inputs
-        uses: actions/checkout@v6
+      - name: ビルド入力を取得
+        uses: actions/checkout@v7
 
-      - name: Build and publish SGLang SIF
-        run: "${GITHUB_WORKSPACE}/scripts/build-sglang-sif.sh"
+      - name: buildah、skopeo、umociでコンテナを構築・保存
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: '"${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"'
 
-      - name: Upload SGLang build log
+      - name: コンテナビルドログを保存
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: sglang-build-log-${{ github.run_id }}-${{ github.run_attempt }}
+          name: qwen-genkai-container-build-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.BUILD_DIR }}/logs
+          if-no-files-found: warn
           compression-level: 1
 
-      - name: Cleanup SGLang build directory
+      - name: コンテナビルド領域を削除
         if: always()
-        run: |
-          : "${BUILD_DIR:?}"
-          [[ -d "${BUILD_DIR}" ]] || exit 0
-
-          module load singularity-ce/4.1.3
-          singularity exec --fakeroot --containall --bind "${BUILD_DIR:?}:/cleanup" docker://busybox:1.36.1-musl /bin/sh -c 'rm -rf -- /cleanup/* /cleanup/.[!.]* /cleanup/..?*'
-          rmdir -- "${BUILD_DIR:?}"
+        run: chmod -R u+rwX "${BUILD_DIR}" 2>/dev/null || true; rm -rf -- "${BUILD_DIR:?}"
 
   provision:
-    name: Provision SGLang runtime
-    needs: [select-sif, reuse-sif, build-sif]
-    if: >-
-      always() &&
-      needs.select-sif.result == 'success' &&
-      ((needs.select-sif.outputs.action == 'reuse' && needs.reuse-sif.result == 'success') ||
-       (needs.select-sif.outputs.action == 'build' && needs.build-sif.result == 'success'))
+    name: Enroot実行環境を配備
+    needs: [select-container, reuse-container, build-container]
+    if: ${{ always() && needs.select-container.result == 'success' && ((needs.select-container.outputs.action == 'reuse' && needs.reuse-container.result == 'success') || (needs.select-container.outputs.action == 'build' && needs.build-container.result == 'success')) }}
     runs-on: [self-hosted, genkai]
     timeout-minutes: 7200
-
-    env:
-      SIF_SOURCE_RUN_NUMBER: ${{ needs.select-sif.outputs.source_run_number }}
-
     outputs:
-      runtime_dir: ${{ steps.provision_runtime.outputs.runtime_dir }}
-
+      model_path: ${{ steps.provision.outputs.model_path }}
+      run_id: ${{ steps.provision.outputs.run_id }}
+      runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
     steps:
-      - name: Checkout runtime files
-        uses: actions/checkout@v6
+      - name: 実行用ファイルを取得
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - name: Provision SGLang runtime
-        id: provision_runtime
+      - name: dummy model用メタデータと実行環境を配備
+        id: provision
         env:
-          METRICS_CREDENTIAL_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
+          CLUSTER_NAME: genkai
+          CONTAINER_ARCHIVE: ${{ env.CONTAINER_ARCHIVE_DIR }}/${{ github.run_id }}.sqsh
+          CONTAINER_SIDECAR: ${{ env.CONTAINER_ARCHIVE_DIR }}/${{ github.run_id }}.container-sidecar.json
+          GPUS_PER_NODE: 4
+          NODE_COUNT: ${{ inputs.node_count }}
+          RESOURCE_GROUP: b-batch
+          RUN_PURPOSE: ${{ inputs.profile && 'profile' || 'bench' }}
         run: |
-          test -s "${MODEL_PATH}/config.json"
-          jq -e '(.model_type | strings | startswith("qwen3_5")) and ((.architectures // []) | any(.[]?; type == "string" and startswith("Qwen3_5")))' "${MODEL_PATH}/config.json" >/dev/null
-          weight_index="${MODEL_PATH}/model.safetensors.index.json"
-          test -s "${weight_index}"
-          jq -e '.weight_map | type == "object" and length > 0' "${weight_index}" >/dev/null
-          while IFS= read -r shard; do
-            test -s "${MODEL_PATH}/${shard}"
-          done < <(jq -r '.weight_map[]' "${weight_index}" | sort -u)
-          model_repository=Qwen/Qwen3.5-397B-A17B-FP8
-          dataset_repository=anon8231489123/ShareGPT_Vicuna_unfiltered
-          model_revision="$(curl --fail --location --silent --show-error "https://huggingface.co/api/models/${model_repository}" | jq -er '.sha | select(test("^[0-9a-f]{40,64}$"))')"
-          dataset_revision="$(curl --fail --location --silent --show-error "https://huggingface.co/api/datasets/${dataset_repository}" | jq -er '.sha | select(test("^[0-9a-f]{40,64}$"))')"
-          uvx --from 'huggingface_hub>=1.0' hf download "${model_repository}" \
-            --revision "${model_revision}" \
-            --include config.json model.safetensors.index.json tokenizer.json tokenizer_config.json special_tokens_map.json generation_config.json chat_template.json \
-            --local-dir "${MODEL_PATH}"
-          uvx --from 'huggingface_hub>=1.0' hf download "${dataset_repository}" \
-            --repo-type dataset \
-            --revision "${dataset_revision}" \
-            --include ShareGPT_V3_unfiltered_cleaned_split.json \
-            --local-dir /fast/PROJECT/datasets/ShareGPT_Vicuna_unfiltered
+          export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
+          "${GITHUB_WORKSPACE}/scripts/provision-qwen-runtime.sh"
+          runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          install -m 0755 "${GITHUB_WORKSPACE}/platforms/genkai/run-qwen35.pjm" "${runtime_dir}/scripts/run-qwen35.pjm"
 
-          install -d -m 2775 /fast/PROJECT/sglang-runs
-          runtime_dir="$(mktemp -d "/fast/PROJECT/sglang-runs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
-          echo "runtime_dir=${runtime_dir}" >> "${GITHUB_OUTPUT}"
-          source_run_number="${SIF_SOURCE_RUN_NUMBER:-${GITHUB_RUN_NUMBER}}"
-          cd "${runtime_dir}"
-          mkdir -p scripts logs results source control domain/fragments profile/raw
-          test -n "${METRICS_CREDENTIAL_JSON}"
-          credential_file="${runtime_dir}/control/bigquery-credential.json"
-          install -m 0600 /dev/null "${credential_file}"
-          printf '%s' "${METRICS_CREDENTIAL_JSON}" >"${credential_file}"
-          export EXPERIMENT_METRICS_DIRECT_SEND=1
-          export EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE="${credential_file}"
-          export EXPERIMENT_METRICS_BIGQUERY_CONFIG="${runtime_dir}/qwen-experiment-metrics/pyproject.toml"
-          ln -s "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.sif" sglang.sif
-          cp "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.metadata/sif-sidecar.json" source/sif-sidecar.json
-          cp -a "${SIF_ARCHIVE_DIR}/${GITHUB_RUN_NUMBER}.metadata/sif-build" source/
-          printf '%s\n' "${source_run_number}" > sif-source-run.txt
-          install -m 0755 \
-            "${GITHUB_WORKSPACE}/scripts/run-qwen35.pjm" \
-            "${GITHUB_WORKSPACE}/scripts/run-qwen35-node.sh" \
-            "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" \
-            "${GITHUB_WORKSPACE}/scripts/qwen-profile-wrapper.py" \
-            scripts/
-          cp -a "${GITHUB_WORKSPACE}/qwen-experiment-metrics" qwen-experiment-metrics
-          uv sync --project qwen-experiment-metrics --frozen --no-dev --extra publish
-          qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics prepare-inputs \
-            --runtime-dir "${runtime_dir}" \
-            --model-path "${MODEL_PATH}" \
-            --model-repository "${model_repository}" \
-            --model-revision "${model_revision}" \
-            --dataset-path "${DATASET_PATH}" \
-            --dataset-repository "${dataset_repository}" \
-            --dataset-revision "${dataset_revision}" \
-            --dataset-relative-path ShareGPT_V3_unfiltered_cleaned_split.json
-          jq -n \
-            --arg sif_source_workflow_run_number "${source_run_number}" \
-            --arg sif_size_bytes "$(stat --format=%s sglang.sif)" \
-            --arg dataset_size_bytes "$(stat --format=%s "${DATASET_PATH}")" \
-            '{sif: {source_workflow_run_number: $sif_source_workflow_run_number, size_bytes: $sif_size_bytes}, dataset: {size_bytes: $dataset_size_bytes}}' \
-            > metrics-artifacts.json
-          test -x qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics
-          git -C "${GITHUB_WORKSPACE}" diff --quiet
-          git -C "${GITHUB_WORKSPACE}" diff --cached --quiet
-          git -C "${GITHUB_WORKSPACE}" cat-file -e "${GITHUB_SHA}^{commit}"
-          git -C "${GITHUB_WORKSPACE}" merge-base --is-ancestor "${GITHUB_SHA}" "${GITHUB_SHA}"
-          control_plane_sha256="$(git -C "${GITHUB_WORKSPACE}" ls-tree -r --full-tree "${GITHUB_SHA}" -- .github/workflows scripts configs | LC_ALL=C sort | sha256sum | awk '{print $1}')"
-          instrumentation_bundle_sha256="$(git -C "${GITHUB_WORKSPACE}" ls-tree -r --full-tree "${GITHUB_SHA}" -- qwen-experiment-metrics | LC_ALL=C sort | sha256sum | awk '{print $1}')"
-          object_hash_algorithm="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-object-format)"
-          if [[ "${RUN_PURPOSE}" == profile ]]; then
-            base_role=profile_base
-          else
-            base_role=score_reference
-          fi
-          qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics init-run \
-            --runtime-dir "${runtime_dir}" \
-            --purpose "${RUN_PURPOSE}" \
-            --object-hash-algorithm "${object_hash_algorithm}" \
-            --base-role "${base_role}" \
-            --base-commit "${GITHUB_SHA}" \
-            --head-commit "${GITHUB_SHA}" \
-            --control-plane-sha256 "${control_plane_sha256}" \
-            --instrumentation-bundle-sha256 "${instrumentation_bundle_sha256}" \
-            --execution-settings "${GITHUB_WORKSPACE}/configs/qwen-v2-${RUN_PURPOSE}.json" \
-            --repository "${GITHUB_WORKSPACE}"
-          qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics record-provenance \
-            --manifest "${runtime_dir}/control/run-manifest.json" \
-            --runtime-dir "${runtime_dir}"
-
-      - name: Cleanup failed SGLang provisioning
-        if: failure() && steps.provision_runtime.outputs.runtime_dir != ''
+      - name: 配備失敗時の実行環境を削除
+        if: failure() && steps.provision.outputs.runtime_dir != ''
         env:
-          RUNTIME_DIR: ${{ steps.provision_runtime.outputs.runtime_dir }}
+          RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
         run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
-    name: Run Qwen 3.5 with SGLang
+    name: Enrootでdummy modelを実行
     needs: provision
     if: always() && needs.provision.result == 'success'
     runs-on: [self-hosted, genkai]
     timeout-minutes: 7200
-
     env:
+      MODEL_PATH: ${{ needs.provision.outputs.model_path }}
       RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
-
     steps:
-      - name: Checkout runner publication files
-        uses: actions/checkout@v6
-
-      - name: Configure direct BigQuery producer sends
+      - name: PJMジョブを投入
+        id: submit
         run: |
-          credential_file="${RUNTIME_DIR}/control/bigquery-credential.json"
-          test -s "${credential_file}"
-          test "$(stat -c '%a' "${credential_file}")" = 600
-          printf 'EXPERIMENT_METRICS_DIRECT_SEND=1\n' >>"${GITHUB_ENV}"
-          printf 'EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE=%s\n' "${credential_file}" >>"${GITHUB_ENV}"
-          printf 'EXPERIMENT_METRICS_BIGQUERY_CONFIG=%s\n' \
-            "${RUNTIME_DIR}/qwen-experiment-metrics/pyproject.toml" >>"${GITHUB_ENV}"
-
-      - name: Verify runner BigQuery connectivity
-        run: |
-          run_id="$(jq -er '.run_id' "${RUNTIME_DIR}/control/run-manifest.json")"
-          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" \
-            smoke-send --run "${run_id}" --source runner
-
-      - name: Submit Qwen job
-        run: |
-          test -s "${RUNTIME_DIR}/control/run-manifest.json"
-          metrics_cli="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
-          manifest="${RUNTIME_DIR}/control/run-manifest.json"
-          job_environment="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},DATASET_PATH=${DATASET_PATH},EXPERIMENT_METRICS_DIRECT_SEND=${EXPERIMENT_METRICS_DIRECT_SEND},EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE=${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE},EXPERIMENT_METRICS_BIGQUERY_CONFIG=${EXPERIMENT_METRICS_BIGQUERY_CONFIG}"
-          submission_argv=(pjsub -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_sglang "${RUNTIME_DIR}/scripts/run-qwen35.pjm")
-          "${metrics_cli}" prepare-submission \
-            --manifest "${manifest}" \
-            --runtime-dir "${RUNTIME_DIR}" \
-            --pjm-script "${RUNTIME_DIR}/scripts/run-qwen35.pjm" \
-            --repository-path scripts/run-qwen35.pjm \
-            -- "${submission_argv[@]}"
-          job_output="$("${submission_argv[@]}")"
-          printf '%s\n' "${job_output}"
-          job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<< "${job_output}")"
+          job_environment="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh,GPUS_PER_NODE=4"
+          submission="$(pjsub -L "node=${{ inputs.node_count }}" --mpi "proc=${{ inputs.node_count }}" -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen35_dummy "${RUNTIME_DIR}/scripts/run-qwen35.pjm")"
+          printf '%s\n' "${submission}"
+          job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<<"${submission}")"
           test -n "${job_id}"
-          "${metrics_cli}" record-submission-result \
-            --manifest "${manifest}" \
-            --runtime-dir "${RUNTIME_DIR}" \
-            --job-id "${job_id}"
-          echo "PJM_JOB_ID=${job_id}" >> "${GITHUB_ENV}"
+          printf 'PJM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
 
-      - name: Wait for Qwen job to start
+      - name: PJMジョブの開始を待機
         run: |
-          while [[ ! -e "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" ]]; do
-            wait_status="$(pjwait -w waitnone "${PJM_JOB_ID}")"
-            pjm_code="$(awk 'NR == 1 { print $2 }' <<< "${wait_status}")"
-            if [[ -n "${pjm_code}" && "${pjm_code}" != X ]]; then
-              printf '%s\n' "${wait_status}"
-              echo "PJM job ended before creating ${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" >&2
-              exit 1
-            fi
-            sleep 2
-          done
-          echo "PJM job log is ready: ${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"
+          while [[ ! -e "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" ]]; do wait_status="$(pjwait -w waitnone "${PJM_JOB_ID}")"; pjm_code="$(awk 'NR == 1 {print $2}' <<<"${wait_status}")"; if [[ -n "${pjm_code}" && "${pjm_code}" != X ]]; then printf '%s\n' "${wait_status}"; exit 1; fi; sleep 2; done
 
-      - name: Stream Qwen execution log
+      - name: PJM実行ログを表示して終了を待機
         run: |
           tail --lines=+1 --follow=name "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" &
           tail_pid=$!
-          stop_tail() {
-            kill "${tail_pid}" 2>/dev/null || true
-            wait "${tail_pid}" 2>/dev/null || true
-          }
-          trap stop_tail EXIT
-          trap 'exit 130' INT
-          trap 'exit 143' TERM
-
+          trap 'kill "${tail_pid}" 2>/dev/null || true; wait "${tail_pid}" 2>/dev/null || true' EXIT
           pjwait -z "${PJM_JOB_ID}"
-          sleep 1
-
-      - name: Verify Qwen job completion
-        run: |
+          kill "${tail_pid}" 2>/dev/null || true
+          wait "${tail_pid}" 2>/dev/null || true
+          trap - EXIT
+          cat "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"
           pjwait "${PJM_JOB_ID}"
           test -e "${RUNTIME_DIR}/run-success"
 
-      - name: Capture PJM accounting source
-        if: always() && env.PJM_JOB_ID != ''
+      - name: ログインrunnerから計測断片を送信
+        env:
+          METRICS_CREDENTIAL_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
         run: |
-          metrics_cli="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
-          manifest="${RUNTIME_DIR}/control/run-manifest.json"
-          mkdir -p "${RUNTIME_DIR}/source/scheduler"
-          set +e
-          pjstat --history -s \
-            --choose jid,st,sdt,elp,ec,sn,pc,nnumu,mmszu,uctmut,sctmut \
-            --data --delimiter $'\t' "${PJM_JOB_ID}" \
-            >"${RUNTIME_DIR}/source/scheduler/accounting.txt" \
-            2>"${RUNTIME_DIR}/source/scheduler/accounting.stderr"
-          accounting_status=$?
-          set -e
-          "${metrics_cli}" record-accounting \
-            --manifest "${manifest}" \
-            --runtime-dir "${RUNTIME_DIR}" \
-            --job-id "${PJM_JOB_ID}" \
-            --stdout "${RUNTIME_DIR}/source/scheduler/accounting.txt" \
-            --stderr "${RUNTIME_DIR}/source/scheduler/accounting.stderr" \
-            --exit-code "${accounting_status}"
+          credential_file="$(mktemp /dev/shm/qwen-bigquery.XXXXXXXXXX)"
+          trap 'rm -f -- "${credential_file}"' EXIT
+          chmod 0600 "${credential_file}"
+          printf '%s' "${METRICS_CREDENTIAL_JSON}" >"${credential_file}"
+          export EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE="${credential_file}"
+          export EXPERIMENT_METRICS_BIGQUERY_CONFIG="${RUNTIME_DIR}/qwen-experiment-metrics/pyproject.toml"
+          run_id="$(jq -er '.run_id' "${RUNTIME_DIR}/control/run-manifest.json")"
+          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" send-fragments --run "${run_id}" --runtime-dir "${RUNTIME_DIR}"
 
-      - name: Reduce and send Qwen profile results
-        if: always()
+      - name: 公式形式で実行成果物を梱包
+        if: always() && steps.submit.outputs.job_id != ''
         run: |
-          manifest="${RUNTIME_DIR}/control/run-manifest.json"
-          if [[ "$(jq -er '.run_purpose' "${manifest}")" == profile ]]; then
-            expected_ranks="$(jq -er '.tensor_parallel_size' "${RUNTIME_DIR}/control/execution-settings.json")"
-            "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" \
-              record-profile-results --manifest "${manifest}" \
-              --runtime-dir "${RUNTIME_DIR}" --expected-ranks "${expected_ranks}"
-          fi
-
-      - name: Package producer fragment artifacts
-        if: always()
-        run: |
-          metrics_cli="${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics"
-          manifest="${RUNTIME_DIR}/control/run-manifest.json"
-          test -s "${manifest}"
           package_args=()
-          while IFS= read -r -d '' member; do
-            relative="${member#${RUNTIME_DIR}/}"
-            role="${relative%%/*}"
-            package_args+=(--member "${role}=${relative}")
-          done < <(
-            find "${RUNTIME_DIR}/control" "${RUNTIME_DIR}/domain" "${RUNTIME_DIR}/logs" "${RUNTIME_DIR}/results" "${RUNTIME_DIR}/source" \
-              -type f ! -name 'bigquery-credential.json' -print0 | sort -z
-          )
+          while IFS= read -r -d '' member; do relative="${member#${RUNTIME_DIR}/}"; package_args+=(--member "${relative%%/*}=${relative}"); done < <(find "${RUNTIME_DIR}/control" "${RUNTIME_DIR}/domain" "${RUNTIME_DIR}/logs" "${RUNTIME_DIR}/results" "${RUNTIME_DIR}/source" -type f -print0 | sort -z)
+          [[ ! -e "${RUNTIME_DIR}/run-success" ]] || package_args+=(--member success=run-success)
           profile_args=()
-          if [[ "$(jq -er '.run_purpose' "${manifest}")" == profile ]]; then
-            while IFS= read -r -d '' member; do
-              profile_args+=(--profile-member "${member#${RUNTIME_DIR}/}")
-            done < <(find "${RUNTIME_DIR}/profile/raw" -type f -print0 | sort -z)
-          fi
-          "${metrics_cli}" package \
-            --manifest "${manifest}" \
-            --runtime-dir "${RUNTIME_DIR}" \
-            "${package_args[@]}" "${profile_args[@]}"
+          if [[ '${{ inputs.profile }}' == true ]]; then while IFS= read -r -d '' member; do profile_args+=(--profile-member "${member#${RUNTIME_DIR}/}"); done < <(find "${RUNTIME_DIR}/profile/raw" -type f -print0 | sort -z); fi
+          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" package --manifest "${RUNTIME_DIR}/control/run-manifest.json" --runtime-dir "${RUNTIME_DIR}" "${package_args[@]}" "${profile_args[@]}"
 
-      - name: Upload fixed v2 artifact set
-        id: upload
-        if: always()
+      - name: 固定構成の成果物を保存
+        if: always() && steps.submit.outputs.job_id != ''
         uses: actions/upload-artifact@v7
         with:
-          name: qwen35-sglang-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          name: qwen-genkai-dummy-${{ needs.provision.outputs.run_id }}
           path: |
             ${{ env.RUNTIME_DIR }}/run-artifacts.tar.zst
             ${{ env.RUNTIME_DIR }}/artifact-manifest.json
@@ -444,14 +224,6 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-      - name: Cleanup provisioned runtime
+      - name: 実行環境を削除
         if: always()
-        run: |
-          if [[ -n "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE:-}" ]]; then
-            rm -f -- "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE}"
-          fi
-          if [[ -n "${PJM_JOB_ID:-}" ]]; then
-            pjdel "${PJM_JOB_ID}" 2>/dev/null || true
-            pjwait -z "${PJM_JOB_ID}" || true
-          fi
-          rm -rf -- "${RUNTIME_DIR:?}"
+        run: if [[ -n "${PJM_JOB_ID:-}" ]]; then pjdel "${PJM_JOB_ID}" 2>/dev/null || true; pjwait -z "${PJM_JOB_ID}" 2>/dev/null || true; fi; rm -rf -- "${RUNTIME_DIR:?}"
