@@ -72,18 +72,15 @@ def test_dockerfile_resolves_sglang_dependencies_before_copying_source() -> None
 
 
 def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
+    selector = (ROOT / "scripts/select-qwen-container.sh").read_text(encoding="utf-8")
     for name in ("genkai.yml", "aspire2ap.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
-        select = workflow[
-            workflow.index("既存成果物の再利用または新規ビルドを選択") : workflow.index(
-                "reuse-container:"
-            )
-        ]
-        assert 'git rev-parse "${commit}^"' in select
-        assert "size_bytes" in select and "sha256sum" in select
-        assert "gh run view" not in select
-        assert "inventory" not in select
-        assert "enroot start" not in select
+        assert '"${GITHUB_WORKSPACE}/scripts/select-qwen-container.sh"' in workflow
+    assert 'git rev-parse "${commit}^"' in selector
+    assert "size_bytes" in selector and "sha256sum" in selector
+    assert "gh run view" not in selector
+    assert "inventory" not in selector
+    assert "enroot start" not in selector
 
 
 def test_entry_workflow_keeps_push_and_dispatch_controls_closed() -> None:
@@ -113,8 +110,11 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "NVIDIA_VISIBLE_DEVICES=all" in node
     assert "NVIDIA_DISABLE_REQUIRE=1" in node
     assert "MELLANOX_VISIBLE_DEVICES=all" in node
-    assert "NVIDIA_VISIBLE_DEVICES=void" in node
+    assert "NVIDIA_VISIBLE_DEVICES=void" in provision
     assert "FLASHINFER_WORKSPACE_BASE=/jit-cache" in node
+    assert "enroot start -e NVIDIA_VISIBLE_DEVICES=void" not in node
+    assert '"qwen-runtime-source-oids/v1"' in provision
+    assert "runtime-source-oids.json" in node
     assert "capture-topology" in node
     assert "--container-argv" in node
     assert "--container-launcher" in node
@@ -187,7 +187,8 @@ def test_credentials_stop_at_login_runner() -> None:
             if name == "genkai.yml"
             else "PBSジョブの終了を待機"
         )
-        assert workflow.index(wait_step) < workflow.index("send-fragments")
+        assert workflow.index(wait_step) < workflow.index("send-qwen-fragments.sh")
+        assert '"${RUNTIME_DIR}/scripts/package-qwen-runtime.sh"' in workflow
 
 
 def test_sglang_patches_close_primary_config_worker_and_profile_sources() -> None:

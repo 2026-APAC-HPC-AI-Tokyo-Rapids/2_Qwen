@@ -14,6 +14,18 @@ ASPIRE 2A+の`mksquashfs`はlogin host全体のmemoryから既定cacheを128865 
 
 完成物は`<workflow-run-id>.sqsh`と`<workflow-run-id>.container-sidecar.json`である。sidecarはSquashFSのsizeとSHA-256を持つ。`[require-build]`がない実行はGitの第一親を順番に遡り、対応するworkflow runの成果物についてsizeとSHA-256だけを照合し、最初の有効なものを再利用する。コンテナ内部検査や過去Actions stepの成否は再利用条件にしない。
 
+## 制御処理の責務
+
+クラスタworkflowはscheduler、filesystem配置、GPU数などのサイト差だけを持つ薄いadapterとする。共通処理は実行段階ごとに分離し、玄界とASPIRE 2A+で同じ実装を使う。
+
+- `containers/sglang/Dockerfile`はimage layerとcontainer内部の依存関係、`scripts/build-sglang-image.sh`はBuildah、Skopeo、Umoci、SquashFS変換と成果物公開を担当する。
+- `scripts/select-qwen-container.sh`はGit第一親をたどる再利用候補の選択とsidecar検証だけを担当する。
+- `scripts/provision-qwen-runtime.sh`はログインノードでruntime directoryを一度構成し、固定source OIDなどcontainer内の不変metadataを一度だけ抽出する。計算ノードやrankごとに同じmetadataを再取得しない。
+- `scripts/run-qwen35-node.sh`は既にprovisionされた設定とmetadataを読み、計算ノード上のEnroot起動とbenchmarkだけを担当する。
+- `scripts/send-qwen-fragments.sh`はscheduler終了後の資格情報境界とBigQuery送信、`scripts/package-qwen-runtime.sh`は回収対象とprofile選択を担当する。どちらもログインrunnerでのみ実行する。
+
+run directoryへ置くscriptはprovision時のcommitからsnapshotする。このため、workflowを待機している間にrepository側を更新しても投入済みjobの実装は変化せず、各runのコード来歴をcommitへ固定できる。
+
 ## クラスタ差
 
 玄界はビルド領域をログインノードの`/dev/shm`、成果物を`/home/ACCOUNT/share/sglang-containers`、実行領域とモデルメタデータを`/fast`へ置く。PJMの`jobenv=singularity`はサイトがcontainer向けuser namespaceを許可するためのscheduler属性として残すが、Singularity executableやSIFは利用しない。1ノード当たり4 GPUを使う。

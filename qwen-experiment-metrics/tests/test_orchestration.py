@@ -113,12 +113,14 @@ def test_workflow_and_pjm_enforce_runner_compute_boundary() -> None:
 
     assert "enroot version" in job
     assert "#PJM -L jobenv=singularity" in pjm
-    assert "send-fragments" in workflow
-    assert "send-fragments" in aspire
+    assert "send-qwen-fragments.sh" in workflow
+    assert "send-qwen-fragments.sh" in aspire
     assert workflow.index("PJM実行ログを表示して終了を待機") < workflow.index(
-        "send-fragments"
+        "send-qwen-fragments.sh"
     )
-    assert aspire.index("PBSジョブの終了を待機") < aspire.index("send-fragments")
+    assert aspire.index("PBSジョブの終了を待機") < aspire.index(
+        "send-qwen-fragments.sh"
+    )
     assert '"${metrics_cli}" merge' not in workflow
     assert 'qwen-experiment-metrics" publish' not in workflow
     assert "deploy-qwen-projections.py" not in workflow
