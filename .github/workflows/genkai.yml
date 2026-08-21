@@ -48,25 +48,8 @@ jobs:
         id: select
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          if [[ '${{ inputs.require_build }}' == true ]]; then printf 'action=build\n' >>"${GITHUB_OUTPUT}"; exit 0; fi
-          commit="${GITHUB_SHA}"
-          while [[ -n "${commit}" ]]; do
-            while IFS= read -r run_id; do
-              [[ "${run_id}" != "${GITHUB_RUN_ID}" ]] || continue
-              archive="${CONTAINER_ARCHIVE_DIR}/${run_id}.sqsh"
-              sidecar="${CONTAINER_ARCHIVE_DIR}/${run_id}.container-sidecar.json"
-              [[ -s "${archive}" && -s "${sidecar}" ]] || continue
-              expected_size="$(jq -er 'select(.schema_version == "container-sidecar/v1") | .container_artifact.size_bytes' "${sidecar}" 2>/dev/null)" || continue
-              expected_sha256="$(jq -er '.container_artifact.sha256' "${sidecar}" 2>/dev/null)" || continue
-              [[ "$(stat -c '%s' "${archive}")" == "${expected_size}" ]] || continue
-              [[ "$(sha256sum "${archive}" | awk '{print $1}')" == "${expected_sha256}" ]] || continue
-              printf 'action=reuse\nsource_run_id=%s\n' "${run_id}" >>"${GITHUB_OUTPUT}"
-              exit 0
-            done < <(gh run list --workflow qwen.yml --commit "${commit}" --limit 100 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
-            commit="$(git rev-parse "${commit}^" 2>/dev/null || true)"
-          done
-          printf 'action=build\n' >>"${GITHUB_OUTPUT}"
+          REQUIRE_BUILD: ${{ inputs.require_build }}
+        run: '"${GITHUB_WORKSPACE}/scripts/select-qwen-container.sh"'
 
   reuse-container:
     name: OCIコンテナを再利用
@@ -192,25 +175,11 @@ jobs:
       - name: ログインrunnerから計測断片を送信
         env:
           METRICS_CREDENTIAL_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
-        run: |
-          credential_file="$(mktemp /dev/shm/qwen-bigquery.XXXXXXXXXX)"
-          trap 'rm -f -- "${credential_file}"' EXIT
-          chmod 0600 "${credential_file}"
-          printf '%s' "${METRICS_CREDENTIAL_JSON}" >"${credential_file}"
-          export EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE="${credential_file}"
-          export EXPERIMENT_METRICS_BIGQUERY_CONFIG="${RUNTIME_DIR}/qwen-experiment-metrics/pyproject.toml"
-          run_id="$(jq -er '.run_id' "${RUNTIME_DIR}/control/run-manifest.json")"
-          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" send-fragments --run "${run_id}" --runtime-dir "${RUNTIME_DIR}"
+        run: '"${RUNTIME_DIR}/scripts/send-qwen-fragments.sh"'
 
       - name: 公式形式で実行成果物を梱包
         if: always() && steps.submit.outputs.job_id != ''
-        run: |
-          package_args=()
-          while IFS= read -r -d '' member; do relative="${member#"${RUNTIME_DIR}/"}"; package_args+=(--member "${relative%%/*}=${relative}"); done < <(find "${RUNTIME_DIR}/control" "${RUNTIME_DIR}/domain" "${RUNTIME_DIR}/logs" "${RUNTIME_DIR}/results" "${RUNTIME_DIR}/source" -type f -print0 | sort -z)
-          [[ ! -e "${RUNTIME_DIR}/run-success" ]] || package_args+=(--member success=run-success)
-          profile_args=()
-          if [[ '${{ inputs.profile }}' == true ]]; then while IFS= read -r -d '' member; do profile_args+=(--profile-member "${member#"${RUNTIME_DIR}/"}"); done < <(find "${RUNTIME_DIR}/profile/raw" -type f -print0 | sort -z); fi
-          "${RUNTIME_DIR}/qwen-experiment-metrics/.venv/bin/qwen-experiment-metrics" package --manifest "${RUNTIME_DIR}/control/run-manifest.json" --runtime-dir "${RUNTIME_DIR}" "${package_args[@]}" "${profile_args[@]}"
+        run: '"${RUNTIME_DIR}/scripts/package-qwen-runtime.sh"'
 
       - name: 固定構成の成果物を保存
         if: always() && steps.submit.outputs.job_id != ''

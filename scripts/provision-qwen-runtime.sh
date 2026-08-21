@@ -38,7 +38,7 @@ printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${PROVISION_OUTPUT}"
 mkdir -p "${runtime_dir}/control" "${runtime_dir}/domain/fragments" "${runtime_dir}/enroot-system" "${runtime_dir}/logs" "${runtime_dir}/profile/raw" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source"
 ln -s "${CONTAINER_ARCHIVE}" "${runtime_dir}/sglang.sqsh"
 install -m 0644 "${CONTAINER_SIDECAR}" "${runtime_dir}/source/container-sidecar.json"
-install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35-job.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen35-node.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${GITHUB_WORKSPACE}/scripts/qwen-profile-wrapper.py" "${runtime_dir}/scripts/"
+install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen35-job.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen35-node.sh" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${GITHUB_WORKSPACE}/scripts/qwen-profile-wrapper.py" "${GITHUB_WORKSPACE}/scripts/send-qwen-fragments.sh" "${GITHUB_WORKSPACE}/scripts/package-qwen-runtime.sh" "${runtime_dir}/scripts/"
 cp -a --no-preserve=ownership,xattr "${GITHUB_WORKSPACE}/qwen-experiment-metrics" "${runtime_dir}/qwen-experiment-metrics"
 cp -a --no-preserve=ownership,xattr "${ENROOT_SYSCONF_PATH}/." "${runtime_dir}/enroot-system/"
 nvidia_hook="${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
@@ -46,6 +46,10 @@ test -x "${nvidia_hook}"
 sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${nvidia_hook}"
 grep -Fq -- '--ldconfig=/sbin/ldconfig' "${nvidia_hook}"
 if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh" ]]; then chmod -x "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh"; fi
+mapfile -t runtime_source_oids < <(ENROOT_SYSCONF_PATH="${runtime_dir}/enroot-system" enroot start -e NVIDIA_VISIBLE_DEVICES=void -e MELLANOX_VISIBLE_DEVICES=void "${CONTAINER_ARCHIVE}" cat /opt/sglang/offline-throughput-source-blob-oid.txt /opt/sglang/server-args-source-blob-oid.txt)
+[[ "${#runtime_source_oids[@]}" -eq 2 ]]
+[[ "${runtime_source_oids[0]}" =~ ^[0-9a-f]{40,64}$ && "${runtime_source_oids[1]}" =~ ^[0-9a-f]{40,64}$ ]]
+jq -n --arg bench_args_blob_oid "${runtime_source_oids[0]}" --arg server_args_blob_oid "${runtime_source_oids[1]}" '{schema_version:"qwen-runtime-source-oids/v1",bench_args_blob_oid:$bench_args_blob_oid,server_args_blob_oid:$server_args_blob_oid}' >"${runtime_dir}/source/runtime-source-oids.json"
 uv sync --project "${runtime_dir}/qwen-experiment-metrics" --frozen --no-dev --extra publish
 
 tensor_parallel_size="$(( NODE_COUNT * GPUS_PER_NODE ))"
