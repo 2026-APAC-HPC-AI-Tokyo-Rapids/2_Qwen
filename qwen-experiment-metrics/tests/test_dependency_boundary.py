@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_container_build_uses_all_rootless_tools() -> None:
     script = (ROOT / "scripts/build-sglang-container.sh").read_text(encoding="utf-8")
-    for command in ("buildah", "skopeo copy", "umoci unpack", "mksquashfs"):
+    for command in ("buildah", "buildah --root", "skopeo copy", "umoci stat", "mksquashfs"):
         assert command in script
     assert "--isolation chroot" in script
     assert "BUILDAH_ISOLATION=chroot" in script
@@ -22,6 +22,8 @@ def test_container_build_uses_all_rootless_tools() -> None:
     assert "rmi --all" not in script
     assert 'test_container="$(buildah ' in script
     assert 'run --isolation chroot "${test_container}"' in script
+    assert 'unshare --mount "${test_container}"' in script
+    assert "umoci unpack" not in script
     assert "test -x /sbin/ldconfig" in script
     assert "--no-preserve=ownership,xattr" in script
     assert '"container-sidecar/v1"' in script

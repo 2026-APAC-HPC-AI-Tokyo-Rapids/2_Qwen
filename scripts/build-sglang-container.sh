@@ -26,7 +26,6 @@ context="${BUILD_DIR}/context"
 source_dir="${BUILD_DIR}/sglang-source"
 oci_build="${BUILD_DIR}/oci-build"
 oci_runtime="${BUILD_DIR}/oci-runtime"
-bundle="${BUILD_DIR}/bundle"
 image="localhost/apac-qwen-sglang:${GITHUB_SHA}"
 
 cleanup() {
@@ -70,14 +69,13 @@ jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITH
 buildah --root "${storage_root}" --runroot "${run_root}" bud --isolation chroot --network host --layers --file "${context}/containers/Dockerfile" --tag "${image}" "${context}" 2>&1 | tee "${BUILD_DIR}/logs/buildah.log"
 test_container="$(buildah --root "${storage_root}" --runroot "${run_root}" from "${image}")"
 buildah --root "${storage_root}" --runroot "${run_root}" run --isolation chroot "${test_container}" /bin/bash -c 'set -euo pipefail; export XDG_CACHE_HOME=/var/tmp/sglang-recipe-test-cache; test -x /sbin/ldconfig; /opt/sglang/venv/bin/python -c "import sglang, torch; print(sglang.__file__); print(torch.__version__)"; /opt/sglang/venv/bin/python -c "from sglang.srt.qwen_experiment_metrics import send_event; assert callable(send_event)"; /opt/sglang/venv/bin/python -c "from importlib.metadata import version; packages = (\"flashinfer-python\", \"flashinfer-cubin\", \"flashinfer-jit-cache\"); versions = {package: version(package).split(\"+\", 1)[0] for package in packages}; assert len(set(versions.values())) == 1, versions; print(versions)"; /opt/sglang/venv/bin/python -c "from importlib.metadata import version; print({p: version(p) for p in (\"deep-ep\", \"mooncake-transfer-engine-cuda13\", \"mscclpp\", \"nixl\", \"nixl-cu13\")})"; mpirun --version; test "$(find /opt/nccl-tests/bin -maxdepth 1 -type f -name "*_perf" | wc -l)" -eq 11; for binary in all_reduce_perf all_gather_perf reduce_scatter_perf; do /opt/nccl-tests/bin/${binary} -h 2>&1 | grep -q -- "-J"; done; test "$(cat /opt/sglang/nccl-tests-commit.txt)" = 717b68318278e93f371d8ffb46b076069d7c7851; test "$(cat /opt/sglang/qwen-experiment-metrics-hook-version.txt)" = 2; test -s /opt/sglang/offline-throughput-source-blob-oid.txt; test -s /opt/sglang/server-args-source-blob-oid.txt; test -s /opt/apac/manifest.json; ! ldd /opt/nccl-tests/bin/all_reduce_perf | grep -q "not found"; ucx_info -v; uv --version; rm -rf "${XDG_CACHE_HOME}"' 2>&1 | tee "${BUILD_DIR}/logs/buildah-test.log"
-buildah --root "${storage_root}" --runroot "${run_root}" rm "${test_container}"
 buildah --root "${storage_root}" --runroot "${run_root}" push "${image}" "oci:${oci_build}:sglang" 2>&1 | tee "${BUILD_DIR}/logs/buildah-push.log"
 skopeo copy "oci:${oci_build}:sglang" "oci:${oci_runtime}:sglang" 2>&1 | tee "${BUILD_DIR}/logs/skopeo-copy.log"
 skopeo inspect --raw "oci:${oci_runtime}:sglang" >"${BUILD_DIR}/logs/oci-manifest.json"
-umoci unpack --rootless --image "${oci_runtime}:sglang" "${bundle}" 2>&1 | tee "${BUILD_DIR}/logs/umoci-unpack.log"
-cmp "${bundle}/rootfs/opt/apac/manifest.json" "${context}/apac-manifest.json"
-test "$(cat "${bundle}/rootfs/opt/sglang/qwen-experiment-metrics-hook-version.txt")" = 2
-mksquashfs "${bundle}/rootfs" "${BUILD_DIR}/sglang.sqsh" -noappend -all-root -no-xattrs -comp gzip -Xcompression-level 2 -processors 32 2>&1 | tee "${BUILD_DIR}/logs/mksquashfs.log"
+umoci stat --json --image "${oci_runtime}:sglang" | tee "${BUILD_DIR}/logs/umoci-stat.json"
+jq -e '.history | length > 0' "${BUILD_DIR}/logs/umoci-stat.json" >/dev/null
+buildah --root "${storage_root}" --runroot "${run_root}" unshare --mount "${test_container}" bash -c 'set -euo pipefail; storage_root=$1; run_root=$2; test_container=$3; context=$4; build_dir=$5; rootfs="$(buildah --root "${storage_root}" --runroot "${run_root}" inspect --type container --format "{{.MountPoint}}" "${test_container}")"; cmp "${rootfs}/opt/apac/manifest.json" "${context}/apac-manifest.json"; test "$(cat "${rootfs}/opt/sglang/qwen-experiment-metrics-hook-version.txt")" = 2; mksquashfs "${rootfs}" "${build_dir}/sglang.sqsh" -noappend -all-root -no-xattrs -comp gzip -Xcompression-level 2 -processors 32 2>&1 | tee "${build_dir}/logs/mksquashfs.log"' bash "${storage_root}" "${run_root}" "${test_container}" "${context}" "${BUILD_DIR}"
+buildah --root "${storage_root}" --runroot "${run_root}" rm "${test_container}"
 
 container_sha256="$(sha256sum "${BUILD_DIR}/sglang.sqsh" | awk '{print $1}')"
 container_size="$(stat -c '%s' "${BUILD_DIR}/sglang.sqsh")"
