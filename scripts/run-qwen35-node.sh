@@ -23,9 +23,10 @@ node_rank="${OMPI_COMM_WORLD_RANK}"
 [[ "${node_rank}" -ge 0 && "${node_rank}" -lt "${nodes}" ]]
 
 node_temporary="$(mktemp -d /dev/shm/qwen-enroot-node.XXXXXXXXXX)"
+container_home="${node_temporary}/home"
 jit_cache="${node_temporary}/jit-cache"
 node_metrics_dir="${node_temporary}/metrics"
-mkdir -p "${jit_cache}" "${node_metrics_dir}"
+mkdir -p "${container_home}/.cache" "${jit_cache}" "${node_metrics_dir}"
 event_server_pid=""
 gpu_sampler_pid=""
 node_status=1
@@ -78,8 +79,8 @@ if [[ "${run_purpose}" == profile ]]; then profile_mounts=(-m "${RUNTIME_DIR}/pr
 runtime_source_oids="${RUNTIME_DIR}/source/runtime-source-oids.json"
 bench_args_blob_oid="$(jq -er 'select(.schema_version == "qwen-runtime-source-oids/v1") | .bench_args_blob_oid' "${runtime_source_oids}")"
 server_args_blob_oid="$(jq -er '.server_args_blob_oid' "${runtime_source_oids}")"
-container_environment=(-e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e HF_DATASETS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/jit-cache -e SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor -e TRITON_CACHE_DIR=/jit-cache/triton -e QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock -e "QWEN_EXPERIMENT_METRICS_RUN_ID=${run_id}" -e "QWEN_EXPERIMENT_METRICS_NODE_RANK=${node_rank}" -e "QWEN_EXPERIMENT_METRICS_BENCH_ARGS_BLOB_OID=${bench_args_blob_oid}" -e "QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID=${server_args_blob_oid}" -e QWEN_EXPERIMENT_METRICS_SOURCE_DIR=/source-output)
-container_mounts=(-m "${MODEL_PATH}:/model" -m "${jit_cache}:/jit-cache" -m "${node_metrics_dir}:/metrics" -m "${RUNTIME_DIR}/source:/source-output")
+container_environment=(-e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e HF_DATASETS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/jit-cache -e SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor -e TRITON_CACHE_DIR=/jit-cache/triton -e QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock -e "QWEN_EXPERIMENT_METRICS_RUN_ID=${run_id}" -e "QWEN_EXPERIMENT_METRICS_NODE_RANK=${node_rank}" -e "QWEN_EXPERIMENT_METRICS_BENCH_ARGS_BLOB_OID=${bench_args_blob_oid}" -e "QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID=${server_args_blob_oid}" -e QWEN_EXPERIMENT_METRICS_SOURCE_DIR=/source-output)
+container_mounts=(-m "${MODEL_PATH}:/model" -m "${container_home}:/runtime-home" -m "${jit_cache}:/jit-cache" -m "${node_metrics_dir}:/metrics" -m "${RUNTIME_DIR}/source:/source-output")
 command=(enroot start "${container_environment[@]}" "${profile_environ[@]}" "${container_mounts[@]}" "${profile_mounts[@]}" "${CONTAINER_IMAGE}" "${sglang_command[@]}")
 
 argv_dir="${node_metrics_dir}/argv"

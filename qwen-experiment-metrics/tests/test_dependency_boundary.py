@@ -111,6 +111,9 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "NVIDIA_DISABLE_REQUIRE=1" in node
     assert "MELLANOX_VISIBLE_DEVICES=all" in node
     assert "NVIDIA_VISIBLE_DEVICES=void" in provision
+    assert "HOME=/runtime-home" in node
+    assert "XDG_CACHE_HOME=/runtime-home/.cache" in node
+    assert '"${container_home}:/runtime-home"' in node
     assert "FLASHINFER_WORKSPACE_BASE=/jit-cache" in node
     assert "enroot start -e NVIDIA_VISIBLE_DEVICES=void" not in node
     assert '"qwen-runtime-source-oids/v1"' in provision
