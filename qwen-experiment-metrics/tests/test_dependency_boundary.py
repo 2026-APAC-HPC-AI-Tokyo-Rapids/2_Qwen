@@ -110,7 +110,7 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "--dataset-path /dataset/ShareGPT_V3_unfiltered_cleaned_split.json" in node
     assert 'dataset_name:"random"' in provision
     assert 'kind:"hub_file"' in provision
-    assert '"${dataset_path}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro"' in node
+    assert '"${dataset_path}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:none:x-create=file,bind,ro,nosuid,nodev"' in node
     assert 'scripts/fetch-sharegpt.sh" "${DATASET_CACHE_ROOT}"' in provision
     assert "revision=192ab2185289094fc556ec8ce5ce1e8e587154ca" in fetch_dataset
     assert "expected_sha256=35f0e213ce091ed9b9af2a1f0755e9d39f9ccec34ab281cd4ca60d70f6479ba4" in fetch_dataset
