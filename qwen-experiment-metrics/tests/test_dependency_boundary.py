@@ -133,6 +133,20 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert 'jit_temporary_root="${TMPDIR:-${TEMPDIR:-${TEMP:-/tmp}}}"' in node
     assert 'jit_temporary="$(mktemp -d "${jit_temporary_root%/}/qwen-jit.XXXXXXXXXX")"' in node
     assert 'jit_cache="${jit_temporary}/cache"' in node
+    assert 'enroot_data="${jit_temporary}/enroot-data"' in node
+    assert 'export ENROOT_DATA_PATH="${enroot_data}"' in node
+    assert 'export ENROOT_RUNTIME_PATH="${enroot_runtime}"' in node
+    assert 'export ENROOT_CACHE_PATH="${enroot_cache}"' in node
+    assert 'export ENROOT_TEMP_PATH="${enroot_temp}"' in node
+    assert 'container_created=0' in node
+    assert 'trap cleanup EXIT' in node
+    assert 'enroot create --name "${container_name}" "${CONTAINER_IMAGE}"' in node
+    assert 'container_created=1' in node
+    assert node.index("trap cleanup EXIT") < node.index("enroot create --name ")
+    assert (
+        'if [[ "${container_created}" -eq 1 ]]; then enroot remove -f "${container_name}" 2>/dev/null || true; fi'
+        in node
+    )
     assert 'rm -rf -- "${jit_temporary:?}"' in node
     assert "enroot start -e NVIDIA_VISIBLE_DEVICES=void" not in node
     assert '"qwen-runtime-source-oids/v1"' in provision
