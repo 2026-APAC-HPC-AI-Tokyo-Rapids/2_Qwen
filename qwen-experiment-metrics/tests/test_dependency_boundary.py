@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -113,8 +114,13 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert '"${dataset_path}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:none:x-create=file,bind,ro,nosuid,nodev"' in node
     assert 'scripts/fetch-sharegpt.sh" "${DATASET_CACHE_ROOT}"' in provision
     assert "revision=192ab2185289094fc556ec8ce5ce1e8e587154ca" in fetch_dataset
-    assert "expected_sha256=35f0e213ce091ed9b9af2a1f0755e9d39f9ccec34ab281cd4ca60d70f6479ba4" in fetch_dataset
+    assert (
+        'if [[ -s "${target_file}" ]]; then printf \'%s\\n\' "${target_file}"; exit 0; fi'
+        in fetch_dataset
+    )
+    assert 'test -s "${staging_dir}/${filename}"' in fetch_dataset
     assert 'mv -T "${staging_dir}" "${target_dir}"' in fetch_dataset
+    assert "sha256sum" not in fetch_dataset
     assert "singularity exec" not in node
     assert "NVIDIA_VISIBLE_DEVICES=all" in node
     assert "NVIDIA_DISABLE_REQUIRE=1" in node
@@ -135,6 +141,15 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "--container-argv" in node
     assert "--container-launcher" in node
     assert "--container-image" in node
+    assert "QWEN_EXPERIMENT_METRICS_DATASET_MANIFEST_SHA256" not in node
+    assert (
+        'if [[ "${node_rank}" -eq 0 && -s "${RUNTIME_DIR}/source/workload-warmup.json" ]]; then "${metrics_cli}" record-workload --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --kind warmup --source "${RUNTIME_DIR}/source/workload-warmup.json"; fi'
+        in node
+    )
+    assert (
+        'if [[ "${node_rank}" -eq 0 && -s "${RUNTIME_DIR}/source/workload-measured.json" ]]; then "${metrics_cli}" record-workload --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --kind measured --source "${RUNTIME_DIR}/source/workload-measured.json"; fi'
+        in node
+    )
     assert '"dummy-random-dataset/v1"' in provision
     assert 'export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"' in provision
     assert 'export UV_PYTHON_INSTALL_DIR="${RUNNER_TEMP}/uv-python"' in provision
@@ -229,6 +244,9 @@ def test_sglang_patches_close_primary_config_worker_and_profile_sources() -> Non
         ROOT / "patches/sglang/0004-observe-primary-token-counts-from-responses.patch"
     ).read_text(encoding="utf-8")
     assert '+            "error_count": 0' not in patch
+    assert "measured DatasetRow has no source array index" not in patch
+    assert "+        if array_index is not None:" in patch
+    assert "QWEN_EXPERIMENT_METRICS_DATASET_MANIFEST_SHA256" not in patch
     assert "--- a/python/sglang/srt/entrypoints/engine.py" in patch
     assert '+            "python/sglang/srt/server_args.py",' in patch
     assert 'producer_id=f"sglang-worker-{global_rank}"' in patch
@@ -241,6 +259,24 @@ def test_sglang_patches_close_primary_config_worker_and_profile_sources() -> Non
         observed_counts
     )
     assert '+            meta_info.get("prompt_tokens")' in observed_counts
+
+
+def test_sglang_patches_are_syntactically_valid_unified_diffs() -> None:
+    patch_dir = ROOT / "patches/sglang"
+    patches = sorted(patch_dir.glob("*.patch"))
+    assert len(patches) >= 6
+    for patch in patches:
+        result = subprocess.run(
+            ["git", "apply", "--numstat", str(patch)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert (
+            result.returncode == 0
+        ), f"Patch {patch.name} is malformed:\n{result.stderr}"
+        assert result.stdout.strip(), f"Patch {patch.name} produced no numstat output"
 
 
 def test_compute_core_has_no_bigquery_or_network_client_dependency() -> None:

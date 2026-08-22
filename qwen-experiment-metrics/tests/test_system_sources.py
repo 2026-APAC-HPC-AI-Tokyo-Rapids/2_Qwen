@@ -86,10 +86,8 @@ def test_scheduler_accounting_binds_exact_tsv_and_job(
 
 
 def test_ordered_workload_is_closed_and_order_sensitive(tmp_path: Path) -> None:
-    dataset_identity = "a" * 64
     value = {
         "schema_version": "ordered-workload/v1",
-        "dataset_manifest_sha256": dataset_identity,
         "kind": "measured",
         "requests": [
             {
@@ -109,16 +107,53 @@ def test_ordered_workload_is_closed_and_order_sensitive(tmp_path: Path) -> None:
     }
     path = tmp_path / "workload-measured.json"
     path.write_bytes(jcs_bytes(value) + b"\n")
-    facts = validate_ordered_workload(
-        path, kind="measured", dataset_manifest_sha256=dataset_identity
-    )
+    facts = validate_ordered_workload(path, kind="measured")
     assert facts[0].logical_value == hashlib.sha256(jcs_bytes(value)).hexdigest()
     value["requests"][0]["sampling_params"].reverse()  # type: ignore[index]
     path.write_bytes(jcs_bytes(value) + b"\n")
     with pytest.raises(ValueError, match="sorted"):
-        validate_ordered_workload(
-            path, kind="measured", dataset_manifest_sha256=dataset_identity
-        )
+        validate_ordered_workload(path, kind="measured")
+
+
+def test_ordered_workload_accepts_generated_measured(tmp_path: Path) -> None:
+    value = {
+        "schema_version": "ordered-workload/v1",
+        "kind": "measured",
+        "requests": [
+            {
+                "source": {
+                    "kind": "generated",
+                    "generator_id": "sglang.sample_random_requests",
+                    "seed": 42,
+                    "generator_ordinal": 0,
+                },
+                "prompt_payload": {
+                    "kind": "text",
+                    "text": "random prompt",
+                    "input_token_count": 1024,
+                },
+                "requested_output_token_count": 128,
+                "sampling_params": [
+                    {"name": "ignore_eos", "declared_type": "bool", "value": True},
+                    {"name": "temperature", "declared_type": "int", "value": 0},
+                ],
+            }
+        ],
+    }
+    path = tmp_path / "workload-measured.json"
+    path.write_bytes(jcs_bytes(value) + b"\n")
+    facts = validate_ordered_workload(path, kind="measured")
+    assert facts[0].logical_value == hashlib.sha256(jcs_bytes(value)).hexdigest()
+
+    # Warmup requires "mode" field
+    with pytest.raises(ValueError, match="ordered workload is not closed"):
+        validate_ordered_workload(path, kind="warmup")
+
+    # Mismatched kind value must fail
+    value["mode"] = "random"
+    path.write_bytes(jcs_bytes(value) + b"\n")
+    with pytest.raises(ValueError, match="ordered workload identity differs"):
+        validate_ordered_workload(path, kind="warmup")
 
 
 def test_node_lifecycle_preserves_raw_wait_status(tmp_path: Path) -> None:

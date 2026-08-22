@@ -801,7 +801,6 @@ def provenance_facts(runtime_dir: Path) -> tuple[Fact, ...]:
         "filename",
         "path",
         "size_bytes",
-        "sha256",
     }:
         raise ValueError("dummy dataset source is not closed")
     if (
@@ -817,13 +816,9 @@ def provenance_facts(runtime_dir: Path) -> tuple[Fact, ...]:
     if not dataset_path.is_absolute():
         raise ValueError("dataset path must be absolute")
     expected_size = _positive_uint(dataset_source["size_bytes"], "dataset size")
-    expected_sha256 = _require_sha256(
-        dataset_source["sha256"], "dummy dataset sha256"
-    )
     if (
         not dataset_path.is_file()
         or dataset_path.stat().st_size != expected_size
-        or _sha256(dataset_path) != expected_sha256
     ):
         raise ValueError("dummy dataset file differs")
     return (
