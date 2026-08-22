@@ -29,8 +29,18 @@ jit_temporary_root="${TMPDIR:-${TEMPDIR:-${TEMP:-/tmp}}}"
 jit_temporary="$(mktemp -d "${jit_temporary_root%/}/qwen-jit.XXXXXXXXXX")"
 container_home="${jit_temporary}/home"
 jit_cache="${jit_temporary}/cache"
+enroot_data="${jit_temporary}/enroot-data"
+enroot_runtime="${jit_temporary}/enroot-runtime"
+enroot_cache="${jit_temporary}/enroot-cache"
+enroot_temp="${jit_temporary}/enroot-temp"
 node_metrics_dir="${node_temporary}/metrics"
-mkdir -p "${container_home}/.cache" "${jit_cache}" "${node_metrics_dir}"
+mkdir -p "${container_home}/.cache" "${jit_cache}" "${enroot_data}" "${enroot_runtime}" "${enroot_cache}" "${enroot_temp}" "${node_metrics_dir}"
+export ENROOT_DATA_PATH="${enroot_data}"
+export ENROOT_RUNTIME_PATH="${enroot_runtime}"
+export ENROOT_CACHE_PATH="${enroot_cache}"
+export ENROOT_TEMP_PATH="${enroot_temp}"
+container_name="qwen-node-${node_rank}"
+container_created=0
 event_server_pid=""
 gpu_sampler_pid=""
 node_status=1
@@ -40,6 +50,7 @@ cleanup() {
   trap - EXIT INT TERM
   if [[ -n "${gpu_sampler_pid}" ]]; then kill -TERM "${gpu_sampler_pid}" 2>/dev/null || true; wait "${gpu_sampler_pid}" 2>/dev/null || true; fi
   if [[ -n "${event_server_pid}" ]]; then kill -TERM "${event_server_pid}" 2>/dev/null || true; wait "${event_server_pid}" 2>/dev/null || true; fi
+  if [[ "${container_created}" -eq 1 ]]; then enroot remove -f "${container_name}" 2>/dev/null || true; fi
   rm -rf -- "${node_temporary:?}"
   rm -rf -- "${jit_temporary:?}"
   exit "${status}"
@@ -47,6 +58,9 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+enroot create --name "${container_name}" "${CONTAINER_IMAGE}"
+container_created=1
 
 "${metrics_cli}" capture-hardware --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --node-rank "${node_rank}"
 
@@ -86,7 +100,7 @@ bench_args_blob_oid="$(jq -er 'select(.schema_version == "qwen-runtime-source-oi
 server_args_blob_oid="$(jq -er '.server_args_blob_oid' "${runtime_source_oids}")"
 container_environment=(-e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e HF_DATASETS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/jit-cache -e SGLANG_DG_CACHE_DIR=/jit-cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/jit-cache/torchinductor -e TRITON_CACHE_DIR=/jit-cache/triton -e QWEN_EXPERIMENT_METRICS_SOCKET=/metrics/events.sock -e "QWEN_EXPERIMENT_METRICS_RUN_ID=${run_id}" -e "QWEN_EXPERIMENT_METRICS_NODE_RANK=${node_rank}" -e "QWEN_EXPERIMENT_METRICS_BENCH_ARGS_BLOB_OID=${bench_args_blob_oid}" -e "QWEN_EXPERIMENT_METRICS_SERVER_ARGS_BLOB_OID=${server_args_blob_oid}" -e QWEN_EXPERIMENT_METRICS_SOURCE_DIR=/source-output)
 container_mounts=(-m "${MODEL_PATH}:/model" -m "${dataset_path}:/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:none:x-create=file,bind,ro,nosuid,nodev" -m "${container_home}:/runtime-home" -m "${jit_cache}:/jit-cache" -m "${node_metrics_dir}:/metrics" -m "${RUNTIME_DIR}/source:/source-output")
-command=(enroot start "${container_environment[@]}" "${profile_environ[@]}" "${container_mounts[@]}" "${profile_mounts[@]}" "${CONTAINER_IMAGE}" "${sglang_command[@]}")
+command=(enroot start "${container_environment[@]}" "${profile_environ[@]}" "${container_mounts[@]}" "${profile_mounts[@]}" "${container_name}" "${sglang_command[@]}")
 
 argv_dir="${node_metrics_dir}/argv"
 mkdir -p "${argv_dir}"
