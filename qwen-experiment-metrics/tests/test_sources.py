@@ -221,7 +221,6 @@ def test_provenance_facts_expose_container_and_dummy_input_details(
             "filename": "ShareGPT_V3_unfiltered_cleaned_split.json",
             "path": str(dataset_file),
             "size_bytes": dataset_file.stat().st_size,
-            "sha256": hashlib.sha256(dataset_file.read_bytes()).hexdigest(),
         },
     }
     (source / "model-metadata.json").write_bytes(jcs_bytes(model) + b"\n")
@@ -236,7 +235,7 @@ def test_provenance_facts_expose_container_and_dummy_input_details(
     assert facts["input.model"] == model
     assert facts["input.dataset"] == dataset
 
-    dataset_file.write_bytes(b"tampered\n")
+    dataset_file.write_bytes(b"tampered with different size\n")
     with pytest.raises(ValueError, match="dummy dataset file differs"):
         provenance_facts(runtime)
 

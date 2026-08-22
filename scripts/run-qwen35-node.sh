@@ -103,5 +103,6 @@ if [[ "${node_rank}" -eq 0 ]]; then "${node_agent[@]}"; node_status=$?; else "${
 set -e
 
 if [[ "${run_purpose}" == profile ]]; then kill -TERM "${gpu_sampler_pid}"; gpu_sampler_status=0; wait "${gpu_sampler_pid}" || gpu_sampler_status=$?; gpu_sampler_pid=""; [[ "${gpu_sampler_status}" -eq 0 ]]; "${metrics_cli}" capture-profile-hardware --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --node-rank "${node_rank}"; fi
-if [[ "${node_rank}" -eq 0 && -s "${RUNTIME_DIR}/source/workload-warmup.json" ]]; then "${metrics_cli}" record-workload --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --kind warmup --source "${RUNTIME_DIR}/source/workload-warmup.json"; "${metrics_cli}" record-workload --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --kind measured --source "${RUNTIME_DIR}/source/workload-measured.json"; fi
+if [[ "${node_rank}" -eq 0 && -s "${RUNTIME_DIR}/source/workload-warmup.json" ]]; then "${metrics_cli}" record-workload --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --kind warmup --source "${RUNTIME_DIR}/source/workload-warmup.json"; fi
+if [[ "${node_rank}" -eq 0 && -s "${RUNTIME_DIR}/source/workload-measured.json" ]]; then "${metrics_cli}" record-workload --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --kind measured --source "${RUNTIME_DIR}/source/workload-measured.json"; fi
 exit "${node_status}"

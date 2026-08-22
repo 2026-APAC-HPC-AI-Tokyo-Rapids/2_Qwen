@@ -769,15 +769,9 @@ def _capture_topology(arguments: argparse.Namespace) -> int:
 
 
 def _record_workload(arguments: argparse.Namespace) -> int:
-    import hashlib
-
     from .workload import validate_ordered_workload
 
-    dataset = arguments.runtime_dir / "source/dataset-manifest.json"
-    identity = hashlib.sha256(dataset.read_bytes()).hexdigest()
-    facts = validate_ordered_workload(
-        arguments.source, kind=arguments.kind, dataset_manifest_sha256=identity
-    )
+    facts = validate_ordered_workload(arguments.source, kind=arguments.kind)
     with Recorder.open(
         arguments.manifest,
         arguments.registry,

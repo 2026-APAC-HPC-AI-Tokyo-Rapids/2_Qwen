@@ -407,7 +407,7 @@ min/median/max、energy sumをquery時に導出する。complete/status boolean�
 ### ordered workload v1
 
 `source/workload-{warmup,measured}.json`は
-`schema_version:const "ordered-workload/v1"/dataset_manifest_sha256/kind/requests`を持つ。`kind`は`warmup|measured`、warmupだけ`mode` enum
+`schema_version:const "ordered-workload/v1"/kind/requests`を持つ。`kind`は`warmup|measured`、warmupだけ`mode` enum
 `random|dataset`を追加する。run IDはsemantic workload bytesへ入れず、run bundle manifestとpublisher
 projectionだけがbindingを所有する。このため同じactual workloadはrunを跨いでも同じsource SHA-256になる。
 requestsは実generate順で、各要素は次を持つ。
@@ -428,7 +428,7 @@ manifest relationだけが所有し、request relationはmanifest identityでjoi
 
 `workload-manifest-projection/v1`は全field required、`additionalProperties=false`の
 `{schema_version:const "workload-manifest-projection/v1",run_id:string,
-workload_kind:enum "warmup"|"measured",dataset_manifest_sha256:sha256,warmup_mode:enum "random"|"dataset"|null,
+workload_kind:enum "warmup"|"measured",warmup_mode:enum "random"|"dataset"|null,
 source_member:relative POSIX path,source_sha256:sha256}`を持つ。measuredのmodeはnullで、
 `source_sha256`がsubject bindingを除いたcanonical workload fileのsemantic manifest identityを兼ねる。
 `workload-request-projection/v1`は全field requiredの
