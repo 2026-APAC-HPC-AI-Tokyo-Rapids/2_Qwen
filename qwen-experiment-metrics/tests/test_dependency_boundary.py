@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import subprocess
 import tomllib
 from pathlib import Path
@@ -178,6 +179,8 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "record-provenance" in provision
     assert "capture-runtime-launchers" in job
     assert "start-run-lifecycle" in job and "finish-run-lifecycle" in job
+    assert "(.generation_wall_sec | tonumber) > 0" in job
+    assert ".generation_wall_sec | numbers" not in job
     assert 'ENROOT_SYSCONF_PATH="${RUNTIME_DIR}/enroot-system"' in job
     assert "--ldconfig=/sbin/ldconfig" in provision
     assert "sed -i 's%--ldconfig=" in provision
@@ -206,6 +209,16 @@ def test_topology_capture_uses_enroot_vocabulary_and_driver_injection() -> None:
     assert "singularity_argv" not in contract
     assert "sif-sidecar" not in sources
     assert "sif-sidecar" not in contract
+
+
+def test_job_success_gate_accepts_primary_result_decimal_encodings() -> None:
+    job = (ROOT / "scripts/run-qwen35-job.sh").read_text(encoding="utf-8")
+    line = next(row for row in job.splitlines() if "jq -e" in row and "generation_wall_sec" in row)
+    jq_filter = line.split("jq -e '", 1)[1].split("' source/primary-result.json", 1)[0]
+    for wall in ("2.342779523", 2.342779523):
+        payload = json.dumps({"error_count": 0, "generation_wall_sec": wall})
+        completed = subprocess.run(["jq", "-e", jq_filter], input=payload, text=True, capture_output=True, check=False)
+        assert completed.returncode == 0
 
 
 def test_aspire_uses_authorized_budget_project_and_default_routing() -> None:
