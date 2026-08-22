@@ -62,4 +62,6 @@ ASPIRE 2A+ではPBS job `203570.pbs111`を1 GPU compute node `a2ap-dgx037`へ投
 
 最初の再検証Actions run `32536408333`はPJM投入前のprovisionで、計測ライブラリのclosed-schema検証だけが旧`random`値を要求していたため`dummy dataset manifest differs`となった。これを同期したPJM job `6556998`では、dataset registryに存在する`random-ids`を`offline_throughput.py`のCLI choicesが受理せずexit 2となった。また同CLIは選択datasetと無関係にShareGPT由来のrandom warmupを先に構築するため、`generated-shared-prefix`へ変えるだけでも暗黙downloadは残る。ShareGPTをlogin nodeで事前取得して公式`random`経路へ明示することで、計算nodeのoffline境界を保ちながら入力1024、出力128、8 promptの診断条件を維持する。これはruntime入力とprovenanceだけの変更であり、container再ビルドを必要としない。過去runのmanifestとartifactは書き換えない。
 
+玄界Actions run `32550368591`、PJM job `6558594`では2ノード8 GPUのdummy generationが8件すべて成功し、benchmark stageもexit code 0だった。しかし、`primary-result/v1`が正確なdecimalとして文字列`"2.342779523"`を保存したのに対し、後段の成功判定がjqのnumber型だけを選ぶ`numbers`を使っていたためexit code 4となり、`run-success`を作成できなかった。成功判定は計測契約と同じく文字列・numberの両方を受理して正値へ正規化する`tonumber`を使う。node 1のraw wait status 9とGloo peer resetはrank 0終了後の分散SGLang teardownで観測されたが、benchmark stageの判定結果ではなく、今回のActions failureの直接原因ではない。
+
 計算ジョブへBigQuery資格情報を渡さない。各producerは共有runtime directoryの`domain/fragments`へ完了済みJSONLをatomicに書く。scheduler terminal状態と`run-success`を確認した後だけ、ログインrunnerがmode 0600の一時資格情報を`/dev/shm`へ作り、全fragmentを一度送信する。資格情報はruntime directoryやActions artifactへ入れない。

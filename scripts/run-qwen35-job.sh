@@ -51,7 +51,7 @@ printf 'finished_at=%s\n' "$(date -u +%FT%TZ)" >>logs/environment.log
 
 if [[ "${benchmark_status}" -eq 0 ]]; then
   test -s source/primary-result.json
-  jq -e '.error_count == 0 and (.generation_wall_sec | numbers) > 0' source/primary-result.json >/dev/null
+  jq -e '.error_count == 0 and ((.generation_wall_sec | tonumber) > 0)' source/primary-result.json >/dev/null
   if [[ "${run_purpose}" == profile ]]; then "${metrics_cli}" record-profile-results --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --expected-ranks "$(jq -er '.tensor_parallel_size' "${execution_settings}")"; fi
   touch run-success
 fi
