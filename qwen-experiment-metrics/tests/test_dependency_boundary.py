@@ -154,7 +154,9 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "capture-topology" in node
     assert "--container-argv" in node
     assert "--container-launcher" in node
-    assert "--container-image" in node
+    assert "--container-target" in node
+    assert '--container-target "${container_name}"' in node
+    assert '--container-image "${CONTAINER_IMAGE}"' not in node
     assert "QWEN_EXPERIMENT_METRICS_DATASET_MANIFEST_SHA256" not in node
     assert (
         'if [[ "${node_rank}" -eq 0 && -s "${RUNTIME_DIR}/source/workload-warmup.json" ]]; then "${metrics_cli}" record-workload --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --kind warmup --source "${RUNTIME_DIR}/source/workload-warmup.json"; fi'
@@ -195,7 +197,7 @@ def test_topology_capture_uses_enroot_vocabulary_and_driver_injection() -> None:
         ROOT
         / "qwen-experiment-metrics/src/qwen_experiment_metrics/contracts/qwen-v2.toml"
     ).read_text(encoding="utf-8")
-    for option in ("--container-argv", "--container-launcher", "--container-image"):
+    for option in ("--container-argv", "--container-launcher", "--container-target"):
         assert option in cli
     assert '"start"' in sources
     assert '"NVIDIA_VISIBLE_DEVICES=all"' in sources

@@ -158,7 +158,7 @@ def parser() -> argparse.ArgumentParser:
     topology.add_argument("--container-argv", type=Path, required=True)
     topology.add_argument("--sglang-argv", type=Path, required=True)
     topology.add_argument("--container-launcher", type=Path, required=True)
-    topology.add_argument("--container-image", type=Path, required=True)
+    topology.add_argument("--container-target", type=str, required=True)
 
     workload = commands.add_parser("record-workload")
     _common_runtime_arguments(workload)
@@ -750,7 +750,7 @@ def _capture_topology(arguments: argparse.Namespace) -> int:
         container_argv=argv(arguments.container_argv),
         sglang_argv=argv(arguments.sglang_argv),
         container_launcher=arguments.container_launcher,
-        container_image=arguments.container_image,
+        container_target=arguments.container_target,
     )
     facts = validate_node_topology(
         path,
