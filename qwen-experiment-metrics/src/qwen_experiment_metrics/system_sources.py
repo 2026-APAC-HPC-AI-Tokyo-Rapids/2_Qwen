@@ -404,7 +404,7 @@ def create_node_topology(
     container_argv: list[str],
     sglang_argv: list[str],
     container_launcher: Path,
-    container_image: Path,
+    container_target: str,
 ) -> Path:
     manifest = load_manifest(manifest_path)
     topology_dir = runtime_dir / "source/topology"
@@ -426,7 +426,7 @@ def create_node_topology(
         "NVIDIA_DRIVER_CAPABILITIES=all",
         "-e",
         "NVIDIA_DISABLE_REQUIRE=1",
-        str(container_image),
+        str(container_target),
         *query_argv,
     ]
     container_query = _capture_source_command(

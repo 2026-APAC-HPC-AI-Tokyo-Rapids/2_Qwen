@@ -107,7 +107,7 @@ mkdir -p "${argv_dir}"
 jq -n --args '$ARGS.positional' -- "$0" "$@" >"${argv_dir}/node-wrapper.json"
 jq -n --args '$ARGS.positional' -- "${command[@]}" >"${argv_dir}/enroot.json"
 jq -n --args '$ARGS.positional' -- "${sglang_command[@]}" >"${argv_dir}/sglang.json"
-"${metrics_cli}" capture-topology --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --node-rank "${node_rank}" --global-rank "${OMPI_COMM_WORLD_RANK}" --local-rank "${OMPI_COMM_WORLD_LOCAL_RANK:-0}" --size "${OMPI_COMM_WORLD_SIZE}" --node-wrapper-argv "${argv_dir}/node-wrapper.json" --container-argv "${argv_dir}/enroot.json" --sglang-argv "${argv_dir}/sglang.json" --container-launcher "$(command -v enroot)" --container-image "${CONTAINER_IMAGE}"
+"${metrics_cli}" capture-topology --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --node-rank "${node_rank}" --global-rank "${OMPI_COMM_WORLD_RANK}" --local-rank "${OMPI_COMM_WORLD_LOCAL_RANK:-0}" --size "${OMPI_COMM_WORLD_SIZE}" --node-wrapper-argv "${argv_dir}/node-wrapper.json" --container-argv "${argv_dir}/enroot.json" --sglang-argv "${argv_dir}/sglang.json" --container-launcher "$(command -v enroot)" --container-target "${container_name}"
 
 phase_agent_args=()
 if [[ "${run_purpose}" == profile ]]; then phase_agent_args=(--phase-socket "${node_metrics_dir}/phase.sock"); fi

@@ -42,7 +42,7 @@ read-onlyなSquashFSから起動するため、計算nodeごとに一時的なru
 
 ASPIRE PBS job `203640.pbs111`は`resources_used.walltime=0`、`Exit_status=-2`、`Stageout_status=1`でscript本体の前に終了し、`PBS_O_WORKDIR`はephemeral runnerのcheckoutを指していた。ASPIREのPBS 2025.2.2は`qsub -d`を実装していないため、`qsub`前にrun固有scratchへ`cd`して投入時working directoryをruntime lifecycleへ固定する。玄界も同じ理由で`pjsub`前にruntime directoryへ移動する。また、provision用`uvx`のmanaged Pythonはrunner一時領域を使う一方、後続jobでも使う計測CLIのmanaged Pythonはruntime directory内へ配置し、venvのinterpreterをrun lifecycleと同じ寿命にする。PBS logが生成されない起動前失敗でもaccountingを先に保存・表示し、成果物へ回収する。
 
-玄界の直近成功runでhost driver 595.71.05を確認した。一方、固定CUDA 13.0.1 base imageの`NVIDIA_REQUIRE_CUDA`は既知の575系driverまでしか列挙していない。新しいdriverはCUDA 13を満たすため、GPU実行時は`NVIDIA_DISABLE_REQUIRE=1`をEnrootへ明示して古いimage内制約だけを無効化する。device、driver library、GPU topologyは引き続きNVIDIA hookとcontainer内`nvidia-smi`で検証する。container内GPU topologyのsource schemaも`singularity_argv`からruntime非依存の`container_argv`へ移行した。
+玄界の直近成功runでhost driver 595.71.05を確認した。一方、固定CUDA 13.0.1 base imageの`NVIDIA_REQUIRE_CUDA`は既知の575系driverまでしか列挙していない。新しいdriverはCUDA 13を満たすため、GPU実行時は`NVIDIA_DISABLE_REQUIRE=1`をEnrootへ明示して古いimage内制約だけを無効化する。device、driver library、GPU topologyは引き続きNVIDIA hookとcontainer内`nvidia-smi`で検証する。container内GPU topologyのsource schemaも`singularity_argv`からruntime非依存の`container_argv`へ移行した。GPU topology probeはimmutableなimage archiveではなく計算ノード上で展開済みのcontainer target（named rootfs）を起動して検査し、SquashFSの不変性照合は`container-sidecar`およびprovenance層へ一元化する。
 
 ASPIRE 2A+にはsystemの`nvidia-container-cli` 1.17.4がある。玄界には配置されていなかったため、NVIDIA公式RPM repositoryの署名を検証し、`libnvidia-container1`と`libnvidia-container-tools` 1.20.0を`~/.local`へ展開した。これによりroot権限を使わずEnrootのNVIDIA hookがhost driverとdeviceをcontainerへ注入できる。
 
