@@ -49,6 +49,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: S3 APIクライアントの実行環境を準備
+        uses: astral-sh/setup-uv@v7
+
       - name: AWSの一時資格情報を取得
         uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
@@ -57,6 +60,7 @@ jobs:
 
       - name: S3 APIでSquashFSを並列配備
         id: provision
+        shell: bash -eo pipefail {0}
         env:
           CLUSTER_NAME: firmus
           CONTAINER_KEY: ${{ inputs.container_key }}
