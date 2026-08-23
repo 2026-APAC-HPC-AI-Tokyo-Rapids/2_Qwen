@@ -27,7 +27,7 @@ run directoryへ置くscriptはprovision時のcommitからsnapshotする。こ�
 
 ## クラスタ差
 
-玄界はdownload先と実行領域を`/fast/pj26000080/sglang-runs`へ置き、`b-batch`の1 GPU nodeで確認する。ASPIRE 2A+は`/scratch/users/industry/ai-hpc/apacsc14/sglang-runs`へ置き、project `59010014`から1 GPU、8 CPU、32 GBを`place=scatter`（非exclusive）で要求する。Firmusは`/scratch/home/apacsc14/qwen/runs`へ置き、`hpcai` partitionで1 GPU、8 CPU、32 GB、17分を要求する。これはmodelを取得しない環境確認用の最小要求であり、実benchmarkでは各siteのnode全体を割り当てるruntime adapterへ接続し直してE2E検証する。
+玄界はdownload先と実行領域を`/fast/pj26000080/sglang-runs`へ置き、`b-batch`の1 GPU nodeで確認する。ASPIRE 2A+は`/scratch/users/industry/ai-hpc/apacsc14/sglang-runs`へ置き、project `59010014`から1 GPU、8 CPU、32 GBを`place=scatter:excl`で要求する。サイトは実際の最小割当を14 CPU、235 GBへ正規化する。非exclusiveを試したPBS job `204056.pbs111`と`204057.pbs111`は、部分使用中の同じnode `a2ap-dgx035`へ割当後、script本体を一度も実行せず`resources_used.walltime=0`、`Exit_status=-2`、`Stageout_status=1`で終了したため採用しない。Firmusは`/scratch/home/apacsc14/qwen/runs`へ置き、`hpcai` partitionで1 GPU、8 CPU、32 GB、17分を要求する。これはmodelを取得しない環境確認用の最小要求であり、実benchmarkでは各siteのnode全体を割り当てるruntime adapterへ接続し直してE2E検証する。
 
 ## 従来のクラスタ内ビルドとGPU dummy実行の記録
 
