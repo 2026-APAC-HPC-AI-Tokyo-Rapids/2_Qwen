@@ -30,4 +30,6 @@ CloudFormation template `aws/qwen-build-infrastructure.yml`はprivate S3 bucket�
 
 玄界、ASPIRE 2A+、Firmusの各self-hosted runnerも同じOIDC roleを一時的にassumeする。ログインノードへAWS CLIは導入せず、一時資格情報を使うBoto3 APIで64 MiB part、最大8並列のuploadとdownloadを行う。sidecarとSquashFSはrun固有directoryへ毎回downloadする。AWS資格情報はscheduler jobへ渡さず、計算ノードへ渡すのはdownload済み`.sqsh`、run固有Enroot設定、実行scriptだけである。
 
+12,718,911,488 byteの同じobjectについて、玄界のpresigned URLと単一`curl`による旧配備jobは8分31秒だった。Boto3 multipartへ切り替えた配備jobは、checkout、OIDC設定、sidecar取得、SHA-256全体読取りまで含めて玄界1分45秒、ASPIRE 2A+ 2分09秒、Firmus 2分08秒となった。新規buildを玄界archiveへ保存する同じBoto3 transfer jobも2分00秒だった。
+
 `[require-build]`が最新commit messageの先頭にある場合は必ず新規buildする。それ以外では第一親履歴を遡り、過去の成功runと対応する玄界ローカルのSquashFSについてsidecar、file size、SHA-256が一致する最近傍の成果物を再利用する。選んだローカル成果物は現在run IDへハードリンクしてから一時S3 objectとしてuploadするため、各クラスタ側のdownloadは省略しない。クラスタタグがないpushは静的検証だけを行い、AWS資源を起動しない。

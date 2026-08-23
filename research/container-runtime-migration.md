@@ -12,22 +12,22 @@ Enroot 4.2.0はDocker archiveやOCI archiveを実行形式として直接使え�
 
 AWS VMは32 GiB RAM全体を一時buildに使えるため、`mksquashfs`は8 worker、8 GiB cache、gzip level 2で実行する。全RAM化は、26.6 GBのrootfsに加えてBuildah layer、OCI layout、圧縮入出力を同時に保持すると32 GiBを超えるため採用しない。高速gp3上でOverlayFSのcopy-on-writeを使う方が容量と速度の境界が明確である。
 
-完成物の再利用正本は玄界の`/home/pj26000080/share/sglang-containers/<workflow-run-id>.sqsh`とsidecarである。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行はGitの第一親を順番に遡り、過去の成功runに対応するローカルfileのsizeとSHA-256を照合して最初の有効な成果物を再利用する。選択後は現在run IDへのハードリンクを作り、private S3の`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/`へ1日限りの配布物としてuploadするため、再利用時にもクラスタ側のdownloadは省略しない。各クラスタrunnerはOIDC資格情報とBoto3 APIで実行直前に1時間の署名付きURLを作るため、AWS CLIを配置せず、bucketもpublicにせず、scheduler queue時間にもURL寿命を消費しない。
+完成物の再利用正本は玄界の`/home/pj26000080/share/sglang-containers/<workflow-run-id>.sqsh`とsidecarである。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行はGitの第一親を順番に遡り、過去の成功runに対応するローカルfileのsizeとSHA-256を照合して最初の有効な成果物を再利用する。選択後は現在run IDへのハードリンクを作り、private S3の`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/`へ1日限りの配布物としてuploadするため、再利用時にもクラスタ側のdownloadは省略しない。各クラスタrunnerはOIDC資格情報とBoto3 APIを使い、64 MiB part、最大8並列でrun directoryへ直接downloadする。AWS CLIを配置せず、bucketもpublicにせず、AWS資格情報をscheduler jobへ渡さない。
 
 ## 制御処理の責務
 
-AWS workflowはbuild/reuseとS3公開を、クラスタworkflowは毎回のdownloadとscheduler差だけを担当する。モデル未配置の現在は3クラスタともCPU nodeで`sglang.check_env`だけを実行し、従来のdummy model、dataset、BigQuery、profile処理は起動しない。
+AWS workflowはbuild/reuseとS3公開を、クラスタworkflowは毎回のdownloadとscheduler差だけを担当する。モデル未配置の現在は3クラスタともGPU nodeで`sglang.check_env`だけを実行し、従来のdummy model、dataset、BigQuery、profile処理は起動しない。
 
 - `scripts/build-sglang-container.sh`はroot Buildah、Skopeo、Umoci、SquashFS変換を、`aws/run-build-instance.sh`はS3入出力とEC2側log回収を担当する。
 - `scripts/select-qwen-container.sh`はGit第一親をたどる玄界ローカル再利用候補の選択とsidecar/file検証だけを担当する。
-- `scripts/provision-qwen-check-env.sh`はlogin runnerでpresign、download、SHA-256検証、run固有Enroot libraryのpoll上限変更を行う。
+- `scripts/provision-qwen-check-env.sh`はlogin runnerでBoto3 multipart download、SHA-256検証、run固有Enroot libraryのpoll上限変更を行う。
 - `scripts/run-qwen-check-env.sh`は計算node上のnode-local Enroot作業pathを作り、共有filesystem上のdownload済みSquashFSを展開せず直接起動する。
 
 run directoryへ置くscriptはprovision時のcommitからsnapshotする。このため、workflowを待機している間にrepository側を更新しても投入済みjobの実装は変化せず、各runのコード来歴をcommitへ固定できる。
 
 ## クラスタ差
 
-玄界はdownload先と実行領域を`/fast/pj26000080/sglang-runs`へ置き、`a-batch` CPU nodeで確認する。ASPIRE 2A+は`/scratch/users/industry/ai-hpc/apacsc14/sglang-runs`へ置き、project `59010014`からGPUを要求しない8 CPU、32 GBのnodeを割り当てる。Firmusは`/scratch/home/apacsc14/qwen/runs`へ置き、`shared` partitionの8 CPU、32 GBで確認する。モデル配備後にGPU benchmarkへ戻す際は、現在もrepositoryに残るGPU/runtime adapterをAWS成果物入力へ接続し直してE2E検証する。
+玄界はdownload先と実行領域を`/fast/pj26000080/sglang-runs`へ置き、`b-batch`の1 GPU nodeで確認する。ASPIRE 2A+は`/scratch/users/industry/ai-hpc/apacsc14/sglang-runs`へ置き、project `59010014`から1 GPU、8 CPU、32 GBを`place=scatter`（非exclusive）で要求する。Firmusは`/scratch/home/apacsc14/qwen/runs`へ置き、`hpcai` partitionで1 GPU、8 CPU、32 GB、17分を要求する。これはmodelを取得しない環境確認用の最小要求であり、実benchmarkでは各siteのnode全体を割り当てるruntime adapterへ接続し直してE2E検証する。
 
 ## 従来のクラスタ内ビルドとGPU dummy実行の記録
 
