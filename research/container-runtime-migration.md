@@ -37,6 +37,8 @@ Actions run `32665563155`のFirmus Slurm job `12867`は24秒で`COMPLETED (0:0)`
 
 玄界はdownload先と実行領域を`/fast/pj26000080/sglang-runs`へ置き、`b-batch`の1 GPU nodeで確認する。ASPIRE 2A+は`/scratch/users/industry/ai-hpc/apacsc14/sglang-runs`へ置き、project `59010014`から各node 112 CPU、8 GPU、1500 GBを`place=scatter:excl`で要求する。1 GPU、8 CPU、32 GBの非exclusive配置を試したPBS job `204056.pbs111`と`204057.pbs111`は、部分使用中の同じnode `a2ap-dgx035`へ割当後、script本体を一度も実行せず`resources_used.walltime=0`、`Exit_status=-2`、`Stageout_status=1`で終了したため採用しない。小さなexclusive要求もsite側で14 CPU、235 GBのsmall poolへ正規化され、空きnode待ちとなった。従来成功済みで実benchmarkの割当てとも一致するDGX全体要求を使う。Firmusは`/scratch/home/apacsc14/qwen/runs`へ置き、`hpcai` partitionで1 GPU、8 CPU、32 GB、17分を要求する。これはmodelを取得しない環境確認用の要求であり、実benchmarkでは各siteのnode全体を割り当てるruntime adapterへ接続し直してE2E検証する。
 
+ASPIREでは`qsub`へscript file pathを引数で渡すと、全DGXを割り当てたjob `204058.pbs111`でもユーザーscript開始前に`Exit_status=-2`となった。切り分けで、stdinから最小scriptを投入したjob `204059.pbs111`と`204060.pbs111`は、同じGPU nodeでshell、user ID、`~/.local/.setenv`、Enroot pathの読込みまでexit 0となった。その一方、同じcheck script fileをpath引数で投入したjob `204061.pbs111`は、PBS MoMの`/var/spool/pbs/mom_priv/jobs/204061.pbs111.SC`が実行時に存在せずexit 127となった。このsite側script staging障害を回避するため、同じGit管理済みscript内容を`qsub` のstdinへリダイレクトする。
+
 ## 従来のクラスタ内ビルドとGPU dummy実行の記録
 
 以下はAWS集中buildへ移行する前の障害と設計判断を履歴として残す。

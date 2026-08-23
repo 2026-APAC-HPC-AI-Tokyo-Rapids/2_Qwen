@@ -273,6 +273,7 @@ def test_aspire_uses_authorized_budget_project_and_default_routing() -> None:
     assert "-q aiq2" not in submit
     assert "ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1" in submit
     assert "-l place=scatter:excl " in submit
+    assert '<"${RUNTIME_DIR}/scripts/check-qwen-container.pbs"' in submit
     assert 'cat "${RUNTIME_DIR}/logs/pbs-accounting.txt"' in workflow
     assert 'cat "${RUNTIME_DIR}/logs/pbs.log"' in workflow
 
