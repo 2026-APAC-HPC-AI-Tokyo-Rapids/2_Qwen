@@ -90,7 +90,7 @@ jobs:
         id: submit
         run: |
           cd "${RUNTIME_DIR}"
-          job_environment="RUNTIME_DIR=${RUNTIME_DIR},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh"
+          job_environment="RUNTIME_DIR=${RUNTIME_DIR}"
           submission="$(pjsub -L "node=${{ inputs.node_count }}" --mpi "proc=1" -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.pjm")"
           printf '%s\n' "${submission}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<<"${submission}")"
