@@ -19,8 +19,8 @@ def test_container_build_uses_root_overlay_and_validates_oci() -> None:
     assert "STORAGE_OPTS" not in script
     assert '[[ "$(id -u)" -eq 0 ]]' in script
     assert 'storage_root="${BUILD_STORAGE_ROOT:-/var/lib/containers/storage}"' in script
-    assert 'git -c "safe.directory=${GIT_MIRROR_DIR}/5_SGLang_Src.git" clone' in script
-    assert 'git config --system --add safe.directory "${GIT_MIRROR_DIR}/5_SGLang_Src.git"' in (ROOT / "aws/run-build-instance.sh").read_text(encoding="utf-8")
+    assert "safe.directory" not in script
+    assert 'tar --no-same-owner -I zstd -xf "${input_archive}"' in (ROOT / "aws/run-build-instance.sh").read_text(encoding="utf-8")
     assert "--layers" in script
     assert "--squash" not in script
     assert "--layers=false" not in script
