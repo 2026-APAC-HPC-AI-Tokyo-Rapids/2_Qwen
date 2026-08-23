@@ -114,8 +114,10 @@ def test_aws_builder_is_ephemeral_and_clusters_always_download_direct_image() ->
     assert "systemd-run --unit=qwen-build-expiration --on-active=6h" in (ROOT / "aws/ec2-user-data.sh").read_text(encoding="utf-8")
     assert "awscli-exe-linux-x86_64.zip" in (ROOT / "aws/ec2-user-data.sh").read_text(encoding="utf-8")
     assert "BlockPublicPolicy: true" in infrastructure
-    assert "generate_presigned_url" in provision
-    assert provision.count("curl --fail") == 2
+    assert 's3-object-transfer.py" download' in provision
+    assert 'download "${SIDECAR_KEY}"' in provision
+    assert 'download "${CONTAINER_KEY}"' in provision
+    assert "generate_presigned_url" not in provision and "curl " not in provision and "aws s3" not in provision
     assert 'downloaded:true,enroot_direct_squashfs:true' in provision
     assert 'enroot start -e NVIDIA_VISIBLE_DEVICES=all' in check
     assert "CUDA available: True" in check

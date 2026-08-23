@@ -29,17 +29,15 @@ runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/check-env-${GITHUB_RUN_ID}-${GITHUB_RU
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${PROVISION_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/enroot-library" "${runtime_dir}/enroot-system" "${runtime_dir}/logs" "${runtime_dir}/scripts" "${runtime_dir}/source"
 
-presign() {
-  uvx --from 'boto3>=1.40,<2' python -c 'import boto3,sys; print(boto3.client("s3",region_name=sys.argv[1]).generate_presigned_url("get_object",Params={"Bucket":sys.argv[2],"Key":sys.argv[3]},ExpiresIn=3600))' "${AWS_REGION}" "${CONTAINER_BUCKET}" "$1"
+download() {
+  uvx --from 'boto3>=1.40,<2' python "${GITHUB_WORKSPACE}/scripts/s3-object-transfer.py" download "${CONTAINER_BUCKET}" "$1" "$2"
 }
 
-sidecar_url="$(presign "${SIDECAR_KEY}")"
-container_url="$(presign "${CONTAINER_KEY}")"
-curl --fail --location --retry 3 --silent --show-error "${sidecar_url}" --output "${runtime_dir}/source/container-sidecar.json"
+download "${SIDECAR_KEY}" "${runtime_dir}/source/container-sidecar.json"
 expected_size="$(jq -er 'select(.schema_version == "container-sidecar/v1") | .container_artifact.size_bytes' "${runtime_dir}/source/container-sidecar.json")"
 expected_sha256="$(jq -er '.container_artifact.sha256' "${runtime_dir}/source/container-sidecar.json")"
 [[ "${expected_size}" == "${CONTAINER_SIZE}" && "${expected_sha256}" == "${CONTAINER_SHA256}" ]]
-curl --fail --location --retry 3 --silent --show-error "${container_url}" --output "${runtime_dir}/.sglang.sqsh.incoming"
+download "${CONTAINER_KEY}" "${runtime_dir}/.sglang.sqsh.incoming"
 [[ "$(stat -c '%s' "${runtime_dir}/.sglang.sqsh.incoming")" == "${CONTAINER_SIZE}" ]]
 [[ "$(sha256sum "${runtime_dir}/.sglang.sqsh.incoming" | awk '{print $1}')" == "${CONTAINER_SHA256}" ]]
 mv -- "${runtime_dir}/.sglang.sqsh.incoming" "${runtime_dir}/sglang.sqsh"
