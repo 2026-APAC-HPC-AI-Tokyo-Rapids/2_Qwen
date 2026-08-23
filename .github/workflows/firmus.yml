@@ -1,0 +1,127 @@
+name: FirmusでQwenコンテナを確認
+
+on:
+  workflow_call:
+    inputs:
+      node_count:
+        required: true
+        type: string
+      container_key:
+        required: true
+        type: string
+      container_sha256:
+        required: true
+        type: string
+      container_size:
+        required: true
+        type: string
+      sidecar_key:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-southeast-1
+  CONTAINER_BUCKET: ${{ vars.QWEN_CONTAINER_BUCKET }}
+  RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+
+defaults:
+  run:
+    shell: bash --login -eo pipefail {0}
+
+jobs:
+  provision:
+    name: S3からSquashFSを毎回ダウンロード
+    runs-on: [self-hosted, firmus]
+    timeout-minutes: 180
+    outputs:
+      runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
+    steps:
+      - name: ノード数を検証
+        run: "[[ '${{ inputs.node_count }}' =~ ^[12]$ ]]"
+
+      - name: 実行用ファイルを取得
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: S3 APIクライアントの実行環境を準備
+        uses: astral-sh/setup-uv@v7
+
+      - name: AWSの一時資格情報を取得
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
+
+      - name: S3 APIでSquashFSを並列配備
+        id: provision
+        shell: bash -eo pipefail {0}
+        env:
+          CLUSTER_NAME: firmus
+          CONTAINER_KEY: ${{ inputs.container_key }}
+          CONTAINER_SHA256: ${{ inputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ inputs.container_size }}
+          ENROOT_LIBRARY_PATH: /scratch/home/ACCOUNT/.local/lib/enroot
+          ENROOT_SYSCONF_PATH: /scratch/home/ACCOUNT/.local/etc/enroot
+          SIDECAR_KEY: ${{ inputs.sidecar_key }}
+        run: |
+          export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
+          "${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"
+          runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/check-qwen-container.slurm" "${runtime_dir}/scripts/check-qwen-container.slurm"
+
+      - name: 配備失敗時の実行環境を削除
+        if: failure() && steps.provision.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+        run: rm -rf -- "${RUNTIME_DIR:?}"
+
+  run:
+    name: GPUノードでEnroot check_envを実行
+    needs: provision
+    runs-on: [self-hosted, firmus]
+    timeout-minutes: 180
+    env:
+      RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
+    steps:
+      - name: Slurmジョブを投入
+        id: submit
+        run: |
+          cd "${RUNTIME_DIR}"
+          variables="ALL,RUNTIME_DIR=${RUNTIME_DIR}"
+          job_id="$(sbatch --parsable --nodes='${{ inputs.node_count }}' --ntasks=1 --gpus-per-node=1 --export="${variables}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --job-name=qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.slurm")"
+          [[ "${job_id}" =~ ^[0-9]+$ ]]
+          printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+
+      - name: Slurmジョブの終了を確認
+        run: |
+          while squeue --noheader --jobs="${SLURM_JOB_ID}" | grep -q .; do sleep 5; done
+          sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State,ExitCode,Elapsed,AllocNodes >"${RUNTIME_DIR}/logs/slurm-accounting.txt"
+          cat "${RUNTIME_DIR}/logs/slurm-accounting.txt"
+          cat "${RUNTIME_DIR}/logs/slurm-${SLURM_JOB_ID}.log"
+          state="$(awk -F'|' -v job_id="${SLURM_JOB_ID}" '$1 == job_id {print $2}' "${RUNTIME_DIR}/logs/slurm-accounting.txt")"
+          exit_code="$(awk -F'|' -v job_id="${SLURM_JOB_ID}" '$1 == job_id {print $3}' "${RUNTIME_DIR}/logs/slurm-accounting.txt")"
+          test "${state}" = COMPLETED
+          test "${exit_code}" = 0:0
+          test -e "${RUNTIME_DIR}/run-success"
+
+      - name: check_envログを保存
+        if: always() && steps.submit.outputs.job_id != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen-firmus-check-env-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.RUNTIME_DIR }}/logs
+            ${{ env.RUNTIME_DIR }}/source
+            ${{ env.RUNTIME_DIR }}/run-success
+          if-no-files-found: error
+
+      - name: 実行環境を削除
+        if: always()
+        run: if [[ -n "${SLURM_JOB_ID:-}" ]] && squeue --noheader --jobs="${SLURM_JOB_ID}" | grep -q .; then scancel "${SLURM_JOB_ID}"; fi; rm -rf -- "${RUNTIME_DIR:?}"

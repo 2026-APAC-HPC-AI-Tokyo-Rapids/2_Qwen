@@ -4,24 +4,16 @@ from pathlib import Path
 
 from .canonical import jcs_bytes, load_json_strict
 from .domain import Fact
-from .manifest import SHA256_PATTERN
 
 
-def validate_ordered_workload(
-    path: Path, *, kind: str, dataset_manifest_sha256: str
-) -> tuple[Fact, ...]:
+def validate_ordered_workload(path: Path, *, kind: str) -> tuple[Fact, ...]:
     value = load_json_strict(path.read_bytes())
-    expected = {"schema_version", "dataset_manifest_sha256", "kind", "requests"}
+    expected = {"schema_version", "kind", "requests"}
     if kind == "warmup":
         expected.add("mode")
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError("ordered workload is not closed")
-    if (
-        value["schema_version"] != "ordered-workload/v1"
-        or value["kind"] != kind
-        or value["dataset_manifest_sha256"] != dataset_manifest_sha256
-        or SHA256_PATTERN.fullmatch(dataset_manifest_sha256) is None
-    ):
+    if value["schema_version"] != "ordered-workload/v1" or value["kind"] != kind:
         raise ValueError("ordered workload identity differs")
     if kind == "warmup" and value["mode"] not in {"random", "dataset"}:
         raise ValueError("warmup mode is invalid")

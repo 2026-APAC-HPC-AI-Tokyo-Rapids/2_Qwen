@@ -1,0 +1,122 @@
+name: ASPIRE 2A+でQwenコンテナを確認
+
+on:
+  workflow_call:
+    inputs:
+      node_count:
+        required: true
+        type: string
+      container_key:
+        required: true
+        type: string
+      container_sha256:
+        required: true
+        type: string
+      container_size:
+        required: true
+        type: string
+      sidecar_key:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-southeast-1
+  CONTAINER_BUCKET: ${{ vars.QWEN_CONTAINER_BUCKET }}
+  RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
+
+defaults:
+  run:
+    shell: bash --login -eo pipefail {0}
+
+jobs:
+  provision:
+    name: S3からSquashFSを毎回ダウンロード
+    runs-on: [self-hosted, aspire2p]
+    timeout-minutes: 180
+    outputs:
+      runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
+    steps:
+      - name: 実行用ファイルを取得
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: S3 APIクライアントの実行環境を準備
+        uses: astral-sh/setup-uv@v7
+
+      - name: AWSの一時資格情報を取得
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
+
+      - name: S3 APIでSquashFSを並列配備
+        id: provision
+        shell: bash -eo pipefail {0}
+        env:
+          CLUSTER_NAME: aspire2ap
+          CONTAINER_KEY: ${{ inputs.container_key }}
+          CONTAINER_SHA256: ${{ inputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ inputs.container_size }}
+          ENROOT_LIBRARY_PATH: /home/ACCOUNT/.local/lib/enroot
+          ENROOT_SYSCONF_PATH: /home/ACCOUNT/.local/etc/enroot
+          SIDECAR_KEY: ${{ inputs.sidecar_key }}
+        run: |
+          export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
+          "${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"
+          runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          install -m 0755 "${GITHUB_WORKSPACE}/platforms/aspire2ap/check-qwen-container.pbs" "${runtime_dir}/scripts/check-qwen-container.pbs"
+
+      - name: 配備失敗時の実行環境を削除
+        if: failure() && steps.provision.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+        run: rm -rf -- "${RUNTIME_DIR:?}"
+
+  run:
+    name: GPUノードでEnroot check_envを実行
+    needs: provision
+    runs-on: [self-hosted, aspire2p]
+    timeout-minutes: 180
+    env:
+      RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
+    steps:
+      - name: PBSジョブを投入
+        id: submit
+        run: |
+          cd "${RUNTIME_DIR}"
+          variables="RUNTIME_DIR=${RUNTIME_DIR}"
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=${{ inputs.node_count }}:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -j oe -N qwen_check_env <"${RUNTIME_DIR}/scripts/check-qwen-container.pbs")"
+          [[ "${job_id}" =~ ^[0-9]+([.][A-Za-z0-9.-]+)?$ ]]
+          printf 'PBS_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+
+      - name: PBSジョブの終了を確認
+        run: |
+          while /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; do sleep 10; done
+          /opt/pbs/bin/qstat -x -f "${PBS_JOB_ID}" >"${RUNTIME_DIR}/logs/pbs-accounting.txt"
+          cat "${RUNTIME_DIR}/logs/pbs-accounting.txt"
+          cat "${RUNTIME_DIR}/logs/pbs.log"
+          exit_status="$(awk -F= '/^[[:space:]]*Exit_status =/{gsub(/[[:space:]]/, "", $2); print $2}' "${RUNTIME_DIR}/logs/pbs-accounting.txt")"
+          test "${exit_status}" = 0
+          test -e "${RUNTIME_DIR}/run-success"
+
+      - name: check_envログを保存
+        if: always() && steps.submit.outputs.job_id != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen-aspire2ap-check-env-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.RUNTIME_DIR }}/logs
+            ${{ env.RUNTIME_DIR }}/source
+            ${{ env.RUNTIME_DIR }}/run-success
+          if-no-files-found: error
+
+      - name: 実行環境を削除
+        if: always()
+        run: if [[ -n "${PBS_JOB_ID:-}" ]] && /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; then /opt/pbs/bin/qdel "${PBS_JOB_ID}"; fi; rm -rf -- "${RUNTIME_DIR:?}"

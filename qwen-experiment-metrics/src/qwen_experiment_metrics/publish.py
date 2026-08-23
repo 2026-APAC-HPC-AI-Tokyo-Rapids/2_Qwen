@@ -128,6 +128,37 @@ def send_raw(
         return False
 
 
+def send_fragments(
+    run_id: str,
+    runtime_dir: Path,
+    *,
+    sender: Callable[..., bool] = send_raw,
+) -> bool:
+    """Send all completed producer fragments once from the login runner."""
+
+    directory = runtime_dir / "domain" / "fragments"
+    if list(directory.glob("*.tmp")):
+        raise ValueError("partial producer fragments remain")
+    paths = sorted(directory.glob("producer--*.jsonl"))
+    if not paths:
+        raise ValueError("no completed producer fragments were found")
+    rows: list[RawRow] = []
+    for path in paths:
+        with path.open(encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, 1):
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        f"invalid fragment row: {path}:{line_number}"
+                    ) from error
+                row = RawRow.from_mapping(value)
+                if row.run != run_id:
+                    raise ValueError(f"fragment belongs to another run: {path}")
+                rows.append(row)
+    return sender(run_id, rows)
+
+
 def _access_token(credentials_file: Path) -> str:
     path = credentials_file.resolve(strict=True)
     if not path.is_file() or stat.S_IMODE(path.stat().st_mode) != 0o600:

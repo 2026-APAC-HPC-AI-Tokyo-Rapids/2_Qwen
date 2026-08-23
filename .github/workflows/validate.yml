@@ -1,0 +1,38 @@
+name: Qwen制御処理の検証
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 検証対象を取得
+        uses: actions/checkout@v7
+
+      - name: uvを導入
+        uses: astral-sh/setup-uv@v7
+
+      - name: シェル構文を検証
+        run: find scripts platforms containers aws -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' -o -name '*.slurm' \) -print0 | xargs -0 -r -n1 bash -n
+
+      - name: YAML構文を検証
+        run: uvx --from pyyaml python -c 'import pathlib, yaml; [yaml.safe_load(path.read_text()) for path in pathlib.Path(".github/workflows").glob("*.yml")]; [yaml.load(path.read_text(), Loader=yaml.BaseLoader) for path in pathlib.Path("aws").glob("*.yml")]'
+
+      - name: GitHub Actions定義を検証
+        run: uvx --from 'actionlint-py==1.7.12.24' actionlint
+
+      - name: CloudFormation定義を検証
+        run: uvx --from 'cfn-lint>=1.38,<2' cfn-lint aws/qwen-build-infrastructure.yml
+
+      - name: コマンド行継続がないことを検証
+        run: '! grep -RIn ''\\$'' scripts platforms containers aws .github/workflows'
+
+      - name: 静的検査を実行
+        run: uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts
+
+      - name: 単体テストを実行
+        run: uv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests
