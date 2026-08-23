@@ -119,6 +119,7 @@ def test_aws_builder_is_ephemeral_and_clusters_always_download_direct_image() ->
     assert 'downloaded:true,enroot_direct_squashfs:true' in provision
     assert 'enroot start -e NVIDIA_VISIBLE_DEVICES=all' in check
     assert "CUDA available: True" in check
+    assert "^GPU [0-9,]*0[0-9,]*:" in check
     assert "enroot create" not in check and "unsquashfs" not in check
 
 
