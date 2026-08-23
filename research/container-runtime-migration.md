@@ -33,6 +33,8 @@ Actions run `32663724386`はwarm buildを実行し、28 step中2から23までEC
 
 Actions run `32665563155`のFirmus Slurm job `12867`は24秒で`COMPLETED (0:0)`となり、8基のNVIDIA H200、CUDA available、NVIDIA topology、`run-success`を確認した。このrunもローカル成果物を再利用しつつ、FirmusがS3 APIでSquashFSを毎回downloadした後の直接Enroot起動である。
 
+Actions run `32670652493`はASPIREの予約変数回避後の最終E2Eで、再利用imageのS3再公開、ASPIREへの無条件download、全DGX PBS job `204070.pbs111`、artifact回収、run directory cleanupまでworkflow全体が成功した。jobは`a2ap-dgx005`で112 CPU、8 GPUを割り当て、36秒、`Exit_status=0`で終了し、8基のNVIDIA H100 80GB HBM3、`CUDA available: True`、NVIDIA topology、`run-success`を確認した。これにより玄界、ASPIRE 2A+、Firmusの3クラスタすべてで、同系統の12.72 GB SquashFSを展開せずEnrootから直接起動する実経路を確認した。
+
 ## クラスタ差
 
 玄界はdownload先と実行領域を`/fast/PROJECT/sglang-runs`へ置き、`b-batch`の1 GPU nodeで確認する。ASPIRE 2A+は`/scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs`へ置き、project `59010014`から各node 112 CPU、8 GPU、1500 GBを`place=scatter:excl`で要求する。1 GPU、8 CPU、32 GBの非exclusive配置を試したPBS job `204056.pbs111`と`204057.pbs111`は、部分使用中の同じnode `a2ap-dgx035`へ割当後、script本体を一度も実行せず`resources_used.walltime=0`、`Exit_status=-2`、`Stageout_status=1`で終了したため採用しない。小さなexclusive要求もsite側で14 CPU、235 GBのsmall poolへ正規化され、空きnode待ちとなった。従来成功済みで実benchmarkの割当てとも一致するDGX全体要求を使う。Firmusは`/scratch/home/ACCOUNT/qwen/runs`へ置き、`hpcai` partitionで1 GPU、8 CPU、32 GB、17分を要求する。これはmodelを取得しない環境確認用の要求であり、実benchmarkでは各siteのnode全体を割り当てるruntime adapterへ接続し直してE2E検証する。
