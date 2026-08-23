@@ -259,7 +259,7 @@ jobs:
   archive-build:
     name: 新規SquashFSを玄界の再利用archiveへ保存
     needs: [select, resolve]
-    if: needs.select.outputs.action == 'build' && needs.resolve.result == 'success'
+    if: ${{ always() && needs.select.outputs.action == 'build' && needs.resolve.result == 'success' }}
     runs-on: [self-hosted, genkai]
     timeout-minutes: 180
     defaults:

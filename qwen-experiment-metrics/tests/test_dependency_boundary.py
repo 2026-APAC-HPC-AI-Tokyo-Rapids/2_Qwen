@@ -105,6 +105,7 @@ def test_aws_builder_is_ephemeral_and_clusters_always_download_direct_image() ->
     provision = (ROOT / "scripts/provision-qwen-check-env.sh").read_text(encoding="utf-8")
     check = (ROOT / "scripts/run-qwen-check-env.sh").read_text(encoding="utf-8")
     assert "m7i.2xlarge" in aws_workflow
+    assert "always() && needs.select.outputs.action == 'build' && needs.resolve.result == 'success'" in aws_workflow
     assert '"VolumeSize":300' in aws_workflow
     assert '"Iops":6000' in aws_workflow and '"Throughput":500' in aws_workflow
     assert "--instance-initiated-shutdown-behavior terminate" in aws_workflow
