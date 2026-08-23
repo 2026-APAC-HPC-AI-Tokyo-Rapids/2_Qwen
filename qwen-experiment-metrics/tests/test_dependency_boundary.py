@@ -17,7 +17,7 @@ def test_container_build_uses_all_rootless_tools() -> None:
     assert "BUILDAH_ISOLATION=chroot" in script
     assert "STORAGE_DRIVER=vfs" in script
     assert "STORAGE_OPTS=vfs.ignore_chown_errors=true" in script
-    assert 'storage_root="/var/tmp/apac-qwen-buildah-$(id -u)"' in script
+    assert 'storage_root="${BUILD_STORAGE_ROOT:-/var/tmp/apac-qwen-buildah-$(id -u)}"' in script
     assert "--layers" in script
     assert "--squash" not in script
     assert "--layers=false" not in script
@@ -75,9 +75,14 @@ def test_dockerfile_resolves_sglang_dependencies_before_copying_source() -> None
 
 def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
     selector = (ROOT / "scripts/select-qwen-container.sh").read_text(encoding="utf-8")
-    for name in ("genkai.yml", "aspire2ap.yml"):
+    for name in ("genkai.yml", "aspire2ap.yml", "firmus.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
         assert '"${GITHUB_WORKSPACE}/scripts/select-qwen-container.sh"' in workflow
+        select_job = workflow[
+            workflow.index("select-container:") : workflow.index("reuse-container:")
+        ]
+        for tool in ("buildah", "skopeo", "umoci", "enroot", "nvidia-container-cli"):
+            assert tool not in select_job
     assert 'git rev-parse "${commit}^"' in selector
     assert "size_bytes" in selector and "sha256sum" in selector
     assert "gh run view" not in selector
@@ -126,7 +131,9 @@ def test_enroot_runtime_is_dummy_and_compute_local() -> None:
     assert "NVIDIA_VISIBLE_DEVICES=all" in node
     assert "NVIDIA_DISABLE_REQUIRE=1" in node
     assert "MELLANOX_VISIBLE_DEVICES=all" in node
-    assert "NVIDIA_VISIBLE_DEVICES=void" in provision
+    assert 'unsquashfs -cat "${CONTAINER_ARCHIVE}" opt/sglang/offline-throughput-source-blob-oid.txt' in provision
+    assert 'unsquashfs -cat "${CONTAINER_ARCHIVE}" opt/sglang/server-args-source-blob-oid.txt' in provision
+    assert "enroot start -e NVIDIA_VISIBLE_DEVICES=void" not in provision
     assert "HOME=/runtime-home" in node
     assert "XDG_CACHE_HOME=/runtime-home/.cache" in node
     assert '"${container_home}:/runtime-home"' in node
@@ -239,20 +246,40 @@ def test_scheduler_submission_uses_persistent_runtime_working_directory() -> Non
     assert submit.index('cd "${RUNTIME_DIR}"') < submit.index("pjsub ")
 
 
-def test_firmus_routes_only_to_bounded_slurm_environment_validation() -> None:
+def test_firmus_uses_shared_beegfs_and_compute_local_enroot() -> None:
     workflow = (ROOT / ".github/workflows/firmus.yml").read_text(encoding="utf-8")
-    script = (ROOT / "platforms/firmus/check-environment.slurm").read_text(encoding="utf-8")
+    script = (ROOT / "platforms/firmus/run-qwen35.slurm").read_text(encoding="utf-8")
     assert "runs-on: [self-hosted, firmus]" in workflow
     assert "[[ '${{ inputs.node_count }}' =~ ^[12]$ ]]" in workflow
+    assert "CONTAINER_ARCHIVE_DIR: /scratch/home/apacsc14/qwen/containers" in workflow
+    assert "BUILD_STORAGE_ROOT: /scratch/home/apacsc14/qwen/buildah" in workflow
+    assert "DATASET_CACHE_ROOT: /scratch/home/apacsc14/qwen/datasets/ShareGPT_Vicuna_unfiltered" in workflow
+    assert "GIT_MIRROR_DIR: /scratch/home/apacsc14/qwen/git-mirror" in workflow
+    assert "MODEL_CACHE_ROOT: /scratch/home/apacsc14/qwen/models/Qwen3.5-397B-A17B-FP8-metadata" in workflow
+    assert "RUNTIME_ROOT: /scratch/home/apacsc14/qwen/runs" in workflow
+    assert "BUILD_DIR: /var/tmp/qwen-sglang-container/" in workflow
+    assert '"${GITHUB_WORKSPACE}/scripts/select-qwen-container.sh"' in workflow
+    assert '"${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"' in workflow
+    assert '"${GITHUB_WORKSPACE}/scripts/provision-qwen-runtime.sh"' in workflow
+    assert "CLUSTER_NAME: firmus" in workflow
+    assert "GPUS_PER_NODE: 8" in workflow
+    assert "RESOURCE_GROUP: hpcai" in workflow
     assert "sbatch --parsable" in workflow
-    assert "--gpus-per-node=1" in workflow
+    assert "--gpus-per-node=8" in workflow
     assert "sacct --allocations" in workflow
-    assert "missing-qwen-dependencies.txt" in workflow
     assert "#SBATCH --partition=hpcai" in script
-    assert "#SBATCH --time=00:02:00" in script
-    assert "nvidia-smi --query-gpu" in script
-    assert "GOOGLE_CREDENTIAL" not in workflow + script
-    assert "BIGQUERY" not in workflow + script
+    assert "#SBATCH --time=00:17:00" in script
+    assert "module load nvhpc-hpcx-cuda13/26.5" in script
+    assert 'exec "${RUNTIME_DIR}/scripts/run-qwen35-job.sh"' in script
+    assert "check-environment.slurm" not in workflow
+    assert "EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON" in workflow
+    assert "GOOGLE_CREDENTIAL" not in script
+    assert "BIGQUERY" not in script
+
+
+def test_validation_includes_slurm_adapters() -> None:
+    workflow = (ROOT / ".github/workflows/validate.yml").read_text(encoding="utf-8")
+    assert "-name '*.slurm'" in workflow
 
 
 def test_credentials_stop_at_login_runner() -> None:

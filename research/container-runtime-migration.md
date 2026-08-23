@@ -16,7 +16,7 @@ ASPIRE 2A+の`mksquashfs`はlogin host全体のmemoryから既定cacheを128865 
 
 ## 制御処理の責務
 
-クラスタworkflowはscheduler、filesystem配置、GPU数などのサイト差だけを持つ薄いadapterとする。共通処理は実行段階ごとに分離し、玄界とASPIRE 2A+で同じ実装を使う。
+クラスタworkflowはscheduler、filesystem配置、GPU数などのサイト差だけを持つ薄いadapterとする。共通処理は実行段階ごとに分離し、玄界、ASPIRE 2A+、Firmusで同じ実装を使う。
 
 - `containers/sglang/Dockerfile`はimage layerとcontainer内部の依存関係、`scripts/build-sglang-image.sh`はBuildah、Skopeo、Umoci、SquashFS変換と成果物公開を担当する。
 - `scripts/select-qwen-container.sh`はGit第一親をたどる再利用候補の選択とsidecar検証だけを担当する。
@@ -32,9 +32,13 @@ run directoryへ置くscriptはprovision時のcommitからsnapshotする。こ�
 
 ASPIRE 2A+はビルド領域をログインノードの`/dev/shm`、成果物・実行領域・モデルメタデータを`/scratch/users/industry/ai-hpc/apacsc14`へ置く。PBS project `59010014`を指定し、default routingから`aiq2`へ1ノード当たり112 CPU、8 GPU、1500 GB memoryを排他的に要求する。`aiq2`の直接指定はqueue ACLで拒否され、projectなしではbudgetを確定できない。システムEnroot 3.4.1の既定pathは一般ユーザーが書けないため、ユーザー領域へEnroot 4.2.0を導入し、cache、data、runtime pathをユーザーが書ける場所へ設定する。
 
+FirmusはBuildah VFS cache、公開成果物、dataset、model metadata、run directoryをBeeGFS上の`/scratch/home/apacsc14/qwen`へ用途別に配置する。login containerの`/dev/shm`は63 MiB、`/var/tmp`の空きは約184 GiBであり、既存クラスタで305–345 GiBを使うVFS cacheはlocal overlayに収まらない。BeeGFS graphroot上のBuildah pull、working container作成、`chroot`実行、削除を固定BusyBoxで実証したため、永続graphrootだけを`qwen/buildah`へ置き、runroot、build context、OCI layout、SquashFS作業出力は`/var/tmp`へ分離する。完成したSquashFSとsidecarだけを共有成果物として公開する。計算ノードでは`/tmp`が約894 GiBのnode-local XFS、`/dev/shm`が約1 TiBなので、Enroot展開rootfsとJIT cacheを`/tmp`、socketと短命metricsを`/dev/shm`へ置く。`hpcai` partitionの2ノード、各8基のH200を利用し、17分のsite上限をSlurm adapterに明示する。
+
 ASPIRE 2A+のhome Lustreでは、既存の`.local/.setenv`や`.gitconfig`に対して`Cannot send after transport endpoint shutdown`、`Input/output error`、`Network is down`が断続的に発生した。同時刻でもhome内の新規ファイル、scratch、`/dev/shm`への作成は成功し、home使用率は9%、scratch使用率は16%だった。新しいinodeへの置換で読取りが復旧したため、容量不足や権限不足、filesystem全域の停止ではなく、home Lustre clientまたは既存inode/dentryに限定された障害と判断する。再発時はlogin nodeとLustre serverのログを管理者に確認してもらう。
 
-両クラスタともEnrootではhostの`/dev`全体をrecursive bindせず、`ENROOT_RESTRICT_DEV=yes`で最小device filesystemを作る。NVIDIAとMellanoxのhookは保持し、GPU計算時だけ必要なdeviceとdriverを注入する。玄界ではPJM cgroup pathとEnroot 4.2.0の`10-cgroups.sh`が整合しなかったため、このuser-local hookだけを無効化し、資源制御をPJMに委ねる。
+2026-08-23のActions run `32614319756`ではhome Lustre障害の再発によりlogin runnerが`.profile`を読めず、再利用経路のcontainer選択前に無条件実行していた`buildah --version`がexit 127となった。第一親成果物の再利用選択が必要とするのはGit、sidecarのsize・SHA-256検証だけであり、Buildah、Skopeo、Umociは新規build script、EnrootとNVIDIA hookは計算nodeの実行scriptがそれぞれ実際に利用する時点で検証する。高コスト成果物の再利用を無関係なtoolchain/home障害で止めないため、両クラスタのselect jobから全container toolの事前probeを削除した。
+
+3クラスタともEnrootではhostの`/dev`全体をrecursive bindせず、`ENROOT_RESTRICT_DEV=yes`で最小device filesystemを作る。NVIDIAとMellanoxのhookは保持し、GPU計算時だけ必要なdeviceとdriverを注入する。玄界ではPJM cgroup pathとEnroot 4.2.0の`10-cgroups.sh`が整合しなかったため、このuser-local hookだけを無効化し、資源制御をPJMに委ねる。FirmusのSlurm cgroup pathでは標準hookを含むEnroot起動が成功しているため無効化しない。
 
 read-onlyなSquashFSから起動するため、計算nodeごとに一時的なruntime homeを作り、containerの`HOME=/runtime-home`と`XDG_CACHE_HOME=/runtime-home/.cache`へbindする。JIT libraryが標準cache pathへ書く場合もこの単一の書込み境界へ収容し、libraryごとにhost home配下の例外mountを増やさない。実行可能な共有libraryを生成するruntime homeとFlashInfer、DeepGEMM、TorchInductor、Tritonのworkspaceは、schedulerが`TMPDIR`、`TEMPDIR`、`TEMP`の順で示すnode-local disk、未指定時は`/tmp`へ置く。またSquashFS直接起動時のmount helperがSGLang終了時の子プロセスkillに巻き込まれてstale file handle (Errno 116 / SIGBUS) となることを防ぐため、node-local一時領域配下に`ENROOT_DATA_PATH`/`ENROOT_RUNTIME_PATH`/`ENROOT_CACHE_PATH`/`ENROOT_TEMP_PATH`を設定し、`enroot create`で展開済みnamed containerを作成してから`enroot start`する。socketと短命なtelemetryだけは`/dev/shm`へ残し、用途の異なる一時領域を分ける。job終了時は両方を削除する。
 
@@ -52,7 +56,7 @@ Enroot 4.2.0の標準NVIDIA hookはhostの`ldconfig`を指定する。`libnvidia
 
 固定digestのBusyBox `sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213`を使い、DockerfileのBuildah chroot build、作業containerの`buildah run`、OCI layoutへのpush、Skopeo copy、Umoci rootless unpack、SquashFS作成を玄界とASPIRE 2A+のlogin nodeで確認した。さらにASPIRE 2A+でBuildah VFS working containerのmount、直接SquashFS作成、OCI push、`umoci stat --json`を一時BusyBox imageで確認した。玄界でもmountしたVFS treeからの直接SquashFS作成まで確認した。厳密なxattrと元ownershipを要求しないため、Lustreが対応しないxattrの警告は許容する。
 
-ASPIRE 2A+ではPBS job `203570.pbs111`を1 GPU compute node `a2ap-dgx037`へ投入し、Enroot 4.2.0で`ENROOT_SMOKE_OK`とexit status 0を確認した。玄界ではPJM job `6548346`をcompute node `b0004`へ投入し、同じく`ENROOT_SMOKE_OK`、PJM exit code 0を確認した。検証用image、script、logは確認後に削除し、schedulerに検証jobを残していない。
+ASPIRE 2A+ではPBS job `203570.pbs111`を1 GPU compute node `a2ap-dgx037`へ投入し、Enroot 4.2.0で`ENROOT_SMOKE_OK`とexit status 0を確認した。玄界ではPJM job `6548346`をcompute node `b0004`へ投入し、同じく`ENROOT_SMOKE_OK`、PJM exit code 0を確認した。FirmusではSlurm job `12613`を1 GPU compute node `g4`へ投入し、Open MPI、node-local XFS上のEnroot `create/start`、NVIDIA hookを通してH200とdriver 610.57.04を確認し、exit code 0となった。検証用image、script、logは確認後に削除し、schedulerに検証jobを残していない。
 
 ## dummy実行と計測境界
 
