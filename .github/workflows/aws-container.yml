@@ -27,18 +27,46 @@ env:
 
 jobs:
   select:
-    name: S3成果物を選択
-    runs-on: ubuntu-latest
+    name: 玄界のローカル成果物を選択
+    runs-on: [self-hosted, genkai]
+    timeout-minutes: 60
     outputs:
       action: ${{ steps.select.outputs.action }}
-      container_key: ${{ steps.select.outputs.container_key }}
-      sidecar_key: ${{ steps.select.outputs.sidecar_key }}
-      source_commit: ${{ steps.select.outputs.source_commit }}
+      source_run_id: ${{ steps.select.outputs.source_run_id }}
+    defaults:
+      run:
+        shell: bash --login -eo pipefail {0}
     steps:
       - name: リポジトリ履歴を取得
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: 既存成果物の再利用または新規ビルドを選択
+        id: select
+        env:
+          CONTAINER_ARCHIVE_DIR: /home/pj26000080/share/sglang-containers
+          GH_TOKEN: ${{ github.token }}
+          REQUIRE_BUILD: ${{ inputs.require_build }}
+        run: scripts/select-qwen-container.sh
+
+  publish-reuse:
+    name: ローカルSquashFSを期限付きS3配布物へ公開
+    needs: select
+    if: needs.select.outputs.action == 'reuse'
+    runs-on: [self-hosted, genkai]
+    timeout-minutes: 180
+    outputs:
+      container_key: ${{ steps.publish.outputs.container_key }}
+      sidecar_key: ${{ steps.publish.outputs.sidecar_key }}
+    defaults:
+      run:
+        shell: bash --login -eo pipefail {0}
+    steps:
+      - name: 転送処理を取得
+        uses: actions/checkout@v7
+        with:
           persist-credentials: false
 
       - name: AWSの一時資格情報を取得
@@ -47,11 +75,25 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
 
-      - name: 既存成果物の再利用または新規ビルドを選択
-        id: select
+      - name: ハードリンクを維持してS3 APIでupload
+        id: publish
         env:
-          REQUIRE_BUILD: ${{ inputs.require_build }}
-        run: scripts/select-qwen-container.sh
+          CONTAINER_ARCHIVE_DIR: /home/pj26000080/share/sglang-containers
+          SOURCE_RUN_ID: ${{ needs.select.outputs.source_run_id }}
+        run: |
+          source_image="${CONTAINER_ARCHIVE_DIR}/${SOURCE_RUN_ID}.sqsh"
+          source_sidecar="${CONTAINER_ARCHIVE_DIR}/${SOURCE_RUN_ID}.container-sidecar.json"
+          current_image="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
+          current_sidecar="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
+          expected_size="$(jq -er '.container_artifact.size_bytes' "${source_sidecar}")"
+          expected_sha256="$(jq -er '.container_artifact.sha256' "${source_sidecar}")"
+          [[ "$(stat -c '%s' "${source_image}")" == "${expected_size}" && "$(sha256sum "${source_image}" | awk '{print $1}')" == "${expected_sha256}" ]]
+          ln -f -- "${source_image}" "${current_image}"
+          ln -f -- "${source_sidecar}" "${current_sidecar}"
+          output_prefix="containers/${GITHUB_SHA}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          uvx --from 'boto3>=1.40,<2' python scripts/s3-object-transfer.py upload "${current_image}" "${CONTAINER_BUCKET}" "${output_prefix}/sglang.sqsh" --sha256 "${expected_sha256}"
+          uvx --from 'boto3>=1.40,<2' python scripts/s3-object-transfer.py upload "${current_sidecar}" "${CONTAINER_BUCKET}" "${output_prefix}/container-sidecar.json"
+          printf 'container_key=%s/sglang.sqsh\nsidecar_key=%s/container-sidecar.json\n' "${output_prefix}" "${output_prefix}" >>"${GITHUB_OUTPUT}"
 
   stage:
     name: 管理済みSGLang mirrorから入力を準備
@@ -85,7 +127,7 @@ jobs:
           git clone --mirror /fast/pj26000080/git-mirror/5_SGLang_Src.git "${input_root}/git-mirror/5_SGLang_Src.git"
           tar -I 'zstd -3 -T0' -cf "${RUNNER_TEMP}/qwen-build-input.tar.zst" -C "${input_root}" qwen git-mirror
           rm -rf -- "${input_root:?}"
-          aws s3 cp "${RUNNER_TEMP}/qwen-build-input.tar.zst" "s3://${CONTAINER_BUCKET}/inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/qwen-build-input.tar.zst" --only-show-errors
+          uvx --from 'boto3>=1.40,<2' python scripts/s3-object-transfer.py upload "${RUNNER_TEMP}/qwen-build-input.tar.zst" "${CONTAINER_BUCKET}" "inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/qwen-build-input.tar.zst"
 
   build:
     name: 一時EC2でSquashFSをビルド
@@ -111,6 +153,7 @@ jobs:
       - name: m7i.2xlargeを起動してビルド
         id: build
         env:
+          BUILD_CACHE_REPOSITORY: ${{ vars.QWEN_AWS_BUILD_CACHE_REPOSITORY }}
           INSTANCE_PROFILE: ${{ vars.QWEN_AWS_BUILD_INSTANCE_PROFILE }}
           SECURITY_GROUP: ${{ vars.QWEN_AWS_BUILD_SECURITY_GROUP }}
         run: |
@@ -136,7 +179,7 @@ jobs:
           ready=false
           for _ in $(seq 1 120); do ping="$(aws ssm describe-instance-information --region "${AWS_REGION}" --filters "Key=InstanceIds,Values=${instance_id}" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)"; if [[ "${ping}" == Online ]]; then ready=true; break; fi; sleep 5; done
           [[ "${ready}" == true ]]
-          build_command="while [ ! -e /var/lib/qwen-build-bootstrap-status ]; do sleep 5; done; cat /var/log/qwen-build-bootstrap.log; test -e /var/lib/qwen-build-ready; aws s3 cp s3://${CONTAINER_BUCKET}/${input_prefix}/run-build-instance.sh /tmp/run-build-instance.sh --only-show-errors; chmod 0755 /tmp/run-build-instance.sh; /tmp/run-build-instance.sh ${CONTAINER_BUCKET} ${input_key} ${output_prefix} ${GITHUB_RUN_ID} ${GITHUB_RUN_ATTEMPT} ${GITHUB_SHA}"
+          build_command="while [ ! -e /var/lib/qwen-build-bootstrap-status ]; do sleep 5; done; cat /var/log/qwen-build-bootstrap.log; test -e /var/lib/qwen-build-ready; aws s3 cp s3://${CONTAINER_BUCKET}/${input_prefix}/run-build-instance.sh /tmp/run-build-instance.sh --only-show-errors; chmod 0755 /tmp/run-build-instance.sh; /tmp/run-build-instance.sh ${CONTAINER_BUCKET} ${input_key} ${output_prefix} ${GITHUB_RUN_ID} ${GITHUB_RUN_ATTEMPT} ${GITHUB_SHA} ${BUILD_CACHE_REPOSITORY}"
           parameters="$(jq -cn --arg command "${build_command}" '{commands:[$command]}')"
           command_id="$(aws ssm send-command --region "${AWS_REGION}" --instance-ids "${instance_id}" --document-name AWS-RunShellScript --parameters "${parameters}" --timeout-seconds 21000 --query Command.CommandId --output text)"
           command_status=Pending
@@ -182,8 +225,8 @@ jobs:
 
   resolve:
     name: S3成果物を確定
-    needs: [select, build]
-    if: ${{ always() && needs.select.result == 'success' && ((needs.select.outputs.action == 'reuse' && needs.build.result == 'skipped') || (needs.select.outputs.action == 'build' && needs.build.result == 'success')) }}
+    needs: [select, publish-reuse, build]
+    if: ${{ always() && needs.select.result == 'success' && ((needs.select.outputs.action == 'reuse' && needs.publish-reuse.result == 'success' && needs.build.result == 'skipped') || (needs.select.outputs.action == 'build' && needs.publish-reuse.result == 'skipped' && needs.build.result == 'success')) }}
     runs-on: ubuntu-latest
     outputs:
       container_key: ${{ steps.resolve.outputs.container_key }}
@@ -202,8 +245,8 @@ jobs:
         env:
           BUILD_CONTAINER_KEY: ${{ needs.build.outputs.container_key }}
           BUILD_SIDECAR_KEY: ${{ needs.build.outputs.sidecar_key }}
-          REUSE_CONTAINER_KEY: ${{ needs.select.outputs.container_key }}
-          REUSE_SIDECAR_KEY: ${{ needs.select.outputs.sidecar_key }}
+          REUSE_CONTAINER_KEY: ${{ needs.publish-reuse.outputs.container_key }}
+          REUSE_SIDECAR_KEY: ${{ needs.publish-reuse.outputs.sidecar_key }}
         run: |
           if [[ '${{ needs.select.outputs.action }}' == build ]]; then container_key=${BUILD_CONTAINER_KEY}; sidecar_key=${BUILD_SIDECAR_KEY}; else container_key=${REUSE_CONTAINER_KEY}; sidecar_key=${REUSE_SIDECAR_KEY}; fi
           sidecar="$(aws s3 cp "s3://${CONTAINER_BUCKET}/${sidecar_key}" - --only-show-errors)"
@@ -212,3 +255,45 @@ jobs:
           image_head="$(aws s3api head-object --region "${AWS_REGION}" --bucket "${CONTAINER_BUCKET}" --key "${container_key}")"
           [[ "$(jq -er '.ContentLength' <<<"${image_head}")" == "${container_size}" && "$(jq -er '.Metadata.sha256' <<<"${image_head}")" == "${container_sha256}" ]]
           printf 'container_key=%s\ncontainer_sha256=%s\ncontainer_size=%s\nsidecar_key=%s\n' "${container_key}" "${container_sha256}" "${container_size}" "${sidecar_key}" >>"${GITHUB_OUTPUT}"
+
+  archive-build:
+    name: 新規SquashFSを玄界の再利用archiveへ保存
+    needs: [select, resolve]
+    if: needs.select.outputs.action == 'build' && needs.resolve.result == 'success'
+    runs-on: [self-hosted, genkai]
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash --login -eo pipefail {0}
+    steps:
+      - name: 転送処理を取得
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: AWSの一時資格情報を取得
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
+
+      - name: S3 APIで取得して検証後にarchiveへ確定
+        env:
+          CONTAINER_ARCHIVE_DIR: /home/pj26000080/share/sglang-containers
+          CONTAINER_KEY: ${{ needs.resolve.outputs.container_key }}
+          CONTAINER_SHA256: ${{ needs.resolve.outputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ needs.resolve.outputs.container_size }}
+          SIDECAR_KEY: ${{ needs.resolve.outputs.sidecar_key }}
+        run: |
+          install -d -m 2775 "${CONTAINER_ARCHIVE_DIR}"
+          image_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.sqsh.${GITHUB_RUN_ATTEMPT}.tmp"
+          sidecar_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.container-sidecar.json.${GITHUB_RUN_ATTEMPT}.tmp"
+          cleanup() { status=$?; rm -f -- "${image_temporary}" "${sidecar_temporary}"; exit "${status}"; }
+          trap cleanup EXIT
+          uvx --from 'boto3>=1.40,<2' python scripts/s3-object-transfer.py download "${CONTAINER_BUCKET}" "${SIDECAR_KEY}" "${sidecar_temporary}"
+          uvx --from 'boto3>=1.40,<2' python scripts/s3-object-transfer.py download "${CONTAINER_BUCKET}" "${CONTAINER_KEY}" "${image_temporary}"
+          [[ "$(jq -er '.container_artifact.size_bytes' "${sidecar_temporary}")" == "${CONTAINER_SIZE}" && "$(jq -er '.container_artifact.sha256' "${sidecar_temporary}")" == "${CONTAINER_SHA256}" ]]
+          [[ "$(stat -c '%s' "${image_temporary}")" == "${CONTAINER_SIZE}" && "$(sha256sum "${image_temporary}" | awk '{print $1}')" == "${CONTAINER_SHA256}" ]]
+          mv -- "${image_temporary}" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
+          mv -- "${sidecar_temporary}" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
+          trap - EXIT

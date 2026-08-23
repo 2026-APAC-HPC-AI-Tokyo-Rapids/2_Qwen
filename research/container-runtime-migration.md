@@ -6,20 +6,20 @@
 
 Dockerfileはsystem toolchain、NCCL tests、Python project metadata由来の依存、GPU通信依存、SGLang sourceの順にレイヤを分ける。SGLangの`pyproject.toml`とmetadata filesだけをsource本体より先にcopyし、`uv.lock`をbuild入力へ含めずに`uv sync --no-install-project`を実行する。依存関係はcold build時に解決し、SGLang sourceや計測patchだけを変えた場合は解決済みの高コストな依存レイヤを再利用する。埋め込みmanifestは最後にcopyし、来歴だけの変更でビルド処理を無効化しない。
 
-VMのroot volumeは300 GiBのgp3（6,000 IOPS、500 MiB/s）とし、Buildah graphroot、runroot、context、OCI layout、SquashFS作業出力を同じlocal ext4上へ置く。instance、root volumeはbuild終了時に必ずterminateし、失敗時も6時間の自動shutdownを上限とする。したがってlayer cacheは永続化せず各新規buildはcoldだが、VM/EBSの常時課金とクラスタ共有filesystem上の305–345 GiBのVFS cacheを廃止できる。
+VMのroot volumeは300 GiBのgp3（6,000 IOPS、500 MiB/s）とし、Buildah graphroot、runroot、context、OCI layout、SquashFS作業出力を同じlocal ext4上へ置く。instance、root volumeはbuild終了時に必ずterminateし、失敗時も6時間の自動shutdownを上限とする。VM/EBSの常時課金とクラスタ共有filesystem上の305–345 GiBのVFS cacheを廃止し、変更されていない中間layerだけを保持数制限付きprivate ECRへ保存する。
 
 Enroot 4.2.0はDocker archiveやOCI archiveを実行形式として直接使えない。このため、Buildah working containerのroot filesystemを`mksquashfs`でEnroot imageへ変換する。OCI内容はSkopeoと`umoci stat --json`で検証し、既にBuildah chroot buildとcontainer内検査を通った同一treeを再利用してroot filesystemの二重展開を避ける。クラスタ側では`.sqsh`を展開せず、そのpathを`enroot start`へ直接渡す。
 
 AWS VMは32 GiB RAM全体を一時buildに使えるため、`mksquashfs`は8 worker、8 GiB cache、gzip level 2で実行する。全RAM化は、26.6 GBのrootfsに加えてBuildah layer、OCI layout、圧縮入出力を同時に保持すると32 GiBを超えるため採用しない。高速gp3上でOverlayFSのcopy-on-writeを使う方が容量と速度の境界が明確である。
 
-完成物はprivate S3 bucketの`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/sglang.sqsh`と`container-sidecar.json`である。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行はGitの第一親を順番に遡り、S3 objectのsizeとSHA-256 metadataを照合して最初の有効な成果物を再利用する。再利用時にもクラスタ側のdownloadは省略しない。各クラスタrunnerはOIDC資格情報で実行直前に1時間の署名付きURLを作るため、bucketはpublicにせず、scheduler queue時間にもURL寿命を消費しない。
+完成物の再利用正本は玄界の`/home/pj26000080/share/sglang-containers/<workflow-run-id>.sqsh`とsidecarである。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行はGitの第一親を順番に遡り、過去の成功runに対応するローカルfileのsizeとSHA-256を照合して最初の有効な成果物を再利用する。選択後は現在run IDへのハードリンクを作り、private S3の`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/`へ1日限りの配布物としてuploadするため、再利用時にもクラスタ側のdownloadは省略しない。各クラスタrunnerはOIDC資格情報とBoto3 APIで実行直前に1時間の署名付きURLを作るため、AWS CLIを配置せず、bucketもpublicにせず、scheduler queue時間にもURL寿命を消費しない。
 
 ## 制御処理の責務
 
 AWS workflowはbuild/reuseとS3公開を、クラスタworkflowは毎回のdownloadとscheduler差だけを担当する。モデル未配置の現在は3クラスタともCPU nodeで`sglang.check_env`だけを実行し、従来のdummy model、dataset、BigQuery、profile処理は起動しない。
 
 - `scripts/build-sglang-container.sh`はroot Buildah、Skopeo、Umoci、SquashFS変換を、`aws/run-build-instance.sh`はS3入出力とEC2側log回収を担当する。
-- `scripts/select-qwen-container.sh`はGit第一親をたどるS3再利用候補の選択とsidecar/object metadata検証だけを担当する。
+- `scripts/select-qwen-container.sh`はGit第一親をたどる玄界ローカル再利用候補の選択とsidecar/file検証だけを担当する。
 - `scripts/provision-qwen-check-env.sh`はlogin runnerでpresign、download、SHA-256検証、run固有Enroot libraryのpoll上限変更を行う。
 - `scripts/run-qwen-check-env.sh`は計算node上のnode-local Enroot作業pathを作り、共有filesystem上のdownload済みSquashFSを展開せず直接起動する。
 

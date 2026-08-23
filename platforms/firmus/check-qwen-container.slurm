@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-#SBATCH --partition=shared
-#SBATCH --time=00:20:00
+#SBATCH --partition=hpcai
+#SBATCH --time=00:17:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 

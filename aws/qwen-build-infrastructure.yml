@@ -14,6 +14,15 @@ Parameters:
     Type: AWS::EC2::VPC::Id
 
 Resources:
+  BuildCacheRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: apac-qwen-build-cache
+      ImageScanningConfiguration:
+        ScanOnPush: false
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Keep the newest 64 Buildah intermediate images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":64},"action":{"type":"expire"}}]}'
+
   GitHubOidcProvider:
     Type: AWS::IAM::OIDCProvider
     Properties:
@@ -43,6 +52,12 @@ Resources:
             Status: Enabled
             Prefix: logs/
             ExpirationInDays: 30
+          - Id: RemoveContainerDistribution
+            Status: Enabled
+            Prefix: containers/
+            ExpirationInDays: 1
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
@@ -104,6 +119,19 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                 Resource: !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:CompleteLayerUpload
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: !GetAtt BuildCacheRepository.Arn
 
   BuilderInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -180,3 +208,5 @@ Outputs:
     Value: !Ref BuilderSecurityGroup
   GitHubActionsRoleArn:
     Value: !GetAtt GitHubActionsRole.Arn
+  BuildCacheRepositoryUri:
+    Value: !GetAtt BuildCacheRepository.RepositoryUri

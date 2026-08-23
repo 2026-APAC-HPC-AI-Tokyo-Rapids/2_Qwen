@@ -31,10 +31,14 @@ trap cleanup EXIT
   printf 'fusermount3=%s\n' "$(command -v fusermount3)"
   printf 'container_image=%s\n' "${CONTAINER_IMAGE}"
   printf 'container_size=%s\n' "$(stat -c '%s' "${CONTAINER_IMAGE}")"
+  nvidia-smi -L
 } >"${RUNTIME_DIR}/logs/environment.log"
 
-enroot start -e NVIDIA_VISIBLE_DEVICES=void -e NVIDIA_DRIVER_CAPABILITIES=void "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python -m sglang.check_env 2>&1 | tee "${RUNTIME_DIR}/logs/check-env.log"
+enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e NVIDIA_DISABLE_REQUIRE=1 "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python -m sglang.check_env 2>&1 | tee "${RUNTIME_DIR}/logs/check-env.log"
 grep -q '^Python:' "${RUNTIME_DIR}/logs/check-env.log"
 grep -q '^PyTorch:' "${RUNTIME_DIR}/logs/check-env.log"
 grep -q '^sglang:' "${RUNTIME_DIR}/logs/check-env.log"
+grep -q '^CUDA available: True$' "${RUNTIME_DIR}/logs/check-env.log"
+grep -q '^GPU 0:' "${RUNTIME_DIR}/logs/check-env.log"
+grep -q '^NVIDIA Topology:' "${RUNTIME_DIR}/logs/check-env.log"
 touch "${RUNTIME_DIR}/run-success"
