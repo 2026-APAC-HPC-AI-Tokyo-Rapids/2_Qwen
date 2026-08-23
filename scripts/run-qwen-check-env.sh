@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${CONTAINER_IMAGE:?Enroot image is required}"
 : "${RUNTIME_DIR:?runtime directory is required}"
+
+container_image="${RUNTIME_DIR}/sglang.sqsh"
+[[ -f "${container_image}" ]]
 
 export ENROOT_LIBRARY_PATH="${RUNTIME_DIR}/enroot-library"
 export ENROOT_SYSCONF_PATH="${RUNTIME_DIR}/enroot-system"
@@ -29,12 +31,12 @@ trap cleanup EXIT
   printf 'enroot_version=%s\n' "$(enroot version)"
   printf 'squashfuse=%s\n' "$(command -v squashfuse)"
   printf 'fusermount3=%s\n' "$(command -v fusermount3)"
-  printf 'container_image=%s\n' "${CONTAINER_IMAGE}"
-  printf 'container_size=%s\n' "$(stat -c '%s' "${CONTAINER_IMAGE}")"
+  printf 'container_image=%s\n' "${container_image}"
+  printf 'container_size=%s\n' "$(stat -c '%s' "${container_image}")"
   nvidia-smi -L
 } >"${RUNTIME_DIR}/logs/environment.log"
 
-enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e NVIDIA_DISABLE_REQUIRE=1 "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python -m sglang.check_env 2>&1 | tee "${RUNTIME_DIR}/logs/check-env.log"
+enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e NVIDIA_DISABLE_REQUIRE=1 "${container_image}" /opt/sglang/venv/bin/python -m sglang.check_env 2>&1 | tee "${RUNTIME_DIR}/logs/check-env.log"
 grep -q '^Python:' "${RUNTIME_DIR}/logs/check-env.log"
 grep -q '^PyTorch:' "${RUNTIME_DIR}/logs/check-env.log"
 grep -q '^sglang:' "${RUNTIME_DIR}/logs/check-env.log"

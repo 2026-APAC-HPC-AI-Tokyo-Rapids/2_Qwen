@@ -39,6 +39,8 @@ Actions run `32665563155`のFirmus Slurm job `12867`は24秒で`COMPLETED (0:0)`
 
 ASPIREでは`qsub`へscript file pathを引数で渡すと、全DGXを割り当てたjob `204058.pbs111`でもユーザーscript開始前に`Exit_status=-2`となった。切り分けで、stdinから最小scriptを投入したjob `204059.pbs111`と`204060.pbs111`は、同じGPU nodeでshell、user ID、`~/.local/.setenv`、Enroot pathの読込みまでexit 0となった。その一方、同じcheck script fileをpath引数で投入したjob `204061.pbs111`は、PBS MoMの`/var/spool/pbs/mom_priv/jobs/204061.pbs111.SC`が実行時に存在せずexit 127となった。このsite側script staging障害を回避するため、同じGit管理済みscript内容を`qsub` のstdinへリダイレクトする。
 
+stdin化後のjob `204062.pbs111`も起動前に`-2`となったため、さらに`qsub -v`の変数を1つずつ分離した。`RUNTIME_DIR`だけを渡し、その配下の実行ファイルを起動したjob `204066.pbs111`はexit 0、同じhostnameだけのscriptに`CONTAINER_IMAGE`を追加したjob `204069.pbs111`は再びscript開始前に`-2`となった。したがってASPIREのサイトhookが`CONTAINER_IMAGE`を予約変数として解釈することが直接原因である。別名の中継変数は作らず、計算nodeのscriptが`RUNTIME_DIR/sglang.sqsh`を直接導出し、schedulerへは`RUNTIME_DIR`だけを渡す。
+
 ## 従来のクラスタ内ビルドとGPU dummy実行の記録
 
 以下はAWS集中buildへ移行する前の障害と設計判断を履歴として残す。
