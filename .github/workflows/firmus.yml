@@ -72,7 +72,7 @@ jobs:
           RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
         run: |
           missing=()
-          for command_name in buildah skopeo umoci nvidia-container-cli uv uvx; do if ! command -v "${command_name}" >/dev/null; then missing+=("${command_name}"); fi; done
+          for command_name in buildah skopeo umoci uv uvx; do if ! command -v "${command_name}" >/dev/null; then missing+=("${command_name}"); fi; done
           if ! enroot version >/dev/null 2>&1; then missing+=(enroot-runtime); fi
           printf '%s\n' "${missing[@]}" | tee "${RUN_DIR}/logs/missing-qwen-dependencies.txt"
           test "${#missing[@]}" -eq 0
