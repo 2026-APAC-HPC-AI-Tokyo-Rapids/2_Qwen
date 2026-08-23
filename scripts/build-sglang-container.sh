@@ -2,8 +2,7 @@
 set -euo pipefail
 
 export BUILDAH_ISOLATION=chroot
-export STORAGE_DRIVER=vfs
-export STORAGE_OPTS=vfs.ignore_chown_errors=true
+export STORAGE_DRIVER=overlay
 
 : "${BUILD_DIR:?build directory is required}"
 : "${CONTAINER_ARCHIVE_DIR:?container archive directory is required}"
@@ -15,23 +14,26 @@ export STORAGE_OPTS=vfs.ignore_chown_errors=true
 
 [[ "${GITHUB_RUN_ID}" =~ ^[0-9]+$ ]]
 [[ "${GITHUB_RUN_ATTEMPT}" =~ ^[0-9]+$ ]]
+[[ "$(id -u)" -eq 0 ]]
 
 archive="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
 sidecar_archive="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
 archive_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.sqsh.${GITHUB_RUN_ATTEMPT}.tmp"
 sidecar_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.container-sidecar.json.${GITHUB_RUN_ATTEMPT}.tmp"
-storage_root="${BUILD_STORAGE_ROOT:-/var/tmp/apac-qwen-buildah-$(id -u)}"
-squashfs_work="/var/tmp/apac-qwen-sglang-$(id -u)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sqsh"
+storage_root="${BUILD_STORAGE_ROOT:-/var/lib/containers/storage}"
+squashfs_work="${BUILD_DIR}/sglang.sqsh"
 run_root="${BUILD_DIR}/runroot"
 context="${BUILD_DIR}/context"
 source_dir="${BUILD_DIR}/sglang-source"
 oci_build="${BUILD_DIR}/oci-build"
 oci_runtime="${BUILD_DIR}/oci-runtime"
 image="localhost/apac-qwen-sglang:${GITHUB_SHA}"
+mounted_container=
 
 cleanup() {
   status=$?
   trap - EXIT INT TERM
+  if [[ -n "${mounted_container}" ]]; then buildah --root "${storage_root}" --runroot "${run_root}" unmount "${mounted_container}" >/dev/null 2>&1 || true; fi
   buildah --root "${storage_root}" --runroot "${run_root}" rm --all >/dev/null 2>&1 || true
   rm -f -- "${archive_temporary}" "${sidecar_temporary}" "${squashfs_work}"
   exit "${status}"
@@ -44,7 +46,7 @@ rm -rf -- "${BUILD_DIR:?}"
 rm -f -- "${squashfs_work}"
 install -d -m 2775 "${BUILD_DIR}" "${BUILD_DIR}/logs" "${context}/containers" "${context}/patches" "${context}/sglang-project-metadata/python" "${CONTAINER_ARCHIVE_DIR}" "${storage_root}"
 storage_fstype="$(stat -f -c '%T' "${storage_root}")"
-case "${storage_fstype}" in lustre|nfs|nfs4) printf 'Unsupported Buildah cache filesystem %s: %s\n' "${storage_fstype}" "${storage_root}" >&2; exit 1;; esac
+case "${storage_fstype}" in ext2/ext3|xfs) :;; *) printf 'Unsupported Buildah storage filesystem %s: %s\n' "${storage_fstype}" "${storage_root}" >&2; exit 1;; esac
 
 if [[ -d "${GIT_MIRROR_DIR}/5_SGLang_Src.git" ]]; then git clone --reference-if-able "${GIT_MIRROR_DIR}/5_SGLang_Src.git" --no-checkout "${GIT_MIRROR_DIR}/5_SGLang_Src.git" "${source_dir}"; else gh repo clone 2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src "${source_dir}" -- --no-checkout; fi
 git -C "${source_dir}" checkout --detach main
@@ -76,7 +78,13 @@ skopeo copy "oci:${oci_build}:sglang" "oci:${oci_runtime}:sglang" 2>&1 | tee "${
 skopeo inspect --raw "oci:${oci_runtime}:sglang" >"${BUILD_DIR}/logs/oci-manifest.json"
 umoci stat --json --image "${oci_runtime}:sglang" | tee "${BUILD_DIR}/logs/umoci-stat.json"
 jq -e '.history | length > 0' "${BUILD_DIR}/logs/umoci-stat.json" >/dev/null
-buildah --root "${storage_root}" --runroot "${run_root}" unshare --mount "${test_container}" bash -c 'set -euo pipefail; storage_root=$1; run_root=$2; test_container=$3; context=$4; build_dir=$5; squashfs_work=$6; rootfs="$(buildah --root "${storage_root}" --runroot "${run_root}" inspect --type container --format "{{.MountPoint}}" "${test_container}")"; cmp "${rootfs}/opt/apac/manifest.json" "${context}/apac-manifest.json"; test "$(cat "${rootfs}/opt/sglang/qwen-experiment-metrics-hook-version.txt")" = 2; mksquashfs "${rootfs}" "${squashfs_work}" -noappend -all-root -no-xattrs -no-duplicates -no-fragments -comp gzip -Xcompression-level 2 -processors 1 -mem 256M 2>&1 | tee "${build_dir}/logs/mksquashfs.log"' bash "${storage_root}" "${run_root}" "${test_container}" "${context}" "${BUILD_DIR}" "${squashfs_work}"
+rootfs="$(buildah --root "${storage_root}" --runroot "${run_root}" mount "${test_container}")"
+mounted_container="${test_container}"
+cmp "${rootfs}/opt/apac/manifest.json" "${context}/apac-manifest.json"
+test "$(cat "${rootfs}/opt/sglang/qwen-experiment-metrics-hook-version.txt")" = 2
+mksquashfs "${rootfs}" "${squashfs_work}" -noappend -all-root -no-xattrs -no-duplicates -no-fragments -comp gzip -Xcompression-level 2 -processors 8 -mem 8G 2>&1 | tee "${BUILD_DIR}/logs/mksquashfs.log"
+buildah --root "${storage_root}" --runroot "${run_root}" unmount "${test_container}"
+mounted_container=
 buildah --root "${storage_root}" --runroot "${run_root}" rm "${test_container}"
 
 container_sha256="$(sha256sum "${squashfs_work}" | awk '{print $1}')"

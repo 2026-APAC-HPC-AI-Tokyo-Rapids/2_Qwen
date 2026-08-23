@@ -1,4 +1,4 @@
-name: ASPIRE 2A+でQwenを実行
+name: ASPIRE 2A+でQwenコンテナを確認
 
 on:
   workflow_call:
@@ -6,22 +6,27 @@ on:
       node_count:
         required: true
         type: string
-      profile:
+      container_key:
         required: true
-        type: boolean
-      require_build:
+        type: string
+      container_sha256:
         required: true
-        type: boolean
+        type: string
+      container_size:
+        required: true
+        type: string
+      sidecar_key:
+        required: true
+        type: string
 
 permissions:
   actions: read
   contents: read
+  id-token: write
 
 env:
-  CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/apacsc14/sglang-containers
-  DATASET_CACHE_ROOT: /scratch/users/industry/ai-hpc/apacsc14/datasets/ShareGPT_Vicuna_unfiltered
-  GIT_MIRROR_DIR: /scratch/users/industry/ai-hpc/apacsc14/git-mirror
-  MODEL_CACHE_ROOT: /scratch/users/industry/ai-hpc/apacsc14/models/Qwen3.5-397B-A17B-FP8-metadata
+  AWS_REGION: ap-southeast-1
+  CONTAINER_BUCKET: ${{ vars.QWEN_CONTAINER_BUCKET }}
   RUNTIME_ROOT: /scratch/users/industry/ai-hpc/apacsc14/sglang-runs
 
 defaults:
@@ -29,102 +34,39 @@ defaults:
     shell: bash --login -eo pipefail {0}
 
 jobs:
-  select-container:
-    name: OCIコンテナを選択
-    runs-on: [self-hosted, aspire2p]
-    timeout-minutes: 7200
-    outputs:
-      action: ${{ steps.select.outputs.action }}
-      source_run_id: ${{ steps.select.outputs.source_run_id }}
-    steps:
-      - name: リポジトリ履歴を取得
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: 既存成果物の再利用または新規ビルドを選択
-        id: select
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REQUIRE_BUILD: ${{ inputs.require_build }}
-        run: '"${GITHUB_WORKSPACE}/scripts/select-qwen-container.sh"'
-
-  reuse-container:
-    name: OCIコンテナを再利用
-    needs: select-container
-    if: needs.select-container.outputs.action == 'reuse'
-    runs-on: [self-hosted, aspire2p]
-    timeout-minutes: 7200
-    steps:
-      - name: 選択した成果物をハードリンク
-        run: |
-          source_run_id='${{ needs.select-container.outputs.source_run_id }}'
-          ln -f -- "${CONTAINER_ARCHIVE_DIR}/${source_run_id}.sqsh" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
-          ln -f -- "${CONTAINER_ARCHIVE_DIR}/${source_run_id}.container-sidecar.json" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
-
-  build-container:
-    name: OCIコンテナをビルド
-    needs: select-container
-    if: needs.select-container.outputs.action == 'build'
-    runs-on: [self-hosted, aspire2p]
-    timeout-minutes: 7200
-    concurrency:
-      group: aspire2ap-qwen-container-build
-    env:
-      BUILD_DIR: /dev/shm/qwen-sglang-container/run-${{ github.run_id }}-${{ github.run_attempt }}
-    steps:
-      - name: ビルド入力を取得
-        uses: actions/checkout@v7
-
-      - name: buildah、skopeo、umociでコンテナを構築・保存
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: '"${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"'
-
-      - name: コンテナビルドログを保存
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: qwen-aspire2ap-container-build-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.BUILD_DIR }}/logs
-          if-no-files-found: warn
-          compression-level: 1
-
-      - name: コンテナビルド領域を削除
-        if: always()
-        run: chmod -R u+rwX "${BUILD_DIR}" 2>/dev/null || true; rm -rf -- "${BUILD_DIR:?}"
-
   provision:
-    name: Enroot実行環境を配備
-    needs: [select-container, reuse-container, build-container]
-    if: ${{ always() && needs.select-container.result == 'success' && ((needs.select-container.outputs.action == 'reuse' && needs.reuse-container.result == 'success') || (needs.select-container.outputs.action == 'build' && needs.build-container.result == 'success')) }}
+    name: S3からSquashFSを毎回ダウンロード
     runs-on: [self-hosted, aspire2p]
-    timeout-minutes: 7200
+    timeout-minutes: 180
     outputs:
-      model_path: ${{ steps.provision.outputs.model_path }}
-      run_id: ${{ steps.provision.outputs.run_id }}
       runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
     steps:
       - name: 実行用ファイルを取得
         uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          persist-credentials: false
 
-      - name: dummy model用メタデータ、ShareGPT、実行環境を配備
+      - name: AWSの一時資格情報を取得
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
+
+      - name: 署名付きURLを生成してSquashFSを配備
         id: provision
         env:
           CLUSTER_NAME: aspire2ap
-          CONTAINER_ARCHIVE: ${{ env.CONTAINER_ARCHIVE_DIR }}/${{ github.run_id }}.sqsh
-          CONTAINER_SIDECAR: ${{ env.CONTAINER_ARCHIVE_DIR }}/${{ github.run_id }}.container-sidecar.json
-          GPUS_PER_NODE: 8
-          NODE_COUNT: ${{ inputs.node_count }}
-          RESOURCE_GROUP: aiq2
-          RUN_PURPOSE: ${{ inputs.profile && 'profile' || 'bench' }}
+          CONTAINER_KEY: ${{ inputs.container_key }}
+          CONTAINER_SHA256: ${{ inputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ inputs.container_size }}
+          ENROOT_LIBRARY_PATH: /home/apacsc14/.local/lib/enroot
+          ENROOT_SYSCONF_PATH: /home/apacsc14/.local/etc/enroot
+          SIDECAR_KEY: ${{ inputs.sidecar_key }}
         run: |
           export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
-          "${GITHUB_WORKSPACE}/scripts/provision-qwen-runtime.sh"
+          "${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
-          install -m 0755 "${GITHUB_WORKSPACE}/platforms/aspire2ap/run-qwen35.pbs" "${runtime_dir}/scripts/run-qwen35.pbs"
+          install -m 0755 "${GITHUB_WORKSPACE}/platforms/aspire2ap/check-qwen-container.pbs" "${runtime_dir}/scripts/check-qwen-container.pbs"
 
       - name: 配備失敗時の実行環境を削除
         if: failure() && steps.provision.outputs.runtime_dir != ''
@@ -133,55 +75,43 @@ jobs:
         run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
-    name: Enrootでdummy modelを実行
+    name: CPUノードでEnroot check_envを実行
     needs: provision
-    if: always() && needs.provision.result == 'success'
     runs-on: [self-hosted, aspire2p]
-    timeout-minutes: 7200
+    timeout-minutes: 180
     env:
-      MODEL_PATH: ${{ needs.provision.outputs.model_path }}
       RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
     steps:
       - name: PBSジョブを投入
         id: submit
         run: |
           cd "${RUNTIME_DIR}"
-          variables="RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh,GPUS_PER_NODE=8"
-          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=${{ inputs.node_count }}:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -j oe -N qwen35_dummy "${RUNTIME_DIR}/scripts/run-qwen35.pbs")"
+          variables="RUNTIME_DIR=${RUNTIME_DIR},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh"
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=${{ inputs.node_count }}:ncpus=8:mem=32gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -j oe -N qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.pbs")"
           [[ "${job_id}" =~ ^[0-9]+([.][A-Za-z0-9.-]+)?$ ]]
           printf 'PBS_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
 
-      - name: PBSジョブの終了を待機
+      - name: PBSジョブの終了を確認
         run: |
           while /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; do sleep 10; done
           /opt/pbs/bin/qstat -x -f "${PBS_JOB_ID}" >"${RUNTIME_DIR}/logs/pbs-accounting.txt"
           cat "${RUNTIME_DIR}/logs/pbs-accounting.txt"
-          if [[ -e "${RUNTIME_DIR}/logs/pbs.log" ]]; then cat "${RUNTIME_DIR}/logs/pbs.log"; fi
+          cat "${RUNTIME_DIR}/logs/pbs.log"
           exit_status="$(awk -F= '/^[[:space:]]*Exit_status =/{gsub(/[[:space:]]/, "", $2); print $2}' "${RUNTIME_DIR}/logs/pbs-accounting.txt")"
           test "${exit_status}" = 0
           test -e "${RUNTIME_DIR}/run-success"
 
-      - name: ログインrunnerから計測断片を送信
-        env:
-          METRICS_CREDENTIAL_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
-        run: '"${RUNTIME_DIR}/scripts/send-qwen-fragments.sh"'
-
-      - name: 公式形式で実行成果物を梱包
-        if: always() && steps.submit.outputs.job_id != ''
-        run: '"${RUNTIME_DIR}/scripts/package-qwen-runtime.sh"'
-
-      - name: 固定構成の成果物を保存
+      - name: check_envログを保存
         if: always() && steps.submit.outputs.job_id != ''
         uses: actions/upload-artifact@v7
         with:
-          name: qwen-aspire2ap-dummy-${{ needs.provision.outputs.run_id }}
+          name: qwen-aspire2ap-check-env-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ env.RUNTIME_DIR }}/run-artifacts.tar.zst
-            ${{ env.RUNTIME_DIR }}/artifact-manifest.json
-            ${{ env.RUNTIME_DIR }}/profile-raw.tar.zst
+            ${{ env.RUNTIME_DIR }}/logs
+            ${{ env.RUNTIME_DIR }}/source
+            ${{ env.RUNTIME_DIR }}/run-success
           if-no-files-found: error
-          compression-level: 0
 
       - name: 実行環境を削除
         if: always()

@@ -2,33 +2,36 @@
 
 ## 現行経路
 
-ビルドは各クラスタのログインrunnerで行う。`buildah bud --isolation chroot --layers`でDockerfileを処理し、Buildah storageからOCI image layoutへpushする。Skopeoは別のOCI layoutへcopyしてtransport境界を検証し、Umociはそのlayoutのmanifestとlayer履歴を検証する。実行用SquashFSは検査に使ったBuildah VFS working containerのroot filesystemを`buildah unshare --mount`のuser namespace内で読み、埋め込みmanifestを照合してから`-all-root -no-xattrs`で所有者をrootへ正規化して作る。厳密な元UID/GID、xattr、ACLの維持は要件に含めない。
+ビルドはAWS Singaporeリージョンでrunごとに起動する`m7i.2xlarge`で行う。VMでは管理者権限を使用できるため、rootless互換処理を使わず、rootのBuildah、OverlayFS、`chroot` isolationでDockerfileを処理する。Buildah storageからOCI image layoutへpushし、Skopeoで別layoutへcopyしてtransport境界を、Umociでmanifestとlayer履歴を検証する。検査したBuildah working containerをrootでmountし、同じroot filesystemを`-all-root -no-xattrs`でSquashFS化する。厳密な元UID/GID、xattr、ACLの維持は要件に含めない。
 
 Dockerfileはsystem toolchain、NCCL tests、Python project metadata由来の依存、GPU通信依存、SGLang sourceの順にレイヤを分ける。SGLangの`pyproject.toml`とmetadata filesだけをsource本体より先にcopyし、`uv.lock`をbuild入力へ含めずに`uv sync --no-install-project`を実行する。依存関係はcold build時に解決し、SGLang sourceや計測patchだけを変えた場合は解決済みの高コストな依存レイヤを再利用する。埋め込みmanifestは最後にcopyし、来歴だけの変更でビルド処理を無効化しない。
 
-rootless BuildahのgraphrootはLustre上へ置かず、runner hostごとのlocal XFSである`/var/tmp/apac-qwen-buildah-<uid>`へ永続化する。runroot、build context、OCI layoutはrunごとの`/dev/shm`に置き、workflow終了時に削除する。2026-08-21に固定BusyBoxを用いたcold/warm buildを両クラスタで行い、`--layers`を使う3つの中間stepすべてが`Using cache`となることを確認した。runner hostが変わるかlocal storageが消去された場合だけcold buildとなる。
+VMのroot volumeは300 GiBのgp3（6,000 IOPS、500 MiB/s）とし、Buildah graphroot、runroot、context、OCI layout、SquashFS作業出力を同じlocal ext4上へ置く。instance、root volumeはbuild終了時に必ずterminateし、失敗時も6時間の自動shutdownを上限とする。したがってlayer cacheは永続化せず各新規buildはcoldだが、VM/EBSの常時課金とクラスタ共有filesystem上の305–345 GiBのVFS cacheを廃止できる。
 
-Enroot 4.2.0はDocker archiveやOCI archiveを直接importできない。このため、Buildah VFS working containerのroot filesystemを`mksquashfs`でEnroot imageへ変換する。ASPIRE 2A+では巨大OCIを`umoci unpack --rootless`すると、squashの有無にかかわらずlayer適用中にexit 137となった。OCI内容はSkopeoと`umoci stat --json`で検証し、既にBuildah chroot buildとcontainer内検査を通った同一imageのVFS treeを再利用することで、root filesystemの二重展開とそのmemory peakを避ける。ログインノードではSquashFS mountや`/dev`のrecursive bindが制限される場合があるため、Enrootの最終確認はGPU計算ノードで行う。
+Enroot 4.2.0はDocker archiveやOCI archiveを実行形式として直接使えない。このため、Buildah working containerのroot filesystemを`mksquashfs`でEnroot imageへ変換する。OCI内容はSkopeoと`umoci stat --json`で検証し、既にBuildah chroot buildとcontainer内検査を通った同一treeを再利用してroot filesystemの二重展開を避ける。クラスタ側では`.sqsh`を展開せず、そのpathを`enroot start`へ直接渡す。
 
-ASPIRE 2A+の`mksquashfs`はlogin host全体のmemoryから既定cacheを128865 MiBと計算し、runnerの実効制約を超えてexit 137となった。2 GiB、4 workerへ制限しても起動直後にkillされたため、圧縮cacheを256 MiB、workerを1に下げ、duplicate探索とfragment packingを無効化する。出力先もRAM-backedな`/dev/shm`ではなくnode-local XFSの`/var/tmp`とし、完成後だけ共有scratchの一時pathへcopyして原子的に公開する。これは元ownershipやxattrと同様に厳密なbit-for-bit最小化よりlogin nodeでの安定した変換を優先する境界であり、完成したSquashFS自体のsizeとSHA-256はsidecarで引き続き検証する。
+AWS VMは32 GiB RAM全体を一時buildに使えるため、`mksquashfs`は8 worker、8 GiB cache、gzip level 2で実行する。全RAM化は、26.6 GBのrootfsに加えてBuildah layer、OCI layout、圧縮入出力を同時に保持すると32 GiBを超えるため採用しない。高速gp3上でOverlayFSのcopy-on-writeを使う方が容量と速度の境界が明確である。
 
-完成物は`<workflow-run-id>.sqsh`と`<workflow-run-id>.container-sidecar.json`である。sidecarはSquashFSのsizeとSHA-256を持つ。`[require-build]`がない実行はGitの第一親を順番に遡り、対応するworkflow runの成果物についてsizeとSHA-256だけを照合し、最初の有効なものを再利用する。コンテナ内部検査や過去Actions stepの成否は再利用条件にしない。
+完成物はprivate S3 bucketの`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/sglang.sqsh`と`container-sidecar.json`である。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行はGitの第一親を順番に遡り、S3 objectのsizeとSHA-256 metadataを照合して最初の有効な成果物を再利用する。再利用時にもクラスタ側のdownloadは省略しない。各クラスタrunnerはOIDC資格情報で実行直前に1時間の署名付きURLを作るため、bucketはpublicにせず、scheduler queue時間にもURL寿命を消費しない。
 
 ## 制御処理の責務
 
-クラスタworkflowはscheduler、filesystem配置、GPU数などのサイト差だけを持つ薄いadapterとする。共通処理は実行段階ごとに分離し、玄界、ASPIRE 2A+、Firmusで同じ実装を使う。
+AWS workflowはbuild/reuseとS3公開を、クラスタworkflowは毎回のdownloadとscheduler差だけを担当する。モデル未配置の現在は3クラスタともCPU nodeで`sglang.check_env`だけを実行し、従来のdummy model、dataset、BigQuery、profile処理は起動しない。
 
-- `containers/sglang/Dockerfile`はimage layerとcontainer内部の依存関係、`scripts/build-sglang-image.sh`はBuildah、Skopeo、Umoci、SquashFS変換と成果物公開を担当する。
-- `scripts/select-qwen-container.sh`はGit第一親をたどる再利用候補の選択とsidecar検証だけを担当する。
-- `scripts/provision-qwen-runtime.sh`はログインノードでruntime directoryを一度構成し、固定source OIDなどcontainer内の不変metadataを一度だけ抽出する。計算ノードやrankごとに同じmetadataを再取得しない。
-- `scripts/run-qwen35-node.sh`は既にprovisionされた設定とmetadataを読み、計算ノード上のEnroot起動とbenchmarkだけを担当する。
-- `scripts/send-qwen-fragments.sh`はscheduler終了後の資格情報境界とBigQuery送信、`scripts/package-qwen-runtime.sh`は回収対象とprofile選択を担当する。どちらもログインrunnerでのみ実行する。
+- `scripts/build-sglang-container.sh`はroot Buildah、Skopeo、Umoci、SquashFS変換を、`aws/run-build-instance.sh`はS3入出力とEC2側log回収を担当する。
+- `scripts/select-qwen-container.sh`はGit第一親をたどるS3再利用候補の選択とsidecar/object metadata検証だけを担当する。
+- `scripts/provision-qwen-check-env.sh`はlogin runnerでpresign、download、SHA-256検証、run固有Enroot libraryのpoll上限変更を行う。
+- `scripts/run-qwen-check-env.sh`は計算node上のnode-local Enroot作業pathを作り、共有filesystem上のdownload済みSquashFSを展開せず直接起動する。
 
 run directoryへ置くscriptはprovision時のcommitからsnapshotする。このため、workflowを待機している間にrepository側を更新しても投入済みjobの実装は変化せず、各runのコード来歴をcommitへ固定できる。
 
 ## クラスタ差
 
-玄界はビルド領域をログインノードの`/dev/shm`、成果物を`/home/pj26000080/share/sglang-containers`、実行領域とモデルメタデータを`/fast`へ置く。PJMの`jobenv=singularity`はサイトがcontainer向けuser namespaceを許可するためのscheduler属性として残すが、Singularity executableやSIFは利用しない。1ノード当たり4 GPUを使う。
+玄界はdownload先と実行領域を`/fast/pj26000080/sglang-runs`へ置き、`a-batch` CPU nodeで確認する。ASPIRE 2A+は`/scratch/users/industry/ai-hpc/apacsc14/sglang-runs`へ置き、project `59010014`からGPUを要求しない8 CPU、32 GBのnodeを割り当てる。Firmusは`/scratch/home/apacsc14/qwen/runs`へ置き、`shared` partitionの8 CPU、32 GBで確認する。モデル配備後にGPU benchmarkへ戻す際は、現在もrepositoryに残るGPU/runtime adapterをAWS成果物入力へ接続し直してE2E検証する。
+
+## 従来のクラスタ内ビルドとGPU dummy実行の記録
+
+以下はAWS集中buildへ移行する前の障害と設計判断を履歴として残す。
 
 ASPIRE 2A+はビルド領域をログインノードの`/dev/shm`、成果物・実行領域・モデルメタデータを`/scratch/users/industry/ai-hpc/apacsc14`へ置く。PBS project `59010014`を指定し、default routingから`aiq2`へ1ノード当たり112 CPU、8 GPU、1500 GB memoryを排他的に要求する。`aiq2`の直接指定はqueue ACLで拒否され、projectなしではbudgetを確定できない。システムEnroot 3.4.1の既定pathは一般ユーザーが書けないため、ユーザー領域へEnroot 4.2.0を導入し、cache、data、runtime pathをユーザーが書ける場所へ設定する。
 
@@ -56,7 +59,27 @@ Enroot 4.2.0の標準NVIDIA hookはhostの`ldconfig`を指定する。`libnvidia
 
 固定digestのBusyBox `sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213`を使い、DockerfileのBuildah chroot build、作業containerの`buildah run`、OCI layoutへのpush、Skopeo copy、Umoci rootless unpack、SquashFS作成を玄界とASPIRE 2A+のlogin nodeで確認した。さらにASPIRE 2A+でBuildah VFS working containerのmount、直接SquashFS作成、OCI push、`umoci stat --json`を一時BusyBox imageで確認した。玄界でもmountしたVFS treeからの直接SquashFS作成まで確認した。厳密なxattrと元ownershipを要求しないため、Lustreが対応しないxattrの警告は許容する。
 
-ASPIRE 2A+ではPBS job `203570.pbs111`を1 GPU compute node `a2ap-dgx037`へ投入し、Enroot 4.2.0で`ENROOT_SMOKE_OK`とexit status 0を確認した。玄界ではPJM job `6548346`をcompute node `b0004`へ投入し、同じく`ENROOT_SMOKE_OK`、PJM exit code 0を確認した。FirmusではSlurm job `12613`を1 GPU compute node `g4`へ投入し、Open MPI、node-local XFS上のEnroot `create/start`、NVIDIA hookを通してH200とdriver 610.57.04を確認し、exit code 0となった。検証用image、script、logは確認後に削除し、schedulerに検証jobを残していない。
+ASPIRE 2A+ではPBS job `203570.pbs111`を1 GPU compute node `a2ap-dgx037`へ投入し、小規模`.sqsh`のpathをそのまま`enroot start`へ渡して`ENROOT_SMOKE_OK`とexit status 0を確認した。玄界ではPJM job `6548346`をcompute node `b0004`へ投入し、同じく小規模`.sqsh`の直接起動で`ENROOT_SMOKE_OK`、PJM exit code 0を確認した。FirmusのSlurm job `12613`は1 GPU compute node `g4`でOpen MPI、node-local XFS上のEnroot `create/start`、NVIDIA hookを通してH200とdriver 610.57.04を確認したが、これは展開済みnamed rootfsの起動であり`.sqsh`直接起動の証拠ではない。2026-08-24のSlurm job `12739`で小規模`.sqsh`の直接起動を試すと、同じ`g4`に`/dev/fuse`と`fusermount3`はあるものの`squashfuse` executableがなく、Enroot 4.2.0は`Command not found: squashfuse`でmount前に終了した。その後、SquashFUSE 0.6.2とlibfuse 3.18.2を`~/.local`へ導入し、user-local `fusermount3`は計算nodeのsystem helperを指すsymlinkとした。Slurm job `12745`は`shared` partitionのcompute node `g1`で、root所有かつsetuidされたsystem `/usr/bin/fusermount3` 3.10.2、world-readable/writableな`/dev/fuse`、user-local SquashFUSEとlibfuseを確認した。共有Enroot installationを変更せず、job内copyだけ既知raceのmount poll上限を100回から5000回へ変更して小規模`.sqsh`を直接`enroot start`した結果、`FIRMUS_DIRECT_SQSH_OK`、direct start 570,413,934 ns、Slurm exit code 0となった。これによりFirmusでもSquashFS直接起動の基本経路は成立した。検証用image、script、logは確認後に削除し、schedulerに検証jobを残していない。
+
+Firmusで直接起動を本番採用する前に、次を確認する。
+
+- production runtimeにもEnrootのmount poll上限増加を適用する。job `12745`の変更はnode-localな一時copyだけであり、共有Enroot installationと現行workflowは未変更である。
+- 実際の約12.7 GB imageをBeeGFS上から直接起動し、cold/warmそれぞれの開始時間と、必要blockだけを読む実行中のI/Oを測定する。
+- GPU allocationでNVIDIA hook、H200、driver libraryをcontainer内から確認する。job `12745`はCPU 1個、1 GiB memoryだけを要求したfilesystem検証である。
+- 実際のSGLangを起動から終了まで走らせ、mount helperがteardownに巻き込まれず、stale file handle、SIGBUS、unmount残留が発生しないことを確認する。
+- 2 node実行では各nodeが同じ`.sqsh`を直接mountできること、runtime homeとJIT cacheが従来どおりnode-local XFSに置かれ、read-only imageへ書込みが発生しないことを確認する。
+
+2026-08-23に玄界のCPU compute node `a0041`で、実成果物の12,718,784,512 byteのSquashFS（展開後26,567,442,083 byte、185,800 entry）を使って起動方式を比較した。共有filesystem上のimageをEnrootで直接起動すると0.538秒、`/dev/shm`へ6.861秒で複製したimageを直接起動すると0.151秒で、いずれも`/bin/sh`を実行してexit code 0となった。kernel SquashFS mountはrootless user namespace内でもloop device設定に失敗したため利用できない。`unsquashfs`による`/dev/shm`への全展開は11.000秒だったが、玄界の`/dev/shm`は`noexec`であり、展開rootfsからの`/bin/sh`は`Permission denied`となる。RAM上のimageからnode-local `/tmp` XFSへの展開は5分を超えた時点でも84%で、実用候補にならないためjob `6570638`を打ち切った。このXFS全展開方式は以後検討しない。
+
+一方、以前のCPU node `a0011`上の小規模imageではEnroot直接起動が`fusermount: mount failed: Operation not permitted`で失敗しており、直接FUSE起動の可否にはnodeまたはjob環境による差が残る。また今回の直接起動はNVIDIA hookを使わない短時間のfilesystem確認であり、既知のmount helper寿命とstale file handle問題を否定しない。実運用をnode-local展開から直接起動へ変更する前に、実際のGPU jobでNVIDIA hook、SGLangの全実行時間、終了処理までをE2E確認する。
+
+上記の`a0011`失敗時は標準のEnroot system設定、`a0041`と`a0025`の成功時は空の`ENROOT_SYSCONF_PATH`を使っており、当初の比較は厳密な同一条件ではなかった。2026-08-24に当時と同じ1,945,600 byteの小規模image、標準system設定、`ENROOT_MOUNT_HOME=no`、node-local `/tmp`上の4種類のEnroot path、同一PJM resource groupと同一`enroot start`引数を使う1 node jobを4本並行実行した。job `6570976`の`a0128`、`6570977`の`a0134`、`6570978`の`a0142`は成功した一方、job `6570979`の`a0143`だけが`Failed to mount`で失敗した。したがって起動オプション差だけではなく、node固有またはその時点のnode状態による差が実在する。成功nodeではkernel 4.18.0-477.27.1、Enroot 4.2.0、SquashFUSE 0.6.2、`/dev/fuse`のmajor/minorとmode、user namespace作成、PJM device cgroupの`c 10:229 rwm`、capability、NoNewPrivs、seccompが一致した。失敗nodeの同じ詳細項目は取得できていないため、差の正体がdevice cgroup、host側FUSE状態、その他の隠れた設定のどれかは未確定である。なおEnroot外で素の`squashfuse`を実行すると成功nodeでもEPERMとなる。Enrootはuser/mount namespaceを作ってからSquashFUSEを起動するため、この素の実行結果をEnroot可否の判定には使わない。
+
+追加診断により、この差は固定的なnode設定差ではなくEnroot 4.2.0のmount成立待ち上限と起動時間のばらつきによるraceと特定した。Enrootの`runtime::_mount_rootfs_shim`はSquashFUSE起動後、`mountpoint`を最大100回だけpollし、成立していなければ生存中のhelperを含むprocess groupを終了する。12 node同時試験では標準設定の初回だけが7 nodeで失敗したが、同じjob内の直後の再実行は成功した。失敗時と成功時のnamespace内部でUID/GID map、capability、seccomp、`/dev/fuse`、setuid fusermount、mount flags、device cgroupの`c 10:229 rwm`は一致した。標準の100回上限を維持し、image、SquashFUSE、fusermount、共有libraryをページキャッシュから外したinstrumented job `6571098`では、node `a0061`でhelperが生存したまま101回、340,201,706 nsに達して`outcome=timeout`となった。直前のjob `6571083`でもnode `a0059`は95回、326,555,659 nsを要しており、上限間際だった。
+
+暫定回避策として、Enrootの`runtime.sh`にある`runtime::_mount_rootfs_shim`のpoll上限を100回から5000回へ増やせば、このraceを回避できる。上限だけを5000回へ変更した一時的なEnroot library copyを使うjob `6571104`から`6571111`は、同じcold化条件で8 nodeすべて成功した。共有Enroot installationは変更していない。恒久対応ではiteration数への依存を避け、十分なwall-clock timeoutまでhelperの生存とmount成立を待つ実装を運用側へ依頼する。直接SquashFS起動を採用する場合は、まずGPU job用のuser-local Enrootへpoll上限増加を適用してE2E確認する。
+
+同日の追加PJM job `6570665`と`6570674`では、元imageと同じ内容を別inodeへ複製し、CPU node `a0025`でLinux `mincore(2)`により計算nodeのページ常駐率が0%であることを確認してから直接起動した。この「計算nodeのページキャッシュがcold」の初回起動は2.447秒と1.924秒、直後の2回目は0.133秒と0.132秒だった。初回起動後に常駐したのは全12,718,784,512 byte中444 page、1,818,624 byte、0.0143%だけであり、3回目も0.134秒と0.136秒だった。image全体の順次readは2.794秒と2.762秒を要し、常駐率を100%にしたが、その後の起動は0.135秒と0.136秒で、初回起動だけで必要blockが温まった場合より速くならなかった。したがって起動短縮のために12.7 GB全体を事前readする必要はなく、同一nodeで一度直接起動するだけで十分である。なお新inodeは実験直前に共有Lustre上で作成したため、Lustre clientの当該inodeはcoldと実測できる一方、Lustre serverおよびstorage device側cacheのcoldまでは利用者権限で保証できない。
 
 ## dummy実行と計測境界
 

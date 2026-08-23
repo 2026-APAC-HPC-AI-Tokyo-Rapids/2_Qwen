@@ -37,7 +37,7 @@ on:
         default: false
         type: boolean
       require_build:
-        description: 既存成果物を再利用せず新しいOCIコンテナをビルドする
+        description: 既存成果物を再利用せず新しいコンテナをビルドする
         required: true
         default: false
         type: boolean
@@ -45,40 +45,57 @@ on:
 permissions:
   actions: read
   contents: read
+  id-token: write
 
 jobs:
   validate:
     name: 制御処理を検証
     uses: ./.github/workflows/validate.yml
 
+  container:
+    name: AWSでSquashFSを準備
+    needs: validate
+    if: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))) || (github.event_name == 'workflow_dispatch' && (inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)) }}
+    uses: ./.github/workflows/aws-container.yml
+    with:
+      require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
+    secrets: inherit
+
   genkai:
     name: 玄界
-    needs: validate
+    needs: [validate, container]
     if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:genkai]')) || (github.event_name == 'workflow_dispatch' && inputs.run_genkai) }}
     uses: ./.github/workflows/genkai.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
-      profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
-      require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
+      container_key: ${{ needs.container.outputs.container_key }}
+      container_sha256: ${{ needs.container.outputs.container_sha256 }}
+      container_size: ${{ needs.container.outputs.container_size }}
+      sidecar_key: ${{ needs.container.outputs.sidecar_key }}
     secrets: inherit
+
   aspire2ap:
     name: ASPIRE 2A+
-    needs: validate
+    needs: [validate, container]
     if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap) }}
     uses: ./.github/workflows/aspire2ap.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
-      profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
-      require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
+      container_key: ${{ needs.container.outputs.container_key }}
+      container_sha256: ${{ needs.container.outputs.container_sha256 }}
+      container_size: ${{ needs.container.outputs.container_size }}
+      sidecar_key: ${{ needs.container.outputs.sidecar_key }}
     secrets: inherit
 
   firmus:
     name: Firmus
-    needs: validate
+    needs: [validate, container]
     if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus) }}
     uses: ./.github/workflows/firmus.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
-      profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
-      require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
+      container_key: ${{ needs.container.outputs.container_key }}
+      container_sha256: ${{ needs.container.outputs.container_sha256 }}
+      container_size: ${{ needs.container.outputs.container_size }}
+      sidecar_key: ${{ needs.container.outputs.sidecar_key }}
     secrets: inherit
