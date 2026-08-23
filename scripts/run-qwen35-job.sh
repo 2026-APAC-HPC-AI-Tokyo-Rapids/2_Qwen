@@ -33,7 +33,7 @@ trap finish_run_lifecycle EXIT
 "${metrics_cli}" record-environment --manifest "${manifest}" --runtime-dir "${RUNTIME_DIR}" --scope runtime
 
 {
-  printf 'job_id=%s\n' "${PJM_JOBID:-${PBS_JOBID:-unknown}}"
+  printf 'job_id=%s\n' "${PJM_JOBID:-${PBS_JOBID:-${SLURM_JOB_ID:-unknown}}}"
   printf 'started_at=%s\n' "$(date -u +%FT%TZ)"
   printf 'container_image=%s\n' "${CONTAINER_IMAGE}"
   printf 'load_format=dummy\n'

@@ -51,7 +51,7 @@ test -x "${nvidia_hook}"
 sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${nvidia_hook}"
 grep -Fq -- '--ldconfig=/sbin/ldconfig' "${nvidia_hook}"
 if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh" ]]; then chmod -x "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh"; fi
-mapfile -t runtime_source_oids < <(ENROOT_SYSCONF_PATH="${runtime_dir}/enroot-system" enroot start -e NVIDIA_VISIBLE_DEVICES=void -e MELLANOX_VISIBLE_DEVICES=void "${CONTAINER_ARCHIVE}" cat /opt/sglang/offline-throughput-source-blob-oid.txt /opt/sglang/server-args-source-blob-oid.txt)
+runtime_source_oids=("$(unsquashfs -cat "${CONTAINER_ARCHIVE}" opt/sglang/offline-throughput-source-blob-oid.txt)" "$(unsquashfs -cat "${CONTAINER_ARCHIVE}" opt/sglang/server-args-source-blob-oid.txt)")
 [[ "${#runtime_source_oids[@]}" -eq 2 ]]
 [[ "${runtime_source_oids[0]}" =~ ^[0-9a-f]{40,64}$ && "${runtime_source_oids[1]}" =~ ^[0-9a-f]{40,64}$ ]]
 jq -n --arg bench_args_blob_oid "${runtime_source_oids[0]}" --arg server_args_blob_oid "${runtime_source_oids[1]}" '{schema_version:"qwen-runtime-source-oids/v1",bench_args_blob_oid:$bench_args_blob_oid,server_args_blob_oid:$server_args_blob_oid}' >"${runtime_dir}/source/runtime-source-oids.json"

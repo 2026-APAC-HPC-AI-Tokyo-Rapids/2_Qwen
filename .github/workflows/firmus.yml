@@ -1,4 +1,4 @@
-name: Firmus環境を検証
+name: FirmusでQwenを実行
 
 on:
   workflow_call:
@@ -14,80 +14,181 @@ on:
         type: boolean
 
 permissions:
+  actions: read
   contents: read
 
 env:
-  RUN_ROOT: /scratch/home/ACCOUNT/qwen-firmus-checks
+  BUILD_STORAGE_ROOT: /scratch/home/ACCOUNT/qwen/buildah
+  CONTAINER_ARCHIVE_DIR: /scratch/home/ACCOUNT/qwen/containers
+  DATASET_CACHE_ROOT: /scratch/home/ACCOUNT/qwen/datasets/ShareGPT_Vicuna_unfiltered
+  GIT_MIRROR_DIR: /scratch/home/ACCOUNT/qwen/git-mirror
+  MODEL_CACHE_ROOT: /scratch/home/ACCOUNT/qwen/models/Qwen3.5-397B-A17B-FP8-metadata
+  RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
 
 defaults:
   run:
     shell: bash --login -eo pipefail {0}
 
 jobs:
-  environment:
-    name: SlurmとQwen依存関係を検証
+  select-container:
+    name: OCIコンテナを選択
     runs-on: [self-hosted, firmus]
-    timeout-minutes: 10
+    timeout-minutes: 7200
+    outputs:
+      action: ${{ steps.select.outputs.action }}
+      source_run_id: ${{ steps.select.outputs.source_run_id }}
     steps:
-      - name: 検証用ファイルを取得
+      - name: ノード数を検証
+        run: "[[ '${{ inputs.node_count }}' =~ ^[12]$ ]]"
+
+      - name: リポジトリ履歴を取得
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 既存成果物の再利用または新規ビルドを選択
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRE_BUILD: ${{ inputs.require_build }}
+        run: '"${GITHUB_WORKSPACE}/scripts/select-qwen-container.sh"'
+
+  reuse-container:
+    name: OCIコンテナを再利用
+    needs: select-container
+    if: needs.select-container.outputs.action == 'reuse'
+    runs-on: [self-hosted, firmus]
+    timeout-minutes: 7200
+    steps:
+      - name: 選択した成果物をハードリンク
+        run: |
+          source_run_id='${{ needs.select-container.outputs.source_run_id }}'
+          ln -f -- "${CONTAINER_ARCHIVE_DIR}/${source_run_id}.sqsh" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
+          ln -f -- "${CONTAINER_ARCHIVE_DIR}/${source_run_id}.container-sidecar.json" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
+
+  build-container:
+    name: OCIコンテナをビルド
+    needs: select-container
+    if: needs.select-container.outputs.action == 'build'
+    runs-on: [self-hosted, firmus]
+    timeout-minutes: 7200
+    concurrency:
+      group: firmus-qwen-container-build
+    env:
+      BUILD_DIR: /var/tmp/qwen-sglang-container/run-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: ビルド入力を取得
         uses: actions/checkout@v7
 
-      - name: 検証領域を作成
-        id: prepare
-        run: |
-          [[ '${{ inputs.node_count }}' =~ ^[12]$ ]]
-          install -d -m 2775 "${RUN_ROOT}"
-          run_dir="$(mktemp -d "${RUN_ROOT}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
-          install -d "${run_dir}/logs" "${run_dir}/scripts"
-          install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/check-environment.slurm" "${run_dir}/scripts/check-environment.slurm"
-          printf 'run_dir=%s\n' "${run_dir}" >>"${GITHUB_OUTPUT}"
-
-      - name: ログイン環境を記録
+      - name: Buildah、Skopeo、Umociでコンテナを構築・保存
         env:
-          RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
-        run: |
-          module purge
-          module load nvhpc-hpcx-cuda13/26.5
-          printf 'node_count=%s\nprofile=%s\nrequire_build=%s\n' '${{ inputs.node_count }}' '${{ inputs.profile }}' '${{ inputs.require_build }}' >"${RUN_DIR}/logs/request.txt"
-          { hostname -f; systemd-detect-virt; df -hT "${HOME}" /scratch /tmp /dev/shm; sinfo -o '%P|%a|%l|%D|%G|%c|%m'; mpirun --version; ucx_info -v; nvcc --version; } >"${RUN_DIR}/logs/login-environment.log" 2>&1
+          GH_TOKEN: ${{ github.token }}
+        run: '"${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"'
 
-      - name: Slurm GPU環境を検証
-        id: slurm
+      - name: コンテナビルドログを保存
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen-firmus-container-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.BUILD_DIR }}/logs
+          if-no-files-found: warn
+          compression-level: 1
+
+      - name: コンテナビルド領域を削除
+        if: always()
+        run: chmod -R u+rwX "${BUILD_DIR}" 2>/dev/null || true; rm -rf -- "${BUILD_DIR:?}"
+
+  provision:
+    name: Enroot実行環境を配備
+    needs: [select-container, reuse-container, build-container]
+    if: ${{ always() && needs.select-container.result == 'success' && ((needs.select-container.outputs.action == 'reuse' && needs.reuse-container.result == 'success') || (needs.select-container.outputs.action == 'build' && needs.build-container.result == 'success')) }}
+    runs-on: [self-hosted, firmus]
+    timeout-minutes: 7200
+    outputs:
+      model_path: ${{ steps.provision.outputs.model_path }}
+      run_id: ${{ steps.provision.outputs.run_id }}
+      runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
+    steps:
+      - name: 実行用ファイルを取得
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: dummy model用メタデータ、ShareGPT、実行環境を配備
+        id: provision
         env:
-          RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
+          CLUSTER_NAME: firmus
+          CONTAINER_ARCHIVE: ${{ env.CONTAINER_ARCHIVE_DIR }}/${{ github.run_id }}.sqsh
+          CONTAINER_SIDECAR: ${{ env.CONTAINER_ARCHIVE_DIR }}/${{ github.run_id }}.container-sidecar.json
+          GPUS_PER_NODE: 8
+          NODE_COUNT: ${{ inputs.node_count }}
+          RESOURCE_GROUP: hpcai
+          RUN_PURPOSE: ${{ inputs.profile && 'profile' || 'bench' }}
         run: |
-          cd "${RUN_DIR}"
-          job_id="$(sbatch --parsable --nodes='${{ inputs.node_count }}' --ntasks='${{ inputs.node_count }}' --gpus-per-node=1 --export="ALL,FIRMUS_RUN_DIR=${RUN_DIR}" --output="${RUN_DIR}/logs/slurm-%j.log" "${RUN_DIR}/scripts/check-environment.slurm")"
+          export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
+          "${GITHUB_WORKSPACE}/scripts/provision-qwen-runtime.sh"
+          runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/run-qwen35.slurm" "${runtime_dir}/scripts/run-qwen35.slurm"
+
+      - name: 配備失敗時の実行環境を削除
+        if: failure() && steps.provision.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+        run: rm -rf -- "${RUNTIME_DIR:?}"
+
+  run:
+    name: Enrootでdummy modelを実行
+    needs: provision
+    if: always() && needs.provision.result == 'success'
+    runs-on: [self-hosted, firmus]
+    timeout-minutes: 7200
+    env:
+      MODEL_PATH: ${{ needs.provision.outputs.model_path }}
+      RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
+    steps:
+      - name: Slurmジョブを投入
+        id: submit
+        run: |
+          cd "${RUNTIME_DIR}"
+          variables="ALL,RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh,GPUS_PER_NODE=8"
+          job_id="$(sbatch --parsable --nodes='${{ inputs.node_count }}' --ntasks='${{ inputs.node_count }}' --gpus-per-node=8 --export="${variables}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --job-name=qwen35_dummy "${RUNTIME_DIR}/scripts/run-qwen35.slurm")"
           [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
-          while squeue --noheader --jobs="${job_id}" | grep -q .; do sleep 2; done
-          sacct --allocations --jobs="${job_id}" --noheader --parsable2 --format=JobID,State,ExitCode,Elapsed,AllocNodes >"${RUN_DIR}/logs/slurm-accounting.txt"
-          cat "${RUN_DIR}/logs/slurm-accounting.txt"
-          state="$(awk -F'|' -v job_id="${job_id}" '$1 == job_id {print $2}' "${RUN_DIR}/logs/slurm-accounting.txt")"
-          test "${state}" = COMPLETED
 
-      - name: Qwen E2Eの不足依存を判定
-        env:
-          RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
+      - name: Slurmジョブの終了を待機
         run: |
-          missing=()
-          for command_name in buildah skopeo umoci uv uvx; do if ! command -v "${command_name}" >/dev/null; then missing+=("${command_name}"); fi; done
-          if ! enroot version >/dev/null 2>&1; then missing+=(enroot-runtime); fi
-          printf '%s\n' "${missing[@]}" | tee "${RUN_DIR}/logs/missing-qwen-dependencies.txt"
-          test "${#missing[@]}" -eq 0
+          while squeue --noheader --jobs="${SLURM_JOB_ID}" | grep -q .; do sleep 5; done
+          sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State,ExitCode,Elapsed,AllocNodes >"${RUNTIME_DIR}/logs/slurm-accounting.txt"
+          cat "${RUNTIME_DIR}/logs/slurm-accounting.txt"
+          if [[ -e "${RUNTIME_DIR}/logs/slurm-${SLURM_JOB_ID}.log" ]]; then cat "${RUNTIME_DIR}/logs/slurm-${SLURM_JOB_ID}.log"; fi
+          state="$(awk -F'|' -v job_id="${SLURM_JOB_ID}" '$1 == job_id {print $2}' "${RUNTIME_DIR}/logs/slurm-accounting.txt")"
+          exit_code="$(awk -F'|' -v job_id="${SLURM_JOB_ID}" '$1 == job_id {print $3}' "${RUNTIME_DIR}/logs/slurm-accounting.txt")"
+          test "${state}" = COMPLETED
+          test "${exit_code}" = 0:0
+          test -e "${RUNTIME_DIR}/run-success"
 
-      - name: 環境検証ログを保存
-        if: always() && steps.prepare.outputs.run_dir != ''
+      - name: ログインrunnerから計測断片を送信
+        env:
+          METRICS_CREDENTIAL_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
+        run: '"${RUNTIME_DIR}/scripts/send-qwen-fragments.sh"'
+
+      - name: 公式形式で実行成果物を梱包
+        if: always() && steps.submit.outputs.job_id != ''
+        run: '"${RUNTIME_DIR}/scripts/package-qwen-runtime.sh"'
+
+      - name: 固定構成の成果物を保存
+        if: always() && steps.submit.outputs.job_id != ''
         uses: actions/upload-artifact@v7
         with:
-          name: qwen-firmus-environment-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.prepare.outputs.run_dir }}/logs
+          name: qwen-firmus-dummy-${{ needs.provision.outputs.run_id }}
+          path: |
+            ${{ env.RUNTIME_DIR }}/run-artifacts.tar.zst
+            ${{ env.RUNTIME_DIR }}/artifact-manifest.json
+            ${{ env.RUNTIME_DIR }}/profile-raw.tar.zst
           if-no-files-found: error
-          compression-level: 1
+          compression-level: 0
 
-      - name: 検証領域を削除
-        if: always() && steps.prepare.outputs.run_dir != ''
-        env:
-          RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
-        run: if [[ -n "${SLURM_JOB_ID:-}" ]] && squeue --noheader --jobs="${SLURM_JOB_ID}" | grep -q .; then scancel "${SLURM_JOB_ID}"; fi; rm -rf -- "${RUN_DIR:?}"
+      - name: 実行環境を削除
+        if: always()
+        run: if [[ -n "${SLURM_JOB_ID:-}" ]] && squeue --noheader --jobs="${SLURM_JOB_ID}" | grep -q .; then scancel "${SLURM_JOB_ID}"; fi; rm -rf -- "${RUNTIME_DIR:?}"

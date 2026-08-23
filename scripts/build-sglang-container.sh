@@ -20,7 +20,7 @@ archive="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
 sidecar_archive="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
 archive_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.sqsh.${GITHUB_RUN_ATTEMPT}.tmp"
 sidecar_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.container-sidecar.json.${GITHUB_RUN_ATTEMPT}.tmp"
-storage_root="/var/tmp/apac-qwen-buildah-$(id -u)"
+storage_root="${BUILD_STORAGE_ROOT:-/var/tmp/apac-qwen-buildah-$(id -u)}"
 squashfs_work="/var/tmp/apac-qwen-sglang-$(id -u)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sqsh"
 run_root="${BUILD_DIR}/runroot"
 context="${BUILD_DIR}/context"
@@ -44,7 +44,7 @@ rm -rf -- "${BUILD_DIR:?}"
 rm -f -- "${squashfs_work}"
 install -d -m 2775 "${BUILD_DIR}" "${BUILD_DIR}/logs" "${context}/containers" "${context}/patches" "${context}/sglang-project-metadata/python" "${CONTAINER_ARCHIVE_DIR}" "${storage_root}"
 storage_fstype="$(stat -f -c '%T' "${storage_root}")"
-case "${storage_fstype}" in lustre|nfs|nfs4) printf 'Buildah cache must be on a node-local filesystem, not %s: %s\n' "${storage_fstype}" "${storage_root}" >&2; exit 1;; esac
+case "${storage_fstype}" in lustre|nfs|nfs4) printf 'Unsupported Buildah cache filesystem %s: %s\n' "${storage_fstype}" "${storage_root}" >&2; exit 1;; esac
 
 if [[ -d "${GIT_MIRROR_DIR}/5_SGLang_Src.git" ]]; then git clone --reference-if-able "${GIT_MIRROR_DIR}/5_SGLang_Src.git" --no-checkout "${GIT_MIRROR_DIR}/5_SGLang_Src.git" "${source_dir}"; else gh repo clone 2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src "${source_dir}" -- --no-checkout; fi
 git -C "${source_dir}" checkout --detach main
