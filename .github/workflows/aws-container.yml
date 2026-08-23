@@ -179,7 +179,7 @@ jobs:
           ready=false
           for _ in $(seq 1 120); do ping="$(aws ssm describe-instance-information --region "${AWS_REGION}" --filters "Key=InstanceIds,Values=${instance_id}" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)"; if [[ "${ping}" == Online ]]; then ready=true; break; fi; sleep 5; done
           [[ "${ready}" == true ]]
-          build_command="while [ ! -e /var/lib/qwen-build-bootstrap-status ]; do sleep 5; done; cat /var/log/qwen-build-bootstrap.log; test -e /var/lib/qwen-build-ready; aws s3 cp s3://${CONTAINER_BUCKET}/${input_prefix}/run-build-instance.sh /tmp/run-build-instance.sh --only-show-errors; chmod 0755 /tmp/run-build-instance.sh; /tmp/run-build-instance.sh ${CONTAINER_BUCKET} ${input_key} ${output_prefix} ${GITHUB_RUN_ID} ${GITHUB_RUN_ATTEMPT} ${GITHUB_SHA} ${BUILD_CACHE_REPOSITORY}"
+          build_command="set -eu; while [ ! -e /var/lib/qwen-build-bootstrap-status ]; do sleep 5; done; cat /var/log/qwen-build-bootstrap.log; test -e /var/lib/qwen-build-ready; aws s3 cp s3://${CONTAINER_BUCKET}/${input_prefix}/run-build-instance.sh /tmp/run-build-instance.sh --only-show-errors; chmod 0755 /tmp/run-build-instance.sh; /tmp/run-build-instance.sh ${CONTAINER_BUCKET} ${input_key} ${output_prefix} ${GITHUB_RUN_ID} ${GITHUB_RUN_ATTEMPT} ${GITHUB_SHA} ${BUILD_CACHE_REPOSITORY}"
           parameters="$(jq -cn --arg command "${build_command}" '{commands:[$command]}')"
           command_id="$(aws ssm send-command --region "${AWS_REGION}" --instance-ids "${instance_id}" --document-name AWS-RunShellScript --parameters "${parameters}" --timeout-seconds 21000 --query Command.CommandId --output text)"
           command_status=Pending

@@ -106,8 +106,10 @@ def test_aws_builder_is_ephemeral_and_clusters_always_download_direct_image() ->
     assert '"VolumeSize":300' in aws_workflow
     assert '"Iops":6000' in aws_workflow and '"Throughput":500' in aws_workflow
     assert "--instance-initiated-shutdown-behavior terminate" in aws_workflow
+    assert 'build_command="set -eu;' in aws_workflow
     assert "ec2 terminate-instances" in aws_workflow
     assert "systemd-run --unit=qwen-build-expiration --on-active=6h" in (ROOT / "aws/ec2-user-data.sh").read_text(encoding="utf-8")
+    assert "awscli-exe-linux-x86_64.zip" in (ROOT / "aws/ec2-user-data.sh").read_text(encoding="utf-8")
     assert "BlockPublicPolicy: true" in infrastructure
     assert "generate_presigned_url" in provision
     assert provision.count("curl --fail") == 2
