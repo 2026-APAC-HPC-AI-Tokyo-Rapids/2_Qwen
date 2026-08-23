@@ -25,9 +25,17 @@ AWS workflowはbuild/reuseとS3公開を、クラスタworkflowは毎回のdownl
 
 run directoryへ置くscriptはprovision時のcommitからsnapshotする。このため、workflowを待機している間にrepository側を更新しても投入済みjobの実装は変化せず、各runのコード来歴をcommitへ固定できる。
 
+## AWS配布と実imageのE2E確認
+
+Actions run `32661356215`はAWS上でcold buildを実行し、instance稼働1,556秒で12,718,911,488 byteのSquashFSを作成した。このimageをS3から取得した玄界PJM job `6571584`とFirmus Slurm job `12847`は、共有filesystem上の`.sqsh`をEnrootで直接起動し、どちらも`CUDA available: True`まで到達した。当時のActions失敗は`check_env`がGPU IDを`GPU 0,1,...`とまとめて出力することを旧assertionが受理しなかった後段判定であり、Enroot起動の失敗ではない。
+
+Actions run `32663724386`はwarm buildを実行し、28 step中2から23までECR cache hit、instance稼働869秒となった。生成物は12,718,911,488 byte、SHA-256 `4149856aa250add011ef671eec4ebf3efd45c1bd91e204718e229a3be80c5cfc`で、玄界の再利用archiveへ保存した。PJM job `6571616`はH100を検出してcheck_envとworkflow cleanupまで成功した。Actions run `32665044917`はこのローカル成果物を再利用し、EC2 buildを省略しつつS3へ再公開し、玄界へ改めて1分45秒でdownloadした。PJM job `6571620`もH100、CUDA、直接SquashFS起動、cleanupを含めworkflow全体が成功した。これにより、`[require-build]`なしのローカル再利用と、実行時の無条件な再downloadが両立することを確認した。
+
+Actions run `32665563155`のFirmus Slurm job `12867`は24秒で`COMPLETED (0:0)`となり、8基のNVIDIA H200、CUDA available、NVIDIA topology、`run-success`を確認した。このrunもローカル成果物を再利用しつつ、FirmusがS3 APIでSquashFSを毎回downloadした後の直接Enroot起動である。
+
 ## クラスタ差
 
-玄界はdownload先と実行領域を`/fast/PROJECT/sglang-runs`へ置き、`b-batch`の1 GPU nodeで確認する。ASPIRE 2A+は`/scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs`へ置き、project `59010014`から1 GPU、8 CPU、32 GBを`place=scatter:excl`で要求する。サイトは実際の最小割当を14 CPU、235 GBへ正規化する。非exclusiveを試したPBS job `204056.pbs111`と`204057.pbs111`は、部分使用中の同じnode `a2ap-dgx035`へ割当後、script本体を一度も実行せず`resources_used.walltime=0`、`Exit_status=-2`、`Stageout_status=1`で終了したため採用しない。Firmusは`/scratch/home/ACCOUNT/qwen/runs`へ置き、`hpcai` partitionで1 GPU、8 CPU、32 GB、17分を要求する。これはmodelを取得しない環境確認用の最小要求であり、実benchmarkでは各siteのnode全体を割り当てるruntime adapterへ接続し直してE2E検証する。
+玄界はdownload先と実行領域を`/fast/PROJECT/sglang-runs`へ置き、`b-batch`の1 GPU nodeで確認する。ASPIRE 2A+は`/scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs`へ置き、project `59010014`から各node 112 CPU、8 GPU、1500 GBを`place=scatter:excl`で要求する。1 GPU、8 CPU、32 GBの非exclusive配置を試したPBS job `204056.pbs111`と`204057.pbs111`は、部分使用中の同じnode `a2ap-dgx035`へ割当後、script本体を一度も実行せず`resources_used.walltime=0`、`Exit_status=-2`、`Stageout_status=1`で終了したため採用しない。小さなexclusive要求もsite側で14 CPU、235 GBのsmall poolへ正規化され、空きnode待ちとなった。従来成功済みで実benchmarkの割当てとも一致するDGX全体要求を使う。Firmusは`/scratch/home/ACCOUNT/qwen/runs`へ置き、`hpcai` partitionで1 GPU、8 CPU、32 GB、17分を要求する。これはmodelを取得しない環境確認用の要求であり、実benchmarkでは各siteのnode全体を割り当てるruntime adapterへ接続し直してE2E検証する。
 
 ## 従来のクラスタ内ビルドとGPU dummy実行の記録
 
