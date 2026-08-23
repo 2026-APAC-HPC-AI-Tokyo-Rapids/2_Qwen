@@ -11,3 +11,5 @@ login containerの`/dev/shm`は63 MiBしかなく、`/var/tmp`の空きも約184
 FirmusのユーザーランドにはBuildah 1.43.2、Skopeo 1.24.0、Umoci 0.6.0、Enroot 4.2.0、uv/uvx 0.12.5がある。login containerにはSquashFUSEと`nvidia-container-cli`がないが、provision時のsource OIDは`unsquashfs -cat`で読み、Enrootは計算ノードだけで使うためSquashFUSEは要求しない。`nvidia-container-cli`は計算ノードにあり、runへ複製したEnroot NVIDIA hookから利用する。
 
 Slurm job `12613`では、`nvhpc-hpcx-cuda13/26.5`のOpen MPI 5.0.10rc2、node-local一時領域、Enroot `create/start`、NVIDIA hookを同じ境界で検証し、H200とdriver 610.57.04をcontainer内から認識して10秒、exit code 0で完了した。これを根拠に`[cluster:firmus]`を共通のbuild、provision、benchmark、fragment送信、公式artifact回収経路へ接続する。
+
+初回Actions run `32620606416` attempt 2ではbase imageと約350 packageのtoolchain導入後、同じlayer末尾のRust導入だけが一時的DNS失敗`Could not resolve host: sh.rustup.rs`で終了した。直後に同hostの名前解決とHTTPS 200を確認したため、損失の大きい実測箇所に限りcurlを3回、2秒間隔、全転送error対象で再試行する。

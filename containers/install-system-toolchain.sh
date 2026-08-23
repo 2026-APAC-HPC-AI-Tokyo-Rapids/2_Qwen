@@ -17,7 +17,7 @@ install -m 0755 /root/.local/bin/uv /root/.local/bin/uvx /usr/local/bin/
 
 export RUSTUP_HOME=/opt/rustup
 export CARGO_HOME=/opt/cargo
-curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0
+curl --proto '=https' --tlsv1.2 --retry 3 --retry-all-errors --retry-delay 2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0
 
 rm -rf /var/lib/apt/lists/* /root/.cache
 install -d -m 0755 /root/.cache /var/tmp/sglang-build /opt/sglang
