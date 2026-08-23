@@ -4,9 +4,11 @@
 
 GitHub Actionsのhosted runnerは制御と小さなsource archiveの作成だけを行う。新規buildが必要な場合、Singapore (`ap-southeast-1`) のdefault public subnetへ`m7i.2xlarge`を1台起動し、SSM経由でbuildを実行する。instanceは8 vCPU、32 GiB RAM、300 GiB gp3 root volume（6,000 IOPS、500 MiB/s）を持ち、inbound portとSSH keyは持たない。
 
-AWS VMではrootを使用し、Buildah `chroot` isolationとOverlayFSでcold buildする。VFS、fakeroot、user namespace向けownership緩和は使わない。OCI layoutはSkopeo copyとUmoci statで検証し、Buildahでmountした同じroot filesystemを8 worker、8 GiB cacheの`mksquashfs`で圧縮する。32 GiB RAMでは展開rootfs約26.6 GBに加えてlayer、OCI layout、圧縮入出力の全てをtmpfsへ同時保持できないため、全RAM buildではなく高速gp3を使う。
+AWS VMではrootを使用し、Buildah `chroot` isolationとOverlayFSでbuildする。VFS、fakeroot、user namespace向けownership緩和は使わない。OCI layoutはSkopeo copyとUmoci statで検証し、Buildahでmountした同じroot filesystemを8 worker、8 GiB cacheの`mksquashfs`で圧縮する。32 GiB RAMでは展開rootfs約26.6 GBに加えてlayer、OCI layout、圧縮入出力の全てをtmpfsへ同時保持できないため、全RAM buildではなく高速gp3を使う。
 
-instanceはbuild成功時にActionsがterminateし、失敗時にもtrapでterminateする。さらにinstance内に6時間後のshutdownを登録し、Actions runner自体が消失した場合の上限を設ける。root EBS volumeは`DeleteOnTermination=true`であり、VMとEBSの常時課金はない。S3のinputは1日、build logは30日で期限切れになる。再利用対象のSquashFSとsidecarだけは期限を設けずに残す。
+instanceはbuild成功時にActionsがterminateし、失敗時にもtrapでterminateする。さらにinstance内に6時間後のshutdownを登録し、Actions runner自体が消失した場合の上限を設ける。root EBS volumeは`DeleteOnTermination=true`であり、VMとEBSの常時課金はない。S3のinputとクラスタ配布用SquashFSは1日、build logは30日で期限切れになる。再利用対象のSquashFSとsidecarの正本は玄界の`/home/ACCOUNT/share/sglang-containers`へrun ID名で保存する。
+
+新規buildではprivate ECRの`apac-qwen-build-cache`をBuildahの`--cache-from`と`--cache-to`へ指定し、変更されていない中間layerをVM間で再利用する。repositoryは最新64 imageだけを残すlifecycle policyを持つ。EBSを常設せず、実際に保存された圧縮layer分だけを課金対象にするため、300 GiB gp3を保持する方式より安い。cacheがない初回buildはcold buildとなり、以後の`[require-build]`でtoolchainやPython dependency layerが一致するときだけ短縮される。完成SquashFSの再利用判定とは独立している。
 
 ## 費用の目安
 
@@ -22,6 +24,6 @@ workflowはinstanceの実際のlaunch時刻から終了後までを秒で測り�
 
 CloudFormation template `aws/qwen-build-infrastructure.yml`はprivate S3 bucket、egress-only security group、EC2 instance profile、GitHub OIDC provider、Actions roleを作る。Actions roleは対象repositoryだけをtrustし、build用instanceの起動・終了、SSM command、対象bucketの操作だけを許可する。privateなSGLang sourceは、そのrepository自身のworkflowが管理する玄界上のread-only bare mirrorからQwen workflowが入力archiveへ複製する。消費側repositoryからsource repositoryへ書き込まず、広いPATや無効化されているdeploy keyに依存しない。
 
-玄界、ASPIRE 2A+、Firmusの各self-hosted runnerも同じOIDC roleを一時的にassumeする。sidecarとSquashFSごとに有効期間1時間のpresigned GET URLを実行直前に生成し、`curl`でrun固有directoryへ毎回downloadする。URLとAWS資格情報はscheduler jobへ渡さず、計算ノードへ渡すのはdownload済み`.sqsh`、run固有Enroot設定、実行scriptだけである。
+玄界、ASPIRE 2A+、Firmusの各self-hosted runnerも同じOIDC roleを一時的にassumeする。ログインノードへAWS CLIは導入せず、uploadとpresignは一時資格情報を使うBoto3 APIで行う。sidecarとSquashFSごとに有効期間1時間のpresigned GET URLを実行直前に生成し、`curl`でrun固有directoryへ毎回downloadする。URLとAWS資格情報はscheduler jobへ渡さず、計算ノードへ渡すのはdownload済み`.sqsh`、run固有Enroot設定、実行scriptだけである。
 
-`[require-build]`が最新commit messageの先頭にある場合は必ず新規buildする。それ以外では第一親履歴を遡り、sidecarのsource commit、S3 object size、SHA-256 metadataが一致する最近傍の成果物を再利用する。クラスタタグがないpushは静的検証だけを行い、AWS資源を起動しない。
+`[require-build]`が最新commit messageの先頭にある場合は必ず新規buildする。それ以外では第一親履歴を遡り、過去の成功runと対応する玄界ローカルのSquashFSについてsidecar、file size、SHA-256が一致する最近傍の成果物を再利用する。選んだローカル成果物は現在run IDへハードリンクしてから一時S3 objectとしてuploadするため、各クラスタ側のdownloadは省略しない。クラスタタグがないpushは静的検証だけを行い、AWS資源を起動しない。

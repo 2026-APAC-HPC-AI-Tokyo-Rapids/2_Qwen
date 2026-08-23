@@ -89,8 +89,9 @@ def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
         assert "select-qwen-container.sh" not in workflow
         assert "build-sglang-container.sh" not in workflow
         assert "provision-qwen-check-env.sh" in workflow
-    assert 'git rev-parse "${commit}^"' in selector
-    assert "size_bytes" in selector and "Metadata.sha256" in selector
+    assert 'git rev-parse --verify "${commit}^"' in selector
+    assert "size_bytes" in selector and "sha256sum" in selector
+    assert "CONTAINER_ARCHIVE_DIR" in selector
     assert "gh run view" not in selector
     assert "inventory" not in selector
     assert "enroot start" not in selector
@@ -111,7 +112,8 @@ def test_aws_builder_is_ephemeral_and_clusters_always_download_direct_image() ->
     assert "generate_presigned_url" in provision
     assert provision.count("curl --fail") == 2
     assert 'downloaded:true,enroot_direct_squashfs:true' in provision
-    assert 'enroot start -e NVIDIA_VISIBLE_DEVICES=void' in check
+    assert 'enroot start -e NVIDIA_VISIBLE_DEVICES=all' in check
+    assert "CUDA available: True" in check
     assert "enroot create" not in check and "unsquashfs" not in check
 
 
@@ -280,10 +282,10 @@ def test_firmus_uses_shared_beegfs_and_compute_local_enroot() -> None:
     assert '"${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"' in workflow
     assert "CLUSTER_NAME: firmus" in workflow
     assert "sbatch --parsable" in workflow
-    assert "--gpus-per-node" not in workflow
+    assert "--gpus-per-node=1" in workflow
     assert "sacct --allocations" in workflow
-    assert "#SBATCH --partition=shared" in script
-    assert "#SBATCH --time=00:20:00" in script
+    assert "#SBATCH --partition=hpcai" in script
+    assert "#SBATCH --time=00:17:00" in script
     assert 'exec "${RUNTIME_DIR}/scripts/run-qwen-check-env.sh"' in script
     assert "GOOGLE_CREDENTIAL" not in script
     assert "BIGQUERY" not in script

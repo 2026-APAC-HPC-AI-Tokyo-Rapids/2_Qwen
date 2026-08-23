@@ -7,12 +7,14 @@ output_prefix=$3
 github_run_id=$4
 github_run_attempt=$5
 github_sha=$6
+cache_repository=$7
 build_root=/opt/qwen-build
 input_archive="${build_root}/input.tar.zst"
 logs_archive="${build_root}/build-logs.tar.zst"
 
 [[ "${bucket}" =~ ^[a-z0-9.-]+$ && "${input_key}" == inputs/* && "${output_prefix}" == containers/* ]]
 [[ "${github_run_id}" =~ ^[1-9][0-9]*$ && "${github_run_attempt}" =~ ^[1-9][0-9]*$ && "${github_sha}" =~ ^[0-9a-f]{40,64}$ ]]
+[[ "${cache_repository}" =~ ^[0-9]+[.]dkr[.]ecr[.][a-z0-9-]+[.]amazonaws[.]com/[a-z0-9._/-]+$ ]]
 
 cleanup() {
   status=$?
@@ -35,6 +37,10 @@ export GITHUB_RUN_ID="${github_run_id}"
 export GITHUB_SHA="${github_sha}"
 export GITHUB_WORKSPACE="${build_root}/input/qwen"
 export GIT_MIRROR_DIR="${build_root}/input/git-mirror"
+export BUILD_CACHE_REPOSITORY="${cache_repository}"
+cache_registry="${cache_repository%%/*}"
+cache_region="$(cut -d. -f4 <<<"${cache_registry}")"
+aws ecr get-login-password --region "${cache_region}" | buildah login --username AWS --password-stdin "${cache_registry}"
 "${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"
 
 image="${CONTAINER_ARCHIVE_DIR}/${github_run_id}.sqsh"

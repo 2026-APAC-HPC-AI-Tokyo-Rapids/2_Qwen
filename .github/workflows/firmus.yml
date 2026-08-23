@@ -78,7 +78,7 @@ jobs:
         run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
-    name: CPUノードでEnroot check_envを実行
+    name: GPUノードでEnroot check_envを実行
     needs: provision
     runs-on: [self-hosted, firmus]
     timeout-minutes: 180
@@ -90,7 +90,7 @@ jobs:
         run: |
           cd "${RUNTIME_DIR}"
           variables="ALL,RUNTIME_DIR=${RUNTIME_DIR},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh"
-          job_id="$(sbatch --parsable --nodes='${{ inputs.node_count }}' --ntasks=1 --export="${variables}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --job-name=qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.slurm")"
+          job_id="$(sbatch --parsable --nodes='${{ inputs.node_count }}' --ntasks=1 --gpus-per-node=1 --export="${variables}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --job-name=qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.slurm")"
           [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
