@@ -271,7 +271,8 @@ def test_aspire_uses_authorized_budget_project_and_default_routing() -> None:
     assert "/opt/pbs/bin/qsub -P 59010014" in submit
     assert submit.index('cd "${RUNTIME_DIR}"') < submit.index("/opt/pbs/bin/qsub ")
     assert "-q aiq2" not in submit
-    assert "-l place=scatter " in submit and "scatter:excl" not in submit
+    assert "ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1" in submit
+    assert "-l place=scatter:excl " in submit
     assert 'cat "${RUNTIME_DIR}/logs/pbs-accounting.txt"' in workflow
     assert 'cat "${RUNTIME_DIR}/logs/pbs.log"' in workflow
 
