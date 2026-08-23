@@ -17,6 +17,11 @@ on:
         required: true
         default: true
         type: boolean
+      run_firmus:
+        description: Firmusで実行する
+        required: true
+        default: true
+        type: boolean
       node_count:
         description: 実行ノード数
         required: true
@@ -61,6 +66,17 @@ jobs:
     needs: validate
     if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap) }}
     uses: ./.github/workflows/aspire2ap.yml
+    with:
+      node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
+      profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
+      require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
+    secrets: inherit
+
+  firmus:
+    name: Firmus
+    needs: validate
+    if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus) }}
+    uses: ./.github/workflows/firmus.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
       profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
