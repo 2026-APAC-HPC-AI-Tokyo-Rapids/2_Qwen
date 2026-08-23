@@ -1,4 +1,6 @@
-# Genkai における SGLang SIF ビルドの調査記録
+# Genkai における SGLang SIF ビルドの調査記録（旧構成）
+
+この記録はOCI / Enroot移行前の履歴である。現行構成は [OCI / Enroot移行記録](../container-runtime-migration.md) を参照する。
 
 このディレクトリは、Qwen 3.5 benchmark に使う SGLang 環境を再現可能な SIF として構築し、ビルド時間を必要な場合だけ負担するための設計を記録する。
 

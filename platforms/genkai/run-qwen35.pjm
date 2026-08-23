@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#PJM -L rscgrp=b-batch
+#PJM -L elapse=01:00:00
+#PJM -L jobenv=singularity
+
+set -euo pipefail
+source "${HOME}/.local/.setenv"
+module purge
+module load nvidia/25.11
+module load nvhpcx/2.25.1-cuda13.0
+module load cuda/13.2.0
+exec "${RUNTIME_DIR}/scripts/run-qwen35-job.sh"

@@ -31,7 +31,6 @@ class Recorder:
         self.completed_path = completed_path
         self._stream = stream
         self._closed = False
-        self._rows: list[dict[str, str]] = []
 
     @classmethod
     def open(
@@ -83,9 +82,6 @@ class Recorder:
         self._stream.write(
             fact_row_bytes(self.manifest.run_id, fact.key, encoded) + b"\n"
         )
-        self._rows.append(
-            {"run": self.manifest.run_id, "key": fact.key, "value": encoded}
-        )
 
     def record_many(self, facts: object) -> None:
         for fact in facts:  # type: ignore[union-attr]
@@ -100,10 +96,6 @@ class Recorder:
         self._stream.close()
         os.replace(self.temporary_path, self.completed_path)
         self._closed = True
-        if os.environ.get("EXPERIMENT_METRICS_DIRECT_SEND") == "1":
-            from .publish import send_raw
-
-            send_raw(self.manifest.run_id, self._rows)
         return self.completed_path
 
     def abort(self) -> Path:

@@ -155,10 +155,10 @@ def parser() -> argparse.ArgumentParser:
     topology.add_argument("--local-rank", type=int, required=True)
     topology.add_argument("--size", type=int, required=True)
     topology.add_argument("--node-wrapper-argv", type=Path, required=True)
-    topology.add_argument("--singularity-argv", type=Path, required=True)
+    topology.add_argument("--container-argv", type=Path, required=True)
     topology.add_argument("--sglang-argv", type=Path, required=True)
-    topology.add_argument("--singularity-launcher", type=Path, required=True)
-    topology.add_argument("--sif", type=Path, required=True)
+    topology.add_argument("--container-launcher", type=Path, required=True)
+    topology.add_argument("--container-target", type=str, required=True)
 
     workload = commands.add_parser("record-workload")
     _common_runtime_arguments(workload)
@@ -173,15 +173,6 @@ def parser() -> argparse.ArgumentParser:
     lifecycle_control = commands.add_parser("record-lifecycle-control")
     _common_runtime_arguments(lifecycle_control)
 
-    sif_sidecar = commands.add_parser("create-sif-sidecar")
-    sif_sidecar.add_argument("--workspace", type=Path, required=True)
-    sif_sidecar.add_argument("--sglang-source", type=Path, required=True)
-    sif_sidecar.add_argument("--sif", type=Path, required=True)
-    sif_sidecar.add_argument("--base-oci", type=Path, required=True)
-    sif_sidecar.add_argument("--embedded-manifest", type=Path, required=True)
-    sif_sidecar.add_argument("--runtime-inventory", type=Path, required=True)
-    sif_sidecar.add_argument("--output", type=Path, required=True)
-
     package = commands.add_parser("package")
     _common_runtime_arguments(package)
     package.add_argument(
@@ -195,6 +186,10 @@ def parser() -> argparse.ArgumentParser:
     smoke = commands.add_parser("smoke-send")
     smoke.add_argument("--run", required=True)
     smoke.add_argument("--source", choices=["runner", "compute"], required=True)
+
+    send_fragments = commands.add_parser("send-fragments")
+    send_fragments.add_argument("--run", required=True)
+    send_fragments.add_argument("--runtime-dir", type=Path, required=True)
 
     return root
 
@@ -249,8 +244,6 @@ def main(argv: list[str] | None = None) -> int:
         return _record_node_lifecycle(arguments)
     if arguments.action == "record-lifecycle-control":
         return _record_lifecycle_control(arguments)
-    if arguments.action == "create-sif-sidecar":
-        return _create_sif_sidecar(arguments)
     if arguments.action == "package":
         return _package(arguments)
     if arguments.action == "smoke-send":
@@ -270,6 +263,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             else 1
         )
+    if arguments.action == "send-fragments":
+        from .publish import send_fragments
+
+        return 0 if send_fragments(arguments.run, arguments.runtime_dir) else 1
     raise AssertionError(arguments.action)
 
 
@@ -750,10 +747,10 @@ def _capture_topology(arguments: argparse.Namespace) -> int:
         local_rank=arguments.local_rank,
         size=arguments.size,
         node_wrapper_argv=argv(arguments.node_wrapper_argv),
-        singularity_argv=argv(arguments.singularity_argv),
+        container_argv=argv(arguments.container_argv),
         sglang_argv=argv(arguments.sglang_argv),
-        singularity_launcher=arguments.singularity_launcher,
-        sif=arguments.sif,
+        container_launcher=arguments.container_launcher,
+        container_target=arguments.container_target,
     )
     facts = validate_node_topology(
         path,
@@ -772,15 +769,9 @@ def _capture_topology(arguments: argparse.Namespace) -> int:
 
 
 def _record_workload(arguments: argparse.Namespace) -> int:
-    import hashlib
-
     from .workload import validate_ordered_workload
 
-    dataset = arguments.runtime_dir / "source/dataset-manifest.json"
-    identity = hashlib.sha256(dataset.read_bytes()).hexdigest()
-    facts = validate_ordered_workload(
-        arguments.source, kind=arguments.kind, dataset_manifest_sha256=identity
-    )
+    facts = validate_ordered_workload(arguments.source, kind=arguments.kind)
     with Recorder.open(
         arguments.manifest,
         arguments.registry,
@@ -835,25 +826,6 @@ def _record_lifecycle_control(arguments: argparse.Namespace) -> int:
         arguments.runtime_dir,
     ) as recorder:
         recorder.record_many(facts)
-    return 0
-
-
-def _create_sif_sidecar(arguments: argparse.Namespace) -> int:
-    from .sources import create_sif_sidecar
-
-    print(
-        str(
-            create_sif_sidecar(
-                workspace=arguments.workspace,
-                sglang_source=arguments.sglang_source,
-                sif=arguments.sif,
-                base_oci=arguments.base_oci,
-                embedded_manifest=arguments.embedded_manifest,
-                runtime_inventory=arguments.runtime_inventory,
-                output=arguments.output,
-            )
-        )
-    )
     return 0
 
 

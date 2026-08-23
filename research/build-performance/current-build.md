@@ -1,4 +1,6 @@
-# 現在の SGLang SIF ビルド構成
+# 旧SGLang SIFビルド構成
+
+この文書はOCI / Enroot移行前の正本を履歴として残したものである。現行構成は [OCI / Enroot移行記録](../container-runtime-migration.md) を参照する。
 
 ここでいう「現在」は `main` の [Genkai workflow](../../.github/workflows/genkai.yml)、[build script](../../scripts/build-sglang-sif.sh)、[SIF recipe](../../containers/sglang.def) を指す。
 

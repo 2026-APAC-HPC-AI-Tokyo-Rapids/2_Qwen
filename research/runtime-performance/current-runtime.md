@@ -1,4 +1,6 @@
-# 現在の Qwen 3.5 実行構成
+# 旧Qwen 3.5 runtime構成
+
+この文書はOCI / Enroot移行前の正本を履歴として残したものである。現行構成は [OCI / Enroot移行記録](../container-runtime-migration.md) を参照する。
 
 ここでいう「現在」は `main` の [Genkai workflow](../../.github/workflows/genkai.yml) と [PJM script](../../scripts/run-qwen35.pjm) を指す。
 
@@ -43,7 +45,7 @@ PJM script は NVIDIA HPC SDK 25.11、HPC-X 2.25.1、CUDA 13.2.0、Singularity C
 
 - model: `/model:ro`
 - dataset の単一 JSON: `/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro`
-- node-local JIT cache: `/jit-cache` と `/root/.cache`
+- node-local disk上のwritable homeとJIT cache: `/runtime-home` と `/jit-cache`
 - 今回の result directory: `/output`
 
 Hugging Face、Transformers、Datasets は offline mode にする。GPU architecture や device を必要とする Triton、DeepGEMM などの JIT は計算ノード側だけで実行する。推論引数は環境変数ではなく、PJM script 内の command として版管理する。
