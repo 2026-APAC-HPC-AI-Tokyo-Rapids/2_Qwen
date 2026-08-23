@@ -91,7 +91,7 @@ jobs:
         run: |
           cd "${RUNTIME_DIR}"
           variables="RUNTIME_DIR=${RUNTIME_DIR},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh"
-          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=${{ inputs.node_count }}:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -j oe -N qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.pbs")"
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=${{ inputs.node_count }}:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -j oe -N qwen_check_env <"${RUNTIME_DIR}/scripts/check-qwen-container.pbs")"
           [[ "${job_id}" =~ ^[0-9]+([.][A-Za-z0-9.-]+)?$ ]]
           printf 'PBS_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
