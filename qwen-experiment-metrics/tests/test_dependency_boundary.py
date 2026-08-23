@@ -90,13 +90,13 @@ def test_entry_workflow_keeps_push_and_dispatch_controls_closed() -> None:
     validation = (ROOT / ".github/workflows/validate.yml").read_text(encoding="utf-8")
     assert "push:" in workflow and "workflow_dispatch:" in workflow
     assert "uses: ./.github/workflows/validate.yml" in workflow
-    for cluster in ("genkai", "aspire2ap"):
+    for cluster in ("genkai", "aspire2ap", "firmus"):
         assert f"[cluster:{cluster}]" in workflow
     for tag in ("[nodes:1]", "[nodes:4]", "[profile]", "[require-build]"):
         assert tag in workflow
     assert "startsWith(github.event.head_commit.message, '[require-build]')" in workflow
-    assert workflow.count("needs: validate") == 2
-    assert "run_genkai:" in workflow and "run_aspire2ap:" in workflow
+    assert workflow.count("needs: validate") == 3
+    assert all(f"run_{cluster}:" in workflow for cluster in ("genkai", "aspire2ap", "firmus"))
     assert "[skip ci]" in (ROOT / "README.md").read_text(encoding="utf-8")
     assert "actionlint-py==1.7.12.24" in validation
 
@@ -237,6 +237,22 @@ def test_scheduler_submission_uses_persistent_runtime_working_directory() -> Non
     genkai = (ROOT / ".github/workflows/genkai.yml").read_text(encoding="utf-8")
     submit = genkai[genkai.index("PJMジョブを投入") : genkai.index("PJMジョブの開始を待機")]
     assert submit.index('cd "${RUNTIME_DIR}"') < submit.index("pjsub ")
+
+
+def test_firmus_routes_only_to_bounded_slurm_environment_validation() -> None:
+    workflow = (ROOT / ".github/workflows/firmus.yml").read_text(encoding="utf-8")
+    script = (ROOT / "platforms/firmus/check-environment.slurm").read_text(encoding="utf-8")
+    assert "runs-on: [self-hosted, firmus]" in workflow
+    assert "[[ '${{ inputs.node_count }}' =~ ^[12]$ ]]" in workflow
+    assert "sbatch --parsable" in workflow
+    assert "--gpus-per-node=1" in workflow
+    assert "sacct --allocations" in workflow
+    assert "missing-qwen-dependencies.txt" in workflow
+    assert "#SBATCH --partition=hpcai" in script
+    assert "#SBATCH --time=00:02:00" in script
+    assert "nvidia-smi --query-gpu" in script
+    assert "GOOGLE_CREDENTIAL" not in workflow + script
+    assert "BIGQUERY" not in workflow + script
 
 
 def test_credentials_stop_at_login_runner() -> None:

@@ -1,0 +1,93 @@
+name: Firmus環境を検証
+
+on:
+  workflow_call:
+    inputs:
+      node_count:
+        required: true
+        type: string
+      profile:
+        required: true
+        type: boolean
+      require_build:
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  RUN_ROOT: /scratch/home/apacsc14/qwen-firmus-checks
+
+defaults:
+  run:
+    shell: bash --login -eo pipefail {0}
+
+jobs:
+  environment:
+    name: SlurmとQwen依存関係を検証
+    runs-on: [self-hosted, firmus]
+    timeout-minutes: 10
+    steps:
+      - name: 検証用ファイルを取得
+        uses: actions/checkout@v7
+
+      - name: 検証領域を作成
+        id: prepare
+        run: |
+          [[ '${{ inputs.node_count }}' =~ ^[12]$ ]]
+          install -d -m 2775 "${RUN_ROOT}"
+          run_dir="$(mktemp -d "${RUN_ROOT}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          install -d "${run_dir}/logs" "${run_dir}/scripts"
+          install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/check-environment.slurm" "${run_dir}/scripts/check-environment.slurm"
+          printf 'run_dir=%s\n' "${run_dir}" >>"${GITHUB_OUTPUT}"
+
+      - name: ログイン環境を記録
+        env:
+          RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
+        run: |
+          module purge
+          module load nvhpc-hpcx-cuda13/26.5
+          printf 'node_count=%s\nprofile=%s\nrequire_build=%s\n' '${{ inputs.node_count }}' '${{ inputs.profile }}' '${{ inputs.require_build }}' >"${RUN_DIR}/logs/request.txt"
+          { hostname -f; systemd-detect-virt; df -hT "${HOME}" /scratch /tmp /dev/shm; sinfo -o '%P|%a|%l|%D|%G|%c|%m'; mpirun --version; ucx_info -v; nvcc --version; } >"${RUN_DIR}/logs/login-environment.log" 2>&1
+
+      - name: Slurm GPU環境を検証
+        id: slurm
+        env:
+          RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
+        run: |
+          cd "${RUN_DIR}"
+          job_id="$(sbatch --parsable --nodes='${{ inputs.node_count }}' --ntasks='${{ inputs.node_count }}' --gpus-per-node=1 --export="ALL,FIRMUS_RUN_DIR=${RUN_DIR}" --output="${RUN_DIR}/logs/slurm-%j.log" "${RUN_DIR}/scripts/check-environment.slurm")"
+          [[ "${job_id}" =~ ^[0-9]+$ ]]
+          printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+          while squeue --noheader --jobs="${job_id}" | grep -q .; do sleep 2; done
+          sacct --allocations --jobs="${job_id}" --noheader --parsable2 --format=JobID,State,ExitCode,Elapsed,AllocNodes >"${RUN_DIR}/logs/slurm-accounting.txt"
+          cat "${RUN_DIR}/logs/slurm-accounting.txt"
+          state="$(awk -F'|' -v job_id="${job_id}" '$1 == job_id {print $2}' "${RUN_DIR}/logs/slurm-accounting.txt")"
+          test "${state}" = COMPLETED
+
+      - name: Qwen E2Eの不足依存を判定
+        env:
+          RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
+        run: |
+          missing=()
+          for command_name in buildah skopeo umoci nvidia-container-cli uv uvx; do if ! command -v "${command_name}" >/dev/null; then missing+=("${command_name}"); fi; done
+          if ! enroot version >/dev/null 2>&1; then missing+=(enroot-runtime); fi
+          printf '%s\n' "${missing[@]}" | tee "${RUN_DIR}/logs/missing-qwen-dependencies.txt"
+          test "${#missing[@]}" -eq 0
+
+      - name: 環境検証ログを保存
+        if: always() && steps.prepare.outputs.run_dir != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen-firmus-environment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prepare.outputs.run_dir }}/logs
+          if-no-files-found: error
+          compression-level: 1
+
+      - name: 検証領域を削除
+        if: always() && steps.prepare.outputs.run_dir != ''
+        env:
+          RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
+        run: if [[ -n "${SLURM_JOB_ID:-}" ]] && squeue --noheader --jobs="${SLURM_JOB_ID}" | grep -q .; then scancel "${SLURM_JOB_ID}"; fi; rm -rf -- "${RUN_DIR:?}"
