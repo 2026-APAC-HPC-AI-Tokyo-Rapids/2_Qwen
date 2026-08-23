@@ -6,6 +6,6 @@
 
 `nvhpc-hpcx-cuda13/26.5` moduleにはOpen MPI 5.0.10rc2、UCX 1.21.0、NCCL 2.29.3、CUDA 13.2が含まれる。Slurm、Git、GitHub CLI、Jq、Curl、Wget、SquashFS toolsはlogin containerにある。
 
-Qwen E2Eで不足しているものはBuildah、Skopeo、Umoci、NVIDIA container CLI、uv/uvxである。`/usr/bin/enroot`は4.2.0 launcherだが、設定された`~/.local/lib/enroot`のruntime libraryと`~/.local/etc/enroot`のconfiguration/hooksがなく、実行できない。login containerにはGPU deviceと`nvidia-smi`がないが、これはSlurm compute nodeで判定する。
+Qwen E2Eでlogin runnerに不足しているものはBuildah、Skopeo、Umoci、uv/uvxである。`/usr/bin/enroot`はlogin nodeとcompute nodeの双方にあるが、設定された`~/.local/lib/enroot`のruntime libraryと`~/.local/etc/enroot`のconfiguration/hooksがなく、実行できない。login containerにはGPU deviceと`nvidia-smi`がない一方、Slurm compute nodeには`/usr/bin/nvidia-container-cli`があり、GPUも正常に認識する。
 
 `[cluster:firmus]`は、依存導入前にはlogin inventoryと短いSlurm GPU smokeを実行してartifactを回収し、その後に不足依存を明示して失敗する。Qwen本体のbuild・provision・benchmarkへは、不足依存とEnroot NVIDIA hookが揃い、公式E2E経路を検証してから接続する。
