@@ -134,7 +134,7 @@ jobs:
           printf 'AWS_BUILD_INSTANCE_ID=%s\n' "${instance_id}" >>"${GITHUB_ENV}"
           aws ec2 wait instance-running --region "${AWS_REGION}" --instance-ids "${instance_id}"
           ready=false
-          for attempt in $(seq 1 120); do ping="$(aws ssm describe-instance-information --region "${AWS_REGION}" --filters "Key=InstanceIds,Values=${instance_id}" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)"; if [[ "${ping}" == Online ]]; then ready=true; break; fi; sleep 5; done
+          for _ in $(seq 1 120); do ping="$(aws ssm describe-instance-information --region "${AWS_REGION}" --filters "Key=InstanceIds,Values=${instance_id}" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)"; if [[ "${ping}" == Online ]]; then ready=true; break; fi; sleep 5; done
           [[ "${ready}" == true ]]
           build_command="while [ ! -e /var/lib/qwen-build-bootstrap-status ]; do sleep 5; done; cat /var/log/qwen-build-bootstrap.log; test -e /var/lib/qwen-build-ready; aws s3 cp s3://${CONTAINER_BUCKET}/${input_prefix}/run-build-instance.sh /tmp/run-build-instance.sh --only-show-errors; chmod 0755 /tmp/run-build-instance.sh; /tmp/run-build-instance.sh ${CONTAINER_BUCKET} ${input_key} ${output_prefix} ${GITHUB_RUN_ID} ${GITHUB_RUN_ATTEMPT} ${GITHUB_SHA}"
           parameters="$(jq -cn --arg command "${build_command}" '{commands:[$command]}')"
@@ -160,9 +160,10 @@ jobs:
           end_epoch="${AWS_BUILD_END_EPOCH:-$(date -u +%s)}"
           export BUILD_ELAPSED_SECONDS="$((end_epoch - launch_epoch))"
           sidecar="$(aws s3 cp "s3://${CONTAINER_BUCKET}/containers/${GITHUB_SHA}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/container-sidecar.json" - --only-show-errors 2>/dev/null || true)"
-          export CONTAINER_SIZE_BYTES="$(jq -er '.container_artifact.size_bytes' <<<"${sidecar}" 2>/dev/null || printf 0)"
+          CONTAINER_SIZE_BYTES="$(jq -er '.container_artifact.size_bytes' <<<"${sidecar}" 2>/dev/null || printf 0)"
+          export CONTAINER_SIZE_BYTES
           scripts/estimate-aws-build-cost.sh
-          printf '### AWS build cost estimate\n\n```json\n%s\n```\n' "$(jq -c . "${COST_OUTPUT}")" >>"${GITHUB_STEP_SUMMARY}"
+          printf '### AWS build cost estimate\n\n%s\n' "$(jq -c . "${COST_OUTPUT}")" >>"${GITHUB_STEP_SUMMARY}"
 
       - name: EC2ビルドログを取得
         if: always()
