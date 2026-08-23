@@ -29,7 +29,7 @@ jobs:
         run: uvx --from 'cfn-lint>=1.38,<2' cfn-lint aws/qwen-build-infrastructure.yml
 
       - name: コマンド行継続がないことを検証
-        run: '! rg --line-number ''\\$'' scripts platforms containers aws .github/workflows'
+        run: '! grep -RIn ''\\$'' scripts platforms containers aws .github/workflows'
 
       - name: 静的検査を実行
         run: uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts
