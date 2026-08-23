@@ -106,26 +106,19 @@ def test_workflow_and_pjm_enforce_runner_compute_boundary() -> None:
     repository = Path(__file__).parents[2]
     workflow = (repository / ".github/workflows/genkai.yml").read_text()
     aspire = (repository / ".github/workflows/aspire2ap.yml").read_text()
-    pjm = (repository / "platforms/genkai/run-qwen35.pjm").read_text()
-    pbs = (repository / "platforms/aspire2ap/run-qwen35.pbs").read_text()
-    job = (repository / "scripts/run-qwen35-job.sh").read_text()
-    node = (repository / "scripts/run-qwen35-node.sh").read_text()
+    pjm = (repository / "platforms/genkai/check-qwen-container.pjm").read_text()
+    pbs = (repository / "platforms/aspire2ap/check-qwen-container.pbs").read_text()
+    check = (repository / "scripts/run-qwen-check-env.sh").read_text()
 
-    assert "enroot version" in job
-    assert "#PJM -L jobenv=singularity" in pjm
-    assert "send-qwen-fragments.sh" in workflow
-    assert "send-qwen-fragments.sh" in aspire
-    assert workflow.index("PJM実行ログを表示して終了を待機") < workflow.index(
-        "send-qwen-fragments.sh"
-    )
-    assert aspire.index("PBSジョブの終了を待機") < aspire.index(
-        "send-qwen-fragments.sh"
-    )
-    assert '"${metrics_cli}" merge' not in workflow
-    assert 'qwen-experiment-metrics" publish' not in workflow
-    assert "deploy-qwen-projections.py" not in workflow
+    assert "enroot version" in check
+    assert "enroot start" in check
+    assert "-m sglang.check_env" in check
+    assert "provision-qwen-check-env.sh" in workflow
+    assert "provision-qwen-check-env.sh" in aspire
+    assert "configure-aws-credentials" in workflow
+    assert "configure-aws-credentials" in aspire
+    assert "send-qwen-fragments.sh" not in workflow
+    assert "send-qwen-fragments.sh" not in aspire
     assert "GOOGLE_CREDENTIAL" not in pjm
     assert "GOOGLE_CREDENTIAL" not in pbs
-    assert " publish " not in pjm and " merge " not in pjm
-    assert "collect " not in pjm and "monitor-node-gpu" not in node
-    assert "serve-events" in node and "sample-gpu" in node
+    assert "AWS_ACCESS_KEY" not in pjm and "AWS_ACCESS_KEY" not in pbs

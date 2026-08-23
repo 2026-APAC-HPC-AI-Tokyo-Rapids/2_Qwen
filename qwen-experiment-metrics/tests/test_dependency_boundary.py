@@ -9,22 +9,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_container_build_uses_all_rootless_tools() -> None:
+def test_container_build_uses_root_overlay_and_validates_oci() -> None:
     script = (ROOT / "scripts/build-sglang-container.sh").read_text(encoding="utf-8")
     for command in ("buildah", "buildah --root", "skopeo copy", "umoci stat", "mksquashfs"):
         assert command in script
     assert "--isolation chroot" in script
     assert "BUILDAH_ISOLATION=chroot" in script
-    assert "STORAGE_DRIVER=vfs" in script
-    assert "STORAGE_OPTS=vfs.ignore_chown_errors=true" in script
-    assert 'storage_root="${BUILD_STORAGE_ROOT:-/var/tmp/apac-qwen-buildah-$(id -u)}"' in script
+    assert "STORAGE_DRIVER=overlay" in script
+    assert "STORAGE_OPTS" not in script
+    assert '[[ "$(id -u)" -eq 0 ]]' in script
+    assert 'storage_root="${BUILD_STORAGE_ROOT:-/var/lib/containers/storage}"' in script
     assert "--layers" in script
     assert "--squash" not in script
     assert "--layers=false" not in script
     assert "rmi --all" not in script
     assert 'test_container="$(buildah ' in script
     assert 'run --isolation chroot "${test_container}"' in script
-    assert 'unshare --mount "${test_container}"' in script
+    assert 'mount "${test_container}"' in script
+    assert "unshare --mount" not in script
     assert "umoci unpack" not in script
     assert "test -x /sbin/ldconfig" in script
     assert "--no-preserve=ownership,xattr" in script
@@ -32,9 +34,8 @@ def test_container_build_uses_all_rootless_tools() -> None:
     assert "-all-root -no-xattrs" in script
     assert "-no-duplicates" in script
     assert "-no-fragments" in script
-    assert "-processors 1 -mem 256M" in script
-    assert 'squashfs_work="/var/tmp/' in script
-    assert '"${BUILD_DIR}/sglang.sqsh"' not in script
+    assert "-processors 8 -mem 8G" in script
+    assert 'squashfs_work="${BUILD_DIR}/sglang.sqsh"' in script
     assert "singularity" not in script.lower()
 
 
@@ -81,19 +82,37 @@ def test_rustup_download_retries_observed_dns_failure() -> None:
 
 def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
     selector = (ROOT / "scripts/select-qwen-container.sh").read_text(encoding="utf-8")
+    aws_workflow = (ROOT / ".github/workflows/aws-container.yml").read_text(encoding="utf-8")
+    assert "scripts/select-qwen-container.sh" in aws_workflow
     for name in ("genkai.yml", "aspire2ap.yml", "firmus.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
-        assert '"${GITHUB_WORKSPACE}/scripts/select-qwen-container.sh"' in workflow
-        select_job = workflow[
-            workflow.index("select-container:") : workflow.index("reuse-container:")
-        ]
-        for tool in ("buildah", "skopeo", "umoci", "enroot", "nvidia-container-cli"):
-            assert tool not in select_job
+        assert "select-qwen-container.sh" not in workflow
+        assert "build-sglang-container.sh" not in workflow
+        assert "provision-qwen-check-env.sh" in workflow
     assert 'git rev-parse "${commit}^"' in selector
-    assert "size_bytes" in selector and "sha256sum" in selector
+    assert "size_bytes" in selector and "Metadata.sha256" in selector
     assert "gh run view" not in selector
     assert "inventory" not in selector
     assert "enroot start" not in selector
+
+
+def test_aws_builder_is_ephemeral_and_clusters_always_download_direct_image() -> None:
+    infrastructure = (ROOT / "aws/qwen-build-infrastructure.yml").read_text(encoding="utf-8")
+    aws_workflow = (ROOT / ".github/workflows/aws-container.yml").read_text(encoding="utf-8")
+    provision = (ROOT / "scripts/provision-qwen-check-env.sh").read_text(encoding="utf-8")
+    check = (ROOT / "scripts/run-qwen-check-env.sh").read_text(encoding="utf-8")
+    assert "m7i.2xlarge" in aws_workflow
+    assert '"VolumeSize":300' in aws_workflow
+    assert '"Iops":6000' in aws_workflow and '"Throughput":500' in aws_workflow
+    assert "--instance-initiated-shutdown-behavior terminate" in aws_workflow
+    assert "ec2 terminate-instances" in aws_workflow
+    assert "systemd-run --unit=qwen-build-expiration --on-active=6h" in (ROOT / "aws/ec2-user-data.sh").read_text(encoding="utf-8")
+    assert "BlockPublicPolicy: true" in infrastructure
+    assert "generate_presigned_url" in provision
+    assert provision.count("curl --fail") == 2
+    assert 'downloaded:true,enroot_direct_squashfs:true' in provision
+    assert 'enroot start -e NVIDIA_VISIBLE_DEVICES=void' in check
+    assert "enroot create" not in check and "unsquashfs" not in check
 
 
 def test_entry_workflow_keeps_push_and_dispatch_controls_closed() -> None:
@@ -103,10 +122,10 @@ def test_entry_workflow_keeps_push_and_dispatch_controls_closed() -> None:
     assert "uses: ./.github/workflows/validate.yml" in workflow
     for cluster in ("genkai", "aspire2ap", "firmus"):
         assert f"[cluster:{cluster}]" in workflow
-    for tag in ("[nodes:1]", "[nodes:4]", "[profile]", "[require-build]"):
+    for tag in ("[nodes:1]", "[nodes:4]", "[require-build]"):
         assert tag in workflow
     assert "startsWith(github.event.head_commit.message, '[require-build]')" in workflow
-    assert workflow.count("needs: validate") == 3
+    assert workflow.count("needs: [validate, container]") == 3
     assert all(f"run_{cluster}:" in workflow for cluster in ("genkai", "aspire2ap", "firmus"))
     assert "[skip ci]" in (ROOT / "README.md").read_text(encoding="utf-8")
     assert "actionlint-py==1.7.12.24" in validation
@@ -237,13 +256,13 @@ def test_job_success_gate_accepts_primary_result_decimal_encodings() -> None:
 def test_aspire_uses_authorized_budget_project_and_default_routing() -> None:
     workflow = (ROOT / ".github/workflows/aspire2ap.yml").read_text(encoding="utf-8")
     submit = workflow[
-        workflow.index("PBSジョブを投入") : workflow.index("PBSジョブの終了を待機")
+        workflow.index("PBSジョブを投入") : workflow.index("PBSジョブの終了を確認")
     ]
     assert "/opt/pbs/bin/qsub -P 59010014" in submit
     assert submit.index('cd "${RUNTIME_DIR}"') < submit.index("/opt/pbs/bin/qsub ")
     assert "-q aiq2" not in submit
     assert 'cat "${RUNTIME_DIR}/logs/pbs-accounting.txt"' in workflow
-    assert 'if [[ -e "${RUNTIME_DIR}/logs/pbs.log" ]]' in workflow
+    assert 'cat "${RUNTIME_DIR}/logs/pbs.log"' in workflow
 
 
 def test_scheduler_submission_uses_persistent_runtime_working_directory() -> None:
@@ -254,31 +273,18 @@ def test_scheduler_submission_uses_persistent_runtime_working_directory() -> Non
 
 def test_firmus_uses_shared_beegfs_and_compute_local_enroot() -> None:
     workflow = (ROOT / ".github/workflows/firmus.yml").read_text(encoding="utf-8")
-    script = (ROOT / "platforms/firmus/run-qwen35.slurm").read_text(encoding="utf-8")
+    script = (ROOT / "platforms/firmus/check-qwen-container.slurm").read_text(encoding="utf-8")
     assert "runs-on: [self-hosted, firmus]" in workflow
     assert "[[ '${{ inputs.node_count }}' =~ ^[12]$ ]]" in workflow
-    assert "CONTAINER_ARCHIVE_DIR: /scratch/home/ACCOUNT/qwen/containers" in workflow
-    assert "BUILD_STORAGE_ROOT: /scratch/home/ACCOUNT/qwen/buildah" in workflow
-    assert "DATASET_CACHE_ROOT: /scratch/home/ACCOUNT/qwen/datasets/ShareGPT_Vicuna_unfiltered" in workflow
-    assert "GIT_MIRROR_DIR: /scratch/home/ACCOUNT/qwen/git-mirror" in workflow
-    assert "MODEL_CACHE_ROOT: /scratch/home/ACCOUNT/qwen/models/Qwen3.5-397B-A17B-FP8-metadata" in workflow
     assert "RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs" in workflow
-    assert "BUILD_DIR: /var/tmp/qwen-sglang-container/" in workflow
-    assert '"${GITHUB_WORKSPACE}/scripts/select-qwen-container.sh"' in workflow
-    assert '"${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"' in workflow
-    assert '"${GITHUB_WORKSPACE}/scripts/provision-qwen-runtime.sh"' in workflow
+    assert '"${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"' in workflow
     assert "CLUSTER_NAME: firmus" in workflow
-    assert "GPUS_PER_NODE: 8" in workflow
-    assert "RESOURCE_GROUP: hpcai" in workflow
     assert "sbatch --parsable" in workflow
-    assert "--gpus-per-node=8" in workflow
+    assert "--gpus-per-node" not in workflow
     assert "sacct --allocations" in workflow
-    assert "#SBATCH --partition=hpcai" in script
-    assert "#SBATCH --time=00:17:00" in script
-    assert "module load nvhpc-hpcx-cuda13/26.5" in script
-    assert 'exec "${RUNTIME_DIR}/scripts/run-qwen35-job.sh"' in script
-    assert "check-environment.slurm" not in workflow
-    assert "EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON" in workflow
+    assert "#SBATCH --partition=shared" in script
+    assert "#SBATCH --time=00:20:00" in script
+    assert 'exec "${RUNTIME_DIR}/scripts/run-qwen-check-env.sh"' in script
     assert "GOOGLE_CREDENTIAL" not in script
     assert "BIGQUERY" not in script
 
@@ -300,15 +306,12 @@ def test_credentials_stop_at_login_runner() -> None:
         assert "GOOGLE_CREDENTIAL" not in text
         assert "BIGQUERY" not in text
         assert "smoke-send" not in text
-    for name in ("genkai.yml", "aspire2ap.yml"):
+    for name in ("genkai.yml", "aspire2ap.yml", "firmus.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
-        wait_step = (
-            "PJM実行ログを表示して終了を待機"
-            if name == "genkai.yml"
-            else "PBSジョブの終了を待機"
-        )
-        assert workflow.index(wait_step) < workflow.index("send-qwen-fragments.sh")
-        assert '"${RUNTIME_DIR}/scripts/package-qwen-runtime.sh"' in workflow
+        assert "configure-aws-credentials" in workflow
+        assert "send-qwen-fragments.sh" not in workflow
+        assert "AWS_ACCESS_KEY_ID" not in workflow
+        assert "AWS_SECRET_ACCESS_KEY" not in workflow
 
 
 def test_sglang_patches_close_primary_config_worker_and_profile_sources() -> None:

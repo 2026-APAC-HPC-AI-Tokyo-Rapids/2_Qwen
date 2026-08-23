@@ -1,4 +1,4 @@
-name: FirmusでQwenを実行
+name: FirmusでQwenコンテナを確認
 
 on:
   workflow_call:
@@ -6,23 +6,27 @@ on:
       node_count:
         required: true
         type: string
-      profile:
+      container_key:
         required: true
-        type: boolean
-      require_build:
+        type: string
+      container_sha256:
         required: true
-        type: boolean
+        type: string
+      container_size:
+        required: true
+        type: string
+      sidecar_key:
+        required: true
+        type: string
 
 permissions:
   actions: read
   contents: read
+  id-token: write
 
 env:
-  BUILD_STORAGE_ROOT: /scratch/home/ACCOUNT/qwen/buildah
-  CONTAINER_ARCHIVE_DIR: /scratch/home/ACCOUNT/qwen/containers
-  DATASET_CACHE_ROOT: /scratch/home/ACCOUNT/qwen/datasets/ShareGPT_Vicuna_unfiltered
-  GIT_MIRROR_DIR: /scratch/home/ACCOUNT/qwen/git-mirror
-  MODEL_CACHE_ROOT: /scratch/home/ACCOUNT/qwen/models/Qwen3.5-397B-A17B-FP8-metadata
+  AWS_REGION: ap-southeast-1
+  CONTAINER_BUCKET: ${{ vars.QWEN_CONTAINER_BUCKET }}
   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
 
 defaults:
@@ -30,105 +34,42 @@ defaults:
     shell: bash --login -eo pipefail {0}
 
 jobs:
-  select-container:
-    name: OCIコンテナを選択
+  provision:
+    name: S3からSquashFSを毎回ダウンロード
     runs-on: [self-hosted, firmus]
-    timeout-minutes: 7200
+    timeout-minutes: 180
     outputs:
-      action: ${{ steps.select.outputs.action }}
-      source_run_id: ${{ steps.select.outputs.source_run_id }}
+      runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
     steps:
       - name: ノード数を検証
         run: "[[ '${{ inputs.node_count }}' =~ ^[12]$ ]]"
 
-      - name: リポジトリ履歴を取得
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: 既存成果物の再利用または新規ビルドを選択
-        id: select
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REQUIRE_BUILD: ${{ inputs.require_build }}
-        run: '"${GITHUB_WORKSPACE}/scripts/select-qwen-container.sh"'
-
-  reuse-container:
-    name: OCIコンテナを再利用
-    needs: select-container
-    if: needs.select-container.outputs.action == 'reuse'
-    runs-on: [self-hosted, firmus]
-    timeout-minutes: 7200
-    steps:
-      - name: 選択した成果物をハードリンク
-        run: |
-          source_run_id='${{ needs.select-container.outputs.source_run_id }}'
-          ln -f -- "${CONTAINER_ARCHIVE_DIR}/${source_run_id}.sqsh" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
-          ln -f -- "${CONTAINER_ARCHIVE_DIR}/${source_run_id}.container-sidecar.json" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
-
-  build-container:
-    name: OCIコンテナをビルド
-    needs: select-container
-    if: needs.select-container.outputs.action == 'build'
-    runs-on: [self-hosted, firmus]
-    timeout-minutes: 7200
-    concurrency:
-      group: firmus-qwen-container-build
-    env:
-      BUILD_DIR: /var/tmp/qwen-sglang-container/run-${{ github.run_id }}-${{ github.run_attempt }}
-    steps:
-      - name: ビルド入力を取得
-        uses: actions/checkout@v7
-
-      - name: Buildah、Skopeo、Umociでコンテナを構築・保存
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: '"${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"'
-
-      - name: コンテナビルドログを保存
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: qwen-firmus-container-build-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.BUILD_DIR }}/logs
-          if-no-files-found: warn
-          compression-level: 1
-
-      - name: コンテナビルド領域を削除
-        if: always()
-        run: chmod -R u+rwX "${BUILD_DIR}" 2>/dev/null || true; rm -rf -- "${BUILD_DIR:?}"
-
-  provision:
-    name: Enroot実行環境を配備
-    needs: [select-container, reuse-container, build-container]
-    if: ${{ always() && needs.select-container.result == 'success' && ((needs.select-container.outputs.action == 'reuse' && needs.reuse-container.result == 'success') || (needs.select-container.outputs.action == 'build' && needs.build-container.result == 'success')) }}
-    runs-on: [self-hosted, firmus]
-    timeout-minutes: 7200
-    outputs:
-      model_path: ${{ steps.provision.outputs.model_path }}
-      run_id: ${{ steps.provision.outputs.run_id }}
-      runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
-    steps:
       - name: 実行用ファイルを取得
         uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          persist-credentials: false
 
-      - name: dummy model用メタデータ、ShareGPT、実行環境を配備
+      - name: AWSの一時資格情報を取得
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
+
+      - name: 署名付きURLを生成してSquashFSを配備
         id: provision
         env:
           CLUSTER_NAME: firmus
-          CONTAINER_ARCHIVE: ${{ env.CONTAINER_ARCHIVE_DIR }}/${{ github.run_id }}.sqsh
-          CONTAINER_SIDECAR: ${{ env.CONTAINER_ARCHIVE_DIR }}/${{ github.run_id }}.container-sidecar.json
-          GPUS_PER_NODE: 8
-          NODE_COUNT: ${{ inputs.node_count }}
-          RESOURCE_GROUP: hpcai
-          RUN_PURPOSE: ${{ inputs.profile && 'profile' || 'bench' }}
+          CONTAINER_KEY: ${{ inputs.container_key }}
+          CONTAINER_SHA256: ${{ inputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ inputs.container_size }}
+          ENROOT_LIBRARY_PATH: /scratch/home/ACCOUNT/.local/lib/enroot
+          ENROOT_SYSCONF_PATH: /scratch/home/ACCOUNT/.local/etc/enroot
+          SIDECAR_KEY: ${{ inputs.sidecar_key }}
         run: |
           export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
-          "${GITHUB_WORKSPACE}/scripts/provision-qwen-runtime.sh"
+          "${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
-          install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/run-qwen35.slurm" "${runtime_dir}/scripts/run-qwen35.slurm"
+          install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/check-qwen-container.slurm" "${runtime_dir}/scripts/check-qwen-container.slurm"
 
       - name: 配備失敗時の実行環境を削除
         if: failure() && steps.provision.outputs.runtime_dir != ''
@@ -137,57 +78,45 @@ jobs:
         run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
-    name: Enrootでdummy modelを実行
+    name: CPUノードでEnroot check_envを実行
     needs: provision
-    if: always() && needs.provision.result == 'success'
     runs-on: [self-hosted, firmus]
-    timeout-minutes: 7200
+    timeout-minutes: 180
     env:
-      MODEL_PATH: ${{ needs.provision.outputs.model_path }}
       RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
     steps:
       - name: Slurmジョブを投入
         id: submit
         run: |
           cd "${RUNTIME_DIR}"
-          variables="ALL,RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh,GPUS_PER_NODE=8"
-          job_id="$(sbatch --parsable --nodes='${{ inputs.node_count }}' --ntasks='${{ inputs.node_count }}' --gpus-per-node=8 --export="${variables}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --job-name=qwen35_dummy "${RUNTIME_DIR}/scripts/run-qwen35.slurm")"
+          variables="ALL,RUNTIME_DIR=${RUNTIME_DIR},CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh"
+          job_id="$(sbatch --parsable --nodes='${{ inputs.node_count }}' --ntasks=1 --export="${variables}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --job-name=qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.slurm")"
           [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
 
-      - name: Slurmジョブの終了を待機
+      - name: Slurmジョブの終了を確認
         run: |
           while squeue --noheader --jobs="${SLURM_JOB_ID}" | grep -q .; do sleep 5; done
           sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State,ExitCode,Elapsed,AllocNodes >"${RUNTIME_DIR}/logs/slurm-accounting.txt"
           cat "${RUNTIME_DIR}/logs/slurm-accounting.txt"
-          if [[ -e "${RUNTIME_DIR}/logs/slurm-${SLURM_JOB_ID}.log" ]]; then cat "${RUNTIME_DIR}/logs/slurm-${SLURM_JOB_ID}.log"; fi
+          cat "${RUNTIME_DIR}/logs/slurm-${SLURM_JOB_ID}.log"
           state="$(awk -F'|' -v job_id="${SLURM_JOB_ID}" '$1 == job_id {print $2}' "${RUNTIME_DIR}/logs/slurm-accounting.txt")"
           exit_code="$(awk -F'|' -v job_id="${SLURM_JOB_ID}" '$1 == job_id {print $3}' "${RUNTIME_DIR}/logs/slurm-accounting.txt")"
           test "${state}" = COMPLETED
           test "${exit_code}" = 0:0
           test -e "${RUNTIME_DIR}/run-success"
 
-      - name: ログインrunnerから計測断片を送信
-        env:
-          METRICS_CREDENTIAL_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
-        run: '"${RUNTIME_DIR}/scripts/send-qwen-fragments.sh"'
-
-      - name: 公式形式で実行成果物を梱包
-        if: always() && steps.submit.outputs.job_id != ''
-        run: '"${RUNTIME_DIR}/scripts/package-qwen-runtime.sh"'
-
-      - name: 固定構成の成果物を保存
+      - name: check_envログを保存
         if: always() && steps.submit.outputs.job_id != ''
         uses: actions/upload-artifact@v7
         with:
-          name: qwen-firmus-dummy-${{ needs.provision.outputs.run_id }}
+          name: qwen-firmus-check-env-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ env.RUNTIME_DIR }}/run-artifacts.tar.zst
-            ${{ env.RUNTIME_DIR }}/artifact-manifest.json
-            ${{ env.RUNTIME_DIR }}/profile-raw.tar.zst
+            ${{ env.RUNTIME_DIR }}/logs
+            ${{ env.RUNTIME_DIR }}/source
+            ${{ env.RUNTIME_DIR }}/run-success
           if-no-files-found: error
-          compression-level: 0
 
       - name: 実行環境を削除
         if: always()

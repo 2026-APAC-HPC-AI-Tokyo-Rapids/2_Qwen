@@ -26,21 +26,45 @@ def test_selector_reuses_valid_first_parent_artifact(tmp_path: Path) -> None:
     subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repository, check=True)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True).stdout.strip()
 
-    archive_dir = tmp_path / "archives"
-    archive_dir.mkdir()
-    archive = archive_dir / "100.sqsh"
-    archive.write_bytes(b"container fixture")
-    digest = subprocess.run(["sha256sum", str(archive)], check=True, capture_output=True, text=True).stdout.split()[0]
-    sidecar = {"schema_version": "container-sidecar/v1", "container_artifact": {"size_bytes": archive.stat().st_size, "sha256": digest}}
-    (archive_dir / "100.container-sidecar.json").write_text(json.dumps(sidecar), encoding="utf-8")
+    digest = "a" * 64
+    image_size = 17
+    sidecar_key = f"containers/{commit}/100-1/container-sidecar.json"
+    sidecar = {"schema_version": "container-sidecar/v1", "container_artifact": {"size_bytes": image_size, "sha256": digest}, "source_commits": {"qwen": commit}}
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    make_executable(fake_bin / "gh", "#!/usr/bin/env bash\nprintf '100\\n'\n")
+    make_executable(fake_bin / "aws", f'''#!/usr/bin/env bash
+if [[ "$1 $2" == "s3api list-objects-v2" ]]; then printf '%s\\n' '{sidecar_key}'; exit 0; fi
+if [[ "$1 $2" == "s3 cp" ]]; then printf '%s\\n' '{json.dumps(sidecar)}'; exit 0; fi
+if [[ "$1 $2" == "s3api head-object" ]]; then printf '%s\\n' '{{"ContentLength":{image_size},"Metadata":{{"sha256":"{digest}"}}}}'; exit 0; fi
+exit 1
+''')
     output = tmp_path / "github-output"
-    environment = os.environ | {"CONTAINER_ARCHIVE_DIR": str(archive_dir), "GITHUB_OUTPUT": str(output), "GITHUB_RUN_ID": "999", "GITHUB_SHA": commit, "REQUIRE_BUILD": "false", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
+    environment = os.environ | {"AWS_REGION": "ap-southeast-1", "CONTAINER_BUCKET": "fixture-bucket", "GITHUB_OUTPUT": str(output), "GITHUB_SHA": commit, "REQUIRE_BUILD": "false", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
     subprocess.run([ROOT / "scripts/select-qwen-container.sh"], cwd=repository, env=environment, check=True)
-    assert output.read_text(encoding="utf-8") == "action=reuse\nsource_run_id=100\n"
+    assert output.read_text(encoding="utf-8") == f"action=reuse\nsource_commit={commit}\ncontainer_key=containers/{commit}/100-1/sglang.sqsh\nsidecar_key={sidecar_key}\n"
+
+
+def test_selector_forces_build_without_touching_s3(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "aws", "#!/usr/bin/env bash\nexit 99\n")
+    output = tmp_path / "github-output"
+    environment = os.environ | {"AWS_REGION": "ap-southeast-1", "CONTAINER_BUCKET": "fixture-bucket", "GITHUB_OUTPUT": str(output), "GITHUB_SHA": "a" * 40, "REQUIRE_BUILD": "true", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
+    subprocess.run([ROOT / "scripts/select-qwen-container.sh"], env=environment, check=True)
+    assert output.read_text(encoding="utf-8") == "action=build\n"
+
+
+def test_aws_cost_estimate_includes_ephemeral_storage_and_external_distribution(tmp_path: Path) -> None:
+    output = tmp_path / "cost.json"
+    environment = os.environ | {"BUILD_ELAPSED_SECONDS": "3600", "CONTAINER_SIZE_BYTES": "12718784512", "EXTERNAL_DOWNLOAD_COUNT": "3", "COST_OUTPUT": str(output)}
+    subprocess.run([ROOT / "scripts/estimate-aws-build-cost.sh"], env=environment, check=True)
+    estimate = json.loads(output.read_text(encoding="utf-8"))
+    assert estimate["estimated_cost_usd"]["ec2"] == pytest.approx(0.504)
+    assert estimate["estimated_cost_usd"]["ebs_gp3"] == pytest.approx(0.09)
+    assert estimate["estimated_cost_usd"]["public_ipv4"] == pytest.approx(0.005)
+    assert estimate["estimated_cost_usd"]["build_subtotal"] == pytest.approx(0.606635)
+    assert estimate["estimated_cost_usd"]["external_data_transfer"] == pytest.approx(4.578762424)
 
 
 def test_publisher_removes_credential_file(tmp_path: Path) -> None:

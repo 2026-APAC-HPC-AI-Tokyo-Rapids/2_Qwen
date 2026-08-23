@@ -17,16 +17,19 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: シェル構文を検証
-        run: find scripts platforms containers -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' -o -name '*.slurm' \) -print0 | xargs -0 -r -n1 bash -n
+        run: find scripts platforms containers aws -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' -o -name '*.slurm' \) -print0 | xargs -0 -r -n1 bash -n
 
       - name: YAML構文を検証
-        run: uvx --from pyyaml python -c 'import pathlib, yaml; [yaml.safe_load(path.read_text()) for path in pathlib.Path(".github/workflows").glob("*.yml")]'
+        run: uvx --from pyyaml python -c 'import pathlib, yaml; [yaml.safe_load(path.read_text()) for path in pathlib.Path(".github/workflows").glob("*.yml")]; [yaml.load(path.read_text(), Loader=yaml.BaseLoader) for path in pathlib.Path("aws").glob("*.yml")]'
 
       - name: GitHub Actions定義を検証
         run: uvx --from 'actionlint-py==1.7.12.24' actionlint
 
+      - name: CloudFormation定義を検証
+        run: uvx --from 'cfn-lint>=1.38,<2' cfn-lint aws/qwen-build-infrastructure.yml
+
       - name: コマンド行継続がないことを検証
-        run: '! rg --line-number ''\\$'' scripts platforms containers .github/workflows'
+        run: '! rg --line-number ''\\$'' scripts platforms containers aws .github/workflows'
 
       - name: 静的検査を実行
         run: uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts

@@ -2,10 +2,10 @@
 
 玄界、ASPIRE 2A+、Firmusで同じQwen 3.5 workloadを実行するリポジトリです。実行入口は [Qwen workflow](.github/workflows/qwen.yml) に統合されています。
 
-コンテナは [Dockerfile](containers/Dockerfile) からrootless Buildahの`chroot` isolationで作成します。Buildahが出力したOCI layoutをSkopeoで正規化し、Umociで展開検証したroot filesystemをSquashFS化して、GPU計算ノード上のEnrootで実行します。Singularity/SIFは現行経路では使用しません。
+コンテナはAWS Singaporeリージョンの一時的な`m7i.2xlarge`から、root権限、Buildahの`chroot` isolation、OverlayFSを使って構築します。Buildahが出力したOCI layoutをSkopeoで正規化し、Umociで検証したroot filesystemをSquashFS化してprivate S3 bucketへ保存します。各クラスタは実行ごとにOIDCで短期AWS資格情報を取得し、1時間の署名付きURLからSquashFSを必ず新規ダウンロードした後、計算ノード上のEnrootへ`.sqsh`を直接渡してFUSE mountします。Singularity/SIFとrootless VFSは現行経路では使用しません。
 
-モデル重みはまだ配置していないため、現在の検証は`Qwen/Qwen3.5-397B-A17B-FP8`の小さな設定・tokenizerファイルだけを配備し、SGLangを`--load-format dummy`およびrandom datasetで実行します。この結果は実モデルの性能値として扱いません。
+モデル重みはまだ配置していないため、現在のschedulerジョブは`python -m sglang.check_env`だけを実行します。GPUやモデルを使うbenchmark経路へ戻すまでは、環境検査の結果を性能値として扱いません。
 
 pushで計算を起動する場合は`[cluster:genkai]`、`[cluster:aspire2ap]`、または`[cluster:firmus]`をコミットメッセージへ付けます。複数指定すれば独立したrunnerから並行実行します。`[nodes:1]`、`[nodes:2]`、`[nodes:4]`でノード数を選び、省略時は2ノードです。Firmusは2ノードしかないため1または2を指定します。新しいコンテナが必要な変更では、コミットメッセージの先頭を`[require-build]`にします。クラスタタグのないpushは検証だけを実行し、`[skip ci]`を先頭に付けたpushではGitHub Actions自体を起動しません。
 
-設計と実機上の制約は [OCI / Enroot移行記録](research/container-runtime-migration.md)、従来構成に至った履歴は`research/build-performance/`と`research/runtime-performance/`を参照してください。
+AWS資源、費用、寿命、資格情報境界は [AWS SquashFSビルド](research/aws-container-build.md)、実機上の制約は [OCI / Enroot移行記録](research/container-runtime-migration.md)、従来構成に至った履歴は`research/build-performance/`と`research/runtime-performance/`を参照してください。
