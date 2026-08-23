@@ -27,7 +27,7 @@ trap cleanup EXIT
 rm -rf -- "${build_root:?}"
 install -d -m 0755 "${build_root}/input" "${build_root}/output" "${build_root}/work"
 aws s3 cp "s3://${bucket}/${input_key}" "${input_archive}" --only-show-errors
-tar -I zstd -xf "${input_archive}" -C "${build_root}/input"
+tar --no-same-owner -I zstd -xf "${input_archive}" -C "${build_root}/input"
 
 export BUILD_DIR="${build_root}/work"
 export BUILD_STORAGE_ROOT=/var/lib/containers/storage
@@ -38,7 +38,6 @@ export GITHUB_SHA="${github_sha}"
 export GITHUB_WORKSPACE="${build_root}/input/qwen"
 export GIT_MIRROR_DIR="${build_root}/input/git-mirror"
 export BUILD_CACHE_REPOSITORY="${cache_repository}"
-git config --system --add safe.directory "${GIT_MIRROR_DIR}/5_SGLang_Src.git"
 cache_registry="${cache_repository%%/*}"
 cache_region="$(cut -d. -f4 <<<"${cache_registry}")"
 aws ecr get-login-password --region "${cache_region}" | buildah login --username AWS --password-stdin "${cache_registry}"
