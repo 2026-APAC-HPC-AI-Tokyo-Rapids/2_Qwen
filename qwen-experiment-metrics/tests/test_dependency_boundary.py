@@ -73,6 +73,12 @@ def test_dockerfile_resolves_sglang_dependencies_before_copying_source() -> None
     ).read_text(encoding="utf-8")
 
 
+def test_rustup_download_retries_observed_dns_failure() -> None:
+    toolchain = (ROOT / "containers/install-system-toolchain.sh").read_text(encoding="utf-8")
+    rustup = next(line for line in toolchain.splitlines() if "https://sh.rustup.rs" in line)
+    assert "--retry 3 --retry-all-errors --retry-delay 2" in rustup
+
+
 def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
     selector = (ROOT / "scripts/select-qwen-container.sh").read_text(encoding="utf-8")
     for name in ("genkai.yml", "aspire2ap.yml", "firmus.yml"):
