@@ -49,7 +49,7 @@ install -d -m 2775 "${BUILD_DIR}" "${BUILD_DIR}/logs" "${context}/containers" "$
 storage_fstype="$(stat -f -c '%T' "${storage_root}")"
 case "${storage_fstype}" in ext2/ext3|xfs) :;; *) printf 'Unsupported Buildah storage filesystem %s: %s\n' "${storage_fstype}" "${storage_root}" >&2; exit 1;; esac
 
-if [[ -d "${GIT_MIRROR_DIR}/5_SGLang_Src.git" ]]; then git clone --reference-if-able "${GIT_MIRROR_DIR}/5_SGLang_Src.git" --no-checkout "${GIT_MIRROR_DIR}/5_SGLang_Src.git" "${source_dir}"; else gh repo clone 2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src "${source_dir}" -- --no-checkout; fi
+if [[ -d "${GIT_MIRROR_DIR}/5_SGLang_Src.git" ]]; then git -c "safe.directory=${GIT_MIRROR_DIR}/5_SGLang_Src.git" clone --reference-if-able "${GIT_MIRROR_DIR}/5_SGLang_Src.git" --no-checkout "${GIT_MIRROR_DIR}/5_SGLang_Src.git" "${source_dir}"; else gh repo clone 2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src "${source_dir}" -- --no-checkout; fi
 git -C "${source_dir}" checkout --detach main
 sglang_commit="$(git -C "${source_dir}" rev-parse HEAD)"
 git -C "${source_dir}" diff --quiet
