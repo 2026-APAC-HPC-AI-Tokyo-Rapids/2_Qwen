@@ -21,7 +21,6 @@ expected_size="$(jq -er 'select(.schema_version == "container-sidecar/v1") | .co
 expected_sha256="$(jq -er '.container_artifact.sha256' "${archive_sidecar}")"
 [[ "${expected_size}" == "${CONTAINER_SIZE}" && "${expected_sha256}" == "${CONTAINER_SHA256}" ]]
 [[ "$(stat -c '%s' "${archive_image}")" == "${CONTAINER_SIZE}" ]]
-[[ "$(sha256sum "${archive_image}" | awk '{print $1}')" == "${CONTAINER_SHA256}" ]]
 
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/check-env-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"

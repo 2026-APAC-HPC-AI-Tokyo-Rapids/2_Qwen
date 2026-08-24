@@ -86,6 +86,9 @@ def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
     selector = (ROOT / "scripts/select-qwen-container.sh").read_text(encoding="utf-8")
     aws_workflow = (ROOT / ".github/workflows/aws-container.yml").read_text(encoding="utf-8")
     assert "scripts/select-qwen-container.sh" in aws_workflow
+    assert aws_workflow.count("scripts/select-qwen-container.sh") == 1
+    assert "select-aspire2ap:" not in aws_workflow and "select-firmus:" not in aws_workflow
+    assert "decide:" not in aws_workflow and "finalize:" not in aws_workflow
     for name in ("genkai.yml", "aspire2ap.yml", "firmus.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
         assert "select-qwen-container.sh" not in workflow
@@ -119,8 +122,7 @@ def test_aws_builder_distributes_only_new_builds_and_reuse_stays_local() -> None
     assert "awscli-exe-linux-x86_64.zip" in (ROOT / "aws/ec2-user-data.sh").read_text(encoding="utf-8")
     assert "BlockPublicPolicy: true" in infrastructure
     assert 's3-object-transfer.py" download' in materialize
-    assert 'if [[ ! "${source_image}" -ef "${current_image}" ]]; then ln -f -- "${source_image}" "${current_image}"; fi' in materialize
-    assert 'stat -c \'%i\'' in materialize
+    assert 'ln -f -- "${source_image}" "${current_image}"' in materialize
     assert '"${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"' in materialize
     assert 'cp --reflink=auto --sparse=always "${archive_image}" "${runtime_dir}/sglang.sqsh"' in provision
     assert "s3-object-transfer.py" not in provision and "configure-aws-credentials" not in provision

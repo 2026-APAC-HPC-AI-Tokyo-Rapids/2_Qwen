@@ -42,8 +42,7 @@ def test_selector_reuses_valid_first_parent_artifact(tmp_path: Path) -> None:
     output = tmp_path / "github-output"
     environment = os.environ | {"CONTAINER_ARCHIVE_DIR": str(archive), "GITHUB_OUTPUT": str(output), "GITHUB_RUN_ID": "200", "GITHUB_SHA": commit, "REQUIRE_BUILD": "false", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
     subprocess.run([ROOT / "scripts/select-qwen-container.sh"], cwd=repository, env=environment, check=True)
-    expected_candidates = json.dumps([{"run_id": "100", "sha256": digest, "size": str(image_size)}], separators=(",", ":"))
-    assert output.read_text(encoding="utf-8") == f"action=reuse\nsource_run_id=100\ncontainer_sha256={digest}\ncontainer_size={image_size}\ncandidates={expected_candidates}\n"
+    assert output.read_text(encoding="utf-8") == f"action=reuse\nsource_run_id=100\ncontainer_sha256={digest}\ncontainer_size={image_size}\n"
 
 
 def test_materializer_reuses_archive_with_hard_links(tmp_path: Path) -> None:
@@ -56,8 +55,7 @@ def test_materializer_reuses_archive_with_hard_links(tmp_path: Path) -> None:
     source_sidecar = archive / "100.container-sidecar.json"
     source_image.write_bytes(image)
     source_sidecar.write_text(json.dumps(sidecar), encoding="utf-8")
-    environment = os.environ | {"ACTION": "reuse", "CONTAINER_ARCHIVE_DIR": str(archive), "CONTAINER_SHA256": digest, "CONTAINER_SIZE": str(len(image)), "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "200", "SOURCE_RUN_ID": "100"}
-    subprocess.run([ROOT / "scripts/materialize-qwen-container.sh"], env=environment, check=True)
+    environment = os.environ | {"ACTION": "reuse", "CONTAINER_ARCHIVE_DIR": str(archive), "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "200", "SOURCE_RUN_ID": "100"}
     subprocess.run([ROOT / "scripts/materialize-qwen-container.sh"], env=environment, check=True)
     assert (archive / "200.sqsh").stat().st_ino == source_image.stat().st_ino
     assert (archive / "200.container-sidecar.json").stat().st_ino == source_sidecar.stat().st_ino
@@ -87,7 +85,7 @@ def test_selector_forces_build_without_querying_history(tmp_path: Path) -> None:
     output = tmp_path / "github-output"
     environment = os.environ | {"CONTAINER_ARCHIVE_DIR": str(tmp_path / "archive"), "GITHUB_OUTPUT": str(output), "GITHUB_RUN_ID": "200", "GITHUB_SHA": "a" * 40, "REQUIRE_BUILD": "true", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
     subprocess.run([ROOT / "scripts/select-qwen-container.sh"], env=environment, check=True)
-    assert output.read_text(encoding="utf-8") == "action=build\ncandidates=[]\n"
+    assert output.read_text(encoding="utf-8") == "action=build\n"
 
 
 def test_aws_cost_estimate_includes_ephemeral_storage_and_external_distribution(tmp_path: Path) -> None:

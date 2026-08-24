@@ -7,14 +7,10 @@ on:
         required: true
         type: boolean
     outputs:
-      action:
-        value: ${{ jobs.finalize.outputs.action }}
-      source_run_id:
-        value: ${{ jobs.finalize.outputs.source_run_id }}
       container_sha256:
-        value: ${{ jobs.finalize.outputs.container_sha256 }}
+        value: ${{ jobs.select-genkai.outputs.action == 'build' && jobs.resolve.outputs.container_sha256 || jobs.select-genkai.outputs.container_sha256 }}
       container_size:
-        value: ${{ jobs.finalize.outputs.container_size }}
+        value: ${{ jobs.select-genkai.outputs.action == 'build' && jobs.resolve.outputs.container_size || jobs.select-genkai.outputs.container_size }}
 
 permissions:
   actions: read
@@ -32,7 +28,6 @@ jobs:
     timeout-minutes: 60
     outputs:
       action: ${{ steps.select.outputs.action }}
-      candidates: ${{ steps.select.outputs.candidates }}
       container_sha256: ${{ steps.select.outputs.container_sha256 }}
       container_size: ${{ steps.select.outputs.container_size }}
       source_run_id: ${{ steps.select.outputs.source_run_id }}
@@ -54,86 +49,10 @@ jobs:
           REQUIRE_BUILD: ${{ inputs.require_build }}
         run: scripts/select-qwen-container.sh
 
-  select-aspire2ap:
-    name: ASPIRE 2A+のローカル成果物を選択
-    runs-on: [self-hosted, aspire2p]
-    timeout-minutes: 60
-    outputs:
-      action: ${{ steps.select.outputs.action }}
-      candidates: ${{ steps.select.outputs.candidates }}
-      container_sha256: ${{ steps.select.outputs.container_sha256 }}
-      container_size: ${{ steps.select.outputs.container_size }}
-      source_run_id: ${{ steps.select.outputs.source_run_id }}
-    defaults:
-      run:
-        shell: bash --login -eo pipefail {0}
-    steps:
-      - name: リポジトリ履歴を取得
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: 既存成果物の再利用または新規ビルドを選択
-        id: select
-        env:
-          CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/apacsc14/sglang-containers
-          GH_TOKEN: ${{ github.token }}
-          REQUIRE_BUILD: ${{ inputs.require_build }}
-        run: scripts/select-qwen-container.sh
-
-  select-firmus:
-    name: Firmusのローカル成果物を選択
-    runs-on: [self-hosted, firmus]
-    timeout-minutes: 60
-    outputs:
-      action: ${{ steps.select.outputs.action }}
-      candidates: ${{ steps.select.outputs.candidates }}
-      container_sha256: ${{ steps.select.outputs.container_sha256 }}
-      container_size: ${{ steps.select.outputs.container_size }}
-      source_run_id: ${{ steps.select.outputs.source_run_id }}
-    defaults:
-      run:
-        shell: bash --login -eo pipefail {0}
-    steps:
-      - name: リポジトリ履歴を取得
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: 既存成果物の再利用または新規ビルドを選択
-        id: select
-        env:
-          CONTAINER_ARCHIVE_DIR: /scratch/home/apacsc14/qwen/containers
-          GH_TOKEN: ${{ github.token }}
-          REQUIRE_BUILD: ${{ inputs.require_build }}
-        run: scripts/select-qwen-container.sh
-
-  decide:
-    name: 再利用するローカル成果物を確定
-    needs: [select-genkai, select-aspire2ap, select-firmus]
-    runs-on: ubuntu-latest
-    outputs:
-      action: ${{ steps.decide.outputs.action }}
-      container_sha256: ${{ steps.decide.outputs.container_sha256 }}
-      container_size: ${{ steps.decide.outputs.container_size }}
-      source_run_id: ${{ steps.decide.outputs.source_run_id }}
-    steps:
-      - name: 利用可能な最新の成果物を選択
-        id: decide
-        env:
-          ASPIRE_CANDIDATES: ${{ needs.select-aspire2ap.outputs.candidates }}
-          FIRMUS_CANDIDATES: ${{ needs.select-firmus.outputs.candidates }}
-          GENKAI_CANDIDATES: ${{ needs.select-genkai.outputs.candidates }}
-        run: |
-          candidate="$(jq -cn --argjson genkai "${GENKAI_CANDIDATES:-[]}" --argjson aspire "${ASPIRE_CANDIDATES:-[]}" --argjson firmus "${FIRMUS_CANDIDATES:-[]}" '[$genkai[] as $candidate | select(any($aspire[]; .run_id == $candidate.run_id and .sha256 == $candidate.sha256 and .size == $candidate.size)) | select(any($firmus[]; .run_id == $candidate.run_id and .sha256 == $candidate.sha256 and .size == $candidate.size)) | $candidate][0] // empty')"
-          if [[ -n "${candidate}" ]]; then printf 'action=reuse\nsource_run_id=%s\ncontainer_sha256=%s\ncontainer_size=%s\n' "$(jq -r '.run_id' <<<"${candidate}")" "$(jq -r '.sha256' <<<"${candidate}")" "$(jq -r '.size' <<<"${candidate}")" >>"${GITHUB_OUTPUT}"; else printf 'action=build\nsource_run_id=\ncontainer_sha256=\ncontainer_size=\n' >>"${GITHUB_OUTPUT}"; fi
-
   stage:
     name: 管理済みSGLang mirrorから入力を準備
-    needs: decide
-    if: needs.decide.outputs.action == 'build'
+    needs: select-genkai
+    if: needs.select-genkai.outputs.action == 'build'
     runs-on: [self-hosted, genkai]
     timeout-minutes: 60
     defaults:
@@ -166,8 +85,8 @@ jobs:
 
   build:
     name: 一時EC2でSquashFSをビルド
-    needs: [decide, stage]
-    if: needs.decide.outputs.action == 'build' && needs.stage.result == 'success'
+    needs: [select-genkai, stage]
+    if: needs.select-genkai.outputs.action == 'build' && needs.stage.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     outputs:
@@ -260,8 +179,8 @@ jobs:
 
   resolve:
     name: S3成果物を確定
-    needs: [decide, build]
-    if: needs.decide.outputs.action == 'build' && needs.build.result == 'success'
+    needs: [select-genkai, build]
+    if: needs.select-genkai.outputs.action == 'build' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     outputs:
       container_key: ${{ steps.resolve.outputs.container_key }}
@@ -292,8 +211,8 @@ jobs:
 
   materialize:
     name: ${{ matrix.cluster }}のローカルarchiveへ確定
-    needs: [decide, resolve]
-    if: ${{ always() && needs.decide.result == 'success' && ((needs.decide.outputs.action == 'reuse' && needs.resolve.result == 'skipped') || (needs.decide.outputs.action == 'build' && needs.resolve.result == 'success')) }}
+    needs: [select-genkai, resolve]
+    if: ${{ always() && needs.select-genkai.result == 'success' && ((needs.select-genkai.outputs.action == 'reuse' && needs.resolve.result == 'skipped') || (needs.select-genkai.outputs.action == 'build' && needs.resolve.result == 'success')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -319,11 +238,11 @@ jobs:
           persist-credentials: false
 
       - name: S3 APIクライアントの実行環境を準備
-        if: needs.decide.outputs.action == 'build'
+        if: needs.select-genkai.outputs.action == 'build'
         uses: astral-sh/setup-uv@v7
 
       - name: AWSの一時資格情報を取得
-        if: needs.decide.outputs.action == 'build'
+        if: needs.select-genkai.outputs.action == 'build'
         uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           aws-region: ${{ env.AWS_REGION }}
@@ -331,33 +250,11 @@ jobs:
 
       - name: build時はS3から取得し、再利用時はarchive内でハードリンク
         env:
-          ACTION: ${{ needs.decide.outputs.action }}
+          ACTION: ${{ needs.select-genkai.outputs.action }}
           CONTAINER_ARCHIVE_DIR: ${{ matrix.archive_dir }}
           CONTAINER_KEY: ${{ needs.resolve.outputs.container_key }}
-          CONTAINER_SHA256: ${{ needs.decide.outputs.action == 'build' && needs.resolve.outputs.container_sha256 || needs.decide.outputs.container_sha256 }}
-          CONTAINER_SIZE: ${{ needs.decide.outputs.action == 'build' && needs.resolve.outputs.container_size || needs.decide.outputs.container_size }}
+          CONTAINER_SHA256: ${{ needs.resolve.outputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ needs.resolve.outputs.container_size }}
           SIDECAR_KEY: ${{ needs.resolve.outputs.sidecar_key }}
-          SOURCE_RUN_ID: ${{ needs.decide.outputs.source_run_id }}
+          SOURCE_RUN_ID: ${{ needs.select-genkai.outputs.source_run_id }}
         run: scripts/materialize-qwen-container.sh
-
-  finalize:
-    name: 全クラスタのローカルarchiveを確認
-    needs: [decide, resolve, materialize]
-    if: ${{ always() && needs.decide.result == 'success' && needs.materialize.result == 'success' }}
-    runs-on: ubuntu-latest
-    outputs:
-      action: ${{ steps.finalize.outputs.action }}
-      container_sha256: ${{ steps.finalize.outputs.container_sha256 }}
-      container_size: ${{ steps.finalize.outputs.container_size }}
-      source_run_id: ${{ steps.finalize.outputs.source_run_id }}
-    steps:
-      - name: 全クラスタで確定した成果物を出力
-        id: finalize
-        env:
-          BUILD_SHA256: ${{ needs.resolve.outputs.container_sha256 }}
-          BUILD_SIZE: ${{ needs.resolve.outputs.container_size }}
-          REUSE_SHA256: ${{ needs.decide.outputs.container_sha256 }}
-          REUSE_SIZE: ${{ needs.decide.outputs.container_size }}
-        run: |
-          if [[ '${{ needs.decide.outputs.action }}' == build ]]; then container_sha256=${BUILD_SHA256}; container_size=${BUILD_SIZE}; source_run_id=${GITHUB_RUN_ID}; else container_sha256=${REUSE_SHA256}; container_size=${REUSE_SIZE}; source_run_id='${{ needs.decide.outputs.source_run_id }}'; fi
-          printf 'action=%s\nsource_run_id=%s\ncontainer_sha256=%s\ncontainer_size=%s\n' '${{ needs.decide.outputs.action }}' "${source_run_id}" "${container_sha256}" "${container_size}" >>"${GITHUB_OUTPUT}"
