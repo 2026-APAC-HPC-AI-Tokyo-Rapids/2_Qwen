@@ -5,12 +5,10 @@
 なし、retryなし、重複許容です。送信失敗はwarningとなり、benchmarkやPJMの
 結果を変更しません。
 
-GPU sampler、GPU profiler/reducer、SGLang request/token/stage/configuration、
-IMB-MPI1、NCCL testsの収集は維持します。NCCL/IMBはgeneration後の独立stageで、
-generation性能値には含めません。fragmentは診断artifactであり再送queueでは
-ありません。中央merge、`metrics.jsonl`、physical projection、consumer view、
-conflict tableはありません。
+現在のQwen実行経路で使うrun/stage lifecycle、provenance、hardware/topology、
+workload、GPU sampler・profiler、SGLang request/token/configurationだけを扱います。
+fragmentは診断artifactであり再送queueではありません。将来用のnetwork測定、
+submission/cache管理、中央merge、physical projection、consumer viewは実装しません。
 
-workflowはrun内にmode 0600のcredential fileを作り、PJMへはpathだけを渡します。
-credential transport変数はenvironment snapshotとartifactから除外し、cleanupで
-fileを削除します。高コスト処理前にrunner/compute双方からsmoke行を送ります。
+計算ノードは共有run directoryへfragmentを書きます。BigQuery資格情報はscheduler
+jobへ渡さず、terminal状態を確認したlogin runnerだけがfragmentを送信します。

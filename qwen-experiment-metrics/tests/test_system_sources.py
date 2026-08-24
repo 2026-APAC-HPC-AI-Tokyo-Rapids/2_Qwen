@@ -15,14 +15,12 @@ from qwen_experiment_metrics.canonical import jcs_bytes
 from qwen_experiment_metrics.profile_contract import parse_phase_summary
 from qwen_experiment_metrics.system_sources import (
     capture_environment_snapshot,
-    create_scheduler_accounting,
     environment_facts,
     finish_run_lifecycle,
     start_run_lifecycle,
     validate_environment_snapshot,
     validate_lifecycle_summary,
     validate_node_lifecycle,
-    validate_scheduler_accounting,
 )
 from qwen_experiment_metrics.workload import validate_ordered_workload
 
@@ -53,36 +51,6 @@ def test_run_lifecycle_uses_one_monotonic_clock(
     values = {fact.key: fact.logical_value for fact in facts}
     assert values["run.exit_code"] == 17
     assert values["run.elapsed_sec"] >= 0
-
-
-def test_scheduler_accounting_binds_exact_tsv_and_job(
-    manifest_path: Path, runtime: Path
-) -> None:
-    scheduler = runtime / "source/scheduler"
-    scheduler.mkdir(parents=True)
-    stdout = scheduler / "accounting.txt"
-    stderr = scheduler / "accounting.stderr"
-    stdout.write_text(
-        "H\tJOB ID\tSTATE\tJOB START DATE\tELAPSE TIME (USE)\tEXIT CODE\t"
-        "SIGNAL NO\tPJM CODE\tNODE NUM (USE)\tMAX MEMORY SIZE (USE)\t"
-        "USER CPU TIME (USE)\tSYSTEM CPU TIME (USE)\n"
-        "\t123\tEXT\t2026/08/10 09:00:00\t00:01:02 (62)\t0\t-\t0\t2\t"
-        "4.0 KiB (4096)\t12000 ms\t3000 ms\n",
-        encoding="utf-8",
-    )
-    stderr.write_bytes(b"")
-    path, facts = create_scheduler_accounting(
-        manifest_path,
-        runtime,
-        job_id="123",
-        stdout_path=stdout,
-        stderr_path=stderr,
-        exit_code=0,
-    )
-    assert validate_scheduler_accounting(path, runtime, RUN_ID) == facts
-    values = {fact.key: fact.logical_value for fact in facts}
-    assert values["scheduler.accounting.elp.seconds"] == 62
-    assert values["scheduler.accounting.mmszu.bytes"] == 4096
 
 
 def test_ordered_workload_is_closed_and_order_sensitive(tmp_path: Path) -> None:
