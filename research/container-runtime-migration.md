@@ -12,7 +12,7 @@ Enroot 4.2.0はDocker archiveやOCI archiveを実行形式として直接使え�
 
 AWS VMは32 GiB RAM全体を一時buildに使えるため、`mksquashfs`は8 worker、8 GiB cache、gzip level 2で実行する。全RAM化は、26.6 GBのrootfsに加えてBuildah layer、OCI layout、圧縮入出力を同時に保持すると32 GiBを超えるため採用しない。高速gp3上でOverlayFSのcopy-on-writeを使う方が容量と速度の境界が明確である。
 
-完成物は玄界、ASPIRE 2A+、Firmusの各ローカルarchiveへrun ID名で保存する。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行はGitの第一親を順番にたどり、3クラスタで同じrun ID、file size、SHA-256を持つ成果物だけを再利用する。private S3の`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/`は新規buildを全3クラスタへ1日限りで配布するときだけ使い、完了マーカーは作らない。再利用時はS3を使わず、各archive内でsource runのsqshとsidecarを今回run IDへハードリンクする。AWS CLIを配置せず、bucketもpublicにせず、AWS資格情報をscheduler jobへ渡さない。
+完成物は玄界、ASPIRE 2A+、Firmusの各ローカルarchiveへrun ID名で保存する。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行は玄界archiveを正本としてGitの第一親を順番にたどり、有効な最新runを再利用する。private S3の`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/`は新規buildを全3クラスタへ1日限りで配布するときだけ使い、完了マーカーは作らない。再利用時はS3を使わず、各archive内でsource runのsqshとsidecarを今回run IDへハードリンクする。AWS CLIを配置せず、bucketもpublicにせず、AWS資格情報をscheduler jobへ渡さない。
 
 ## 制御処理の責務
 
