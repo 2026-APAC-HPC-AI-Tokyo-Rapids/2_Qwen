@@ -68,10 +68,8 @@ jobs:
     uses: ./.github/workflows/genkai.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
-      container_key: ${{ needs.container.outputs.container_key }}
       container_sha256: ${{ needs.container.outputs.container_sha256 }}
       container_size: ${{ needs.container.outputs.container_size }}
-      sidecar_key: ${{ needs.container.outputs.sidecar_key }}
     secrets: inherit
 
   aspire2ap:
@@ -81,10 +79,8 @@ jobs:
     uses: ./.github/workflows/aspire2ap.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
-      container_key: ${{ needs.container.outputs.container_key }}
       container_sha256: ${{ needs.container.outputs.container_sha256 }}
       container_size: ${{ needs.container.outputs.container_size }}
-      sidecar_key: ${{ needs.container.outputs.sidecar_key }}
     secrets: inherit
 
   firmus:
@@ -94,8 +90,6 @@ jobs:
     uses: ./.github/workflows/firmus.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
-      container_key: ${{ needs.container.outputs.container_key }}
       container_sha256: ${{ needs.container.outputs.container_sha256 }}
       container_size: ${{ needs.container.outputs.container_size }}
-      sidecar_key: ${{ needs.container.outputs.sidecar_key }}
     secrets: inherit

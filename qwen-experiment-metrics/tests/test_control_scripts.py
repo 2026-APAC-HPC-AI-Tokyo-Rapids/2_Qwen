@@ -42,7 +42,42 @@ def test_selector_reuses_valid_first_parent_artifact(tmp_path: Path) -> None:
     output = tmp_path / "github-output"
     environment = os.environ | {"CONTAINER_ARCHIVE_DIR": str(archive), "GITHUB_OUTPUT": str(output), "GITHUB_RUN_ID": "200", "GITHUB_SHA": commit, "REQUIRE_BUILD": "false", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
     subprocess.run([ROOT / "scripts/select-qwen-container.sh"], cwd=repository, env=environment, check=True)
-    assert output.read_text(encoding="utf-8") == "action=reuse\nsource_run_id=100\n"
+    expected_candidates = json.dumps([{"run_id": "100", "sha256": digest, "size": str(image_size)}], separators=(",", ":"))
+    assert output.read_text(encoding="utf-8") == f"action=reuse\nsource_run_id=100\ncontainer_sha256={digest}\ncontainer_size={image_size}\ncandidates={expected_candidates}\n"
+
+
+def test_materializer_reuses_archive_with_hard_links(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    image = b"fixture-container\n"
+    digest = hashlib.sha256(image).hexdigest()
+    sidecar = {"schema_version": "container-sidecar/v1", "container_artifact": {"artifact_relative_path": "sglang.sqsh", "size_bytes": len(image), "sha256": digest}}
+    source_image = archive / "100.sqsh"
+    source_sidecar = archive / "100.container-sidecar.json"
+    source_image.write_bytes(image)
+    source_sidecar.write_text(json.dumps(sidecar), encoding="utf-8")
+    environment = os.environ | {"ACTION": "reuse", "CONTAINER_ARCHIVE_DIR": str(archive), "CONTAINER_SHA256": digest, "CONTAINER_SIZE": str(len(image)), "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "200", "SOURCE_RUN_ID": "100"}
+    subprocess.run([ROOT / "scripts/materialize-qwen-container.sh"], env=environment, check=True)
+    subprocess.run([ROOT / "scripts/materialize-qwen-container.sh"], env=environment, check=True)
+    assert (archive / "200.sqsh").stat().st_ino == source_image.stat().st_ino
+    assert (archive / "200.container-sidecar.json").stat().st_ino == source_sidecar.stat().st_ino
+
+
+def test_materializer_downloads_only_for_build(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    fixture_image = tmp_path / "fixture.sqsh"
+    fixture_sidecar = tmp_path / "fixture.container-sidecar.json"
+    image = b"fixture-container\n"
+    digest = hashlib.sha256(image).hexdigest()
+    fixture_image.write_bytes(image)
+    fixture_sidecar.write_text(json.dumps({"schema_version": "container-sidecar/v1", "container_artifact": {"artifact_relative_path": "sglang.sqsh", "size_bytes": len(image), "sha256": digest}}), encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "uvx", "#!/usr/bin/env bash\nif [[ \"$7\" == */sglang.sqsh ]]; then cp -- \"${FIXTURE_IMAGE}\" \"$8\"; else cp -- \"${FIXTURE_SIDECAR}\" \"$8\"; fi\n")
+    environment = os.environ | {"ACTION": "build", "CONTAINER_ARCHIVE_DIR": str(archive), "CONTAINER_BUCKET": "fixture-bucket", "CONTAINER_KEY": "containers/commit/run/sglang.sqsh", "CONTAINER_SHA256": digest, "CONTAINER_SIZE": str(len(image)), "FIXTURE_IMAGE": str(fixture_image), "FIXTURE_SIDECAR": str(fixture_sidecar), "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "200", "GITHUB_WORKSPACE": str(tmp_path), "PATH": f"{fake_bin}:{os.environ['PATH']}", "SIDECAR_KEY": "containers/commit/run/container-sidecar.json"}
+    subprocess.run([ROOT / "scripts/materialize-qwen-container.sh"], env=environment, check=True)
+    assert (archive / "200.sqsh").read_bytes() == image
+    assert json.loads((archive / "200.container-sidecar.json").read_text(encoding="utf-8"))["container_artifact"]["sha256"] == digest
 
 
 def test_selector_forces_build_without_querying_history(tmp_path: Path) -> None:
@@ -52,7 +87,7 @@ def test_selector_forces_build_without_querying_history(tmp_path: Path) -> None:
     output = tmp_path / "github-output"
     environment = os.environ | {"CONTAINER_ARCHIVE_DIR": str(tmp_path / "archive"), "GITHUB_OUTPUT": str(output), "GITHUB_RUN_ID": "200", "GITHUB_SHA": "a" * 40, "REQUIRE_BUILD": "true", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
     subprocess.run([ROOT / "scripts/select-qwen-container.sh"], env=environment, check=True)
-    assert output.read_text(encoding="utf-8") == "action=build\n"
+    assert output.read_text(encoding="utf-8") == "action=build\ncandidates=[]\n"
 
 
 def test_aws_cost_estimate_includes_ephemeral_storage_and_external_distribution(tmp_path: Path) -> None:

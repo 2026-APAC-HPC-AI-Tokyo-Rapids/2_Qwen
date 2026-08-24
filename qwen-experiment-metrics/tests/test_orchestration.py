@@ -115,8 +115,8 @@ def test_workflow_and_pjm_enforce_runner_compute_boundary() -> None:
     assert "-m sglang.check_env" in check
     assert "provision-qwen-check-env.sh" in workflow
     assert "provision-qwen-check-env.sh" in aspire
-    assert "configure-aws-credentials" in workflow
-    assert "configure-aws-credentials" in aspire
+    assert "configure-aws-credentials" not in workflow
+    assert "configure-aws-credentials" not in aspire
     assert "send-qwen-fragments.sh" not in workflow
     assert "send-qwen-fragments.sh" not in aspire
     assert "GOOGLE_CREDENTIAL" not in pjm
