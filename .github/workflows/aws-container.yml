@@ -8,19 +8,13 @@ on:
         type: boolean
     outputs:
       action:
-        value: ${{ jobs.resolve.outputs.action }}
+        value: ${{ jobs.finalize.outputs.action }}
       source_run_id:
-        value: ${{ jobs.resolve.outputs.source_run_id }}
-      distribution_prefix:
-        value: ${{ jobs.resolve.outputs.distribution_prefix }}
-      container_key:
-        value: ${{ jobs.resolve.outputs.container_key }}
+        value: ${{ jobs.finalize.outputs.source_run_id }}
       container_sha256:
-        value: ${{ jobs.resolve.outputs.container_sha256 }}
+        value: ${{ jobs.finalize.outputs.container_sha256 }}
       container_size:
-        value: ${{ jobs.resolve.outputs.container_size }}
-      sidecar_key:
-        value: ${{ jobs.resolve.outputs.sidecar_key }}
+        value: ${{ jobs.finalize.outputs.container_size }}
 
 permissions:
   actions: read
@@ -38,6 +32,9 @@ jobs:
     timeout-minutes: 60
     outputs:
       action: ${{ steps.select.outputs.action }}
+      candidates: ${{ steps.select.outputs.candidates }}
+      container_sha256: ${{ steps.select.outputs.container_sha256 }}
+      container_size: ${{ steps.select.outputs.container_size }}
       source_run_id: ${{ steps.select.outputs.source_run_id }}
     defaults:
       run:
@@ -63,6 +60,9 @@ jobs:
     timeout-minutes: 60
     outputs:
       action: ${{ steps.select.outputs.action }}
+      candidates: ${{ steps.select.outputs.candidates }}
+      container_sha256: ${{ steps.select.outputs.container_sha256 }}
+      container_size: ${{ steps.select.outputs.container_size }}
       source_run_id: ${{ steps.select.outputs.source_run_id }}
     defaults:
       run:
@@ -88,6 +88,9 @@ jobs:
     timeout-minutes: 60
     outputs:
       action: ${{ steps.select.outputs.action }}
+      candidates: ${{ steps.select.outputs.candidates }}
+      container_sha256: ${{ steps.select.outputs.container_sha256 }}
+      container_size: ${{ steps.select.outputs.container_size }}
       source_run_id: ${{ steps.select.outputs.source_run_id }}
     defaults:
       run:
@@ -113,68 +116,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       action: ${{ steps.decide.outputs.action }}
-      archive_dir: ${{ steps.decide.outputs.archive_dir }}
-      runner_labels: ${{ steps.decide.outputs.runner_labels }}
+      container_sha256: ${{ steps.decide.outputs.container_sha256 }}
+      container_size: ${{ steps.decide.outputs.container_size }}
       source_run_id: ${{ steps.decide.outputs.source_run_id }}
     steps:
       - name: 利用可能な最新の成果物を選択
         id: decide
         env:
-          ASPIRE_ACTION: ${{ needs.select-aspire2ap.outputs.action }}
-          ASPIRE_RUN_ID: ${{ needs.select-aspire2ap.outputs.source_run_id }}
-          FIRMUS_ACTION: ${{ needs.select-firmus.outputs.action }}
-          FIRMUS_RUN_ID: ${{ needs.select-firmus.outputs.source_run_id }}
-          GENKAI_ACTION: ${{ needs.select-genkai.outputs.action }}
-          GENKAI_RUN_ID: ${{ needs.select-genkai.outputs.source_run_id }}
+          ASPIRE_CANDIDATES: ${{ needs.select-aspire2ap.outputs.candidates }}
+          FIRMUS_CANDIDATES: ${{ needs.select-firmus.outputs.candidates }}
+          GENKAI_CANDIDATES: ${{ needs.select-genkai.outputs.candidates }}
         run: |
-          selected_run_id=
-          selected_archive_dir=
-          selected_runner_labels=
-          consider() { if [[ "$1" == reuse && "$2" =~ ^[1-9][0-9]*$ && ( -z "${selected_run_id}" || "$2" -gt "${selected_run_id}" ) ]]; then selected_run_id="$2"; selected_archive_dir="$3"; selected_runner_labels="$4"; fi; }
-          consider "${GENKAI_ACTION}" "${GENKAI_RUN_ID}" /home/ACCOUNT/share/sglang-containers '["self-hosted","genkai"]'
-          consider "${ASPIRE_ACTION}" "${ASPIRE_RUN_ID}" /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers '["self-hosted","aspire2p"]'
-          consider "${FIRMUS_ACTION}" "${FIRMUS_RUN_ID}" /scratch/home/ACCOUNT/qwen/containers '["self-hosted","firmus"]'
-          if [[ -n "${selected_run_id}" ]]; then printf 'action=reuse\nsource_run_id=%s\narchive_dir=%s\nrunner_labels=%s\n' "${selected_run_id}" "${selected_archive_dir}" "${selected_runner_labels}" >>"${GITHUB_OUTPUT}"; else printf 'action=build\nsource_run_id=\narchive_dir=\nrunner_labels=[]\n' >>"${GITHUB_OUTPUT}"; fi
-
-  publish-reuse:
-    name: ローカルSquashFSを期限付きS3配布物へ公開
-    needs: decide
-    if: needs.decide.outputs.action == 'reuse'
-    runs-on: ${{ fromJSON(needs.decide.outputs.runner_labels) }}
-    timeout-minutes: 180
-    outputs:
-      container_key: ${{ steps.publish.outputs.container_key }}
-      sidecar_key: ${{ steps.publish.outputs.sidecar_key }}
-    defaults:
-      run:
-        shell: bash --login -eo pipefail {0}
-    steps:
-      - name: 転送処理を取得
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: AWSの一時資格情報を取得
-        uses: aws-actions/configure-aws-credentials@v6.2.3
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
-
-      - name: 検証済みローカル成果物をS3 APIでupload
-        id: publish
-        env:
-          CONTAINER_ARCHIVE_DIR: ${{ needs.decide.outputs.archive_dir }}
-          SOURCE_RUN_ID: ${{ needs.decide.outputs.source_run_id }}
-        run: |
-          source_image="${CONTAINER_ARCHIVE_DIR}/${SOURCE_RUN_ID}.sqsh"
-          source_sidecar="${CONTAINER_ARCHIVE_DIR}/${SOURCE_RUN_ID}.container-sidecar.json"
-          expected_size="$(jq -er 'select(.schema_version == "container-sidecar/v1") | .container_artifact.size_bytes' "${source_sidecar}")"
-          expected_sha256="$(jq -er '.container_artifact.sha256 | select(test("^[0-9a-f]{64}$"))' "${source_sidecar}")"
-          [[ "$(stat -c '%s' "${source_image}")" == "${expected_size}" && "$(sha256sum "${source_image}" | awk '{print $1}')" == "${expected_sha256}" ]]
-          output_prefix="containers/${GITHUB_SHA}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          uvx --from 'boto3>=1.40,<2' python scripts/s3-object-transfer.py upload "${source_image}" "${CONTAINER_BUCKET}" "${output_prefix}/sglang.sqsh" --sha256 "${expected_sha256}"
-          uvx --from 'boto3>=1.40,<2' python scripts/s3-object-transfer.py upload "${source_sidecar}" "${CONTAINER_BUCKET}" "${output_prefix}/container-sidecar.json"
-          printf 'container_key=%s/sglang.sqsh\nsidecar_key=%s/container-sidecar.json\n' "${output_prefix}" "${output_prefix}" >>"${GITHUB_OUTPUT}"
+          candidate="$(jq -cn --argjson genkai "${GENKAI_CANDIDATES:-[]}" --argjson aspire "${ASPIRE_CANDIDATES:-[]}" --argjson firmus "${FIRMUS_CANDIDATES:-[]}" '[$genkai[] as $candidate | select(any($aspire[]; .run_id == $candidate.run_id and .sha256 == $candidate.sha256 and .size == $candidate.size)) | select(any($firmus[]; .run_id == $candidate.run_id and .sha256 == $candidate.sha256 and .size == $candidate.size)) | $candidate][0] // empty')"
+          if [[ -n "${candidate}" ]]; then printf 'action=reuse\nsource_run_id=%s\ncontainer_sha256=%s\ncontainer_size=%s\n' "$(jq -r '.run_id' <<<"${candidate}")" "$(jq -r '.sha256' <<<"${candidate}")" "$(jq -r '.size' <<<"${candidate}")" >>"${GITHUB_OUTPUT}"; else printf 'action=build\nsource_run_id=\ncontainer_sha256=\ncontainer_size=\n' >>"${GITHUB_OUTPUT}"; fi
 
   stage:
     name: 管理済みSGLang mirrorから入力を準備
@@ -306,17 +260,14 @@ jobs:
 
   resolve:
     name: S3成果物を確定
-    needs: [decide, publish-reuse, build]
-    if: ${{ always() && needs.decide.result == 'success' && ((needs.decide.outputs.action == 'reuse' && needs.publish-reuse.result == 'success' && needs.build.result == 'skipped') || (needs.decide.outputs.action == 'build' && needs.publish-reuse.result == 'skipped' && needs.build.result == 'success')) }}
+    needs: [decide, build]
+    if: needs.decide.outputs.action == 'build' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     outputs:
-      action: ${{ steps.resolve.outputs.action }}
       container_key: ${{ steps.resolve.outputs.container_key }}
       container_sha256: ${{ steps.resolve.outputs.container_sha256 }}
       container_size: ${{ steps.resolve.outputs.container_size }}
-      distribution_prefix: ${{ steps.resolve.outputs.distribution_prefix }}
       sidecar_key: ${{ steps.resolve.outputs.sidecar_key }}
-      source_run_id: ${{ steps.resolve.outputs.source_run_id }}
     steps:
       - name: AWSの一時資格情報を取得
         uses: aws-actions/configure-aws-credentials@v6.2.3
@@ -329,14 +280,84 @@ jobs:
         env:
           BUILD_CONTAINER_KEY: ${{ needs.build.outputs.container_key }}
           BUILD_SIDECAR_KEY: ${{ needs.build.outputs.sidecar_key }}
-          REUSE_CONTAINER_KEY: ${{ needs.publish-reuse.outputs.container_key }}
-          REUSE_SIDECAR_KEY: ${{ needs.publish-reuse.outputs.sidecar_key }}
         run: |
-          if [[ '${{ needs.decide.outputs.action }}' == build ]]; then container_key=${BUILD_CONTAINER_KEY}; sidecar_key=${BUILD_SIDECAR_KEY}; source_run_id=${GITHUB_RUN_ID}; else container_key=${REUSE_CONTAINER_KEY}; sidecar_key=${REUSE_SIDECAR_KEY}; source_run_id='${{ needs.decide.outputs.source_run_id }}'; fi
+          container_key=${BUILD_CONTAINER_KEY}
+          sidecar_key=${BUILD_SIDECAR_KEY}
           sidecar="$(aws s3 cp "s3://${CONTAINER_BUCKET}/${sidecar_key}" - --only-show-errors)"
           container_size="$(jq -er 'select(.schema_version == "container-sidecar/v1") | .container_artifact.size_bytes' <<<"${sidecar}")"
           container_sha256="$(jq -er '.container_artifact.sha256 | select(test("^[0-9a-f]{64}$"))' <<<"${sidecar}")"
           image_head="$(aws s3api head-object --region "${AWS_REGION}" --bucket "${CONTAINER_BUCKET}" --key "${container_key}")"
           [[ "$(jq -er '.ContentLength' <<<"${image_head}")" == "${container_size}" && "$(jq -er '.Metadata.sha256' <<<"${image_head}")" == "${container_sha256}" ]]
-          distribution_prefix="${container_key%/sglang.sqsh}"
-          printf 'action=%s\nsource_run_id=%s\ndistribution_prefix=%s\ncontainer_key=%s\ncontainer_sha256=%s\ncontainer_size=%s\nsidecar_key=%s\n' '${{ needs.decide.outputs.action }}' "${source_run_id}" "${distribution_prefix}" "${container_key}" "${container_sha256}" "${container_size}" "${sidecar_key}" >>"${GITHUB_OUTPUT}"
+          printf 'container_key=%s\ncontainer_sha256=%s\ncontainer_size=%s\nsidecar_key=%s\n' "${container_key}" "${container_sha256}" "${container_size}" "${sidecar_key}" >>"${GITHUB_OUTPUT}"
+
+  materialize:
+    name: ${{ matrix.cluster }}のローカルarchiveへ確定
+    needs: [decide, resolve]
+    if: ${{ always() && needs.decide.result == 'success' && ((needs.decide.outputs.action == 'reuse' && needs.resolve.result == 'skipped') || (needs.decide.outputs.action == 'build' && needs.resolve.result == 'success')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cluster: 玄界
+            runner_labels: [self-hosted, genkai]
+            archive_dir: /home/ACCOUNT/share/sglang-containers
+          - cluster: ASPIRE 2A+
+            runner_labels: [self-hosted, aspire2p]
+            archive_dir: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+          - cluster: Firmus
+            runner_labels: [self-hosted, firmus]
+            archive_dir: /scratch/home/ACCOUNT/qwen/containers
+    runs-on: ${{ matrix.runner_labels }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash --login -eo pipefail {0}
+    steps:
+      - name: archive処理を取得
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: S3 APIクライアントの実行環境を準備
+        if: needs.decide.outputs.action == 'build'
+        uses: astral-sh/setup-uv@v7
+
+      - name: AWSの一時資格情報を取得
+        if: needs.decide.outputs.action == 'build'
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
+
+      - name: build時はS3から取得し、再利用時はarchive内でハードリンク
+        env:
+          ACTION: ${{ needs.decide.outputs.action }}
+          CONTAINER_ARCHIVE_DIR: ${{ matrix.archive_dir }}
+          CONTAINER_KEY: ${{ needs.resolve.outputs.container_key }}
+          CONTAINER_SHA256: ${{ needs.decide.outputs.action == 'build' && needs.resolve.outputs.container_sha256 || needs.decide.outputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ needs.decide.outputs.action == 'build' && needs.resolve.outputs.container_size || needs.decide.outputs.container_size }}
+          SIDECAR_KEY: ${{ needs.resolve.outputs.sidecar_key }}
+          SOURCE_RUN_ID: ${{ needs.decide.outputs.source_run_id }}
+        run: scripts/materialize-qwen-container.sh
+
+  finalize:
+    name: 全クラスタのローカルarchiveを確認
+    needs: [decide, resolve, materialize]
+    if: ${{ always() && needs.decide.result == 'success' && needs.materialize.result == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.finalize.outputs.action }}
+      container_sha256: ${{ steps.finalize.outputs.container_sha256 }}
+      container_size: ${{ steps.finalize.outputs.container_size }}
+      source_run_id: ${{ steps.finalize.outputs.source_run_id }}
+    steps:
+      - name: 全クラスタで確定した成果物を出力
+        id: finalize
+        env:
+          BUILD_SHA256: ${{ needs.resolve.outputs.container_sha256 }}
+          BUILD_SIZE: ${{ needs.resolve.outputs.container_size }}
+          REUSE_SHA256: ${{ needs.decide.outputs.container_sha256 }}
+          REUSE_SIZE: ${{ needs.decide.outputs.container_size }}
+        run: |
+          if [[ '${{ needs.decide.outputs.action }}' == build ]]; then container_sha256=${BUILD_SHA256}; container_size=${BUILD_SIZE}; source_run_id=${GITHUB_RUN_ID}; else container_sha256=${REUSE_SHA256}; container_size=${REUSE_SIZE}; source_run_id='${{ needs.decide.outputs.source_run_id }}'; fi
+          printf 'action=%s\nsource_run_id=%s\ncontainer_sha256=%s\ncontainer_size=%s\n' '${{ needs.decide.outputs.action }}' "${source_run_id}" "${container_sha256}" "${container_size}" >>"${GITHUB_OUTPUT}"

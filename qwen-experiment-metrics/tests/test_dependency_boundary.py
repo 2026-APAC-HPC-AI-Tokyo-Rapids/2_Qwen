@@ -99,14 +99,17 @@ def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
     assert "enroot start" not in selector
 
 
-def test_aws_builder_is_ephemeral_and_clusters_always_download_direct_image() -> None:
+def test_aws_builder_distributes_only_new_builds_and_reuse_stays_local() -> None:
     infrastructure = (ROOT / "aws/qwen-build-infrastructure.yml").read_text(encoding="utf-8")
     aws_workflow = (ROOT / ".github/workflows/aws-container.yml").read_text(encoding="utf-8")
+    materialize = (ROOT / "scripts/materialize-qwen-container.sh").read_text(encoding="utf-8")
     provision = (ROOT / "scripts/provision-qwen-check-env.sh").read_text(encoding="utf-8")
     check = (ROOT / "scripts/run-qwen-check-env.sh").read_text(encoding="utf-8")
     assert "m7i.2xlarge" in aws_workflow
-    assert "archive-build:" not in aws_workflow
-    assert "needs: [decide, publish-reuse, build]" in aws_workflow
+    assert "publish-reuse:" not in aws_workflow
+    assert "materialize:" in aws_workflow
+    assert "fail-fast: false" in aws_workflow
+    assert "build時はS3から取得し、再利用時はarchive内でハードリンク" in aws_workflow
     assert '"VolumeSize":300' in aws_workflow
     assert '"Iops":6000' in aws_workflow and '"Throughput":500' in aws_workflow
     assert "--instance-initiated-shutdown-behavior terminate" in aws_workflow
@@ -115,13 +118,13 @@ def test_aws_builder_is_ephemeral_and_clusters_always_download_direct_image() ->
     assert "systemd-run --unit=qwen-build-expiration --on-active=6h" in (ROOT / "aws/ec2-user-data.sh").read_text(encoding="utf-8")
     assert "awscli-exe-linux-x86_64.zip" in (ROOT / "aws/ec2-user-data.sh").read_text(encoding="utf-8")
     assert "BlockPublicPolicy: true" in infrastructure
-    assert 's3-object-transfer.py" download' in provision
-    assert 'download "${SIDECAR_KEY}"' in provision
-    assert 'download "${CONTAINER_KEY}"' in provision
-    assert 'cp --reflink=auto --sparse=always "${runtime_dir}/sglang.sqsh"' in provision
-    assert '"${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"' in provision
-    assert "generate_presigned_url" not in provision and "curl " not in provision and "aws s3" not in provision
-    assert 'downloaded:true,enroot_direct_squashfs:true' in provision
+    assert 's3-object-transfer.py" download' in materialize
+    assert 'if [[ ! "${source_image}" -ef "${current_image}" ]]; then ln -f -- "${source_image}" "${current_image}"; fi' in materialize
+    assert 'stat -c \'%i\'' in materialize
+    assert '"${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"' in materialize
+    assert 'cp --reflink=auto --sparse=always "${archive_image}" "${runtime_dir}/sglang.sqsh"' in provision
+    assert "s3-object-transfer.py" not in provision and "configure-aws-credentials" not in provision
+    assert 'local_archive:true,enroot_direct_squashfs:true' in provision
     assert 'enroot start -e NVIDIA_VISIBLE_DEVICES=all' in check
     assert "CUDA available: True" in check
     assert "^GPU [0-9,]*0[0-9,]*:" in check
@@ -327,10 +330,11 @@ def test_credentials_stop_at_login_runner() -> None:
         assert "smoke-send" not in text
     for name in ("genkai.yml", "aspire2ap.yml", "firmus.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
-        assert "configure-aws-credentials" in workflow
+        assert "configure-aws-credentials" not in workflow
         assert "send-qwen-fragments.sh" not in workflow
         assert "AWS_ACCESS_KEY_ID" not in workflow
         assert "AWS_SECRET_ACCESS_KEY" not in workflow
+    assert "configure-aws-credentials" in (ROOT / ".github/workflows/aws-container.yml").read_text(encoding="utf-8")
 
 
 def test_sglang_patches_close_primary_config_worker_and_profile_sources() -> None:

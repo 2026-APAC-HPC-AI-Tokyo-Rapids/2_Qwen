@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${AWS_REGION:?AWS region is required}"
 : "${CLUSTER_NAME:?cluster name is required}"
 : "${CONTAINER_ARCHIVE_DIR:?container archive directory is required}"
-: "${CONTAINER_BUCKET:?container bucket is required}"
-: "${CONTAINER_KEY:?container key is required}"
 : "${CONTAINER_SHA256:?container SHA-256 is required}"
 : "${CONTAINER_SIZE:?container size is required}"
 : "${ENROOT_LIBRARY_PATH:?Enroot library path is required}"
@@ -14,46 +11,24 @@ set -euo pipefail
 : "${GITHUB_RUN_ID:?workflow run ID is required}"
 : "${GITHUB_WORKSPACE:?workflow workspace is required}"
 : "${PROVISION_OUTPUT:?GitHub output file is required}"
-: "${RUNNER_TEMP:?GitHub runner temporary directory is required}"
 : "${RUNTIME_ROOT:?runtime root is required}"
-: "${SIDECAR_KEY:?container sidecar key is required}"
 
-[[ "${CONTAINER_KEY}" == containers/*/sglang.sqsh && "${SIDECAR_KEY}" == containers/*/container-sidecar.json ]]
 [[ "${CONTAINER_SHA256}" =~ ^[0-9a-f]{64}$ && "${CONTAINER_SIZE}" =~ ^[1-9][0-9]*$ ]]
-[[ "${CONTAINER_KEY%/sglang.sqsh}" == "${SIDECAR_KEY%/container-sidecar.json}" ]]
 
-export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"
-export UV_PYTHON_INSTALL_DIR="${RUNNER_TEMP}/uv-python"
-install -d -m 0700 "${UV_CACHE_DIR}" "${UV_PYTHON_INSTALL_DIR}"
+archive_image="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
+archive_sidecar="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
+expected_size="$(jq -er 'select(.schema_version == "container-sidecar/v1") | .container_artifact.size_bytes' "${archive_sidecar}")"
+expected_sha256="$(jq -er '.container_artifact.sha256' "${archive_sidecar}")"
+[[ "${expected_size}" == "${CONTAINER_SIZE}" && "${expected_sha256}" == "${CONTAINER_SHA256}" ]]
+[[ "$(stat -c '%s' "${archive_image}")" == "${CONTAINER_SIZE}" ]]
+[[ "$(sha256sum "${archive_image}" | awk '{print $1}')" == "${CONTAINER_SHA256}" ]]
+
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/check-env-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${PROVISION_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/enroot-library" "${runtime_dir}/enroot-system" "${runtime_dir}/logs" "${runtime_dir}/scripts" "${runtime_dir}/source"
-
-download() {
-  uvx --from 'boto3>=1.40,<2' python "${GITHUB_WORKSPACE}/scripts/s3-object-transfer.py" download "${CONTAINER_BUCKET}" "$1" "$2"
-}
-
-download "${SIDECAR_KEY}" "${runtime_dir}/source/container-sidecar.json"
-expected_size="$(jq -er 'select(.schema_version == "container-sidecar/v1") | .container_artifact.size_bytes' "${runtime_dir}/source/container-sidecar.json")"
-expected_sha256="$(jq -er '.container_artifact.sha256' "${runtime_dir}/source/container-sidecar.json")"
-[[ "${expected_size}" == "${CONTAINER_SIZE}" && "${expected_sha256}" == "${CONTAINER_SHA256}" ]]
-download "${CONTAINER_KEY}" "${runtime_dir}/.sglang.sqsh.incoming"
-[[ "$(stat -c '%s' "${runtime_dir}/.sglang.sqsh.incoming")" == "${CONTAINER_SIZE}" ]]
-[[ "$(sha256sum "${runtime_dir}/.sglang.sqsh.incoming" | awk '{print $1}')" == "${CONTAINER_SHA256}" ]]
-mv -- "${runtime_dir}/.sglang.sqsh.incoming" "${runtime_dir}/sglang.sqsh"
-
-install -d -m 2775 "${CONTAINER_ARCHIVE_DIR}"
-archive_image_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.sqsh.${GITHUB_RUN_ATTEMPT}.tmp"
-archive_sidecar_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.container-sidecar.json.${GITHUB_RUN_ATTEMPT}.tmp"
-cleanup_archive() { status=$?; rm -f -- "${archive_image_temporary}" "${archive_sidecar_temporary}"; exit "${status}"; }
-trap cleanup_archive EXIT
-cp --reflink=auto --sparse=always "${runtime_dir}/sglang.sqsh" "${archive_image_temporary}"
-cp --reflink=auto "${runtime_dir}/source/container-sidecar.json" "${archive_sidecar_temporary}"
-[[ "$(stat -c '%s' "${archive_image_temporary}")" == "${CONTAINER_SIZE}" && "$(sha256sum "${archive_image_temporary}" | awk '{print $1}')" == "${CONTAINER_SHA256}" ]]
-mv -- "${archive_image_temporary}" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
-mv -- "${archive_sidecar_temporary}" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
-trap - EXIT
+cp --reflink=auto --sparse=always "${archive_image}" "${runtime_dir}/sglang.sqsh"
+cp --reflink=auto "${archive_sidecar}" "${runtime_dir}/source/container-sidecar.json"
 
 cp -a --no-preserve=ownership,xattr "${ENROOT_SYSCONF_PATH}/." "${runtime_dir}/enroot-system/"
 cp -a --no-preserve=ownership,xattr "${ENROOT_LIBRARY_PATH}/." "${runtime_dir}/enroot-library/"
@@ -67,4 +42,4 @@ if [[ -x "${nvidia_hook}" ]]; then sed -i 's%--ldconfig=@$(command -v ldconfig.r
 if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh" ]]; then chmod -x "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh"; fi
 
 install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen-check-env.sh" "${runtime_dir}/scripts/run-qwen-check-env.sh"
-jq -n --arg cluster "${CLUSTER_NAME}" --arg bucket "${CONTAINER_BUCKET}" --arg container_key "${CONTAINER_KEY}" --arg sidecar_key "${SIDECAR_KEY}" --arg sha256 "${CONTAINER_SHA256}" --argjson size_bytes "${CONTAINER_SIZE}" '{schema_version:"qwen-check-env-source/v1",cluster:$cluster,s3:{bucket:$bucket,container_key:$container_key,sidecar_key:$sidecar_key},container:{size_bytes:$size_bytes,sha256:$sha256},downloaded:true,enroot_direct_squashfs:true}' >"${runtime_dir}/source/check-env-source.json"
+jq -n --arg cluster "${CLUSTER_NAME}" --arg archive_run_id "${GITHUB_RUN_ID}" --arg sha256 "${CONTAINER_SHA256}" --argjson size_bytes "${CONTAINER_SIZE}" '{schema_version:"qwen-check-env-source/v1",cluster:$cluster,archive:{run_id:$archive_run_id},container:{size_bytes:$size_bytes,sha256:$sha256},local_archive:true,enroot_direct_squashfs:true}' >"${runtime_dir}/source/check-env-source.json"

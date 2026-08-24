@@ -6,27 +6,18 @@ on:
       node_count:
         required: true
         type: string
-      container_key:
-        required: true
-        type: string
       container_sha256:
         required: true
         type: string
       container_size:
         required: true
         type: string
-      sidecar_key:
-        required: true
-        type: string
 
 permissions:
   actions: read
   contents: read
-  id-token: write
 
 env:
-  AWS_REGION: ap-southeast-1
-  CONTAINER_BUCKET: ${{ vars.QWEN_CONTAINER_BUCKET }}
   RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
 
 defaults:
@@ -35,7 +26,7 @@ defaults:
 
 jobs:
   provision:
-    name: S3からSquashFSを毎回ダウンロード
+    name: ローカルarchiveからSquashFSを配備
     runs-on: [self-hosted, aspire2p]
     timeout-minutes: 180
     outputs:
@@ -46,27 +37,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: S3 APIクライアントの実行環境を準備
-        uses: astral-sh/setup-uv@v7
-
-      - name: AWSの一時資格情報を取得
-        uses: aws-actions/configure-aws-credentials@v6.2.3
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
-
-      - name: S3 APIでSquashFSを並列配備
+      - name: archiveのSquashFSを実行領域へ配備
         id: provision
         shell: bash -eo pipefail {0}
         env:
           CLUSTER_NAME: aspire2ap
           CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
-          CONTAINER_KEY: ${{ inputs.container_key }}
           CONTAINER_SHA256: ${{ inputs.container_sha256 }}
           CONTAINER_SIZE: ${{ inputs.container_size }}
           ENROOT_LIBRARY_PATH: /home/ACCOUNT/.local/lib/enroot
           ENROOT_SYSCONF_PATH: /home/ACCOUNT/.local/etc/enroot
-          SIDECAR_KEY: ${{ inputs.sidecar_key }}
         run: |
           export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
           "${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"

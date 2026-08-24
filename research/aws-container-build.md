@@ -14,7 +14,7 @@ instanceはbuild成功時にActionsがterminateし、失敗時にもtrapでtermi
 
 2026-08-24時点のSingapore Linux on-demand価格は`m7i.2xlarge`が0.504 USD/hourである。gp3は300 GiB、追加3,000 IOPS、追加375 MiB/sをAWSの30日月で時間按分すると0.090 USD/hour、public IPv4は0.005 USD/hourなので、VM稼働中は合計0.599 USD/hourとなる。実buildで得た12,718,911,488 byte imageをAWS CLI既定の8 MiB multipart partでuploadするS3 Tier 1 requestは約0.0076 USDである。したがってbuildだけの概算は、1、2、4時間なら約0.607、1.206、2.404 USDとなる。S3 artifact保管料はユーザー指定により含めない。
 
-EC2と同一SingaporeリージョンのS3間転送は無料である。一方、S3から外部へこのimageを1回downloadすると12.719 GBとなり、account全体の月100 GB無料枠を使い切った後のSingapore先頭tier 0.120 USD/GBでは1.526 USDかかる。3クラスタを実行するrunの外部downloadは、buildと再利用のどちらで3回、4.579 USDである。取得済みfileをそのままローカルarchive用に複製するため、archive保存のためのS3再downloadは発生しない。無料枠が残っていればこれらの転送料は0 USDである。料金根拠はAWSの [EBS pricing](https://aws.amazon.com/ebs/pricing/)、[S3 pricing](https://aws.amazon.com/s3/pricing/)、公開Pricing APIのAWSDataTransfer Singapore offerである。
+EC2と同一SingaporeリージョンのS3間転送は無料である。一方、S3から外部へこのimageを1回downloadすると12.719 GBとなり、account全体の月100 GB無料枠を使い切った後のSingapore先頭tier 0.120 USD/GBでは1.526 USDかかる。外部downloadは新規build時だけ全3クラスタで1回ずつ、合計3回、4.579 USDである。既存buildを使うrunは各クラスタのarchive内でハードリンクを作るだけなので、S3転送費とsqsh本体の追加保管容量は発生しない。無料枠が残っていればbuild時の転送料も0 USDである。料金根拠はAWSの [EBS pricing](https://aws.amazon.com/ebs/pricing/)、[S3 pricing](https://aws.amazon.com/s3/pricing/)、公開Pricing APIのAWSDataTransfer Singapore offerである。
 
 実測cold buildはinstance稼働1,556秒、build job 26分53秒、AWS内build小計0.2665 USDだった。ECR cacheがある同一sourceのwarm buildは28 step中2から23までcache hitとなり、instance稼働869秒、build job 15分26秒、build小計0.1522 USDだった。したがって3クラスタへ新規buildを配布する1 runの総AWS費用は、月100 GB無料枠が残っていればcold 0.267 USDまたはwarm 0.152 USD、無料枠消化後はcold 6.372 USDまたはwarm 6.257 USDが目安になる。S3 artifact保管料は含めない。
 
@@ -28,8 +28,8 @@ workflowはinstanceの実際のlaunch時刻から終了後までを秒で測り�
 
 CloudFormation template `aws/qwen-build-infrastructure.yml`はprivate S3 bucket、egress-only security group、EC2 instance profile、GitHub OIDC provider、Actions roleを作る。Actions roleは対象repositoryだけをtrustし、build用instanceの起動・終了、SSM command、対象bucketの操作だけを許可する。privateなSGLang sourceは、そのrepository自身のworkflowが管理する玄界上のread-only bare mirrorからQwen workflowが入力archiveへ複製する。消費側repositoryからsource repositoryへ書き込まず、広いPATや無効化されているdeploy keyに依存しない。
 
-玄界、ASPIRE 2A+、Firmusの各self-hosted runnerも同じOIDC roleを一時的にassumeする。ログインノードへAWS CLIは導入せず、一時資格情報を使うBoto3 APIで64 MiB part、最大8並列のuploadとdownloadを行う。sidecarとSquashFSはrun固有directoryへ毎回1回だけdownloadし、検証済みのそのfileを同じクラスタのローカルarchiveへ確定する。AWS資格情報はscheduler jobへ渡さず、計算ノードへ渡すのはdownload済み`.sqsh`、run固有Enroot設定、実行scriptだけである。
+新規build時だけ、玄界、ASPIRE 2A+、Firmusの各self-hosted runnerが同じOIDC roleを一時的にassumeする。ログインノードへAWS CLIは導入せず、一時資格情報を使うBoto3 APIで64 MiB part、最大8並列のdownloadを行い、sidecarとSquashFSを各ローカルarchiveへ確定する。再利用時はAWS資格情報を取得せず、3クラスタそれぞれのarchive内で検証済みsource runを今回run IDへハードリンクする。AWS資格情報はscheduler jobへ渡さず、計算ノードへ渡すのはarchiveからrun directoryへ配備済みの`.sqsh`、run固有Enroot設定、実行scriptだけである。
 
 12,718,911,488 byteの同じobjectについて、玄界のpresigned URLと単一`curl`による旧配備jobは8分31秒だった。Boto3 multipartへ切り替えた配備jobは、checkout、OIDC設定、sidecar取得、SHA-256全体読取りまで含めて玄界1分45秒、ASPIRE 2A+ 2分09秒、Firmus 2分08秒となった。新規buildを玄界archiveへ保存する同じBoto3 transfer jobも2分00秒だった。
 
-`[require-build]`が最新commit messageの先頭にある場合は必ず新規buildする。それ以外では3クラスタそれぞれで第一親履歴をたどり、ローカルSquashFSとsidecarのfile size、SHA-256が一致する候補を探す。有効な候補のうち最新のrun IDを一時S3 objectとしてuploadし、各クラスタ側のdownloadは省略しない。クラスタタグがないpushは静的検証だけを行い、AWS資源を起動しない。
+`[require-build]`が最新commit messageの先頭にある場合は必ず新規buildする。それ以外では3クラスタそれぞれで第一親履歴をたどり、ローカルSquashFSとsidecarのfile size、SHA-256が一致する候補を探す。3クラスタで同じrun ID、size、SHA-256が見つかった場合だけ再利用し、各archive内で今回run IDへのハードリンクを作る。候補が揃わなければ新規buildとして全3クラスタへS3配布する。クラスタタグがないpushは静的検証だけを行い、AWS資源を起動しない。

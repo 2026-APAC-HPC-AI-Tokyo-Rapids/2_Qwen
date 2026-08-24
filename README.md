@@ -2,7 +2,7 @@
 
 玄界、ASPIRE 2A+、Firmusで同じQwen 3.5 workloadを実行するリポジトリです。実行入口は [Qwen workflow](.github/workflows/qwen.yml) に統合されています。
 
-コンテナはAWS Singaporeリージョンの一時的な`m7i.2xlarge`から、root権限、Buildahの`chroot` isolation、OverlayFSを使って構築します。Buildahが出力したOCI layoutをSkopeoで正規化し、Umociで検証したroot filesystemをSquashFS化します。private S3 bucketは全クラスタへの1日限りの配布にだけ使い、完了マーカーや永続保管は行いません。各クラスタは実行ごとにOIDCで短期AWS資格情報を取得し、Boto3でSquashFSを1回ダウンロードします。sizeとSHA-256を検証したその取得物をクラスタのローカルarchiveへ残し、後続runで再利用します。GPU計算ノードではEnrootへ`.sqsh`を直接渡してFUSE mountします。クラスタのログインノードへAWS CLIは導入しません。Singularity/SIFとrootless VFSは現行経路では使用しません。
+コンテナはAWS Singaporeリージョンの一時的な`m7i.2xlarge`から、root権限、Buildahの`chroot` isolation、OverlayFSを使って構築します。Buildahが出力したOCI layoutをSkopeoで正規化し、Umociで検証したroot filesystemをSquashFS化します。private S3 bucketは新規buildを全クラスタへ1日限りで配布するときだけ使い、完了マーカーや永続保管は行いません。build時は3クラスタがBoto3でSquashFSを1回ずつ取得してローカルarchiveへ保存します。既存buildを使うrunではS3を使わず、各archive内で再利用元sqshを今回run IDへハードリンクします。GPU計算ノードではarchiveからrun directoryへ配備した`.sqsh`をEnrootへ直接渡してFUSE mountします。クラスタのログインノードへAWS CLIは導入しません。Singularity/SIFとrootless VFSは現行経路では使用しません。
 
 モデル重みはまだ配置していないため、現在のschedulerジョブは`python -m sglang.check_env`だけを実行します。GPUやモデルを使うbenchmark経路へ戻すまでは、環境検査の結果を性能値として扱いません。
 
