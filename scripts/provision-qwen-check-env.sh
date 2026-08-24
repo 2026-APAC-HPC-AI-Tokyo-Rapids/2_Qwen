@@ -3,6 +3,7 @@ set -euo pipefail
 
 : "${AWS_REGION:?AWS region is required}"
 : "${CLUSTER_NAME:?cluster name is required}"
+: "${CONTAINER_ARCHIVE_DIR:?container archive directory is required}"
 : "${CONTAINER_BUCKET:?container bucket is required}"
 : "${CONTAINER_KEY:?container key is required}"
 : "${CONTAINER_SHA256:?container SHA-256 is required}"
@@ -41,6 +42,18 @@ download "${CONTAINER_KEY}" "${runtime_dir}/.sglang.sqsh.incoming"
 [[ "$(stat -c '%s' "${runtime_dir}/.sglang.sqsh.incoming")" == "${CONTAINER_SIZE}" ]]
 [[ "$(sha256sum "${runtime_dir}/.sglang.sqsh.incoming" | awk '{print $1}')" == "${CONTAINER_SHA256}" ]]
 mv -- "${runtime_dir}/.sglang.sqsh.incoming" "${runtime_dir}/sglang.sqsh"
+
+install -d -m 2775 "${CONTAINER_ARCHIVE_DIR}"
+archive_image_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.sqsh.${GITHUB_RUN_ATTEMPT}.tmp"
+archive_sidecar_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.container-sidecar.json.${GITHUB_RUN_ATTEMPT}.tmp"
+cleanup_archive() { status=$?; rm -f -- "${archive_image_temporary}" "${archive_sidecar_temporary}"; exit "${status}"; }
+trap cleanup_archive EXIT
+cp --reflink=auto --sparse=always "${runtime_dir}/sglang.sqsh" "${archive_image_temporary}"
+cp --reflink=auto "${runtime_dir}/source/container-sidecar.json" "${archive_sidecar_temporary}"
+[[ "$(stat -c '%s' "${archive_image_temporary}")" == "${CONTAINER_SIZE}" && "$(sha256sum "${archive_image_temporary}" | awk '{print $1}')" == "${CONTAINER_SHA256}" ]]
+mv -- "${archive_image_temporary}" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
+mv -- "${archive_sidecar_temporary}" "${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
+trap - EXIT
 
 cp -a --no-preserve=ownership,xattr "${ENROOT_SYSCONF_PATH}/." "${runtime_dir}/enroot-system/"
 cp -a --no-preserve=ownership,xattr "${ENROOT_LIBRARY_PATH}/." "${runtime_dir}/enroot-library/"
