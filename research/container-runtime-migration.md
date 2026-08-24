@@ -12,7 +12,7 @@ Enroot 4.2.0はDocker archiveやOCI archiveを実行形式として直接使え�
 
 AWS VMは32 GiB RAM全体を一時buildに使えるため、`mksquashfs`は8 worker、8 GiB cache、gzip level 2で実行する。全RAM化は、26.6 GBのrootfsに加えてBuildah layer、OCI layout、圧縮入出力を同時に保持すると32 GiBを超えるため採用しない。高速gp3上でOverlayFSのcopy-on-writeを使う方が容量と速度の境界が明確である。
 
-完成物の再利用正本は玄界の`/home/ACCOUNT/share/sglang-containers/<workflow-run-id>.sqsh`とsidecarである。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行はGitの第一親を順番に遡り、過去の成功runに対応するローカルfileのsizeとSHA-256を照合して最初の有効な成果物を再利用する。選択後は現在run IDへのハードリンクを作り、private S3の`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/`へ1日限りの配布物としてuploadするため、再利用時にもクラスタ側のdownloadは省略しない。各クラスタrunnerはOIDC資格情報とBoto3 APIを使い、64 MiB part、最大8並列でrun directoryへ直接downloadする。AWS CLIを配置せず、bucketもpublicにせず、AWS資格情報をscheduler jobへ渡さない。
+完成物の再利用copyは玄界、ASPIRE 2A+、Firmusの各ローカルarchiveへrun ID名で保存する。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行はGitの第一親を順番にたどり、各archiveのfile sizeとSHA-256を照合し、有効な最新runを再利用する。private S3の`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/`は1日限りの配布にだけ使い、完了マーカーは作らない。各クラスタrunnerはOIDC資格情報とBoto3 APIを使い、64 MiB part、最大8並列でrun directoryへ毎回1回downloadする。検証済みのその取得物をローカルarchiveへ保存するため、archive用のS3再downloadは行わない。AWS CLIを配置せず、bucketもpublicにせず、AWS資格情報をscheduler jobへ渡さない。
 
 ## 制御処理の責務
 

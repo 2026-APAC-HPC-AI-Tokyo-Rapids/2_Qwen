@@ -105,7 +105,8 @@ def test_aws_builder_is_ephemeral_and_clusters_always_download_direct_image() ->
     provision = (ROOT / "scripts/provision-qwen-check-env.sh").read_text(encoding="utf-8")
     check = (ROOT / "scripts/run-qwen-check-env.sh").read_text(encoding="utf-8")
     assert "m7i.2xlarge" in aws_workflow
-    assert "always() && needs.select.outputs.action == 'build' && needs.resolve.result == 'success'" in aws_workflow
+    assert "archive-build:" not in aws_workflow
+    assert "needs: [decide, publish-reuse, build]" in aws_workflow
     assert '"VolumeSize":300' in aws_workflow
     assert '"Iops":6000' in aws_workflow and '"Throughput":500' in aws_workflow
     assert "--instance-initiated-shutdown-behavior terminate" in aws_workflow
@@ -117,6 +118,8 @@ def test_aws_builder_is_ephemeral_and_clusters_always_download_direct_image() ->
     assert 's3-object-transfer.py" download' in provision
     assert 'download "${SIDECAR_KEY}"' in provision
     assert 'download "${CONTAINER_KEY}"' in provision
+    assert 'cp --reflink=auto --sparse=always "${runtime_dir}/sglang.sqsh"' in provision
+    assert '"${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"' in provision
     assert "generate_presigned_url" not in provision and "curl " not in provision and "aws s3" not in provision
     assert 'downloaded:true,enroot_direct_squashfs:true' in provision
     assert 'enroot start -e NVIDIA_VISIBLE_DEVICES=all' in check
