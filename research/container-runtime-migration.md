@@ -18,8 +18,10 @@ AWS VMは32 GiB RAM全体を一時buildに使えるため、`mksquashfs`は8 wor
 
 AWS workflowはbuild/reuseとS3公開を、クラスタworkflowは毎回のdownloadとscheduler差だけを担当する。モデル未配置の現在は3クラスタともGPU nodeで`sglang.check_env`だけを実行し、従来のdummy model、dataset、BigQuery、profile処理は起動しない。
 
+玄界のuser-local Enrootはaccount root直下ではなく、runnerの実HOMEである`/home/ACCOUNT/ku60000563/.local`配下にある。workflowはこの実在する`etc/enroot`と`lib/enroot`をrun directoryへcopyする。
+
 - `scripts/build-sglang-container.sh`はroot Buildah、Skopeo、Umoci、SquashFS変換を、`aws/run-build-instance.sh`はS3入出力とEC2側log回収を担当する。
-- `scripts/select-qwen-container.sh`はGit第一親をたどる玄界ローカル再利用候補の選択とsidecar/file検証だけを担当する。
+- `scripts/select-qwen-container.sh`はGit第一親をたどる各クラスタのローカル再利用候補の選択とsidecar/file検証だけを担当する。
 - `scripts/provision-qwen-check-env.sh`はlogin runnerでBoto3 multipart download、SHA-256検証、run固有Enroot libraryのpoll上限変更を行う。
 - `scripts/run-qwen-check-env.sh`は計算node上のnode-local Enroot作業pathを作り、共有filesystem上のdownload済みSquashFSを展開せず直接起動する。
 

@@ -284,6 +284,8 @@ def test_aspire_uses_authorized_budget_project_and_default_routing() -> None:
 
 def test_scheduler_submission_uses_persistent_runtime_working_directory() -> None:
     genkai = (ROOT / ".github/workflows/genkai.yml").read_text(encoding="utf-8")
+    assert "ENROOT_SYSCONF_PATH: /home/ACCOUNT/ku60000563/.local/etc/enroot" in genkai
+    assert "ENROOT_LIBRARY_PATH: /home/ACCOUNT/ku60000563/.local/lib/enroot" in genkai
     submit = genkai[genkai.index("PJMジョブを投入") : genkai.index("PJMジョブの開始を待機")]
     assert submit.index('cd "${RUNTIME_DIR}"') < submit.index("pjsub ")
 
