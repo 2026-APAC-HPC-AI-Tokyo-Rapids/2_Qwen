@@ -32,4 +32,4 @@ CloudFormation template `aws/qwen-build-infrastructure.yml`はprivate S3 bucket�
 
 12,718,911,488 byteの同じobjectについて、玄界のpresigned URLと単一`curl`による旧配備jobは8分31秒だった。Boto3 multipartへ切り替えた配備jobは、checkout、OIDC設定、sidecar取得、SHA-256全体読取りまで含めて玄界1分45秒、ASPIRE 2A+ 2分09秒、Firmus 2分08秒となった。新規buildを玄界archiveへ保存する同じBoto3 transfer jobも2分00秒だった。
 
-`[require-build]`が最新commit messageの先頭にある場合は必ず新規buildする。それ以外では3クラスタそれぞれで第一親履歴をたどり、ローカルSquashFSとsidecarのfile size、SHA-256が一致する候補を探す。有効な候補のうち最新のrun IDを一時S3 objectとしてuploadし、各クラスタ側のdownloadは省略しない。クラスタタグがないpushは静的検証だけを行い、AWS資源を起動しない。
+`[require-build]`が最新commit messageの先頭にある場合は必ず新規buildする。それ以外では3クラスタそれぞれで全祖先履歴をたどり、ローカルSquashFSとsidecarのfile size、SHA-256が一致する候補を探す。有効な候補のうち最新のrun IDを一時S3 objectとしてuploadし、各クラスタ側のdownloadは省略しない。クラスタタグがないpushは静的検証だけを行い、AWS資源を起動しない。

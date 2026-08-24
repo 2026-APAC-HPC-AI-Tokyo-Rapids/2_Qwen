@@ -82,7 +82,7 @@ def test_rustup_download_retries_observed_dns_failure() -> None:
     assert "--retry 3 --retry-all-errors --retry-delay 2" in rustup
 
 
-def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
+def test_ancestor_reuse_has_only_size_and_sha_gates() -> None:
     selector = (ROOT / "scripts/select-qwen-container.sh").read_text(encoding="utf-8")
     aws_workflow = (ROOT / ".github/workflows/aws-container.yml").read_text(encoding="utf-8")
     assert "scripts/select-qwen-container.sh" in aws_workflow
@@ -91,7 +91,7 @@ def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
         assert "select-qwen-container.sh" not in workflow
         assert "build-sglang-container.sh" not in workflow
         assert "provision-qwen-check-env.sh" in workflow
-    assert 'git rev-parse --verify "${commit}^"' in selector
+    assert 'git rev-list --topo-order "${GITHUB_SHA}"' in selector
     assert "size_bytes" in selector and "sha256sum" in selector
     assert "CONTAINER_ARCHIVE_DIR" in selector
     assert "gh run view" not in selector
