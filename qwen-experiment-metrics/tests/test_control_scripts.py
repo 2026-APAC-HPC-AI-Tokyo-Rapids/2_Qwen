@@ -16,7 +16,7 @@ def make_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
-def test_selector_reuses_valid_ancestor_artifact(tmp_path: Path) -> None:
+def test_selector_reuses_valid_first_parent_artifact(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     repository.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
@@ -41,44 +41,6 @@ def test_selector_reuses_valid_ancestor_artifact(tmp_path: Path) -> None:
     make_executable(fake_bin / "gh", "#!/usr/bin/env bash\nprintf '100\\n'\n")
     output = tmp_path / "github-output"
     environment = os.environ | {"CONTAINER_ARCHIVE_DIR": str(archive), "GITHUB_OUTPUT": str(output), "GITHUB_RUN_ID": "200", "GITHUB_SHA": commit, "REQUIRE_BUILD": "false", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
-    subprocess.run([ROOT / "scripts/select-qwen-container.sh"], cwd=repository, env=environment, check=True)
-    assert output.read_text(encoding="utf-8") == "action=reuse\nsource_run_id=100\n"
-
-
-def test_selector_reuses_artifact_from_merged_parent(tmp_path: Path) -> None:
-    repository = tmp_path / "repository"
-    repository.mkdir()
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repository, check=True)
-    subprocess.run(["git", "config", "user.email", "fixture@example.com"], cwd=repository, check=True)
-    subprocess.run(["git", "config", "user.name", "Fixture"], cwd=repository, check=True)
-    (repository / "tracked.txt").write_text("base\n", encoding="utf-8")
-    subprocess.run(["git", "add", "tracked.txt"], cwd=repository, check=True)
-    subprocess.run(["git", "commit", "-qm", "base"], cwd=repository, check=True)
-    subprocess.run(["git", "switch", "-qc", "container"], cwd=repository, check=True)
-    (repository / "container.txt").write_text("container\n", encoding="utf-8")
-    subprocess.run(["git", "add", "container.txt"], cwd=repository, check=True)
-    subprocess.run(["git", "commit", "-qm", "container"], cwd=repository, check=True)
-    container_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True).stdout.strip()
-    subprocess.run(["git", "switch", "main"], cwd=repository, check=True, capture_output=True)
-    (repository / "main.txt").write_text("main\n", encoding="utf-8")
-    subprocess.run(["git", "add", "main.txt"], cwd=repository, check=True)
-    subprocess.run(["git", "commit", "-qm", "main"], cwd=repository, check=True)
-    subprocess.run(["git", "merge", "--no-ff", "-qm", "merge", "container"], cwd=repository, check=True)
-    merge_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True).stdout.strip()
-
-    archive = tmp_path / "archive"
-    archive.mkdir()
-    image = b"fixture-container\n"
-    digest = hashlib.sha256(image).hexdigest()
-    (archive / "100.sqsh").write_bytes(image)
-    sidecar = {"schema_version": "container-sidecar/v1", "container_artifact": {"artifact_relative_path": "sglang.sqsh", "size_bytes": len(image), "sha256": digest}, "source_commits": {"qwen": container_commit}}
-    (archive / "100.container-sidecar.json").write_text(json.dumps(sidecar), encoding="utf-8")
-
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    make_executable(fake_bin / "gh", f"#!/usr/bin/env bash\nif [[ \"$*\" == *\"--commit {container_commit}\"* ]]; then printf '100\\n'; fi\n")
-    output = tmp_path / "github-output"
-    environment = os.environ | {"CONTAINER_ARCHIVE_DIR": str(archive), "GITHUB_OUTPUT": str(output), "GITHUB_RUN_ID": "200", "GITHUB_SHA": merge_commit, "REQUIRE_BUILD": "false", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
     subprocess.run([ROOT / "scripts/select-qwen-container.sh"], cwd=repository, env=environment, check=True)
     assert output.read_text(encoding="utf-8") == "action=reuse\nsource_run_id=100\n"
 

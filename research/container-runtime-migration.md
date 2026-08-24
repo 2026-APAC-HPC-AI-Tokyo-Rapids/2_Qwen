@@ -12,14 +12,14 @@ Enroot 4.2.0はDocker archiveやOCI archiveを実行形式として直接使え�
 
 AWS VMは32 GiB RAM全体を一時buildに使えるため、`mksquashfs`は8 worker、8 GiB cache、gzip level 2で実行する。全RAM化は、26.6 GBのrootfsに加えてBuildah layer、OCI layout、圧縮入出力を同時に保持すると32 GiBを超えるため採用しない。高速gp3上でOverlayFSのcopy-on-writeを使う方が容量と速度の境界が明確である。
 
-完成物の再利用copyは玄界、ASPIRE 2A+、Firmusの各ローカルarchiveへrun ID名で保存する。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行はGitの全祖先をtopological orderでたどり、各archiveのfile sizeとSHA-256を照合し、有効な最新runを再利用する。private S3の`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/`は1日限りの配布にだけ使い、完了マーカーは作らない。各クラスタrunnerはOIDC資格情報とBoto3 APIを使い、64 MiB part、最大8並列でrun directoryへ毎回1回downloadする。検証済みのその取得物をローカルarchiveへ保存するため、archive用のS3再downloadは行わない。AWS CLIを配置せず、bucketもpublicにせず、AWS資格情報をscheduler jobへ渡さない。
+完成物の再利用copyは玄界、ASPIRE 2A+、Firmusの各ローカルarchiveへrun ID名で保存する。sidecarはSquashFSのsize、SHA-256、Qwen/SGLang source commitを持つ。`[require-build]`がない実行はGitの第一親を順番にたどり、各archiveのfile sizeとSHA-256を照合し、有効な最新runを再利用する。private S3の`containers/<Qwen-commit>/<workflow-run-id>-<attempt>/`は1日限りの配布にだけ使い、完了マーカーは作らない。各クラスタrunnerはOIDC資格情報とBoto3 APIを使い、64 MiB part、最大8並列でrun directoryへ毎回1回downloadする。検証済みのその取得物をローカルarchiveへ保存するため、archive用のS3再downloadは行わない。AWS CLIを配置せず、bucketもpublicにせず、AWS資格情報をscheduler jobへ渡さない。
 
 ## 制御処理の責務
 
 AWS workflowはbuild/reuseとS3公開を、クラスタworkflowは毎回のdownloadとscheduler差だけを担当する。モデル未配置の現在は3クラスタともGPU nodeで`sglang.check_env`だけを実行し、従来のdummy model、dataset、BigQuery、profile処理は起動しない。
 
 - `scripts/build-sglang-container.sh`はroot Buildah、Skopeo、Umoci、SquashFS変換を、`aws/run-build-instance.sh`はS3入出力とEC2側log回収を担当する。
-- `scripts/select-qwen-container.sh`はGitの全祖先をたどる各クラスタのローカル再利用候補選択とsidecar/file検証だけを担当する。
+- `scripts/select-qwen-container.sh`はGit第一親をたどる玄界ローカル再利用候補の選択とsidecar/file検証だけを担当する。
 - `scripts/provision-qwen-check-env.sh`はlogin runnerでBoto3 multipart download、SHA-256検証、run固有Enroot libraryのpoll上限変更を行う。
 - `scripts/run-qwen-check-env.sh`は計算node上のnode-local Enroot作業pathを作り、共有filesystem上のdownload済みSquashFSを展開せず直接起動する。
 

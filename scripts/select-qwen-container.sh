@@ -9,7 +9,8 @@ set -euo pipefail
 
 if [[ "${REQUIRE_BUILD}" == true ]]; then printf 'action=build\n' >>"${GITHUB_OUTPUT}"; exit 0; fi
 
-while IFS= read -r commit; do
+commit="${GITHUB_SHA}"
+while [[ -n "${commit}" ]]; do
   while IFS= read -r run_id; do
     [[ "${run_id}" != "${GITHUB_RUN_ID}" ]] || continue
     archive="${CONTAINER_ARCHIVE_DIR}/${run_id}.sqsh"
@@ -22,6 +23,7 @@ while IFS= read -r commit; do
     printf 'action=reuse\nsource_run_id=%s\n' "${run_id}" >>"${GITHUB_OUTPUT}"
     exit 0
   done < <(gh run list --workflow qwen.yml --commit "${commit}" --limit 1000 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
-done < <(git rev-list --topo-order "${GITHUB_SHA}")
+  commit="$(git rev-parse --verify "${commit}^" 2>/dev/null || true)"
+done
 
 printf 'action=build\n' >>"${GITHUB_OUTPUT}"
