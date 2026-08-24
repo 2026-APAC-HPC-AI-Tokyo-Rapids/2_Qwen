@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import signal
-import sys
 from pathlib import Path
 
 from .canonical import jcs_bytes, jcs_text, load_json_strict
@@ -50,9 +49,6 @@ def parser() -> argparse.ArgumentParser:
     stage.add_argument("--stdout-path", type=Path)
     stage.add_argument("command", nargs=argparse.REMAINDER)
 
-    record = commands.add_parser("record-event")
-    _common_runtime_arguments(record)
-
     serve = commands.add_parser("serve-events")
     _common_runtime_arguments(serve)
     serve.add_argument("--socket", type=Path, required=True)
@@ -69,58 +65,15 @@ def parser() -> argparse.ArgumentParser:
     gpu.add_argument("--ready-file", type=Path)
     gpu.add_argument("--completion-file", type=Path, required=True)
 
-    network = commands.add_parser("record-network")
-    _common_runtime_arguments(network)
-    network.add_argument("--imb-stdout", type=Path, required=True)
-    network.add_argument("--imb-version", required=True)
-    network.add_argument("--nccl-all-reduce", type=Path, required=True)
-    network.add_argument("--nccl-all-gather", type=Path, required=True)
-    network.add_argument("--nccl-reduce-scatter", type=Path, required=True)
-    network.add_argument("--nccl-tests-commit", required=True)
-    network.add_argument("--expected-mpi-processes", type=int, required=True)
-    network.add_argument("--expected-gpus-per-process", type=int, required=True)
-
-    inputs = commands.add_parser("prepare-inputs")
-    inputs.add_argument("--runtime-dir", type=Path, required=True)
-    inputs.add_argument("--model-path", type=Path, required=True)
-    inputs.add_argument("--model-repository", required=True)
-    inputs.add_argument("--model-revision", required=True)
-    inputs.add_argument("--dataset-path", type=Path, required=True)
-    inputs.add_argument("--dataset-repository", required=True)
-    inputs.add_argument("--dataset-revision", required=True)
-    inputs.add_argument("--dataset-relative-path", required=True)
-
     provenance = commands.add_parser("record-provenance")
     _common_runtime_arguments(provenance)
-
-    submission = commands.add_parser("prepare-submission")
-    _common_runtime_arguments(submission)
-    submission.add_argument("--pjm-script", type=Path, required=True)
-    submission.add_argument("--repository-path", required=True)
-    submission.add_argument("command", nargs=argparse.REMAINDER)
-
-    submission_result = commands.add_parser("record-submission-result")
-    _common_runtime_arguments(submission_result)
-    submission_result.add_argument("--job-id", required=True)
-
-    job_entry = commands.add_parser("record-job-entry")
-    _common_runtime_arguments(job_entry)
-
-    cache = commands.add_parser("record-cache")
-    _common_runtime_arguments(cache)
-    cache.add_argument("--node-rank", type=int, required=True)
-    cache.add_argument("--cache-root", type=Path, required=True)
 
     launchers = commands.add_parser("capture-runtime-launchers")
     _common_runtime_arguments(launchers)
 
     environment = commands.add_parser("record-environment")
     _common_runtime_arguments(environment)
-    environment.add_argument(
-        "--scope",
-        choices=("job-entry", "runtime"),
-        required=True,
-    )
+    environment.add_argument("--scope", choices=("runtime",), required=True)
 
     run_start = commands.add_parser("start-run-lifecycle")
     _common_runtime_arguments(run_start)
@@ -128,13 +81,6 @@ def parser() -> argparse.ArgumentParser:
     run_finish = commands.add_parser("finish-run-lifecycle")
     _common_runtime_arguments(run_finish)
     run_finish.add_argument("--exit-code", type=int, required=True)
-
-    accounting = commands.add_parser("record-accounting")
-    _common_runtime_arguments(accounting)
-    accounting.add_argument("--job-id", required=True)
-    accounting.add_argument("--stdout", type=Path, required=True)
-    accounting.add_argument("--stderr", type=Path, required=True)
-    accounting.add_argument("--exit-code", type=int, required=True)
 
     hardware = commands.add_parser("capture-hardware")
     _common_runtime_arguments(hardware)
@@ -165,14 +111,6 @@ def parser() -> argparse.ArgumentParser:
     workload.add_argument("--kind", choices=("warmup", "measured"), required=True)
     workload.add_argument("--source", type=Path, required=True)
 
-    node_lifecycle = commands.add_parser("record-node-lifecycle")
-    _common_runtime_arguments(node_lifecycle)
-    node_lifecycle.add_argument("--node-rank", type=int, required=True)
-    node_lifecycle.add_argument("--source", type=Path, required=True)
-
-    lifecycle_control = commands.add_parser("record-lifecycle-control")
-    _common_runtime_arguments(lifecycle_control)
-
     package = commands.add_parser("package")
     _common_runtime_arguments(package)
     package.add_argument(
@@ -183,10 +121,6 @@ def parser() -> argparse.ArgumentParser:
     )
     package.add_argument("--profile-member", action="append", default=[])
 
-    smoke = commands.add_parser("smoke-send")
-    smoke.add_argument("--run", required=True)
-    smoke.add_argument("--source", choices=["runner", "compute"], required=True)
-
     send_fragments = commands.add_parser("send-fragments")
     send_fragments.add_argument("--run", required=True)
     send_fragments.add_argument("--runtime-dir", type=Path, required=True)
@@ -196,78 +130,31 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
-    if arguments.action == "init-run":
-        return _init_run(arguments)
-    if arguments.action == "run-stage":
-        return _run_stage(arguments)
-    if arguments.action == "record-event":
-        return _record_event(arguments)
-    if arguments.action == "serve-events":
-        return _serve_events(arguments)
-    if arguments.action == "sample-gpu":
-        return _sample_gpu(arguments)
-    if arguments.action == "record-network":
-        return _record_network(arguments)
-    if arguments.action == "prepare-inputs":
-        return _prepare_inputs(arguments)
-    if arguments.action == "record-provenance":
-        return _record_provenance(arguments)
-    if arguments.action == "prepare-submission":
-        return _prepare_submission(arguments)
-    if arguments.action == "record-submission-result":
-        return _record_submission_result(arguments)
-    if arguments.action == "record-job-entry":
-        return _record_job_entry(arguments)
-    if arguments.action == "record-cache":
-        return _record_cache(arguments)
-    if arguments.action == "capture-runtime-launchers":
-        return _capture_runtime_launchers(arguments)
-    if arguments.action == "record-environment":
-        return _record_environment(arguments)
-    if arguments.action == "start-run-lifecycle":
-        return _start_run_lifecycle(arguments)
-    if arguments.action == "finish-run-lifecycle":
-        return _finish_run_lifecycle(arguments)
-    if arguments.action == "record-accounting":
-        return _record_accounting(arguments)
-    if arguments.action == "capture-hardware":
-        return _capture_hardware(arguments)
-    if arguments.action == "capture-profile-hardware":
-        return _capture_profile_hardware(arguments)
-    if arguments.action == "record-profile-results":
-        return _record_profile_results(arguments)
-    if arguments.action == "capture-topology":
-        return _capture_topology(arguments)
-    if arguments.action == "record-workload":
-        return _record_workload(arguments)
-    if arguments.action == "record-node-lifecycle":
-        return _record_node_lifecycle(arguments)
-    if arguments.action == "record-lifecycle-control":
-        return _record_lifecycle_control(arguments)
-    if arguments.action == "package":
-        return _package(arguments)
-    if arguments.action == "smoke-send":
-        from .publish import send_raw
+    handlers = {
+        "init-run": _init_run,
+        "run-stage": _run_stage,
+        "serve-events": _serve_events,
+        "sample-gpu": _sample_gpu,
+        "record-provenance": _record_provenance,
+        "capture-runtime-launchers": _capture_runtime_launchers,
+        "record-environment": _record_environment,
+        "start-run-lifecycle": _start_run_lifecycle,
+        "finish-run-lifecycle": _finish_run_lifecycle,
+        "capture-hardware": _capture_hardware,
+        "capture-profile-hardware": _capture_profile_hardware,
+        "record-profile-results": _record_profile_results,
+        "capture-topology": _capture_topology,
+        "record-workload": _record_workload,
+        "package": _package,
+        "send-fragments": _send_fragments,
+    }
+    return handlers[arguments.action](arguments)
 
-        return (
-            0
-            if send_raw(
-                arguments.run,
-                [
-                    {
-                        "run": arguments.run,
-                        "key": f"smoke.{arguments.source}",
-                        "value": "true",
-                    }
-                ],
-            )
-            else 1
-        )
-    if arguments.action == "send-fragments":
-        from .publish import send_fragments
 
-        return 0 if send_fragments(arguments.run, arguments.runtime_dir) else 1
-    raise AssertionError(arguments.action)
+def _send_fragments(arguments: argparse.Namespace) -> int:
+    from .publish import send_fragments
+
+    return 0 if send_fragments(arguments.run, arguments.runtime_dir) else 1
 
 
 def _init_run(arguments: argparse.Namespace) -> int:
@@ -331,22 +218,6 @@ def _run_stage(arguments: argparse.Namespace) -> int:
             stdout_path=arguments.stdout_path,
         )
     return termination.shell_returncode()
-
-
-def _record_event(arguments: argparse.Namespace) -> int:
-    recorder = LocalEventFragmentRecorder(
-        arguments.manifest,
-        arguments.runtime_dir,
-        arguments.registry,
-        node_rank=arguments.node_rank,
-    )
-    try:
-        recorder.record_bytes(sys.stdin.buffer.read())
-        recorder.close()
-    except BaseException:
-        recorder.abort()
-        raise
-    return 0
 
 
 def _serve_events(arguments: argparse.Namespace) -> int:
@@ -423,44 +294,6 @@ def _sample_gpu(arguments: argparse.Namespace) -> int:
     return status
 
 
-def _record_network(arguments: argparse.Namespace) -> int:
-    from .orchestration import record_network_sources
-
-    record_network_sources(
-        arguments.manifest,
-        arguments.runtime_dir,
-        imb_stdout=arguments.imb_stdout,
-        imb_version=arguments.imb_version,
-        nccl_results={
-            "all_reduce": arguments.nccl_all_reduce,
-            "all_gather": arguments.nccl_all_gather,
-            "reduce_scatter": arguments.nccl_reduce_scatter,
-        },
-        nccl_tests_commit=arguments.nccl_tests_commit,
-        expected_mpi_processes=arguments.expected_mpi_processes,
-        expected_gpus_per_process=arguments.expected_gpus_per_process,
-        registry_path=arguments.registry,
-    )
-    return 0
-
-
-def _prepare_inputs(arguments: argparse.Namespace) -> int:
-    from .sources import create_input_manifests
-
-    model, dataset = create_input_manifests(
-        arguments.runtime_dir,
-        model_path=arguments.model_path,
-        model_repository=arguments.model_repository,
-        model_revision=arguments.model_revision,
-        dataset_path=arguments.dataset_path,
-        dataset_repository=arguments.dataset_repository,
-        dataset_revision=arguments.dataset_revision,
-        dataset_relative_path=arguments.dataset_relative_path,
-    )
-    print(jcs_text({"dataset_manifest": str(dataset), "model_manifest": str(model)}))
-    return 0
-
-
 def _record_provenance(arguments: argparse.Namespace) -> int:
     from .sources import provenance_facts
 
@@ -471,79 +304,6 @@ def _record_provenance(arguments: argparse.Namespace) -> int:
         arguments.runtime_dir,
     ) as recorder:
         recorder.record_many(provenance_facts(arguments.runtime_dir))
-    return 0
-
-
-def _prepare_submission(arguments: argparse.Namespace) -> int:
-    from .sources import create_submission_request
-
-    _, facts = create_submission_request(
-        arguments.manifest,
-        arguments.runtime_dir,
-        pjm_script=arguments.pjm_script,
-        repository_path=arguments.repository_path,
-        argv=_without_separator(arguments.command),
-    )
-    with Recorder.open(
-        arguments.manifest,
-        arguments.registry,
-        "submission-request",
-        arguments.runtime_dir,
-    ) as recorder:
-        recorder.record_many(facts)
-    return 0
-
-
-def _record_submission_result(arguments: argparse.Namespace) -> int:
-    from .sources import create_submission_result
-
-    _, fact = create_submission_result(
-        arguments.manifest, arguments.runtime_dir, arguments.job_id
-    )
-    with Recorder.open(
-        arguments.manifest,
-        arguments.registry,
-        "submission-result",
-        arguments.runtime_dir,
-    ) as recorder:
-        recorder.record(fact)
-    return 0
-
-
-def _record_job_entry(arguments: argparse.Namespace) -> int:
-    from .sources import job_entry_fact
-
-    manifest = load_manifest(arguments.manifest)
-    fact = job_entry_fact(
-        arguments.runtime_dir / "control/job-entry.json", manifest.run_id
-    )
-    with Recorder.open(
-        arguments.manifest,
-        arguments.registry,
-        "job-entry",
-        arguments.runtime_dir,
-    ) as recorder:
-        recorder.record(fact)
-    return 0
-
-
-def _record_cache(arguments: argparse.Namespace) -> int:
-    from .sources import create_cache_manifest
-
-    producer = f"cache:node-{arguments.node_rank}"
-    _, fact = create_cache_manifest(
-        arguments.manifest,
-        arguments.runtime_dir,
-        node_rank=arguments.node_rank,
-        cache_root=arguments.cache_root,
-    )
-    with Recorder.open(
-        arguments.manifest,
-        arguments.registry,
-        producer,
-        arguments.runtime_dir,
-    ) as recorder:
-        recorder.record(fact)
     return 0
 
 
@@ -596,27 +356,6 @@ def _finish_run_lifecycle(arguments: argparse.Namespace) -> int:
     )
     with Recorder.open(
         arguments.manifest, arguments.registry, "run-lifecycle", arguments.runtime_dir
-    ) as recorder:
-        recorder.record_many(facts)
-    return 0
-
-
-def _record_accounting(arguments: argparse.Namespace) -> int:
-    from .system_sources import create_scheduler_accounting
-
-    _, facts = create_scheduler_accounting(
-        arguments.manifest,
-        arguments.runtime_dir,
-        job_id=arguments.job_id,
-        stdout_path=arguments.stdout,
-        stderr_path=arguments.stderr,
-        exit_code=arguments.exit_code,
-    )
-    with Recorder.open(
-        arguments.manifest,
-        arguments.registry,
-        "scheduler-accounting",
-        arguments.runtime_dir,
     ) as recorder:
         recorder.record_many(facts)
     return 0
@@ -782,53 +521,6 @@ def _record_workload(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def _record_node_lifecycle(arguments: argparse.Namespace) -> int:
-    from .system_sources import validate_node_lifecycle
-
-    facts = validate_node_lifecycle(arguments.source, node_rank=arguments.node_rank)
-    with Recorder.open(
-        arguments.manifest,
-        arguments.registry,
-        f"node-lifecycle:node-{arguments.node_rank}",
-        arguments.runtime_dir,
-    ) as recorder:
-        recorder.record_many(facts)
-    return 0
-
-
-def _record_lifecycle_control(arguments: argparse.Namespace) -> int:
-    from .sources import load_execution_settings
-    from .system_sources import (
-        validate_lifecycle_rendezvous,
-        validate_lifecycle_summary,
-    )
-
-    manifest = load_manifest(arguments.manifest)
-    settings = load_execution_settings(
-        arguments.runtime_dir / "control/execution-settings.json"
-    )
-    facts = (
-        *validate_lifecycle_rendezvous(
-            arguments.runtime_dir / "control/lifecycle/rendezvous.json",
-            manifest.run_id,
-            settings.node_agent_port,
-        ),
-        *validate_lifecycle_summary(
-            arguments.runtime_dir / "control/lifecycle/summary.json",
-            manifest.run_id,
-            settings.nodes,
-        ),
-    )
-    with Recorder.open(
-        arguments.manifest,
-        arguments.registry,
-        "lifecycle-control",
-        arguments.runtime_dir,
-    ) as recorder:
-        recorder.record_many(facts)
-    return 0
-
-
 def _package(arguments: argparse.Namespace) -> int:
     from .artifact_store import RunPackager
 
@@ -878,4 +570,4 @@ def _start_ready_file_writer(server: UnixEventServer, path: Path) -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

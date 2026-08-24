@@ -25,12 +25,6 @@ applicability = ["bench", "profile"]
 required = true
 
 [[producers]]
-id = "network"
-instance_pattern = "^network$"
-applicability = ["bench", "profile"]
-required = false
-
-[[producers]]
 id = "gpu-sampler"
 instance_pattern = "^gpu-sampler:node-[0-9]+$"
 applicability = ["profile"]
@@ -43,32 +37,8 @@ applicability = ["bench", "profile"]
 required = true
 
 [[producers]]
-id = "cache"
-instance_pattern = "^cache:node-[0-9]+$"
-applicability = ["bench", "profile"]
-required = false
-
-[[producers]]
-id = "submission-request"
-instance_pattern = "^submission-request$"
-applicability = ["bench", "profile"]
-required = false
-
-[[producers]]
-id = "submission-result"
-instance_pattern = "^submission-result$"
-applicability = ["bench", "profile"]
-required = false
-
-[[producers]]
-id = "job-entry"
-instance_pattern = "^job-entry$"
-applicability = ["bench", "profile"]
-required = false
-
-[[producers]]
 id = "environment"
-instance_pattern = "^environment:(?:job-entry|runtime)$"
+instance_pattern = "^environment:runtime$"
 applicability = ["bench", "profile"]
 required = false
 
@@ -81,12 +51,6 @@ required = false
 [[producers]]
 id = "run-lifecycle"
 instance_pattern = "^run-lifecycle$"
-applicability = ["bench", "profile"]
-required = false
-
-[[producers]]
-id = "scheduler-accounting"
-instance_pattern = "^scheduler-accounting$"
 applicability = ["bench", "profile"]
 required = false
 
@@ -281,104 +245,6 @@ applicability = ["bench", "profile"]
 required = true
 
 [[facts]]
-id = "cache_input_manifest_sha256"
-key_pattern = "^cache\\.node\\.[0-9]+\\.input_manifest_sha256$"
-owner = "cache"
-logical_type = "sha256"
-unit = "none"
-cardinality = "one per expected node"
-authoritative_source = "source/cache/node-<node>-input-manifest.json"
-capture_moment = "after staging and before benchmark"
-raw_destination = "run/key/value fact"
-validation = "SHA-256 of subject-free canonical cache members"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
-id = "submission_subject_manifest"
-key_pattern = "^scheduler\\.request\\.subject_manifest_sha256$"
-owner = "submission-request"
-logical_type = "sha256"
-unit = "none"
-cardinality = "one per run"
-authoritative_source = "control/submission-request.json subject_manifest"
-capture_moment = "immediately before pjsub"
-raw_destination = "run/key/value fact"
-validation = "must bind the immutable control/run-manifest.json bytes"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
-id = "submission_pjm_path"
-key_pattern = "^scheduler\\.request\\.pjm_script\\.repository_path$"
-owner = "submission-request"
-logical_type = "string"
-unit = "none"
-cardinality = "one per run"
-authoritative_source = "control/submission-request.json pjm_script"
-capture_moment = "immediately before pjsub"
-raw_destination = "run/key/value fact"
-validation = "safe repository-relative POSIX path"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
-id = "submission_pjm_sha256"
-key_pattern = "^scheduler\\.request\\.pjm_script\\.sha256$"
-owner = "submission-request"
-logical_type = "sha256"
-unit = "none"
-cardinality = "one per run"
-authoritative_source = "control/submission-request.json pjm_script"
-capture_moment = "immediately before pjsub"
-raw_destination = "run/key/value fact"
-validation = "SHA-256 of the submitted PJM script bytes"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
-id = "submission_argv"
-key_pattern = "^scheduler\\.request\\.argv$"
-owner = "submission-request"
-logical_type = "jcs"
-unit = "none"
-cardinality = "one per run"
-authoritative_source = "control/submission-request.json argv"
-capture_moment = "immediately before pjsub"
-raw_destination = "run/key/value fact"
-validation = "nonempty exact argument vector"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
-id = "submission_job_id"
-key_pattern = "^scheduler\\.submit_job_id$"
-owner = "submission-result"
-logical_type = "string"
-unit = "none"
-cardinality = "one per successful submission"
-authoritative_source = "control/submission-result.json job_id"
-capture_moment = "after successful pjsub parse"
-raw_destination = "run/key/value fact"
-validation = "decimal PJM job ID"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
-id = "job_entry_job_id"
-key_pattern = "^scheduler\\.job_entry_job_id$"
-owner = "job-entry"
-logical_type = "string"
-unit = "none"
-cardinality = "one per entered job"
-authoritative_source = "control/job-entry.json pj_job_id"
-capture_moment = "first compute-side boundary"
-raw_destination = "run/key/value fact"
-validation = "decimal PJM job ID bound to the run manifest"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
 id = "stage_launch"
 key_pattern = "^run\\.stage\\.[a-z0-9][a-z0-9._-]{0,99}\\.launch$"
 owner = "stage"
@@ -533,152 +399,12 @@ applicability = ["bench", "profile"]
 required = false
 
 [[facts]]
-id = "imb_process_count"
-key_pattern = "^network\\.imb_mpi1\\.process_count$"
-owner = "network"
-logical_type = "uint"
-unit = "process"
-cardinality = "one per run when IMB executes"
-authoritative_source = "IMB section process count validated against argv"
-capture_moment = "after complete IMB parse"
-raw_destination = "run/key/value fact"
-validation = "positive and identical across required sections"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "imb_message_size"
-key_pattern = "^network\\.imb_mpi1\\.message_size\\.(?:min_bytes|max_bytes)$"
-owner = "network"
-logical_type = "uint"
-unit = "byte"
-cardinality = "two per run when IMB executes"
-authoritative_source = "validated IMB result sizes and argv"
-capture_moment = "after complete IMB parse"
-raw_destination = "run/key/value fact"
-validation = "protocol bounds 0 through 4194304"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "imb_iteration_uint"
-key_pattern = "^network\\.imb_mpi1\\.iteration\\.(?:max_per_sample|time_limit_sec)$"
-owner = "network"
-logical_type = "uint"
-unit = "iteration or second as named"
-cardinality = "two per run when IMB executes"
-authoritative_source = "validated IMB rows and exact argv"
-capture_moment = "after complete IMB parse"
-raw_destination = "run/key/value fact"
-validation = "positive protocol values"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "imb_iteration_policy"
-key_pattern = "^network\\.imb_mpi1\\.iteration\\.policy$"
-owner = "network"
-logical_type = "string"
-unit = "none"
-cardinality = "one per run when IMB executes"
-authoritative_source = "exact IMB argv"
-capture_moment = "at network stage launch"
-raw_destination = "run/key/value fact"
-validation = "const dynamic"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "imb_version"
-key_pattern = "^software\\.imb_mpi1\\.version$"
-owner = "network"
-logical_type = "string"
-unit = "none"
-cardinality = "zero or one per run"
-authoritative_source = "IMB-MPI1 stdout version marker"
-capture_moment = "after complete IMB parse"
-raw_destination = "run/key/value fact"
-validation = "nonempty when present"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "nccl_process_grid"
-key_pattern = "^network\\.nccl_tests\\.(?:mpi_process_count|gpus_per_process|total_gpu_count)$"
-owner = "network"
-logical_type = "uint"
-unit = "process or GPU as named"
-cardinality = "three per run when NCCL executes"
-authoritative_source = "exact argv and nccl-tests config devices"
-capture_moment = "after complete NCCL parse"
-raw_destination = "run/key/value fact"
-validation = "positive and multiplicatively consistent"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "nccl_message_size"
-key_pattern = "^network\\.nccl_tests\\.message_size\\.(?:min_bytes|max_bytes|factor)$"
-owner = "network"
-logical_type = "uint"
-unit = "byte or ratio as named"
-cardinality = "three per run when NCCL executes"
-authoritative_source = "exact argv and nccl-tests config"
-capture_moment = "after complete NCCL parse"
-raw_destination = "run/key/value fact"
-validation = "8 bytes through 1 GiB with factor two"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "nccl_iterations"
-key_pattern = "^network\\.nccl_tests\\.(?:warmup_iterations|timed_iterations|check_iterations|rank_average_mode)$"
-owner = "network"
-logical_type = "uint"
-unit = "iteration or mode as named"
-cardinality = "four per run when NCCL executes"
-authoritative_source = "exact argv and nccl-tests config"
-capture_moment = "after complete NCCL parse"
-raw_destination = "run/key/value fact"
-validation = "protocol fixed values 5, 20, 1, and 1"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "nccl_tests_commit"
-key_pattern = "^software\\.nccl_tests\\.commit$"
-owner = "network"
-logical_type = "string"
-unit = "none"
-cardinality = "one per run when NCCL executes"
-authoritative_source = "container-embedded nccl-tests source commit"
-capture_moment = "before network stage launch"
-raw_destination = "run/key/value fact"
-validation = "const 717b68318278e93f371d8ffb46b076069d7c7851"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "nccl_runtime_version"
-key_pattern = "^software\\.nccl\\.version$"
-owner = "network"
-logical_type = "string"
-unit = "none"
-cardinality = "one per run when NCCL executes"
-authoritative_source = "nccl-tests runtime nccl_version"
-capture_moment = "after complete NCCL parse"
-raw_destination = "run/key/value fact"
-validation = "nonempty runtime version"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
 id = "environment_value_base64"
-key_pattern = '^environment\.(?:job_entry|runtime)\.(?:[A-Za-z0-9_-]+|encoded\.[0-9a-f]+)$'
+key_pattern = '^environment\.runtime\.(?:[A-Za-z0-9_-]+|encoded\.[0-9a-f]+)$'
 owner = "environment"
 logical_type = "string"
 unit = "RFC4648 base64"
-cardinality = "one per environment name at job entry and common runtime"
+cardinality = "one per environment name at common runtime"
 authoritative_source = "name-NUL-value-NUL environment snapshot"
 capture_moment = "at the named execution scope boundary"
 raw_destination = "source/environment/<scope>.snapshot"
@@ -741,76 +467,6 @@ raw_destination = "run/key/value fact"
 validation = "integer exit code"
 applicability = ["bench", "profile"]
 required = true
-
-[[facts]]
-id = "scheduler_accounting_identity"
-key_pattern = '^scheduler\.accounting\.(?:jid|st|sdt)$'
-owner = "scheduler-accounting"
-logical_type = "string"
-unit = "none"
-cardinality = "three per run"
-authoritative_source = "source/scheduler/accounting.txt"
-capture_moment = "terminal scheduler accounting"
-raw_destination = "run/key/value fact"
-validation = "exact single pjstat TSV row"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
-id = "scheduler_accounting_lexeme"
-key_pattern = '^scheduler\.accounting\.(?:elp|ec|sn|pc|nnumu|mmszu|uctmut|sctmut)\.lexeme$'
-owner = "scheduler-accounting"
-logical_type = "string"
-unit = "source lexeme"
-cardinality = "eight per run"
-authoritative_source = "source/scheduler/accounting.txt"
-capture_moment = "terminal scheduler accounting"
-raw_destination = "run/key/value fact"
-validation = "lossless source lexeme"
-applicability = ["bench", "profile"]
-required = true
-
-[[facts]]
-id = "scheduler_accounting_int"
-key_pattern = '^scheduler\.accounting\.(?:ec|sn|pc|nnumu)\.value$'
-owner = "scheduler-accounting"
-logical_type = "int"
-unit = "count or status as named"
-cardinality = "zero or four per run"
-authoritative_source = "validated scheduler lexeme"
-capture_moment = "terminal scheduler accounting"
-raw_destination = "run/key/value fact"
-validation = "strict integer when scheduler value is not null"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "scheduler_accounting_memory"
-key_pattern = '^scheduler\.accounting\.mmszu\.bytes$'
-owner = "scheduler-accounting"
-logical_type = "uint"
-unit = "byte"
-cardinality = "zero or one per run"
-authoritative_source = "validated mmszu scheduler lexeme"
-capture_moment = "terminal scheduler accounting"
-raw_destination = "run/key/value fact"
-validation = "exact byte conversion when scheduler value is not null"
-applicability = ["bench", "profile"]
-required = false
-
-[[facts]]
-id = "scheduler_accounting_time"
-key_pattern = '^scheduler\.accounting\.(?:elp|uctmut|sctmut)\.seconds$'
-owner = "scheduler-accounting"
-logical_type = "decimal"
-unit = "second"
-cardinality = "zero through three per run"
-authoritative_source = "validated scheduler time lexeme"
-capture_moment = "terminal scheduler accounting"
-raw_destination = "run/key/value fact"
-validation = "exact duration conversion when scheduler value is not null"
-applicability = ["bench", "profile"]
-required = false
 
 [[facts]]
 id = "hardware_hostname"

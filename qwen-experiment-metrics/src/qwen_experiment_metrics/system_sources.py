@@ -17,7 +17,6 @@ from .domain import Fact
 from .manifest import load_manifest
 
 _SAFE_KEY = re.compile(rb"^[A-Za-z0-9_-]+$")
-_INT = re.compile(r"^-?[0-9]+$")
 _UINT = re.compile(r"^[0-9]+$")
 _GPU_QUERY_FIELDS = (
     "index",
@@ -33,19 +32,6 @@ _GPU_QUERY_FIELDS = (
     "clocks.max.memory",
     "mig.mode.current",
     "ecc.mode.current",
-)
-_ACCOUNTING_COLUMNS = (
-    "jid",
-    "st",
-    "sdt",
-    "elp",
-    "ec",
-    "sn",
-    "pc",
-    "nnumu",
-    "mmszu",
-    "uctmut",
-    "sctmut",
 )
 
 
@@ -213,102 +199,6 @@ def validate_run_lifecycle(
         Fact("run.elapsed_sec", elapsed),
         Fact("run.exit_code", exit_code),
     )
-
-
-def create_scheduler_accounting(
-    manifest_path: Path,
-    runtime_dir: Path,
-    *,
-    job_id: str,
-    stdout_path: Path,
-    stderr_path: Path,
-    exit_code: int,
-) -> tuple[Path, tuple[Fact, ...]]:
-    manifest = load_manifest(manifest_path)
-    if re.fullmatch(r"[0-9]+", job_id) is None:
-        raise ValueError("accounting job ID is invalid")
-    row = _parse_accounting_stdout(stdout_path.read_bytes())
-    argv = [
-        "pjstat",
-        "--history",
-        "-s",
-        "--choose",
-        ",".join(_ACCOUNTING_COLUMNS),
-        "--data",
-        "--delimiter",
-        "\t",
-        job_id,
-    ]
-    value = {
-        "schema_version": "scheduler-accounting/v1",
-        "run_id": manifest.run_id,
-        "argv": argv,
-        "outcome": {"kind": "exit", "code": exit_code},
-        "stdout": _member(stdout_path, "source/scheduler/accounting.txt"),
-        "stderr": _member(stderr_path, "source/scheduler/accounting.stderr"),
-        "columns": list(_ACCOUNTING_COLUMNS),
-        "row": row,
-    }
-    destination = runtime_dir / "source/scheduler/accounting.json"
-    _exclusive_json(destination, value)
-    facts = validate_scheduler_accounting(destination, runtime_dir, manifest.run_id)
-    return destination, facts
-
-
-def validate_scheduler_accounting(
-    path: Path, runtime_dir: Path, run_id: str
-) -> tuple[Fact, ...]:
-    value = load_json_strict(path.read_bytes())
-    if not isinstance(value, dict) or set(value) != {
-        "schema_version",
-        "run_id",
-        "argv",
-        "outcome",
-        "stdout",
-        "stderr",
-        "columns",
-        "row",
-    }:
-        raise ValueError("scheduler accounting is not closed")
-    if (
-        value["schema_version"] != "scheduler-accounting/v1"
-        or value["run_id"] != run_id
-    ):
-        raise ValueError("scheduler accounting identity differs")
-    if value["columns"] != list(_ACCOUNTING_COLUMNS):
-        raise ValueError("scheduler accounting columns differ")
-    argv = value["argv"]
-    if not isinstance(argv, list) or argv[:-1] != [
-        "pjstat",
-        "--history",
-        "-s",
-        "--choose",
-        ",".join(_ACCOUNTING_COLUMNS),
-        "--data",
-        "--delimiter",
-        "\t",
-    ]:
-        raise ValueError("scheduler accounting argv differs")
-    outcome = value["outcome"]
-    if outcome != {"kind": "exit", "code": 0}:
-        raise ValueError("scheduler accounting command did not succeed")
-    for name, expected_path in (
-        ("stdout", "source/scheduler/accounting.txt"),
-        ("stderr", "source/scheduler/accounting.stderr"),
-    ):
-        relative = _validate_member(value[name])
-        if relative != expected_path:
-            raise ValueError("scheduler accounting member path differs")
-        _bind_member(runtime_dir / relative, value[name])
-    row = value["row"]
-    if not isinstance(row, dict) or set(row) != set(_ACCOUNTING_COLUMNS):
-        raise ValueError("scheduler accounting row is not closed")
-    reparsed = _parse_accounting_stdout(
-        runtime_dir.joinpath("source/scheduler/accounting.txt").read_bytes()
-    )
-    if row != reparsed or row["jid"] != argv[-1]:
-        raise ValueError("scheduler accounting row binding differs")
-    return _accounting_facts(row)
 
 
 def create_minimal_hardware(runtime_dir: Path, *, node_rank: int) -> Path:
@@ -687,51 +577,6 @@ def validate_lifecycle_summary(
     return tuple(facts)
 
 
-def _parse_accounting_stdout(payload: bytes) -> dict[str, str]:
-    try:
-        text = payload.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise ValueError("scheduler accounting is not UTF-8") from error
-    lines = text.splitlines()
-    if len(lines) != 2:
-        raise ValueError("scheduler accounting must contain one header and data row")
-    header = lines[0].split("\t")
-    fields = lines[1].split("\t")
-    if (
-        len(header) != len(_ACCOUNTING_COLUMNS) + 1
-        or header[0] != "H"
-        or len(fields) != len(_ACCOUNTING_COLUMNS) + 1
-        or fields[0] != ""
-    ):
-        raise ValueError("scheduler accounting column count differs")
-    return dict(zip(_ACCOUNTING_COLUMNS, fields[1:], strict=True))
-
-
-def _accounting_facts(row: dict[str, str]) -> tuple[Fact, ...]:
-    facts = [
-        Fact(f"scheduler.accounting.{name}", row[name]) for name in ("jid", "st", "sdt")
-    ]
-    elapsed = _duration_seconds(row["elp"])
-    facts.append(Fact("scheduler.accounting.elp.lexeme", row["elp"]))
-    if elapsed is not None:
-        facts.append(Fact("scheduler.accounting.elp.seconds", elapsed))
-    for name in ("ec", "sn", "pc", "nnumu"):
-        facts.append(Fact(f"scheduler.accounting.{name}.lexeme", row[name]))
-        parsed = _nullable_int_lexeme(row[name])
-        if parsed is not None:
-            facts.append(Fact(f"scheduler.accounting.{name}.value", parsed))
-    facts.append(Fact("scheduler.accounting.mmszu.lexeme", row["mmszu"]))
-    memory = _memory_bytes(row["mmszu"])
-    if memory is not None:
-        facts.append(Fact("scheduler.accounting.mmszu.bytes", memory))
-    for name in ("uctmut", "sctmut"):
-        facts.append(Fact(f"scheduler.accounting.{name}.lexeme", row[name]))
-        seconds = _milliseconds_seconds(row[name])
-        if seconds is not None:
-            facts.append(Fact(f"scheduler.accounting.{name}.seconds", seconds))
-    return tuple(facts)
-
-
 def _platform_settings() -> dict[str, object]:
     cpufreq_root = Path("/sys/devices/system/cpu/cpufreq")
     policies = None
@@ -1090,62 +935,6 @@ def _lifecycle_mark_facts(node: int, kind: str, value: dict[str, object]) -> lis
     ]
 
 
-def _duration_seconds(value: str) -> Decimal | None:
-    if _is_null_lexeme(value):
-        return None
-    match = re.fullmatch(
-        r"(?:(?P<days>[0-9]+)-)?(?P<hours>[0-9]+):(?P<minutes>[0-5][0-9]):(?P<seconds>[0-5][0-9](?:\.[0-9]+)?)(?: \((?P<total>[0-9]+)\))?",
-        value,
-    )
-    if match is None:
-        raise ValueError("invalid scheduler elapsed lexeme")
-    elapsed = (
-        Decimal(match.group("days") or 0) * 86400
-        + Decimal(match.group("hours")) * 3600
-        + Decimal(match.group("minutes")) * 60
-        + Decimal(match.group("seconds"))
-    )
-    if match.group("total") is not None and elapsed != Decimal(match.group("total")):
-        raise ValueError("scheduler elapsed display and total differ")
-    return elapsed
-
-
-def _nullable_int_lexeme(value: str) -> int | None:
-    if _is_null_lexeme(value):
-        return None
-    if _INT.fullmatch(value) is None:
-        raise ValueError("invalid scheduler integer lexeme")
-    return int(value)
-
-
-def _memory_bytes(value: str) -> int | None:
-    if _is_null_lexeme(value):
-        return None
-    match = re.search(r"\(([0-9]+)(?:\s+bytes)?\)\s*$", value)
-    if match is None:
-        raise ValueError("invalid scheduler memory lexeme")
-    return int(match.group(1))
-
-
-def _milliseconds_seconds(value: str) -> Decimal | None:
-    if _is_null_lexeme(value):
-        return None
-    numeric = value.removesuffix(" ms")
-    if numeric == value:
-        raise ValueError("invalid scheduler CPU-time lexeme")
-    try:
-        milliseconds = Decimal(numeric)
-    except Exception as error:
-        raise ValueError("invalid scheduler CPU-time lexeme") from error
-    if not milliseconds.is_finite() or milliseconds < 0:
-        raise ValueError("invalid scheduler CPU-time lexeme")
-    return milliseconds / Decimal(1000)
-
-
-def _is_null_lexeme(value: str) -> bool:
-    return value in {"", "-", "N/A", "(null)"}
-
-
 def _boost_settings() -> dict[str, object]:
     choices = (
         (Path("/sys/devices/system/cpu/cpufreq/boost"), False),
@@ -1401,6 +1190,10 @@ def _uint_lexeme(value: str, label: str) -> int:
 
 def _nullable_text(value: str) -> str | None:
     return None if _is_null_lexeme(value) else value
+
+
+def _is_null_lexeme(value: str) -> bool:
+    return value in {"", "-", "N/A", "(null)"}
 
 
 def _nullable_decimal(value: str) -> Decimal | None:

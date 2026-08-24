@@ -5,20 +5,17 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import EXECUTION_SETTINGS, make_manifest
+from conftest import EXECUTION_SETTINGS
 
 from qwen_experiment_metrics.canonical import jcs_bytes, load_json_strict
 from qwen_experiment_metrics.sources import (
     capture_runtime_launchers,
-    create_cache_manifest,
     create_input_manifests,
-    create_submission_request,
     execution_facts,
     input_manifest_facts,
     load_execution_settings,
     provenance_facts,
     runtime_launcher_facts,
-    validate_cache_manifest,
     validate_runtime_launchers,
 )
 
@@ -83,25 +80,6 @@ def test_input_manifests_bind_immutable_revisions_and_small_files(
     assert facts["input.dataset"]["sha256"] == (
         "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
     )
-
-
-def test_cache_identity_excludes_run_binding(tmp_path: Path) -> None:
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    (cache / "kernel.bin").write_bytes(b"kernel")
-    (cache / "current").symlink_to("kernel.bin")
-    facts = []
-    for name in ("first", "second"):
-        runtime = tmp_path / name
-        manifest = make_manifest(runtime)
-        source, fact = create_cache_manifest(
-            manifest, runtime, node_rank=0, cache_root=cache
-        )
-        validate_cache_manifest(
-            source, load_json_strict(manifest.read_bytes())["run_id"], 0
-        )
-        facts.append(fact.logical_value)
-    assert facts[0] == facts[1]
 
 
 def test_runtime_launcher_source_binds_resolved_files_and_outputs(
@@ -238,27 +216,3 @@ def test_provenance_facts_expose_container_and_dummy_input_details(
     dataset_file.write_bytes(b"tampered with different size\n")
     with pytest.raises(ValueError, match="dummy dataset file differs"):
         provenance_facts(runtime)
-
-
-def test_submission_request_binds_manifest_script_and_exact_argv(
-    tmp_path: Path,
-) -> None:
-    runtime = tmp_path / "run"
-    manifest = make_manifest(runtime)
-    script = tmp_path / "run.pjm"
-    script.write_text("#!/bin/sh\n", encoding="utf-8")
-    argv = ["pjsub", "-N", "qwen", str(script)]
-    source, facts = create_submission_request(
-        manifest,
-        runtime,
-        pjm_script=script,
-        repository_path="scripts/run-qwen35.pjm",
-        argv=argv,
-    )
-    assert load_json_strict(source.read_bytes())["argv"] == argv
-    assert {fact.key for fact in facts} == {
-        "scheduler.request.subject_manifest_sha256",
-        "scheduler.request.pjm_script.repository_path",
-        "scheduler.request.pjm_script.sha256",
-        "scheduler.request.argv",
-    }
