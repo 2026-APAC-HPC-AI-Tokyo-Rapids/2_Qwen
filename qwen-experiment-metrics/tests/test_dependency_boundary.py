@@ -145,6 +145,12 @@ def test_entry_workflow_keeps_push_and_dispatch_controls_closed() -> None:
     assert "startsWith(github.event.head_commit.message, '[require-build]')" in workflow
     assert workflow.count("needs: [validate, container]") == 3
     assert all(f"run_{cluster}:" in workflow for cluster in ("genkai", "aspire2ap", "firmus"))
+    assert "needs: [genkai, aspire2ap, firmus]" in workflow
+    assert "QWEN_ARTIFACT_ARCHIVE_ROOT: /srv/qwen-artifacts" in workflow
+    assert "shell: home-lab-shell {0}" in workflow
+    assert "actions/download-artifact@v8" in workflow
+    assert "SHA256SUMS" in workflow
+    assert "actions/artifacts/${artifact_id}" in workflow
     assert "[skip ci]" in (ROOT / "README.md").read_text(encoding="utf-8")
     assert "actionlint-py==1.7.12.24" in validation
 

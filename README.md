@@ -8,6 +8,8 @@
 
 クラスタ処理を担当するjobは`[self-hosted, home-lab]`で起動し、`genkai-shell --github-shell`、`aspire2p-shell --github-shell`、`firmus-shell --github-shell`をcustom shellとして直接使います。checkoutとstep環境だけをrun固有一時領域へ転送し、SquashFS archive、Enroot設定、dataset、model、run directoryは各ログインノード上の既存パスを維持します。
 
+各クラスタの`check_env`ログは一度GitHub Artifactへ回収し、選択した全クラスタの終了後にhome-lab runnerから`/srv/qwen-artifacts/<run-id>/<attempt>`へチェックサム付きで移管します。home RAIDへの配置に成功した後だけ、転送済みのGitHub Artifactを削除します。
+
 pushで計算を起動する場合は`[cluster:genkai]`、`[cluster:aspire2ap]`、または`[cluster:firmus]`をコミットメッセージへ付けます。複数指定すれば独立したrunnerから並行実行します。`[nodes:1]`、`[nodes:2]`、`[nodes:4]`でノード数を選び、省略時は2ノードです。Firmusは2ノードしかないため1または2を指定します。新しいコンテナが必要な変更では、コミットメッセージの先頭を`[require-build]`にします。クラスタタグのないpushは検証だけを実行し、`[skip ci]`を先頭に付けたpushではGitHub Actions自体を起動しません。
 
 AWS資源、費用、寿命、資格情報境界は [AWS SquashFSビルド](research/aws-container-build.md)、実機上の制約は [OCI / Enroot移行記録](research/container-runtime-migration.md)、従来構成に至った履歴は`research/build-performance/`と`research/runtime-performance/`を参照してください。

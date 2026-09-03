@@ -43,7 +43,7 @@ on:
         type: boolean
 
 permissions:
-  actions: read
+  actions: write
   contents: read
   id-token: write
 
@@ -93,3 +93,45 @@ jobs:
       container_sha256: ${{ needs.container.outputs.container_sha256 }}
       container_size: ${{ needs.container.outputs.container_size }}
     secrets: inherit
+
+  archive-artifacts:
+    name: 成果物を自宅サーバーへ保管
+    needs: [genkai, aspire2ap, firmus]
+    if: >-
+      always() &&
+      (needs.genkai.result == 'success' || needs.aspire2ap.result == 'success' || needs.firmus.result == 'success')
+    runs-on: [self-hosted, home-lab]
+    permissions:
+      actions: write
+      contents: read
+    env:
+      QWEN_ARTIFACT_ARCHIVE_ROOT: /srv/qwen-artifacts
+
+    steps:
+      - name: ワークフロー成果物を取得
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: qwen-*-check-env-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: 成果物を自宅サーバーへ配置
+        shell: home-lab-shell {0}
+        run: |
+          destination_parent="${QWEN_ARTIFACT_ARCHIVE_ROOT}/${GITHUB_RUN_ID}"
+          destination="${destination_parent}/${GITHUB_RUN_ATTEMPT}"
+          test -d artifacts
+          test -n "$(find artifacts -type f -print -quit)"
+          install -d -m 0750 "${destination_parent}"
+          staging="$(mktemp -d "${destination_parent}/.${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          trap 'rm -rf -- "${staging}"' EXIT
+          cp -a artifacts/. "${staging}/"
+          (cd "${staging}" && find . -type f -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS)
+          mv -T -- "${staging}" "${destination}"
+          trap - EXIT
+
+      - name: 転送済みのGitHub成果物を削除
+        shell: home-lab-shell {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '.artifacts[] | select(.name | startswith("qwen-") and contains("-check-env-")) | .id' | while read -r artifact_id; do gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"; done
