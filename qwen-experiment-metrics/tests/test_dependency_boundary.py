@@ -150,6 +150,7 @@ def test_entry_workflow_keeps_push_and_dispatch_controls_closed() -> None:
     assert "shell: home-lab-shell {0}" in workflow
     assert "actions/download-artifact@v8" in workflow
     assert "SHA256SUMS" in workflow
+    assert "find . -type f ! -name SHA256SUMS" in workflow
     assert "actions/artifacts/${artifact_id}" in workflow
     assert "[skip ci]" in (ROOT / "README.md").read_text(encoding="utf-8")
     assert "actionlint-py==1.7.12.24" in validation
