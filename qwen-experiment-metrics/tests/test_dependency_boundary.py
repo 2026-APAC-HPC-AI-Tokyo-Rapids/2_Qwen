@@ -298,7 +298,8 @@ def test_scheduler_submission_uses_persistent_runtime_working_directory() -> Non
 def test_firmus_uses_shared_beegfs_and_compute_local_enroot() -> None:
     workflow = (ROOT / ".github/workflows/firmus.yml").read_text(encoding="utf-8")
     script = (ROOT / "platforms/firmus/check-qwen-container.slurm").read_text(encoding="utf-8")
-    assert "runs-on: [self-hosted, firmus]" in workflow
+    assert "runs-on: [self-hosted, home-lab]" in workflow
+    assert "shell: firmus-shell --github-shell {0}" in workflow
     assert "[[ '${{ inputs.node_count }}' =~ ^[12]$ ]]" in workflow
     assert "RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs" in workflow
     assert '"${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"' in workflow
@@ -311,6 +312,21 @@ def test_firmus_uses_shared_beegfs_and_compute_local_enroot() -> None:
     assert 'exec "${RUNTIME_DIR}/scripts/run-qwen-check-env.sh"' in script
     assert "GOOGLE_CREDENTIAL" not in script
     assert "BIGQUERY" not in script
+
+
+def test_cluster_steps_use_home_lab_remote_shells() -> None:
+    workflows = {
+        "genkai.yml": "genkai-shell",
+        "aspire2ap.yml": "aspire2p-shell",
+        "firmus.yml": "firmus-shell",
+    }
+    for filename, remote_shell in workflows.items():
+        workflow = (ROOT / ".github/workflows" / filename).read_text(encoding="utf-8")
+        assert f"shell: {remote_shell} --github-shell {{0}}" in workflow
+        assert "runs-on: [self-hosted, home-lab]" in workflow
+    aws = (ROOT / ".github/workflows/aws-container.yml").read_text(encoding="utf-8")
+    assert "runner_labels" not in aws
+    assert "remote_shell" in aws
 
 
 def test_validation_includes_slurm_adapters() -> None:

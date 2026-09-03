@@ -22,12 +22,12 @@ env:
 
 defaults:
   run:
-    shell: bash --login -eo pipefail {0}
+    shell: aspire2p-shell --github-shell {0}
 
 jobs:
   provision:
     name: ローカルarchiveからSquashFSを配備
-    runs-on: [self-hosted, aspire2p]
+    runs-on: [self-hosted, home-lab]
     timeout-minutes: 180
     outputs:
       runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
@@ -39,7 +39,6 @@ jobs:
 
       - name: archiveのSquashFSを実行領域へ配備
         id: provision
-        shell: bash -eo pipefail {0}
         env:
           CLUSTER_NAME: aspire2ap
           CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
@@ -62,7 +61,7 @@ jobs:
   run:
     name: GPUノードでEnroot check_envを実行
     needs: provision
-    runs-on: [self-hosted, aspire2p]
+    runs-on: [self-hosted, home-lab]
     timeout-minutes: 180
     env:
       RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
@@ -87,15 +86,21 @@ jobs:
           test "${exit_status}" = 0
           test -e "${RUNTIME_DIR}/run-success"
 
+      - name: check_envログをrunnerへ回収
+        if: always() && steps.submit.outputs.job_id != ''
+        shell: home-lab-shell {0}
+        run: |
+          destination="${RUNNER_TEMP}/qwen-aspire2ap-check-env"
+          aspire2p-shell --pull "${RUNTIME_DIR}/logs" "${destination}"
+          aspire2p-shell --pull "${RUNTIME_DIR}/source" "${destination}"
+          aspire2p-shell --pull "${RUNTIME_DIR}/run-success" "${destination}"
+
       - name: check_envログを保存
         if: always() && steps.submit.outputs.job_id != ''
         uses: actions/upload-artifact@v7
         with:
           name: qwen-aspire2ap-check-env-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ env.RUNTIME_DIR }}/logs
-            ${{ env.RUNTIME_DIR }}/source
-            ${{ env.RUNTIME_DIR }}/run-success
+          path: ${{ runner.temp }}/qwen-aspire2ap-check-env
           if-no-files-found: error
 
       - name: 実行環境を削除
