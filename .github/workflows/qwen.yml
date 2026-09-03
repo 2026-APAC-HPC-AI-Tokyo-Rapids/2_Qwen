@@ -125,7 +125,7 @@ jobs:
           staging="$(mktemp -d "${destination_parent}/.${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
           trap 'rm -rf -- "${staging}"' EXIT
           cp -a artifacts/. "${staging}/"
-          (cd "${staging}" && find . -type f -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS)
+          (cd "${staging}" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS)
           mv -T -- "${staging}" "${destination}"
           trap - EXIT
 
