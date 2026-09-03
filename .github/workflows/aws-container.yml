@@ -24,7 +24,7 @@ env:
 jobs:
   select-genkai:
     name: 玄界のローカル成果物を選択
-    runs-on: [self-hosted, genkai]
+    runs-on: [self-hosted, home-lab]
     timeout-minutes: 60
     outputs:
       action: ${{ steps.select.outputs.action }}
@@ -33,7 +33,7 @@ jobs:
       source_run_id: ${{ steps.select.outputs.source_run_id }}
     defaults:
       run:
-        shell: bash --login -eo pipefail {0}
+        shell: genkai-shell --github-shell {0}
     steps:
       - name: リポジトリ履歴を取得
         uses: actions/checkout@v7
@@ -53,11 +53,11 @@ jobs:
     name: 管理済みSGLang mirrorから入力を準備
     needs: select-genkai
     if: needs.select-genkai.outputs.action == 'build'
-    runs-on: [self-hosted, genkai]
+    runs-on: [self-hosted, home-lab]
     timeout-minutes: 60
     defaults:
       run:
-        shell: bash --login -eo pipefail {0}
+        shell: genkai-shell --github-shell {0}
     steps:
       - name: Qwenのビルド入力を取得
         uses: actions/checkout@v7
@@ -218,28 +218,24 @@ jobs:
       matrix:
         include:
           - cluster: 玄界
-            runner_labels: [self-hosted, genkai]
+            remote_shell: genkai-shell
             archive_dir: /home/pj26000080/share/sglang-containers
           - cluster: ASPIRE 2A+
-            runner_labels: [self-hosted, aspire2p]
+            remote_shell: aspire2p-shell
             archive_dir: /scratch/users/industry/ai-hpc/apacsc14/sglang-containers
           - cluster: Firmus
-            runner_labels: [self-hosted, firmus]
+            remote_shell: firmus-shell
             archive_dir: /scratch/home/apacsc14/qwen/containers
-    runs-on: ${{ matrix.runner_labels }}
+    runs-on: [self-hosted, home-lab]
     timeout-minutes: 180
     defaults:
       run:
-        shell: bash --login -eo pipefail {0}
+        shell: ${{ matrix.remote_shell }} --github-shell {0}
     steps:
       - name: archive処理を取得
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-
-      - name: S3 APIクライアントの実行環境を準備
-        if: needs.select-genkai.outputs.action == 'build'
-        uses: astral-sh/setup-uv@v7
 
       - name: AWSの一時資格情報を取得
         if: needs.select-genkai.outputs.action == 'build'

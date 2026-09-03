@@ -28,7 +28,7 @@ workflowはinstanceの実際のlaunch時刻から終了後までを秒で測り�
 
 CloudFormation template `aws/qwen-build-infrastructure.yml`はprivate S3 bucket、egress-only security group、EC2 instance profile、GitHub OIDC provider、Actions roleを作る。Actions roleは対象repositoryだけをtrustし、build用instanceの起動・終了、SSM command、対象bucketの操作だけを許可する。privateなSGLang sourceは、そのrepository自身のworkflowが管理する玄界上のread-only bare mirrorからQwen workflowが入力archiveへ複製する。消費側repositoryからsource repositoryへ書き込まず、広いPATや無効化されているdeploy keyに依存しない。
 
-新規build時だけ、玄界、ASPIRE 2A+、Firmusの各self-hosted runnerが同じOIDC roleを一時的にassumeする。ログインノードへAWS CLIは導入せず、一時資格情報を使うBoto3 APIで64 MiB part、最大8並列のdownloadを行い、sidecarとSquashFSを各ローカルarchiveへ確定する。再利用時はAWS資格情報を取得せず、3クラスタそれぞれのarchive内で検証済みsource runを今回run IDへハードリンクする。AWS資格情報はscheduler jobへ渡さず、計算ノードへ渡すのはarchiveからrun directoryへ配備済みの`.sqsh`、run固有Enroot設定、実行scriptだけである。
+新規build時だけ、各materialize jobを実行する`home-lab` runnerが同じOIDC roleを一時的にassumeし、対応するcustom shellへ一時資格情報を渡す。ログインノードへAWS CLIは導入せず、そのstep内のBoto3 APIで64 MiB part、最大8並列のdownloadを行い、sidecarとSquashFSを各ローカルarchiveへ確定する。remote step終了時に資格情報を含む一時環境を削除する。再利用時はAWS資格情報を取得せず、3クラスタそれぞれのarchive内で検証済みsource runを今回run IDへハードリンクする。AWS資格情報はscheduler jobへ渡さず、計算ノードへ渡すのはarchiveからrun directoryへ配備済みの`.sqsh`、run固有Enroot設定、実行scriptだけである。
 
 12,718,911,488 byteの同じobjectについて、玄界のpresigned URLと単一`curl`による旧配備jobは8分31秒だった。Boto3 multipartへ切り替えた配備jobは、checkout、OIDC設定、sidecar取得、SHA-256全体読取りまで含めて玄界1分45秒、ASPIRE 2A+ 2分09秒、Firmus 2分08秒となった。新規buildを玄界archiveへ保存する同じBoto3 transfer jobも2分00秒だった。
 
