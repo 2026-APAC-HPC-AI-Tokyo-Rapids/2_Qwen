@@ -336,13 +336,17 @@ def test_cluster_steps_use_home_lab_remote_shells() -> None:
     assert "remote_shell" in aws
 
 
-def test_scheduler_wait_jobs_use_the_self_hosted_five_day_limit() -> None:
+def test_cluster_remote_jobs_use_the_self_hosted_five_day_limit() -> None:
     for filename in ("genkai.yml", "aspire2ap.yml", "firmus.yml"):
         workflow = (ROOT / ".github/workflows" / filename).read_text(encoding="utf-8")
         jobs = workflow.split("jobs:\n", 1)[1]
-        run_job = jobs[jobs.index("  run:\n") :]
-        assert "timeout-minutes: 7200" in run_job
-        assert "timeout-minutes: 180" not in run_job
+        assert jobs.count("timeout-minutes: 7200") == 2
+        assert "timeout-minutes: 180" not in jobs
+
+    aws = (ROOT / ".github/workflows/aws-container.yml").read_text(encoding="utf-8")
+    materialize_job = aws[aws.index("  materialize:\n") :]
+    assert "timeout-minutes: 7200" in materialize_job
+    assert "timeout-minutes: 180" not in materialize_job
 
 
 def test_validation_includes_slurm_adapters() -> None:
