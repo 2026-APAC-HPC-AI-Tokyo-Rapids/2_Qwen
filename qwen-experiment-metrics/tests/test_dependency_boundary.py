@@ -97,6 +97,8 @@ def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
     assert 'git rev-parse --verify "${commit}^"' in selector
     assert "size_bytes" in selector and "sha256sum" in selector
     assert "CONTAINER_ARCHIVE_DIR" in selector
+    assert '--json databaseId,conclusion' in selector
+    assert 'select(.conclusion == "success")' in selector
     assert "gh run view" not in selector
     assert "inventory" not in selector
     assert "enroot start" not in selector

@@ -22,7 +22,7 @@ while [[ -n "${commit}" ]]; do
     [[ "$(sha256sum "${archive}" | awk '{print $1}')" == "${expected_sha256}" ]] || continue
     printf 'action=reuse\nsource_run_id=%s\ncontainer_sha256=%s\ncontainer_size=%s\n' "${run_id}" "${expected_sha256}" "${expected_size}" >>"${GITHUB_OUTPUT}"
     exit 0
-  done < <(gh run list --workflow qwen.yml --commit "${commit}" --limit 1000 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
+  done < <(gh run list --workflow qwen.yml --commit "${commit}" --limit 1000 --json databaseId,conclusion --jq '.[] | select(.conclusion == "success") | .databaseId' 2>/dev/null || true)
   commit="$(git rev-parse --verify "${commit}^" 2>/dev/null || true)"
 done
 
