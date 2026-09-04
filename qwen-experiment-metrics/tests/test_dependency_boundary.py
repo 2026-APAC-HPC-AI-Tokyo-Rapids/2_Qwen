@@ -86,8 +86,17 @@ def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
     selector = (ROOT / "scripts/select-qwen-container.sh").read_text(encoding="utf-8")
     aws_workflow = (ROOT / ".github/workflows/aws-container.yml").read_text(encoding="utf-8")
     assert "scripts/select-qwen-container.sh" in aws_workflow
-    assert aws_workflow.count("scripts/select-qwen-container.sh") == 1
-    assert "select-aspire2ap:" not in aws_workflow and "select-firmus:" not in aws_workflow
+    assert aws_workflow.count("scripts/select-qwen-container.sh") == 3
+    assert "select-aspire2ap:" in aws_workflow and "select-firmus:" in aws_workflow
+    for remote_shell in ("genkai-shell", "aspire2p-shell", "firmus-shell"):
+        assert f"shell: {remote_shell} --github-shell {{0}}" in aws_workflow
+    for prefix in ("genkai", "aspire2ap", "firmus"):
+        assert f"{prefix}_container_sha256:" in aws_workflow
+        assert f"{prefix}_container_size:" in aws_workflow
+    build_if_any_cache_is_missing = "needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build'"
+    assert build_if_any_cache_is_missing in aws_workflow
+    assert aws_workflow.count("&& 'build' || 'reuse'") == 3
+    assert "SOURCE_RUN_ID: ${{ matrix.source_run_id }}" in aws_workflow
     assert "decide:" not in aws_workflow and "finalize:" not in aws_workflow
     for name in ("genkai.yml", "aspire2ap.yml", "firmus.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
@@ -97,8 +106,6 @@ def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
     assert 'git rev-parse --verify "${commit}^"' in selector
     assert "size_bytes" in selector and "sha256sum" in selector
     assert "CONTAINER_ARCHIVE_DIR" in selector
-    assert '--json databaseId,conclusion' in selector
-    assert 'select(.conclusion == "success")' in selector
     assert "gh run view" not in selector
     assert "inventory" not in selector
     assert "enroot start" not in selector
