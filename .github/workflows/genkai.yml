@@ -70,8 +70,8 @@ jobs:
         id: submit
         run: |
           cd "${RUNTIME_DIR}"
-          job_environment="RUNTIME_DIR=${RUNTIME_DIR}"
-          submission="$(pjsub -L "node=${{ inputs.node_count }}" --mpi "proc=1" -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.pjm")"
+          job_environment="NODE_COUNT=${{ inputs.node_count }},RUNTIME_DIR=${RUNTIME_DIR}"
+          submission="$(pjsub -L "node=${{ inputs.node_count }}" --mpi "proc=${{ inputs.node_count }}" -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.pjm")"
           printf '%s\n' "${submission}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<<"${submission}")"
           test -n "${job_id}"
@@ -80,7 +80,7 @@ jobs:
 
       - name: PJMジョブの開始を待機
         run: |
-          while [[ ! -e "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" ]]; do wait_status="$(pjwait -w waitnone "${PJM_JOB_ID}")"; pjm_code="$(awk 'NR == 1 {print $2}' <<<"${wait_status}")"; if [[ -n "${pjm_code}" && "${pjm_code}" != X ]]; then printf '%s\n' "${wait_status}"; exit 1; fi; sleep 2; done
+          while [[ ! -e "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" ]]; do wait_status="$(pjwait -w waitnone "${PJM_JOB_ID}")"; printf '%s\n' "${wait_status}"; pjm_code="$(awk 'NR == 1 {print $2}' <<<"${wait_status}")"; if [[ -n "${pjm_code}" && "${pjm_code}" != X ]]; then exit 1; fi; sleep 15; done
 
       - name: PJMジョブの終了を確認
         run: |

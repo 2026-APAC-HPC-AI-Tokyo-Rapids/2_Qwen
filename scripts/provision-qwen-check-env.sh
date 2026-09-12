@@ -41,4 +41,5 @@ if [[ -x "${nvidia_hook}" ]]; then sed -i 's%--ldconfig=@$(command -v ldconfig.r
 if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh" ]]; then chmod -x "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh"; fi
 
 install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen-check-env.sh" "${runtime_dir}/scripts/run-qwen-check-env.sh"
+install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-qwen-check-env-rank.sh" "${runtime_dir}/scripts/run-qwen-check-env-rank.sh"
 jq -n --arg cluster "${CLUSTER_NAME}" --arg archive_run_id "${GITHUB_RUN_ID}" --arg sha256 "${CONTAINER_SHA256}" --argjson size_bytes "${CONTAINER_SIZE}" '{schema_version:"qwen-check-env-source/v1",cluster:$cluster,archive:{run_id:$archive_run_id},container:{size_bytes:$size_bytes,sha256:$sha256},local_archive:true,enroot_direct_squashfs:true}' >"${runtime_dir}/source/check-env-source.json"

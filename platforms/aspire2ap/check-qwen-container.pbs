@@ -3,4 +3,22 @@
 
 set -euo pipefail
 source "${HOME}/.local/.setenv"
-exec "${RUNTIME_DIR}/scripts/run-qwen-check-env.sh"
+: "${PBS_NODEFILE:?PBS node file is required}"
+: "${EXPECTED_NODE_COUNT:?expected node count is required}"
+[[ "${EXPECTED_NODE_COUNT}" =~ ^[1-9][0-9]*$ ]]
+
+mapfile -t hosts < <(awk '!seen[$0]++' "${PBS_NODEFILE}")
+printf 'expected_node_count=%s nodefile_unique_hosts=%s\n' "${EXPECTED_NODE_COUNT}" "${#hosts[@]}"
+node_count="${EXPECTED_NODE_COUNT}"
+[[ "${#hosts[@]}" -eq "${node_count}" ]]
+rank_map="${RUNTIME_DIR}/logs/rank-map.tsv"
+: >"${rank_map}"
+for ((rank = 0; rank < node_count; rank++)); do printf '%s\t%s\n' "${hosts[rank]%%.*}" "${rank}" >>"${rank_map}"; done
+/opt/pbs/bin/pbsdsh -- "${RUNTIME_DIR}/scripts/run-qwen-check-env-rank.sh"
+
+summary="${RUNTIME_DIR}/logs/all-nodes-summary.txt"
+: >"${summary}"
+for ((rank = 0; rank < node_count; rank++)); do rank_output="${RUNTIME_DIR}/logs/rank-${rank}"; test -s "${rank_output}/environment.log"; test -s "${rank_output}/check-env.log"; test -e "${rank_output}/run-success"; hostname_value="$(sed -n 's/^hostname=//p' "${rank_output}/environment.log")"; test -n "${hostname_value}"; printf 'rank=%d hostname=%s status=success\n' "${rank}" "${hostname_value}" >>"${summary}"; done
+[[ "$(find "${RUNTIME_DIR}/logs" -mindepth 2 -maxdepth 2 -type f -name run-success | wc -l)" -eq "${node_count}" ]]
+[[ "$(sed -n 's/.* hostname=\([^ ]*\) .*/\1/p' "${summary}" | sort -u | wc -l)" -eq "${node_count}" ]]
+touch "${RUNTIME_DIR}/run-success"
