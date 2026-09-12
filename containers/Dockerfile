@@ -22,7 +22,6 @@ RUN /opt/apac/install-python-dependencies.sh && rm /opt/apac/install-python-depe
 COPY containers/install-accelerator-dependencies.sh /opt/apac/install-accelerator-dependencies.sh
 RUN /opt/apac/install-accelerator-dependencies.sh && rm /opt/apac/install-accelerator-dependencies.sh
 
-COPY patches/sglang /opt/sglang-patches
 COPY sglang-source /opt/sglang/source
 COPY sglang-commit.txt /opt/sglang/sglang-commit.txt
 COPY containers/install-sglang-source.sh /opt/apac/install-sglang-source.sh
