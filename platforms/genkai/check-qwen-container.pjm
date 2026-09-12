@@ -5,4 +5,13 @@
 
 set -euo pipefail
 source "${HOME}/.local/.setenv"
-exec "${RUNTIME_DIR}/scripts/run-qwen-check-env.sh"
+
+: "${NODE_COUNT:?node count is required}"
+[[ "${NODE_COUNT}" =~ ^[1-9][0-9]*$ ]]
+
+module purge
+module load intel/2025.1.3 impi
+mpirun_path="$(command -v mpirun)"
+"${mpirun_path}" -np "${NODE_COUNT}" -ppn 1 -genv PATH "${PATH}" "${RUNTIME_DIR}/scripts/run-qwen-check-env.sh"
+for ((rank = 0; rank < NODE_COUNT; rank++)); do test -e "${RUNTIME_DIR}/logs/run-success-rank-${rank}"; done
+touch "${RUNTIME_DIR}/run-success"
