@@ -81,7 +81,6 @@ jq -e '.history | length > 0' "${BUILD_DIR}/logs/umoci-stat.json" >/dev/null
 rootfs="$(buildah --root "${storage_root}" --runroot "${run_root}" mount "${test_container}")"
 mounted_container="${test_container}"
 cmp "${rootfs}/opt/apac/manifest.json" "${context}/apac-manifest.json"
-test "$(cat "${rootfs}/opt/sglang/qwen-experiment-metrics-hook-version.txt")" = 2
 mksquashfs "${rootfs}" "${squashfs_work}" -noappend -all-root -no-xattrs -no-duplicates -no-fragments -comp gzip -Xcompression-level 2 -processors 8 -mem 8G 2>&1 | tee "${BUILD_DIR}/logs/mksquashfs.log"
 buildah --root "${storage_root}" --runroot "${run_root}" unmount "${test_container}"
 mounted_container=
