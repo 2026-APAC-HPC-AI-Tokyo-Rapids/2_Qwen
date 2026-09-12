@@ -107,6 +107,7 @@ run_aiperf() {
   cp "${export_file}" "${OUTPUT_DIR}/results/profile_export_aiperf.json"
   python3 - "${OUTPUT_DIR}/results/profile_export_aiperf.json" "${OUTPUT_DIR}/results/score.json" "${CONCURRENCY}" <<'PY'
 import json
+import math
 import sys
 
 source, destination, concurrency = sys.argv[1:]
@@ -142,6 +143,10 @@ with open(destination, "w", encoding="utf-8") as output:
 print(json.dumps(result, sort_keys=True))
 if not eligible:
     raise SystemExit("official run did not meet good_request_fraction >= 0.90")
+if not math.isclose(result["observed_input_sequence_length_avg"], 4000.0):
+    raise SystemExit("official run did not produce average input length 4000")
+if not math.isclose(result["observed_output_sequence_length_avg"], 200.0):
+    raise SystemExit("official run did not produce average output length 200")
 PY
 }
 
