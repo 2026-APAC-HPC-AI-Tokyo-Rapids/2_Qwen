@@ -69,6 +69,8 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert router.count("--prefill ") == 4
     assert router.count("--decode ") == 2
     assert "--pd-disaggregation" in router
+    assert '-m "${MODEL_PATH}:/model"' in router
+    assert "HF_HUB_OFFLINE=1" in router
 
 
 def test_compute_scripts_have_no_cloud_credentials() -> None:
