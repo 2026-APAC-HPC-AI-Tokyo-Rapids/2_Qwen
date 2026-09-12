@@ -2,34 +2,34 @@
 
 ## 構成
 
-GitHub Actionsのhosted runnerは制御と小さなsource archiveの作成だけを行う。新規buildが必要な場合、Singapore (`ap-southeast-1`) のdefault public subnetへ`m7i.2xlarge`を1台起動し、SSM経由でbuildを実行する。instanceは8 vCPU、32 GiB RAM、300 GiB gp3 root volume（6,000 IOPS、500 MiB/s）を持ち、inbound portとSSH keyは持たない。
+GitHub Actionsのhosted runnerは制御および小さなソースアーカイブの作成のみを行う。新規ビルドが必要な場合は、AWSシンガポール（`ap-southeast-1`）リージョンのデフォルトパブリックサブネット内に`m7i.2xlarge`インスタンスを1台起動し、AWS Systems Manager（SSM）経由でビルドコマンドを実行する。当該インスタンスは8 vCPU、32 GiB RAM、300 GiBのgp3ルートボリューム（6,000 IOPS、500 MiB/s）を備え、インバウンドポートの開放やSSHキーの配置は行わない。
 
-AWS VMではrootを使用し、Buildah `chroot` isolationとOverlayFSでbuildする。VFS、fakeroot、user namespace向けownership緩和は使わない。OCI layoutはSkopeo copyとUmoci statで検証し、Buildahでmountした同じroot filesystemを8 worker、8 GiB cacheの`mksquashfs`で圧縮する。32 GiB RAMでは展開rootfs約26.6 GBに加えてlayer、OCI layout、圧縮入出力の全てをtmpfsへ同時保持できないため、全RAM buildではなく高速gp3を使う。
+AWS VM上ではroot権限を使用し、Buildahの`chroot` isolationおよびOverlayFSを用いてビルドする。VFS、fakeroot、およびユーザー名前空間向けの所有権（ownership）緩和処理は使用しない。生成されたOCI layoutはSkopeo copyおよびUmoci statによって検証し、Buildahでマウントした同一のroot filesystemを、8ワーカー・8 GiBキャッシュ構成の`mksquashfs`により圧縮する。32 GiBのRAM容量では、約26.6 GBの展開後rootfsに加えてレイヤーデータ、OCI layout、および圧縮処理の入出力をすべてtmpfs上に同時保持することはできないため、オールRAMビルドは採らず高速なgp3ストレージを利用する。
 
-instanceはbuild成功時にActionsがterminateし、失敗時にもtrapでterminateする。さらにinstance内に6時間後のshutdownを登録し、Actions runner自体が消失した場合の上限を設ける。root EBS volumeは`DeleteOnTermination=true`であり、VMとEBSの常時課金はない。S3のinputとクラスタ配布用SquashFSは1日、build logは30日で期限切れになる。S3に配布完了マーカーは作らない。再利用対象のSquashFSとsidecarは、玄界の`/home/pj26000080/share/sglang-containers`、ASPIRE 2A+の`/scratch/users/industry/ai-hpc/apacsc14/sglang-containers`、Firmusの`/scratch/home/apacsc14/qwen/containers`へrun ID名で保存する。
+インスタンスは、ビルド成功時にGitHub Actionsによって確実にterminate（終了）され、ビルド失敗時にもシェルtrapにより終了される。さらに、インスタンス内部で6時間後の自動シャットダウンをスケジュール登録し、Actions runner自体が消失した場合の稼働時間上限を設けている。ルートEBSボリュームには`DeleteOnTermination=true`が設定されており、VMやEBSが常時課金されることはない。S3上の入力データおよびクラスタ配布用SquashFSは1日、ビルドログは30日でライフサイクル失効する。S3上には配布完了マーカーを作成しない。再利用対象となるSquashFSおよびsidecarファイルは、玄界の`/home/pj26000080/share/sglang-containers`、ASPIRE 2A+の`/scratch/users/industry/ai-hpc/apacsc14/sglang-containers`、およびFirmusの`/scratch/home/apacsc14/qwen/containers`へ、run IDを冠したファイル名で保存される。
 
-新規buildではprivate ECRの`apac-qwen-build-cache`をBuildahの`--cache-from`と`--cache-to`へ指定し、変更されていない中間layerをVM間で再利用する。repositoryは最新64 imageだけを残すlifecycle policyを持つ。EBSを常設せず、実際に保存された圧縮layer分だけを課金対象にするため、300 GiB gp3を保持する方式より安い。cacheがない初回buildはcold buildとなり、以後の`[require-build]`でtoolchainやPython dependency layerが一致するときだけ短縮される。完成SquashFSの再利用判定とは独立している。
+新規ビルド時は、プライベートECRの`apac-qwen-build-cache`をBuildahの`--cache-from`および`--cache-to`に指定し、変更のない中間レイヤーをVM間で再利用する。当該リポジトリには最新64イメージのみを保持するライフサイクルポリシーを設定している。EBSを常設せず、実際に保存された圧縮レイヤーの容量のみを課金対象とするため、300 GiBのgp3を保持し続ける方式よりも低コストとなる。キャッシュが存在しない初回ビルドはコールドビルドとなるが、以降の`[require-build]`においてツールチェーンやPython依存レイヤーが一致する場合はビルド時間が大幅に短縮される。これは完成済みSquashFSの再利用判定とは独立した機構である。
 
 ## 費用の目安
 
-2026-08-24時点のSingapore Linux on-demand価格は`m7i.2xlarge`が0.504 USD/hourである。gp3は300 GiB、追加3,000 IOPS、追加375 MiB/sをAWSの30日月で時間按分すると0.090 USD/hour、public IPv4は0.005 USD/hourなので、VM稼働中は合計0.599 USD/hourとなる。実buildで得た12,718,911,488 byte imageをAWS CLI既定の8 MiB multipart partでuploadするS3 Tier 1 requestは約0.0076 USDである。したがってbuildだけの概算は、1、2、4時間なら約0.607、1.206、2.404 USDとなる。S3 artifact保管料はユーザー指定により含めない。
+2026-08-24時点のシンガポールリージョンにおけるLinuxオンデマンド料金は、`m7i.2xlarge`で0.504 USD/hourである。gp3（300 GiB、追加3,000 IOPS、追加375 MiB/s）をAWSの月間30日換算で時間按分すると0.090 USD/hour、パブリックIPv4アドレスが0.005 USD/hourとなり、VM稼働中の合計費用は0.599 USD/hourとなる。実ビルドで生成された12,718,911,488バイトのイメージをAWS CLI標準の8 MiBマルチパート単位でアップロードする際のS3 Tier 1リクエスト費用は約0.0076 USDである。したがって、ビルド処理単体の概算費用は、稼働1時間・2時間・4時間の場合でそれぞれ約0.607、1.206、2.404 USDとなる。なお、S3の成果物保管料はユーザー指定方針に基づき計算から除外している。
 
-EC2と同一SingaporeリージョンのS3間転送は無料である。一方、S3から外部へこのimageを1回downloadすると12.719 GBとなり、account全体の月100 GB無料枠を使い切った後のSingapore先頭tier 0.120 USD/GBでは1.526 USDかかる。外部downloadは新規build時だけ全3クラスタで1回ずつ、合計3回、4.579 USDである。既存buildを使うrunは各クラスタのarchive内でハードリンクを作るだけなので、S3転送費とsqsh本体の追加保管容量は発生しない。無料枠が残っていればbuild時の転送料も0 USDである。料金根拠はAWSの [EBS pricing](https://aws.amazon.com/ebs/pricing/)、[S3 pricing](https://aws.amazon.com/s3/pricing/)、公開Pricing APIのAWSDataTransfer Singapore offerである。
+EC2と同一シンガポールリージョン内のS3間のデータ転送は無料である。一方、S3から外部クラスタへ当該イメージを1回ダウンロードすると12.719 GBとなり、AWSアカウント全体の月間100 GB無料枠を消化した後のシンガポール先頭ティア（0.120 USD/GB）では1回あたり1.526 USDを要する。外部ダウンロードが発生するのは新規ビルド時のみであり、3クラスタすべてで1回ずつ取得した場合の合計は3回で4.579 USDとなる。既存ビルドを再利用するランでは各クラスタのローカルアーカイブ内でハードリンクを作成するのみであるため、S3転送費用や追加のストレージ保管容量は発生しない。月間無料枠が残存していれば、ビルド時の転送費用も0 USDとなる。料金の根拠は、AWS公式の [EBS pricing](https://aws.amazon.com/ebs/pricing/)、[S3 pricing](https://aws.amazon.com/s3/pricing/)、および公開Pricing APIのAWSDataTransferシンガポールオファーに基づいている。
 
-実測cold buildはinstance稼働1,556秒、build job 26分53秒、AWS内build小計0.2665 USDだった。ECR cacheがある同一sourceのwarm buildは28 step中2から23までcache hitとなり、instance稼働869秒、build job 15分26秒、build小計0.1522 USDだった。したがって3クラスタへ新規buildを配布する1 runの総AWS費用は、月100 GB無料枠が残っていればcold 0.267 USDまたはwarm 0.152 USD、無料枠消化後はcold 6.372 USDまたはwarm 6.257 USDが目安になる。S3 artifact保管料は含めない。
+実測されたコールドビルドでは、インスタンス稼働時間1,556秒、ビルドジョブ所要時間26分53秒であり、AWS内ビルド小計は0.2665 USDであった。ECRキャッシュを活用した同一ソースでのウォームビルドでは、全28ステップ中ステップ2から23までがキャッシュヒットとなり、インスタンス稼働時間869秒、ビルドジョブ所要時間15分26秒、ビルド小計0.1522 USDに短縮された。したがって、新規ビルドを全3クラスタへ配布する1ランあたりの総AWS費用は、月間100 GBの無料枠内であればコールド時0.267 USD／ウォーム時0.152 USD、無料枠消化後であればコールド時6.372 USD／ウォーム時6.257 USDが目安となる（S3の成果物保管料を除く）。
 
-ECR cacheのSingapore保管単価は0.10 USD/GB-monthである。初回成功build後は27個のcache imageについて`describe-images`の累積sizeが233.4 GBに見えるが、共有layer digestを重複排除した圧縮blobは13.103 GBであり、実ストレージ相当は約1.31 USD/月である。これはbuild 1回ごとの費用ではなく、保持中だけ発生する唯一のbuild cache常時費用である。64 imageの保持上限で変更後のlayer増加を制限する。料金根拠はAWSの [ECR pricing](https://aws.amazon.com/ecr/pricing/) と公開Pricing APIのAmazonECR Singapore offerである。
+ECRキャッシュのシンガポールリージョンにおける保管単価は0.10 USD/GB-monthである。初回ビルド成功後、27個のキャッシュイメージについて`describe-images`上の累積サイズは233.4 GBと表示されるが、共通レイヤーdigestの重複を排除した実際の圧縮blob総量は13.103 GBであり、実ストレージ費用は約1.31 USD/月に相当する。これはビルド1回ごとの都度費用ではなく、キャッシュを保持している期間にのみ発生する唯一の常時発生費用である。保持上限64イメージのライフサイクルポリシーにより、変更に伴うレイヤー増大を抑制している。料金根拠はAWS公式の [ECR pricing](https://aws.amazon.com/ecr/pricing/) および公開Pricing APIのAmazonECRシンガポールオファーである。
 
-workflowはinstanceの実際のlaunch時刻から終了後までを秒で測り、`scripts/estimate-aws-build-cost.sh`でEC2、EBS、public IPv4、multipart requestを分離した`aws-build-cost.json`をbuild log artifactとJob Summaryへ残す。最終報告ではこの実測秒数と実際のSquashFS sizeを使い、archive保存と選択したクラスタへの外部転送を加えた値も再計算する。Cost Explorerへの反映には時間差があるため、この値は請求明細ではなく公開単価による見積りである。
+ワークフローは、EC2インスタンスの実際の起動（launch）時刻から終了までを秒単位で計測し、`scripts/estimate-aws-build-cost.sh`を用いてEC2、EBS、パブリックIPv4、マルチパートリクエストの各費用を内訳算出した`aws-build-cost.json`を、ビルドログ成果物およびJob Summaryに記録する。最終報告ではこの実測秒数と実際のSquashFSサイズを用い、アーカイブ保存および選択クラスタへの外部転送費用を加味した総額を再計算する。Cost Explorerへの反映には時間差があるため、この算出値は請求明細ではなく公開単価による見積りである。
 
-`m7i-flex.2xlarge`は0.4788 USD/hourだがEBS baselineが1,250 Mbpsで、`m7i.2xlarge`の2,500 Mbpsより低い。差額は0.0252 USD/hourに留まり、container buildは大量の小ファイルI/Oを伴うため`m7i.2xlarge`を選ぶ。
+`m7i-flex.2xlarge`は0.4788 USD/hourだがEBSベースライン帯域が1,250 Mbpsで、`m7i.2xlarge`の2,500 Mbpsより低い。差額は0.0252 USD/hourにとどまり、コンテナビルド処理は大量の小ファイルI/Oを伴うため、I/O性能に優れる`m7i.2xlarge`を選択する。
 
 ## 資格情報と配布
 
-CloudFormation template `aws/qwen-build-infrastructure.yml`はprivate S3 bucket、egress-only security group、EC2 instance profile、GitHub OIDC provider、Actions roleを作る。Actions roleは対象repositoryだけをtrustし、build用instanceの起動・終了、SSM command、対象bucketの操作だけを許可する。privateなSGLang sourceは、そのrepository自身のworkflowが管理する玄界上のread-only bare mirrorからQwen workflowが入力archiveへ複製する。消費側repositoryからsource repositoryへ書き込まず、広いPATや無効化されているdeploy keyに依存しない。
+CloudFormationテンプレート `aws/qwen-build-infrastructure.yml` は、プライベートS3バケット、送信専用（egress-only）セキュリティグループ、EC2インスタンスプロファイル、GitHub OIDCプロバイダ、およびActions用IAMロールをプロビジョニングする。Actions用ロールは対象リポジトリのみを信頼（trust）し、ビルド用インスタンスの起動・終了、SSMコマンドの送信、および対象バケットの操作のみを許可する。プライベートなSGLangソースコードについては、当該リポジトリ自身のワークフローが管理する玄界上の読み取り専用bare mirrorから、Qwenワークフローがビルド入力アーカイブへ複製する。利用側リポジトリからソースリポジトリへの書き込みは行わず、広範な権限を持つPATや無効化されたデプロスキーへの依存を排除している。
 
-新規build時だけ、各materialize jobを実行する`home-lab` runnerが同じOIDC roleを一時的にassumeし、対応するcustom shellへ一時資格情報を渡す。ログインノードへAWS CLIは導入せず、そのstep内のBoto3 APIで64 MiB part、最大8並列のdownloadを行い、sidecarとSquashFSを各ローカルarchiveへ確定する。remote step終了時に資格情報を含む一時環境を削除する。再利用時はAWS資格情報を取得せず、3クラスタそれぞれのarchive内で検証済みsource runを今回run IDへハードリンクする。AWS資格情報はscheduler jobへ渡さず、計算ノードへ渡すのはarchiveからrun directoryへ配備済みの`.sqsh`、run固有Enroot設定、実行scriptだけである。
+新規ビルド時のみ、各materializeジョブを実行する`home-lab` runnerが同一のOIDCロールを一時的にassumeし、対応するカスタムシェルへ一時クレデンシャルを引き渡す。ログインノード上にはAWS CLIを導入せず、当該ステップ内のBoto3 APIを通じて64 MiBパーツ・最大8並列のマルチパートダウンロードを実行し、sidecarおよびSquashFSを各ローカルアーカイブへ確定配備する。リモートステップ終了時には、クレデンシャルを含む一時環境を確実に消去する。再利用時はAWSクレデンシャルを取得せず、3クラスタそれぞれのアーカイブ内において検証済みのソースランを今回のrun IDへとハードリンクする。AWSクレデンシャルはスケジューラジョブ（計算ノード）には一切渡さず、計算ノードに引き渡すのはアーカイブからrunディレクトリへ配備済みの`.sqsh`イメージ、ラン固有のEnroot設定、および実行スクリプトのみに限定する。
 
-12,718,911,488 byteの同じobjectについて、玄界のpresigned URLと単一`curl`による旧配備jobは8分31秒だった。Boto3 multipartへ切り替えた配備jobは、checkout、OIDC設定、sidecar取得、SHA-256全体読取りまで含めて玄界1分45秒、ASPIRE 2A+ 2分09秒、Firmus 2分08秒となった。新規buildを玄界archiveへ保存する同じBoto3 transfer jobも2分00秒だった。
+12,718,911,488バイトの同一オブジェクトに対して、玄界でのpresigned URLと単一`curl`を用いた旧配備ジョブの所要時間は8分31秒であった。Boto3マルチパートダウンロードへと刷新した配備ジョブでは、checkout、OIDC設定、sidecar取得、およびSHA-256フル検証まで含めて、玄界で1分45秒、ASPIRE 2A+で2分09秒、Firmusで2分08秒へと短縮された。新規ビルドを玄界アーカイブへ保存する同様のBoto3転送ジョブも2分00秒で完了している。
 
-`[require-build]`が最新commit messageの先頭にある場合は必ず新規buildする。それ以外では玄界archiveを正本として第一親履歴をたどり、file sizeとSHA-256が一致する最新runを選ぶ。通常系ではbuild時に同じ成果物を全3クラスタへ配布済みなので、再利用時はそのrun IDを各archive内で今回run IDへハードリンクする。クラスタタグがないpushは静的検証だけを行い、AWS資源を起動しない。
+最新コミットメッセージの先頭に`[require-build]`が含まれる場合は、無条件で新規ビルドを実行する。それ以外の場合は、玄界アーカイブを正本としてGitの第一親（first-parent）履歴を遡り、ファイルサイズおよびSHA-256が一致する最新の成功ランを選択する。通常系ではビルド時に同一成果物が全3クラスタへ配布済みであるため、再利用時はそのrun IDを各アーカイブ内で今回のrun IDへとハードリンクする。クラスタタグが指定されていないpushでは静的検証のみが実行され、AWSリソースが起動されることはない。

@@ -1,25 +1,20 @@
-# SGLang実効設定の収集
+# SGLang 実効設定の収集
 
-## なぜcommand lineだけでは不足するか
+## コマンドライン引数のみでは不十分な理由
 
-`offline_throughput`は`BenchArgs`と`ServerArgs`をdataclassとして生成する。
-特に`ServerArgs.__post_init__()`は、device、GPU memory、model architecture、
-attention backend、page size、parallelism、cacheなどの既定値を解決・変更する。
+SGLang の `offline_throughput` ベンチマークは、内部で `BenchArgs` および `ServerArgs` を Python の dataclass として生成・初期化する。特に `ServerArgs.__post_init__()` は、実行対象デバイス、GPU メモリ容量、モデルアーキテクチャ、アテンションバックエンド、ページサイズ、並列化戦略、キャッシュ設定などのデフォルト値を動的に解決・上書きする。
 
-Qwen 3.5向けにもmodel architectureとGPU capabilityに応じたoverrideがある。
-したがって、`--attention-backend`を指定しなかったという事実だけでは、実際に何が
-選ばれたかを記録できない。
+Qwen 3.5 を実行する場合にも、モデルアーキテクチャおよび GPU のハードウェア能力に応じた自動オーバーライドが働く。したがって、ユーザーが `--attention-backend` をコマンドラインで明示しなかったという事実のみでは、実行時に実際にどのバックエンドが選定されたのかを記録・特定することができない。
 
-## 保存する3層
+## 記録する3層の構造
 
-### 実argv
+### 1. 実際の起動引数列（実 argv）
 
-`run.command`にSingularityを含む完全なargvのshell表現を保存する。これはユーザーが何を
-指定したかの正本である。
+`run.command` に、Singularity 起動コマンドを含む完全な argv のシェル文字列表現を保存する。これは、ユーザーまたはワークフローが明示的に何を指示したかを示す正本となる。
 
-### benchmark引数
+### 2. ベンチマーク引数（BenchArgs）
 
-`dataclasses.asdict(bench_args)`を次へ展開する。
+`dataclasses.asdict(bench_args)` を以下のキー階層へ展開する。
 
 ```text
 sglang.benchmark_arg.backend
@@ -30,35 +25,32 @@ sglang.benchmark_arg.seed
 ...
 ```
 
-CLIで省略したdefaultも含める。
+CLI で指定を省略したデフォルト値も含め、確定した全引数を網羅する。
 
-### 実効server引数
+### 3. 実効サーバー引数（ServerArgs）
 
-Engine初期化前に解決済みの`ServerArgs`を次へ展開する。
+Engine 初期化直前の段階で確定・解決された `ServerArgs` を以下のキー階層へ展開する。
 
 ```text
 sglang.server_arg.<field>
 sglang.server_arg.<field>.<nested-key>
 ```
 
-`backend.get_server_info()`は`ServerArgs`の複製とSGLangのprivateな
-`internal_states`を大量に含むため保存しない。`sglang.runtime.*`は生成しない。
+なお、`backend.get_server_info()` は `ServerArgs` の重複コピーや SGLang 内部のプライベートな状態変数（`internal_states`）を膨大に含むため保存しない。また、`sglang.runtime.*` という動的プレフィックスは生成しない。
 
-## dict/listの展開規則
+## 辞書（dict）および配列（list）の展開規則
 
-generic flattenerは次の規則にする。
+汎用フラットナー（generic flattener）は、以下のルールに厳格に従って構造化データをフラット化する。
 
-- dataclassはfield名のdictへ変換する。
-- dictはkeyを1階層として再帰展開する。
-- list/tupleは順序を持つ設定値に限り展開せず、そのfieldのcompact JSON配列として
-  1つの文字列scalarに保存する。artifactやログ本文をこの方式で格納しない。
-- `None`は空文字にする。
-- boolは`true`/`false`、有限数はcanonical decimalにする。
-- Enumはそのscalar valueを使う。
-- dict全体をJSON文字列にせず、keyごとに展開する。
-- 空dictは空文字、空list/tupleは`[]`として保存する。
-- 通常property名に使えないdict keyはUTF-8 byte列をhex化し、
-  `encoded.<hex>`として可逆に表す。
+- dataclass はフィールド名をキーとする辞書（dict）へ変換する。
+- 辞書（dict）はキーをドット区切りの1階層として再帰的に展開する。
+- リストやタプル（list/tuple）は、順序性を持つ設定値に限定して個別行へ展開せず、当該フィールドのコンパクトな JSON 配列文字列として単一のスカラー値に格納する。成果物ファイルやログの本文をこの方式で格納してはならない。
+- `None` は空文字列とする。
+- 真偽値（bool）は `true` / `false`、有限小数は正規化された10進表記（canonical decimal）とする。
+- 列挙型（Enum）はそのスカラー値そのものを用いる。
+- 辞書全体を一括して JSON 文字列へシリアライズすることは行わず、キーごとに個別の行へ展開する。
+- 空の辞書は空文字列、空のリスト／タプルは `[]` として記録する。
+- 通常のプロパティ名として使用できない特殊な辞書キーは、UTF-8 バイト列を 16 進ダンプし、`encoded.<hex>` として可逆的に表現する。
 
 例:
 
@@ -71,7 +63,7 @@ generic flattenerは次の規則にする。
 }
 ```
 
-は次になる。
+上記のデータ構造は、以下のように展開される。
 
 ```text
 sglang.server_arg.cuda_graph_config.decode.backend = full
@@ -80,39 +72,31 @@ sglang.server_arg.cuda_graph_config.decode.bs = [1,2,4]
 sglang.server_arg.cuda_graph_config.prefill.bs = [4,8,12]
 ```
 
-## workload
+## ワークロード情報
 
-requestごとのtoken数やその分布は保存しない。benchmark完了時にSGLang resultから得る
-`result.token.input.total`と`result.token.output.total`だけを保存する。
+リクエストごとの個別トークン数やその詳細な分布情報は BigQuery には保存しない。ベンチマーク完了時に SGLang の結果集計から得られる `result.token.input.total` および `result.token.output.total` の総数のみを記録する。
 
-## model
+## モデル識別情報
 
-`model.config.*`は保存しない。モデル名からmodel repositoryの設定をたどれるため、
-hostの`MODEL_PATH`末尾を次の1キーだけに保存する。
+`model.config.*` などのモデル詳細設定は保存しない。モデル名が特定できれば Hugging Face リポジトリ等の構成情報を追跡できるため、ホスト側の `MODEL_PATH` の末尾ディレクトリ名を以下の単一キーにのみ記録する。
 
 ```text
 model.name
 ```
 
-## process間transport
+## プロセス間通信（トランスポート）
 
-host側`stage_runner`がUnix domain socketをlistenしてからSingularityを起動する。
-SGLang patchは次のeventをlength-prefix付きJSONとして送る。
+ホスト側の `stage_runner` があらかじめ Unix ドメインソケットをリッスンした状態で Singularity コンテナを起動する。SGLang 側へ適用した計測パッチは、以下のイベントを長さプレフィックス付き（length-prefixed）JSON としてソケット経由でホスト側へ送信する。
 
 ```text
 sglang.configuration
 sglang.benchmark_result
 ```
 
-collectorはevent受信ごとにflatten・sendし、成功応答後にmemoryから破棄する。
-socket切断やevent欠損でもbenchmarkは継続する。transport認証情報をcontainerへ渡す
-必要はなく、BigQuery送信はhost側collectorだけが行う。
+コレクターはイベントを受信するごとにインメモリでフラット化および BigQuery 送信を行い、送信成功のレスポンスを受領した直後にメモリから安全に破棄する。ソケット通信の切断やイベントの欠損が発生した場合でも、ベンチマーク本体の推論処理はそのまま継続する。BigQuery の認証情報をコンテナ内部へ持ち込む必要はなく、クラウドへのメトリクス送信はホスト側のコレクターのみが一元的に担当する。
 
-実装時のpatchはupstream側ロジックを書き換えず、情報を読み取るhookだけに限定する。
-SGLang commit更新時にpatch適用とevent schema testを必須にする。
+実装時のパッチは upstream 側の推論ロジックには一切手を加えず、設定情報および結果イベントを読み取るフック処理のみに限定する。SGLang のコミットを更新する際は、パッチの適用可能性およびイベントスキーマの単体テストを必須の検証ステップとする。
 
-## security上の扱い
+## セキュリティに関する設計方針
 
-既決の「環境変数を全保存する」方針と同様、ServerArgsにもfield単位のfilterを設けない。
-将来`api_key`や`admin_api_key`を設定すれば保存対象になる。この方針を変更する場合は、
-暗黙のfilterを追加せず、設計文書とkey契約を先に改訂する。
+すでに合意された「環境変数を全件保存する」方針と同様に、`ServerArgs` に関してもフィールド単位の秘匿フィルタリングは原則として設けない。将来的に `api_key` や `admin_api_key` などの機微な引数を指定した場合は、そのまま保存対象となる。この取り扱い方針を変更する場合は、暗黙の場当たり的なフィルターを追加するのではなく、設計ドキュメントおよびキー契約を改訂した上で明示的に実施する。

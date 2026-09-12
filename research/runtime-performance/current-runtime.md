@@ -1,23 +1,23 @@
-# 旧Qwen 3.5 runtime構成
+# 旧Qwen 3.5 ランタイム構成
 
-この文書はOCI / Enroot移行前の正本を履歴として残したものである。現行構成は [OCI / Enroot移行記録](../container-runtime-migration.md) を参照する。
+この文書は、OCI / Enroot への移行前に正本として運用されていた構成を履歴として保存したものである。現在の構成については [OCI / Enroot移行記録](../container-runtime-migration.md) を参照する。
 
-ここでいう「現在」は `main` の [Genkai workflow](../../.github/workflows/genkai.yml) と [PJM script](../../scripts/run-qwen35.pjm) を指す。
+ここでいう「現在」は、当時の `main` ブランチにおける [Genkai workflow](../../.github/workflows/genkai.yml) および [PJM script](../../scripts/run-qwen35.pjm) の仕様を指す。
 
-## provision
+## プロビジョニング
 
-workflow 全体で model と dataset の共有 filesystem 上の path を定義する。
+ワークフロー全体で使用するモデルおよびデータセットの共有ファイルシステム上のパスを以下のように定義する。
 
 ```text
 MODEL_PATH=/fast/pj26000080/Qwen/Qwen3.5-397B-A17B-FP8
 DATASET_PATH=/fast/pj26000080/datasets/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json
 ```
 
-`provision` job は GPU を使わず、host の `jq` で model config が Qwen 3.5 であることを確認する。さらにsafetensors indexを読み、列挙された全shardが存在し、空でないことを確認する。巨大なcheckpoint全体を読み直すchecksum検証は行わない。
+`provision` ジョブは GPU を使用せず、ホスト環境の `jq` コマンドを用いてモデル設定（config）が Qwen 3.5 であることを確認する。さらに safetensors のインデックスファイルを読み込み、列挙された全シャードが存在しかつ空ファイルでないことを検証する。なお、巨大なチェックポイントファイル全体の再読み込みを伴うチェックサム検証は実施しない。
 
-ShareGPT は `hf download` により上記の path へ取得する。model と dataset は SIF に封入しない。
+ShareGPT データセットは、`hf download` コマンドにより上記のパスへ事前に取得しておく。モデルおよびデータセットは SIF 内には同梱しない。
 
-検証後、`/fast/pj26000080/sglang-runs` に実行ごとの一時 runtime directory を作る。その中に次を揃える。
+検証の完了後、`/fast/pj26000080/sglang-runs` 配下に実行単位の一時ランタイムディレクトリを作成し、以下の資材を配置する。
 
 ```text
 sglang.sif
@@ -27,52 +27,50 @@ logs/
 results/
 ```
 
-SIF は別ファイルシステム上のarchiveを指すsymbolic linkであり、scriptはそのworkflowのcheckoutからcopyする。PJM scriptの内容と出力先はrepository checkoutやbuild directoryに依存しない。ただし、後述のとおり、現行の投入cwdにはcheckoutへの依存が残っている。
+SIF は別ファイルシステム上のアーカイブを指すシンボリックリンクであり、スクリプト類はそのワークフロー実行時のチェックアウトからコピーして配置する。PJM スクリプトの内容および結果の出力先は、リポジトリのチェックアウトやビルドディレクトリには依存しない。ただし後述のとおり、当時のジョブ投入時におけるカレントワーキングディレクトリ（cwd）にはチェックアウトへの依存が残存していた。
 
-## PJM job の lifecycle
+## PJM ジョブのライフサイクル
 
-workflow は `pjsub -x` で `RUNTIME_DIR`、`MODEL_PATH`、`DATASET_PATH`、workflow metadata を渡し、Node Group B の2ノード（各ノードH100 4 GPU、合計8 GPU）、10 分の PJM job を投入する。標準の `pjwait` で開始と終了を待ち、実行中の log を Actions に stream する。
+ワークフローは `pjsub -x` を用いて `RUNTIME_DIR`、`MODEL_PATH`、`DATASET_PATH`、およびワークフローのメタデータを環境変数として引き渡し、Node Group B の2ノード（各ノード H100 4基、計8 GPU）、実行制限時間10分の PJM ジョブを投入する。標準の `pjwait` でジョブの開始と完了を待機し、実行中のログを GitHub Actions へストリーミングする。
 
-benchmark の終了 code は profiler wrapper、PJM script、workflow へ伝播する。成功時だけ `results.jsonl` の存在を確認して `run-success` marker を作る。workflow は job 終了後にこの marker を検証する。
+ベンチマークの終了コードは、プロファイララッパー、PJM スクリプト、およびワークフローへと順次伝播する。正常終了時のみ `results.jsonl` の存在を確認した上で `run-success` マーカーファイルを作成し、ワークフロー側でジョブ完了後にこのマーカーの有無を検証する。
 
-成功、失敗、cancel のいずれでも logs と results の回収を試みる。その後、残っている PJM job を停止してから、一時 runtime directory を削除する。
+ジョブの成功・失敗・キャンセルのいずれにおいても、ログおよび結果ファイルの回収を試行する。その後、残存する PJM ジョブを確実に停止させてから、一時ランタイムディレクトリを削除する。
 
-ただし、現行 workflow は `pjsub` 前に共有 filesystem 上の `RUNTIME_DIR` へ移動していない。ephemeral runner の checkout がqueue待ち中に消えると、PJM jobが `NO CURRENT DIR` で開始前に終了することを過去に確認している。経緯と必要な修正は [trial-record.md](trial-record.md#7-ephemeral-runner-と-no-current-dir) を参照する。
+ただし、当時のワークフローは `pjsub` 実行前に共有ファイルシステム上の `RUNTIME_DIR` へカレントディレクトリを移動していなかった。そのため、キュー待ちの間にエフェメラルランナーのチェックアウトが消失すると、PJM ジョブが `NO CURRENT DIR` エラーによって実行開始前に異常終了する事象が確認されている。この経緯および必要な対処については [trial-record.md](trial-record.md#7-ephemeral-runner-と-no-current-dir) を参照する。
 
 ## 計算ノード上の実行環境
 
-PJM script は NVIDIA HPC SDK 25.11、HPC-X 2.25.1、CUDA 13.2.0、Singularity CE 4.1.3をloadする。Open MPIはCPU bindingを無効化して各ノードに1プロセスを配置し、それぞれのcontainerが4 GPUを担当する。SGLangは`tp_size=8`、`nnodes=2`としてノード間tensor parallelismを構成する。Genkai計算ノードでは通常のcontainer process生成が許可されないため、containerは`--userns --nv --cleanenv --containall`で起動する。FUSE mountも許可されない場合はSingularityの一時sandbox展開へfallbackする。次だけを明示的にbind mountする。
+PJM スクリプトは NVIDIA HPC SDK 25.11、HPC-X 2.25.1、CUDA 13.2.0、Singularity CE 4.1.3 をロードする。Open MPI は CPU バインディングを無効化した上で各ノードに1プロセスを配置し、各コンテナインスタンスがノード内の4 GPUを担当する。SGLang は `tp_size=8`、`nnodes=2` としてノード間テンソル並列（Tensor Parallelism）を構成する。Genkai の計算ノードでは通常のコンテナプロセス生成権限が制限されているため、コンテナは `--userns --nv --cleanenv --containall` フラグを付与して起動する。FUSE マウントが許可されない環境では、Singularity の一時サンドボックス展開へとフォールバックする。バインドマウントは必要最小限とし、以下のパスのみを明示的にマウントする。
 
-- model: `/model:ro`
-- dataset の単一 JSON: `/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro`
-- node-local disk上のwritable homeとJIT cache: `/runtime-home` と `/jit-cache`
-- 今回の result directory: `/output`
+- モデル: `/model:ro`
+- データセットの単一 JSON ファイル: `/dataset/ShareGPT_V3_unfiltered_cleaned_split.json:ro`
+- ノードローカルディスク上の書き込み可能なホームおよび JIT キャッシュ領域: `/runtime-home`、`/jit-cache`
+- 実行ごとの結果出力ディレクトリ: `/output`
 
-Hugging Face、Transformers、Datasets は offline mode にする。GPU architecture や device を必要とする Triton、DeepGEMM などの JIT は計算ノード側だけで実行する。推論引数は環境変数ではなく、PJM script 内の command として版管理する。
+Hugging Face、Transformers、Datasets の各ライブラリはオフラインモードに設定する。GPU アーキテクチャやデバイスを必要とする Triton や DeepGEMM などの JIT コンパイルは、計算ノード側でのみ実行する。推論実行時の引数は環境変数ではなく、PJM スクリプト内のコマンドライン引数としてバージョン管理する。
 
-## JIT cache
+## JIT キャッシュ
 
-永続 cache は共有 filesystem の `${HOME}/.cache/sglang-jit` に置く。ただし benchmark 中に共有 filesystem を直接読まず、各計算ノードの `/tmp/sglang-jit.*` へ snapshot を staging して bind mount する。
+永続キャッシュは共有ファイルシステム上の `${HOME}/.cache/sglang-jit` に保持する。ただし、ベンチマーク実行中に共有ファイルシステムへ直接アクセスすることは避け、各計算ノードのローカルディスク（`/tmp/sglang-jit.*`）へスナップショットをステージングした上でバインドマウントする。
 
-staging は共有 lock、成功後の `rsync` による書き戻しは排他 lock で保護する。benchmark が失敗または cancel された場合は local cache を書き戻さない。node-local JIT cache と Singularity の一時 directory は終了時に削除する。
+ステージング処理は共有ロック、正常終了後の `rsync` による共有ファイルシステムへの書き戻しは排他ロックで保護する。ベンチマークが失敗またはキャンセルされた場合、ローカルキャッシュの書き戻しは行わない。ノードローカルの JIT キャッシュおよび Singularity の一時ディレクトリは、ジョブ終了時に確実に削除する。
 
-GPU構成と1秒間隔のtelemetryは各ノードで取得し、raw sampleをdiskへ保存せずmemory上で
-GPUごとのscalarへ集約する。rank 0のcollectorが2ノード分をBigQueryへ送り、
-`hardware.gpu.count`は各ノードの実測GPU数の合計とする。
+GPU 構成情報および1秒間隔のテレメトリは各ノードで収集し、生サンプルをディスクへ書き出さずにメモリ上で GPU ごとのスカラー値へ集約する。ランク0（Rank 0）のコレクターが2ノード分のデータを BigQuery へ送信し、`hardware.gpu.count` には各ノードの実測 GPU 数の総和を記録する。
 
-## 固定 benchmark command
+## 固定ベンチマークコマンド
 
-現在は SGLang の `sglang.benchmark.offline_throughput` を次の主要条件で実行する。
+当時の構成では、SGLang の `sglang.benchmark.offline_throughput` を以下の主要パラメータで実行していた。
 
 | 項目 | 値 |
 |---|---|
-| load format | `auto` |
-| tensor parallel size | 8 |
-| dataset | ShareGPT |
-| prompt 数 | 32 |
-| output length | 256 |
-| context length | 262144 |
-| seed | 42 |
-| static memory fraction | 0.85 |
+| ロード形式（load format） | `auto` |
+| テンソル並列サイズ（TP size） | 8 |
+| データセット | ShareGPT |
+| プロンプト数 | 32 |
+| 出力トークン長（output length） | 256 |
+| コンテキスト長（context length） | 262144 |
+| 乱数シード（seed） | 42 |
+| 静的メモリ確保比率（static memory fraction） | 0.85 |
 
-結果は `/output/results.jsonl`、command と console output は `/output/throughput.log` に保存する。
+ベンチマーク結果は `/output/results.jsonl` に、実行コマンドおよびコンソール標準出力は `/output/throughput.log` にそれぞれ保存される。

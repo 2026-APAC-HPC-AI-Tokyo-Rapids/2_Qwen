@@ -1,115 +1,109 @@
-# 実装順序と検証計画
+# 実装手順と検証計画
 
-## 現在確定している設計
+## 確定済みの基本設計
 
-- BigQuery raw schemaとsenderはOpenFOAM互換にする。
-- Qwen専用dataset/tableは`qwen_experiment_metrics.qwen_metrics`とする。
-- collectorは独立uv projectとしてruntime bundleへcopyする。
-- SGLangの実効引数はcommand lineから再構築せず、Engine内のobjectから取得する。
-- nested dictはscalar keyへ再帰展開し、順序を持つ設定list/tupleだけを限定的に
-  compact JSON文字列へまとめる。
-- GPU raw sampleは保存せず、1秒samplingのrun-level集約だけを送る。
-- 第1段階は`nvidia-smi`、DCGMは実機利用可能性確認後の第2段階にする。
-- 通常benchmarkの成否をmetrics失敗で変えない。
+- BigQuery の生データスキーマ（3列）および送信モジュールは、OpenFOAM との互換性を維持する。
+- Qwen 専用のデータセットおよびテーブルは `qwen_experiment_metrics.qwen_metrics` とする。
+- コレクターは独立した uv プロジェクトとして管理し、ジョブ実行時にランタイムバンドルへコピーする。
+- SGLang の実効引数はコマンドライン文字列から再構築するのではなく、Engine 内部の Python オブジェクトから直接抽出する。
+- ネストされた辞書（dict）はスカラーキーへ再帰的に展開し、順序性を持つ設定リスト／タプル（list/tuple）に限り例外としてコンパクトな JSON 配列文字列へまとめる。
+- GPU の生サンプル（raw sample）は永続化せず、1秒周期サンプリングに基づく実行レベル集約値のみを送信する。
+- 第1段階としては `nvidia-smi` を使用し、DCGM は実機での利用可能性が検証された後の第2段階として導入する。
+- メトリクス収集の成否によって、ベンチマーク本来の合否や終了コードを変更しない。
 
-## Phase 1: 共通基盤
+## フェーズ 1: 共通基盤の実装
 
-1. `qwen-experiment-metrics/`をuv projectとして作る。
-2. OpenFOAMから`Metric`, scalar codec, key validator, credential capture,
-   config loader, REST sender, `CommandRunner`, `pjstat` readerを移植する。
-3. package名、CLI名、BigQuery設定をQwen用に変更する。
-4. stdout sinkとunit testを移植する。
-5. generic nested flattenerを追加し、dict/list/None/Enum/invalid keyのtestを書く。
+1. リポジトリ直下に `qwen-experiment-metrics/` を uv プロジェクトとして新設する。
+2. OpenFOAM から `Metric`、スカラーコーデック、キーバリデータ、認証情報キャプチャ、設定ローダー、REST 送信モジュール、`CommandRunner`、`pjstat` リーダーを移植する。
+3. パッケージ名、CLI コマンド名、BigQuery 接続設定を Qwen 用へ更新する。
+4. 標準出力シンク（stdout sink）および単体テスト群を移植する。
+5. 汎用ネストフラットナー（generic nested flattener）を実装し、dict、list、None、Enum、不正文字キーに対する単体テストを作成する。
 
-このphaseはSIFを変更しない。
+※本フェーズではコンテナイメージ（SIF）の変更は行わない。
 
-## Phase 2: host collector
+## フェーズ 2: ホスト側コレクターの実装
 
-1. run ID、run start/end、argv collectorを実装する。
-2. host platform、全環境変数、CPU、memory collectorを移植・拡張する。
-3. static NVIDIA GPU query parserを実装する。
-4. PJM scheduler collectorを移植する。
-5. SIF、dataset、result artifactのpath、size、正規のsource identifierを収集する。
-6. 現行`results.jsonl` parserとbenchmark result mappingを実装する。
+1. run ID、実行開始・終了時刻、argv のコレクターを実装する。
+2. ホストプラットフォーム情報、全環境変数、CPU、メモリのコレクターを移植・拡張する。
+3. 静的 NVIDIA GPU クエリのパーサーを実装する。
+4. PJM スケジューラコレクターを移植する。
+5. SIF、データセット、結果成果物のファイルパス、サイズ、正規ソース識別子の収集モジュールを実装する。
+6. 当時の `results.jsonl` パーサーおよびベンチマーク結果のマッピングロジックを実装する。
 
-fixtureだけで全parserをtestし、login nodeにGPUがないことをtest失敗理由にしない。
+※テストフィクスチャを活用して全パーサーの単体テストを完備し、ログインノードに GPU が搭載されていないことをテスト不合格の理由にしない。
 
-## Phase 3: GPU stage wrapper
+## フェーズ 3: GPU ステージラッパーの実装
 
-1. Python supervisorでsubprocess、monotonic timing、signal伝播を実装する。
-2. `nvidia-smi` samplerをstdout pipeで起動し、raw sampleをmemory集約する。
-3. mean/max/p50/p95、power積分、P-state countを実装する。
-4. missing field、`N/A`、途中終了、0 sample、複数GPU、MIG fixtureをtestする。
-5. Unix socket event receiverを追加する。
+1. Python によるスーパーバイザーを構築し、サブプロセス管理、モノトニック計時、シグナル伝播を実装する。
+2. `nvidia-smi` サンプラーを標準出力パイプ経由で起動し、生サンプルをメモリ上で集約する。
+3. 平均値、最大値、p50、p95、消費電力量積分、P-state カウントの集約計算を実装する。
+4. 欠損フィールド、`N/A` 応答、途中終了、サンプル数ゼロ、複数 GPU、MIG 構成に対するテストフィクスチャを作成・検証する。
+5. Unix ドメインソケットによるイベントレシーバーを実装する。
 
-sampler overheadはActionsのGPU jobで、samplingなし/ありの短い同条件runを複数回行って
-確認する。比較runは同時投入できる場合は並行させる。
+※サンプラーのオーバーヘッドは、GitHub Actions 上の GPU ジョブにおいてサンプリング有効／無効の短時間テストを同条件で複数回実行して計測・確認する。
 
-## Phase 4: SGLang instrumentation
+## フェーズ 4: SGLang 計測フックの実装
 
-upstream sourceへのpatchを最小限で追加する。
+upstream ソースに対するパッチを最小限の範囲で作成する。
 
-1. Engine初期化後に`BenchArgs`, 実効`ServerArgs`, container env,
-   workload shapeをconfiguration eventとして送る。
-2. benchmark終了後にresult dictをresult eventとして送る。
-3. socket未設定・接続失敗・collector切断時はwarningだけで通常動作を続ける。
-4. `backend=engine`, `runtime`, Ray proxyでevent取得経路が壊れないようtestする。
-5. patch適用後のSGLang commitとevent schemaをSIF testで確認する。
+1. Engine 初期化直後に `BenchArgs`、実効 `ServerArgs`、コンテナ内環境変数、ワークロード構成を構造化イベントとしてソケット送信する。
+2. ベンチマーク終了直後に結果辞書（result dict）を結果イベントとしてソケット送信する。
+3. ソケット未設定、接続失敗、コレクター切断が発生した場合は警告ログを出力するにとどめ、通常の推論処理を継続させる。
+4. `backend=engine`、`runtime`、Ray プロキシ環境においてイベント送出経路が阻害されないことを検証する。
+5. パッチ適用後の SGLang コミットおよびイベントスキーマの適合性を SIF 単体テストで確認する。
 
-このpatchを含めるcommitは先頭に`[require-build]`を付ける。
+※本パッチを組み込むコミットには、コミットメッセージ冒頭に `[require-build]` を明記する。
 
-## Phase 5: workflow統合
+## フェーズ 5: ワークフローへの統合
 
-1. provision jobでcollector projectをcopyし`uv sync --frozen --no-dev`する。
-2. PJM submit前に共有`RUNTIME_DIR`へ`cd`し、既知の`NO CURRENT DIR`問題も同時に解消する。
-3. GitHub metadataとcredential Base64を`pjsub -x`へ追加する。
-4. PJM scriptをrun/platform/static GPU/stage/run-endへ配線する。
-5. Singularity commandへmetrics socket directoryとsocket path envを渡す。
-6. PJM終了後のrunner stepでscheduler metricsを送る。
-7. cleanupとartifact uploadは現在の`if: always()`を維持する。
+1. `provision` ジョブにおいてコレクタープロジェクトをランタイムバンドルへコピーし、`uv sync --frozen --no-dev` を実行する。
+2. PJM ジョブ投入前に共有ファイルシステム上の `RUNTIME_DIR` へカレントディレクトリを移動させ、既知の `NO CURRENT DIR` エラーを解消する。
+3. GitHub メタデータおよび Base64 エンコード済み認証情報を `pjsub -x` 引数へ追加する。
+4. PJM スクリプトから run 開始、プラットフォーム、静的 GPU、ステージ、run 終了の各コレクター呼び出しを配線する。
+5. Singularity コマンドへメトリクスソケット用ディレクトリのマウントおよび環境変数を引き渡す。
+6. PJM ジョブ終了後、GitHub Actions ランナーのステップからスケジューラメトリクスを送信する。
+7. クリーンアップおよび成果物アップロードのステップには、既存の `if: always()` 条件を維持する。
 
-## Phase 6: BigQuery
+## フェーズ 6: BigQuery 基盤の整備と実環境検証
 
-1. Tokyoに`qwen_experiment_metrics` datasetを作る。
-2. `qwen_metrics` tableを3列、ingestion-time日次partition、
-   `run,key` clusterで作る。
-3. OpenFOAMと同じservice accountへ必要最小限のinsert権限を付与する。
-4. repository secretは既存名を再利用できるか確認し、必要なら登録する。
-5. stdout sinkでend-to-end dry run後、実tableへ1 runだけ送る。
-6. row数、空文字、scalar key、重複、scheduler後送信をqueryで検証する。
-7. raw table以外のviewや追加resourceを作らないことを確認する。
+1. 東京リージョン（`asia-northeast1`）に `qwen_experiment_metrics` データセットを作成する。
+2. `qwen_metrics` テーブルを3列構成、取り込み日時による日次パーティション、および `run, key` によるクラスタリング設定で作成する。
+3. OpenFOAM と同一のサービスアカウントに対し、必要最小限のデータ挿入権限を付与する。
+4. GitHub リポジトリのシークレットが既存の名称で再利用可能か確認し、必要に応じて設定する。
+5. 標準出力シンクによるドライランでエンドツーエンド動作を確認した後、実際のテーブルへ1回のみ実データを送信する。
+6. レコード行数、空文字列の扱い、スカラーキーの展開状態、重複の有無、ジョブ終了後送信の正常性を SQL クエリで検証する。
+7. 生データテーブル以外のビューや不要なクラウドコンポーネントが作成されていないことを確認する。
 
-使っていなくても継続課金するserviceは、この計画には追加しない。
+※非稼働時であっても継続課金が発生するようなマネージドサービスは、本計画には一切追加しない。
 
-## Phase 7: optional DCGM
+## フェーズ 7: DCGM 連携の検証（オプション）
 
-通常のSGLang変更ではない調査であっても、実機確認はActions/PJM経由で履歴を残す。
+通常の SGLang 修正とは異なる環境調査であっても、実機による検証結果は GitHub Actions および PJM のログとして確実に履歴を残す。
 
-1. 計算ノード上の`dcgmi`/library/host engineの有無とversionを確認する。
-2. H100/full GPU/MIGそれぞれでsupported metric groupを確認する。
-3. `nvidia-smi` samplerとの同時利用可否とoverheadを測る。
-4. 利用可能なfieldだけschemaへ追加し、unsupportedを空文字にする。
+1. 計算ノード上における `dcgmi` コマンド、関連ライブラリ、ホスト側エンジンの有無およびバージョンを確認する。
+2. H100、フル GPU、MIG の各構成においてサポートされるメトリクスグループを特定する。
+3. `nvidia-smi` サンプラーとの同時実行可否および測定オーバーヘッドを評価する。
+4. 実地で取得可能と確認されたフィールドのみをスキーマへ追加し、未サポート項目は空文字列とする。
 
-## 受け入れ条件
+## 受け入れ基準
 
-- unit testでBigQuery rowが常に3列・scalarになる。
-- credentialが`env.*`、log、artifact、socket eventへ出ない。
-- benchmark commandと終了codeがcollectorなしの場合と同じである。
-- SGLang default/auto解決後のbackend値がBigQueryで確認できる。
-- `BenchArgs`, `ServerArgs`, request dictのnested値が個別keyになる。
-- GPU static構成とruntime aggregateがUUIDで対応する。
-- raw GPU sample、prompt、生成本文が保存されない。
-- benchmark失敗runでも開始済みbatchとGPU集約が可能な範囲で残る。
-- sender失敗だけではActions/PJM benchmarkが失敗しない。
-- PJM終了後にscheduler accountingが同じrun名へ追加される。
+- 単体テストにおいて、生成される BigQuery レコードが常に3列かつスカラー値であることが保証されていること。
+- 認証情報が `env.*`、各種ログ、成果物ファイル、ソケットイベントへ一切漏洩していないこと。
+- ベンチマーク実行コマンドおよび終了ステータスコードが、コレクター未導入時と完全に同一であること。
+- SGLang のデフォルト値および動的解決後の実効バックエンド設定が、BigQuery 上で確認可能であること。
+- `BenchArgs`、`ServerArgs`、リクエスト設定のネストされたデータ構造が、個別のスカラーキーとして平坦に展開されていること。
+- GPU の静的構成情報と実行時集約メトリクスが、GPU UUID を介して正しく対応付けられていること。
+- 生の GPU サンプル、プロンプトテキスト本文、生成テキスト本文が BigQuery へ保存されていないこと。
+- ベンチマークが異常終了した実行であっても、開始済みバッチおよび可能な範囲での GPU 集約値が欠損なく記録されていること。
+- 送信モジュールの通信障害のみを理由として、GitHub Actions や PJM ベンチマーク全体が失敗扱いにならないこと。
+- PJM ジョブの終了後に、スケジューラのアカウンティング情報が同一の実行名（run 名）へ正しく追記されること。
 
-## 実装時に先に確認する小さな不確実性
+## 実装着手時に先行確認すべき不確実性
 
-- 現行SIFで使われる正確なSGLang commitと、調査snapshotとの差
-- Genkaiのdriverが受け付ける`nvidia-smi --query-gpu` field名
-- full H100 jobでDCGM profilingがuser権限から利用可能か
-- Singularity bind越しのUnix socket通信
-- model local metadataからHugging Face commitを確実に得られるか
+- 当時の SIF で使用されている正確な SGLang コミットと、調査時点のスナップショットとの差異
+- Genkai の NVIDIA ドライバが受容する `nvidia-smi --query-gpu` の正確なフィールド名一覧
+- フル H100 ジョブにおいて、一般ユーザー権限から DCGM プロファイリング機能が利用可能であるか否か
+- Singularity バインドマウント境界を越えた Unix ドメインソケット通信の安定性
+- モデルのローカルメタデータから Hugging Face のコミット SHA を確実に入手できるか否か
 
-これらは設計を未確定にする理由ではない。unsupported時は空文字にする契約を維持し、
-実装fixtureとActions上の短いprobeで取得方法だけを確定する。
+これらの項目は設計を未確定のまま放置する理由にはならない。「未対応項目は空文字列とする」という基本規約を堅持し、実装フェーズのフィクスチャおよび GitHub Actions 上の短時間プローブを通じて具体的な取得経路を確定させる。

@@ -61,5 +61,6 @@ def test_official_command_contains_locked_workload() -> None:
 
 def test_provision_maps_main_to_pinned_tokenizer_revision() -> None:
     script = (REPOSITORY / "scripts" / "provision-qwen-pd.sh").read_text()
-    assert 'test -d "${tokenizer_cache_repository}/snapshots/${tokenizer_revision}"' in script
+    assert 'hf download "${tokenizer_repository}" config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --revision "${tokenizer_revision}"' in script
+    assert 'test -s "${tokenizer_snapshot}/${tokenizer_file}"' in script
     assert 'printf \'%s\' "${tokenizer_revision}" >"${tokenizer_cache_repository}/refs/main"' in script

@@ -2,66 +2,50 @@
 
 ## 目的
 
-メトリクスは、Gitやlogを複製する保管庫ではない。BigQueryとスプレッドシートから
-次の問いへ短く答えるための索引である。
+実験メトリクスは、Git やログファイルを単に複製・保管するためのストレージではない。BigQuery やスプレッドシートから以下の問いに対して迅速かつ的確に答えるための索引（インデックス）として機能する。
 
-1. どのGit管理下の条件で実行したか。
-2. Git外で、実行時にどの条件が選ばれたか。
-3. 実workloadと分散実行は妥当で、比較に必要な観測が揃っているか。
-4. 何を一次指標として、どれだけ速かったか。
-5. 比較不能または要調査と判断すべき欠損や競合がないか。
+1. どの Git 管理下の実験条件に基づいて実行されたか。
+2. Git の管理外で、実行時にどの動的条件が選定されたか。
+3. 実際のワークロードおよび分散実行構成は妥当であり、比較検証に必要な観測データが揃っているか。
+4. 何を一次指標として評価し、どの程度のスループット・性能向上を達成したか。
+5. 比較不能または詳細調査を要すると判断すべきデータの欠損や競合が存在しないか。
 
-変更内容と変更理由の正本はGit、実行詳細の正本はrun artifact、raw factの索引は
-BigQuery、比較規則の正本はGit管理されたSQLとtestとする。BigQuery viewはその
-deploy済み実体であり、暗黙に手編集しない。
+変更内容および変更理由の正本は Git、実行詳細の正本は各実行の成果物（run artifact）、生の観測ファクト（raw fact）の索引は BigQuery、比較ルールの正本は Git 管理された SQL クエリおよびテストコードとする。BigQuery のビューはそれらをデプロイした実体であり、手動による暗黙の変更は行わない。
 
-本projectは実験用であり、mission-criticalな送達systemではない。正常終了するrunで取得対象が最初から
-実装されていないことは許さないが、極稀なcollector、node、転送failureを救うための多段retry、fallback source、
-field別reason registry、耐久journalは作らない。値のsource、取得時点、schemaは厳密にする一方、取得できなかった
-値はconsumerで`NULL`、run全体は単一の`collection_complete=false`で十分とする。失敗runは保存できたlogを残し、
-必要なら人が再実行する。このsimple failure modelは以降の節にある個別の旧reason表現より優先する。
-厳密さは実装時のcontract testに寄せ、実行時は各sourceを一度取得しterminal後に一度finalizeするだけにする。
-同じ値を複数validatorで囲むruntime safeguardは追加しない。
+本プロジェクトは実験的検証を主目的としており、ミッションクリティカルな高信頼トランザクションシステムではない。正常終了した実行において収集対象があらかじめ未実装である事態は許容しないものの、極めて稀なコレクター、ノード、またはネットワーク転送の障害を救済するための多段リトライ、フォールバックデータソース、フィールド別のエラー理由レジストリ、耐久ジャーナル等は構築しない。値のソース、取得タイミング、スキーマの定義を厳格に保つ一方、取得に失敗した値はコンシューマ側で `NULL` として扱い、実行全体としては単一の `collection_complete=false` フラグで表現すれば十分とする。失敗した実行については保存できたログを保全し、必要に応じて人間が再実行を行う。このシンプルな障害モデル（simple failure model）を、以降の各節における個別の記述よりも優先する。厳密性の担保は実装時のコントラクトテストに委ね、実行時においては各データソースを1回のみ取得し、ジョブ終了後に1回のみ確定処理（finalize）を行う構成とする。同一の値を複数のバリデータで多重に囲い込むような過剰なランタイムガードは設けない。
 
-## 正本とidentity
+## 正本と識別性（Identity）
 
-| 情報 | 正本 | raw metricの役割 |
+| 情報種別 | 正本 | 生メトリクス（raw metric）の役割 |
 |---|---|---|
-| script、設定、patch | `2_Qwen`のcommit | repositoryとfull commitを指す |
-| 仮説、変更理由、期待する効果 | commit messageのbody | 保存しない |
-| SGLangの変更 | `5_SGLang_Src`のcommit | SIF provenanceを索引化する |
-| stdout、stderr、SGLang結果 | run artifactのlog/JSONL | 比較に必要な原始観測だけを索引化する |
-| host/container環境 | scopeごとのbyte-exact snapshot | 全件保存する |
-| SIF、model、dataset、cache | immutable artifact | revisionまたはmanifest identityを指す |
-| throughput、speedup、median、順位 | Git管理されたview SQL | raw tableへ保存しない |
+| スクリプト、設定、パッチ | `2_Qwen` のコミット | リポジトリおよび完全コミット SHA を指し示す |
+| 仮説、変更理由、期待される効果 | コミットメッセージの本文（body） | メトリクスとしては保存しない |
+| SGLang 側の変更 | `5_SGLang_Src` のコミット | SIF の来歴（provenance）を索引化する |
+| 標準出力、標準エラー出力、SGLang 結果 | 実行成果物内のログおよび JSONL | 比較に必要な原始観測値のみを索引化する |
+| ホストおよびコンテナの実行環境 | スコープごとのバイト完全一致スナップショット | フィルタリングを行わず全件保存する |
+| SIF、モデル、データセット、キャッシュ | 不変成果物（immutable artifact） | リビジョンまたはマニフェスト識別子を指し示す |
+| スループット、高速化率、中央値、順位 | Git 管理されたビュー SQL | 生データテーブル（raw table）には保存しない |
 
-次の三つを混同しない。
+以下の3つの概念を混同してはならない。
 
-- source identity: repository URLとresolved full commit
-- artifact identity: immutable revision、manifest ID、またはbuild時のcontent hash
-- reproducibility: base image digest、toolchain、dependency、全source commitを含むmanifest
+- ソース識別子（source identity）: リポジトリ URL および解決済みの完全コミット SHA
+- 成果物識別子（artifact identity）: 不変リビジョン、マニフェスト ID、またはビルド時のコンテンツハッシュ
+- 再現性（reproducibility）: ベースイメージダイジェスト、ツールチェーン、依存関係、全ソースコミットを網羅したマニフェスト
 
-Git管理されたrecipeやpatchごとにSHA-256 metricを作らない。`2_Qwen`のcommitとpathで
-内容が一意になるためである。hashはGit外artifact、binary転送、順序付きworkload/cache
-manifestの冪等性確認に限定し、巨大artifactをbenchmark runごとに再hashしない。
+Git 管理下のビルドレシピやパッチごとに SHA-256 メトリクスを個別に生成することは避ける。これらは `2_Qwen` のコミット SHA およびファイルパスによって一意に特定可能であるためである。ハッシュ値の計算は Git 管理外の成果物、バイナリ転送の検証、順序付きワークロードやキャッシュマニフェストの冪等性確認に限定し、巨大な成果物ファイルをベンチマーク実行ごとに再ハッシュすることは行わない。
 
-## Gitによる実験条件の管理
+## Git による実験条件の管理
 
-- 性能、workload、parallelism、cache policy、build、collectorの挙動を変える変更は
-  job投入前にcommitする。
-- Actions checkout直後、provision前にclean treeとfull commitを検証する。
-- benchmarkに使うcommitはremoteから到達可能、または耐久archiveに保存済みでなければ
-  ならない。provenanceのないmanual runは投入しない。
-- 一つのcommitは一つの説明可能な変更単位にする。複数fileが同じ仮説を実現する場合は
-  同じcommitでよい。
-- subjectは変更の要約、空行後のbodyは変更理由、仮説、期待する影響、確認方法を書く。
-- 同じ条件の反復ではcommitを増やさず、同じcommitから複数runを作る。
-- model、dataset、SGLang引数、配置をworkflow dispatch inputへ逃がさず、tracked script
-  または設定に置く。
-- SIFを再利用したrunは、現在の実行commitとは別にoriginal SIF build commitと
-  `5_SGLang_Src` commitを記録する。
+- 推論性能、ワークロード、並列化戦略、キャッシュポリシー、ビルド手順、コレクターの動作に変更を加える場合は、ジョブ投入前に必ず Git へコミットする。
+- GitHub Actions のチェックアウト直後、プロビジョニングを開始する前に、作業ツリーがクリーンであること（clean tree）および完全なコミット SHA を検証する。
+- ベンチマークに用いるコミットは、リモートリポジトリから到達可能であるか、または永続アーカイブに保全されていなければならない。来歴の追跡できない手動実行は禁止する。
+- 1つのコミットは、単一の明確に説明可能な変更単位とする。複数のファイルにまたがる修正であっても、同一の仮説を具現化するものであれば1つのコミットにまとめてよい。
+- コミットメッセージの件名（subject）には変更の要約を記載し、空行を挟んだ本文（body）には変更の理由、検証対象の仮説、期待される影響、および確認手順を明記する。
+- 同一条件での反復試行においては無意味にコミットを増やさず、同一コミットから複数の実行ジョブ（run）を生成する。
+- モデル、データセット、SGLang 引数、配置構成をワークフローの手動ディスパッチ入力へ逃がすことは避け、バージョン管理されたスクリプトまたは設定ファイル内に定義する。
+- 既存の SIF イメージを再利用した実行においては、現在の実行コミットとは別に、元となる SIF ビルド時のコミット SHA および `5_SGLang_Src` のコミット SHA を独立して記録する。
 
-commit messageの例を示す。
+コミットメッセージの記述例を以下に示す。
 
 ```text
 Pin one SGLang process to each NUMA domain
@@ -72,20 +56,15 @@ memory placement shortens engine initialization without reducing generation
 throughput. Compare repeated phase times against the parent commit.
 ```
 
-この文章を`experiment.hypothesis`や`run.note`へ複製しない。人間とエージェントは
-runのcommitから読む。
+上記のような解説文を `experiment.hypothesis` や `run.note` などのメトリクスキーへ複製することはしない。人間および AI エージェントは、対象の実行に対応する Git コミットログから背景情報を読み取るものとする。
 
 ### 調査根拠
 
-現行fileに加え、`9109ede`（BigQuery収集導入）、`e1d5868`/`fdd81c1`（過剰metric削除とaggregate化）、
-`a923409`（commandを一metric化）、`cc63e9d`（PJM log保持）、`8ac88e3`/`44143c7`（2-node実行とteardown）、
-`b6daf9c`（bench/profile分離）までの関連commit列を確認した。過去のCodex threadで確定した「欠測はNULLだけ」
-「OpenFOAM移管を基準」「稀な失敗は許容」は本書の決定状態へ要約し、会話本文やcommit messageをrun metricへ
-複製しない。
+現行のファイル構成に加え、`9109ede`（BigQuery 収集の初期導入）、`e1d5868`/`fdd81c1`（過剰なメトリクスの削除と集約化）、`a923409`（コマンドライン引数の単一メトリクス化）、`cc63e9d`（PJM ログの保持）、`8ac88e3`/`44143c7`（2ノード実行とティアダウン処理）、`b6daf9c`（bench / profile の分離）に至る一連のコミット履歴を精査した。過去の設計対話において合意された「欠測は NULL のみで表現する」「OpenFOAM の設計移管を基準とする」「稀な障害は許容する」という基本方針を本計画の確定仕様として集約しており、対話本文やコミットメッセージを実験メトリクスへ重複記録することはない。
 
-## raw relationの契約
+## 生リレーション（Raw Relation）の契約
 
-raw tableは現在の三列を維持する。
+生データテーブル（raw table）は、従来の3列構造を厳格に維持する。
 
 ```text
 run    STRING NOT NULL
@@ -93,167 +72,101 @@ key    STRING NOT NULL
 value  STRING NOT NULL
 ```
 
-`run`は一runの全producerが共有するglobally uniqueでimmutableなIDである。job投入前に
-OS CSPRNGの16 byteを32文字のlowercase hexで表す128-bit run IDを一つ生成する。
-manual経路でも同じrun ID規則を使う。
-`pjsub`返却後にしか分からないPJM job IDはrun IDへ
-含めず、submission resultとjob-entryのjob IDをquery時に結ぶ。完全導出できるbinding recordは作らず、初期run manifestを書き換えない。
-run IDはUTF-8で`^[a-z0-9][a-z0-9._-]{0,199}$`を満たすよう生成し、同じ値を安全なruntime path
-componentとして使う。任意のrepository名やuser入力を未escapeで連結しない。
-raw relationは次のfunctional dependencyを満たす。
+`run` は、単一の実行に属する全プロデューサーが共有する、グローバルに一意（globally unique）かつ不変（immutable）な識別子である。ジョブ投入前に、OS の CSPRNG から得た 16 バイトを 32 文字の小文字 16 進数表記とした 128 ビットの run ID を1つ生成する。手動投入経路であっても同様の run ID 規則に従う。
+`pjsub` の実行完了後に初めて確定する PJM ジョブ ID は run ID の構成要素には含めず、投入結果およびジョブ起動時に観測されたジョブ ID をクエリ実行時に結合する。完全に事後導出可能な紐付けレコードを個別に作成することはせず、初期の run マニフェストを変更することもない。
+run ID は UTF-8 文字列として `^[a-z0-9][a-z0-9._-]{0,199}$` を満たすよう生成し、安全なランタイムパスの構成要素としてもそのまま使用できるようにする。任意のリポジトリ名やユーザー入力をエスケープ処理なしでそのまま連結してはならない。
+生リレーションは、以下の関数従属性を厳密に満たすものとする。
 
 ```text
 (run, key) -> value
 ```
 
-- 完全一致する`(run,key,value)`の再送は、論理上の一rowとして扱う。
-- 同じ`(run,key)`に複数のdistinct valueがあれば値を選ばず`conflicting`とし、runを
-  比較から除外する。
-- 既存runの値を訂正しない。訂正測定は新しいrunとして残す。
-- row不在は未観測、`value=""`は実際に観測した空文字、`"0"`は真のゼロを表す。
-- 取得不能や非該当をplaceholder空文字にしない。
-- collectorは成功時にfragmentを閉じ、失敗時はnonzeroで終わる。別のcollection status、原因、error count、
-  started/final耐久journalは作らない。finalizerはvariant別expected fragment/fileの存在から
-  `collection_complete`を一度導出し、既に完成したsource/logだけを収録する。
+- 完全一致する `(run, key, value)` の再送が発生した場合、論理的には単一の行として扱う。
+- 同一の `(run, key)` に対して相異なる複数の値（distinct value）が存在した場合、勝手に値を選択せず「競合（conflicting）」として検出し、当該実行をベンチマーク比較から除外する。
+- 既存の実行レコードの値を上書き・訂正することは禁止する。再測定を行った場合は、新しい実行（run）として独立して記録する。
+- テーブルに行が存在しないこと（absent）は「未観測」を意味し、`value=""` は「実際に空文字列を観測したこと」、`"0"` は「真の数値ゼロ」をそれぞれ厳密に表す。
+- 取得不能や非該当の項目に対して、ダミーの空文字列プレースホルダーを割り当ててはならない。
+- コレクターは正常終了時にフラグメントを確定してクローズし、異常終了時は非ゼロの終了コードで停止する。別の収集ステータス、エラー原因コード、エラーカウント、実行中／完了を示す耐久ジャーナル等は作成しない。ファイナライザは、バリアントごとに想定されるフラグメントやファイルの存在確認を通じて `collection_complete` を1回のみ導出し、すでに正常完成したソースやログのみを取り込む。
 
-contract/protocolのIDやhashはmetricへ保存しない。既存keyの意味、unit、JSON shapeを変える場合は
-新keyにし、細かい仕様はソースと文書を正本にする。
+プロトコルやコントラクトの内部 ID やハッシュ値をメトリクスとして保存しない。既存キーの意味、単位、または JSON 構造を変更する場合は新しいキー名を定義し、詳細な仕様はソースコードおよび設計ドキュメントを正本とする。
 
-各keyまたはkey patternは、owner、logical type、unit、cardinality、source、scope、
-取得時点、required/optionalを一つのGit管理registryで定義する。動的keyの
-component escapeは単射にし、append/merge時にもownershipと衝突を検査する。
+各キーまたはキーパターンは、オーナー、論理型、単位、カーディナリティ、データソース、スコープ、収集タイミング、必須／任意の別を、Git 管理下の単一のキーレジストリにおいて定義する。動的キーのエスケープ処理は単射性を保ち、レコードの追記・マージ時にもオーナーシップの正当性とキー衝突の有無を検証する。
 
-## scalarとcanonical JSON
+## スカラー値と正規化 JSON（Canonical JSON）
 
-自然に一つのscalarである値は、そのscalarをSTRINGへ変換する。順序や対応関係を持つ
-複数値は、添字付きkeyへ分解せず一つのcanonical JSON valueにする。
+自然に単一のスカラー値として表現できるデータは、そのスカラー値を STRING 型へ変換して格納する。順序性や相互関係を持つ複合的なデータ構造については、インデックス付きの個別キーへ分解することはせず、単一の正規化 JSON（canonical JSON）文字列として保持する。
 
-canonical JSONはRFC 8785 JSON Canonicalization Schemeに固定する。array順序を保持し、
-duplicate object key、NaN、Infinityを禁止する。RFC 8785の表現可能範囲を超える整数や精度を
-必要とするdecimalはJSON numberにせず、registryで型を定めたcanonical decimal stringにする。
+正規化 JSON には、RFC 8785（JSON Canonicalization Scheme: JCS）を全面的に採用する。配列の要素順序を厳密に保持し、オブジェクトキーの重複、NaN、Infinity の混入を禁止する。RFC 8785 の表現可能範囲を超える大きな整数や高精度な小数は JSON の number 型としてはシリアライズせず、レジストリ側で型定義された正規化10進数文字列（canonical decimal string）として扱う。
 
-scalar encoderも次に固定する。
+スカラーエンコーダーの規約も以下のように統一する。
 
-- boolは`true`/`false`、intは符号付き十進最短表現とし、leading `+`/zeroと`-0`を許さない。
-- floatは有限IEEE 754値のRFC 8785 number serializationとし、NaN/Infinityを許さない。
-- timestampはUTCへ正規化した`YYYY-MM-DDTHH:MM:SS[.fraction]Z`とし、小数秒の末尾zeroを除く。
-- 時間のunitは秒、data量はbyteとする。stringはUTF-8で保持する。
-- JSON `null`はregistryが定義する「観測済みcompound record内のfield欠損」にだけ使い、
-  key全体の取得失敗や非該当には使わない。
+- 真偽値（bool）は `true` / `false`、整数（int）は符号付き最短10進表記とし、先頭の冗長な `+` やゼロ、および `-0` を禁止する。
+- 浮動小数点数（float）は有限の IEEE 754 値とし、RFC 8785 の数値シリアライズ規則に従う（NaN や Infinity は禁止）。
+- タイムスタンプは UTC に正規化された `YYYY-MM-DDTHH:MM:SS[.fraction]Z` 形式とし、小数秒の末尾の不要なゼロは除去する。
+- 時間の基本単位は秒（sec）、データ量の基本単位はバイト（bytes）とする。文字列は UTF-8 でエンコードする。
+- JSON の `null` は、レジストリに定義された「観測済み複合レコード内における特定フィールドの欠損」を明示する用途にのみ限定し、キー全体の取得失敗や非該当の表現には用いない。
 
-これにより同じlogical valueはprocessやlanguageにかかわらず同じbyte列になる。
+以上の規約により、同一の論理値はプロセスやプログラミング言語の実装差異にかかわらず、完全に同一のバイト列へとシリアライズされる。
 
-Pythonの`str(list)`は使用しない。logical typeとunitはvalueから推測せずkey registryを
-正本にする。
+Python の `str(list)` 等の非決定論的な文字列表現は使用しない。論理型や単位は格納された文字列値から推測するのではなく、キーレジストリの定義を正本とする。
 
-## 重複を避ける規則
+## 冗長な重複を排除する規則
 
-候補Aを削除できるのは、残存するraw factとimmutableなGit/artifact identityだけから、
-同じsemantic、source、scope、取得時点、unit、精度で、Aのkey membershipとvalueを
-常に一意かつ損失なく復元でき、comparison viewの利用性も失わない場合だけである。
+あるメトリクス候補 A を削除・除外できるのは、残存する生の観測ファクトおよび不変な Git／成果物識別子のみから、同一の意味、データソース、スコープ、取得タイミング、単位、精度において、A のキーの存在性および値を常に一意かつ損失なく完全に復元可能であり、かつ比較ビューの利用性を損なわない場合に限られる。
 
-単に値が等しい、名前が似る、またはlogに存在するだけでは削除しない。requestedと
-effective、plannedとobserved、異なるnode rank、別phaseの時間は独立事実である。公式producer
-との照合、schema routing、保存層をまたぐmanifest索引などの正当な重複は、registryの
-`duplication_justification`へ理由と検証式を書く。
+単に値が同一である、名称が類似している、あるいはログファイル内にテキストとして存在しているという理由のみで安易に削除してはならない。要求値と実効値、計画値と実測値、異なるノードランクでの観測値、異なるフェーズの所要時間は、それぞれ独立した固有の観測ファクトである。公式プロデューサーとの整合性検証、スキーマルーティング、保存層をまたぐマニフェスト索引など、正当な理由に基づく重複については、レジストリの `duplication_justification` 項目にその妥当性理由と検証式を明記する。
 
-全環境変数の保存は、取り漏らしのないforensic比較という要件に基づく明示的な非最小例外
-である。個別env値を別namespaceへ再掲せず、標準Sheetでは比較関連projectionだけを出す。
+計算環境における全環境変数の保存は、欠落のない厳密なフォレンジック比較を可能にするという要件に基づく、明示的に認められた例外措置である。個別の環境変数の値を別名前空間へ無闇に再掲することは避け、標準のスプレッドシート上では比較に必要な主要プロジェクションのみを展開する。
 
-## raw metrics exportと送達
+## 生メトリクスのエクスポートと配送
 
-v2は任意のcrash境界から一件も失わず再開できることを目的にしない。release gateは、成功した各run
-variantの正常pathでcontractが要求する設定、性能値、raw log、PJM accounting、profile runのprofile rawが
-Artifactへ収録され、finalizerで確認できることである。失敗・中断runは完成済みfileだけを残し、partial recordの
-復旧処理は作らない。supervisorがterminal後のfinalizerまで到達した失敗runは、そこで存在する完成済みlog/sourceと
-`collection_complete=false`を通常の一artifact setへpackageする。finalizer前のcrashまたはpackage自体の失敗だけは
-完成artifactを作らない。原因fieldは追加しない。
+v2 設計においては、任意のクラッシュ境界から一切のデータ損失なしで処理を再開できるような複雑な高耐障害性を目的としない。リリース基準（release gate）は、成功した各実行バリアントの正常系パスにおいて、コントラクトが要求する設定値、性能指標、生ログ、PJM アカウンティング情報、およびプロファイル実行時のプロファイル生データが成果物（Artifact）として確実に収録され、ファイナライザによってその完全性が検証されることにある。失敗または中断した実行については完成済みのファイルのみを残し、不完全な部分レコードの複雑なリカバリ処理は構築しない。スーパーバイザーがジョブ終了後のファイナライザまで到達できた失敗実行については、その時点で存在する完成済みログやソースファイルを取りまとめ、`collection_complete=false` とともに単一の成果物セットとしてパッケージングする。ファイナライザに到達する前のクラッシュやパッケージング処理自体の失敗に限り、完成成果物の生成をスキップする。この場合も詳細な原因フィールドの追加は行わない。
 
-`metrics.jsonl`はBigQuery fact tableと同じ`run/key/value`を持つrun単位のraw exportである。artifact projectionは
-subject artifact setからPublisherが別relationへ送る。別event
-envelope、型別value列、ack queueは作らない。
+`metrics.jsonl` は、BigQuery のファクトテーブルと同一の `run/key/value` 構造を持つ、実行単位の生データエクスポートファイルである。成果物プロジェクションは、対象成果物セットからパブリッシャ（Publisher）によって独立したリレーションへ送信される。別のイベントエンベロープ、型別の値カラム、ACK 待ちキュー等は構築しない。
 
-target programの薄いhookが出すversion付きdomain recordは、local adapterへの入力または
-diagnostic/source logであって第二の送達queueではない。単発factはadapterがregistryで検証してraw exportへ
-変換する。反復eventを最終的に一arrayへするfamilyはline-buffered domain JSONLへ書き、stage終了時に
-flushする。terminal後のpure reducerが一度だけFactへ変換する。稀なprocess/node failureで末尾が欠ける
-ことは許容し、正常終了したのにexpected recordが毎回欠ける実装をreleaseしない。registryはsource
-JSONL/artifactとmetric fragmentのどちらを正本にするかfamilyごとに固定する。
+ターゲットプログラム側に組み込む最小限のフックが出力するバージョン付きドメインレコードは、ローカルアダプターへの入力または診断用のソースログであり、二次的な配送キューではない。単発のファクトについてはアダプターがレジストリに照らして検証し、生エクスポートへ変換する。反復的なイベントを最終的に単一の配列へまとめるファクトファミリーは行バッファリングされた JSONL へ書き出し、ステージ終了時にフラッシュする。ジョブ終了後に純粋リデューサー（pure reducer）が1回のみファクトへと集約変換する。プロセスの異常停止等によって末尾のデータが極稀に欠落することは許容するが、正常終了したにもかかわらず想定レコードが恒常的に欠損するような実装はリリースを認めない。レジストリにおいて、ソース JSONL／成果物ファイルとメトリクスフラグメントのどちらを正本とするかをファミリーごとに厳密に規定する。
 
 ```text
-compute producer
-  -> node別のmetrics JSONLへappendしstage終了時にflush
-  -> 完了fragmentをtemporary fileからrename
-  -> runnerがexpected node、fragment、expected fileを一度検証してmetrics.jsonlへmerge
-  -> merge済みfragmentを削除し、log/sample/source/resultのrun bundleとartifact-manifest.jsonを作成
-  -> run bundle、merged JSONL、artifact manifestをGitHub Artifactへupload
-  -> upload成功後にGenkai runtimeを削除可能
-  -> archive jobがhome RAIDへscpし、runnerがBigQueryへ送信
+計算ノード上のプロデューサー
+  -> ノード個別の metrics JSONL へ追記し、ステージ終了時にフラッシュ
+  -> 完了したフラグメントを一時ファイルから正式名へリネーム
+  -> ランナーが想定ノード、フラグメント、想定ファイルの整合性を検証して metrics.jsonl へマージ
+  -> マージ完了したフラグメントを削除し、ログ／サンプル／ソース／結果をまとめた実行バンドルと artifact-manifest.json を作成
+  -> 実行バンドル、マージ済み JSONL、成果物マニフェストを GitHub Artifact へアップロード
+  -> アップロード成功を確認後、Genkai 上の一時ランタイムディレクトリを削除可能
+  -> アーカイブジョブが SSH 経由で home RAID へ保管し、ランナーが BigQuery へ送信
 ```
 
-- 一つのJSON objectを一lineで書き、producer終了時にflush/closeする。各lineやdirectoryごとの`fsync`は
-  要求せず、必要なら一定間隔のbuffer flushを使う。
-- expected producer/file集合はimmutable contractのvariant applicability、protocol、bundle selectionからjob投入前に一回導出する。manifestへ再掲しない。scheduler
-  accountingとobserved placementは、その期待集合が実際に成立したかを後から検証するsourceである。
-- mergeはrun ID、JSON、owner、expected node、一意性を検査し、欠損や異値競合を隠さない。
-- BigQuery `insertId`はbest-effortの補助にすぎない。logical viewが完全一致rowをdeduplicate
-  し、異値競合を隔離する。
-- replayは同じrowを全件送ってよい。送信成功後もarchiveのJSONLを変更しない。publish失敗時はhomeまたは
-  GitHub ArtifactのJSONLからworkflowを手動再実行する。
-- upload失敗はattempt failureとする。upload成功後はruntimeを削除してよく、home転送のSCPが
-  失敗した時だけGitHub Artifactを残す。
+- 1つの JSON オブジェクトは1行（1 line）として書き出し、プロデューサーの終了時に確実にフラッシュおよびクローズする。各行ごとやディレクトリごとの同期書き込み（`fsync`）は要求せず、必要に応じて一定周期のバッファフラッシュを用いる。
+- 想定されるプロデューサーおよびファイルの集合は、不変コントラクトのバリアント適用規則、プロトコル定義、バンドル選定からジョブ投入前に1回のみ導出する。マニフェスト内に重複して列挙することはしない。スケジューラのアカウンティング情報および観測された配置情報は、その想定集合が実行時に正しく成立したかを事後検証するための入力ソースとなる。
+- マージ処理では、run ID、JSON 形式、オーナーシップ、想定ノード、一意性を厳格に検査し、データの欠落や異値競合を暗黙に隠蔽しない。
+- BigQuery の `insertId` はベストエフォートな補助機能に過ぎない。論理ビュー側で完全一致レコードの重複排除を行い、相異なる値の競合を確実に隔離する。
+- リプレイ送信を行う際は、同一の行データを全件再送してよい。送信完了後であってもアーカイブ内の JSONL ファイルを変更してはならない。パブリッシュ処理に失敗した場合は、home RAID または GitHub Artifact 内の JSONL を入力としてワークフローを手動再実行する。
+- アップロードの失敗は試行の失敗（attempt failure）として扱う。アップロード成功後は一時ランタイムを削除して差し支えないが、home RAID への転送が失敗した場合は GitHub Artifact を削除せずに保持する。
 
-artifact identityの自己参照を避ける。全fragmentを一度mergeして`metrics.jsonl`を確定した後、log、source、
-resultからrun bundleを作る。fragmentはmerged JSONLの完全な部分集合なのでartifactへ保存しない。
-profileではraw GPU sampleとapplicableなprofiler rawだけを別のprofile raw tarへ
-収録し、bundle、metrics sidecar、profile raw tarのpath/size/hashを
-`artifact-manifest.json`へ保存する。bundle hashやmetrics sidecar自身のhashをmetricへ戻して再mergeしない。publishはremote archive
-verificationを前提にせず、同じattemptのlocal/GitHub artifactを入力にできる。
+成果物識別子の自己参照を排除する。全フラグメントを1回マージして `metrics.jsonl` を確定させた後、ログ、ソース、結果を取りまとめて実行バンドルを構築する。各フラグメントはマージ済み JSONL の完全な部分集合であるため、成果物アーカイブ内へ重複保存することはしない。
+プロファイル実行においては、生の GPU サンプルおよび該当するプロファイラ生データのみを独立したプロファイル生データアーカイブ（`profile-raw.tar.zst`）へ収録し、実行バンドル、メトリクスサイドカー、プロファイル生データアーカイブの各ファイルパス、サイズ、ハッシュ値を `artifact-manifest.json` へ記録する。バンドル自身のハッシュやメトリクスサイドカー自身のハッシュをメトリクスへフィードバックして再マージするような循環参照は行わない。パブリッシュ処理はリモートアーカイブの検証を前提とせず、同一の実行試行におけるローカルまたは GitHub Artifact を直接入力として実行できるものとする。
 
-timed benchmark中はBigQueryへ接続しない。送信用credentialはrunnerだけが保持するため、
-PJM processの性能条件へ混入しない。各snapshotはそのscopeに実在する環境をfilterなしで
-保存し、機密値も例外扱いしない。
+時間計測対象のベンチマーク実行中は、BigQuery への接続を行わない。送信用の認証情報は GitHub Actions ランナー側のみが保持するため、PJM ジョブの実行環境や性能特性へ認証情報が混入することはない。各環境スナップショットは、そのスコープに実在する環境変数をフィルタリングなしで保存し、機密性の高い値であっても例外扱いはしない。
 
-## 最小の実装境界
+## 最小の実装責任境界
 
-対象programへ計測システムの都合を持ち込まないため、責務を次の六境界へ固定する。
+対象となる推論プログラム側へ計測システムの都合を持ち込まないため、各コンポーネントの責務を以下の6つの境界に厳密に分離する。
 
-1. domain probe/parserは`Fact(key, logical_value)`だけを返すpure functionとする。run ID、文字列化、
-   filesystem、BigQueryを知らない。
-2. `recording.py`の`Recorder`だけがpersist済みrun manifest、registry、canonical encoder、factのbuffered
-   append/flush、data fragmentのcompletionを所有する。別のcollector status fileは作らない。
-3. `StageRunner`だけがspawnするactual argv、monotonic timer、signal、child wait statusを所有し、
-   観測したfactを`Recorder`へ渡す。
-4. runner側`merge`がexpected producer、run ID、owner、一意性、required key、fragment完了を検証し、
-   archive対象のmerged JSONLを作る。node-scoped full factをrun-scopedへ変換しない。
-5. `ArtifactStore/RunPackager`がrun bundle/manifestの作成と検証を所有する。GitHub Artifact uploadと
-   home移管はworkflowが担当し、汎用reconciler、quarantine service、delivery ledgerは作らない。
-6. runner側`publish`だけがBigQuery credentialと、一attempt一送信・同じartifact setを入力にした手動workflow
-   再実行を所有する。collector、SGLang、PJM
-   processはBigQuery、artifact upload、HTTP/cloud client等の外部送達networkを使わない。唯一、
-   `node-agent`だけがprotocolの個別fieldで許可した明示rendezvous endpointへのrun内control transportを使える。
-   credential、DNS discovery、外部egressを許可しない。
+1. ドメインプローブ／パーサー: `Fact(key, logical_value)` のみを返却する純粋関数（pure function）とする。run ID、文字列化の作法、ファイルシステム、BigQuery 等の存在を関知しない。
+2. レコーダー（`recording.py` 内の `Recorder`）: 永続化された run マニフェスト、レジストリ定義、正規化エンコーダー、ファクトのバッファリング追記・フラッシュ、データフラグメントの確定完了処理のみを所有する。独立したコレクターステータスファイルは作成しない。
+3. ステージランナー（`StageRunner`）: プロセス起動時の実際の argv、モノトニックタイマー、シグナルハンドリング、子プロセスの待機ステータスのみを所有し、観測されたファクトを `Recorder` へ引き渡す。
+4. ランナー側マージ（`merge`）: 想定プロデューサー、run ID、オーナーシップ、一意性、必須キー、フラグメント完了状態を検証し、アーカイブ対象となるマージ済み JSONL を生成する。ノードスコープの完全ファクトを実行スコープへ無理に圧縮変換しない。
+5. 成果物ストア／パッケージャ（`ArtifactStore` / `RunPackager`）: 実行バンドルおよび成果物マニフェストの生成と検証を所有する。GitHub Artifact へのアップロードおよび home RAID への移管はワークフローが担当し、汎用リコンサイラ、隔離サービス、配送元帳等は構築しない。
+6. ランナー側パブリッシュ（`publish`）: BigQuery 認証情報の管理、1試行1回限りの送信処理、および同一成果物セットを入力とする手動再実行の制御のみを所有する。コレクター、SGLang、PJM の各プロセスは BigQuery、成果物アップロード、HTTP／クラウドクライアント等の外部ネットワーク送信を行わない。唯一、`node-agent` のみがプロトコルの個別設定で許可された明示的なランデブーエンドポイントへのジョブ内制御通信を行うことができる。外部 DNS 解決や外部へのエグレス通信は一切許可しない。
 
-SGLang本体へ必要なhookは、version付きlocal structured eventを定義済み境界でだけ書く薄いadapterとする。
-metrics packageやBigQuery clientをimportせず、送達、再試行、key展開を知らない。実装上は
-`domain.py`、`recording.py`、`submission.py`、`stage_runner.py`、`merge.py`、`artifact_store.py`、`publish.py`、domain別
-probe/parserを深いmodule境界にし、CLIはそのcomposition rootに限定する。
+SGLang 本体へ組み込む必要なフックは、定義された境界でのみバージョン付きのローカル構造化イベントを書き出す薄いアダプターに限定する。メトリクス収集パッケージや BigQuery クライアントをインポートすることはせず、配送、再試行、キー展開等の処理は関知しない。実装構造としては、`domain.py`、`recording.py`、`submission.py`、`stage_runner.py`、`merge.py`、`artifact_store.py`、`publish.py`、および各ドメインのプローブ／パーサーを疎結合なモジュール境界として構成し、CLI コマンドはそのコンポジションルート（composition root）の役割に特化させる。
 
-QwenのSGLang patch内で唯一のresult writerとして、rank 0の`PrimaryResultWriter`だけは
-`backend.generate` return後にprimary artifactをtemporary fileからrenameして完成させる。これはmetrics writerでも
-bundle storeでもなく、metrics keyを知らないsource-artifact writerである。schemaはcontract、run、
-invocation ID、generation duration、returned/error count、observed input/output totalsに固定し、runnerの
-primary-result parserだけが対応raw keyのownerになる。
+Qwen の SGLang パッチ内における唯一の結果ライターとして、ランク0の `PrimaryResultWriter` に限り、`backend.generate` の完了後にプライマリアーティファクトを一時ファイルからリネームして正式生成する。これはメトリクスライターでもバンドルストアでもなく、メトリクスキーの体系を関知しないソース成果物ライターである。データスキーマは、コントラクト定義、run ID、呼び出し ID、生成所要時間、返却／エラー件数、実測入力／出力トークン総数に固定し、ランナー側のプライマリリザルトパーサーのみが対応する生キーのオーナーとなる。
 
-Qwen用とOpenFOAM用を直ちに第三の共通packageへ統合しない。まず同じcontractとconformance
-fixtureを両repositoryで満たし、interfaceが安定してから、canonical encoder、registry validator、
-merge validatorだけを抽出する。domain collectorやpipeline固有の失敗処理は共通化しない。
+Qwen 用と OpenFOAM 用の収集基盤を直ちに共通パッケージへ統合することは行わない。まずは同一のコントラクトおよび適合性フィクスチャを双方のリポジトリで満たし、インターフェースが十分に安定した段階で、正規化エンコーダー、レジストリバリデータ、マージバリデータのみを共通抽出する。ドメイン固有のコレクターやクラスタ固有の障害処理を安易に共通化してはならない。
 
-実装開始前の設計正本として、各factの権威source、producer、取得時点、raw key/artifact、validation、
-欠損時の扱いは[観測マップ](./01-v2-observation-map.md)、field-level shapeは
-[contract schema handoff](./02-v2-contract-schemas.md)に置く。最初の実装sliceでこれらを一つの
-機械可読contractへ移し、以後は観測マップの表をcontractから生成する。sourceと取得時点をcontractへ
-特定できない候補は追加しない。
+実装着手前の正本として、各ファクトの正本ソース、プロデューサー、取得タイミング、生キー／成果物の対応、検証規約、欠損時の取り扱いは[観測マップ](./01-v2-observation-map.md)に、フィールドレベルのデータ構造は[契約スキーマ](./02-v2-contract-schemas.md)にそれぞれ定義する。最初期の実装スライスにおいてこれらを機械可読なコントラクトへ移行し、以後は観測マップの各一覧をコントラクトから自動生成する運用とする。ソースおよび取得タイミングをコントラクト上で一意に特定できないメトリクス候補は追加しない。
 
 ## 環境snapshot
 
@@ -324,115 +237,111 @@ result、timestamp pairはprofile window containmentのためだけに併存し�
 
 保存raw factは次の形にする。
 
-- `run.stage.benchmark.launch`: stageが起動したouter MPI `argv/cwd/stderr_mode`のcanonical JSON object
-- `parallel.node.<node_rank>.process_lifecycle`: child start/end、raw wait statusまたはspawn error、
-  `<boot_id>:CLOCK_MONOTONIC` clock IDだけのJSON object。exit/signal/kindは保存せずviewで導出
-- node topology artifact: node wrapper/Singularity/SGLang argv、host process affinity、static GPU mappingを所有する
-- node config event artifact: resolved BenchArgs/ServerArgsだけを所有する。argv/affinity/GPUを複写しない
-- worker-ready event artifact: global rank別のruntime backend、device/UUID、worker affinityを所有する
+## 環境スナップショット（Environment Snapshot）
 
-shell表示はviewで作る。同じnode固有fieldをrun-scoped keyへ送らない。
-wrapperはshutdown受信や分類結果を自身のfragmentへ複写しない。node-agentの最終summaryをshutdown受信の正本、
-wrapper fragmentをchild lifecycleの正本にする。summaryはrun、node rank、invocation ID、sequence、local
-monotonic timestamp、`CLOCK_MONOTONIC` clock IDを持つ。reducerがshutdown invocation ID一致とnodeごとの一意性を検証し、viewはそのvalidな一件と
-child lifecycleをrun/node rankでjoinする。clock IDも一致する時だけshutdown受信より前のchild exitをearly
-failure、受信後をcoordinated teardownと導出する。受信record 0/複数、invocation/clock不一致では分類を
-作らずNULLにする。別nodeのtimestampを直接比較せず、rank 0 completion file到着だけでnonzero node rankの早期死を
-上書きしない。
+同一の環境変数名であっても、取得時点、実行ノード、プロセススコープが異なればその技術的意味は大きく異なる。したがって、以下の4つのスコープに明確に分離して記録する。
 
-## Qwen/SGLangで保存する原始事実
+- `env.job_entry.*`: PJM ジョブ起動直後、環境モジュールのロードや変数の unset を行う前の全環境変数
+- `env.host.node.<node_rank>.*`: モジュール設定完了後、各ノード上でベンチマークコマンドを実行する直前の全環境変数
+- `sglang.env.node.<node_rank>.*`: 各コンテナ内部において、`_set_envs_and_config` 等の解決処理を完了し、スケジューラプロセスを起動する直前の全環境変数
+- `sglang.worker.env.rank.<global_rank>.*`: 各推論ワーカーがランタイムの初期化を完了し、ready を通知する直前の全環境変数
 
-### run、stage
+変数名および値はバイト完全一致（byte-exact）で取得する。変数名の各バイトは、半角英数字およびアンダースコア `[A-Za-z0-9_]` のみをそのまま使用し、それ以外の特殊文字は `~HH` 形式の大文字16進表記でエスケープすることで単射性を担保する。値については、UTF-8 文字列として有効か否かにかかわらず、全件を RFC 4648 準拠のパディング付き Base64 文字列へ変換し、キーレジストリ上で `bytes/base64` 型として宣言する。これにより、平文の通常文字列と Base64 との曖昧性を完全に排除する。スナップショット間で同一の値が重複して記録されたとしても、それらはスコープの異なる独立した観測データとして正当に扱う。標準的な2実行間の差分比較においては Git 管理下の主要な比較対象キーのみを展開表示し、環境変数の完全な差分は専用のビューでデコードして提供する。
+
+## 実験データの独立性
+
+1回のジョブ実行は単一の run ID によって記録し、各実行（run）は他のいかなる実行からも完全に独立した実験データとして取り扱う。
+ブロック番号、実行順序、反復インデックス（replicate index）、ペア ID、グループ／セット ID、計画試行回数、停止ルール（stopping rule）など、反復試行やペア実行の管理を目的とした追加フィールド、メトリクスキー、マニフェスト項目は一切設けない。
+
+Qwen / SGLang における実際のソースコード、ワークロード、個別実行設定、配置構成、推論結果、タイムスタンプ、成果物識別子は、各実行自身が完全に自律して記録する。複数実行の比較分析や統計処理が必要な場合は、保存済みの個別キーを利用者が都度選択してクエリ側で実行する。事前のグルーピング、ペアリング、フィンガープリント、試行回数集計、中央値／MAD などの反復統計量を、v2 の標準ビューやスプレッドシート側へ静的に保持させることはしない。
+
+## 分散プロデューサー契約
+
+共有ファイルシステム上に Unix ドメインソケットを配置してノード間のイベントトランスポートとして利用する構成は採用しない。Unix ドメインソケットのエンドポイントは各ノードのローカルディスク上に作成し、各ノードで発生したイベントはそのノード固有の JSONL ファイルへ書き出す。
+
+- ランク0（Rank 0）のみが、ワークロードマニフェスト、ベンチマーク測定結果、および実行スコープのフェーズ境界を生成する正本プロデューサーとなる。
+- 各ノードは、解決済み引数、環境変数、実際の argv、CPU アフィニティ、GPU マッピング、テレメトリを、自身のノードスコープのファクトとして出力する。
+- 生データ層では、ノードおよびランクスコープの完全なファクトを正本として保存する。ビュー層においてのみ、想定される全スコープでの一致が検証されたフィールドを共通設定として表示し、生データ層に共通値と差分値の二重表現を作成することはしない。
+- 想定ノードランク `0..protocol.nodes-1`、グローバルワーカーランク `0..protocol.tensor_parallel_size-1`、一意なホスト名、GPU UUID の集合を、マニフェストおよびスケジューラ要求と厳格に突合する。
+- ゼロ以外の各ノードランクにおける協調的終了（coordinated teardown）と早期異常終了（early exit）は、当該ノードのローカルクロック上における子プロセスの終了時刻と、`lifecycle.shutdown.start` の受信時刻との前後関係に基づいて明確に判別する。
+
+制御プレーンは以下の2つのファミリーに厳密に分離する。
+`ライフサイクル制御（lifecycle control）` は、プロトコルの個別設定で指定されたマルチノード実行を正常終了させるための共通ハーネスとして機能し、bench / profile の双方で共通に利用され、起動時の ready 通知および `lifecycle.shutdown.start` の正常ハンドシェイクを最終サマリーログへ記録する。
+`GPU フェーズ制御（GPU phase control）` は profile 実行専用であり、ウォームアップおよび測定生成の開始／終了時刻と各ノードの受信時刻をプロファイルサマリーへ記録する。両者のプロデューサーおよび完全性判定を混同させてはならない。
+
+非ゼロノードランクの `Engine()` コンストラクタ呼び出しは分散完了まで内部でブロックするため、コンストラクタ復帰後を設定情報のプロデューサーとしてはならない。SGLang 内部で最終的なランタイム引数が解決された後、各参加ノードが待機状態へ入る直前のフックからノードフラグメントを出力させる。
+GPU フェーズマーカーおよび制御フォワーダーは profile プロトコルでのみ起動し、通常 bench ではプロデューサーグラフから完全に除外して NULL 扱いとする。profile 実行においてもマーカーロジックを SGLang ワーカー内部へ直接組み込むことは避け、ベンチマーク開始前に接続済みの軽量な制御フォワーダーを介して通信する。ランク0のオフラインフックが `invocation_id`、フェーズ名、開始／終了フラグ、シーケンス番号を各ノードのモニターへブロードキャストし、各モニターがノードローカルの受信時刻を記録して ACK を返却する。最終サマリーは成果物として保全し、異なるノード間のモノトニック計時値を直接減算してはならない。本実行構成において、ネイティブワーカーのマーカーと制御フォワーダーのマーカーを同一メトリクスへ混在させることは禁止する。
+
+profile 実行における生成フェーズの実行順序は、`start ブロードキャスト -> 想定 protocol.nodes の ACK 完了 -> ランク0 タイマースタート -> generate 呼び出し -> タイマーストップ -> end ブロードキャスト -> 想定 ACK 完了` に固定する。start ACK 完了から generate 開始までのリードタイム、および generate 終了から end ACK 完了までのトレイルタイムをランク0のクロックで成果物へ記録することで、GPU の観測ウィンドウが推論生成区間の保守的な上位集合（superset）であることを数学的に判定可能とする。ウォームアップおよび測定生成のサマリーは、通常のリザルトライターと同一のランク0 モノトニック計時境界（ナノ秒単位）を用い、保存されたウォールタイムスカラー値が `(end - start) / 1e9` と厳密に一致することを検証する。スカラー値は全バリアント共通の結果指標、タイムスタンプのペアはプロファイルウィンドウの内包性検証のためだけに併存させ、別個のタイマーを二重計測することは避ける。すべての実行目的において、生成タイマーの終了後に `lifecycle.shutdown.start(invocation_id)` を全想定ノードへ1回のみブロードキャストし、正常 ACK を確認した後に `backend.shutdown()` を呼び出す。
+
+生ファクトとして保存するデータ形式は以下のとおりとする。
+
+- `run.stage.benchmark.launch`: ステージが起動した外側 MPI の `argv/cwd/stderr_mode` を格納した正規化 JSON オブジェクト
+- `parallel.node.<node_rank>.process_lifecycle`: 子プロセスの開始／終了時刻、生 wait ステータスまたは spawn エラー、および `<boot_id>:CLOCK_MONOTONIC` クロック識別子のみを格納した JSON オブジェクト（exit / signal / kind への分類は保存せずビュー層で導出）
+- ノードトポロジー成果物: ノードラッパー、Singularity、SGLang の実起動引数列、ホストプロセスのアフィニティ、静的 GPU マッピング情報を所有
+- ノード設定イベント成果物: 解決済みの BenchArgs および ServerArgs のみを所有（argv や GPU 情報を重複保持しない）
+- ワーカーレディイベント成果物: グローバルランクごとのランタイムバックエンド、デバイス UUID、ワーカーアフィニティを所有
+
+シェル表示用の文字列はビュー層で組み立てる。同一のノード固有フィールドを実行スコープのキーへ送信してはならない。
+ノードラッパーは、シャットダウン受信の事実や判定結果を自身のフラグメントへ重複書き込みしない。ノードエージェントの最終サマリーをシャットダウン受信の正本とし、ラッパーのフラグメントを子プロセスのライフサイクルの正本とする。サマリーには run ID、ノードランク、呼び出し ID、シーケンス番号、ローカルモノトニックタイムスタンプ、`CLOCK_MONOTONIC` クロック識別子を記録する。リデューサーがシャットダウン呼び出し ID の一致とノードごとの一意性を検証し、ビュー層はその検証済みレコードと子プロセスライフサイクルを run ID およびノードランクで結合する。クロック識別子も一致している場合に限り、シャットダウン受信前の子プロセス終了を早期障害（early failure）、受信後の終了を協調的終了（coordinated teardown）として分類導出する。受信レコードが0件または複数存在する場合、あるいは呼び出し ID やクロック識別子に不一致がある場合は、分類を確定させず NULL とする。異なるノード間のタイムスタンプを直接突き合わせることはせず、ランク0の完了ファイルが生成されたという事実のみで非ゼロノードランクの早期異常終了を上書き隠蔽してはならない。
+
+## Qwen / SGLang において保存する原始事実
+
+### 実行（Run）およびステージ（Stage）
 
 - `run.started_at`、`run.finished_at`、`run.elapsed_sec`
-- `run.exit_code`。`run_outcome`は0=`succeeded`、非0=`failed`、欠損=`NULL`としてviewで一度導出する
-- `run.stage.benchmark.launch`。node別actual argvはnode topology artifactだけが所有する
-- `perf.stage.benchmark.wall_time_sec`とexit/signal/spawn errorを区別するstage termination object
-- `scheduler.request`: runner submit boundaryの個別実行設定、PJM script identity、exact `pjsub` argv
-- `scheduler.accounting`: 固定した`pjstat --history -S --choose ... --data --delimiter "\t"`の結果
-- regular runだけ、submission resultの`scheduler.submit_job_id`とjob-entryの
-  `scheduler.job_entry_job_id`を別sourceのscalar indexとして保存し、equalityはviewで導出する。binding booleanは作らない
-- benchでもmodel load前に一度だけ、node別topology artifactへlogical index、PCI bus ID、UUID、model、
-  memory bytes、driver versionと設定値を保存する。run-scoped `hardware.gpu.nodes` raw factは作らない
-- profileだけ、minimal CPU/settingsに含まれないfull NUMA/memory raw artifactを追加する。captureのrun ID/hostnameを
-  minimal hardwareの`(node_rank,hostname)`と照合し、meminfo kB→bytesとcpulist canonicalizationを固定する。
-  `hardware.cpu_numa.nodes` raw factは作らずconsumerへ直接投影し、benchではNULL
-- worker affinity/cpusetは`worker_ready`のglobal-rank-scoped runtime fact
+- `run.exit_code`: `run_outcome` は 0 を `succeeded`、非ゼロを `failed`、欠損を `NULL` としてビュー層で1回のみ導出する
+- `run.stage.benchmark.launch`: 各ノードの実 argv はノードトポロジー成果物のみが所有する
+- `perf.stage.benchmark.wall_time_sec`、および exit / signal / spawn error を明確に区別するステージ終了オブジェクト
+- `scheduler.request`: ランナーのジョブ投入境界における個別実行設定、PJM スクリプト識別子、実際の `pjsub` 引数列
+- `scheduler.accounting`: 固定された `pjstat --history -S --choose ... --data --delimiter "\t"` の出力結果
+- 通常の実行に限り、投入結果の `scheduler.submit_job_id` とジョブ起動時の `scheduler.job_entry_job_id` を別ソースのスカラーインデックスとして保存し、両者の一致性はビュー層で判定する（結合成否のブール値キーは作らない）
+- 通常の bench 実行であってもモデルロード前に1回のみ、ノード別トポロジー成果物へ論理インデックス、PCI バス ID、UUID、モデル名、メモリバイト数、ドライババージョン、各種設定値を記録する（実行スコープの `hardware.gpu.nodes` 生ファクトは作らない）
+- profile 実行に限り、最小限の CPU・設定情報には含まれない詳細な NUMA・メモリの生アーティファクト（raw artifact）を追加取得する。キャプチャデータの run ID およびホスト名を最小ハードウェア情報の `(node_rank, hostname)` と突合し、meminfo の kB からバイトへの換算および cpulist の正規化を行う（`hardware.cpu_numa.nodes` 生ファクトは作成せずコンシューマ列へ直接投影し、bench では NULL とする）
+- ワーカーの CPU アフィニティおよび cpuset は、`worker_ready` イベントにおけるグローバルランクスコープの実行時ファクトとして記録する
 
-run lifecycleはPJM entryからcompute source/log回収終了までを取る。started/finishedはUTC wall clock、elapsedは同じsupervisor境界の
-monotonic clockで取得するため、
-wall-clock jumpとtimestamp精度の影響を受けず厳密な派生関係ではない間だけ残す。同一scope、clock、
-precisionへ統一した時点でelapsedまたはtimestamp pairの一方をview派生へ移す。
+実行ライフサイクル（run lifecycle）の計測区間は、PJM ジョブ起動から計算結果・ログの回収完了までとする。開始・終了時刻は UTC ウォールクロック、経過時間は同一スーパーバイザー境界のモノトニッククロックから取得するため、クロックの不連続ジャンプやタイムスタンプの分解能差異に起因する不整合を避ける目的で、厳密な従属関係が成立しない間は双方を記録に残す。同一のスコープ、クロック、精度へ統一された段階で、経過時間またはタイムスタンプペアのいずれか一方をビュー側の導出項目へ移行する。
 
-### SIF、model、dataset provenance
+### SIF、モデル、データセットの来歴（Provenance）
 
-SIF内manifestにはbuild inputsとして次を固定する。
+コンテナイメージ（SIF）内部のマニフェストには、ビルド時の入力情報として以下を記録・固定する。
 
-- buildを定義した`2_Qwen`のrepository ID、object hash algorithm、full commit
-- `5_SGLang_Src`のrepository ID、object hash algorithm、resolved full commit
-- base OCI digest、resolved package/toolchain manifest
-- workflow run/attemptはSIF/sidecarに入れずoperational build rowだけが所有する
+- ビルドを定義した `2_Qwen` のリポジトリ識別子、オブジェクトハッシュアルゴリズム、完全コミット SHA
+- `5_SGLang_Src` のリポジトリ識別子、オブジェクトハッシュアルゴリズム、解決済みの完全コミット SHA
+- ベース OCI イメージのダイジェスト、解決済みのパッケージおよびツールチェーンのマニフェスト
+- ワークフローの実行番号や試行回数は SIF やサイドカー内には含めず、運用ビルド管理テーブル側のみが所有する
 
-nccl-testsはmoving masterを使わずcommit
-`717b68318278e93f371d8ffb46b076069d7c7851`へ固定し、MPI対応かつJSON出力対応でbuildする。
-SIF build testは`all_reduce_perf`、`all_gather_perf`、`reduce_scatter_perf`の存在、固定commit、MPI support、
-`-J` optionの利用可能性を検証する。実NCCL library versionはrun時に`software.nccl.version`へ記録する。
+nccl-tests は可変な最新ブランチを参照せず、コミット `717b68318278e93f371d8ffb46b076069d7c7851` に固定した上で、MPI 対応および JSON 出力対応を有効化してビルドする。SIF のビルドテストにおいて、`all_reduce_perf`、`all_gather_perf`、`reduce_scatter_perf` の各バイナリの存在、固定コミットとの一致、MPI サポート、および `-J` オプションの利用可能性を検証する。実際にロードされた NCCL ライブラリのバージョンは、実行時に `software.nccl.version` へ記録する。
 
-SIF完成後に実際の参照先binaryをSHA-256で検証し、そのcontent identityとembedded manifestの
-identityをsidecarへ保存する。SIF全体hashをSIF自身へ埋め込む自己参照にはしない。
-sidecarはscore bundle `source_paths`ごとのfinal tree stateをpath順のabsentまたはmode/blob OIDとして一度持ち、
-SIF semanticへ含める。referenceはemptyとするため、
-別instrumentation source bytesを同じsemanticとして扱わない。
-v1のbundle `source_paths`とin-process hookはすべて`sif_build_definition` repositoryに属し、各hook `source_path`を
-bundle集合とsidecar tree entryへ含める。upstream `sglang_source`を直接変更する場合は、曖昧に混ぜず別contractで
-そのrepositoryのdiff/treeを追加する。
-recipeの`From:`はdigest-pinned referenceにし、buildが消費したOCI manifest/config/layer digestを
-sidecarへ記録する。build scriptがSIFとsidecarを書き終えて成功した後だけcacheへ公開し、reuse時に
-両者のidentity一致を検査する。任意のcrash境界から二fileを復旧するtransactionは作らない。
+SIF 完成後、実際に参照されるバイナリファイルを SHA-256 で検証し、そのコンテンツハッシュおよび埋め込みマニフェストの識別情報をサイドカーファイルへ保存する。SIF 全体のハッシュ値を SIF 自身へ埋め込むような循環参照は行わない。
+サイドカーファイルは、スコアバンドルの `source_paths` に基づく最終ツリー状態をパス順に保持し、SIF の同一性定義に含める。空の参照を許容しないことで、異なる計測ソースコードのバイト列を同一のセマンティクスとして誤認することを防ぐ。
+v1 におけるバンドルの `source_paths` およびインプロセスフックはすべて `sif_build_definition` リポジトリに属し、各フックの `source_path` をバンドル集合およびサイドカーツリーへ登録する。upstream の `sglang_source` を直接改変する場合は、混同を避けるため独立した契約として当該リポジトリの差分ツリーを追加する。
+レシピ内の `From:` 句にはダイジェスト指定の参照を用い、ビルド時に消費された OCI マニフェスト、設定、レイヤーの各ダイジェストをサイドカーへ記録する。ビルドスクリプトが SIF およびサイドカーの双方を完全に書き終えて正常終了した場合に限りキャッシュ領域へ公開し、再利用時には双方の識別子の一致を検証する。クラッシュ時に中途半端な2ファイルを自動修復するような複雑なトランザクション機構は設けない。
 
-model sourceはtagged unionにする。Hub由来なら`hub_revision`としてrepositoryとfull immutable revision、local
-prebuiltなら`source/model-manifest.json`自身の`prebuilt_manifest` recordに各shardの
-relative path/size/SHA-256を必須にし、完全導出できるmanifest IDはrecordへ複写しない。別のprebuilt manifest artifact/pathは参照しない。runの
-`source/model-manifest.json`は選んだsource record、`config.json`と`model.safetensors.index.json`のSHA-256、indexが
-参照するsorted unique shardのrelative path/size、tokenizer/chat-template fileのpath/size/SHA-256を持つ。runごとは
-small file hashとshard path/sizeをsource recordへ照合し、400 GBのshard本文を再hashしない。
+モデルのデータソースは直和型（tagged union）として管理する。Hugging Face Hub 由来の場合は `hub_revision` としてリポジトリ名および完全な不変リビジョンを記録し、ローカルの事前構築済みモデル（prebuilt）の場合は `source/model-manifest.json` 内の `prebuilt_manifest` レコードに各シャードの相対パス、サイズ、SHA-256 を必須として記録する。完全に導出可能なマニフェスト ID をレコード内へ重複記載することはせず、外部の別マニフェストファイルを参照することもしない。実行ごとの `source/model-manifest.json` は、選定されたソースレコード、`config.json` および `model.safetensors.index.json` の SHA-256、インデックスが参照するソート済みシャード一覧の相対パスとサイズ、トークナイザおよびチャットテンプレート関連ファイルのパス、サイズ、SHA-256 を保持する。実行ごとの検証では、小さなメタデータファイルのハッシュおよびシャードのパス・サイズをソースレコードと照合するにとどめ、400 GB のシャード本文全体の再ハッシュは行わない。
 
-datasetはworkflowのtracked protocolでfull repository revisionをpinし、`hf download --revision <full-revision>`を
-使う。`source/dataset-manifest.json`へrepository/full revision、relative file name、size、SHA-256を保存する。
-moving `main`や共有pathだけをidentityにしない。runが一度所有し、provision時にmanifestと実体の一致を検証する。
+データセットについては、ワークフローのバージョン管理されたプロトコルにおいて完全なリポジトリリビジョンを固定し、`hf download --revision <full-revision>` を用いて取得する。`source/dataset-manifest.json` へリポジトリ名、完全リビジョン、相対ファイル名、サイズ、SHA-256 を記録する。可変な `main` ブランチや共有ファイルシステム上のパスのみを識別子として流用してはならない。実行ジョブがマニフェストを所有し、プロビジョニング時にマニフェストと実体ファイルの一致を厳格に検証する。
 
-raw索引は`artifact.model.manifest_sha256`、`artifact.dataset.manifest_sha256`だけを持つ。
-repository/revision/memberはmanifest内の完全recordが正本であり、個別raw keyへ再掲しない。
+生データの索引としては、`artifact.model.manifest_sha256` および `artifact.dataset.manifest_sha256` のみを保持する。リポジトリ名、リビジョン番号、構成ファイル等の詳細はマニフェスト内の完全なレコードが正本であり、個別の生メトリクスキーへ再掲することはない。
 
-raw tableはrun自身の再現に必要なcommitとmanifest identityだけを索引化する。source manifestはrun bundleの固定member
-から到達し、bundle URIはworkflow operational joinが所有する。SIFや全model shardを各benchmark runで再hashしない。
+生データテーブルは、実行の再現に必要なコミット情報およびマニフェスト識別子のみを索引化する。ソースマニフェストへは実行バンドル内の固定パスからアクセス可能であり、バンドルの URI はワークフローの運用テーブル側で紐付ける。SIF イメージや全モデルシャードをベンチマーク実行のたびに再ハッシュすることは行わない。
 
-### 実workload identity
+### 実際のワークロードの同一性（Workload Identity）
 
-rank 0は、実際に選ばれたrequest順序を持つcanonical manifestをartifactへ残す。各recordは
-少なくとも次を含む。
+ランク0 は、実際に選択されたリクエスト順序を保持する正規化マニフェストを成果物ファイルとして永続化する。各レコードは、少なくとも以下の要素を網羅する。
 
-- dataset rowならdataset manifest identity+元JSON array index、random warmupならgenerator ID+seed+ordinalのsource identity
-- 実generateへ渡すexact prompt payload。現行text pathはUTF-8 textとtokenizerが観測したinput token count、
-  将来token-ID pathならinteger arrayのtagged union
-- requested output length
-- sampling parameter
-- request順序
+- データセット行に基づく場合はデータセットマニフェスト識別子および元の JSON 配列インデックス、ランダムウォームアップの場合は生成器 ID、シード値、序数からなるソース識別情報
+- 実際の generate 呼び出しへ渡されたプロンプトデータ本体（テキストプロンプトの場合は UTF-8 文字列およびトークナイザが観測した入力トークン数、将来のトークン ID 指定パスの場合は整数配列の直和型）
+- 要求出力トークン長
+- サンプリングパラメータ
+- リクエストの投入順序
 
-actual input promptは比較に必要なため保存するが、生成本文は保存しない。manifest identityはordered requestの
-exact prompt payloadを含む全recordから作る。publisherはartifactをparseし、request ordinal/source identity/
-prompt payload/requested output length/sampling
-parameterを`qwen_workload_requests_raw_v2`へqueryable copyとして投入する。manifest hashだけではworkloadの
-長さ分布や内容をSheet/agentが判断できないため、このrelationはartifactとBigQueryの保存境界をまたぐ正当な重複である。
-workload manifest identityは`qwen_workload_manifests_raw_v2`のsource SHA-256だけが所有し、通常Factへ複写しない。
-protocolの単一expected workload identityは
-`SHA-256(JCS({warmup:<warmup manifest file SHA-256>,measured:<measured manifest file SHA-256>}))`とし、regularはrun、
+実際に投入された入力プロンプトは実験の再現・比較に不可欠であるため記録するが、モデルが生成したテキスト本文は保存しない。ワークロードの同一性（manifest identity）は、順序付けられたリクエストのプロンプトデータを含む全レコードから算出する。パブリッシャは成果物をパースし、リクエスト序数、ソース識別情報、プロンプトデータ、要求出力長、サンプリングパラメータを `qwen_workload_requests_raw_v2` へクエリ可能なコピーとして投入する。マニフェストのハッシュ値のみではワークロードのトークン長分布や内容をスプレッドシートやエージェントが判断できないため、このリレーションは成果物ストレージと BigQuery の境界をまたぐ正当な重複として認める。
+ワークロードマニフェスト自体の同一性ハッシュは `qwen_workload_manifests_raw_v2` のソース SHA-256 のみが所有し、通常のファクトテーブルへは複製しない。プロトコルにおける想定ワークロードの単一ハッシュ値は `SHA-256(JCS({warmup: <warmup manifest SHA-256>, measured: <measured manifest SHA-256>}))` として定義する。
 
-warmup manifest内のmodeもmeasured前のcache/stateを変える一致必須条件にする。selected count、planned input/
-output token total、modeはmanifestの完全な部分集合なのでconsumer viewで導出し、raw keyやPrimaryResultへ
-複写しない。総token数が等しくてもrequest順序や長さ分布が異なればmanifest identityが変わる。
+ウォームアップマニフェスト内に記録されたモード設定も、本番測定前のキャッシュ状態やエンジン状態を左右するため、完全一致を要求する必須条件とする。選択件数、計画入力／出力トークン総数、実行モードはマニフェストの完全な部分集合であるためコンシューマビュー側で導出するものとし、生キーやプライマリリザルトへ重複して記録しない。総トークン数が同一であっても、リクエストの順序や長さの分布が異なればマニフェストの同一性ハッシュは異なる値となる。
 
-### benchmark結果の原始観測値
+### ベンチマーク結果の原始観測値
 
 - `result.request.returned_count`
 - `result.request.error_count`
@@ -440,34 +349,20 @@ output token total、modeはmanifestの完全な部分集合なのでconsumer vi
 - `result.token.output.total`
 - `perf.benchmark.generation.wall_time_sec`
 
-returned/error countは実際に返ったresponse配列と各objectを検証して作る。返らなかった件数は
-viewで`workload.requests.length - returned_count`として導出する。generation開始前の予定request数を
-`successful_requests`と呼ばない。result fileは存在だけでなく、非空、valid JSON、期待row数、
-有限で正のlatency、token整合を検査する。
+返却件数およびエラー件数は、実際に返却されたレスポンス配列および各オブジェクトの内容を厳密に検証して計数する。返却されなかったリクエスト数は、ビュー層において `workload.requests.length - returned_count` として算出する。生成開始前に予定されていたリクエスト件数を安易に `successful_requests` と呼称してはならない。結果ファイルについては単なる存在確認だけでなく、ファイルが空でないこと、JSON として妥当であること、想定行数を満たしていること、レイテンシが有限の正値であること、トークン数が整合していることを厳格に検査する。
 
-runtime backendの文字列出力はgenerate return直後にdecodeし、各responseの
-`meta_info.prompt_tokens`と`completion_tokens`からobserved totalsを作る。malformed/error responseは
-`error_count`へ分類し、取れないtoken値はNULLにする。generate全体が
-例外ならreturned/error/token countを0と捏造せず、generation lifecycle failedとkey不在で表す。
+ランタイムバックエンドの文字列出力は generate 呼び出しから復帰した直後にデコードし、各レスポンスの `meta_info.prompt_tokens` および `completion_tokens` から実測トークン総数を集計する。不正なレスポンスやエラーレスポンスは `error_count` へ分類し、取得不能なトークン値は NULL とする。generate の呼び出し全体が例外によって中断した場合、返却数やトークン数を 0 と捏造することはせず、ライフサイクル失敗およびキーの非存在（absent）として正しく表現する。
 
-bench/profileのprimary resultは、rank 0がこの検証直後に作るartifactを唯一のsourceとする。
-temporary fileをwrite/closeしてrenameしてからprofile固有取得または
-shutdownへ進む。`get_server_info()`は一次factを持たずprofileだけで呼ぶ。通常benchはprimary result完成後に
-直ちにlifecycle shutdownへ進む。予定件数を成功件数として扱うnative `result_filename`は使わない。
-この限定的な二sourceは`duplication_justification`へ検証式とともに登録する。
+bench および profile 実行におけるプライマリリザルトは、ランク0 が上記の検証直後に生成する成果物ファイルを唯一の正本とする。一時ファイルへの書き込みおよびクローズを完了し、正式なファイル名へリネームした後に、プロファイル固有の取得処理やシャットダウン処理へ進む。`get_server_info()` は一次ファクトを持たないため profile 実行でのみ呼び出し、通常の bench 実行ではプライマリリザルトの完成後直ちにライフサイクルのシャットダウンへ移行する。予定リクエスト数をそのまま成功件数として扱うような実装依存の `result_filename` は使用しない。
 
-benchmark validityは少なくとも`error_count = 0`、`returned_count = workload.requests.length`、observed
-input totalとplanned input totalの一致、有限かつ正のgeneration wall timeを要求する。現在の
-`ignore_eos`固定protocolではobserved output totalとrequested output totalの一致も要求する。
-nullableなordered output identityは通常bench/profileの`benchmark_valid`へ追加せず、開発時の一時比較の
-evidence presence/result equivalenceにだけ要求する。
+ベンチマークの妥当性（benchmark validity）の判定基準として、少なくとも `error_count = 0` であること、`returned_count = workload.requests.length` であること、実測入力トークン総数と計画入力トークン総数が一致すること、および生成ウォールタイムが有限かつ正の値であることを必須要件とする。現在の `ignore_eos` を固定した測定プロトコルにおいては、実測出力トークン総数と要求出力トークン総数の一致も要求する。
+出力トークン ID の順序付き同一性ハッシュは、通常の bench / profile の `benchmark_valid` 条件には含めず、開発時の性能比較における数値等価性の検証にのみ用いる。
 
-request/input/output/total throughputは上記の原始値からviewで計算する。資格確認/primary artifact内へ
-代数的throughputを複写しない。一次比較に使わない`last_gen_throughput`も取得・保存しない。
+リクエストスループット、入力トークンスループット、出力トークンスループット、合計トークンスループットは、上記の原始観測値からビュー層の計算式によって導出する。プライマリアーティファクト内へ代数的なスループット数値を重複記録することはしない。また、一次比較の指標として用いない `last_gen_throughput` の取得や保存も行わない。
 
-### phase timing
+### フェーズ計時（Phase Timing）
 
-外側から観測可能な境界に合わせ、同じmonotonic clock domainから次を記録する。
+プロセスの外側から明確に観測可能な境界に合わせ、同一のモノトニッククロックドメインから以下の各フェーズ所要時間を記録する。
 
 - `perf.phase.distributed_engine_init.wall_time_sec`
 - `perf.phase.input_prepare.wall_time_sec`
@@ -475,135 +370,86 @@ request/input/output/total throughputは上記の原始値からviewで計算す
 - `perf.benchmark.generation.wall_time_sec`
 - `perf.phase.engine_shutdown.wall_time_sec`
 
-distributed engine initはrank 0 processの同じclockで`Engine(...)`呼出し直前からconstructor return
-直後までとする。各worker-ready timestampを引き算へ混ぜず、ready eventはglobal rank cardinalityと
-runtime completenessだけに使う。input prepareはmeasured request object完成時にtimerを閉じ、
-workload manifestのhash/writeはtimer外かつgenerate前に行う。
+分散エンジンの初期化時間は、ランク0 プロセスの同一クロックを用いて、`Engine(...)` の呼び出し直前からコンストラクタが復帰した直後までを計測する。各ワーカーの ready タイムスタンプを減算処理に混在させることはせず、ready イベントはグローバルランクのカーディナリティおよびランタイムの完全性検証にのみ使用する。入力準備フェーズは測定リクエストオブジェクトが完成した時点でタイマーを停止させ、ワークロードマニフェストのハッシュ計算およびファイル書き出しはタイマー計測区間の外側、かつ generate 呼び出しの前に行う。
 
-純粋なmodel loadは全worker内の境界を観測できた場合だけ追加する。JITは複数phaseにまたがる
-ため、根拠なく`jit_and_warmup`という一時間へまとめない。timed pathではlocal source writeだけを
-行い、BigQuery送信待ちをstage時間へ混入させない。
+純粋なモデルロード時間については、全ワーカー内部での境界が完全に観測できた場合に限り独立した項目として追加する。JIT コンパイル処理は複数のフェーズにまたがって発生するため、客観的な根拠なしに `jit_and_warmup` といった曖昧な単一時間へ合算してはならない。時間計測パスにおいてはローカルファイルへの書き込みのみを行い、BigQuery へのネットワーク送信待ち時間をステージの計測時間へ混入させてはならない。
 
-### MPI・NCCL通信計測
+### MPI および NCCL 通信計測
 
-bench/profileのprimary generationが成功した場合に限り、同じallocation、MPI process数、GPU/process、transport環境で
-IMB-MPI1とnccl-testsを本処理後に実行する。cluster固有launcherは後続のジョブ組込みが完全argvを組み立て、
-共通capture runnerはargvを変更せずstdout/stderr/argv/terminationを保存する。
+bench または profile 実行における推論生成処理が正常完了した場合に限り、同一の計算リソース割り当て、同一の MPI プロセス数、プロセス当たり GPU 数、およびネットワークトランスポート環境下で、本処理の直後に IMB-MPI1 および nccl-tests を実行する。クラスタ固有のランチャーコマンドは後続のジョブスクリプト側で完全な引数列を組み立て、共通のキャプチャランナーは引数を改変せずに標準出力、標準エラー出力、argv、終了コードを保存する。
 
 ```text
 IMB-MPI1 -npmin <generationと同じMPI process数> -msglog 0:22 -iter 1000 -time 1 \
   -iter_policy dynamic PingPong Sendrecv Allreduce
 ```
 
-0 byteおよび1 byteから4 MiBまでの2冪を対象にし、rawは`source/network/imb-mpi1/`へ置く。pure text parserは
-complete sectionだけからIMB自身のprocess count、message size、iterations、time、bandwidthを復元し、独自平均や再計算値を作らない。
+0 バイト、および 1 バイトから 4 MiB までの 2 の累乗サイズを計測対象とし、生データは `source/network/imb-mpi1/` 配下に保存する。テキストパーサーは完全に完了したセクションのみから IMB 自身のプロセス数、メッセージサイズ、反復回数、所要時間、帯域幅を抽出し、独自の平均値や再計算値を作成しない。
 
-nccl-testsは`network_nccl_all_reduce`、`network_nccl_all_gather`、`network_nccl_reduce_scatter`の独立stageとし、
-`all_reduce_perf`、`all_gather_perf`、`reduce_scatter_perf`を次の共通引数で実行する。
+nccl-tests は、`network_nccl_all_reduce`、`network_nccl_all_gather`、`network_nccl_reduce_scatter` の独立したステージとして実行し、`all_reduce_perf`、`all_gather_perf`、`reduce_scatter_perf` を以下の共通パラメータで呼び出す。
 
 ```text
 -b 8 -e 1G -f 2 -w 5 -n 20 -m 1 -N 1 -d float -c 1 -a 1 -T 300
 -g <generationと同じGPU数/MPI process> -J <collective別JSON path>
 ```
 
-全MPI process・全GPUで一communicatorを作り、`NCCL_TESTS_SPLIT`は設定しない。JSONを正本としてparseし、
-stdout/stderr/argvも`source/network/nccl-tests/<collective>/`へ保存する。out-of-place/in-placeを別rowにし、
-nccl-tests出力の`algbw`と`busbw`を意味の異なる値としてそのまま保存する。
+全 MPI プロセスおよび全 GPU を単一のコミュニケータに統合し、`NCCL_TESTS_SPLIT` は設定しない。出力された JSON ファイルを正本としてパースし、標準出力、標準エラー出力、argv も `source/network/nccl-tests/<collective>/` 配下に保存する。アウトオブプレース（out-of-place）とインプレース（in-place）は個別の行として扱い、nccl-tests が出力するアルゴリズム帯域幅（`algbw`）とバス帯域幅（`busbw`）は意味の異なる指標としてそのまま独立して記録する。
 
-固定幅factsは`network.imb_mpi1.*`、`software.imb_mpi1.version`、`network.nccl_tests.*`、
-`software.nccl_tests.commit`、`software.nccl.version`とstage termination/wall timeだけである。
-IMBは`mpi_network_results_v2`へ`(run_id,benchmark,process_count,message_bytes)` grain、NCCLは
-`nccl_network_results_v2`へ`(run_id,collective,message_bytes,buffer_mode)` grainで投影し、summary keyは作らない。
+固定幅のファクトとしては、`network.imb_mpi1.*`、`software.imb_mpi1.version`、`network.nccl_tests.*`、`software.nccl_tests.commit`、`software.nccl.version`、および各ステージの終了状態／ウォールタイムのみを記録する。IMB の結果は `(run_id, benchmark, process_count, message_bytes)` の粒度で `mpi_network_results_v2` へ、NCCL の結果は `(run_id, collective, message_bytes, buffer_mode)` の粒度で `nccl_network_results_v2` へそれぞれ展開し、集約サマリーキーは作成しない。
 
-generation失敗時は通信stageを一つも起動しない。通信stageの失敗はgeneration/run成功を覆さないが
-`collection_complete=false`とし、parse不能・truncated sourceから結果rowを作らない。NCCL三stageは一つが失敗しても残りを続行し、
-retryしない。generation wall timeへ通信時間を含めず、run全体時間だけが含む。ASPIRE 2A/2A+、Gadi、玄界のlauncher、
-module、host mapping、Singularity、walltime、PJM/PBS/workflow編集は後続作業とする。
+推論生成処理が失敗した場合は、通信計測ステージを一切起動しない。通信ステージが失敗した場合であっても推論生成の成功ステータスは覆らないが、実行全体の完全性フラグは `collection_complete=false` とし、パース不能または途絶したソースから不完全な結果レコードを生成してはならない。NCCL の3ステージは、途中の1つが失敗しても残りのステージを継続して実行し、リトライは行わない。推論生成のウォールタイムには通信計測の時間を含めず、ジョブ全体の経過時間のみがこれを含む。ASPIRE 2A/2A+、Gadi、玄界のランチャー、モジュール、ホストマッピング、Singularity、ウォールタイム、PJM/PBS/ワークフロー編集は後続作業とする。
 
-### cache identity
+### キャッシュの同一性（Cache Identity）
 
-各nodeでstaging完了後、benchmark前のinput cacheをcanonical manifestとして保存し、
-`cache.node.<node_rank>.input_manifest_sha256`だけを比較identityとして索引化する。
-file count、size、cold/warmをraw metricへ重複保存しない。empty、compatible warm、unknownは
-manifest dimensionとSIF/model/driver/backend互換規則からviewで導出する。
+各ノードにおけるステージング完了後、ベンチマーク実行直前の入力キャッシュ状態を正規化マニフェストとして保存し、`cache.node.<node_rank>.input_manifest_sha256` のみを比較用の同一性識別子として索引化する。ファイル数、合計サイズ、コールド／ウォームの判定を生メトリクスへ重複記録することは避ける。未初期化、互換性のあるウォーム状態、未知の状態等の判定は、マニフェスト情報ならびに SIF、モデル、ドライバ、バックエンドの互換性規約に基づいてビュー層で導出する。
 
-run後にcacheを共有領域へmergeしても、そのrunのinput identityは変更しない。同じfile count
-とsizeでも内容が違えばmanifest identityが変わらなければならない。
+ベンチマーク終了後にノードローカルのキャッシュを共有領域へマージした場合であっても、当該実行における入力キャッシュの同一性ハッシュは変更しない。ファイル数や合計サイズが同一であっても、内容に差異があればマニフェストのハッシュ値は異なる値とならなければならない。
 
-### GPU telemetry（profile only）
+### GPU テレメトリ（Profile 専用）
 
-各nodeのsamplerはnode-owned JSONLへbuffered appendし、一定間隔と正常終了時にflush/closeする。
-稀なprocess killで末尾sampleを失うことは許容する。sampleはnode-local monotonic timestamp、wall anchor、sequence、GPU UUID、
-logical indexとnullable measurement値を持つ。control markerを各nodeの同じnode-local clockで受け、expected
-nodeのstart/endが一つでも欠ければgeneration aggregateを作らない。poll status/reason fieldは作らない。node GPU windowは同じ
-`invocation_id`のlocal observation `[start,end)`とし、broadcast/ACK latencyをprofile summaryへ残す。
+各ノード上のサンプラーは、ノード所有の JSONL ファイルへバッファリング追記を行い、一定周期および正常終了時にフラッシュおよびクローズする。プロセスの強制終了等によって末尾の数サンプルが失われることは許容する。各サンプルは、ノードローカルのモノトニックタイムスタンプ、ウォールクロック時刻、シーケンス番号、GPU UUID、論理インデックス、および NULL 許容の各測定値を保持する。制御マーカーは各ノードの同一ローカルクロックで受信し、想定ノードにおける開始／終了マーカーが1つでも欠落した場合は生成区間の集約値を算出しない。サンプラーのポーリングステータスや理由フィールドは作成しない。ノードごとの GPU 観測ウィンドウは、同一の `invocation_id` におけるローカル観測区間 `[start, end)` とし、ブロードキャストおよび ACK のレイテンシをプロファイルサマリーへ記録する。
 
-BigQueryにはphase/node/GPU scopeを明示して、次だけを集約する。
+BigQuery へは、フェーズ、ノード、GPU のスコープを明示的に指定した上で、以下の集約値のみを送信する。
 
-- valid sample countとvalid observed duration
-- generation GPU utilization mean/p95
-- memory max
-- energyとpower-valid duration
-- temperature max、SM clock min
+- 有効サンプル数および有効観測時間（秒）
+- 生成区間における GPU 使用率の平均値および95パーセンタイル値
+- メモリ使用量の最大値
+- 消費電力量（J）および電力有効観測時間
+- 最高温度（℃）および最低 SM クロック周波数（MHz）
 
-gauge sampleは取得時刻から次sample、phase end、または`2 * nominal_interval`の最小時刻まで
-有効なstep functionとして扱い、それより長いgapはcoverageへ入れない。meanはvalid duration
-weighted mean、p95は値を昇順に並べたweighted nearest-rank、energyはpowerの同じstep-function
-積分とする。最後のpre-start sampleもその有効区間がphase `[start,end)`と交差する部分には使う。
-coverageはvalid observed duration / phase durationである。power meanは
-energy/power-valid durationからviewで導出する。phase markerが欠けた場合はgeneration aggregateを
-作らず、stage全体値で代用しない。raw sampleと集約の一致をfixtureで確認する。
+ゲージ（瞬時値）サンプルは、取得時刻から次のサンプル時刻、フェーズ終了時刻、または `2 * nominal_interval` のいずれか最小の時刻まで有効な階段関数（step function）として扱い、これを超える長い空白期間はカバレッジの計算対象外とする。使用率の平均値は有効時間による重み付け平均、95パーセンタイル値は昇順に並べた重み付け最近傍ランク（weighted nearest-rank）、消費電力量は消費電力サンプルの同一階段関数による積分値とする。測定開始直前の最後のサンプルであっても、その有効区間がフェーズ区間 `[start, end)` と交差する部分は計算に含める。
+カバレッジ比率は `有効観測時間 / フェーズ継続時間` として算出する。平均電力（W）は、消費電力量および電力有効時間からビュー層で導出する。フェーズマーカーが欠落した場合は生成区間の集約を行わず、ステージ全体の集約値で安易に代用してはならない。生サンプルと集約値の整合性はテストフィクスチャを用いて検証する。
 
-## validity、completeness、comparison eligibility
+## 妥当性・完全性・比較適格性
 
-viewは`collection_complete`、`benchmark_valid`、`score_comparison_eligible`、
-`run_outcome`だけを独立に導出する。configuration/lifecycle/provenance/topology/telemetryごとのstatusやreasonは
-作らず、個々の値はRunsまたはSourcesで直接確認する。profile telemetryはsample/valid duration/coverageと
-nullable aggregate値だけを表示し、complete booleanを作らない。
+ビュー層は、`collection_complete`、`benchmark_valid`、`score_comparison_eligible`、`run_outcome` の各フラグを完全に独立して算出・導出する。設定、ライフサイクル、来歴、トポロジー、テレメトリごとの個別ステータスやエラー理由は作成せず、個別の詳細値は Runs または Sources テーブルで直接確認するものとする。プロファイルテレメトリについては、サンプル数、有効時間、カバレッジ、および集約値のみを表示し、テレメトリ専用の完全性ブール値は設けない。
 
-telemetry欠損だけをbenchmark failureへ読み替えない。各runでnode rank `0..nodes-1`、distinct host数、
-GPU/node、unique GPU UUID数、TP、nnodes、MPI process数をprotocolの個別fieldへ照合する。現在の具体設定値は
-2 nodes、1 MPI process/node、4 GPU/node、TP=8である。configuration eventやworkload manifestが欠けた成功runはthroughput値を残すが、
-score comparison eligibleにはしない。
+テレメトリの欠損のみをもってベンチマーク本体の失敗とみなしてはならない。各実行において、ノードランク `0..nodes-1`、一意なホスト数、ノード当たり GPU 数、一意な GPU UUID 数、TP、ノード数、MPI プロセス数をプロトコルの個別フィールドと突合する。現在の具体的な実機設定値は、2ノード、ノード当たり1 MPI プロセス、ノード当たり4 GPU、TP=8 である。設定イベントやワークロードマニフェストが欠落した実行であっても、ベンチマーク自体が成功していればスループット値は記録するが、スコア比較適格（score comparison eligible）とは判定しない。
 
-`run_purpose`は各run自身の用途として保存するが、group/set IDは作らない。
-`score_comparison_eligible`は`run_purpose=bench`と通常のresult/source/placement gateだけから導出する。
-開発時の非擾乱確認はrunやeligibilityとして記録しない。profileはthroughputを算出・表示してもscore stats、best、rankingへ入れない。
+`run_purpose` は各実行自身の用途として記録するが、グループ ID やセット ID は作成しない。
+`score_comparison_eligible` は、`run_purpose=bench` であること、および通常の推論結果・ソース・配置の検証ゲートをすべて通過していることから導出する。開発フェーズにおける性能非擾乱性の確認実行は、独立した実行や適格性フラグとして記録しない。また、profile 実行においてスループットを算出・表示した場合であっても、公式スコアの統計集計、ベストスコア選定、ランキング比較の対象には含めない。
 
-## bench/profile trackの分離
+## bench トラックと profile トラックの分離
 
-重いprofilerやGPU pollingを挟むrunと公式性能を測るrunは分離する。
+高負荷なプロファイラや GPU の頻繁なポーリングを伴う実行と、公式な推論性能スコアを計測する実行は明確に分離する。
 
-- `bench`: score、環境比較、通常の結果・provenance・placementを保存する。profiler、GPU polling、
-  verbose traceを入れない。
-- `profile`: benchのexact commitへprofile専用overlayを載せる診断track。score集計、
-  環境rankingへ混ぜない。
+- `bench`: 公式性能スコアの計測、実行環境間の比較、標準的な推論結果・来歴・配置構成の記録を担う。詳細プロファイラ、GPU ポーリング、冗長なトレース出力は一切含めない。
+- `profile`: bench と同一のコミットに対してプロファイル専用オーバーレイを適用して実行する診断用トラック。公式スコア集計や性能ランキングには混入させない。
 
-key catalogのapplicabilityは`bench|profile`だけを持つ。非適用でも取得失敗でもconsumer値はNULLだけとし、
-field別status、欠損placeholder、reasonを作らない。required sourceの有無はrun-level
-`collection_complete`へ一度だけ反映する。
+キーカタログにおける適用範囲（applicability）は `bench|profile` のいずれかのみを指定する。非該当の実行または取得失敗のケースであっても、コンシューマ列には単に NULL を格納し、フィールド別のステータスフラグ、ダミーのプレースホルダー、詳細理由キー等は作成しない。必須データソースの有無は、実行レベルの `collection_complete` フラグへ1回のみ反映させる。
 
-## BigQuery viewとスプレッドシート
+## BigQuery ビューとスプレッドシート連携
 
-BigQueryには通常bench/profileのrun、source、artifact、workload、result、placement、profile projectionだけを公開する。
-開発時の非擾乱確認、計測なし／ありの組、allocation、判定recordを表すrelationは作らない。
+BigQuery においては、通常の bench および profile 実行における実行情報、ソース、成果物、ワークロード、結果、配置、プロファイルプロジェクションのみを公開する。開発時における性能非擾乱性の検証実行、計測有効／無効の比較ペア、一時的なリソース割り当て、判定レコード等を保持するリレーションは作成しない。
 
-Runsの実行設定はnodes、MPI processes、GPU/node、tensor parallel size、resource group、transport、
-address source、portを個別列にする。設定を束ねるID/object/manifest列は作らない。
+Runs テーブルにおける実行設定は、ノード数、MPI プロセス数、ノード当たり GPU 数、テンソル並列サイズ、リソースグループ、トランスポートポリシー、アドレス解決元、ポート番号をそれぞれ独立した列として展開する。これらを一括して束ねる複合 ID、複合オブジェクト、複合マニフェスト列は設けない。
 
-Connected Sheetsの既存tab設計は維持する。通信結果の表は全実装完了後に設計し、現段階では
-`mpi_network_results_v2`と`nccl_network_results_v2`を将来の`MPI Network`、`NCCL Network` tabの入力候補と
-することだけを固定する。JSON展開やsummary列は要求しない。固定幅source欠損はNULL、long relationは実在rowだけを返す。
+Connected Sheets における既存のシート設計はそのまま維持する。ネットワーク通信計測の結果テーブルについては、全機能の実装完了後に改めてシートレイアウトを設計するものとし、現段階では `mpi_network_results_v2` および `nccl_network_results_v2` を将来の `MPI Network`、`NCCL Network` タブへの入力候補として位置付けることのみを確定事項とする。JSON の展開や集約サマリー列は要求しない。固定幅のソースが欠損した場合は NULL を格納し、長大リレーション（long relation）は実在する行データのみを返却する。
 
-## 開発時の非擾乱確認
+## 開発時における非擾乱性の確認
 
-experiment-metrics-v2のcollector実装中に、代表2-node TP=8設定で計測なし／ありを同条件で実行し、
-throughput、stage wall、ordered output identityを見て実用上の低下や数値変化がないことを確認する。
-これは実装作業の一時チェックであり、確認後は出力を破棄する。
+experiment-metrics-v2 のコレクター実装段階において、代表的な 2ノード TP=8 の実機設定を用い、「計測なし」と「計測有効」の条件を同一環境で実行し、スループット性能、各ステージの所要時間、順序付き出力トークンの同一性を比較することで、実用上の性能低下や数値の不一致が生じていないことを事前に確認する。これは開発・実装プロセスにおける一時的な検証作業であり、確認完了後に出力データは破棄する。
 
-v2には専用run purpose、arm、pair、allocation、manifest、artifact、Fact、metric key、BigQuery relation、
-Sheets tab/column、eligibility、Git管理decision record、fixtureを作らない。通常benchは確認済みbundleを直接使い、
-一時チェックの結果をrunへjoinしない。
+v2 の本番スキーマには、この検証専用の実行目的（run purpose）、比較アーム、ペア ID、リソース割り当て、マニフェスト、成果物、ファクト、メトリクスキー、BigQuery リレーション、スプレッドシート列、適格性判定、決定レコード、テストフィクスチャ等を持ち込んではならない。通常の bench 実行は検証済みのバンドルを直接利用し、一時チェックの検証結果を実行データへ結合させることはしない。
 
 
 ## 決定事項と再open条件
@@ -651,40 +497,33 @@ tool/version/argv/outcome/reason/statusやexpected rank集合は複写しない�
 `(run,global_rank,activity,event_category,event_name,call_count,inclusive_duration_sum_ns,source_member,source_sha256)` grainの
 `qwen_profiler_events_raw_v2`を作る。per-event trace本文、平均、構成比、rank合計、top-N、CPU/GPU/NCCL分類、run-wide
 summaryは保存せずquery時に導出し、bounded `Profiler` Sheet tabがprofile run同士を比較する。trace欠損時は既存
-`collection_complete=false`、固定幅consumerはNULL、long relationは実在rowだけとし、profiler専用complete/reason/placeholderを作らない。
+`collection_complete=false` とし、固定幅コンシューマでは NULL、ロングリレーションでは実在する行のみを記録し、プロファイラ専用の完了フラグや理由、プレースホルダは作成しない。
 
-D-004のreopen triggerは、固定したSGLang commitでlegacy profiler経路が削除されるか、global TP rankとtraceの
-一対一対応が成立しなくなった時だけとする。profile traceの稀な欠損は再設計理由にせず、通常どおりNULL/0 rowで残す。
+D-004 の再オープン条件（reopen trigger）は、固定された SGLang コミットにおいてレガシープロファイラ経路が削除された場合、あるいはグローバル TP ランクとトレースの 1 対 1 対応が成立しなくなった場合のみとする。プロファイルトレースの稀な欠損は設計見直しの理由とせず、通常どおり NULL や 0 行として記録する。
 
-D-003は2026-08-09にユーザー回答「基本的にはマルチノード対応型の収集。Qwen推論も同じ」で確定した。
-2026-08-10の追加回答により、実行設定を一つの抽象やIDへ束ねず、nodes/worker/GPU cardinalityその他を
-protocolの個別fieldから展開し、Sheetsでも各値を別列にする。affected fields/viewsはprotocolの個別実行設定、
-scheduler request、producer node/global-rank axes、topology/host/GPU consensus、lifecycle/phase ACK集合、
-participant termination、collection/score eligibilityである。OpenFOAMは1/2/4-node実機canary、Qwenは
-個別field駆動のcardinalityと現在の2-node TP=8実機設定を対象にする。
-reopen triggerはSGLangまたはschedulerの配置意味が変わり、v1の一node一MPI wrapper/full-GPU TP制約で表せなくなった時だけとする。
-collector実装中の非擾乱確認は代表2-node TP=8設定で一時的に行い、確認後に出力を破棄する。
+D-003 は 2026-08-09 のユーザー確認により「基本的にはマルチノード対応型の収集。Qwen 推論も同様」として確定した。さらに 2026-08-10 の追加回答に基づき、実行設定を単一の抽象概念や ID に集約せず、ノード／ワーカー／GPU のカーディナリティ等をプロトコルの個別フィールドから展開し、Connected Sheets 上でも各設定値を独立した列として扱う。影響を受けるフィールドおよびビュー（affected fields/views）は、プロトコルの個別実行設定、スケジューラ要求、producer ノード／グローバルランク軸、トポロジ／ホスト／GPU の合意情報、ライフサイクル／フェーズ ACK 集合、参加プロセスの終了状態、収集およびスコア適格性判定である。OpenFOAM は 1/2/4 ノードの実機カナリア、Qwen は個別フィールド駆動のカーディナリティと現在の 2 ノード・TP=8 実機設定を対象とする。
+再オープンの契機は、SGLang またはスケジューラの配置セマンティクスが変更され、v1 の「1 ノード・1 MPI ラッパー／フル GPU TP 制約」で表現できなくなった場合のみとする。コレクタ実装中のオーバーヘッド（非擾乱性）確認は、代表的な 2 ノード・TP=8 設定で一時的に実施し、検証完了後に出力を破棄する。
 
 ## 決定状態
 
-| 状態 | 決定 |
+| 状態 | 決定内容 |
 |---|---|
-| 確定 | raw relationは`run/key/value`の三列、compound valueはcanonical JSON |
-| 確定 | 定義した各process scopeの環境変数は機密値を含めfilterせずbyte-exactに全件保存 |
-| 確定 | native object/structured sourceを優先し、log regexはfixture付きの最終手段 |
-| 確定 | compute側はlocal raw fileだけ、finalize/publishはrunner、Artifact upload/home移管はworkflowが担当 |
-| 確定 | observed totalsから派生するthroughputやnode full factsのcommon copyをrawへ重複保存しない |
-| 確定 | bench/profileを分離し、取得できなかった値とprofile専用familyは値だけNULL、原因/status/欠損用recordなしとする。run-level statusは`collection_complete`だけ |
-| 確定 | 実験用途として多段retry、fallback source、field別reason registryを作らない |
-| 確定 | artifact移管はOpenFOAMのGitHub Artifact -> Tailscale/SSH -> home RAIDを基準とし、Qwenへ同じ経路を移植する |
-| 確定 | home artifactは自動expireせず、容量が実際に問題になった時だけ手動整理する。専用quarantineは作らない |
-| 確定 | D-003: Qwen collectorはmulti-node対応とし、expected node/worker/GPU集合をprotocolの個別fieldから展開する。実行設定を束ねるID/object/manifestは作らず、Sheetsでは各値を別列にする。現在の実機設定は2 node、4 GPU/node、TP=8 |
-| 確定 | D-004: profileはSGLang legacy PyTorch ProfilerのCPU+GPU、warmup外の先頭5 scheduler forward、stack/shape/mergeなし、global TP rank別traceを使う |
-| 確定 | 非擾乱確認はcollector実装中だけ行い、結果・専用run・metric・artifact・relation・decision recordを保存しない |
+| 確定 | 生リレーション（raw relation）は `run`, `key`, `value` の 3 列構成とし、複合値（compound value）は正規化 JSON（Canonical JSON / RFC 8785）で表現する |
+| 確定 | 定義された各プロセススコープの環境変数は、秘匿値も含めフィルタリングを行わずバイト単位で完全に保存する |
+| 確定 | ネイティブオブジェクトおよび構造化ソースを最優先し、ログ正規表現によるパースはフィクスチャを伴う最終手段とする |
+| 確定 | 計算ノード側はローカルの生ファイル（raw file）出力のみを担当し、ファイナライズとパブリッシュはランナー、Artifact アップロードおよびホームストレージへの移管はワークフローが担う |
+| 確定 | 観測された合計値（observed totals）から導出されるスループットや、全ノード共通ファクトの冗長コピーを生テーブルへ重複保存しない |
+| 確定 | ベンチマーク（bench）とプロファイル（profile）を分離し、取得できなかった値およびプロファイル専用ファミリは値のみを NULL とし、原因・ステータス・欠損記録用のレコードは新設しない。実行レベルの状態管理は `collection_complete` のみとする |
+| 確定 | 実験用途として、多段リトライ、フォールバックソース、フィールド別の理由レジストリ（reason registry）は構築しない |
+| 確定 | アーティファクトの移管は、OpenFOAM の先行実装（GitHub Artifact → Tailscale/SSH → ホーム RAID）を標準とし、Qwen にも同一経路を移植する |
+| 確定 | ホームストレージ上のアーティファクトは自動破棄（expire）せず、容量が実際に枯渇した場合のみ手動で整理する。専用の隔離領域（quarantine）は設けない |
+| 確定 | D-003: Qwen のコレクタはマルチノード対応とし、期待されるノード／ワーカー／GPU の集合をプロトコルの個別フィールドから展開する。実行設定を単一の ID・オブジェクト・マニフェストへ束ねず、Sheets 上でも各設定値を独立した列として扱う。現在の実機構成は 2 ノード、各ノード 4 GPU、TP=8 とする |
+| 確定 | D-004: プロファイルは SGLang のレガシー PyTorch Profiler（CPU+GPU、ウォームアップ除外後の先頭 5 スケジューラフォワード、スタック／形状／マージなし）を用い、グローバル TP ランク別のトレースを採取する |
+| 確定 | オーバーヘッド（非擾乱性）確認はコレクタ実装中の一時作業に留め、その測定結果、専用実行（run）、メトリクス、アーティファクト、リレーション、意思決定レコードは一切永続化しない |
 
 ## 実装ハンドオフ
 
-公開面はbench/profileの通常runだけを扱う。
+公開インターフェースは bench および profile の通常実行のみを取り扱う。
 
 ```python
 Fact(key: str, logical_value: LogicalValue)
@@ -698,65 +537,50 @@ finalize_run(manifest_path, runtime_dir) -> FinalizeOutcome
 publish_run(manifest_path, artifact_set_path, destination) -> PublishOutcome
 ```
 
-CLIのpurposeは`bench|profile`だけとする。非擾乱確認、arm、pair、allocation、childを表すoption/subcommandは
-追加しない。owner scopeはrun/build、source storageはfact fragment、run bundle、profile rawだけである。
+CLI の目的（purpose）は `bench | profile` のみとする。非擾乱性確認、arm、pair、allocation、child を表すオプションやサブコマンドは追加しない。owner のスコープは run および build に限定し、ソースストレージはファクト断片（fact fragment）、実行バンドル（run bundle）、プロファイル生データ（profile raw）のみとする。
 
-runtime layoutは`runs/<run-id>/`の下に`control/`、`domain/`、`source/`、`logs/`、
-`profile/raw/`、`archive-staging/`を持つ。artifact setは`run-artifacts.tar.zst`、
-`metrics.jsonl`、profileだけの`profile-raw.tar.zst`、`artifact-manifest.json`で閉じる。
-開発時の非擾乱確認用file/directoryはこのlayoutへ入れない。
+ランタイムのディレクトリレイアウトは、`runs/<run-id>/` 配下に `control/`, `domain/`, `source/`, `logs/`, `profile/raw/`, `archive-staging/` を配置する。アーティファクトセットは `run-artifacts.tar.zst`, `metrics.jsonl`, プロファイル時のみ生成される `profile-raw.tar.zst`, `artifact-manifest.json` で完結させる。開発時の一時的な非擾乱性確認用ファイルやディレクトリは、このレイアウトに混入させてはならない。
 
-### test gate
+### テストゲート
 
-manifest、submission/job ID、environment、merge、artifact、Qwen/SGLang意味、placement/lifecycle、profile、再構築に加え、
-IMBの0 byte/科学表記/欠損列/複数process-count section/警告/truncated fixtureと、3 collectiveのNCCL JSON fixtureで
-buffer mode、datatype、reduction op、time、algbw、busbw、errorを検証する。command失敗、timeout、JSON不在、部分出力は0 rowかつ
-terminationと`collection_complete=false`だけになること、raw artifactから同一row集合を再構築できることもtest gateに含める。
-catalog/schema testは`lane`、`qualification*`、`block_id`、`block_order`、`replicate_index`、`pair_id`、
-`ib_*_bw`、`ib_*_lat`、network用contract/protocol ID・hashがないことを保証する。Connected Sheetsの詳細testは表設計時へ延期する。
-非擾乱確認は実装者がその場で実行・確認し、
-fixture、golden decision、publish対象にはしない。
+テストゲートでは、マニフェスト、投入／ジョブ ID、環境変数、マージ処理、アーティファクト、Qwen/SGLang セマンティクス、配置／ライフサイクル、プロファイル、再構築の検証に加え、IMB の 0 バイト／指数表記／欠損列／複数プロセス数セクション／警告／切り詰めフィクスチャ、および 3 つの集約通信（collective）に関する NCCL JSON フィクスチャを用いて、バッファモード、データ型、リダクション演算、所要時間、algbw、busbw、エラー処理を網羅的に検証する。
+コマンド失敗、タイムアウト、JSON の不在、部分出力が発生した場合は、記録行を 0 行とし、プロセス終了状態の記録および `collection_complete=false` のフラグ設定のみに留めること、またローカルの生アーティファクトから同一の論理行集合を完全に再構築できることもテストゲートの合格基準とする。
+カタログおよびスキーマのテストでは、`lane`, `qualification*`, `block_id`, `block_order`, `replicate_index`, `pair_id`, `ib_*_bw`, `ib_*_lat`、ならびにネットワーク用コントラクト／プロトコル ID・ハッシュが存在しないことを保証する。Connected Sheets の詳細な表示テストは、スプレッドシート表設計フェーズへ委ねる。
+非擾乱性の確認は実装者がその場で実行・検証し、フィクスチャ、ゴールデン決定、パブリッシュ対象には含めない。
 
-### release単位
+### リリース単位
 
-1. legacy output、evaluator、baseline logをgolden fixtureとして凍結する。
-2. manifest、local metrics export、structured hooks、complete result、topology sidecarをv2 fixtureと最初のrunで通す。
-3. benchへ必要な最小bundleをcollector実装中に代表2-node TP=8設定で計測なし／あり比較へ掛ける。
-   意味・数値同等性・非擾乱を確認したら結果を破棄し、確認済みcollectorをbenchへ追加する。
-4. v2 view/Sheetを切り替え、legacy-only consumerがゼロになってから旧sender/subset keyを削除する。
+1. レガシー出力、エバリュエータ、ベースラインログをゴールデンフィクスチャとして凍結する。
+2. マニフェスト、ローカルメトリクスエクスポート、構造化フック、完全な結果取得、トポロジサイドカーを、v2 フィクスチャおよび初回実行を通じて検証・開通させる。
+3. bench に必要な最小限のバンドルについて、コレクタ実装中に代表的な 2 ノード・TP=8 設定を用いて「計測なし／あり」の比較測定を行う。意味・数値の同等性および非擾乱性を確認した後に一時測定結果を破棄し、検証済みコレクタを bench パイプラインへ組み込む。
+4. v2 ビューおよび Connected Sheets を切り替え、レガシー専用コンシューマが存在しなくなったことを確認した後に、旧送信処理および旧サブセットキーを廃止・削除する。
 
-rollbackは実行設定と実装を直前版へ戻して新しいrunを投入する。既存runのmanifest/rowを書き換えず、
-一run内でlegacy producerとv2 producerを混在させない。
+ロールバック時は、実行設定と実装を直前の安定版に戻した上で、新たな run を再投入する。既存 run のマニフェストやレコード行を直接改ざんすることはせず、同一 run 内でレガシー producer と v2 producer を混在させてはならない。
 
 ## 実装順序
 
-1. 現行key、producer、consumer、artifact保存先をinventory化し、key registryとexpected producer graphを作る。
-2. clean checkout、remote到達性、SIF/build sidecar、manual provenance gateを作る。
-3. BigQuery credentialをrunnerだけへ移し、Fact/Recorder、JSONL export、runner merge/publish、
-   GitHub Artifact upload/home移管を導入する。
-4. raw table、conflict検査、Sources lineage、artifact status、run/point viewを
-   key catalogから生成しfixtureを通す。
-5. actual workload、primary result、environment、topology、lifecycleをstructured sourceとして追加する。
-6. canonical evaluatorを作り、legacy validity/throughputとbaseline golden logを照合する。
-7. D-003の個別実行設定、node/rank/GPU projectionを追加し、各設定fieldとの一致を検証する。
-8. D-004のprofile raw/capture/event projectionを追加する。
-9. 共通network capture、IMB/NCCL pure parser、固定幅facts、二つのnetwork long relationを実装し、round-tripと
-   失敗時0-row規則をfixtureで通す。SIFは固定nccl-tests commitをbuild/testするがcluster固有ジョブへは組み込まない。
-10. Connected Sheetsをbounded consumerへ切り替え、旧key consumerがなくなってから冗長key生成を止める。
-11. home run artifact treeとGit管理source/SQLから空datasetを再構築して旧viewを廃止する。
+1. 現行のキー、producer、consumer、アーティファクト保存先をインベントリ化し、キーレジストリと期待される producer グラフを構築する。
+2. クリーンチェックアウト、リモート到達性確認、SIF／ビルドサイドカー、手動プロベナンスゲートを整備する。
+3. BigQuery 認証情報の保持責務をランナーのみに移管し、Fact/Recorder、JSONL エクスポート、ランナー側マージ／パブリッシュ、GitHub Artifact アップロードおよびホーム RAID 移管処理を導入する。
+4. 生テーブル（raw table）、衝突検査、Sources 来歴ビュー、アーティファクトステータス、run/point ビューをキーカタログから自動生成し、フィクスチャ検証を通過させる。
+5. 実際のワークロード実行、主要結果、環境変数、トポロジ、ライフサイクルの各収集処理を構造化ソースとして追加する。
+6. 正準エバリュエータを構築し、レガシー評価指標の妥当性・スループットとベースラインゴールデンログの一致を検証する。
+7. D-003 に基づく個別実行設定、ノード／ランク／GPU プロジェクションを追加し、各設定フィールドとの厳密な一致を検証する。
+8. D-004 に基づくプロファイル生データ、キャプチャ、イベントプロジェクションを追加する。
+9. 共通ネットワークキャプチャ、IMB/NCCL ピュアパーサ、固定幅ファクト、2 つのネットワークロングリレーションを実装し、ラウンドトリップ性および障害時 0 行記録規則をフィクスチャで担保する。SIF は固定された nccl-tests コミットをビルド・テストするが、クラスタ固有の本番ジョブには組み込まない。
+10. Connected Sheets を境界付きコンシューマ（bounded consumer）へ切り替え、旧キーのコンシューマが完全に解消された段階で冗長キーの生成を停止する。
+11. ホームストレージ上の実行アーティファクトツリーと Git 管理下のソースコード・SQL から空データセットを完全に再構築できることを確認し、旧ビューを正式に廃止する。
 
 ## 完了条件
 
-- source/build commit、toolchain、SIF/binary identityを追跡できる。
-- key ownerが一意で、distinct後のrun/key conflictがゼロである。
-- BigQuery停止時もartifact JSONLから同じlogical row集合を再送できる。
-- success/failure/timeout runのexpected source/logを保存し、artifact移管を再実行できる。
-- benchmark validityとthroughputがlegacy golden logに一致する。
-- workload、result、stage wall、node/rank/GPU placementを独立sourceから再構築できる。
-- completeなIMB/NCCL rawからmessage size別rowをlosslessに再構築でき、通信stage失敗がgeneration成功を変更しない。
-- requested/observedのnodes、MPI、GPU/node、TP、resource、transportが個別列で照合できる。
-- profile-only列はbenchで理由なしのNULLとなり、profile raw/projectionをhomeから再構築できる。
-- collector実装中の一時比較で性能・数値非回帰を確認し、その比較結果がv2のrun、key、artifact、
-  relation、Sheet、decision recordに保存されない。
-- Runs/Sources/Config Diff/Environment/Topology/Profile Counters/Data Statusが
-  JSON展開なしで主要結果とlineageを表示する。
+- ソースおよびビルドのコミットハッシュ、ツールチェーン、SIF／バイナリの同一性が完全に追跡可能であること。
+- 各キーの所有者（owner）が一意に定まり、重複排除（distinct）後の `run`/`key` 衝突がゼロであること。
+- BigQuery の一時停止や障害発生時でも、アーティファクトの JSONL から同一の論理行集合を完全に再送可能であること。
+- 成功・失敗・タイムアウトのいずれの実行結果においても、期待されるソースおよびログが確実に保存され、アーティファクト移管を再実行可能であること。
+- ベンチマーク結果の妥当性検証およびスループット計算が、レガシーゴールデンログの計算結果と完全に一致すること。
+- ワークロード、測定結果、各ステージの所要時間（wall time）、ノード／ランク／GPU の配置情報が、独立したソースから矛盾なく再構築可能であること。
+- 完全な IMB／NCCL 生データから、メッセージサイズ別のレコード行を可逆的かつ欠落なく再構築でき、通信測定ステージの失敗がテキスト生成の成功判定を阻害しないこと。
+- 要求値（requested）と実測値（observed）のノード数、MPI プロセス数、GPU/ノード数、TP 数、計算資源、転送方式が、個別列として明確に照合可能であること。
+- プロファイル専用列はベンチマーク実行時に正当な理由記述なしの純粋な NULL となり、プロファイル生データおよびプロジェクションをホームストレージから再構築可能であること。
+- コレクタ実装中の一時比較によって性能・数値の非回帰（非擾乱性）を確認済みであり、その一時測定結果が v2 の run、key、artifact、relation、Sheet、決定レコードに一切混入していないこと。
+- Runs, Sources, Config Diff, Environment, Topology, Profile Counters, Data Status の各ビューにおいて、JSON の動的展開を要することなく主要結果と来歴を即座に確認できること。
