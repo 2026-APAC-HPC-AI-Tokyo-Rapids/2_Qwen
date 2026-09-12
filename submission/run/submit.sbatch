@@ -72,7 +72,7 @@ run_node() {
   trap 'exit 143' TERM
 
   ib_devices=()
-  for state_file in /sys/class/infiniband/*/ports/1/state; do if grep -q ACTIVE "${state_file}"; then device="${state_file#/sys/class/infiniband/}"; ib_devices+=("${device%%/*}:1"); fi; done
+  for state_file in /sys/class/infiniband/*/ports/1/state; do device="${state_file#/sys/class/infiniband/}"; device="${device%%/*}"; if grep -q ACTIVE "${state_file}" && grep -qx InfiniBand "/sys/class/infiniband/${device}/ports/1/link_layer"; then ib_devices+=("${device}:1"); fi; done
   [[ "${#ib_devices[@]}" -gt 0 ]]
   ucx_devices="$(IFS=,; printf '%s' "${ib_devices[*]}")"
   printf 'hostname=%s\nnode_ip=%s\nnode_rank=%s\nucx_net_devices=%s\n' "${hostname_short}" "${node_ip}" "${node_rank}" "${ucx_devices}" >"${OUTPUT_DIR}/node-${node_rank}-environment.log"
