@@ -75,10 +75,11 @@ def test_dockerfile_resolves_sglang_dependencies_before_copying_source() -> None
     assert "qwen_experiment_metrics" not in source
 
 
-def test_rustup_download_retries_observed_dns_failure() -> None:
+def test_text_runtime_does_not_build_unused_rust_extensions() -> None:
     toolchain = (ROOT / "containers/install-system-toolchain.sh").read_text(encoding="utf-8")
-    rustup = next(line for line in toolchain.splitlines() if "https://sh.rustup.rs" in line)
-    assert "--retry 3 --retry-all-errors --retry-delay 2" in rustup
+    source = (ROOT / "containers/install-sglang-source.sh").read_text(encoding="utf-8")
+    assert "rustup" not in toolchain
+    assert "SGLANG_BUILD_RUST_EXTS=none" in source
 
 
 def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
