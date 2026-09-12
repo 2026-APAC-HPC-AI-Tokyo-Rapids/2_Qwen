@@ -1,96 +1,96 @@
 # SGLang SIF ビルドの試行記録
 
-この文書は、2026-07-12 から 2026-07-25 までの Codex 会話、GitHub Actions、Genkai 上の手動診断から、現在の設計判断に関係する結果を整理したものである。途中の構成で得た時間は現在の recipe と直接比較できない。run number、導入 package、runner、共有環境の状態が異なるため、性能値ではなく採否理由を残すことを目的とする。
+この文書は、2026-07-12から2026-07-25にかけてのCodex会話、GitHub Actionsの実行ログ、および玄界上での手動診断から得られた、当時の設計判断に関わる知見を整理した記録である。途中の検証構成で得られた所要時間は、最終的なレシピと直接比較できるものではない。run number、導入パッケージ、runner環境、および共有環境の状態が異なるため、絶対的な性能数値ではなく各方式の採否理由を記録に残すことを主目的とする。
 
 ## 1. `build → provision → run` に戻した理由
 
-最初は公開済み SGLang image を使う `provision → run` の二段構成も検討した。しかし、このリポジトリの目的は SGLang source を変更して同じ Qwen benchmark で比較することである。Python、Rust extension、CUDA kernel、依存関係を変えた実験を扱うには、実行環境そのものを成果物として固定する build が必要になる。
+当初は公開済みのSGLangイメージを利用する`provision → run`の二段構成も検討した。しかし、本リポジトリの目的はSGLangのソースコードに改変を加え、同一のQwenベンチマーク上で性能比較を行うことにある。Pythonコード、Rust拡張、CUDAカーネル、および依存ライブラリを変更した実験を扱うためには、実行環境そのものを不変な成果物として固定するビルド工程が不可欠となる。
 
 
-- source、recipe、patch、依存関係を変えたときだけ明示的に build する。
-- runtime script や benchmark 条件だけを変えたときは既存成果物を再利用する。
-- build の成否と実験の成否を分け、downstream が失敗しても完成済み SIF は再利用できるようにする。
-- SGLang source の変更は repository 内の `patches/sglang` で管理する。
+- ソースコード、レシピ、パッチ、または依存関係を変更したときのみ明示的にビルド（build）を実行する。
+- 実行時スクリプトやベンチマーク条件のみを変更した際は、既存のビルド成果物を再利用する。
+- ビルドの成否と実験実行の成否を分離し、後続の実行（downstream）が失敗した場合であっても、完成済みのSIFは次回以降へ再利用できるようにする。
+- SGLangソースコードの変更差分は、リポジトリ内の`patches/sglang`配下で管理する。
 
-Singularity CE の cache は OCI blob の取得を省けるが、Docker BuildKit のように `%post` の各段階を再利用しない。同一 recipe の `--fakeroot` build を繰り返しても `%post` は再実行された。このため、途中 cache の複雑化ではなく、完成 SIF を第一親履歴から再利用する方式を採用した。
+Singularity CEのキャッシュ機能はOCI blobの再取得を省略できるものの、Docker BuildKitのように`%post`内の各処理段階をキャッシュ・再利用する機構を持たない。同一レシピに対して`--fakeroot`ビルドを繰り返しても`%post`ブロックは最初から再実行された。このため、中間キャッシュの複雑化を追究するのではなく、完成したSIFイメージを第一親履歴に基づいて再利用する方式を採用した。
 
-## 2. build directory の比較
+## 2. ビルドディレクトリの比較検証
 
 ### `/var/tmp`
 
-Genkai login node の `/var/tmp` は fakeroot、xattr、package install を含む完全 build に成功した。2026-07-22 の手動試験では約34分45秒、SIF は約9.9 GiBだった。
+玄界のログインノードにおける`/var/tmp`は、fakeroot、拡張属性（xattr）、パッケージインストールを含むフルビルドを正常に完走できた。2026-07-22の手動試験では所要時間が約34分45秒、生成されたSIFのサイズは約9.9 GiBであった。
 
-一方、実体は node-local disk で、4 KiB direct random write の同時測定は約362 IOPS、平均 latency 88.3 msだった。Actions の別 run では `apt-get install` だけで約56分を使い、disk utilization 約93%、約118 write IOPSとなった。停止ではなく、dpkg が作る多数の小ファイルで random write が律速していた。
+一方で、その実体はノードローカルディスクであり、4 KiBダイレクトランダムライトの同時測定値は約362 IOPS、平均レイテンシ88.3 msにとどまった。GitHub Actionsの別ランでは`apt-get install`の処理だけで約56分を要し、ディスク使用率は約93%、約118ライトIOPSを記録した。これは処理の停止ではなく、dpkgが大量に生成する小ファイルのランダムライトがボトルネックとなっていたためである。
 
-したがって `/var/tmp` は正しく動く fallback ではあるが、通常の build tree には遅すぎる。
+したがって、`/var/tmp`は正常動作するフォールバック先としては機能するものの、定常的なビルドツリーとしては著しく低速であると判断した。
 
 ### `/fast/PROJECT`
 
-同じ診断で逐次 I/O は `/var/tmp` より大幅に速く、4 KiB random write も約6,819 IOPSだった。しかし Lustre 上では rootless container 用 xattr を保存できず、`apt` や `dpkg` が必要とする ownership 変更も失敗した。OCI 展開時の xattr warning 自体は継続可能だったが、その後の `chown: Operation not permitted` により package 設定が失敗した。
+同一の診断において、Lustre共有ファイルシステムである`/fast`のシーケンシャルI/Oは`/var/tmp`よりも大幅に高速であり、4 KiBランダムライトも約6,819 IOPSを記録した。しかしながら、Lustre上ではrootlessコンテナ用のxattrを保存できず、`apt`や`dpkg`が必要とする所有権変更（chown）も失敗した。OCI展開時のxattr警告自体はビルド継続可能であったものの、その後の`chown: Operation not permitted`によってパッケージ設定が中断された。
 
-このため、共有 `/fast` は source archive や完成 SIF の保存先には適するが、fakeroot で package manager を動かす build tree には採用しない。
+このため、共有ストレージ`/fast`はソースアーカイブや完成SIFの保管先には適しているが、fakeroot下でパッケージマネージャを実行するビルド作業領域には採用できない。
 
 ### `/dev/shm`
 
-login node の `/dev/shm` は約504 GiBの tmpfs で、rootless container 用 xattr は持たないものの、fakeroot 内の `chown` と小型 SIF の build・実行に成功した。大量の小ファイルを扱う build tree では node-local disk より明確に適している。
+ログインノードの`/dev/shm`は約504 GiBのtmpfs領域であり、rootlessコンテナ用のxattrは保持できないものの、fakeroot環境内での`chown`および小型SIFのビルド・実行が正常に行えることを確認した。大量の小ファイルを扱うビルドツリーとしては、ノードローカルディスクよりも明らかに優れている。
 
-比較を受け、現在は run 固有の build tree、Singularity cache、一時領域を `/dev/shm/qwen-sglang-build` に置く。完成物だけを `/fast` の一時名へ copy し、rename で公開する。
+この比較結果を受け、ラン固有のビルドツリー、Singularityキャッシュ、および一時作業領域を`/dev/shm/qwen-sglang-build`上に配置する構成とした。完成成果物のみを`/fast`の一時ファイル名へコピーし、アトミックなリネームによって公開する。
 
-login node は接続ごとに変わり得るため、node-local directory を別 SSH 接続や別 jobへ引き継がない。Actions の一つの build job内で完結させる。
+ログインノードは接続ごとに異なるホストへ割り振られる可能性があるため、ノードローカルなディレクトリを別SSH接続や別ジョブへ引き継ぐことはせず、Actionsの単一ビルドジョブ内でライフサイクルを完結させる。
 
-## 3. SIF packaging の試行
+## 3. SIFパッキングの試行
 
-過去の一気通貫 `singularity build` では、依存導入より SquashFS 作成が支配的になった構成があった。追加 backend と debug symbol を含む試行では、sandbox build 約578秒に対し、SIF packaging が約23分、SIF は約9.7 GiBだった。
+過去の一気通貫な`singularity build`処理では、依存関係の導入よりもSquashFSの作成（パッキング）が所要時間の大半を占めるケースが存在した。追加バックエンドとデバッグシンボルを含めた試行では、sandboxの構築に約578秒を要したのに対し、SIFパッキングに約23分を要し、生成SIFは約9.7 GiBに達した。
 
-同じ rootfs を使って gzip、LZO、XZ と worker 数を比較した結果、次の傾向を確認した。
+同一のrootfsを用いて、gzip、LZO、XZの各圧縮方式とワーカー並列度を比較検証した結果、以下の傾向を確認した。
 
-- gzip は worker 数を増やすと大きく短縮した。
-- Genkai 標準の LZO は `lzo1x_999` で、全 worker 数において gzip より遅く、生成物も大きかった。
-- XZ は約10%小さくなったが gzip より遅かった。
-- 60 worker 付近から伸びが鈍り、120 worker が常に最速とは限らなかった。
-- zstd は当時の Genkai kernel で SquashFS mount support がなく、通常の SIF 実行には採用できなかった。
+- gzipはワーカー並列度を高めることで所要時間を大幅に短縮できた。
+- 玄界の標準LZO（`lzo1x_999`）は、すべての並列度においてgzipよりも低速であり、生成ファイルサイズも大きかった。
+- XZはファイルサイズが約10%削減されたものの、gzipに比べて大幅に遅かった。
+- 60ワーカー付近から並列度向上の効果が頭打ちとなり、120ワーカーが常に最速とは限らなかった。
+- zstdは当時の玄界カーネルにおいてSquashFSマウントがサポートされておらず、通常のSIF実行には採用できなかった。
 
-gzip level 1 と新しい `sqfstar` を使う案も実環境で検証し、tar から SquashFS を直接作ることで展開と大量 inode の cleanup を省けることを確認した。しかし、その後は PJM 計算ノードを packaging に使わず、login node 内で完結する現在の方式へ整理した。
+gzipレベル1と新しい`sqfstar`ツールを組み合わせる案も実機で検証し、tarストリームからSquashFSを直接生成することで展開処理と大量inodeのクリーンアップを省略できることを確認した。ただしその後は、PJM計算ノードをパッキング処理に使用せず、ログインノード内で完結させる構成へと整理した。
 
-現在残っている重要な判断は、遅い directory-to-SIF 再圧縮を避けることである。[build script](../../scripts/build-sglang-sif.sh) は fakeroot namespace 内で rootfs を tar stream にし、`mksquashfs -tar -numeric-owner` へ渡す。これにより UID/GIDを維持したまま SquashFS を一度だけ作り、definition、metadata、Primary System partition を `singularity sif add` で直接格納する。
+現在において重要な設計判断は、低速なディレクトリ対SIFの再圧縮処理を回避することである。[build script](../../scripts/build-sglang-sif.sh) はfakeroot名前空間内でrootfsをtarストリーム化し、`mksquashfs -tar -numeric-owner`へとパイプで引き渡す。これにより、UID/GIDのメタデータを保持したままSquashFSを一度だけ生成し、定義ファイル、メタデータ、およびPrimary Systemパーティションを`singularity sif add`によって直接格納する。
 
-現在の gzip level 2、32 processors、64 GiB memory limit は過去の全条件と同一ではない。変更する場合は、現在の buildを基準に SIF size、pack時間、実行可否を再測定する。
+現在のgzipレベル2、32プロセッサ、64 GiBメモリ制限の設定は、過去のすべての検証条件と完全に同一ではない。設定を変更する際は、現行ビルドを基準としてSIFサイズ、パッキング所要時間、および実行可否を再測定する必要がある。
 
-## 4. build 時間の内訳から分かったこと
+## 4. ビルド時間の内訳から分かったこと
 
-home-lab runner を使っていた Actions run #78 は、現在とは異なる構成だが、時間の所在を調べる材料になった。
+home-lab runnerを用いていた当時のActions run #78は、現在とは構成が異なるものの、ボトルネックの所在を把握する貴重なデータとなった。
 
-| 区間 | 時間 |
+| 工程 | 所要時間 |
 |---|---:|
-| base image bootstrap | 1分31秒 |
+| ベースイメージのブートストラップ | 1分31秒 |
 | `apt-get install` | 5分02秒 |
-| SGLang と Python dependency | 2分43秒 |
-| FlashInfer cubin / JIT cache | 1分23秒 |
+| SGLangおよびPython依存関係 | 2分43秒 |
+| FlashInfer cubin / JITキャッシュ | 1分23秒 |
 | DeepEP | 1分33秒 |
 | MSCCL++ | 3分04秒 |
-| kernel lock / download | 22秒 |
-| SIF 作成 | 9分28秒 |
-| inspect と Genkai への公開 | 2分11秒 |
+| カーネルロック／ダウンロード | 22秒 |
+| SIF作成（パッキング） | 9分28秒 |
+| 検証（inspect）および玄界への公開 | 2分11秒 |
 
-この run の build と公開は合計28分19秒、SIF は9.88 GiBだった。現在は home-lab と SSH/SCP を使わないため数値を比較してはいけないが、network、package install、CUDA extension build、SquashFS を別々に観測する必要があることを示している。
+このランにおけるビルドおよび公開の総所要時間は28分19秒、SIFサイズは9.88 GiBであった。現在はhome-labおよびSSH/SCPを経由しないため数値自体を単純比較してはならないが、ネットワーク転送、パッケージインストール、CUDA拡張のビルド、およびSquashFS圧縮を個別に切り分けて観測する必要性を示している。
 
-実際、FlashInfer package index の応答だけで約9分44秒かかった run もあり、次の run では16秒に戻った。小さな recipe 変更でも、配信元と共有環境の変動により full build時間は大きく変わる。単一 run の wall timeだけで並列度や storage の効果を判断しない。
+実際、FlashInferのパッケージインデックスへの問い合わせ応答だけで約9分44秒を要したランが存在した一方、次のランでは16秒へと復旧した。軽微なレシピ変更であっても、配信元サーバーや共有環境の負荷変動によってフルビルド所要時間は大きく揺らぐ。単一ランの実行時間（wall time）のみに基づいて並列度やストレージの効果を過大・過小評価してはならない。
 
 ## 5. 失敗から残した実装
 
 ### host `/tmp` の quota
 
-初期の build は、Singularity `%post` が host の quota 付き `/tmp` を使い、apt の署名検証用一時ファイルや `get-pip.py` を作れず失敗した。recipe 内の `TMPDIR` を sandbox 内へ固定し、workflow の build scratch は `/dev/shm` へ分離した。
+初期のビルドでは、Singularityの`%post`処理がホスト側の容量制限付き`/tmp`を使用してしまい、aptの署名検証用一時ファイルや`get-pip.py`の生成に失敗して異常終了した。この対策として、レシピ内の`TMPDIR`をsandbox内部へと固定し、ワークフロー全体のビルド作業用スクラッチ領域を`/dev/shm`へと分離した。
 
 ### fakeroot sandbox の cleanup
 
-fakeroot build 後の sandbox には subuid 所有の directory が残る。通常ユーザーの `chmod -R` と `rm -rf` では削除できず、build 自体が成功しても cleanup step が失敗した。
+fakerootを用いてビルドした後のsandboxディレクトリ内には、subuid権限で作成されたファイル群が残存する。これらは一般ユーザー権限での`chmod -R`や`rm -rf`では削除できず、ビルド自体が成功しても事後クリーンアップステップが失敗する原因となった。
 
-現在は独立した `busybox:1.36.1-musl` を fakeroot で起動し、run 固有の build directory を bindして削除する。生成途中の SIF に依存しないため、build のどの段階で失敗しても同じ cleanup を使える。
+現在は、独立した`busybox:1.36.1-musl`イメージをfakerootで起動し、ラン固有のビルドディレクトリをバインドマウントした上でコンテナ内から削除する方式としている。生成途中のSIFに依存しないため、ビルドがどの段階で異常終了した場合であっても同一のクリーンアップ処理を確実に適用できる。
 
 ### FlashInfer の version と test
 
-Actions #91 と #94 は、次の不整合により計算ノードで失敗した。
+Actions run #91および#94は、以下のバージョン不整合により計算ノード上で実行時エラーとなった。
 
 ```text
 flashinfer-python=0.6.15.post1
@@ -98,8 +98,8 @@ flashinfer-cubin=0.6.14
 flashinfer-jit-cache=0.6.14+cu130
 ```
 
-upstream SGLang `main` が更新された一方、recipe の companion artifact が固定値のままだったことが原因である。現在はインストールされた `flashinfer-python` の version を読み、cubin と JIT cache を同じ releaseへ揃える。
+upstreamのSGLang `main`が更新された一方で、レシピ側の関連成果物のバージョン指定が固定値のままとなっていたことが原因であった。現在は、インストールされた`flashinfer-python`のバージョンを実行時に読み取り、cubinおよびJITキャッシュを同一リリースに合わせて動的に揃える構成としている。
 
-その後、login node の `%test` で `flashinfer` や `sgl_kernel` を importすると、書き込み可能 cache や `libcuda.so.1` を要求して失敗した。これは package 不整合ではなく、GPUのない login nodeで runtime pathを検査したことが誤りだった。
+その後、ログインノード上の`%test`ブロックで`flashinfer`や`sgl_kernel`をimportしようとしたところ、書き込み可能なキャッシュパスや`libcuda.so.1`を要求されてテストが失敗した。これはパッケージの不整合ではなく、GPUが搭載されていないログインノード上でランタイムパスのロードを試みたことが原因であった。
 
-現在の `%test` は、通常の SGLang import、FlashInfer三 package の metadata上の version一致、backend packageの存在、MPI・UCXなど、GPU非依存の範囲に限定する。GPU依存の import、JIT、benchmark は計算ノードの責務とする。
+現在の`%test`では、通常のSGLangのimport、FlashInfer 3パッケージのメタデータ上のバージョン一致確認、各種バックエンドパッケージの存在確認、ならびにMPI・UCXの健全性確認など、GPU非依存の検査範囲に限定している。GPUに依存するモジュールのimport、JITコンパイル、およびベンチマーク実行は計算ノード側の責務として明確に分離した。

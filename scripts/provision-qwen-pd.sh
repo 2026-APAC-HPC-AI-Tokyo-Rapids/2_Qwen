@@ -49,9 +49,10 @@ install -m 0644 "${GITHUB_WORKSPACE}/configs/firmus-pd.json" "${runtime_dir}/sou
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/run-qwen-pd.slurm" "${runtime_dir}/scripts/run-qwen-pd.slurm"
 export HF_HOME="${runtime_dir}/tokenizer-cache"
 export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"
-uvx --from 'huggingface_hub==0.36.0' hf download "${tokenizer_repository}" --revision "${tokenizer_revision}" --include config.json --include generation_config.json --include merges.txt --include tokenizer.json --include tokenizer_config.json --include vocab.json >/dev/null
+uvx --from 'huggingface_hub==0.36.0' hf download "${tokenizer_repository}" config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --revision "${tokenizer_revision}" >/dev/null
 tokenizer_cache_repository="${HF_HOME}/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507"
-test -d "${tokenizer_cache_repository}/snapshots/${tokenizer_revision}"
+tokenizer_snapshot="${tokenizer_cache_repository}/snapshots/${tokenizer_revision}"
+for tokenizer_file in config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json; do test -s "${tokenizer_snapshot}/${tokenizer_file}"; done
 install -d -m 0755 "${tokenizer_cache_repository}/refs"
 printf '%s' "${tokenizer_revision}" >"${tokenizer_cache_repository}/refs/main"
 jq -n --arg repository "${model_repository}" --arg revision "${model_revision}" --arg path "${MODEL_PATH}" --arg tokenizer_repository "${tokenizer_repository}" --arg tokenizer_revision "${tokenizer_revision}" '{schema_version:"qwen3-pd-model/v1",model:{repository:$repository,revision:$revision,path:$path,precision:"fp8",shards:24},tokenizer:{repository:$tokenizer_repository,revision:$tokenizer_revision}}' >"${runtime_dir}/source/model.json"

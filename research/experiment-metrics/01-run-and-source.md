@@ -1,8 +1,8 @@
-# 実行識別・source・入力artifact
+# 実行識別・ソース・入力成果物
 
-## run名
+## 実行名（run 名）の命名規則
 
-Actionsから投入する通常経路は次に固定する。
+GitHub Actions 経由でジョブを投入する標準経路においては、以下の命名規則に固定する。
 
 ```text
 qwen-<GITHUB_RUN_ID>-<GITHUB_RUN_ATTEMPT>-<PJM_JOBID>
@@ -13,52 +13,45 @@ qwen-<GITHUB_RUN_ID>-<GITHUB_RUN_ATTEMPT>-<PJM_JOBID>
 qwen-manual-<PJM_JOBID>-<YYYYMMDDTHHMMSSffffffZ>
 ```
 
-現行workflowは`GITHUB_RUN_ATTEMPT`と`GITHUB_REPOSITORY`をPJMへ渡していないため、
-実装時に追加する。
+当時のワークフロー定義では `GITHUB_RUN_ATTEMPT` および `GITHUB_REPOSITORY` が PJM スクリプト側へ渡されていなかったため、本メトリクス基盤の実装時に環境変数渡しを追加する。
 
-## run lifecycle
+## 実行ライフサイクル（Run Lifecycle）
 
 | キー | 論理型 | 取得元 |
 |---|---|---|
-| `run.started_at` | timestamp | collector UTC clock |
-| `run.finished_at` | timestamp | collector UTC clock |
-| `run.elapsed_sec` | float | PJM scriptのmonotonic clock |
-| `run.outcome` | enum | supervisor |
-| `run.exit_code` | int | benchmark pipeline |
-| `run.signal` | int | signal終了時 |
-| `run.command` | string | 実argvを`shlex.join()`したshell表現 |
+| `run.started_at` | timestamp | コレクターの UTC ウォールクロック |
+| `run.finished_at` | timestamp | コレクターの UTC ウォールクロック |
+| `run.elapsed_sec` | float | PJM スクリプトのモノトニッククロック |
+| `run.outcome` | enum | スーパーバイザー判定 |
+| `run.exit_code` | int | ベンチマークパイプラインの終了コード |
+| `run.signal` | int | シグナル終了時の受信シグナル番号 |
+| `run.command` | string | 実際の argv を `shlex.join()` で結合したシェル文字列表現 |
 
-`run.outcome`は`succeeded`, `failed`, `cancelled`だけを使う。PJM scriptが構築した
-arrayをcollectorへ渡し、空白や引用符を含む引数も復元できるよう`shlex.join()`で
-単一のshell表現へ変換する。
+`run.outcome` には、`succeeded`、`failed`、`cancelled` の3値のみを使用する。PJM スクリプトが構築した引数配列をコレクターへ直接渡し、空白やクォートを含む複雑なコマンドライン引数も忠実に復元できるよう、`shlex.join()` を用いて単一のシェル実行文字列表現へ変換する。
 
-## software source
+## ソフトウェアソースとバージョン情報
 
-repository側commitは`env.GITHUB_SHA`を正本とし、別名へ複製しない。
-SIF内SGLangはrepository commitと独立しているため、次を個別に保存する。
+リポジトリ側のコミット SHA は環境変数 `env.GITHUB_SHA` を正本とし、別名キーへの無用な複製は行わない。
+コンテナ（SIF）内部の SGLang はリポジトリ側のコミットとは独立して管理されるため、以下の項目を個別に記録する。
 
 | キー | 取得元 |
 |---|---|
-| `software.sglang.commit` | SIF内`/opt/sglang/sglang-commit.txt` |
-| `software.sglang.version` | SGLang `__version__` |
-| `software.python.version` | benchmark process |
-| `software.torch.version` | benchmark process |
-| `software.cuda.runtime_version` | PyTorch runtime |
-| `software.cuda.driver_version` | NVIDIA driver query |
-| `software.singularity.version` | host `singularity --version` |
+| `software.sglang.commit` | SIF 内の `/opt/sglang/sglang-commit.txt` |
+| `software.sglang.version` | SGLang の `__version__` |
+| `software.python.version` | ベンチマークプロセスの Python バージョン |
+| `software.torch.version` | ベンチマークプロセスの PyTorch バージョン |
+| `software.cuda.runtime_version` | PyTorch ランタイムが認識する CUDA バージョン |
+| `software.cuda.driver_version` | NVIDIA ドライバクエリが返すバージョン |
+| `software.singularity.version` | ホスト上の `singularity --version` 出力 |
 
-packageを問答無用で全件展開するとrun当たりのrow数とversion差分noiseが大きくなるため、
-性能に直接関係する主要packageだけを個別キーにする。SIFは生成元workflow run番号、
-SGLang commit、主要package versionで識別する。
+インストール済みパッケージを無差別に全件展開すると、1実行あたりの行数肥大化や不要なバージョン差分ノイズを招くため、推論性能に直接影響を与える主要パッケージに限定して個別キーとして記録する。コンテナイメージ（SIF）は、ビルド元となった GitHub Actions ワークフローの実行番号、SGLang コミット、および主要パッケージのバージョンによって一意に識別する。
 
-## 入力とartifact
+## 入力データと成果物（Artifact）
 
 | キー | 取得元 |
 |---|---|
 | `artifact.sif.source_workflow_run_number` | `sif-source-run.txt` |
-| `artifact.sif.size_bytes` | `stat` |
-| `artifact.dataset.size_bytes` | `stat` |
+| `artifact.sif.size_bytes` | ファイルの `stat`（サイズバイト数） |
+| `artifact.dataset.size_bytes` | ファイルの `stat`（サイズバイト数） |
 
-artifact hashを実験条件の代理にしない。runtime scriptは`env.GITHUB_SHA`と
-`run.command`、SIFは生成元workflow run番号、modelとdatasetはSGLang実引数および
-workflow環境から識別する。sizeは成果物の存在と回収状態を診断する補助値である。
+成果物のファイルハッシュを実験条件の代理識別子として用いることはしない。ランタイムスクリプトは `env.GITHUB_SHA` および `run.command`、SIF は生成元ワークフロー実行番号、モデルおよびデータセットは SGLang の実効引数とワークフロー環境変数によってそれぞれ識別する。ファイルサイズ（`size_bytes`）は、成果物の存在性および転送完了状態を診断するための補助情報として記録する。

@@ -1,115 +1,99 @@
-# Qwen/SGLang v2 観測マップ
+# Qwen / SGLang 実験メトリクス v2 観測マップ
 
 ## この文書の役割
 
-この文書は、各factについて「どこにある値を、誰が、いつ取得するか」を固定する実装契約で
-ある。[概要計画](./00-v2-plan.md)が情報モデルと比較規則、
-[contract schema handoff](./02-v2-contract-schemas.md)がfield-level shapeを定め、本書が実コード・command・
-artifactへの配線を定める。
+この文書は、各実験ファクト（fact）について「どのデータソースから、どのコンポーネントが、どのタイミングで取得するか」を厳密に定義する実装規約である。[概要計画](./00-v2-plan.md)が情報モデルおよび比較規約を定め、[契約スキーマ](./02-v2-contract-schemas.md)がフィールドレベルのデータ構造を定義するのに対し、本文書は実際のソースコード、コマンドライン、および成果物ファイルへの具体的な配線を規定する。
 
-key registryへ入れるには、次の六項目を全て埋めなければならない。
+キーレジストリへ新規項目を登録する際は、以下の6要件をすべて満たさなければならない。
 
-1. authoritative source: object、structured file、command、またはsource symbol
-2. producer: そのsourceを一度だけ読むowner
-3. capture moment: 値が確定し、まだ失われていない時点
-4. raw destination: `run/key/value`または耐久artifact
-5. validation: 誤読、scope混同、部分取得を検出する規則
-6. applicability: どのrun variantで取得するか
+1. 正本データソース（authoritative source）: オブジェクト、構造化ファイル、コマンド、またはソースコードシンボル
+2. プロデューサー（producer）: 当該データソースを1回のみ読み取る責務を持つオーナー
+3. 取得タイミング（capture moment）: 値が確定し、かつ揮発・消失する前の時点
+4. 生データの格納先（raw destination）: `run/key/value` 形式または永続化成果物
+5. 検証規則（validation）: 誤読、スコープの混同、部分的な取得漏れを検出するバリデーション規約
+6. 適用範囲（applicability）: どの実行バリアント（bench / profile 等）で収集対象とするか
 
-sourceの優先順位は、native object/API、machine-readable command/file、専用structured marker、
-stable log parser、汎用text regexの順とする。選んだsourceをfixtureで確認する。通常runで同じ値を
-上位・下位sourceから二重取得する必要はない。CLI defaultや入力fileに書いた値を、実効値や実測結果として
-扱ってはならない。
+データソースの選定における優先順位は、ネイティブオブジェクト／API、機械可読なコマンド出力／ファイル、専用の構造化マーカー、安定したログパーサー、汎用正規表現テキスト抽出の順とする。選定したデータソースはフィクスチャ（fixture）を用いて事前に動作検証を行う。通常の実行において、同一の値を上位・下位のデータソースから二重に取得する必要はない。また、CLI のデフォルト値や入力ファイルに静的に記載された値を、実効設定値や実測値として流用してはならない。
 
-## 値の段階とscope
+## 値のライフサイクル段階とスコープ
 
-| 段階 | 意味 | Qwen/SGLangの例 |
+| 段階 | 意味 | Qwen / SGLang における具体例 |
 |---|---|---|
-| requested | Git管理script/protocolが指定した値 | `--tp-size 8`、32 prompts |
-| launch-effective | default、environment、auto resolutionを反映し、worker launchへ渡す直前の値 | resolved `BenchArgs`、resolved `ServerArgs` |
-| runtime-observed | worker/backend初期化後に実際に成立した値 | rank、GPU UUID、communication backend、worker-ready state |
-| result-observed | 実responseを検査して得た値 | returned count、completion tokens、generation duration |
+| 要求値（requested） | Git 管理下のスクリプトやプロトコルが明示的に指定した値 | `--tp-size 8`、プロンプト数 32 |
+| 実効値（launch-effective） | デフォルト値、環境変数、動的解決結果を反映し、ワーカー起動直前に確定した値 | 解決済みの `BenchArgs`、解決済みの `ServerArgs` |
+| ランタイム実測値（runtime-observed） | ワーカーおよびバックエンドの初期化完了後に実際に成立・観測された値 | ランク番号、GPU UUID、通信バックエンド、worker-ready 状態 |
+| リザルト実測値（result-observed） | 実際の推論レスポンスを検証・検査して得られた測定値 | 正常返却数、完了トークン数、生成所要時間 |
 
-node scopeも分ける。rank 0の値を各nonzero node rankへ複製せず、まずnode別full snapshotを保存する。merge時に
-node/rank-scoped full factを変換せず保持し、viewだけが全expected scopeで一致したfieldをcommon
-表示する。common/deltaの第二raw表現は作らない。requestedとobserved、warmupとmeasured workload、
-予定件数と返却件数は別factである。
+ノード単位のスコープ（node scope）も厳格に分離する。ランク0（Rank 0）の観測値を非ゼロの各ノードランクへ安易に複製することは行わず、まずノードごとの完全なスナップショットを独立して保存する。マージ処理においてもノードやランクごとの詳細ファクトを変換せずに保持し、ビュー層でのみ全想定スコープで一致したフィールドを共通設定として表示する。共通値と差分値を混在させた二重の生データ表現は作成しない。要求値と実測値、ウォームアップと本番測定ワークロード、予定リクエスト数と返却リクエスト数は、それぞれ独立した別個のファクトとして厳密に区別する。
 
-## producerと時系列
+## プロデューサーと実行時系列
 
 ```text
-Actions runner
-  create one bench/profile run manifest
-  verify source/artifact sidecars and independent scheduler/execution fields
-  record exact pjsub argv and submit without BigQuery credentials
-  save stdout/stderr, outcome, and returned job ID
+Actions ランナー
+  単一の bench / profile 実行マニフェストを作成
+  ソースおよび成果物のサイドカー、ならびに独立したスケジューラ・実行パラメータを検証
+  実際の pjsub 引数列を記録し、BigQuery 認証情報を含めずにジョブを投入
+  標準出力・標準エラー出力、ジョブ成否、返却されたジョブ ID を保存
 
-PJM supervisor
-  snapshot job-entry environment
-  write run ID and PJM_JOBID
-  launch one StageRunner/mpiexec/node-wrapper set
+PJM スーパーバイザー
+  ジョブ起動直後の環境変数をスナップショット保存
+  実行 ID（run ID）および PJM_JOBID を記録
+  StageRunner、mpiexec、node-wrapper の一式を起動
 
-node wrapper / node-agent
-  record topology, cache input, exact argv, hardware, and host environment
-  wait for expected-node readiness before starting containers
-  bench/profile: snapshot score config and container state
-  profile only: append raw GPU samples and local phase markers
-  flush/close local sources before script exit
+ノードラッパー / ノードエージェント
+  トポロジー、キャッシュ入力、実際の argv、ハードウェア構成、ホスト環境を記録
+  全ノードの準備完了（readiness）を確認してからコンテナを起動
+  bench / profile: スコア設定およびコンテナ状態のスナップショットを取得
+  profile 専用: 生の GPU サンプルおよびローカルフェーズマーカーを追記
+  スクリプト終了前にローカルデータソースを確実にフラッシュ・クローズ
 
-SGLang score hook
-  emit launch-effective ServerArgs and worker-ready facts
+SGLang スコアフック
+  起動時に実効化された ServerArgs および worker-ready ファクトを出力
 
-rank-0 result hook
-  persist warmup/measured workload manifests
-  write the authoritative primary-result artifact
-  profile only: emit distributed GPU phase boundaries
+ランク0 リザルトフック
+  ウォームアップ用および本番測定用のワークロードマニフェストを永続化
+  正本となるプライマリリザルト（primary-result）成果物を書き出し
+  profile 専用: 分散 GPU 観測フェーズの境界マーカーを出力
 
-Actions runner
-  parse/reduce completed sources after terminal state
-  merge, validate, upload run artifact, and publish run projections
+Actions ランナー
+  ジョブ終了状態への到達後、収集完了したデータソースをパース・集約
+  マージ、検証、実行成果物のアップロード、および実行プロジェクションの公開を実施
 ```
 
-全producerは`run-manifest.json`のrun IDを読む。各processで再計算しない。target hookはlocal structured
-eventを書くだけで、metric key、BigQuery、retryを知らない。
+すべてのプロデューサーは `control/run-manifest.json` に記載された一意な run ID を読み取り、各プロセスが独自に ID を再計算することは禁止する。対象フックはローカルの構造化イベントを書き出す責務のみを負い、メトリクスキーの階層構造、BigQuery 送信、リトライ処理などの関心事からは完全に疎結合とする。
 
-## fact別の取得契約
+## ファクトファミリー別の取得規約
 
-取得できなかった値はkeyを出さずconsumerでNULLにする。required sourceの欠損は
-`collection_complete=false`に反映するだけで、原因、family status、placeholder keyを作らない。
+取得に失敗した値についてはメトリクスキー自体を出力せず、コンシューマ側で NULL として扱う。必須データソースが欠損した場合は `collection_complete=false` に反映させるのみとし、原因別の詳細キー、ファミリーステータス、ダミーのプレースホルダーキーを個別に作成してはならない。
 
-| fact family | authoritative source / producer | raw destination | validation / applicability |
+| ファクトファミリー | 正本データソース／プロデューサー | 生データの格納先 | 検証規則／適用範囲 |
 |---|---|---|---|
-| run identity | runner / submit前 | `control/run-manifest.json` | run IDとpurposeを照合。contract/protocol identityは記録しない |
-| source track | Git object / runner | run manifestとsource projection | clean checkout、full OID、base ancestor、実control-plane hash |
-| instrumentation bundle | Git管理bundleとSIF sidecar / runner | bundle member/hash | bench/profileの通常bundleだけ。開発時比較の情報は入れない |
-| scheduler | exact pjsub argv/stdout/stderr、job-entry、pjstat / runner・supervisor | scheduler fact/source | submit、entry、accountingのjob ID一致 |
-| environment | job entry、host exec、SGLang launch、workerのbyte環境 / 各scope owner | snapshotとscope別fact | byte-exact、expected node/rankを保持 |
-| SIF/toolchain | build sidecar、完成SIF、runtime file / build packager | SIF provenance projection | full commit、digest、file hash、role一意性 |
-| model/dataset/cache | pinned manifestとstaging input / provision verifier | source manifestとartifact identity | revision、member path/size/hashを照合 |
-| scheduler request | 実行設定の独立fieldとexact pjsub argv / runner | scheduler request | nodes、MPI、GPU/node、TP、resource、transport等を独立に照合 |
-| hardware/topology | lscpu/sysfs、MPI/container/worker observation / node wrapper | node/rank projection | expected node/rank/GPU bijection |
-| lifecycle | node-agent rendezvousとsummary | lifecycle projection | run/version/freshness、expected node ACK、shutdown一意性 |
-| workload | generateへ渡したordered request / rank-0 result hook | ordered workload artifact | warmup/measuredを分離し、summary keyは作らない |
-| primary result | 実response検査結果 / rank-0 result hook | `source/primary-result.json` | returned/error/token/output identity/wall。throughputはquery時導出 |
-| stage/process | StageRunnerのmonotonic timerとwait status | stage termination fact | argv/cwd/exit/signal/timeout、clock scopeを保持 |
-| MPI network capture | generation成功後のIMB argv/stdout/stderr / network capture | `source/network/imb-mpi1/`、固定幅facts、`mpi_network_results_v2` | generationと同じMPI process/allocation/transport。complete sectionだけをpure parse。失敗/timeout/truncatedは0 row、termination保持、`collection_complete=false` |
-| NCCL network capture | generation成功後のcollective別argv/JSON/stdout/stderr / network capture | `source/network/nccl-tests/<collective>/`、固定幅facts、`nccl_network_results_v2` | generationと同じMPI/GPU数、全GPU一communicator、`NCCL_TESTS_SPLIT`なし。3 stageは独立継続、JSON不在/parse不能は当該stage 0 row、retryなし |
-| GPU telemetry | nvidia-smi sampleとphase marker / profile agent | profile raw/projection | profileだけ。benchはproducerなし、consumer NULL |
-| artifact | hash済みmemberとouter manifest / publisher | artifact index | expected member、size/hash、role、一意なownerを照合 |
+| 実行識別（run identity） | ランナー／ジョブ投入前 | `control/run-manifest.json` | run ID および実行目的を突合。プロトコル固有 ID は記録しない |
+| ソース追跡（source track） | Git オブジェクト／ランナー | run マニフェストおよびソースプロジェクション | クリーンチェックアウト、完全 OID、ベースコミット、制御プレーンハッシュを検証 |
+| 計測バンドル（instrumentation bundle） | Git 管理下の資材および SIF サイドカー／ランナー | バンドル構成要素／ハッシュ | bench / profile の正規バンドルのみ対象。開発時比較用の中間情報は除外 |
+| スケジューラ（scheduler） | 実際の pjsub 引数列／stdout／stderr、ジョブ開始環境、pjstat／ランナー・スーパーバイザー | スケジューラファクト／ソース | ジョブ投入時、実行開始時、アカウンティング情報におけるジョブ ID の一致を確認 |
+| 環境変数（environment） | ジョブ開始時、ホスト実行時、SGLang 起動時、ワーカープロセスの環境変数／各スコープオーナー | スナップショットおよびスコープ別ファクト | バイト完全一致で保存し、想定ノード・ランクの対応関係を保持 |
+| SIF / ツールチェーン | ビルドサイドカー、完成 SIF、実行時ファイル／ビルドパッケージャ | SIF 来歴プロジェクション | 完全コミット SHA、ダイジェスト、ファイルハッシュ、役割の一意性を検証 |
+| モデル／データセット／キャッシュ | 固定マニフェストおよびステージング入力／プロビジョニング検証器 | ソースマニフェストおよび成果物識別子 | リビジョン、ファイルパス、サイズ、ハッシュ値を突合 |
+| スケジューラ要求パラメータ | 実行設定の独立フィールドおよび実際の pjsub 引数列／ランナー | スケジューラ要求ファクト | ノード数、MPI プロセス数、GPU 数、TP、リソース、トランスポート等を個別に突合 |
+| ハードウェア／トポロジー | lscpu、sysfs、MPI／コンテナ／ワーカーの観測情報／ノードラッパー | ノード／ランクプロジェクション | 想定ノード、ランク、GPU の全単射（bijection）関係を検証 |
+| ライフサイクル（lifecycle） | ノードエージェントのランデブーおよびサマリー情報 | ライフサイクルプロジェクション | run ID、バージョン、鮮度、想定ノードの ACK、シャットダウンの一意性を検証 |
+| ワークロード（workload） | generate 呼び出しへ渡された順序付きリクエスト／ランク0 リザルトフック | 順序付きワークロード成果物 | ウォームアップと本番測定を分離し、集約サマリーキーは作らない |
+| プライマリリザルト（primary result） | 実際のレスポンス検証結果／ランク0 リザルトフック | `source/primary-result.json` | 返却数、エラー数、トークン数、出力同一性、生成時間。スループットはクエリ時に算出 |
+| ステージ／プロセス | StageRunner のモノトニックタイマーおよび待機ステータス | ステージ終了ファクト | argv、cwd、終了コード、シグナル、タイムアウト、クロックスコープを保持 |
+| MPI ネットワーク計測 | 生成成功後における IMB の argv／stdout／stderr／ネットワークキャプチャ | `source/network/imb-mpi1/`、固定幅ファクト、`mpi_network_results_v2` | generation 実行時と同一の MPI プロセス数・リソース・通信方式。完了セクションのみをパース。失敗・タイムアウト・途絶時は0行とし、終了状態を記録した上で `collection_complete=false` |
+| NCCL ネットワーク計測 | 生成成功後における集団通信ごとの argv／JSON／stdout／stderr／ネットワークキャプチャ | `source/network/nccl-tests/<collective>/`、固定幅ファクト、`nccl_network_results_v2` | generation と同一の MPI・GPU 数、全 GPU 単一コミュニケータ、`NCCL_TESTS_SPLIT` なし。3ステージは独立継続し、JSON 欠損時は当該ステージ0行としてリトライは行わない |
+| GPU テレメトリ | nvidia-smi サンプルおよびフェーズマーカー／プロファイルエージェント | プロファイル生データ／プロジェクション | profile 専用。bench 実行ではプロデューサーを起動せず、コンシューマ列は NULL |
+| 成果物管理（artifact） | ハッシュ計算済み構成要素および外部マニフェスト／パブリッシャ | 成果物インデックス | 想定構成要素、サイズ、ハッシュ値、役割、一意なオーナーを突合 |
 
-## 個別実行設定とconsumer
+## 個別実行設定とコンシューマ表現
 
-nodes、MPI processes、GPU/node、tensor parallel size、resource group、transport、address source、portは
-実行設定の独立field、BigQuery/Sheetsの独立列として持つ。これらを束ねるID、object、manifestは作らない。
+ノード数、MPI プロセス数、ノード当たり GPU 数、テンソル並列サイズ、リソースグループ、トランスポートポリシー、アドレス解決元、ポート番号は、実行設定の独立したフィールドとして定義し、BigQuery およびスプレッドシート上でも独立した列として平坦に展開する。これらを一括して束ねる複合 ID、複合オブジェクト、複合マニフェストは作成しない。
 
-benchの比較適格性は通常runのsource/workload/result/placement/completenessから導出する。
-profileはscore統計へ入れない。complete recordから導出できるfirst/last/count/average、throughput、
-構成比、rank/run合計、top-Nはraw keyとして保存しない。
+ベンチマークスコアの比較適格性は、通常実行におけるソース、ワークロード、結果、配置、および収集完全性の各ファクトからビュー側で導出する。プロファイル実行（profile）はスコア比較統計の母集団には含めない。完全なレコードから事後計算可能な最初／最後の値、件数、平均値、スループット、構成比率、ランク／実行の合計値、上位 N 件（top-N）などは、生キーとして保存しない。
 
-## 開発時の非擾乱確認
+## 開発時における非擾乱性の確認
 
-collector実装中に代表設定で計測なし／ありを同条件で実行し、throughputとstage wallが実用上遅くなって
-いないことを確認する。確認後は出力を破棄する。
+コレクター基盤の実装フェーズにおいては、代表的な実験設定を用いて「計測オーバーヘッドなし」と「計測有効」の条件を同一環境で実行し、スループット性能および各ステージのウォールタイムが実用上劣化していないことを事前に検証する。確認完了後、テスト実行の出力データは破棄する。
 
-この確認のためのrun purpose、arm、pair、allocation、manifest、artifact、metric key、relation、Sheet列、
-eligibility、decision record、fixtureをv2へ追加しない。通常benchへ結果をjoinしない。
+なお、この性能非擾乱性の検証を目的とした実行用途（run purpose）、比較アーム、ペア ID、リソース割り当て、マニフェスト、成果物、メトリクスキー、リレーション、スプレッドシート列、適格性フラグ、判定レコード、およびテストフィクスチャを本番 v2 仕様へ持ち込んではならない。また、通常ベンチマークの集計テーブルへその結果を結合させてはならない。

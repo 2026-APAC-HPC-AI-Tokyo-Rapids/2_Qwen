@@ -1,83 +1,83 @@
-# Qwen 3.5 runtime の試行記録
+# Qwen 3.5 ランタイムの試行記録
 
-この文書は、2026-07-12 から 2026-07-28 までの Codex 会話、GitHub Actions、PJM job の診断結果を整理したものである。現在の構成で継続的な性能比較を始める前に、実行環境と lifecycle の問題を切り分けた記録であり、throughput の性能結論ではない。
+この文書は、2026-07-12 から 2026-07-28 にかけて実施された対話ログ、GitHub Actions 実行ログ、および PJM ジョブの診断結果を体系的に整理した記録である。現行構成において継続的な性能ベンチマークを開始するにあたり、実行環境とライフサイクルに起因する課題を切り分けた経緯を記したものであり、スループット性能に関する最終結論ではない。
 
-## 1. runtime bundle を作る理由
+## 1. ランタイムバンドル（runtime bundle）を作成する理由
 
-初期案では repository checkout から直接 PJM script を起動する構成も検討した。しかし Actions runner の checkout は一時的であり、長い queue待ちの間に runner が再登録される可能性がある。また、どの SIF、script、結果が一つの実験に属するか分かりにくい。
+初期の構想では、リポジトリのチェックアウトディレクトリから直接 PJM スクリプトを実行する構成も検討された。しかし GitHub Actions ランナーのチェックアウト領域は一時的（エフェメラル）であり、ジョブのキュー待機時間が長期化した場合にランナーが再登録・再起動されるリスクを排除できなかった。また、どの SIF イメージ、スクリプト、測定結果が特定の実験に対応しているのか追跡が困難になるという課題もあった。
 
-そのため、共有 filesystem 上の run 固有 directory に次をまとめる。
+そこで、共有ファイルシステム上に実行単位（run）ごとの個別ディレクトリを生成し、以下の構成要素を1箇所に集約する方針を採用した。
 
-- 選択済み SIF への symbolic link
-- その workflow revision の PJM script と profiler wrapper
-- SIF の再利用元 run number
-- logs
-- results
+- 選択された SIF イメージへのシンボリックリンク
+- 当該ワークフローリビジョンの PJM スクリプトおよびプロファイララッパー
+- SIF の再利用元となった実行番号（run number）のメタデータ
+- 各種実行ログ
+- ベンチマーク結果
 
-model と dataset は大きく、複数実行で共通なので bundle へ copyせず、固定 pathから read-only bindする。
+モデルおよびデータセットは容量が極めて大きく複数回の実行で共有されるため、個別バンドル内にはコピーせず、固定パスから読み取り専用（read-only）でバインドマウントする。
 
-## 2. model と dataset の扱い
+## 2. モデルとデータセットの取り扱い
 
-入力 dataset は SGLang の標準的な ShareGPT workload とし、SIFには入れない。`provision` で Hugging Face Hub の最新 datasetを共有 pathへ取得し、実行時は単一 JSONだけを bindする。
+入力データセットには SGLang の標準的な ShareGPT ワークロードを採用し、SIF 内には含めない設計とした。プロビジョニングジョブにおいて Hugging Face Hub から最新のデータセットを共有パス上へ取得し、実行時には対象となる単一の JSON ファイルのみをコンテナ内へバインドマウントする。
 
-modelは単に `config.json` の存在を見るだけでなく、Qwen 3.5の model type / architectureであることを hostの `jq` で検査する。さらにsafetensors indexに列挙された全shardが存在し、空でないことを検査する。巨大なcheckpoint全体を読み直すchecksum検証は行わない。
+モデルについては単に `config.json` の存在を確認するだけでなく、Qwen 3.5 のモデル種別およびアーキテクチャ定義と一致しているかをホスト環境の `jq` コマンドで検証する。さらに、safetensors インデックスに列挙された全シャードが存在しかつ空ファイルでないことを検査する。巨大なチェックポイント全体を読み直すチェックサム検証は行わない。
 
-この設計ではHub側の repositoryが更新されると、以前は完全だった local checkpointも不足扱いになることがある。これは「固定済みlocal copyを永久に使う」設計ではなく、「実行時点の最新Hub revisionに対して完全であることを要求する」設計上の選択である。性能比較では model revisionが変わっていないことも確認する必要がある。
+この検証方針では、Hugging Face Hub 側のリポジトリが更新された場合、以前は完全であったローカルチェックポイントであってもシャード不足として検出される可能性がある。これは「固定されたローカルコピーを恒久的に利用し続ける」設計ではなく、「実行時点の最新 Hub リビジョンに対して完全性を保証する」という設計判断に基づく。したがって、性能比較を行う際にはモデルのリビジョンに変更が生じていないかも併せて確認する必要がある。
 
-## 3. JIT cache を共有 filesystemから直接読まない理由
+## 3. JIT キャッシュを共有ファイルシステムから直接参照しない理由
 
-初期実行では、共有 filesystem 上の SGLang cacheをbenchmarkから直接参照すると読み取りが不安定になることがあった。現在は実行開始時に共有 lockを取り、node-local directoryへ一貫したsnapshotを stagingする。成功したrunだけを排他 lock下で共有 cacheへmergeする。
+初期の実験において、共有ファイルシステム上の SGLang キャッシュディレクトリをベンチマークプロセスから直接参照した際、メタデータ操作の競合や I/O 遅延によって読み取りが不安定になる事象が観測された。このため、実行開始時に共有ロックを取得した上で各計算ノードのローカルディスクへ一貫したスナップショットをステージングする方式へと改めた。ベンチマークが正常終了した実行に限り、排他ロックの制御下で共有キャッシュへ差分をマージする。
 
-失敗runの不完全なJIT生成物は書き戻さない。複数runはsnapshotの読み取りを並行できるが、mergeは直列化する。
+失敗した実行における不完全な JIT 生成物は共有領域へ書き戻さない。これにより、複数の実行が並行してスナップショットを読み出すことは許容しつつ、共有キャッシュへの書き戻し処理は確実に直列化される。
 
-## 4. `/dev/shm` ではなく `/tmp` に JIT cache を置く理由
+## 4. `/dev/shm` ではなく `/tmp` に JIT キャッシュを配置する理由
 
-計算ノードの `/dev/shm` は実効的に `noexec` だった。Tritonが生成した `cuda_utils.so` をここからloadしようとすると、次のような失敗になった。
+Genkai 計算ノードにおける `/dev/shm` は実効的に `noexec`（実行権限なし）でマウントされていた。Triton が動的生成した共有ライブラリ `cuda_utils.so` を `/dev/shm` 上からロードしようとすると、以下のエラーによりロードに失敗した。
 
 ```text
 cuda_utils.so: failed to map segment from shared object
 ```
 
-同じ計算ノードの `/tmp` は node-local な XFSで、`exec` が許可されていた。診断したノードでは2 driveのmd RAID上にあり、buffered fioはread/writeとも約1.6 GiB/sだった。物理diskの持続帯域そのものではないが、Triton、DeepGEMM、TorchInductorのJIT cacheには十分である。
+一方、同一計算ノード上の `/tmp` はノードローカルな XFS であり、`exec`（実行権限）が明示的に許可されていた。診断を実施したノードでは 2 本の NVMe ドライブによる md RAID アレイ上に構築されており、バッファリング有効時の fio によるシーケンシャル性能は Read/Write ともに約 1.6 GiB/s を記録した。物理ディスク単体の持続帯域幅そのものではないものの、Triton、DeepGEMM、TorchInductor が必要とする JIT キャッシュの I/O 負荷に対しては十分な性能を有している。
 
-このため、実行可能な `.so` を生成する JIT cacheだけを `/tmp/sglang-jit.*` に置く。Singularityの一時領域は `/dev/shm/sglang-run.*` のままである。両者は用途が異なるため、一括して同じscratchへ移さない。
+以上の理由から、実行可能バイナリ（`.so`）が生成される JIT キャッシュのみを `/tmp/sglang-jit.*` に配置する。Singularity の一時展開領域については、引き続き `/dev/shm/sglang-run.*` を利用する。両者は要求される I/O 特性およびセキュリティ属性が異なるため、同一のスキャンディスクへ無差別に集約することは避けている。
 
-## 5. FlashInfer cache の二層
+## 5. FlashInfer キャッシュの二層構造
 
-名前が似ているが、次は別物である。
+名称が酷似しているものの、以下の2つは明確に役割が異なる別個のコンポーネントである。
 
 | 対象 | 役割 |
 |---|---|
-| `flashinfer-jit-cache` Python package | 事前配布された多数のkernel artifact。SIF内でread-only |
-| `/root/.cache/flashinfer` | 未収録条件のJIT結果、生成source、log。実行時にwriteが必要 |
+| `flashinfer-jit-cache` Python パッケージ | 事前コンパイル・事前配布された多数のカーネル成果物。SIF 内に読み取り専用で保持 |
+| `/root/.cache/flashinfer` | 事前配布パッケージに未収録の条件下で生成される JIT コンパイル結果、生成ソースコード、ログ。実行時に書き込み権限が必要 |
 
-事前配布packageを導入しても、runtime workspaceは必要になる。そこでnode-local JIT cacheを `/root/.cache` にも bindし、SIF内のartifactを利用しながら不足分だけを書き込む。SIF testでは一時的なwritable tmpfsを使うが、そこで生成したcacheは永続化しない。
+事前配布パッケージをイメージ内に組み込んだ場合でも、実行時のワークスペース領域は依然として不可欠である。そこで、ノードローカルの JIT キャッシュをコンテナ内の `/root/.cache` にもバインドマウントし、SIF 内の既存成果物を最大限に活用しつつ、不足分の差分カーネルのみを実行時にローカル領域へ書き込む運用とした。なお、SIF の単体テスト時には一時的な書き込み可能 tmpfs を割り当てるが、そこで生成されたキャッシュは永続化せずに破棄する。
 
-## 6. PJM の待機とログ表示
+## 6. PJM ジョブの待機とログストリーミング
 
-`pjwait <job-id>` はqueue待ち、実行、終了まで全体を待つ。実行開始だけを通知するコマンドとしては使えない。
+PJM の標準コマンド `pjwait <job-id>` は、キュー待機、実行、終了に至る全ライフサイクルを一括して待機する。そのため、ジョブの「実行開始」の契機のみを独立して検知する用途には適さない。
 
-Actions上でqueue待ちと計算ログを別stepに見せるため、現在は次の順にしている。
+GitHub Actions 上でキュー待機時間と実際の計算実行ログを個別のステップとして可視化するため、現在は以下の手順で待機とストリーミングを制御している。
 
-1. `pjsub` でjob IDを得る。
-2. `pjwait -w waitnone` とlog fileの存在を使い、job開始または開始前終了を判定する。
-3. log fileができた後、別stepで `tail --follow=name` と `pjwait -z` を並行する。
-4. 最後に `pjwait` の完了状態と `run-success` markerを確認する。
+1. `pjsub` コマンドを実行し、ジョブ ID を取得する。
+2. `pjwait -w waitnone` とログファイルの生成有無を併用し、ジョブの実行開始または開始前異常終了を判定する。
+3. ログファイルの生成を確認後、後続ステップで `tail --follow=name` によるログ追跡と `pjwait -z` による終了待機を並行して実行する。
+4. 最終ステップで `pjwait` の終了ステータスおよび `run-success` マーカーファイルの有無を検証する。
 
-独自の大きなscheduler polling scriptは一度導入したが、`pjstat` 自体の一時失敗とjob終了の区別が複雑になったため撤去した。標準の `pjwait` を中心にし、開始待ちに必要な最小限だけを残す。
+かつて独自の大規模なスケジューラポーリングスクリプトを導入した経緯があったが、`pjstat` の一時的な呼び出し失敗とジョブ自体の正常終了との判別処理が複雑化を招いたため撤去した。標準の `pjwait` を基軸とし、開始待機に必要な最小限のロジックのみを維持している。
 
-## 7. ephemeral runner と `NO CURRENT DIR`
+## 7. エフェメラルランナーと `NO CURRENT DIR` エラー
 
-2026-07-26 のActionsでは、PJM jobが長時間queueにいる間にself-hosted runnerがGitHubとの通信を失った。buildとprovisionは成功していたが、artifact回収とcleanupは実行されず、PJM jobだけが残った。
+2026-07-26 に実行された GitHub Actions ワークフローにおいて、PJM ジョブが長時間キュー待機している間に、セルフホストランナーと GitHub との通信が切断される事象が発生した。ビルドおよびプロビジョニングは成功していたものの、成果物の回収およびクリーンアップステップがスキップされ、計算キュー内に PJM ジョブのみが取り残された。
 
-診断では次を確認した。
+ホスト環境の診断を行った結果、以下の事実が判明した。
 
-- host自体は再起動していない。
-- runnerを管理するuser systemdが途中で再起動し、runnerが別IDで再登録された。
-- `Linger=no` で、runnerはuser service配下にあった。
-- `nohup` ではsystemd cgroupの停止を回避できない。
+- ホストサーバー自体は再起動していない。
+- ランナープロセスを管理するユーザー systemd が途中で再起動し、ランナーが別 ID で再登録された。
+- `Linger=no` に設定されており、ランナーがユーザーセッション配下の cgroup で動作していた。
+- `nohup` によるバックグラウンド起動を行っていても、systemd cgroup の終了に伴うプロセス停止は回避できない。
 
-孤立したPJM jobは後に開始したが、GPU処理へ入る前に終了した。
+その後、孤立した PJM ジョブはキューから計算ノードへとディスパッチされたものの、GPU 処理へ到達する前に直ちに異常終了した。
 
 ```text
 PJM code: 16
@@ -85,24 +85,24 @@ reason: NO CURRENT DIR
 GPU execution time: 0
 ```
 
-`pjsub` を実行したcwdがephemeral runnerのcheckoutであり、job開始時にはそのdirectoryが削除されていたことが原因である。runtime bundle自体は共有 filesystemに残っていても、schedulerが最初にcwdへ移動できなければPJM scriptは開始されない。
+原因は、`pjsub` を実行した当時のカレントワーキングディレクトリ（cwd）がエフェメラルランナーのチェックアウトディレクトリであり、ジョブ開始時にはそのディレクトリがランナーの再登録によってすでに消去されていた点にある。ランタイムバンドル自体は共有ファイルシステム上に保全されていても、スケジューラが起動時に投入元 cwd へ移動できなければ、PJM スクリプトは実行を開始できない。
 
 ### 現在の未解決点
 
-現行 [workflow](../../.github/workflows/genkai.yml) の `Submit Qwen job` は、`RUNTIME_DIR` 内のscriptを絶対pathで指定しているが、`pjsub` の前に `RUNTIME_DIR` へ `cd` していない。このため、同じrunner再登録がqueue待ち中に起きれば `NO CURRENT DIR` が再発する可能性がある。
+当時のワークフロー（[genkai.yml](../../.github/workflows/genkai.yml)）の `Submit Qwen job` ステップでは、`RUNTIME_DIR` 内のスクリプトを絶対パスで指定していたものの、`pjsub` の呼び出し直前に `RUNTIME_DIR` へ `cd` していなかった。そのため、キュー待機中に同様のランナー再登録が発生した場合、`NO CURRENT DIR` エラーが再発する潜在リスクが残されていた。
 
-修正する場合は、少なくとも `pjsub` 前に共有 filesystem上の `${RUNTIME_DIR}` へ移動し、投入cwdもruntime lifecycleの一部にする必要がある。runnerそのものについては、`loginctl enable-linger` またはsystem service化が本筋であり、workflowだけでは通信断を完全には防げない。
+根本的な対策としては、少なくとも `pjsub` 投入前に共有ファイルシステム上の `${RUNTIME_DIR}` へカレントディレクトリを移動し、ジョブ投入時の cwd 自体もランタイムライフサイクル管理下に置く必要がある。またランナー自体の安定運用については、`loginctl enable-linger` によるセッション保持、あるいは systemd システムサービスとしての常駐化が本質的な解決策であり、ワークフロー定義の工夫のみではホスト通信断を完全に防ぐことはできない。
 
 ## 8. 現時点の検証範囲
 
-過去のActions #80では、当時のSIFとruntime構成でend-to-end実行に成功した。その後の #91/#94 はFlashInfer version不整合、さらに新しいrunはrunner消失と `NO CURRENT DIR` で失敗している。
+過去の Actions 実行 #80 においては、当時の SIF イメージおよびランタイム構成によってエンドツーエンド（E2E）での実行成功を確認できた。しかしその後の実行 #91 および #94 では FlashInfer のバージョン不整合が発生し、さらに直近の実行では上述のエフェメラルランナー消失および `NO CURRENT DIR` エラーによる中断が生じた。
 
-したがって、現在のrecipe、現在のJIT cache配置、現在のruntime bundleを組み合わせたend-to-end成功は、会話履歴の範囲ではまだ確立していない。throughputの比較へ進む前に、次を一度のActions runで確認する必要がある。
+したがって、当時のビルドレシピ、JIT キャッシュ配置、およびランタイムバンドル構造を統合した最新構成での E2E 完走は、一連の検証会話の記録時点では未確立の状態にあった。スループット性能の比較検討へ進む前提として、以下の全行程が単一の Actions ワークフロー内で滞りなく完了することを確認する必要があった。
 
-1. SIF buildまたは再利用
-2. modelとdatasetのprovision
-3. queue待ちを越えたPJM script開始
-4. GPU上のFlashInfer、Triton、SGLang初期化
-5. `results.jsonl` の生成
-6. JIT cacheの成功時merge
-7. artifact回収とruntime cleanup
+1. SIF イメージのビルドまたは既存成果物の再利用
+2. モデルおよびデータセットのプロビジョニング
+3. キュー待ちを越えた PJM スクリプトの開始
+4. GPU 上での FlashInfer、Triton、SGLang の正常な初期化
+5. `results.jsonl` の正常出力
+6. 正常終了時における JIT キャッシュのマージ
+7. 成果物の確実な回収および一時ランタイムリソースのクリーンアップ

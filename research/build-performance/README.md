@@ -1,45 +1,37 @@
 # Genkai における SGLang SIF ビルドの調査記録（旧構成）
 
-この記録はOCI / Enroot移行前の履歴である。現行構成は [OCI / Enroot移行記録](../container-runtime-migration.md) を参照する。
+この記録は、OCI / Enroot移行以前の旧構成に関する履歴である。現行構成については [OCI / Enroot移行記録](../container-runtime-migration.md) を参照のこと。
 
-このディレクトリは、Qwen 3.5 benchmark に使う SGLang 環境を再現可能な SIF として構築し、ビルド時間を必要な場合だけ負担するための設計を記録する。
+本ディレクトリは、Qwen 3.5ベンチマークに用いるSGLang実行環境を再現可能なSIF（Singularity Image Format）として構築し、必要な場合にのみビルドコストを負担するための設計内容を記録している。
 
-現在の workflow は、recipe、Org 管理の `5_SGLang_Src/main`、`patches/sglang/*.patch` から完成済み SIF を作る。通常の push では第一親履歴上の最も近い SIF を再利用し、明示した場合だけ新しくビルドする。
+当時のワークフローでは、Singularityレシピ、Organization管理の`5_SGLang_Src/main`、および`patches/sglang/*.patch`から完成済みSIFを生成していた。通常のpushでは第一親（first-parent）履歴上で直近のSIFを再利用し、明示的に指定した場合のみ新規ビルドを実行する運用とした。
 
-現行構成は [current-build.md](current-build.md)、その構成に至った実験と失敗は [trial-record.md](trial-record.md) を参照する。
+当時の構成詳細は [current-build.md](current-build.md)、当該構成に至った実験と試行錯誤の記録は [trial-record.md](trial-record.md) を参照のこと。
 
-## この構成で確立していること
+## この構成で確立した事項
 
-- 公開済み SGLang image を親にせず、CUDA 13.0.1 と Ubuntu 24.04 を基準に source から SGLang を導入する。
-- SIF は Genkai の login node で Singularity CE 4.1.3 を使ってビルドし、PJM と GPU 計算ノードはビルドに使わない。
-- build tree、Singularity cache、一時領域は node-local な `/dev/shm/qwen-sglang-build` に置く。
-- 完成 SIF は `/home/ACCOUNT/share/sglang-sifs/<run-number>.sif` に保存し、同一 filesystem 内で atomic に公開する。
-- SIF には source、recipe、patch、build tool、workflow run を追跡する provenance を格納する。
-- SGLang、recipe、依存関係を変更する push は、コミットメッセージの先頭に `[require-build]` を付ける。
+- 公開済みSGLangイメージをベースとせず、CUDA 13.0.1およびUbuntu 24.04を基準としてソースコードからSGLangをビルド・導入する。
+- SIFのビルドは玄界のログインノード上でSingularity CE 4.1.3を用いて実行し、PJMスケジューラおよびGPU計算ノードはビルド処理に使用しない。
+- ビルドツリー、Singularityキャッシュ、および一時領域は、ノードローカルなtmpfsである`/dev/shm/qwen-sglang-build`上に配置する。
+- 完成したSIFは`/home/ACCOUNT/share/sglang-sifs/<run-number>.sif`に保存し、同一ファイルシステム内でのアトミックな移動（rename）により公開する。
+- SIF内には、ソースコード、レシピ、パッチ、ビルドツール、およびGitHub Actionsワークフローの実行情報を追跡する来歴（provenance）を格納する。
+- SGLang本体、レシピ、または依存関係を変更するpushでは、コミットメッセージの先頭に`[require-build]`を付与する。
 
-## SGLang source mirror
+## SGLangソースミラー
 
-Genkai では `5_SGLang_Src` の bare mirror を Git object cache として共有する。
+玄界上では、`5_SGLang_Src`のbare mirrorをGitオブジェクトキャッシュとして共有している。
 
 ```text
 /fast/PROJECT/git-mirror/5_SGLang_Src.git
 ```
 
-Org 管理の `5_SGLang_Src` は push 後に自身の GitHub Actions からこの mirror を
-更新する。このリポジトリの workflow は mirror を読み取り専用として扱い、新規
-SIF ビルド時だけ run 固有の `/dev/shm` 作業ディレクトリへ clone して `main` の
-先端を detached checkout する。recipe はそのローカル tree を `%files` で
-取り込み、SGLang の公式リポジトリを直接 clone しない。
+Organization管理下の`5_SGLang_Src`リポジトリは、push発生時に自身のGitHub Actionsワークフローからこのミラーを自動更新する。本リポジトリのワークフローはこのミラーを読み取り専用として扱い、新規SIFビルド時のみラン固有の`/dev/shm`作業ディレクトリへとクローンして`main`ブランチの先端をdetached checkoutする。レシピ側はそのローカルツリーを`%files`ディレクティブで取り込み、ビルド中にSGLangの公式リポジトリを直接クローンすることはしない。
 
-DeepEP は mirror の対象外である。現行どおり公式
-`deepseek-ai/DeepEP` の固定 commit
-`9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee` の archive を recipe 内で直接取得する。
-MSCCL++、PyPI/uv、FlashInfer、Hugging Face のモデルとデータセットもこの Git
-mirror の対象外である。
+DeepEPはこのミラー管理の対象外である。従来どおり公式リポジトリ（`deepseek-ai/DeepEP`）の固定コミット`9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee`のアーカイブをレシピ内で直接取得する。MSCCL++、PyPI/uv、FlashInfer、ならびにHugging Face上のモデルおよびデータセットも本Gitミラーの対象外である。
 
-### 初回構築
+### 初回構築手順
 
-初回だけ Genkai へ SSH し、次を実行する。この処理は workflow YAML に含めない。
+初回のみ玄界へSSH接続し、以下のコマンドを実行する。なお、本処理はワークフローYAMLには含めない。
 
 ```bash
 install -d -m 2775 /fast/PROJECT/git-mirror
@@ -55,15 +47,11 @@ git -C /fast/PROJECT/git-mirror/5_SGLang_Src.git \
   config core.sharedRepository group
 ```
 
-`git clone --mirror` は初回だけであり、通常運用では `5_SGLang_Src` の push を
-契機にソースリポジトリ側の workflow が mirror を更新する。この cache は取得量と
-準備時間を減らすためのものである。
+`git clone --mirror`による初期化は初回限定の作業であり、通常運用では`5_SGLang_Src`へのpushを契機としてソースリポジトリ側のワークフローがミラーを更新する。本キャッシュの主目的は、ネットワーク取得量とビルド準備時間の削減である。
 
-### 障害時の再作成
+### 障害時の再作成手順
 
-bare repository が壊れた場合は、ソースリポジトリの mirror 更新workflowが実行中で
-ないことを確認してから、壊れたrepositoryを別名へ退避する。その後、上記の初回構築
-手順で新しいmirrorを作り、次を確認してからworkflowを再実行する。
+bareリポジトリが破損した場合は、ソースリポジトリ側のミラー更新ワークフローが実行中でないことを確認した上で、破損したリポジトリを別名へと退避する。その後、上記の初回構築手順に沿って新しいミラーを再作成し、以下の整合性を確認してからワークフローを再実行する。
 
 ```bash
 git -C /fast/PROJECT/git-mirror/5_SGLang_Src.git fsck --full
@@ -73,4 +61,4 @@ test "$(git -C /fast/PROJECT/git-mirror/5_SGLang_Src.git \
   config --get core.sharedRepository)" = group
 ```
 
-`research/**` を含む Markdown だけの push では、[workflow](../../.github/workflows/genkai.yml) は起動しない。
+なお、`research/**`配下のMarkdownファイルのみを変更したpushでは、[ワークフロー](../../.github/workflows/genkai.yml) は起動しない。
