@@ -1,6 +1,6 @@
 # Qwen3-235B PD inference on Firmus
 
-公式Qwen競技の `Qwen/Qwen3-235B-A22B-Instruct-2507` FP8 weightsを、Firmusの2ノード16基のH200を用いてPrefill–Decode分離（PD分離）構成で評価するリポジトリです。実行エントリポイントは [Qwen workflow](.github/workflows/qwen.yml) です。玄界およびASPIRE 2A+向けのワークフローは、モデルや実行環境が整備されるまでの間、既存の`sglang.check_env`による環境検査のみを実行します。
+公式Qwen競技の `Qwen/Qwen3-235B-A22B-Instruct-2507` FP8 weightsを、Firmusの2ノード16基のH200を用いてPrefill–Decode分離（PD分離）構成で評価するリポジトリです。実行エントリポイントは [Qwen workflow](.github/workflows/qwen.yml) です。玄界およびASPIRE 2A+には同じ固定revisionの全24モデルシャードと検証済みSquashFSが配置されており、現在の各ワークフローは要求した全ノードで`sglang.check_env`とNIXLバージョンを検証します。
 
 Firmusにおける初期構成は、node 0のPrefillワーカー4基（TP2）およびnode 1のDecodeワーカー2基（TP4/EP4）です。各ワーカーはNIXLを使用し、計算ノード上で状態が`ACTIVE`かつリンク層が`InfiniBand`であるHCAだけを`UCX_NET_DEVICES`へ渡します。複数NIC環境でもNIXLの制御経路とデータ経路が同じ到達可能なアドレスを使うように、各ノードのIPv4アドレスをrouter URL、ヘルスチェック、およびSGLangの`SGLANG_HOST_IP`へ明示します。計6基のワーカーの健全性（ヘルスチェック）を確認したのち、`sglang-router`の単一ゲートウェイを起動し、AIPerfはその`/v1/chat/completions`エンドポイントにのみ接続します。サービスの起動、ヘルスチェック、AIPerfの実行、および公式結果判定は、同一の [Slurm job](platforms/firmus/run-qwen-pd.slurm) 内で一貫して実行されます。
 
@@ -16,6 +16,6 @@ push契機で計算ジョブを起動する場合は、コミットメッセー�
 [require-build] [cluster:firmus] [nodes:2] Run official Qwen3 PD baseline
 ```
 
-`[cluster:genkai]`および`[cluster:aspire2ap]`は、各クラスタにおける環境検査ジョブを起動します。クラスタタグのないpushでは静的検証のみが実行され、`[skip ci]`を先頭に付けたpushではGitHub Actions自体が起動しません。実行成果物（run artifacts）は、一旦GitHub ActionsのArtifactとして回収された後、home-labの`/hdd_raid/samba/net_share/qwen-artifacts/<run-id>/<attempt>`へSHA-256マニフェスト付きで退避・保管されます。
+`[cluster:genkai]`および`[cluster:aspire2ap]`は、各クラスタにおける環境検査ジョブを起動します。`[nodes:N]`で要求した各ノードへ1 rankを配置し、全rankの成功と相異なるhostnameを確認します。クラスタタグのないpushでは静的検証のみが実行され、`[skip ci]`を先頭に付けたpushではGitHub Actions自体が起動しません。実行成果物（run artifacts）は、一旦GitHub ActionsのArtifactとして回収された後、home-labの`/hdd_raid/samba/net_share/qwen-artifacts/<run-id>/<attempt>`へSHA-256マニフェスト付きで退避・保管されます。
 
 公式仕様、固定コマンド、モデル配置の検証結果、および実装判断の詳細は [公式Qwen3 PD実装記録](research/official-qwen3-pd.md) を参照してください。AWSリソースと認証情報の分離境界については [AWS SquashFSビルド](research/aws-container-build.md)、Enrootへの移行経緯と設計理由は [OCI / Enroot移行記録](research/container-runtime-migration.md) に記録されています。
