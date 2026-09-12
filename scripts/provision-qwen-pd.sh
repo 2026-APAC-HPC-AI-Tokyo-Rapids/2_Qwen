@@ -50,5 +50,9 @@ install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/run-qwen-pd.slurm" "${runt
 export HF_HOME="${runtime_dir}/tokenizer-cache"
 export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"
 uvx --from 'huggingface_hub==0.36.0' hf download "${tokenizer_repository}" --revision "${tokenizer_revision}" --include config.json --include generation_config.json --include merges.txt --include tokenizer.json --include tokenizer_config.json --include vocab.json >/dev/null
+tokenizer_cache_repository="${HF_HOME}/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507"
+test -d "${tokenizer_cache_repository}/snapshots/${tokenizer_revision}"
+install -d -m 0755 "${tokenizer_cache_repository}/refs"
+printf '%s' "${tokenizer_revision}" >"${tokenizer_cache_repository}/refs/main"
 jq -n --arg repository "${model_repository}" --arg revision "${model_revision}" --arg path "${MODEL_PATH}" --arg tokenizer_repository "${tokenizer_repository}" --arg tokenizer_revision "${tokenizer_revision}" '{schema_version:"qwen3-pd-model/v1",model:{repository:$repository,revision:$revision,path:$path,precision:"fp8",shards:24},tokenizer:{repository:$tokenizer_repository,revision:$tokenizer_revision}}' >"${runtime_dir}/source/model.json"
 jq -n --arg commit "${GITHUB_SHA}" --argjson profile "${PROFILE}" --arg container_sha256 "${CONTAINER_SHA256}" --argjson container_size "${CONTAINER_SIZE}" '{schema_version:"qwen3-pd-provenance/v1",commit:$commit,profile:$profile,container:{sha256:$container_sha256,size_bytes:$container_size},aiperf:{version:"0.12.0",commit:"be53bf2953d30e46c500e6a80fc1f8b6f84bc718"},sglang_router:{version:"0.3.2"}}' >"${runtime_dir}/source/provenance.json"
