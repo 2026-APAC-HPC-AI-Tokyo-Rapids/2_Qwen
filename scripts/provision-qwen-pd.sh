@@ -44,7 +44,7 @@ sed -i 's/local timeout=100 pid=-1 id=0/local timeout=5000 pid=-1 id=0/' "${runt
 nvidia_hook="${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
 if [[ -x "${nvidia_hook}" ]]; then sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${nvidia_hook}"; fi
 
-install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-aiperf.sh" "${GITHUB_WORKSPACE}/scripts/run-aiperf-container.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen-pd-job.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen-pd-node.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen-pd-router.sh" "${GITHUB_WORKSPACE}/scripts/sample-gpu.sh" "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${runtime_dir}/scripts/"
+install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-aiperf.sh" "${GITHUB_WORKSPACE}/scripts/run-aiperf-container.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen-pd-job.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen-pd-node.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen-pd-router.sh" "${GITHUB_WORKSPACE}/scripts/sample-gpu.sh" "${GITHUB_WORKSPACE}/scripts/sample-system.sh" "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${runtime_dir}/scripts/"
 install -m 0644 "${GITHUB_WORKSPACE}/configs/firmus-pd.json" "${runtime_dir}/source/run-config.json"
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/run-qwen-pd.slurm" "${runtime_dir}/scripts/run-qwen-pd.slurm"
 export HF_HOME="${runtime_dir}/tokenizer-cache"

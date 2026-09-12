@@ -71,6 +71,8 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert "--pd-disaggregation" in router
     assert '-m "${MODEL_PATH}:/model"' in router
     assert "HF_HUB_OFFLINE=1" in router
+    assert "sample-system.sh" in node
+    assert "sample-system.sh" in (ROOT / "scripts/provision-qwen-pd.sh").read_text()
 
 
 def test_compute_scripts_have_no_cloud_credentials() -> None:

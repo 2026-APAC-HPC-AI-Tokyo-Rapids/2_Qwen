@@ -13,11 +13,13 @@ hostname_short="$(hostname -s)"
 node_tmp="$(mktemp -d "${TMPDIR:-/tmp}/qwen-pd-${node_rank}.XXXXXXXXXX")"
 pids=()
 sampler_pid=
+system_sampler_pid=
 
 cleanup() {
   status=$?
   trap - EXIT INT TERM
   if [[ -n "${sampler_pid}" ]]; then kill "${sampler_pid}" 2>/dev/null || true; wait "${sampler_pid}" 2>/dev/null || true; fi
+  if [[ -n "${system_sampler_pid}" ]]; then kill "${system_sampler_pid}" 2>/dev/null || true; wait "${system_sampler_pid}" 2>/dev/null || true; fi
   for pid in "${pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
   for pid in "${pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
   rm -rf -- "${node_tmp:?}"
@@ -34,7 +36,10 @@ UCX_NET_DEVICES="$(IFS=,; printf '%s' "${ib_devices[*]}")"
 printf 'hostname=%s\nnode_rank=%s\nucx_net_devices=%s\n' "${hostname_short}" "${node_rank}" "${UCX_NET_DEVICES}" >"${RUNTIME_DIR}/logs/node-${node_rank}-environment.log"
 nvidia-smi -L >>"${RUNTIME_DIR}/logs/node-${node_rank}-environment.log"
 
-if [[ "${PROFILE}" == true ]]; then OUTPUT="${RUNTIME_DIR}/profile/gpu-node-${node_rank}.csv" "${RUNTIME_DIR}/scripts/sample-gpu.sh" & sampler_pid=$!; fi
+if [[ "${PROFILE}" == true ]]; then
+  OUTPUT="${RUNTIME_DIR}/profile/gpu-node-${node_rank}.csv" "${RUNTIME_DIR}/scripts/sample-gpu.sh" & sampler_pid=$!
+  NODE_RANK="${node_rank}" OUTPUT_DIR="${RUNTIME_DIR}/profile" "${RUNTIME_DIR}/scripts/sample-system.sh" & system_sampler_pid=$!
+fi
 
 start_worker() {
   local role="$1" worker="$2" tp="$3" port="$4" bootstrap="$5" gpus="$6"
