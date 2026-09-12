@@ -57,3 +57,9 @@ def test_official_command_contains_locked_workload() -> None:
     )
     assert all(argument in script for argument in required)
     assert "--request-rate" not in script
+
+
+def test_provision_maps_main_to_pinned_tokenizer_revision() -> None:
+    script = (REPOSITORY / "scripts" / "provision-qwen-pd.sh").read_text()
+    assert 'test -d "${tokenizer_cache_repository}/snapshots/${tokenizer_revision}"' in script
+    assert 'printf \'%s\' "${tokenizer_revision}" >"${tokenizer_cache_repository}/refs/main"' in script
