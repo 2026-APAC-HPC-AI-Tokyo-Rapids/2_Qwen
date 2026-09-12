@@ -20,7 +20,15 @@
 | AIPerf | `v0.12.0`, commit `be53bf2953d30e46c500e6a80fc1f8b6f84bc718` |
 | sglang-router | `0.3.2` |
 
-Firmus上の`/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8`には24個のsafetensorsシャードが配置されており、Hugging Faceダウンロードメタデータのコミットリビジョンも上表のmodel revisionと完全に一致することを確認した。玄界にも221 GiBのモデル重みが配置されている。一方、ASPIRE 2A+は確認時点で77 GiBのダウンロードキャッシュのみが存在し、model rootにsafetensorsファイルが存在しないため、現時点での実行対象からは除外している。
+Firmus上の`/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8`には24個のsafetensorsシャードが配置されており、Hugging Faceダウンロードメタデータのコミットリビジョンも上表のmodel revisionと完全に一致することを確認した。玄界にも221 GiBのモデル重みが配置されている。ASPIRE 2A+では、その後モデル配置が完了し、固定revision `e156cb4efae43fbee1a1ab073f946a1377e6b969`、24/24シャード、シャード総容量236,426,193,880 bytesを確認した。
+
+## 玄界・ASPIRE 2A+での実機検証
+
+main統合コミット`ae9ac10`のActions run 34700473422から両クラスタを同時に実行し、配備、schedulerジョブ、成果物回収、home-lab退避を含むワークフロー全体が成功した。両クラスタともEnroot 4.2.0、CUDA 13.0、PyTorch 2.11.0+cu130、SGLang、NIXL/nixl-cu13 1.4.1を確認し、共通のSquashFS（12,106,153,984 bytes、SHA-256 `6b4d81eb6400fa33400e5725a2842f63565b700d579f9be812a7c229a80da3b5`）を使用した。
+
+玄界のPJM job 6769520は37秒、終了コード0で完了した。rank 0は`b0003`、rank 1は`b0004`に配置され、各ノードで4基のH100を確認した。成果物10300281428（6,220 bytes、SHA-256 `8180f7026d604c1b73c23d729a2fa9d6b876fb785d26dc580a81e2e27f6ffc3f`）を退避した。先行run 34693425543ではPJM job 6767065自体が成功した後、開始待機中のSSH接続が2時間13分無出力となり切断された。この実測事象に対し、PJM待機状態を15秒ごとに出力する修正を加え、単独再試行run 34700290250と統合runの双方でActions全体の成功を確認した。
+
+ASPIRE 2A+のPBS job 208754.pbs111は34秒、`Exit_status=0`で完了した。rank 0は`a2ap-dgx035`、rank 1は`a2ap-dgx036`に配置され、各rankに1基のH100 80 GB HBM3を割り当てた。成果物10300421905（7,681 bytes、SHA-256 `c05896524527d41c8b78ada7bbb4b109352c9d4aa299adbc7a067d0f3aaba523`）を退避した。両クラスタの全ノード検証は環境と配備経路を対象とし、Firmus向け公式PD性能値の代替とはしない。
 
 ## 実行と判定
 
