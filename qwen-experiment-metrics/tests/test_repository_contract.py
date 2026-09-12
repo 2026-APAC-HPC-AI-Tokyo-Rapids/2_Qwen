@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -86,6 +87,17 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert "HF_HUB_OFFLINE=1" in router
     assert "sample-system.sh" in node
     assert "sample-system.sh" in (ROOT / "scripts/provision-qwen-pd.sh").read_text()
+
+
+def test_firmus_pd_bounds_each_workers_kv_capacity() -> None:
+    node_script = (ROOT / "scripts/run-qwen-pd-node.sh").read_text()
+    submission = (ROOT / "submission/run/submit.sbatch").read_text()
+    config = json.loads((ROOT / "configs/firmus-pd.json").read_text())
+
+    expected_arg = "--max-total-tokens 131072"
+    assert expected_arg in node_script
+    assert expected_arg in submission
+    assert config["topology"]["max_total_tokens_per_worker"] == 131072
 
 
 def test_submission_script_keeps_profile_data_separate() -> None:
