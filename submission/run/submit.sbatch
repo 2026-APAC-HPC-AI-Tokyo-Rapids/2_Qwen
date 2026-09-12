@@ -220,7 +220,13 @@ while true; do kill -0 "${server_pid}"; ready=0; for url in "${worker_urls[@]}";
 srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env HEAD_IP="${head_ip}" TAIL_IP="${tail_ip}" "${script_path}" router >"${OUTPUT_DIR}/router.log" 2>&1 &
 router_pid=$!
 deadline="$((SECONDS + 300))"
-until curl --fail --silent --max-time 2 "http://${head_ip}:8000/health" >/dev/null; do kill -0 "${router_pid}"; (( SECONDS < deadline )); sleep 2; done
-curl --fail --silent "http://${head_ip}:8000/v1/models" >"${OUTPUT_DIR}/models.json"
+models_url="http://${head_ip}:8000/v1/models"
+models_pending="${OUTPUT_DIR}/models.pending.json"
+while true; do
+  kill -0 "${router_pid}"
+  if curl --fail --silent --max-time 2 "${models_url}" >"${models_pending}" && jq -e '.data | map(.id) | index("qwen") != null' "${models_pending}" >/dev/null; then mv "${models_pending}" "${OUTPUT_DIR}/models.json"; break; fi
+  (( SECONDS < deadline ))
+  sleep 2
+done
 srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" "${script_path}" aiperf >"${OUTPUT_DIR}/aiperf.log" 2>&1
 touch "${OUTPUT_DIR}/run-success"

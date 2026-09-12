@@ -52,8 +52,14 @@ done
 srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env HEAD_IP="${head_ip}" TAIL_IP="${tail_ip}" "${RUNTIME_DIR}/scripts/run-qwen-pd-router.sh" >"${RUNTIME_DIR}/logs/router.log" 2>&1 &
 router_step_pid=$!
 deadline="$((SECONDS + 300))"
-until curl --fail --silent --max-time 2 "http://${head_ip}:8000/health" >/dev/null; do kill -0 "${router_step_pid}"; (( SECONDS < deadline )); sleep 2; done
-curl --fail --silent "http://${head_ip}:8000/v1/models" | tee "${RUNTIME_DIR}/results/models.json" | jq -e '.data | map(.id) | index("qwen") != null' >/dev/null
+models_url="http://${head_ip}:8000/v1/models"
+models_pending="${RUNTIME_DIR}/results/models.pending.json"
+while true; do
+  kill -0 "${router_step_pid}"
+  if curl --fail --silent --max-time 2 "${models_url}" >"${models_pending}" && jq -e '.data | map(.id) | index("qwen") != null' "${models_pending}" >/dev/null; then mv "${models_pending}" "${RUNTIME_DIR}/results/models.json"; break; fi
+  (( SECONDS < deadline ))
+  sleep 2
+done
 
 srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env AIPERF_MODE="${mode}" BENCHMARK_DURATION="${duration}" BENCHMARK_GRACE_PERIOD="${grace}" CONCURRENCY="${concurrency}" HOST=127.0.0.1:8000 WARMUP_DURATION="${warmup}" "${RUNTIME_DIR}/scripts/run-aiperf-container.sh" >"${RUNTIME_DIR}/logs/aiperf.log" 2>&1
 parser_args=()

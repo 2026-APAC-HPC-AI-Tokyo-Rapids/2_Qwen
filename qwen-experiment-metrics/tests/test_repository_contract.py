@@ -60,7 +60,9 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert "#SBATCH --nodes=2" in batch
     assert "#SBATCH --gpus-per-node=8" in batch
     assert "#SBATCH --time=00:17:00" in batch
-    assert job.count("/health") >= 7
+    assert job.count("/health") >= 6
+    assert 'models.pending.json' in job
+    assert 'index("qwen") != null' in job
     assert node.count("start_worker prefill") == 4
     assert node.count("start_worker decode") == 2
     assert "--tp-size \"${tp}\"" in node
