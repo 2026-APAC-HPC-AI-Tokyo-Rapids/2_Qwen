@@ -36,7 +36,7 @@ Firmusで公式に検証された初期構成を採用し、node 0にPrefillワ�
 
 `scripts/run-qwen-pd-job.sh`は、ワーカー群、ルーター、AIPerfの順序でプロセスを起動する。AIPerfから参照されるエンドポイントは、ルーターが提供する`/v1/chat/completions`のみである。`scripts/run-aiperf.sh`は公式モード（official）と探索モード（exploratory）を明示的に切り分け、公式モードでは規定のワークロード引数を厳密に固定する。探索モードでのみ、`configs/firmus-pd.json`に定義された短時間実行の設定を適用できる。なお、いずれのモードにおいてもopen-loop用の`--request-rate`は指定しない。
 
-`scripts/parse-aiperf-result.py`は、AIPerf 0.12.0が出力する`profile_export_aiperf.json`からgoodput、good request fraction、リクエスト数／エラー数、および実測されたISL/OSLを読み取り、公式の0.90合格判定（gate）と算出スコアをJSONファイルへ保存する。公式モードにおいて合格基準に達しなかった場合はジョブを失敗（fail）扱いとする。探索モードでは、基準未達のデータも分析用成果物としてそのまま保持する。
+`scripts/parse-aiperf-result.py`は、AIPerf 0.12.0が出力する`profile_export_aiperf.json`からgoodput、good request fraction、リクエスト数／エラー数、および実測されたISL/OSLを読み取り、公式の0.90合格判定（gate）と算出スコアをJSONファイルへ保存する。公式モードでは、保存したargv全体、AIPerf version、tokenizer revision、mode、concurrency、gatewayが固定ワークロードと一致することも検証する。この来歴が揃う場合だけ、設定ISL 4000に加えてAIPerfの`first_turn_prefix`補正後にclient exportへ記録される3986を厳密に受理する。raw観測値と`goodput × 200`の計算は変更しない。公式モードにおいて合格基準または来歴検証を満たさない場合はジョブを失敗（fail）扱いとする。探索モードでは、基準未達のデータも分析用成果物としてそのまま保持する。補正の実装根拠と判定範囲は[`aiperf-isl-validation.md`](aiperf-isl-validation.md)に記録した。
 
 通常ランにおける観測対象は、各種サービスログ、AIPerf成果物、およびワーカーのPrometheusスナップショットである。コミットメッセージに`[profile]`を付与したランに限り、1秒間隔のGPUテレメトリも併せて取得する。プロファイリングに伴う計測負荷が含まれるため、`[profile]`付きランの数値を通常ランの公式スコアとして扱ってはならない。
 
@@ -50,4 +50,4 @@ fresh container buildはActions run 34681001728で成功した。生成したSqu
 
 ## 提出用バンドル
 
-`submission/run/submit.sbatch`は、コンテナパスとモデルパス以外の実行構成を1つのSlurmスクリプトに固定している。2ノードのプロセス起動、6ワーカーのヘルスチェック、PDルーター、公式AIPerf、raw exportの探索、good request fractionの適格判定、およびスコア生成を同一allocation内で実行する。実測された平均ISL/OSLが4000/200から外れる場合も公式結果として失敗させる。
+`submission/run/submit.sbatch`は、コンテナパスとモデルパス以外の実行構成を1つのSlurmスクリプトに固定している。2ノードのプロセス起動、6ワーカーのヘルスチェック、PDルーター、公式AIPerf、raw exportの探索、good request fractionの適格判定、およびスコア生成を同一allocation内で実行する。固定コマンドと来歴が一致する場合に限り平均ISL 4000またはprefix補正後のclient観測値3986を受理し、平均OSL 200から外れる結果は失敗させる。設定値、観測値、判定結果は`score.json`へ分けて保存する。
