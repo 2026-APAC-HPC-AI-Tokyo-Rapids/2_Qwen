@@ -95,7 +95,27 @@ def test_active_shell_commands_have_no_line_continuations() -> None:
     paths += list((ROOT / "platforms").rglob("*.pjm"))
     paths += list((ROOT / "platforms").rglob("*.pbs"))
     paths += list((ROOT / "platforms").rglob("*.slurm"))
+    paths += list((ROOT / "submission").rglob("*.sh"))
+    paths += list((ROOT / "submission").rglob("*.sbatch"))
     for path in paths:
         assert not any(
             line.endswith("\\") for line in path.read_text().splitlines()
         ), path
+
+
+def test_submission_contains_reproducible_official_entrypoint() -> None:
+    setup = (ROOT / "submission" / "build" / "setup.sh").read_text()
+    batch = (ROOT / "submission" / "run" / "submit.sbatch").read_text()
+
+    assert 'exec "${repository}/scripts/build-sglang-container.sh"' in setup
+    assert "#SBATCH --nodes=2" in batch
+    assert "#SBATCH --gpus-per-node=8" in batch
+    assert batch.count("start_worker prefill") == 4
+    assert batch.count("start_worker decode") == 2
+    assert "--pd-disaggregation" in batch
+    assert "--warmup-duration 60 --benchmark-duration 120 --benchmark-grace-period 30" in batch
+    assert "--synthetic-input-tokens-mean 4000" in batch
+    assert "--output-tokens-mean 200" in batch
+    assert "--random-seed 2026" in batch
+    assert "--cache-bust first_turn_prefix" in batch
+    assert "goodput * 200 if eligible else 0.0" in batch
