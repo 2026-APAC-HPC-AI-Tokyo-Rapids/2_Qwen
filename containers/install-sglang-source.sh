@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
-export CARGO_HOME=/opt/cargo
-export RUSTUP_HOME=/opt/rustup
-export CARGO_PROFILE_RELEASE_DEBUG=2
-export CARGO_PROFILE_RELEASE_STRIP=none
+export SGLANG_BUILD_RUST_EXTS=none
 export CUDA_HOME=/usr/local/cuda
-export PATH=/opt/cargo/bin:/usr/local/cuda/bin:/usr/local/bin:${PATH}
+export PATH=/usr/local/cuda/bin:/usr/local/bin:${PATH}
 export UV_CACHE_DIR=/opt/sglang/uv-cache
 export UV_PROJECT_ENVIRONMENT=/opt/sglang/venv
 
@@ -20,5 +17,5 @@ cd /opt/sglang/source
 uv pip freeze --python /opt/sglang/venv/bin/python > /opt/sglang/requirements-frozen.txt
 /opt/sglang/venv/bin/python -m compileall -q /opt/sglang/source/python/sglang
 
-rm -rf /root/.cache /opt/sglang/source/.git /opt/sglang/uv-cache /opt/cargo /opt/rustup /opt/DeepEP/.git /var/tmp/sglang-build
+rm -rf /root/.cache /opt/sglang/source/.git /opt/sglang/uv-cache /opt/DeepEP/.git /var/tmp/sglang-build
 install -d -m 0755 /root/.cache
