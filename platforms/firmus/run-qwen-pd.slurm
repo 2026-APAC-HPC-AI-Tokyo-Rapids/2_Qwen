@@ -5,7 +5,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=64
 #SBATCH --gpus-per-node=8
-#SBATCH --time=00:30:00
+#SBATCH --time=00:17:00
 
 set -euo pipefail
 source "${HOME}/.local/.setenv"
