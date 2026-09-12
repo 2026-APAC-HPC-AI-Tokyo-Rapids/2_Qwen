@@ -66,6 +66,11 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert job.count("/health") >= 6
     assert 'models.pending.json' in job
     assert 'index("qwen") != null' in job
+    assert job.count("nixl-prewarm-${SLURM_JOB_ID}") == 1
+    assert job.count("--max-time 120") == 1
+    assert job.count("min_tokens:2,max_tokens:2") == 1
+    assert job.index('index("qwen") != null') < job.index("nixl-prewarm-${SLURM_JOB_ID}")
+    assert job.index("nixl-prewarm-${SLURM_JOB_ID}") < job.index("run-aiperf-container.sh")
     assert node.count("start_worker prefill") == 4
     assert node.count("start_worker decode") == 2
     assert "--tp-size \"${tp}\"" in node
@@ -86,6 +91,11 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
 def test_submission_script_keeps_profile_data_separate() -> None:
     submission = (ROOT / "submission/run/submit.sbatch").read_text()
 
+    assert submission.count("nixl-prewarm-${SLURM_JOB_ID}") == 1
+    assert submission.count("--max-time 120") == 1
+    assert submission.count("min_tokens:2,max_tokens:2") == 1
+    assert submission.index('index("qwen") != null') < submission.index("nixl-prewarm-${SLURM_JOB_ID}")
+    assert submission.index("nixl-prewarm-${SLURM_JOB_ID}") < submission.rindex('"${script_path}" aiperf')
     assert 'gpu-node-${node_rank}.csv' in submission
     for prefix in ("cpu", "network", "infiniband"):
         assert f"{prefix}-node-${{rank}}.csv" in submission
