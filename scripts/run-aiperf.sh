@@ -16,7 +16,7 @@ if [[ "${AIPERF_MODE}" == official ]]; then timing=(--warmup-duration 60 --bench
 command=(/opt/sglang/venv/bin/aiperf profile "${common[@]:0:19}" "${timing[@]}" "${common[@]:19}")
 printf '%q ' "${command[@]}" >aiperf-command.txt
 printf '\n' >>aiperf-command.txt
-printf 'aiperf_version=%s\nmode=%s\nconcurrency=%s\ngateway=http://%s/v1/chat/completions\n' "$(/opt/sglang/venv/bin/python -c 'from importlib.metadata import version; print(version("aiperf"))')" "${AIPERF_MODE}" "${CONCURRENCY}" "${HOST}" >aiperf-provenance.txt
+printf 'aiperf_version=%s\nmode=%s\nconcurrency=%s\ngateway=http://%s/v1/chat/completions\ntokenizer_revision=%s\n' "$(/opt/sglang/venv/bin/python -c 'from importlib.metadata import version; print(version("aiperf"))')" "${AIPERF_MODE}" "${CONCURRENCY}" "${HOST}" "$(cat "${HF_HOME:?}/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/refs/main")" >aiperf-provenance.txt
 "${command[@]}"
 export_file="$(find artifacts -type f -name profile_export_aiperf.json -print -quit)"
 [[ -n "${export_file}" && -s "${export_file}" ]]

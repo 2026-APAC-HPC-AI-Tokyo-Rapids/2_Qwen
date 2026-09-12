@@ -63,7 +63,7 @@ done
 
 srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env AIPERF_MODE="${mode}" BENCHMARK_DURATION="${duration}" BENCHMARK_GRACE_PERIOD="${grace}" CONCURRENCY="${concurrency}" HOST=127.0.0.1:8000 WARMUP_DURATION="${warmup}" "${RUNTIME_DIR}/scripts/run-aiperf-container.sh" >"${RUNTIME_DIR}/logs/aiperf.log" 2>&1
 parser_args=()
-if [[ "${mode}" == official ]]; then parser_args+=(--require-eligible); fi
+if [[ "${mode}" == official ]]; then parser_args+=(--require-eligible --command "${RUNTIME_DIR}/results/aiperf-command.txt" --provenance "${RUNTIME_DIR}/results/aiperf-provenance.txt"); fi
 "${RUNTIME_DIR}/scripts/parse-aiperf-result.py" "${RUNTIME_DIR}/results/profile_export_aiperf.json" "${RUNTIME_DIR}/results/score.json" --concurrency "${concurrency}" "${parser_args[@]}"
 for url in "${worker_urls[@]}"; do metrics_url="${url%/health}/metrics"; filename="$(sed 's%http://%%; s%[:/]%-%g' <<<"${metrics_url}")"; curl --fail --silent --max-time 10 "${metrics_url}" >"${RUNTIME_DIR}/results/${filename}.prom" || true; done
 printf 'finished_at=%s\n' "$(date -u +%FT%TZ)" >>"${RUNTIME_DIR}/logs/job-environment.log"

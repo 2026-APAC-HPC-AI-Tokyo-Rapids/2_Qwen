@@ -12,4 +12,6 @@ The script uses `/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8` by default. 
 
 Set `PROFILE=true` only for a separate diagnostic run. This records one-second GPU, CPU, NIC, and InfiniBand telemetry below the run's `profile` directory and must not be treated as the performance result.
 
+The run records the exact AIPerf command and runtime version/tokenizer revision in `aiperf-command.txt` and `aiperf-provenance.txt`. Official validation checks these artifacts against the fixed workload before accepting input-length observations of 4000 or the pinned client's prefix-compensated 3986 tokens. Other input lengths, output lengths other than 200, and good request fractions below 0.90 fail validation. Raw observations and scoring remain unchanged; `score.json` also records `official_validation`. See the [input-length investigation](../research/aiperf-isl-validation.md) for the source and diagnostic evidence.
+
 `analysis/profiling_data/16928` contains the recovered telemetry and aggregate notes from a separate concurrency-16 diagnostic run. That allocation reached the Firmus time limit during AIPerf warm-up and has no benchmark score; it is retained only to document the observed low utilization and transfer stall.
