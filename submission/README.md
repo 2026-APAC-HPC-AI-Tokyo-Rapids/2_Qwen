@@ -1,6 +1,6 @@
 # Qwen3 submission
 
-`build/setup.sh` invokes the repository's pinned Buildah recipe. It requires a local mirror named `5_SGLang_Src.git` and publishes a verified Enroot-compatible SquashFS image. `build/build.log` is the complete log from the successful fresh build in GitHub Actions run 34681001728; `build/build-test.log` records the package and runtime checks executed inside that image.
+`build/setup.sh` invokes the repository's pinned Buildah recipe. It requires a local mirror named `5_SGLang_Src.git` and publishes a verified Enroot-compatible SquashFS image. `build/build.log` is the complete log from the successful fresh build in GitHub Actions run 34681001728; `build/build-test.log` records the package and runtime checks executed inside that image. `build/provenance.json` records the verified SquashFS and OCI digests, source commits, and build tool versions from that run.
 
 On a Firmus login node, submit the official two-node run with:
 
