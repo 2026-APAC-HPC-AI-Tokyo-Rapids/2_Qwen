@@ -71,9 +71,8 @@ def test_dockerfile_resolves_sglang_dependencies_before_copying_source() -> None
     assert (
         "uv pip install --python /opt/sglang/venv/bin/python --no-deps -e ." in source
     )
-    assert "from sglang.srt.qwen_experiment_metrics import send_event" in (
-        ROOT / "scripts/build-sglang-container.sh"
-    ).read_text(encoding="utf-8")
+    assert '"aiperf==0.12.0" "sglang-router==0.3.2"' in dependencies
+    assert "qwen_experiment_metrics" not in source
 
 
 def test_rustup_download_retries_observed_dns_failure() -> None:
@@ -98,11 +97,15 @@ def test_first_parent_reuse_has_only_size_and_sha_gates() -> None:
     assert aws_workflow.count("&& 'build' || 'reuse'") == 3
     assert "SOURCE_RUN_ID: ${{ matrix.source_run_id }}" in aws_workflow
     assert "decide:" not in aws_workflow and "finalize:" not in aws_workflow
-    for name in ("genkai.yml", "aspire2ap.yml", "firmus.yml"):
+    for name in ("genkai.yml", "aspire2ap.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
         assert "select-qwen-container.sh" not in workflow
         assert "build-sglang-container.sh" not in workflow
         assert "provision-qwen-check-env.sh" in workflow
+    firmus = (ROOT / ".github/workflows/firmus.yml").read_text(encoding="utf-8")
+    assert "select-qwen-container.sh" not in firmus
+    assert "build-sglang-container.sh" not in firmus
+    assert "provision-qwen-pd.sh" in firmus
     assert 'git rev-parse --verify "${commit}^"' in selector
     assert "size_bytes" in selector and "sha256sum" in selector
     assert "CONTAINER_ARCHIVE_DIR" in selector
@@ -313,19 +316,19 @@ def test_scheduler_submission_uses_persistent_runtime_working_directory() -> Non
 
 def test_firmus_uses_shared_beegfs_and_compute_local_enroot() -> None:
     workflow = (ROOT / ".github/workflows/firmus.yml").read_text(encoding="utf-8")
-    script = (ROOT / "platforms/firmus/check-qwen-container.slurm").read_text(encoding="utf-8")
+    script = (ROOT / "platforms/firmus/run-qwen-pd.slurm").read_text(encoding="utf-8")
     assert "runs-on: [self-hosted, home-lab]" in workflow
     assert "shell: firmus-shell --github-shell {0}" in workflow
-    assert "[[ '${{ inputs.node_count }}' =~ ^[12]$ ]]" in workflow
+    assert "test '${{ inputs.node_count }}' = 2" in workflow
     assert "RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs" in workflow
-    assert '"${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"' in workflow
-    assert "CLUSTER_NAME: firmus" in workflow
+    assert "scripts/provision-qwen-pd.sh" in workflow
+    assert "/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8" in workflow
     assert "sbatch --parsable" in workflow
-    assert "--gpus-per-node=1" in workflow
     assert "sacct --allocations" in workflow
     assert "#SBATCH --partition=hpcai" in script
-    assert "#SBATCH --time=00:17:00" in script
-    assert 'exec "${RUNTIME_DIR}/scripts/run-qwen-check-env.sh"' in script
+    assert "#SBATCH --nodes=2" in script
+    assert "#SBATCH --gpus-per-node=8" in script
+    assert 'exec "${RUNTIME_DIR}/scripts/run-qwen-pd-job.sh"' in script
     assert "GOOGLE_CREDENTIAL" not in script
     assert "BIGQUERY" not in script
 

@@ -90,6 +90,7 @@ jobs:
     uses: ./.github/workflows/firmus.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
+      profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
       container_sha256: ${{ needs.container.outputs.firmus_container_sha256 }}
       container_size: ${{ needs.container.outputs.firmus_container_size }}
     secrets: inherit
@@ -112,7 +113,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: artifacts
-          pattern: qwen-*-check-env-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: qwen-*-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: 成果物を自宅サーバーへ配置
         shell: home-lab-shell {0}
@@ -134,4 +135,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '.artifacts[] | select(.name | startswith("qwen-") and contains("-check-env-")) | .id' | while read -r artifact_id; do gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"; done
+          gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '.artifacts[] | select(.name | startswith("qwen-") and endswith("-${{ github.run_id }}-${{ github.run_attempt }}")) | .id' | while read -r artifact_id; do gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"; done
