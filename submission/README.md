@@ -1,6 +1,14 @@
 # Qwen3 submission
 
-`build/setup.sh` invokes the repository's pinned Buildah recipe. It requires a local mirror named `5_SGLang_Src.git` and publishes a verified Enroot-compatible SquashFS image. `build/build.log` is the complete log from the successful fresh build in GitHub Actions run 34681001728; `build/build-test.log` records the package and runtime checks executed inside that image. `build/provenance.json` records the verified SquashFS and OCI digests, source commits, and build tool versions from that run.
+`build/setup.sh` invokes the pinned Buildah recipe from this repository. The repository root, including `containers/` and `scripts/build-sglang-container.sh`, is part of the build input; `submission/` alone is not a standalone container-build context. The recipe checks out SGLang commit `fc275674a97d78553b22597ee72c8fd48f5420f4` and installs the versions fixed by the container files. It requires root, Buildah, Skopeo, Umoci, SquashFS tools, Git, GitHub CLI, and jq. `GIT_MIRROR_DIR` may contain a local bare mirror named `5_SGLang_Src.git`; otherwise the recipe clones the repository with GitHub CLI.
+
+From the repository root, build an Enroot-compatible SquashFS with a writable temporary directory, output directory, and OCI cache repository:
+
+```bash
+sudo env BUILD_CACHE_REPOSITORY=registry.example/team/qwen-build-cache BUILD_DIR=/var/tmp/qwen-build CONTAINER_ARCHIVE_DIR="$PWD/submission/build/output" GITHUB_RUN_ATTEMPT=1 GITHUB_RUN_ID=100001 GITHUB_SHA="$(git rev-parse HEAD)" GIT_MIRROR_DIR=/path/to/git-mirrors submission/build/setup.sh
+```
+
+Choose a numeric build ID that does not collide with an existing output. The command publishes `submission/build/output/100001.sqsh` and `100001.container-sidecar.json`; the OCI cache repository must be writable by Buildah. `build/build.log` is the complete container-build log from the successful build job in GitHub Actions run 34681001728; the overall workflow later failed in a cluster execution job. `build/build-test.log` records the package and runtime checks executed inside that image. `build/provenance.json` records the verified SquashFS and OCI digests, source commits, and build tool versions from that build.
 
 On a Firmus login node, submit the official two-node run with:
 

@@ -29,6 +29,7 @@ source_dir="${BUILD_DIR}/sglang-source"
 oci_build="${BUILD_DIR}/oci-build"
 oci_runtime="${BUILD_DIR}/oci-runtime"
 image="localhost/apac-qwen-sglang:${GITHUB_SHA}"
+sglang_revision=fc275674a97d78553b22597ee72c8fd48f5420f4
 mounted_container=
 
 cleanup() {
@@ -50,8 +51,9 @@ storage_fstype="$(stat -f -c '%T' "${storage_root}")"
 case "${storage_fstype}" in ext2/ext3|xfs) :;; *) printf 'Unsupported Buildah storage filesystem %s: %s\n' "${storage_fstype}" "${storage_root}" >&2; exit 1;; esac
 
 if [[ -d "${GIT_MIRROR_DIR}/5_SGLang_Src.git" ]]; then git clone --reference-if-able "${GIT_MIRROR_DIR}/5_SGLang_Src.git" --no-checkout "${GIT_MIRROR_DIR}/5_SGLang_Src.git" "${source_dir}"; else gh repo clone 2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src "${source_dir}" -- --no-checkout; fi
-git -C "${source_dir}" checkout --detach main
+git -C "${source_dir}" checkout --detach "${sglang_revision}"
 sglang_commit="$(git -C "${source_dir}" rev-parse HEAD)"
+[[ "${sglang_commit}" = "${sglang_revision}" ]]
 git -C "${source_dir}" diff --quiet
 git -C "${source_dir}" diff --cached --quiet
 

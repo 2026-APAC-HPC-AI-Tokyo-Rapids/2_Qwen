@@ -17,6 +17,9 @@ def test_container_build_contract() -> None:
     assert "--isolation chroot" in build
     assert "BUILDAH_ISOLATION=chroot" in build
     assert "STORAGE_DRIVER=overlay" in build
+    assert "sglang_revision=fc275674a97d78553b22597ee72c8fd48f5420f4" in build
+    assert 'checkout --detach "${sglang_revision}"' in build
+    assert '[[ "${sglang_commit}" = "${sglang_revision}" ]]' in build
     assert "--layers" in build
     assert "--squash" not in build
     assert "-all-root -no-xattrs" in build
