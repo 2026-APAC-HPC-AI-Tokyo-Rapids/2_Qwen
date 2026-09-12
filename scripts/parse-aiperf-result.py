@@ -49,6 +49,15 @@ def parse_result(metrics: dict[str, Any], concurrency: int) -> dict[str, Any]:
     }
 
 
+def validate_official_result(result: dict[str, Any]) -> None:
+    if not result["eligible"]:
+        raise ValueError("good_request_fraction is below 0.90")
+    if not math.isclose(result["observed_input_sequence_length_avg"], 4000.0):
+        raise ValueError("average input sequence length is not 4000 tokens")
+    if not math.isclose(result["observed_output_sequence_length_avg"], 200.0):
+        raise ValueError("average output sequence length is not 200 tokens")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("export", type=Path)
@@ -60,8 +69,11 @@ def main() -> None:
     result = parse_result(metrics, args.concurrency)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps(result, sort_keys=True))
-    if args.require_eligible and not result["eligible"]:
-        raise SystemExit("official run did not meet good_request_fraction >= 0.90")
+    if args.require_eligible:
+        try:
+            validate_official_result(result)
+        except ValueError as error:
+            raise SystemExit(f"invalid official result: {error}") from error
 
 
 if __name__ == "__main__":

@@ -9,14 +9,18 @@ REPOSITORY = Path(__file__).parents[2]
 PARSER = REPOSITORY / "scripts" / "parse-aiperf-result.py"
 
 
-def metrics(fraction: float = 0.9) -> dict[str, object]:
+def metrics(
+    fraction: float = 0.9,
+    input_length: float = 4000,
+    output_length: float = 200,
+) -> dict[str, object]:
     return {
         "goodput": {"unit": "requests/sec", "avg": 4.25},
         "good_request_fraction": {"unit": "fraction", "avg": fraction},
         "request_count": {"unit": "requests", "avg": 512},
         "error_request_count": None,
-        "input_sequence_length": {"unit": "tokens", "avg": 4000},
-        "output_sequence_length": {"unit": "tokens", "avg": 200},
+        "input_sequence_length": {"unit": "tokens", "avg": input_length},
+        "output_sequence_length": {"unit": "tokens", "avg": output_length},
     }
 
 
@@ -38,6 +42,27 @@ def test_parser_rejects_ineligible_official_run(tmp_path: Path) -> None:
     result = subprocess.run([sys.executable, PARSER, source, output, "--concurrency", "16", "--require-eligible"], check=False)
     assert result.returncode != 0
     assert json.loads(output.read_text())["score_output_tokens_per_second"] == 0
+
+
+def test_parser_rejects_wrong_official_token_lengths(tmp_path: Path) -> None:
+    for name, value in (("input_length", 3999), ("output_length", 199)):
+        source = tmp_path / f"{name}.json"
+        output = tmp_path / f"{name}-score.json"
+        arguments = {name: value}
+        source.write_text(json.dumps(metrics(**arguments)))
+        result = subprocess.run(
+            [
+                sys.executable,
+                PARSER,
+                source,
+                output,
+                "--concurrency",
+                "16",
+                "--require-eligible",
+            ],
+            check=False,
+        )
+        assert result.returncode != 0
 
 
 def test_official_command_contains_locked_workload() -> None:
