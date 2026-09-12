@@ -10,6 +10,8 @@ set -euo pipefail
 [[ "${SLURM_PROCID}" =~ ^[01]$ ]]
 node_rank="${SLURM_PROCID}"
 hostname_short="$(hostname -s)"
+node_ip="$(getent ahostsv4 "${hostname_short}" | awk '$2 == "STREAM" { print $1; exit }')"
+[[ "${node_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
 node_tmp="$(mktemp -d "${TMPDIR:-/tmp}/qwen-pd-${node_rank}.XXXXXXXXXX")"
 pids=()
 sampler_pid=
@@ -33,7 +35,7 @@ ib_devices=()
 for state_file in /sys/class/infiniband/*/ports/1/state; do if grep -q 'ACTIVE' "${state_file}"; then device="${state_file#/sys/class/infiniband/}"; ib_devices+=("${device%%/*}:1"); fi; done
 [[ "${#ib_devices[@]}" -gt 0 ]]
 UCX_NET_DEVICES="$(IFS=,; printf '%s' "${ib_devices[*]}")"
-printf 'hostname=%s\nnode_rank=%s\nucx_net_devices=%s\n' "${hostname_short}" "${node_rank}" "${UCX_NET_DEVICES}" >"${RUNTIME_DIR}/logs/node-${node_rank}-environment.log"
+printf 'hostname=%s\nnode_ip=%s\nnode_rank=%s\nucx_net_devices=%s\n' "${hostname_short}" "${node_ip}" "${node_rank}" "${UCX_NET_DEVICES}" >"${RUNTIME_DIR}/logs/node-${node_rank}-environment.log"
 nvidia-smi -L >>"${RUNTIME_DIR}/logs/node-${node_rank}-environment.log"
 
 if [[ "${PROFILE}" == true ]]; then
@@ -47,7 +49,7 @@ start_worker() {
   install -d -m 0700 "${worker_tmp}/cache" "${worker_tmp}/data" "${worker_tmp}/home" "${worker_tmp}/runtime" "${worker_tmp}/temp"
   local args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
   if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}"); else args+=(--ep-size 4 --max-running-requests 256); fi
-  (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${UCX_NET_DEVICES}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${CONTAINER_IMAGE}" "${args[@]}") >"${RUNTIME_DIR}/logs/${role}-${worker}.log" 2>&1 &
+  (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${UCX_NET_DEVICES}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${CONTAINER_IMAGE}" "${args[@]}") >"${RUNTIME_DIR}/logs/${role}-${worker}.log" 2>&1 &
   pids+=("$!")
 }
 

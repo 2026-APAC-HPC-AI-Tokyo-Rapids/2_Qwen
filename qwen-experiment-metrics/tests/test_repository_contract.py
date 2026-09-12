@@ -66,6 +66,9 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert "--tp-size \"${tp}\"" in node
     assert "--ep-size 4 --max-running-requests 256" in node
     assert "--disaggregation-transfer-backend nixl" in node
+    assert 'SGLANG_HOST_IP=${node_ip}' in node
+    assert 'HEAD_IP="${head_ip}" TAIL_IP="${tail_ip}"' in job
+    assert 'http://${HEAD_IP}:30100' in router
     assert router.count("--prefill ") == 4
     assert router.count("--decode ") == 2
     assert "--pd-disaggregation" in router
@@ -73,6 +76,16 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert "HF_HUB_OFFLINE=1" in router
     assert "sample-system.sh" in node
     assert "sample-system.sh" in (ROOT / "scripts/provision-qwen-pd.sh").read_text()
+
+
+def test_submission_script_keeps_profile_data_separate() -> None:
+    submission = (ROOT / "submission/run/submit.sbatch").read_text()
+
+    assert 'gpu-node-${node_rank}.csv' in submission
+    for prefix in ("cpu", "network", "infiniband"):
+        assert f"{prefix}-node-${{rank}}.csv" in submission
+    assert '${OUTPUT_DIR}/profile' in submission
+    assert 'SGLANG_HOST_IP=${node_ip}' in submission
 
 
 def test_compute_scripts_have_no_cloud_credentials() -> None:

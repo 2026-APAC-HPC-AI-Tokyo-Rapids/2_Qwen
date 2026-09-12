@@ -16,6 +16,10 @@ mapfile -t nodes < <(scontrol show hostnames "${SLURM_JOB_NODELIST}")
 [[ "${#nodes[@]}" -eq 2 ]]
 head_host="${nodes[0]}"
 tail_host="${nodes[1]}"
+head_ip="$(getent ahostsv4 "${head_host}" | awk '$2 == "STREAM" { print $1; exit }')"
+tail_ip="$(getent ahostsv4 "${tail_host}" | awk '$2 == "STREAM" { print $1; exit }')"
+[[ "${head_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+[[ "${tail_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
 server_step_pid=
 router_step_pid=
 
@@ -30,11 +34,11 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-printf 'job_id=%s\nhead_host=%s\ntail_host=%s\nmode=%s\nconcurrency=%s\nprofile=%s\nstarted_at=%s\n' "${SLURM_JOB_ID}" "${head_host}" "${tail_host}" "${mode}" "${concurrency}" "${PROFILE}" "$(date -u +%FT%TZ)" >"${RUNTIME_DIR}/logs/job-environment.log"
+printf 'job_id=%s\nhead_host=%s\nhead_ip=%s\ntail_host=%s\ntail_ip=%s\nmode=%s\nconcurrency=%s\nprofile=%s\nstarted_at=%s\n' "${SLURM_JOB_ID}" "${head_host}" "${head_ip}" "${tail_host}" "${tail_ip}" "${mode}" "${concurrency}" "${PROFILE}" "$(date -u +%FT%TZ)" >"${RUNTIME_DIR}/logs/job-environment.log"
 srun --overlap --nodes=2 --ntasks=2 --ntasks-per-node=1 --distribution=block:block "${RUNTIME_DIR}/scripts/run-qwen-pd-node.sh" >"${RUNTIME_DIR}/logs/server-step.log" 2>&1 &
 server_step_pid=$!
 
-worker_urls=("http://${head_host}:30100/health" "http://${head_host}:30101/health" "http://${head_host}:30102/health" "http://${head_host}:30103/health" "http://${tail_host}:30200/health" "http://${tail_host}:30201/health")
+worker_urls=("http://${head_ip}:30100/health" "http://${head_ip}:30101/health" "http://${head_ip}:30102/health" "http://${head_ip}:30103/health" "http://${tail_ip}:30200/health" "http://${tail_ip}:30201/health")
 deadline="$((SECONDS + 1200))"
 while true; do
   kill -0 "${server_step_pid}"
@@ -45,11 +49,11 @@ while true; do
   sleep 5
 done
 
-srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env HEAD_HOST="${head_host}" TAIL_HOST="${tail_host}" "${RUNTIME_DIR}/scripts/run-qwen-pd-router.sh" >"${RUNTIME_DIR}/logs/router.log" 2>&1 &
+srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env HEAD_IP="${head_ip}" TAIL_IP="${tail_ip}" "${RUNTIME_DIR}/scripts/run-qwen-pd-router.sh" >"${RUNTIME_DIR}/logs/router.log" 2>&1 &
 router_step_pid=$!
 deadline="$((SECONDS + 300))"
-until curl --fail --silent --max-time 2 "http://${head_host}:8000/health" >/dev/null; do kill -0 "${router_step_pid}"; (( SECONDS < deadline )); sleep 2; done
-curl --fail --silent "http://${head_host}:8000/v1/models" | tee "${RUNTIME_DIR}/results/models.json" | jq -e '.data | map(.id) | index("qwen") != null' >/dev/null
+until curl --fail --silent --max-time 2 "http://${head_ip}:8000/health" >/dev/null; do kill -0 "${router_step_pid}"; (( SECONDS < deadline )); sleep 2; done
+curl --fail --silent "http://${head_ip}:8000/v1/models" | tee "${RUNTIME_DIR}/results/models.json" | jq -e '.data | map(.id) | index("qwen") != null' >/dev/null
 
 srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env AIPERF_MODE="${mode}" BENCHMARK_DURATION="${duration}" BENCHMARK_GRACE_PERIOD="${grace}" CONCURRENCY="${concurrency}" HOST=127.0.0.1:8000 WARMUP_DURATION="${warmup}" "${RUNTIME_DIR}/scripts/run-aiperf-container.sh" >"${RUNTIME_DIR}/logs/aiperf.log" 2>&1
 parser_args=()

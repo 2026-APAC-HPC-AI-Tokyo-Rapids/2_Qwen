@@ -31,3 +31,15 @@ Firmusで公式に検証された初期構成を採用し、node 0にPrefillワ�
 `scripts/parse-aiperf-result.py`は、AIPerf 0.12.0が出力する`profile_export_aiperf.json`からgoodput、good request fraction、リクエスト数／エラー数、および実測されたISL/OSLを読み取り、公式の0.90合格判定（gate）と算出スコアをJSONファイルへ保存する。公式モードにおいて合格基準に達しなかった場合はジョブを失敗（fail）扱いとする。探索モードでは、基準未達のデータも分析用成果物としてそのまま保持する。
 
 通常ランにおける観測対象は、各種サービスログ、AIPerf成果物、およびワーカーのPrometheusスナップショットである。コミットメッセージに`[profile]`を付与したランに限り、1秒間隔のGPUテレメトリも併せて取得する。プロファイリングに伴う計測負荷が含まれるため、`[profile]`付きランの数値を通常ランの公式スコアとして扱ってはならない。
+
+## FirmusでのE2E起動検証
+
+fresh container buildはActions run 34681001728で成功した。生成したSquashFSは12,106,153,984 bytesで、SHA-256は`6b4d81eb6400fa33400e5725a2842f63565b700d579f9be812a7c229a80da3b5`である。コンテナ内でSGLang、PyTorch 2.11.0+cu130、AIPerf 0.12.0、sglang-router 0.3.2、NIXL 1.4.1、およびNCCL testsを検証した。ビルドログとsidecarは`submission/build`にも収録している。
+
+最初のE2Eでは6基のワーカーとルーターの起動後、AIPerfのオフラインtokenizer解決に失敗した。Hugging Face標準キャッシュの`refs/main`を固定revisionへ対応付け、6個のtokenizerファイルを1回の`hf download`で取得して全ファイルを検査することで解消した。次のE2EではAIPerfのtokenizer初期化と12,800件のsynthetic dataset生成まで進んだが、ルーターのコンテナに`/model`がマウントされておらず、ルーター自身のtokenizer登録が失敗した。ワーカーと同じモデルパスをルーターへ読み取り用に渡し、Hugging FaceおよびTransformersをオフラインモードに固定した。
+
+これらの失敗ランはワーカー起動、NIXL初期化、単一gatewayのヘルスチェック、AIPerf入力生成という段階ごとに原因を分離するための記録であり、性能値としては採用しない。最終結果には、ルーター修正後に完走した通常ランのraw exportのみを用いる。
+
+## 提出用バンドル
+
+`submission/run/submit.sbatch`は、コンテナパスとモデルパス以外の実行構成を1つのSlurmスクリプトに固定している。2ノードのプロセス起動、6ワーカーのヘルスチェック、PDルーター、公式AIPerf、raw exportの探索、good request fractionの適格判定、およびスコア生成を同一allocation内で実行する。実測された平均ISL/OSLが4000/200から外れる場合も公式結果として失敗させる。
