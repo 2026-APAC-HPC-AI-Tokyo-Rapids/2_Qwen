@@ -23,7 +23,8 @@ AIPerf 0.12.0の固定公式ワークロード（並行数16、フェーズ設�
 | Good requests | 558 |
 | Good request fraction | 1.0 |
 | Goodput | 4.548422736312085 requests/s |
-| スコア（Goodput × 固定OSL 200） | **909.6845472624169 output tokens/s** |
+| ローカル正規化スコア（Goodput × 設定OSL 200） | **909.6845472624169 output tokens/s** |
+| AIPerf生出力トークンスループット | **909.6763959671906 output tokens/s** |
 | TTFT（avg / p99 / max） | 513.7301314480287 / 1414.8025531499998 / 1570.409445 ms |
 | ITL（avg / p99 / max） | 14.941216278695165 / 16.697356633115575 / 16.739300150753767 ms |
 | ISL（min / max / count / sum / avg） | 3986 / 3987 / 558 / 2224189 / 3986.0017921146955 |
