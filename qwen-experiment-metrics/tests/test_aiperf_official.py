@@ -15,12 +15,19 @@ PARSER = REPOSITORY / "scripts" / "parse-aiperf-result.py"
 
 def metrics(
     fraction: float = 0.9,
-    input_length: float = 4000,
+    input_length: float = 3986,
     output_length: float = 200,
     input_statistics: dict[str, float] | None = None,
     output_statistics: dict[str, float] | None = None,
     osl_mismatch_count: float = 0,
 ) -> dict[str, object]:
+    if input_statistics is None:
+        input_statistics = {
+            "min": input_length,
+            "max": input_length,
+            "count": 512,
+            "sum": input_length * 512,
+        }
     if output_statistics is None:
         output_statistics = {
             "min": output_length,
@@ -29,6 +36,11 @@ def metrics(
             "sum": output_length * 512,
         }
     result = {
+        "aiperf_version": "0.12.0",
+        "was_cancelled": False,
+        "error_summary": [],
+        "benchmark_duration": {"unit": "sec", "avg": 120},
+        "good_request_count": {"unit": "requests", "avg": fraction * 512},
         "goodput": {"unit": "requests/sec", "avg": 4.25},
         "good_request_fraction": {"unit": "fraction", "avg": fraction},
         "request_count": {"unit": "requests", "avg": 512},
@@ -40,9 +52,18 @@ def metrics(
             **output_statistics,
         },
         "osl_mismatch_count": {"unit": "requests", "avg": osl_mismatch_count},
+        "run_info": {
+            "random_seed": 2026,
+            "cli_command": "aiperf profile --url http://127.0.0.1:8000 --endpoint-type chat --endpoint /v1/chat/completions --model qwen --tokenizer Qwen/Qwen3-235B-A22B-Instruct-2507 --streaming -H 'Accept: text/event-stream' --concurrency 16 --workers-max 16 --api-key '<redacted>' --warmup-duration 60 --benchmark-duration 120 --benchmark-grace-period 30 --synthetic-input-tokens-mean 4000 --synthetic-input-tokens-stddev 0 --output-tokens-mean 200 --output-tokens-stddev 0 --extra-inputs min_tokens:200 --extra-inputs max_tokens:200 --extra-inputs ignore_eos:true --extra-inputs temperature:0.0 --extra-inputs repetition_penalty:1.0 --num-dataset-entries 12800 --random-seed 2026 --cache-bust first_turn_prefix --goodput 'time_to_first_token:3000 inter_token_latency:20' --ui simple",
+        },
+        "input_config": {
+            "phases": [
+                {"name": "warmup", "kind": "warmup", "type": "concurrency", "exclude_from_results": True, "duration": 60.0, "concurrency": 16},
+                {"name": "profiling", "kind": "profiling", "type": "concurrency", "duration": 120.0, "concurrency": 16, "grace_period": 30.0},
+            ]
+        },
     }
-    if input_statistics is not None:
-        result["input_sequence_length"].update(input_statistics)
+    result["input_sequence_length"].update(input_statistics)
     return result
 
 
@@ -78,17 +99,48 @@ def parse(tmp_path: Path, parser_path: Path, artifacts: list[str], values: dict[
     return process, json.loads(output.read_text())
 
 
-@pytest.mark.parametrize("input_length", [4000, 3986])
-def test_parser_emits_official_score(tmp_path: Path, parser_path: Path, official_artifacts: list[str], input_length: int) -> None:
-    process, result = parse(tmp_path, parser_path, official_artifacts, metrics(input_length=input_length))
+def test_parser_emits_official_score(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
+    process, result = parse(tmp_path, parser_path, official_artifacts, metrics(input_length=3986))
     assert process.returncode == 0, process.stderr
     assert result["eligible"] is True
     assert result["score_output_tokens_per_second"] == 850
     assert result["error_request_count"] == 0
-    assert result["observed_input_sequence_length_avg"] == input_length
+    assert result["observed_input_sequence_length_avg"] == 3986
     assert result["official_validation"]["valid"] is True
     assert result["official_validation"]["configured_input_sequence_length"] == 4000
-    assert result["official_validation"]["client_input_token_adjustment"] == 4000 - input_length
+    assert result["official_validation"]["client_input_token_adjustment"] == 14
+
+
+def test_parser_rejects_input_length_without_distribution(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
+    values = metrics(input_length=3986)
+    for statistic in ("min", "max", "count", "sum"):
+        values["input_sequence_length"].pop(statistic)
+
+    process, result = parse(tmp_path, parser_path, official_artifacts, values)
+
+    assert process.returncode != 0
+    assert result["official_validation"]["valid"] is False
+    assert "lacks distribution evidence" in process.stderr
+
+
+@pytest.mark.parametrize(
+    "field,value,error",
+    [
+        ("aiperf_version", "0.11.0", "version"),
+        ("was_cancelled", True, "cancelled"),
+        ("error_summary", [{"count": 1}], "request errors"),
+        ("benchmark_duration", {"unit": "sec", "avg": 119.9}, "incomplete"),
+    ],
+)
+def test_parser_rejects_incomplete_or_wrong_export_identity(tmp_path: Path, parser_path: Path, official_artifacts: list[str], field: str, value: object, error: str) -> None:
+    values = metrics(input_length=3986)
+    values[field] = value
+
+    process, result = parse(tmp_path, parser_path, official_artifacts, values)
+
+    assert process.returncode != 0
+    assert result["official_validation"]["valid"] is False
+    assert error in process.stderr
 
 
 def test_parser_rejects_ineligible_official_run(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
@@ -108,6 +160,8 @@ def test_parser_accepts_measured_cache_bust_distribution(tmp_path: Path, parser_
         output_statistics={"min": 200, "max": 200, "count": 555, "sum": 111000},
     )
     values["request_count"] = {"unit": "requests", "avg": 555}
+    values["good_request_count"] = {"unit": "requests", "avg": 555}
+    values["good_request_fraction"] = {"unit": "fraction", "avg": 1.0}
 
     process, result = parse(tmp_path, parser_path, official_artifacts, values)
 
@@ -120,8 +174,10 @@ def test_parser_accepts_measured_cache_bust_distribution(tmp_path: Path, parser_
 def test_parser_accepts_measured_output_length_distribution(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
     observed = 200.00179211469535
     statistics = {"min": 200, "max": 201, "count": 558, "sum": 111601}
-    values = metrics(output_length=observed, output_statistics=statistics)
+    values = metrics(input_statistics={"min": 3986, "max": 3986, "count": 558, "sum": 3986 * 558}, output_length=observed, output_statistics=statistics)
     values["request_count"] = {"unit": "requests", "avg": 558}
+    values["good_request_count"] = {"unit": "requests", "avg": 558}
+    values["good_request_fraction"] = {"unit": "fraction", "avg": 1.0}
 
     process, result = parse(tmp_path, parser_path, official_artifacts, values)
 
@@ -141,12 +197,12 @@ def test_parser_rejects_cache_bust_distribution_outside_pinned_range(tmp_path: P
     assert "cache-bust distribution" in process.stderr
 
 
-@pytest.mark.parametrize("name,value", [("input_length", 3999), ("input_length", 3985), ("input_length", 3986.000001)])
+@pytest.mark.parametrize("name,value", [("input_length", 3983), ("input_length", 3989), ("input_length", 3986.000001)])
 def test_parser_rejects_wrong_official_token_lengths(tmp_path: Path, parser_path: Path, official_artifacts: list[str], name: str, value: float) -> None:
     process, result = parse(tmp_path, parser_path, official_artifacts, metrics(**{name: value}))
     assert process.returncode != 0
     assert result["official_validation"]["valid"] is False
-    assert "average" in process.stderr
+    assert "cache-bust distribution" in process.stderr
 
 
 @pytest.mark.parametrize(

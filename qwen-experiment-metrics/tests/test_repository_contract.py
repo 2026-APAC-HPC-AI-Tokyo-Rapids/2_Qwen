@@ -61,17 +61,15 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     router = (ROOT / "scripts/run-qwen-pd-router.sh").read_text()
 
     assert "test '${{ inputs.node_count }}' = 2" in workflow
+    assert '"${RUNTIME_DIR}/scripts/submit.sbatch"' in workflow
     assert "#SBATCH --nodes=2" in batch
     assert "#SBATCH --gpus-per-node=8" in batch
     assert "#SBATCH --time=00:17:00" in batch
     assert job.count("/health") >= 6
     assert 'models.pending.json' in job
     assert 'index("qwen") != null' in job
-    assert job.count("nixl-prewarm-${SLURM_JOB_ID}") == 1
-    assert job.count("--max-time 180") == 1
-    assert job.count("min_tokens:2,max_tokens:2") == 1
-    assert job.index('index("qwen") != null') < job.index("nixl-prewarm-${SLURM_JOB_ID}")
-    assert job.index("nixl-prewarm-${SLURM_JOB_ID}") < job.index("run-aiperf-container.sh")
+    assert "nixl-prewarm" not in job
+    assert job.index('index("qwen") != null') < job.index("run-aiperf-container.sh")
     assert node.count("start_worker prefill") == 4
     assert node.count("start_worker decode") == 2
     assert "--tp-size \"${tp}\"" in node
@@ -105,11 +103,8 @@ def test_firmus_pd_bounds_each_workers_kv_capacity() -> None:
 def test_submission_script_keeps_profile_data_separate() -> None:
     submission = (ROOT / "submission/run/submit.sbatch").read_text()
 
-    assert submission.count("nixl-prewarm-${SLURM_JOB_ID}") == 1
-    assert submission.count("--max-time 180") == 1
-    assert submission.count("min_tokens:2,max_tokens:2") == 1
-    assert submission.index('index("qwen") != null') < submission.index("nixl-prewarm-${SLURM_JOB_ID}")
-    assert submission.index("nixl-prewarm-${SLURM_JOB_ID}") < submission.rindex('"${script_path}" aiperf')
+    assert "nixl-prewarm" not in submission
+    assert submission.index('index("qwen") != null') < submission.rindex('"${script_path}" aiperf')
     assert 'gpu-node-${node_rank}.csv' in submission
     for prefix in ("cpu", "network", "infiniband"):
         assert f"{prefix}-node-${{rank}}.csv" in submission
@@ -165,3 +160,17 @@ def test_submission_contains_reproducible_official_entrypoint() -> None:
     assert "--random-seed 2026" in batch
     assert "--cache-bust first_turn_prefix" in batch
     assert "goodput * 200 if eligible else 0.0" in batch
+    assert "e156cb4efae43fbee1a1ab073f946a1377e6b969" in batch
+    assert "model-*-of-00024.safetensors" in batch
+    assert '.quantization_config.quant_method == "fp8"' in batch
+    for digest in (
+        "f056921e486d3e22aed125b5218b87146ea2ac838ccf1521dea5b08f809e8d59",
+        "19d306dd769db12a9d710b44cf7f83b635efbe5166b84fb4358a08fb7d88bb53",
+        "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+        "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+        "a62ff0a2472a0fa1b8eaabcb57c59b58afa42a22831dc141400b6e0cf2b65ce3",
+        "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+    ):
+        assert digest in batch
+    for logfile in ("server-step.log", "router.log", "aiperf.log"):
+        assert f'${{OUTPUT_DIR}}/logs/{logfile}' in batch
