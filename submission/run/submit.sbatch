@@ -196,6 +196,8 @@ def parse_result(metrics: dict[str, Any], concurrency: int) -> dict[str, Any]:
     input_length = metric(metrics, "input_sequence_length")
     input_statistics = metric_statistics(metrics, "input_sequence_length")
     output_length = metric(metrics, "output_sequence_length")
+    output_statistics = metric_statistics(metrics, "output_sequence_length")
+    osl_mismatch_count = metric(metrics, "osl_mismatch_count")
     if requests <= 0 or goodput < 0 or not 0 <= fraction <= 1 or errors < 0:
         raise ValueError("invalid request or goodput metrics")
     eligible = fraction >= 0.90
@@ -210,10 +212,13 @@ def parse_result(metrics: dict[str, Any], concurrency: int) -> dict[str, Any]:
         "error_request_count": errors,
         "observed_input_sequence_length_avg": input_length,
         "observed_output_sequence_length_avg": output_length,
+        "osl_mismatch_count": osl_mismatch_count,
         "sla": {"time_to_first_token_ms": 3000, "inter_token_latency_ms": 20},
     }
     for statistic, value in input_statistics.items():
         result[f"observed_input_sequence_length_{statistic}"] = value
+    for statistic, value in output_statistics.items():
+        result[f"observed_output_sequence_length_{statistic}"] = value
     return result
 
 
@@ -259,8 +264,32 @@ def validate_official_result(result: dict[str, Any], command: Path | None, prove
         valid_aggregate = count == result["request_count"] and count > 0 and total.is_integer() and math.isclose(input_length, total / count, rel_tol=0.0, abs_tol=1e-12)
         if not valid_distribution or not valid_aggregate:
             raise ValueError("input sequence length is inconsistent with pinned AIPerf's cache-bust distribution")
-    if result["observed_output_sequence_length_avg"] != 200.0:
-        raise ValueError("average output sequence length is not 200 tokens")
+    # AIPerf 0.12.0 defines an OSL mismatch as a difference greater than the
+    # smaller of 5% and 50 tokens. At the fixed requested OSL of 200, values
+    # from 190 through 210 are therefore within its pinned tolerance. Validate
+    # the raw distribution independently so an altered mismatch threshold
+    # cannot make an out-of-range result pass.
+    required_statistics = ("min", "max", "count", "sum")
+    output_statistics = {
+        name: result.get(f"observed_output_sequence_length_{name}")
+        for name in required_statistics
+    }
+    if any(value is None for value in output_statistics.values()):
+        raise ValueError("output sequence length lacks distribution evidence")
+    minimum, maximum = output_statistics["min"], output_statistics["max"]
+    count, total = output_statistics["count"], output_statistics["sum"]
+    output_length = result["observed_output_sequence_length_avg"]
+    valid_distribution = 190 <= minimum <= maximum <= 210
+    valid_aggregate = (
+        count == result["request_count"]
+        and count > 0
+        and total.is_integer()
+        and math.isclose(output_length, total / count, rel_tol=0.0, abs_tol=1e-12)
+    )
+    if not valid_distribution or not valid_aggregate:
+        raise ValueError("output sequence length is inconsistent with pinned AIPerf tolerance")
+    if result["osl_mismatch_count"] != 0:
+        raise ValueError("AIPerf reported output sequence length mismatches")
     return {"valid": True, "configured_input_sequence_length": 4000, "configured_output_sequence_length": 200, "client_input_token_adjustment": 4000 - input_length, "aiperf_version": "0.12.0", "tokenizer_revision": TOKENIZER_REVISION}
 
 
