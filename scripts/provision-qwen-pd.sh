@@ -46,7 +46,6 @@ nvidia_hook="${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
 if [[ -x "${nvidia_hook}" ]]; then sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${nvidia_hook}"; fi
 
 install -m 0755 "${GITHUB_WORKSPACE}/submission/run/submit.sbatch" "${runtime_dir}/scripts/submit.sbatch"
-install -m 0644 "${GITHUB_WORKSPACE}/configs/firmus-pd.json" "${runtime_dir}/source/run-config.json"
 export HF_HOME="${runtime_dir}/tokenizer-cache"
 export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"
 uvx --from 'huggingface_hub==0.36.0' hf download "${tokenizer_repository}" config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --revision "${tokenizer_revision}" >/dev/null

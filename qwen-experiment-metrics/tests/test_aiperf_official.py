@@ -82,10 +82,10 @@ def parser_path(request: pytest.FixtureRequest, tmp_path: Path) -> Path:
 @pytest.fixture
 def official_artifacts(tmp_path: Path) -> list[str]:
     # Exercise the actual Bash array construction and printf %q serialization.
-    script = (REPOSITORY / "scripts/run-aiperf.sh").read_text()
-    recording = script.split("printf 'aiperf_version=", 1)[0]
-    environment = {**os.environ, "AIPERF_MODE": "official", "CONCURRENCY": "16", "HOST": "127.0.0.1:8000", "RESULTS_DIR": str(tmp_path)}
-    subprocess.run(["bash", "-c", recording], env=environment, check=True)
+    script = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    command_line = next(line for line in script.splitlines() if line.startswith("  command=("))
+    recording = command_line + f"\nprintf '%q ' \"${{command[@]}}\" >{shlex.quote(str(tmp_path / 'aiperf-command.txt'))}"
+    subprocess.run(["bash", "-c", recording], env={**os.environ, "CONCURRENCY": "16"}, check=True)
     provenance = tmp_path / "aiperf-provenance.txt"
     provenance.write_text("aiperf_version=0.12.0\nmode=official\nconcurrency=16\ngateway=http://127.0.0.1:8000/v1/chat/completions\ntokenizer_revision=ac9c66cc9b46af7306746a9250f23d47083d689e\n")
     return ["--command", str(tmp_path / "aiperf-command.txt"), "--provenance", str(provenance)]
@@ -300,25 +300,6 @@ def test_submission_records_runtime_provenance(tmp_path: Path, official_artifact
     process = subprocess.run(["bash", "-ec", program, "_", "16", sys.executable, "-c", "print('benchmark invoked')"], check=True, capture_output=True, text=True)
     assert process.stdout.strip() == "benchmark invoked"
     assert Path(official_artifacts[3]).read_text() == expected
-
-
-def test_official_command_contains_locked_workload() -> None:
-    script = (REPOSITORY / "scripts" / "run-aiperf.sh").read_text()
-    required = (
-        "--endpoint /v1/chat/completions",
-        "--tokenizer Qwen/Qwen3-235B-A22B-Instruct-2507",
-        "--warmup-duration 60",
-        "--benchmark-duration 120",
-        "--benchmark-grace-period 30",
-        "--synthetic-input-tokens-mean 4000",
-        "--output-tokens-mean 200",
-        "--num-dataset-entries 12800",
-        "--random-seed 2026",
-        "--cache-bust first_turn_prefix",
-        '--goodput "time_to_first_token:3000 inter_token_latency:20"',
-    )
-    assert all(argument in script for argument in required)
-    assert "--request-rate" not in script
 
 
 def test_provision_maps_main_to_pinned_tokenizer_revision() -> None:

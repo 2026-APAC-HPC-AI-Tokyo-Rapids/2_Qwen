@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -55,49 +54,40 @@ def test_workflow_keeps_build_and_cluster_controls_explicit() -> None:
 
 def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     workflow = (ROOT / ".github/workflows/firmus.yml").read_text()
-    batch = (ROOT / "platforms/firmus/run-qwen-pd.slurm").read_text()
-    job = (ROOT / "scripts/run-qwen-pd-job.sh").read_text()
-    node = (ROOT / "scripts/run-qwen-pd-node.sh").read_text()
-    router = (ROOT / "scripts/run-qwen-pd-router.sh").read_text()
+    submission = (ROOT / "submission/run/submit.sbatch").read_text()
 
     assert "test '${{ inputs.node_count }}' = 2" in workflow
     assert '"${RUNTIME_DIR}/scripts/submit.sbatch"' in workflow
-    assert "#SBATCH --nodes=2" in batch
-    assert "#SBATCH --gpus-per-node=8" in batch
-    assert "#SBATCH --time=00:17:00" in batch
-    assert job.count("/health") >= 6
-    assert 'models.pending.json' in job
-    assert 'index("qwen") != null' in job
-    assert "nixl-prewarm" not in job
-    assert job.index('index("qwen") != null') < job.index("run-aiperf-container.sh")
-    assert node.count("start_worker prefill") == 4
-    assert node.count("start_worker decode") == 2
-    assert "--tp-size \"${tp}\"" in node
-    assert "--ep-size 4 --max-running-requests 256" in node
-    assert "--disaggregation-transfer-backend nixl" in node
-    assert 'grep -q \'ACTIVE\' "${state_file}"' in node
-    assert "/link_layer" not in node
-    assert 'SGLANG_HOST_IP=${node_ip}' in node
-    assert 'HEAD_IP="${head_ip}" TAIL_IP="${tail_ip}"' in job
-    assert 'http://${HEAD_IP}:30100' in router
-    assert router.count("--prefill ") == 4
-    assert router.count("--decode ") == 2
-    assert "--pd-disaggregation" in router
-    assert '-m "${MODEL_PATH}:/model"' in router
-    assert "HF_HUB_OFFLINE=1" in router
-    assert "sample-system.sh" in node
-    assert "sample_system()" in (ROOT / "submission/run/submit.sbatch").read_text()
+    assert "#SBATCH --nodes=2" in submission
+    assert "#SBATCH --gpus-per-node=8" in submission
+    assert "#SBATCH --time=00:17:00" in submission
+    assert submission.count("/health") >= 6
+    assert 'models.pending.json' in submission
+    assert 'index("qwen") != null' in submission
+    assert "nixl-prewarm" not in submission
+    assert submission.index('index("qwen") != null') < submission.rindex('"${script_path}" aiperf')
+    assert submission.count("start_worker prefill") == 4
+    assert submission.count("start_worker decode") == 2
+    assert "--tp-size \"${tp}\"" in submission
+    assert "--ep-size 4 --max-running-requests 256" in submission
+    assert "--disaggregation-transfer-backend nixl" in submission
+    assert 'grep -q ACTIVE "${state_file}"' in submission
+    assert "/link_layer" not in submission
+    assert 'SGLANG_HOST_IP=${node_ip}' in submission
+    assert 'http://${HEAD_IP}:30100' in submission
+    assert submission.count("--prefill ") == 4
+    assert submission.count("--decode ") == 2
+    assert "--pd-disaggregation" in submission
+    assert '-m "${MODEL_PATH}:/model"' in submission
+    assert "HF_HUB_OFFLINE=1" in submission
+    assert "sample_system()" in submission
 
 
 def test_firmus_pd_bounds_each_workers_kv_capacity() -> None:
-    node_script = (ROOT / "scripts/run-qwen-pd-node.sh").read_text()
     submission = (ROOT / "submission/run/submit.sbatch").read_text()
-    config = json.loads((ROOT / "configs/firmus-pd.json").read_text())
 
     expected_arg = "--max-total-tokens 131072"
-    assert expected_arg in node_script
     assert expected_arg in submission
-    assert config["topology"]["max_total_tokens_per_worker"] == 131072
 
 
 def test_submission_script_keeps_profile_data_separate() -> None:
@@ -114,15 +104,23 @@ def test_submission_script_keeps_profile_data_separate() -> None:
     assert "/link_layer" not in submission
 
 
+def test_submission_is_the_only_firmus_pd_runtime() -> None:
+    obsolete_paths = (
+        "configs/firmus-pd.json",
+        "platforms/firmus/run-qwen-pd.slurm",
+        "scripts/run-aiperf-container.sh",
+        "scripts/run-aiperf.sh",
+        "scripts/run-qwen-pd-job.sh",
+        "scripts/run-qwen-pd-node.sh",
+        "scripts/run-qwen-pd-router.sh",
+    )
+    assert all(not (ROOT / path).exists() for path in obsolete_paths)
+    provision = (ROOT / "scripts/provision-qwen-pd.sh").read_text()
+    assert "run-config.json" not in provision
+
+
 def test_compute_scripts_have_no_cloud_credentials() -> None:
-    compute_files = [
-        ROOT / "scripts/run-qwen-pd-job.sh",
-        ROOT / "scripts/run-qwen-pd-node.sh",
-        ROOT / "scripts/run-qwen-pd-router.sh",
-        ROOT / "scripts/run-aiperf-container.sh",
-        ROOT / "scripts/run-aiperf.sh",
-        ROOT / "platforms/firmus/run-qwen-pd.slurm",
-    ]
+    compute_files = [ROOT / "submission/run/submit.sbatch"]
     for path in compute_files:
         content = path.read_text()
         assert "GOOGLE_CREDENTIAL" not in content
