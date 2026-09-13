@@ -86,7 +86,7 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert '-m "${MODEL_PATH}:/model"' in router
     assert "HF_HUB_OFFLINE=1" in router
     assert "sample-system.sh" in node
-    assert "sample-system.sh" in (ROOT / "scripts/provision-qwen-pd.sh").read_text()
+    assert "sample_system()" in (ROOT / "submission/run/submit.sbatch").read_text()
 
 
 def test_firmus_pd_bounds_each_workers_kv_capacity() -> None:
@@ -161,12 +161,12 @@ def test_submission_contains_reproducible_official_entrypoint() -> None:
     assert "--cache-bust first_turn_prefix" in batch
     assert "goodput * 200 if eligible else 0.0" in batch
     assert "e156cb4efae43fbee1a1ab073f946a1377e6b969" in batch
-    assert "model-*-of-00024.safetensors" in batch
+    assert "model-%05d-of-00024.safetensors" in batch
     assert '.quantization_config.quant_method == "fp8"' in batch
     for digest in (
-        "f056921e486d3e22aed125b5218b87146ea2ac838ccf1521dea5b08f809e8d59",
-        "19d306dd769db12a9d710b44cf7f83b635efbe5166b84fb4358a08fb7d88bb53",
-        "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+        "ad59a339665ee1c68cbff06ac72c9e59f5183ebfaf3698c98737e003a870e9e2",
+        "835fffe355c9438e7a25be099b3fccaa98350b83451f9fd2d99512e74f1ade48",
+        "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3",
         "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
         "a62ff0a2472a0fa1b8eaabcb57c59b58afa42a22831dc141400b6e0cf2b65ce3",
         "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
@@ -174,3 +174,5 @@ def test_submission_contains_reproducible_official_entrypoint() -> None:
         assert digest in batch
     for logfile in ("server-step.log", "router.log", "aiperf.log"):
         assert f'${{OUTPUT_DIR}}/logs/{logfile}' in batch
+    assert 'caller_enroot_library_path="${ENROOT_LIBRARY_PATH:-}"' in batch
+    assert 'cp -L "${TOKENIZER_PATH}/${tokenizer_file}"' in batch
