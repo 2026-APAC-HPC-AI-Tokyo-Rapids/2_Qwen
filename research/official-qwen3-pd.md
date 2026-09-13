@@ -32,11 +32,11 @@ ASPIRE 2A+のPBS job 208754.pbs111は34秒、`Exit_status=0`で完了した。ra
 
 ## 実行と判定
 
-Firmusで公式に検証された初期構成を採用し、node 0にPrefillワーカー4基をTP2で、node 1にDecodeワーカー2基をTP4/EP4で配置する。Decode側の`max-running-requests`は256とする。全ワーカーで通信バックエンドにNIXLを選択し、計算ノードごとにアクティブなInfiniBandデバイスを検出して`UCX_NET_DEVICES`へと引き渡す。各ワーカーのAPIポート番号および各Prefillワーカーのブートストラップポート番号は重複しないよう一意に割り当てる。
+最終候補トポロジは、node 0に4基のTP2 Prefillワーカー、node 1に2基のTP4/EP4 Decodeワーカーを配置し、Decode側の`max-running-requests`を256、全ワーカーの`max-total-tokens`を131072とする。この容量は、公式の16リクエスト（入力4000＋出力200トークン）がすべて単一ワーカーに集中した場合に必要となる67200トークンを上回りつつ、自動推定容量1531197トークン全体に対するNIXLのeagerなprepared descriptor構築を防止する。NIXL、アクティブなInfiniBand用の`UCX_NET_DEVICES`、および各ワーカー固有のAPI／ブートストラップポート設定は維持する。
 
 `scripts/run-qwen-pd-job.sh`は、ワーカー群、ルーター、AIPerfの順序でプロセスを起動する。AIPerfから参照されるエンドポイントは、ルーターが提供する`/v1/chat/completions`のみである。`scripts/run-aiperf.sh`は公式モード（official）と探索モード（exploratory）を明示的に切り分け、公式モードでは規定のワークロード引数を厳密に固定する。探索モードでのみ、`configs/firmus-pd.json`に定義された短時間実行の設定を適用できる。なお、いずれのモードにおいてもopen-loop用の`--request-rate`は指定しない。
 
-`scripts/parse-aiperf-result.py`は、AIPerf 0.12.0が出力する`profile_export_aiperf.json`からgoodput、good request fraction、リクエスト数／エラー数、および実測されたISL/OSLを読み取り、公式の0.90合格判定（gate）と算出スコアをJSONファイルへ保存する。公式モードでは、保存したargv全体、AIPerf version、tokenizer revision、mode、concurrency、gatewayが固定ワークロードと一致することも検証する。この来歴が揃う場合だけ、設定ISL 4000に加えてAIPerfの`first_turn_prefix`補正後にclient exportへ記録される3986を厳密に受理する。raw観測値と`goodput × 200`の計算は変更しない。公式モードにおいて合格基準または来歴検証を満たさない場合はジョブを失敗（fail）扱いとする。探索モードでは、基準未達のデータも分析用成果物としてそのまま保持する。補正の実装根拠と判定範囲は[`aiperf-isl-validation.md`](aiperf-isl-validation.md)に記録した。
+`scripts/parse-aiperf-result.py`は、AIPerf 0.12.0が出力する`profile_export_aiperf.json`からgoodput、good request fraction、リクエスト数／エラー数、および実測されたISL/OSLを読み取り、公式の0.90合格判定（gate）と算出スコアをJSONファイルへ保存する。結果パーサーは、ISL の `min`、`max`、`count`、`sum` を保持・検証し、`min`/`max` が `3984`〜`3988` の範囲内にあること、`count` が `request_count` と合致すること、および `average` が整数 `sum` と `count` の商と一致することを確認する。レガシーな固定値 `4000` または `3986` の受容は継続するが、分布の裏付けがない非整数の平均値は排除する。保存したargv全体、AIPerf version、tokenizer revision、mode、concurrency、gatewayが固定ワークロードと一致することも検証し、raw観測値と`goodput × 200`の計算は変更しない。補正の実装根拠と判定範囲は[`aiperf-isl-validation.md`](aiperf-isl-validation.md)に記録した。
 
 通常ランにおける観測対象は、各種サービスログ、AIPerf成果物、およびワーカーのPrometheusスナップショットである。コミットメッセージに`[profile]`を付与したランに限り、1秒間隔のGPUテレメトリも併せて取得する。プロファイリングに伴う計測負荷が含まれるため、`[profile]`付きランの数値を通常ランの公式スコアとして扱ってはならない。
 
@@ -50,4 +50,4 @@ fresh container buildはActions run 34681001728で成功した。生成したSqu
 
 ## 提出用バンドル
 
-`submission/run/submit.sbatch`は、コンテナパスとモデルパス以外の実行構成を1つのSlurmスクリプトに固定している。2ノードのプロセス起動、6ワーカーのヘルスチェック、PDルーター、公式AIPerf、raw exportの探索、good request fractionの適格判定、およびスコア生成を同一allocation内で実行する。固定コマンドと来歴が一致する場合に限り平均ISL 4000またはprefix補正後のclient観測値3986を受理し、平均OSL 200から外れる結果は失敗させる。設定値、観測値、判定結果は`score.json`へ分けて保存する。
+`submission/run/submit.sbatch`は、コンテナパスとモデルパス以外の実行構成を1つのSlurmスクリプトに固定している。2ノードのプロセス起動、6ワーカーのヘルスチェック、PDルーター、公式AIPerf、raw exportの探索、good request fractionの適格判定、およびスコア生成を同一allocation内で実行する。固定された公式 `argv` および来歴の保持を必須とし、OSL `200`、`good_request_fraction >= 0.90`、ならびに整合するISL分布を確認できた実行だけを有効とする。設定値、観測値、判定結果は`score.json`へ分けて保存する。
