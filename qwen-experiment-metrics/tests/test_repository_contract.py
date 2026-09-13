@@ -176,3 +176,6 @@ def test_submission_contains_reproducible_official_entrypoint() -> None:
         assert f'${{OUTPUT_DIR}}/logs/{logfile}' in batch
     assert 'caller_enroot_library_path="${ENROOT_LIBRARY_PATH:-}"' in batch
     assert 'cp -L "${TOKENIZER_PATH}/${tokenizer_file}"' in batch
+    assert 'shared_script_path="${OUTPUT_DIR}/submit.sbatch"' in batch
+    assert 'install -m 0755 "${script_path}" "${shared_script_path}"' in batch
+    assert batch.index('install -m 0755 "${script_path}" "${shared_script_path}"') < batch.index('"${script_path}" node')

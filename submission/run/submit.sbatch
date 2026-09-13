@@ -393,6 +393,8 @@ tokenizer_files=(config.json generation_config.json merges.txt tokenizer.json to
 tokenizer_hashes=(ad59a339665ee1c68cbff06ac72c9e59f5183ebfaf3698c98737e003a870e9e2 835fffe355c9438e7a25be099b3fccaa98350b83451f9fd2d99512e74f1ade48 599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3 aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4 a62ff0a2472a0fa1b8eaabcb57c59b58afa42a22831dc141400b6e0cf2b65ce3 ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910)
 for index in "${!tokenizer_files[@]}"; do tokenizer_file="${tokenizer_files[${index}]}"; [[ "$(sha256sum "${TOKENIZER_PATH}/${tokenizer_file}" | awk '{print $1}')" == "${tokenizer_hashes[${index}]}" ]]; done
 install -d -m 0755 "${OUTPUT_DIR}/logs" "${OUTPUT_DIR}/results" "${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/refs" "${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e"
+shared_script_path="${OUTPUT_DIR}/submit.sbatch"
+if [[ "${script_path}" != "${shared_script_path}" ]]; then install -m 0755 "${script_path}" "${shared_script_path}"; script_path="${shared_script_path}"; fi
 tokenizer_snapshot="${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e"
 if [[ "$(realpath "${TOKENIZER_PATH}")" != "$(realpath "${tokenizer_snapshot}")" ]]; then for tokenizer_file in "${tokenizer_files[@]}"; do cp -L "${TOKENIZER_PATH}/${tokenizer_file}" "${tokenizer_snapshot}/${tokenizer_file}"; done; fi
 printf '%s' ac9c66cc9b46af7306746a9250f23d47083d689e >"${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/refs/main"
