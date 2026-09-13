@@ -17,8 +17,9 @@ def metrics(
     fraction: float = 0.9,
     input_length: float = 4000,
     output_length: float = 200,
+    input_statistics: dict[str, float] | None = None,
 ) -> dict[str, object]:
-    return {
+    result = {
         "goodput": {"unit": "requests/sec", "avg": 4.25},
         "good_request_fraction": {"unit": "fraction", "avg": fraction},
         "request_count": {"unit": "requests", "avg": 512},
@@ -26,6 +27,9 @@ def metrics(
         "input_sequence_length": {"unit": "tokens", "avg": input_length},
         "output_sequence_length": {"unit": "tokens", "avg": output_length},
     }
+    if input_statistics is not None:
+        result["input_sequence_length"].update(input_statistics)
+    return result
 
 
 @pytest.fixture(params=["repository", "submission"])
@@ -79,6 +83,30 @@ def test_parser_rejects_ineligible_official_run(tmp_path: Path, parser_path: Pat
     assert result["score_output_tokens_per_second"] == 0
     assert result["official_validation"]["valid"] is False
     assert "below 0.90" in process.stderr
+
+
+def test_parser_accepts_measured_cache_bust_distribution(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
+    observed = 3986.001801801802
+    statistics = {"min": 3986, "max": 3987, "count": 555, "sum": 2212231}
+    values = metrics(input_length=observed, input_statistics=statistics)
+    values["request_count"] = {"unit": "requests", "avg": 555}
+
+    process, result = parse(tmp_path, parser_path, official_artifacts, values)
+
+    assert process.returncode == 0, process.stderr
+    assert result["observed_input_sequence_length_min"] == 3986
+    assert result["observed_input_sequence_length_max"] == 3987
+    assert result["official_validation"]["valid"] is True
+
+
+@pytest.mark.parametrize("minimum,maximum", [(3983, 3987), (3986, 3989)])
+def test_parser_rejects_cache_bust_distribution_outside_pinned_range(tmp_path: Path, parser_path: Path, official_artifacts: list[str], minimum: int, maximum: int) -> None:
+    statistics = {"min": minimum, "max": maximum, "count": 512, "sum": 2040832}
+    process, result = parse(tmp_path, parser_path, official_artifacts, metrics(input_length=3986.0 + 1 / 512, input_statistics=statistics))
+
+    assert process.returncode != 0
+    assert result["official_validation"]["valid"] is False
+    assert "cache-bust distribution" in process.stderr
 
 
 @pytest.mark.parametrize("name,value", [("input_length", 3999), ("input_length", 3985), ("input_length", 3986.000001), ("output_length", 199)])

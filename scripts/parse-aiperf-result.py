@@ -24,6 +24,21 @@ def metric(metrics: dict[str, Any], name: str, *, nullable: bool = False) -> flo
     return result
 
 
+def metric_statistics(metrics: dict[str, Any], name: str) -> dict[str, float]:
+    value = metrics.get(name)
+    if not isinstance(value, dict):
+        return {}
+    statistics = {}
+    for statistic in ("min", "max", "count", "sum"):
+        candidate = value.get(statistic)
+        if isinstance(candidate, (int, float)):
+            candidate = float(candidate)
+            if not math.isfinite(candidate):
+                raise ValueError(f"non-finite {name}.{statistic}")
+            statistics[statistic] = candidate
+    return statistics
+
+
 def parse_result(metrics: dict[str, Any], concurrency: int) -> dict[str, Any]:
     if concurrency < 1:
         raise ValueError("concurrency must be positive")
@@ -32,11 +47,12 @@ def parse_result(metrics: dict[str, Any], concurrency: int) -> dict[str, Any]:
     requests = metric(metrics, "request_count")
     errors = metric(metrics, "error_request_count", nullable=True)
     input_length = metric(metrics, "input_sequence_length")
+    input_statistics = metric_statistics(metrics, "input_sequence_length")
     output_length = metric(metrics, "output_sequence_length")
     if requests <= 0 or goodput < 0 or not 0 <= fraction <= 1 or errors < 0:
         raise ValueError("invalid request or goodput metrics")
     eligible = fraction >= 0.90
-    return {
+    result = {
         "schema_version": "qwen3-pd-score/v1",
         "concurrency": concurrency,
         "goodput_requests_per_second": goodput,
@@ -49,6 +65,9 @@ def parse_result(metrics: dict[str, Any], concurrency: int) -> dict[str, Any]:
         "observed_output_sequence_length_avg": output_length,
         "sla": {"time_to_first_token_ms": 3000, "inter_token_latency_ms": 20},
     }
+    for statistic, value in input_statistics.items():
+        result[f"observed_input_sequence_length_{statistic}"] = value
+    return result
 
 
 TOKENIZER_REVISION = "ac9c66cc9b46af7306746a9250f23d47083d689e"
@@ -78,12 +97,21 @@ def validate_official_result(result: dict[str, Any], command: Path | None, prove
     validate_official_workload(command, provenance, result["concurrency"])
     if not result["eligible"]:
         raise ValueError("good_request_fraction is below 0.90")
-    # AIPerf 0.12.0 subtracts the rounded 14-token cache-bust estimate from
-    # synthetic ISL. Its client export measures that generated prompt (3986).
-    # Keep the original 4000 observation valid too, but admit no nearby values.
+    # AIPerf 0.12.0 subtracts the rounded 14-token cache-bust estimate from the
+    # synthetic ISL. The actual first_turn_prefix marker varies from 12 to 16
+    # tokens, so individual client observations span 3984 through 3988 tokens.
     input_length = result["observed_input_sequence_length_avg"]
     if input_length not in (4000.0, 3986.0):
-        raise ValueError("average input sequence length is neither 4000 nor pinned AIPerf's 3986 tokens")
+        required_statistics = ("min", "max", "count", "sum")
+        statistics = {name: result.get(f"observed_input_sequence_length_{name}") for name in required_statistics}
+        if any(value is None for value in statistics.values()):
+            raise ValueError("non-integral average input sequence length lacks distribution evidence")
+        minimum, maximum = statistics["min"], statistics["max"]
+        count, total = statistics["count"], statistics["sum"]
+        valid_distribution = 3984 <= minimum <= maximum <= 3988
+        valid_aggregate = count == result["request_count"] and count > 0 and total.is_integer() and math.isclose(input_length, total / count, rel_tol=0.0, abs_tol=1e-12)
+        if not valid_distribution or not valid_aggregate:
+            raise ValueError("input sequence length is inconsistent with pinned AIPerf's cache-bust distribution")
     if result["observed_output_sequence_length_avg"] != 200.0:
         raise ValueError("average output sequence length is not 200 tokens")
     return {"valid": True, "configured_input_sequence_length": 4000, "configured_output_sequence_length": 200, "client_input_token_adjustment": 4000 - input_length, "aiperf_version": "0.12.0", "tokenizer_revision": TOKENIZER_REVISION}
