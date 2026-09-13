@@ -8,6 +8,8 @@ Firmusにおける初期構成は、node 0のPrefillワーカー4基（TP2）お
 
 公式判定には実行した`aiperf-command.txt`と`aiperf-provenance.txt`を渡し、固定コマンド、AIPerf 0.12.0、tokenizer revision、concurrency、gatewayの一致も検証します。合成 ISL の設定値は `4000` ですが、AIPerf 0.12.0 のキャッシュバスト処理に伴うマーカートークン化の変動（減算推定値 `14` に対し実際は `12`〜`16` トークン）により、クライアント側で観測される有効な ISL は `3984`〜`3988` の範囲に分布します。そのためパーサーは、従来の固定値（`4000` または `3986`）の受容を維持しつつ、`min`/`max` が `3984`〜`3988` に収まり、`count`、整数 `sum`、および `average == sum / count` の整合性が確認された分布統計を正当な結果として受け入れます。なお、分布の裏付けを伴わない近傍の非整数平均値は拒否されます。観測値は変更せず、設定値と判定結果を`score.json`の`official_validation`へ記録します。[補正値の根拠と判定範囲](research/aiperf-isl-validation.md)を参照してください。
 
+公式の `AIPerf` 引数では `min_tokens=200`、`max_tokens=200`、`ignore_eos=true` を指定して要求 OSL を `200` とする。検証処理では観測された `min`、`max`、`count`、`sum` を保持する。`AIPerf 0.12.0` の定義では要求 OSL の `5%` または `50` トークンの小さい方を超える絶対差を不一致（mismatch）と判定するため、要求値 `200` に対する許容観測範囲は `190` 以上 `210` 以下（両端含む）となる。検証要件として、`count` が `request_count` と等しいこと、`average` が `sum` / `count` と等しいこと、`sum` が整数であること、および `osl_mismatch_count` が `0` であることを義務付ける。スコア算出は goodput に設定値の `200` を乗じる仕様を維持する。
+
 通常ランでは、ワーカー／ルーター／AIPerfのログ、AIPerfの成果物（raw artifacts）、Prometheusスナップショット、およびソース／コンテナ／モデル／トークナイザーの来歴を回収します。コミットメッセージに`[profile]`を付与した実行に限り、各GPUの使用率、メモリ、消費電力、温度、クロックに加え、CPU時間、NICの送受信量、InfiniBand counterを1秒間隔でサンプリングし、`profile`成果物へ分離して記録します。プロファイリングのオーバーヘッドを含むため、通常のベンチマーク結果と`[profile]`付き実行の結果を直接比較してはなりません。
 
 コンテナは、AWSシンガポールリージョン上に一時起動する`m7i.2xlarge`インスタンスにおいて、Buildahの`chroot` isolationを用いて構築します。生成したOCI layoutをSkopeoおよびUmociで検証した上でSquashFS化し、SGLang mirrorの特定コミット、AIPerf 0.12.0、sglang-router 0.3.2を固定します。各クラスタは自身のローカルアーカイブのみを検索し、クラスタ間でのキャッシュ複製は行いません。ソースコード、ツールチェーン、依存関係を変更したコミットには、メッセージの先頭に`[require-build]`を付与してください。

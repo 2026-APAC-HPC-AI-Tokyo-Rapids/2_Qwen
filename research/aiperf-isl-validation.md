@@ -14,6 +14,8 @@ AIPerf 0.12.0、commit `be53bf2953d30e46c500e6a80fc1f8b6f84bc718` の実装を�
 
 単一の固定値（`4000` または `3986`）のみを受容する前提は実態に即していない。過去の観測結果との後方互換性として `4000` および `3986` の完全一致は引き続き許容されるものの、正式な判定ではリクエストごとの `min` および `max` が `3984`〜`3988` の許容範囲内に収まっていることが求められる。分布の根拠データが存在しない近傍の非整数平均値は無効として拒否する。
 
-実際のスコア証拠である Firmus Slurm ジョブ `17003` のエクスポートデータでは、リクエスト総数 `555` 件に対し、`min` が `3986`、`max` が `3987`、`sum` が `2212231`、`average` が `3986.001801801802` となる実績値が確認された。パーサーはこれら `min`、`max`、`count`、`sum` を保持・検証し、`count == request_count`、整数 `sum`、および `average == sum / count` の一致を確認する。公式判定時に保存されたargv全体、AIPerf version、tokenizer revision、mode、concurrency、gatewayも固定値と照合する。出力長 `200` および `good_request_fraction >= 0.90` の条件は維持する。
+実際のスコア証拠である Firmus Slurm ジョブ `17003` のエクスポートデータでは、リクエスト総数 `555` 件に対し、`min` が `3986`、`max` が `3987`、`sum` が `2212231`、`average` が `3986.001801801802` となる実績値が確認された。パーサーはこれら `min`、`max`、`count`、`sum` を保持・検証し、`count == request_count`、整数 `sum`、および `average == sum / count` の一致を確認する。公式判定時に保存されたargv全体、AIPerf version、tokenizer revision、mode、concurrency、gatewayも固定値と照合する。`good_request_fraction >= 0.90` の条件は維持する。
+
+Firmus Slurm `17005` ではリクエスト数 `558`、エラー数 `0`、good fraction `1.0`、goodput `4.536230620411887` req/s、暫定スコア `907.2461240823774` output tokens/s を記録した。復旧された集計エクスポートにおける観測 OSL は `min` `200`、`max` `201`、`count` `558`、`sum` `111601`、`average` `200.00179211469535`、`osl_mismatch_count` `0` であった。完全一致の平均値を前提とするバリデータでは一度却下されたが、ソースコードの精査により、この集計分布は固定された `AIPerf` の許容差を満たしていることが確認された。現在、バリデータは生の集計分布と不一致カウントを個別に検証する仕様となっている。
 
 repositoryとstandalone sbatchのparserは同一内容を使い、回帰テストで一致を確認する。`4000`/`3986`の受理、実測分布の受理、範囲外または整合しない分布の拒否、argv改変・追加、来歴不一致・欠落の拒否を双方で検証する。

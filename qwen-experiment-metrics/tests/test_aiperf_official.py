@@ -18,14 +18,28 @@ def metrics(
     input_length: float = 4000,
     output_length: float = 200,
     input_statistics: dict[str, float] | None = None,
+    output_statistics: dict[str, float] | None = None,
+    osl_mismatch_count: float = 0,
 ) -> dict[str, object]:
+    if output_statistics is None:
+        output_statistics = {
+            "min": output_length,
+            "max": output_length,
+            "count": 512,
+            "sum": output_length * 512,
+        }
     result = {
         "goodput": {"unit": "requests/sec", "avg": 4.25},
         "good_request_fraction": {"unit": "fraction", "avg": fraction},
         "request_count": {"unit": "requests", "avg": 512},
         "error_request_count": None,
         "input_sequence_length": {"unit": "tokens", "avg": input_length},
-        "output_sequence_length": {"unit": "tokens", "avg": output_length},
+        "output_sequence_length": {
+            "unit": "tokens",
+            "avg": output_length,
+            **output_statistics,
+        },
+        "osl_mismatch_count": {"unit": "requests", "avg": osl_mismatch_count},
     }
     if input_statistics is not None:
         result["input_sequence_length"].update(input_statistics)
@@ -88,7 +102,11 @@ def test_parser_rejects_ineligible_official_run(tmp_path: Path, parser_path: Pat
 def test_parser_accepts_measured_cache_bust_distribution(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
     observed = 3986.001801801802
     statistics = {"min": 3986, "max": 3987, "count": 555, "sum": 2212231}
-    values = metrics(input_length=observed, input_statistics=statistics)
+    values = metrics(
+        input_length=observed,
+        input_statistics=statistics,
+        output_statistics={"min": 200, "max": 200, "count": 555, "sum": 111000},
+    )
     values["request_count"] = {"unit": "requests", "avg": 555}
 
     process, result = parse(tmp_path, parser_path, official_artifacts, values)
@@ -96,6 +114,20 @@ def test_parser_accepts_measured_cache_bust_distribution(tmp_path: Path, parser_
     assert process.returncode == 0, process.stderr
     assert result["observed_input_sequence_length_min"] == 3986
     assert result["observed_input_sequence_length_max"] == 3987
+    assert result["official_validation"]["valid"] is True
+
+
+def test_parser_accepts_measured_output_length_distribution(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
+    observed = 200.00179211469535
+    statistics = {"min": 200, "max": 201, "count": 558, "sum": 111601}
+    values = metrics(output_length=observed, output_statistics=statistics)
+    values["request_count"] = {"unit": "requests", "avg": 558}
+
+    process, result = parse(tmp_path, parser_path, official_artifacts, values)
+
+    assert process.returncode == 0, process.stderr
+    assert result["observed_output_sequence_length_min"] == 200
+    assert result["observed_output_sequence_length_max"] == 201
     assert result["official_validation"]["valid"] is True
 
 
@@ -109,12 +141,48 @@ def test_parser_rejects_cache_bust_distribution_outside_pinned_range(tmp_path: P
     assert "cache-bust distribution" in process.stderr
 
 
-@pytest.mark.parametrize("name,value", [("input_length", 3999), ("input_length", 3985), ("input_length", 3986.000001), ("output_length", 199)])
+@pytest.mark.parametrize("name,value", [("input_length", 3999), ("input_length", 3985), ("input_length", 3986.000001)])
 def test_parser_rejects_wrong_official_token_lengths(tmp_path: Path, parser_path: Path, official_artifacts: list[str], name: str, value: float) -> None:
     process, result = parse(tmp_path, parser_path, official_artifacts, metrics(**{name: value}))
     assert process.returncode != 0
     assert result["official_validation"]["valid"] is False
     assert "average" in process.stderr
+
+
+@pytest.mark.parametrize(
+    "statistics,mismatch_count",
+    [
+        ({"min": 189, "max": 200, "count": 512, "sum": 102389}, 1),
+        ({"min": 200, "max": 211, "count": 512, "sum": 102411}, 1),
+        ({"min": 199, "max": 201, "count": 511, "sum": 102200}, 0),
+        ({"min": 199, "max": 201, "count": 512, "sum": 102399}, 0),
+    ],
+)
+def test_parser_rejects_invalid_output_length_distribution(
+    tmp_path: Path,
+    parser_path: Path,
+    official_artifacts: list[str],
+    statistics: dict[str, float],
+    mismatch_count: float,
+) -> None:
+    process, result = parse(
+        tmp_path,
+        parser_path,
+        official_artifacts,
+        metrics(output_length=200, output_statistics=statistics, osl_mismatch_count=mismatch_count),
+    )
+
+    assert process.returncode != 0
+    assert result["official_validation"]["valid"] is False
+    assert "output sequence length" in process.stderr
+
+
+def test_parser_rejects_aiperf_output_length_mismatch(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
+    process, result = parse(tmp_path, parser_path, official_artifacts, metrics(osl_mismatch_count=1))
+
+    assert process.returncode != 0
+    assert result["official_validation"]["valid"] is False
+    assert "reported output sequence length mismatches" in process.stderr
 
 
 @pytest.mark.parametrize("option,value", [("--synthetic-input-tokens-mean", "3986"), ("--warmup-duration", "10"), ("--random-seed", "2027"), ("--cache-bust", "none"), ("--workers-max", "8"), ("--goodput", "time_to_first_token:9000 inter_token_latency:20"), ("--url", "http://127.0.0.2:8000")])
