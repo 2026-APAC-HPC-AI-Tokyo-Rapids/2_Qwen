@@ -61,16 +61,6 @@ while true; do
   sleep 2
 done
 
-prewarm_request="${RUNTIME_DIR}/logs/nixl-prewarm-request.json"
-prewarm_response="${RUNTIME_DIR}/logs/nixl-prewarm-response.json"
-prewarm_timing="${RUNTIME_DIR}/logs/nixl-prewarm-timing.txt"
-jq -n --arg content "nixl-prewarm-${SLURM_JOB_ID}" '{model:"qwen",messages:[{role:"user",content:$content}],stream:false,min_tokens:2,max_tokens:2,ignore_eos:true,temperature:0.0}' >"${prewarm_request}"
-prewarm_started="$(date +%s)"
-printf 'started_at=%s\n' "$(date -u +%FT%TZ)" >"${prewarm_timing}"
-curl --fail --silent --show-error --max-time 180 -H 'Content-Type: application/json' --data-binary "@${prewarm_request}" "http://${head_ip}:8000/v1/chat/completions" >"${prewarm_response}"
-jq -e '.choices | length > 0' "${prewarm_response}" >/dev/null
-printf 'finished_at=%s\nelapsed_seconds=%s\n' "$(date -u +%FT%TZ)" "$(( $(date +%s) - prewarm_started ))" >>"${prewarm_timing}"
-
 srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env AIPERF_MODE="${mode}" BENCHMARK_DURATION="${duration}" BENCHMARK_GRACE_PERIOD="${grace}" CONCURRENCY="${concurrency}" HOST=127.0.0.1:8000 WARMUP_DURATION="${warmup}" "${RUNTIME_DIR}/scripts/run-aiperf-container.sh" >"${RUNTIME_DIR}/logs/aiperf.log" 2>&1
 parser_args=()
 if [[ "${mode}" == official ]]; then parser_args+=(--require-eligible --command "${RUNTIME_DIR}/results/aiperf-command.txt" --provenance "${RUNTIME_DIR}/results/aiperf-provenance.txt"); fi

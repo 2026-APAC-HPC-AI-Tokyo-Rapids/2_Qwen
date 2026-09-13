@@ -75,8 +75,8 @@ jobs:
         id: submit
         run: |
           cd "${RUNTIME_DIR}"
-          variables="ALL,RUNTIME_DIR=${RUNTIME_DIR},MODEL_PATH=${MODEL_PATH},PROFILE=${PROFILE}"
-          job_id="$(sbatch --parsable --export="${variables}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/run-qwen-pd.slurm")"
+          variables="ALL,CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh,ENROOT_LIBRARY_PATH=${RUNTIME_DIR}/enroot-library,ENROOT_MOUNT_HOME=no,ENROOT_SYSCONF_PATH=${RUNTIME_DIR}/enroot-system,MODEL_PATH=${MODEL_PATH},OUTPUT_DIR=${RUNTIME_DIR},PROFILE=${PROFILE}"
+          job_id="$(sbatch --parsable --export="${variables}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/submit.sbatch")"
           [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"

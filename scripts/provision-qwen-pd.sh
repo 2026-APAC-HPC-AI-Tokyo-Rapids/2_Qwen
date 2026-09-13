@@ -29,6 +29,7 @@ archive_sidecar="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.jso
 [[ -s "${MODEL_PATH}/config.json" && -s "${MODEL_PATH}/model.safetensors.index.json" ]]
 [[ "$(find "${MODEL_PATH}" -maxdepth 1 -type f -name 'model-*-of-00024.safetensors' | wc -l)" -eq 24 ]]
 [[ "$(head -n 1 "${MODEL_PATH}/.cache/huggingface/download/config.json.metadata")" == "${model_revision}" ]]
+jq -e '.model_type == "qwen3_moe" and .architectures == ["Qwen3MoeForCausalLM"] and .quantization_config.quant_method == "fp8" and .quantization_config.fmt == "e4m3"' "${MODEL_PATH}/config.json" >/dev/null
 
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
@@ -45,6 +46,7 @@ nvidia_hook="${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
 if [[ -x "${nvidia_hook}" ]]; then sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${nvidia_hook}"; fi
 
 install -m 0755 "${GITHUB_WORKSPACE}/scripts/run-aiperf.sh" "${GITHUB_WORKSPACE}/scripts/run-aiperf-container.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen-pd-job.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen-pd-node.sh" "${GITHUB_WORKSPACE}/scripts/run-qwen-pd-router.sh" "${GITHUB_WORKSPACE}/scripts/sample-gpu.sh" "${GITHUB_WORKSPACE}/scripts/sample-system.sh" "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${runtime_dir}/scripts/"
+install -m 0755 "${GITHUB_WORKSPACE}/submission/run/submit.sbatch" "${runtime_dir}/scripts/submit.sbatch"
 install -m 0644 "${GITHUB_WORKSPACE}/configs/firmus-pd.json" "${runtime_dir}/source/run-config.json"
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/run-qwen-pd.slurm" "${runtime_dir}/scripts/run-qwen-pd.slurm"
 export HF_HOME="${runtime_dir}/tokenizer-cache"

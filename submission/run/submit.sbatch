@@ -75,8 +75,8 @@ run_node() {
   for state_file in /sys/class/infiniband/*/ports/1/state; do if grep -q ACTIVE "${state_file}"; then device="${state_file#/sys/class/infiniband/}"; hca_devices+=("${device%%/*}:1"); fi; done
   [[ "${#hca_devices[@]}" -gt 0 ]]
   ucx_devices="$(IFS=,; printf '%s' "${hca_devices[*]}")"
-  printf 'hostname=%s\nnode_ip=%s\nnode_rank=%s\nucx_net_devices=%s\n' "${hostname_short}" "${node_ip}" "${node_rank}" "${ucx_devices}" >"${OUTPUT_DIR}/node-${node_rank}-environment.log"
-  nvidia-smi -L >>"${OUTPUT_DIR}/node-${node_rank}-environment.log"
+  printf 'hostname=%s\nnode_ip=%s\nnode_rank=%s\nucx_net_devices=%s\n' "${hostname_short}" "${node_ip}" "${node_rank}" "${ucx_devices}" >"${OUTPUT_DIR}/logs/node-${node_rank}-environment.log"
+  nvidia-smi -L >>"${OUTPUT_DIR}/logs/node-${node_rank}-environment.log"
   if [[ "${PROFILE}" == true ]]; then
     install -d -m 0755 "${OUTPUT_DIR}/profile"
     nvidia-smi --query-gpu=timestamp,index,uuid,utilization.gpu,memory.used,power.draw,temperature.gpu,clocks.sm --format=csv -l 1 >"${OUTPUT_DIR}/profile/gpu-node-${node_rank}.csv" & sampler_pid=$!
@@ -94,7 +94,7 @@ run_node() {
     install -d -m 0700 "${worker_tmp}/cache" "${worker_tmp}/data" "${worker_tmp}/home" "${worker_tmp}/runtime" "${worker_tmp}/temp"
     args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --max-total-tokens 131072 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
     if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}"); else args+=(--ep-size 4 --max-running-requests 256); fi
-    (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${CONTAINER_IMAGE}" "${args[@]}") >"${OUTPUT_DIR}/${role}-${worker}.log" 2>&1 &
+    (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${CONTAINER_IMAGE}" "${args[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
     pids+=("$!")
   }
 
@@ -225,7 +225,16 @@ def parse_result(metrics: dict[str, Any], concurrency: int) -> dict[str, Any]:
 TOKENIZER_REVISION = "ac9c66cc9b46af7306746a9250f23d47083d689e"
 
 
-def validate_official_workload(command: Path, provenance: Path, concurrency: int) -> None:
+def expected_official_command(gateway: str, concurrency: int) -> list[str]:
+    url = urlsplit(gateway)
+    expected = ["/opt/sglang/venv/bin/aiperf", "profile", "--url", f"http://{url.netloc}"]
+    expected += shlex.split('--endpoint-type chat --endpoint /v1/chat/completions --model qwen --tokenizer Qwen/Qwen3-235B-A22B-Instruct-2507 --streaming -H "Accept: text/event-stream"')
+    expected += ["--concurrency", str(concurrency), "--workers-max", str(concurrency)]
+    expected += shlex.split('--api-key NOT_USED --warmup-duration 60 --benchmark-duration 120 --benchmark-grace-period 30 --synthetic-input-tokens-mean 4000 --synthetic-input-tokens-stddev 0 --output-tokens-mean 200 --output-tokens-stddev 0 --extra-inputs min_tokens:200 --extra-inputs max_tokens:200 --extra-inputs ignore_eos:true --extra-inputs temperature:0.0 --extra-inputs repetition_penalty:1.0 --num-dataset-entries 12800 --random-seed 2026 --cache-bust first_turn_prefix --goodput "time_to_first_token:3000 inter_token_latency:20" --ui simple')
+    return expected
+
+
+def validate_official_workload(command: Path, provenance: Path, concurrency: int) -> list[str]:
     """Require the fixed command and measured runtime identity, without tolerance."""
     identity = dict(line.split("=", 1) for line in provenance.read_text().splitlines())
     gateway = identity.get("gateway", "")
@@ -235,35 +244,72 @@ def validate_official_workload(command: Path, provenance: Path, concurrency: int
     required = {"aiperf_version": "0.12.0", "mode": "official", "concurrency": str(concurrency), "tokenizer_revision": TOKENIZER_REVISION}
     if any(identity.get(key) != value for key, value in required.items()):
         raise ValueError("AIPerf provenance does not match the pinned official workload")
-    expected = ["/opt/sglang/venv/bin/aiperf", "profile", "--url", f"http://{url.netloc}"]
-    expected += shlex.split('--endpoint-type chat --endpoint /v1/chat/completions --model qwen --tokenizer Qwen/Qwen3-235B-A22B-Instruct-2507 --streaming -H "Accept: text/event-stream"')
-    expected += ["--concurrency", str(concurrency), "--workers-max", str(concurrency)]
-    expected += shlex.split('--api-key NOT_USED --warmup-duration 60 --benchmark-duration 120 --benchmark-grace-period 30 --synthetic-input-tokens-mean 4000 --synthetic-input-tokens-stddev 0 --output-tokens-mean 200 --output-tokens-stddev 0 --extra-inputs min_tokens:200 --extra-inputs max_tokens:200 --extra-inputs ignore_eos:true --extra-inputs temperature:0.0 --extra-inputs repetition_penalty:1.0 --num-dataset-entries 12800 --random-seed 2026 --cache-bust first_turn_prefix --goodput "time_to_first_token:3000 inter_token_latency:20" --ui simple')
+    expected = expected_official_command(gateway, concurrency)
     if shlex.split(command.read_text()) != expected:
         raise ValueError("AIPerf command does not match the fixed official workload")
+    return expected
 
 
-def validate_official_result(result: dict[str, Any], command: Path | None, provenance: Path | None) -> dict[str, Any]:
+def validate_official_export(metrics: dict[str, Any], result: dict[str, Any], expected_command: list[str]) -> None:
+    if metrics.get("aiperf_version") != "0.12.0":
+        raise ValueError("AIPerf export version does not match 0.12.0")
+    if metrics.get("was_cancelled") is not False:
+        raise ValueError("AIPerf export was cancelled")
+    if metrics.get("error_summary") != []:
+        raise ValueError("AIPerf export contains request errors")
+    duration = metric(metrics, "benchmark_duration")
+    good_requests = metric(metrics, "good_request_count")
+    if duration < 120 or good_requests < 0 or good_requests > result["request_count"]:
+        raise ValueError("AIPerf export has incomplete benchmark accounting")
+    denominator = result["request_count"] + result["error_request_count"]
+    if denominator <= 0 or not math.isclose(result["good_request_fraction"], good_requests / denominator, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError("AIPerf good request accounting is inconsistent")
+    run_info = metrics.get("run_info")
+    if not isinstance(run_info, dict) or run_info.get("random_seed") != 2026 or not isinstance(run_info.get("cli_command"), str):
+        raise ValueError("AIPerf export run identity is incomplete")
+    export_command = shlex.split(run_info["cli_command"])
+    if export_command and export_command[0] == "aiperf":
+        export_command[0] = expected_command[0]
+    try:
+        api_key_index = export_command.index("--api-key") + 1
+        if export_command[api_key_index] == "<redacted>":
+            export_command[api_key_index] = "NOT_USED"
+    except (ValueError, IndexError):
+        raise ValueError("AIPerf export command is incomplete") from None
+    if export_command != expected_command:
+        raise ValueError("AIPerf export command does not match the fixed official workload")
+    config = metrics.get("input_config")
+    if not isinstance(config, dict):
+        raise TypeError("AIPerf export input configuration is missing")
+    expected_phases = [
+        {"name": "warmup", "kind": "warmup", "type": "concurrency", "exclude_from_results": True, "duration": 60.0, "concurrency": result["concurrency"]},
+        {"name": "profiling", "kind": "profiling", "type": "concurrency", "duration": 120.0, "concurrency": result["concurrency"], "grace_period": 30.0},
+    ]
+    if config.get("phases") != expected_phases:
+        raise ValueError("AIPerf export phases do not match the fixed official workload")
+
+
+def validate_official_result(metrics: dict[str, Any], result: dict[str, Any], command: Path | None, provenance: Path | None) -> dict[str, Any]:
     if command is None or provenance is None:
         raise ValueError("official validation requires --command and --provenance")
-    validate_official_workload(command, provenance, result["concurrency"])
+    expected_command = validate_official_workload(command, provenance, result["concurrency"])
+    validate_official_export(metrics, result, expected_command)
     if not result["eligible"]:
         raise ValueError("good_request_fraction is below 0.90")
     # AIPerf 0.12.0 subtracts the rounded 14-token cache-bust estimate from the
     # synthetic ISL. The actual first_turn_prefix marker varies from 12 to 16
     # tokens, so individual client observations span 3984 through 3988 tokens.
     input_length = result["observed_input_sequence_length_avg"]
-    if input_length not in (4000.0, 3986.0):
-        required_statistics = ("min", "max", "count", "sum")
-        statistics = {name: result.get(f"observed_input_sequence_length_{name}") for name in required_statistics}
-        if any(value is None for value in statistics.values()):
-            raise ValueError("non-integral average input sequence length lacks distribution evidence")
-        minimum, maximum = statistics["min"], statistics["max"]
-        count, total = statistics["count"], statistics["sum"]
-        valid_distribution = 3984 <= minimum <= maximum <= 3988
-        valid_aggregate = count == result["request_count"] and count > 0 and total.is_integer() and math.isclose(input_length, total / count, rel_tol=0.0, abs_tol=1e-12)
-        if not valid_distribution or not valid_aggregate:
-            raise ValueError("input sequence length is inconsistent with pinned AIPerf's cache-bust distribution")
+    required_statistics = ("min", "max", "count", "sum")
+    input_statistics = {name: result.get(f"observed_input_sequence_length_{name}") for name in required_statistics}
+    if any(value is None for value in input_statistics.values()):
+        raise ValueError("input sequence length lacks distribution evidence")
+    minimum, maximum = input_statistics["min"], input_statistics["max"]
+    count, total = input_statistics["count"], input_statistics["sum"]
+    valid_distribution = 3984 <= minimum <= maximum <= 3988
+    valid_aggregate = count == result["request_count"] and count > 0 and total.is_integer() and math.isclose(input_length, total / count, rel_tol=0.0, abs_tol=1e-12)
+    if not valid_distribution or not valid_aggregate:
+        raise ValueError("input sequence length is inconsistent with pinned AIPerf's cache-bust distribution")
     # AIPerf 0.12.0 defines an OSL mismatch as a difference greater than the
     # smaller of 5% and 50 tokens. At the fixed requested OSL of 200, values
     # from 190 through 210 are therefore within its pinned tolerance. Validate
@@ -307,8 +353,8 @@ def main() -> None:
     validation_error = None
     if args.require_eligible:
         try:
-            result["official_validation"] = validate_official_result(result, args.command, args.provenance)
-        except (ValueError, OSError) as error:
+            result["official_validation"] = validate_official_result(metrics, result, args.command, args.provenance)
+        except (TypeError, ValueError, OSError) as error:
             validation_error = str(error)
             result["official_validation"] = {"valid": False, "error": validation_error}
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
@@ -330,9 +376,15 @@ if [[ "${mode}" == aiperf ]]; then run_aiperf; exit; fi
 [[ "${PROFILE}" == true || "${PROFILE}" == false ]]
 [[ -s "${CONTAINER_IMAGE}" ]]
 [[ -s "${MODEL_PATH}/config.json" && -s "${MODEL_PATH}/model.safetensors.index.json" ]]
-install -d -m 0755 "${OUTPUT_DIR}/results" "${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/refs" "${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e"
+[[ "$(find "${MODEL_PATH}" -maxdepth 1 -type f -name 'model-*-of-00024.safetensors' | wc -l)" -eq 24 ]]
+[[ "$(head -n 1 "${MODEL_PATH}/.cache/huggingface/download/config.json.metadata")" == e156cb4efae43fbee1a1ab073f946a1377e6b969 ]]
+jq -e '.model_type == "qwen3_moe" and .architectures == ["Qwen3MoeForCausalLM"] and .quantization_config.quant_method == "fp8" and .quantization_config.fmt == "e4m3"' "${MODEL_PATH}/config.json" >/dev/null
+tokenizer_files=(config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json)
+tokenizer_hashes=(f056921e486d3e22aed125b5218b87146ea2ac838ccf1521dea5b08f809e8d59 19d306dd769db12a9d710b44cf7f83b635efbe5166b84fb4358a08fb7d88bb53 8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5 aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4 a62ff0a2472a0fa1b8eaabcb57c59b58afa42a22831dc141400b6e0cf2b65ce3 ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910)
+for index in "${!tokenizer_files[@]}"; do tokenizer_file="${tokenizer_files[${index}]}"; [[ "$(sha256sum "${MODEL_PATH}/${tokenizer_file}" | awk '{print $1}')" == "${tokenizer_hashes[${index}]}" ]]; done
+install -d -m 0755 "${OUTPUT_DIR}/logs" "${OUTPUT_DIR}/results" "${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/refs" "${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e"
 tokenizer_snapshot="${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e"
-for tokenizer_file in config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json; do test -s "${MODEL_PATH}/${tokenizer_file}"; ln -s "${MODEL_PATH}/${tokenizer_file}" "${tokenizer_snapshot}/${tokenizer_file}"; done
+for tokenizer_file in "${tokenizer_files[@]}"; do ln -s "${MODEL_PATH}/${tokenizer_file}" "${tokenizer_snapshot}/${tokenizer_file}"; done
 printf '%s' ac9c66cc9b46af7306746a9250f23d47083d689e >"${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/refs/main"
 mapfile -t nodes < <(scontrol show hostnames "${SLURM_JOB_NODELIST}")
 [[ "${#nodes[@]}" -eq 2 ]]
@@ -348,30 +400,21 @@ cleanup_all() { status=$?; trap - EXIT INT TERM; if [[ -n "${router_pid}" ]]; th
 trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-srun --overlap --nodes=2 --ntasks=2 --ntasks-per-node=1 --distribution=block:block "${script_path}" node >"${OUTPUT_DIR}/server-step.log" 2>&1 &
+srun --overlap --nodes=2 --ntasks=2 --ntasks-per-node=1 --distribution=block:block "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 &
 server_pid=$!
 worker_urls=("http://${head_ip}:30100/health" "http://${head_ip}:30101/health" "http://${head_ip}:30102/health" "http://${head_ip}:30103/health" "http://${tail_ip}:30200/health" "http://${tail_ip}:30201/health")
 deadline="$((SECONDS + 900))"
 while true; do kill -0 "${server_pid}"; ready=0; for url in "${worker_urls[@]}"; do if curl --fail --silent --max-time 2 "${url}" >/dev/null; then ready="$((ready + 1))"; fi; done; if [[ "${ready}" -eq 6 ]]; then break; fi; (( SECONDS < deadline )); sleep 5; done
-srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env HEAD_IP="${head_ip}" TAIL_IP="${tail_ip}" "${script_path}" router >"${OUTPUT_DIR}/router.log" 2>&1 &
+srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env HEAD_IP="${head_ip}" TAIL_IP="${tail_ip}" "${script_path}" router >"${OUTPUT_DIR}/logs/router.log" 2>&1 &
 router_pid=$!
 deadline="$((SECONDS + 300))"
 models_url="http://${head_ip}:8000/v1/models"
-models_pending="${OUTPUT_DIR}/models.pending.json"
+models_pending="${OUTPUT_DIR}/results/models.pending.json"
 while true; do
   kill -0 "${router_pid}"
-  if curl --fail --silent --max-time 2 "${models_url}" >"${models_pending}" && jq -e '.data | map(.id) | index("qwen") != null' "${models_pending}" >/dev/null; then mv "${models_pending}" "${OUTPUT_DIR}/models.json"; break; fi
+  if curl --fail --silent --max-time 2 "${models_url}" >"${models_pending}" && jq -e '.data | map(.id) | index("qwen") != null' "${models_pending}" >/dev/null; then mv "${models_pending}" "${OUTPUT_DIR}/results/models.json"; break; fi
   (( SECONDS < deadline ))
   sleep 2
 done
-prewarm_request="${OUTPUT_DIR}/nixl-prewarm-request.json"
-prewarm_response="${OUTPUT_DIR}/nixl-prewarm-response.json"
-prewarm_timing="${OUTPUT_DIR}/nixl-prewarm-timing.txt"
-jq -n --arg content "nixl-prewarm-${SLURM_JOB_ID}" '{model:"qwen",messages:[{role:"user",content:$content}],stream:false,min_tokens:2,max_tokens:2,ignore_eos:true,temperature:0.0}' >"${prewarm_request}"
-prewarm_started="$(date +%s)"
-printf 'started_at=%s\n' "$(date -u +%FT%TZ)" >"${prewarm_timing}"
-curl --fail --silent --show-error --max-time 180 -H 'Content-Type: application/json' --data-binary "@${prewarm_request}" "http://${head_ip}:8000/v1/chat/completions" >"${prewarm_response}"
-jq -e '.choices | length > 0' "${prewarm_response}" >/dev/null
-printf 'finished_at=%s\nelapsed_seconds=%s\n' "$(date -u +%FT%TZ)" "$(( $(date +%s) - prewarm_started ))" >>"${prewarm_timing}"
-srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" "${script_path}" aiperf >"${OUTPUT_DIR}/aiperf.log" 2>&1
+srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" "${script_path}" aiperf >"${OUTPUT_DIR}/logs/aiperf.log" 2>&1
 touch "${OUTPUT_DIR}/run-success"
