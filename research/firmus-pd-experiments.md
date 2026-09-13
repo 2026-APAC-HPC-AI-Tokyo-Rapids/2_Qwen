@@ -29,6 +29,16 @@
 
 回収区間のGPU平均使用率はnode 0で5.681%、node 1で5.025%、CPU idleはそれぞれ85.900%、88.913%だった。InfiniBandの累積counter差分は各HCAで数十KB以下にとどまった。低い計算利用率と小さい通信counter差分は、ログに記録された`KVPoll.WaitingForInput`と整合する。ただし、これはTIMEOUTした単一profile runであり、HCA間の性能差や因果関係を単独で確定する根拠にはしない。
 
-## 次の比較
+## 最終判断
 
-同梱SGLang sourceのNIXL文書は、UCX backendの最初のrequestに一度だけ接続cold-startが生じるため、サービス起動後にthrowaway requestを1回送ることを推奨している。commit `f430437`では公式AIPerfコマンドを変更せず、その直前にgateway経由の2-token requestを同期実行する。このrequestの入力、応答、所要時間は通常のAIPerf成果物から分離する。Actions run 34701093440 / Slurm job 16938で、初回接続を事前に完了させることでAIPerf warmupの同時16 requestsに残る転送待ちが減るかを検証する。
+外部からの2トークン事前ウォームアップ（two-token prewarm）について反復検証を実施した結果、ブートストラップ制御パスの不安定化要因となることが特定されたため、不採用とした。公式の AIPerf 0.12.0 コマンドには既定の60秒間ウォームアップが含まれているため、最終実装では余分な外部プリウォームのみを削除し、各 Worker および Router が正常（healthy）となった直後に固定の公式コマンドを開始する構成とした。
+
+Actions `34732532321` / Slurm `17021`（実行ノード: `g1`, `g4`）において所要時間 `00:11:16`、ステータス `COMPLETED 0:0` で実行が完了した。計測結果は以下の通りである。
+
+- **リクエスト数**: 558（エラー: 0）
+- **Good request fraction**: 1.0
+- **Goodput**: 4.548422736312085 requests/s
+- **スコア**: 909.6845472624169 output tokens/s
+- **ローカルバリデーション**: true
+
+実行終了に伴い、アーティファクトおよび全サービスログをアーカイブし、ランタイムのクリーンアップを完了した。残留ジョブは存在しない。
