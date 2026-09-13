@@ -68,7 +68,7 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert 'models.pending.json' in job
     assert 'index("qwen") != null' in job
     assert job.count("nixl-prewarm-${SLURM_JOB_ID}") == 1
-    assert job.count("--max-time 120") == 1
+    assert job.count("--max-time 180") == 1
     assert job.count("min_tokens:2,max_tokens:2") == 1
     assert job.index('index("qwen") != null') < job.index("nixl-prewarm-${SLURM_JOB_ID}")
     assert job.index("nixl-prewarm-${SLURM_JOB_ID}") < job.index("run-aiperf-container.sh")
@@ -77,6 +77,8 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert "--tp-size \"${tp}\"" in node
     assert "--ep-size 4 --max-running-requests 256" in node
     assert "--disaggregation-transfer-backend nixl" in node
+    assert 'grep -q \'ACTIVE\' "${state_file}"' in node
+    assert "/link_layer" not in node
     assert 'SGLANG_HOST_IP=${node_ip}' in node
     assert 'HEAD_IP="${head_ip}" TAIL_IP="${tail_ip}"' in job
     assert 'http://${HEAD_IP}:30100' in router
@@ -104,7 +106,7 @@ def test_submission_script_keeps_profile_data_separate() -> None:
     submission = (ROOT / "submission/run/submit.sbatch").read_text()
 
     assert submission.count("nixl-prewarm-${SLURM_JOB_ID}") == 1
-    assert submission.count("--max-time 120") == 1
+    assert submission.count("--max-time 180") == 1
     assert submission.count("min_tokens:2,max_tokens:2") == 1
     assert submission.index('index("qwen") != null') < submission.index("nixl-prewarm-${SLURM_JOB_ID}")
     assert submission.index("nixl-prewarm-${SLURM_JOB_ID}") < submission.rindex('"${script_path}" aiperf')
@@ -113,6 +115,8 @@ def test_submission_script_keeps_profile_data_separate() -> None:
         assert f"{prefix}-node-${{rank}}.csv" in submission
     assert '${OUTPUT_DIR}/profile' in submission
     assert 'SGLANG_HOST_IP=${node_ip}' in submission
+    assert 'grep -q ACTIVE "${state_file}"' in submission
+    assert "/link_layer" not in submission
 
 
 def test_compute_scripts_have_no_cloud_credentials() -> None:

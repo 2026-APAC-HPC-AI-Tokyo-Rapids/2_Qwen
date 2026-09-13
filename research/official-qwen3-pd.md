@@ -32,9 +32,13 @@ ASPIRE 2A+のPBS job 208754.pbs111は34秒、`Exit_status=0`で完了した。ra
 
 ## 実行と判定
 
-最終候補トポロジは、node 0に4基のTP2 Prefillワーカー、node 1に2基のTP4/EP4 Decodeワーカーを配置し、Decode側の`max-running-requests`を256、全ワーカーの`max-total-tokens`を131072とする。この容量は、公式の16リクエスト（入力4000＋出力200トークン）がすべて単一ワーカーに集中した場合に必要となる67200トークンを上回りつつ、自動推定容量1531197トークン全体に対するNIXLのeagerなprepared descriptor構築を防止する。NIXL、アクティブなInfiniBand用の`UCX_NET_DEVICES`、および各ワーカー固有のAPI／ブートストラップポート設定は維持する。
+最終候補トポロジは、node 0に4基のTP2 Prefillワーカー、node 1に2基のTP4/EP4 Decodeワーカーを配置し、Decode側の`max-running-requests`を256、全ワーカーの`max-total-tokens`を131072とする。この容量は、公式の16リクエスト（入力4000＋出力200トークン）がすべて単一ワーカーに集中した場合に必要となる67200トークンを上回りつつ、自動推定容量1531197トークン全体に対するNIXLのeagerなprepared descriptor構築を防止する。最終トポロジではNIXLを維持し、8基のInfiniBandおよび2基のEthernet HCAを含むFirmus上のすべてのアクティブなHCAをUCX_NET_DEVICESに設定するとともに、各ワーカーに対して個別のAPI/ブートストラップポートを維持する。
 
 `scripts/run-qwen-pd-job.sh`は、ワーカー群、ルーター、AIPerfの順序でプロセスを起動する。AIPerfから参照されるエンドポイントは、ルーターが提供する`/v1/chat/completions`のみである。`scripts/run-aiperf.sh`は公式モード（official）と探索モード（exploratory）を明示的に切り分け、公式モードでは規定のワークロード引数を厳密に固定する。探索モードでのみ、`configs/firmus-pd.json`に定義された短時間実行の設定を適用できる。なお、いずれのモードにおいてもopen-loop用の`--request-rate`は指定しない。
+
+Actions `34728353522` / Firmus Slurm `17007` では、`g1`/`g4` 上で同一の bounded-KV 構成を使用しました。全 16 ランクで CUDA graph キャプチャおよび内部 PD warmup を完了し、OOM、UCX、NIXL エラーは発生しませんでしたが、選択された `prefill-3` から `decode-0` への外部 prewarm が、`bootstrap-req` が 1 のまま推移する中でクライアント側の 120 秒の `curl` 制限によりアボートされました。7分50秒後に `FAILED 28:0` で終了したものの、アーティファクト `10308936949` は回収され、ランタイムはクリーンアップされて残留ジョブはなく、AIPerf には到達しませんでした。
+
+成功した Slurm `17005` では、prewarm を行っていない prefill ワーカーが公式 warmup 開始から最初の実入力までに約 125 秒を要しており、健全な bounded-KV ブートストラップでも 120 秒を超える可能性があることが示されています。したがって、固定された公式 AIPerf コマンドやスコア測定用ワークロードは変更せず、prewarm リクエストを 1 件維持したまま、その有界タイムアウトのみを 120 秒から 180 秒に引き上げます。
 
 `scripts/parse-aiperf-result.py`は、AIPerf 0.12.0が出力する`profile_export_aiperf.json`からgoodput、good request fraction、リクエスト数／エラー数、および実測されたISL/OSLを読み取り、公式の0.90合格判定（gate）と算出スコアをJSONファイルへ保存する。結果パーサーは、ISL の `min`、`max`、`count`、`sum` を保持・検証し、`min`/`max` が `3984`〜`3988` の範囲内にあること、`count` が `request_count` と合致すること、および `average` が整数 `sum` と `count` の商と一致することを確認する。レガシーな固定値 `4000` または `3986` の受容は継続するが、分布の裏付けがない非整数の平均値は排除する。保存したargv全体、AIPerf version、tokenizer revision、mode、concurrency、gatewayが固定ワークロードと一致することも検証し、raw観測値と`goodput × 200`の計算は変更しない。補正の実装根拠と判定範囲は[`aiperf-isl-validation.md`](aiperf-isl-validation.md)に記録した。
 
