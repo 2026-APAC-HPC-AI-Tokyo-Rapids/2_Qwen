@@ -71,10 +71,10 @@ run_node() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  ib_devices=()
-  for state_file in /sys/class/infiniband/*/ports/1/state; do device="${state_file#/sys/class/infiniband/}"; device="${device%%/*}"; if grep -q ACTIVE "${state_file}" && grep -qx InfiniBand "/sys/class/infiniband/${device}/ports/1/link_layer"; then ib_devices+=("${device}:1"); fi; done
-  [[ "${#ib_devices[@]}" -gt 0 ]]
-  ucx_devices="$(IFS=,; printf '%s' "${ib_devices[*]}")"
+  hca_devices=()
+  for state_file in /sys/class/infiniband/*/ports/1/state; do if grep -q ACTIVE "${state_file}"; then device="${state_file#/sys/class/infiniband/}"; hca_devices+=("${device%%/*}:1"); fi; done
+  [[ "${#hca_devices[@]}" -gt 0 ]]
+  ucx_devices="$(IFS=,; printf '%s' "${hca_devices[*]}")"
   printf 'hostname=%s\nnode_ip=%s\nnode_rank=%s\nucx_net_devices=%s\n' "${hostname_short}" "${node_ip}" "${node_rank}" "${ucx_devices}" >"${OUTPUT_DIR}/node-${node_rank}-environment.log"
   nvidia-smi -L >>"${OUTPUT_DIR}/node-${node_rank}-environment.log"
   if [[ "${PROFILE}" == true ]]; then
@@ -370,7 +370,7 @@ prewarm_timing="${OUTPUT_DIR}/nixl-prewarm-timing.txt"
 jq -n --arg content "nixl-prewarm-${SLURM_JOB_ID}" '{model:"qwen",messages:[{role:"user",content:$content}],stream:false,min_tokens:2,max_tokens:2,ignore_eos:true,temperature:0.0}' >"${prewarm_request}"
 prewarm_started="$(date +%s)"
 printf 'started_at=%s\n' "$(date -u +%FT%TZ)" >"${prewarm_timing}"
-curl --fail --silent --show-error --max-time 120 -H 'Content-Type: application/json' --data-binary "@${prewarm_request}" "http://${head_ip}:8000/v1/chat/completions" >"${prewarm_response}"
+curl --fail --silent --show-error --max-time 180 -H 'Content-Type: application/json' --data-binary "@${prewarm_request}" "http://${head_ip}:8000/v1/chat/completions" >"${prewarm_response}"
 jq -e '.choices | length > 0' "${prewarm_response}" >/dev/null
 printf 'finished_at=%s\nelapsed_seconds=%s\n' "$(date -u +%FT%TZ)" "$(( $(date +%s) - prewarm_started ))" >>"${prewarm_timing}"
 srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" "${script_path}" aiperf >"${OUTPUT_DIR}/aiperf.log" 2>&1
