@@ -55,6 +55,19 @@ def test_workflow_keeps_build_and_cluster_controls_explicit() -> None:
     assert "-name '*.slurm'" in validation
 
 
+def test_container_reuse_hash_check_keeps_remote_shell_alive() -> None:
+    selection = (ROOT / "scripts/select-qwen-container.sh").read_text()
+
+    assert "verify_sha256" in selection
+    assert "while sleep 15" in selection
+    assert "container_sha256_check_in_progress=" in selection
+    assert selection.index("hash_progress_pid=$!") < selection.index(
+        'actual="$(sha256sum'
+    )
+    hash_index = selection.index('actual="$(sha256sum')
+    assert hash_index < selection.index("stop_hash_progress", hash_index)
+
+
 def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     workflow = (ROOT / ".github/workflows/firmus.yml").read_text()
     submission = (ROOT / "submission/run/submit.sbatch").read_text()
