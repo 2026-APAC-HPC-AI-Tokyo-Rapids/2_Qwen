@@ -42,6 +42,8 @@ def test_workflow_keeps_build_and_cluster_controls_explicit() -> None:
     for cluster in ("genkai", "aspire2ap", "firmus"):
         assert f"[cluster:{cluster}]" in entry
         assert f"run_{cluster}:" in entry
+        assert f"needs.container.outputs.{cluster}_container_sha256 != ''" in entry
+        assert f"needs.container.outputs.{cluster}_container_size != ''" in entry
     for tag in ("[nodes:1]", "[nodes:4]", "[require-build]", "[profile]"):
         assert tag in entry
     assert "startsWith(github.event.head_commit.message, '[require-build]')" in entry
@@ -74,10 +76,25 @@ def test_scheduler_monitor_tolerates_temporary_connection_failures() -> None:
     monitor = (ROOT / "scripts/monitor-qwen-job.sh").read_text()
 
     assert '[[ "${status}" -eq 75 ]]' in monitor
-    assert '[[ "${status}" -eq 255 ]]' in monitor
+    assert '[[ "${status}" -eq 124 || "${status}" -eq 255 ]]' in monitor
     assert '[[ "${connection_failure_seconds}" -lt 300 ]]' in monitor
+    assert 'timeout --foreground 60 "${remote_shell}"' in monitor
     assert "sleep 15" in monitor
     assert "sleep 30" in monitor
+
+
+def test_genkai_uses_bounded_concurrency_for_its_eight_gpu_allocation() -> None:
+    workflow = (ROOT / ".github/workflows/genkai.yml").read_text()
+
+    assert 'job_environment="CONCURRENCY=8,' in workflow
+
+
+def test_submission_selects_the_final_export_and_uses_container_python() -> None:
+    submission = (ROOT / "submission/run/submit.sbatch").read_text()
+
+    assert '-mindepth 2 -maxdepth 2 -type f -name profile_export_aiperf.json' in submission
+    assert '"${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json' in submission
+    assert '  python3 - "${OUTPUT_DIR}/results/profile_export_aiperf.json"' not in submission
 
 
 def test_cluster_branches_do_not_cancel_each_other() -> None:

@@ -163,10 +163,10 @@ run_aiperf() {
   child_pid=$!
   wait "${child_pid}"
   child_pid=
-  export_file="$(find "${OUTPUT_DIR}/results/artifacts" -type f -name profile_export_aiperf.json -print -quit)"
+  export_file="$(find "${OUTPUT_DIR}/results/artifacts" -mindepth 2 -maxdepth 2 -type f -name profile_export_aiperf.json -print -quit)"
   [[ -n "${export_file}" && -s "${export_file}" ]]
   cp "${export_file}" "${OUTPUT_DIR}/results/profile_export_aiperf.json"
-  python3 - "${OUTPUT_DIR}/results/profile_export_aiperf.json" "${OUTPUT_DIR}/results/score.json" --concurrency "${CONCURRENCY}" --require-eligible --command "${OUTPUT_DIR}/results/aiperf-command.txt" --provenance "${OUTPUT_DIR}/results/aiperf-provenance.txt" <<'PY'
+  enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}/results:/results" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json /results/score.json --concurrency "${CONCURRENCY}" --require-eligible --command /results/aiperf-command.txt --provenance /results/aiperf-provenance.txt <<'PY'
 #!/usr/bin/env python3
 """Validate AIPerf's official Qwen metrics and emit the competition score."""
 
