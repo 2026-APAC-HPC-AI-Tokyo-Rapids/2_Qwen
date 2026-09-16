@@ -14,7 +14,7 @@ Firmus では、最終トポロジーとして node 0 に TP2 の Prefill ワー
 
 公式の `AIPerf` 引数では `min_tokens=200`、`max_tokens=200`、`ignore_eos=true` を指定して要求 OSL を `200` とする。検証処理では観測された `min`、`max`、`count`、`sum` を保持する。`AIPerf 0.12.0` の定義では要求 OSL の `5%` または `50` トークンの小さい方を超える絶対差を不一致（mismatch）と判定するため、要求値 `200` に対する許容観測範囲は `190` 以上 `210` 以下（両端含む）となる。検証要件として、`count` が `request_count` と等しいこと、`average` が `sum` / `count` と等しいこと、`sum` が整数であること、および `osl_mismatch_count` が `0` であることを義務付ける。スコア算出は goodput に設定値の `200` を乗じる仕様を維持する。
 
-通常実行では、6基のワーカーログ、ルーターログ、AIPerf の生エクスポート、スコア、スケジューラアカウンティング、ならびにソースコンテナ・モデル・トークナイザの来歴情報（provenance）が収集されます。Prometheus ワーカーのスナップショットは収集されません。プロファイル実行時のみ、GPU、CPU、NIC、および InfiniBand のテレメトリが1秒間隔で個別の profile ディレクトリに収集されますが、プロファイル時の測定値は通常ベンチマークの結果と直接比較してはなりません。
+通常実行では、6基のワーカーログ、ルーターログ、AIPerf の生エクスポート、スコア、スケジューラアカウンティング、ならびにソースコンテナ・モデル・トークナイザの来歴情報（provenance）が収集されます。Prometheus ワーカーのスナップショットは収集されません。プロファイル実行時のみ、各SGLang workerは共通の `scripts/exec-profiler.sh` 実行境界を通り、そのargv証跡とGPU、CPU、NIC、およびInfiniBandの1秒間隔テレメトリが個別のprofileディレクトリに収集されます。全workerのargv証跡が揃わないprofile実行は成功扱いにしません。プロファイル時の測定値は通常ベンチマークの結果と直接比較してはなりません。
 
 コンテナは、AWSシンガポールリージョン上に一時起動する`m7i.2xlarge`インスタンスにおいて、Buildahの`chroot` isolationを用いて構築します。生成したOCI layoutをSkopeoおよびUmociで検証した上でSquashFS化し、SGLang mirrorの特定コミット、AIPerf 0.12.0、sglang-router 0.3.2を固定します。各クラスタは自身のローカルアーカイブのみを検索し、クラスタ間でのキャッシュ複製は行いません。ソースコード、ツールチェーン、依存関係を変更したコミットには、メッセージの先頭に`[require-build]`を付与してください。
 
