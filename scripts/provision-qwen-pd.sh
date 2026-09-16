@@ -48,7 +48,7 @@ nvidia_hook="${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
 if [[ -x "${nvidia_hook}" ]]; then sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${nvidia_hook}"; fi
 if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh" ]]; then chmod -x "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh"; fi
 
-install -m 0755 "${GITHUB_WORKSPACE}/submission/run/submit.sbatch" "${runtime_dir}/scripts/submit.sbatch"
+install -m 0755 "${GITHUB_WORKSPACE}/submission/run/submit.sbatch" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/"
 export HF_HOME="${runtime_dir}/tokenizer-cache"
 export HF_HUB_DISABLE_XET=1
 export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"

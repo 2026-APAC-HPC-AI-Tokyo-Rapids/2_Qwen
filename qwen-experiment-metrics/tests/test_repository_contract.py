@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import shlex
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -146,6 +149,7 @@ def test_firmus_pd_bounds_each_workers_kv_capacity() -> None:
 
 def test_submission_script_keeps_profile_data_separate() -> None:
     submission = (ROOT / "submission/run/submit.sbatch").read_text()
+    provision = (ROOT / "scripts/provision-qwen-pd.sh").read_text()
 
     assert "nixl-prewarm" not in submission
     assert submission.index('index("qwen") != null') < submission.rindex('"${script_path}" aiperf')
@@ -156,6 +160,22 @@ def test_submission_script_keeps_profile_data_separate() -> None:
     assert 'SGLANG_HOST_IP=${node_ip}' in submission
     assert 'grep -q ACTIVE "${state_file}"' in submission
     assert "/link_layer" not in submission
+    assert 'if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=' in submission
+    assert '"${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/"' in provision
+    assert "profiler-invocation-*.argv" in submission
+
+
+def test_exec_profiler_preserves_argv_and_exit_status(tmp_path: Path) -> None:
+    profiler = ROOT / "scripts/exec-profiler.sh"
+    invocation = tmp_path / "profile/profiler-invocation.argv"
+    command = ["/bin/sh", "-c", 'test "$1" = "argument with spaces"; exit 23', "_", "argument with spaces"]
+
+    process = subprocess.run([profiler, *command], check=False, env=os.environ | {"QWEN_PROFILER_INVOCATION_PATH": str(invocation)})
+
+    assert process.returncode == 23
+    assert shlex.split(invocation.read_text()) == command
+    assert profiler.stat().st_mode & 0o111
+    assert 'exec "$@"' in profiler.read_text()
 
 
 def test_submission_is_the_only_firmus_pd_runtime() -> None:
