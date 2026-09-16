@@ -1,17 +1,12 @@
-name: ASPIRE 2A+でQwenコンテナを確認
+name: ASPIRE 2A+でQwen3 PDを実行
 
 on:
   workflow_call:
     inputs:
-      node_count:
-        required: true
-        type: string
-      container_sha256:
-        required: true
-        type: string
-      container_size:
-        required: true
-        type: string
+      node_count: {required: true, type: string}
+      profile: {required: true, type: boolean}
+      container_sha256: {required: true, type: string}
+      container_size: {required: true, type: string}
 
 permissions:
   actions: read
@@ -26,18 +21,19 @@ defaults:
 
 jobs:
   provision:
-    name: ローカルarchiveからSquashFSを配備
+    name: PD実行環境を配備
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     outputs:
       runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
     steps:
+      - name: 2ノードを検証
+        run: "test '${{ inputs.node_count }}' = 2"
       - name: 実行用ファイルを取得
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-
-      - name: archiveのSquashFSを実行領域へ配備
+      - name: SquashFS・モデル・tokenizer・設定を配備
         id: provision
         env:
           CLUSTER_NAME: aspire2ap
@@ -46,12 +42,12 @@ jobs:
           CONTAINER_SIZE: ${{ inputs.container_size }}
           ENROOT_LIBRARY_PATH: /home/ACCOUNT/.local/lib/enroot
           ENROOT_SYSCONF_PATH: /home/ACCOUNT/.local/etc/enroot
+          MODEL_PATH: /scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+          PROFILE: ${{ inputs.profile }}
         run: |
-          export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
-          "${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"
+          PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
-          install -m 0755 "${GITHUB_WORKSPACE}/platforms/aspire2ap/check-qwen-container.pbs" "${runtime_dir}/scripts/check-qwen-container.pbs"
-
+          install -m 0755 platforms/aspire2ap/run-qwen-pd.pbs "${runtime_dir}/scripts/run-qwen-pd.pbs"
       - name: 配備失敗時の実行環境を削除
         if: failure() && steps.provision.outputs.runtime_dir != ''
         env:
@@ -59,24 +55,25 @@ jobs:
         run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
-    name: GPUノードでEnroot check_envを実行
+    name: 2ノード16 GPUでPDとAIPerfを実行
     needs: provision
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     env:
+      MODEL_PATH: /scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+      PROFILE: ${{ inputs.profile }}
       RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
     steps:
       - name: PBSジョブを投入
         id: submit
         run: |
           cd "${RUNTIME_DIR}"
-          variables="RUNTIME_DIR=${RUNTIME_DIR},EXPECTED_NODE_COUNT=${{ inputs.node_count }}"
-          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=${{ inputs.node_count }}:ncpus=8:ngpus=1:mem=128gb:mpiprocs=1' -l place=scatter -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -j oe -N qwen_check_env <"${RUNTIME_DIR}/scripts/check-qwen-container.pbs")"
+          variables="CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh,ENROOT_LIBRARY_PATH=${RUNTIME_DIR}/enroot-library,ENROOT_MOUNT_HOME=no,ENROOT_SYSCONF_PATH=${RUNTIME_DIR}/enroot-system,MODEL_PATH=${MODEL_PATH},NODE_COUNT=2,OUTPUT_DIR=${RUNTIME_DIR},PROFILE=${PROFILE},RUNTIME_DIR=${RUNTIME_DIR},TOKENIZER_PATH=${RUNTIME_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e"
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=2:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -j oe -N qwen3_pd "${RUNTIME_DIR}/scripts/run-qwen-pd.pbs")"
           [[ "${job_id}" =~ ^[0-9]+([.][A-Za-z0-9.-]+)?$ ]]
           printf 'PBS_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
-
-      - name: PBSジョブの終了を確認
+      - name: PBSジョブの終了と公式成果物を確認
         run: |
           while /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; do sleep 10; done
           /opt/pbs/bin/qstat -x -f "${PBS_JOB_ID}" >"${RUNTIME_DIR}/logs/pbs-accounting.txt"
@@ -85,24 +82,26 @@ jobs:
           exit_status="$(awk -F= '/^[[:space:]]*Exit_status =/{gsub(/[[:space:]]/, "", $2); print $2}' "${RUNTIME_DIR}/logs/pbs-accounting.txt")"
           test "${exit_status}" = 0
           test -e "${RUNTIME_DIR}/run-success"
-
-      - name: check_envログをrunnerへ回収
+          test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
+          test -s "${RUNTIME_DIR}/results/score.json"
+      - name: ログ・AIPerf・profile・来歴をrunnerへ回収
         if: always() && steps.submit.outputs.job_id != ''
         shell: home-lab-shell {0}
         run: |
-          destination="${RUNNER_TEMP}/qwen-aspire2ap-check-env"
-          aspire2p-shell --pull "${RUNTIME_DIR}/logs" "${destination}"
-          aspire2p-shell --pull "${RUNTIME_DIR}/source" "${destination}"
-          aspire2p-shell --pull "${RUNTIME_DIR}/run-success" "${destination}"
-
-      - name: check_envログを保存
+          destination="${RUNNER_TEMP}/qwen-aspire2ap-pd"
+          install -d -m 0755 "${destination}"
+          aspire2p-shell --pull "${RUNTIME_DIR}/logs" "${destination}/logs"
+          aspire2p-shell --pull "${RUNTIME_DIR}/profile" "${destination}/profile"
+          aspire2p-shell --pull "${RUNTIME_DIR}/results" "${destination}/results"
+          aspire2p-shell --pull "${RUNTIME_DIR}/source" "${destination}/source"
+          aspire2p-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"
+      - name: 実行成果物を保存
         if: always() && steps.submit.outputs.job_id != ''
         uses: actions/upload-artifact@v7
         with:
-          name: qwen-aspire2ap-check-env-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/qwen-aspire2ap-check-env
+          name: qwen-aspire2ap-pd-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qwen-aspire2ap-pd
           if-no-files-found: error
-
-      - name: 実行環境を削除
+      - name: 実行環境と残留ジョブを削除
         if: always()
         run: if [[ -n "${PBS_JOB_ID:-}" ]] && /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; then /opt/pbs/bin/qdel "${PBS_JOB_ID}"; fi; rm -rf -- "${RUNTIME_DIR:?}"

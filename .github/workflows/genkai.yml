@@ -1,17 +1,12 @@
-name: 玄界でQwenコンテナを確認
+name: 玄界でQwen3 PDを実行
 
 on:
   workflow_call:
     inputs:
-      node_count:
-        required: true
-        type: string
-      container_sha256:
-        required: true
-        type: string
-      container_size:
-        required: true
-        type: string
+      node_count: {required: true, type: string}
+      profile: {required: true, type: boolean}
+      container_sha256: {required: true, type: string}
+      container_size: {required: true, type: string}
 
 permissions:
   actions: read
@@ -26,18 +21,19 @@ defaults:
 
 jobs:
   provision:
-    name: ローカルarchiveからSquashFSを配備
+    name: PD実行環境を配備
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     outputs:
       runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
     steps:
+      - name: ノード数を検証
+        run: "test '${{ inputs.node_count }}' = 2 || test '${{ inputs.node_count }}' = 4"
       - name: 実行用ファイルを取得
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-
-      - name: archiveのSquashFSを実行領域へ配備
+      - name: SquashFS・モデル・tokenizer・設定を配備
         id: provision
         env:
           CLUSTER_NAME: genkai
@@ -46,12 +42,12 @@ jobs:
           CONTAINER_SIZE: ${{ inputs.container_size }}
           ENROOT_LIBRARY_PATH: /home/ACCOUNT/ku60000563/.local/lib/enroot
           ENROOT_SYSCONF_PATH: /home/ACCOUNT/ku60000563/.local/etc/enroot
+          MODEL_PATH: /fast/PROJECT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+          PROFILE: ${{ inputs.profile }}
         run: |
-          export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
-          "${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"
+          PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
-          install -m 0755 "${GITHUB_WORKSPACE}/platforms/genkai/check-qwen-container.pjm" "${runtime_dir}/scripts/check-qwen-container.pjm"
-
+          install -m 0755 platforms/genkai/run-qwen-pd.pjm "${runtime_dir}/scripts/run-qwen-pd.pjm"
       - name: 配備失敗時の実行環境を削除
         if: failure() && steps.provision.outputs.runtime_dir != ''
         env:
@@ -59,53 +55,52 @@ jobs:
         run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
-    name: GPUノードでEnroot check_envを実行
+    name: PDとAIPerfを実行
     needs: provision
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     env:
+      MODEL_PATH: /fast/PROJECT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+      PROFILE: ${{ inputs.profile }}
       RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
     steps:
       - name: PJMジョブを投入
         id: submit
         run: |
           cd "${RUNTIME_DIR}"
-          job_environment="NODE_COUNT=${{ inputs.node_count }},RUNTIME_DIR=${RUNTIME_DIR}"
-          submission="$(pjsub -L "node=${{ inputs.node_count }}" --mpi "proc=${{ inputs.node_count }}" -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.pjm")"
+          job_environment="CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh,ENROOT_LIBRARY_PATH=${RUNTIME_DIR}/enroot-library,ENROOT_MOUNT_HOME=no,ENROOT_SYSCONF_PATH=${RUNTIME_DIR}/enroot-system,MODEL_PATH=${MODEL_PATH},NODE_COUNT=${{ inputs.node_count }},OUTPUT_DIR=${RUNTIME_DIR},PROFILE=${PROFILE},RUNTIME_DIR=${RUNTIME_DIR},TOKENIZER_PATH=${RUNTIME_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e"
+          submission="$(pjsub -L "node=${{ inputs.node_count }}" --mpi "proc=${{ inputs.node_count }}" -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.pjm.log" -j -N qwen3_pd "${RUNTIME_DIR}/scripts/run-qwen-pd.pjm")"
           printf '%s\n' "${submission}"
           job_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<<"${submission}")"
-          test -n "${job_id}"
+          [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'PJM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
-
-      - name: PJMジョブの開始を待機
-        run: |
-          while [[ ! -e "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" ]]; do wait_status="$(pjwait -w waitnone "${PJM_JOB_ID}")"; printf '%s\n' "${wait_status}"; pjm_code="$(awk 'NR == 1 {print $2}' <<<"${wait_status}")"; if [[ -n "${pjm_code}" && "${pjm_code}" != X ]]; then exit 1; fi; sleep 15; done
-
-      - name: PJMジョブの終了を確認
+      - name: PJMジョブの終了と公式成果物を確認
         run: |
           pjwait -z "${PJM_JOB_ID}"
-          cat "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"
-          pjwait "${PJM_JOB_ID}"
+          pjwait "${PJM_JOB_ID}" | tee "${RUNTIME_DIR}/logs/pjm-accounting.txt"
+          cat "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.pjm.log"
           test -e "${RUNTIME_DIR}/run-success"
-
-      - name: check_envログをrunnerへ回収
+          test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
+          test -s "${RUNTIME_DIR}/results/score.json"
+      - name: ログ・AIPerf・profile・来歴をrunnerへ回収
         if: always() && steps.submit.outputs.job_id != ''
         shell: home-lab-shell {0}
         run: |
-          destination="${RUNNER_TEMP}/qwen-genkai-check-env"
-          genkai-shell --pull "${RUNTIME_DIR}/logs" "${destination}"
-          genkai-shell --pull "${RUNTIME_DIR}/source" "${destination}"
-          genkai-shell --pull "${RUNTIME_DIR}/run-success" "${destination}"
-
-      - name: check_envログを保存
+          destination="${RUNNER_TEMP}/qwen-genkai-pd"
+          install -d -m 0755 "${destination}"
+          genkai-shell --pull "${RUNTIME_DIR}/logs" "${destination}/logs"
+          genkai-shell --pull "${RUNTIME_DIR}/profile" "${destination}/profile"
+          genkai-shell --pull "${RUNTIME_DIR}/results" "${destination}/results"
+          genkai-shell --pull "${RUNTIME_DIR}/source" "${destination}/source"
+          genkai-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"
+      - name: 実行成果物を保存
         if: always() && steps.submit.outputs.job_id != ''
         uses: actions/upload-artifact@v7
         with:
-          name: qwen-genkai-check-env-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/qwen-genkai-check-env
+          name: qwen-genkai-pd-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qwen-genkai-pd
           if-no-files-found: error
-
-      - name: 実行環境を削除
+      - name: 実行環境と残留ジョブを削除
         if: always()
         run: if [[ -n "${PJM_JOB_ID:-}" ]]; then pjdel "${PJM_JOB_ID}" 2>/dev/null || true; pjwait -z "${PJM_JOB_ID}" 2>/dev/null || true; fi; rm -rf -- "${RUNTIME_DIR:?}"

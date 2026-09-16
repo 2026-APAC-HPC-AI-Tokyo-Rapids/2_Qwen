@@ -68,6 +68,7 @@ jobs:
     uses: ./.github/workflows/genkai.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
+      profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
       container_sha256: ${{ needs.container.outputs.genkai_container_sha256 }}
       container_size: ${{ needs.container.outputs.genkai_container_size }}
     secrets: inherit
@@ -79,6 +80,7 @@ jobs:
     uses: ./.github/workflows/aspire2ap.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
+      profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
       container_sha256: ${{ needs.container.outputs.aspire2ap_container_sha256 }}
       container_size: ${{ needs.container.outputs.aspire2ap_container_size }}
     secrets: inherit
@@ -100,7 +102,7 @@ jobs:
     needs: [genkai, aspire2ap, firmus]
     if: >-
       always() &&
-      (needs.genkai.result == 'success' || needs.aspire2ap.result == 'success' || needs.firmus.result == 'success')
+      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped')
     runs-on: [self-hosted, home-lab]
     permissions:
       actions: write

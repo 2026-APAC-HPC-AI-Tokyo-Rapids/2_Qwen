@@ -1,6 +1,8 @@
-# Qwen3-235B PD inference on Firmus
+# Qwen3-235B PD inference on Firmus, Genkai, and ASPIRE 2A+
 
-公式Qwen競技の `Qwen/Qwen3-235B-A22B-Instruct-2507` FP8 weightsを、Firmusの2ノード16基のH200を用いてPrefill–Decode分離（PD分離）構成で評価するリポジトリです。実行エントリポイントは [Qwen workflow](.github/workflows/qwen.yml) です。玄界およびASPIRE 2A+には同じ固定revisionの全24モデルシャードと検証済みSquashFSが配置されており、現在の各ワークフローは要求した全ノードで`sglang.check_env`とNIXLバージョンを検証します。
+公式Qwen競技の `Qwen/Qwen3-235B-A22B-Instruct-2507` FP8 weightsをPrefill–Decode分離（PD分離）構成で評価するリポジトリです。実行エントリポイントは [Qwen workflow](.github/workflows/qwen.yml) です。Firmus、玄界、ASPIRE 2A+のそれぞれに同じ固定revisionの全24モデルシャードと検証済みSquashFSを配置し、各クラスタのSlurm、PJM、PBSジョブ内でモデル検証、SGLang workerとPD routerの起動、公式AIPerf、ローカル結果検証までを連続して実行します。
+
+Firmusは2ノード各8 GPUの検証済み4×TP2 prefill、2×TP4/EP4 decode構成を使います。ASPIRE 2A+は2ノード各8 GPUで1×TP8 prefill、1×TP8/EP8 decodeを使います。玄界は1ノード合4 GPUで、2ノード時は1 prefill + 1 decode、4ノード時は2 prefill + 2 decodeの各TP4/EP4構成を使います。玄界は補足評価用であり、公式採点対象のクラスタ間でraw throughputを直接比較しません。
 
 Firmus では、最終トポロジーとして node 0 に TP2 の Prefill ワーカー 4 基、node 1 に TP4/EP4 の Decode ワーカー 2 基を使用します。各ワーカーは NIXL を使用し、ポート状態が `ACTIVE` であるすべての HCA を `UCX_NET_DEVICES` に渡します。検証済みノードでは、これは 8 基の InfiniBand HCA と 2 基の Ethernet HCA から構成される計 10 個のデバイスとなります。なお、本実装では意図的に `link_layer` によるフィルタリングを行っていません。複数NIC環境でもNIXLの制御経路とデータ経路が同じ到達可能なアドレスを使うように、各ノードのIPv4アドレスをrouter URL、ヘルスチェック、およびSGLangの`SGLANG_HOST_IP`へ明示します。計6基のワーカーの健全性（ヘルスチェック）を確認したのち、`sglang-router`の単一ゲートウェイを起動し、AIPerfはその`/v1/chat/completions`エンドポイントにのみ接続します。サービスの起動、ヘルスチェック、AIPerfの実行、および固定された公式ワークロードのローカル検証は、同一のスタンドアロンSlurmジョブ [submission/run/submit.sbatch](submission/run/submit.sbatch) 内で一貫して実行されます。
 
@@ -22,6 +24,6 @@ push契機で計算ジョブを起動する場合は、コミットメッセー�
 [require-build] [cluster:firmus] [nodes:2] Run official Qwen3 PD baseline
 ```
 
-`[cluster:genkai]`および`[cluster:aspire2ap]`は、各クラスタにおける環境検査ジョブを起動します。`[nodes:N]`で要求した各ノードへ1 rankを配置し、全rankの成功と相異なるhostnameを確認します。クラスタタグのないpushでは静的検証のみが実行され、`[skip ci]`を先頭に付けたpushではGitHub Actions自体が起動しません。実行成果物（run artifacts）は、一旦GitHub ActionsのArtifactとして回収された後、home-labの`/srv/qwen-artifacts/<run-id>/<attempt>`へSHA-256マニフェスト付きで退避・保管されます。
+`[cluster:firmus]`と`[cluster:aspire2ap]`は`[nodes:2]`、`[cluster:genkai]`は`[nodes:2]`または`[nodes:4]`でPDベンチマークを起動します。複数のクラスタタグを指定した場合は並行実行します。クラスタタグのないpushでは静的検証のみが実行され、`[skip ci]`を先頭に付けたpushではGitHub Actions自体が起動しません。全クラスタのログ、AIPerf raw export、score、profile、来歴は`qwen-<cluster>-pd-*`のGitHub Actions Artifactとして回収し、その後home-labの`/srv/qwen-artifacts/<run-id>/<attempt>`へSHA-256マニフェスト付きで退避・保管します。
 
 公式仕様、固定コマンド、モデル配置の検証結果、および実装判断の詳細は [公式Qwen3 PD実装記録](research/official-qwen3-pd.md) を参照してください。AWSリソースと認証情報の分離境界については [AWS SquashFSビルド](research/aws-container-build.md)、Enrootへの移行経緯と設計理由は [OCI / Enroot移行記録](research/container-runtime-migration.md) に記録されています。
