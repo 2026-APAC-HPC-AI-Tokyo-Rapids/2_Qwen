@@ -64,6 +64,10 @@ jobs:
       PROFILE: ${{ inputs.profile }}
       RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
     steps:
+      - name: 接続待ち処理を取得
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: PJMジョブを投入
         id: submit
         run: |
@@ -76,13 +80,8 @@ jobs:
           printf 'PJM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
       - name: PJMジョブの終了と公式成果物を確認
-        run: |
-          pjwait -z "${PJM_JOB_ID}"
-          pjwait "${PJM_JOB_ID}" | tee "${RUNTIME_DIR}/logs/pjm-accounting.txt"
-          cat "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.pjm.log"
-          test -e "${RUNTIME_DIR}/run-success"
-          test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
-          test -s "${RUNTIME_DIR}/results/score.json"
+        shell: bash
+        run: scripts/monitor-qwen-job.sh genkai-shell platforms/genkai/check-qwen-job.sh
       - name: ログ・AIPerf・profile・来歴をrunnerへ回収
         if: always() && steps.submit.outputs.job_id != ''
         shell: home-lab-shell {0}

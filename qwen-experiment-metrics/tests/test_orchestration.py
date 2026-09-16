@@ -9,11 +9,17 @@ def test_workflows_run_the_official_pd_path_on_every_cluster() -> None:
     submission = (repository / "submission/run/submit.sbatch").read_text()
     genkai_job = (repository / "platforms/genkai/run-qwen-pd.pjm").read_text()
     aspire_job = (repository / "platforms/aspire2ap/run-qwen-pd.pbs").read_text()
+    checkers = [
+        (repository / "platforms/genkai/check-qwen-job.sh").read_text(),
+        (repository / "platforms/aspire2ap/check-qwen-job.sh").read_text(),
+        (repository / "platforms/firmus/check-qwen-job.sh").read_text(),
+    ]
 
-    for workflow in (genkai, aspire, firmus):
+    for workflow, checker in zip((genkai, aspire, firmus), checkers, strict=True):
         assert "provision-qwen-pd.sh" in workflow
-        assert "profile_export_aiperf.json" in workflow
-        assert "score.json" in workflow
+        assert "monitor-qwen-job.sh" in workflow
+        assert "profile_export_aiperf.json" in checker
+        assert "score.json" in checker
         assert "upload-artifact@v7" in workflow
         assert "configure-aws-credentials" not in workflow
     assert '--mpi "proc=${{ inputs.node_count }}"' in genkai

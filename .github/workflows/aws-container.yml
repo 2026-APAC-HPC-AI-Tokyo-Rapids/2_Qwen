@@ -34,6 +34,7 @@ jobs:
     name: 玄界のローカル成果物を選択
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
+    continue-on-error: true
     outputs:
       action: ${{ steps.select.outputs.action }}
       container_sha256: ${{ steps.select.outputs.container_sha256 }}
@@ -61,6 +62,7 @@ jobs:
     name: ASPIRE 2A+のローカル成果物を選択
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
+    continue-on-error: true
     outputs:
       action: ${{ steps.select.outputs.action }}
       container_sha256: ${{ steps.select.outputs.container_sha256 }}
@@ -88,6 +90,7 @@ jobs:
     name: Firmusのローカル成果物を選択
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
+    continue-on-error: true
     outputs:
       action: ${{ steps.select.outputs.action }}
       container_sha256: ${{ steps.select.outputs.container_sha256 }}
@@ -274,7 +277,8 @@ jobs:
   materialize:
     name: ${{ matrix.cluster }}のローカルarchiveへ確定
     needs: [select-genkai, select-aspire2ap, select-firmus, resolve]
-    if: ${{ always() && needs.select-genkai.result == 'success' && needs.select-aspire2ap.result == 'success' && needs.select-firmus.result == 'success' && (((needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') && needs.resolve.result == 'success') || (needs.select-genkai.outputs.action == 'reuse' && needs.select-aspire2ap.outputs.action == 'reuse' && needs.select-firmus.outputs.action == 'reuse' && needs.resolve.result == 'skipped')) }}
+    if: ${{ always() }}
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -282,17 +286,17 @@ jobs:
           - cluster: 玄界
             remote_shell: genkai-shell
             archive_dir: /home/ACCOUNT/share/sglang-containers
-            action: ${{ (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') && 'build' || 'reuse' }}
+            action: ${{ (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') && 'build' || needs.select-genkai.outputs.action }}
             source_run_id: ${{ needs.select-genkai.outputs.source_run_id }}
           - cluster: ASPIRE 2A+
             remote_shell: aspire2p-shell
             archive_dir: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
-            action: ${{ (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') && 'build' || 'reuse' }}
+            action: ${{ (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') && 'build' || needs.select-aspire2ap.outputs.action }}
             source_run_id: ${{ needs.select-aspire2ap.outputs.source_run_id }}
           - cluster: Firmus
             remote_shell: firmus-shell
             archive_dir: /scratch/home/ACCOUNT/qwen/containers
-            action: ${{ (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') && 'build' || 'reuse' }}
+            action: ${{ (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') && 'build' || needs.select-firmus.outputs.action }}
             source_run_id: ${{ needs.select-firmus.outputs.source_run_id }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
@@ -313,6 +317,7 @@ jobs:
           role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
 
       - name: build時はS3から取得し、再利用時はarchive内でハードリンク
+        if: matrix.action == 'reuse' || (matrix.action == 'build' && needs.resolve.result == 'success')
         env:
           ACTION: ${{ matrix.action }}
           CONTAINER_ARCHIVE_DIR: ${{ matrix.archive_dir }}
