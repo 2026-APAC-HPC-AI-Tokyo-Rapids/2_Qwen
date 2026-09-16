@@ -117,7 +117,13 @@ jobs:
           path: artifacts
           pattern: qwen-*-${{ github.run_id }}-${{ github.run_attempt }}
 
+      - name: 保管対象の有無を確認
+        id: artifacts
+        shell: bash
+        run: if [[ -n "$(find artifacts -type f -print -quit 2>/dev/null)" ]]; then printf 'present=true\n' >>"${GITHUB_OUTPUT}"; else printf 'present=false\n' >>"${GITHUB_OUTPUT}"; fi
+
       - name: 成果物を自宅サーバーへ配置
+        if: steps.artifacts.outputs.present == 'true'
         shell: home-lab-shell {0}
         run: |
           destination_parent="${QWEN_ARTIFACT_ARCHIVE_ROOT}/${GITHUB_RUN_ID}"
@@ -133,6 +139,7 @@ jobs:
           trap - EXIT
 
       - name: 転送済みのGitHub成果物を削除
+        if: steps.artifacts.outputs.present == 'true'
         shell: home-lab-shell {0}
         env:
           GH_TOKEN: ${{ github.token }}

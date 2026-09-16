@@ -50,8 +50,12 @@ if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10
 
 install -m 0755 "${GITHUB_WORKSPACE}/submission/run/submit.sbatch" "${runtime_dir}/scripts/submit.sbatch"
 export HF_HOME="${runtime_dir}/tokenizer-cache"
+export HF_HUB_DISABLE_XET=1
 export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"
-uvx --from 'huggingface_hub==0.36.0' hf download "${tokenizer_repository}" config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --revision "${tokenizer_revision}" >/dev/null
+export UV_CONCURRENT_BUILDS=1
+export UV_CONCURRENT_DOWNLOADS=1
+export UV_CONCURRENT_INSTALLS=1
+uvx --from 'huggingface_hub==0.36.0' hf download "${tokenizer_repository}" config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --max-workers 1 --revision "${tokenizer_revision}" >/dev/null
 tokenizer_cache_repository="${HF_HOME}/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507"
 tokenizer_snapshot="${tokenizer_cache_repository}/snapshots/${tokenizer_revision}"
 for tokenizer_file in config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json; do test -s "${tokenizer_snapshot}/${tokenizer_file}"; done

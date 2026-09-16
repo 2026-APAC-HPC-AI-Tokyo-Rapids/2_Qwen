@@ -304,6 +304,9 @@ def test_submission_records_runtime_provenance(tmp_path: Path, official_artifact
 
 def test_provision_maps_main_to_pinned_tokenizer_revision() -> None:
     script = (REPOSITORY / "scripts" / "provision-qwen-pd.sh").read_text()
-    assert 'hf download "${tokenizer_repository}" config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --revision "${tokenizer_revision}"' in script
+    assert 'hf download "${tokenizer_repository}" config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --max-workers 1 --revision "${tokenizer_revision}"' in script
+    assert "export HF_HUB_DISABLE_XET=1" in script
+    for variable in ("UV_CONCURRENT_BUILDS", "UV_CONCURRENT_DOWNLOADS", "UV_CONCURRENT_INSTALLS"):
+        assert f"export {variable}=1" in script
     assert 'test -s "${tokenizer_snapshot}/${tokenizer_file}"' in script
     assert 'printf \'%s\' "${tokenizer_revision}" >"${tokenizer_cache_repository}/refs/main"' in script
