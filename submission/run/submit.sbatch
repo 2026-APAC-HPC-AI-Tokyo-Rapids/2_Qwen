@@ -15,8 +15,7 @@ source "${HOME}/.local/.setenv"
 if [[ -n "${caller_enroot_library_path}" ]]; then export ENROOT_LIBRARY_PATH="${caller_enroot_library_path}"; fi
 if [[ -n "${caller_enroot_mount_home}" ]]; then export ENROOT_MOUNT_HOME="${caller_enroot_mount_home}"; fi
 if [[ -n "${caller_enroot_sysconf_path}" ]]; then export ENROOT_SYSCONF_PATH="${caller_enroot_sysconf_path}"; fi
-module purge
-module load nvhpc-hpcx-cuda13/26.5
+if [[ "${QWEN_PLATFORM:-firmus}" == firmus ]]; then module purge; module load nvhpc-hpcx-cuda13/26.5; fi
 
 script_path="$(realpath "${BASH_SOURCE[0]}")"
 submission_dir="$(cd "$(dirname "${script_path}")/.." && pwd)"
@@ -26,6 +25,9 @@ export OUTPUT_DIR="${OUTPUT_DIR:-${submission_dir}/results/logs/${SLURM_JOB_ID}}
 export PROFILE="${PROFILE:-false}"
 export CONCURRENCY="${CONCURRENCY:-16}"
 export TOKENIZER_PATH="${TOKENIZER_PATH:-${HOME}/.cache/huggingface/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e}"
+export QWEN_PLATFORM="${QWEN_PLATFORM:-firmus}"
+export NODE_COUNT="${NODE_COUNT:-2}"
+export GPUS_PER_NODE="${GPUS_PER_NODE:-8}"
 mode="${1:-orchestrate}"
 
 sample_system() {
@@ -56,7 +58,9 @@ sample_system() {
 }
 
 run_node() {
-  node_rank="${SLURM_PROCID:?Slurm process rank is required}"
+  node_rank="${QWEN_NODE_RANK:-${SLURM_PROCID:-${PMI_RANK:-}}}"
+  if [[ -z "${node_rank}" && -s "${OUTPUT_DIR}/source/node-addresses.tsv" ]]; then node_rank="$(awk -v host="$(hostname -s)" '$2 == host {print $1}' "${OUTPUT_DIR}/source/node-addresses.tsv")"; fi
+  [[ "${node_rank}" =~ ^[0-9]+$ && "${node_rank}" -lt "${NODE_COUNT}" ]]
   hostname_short="$(hostname -s)"
   node_ip="$(getent ahostsv4 "${hostname_short}" | awk '$2 == "STREAM" { print $1; exit }')"
   [[ "${node_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -97,23 +101,31 @@ run_node() {
     port="$4"
     bootstrap="$5"
     gpus="$6"
+    ep="${7:-}"
     worker_tmp="${node_tmp}/${role}-${worker}"
     install -d -m 0700 "${worker_tmp}/cache" "${worker_tmp}/data" "${worker_tmp}/home" "${worker_tmp}/runtime" "${worker_tmp}/temp"
     args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --max-total-tokens 131072 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
-    if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}"); else args+=(--ep-size 4 --max-running-requests 256); fi
+    if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}"); else args+=(--ep-size "${ep}" --max-running-requests 256); fi
     (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${CONTAINER_IMAGE}" "${args[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
     pids+=("$!")
   }
 
-  if [[ "${node_rank}" -eq 0 ]]; then
-    start_worker prefill 0 2 30100 9000 0,1
-    start_worker prefill 1 2 30101 9001 2,3
-    start_worker prefill 2 2 30102 9002 4,5
-    start_worker prefill 3 2 30103 9003 6,7
-  else
-    start_worker decode 0 4 30200 unused 0,1,2,3
-    start_worker decode 1 4 30201 unused 4,5,6,7
-  fi
+  case "${QWEN_PLATFORM}" in
+    firmus)
+      [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]]
+      if [[ "${node_rank}" -eq 0 ]]; then start_worker prefill 0 2 30100 9000 0,1; start_worker prefill 1 2 30101 9001 2,3; start_worker prefill 2 2 30102 9002 4,5; start_worker prefill 3 2 30103 9003 6,7; else start_worker decode 0 4 30200 unused 0,1,2,3 4; start_worker decode 1 4 30201 unused 4,5,6,7 4; fi
+      ;;
+    aspire2ap)
+      [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]]
+      if [[ "${node_rank}" -eq 0 ]]; then start_worker prefill 0 8 30100 9000 0,1,2,3,4,5,6,7; else start_worker decode 0 8 30200 unused 0,1,2,3,4,5,6,7 8; fi
+      ;;
+    genkai)
+      [[ "${GPUS_PER_NODE}" -eq 4 && ( "${NODE_COUNT}" -eq 2 || "${NODE_COUNT}" -eq 4 ) ]]
+      prefill_nodes="$((NODE_COUNT / 2))"
+      if [[ "${node_rank}" -lt "${prefill_nodes}" ]]; then start_worker prefill "${node_rank}" 4 "$((30100 + node_rank))" "$((9000 + node_rank))" 0,1,2,3; else decode_index="$((node_rank - prefill_nodes))"; start_worker decode "${decode_index}" 4 "$((30200 + decode_index))" unused 0,1,2,3 4; fi
+      ;;
+    *) printf 'unsupported Qwen platform: %s\n' "${QWEN_PLATFORM}" >&2; exit 64 ;;
+  esac
   while true; do for pid in "${pids[@]}"; do if ! kill -0 "${pid}" 2>/dev/null; then wait "${pid}"; fi; done; sleep 2; done
 }
 
@@ -126,7 +138,10 @@ run_router() {
   trap 'exit 143' TERM
   export ENROOT_CACHE_PATH="${router_tmp}/cache" ENROOT_DATA_PATH="${router_tmp}/data" ENROOT_RUNTIME_PATH="${router_tmp}/runtime" ENROOT_TEMP_PATH="${router_tmp}/temp"
   install -d -m 0700 "${ENROOT_CACHE_PATH}" "${ENROOT_DATA_PATH}" "${ENROOT_RUNTIME_PATH}" "${ENROOT_TEMP_PATH}"
-  enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${MODEL_PATH}:/model" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python -m sglang_router.launch_router --pd-disaggregation --prefill "http://${HEAD_IP}:30100" 9000 --prefill "http://${HEAD_IP}:30101" 9001 --prefill "http://${HEAD_IP}:30102" 9002 --prefill "http://${HEAD_IP}:30103" 9003 --decode "http://${TAIL_IP}:30200" --decode "http://${TAIL_IP}:30201" --host 0.0.0.0 --port 8000 &
+  router_args=(/opt/sglang/venv/bin/python -m sglang_router.launch_router --pd-disaggregation)
+  while IFS=$'\t' read -r role host port bootstrap; do if [[ "${role}" == prefill ]]; then router_args+=(--prefill "http://${host}:${port}" "${bootstrap}"); else router_args+=(--decode "http://${host}:${port}"); fi; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+  router_args+=(--host 0.0.0.0 --port 8000)
+  enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${MODEL_PATH}:/model" "${CONTAINER_IMAGE}" "${router_args[@]}" &
   child_pid=$!
   wait "${child_pid}"
   child_pid=
@@ -381,6 +396,8 @@ if [[ "${mode}" == aiperf ]]; then run_aiperf; exit; fi
 [[ "${mode}" == orchestrate ]]
 [[ "${CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]
 [[ "${PROFILE}" == true || "${PROFILE}" == false ]]
+[[ "${NODE_COUNT}" =~ ^[1-9][0-9]*$ && "${GPUS_PER_NODE}" =~ ^[1-9][0-9]*$ ]]
+case "${QWEN_PLATFORM}" in firmus) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]] ;; aspire2ap) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]] ;; genkai) [[ "${GPUS_PER_NODE}" -eq 4 && ( "${NODE_COUNT}" -eq 2 || "${NODE_COUNT}" -eq 4 ) ]] ;; *) exit 64 ;; esac
 [[ -s "${CONTAINER_IMAGE}" ]]
 [[ -s "${MODEL_PATH}/config.json" && -s "${MODEL_PATH}/model.safetensors.index.json" ]]
 [[ "$(head -n 1 "${MODEL_PATH}/.cache/huggingface/download/config.json.metadata")" == e156cb4efae43fbee1a1ab073f946a1377e6b969 ]]
@@ -398,29 +415,54 @@ if [[ "${script_path}" != "${shared_script_path}" ]]; then install -m 0755 "${sc
 tokenizer_snapshot="${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e"
 if [[ "$(realpath "${TOKENIZER_PATH}")" != "$(realpath "${tokenizer_snapshot}")" ]]; then for tokenizer_file in "${tokenizer_files[@]}"; do cp -L "${TOKENIZER_PATH}/${tokenizer_file}" "${tokenizer_snapshot}/${tokenizer_file}"; done; fi
 printf '%s' ac9c66cc9b46af7306746a9250f23d47083d689e >"${OUTPUT_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/refs/main"
-mapfile -t nodes < <(scontrol show hostnames "${SLURM_JOB_NODELIST}")
-[[ "${#nodes[@]}" -eq 2 ]]
-head_host="${nodes[0]}"
-tail_host="${nodes[1]}"
-head_ip="$(getent ahostsv4 "${head_host}" | awk '$2 == "STREAM" { print $1; exit }')"
-tail_ip="$(getent ahostsv4 "${tail_host}" | awk '$2 == "STREAM" { print $1; exit }')"
-[[ "${head_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
-[[ "${tail_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+case "${QWEN_PLATFORM}" in
+  firmus) mapfile -t nodes < <(scontrol show hostnames "${SLURM_JOB_NODELIST}") ;;
+  aspire2ap) mapfile -t nodes < <(awk '!seen[$0]++ {sub(/\..*/, "", $0); print}' "${PBS_NODEFILE:?PBS node file is required}") ;;
+  genkai)
+    node_probe="${OUTPUT_DIR}/source/node-probe.tsv"
+    mpirun -np "${NODE_COUNT}" -ppn 1 -genv PATH "${PATH}" /bin/bash -c 'printf "%s\t%s\n" "${PMI_RANK}" "$(hostname -s)"' >"${node_probe}"
+    mapfile -t nodes < <(sort -n -k1,1 "${node_probe}" | cut -f2)
+    ;;
+esac
+[[ "${#nodes[@]}" -eq "${NODE_COUNT}" && "$(printf '%s\n' "${nodes[@]}" | sort -u | wc -l)" -eq "${NODE_COUNT}" ]]
+: >"${OUTPUT_DIR}/source/node-addresses.tsv"
+node_ips=()
+for rank in "${!nodes[@]}"; do node_ip="$(getent ahostsv4 "${nodes[${rank}]}" | awk '$2 == "STREAM" { print $1; exit }')"; [[ "${node_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; node_ips+=("${node_ip}"); printf '%s\t%s\t%s\n' "${rank}" "${nodes[${rank}]}" "${node_ip}" >>"${OUTPUT_DIR}/source/node-addresses.tsv"; done
+: >"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+case "${QWEN_PLATFORM}" in
+  firmus)
+    for worker in 0 1 2 3; do printf 'prefill\t%s\t%s\t%s\n' "${node_ips[0]}" "$((30100 + worker))" "$((9000 + worker))" >>"${OUTPUT_DIR}/source/worker-endpoints.tsv"; done
+    for worker in 0 1; do printf 'decode\t%s\t%s\tunused\n' "${node_ips[1]}" "$((30200 + worker))" >>"${OUTPUT_DIR}/source/worker-endpoints.tsv"; done
+    ;;
+  aspire2ap)
+    printf 'prefill\t%s\t30100\t9000\ndecode\t%s\t30200\tunused\n' "${node_ips[0]}" "${node_ips[1]}" >"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+    ;;
+  genkai)
+    prefill_nodes="$((NODE_COUNT / 2))"
+    for ((rank = 0; rank < prefill_nodes; rank++)); do printf 'prefill\t%s\t%s\t%s\n' "${node_ips[${rank}]}" "$((30100 + rank))" "$((9000 + rank))" >>"${OUTPUT_DIR}/source/worker-endpoints.tsv"; done
+    for ((rank = prefill_nodes; rank < NODE_COUNT; rank++)); do printf 'decode\t%s\t%s\tunused\n' "${node_ips[${rank}]}" "$((30200 + rank - prefill_nodes))" >>"${OUTPUT_DIR}/source/worker-endpoints.tsv"; done
+    ;;
+esac
 server_pid=
 router_pid=
 cleanup_all() { status=$?; trap - EXIT INT TERM; if [[ -n "${router_pid}" ]]; then kill "${router_pid}" 2>/dev/null || true; wait "${router_pid}" 2>/dev/null || true; fi; if [[ -n "${server_pid}" ]]; then kill "${server_pid}" 2>/dev/null || true; wait "${server_pid}" 2>/dev/null || true; fi; exit "${status}"; }
 trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-srun --overlap --nodes=2 --ntasks=2 --ntasks-per-node=1 --distribution=block:block "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 &
+case "${QWEN_PLATFORM}" in
+  firmus) srun --overlap --nodes="${NODE_COUNT}" --ntasks="${NODE_COUNT}" --ntasks-per-node=1 --distribution=block:block "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
+  aspire2ap) /opt/pbs/bin/pbsdsh -- "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
+  genkai) mpirun -np "${NODE_COUNT}" -ppn 1 -genv PATH "${PATH}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
+esac
 server_pid=$!
-worker_urls=("http://${head_ip}:30100/health" "http://${head_ip}:30101/health" "http://${head_ip}:30102/health" "http://${head_ip}:30103/health" "http://${tail_ip}:30200/health" "http://${tail_ip}:30201/health")
+worker_urls=()
+while IFS=$'\t' read -r _ host port _; do worker_urls+=("http://${host}:${port}/health"); done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
 deadline="$((SECONDS + 900))"
-while true; do kill -0 "${server_pid}"; ready=0; for url in "${worker_urls[@]}"; do if curl --fail --silent --max-time 2 "${url}" >/dev/null; then ready="$((ready + 1))"; fi; done; if [[ "${ready}" -eq 6 ]]; then break; fi; (( SECONDS < deadline )); sleep 5; done
-srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" env HEAD_IP="${head_ip}" TAIL_IP="${tail_ip}" "${script_path}" router >"${OUTPUT_DIR}/logs/router.log" 2>&1 &
+while true; do kill -0 "${server_pid}"; ready=0; for url in "${worker_urls[@]}"; do if curl --fail --silent --max-time 2 "${url}" >/dev/null; then ready="$((ready + 1))"; fi; done; if [[ "${ready}" -eq "${#worker_urls[@]}" ]]; then break; fi; (( SECONDS < deadline )); sleep 5; done
+"${script_path}" router >"${OUTPUT_DIR}/logs/router.log" 2>&1 &
 router_pid=$!
 deadline="$((SECONDS + 300))"
-models_url="http://${head_ip}:8000/v1/models"
+models_url="http://127.0.0.1:8000/v1/models"
 models_pending="${OUTPUT_DIR}/results/models.pending.json"
 while true; do
   kill -0 "${router_pid}"
@@ -428,5 +470,5 @@ while true; do
   (( SECONDS < deadline ))
   sleep 2
 done
-srun --overlap --nodes=1 --ntasks=1 --nodelist="${head_host}" "${script_path}" aiperf >"${OUTPUT_DIR}/logs/aiperf.log" 2>&1
+"${script_path}" aiperf >"${OUTPUT_DIR}/logs/aiperf.log" 2>&1
 touch "${OUTPUT_DIR}/run-success"

@@ -4,6 +4,7 @@ set -euo pipefail
 : "${CONTAINER_ARCHIVE_DIR:?container archive directory is required}"
 : "${CONTAINER_SHA256:?container SHA-256 is required}"
 : "${CONTAINER_SIZE:?container size is required}"
+: "${CLUSTER_NAME:?cluster name is required}"
 : "${ENROOT_LIBRARY_PATH:?Enroot library path is required}"
 : "${ENROOT_SYSCONF_PATH:?Enroot system configuration path is required}"
 : "${GITHUB_RUN_ATTEMPT:?workflow run attempt is required}"
@@ -23,6 +24,7 @@ tokenizer_revision=ac9c66cc9b46af7306746a9250f23d47083d689e
 archive_image="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
 archive_sidecar="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.container-sidecar.json"
 [[ "${CONTAINER_SHA256}" =~ ^[0-9a-f]{64}$ && "${CONTAINER_SIZE}" =~ ^[1-9][0-9]*$ ]]
+case "${CLUSTER_NAME}" in firmus|genkai|aspire2ap) ;; *) exit 64 ;; esac
 [[ "$(jq -er '.container_artifact.size_bytes' "${archive_sidecar}")" == "${CONTAINER_SIZE}" ]]
 [[ "$(jq -er '.container_artifact.sha256' "${archive_sidecar}")" == "${CONTAINER_SHA256}" ]]
 [[ "$(stat -c '%s' "${archive_image}")" == "${CONTAINER_SIZE}" ]]
@@ -44,6 +46,7 @@ runtime_library="${runtime_dir}/enroot-library/runtime.sh"
 sed -i 's/local timeout=100 pid=-1 id=0/local timeout=5000 pid=-1 id=0/' "${runtime_library}"
 nvidia_hook="${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
 if [[ -x "${nvidia_hook}" ]]; then sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${nvidia_hook}"; fi
+if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh" ]]; then chmod -x "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh"; fi
 
 install -m 0755 "${GITHUB_WORKSPACE}/submission/run/submit.sbatch" "${runtime_dir}/scripts/submit.sbatch"
 export HF_HOME="${runtime_dir}/tokenizer-cache"
@@ -55,4 +58,4 @@ for tokenizer_file in config.json generation_config.json merges.txt tokenizer.js
 install -d -m 0755 "${tokenizer_cache_repository}/refs"
 printf '%s' "${tokenizer_revision}" >"${tokenizer_cache_repository}/refs/main"
 jq -n --arg repository "${model_repository}" --arg revision "${model_revision}" --arg path "${MODEL_PATH}" --arg tokenizer_repository "${tokenizer_repository}" --arg tokenizer_revision "${tokenizer_revision}" '{schema_version:"qwen3-pd-model/v1",model:{repository:$repository,revision:$revision,path:$path,precision:"fp8",shards:24},tokenizer:{repository:$tokenizer_repository,revision:$tokenizer_revision}}' >"${runtime_dir}/source/model.json"
-jq -n --arg commit "${GITHUB_SHA}" --argjson profile "${PROFILE}" --arg container_sha256 "${CONTAINER_SHA256}" --argjson container_size "${CONTAINER_SIZE}" '{schema_version:"qwen3-pd-provenance/v1",commit:$commit,profile:$profile,container:{sha256:$container_sha256,size_bytes:$container_size},aiperf:{version:"0.12.0",commit:"be53bf2953d30e46c500e6a80fc1f8b6f84bc718"},sglang_router:{version:"0.3.2"}}' >"${runtime_dir}/source/provenance.json"
+jq -n --arg cluster "${CLUSTER_NAME}" --arg commit "${GITHUB_SHA}" --argjson profile "${PROFILE}" --arg container_sha256 "${CONTAINER_SHA256}" --argjson container_size "${CONTAINER_SIZE}" '{schema_version:"qwen3-pd-provenance/v1",cluster:$cluster,commit:$commit,profile:$profile,container:{sha256:$container_sha256,size_bytes:$container_size},aiperf:{version:"0.12.0",commit:"be53bf2953d30e46c500e6a80fc1f8b6f84bc718"},sglang_router:{version:"0.3.2"}}' >"${runtime_dir}/source/provenance.json"

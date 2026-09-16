@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#PBS -l walltime=00:30:00
+
+set -euo pipefail
+source "${HOME}/.local/.setenv"
+: "${NODE_COUNT:?node count is required}"
+: "${PBS_NODEFILE:?PBS node file is required}"
+: "${RUNTIME_DIR:?runtime directory is required}"
+[[ "${NODE_COUNT}" -eq 2 ]]
+export QWEN_PLATFORM=aspire2ap
+export GPUS_PER_NODE=8
+exec "${RUNTIME_DIR}/scripts/submit.sbatch"

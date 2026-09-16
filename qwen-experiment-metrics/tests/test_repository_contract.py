@@ -46,6 +46,9 @@ def test_workflow_keeps_build_and_cluster_controls_explicit() -> None:
         assert tag in entry
     assert "startsWith(github.event.head_commit.message, '[require-build]')" in entry
     assert "uses: ./.github/workflows/validate.yml" in entry
+    assert "QWEN_ARTIFACT_ARCHIVE_ROOT: /hdd_raid/samba/net_share/qwen-artifacts" in entry
+    assert "pattern: qwen-*-${{ github.run_id }}-${{ github.run_attempt }}" in entry
+    assert "needs.genkai.result != 'skipped'" in entry
     assert "fail-fast: false" in container
     assert "m7i.2xlarge" in container
     assert "actionlint-py==1.7.12.24" in validation
@@ -61,22 +64,22 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert "#SBATCH --nodes=2" in submission
     assert "#SBATCH --gpus-per-node=8" in submission
     assert "#SBATCH --time=00:17:00" in submission
-    assert submission.count("/health") >= 6
+    assert 'worker_urls+=("http://${host}:${port}/health")' in submission
     assert 'models.pending.json' in submission
     assert 'index("qwen") != null' in submission
     assert "nixl-prewarm" not in submission
     assert submission.index('index("qwen") != null') < submission.rindex('"${script_path}" aiperf')
-    assert submission.count("start_worker prefill") == 4
-    assert submission.count("start_worker decode") == 2
+    firmus_block = submission.split("firmus)", 1)[1].split(";;", 1)[0]
+    assert firmus_block.count("start_worker prefill") == 4
+    assert firmus_block.count("start_worker decode") == 2
     assert "--tp-size \"${tp}\"" in submission
-    assert "--ep-size 4 --max-running-requests 256" in submission
+    assert '--ep-size "${ep}" --max-running-requests 256' in submission
     assert "--disaggregation-transfer-backend nixl" in submission
     assert 'grep -q ACTIVE "${state_file}"' in submission
     assert "/link_layer" not in submission
     assert 'SGLANG_HOST_IP=${node_ip}' in submission
-    assert 'http://${HEAD_IP}:30100' in submission
-    assert submission.count("--prefill ") == 4
-    assert submission.count("--decode ") == 2
+    assert 'router_args+=(--prefill "http://${host}:${port}" "${bootstrap}")' in submission
+    assert 'router_args+=(--decode "http://${host}:${port}")' in submission
     assert "--pd-disaggregation" in submission
     assert '-m "${MODEL_PATH}:/model"' in submission
     assert "HF_HUB_OFFLINE=1" in submission
@@ -149,8 +152,9 @@ def test_submission_contains_reproducible_official_entrypoint() -> None:
     assert 'exec "${repository}/scripts/build-sglang-container.sh"' in setup
     assert "#SBATCH --nodes=2" in batch
     assert "#SBATCH --gpus-per-node=8" in batch
-    assert batch.count("start_worker prefill") == 4
-    assert batch.count("start_worker decode") == 2
+    firmus_block = batch.split("firmus)", 1)[1].split(";;", 1)[0]
+    assert firmus_block.count("start_worker prefill") == 4
+    assert firmus_block.count("start_worker decode") == 2
     assert "--pd-disaggregation" in batch
     assert "--warmup-duration 60 --benchmark-duration 120 --benchmark-grace-period 30" in batch
     assert "--synthetic-input-tokens-mean 4000" in batch
