@@ -68,6 +68,25 @@ def test_container_reuse_hash_check_keeps_remote_shell_alive() -> None:
     assert hash_index < selection.index("stop_hash_progress", hash_index)
 
 
+def test_scheduler_monitor_tolerates_temporary_connection_failures() -> None:
+    monitor = (ROOT / "scripts/monitor-qwen-job.sh").read_text()
+
+    assert '[[ "${status}" -eq 75 ]]' in monitor
+    assert '[[ "${status}" -eq 255 ]]' in monitor
+    assert '[[ "${connection_failure_seconds}" -lt 300 ]]' in monitor
+    assert "sleep 15" in monitor
+    assert "sleep 30" in monitor
+
+
+def test_cluster_branches_do_not_cancel_each_other() -> None:
+    container = (ROOT / ".github/workflows/aws-container.yml").read_text()
+    entry = (ROOT / ".github/workflows/qwen.yml").read_text()
+
+    assert container.count("continue-on-error: true") >= 4
+    assert "fail-fast: false" in container
+    assert entry.count("needs: [validate, container]") == 3
+
+
 def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     workflow = (ROOT / ".github/workflows/firmus.yml").read_text()
     submission = (ROOT / "submission/run/submit.sbatch").read_text()
