@@ -7,6 +7,28 @@ set -euo pipefail
 : "${GITHUB_SHA:?workflow commit is required}"
 : "${REQUIRE_BUILD:?build selection is required}"
 
+hash_progress_pid=
+stop_hash_progress() {
+  if [[ -n "${hash_progress_pid}" ]]; then
+    kill "${hash_progress_pid}" 2>/dev/null || true
+    wait "${hash_progress_pid}" 2>/dev/null || true
+    hash_progress_pid=
+  fi
+}
+trap stop_hash_progress EXIT
+
+verify_sha256() {
+  local archive_path=$1
+  local expected=$2
+  local actual
+
+  while sleep 15; do printf 'container_sha256_check_in_progress=%s\n' "$(basename "${archive_path}")" >&2; done &
+  hash_progress_pid=$!
+  actual="$(sha256sum "${archive_path}" | awk '{print $1}')"
+  stop_hash_progress
+  [[ "${actual}" == "${expected}" ]]
+}
+
 if [[ "${REQUIRE_BUILD}" == true ]]; then printf 'action=build\n' >>"${GITHUB_OUTPUT}"; exit 0; fi
 
 commit="${GITHUB_SHA}"
@@ -19,7 +41,7 @@ while [[ -n "${commit}" ]]; do
     expected_size="$(jq -er 'select(.schema_version == "container-sidecar/v1" and .container_artifact.artifact_relative_path == "sglang.sqsh") | .container_artifact.size_bytes' "${sidecar}" 2>/dev/null)" || continue
     expected_sha256="$(jq -er '.container_artifact.sha256 | select(test("^[0-9a-f]{64}$"))' "${sidecar}" 2>/dev/null)" || continue
     [[ "$(stat -c '%s' "${archive}")" == "${expected_size}" ]] || continue
-    [[ "$(sha256sum "${archive}" | awk '{print $1}')" == "${expected_sha256}" ]] || continue
+    verify_sha256 "${archive}" "${expected_sha256}" || continue
     printf 'action=reuse\nsource_run_id=%s\ncontainer_sha256=%s\ncontainer_size=%s\n' "${run_id}" "${expected_sha256}" "${expected_size}" >>"${GITHUB_OUTPUT}"
     exit 0
   done < <(gh run list --workflow qwen.yml --commit "${commit}" --limit 1000 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
