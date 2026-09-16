@@ -48,6 +48,8 @@ def test_workflow_keeps_build_and_cluster_controls_explicit() -> None:
     assert "uses: ./.github/workflows/validate.yml" in entry
     assert "QWEN_ARTIFACT_ARCHIVE_ROOT: /hdd_raid/samba/net_share/qwen-artifacts" in entry
     assert "pattern: qwen-*-${{ github.run_id }}-${{ github.run_attempt }}" in entry
+    assert "id: artifacts" in entry
+    assert entry.count("if: steps.artifacts.outputs.present == 'true'") == 2
     assert "needs.genkai.result != 'skipped'" in entry
     assert "fail-fast: false" in container
     assert "m7i.2xlarge" in container
