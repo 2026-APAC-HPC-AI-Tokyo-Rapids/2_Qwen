@@ -64,7 +64,7 @@ jobs:
   genkai:
     name: 玄界
     needs: [validate, container]
-    if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:genkai]')) || (github.event_name == 'workflow_dispatch' && inputs.run_genkai) }}
+    if: ${{ ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:genkai]')) || (github.event_name == 'workflow_dispatch' && inputs.run_genkai)) && needs.container.outputs.genkai_container_sha256 != '' && needs.container.outputs.genkai_container_size != '' }}
     uses: ./.github/workflows/genkai.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
@@ -76,7 +76,7 @@ jobs:
   aspire2ap:
     name: ASPIRE 2A+
     needs: [validate, container]
-    if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap) }}
+    if: ${{ ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
     uses: ./.github/workflows/aspire2ap.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
@@ -88,7 +88,7 @@ jobs:
   firmus:
     name: Firmus
     needs: [validate, container]
-    if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus) }}
+    if: ${{ ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus)) && needs.container.outputs.firmus_container_sha256 != '' && needs.container.outputs.firmus_container_size != '' }}
     uses: ./.github/workflows/firmus.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
