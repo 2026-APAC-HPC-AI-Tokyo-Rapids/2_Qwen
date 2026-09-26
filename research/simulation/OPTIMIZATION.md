@@ -4,6 +4,8 @@
 
 ## 比較条件と正本
 
+入力共有とcacheの調査は [PREFIX.md](PREFIX.md)。実測prefix再利用は約0.077%。AIPerf 0.12.0の通常synthetic経路では、指定されたcache-bust markerがwireへ渡らない挙動をCPUで確認した。公式clientを変更せずに記録している。
+
 公式ターゲットは `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8@e156cb4efae43fbee1a1ab073f946a1377e6b969`。実配備SGLang sourceは `fc275674a97d78553b22597ee72c8fd48f5420f4`、コンテナSHA256は `6b4d81eb6400fa33400e5725a2842f63565b700d579f9be812a7c229a80da3b5`。全16 GPU、PD、BF16 KV、ISL4000/OSL200、greedy、公式warmup60秒/測定120秒/grace30秒を使用する。
 
 - 設定と変更理由: 各実験commit、`configs/aspire-serving.json`、`forward-plan.json`。
