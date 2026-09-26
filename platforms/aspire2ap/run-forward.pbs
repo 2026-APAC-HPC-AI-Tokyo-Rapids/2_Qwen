@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#PBS -l walltime=00:30:00
+set -euo pipefail
+: "${RUNTIME_DIR:?runtime directory required}"
+: "${PBS_NODEFILE:?PBS node list required}"
+awk '!seen[$0]++ {sub(/\..*/, "", $0); print}' "${PBS_NODEFILE}" >"${RUNTIME_DIR}/logs/hosts.txt"
+[[ "$(wc -l <"${RUNTIME_DIR}/logs/hosts.txt")" -eq 2 ]]
+/opt/pbs/bin/pbsdsh -- "${RUNTIME_DIR}/scripts/forward-node.sh"
+for worker in prefill-0 prefill-1 decode-0; do test -s "${RUNTIME_DIR}/results/${worker}.jsonl"; done
+touch "${RUNTIME_DIR}/run-success"

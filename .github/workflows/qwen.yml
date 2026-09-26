@@ -76,7 +76,7 @@ jobs:
   aspire2ap:
     name: ASPIRE 2A+
     needs: [validate, container]
-    if: ${{ !contains(github.event.head_commit.message, '[calibration]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
+    if: ${{ !contains(github.event.head_commit.message, '[calibration]') && !contains(github.event.head_commit.message, '[forward]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
     uses: ./.github/workflows/aspire2ap.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
@@ -107,12 +107,22 @@ jobs:
       container_size: ${{ needs.container.outputs.aspire2ap_container_size }}
     secrets: inherit
 
+  aspire-forward:
+    name: ASPIREのQwen forward時間を校正測定
+    needs: [validate, container]
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[forward]') && contains(github.event.head_commit.message, '[cluster:aspire2ap]') && contains(github.event.head_commit.message, '[nodes:2]') && contains(github.event.head_commit.message, '[profile]') && needs.container.outputs.aspire2ap_container_sha256 != '' }}
+    uses: ./.github/workflows/aspire-forward.yml
+    with:
+      container_sha256: ${{ needs.container.outputs.aspire2ap_container_sha256 }}
+      container_size: ${{ needs.container.outputs.aspire2ap_container_size }}
+    secrets: inherit
+
   archive-artifacts:
     name: 成果物を自宅サーバーへ保管
-    needs: [genkai, aspire2ap, firmus, aspire-calibration]
+    needs: [genkai, aspire2ap, firmus, aspire-calibration, aspire-forward]
     if: >-
       always() &&
-      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.aspire-calibration.result != 'skipped')
+      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.aspire-calibration.result != 'skipped' || needs.aspire-forward.result != 'skipped')
     runs-on: [self-hosted, home-lab]
     permissions:
       actions: write
