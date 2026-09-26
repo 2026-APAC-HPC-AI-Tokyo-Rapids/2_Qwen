@@ -7,7 +7,8 @@
 #SBATCH --gpus-per-node=8
 #SBATCH --time=00:17:00
 
-set -euo pipefail
+set -Eeuo pipefail
+trap 'printf "submission_failed mode=%s line=%s status=%s\n" "${1:-orchestrate}" "${LINENO}" "$?" >&2' ERR
 caller_enroot_library_path="${ENROOT_LIBRARY_PATH:-}"
 caller_enroot_mount_home="${ENROOT_MOUNT_HOME:-}"
 caller_enroot_sysconf_path="${ENROOT_SYSCONF_PATH:-}"
@@ -167,10 +168,6 @@ run_aiperf() {
   child_pid=$!
   wait "${child_pid}"
   child_pid=
-  if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
-    enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}:/calibration" "${CONTAINER_IMAGE}" /usr/local/bin/uv run --offline --no-project --python /opt/sglang/venv/bin/python python /calibration/scripts/greedy_probe.py /calibration/results
-    while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/get_server_info" >"${OUTPUT_DIR}/results/server-info-${role}-${port}.json"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
-  fi
   export_file="$(find "${OUTPUT_DIR}/results/artifacts" -mindepth 2 -maxdepth 2 -type f -name profile_export_aiperf.json -print -quit)"
   [[ -n "${export_file}" && -s "${export_file}" ]]
   cp "${export_file}" "${OUTPUT_DIR}/results/profile_export_aiperf.json"
@@ -396,6 +393,10 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 PY
+  if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
+    while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/get_server_info" >"${OUTPUT_DIR}/results/server-info-${role}-${port}.json"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+    enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}:/calibration" "${CONTAINER_IMAGE}" /usr/local/bin/uv run --offline --no-project --python /opt/sglang/venv/bin/python python /calibration/scripts/greedy_probe.py /calibration/results
+  fi
 }
 
 if [[ "${mode}" == node ]]; then run_node; exit; fi
@@ -465,8 +466,8 @@ esac
 server_pid=$!
 worker_urls=()
 while IFS=$'\t' read -r _ host port _; do worker_urls+=("http://${host}:${port}/health"); done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
-deadline="$((SECONDS + 900))"
-while true; do kill -0 "${server_pid}"; if compgen -G "${OUTPUT_DIR}/logs/worker-failed-*" >/dev/null; then cat "${OUTPUT_DIR}"/logs/worker-failed-* >&2; exit 1; fi; ready=0; for url in "${worker_urls[@]}"; do if curl --fail --silent --max-time 2 "${url}" >/dev/null; then ready="$((ready + 1))"; fi; done; if [[ "${ready}" -eq "${#worker_urls[@]}" ]]; then break; fi; (( SECONDS < deadline )); sleep 5; done
+deadline="$((SECONDS + 1500))"
+while true; do kill -0 "${server_pid}"; if compgen -G "${OUTPUT_DIR}/logs/worker-failed-*" >/dev/null; then cat "${OUTPUT_DIR}"/logs/worker-failed-* >&2; exit 1; fi; ready=0; for url in "${worker_urls[@]}"; do if curl --fail --silent --max-time 2 "${url}" >/dev/null; then ready="$((ready + 1))"; fi; done; if [[ "${ready}" -eq "${#worker_urls[@]}" ]]; then break; fi; if (( SECONDS >= deadline )); then printf 'worker_readiness_timeout ready=%s expected=%s utc=%s\n' "${ready}" "${#worker_urls[@]}" "$(date -u +%FT%TZ)" >&2; exit 1; fi; sleep 5; done
 "${script_path}" router >"${OUTPUT_DIR}/logs/router.log" 2>&1 &
 router_pid=$!
 deadline="$((SECONDS + 300))"
