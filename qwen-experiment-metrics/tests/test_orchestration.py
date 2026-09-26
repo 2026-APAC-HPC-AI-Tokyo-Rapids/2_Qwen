@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -43,7 +44,12 @@ def test_cluster_topologies_use_every_allocated_gpu() -> None:
     assert 'firmus) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]]' in submission
     assert 'aspire2ap) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]]' in submission
     assert 'genkai) [[ "${GPUS_PER_NODE}" -eq 4' in submission
-    assert "start_worker prefill 0 8 30100 9000 0,1,2,3,4,5,6,7" in submission
-    assert "start_worker decode 0 8 30200 unused 0,1,2,3,4,5,6,7 8" in submission
+    config = json.loads((repository / "configs/aspire-serving.json").read_text())
+    for node in range(2):
+        workers = [worker for worker in config["workers"] if worker["node"] == node]
+        gpus = [int(gpu) for worker in workers for gpu in worker["gpus"].split(",")]
+        assert sorted(gpus) == list(range(8))
+        assert all(worker["tp"] == len(worker["gpus"].split(",")) for worker in workers)
+        assert {worker["role"] for worker in workers} == ({"prefill"} if node == 0 else {"decode"})
     assert 'start_worker prefill "${node_rank}" 4' in submission
     assert 'start_worker decode "${decode_index}" 4' in submission

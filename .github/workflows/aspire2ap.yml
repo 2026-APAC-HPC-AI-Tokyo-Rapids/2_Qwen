@@ -47,6 +47,8 @@ jobs:
         run: |
           PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          install -m 0644 research/simulation/greedy_probe.py "${runtime_dir}/scripts/greedy_probe.py"
+          install -m 0644 configs/aspire-serving.json "${runtime_dir}/source/aspire-serving.json"
           install -m 0755 platforms/aspire2ap/run-qwen-pd.pbs "${runtime_dir}/scripts/run-qwen-pd.pbs"
       - name: 配備失敗時の実行環境を削除
         if: failure() && steps.provision.outputs.runtime_dir != ''
