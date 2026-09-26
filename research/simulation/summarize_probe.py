@@ -43,10 +43,11 @@ def summarize(root):
         summary.append(row)
     nixl = []
     if any('nixl_measurements' in record for record in records):
-        expected_nixl = {(tp, tokens) for tp in (4, 8) for tokens in (128, 1024, 4000, 4200)}
+        destination_tps = (4, 8) if records[0].get('nixl_geometry_version') == 2 else (8,)
+        expected_nixl = {(tp, destination_tp, tokens) for tp in (4, 8) for destination_tp in destination_tps for tokens in (128, 1024, 4000, 4200)}
         for record in records:
             points = record.get('nixl_measurements', [])
-            if len(points) != 8 or {(p['source_tp'], p['prompt_tokens']) for p in points} != expected_nixl:
+            if len(points) != len(expected_nixl) or {(p['source_tp'], p.get('destination_tp', 8), p['prompt_tokens']) for p in points} != expected_nixl:
                 raise ValueError('incomplete NIXL measurements')
             for point in points:
                 if not point['integrity_verified'] or len(point['latency_ms_samples']) != 5 or any(not math.isfinite(x) or x <= 0 for x in point['latency_ms_samples']):

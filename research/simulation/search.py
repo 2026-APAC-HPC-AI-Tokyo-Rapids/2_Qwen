@@ -64,11 +64,11 @@ def main():
             worker['kv_cache'].update({'block_size': 1 if backend == 'sglang' else 16, 'capacity': {'type': 'fixed', 'blocks': 131072 if backend == 'sglang' else 8192}})
             if args.fpm:
                 worker['timing'] = {'estimation_mode': 'fpm_interpolation', 'fallback_policy': 'deny', 'fpm_parquet_path': str(args.fpm.resolve())}
-        if measured_link and decode_tp == 8:
-            point = next(p for p in measured_link if p['source_tp'] == prefill_tp and p['prompt_tokens'] == 4000)
+        if measured_link:
+            point = next(p for p in measured_link if p['source_tp'] == prefill_tp and p['destination_tp'] == decode_tp and p['prompt_tokens'] == 4000)
             engine['kv_transfer']['bandwidth_gb_per_second'] = point['effective_unique_KV_GB_per_second']
         elif args.fpm:
-            # No measured TP4 receiver transfer. Do not invent its link calibration.
+            # A calibrated sweep requires measured transfer as well as model timing.
             continue
         name = f'{backend}-p{8 // prefill_tp}x{prefill_tp}-d{8 // decode_tp}x{decode_tp}-c{concurrency}'
         tasks.append((args.output / name, config))
