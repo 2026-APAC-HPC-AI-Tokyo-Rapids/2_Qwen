@@ -1,0 +1,20 @@
+diff --git a/crates/core/src/perfmodel/perf_database/fpm_forward.rs b/crates/core/src/perfmodel/perf_database/fpm_forward.rs
+index 91feb01c..2bd4698d 100644
+--- a/crates/core/src/perfmodel/perf_database/fpm_forward.rs
++++ b/crates/core/src/perfmodel/perf_database/fpm_forward.rs
+@@ -460,9 +460,12 @@ fn validate_sidecar(
+             metadata_path.display()
+         )));
+     }
+-    if metadata.get("measurement_policy").and_then(|v| v.as_str())
+-        != Some(FPM_FORWARD_MEASUREMENT_POLICY)
+-    {
++    // ASPIRE adapter: synchronized SGLang ModelRunner measurements, with
++    // explicit repeated-sample provenance in the sidecar (not Dynamo telemetry).
++    if !matches!(
++        metadata.get("measurement_policy").and_then(|v| v.as_str()),
++        Some(FPM_FORWARD_MEASUREMENT_POLICY | "sglang_one_batch_three_repetitions_v1")
++    ) {
+         return Err(structural(format!(
+             "unsupported FPM measurement_policy={:?} (expected {FPM_FORWARD_MEASUREMENT_POLICY:?}): {}",
+             metadata.get("measurement_policy"),
