@@ -1,0 +1,30 @@
+# CPU feasibility probe; these predictions are not official benchmark results.
+traffic:
+  source: {type: synthetic, input_tokens: 4000, output_tokens: 200}
+  load: {type: concurrency, concurrency: 16}
+  stop: {requests: 160}
+engine:
+  mode: disaggregated
+  model: research/simulation/model
+  hardware: h100_sxm
+  backend: sglang
+  backend_version: "0.5.14"
+  estimation_mode: op_level
+  fallback_policy: deny
+  context_length: 8192
+  workers:
+    prefill:
+      parallelism: {replicas: 1, tensor: 8, pipeline: 1, attention_data: 1, moe_tensor: 8, moe_expert: 1}
+      scheduler: {max_batched_tokens: 8192, max_sequences: 256}
+      kv_cache:
+        prefix_caching: false
+        capacity: {type: default, memory_fraction: 0.90}
+    decode:
+      parallelism: {replicas: 1, tensor: 8, pipeline: 1, attention_data: 1, moe_tensor: 1, moe_expert: 8}
+      scheduler: {max_batched_tokens: 8192, max_sequences: 256}
+      kv_cache:
+        prefix_caching: false
+        capacity: {type: default, memory_fraction: 0.90}
+  # Assumed aggregate link rate, not measured ASPIRE bandwidth.
+  # Full BF16 KV payload = 2 * 94 layers * 4 heads * 128 head_dim * 2 bytes.
+  kv_transfer: {bytes_per_token: 192512, bandwidth_gb_per_second: 50, timing_mode: full_prompt}

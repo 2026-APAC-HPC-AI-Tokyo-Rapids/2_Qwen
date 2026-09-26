@@ -1,0 +1,30 @@
+name: ASPIRE offline simulation feasibility
+
+on:
+  push:
+    branches: [research/aspire-dynosim-aisimulate]
+    paths: [research/simulation/**, .github/workflows/simulation.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Install pinned CPU simulator
+        run: |
+          uv venv --python 3.12.12 .venv-simulation
+          uv pip sync --python .venv-simulation/bin/python research/simulation/requirements.lock
+      - name: Predict the single configuration in this commit
+        run: .venv-simulation/bin/python research/simulation/run.py simulation-output
+      - name: Save prediction, diagnostics, and provenance
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aspire-simulation-${{ github.sha }}
+          path: simulation-output
+          if-no-files-found: error
