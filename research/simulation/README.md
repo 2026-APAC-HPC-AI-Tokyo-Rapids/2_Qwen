@@ -37,6 +37,14 @@ Invalid quantized MoE configuration:
 
 以前のActions [35108498091](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/35108498091) ではASPIREのPBS `209623.pbs111` が失敗し、`run-success` が欠けていた。Actionsログだけでは最初のPBS致命エラーは分からず、今回のMoE制約と同じ原因とは認定しない。Firmusの成功値もH100校正に流用しない。過去のresearchと2026-09-16のCodex会話記録を照合した。
 
+## CPU実行で確認した候補
+
+現行形状を保存したcommitは `e61bb78`。その[CPU Actions](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/36220794741)は上記のTP8不整合を検出して失敗、artifact回収まで完了した。同commitの通常Qwen workflowはクラスタタグなしの静的検証に成功した。
+
+この後の `prediction.yaml` はnode 0に2×TP4 prefill、node 1に1×TP8/EP8 decodeを置く候補。BF16 KVとBF16 attentionを明示する。simulatorはFP8 checkpointからKV/attentionもFP8と推論するため、省略時の予測を実機のauto/BF16設定と比較しない。KVのみBF16に変更するとFP8 attention/BF16 KVの性能データがなく失敗した。両方を明示して予測を完走した。最初のTP8拒否は精度既定値の補正前であり、性能の対照実験ではない。
+
+ローカルCPU実行（160 requests、N=16、仮定50 GB/s）では、予測throughput 4.492 requests/s、平均TTFT 275.6 ms、p99 TTFT 1167.8 ms、平均ITL 16.22 ms、request単位の同時SLA達成160/160。仮想時間35.62秒、replay部分のCPU wall time約1.24秒。初期化や依存導入時間を含まない。これは感度検証の開始点であり、実機の最適構成・性能改善を示す結果ではない。
+
 ## 適用範囲と限界
 
 DynoSimはDynamo Router/Plannerを含むシミュレーションの入口で、AISimulateは共通の予測エンジン。現在の実装はSGLang + sglang-router 0.3.2であり、まず `--stack engine` を使用する。Dynamoへの移行やDynoSimのruntime統合は今回実行していない。
@@ -47,7 +55,7 @@ DynoSimはDynamo Router/Plannerを含むシミュレーションの入口で、A
 
 - 4000/200 tokens、concurrency 16、160 requests。Shakespeare本文・tokenizer/chat template・seed 2026・AIPerf 60/120/30秒は再現していない。prefix cacheを無効化してcache-bustの効果を近似した。公式の有効ISL 3984–3988との差も残る。
 - context length 8192、memory fraction 0.90。ただし実機の `max-total-tokens=131072`、chunked prefill、CUDA graph予約量との完全一致は未検証。simulatorは既定のHBM容量推定を使う。
-- weight FP8は公式configから推論。KVはBF16想定。転送は全層の非重複KV `2×94×4×128×2=192512 bytes/token` と仮定する。TP>KV head数での複製、分割方式、NIC競合やNIXL接続確立は再現しない。
+- weight FP8は公式configから推論。KVとattentionはBF16を明示。転送は全層の非重複KV `2×94×4×128×2=192512 bytes/token` と仮定する。TP>KV head数での複製、分割方式、NIC競合やNIXL接続確立は再現しない。
 - KV転送に50 GB/sを仮定する。実測値ではなく、H100 system profileのper-GPU帯域からnode全体への一致を主張しない。既定の無遅延を避けるための感度検証の起点。
 - 汎用H100のNCCL/演算データには実測、補間、経験モデルが混在する。ASPIREのNIC/クロック/ライブラリに固有の校正値ではない。
 - 合成closed-loopの終了までの予測であり、120秒の公式goodputや公式スコアを算出・提出しない。simulatorはmodel outputを生成せずaccuracyも判定できない。

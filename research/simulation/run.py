@@ -42,6 +42,8 @@ def main():
     for role, worker in workers.items():
         shape = worker["parallelism"]
         request = {"model": engine["model"], "system": engine["hardware"], "backend": engine["backend"], "backend_version": engine["backend_version"], "worker_type": role, "tp": shape["tensor"], "pp": shape["pipeline"], "attention_dp": shape["attention_data"], "moe_tp_size": shape["moe_tensor"], "moe_ep_size": shape["moe_expert"], "estimation_mode": "op_level", "fallback_policy": "deny"}
+        request["kvcache_quant_mode"] = engine["kvcache_quant_mode"]
+        request["fmha_quant_mode"] = engine["fmha_quant_mode"]
         try:
             estimator = RustForwardPassPerfModel.best_available(request)
             try:

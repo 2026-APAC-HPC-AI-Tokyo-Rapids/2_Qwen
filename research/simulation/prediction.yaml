@@ -12,9 +12,11 @@ engine:
   estimation_mode: op_level
   fallback_policy: deny
   context_length: 8192
+  kvcache_quant_mode: bfloat16
+  fmha_quant_mode: bfloat16
   workers:
     prefill:
-      parallelism: {replicas: 1, tensor: 8, pipeline: 1, attention_data: 1, moe_tensor: 8, moe_expert: 1}
+      parallelism: {replicas: 2, tensor: 4, pipeline: 1, attention_data: 1, moe_tensor: 4, moe_expert: 1}
       scheduler: {max_batched_tokens: 8192, max_sequences: 256}
       kv_cache:
         prefix_caching: false
