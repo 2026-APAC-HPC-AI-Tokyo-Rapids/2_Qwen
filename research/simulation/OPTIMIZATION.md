@@ -49,7 +49,7 @@ Actions `36226304028` / PBS `212982` は55条件・165 raw rowsを満たし、PB
 |汎用op model|913.632|241.903|16.239|
 |実測FPM|1022.552|233.913|14.402|
 
-実機554 requests、0 errors、joint SLA fraction 1.0、OSL mismatch 0、ローカルparser valid。baseline一回の結果なので再現性は未確定。実測FPMのthroughput予測は実機より13.185%高く、汎用op modelの1.129%より誤差が大きかった。forward単体の精度改善をserving全体の精度改善と同一視しない。CPU overhead、queue/overlap、有限requestと定時間測定の差が未モデル化で、TTFTも過小予測している。
+実機554 requests、0 errors、joint SLA fraction 1.0、OSL mismatch 0、ローカルparser valid。後続の同条件反復は897.824で、初回との差は0.62%。実測FPMのthroughput予測は実機より13.185%高く、汎用op modelの1.129%より誤差が大きかった。forward単体の精度改善をserving全体の精度改善と同一視しない。CPU overhead、queue/overlap、有限requestと定時間測定の差が未モデル化で、TTFTも過小予測している。
 
 ### 追加の実機観測
 
@@ -60,15 +60,29 @@ Actions `36226304028` / PBS `212982` は55条件・165 raw rowsを満たし、PB
 |P2TP4/D2TP4 c32 target-only|36228995654|1592.140|1.0|636.676 / 16.775|
 |P2TP4/D2TP4 c16 EAGLE3|36229580995|1489.537|1.0|545.586 / 7.986|
 
-target-only c16/c32のActions・PBS正常終了とrawを確認。c32のローカルparserを再実行して一致した。c16のPBS walltime11分34秒、c32は11分45秒。P4→D8 baseline反復はActions成功、初回との差0.62%。P4→D4 c32は現時点の通常推論の最大観測値だが、反復 `36230301903` と上限側c40 `36230331081` は別途確認する。c40/c48の追加CPU探索は実測範囲内で2230.4/2390.3 predicted good tokens/s、SLA fraction1.0/0.975。rawは `qwen16-measured-search-high-concurrency` に保管。servingを過大予測する傾向があるため実機SLAで判定する。
+target-only c16/c32のActions・PBS正常終了とrawを確認。c32のローカルparserを再実行して一致した。c16のPBS walltime11分34秒、c32は11分45秒。P4→D8 baseline反復はActions成功、初回との差0.62%。P4→D4 c32反復 `36230301903` は1595.780（差0.23%）、c40 `36230331081` は1839.777、SLA0.990418。両方Actions正常終了、home checksumとrawのparser再実行を確認した。c40/c48の追加CPU探索は実測範囲内で2230.4/2390.3 predicted good tokens/s、SLA fraction1.0/0.975。rawは `qwen16-measured-search-high-concurrency` に保管。servingを過大予測する傾向があるため実機SLAで判定する。
 
 `collect.py` はspeculation algorithm/steps/draft length、draft weight/runtime-config hashes、deterministic inference modeを比較キーへ含める。初版のように同じTP/EPのtarget-onlyと投機設定を同一条件へまとめない。archive33件の中間inventory（`inventory-a0c9726.json`）ではASPIRE15件中、通常測定として来歴の揃う候補は回収済みbaseline1件のみだった。このsnapshotは上記追加runのarchive完了前であり、最新集計ではない。
 
 有限request数の感度もCPUで確認した。P4/D4の実測FPM設定を固定し320→1280 requestsだけ変えると、c16/c32/c40は1166.2/2066.0/2413.7 predicted good tokens/sとなり、320件の1147.4/1960.2/2230.4より高い。c32のsimulation durationは123.9秒となるが、実機1592–1596との差は縮まらない。少ないrequest数だけでは過大予測を説明できない。60秒warmup/120秒profile/30秒drainや入力分布を再現した比較ではなく、CPU sensitivityとして `qwen16-request-count-sensitivity` のconfig/log/per-request出力を保存する。
 
+### 通常モードの上限側（2026-09-26、回収中）
+
+|条件、旧image・P2TP4/D2TP4|Actions|good tokens/s|joint SLA fraction|確認状態|
+|---|---|---:|---:|---|
+|target-only c40 反復|36232258544|1839.054|0.991282|PBS Exit0、回収中|
+|target-only c48|36231906794|1945.962|0.954078|PBS Exit0、raw parser再実行一致、Actions監視失敗|
+|EAGLE3 c32|36232547785|2218.384|1.0|PBS Exit0、回収中|
+|EAGLE3 c48|36232941281|2305.296|0.929366|PBS Exit0、回収中|
+|EAGLE3 c48 反復|36233305728|2294.650|0.927963|PBS Exit0、回収中|
+
+c48 EAGLE3の反復差は約0.5%。ただしc32からの伸びは約4%で、TTFTによりjoint SLAの余裕が小さい。中間c40を `66f3ca6` / `research/aspire-eagle-c40`（Actions `36234985587`、同条件反復 `36235158063`）で追加した。concurrencyだけを変更し、image・draft・配置・通常推論・公式入力は固定する。
+
+target-only c48のActions失敗は計算失敗ではない。監視checkerの単発180秒timeoutが続き、連続接続失敗300秒の上限でexit124になった。PBSは後にExit0、runnerのraw回収とhome保存も完了した。archive内accountingはR状態の古いsnapshotなので、別途取得したPBS履歴をterminal根拠とし、原archiveは改変しない。
+
 ### ブラックボックス探索の適用判断
 
-ユーザー提案のOptunaも候補とする。現在は同一image・P4/D4・通常推論でconcurrencyだけを32→40→48と増やしてSLA境界を確認しているため、この小さな一次元探索に追加依存は導入しない。c32反復は1595.780 good tokens/s（初回1592.140、差0.23%）。c40は1839.777、joint SLA fraction 1137/1148=0.990418、平均TTFT/ITL 745.613/17.566 ms。両PBSはExit0、Actionsの回収は継続中。c48は `d133c40` / `36231906794` で投入した。
+ユーザー提案のOptunaも候補とする。現在は同一image・P4/D4・通常推論でconcurrencyだけを32→40→48と増やしてSLA境界を確認しているため、この小さな一次元探索に追加依存は導入しない。c32反復は1595.780 good tokens/s（初回1592.140、差0.23%）。c40は1839.777、joint SLA fraction 1137/1148=0.990418、平均TTFT/ITL 745.613/17.566 ms。両PBSはExit0、Actions・home archive・raw parser確認も完了。c48は `d133c40` / `36231906794` で投入した。
 
 draft length・concurrency・chunk size等の相互作用を探索する段階では、[Optuna ask/tell](https://optuna.readthedocs.io/en/stable/tutorial/20_recipes/009_ask_and_tell.html)で候補提案とActions実行を分離できる。目的値は実機のgood tokens/s、制約はjoint SLA fraction >=0.9とし、image・backend・決定的推論モード・workloadが異なる観測は同じstudyへ混ぜない。候補ごとにcommitを作成し、terminal状態とraw/parser確認後にtellする。通信失敗・未実行・OOMを性能0として学習させずFAILとし、予測値も実測trialへ混ぜない。出力正当性は独立した採用条件とする。seedとOptuna versionを固定し、最良候補は別割当で反復する。[TPE](https://optuna.readthedocs.io/en/stable/reference/samplers/generated/optuna.samplers.TPESampler.html)の初期ランダム試行数もGPU予算に含める。現時点でOptunaによる実機探索を実行したとは扱わない。
 
@@ -92,7 +106,7 @@ EAGLE3候補は [Nebius Instruct版](https://huggingface.co/nebius/EAGLE3-Qwen3-
 
 `prepare_eagle.py` はBF16 weights、integer token maps、hidden/vocabulary shapesを確認し、元config/model card/weight SHA256/runtime configを保存。SGLangのarchitecture selectorとBF16宣言のみ変更、重み無変更。PDで必要なaux hidden statesを転送するためprefill/decode両方にEAGLE3を指定する。公式targetは変更しない。
 
-Nebius draftは572,538,880 BF16 parameters、weights 1,145,943,008 bytes（integer token mapsを含む）。NGRAM run `36227653702` の最初の致命的エラーはPD warmupの `ngram_worker.py:242`、`spec_info=None` による `accept_tokens` 属性参照であり、後続SIGKILLをOOMと解釈しない。`ed4c823` はPD初期NGRAM状態を構築する17行のsource patchを所有側build contextに追加し、新規imageで再実行する。既にoutput_idsにあるbonus tokenを重複させないゼロ初期accept lengthsをCPU torch回帰検証済み。target verificationは変更していない。GPUのE2E検証は別途必要。
+Nebius draftは572,538,880 BF16 parameters、weights 1,145,943,008 bytes（integer token mapsを含む）。NGRAM run `36227653702` の最初の致命的エラーはPD warmupの `ngram_worker.py:242`、`spec_info=None` による `accept_tokens` 属性参照であり、後続SIGKILLをOOMと解釈しない。`ed4c823` はPD初期NGRAM状態を構築する17行のsource patchを所有側build contextに追加し、新規imageで再実行する。既にoutput_idsにあるbonus tokenを重複させないゼロ初期accept lengthsをCPU torch回帰検証済み。target verificationは変更していない。後述の新image runでGPU E2E検証も完了した。
 
 旧mixed-TP EAGLE3 `36227719367` / PBS212995はwarmup中のNIXL remote disconnect→NOT_FOUND→転送timeoutで失敗（Exit1、16分58秒）。home archiveをchecksum確認済み、性能値なし。equal-TP EAGLE3 `32c8539` / `36229580995` / PBS213006はExit0、11分46秒、904 requests/0 errors。decode workerごとの平均受理長は2.226/2.219（bonus tokenを含み、warmup等も含む累積値）。
 
@@ -102,7 +116,7 @@ Nebius draftは572,538,880 BF16 parameters、weights 1,145,943,008 bytes（integ
 
 修正版NGRAM imageはAWS build26分20秒で成功、SHA256 `994d664d6771af8f722c95d7c45c0c0cd362323c92f4b927da20e2e88aace562`、12,225,540,096 bytes。torch2.11+cu130/NIXL1.4.1/AIPerf0.12.0のCPU smokeを確認。Firmus配布SSH失敗はcontinue-on-errorでASPIRE配布・実行を妨げず、再buildなしで継続した。新image target-only対照は `499d417` / `36230584981`。
 
-修正版NGRAM `36228809354` / PBS213009はExit0（11分43秒）、998.081 good tokens/s、612 requests、joint SLA fraction1.0、平均受理長1.589。新image target-only `36230584981` / PBS213012もExit0（11分37秒）、903.940 good tokens/s、555 requests、SLA1.0。両者0 errors、同一image/TP/EP/c16の一回ずつの比較でNGRAMは10.4%高い。Actionsの回収は継続中であり、反復結果ではない。
+修正版NGRAM `36228809354` / PBS213009はExit0（11分43秒）、998.081 good tokens/s、612 requests、joint SLA fraction1.0、平均受理長1.589。新image target-only `36230584981` / PBS213012もExit0（11分37秒）、903.940 good tokens/s、555 requests、SLA1.0。両者0 errors、同一image/TP/EP/c16の一回ずつの比較でNGRAMは10.4%高い。両Actions正常終了、home archiveのchecksumとraw parser再実行を確認済み。反復結果ではない。
 
 NGRAMのgeneric probeは新image対照と7/8問一致し、prompt5（stack/queue説明）の最初のtokenから差があった。旧image対照反復とは8/8問・512 tokens全て一致する。旧image対照2回も全問一致、新旧imageの通常推論間では同じprompt5が異なる。この観測だけで数値誤差や投機の不具合と断定しない。比較JSONはhomeの `research-issue-16/20260926` に保存した。
 

@@ -1,6 +1,6 @@
 # ASPIRE 2A+向けAISimulate実現性検証
 
-2026-09-26。対象は `aspire2p.nscc.sg`、2ノード・16 H100。これはCPU上の事前評価であり、公式性能結果、実機での起動成功、accuracy合格を意味しない。
+2026-09-26。対象は `aspire2p.nscc.sg`、2ノード・16 H100。このページは初期CPU事前評価の記録。後続の実測校正・構成探索・投機デコードの結果は [OPTIMIZATION.md](OPTIMIZATION.md)、AIPerf入力とKV再利用の調査は [PREFIX.md](PREFIX.md) を参照。CPU予測自体は公式性能結果やaccuracy合格を意味しない。
 
 ## 再現
 
@@ -55,7 +55,7 @@ DynoSimはDynamo Router/Plannerを含むシミュレーションの入口で、A
 
 今回の仮定・差分:
 
-- 4000/200 tokens、concurrency 16、160 requests。Shakespeare本文・tokenizer/chat template・seed 2026・AIPerf 60/120/30秒は再現していない。prefix cacheを無効化してcache-bustの効果を近似した。公式の有効ISL 3984–3988との差も残る。
+- 4000/200 tokens、concurrency 16、160 requests。Shakespeare本文・tokenizer/chat template・seed 2026・AIPerf 60/120/30秒は再現していない。初期評価ではcache-bustを想定してprefix cacheを無効化した。後続の同版client調査では通常synthetic経路でmarkerがwireへ渡らない挙動を確認したが、実機prefix再利用率自体は約0.077%と低かった（[詳細](PREFIX.md)）。公式の有効ISL 3984–3988との差も残る。
 - context length 8192、memory fraction 0.90。ただし実機の `max-total-tokens=131072`、chunked prefill、CUDA graph予約量との完全一致は未検証。simulatorは既定のHBM容量推定を使う。
 - weight FP8は公式configから推論。KVとattentionはBF16を明示。転送は全層の非重複KV `2×94×4×128×2=192512 bytes/token` と仮定する。TP>KV head数での複製、分割方式、NIC競合やNIXL接続確立は再現しない。
 - KV転送に50 GB/sを仮定する。実測値ではなく、H100 system profileのper-GPU帯域からnode全体への一致を主張しない。既定の無遅延を避けるための感度検証の起点。
