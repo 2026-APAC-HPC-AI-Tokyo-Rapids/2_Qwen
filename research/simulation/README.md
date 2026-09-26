@@ -45,6 +45,8 @@ Invalid quantized MoE configuration:
 
 ローカルCPU実行（160 requests、N=16、仮定50 GB/s）では、予測throughput 4.492 requests/s、平均TTFT 275.6 ms、p99 TTFT 1167.8 ms、平均ITL 16.22 ms、request単位の同時SLA達成160/160。仮想時間35.62秒、replay部分のCPU wall time約1.24秒。初期化や依存導入時間を含まない。これは感度検証の開始点であり、実機の最適構成・性能改善を示す結果ではない。
 
+候補commit `bc3fda9` の[CPU Actions 36220906565](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/36220906565)は成功。artifact `10899022184`（86,740 bytes）をダウンロードし、raw request、予測、来歴、診断を確認した。ローカルとthroughput・SLA件数・仮想時間が一致し、TTFT平均の差は浮動小数点丸めの範囲だった。Actionsのreplay wall timeは約0.98秒。基準の失敗artifactは `10898452544`。採用候補を保証する性能比較やASPIRE GPU実行は行っていない。
+
 ## 適用範囲と限界
 
 DynoSimはDynamo Router/Plannerを含むシミュレーションの入口で、AISimulateは共通の予測エンジン。現在の実装はSGLang + sglang-router 0.3.2であり、まず `--stack engine` を使用する。Dynamoへの移行やDynoSimのruntime統合は今回実行していない。
