@@ -102,12 +102,23 @@ def collect_run(root, provenance_path, target):
             continue
         hashes.add(fingerprint)
         exports.append(export_metrics(path))
-    scores = [read_json(p) for p in root.rglob("score.json")]
+    score_paths = sorted(root.rglob("score.json"))
+    scores = [read_json(p) for p in score_paths]
+    config_path = source_dir / "aspire-serving.json"
+    serving_config = read_json(config_path) if config_path.exists() else None
     problems = []
     if not any(p.is_file() and not any(part.startswith("rank-") for part in p.relative_to(root).parts) for p in root.rglob("run-success")):
         problems.append("missing_terminal_success_marker")
     if len(scores) != 1 or scores[0].get("official_validation", {}).get("valid") is not True:
         problems.append("missing_or_invalid_local_validation")
+    if len(scores) == 1:
+        concurrency = scores[0].get("concurrency")
+        if serving_config is not None and serving_config.get("concurrency") != concurrency:
+            problems.append("configured_concurrency_mismatch")
+        for export in exports:
+            for phase in export["workload"].get("phases") or []:
+                if phase.get("kind") == "profiling" and phase.get("concurrency") != concurrency:
+                    problems.append("benchmark_concurrency_mismatch")
     if provenance.get("cluster") != target:
         problems.append("different_or_unknown_cluster")
     if provenance.get("profile") is not False:
@@ -138,7 +149,7 @@ def collect_run(root, provenance_path, target):
         problems.append("missing_hardware_observation")
     condition = {"cluster": provenance.get("cluster"), "model": model.get("model", {}).get("revision"), "container": provenance.get("container", {}).get("sha256"), "sglang": sidecar.get("source_commits", {}).get("sglang"), "profile": provenance.get("profile"), "draft": draft_identity, "workers": [{"worker": w["worker"], "settings": w["settings"]} for w in shapes], "workload": exports[0]["workload"] if len(exports) == 1 else None}
     condition_key = hashlib.sha256(json.dumps(condition, sort_keys=True).encode()).hexdigest() if not problems else None
-    return {"condition_key": condition_key, "root": str(root), "provenance": provenance, "source": evidence(provenance_path), "model": model.get("model"), "sglang_commit": sidecar.get("source_commits", {}).get("sglang"), "worker_settings": shapes, "hardware": hardware, "exports": exports, "duplicate_exports": duplicates, "port_traffic": [counter_rates(p) for p in sorted(root.rglob("infiniband-node-*.csv"))], "comparison_blockers": sorted(set(problems)), "candidate_for_matched_comparison": not problems}
+    return {"condition_key": condition_key, "root": str(root), "provenance": provenance, "source": evidence(provenance_path), "model": model.get("model"), "sglang_commit": sidecar.get("source_commits", {}).get("sglang"), "serving_config": {"source": evidence(config_path), "value": serving_config} if serving_config is not None else None, "local_scores": [{"source": evidence(p), "value": score} for p, score in zip(score_paths, scores)], "worker_settings": shapes, "hardware": hardware, "exports": exports, "duplicate_exports": duplicates, "port_traffic": [counter_rates(p) for p in sorted(root.rglob("infiniband-node-*.csv"))], "comparison_blockers": sorted(set(problems)), "candidate_for_matched_comparison": not problems}
 
 
 def collect(root, target):

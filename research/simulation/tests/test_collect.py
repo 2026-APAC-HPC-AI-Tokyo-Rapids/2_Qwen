@@ -26,7 +26,8 @@ class CollectionTests(unittest.TestCase):
         self.write("source/source/provenance.json", {"schema_version": "qwen3-pd-provenance/v1", "cluster": cluster, "profile": profile, "container": {"sha256": "fixture"}})
         self.write("source/source/model.json", {"model": {"revision": "fixture"}})
         self.write("source/source/container-sidecar.json", {"source_commits": {"sglang": "fixture"}})
-        self.write("score.json", {"official_validation": {"valid": True}})
+        self.write("score.json", {"concurrency": 16, "official_validation": {"valid": True}})
+        self.write("source/source/aspire-serving.json", {"concurrency": 16})
         (self.root / "run-success").touch()
         logs = self.root / "logs"
         logs.mkdir()
@@ -61,6 +62,21 @@ class CollectionTests(unittest.TestCase):
         self.fixture()
         (self.root / "score.json").unlink()
         self.assertEqual(collect.collect(self.root, "aspire2ap")["summary"]["candidate_runs"], 0)
+
+    def test_score_is_traceable_and_must_match_committed_concurrency(self):
+        self.fixture()
+        self.write("source/source/aspire-serving.json", {"concurrency": 40})
+        run = collect.collect(self.root, "aspire2ap")["runs"][0]
+        self.assertIn("configured_concurrency_mismatch", run["comparison_blockers"])
+        self.assertEqual(run["local_scores"][0]["value"]["concurrency"], 16)
+        self.assertEqual(run["local_scores"][0]["source"], collect.evidence(self.root / "score.json"))
+
+    def test_score_must_match_actual_profiling_concurrency(self):
+        data = self.fixture()
+        data["input_config"]["phases"][0]["concurrency"] = 48
+        self.write("results/profile_export_aiperf.json", data)
+        run = collect.collect(self.root, "aspire2ap")["runs"][0]
+        self.assertIn("benchmark_concurrency_mismatch", run["comparison_blockers"])
 
     def test_speculation_is_a_comparison_condition(self):
         self.fixture()
