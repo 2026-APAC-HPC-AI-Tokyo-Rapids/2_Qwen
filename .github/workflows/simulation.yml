@@ -36,11 +36,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - name: Read existing archived measurements
         shell: home-lab-shell {0}
         run: |
           install -d -m 0755 "${RUNNER_TEMP}/calibration-inventory"
-          python3 research/simulation/collect.py /srv/qwen-artifacts "${RUNNER_TEMP}/calibration-inventory/inventory.json"
+          uv run --no-project --python 3.12.12 python research/simulation/collect.py /srv/qwen-artifacts "${RUNNER_TEMP}/calibration-inventory/inventory.json"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

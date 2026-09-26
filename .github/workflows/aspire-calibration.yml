@@ -15,6 +15,7 @@ jobs:
         shell: aspire2p-shell --github-shell {0}
     steps:
       - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - name: Stage scripts with the existing verified container
         id: stage
         env:
@@ -62,7 +63,7 @@ jobs:
           aspire2p-shell --pull "${RUNTIME_DIR}/source" "${destination}/source"
       - name: Validate and summarize the recovered rank measurements
         shell: bash
-        run: python3 research/simulation/summarize_probe.py "${RUNNER_TEMP}/qwen-calibration" "${RUNNER_TEMP}/qwen-calibration/summary.json"
+        run: uv run --no-project --python 3.12.12 python research/simulation/summarize_probe.py "${RUNNER_TEMP}/qwen-calibration" "${RUNNER_TEMP}/qwen-calibration/summary.json"
       - uses: actions/upload-artifact@v7
         if: always() && steps.stage.outputs.runtime_dir != ''
         with:
