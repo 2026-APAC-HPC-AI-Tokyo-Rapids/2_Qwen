@@ -2,6 +2,9 @@
 #PBS -l walltime=00:10:00
 set -euo pipefail
 : "${RUNTIME_DIR:?runtime directory required}"
+: "${PBS_NODEFILE:?PBS node list required}"
+awk '!seen[$0]++ {sub(/\..*/, "", $0); print}' "${PBS_NODEFILE}" >"${RUNTIME_DIR}/logs/hosts.txt"
+[[ "$(wc -l <"${RUNTIME_DIR}/logs/hosts.txt")" -eq 2 ]]
 /opt/pbs/bin/pbsdsh -- "${RUNTIME_DIR}/scripts/probe-node.sh"
 [[ "$(find "${RUNTIME_DIR}/results" -maxdepth 1 -name 'rank-*.json' | wc -l)" -eq 16 ]]
 touch "${RUNTIME_DIR}/run-success"
