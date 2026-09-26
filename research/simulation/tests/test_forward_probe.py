@@ -33,8 +33,12 @@ class IncrementalForwardTests(unittest.TestCase):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'results.jsonl'
-            args = types.SimpleNamespace(result_filename=str(path))
+            root = Path(directory)
+            (root / 'source').mkdir()
+            (root / 'results').mkdir()
+            (root / 'source/forward-plan.json').write_text('{}')
+            path = root / 'results/results.jsonl'
+            args = types.SimpleNamespace(result_filename=str(path), batch_size=[1], input_len=[1,2,3], output_len=[1])
             with self.assertRaisesRegex(RuntimeError, 'next shape'):
                 module.recording_latency_test(None, None, args, 0, 0)
             self.assertEqual([json.loads(line) for line in path.read_text().splitlines()], [{'sample': 2}, {'sample': 3}])

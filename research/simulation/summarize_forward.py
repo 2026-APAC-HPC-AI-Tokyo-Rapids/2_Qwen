@@ -13,6 +13,7 @@ def summarize(root):
         raise ValueError('exactly one forward plan required')
     plan = json.loads(plans[0].read_text())
     rows = []
+    chunks = []
     for worker in plan['workers']:
         files = list(root.rglob(worker['name'] + '.jsonl'))
         if len(files) != 1:
@@ -33,7 +34,21 @@ def summarize(root):
             raise ValueError(f'incomplete measurement coverage for {worker["name"]}')
         for (bs, length), samples in sorted(grouped.items()):
             rows.append({**worker, 'batch_size': bs, 'input_len': length, 'output_len': plan['output_length'], 'prefill_ms_samples': [m['prefill_latency'] * 1000 for m in samples], 'decode_ms_samples': [m['median_decode_latency'] * 1000 for m in samples], 'prefill_ms': statistics.median(m['prefill_latency'] * 1000 for m in samples), 'decode_ms': statistics.median(m['median_decode_latency'] * 1000 for m in samples), 'raw_sha256': hashlib.sha256(files[0].read_bytes()).hexdigest()})
-    return {'schema_version': 'qwen-forward-summary/v1', 'plan': plan, 'measurements': rows, 'timing_boundary': 'SGLang one_batch ModelRunner extend/decode with synchronization; includes sampling, excludes serving queues and NIXL', 'official_result': False}
+        if 'chunk_batch_sizes' in plan:
+            files = list(root.rglob(worker['name'] + '.chunks.jsonl'))
+            if len(files) != 1:
+                raise ValueError('missing or duplicate chunk measurements')
+            points = [json.loads(line) for line in files[0].read_text().splitlines()]
+            expected_chunks = {('prefill', b, p, n) for b in plan['chunk_batch_sizes'] for p in plan['chunk_prefix_lengths'] for n in plan['chunk_input_lengths']}
+            expected_chunks |= {('decode', b, 0, n) for b in plan['decode_batch_sizes'] for n in (4000, 4200) if b * (n + 32) <= 131072}
+            keys = [(p['kind'], p['batch_size'], p['prefix_len'], p['input_len']) for p in points]
+            if len(keys) != len(expected_chunks) or set(keys) != expected_chunks:
+                raise ValueError('incomplete chunk/decode measurements')
+            for point in points:
+                if len(point['latency_ms_samples']) != 3 or any(not math.isfinite(x) or x <= 0 for x in point['latency_ms_samples']):
+                    raise ValueError('invalid chunk/decode latency')
+                chunks.append({**worker, **point, 'raw_sha256': hashlib.sha256(files[0].read_bytes()).hexdigest()})
+    return {'schema_version': 'qwen-forward-summary/v1', 'plan': plan, 'measurements': rows, 'chunk_measurements': chunks, 'timing_boundary': 'SGLang one_batch ModelRunner extend/decode with synchronization; includes sampling, excludes serving queues and NIXL', 'official_result': False}
 
 
 def main():

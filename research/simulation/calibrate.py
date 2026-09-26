@@ -25,8 +25,22 @@ def rows_from_summary(summary, model_path, held_out_length=None):
             # Decode reports the median of 31 forwards at contexts ISL+1..ISL+31.
             # Assign its center coordinate and retain that approximation explicitly.
             kv = 0 if kind == 'prefill' else batch * (length + 16)
-            rows.append({'cell_id': f'tp{tp}-ep{ep}', 'model_path': model_path, 'system': 'h100_sxm', 'backend': 'sglang', 'backend_version': VERSION, 'weight_quantization': 'fp8_block', 'gemm_quant_mode': 'fp8_block', 'moe_quant_mode': 'fp8_block', 'fmha_quant_mode': 'bfloat16', 'comm_quant_mode': 'half', 'kv_cache_dtype': 'bfloat16', 'tp': tp, 'pp': 1, 'dp': 1, 'moe_tp': tp // ep, 'moe_ep': ep, 'cp': 1, 'moe_backend': 'auto', 'attention_backend': 'auto', 'enable_wideep': False, 'enable_eplb': False, 'workload_kind': kind, 'batch_size': batch, 'total_prefill_tokens': batch * length if kind == 'prefill' else 0, 'total_kv_read_tokens': kv, 'partition_policy': 'balanced_v1', 'latency_ms': float(statistics.median(samples))})
-    return rows
+            rows.append({'cell_id': f'tp{tp}-ep{ep}', 'model_path': model_path, 'system': 'h100_sxm', 'backend': 'sglang', 'backend_version': VERSION, 'weight_quantization': 'fp8_block', 'gemm_quant_mode': 'fp8_block', 'moe_quant_mode': 'fp8_block', 'fmha_quant_mode': 'bfloat16', 'comm_quant_mode': 'half', 'kv_cache_dtype': 'bfloat16', 'tp': tp, 'pp': 1, 'dp': 1, 'moe_tp': tp // ep, 'moe_ep': ep, 'cp': 1, 'moe_backend': 'auto', 'attention_backend': 'auto', 'enable_wideep': False, 'enable_eplb': False, 'workload_kind': kind, 'batch_size': batch, 'total_prefill_tokens': batch * length if kind == 'prefill' else 0, 'total_kv_read_tokens': kv, 'partition_policy': 'balanced_v1', 'latency_ms': float(statistics.median(samples)), '_samples': samples})
+    for point in summary.get('chunk_measurements', []):
+        if point['kind'] == 'decode' and point['input_len'] == held_out_length:
+            continue
+        base = next(row for row in rows if row['tp'] == point['tp'] and row['moe_ep'] == point['ep'] and row['workload_kind'] == point['kind'])
+        batch, length = point['batch_size'], point['input_len']
+        kind = point['kind']
+        row = {**base, 'batch_size': batch, 'total_prefill_tokens': batch * length if kind == 'prefill' else 0, 'total_kv_read_tokens': batch * (point['prefix_len'] if kind == 'prefill' else length + 16), 'latency_ms': float(statistics.median(point['latency_ms_samples'])), '_samples': point['latency_ms_samples']}
+        rows.append(row)
+    # Multiple TP4 replicas and full/chunked warmup can measure the same physical
+    # coordinate. Aggregate those observations before the native unique-cell gate.
+    grouped = {}
+    for row in rows:
+        key = tuple(row[k] for k in ('tp', 'moe_ep', 'workload_kind', 'batch_size', 'total_prefill_tokens', 'total_kv_read_tokens'))
+        grouped.setdefault(key, []).append(row)
+    return [{**{k: v for k, v in group[0].items() if k != '_samples'}, 'latency_ms': float(statistics.median(x for row in group for x in row['_samples']))} for group in grouped.values()]
 
 
 def export(summary_path, output, held_out_length=None):

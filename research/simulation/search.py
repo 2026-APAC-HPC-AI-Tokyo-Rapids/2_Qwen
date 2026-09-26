@@ -41,6 +41,8 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--fpm', type=Path)
     parser.add_argument('--nixl-summary', type=Path)
+    parser.add_argument('--prefill-tp', type=int, nargs='+', choices=[4, 8], default=[4, 8])
+    parser.add_argument('--decode-tp', type=int, nargs='+', choices=[4, 8], default=[4, 8])
     parser.add_argument('--concurrency', type=int, nargs='+', default=[4, 8, 12, 16, 24, 32])
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
@@ -53,7 +55,7 @@ def main():
     if args.nixl_summary:
         measured_link = json.loads(args.nixl_summary.read_text())['nixl_segmented_writes']
     tasks = []
-    for (backend, version), prefill_tp, decode_tp, concurrency in itertools.product(backends, (4, 8), (4, 8), args.concurrency):
+    for (backend, version), prefill_tp, decode_tp, concurrency in itertools.product(backends, args.prefill_tp, args.decode_tp, args.concurrency):
         config = copy.deepcopy(base)
         engine = config['engine']
         engine.update({'backend': backend, 'backend_version': version, 'estimation_mode': 'fpm_interpolation' if args.fpm else 'op_level'})
