@@ -26,6 +26,8 @@ Actions `36226304028` / PBS `212982` は55条件・165 raw rowsを満たし、PB
 
 入力4000を除いて学習した26点のholdout誤差は中央値0.672%、最大6.291%。2点は範囲外として予測を拒否した。同一割当内のshape holdoutなので、独立した公式AIPerfの予測精度は別途評価する。
 
+さらに `compare_predictions.py` で、別割当の `36224333888` decode worker（TP8/EP8）の完了済み23条件×prefill/decodeを検証した。46点全て予測でき、汎用op modelはAPE中央値6.333%/最大29.920%、実測FPMは中央値0.222%/最大3.116%。検証元run全体はTP4 OOMで失敗しているため、この比較は完了したTP8 workerだけを明示的に抽出した。測定点は同じshapeの独立割当であり、未測定shapeやserving全体への一般化とは区別する。汎用backend release slotと配備source commitの差も含む比較である。
+
 同runのNIXL geometry2は source TP4/8 × destination TP4/8 × 128/1024/4000/4200 tokens の16点。94層×K/Vの188 GPU segmentsを実際に書き、destination内容を検証。TP4→TP8ではKV headの複製が必要であり、4000tokenの7.887msをTP8→TP8の3.995msと区別する。registration・serving queue・block packingは測定範囲外。
 
 汎用データによるSGLang/vLLM/TRT-LLMの36候補CPU screenは `backend-screen` に保管。SGLang P2TP4/D2TP4 c24を優先候補としたが、配備versionと実測ではないためbackendの優劣は未確定。
