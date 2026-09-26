@@ -49,6 +49,10 @@ jobs:
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
           install -m 0644 research/simulation/greedy_probe.py "${runtime_dir}/scripts/greedy_probe.py"
           install -m 0644 configs/aspire-serving.json "${runtime_dir}/source/aspire-serving.json"
+          if [[ "$(jq -r '.speculation.algorithm' configs/aspire-serving.json)" == EAGLE3 ]]; then
+            uvx --from 'huggingface_hub==0.36.0' hf download nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507 config.json README.md model.safetensors --revision ff0f0c0999f6c86b21dfd2f5803eebc4ac712224 --local-dir "${runtime_dir}/draft" --max-workers 1
+            uv run --no-project --python 3.12.12 python research/simulation/prepare_eagle.py "${runtime_dir}/draft" "${runtime_dir}/source"
+          fi
           install -m 0755 platforms/aspire2ap/run-qwen-pd.pbs "${runtime_dir}/scripts/run-qwen-pd.pbs"
       - name: 配備失敗時の実行環境を削除
         if: failure() && steps.provision.outputs.runtime_dir != ''
