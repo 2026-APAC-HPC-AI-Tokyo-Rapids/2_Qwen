@@ -9,7 +9,10 @@ printf 'source=%s\ndestination=%s\nhost=%s\n' "${source_path}" "${destination}" 
 df -PT "${source_path}" "$(dirname "${destination}")"
 printf 'copy_start=%s\n' "$(date --iso-8601=ns)"
 SECONDS=0
-cp -rL -- "${source_path}" "${destination}"
+mkdir -- "${destination}"
+# The verified source has 76 GiB of download cache, unused by local model loading.
+# Parent provisioning verifies pinned download metadata before node staging.
+for model_file in "${source_path}"/*; do cp -rL -- "${model_file}" "${destination}/"; done
 printf 'copy_seconds=%s\ncopy_end=%s\n' "${SECONDS}" "$(date --iso-8601=ns)"
 cmp "${source_path}/model.safetensors.index.json" "${destination}/model.safetensors.index.json"
 while IFS= read -r shard; do [[ "$(stat -c %s "${source_path}/${shard}")" == "$(stat -c %s "${destination}/${shard}")" ]]; done < <(jq -r '.weight_map[]' "${source_path}/model.safetensors.index.json" | sort -u)
