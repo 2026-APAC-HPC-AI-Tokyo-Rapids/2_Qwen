@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+: "${RUNTIME_DIR:?runtime directory required}"
+exec >"${RUNTIME_DIR}/logs/bootstrap-$(hostname -s).log" 2>&1
+trap 'printf "probe_bootstrap_failed line=%s status=%s\n" "${LINENO}" "$?" >&2' ERR
 source "${HOME}/.local/.setenv"
 : "${PBS_JOBID:?PBS allocation required}"
 : "${PBS_NODEFILE:?PBS node list required}"
