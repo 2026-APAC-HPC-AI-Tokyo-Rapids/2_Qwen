@@ -61,6 +61,8 @@ target-only c16/c32のActions・PBS正常終了とrawを確認。c32のローカ
 
 `collect.py` はspeculation algorithm/steps/draft length、draft weight/runtime-config hashes、deterministic inference modeを比較キーへ含める。初版のように同じTP/EPのtarget-onlyと投機設定を同一条件へまとめない。archive33件の中間inventory（`inventory-a0c9726.json`）ではASPIRE15件中、通常測定として来歴の揃う候補は回収済みbaseline1件のみだった。このsnapshotは上記追加runのarchive完了前であり、最新集計ではない。
 
+有限request数の感度もCPUで確認した。P4/D4の実測FPM設定を固定し320→1280 requestsだけ変えると、c16/c32/c40は1166.2/2066.0/2413.7 predicted good tokens/sとなり、320件の1147.4/1960.2/2230.4より高い。c32のsimulation durationは123.9秒となるが、実機1592–1596との差は縮まらない。少ないrequest数だけでは過大予測を説明できない。60秒warmup/120秒profile/30秒drainや入力分布を再現した比較ではなく、CPU sensitivityとして `qwen16-request-count-sensitivity` のconfig/log/per-request出力を保存する。
+
 ### ブラックボックス探索の適用判断
 
 ユーザー提案のOptunaも候補とする。現在は同一image・P4/D4・通常推論でconcurrencyだけを32→40→48と増やしてSLA境界を確認しているため、この小さな一次元探索に追加依存は導入しない。c32反復は1595.780 good tokens/s（初回1592.140、差0.23%）。c40は1839.777、joint SLA fraction 1137/1148=0.990418、平均TTFT/ITL 745.613/17.566 ms。両PBSはExit0、Actionsの回収は継続中。c48は `d133c40` / `36231906794` で投入した。
@@ -94,6 +96,10 @@ Nebius draftは572,538,880 BF16 parameters、weights 1,145,943,008 bytes（integ
 ただしpost-benchmarkの8 generic promptsでtarget-only c16対照との出力差が5問にあった。同じTP/EP・imageのtarget-only c16とc32間でも3問に差異があり、投機固有の誤りとは未確定。SGLangのgreedy verifyがtarget logitsのargmaxを照合することはsourceで確認したが、bitwise parityを達成したとは報告しない。既存の `--enable-deterministic-inference` による対比較（EAGLE3 `8c5d670` / `36231207022`、target-only `7bdc927` / `36231225267`）で切り分ける。主催者のfull accuracy検査は依然として別の検証である。
 
 修正版NGRAM imageはAWS build26分20秒で成功、SHA256 `994d664d6771af8f722c95d7c45c0c0cd362323c92f4b927da20e2e88aace562`、12,225,540,096 bytes。torch2.11+cu130/NIXL1.4.1/AIPerf0.12.0のCPU smokeを確認。Firmus配布SSH失敗はcontinue-on-errorでASPIRE配布・実行を妨げず、再buildなしで継続した。新image target-only対照は `499d417` / `36230584981`。
+
+修正版NGRAM `36228809354` / PBS213009はExit0（11分43秒）、998.081 good tokens/s、612 requests、joint SLA fraction1.0、平均受理長1.589。新image target-only `36230584981` / PBS213012もExit0（11分37秒）、903.940 good tokens/s、555 requests、SLA1.0。両者0 errors、同一image/TP/EP/c16の一回ずつの比較でNGRAMは10.4%高い。Actionsの回収は継続中であり、反復結果ではない。
+
+NGRAMのgeneric probeは新image対照と7/8問一致し、prompt5（stack/queue説明）の最初のtokenから差があった。旧image対照反復とは8/8問・512 tokens全て一致する。旧image対照2回も全問一致、新旧imageの通常推論間では同じprompt5が異なる。この観測だけで数値誤差や投機の不具合と断定しない。比較JSONはhomeの `research-issue-16/20260926` に保存した。
 
 ## 実行経路の失敗
 
