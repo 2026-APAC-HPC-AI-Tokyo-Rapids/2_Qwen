@@ -10,7 +10,7 @@
 - 実行経過: Actions/PBSログ。
 - raw: `ssh archive-host` の `/srv/qwen-artifacts/<Actions run>/1`。
 - CPU探索・派生FPM・holdout: 同サーバーの `qwen-artifacts/research-issue-16/20260926`。
-- 公式性能は `scripts/parse-aiperf-result.py` のjoint SLA判定を使う。microbenchmarkや512-token generic parityで主催者の全件accuracy検査を代替しない。
+- 規約に合わせた性能判定には `scripts/parse-aiperf-result.py` のjoint SLA判定を使う。このスクリプトは主催者提供の公式parserではない。microbenchmarkや512-token generic parityで主催者の全件accuracy検査を代替しない。
 
 ## 校正の方法
 
@@ -32,9 +32,27 @@ Actions `36226304028` / PBS `212982` は55条件・165 raw rowsを満たし、PB
 
 汎用データによるSGLang/vLLM/TRT-LLMの36候補CPU screenは `backend-screen` に保管。SGLang P2TP4/D2TP4 c24を優先候補としたが、配備versionと実測ではないためbackendの優劣は未確定。
 
+### Dense gridと実機対照
+
+`36227604382` / `6b80944` / PBS `212992` はActionsを含め正常終了。55 full cellsと561 chunk cells（187条件×3 workers）を回収した。新dense gridで学習し、独立割当 `36226304028` の110点を検証すると、汎用op modelのAPE中央値7.479%/最大32.871%に対して実測FPMは中央値0.234%/最大3.572%。同じshapeの独立割当間の比較であり、未知shapeの精度を示すものではない。
+
+`measured-search` の24候補中23候補は補間範囲内で完走。P2TP4/D1TP8 c32はdecode batch32の長いcontextが実測範囲外で拒否され、性能0の候補として扱わない。上位はP2TP4/D2TP4 c32（1960.2 predicted good tokens/s）、同c24（1530.7）。c16（1147.4）を対照として同c32を実機へ投入した。320件の合成requestによる探索なので、固定120秒のAIPerf結果と同一のworkloadではない。
+
+最初のtarget-only `377b690` / Actions `36227731991` / PBS `212994` は、VPN更新でActionsのSSH接続が失敗した後もPBSが継続し、Exit_status=0、walltime12分33秒で完了した。rawを手動回収して規約準拠parserを再実行し、一致を確認した。canonical archiveは同runの `1/recovered-after-vpn`。
+
+|P2TP4/D1TP8 c16|good tokens/s|平均TTFT ms|平均ITL ms|
+|---|---:|---:|---:|
+|実機、target-only|903.434|388.931|15.656|
+|汎用op model|913.632|241.903|16.239|
+|実測FPM|1022.552|233.913|14.402|
+
+実機554 requests、0 errors、joint SLA fraction 1.0、OSL mismatch 0、ローカルparser valid。baseline一回の結果なので再現性は未確定。実測FPMのthroughput予測は実機より13.185%高く、汎用op modelの1.129%より誤差が大きかった。forward単体の精度改善をserving全体の精度改善と同一視しない。CPU overhead、queue/overlap、有限requestと定時間測定の差が未モデル化で、TTFTも過小予測している。
+
 ## ローカルモデル配置
 
 計算ノードのTMPDIRは `/raid` 上のext4で、観測時に約27 TB空き。`stage-qwen-node-model.sh` でtargetをノードにつき1回コピーし、同一ノードのworker間で共有する。コピー時刻/所要時間、source/destination filesystem、byte量、indexとshardサイズを記録。copy+loadの総時間と各段階を比較し、serving throughputへの効果とは分けて評価する。コピーはそのallocationの一時領域に限り、終了時に削除する。
+
+`36227604382` ではcopy203/214秒、local TP4 load31.76–32.68秒、TP8 load9.49–10.39秒。共有filesystemの `36226304028` はTP4 load789.29秒、TP8 load59.17–64.44秒。TP4のcopy+loadは短縮したが、TP8はcopyを含めると遅い。別割当の観測であり、filesystem負荷を固定した反復比較ではない。`0ba5297` 以降は子コピーに不要な76 GiBのHF `.cache` を除外する。共有source自体は削除しない。
 
 ## 投機デコード
 
@@ -49,6 +67,8 @@ node-local、c16、P2×TP4/EP1、D1×TP8/EP8の対照条件:
 EAGLE3候補は [Nebius Instruct版](https://huggingface.co/nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507)、revision `ff0f0c0999f6c86b21dfd2f5803eebc4ac712224`、CC-BY-4.0。model cardはInfinity-Instructの一般データ由来と記載。公開受理率は今回の公式条件の予測値として扱わない。[RedHat版](https://huggingface.co/RedHatAI/Qwen3-235B-A22B-Instruct-2507-speculator.eagle3)も存在するが、まずnative形式に近いNebiusを選択。[NVIDIA Thinking版](https://huggingface.co/nvidia/Qwen3-235B-A22B-Thinking-2507-Eagle3)よりターゲットと対応するInstruct版を優先する。
 
 `prepare_eagle.py` はBF16 weights、integer token maps、hidden/vocabulary shapesを確認し、元config/model card/weight SHA256/runtime configを保存。SGLangのarchitecture selectorとBF16宣言のみ変更、重み無変更。PDで必要なaux hidden statesを転送するためprefill/decode両方にEAGLE3を指定する。公式targetは変更しない。
+
+Nebius draftは572,538,880 BF16 parameters、weights 1,145,943,008 bytes（integer token mapsを含む）。NGRAM run `36227653702` の最初の致命的エラーはPD warmupの `ngram_worker.py:242`、`spec_info=None` による `accept_tokens` 属性参照であり、後続SIGKILLをOOMと解釈しない。`ed4c823` はPD初期NGRAM状態を構築する17行のsource patchを所有側build contextに追加し、新規imageで再実行する。既にoutput_idsにあるbonus tokenを重複させないゼロ初期accept lengthsをCPU torch回帰検証済み。target verificationは変更していない。GPUのE2E検証は別途必要。
 
 ## 実行経路の失敗
 
