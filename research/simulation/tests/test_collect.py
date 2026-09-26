@@ -75,6 +75,13 @@ class CollectionTests(unittest.TestCase):
         log.write_text(log.read_text().replace("tokens=4", "tokens=8"))
         self.assertNotEqual(ngram, key())
 
+    def test_deterministic_mode_is_a_comparison_condition(self):
+        self.fixture()
+        first = collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"]
+        log = self.root / "logs/prefill-0.log"
+        log.write_text(log.read_text().replace("speculative_algorithm=None", "enable_deterministic_inference=True, speculative_algorithm=None"))
+        self.assertNotEqual(first, collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"])
+
     def test_draft_weights_and_runtime_config_identify_eagle(self):
         self.fixture()
         (self.root / "logs/prefill-0.log").write_text("server_args=ServerArgs(tp_size=4, ep_size=1, speculative_algorithm='EAGLE3')\n")

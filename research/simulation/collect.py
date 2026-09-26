@@ -74,7 +74,7 @@ def worker_shapes(root):
         with path.open(errors="replace") as stream:
             line = next((line for line in stream if "server_args=ServerArgs(" in line), "")
         fields = {}
-        for key in ("tp_size", "ep_size", "pp_size", "dp_size", "context_length", "max_total_tokens", "max_running_requests", "chunked_prefill_size", "mem_fraction_static", "kv_cache_dtype", "dtype", "attention_backend", "moe_runner_backend", "speculative_algorithm", "speculative_num_steps", "speculative_eagle_topk", "speculative_num_draft_tokens", "speculative_ngram_min_bfs_breadth", "speculative_ngram_max_bfs_breadth", "speculative_ngram_match_type", "speculative_ngram_max_trie_depth", "speculative_accept_threshold_single", "speculative_accept_threshold_acc", "speculative_use_rejection_sampling"):
+        for key in ("tp_size", "ep_size", "pp_size", "dp_size", "context_length", "max_total_tokens", "max_running_requests", "chunked_prefill_size", "mem_fraction_static", "kv_cache_dtype", "dtype", "attention_backend", "moe_runner_backend", "enable_deterministic_inference", "speculative_algorithm", "speculative_num_steps", "speculative_eagle_topk", "speculative_num_draft_tokens", "speculative_ngram_min_bfs_breadth", "speculative_ngram_max_bfs_breadth", "speculative_ngram_match_type", "speculative_ngram_max_trie_depth", "speculative_accept_threshold_single", "speculative_accept_threshold_acc", "speculative_use_rejection_sampling"):
             match = re.search(r"\b" + key + r"=('[^']*'|[^,)]+)", line)
             fields[key] = match[1].strip("'") if match else None
         if line:

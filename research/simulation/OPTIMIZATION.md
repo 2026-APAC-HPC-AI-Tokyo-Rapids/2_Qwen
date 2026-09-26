@@ -48,6 +48,19 @@ Actions `36226304028` / PBS `212982` は55条件・165 raw rowsを満たし、PB
 
 実機554 requests、0 errors、joint SLA fraction 1.0、OSL mismatch 0、ローカルparser valid。baseline一回の結果なので再現性は未確定。実測FPMのthroughput予測は実機より13.185%高く、汎用op modelの1.129%より誤差が大きかった。forward単体の精度改善をserving全体の精度改善と同一視しない。CPU overhead、queue/overlap、有限requestと定時間測定の差が未モデル化で、TTFTも過小予測している。
 
+### 追加の実機観測
+
+|条件（全16 GPU、旧image）|Actions|good tokens/s|SLA fraction|平均TTFT / ITL ms|
+|---|---|---:|---:|---:|
+|P2TP4/D1TP8 c16 target-only 反復|36229736223|897.824|1.0|別途raw参照|
+|P2TP4/D2TP4 c16 target-only|36228974704|972.042|1.0|381.866 / 14.445|
+|P2TP4/D2TP4 c32 target-only|36228995654|1592.140|1.0|636.676 / 16.775|
+|P2TP4/D2TP4 c16 EAGLE3|36229580995|1489.537|1.0|545.586 / 7.986|
+
+target-only c16/c32のActions・PBS正常終了とrawを確認。c32のローカルparserを再実行して一致した。c16のPBS walltime11分34秒、c32は11分45秒。P4→D8 baseline反復はActions成功、初回との差0.62%。P4→D4 c32は現時点の通常推論の最大観測値だが、反復 `36230301903` と上限側c40 `36230331081` は別途確認する。c40/c48の追加CPU探索は実測範囲内で2230.4/2390.3 predicted good tokens/s、SLA fraction1.0/0.975。rawは `qwen16-measured-search-high-concurrency` に保管。servingを過大予測する傾向があるため実機SLAで判定する。
+
+`collect.py` はspeculation algorithm/steps/draft length、draft weight/runtime-config hashes、deterministic inference modeを比較キーへ含める。初版のように同じTP/EPのtarget-onlyと投機設定を同一条件へまとめない。archive33件の中間inventory（`inventory-a0c9726.json`）ではASPIRE15件中、通常測定として来歴の揃う候補は回収済みbaseline1件のみだった。このsnapshotは上記追加runのarchive完了前であり、最新集計ではない。
+
 ## ローカルモデル配置
 
 計算ノードのTMPDIRは `/raid` 上のext4で、観測時に約27 TB空き。`stage-qwen-node-model.sh` でtargetをノードにつき1回コピーし、同一ノードのworker間で共有する。コピー時刻/所要時間、source/destination filesystem、byte量、indexとshardサイズを記録。copy+loadの総時間と各段階を比較し、serving throughputへの効果とは分けて評価する。コピーはそのallocationの一時領域に限り、終了時に削除する。
@@ -69,6 +82,12 @@ EAGLE3候補は [Nebius Instruct版](https://huggingface.co/nebius/EAGLE3-Qwen3-
 `prepare_eagle.py` はBF16 weights、integer token maps、hidden/vocabulary shapesを確認し、元config/model card/weight SHA256/runtime configを保存。SGLangのarchitecture selectorとBF16宣言のみ変更、重み無変更。PDで必要なaux hidden statesを転送するためprefill/decode両方にEAGLE3を指定する。公式targetは変更しない。
 
 Nebius draftは572,538,880 BF16 parameters、weights 1,145,943,008 bytes（integer token mapsを含む）。NGRAM run `36227653702` の最初の致命的エラーはPD warmupの `ngram_worker.py:242`、`spec_info=None` による `accept_tokens` 属性参照であり、後続SIGKILLをOOMと解釈しない。`ed4c823` はPD初期NGRAM状態を構築する17行のsource patchを所有側build contextに追加し、新規imageで再実行する。既にoutput_idsにあるbonus tokenを重複させないゼロ初期accept lengthsをCPU torch回帰検証済み。target verificationは変更していない。GPUのE2E検証は別途必要。
+
+旧mixed-TP EAGLE3 `36227719367` / PBS212995はwarmup中のNIXL remote disconnect→NOT_FOUND→転送timeoutで失敗（Exit1、16分58秒）。home archiveをchecksum確認済み、性能値なし。equal-TP EAGLE3 `32c8539` / `36229580995` / PBS213006はExit0、11分46秒、904 requests/0 errors。decode workerごとの平均受理長は2.226/2.219（bonus tokenを含み、warmup等も含む累積値）。
+
+ただしpost-benchmarkの8 generic promptsでtarget-only c16対照との出力差が5問にあった。同じTP/EP・imageのtarget-only c16とc32間でも3問に差異があり、投機固有の誤りとは未確定。SGLangのgreedy verifyがtarget logitsのargmaxを照合することはsourceで確認したが、bitwise parityを達成したとは報告しない。既存の `--enable-deterministic-inference` による対比較（EAGLE3 `8c5d670` / `36231207022`、target-only `7bdc927` / `36231225267`）で切り分ける。主催者のfull accuracy検査は依然として別の検証である。
+
+修正版NGRAM imageはAWS build26分20秒で成功、SHA256 `994d664d6771af8f722c95d7c45c0c0cd362323c92f4b927da20e2e88aace562`、12,225,540,096 bytes。torch2.11+cu130/NIXL1.4.1/AIPerf0.12.0のCPU smokeを確認。Firmus配布SSH失敗はcontinue-on-errorでASPIRE配布・実行を妨げず、再buildなしで継続した。新image target-only対照は `499d417` / `36230584981`。
 
 ## 実行経路の失敗
 
