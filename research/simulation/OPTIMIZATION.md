@@ -11,6 +11,7 @@
 - raw: `ssh archive-host` の `/srv/qwen-artifacts/<Actions run>/1`。
 - CPU探索・派生FPM・holdout: 同サーバーの `qwen-artifacts/research-issue-16/20260926`。
 - 規約に合わせた性能判定には `scripts/parse-aiperf-result.py` のjoint SLA判定を使う。このスクリプトは主催者提供の公式parserではない。microbenchmarkや512-token generic parityで主催者の全件accuracy検査を代替しない。
+- **決定的推論モードは規約の必須条件ではない。** ユーザー指摘を受け[Q4](https://github.com/hpcac/2026-APAC-HPC-AI/blob/main/1.%20Qwen3%20AI%20Task%20Rules.md#q4-short-answers)を再確認した。浮動小数点演算順序による違いは許容され、品質判定はlogitsやtoken列の完全一致ではなく、公式FP8基準のbenchmark scoreの99%以上。generic probeの不一致だけで候補を失格にしない。投機ではtargetによる検証を維持し、計算の省略・近似を入れない。通常モードで構成探索を続け、決定的推論の2本は診断結果としてのみ扱う。
 
 ## 校正の方法
 
@@ -94,6 +95,8 @@ Nebius draftは572,538,880 BF16 parameters、weights 1,145,943,008 bytes（integ
 旧mixed-TP EAGLE3 `36227719367` / PBS212995はwarmup中のNIXL remote disconnect→NOT_FOUND→転送timeoutで失敗（Exit1、16分58秒）。home archiveをchecksum確認済み、性能値なし。equal-TP EAGLE3 `32c8539` / `36229580995` / PBS213006はExit0、11分46秒、904 requests/0 errors。decode workerごとの平均受理長は2.226/2.219（bonus tokenを含み、warmup等も含む累積値）。
 
 ただしpost-benchmarkの8 generic promptsでtarget-only c16対照との出力差が5問にあった。同じTP/EP・imageのtarget-only c16とc32間でも3問に差異があり、投機固有の誤りとは未確定。SGLangのgreedy verifyがtarget logitsのargmaxを照合することはsourceで確認したが、bitwise parityを達成したとは報告しない。既存の `--enable-deterministic-inference` による対比較（EAGLE3 `8c5d670` / `36231207022`、target-only `7bdc927` / `36231225267`）で切り分ける。主催者のfull accuracy検査は依然として別の検証である。
+
+上記診断は両方のgeneric probeで8/8問・512 tokens全て一致した。決定的推論のEAGLE3は769.837 good tokens/s、SLA0.983437、483 requests、0 errors、PBS213014 Exit0。一方target-onlyは314 requests/0 errorsでもSLA0.0のためparserが不合格とし、PBS213015 Exit1。通常モードの性能候補へこの遅い設定を強制しない。通常モードEAGLE3 c32は `f4a83e0` / `36232547785` で投入済み。
 
 修正版NGRAM imageはAWS build26分20秒で成功、SHA256 `994d664d6771af8f722c95d7c45c0c0cd362323c92f4b927da20e2e88aace562`、12,225,540,096 bytes。torch2.11+cu130/NIXL1.4.1/AIPerf0.12.0のCPU smokeを確認。Firmus配布SSH失敗はcontinue-on-errorでASPIRE配布・実行を妨げず、再buildなしで継続した。新image target-only対照は `499d417` / `36230584981`。
 
