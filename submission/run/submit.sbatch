@@ -453,7 +453,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 case "${QWEN_PLATFORM}" in
   firmus) srun --overlap --nodes="${NODE_COUNT}" --ntasks="${NODE_COUNT}" --ntasks-per-node=1 --distribution=block:block "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
-  aspire2ap) /opt/pbs/bin/pbsdsh -- "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
+  aspire2ap) /opt/pbs/bin/pbsdsh -- env "QWEN_PLATFORM=${QWEN_PLATFORM}" "OUTPUT_DIR=${OUTPUT_DIR}" "MODEL_PATH=${MODEL_PATH}" "CONTAINER_IMAGE=${CONTAINER_IMAGE}" "PROFILE=${PROFILE}" "NODE_COUNT=${NODE_COUNT}" "GPUS_PER_NODE=${GPUS_PER_NODE}" "ENROOT_LIBRARY_PATH=${ENROOT_LIBRARY_PATH}" "ENROOT_SYSCONF_PATH=${ENROOT_SYSCONF_PATH}" "ENROOT_MOUNT_HOME=${ENROOT_MOUNT_HOME}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
   genkai) mpirun -np "${NODE_COUNT}" -ppn 1 -genv PATH "${PATH}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
 esac
 server_pid=$!
