@@ -41,7 +41,20 @@ def summarize(root):
         else:
             row["algorithm_GB_per_second_slowest_rank"] = size / max(latencies) / 1e6
         summary.append(row)
-    return {"schema_version": "qwen-hardware-probe-summary/v1", "job_id": records[0]["job_id"], "hosts": sorted(hosts), "rank_count": 16, "measurements": summary, "nixl_bandwidth_gb_per_second": None, "qwen_forward_pass_calibration": None, "accuracy_improvement_demonstrated": False, "limitations": records[0]["limitations"]}
+    nixl = []
+    if any('nixl_measurements' in record for record in records):
+        expected_nixl = {(tp, tokens) for tp in (4, 8) for tokens in (128, 1024, 4000, 4200)}
+        for record in records:
+            points = record.get('nixl_measurements', [])
+            if len(points) != 8 or {(p['source_tp'], p['prompt_tokens']) for p in points} != expected_nixl:
+                raise ValueError('incomplete NIXL measurements')
+            for point in points:
+                if not point['integrity_verified'] or len(point['latency_ms_samples']) != 5 or any(not math.isfinite(x) or x <= 0 for x in point['latency_ms_samples']):
+                    raise ValueError('invalid NIXL measurement')
+        for point in records[0]['nixl_measurements']:
+            ms = statistics.median(point['latency_ms_samples'])
+            nixl.append({**point, 'median_latency_ms': ms, 'physical_GB_per_second': point['physical_bytes'] / ms / 1e6, 'effective_unique_KV_GB_per_second': point['unique_kv_bytes'] / ms / 1e6})
+    return {"nixl_segmented_writes": nixl, "schema_version": "qwen-hardware-probe-summary/v1", "job_id": records[0]["job_id"], "hosts": sorted(hosts), "rank_count": 16, "measurements": summary, "nixl_bandwidth_gb_per_second": None, "qwen_forward_pass_calibration": None, "accuracy_improvement_demonstrated": False, "limitations": records[0]["limitations"]}
 
 
 def main():

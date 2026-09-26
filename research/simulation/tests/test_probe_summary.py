@@ -40,3 +40,36 @@ class ProbeSummaryTests(unittest.TestCase):
         p.write_text(json.dumps(data))
         with self.assertRaises(ValueError):
             summary.summarize(self.root)
+
+    def add_nixl(self):
+        points = [{"source_tp": tp, "prompt_tokens": tokens, "integrity_verified": True, "latency_ms_samples": [2, 3, 4, 5, 6], "physical_bytes": 8 * 188 * tokens * 256, "unique_kv_bytes": 4 * 188 * tokens * 256} for tp in (4, 8) for tokens in (128, 1024, 4000, 4200)]
+        for p in self.root.glob("rank-*.json"):
+            data = json.loads(p.read_text())
+            data["nixl_measurements"] = points
+            p.write_text(json.dumps(data))
+
+    def test_nixl_physical_and_unique_rates(self):
+        self.add_nixl()
+        points = summary.summarize(self.root)["nixl_segmented_writes"]
+        self.assertEqual(len(points), 8)
+        self.assertEqual(points[0]["median_latency_ms"], 4)
+        self.assertAlmostEqual(points[0]["physical_GB_per_second"], 8 * 188 * 128 * 256 / 4e6)
+        self.assertEqual(points[0]["physical_GB_per_second"], 2 * points[0]["effective_unique_KV_GB_per_second"])
+
+    def test_nixl_partial_results_rejected(self):
+        self.add_nixl()
+        p = self.root / "rank-15.json"
+        data = json.loads(p.read_text())
+        data["nixl_measurements"].pop()
+        p.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "incomplete NIXL"):
+            summary.summarize(self.root)
+
+    def test_nixl_failed_integrity_rejected(self):
+        self.add_nixl()
+        p = self.root / "rank-0.json"
+        data = json.loads(p.read_text())
+        data["nixl_measurements"][0]["integrity_verified"] = False
+        p.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "invalid NIXL"):
+            summary.summarize(self.root)

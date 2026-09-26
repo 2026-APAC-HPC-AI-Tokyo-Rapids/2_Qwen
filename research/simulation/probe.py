@@ -60,8 +60,11 @@ def main():
             measure("nccl_intra_node_all_reduce", lambda tensor=tensor: dist.all_reduce(tensor, group=groups[rank // 8]), payload_bytes=size, participants=8)
             measure("nccl_inter_node_pair_all_reduce", lambda tensor=tensor: dist.all_reduce(tensor, group=pairs[local_rank]), payload_bytes=size, participants=2)
             del tensor
+        from nixl_probe import measure as measure_nixl
+
+        nixl_measurements = measure_nixl(torch, dist, rank, local_rank)
         props = torch.cuda.get_device_properties(local_rank)
-        record = {"schema_version": "qwen-hardware-probe/v1", "cluster": "aspire2ap", "job_id": os.environ["PBS_JOBID"], "hostname": socket.gethostname(), "rank": rank, "local_rank": local_rank, "torch": torch.__version__, "cuda": torch.version.cuda, "nccl": torch.cuda.nccl.version(), "gpu": {"name": props.name, "memory_bytes": props.total_memory, "sm_count": props.multi_processor_count}, "measurements": rows, "limitations": ["Synthetic BF16 GEMM, not FP8 MoE/attention/whole-forward latency", "NCCL collectives, not NIXL KV transfer", "Five temporal samples in one allocation, not independent run replication", "GPU event timings; allocation and process startup excluded"]}
+        record = {"schema_version": "qwen-hardware-probe/v1", "cluster": "aspire2ap", "job_id": os.environ["PBS_JOBID"], "hostname": socket.gethostname(), "rank": rank, "local_rank": local_rank, "torch": torch.__version__, "cuda": torch.version.cuda, "nccl": torch.cuda.nccl.version(), "gpu": {"name": props.name, "memory_bytes": props.total_memory, "sm_count": props.multi_processor_count}, "measurements": rows, "nixl_measurements": nixl_measurements, "limitations": ["Synthetic BF16 GEMM, not FP8 MoE/attention/whole-forward latency", "NIXL segmented synthetic KV writes exclude serving queues and KV block packing", "Five temporal samples in one allocation, not independent run replication", "NCCL/GEMM/copy use GPU events; NIXL uses wall time; allocation and process startup excluded"]}
         with (output / f"rank-{rank}.json").open("x") as stream:
             json.dump(record, stream, indent=2)
             stream.write("\n")
