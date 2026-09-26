@@ -6,6 +6,7 @@ import statistics
 from pathlib import Path
 
 from aisimulate_core.sdk import RustForwardPassPerfModel
+from aisimulate_core.sdk.errors import PerfDataNotAvailableError
 from calibrate import VERSION, export
 
 
@@ -30,12 +31,17 @@ def main():
                         continue
                     batch = point['batch_size']
                     metrics = {'scheduled_requests': {'num_prefill_requests': batch if role == 'prefill' else 0, 'sum_prefill_tokens': batch * 4000 if role == 'prefill' else 0, 'sum_prefill_kv_tokens': 0, 'num_decode_requests': batch if role == 'decode' else 0, 'sum_decode_kv_tokens': batch * 4016 if role == 'decode' else 0}}
-                    predicted = model.estimate_forward_pass_time_ms(metrics)
+                    try:
+                        predicted = model.estimate_forward_pass_time_ms(metrics)
+                    except PerfDataNotAvailableError as error:
+                        rows.append({'worker': point['name'], 'role': role, 'tp': tp, 'ep': ep, 'batch_size': batch, 'input_len': 4000, 'unsupported': str(error)})
+                        continue
                     actual = point[role + '_ms']
                     rows.append({'worker': point['name'], 'role': role, 'tp': tp, 'ep': ep, 'batch_size': batch, 'input_len': 4000, 'predicted_ms': predicted, 'measured_ms': actual, 'absolute_percentage_error': abs(predicted / actual - 1) * 100})
             finally:
                 model.close()
-    result = {'official_result': False, 'validation': 'input length 4000 excluded from training, other lengths from same allocation; independent AIPerf validation still required', 'median_absolute_percentage_error': statistics.median(r['absolute_percentage_error'] for r in rows), 'max_absolute_percentage_error': max(r['absolute_percentage_error'] for r in rows), 'measurements': rows}
+    errors = [r['absolute_percentage_error'] for r in rows if 'absolute_percentage_error' in r]
+    result = {'predicted_cells': len(errors), 'unsupported_cells': len(rows) - len(errors), 'official_result': False, 'validation': 'input length 4000 excluded from training, other lengths from same allocation; independent AIPerf validation still required', 'median_absolute_percentage_error': statistics.median(errors) if errors else None, 'max_absolute_percentage_error': max(errors) if errors else None, 'measurements': rows}
     (args.output / 'validation.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({k: v for k, v in result.items() if k != 'measurements'}, indent=2))
 
