@@ -181,7 +181,7 @@ run_aiperf() {
   export_file="$(find "${OUTPUT_DIR}/results/artifacts" -mindepth 2 -maxdepth 2 -type f -name profile_export_aiperf.json -print -quit)"
   [[ -n "${export_file}" && -s "${export_file}" ]]
   cp "${export_file}" "${OUTPUT_DIR}/results/profile_export_aiperf.json"
-  enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}/results:/results" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json /results/score.json --concurrency "${CONCURRENCY}" --require-eligible --command /results/aiperf-command.txt --provenance /results/aiperf-provenance.txt <<'PY'
+  if enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}/results:/results" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json /results/score.json --concurrency "${CONCURRENCY}" --require-eligible --command /results/aiperf-command.txt --provenance /results/aiperf-provenance.txt <<'PY'
 #!/usr/bin/env python3
 """Validate AIPerf's official Qwen metrics and emit the competition score."""
 
@@ -403,10 +403,12 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 PY
+  then parser_status=0; else parser_status=$?; fi
   if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
     while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/get_server_info" >"${OUTPUT_DIR}/results/server-info-${role}-${port}.json"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
     enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}:/calibration" "${CONTAINER_IMAGE}" /usr/local/bin/uv run --offline --no-project --python /opt/sglang/venv/bin/python python /calibration/scripts/greedy_probe.py /calibration/results
   fi
+  return "${parser_status}"
 }
 
 if [[ "${mode}" == node ]]; then run_node; exit; fi
