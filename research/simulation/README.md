@@ -9,7 +9,7 @@
 ```bash
 uv venv --python 3.12.12 /tmp/qwen-simulation-env
 uv pip sync --python /tmp/qwen-simulation-env/bin/python research/simulation/requirements.lock
-/tmp/qwen-simulation-env/bin/python research/simulation/run.py /tmp/qwen-simulation-output
+uv run --offline --no-project --python /tmp/qwen-simulation-env/bin/python python research/simulation/run.py /tmp/qwen-simulation-output
 ```
 
 出力先には未作成のディレクトリを指定する。`prediction.yaml` がこのコミットの唯一の実験条件。条件比較はこのファイルを変更した個別commitをpushする。matrix/dispatch/sweepで条件を切り替えない。CPU専用workflow `simulation.yml` が診断・予測・raw request・source/memory/time details・来歴をartifactへ保存する。クラスタタグは付けず、PBS/GPU計算は起動しない。依存関係は今回検証した環境を全件固定した。

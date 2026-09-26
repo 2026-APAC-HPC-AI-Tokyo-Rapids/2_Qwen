@@ -20,9 +20,9 @@ jobs:
           uv venv --python 3.12.12 .venv-simulation
           uv pip sync --python .venv-simulation/bin/python research/simulation/requirements.lock
       - name: Test calibration data semantics
-        run: .venv-simulation/bin/python -m unittest discover -s research/simulation/tests
+        run: uv run --offline --no-project --python .venv-simulation/bin/python python -m unittest discover -s research/simulation/tests
       - name: Predict the single configuration in this commit
-        run: .venv-simulation/bin/python research/simulation/run.py simulation-output
+        run: uv run --offline --no-project --python .venv-simulation/bin/python python research/simulation/run.py simulation-output
       - name: Save prediction, diagnostics, and provenance
         if: always()
         uses: actions/upload-artifact@v7

@@ -1,9 +1,9 @@
 """Exercise pending, terminal and failed scheduler observations through a shell adapter."""
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 MONITOR = Path(__file__).resolve().parents[3] / 'scripts/monitor-qwen-job.sh'
 
@@ -18,7 +18,7 @@ class MonitorTest(unittest.TestCase):
             sleeper = root / 'sleep'
             sleeper.write_text('#!/bin/bash\nexit 0\n')
             sleeper.chmod(0o755)
-            return subprocess.run(['bash', str(MONITOR), str(adapter), 'checker'], env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}'}, capture_output=True, text=True, timeout=5)
+            return subprocess.run(['bash', str(MONITOR), str(adapter), 'checker'], env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}'}, capture_output=True, text=True, timeout=5, check=False)
 
     def test_zero_status_pending(self):
         result = self.run_monitor(0, 0)
