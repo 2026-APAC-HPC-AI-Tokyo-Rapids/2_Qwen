@@ -1,13 +1,57 @@
 {
   "schema_version": "qwen-forward-plan/v1",
   "model_revision": "e156cb4efae43fbee1a1ab073f946a1377e6b969",
-  "input_lengths": [512, 2048, 4000, 4200],
-  "batch_sizes": [1, 2, 4, 8, 16, 32],
+  "input_lengths": [
+    512,
+    2048,
+    4000,
+    4200
+  ],
+  "batch_sizes": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32
+  ],
   "repetitions": 3,
   "output_length": 32,
   "workers": [
-    {"node": 0, "name": "prefill-0", "tp": 4, "ep": 1, "gpus": "0,1,2,3"},
-    {"node": 0, "name": "prefill-1", "tp": 4, "ep": 1, "gpus": "4,5,6,7"},
-    {"node": 1, "name": "decode-0", "tp": 8, "ep": 8, "gpus": "0,1,2,3,4,5,6,7"}
+    {
+      "node": 0,
+      "name": "prefill-0",
+      "tp": 4,
+      "ep": 1,
+      "gpus": "0,1,2,3",
+      "batch_sizes": [
+        1,
+        2,
+        4,
+        8,
+        16
+      ]
+    },
+    {
+      "node": 0,
+      "name": "prefill-1",
+      "tp": 4,
+      "ep": 1,
+      "gpus": "4,5,6,7",
+      "batch_sizes": [
+        1,
+        2,
+        4,
+        8,
+        16
+      ]
+    },
+    {
+      "node": 1,
+      "name": "decode-0",
+      "tp": 8,
+      "ep": 8,
+      "gpus": "0,1,2,3,4,5,6,7"
+    }
   ]
 }

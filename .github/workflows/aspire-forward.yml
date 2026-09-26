@@ -34,7 +34,7 @@ jobs:
           cp -a --no-preserve=ownership,xattr "${HOME}/.local/etc/enroot/." "${runtime_dir}/enroot-system/"
           sed -i 's/local timeout=100 pid=-1 id=0/local timeout=5000 pid=-1 id=0/' "${runtime_dir}/enroot-library/runtime.sh"
           sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
-          install -m 0755 research/simulation/forward-node.sh platforms/aspire2ap/run-forward.pbs "${runtime_dir}/scripts/"
+          install -m 0755 research/simulation/forward-node.sh research/simulation/forward_probe.py platforms/aspire2ap/run-forward.pbs "${runtime_dir}/scripts/"
           cp research/simulation/forward-plan.json "${runtime_dir}/source/forward-plan.json"
           jq -n --arg commit "${GITHUB_SHA}" --arg sha256 "${CONTAINER_SHA256}" '{schema_version:"qwen-forward-calibration/v1",cluster:"aspire2ap",commit:$commit,container_sha256:$sha256,official_result:false}' >"${runtime_dir}/source/calibration.json"
       - name: Submit the bounded two-node diagnostic

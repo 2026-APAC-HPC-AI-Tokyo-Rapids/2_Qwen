@@ -18,7 +18,7 @@ def summarize(root):
         if len(files) != 1:
             raise ValueError(f'missing or duplicate worker {worker["name"]}')
         measurements = [json.loads(line) for line in files[0].read_text().splitlines()]
-        expected = {(bs, length) for bs in plan['batch_sizes'] for length in plan['input_lengths'] if bs * (length + plan['output_length']) <= 131072}
+        expected = {(bs, length) for bs in worker.get('batch_sizes', plan['batch_sizes']) for length in plan['input_lengths'] if bs * (length + plan['output_length']) <= 131072}
         grouped = {}
         for measurement in measurements:
             key = (measurement['batch_size'], measurement['input_len'])
