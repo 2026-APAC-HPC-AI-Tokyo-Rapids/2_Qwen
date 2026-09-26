@@ -61,6 +61,12 @@ target-only c16/c32のActions・PBS正常終了とrawを確認。c32のローカ
 
 `collect.py` はspeculation algorithm/steps/draft length、draft weight/runtime-config hashes、deterministic inference modeを比較キーへ含める。初版のように同じTP/EPのtarget-onlyと投機設定を同一条件へまとめない。archive33件の中間inventory（`inventory-a0c9726.json`）ではASPIRE15件中、通常測定として来歴の揃う候補は回収済みbaseline1件のみだった。このsnapshotは上記追加runのarchive完了前であり、最新集計ではない。
 
+### ブラックボックス探索の適用判断
+
+ユーザー提案のOptunaも候補とする。現在は同一image・P4/D4・通常推論でconcurrencyだけを32→40→48と増やしてSLA境界を確認しているため、この小さな一次元探索に追加依存は導入しない。c32反復は1595.780 good tokens/s（初回1592.140、差0.23%）。c40は1839.777、joint SLA fraction 1137/1148=0.990418、平均TTFT/ITL 745.613/17.566 ms。両PBSはExit0、Actionsの回収は継続中。c48は `d133c40` / `36231906794` で投入した。
+
+draft length・concurrency・chunk size等の相互作用を探索する段階では、[Optuna ask/tell](https://optuna.readthedocs.io/en/stable/tutorial/20_recipes/009_ask_and_tell.html)で候補提案とActions実行を分離できる。目的値は実機のgood tokens/s、制約はjoint SLA fraction >=0.9とし、image・backend・決定的推論モード・workloadが異なる観測は同じstudyへ混ぜない。候補ごとにcommitを作成し、terminal状態とraw/parser確認後にtellする。通信失敗・未実行・OOMを性能0として学習させずFAILとし、予測値も実測trialへ混ぜない。出力正当性は独立した採用条件とする。seedとOptuna versionを固定し、最良候補は別割当で反復する。[TPE](https://optuna.readthedocs.io/en/stable/reference/samplers/generated/optuna.samplers.TPESampler.html)の初期ランダム試行数もGPU予算に含める。現時点でOptunaによる実機探索を実行したとは扱わない。
+
 ## ローカルモデル配置
 
 計算ノードのTMPDIRは `/raid` 上のext4で、観測時に約27 TB空き。`stage-qwen-node-model.sh` でtargetをノードにつき1回コピーし、同一ノードのworker間で共有する。コピー時刻/所要時間、source/destination filesystem、byte量、indexとshardサイズを記録。copy+loadの総時間と各段階を比較し、serving throughputへの効果とは分けて評価する。コピーはそのallocationの一時領域に限り、終了時に削除する。
