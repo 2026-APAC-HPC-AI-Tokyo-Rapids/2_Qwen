@@ -75,3 +75,5 @@ DynoSimはDynamo Router/Plannerを含むシミュレーションの入口で、A
 - [公式Qwen rulesと9/25 Addendum](https://github.com/hpcac/2026-APAC-HPC-AI/blob/main/1.%20Qwen3%20AI%20Task%20Rules.md)
 - [DynoSimの位置付け](https://docs.nvidia.com/dynamo/dev/knowledge-base/concepts/simulation/overview)
 - [AISimulate CLI](https://github.com/ai-dynamo/aisimulate/blob/992dddc7ee2bad8fd523e7db99eea4ac64254766/docs/cli/user-guide.md)
+
+校正データの収集と実測の研究は [Issue #15の記録](CALIBRATION.md) を参照。

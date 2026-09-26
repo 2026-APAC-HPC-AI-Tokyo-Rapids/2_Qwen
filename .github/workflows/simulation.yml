@@ -19,6 +19,8 @@ jobs:
         run: |
           uv venv --python 3.12.12 .venv-simulation
           uv pip sync --python .venv-simulation/bin/python research/simulation/requirements.lock
+      - name: Test calibration data semantics
+        run: .venv-simulation/bin/python -m unittest discover -s research/simulation/tests
       - name: Predict the single configuration in this commit
         run: .venv-simulation/bin/python research/simulation/run.py simulation-output
       - name: Save prediction, diagnostics, and provenance
@@ -27,4 +29,21 @@ jobs:
         with:
           name: aspire-simulation-${{ github.sha }}
           path: simulation-output
+          if-no-files-found: error
+
+  inventory:
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read existing archived measurements
+        shell: home-lab-shell {0}
+        run: |
+          install -d -m 0755 "${RUNNER_TEMP}/calibration-inventory"
+          python3 research/simulation/collect.py /srv/qwen-artifacts "${RUNNER_TEMP}/calibration-inventory/inventory.json"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: calibration-inventory-${{ github.sha }}
+          path: ${{ runner.temp }}/calibration-inventory
           if-no-files-found: error

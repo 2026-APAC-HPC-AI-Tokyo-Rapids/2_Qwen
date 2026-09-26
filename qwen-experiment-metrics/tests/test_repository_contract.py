@@ -106,7 +106,8 @@ def test_cluster_branches_do_not_cancel_each_other() -> None:
 
     assert container.count("continue-on-error: true") >= 4
     assert "fail-fast: false" in container
-    assert entry.count("needs: [validate, container]") == 3
+    assert entry.count("needs: [validate, container]") == 4
+    assert "aspire-calibration:" in entry
 
 
 def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:

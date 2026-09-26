@@ -1,0 +1,79 @@
+name: ASPIRE hardware calibration probes
+on:
+  workflow_call:
+    inputs:
+      container_sha256: {required: true, type: string}
+      container_size: {required: true, type: string}
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 1440
+    defaults:
+      run:
+        shell: aspire2p-shell --github-shell {0}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Stage scripts with the existing verified container
+        id: stage
+        env:
+          CONTAINER_SHA256: ${{ inputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ inputs.container_size }}
+        run: |
+          source "${HOME}/.local/.setenv"
+          archive="/scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers/${GITHUB_RUN_ID}.sqsh"
+          [[ "$(stat -c '%s' "${archive}")" == "${CONTAINER_SIZE}" ]]
+          runtime_dir="$(mktemp -d /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs/calibration-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX)"
+          printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
+          install -d -m 0755 "${runtime_dir}/scripts" "${runtime_dir}/results" "${runtime_dir}/logs" "${runtime_dir}/source" "${runtime_dir}/enroot-library" "${runtime_dir}/enroot-system"
+          ln -s "${archive}" "${runtime_dir}/sglang.sqsh"
+          cp "/scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers/${GITHUB_RUN_ID}.container-sidecar.json" "${runtime_dir}/source/container-sidecar.json"
+          cp -a --no-preserve=ownership,xattr "${HOME}/.local/lib/enroot/." "${runtime_dir}/enroot-library/"
+          cp -a --no-preserve=ownership,xattr "${HOME}/.local/etc/enroot/." "${runtime_dir}/enroot-system/"
+          sed -i 's/local timeout=100 pid=-1 id=0/local timeout=5000 pid=-1 id=0/' "${runtime_dir}/enroot-library/runtime.sh"
+          sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
+          install -m 0755 research/simulation/probe.py research/simulation/probe-node.sh platforms/aspire2ap/run-calibration.pbs "${runtime_dir}/scripts/"
+          jq -n --arg commit "${GITHUB_SHA}" --arg sha256 "${CONTAINER_SHA256}" '{schema_version:"qwen-hardware-calibration/v1",cluster:"aspire2ap",commit:$commit,container_sha256:$sha256,official_result:false}' >"${runtime_dir}/source/calibration.json"
+      - name: Submit the bounded two-node diagnostic
+        id: submit
+        env:
+          RUNTIME_DIR: ${{ steps.stage.outputs.runtime_dir }}
+        run: |
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=2:ncpus=112:ngpus=8:mem=256gb:mpiprocs=1' -l place=scatter:excl -v "RUNTIME_DIR=${RUNTIME_DIR}" -o "${RUNTIME_DIR}/logs/pbs.log" -j oe -N qwen_calibration "${RUNTIME_DIR}/scripts/run-calibration.pbs")"
+          [[ "${job_id}" =~ ^[0-9]+([.][A-Za-z0-9.-]+)?$ ]]
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+      - name: Wait for terminal scheduler state and all 16 rank results
+        shell: bash
+        env:
+          PBS_JOB_ID: ${{ steps.submit.outputs.job_id }}
+          RUNTIME_DIR: ${{ steps.stage.outputs.runtime_dir }}
+        run: scripts/monitor-qwen-job.sh aspire2p-shell platforms/aspire2ap/check-calibration.sh
+      - name: Recover evidence including failure logs
+        if: always() && steps.stage.outputs.runtime_dir != ''
+        shell: home-lab-shell {0}
+        env:
+          RUNTIME_DIR: ${{ steps.stage.outputs.runtime_dir }}
+        run: |
+          destination="${RUNNER_TEMP}/qwen-calibration"
+          install -d -m 0755 "${destination}"
+          aspire2p-shell --pull "${RUNTIME_DIR}/logs" "${destination}/logs"
+          aspire2p-shell --pull "${RUNTIME_DIR}/results" "${destination}/results"
+          aspire2p-shell --pull "${RUNTIME_DIR}/source" "${destination}/source"
+      - name: Validate and summarize the recovered rank measurements
+        shell: bash
+        run: python3 research/simulation/summarize_probe.py "${RUNNER_TEMP}/qwen-calibration" "${RUNNER_TEMP}/qwen-calibration/summary.json"
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.stage.outputs.runtime_dir != ''
+        with:
+          name: qwen-aspire2ap-calibration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qwen-calibration
+          if-no-files-found: error
+      - name: Remove only this diagnostic allocation and staging directory
+        if: always() && steps.stage.outputs.runtime_dir != ''
+        env:
+          PBS_JOB_ID: ${{ steps.submit.outputs.job_id }}
+          RUNTIME_DIR: ${{ steps.stage.outputs.runtime_dir }}
+        run: |
+          if [[ -n "${PBS_JOB_ID}" ]] && /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; then state="$(/opt/pbs/bin/qstat -f "${PBS_JOB_ID}" | awk '/^[[:space:]]*job_state =/ {print $3}')"; if [[ "${state}" != F ]]; then /opt/pbs/bin/qdel "${PBS_JOB_ID}"; fi; fi
+          rm -rf -- "${RUNTIME_DIR:?}"
