@@ -35,7 +35,7 @@ def measure(runner, plan, destination, tp_rank):
             if tp_rank == 0:
                 output.write(json.dumps({'kind': 'prefill', 'batch_size': batch_size, 'input_len': length, 'prefix_len': prefix, 'latency_ms_samples': samples, 'warmup_iterations': 3, 'kv_seed': 'real_model_forward'}) + '\n')
                 output.flush()
-        for batch_size, length in itertools.product(plan['decode_batch_sizes'], (4000, 4200)):
+        for batch_size, length in itertools.product(plan['decode_batch_sizes'], plan.get('decode_input_lengths', [4000, 4200])):
             if batch_size > runner.max_batch_size(length, 32):
                 continue
             samples = []

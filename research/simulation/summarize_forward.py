@@ -40,7 +40,7 @@ def summarize(root):
                 raise ValueError('missing or duplicate chunk measurements')
             points = [json.loads(line) for line in files[0].read_text().splitlines()]
             expected_chunks = {('prefill', b, p, n) for b in plan['chunk_batch_sizes'] for p in plan['chunk_prefix_lengths'] for n in plan['chunk_input_lengths']}
-            expected_chunks |= {('decode', b, 0, n) for b in plan['decode_batch_sizes'] for n in (4000, 4200) if b * (n + 32) <= 131072}
+            expected_chunks |= {('decode', b, 0, n) for b in plan['decode_batch_sizes'] for n in plan.get('decode_input_lengths', [4000, 4200]) if b * (n + 32) <= 131072}
             keys = [(p['kind'], p['batch_size'], p['prefix_len'], p['input_len']) for p in points]
             if len(keys) != len(expected_chunks) or set(keys) != expected_chunks:
                 raise ValueError('incomplete chunk/decode measurements')

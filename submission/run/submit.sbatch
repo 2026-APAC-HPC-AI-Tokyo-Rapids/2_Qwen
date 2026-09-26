@@ -84,6 +84,11 @@ run_node() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
+  if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.model_storage // "shared"' "${OUTPUT_DIR}/source/aspire-serving.json")" == node_local ]]; then
+    bash "${OUTPUT_DIR}/scripts/stage-qwen-node-model.sh" "${MODEL_PATH}" "${node_tmp}/model" "${OUTPUT_DIR}/logs/node-${node_rank}-model-copy.log"
+    MODEL_PATH="${node_tmp}/model"
+  fi
+
   hca_devices=()
   for state_file in /sys/class/infiniband/*/ports/1/state; do if grep -q ACTIVE "${state_file}"; then device="${state_file#/sys/class/infiniband/}"; hca_devices+=("${device%%/*}:1"); fi; done
   [[ "${#hca_devices[@]}" -gt 0 ]]
