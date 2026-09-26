@@ -61,6 +61,9 @@ cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/b
 cp --no-preserve=ownership,xattr "${source_dir}/LICENSE" "${source_dir}/README.md" "${source_dir}/python/pyproject.toml" "${context}/sglang-project-metadata/python/"
 cp -a --no-preserve=ownership,xattr "${source_dir}" "${context}/sglang-source"
 rm -rf -- "${context}/sglang-source/.git"
+cp "${GITHUB_WORKSPACE}/patches/sglang/ngram-pd-initial-state.patch" "${context}/patches/"
+git -C "${context}/sglang-source" apply --check "${context}/patches/ngram-pd-initial-state.patch"
+git -C "${context}/sglang-source" apply "${context}/patches/ngram-pd-initial-state.patch"
 printf '%s\n' "${sglang_commit}" >"${context}/sglang-commit.txt"
 
 base_reference="$(sed -n 's/^FROM //p' "${GITHUB_WORKSPACE}/containers/Dockerfile")"
@@ -69,7 +72,7 @@ qwen_object_format="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-object-forma
 sglang_object_format="$(git -C "${source_dir}" rev-parse --show-object-format)"
 dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/Dockerfile)"
 build_steps_json="$(find "${GITHUB_WORKSPACE}/containers" -maxdepth 1 -type f -name '*.sh' -print | sort | while read -r build_step; do jq -cn --arg path "${build_step#"${GITHUB_WORKSPACE}/"}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${build_step}")" '{path:$path,blob_oid:$oid}'; done | jq -s '.')"
-patches_json='[]'
+patches_json="$(jq -cn --arg path 'patches/sglang/ngram-pd-initial-state.patch' --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object patches/sglang/ngram-pd-initial-state.patch)" '[{path:$path,blob_oid:$oid}]')"
 jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITHUB_SHA}" --arg sglang_object_format "${sglang_object_format}" --arg sglang_commit "${sglang_commit}" --arg dockerfile_blob_oid "${dockerfile_blob_oid}" --arg base_reference "${base_reference}" --arg base_manifest_sha256 "${base_manifest_sha256}" --argjson build_steps "${build_steps_json}" --argjson patches "${patches_json}" '{schema_version:"oci-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"container_build_definition",object_hash_algorithm:$qwen_object_format,oid:$qwen_commit},{repository_id:"apac2026-sglang",commit_role:"sglang_source",object_hash_algorithm:$sglang_object_format,oid:$sglang_commit}],recipe:{path:"containers/Dockerfile",blob_oid:$dockerfile_blob_oid,build_steps:$build_steps},applied_patches:$patches,base_oci:{reference:$base_reference,manifest_sha256:$base_manifest_sha256}}' >"${context}/apac-manifest.json"
 
 buildah --root "${storage_root}" --runroot "${run_root}" bud --isolation chroot --network host --layers --cache-from "${BUILD_CACHE_REPOSITORY}" --cache-to "${BUILD_CACHE_REPOSITORY}" --cache-ttl 336h --file "${context}/containers/Dockerfile" --tag "${image}" "${context}" 2>&1 | tee "${BUILD_DIR}/logs/buildah.log"

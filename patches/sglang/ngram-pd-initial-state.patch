@@ -1,0 +1,26 @@
+--- a/python/sglang/srt/speculative/spec_info.py
++++ b/python/sglang/srt/speculative/spec_info.py
+@@ -184,6 +184,23 @@
+             return build_eagle_disagg_draft_input(
+                 batch, server_args, last_tokens_tensor, future_map
+             )
++        if self.is_ngram():
++            from sglang.srt.speculative.ngram_info import NgramVerifyInput
++
++            # PD already appended the prefill bonus token to req.output_ids.
++            # Seed an empty previous accept span: overlap must not append it twice.
++            count = len(batch.reqs)
++            stride = server_args.speculative_num_draft_tokens
++            spec_info = NgramVerifyInput(
++                draft_token_num=stride,
++                new_seq_lens=batch.seq_lens.clone(),
++                accept_tokens=torch.zeros(count * stride, dtype=torch.int32, device=batch.device),
++                accept_lens=torch.zeros(count, dtype=torch.int32, device=batch.device),
++            )
++            if batch.enable_overlap:
++                spec_info.future_indices = batch.req_pool_indices
++                future_map.publish(spec_info.future_indices, batch.seq_lens)
++            return spec_info
+         return None
+ 
+     def need_topk(self) -> bool:
