@@ -30,7 +30,7 @@ class CollectionTests(unittest.TestCase):
         (self.root / "run-success").touch()
         logs = self.root / "logs"
         logs.mkdir()
-        (logs / "prefill-0.log").write_text("server_args=ServerArgs(tp_size=4, ep_size=1)\n")
+        (logs / "prefill-0.log").write_text("server_args=ServerArgs(tp_size=4, ep_size=1, speculative_algorithm=None)\n")
         (logs / "node-0-environment.log").write_text("GPU 0: NVIDIA H100 80GB HBM3\n")
         data = {k: {"unit": unit, "avg": 1.0} for k, unit in collect.METRICS.items()}
         data.update({"benchmark_id": "fixture", "was_cancelled": False, "error_summary": [], "input_config": {"phases": [{"kind": "profiling", "type": "concurrency", "concurrency": 16}]}})
@@ -61,6 +61,32 @@ class CollectionTests(unittest.TestCase):
         self.fixture()
         (self.root / "score.json").unlink()
         self.assertEqual(collect.collect(self.root, "aspire2ap")["summary"]["candidate_runs"], 0)
+
+    def test_speculation_is_a_comparison_condition(self):
+        self.fixture()
+        def key():
+            return collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"]
+        baseline = key()
+        log = self.root / "logs/prefill-0.log"
+        log.write_text("server_args=ServerArgs(tp_size=4, ep_size=1, speculative_algorithm='NGRAM', speculative_num_draft_tokens=4)\n")
+        ngram = key()
+        self.assertIsNotNone(ngram)
+        self.assertNotEqual(baseline, ngram)
+        log.write_text(log.read_text().replace("tokens=4", "tokens=8"))
+        self.assertNotEqual(ngram, key())
+
+    def test_draft_weights_and_runtime_config_identify_eagle(self):
+        self.fixture()
+        (self.root / "logs/prefill-0.log").write_text("server_args=ServerArgs(tp_size=4, ep_size=1, speculative_algorithm='EAGLE3')\n")
+        run = collect.collect(self.root, "aspire2ap")["runs"][0]
+        self.assertIn("missing_draft_identity", run["comparison_blockers"])
+        draft = {"repository": "fixture", "revision": "one", "weight_sha256": "weights1", "runtime_config_sha256": "config1"}
+        self.write("source/source/draft-provenance.json", draft)
+        first = collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"]
+        self.assertIsNotNone(first)
+        draft["weight_sha256"] = "weights2"
+        self.write("source/source/draft-provenance.json", draft)
+        self.assertNotEqual(first, collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"])
 
     def test_unit_mismatch_is_not_rescaled_silently(self):
         data = self.fixture()

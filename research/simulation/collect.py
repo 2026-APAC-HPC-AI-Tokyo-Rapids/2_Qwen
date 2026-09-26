@@ -74,7 +74,7 @@ def worker_shapes(root):
         with path.open(errors="replace") as stream:
             line = next((line for line in stream if "server_args=ServerArgs(" in line), "")
         fields = {}
-        for key in ("tp_size", "ep_size", "pp_size", "dp_size", "context_length", "max_total_tokens", "max_running_requests", "chunked_prefill_size", "mem_fraction_static", "kv_cache_dtype", "dtype", "attention_backend", "moe_runner_backend"):
+        for key in ("tp_size", "ep_size", "pp_size", "dp_size", "context_length", "max_total_tokens", "max_running_requests", "chunked_prefill_size", "mem_fraction_static", "kv_cache_dtype", "dtype", "attention_backend", "moe_runner_backend", "speculative_algorithm", "speculative_num_steps", "speculative_eagle_topk", "speculative_num_draft_tokens", "speculative_ngram_min_bfs_breadth", "speculative_ngram_max_bfs_breadth", "speculative_ngram_match_type", "speculative_ngram_max_trie_depth", "speculative_accept_threshold_single", "speculative_accept_threshold_acc", "speculative_use_rejection_sampling"):
             match = re.search(r"\b" + key + r"=('[^']*'|[^,)]+)", line)
             fields[key] = match[1].strip("'") if match else None
         if line:
@@ -88,6 +88,9 @@ def collect_run(root, provenance_path, target):
     model_path, sidecar_path = source_dir / "model.json", source_dir / "container-sidecar.json"
     model = read_json(model_path) if model_path.exists() else {}
     sidecar = read_json(sidecar_path) if sidecar_path.exists() else {}
+    draft_path = source_dir / "draft-provenance.json"
+    draft = read_json(draft_path) if draft_path.exists() else {}
+    draft_identity = {k: draft.get(k) for k in ("repository", "revision", "weight_sha256", "runtime_config_sha256")} if draft else None
     shapes = worker_shapes(root)
     exports, hashes, duplicates = [], set(), []
     for path in sorted(root.rglob("profile_export_aiperf.json"), key=lambda p: (len(p.parts), str(p))):
@@ -113,6 +116,11 @@ def collect_run(root, provenance_path, target):
         problems.append("missing_or_ambiguous_benchmark_export")
     if not shapes:
         problems.append("missing_worker_settings")
+    algorithms = {w["settings"]["speculative_algorithm"] for w in shapes}
+    if None in algorithms:
+        problems.append("missing_speculation_identity")
+    if algorithms - {None, "None", "NGRAM"} and (not draft_identity or not all(draft_identity.values())):
+        problems.append("missing_draft_identity")
     if not model.get("model", {}).get("revision"):
         problems.append("missing_model_revision")
     if not provenance.get("container", {}).get("sha256"):
@@ -128,7 +136,7 @@ def collect_run(root, provenance_path, target):
         hardware.append({"source": evidence(path), "observations": lines})
     if not hardware:
         problems.append("missing_hardware_observation")
-    condition = {"cluster": provenance.get("cluster"), "model": model.get("model", {}).get("revision"), "container": provenance.get("container", {}).get("sha256"), "sglang": sidecar.get("source_commits", {}).get("sglang"), "profile": provenance.get("profile"), "workers": [{"worker": w["worker"], "settings": w["settings"]} for w in shapes], "workload": exports[0]["workload"] if len(exports) == 1 else None}
+    condition = {"cluster": provenance.get("cluster"), "model": model.get("model", {}).get("revision"), "container": provenance.get("container", {}).get("sha256"), "sglang": sidecar.get("source_commits", {}).get("sglang"), "profile": provenance.get("profile"), "draft": draft_identity, "workers": [{"worker": w["worker"], "settings": w["settings"]} for w in shapes], "workload": exports[0]["workload"] if len(exports) == 1 else None}
     condition_key = hashlib.sha256(json.dumps(condition, sort_keys=True).encode()).hexdigest() if not problems else None
     return {"condition_key": condition_key, "root": str(root), "provenance": provenance, "source": evidence(provenance_path), "model": model.get("model"), "sglang_commit": sidecar.get("source_commits", {}).get("sglang"), "worker_settings": shapes, "hardware": hardware, "exports": exports, "duplicate_exports": duplicates, "port_traffic": [counter_rates(p) for p in sorted(root.rglob("infiniband-node-*.csv"))], "comparison_blockers": sorted(set(problems)), "candidate_for_matched_comparison": not problems}
 
