@@ -114,6 +114,7 @@ run_node() {
     args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --max-total-tokens 131072 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
     if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}" --ep-size "${ep:-1}"); else args+=(--ep-size "${ep}" --max-running-requests 256); fi
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.speculation.algorithm' "${OUTPUT_DIR}/source/aspire-serving.json")" == NGRAM && "${role}" == decode ]]; then args+=(--speculative-algorithm NGRAM --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-ngram-max-bfs-breadth 1); fi
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.deterministic_inference // false' "${OUTPUT_DIR}/source/aspire-serving.json")" == true ]]; then args+=(--enable-deterministic-inference); fi
     draft_mount=()
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.speculation.algorithm' "${OUTPUT_DIR}/source/aspire-serving.json")" == EAGLE3 ]]; then
       args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")")
