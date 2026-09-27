@@ -51,3 +51,7 @@ TP8/EP8とc36反復では、SSH wrapperが有効なPBS pending応答を出しな
 ## 係数固定後の新規run評価
 
 係数とc40予測は `ffb43b8`（2026-09-27 07:04:48 UTC）で固定済みである。その後に投入・完走した通常target-only run `36305644422`（010/021）を追加評価し、係数を再学習せず適用した。既知のserving構成に対する新しいrunの検証であり、新しいbackendや投機構成の外挿検証ではない。過去4runの分割評価とは別に報告し、物理ノード対も明記する。入力と出力はhome archiveの `research-issue-17/20260927/goodput-prospective{,-input}.json`、検証結果と追加runはIssue #17へ記録する。
+
+## Routerの実効更新周期
+
+router 0.3.2のpolicy設定 `load_check_interval_secs=5` は共有LoadMonitorの実効周期ではなかった。実行ログは30秒を示し、`AppContext::with_load_monitor` が `worker_startup_check_interval_secs` を使うことを確認した。5秒を実効周期とした以前のIssueコメントは訂正する。power-of-twoの30秒と1秒を、同じ004/009・c40・投機3/4で比較する。round-robinとは別要因として評価する。集計キーには実効周期の設定と物理ノード対も含め、識別できないrunを同条件候補にしない。

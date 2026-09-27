@@ -28,6 +28,7 @@ class CollectionTests(unittest.TestCase):
         self.write("source/source/container-sidecar.json", {"source_commits": {"sglang": "fixture"}})
         self.write("score.json", {"concurrency": 16, "official_validation": {"valid": True}})
         self.write("source/source/aspire-serving.json", {"concurrency": 16})
+        (self.root / "source/source/node-addresses.tsv").write_text("0\tnode-a\t10.0.0.1\n1\tnode-b\t10.0.0.2\n")
         (self.root / "run-success").touch()
         logs = self.root / "logs"
         logs.mkdir()
@@ -54,6 +55,30 @@ class CollectionTests(unittest.TestCase):
         second = collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"]
         self.assertIsNotNone(second)
         self.assertNotEqual(first, second)
+
+    def test_load_poll_period_separates_comparison_groups(self):
+        self.fixture()
+        self.write("source/source/aspire-serving.json", {"concurrency": 16, "prefill_routing_policy": "power_of_two"})
+        first = collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"]
+        self.write("source/source/aspire-serving.json", {"concurrency": 16, "prefill_routing_policy": "power_of_two", "router_load_poll_seconds": 1})
+        second = collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"]
+        self.assertIsNotNone(second)
+        self.assertNotEqual(first, second)
+
+    def test_physical_node_pair_separates_comparison_groups(self):
+        self.fixture()
+        first = collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"]
+        (self.root / "source/source/node-addresses.tsv").write_text("0\tnode-c\t10.0.0.3\n1\tnode-d\t10.0.0.4\n")
+        second = collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"]
+        self.assertIsNotNone(second)
+        self.assertNotEqual(first, second)
+
+    def test_missing_physical_nodes_blocks_comparison(self):
+        self.fixture()
+        (self.root / "source/source/node-addresses.tsv").unlink()
+        run = collect.collect(self.root, "aspire2ap")["runs"][0]
+        self.assertIsNone(run["condition_key"])
+        self.assertIn("missing_physical_node_identity", run["comparison_blockers"])
 
     def test_other_backend_requires_native_worker_evidence(self):
         self.fixture()
