@@ -55,3 +55,13 @@ TP8/EP8とc36反復では、SSH wrapperが有効なPBS pending応答を出しな
 ## Routerの実効更新周期
 
 router 0.3.2のpolicy設定 `load_check_interval_secs=5` は共有LoadMonitorの実効周期ではなかった。実行ログは30秒を示し、`AppContext::with_load_monitor` が `worker_startup_check_interval_secs` を使うことを確認した。5秒を実効周期とした以前のIssueコメントは訂正する。power-of-twoの30秒と1秒を、同じ004/009・c40・投機3/4で比較する。round-robinとは別要因として評価する。集計キーには実効周期の設定と物理ノード対も含め、識別できないrunを同条件候補にしない。
+
+## 追加探索の終了と残す構成
+
+クレジット節約の指示により、2026-09-27の追加探索を終了する。条件別の値・raw検証・実行リンクの正本は [Issue #17](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/17) とそのコメントを参照する。
+
+残すSGLang候補は `research/aspire-eagle-roundrobin-fp8` の `a94f8eb`：c40、EAGLE3 3 steps/topk1/4 draft tokens、P2×TP4/D2×TP4 EP1、prefill round-robin、FP8 KV、固定NCCL port。004/009上の同一commitで2回完走した。通常routingの対照よりgoodputが改善したが、BF16 round-robinよりわずかに低い。FP8の利点はKV領域の半減であり、速度向上を保証しない。主催者の完全なaccuracy評価は未実施で、mainへのマージはしていない。
+
+投機長、concurrency、TP/EP、chunk、power-of-twoおよびvLLMの追加探索は採用根拠が弱いため打ち切る。TensorRT-LLMは最後の実機試行でもリクエスト処理に失敗し、性能値を得られなかった。実装・起動調査の履歴を保持するが、性能比較完了とは扱わず、追加build・修正・再試行は行わない。
+
+経験的goodput係数は固定後の2つの新規target-only runでも評価し、予測誤差は約10〜11%残った。これは既知構成に対する経験的補正であり、serving engineのqueue/TTFT/ITLモデル自体の改善ではない。
