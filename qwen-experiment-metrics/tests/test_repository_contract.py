@@ -81,7 +81,7 @@ def test_scheduler_monitor_tolerates_temporary_connection_failures() -> None:
     assert '[[ "${status}" -eq 75 ]]' in monitor
     assert '[[ "${status}" -eq 124 || "${status}" -eq 255 ]]' in monitor
     assert '[[ "${connection_failure_seconds}" -lt 300 ]]' in monitor
-    assert 'timeout --foreground 60 "${remote_shell}"' in monitor
+    assert 'timeout --foreground 180 "${remote_shell}"' in monitor
     assert "sleep 15" in monitor
     assert "sleep 30" in monitor
 
