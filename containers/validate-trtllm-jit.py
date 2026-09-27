@@ -27,7 +27,7 @@ source = b"""
 #include <deep_gemm/fp8_gemm_impl.cuh>
 __global__ void header_smoke() {}
 """
-flags = ["-std=c++17", "--gpu-architecture=sm_90a", f"-I{include}", "-D__FORCE_INCLUDE_CUDA_FP16_HPP_FROM_FP16_H__=1", "-D__FORCE_INCLUDE_CUDA_BF16_HPP_FROM_BF16_H__=1"]
+flags = ["-std=c++17", "--gpu-architecture=sm_90a", "-default-device", "--ptxas-options=-allow-expensive-optimizations=true", "--ptxas-options=--register-usage-level=10", "--diag-suppress=161,174,177,940", f"-I{include}", "-D__FORCE_INCLUDE_CUDA_FP16_HPP_FROM_FP16_H__=1", "-D__FORCE_INCLUDE_CUDA_BF16_HPP_FROM_BF16_H__=1"]
 options = (c.c_char_p * len(flags))(*(flag.encode() for flag in flags))
 program = c.c_void_p()
 assert nvrtc.nvrtcCreateProgram(c.byref(program), source, b"header_smoke.cu", 0, None, None) == 0
