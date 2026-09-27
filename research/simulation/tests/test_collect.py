@@ -47,6 +47,21 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(len(result["runs"][0]["duplicate_exports"]), 1)
         self.assertTrue(result["runs"][0]["candidate_for_matched_comparison"])
 
+    def test_routing_policy_separates_comparison_groups(self):
+        self.fixture()
+        first = collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"]
+        self.write("source/source/aspire-serving.json", {"concurrency": 16, "prefill_routing_policy": "power_of_two"})
+        second = collect.collect(self.root, "aspire2ap")["runs"][0]["condition_key"]
+        self.assertIsNotNone(second)
+        self.assertNotEqual(first, second)
+
+    def test_other_backend_requires_native_worker_evidence(self):
+        self.fixture()
+        self.write("source/source/aspire-serving.json", {"concurrency": 16, "backend": "vllm"})
+        run = collect.collect(self.root, "aspire2ap")["runs"][0]
+        self.assertIsNone(run["condition_key"])
+        self.assertIn("unsupported_backend_worker_evidence", run["comparison_blockers"])
+
     def test_other_h100_cluster_is_not_aspire(self):
         self.fixture(cluster="genkai")
         result = collect.collect(self.root, "aspire2ap")

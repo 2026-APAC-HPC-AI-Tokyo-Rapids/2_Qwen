@@ -106,7 +106,11 @@ def collect_run(root, provenance_path, target):
     scores = [read_json(p) for p in score_paths]
     config_path = source_dir / "aspire-serving.json"
     serving_config = read_json(config_path) if config_path.exists() else None
+    backend = (serving_config or {}).get("backend", "sglang")
+    routing = (serving_config or {}).get("prefill_routing_policy", "cache_aware")
     problems = []
+    if backend != "sglang":
+        problems.append("unsupported_backend_worker_evidence")
     if not any(p.is_file() and not any(part.startswith("rank-") for part in p.relative_to(root).parts) for p in root.rglob("run-success")):
         problems.append("missing_terminal_success_marker")
     if len(scores) != 1 or scores[0].get("official_validation", {}).get("valid") is not True:
@@ -147,9 +151,9 @@ def collect_run(root, provenance_path, target):
         hardware.append({"source": evidence(path), "observations": lines})
     if not hardware:
         problems.append("missing_hardware_observation")
-    condition = {"cluster": provenance.get("cluster"), "model": model.get("model", {}).get("revision"), "container": provenance.get("container", {}).get("sha256"), "sglang": sidecar.get("source_commits", {}).get("sglang"), "profile": provenance.get("profile"), "draft": draft_identity, "workers": [{"worker": w["worker"], "settings": w["settings"]} for w in shapes], "workload": exports[0]["workload"] if len(exports) == 1 else None}
+    condition = {"backend": backend, "prefill_routing_policy": routing, "cluster": provenance.get("cluster"), "model": model.get("model", {}).get("revision"), "container": provenance.get("container", {}).get("sha256"), "sglang": sidecar.get("source_commits", {}).get("sglang"), "profile": provenance.get("profile"), "draft": draft_identity, "workers": [{"worker": w["worker"], "settings": w["settings"]} for w in shapes], "workload": exports[0]["workload"] if len(exports) == 1 else None}
     condition_key = hashlib.sha256(json.dumps(condition, sort_keys=True).encode()).hexdigest() if not problems else None
-    return {"condition_key": condition_key, "root": str(root), "provenance": provenance, "source": evidence(provenance_path), "model": model.get("model"), "sglang_commit": sidecar.get("source_commits", {}).get("sglang"), "serving_config": {"source": evidence(config_path), "value": serving_config} if serving_config is not None else None, "local_scores": [{"source": evidence(p), "value": score} for p, score in zip(score_paths, scores)], "worker_settings": shapes, "hardware": hardware, "exports": exports, "duplicate_exports": duplicates, "port_traffic": [counter_rates(p) for p in sorted(root.rglob("infiniband-node-*.csv"))], "comparison_blockers": sorted(set(problems)), "candidate_for_matched_comparison": not problems}
+    return {"backend": backend, "prefill_routing_policy": routing, "condition_key": condition_key, "root": str(root), "provenance": provenance, "source": evidence(provenance_path), "model": model.get("model"), "sglang_commit": sidecar.get("source_commits", {}).get("sglang"), "serving_config": {"source": evidence(config_path), "value": serving_config} if serving_config is not None else None, "local_scores": [{"source": evidence(p), "value": score} for p, score in zip(score_paths, scores)], "worker_settings": shapes, "hardware": hardware, "exports": exports, "duplicate_exports": duplicates, "port_traffic": [counter_rates(p) for p in sorted(root.rglob("infiniband-node-*.csv"))], "comparison_blockers": sorted(set(problems)), "candidate_for_matched_comparison": not problems}
 
 
 def collect(root, target):
