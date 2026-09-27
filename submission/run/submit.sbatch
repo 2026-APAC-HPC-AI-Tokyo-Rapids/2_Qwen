@@ -166,7 +166,7 @@ run_router() {
     jq -Rn '[inputs | split("\t") | {role:.[0],url:(.[1]+":"+.[2])}] | {hostname:"0.0.0.0",port:8000,backend:"pytorch",context_servers:{num_instances:([.[] | select(.role=="prefill")] | length),urls:[.[] | select(.role=="prefill") | .url]},generation_servers:{num_instances:([.[] | select(.role=="decode")] | length),urls:[.[] | select(.role=="decode") | .url]}}' <"${OUTPUT_DIR}/source/worker-endpoints.tsv" >"${OUTPUT_DIR}/source/trt-disagg.json"
     router_args=(/opt/trtllm/venv/bin/trtllm-serve disaggregated -c /run-source/trt-disagg.json)
   fi
-  enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${MODEL_PATH}:/model" -m "${OUTPUT_DIR}/source:/run-source" "${CONTAINER_IMAGE}" "${router_args[@]}" &
+  enroot start -e NVIDIA_VISIBLE_DEVICES=none -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e HOME=/tmp -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${MODEL_PATH}:/model" -m "${OUTPUT_DIR}/source:/run-source" "${CONTAINER_IMAGE}" "${router_args[@]}" &
   child_pid=$!
   wait "${child_pid}"
   child_pid=
