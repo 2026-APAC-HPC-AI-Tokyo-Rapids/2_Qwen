@@ -162,11 +162,13 @@ run_router() {
   router_args=(/opt/sglang/venv/bin/python -m sglang_router.launch_router --pd-disaggregation)
   while IFS=$'\t' read -r role host port bootstrap; do if [[ "${role}" == prefill ]]; then router_args+=(--prefill "http://${host}:${port}" "${bootstrap}"); else router_args+=(--decode "http://${host}:${port}"); fi; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
   router_args+=(--host 0.0.0.0 --port 8000)
+  router_environment=(-e NVIDIA_VISIBLE_DEVICES=none)
   if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.backend // "sglang"' "${OUTPUT_DIR}/source/aspire-serving.json")" == trtllm ]]; then
+    router_environment=(-e NVIDIA_VISIBLE_DEVICES=0 -e NVIDIA_DRIVER_CAPABILITIES=compute,utility)
     jq -Rn '[inputs | split("\t") | {role:.[0],url:(.[1]+":"+.[2])}] | {hostname:"0.0.0.0",port:8000,backend:"pytorch",context_servers:{num_instances:([.[] | select(.role=="prefill")] | length),urls:[.[] | select(.role=="prefill") | .url]},generation_servers:{num_instances:([.[] | select(.role=="decode")] | length),urls:[.[] | select(.role=="decode") | .url]}}' <"${OUTPUT_DIR}/source/worker-endpoints.tsv" >"${OUTPUT_DIR}/source/trt-disagg.json"
     router_args=(/opt/trtllm/venv/bin/trtllm-serve disaggregated -c /run-source/trt-disagg.json)
   fi
-  enroot start -e NVIDIA_VISIBLE_DEVICES=none -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e HOME=/tmp -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${MODEL_PATH}:/model" -m "${OUTPUT_DIR}/source:/run-source" "${CONTAINER_IMAGE}" "${router_args[@]}" &
+  enroot start "${router_environment[@]}" -e HOME=/tmp -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${MODEL_PATH}:/model" -m "${OUTPUT_DIR}/source:/run-source" "${CONTAINER_IMAGE}" "${router_args[@]}" &
   child_pid=$!
   wait "${child_pid}"
   child_pid=
