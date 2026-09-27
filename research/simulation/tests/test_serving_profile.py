@@ -27,6 +27,5 @@ class ServingProfileTests(unittest.TestCase):
                 module.summarize(root)
 
     def test_missing_capture_is_not_empty_success(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(ValueError, "no profile"):
-                module.summarize(Path(directory))
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(ValueError, "no profile"):
+            module.summarize(Path(directory))
