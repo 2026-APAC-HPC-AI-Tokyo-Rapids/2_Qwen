@@ -45,7 +45,7 @@ def summarize(directory):
         workers[worker] = rows
     if not workers:
         raise ValueError("no profile histogram snapshots")
-    return {"official_result": False, "scope": "before AIPerf warmup through benchmark drain; excludes later generic probes", "limitations": ["native host timestamps, not isolated GPU kernel times", "stage intervals may overlap; do not add unrelated histograms", "means do not explain individual request tails"], "workers": workers}
+    return {"official_result": False, "scope": "before AIPerf warmup through benchmark drain; excludes later generic probes", "limitations": ["native host timestamps, not isolated GPU kernel times", "stage intervals may overlap; do not add unrelated histograms", "means do not explain individual request tails", "native counters can include health requests during the capture"], "workers": workers}
 
 
 if __name__ == "__main__":
