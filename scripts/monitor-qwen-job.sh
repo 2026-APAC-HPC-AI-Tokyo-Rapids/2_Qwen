@@ -9,7 +9,7 @@ connection_failure_started=-1
 while true; do
   if output=$(timeout --foreground 180 "${remote_shell}" --github-shell "${checker}"); then status=0; else status=$?; fi
   printf '%s\n' "${output}"
-  if [[ "${status}" -eq 75 ]] || { [[ "${status}" -eq 0 ]] && [[ "${output}" == scheduler_job_pending=* ]]; }; then
+  if [[ "${status}" -eq 75 ]] || { [[ "${status}" -eq 0 ]] && [[ "${output}" == scheduler_job_pending=* ]]; } || { [[ "${status}" -eq 2 ]] && [[ "${output}" =~ ^scheduler_job_pending=[[:alnum:]._-]+[[:space:]]state=[A-Z]+$ ]]; }; then
     connection_failure_started=-1
     sleep 30
     continue
