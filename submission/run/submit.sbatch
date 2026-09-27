@@ -120,7 +120,12 @@ run_node() {
       args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")")
       draft_mount=(-m "${OUTPUT_DIR}/draft:/draft")
     fi
-    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.backend // "sglang"' "${OUTPUT_DIR}/source/aspire-serving.json")" == trtllm ]]; then
+      if [[ "${role}" == prefill ]]; then overlap=true; server_role=CONTEXT; else overlap=false; server_role=GENERATION; fi
+      jq -n --argjson disable "${overlap}" '{disable_overlap_scheduler:$disable,kv_cache_config:{max_tokens:131072,dtype:"auto"},cache_transceiver_config:{backend:"NIXL",max_tokens_in_buffer:8192}}' >"${worker_tmp}/home/serve.json"
+      args=(/opt/trtllm/venv/bin/trtllm-serve /model --backend pytorch --served_model_name qwen --tp_size "${tp}" --ep_size "${ep}" --max_batch_size 256 --max_num_tokens 8192 --max_seq_len 8192 --host 0.0.0.0 --port "${port}" --server_role "${server_role}" --config /runtime-home/serve.json)
+    fi
+    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e TRTLLM_NIXL_KVCACHE_BACKEND=UCX -e OMPI_ALLOW_RUN_AS_ROOT=1 -e OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
     (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec "${worker_command[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
     pids+=("$!")
@@ -157,7 +162,11 @@ run_router() {
   router_args=(/opt/sglang/venv/bin/python -m sglang_router.launch_router --pd-disaggregation)
   while IFS=$'\t' read -r role host port bootstrap; do if [[ "${role}" == prefill ]]; then router_args+=(--prefill "http://${host}:${port}" "${bootstrap}"); else router_args+=(--decode "http://${host}:${port}"); fi; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
   router_args+=(--host 0.0.0.0 --port 8000)
-  enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${MODEL_PATH}:/model" "${CONTAINER_IMAGE}" "${router_args[@]}" &
+  if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.backend // "sglang"' "${OUTPUT_DIR}/source/aspire-serving.json")" == trtllm ]]; then
+    jq -Rn '[inputs | split("\t") | {role:.[0],url:(.[1]+":"+.[2])}] | {hostname:"0.0.0.0",port:8000,backend:"pytorch",context_servers:{num_instances:([.[] | select(.role=="prefill")] | length),urls:[.[] | select(.role=="prefill") | .url]},generation_servers:{num_instances:([.[] | select(.role=="decode")] | length),urls:[.[] | select(.role=="decode") | .url]}}' <"${OUTPUT_DIR}/source/worker-endpoints.tsv" >"${OUTPUT_DIR}/source/trt-disagg.json"
+    router_args=(/opt/trtllm/venv/bin/trtllm-serve disaggregated -c /run-source/trt-disagg.json)
+  fi
+  enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${MODEL_PATH}:/model" -m "${OUTPUT_DIR}/source:/run-source" "${CONTAINER_IMAGE}" "${router_args[@]}" &
   child_pid=$!
   wait "${child_pid}"
   child_pid=
@@ -406,7 +415,9 @@ if __name__ == "__main__":
 PY
   then parser_status=0; else parser_status=$?; fi
   if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
-    while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/get_server_info" >"${OUTPUT_DIR}/results/server-info-${role}-${port}.json"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+    info_endpoint=get_server_info
+    if [[ "$(jq -r '.backend // "sglang"' "${OUTPUT_DIR}/source/aspire-serving.json")" == trtllm ]]; then info_endpoint=v1/models; fi
+    while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/${info_endpoint}" >"${OUTPUT_DIR}/results/server-info-${role}-${port}.json"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
     enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}:/calibration" "${CONTAINER_IMAGE}" /usr/local/bin/uv run --offline --no-project --python /opt/sglang/venv/bin/python python /calibration/scripts/greedy_probe.py /calibration/results
   fi
   return "${parser_status}"
@@ -485,6 +496,12 @@ while true; do kill -0 "${server_pid}"; if compgen -G "${OUTPUT_DIR}/logs/worker
 router_pid=$!
 deadline="$((SECONDS + 300))"
 models_url="http://127.0.0.1:8000/v1/models"
+if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.backend // "sglang"' "${OUTPUT_DIR}/source/aspire-serving.json")" == trtllm ]]; then
+  read -r _ model_host model_port _ <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+  models_url="http://${model_host}:${model_port}/v1/models"
+  for ((attempt=0; attempt<150; attempt++)); do if curl --fail --silent --max-time 2 http://127.0.0.1:8000/health >"${OUTPUT_DIR}/results/proxy-health.txt"; then break; fi; kill -0 "${router_pid}"; sleep 2; done
+  curl --fail --silent --max-time 2 http://127.0.0.1:8000/health >/dev/null
+fi
 models_pending="${OUTPUT_DIR}/results/models.pending.json"
 while true; do
   kill -0 "${router_pid}"

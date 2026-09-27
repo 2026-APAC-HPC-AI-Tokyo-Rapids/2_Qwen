@@ -27,6 +27,8 @@ COPY sglang-commit.txt /opt/sglang/sglang-commit.txt
 COPY containers/install-sglang-source.sh /opt/apac/install-sglang-source.sh
 RUN /opt/apac/install-sglang-source.sh && rm /opt/apac/install-sglang-source.sh
 
+RUN uv venv --python /opt/sglang/venv/bin/python /opt/trtllm/venv && uv pip install --python /opt/trtllm/venv/bin/python --extra-index-url https://pypi.nvidia.com --extra-index-url https://download.pytorch.org/whl/cu130 --index-strategy unsafe-best-match 'tensorrt-llm @ https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.3.0rc20-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=cd7387185d8c2a5ab47d426fde17cd6590ebc346fe82ab58847c491243e1811a' 'torch==2.10.0+cu130' 'nixl-cu13==1.0.1' 'nixl==1.0.1' && /opt/trtllm/venv/bin/python -c "from importlib.metadata import version; assert version('tensorrt-llm') == '1.3.0rc20'" && uv cache clean
+
 COPY apac-manifest.json /opt/apac/manifest.json
 
 ENV CUDA_HOME=/usr/local/cuda
