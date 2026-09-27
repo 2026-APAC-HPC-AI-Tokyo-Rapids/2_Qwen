@@ -113,6 +113,7 @@ run_node() {
     install -d -m 0700 "${worker_tmp}/cache" "${worker_tmp}/data" "${worker_tmp}/home" "${worker_tmp}/runtime" "${worker_tmp}/temp"
     args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --max-total-tokens 131072 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
     if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--kv-cache-dtype "$(jq -r '.kv_cache_dtype // "auto"' "${OUTPUT_DIR}/source/aspire-serving.json")"); fi
+    if [[ "${PROFILE}" == true ]]; then args+=(--enable-metrics --enable-request-time-stats-logging); fi
     if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}" --ep-size "${ep:-1}"); else args+=(--ep-size "${ep}" --max-running-requests 256); fi
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.speculation.algorithm' "${OUTPUT_DIR}/source/aspire-serving.json")" == NGRAM && "${role}" == decode ]]; then args+=(--speculative-algorithm NGRAM --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-ngram-max-bfs-breadth 1); fi
     draft_mount=()
@@ -172,6 +173,9 @@ run_aiperf() {
   trap 'exit 143' TERM
   export ENROOT_CACHE_PATH="${aiperf_tmp}/cache" ENROOT_DATA_PATH="${aiperf_tmp}/data" ENROOT_RUNTIME_PATH="${aiperf_tmp}/runtime" ENROOT_TEMP_PATH="${aiperf_tmp}/temp"
   install -d -m 0700 "${ENROOT_CACHE_PATH}" "${ENROOT_DATA_PATH}" "${ENROOT_RUNTIME_PATH}" "${ENROOT_TEMP_PATH}"
+  if [[ "${PROFILE}" == true ]]; then
+    while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/metrics" >"${OUTPUT_DIR}/profile/metrics-before-${role}-${port}.prom"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+  fi
   command=(/opt/sglang/venv/bin/aiperf profile --url http://127.0.0.1:8000 --endpoint-type chat --endpoint /v1/chat/completions --model qwen --tokenizer Qwen/Qwen3-235B-A22B-Instruct-2507 --streaming -H 'Accept: text/event-stream' --concurrency "${CONCURRENCY}" --workers-max "${CONCURRENCY}" --api-key NOT_USED --warmup-duration 60 --benchmark-duration 120 --benchmark-grace-period 30 --synthetic-input-tokens-mean 4000 --synthetic-input-tokens-stddev 0 --output-tokens-mean 200 --output-tokens-stddev 0 --extra-inputs min_tokens:200 --extra-inputs max_tokens:200 --extra-inputs ignore_eos:true --extra-inputs temperature:0.0 --extra-inputs repetition_penalty:1.0 --num-dataset-entries 12800 --random-seed 2026 --cache-bust first_turn_prefix --goodput "time_to_first_token:3000 inter_token_latency:20" --ui simple)
   printf '%q ' "${command[@]}" >"${OUTPUT_DIR}/results/aiperf-command.txt"
   printf '\n' >>"${OUTPUT_DIR}/results/aiperf-command.txt"
@@ -179,6 +183,9 @@ run_aiperf() {
   child_pid=$!
   wait "${child_pid}"
   child_pid=
+  if [[ "${PROFILE}" == true ]]; then
+    while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/metrics" >"${OUTPUT_DIR}/profile/metrics-after-${role}-${port}.prom"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+  fi
   export_file="$(find "${OUTPUT_DIR}/results/artifacts" -mindepth 2 -maxdepth 2 -type f -name profile_export_aiperf.json -print -quit)"
   [[ -n "${export_file}" && -s "${export_file}" ]]
   cp "${export_file}" "${OUTPUT_DIR}/results/profile_export_aiperf.json"
