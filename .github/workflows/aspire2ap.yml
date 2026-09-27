@@ -79,7 +79,7 @@ jobs:
         run: |
           cd "${RUNTIME_DIR}"
           variables="PROFILE=${PROFILE},RUNTIME_DIR=${RUNTIME_DIR}"
-          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=1:host=a2ap-dgx004:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1+1:host=a2ap-dgx009:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -e "${RUNTIME_DIR}/logs/pbs.stderr.log" -N qwen3_pd "${RUNTIME_DIR}/scripts/run-qwen-pd.pbs")"
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=1:host=a2ap-dgx010:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1+1:host=a2ap-dgx021:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -e "${RUNTIME_DIR}/logs/pbs.stderr.log" -N qwen3_pd "${RUNTIME_DIR}/scripts/run-qwen-pd.pbs")"
           [[ "${job_id}" =~ ^[0-9]+([.][A-Za-z0-9.-]+)?$ ]]
           printf 'PBS_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
