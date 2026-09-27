@@ -27,7 +27,7 @@ COPY sglang-commit.txt /opt/sglang/sglang-commit.txt
 COPY containers/install-sglang-source.sh /opt/apac/install-sglang-source.sh
 RUN /opt/apac/install-sglang-source.sh && rm /opt/apac/install-sglang-source.sh
 
-RUN uv venv --python /opt/sglang/venv/bin/python /opt/vllm/venv && uv pip install --python /opt/vllm/venv/bin/python 'vllm==0.24.0' 'nixl==0.10.1' 'nixl-cu13==0.10.1' && /opt/vllm/venv/bin/python -c "import vllm, nixl; print(vllm.__version__)" && uv cache clean
+RUN uv venv --python /opt/sglang/venv/bin/python /opt/vllm/venv && uv pip install --python /opt/vllm/venv/bin/python 'vllm==0.24.0' 'nixl==1.2.0' 'nixl-cu13==1.2.0' && /opt/vllm/venv/bin/python -c "import vllm, nixl; print(vllm.__version__)" && uv cache clean
 
 RUN curl -fsSL https://raw.githubusercontent.com/vllm-project/vllm/ee0da84ab9e04ac7610e28580af62c365e898389/tests/v1/kv_connector/nixl_integration/toy_proxy_server.py -o /opt/vllm/proxy.py && echo '0ba88d1e77d0bd5f4f2f6e69f1bf6e29fbc258e64dbed695c0d968ff14720fd8  /opt/vllm/proxy.py' | sha256sum -c -
 
