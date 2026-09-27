@@ -2,6 +2,8 @@
 
 追跡: https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/15
 
+後続のforward/NIXL校正と反復AIPerf評価は完了し、結果を [OPTIMIZATION.md](OPTIMIZATION.md) にまとめた。forward単体の誤差改善と、serving全体に残る過大予測を区別して報告する。
+
 ## 研究の問い
 
 既存のAIPerf結果、実配備の構成、ASPIRE固有のGPU・通信測定を取得すると、汎用H100データによる予測誤差を減らせるか。

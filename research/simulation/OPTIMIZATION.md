@@ -1,6 +1,27 @@
 # Issue #16: 実測で校正した構成探索
 
-追跡: [Issue #16](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/16)。公式結果が出るまでは構成の優位性を結論にしない。
+追跡: [Issue #16](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/16)。2026-09-27に反復測定・raw回収・再解析を完了。以下は公式条件のAIPerfをローカルparserで検証した研究結果であり、主催者のaccuracy認定ではない。
+
+## 採用候補と研究の結論
+
+今回の測定範囲では、通常推論の **EAGLE3 / concurrency 40 / P2×TP4・D2×TP4（全worker EP1）** を採用候補とする。実行設定の正本は `research/aspire-eagle-c40` の `66f3ca60486066b9a3685ef004082d8a81093061`。2ノード16 H100、node-local target、Nebius Instruct draft（3 steps / topk1 / 4 draft tokens）、BF16 KV、旧image `6b4d81eb…` を使用した。
+
+|同じimage・P2TP4/D2TP4|反復数|good output tokens/s|joint SLA達成率|
+|---|---:|---:|---:|
+|target-only c40|2|1839.777 / 1839.054|99.04% / 99.13%|
+|EAGLE3 c32|1|2218.384|100%|
+|**EAGLE3 c40**|**2**|**2346.714 / 2315.183**|**98.50% / 98.61%**|
+|EAGLE3 c48|2|2305.296 / 2294.650|92.94% / 92.80%|
+
+EAGLE3 c40の平均2330.949は同一配置・同一concurrencyのtarget-only平均1839.416より26.7%高い。c40の2回の差は1.36%。c48に対する平均スコア差は1.35%と小さく、2反復だけで統計的な優位性を確定しない。SLAの余裕も含めてc40を選んだ。c40のTTFT p95は2559/2709 ms、c48は3131/3270 ms。一方ITL p95は両条件とも約11 msで、c48のSLA損失は主にTTFTに現れた。
+
+c40のActions `36234985587` / `36235158063` は両方success、PBS `213029` / `213030` はF/Exit0。各home archiveの48項目すべてのSHA256と、raw exportから再実行したparserの完全一致を確認した。実行時のimage、source、draft、worker配置も一致した。c32/c48/c40の5 runにactive PBS・scratch残留がないことを2026-09-27に確認済み。
+
+研究ブランチ `research/aspire-dynosim-aisimulate` は収集・校正スクリプトとNGRAM修正imageを含む。採用候補の再実行には上記EAGLE3実験ブランチを使う。NGRAM修正imageとEAGLE3 c40を組み合わせた性能は未測定。
+
+実測校正はforward単体の同shape・別割当でAPE中央値を7.479%→0.234%に改善した。一方、serving全体は約13–23%過大予測し、汎用モデルより正確とは示せなかった。候補削減には使えたが、最終選定は実機AIPerfで行った。AISimulateのSGLang投機デコード対応は不足しているため、投機結果は実測で評価した。vLLM/TRT-LLMは汎用データのCPU screenまでで、実機を含む全backendの大域的最適値を保証する探索ではない。DynoSim runtime統合も未実施。
+
+主催者の全件accuracy検査（FP8基準scoreの99%以上）は別途必要。決定的推論は必須条件にせず、通常モードの実測値を採用候補の根拠とする。
 
 ## 比較条件と正本
 
@@ -62,27 +83,29 @@ Actions `36226304028` / PBS `212982` は55条件・165 raw rowsを満たし、PB
 
 target-only c16/c32のActions・PBS正常終了とrawを確認。c32のローカルparserを再実行して一致した。c16のPBS walltime11分34秒、c32は11分45秒。P4→D8 baseline反復はActions成功、初回との差0.62%。P4→D4 c32反復 `36230301903` は1595.780（差0.23%）、c40 `36230331081` は1839.777、SLA0.990418。両方Actions正常終了、home checksumとrawのparser再実行を確認した。c40/c48の追加CPU探索は実測範囲内で2230.4/2390.3 predicted good tokens/s、SLA fraction1.0/0.975。rawは `qwen16-measured-search-high-concurrency` に保管。servingを過大予測する傾向があるため実機SLAで判定する。
 
-`collect.py` はspeculation algorithm/steps/draft length、draft weight/runtime-config hashes、deterministic inference modeを比較キーへ含める。初版のように同じTP/EPのtarget-onlyと投機設定を同一条件へまとめない。archive33件の中間inventory（`inventory-a0c9726.json`）ではASPIRE15件中、通常測定として来歴の揃う候補は回収済みbaseline1件のみだった。このsnapshotは上記追加runのarchive完了前であり、最新集計ではない。
+`collect.py` はspeculation algorithm/steps/draft length、draft weight/runtime-config hashes、deterministic inference modeを比較キーへ含める。初版のように同じTP/EPのtarget-onlyと投機設定を同一条件へまとめない。最終inventory `inventory-final-71b913f.json` は51記録、ASPIRE33記録、ASPIRE export18件、比較可能17件、読取エラー0件。17件には決定的推論の診断1件も含むため、条件キーで通常モードと区別する。同条件の反復はbaseline、target-only c32/c40、EAGLE3 c40/c48の5組。scoreと設定・profile phaseのconcurrency整合性も検査する。
 
 有限request数の感度もCPUで確認した。P4/D4の実測FPM設定を固定し320→1280 requestsだけ変えると、c16/c32/c40は1166.2/2066.0/2413.7 predicted good tokens/sとなり、320件の1147.4/1960.2/2230.4より高い。c32のsimulation durationは123.9秒となるが、実機1592–1596との差は縮まらない。少ないrequest数だけでは過大予測を説明できない。60秒warmup/120秒profile/30秒drainや入力分布を再現した比較ではなく、CPU sensitivityとして `qwen16-request-count-sensitivity` のconfig/log/per-request出力を保存する。
 
-### 通常モードの上限側（2026-09-26、回収中）
+### 通常モードの上限側（2026-09-27回収確認済み）
 
 |条件、旧image・P2TP4/D2TP4|Actions|good tokens/s|joint SLA fraction|確認状態|
 |---|---|---:|---:|---|
-|target-only c40 反復|36232258544|1839.054|0.991282|PBS Exit0、回収中|
-|target-only c48|36231906794|1945.962|0.954078|PBS Exit0、raw parser再実行一致、Actions監視失敗|
-|EAGLE3 c32|36232547785|2218.384|1.0|PBS Exit0、回収中|
-|EAGLE3 c48|36232941281|2305.296|0.929366|PBS Exit0、回収中|
-|EAGLE3 c48 反復|36233305728|2294.650|0.927963|PBS Exit0、回収中|
+|target-only c40 反復|36232258544|1839.054|0.991282|PBS Exit0、home checksum・raw parser一致、Actions監視失敗|
+|target-only c48|36231906794|1945.962|0.954078|PBS Exit0、home checksum・raw parser一致、Actions監視失敗|
+|EAGLE3 c32|36232547785|2218.384|1.0|PBS Exit0、home checksum・raw parser一致、Actions監視失敗|
+|EAGLE3 c48|36232941281|2305.296|0.929366|PBS Exit0、home checksum・raw parser一致、ASPIRE監視失敗|
+|EAGLE3 c48 反復|36233305728|2294.650|0.927963|PBS Exit0、home checksum・raw parser一致、ASPIRE監視失敗|
+|EAGLE3 c40|36234985587|2346.714|0.985024|Actions/PBS成功、home checksum・raw parser一致|
+|EAGLE3 c40 反復|36235158063|2315.183|0.986130|Actions/PBS成功、home checksum・raw parser一致|
 
-c48 EAGLE3の反復差は約0.5%。ただしc32からの伸びは約4%で、TTFTによりjoint SLAの余裕が小さい。中間c40を `66f3ca6` / `research/aspire-eagle-c40`（Actions `36234985587`、同条件反復 `36235158063`）で追加した。concurrencyだけを変更し、image・draft・配置・通常推論・公式入力は固定する。
+c48 EAGLE3の反復差は約0.5%。ただしc32からの伸びは約4%で、TTFTによりjoint SLAの余裕が小さい。中間c40を `66f3ca6` / `research/aspire-eagle-c40`（Actions `36234985587`、同条件反復 `36235158063`）で追加した。concurrencyだけを変更し、image・draft・配置・通常推論・公式入力を固定した。
 
-target-only c48のActions失敗は計算失敗ではない。監視checkerの単発180秒timeoutが続き、連続接続失敗300秒の上限でexit124になった。PBSは後にExit0、runnerのraw回収とhome保存も完了した。archive内accountingはR状態の古いsnapshotなので、別途取得したPBS履歴をterminal根拠とし、原archiveは改変しない。
+target-only c48とc40反復のActions失敗は計算失敗ではない。監視checkerの単発180秒timeoutが続き、連続接続失敗300秒の上限でexit124になった。PBSは後にExit0、runnerのraw回収とhome保存も完了した。archive内accountingはR状態の古いsnapshotなので、別途取得したPBS履歴をterminal根拠とし、原archiveは改変しない。2本のterminal履歴は研究archiveの `pbs-terminal-evidence-20260926.txt` に保存した。EAGLE3 c32/c48のASPIRE実行jobも監視接続timeoutで失敗したが、PBS Exit0・raw回収・home checksumを確認した。c48反復のworkflow全体には別途Firmus成果物選択の失敗もある。採用候補c40の2回は同じ監視実装でE2E成功しており、通信起因の過去run失敗と区別する。
 
 ### ブラックボックス探索の適用判断
 
-ユーザー提案のOptunaも候補とする。現在は同一image・P4/D4・通常推論でconcurrencyだけを32→40→48と増やしてSLA境界を確認しているため、この小さな一次元探索に追加依存は導入しない。c32反復は1595.780 good tokens/s（初回1592.140、差0.23%）。c40は1839.777、joint SLA fraction 1137/1148=0.990418、平均TTFT/ITL 745.613/17.566 ms。両PBSはExit0、Actions・home archive・raw parser確認も完了。c48は `d133c40` / `36231906794` で投入した。
+ユーザー提案のOptunaも候補とする。今回の同一image・P4/D4・通常推論はconcurrencyを32/40/48で比較する小さな一次元探索だったため、追加依存を導入しなかった。c32反復は1595.780 good tokens/s（初回1592.140、差0.23%）。c40は1839.777、joint SLA fraction 1137/1148=0.990418、平均TTFT/ITL 745.613/17.566 ms。両PBSはExit0、Actions・home archive・raw parser確認も完了。c48は `d133c40` / `36231906794` で投入した。
 
 draft length・concurrency・chunk size等の相互作用を探索する段階では、[Optuna ask/tell](https://optuna.readthedocs.io/en/stable/tutorial/20_recipes/009_ask_and_tell.html)で候補提案とActions実行を分離できる。目的値は実機のgood tokens/s、制約はjoint SLA fraction >=0.9とし、image・backend・決定的推論モード・workloadが異なる観測は同じstudyへ混ぜない。候補ごとにcommitを作成し、terminal状態とraw/parser確認後にtellする。通信失敗・未実行・OOMを性能0として学習させずFAILとし、予測値も実測trialへ混ぜない。出力正当性は独立した採用条件とする。seedとOptuna versionを固定し、最良候補は別割当で反復する。[TPE](https://optuna.readthedocs.io/en/stable/reference/samplers/generated/optuna.samplers.TPESampler.html)の初期ランダム試行数もGPU予算に含める。現時点でOptunaによる実機探索を実行したとは扱わない。
 
@@ -110,9 +133,9 @@ Nebius draftは572,538,880 BF16 parameters、weights 1,145,943,008 bytes（integ
 
 旧mixed-TP EAGLE3 `36227719367` / PBS212995はwarmup中のNIXL remote disconnect→NOT_FOUND→転送timeoutで失敗（Exit1、16分58秒）。home archiveをchecksum確認済み、性能値なし。equal-TP EAGLE3 `32c8539` / `36229580995` / PBS213006はExit0、11分46秒、904 requests/0 errors。decode workerごとの平均受理長は2.226/2.219（bonus tokenを含み、warmup等も含む累積値）。
 
-ただしpost-benchmarkの8 generic promptsでtarget-only c16対照との出力差が5問にあった。同じTP/EP・imageのtarget-only c16とc32間でも3問に差異があり、投機固有の誤りとは未確定。SGLangのgreedy verifyがtarget logitsのargmaxを照合することはsourceで確認したが、bitwise parityを達成したとは報告しない。既存の `--enable-deterministic-inference` による対比較（EAGLE3 `8c5d670` / `36231207022`、target-only `7bdc927` / `36231225267`）で切り分ける。主催者のfull accuracy検査は依然として別の検証である。
+ただしpost-benchmarkの8 generic promptsでtarget-only c16対照との出力差が5問にあった。同じTP/EP・imageのtarget-only c16とc32間でも3問に差異があり、投機固有の誤りとは未確定。SGLangのgreedy verifyがtarget logitsのargmaxを照合することはsourceで確認したが、bitwise parityを達成したとは報告しない。既存の `--enable-deterministic-inference` による対比較（EAGLE3 `8c5d670` / `36231207022`、target-only `7bdc927` / `36231225267`）で切り分けた。主催者のfull accuracy検査は依然として別の検証である。
 
-上記診断は両方のgeneric probeで8/8問・512 tokens全て一致した。決定的推論のEAGLE3は769.837 good tokens/s、SLA0.983437、483 requests、0 errors、PBS213014 Exit0。一方target-onlyは314 requests/0 errorsでもSLA0.0のためparserが不合格とし、PBS213015 Exit1。通常モードの性能候補へこの遅い設定を強制しない。通常モードEAGLE3 c32は `f4a83e0` / `36232547785` で投入済み。
+上記診断は両方のgeneric probeで8/8問・512 tokens全て一致した。決定的推論のEAGLE3は769.837 good tokens/s、SLA0.983437、483 requests、0 errors、PBS213014 Exit0。一方target-onlyは314 requests/0 errorsでもSLA0.0のためparserが不合格とし、PBS213015 Exit1。通常モードの性能候補へこの遅い設定を強制しない。通常モードの最終比較は上記c32/c40/c48表を参照。
 
 修正版NGRAM imageはAWS build26分20秒で成功、SHA256 `994d664d6771af8f722c95d7c45c0c0cd362323c92f4b927da20e2e88aace562`、12,225,540,096 bytes。torch2.11+cu130/NIXL1.4.1/AIPerf0.12.0のCPU smokeを確認。Firmus配布SSH失敗はcontinue-on-errorでASPIRE配布・実行を妨げず、再buildなしで継続した。新image target-only対照は `499d417` / `36230584981`。
 
@@ -127,3 +150,9 @@ NGRAMのgeneric probeは新image対照と7/8問一致し、prompt5（stack/queue
 旧chunk run `36226700537` と旧baseline `36226778215` は監視SSH timeout後のworkflow cleanupで中断（PBS Exit_status143）。旧NGRAM `36226824669` は待機中に同じ失敗となり公式測定なし。chunk runのdecode workerだけはfull23条件＋chunk53条件が回収済みであり、全run完了とは扱わない。
 
 `51b620c` はobserved remote shellの約78–110秒を根拠に1回の監視期限を60→180秒へ変更した。過去commitの実行には遡及しない。strict terminal/artifact判定と接続失敗時の有限retryは維持する。
+
+## 終了時の整理
+
+2026-09-27、最新5 runのterminal状態・archive・PBS残留なしをLuna監視agentが確認した。採用候補2本はActions全体success。消失済み一時worktreeの管理情報を削除し、他の実験ブランチの祖先である `0ba5297` だけを指していた重複ブランチ `research/aspire-baseline-repeat` を削除した。commitは研究・採用候補ブランチの履歴に残る。条件固有の実験ブランチと高価なimageは再現用に保持する。
+
+最終inventoryと4本のEAGLE3 raw再解析はhome研究archiveの `inventory-final-71b913f.json`、`ordinary-eagle-final-verification.json`、`qwen16-<run>-reparsed.json` に保存した。入力prefix解析の正本は [PREFIX.md](PREFIX.md) を参照。
