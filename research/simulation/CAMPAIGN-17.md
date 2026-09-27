@@ -47,3 +47,7 @@ prefill chunk4096とpower_of_twoを通常runで比較し、後者はTTFT悪化�
 TP8/EP8とc36反復では、SSH wrapperが有効なPBS pending応答を出しながらtar転送エラー2で終了し、既存cleanupがジョブを削除する失敗を観測した。`main` の `6820b27` はこの完全なpending応答がある場合だけ継続する。実際のterminal失敗と不完全応答は引き続き失敗とする。動作テスト6件と制御系全151件、Actions検証が通った。修正を適用した追試の完走はIssueで追跡する。
 
 集計キーにはbackendとprefill routing policyを含め、別backendのnative worker起動情報を検証できないrunは通常比較に含めない。vLLMのNIXL依存は固定ソースの要求1.2.0へ修正して新規buildした。古い0.10.1指定のrunは互換性調査として区別し、サポートされた構成の代表値にはしない。
+
+## 係数固定後の新規run評価
+
+係数とc40予測は `ffb43b8`（2026-09-27 07:04:48 UTC）で固定済みである。その後に投入・完走した通常target-only run `36305644422`（010/021）を追加評価し、係数を再学習せず適用した。既知のserving構成に対する新しいrunの検証であり、新しいbackendや投機構成の外挿検証ではない。過去4runの分割評価とは別に報告し、物理ノード対も明記する。入力と出力はhome archiveの `research-issue-17/20260927/goodput-prospective{,-input}.json`、検証結果と追加runはIssue #17へ記録する。
