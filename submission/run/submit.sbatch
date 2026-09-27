@@ -112,6 +112,7 @@ run_node() {
     worker_tmp="${node_tmp}/${role}-${worker}"
     install -d -m 0700 "${worker_tmp}/cache" "${worker_tmp}/data" "${worker_tmp}/home" "${worker_tmp}/runtime" "${worker_tmp}/temp"
     args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --max-total-tokens 131072 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
+    if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--kv-cache-dtype "$(jq -r '.kv_cache_dtype // "auto"' "${OUTPUT_DIR}/source/aspire-serving.json")"); fi
     if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}" --ep-size "${ep:-1}"); else args+=(--ep-size "${ep}" --max-running-requests 256); fi
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.speculation.algorithm' "${OUTPUT_DIR}/source/aspire-serving.json")" == NGRAM && "${role}" == decode ]]; then args+=(--speculative-algorithm NGRAM --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-ngram-max-bfs-breadth 1); fi
     draft_mount=()
