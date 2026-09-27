@@ -120,7 +120,12 @@ run_node() {
       args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")")
       draft_mount=(-m "${OUTPUT_DIR}/draft:/draft")
     fi
-    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.backend // "sglang"' "${OUTPUT_DIR}/source/aspire-serving.json")" == vllm ]]; then
+      if [[ "${role}" == prefill ]]; then kv_role=kv_producer; else kv_role=kv_consumer; fi
+      kv_config="$(jq -cn --arg role "${kv_role}" '{kv_connector:"NixlConnector",kv_role:$role,kv_load_failure_policy:"fail"}')"
+      args=(/opt/vllm/venv/bin/vllm serve /model --served-model-name qwen --trust-remote-code --max-model-len 8192 --tensor-parallel-size "${tp}" --gpu-memory-utilization 0.90 --block-size 16 --num-gpu-blocks-override 8192 --max-num-seqs 256 --kv-cache-dtype auto --host 0.0.0.0 --port "${port}" --kv-transfer-config "${kv_config}")
+    fi
+    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e "VLLM_HOST_IP=${node_ip}" -e "VLLM_NIXL_SIDE_CHANNEL_HOST=${node_ip}" -e "VLLM_NIXL_SIDE_CHANNEL_PORT=$((port + 1000))" -e VLLM_USE_V1=1 -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
     (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec "${worker_command[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
     pids+=("$!")
@@ -157,6 +162,11 @@ run_router() {
   router_args=(/opt/sglang/venv/bin/python -m sglang_router.launch_router --pd-disaggregation)
   while IFS=$'\t' read -r role host port bootstrap; do if [[ "${role}" == prefill ]]; then router_args+=(--prefill "http://${host}:${port}" "${bootstrap}"); else router_args+=(--decode "http://${host}:${port}"); fi; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
   router_args+=(--host 0.0.0.0 --port 8000)
+  if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.backend // "sglang"' "${OUTPUT_DIR}/source/aspire-serving.json")" == vllm ]]; then
+    prefill_hosts=(); prefill_ports=(); decode_hosts=(); decode_ports=()
+    while IFS=$'\t' read -r role host port _; do if [[ "${role}" == prefill ]]; then prefill_hosts+=("${host}"); prefill_ports+=("${port}"); else decode_hosts+=("${host}"); decode_ports+=("${port}"); fi; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+    router_args=(/opt/vllm/venv/bin/python /opt/vllm/proxy.py --host 0.0.0.0 --port 8000 --prefiller-hosts "${prefill_hosts[@]}" --prefiller-ports "${prefill_ports[@]}" --decoder-hosts "${decode_hosts[@]}" --decoder-ports "${decode_ports[@]}")
+  fi
   enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${MODEL_PATH}:/model" "${CONTAINER_IMAGE}" "${router_args[@]}" &
   child_pid=$!
   wait "${child_pid}"
@@ -406,7 +416,9 @@ if __name__ == "__main__":
 PY
   then parser_status=0; else parser_status=$?; fi
   if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
-    while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/get_server_info" >"${OUTPUT_DIR}/results/server-info-${role}-${port}.json"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+    info_endpoint=get_server_info
+    if [[ "$(jq -r '.backend // "sglang"' "${OUTPUT_DIR}/source/aspire-serving.json")" == vllm ]]; then info_endpoint=v1/models; fi
+    while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/${info_endpoint}" >"${OUTPUT_DIR}/results/server-info-${role}-${port}.json"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
     enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}:/calibration" "${CONTAINER_IMAGE}" /usr/local/bin/uv run --offline --no-project --python /opt/sglang/venv/bin/python python /calibration/scripts/greedy_probe.py /calibration/results
   fi
   return "${parser_status}"
@@ -485,6 +497,12 @@ while true; do kill -0 "${server_pid}"; if compgen -G "${OUTPUT_DIR}/logs/worker
 router_pid=$!
 deadline="$((SECONDS + 300))"
 models_url="http://127.0.0.1:8000/v1/models"
+if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.backend // "sglang"' "${OUTPUT_DIR}/source/aspire-serving.json")" == vllm ]]; then
+  read -r _ model_host model_port _ <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+  models_url="http://${model_host}:${model_port}/v1/models"
+  for ((attempt=0; attempt<150; attempt++)); do if curl --fail --silent --max-time 2 http://127.0.0.1:8000/healthcheck >"${OUTPUT_DIR}/results/proxy-health.json"; then break; fi; kill -0 "${router_pid}"; sleep 2; done
+  jq -e '.status == "ok"' "${OUTPUT_DIR}/results/proxy-health.json" >/dev/null
+fi
 models_pending="${OUTPUT_DIR}/results/models.pending.json"
 while true; do
   kill -0 "${router_pid}"
