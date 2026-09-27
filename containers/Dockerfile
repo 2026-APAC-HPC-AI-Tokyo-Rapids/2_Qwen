@@ -29,6 +29,12 @@ RUN /opt/apac/install-sglang-source.sh && rm /opt/apac/install-sglang-source.sh
 
 RUN uv venv --python /opt/sglang/venv/bin/python /opt/trtllm/venv && uv pip install --python /opt/trtllm/venv/bin/python --extra-index-url https://pypi.nvidia.com --extra-index-url https://download.pytorch.org/whl/cu130 --index-strategy unsafe-best-match 'tensorrt-llm @ https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.3.0rc20-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=cd7387185d8c2a5ab47d426fde17cd6590ebc346fe82ab58847c491243e1811a' 'torch==2.10.0+cu130' 'nixl-cu13==1.0.1' 'nixl==1.0.1' && /opt/trtllm/venv/bin/python -c "from importlib.metadata import version; assert version('tensorrt-llm') == '1.3.0rc20'" && uv cache clean
 
+# DeepGEMM discovers its bundled headers by running pip show tensorrt_llm.
+RUN uv pip install --python /opt/trtllm/venv/bin/python "pip==25.3" && /opt/trtllm/venv/bin/pip show tensorrt_llm && /opt/trtllm/venv/bin/python -c "from importlib.metadata import distribution; from pathlib import Path; p = Path(distribution('tensorrt-llm').locate_file('tensorrt_llm/include')); assert (p / 'deep_gemm/fp8_gemm_impl.cuh').is_file(), p; assert (p / 'cuda_fp8.h').is_file(), p" && uv cache clean
+
+COPY containers/validate-trtllm-jit.py /opt/apac/validate-trtllm-jit.py
+RUN PATH=/opt/trtllm/venv/bin:$PATH /opt/trtllm/venv/bin/python /opt/apac/validate-trtllm-jit.py && rm /opt/apac/validate-trtllm-jit.py
+
 COPY apac-manifest.json /opt/apac/manifest.json
 
 ENV CUDA_HOME=/usr/local/cuda

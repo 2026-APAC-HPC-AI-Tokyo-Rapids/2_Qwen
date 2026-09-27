@@ -57,7 +57,7 @@ sglang_commit="$(git -C "${source_dir}" rev-parse HEAD)"
 git -C "${source_dir}" diff --quiet
 git -C "${source_dir}" diff --cached --quiet
 
-cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/build-nccl-tests.sh" "${GITHUB_WORKSPACE}/containers/install-accelerator-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-python-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-sglang-source.sh" "${GITHUB_WORKSPACE}/containers/install-system-toolchain.sh" "${context}/containers/"
+cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/build-nccl-tests.sh" "${GITHUB_WORKSPACE}/containers/install-accelerator-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-python-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-sglang-source.sh" "${GITHUB_WORKSPACE}/containers/install-system-toolchain.sh" "${GITHUB_WORKSPACE}/containers/validate-trtllm-jit.py" "${context}/containers/"
 cp --no-preserve=ownership,xattr "${source_dir}/LICENSE" "${source_dir}/README.md" "${source_dir}/python/pyproject.toml" "${context}/sglang-project-metadata/python/"
 cp -a --no-preserve=ownership,xattr "${source_dir}" "${context}/sglang-source"
 rm -rf -- "${context}/sglang-source/.git"
