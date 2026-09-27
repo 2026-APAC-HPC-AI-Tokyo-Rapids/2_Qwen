@@ -6,7 +6,7 @@
 
 ## 測定範囲
 
-条件ごとのcommit/Actionsから、投機2/3と5/6、native TTFT profile、TP4/EP4、TP8/EP8、vLLM0.24.0、TensorRT-LLM1.3.0rc20、target-only profileを投入した。通常設定比較は同一ノード対018/027、profileは別の004/009。concurrency36/44と反復は投機比較結果に続けて行う。
+条件ごとのcommit/Actionsから、投機2/3と5/6、native TTFT profile、TP4/EP4、TP8/EP8、vLLM0.24.0、TensorRT-LLM1.3.0rc20、target-only profileを投入した。通常設定比較は同一ノード対018/027、profileは別の004/009。concurrency36/44は基準の投機3/4を固定して別条件として実施し、各点を反復する。投機長変更のrunとはまとめない。
 
 ## serving予測の測定窓
 
@@ -37,3 +37,13 @@ c32の補正後予測1722.165、誤差7.92〜8.17%。c40は2032.152、誤差10.4
 c48 profile `36300973745` / PBS213343は1506requests・0errorsだがSLA85.9230%でparserの90%ゲートに不合格、Exit1。通常性能値としては採用しない。native metricsはprefill queue平均1075/469ms、prefill forward751/650ms、prefill transfer完了待ち309/268ms、decode開始queue約0.12ms。warmup・healthを含み得る。decode受信待ち約1.7秒にはprefill待ちが入り、ネットワーク所要時間とは呼ばない。profileのソース上の計測境界も確認した。
 
 別ノード対004/009で通常c40対照、chunk4096、prefill power_of_two policyを投入し、各要因を分けて比較する。profileのスコアを通常対照に使わない。
+
+## 実機profileを踏まえた追試と制御経路の修正
+
+target-only c40の別profileも取得した。prefill queue、forward、転送完了待ち、decode admissionをnative histogramで分離できたが、EAGLE c48とは投機・concurrencyが異なる。各段階の差を投機だけの効果と断定しない。集計rawはIssue記載の保存先へ退避した。
+
+prefill chunk4096とpower_of_twoを通常runで比較し、後者はTTFT悪化によりSLA不適格だった。router0.3.2のpower-of-two実装は周期的に取得したtoken loadを参照するため、2workerで更新間に負荷が偏る可能性がある。これは原因仮説であり、prefillだけround_robinにした追試を追加した。decode routingは変更しない。
+
+TP8/EP8とc36反復では、SSH wrapperが有効なPBS pending応答を出しながらtar転送エラー2で終了し、既存cleanupがジョブを削除する失敗を観測した。`main` の `6820b27` はこの完全なpending応答がある場合だけ継続する。実際のterminal失敗と不完全応答は引き続き失敗とする。動作テスト6件と制御系全151件、Actions検証が通った。修正を適用した追試の完走はIssueで追跡する。
+
+集計キーにはbackendとprefill routing policyを含め、別backendのnative worker起動情報を検証できないrunは通常比較に含めない。vLLMのNIXL依存は固定ソースの要求1.2.0へ修正して新規buildした。古い0.10.1指定のrunは互換性調査として区別し、サポートされた構成の代表値にはしない。
