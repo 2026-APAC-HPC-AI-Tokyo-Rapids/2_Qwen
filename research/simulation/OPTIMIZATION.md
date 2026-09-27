@@ -2,6 +2,8 @@
 
 追跡: [Issue #16](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/16)。2026-09-27に反復測定・raw回収・再解析を完了。以下は公式条件のAIPerfをローカルparserで検証した研究結果であり、主催者のaccuracy認定ではない。
 
+2026-09-27追試: [FP8 KV比較](FP8-KV.md)。KV割当半減と初回の計算完走を確認。SSH切断によるraw回収・反復確認が未完了のため、下記の採用候補を上書きしない。
+
 ## 採用候補と研究の結論
 
 今回の測定範囲では、通常推論の **EAGLE3 / concurrency 40 / P2×TP4・D2×TP4（全worker EP1）** を採用候補とする。実行設定の正本は `research/aspire-eagle-c40` の `66f3ca60486066b9a3685ef004082d8a81093061`。2ノード16 H100、node-local target、Nebius Instruct draft（3 steps / topk1 / 4 draft tokens）、BF16 KV、旧image `6b4d81eb…` を使用した。
