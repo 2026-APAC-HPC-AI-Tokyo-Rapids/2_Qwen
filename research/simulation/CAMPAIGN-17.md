@@ -23,3 +23,17 @@
 測定窓を近づけても過大予測は解消せず、c32/c40では約29%/32%残る。元のforward補間の精度とserving全体の精度は区別する。次にnative profileで段階別の差を調べる。サービス時間の補正を試す場合、校正runと独立評価runを分け、GPU forwardの実測FPMを上書きしない。
 
 `summarize_serving_profile.py` はprofile専用runのPrometheus前後差分を集計する。差分はwarmupを含むため公式120秒だけの値ではない。native host timestampにはCPU・待ち・通信が含まれ、GPU kernel時間や非重複の加算可能な区間とは限らない。
+
+## 経験的goodput補正の独立run評価
+
+c16 `36228974704` だけから実測/予測比0.8372308628を決定し、c32 `36228995654`/`36230301903` とc40 `36230331081`/`36232258544` の4runへ適用した。評価runの値は係数の算出に使わない。これらは既存研究で観測済みのrunで、盲検評価ではない。
+
+c32の補正後予測1722.165、誤差7.92〜8.17%。c40は2032.152、誤差10.46〜10.50%。未補正の約29〜32%から減った。一点で学習した経験的なgoodput補正としては改善したが、TTFT/ITL・queue・SLA予測を直したわけではない。native engineや実測forward FPMを変更せず、別の比較器 `calibrate_serving_goodput.py` として残す。別backend、投機、TP/EP配置へ適用する根拠はない。
+
+## 最初のGPU結果とTTFT調査
+
+5 steps/6 tokensのc40は `36300950254` / PBS213341、Exit0、2283.863 good tokens/s、SLA97.9777%、0 errors。初回値は既存3/4より低い。rawのarchive確認はIssueで追跡する。
+
+c48 profile `36300973745` / PBS213343は1506requests・0errorsだがSLA85.9230%でparserの90%ゲートに不合格、Exit1。通常性能値としては採用しない。native metricsはprefill queue平均1075/469ms、prefill forward751/650ms、prefill transfer完了待ち309/268ms、decode開始queue約0.12ms。warmup・healthを含み得る。decode受信待ち約1.7秒にはprefill待ちが入り、ネットワーク所要時間とは呼ばない。profileのソース上の計測境界も確認した。
+
+別ノード対004/009で通常c40対照、chunk4096、prefill power_of_two policyを投入し、各要因を分けて比較する。profileのスコアを通常対照に使わない。
