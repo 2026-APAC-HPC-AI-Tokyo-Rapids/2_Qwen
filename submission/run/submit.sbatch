@@ -24,6 +24,9 @@ export CONTAINER_IMAGE="${CONTAINER_IMAGE:-${submission_dir}/build/sglang.sqsh}"
 export MODEL_PATH="${MODEL_PATH:-/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8}"
 export OUTPUT_DIR="${OUTPUT_DIR:-${submission_dir}/results/logs/${SLURM_JOB_ID}}"
 export PROFILE="${PROFILE:-false}"
+export PROFILER_NSYS_ROOT="${PROFILER_NSYS_ROOT:-}"
+export PROFILER_TRIGGER_DELAY="${PROFILER_TRIGGER_DELAY:-30}"
+export PROFILER_CAPTURE_SECONDS="${PROFILER_CAPTURE_SECONDS:-5}"
 export CONCURRENCY="${CONCURRENCY:-16}"
 export TOKENIZER_PATH="${TOKENIZER_PATH:-${HOME}/.cache/huggingface/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e}"
 export QWEN_PLATFORM="${QWEN_PLATFORM:-firmus}"
@@ -149,8 +152,15 @@ run_node() {
       args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")")
       draft_mount=(-m "${OUTPUT_DIR}/draft:/draft")
     fi
-    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
-    if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
+    profiler_env=()
+    profiler_mounts=()
+    container_command=("${args[@]}")
+    if [[ "${PROFILE}" == true ]]; then
+      profiler_env=(-e "QWEN_PROFILER_OUTPUT_DIR=/profiler-output" -e "QWEN_PROFILER_LABEL=node-${node_rank}-${role}-${worker}")
+      profiler_mounts=(-m "${PROFILER_NSYS_ROOT}:/opt/nsys:bind,ro,x-create=dir" -m "${OUTPUT_DIR}/scripts:/opt/profiler:bind,ro,x-create=dir" -m "${OUTPUT_DIR}/profile:/profiler-output")
+      container_command=(/opt/profiler/exec-profiler.sh "${args[@]}")
+    fi
+    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton "${profiler_env[@]}" -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${profiler_mounts[@]}" "${CONTAINER_IMAGE}" "${container_command[@]}")
     (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec "${worker_command[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
     pids+=("$!")
   }
@@ -448,6 +458,7 @@ if [[ "${mode}" == aiperf ]]; then run_aiperf; exit; fi
 [[ "${mode}" == orchestrate ]]
 [[ "${CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]
 [[ "${PROFILE}" == true || "${PROFILE}" == false ]]
+if [[ "${PROFILE}" == true ]]; then [[ -x "${PROFILER_NSYS_ROOT}/bin/nsys" ]]; fi
 [[ "${NODE_COUNT}" =~ ^[1-9][0-9]*$ && "${GPUS_PER_NODE}" =~ ^[1-9][0-9]*$ ]]
 case "${QWEN_PLATFORM}" in firmus) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]] ;; aspire2ap) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]] ;; genkai) [[ "${GPUS_PER_NODE}" -eq 4 && ( "${NODE_COUNT}" -eq 2 || "${NODE_COUNT}" -eq 4 ) ]] ;; *) exit 64 ;; esac
 [[ -s "${CONTAINER_IMAGE}" ]]
@@ -503,7 +514,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 case "${QWEN_PLATFORM}" in
   firmus) srun --overlap --nodes="${NODE_COUNT}" --ntasks="${NODE_COUNT}" --ntasks-per-node=1 --distribution=block:block "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
-  aspire2ap) /opt/pbs/bin/pbsdsh -- env "QWEN_PLATFORM=${QWEN_PLATFORM}" "OUTPUT_DIR=${OUTPUT_DIR}" "MODEL_PATH=${MODEL_PATH}" "CONTAINER_IMAGE=${CONTAINER_IMAGE}" "PROFILE=${PROFILE}" "NODE_COUNT=${NODE_COUNT}" "GPUS_PER_NODE=${GPUS_PER_NODE}" "ENROOT_LIBRARY_PATH=${ENROOT_LIBRARY_PATH}" "ENROOT_SYSCONF_PATH=${ENROOT_SYSCONF_PATH}" "ENROOT_MOUNT_HOME=${ENROOT_MOUNT_HOME}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
+  aspire2ap) /opt/pbs/bin/pbsdsh -- env "QWEN_PLATFORM=${QWEN_PLATFORM}" "OUTPUT_DIR=${OUTPUT_DIR}" "MODEL_PATH=${MODEL_PATH}" "CONTAINER_IMAGE=${CONTAINER_IMAGE}" "PROFILE=${PROFILE}" "PROFILER_NSYS_ROOT=${PROFILER_NSYS_ROOT}" "NODE_COUNT=${NODE_COUNT}" "GPUS_PER_NODE=${GPUS_PER_NODE}" "ENROOT_LIBRARY_PATH=${ENROOT_LIBRARY_PATH}" "ENROOT_SYSCONF_PATH=${ENROOT_SYSCONF_PATH}" "ENROOT_MOUNT_HOME=${ENROOT_MOUNT_HOME}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
   genkai) mpirun -np "${NODE_COUNT}" -ppn 1 -genv PATH "${PATH}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
 esac
 server_pid=$!
@@ -522,6 +533,26 @@ while true; do
   (( SECONDS < deadline ))
   sleep 2
 done
+if [[ "${PROFILE}" == true ]]; then
+  install -d -m 0755 "${OUTPUT_DIR}/profile"
+  profile_capture() {
+    sleep "${PROFILER_TRIGGER_DELAY}"
+    while IFS=$'\t' read -r role host port _; do
+      if [[ "${role}" == decode ]]; then
+        if ! curl --fail --silent --max-time 5 -X POST "http://${host}:${port}/start_profile" -H 'Content-Type: application/json' -d '{"activities":["CUDA_PROFILER"]}' >"${OUTPUT_DIR}/profile/start-profile-${host}-${port}.json"; then printf 'start_profile_failed host=%s port=%s\n' "${host}" "${port}" >&2; fi
+      fi
+    done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+    sleep "${PROFILER_CAPTURE_SECONDS}"
+    while IFS=$'\t' read -r role host port _; do
+      if [[ "${role}" == decode ]]; then
+        if ! curl --fail --silent --max-time 5 -X POST "http://${host}:${port}/stop_profile" >"${OUTPUT_DIR}/profile/stop-profile-${host}-${port}.json"; then printf 'stop_profile_failed host=%s port=%s\n' "${host}" "${port}" >&2; fi
+      fi
+    done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+  }
+  profile_capture &
+  profile_capture_pid=$!
+fi
 "${script_path}" aiperf >"${OUTPUT_DIR}/logs/aiperf.log" 2>&1
+if [[ -n "${profile_capture_pid:-}" ]]; then wait "${profile_capture_pid}" || true; fi
 if [[ "${PROFILE}" == true ]]; then [[ "$(find "${OUTPUT_DIR}/profile" -maxdepth 1 -type f -name 'profiler-invocation-*.argv' | wc -l)" -eq "$(wc -l <"${OUTPUT_DIR}/source/worker-endpoints.tsv")" ]]; fi
 touch "${OUTPUT_DIR}/run-success"

@@ -161,22 +161,51 @@ def test_submission_script_keeps_profile_data_separate() -> None:
     assert 'SGLANG_HOST_IP=${node_ip}' in submission
     assert 'grep -q ACTIVE "${state_file}"' in submission
     assert "/link_layer" not in submission
-    assert 'if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=' in submission
+    assert 'if [[ "${PROFILE}" == true ]]; then' in submission
+    assert '/opt/profiler/exec-profiler.sh' in submission
+    assert ':/opt/nsys:bind,ro,x-create=dir' in submission
+    assert 'QWEN_PROFILER_OUTPUT_DIR=/profiler-output' in submission
     assert '"${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/"' in provision
     assert "profiler-invocation-*.argv" in submission
+    profiler = (ROOT / "scripts/exec-profiler.sh").read_text()
+    assert 'invocation="${QWEN_PROFILER_OUTPUT_DIR}/profiler-invocation-${QWEN_PROFILER_LABEL}.argv"' in profiler
+    assert 'exec "${nsys_bin}" profile' in profiler
+    assert "--capture-range=cudaProfilerApi" in profiler
+    assert "--capture-range-end=stop" in profiler
+    assert "--trace-fork-before-exec=true" in profiler
+    assert '/start_profile"' in submission
+    assert '/stop_profile"' in submission
+    assert '"CUDA_PROFILER"' in submission
 
 
-def test_exec_profiler_preserves_argv_and_exit_status(tmp_path: Path) -> None:
+def test_exec_profiler_wraps_command_with_nsys(tmp_path: Path) -> None:
     profiler = ROOT / "scripts/exec-profiler.sh"
-    invocation = tmp_path / "profile/profiler-invocation.argv"
-    command = ["/bin/sh", "-c", 'test "$1" = "argument with spaces"; exit 23', "_", "argument with spaces"]
+    output_dir = tmp_path / "profile"
+    recorded = tmp_path / "nsys-args.txt"
+    stub = tmp_path / "nsys"
+    stub.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" >"${STUB_OUT}"\nexit 23\n')
+    stub.chmod(0o755)
+    command = ["/bin/sh", "-c", 'test "$1" = "argument with spaces"; exit 99', "_", "argument with spaces"]
 
-    process = subprocess.run([profiler, *command], check=False, env=os.environ | {"QWEN_PROFILER_INVOCATION_PATH": str(invocation)})
+    process = subprocess.run(
+        [profiler, *command],
+        check=False,
+        env=os.environ
+        | {
+            "QWEN_PROFILER_OUTPUT_DIR": str(output_dir),
+            "QWEN_PROFILER_LABEL": "node-0-decode-0",
+            "QWEN_PROFILER_NSYS_BIN": str(stub),
+            "STUB_OUT": str(recorded),
+        },
+    )
 
     assert process.returncode == 23
+    invocation = output_dir / "profiler-invocation-node-0-decode-0.argv"
     assert shlex.split(invocation.read_text()) == command
+    recorded_args = recorded.read_text().splitlines()
+    assert recorded_args[0] == "profile"
+    assert recorded_args[-len(command) :] == command
     assert profiler.stat().st_mode & 0o111
-    assert 'exec "$@"' in profiler.read_text()
 
 
 def test_submission_is_the_only_firmus_pd_runtime() -> None:
