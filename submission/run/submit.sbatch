@@ -158,7 +158,7 @@ run_node() {
         mapfile -t patch_files < <(find "${patch_dir}" -type f -name '*.py')
         [[ "${#patch_files[@]}" -gt 0 ]]
         for patch_file in "${patch_files[@]}"; do patch_mounts+=(-m "${patch_file}:/opt/sglang/source/python/sglang/${patch_file#"${patch_dir}"/}:bind,ro"); done
-        patch_command=(/bin/bash -ec '/opt/sglang/venv/bin/python -c "import inspect, sglang.srt.models.utils as m; assert \"fp8_kv_cache\" in inspect.getsource(m.enable_fused_set_kv_buffer); print(\"sglang_patch_ok\")" && exec "$@"' _)
+        patch_command=(/bin/bash -euc '/opt/sglang/venv/bin/python -c "import inspect, sglang.srt.models.utils as m; assert \"fp8_kv_cache\" in inspect.getsource(m.enable_fused_set_kv_buffer); print(\"sglang_patch_ok\")" && exec "$@"' _)
       fi
     fi
     worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${patch_mounts[@]}" "${draft_mount[@]}" "${CONTAINER_IMAGE}" "${patch_command[@]}" "${args[@]}")
