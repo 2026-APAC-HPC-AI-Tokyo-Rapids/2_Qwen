@@ -166,6 +166,17 @@ def test_submission_script_keeps_profile_data_separate() -> None:
     assert "profiler-invocation-*.argv" in submission
 
 
+def test_submission_overlays_a_sglang_source_patch_on_the_built_container() -> None:
+    submission = (ROOT / "submission/run/submit.sbatch").read_text()
+    provision = (ROOT / "scripts/provision-qwen-pd.sh").read_text()
+
+    assert 'cp -a --no-preserve=ownership,xattr "${GITHUB_WORKSPACE}/patches/sglang/." "${runtime_dir}/sglang-patches/"' in provision
+    assert '.sglang_patch // ""' in submission
+    assert '/opt/sglang/source/python/sglang/${patch_file#"${patch_dir}"/}:bind,ro' in submission
+    assert 'inspect.getsource(m.enable_fused_set_kv_buffer)' in submission
+    assert '"${patch_mounts[@]}" "${draft_mount[@]}"' in submission
+
+
 def test_exec_profiler_preserves_argv_and_exit_status(tmp_path: Path) -> None:
     profiler = ROOT / "scripts/exec-profiler.sh"
     invocation = tmp_path / "profile/profiler-invocation.argv"

@@ -50,6 +50,8 @@ if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10
 
 install -m 0755 "${GITHUB_WORKSPACE}/submission/run/submit.sbatch" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/"
 install -m 0755 "${GITHUB_WORKSPACE}/scripts/stage-qwen-node-model.sh" "${runtime_dir}/scripts/"
+install -d -m 0755 "${runtime_dir}/sglang-patches"
+cp -a --no-preserve=ownership,xattr "${GITHUB_WORKSPACE}/patches/sglang/." "${runtime_dir}/sglang-patches/"
 export HF_HOME="${runtime_dir}/tokenizer-cache"
 export HF_HUB_DISABLE_XET=1
 export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"
