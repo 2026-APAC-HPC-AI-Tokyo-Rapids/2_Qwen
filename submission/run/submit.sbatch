@@ -57,6 +57,28 @@ sample_system() {
   done
 }
 
+# Libraries own cache validity; keep their files across jobs without a custom key.
+restore_worker_cache() {
+  local archive="$1" directory="$2"
+  install -d -m 0700 "${directory}"
+  if [[ -f "${archive}" ]]; then
+    tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${directory}"
+    printf 'jit_cache_restored=%s time=%s\n' "${archive}" "$(date -u +%FT%TZ)"
+  fi
+}
+
+save_worker_cache() {
+  local directory="$1" archive="$2" pending
+  install -d -m 0700 "$(dirname "${archive}")" || return 1
+  pending="$(mktemp "${archive}.XXXXXXXXXX")" || return 1
+  if tar -cf "${pending}" -C "${directory}" . && mv -f -- "${pending}" "${archive}"; then
+    printf 'jit_cache_saved=%s time=%s\n' "${archive}" "$(date -u +%FT%TZ)"
+  else
+    rm -f -- "${pending}"
+    return 1
+  fi
+}
+
 run_node() {
   node_rank="${QWEN_NODE_RANK:-${SLURM_PROCID:-${PMI_RANK:-}}}"
   if [[ -z "${node_rank}" && -s "${OUTPUT_DIR}/source/node-addresses.tsv" ]]; then node_rank="$(awk -v host="$(hostname -s)" '$2 == host {print $1}' "${OUTPUT_DIR}/source/node-addresses.tsv")"; fi
@@ -66,6 +88,8 @@ run_node() {
   [[ "${node_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
   node_tmp="$(mktemp -d "${TMPDIR:-/tmp}/qwen-submission-node-${node_rank}.XXXXXXXXXX")"
   pids=()
+  cache_workers=()
+  cache_root="$(dirname "${OUTPUT_DIR}")/jit-cache/${QWEN_PLATFORM}"
   sampler_pid=
   system_sampler_pid=
   cleanup_node() {
@@ -75,6 +99,9 @@ run_node() {
     if [[ -n "${system_sampler_pid}" ]]; then kill "${system_sampler_pid}" 2>/dev/null || true; wait "${system_sampler_pid}" 2>/dev/null || true; fi
     for pid in "${pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
     for pid in "${pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
+    for cache_worker in "${cache_workers[@]}"; do
+      if ! save_worker_cache "${node_tmp}/${cache_worker}/home/.cache" "${cache_root}/${cache_worker}.tar"; then printf 'jit_cache_save_failed worker=%s\n' "${cache_worker}" >&2; fi
+    done
     rm -rf -- "${node_tmp:?}"
     exit "${status}"
   }
@@ -104,9 +131,11 @@ run_node() {
     ep="${7:-}"
     worker_tmp="${node_tmp}/${role}-${worker}"
     install -d -m 0700 "${worker_tmp}/cache" "${worker_tmp}/data" "${worker_tmp}/home" "${worker_tmp}/runtime" "${worker_tmp}/temp"
+    restore_worker_cache "${cache_root}/${role}-${worker}.tar" "${worker_tmp}/home/.cache"
+    cache_workers+=("${role}-${worker}")
     args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --max-total-tokens 131072 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
     if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}"); else args+=(--ep-size "${ep}" --max-running-requests 256); fi
-    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${CONTAINER_IMAGE}" "${args[@]}")
+    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${CONTAINER_IMAGE}" "${args[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
     (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec "${worker_command[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
     pids+=("$!")
