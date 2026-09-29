@@ -166,6 +166,15 @@ def test_submission_script_keeps_profile_data_separate() -> None:
     assert "profiler-invocation-*.argv" in submission
 
 
+def test_submission_applies_configured_draft_quantization_and_records_pressure() -> None:
+    submission = (ROOT / "submission/run/submit.sbatch").read_text()
+
+    assert '.speculation.draft_quantization // ""' in submission
+    assert '--speculative-draft-model-quantization "${draft_quantization}"' in submission
+    assert "utilization.gpu,utilization.memory" in submission
+    assert "clocks.sm,clocks.mem" in submission
+
+
 def test_exec_profiler_preserves_argv_and_exit_status(tmp_path: Path) -> None:
     profiler = ROOT / "scripts/exec-profiler.sh"
     invocation = tmp_path / "profile/profiler-invocation.argv"

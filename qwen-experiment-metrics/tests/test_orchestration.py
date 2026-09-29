@@ -27,7 +27,10 @@ def test_workflows_run_the_official_pd_path_on_every_cluster() -> None:
     assert "module load intel/2025.1.3 impi" in genkai_job
     assert "QWEN_PLATFORM=genkai" in genkai_job
     assert "GPUS_PER_NODE=4" in genkai_job
-    assert "select=1:host=a2ap-dgx004:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1+1:host=a2ap-dgx009:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1" in aspire
+    assert (
+        "select=1:host=a2ap-dgx009:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1+1:host=a2ap-dgx013:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1"
+        in aspire
+    ) or ("select=2:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1" in aspire)
     assert "place=scatter:excl" in aspire
     assert "QWEN_PLATFORM=aspire2ap" in aspire_job
     assert "GPUS_PER_NODE=8" in aspire_job

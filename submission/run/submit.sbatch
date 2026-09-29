@@ -124,7 +124,7 @@ run_node() {
   nvidia-smi -L >>"${OUTPUT_DIR}/logs/node-${node_rank}-environment.log"
   if [[ "${PROFILE}" == true ]]; then
     install -d -m 0755 "${OUTPUT_DIR}/profile"
-    nvidia-smi --query-gpu=timestamp,index,uuid,utilization.gpu,memory.used,power.draw,temperature.gpu,clocks.sm --format=csv -l 1 >"${OUTPUT_DIR}/profile/gpu-node-${node_rank}.csv" & sampler_pid=$!
+    nvidia-smi --query-gpu=timestamp,index,uuid,utilization.gpu,utilization.memory,memory.used,power.draw,temperature.gpu,clocks.sm,clocks.mem --format=csv -l 1 >"${OUTPUT_DIR}/profile/gpu-node-${node_rank}.csv" & sampler_pid=$!
     sample_system "${node_rank}" "${OUTPUT_DIR}/profile" & system_sampler_pid=$!
   fi
 
@@ -147,6 +147,8 @@ run_node() {
     draft_mount=()
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.speculation.algorithm' "${OUTPUT_DIR}/source/aspire-serving.json")" == EAGLE3 ]]; then
       args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")")
+      draft_quantization="$(jq -r '.speculation.draft_quantization // ""' "${OUTPUT_DIR}/source/aspire-serving.json")"
+      if [[ -n "${draft_quantization}" ]]; then args+=(--speculative-draft-model-quantization "${draft_quantization}"); fi
       draft_mount=(-m "${OUTPUT_DIR}/draft:/draft")
     fi
     worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
