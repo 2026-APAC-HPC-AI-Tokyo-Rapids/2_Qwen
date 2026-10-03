@@ -60,3 +60,7 @@ Prefill1には時刻のない `sympy.integrals.laplace` importエラーも記録
 したがってDP2は**PD転送が成立しなかったため現構成への採用を見送る**。性能不良という判定ではない。今回の範囲では追加NIXL開発・GPU投入を拡張せず、DP4・別backendのEP4も保留する。P2/D2各TP4・EP1・DP1・PP1を維持するが、これはTP/EP/PP/DP全体の最適性の証明ではなく、今回の探索の暫定結論である。
 
 再試験raw正本は `tomokazu-ubuntu-server:/hdd_raid/samba/net_share/qwen-artifacts/37129209750/1/`、全32ファイルchecksum確認済み。初回と合わせてPBS terminal、runtime削除、短時間診断ディレクトリ削除を確認し、実験branchは再現用に保持する。派生監査正本に `retry-audit.py`、raw record集計、起動条件比較、独立NIXL診断を保存した。
+
+## 10月4日のnative追加調査
+
+[exact NIXL/UCX調査](2026-10-03-nixl-dp2-root-cause.md)でimage native commit075b2397、wheel UCX1.23.0を照合した。native1198はUCX postXfer返却であり、metadata stale-handleは別NOT_FOUND。旧独立noteのfailed UUID全件D1対応を訂正し、両D replicaの各2agentであることを確認した。元UCS status/endpoint callback/progress cadenceがなく根因は未確定。今後必要ならDEBUG/infoの有限診断を判断し、small fixやDP2性能劣位と決めつけない。上記CLI比較で除外/対象外としたTP/EP/PPは、source改修による理論的対応まで否定するものではない（[改修量・優先表](2026-10-04-options-priority.md)）。
