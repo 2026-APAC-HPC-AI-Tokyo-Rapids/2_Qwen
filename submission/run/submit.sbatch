@@ -8,6 +8,10 @@
 #SBATCH --time=00:17:00
 
 set -euo pipefail
+if [[ "${QWEN_PLATFORM:-firmus}" == aspire2ap ]]; then
+  set -E
+  trap 'printf "submission_failed mode=%s line=%s status=%s\n" "${1:-orchestrate}" "${LINENO}" "$?" >&2' ERR
+fi
 caller_enroot_library_path="${ENROOT_LIBRARY_PATH:-}"
 caller_enroot_mount_home="${ENROOT_MOUNT_HOME:-}"
 caller_enroot_sysconf_path="${ENROOT_SYSCONF_PATH:-}"
@@ -29,6 +33,7 @@ export QWEN_PLATFORM="${QWEN_PLATFORM:-firmus}"
 export NODE_COUNT="${NODE_COUNT:-2}"
 export GPUS_PER_NODE="${GPUS_PER_NODE:-8}"
 mode="${1:-orchestrate}"
+if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then CONCURRENCY="$(jq -er ' .concurrency' "${OUTPUT_DIR}/source/aspire-serving.json")"; fi
 
 sample_system() {
   local rank="$1" profile_dir="$2" timestamp user nice system idle iowait irq softirq steal interface rx_bytes rx_packets rx_errors tx_bytes tx_packets tx_errors counters device
@@ -109,6 +114,11 @@ run_node() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
+  if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.model_storage // "shared"' "${OUTPUT_DIR}/source/aspire-serving.json")" == node_local ]]; then
+    bash "${OUTPUT_DIR}/scripts/stage-qwen-node-model.sh" "${MODEL_PATH}" "${node_tmp}/model" "${OUTPUT_DIR}/logs/node-${node_rank}-model-copy.log"
+    MODEL_PATH="${node_tmp}/model"
+  fi
+
   hca_devices=()
   for state_file in /sys/class/infiniband/*/ports/1/state; do if grep -q ACTIVE "${state_file}"; then device="${state_file#/sys/class/infiniband/}"; hca_devices+=("${device%%/*}:1"); fi; done
   [[ "${#hca_devices[@]}" -gt 0 ]]
@@ -134,8 +144,16 @@ run_node() {
     restore_worker_cache "${cache_root}/${role}-${worker}.tar" "${worker_tmp}/home/.cache"
     cache_workers+=("${role}-${worker}")
     args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --max-total-tokens 131072 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
-    if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}"); else args+=(--ep-size "${ep}" --max-running-requests 256); fi
-    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${CONTAINER_IMAGE}" "${args[@]}")
+    if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--nccl-port "$((port + 1000))"); fi
+    if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--kv-cache-dtype "$(jq -r '.kv_cache_dtype // "auto"' "${OUTPUT_DIR}/source/aspire-serving.json")"); fi
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then args+=(--moe-runner-backend cutlass); fi
+    if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}"); if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--ep-size "${ep:-1}"); fi; else args+=(--ep-size "${ep}" --max-running-requests 256); fi
+    draft_mount=()
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.speculation.algorithm' "${OUTPUT_DIR}/source/aspire-serving.json")" == EAGLE3 ]]; then
+      args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")")
+      draft_mount=(-m "${OUTPUT_DIR}/draft:/draft")
+    fi
+    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
     (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec "${worker_command[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
     pids+=("$!")
@@ -148,7 +166,7 @@ run_node() {
       ;;
     aspire2ap)
       [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]]
-      if [[ "${node_rank}" -eq 0 ]]; then start_worker prefill 0 8 30100 9000 0,1,2,3,4,5,6,7; else start_worker decode 0 8 30200 unused 0,1,2,3,4,5,6,7 8; fi
+      while IFS=$'\t' read -r role worker tp ep port bootstrap gpus; do start_worker "${role}" "${worker}" "${tp}" "${port}" "${bootstrap}" "${gpus}" "${ep}"; done < <(jq -r --argjson node "${node_rank}" '.workers[] | select(.node==$node) | [.role,.index,.tp,.ep,.port,.bootstrap,.gpus] | @tsv' "${OUTPUT_DIR}/source/aspire-serving.json")
       ;;
     genkai)
       [[ "${GPUS_PER_NODE}" -eq 4 && ( "${NODE_COUNT}" -eq 2 || "${NODE_COUNT}" -eq 4 ) ]]
@@ -157,7 +175,14 @@ run_node() {
       ;;
     *) printf 'unsupported Qwen platform: %s\n' "${QWEN_PLATFORM}" >&2; exit 64 ;;
   esac
-  while true; do for pid in "${pids[@]}"; do if ! kill -0 "${pid}" 2>/dev/null; then wait "${pid}"; fi; done; sleep 2; done
+  while true; do
+    for pid in "${pids[@]}"; do
+      if ! kill -0 "${pid}" 2>/dev/null; then
+        if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then status=0; wait "${pid}" || status=$?; printf 'worker_exited node=%s pid=%s status=%s\n' "${node_rank}" "${pid}" "${status}" >"${OUTPUT_DIR}/logs/worker-failed-${node_rank}"; exit 1; else wait "${pid}"; fi
+      fi
+    done
+    sleep 2
+  done
 }
 
 run_router() {
@@ -172,6 +197,7 @@ run_router() {
   router_args=(/opt/sglang/venv/bin/python -m sglang_router.launch_router --pd-disaggregation)
   while IFS=$'\t' read -r role host port bootstrap; do if [[ "${role}" == prefill ]]; then router_args+=(--prefill "http://${host}:${port}" "${bootstrap}"); else router_args+=(--decode "http://${host}:${port}"); fi; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
   router_args+=(--host 0.0.0.0 --port 8000)
+  if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then router_args+=(--prefill-policy "$(jq -r ' .prefill_routing_policy' "${OUTPUT_DIR}/source/aspire-serving.json")"); fi
   enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${MODEL_PATH}:/model" "${CONTAINER_IMAGE}" "${router_args[@]}" &
   child_pid=$!
   wait "${child_pid}"
@@ -197,7 +223,7 @@ run_aiperf() {
   export_file="$(find "${OUTPUT_DIR}/results/artifacts" -mindepth 2 -maxdepth 2 -type f -name profile_export_aiperf.json -print -quit)"
   [[ -n "${export_file}" && -s "${export_file}" ]]
   cp "${export_file}" "${OUTPUT_DIR}/results/profile_export_aiperf.json"
-  enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}/results:/results" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json /results/score.json --concurrency "${CONCURRENCY}" --require-eligible --command /results/aiperf-command.txt --provenance /results/aiperf-provenance.txt <<'PY'
+  if enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}/results:/results" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json /results/score.json --concurrency "${CONCURRENCY}" --require-eligible --command /results/aiperf-command.txt --provenance /results/aiperf-provenance.txt <<'PY'
 #!/usr/bin/env python3
 """Validate AIPerf's official Qwen metrics and emit the competition score."""
 
@@ -419,6 +445,12 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 PY
+  then parser_status=0; else parser_status=$?; fi
+  if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
+    while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/get_server_info" >"${OUTPUT_DIR}/results/server-info-${role}-${port}.json"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+    enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}:/calibration" "${CONTAINER_IMAGE}" /usr/local/bin/uv run --offline --no-project --python /opt/sglang/venv/bin/python python /calibration/scripts/greedy_probe.py /calibration/results
+  fi
+  return "${parser_status}"
 }
 
 if [[ "${mode}" == node ]]; then run_node; exit; fi
@@ -466,7 +498,7 @@ case "${QWEN_PLATFORM}" in
     for worker in 0 1; do printf 'decode\t%s\t%s\tunused\n' "${node_ips[1]}" "$((30200 + worker))" >>"${OUTPUT_DIR}/source/worker-endpoints.tsv"; done
     ;;
   aspire2ap)
-    printf 'prefill\t%s\t30100\t9000\ndecode\t%s\t30200\tunused\n' "${node_ips[0]}" "${node_ips[1]}" >"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+    while IFS=$'\t' read -r role rank port bootstrap; do printf '%s\t%s\t%s\t%s\n' "${role}" "${node_ips[${rank}]}" "${port}" "${bootstrap}" >>"${OUTPUT_DIR}/source/worker-endpoints.tsv"; done < <(jq -r '.workers[] | [.role,.node,.port,.bootstrap] | @tsv' "${OUTPUT_DIR}/source/aspire-serving.json")
     ;;
   genkai)
     prefill_nodes="$((NODE_COUNT / 2))"
@@ -482,14 +514,19 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 case "${QWEN_PLATFORM}" in
   firmus) srun --overlap --nodes="${NODE_COUNT}" --ntasks="${NODE_COUNT}" --ntasks-per-node=1 --distribution=block:block "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
-  aspire2ap) /opt/pbs/bin/pbsdsh -- "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
+  aspire2ap) /opt/pbs/bin/pbsdsh -- env "QWEN_PLATFORM=${QWEN_PLATFORM}" "OUTPUT_DIR=${OUTPUT_DIR}" "MODEL_PATH=${MODEL_PATH}" "CONTAINER_IMAGE=${CONTAINER_IMAGE}" "PROFILE=${PROFILE}" "NODE_COUNT=${NODE_COUNT}" "GPUS_PER_NODE=${GPUS_PER_NODE}" "ENROOT_LIBRARY_PATH=${ENROOT_LIBRARY_PATH}" "ENROOT_SYSCONF_PATH=${ENROOT_SYSCONF_PATH}" "ENROOT_MOUNT_HOME=${ENROOT_MOUNT_HOME}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
   genkai) mpirun -np "${NODE_COUNT}" -ppn 1 -genv PATH "${PATH}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
 esac
 server_pid=$!
 worker_urls=()
 while IFS=$'\t' read -r _ host port _; do worker_urls+=("http://${host}:${port}/health"); done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
-deadline="$((SECONDS + 900))"
-while true; do kill -0 "${server_pid}"; ready=0; for url in "${worker_urls[@]}"; do if curl --fail --silent --max-time 2 "${url}" >/dev/null; then ready="$((ready + 1))"; fi; done; if [[ "${ready}" -eq "${#worker_urls[@]}" ]]; then break; fi; (( SECONDS < deadline )); sleep 5; done
+if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
+  deadline="$((SECONDS + 1500))"
+  while true; do kill -0 "${server_pid}"; if compgen -G "${OUTPUT_DIR}/logs/worker-failed-*" >/dev/null; then cat "${OUTPUT_DIR}"/logs/worker-failed-* >&2; exit 1; fi; ready=0; for url in "${worker_urls[@]}"; do if curl --fail --silent --max-time 2 "${url}" >/dev/null; then ready="$((ready + 1))"; fi; done; if [[ "${ready}" -eq "${#worker_urls[@]}" ]]; then break; fi; if (( SECONDS >= deadline )); then printf 'worker_readiness_timeout ready=%s expected=%s utc=%s\n' "${ready}" "${#worker_urls[@]}" "$(date -u +%FT%TZ)" >&2; exit 1; fi; sleep 5; done
+else
+  deadline="$((SECONDS + 900))"
+  while true; do kill -0 "${server_pid}"; ready=0; for url in "${worker_urls[@]}"; do if curl --fail --silent --max-time 2 "${url}" >/dev/null; then ready="$((ready + 1))"; fi; done; if [[ "${ready}" -eq "${#worker_urls[@]}" ]]; then break; fi; (( SECONDS < deadline )); sleep 5; done
+fi
 "${script_path}" router >"${OUTPUT_DIR}/logs/router.log" 2>&1 &
 router_pid=$!
 deadline="$((SECONDS + 300))"

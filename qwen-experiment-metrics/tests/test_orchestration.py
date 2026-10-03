@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -26,7 +27,7 @@ def test_workflows_run_the_official_pd_path_on_every_cluster() -> None:
     assert "module load intel/2025.1.3 impi" in genkai_job
     assert "QWEN_PLATFORM=genkai" in genkai_job
     assert "GPUS_PER_NODE=4" in genkai_job
-    assert "select=2:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1" in aspire
+    assert "select=1:host=a2ap-dgx026:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1+1:host=a2ap-dgx030:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1" in aspire
     assert "place=scatter:excl" in aspire
     assert "QWEN_PLATFORM=aspire2ap" in aspire_job
     assert "GPUS_PER_NODE=8" in aspire_job
@@ -43,7 +44,8 @@ def test_cluster_topologies_use_every_allocated_gpu() -> None:
     assert 'firmus) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]]' in submission
     assert 'aspire2ap) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]]' in submission
     assert 'genkai) [[ "${GPUS_PER_NODE}" -eq 4' in submission
-    assert "start_worker prefill 0 8 30100 9000 0,1,2,3,4,5,6,7" in submission
-    assert "start_worker decode 0 8 30200 unused 0,1,2,3,4,5,6,7 8" in submission
+    assert ".workers[] | select(.node==$node)" in submission
+    config = json.loads((repository / "configs/aspire-serving.json").read_text())
+    assert [(w["role"], w["node"], w["tp"], w["ep"], w["gpus"]) for w in config["workers"]] == [("prefill", 0, 4, 1, "0,1,2,3"), ("prefill", 0, 4, 1, "4,5,6,7"), ("decode", 1, 4, 1, "0,1,2,3"), ("decode", 1, 4, 1, "4,5,6,7")]
     assert 'start_worker prefill "${node_rank}" 4' in submission
     assert 'start_worker decode "${decode_index}" 4' in submission
