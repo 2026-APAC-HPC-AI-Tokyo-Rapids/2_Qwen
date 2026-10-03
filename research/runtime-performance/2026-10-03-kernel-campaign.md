@@ -6,11 +6,11 @@
 
 | 条件 | コミット | Actions | 状態 |
 |---|---|---|---|
-|現行c40対照|22e04f2|[37117075216](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117075216)|実行中。前回採用338647aと実行コード・設定は同一|
-|並行度44のみ|9ee27fa|[37117351967](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117351967)|投入済み。既存イメージ再利用|
+|現行c40対照|22e04f2|[37117075216](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117075216)|成功・正本照合済み。2573.455 good tok/s。前回採用338647aと実行コード・設定は同一|
+|並行度44のみ|9ee27fa|[37117351967](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117351967)|成功・正本照合済み。2635.793 good tok/s（単回比較＋2.42%）|
 |Prefill SiLU＋量子化融合のみ|1c2e1ed|[37117374985](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117374985)|新規ビルド・実行を投入済み|
 |graph bucket13/15のみ|0251488|[37117838126](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117838126)|投入済み。既存イメージ再利用|
-|SiLU＋draft head行削減＋c44＋graph13/15|f2d4673|未投入|181テスト・両パッチの意味検査・共同適用に成功。先行ビルドのキャッシュ確定を待って投入する|
+|SiLU＋draft head行削減＋c44＋graph13/15|2f295de|[37119291598](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37119291598)|投入済み。188テスト・共同適用検査に成功。採点前の短時間SiLU診断を同じ割当内に含む|
 
 共通条件はDGX026＋030、16 H100、P2TP4/D2TP4 EP1、EAGLE3 steps3/draft4、BF16 draft、FP8 KV、CUTLASS prefill、auto/Triton decode、chunk8192、pool131072。スコア計測ではprofileを無効にする。固定ノードを使用するためGPU割当は直列となるが、ビルドや安価な検証は並行して進める。過去の全体約19分／GPU実行段階約15分は所要時間の目安であり、待ち時間・新規ビルドは別途必要となる。
 
@@ -33,3 +33,9 @@ c44のCPU代理モデルは2585.816 good tok/s、同モデルのc40は2459.498�
 新規ビルドは依存ライブラリが変わる可能性がある。旧イメージ`6b4d81eb6400fa33400e5725a2842f63565b700d579f9be812a7c229a80da3b5`の`requirements-frozen.txt`と埋め込みmanifestを取得済みであり、新イメージと照合する。差がある場合は追加対照を自動増発せず、変更一式に依存差分も含まれることを明示して評価する。カーネル単独の効果を主張する必要がある場合に限って、依存環境を揃えた比較が必要となる。
 
 完了条件は、Actions・schedulerの終了、ログ、公開ルールに対応するparser、成果物の照合、候補の採否、および不要なジョブ・作業物の整理までとする。投入しただけでは完了としない。
+
+## 中間結果と比較上の注意
+
+c44は対照と同じイメージ・モデル・固定ノードで、good tok/sが2573.455→2635.793（＋2.42%）。ただしTTFT平均は1085.99→1327.87 ms、p99は2579.05→2860.20 msへ悪化し、適格率も99.369→99.141%へ低下した。ITL p99は12.406→11.909 ms。各1回であり採用確定ではない。正本の選択44ファイルのSHA照合とparser再実行は成功した。
+
+SiLU版の新イメージ7fe7c9faでは、旧6b4d81に対してNIXL 1.4.1→1.5.0、CUDA関連、nccl4py、compressed-tensors等の依存更新を実際に確認した。torch、Triton、FlashInfer、DeepGEMMの版とbase OCI・ビルドrecipeは同じ。全体差をSiLUだけに帰属させない。統合版には同一入力で融合前後を測る短時間診断を置き、各3形状・32 replay、JIT込み120秒上限、ASPIRE node0 GPU0のモデル起動前だけで実行する。公式採点中には実行せず、数値誤差・時間はresultsへ保存する。
