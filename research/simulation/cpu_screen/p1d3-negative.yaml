@@ -1,0 +1,70 @@
+engine:
+  backend: sglang
+  backend_version: fc275674a97d78553b22597ee72c8fd48f5420f4
+  context_length: 8192
+  estimation_mode: fpm_interpolation
+  fallback_policy: deny
+  fmha_quant_mode: bfloat16
+  gemm_quant_mode: fp8_block
+  hardware: h100_sxm
+  kv_transfer:
+    bandwidth_gb_per_second: 192.99211573642776
+    bytes_per_token: 192512
+    timing_mode: full_prompt
+  kvcache_quant_mode: bfloat16
+  mode: disaggregated
+  model: research/simulation/model
+  moe_quant_mode: fp8_block
+  workers:
+    decode:
+      kv_cache:
+        block_size: 1
+        capacity:
+          blocks: 131072
+          type: fixed
+        prefix_caching: false
+      parallelism:
+        attention_data: 1
+        moe_expert: 1
+        moe_tensor: 4
+        pipeline: 1
+        replicas: 3
+        tensor: 4
+      scheduler:
+        max_batched_tokens: 8192
+        max_sequences: 256
+      timing:
+        estimation_mode: fpm_interpolation
+        fallback_policy: deny
+        fpm_parquet_path: external-measured-fpm
+    prefill:
+      kv_cache:
+        block_size: 1
+        capacity:
+          blocks: 131072
+          type: fixed
+        prefix_caching: false
+      parallelism:
+        attention_data: 1
+        moe_expert: 1
+        moe_tensor: 4
+        pipeline: 1
+        replicas: 1
+        tensor: 4
+      scheduler:
+        max_batched_tokens: 8192
+        max_sequences: 256
+      timing:
+        estimation_mode: fpm_interpolation
+        fallback_policy: deny
+        fpm_parquet_path: external-measured-fpm
+traffic:
+  load:
+    concurrency: 40
+    type: concurrency
+  source:
+    input_tokens: 4000
+    output_tokens: 200
+    type: synthetic
+  stop:
+    requests: 4000
