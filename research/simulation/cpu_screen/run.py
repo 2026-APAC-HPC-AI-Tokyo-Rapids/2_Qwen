@@ -52,6 +52,7 @@ def main():
     args.output.mkdir()
     repo = Path(__file__).resolve().parents[3]
     config = yaml.safe_load(args.config.read_text())
+    native_sglang = config.pop('native_sglang', None)
     # External FPM identity includes its exact collected model path.
     if not Path(config['engine']['model']).is_absolute():
         config['engine']['model'] = str(repo / config['engine']['model'])
@@ -59,12 +60,16 @@ def main():
         worker['timing']['fpm_parquet_path'] = str(args.fpm.resolve())
     effective = args.output / 'effective-config.yaml'
     effective.write_text(yaml.safe_dump(config, sort_keys=False))
-    provenance = {'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(), 'condition_config_sha256': sha(args.config), 'effective_config_sha256': sha(effective), 'fpm_sha256': sha(args.fpm), 'fpm_metadata_sha256': {p.name: sha(p) for p in args.fpm.parent.glob('*metadata*')}, 'model_config_sha256': sha(Path(config['engine']['model']) / 'config.json'), 'python': platform.python_version(), 'aisimulate': importlib.metadata.version('aisimulate'), 'environment': {'AIC_ALLOW_UNLISTED_VERSIONS': '1'}, 'reuse_prediction': str(args.reuse_prediction) if args.reuse_prediction else None}
+    provenance = {'native_sglang': native_sglang, 'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(), 'condition_config_sha256': sha(args.config), 'effective_config_sha256': sha(effective), 'fpm_sha256': sha(args.fpm), 'fpm_metadata_sha256': {p.name: sha(p) for p in args.fpm.parent.glob('*metadata*')}, 'model_config_sha256': sha(Path(config['engine']['model']) / 'config.json'), 'python': platform.python_version(), 'aisimulate': importlib.metadata.version('aisimulate'), 'environment': {'AIC_ALLOW_UNLISTED_VERSIONS': '1'}, 'reuse_prediction': str(args.reuse_prediction) if args.reuse_prediction else None}
     (args.output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
     if args.reuse_prediction:
         (args.output / 'prediction').symlink_to(args.reuse_prediction.resolve(), target_is_directory=True)
     else:
         command = [str(Path(sys.executable).with_name('aisimulate')), 'predict', '--config', str(effective), '--stack', 'engine', '--output-dir', str(args.output / 'prediction'), '--capture-per-request', '--detail', 'all']
+        if native_sglang:
+            native_path = args.output / 'native-sglang.json'
+            native_path.write_text(json.dumps(native_sglang, indent=2) + '\n')
+            command = [sys.executable, str(Path(__file__).with_name('native_run.py')), str(effective), str(args.output / 'prediction'), str(native_path)]
         provenance['command'] = command
         before = time.monotonic()
         with (args.output / 'predict.log').open('w') as log:
