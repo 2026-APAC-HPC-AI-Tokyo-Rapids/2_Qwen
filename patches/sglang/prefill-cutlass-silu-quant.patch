@@ -1,0 +1,25 @@
+--- a/python/sglang/srt/layers/moe/cutlass_moe.py
++++ b/python/sglang/srt/layers/moe/cutlass_moe.py
+@@ -263,8 +263,11 @@
+             workspace,
+         )
+ 
+-    intermediate = torch.empty((m * topk, n), device=device, dtype=out_dtype)
+-    silu_and_mul(c1, intermediate)
++    # Fuse the existing Hopper SiLU and FP8 quantization boundary.
++    fuse_act_quant = is_sm90_supported() and not use_mxfp8
++    if not fuse_act_quant:
++        intermediate = torch.empty((m * topk, n), device=device, dtype=out_dtype)
++        silu_and_mul(c1, intermediate)
+ 
+     if use_mxfp8 and es_down:
+         intemediate_q = torch.empty_like(intermediate, dtype=torch.float8_e4m3fn)
+@@ -279,6 +282,8 @@
+             intemediate_q,
+             a2_scale,
+         )
++    elif fuse_act_quant:
++        intemediate_q, a2_scale = sglang_per_token_group_quant_fp8(c1, 128, fuse_silu_and_mul=True)
+     else:
+         intemediate_q, a2_scale = sglang_per_token_group_quant_fp8(intermediate, 128)
+ 

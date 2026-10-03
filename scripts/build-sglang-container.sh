@@ -57,6 +57,11 @@ sglang_commit="$(git -C "${source_dir}" rev-parse HEAD)"
 git -C "${source_dir}" diff --quiet
 git -C "${source_dir}" diff --cached --quiet
 
+# Apply only this tracked experiment patch to the private build clone.
+sglang_patch="patches/sglang/prefill-cutlass-silu-quant.patch"
+git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${sglang_patch}"
+git -C "${source_dir}" apply "${GITHUB_WORKSPACE}/${sglang_patch}"
+
 cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/build-nccl-tests.sh" "${GITHUB_WORKSPACE}/containers/install-accelerator-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-python-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-sglang-source.sh" "${GITHUB_WORKSPACE}/containers/install-system-toolchain.sh" "${context}/containers/"
 cp --no-preserve=ownership,xattr "${source_dir}/LICENSE" "${source_dir}/README.md" "${source_dir}/python/pyproject.toml" "${context}/sglang-project-metadata/python/"
 cp -a --no-preserve=ownership,xattr "${source_dir}" "${context}/sglang-source"
@@ -69,7 +74,7 @@ qwen_object_format="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-object-forma
 sglang_object_format="$(git -C "${source_dir}" rev-parse --show-object-format)"
 dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/Dockerfile)"
 build_steps_json="$(find "${GITHUB_WORKSPACE}/containers" -maxdepth 1 -type f -name '*.sh' -print | sort | while read -r build_step; do jq -cn --arg path "${build_step#"${GITHUB_WORKSPACE}/"}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${build_step}")" '{path:$path,blob_oid:$oid}'; done | jq -s '.')"
-patches_json='[]'
+patches_json="$(jq -cn --arg path "${sglang_patch}" --arg blob_oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${sglang_patch}")" --arg sha256 "$(sha256sum "${GITHUB_WORKSPACE}/${sglang_patch}" | awk '{print $1}')" --arg target_path "python/sglang/srt/layers/moe/cutlass_moe.py" --arg target_blob_oid "$(git -C "${source_dir}" hash-object python/sglang/srt/layers/moe/cutlass_moe.py)" --arg target_sha256 "$(sha256sum "${source_dir}/python/sglang/srt/layers/moe/cutlass_moe.py" | awk '{print $1}')" '[{path:$path,blob_oid:$blob_oid,sha256:$sha256,target_path:$target_path,target_blob_oid:$target_blob_oid,target_sha256:$target_sha256}]')"
 jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITHUB_SHA}" --arg sglang_object_format "${sglang_object_format}" --arg sglang_commit "${sglang_commit}" --arg dockerfile_blob_oid "${dockerfile_blob_oid}" --arg base_reference "${base_reference}" --arg base_manifest_sha256 "${base_manifest_sha256}" --argjson build_steps "${build_steps_json}" --argjson patches "${patches_json}" '{schema_version:"oci-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"container_build_definition",object_hash_algorithm:$qwen_object_format,oid:$qwen_commit},{repository_id:"apac2026-sglang",commit_role:"sglang_source",object_hash_algorithm:$sglang_object_format,oid:$sglang_commit}],recipe:{path:"containers/Dockerfile",blob_oid:$dockerfile_blob_oid,build_steps:$build_steps},applied_patches:$patches,base_oci:{reference:$base_reference,manifest_sha256:$base_manifest_sha256}}' >"${context}/apac-manifest.json"
 
 buildah --root "${storage_root}" --runroot "${run_root}" bud --isolation chroot --network host --layers --cache-from "${BUILD_CACHE_REPOSITORY}" --cache-to "${BUILD_CACHE_REPOSITORY}" --cache-ttl 336h --file "${context}/containers/Dockerfile" --tag "${image}" "${context}" 2>&1 | tee "${BUILD_DIR}/logs/buildah.log"
