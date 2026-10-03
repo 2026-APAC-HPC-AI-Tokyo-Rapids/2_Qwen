@@ -53,6 +53,6 @@ def test_cluster_topologies_use_every_allocated_gpu() -> None:
         gpus = [int(gpu) for worker in workers for gpu in worker["gpus"].split(",")]
         assert sorted(gpus) == list(range(8))
         assert all(worker["tp"] == len(worker["gpus"].split(",")) for worker in workers)
-        assert {worker["role"] for worker in workers} == ({"prefill"} if node == 0 else {"decode"})
+        assert {worker["role"] for worker in workers} == ({"prefill"} if node == 0 else {"prefill", "decode"})
     assert 'start_worker prefill "${node_rank}" 4' in submission
     assert 'start_worker decode "${decode_index}" 4' in submission
