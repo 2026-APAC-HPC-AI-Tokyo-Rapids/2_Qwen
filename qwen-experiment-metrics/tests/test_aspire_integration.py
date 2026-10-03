@@ -70,7 +70,7 @@ def test_graph_candidate_preserves_archived_buckets_and_client_condition() -> No
     # Audited decode default at SGLang fc275674; only two missing buckets are added.
     archived_bs = [*range(1, 9), *range(10, 33, 2), *range(40, 65, 4), *range(72, 257, 8), *range(272, 513, 16)]
     assert config["decode_cuda_graph_bs"] == sorted([*archived_bs, 13, 15])
-    assert config["concurrency"] == 44
+    assert config["concurrency"] == 48
 
 
 @pytest.mark.parametrize("platform", ["aspire2ap", "firmus", "genkai"])

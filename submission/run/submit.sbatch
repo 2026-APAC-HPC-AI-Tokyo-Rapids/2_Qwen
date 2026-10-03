@@ -114,23 +114,6 @@ run_node() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  # Isolated synthetic kernel timing before node0 starts any model workers.
-  if [[ "${QWEN_PLATFORM}" == aspire2ap && "${node_rank}" == 0 ]]; then
-    diagnostic_tmp="${node_tmp}/silu-diagnostic"
-    install -d -m 0700 "${diagnostic_tmp}/cache" "${diagnostic_tmp}/data" "${diagnostic_tmp}/home" "${diagnostic_tmp}/runtime" "${diagnostic_tmp}/temp"
-    diagnostic_status=0
-    (export ENROOT_CACHE_PATH="${diagnostic_tmp}/cache" ENROOT_DATA_PATH="${diagnostic_tmp}/data" ENROOT_RUNTIME_PATH="${diagnostic_tmp}/runtime" ENROOT_TEMP_PATH="${diagnostic_tmp}/temp"; timeout --signal=TERM --kill-after=5s 120s enroot start -e NVIDIA_VISIBLE_DEVICES=0 -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e NVIDIA_DISABLE_REQUIRE=1 -e CUDA_VISIBLE_DEVICES=0 -e HOME=/diagnostic-home -e XDG_CACHE_HOME=/diagnostic-home/.cache -m "${diagnostic_tmp}/home:/diagnostic-home" -m "${OUTPUT_DIR}/scripts/diagnose-silu-quant.py:/diagnose-silu-quant.py" -m "${OUTPUT_DIR}/results:/results" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python /diagnose-silu-quant.py) >"${OUTPUT_DIR}/logs/silu-quant-diagnostic.log" 2>&1 || diagnostic_status=$?
-    if [[ "${diagnostic_status}" -ne 0 ]]; then
-      printf 'silu_quant_diagnostic_failed status=%s; continuing official run\n' "${diagnostic_status}" >&2
-      if [[ -s "${OUTPUT_DIR}/results/silu-quant-diagnostic.json" ]]; then
-        jq --argjson status "${diagnostic_status}" '. + {status:"error_or_timeout",exit_status:$status}' "${OUTPUT_DIR}/results/silu-quant-diagnostic.json" >"${OUTPUT_DIR}/results/silu-quant-diagnostic.exit.json"
-        mv "${OUTPUT_DIR}/results/silu-quant-diagnostic.exit.json" "${OUTPUT_DIR}/results/silu-quant-diagnostic.json"
-      else
-        jq -n --argjson status "${diagnostic_status}" '{schema_version:"qwen-silu-quant-diagnostic/v1",status:"error_or_timeout",exit_status:$status,scope:"Pre-model synthetic diagnostic; official benchmark continues"}' >"${OUTPUT_DIR}/results/silu-quant-diagnostic.json"
-      fi
-    fi
-  fi
-
   if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.model_storage // "shared"' "${OUTPUT_DIR}/source/aspire-serving.json")" == node_local ]]; then
     bash "${OUTPUT_DIR}/scripts/stage-qwen-node-model.sh" "${MODEL_PATH}" "${node_tmp}/model" "${OUTPUT_DIR}/logs/node-${node_rank}-model-copy.log"
     MODEL_PATH="${node_tmp}/model"
