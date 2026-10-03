@@ -6,7 +6,7 @@ The evidence supports a **mixed backend**, not a universal DeepGEMM winner. In t
 
 Prefill-only native CUTLASS is the sole new candidate with repeated positive measured evidence: +3.943% and +3.024% in two paired comparisons. The matched performance gate and integration E2E passed; the reviewed ASPIRE configuration is adopted on main. Decode-only DeepGEMM and CUTLASS both lost throughput. CPU screening does not justify further GPU experiments on larger chunks, the intended 4P/12D layout, or a doubled single-decode KV pool. These are bounded decisions, not proofs of global optimality.
 
-Progress and decisions are recorded in [Issue #17](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/17), including the [CPU screening and complete first campaign](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/17#issuecomment-5965381660).
+Progress and decisions are recorded in [Issue #17](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/17), including the [CPU screening and complete first campaign](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/17#issuecomment-5965381660) and [final integration/adoption report](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/17#issuecomment-5966153803).
 
 ## Comparable first campaign
 
