@@ -8,9 +8,9 @@
 |---|---|---|---|
 |現行c40対照|22e04f2|[37117075216](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117075216)|成功・正本照合済み。2573.455 good tok/s。前回採用338647aと実行コード・設定は同一|
 |並行度44のみ|9ee27fa|[37117351967](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117351967)|成功・正本照合済み。2635.793 good tok/s（単回比較＋2.42%）|
-|Prefill SiLU＋量子化融合のみ|1c2e1ed|[37117374985](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117374985)|新規ビルド・実行を投入済み|
+|Prefill SiLU＋量子化融合のみ|1c2e1ed|[37117374985](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117374985)|成功・正本照合済み。2593.271 good tok/s（旧対照比＋0.77%、依存差あり）|
 |graph bucket13/15のみ|0251488|[37117838126](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37117838126)|成功・正本照合済み。2573.305 good tok/s（単回比較−0.006%、横ばい）|
-|SiLU＋draft head行削減＋c44＋graph13/15|2f295de|[37119291598](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37119291598)|投入済み。188テスト・共同適用検査に成功。採点前の短時間SiLU診断を同じ割当内に含む|
+|SiLU＋draft head行削減＋c44＋graph13/15|2f295de|[37119291598](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37119291598)|成功・正本照合済み。2667.013 good tok/s（旧対照比＋3.64%）。SiLU単体診断完了|
 
 共通条件はDGX026＋030、16 H100、P2TP4/D2TP4 EP1、EAGLE3 steps3/draft4、BF16 draft、FP8 KV、CUTLASS prefill、auto/Triton decode、chunk8192、pool131072。スコア計測ではprofileを無効にする。固定ノードを使用するためGPU割当は直列となるが、ビルドや安価な検証は並行して進める。過去の全体約19分／GPU実行段階約15分は所要時間の目安であり、待ち時間・新規ビルドは別途必要となる。
 
@@ -49,3 +49,15 @@ Graph13/15は捕捉ログ上で51→53バケット、最大256を維持してお
 ## 検証記録の正本
 
 `archive-host:/srv/qwen-artifacts/research-issue-17/20261003-existing-data-analysis/` 配下に保存した。`kernel-campaign-runtime-audit/` の24件の派生結果はリモートで全ハッシュ一致（manifest `be4d1c641391d6938dbed43c9ad0340e0f08d093ec22d94fc0533a21959345af`）。生ログは各Actions runの既存正本を参照する。CPUのSiLU・draft head・統合・graph clamp検査は `kernel-campaign-validation/cpu-validation.tar.gz` に保存し、ローカル／リモートSHA256 `0e9817fdc17f6795e38e3e0f59085ee58db68be9b5aa230ab9ec33f392c1f95a` の一致を確認した。
+
+SiLU版は1597件中1587件適格（99.374%）、TTFT平均1037.568 ms／p99 2520.814 ms、ITL平均10.028 ms／p99 12.631 ms、errors/cancelなし。PBS215904は固定DGX026/030で11分40秒、Exit0。48選択ファイルとリモート全manifestを照合しparser再実行も一致した。実イメージのCUTLASSソースハッシュと適用条件は確認したが、レイヤーごとのカーネルtraceは今回取得していない。8件のgreedy probe中3件が対照と一致し、全件logprobsは有限値であったが、これ自体はモデル精度の合否ではない。派生正本は `kernel-campaign-silu-audit/`、manifest `818f422c4a33b592ac56ee2e3f7873a03ad65030e8befa529ff8522366b5f08d`。
+
+統合版イメージはSiLU版とfrozen requirements・FA3 lockが同一で、両パッチと3ファイルの実ソースハッシュも一致した。旧対照とSiLU版のFA3実バイナリは同一だったためFA3の差し替えは確認されなかったが、63件の依存差による全体性能への影響は分離できない。
+
+## 統合版の実測と条件付きc48
+
+統合版は1648件中1634件適格（99.150%）、TTFT違反14件、ITL違反・errors/cancelなし、2667.013 good tok/s。TTFT平均1297.590 ms／p99 2817.926 ms、ITL平均9.750 ms／p99 12.233 ms。PBS215906はDGX026/030で11分59秒、Exit0、Actions成功。リモート全manifestと選択50ファイルの照合、parser再実行が一致し、c44・graph13/15とソースパッチを確認した。旧c40比＋3.64%、c44のみ比＋1.18%だが、それぞれ1回で依存差もあるため、各変更の寄与・反復再現性は未確定。
+
+同一イメージ内のSiLU baseline→fusedの中央値はR8192で10.912→10.480 µs、R32768で40.784→27.584 µs、R65536で82.176→47.888 µs（各32 replay）。出力とscaleは有限値。FP32参照に対するrelative L2は融合側0.022707〜0.022779、既存側0.022651〜0.022714と近いが、合成入力の数値診断でありモデル品質の証明ではない。カーネル区間の比率をE2Eへ乗算しない。
+
+正本照合後、CPUスクリーニング・decodeキュー/退避なし・メモリ状況・適格率を根拠に、統合版イメージを再利用するc48 `ecd8952` / [37121275791](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37121275791) を1条件だけ追加投入した。181テストを完了し、両パッチ・chunk8192・pool131072・graph・モデル・固定ノードは維持する。完了済みの一時SiLU診断を除去したため、起動前の診断有無は異なるが、公式採点中の処理は並行度以外変更しない。新規ビルド・profile・総当たりは行わない。
