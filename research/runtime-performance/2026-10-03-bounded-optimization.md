@@ -51,6 +51,8 @@ Old rerun `37091361072` remains queued with zero jobs; both normal and force-can
 
 The user's intended candidate is **prefill4GPU/decode12GPU: P1TP4/D3TP4**. The previously launched P3D1 trial is the reverse direction and was launched before sufficient simulation. Its failure does not reject P1D3. Major layout changes must be screened before spending GPU credits.
 
+PP/EP/DP/CP/TP variants were screened for deployment compatibility rather than exhaustively ranked: TP2 does not fit the model, deployed EAGLE3 conflicts with PP, decode CP is unsupported, and earlier TP4/EP4 or TP8/EP8 evidence does not justify adoption. These constrain the current implementation, not a hypothetical implementation from scratch. The existing c44 run36542080658 gained only1.13% in a single comparison with differing telemetry/seeds; that evidence does not justify replacing c40.
+
 AISimulate uses413 collected whole-forward timing rows, target-only BF16 KV/attention, FP8 weights, synthetic4000/200 requests, c40 and4000 completions. It does not faithfully implement deployed EAGLE3/FP8-KV serving or the actual512-token admission reservation and preallocation queues. Its throughput is not an official AIPerf score.
 
 | Native CPU condition | Output tok/s | Joint SLA fraction | Mean TTFT ms |
