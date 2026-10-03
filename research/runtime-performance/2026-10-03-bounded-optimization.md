@@ -69,7 +69,7 @@ Measured prefill B1/B2/B4/B8 full-prompt forward latency is154.796/293.657/553.6
 
 The actual P3D1 run shows a sampled preallocation queue of11.50 requests and mean running batch24.91. Logged `#transfer-req` includes bootstrap, prefill and transfer-related waiting; it is not an isolated network-transfer latency measurement. These log samples are not wall-time-weighted measurements of every iteration.
 
-Original-pool unconstrained P3D1 exceeds measured decode KV coverage; doubled-pool P3D1 reaches unmeasured B36. External sequence caps27/29 are labeled admission sensitivities, not a faithful reservation implementation. A separate empirical batch/ITL sensitivity admits a pool win only under optimistic latency assumptions; it is not robust. Prepared pool commit `9440fa6` remains unpushed.
+Original-pool unconstrained P3D1 exceeds measured decode KV coverage; doubled-pool P3D1 reaches unmeasured B36. External sequence caps27/29 are labeled admission sensitivities, not a faithful reservation implementation. A separate empirical batch/ITL sensitivity admits a pool win only under optimistic latency assumptions; it is not robust. Prepared pool commit `9440fa6` was never pushed; its rejected temporary branch/worktree has been removed without a GPU run.
 
 ## Kernel and call overhead: what is established
 
