@@ -49,6 +49,7 @@ if [[ -x "${nvidia_hook}" ]]; then sed -i 's%--ldconfig=@$(command -v ldconfig.r
 if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh" ]]; then chmod -x "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh"; fi
 
 install -m 0755 "${GITHUB_WORKSPACE}/submission/run/submit.sbatch" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/"
+if [[ "${CLUSTER_NAME}" == aspire2ap ]]; then install -m 0755 "${GITHUB_WORKSPACE}/scripts/diagnose-silu-quant.py" "${runtime_dir}/scripts/"; fi
 export HF_HOME="${runtime_dir}/tokenizer-cache"
 export HF_HUB_DISABLE_XET=1
 export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"

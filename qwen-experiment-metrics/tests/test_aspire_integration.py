@@ -54,10 +54,23 @@ def capture_router(source: str, platform: str, tmp_path: Path) -> list[str]:
 
 
 @pytest.mark.parametrize("platform,nodes,profile", [("aspire2ap", 2, False), ("firmus", 2, False), ("firmus", 2, True), ("genkai", 2, False), ("genkai", 4, False), ("genkai", 4, True)])
-def test_worker_argv_matches_validated_candidate_or_main(platform: str, nodes: int, profile: bool, tmp_path: Path) -> None:
+def test_worker_argv_matches_archived_base_with_graph_candidate(platform: str, nodes: int, profile: bool, tmp_path: Path) -> None:
     source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
     expected = json.loads(FIXTURE.read_text())["workers"][f"{platform}-{nodes}-{profile}"]
+    if platform == "aspire2ap":
+        graph_bs = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())["decode_cuda_graph_bs"]
+        for worker in expected:
+            if worker["argv"][worker["argv"].index("--disaggregation-mode") + 1] == "decode":
+                worker["argv"] += ["--cuda-graph-bs-decode", *map(str, graph_bs)]
     assert capture_workers(source, platform, nodes, tmp_path, profile) == expected
+
+
+def test_graph_candidate_preserves_archived_buckets_and_client_condition() -> None:
+    config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
+    # Audited decode default at SGLang fc275674; only two missing buckets are added.
+    archived_bs = [*range(1, 9), *range(10, 33, 2), *range(40, 65, 4), *range(72, 257, 8), *range(272, 513, 16)]
+    assert config["decode_cuda_graph_bs"] == sorted([*archived_bs, 13, 15])
+    assert config["concurrency"] == 44
 
 
 @pytest.mark.parametrize("platform", ["aspire2ap", "firmus", "genkai"])
