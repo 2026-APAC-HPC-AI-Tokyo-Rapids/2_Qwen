@@ -46,7 +46,7 @@ def capture_router(source: str, platform: str, tmp_path: Path) -> list[str]:
     root = tmp_path / platform
     (root / "source").mkdir(parents=True)
     (root / "source/aspire-serving.json").write_bytes((REPOSITORY / "configs/aspire-serving.json").read_bytes())
-    (root / "source/worker-endpoints.tsv").write_text("prefill\t192.0.2.1\t30100\t9000\nprefill\t192.0.2.1\t30101\t9001\ndecode\t192.0.2.2\t30200\tunused\ndecode\t192.0.2.2\t30201\tunused\n")
+    (root / "source/worker-endpoints.tsv").write_text("prefill\t192.0.2.1\t30100\t9000\nprefill\t192.0.2.1\t" + ("30110" if platform == "aspire2ap" else "30101") + "\t9001\ndecode\t192.0.2.2\t30200\tunused\ndecode\t192.0.2.2\t30201\tunused\n")
     function = source.split("run_router() {", 1)[1].split("\nrun_aiperf()", 1)[0]
     harness = "set -euo pipefail\nenroot() { printf '%s\\0' \"$@\" >\"${OUTPUT_DIR}/argv\"; }\nrun_router() {" + function + "\nrun_router\n"
     subprocess.run(["bash", "-c", harness], env={**os.environ, "QWEN_PLATFORM": platform, "OUTPUT_DIR": str(root), "MODEL_PATH": "/fixture/model", "CONTAINER_IMAGE": "/fixture/image.sqsh"}, check=True)
@@ -65,6 +65,9 @@ def test_worker_argv_matches_archived_base_with_graph_candidate(platform: str, n
             else:
                 position = worker["argv"].index("cutlass") + 1
                 worker["argv"][position:position] = ["--enable-dp-attention", "--dp-size", "2"]
+                if worker["argv"][worker["argv"].index("--port") + 1] == "30101":
+                    worker["argv"][worker["argv"].index("--port") + 1] = "30110"
+                    worker["argv"][worker["argv"].index("--nccl-port") + 1] = "31110"
     assert capture_workers(source, platform, nodes, tmp_path, profile) == expected
 
 
@@ -79,7 +82,10 @@ def test_graph_candidate_preserves_archived_buckets_and_client_condition() -> No
 @pytest.mark.parametrize("platform", ["aspire2ap", "firmus", "genkai"])
 def test_router_argv_matches_candidate_or_main(platform: str, tmp_path: Path) -> None:
     source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
-    assert capture_router(source, platform, tmp_path) == json.loads(FIXTURE.read_text())["routers"][platform]
+    expected = json.loads(FIXTURE.read_text())["routers"][platform]
+    if platform == "aspire2ap":
+        expected = [item.replace("192.0.2.1:30101", "192.0.2.1:30110") for item in expected]
+    assert capture_router(source, platform, tmp_path) == expected
 
 
 def test_candidate_flags_agree_with_archived_server_info() -> None:
@@ -220,3 +226,20 @@ def test_greedy_probe_records_fixed_requests_and_requires_logprobs(tmp_path: Pat
         assert request["min_tokens"] == request["max_tokens"] == 64
         assert request["ignore_eos"] and request["logprobs"]
         assert not request["stream"]
+
+
+def test_prefill_dp_tcp_ports_do_not_overlap() -> None:
+    """Pinned SGLang PortArgs uses API+233 through API+239 in DP mode."""
+    workers = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())["workers"]
+    per_node: dict[int, set[int]] = {}
+    for worker in workers:
+        api = worker["port"]
+        ports = {api, api + 1000}
+        if worker["role"] == "prefill":
+            ports.update(range(api + 233, api + 240))
+            ports.add(api + 13)  # DataParallelController handshake.
+            ports.add(worker["bootstrap"])
+        assert not per_node.setdefault(worker["node"], set()).intersection(ports)
+        per_node[worker["node"]].update(ports)
+    # The previous adjacent API ports necessarily overlapped the DP range.
+    assert set(range(30100 + 233, 30100 + 240)).intersection(range(30101 + 233, 30101 + 240))
