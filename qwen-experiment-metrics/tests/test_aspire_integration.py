@@ -64,7 +64,9 @@ def test_worker_argv_matches_archived_base_with_graph_candidate(platform: str, n
                 worker["argv"] += ["--cuda-graph-bs-decode", *map(str, graph_bs)]
             else:
                 image_index = worker["argv"].index("/fixture/image.sqsh")
-                worker["argv"][image_index:image_index] = ["-e", "SGLANG_PREFILL_CUTLASS_ES=off"]
+                worker["argv"][image_index:image_index] = ["-e", "SGLANG_PREFILL_CUTLASS_ES=off", "-e", "NCCL_DEBUG=INFO", "-e", "NCCL_DEBUG_SUBSYS=INIT,NVLS"]
+                cutlass_index = worker["argv"].index("--moe-runner-backend") + 2
+                worker["argv"][cutlass_index:cutlass_index] = ["--enable-nccl-nvls"]
     assert capture_workers(source, platform, nodes, tmp_path, profile) == expected
 
 
