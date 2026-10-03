@@ -36,7 +36,7 @@ def capture_workers(source: str, platform: str, nodes: int, tmp_path: Path, prof
     worker = source.split("  start_worker() {", 1)[1].split("\n  case \"${QWEN_PLATFORM}\"", 1)[0]
     topology = source.split("\n  case \"${QWEN_PLATFORM}\"", 1)[1].split("\n  esac", 1)[0]
     harness = 'set -euo pipefail\nrestore_worker_cache() { mkdir -p "$2"; }\npids=()\ncache_workers=()\nstart_worker() {' + worker + '\nfor ((node_rank=0;node_rank<NODE_COUNT;node_rank++)); do\ncase "${QWEN_PLATFORM}"' + topology + '\nesac\ndone\nfor pid in "${pids[@]}"; do wait "$pid"; done\n'
-    environment = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}", "ARGV_RECORD": str(record), "QWEN_PLATFORM": platform, "NODE_COUNT": str(nodes), "GPUS_PER_NODE": "4" if platform == "genkai" else "8", "PROFILE": "true" if profile else "false", "OUTPUT_DIR": str(output), "node_tmp": str(root / "node"), "cache_root": str(root / "cache"), "MODEL_PATH": "/fixture/model", "CONTAINER_IMAGE": "/fixture/image.sqsh", "ucx_devices": "mlx5_0:1,mlx5_1:1", "node_ip": "192.0.2.1"}
+    environment = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}", "ARGV_RECORD": str(record), "QWEN_PLATFORM": platform, "NODE_COUNT": str(nodes), "GPUS_PER_NODE": "4" if platform == "genkai" else "8", "PROFILE": "true" if profile else "false", "OUTPUT_DIR": str(output), "node_tmp": str(root / "node"), "cache_root": str(root / "cache"), "MODEL_PATH": "/fixture/model", "CONTAINER_IMAGE": "/fixture/image.sqsh", "ucx_devices": "mlx5_0:1,mlx5_1:1", "node_ip": "192.0.2.1", "PROFILER_NSYS_ROOT": "/fixture/nsys"}
     subprocess.run(["bash", "-c", harness], env=environment, check=True, capture_output=True, text=True)
     result = [json.loads(line.replace(str(root), "/fixture")) for line in record.read_text().splitlines()]
     return sorted(result, key=lambda item: item["argv"][item["argv"].index("--port") + 1])
@@ -162,8 +162,8 @@ def test_aiperf_argv_matches_archived_candidate(tmp_path: Path) -> None:
     assert process.stdout.rstrip("\0").split("\0") == json.loads(FIXTURE.read_text())["aiperf_argv"]
 
 
-@pytest.mark.parametrize("platform,parser_status", [("aspire2ap", 0), ("aspire2ap", 3), ("firmus", 0), ("firmus", 3), ("genkai", 3)])
-def test_parser_status_survives_post_benchmark_evidence(tmp_path: Path, platform: str, parser_status: int) -> None:
+@pytest.mark.parametrize("platform,parser_status,profile", [("aspire2ap", 0, False), ("aspire2ap", 3, False), ("firmus", 0, False), ("firmus", 3, False), ("genkai", 3, False), ("aspire2ap", 0, True), ("aspire2ap", 3, True)])
+def test_parser_status_survives_post_benchmark_evidence(tmp_path: Path, platform: str, parser_status: int, profile: bool) -> None:
     for directory in ("source", "results/artifacts/run"):
         (tmp_path / directory).mkdir(parents=True)
     (tmp_path / "source/worker-endpoints.tsv").write_text("prefill\t192.0.2.1\t30100\t9000\ndecode\t192.0.2.2\t30200\tunused\n")
@@ -173,14 +173,15 @@ def test_parser_status_survives_post_benchmark_evidence(tmp_path: Path, platform
     stubs = '''set -euo pipefail
 enroot() {
   case " $* " in
-    *" --require-eligible "*) return "${PARSER_STATUS}" ;;
+    *" /results/score.json "*) printf '%s\n' "$*" >"${OUTPUT_DIR}/parser-argv"; return "${PARSER_STATUS}" ;;
     *" /calibration/scripts/greedy_probe.py "*) printf 'greedy\n' >"${OUTPUT_DIR}/greedy-invoked" ;;
   esac
 }
 curl() { printf '{}\n'; }
 '''
-    process = subprocess.run(["bash", "-c", stubs + "run_aiperf() {" + function + "\nrun_aiperf\n"], env={**os.environ, "QWEN_PLATFORM": platform, "OUTPUT_DIR": str(tmp_path), "CONCURRENCY": "40" if platform == "aspire2ap" else "16", "CONTAINER_IMAGE": "/fixture/image.sqsh", "PARSER_STATUS": str(parser_status)}, capture_output=True, text=True, check=False)
+    process = subprocess.run(["bash", "-c", stubs + "run_aiperf() {" + function + "\nrun_aiperf\n"], env={**os.environ, "QWEN_PLATFORM": platform, "OUTPUT_DIR": str(tmp_path), "CONCURRENCY": "40" if platform == "aspire2ap" else "16", "CONTAINER_IMAGE": "/fixture/image.sqsh", "PARSER_STATUS": str(parser_status), "PROFILE": "true" if profile else "false"}, capture_output=True, text=True, check=False)
     assert process.returncode == parser_status, process.stderr
+    assert ("--require-eligible" in (tmp_path / "parser-argv").read_text()) is not profile
     assert (tmp_path / "greedy-invoked").exists() == (platform == "aspire2ap")
     assert len(list((tmp_path / "results").glob("server-info-*.json"))) == (2 if platform == "aspire2ap" else 0)
 
@@ -217,3 +218,19 @@ def test_greedy_probe_records_fixed_requests_and_requires_logprobs(tmp_path: Pat
         assert request["min_tokens"] == request["max_tokens"] == 64
         assert request["ignore_eos"] and request["logprobs"]
         assert not request["stream"]
+
+
+def test_prefill_profile_wraps_same_command_and_preserves_decode(tmp_path: Path) -> None:
+    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    plain = capture_workers(source, "aspire2ap", 2, tmp_path, False)
+    profiled = capture_workers(source, "aspire2ap", 2, tmp_path, True)
+    for baseline, observed in zip(plain, profiled, strict=True):
+        argv = observed["argv"]
+        if argv[argv.index("--disaggregation-mode") + 1] == "decode":
+            assert argv == baseline["argv"]
+            assert "/opt/profiler/exec-profiler.sh" not in argv
+        else:
+            assert argv[argv.index("/opt/profiler/exec-profiler.sh") + 1:] == baseline["argv"][baseline["argv"].index("/fixture/image.sqsh") + 1:]
+            assert "QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys" in argv
+            assert "/fixture/nsys:/opt/nsys:bind,ro,x-create=dir" in argv
+        assert observed["profiler"] is not None

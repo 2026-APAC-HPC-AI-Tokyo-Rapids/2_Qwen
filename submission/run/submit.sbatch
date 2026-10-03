@@ -157,7 +157,15 @@ run_node() {
       mapfile -t decode_graph_bs < <(jq -r '.decode_cuda_graph_bs // [] | .[]' "${OUTPUT_DIR}/source/aspire-serving.json")
       if [[ "${#decode_graph_bs[@]}" -gt 0 ]]; then args+=(--cuda-graph-bs-decode "${decode_graph_bs[@]}"); fi
     fi
-    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
+    profiler_env=()
+    profiler_mounts=()
+    container_command=("${args[@]}")
+    if [[ "${PROFILE}" == true && "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then
+      profiler_env=(-e "QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys" -e "QWEN_PROFILER_INVOCATION_PATH=/profiler-output/nsys-node-${node_rank}-${role}-${worker}.argv")
+      profiler_mounts=(-m "${PROFILER_NSYS_ROOT}:/opt/nsys:bind,ro,x-create=dir" -m "${OUTPUT_DIR}/scripts:/opt/profiler:bind,ro,x-create=dir" -m "${OUTPUT_DIR}/profile:/profiler-output")
+      container_command=(/opt/profiler/exec-profiler.sh "${args[@]}")
+    fi
+    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${profiler_env[@]}" "${profiler_mounts[@]}" "${CONTAINER_IMAGE}" "${container_command[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
     (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec "${worker_command[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
     pids+=("$!")
@@ -227,7 +235,9 @@ run_aiperf() {
   export_file="$(find "${OUTPUT_DIR}/results/artifacts" -mindepth 2 -maxdepth 2 -type f -name profile_export_aiperf.json -print -quit)"
   [[ -n "${export_file}" && -s "${export_file}" ]]
   cp "${export_file}" "${OUTPUT_DIR}/results/profile_export_aiperf.json"
-  if enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}/results:/results" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json /results/score.json --concurrency "${CONCURRENCY}" --require-eligible --command /results/aiperf-command.txt --provenance /results/aiperf-provenance.txt <<'PY'
+  eligibility_args=(--require-eligible)
+  if [[ "${PROFILE}" == true ]]; then eligibility_args=(); fi
+  if enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}/results:/results" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json /results/score.json --concurrency "${CONCURRENCY}" "${eligibility_args[@]}" --command /results/aiperf-command.txt --provenance /results/aiperf-provenance.txt <<'PY'
 #!/usr/bin/env python3
 """Validate AIPerf's official Qwen metrics and emit the competition score."""
 
@@ -463,6 +473,7 @@ if [[ "${mode}" == aiperf ]]; then run_aiperf; exit; fi
 [[ "${mode}" == orchestrate ]]
 [[ "${CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]
 [[ "${PROFILE}" == true || "${PROFILE}" == false ]]
+if [[ "${PROFILE}" == true && "${QWEN_PLATFORM}" == aspire2ap ]]; then [[ -x "${PROFILER_NSYS_ROOT}/bin/nsys" ]]; "${PROFILER_NSYS_ROOT}/bin/nsys" --version >"${OUTPUT_DIR}/profile/nsys-version.txt"; printf 'instrumented profile run; score is not an adoption measurement\n' >"${OUTPUT_DIR}/profile/interpretation.txt"; fi
 [[ "${NODE_COUNT}" =~ ^[1-9][0-9]*$ && "${GPUS_PER_NODE}" =~ ^[1-9][0-9]*$ ]]
 case "${QWEN_PLATFORM}" in firmus) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]] ;; aspire2ap) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]] ;; genkai) [[ "${GPUS_PER_NODE}" -eq 4 && ( "${NODE_COUNT}" -eq 2 || "${NODE_COUNT}" -eq 4 ) ]] ;; *) exit 64 ;; esac
 [[ -s "${CONTAINER_IMAGE}" ]]
@@ -512,13 +523,13 @@ case "${QWEN_PLATFORM}" in
 esac
 server_pid=
 router_pid=
-cleanup_all() { status=$?; trap - EXIT INT TERM; if [[ -n "${router_pid}" ]]; then kill "${router_pid}" 2>/dev/null || true; wait "${router_pid}" 2>/dev/null || true; fi; if [[ -n "${server_pid}" ]]; then kill "${server_pid}" 2>/dev/null || true; wait "${server_pid}" 2>/dev/null || true; fi; exit "${status}"; }
+cleanup_all() { status=$?; trap - EXIT INT TERM; if [[ -n "${profile_capture_pid:-}" ]]; then kill "${profile_capture_pid}" 2>/dev/null || true; wait "${profile_capture_pid}" 2>/dev/null || true; fi; if [[ -n "${router_pid}" ]]; then kill "${router_pid}" 2>/dev/null || true; wait "${router_pid}" 2>/dev/null || true; fi; if [[ -n "${server_pid}" ]]; then kill "${server_pid}" 2>/dev/null || true; wait "${server_pid}" 2>/dev/null || true; fi; exit "${status}"; }
 trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 case "${QWEN_PLATFORM}" in
   firmus) srun --overlap --nodes="${NODE_COUNT}" --ntasks="${NODE_COUNT}" --ntasks-per-node=1 --distribution=block:block "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
-  aspire2ap) /opt/pbs/bin/pbsdsh -- env "QWEN_PLATFORM=${QWEN_PLATFORM}" "OUTPUT_DIR=${OUTPUT_DIR}" "MODEL_PATH=${MODEL_PATH}" "CONTAINER_IMAGE=${CONTAINER_IMAGE}" "PROFILE=${PROFILE}" "NODE_COUNT=${NODE_COUNT}" "GPUS_PER_NODE=${GPUS_PER_NODE}" "ENROOT_LIBRARY_PATH=${ENROOT_LIBRARY_PATH}" "ENROOT_SYSCONF_PATH=${ENROOT_SYSCONF_PATH}" "ENROOT_MOUNT_HOME=${ENROOT_MOUNT_HOME}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
+  aspire2ap) /opt/pbs/bin/pbsdsh -- env "QWEN_PLATFORM=${QWEN_PLATFORM}" "OUTPUT_DIR=${OUTPUT_DIR}" "MODEL_PATH=${MODEL_PATH}" "CONTAINER_IMAGE=${CONTAINER_IMAGE}" "PROFILE=${PROFILE}" "PROFILER_NSYS_ROOT=${PROFILER_NSYS_ROOT:-}" "NODE_COUNT=${NODE_COUNT}" "GPUS_PER_NODE=${GPUS_PER_NODE}" "ENROOT_LIBRARY_PATH=${ENROOT_LIBRARY_PATH}" "ENROOT_SYSCONF_PATH=${ENROOT_SYSCONF_PATH}" "ENROOT_MOUNT_HOME=${ENROOT_MOUNT_HOME}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
   genkai) mpirun -np "${NODE_COUNT}" -ppn 1 -genv PATH "${PATH}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
 esac
 server_pid=$!
@@ -542,6 +553,9 @@ while true; do
   (( SECONDS < deadline ))
   sleep 2
 done
+profile_capture_pid=
+if [[ "${PROFILE}" == true && "${QWEN_PLATFORM}" == aspire2ap ]]; then "${OUTPUT_DIR}/scripts/capture-prefill-profile.sh" "${OUTPUT_DIR}" >"${OUTPUT_DIR}/logs/profile-capture.log" 2>&1 & profile_capture_pid=$!; fi
 "${script_path}" aiperf >"${OUTPUT_DIR}/logs/aiperf.log" 2>&1
+if [[ -n "${profile_capture_pid}" ]]; then wait "${profile_capture_pid}"; for worker in 0 1; do [[ -s "${OUTPUT_DIR}/profile/nsys-node-0-prefill-${worker}.nsys-rep" ]]; [[ "$(find "${OUTPUT_DIR}/profile/torch-prefill-${worker}" -name '*.trace.json.gz' -size +0c | wc -l)" -eq 4 ]]; done; fi
 if [[ "${PROFILE}" == true ]]; then [[ "$(find "${OUTPUT_DIR}/profile" -maxdepth 1 -type f -name 'profiler-invocation-*.argv' | wc -l)" -eq "$(wc -l <"${OUTPUT_DIR}/source/worker-endpoints.tsv")" ]]; fi
 touch "${OUTPUT_DIR}/run-success"
