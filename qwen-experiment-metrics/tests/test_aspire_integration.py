@@ -62,6 +62,9 @@ def test_worker_argv_matches_archived_base_with_graph_candidate(platform: str, n
         for worker in expected:
             if worker["argv"][worker["argv"].index("--disaggregation-mode") + 1] == "decode":
                 worker["argv"] += ["--cuda-graph-bs-decode", *map(str, graph_bs)]
+            else:
+                position = worker["argv"].index("cutlass") + 1
+                worker["argv"][position:position] = ["--enable-dp-attention", "--dp-size", "2"]
     assert capture_workers(source, platform, nodes, tmp_path, profile) == expected
 
 
