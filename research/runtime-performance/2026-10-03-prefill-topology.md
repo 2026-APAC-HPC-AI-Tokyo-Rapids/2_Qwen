@@ -35,4 +35,13 @@ Qwen3通常MHAは `models/qwen3_moe.py:463–479` でAttention TPに応じたhea
 
 ## 実行記録
 
-CPU側argv fixtureを含む52テスト、Ruff、bash構文、固定ソースのDP調整処理を検証し、2系統のSolレビュー後に `bea3efb` を投入した。[Actions 37126228529](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37126228529)。branchは `research/aspire-prefill-dp2-20261003`、親は同一イメージc48の `ecd8952`。新規ビルドは要求せず、再利用予定SHAは `20c3a38359ccc61967343ec23d600f783df8d487c6339d12b9ca53c14b55d3d3`。実行中で結果未確認。単一runで優位性を確定せず、結果が有望なら同条件対照との反復を行う。runtimeのmain反映は優位性確認後とする。
+CPU側argv fixtureを含む52テスト、Ruff、bash構文、固定ソースのDP調整処理を検証し、2系統のSolレビュー後に `bea3efb` を投入した。[Actions 37126228529](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37126228529)。branchは `research/aspire-prefill-dp2-20261003`、親は同一イメージc48の `ecd8952`。新規ビルドは要求せず、再利用予定SHAは `20c3a38359ccc61967343ec23d600f783df8d487c6339d12b9ca53c14b55d3d3`。初回は同SHAを再利用したが、サーバー起動で失敗し性能未評価となった。単一runで優位性を確定せず、結果が有望なら同条件対照との反復を行う。runtimeのmain反映は優位性確認後とする。
+
+
+初回PBS `215925.pbs111` は14:04:20–14:08:31 UTCに実行され、Exit_status1で終了した。最初の時刻付き致命ログは22:07:48 SGTのPrefill0 detokenizerによる `tcp://127.0.0.1:30335` のbind失敗（Address already in use）。DP attentionは通常のIPCからAPI+233〜239のTCPへ切り替わるため、API30100/30101ではP0 detokenizer30335とP1 tokenizer30335が衝突する。公式bench、結果parser、8 greedy probe、KV転送、GPUメモリ評価には到達していない。後続のrun-success欠損によるtarエラーは採点前起動失敗の原因ではない。
+
+Prefill1には時刻のない `sympy.integrals.laplace` importエラーも記録された。実イメージ内に同ファイルが存在し、抽出したSymPy/mpmathをPython3.12.12で直接importおよび4並列spawn importする短時間CPU診断は成功した。ただしフルコンテナ・Torch・DP子processの状態やエラー前後関係を再現しておらず、原因確定や二次障害とは扱わない。
+
+最小修正 `a953ec8` はP1 APIのみ30101→30110とし、既存処理によりNCCLも31101→31110になる。bootstrap9001とD設定・c48・イメージ・kernelを維持した。actual worker/router argv fixtureと同nodeのAPI/NCCL/bootstrap/DP派生範囲/handshake+13の衝突検査を含む53 CPUテスト、Ruff、bash構文が成功した。原因修正後の有限E2E再試験1回を [Actions37129209750](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37129209750) として投入し、terminalまで監視する。未解決の失敗に備える汎用retryや依存変更は追加していない。
+
+初回raw正本は `tomokazu-ubuntu-server:/hdd_raid/samba/net_share/qwen-artifacts/37126228529/1/`、全24ファイルchecksum確認済み。PBS terminalとruntime削除を確認した。派生監査と再現scriptは `research-issue-17/20261003-existing-data-analysis/prefill-dp2-audit/` に保存し、rawを重複退避しない。TP4EP4+Tritonには別候補としてコード経路があるが、backend変更と未測定の中間bufferコストを伴うため今回は追加実機を保留する。DP2が中立・負ならDP4へ自動拡張しない。
