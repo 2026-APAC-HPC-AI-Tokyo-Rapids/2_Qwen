@@ -27,3 +27,11 @@
 ## 正本と完了条件
 
 Lunaがbuild/配備/PBS/probe/E2Eを監視し、最初fatal・probe完成・terminalでSolへ復帰通知する。raw正本は `qwen-artifacts/{run}/1`、解析・preflight・式は `research-issue-17/20261004-moe-es/`。初回runと候補のimage/source/patch来歴、local probe、公式parser/raw request、8greedy probe、checksum、残留PBS/runtimeと作業treeを監査し、改善なしもそのまま記録する。runtime sourceは優位性確認前にmainへmergeしない。
+
+## 初回結果と次の条件
+
+37140273788はbuild・ASPIRE・公式採点・回収・cleanup成功。optional Firmus archiveはSSH接続切断が初発で失敗したが、ASPIRE imageを無効にせずworkflow全体はsuccess。新image SHA256は `4618103a36b6cae6fd86054b5e26a58358106d9c97ad4e5fb5c10a6bd6a3c0aa`。52manifest対象全hash一致、parser再計算一致、1665 requests/error0、good fraction98.9189%、score2679.351 tokens/s、8件greedy各64tokens/logprobs、PBS216067 Exit0/11m53、runtime削除と残留PBSなしを確認した。これはES-off新image対照であり改善実績ではない。
+
+全4shape×4modeで精度gateとglobal graph capture成功。T8192 balancedのgraph時間はoff1.3841ms、up1.3980、down1.4014、both1.4018。対off時間差はup+1.01%/down+1.25%/both+1.28%。T8192 skewは+0.15/+0.69/+0.31%、T4096 skewは+2.32/+1.94/+3.45%、T32は+23.51/+24.75/+30.81%。eagerも全candidate点推定で遅い。単一ordered20repeatの僅差を有意悪化とは断定しないが、有望条件がないためES candidate E2Eは投入せず不採用。これは合成routingのfusedMoE全体時間であり、個別GEMMのTFLOP/sへ逆算しない。
+
+次は別要因の[Prefill NVLS](2026-10-04-prefill-nvls-campaign.md)を同new imageのruntime条件で比較する。MoE GEMMの改善とは区別する。
