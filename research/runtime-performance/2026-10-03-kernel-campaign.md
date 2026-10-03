@@ -45,3 +45,7 @@ Graph13/15は捕捉ログ上で51→53バケット、最大256を維持してお
 ## ITL余裕とバッチ拡大の相互作用
 
 ユーザー指摘により、固定並行度でgoodputが横ばいでも、ITL短縮が並行度・decodeバッチを増やす余地を作る点を明示する。graph13/15の単独c40結果だけで不採用とはしない。投入済み統合版はgraph13/15＋c44を含むため、この組み合わせの挙動も確認する。ただし両ソースパッチと依存更新も含み、graphとc44の相互作用だけを識別する実験ではない。追加の拡大はTTFT、prefill待ち、ITL分布、KVメモリ、公開SLA内のgoodputを合わせて判断し、短縮した平均ITLだけから上限を線形外挿しない。CPU探索で残ったc48は、この統合結果を踏まえて有望性を再評価する候補とし、自動投入しない。
+
+## 検証記録の正本
+
+`tomokazu-ubuntu-server:/hdd_raid/samba/net_share/qwen-artifacts/research-issue-17/20261003-existing-data-analysis/` 配下に保存した。`kernel-campaign-runtime-audit/` の24件の派生結果はリモートで全ハッシュ一致（manifest `be4d1c641391d6938dbed43c9ad0340e0f08d093ec22d94fc0533a21959345af`）。生ログは各Actions runの既存正本を参照する。CPUのSiLU・draft head・統合・graph clamp検査は `kernel-campaign-validation/cpu-validation.tar.gz` に保存し、ローカル／リモートSHA256 `0e9817fdc17f6795e38e3e0f59085ee58db68be9b5aa230ab9ec33f392c1f95a` の一致を確認した。
