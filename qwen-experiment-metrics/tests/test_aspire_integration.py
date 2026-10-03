@@ -33,7 +33,7 @@ def capture_workers(source: str, platform: str, nodes: int, tmp_path: Path, prof
     profiler = output / "scripts/exec-profiler.sh"
     profiler.write_text('#!/bin/bash\nexec "$@"\n')
     profiler.chmod(0o755)
-    worker = source.split("  start_worker() {", 1)[1].split("\n  case \"${QWEN_PLATFORM}\"", 1)[0]
+    worker = source.split("  start_worker() {", 1)[1].split("\n  }\n", 1)[0] + "\n  }\n"
     topology = source.split("\n  case \"${QWEN_PLATFORM}\"", 1)[1].split("\n  esac", 1)[0]
     harness = 'set -euo pipefail\nrestore_worker_cache() { mkdir -p "$2"; }\npids=()\ncache_workers=()\nstart_worker() {' + worker + '\nfor ((node_rank=0;node_rank<NODE_COUNT;node_rank++)); do\ncase "${QWEN_PLATFORM}"' + topology + '\nesac\ndone\nfor pid in "${pids[@]}"; do wait "$pid"; done\n'
     environment = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}", "ARGV_RECORD": str(record), "QWEN_PLATFORM": platform, "NODE_COUNT": str(nodes), "GPUS_PER_NODE": "4" if platform == "genkai" else "8", "PROFILE": "true" if profile else "false", "OUTPUT_DIR": str(output), "node_tmp": str(root / "node"), "cache_root": str(root / "cache"), "MODEL_PATH": "/fixture/model", "CONTAINER_IMAGE": "/fixture/image.sqsh", "ucx_devices": "mlx5_0:1,mlx5_1:1", "node_ip": "192.0.2.1"}
@@ -62,6 +62,9 @@ def test_worker_argv_matches_archived_base_with_graph_candidate(platform: str, n
         for worker in expected:
             if worker["argv"][worker["argv"].index("--disaggregation-mode") + 1] == "decode":
                 worker["argv"] += ["--cuda-graph-bs-decode", *map(str, graph_bs)]
+            else:
+                image_index = worker["argv"].index("/fixture/image.sqsh")
+                worker["argv"][image_index:image_index] = ["-e", "SGLANG_PREFILL_CUTLASS_ES=off"]
     assert capture_workers(source, platform, nodes, tmp_path, profile) == expected
 
 
