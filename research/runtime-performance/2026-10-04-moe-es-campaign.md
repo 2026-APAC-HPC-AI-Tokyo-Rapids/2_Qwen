@@ -35,3 +35,9 @@ Lunaがbuild/配備/PBS/probe/E2Eを監視し、最初fatal・probe完成・term
 全4shape×4modeで精度gateとglobal graph capture成功。T8192 balancedのgraph時間はoff1.3841ms、up1.3980、down1.4014、both1.4018。対off時間差はup+1.01%/down+1.25%/both+1.28%。T8192 skewは+0.15/+0.69/+0.31%、T4096 skewは+2.32/+1.94/+3.45%、T32は+23.51/+24.75/+30.81%。eagerも全candidate点推定で遅い。単一ordered20repeatの僅差を有意悪化とは断定しないが、有望条件がないためES candidate E2Eは投入せず不採用。これは合成routingのfusedMoE全体時間であり、個別GEMMのTFLOP/sへ逆算しない。
 
 次は別要因の[Prefill NVLS](2026-10-04-prefill-nvls-campaign.md)を同new imageのruntime条件で比較する。MoE GEMMの改善とは区別する。
+
+## 量化scale shuffle融合のCPU候補（保留）
+
+別branch `experiment/prefill-shuffle-fusion-20261004`（b557fcd起点）で量化値とscaleのrow shuffle融合をCPU準備した。default off、P/Hopper/EP1/K4096G32の限定経路、既存quantize-onceを保持。205tests/Ruff/bash/diff、固定sourceの4patch適用とAST検査を通過したが、commit/build/push/GPUは未実施、実機の速度・精度・graph成立は未確認。
+
+既存profile P0TP0ではpaired copy211.35µs/call（FP8169.49＋scale41.86）。scale費用を全除去してもactive5秒窓の65.67ms（1.31%）、半減なら32.84ms（0.66%）が局所削減上限で、FP8 copy12.35%退行で相殺する。bulk bytesは変わらず、graph node一つ削減をCPU launch一回削減と同一視しない。これはE2E向上率ではなく局所費用上限。独立新image buildと同image off/enable反復費用に対し現時点の根拠は弱く、単独build/GPUは保留。次に別理由でsource buildを行う機会へ有限probeを同梱する候補として保持する。NVLSを優先する。
