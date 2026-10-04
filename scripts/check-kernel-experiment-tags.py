@@ -1,0 +1,23 @@
+"""Validate explicit bounded kernel-build/probe tags before any expensive work."""
+import os
+
+
+def validate(message):
+    build_only = '[build-only]' in message
+    probe = '[cutlass-grid-probe]' in message
+    if not (build_only or probe):
+        return
+    if build_only and probe:
+        raise ValueError('build-only and cutlass-grid-probe are separate tracked stages')
+    if '[cluster:aspire2ap]' not in message or any(tag in message for tag in ['[cluster:genkai]', '[cluster:firmus]']):
+        raise ValueError('kernel build/probe requires only cluster:aspire2ap')
+    if '[profile]' in message:
+        raise ValueError('finite kernel stages do not capture a profiler')
+    if build_only and not message.startswith('[require-build]'):
+        raise ValueError('build-only requires the require-build prefix')
+    if probe and ('[nodes:1]' not in message or any(tag in message for tag in ['[nodes:2]', '[nodes:4]']) or message.startswith('[require-build]')):
+        raise ValueError('grid probe requires nodes:1 and a separately built reusable image')
+
+
+if __name__ == '__main__':
+    validate(os.environ.get('QWEN_COMMIT_MESSAGE', ''))
