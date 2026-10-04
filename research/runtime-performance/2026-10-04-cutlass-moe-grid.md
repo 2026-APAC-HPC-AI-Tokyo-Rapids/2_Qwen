@@ -75,3 +75,27 @@ terminal rawのgpu-environment.csvはprobe開始前snapshotでSM clock345MHz/32�
 初回gridの基準未達・候補無しという結論を維持する。一方、balanced約1%/skew約.2%のdown stage4仮説について、ユーザーの最適探索指示とroot判断に従い同imageの短い独立1GPU確認を一回だけ追加する。candidateは`coop128_c1x2_s4`と`coop128_c1x1_s4`の2つ、upはwheel固定。wheel/stockclone対照、新seed、20paired roundsと順序反転、各測定前に0.2秒以上の連続GPU warmupを行う。allocatedUUIDだけの1秒clocks/power/utilization samplingを計測区間外でも記録し、他GPUへアクセスしない。
 
 事前確認gateはcandidate/wheel medianが8192 balancedで0.995以下・skewで0.999以下、各pattern15/20round以上改善、全finite/relativeL2<=1e-3。heldout4096 skew/8192 moderateは順位選定に使わずmedian退行を除外する頑健性gate。bootstrap95%区間は診断であり20roundを20独立runとは数えない。初回gridの全5sign条件を黙って置換するのではなく、別実験・別条件commitの確認基準として記録する。tinygainの場合は公式E2E費用対効果をrootへ提示し、自動採用しない。sourcevariant/stage5/newbuildなし、既healthy PBS216140 Q維持。
+
+## 独立確認の完走・採否
+
+[bce182d / run37196596176](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37196596176)はsameimage66925d03再利用、新build無し、Actions全体success/PBS216221 Exit0・5分20秒、DGX038のallocated H100 1GPUで完走。正本`qwen-artifacts/37196596176/1`全14hash、module/image/probe/productionID、20round全warmup>=200ms・400連続replay、実commandUUID限定、sampler正常終了・stderr無し、公式score非生成、home回収・runtime/PBScleanupを確認。旧healthy216140 Qは変更なし。
+
+
+事前gateを独立再計算し、両候補False。追加E2Eを勧めない。初回16候補gridの「頑健な勝者なし」は維持する。
+
+|候補|8192 balanced 中央値時間差 / paired勝数|8192 skew 中央値時間差 / paired勝数|heldout4096 skew|heldout8192 moderate|
+|---|---|---|---|---|
+|down c1x2 stage4 / up wheel|-0.6488% / 20/20|-0.1502% / 11/20|-0.7008% / 18/20|-0.3875% / 20/20|
+|down c1x1 stage4 / up wheel|-0.6879% / 20/20|+0.0023% / 10/20|-0.2685% / 15/20|-0.2754% / 16/20|
+
+表の時間差はcandidate median / wheel median - 1。paired ratio中央値とは異なる。c1x2 skewはpaired中央値-0.0147%、診断bootstrap95%区間[0.998212,1.001142]で1を含む。c1x1 skewはpaired中央値+0.0381%、区間[0.998200,1.002029]。balancedは両候補改善するが、skewの最低15/20勝を満たさない（c1x1は中央値閾値も未達）。観測後に閾値は変えない。heldoutは退行なしだが、選定に使わず、training未達を救済しない。
+
+全4shape×4variant×20roundのeager/graph出力はfinite、relativeL2=0、bitwise一致。stock clone/wheel中央値差はbalanced-0.0159%、skew+0.0042%、heldout4096-0.0839%、moderate+0.0806%。候補の約0.65% balanced差を単にbuild差とは説明しにくいが、実route skewで頑健な改善の証拠にはならない。
+
+wholeMoE CUDA graph時間であり、down GEMM単独改善率へ逆算しない。実router分布未収集の合成入力、同一run内20roundは独立runではないためresampling区間は診断のみ。新seedとheldoutで過適合を点検したが、公式E2E改善は未確認。
+
+H10080GB HBM3 / SM132 / visible1、UUID f28ea8ef-b4e7-5547-f51e-0bd45cfb6168。1秒samplerのutil>0全232sampleでSM1845–1980MHz。CSV timestampにtimezoneが無く、probeUTCと8h差の時間整合からUTC+8を仮定するとbalanced1890–1965、skew1905–1980、heldout4096 1845–1965、moderate1890–1965MHz。これはshape全windowの範囲で、variant別の完全matched clock証明ではない。prelaunch345MHzを実行clockとして扱わない。
+
+正本JSON SHA256: 52f5db2415bd514a903b69a1df6254a77a1973fac79cf5ebdaf2d66be50aad6c。独立解析script/JSONは同dirに保持。raw改変、追加GPU投入、自動採用なし。
+
+両候補の事前gate未達により候補E2Eは投入しない。pass時の同newimage shuffleon/tileoff vs down-IDだけ変更のmatched E2EはCPU計画のみ（通常12分×16GPU、off/on pair約24分・6.4GPUh、queue別）。その費用をこの微小・分布依存結果だけで追加消費しない。initialgrid verdictやprecision/runtime既定は維持し、改善未確認を最適性証明に置き換えない。branch `experiment/prefill-cutlass-confirm-20261004` は再現用保持、mainruntime変更なし。
