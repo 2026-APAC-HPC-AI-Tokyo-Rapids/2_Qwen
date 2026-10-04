@@ -76,11 +76,21 @@ jobs:
   aspire2ap:
     name: ASPIRE 2A+
     needs: [validate, container]
-    if: ${{ ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
+    if: ${{ !contains(github.event.head_commit.message, '[build-only]') && !contains(github.event.head_commit.message, '[cutlass-grid-probe]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
     uses: ./.github/workflows/aspire2ap.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
       profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
+      container_sha256: ${{ needs.container.outputs.aspire2ap_container_sha256 }}
+      container_size: ${{ needs.container.outputs.aspire2ap_container_size }}
+    secrets: inherit
+
+  cutlass-grid:
+    name: ASPIRE 2A+の1GPU有限CUTLASS grid
+    needs: [validate, container]
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]') && contains(github.event.head_commit.message, '[cutlass-grid-probe]') && !contains(github.event.head_commit.message, '[build-only]') && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
+    uses: ./.github/workflows/aspire2ap-grid.yml
+    with:
       container_sha256: ${{ needs.container.outputs.aspire2ap_container_sha256 }}
       container_size: ${{ needs.container.outputs.aspire2ap_container_size }}
     secrets: inherit
@@ -99,10 +109,10 @@ jobs:
 
   archive-artifacts:
     name: 成果物を自宅サーバーへ保管
-    needs: [genkai, aspire2ap, firmus]
+    needs: [genkai, aspire2ap, firmus, cutlass-grid]
     if: >-
       always() &&
-      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped')
+      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.cutlass-grid.result != 'skipped')
     runs-on: [self-hosted, home-lab]
     permissions:
       actions: write
