@@ -15,6 +15,6 @@ module = load(name='apac_prefill_moe_tiles', sources=[str(root / 'moe_tiles.cu')
 source = Path(module.__file__)
 destination = Path(sysconfig.get_paths()['platlib']) / source.name
 shutil.copyfile(source, destination)
-manifest = {'schema': 'prefill-moe-tiles/v1', 'cutlass_revision': '57e3cfb47a2d9e0d46eb6335c3dc411498efa198', 'architecture': 'sm_90a', 'source_sha256': hashlib.sha256((root / 'moe_tiles.cu').read_bytes()).hexdigest(), 'module_sha256': hashlib.sha256(destination.read_bytes()).hexdigest(), 'module_path': str(destination), 'modes': {'0': 'stock128x128cluster1x2', '1': 'down128x128cluster1x1', '2': 'down128x256cluster1x1', '3': 'down64x128pingpong2x1', '4': 'up64x128pingpong2x1'}}
+manifest = {'schema': 'prefill-moe-tiles/v1', 'cutlass_revision': '57e3cfb47a2d9e0d46eb6335c3dc411498efa198', 'architecture': 'sm_90a', 'source_sha256': hashlib.sha256((root / 'moe_tiles.cu').read_bytes()).hexdigest(), 'module_sha256': hashlib.sha256(destination.read_bytes()).hexdigest(), 'module_path': str(destination), 'modes': {'0': 'stock128x128cluster1x2', '1': 'down128x128cluster1x1', '3': 'down64x128pingpong2x1', '4': 'up64x128pingpong2x1'}}
 (root / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 print(json.dumps(manifest))

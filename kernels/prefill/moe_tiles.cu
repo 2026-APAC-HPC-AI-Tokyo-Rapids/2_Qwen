@@ -243,7 +243,6 @@ struct Stock {
   using LayoutSFB = decltype(ScaleConfig::deduce_layoutSFB());
 };
 struct SingleCluster : Stock { using ClusterShape = Shape<_1, _1, _1>; };
-struct WideN : SingleCluster { using MmaTileShape = Shape<_128, _256, _128>; };
 struct Pingpong : Stock {
   using MmaTileShape = Shape<_64, _128, _128>;
   using ClusterShape = Shape<_2, _1, _1>;
@@ -303,7 +302,6 @@ void grouped_mm(torch::Tensor output, torch::Tensor a_ptrs, torch::Tensor b_ptrs
   switch(mode) {
     case 0: RUN_CONFIG(Stock); break;
     case 1: TORCH_CHECK(k == 384, "down only"); RUN_CONFIG(SingleCluster); break;
-    case 2: TORCH_CHECK(k == 384, "down only"); RUN_CONFIG(WideN); break;
     case 3: TORCH_CHECK(k == 384, "down only"); RUN_CONFIG(Pingpong); break;
     case 4: TORCH_CHECK(k == 4096, "up only"); RUN_CONFIG(Pingpong); break;
     default: TORCH_CHECK(false, "unknown finite tile mode");

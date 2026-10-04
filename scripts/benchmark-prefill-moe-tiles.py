@@ -89,7 +89,7 @@ def main():
         baseline_errors = {name: relative_l2(reference, dense) for name, dense in dense_refs.items()}
         record["baseline_reference_relative_l2"] = baseline_errors
         graphs = {}
-        for name, modes in [("wheel", (-1, -1)), ("clone", (0, 0)), ("down-c1", (-1, 1)), ("down-n256", (-1, 2)), ("down-pingpong", (-1, 3)), ("up-pingpong", (4, -1))]:
+        for name, modes in [("wheel", (-1, -1)), ("clone", (0, 0)), ("down-c1", (-1, 1)), ("down-pingpong", (-1, 3)), ("up-pingpong", (4, -1))]:
             record["in_progress"] = name
             args.output.write_text(json.dumps(result | {"current_case": record}, indent=2) + "\n")
             try:

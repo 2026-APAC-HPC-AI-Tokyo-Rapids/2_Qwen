@@ -20,7 +20,7 @@ def function(name):
     return namespace, namespace[name]
 
 
-@pytest.mark.parametrize('up,down,result', [('off', 'off', (-1, -1)), ('stock', 'stock', (0, 0)), ('pingpong', 'c1', (4, 1)), ('off', 'n256', (-1, 2)), ('off', 'pingpong', (-1, 3))])
+@pytest.mark.parametrize('up,down,result', [('off', 'off', (-1, -1)), ('stock', 'stock', (0, 0)), ('pingpong', 'c1', (4, 1)), ('off', 'pingpong', (-1, 3))])
 def test_cached_condition_scope(up, down, result):
     _, choose = function('_prefill_tile_modes')
     assert choose(up, down, True, True, 1, False) == result
@@ -79,3 +79,11 @@ def test_actual_build_patch_chain_checks_the_updated_private_tree(tmp_path):
     for line in dockerfile.splitlines():
         if line.startswith('COPY containers/') and line.split()[1].endswith('.sh'):
             assert os.access(ROOT / line.split()[1], os.X_OK), line
+
+
+def test_rejected_wide_n_geometry_is_not_instantiated_or_selected():
+    _, choose = function('_prefill_tile_modes')
+    with pytest.raises(ValueError):
+        choose('off', 'n256', True, True, 1, False)
+    assert 'WideN' not in (ROOT / 'kernels/prefill/moe_tiles.cu').read_text()
+    assert 'down-n256' not in (ROOT / 'scripts/benchmark-prefill-moe-tiles.py').read_text()
