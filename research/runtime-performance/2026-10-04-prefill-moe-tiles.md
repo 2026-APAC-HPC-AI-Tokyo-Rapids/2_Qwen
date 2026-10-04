@@ -29,3 +29,9 @@ FP32 atomic融合はBF16丸めをepilogue内に残して精度を維持できる
 stock clone large shapeはrelativeL2<=1e-3を必須とし、bitwise一致は診断併記。candidateはrelativeL2/maxabs/maxrel/finite、T32独立BF16/FP32参照に対するbaseline envelope、graphの同検査を保存する。relativeL2>1e-3は品質未承認の注意flag、0.1閾値は粗大誤りscreenに過ぎない。丸め順序差を許容しつつ、明白な品質悪化は採用不可。GPU illegal access/未知fatal後に測定を続けず、can_implement不成立の候補だけは理由を記録する。局所で有望なgeometryのみ追跡conditioncommitで固定し、同newimageoff/on公式E2E＋必要反復、実routingとgreedy品質を確認する。
 
 CPU218tests、actualP/Dargvfixture、Ruff/bash/5patch ASTと独立reviewでcheap gateを先に実施。localnvccが無いためnativecompile・can_implement・CUDAgraph・実品質/速度はまだ未確認、初回remotebuild/probeで検証する。raw/派生正本とIssue17へrun識別子・採否・cleanupを追記し、投入だけで完了としない。
+
+## 初回build失敗と最小修正
+
+実装ffccc09/run[37172308998](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37172308998)は2026-10-04 02:54:51 UTC、固定fc275のprivate cloneでfp8.py:224のpatch適用checkに失敗。Docker/native compile未到達、PBS未投入、GPU消費なし。複数patchを一括`git apply --check`すると後続tileが依存するES追加contextを元sourceへ照合し失敗した。前CPU検証は逐次check/applyでありactualscriptと異なる手順を検査していた。offset変更ではなく、actualscriptを各patch順のcheck→applyへ修正。固定FCで旧失敗と修正版全5patch/AST成功を双方再現し、actualloopを抽出して依存5patchへ実行するfixtureを追加した。
+
+別途、直接Docker RUNする新compiler recipeのmode100644漏れも100755へ修正し、全COPY対象shellの実行bit検査を追加。219CPUtests/Ruff/bash/diffと独立review通過。修正[6ea0e6b](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/commit/6ea0e6b38272f2d5cc4fe1eb85edda0bb52b54ea)を前runterminal後pushし、再build[37172734078](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37172734078)を開始した。候補・serving条件は不変、native/GPU結果は未確認。
