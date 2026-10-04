@@ -19,12 +19,21 @@ nvidia-smi -i "${uuid}" --query-gpu=name,uuid,driver_version,memory.total,clocks
 source "${HOME}/.local/.setenv"
 export ENROOT_LIBRARY_PATH="${RUNTIME_DIR}/enroot-library" ENROOT_SYSCONF_PATH="${RUNTIME_DIR}/enroot-system" ENROOT_MOUNT_HOME=no
 node_tmp="$(mktemp -d /tmp/qwen-grid-${PBS_JOBID}.XXXXXXXXXX)"
-trap 'rm -rf -- "${node_tmp}"' EXIT
+sampler_pid=''
+trap 'if [[ -n "${sampler_pid}" ]]; then kill "${sampler_pid}" 2>/dev/null || true; wait "${sampler_pid}" 2>/dev/null || true; fi; rm -rf -- "${node_tmp}"' EXIT
 install -d -m 0700 "${node_tmp}/cache" "${node_tmp}/data" "${node_tmp}/runtime" "${node_tmp}/temp" "${node_tmp}/home"
 export ENROOT_CACHE_PATH="${node_tmp}/cache" ENROOT_DATA_PATH="${node_tmp}/data" ENROOT_RUNTIME_PATH="${node_tmp}/runtime" ENROOT_TEMP_PATH="${node_tmp}/temp"
-command=(timeout 720 enroot start -e "NVIDIA_VISIBLE_DEVICES=${uuid}" -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e NVIDIA_DISABLE_REQUIRE=1 -e CUDA_VISIBLE_DEVICES=0 -e HOME=/runtime-home -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -e "QWEN_GRID_IMAGE_SHA=$(jq -r '.container_artifact.sha256' "${RUNTIME_DIR}/source/container-sidecar.json")" -m "${node_tmp}/home:/runtime-home" -m "${RUNTIME_DIR}/scripts:/probe:bind,ro,x-create=dir" -m "${RUNTIME_DIR}/results:/results" "${RUNTIME_DIR}/sglang.sqsh" /opt/sglang/venv/bin/python /probe/benchmark-prefill-cutlass-grid.py /results/cutlass-grid.json)
+nvidia-smi -i "${uuid}" --query-gpu=timestamp,uuid,clocks.sm,power.draw,utilization.gpu,temperature.gpu --format=csv -l 1 >"${RUNTIME_DIR}/logs/allocated-gpu-active.csv" 2>"${RUNTIME_DIR}/logs/allocated-gpu-sampler.stderr.log" &
+sampler_pid="$!"
+command=(timeout 720 enroot start -e "NVIDIA_VISIBLE_DEVICES=${uuid}" -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e NVIDIA_DISABLE_REQUIRE=1 -e CUDA_VISIBLE_DEVICES=0 -e HOME=/runtime-home -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -e "QWEN_GRID_IMAGE_SHA=$(jq -r '.container_artifact.sha256' "${RUNTIME_DIR}/source/container-sidecar.json")" -m "${node_tmp}/home:/runtime-home" -m "${RUNTIME_DIR}/scripts:/probe:bind,ro,x-create=dir" -m "${RUNTIME_DIR}/results:/results" "${RUNTIME_DIR}/sglang.sqsh" /opt/sglang/venv/bin/python /probe/benchmark-prefill-cutlass-confirm.py /results/cutlass-confirm.json)
 printf '%q ' "${command[@]}" >"${RUNTIME_DIR}/logs/probe-command.txt"
 printf '\n' >>"${RUNTIME_DIR}/logs/probe-command.txt"
 "${command[@]}" >"${RUNTIME_DIR}/logs/cutlass-grid.log" 2>&1
-jq -e '.schema == "prefill-cutlass-grid-probe/v1" and .serving_adoption == false and (.cases | length) == 2 and (.joint | length) == 3 and (.in_progress | not)' "${RUNTIME_DIR}/results/cutlass-grid.json" >/dev/null
+kill -0 "${sampler_pid}"
+kill "${sampler_pid}"
+wait "${sampler_pid}" 2>/dev/null || true
+sampler_pid=''
+test "$(wc -l <"${RUNTIME_DIR}/logs/allocated-gpu-active.csv")" -gt 2
+test ! -s "${RUNTIME_DIR}/logs/allocated-gpu-sampler.stderr.log"
+jq -e '.schema == "prefill-cutlass-confirm-probe/v1" and .serving_adoption == false and (.cases | length) == 2 and (.heldout | length) == 2 and (.in_progress | not)' "${RUNTIME_DIR}/results/cutlass-confirm.json" >/dev/null
 touch "${RUNTIME_DIR}/run-success"

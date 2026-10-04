@@ -46,3 +46,12 @@ def test_actual_push_workflow_routes(message, pd, probe):
         expression = expression.replace("&&", " and ").replace("||", " or ")
         expression = re.sub(r"!(?!=)", " not ", expression)
         assert eval(expression.strip(), {"__builtins__": {}}, {}) is expected
+
+
+def test_confirmation_sampler_is_allocated_uuid_only_and_stopped():
+    driver=(ROOT/'platforms/aspire2ap/run-cutlass-grid.pbs').read_text()
+    assert 'nvidia-smi -i "${uuid}" --query-gpu=timestamp,uuid,clocks.sm,power.draw,utilization.gpu,temperature.gpu --format=csv -l 1' in driver
+    assert 'kill -0 "${sampler_pid}"' in driver and 'kill "${sampler_pid}"' in driver
+    assert 'prefill-cutlass-confirm-probe/v1' in driver
+    workflow=(ROOT/'.github/workflows/aspire2ap-grid.yml').read_text()
+    assert 'scripts/benchmark-prefill-cutlass-grid.py scripts/benchmark-prefill-cutlass-confirm.py' in workflow

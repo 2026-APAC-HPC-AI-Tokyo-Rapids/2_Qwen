@@ -8,6 +8,6 @@ if [[ "${state}" != F ]]; then printf 'scheduler_job_pending=%s state=%s\n' "${P
   cat "${RUNTIME_DIR}/logs/pbs-accounting.txt"
   test "$(awk -F= '/^[[:space:]]*Exit_status =/{gsub(/[[:space:]]/, "", $2); print $2}' "${RUNTIME_DIR}/logs/pbs-accounting.txt")" = 0
   test -e "${RUNTIME_DIR}/run-success"
-  test -s "${RUNTIME_DIR}/results/cutlass-grid.json"
+  test -s "${RUNTIME_DIR}/results/cutlass-confirm.json"
   test ! -e "${RUNTIME_DIR}/results/score.json"
 fi
