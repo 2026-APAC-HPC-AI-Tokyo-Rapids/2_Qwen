@@ -29,3 +29,19 @@ build成功後、別runtime commitで同imageのstock/tiledをscheduler経由1GP
 ## 初回probe起動失敗
 
 37220486463/PBS216326はDGX039の1GPUで8秒、Exit1。最初のfatalはprobe main43がtorchより先にnative extensionをimportし、`ImportError: libc10.so: cannot open shared object file`。build時はtorchを先にimportしてmodule検査が通過しており、probe import順を最小修正する。新build不要。JSON/性能値は生成されなかった。image正本SHA `182fbb6df7f941aa688a393dfc181bb269f3112a6d34c33f6007ddc5d09f0a42`、raw正本 `qwen-artifacts/37220486463/1` の13hash一致、runtime/self-job cleanupとhome archival成功。初回probeは性能比較に使用しない。
+
+## 有限probe成功と公式比較開始
+
+Torch先行importへ修正した `1781bc9` / [37221346131](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37221346131) はActions/PBS216329成功、wall6:58、DGX038のallocated1GPU、正本14hash一致・runtime cleanup/homearchive成功。事前gateを独立再計算してPASS、全wholeMoE eager/graph bitwise一致・finite・relativeL2=0、map/reset/T0/oracle完備。
+
+|shape|helper stock→tiled ms|wholeMoE stock→tiled ms|whole短縮|勝数|
+|---|---|---|---|---|
+|8192 balanced|.107728→.032630|1.329936→1.249666|6.0356%|20/20|
+|8192 skew|.102588→.031703|1.354264→1.277219|5.6891%|20/20|
+|4096 skew heldout|.057165→.020120|.806483→.755452|6.3277%|20/20|
+|8192 hot heldout|.102524→.031538|1.293173→1.227552|5.0744%|20/20|
+|65 tail heldout|.010822→.008815|.259699→.257781|.7385%|20/20|
+
+helper約69–70%とwhole約6%を区別し、GEMM単独TF/s改善とは呼ばない。合成routing・同run paired比較であり実expert分布/E2E gain未証明。active util>0 258 clock samplesはSM1770–1980MHz、1秒samplerではvariant別clock完全一致を証明しない。CSVtimezoneはallocation日時とのUTC+8推定対応。旧profileからの3.09%消去感度をこの別GPU/別測定windowの厳密gain上限にはしない。
+
+同image182fbb6dで [routing-off公式control37222559966](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37222559966) / `4cdeca6` を投入。Pshuffle1/routing0、D/c48/fixed026030/topology/precision維持、microhook/profile無し。off terminal監査後routing1のみを変更して候補を順次比較する。新build不要、通常pair約24分/6.4GPUh、queue別。公式score・8greedy・TTFT/ITL/Pqueue/Dacceptlen/全hash/cleanupまで確認し、単pairで採用を断定しない。
