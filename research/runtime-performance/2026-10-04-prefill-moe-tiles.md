@@ -67,3 +67,11 @@ paired shuffleはT8192 stock中央値0.203475ms→fused0.167149ms、17.853%短�
 **推奨:** tile全offを保持し、同newimageのoff対P-only fused shuffle enableという単要因の非profile公式E2Eへ進む。局所勝者はshuffleのみ。採用は公式parser/品質/greedy/来歴と必要な反復の確認後、単runで改善を確定しない。
 
 root判断によりtile candidate E2Eは見送り。shuffleのみP環境flag1、tile/ES/NVLSoff・D/c48固定の同image候補をCPU準備、actualargvを含む59targetedtestsと独立review通過。offterminal全監査後だけ追跡commitpushする。採点前finiteprobehookは候補で除去し条件差に記録。既存helperには分岐発火logが無いためactualPenv/sourceguard/batchshape照合を確認し、直接kernel名による選択証明はnonprofile未観測という限界を保持する。
+
+## off監査とshuffleonly E2E投入
+
+37173471321はActions/PBS216125成功（11:56）、正本54hash/公式制約parser再実行一致・eligible、score2681.82392469891/good98.9202%、errors/cancel0・TTFT不適格18件。実worker4設定、同image/source、2probe liveと正本byte一致、前offとの8greedy token/logprob完全一致を確認。runtime削除/qstat空。これは新build全off対照でありtile/shuffle改善の値ではない。
+
+[8505eae](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/commit/8505eae300dbb643d189e8f4401a8b5c47349e0e)でP2workersの`SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1`だけを有効にし、同image再利用の[37175480138](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37175480138)を投入。D/c48/TP4EP1DP1PP1/fixed026+030/profilefalseとtile/ES/NVLSoffを保持。既に完了した採点前finiteprobehookは除去した条件差を記録。worker actualcommandをlaunch前に保存する2linesを追加、bench observer/source変更なし。offの環境command記録は欠落しtrackedsource/fixture/workerinfo/defaultoffから裏付けるという限界がある。219CPUtestsと独立review通過、候補E2Eが有望なら同imageoff/on追加pairで確認、局所gainを採用値にしない。
+
+追加runtime探索screenではcontext8192によりgraphmaxは8192 clampされchunk16384だけでは16384graphを作れず、追加buffer/peakも未確認。c44→48でPqueue増/Dactiveほぼ不変だったためc52の根拠は弱い。現在はchunk16K/c52を混ぜず、融合の明確なE2E改善後だけ別単要因候補として再検討する。
