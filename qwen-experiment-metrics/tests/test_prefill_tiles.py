@@ -54,3 +54,28 @@ def test_route_fixture_offsets_cover_top8_without_duplicates_or_negative_expert_
         for count in counts:
             offsets.append(offsets[-1]+count)
         assert offsets[-1] == tokens*8 and all(x<=y for x,y in pairwise(offsets))
+
+
+def test_actual_build_patch_chain_checks_the_updated_private_tree(tmp_path):
+    import os
+    import subprocess
+
+    source = tmp_path / 'source'
+    source.mkdir()
+    subprocess.run(['git', 'init', '-q', str(source)], check=True)
+    (source / 'dependent.txt').write_text('stage0\n')
+    names = ['sglang_patch', 'draft_head_patch', 'es_patch', 'fused_shuffle_patch', 'tile_patch']
+    env = dict(os.environ, source_dir=str(source), GITHUB_WORKSPACE=str(tmp_path))
+    for index, name in enumerate(names):
+        patch = tmp_path / f'{name}.patch'
+        patch.write_text(f'--- a/dependent.txt\n+++ b/dependent.txt\n@@ -1 +1 @@\n-stage{index}\n+stage{index + 1}\n')
+        env[name] = patch.name
+    script = (ROOT / 'scripts/build-sglang-container.sh').read_text()
+    start = script.index('for patch in "${sglang_patch}"')
+    chain = script[start:script.index('\ndone', start) + len('\ndone')]
+    subprocess.run(['bash', '-euc', chain], env=env, check=True)
+    assert (source / 'dependent.txt').read_text() == 'stage5\n'
+    dockerfile = (ROOT / 'containers/Dockerfile').read_text()
+    for line in dockerfile.splitlines():
+        if line.startswith('COPY containers/') and line.split()[1].endswith('.sh'):
+            assert os.access(ROOT / line.split()[1], os.X_OK), line

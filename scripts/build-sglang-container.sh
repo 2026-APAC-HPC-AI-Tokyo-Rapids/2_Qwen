@@ -63,8 +63,11 @@ draft_head_patch="patches/sglang/draft-extend-selected-head-rows.patch"
 es_patch="patches/sglang/prefill-cutlass-es.patch"
 fused_shuffle_patch="patches/sglang/prefill-fp8-scale-row-shuffle.patch"
 tile_patch="patches/sglang/prefill-cutlass-tiles.patch"
-git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${sglang_patch}" "${GITHUB_WORKSPACE}/${draft_head_patch}" "${GITHUB_WORKSPACE}/${es_patch}" "${GITHUB_WORKSPACE}/${fused_shuffle_patch}" "${GITHUB_WORKSPACE}/${tile_patch}"
-git -C "${source_dir}" apply "${GITHUB_WORKSPACE}/${sglang_patch}" "${GITHUB_WORKSPACE}/${draft_head_patch}" "${GITHUB_WORKSPACE}/${es_patch}" "${GITHUB_WORKSPACE}/${fused_shuffle_patch}" "${GITHUB_WORKSPACE}/${tile_patch}"
+# Later patches depend on additions made by earlier patches; check each updated private tree.
+for patch in "${sglang_patch}" "${draft_head_patch}" "${es_patch}" "${fused_shuffle_patch}" "${tile_patch}"; do
+  git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${patch}"
+  git -C "${source_dir}" apply "${GITHUB_WORKSPACE}/${patch}"
+done
 
 cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/build-nccl-tests.sh" "${GITHUB_WORKSPACE}/containers/install-accelerator-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-python-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-sglang-source.sh" "${GITHUB_WORKSPACE}/containers/install-system-toolchain.sh" "${context}/containers/"
 cp --no-preserve=ownership,xattr "${source_dir}/LICENSE" "${source_dir}/README.md" "${source_dir}/python/pyproject.toml" "${context}/sglang-project-metadata/python/"
