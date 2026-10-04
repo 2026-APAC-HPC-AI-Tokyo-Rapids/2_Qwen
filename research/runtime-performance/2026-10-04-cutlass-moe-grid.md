@@ -69,3 +69,9 @@ device: H10080GBHBM3、132SM、visible1、Torch2.11cu130、CUDA13.0。clock時�
 terminal rawのgpu-environment.csvはprobe開始前snapshotでSM clock345MHz/32°C、driver595.71.05。これはidle時のclockで、計測中345MHzだったとは解釈しない。今回連続clock samplingは無いのでactive clockは未確認。元profileDGX026の1980MHz実測と同clock/同node条件を主張せず、今回同GPU内の交互順比較だけを使う。
 
 有限16構成の探索で事前gateを満たすwinner無し、追加候補E2Eを投入しない。Optunaはこの小さい離散空間の全grid結果を置き換える理由がなく未使用。これは未知空間の最適性証明ではなく、未探索mainloop/layout/実routing分布は残る。既shuffle融合の優位性・最後の反復Qは別キャンペーンとして継続。mainruntime/source採用なし。
+
+## 独立stage4確認実験の事前計画
+
+初回gridの基準未達・候補無しという結論を維持する。一方、balanced約1%/skew約.2%のdown stage4仮説について、ユーザーの最適探索指示とroot判断に従い同imageの短い独立1GPU確認を一回だけ追加する。candidateは`coop128_c1x2_s4`と`coop128_c1x1_s4`の2つ、upはwheel固定。wheel/stockclone対照、新seed、20paired roundsと順序反転、各測定前に0.2秒以上の連続GPU warmupを行う。allocatedUUIDだけの1秒clocks/power/utilization samplingを計測区間外でも記録し、他GPUへアクセスしない。
+
+事前確認gateはcandidate/wheel medianが8192 balancedで0.995以下・skewで0.999以下、各pattern15/20round以上改善、全finite/relativeL2<=1e-3。heldout4096 skew/8192 moderateは順位選定に使わずmedian退行を除外する頑健性gate。bootstrap95%区間は診断であり20roundを20独立runとは数えない。初回gridの全5sign条件を黙って置換するのではなく、別実験・別条件commitの確認基準として記録する。tinygainの場合は公式E2E費用対効果をrootへ提示し、自動採用しない。sourcevariant/stage5/newbuildなし、既healthy PBS216140 Q維持。
