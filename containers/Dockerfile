@@ -27,10 +27,10 @@ COPY sglang-commit.txt /opt/sglang/sglang-commit.txt
 COPY containers/install-sglang-source.sh /opt/apac/install-sglang-source.sh
 RUN /opt/apac/install-sglang-source.sh && rm /opt/apac/install-sglang-source.sh
 
-COPY prefill-moe-tiles /opt/apac/prefill-moe-tiles
-COPY containers/build-prefill-moe-tiles.py /opt/apac/prefill-moe-tiles/build.py
-COPY containers/build-prefill-moe-tiles.sh /opt/apac/build-prefill-moe-tiles.sh
-RUN /opt/apac/build-prefill-moe-tiles.sh && rm /opt/apac/build-prefill-moe-tiles.sh
+COPY prefill-moe-routing /opt/apac/prefill-moe-routing
+COPY containers/build-prefill-moe-routing.py /opt/apac/prefill-moe-routing/build.py
+COPY containers/build-prefill-moe-routing.sh /opt/apac/build-prefill-moe-routing.sh
+RUN /opt/apac/build-prefill-moe-routing.sh && rm /opt/apac/build-prefill-moe-routing.sh
 
 COPY apac-manifest.json /opt/apac/manifest.json
 

@@ -64,7 +64,7 @@ def test_actual_build_patch_chain_checks_the_updated_private_tree(tmp_path):
     source.mkdir()
     subprocess.run(['git', 'init', '-q', str(source)], check=True)
     (source / 'dependent.txt').write_text('stage0\n')
-    names = ['sglang_patch', 'draft_head_patch', 'es_patch', 'fused_shuffle_patch', 'tile_patch']
+    names = ['sglang_patch', 'draft_head_patch', 'fused_shuffle_patch', 'routing_patch']
     env = dict(os.environ, source_dir=str(source), GITHUB_WORKSPACE=str(tmp_path))
     for index, name in enumerate(names):
         patch = tmp_path / f'{name}.patch'
@@ -74,7 +74,7 @@ def test_actual_build_patch_chain_checks_the_updated_private_tree(tmp_path):
     start = script.index('for patch in "${sglang_patch}"')
     chain = script[start:script.index('\ndone', start) + len('\ndone')]
     subprocess.run(['bash', '-euc', chain], env=env, check=True)
-    assert (source / 'dependent.txt').read_text() == 'stage5\n'
+    assert (source / 'dependent.txt').read_text() == 'stage4\n'
     dockerfile = (ROOT / 'containers/Dockerfile').read_text()
     for line in dockerfile.splitlines():
         if line.startswith('COPY containers/') and line.split()[1].endswith('.sh'):

@@ -41,10 +41,10 @@ jobs:
           cp -a --no-preserve=ownership,xattr /home/ACCOUNT/.local/etc/enroot/. "${runtime}/enroot-system/"
           sed -i 's/local timeout=100 pid=-1 id=0/local timeout=5000 pid=-1 id=0/' "${runtime}/enroot-library/runtime.sh"
           sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${runtime}/enroot-system/hooks.d/98-nvidia.sh"
-          install -m 0644 scripts/benchmark-prefill-cutlass-grid.py "${runtime}/scripts/"
+          install -m 0644 scripts/benchmark-prefill-moe-routing.py "${runtime}/scripts/"
           install -m 0755 platforms/aspire2ap/run-cutlass-grid.pbs platforms/aspire2ap/check-cutlass-grid.sh "${runtime}/scripts/"
           sha256sum "${runtime}/scripts/"* >"${runtime}/source/probe-sha256.txt"
-          jq -n --arg commit "${GITHUB_SHA}" --arg image "${CONTAINER_SHA256}" '{purpose:"finite-grid-probe",commit:$commit,image_sha256:$image,ngpus:1,walltime_seconds:900,official_score:false}' >"${runtime}/source/provenance.json"
+          jq -n --arg commit "${GITHUB_SHA}" --arg image "${CONTAINER_SHA256}" '{purpose:"finite-routing-probe",commit:$commit,image_sha256:$image,ngpus:1,walltime_seconds:900,official_score:false}' >"${runtime}/source/provenance.json"
       - name: 共有1GPU PBSを投入
         id: submit
         env:
