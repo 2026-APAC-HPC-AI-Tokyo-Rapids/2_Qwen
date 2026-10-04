@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
       - name: 明示probe条件を検査
         run: |
-          [[ "${QWEN_COMMIT_MESSAGE}" == *'[cutlass-grid-probe]'* ]]
+          [[ "${QWEN_COMMIT_MESSAGE}" == *'[cutlass-grid-probe]'* || "${QWEN_COMMIT_MESSAGE}" == *'[moe-routing-probe]'* ]]
           [[ "${QWEN_COMMIT_MESSAGE}" != *'[build-only]'* && "${QWEN_COMMIT_MESSAGE}" != *'[profile]'* ]]
       - name: imageとprobeを配備
         id: provision
