@@ -19,3 +19,9 @@
 build成功後、別runtime commitで同imageのstock/tiledをscheduler経由1GPU・15分walltime・720秒timeoutの有限microprobeで測る。allocated GPU UUIDのみmount/監視、active clock/powerを1秒CSVに記録する。モデルstaging・公式score生成は行わない。
 
 事前gateは8192 balanced/skewのwholeMoEそれぞれ中央値ratio≤0.995かつ20paired round中15勝以上。heldout4096skew/8192hot-only/65tailは中央値退行無し。全eager/graph finite/relativeL2≤1e-3、bitwise差診断、T32独立BF16/FP32 oracle envelope、map逆写像/offset/count、同graphでIDsを変えたreset、T0を必須にする。候補2・training2shape・heldout3shape・oracle1shape、最大404測定/40400timed replay、交互順序と連続≥200ms warmupで有限終了する。synthetic routeは実expert分布ではない。micro有望時だけ同新image・shuffleon・routing off/onの公式E2E比較条件と費用をrootへ報告する。自動採用・実行中探索は導入しない。
+
+## helper build成功
+
+37218171768はterminal success。source `d958b6ce7ea382c9ac42a8ebf8f4f6c4b68a781900129e15aa9fa650f2cb38ce`、build Python `ba9dd52211441c69529ce76d712a520c4204f71a3a76fa287a480a23e4094c8e` はcheckoutと一致。module `620e625331d74985538fbef04f077daf299b5af7eb9d97b2e25e2bd608666e1d` がlink/import済み。ptxasはscatter32/prefix28/histogram18 registers、各512B shared、1TU/3kernel/MAX_JOBS1を確認。EC2 elapsed1568秒、image12231192576 bytes、S3/全cluster archive成功、GPU/PBS無し。
+
+別runtime commit `4b34df8` をpushして同image finite routing probeへ進めた。公式E2E性能改善はまだ未確認。
