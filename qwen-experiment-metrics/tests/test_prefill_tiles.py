@@ -20,7 +20,7 @@ def function(name):
     return namespace, namespace[name]
 
 
-@pytest.mark.parametrize('up,down,result', [('off', 'off', (-1, -1)), ('stock', 'stock', (0, 0)), ('pingpong', 'c1', (4, 1)), ('off', 'pingpong', (-1, 3))])
+@pytest.mark.parametrize('up,down,result', [('off', 'off', (-1, -1)), ('stock', 'stock', (0, 0)), ('coop128_c1x1_s2', 'coop128_c2x2_s4', (5, 15)), ('off', 'coop128_c1x2_s3', (-1, 2))])
 def test_cached_condition_scope(up, down, result):
     _, choose = function('_prefill_tile_modes')
     assert choose(up, down, True, True, 1, False) == result
@@ -87,3 +87,22 @@ def test_rejected_wide_n_geometry_is_not_instantiated_or_selected():
         choose('off', 'n256', True, True, 1, False)
     assert 'WideN' not in (ROOT / 'kernels/prefill/moe_tiles.cu').read_text()
     assert 'down-n256' not in (ROOT / 'scripts/benchmark-prefill-moe-tiles.py').read_text()
+
+
+def test_finite_grid_preserves_precision_and_bounds_compile_memory():
+    import json
+    candidates = json.loads((ROOT / 'kernels/prefill/grid-configurations.json').read_text())
+    assert len(candidates) == 16
+    assert {tuple(c['cluster_mnk']) for c in candidates} == {(1, 1, 1), (1, 2, 1), (2, 1, 1), (2, 2, 1)}
+    assert {c['requested_stages'] for c in candidates} == {'auto', 2, 3, 4}
+    assert all(c['tile_mnk'] == [128, 128, 128] for c in candidates)
+    header = (ROOT / 'kernels/prefill/moe_grid.cuh').read_text()
+    assert 'Sm90BlockwiseScaleConfig<1, 128, 128' in header
+    assert 'ResolvedStages == RequestedStages' in header
+    assert 'shared storage exceeds SM90 capacity' in header
+    assert 'StageCountAutoCarveout<Reserve>' in header
+    recipe = (ROOT / 'containers/build-prefill-moe-tiles.py').read_text()
+    assert "os.environ['MAX_JOBS'] = '1'" in recipe
+    for index in range(4):
+        cluster = (ROOT / f'kernels/prefill/moe_grid_cluster_{index}.cu').read_text()
+        assert cluster.count('run_tile<Config') == 4

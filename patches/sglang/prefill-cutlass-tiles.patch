@@ -55,8 +55,8 @@ index 498b7b9..3e6553d 100644
  
  
 +def _prefill_tile_modes(up, down, is_prefill, hopper, ep_size, use_mxfp8):
-+    up_modes = {"off": -1, "stock": 0, "pingpong": 4}
-+    down_modes = {"off": -1, "stock": 0, "c1": 1, "pingpong": 3}
++    up_modes = {'off': -1, 'stock': 0, 'coop128_c1x2_sauto': 0, 'coop128_c1x2_s2': 1, 'coop128_c1x2_s3': 2, 'coop128_c1x2_s4': 3, 'coop128_c1x1_sauto': 4, 'coop128_c1x1_s2': 5, 'coop128_c1x1_s3': 6, 'coop128_c1x1_s4': 7, 'coop128_c2x1_sauto': 8, 'coop128_c2x1_s2': 9, 'coop128_c2x1_s3': 10, 'coop128_c2x1_s4': 11, 'coop128_c2x2_sauto': 12, 'coop128_c2x2_s2': 13, 'coop128_c2x2_s3': 14, 'coop128_c2x2_s4': 15}
++    down_modes = dict(up_modes)
 +    if up not in up_modes or down not in down_modes:
 +        raise ValueError("Invalid finite prefill tile condition")
 +    if not is_prefill or not hopper or ep_size != 1 or use_mxfp8:
