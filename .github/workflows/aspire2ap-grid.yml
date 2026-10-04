@@ -1,0 +1,82 @@
+name: ASPIRE 2A+の1GPUで有限CUTLASS gridを測定
+on:
+  workflow_call:
+    inputs:
+      container_sha256: {required: true, type: string}
+      container_size: {required: true, type: string}
+permissions:
+  actions: read
+  contents: read
+jobs:
+  probe:
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 7200
+    defaults:
+      run:
+        shell: aspire2p-shell --github-shell {0}
+    env:
+      CONTAINER_SHA256: ${{ inputs.container_sha256 }}
+      CONTAINER_SIZE: ${{ inputs.container_size }}
+      QWEN_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: 明示probe条件を検査
+        run: |
+          [[ "${QWEN_COMMIT_MESSAGE}" == *'[cutlass-grid-probe]'* ]]
+          [[ "${QWEN_COMMIT_MESSAGE}" != *'[build-only]'* && "${QWEN_COMMIT_MESSAGE}" != *'[profile]'* ]]
+      - name: imageとprobeを配備
+        id: provision
+        run: |
+          archive="/scratch/users/industry/ai-hpc/apacsc14/sglang-containers/${GITHUB_RUN_ID}"
+          test "$(stat -c %s "${archive}.sqsh")" = "${CONTAINER_SIZE}"
+          test "$(jq -r '.container_artifact.sha256' "${archive}.container-sidecar.json")" = "${CONTAINER_SHA256}"
+          runtime="$(mktemp -d /scratch/users/industry/ai-hpc/apacsc14/sglang-runs/grid-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX)"
+          printf 'runtime_dir=%s\n' "${runtime}" >>"${GITHUB_OUTPUT}"
+          install -d -m 0755 "${runtime}/scripts" "${runtime}/source" "${runtime}/results" "${runtime}/logs" "${runtime}/enroot-library" "${runtime}/enroot-system"
+          ln -s "${archive}.sqsh" "${runtime}/sglang.sqsh"
+          cp "${archive}.container-sidecar.json" "${runtime}/source/container-sidecar.json"
+          cp -a --no-preserve=ownership,xattr /home/users/industry/ai-hpc/apacsc14/.local/lib/enroot/. "${runtime}/enroot-library/"
+          cp -a --no-preserve=ownership,xattr /home/users/industry/ai-hpc/apacsc14/.local/etc/enroot/. "${runtime}/enroot-system/"
+          sed -i 's/local timeout=100 pid=-1 id=0/local timeout=5000 pid=-1 id=0/' "${runtime}/enroot-library/runtime.sh"
+          sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${runtime}/enroot-system/hooks.d/98-nvidia.sh"
+          install -m 0644 scripts/benchmark-prefill-cutlass-grid.py "${runtime}/scripts/"
+          install -m 0755 platforms/aspire2ap/run-cutlass-grid.pbs platforms/aspire2ap/check-cutlass-grid.sh "${runtime}/scripts/"
+          sha256sum "${runtime}/scripts/"* >"${runtime}/source/probe-sha256.txt"
+          jq -n --arg commit "${GITHUB_SHA}" --arg image "${CONTAINER_SHA256}" '{purpose:"finite-grid-probe",commit:$commit,image_sha256:$image,ngpus:1,walltime_seconds:900,official_score:false}' >"${runtime}/source/provenance.json"
+      - name: 共有1GPU PBSを投入
+        id: submit
+        env:
+          RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+        run: |
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=1:ncpus=14:ngpus=1:mem=235gb:mpiprocs=1' -l place=free -v "RUNTIME_DIR=${RUNTIME_DIR}" -o "${RUNTIME_DIR}/logs/pbs.log" -e "${RUNTIME_DIR}/logs/pbs.stderr.log" -N cutlass_grid "${RUNTIME_DIR}/scripts/run-cutlass-grid.pbs")"
+          printf 'PBS_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+      - name: PBS終端とmicro成果物を検査
+        env:
+          RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+        run: |
+          while true; do output="$("${RUNTIME_DIR}/scripts/check-cutlass-grid.sh")"; printf '%s\n' "${output}"; if [[ "${output}" != scheduler_job_pending=* ]]; then break; fi; sleep 30; done
+      - name: rawを回収
+        if: always() && steps.submit.outputs.job_id != ''
+        shell: bash
+        env:
+          RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+        run: |
+          destination="${RUNNER_TEMP}/qwen-aspire2ap-grid"
+          install -d -m 0755 "${destination}"
+          aspire2p-shell --pull "${RUNTIME_DIR}/logs" "${destination}/logs"
+          aspire2p-shell --pull "${RUNTIME_DIR}/results" "${destination}/results"
+          aspire2p-shell --pull "${RUNTIME_DIR}/source" "${destination}/source"
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.submit.outputs.job_id != ''
+        with:
+          name: qwen-aspire2ap-grid-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qwen-aspire2ap-grid
+          if-no-files-found: error
+      - name: 一時runtimeと自jobを削除
+        if: always() && steps.provision.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+        run: if [[ -n "${PBS_JOB_ID:-}" ]] && /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; then /opt/pbs/bin/qdel "${PBS_JOB_ID}"; fi; rm -rf -- "${RUNTIME_DIR:?}"
