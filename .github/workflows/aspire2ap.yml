@@ -48,7 +48,7 @@ jobs:
           PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
           install -m 0755 scripts/stage-qwen-node-model.sh "${runtime_dir}/scripts/stage-qwen-node-model.sh"
-          install -m 0644 scripts/benchmark-prefill-moe-es.py "${runtime_dir}/scripts/benchmark-prefill-moe-es.py"
+          install -m 0644 scripts/benchmark-prefill-moe-tiles.py scripts/benchmark-prefill-fp8-row-shuffle.py "${runtime_dir}/scripts/"
           install -m 0644 research/simulation/greedy_probe.py "${runtime_dir}/scripts/greedy_probe.py"
           install -m 0644 configs/aspire-serving.json "${runtime_dir}/source/aspire-serving.json"
           if [[ "$(jq -r '.speculation.algorithm' configs/aspire-serving.json)" == EAGLE3 ]]; then

@@ -1,0 +1,88 @@
+diff --git a/python/sglang/srt/layers/moe/cutlass_moe.py b/python/sglang/srt/layers/moe/cutlass_moe.py
+index 688b4bc..3c8b20a 100755
+--- a/python/sglang/srt/layers/moe/cutlass_moe.py
++++ b/python/sglang/srt/layers/moe/cutlass_moe.py
+@@ -25,6 +25,15 @@ if _is_cuda:
+     from sglang.kernels.ops.activation.activation import silu_and_mul
+ 
+ 
++def _prefill_tile_mm(mode, *args):
++    # Preserve wheel's special small-M path, and avoid importing the optional module when off.
++    if mode < 0 or args[6].shape[0] <= 2048 or args[0].dtype != torch.bfloat16 or (args[6].shape[1], args[0].shape[1], args[7].shape[0]) not in [(4096, 768, 128), (384, 4096, 128)]:
++        return fp8_blockwise_scaled_grouped_mm(*args)
++    from apac_prefill_moe_tiles import grouped_mm
++
++    return grouped_mm(*args, mode)
++
++
+ def cutlass_fused_experts_fp8(
+     a: torch.Tensor,
+     w1_q: torch.Tensor,
+@@ -50,6 +59,7 @@ def cutlass_fused_experts_fp8(
+     use_mxfp8: bool = False,
+     output: Optional[torch.Tensor] = None,
+     enable_es: Tuple[bool, bool] = (False, False),
++    prefill_tile_modes: Tuple[int, int] = (-1, -1),
+ ) -> torch.Tensor:
+     """Performs Fused MoE computation using CUTLASS-like kernels with FP8 weights and activations.
+ 
+@@ -265,7 +275,8 @@ def cutlass_fused_experts_fp8(
+             blockscale_offsets[:-1],
+         )
+     else:
+-        fp8_blockwise_scaled_grouped_mm(
++        _prefill_tile_mm(
++            prefill_tile_modes[0],
+             c1,
+             a_ptrs,
+             b_ptrs,
+@@ -336,7 +347,8 @@ def cutlass_fused_experts_fp8(
+             blockscale_offsets[:-1],
+         )
+     else:
+-        fp8_blockwise_scaled_grouped_mm(
++        _prefill_tile_mm(
++            prefill_tile_modes[1],
+             c2,
+             a_ptrs,
+             b_ptrs,
+diff --git a/python/sglang/srt/layers/quantization/fp8.py b/python/sglang/srt/layers/quantization/fp8.py
+index 498b7b9..3e6553d 100644
+--- a/python/sglang/srt/layers/quantization/fp8.py
++++ b/python/sglang/srt/layers/quantization/fp8.py
+@@ -224,6 +224,16 @@ def cast_e2m1fn_to_e4m3fn(
+     )
+ 
+ 
++def _prefill_tile_modes(up, down, is_prefill, hopper, ep_size, use_mxfp8):
++    up_modes = {"off": -1, "stock": 0, "pingpong": 4}
++    down_modes = {"off": -1, "stock": 0, "c1": 1, "n256": 2, "pingpong": 3}
++    if up not in up_modes or down not in down_modes:
++        raise ValueError("Invalid finite prefill tile condition")
++    if not is_prefill or not hopper or ep_size != 1 or use_mxfp8:
++        return (-1, -1)
++    return (up_modes[up], down_modes[down])
++
++
+ def _prefill_cutlass_es_flags(mode, is_prefill, hopper, use_mxfp8):
+     # Keep the existing MXFP8 path and the BF16 draft untouched.
+     if mode not in ("off", "up", "down", "both"):
+@@ -2454,6 +2464,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
+                 use_mxfp8=use_mxfp8,
+                 output=symm_output,
+                 enable_es=self._prefill_cutlass_es,
++                prefill_tile_modes=self._prefill_tile_modes,
+             )
+             return StandardCombineInput(hidden_states=output)
+ 
+@@ -2575,6 +2586,10 @@ class Fp8MoEMethod(FusedMoEMethodBase):
+             return
+ 
+         self._prefill_cutlass_es = _prefill_cutlass_es_flags(os.environ.get("SGLANG_PREFILL_CUTLASS_ES", "off"), get_server_args().disaggregation_mode == "prefill", is_sm90_supported(), getattr(self.quant_config, "use_mxfp8", False))
++        self._prefill_tile_modes = _prefill_tile_modes(os.environ.get("SGLANG_PREFILL_UP_TILE", "off"), os.environ.get("SGLANG_PREFILL_DOWN_TILE", "off"), get_server_args().disaggregation_mode == "prefill", is_sm90_supported(), get_server_args().ep_size, getattr(self.quant_config, "use_mxfp8", False))
++        if self._prefill_tile_modes != (-1, -1):
++            import apac_prefill_moe_tiles  # noqa: F401 - prebuilt module; never compile on compute nodes
++
+         device = layer.w13_weight.device
+         num_experts = layer.w13_weight.shape[0]
+         hidden_size = layer.w2_weight.shape[1]

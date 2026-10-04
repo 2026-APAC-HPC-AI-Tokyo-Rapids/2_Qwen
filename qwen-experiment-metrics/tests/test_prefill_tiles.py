@@ -1,0 +1,56 @@
+"""CPU checks for finite condition dispatch and unchanged routing contracts."""
+import ast
+import sys
+from itertools import pairwise
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = Path(__file__).parents[2]
+PATCH = ROOT / 'patches/sglang/prefill-cutlass-tiles.patch'
+
+
+def function(name):
+    source = '\n'.join(line[1:] for line in PATCH.read_text().splitlines() if line.startswith('+') and not line.startswith('+++'))
+    source = source[source.index("def " + name):].split("\n\n\n", 1)[0]
+    node = ast.parse(source).body[0]
+    namespace = {'torch': SimpleNamespace(bfloat16='bf16')}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(PATCH), 'exec'), namespace)  # noqa: S102
+    return namespace, namespace[name]
+
+
+@pytest.mark.parametrize('up,down,result', [('off', 'off', (-1, -1)), ('stock', 'stock', (0, 0)), ('pingpong', 'c1', (4, 1)), ('off', 'n256', (-1, 2)), ('off', 'pingpong', (-1, 3))])
+def test_cached_condition_scope(up, down, result):
+    _, choose = function('_prefill_tile_modes')
+    assert choose(up, down, True, True, 1, False) == result
+    for prefill, hopper, ep, mxfp8 in [(False, True, 1, False), (True, False, 1, False), (True, True, 4, False), (True, True, 1, True)]:
+        assert choose(up, down, prefill, hopper, ep, mxfp8) == (-1, -1)
+    with pytest.raises(ValueError):
+        choose('unknown', down, True, True, 1, False)
+
+
+@pytest.mark.parametrize('mode,rows,shape,dtype,native', [(-1, 65536, (384, 4096, 128), 'bf16', False), (1, 0, (384, 4096, 128), 'bf16', False), (1, 2048, (384, 4096, 128), 'bf16', False), (1, 65536, (384, 4096, 128), 'half', False), (1, 65536, (768, 4096, 128), 'bf16', False), (3, 65536, (384, 4096, 128), 'bf16', True), (4, 65536, (4096, 768, 128), 'bf16', True)])
+def test_actual_dispatch_never_imports_or_compiles_when_outside_scope(monkeypatch, mode, rows, shape, dtype, native):
+    namespace, dispatch = function('_prefill_tile_mm')
+    calls = []
+    namespace['fp8_blockwise_scaled_grouped_mm'] = lambda *args: calls.append(('wheel', args))
+    monkeypatch.setitem(sys.modules, 'apac_prefill_moe_tiles', SimpleNamespace(grouped_mm=lambda *args: calls.append(('native', args))))
+    k, n, e = shape
+    args = [SimpleNamespace(dtype=dtype, shape=(rows, n)), *[None]*5, SimpleNamespace(shape=(rows, k)), SimpleNamespace(shape=(e, k, n)), *[None]*10]
+    dispatch(mode, *args)
+    assert calls == [('native', (*args, mode))] if native else calls == [('wheel', tuple(args))]
+
+
+def test_route_fixture_offsets_cover_top8_without_duplicates_or_negative_expert_rows():
+    for tokens, skew in [(32, False), (4096, True), (8192, False), (8192, True)]:
+        counts = [0]*128
+        for row in range(tokens):
+            ids = [(row*17+lane*13)%128 if skew and row%4 == 0 else (row+lane)%16 if skew else (row*8+lane)%128 for lane in range(8)]
+            assert len(set(ids)) == 8
+            for expert in ids:
+                counts[expert] += 1
+        offsets = [0]
+        for count in counts:
+            offsets.append(offsets[-1]+count)
+        assert offsets[-1] == tokens*8 and all(x<=y for x,y in pairwise(offsets))

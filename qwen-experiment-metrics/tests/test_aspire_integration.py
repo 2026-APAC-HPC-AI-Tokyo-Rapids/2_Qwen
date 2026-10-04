@@ -64,7 +64,7 @@ def test_worker_argv_matches_archived_base_with_graph_candidate(platform: str, n
                 worker["argv"] += ["--cuda-graph-bs-decode", *map(str, graph_bs)]
             else:
                 image_index = worker["argv"].index("/fixture/image.sqsh")
-                worker["argv"][image_index:image_index] = ["-e", "SGLANG_PREFILL_CUTLASS_ES=off"]
+                worker["argv"][image_index:image_index] = ["-e", "SGLANG_PREFILL_CUTLASS_ES=off", "-e", "SGLANG_PREFILL_UP_TILE=off", "-e", "SGLANG_PREFILL_DOWN_TILE=off", "-e", "SGLANG_PREFILL_FUSED_FP8_SHUFFLE=0"]
     assert capture_workers(source, platform, nodes, tmp_path, profile) == expected
 
 
