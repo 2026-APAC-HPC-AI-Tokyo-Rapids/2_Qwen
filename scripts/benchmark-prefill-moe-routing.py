@@ -40,8 +40,11 @@ def order(round_index):
 
 
 def main():
-    import apac_prefill_moe_routing as native
     import torch
+
+    # Loading torch first supplies libc10/libtorch to the prebuilt CUDA extension.
+    assert torch.__version__
+    import apac_prefill_moe_routing as native
     from sglang.srt.layers.moe import cutlass_moe as moe
 
     parser = argparse.ArgumentParser()

@@ -56,3 +56,11 @@ def test_finite_one_gpu_and_graph_changed_ids():
     for contract in ['torch.cuda.device_count() == 1', 'warmup_replays <= 65536', 'while warmup < 200', 'graph_changed_ids_reset_pass', 'empty_helper_and_whole_moe_pass', 'independent_oracle_pass', "'heldout': []", "'serving_adoption': False"]:
         assert contract in source
     assert 'prefill_tile_modes=' not in source and 'grouped_mm' not in source
+
+
+def test_torch_loads_before_prebuilt_extension():
+    source = (ROOT / 'scripts/benchmark-prefill-moe-routing.py').read_text()
+    main = source[source.index('def main():'):]
+    assert main.index('import torch') < main.index('import apac_prefill_moe_routing as native')
+    # Prevent import sorting from regrouping native ahead of torch.
+    assert main.index('import torch') < main.index('assert torch.__version__') < main.index('import apac_prefill_moe_routing as native')
