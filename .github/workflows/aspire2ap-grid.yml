@@ -32,7 +32,7 @@ jobs:
           archive="/scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers/${GITHUB_RUN_ID}"
           test "$(stat -c %s "${archive}.sqsh")" = "${CONTAINER_SIZE}"
           test "$(jq -r '.container_artifact.sha256' "${archive}.container-sidecar.json")" = "${CONTAINER_SHA256}"
-          runtime="$(mktemp -d /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs/grid-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX)"
+          runtime="$(mktemp -d /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs/routing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX)"
           printf 'runtime_dir=%s\n' "${runtime}" >>"${GITHUB_OUTPUT}"
           install -d -m 0755 "${runtime}/scripts" "${runtime}/source" "${runtime}/results" "${runtime}/logs" "${runtime}/enroot-library" "${runtime}/enroot-system"
           ln -s "${archive}.sqsh" "${runtime}/sglang.sqsh"
@@ -50,7 +50,7 @@ jobs:
         env:
           RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
         run: |
-          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=1:ncpus=14:ngpus=1:mem=235gb:mpiprocs=1' -l place=free -v "RUNTIME_DIR=${RUNTIME_DIR}" -o "${RUNTIME_DIR}/logs/pbs.log" -e "${RUNTIME_DIR}/logs/pbs.stderr.log" -N cutlass_grid "${RUNTIME_DIR}/scripts/run-cutlass-grid.pbs")"
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=1:ncpus=14:ngpus=1:mem=235gb:mpiprocs=1' -l place=free -v "RUNTIME_DIR=${RUNTIME_DIR}" -o "${RUNTIME_DIR}/logs/pbs.log" -e "${RUNTIME_DIR}/logs/pbs.stderr.log" -N moe_routing "${RUNTIME_DIR}/scripts/run-cutlass-grid.pbs")"
           printf 'PBS_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
       - name: PBS終端とmicro成果物を検査
