@@ -25,3 +25,7 @@ build成功後、別runtime commitで同imageのstock/tiledをscheduler経由1GP
 37218171768はterminal success。source `d958b6ce7ea382c9ac42a8ebf8f4f6c4b68a781900129e15aa9fa650f2cb38ce`、build Python `ba9dd52211441c69529ce76d712a520c4204f71a3a76fa287a480a23e4094c8e` はcheckoutと一致。module `620e625331d74985538fbef04f077daf299b5af7eb9d97b2e25e2bd608666e1d` がlink/import済み。ptxasはscatter32/prefix28/histogram18 registers、各512B shared、1TU/3kernel/MAX_JOBS1を確認。EC2 elapsed1568秒、image12231192576 bytes、S3/全cluster archive成功、GPU/PBS無し。
 
 条件のみの空commit `4b34df8` はpaths-ignore付きpush workflowを生成しなかった。GPU消費無し。PBS job/runtime名をrouting専用にした実runtime commit `f041fe1` で[finite 1GPU run37220486463](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37220486463)を起動した。source/image/gateは変更しない。公式E2E性能改善はまだ未確認。
+
+## 初回probe起動失敗
+
+37220486463/PBS216326はDGX039の1GPUで8秒、Exit1。最初のfatalはprobe main43がtorchより先にnative extensionをimportし、`ImportError: libc10.so: cannot open shared object file`。build時はtorchを先にimportしてmodule検査が通過しており、probe import順を最小修正する。新build不要。JSON/性能値は生成されなかった。image正本SHA `182fbb6df7f941aa688a393dfc181bb269f3112a6d34c33f6007ddc5d09f0a42`、raw正本 `qwen-artifacts/37220486463/1` の13hash一致、runtime/self-job cleanupとhome archival成功。初回probeは性能比較に使用しない。
