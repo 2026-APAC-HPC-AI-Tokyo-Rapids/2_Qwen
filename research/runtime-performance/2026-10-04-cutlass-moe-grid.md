@@ -15,3 +15,57 @@ microprobeはnormal routeのshared 1GPU、14 CPU/235GB、place=free、wall15分�
 [89195b0 / build37194029820](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37194029820)はnative compile/link/importを含め成功。16構成を4 geometry objectとbindingの5 TUで一度のimagebuildへ収録、MAX_JOBS1。image SHA256 `66925d036b288267adaeaafba65397b1a08313ab03b3e7efb5f05fec9bbb2dab`、サイズ12,232,060,928 bytes、module `f680e7e424536544b02b47d9d1e1e4bd1d615db28e5eaf2cd9a2922696fd1737`、source `01b81e1d034e93aab8f02f203e808322a069d2caf8b5b74b1f27cf794ba89d00`。Auto段数6、固定2/3/4が全clusterで成立し16unique、stage重複なし。SharedStorageは218624/84992/118272/152064 bytes、GEMM register168/helper30。Carveoutは実SMEM増量ではなくstage制約であり、register削減は確認されない。GPU can_implement/精度・速度はこの時点では未確認。
 
 [9de0957 / finite1GPU37195511116](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37195511116)を同image再利用で投入。最大16config、各train最大34variant×2shape×5round、heldout最大6variant×3shape×5round＝430 graph測定・43000 timed replays。各測定3 eager warmup＋3 graph warmup、720秒timeout/15分wall。probe source/hash・native/productionID照合、1visibleGPU・精度gateを含む19CPUtests/Ruff/独立review通過。合成wholeMoE測定であり、公式採用評価・候補自動採用は行わない。結果待ち、旧repeat-on216140 Qを維持する。
+
+## 完走監査・探索結果
+
+run37195511116はActions全体success/PBS216217 Exit0、DGX038のH100 1GPU、wall3分55秒。正本`qwen-artifacts/37195511116/1`の全12hash、image/probe/source/module/productionID、実allocatedUUIDだけのcommand、score非生成、全回収・cleanupを照合した。live JSONとterminal正本はbyte一致。全74測定entryでeager/graph bitwise同一・L2=0、全候補can_implement/graph成功。下記はwholeMoE時間であり個別GEMM TF/sではない。
+
+
+37195511116 terminal正本JSONを解析。live snapshotとbyte一致を独立確認、auditの全12hash/PBS216217 Exit0/3:55/cleanup監査を参照。実nodeはDGX038、1GPU。全16config・up/down各役割×balanced/skewの品質・graphを確認。全測定でeager/graph L2=0、bitwise同一、finite、quality_eligible。未対応候補無し。
+
+|候補|balanced 全MoE対stock時間差 / 改善round数|skew 時間差 / 改善round数|
+|---|---:|---:|
+|up:coop128_c1x2_sauto|-0.119% / 2/5|-0.165% / 3/5|
+|down:coop128_c1x2_sauto|-0.065% / 3/5|+0.092% / 2/5|
+|up:coop128_c1x2_s2|+41.765% / 0/5|+35.667% / 0/5|
+|down:coop128_c1x2_s2|+10.131% / 0/5|+9.206% / 0/5|
+|up:coop128_c1x2_s3|+11.653% / 0/5|+8.566% / 0/5|
+|down:coop128_c1x2_s3|+0.363% / 1/5|+1.177% / 0/5|
+|up:coop128_c1x2_s4|+3.514% / 0/5|+1.237% / 0/5|
+|down:coop128_c1x2_s4|-0.952% / 5/5|-0.205% / 4/5|
+|up:coop128_c1x1_sauto|-0.517% / 4/5|+1.887% / 0/5|
+|down:coop128_c1x1_sauto|-0.466% / 4/5|+0.187% / 1/5|
+|up:coop128_c1x1_s2|+42.899% / 0/5|+34.815% / 0/5|
+|down:coop128_c1x1_s2|+12.176% / 0/5|+9.356% / 0/5|
+|up:coop128_c1x1_s3|+10.790% / 0/5|+8.165% / 0/5|
+|down:coop128_c1x1_s3|+0.815% / 0/5|+0.970% / 0/5|
+|up:coop128_c1x1_s4|+2.260% / 0/5|+1.940% / 0/5|
+|down:coop128_c1x1_s4|-1.061% / 5/5|-0.169% / 4/5|
+|up:coop128_c2x1_sauto|-0.511% / 5/5|+3.381% / 0/5|
+|down:coop128_c2x1_sauto|+0.513% / 0/5|+4.186% / 0/5|
+|up:coop128_c2x1_s2|+43.632% / 0/5|+52.941% / 0/5|
+|down:coop128_c2x1_s2|+12.462% / 0/5|+16.145% / 0/5|
+|up:coop128_c2x1_s3|+11.830% / 0/5|+17.308% / 0/5|
+|down:coop128_c2x1_s3|+0.656% / 0/5|+5.417% / 0/5|
+|up:coop128_c2x1_s4|+3.401% / 0/5|+7.255% / 0/5|
+|down:coop128_c2x1_s4|-0.663% / 5/5|+3.580% / 0/5|
+|up:coop128_c2x2_sauto|+0.569% / 0/5|+4.213% / 0/5|
+|down:coop128_c2x2_sauto|+2.764% / 0/5|+7.147% / 0/5|
+|up:coop128_c2x2_s2|+51.396% / 0/5|+63.004% / 0/5|
+|down:coop128_c2x2_s2|+14.565% / 0/5|+20.784% / 0/5|
+|up:coop128_c2x2_s3|+15.939% / 0/5|+21.489% / 0/5|
+|down:coop128_c2x2_s3|+3.148% / 0/5|+9.274% / 0/5|
+|up:coop128_c2x2_s4|+5.650% / 0/5|+8.801% / 0/5|
+|down:coop128_c2x2_s4|+1.211% / 0/5|+6.597% / 0/5|
+
+clone/wheel差はbalanced+0.054%、skew+0.123%、heldout4096-0.058%、hotonly8192-0.072%。T32+4.03%はprobe強制large geometryとwheel smallMの差でproduction性能候補ではない。stockは全出力bitwise同一。
+
+down stage4はbalanced約1%改善・skew約0.2%改善の点推定だが、skewで1round微悪化し事前「両patterns全5round改善」基準を通らない。wheel比ではskewの改善はさらに小さい。up cluster2x1 autoはbalanced改善対skew退行。stage2/3等に頑健な勝者なし。shortlistは両role空、joint heldoutにはwheel/stockしか測定されておらずcandidateのheldout成立を主張できない。
+
+**判断:** 現事前基準ではE2Eへ進む候補無し。事後に基準を緩めない。これはstage4downの効果が理論的にないという結論ではなく、実router分布未知・小差・heldout未検証のため追加E2E根拠不足という判断。個別GEMM時間へ全MoE改善率を逆算しない。shape key/quality/5pairedround詳細はanalysis.json参照。
+
+device: H10080GBHBM3、132SM、visible1、Torch2.11cu130、CUDA13.0。clock時系列はJSONに無いので外部gpu-environment.csvのsnapshotと区別。image/source/modulehashはaudit独立照合対象。
+
+terminal rawのgpu-environment.csvはprobe開始前snapshotでSM clock345MHz/32°C、driver595.71.05。これはidle時のclockで、計測中345MHzだったとは解釈しない。今回連続clock samplingは無いのでactive clockは未確認。元profileDGX026の1980MHz実測と同clock/同node条件を主張せず、今回同GPU内の交互順比較だけを使う。
+
+有限16構成の探索で事前gateを満たすwinner無し、追加候補E2Eを投入しない。Optunaはこの小さい離散空間の全grid結果を置き換える理由がなく未使用。これは未知空間の最適性証明ではなく、未探索mainloop/layout/実routing分布は残る。既shuffle融合の優位性・最後の反復Qは別キャンペーンとして継続。mainruntime/source採用なし。
