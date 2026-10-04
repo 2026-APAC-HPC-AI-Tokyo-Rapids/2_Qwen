@@ -43,3 +43,27 @@ CPU218tests、actualP/Dargvfixture、Ruff/bash/5patch ASTと独立reviewでcheap
 新scale256への変更やlayout改造を追加せず、[77e059e](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/commit/77e059e489bce0b9273af6f736b61f32da1aa334)でmode2のnative/Python選択/manifest/probeを除外。上表N256はcompile不成立の履歴であり、実測対象はstock clone＋down C1＋down/up pingpongの5variant（wheel含む）へ減った。残configはN128を保持しFP8scale128/FP32acc/BF16outputを変更しない。219CPUtests・actual5patch/AST・独立review通過後、前runterminal/PBS無しを確認し再build[37173471321](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37173471321)開始。残configのcompile/graph/性能は未確認、GPU未消費。
 
 再build37173471321はnativecompile/link/importに成功。actualnvccはsm90a/CUTEpacked/CUTLASStensorcore/O3/C++17、sourceSHA17fb2b4ed82cc4e5a2f80790fc1587e5fdc0b77752fd8f924e1f645f29801a41が77e059eと一致、moduleSHA5acc92c40938a30990a93c957a2cd8169f554c983955315c94c0e754c0765496。新imageSHA6842ee6576d80d26ee239ce6ed25519402ecdf9f5b9f2cc13b658f63bf3b64ff/12231323648 bytes、sidecar77e059e+fc275一致。PBS216125は固定DGX026/030で開始（03:35:52 UTC）、profilefalse。局所probe/通常off E2Eの結果は未確認。
+
+## 初回局所結果（通常対照のterminal待ち）
+
+# 37173471321 有限probeの独立所見
+
+live read-only JSONを解析。terminal canonical rawのhash照合はaudit担当。公式off E2Eは進行中であり、以下は採用性能ではない。
+
+stock cloneはT8192balanced/skew・T4096skewでwheelとのeager/graph relative L2=0、bitwise同一。graph中央値比は0.999859/0.999779/1.001329。移植/ビルド差は今回のfixtureでほぼない。全4shape×5variantsでgraphと精度gate成立、candidate numerical attention flagなし。
+
+| tile候補 | T8192 balanced対wheel時間差 | T8192 skew | T4096 skew |
+|---|---:|---:|---:|
+| down C1 | -0.174% | +0.174% | +0.305% |
+| down Pingpong | +4.513% | +0.892% | +1.918% |
+| up Pingpong | +6.035% | +5.166% | +5.726% |
+
+downC1の五round paired差はbalanced[-0.248,+0.076]%、skew[-0.063,+0.471]%で一貫する勝者ではない。Pingpongは全large shapeのpaired roundsが正（遅い）。T32はnative large geometry強制のoracleでproductionはsmallM wheelを保持するため、serving速度の比較対象にはしない。全MoEgraph時間でありup/down個別GEMM改善率には逆算しない。tile candidate E2Eを追加する根拠なし。
+
+paired shuffleはT8192 stock中央値0.203475ms→fused0.167149ms、17.853%短縮（36.326us/call）。stock範囲[0.203357,0.203814]、fused[0.167069,0.167434]msと全五sample分離。T4096は22.428%、T32は36.095%短縮。rawbytepatternsとquantize-once inputの値/scale bitwise一致、graph capture/replay、T0 empty契約が通過。測定順はstock五sample後fused五sampleでtileのrotate/reverseとは異なり、順序交絡の限界は残るが差はsample内の揺らぎより十分大きい。
+
+旧profile1569callsへ単純適用すると約56.996ms（active窓1.139%）の局所削減感度。ただしisolated cached copyと実MoEのcache/occupancy/メモリallocationは異なり、instrumented profileと通常E2Eも異なる。これをscoreの期待gainとは言わない。
+
+**推奨:** tile全offを保持し、同newimageのoff対P-only fused shuffle enableという単要因の非profile公式E2Eへ進む。局所勝者はshuffleのみ。採用は公式parser/品質/greedy/来歴と必要な反復の確認後、単runで改善を確定しない。
+
+root判断によりtile candidate E2Eは見送り。shuffleのみP環境flag1、tile/ES/NVLSoff・D/c48固定の同image候補をCPU準備、actualargvを含む59targetedtestsと独立review通過。offterminal全監査後だけ追跡commitpushする。採点前finiteprobehookは候補で除去し条件差に記録。既存helperには分岐発火logが無いためactualPenv/sourceguard/batchshape照合を確認し、直接kernel名による選択証明はnonprofile未観測という限界を保持する。
