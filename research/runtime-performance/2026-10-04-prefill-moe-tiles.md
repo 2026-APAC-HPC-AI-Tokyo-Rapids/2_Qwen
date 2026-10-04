@@ -75,3 +75,36 @@ root判断によりtile candidate E2Eは見送り。shuffleのみP環境flag1、
 [44fab12](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/commit/44fab12fc5f5f4d684acfdeb541b322949017e8c)でP2workersの`SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1`だけを有効にし、同image再利用の[37175480138](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37175480138)を投入。D/c48/TP4EP1DP1PP1/fixed026+030/profilefalseとtile/ES/NVLSoffを保持。既に完了した採点前finiteprobehookは除去した条件差を記録。worker actualcommandをlaunch前に保存する2linesを追加、bench observer/source変更なし。offの環境command記録は欠落しtrackedsource/fixture/workerinfo/defaultoffから裏付けるという限界がある。219CPUtestsと独立review通過、候補E2Eが有望なら同imageoff/on追加pairで確認、局所gainを採用値にしない。
 
 追加runtime探索screenではcontext8192によりgraphmaxは8192 clampされchunk16384だけでは16384graphを作れず、追加buffer/peakも未確認。c44→48でPqueue増/Dactiveほぼ不変だったためc52の根拠は弱い。現在はchunk16K/c52を混ぜず、融合の明確なE2E改善後だけ別単要因候補として再検討する。
+
+## 初回shuffle E2E独立比較
+
+# shuffle on/off 初回E2E独立比較
+
+同image off37173471321対on37175480138。正本rawをread-only比較。source来歴・全hash・terminal・parser監査はaudit担当。非profile公式c48、P-only fusedshuffle以外precision/role/tileESoff等を固定。offは起動前finiteprobeあり、onでは除去しargv証跡を追加した条件差がある。
+
+| 指標 | off | on |
+|---|---:|---:|
+| official good tok/s |2681.8239|2715.4992 (+1.2557%)|
+| total output tok/s |2711.0573|2744.7800 (+1.2439%)|
+| requests / jointbad |1667 /18|1685 /18|
+| good fraction |98.9202%|98.9318%|
+| TTFT mean / p95 / p99 ms |1565.04 /1825.80 /3109.34|1510.34 /1734.51 /3065.85|
+| ITL mean / p95 / p99 ms |9.7168 /11.3216 /12.0871|9.7989 /11.3875 /12.1011|
+| client effective P / D concurrency |21.2149 /26.2125|20.7281 /26.7627|
+| sampled P queue pooled |1.7875|1.6377|
+| sampled D acceptlen |2.22980|2.22669|
+| sampled full8192 batch |95.2381%|96.1353%|
+
+TTFT平均3.495%低下、Pqueue約8.38%減、実効D並列約2.10%増はP待ちの改善と整合する。平均ITL0.844%増は同時decode増と両立するが因果確定ではない。jointbad両18、errors/cancel0、OSL mismatch0。greedy8件すべてchoices（content/tokens/logprobsを含む）がoff/on一致、prompt hash一致。独立タスク精度評価の代わりにはしない。
+
+Pqueueは各worker1.776/1.799→1.612/1.663と両側低下。D log active15.103/15.112→15.419/15.581、queue0。転送待ちreq7.936→7.742は複合待ち件数でネットワーク時間ではない。log統計は無加重sampleで時間重み付きoccupancyではない。Pinput-throughput平均は片側だけ上昇し反対側は低下、ログで孤立したサービス時間の明確改善を確定しない。
+
+**判断:** microのbitcopy品質と17.85%copy短縮、初回E2Eのscore/TTFT/Pqueueの方向は有望。同image off/on一対の反復は合理的。ただし初回1pairだけでは採用を確定しない。Pサービスkernel直接測定もなく、c52を混ぜない。反復が中立・逆方向なら初回+1.256%だけで改善としない。候補tileは全off維持。
+
+## main採用の依存範囲（反復前の案、変更未実施）
+
+shufflepatch単独のcleanFC適用はCPUで成功し、形式上SiLU/ES/tileへ依存しない。既存quantを一度だけ行ったFP8値/FP32scale bitsをgatherするTritonhelperであり、SM90 nativeextensionは不要。tile用module/buildrecipe/選択patchを撤去してもshuffleの意味は保てるが、image/sourceが変わるため新buildと通常E2Eが必要で、現imageの測定値を新imageの保証にできない。
+
+現mainは未patch source/c40、測定baselineはSiLU融合/drafthead選択/c48/Dgraph13,15等を含むため、shuffleだけmain onにして同測定条件と扱わない。丸ごとbranch mergeも不採用ES/tile/native/probeを持込むため不適切。最小費用案は測定済branch/imageを実行・再現正本として保持し、反復成功ならその条件での限定採用を文書化。mainでsource再構成する時はbaselineの採用前提を個別整理し、SiLU/drafthead（必要ならc48/Dgraph）とshuffleのみへ縮小、ES/tile/nativeextension/probeを除去する。次の別理由sourcebuild機会にまとめれば追加buildを抑えられるが、新imageoff/on通常E2Eは省略できない。反復前にactualmain変更は行わない。
+
+初回onは52hash/parser/settings/PBS0/11:55・actualPflag1とDにPenv無し・8greedy対off token/logprob一致・runtime削除/qstat空を確認。Actions全体success、非対象Genkai選択のみSSH133.5.4.132:22切断→tarnotarchiveexit2の独立障害を記録。反復off[de17ae2](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/commit/de17ae241240adf3bd5d1cefc3e93dd50934bdfe)/[37176596065](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37176596065)を同image・no probe/actualargv双方保持の条件で順次投入、反復onはoffterminal監査後に別条件commitで実施する。
