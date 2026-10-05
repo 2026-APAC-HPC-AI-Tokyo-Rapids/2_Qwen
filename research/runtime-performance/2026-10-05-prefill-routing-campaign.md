@@ -55,3 +55,7 @@ helper約69–70%とwhole約6%を区別し、GEMM単独TF/s改善とは呼ばな
 最小infra修正main1988b2d：最後の確定PBS stateがQの場合だけ連続接続障害budgetを1800秒へ、R/unknownは既存300秒、各SSH180秒/PBS30分walltime維持。Q待機そのものの上限は追加しない。Q124/255障害→復旧R→再124でbudget300へ戻るfixtureをmain65940aaで明示確認、monitor7/contract15 testsとRuff/bash通過。runtime-onlyでnewbuild不要。
 
 [新公式off control37319361445](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37319361445) / `77dab97` を同image182fbb6d・Pshuffle1/routing0・c48/D/fixed026030維持で再投入。Luna collab監視を復帰できたためR/score/terminalでSolをfollowupする。旧CLI監視は古いQ時点で終了しており終端引継ぎを果たさなかったので、現在の状態判断には使用しない。現在liveは新offのみ、公式onはまだ未投入。Goalは未完了、off terminal/全監査後on→公式比較まで継続する。
+
+### 再投入のscheduler照合
+
+新off37319361445のPBSは216741、runtime `pd-37319361445-1.RVNTC8TmPY`。Q/aiq2、固定026030各8GPU/112CPU/1880GB、comment `Not Running: Not enough free nodes available`。qstat-fにestimated.start_time/ETAは表示されていない。runtime provenanceの77dab977・image182fbb6d・PROFILEfalseを照合。通常tomokazu shellとscheduler surfaceを区別し、`ssh -o BatchMode=yes tomokazu-ubuntu-server "~/actions-runner/shell/aspire2p-shell '/opt/pbs/bin/qstat -u apacsc14'"` でuidapacsc14/optpbs/scratchを確認した。Lunaへこの具体経路を渡しQ5分/R60秒監視を再確認。観測経路の不一致をjob失敗/再投入理由にしていない。
