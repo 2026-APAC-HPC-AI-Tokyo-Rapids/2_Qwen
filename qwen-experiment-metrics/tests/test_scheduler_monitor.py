@@ -62,5 +62,5 @@ class MonitorTest(unittest.TestCase):
                 self.assertIn(f'last_state={state} limit_seconds={limit}', result.stderr)
                 self.assertIn('status=124', result.stderr)
                 self.assertIn('status=255', result.stderr)
-                self.assertIn(f'last_state={next_state} limit_seconds={1800 if next_state == 'Q' else 300}', result.stderr)
+                self.assertIn(f"last_state={next_state} limit_seconds={1800 if next_state == 'Q' else 300}", result.stderr)
                 self.assertIn('terminal', result.stdout)
