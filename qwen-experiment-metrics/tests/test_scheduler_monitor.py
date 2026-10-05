@@ -45,3 +45,21 @@ class MonitorTest(unittest.TestCase):
         result = self.run_monitor(2, 0, "terminal_observation_incomplete")
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("\nterminal\n", result.stdout)
+
+
+    def test_connection_outage_budget_follows_last_observed_state(self):
+        for state, limit in [('Q', 1800), ('R', 300)]:
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                adapter = root / 'adapter'
+                adapter.write_text(f'#!/bin/bash\nn=$(cat "{root}/count" 2>/dev/null || echo 0)\necho $((n+1)) >"{root}/count"\ncase $n in\n0) echo scheduler_job_pending=123.pbs111 state={state}; exit 0;;\n1) exit 124;;\n2) exit 255;;\n3) echo scheduler_job_pending=123.pbs111 state={state}; exit 0;;\n*) echo terminal; exit 0;;\nesac\n')
+                adapter.chmod(0o755)
+                sleeper = root / 'sleep'
+                sleeper.write_text('#!/bin/bash\nexit 0\n')
+                sleeper.chmod(0o755)
+                result = subprocess.run(['bash', str(MONITOR), str(adapter), 'checker'], env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}'}, capture_output=True, text=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, 0)
+                self.assertIn(f'last_state={state} limit_seconds={limit}', result.stderr)
+                self.assertIn('status=124', result.stderr)
+                self.assertIn('status=255', result.stderr)
+                self.assertIn('terminal', result.stdout)
