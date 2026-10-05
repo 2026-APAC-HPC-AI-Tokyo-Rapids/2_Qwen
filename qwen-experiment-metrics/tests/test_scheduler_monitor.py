@@ -48,11 +48,11 @@ class MonitorTest(unittest.TestCase):
 
 
     def test_connection_outage_budget_follows_last_observed_state(self):
-        for state, limit in [('Q', 1800), ('R', 300)]:
-            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+        for state, next_state, limit in [('Q', 'Q', 1800), ('R', 'R', 300), ('Q', 'R', 1800)]:
+            with self.subTest(state=state, next_state=next_state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 adapter = root / 'adapter'
-                adapter.write_text(f'#!/bin/bash\nn=$(cat "{root}/count" 2>/dev/null || echo 0)\necho $((n+1)) >"{root}/count"\ncase $n in\n0) echo scheduler_job_pending=123.pbs111 state={state}; exit 0;;\n1) exit 124;;\n2) exit 255;;\n3) echo scheduler_job_pending=123.pbs111 state={state}; exit 0;;\n*) echo terminal; exit 0;;\nesac\n')
+                adapter.write_text(f'#!/bin/bash\nn=$(cat "{root}/count" 2>/dev/null || echo 0)\necho $((n+1)) >"{root}/count"\ncase $n in\n0) echo scheduler_job_pending=123.pbs111 state={state}; exit 0;;\n1) exit 124;;\n2) exit 255;;\n3) echo scheduler_job_pending=123.pbs111 state={next_state}; exit 0;;\n4) exit 124;;\n*) echo terminal; exit 0;;\nesac\n')
                 adapter.chmod(0o755)
                 sleeper = root / 'sleep'
                 sleeper.write_text('#!/bin/bash\nexit 0\n')
@@ -62,4 +62,5 @@ class MonitorTest(unittest.TestCase):
                 self.assertIn(f'last_state={state} limit_seconds={limit}', result.stderr)
                 self.assertIn('status=124', result.stderr)
                 self.assertIn('status=255', result.stderr)
+                self.assertIn(f'last_state={next_state} limit_seconds={1800 if next_state == 'Q' else 300}', result.stderr)
                 self.assertIn('terminal', result.stdout)
