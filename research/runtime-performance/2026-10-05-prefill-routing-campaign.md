@@ -59,3 +59,11 @@ helper約69–70%とwhole約6%を区別し、GEMM単独TF/s改善とは呼ばな
 ### 再投入のscheduler照合
 
 新off37319361445のPBSは216741、runtime `pd-37319361445-1.RVNTC8TmPY`。Q/aiq2、固定026030各8GPU/112CPU/1880GB、comment `Not Running: Not enough free nodes available`。qstat-fにestimated.start_time/ETAは表示されていない。runtime provenanceの77dab977・image182fbb6d・PROFILEfalseを照合。通常tomokazu shellとscheduler surfaceを区別し、`ssh -o BatchMode=yes tomokazu-ubuntu-server "~/actions-runner/shell/aspire2p-shell '/opt/pbs/bin/qstat -u apacsc14'"` でuidapacsc14/optpbs/scratchを確認した。Lunaへこの具体経路を渡しQ5分/R60秒監視を再確認。観測経路の不一致をjob失敗/再投入理由にしていない。
+
+## 同image公式onを先にqueueへ投入（10月6日）
+
+長い固定pair待ちを再び挟まないため、off終端後にonを投入する従来の順序を変更し、既定のoff/on一組だけを先にqueueへ置く。runtime条件commit `934636c5e7417a603bdd0239096cf32177a6a781` / [on Actions37389659143](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/actions/runs/37389659143) / PBS216810、runtime `pd-37389659143-1.vJDVyvtpkw`。Pの`SGLANG_PREFILL_TILED_ROUTING=1`と対応fixture/commentだけを変更し、Pshuffle1、D、c48、precision、profilefalseを固定した。27 integration tests/bash syntax/diff checksを再確認した。
+
+onのASPIRE image sidecarとruntime provenanceでimage182fbb6d、size12231192576、buildsource9c5a5a3、SGLangfc275674、commit934636c5を照合し、offとserving JSONがbyte一致することを確認。EC2 build/S3/mirror preparationはskippedで新build無し。PBS216810もoff216741と同じ固定026/030各8GPU・112CPU・scheduler1880GB、place scatter:excl、wall30分を要求してQ。二組を同時計算せず、同じexclusive pairで順次実行となる。ただしschedulerの実行順序は保証しない。既計画の2run予算内で追加反復無し、健全off取消無し。onのqueue投入だけでoffとの優劣や精度を判定しない。
+
+Lunaが両Actions/PBSを監視し、R/terminal時にSolが独立監査する。off失敗時は最初のfatalを解析し、有効対照が無いonの性能を断定しない。terminal、repository parser（公開規則準拠で主催者提供ではない）、TTFT/ITL、8greedy、actual4worker argv、全rawhash、runtime消去を両runで確認する。整数routingのmicrobitwise期待を維持するが、E2E logprob exact差はtoken位置・数値差・原因の診断として記録し、ユーザーが許容する丸め変更を自動不採用条件にしない。主催者の完全accuracy評価と単pairの採用判断は別途未確認。
