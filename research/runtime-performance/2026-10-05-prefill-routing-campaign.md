@@ -1,6 +1,6 @@
 # Prefill routing helperの部分置換
 
-更新日2026-10-05 JST。ユーザーの実測高速化要求に対し、[独立設計review](2026-10-05-next-moe-routing-review.md)を実装へ進めた。既CUTLASS gridとstage4確認は事前gate未達のまま、GEMM候補を採用しない。既shuffle最終反復37177667936/PBS216140も変更・取消せずLunaが監視する。
+更新日2026-10-05 JST。ユーザーの実測高速化要求に対し、[独立設計review](2026-10-05-next-moe-routing-review.md)を実装へ進めた。既CUTLASS gridとstage4確認は事前gate未達のまま、GEMM候補を採用しない。既shuffle最終反復37177667936/PBS216140は後述の監視接続障害で未GPU実行のままworkflow cleanupが取消した。第四runの性能は未確認。現在Lunaは新routing-off control37319361445を監視する。
 
 ## 実装と条件
 
@@ -45,3 +45,13 @@ Torch先行importへ修正した `1781bc9` / [37221346131](https://github.com/20
 helper約69–70%とwhole約6%を区別し、GEMM単独TF/s改善とは呼ばない。合成routing・同run paired比較であり実expert分布/E2E gain未証明。active util>0 258 clock samplesはSM1770–1980MHz、1秒samplerではvariant別clock完全一致を証明しない。CSVtimezoneはallocation日時とのUTC+8推定対応。旧profileからの3.09%消去感度をこの別GPU/別測定windowの厳密gain上限にはしない。
 
 同image182fbb6dで [routing-off公式control37222559966](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37222559966) / `4cdeca6` を投入。Pshuffle1/routing0、D/c48/fixed026030/topology/precision維持、microhook/profile無し。off terminal監査後routing1のみを変更して候補を順次比較する。新build不要、通常pair約24分/6.4GPUh、queue別。公式score・8greedy・TTFT/ITL/Pqueue/Dacceptlen/全hash/cleanupまで確認し、単pairで採用を断定しない。
+
+## 公式controlの待機中接続障害と再投入
+
+37222559966/PBS216333は約12時間Q。最後の正常観測はQ、source/rawにはstime/resources_used/Exit_statusもscoreも無く、GPU実行無し。first failureは2026-10-05 06:37:26Zの監視SSH timeout124。06:41:10Zの再timeout、06:47:24Zに連続接続障害budget300秒を超えてmonitor終了。Q待ち全体deadline/PBS execution walltimeの失敗ではない。その後cleanupが自分の未実行PBSをqdel、raw回収時run-success欠損は二次障害。正本9hash一致、postcleanupPBS F/terminated、runtime削除済み。公式性能値無し。
+
+旧shuffle37177667936/PBS216140も同じ接続timeout124→cleanupによる未起動取消、stime/Exit/walltime無し、正本9hash一致。最終shuffle反復は未検証のまま、既3runの所見を広げない。ユーザー/agentによる健全jobの手動取消は行っていない。
+
+最小infra修正main1988b2d：最後の確定PBS stateがQの場合だけ連続接続障害budgetを1800秒へ、R/unknownは既存300秒、各SSH180秒/PBS30分walltime維持。Q待機そのものの上限は追加しない。Q124/255障害→復旧R→再124でbudget300へ戻るfixtureをmain65940aaで明示確認、monitor7/contract15 testsとRuff/bash通過。runtime-onlyでnewbuild不要。
+
+[新公式off control37319361445](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37319361445) / `77dab97` を同image182fbb6d・Pshuffle1/routing0・c48/D/fixed026030維持で再投入。Luna collab監視を復帰できたためR/score/terminalでSolをfollowupする。旧CLI監視は古いQ時点で終了しており終端引継ぎを果たさなかったので、現在の状態判断には使用しない。現在liveは新offのみ、公式onはまだ未投入。Goalは未完了、off terminal/全監査後on→公式比較まで継続する。
