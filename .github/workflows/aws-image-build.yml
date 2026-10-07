@@ -112,8 +112,8 @@ jobs:
             [[ "$(jq -er '.ContentLength' <<<"${docker_head}")" == "$(jq -er '.docker_artifact.size_bytes' <<<"${sidecar}")" && "$(jq -er '.Metadata.sha256' <<<"${docker_head}")" == "$(jq -er '.docker_artifact.sha256' <<<"${sidecar}")" ]]
           fi
           printf 'container_sha256=%s\ncontainer_size=%s\n' "${container_sha256}" "${container_size}" >>"${GITHUB_OUTPUT}"
-          printf '### %s image\n\nSquashFS: `s3://%s/%s`\n\nSidecar: `s3://%s/%s`\n' "${FRAMEWORK}" "${CONTAINER_BUCKET}" "${CONTAINER_KEY}" "${CONTAINER_BUCKET}" "${SIDECAR_KEY}" >>"${GITHUB_STEP_SUMMARY}"
-          if [[ -n "${DOCKER_KEY}" ]]; then printf '\nDocker archive: `s3://%s/%s`\n' "${CONTAINER_BUCKET}" "${DOCKER_KEY}" >>"${GITHUB_STEP_SUMMARY}"; fi
+          printf '### %s image\n\nSquashFS: s3://%s/%s\n\nSidecar: s3://%s/%s\n' "${FRAMEWORK}" "${CONTAINER_BUCKET}" "${CONTAINER_KEY}" "${CONTAINER_BUCKET}" "${SIDECAR_KEY}" >>"${GITHUB_STEP_SUMMARY}"
+          if [[ -n "${DOCKER_KEY}" ]]; then printf '\nDocker archive: s3://%s/%s\n' "${CONTAINER_BUCKET}" "${DOCKER_KEY}" >>"${GITHUB_STEP_SUMMARY}"; fi
 
       - name: AWSビルド費用を見積もる
         if: always()
