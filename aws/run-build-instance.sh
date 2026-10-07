@@ -8,6 +8,7 @@ github_run_id=$4
 github_run_attempt=$5
 github_sha=$6
 cache_repository=$7
+framework=${8:-sglang}
 build_root=/opt/qwen-build
 input_archive="${build_root}/input.tar.zst"
 logs_archive="${build_root}/build-logs.tar.zst"
@@ -15,6 +16,7 @@ logs_archive="${build_root}/build-logs.tar.zst"
 [[ "${bucket}" =~ ^[a-z0-9.-]+$ && "${input_key}" == inputs/* && "${output_prefix}" == containers/* ]]
 [[ "${github_run_id}" =~ ^[1-9][0-9]*$ && "${github_run_attempt}" =~ ^[1-9][0-9]*$ && "${github_sha}" =~ ^[0-9a-f]{40,64}$ ]]
 [[ "${cache_repository}" =~ ^[0-9]+[.]dkr[.]ecr[.][a-z0-9-]+[.]amazonaws[.]com/[a-z0-9._/-]+$ ]]
+[[ "${framework}" == sglang || "${framework}" == vllm ]]
 
 cleanup() {
   status=$?
@@ -41,12 +43,19 @@ export BUILD_CACHE_REPOSITORY="${cache_repository}"
 cache_registry="${cache_repository%%/*}"
 cache_region="$(cut -d. -f4 <<<"${cache_registry}")"
 aws ecr get-login-password --region "${cache_region}" | buildah login --username AWS --password-stdin "${cache_registry}"
-"${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"
+"${GITHUB_WORKSPACE}/scripts/build-${framework}-container.sh"
 
 image="${CONTAINER_ARCHIVE_DIR}/${github_run_id}.sqsh"
 sidecar="${CONTAINER_ARCHIVE_DIR}/${github_run_id}.container-sidecar.json"
 image_sha256="$(jq -er '.container_artifact.sha256' "${sidecar}")"
 image_size="$(jq -er '.container_artifact.size_bytes' "${sidecar}")"
 [[ "$(sha256sum "${image}" | awk '{print $1}')" == "${image_sha256}" && "$(stat -c '%s' "${image}")" == "${image_size}" ]]
-aws s3 cp "${image}" "s3://${bucket}/${output_prefix}/sglang.sqsh" --metadata "sha256=${image_sha256}" --only-show-errors
+aws s3 cp "${image}" "s3://${bucket}/${output_prefix}/${framework}.sqsh" --metadata "sha256=${image_sha256}" --only-show-errors
+if [[ "${framework}" == vllm ]]; then
+  docker_archive="${CONTAINER_ARCHIVE_DIR}/${github_run_id}.docker.tar.zst"
+  docker_sha256="$(jq -er '.docker_artifact.sha256' "${sidecar}")"
+  docker_size="$(jq -er '.docker_artifact.size_bytes' "${sidecar}")"
+  [[ "$(sha256sum "${docker_archive}" | awk '{print $1}')" == "${docker_sha256}" && "$(stat -c '%s' "${docker_archive}")" == "${docker_size}" ]]
+  aws s3 cp "${docker_archive}" "s3://${bucket}/${output_prefix}/vllm.docker.tar.zst" --metadata "sha256=${docker_sha256}" --only-show-errors
+fi
 aws s3 cp "${sidecar}" "s3://${bucket}/${output_prefix}/container-sidecar.json" --only-show-errors

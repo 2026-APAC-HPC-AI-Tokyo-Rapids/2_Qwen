@@ -20,6 +20,9 @@ compiler PATH fix. Runtime experiments do not need an AWS rebuild. This branch
 rejects `[require-build]` and `[profile]` for Firmus rather than silently ignoring
 them: source/container experiments need a separately built image and an updated
 pin, and GPU profiling has not been implemented for these copied scripts.
+The separate [vLLM image build on AWS](../../../research/vllm-container-build.md)
+produces a Docker archive and a new Firmus SquashFS without overwriting these
+baseline images or submitting a benchmark.
 
 Each run gets `/scratch/home/apacsc14/qwen/runs/pd-<Actions ID>-<attempt>.<suffix>`.
 Only the paths change: worker/router/Slurm logs go in `logs/`, generated worker code
