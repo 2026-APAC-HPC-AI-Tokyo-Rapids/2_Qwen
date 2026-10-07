@@ -63,6 +63,7 @@ def test_worker_argv_matches_archived_base_with_graph_candidate(platform: str, n
             if worker["argv"][worker["argv"].index("--disaggregation-mode") + 1] == "decode":
                 worker["argv"] += ["--cuda-graph-bs-decode", *map(str, graph_bs)]
             else:
+                worker["argv"] += ["--enable-symm-mem"]
                 image_index = worker["argv"].index("/fixture/image.sqsh")
                 worker["argv"][image_index:image_index] = ["-e", "SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1", "-e", "SGLANG_PREFILL_TILED_ROUTING=1"]
     assert capture_workers(source, platform, nodes, tmp_path, profile) == expected

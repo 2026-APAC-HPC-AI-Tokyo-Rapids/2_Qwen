@@ -157,6 +157,8 @@ run_node() {
       mapfile -t decode_graph_bs < <(jq -r '.decode_cuda_graph_bs // [] | .[]' "${OUTPUT_DIR}/source/aspire-serving.json")
       if [[ "${#decode_graph_bs[@]}" -gt 0 ]]; then args+=(--cuda-graph-bs-decode "${decode_graph_bs[@]}"); fi
     fi
+    # NCCL symmetric allocator candidate: prefill only, same routing-on baseline.
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then args+=(--enable-symm-mem); fi
     es_env=()
     # Same-image routing candidate: shuffle on/tiled helper on; D and wheel GEMMs unchanged.
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then es_env=(-e SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1 -e SGLANG_PREFILL_TILED_ROUTING=1); fi
