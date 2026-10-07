@@ -9,12 +9,6 @@ on:
       profile:
         required: true
         type: boolean
-      container_sha256:
-        required: true
-        type: string
-      container_size:
-        required: true
-        type: string
 
 permissions:
   actions: read
@@ -29,7 +23,7 @@ defaults:
 
 jobs:
   provision:
-    name: 公式PD実行環境を配備
+    name: Reference baseline実行環境を配備
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     outputs:
@@ -46,15 +40,9 @@ jobs:
       - name: SquashFS・モデル・tokenizer・設定を配備
         id: provision
         env:
-          CLUSTER_NAME: firmus
-          CONTAINER_ARCHIVE_DIR: /scratch/home/ACCOUNT/qwen/containers
-          CONTAINER_SHA256: ${{ inputs.container_sha256 }}
-          CONTAINER_SIZE: ${{ inputs.container_size }}
-          ENROOT_LIBRARY_PATH: /scratch/home/ACCOUNT/.local/lib/enroot
-          ENROOT_SYSCONF_PATH: /scratch/home/ACCOUNT/.local/etc/enroot
-          MODEL_PATH: /scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8
           PROFILE: ${{ inputs.profile }}
-        run: PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh
+          QWEN_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: scripts/provision-firmus-framework.sh
 
       - name: 配備失敗時の実行環境を削除
         if: failure() && steps.provision.outputs.runtime_dir != ''
@@ -80,13 +68,12 @@ jobs:
         id: submit
         run: |
           cd "${RUNTIME_DIR}"
-          variables="ALL,CONTAINER_IMAGE=${RUNTIME_DIR}/sglang.sqsh,ENROOT_LIBRARY_PATH=${RUNTIME_DIR}/enroot-library,ENROOT_MOUNT_HOME=no,ENROOT_SYSCONF_PATH=${RUNTIME_DIR}/enroot-system,MODEL_PATH=${MODEL_PATH},OUTPUT_DIR=${RUNTIME_DIR},PROFILE=${PROFILE},TOKENIZER_PATH=${RUNTIME_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e"
-          job_id="$(sbatch --parsable --export="${variables}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/submit.sbatch")"
+          job_id="$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/submit.sbatch")"
           [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
 
-      - name: Slurmジョブの終了と公式成果物を確認
+      - name: Slurmジョブの終了と比較成果物を確認
         shell: bash
         run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-qwen-job.sh
 
@@ -100,7 +87,7 @@ jobs:
           firmus-shell --pull "${RUNTIME_DIR}/profile" "${destination}/profile"
           firmus-shell --pull "${RUNTIME_DIR}/results" "${destination}/results"
           firmus-shell --pull "${RUNTIME_DIR}/source" "${destination}/source"
-          firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"
+          if firmus-shell "test -e '${RUNTIME_DIR}/run-success'"; then firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; fi
 
       - name: 実行成果物を保存
         if: always() && steps.submit.outputs.job_id != ''
