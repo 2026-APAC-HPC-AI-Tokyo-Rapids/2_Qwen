@@ -48,7 +48,7 @@ class MonitorTest(unittest.TestCase):
 
 
     def test_connection_outage_budget_follows_last_observed_state(self):
-        for state, next_state, limit in [('Q', 'Q', 1800), ('R', 'R', 300), ('Q', 'R', 1800)]:
+        for state, next_state, limit in [('Q', 'Q', 'none'), ('R', 'R', 300), ('Q', 'R', 'none')]:
             with self.subTest(state=state, next_state=next_state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 adapter = root / 'adapter'
@@ -62,5 +62,23 @@ class MonitorTest(unittest.TestCase):
                 self.assertIn(f'last_state={state} limit_seconds={limit}', result.stderr)
                 self.assertIn('status=124', result.stderr)
                 self.assertIn('status=255', result.stderr)
-                self.assertIn(f"last_state={next_state} limit_seconds={1800 if next_state == 'Q' else 300}", result.stderr)
+                self.assertIn(f"last_state={next_state} limit_seconds={'none' if next_state == 'Q' else 300}", result.stderr)
                 self.assertIn('terminal', result.stdout)
+
+    def test_long_outage_only_queued_observation_remains_pending(self):
+        for state, expected in [('Q', 0), ('R', 124), ('unknown', 124)]:
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                monitor = root / 'monitor'
+                # Inject elapsed time only: exercise the real budget decision without a 30-minute test.
+                monitor.write_text(MONITOR.read_text().replace('connection_failure_seconds=$((SECONDS - connection_failure_started))', 'connection_failure_seconds=1801'))
+                adapter = root / 'adapter'
+                observation = f'echo scheduler_job_pending=123.pbs111 state={state}; exit 0' if state != 'unknown' else 'exit 124'
+                adapter.write_text(f'#!/bin/bash\nn=$(cat "{root}/count" 2>/dev/null || echo 0)\necho $((n+1)) >"{root}/count"\ncase $n in\n0) {observation};;\n1) exit 124;;\n*) echo terminal; exit 0;;\nesac\n')
+                adapter.chmod(0o755)
+                sleeper = root / 'sleep'
+                sleeper.write_text('#!/bin/bash\nexit 0\n')
+                sleeper.chmod(0o755)
+                result = subprocess.run(['bash', str(monitor), str(adapter), 'checker'], env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}'}, capture_output=True, text=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, expected)
+                self.assertEqual('terminal' in result.stdout, state == 'Q')
