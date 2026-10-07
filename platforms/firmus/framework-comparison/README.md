@@ -8,7 +8,10 @@ are preserved. These are reference-07 comparisons, not official-duration submiss
 Edit `configs/firmus-framework.json`: `framework` is `sglang` or `vllm`, and
 `concurrency` initially equals 8. Commit each condition separately and push with
 `[cluster:firmus] [nodes:2]` in the commit title. A push without a cluster tag runs
-validation only. Run the frameworks sequentially to avoid resource contention.
+validation only. Both controls request both nodes and all 16 GPUs, so they may be
+queued together but cannot execute concurrently. Their worker homes are isolated.
+For manual dispatch, this branch defaults to Firmus only; leave the other cluster
+checkboxes disabled. Experiment conditions should still be tracked by commits.
 
 The two images are reused from the working baseline, with pinned sizes and SHA-256
 hashes checked before Slurm submission. The SGLang image also runs the same AIPerf
@@ -42,3 +45,8 @@ archive path; only this workflow's own scheduler job is cleaned up.
 
 BigQuery is not a step in the current Firmus workflow. This branch preserves that
 behavior; it does not invent a separate metrics publishing path.
+
+The committed SGLang and vLLM worker, router and client commands were compared with
+their remote working scripts. They match after substituting the run/output paths.
+The proxy is byte-identical, SHA-256
+`4cb4e23e0b4b48afc4a4af7b6fa29ddbc1a21cde21bdb1979a50010614077de0`.
