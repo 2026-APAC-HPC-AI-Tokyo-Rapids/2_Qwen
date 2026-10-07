@@ -9,11 +9,12 @@ set -euo pipefail
 : "${RUNTIME_ROOT:?}"
 : "${PROFILE:?}"
 : "${REQUIRE_BUILD:?}"
-[[ "${PROFILE}" == false ]] || { echo 'This reference comparison does not implement GPU profiling.' >&2; exit 64; }
+[[ "${PROFILE}" == true || "${PROFILE}" == false ]]
 [[ "${REQUIRE_BUILD}" == false ]] || { echo 'This branch reuses pinned baseline images; rebuild and update their hashes before requesting a source experiment.' >&2; exit 64; }
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${config}")"
+[[ "${PROFILE}" == false || "${framework}" == sglang ]] || { echo 'Nsight capture currently supports the SGLang profile API only.' >&2; exit 64; }
 jq -e '.workload == "reference-07" and (.concurrency | type == "number" and . >= 1 and floor == .)' "${config}" >/dev/null
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
@@ -50,6 +51,20 @@ sha256sum "${tokenizer}"/* >"${runtime_dir}/source/tokenizer.sha256"
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/${framework}.sbatch" "${runtime_dir}/scripts/submit.sbatch"
 install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/vllm-proxy.py" "${runtime_dir}/vllm-proxy.py"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${GITHUB_WORKSPACE}/scripts/parse-firmus-reference-result.py" "${runtime_dir}/scripts/"
+if [[ "${PROFILE}" == true ]]; then
+  install -m 0755 "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${GITHUB_WORKSPACE}/scripts/capture-firmus-profile.sh" "${runtime_dir}/scripts/"
+  install -m 0644 "${GITHUB_WORKSPACE}/scripts/validate-firmus-profile.py" "${runtime_dir}/scripts/"
+  command -v ar >/dev/null
+  package="${runtime_dir}/nsight.deb"
+  curl --fail --location --show-error --max-time 600 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/nsight-systems-2025.3.2_2025.3.2.474-1_amd64.deb -o "${package}"
+  printf 'c7cfe27e2250eb91e1a67e7feb5f2c490c7f598e3b3a3d047aff000bc49f9d6b  %s\n' "${package}" | sha256sum --check >"${runtime_dir}/source/nsys-package.sha256"
+  install -d -m 0755 "${runtime_dir}/nsys-extract"
+  ar p "${package}" data.tar.gz | tar -xz -C "${runtime_dir}/nsys-extract" --wildcards './opt/nvidia/nsight-systems/2025.3.2/bin/*' './opt/nvidia/nsight-systems/2025.3.2/target-linux-x64/*' './opt/nvidia/nsight-systems/2025.3.2/host-linux-x64/*' './opt/nvidia/nsight-systems/2025.3.2/EULA.txt'
+  mv "${runtime_dir}/nsys-extract/opt/nvidia/nsight-systems/2025.3.2" "${runtime_dir}/nsys"
+  rm -rf -- "${package}" "${runtime_dir}/nsys-extract"
+  test -x "${runtime_dir}/nsys/bin/nsys"
+  cp "${runtime_dir}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/capture-firmus-profile.sh" "${runtime_dir}/scripts/validate-firmus-profile.py" "${runtime_dir}/source/"
+fi
 cp "${runtime_dir}/scripts/submit.sbatch" "${runtime_dir}/vllm-proxy.py" "${runtime_dir}/source/"
 if [[ "${framework}" == vllm ]]; then
   for worker in prefill-0 prefill-1 prefill-2 prefill-3 decode-0 decode-1; do
@@ -62,4 +77,4 @@ if [[ "${framework}" == vllm ]]; then
   (cd "${runtime_dir}" && find home -type f -print0 | sort -z | xargs -0 -r sha256sum) >"${runtime_dir}/source/jit-cache.sha256"
 fi
 jq -n --arg model_path "${model}" '{schema_version:"qwen3-pd-model/v1",model:{repository:"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",revision:"e156cb4efae43fbee1a1ab073f946a1377e6b969",path:$model_path,precision:"fp8",shards:24},tokenizer:{repository:"Qwen/Qwen3-235B-A22B-Instruct-2507",revision:"ac9c66cc9b46af7306746a9250f23d47083d689e"}}' >"${runtime_dir}/source/model.json"
-jq -n --arg commit "${GITHUB_SHA}" --arg framework "${framework}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson images "$(jq .images "${config}")" '{schema_version:"qwen3-pd-provenance/v1",cluster:"firmus",commit:$commit,framework:$framework,workflow_run_id:$run_id,workflow_run_attempt:$attempt,profile:false,workload:"reference-07",official_submission:false,container:($images[$framework] | {sha256,size_bytes}),client_container:($images.sglang | {sha256,size_bytes}),aiperf:{version:"0.12.0",commit:"be53bf2953d30e46c500e6a80fc1f8b6f84bc718"},cache_source:(if $framework == "vllm" then "matched-settings-comparison/home" else null end)}' >"${runtime_dir}/source/provenance.json"
+jq -n --arg commit "${GITHUB_SHA}" --arg framework "${framework}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson profile "${PROFILE}" --argjson images "$(jq .images "${config}")" '{schema_version:"qwen3-pd-provenance/v1",cluster:"firmus",commit:$commit,framework:$framework,workflow_run_id:$run_id,workflow_run_attempt:$attempt,profile:$profile,workload:"reference-07",official_submission:false,container:($images[$framework] | {sha256,size_bytes}),client_container:($images.sglang | {sha256,size_bytes}),aiperf:{version:"0.12.0",commit:"be53bf2953d30e46c500e6a80fc1f8b6f84bc718"},cache_source:(if $framework == "vllm" then "matched-settings-comparison/home" else null end)}' >"${runtime_dir}/source/provenance.json"

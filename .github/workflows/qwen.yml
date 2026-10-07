@@ -132,6 +132,7 @@ jobs:
         run: if [[ -n "$(find artifacts -type f -print -quit 2>/dev/null)" ]]; then printf 'present=true\n' >>"${GITHUB_OUTPUT}"; else printf 'present=false\n' >>"${GITHUB_OUTPUT}"; fi
 
       - name: 成果物を自宅サーバーへ配置
+        id: archive
         if: steps.artifacts.outputs.present == 'true'
         shell: home-lab-shell {0}
         run: |
@@ -146,6 +147,11 @@ jobs:
           (cd "${staging}" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS)
           mv -T -- "${staging}" "${destination}"
           trap - EXIT
+
+      - name: 保管先をsummaryに記録
+        if: always() && steps.archive.outcome == 'success'
+        shell: bash
+        run: printf '### Artifact archive\n\nArchived and checksummed at `archive-host:/srv/qwen-artifacts/%s/%s/`.\n' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >>"${GITHUB_STEP_SUMMARY}"
 
       - name: 転送済みのGitHub成果物を削除
         if: steps.artifacts.outputs.present == 'true'
