@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import json
 import runpy
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -58,3 +60,23 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["reference_validation"]["valid"] is True
     assert result["eligible"] is False
     assert result["score_output_tokens_per_second"] == 0
+
+
+@pytest.mark.parametrize("framework", ["sglang", "vllm"])
+def test_provenance_distinguishes_server_client_and_prepared_cache(tmp_path: Path, framework: str) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "source").mkdir(parents=True)
+    provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
+    commands = "jq -n --arg model_path" + provision.split("jq -n --arg model_path", 1)[1]
+    config = ROOT / "configs/firmus-framework.json"
+    environment = {**os.environ, "runtime_dir": str(runtime), "model": "/scratch/model", "framework": framework, "config": str(config), "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}
+    subprocess.run(["bash", "-euc", commands], env=environment, check=True)
+    identity = json.loads((runtime / "source/provenance.json").read_text())
+    images = json.loads(config.read_text())["images"]
+    assert identity["container"]["sha256"] == images[framework]["sha256"]
+    assert identity["client_container"]["sha256"] == images["sglang"]["sha256"]
+    assert identity["cache_source"] == ("matched-settings-comparison/home" if framework == "vllm" else None)
+    model = json.loads((runtime / "source/model.json").read_text())
+    assert model["schema_version"] == "qwen3-pd-model/v1"
+    assert model["model"]["path"] == "/scratch/model"
+    assert model["model"]["shards"] == 24
