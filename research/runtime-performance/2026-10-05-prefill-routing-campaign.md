@@ -78,3 +78,7 @@ read-only scheduler再照合でoff216741は健全Qのまま、開始予測がOct
 今回の対応は両健全Qを維持し、Lunaの長め監視でR/terminal/ETA/期限接近を通知すること。取消・変更・再投入・追加GPU・条件変更は行わない。期限前にRへ進まなければその事実を報告し、terminal時には失敗段階/raw/cleanupを確認する。公式scoreと性能改善は未確定、terminal後の独立parser/精度診断/全hash/artifact/cleanup監査は維持する。
 
 期限で実terminalとなった場合の最小再投入候補は、まずActions結論・PBS F/削除・stime/使用walltime・raw全hash・runtime消去を確認して未実行取消とGPU実行後失敗を区別すること。onが成功済ならその来歴/rawを保存し、有効offがない状態で性能差を断定しない。必要な失敗側だけを同じimage182fbb6d・fixed026030・c48・Pshuffle1・Proute0または1・D/precision/profilefalseのまま、対応conditioncommitを親とする追跡commitで再投入する。paths-ignoreで空commitはworkflowを起動しなかった既知事実があるため、実行理由を記した実runtime commentの最小変更でpush triggerを残し、cluster/nodesタグを付け、require-buildを付けない。安価なargv/budgetfixture/bash/diff検証後、Actionsでsameimage選択とPBS来歴を再確認する。再投入は実terminal/cleanup後の必要側のみで、今回は実施しない。
+
+### 現在の開始予測への更新（10月7日）
+
+read-only再照合で両Actions37319361445/37389659143はin_progress、PBS off216741/on216810は健全Q・mem不足。offの現在ETAは**Oct9 16:49:29 SGT**へ前倒しされ、前回Oct11予測と異なりoff Actions期限目安Oct10 21:50:42 SGTの**29時間1分13秒前**となった。onは独立ETA無し。過去予測は履歴として上記に維持する。現在ETAもscheduler推定で開始を保証せず、両runの公式score・精度診断・terminal/raw/parser/全hash/cleanup監査は未完了。livejob取消・変更・追加投入を行わずLuna監視を継続する。
