@@ -151,7 +151,7 @@ jobs:
       - name: 保管先をsummaryに記録
         if: always() && steps.archive.outcome == 'success'
         shell: bash
-        run: printf '### Artifact archive\n\nArchived and checksummed at `archive-host:/srv/qwen-artifacts/%s/%s/`.\n' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >>"${GITHUB_STEP_SUMMARY}"
+        run: printf '### Artifact archive\n\nArchived and checksummed at **archive-host:/srv/qwen-artifacts/%s/%s/**.\n' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >>"${GITHUB_STEP_SUMMARY}"
 
       - name: 転送済みのGitHub成果物を削除
         if: steps.artifacts.outputs.present == 'true'
