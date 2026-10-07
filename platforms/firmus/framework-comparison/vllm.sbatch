@@ -34,6 +34,8 @@ ISL=4000
 OSL=200
 N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")
 ART=${ROOT}/logs
+PROFILE=${PROFILE:-false}
+[[ "${PROFILE}" == true || "${PROFILE}" == false ]]
 
 NODES=($(scontrol show hostnames "${SLURM_JOB_NODELIST}"))
 HEAD=${NODES[0]}
@@ -44,7 +46,9 @@ TAIL_IP=$(ip_of "${TAIL}")
 
 mounts() {
   mkdir -p "${ROOT}/home/$1"
-  echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},/dev/infiniband:/dev/infiniband"
+  local profiler_mount=
+  if [[ "${PROFILE}" == true ]]; then profiler_mount=",${ROOT}/nsys:/opt/nsys:ro"; fi
+  echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},/dev/infiniband:/dev/infiniband${profiler_mount}"
 }
 
 wait_http() {
@@ -55,6 +59,25 @@ echo "[$(date -Iseconds)] job=${SLURM_JOB_ID} user=$(whoami)"
 echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=${ISL} osl=${OSL} N=${N}"
 test -r "${SGLANG}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json"
 mkdir -p "${ART}"
+worker_pids=()
+profile_capture_pid=
+cleanup_all() {
+  status=$?
+  trap - EXIT INT TERM
+  if [[ -n "${profile_capture_pid}" ]]; then kill "${profile_capture_pid}" 2>/dev/null || true; wait "${profile_capture_pid}" 2>/dev/null || true; fi
+  for pid in "${worker_pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
+  for pid in "${worker_pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
+  exit "${status}"
+}
+trap cleanup_all EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [[ "${PROFILE}" == true ]]; then
+  "${ROOT}/nsys/bin/nsys" --version >"${ROOT}/profile/nsys-version.txt"
+  printf 'Instrumented reference run; score is not an adoption measurement. Capture: CUDA/NVTX/OS runtime, five seconds after warmup.\n' >"${ROOT}/profile/interpretation.txt"
+  for worker in 0 1 2 3; do printf 'prefill-%s\t%s\t%s\t2\n' "${worker}" "${HEAD_IP}" "$((30100 + worker))"; done >"${ROOT}/source/worker-endpoints.tsv"
+  for worker in 0 1; do printf 'decode-%s\t%s\t%s\t4\n' "${worker}" "${TAIL_IP}" "$((30200 + worker))"; done >>"${ROOT}/source/worker-endpoints.tsv"
+fi
 
 cat >"${ROOT}/source/worker.sh" <<'EOF'
 set -euo pipefail
@@ -83,26 +106,34 @@ if [[ "$role" == prefill ]]; then
 else
   KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}'
 fi
-exec /usr/local/bin/vllm serve "$model" --served-model-name qwen --trust-remote-code --host 0.0.0.0 --port "$port" --tensor-parallel-size "$tp" --max-model-len 8192 --gpu-memory-utilization 0.90 --kv-transfer-config "$KV_CONFIG" "$@"
+runtime_dir=$(dirname "$(dirname "$0")")
+worker_command=(/usr/local/bin/vllm serve "$model" --served-model-name qwen --trust-remote-code --host 0.0.0.0 --port "$port" --tensor-parallel-size "$tp" --max-model-len 8192 --gpu-memory-utilization 0.90 --kv-transfer-config "$KV_CONFIG" "$@")
+if [[ -x /opt/nsys/bin/nsys ]]; then
+  export QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys
+  export QWEN_PROFILER_INVOCATION_PATH="${runtime_dir}/profile/nsys-${name}.argv"
+  export VLLM_WORKER_MULTIPROC_METHOD=spawn
+  worker_command=(bash "${runtime_dir}/scripts/exec-profiler.sh" "${worker_command[@]}" --profiler-config '{"profiler":"cuda"}')
+fi
+exec "${worker_command[@]}"
 EOF
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 2 >"${ART}/prefill-0.log" 2>&1 &
-P0_PID=$!
+worker_pids+=("$!")
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" 2 >"${ART}/prefill-1.log" 2>&1 &
-P1_PID=$!
+worker_pids+=("$!")
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-image="${SGLANG}" --container-mounts="$(mounts prefill-2)" bash "${ROOT}/source/worker.sh" prefill-2 30102 "${MODEL}" 2 >"${ART}/prefill-2.log" 2>&1 &
-P2_PID=$!
+worker_pids+=("$!")
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-image="${SGLANG}" --container-mounts="$(mounts prefill-3)" bash "${ROOT}/source/worker.sh" prefill-3 30103 "${MODEL}" 2 >"${ART}/prefill-3.log" 2>&1 &
-P3_PID=$!
+worker_pids+=("$!")
 
 srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 --enable-expert-parallel --max-cudagraph-capture-size 64 --max-num-seqs 256 --no-enable-flashinfer-autotune >"${ART}/decode-0.log" 2>&1 &
-D0_PID=$!
+worker_pids+=("$!")
 
 srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-image="${SGLANG}" --container-mounts="$(mounts decode-1)" bash "${ROOT}/source/worker.sh" decode-1 30201 "${MODEL}" 4 --enable-expert-parallel --max-cudagraph-capture-size 64 --max-num-seqs 256 --no-enable-flashinfer-autotune >"${ART}/decode-1.log" 2>&1 &
-D1_PID=$!
+worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:30100/health"; echo "prefill-0 ready"
 wait_http "http://${HEAD_IP}:30101/health"; echo "prefill-1 ready"
@@ -112,17 +143,20 @@ wait_http "http://${TAIL_IP}:30200/health"; echo "decode-0 ready"
 wait_http "http://${TAIL_IP}:30201/health"; echo "decode-1 ready"
 
 srun --overlap -N1 -n1 -w "${HEAD}" --cpus-per-task=2 --container-image="${SGLANG}" --container-mounts="$(mounts router)" /usr/bin/python3 "${ROOT}/vllm-proxy.py" --host 0.0.0.0 --port "${R_PORT}" --prefiller-hosts "${HEAD_IP}" "${HEAD_IP}" "${HEAD_IP}" "${HEAD_IP}" --prefiller-ports 30100 30101 30102 30103 --decoder-hosts "${TAIL_IP}" "${TAIL_IP}" --decoder-ports 30200 30201 >"${ART}/router.log" 2>&1 &
-R_PID=$!
+worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:${R_PORT}/v1/models"
 echo "READY after ${SECONDS}s"
 
+if [[ "${PROFILE}" == true ]]; then "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" >"${ART}/profile-capture.log" 2>&1 & profile_capture_pid=$!; fi
 srun --overlap -N1 -n1 -w "${HEAD}" --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" /opt/sglang/venv/bin/aiperf profile --model qwen --tokenizer "/scratch/home/ACCOUNT/qwen/framework-comparison/sources/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e" --url "http://127.0.0.1:${R_PORT}" --endpoint-type chat --endpoint /v1/chat/completions --streaming --concurrency "${N}" --warmup-duration 20 --benchmark-duration 60 --benchmark-grace-period 15 --synthetic-input-tokens-mean "${ISL}" --synthetic-input-tokens-stddev 0 --output-tokens-mean "${OSL}" --output-tokens-stddev 0 --num-dataset-entries 12800 --random-seed 2026 --cache-bust first_turn_prefix --extra-inputs "min_tokens:${OSL}" --extra-inputs "max_tokens:${OSL}" --extra-inputs "ignore_eos:true" --extra-inputs "temperature:0.0" --extra-inputs "repetition_penalty:1.0" -H "Accept: text/event-stream" --artifact-dir "${ROOT}/results" >"${ART}/aiperf.log" 2>&1
 echo "AIPERF ok"
 srun --overlap -N1 -n1 -w "${HEAD}" --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" /opt/sglang/venv/bin/python "${ROOT}/scripts/parse-firmus-reference-result.py" "${ROOT}/results" --concurrency "${N}"
+if [[ "${PROFILE}" == true ]]; then
+  wait "${profile_capture_pid}"
+  profile_capture_pid=
+  deadline=$((SECONDS + 180))
+  while [[ "$(find "${ROOT}/profile" -maxdepth 1 -name '*.nsys-rep' -size +0c | wc -l)" -ne 6 ]]; do (( SECONDS < deadline )); sleep 2; done
+  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" /opt/sglang/venv/bin/python "${ROOT}/scripts/validate-firmus-profile.py" "${ROOT}" >"${ART}/profile-validation.log" 2>&1
+fi
 touch "${ROOT}/run-success"
-
-set +e
-kill "${P0_PID}" "${P1_PID}" "${P2_PID}" "${P3_PID}" "${D0_PID}" "${D1_PID}" "${R_PID}"
-wait "${P0_PID}" "${P1_PID}" "${P2_PID}" "${P3_PID}" "${D0_PID}" "${D1_PID}" "${R_PID}"
-set -e

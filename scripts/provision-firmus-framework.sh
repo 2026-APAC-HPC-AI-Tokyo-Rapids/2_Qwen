@@ -14,7 +14,6 @@ set -euo pipefail
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${config}")"
-[[ "${PROFILE}" == false || "${framework}" == sglang ]] || { echo 'Nsight capture currently supports the SGLang profile API only.' >&2; exit 64; }
 jq -e '.workload == "reference-07" and (.concurrency | type == "number" and . >= 1 and floor == .)' "${config}" >/dev/null
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
