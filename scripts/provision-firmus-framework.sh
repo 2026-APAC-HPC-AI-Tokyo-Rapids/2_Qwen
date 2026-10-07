@@ -8,9 +8,9 @@ set -euo pipefail
 : "${GITHUB_OUTPUT:?}"
 : "${RUNTIME_ROOT:?}"
 : "${PROFILE:?}"
-: "${QWEN_COMMIT_MESSAGE:=}"
+: "${REQUIRE_BUILD:?}"
 [[ "${PROFILE}" == false ]] || { echo 'This reference comparison does not implement GPU profiling.' >&2; exit 64; }
-[[ "${QWEN_COMMIT_MESSAGE}" != '[require-build]'* ]] || { echo 'This branch reuses pinned baseline images; rebuild and update their hashes before requesting a source experiment.' >&2; exit 64; }
+[[ "${REQUIRE_BUILD}" == false ]] || { echo 'This branch reuses pinned baseline images; rebuild and update their hashes before requesting a source experiment.' >&2; exit 64; }
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${config}")"

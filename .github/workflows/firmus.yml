@@ -9,6 +9,9 @@ on:
       profile:
         required: true
         type: boolean
+      require_build:
+        required: true
+        type: boolean
 
 permissions:
   actions: read
@@ -41,7 +44,7 @@ jobs:
         id: provision
         env:
           PROFILE: ${{ inputs.profile }}
-          QWEN_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          REQUIRE_BUILD: ${{ inputs.require_build }}
         run: scripts/provision-firmus-framework.sh
 
       - name: 配備失敗時の実行環境を削除
