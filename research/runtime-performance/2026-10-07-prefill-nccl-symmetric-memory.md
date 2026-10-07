@@ -18,6 +18,8 @@ parent e484c760（routingon公式control）から`f229f661de9f4a1ebbfda59def7f43
 
 old routing off37319361445/216741、on37389659143/216810、symm37604857808/217308はActions failure/PBS F。最初のfatalはOct7 14:08:27/14:12:04/14:09:35Zのmonitor SSHtimeout124で、laststateQの連続接続障害が1800秒を超えた後、workflow cleanupが自身の未実行Qを取消した。mem不足は待機理由であり終了fatalではなく、5日Actions期限でもない。run-success欠損exit2は二次障害。全3PBSにstime/resources_usedwalltime/exechost/Exitstatusが無くGPU実行無し/公式score無し、各正本9hash(計27)一致、全runtime消去を独立確認した。
 
-観測に基づく最小main修正acf2427はlaststateQ確定時だけ観測failure累積でfatalにしない。個別SSH180秒・Runknown300秒・実terminal判定・Actions上限を維持。elapsed1801秒fixtureでQ継続/Runknownfatalを確認、terminalsuccess/failure既fixture含む23tests/Ruff/bash/diff通過。GitHubpushが500を返す障害を観測しており、配備完了と混同しない。
+観測に基づく最小main修正acf2427はlaststateQ確定時だけ観測failure累積でfatalにしない。個別SSH180秒・Runknown300秒・実terminal判定・Actions上限を維持。elapsed1801秒fixtureでQ継続/Runknownfatalを確認、terminalsuccess/failure既fixture含む23tests/Ruff/bash/diff通過。GitHubpushが500を返す一時障害を観測したが、後続pushは成功しmainへ配備済み。
 
 固定030032はread-only現物で他jobが各全資源占有、即時空き/ETA確約無し。symm通常比較だけをfree同selectorへ再準備し、routingoncontrol999a5a3（parente484c760）とP-onlysymmon2b04aa2（parentf229f661）にmonitor修正を適用。各52CPUtests/bash/actionlint/diff通過、sameimage182fbb6d/buildsource9c5a5a3/no-sourcebuild/resource削減無し。独立allocationのactualpair一致を照合し、別pairなら結論を制限する。routingfree一対は既監査完了のため、未実行旧fixedrouting2本の再投入を無条件には追加しない。symm性能・実kernel使用・精度・terminal全監査は未完了。
+
+再投入はcontrol [37642502611](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37642502611) / symmon [37642503212](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37642503212)。Oct7 15:24Z時点で両Actions validate成功、ASPIRE既存成果物選択中、PBS未確定。同image来歴・実資源・実適用・公式結果・精度・全rawhash・cleanupの終端監査を続ける。
