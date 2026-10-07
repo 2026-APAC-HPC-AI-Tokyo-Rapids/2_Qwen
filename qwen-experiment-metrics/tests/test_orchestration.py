@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 
-def test_workflows_run_the_official_pd_path_on_every_cluster() -> None:
+def test_workflows_keep_the_shared_pd_result_and_archive_contract() -> None:
     repository = Path(__file__).parents[2]
     genkai = (repository / ".github/workflows/genkai.yml").read_text()
     aspire = (repository / ".github/workflows/aspire2ap.yml").read_text()
@@ -17,12 +17,14 @@ def test_workflows_run_the_official_pd_path_on_every_cluster() -> None:
     ]
 
     for workflow, checker in zip((genkai, aspire, firmus), checkers, strict=True):
-        assert "provision-qwen-pd.sh" in workflow
         assert "monitor-qwen-job.sh" in workflow
         assert "profile_export_aiperf.json" in checker
         assert "score.json" in checker
         assert "upload-artifact@v7" in workflow
         assert "configure-aws-credentials" not in workflow
+    assert "provision-qwen-pd.sh" in genkai
+    assert "provision-qwen-pd.sh" in aspire
+    assert "provision-firmus-framework.sh" in firmus
     assert '--mpi "proc=${{ inputs.node_count }}"' in genkai
     assert "module load intel/2025.1.3 impi" in genkai_job
     assert "QWEN_PLATFORM=genkai" in genkai_job
