@@ -115,3 +115,7 @@ read-only再照合で両Actions37319361445/37389659143はin_progress、PBS off21
 同prompt8件×64tokenのrequest/content/tokenbytes/logprobsはすべて完全一致。整数routingのmicrobitwise期待と整合し、E2E数値差の原因解析は不要だった。ただし8件synthetic probeは主催者の完全accuracy評価ではない。benchmark窓のunweighted log sampleでPqueue平均1.613909→1.174014、Dacceptlen2.226411→2.231057、full8192割合.93765→.88515。これらはtime-weighted占有率や単独kernel latencyではなく、step分布も変わるので局所原因の厳密証明にはしない。
 
 **同pair一対では+2.49%の暫定的な有望結果**。TTFT改善とITL微悪化を併記し、順序/time drift/測定分散が未評価のため採用を断定せずmain runtimeへ統合しない。追加反復は投入せず、ユーザーの旧job維持指示に従いfixed off216741/on216810の監視とterminal監査を継続する。自由2runのGPU/PBS残留無し、成功imageは再利用可能なまま保持し、調査scriptは残る旧run監査に使用する。
+
+### 旧fixed2本の終端訂正（10月8日）
+
+37319361445/216741と37389659143/216810はlaststateQ監視SSH124が1800秒budgetを超過→workflowcleanup自身Q取消でfailure/PBSF、GPU無実行。mem不足は待機理由、終了fatalではない。各9正本hash/runtime消去確認。自由030032一対の暫定+2.49%を再解釈せず、未実行旧fixedを追加性能データとしない。最小Q観測修正acf2427後はsymmcontrol/onだけを先に再準備し、routing反復の無条件追加無し。
