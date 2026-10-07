@@ -82,3 +82,16 @@ read-only scheduler再照合でoff216741は健全Qのまま、開始予測がOct
 ### 現在の開始予測への更新（10月7日）
 
 read-only再照合で両Actions37319361445/37389659143はin_progress、PBS off216741/on216810は健全Q・mem不足。offの現在ETAは**Oct9 16:49:29 SGT**へ前倒しされ、前回Oct11予測と異なりoff Actions期限目安Oct10 21:50:42 SGTの**29時間1分13秒前**となった。onは独立ETA無し。過去予測は履歴として上記に維持する。現在ETAもscheduler推定で開始を保証せず、両runの公式score・精度診断・terminal/raw/parser/全hash/cleanup監査は未完了。livejob取消・変更・追加投入を行わずLuna監視を継続する。
+
+## 自由pairの追加公式off/on（10月7日）
+
+ユーザーの「自由ペアで同じの投げなおしてみたら?」に続く「取り下げなくていいよ」に従い、旧fixed off37319361445/PBS216741・on37389659143/PBS216810を健全Qのまま維持し、自由pair2条件を**追加**投入した。旧job取消は行わない。各旧conditioncommitを親とするbranchで、固定026030だけを外し、既方式`select=2:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1`・scatter:excl・30minへ復元し、orchestrationfixtureを更新。P2TP4EP1/D2TP4/c48/Pshuffle1/Proute0or1/precision/EAGLE/profilefalseを維持し、source/mirror/container変更無し。公式複数条件を同allocationで実行する既存機能はなく、新infraは作らない。
+
+|条件|parent→commit|Actions/PBS|runtime|
+|---|---|---|---|
+|free off|77dab977→e580642a|[37576502357](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37576502357)/217224|pd-37576502357-1.0g2zAKFz3O|
+|free on|934636c5→e484c760|[37576508318](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37576508318)/217225|pd-37576508318-1.ID7qKbjfk4|
+
+各36 orchestration/actualargv/monitor tests＋15 repository contract tests、bash/actionlint/diff checks通過。実sidecar/runtime provenanceで同image182fbb6d・size12231192576・buildsource9c5a5a3・SGLangfc275674・各commit・profilefalseを照合し、serving JSON byte一致、EC2/mirror/S3buildskippedを確認した。PBSは両Q/aiq2・mem不足、admission後select2各112CPU/8GPU/1880GB・合計16GPU/3760GB・excl/30min、host指定無しを確認。実actualpair/GPU型/H100・workeractualargvはR後に現物を照合する。
+
+旧2本＋追加2本の4本を維持する。ユーザーが認可した追加2run予算で、異なるresourcesなら並行GPU実行の可能性がある。独立自由pairが別actualpairに割り当てられた場合、routingとhardwareが交絡するため厳密同pair改善の結論を出さず、旧fixedpairとも無条件に混合集計しない。Lunaへ新handlesを引継ぎ、全4runのterminal/raw/parser/TTFTITL/8greedy数値診断/全hash/artifact/cleanupまで監査を継続する。性能優位と主催者accuracyは未確認、main runtime採用は行わない。
