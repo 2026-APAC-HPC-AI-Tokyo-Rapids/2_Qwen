@@ -73,7 +73,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 if [[ "${PROFILE}" == true ]]; then
   "${ROOT}/nsys/bin/nsys" --version >"${ROOT}/profile/nsys-version.txt"
-  printf 'Instrumented reference run; score is not an adoption measurement. Capture: CUDA/NVTX/OS runtime, five seconds after warmup.\n' >"${ROOT}/profile/interpretation.txt"
+  printf 'Capture: CUDA/NVTX/OS runtime, from five seconds after warmup through benchmark and grace completion. Stop and flush after traffic completes. Instrumented reference score is not an adoption measurement.\n' >"${ROOT}/profile/interpretation.txt"
   for worker in 0 1 2 3; do printf 'prefill-%s\t%s\t%s\t2\n' "${worker}" "${HEAD_IP}" "$((30100 + worker))"; done >"${ROOT}/source/worker-endpoints.tsv"
   for worker in 0 1; do printf 'decode-%s\t%s\t%s\t4\n' "${worker}" "${TAIL_IP}" "$((30200 + worker))"; done >>"${ROOT}/source/worker-endpoints.tsv"
 fi

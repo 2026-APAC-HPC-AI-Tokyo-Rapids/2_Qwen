@@ -26,7 +26,7 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
         def do_POST(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             with request_lock:
-                requests.append((self.path, json.loads(body) if body else None))
+                requests.append((self.path, json.loads(body) if body else None, "Phase profiling (profiling) complete |" in (tmp_path / "logs/aiperf.log").read_text()))
                 number = len(requests)
             self.send_response(500 if self.path == f"/{failure}_profile" and number % 6 == 1 else 200)
             self.end_headers()
@@ -45,7 +45,7 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     (tmp_path / "source/worker-endpoints.tsv").write_text("".join(f"{name}\t127.0.0.1\t{server.server_port}\t{tp}\n" for name, tp in workers))
     (tmp_path / "logs/aiperf.log").write_text("Phase profiling (profiling) started\n")
     sleep = tmp_path / "bin/sleep"
-    sleep.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >>\"$SLEEP_RECORD\"\n")
+    sleep.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >>\"$SLEEP_RECORD\"\nif [[ $1 == 1 ]]; then printf 'Phase profiling (profiling) complete | elapsed=75.00s\\n' >>\"${SLEEP_RECORD%/*}/logs/aiperf.log\"; fi\n")
     sleep.chmod(0o755)
     try:
         result = subprocess.run(["bash", str(ROOT / "scripts/capture-firmus-profile.sh"), str(tmp_path)], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLEEP_RECORD": str(tmp_path / "sleeps")}, capture_output=True, text=True, check=False)
@@ -54,11 +54,13 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
         thread.join()
         server.server_close()
     assert (result.returncode != 0) is (failure is not None)
-    assert [path for path, _ in requests].count("/start_profile") == 6
-    assert [path for path, _ in requests].count("/stop_profile") == 6
+    assert [path for path, _, _ in requests].count("/start_profile") == 6
+    assert [path for path, _, _ in requests].count("/stop_profile") == 6
     expected_body = {"activities": ["CUDA_PROFILER"]} if framework == "sglang" else None
-    assert all(body == expected_body for path, body in requests if path == "/start_profile")
-    assert (tmp_path / "sleeps").read_text().splitlines() == (["5"] if failure == "start" else ["5", "5"])
+    assert all(body == expected_body for path, body, _ in requests if path == "/start_profile")
+    assert (tmp_path / "sleeps").read_text().splitlines() == (["5"] if failure == "start" else ["5", "1" if framework == "sglang" else "5"])
+    if framework == "sglang" and failure != "start":
+        assert all(complete for path, _, complete in requests if path == "/stop_profile")
     assert ("capture_stopped" in result.stdout) is (failure is None)
 
 
@@ -92,10 +94,13 @@ def test_summary_marks_profile_score_and_handles_missing_results(tmp_path: Path,
     profile = tmp_path / "profile/profile"
     profile.mkdir(parents=True)
     (profile / "nsys-prefill-0.nsys-rep").write_text("report")
+    assert "GPU coverage unverified" in SUMMARY(tmp_path, "456", "failure")
+    (profile / "interpretation.txt").write_text("Capture continues through benchmark and grace completion.\n")
     (profile / "validation.json").write_text(json.dumps({"valid": True, "workers": {"prefill-0": {"gpu_count": 2}}}))
     summary = SUMMARY(tmp_path, "456", "failure")
     assert "1 / 6 reports" in summary and "2 / 16 GPUs" in summary
     assert "Instrumented score" in summary and "not an official submission" in summary
+    assert "Capture continues through benchmark and grace completion." in summary
     assert "/qwen-artifacts/123/1/" in summary
 
 

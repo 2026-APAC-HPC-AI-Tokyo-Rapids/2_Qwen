@@ -73,8 +73,10 @@ After AIPerf warmup and five seconds of benchmark traffic, `/start_profile` acti
 CUDA profiling on P4/D2 concurrently. SGLang receives the `CUDA_PROFILER`
 activity; vLLM uses `--profiler-config '{"profiler":"cuda"}'` and an empty
 POST body, with `VLLM_WORKER_MULTIPROC_METHOD=spawn` for Nsight. These extra
-settings are enabled only in profile runs. Five seconds after all acknowledgments,
-`/stop_profile` ends capture. Each worker records CUDA graph node kernels, NVTX,
+settings are enabled only in profile runs. vLLM stops five seconds after all acknowledgments.
+SGLang captures through the AIPerf benchmark and grace completion marker before
+calling `/stop_profile`: a short window can miss idle prefill workers, and stopping
+Nsight stalls the workers while reports flush. Each worker records CUDA graph node kernels, NVTX,
 and OS runtime; CPU sampling and Torch CPU/GPU profiler are disabled. Partial starts
 receive best-effort stop before workers are cleaned up. Reports, API responses,
 actual launch arguments and timestamped capture logs survive benchmark failure.
