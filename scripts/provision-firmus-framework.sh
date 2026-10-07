@@ -38,6 +38,7 @@ for image_framework in sglang "${framework}"; do
   [[ "$(awk '{print $1}' "${runtime_dir}/source/${image_framework}-image.sha256")" == "${expected_sha}" ]]
   ln -s "${image}" "${runtime_dir}/${image_framework}.sqsh"
   cp "${provenance}" "${runtime_dir}/source/${image_framework}-container.json"
+  if [[ "${framework}" == sglang ]]; then cp "${provenance}" "${runtime_dir}/source/container-sidecar.json"; fi
 done
 model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8
 [[ -s "${model}/config.json" && -s "${model}/model.safetensors.index.json" ]]
@@ -60,4 +61,5 @@ if [[ "${framework}" == vllm ]]; then
   done
   (cd "${runtime_dir}" && find home -type f -print0 | sort -z | xargs -0 -r sha256sum) >"${runtime_dir}/source/jit-cache.sha256"
 fi
-jq -n --arg commit "${GITHUB_SHA}" --arg framework "${framework}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" '{schema_version:"qwen3-pd-provenance/v1",cluster:"firmus",commit:$commit,framework:$framework,workflow_run_id:$run_id,workflow_run_attempt:$attempt,profile:false,workload:"reference-07",official_submission:false,model:{repository:"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",revision:"e156cb4efae43fbee1a1ab073f946a1377e6b969"},tokenizer:{revision:"ac9c66cc9b46af7306746a9250f23d47083d689e"},aiperf:{version:"0.12.0"},cache_source:"matched-settings-comparison/home"}' >"${runtime_dir}/source/provenance.json"
+jq -n --arg model_path "${model}" '{schema_version:"qwen3-pd-model/v1",model:{repository:"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",revision:"e156cb4efae43fbee1a1ab073f946a1377e6b969",path:$model_path,precision:"fp8",shards:24},tokenizer:{repository:"Qwen/Qwen3-235B-A22B-Instruct-2507",revision:"ac9c66cc9b46af7306746a9250f23d47083d689e"}}' >"${runtime_dir}/source/model.json"
+jq -n --arg commit "${GITHUB_SHA}" --arg framework "${framework}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson images "$(jq .images "${config}")" '{schema_version:"qwen3-pd-provenance/v1",cluster:"firmus",commit:$commit,framework:$framework,workflow_run_id:$run_id,workflow_run_attempt:$attempt,profile:false,workload:"reference-07",official_submission:false,container:($images[$framework] | {sha256,size_bytes}),client_container:($images.sglang | {sha256,size_bytes}),aiperf:{version:"0.12.0",commit:"be53bf2953d30e46c500e6a80fc1f8b6f84bc718"},cache_source:(if $framework == "vllm" then "matched-settings-comparison/home" else null end)}' >"${runtime_dir}/source/provenance.json"
