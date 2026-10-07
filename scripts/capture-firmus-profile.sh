@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# One five-second CUDA capture on all six SGLang PD workers after warmup.
+# One five-second CUDA capture on all six SGLang or vLLM PD workers after warmup.
 set -euo pipefail
 runtime_dir=${1:?runtime directory required}
+framework=$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${runtime_dir}/source/firmus-framework.json")
+start_body=
+if [[ "${framework}" == sglang ]]; then start_body='{"activities":["CUDA_PROFILER"]}'; fi
 start_requested=false
 stop_requested=false
 stop_workers() {
@@ -31,7 +34,7 @@ pids=()
 count=0
 while IFS=$'\t' read -r name host port tp; do
   printf 'start_requested worker=%s utc=%s\n' "${name}" "$(date -u +%FT%T.%NZ)"
-  curl --fail --silent --show-error --max-time 60 -X POST "http://${host}:${port}/start_profile" -H 'Content-Type: application/json' -d '{"activities":["CUDA_PROFILER"]}' >"${runtime_dir}/profile/start-${name}.txt" 2>"${runtime_dir}/profile/start-${name}.stderr" &
+  curl --fail --silent --show-error --max-time 60 -X POST "http://${host}:${port}/start_profile" -H 'Content-Type: application/json' -d "${start_body}" >"${runtime_dir}/profile/start-${name}.txt" 2>"${runtime_dir}/profile/start-${name}.stderr" &
   pids+=("$!")
   count=$((count + 1))
 done <"${runtime_dir}/source/worker-endpoints.tsv"

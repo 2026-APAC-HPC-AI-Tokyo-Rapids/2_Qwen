@@ -16,8 +16,9 @@ VALIDATE = runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"))["val
 SUMMARY = runpy.run_path(str(ROOT / "scripts/summarize-firmus-run.py"))["summarize"]
 
 
+@pytest.mark.parametrize("framework", ["sglang", "vllm"])
 @pytest.mark.parametrize("failure", [None, "start", "stop"])
-def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None) -> None:
+def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None, framework: str) -> None:
     requests = []
     request_lock = threading.Lock()
 
@@ -39,6 +40,7 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     thread.start()
     for directory in ("logs", "source", "profile", "bin"):
         (tmp_path / directory).mkdir()
+    (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"framework": framework}))
     workers = [(f"prefill-{n}", 2) for n in range(4)] + [(f"decode-{n}", 4) for n in range(2)]
     (tmp_path / "source/worker-endpoints.tsv").write_text("".join(f"{name}\t127.0.0.1\t{server.server_port}\t{tp}\n" for name, tp in workers))
     (tmp_path / "logs/aiperf.log").write_text("Phase profiling (profiling) started\n")
@@ -54,7 +56,8 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     assert (result.returncode != 0) is (failure is not None)
     assert [path for path, _ in requests].count("/start_profile") == 6
     assert [path for path, _ in requests].count("/stop_profile") == 6
-    assert all(body == {"activities": ["CUDA_PROFILER"]} for path, body in requests if path == "/start_profile")
+    expected_body = {"activities": ["CUDA_PROFILER"]} if framework == "sglang" else None
+    assert all(body == expected_body for path, body in requests if path == "/start_profile")
     assert (tmp_path / "sleeps").read_text().splitlines() == (["5"] if failure == "start" else ["5", "5"])
     assert ("capture_stopped" in result.stdout) is (failure is None)
 
@@ -97,3 +100,32 @@ def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path) -> None:
     assert "--capture-range=cudaProfilerApi" in argv and "--capture-range-end=stop" in argv
     assert "--cuda-graph-trace=node" in argv and "--sample=none" in argv
     assert argv[-5:] == ["/opt/python", "-m", "sglang.launch_server", "--port", "30200"]
+
+
+@pytest.mark.parametrize("profile", [False, True])
+def test_vllm_launch_keeps_baseline_arguments_and_enables_cuda_only_for_profile(tmp_path: Path, profile: bool) -> None:
+    (tmp_path / "source").mkdir()
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/exec-profiler.sh").write_bytes((ROOT / "scripts/exec-profiler.sh").read_bytes())
+    stub = '#!/bin/bash\nprintf "%s\\0" "$@" >"$ARGV_RECORD"\nprintf "%s" "${VLLM_WORKER_MULTIPROC_METHOD:-}" >"$METHOD_RECORD"\n'
+    vllm = tmp_path / "vllm"
+    vllm.write_text(stub)
+    vllm.chmod(0o755)
+    nsys = tmp_path / "nsys"
+    if profile:
+        nsys.write_text(stub)
+        nsys.chmod(0o755)
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    launch = 'runtime_dir=' + source.split('runtime_dir=', 1)[1].split('\nEOF', 1)[0]
+    launch = launch.replace('/opt/nsys/bin/nsys', str(nsys)).replace('/usr/local/bin/vllm', str(vllm))
+    kv_config = '{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}'
+    worker = tmp_path / "source/worker.sh"
+    worker.write_text('set -euo pipefail\nname=$1\nport=$2\nmodel=$3\ntp=$4\nshift 4\nKV_CONFIG=\'' + kv_config + "'\n" + launch)
+    subprocess.run(["bash", str(worker), "decode-0", "30200", "/model", "4", "--enable-expert-parallel"], env={**os.environ, "ARGV_RECORD": str(tmp_path / "argv"), "METHOD_RECORD": str(tmp_path / "method"), "VLLM_WORKER_MULTIPROC_METHOD": ""}, check=True)
+    argv = (tmp_path / "argv").read_text().rstrip("\0").split("\0")
+    if profile:
+        assert "--capture-range=cudaProfilerApi" in argv
+        argv = argv[argv.index(str(vllm)) + 1:]
+    expected = ["serve", "/model", "--served-model-name", "qwen", "--trust-remote-code", "--host", "0.0.0.0", "--port", "30200", "--tensor-parallel-size", "4", "--max-model-len", "8192", "--gpu-memory-utilization", "0.90", "--kv-transfer-config", kv_config, "--enable-expert-parallel"]
+    assert argv == expected + (["--profiler-config", '{"profiler":"cuda"}'] if profile else [])
+    assert (tmp_path / "method").read_text() == ("spawn" if profile else "")
