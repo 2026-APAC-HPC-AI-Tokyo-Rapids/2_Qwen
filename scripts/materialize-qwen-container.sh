@@ -7,6 +7,8 @@ set -euo pipefail
 : "${GITHUB_RUN_ID:?workflow run ID is required}"
 
 [[ "${ACTION}" == build || "${ACTION}" == reuse ]]
+framework=${CONTAINER_FRAMEWORK:-sglang}
+[[ "${framework}" == sglang || "${framework}" == vllm ]]
 
 install -d -m 2775 "${CONTAINER_ARCHIVE_DIR}"
 current_image="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"
@@ -28,8 +30,8 @@ fi
 : "${CONTAINER_SIZE:?container size is required}"
 : "${GITHUB_WORKSPACE:?workflow workspace is required}"
 : "${SIDECAR_KEY:?container sidecar key is required}"
-[[ "${CONTAINER_KEY}" == containers/*/sglang.sqsh && "${SIDECAR_KEY}" == containers/*/container-sidecar.json ]]
-[[ "${CONTAINER_KEY%/sglang.sqsh}" == "${SIDECAR_KEY%/container-sidecar.json}" ]]
+[[ "${CONTAINER_KEY}" == containers/*/"${framework}.sqsh" && "${SIDECAR_KEY}" == containers/*/container-sidecar.json ]]
+[[ "${CONTAINER_KEY%/*}" == "${SIDECAR_KEY%/*}" ]]
 [[ "${CONTAINER_SHA256}" =~ ^[0-9a-f]{64}$ && "${CONTAINER_SIZE}" =~ ^[1-9][0-9]*$ ]]
 
 image_temporary="${CONTAINER_ARCHIVE_DIR}/.${GITHUB_RUN_ID}.sqsh.${GITHUB_RUN_ATTEMPT}.tmp"
@@ -38,7 +40,7 @@ cleanup() { status=$?; rm -f -- "${image_temporary}" "${sidecar_temporary}"; exi
 trap cleanup EXIT
 uvx --from 'boto3>=1.40,<2' python "${GITHUB_WORKSPACE}/scripts/s3-object-transfer.py" download "${CONTAINER_BUCKET}" "${SIDECAR_KEY}" "${sidecar_temporary}"
 uvx --from 'boto3>=1.40,<2' python "${GITHUB_WORKSPACE}/scripts/s3-object-transfer.py" download "${CONTAINER_BUCKET}" "${CONTAINER_KEY}" "${image_temporary}"
-[[ "$(jq -er 'select(.schema_version == "container-sidecar/v1") | .container_artifact.size_bytes' "${sidecar_temporary}")" == "${CONTAINER_SIZE}" ]]
+[[ "$(jq -er --arg path "${framework}.sqsh" 'select(.schema_version == "container-sidecar/v1" and .container_artifact.artifact_relative_path == $path) | .container_artifact.size_bytes' "${sidecar_temporary}")" == "${CONTAINER_SIZE}" ]]
 [[ "$(jq -er '.container_artifact.sha256' "${sidecar_temporary}")" == "${CONTAINER_SHA256}" ]]
 [[ "$(stat -c '%s' "${image_temporary}")" == "${CONTAINER_SIZE}" && "$(sha256sum "${image_temporary}" | awk '{print $1}')" == "${CONTAINER_SHA256}" ]]
 mv -- "${image_temporary}" "${current_image}"

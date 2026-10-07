@@ -1,0 +1,80 @@
+name: AWSでvLLMイメージをビルド
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-southeast-1
+  CONTAINER_BUCKET: ${{ vars.QWEN_CONTAINER_BUCKET }}
+
+jobs:
+  validate:
+    uses: ./.github/workflows/validate.yml
+
+  stage:
+    name: vLLMのビルド入力をS3へ保存
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: AWSの一時資格情報を取得
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
+
+      - name: checkout済みのビルド定義とGit metadataをarchive化
+        run: |
+          input_root="$(mktemp -d "${RUNNER_TEMP}/vllm-build-input.XXXXXXXXXX")"
+          trap 'rm -rf -- "${input_root}"' EXIT
+          cp -a "${GITHUB_WORKSPACE}" "${input_root}/qwen"
+          rm -f -- "${input_root}/qwen/.env"
+          tar -I 'zstd -3 -T0' -cf "${RUNNER_TEMP}/qwen-build-input.tar.zst" -C "${input_root}" qwen
+          aws s3 cp "${RUNNER_TEMP}/qwen-build-input.tar.zst" "s3://${CONTAINER_BUCKET}/inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/qwen-build-input.tar.zst" --only-show-errors
+
+  build:
+    name: AWSでvLLMをビルド
+    needs: stage
+    uses: ./.github/workflows/aws-image-build.yml
+    with:
+      framework: vllm
+    secrets: inherit
+
+  materialize:
+    name: FirmusへvLLM SquashFSを配布
+    needs: build
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: firmus-shell --github-shell {0}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: AWSの一時資格情報を取得
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
+
+      - name: SHA-256検証後に独立したvLLM archiveへ保存
+        env:
+          ACTION: build
+          CONTAINER_FRAMEWORK: vllm
+          CONTAINER_ARCHIVE_DIR: /scratch/home/ACCOUNT/qwen/vllm-containers
+          CONTAINER_KEY: ${{ needs.build.outputs.container_key }}
+          SIDECAR_KEY: ${{ needs.build.outputs.sidecar_key }}
+          CONTAINER_SHA256: ${{ needs.build.outputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ needs.build.outputs.container_size }}
+        run: |
+          scripts/materialize-qwen-container.sh
+          printf 'Firmus image: %s/%s.sqsh\n' "${CONTAINER_ARCHIVE_DIR}" "${GITHUB_RUN_ID}" >>"${GITHUB_STEP_SUMMARY}"

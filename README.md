@@ -1,5 +1,7 @@
 # Qwen3-235B PD inference on Firmus, Genkai, and ASPIRE 2A+
 
+vLLM用イメージは、GitHub Actionsの **AWSでvLLMイメージをビルド** から手動で生成できます。Docker用アーカイブとFirmus用SquashFSを生成し、後者をFirmusへ配布します。実行方法と成果物の場所は [vLLM image build on AWS](research/vllm-container-build.md) を参照してください。
+
 公式Qwen競技の `Qwen/Qwen3-235B-A22B-Instruct-2507` FP8 weightsをPrefill–Decode分離（PD分離）構成で評価するリポジトリです。実行エントリポイントは [Qwen workflow](.github/workflows/qwen.yml) です。Firmus、玄界、ASPIRE 2A+のそれぞれに同じ固定revisionの全24モデルシャードと検証済みSquashFSを配置し、各クラスタのSlurm、PJM、PBSジョブ内でモデル検証、SGLang workerとPD routerの起動、公式AIPerf、ローカル結果検証までを連続して実行します。
 
 Firmusは2ノード各8 GPUの検証済み4×TP2 prefill、2×TP4/EP4 decode構成を使います。ASPIRE 2A+は2ノード各8 GPUで1×TP8 prefill、1×TP8/EP8 decodeを使います。玄界は1ノード合4 GPUで、2ノード時は1 prefill + 1 decode、4ノード時は2 prefill + 2 decodeの各TP4/EP4構成を使います。玄界は補足評価用であり、公式採点対象のクラスタ間でraw throughputを直接比較しません。

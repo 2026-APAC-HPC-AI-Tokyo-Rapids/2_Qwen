@@ -58,7 +58,8 @@ def test_workflow_keeps_build_and_cluster_controls_explicit() -> None:
     assert entry.count("if: steps.artifacts.outputs.present == 'true'") == 2
     assert "needs.genkai.result != 'skipped'" in entry
     assert "fail-fast: false" in container
-    assert "m7i.2xlarge" in container
+    assert "uses: ./.github/workflows/aws-image-build.yml" in container
+    assert "m7i.2xlarge" in (ROOT / ".github/workflows/aws-image-build.yml").read_text()
     assert "actionlint-py==1.7.12.24" in validation
     assert "-name '*.slurm'" in validation
 
