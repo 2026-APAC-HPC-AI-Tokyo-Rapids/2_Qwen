@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One five-second CUDA capture on all six SGLang or vLLM PD workers after warmup.
+# Capture SGLang through benchmark completion; retain the five-second vLLM window.
 set -euo pipefail
 runtime_dir=${1:?runtime directory required}
 framework=$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${runtime_dir}/source/firmus-framework.json")
@@ -43,7 +43,15 @@ start_status=0
 for pid in "${pids[@]}"; do wait "${pid}" || start_status=1; done
 [[ "${start_status}" -eq 0 ]] || exit 1
 printf 'capture_active utc=%s\n' "$(date -u +%FT%T.%NZ)"
-sleep 5
+if [[ "${framework}" == sglang ]]; then
+  deadline=$((SECONDS + 180))
+  while ! grep -Fq 'Phase profiling (profiling) complete |' "${runtime_dir}/logs/aiperf.log"; do
+    (( SECONDS < deadline )) || exit 1
+    sleep 1
+  done
+else
+  sleep 5
+fi
 stop_requested=true
 printf 'stop_requested utc=%s\n' "$(date -u +%FT%T.%NZ)"
 stop_workers stop

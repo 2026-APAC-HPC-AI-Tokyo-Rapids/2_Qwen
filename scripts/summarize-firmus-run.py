@@ -29,7 +29,10 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         lines += ["", "Validated AIPerf result unavailable; inspect the logs."]
     if profile:
         workers = capture.get("workers", {})
-        lines += ["", f"Nsight: **{len(reports)} / 6 reports**; CUDA validation **{capture.get('valid', False)}**; **{sum(worker['gpu_count'] for worker in workers.values())} / 16 GPUs** with kernels. Five-second capture after warmup. **Instrumented score; do not use for performance comparison.**"]
+        gpu_coverage = f"{sum(worker['gpu_count'] for worker in workers.values())} / 16 GPUs" if capture else "GPU coverage unverified"
+        notes = sorted(root.rglob("interpretation.txt"))
+        capture_note = notes[0].read_text().strip() if notes else "Capture timing unavailable; inspect profile-capture.log."
+        lines += ["", f"Nsight: **{len(reports)} / 6 reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **Instrumented score; do not use for performance comparison.**"]
     else:
         lines += ["", "Nsight: disabled."]
     lines += ["", f"Archive after the archive job succeeds: `reschene-tuat-server:/mnt/net_share/qwen-artifacts/{run_id}/{attempt}/`.", "Reports: `profile/`; conditions and image hashes: `source/`; raw requests and score: `results/`.", ""]
