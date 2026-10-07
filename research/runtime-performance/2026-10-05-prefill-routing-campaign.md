@@ -95,3 +95,23 @@ read-only再照合で両Actions37319361445/37389659143はin_progress、PBS off21
 各36 orchestration/actualargv/monitor tests＋15 repository contract tests、bash/actionlint/diff checks通過。実sidecar/runtime provenanceで同image182fbb6d・size12231192576・buildsource9c5a5a3・SGLangfc275674・各commit・profilefalseを照合し、serving JSON byte一致、EC2/mirror/S3buildskippedを確認した。PBSは両Q/aiq2・mem不足、admission後select2各112CPU/8GPU/1880GB・合計16GPU/3760GB・excl/30min、host指定無しを確認。実actualpair/GPU型/H100・workeractualargvはR後に現物を照合する。
 
 旧2本＋追加2本の4本を維持する。ユーザーが認可した追加2run予算で、異なるresourcesなら並行GPU実行の可能性がある。独立自由pairが別actualpairに割り当てられた場合、routingとhardwareが交絡するため厳密同pair改善の結論を出さず、旧fixedpairとも無条件に混合集計しない。Lunaへ新handlesを引継ぎ、全4runのterminal/raw/parser/TTFTITL/8greedy数値診断/全hash/artifact/cleanupまで監査を継続する。性能優位と主催者accuracyは未確認、main runtime採用は行わない。
+
+## 自由pair公式E2E終端監査（10月7日）
+
+両runはActions success、PBS F/Exit0、全回収/archive/cleanup成功。off217224は16:22:41–16:34:40SGT/wall11:52、on217225は16:34:40–16:46:35/wall11:51。独立自由pairだったが、現物は**P030/D032の同じpairで連続実行**となった。node-addressesと16基のH10080GB HBM3 UUIDを両runで照合し、今回の比較には別actualpair交絡は発生しなかった。旧fixed026030との混合集計は行わない。
+
+|項目|off37576502357|on37576508318|変化|
+|---|---:|---:|---:|
+|公開規則準拠repository score out tok/s|2712.079720|2779.551953|+2.487841%|
+|good request fraction|.989304813|.990708479|両eligible|
+|request count|1683|1722||
+|平均TTFT ms|1509.312749|1403.656081|-7.000316%|
+|平均ITL ms|9.822403|9.961746|+1.418622%|
+|TTFT>3000ms / ITL>20ms|18 / 0|16 / 0||
+|raw cancel / error|0 / 0|0 / 0||
+
+各正本`qwen-artifacts/<run>/1/`の52rawhash（計104）を全再計算し、archivedscoreとrepository parser再計算が等価、60/120/30公式commandとprovenanceを検査した。このparserは主催者提供ではなく公開規則に準拠するもの。sameimage182fbb6d/source9c5a5a3/c48/topology/precision/PROFILEfalse/4workersettingsを照合し、実4worker argvはallocationのruntime/node-local pathだけ正規化後、Proute0→1以外一致。Pshuffle1、Denv無し、profiler無しを確認。両runtimeの消去をterminal後のread-only SSHで確認した。
+
+同prompt8件×64tokenのrequest/content/tokenbytes/logprobsはすべて完全一致。整数routingのmicrobitwise期待と整合し、E2E数値差の原因解析は不要だった。ただし8件synthetic probeは主催者の完全accuracy評価ではない。benchmark窓のunweighted log sampleでPqueue平均1.613909→1.174014、Dacceptlen2.226411→2.231057、full8192割合.93765→.88515。これらはtime-weighted占有率や単独kernel latencyではなく、step分布も変わるので局所原因の厳密証明にはしない。
+
+**同pair一対では+2.49%の暫定的な有望結果**。TTFT改善とITL微悪化を併記し、順序/time drift/測定分散が未評価のため採用を断定せずmain runtimeへ統合しない。追加反復は投入せず、ユーザーの旧job維持指示に従いfixed off216741/on216810の監視とterminal監査を継続する。自由2runのGPU/PBS残留無し、成功imageは再利用可能なまま保持し、調査scriptは残る旧run監査に使用する。
