@@ -12,4 +12,7 @@ trap 'rm -f -- "${invocation_tmp}"' EXIT INT TERM
 printf '%q ' "$@" >"${invocation_tmp}"
 printf '\n' >>"${invocation_tmp}"
 mv -- "${invocation_tmp}" "${QWEN_PROFILER_INVOCATION_PATH}"
+if [[ -n "${QWEN_PROFILER_NSYS_BIN:-}" ]]; then
+  exec "${QWEN_PROFILER_NSYS_BIN}" profile --force-overwrite=true --trace-fork-before-exec=true --capture-range=cudaProfilerApi --capture-range-end=stop --trace=cuda,nvtx,osrt --cuda-graph-trace=node --sample=none --cpuctxsw=none --output="${QWEN_PROFILER_INVOCATION_PATH%.argv}" "$@"
+fi
 exec "$@"

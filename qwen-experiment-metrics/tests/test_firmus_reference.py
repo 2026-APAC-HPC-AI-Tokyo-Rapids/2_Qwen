@@ -62,17 +62,18 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
-@pytest.mark.parametrize("framework", ["sglang", "vllm"])
-def test_provenance_distinguishes_server_client_and_prepared_cache(tmp_path: Path, framework: str) -> None:
+@pytest.mark.parametrize("framework,profile", [("sglang", "false"), ("sglang", "true"), ("vllm", "false")])
+def test_provenance_distinguishes_server_client_and_prepared_cache(tmp_path: Path, framework: str, profile: str) -> None:
     runtime = tmp_path / "runtime"
     (runtime / "source").mkdir(parents=True)
     provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
     commands = "jq -n --arg model_path" + provision.split("jq -n --arg model_path", 1)[1]
     config = ROOT / "configs/firmus-framework.json"
-    environment = {**os.environ, "runtime_dir": str(runtime), "model": "/scratch/model", "framework": framework, "config": str(config), "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}
+    environment = {**os.environ, "runtime_dir": str(runtime), "model": "/scratch/model", "framework": framework, "config": str(config), "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "PROFILE": profile}
     subprocess.run(["bash", "-euc", commands], env=environment, check=True)
     identity = json.loads((runtime / "source/provenance.json").read_text())
     images = json.loads(config.read_text())["images"]
+    assert identity["profile"] is (profile == "true")
     assert identity["container"]["sha256"] == images[framework]["sha256"]
     assert identity["client_container"]["sha256"] == images["sglang"]["sha256"]
     assert identity["cache_source"] == ("matched-settings-comparison/home" if framework == "vllm" else None)
@@ -82,11 +83,11 @@ def test_provenance_distinguishes_server_client_and_prepared_cache(tmp_path: Pat
     assert model["model"]["shards"] == 24
 
 
-@pytest.mark.parametrize("profile,require_build", [("true", "false"), ("false", "true")])
+@pytest.mark.parametrize("profile,require_build", [("false", "true")])
 def test_unsupported_modes_fail_before_container_staging(tmp_path: Path, profile: str, require_build: str) -> None:
     runtime = tmp_path / "runs"
     environment = {**os.environ, "GITHUB_WORKSPACE": str(ROOT), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "a" * 40, "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(runtime), "PROFILE": profile, "REQUIRE_BUILD": require_build}
     result = subprocess.run(["bash", str(ROOT / "scripts/provision-firmus-framework.sh")], env=environment, capture_output=True, text=True, check=False)
     assert result.returncode == 64
-    assert "does not implement GPU profiling" in result.stderr or "reuses pinned baseline images" in result.stderr
+    assert "reuses pinned baseline images" in result.stderr
     assert not runtime.exists()
