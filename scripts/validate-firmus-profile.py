@@ -11,6 +11,8 @@ from pathlib import Path
 
 def validate_capture(database: Path, tp: int) -> dict:
     with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
+        if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='CUPTI_ACTIVITY_KIND_KERNEL'").fetchone():
+            raise ValueError(f"no CUDA kernels captured in {database.name}; expected kernels on {tp} GPUs")
         rows = connection.execute("SELECT deviceId, COUNT(*) FROM CUPTI_ACTIVITY_KIND_KERNEL GROUP BY deviceId").fetchall()
     if len(rows) != tp or any(count <= 0 for _, count in rows):
         raise ValueError(f"expected kernels on {tp} GPUs, got {rows}")

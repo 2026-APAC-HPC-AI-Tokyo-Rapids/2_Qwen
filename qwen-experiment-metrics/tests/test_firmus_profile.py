@@ -72,6 +72,15 @@ def test_profile_validation_rejects_missing_tp_rank(tmp_path: Path) -> None:
         VALIDATE(database, 4)
 
 
+def test_profile_validation_explains_idle_worker_capture(tmp_path: Path) -> None:
+    database = tmp_path / "nsys-prefill-1.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE TARGET_INFO_GPU (deviceId INTEGER)")
+        connection.executemany("INSERT INTO TARGET_INFO_GPU VALUES (?)", [(0,), (1,)])
+    with pytest.raises(ValueError, match=r"no CUDA kernels captured in nsys-prefill-1.sqlite; expected kernels on 2 GPUs"):
+        VALIDATE(database, 2)
+
+
 def test_summary_marks_profile_score_and_handles_missing_results(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("GITHUB_RUN_ID", "123")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
