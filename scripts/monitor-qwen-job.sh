@@ -13,9 +13,9 @@ while true; do
   if output=$(timeout --foreground 180 "${remote_shell}" --github-shell "${checker}" 2>"${transport_stderr}"); then status=0; else status=$?; fi
   cat "${transport_stderr}" >&2
   # The shell adapter can report tar exit 2 after an SSH stream is cut off.
-  if [[ "${status}" -eq 2 ]] && grep -Eq '^Connection closed by .* port [0-9]+$' "${transport_stderr}"; then status=255; fi
+  if [[ "${status}" -eq 2 ]] && grep -Eq '^(Connection closed by .* port [0-9]+|exec request failed on channel [0-9]+)$' "${transport_stderr}"; then status=255; fi
   printf '%s\n' "${output}"
-  if [[ "${status}" -eq 75 ]] || { [[ "${status}" -eq 0 ]] && [[ "${output}" == scheduler_job_pending=* ]]; } || { [[ "${status}" -eq 2 ]] && [[ "${output}" =~ ^scheduler_job_pending=[[:alnum:]._-]+[[:space:]]state=[A-Z]+$ ]]; }; then
+  if [[ "${status}" -eq 75 ]] || { [[ "${status}" -eq 0 ]] && [[ "${output}" == scheduler_job_pending=* ]]; } || { [[ "${status}" -eq 2 ]] && [[ "${output}" =~ ^scheduler_job_pending=[[:alnum:]._-]+([[:space:]]state=[A-Z]+)?$ ]]; }; then
     if [[ "${output}" =~ state=([A-Z]+) ]]; then last_observed_state=${BASH_REMATCH[1]}; fi
     connection_failure_started=-1
     sleep 30
