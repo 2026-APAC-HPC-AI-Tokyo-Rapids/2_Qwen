@@ -98,7 +98,7 @@ jobs:
   firmus:
     name: Firmus
     needs: validate
-    if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus) }}
+    if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus) }}
     uses: ./.github/workflows/firmus.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
@@ -106,12 +106,19 @@ jobs:
       require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
     secrets: inherit
 
+  firmus-dynamo:
+    name: Firmus Dynamo
+    needs: validate
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && contains(github.event.head_commit.message, '[dynamo]') }}
+    uses: ./.github/workflows/firmus-dynamo.yml
+    secrets: inherit
+
   archive-artifacts:
     name: 成果物を自宅サーバーへ保管
-    needs: [genkai, aspire2ap, firmus, cutlass-grid]
+    needs: [genkai, aspire2ap, firmus, firmus-dynamo, cutlass-grid]
     if: >-
       always() &&
-      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.cutlass-grid.result != 'skipped')
+      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.firmus-dynamo.result != 'skipped' || needs.cutlass-grid.result != 'skipped')
     runs-on: [self-hosted, home-lab]
     permissions:
       actions: write

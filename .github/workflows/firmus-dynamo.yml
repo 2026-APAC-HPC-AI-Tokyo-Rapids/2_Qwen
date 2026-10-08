@@ -1,0 +1,89 @@
+name: FirmusでDynamo PDを実行
+on:
+  workflow_call:
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+env:
+  AWS_REGION: ap-southeast-1
+  CONTAINER_BUCKET: ${{ vars.QWEN_CONTAINER_BUCKET }}
+jobs:
+  stage:
+    name: 固定したDynamoビルド入力をS3へ保存
+    if: ${{ startsWith(github.event.head_commit.message, '[require-build]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
+      - name: sourceとGit metadataを保存
+        run: |
+          input_root="$(mktemp -d "${RUNNER_TEMP}/dynamo-build-input.XXXXXXXXXX")"
+          trap 'rm -rf -- "${input_root}"' EXIT
+          cp -a "${GITHUB_WORKSPACE}" "${input_root}/qwen"
+          rm -f -- "${input_root}/qwen/.env"
+          tar -I 'zstd -3 -T0' -cf "${RUNNER_TEMP}/qwen-build-input.tar.zst" -C "${input_root}" qwen
+          aws s3 cp "${RUNNER_TEMP}/qwen-build-input.tar.zst" "s3://${CONTAINER_BUCKET}/inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/qwen-build-input.tar.zst" --only-show-errors
+  build:
+    name: 公式Dynamo runtimeを検証してSquashFS化
+    needs: stage
+    if: ${{ startsWith(github.event.head_commit.message, '[require-build]') }}
+    uses: ./.github/workflows/aws-image-build.yml
+    with:
+      framework: dynamo
+    secrets: inherit
+  materialize:
+    name: FirmusへDynamo runtimeを配布
+    needs: build
+    if: ${{ always() && !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: firmus-shell --github-shell {0}
+    outputs:
+      container_sha256: ${{ steps.image.outputs.container_sha256 }}
+      container_size: ${{ steps.image.outputs.container_size }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.QWEN_AWS_BUILD_ROLE_ARN }}
+      - name: sizeとSHA-256検証後にarchiveへ保存
+        env:
+          ACTION: ${{ startsWith(github.event.head_commit.message, '[require-build]') && 'build' || 'reuse' }}
+          CONTAINER_FRAMEWORK: dynamo
+          CONTAINER_ARCHIVE_DIR: /scratch/home/ACCOUNT/qwen/dynamo-containers
+          CONTAINER_KEY: ${{ needs.build.outputs.container_key }}
+          SIDECAR_KEY: ${{ needs.build.outputs.sidecar_key }}
+          CONTAINER_SHA256: ${{ needs.build.outputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ needs.build.outputs.container_size }}
+        run: |
+          if [[ "${ACTION}" == reuse ]]; then export SOURCE_RUN_ID="$(jq -er .container_run_id configs/firmus-dynamo.json)"; fi
+          scripts/materialize-qwen-container.sh
+      - name: 配備したイメージの識別情報を取得
+        id: image
+        run: |
+          sidecar="/scratch/home/ACCOUNT/qwen/dynamo-containers/${GITHUB_RUN_ID}.container-sidecar.json"
+          printf 'container_sha256=%s\ncontainer_size=%s\n' "$(jq -er .container_artifact.sha256 "${sidecar}")" "$(jq -er .container_artifact.size_bytes "${sidecar}")" >>"${GITHUB_OUTPUT}"
+  run:
+    name: Dynamo frontendとP4 D2を実行
+    needs: materialize
+    if: ${{ always() && !cancelled() && needs.materialize.result == 'success' }}
+    uses: ./.github/workflows/firmus.yml
+    with:
+      node_count: '2'
+      profile: false
+      require_build: false
+      dynamo: true
+      container_sha256: ${{ needs.materialize.outputs.container_sha256 }}
+      container_size: ${{ needs.materialize.outputs.container_size }}
+    secrets: inherit

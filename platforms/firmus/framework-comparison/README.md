@@ -98,3 +98,25 @@ Profiler needs engine latency/throughput/capacity measurements for the candidate
 TP configurations, and candidate topologies still need uninstrumented E2E checks
 with the task's TTFT/ITL constraints. The current job uses the reference NIXL proxy;
 Dynamo frontend/worker integration is a separate experiment.
+
+## Dynamo PD experiments
+
+`codex/firmus-vllm-dynamo` and `codex/firmus-sglang-dynamo` select their backend in
+`configs/firmus-dynamo.json`. Dynamo 1.5.1 and each official runtime's amd64 OCI
+digest are pinned. The vLLM runtime contains vLLM 0.28.0 / NIXL 1.3.2; the SGLang
+runtime contains SGLang 0.5.18 / NIXL 1.4.0. Engine versions differ from the native
+controls and must be included when interpreting comparisons.
+
+Push `[require-build] [cluster:firmus] [dynamo] [nodes:2]` to validate the official
+runtime on AWS, preserve its environment for Enroot, and submit the scheduler job.
+For subsequent runtime changes, record the completed build's Actions ID as
+`container_run_id` in the configuration and omit `[require-build]` to reuse it.
+Build artifacts survive benchmark failures.
+
+The first uninstrumented control keeps P4 × TP2 / D2 × TP4 EP4 and the reference-07
+client unchanged. An etcd service discovers workers across both nodes; Dynamo's
+frontend uses the TCP request plane and ZMQ event plane, and NIXL transfers KV
+between prefill and decode. Worker system-health checks and a chat request precede
+AIPerf. Worker arguments, metrics, logs, results and image provenance follow the
+existing artifact archive path and Actions summary. These controls establish a
+working Dynamo baseline before candidate TP or worker-count experiments.

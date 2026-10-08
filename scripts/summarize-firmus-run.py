@@ -23,6 +23,9 @@ def summarize(root: Path, job_id: str, status: str) -> str:
     run_id = os.environ.get("GITHUB_RUN_ID", "unknown")
     attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "unknown")
     lines = ["### Firmus Qwen", "", f"- Status: **{status}**; Slurm `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'unavailable')}**; H200 × 16; P4 × TP2 / D2 × TP4 EP4; concurrency **{config.get('concurrency', 'unavailable')}**.", "- Workload: reference-07, ISL 4000 / OSL 200, warmup / benchmark / grace **20 / 60 / 15 s**; **not an official submission**."]
+    if identity.get("dynamo"):
+        dynamo = identity["dynamo"]
+        lines += [f"- Dynamo **{dynamo['version']}**; engine **{dynamo['engine_version']}**; frontend → TCP → PD workers; NIXL KV transfer. Engine version differs from the standalone baseline."]
     if score:
         lines += ["", "| Metric | Value |", "| --- | ---: |", f"| Requests / good requests | {score['request_count']} / {score['good_request_count']} |", f"| Good request fraction | {score['good_request_fraction']:.2%} |", f"| Goodput | {score['goodput_requests_per_second']:.3f} req/s |", f"| Reference score | {score['score_output_tokens_per_second']:.3f} output tok/s |", f"| SLA eligible | {score['eligible']} |"]
     else:

@@ -12,6 +12,18 @@ on:
       require_build:
         required: true
         type: boolean
+      dynamo:
+        required: false
+        default: false
+        type: boolean
+      container_sha256:
+        required: false
+        default: ''
+        type: string
+      container_size:
+        required: false
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -45,7 +57,9 @@ jobs:
         env:
           PROFILE: ${{ inputs.profile }}
           REQUIRE_BUILD: ${{ inputs.require_build }}
-        run: scripts/provision-firmus-framework.sh
+          CONTAINER_SHA256: ${{ inputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ inputs.container_size }}
+        run: if [[ '${{ inputs.dynamo }}' == true ]]; then scripts/provision-firmus-dynamo.sh; else scripts/provision-firmus-framework.sh; fi
 
       - name: 配備失敗時の実行環境を削除
         if: failure() && steps.provision.outputs.runtime_dir != ''
@@ -102,10 +116,10 @@ jobs:
 
       - name: 実行条件・結果・Nsight成果物をsummaryに記録
         if: always() && steps.submit.outputs.job_id != ''
-        shell: home-lab-shell {0}
+        shell: firmus-shell --github-shell {0}
         env:
           JOB_STATUS: ${{ job.status }}
-        run: python3 scripts/summarize-firmus-run.py "${RUNNER_TEMP}/qwen-firmus-pd" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
+        run: uv run --no-project python "${RUNTIME_DIR}/scripts/summarize-firmus-run.py" "${RUNTIME_DIR}" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
 
       - name: 実行環境と残留ジョブを削除
         if: always()
