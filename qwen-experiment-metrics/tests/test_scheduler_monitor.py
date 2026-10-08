@@ -1,7 +1,9 @@
 """Exercise pending, terminal and failed scheduler observations through a shell adapter."""
 import os
+import shlex
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -9,6 +11,25 @@ MONITOR = Path(__file__).resolve().parents[2] / 'scripts/monitor-qwen-job.sh'
 
 
 class MonitorTest(unittest.TestCase):
+    def test_provision_waits_for_transport_but_preserves_validation_failure(self):
+        workflow = (MONITOR.parents[1] / ".github/workflows/firmus.yml").read_text()
+        step = workflow.split("        id: provision\n", 1)[1].split("\n      - name:", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1]).replace("${{ inputs.dynamo }}", "false")
+        cases = [(255, "Connection closed by host port 2026", True), (2, "exec request failed on channel 0\r", True), (254, "/home/ACCOUNT/.local/.setenv: fork: Resource temporarily unavailable", True), (1, "image checksum mismatch", False), (2, "invalid workload", False)]
+        for status, error, retry in cases:
+            with self.subTest(status=status, error=error), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                adapter = root / "firmus-shell"
+                adapter.write_text(f'#!/bin/bash\nif [[ ! -e "{root}/seen" ]]; then touch "{root}/seen"; printf "%s\\n" {shlex.quote(error)} >&2; exit {status}; fi\necho provision_complete\n')
+                adapter.chmod(0o755)
+                for name, body in (("sleep", "exit 0"), ("timeout", 'shift 2; exec "$@"')):
+                    tool = root / name
+                    tool.write_text(f"#!/bin/bash\n{body}\n")
+                    tool.chmod(0o755)
+                result = subprocess.run(["bash", "-euc", script], env={**os.environ, "PATH": f"{root}:{os.environ['PATH']}"}, capture_output=True, text=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, 0 if retry else status)
+                self.assertEqual("provision_complete" in result.stdout, retry)
+
     def run_monitor(self, pending_status, terminal_status, observation="scheduler_job_pending=123.pbs111 state=R", transport_error=False, transport_message="Connection closed by 150.230.206.3 port 2026"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
