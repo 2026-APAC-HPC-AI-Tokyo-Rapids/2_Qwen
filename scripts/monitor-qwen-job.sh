@@ -20,8 +20,7 @@ while true; do
   [[ "${status}" -eq 124 || "${status}" -eq 255 ]] || exit "${status}"
   if [[ "${connection_failure_started}" -lt 0 ]]; then connection_failure_started=${SECONDS}; fi
   connection_failure_seconds=$((SECONDS - connection_failure_started))
-  connection_failure_limit=300
-  if [[ "${last_observed_state}" == Q ]]; then connection_failure_limit=none; else [[ "${connection_failure_seconds}" -lt "${connection_failure_limit}" ]] || exit "${status}"; fi
-  printf 'scheduler_monitor_connection_failed status=%s retry_in_seconds=15 failure_seconds=%s last_state=%s limit_seconds=%s\n' "${status}" "${connection_failure_seconds}" "${last_observed_state}" "${connection_failure_limit}" >&2
+  # Lost SSH observations do not establish scheduler failure; wait for a definitive result.
+  printf 'scheduler_monitor_connection_failed status=%s retry_in_seconds=15 failure_seconds=%s last_state=%s limit_seconds=%s\n' "${status}" "${connection_failure_seconds}" "${last_observed_state}" none >&2
   sleep 15
 done

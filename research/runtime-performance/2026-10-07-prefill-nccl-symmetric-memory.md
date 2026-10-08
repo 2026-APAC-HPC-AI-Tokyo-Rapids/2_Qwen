@@ -25,3 +25,11 @@ old routing off37319361445/216741、on37389659143/216810、symm37604857808/21730
 再投入はcontrol [37642502611](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37642502611) / symmon [37642503212](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37642503212)。Oct7 15:24Z時点で両Actions validate成功、ASPIRE既存成果物選択中、PBS未確定。同image来歴・実資源・実適用・公式結果・精度・全rawhash・cleanupの終端監査を続ける。
 
 Oct7 23:37SGT実物照合: control37642502611→PBS217355 / runtime `pd-37642502611-1.IwVyAW9cat`、symmon37642503212→PBS217356 / `pd-37642503212-1.vW71S4Y8D4`。両Q/aiq2/profilefalse、submit自由select2×112CPU8GPU1500gb、admission各1880GB/scatterexcl/30min。sidecar両image182fbb6d/size12231192576/buildsource9c5a5a3/sglangfc275674一致、新EC2/mirror/S3buildskip。mem不足で待機、control予測Oct8 08:52:33SGT/013019は非保証・actualnodeではなく、onETA無し。Lunaへ両handles引継ぎ済み。
+
+## NCCL symm候補の観測障害とraw欠損（10月8日）
+
+候補37642503212/PBS217356は同013/019の16H100で09:17:52–09:29:48SGT、PBSF/Exit0/Stageout1まで計算した。しかしActionsは01:22:03ZにlaststateRのSSH124を観測し、接続障害300秒予算で01:27:33Zにmonitorがexit124。真のPBS終端前に回収を開始したため01:29:20Zに`tar: logs/router.log: file changed as we read it`でexit1、その後workflow自身cleanupがruntimeを削除した。時計差ではなく終端を確認できないまま回収へ進んだ二次障害である。Actions failure、正本37642503212/1は17logsのみで全17hash一致、results/source/run-success/greedyは欠損。
+
+終端前のread-only runtimeでcontrol2775.546377213522、候補2843.0536912143675 outtok/s（+2.432217114%、goodfraction .9912739965/.9920454545、both eligible/error0）を観測したが、候補のrepository parser再計算・8greedy・全来歴監査が不能なので性能比較は参考値へ格下げし、採用根拠としない。flagtrueをNCCL symmetric kernel使用の証明にせず、通常runとは別のINFO/TUNING診断を必要とする。
+
+実観測に基づく最小monitor修正はQ/R/unknownのすべてでSSH124/255の累積時間だけをscheduler失敗とみなさない。個別SSH180秒、PBSwall30分、Actions上限、実terminal/成果物checkerの失敗を維持する。接続復旧後に確定終端を確認してから回収し、完走成果物を観測障害だけで破棄しない。Q/R/unknown・elapsed1801秒の障害後にterminal0/1をそのまま返すfixture、既非接続fatalを含む23tests/Ruff/bash/diffPASS。tar専用fallbackは追加しない。control終端監査後、必要候補のみ同対照pair・同imageで再投入し別適用診断を行う。
