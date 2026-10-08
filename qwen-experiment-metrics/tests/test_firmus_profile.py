@@ -113,6 +113,8 @@ def test_summary_uses_official_score_and_measured_latency(tmp_path: Path) -> Non
     assert "360 / 360" in summary and "600.000 output tok/s" in summary
     assert "330.000 / 580.000 ms" in summary and "12.000 / 13.000 ms" in summary
     assert "Official workload validation | True" in summary
+    (tmp_path / "provenance.json").write_text(json.dumps({"framework": "sglang", "workload": "official"}))
+    assert "P2 × TP4 / D2 × TP4 EP1" in SUMMARY(tmp_path, "456", "success")
 
 
 def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path) -> None:

@@ -1,5 +1,19 @@
 # Firmus framework experiments through the team Actions pipeline
 
+The current SGLang condition matches ASPIRE run `37714793539` at concurrency 48,
+P2TP4/D2TP4 EP1, FP8 E4M3 KV, pool 131072, chunk/context 8192, FA3 attention,
+standard prefill CUTLASS, and round-robin prefill routing. It reuses the pinned
+base SGLang image without the ASPIRE custom kernel patches and disables EAGLE.
+Model loading still uses Firmus's shared model path; measured serving uses GPU
+resident weights. ASPIRE stages the same model revision to node-local storage.
+The client uses official 60/120/30 timings and records actual server settings
+before measurement. This SGLang condition is unprofiled; profile/reference modes
+are rejected before provisioning. vLLM retains the earlier reference path.
+
+## Earlier reference and profile controls
+
+The following records describe the earlier six-worker controls and their commits.
+
 This branch copies the working `matched-settings-comparison` scripts. The remote
 `readable-baseline` and `matched-settings-comparison` directories remain unchanged.
 Worker launch arguments, GPU layout, client arguments, and 20/60/15-second timings

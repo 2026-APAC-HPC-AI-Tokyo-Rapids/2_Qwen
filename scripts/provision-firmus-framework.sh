@@ -14,7 +14,7 @@ set -euo pipefail
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${config}")"
-jq -e --argjson profile "${PROFILE}" '(.workload == "reference-07" or (.workload == "official" and .framework == "vllm" and $profile == false)) and (.concurrency | type == "number" and . >= 1 and floor == .)' "${config}" >/dev/null
+jq -e --argjson profile "${PROFILE}" '((.workload == "reference-07" and .framework == "vllm") or (.workload == "official" and $profile == false)) and (.concurrency | type == "number" and . >= 1 and floor == .)' "${config}" >/dev/null
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
