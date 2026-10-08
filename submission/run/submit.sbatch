@@ -163,6 +163,8 @@ run_node() {
     es_env=()
     # Same-image routing candidate: shuffle on/tiled helper on; D and wheel GEMMs unchanged.
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then es_env=(-e SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1 -e SGLANG_PREFILL_TILED_ROUTING=1); fi
+    # Separate application diagnostic: NCCL kernel-selection evidence; its score is instrumented.
+    if [[ "${PROFILE}" == true && "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then es_env+=(-e NCCL_DEBUG=INFO -e NCCL_DEBUG_SUBSYS=TUNING); fi
     worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${es_env[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
     printf '%q ' "${worker_command[@]}" >"${OUTPUT_DIR}/logs/${role}-${worker}-command.txt"
