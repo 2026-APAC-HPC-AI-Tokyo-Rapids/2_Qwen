@@ -9,11 +9,11 @@ MONITOR = Path(__file__).resolve().parents[2] / 'scripts/monitor-qwen-job.sh'
 
 
 class MonitorTest(unittest.TestCase):
-    def run_monitor(self, pending_status, terminal_status, observation="scheduler_job_pending=123.pbs111 state=R", transport_error=False):
+    def run_monitor(self, pending_status, terminal_status, observation="scheduler_job_pending=123.pbs111 state=R", transport_error=False, transport_message="Connection closed by 150.230.206.3 port 2026"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             adapter = root / 'adapter'
-            stderr = "echo 'Connection closed by 150.230.206.3 port 2026' >&2; echo 'tar: This does not look like a tar archive' >&2; " if transport_error else ""
+            stderr = f"echo '{transport_message}' >&2; echo 'tar: This does not look like a tar archive' >&2; " if transport_error else ""
             adapter.write_text(f'#!/bin/bash\nif [[ ! -e "{root}/seen" ]]; then touch "{root}/seen"; echo {observation}; {stderr}exit {pending_status}; fi\necho terminal\nexit {terminal_status}\n')
             adapter.chmod(0o755)
             sleeper = root / 'sleep'
@@ -42,19 +42,27 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("terminal", result.stdout)
 
+    def test_firmus_pending_observation_without_state_survives_tar_failure(self):
+        for terminal_status in (0, 1):
+            with self.subTest(terminal_status=terminal_status):
+                result = self.run_monitor(2, terminal_status, observation="scheduler_job_pending=21732")
+                self.assertEqual(result.returncode, terminal_status)
+                self.assertIn("terminal", result.stdout)
+
     def test_tar_failure_without_pending_evidence_is_fatal(self):
         result = self.run_monitor(2, 0, "terminal_observation_incomplete")
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("\nterminal\n", result.stdout)
 
     def test_disconnected_ssh_stream_wrapped_as_tar_failure_is_retried(self):
-        for terminal_status in (0, 1):
-            with self.subTest(terminal_status=terminal_status):
-                result = self.run_monitor(2, terminal_status, observation="", transport_error=True)
-                self.assertEqual(result.returncode, terminal_status)
-                self.assertIn('terminal', result.stdout)
-                self.assertIn('status=255', result.stderr)
-                self.assertIn('Connection closed', result.stderr)
+        for message in ("Connection closed by 150.230.206.3 port 2026", "exec request failed on channel 0"):
+            for terminal_status in (0, 1):
+                with self.subTest(message=message, terminal_status=terminal_status):
+                    result = self.run_monitor(2, terminal_status, observation="", transport_error=True, transport_message=message)
+                    self.assertEqual(result.returncode, terminal_status)
+                    self.assertIn('terminal', result.stdout)
+                    self.assertIn('status=255', result.stderr)
+                    self.assertIn(message, result.stderr)
 
 
     def test_connection_outage_preserves_last_observed_state(self):
