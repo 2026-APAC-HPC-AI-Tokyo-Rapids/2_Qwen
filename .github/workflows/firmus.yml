@@ -24,6 +24,14 @@ on:
         required: false
         default: ''
         type: string
+      recovery_job_id:
+        required: false
+        default: ''
+        type: string
+      recovery_runtime_dir:
+        required: false
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -59,10 +67,15 @@ jobs:
           REQUIRE_BUILD: ${{ inputs.require_build }}
           CONTAINER_SHA256: ${{ inputs.container_sha256 }}
           CONTAINER_SIZE: ${{ inputs.container_size }}
-        run: if [[ '${{ inputs.dynamo }}' == true ]]; then scripts/provision-firmus-dynamo.sh; else scripts/provision-firmus-framework.sh; fi
+          RECOVERY_RUNTIME_DIR: ${{ inputs.recovery_runtime_dir }}
+        run: |
+          if [[ -n "${RECOVERY_RUNTIME_DIR}" ]]; then
+            [[ "${RECOVERY_RUNTIME_DIR}" == "${RUNTIME_ROOT}/dynamo-"* && -s "${RECOVERY_RUNTIME_DIR}/source/provenance.json" ]]
+            printf 'runtime_dir=%s\n' "${RECOVERY_RUNTIME_DIR}" >>"${GITHUB_OUTPUT}"
+          elif [[ '${{ inputs.dynamo }}' == true ]]; then scripts/provision-firmus-dynamo.sh; else scripts/provision-firmus-framework.sh; fi
 
       - name: 配備失敗時の実行環境を削除
-        if: failure() && steps.provision.outputs.runtime_dir != ''
+        if: failure() && steps.provision.outputs.runtime_dir != '' && inputs.recovery_runtime_dir == ''
         env:
           RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
         run: rm -rf -- "${RUNTIME_DIR:?}"
@@ -83,9 +96,22 @@ jobs:
           persist-credentials: false
       - name: Slurmジョブを投入
         id: submit
+        env:
+          RECOVERY_JOB_ID: ${{ inputs.recovery_job_id }}
         run: |
           cd "${RUNTIME_DIR}"
-          job_id="$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/submit.sbatch")"
+          if [[ -n "${RECOVERY_JOB_ID}" ]]; then
+            job_id=${RECOVERY_JOB_ID}
+            [[ "${job_id}" =~ ^[0-9]+$ ]]
+            scontrol show job "${job_id}" >"${RUNTIME_DIR}/logs/slurm-before-recovery.txt"
+            grep -Fq "WorkDir=${RUNTIME_DIR}" "${RUNTIME_DIR}/logs/slurm-before-recovery.txt"
+            grep -Fq 'JobState=PENDING' "${RUNTIME_DIR}/logs/slurm-before-recovery.txt"
+            scontrol update "JobId=${job_id}" TimeLimit=00:17:00
+            scontrol show job "${job_id}" >"${RUNTIME_DIR}/logs/slurm-after-recovery.txt"
+            jq -n --arg run "${GITHUB_RUN_ID}" --arg commit "${GITHUB_SHA}" --arg job "${job_id}" '{recovery_workflow_run_id:$run,recovery_commit:$commit,slurm_job_id:$job,time_limit:"00:17:00",new_job_submitted:false}' >"${RUNTIME_DIR}/source/recovery.json"
+          else
+            job_id="$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/submit.sbatch")"
+          fi
           [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
@@ -116,12 +142,16 @@ jobs:
           path: ${{ runner.temp }}/qwen-firmus-pd
           if-no-files-found: error
 
+      - name: Summary用のuvを導入
+        if: always() && steps.submit.outputs.job_id != ''
+        uses: astral-sh/setup-uv@v7
+
       - name: 実行条件・結果・Nsight成果物をsummaryに記録
         if: always() && steps.submit.outputs.job_id != ''
-        shell: firmus-shell --github-shell {0}
+        shell: bash
         env:
           JOB_STATUS: ${{ job.status }}
-        run: uv run --no-project python "${RUNTIME_DIR}/scripts/summarize-firmus-run.py" "${RUNTIME_DIR}" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
+        run: uv run --no-project --python 3.13 python scripts/summarize-firmus-run.py "${RUNNER_TEMP}/qwen-firmus-pd" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
 
       - name: 回収済みで終了した実行環境を削除
         if: always() && steps.collect.outcome == 'success' && steps.upload.outcome == 'success'
