@@ -159,7 +159,7 @@ run_node() {
     fi
     # Retry after running-state SSH observation failure; fix actual control pair 013/019, preserve serving math.
     # NCCL symmetric allocator candidate: prefill only, same routing-on baseline.
-    if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then args+=(--enable-symm-mem); fi
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then args+=(--enable-symm-mem); fi # Normal reverse-order repeat; instrumentation remains disabled.
     es_env=()
     # Same-image routing candidate: shuffle on/tiled helper on; D and wheel GEMMs unchanged.
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then es_env=(-e SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1 -e SGLANG_PREFILL_TILED_ROUTING=1); fi
