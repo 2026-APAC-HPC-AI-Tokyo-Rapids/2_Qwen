@@ -16,8 +16,9 @@ assert actual == expected, actual
 assert torch.version.cuda == "13.0", torch.version.cuda
 assert os.environ["DYNAMO_COMMIT_SHA"] == config["dynamo"]["commit"]
 assert shutil.which("etcd"), "official runtime must supply etcd"
-for module in ("dynamo.frontend", f"dynamo.{backend}"):
-    subprocess.run(["python3", "-m", module, "--help"], check=True)
+# Backend CLI construction can infer a CUDA device even for --help. Validate it
+# with real GPUs in Slurm; the frontend and package checks run on the CPU builder.
+subprocess.run(["python3", "-m", "dynamo.frontend", "--help"], check=True)
 environment = Path("/etc/environment").read_text()
 assert f'PATH="{os.environ["PATH"]}"' in environment
 assert f'LD_LIBRARY_PATH="{os.environ["LD_LIBRARY_PATH"]}"' in environment
