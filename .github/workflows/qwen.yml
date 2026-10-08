@@ -113,40 +113,6 @@ jobs:
     uses: ./.github/workflows/firmus-dynamo.yml
     secrets: inherit
 
-  firmus-dynamo-inspect:
-    name: 既存Dynamoジョブを確認して重複を整理
-    needs: validate
-    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[firmus-dynamo-inspect]') }}
-    runs-on: [self-hosted, home-lab]
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Slurmと残存ログを読み取り
-        shell: firmus-shell --github-shell {0}
-        env:
-          REMOVE_DUPLICATE: ${{ contains(github.event.head_commit.message, '[firmus-dynamo-recover]') }}
-        run: |
-          scontrol show partition hpcai
-          printf 'login_process_limit=%s\n' "$(ulimit -u)"
-          ps -u "$(id -u)" -o pid,ppid,nlwp,etime,comm --sort=-nlwp | head -n 20 || true
-          sacct --allocations --jobs=21732,21733,21736 --noheader --parsable2 --format=JobID,State,ExitCode,Start,End,Elapsed,Reason
-          squeue --noheader --format='%i %T %R %N' | awk '$1 == 21732 || $1 == 21733 || $1 == 21736'
-          for runtime_dir in /scratch/home/ACCOUNT/qwen/runs/dynamo-37726750086-1.aOXjk2Wery /scratch/home/ACCOUNT/qwen/runs/dynamo-37726198579-1.URxt10gJ1o /scratch/home/ACCOUNT/qwen/runs/dynamo-37726750730-1.9k8iOb5LLl; do
-            printf 'runtime=%s\n' "${runtime_dir}"
-            if [[ ! -d "${runtime_dir}" ]]; then echo 'runtime_missing'; continue; fi
-            if [[ -e "${runtime_dir}/run-success" ]]; then echo 'run_success_present'; fi
-            for log in "${runtime_dir}"/logs/*.log; do if [[ -f "${log}" ]]; then printf 'log=%s\n' "${log}"; tail -n 25 "${log}"; fi; done
-          done
-          if [[ "${REMOVE_DUPLICATE}" == true ]]; then
-            duplicate="$(scontrol show job 21733)"
-            grep -Fq 'WorkDir=/scratch/home/ACCOUNT/qwen/runs/dynamo-37726198579-1.URxt10gJ1o' <<<"${duplicate}"
-            grep -Fq 'JobState=PENDING' <<<"${duplicate}"
-            scancel 21733
-            printf 'Cancelled own superseded pending SGLang job 21733; latest job 21736 is recovered separately.\n'
-          fi
-
   firmus-dynamo-recover:
     name: 既存Dynamoジョブの制限時間を修正して回収
     needs: validate
