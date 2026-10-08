@@ -37,3 +37,9 @@ Oct7 23:37SGT実物照合: control37642502611→PBS217355 / runtime `pd-37642502
 ### 必要候補と別適用診断の投入
 
 main修正e758ee1のvalidate37714579426成功後、通常再試験`9d64fae44b26d2594fa85a477059a759ca6fdf6b` / [37714793539](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37714793539)と、別適用診断`2928a4c24b13c9d5febc446a9cfb33b6a0c50741` / [37714798160](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37714798160)をpushした。failed2b04aa26親の条件別branchにmonitor最小修正を適用し、両013/019を実対照pairへ固定した。各52tests/Ruff/bash/actionlint/diffPASS、同image182fbb6d/16H100/serving/precision維持、新build無し。通常runにdebug/profiler無し、診断だけP/profiletrueのNCCLINFO/TUNINGで`AllReduce [Symmetric]`の実kernel選択を確認する。profile scoreは比較へ混ぜない。control37642502611は取消せず回収継続、終端監査前でも長いqueue待ちを避けるため必要条件を先に投入した。PBS/runtime/provenanceとterminal/raw/greedy/hash/cleanup監査を続ける。
+
+### Control終端監査と再試験来歴
+
+control37642502611/PBS217355はActions success、F/Exit0、P013/D019、wall12:05（09:05:41–09:17:52SGT）。正本52rawhash、公開規則準拠repository parser再計算=保存score、公式60/120/30command、model/tokenizer/同image/source、4worker argv/server settings、16uniqueH10080GB、8greedy各64token/finiteを独立確認。score2775.546377213522、goodfraction.9912739965095986、1719req、cancel/error0、TTFT>3s15/ITL>20ms0、meanTTFT1402.9647734141943ms/ITL10.000490851648756ms。runtime-removedを独立SSH確認。主催者完全accuracyではなく、有効対照1runとして保持する。失敗候補217356の16physicalUUIDは対照とすべて一致するが、欠損rawの精度/score再計算は復元できない。
+
+新通常37714793539→PBS217431/runtime `pd-37714793539-1.JA2mjieF8Z`、診断37714798160→217432/`pd-37714798160-1.RjCnUeShnd`。両実sidecar/provenanceでimage182fbb6d/size12231192576/buildsource9c5a5a3/sglangfc275674・条件commit・通常profilefalse/診断true一致を確認し、EC2/mirror/S3buildskipでnewbuild無し。両Q/aiq2・mem不足、013019pin、admission各8GPU112CPU1880GB/scatterexcl/wall30min。runtime/sourceの条件が異なる場合は比較しない。Lunaへexacthandlesを渡し、root方針でQ30分原則（ETA目前のみ短縮）/R60秒監視へ調整。Solの重複定期pollを止め、R/terminal通知で実kernel/公式raw/精度/hash/cleanupを監査する。
