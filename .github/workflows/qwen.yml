@@ -116,7 +116,7 @@ jobs:
   firmus-dynamo-inspect:
     name: 既存Dynamoジョブを確認して重複を整理
     needs: validate
-    if: ${{ github.event_name == 'push' && (contains(github.event.head_commit.message, '[firmus-dynamo-inspect]') || (contains(github.event.head_commit.message, '[firmus-dynamo-recover]') && github.ref_name == 'codex/firmus-sglang-dynamo')) }}
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[firmus-dynamo-inspect]') }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 10
     steps:
