@@ -126,6 +126,7 @@ jobs:
       - name: Slurmと残存ログを読み取り
         shell: firmus-shell --github-shell {0}
         run: |
+          scontrol show partition hpcai
           sacct --allocations --jobs=21732,21733,21736 --noheader --parsable2 --format=JobID,State,ExitCode,Start,End,Elapsed,Reason
           squeue --noheader --format='%i %T %R %N' | awk '$1 == 21732 || $1 == 21733 || $1 == 21736'
           for runtime_dir in /scratch/home/ACCOUNT/qwen/runs/dynamo-37726750086-1.aOXjk2Wery /scratch/home/ACCOUNT/qwen/runs/dynamo-37726198579-1.URxt10gJ1o /scratch/home/ACCOUNT/qwen/runs/dynamo-37726750730-1.9k8iOb5LLl; do

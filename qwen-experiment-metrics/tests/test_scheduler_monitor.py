@@ -9,11 +9,12 @@ MONITOR = Path(__file__).resolve().parents[2] / 'scripts/monitor-qwen-job.sh'
 
 
 class MonitorTest(unittest.TestCase):
-    def run_monitor(self, pending_status, terminal_status, observation="scheduler_job_pending=123.pbs111 state=R"):
+    def run_monitor(self, pending_status, terminal_status, observation="scheduler_job_pending=123.pbs111 state=R", transport_error=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             adapter = root / 'adapter'
-            adapter.write_text(f'#!/bin/bash\nif [[ ! -e "{root}/seen" ]]; then touch "{root}/seen"; echo {observation}; exit {pending_status}; fi\necho terminal\nexit {terminal_status}\n')
+            stderr = "echo 'Connection closed by 150.230.206.3 port 2026' >&2; echo 'tar: This does not look like a tar archive' >&2; " if transport_error else ""
+            adapter.write_text(f'#!/bin/bash\nif [[ ! -e "{root}/seen" ]]; then touch "{root}/seen"; echo {observation}; {stderr}exit {pending_status}; fi\necho terminal\nexit {terminal_status}\n')
             adapter.chmod(0o755)
             sleeper = root / 'sleep'
             sleeper.write_text('#!/bin/bash\nexit 0\n')
@@ -46,9 +47,18 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("\nterminal\n", result.stdout)
 
+    def test_disconnected_ssh_stream_wrapped_as_tar_failure_is_retried(self):
+        for terminal_status in (0, 1):
+            with self.subTest(terminal_status=terminal_status):
+                result = self.run_monitor(2, terminal_status, observation="", transport_error=True)
+                self.assertEqual(result.returncode, terminal_status)
+                self.assertIn('terminal', result.stdout)
+                self.assertIn('status=255', result.stderr)
+                self.assertIn('Connection closed', result.stderr)
 
-    def test_connection_outage_budget_follows_last_observed_state(self):
-        for state, next_state, limit in [('Q', 'Q', 1800), ('R', 'R', 300), ('Q', 'R', 1800)]:
+
+    def test_connection_outage_preserves_last_observed_state(self):
+        for state, next_state, limit in [('Q', 'Q', 'none'), ('R', 'R', 'none'), ('Q', 'R', 'none')]:
             with self.subTest(state=state, next_state=next_state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 adapter = root / 'adapter'
@@ -62,5 +72,24 @@ class MonitorTest(unittest.TestCase):
                 self.assertIn(f'last_state={state} limit_seconds={limit}', result.stderr)
                 self.assertIn('status=124', result.stderr)
                 self.assertIn('status=255', result.stderr)
-                self.assertIn(f"last_state={next_state} limit_seconds={1800 if next_state == 'Q' else 300}", result.stderr)
+                self.assertIn(f"last_state={next_state} limit_seconds=none", result.stderr)
                 self.assertIn('terminal', result.stdout)
+
+    def test_long_outage_waits_for_definitive_scheduler_result(self):
+        for state, expected in [('Q', 0), ('R', 0), ('unknown', 0), ('Q', 1), ('R', 1), ('unknown', 1)]:
+            with self.subTest(state=state, terminal_status=expected), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                monitor = root / 'monitor'
+                # Inject elapsed time only: connection loss must not become a terminal result.
+                monitor.write_text(MONITOR.read_text().replace('connection_failure_seconds=$((SECONDS - connection_failure_started))', 'connection_failure_seconds=1801'))
+                adapter = root / 'adapter'
+                observation = f'echo scheduler_job_pending=123.pbs111 state={state}; exit 0' if state != 'unknown' else 'exit 124'
+                adapter.write_text(f'#!/bin/bash\nn=$(cat "{root}/count" 2>/dev/null || echo 0)\necho $((n+1)) >"{root}/count"\ncase $n in\n0) {observation};;\n1) exit 124;;\n*) echo terminal; exit {expected};;\nesac\n')
+                adapter.chmod(0o755)
+                sleeper = root / 'sleep'
+                sleeper.write_text('#!/bin/bash\nexit 0\n')
+                sleeper.chmod(0o755)
+                result = subprocess.run(['bash', str(monitor), str(adapter), 'checker'], env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}'}, capture_output=True, text=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, expected)
+                self.assertIn('terminal', result.stdout)
+                self.assertIn('limit_seconds=none', result.stderr)
