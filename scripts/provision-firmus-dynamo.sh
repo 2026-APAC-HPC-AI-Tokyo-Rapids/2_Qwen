@@ -33,7 +33,8 @@ for image_name in dynamo sglang; do
   progress_pid=$!
   trap 'kill "${progress_pid}" 2>/dev/null || true' EXIT
   sha256sum "${image}" >"${runtime_dir}/source/${image_name}-image.sha256"
-  kill "${progress_pid}"
+  # A login fork failure may already have stopped the advisory progress loop.
+  kill "${progress_pid}" 2>/dev/null || true
   wait "${progress_pid}" 2>/dev/null || true
   trap - EXIT
   [[ "$(awk '{print $1}' "${runtime_dir}/source/${image_name}-image.sha256")" == "${expected_sha}" ]]
