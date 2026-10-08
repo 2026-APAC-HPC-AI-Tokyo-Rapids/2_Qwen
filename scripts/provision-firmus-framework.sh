@@ -55,6 +55,14 @@ if [[ "$(jq -r .workload "${config}")" == official ]]; then
   for file in config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json; do cp -L "${tokenizer}/${file}" "${tokenizer_cache}/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e/${file}"; done
   printf '%s' ac9c66cc9b46af7306746a9250f23d47083d689e >"${tokenizer_cache}/refs/main"
 fi
+if [[ "${framework}" == sglang ]]; then
+  jq -e '.speculation.algorithm == "EAGLE3" and .speculation.steps == 3 and .speculation.draft_tokens == 4' "${config}" >/dev/null
+  export HF_HUB_DISABLE_XET=1 UV_CONCURRENT_BUILDS=1 UV_CONCURRENT_DOWNLOADS=1 UV_CONCURRENT_INSTALLS=1
+  uvx --from 'huggingface_hub==0.36.0' hf download "$(jq -er '.speculation.draft_repository' "${config}")" config.json README.md model.safetensors --revision "$(jq -er '.speculation.draft_revision' "${config}")" --local-dir "${runtime_dir}/draft" --max-workers 1
+  python3 "${GITHUB_WORKSPACE}/research/simulation/prepare_eagle.py" "${runtime_dir}/draft" "${runtime_dir}/source"
+  jq -e '.revision == "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224" and .weight_sha256 == "bf226a966868fe413a22e62e471aa1130bd94f17fd2c40d322b1c8b4def1ae86" and .weight_bytes == 1145943008 and .precision == "BF16"' "${runtime_dir}/source/draft-provenance.json" >/dev/null
+  cp "${GITHUB_WORKSPACE}/research/simulation/prepare_eagle.py" "${runtime_dir}/source/"
+fi
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/${framework}.sbatch" "${runtime_dir}/scripts/submit.sbatch"
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/official-aiperf.sh" "${runtime_dir}/scripts/official-aiperf.sh"
 install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/vllm-proxy.py" "${runtime_dir}/vllm-proxy.py"

@@ -46,7 +46,7 @@ defaults:
 
 jobs:
   provision:
-    name: Reference baseline実行環境を配備
+    name: 固定したイメージ・モデル・実行条件を配備
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     outputs:
@@ -86,7 +86,7 @@ jobs:
           trap 'rm -f -- "${stderr}"' EXIT
           deadline=$((SECONDS + 900))
           while true; do
-            if timeout --foreground 300 firmus-shell --github-shell "${provision}" 2>"${stderr}"; then cat "${stderr}" >&2; break; else status=$?; fi
+            if timeout --foreground 600 firmus-shell --github-shell "${provision}" 2>"${stderr}"; then cat "${stderr}" >&2; break; else status=$?; fi
             cat "${stderr}" >&2
             if [[ "${status}" -eq 2 || "${status}" -eq 254 ]] && grep -Eq '^(Connection closed by .* port [0-9]+|exec request failed on channel [0-9]+|.*: fork: (retry: )?Resource temporarily unavailable)[[:space:]]*$' "${stderr}"; then status=255; fi
             if [[ "${status}" -ne 255 && "${status}" -ne 124 ]] || (( SECONDS >= deadline )); then exit "${status}"; fi
@@ -156,11 +156,20 @@ jobs:
         run: |
           destination="${RUNNER_TEMP}/qwen-firmus-pd"
           install -d -m 0755 "${destination}"
-          firmus-shell --pull "${RUNTIME_DIR}/logs" "${destination}/logs"
-          firmus-shell --pull "${RUNTIME_DIR}/profile" "${destination}/profile"
-          firmus-shell --pull "${RUNTIME_DIR}/results" "${destination}/results"
-          firmus-shell --pull "${RUNTIME_DIR}/source" "${destination}/source"
-          if firmus-shell "test -e '${RUNTIME_DIR}/run-success'"; then firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; fi
+          # A disconnected SSH tar stream previously lost source/ after a successful run.
+          # Retry only artifact reads; never repeat the separate sbatch step.
+          retry_read() {
+            local attempt status
+            for attempt in 1 2 3 4 5 6; do
+              if timeout --foreground 180 "$@"; then return 0; else status=$?; fi
+              if (( attempt == 6 )); then return "${status}"; fi
+              printf 'Artifact read failed (exit %s); retry in 30s (%s/6).\n' "${status}" "${attempt}" >&2
+              sleep 30
+            done
+          }
+          for part in logs profile results source; do retry_read firmus-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"; done
+          marker=$(retry_read firmus-shell "if test -e '${RUNTIME_DIR}/run-success'; then echo present; else echo absent; fi")
+          if [[ "${marker}" == present ]]; then retry_read firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; else [[ "${marker}" == absent ]]; fi
 
       - name: 実行成果物を保存
         id: upload

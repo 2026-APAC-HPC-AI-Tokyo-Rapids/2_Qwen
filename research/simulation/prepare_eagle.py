@@ -28,8 +28,11 @@ def prepare(root, evidence):
     (evidence / 'draft-original-config.json').write_bytes(original)
     (evidence / 'draft-runtime-config.json').write_bytes(config_path.read_bytes())
     (evidence / 'draft-README.md').write_bytes((root / 'README.md').read_bytes())
+    digest = hashlib.sha256()
     with weights.open('rb') as stream:
-        weight_sha = hashlib.file_digest(stream, 'sha256').hexdigest()
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    weight_sha = digest.hexdigest()
     provenance = {'repository': 'nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507', 'revision': 'ff0f0c0999f6c86b21dfd2f5803eebc4ac712224', 'license': 'CC-BY-4.0', 'weight_sha256': weight_sha, 'weight_bytes': weights.stat().st_size, 'precision': 'BF16', 'parameter_count': sum(math.prod(t['shape']) for t in tensors.values() if t['dtype'] == 'BF16'), 'tensors': tensors, 'adaptation': 'Native SGLang EAGLE3 architecture selector and explicit BF16 dtype only; weights unchanged', 'original_config_sha256': hashlib.sha256(original).hexdigest(), 'runtime_config_sha256': hashlib.sha256(config_path.read_bytes()).hexdigest()}
     (evidence / 'draft-provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
 

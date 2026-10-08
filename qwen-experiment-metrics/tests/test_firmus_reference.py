@@ -6,6 +6,7 @@ import os
 import runpy
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -63,11 +64,13 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
-def test_sglang_launch_matches_aspire_conditions_without_eagle(tmp_path: Path) -> None:
+def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 48, "official")
     (tmp_path / "logs").mkdir()
+    (tmp_path / "source").mkdir()
+    (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
     record = tmp_path / "commands.jsonl"
     stub = tmp_path / "srun"
     stub.write_text(f"#!{sys.executable}\nimport json,os,sys\nfd=os.open(os.environ['RECORD'],os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)\nos.write(fd,(json.dumps(sys.argv[1:])+'\\n').encode())\nos.close(fd)\n")
@@ -83,22 +86,34 @@ def test_sglang_launch_matches_aspire_conditions_without_eagle(tmp_path: Path) -
     assert len(workers) == 4 and all("--gres=gpu:4" in argv for argv in workers)
     archived = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/aspire-integration-argv.json").read_text())["archived_server_info"]
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
-    launch = worker.split("UCX_IB=", 1)[0] + "printf '%s\\0' " + worker.split("\nexec ", 1)[1]
+    launch = worker.split("UCX_IB=", 1)[0] + 'printf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "$SGLANG_HOST_IP"\n' + "printf '%s\\0' " + worker.split("\nexec ", 1)[1]
     observed = {}
     for argv in workers:
         args = argv[argv.index("bash") + 2:]
-        probe = subprocess.run(["bash", "-c", launch, "fixture", *args], check=True, capture_output=True)
-        flags = probe.stdout.decode().rstrip("\0").split("\0")
+        probe = subprocess.run(["bash", "-c", launch, "fixture", *args], env={**os.environ, "SLURM_SUBMIT_DIR": str(tmp_path)}, check=True, capture_output=True)
+        shuffle, routing, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
         name, port = args[:2]
+        assert host_ip == ("192.0.2.1" if name.startswith("prefill") else "192.0.2.2")
         observed[name] = argv[argv.index("-w") + 1]
         for flag, key in {"--tp-size": "tp_size", "--ep-size": "ep_size", "--kv-cache-dtype": "kv_cache_dtype", "--nccl-port": "nccl_port", "--max-total-tokens": "max_total_tokens"}.items():
             assert flags[flags.index(flag) + 1] == str(archived[port][key])
         assert flags[flags.index("--chunked-prefill-size") + 1] == "8192"
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
         assert flags[flags.index("--max-running-requests") + 1] == ("48" if name.startswith("prefill") else "256")
-        assert "--speculative-algorithm" not in flags
+        assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
+        assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
+        assert flags[flags.index("--speculative-num-steps") + 1] == "3"
+        assert flags[flags.index("--speculative-eagle-topk") + 1] == "1"
+        assert flags[flags.index("--speculative-num-draft-tokens") + 1] == "4"
+        assert "--speculative-draft-model-quantization" not in flags
+        assert "--container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER" in argv
         if name.startswith("prefill"):
             assert flags[flags.index("--moe-runner-backend") + 1] == "cutlass"
+            assert "--enable-symm-mem" in flags and (shuffle, routing) == ("1", "1")
+        else:
+            start = flags.index("--cuda-graph-bs-decode") + 1
+            assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
+            assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
     assert observed == {"prefill-0": "node0", "prefill-1": "node0", "decode-0": "node1", "decode-1": "node1"}
     router_argv = next(argv for argv in commands if "sglang_router.launch_router" in argv)
     assert router_argv.count("--prefill") == router_argv.count("--decode") == 2
@@ -126,6 +141,27 @@ def test_provenance_distinguishes_server_client_and_prepared_cache(tmp_path: Pat
     assert model["schema_version"] == "qwen3-pd-model/v1"
     assert model["model"]["path"] == "/scratch/model"
     assert model["model"]["shards"] == 24
+
+
+def test_collection_retries_interrupted_artifacts_without_submitting(tmp_path: Path) -> None:
+    workflow = (ROOT / ".github/workflows/firmus.yml").read_text()
+    collect = workflow.split("id: collect\n", 1)[1].split("      - name:", 1)[0]
+    script = textwrap.dedent(collect.split("        run: |\n", 1)[1])
+    shell = tmp_path / "firmus-shell"
+    shell.write_text(f"#!{sys.executable}\nimport os,sys\nfrom pathlib import Path\nroot=Path(os.environ['RUNNER_TEMP'])\nargs=sys.argv[1:]\nwith (root/'reads').open('a') as f: f.write(repr(args)+'\\n')\nkey='source' if args[0]=='--pull' and args[1].endswith('/source') else 'marker' if args[0].startswith('if test') else ''\nif key and not (root/key).exists():\n (root/key).touch()\n sys.exit(2 if key=='source' else 255)\nif key=='marker': print('present')\n")
+    shell.chmod(0o755)
+    for name, body in {"timeout": 'shift 2; exec "$@"', "sleep": ':'}.items():
+        stub = tmp_path / name
+        stub.write_text(f"#!/bin/bash\n{body}\n")
+        stub.chmod(0o755)
+    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path), "RUNTIME_DIR": "/runs/full-one-job"}
+    subprocess.run(["bash", "-euc", script], env=environment, check=True)
+    reads = (tmp_path / "reads").read_text().splitlines()
+    assert len(reads) == 8  # Four directories, marker and run-success, plus two failed reads.
+    assert sum("/source'" in row for row in reads) == 2
+    assert sum("if test" in row for row in reads) == 2
+    assert reads[-1].startswith("['--pull', '/runs/full-one-job/run-success'")
+    assert all("sbatch" not in row for row in reads)
 
 
 @pytest.mark.parametrize("profile,require_build", [("false", "true")])
