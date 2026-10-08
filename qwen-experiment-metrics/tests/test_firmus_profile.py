@@ -104,6 +104,17 @@ def test_summary_marks_profile_score_and_handles_missing_results(tmp_path: Path,
     assert "/qwen-artifacts/123/1/" in summary
 
 
+def test_summary_uses_official_score_and_measured_latency(tmp_path: Path) -> None:
+    (tmp_path / "provenance.json").write_text(json.dumps({"framework": "vllm", "workload": "official"}))
+    (tmp_path / "score.json").write_text(json.dumps({"request_count": 360, "good_request_fraction": 1.0, "goodput_requests_per_second": 3.0, "score_output_tokens_per_second": 600.0, "eligible": True, "official_validation": {"valid": True}}))
+    (tmp_path / "profile_export_aiperf.json").write_text(json.dumps({"good_request_count": {"avg": 360}, "time_to_first_token": {"avg": 330, "p99": 580}, "inter_token_latency": {"avg": 12, "p99": 13}}))
+    summary = SUMMARY(tmp_path, "456", "success")
+    assert "60 / 120 / 30" in summary and "reference-07" not in summary
+    assert "360 / 360" in summary and "600.000 output tok/s" in summary
+    assert "330.000 / 580.000 ms" in summary and "12.000 / 13.000 ms" in summary
+    assert "Official workload validation | True" in summary
+
+
 def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path) -> None:
     stub = tmp_path / "nsys"
     stub.write_text("#!/bin/bash\nprintf '%s\\0' \"$@\" >\"$NSYS_RECORD\"\n")

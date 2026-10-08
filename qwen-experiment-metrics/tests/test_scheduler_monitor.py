@@ -55,15 +55,24 @@ class MonitorTest(unittest.TestCase):
         self.assertNotIn("\nterminal\n", result.stdout)
 
     def test_disconnected_ssh_stream_wrapped_as_tar_failure_is_retried(self):
-        for message in ("Connection closed by 150.230.206.3 port 2026", "exec request failed on channel 0"):
+        for message in ("Connection closed by 150.230.206.3 port 2026", "exec request failed on channel 0", "exec request failed on channel 0\r"):
             for terminal_status in (0, 1):
                 with self.subTest(message=message, terminal_status=terminal_status):
                     result = self.run_monitor(2, terminal_status, observation="", transport_error=True, transport_message=message)
                     self.assertEqual(result.returncode, terminal_status)
                     self.assertIn('terminal', result.stdout)
                     self.assertIn('status=255', result.stderr)
-                    self.assertIn(message, result.stderr)
+                    self.assertIn(message.rstrip("\r"), result.stderr)
 
+    def test_login_fork_failure_is_retried_but_other_exit_254_is_fatal(self):
+        for message in ("/etc/profile.d/which2.sh: fork: retry: Resource temporarily unavailable", "/etc/bashrc: fork: Resource temporarily unavailable\r"):
+            result = self.run_monitor(254, 0, observation="", transport_error=True, transport_message=message)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("terminal", result.stdout)
+            self.assertIn("status=255", result.stderr)
+        result = self.run_monitor(254, 0, observation="", transport_error=True, transport_message="checker failed")
+        self.assertEqual(result.returncode, 254)
+        self.assertNotIn("terminal", result.stdout)
 
     def test_connection_outage_preserves_last_observed_state(self):
         for state, next_state, limit in [('Q', 'Q', 'none'), ('R', 'R', 'none'), ('Q', 'R', 'none')]:

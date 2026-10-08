@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import shlex
 import subprocess
 import sys
@@ -11,6 +12,14 @@ import pytest
 
 REPOSITORY = Path(__file__).parents[2]
 PARSER = REPOSITORY / "scripts" / "parse-aiperf-result.py"
+
+
+def test_vllm_official_client_uses_fixed_scoring_command() -> None:
+    script = (REPOSITORY / "platforms/firmus/framework-comparison/official-aiperf.sh").read_text()
+    command_line = next(line for line in script.splitlines() if line.startswith("command=("))
+    result = subprocess.run(["bash", "-euc", command_line + '\nprintf "%s\\0" "${command[@]}"'], env={**os.environ, "N": "8"}, capture_output=True, check=True)
+    expected = runpy.run_path(str(PARSER))["expected_official_command"]("http://127.0.0.1:8000/v1/chat/completions", 8)
+    assert result.stdout.decode().rstrip("\0").split("\0") == expected
 
 
 def metrics(

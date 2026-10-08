@@ -17,7 +17,7 @@
 #
 # Copied from reference-scripts/07-pd-235b-8plus8.sbatch.
 # This adaptation uses our images and pinned tokenizer, concurrency 8,
-# and the reference warmup/benchmark/grace timings (20s/60s/15s).
+# and committed reference (20/60/15s) or official (60/120/30s) timings.
 # Actions changes only run/image/output paths, supplies concurrency from committed
 # configuration, and validates raw requests after measurement. Serving flags unchanged.
 # Launch, network selection, readiness and cleanup follow the reference.
@@ -149,9 +149,13 @@ wait_http "http://${HEAD_IP}:${R_PORT}/v1/models"
 echo "READY after ${SECONDS}s"
 
 if [[ "${PROFILE}" == true ]]; then "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" >"${ART}/profile-capture.log" 2>&1 & profile_capture_pid=$!; fi
+if [[ "$(jq -r .workload "${ROOT}/source/firmus-framework.json")" == official ]]; then
+  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1
+else
 srun --overlap -N1 -n1 -w "${HEAD}" --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" /opt/sglang/venv/bin/aiperf profile --model qwen --tokenizer "/scratch/home/ACCOUNT/qwen/framework-comparison/sources/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e" --url "http://127.0.0.1:${R_PORT}" --endpoint-type chat --endpoint /v1/chat/completions --streaming --concurrency "${N}" --warmup-duration 20 --benchmark-duration 60 --benchmark-grace-period 15 --synthetic-input-tokens-mean "${ISL}" --synthetic-input-tokens-stddev 0 --output-tokens-mean "${OSL}" --output-tokens-stddev 0 --num-dataset-entries 12800 --random-seed 2026 --cache-bust first_turn_prefix --extra-inputs "min_tokens:${OSL}" --extra-inputs "max_tokens:${OSL}" --extra-inputs "ignore_eos:true" --extra-inputs "temperature:0.0" --extra-inputs "repetition_penalty:1.0" -H "Accept: text/event-stream" --artifact-dir "${ROOT}/results" >"${ART}/aiperf.log" 2>&1
-echo "AIPERF ok"
 srun --overlap -N1 -n1 -w "${HEAD}" --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" /opt/sglang/venv/bin/python "${ROOT}/scripts/parse-firmus-reference-result.py" "${ROOT}/results" --concurrency "${N}"
+fi
+echo "AIPERF ok"
 if [[ "${PROFILE}" == true ]]; then
   wait "${profile_capture_pid}"
   profile_capture_pid=
