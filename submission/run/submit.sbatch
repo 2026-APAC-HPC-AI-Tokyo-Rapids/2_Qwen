@@ -157,6 +157,7 @@ run_node() {
       mapfile -t decode_graph_bs < <(jq -r '.decode_cuda_graph_bs // [] | .[]' "${OUTPUT_DIR}/source/aspire-serving.json")
       if [[ "${#decode_graph_bs[@]}" -gt 0 ]]; then args+=(--cuda-graph-bs-decode "${decode_graph_bs[@]}"); fi
     fi
+    # Retry after running-state SSH observation failure; fix actual control pair 013/019, preserve serving math.
     # NCCL symmetric allocator candidate: prefill only, same routing-on baseline.
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then args+=(--enable-symm-mem); fi
     es_env=()
