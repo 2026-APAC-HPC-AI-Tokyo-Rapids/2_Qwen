@@ -33,3 +33,7 @@ Oct7 23:37SGT実物照合: control37642502611→PBS217355 / runtime `pd-37642502
 終端前のread-only runtimeでcontrol2775.546377213522、候補2843.0536912143675 outtok/s（+2.432217114%、goodfraction .9912739965/.9920454545、both eligible/error0）を観測したが、候補のrepository parser再計算・8greedy・全来歴監査が不能なので性能比較は参考値へ格下げし、採用根拠としない。flagtrueをNCCL symmetric kernel使用の証明にせず、通常runとは別のINFO/TUNING診断を必要とする。
 
 実観測に基づく最小monitor修正はQ/R/unknownのすべてでSSH124/255の累積時間だけをscheduler失敗とみなさない。個別SSH180秒、PBSwall30分、Actions上限、実terminal/成果物checkerの失敗を維持する。接続復旧後に確定終端を確認してから回収し、完走成果物を観測障害だけで破棄しない。Q/R/unknown・elapsed1801秒の障害後にterminal0/1をそのまま返すfixture、既非接続fatalを含む23tests/Ruff/bash/diffPASS。tar専用fallbackは追加しない。control終端監査後、必要候補のみ同対照pair・同imageで再投入し別適用診断を行う。
+
+### 必要候補と別適用診断の投入
+
+main修正e758ee1のvalidate37714579426成功後、通常再試験`9d64fae44b26d2594fa85a477059a759ca6fdf6b` / [37714793539](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37714793539)と、別適用診断`2928a4c24b13c9d5febc446a9cfb33b6a0c50741` / [37714798160](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37714798160)をpushした。failed2b04aa26親の条件別branchにmonitor最小修正を適用し、両013/019を実対照pairへ固定した。各52tests/Ruff/bash/actionlint/diffPASS、同image182fbb6d/16H100/serving/precision維持、新build無し。通常runにdebug/profiler無し、診断だけP/profiletrueのNCCLINFO/TUNINGで`AllReduce [Symmetric]`の実kernel選択を確認する。profile scoreは比較へ混ぜない。control37642502611は取消せず回収継続、終端監査前でも長いqueue待ちを避けるため必要条件を先に投入した。PBS/runtime/provenanceとterminal/raw/greedy/hash/cleanup監査を続ける。
