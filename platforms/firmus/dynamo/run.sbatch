@@ -2,7 +2,7 @@
 #SBATCH -J qwen-dynamo-pd
 #SBATCH -p hpcai
 #SBATCH -N 2
-#SBATCH -t 00:25:00
+#SBATCH -t 00:17:00
 #SBATCH --gres=gpu:8
 #SBATCH --propagate=NONE
 set -euo pipefail
