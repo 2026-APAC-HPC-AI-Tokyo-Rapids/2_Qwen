@@ -95,6 +95,7 @@ jobs:
         run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-qwen-job.sh
 
       - name: ログ・AIPerf・profile・来歴をrunnerへ回収
+        id: collect
         if: always() && steps.submit.outputs.job_id != ''
         shell: home-lab-shell {0}
         run: |
@@ -107,6 +108,7 @@ jobs:
           if firmus-shell "test -e '${RUNTIME_DIR}/run-success'"; then firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; fi
 
       - name: 実行成果物を保存
+        id: upload
         if: always() && steps.submit.outputs.job_id != ''
         uses: actions/upload-artifact@v7
         with:
@@ -121,6 +123,8 @@ jobs:
           JOB_STATUS: ${{ job.status }}
         run: uv run --no-project python "${RUNTIME_DIR}/scripts/summarize-firmus-run.py" "${RUNTIME_DIR}" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
 
-      - name: 実行環境と残留ジョブを削除
-        if: always()
-        run: if [[ -n "${SLURM_JOB_ID:-}" ]] && squeue --noheader --jobs="${SLURM_JOB_ID}" | grep -q .; then scancel "${SLURM_JOB_ID}"; fi; rm -rf -- "${RUNTIME_DIR:?}"
+      - name: 回収済みで終了した実行環境を削除
+        if: always() && steps.collect.outcome == 'success' && steps.upload.outcome == 'success'
+        run: |
+          state="$(sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State | awk -F'|' -v id="${SLURM_JOB_ID}" '$1 == id {print $2}')"
+          case "${state}" in COMPLETED|FAILED|TIMEOUT|CANCELLED*|OUT_OF_MEMORY|NODE_FAIL) rm -rf -- "${RUNTIME_DIR:?}";; *) printf 'Preserving runtime and Slurm job %s (state=%s)\n' "${SLURM_JOB_ID}" "${state}";; esac
