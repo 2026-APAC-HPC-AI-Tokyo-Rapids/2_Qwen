@@ -1,5 +1,6 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
+USER root
 
 LABEL org.opencontainers.image.title="APAC Dynamo PD runtime"
 LABEL org.opencontainers.image.source="https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen"
@@ -11,3 +12,4 @@ RUN python3 -c 'import os; from pathlib import Path; keys=("PATH","LD_LIBRARY_PA
 COPY apac-manifest.json /opt/apac/manifest.json
 COPY configs/firmus-dynamo.json /opt/apac/firmus-dynamo.json
 COPY containers/check-dynamo-image.py /opt/apac/check-dynamo-image.py
+USER dynamo
