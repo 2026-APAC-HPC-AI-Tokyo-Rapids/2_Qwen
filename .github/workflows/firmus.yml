@@ -126,7 +126,7 @@ jobs:
             if timeout --foreground 180 firmus-shell --github-shell platforms/firmus/recover-dynamo-job.sh 2>"${stderr}"; then break; else status=$?; fi
             cat "${stderr}" >&2
             if [[ "${status}" -eq 2 ]] && grep -Eq '^Connection closed by .* port [0-9]+$' "${stderr}"; then status=255; fi
-            if [[ "${status}" -ne 255 && "${status}" -ne 124 ]] || (( SECONDS >= deadline )); then printf 'Existing Slurm job `%s` was preserved; recovery failed (exit `%s`). Inspect SSH and recovery logs.\n' "${RECOVERY_JOB_ID}" "${status}" >>"${GITHUB_STEP_SUMMARY}"; exit "${status}"; fi
+            if [[ "${status}" -ne 255 && "${status}" -ne 124 ]] || (( SECONDS >= deadline )); then printf 'Existing Slurm job %s was preserved; recovery failed (exit %s). Inspect SSH and recovery logs.\n' "${RECOVERY_JOB_ID}" "${status}" >>"${GITHUB_STEP_SUMMARY}"; exit "${status}"; fi
             printf 'Recovery SSH unavailable (exit %s); retry in 30s; no new Slurm job.\n' "${status}"
             sleep 30
           done
