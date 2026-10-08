@@ -43,3 +43,25 @@ main修正e758ee1のvalidate37714579426成功後、通常再試験`9d64fae44b26d
 control37642502611/PBS217355はActions success、F/Exit0、P013/D019、wall12:05（09:05:41–09:17:52SGT）。正本52rawhash、公開規則準拠repository parser再計算=保存score、公式60/120/30command、model/tokenizer/同image/source、4worker argv/server settings、16uniqueH10080GB、8greedy各64token/finiteを独立確認。score2775.546377213522、goodfraction.9912739965095986、1719req、cancel/error0、TTFT>3s15/ITL>20ms0、meanTTFT1402.9647734141943ms/ITL10.000490851648756ms。runtime-removedを独立SSH確認。主催者完全accuracyではなく、有効対照1runとして保持する。失敗候補217356の16physicalUUIDは対照とすべて一致するが、欠損rawの精度/score再計算は復元できない。
 
 新通常37714793539→PBS217431/runtime `pd-37714793539-1.JA2mjieF8Z`、診断37714798160→217432/`pd-37714798160-1.RjCnUeShnd`。両実sidecar/provenanceでimage182fbb6d/size12231192576/buildsource9c5a5a3/sglangfc275674・条件commit・通常profilefalse/診断true一致を確認し、EC2/mirror/S3buildskipでnewbuild無し。両Q/aiq2・mem不足、013019pin、admission各8GPU112CPU1880GB/scatterexcl/wall30min。runtime/sourceの条件が異なる場合は比較しない。Lunaへexacthandlesを渡し、root方針でQ30分原則（ETA目前のみ短縮）/R60秒監視へ調整。Solの重複定期pollを止め、R/terminal通知で実kernel/公式raw/精度/hash/cleanupを監査する。
+
+
+### 通常候補・別適用診断の完走監査（2026-10-08）
+
+通常37714793539/PBS217431はActions success（04:15:42UTC）、F/Exit0、実P013/D019、wall12:00。正本52全hash、公開規則準拠repository parser再計算=保存score、同16physicalGPU UUID/image/source/model/config、4実argvの差がPの`--enable-symm-mem`のみ、8greedy×64token finite、runtime削除を確認した。公式入力/60秒warmup・120秒測定・30秒cooldownも一致し、monitor修正後のActions→PBS→公式結果→全raw回収→cleanupが完走した。
+
+|通常条件|score out tok/s|good fraction|requests|mean TTFT ms|mean ITL ms|
+|---|---:|---:|---:|---:|---:|
+|control37642502611|2775.546377|0.991273997|1719|1402.964773|10.000491|
+|P symm37714793539|2851.604172|0.992063492|1764|1268.981276|10.224663|
+
+有効な単一pairではscore+2.740282%、TTFT-9.550026%、ITL+2.241616%、cancel/error0、TTFT>3sは15→14、ITL>20msは双方0。通常候補のP queueログ標本平均は0.68565、D accept len2.22214。標本は非時間加重であり、isolated NCCL kernel削減幅や因果帰属を表さない。欠損旧候補の+2.43%とprofile scoreは性能反復へ混ぜない。
+
+8greedyの生成tokenは3/8一致、5/8の最初分岐は0-based17/14/21/39/25。canonical rawの同prefix max|ΔlogP|はprompt順0.37387/0.21768/0.22215/0.14166/0.49705/0.49346/0.00016011/0.05034。top_logprobsは全て空なので、最初分岐の同token候補順位/top2margin・全分布距離は未取得。別モデルで選択された異なるtokenのlogP差をmarginとみなさず、分岐後のlogP差も同入力の数値誤差とみなさない。NaN/invalidはなく、分岐だけでaccuracy劣化としない。一方、合成8promptは主催者accuracy評価ではなく、精度維持を断定しない。
+
+診断37714798160/PBS217432もActions success（04:17:48UTC）、F/Exit0、wall11:35、同pair/16UUID。正本64全hash、公式parser再計算一致、8×64finite、4profile invocationとnode0/1 telemetry、PのみINFO/TUNING・D debug無し、同image/source/設定、runtime削除PASS。両P rank0で各9885件の`AllReduce [Symmetric]`選択を記録し、67108864 Bytesの`AllReduce_RSxLDMC_AGxSTMC`と8192 Bytesの`AllReduce_AGxLLMC_R`を確認した。INFOは選択/capture時のログであり、後続のbenchphaseでは8192-token `cuda graph: True`を確認。実SGLang fc275674のbreakable backendはcaptureしたShapeKeyのgraphをreplayし、同shape benchでそのcaptured symmetric kernelが使われることをこの範囲で裏付ける。実backendはbreakableでありfullではない。perkernel GPU時刻、isolated削減幅、全collectiveへの適用は証明していない。診断scoreは比較対象から除外する。
+
+固定NCCL2.28.9-1一次sourceではBF16 small symmetric sumのaccumulatorはFP32、large multimem BF16 sumもCUDA≥12.2の`.acc::f32`で、出力BF16へ戻す。SGLang fc275674のpyncclはtensor.dtypeをそのままNCCLへ渡し、symm outputもempty_likeであり、新しい低精度castを追加していない。総和順/丸め変化と整合するが、個々の生成分岐の原因を唯一に特定せず、installed binaryの全disassemblyや分布全比較は未取得。[NCCL symmetric primitives](https://github.com/NVIDIA/nccl/blob/v2.28.9-1/src/device/symmetric/primitives.cuh)、[all_reduce](https://github.com/NVIDIA/nccl/blob/v2.28.9-1/src/device/symmetric/all_reduce.cuh)、[reduce_kernel](https://github.com/NVIDIA/nccl/blob/v2.28.9-1/src/device/reduce_kernel.h)を根拠とする。
+
+反復は通常instrumentation無しでcandidate→control順に各追跡commitをpushした。candidate`c65c22c38e5dbcd3352fdf36a2cf50596dfea174`/[37727083061](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37727083061)、control`67e2730d9040c9587114aab957c16152932c8324`/[37727107336](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37727107336)。同013019/image/settingsでP symmのみを変え、新build/profile無し。各25tests+9subtests/bash/Ruff/actionlint/diff PASS。push順からscheduler順を断定せず、PBS accountingの実開始順を記録し全raw/parser/finite/cleanupまで監査する。反復前のmain採用は行わない。
+
+canonical rawはhome server `/srv/qwen-artifacts/RUN/1`、独立監査の派生証拠はlocal `/tmp/qwen-routing-audit-20261005/{RUN-audit.json,RUN-runtime-pair-audit.json,37714798160-application-audit.json,37714793539-canonical-prefix-diagnostic.json,nccl-normal-pair-comparison.json}`。一時diagnostic source取得物は一次source照合の証拠で、計算ノードへ注入していない。
