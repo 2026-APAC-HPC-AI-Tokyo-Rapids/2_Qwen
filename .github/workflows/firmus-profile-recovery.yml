@@ -27,11 +27,11 @@ jobs:
             original_run: '37886769411'
             commit: edc60ba
             runtime: /scratch/home/apacsc14/qwen/runs/pd-37886769411-1.LLQ9cdPzzO
-          - job: '22004'
+          - job: '22005'
             original_run: '37886786534'
             commit: e9624ed
             runtime: /scratch/home/apacsc14/qwen/runs/pd-37886786534-1.3NBwI0YUKA
-          - job: '22005'
+          - job: '22006'
             original_run: '37886821128'
             commit: 3e0a538
             runtime: /scratch/home/apacsc14/qwen/runs/pd-37886821128-1.XKCFhp4Y5p
@@ -47,15 +47,18 @@ jobs:
         with:
           persist-credentials: false
       - name: Verify original job provenance
+        id: verify
         shell: firmus-shell --github-shell {0}
-        run: jq -e --arg run '${{ matrix.original_run }}' --arg commit '${{ matrix.commit }}' '.workflow_run_id == $run and (.commit | startswith($commit))' "${RUNTIME_DIR}/source/provenance.json"
+        run: |
+          jq -e --arg run '${{ matrix.original_run }}' --arg commit '${{ matrix.commit }}' '.workflow_run_id == $run and (.commit | startswith($commit))' "${RUNTIME_DIR}/source/provenance.json"
+          scontrol show job "${SLURM_JOB_ID}" | grep -F "Command=${RUNTIME_DIR}/scripts/submit.sbatch"
       - name: Monitor existing Slurm job
         id: monitor
         shell: bash
         run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-qwen-job.sh
       - name: Collect original logs and results
         id: collect
-        if: always()
+        if: always() && steps.verify.outcome == 'success'
         shell: home-lab-shell {0}
         run: |
           destination="${RUNNER_TEMP}/qwen-firmus-${SLURM_JOB_ID}"
