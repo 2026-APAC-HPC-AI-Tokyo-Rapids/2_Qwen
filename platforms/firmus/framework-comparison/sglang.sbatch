@@ -19,6 +19,10 @@ MODEL=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8
 R_PORT=8000
 READY_SECS=600  # ASPIRE full stack took 7m09s; leave time for the 60/120/30 client.
 N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")
+# Parse configuration on the host; the pinned serving image does not include jq.
+speculation=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -er '.speculation.steps' "${ROOT}/source/firmus-framework.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -er '.speculation.draft_tokens' "${ROOT}/source/firmus-framework.json")")
+decode_graph=(--cuda-graph-bs-decode)
+while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${ROOT}/source/firmus-framework.json")
 ART=${ROOT}/logs
 export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
 export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
@@ -38,7 +42,21 @@ mounts() {
 }
 
 wait_http() {
-  timeout "${READY_SECS}" curl -sf --retry-connrefused --retry-all-errors --retry-delay 2 --retry 300 --max-time 2 -o /dev/null "$1"
+  local deadline=$((SECONDS + READY_SECS)) pid status
+  while true; do
+    for pid in "${worker_pids[@]}"; do
+      if ! kill -0 "${pid}" 2>/dev/null; then
+        status=0
+        wait "${pid}" || status=$?
+        printf 'server_exited pid=%s status=%s waiting_for=%s\n' "${pid}" "${status}" "$1" >&2
+        if (( status == 0 )); then status=1; fi
+        return "${status}"
+      fi
+    done
+    if curl --fail --silent --max-time 2 -o /dev/null "$1"; then return 0; fi
+    if (( SECONDS >= deadline )); then printf 'server_readiness_timeout url=%s\n' "$1" >&2; return 124; fi
+    sleep 2
+  done
 }
 
 echo "[$(date -Iseconds)] job=${SLURM_JOB_ID} user=$(whoami)"
@@ -68,15 +86,8 @@ tp=$4
 export SGLANG_HOST_IP=$5
 shift 5
 role=${name%%-*}
-config=${SLURM_SUBMIT_DIR}/source/firmus-framework.json
-extra=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -er '.speculation.steps' "$config")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -er '.speculation.draft_tokens' "$config")")
 if [[ "$role" == prefill ]]; then
   export SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1 SGLANG_PREFILL_TILED_ROUTING=1
-  extra+=(--enable-symm-mem)
-else
-  graph_bs=()
-  while read -r size; do graph_bs+=("$size"); done < <(jq -er '.decode_cuda_graph_bs[]' "$config")
-  extra+=(--cuda-graph-bs-decode "${graph_bs[@]}")
 fi
 UCX_IB=$(for d in /sys/class/infiniband/*; do
   [ "$(cat "$d/ports/1/state" 2>/dev/null)" = "4: ACTIVE" ] || continue
@@ -91,16 +102,16 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 echo "$name host=$(hostname) ip=$SGLANG_HOST_IP hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp shuffle=${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0} routing=${SGLANG_PREFILL_TILED_ROUTING:-0}"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
-exec /opt/sglang/venv/bin/python -m sglang.launch_server --model-path "$model" --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "$tp" --ep-size 1 --mem-fraction-static 0.90 --max-total-tokens 131072 --chunked-prefill-size 8192 --kv-cache-dtype fp8_e4m3 --attention-backend fa3 --nccl-port "$((port + 1000))" --disaggregation-mode "$role" --disaggregation-transfer-backend nixl "${extra[@]}" "$@" --host 0.0.0.0 --port "$port"
+exec /opt/sglang/venv/bin/python -m sglang.launch_server --model-path "$model" --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "$tp" --ep-size 1 --mem-fraction-static 0.90 --max-total-tokens 131072 --chunked-prefill-size 8192 --kv-cache-dtype fp8_e4m3 --attention-backend fa3 --nccl-port "$((port + 1000))" --disaggregation-mode "$role" --disaggregation-transfer-backend nixl "$@" --host 0.0.0.0 --port "$port"
 EOF
 
-srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 4 "${HEAD_IP}" --disaggregation-bootstrap-port 9000 --max-running-requests "${N}" --moe-runner-backend cutlass >"${ART}/prefill-0.log" 2>&1 &
+srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" --enable-symm-mem --disaggregation-bootstrap-port 9000 --max-running-requests "${N}" --moe-runner-backend cutlass >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" 4 "${HEAD_IP}" --disaggregation-bootstrap-port 9001 --max-running-requests "${N}" --moe-runner-backend cutlass >"${ART}/prefill-1.log" 2>&1 &
+srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" --enable-symm-mem --disaggregation-bootstrap-port 9001 --max-running-requests "${N}" --moe-runner-backend cutlass >"${ART}/prefill-1.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" --max-running-requests 256 >"${ART}/decode-0.log" 2>&1 &
+srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --max-running-requests 256 >"${ART}/decode-0.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-1)" bash "${ROOT}/source/worker.sh" decode-1 30201 "${MODEL}" 4 "${TAIL_IP}" --max-running-requests 256 >"${ART}/decode-1.log" 2>&1 &
+srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-1)" bash "${ROOT}/source/worker.sh" decode-1 30201 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --max-running-requests 256 >"${ART}/decode-1.log" 2>&1 &
 worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:30100/health"; echo "prefill-0 ready"

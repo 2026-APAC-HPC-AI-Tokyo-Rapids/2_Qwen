@@ -78,7 +78,8 @@ def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
     launches = "srun --exact" + source.split("srun --exact", 1)[1].split("\nwait_http", 1)[0]
     router = next(line for line in source.splitlines() if line.startswith("srun ") and "sglang_router.launch_router" in line)
     client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
-    harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
+    configuration = 'speculation=(' + source.split('speculation=(', 1)[1].split('\nART=', 1)[0]
+    harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + '\n' + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
     environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "SGLANG": "/image", "AIPERF": "/image", "MODEL": "/model", "N": "48", "R_PORT": "8000"}
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
@@ -86,6 +87,7 @@ def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
     assert len(workers) == 4 and all("--gres=gpu:4" in argv for argv in workers)
     archived = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/aspire-integration-argv.json").read_text())["archived_server_info"]
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    assert "jq" not in worker  # Not installed in the pinned image; parse on the host.
     launch = worker.split("UCX_IB=", 1)[0] + 'printf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "$SGLANG_HOST_IP"\n' + "printf '%s\\0' " + worker.split("\nexec ", 1)[1]
     observed = {}
     for argv in workers:
@@ -120,6 +122,19 @@ def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
     assert router_argv[router_argv.index("--prefill-policy") + 1] == "round_robin"
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
     assert client_argv[-2:] == [str(tmp_path), "48"]
+
+
+@pytest.mark.parametrize("worker_status,expected", [(127, 127), (0, 1)])
+def test_readiness_stops_on_any_exited_server_before_curl(tmp_path: Path, worker_status: int, expected: int) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
+    readiness = "wait_http() {" + source.split("wait_http() {", 1)[1].split('\necho "[$(date', 1)[0]
+    # The first server remains alive, while another has already failed. Even a
+    # healthy endpoint must not hide that failure or retry until the 600s cap.
+    harness = readiness + f'\nREADY_SECS=600\n(sleep 60) &\nhealthy=$!\ntrap \'kill "$healthy"; wait "$healthy" 2>/dev/null || true\' EXIT\n(exit {worker_status}) &\nfailed=$!\nwait "$failed" || true\nworker_pids=("$healthy" "$failed")\ncurl() {{ touch "{tmp_path / "curl-called"}"; return 0; }}\nwait_http http://fixture/health\n'
+    result = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=5, check=False)
+    assert result.returncode == expected
+    assert f"status={worker_status}" in result.stderr
+    assert not (tmp_path / "curl-called").exists()
 
 
 @pytest.mark.parametrize("framework,profile", [("sglang", "false"), ("sglang", "true"), ("vllm", "false"), ("vllm", "true")])
