@@ -32,6 +32,7 @@ export TOKENIZER_PATH="${TOKENIZER_PATH:-${HOME}/.cache/huggingface/hub/models--
 export QWEN_PLATFORM="${QWEN_PLATFORM:-firmus}"
 export NODE_COUNT="${NODE_COUNT:-2}"
 export GPUS_PER_NODE="${GPUS_PER_NODE:-8}"
+aspire_nsys_root=/scratch/users/industry/ai-hpc/ACCOUNT/sglang-tools/cuda-13.0.1/nsight-systems-2025.3.2
 mode="${1:-orchestrate}"
 if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then CONCURRENCY="$(jq -er ' .concurrency' "${OUTPUT_DIR}/source/aspire-serving.json")"; fi
 
@@ -165,7 +166,13 @@ run_node() {
     prefill_env=()
     # Adopted prefill bit-copy shuffle and integer routing; D and wheel GEMMs unchanged.
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then prefill_env=(-e SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1 -e SGLANG_PREFILL_TILED_ROUTING=1); fi
-    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${prefill_env[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
+    profile_mounts=()
+    # Decode-only bounded Nsight capture: /start_profile and /stop_profile with CUDA_PROFILER open and close the window.
+    if [[ "${PROFILE}" == true && "${QWEN_PLATFORM}" == aspire2ap && "${role}" == decode ]]; then
+      profile_mounts=(-m "${aspire_nsys_root}:/opt/nsys:bind,ro,x-create=dir" -m "${OUTPUT_DIR}/profile:/profiler-output")
+      args=(/opt/nsys/bin/nsys profile --force-overwrite=true --trace-fork-before-exec=true --capture-range=cudaProfilerApi --capture-range-end=stop --trace=cuda,nvtx,osrt --cuda-graph-trace=node --sample=none --cpuctxsw=none "--output=/profiler-output/nsys-decode-${worker}" "${args[@]}")
+    fi
+    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${profile_mounts[@]}" "${prefill_env[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
     printf '%q ' "${worker_command[@]}" >"${OUTPUT_DIR}/logs/${role}-${worker}-command.txt"
     printf '\n' >>"${OUTPUT_DIR}/logs/${role}-${worker}-command.txt"
@@ -552,6 +559,20 @@ while true; do
   (( SECONDS < deadline ))
   sleep 2
 done
+capture_decode_profile() {
+  deadline="$((SECONDS + 600))"
+  while ! grep -Fq 'Phase profiling (profiling) started' "${OUTPUT_DIR}/logs/aiperf.log" 2>/dev/null; do (( SECONDS < deadline )); sleep 1; done
+  sleep 20
+  while IFS=$'\t' read -r role host port _; do if [[ "${role}" == decode ]]; then printf 'start_requested port=%s utc=%s\n' "${port}" "$(date -u +%FT%T.%NZ)"; curl --fail --silent --show-error --max-time 60 -X POST "http://${host}:${port}/start_profile" -H 'Content-Type: application/json' -d '{"activities":["CUDA_PROFILER"]}'; fi; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+  sleep 3
+  while IFS=$'\t' read -r role host port _; do if [[ "${role}" == decode ]]; then printf 'stop_requested port=%s utc=%s\n' "${port}" "$(date -u +%FT%T.%NZ)"; curl --fail --silent --show-error --max-time 180 -X POST "http://${host}:${port}/stop_profile"; fi; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+  deadline="$((SECONDS + 300))"
+  until compgen -G "${OUTPUT_DIR}/profile/nsys-decode-*.nsys-rep" >/dev/null; do (( SECONDS < deadline )); sleep 5; done
+  printf 'report_written utc=%s\n' "$(date -u +%FT%T.%NZ)"
+}
+profile_capture_pid=
+if [[ "${PROFILE}" == true && "${QWEN_PLATFORM}" == aspire2ap ]]; then capture_decode_profile >"${OUTPUT_DIR}/logs/profile-capture.log" 2>&1 & profile_capture_pid=$!; fi
 "${script_path}" aiperf >"${OUTPUT_DIR}/logs/aiperf.log" 2>&1
+if [[ -n "${profile_capture_pid}" ]]; then wait "${profile_capture_pid}"; fi
 if [[ "${PROFILE}" == true ]]; then [[ "$(find "${OUTPUT_DIR}/profile" -maxdepth 1 -type f -name 'profiler-invocation-*.argv' | wc -l)" -eq "$(wc -l <"${OUTPUT_DIR}/source/worker-endpoints.tsv")" ]]; fi
 touch "${OUTPUT_DIR}/run-success"

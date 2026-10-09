@@ -36,7 +36,7 @@ def capture_workers(source: str, platform: str, nodes: int, tmp_path: Path, prof
     worker = source.split("  start_worker() {", 1)[1].split("\n  }\n", 1)[0] + "\n  }\n"
     topology = source.split("\n  case \"${QWEN_PLATFORM}\"", 1)[1].split("\n  esac", 1)[0]
     harness = 'set -euo pipefail\nrestore_worker_cache() { mkdir -p "$2"; }\npids=()\ncache_workers=()\nstart_worker() {' + worker + '\nfor ((node_rank=0;node_rank<NODE_COUNT;node_rank++)); do\ncase "${QWEN_PLATFORM}"' + topology + '\nesac\ndone\nfor pid in "${pids[@]}"; do wait "$pid"; done\n'
-    environment = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}", "ARGV_RECORD": str(record), "QWEN_PLATFORM": platform, "NODE_COUNT": str(nodes), "GPUS_PER_NODE": "4" if platform == "genkai" else "8", "PROFILE": "true" if profile else "false", "OUTPUT_DIR": str(output), "node_tmp": str(root / "node"), "cache_root": str(root / "cache"), "MODEL_PATH": "/fixture/model", "CONTAINER_IMAGE": "/fixture/image.sqsh", "ucx_devices": "mlx5_0:1,mlx5_1:1", "node_ip": "192.0.2.1"}
+    environment = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}", "ARGV_RECORD": str(record), "QWEN_PLATFORM": platform, "NODE_COUNT": str(nodes), "GPUS_PER_NODE": "4" if platform == "genkai" else "8", "PROFILE": "true" if profile else "false", "OUTPUT_DIR": str(output), "node_tmp": str(root / "node"), "cache_root": str(root / "cache"), "MODEL_PATH": "/fixture/model", "CONTAINER_IMAGE": "/fixture/image.sqsh", "ucx_devices": "mlx5_0:1,mlx5_1:1", "node_ip": "192.0.2.1", "aspire_nsys_root": "/fixture/nsys"}
     subprocess.run(["bash", "-c", harness], env=environment, check=True, capture_output=True, text=True)
     result = [json.loads(line.replace(str(root), "/fixture")) for line in record.read_text().splitlines()]
     return sorted(result, key=lambda item: item["argv"][item["argv"].index("--port") + 1])
@@ -74,6 +74,22 @@ def test_worker_argv_matches_adopted_prefill_combination(platform: str, nodes: i
                 image_index = worker["argv"].index("/fixture/image.sqsh")
                 worker["argv"][image_index:image_index] = ["-e", "SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1", "-e", "SGLANG_PREFILL_TILED_ROUTING=1"]
     assert capture_workers(source, platform, nodes, tmp_path, profile) == expected
+
+
+def test_aspire_profile_wraps_only_decode_in_bounded_nsys(tmp_path: Path) -> None:
+    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    for worker in capture_workers(source, "aspire2ap", 2, tmp_path, profile=True):
+        argv = worker["argv"]
+        image = argv.index("/fixture/image.sqsh")
+        if argv[argv.index("--disaggregation-mode") + 1] == "decode":
+            assert argv[image + 1:image + 3] == ["/opt/nsys/bin/nsys", "profile"]
+            assert "--capture-range=cudaProfilerApi" in argv and "--cuda-graph-trace=node" in argv
+            assert "--output=/profiler-output/nsys-decode-0" in argv
+            assert ["-m", "/fixture/nsys:/opt/nsys:bind,ro,x-create=dir"] == argv[argv.index("/fixture/nsys:/opt/nsys:bind,ro,x-create=dir") - 1:argv.index("/fixture/nsys:/opt/nsys:bind,ro,x-create=dir") + 1]
+        else:
+            assert argv[image + 1] == "/opt/sglang/venv/bin/python"
+            assert "/opt/nsys/bin/nsys" not in argv
+    assert "capture_decode_profile >" in source
 
 
 def test_adopted_graph_preserves_archived_buckets_and_client_condition() -> None:
