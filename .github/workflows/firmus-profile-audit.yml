@@ -1,0 +1,19 @@
+name: Inspect archived Firmus profile failures
+on:
+  push:
+    paths:
+      - .github/workflows/firmus-profile-audit.yml
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: [self-hosted, home-lab]
+    steps:
+      - name: Read decisive archived logs and available Python
+        shell: home-lab-shell {0}
+        run: |
+          command -v python python3 uv || true
+          for run in 37653746232 37630835533; do
+            root="/srv/qwen-artifacts/${run}/1"
+            find "${root}" -type f \( -name '*validation*' -o -name 'slurm*.log' -o -name 'profile-capture.log' -o -name 'score.json' -o -name 'aiperf.log' \) -print -exec tail -n 35 {} \;
+          done
