@@ -30,7 +30,9 @@ The preceding generic H200 target-only screen at global4×4000 predicts347.676ms
 
 ## Acceptance and results
 
-Pending execution. Verify resolved server-info, both P DP ranks and NIXL handoff, unchanged image, scheduler terminal status, official-condition parser replay, per-request SLA, archived hashes and runtime cleanup. Raw throughput is not an eligible score when good-request fraction is below90%. Separate allocation/kernel/graph differences preclude attributing all differences from the old CUTLASS baseline to EP. Repeat a promising configuration before adoption; organizer full-set accuracy remains a separate gate.
+Slurm jobs21977 (EP8 native),21978 (EP2 native),21979 (EP8 DeepEP) were pending resources at03:43 UTC. Both available H200 nodes were occupied; scheduler priorities also placed other pending jobs ahead. Submission order is not a start-time guarantee. No GPU measurement is available yet.
+
+Verify resolved server-info, both P DP ranks and NIXL handoff, unchanged image, scheduler terminal status, official-condition parser replay, per-request SLA, archived hashes and runtime cleanup. Raw throughput is not an eligible score when good-request fraction is below90%. Separate allocation/kernel/graph differences preclude attributing all differences from the old CUTLASS baseline to EP. Repeat a promising configuration before adoption; organizer full-set accuracy remains a separate gate.
 
 ## Next candidate preparation: removing Attention TP too (not submitted)
 
