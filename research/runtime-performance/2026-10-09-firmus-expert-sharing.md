@@ -41,3 +41,17 @@ Fixed-source paths exist for world8/EP8/Attention DP8, giving Attention TP1 and 
 Keep aggregate budgets distinct from per-DP settings. Current aggregate chunk16384 becomes local2048 at DP8; keeping local8192 would raise aggregate chunk to65536. A fixed per-DP KV pool allocates four times more KV bytes/rank at Attention TP1 than TP4. This is not an unavoidable penalty at fixed global capacity: P pool32768×DP8 preserves the current131072×DP2 token budget, and D pool65536×DP8 preserves the current262144×two-independent-workers budget. Target KV bytes/rank then remain approximately2.94/5.88 GiB for P/D, respectively, before extra buffers and reservations. DP-local fragmentation, admission reserve and imbalance still require measurement. EAGLE draft TP1 also adds weight replication.
 
 For a prospective DeepEP low-latency Decode candidate, the default dispatch capacity128 is token rows, not requests. EAGLE verify width4 consumes128 rows at local batch32; local64 needs256 before graph padding. Do not copy the existing graph bucket list or request limit without checking this capacity. No extra GPU jobs were submitted for this TP1 preparation.
+
+### Equal-work CPU screen for Attention TP1
+
+A separate H200 target-only screen fixes role resources at8 GPUs and global Prefill input at8 or16 requests×4000, keeping integer requests per DP rank even at DP8. These32k/64k aggregate shapes exceed the current16k aggregate chunk and must not be read as predictions of the queued trials. All20 queries returned with no reported estimator fallback; operator-table extrapolation remains possible.
+
+| Layout | P global32k ms | P global64k ms | D global64 ms | D global128 ms |
+|---|---:|---:|---:|---:|
+| Independent TP4×2 | 482.157 | 953.404 | 24.042 | 27.301 |
+| Attention TP4/DP2, EP2 | 676.040 | 1336.112 | 23.311 | 27.027 |
+| Attention TP4/DP2, EP8 | 806.881 | 1597.794 | 22.917 | 26.430 |
+| Attention TP2/DP4, EP8 | 757.689 | 1491.662 | 22.728 | 26.365 |
+| Attention TP1/DP8, EP8 | 722.503 | 1414.736 | 22.509 | 26.079 |
+
+Within the EP8 family, eliminating Attention TP shortens predicted Prefill latency by10.5–11.5%; this still exceeds the EP2 estimate by6–7%. The experiment should therefore test the benefit without assuming a global optimum. These are AISimulate0.13.0 FP8 Attention/KV, legacy native Triton MoE with default routing alpha1.2, context4100 Decode estimates. They exclude EAGLE and do not predict DeepEP/DeepGEMM, admission, queueing or official goodput. Queries, full operator diagnostics, wheel/model/MoE-table provenance and six verified raw-file hashes are archived at `/home/USER/qwen-artifacts/research-simulation/20261009-adp8/`.
