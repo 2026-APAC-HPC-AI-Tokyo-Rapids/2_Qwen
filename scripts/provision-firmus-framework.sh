@@ -51,6 +51,11 @@ install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/${fra
 install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/vllm-proxy.py" "${runtime_dir}/vllm-proxy.py"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${GITHUB_WORKSPACE}/scripts/parse-firmus-reference-result.py" "${runtime_dir}/scripts/"
 if [[ "${PROFILE}" == true ]]; then
+  if [[ "${framework}" == sglang ]]; then
+    install -d -m 0755 "${runtime_dir}/profile-hooks"
+    install -m 0644 "${GITHUB_WORKSPACE}/scripts/profile-firmus-nixl.py" "${runtime_dir}/profile-hooks/sitecustomize.py"
+    cp "${runtime_dir}/profile-hooks/sitecustomize.py" "${runtime_dir}/source/nixl-timing-sitecustomize.py"
+  fi
   install -m 0755 "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${GITHUB_WORKSPACE}/scripts/capture-firmus-profile.sh" "${runtime_dir}/scripts/"
   install -m 0644 "${GITHUB_WORKSPACE}/scripts/validate-firmus-profile.py" "${runtime_dir}/scripts/"
   command -v ar >/dev/null
