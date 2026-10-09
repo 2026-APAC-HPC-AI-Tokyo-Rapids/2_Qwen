@@ -64,10 +64,10 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
-def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
+def test_sglang_launch_matches_decode_pool_and_load_candidate(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 48, "official")
+    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 96, "official")
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
@@ -80,7 +80,7 @@ def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
     client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
     configuration = 'speculation=(' + source.split('speculation=(', 1)[1].split('\nART=', 1)[0]
     harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + '\n' + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
-    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "SGLANG": "/image", "AIPERF": "/image", "MODEL": "/model", "N": "48", "R_PORT": "8000"}
+    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "SGLANG": "/image", "AIPERF": "/image", "MODEL": "/model", "N": "96", "R_PORT": "8000"}
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
     workers = [argv for argv in commands if "--exact" in argv]
@@ -97,11 +97,12 @@ def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
         name, port = args[:2]
         assert host_ip == ("192.0.2.1" if name.startswith("prefill") else "192.0.2.2")
         observed[name] = argv[argv.index("-w") + 1]
-        for flag, key in {"--tp-size": "tp_size", "--ep-size": "ep_size", "--kv-cache-dtype": "kv_cache_dtype", "--nccl-port": "nccl_port", "--max-total-tokens": "max_total_tokens"}.items():
+        for flag, key in {"--tp-size": "tp_size", "--ep-size": "ep_size", "--kv-cache-dtype": "kv_cache_dtype", "--nccl-port": "nccl_port"}.items():
             assert flags[flags.index(flag) + 1] == str(archived[port][key])
+        assert flags[flags.index("--max-total-tokens") + 1] == ("131072" if name.startswith("prefill") else "262144")
         assert flags[flags.index("--chunked-prefill-size") + 1] == "8192"
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
-        assert flags[flags.index("--max-running-requests") + 1] == ("48" if name.startswith("prefill") else "256")
+        assert flags[flags.index("--max-running-requests") + 1] == ("96" if name.startswith("prefill") else "256")
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
         assert flags[flags.index("--speculative-num-steps") + 1] == "3"
@@ -121,7 +122,7 @@ def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
     assert router_argv.count("--prefill") == router_argv.count("--decode") == 2
     assert router_argv[router_argv.index("--prefill-policy") + 1] == "round_robin"
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
-    assert client_argv[-2:] == [str(tmp_path), "48"]
+    assert client_argv[-2:] == [str(tmp_path), "96"]
 
 
 @pytest.mark.parametrize("worker_status,expected", [(127, 127), (0, 1)])
