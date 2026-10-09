@@ -102,6 +102,7 @@ echo "$name host=$(hostname) ib=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp"
 runtime_dir=$(dirname "$(dirname "$0")")
 profiler=()
 if [[ -x /opt/nsys/bin/nsys ]]; then
+  export PYTHONPATH="${runtime_dir}/profile-hooks${PYTHONPATH:+:${PYTHONPATH}}"
   export QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys
   export QWEN_PROFILER_INVOCATION_PATH="${runtime_dir}/profile/nsys-${name}.argv"
   profiler=(bash "${runtime_dir}/scripts/exec-profiler.sh")
