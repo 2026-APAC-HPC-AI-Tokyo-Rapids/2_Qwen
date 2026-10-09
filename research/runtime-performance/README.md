@@ -2,6 +2,7 @@
 
 現行Qwen3-235B-A22B・公式4000/200タスクの調査:
 
+- [2026-10-09: Prefill供給律速とP3/D1大pool再配分](2026-10-09-prefill-supply-rebalance.md)
 - [2026-10-09: FirmusのEP2 / EP8共有expert検証](2026-10-09-firmus-expert-sharing.md)
 - [2026-10-09: AISimulateの評価範囲、ベンチの妥当性、DP/EP/PP/TP/CPの再評価](2026-10-09-simulation-parallelism.md)
 - [2026-10-09: ASPIRE H100 / Firmus H200の容量・負荷検証](2026-10-09-capacity-load.md)
