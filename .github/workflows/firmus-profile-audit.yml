@@ -12,8 +12,7 @@ jobs:
       - name: Read decisive archived logs and available Python
         shell: home-lab-shell {0}
         run: |
-          command -v python python3 uv || true
-          for run in 37653746232 37630835533; do
-            root="/hdd_raid/samba/net_share/qwen-artifacts/${run}/1"
-            find "${root}" -type f \( -name '*validation*' -o -name 'slurm*.log' -o -name 'profile-capture.log' -o -name 'score.json' -o -name 'aiperf.log' \) -print -exec tail -n 35 {} \;
-          done
+          ls -l /usr/bin/python* /usr/local/bin/python* /opt/uv/bin/uv /opt/venv/bin/python 2>/dev/null || true
+          root=/hdd_raid/samba/net_share/qwen-artifacts/37653746232/1
+          find "${root}/profile" -type f -name '*stop*' -print -exec cat {} \;
+          find "${root}/logs" -type f -name 'decode-0.log' -print -exec tail -n 20 {} \;
