@@ -64,7 +64,7 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
-def test_sglang_launch_matches_decode_pool_and_load_candidate(tmp_path: Path) -> None:
+def test_sglang_launch_matches_prefill_ep8_dp2_candidate(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 96, "official")
@@ -84,7 +84,9 @@ def test_sglang_launch_matches_decode_pool_and_load_candidate(tmp_path: Path) ->
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
     workers = [argv for argv in commands if "--exact" in argv]
-    assert len(workers) == 4 and all("--gres=gpu:4" in argv for argv in workers)
+    assert len(workers) == 3
+    assert sum("--gres=gpu:8" in argv for argv in workers) == 1
+    assert sum("--gres=gpu:4" in argv for argv in workers) == 2
     archived = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/aspire-integration-argv.json").read_text())["archived_server_info"]
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     assert "jq" not in worker  # Not installed in the pinned image; parse on the host.
@@ -98,9 +100,10 @@ def test_sglang_launch_matches_decode_pool_and_load_candidate(tmp_path: Path) ->
         assert host_ip == ("192.0.2.1" if name.startswith("prefill") else "192.0.2.2")
         observed[name] = argv[argv.index("-w") + 1]
         for flag, key in {"--tp-size": "tp_size", "--ep-size": "ep_size", "--kv-cache-dtype": "kv_cache_dtype", "--nccl-port": "nccl_port"}.items():
-            assert flags[flags.index(flag) + 1] == str(archived[port][key])
+            expected = 8 if name.startswith("prefill") and flag in ("--tp-size", "--ep-size") else archived[port][key]
+            assert flags[flags.index(flag) + 1] == str(expected)
         assert flags[flags.index("--max-total-tokens") + 1] == ("131072" if name.startswith("prefill") else "262144")
-        assert flags[flags.index("--chunked-prefill-size") + 1] == "8192"
+        assert flags[flags.index("--chunked-prefill-size") + 1] == ("16384" if name.startswith("prefill") else "8192")
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
         assert flags[flags.index("--max-running-requests") + 1] == ("96" if name.startswith("prefill") else "256")
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
@@ -111,15 +114,19 @@ def test_sglang_launch_matches_decode_pool_and_load_candidate(tmp_path: Path) ->
         assert "--speculative-draft-model-quantization" not in flags
         assert "--container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER" in argv
         if name.startswith("prefill"):
-            assert flags[flags.index("--moe-runner-backend") + 1] == "cutlass"
-            assert "--enable-symm-mem" in flags and (shuffle, routing) == ("1", "1")
+            assert flags[flags.index("--moe-runner-backend") + 1] == "deep_gemm"
+            assert "--enable-dp-attention" in flags
+            for flag, expected in {"--dp-size": "2", "--max-prefill-tokens": "16384", "--moe-a2a-backend": "deepep", "--deepep-mode": "normal", "--speculative-moe-a2a-backend": "none", "--speculative-moe-runner-backend": "triton"}.items():
+                assert flags[flags.index(flag) + 1] == expected
+            assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
         else:
             start = flags.index("--cuda-graph-bs-decode") + 1
             assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
-    assert observed == {"prefill-0": "node0", "prefill-1": "node0", "decode-0": "node1", "decode-1": "node1"}
+    assert observed == {"prefill-0": "node0", "decode-0": "node1", "decode-1": "node1"}
     router_argv = next(argv for argv in commands if "sglang_router.launch_router" in argv)
-    assert router_argv.count("--prefill") == router_argv.count("--decode") == 2
+    assert router_argv.count("--prefill") == 1
+    assert router_argv.count("--decode") == 2
     assert router_argv[router_argv.index("--prefill-policy") + 1] == "round_robin"
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
     assert client_argv[-2:] == [str(tmp_path), "96"]
