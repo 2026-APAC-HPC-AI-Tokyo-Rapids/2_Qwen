@@ -13,6 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 VALIDATE = runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"))["validate_capture"]
+KERNEL_SUMMARY = runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"))["summarize_kernels"]
 SUMMARY = runpy.run_path(str(ROOT / "scripts/summarize-firmus-run.py"))["summarize"]
 
 
@@ -80,6 +81,20 @@ def test_profile_validation_explains_idle_worker_capture(tmp_path: Path) -> None
         connection.executemany("INSERT INTO TARGET_INFO_GPU VALUES (?)", [(0,), (1,)])
     with pytest.raises(ValueError, match=r"no CUDA kernels captured in nsys-prefill-1.sqlite; expected kernels on 2 GPUs"):
         VALIDATE(database, 2)
+
+
+def test_kernel_summary_distinguishes_overlapping_duration_from_envelope(tmp_path: Path) -> None:
+    database = tmp_path / "report.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE StringIds (id INTEGER, value TEXT)")
+        connection.execute("INSERT INTO StringIds VALUES (1, 'collective')")
+        connection.execute("CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (deviceId INTEGER, start INTEGER, end INTEGER, demangledName INTEGER)")
+        connection.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?, ?, ?, ?)", [(0, 0, 10, 1), (0, 5, 15, 1), (1, 0, 10, 1)])
+    summary = KERNEL_SUMMARY(database)
+    assert summary["devices"][0]["kernel_envelope_ns"] == 15
+    assert summary["devices"][0]["summed_kernel_duration_ns"] == 20
+    assert summary["top_kernels"][0]["calls"] == 3
+    assert summary["top_kernels"][0]["mean_duration_ns"] == 10
 
 
 def test_summary_marks_profile_score_and_handles_missing_results(tmp_path: Path, monkeypatch) -> None:
