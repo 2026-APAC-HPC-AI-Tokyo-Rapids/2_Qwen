@@ -1,0 +1,65 @@
+--- a/python/sglang/srt/layers/attention/trtllm_mha_backend.py
++++ b/python/sglang/srt/layers/attention/trtllm_mha_backend.py
+@@ -205,6 +205,31 @@
+         #   KV bf16: q_type = bf16, out_type=model_runner.dtype
+         #   KV fp8: q_type = fp8, out_type=model_runner.dtype
+         self.is_xqa_impl = is_sm90_supported() or is_sm120_supported()
++        # SM90/SM120 XQA requires an explicit in-window causal bitmask whenever a
++        # request carries several query tokens (EAGLE target verify). Row i may
++        # attend window tokens 0..i; bit j of the per-row uint32 word is window
++        # token j, stored as uint16 pairs ([rows, q_len, 2 * ceil(q_len / 32)]).
++        self.xqa_spec_dec_mask = None
++        if self.is_xqa_impl and (self.speculative_num_draft_tokens or 0) > 1:
++            q_len = self.speculative_num_draft_tokens
++            words = (q_len + 31) // 32
++            causal = torch.arange(words * 32, device=self.device).unsqueeze(
++                0
++            ) <= torch.arange(q_len, device=self.device).unsqueeze(1)
++            packed = (
++                (
++                    causal.view(q_len, words, 32).to(torch.int64)
++                    << torch.arange(32, device=self.device, dtype=torch.int64)
++                )
++                .sum(dim=-1)
++                .to(torch.int32)
++            )
++            self.xqa_spec_dec_mask = (
++                packed.unsqueeze(0)
++                .expand(model_runner.req_to_token_pool.size, q_len, words)
++                .contiguous()
++                .view(torch.uint16)
++            )
+ 
+     def _check_decode_kv_access(self) -> None:
+         supported_kinds = {
+@@ -1087,6 +1112,22 @@
+ 
+         return o.view(-1, layer.tp_q_head_num * layer.head_dim)
+ 
++    def _xqa_verify_mask(
++        self, q: torch.Tensor, forward_batch: ForwardBatch
++    ) -> Optional[torch.Tensor]:
++        q_len = self.forward_metadata.max_seq_len_q
++        if (
++            self.xqa_spec_dec_mask is None
++            or q_len <= 1
++            or not forward_batch.forward_mode.is_target_verify()
++        ):
++            return None
++        assert q_len == self.speculative_num_draft_tokens, (
++            f"XQA verify mask is built for {self.speculative_num_draft_tokens} "
++            f"tokens per request, got {q_len}"
++        )
++        return self.xqa_spec_dec_mask[: q.shape[0] // q_len]
++
+     def forward_extend(
+         self,
+         q: torch.Tensor,
+@@ -1244,6 +1285,7 @@
+                     skip_softmax_threshold_scale_factor=envs.SGLANG_SKIP_SOFTMAX_DECODE_THRESHOLD_SCALE_FACTOR.get(),
+                     out_dtype=self.q_data_type,
+                     q_len_per_req=self.forward_metadata.max_seq_len_q,
++                    mask=self._xqa_verify_mask(q, forward_batch),
+                 )
+         else:
+ 

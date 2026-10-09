@@ -57,13 +57,14 @@ sglang_commit="$(git -C "${source_dir}" rev-parse HEAD)"
 git -C "${source_dir}" diff --quiet
 git -C "${source_dir}" diff --cached --quiet
 
-# Apply the measured precision-preserving bundle plus the routing helper to the private clone.
+# Apply the measured precision-preserving bundle, the routing helper and the decode XQA verify mask to the private clone.
 sglang_patch="patches/sglang/prefill-cutlass-silu-quant.patch"
 draft_head_patch="patches/sglang/draft-extend-selected-head-rows.patch"
 fused_shuffle_patch="patches/sglang/prefill-fp8-scale-row-shuffle.patch"
 routing_patch="patches/sglang/prefill-tiled-routing.patch"
+xqa_mask_patch="patches/sglang/decode-xqa-verify-mask.patch"
 # Later patches depend on additions made by earlier patches; check each updated private tree.
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}"; do
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${xqa_mask_patch}"; do
   git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${patch}"
   git -C "${source_dir}" apply "${GITHUB_WORKSPACE}/${patch}"
 done
@@ -84,11 +85,12 @@ sglang_object_format="$(git -C "${source_dir}" rev-parse --show-object-format)"
 dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/Dockerfile)"
 build_steps_json="$(sed -n 's%^COPY \(containers/[^ ]*\.sh\) .*%\1%p' "${GITHUB_WORKSPACE}/containers/Dockerfile" | while read -r build_step; do build_step="${GITHUB_WORKSPACE}/${build_step}"; jq -cn --arg path "${build_step#"${GITHUB_WORKSPACE}/"}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${build_step}")" '{path:$path,blob_oid:$oid}'; done | jq -s '.')"
 patches_json='[]'
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}"; do
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${xqa_mask_patch}"; do
   case "${patch}" in
     "${draft_head_patch}") targets=(python/sglang/srt/speculative/eagle_worker_v2.py python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py) ;;
     "${fused_shuffle_patch}") targets=(python/sglang/srt/layers/moe/cutlass_moe.py python/sglang/kernels/ops/moe/prefill_fp8_row_shuffle.py) ;;
     "${routing_patch}") targets=(python/sglang/srt/layers/moe/cutlass_moe.py python/sglang/kernels/ops/moe/prefill_routing.py) ;;
+    "${xqa_mask_patch}") targets=(python/sglang/srt/layers/attention/trtllm_mha_backend.py) ;;
     *) targets=(python/sglang/srt/layers/moe/cutlass_moe.py) ;;
   esac
   targets_json='[]'
