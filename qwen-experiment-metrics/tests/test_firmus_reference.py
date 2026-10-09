@@ -64,10 +64,10 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
-def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
+def test_sglang_launch_matches_full_h200_tp2_conditions(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 48, "official")
+    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 64, "official")
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
@@ -80,11 +80,12 @@ def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
     client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
     configuration = 'speculation=(' + source.split('speculation=(', 1)[1].split('\nART=', 1)[0]
     harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + '\n' + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
-    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "SGLANG": "/image", "AIPERF": "/image", "MODEL": "/model", "N": "48", "R_PORT": "8000"}
+    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "SGLANG": "/image", "AIPERF": "/image", "MODEL": "/model", "N": "64", "R_PORT": "8000"}
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
     workers = [argv for argv in commands if "--exact" in argv]
-    assert len(workers) == 4 and all("--gres=gpu:4" in argv for argv in workers)
+    assert len(workers) == 6
+    assert sum(2 if "--gres=gpu:2" in argv else 4 for argv in workers) == 16
     archived = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/aspire-integration-argv.json").read_text())["archived_server_info"]
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     assert "jq" not in worker  # Not installed in the pinned image; parse on the host.
@@ -95,13 +96,20 @@ def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
         probe = subprocess.run(["bash", "-c", launch, "fixture", *args], env={**os.environ, "SLURM_SUBMIT_DIR": str(tmp_path)}, check=True, capture_output=True)
         shuffle, routing, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
         name, port = args[:2]
+        prefill = name.startswith("prefill")
+        expected_tp = 2 if prefill else 4
+        assert f"--gres=gpu:{expected_tp}" in argv
+        assert f"--cpus-per-task={16 if prefill else 32}" in argv
+        assert flags[flags.index("--tp-size") + 1] == str(expected_tp)
+        fixture_port = "30100" if prefill else "30200"
         assert host_ip == ("192.0.2.1" if name.startswith("prefill") else "192.0.2.2")
         observed[name] = argv[argv.index("-w") + 1]
-        for flag, key in {"--tp-size": "tp_size", "--ep-size": "ep_size", "--kv-cache-dtype": "kv_cache_dtype", "--nccl-port": "nccl_port", "--max-total-tokens": "max_total_tokens"}.items():
-            assert flags[flags.index(flag) + 1] == str(archived[port][key])
+        for flag, key in {"--ep-size": "ep_size", "--kv-cache-dtype": "kv_cache_dtype", "--nccl-port": "nccl_port", "--max-total-tokens": "max_total_tokens"}.items():
+            expected = str(int(port) + 1000) if key == "nccl_port" else str(archived[fixture_port][key])
+            assert flags[flags.index(flag) + 1] == expected
         assert flags[flags.index("--chunked-prefill-size") + 1] == "8192"
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
-        assert flags[flags.index("--max-running-requests") + 1] == ("48" if name.startswith("prefill") else "256")
+        assert flags[flags.index("--max-running-requests") + 1] == ("64" if name.startswith("prefill") else "256")
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
         assert flags[flags.index("--speculative-num-steps") + 1] == "3"
@@ -116,12 +124,12 @@ def test_sglang_launch_matches_full_aspire_conditions(tmp_path: Path) -> None:
             start = flags.index("--cuda-graph-bs-decode") + 1
             assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
-    assert observed == {"prefill-0": "node0", "prefill-1": "node0", "decode-0": "node1", "decode-1": "node1"}
+    assert observed == {"prefill-0": "node0", "prefill-1": "node0", "prefill-2": "node0", "prefill-3": "node0", "decode-0": "node1", "decode-1": "node1"}
     router_argv = next(argv for argv in commands if "sglang_router.launch_router" in argv)
-    assert router_argv.count("--prefill") == router_argv.count("--decode") == 2
+    assert router_argv.count("--prefill") == 4 and router_argv.count("--decode") == 2
     assert router_argv[router_argv.index("--prefill-policy") + 1] == "round_robin"
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
-    assert client_argv[-2:] == [str(tmp_path), "48"]
+    assert client_argv[-2:] == [str(tmp_path), "64"]
 
 
 @pytest.mark.parametrize("worker_status,expected", [(127, 127), (0, 1)])
