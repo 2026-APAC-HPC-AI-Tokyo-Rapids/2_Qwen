@@ -8,6 +8,7 @@
 #SBATCH -o runs/sglang-%j.out
 #SBATCH -e runs/sglang-%j.err
 #
+# 2026-10-09 framework diagnosis: SGLang reference plus bounded second-pass capture.
 # Actions copy of matched-settings-comparison; decoder controls are matched to vLLM. See README.md.
 #
 # 235B 8+8: 4x Prefill workers at TP=2, EP=1 + 2x Decode workers at TP=4, EP=4 = 16 GPUs.
