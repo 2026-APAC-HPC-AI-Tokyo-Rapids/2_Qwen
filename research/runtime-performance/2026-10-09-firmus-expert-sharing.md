@@ -31,3 +31,11 @@ The preceding generic H200 target-only screen at global4×4000 predicts347.676ms
 ## Acceptance and results
 
 Pending execution. Verify resolved server-info, both P DP ranks and NIXL handoff, unchanged image, scheduler terminal status, official-condition parser replay, per-request SLA, archived hashes and runtime cleanup. Raw throughput is not an eligible score when good-request fraction is below90%. Separate allocation/kernel/graph differences preclude attributing all differences from the old CUTLASS baseline to EP. Repeat a promising configuration before adoption; organizer full-set accuracy remains a separate gate.
+
+## Next candidate preparation: removing Attention TP too (not submitted)
+
+Fixed-source paths exist for world8/EP8/Attention DP8, giving Attention TP1 and MoE TP1. P-only changes introduce P Attention TP1→D TP4 head slicing in NIXL; the implementation exists, but prior EAGLE heterogeneous-TP transfer failed with an unresolved initial `NIXL_ERR_REMOTE_DISCONNECT`. Changing both roles avoids heterogeneous head slicing while introducing more simultaneous factors. Neither path is validated by the current trials.
+
+Keep aggregate budgets distinct from per-DP settings. Current aggregate chunk16384 becomes local2048 at DP8; keeping local8192 would raise aggregate chunk to65536. A fixed per-DP KV pool allocates four times more KV bytes/rank at Attention TP1 than TP4. This is not an unavoidable penalty at fixed global capacity: P pool32768×DP8 preserves the current131072×DP2 token budget, and D pool65536×DP8 preserves the current262144×two-independent-workers budget. Target KV bytes/rank then remain approximately2.94/5.88 GiB for P/D, respectively, before extra buffers and reservations. DP-local fragmentation, admission reserve and imbalance still require measurement. EAGLE draft TP1 also adds weight replication.
+
+For a prospective DeepEP low-latency Decode candidate, the default dispatch capacity128 is token rows, not requests. EAGLE verify width4 consumes128 rows at local batch32; local64 needs256 before graph padding. Do not copy the existing graph bucket list or request limit without checking this capacity. No extra GPU jobs were submitted for this TP1 preparation.
