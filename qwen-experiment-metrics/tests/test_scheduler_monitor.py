@@ -46,6 +46,17 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("\nterminal\n", result.stdout)
 
+    def test_firmus_pending_without_state_survives_tar_failure(self):
+        result = self.run_monitor(2, 0, "scheduler_job_pending=22003")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("terminal", result.stdout)
+
+    def test_ssh_disconnect_stderr_survives_tar_failure(self):
+        result = self.run_monitor(2, 0, "'Connection closed by 150.230.206.3 port 2026' >&2")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("scheduler_monitor_connection_failed status=2", result.stderr)
+        self.assertIn("terminal", result.stdout)
+
 
     def test_connection_outage_budget_follows_last_observed_state(self):
         for state, next_state, limit in [('Q', 'Q', 1800), ('R', 'R', 300), ('Q', 'R', 1800)]:

@@ -1,0 +1,98 @@
+name: Recover existing Firmus profiling jobs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  recover:
+    # These rows identify already-submitted immutable jobs; no condition is changed
+    # and no sbatch command is run. Remove this campaign-only workflow afterward.
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - job: '22003'
+            original_run: '37886769411'
+            commit: edc60ba
+            runtime: /scratch/home/ACCOUNT/qwen/runs/pd-37886769411-1.LLQ9cdPzzO
+          - job: '22004'
+            original_run: '37886786534'
+            commit: e9624ed
+            runtime: /scratch/home/ACCOUNT/qwen/runs/pd-37886786534-1.3NBwI0YUKA
+          - job: '22005'
+            original_run: '37886821128'
+            commit: 3e0a538
+            runtime: /scratch/home/ACCOUNT/qwen/runs/pd-37886821128-1.XKCFhp4Y5p
+          - job: '22044'
+            original_run: '37888308774'
+            commit: e3bb75e
+            runtime: /scratch/home/ACCOUNT/qwen/runs/pd-37888308774-3.biHWgtm9Ss
+    env:
+      RUNTIME_DIR: ${{ matrix.runtime }}
+      SLURM_JOB_ID: ${{ matrix.job }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify original job provenance
+        shell: firmus-shell --github-shell {0}
+        run: jq -e --arg run '${{ matrix.original_run }}' --arg commit '${{ matrix.commit }}' '.workflow_run_id == $run and (.commit | startswith($commit))' "${RUNTIME_DIR}/source/provenance.json"
+      - name: Monitor existing Slurm job
+        id: monitor
+        shell: bash
+        run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-qwen-job.sh
+      - name: Collect original logs and results
+        id: collect
+        if: always()
+        shell: home-lab-shell {0}
+        run: |
+          destination="${RUNNER_TEMP}/qwen-firmus-${SLURM_JOB_ID}"
+          install -d -m 0755 "${destination}"
+          for part in logs profile results source; do firmus-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"; done
+          if firmus-shell "test -e '${RUNTIME_DIR}/run-success'"; then firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; fi
+      - uses: actions/upload-artifact@v7
+        id: upload
+        if: always() && steps.collect.outcome == 'success'
+        with:
+          name: qwen-firmus-${{ matrix.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qwen-firmus-${{ matrix.job }}
+          if-no-files-found: error
+      - uses: actions/setup-python@v6
+        if: always() && steps.upload.outcome == 'success'
+        with:
+          python-version: '3.12'
+      - name: Summarize recovered original run
+        if: always() && steps.upload.outcome == 'success'
+        shell: bash
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python scripts/summarize-firmus-run.py "${RUNNER_TEMP}/qwen-firmus-${SLURM_JOB_ID}" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
+      - name: Clean only a terminal collected runtime
+        if: always() && steps.upload.outcome == 'success'
+        shell: firmus-shell --github-shell {0}
+        run: if [[ -z "$(squeue --noheader --jobs="${SLURM_JOB_ID}")" ]]; then rm -rf -- "${RUNTIME_DIR:?}"; else echo 'Job remains active; preserving its runtime.'; fi
+  archive:
+    needs: recover
+    if: always()
+    runs-on: [self-hosted, home-lab]
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: qwen-*-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Archive and checksum recovered evidence
+        shell: home-lab-shell {0}
+        run: |
+          destination="/srv/qwen-artifacts/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+          test -n "$(find artifacts -type f -print -quit)"
+          test ! -e "${destination}"
+          install -d -m 0750 "${destination}"
+          cp -a artifacts/. "${destination}/"
+          (cd "${destination}" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS)
+          printf 'Archived recovered evidence at %s\n' "${destination}" >>"${GITHUB_STEP_SUMMARY}"
