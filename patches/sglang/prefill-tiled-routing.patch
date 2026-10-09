@@ -1,0 +1,87 @@
+--- a/python/sglang/srt/layers/moe/cutlass_moe.py
++++ b/python/sglang/srt/layers/moe/cutlass_moe.py
+@@ -7,6 +7,8 @@
+ 
+ from sglang.srt.runtime_context import get_parallel, get_server_args
+ from sglang.srt.utils import is_cuda, is_sm90_supported, is_sm100_supported
++
++_prefill_tiled_routing = os.environ.get("SGLANG_PREFILL_TILED_ROUTING", "0") == "1"
+ 
+ _prefill_fused_shuffle = os.environ.get("SGLANG_PREFILL_FUSED_FP8_SHUFFLE", "0") == "1"
+ 
+@@ -141,6 +143,9 @@
+     topk = topk_ids.size(1)
+     device = a.device
+ 
++    if m == 0:
++        return output if output is not None else torch.empty_like(a)
++
+     a_map = torch.empty((topk_ids.numel()), dtype=torch.int32, device=device)
+     c_map = torch.empty((topk_ids.numel()), dtype=torch.int32, device=device)
+ 
+@@ -182,18 +187,39 @@
+             (num_experts + 1,), dtype=torch.int32, device=device
+         )
+ 
+-    prepare_moe_input(
+-        topk_ids,
+-        expert_offsets,
+-        problem_sizes1,
+-        problem_sizes2,
+-        a_map,
+-        c_map,
+-        num_experts,
+-        n,
+-        k,
+-        blockscale_offsets,
+-    )
++    if (
++        _prefill_tiled_routing
++        and is_sm90_supported()
++        and get_server_args().disaggregation_mode == "prefill"
++        and get_parallel().moe_ep_size == 1
++        and a.dtype == torch.bfloat16
++        and use_fp8_blockscale
++        and not use_mxfp8
++        and num_experts == 128
++        and topk == 8
++        and k == 4096
++        and n in (384, 768)
++        and m <= 8192
++        and topk_ids.dtype == torch.int32
++        and topk_ids.is_contiguous()
++    ):
++        # EP1 production topk IDs are all 0..127. Invalid IDs are not supported.
++        from sglang.kernels.ops.moe.prefill_routing import prepare_tiled_routing
++
++        prepare_tiled_routing(topk_ids, expert_offsets, problem_sizes1, problem_sizes2, a_map, c_map, n)
++    else:
++        prepare_moe_input(
++            topk_ids,
++            expert_offsets,
++            problem_sizes1,
++            problem_sizes2,
++            a_map,
++            c_map,
++            num_experts,
++            n,
++            k,
++            blockscale_offsets,
++        )
+ 
+     if use_mxfp8 and es_up:
+         rep_a = shuffle_rows(a, a_map, (m * topk, k))
+--- /dev/null
++++ b/python/sglang/kernels/ops/moe/prefill_routing.py
+@@ -0,0 +1,11 @@
++"""Prebuilt CUDA integer routing helper; EP1 valid IDs only, no runtime compile."""
++import torch
++import apac_prefill_moe_routing
++
++
++def prepare_tiled_routing(ids, offsets, p1, p2, a_map, c_map, intermediate_size):
++    # Fixed allocation sizes depend only on host shape, no GPU counts.item().
++    tiles = (ids.numel() + 511) // 512
++    counts = torch.empty((tiles, 128), dtype=torch.int32, device=ids.device)
++    tile_offsets = torch.empty_like(counts)
++    apac_prefill_moe_routing.prepare(ids, offsets, p1, p2, a_map, c_map, counts, tile_offsets, intermediate_size)

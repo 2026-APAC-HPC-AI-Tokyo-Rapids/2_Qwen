@@ -57,9 +57,23 @@ sglang_commit="$(git -C "${source_dir}" rev-parse HEAD)"
 git -C "${source_dir}" diff --quiet
 git -C "${source_dir}" diff --cached --quiet
 
+# Apply the measured precision-preserving bundle plus the routing helper to the private clone.
+sglang_patch="patches/sglang/prefill-cutlass-silu-quant.patch"
+draft_head_patch="patches/sglang/draft-extend-selected-head-rows.patch"
+fused_shuffle_patch="patches/sglang/prefill-fp8-scale-row-shuffle.patch"
+routing_patch="patches/sglang/prefill-tiled-routing.patch"
+# Later patches depend on additions made by earlier patches; check each updated private tree.
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}"; do
+  git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${patch}"
+  git -C "${source_dir}" apply "${GITHUB_WORKSPACE}/${patch}"
+done
+
 cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/build-nccl-tests.sh" "${GITHUB_WORKSPACE}/containers/install-accelerator-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-python-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-sglang-source.sh" "${GITHUB_WORKSPACE}/containers/install-system-toolchain.sh" "${context}/containers/"
 cp --no-preserve=ownership,xattr "${source_dir}/LICENSE" "${source_dir}/README.md" "${source_dir}/python/pyproject.toml" "${context}/sglang-project-metadata/python/"
 cp -a --no-preserve=ownership,xattr "${source_dir}" "${context}/sglang-source"
+cp "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.sh" "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.py" "${context}/containers/"
+install -d "${context}/prefill-moe-routing"
+cp "${GITHUB_WORKSPACE}/kernels/prefill/moe_routing.cu" "${context}/prefill-moe-routing/"
 rm -rf -- "${context}/sglang-source/.git"
 printf '%s\n' "${sglang_commit}" >"${context}/sglang-commit.txt"
 
@@ -68,9 +82,22 @@ base_manifest_sha256="$(skopeo inspect --raw "docker://${base_reference}" | tee 
 qwen_object_format="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-object-format)"
 sglang_object_format="$(git -C "${source_dir}" rev-parse --show-object-format)"
 dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/Dockerfile)"
-build_steps_json="$(find "${GITHUB_WORKSPACE}/containers" -maxdepth 1 -type f -name '*.sh' -print | sort | while read -r build_step; do jq -cn --arg path "${build_step#"${GITHUB_WORKSPACE}/"}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${build_step}")" '{path:$path,blob_oid:$oid}'; done | jq -s '.')"
+build_steps_json="$(sed -n 's%^COPY \(containers/[^ ]*\.sh\) .*%\1%p' "${GITHUB_WORKSPACE}/containers/Dockerfile" | while read -r build_step; do build_step="${GITHUB_WORKSPACE}/${build_step}"; jq -cn --arg path "${build_step#"${GITHUB_WORKSPACE}/"}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${build_step}")" '{path:$path,blob_oid:$oid}'; done | jq -s '.')"
 patches_json='[]'
-jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITHUB_SHA}" --arg sglang_object_format "${sglang_object_format}" --arg sglang_commit "${sglang_commit}" --arg dockerfile_blob_oid "${dockerfile_blob_oid}" --arg base_reference "${base_reference}" --arg base_manifest_sha256 "${base_manifest_sha256}" --argjson build_steps "${build_steps_json}" --argjson patches "${patches_json}" '{schema_version:"oci-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"container_build_definition",object_hash_algorithm:$qwen_object_format,oid:$qwen_commit},{repository_id:"apac2026-sglang",commit_role:"sglang_source",object_hash_algorithm:$sglang_object_format,oid:$sglang_commit}],recipe:{path:"containers/Dockerfile",blob_oid:$dockerfile_blob_oid,build_steps:$build_steps},applied_patches:$patches,base_oci:{reference:$base_reference,manifest_sha256:$base_manifest_sha256}}' >"${context}/apac-manifest.json"
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}"; do
+  case "${patch}" in
+    "${draft_head_patch}") targets=(python/sglang/srt/speculative/eagle_worker_v2.py python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py) ;;
+    "${fused_shuffle_patch}") targets=(python/sglang/srt/layers/moe/cutlass_moe.py python/sglang/kernels/ops/moe/prefill_fp8_row_shuffle.py) ;;
+    "${routing_patch}") targets=(python/sglang/srt/layers/moe/cutlass_moe.py python/sglang/kernels/ops/moe/prefill_routing.py) ;;
+    *) targets=(python/sglang/srt/layers/moe/cutlass_moe.py) ;;
+  esac
+  targets_json='[]'
+  for target in "${targets[@]}"; do
+    targets_json="$(jq --arg path "${target}" --arg blob_oid "$(git -C "${source_dir}" hash-object "${target}")" --arg sha256 "$(sha256sum "${source_dir}/${target}" | awk '{print $1}')" '. + [{path:$path,blob_oid:$blob_oid,sha256:$sha256}]' <<<"${targets_json}")"
+  done
+  patches_json="$(jq --arg path "${patch}" --arg blob_oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${patch}")" --arg sha256 "$(sha256sum "${GITHUB_WORKSPACE}/${patch}" | awk '{print $1}')" --argjson targets "${targets_json}" '. + [{path:$path,blob_oid:$blob_oid,sha256:$sha256,targets:$targets}]' <<<"${patches_json}")"
+done
+jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITHUB_SHA}" --arg sglang_object_format "${sglang_object_format}" --arg sglang_commit "${sglang_commit}" --arg dockerfile_blob_oid "${dockerfile_blob_oid}" --arg base_reference "${base_reference}" --arg base_manifest_sha256 "${base_manifest_sha256}" --arg routing_source_sha256 "$(sha256sum "${GITHUB_WORKSPACE}/kernels/prefill/moe_routing.cu" | awk '{print $1}')" --arg routing_build_sha256 "$(sha256sum "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.py" | awk '{print $1}')" --argjson build_steps "${build_steps_json}" --argjson patches "${patches_json}" '{schema_version:"oci-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"container_build_definition",object_hash_algorithm:$qwen_object_format,oid:$qwen_commit},{repository_id:"apac2026-sglang",commit_role:"sglang_source",object_hash_algorithm:$sglang_object_format,oid:$sglang_commit}],recipe:{path:"containers/Dockerfile",blob_oid:$dockerfile_blob_oid,build_steps:$build_steps},applied_patches:$patches,local_kernels:{path:"kernels/prefill/moe_routing.cu",sha256:$routing_source_sha256,build_sha256:$routing_build_sha256,architecture:"sm_90",translation_units:1,gemm_templates:0},base_oci:{reference:$base_reference,manifest_sha256:$base_manifest_sha256}}' >"${context}/apac-manifest.json"
 
 buildah --root "${storage_root}" --runroot "${run_root}" bud --isolation chroot --network host --layers --cache-from "${BUILD_CACHE_REPOSITORY}" --cache-to "${BUILD_CACHE_REPOSITORY}" --cache-ttl 336h --file "${context}/containers/Dockerfile" --tag "${image}" "${context}" 2>&1 | tee "${BUILD_DIR}/logs/buildah.log"
 test_container="$(buildah --root "${storage_root}" --runroot "${run_root}" from "${image}")"
