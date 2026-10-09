@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J sglang-dpool262144-c96
+#SBATCH -J sglang-pchunk16384-c96
 #SBATCH -p hpcai
 #SBATCH -N 2
 #SBATCH -t 00:17:00
@@ -8,7 +8,7 @@
 #SBATCH --no-requeue
 #SBATCH -o runs/sglang-%j.out
 #SBATCH -e runs/sglang-%j.err
-# Keep the e481de9 EAGLE3 stack; increase only Decode KV capacity and offered load.
+# Keep the f084943 Decode pool and concurrency; increase Prefill chunk capacity.
 # One full benchmark allocation, with the official 60/120/30 client.
 set -euo pipefail
 
@@ -87,8 +87,10 @@ export SGLANG_HOST_IP=$5
 shift 5
 role=${name%%-*}
 max_total_tokens=131072
+chunked_prefill_size=8192
 if [[ "$role" == decode ]]; then max_total_tokens=262144; fi
 if [[ "$role" == prefill ]]; then
+  chunked_prefill_size=16384
   export SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1 SGLANG_PREFILL_TILED_ROUTING=1
 fi
 UCX_IB=$(for d in /sys/class/infiniband/*; do
@@ -104,7 +106,7 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 echo "$name host=$(hostname) ip=$SGLANG_HOST_IP hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp shuffle=${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0} routing=${SGLANG_PREFILL_TILED_ROUTING:-0}"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
-exec /opt/sglang/venv/bin/python -m sglang.launch_server --model-path "$model" --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "$tp" --ep-size 1 --mem-fraction-static 0.90 --max-total-tokens "$max_total_tokens" --chunked-prefill-size 8192 --kv-cache-dtype fp8_e4m3 --attention-backend fa3 --nccl-port "$((port + 1000))" --disaggregation-mode "$role" --disaggregation-transfer-backend nixl "$@" --host 0.0.0.0 --port "$port"
+exec /opt/sglang/venv/bin/python -m sglang.launch_server --model-path "$model" --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "$tp" --ep-size 1 --mem-fraction-static 0.90 --max-total-tokens "$max_total_tokens" --chunked-prefill-size "$chunked_prefill_size" --max-prefill-tokens 16384 --kv-cache-dtype fp8_e4m3 --attention-backend fa3 --nccl-port "$((port + 1000))" --disaggregation-mode "$role" --disaggregation-transfer-backend nixl "$@" --host 0.0.0.0 --port "$port"
 EOF
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" --enable-symm-mem --disaggregation-bootstrap-port 9000 --max-running-requests "${N}" --moe-runner-backend cutlass >"${ART}/prefill-0.log" 2>&1 &
@@ -129,7 +131,7 @@ echo "READY after ${SECONDS}s"
 
 while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"
-  jq -e --arg role "${worker%%-*}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.tp_size == 4 and .ep_size == 1 and .kv_cache_dtype == "fp8_e4m3" and .context_length == 8192 and .max_total_tokens == (if $role == "decode" then 262144 else 131072 end) and .chunked_prefill_size == 8192 and .attention_backend == "fa3" and .speculative_algorithm == "EAGLE3" and .speculative_draft_model_path == "/draft" and .speculative_num_steps == $config[0].speculation.steps and .speculative_num_draft_tokens == $config[0].speculation.draft_tokens and .speculative_eagle_topk == 1 and .speculative_draft_model_quantization == null and .max_running_requests == (if $role == "prefill" then $config[0].concurrency else 256 end) and (if $role == "prefill" then .enable_symm_mem == true and .moe_runner_backend == "cutlass" else .enable_symm_mem == false and .cuda_graph_bs_decode == $config[0].decode_cuda_graph_bs end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
+  jq -e --arg role "${worker%%-*}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.tp_size == 4 and .ep_size == 1 and .kv_cache_dtype == "fp8_e4m3" and .context_length == 8192 and .max_total_tokens == (if $role == "decode" then 262144 else 131072 end) and .chunked_prefill_size == (if $role == "prefill" then 16384 else 8192 end) and .max_prefill_tokens == 16384 and .attention_backend == "fa3" and .speculative_algorithm == "EAGLE3" and .speculative_draft_model_path == "/draft" and .speculative_num_steps == $config[0].speculation.steps and .speculative_num_draft_tokens == $config[0].speculation.draft_tokens and .speculative_eagle_topk == 1 and .speculative_draft_model_quantization == null and .max_running_requests == (if $role == "prefill" then $config[0].concurrency else 256 end) and (if $role == "prefill" then .enable_symm_mem == true and .moe_runner_backend == "cutlass" else .enable_symm_mem == false and .cuda_graph_bs_decode == $config[0].decode_cuda_graph_bs end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
 done <"${ROOT}/source/worker-endpoints.tsv"
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1
 echo "AIPERF ok"

@@ -64,7 +64,7 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
-def test_sglang_launch_matches_decode_pool_and_load_candidate(tmp_path: Path) -> None:
+def test_sglang_launch_matches_prefill_chunk_and_decode_pool_candidate(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 96, "official")
@@ -100,7 +100,8 @@ def test_sglang_launch_matches_decode_pool_and_load_candidate(tmp_path: Path) ->
         for flag, key in {"--tp-size": "tp_size", "--ep-size": "ep_size", "--kv-cache-dtype": "kv_cache_dtype", "--nccl-port": "nccl_port"}.items():
             assert flags[flags.index(flag) + 1] == str(archived[port][key])
         assert flags[flags.index("--max-total-tokens") + 1] == ("131072" if name.startswith("prefill") else "262144")
-        assert flags[flags.index("--chunked-prefill-size") + 1] == "8192"
+        assert flags[flags.index("--chunked-prefill-size") + 1] == ("16384" if name.startswith("prefill") else "8192")
+        assert flags[flags.index("--max-prefill-tokens") + 1] == "16384"
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
         assert flags[flags.index("--max-running-requests") + 1] == ("96" if name.startswith("prefill") else "256")
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
