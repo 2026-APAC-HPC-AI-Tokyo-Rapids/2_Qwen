@@ -1,6 +1,14 @@
-# GenkaiにおけるQwen 3.5 benchmarkの調査記録（旧構成）
+# 実行性能の調査記録
 
-この記録は、実モデルとSIFを用いていた従来経路の履歴である。現行のOCI / Enrootダミー実行経路については [OCI / Enroot移行記録](../container-runtime-migration.md) を参照のこと。
+現行Qwen3-235B-A22B・公式4000/200タスクの調査:
+
+- [2026-10-09: AISimulateの評価範囲、ベンチの妥当性、DP/EP/PP/TP/CPの再評価](2026-10-09-simulation-parallelism.md)
+- [2026-10-09: ASPIRE H100 / Firmus H200の容量・負荷検証](2026-10-09-capacity-load.md)
+- [並列構成の容量・計算量・通信量の概算](2026-10-09-parallelism-bounds.json)
+
+## GenkaiにおけるQwen 3.5 benchmarkの調査記録（旧構成）
+
+以下は、実モデルとSIFを用いていた従来経路の履歴であり、現行の性能条件ではない。その後の移行経緯は [OCI / Enroot移行記録](../container-runtime-migration.md) を参照のこと。
 
 本ディレクトリは、玄界のGPU計算ノード上でQwen 3.5をSGLangにより実行し、各種変更が性能に与える影響を厳密に比較するための固定条件および運用手順を記録している。
 
