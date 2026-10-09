@@ -1,14 +1,20 @@
 name: Recover existing Firmus profiling jobs
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [codex/firmus-framework-experiments]
+    paths: [.github/workflows/firmus-profile-recovery.yml]
 
 permissions:
   actions: read
   contents: read
 
 jobs:
+  validate:
+    uses: ./.github/workflows/validate.yml
   recover:
+    needs: validate
+    if: contains(github.event.head_commit.message, '[recover-firmus]')
     # These rows identify already-submitted immutable jobs; no condition is changed
     # and no sbatch command is run. Remove this campaign-only workflow afterward.
     runs-on: [self-hosted, home-lab]
@@ -79,7 +85,7 @@ jobs:
         run: if [[ -z "$(squeue --noheader --jobs="${SLURM_JOB_ID}")" ]]; then rm -rf -- "${RUNTIME_DIR:?}"; else echo 'Job remains active; preserving its runtime.'; fi
   archive:
     needs: recover
-    if: always()
+    if: always() && needs.recover.result != 'skipped'
     runs-on: [self-hosted, home-lab]
     steps:
       - uses: actions/download-artifact@v8
