@@ -30,6 +30,8 @@ The preceding generic H200 target-only screen at global4×4000 predicts347.676ms
 
 ## Acceptance and results
 
+Scoring uses pinned AIPerf0.12.0 and the repository parser implementing the published competition conditions; the parser itself is not an organizer-supplied binary. Command, export, provenance and request accounting are checked. Organizer full-set accuracy remains a separate gate.
+
 Slurm21977 (EP8 native) completed its benchmark and ended FAILED1:0 at the SLA gate after9m52s on g1/g4. Actions37877573181 is terminal failure with successful artifact recovery, NAS archival and runtime cleanup. EP2 native21978 also completed and failed only the SLA gate after9m58s, with successful Actions artifact recovery and cleanup. EP8 DeepEP21979 remains pending resources at05:07 UTC. Scheduler priorities change with allocation history; submission order is not a start-time guarantee.
 
 Verify resolved server-info, both P DP ranks and NIXL handoff, unchanged image, scheduler terminal status, official-condition parser replay, per-request SLA, archived hashes and runtime cleanup. Raw throughput is not an eligible score when good-request fraction is below90%. Separate allocation/kernel/graph differences preclude attributing all differences from the old CUTLASS baseline to EP. Repeat a promising configuration before adoption; organizer full-set accuracy remains a separate gate.
