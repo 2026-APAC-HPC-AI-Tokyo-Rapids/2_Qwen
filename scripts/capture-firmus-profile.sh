@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Capture SGLang through benchmark completion; retain the five-second vLLM window.
+# Capture the same bounded steady-state window for both frameworks, after a normal pass.
 set -euo pipefail
 runtime_dir=${1:?runtime directory required}
 framework=$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${runtime_dir}/source/firmus-framework.json")
@@ -27,7 +27,7 @@ trap cleanup_capture EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 deadline=$((SECONDS + 600))
-while ! grep -Fq 'Phase profiling (profiling) started' "${runtime_dir}/logs/aiperf.log"; do (( SECONDS < deadline )); sleep 1; done
+while ! grep -Fq 'Phase profiling (profiling) started' "${runtime_dir}/profile/client/aiperf.log"; do (( SECONDS < deadline )); sleep 1; done
 sleep 5
 start_requested=true
 pids=()
@@ -43,15 +43,7 @@ start_status=0
 for pid in "${pids[@]}"; do wait "${pid}" || start_status=1; done
 [[ "${start_status}" -eq 0 ]] || exit 1
 printf 'capture_active utc=%s\n' "$(date -u +%FT%T.%NZ)"
-if [[ "${framework}" == sglang ]]; then
-  deadline=$((SECONDS + 180))
-  while ! grep -Fq 'Phase profiling (profiling) complete |' "${runtime_dir}/logs/aiperf.log"; do
-    (( SECONDS < deadline )) || exit 1
-    sleep 1
-  done
-else
-  sleep 5
-fi
+sleep 10
 stop_requested=true
 printf 'stop_requested utc=%s\n' "$(date -u +%FT%T.%NZ)"
 stop_workers stop

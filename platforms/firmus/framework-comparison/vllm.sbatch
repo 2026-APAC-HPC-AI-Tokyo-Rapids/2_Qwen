@@ -74,7 +74,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 if [[ "${PROFILE}" == true ]]; then
   "${ROOT}/nsys/bin/nsys" --version >"${ROOT}/profile/nsys-version.txt"
-  printf 'Instrumented reference run; score is not an adoption measurement. Capture: CUDA/NVTX/OS runtime, five seconds after warmup.\n' >"${ROOT}/profile/interpretation.txt"
+  printf 'Capture: identical ten-second CPU-runtime/CUDA/NVTX window after a separate normal reference pass and second-pass warmup. results/ is the normal pass; profile/client/ is diagnostic only.\n' >"${ROOT}/profile/interpretation.txt"
   for worker in 0 1 2 3; do printf 'prefill-%s\t%s\t%s\t2\n' "${worker}" "${HEAD_IP}" "$((30100 + worker))"; done >"${ROOT}/source/worker-endpoints.tsv"
   for worker in 0 1; do printf 'decode-%s\t%s\t%s\t4\n' "${worker}" "${TAIL_IP}" "$((30200 + worker))"; done >>"${ROOT}/source/worker-endpoints.tsv"
 fi
@@ -148,11 +148,15 @@ worker_pids+=("$!")
 wait_http "http://${HEAD_IP}:${R_PORT}/v1/models"
 echo "READY after ${SECONDS}s"
 
-if [[ "${PROFILE}" == true ]]; then "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" >"${ART}/profile-capture.log" 2>&1 & profile_capture_pid=$!; fi
+
 srun --overlap -N1 -n1 -w "${HEAD}" --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" /opt/sglang/venv/bin/aiperf profile --model qwen --tokenizer "/scratch/home/apacsc14/qwen/framework-comparison/sources/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e" --url "http://127.0.0.1:${R_PORT}" --endpoint-type chat --endpoint /v1/chat/completions --streaming --concurrency "${N}" --warmup-duration 20 --benchmark-duration 60 --benchmark-grace-period 15 --synthetic-input-tokens-mean "${ISL}" --synthetic-input-tokens-stddev 0 --output-tokens-mean "${OSL}" --output-tokens-stddev 0 --num-dataset-entries 12800 --random-seed 2026 --cache-bust first_turn_prefix --extra-inputs "min_tokens:${OSL}" --extra-inputs "max_tokens:${OSL}" --extra-inputs "ignore_eos:true" --extra-inputs "temperature:0.0" --extra-inputs "repetition_penalty:1.0" -H "Accept: text/event-stream" --artifact-dir "${ROOT}/results" >"${ART}/aiperf.log" 2>&1
 echo "AIPERF ok"
 srun --overlap -N1 -n1 -w "${HEAD}" --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" /opt/sglang/venv/bin/python "${ROOT}/scripts/parse-firmus-reference-result.py" "${ROOT}/results" --concurrency "${N}"
 if [[ "${PROFILE}" == true ]]; then
+  mkdir -p "${ROOT}/profile/client"
+  "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" >"${ART}/profile-capture.log" 2>&1 &
+  profile_capture_pid=$!
+  srun --overlap -N1 -n1 -w "${HEAD}" --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" /opt/sglang/venv/bin/aiperf profile --model qwen --tokenizer "/scratch/home/apacsc14/qwen/framework-comparison/sources/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e" --url "http://127.0.0.1:${R_PORT}" --endpoint-type chat --endpoint /v1/chat/completions --streaming --concurrency "${N}" --warmup-duration 20 --benchmark-duration 60 --benchmark-grace-period 15 --synthetic-input-tokens-mean "${ISL}" --synthetic-input-tokens-stddev 0 --output-tokens-mean "${OSL}" --output-tokens-stddev 0 --num-dataset-entries 12800 --random-seed 2026 --cache-bust first_turn_prefix --extra-inputs "min_tokens:${OSL}" --extra-inputs "max_tokens:${OSL}" --extra-inputs "ignore_eos:true" --extra-inputs "temperature:0.0" --extra-inputs "repetition_penalty:1.0" -H "Accept: text/event-stream" --artifact-dir "${ROOT}/profile/client" >"${ROOT}/profile/client/aiperf.log" 2>&1
   wait "${profile_capture_pid}"
   profile_capture_pid=
   deadline=$((SECONDS + 180))
