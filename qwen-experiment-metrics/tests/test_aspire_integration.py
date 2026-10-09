@@ -61,6 +61,8 @@ def test_worker_argv_matches_adopted_prefill_combination(platform: str, nodes: i
         graph_bs = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())["decode_cuda_graph_bs"]
         for worker in expected:
             if worker["argv"][worker["argv"].index("--disaggregation-mode") + 1] == "decode":
+                # The saved fixture remains the archived baseline; only this trial changes D capacity.
+                worker["argv"][worker["argv"].index("--max-total-tokens") + 1] = "196608"
                 worker["argv"] += ["--cuda-graph-bs-decode", *map(str, graph_bs)]
             else:
                 worker["argv"] += ["--enable-symm-mem"]
@@ -69,12 +71,12 @@ def test_worker_argv_matches_adopted_prefill_combination(platform: str, nodes: i
     assert capture_workers(source, platform, nodes, tmp_path, profile) == expected
 
 
-def test_adopted_graph_preserves_archived_buckets_and_client_condition() -> None:
+def test_trial_preserves_archived_graph_buckets_and_uses_c64() -> None:
     config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
     # Audited decode default at SGLang fc275674; only two missing buckets are added.
     archived_bs = [*range(1, 9), *range(10, 33, 2), *range(40, 65, 4), *range(72, 257, 8), *range(272, 513, 16)]
     assert config["decode_cuda_graph_bs"] == sorted([*archived_bs, 13, 15])
-    assert config["concurrency"] == 48
+    assert config["concurrency"] == 64
 
 
 @pytest.mark.parametrize("platform", ["aspire2ap", "firmus", "genkai"])

@@ -143,8 +143,9 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
 def test_firmus_pd_bounds_each_workers_kv_capacity() -> None:
     submission = (ROOT / "submission/run/submit.sbatch").read_text()
 
-    expected_arg = "--max-total-tokens 131072"
-    assert expected_arg in submission
+    assert "local max_total_tokens=131072" in submission
+    assert '--max-total-tokens "${max_total_tokens}"' in submission
+    # test_aspire_integration executes worker argv for every platform, including Firmus.
 
 
 def test_submission_script_keeps_profile_data_separate() -> None:
