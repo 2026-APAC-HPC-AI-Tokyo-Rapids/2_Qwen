@@ -65,6 +65,9 @@ def test_worker_argv_matches_adopted_prefill_combination(platform: str, nodes: i
         third_prefill = json.loads(archived["30100"].replace("prefill-0/", "prefill-2/").replace('"30100"', '"30102"').replace('"31100"', '"31102"').replace('"9000"', '"9002"'))
         single_decode = json.loads(archived["30201"].replace("decode-1/", "decode-0/").replace('"30201"', '"30200"').replace('"31201"', '"31200"'))
         single_decode["argv"][single_decode["argv"].index("--max-total-tokens") + 1] = str(config["decode_max_total_tokens"])
+        # This trial also runs the single large-batch decode worker on native CUTLASS MoE.
+        kv_index = single_decode["argv"].index("--kv-cache-dtype") + 2
+        single_decode["argv"][kv_index:kv_index] = ["--moe-runner-backend", "cutlass"]
         expected = [json.loads(archived["30100"]), json.loads(archived["30101"]), third_prefill, single_decode]
         for worker in expected:
             if worker["argv"][worker["argv"].index("--disaggregation-mode") + 1] == "decode":
@@ -81,7 +84,7 @@ def test_adopted_graph_preserves_archived_buckets_and_client_condition() -> None
     # Audited decode default at SGLang fc275674; only two missing buckets are added.
     archived_bs = [*range(1, 9), *range(10, 33, 2), *range(40, 65, 4), *range(72, 257, 8), *range(272, 513, 16)]
     assert config["decode_cuda_graph_bs"] == sorted([*archived_bs, 13, 15])
-    assert config["concurrency"] == 88
+    assert config["concurrency"] == 72
     assert config["decode_max_total_tokens"] == 393216
 
 
