@@ -30,9 +30,21 @@ The preceding generic H200 target-only screen at global4×4000 predicts347.676ms
 
 ## Acceptance and results
 
-Slurm jobs21977 (EP8 native),21978 (EP2 native),21979 (EP8 DeepEP) were pending resources at03:43 UTC. Both available H200 nodes were occupied; scheduler priorities also placed other pending jobs ahead. Submission order is not a start-time guarantee. No GPU measurement is available yet.
+Slurm21977 (EP8 native) completed its benchmark and ended FAILED1:0 at the SLA gate after9m52s on g1/g4. Actions37877573181 is terminal failure with successful artifact recovery, NAS archival and runtime cleanup. Jobs21978 (EP2 native) and21979 (EP8 DeepEP) remain pending resources at04:30 UTC. Scheduler priorities change with allocation history; submission order is not a start-time guarantee.
 
 Verify resolved server-info, both P DP ranks and NIXL handoff, unchanged image, scheduler terminal status, official-condition parser replay, per-request SLA, archived hashes and runtime cleanup. Raw throughput is not an eligible score when good-request fraction is below90%. Separate allocation/kernel/graph differences preclude attributing all differences from the old CUTLASS baseline to EP. Repeat a promising configuration before adoption; organizer full-set accuracy remains a separate gate.
+
+### EP8 native: execution succeeds, SLA fails
+
+The client completed1183 requests with no errors;92 passed joint SLA (7.7768%). Eligible competition score is0. Uncapped joint-good output is134.326335 tok/s; raw input/output34424.364725/1727.246861 tok/s. TTFT mean9089.531ms/p99 16567.147ms; ITL mean6.23405ms/p99 8.03101ms. Accounting duration136.977014s includes the measured drain. The first failing command is `source/source/official-aiperf.sh:18`, parser `--require-eligible`, with `good_request_fraction is below 0.90`; there is no observed CUDA/NIXL fatal error.
+
+Resolved server-info confirms EP8/ADP2/Attention TP4/MoETP1, native Triton and the requested pools. Live bootstrap HTTP advertises Attention TP4 and DP2, both DP entries, and follow-bootstrap-room routing. Both DP ranks processed real requests and both Decode workers produced responses. P graph initialization left approximately97.46GB per GPU free; memory availability did not translate into higher measured throughput.
+
+H200/Triton3.6 lacks P config files `moe_runner/triton_utils/configs/triton_3_6_0/E=16,N=1536,device_name=NVIDIA_H200,dtype=fp8_w8a8,block_shape=[128, 128]{,_down}.json`; the runner uses defaults. Fixed-source fallback parameters are BM64/BN128/BK128/GROUP32/warps4/stages3. This is a concrete tuning gap, not evidence by itself that the kernel accounts for the entire slowdown. Do not generalize this native result to tuned Triton, CUTLASS EP or DeepEP/DeepGEMM.
+
+A90-second log window12:24:00–12:25:30 UTC+8 lies inside raw profiling request starts12:23:39.197–12:25:39.177. P DP0/DP1 queue means16.854/50.341 (205 samples each), showing imbalance. D0/D1 running means7.423/8.116, transfer-wait39.829/40.041, queue0 (123/121 samples), accepted length approximately2.23. These are arithmetic log-sample means, not time-weighted metrics or synchronized worker sums. Each P DP logs1,671,168 new tokens between first/last sample,18,568.53 logged work tokens/s; this is not a mean of the printed throughput field and does not establish official completed-token capacity. Padding, chunk work and templates are not separated. Queueing points toward insufficient P supply, while neither a NIC bottleneck nor the cause of DP imbalance is identified by these samples alone.
+
+The condition commit's parser replay exactly matches saved score; all45 files in `/srv/qwen-artifacts/37877573181/1/SHA256SUMS` passed independent verification. Same image/source is confirmed; runtime was removed and Slurm has no residual running job. `run-success` is absent as expected for failed eligibility. CPU sample analysis and its two verified hashes are in `/home/USER/qwen-artifacts/research-runtime/20261009-firmus21977-analysis/`. No configuration is adopted from this single failed-SLA run.
 
 ## Next candidate preparation: removing Attention TP too (not submitted)
 
