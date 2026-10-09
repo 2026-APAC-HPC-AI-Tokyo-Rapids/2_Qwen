@@ -30,7 +30,7 @@ The preceding generic H200 target-only screen at global4×4000 predicts347.676ms
 
 ## Acceptance and results
 
-Slurm21977 (EP8 native) completed its benchmark and ended FAILED1:0 at the SLA gate after9m52s on g1/g4. Actions37877573181 is terminal failure with successful artifact recovery, NAS archival and runtime cleanup. Jobs21978 (EP2 native) and21979 (EP8 DeepEP) remain pending resources at04:30 UTC. Scheduler priorities change with allocation history; submission order is not a start-time guarantee.
+Slurm21977 (EP8 native) completed its benchmark and ended FAILED1:0 at the SLA gate after9m52s on g1/g4. Actions37877573181 is terminal failure with successful artifact recovery, NAS archival and runtime cleanup. EP2 native21978 also completed and failed only the SLA gate after9m58s, with successful Actions artifact recovery and cleanup. EP8 DeepEP21979 remains pending resources at05:07 UTC. Scheduler priorities change with allocation history; submission order is not a start-time guarantee.
 
 Verify resolved server-info, both P DP ranks and NIXL handoff, unchanged image, scheduler terminal status, official-condition parser replay, per-request SLA, archived hashes and runtime cleanup. Raw throughput is not an eligible score when good-request fraction is below90%. Separate allocation/kernel/graph differences preclude attributing all differences from the old CUTLASS baseline to EP. Repeat a promising configuration before adoption; organizer full-set accuracy remains a separate gate.
 
@@ -45,6 +45,23 @@ H200/Triton3.6 lacks P config files `moe_runner/triton_utils/configs/triton_3_6_
 A90-second log window12:24:00–12:25:30 UTC+8 lies inside raw profiling request starts12:23:39.197–12:25:39.177. P DP0/DP1 queue means16.854/50.341 (205 samples each), showing imbalance. D0/D1 running means7.423/8.116, transfer-wait39.829/40.041, queue0 (123/121 samples), accepted length approximately2.23. These are arithmetic log-sample means, not time-weighted metrics or synchronized worker sums. Each P DP logs1,671,168 new tokens between first/last sample,18,568.53 logged work tokens/s; this is not a mean of the printed throughput field and does not establish official completed-token capacity. Padding, chunk work and templates are not separated. Queueing points toward insufficient P supply, while neither a NIC bottleneck nor the cause of DP imbalance is identified by these samples alone.
 
 The condition commit's parser replay exactly matches saved score; all45 files in `/srv/qwen-artifacts/37877573181/1/SHA256SUMS` passed independent verification. Same image/source is confirmed; runtime was removed and Slurm has no residual running job. `run-success` is absent as expected for failed eligibility. CPU sample analysis and its two verified hashes are in `/home/USER/qwen-artifacts/research-runtime/20261009-firmus21977-analysis/`. No configuration is adopted from this single failed-SLA run.
+
+### EP2 native: execution succeeds, SLA fails
+
+Slurm21978 ended FAILED1:0 after9m58s on g1/g4; Actions37877571478 is terminal failure with successful recovery/archive/cleanup. The client completed1336 requests, errors0,108 good (8.0838%). Eligible score0; uncapped good output164.539398 tok/s. Raw input/output40565.832695/2035.398061 tok/s; TTFT mean7623.423ms/p99 13189.152ms, ITL mean6.74260ms/p99 8.51822ms, accounting131.272721s. The parser's90% eligibility gate is the first failing command; no serving/NIXL fatal occurred.
+
+EP2/ADP2/Attention TP4/MoETP4/native Triton, unchanged image and P131072/D262144 pools are confirmed. Bootstrap registers both DP ranks as Attention TP4. E64/N384 H200/Triton3.6 up/down configs are also absent, so both native candidates use defaults for their respective shapes. P graph initialization leaves98.34GB/GPU free. Memory exhaustion is not observed.
+
+Inside profiling,13:00:30–13:02:00 UTC+8, P DP0/DP1 queue means14.74/50.03 over234 samples each; D0/D1 running9.29/8.78 and transfer wait39.76/37.64 over119/121 samples. Logged P work-token rates are approximately21.21k/s per DP, not official E2E throughput or isolated service capacity. As in EP8, sample means are not time weighted, and DP queue imbalance does not establish its cause.
+
+The commit677d1471 parser replay matches saved score exactly and all45 raw SHA256 entries verify at `/srv/qwen-artifacts/37877571478/1/`. Runtime was deleted, no Slurm job remains active, and `run-success` is absent as expected. Derived analysis script/results/checksum are at `/home/USER/qwen-artifacts/research-runtime/20261009-firmus21978-analysis/`.
+
+| Native candidate | Eligible score tok/s | SLA fraction | Raw output tok/s | TTFT mean ms | ITL mean ms |
+|---|---:|---:|---:|---:|---:|
+| EP2 / MoE TP4 | 0 | 8.0838% | 2035.398 | 7623.423 | 6.743 |
+| EP8 / MoE TP1 | 0 | 7.7768% | 1727.247 | 9089.531 | 6.234 |
+
+EP2 raw output is17.84% higher in this one pair. The direction and approximate magnitude resemble the frozen target-only hypothesis (EP8 Prefill latency18.4% higher at a nearby equal-work shape), but one pair neither validates absolute serving predictions nor proves an optimum. Both are ineligible at c96; no runtime adoption follows. The DeepEP bundle remains unmeasured.
 
 ### Native EP implementation and tuning scope
 
