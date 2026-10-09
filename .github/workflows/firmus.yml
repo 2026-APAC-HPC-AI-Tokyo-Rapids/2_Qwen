@@ -100,12 +100,18 @@ jobs:
           path: ${{ runner.temp }}/qwen-firmus-pd
           if-no-files-found: error
 
+      - name: summary用Pythonを準備
+        if: always() && steps.submit.outputs.job_id != ''
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: 実行条件・結果・Nsight成果物をsummaryに記録
         if: always() && steps.submit.outputs.job_id != ''
-        shell: home-lab-shell {0}
+        shell: bash
         env:
           JOB_STATUS: ${{ job.status }}
-        run: python3 scripts/summarize-firmus-run.py "${RUNNER_TEMP}/qwen-firmus-pd" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
+        run: python scripts/summarize-firmus-run.py "${RUNNER_TEMP}/qwen-firmus-pd" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
 
       - name: 実行環境と残留ジョブを削除
         if: always()

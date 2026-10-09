@@ -69,17 +69,17 @@ NVIDIA's Nsight Systems 2025.3.2.474 Debian package, verifies SHA-256, and extra
 only its CLI runtime into this run's temporary directory. No system installation
 or image rebuild is performed; workers mount the tool read-only.
 
-After AIPerf warmup and five seconds of benchmark traffic, `/start_profile` activates
-CUDA profiling on P4/D2 concurrently. SGLang receives the `CUDA_PROFILER`
-activity; vLLM uses `--profiler-config '{"profiler":"cuda"}'` and an empty
-POST body, with `VLLM_WORKER_MULTIPROC_METHOD=spawn` for Nsight. These extra
-settings are enabled only in profile runs. vLLM stops five seconds after all acknowledgments.
-SGLang captures through the AIPerf benchmark and grace completion marker before
-calling `/stop_profile`: a short window can miss idle prefill workers, and stopping
-Nsight stalls the workers while reports flush. Each worker records CUDA graph node kernels, NVTX,
-and OS runtime; CPU sampling and Torch CPU/GPU profiler are disabled. Partial starts
-receive best-effort stop before workers are cleaned up. Reports, API responses,
-actual launch arguments and timestamped capture logs survive benchmark failure.
+Each allocation first completes the unchanged reference client and parser with CUDA
+capture disabled, preserving that pass under `results/`. It then runs the same
+client again under `profile/client/`. After second-pass warmup and five seconds of
+traffic, all six workers capture the same ten-second window. SGLang receives
+`CUDA_PROFILER`; vLLM uses `--profiler-config '{"profiler":"cuda"}'` and spawn.
+The bounded window avoids the observed 180-second decoder export timeout in
+Actions 37653746232. Keeping this pass separate prevents report flushing from
+corrupting the preceding latency measurement. Nsight is attached to the processes
+in both passes, so profiler-free repeats remain the performance comparison control.
+Serving flags, pinned images, topology, tokenizer and reference timings are fixed.
+Reports, API responses, actual launch arguments and timestamps survive failures.
 
 Success additionally requires six nonempty `.nsys-rep` files and CUDA kernel events
 on all sixteen GPUs, checked through temporary SQLite exports in the allocation.
