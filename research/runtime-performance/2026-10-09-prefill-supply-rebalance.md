@@ -128,3 +128,33 @@ running差（+1.8）による伸びは、上記の傾きで約0.3ms分にすぎ�
 - **Firmus（チームメイト担当）への提案。** H200でもP2/D2はP律速（3170）。H200のDはHBM帯域が大きいので、P3/D1（D pool拡大）での単一DのITLはH100より低く出る可能性が高く、最初に試す価値がある。
 
 今回のASPIRE消費は、精算済みの2本で419.27 SUと426.10 SUだった。CUTLASS runは約420 SUで、本稿の記入時点では未精算（myprojects: balance 14714.772 SU、In Doubt 1024）。
+
+## 7. 単一Decodeのkernel内訳（running約63）
+
+f84ea21（ed8c534と同一のserving条件に、Decodeのみの区間Nsightを追加）。Actions 37931615219のattempt 1はdgx034で`/dev/infiniband/rdma_cm`のenroot mountに失敗し、SGLang起動前に終了した（PBS218198、walltime3分15秒）。9月のdgx016と同じノード起因の事象で、条件を変えずに1回だけ再実行した。attempt 2（PBS218203、dgx021/dgx027、walltime12分28秒）でreport（60MB、archive全SHA256一致）を取得した。
+
+AIPerfの計測開始から20秒後にDecodeの`/start_profile`（CUDA_PROFILER）を開き、21:22:59–21:23:06 SGTの約3秒を記録した。stop後のreport書き出し（約48秒）でDecodeが止まり、ITL p99が276msに伸びて計測runはSLA不適格になった。このscoreは計測の副作用であり、比較には使わない。記録区間直前のD runningは60〜70。reportはlogin nodeで`nsys export`によりSQLiteに変換し、rank0の66 target forwardを集計した。計測下のstep間隔は46.4ms、kernel合計は43.6ms/stepだった（通常runの推定約38ms/stepより、Nsight分だけ長い）。
+
+| kernel | ms/step | calls/step | 所見 |
+|---|---:|---:|---|
+| `fused_moe_kernel`（Triton） | 18.48 | 188 | up 117.5µs/層は全expert FP8重み403MBを約3.4TB/sで読む帯域上限。down 77.3µs/層は201MBで約2.6TB/s（約78%） |
+| FA3 attention（`FlashAttnFwdSm90`＋combine＋prepare） | 7.50 | 97 | 1 callでKV約66MB（63 request×1.05MB）を約0.97TB/s。HBMの約28%しか出ていない |
+| FlashInfer AR＋residual＋RMSNorm（oneshot lamport） | 5.64 | 187 | 252 token×4096 BF16（約2MB）を約30µs |
+| dense入力の`per_token_group_quant` | 3.02 | 188 | 約2MBの入力に16µs |
+| DeepGEMM dense（QKV/O） | 2.16 | 188 | |
+| その他（FP8 copy 0.74、moe_sum 0.71、通常AR 0.63 など） | 約6 | | |
+
+**結論。** MoEは重み読出しの帯域上限にあり、batchに依存しない固定費である。running 1件あたりの増分（約0.35ms/step）のうち最大のものはFP8 KVのattentionで、約0.12ms/request/stepが帯域効率28%で消費されている。残りはtoken数に比例するall-reduce・量子化・小kernel群。
+
+固定sourceで確認したこと：
+
+- FA3は`page_size % kBlockN == 0`かつ`seqlen_q×GQA比 > kBlockM`のときだけpaged KVのTMA経路を使う（upstream `hopper/flash_api.cpp`の`get_pagedkv_tma`）。verifyは4×16=64で、FP8 hdim128のkBlockM=128を下回る。従って`page_size`を変えても非TMA経路のままで、効果は不確実。PDはPとDの`page_size`一致も要求する（`disaggregation/common/conn.py`）。
+- AR融合のoneshot/twoshotは呼び出し側で指定されず（`use_oneshot=None`）、FlashInfer内部で決まる。252 tokenでもoneshotが選ばれていた。
+
+**Decode改修候補（すべてimage再buildを伴う）。**
+
+1. verify用FP8 decode attentionの帯域効率改善（28%→70〜80%なら約4ms/step短縮、batch比例の傾きもほぼ半減）。候補は、GQA 16×4 tokenを1 CTAにまとめるdecode専用kernel、FA3のTMA paged KV経路の強制（heuristicの見直し）、FlashInferのFP8 decode/XQA系。
+2. AR融合を一定token数以上でtwoshotにする（約2ms/stepの見込み）。
+3. dense入力のgroup128 FP8量子化をAR＋RMSNorm融合の出力側へ移す（約2.5ms/stepの見込み）。丸めは同じ値・同じgroupで行う。
+
+1〜3で約8ms/step（通常runの約20%）が見込め、running 63でのITLは約17.2ms→約14ms。ITL 18msで単一Dが扱えるrunningは約67→約90へ増える。P3/D1の上限はDecode側の約3.6kから、Prefill側（3 worker、約4.1–4.3k）へ移る。導出スクリプトと集計は`/home/USER/qwen-artifacts/research-runtime/20261009-p3d1-decode-profile/`（SHA256SUMS付き）。
