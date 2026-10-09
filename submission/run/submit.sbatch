@@ -143,7 +143,10 @@ run_node() {
     install -d -m 0700 "${worker_tmp}/cache" "${worker_tmp}/data" "${worker_tmp}/home" "${worker_tmp}/runtime" "${worker_tmp}/temp"
     restore_worker_cache "${cache_root}/${role}-${worker}.tar" "${worker_tmp}/home/.cache"
     cache_workers+=("${role}-${worker}")
-    args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --max-total-tokens 131072 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
+    max_total_tokens=131072
+    # A single ASPIRE decode worker needs a larger admission pool than the prefill workers.
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == decode ]]; then max_total_tokens="$(jq -r '.decode_max_total_tokens // 131072' "${OUTPUT_DIR}/source/aspire-serving.json")"; fi
+    args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --max-total-tokens "${max_total_tokens}" --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
     if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--nccl-port "$((port + 1000))"); fi
     if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--kv-cache-dtype "$(jq -r '.kv_cache_dtype // "auto"' "${OUTPUT_DIR}/source/aspire-serving.json")"); fi
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then args+=(--moe-runner-backend cutlass); fi
