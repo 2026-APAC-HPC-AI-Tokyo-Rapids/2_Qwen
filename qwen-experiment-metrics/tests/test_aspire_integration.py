@@ -71,7 +71,7 @@ def test_worker_argv_matches_adopted_prefill_combination(platform: str, nodes: i
             backend_index = worker["argv"].index("--kv-cache-dtype") + 2 + (2 if "--moe-runner-backend" in worker["argv"] else 0)
             worker["argv"][backend_index:backend_index] = ["--page-size", "64"]
         decode_index = single_decode["argv"].index("--page-size") + 2
-        single_decode["argv"][decode_index:decode_index] = ["--attention-backend", "trtllm_mha", "--speculative-draft-attention-backend", "fa3"]
+        single_decode["argv"][decode_index:decode_index] = ["--prefill-attention-backend", "fa3", "--decode-attention-backend", "trtllm_mha", "--speculative-attention-mode", "decode", "--speculative-draft-attention-backend", "fa3"]
         for worker in expected:
             if worker["argv"][worker["argv"].index("--disaggregation-mode") + 1] == "decode":
                 worker["argv"] += ["--cuda-graph-bs-decode", *map(str, graph_bs)]

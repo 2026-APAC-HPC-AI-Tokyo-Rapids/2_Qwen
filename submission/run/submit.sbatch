@@ -153,8 +153,9 @@ run_node() {
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then args+=(--moe-runner-backend cutlass); fi
     # PD transfer requires one page size on both roles; trtllm_mha accepts only 16, 32 or 64.
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.page_size // empty' "${OUTPUT_DIR}/source/aspire-serving.json")" != "" ]]; then args+=(--page-size "$(jq -r '.page_size' "${OUTPUT_DIR}/source/aspire-serving.json")"); fi
-    # SM90 trtllm_mha runs target verify on FlashInfer XQA; draft extend casts Q to FP8, which XQA rejects, so the draft stays on FA3.
-    if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == decode && "$(jq -r '.decode_attention_backend // empty' "${OUTPUT_DIR}/source/aspire-serving.json")" != "" ]]; then args+=(--attention-backend "$(jq -r '.decode_attention_backend' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-draft-attention-backend fa3); fi
+    # SM90 trtllm_mha is decode-only (prefill needs SM100) and runs on FlashInfer XQA; target verify reaches it only in decode speculative-attention mode.
+    # Draft extend casts Q to FP8, which XQA rejects, so the draft stays on FA3.
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == decode && "$(jq -r '.decode_attention_backend // empty' "${OUTPUT_DIR}/source/aspire-serving.json")" != "" ]]; then args+=(--prefill-attention-backend fa3 --decode-attention-backend "$(jq -r '.decode_attention_backend' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-attention-mode decode --speculative-draft-attention-backend fa3); fi
     if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}"); if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--ep-size "${ep:-1}"); fi; else args+=(--ep-size "${ep}" --max-running-requests 256); fi
     draft_mount=()
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.speculation.algorithm' "${OUTPUT_DIR}/source/aspire-serving.json")" == EAGLE3 ]]; then
