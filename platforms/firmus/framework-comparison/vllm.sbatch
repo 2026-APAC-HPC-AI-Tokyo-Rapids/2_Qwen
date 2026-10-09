@@ -8,6 +8,7 @@
 #SBATCH -o runs/vllm-%j.out
 #SBATCH -e runs/vllm-%j.err
 #
+# 2026-10-09 profiler-free vLLM repeat precedes SGLang to reverse the capture order.
 # Actions copy of matched-settings-comparison; decoder controls are matched to SGLang. See README.md.
 #
 # 235B 8+8: 4x Prefill workers at TP=2, EP=1 + 2x Decode workers at TP=4, EP=4 = 16 GPUs.
