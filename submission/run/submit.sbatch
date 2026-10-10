@@ -151,6 +151,8 @@ run_node() {
     if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--nccl-port "$((port + 1000))"); fi
     if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--kv-cache-dtype "$(jq -r '.kv_cache_dtype // "auto"' "${OUTPUT_DIR}/source/aspire-serving.json")"); fi
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then args+=(--moe-runner-backend cutlass); fi
+    # PD transfer requires one page size on both roles. SGLang's automatic backend choice leaves FA3 when page size > 1, so FA3 is pinned explicitly.
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.page_size // empty' "${OUTPUT_DIR}/source/aspire-serving.json")" != "" ]]; then args+=(--page-size "$(jq -r '.page_size' "${OUTPUT_DIR}/source/aspire-serving.json")" --attention-backend fa3); fi
     if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}"); if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--ep-size "${ep:-1}"); fi; else args+=(--ep-size "${ep}" --max-running-requests 256); fi
     draft_mount=()
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.speculation.algorithm' "${OUTPUT_DIR}/source/aspire-serving.json")" == EAGLE3 ]]; then
