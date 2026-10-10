@@ -217,3 +217,29 @@ Actions 38020231725、Slurm 22269（g1/g4、COMPLETED 0:0、11分32秒）。arch
 親より+26.6%、TP4 P2/D2 c48基準（3170、37868180304）より+37.8%。いずれも単回・別allocationの比較で、matched pairではない。
 
 H100 ASPIREと同じ構図で、律速はDecodeのITLに移った（平均17.9ms、p90 19.5ms）。Prefill側は、head nodeのworkerがほぼ待ちなし、decodeと同居するtail nodeの2 workerに軽い待ちがある。Firmusでのさらなる改善点は、単一Decodeのrequestあたりコスト（§7のattention帯域）と、同居prefillの遅さの原因特定。cの微調整（例：96）は、ITL違反を減らす代わりに並行数も減るので、取り得る幅は小さいと見込む。
+
+## 11. 1 GPU attention probeとpage size 64（判断保留）
+
+**probe**（0e65dee、Actions 38022625925、PBS218312、H100 1基、約30 SU以下）。Decode verifyの形状（Q 16 head、FP8 KV 1 head、verify 4 token、prefix 4096、pageを散在配置）で、SGLang fc275674のtarget verify呼び出しを再現し、FP32参照と比較した。
+
+| batch | FA3 page1 | FA3 page64 | XQA（SGLang規約、page64） |
+|---:|---:|---:|---:|
+| 16 | 31.6 µs | 31.9 µs | 36.1 µs |
+| 32 | 32.0 µs | 32.2 µs | 35.7 µs |
+| 64 | 51.3 µs | 43.0 µs | 42.0 µs |
+| 96 | 80.7 µs | 65.8 µs | 59.8 µs |
+
+誤差（相対L2）はFA3、XQAともに約0.027で、FP8化したQに由来する。XQAはseq_lensを窓抜きにすると誤差が0.04へ増えるので、SGLangの「prefix＋窓」規約は正しい。従って、§8で出力が壊れた原因はXQA kernelではなく、serving側の統合（hybrid backend・graph metadata経路）にある。XQAはpage 64のFA3より0〜9%速いだけなので、統合の修正に投資する価値は低い。一方、page 64のFA3はpage 1よりbatch 64/96で16/19%速い。
+
+**page size 64のE2E**。1回目の0db5458（Actions 38023059329）は失敗した。SGLangの自動選択は`page_size`>1でFA3を避けるため、FlashInferが選ばれ、DecodeのCUDA graph captureでworkspaceが不足した（`batch_prefill_tmp_s`、5分17秒）。2回目の37ed220（Actions 38023851853、PBS218323、dgx007/dgx013、12分01秒、archive全SHA256一致）では`--attention-backend fa3`を明示し、P3/D1・c72・pool393216を維持した。good率73.81%で不適格（score 0）。
+
+| 指標 | c72 page1（ed8c534、dgx004/026） | c72 page64 FA3（37ed220、dgx007/013） |
+|---|---:|---:|
+| TTFT 平均 / p90 | 769 / 1253 ms | 554 / 863 ms |
+| 同居P（prefill-2）inflight / queue | 2.9 / 0 | 1.5 / 0（他Pと同じ） |
+| D running 平均 | 61.6 | 66.5 |
+| ITL 平均 / p90 | 17.18 / 18.77 ms | 19.04 / 20.89 ms |
+
+page 64ではPrefill側の待ちとTTFTが減り、decodeと同居するprefillの遅れも消えた。転送記述子が減った効果と考えられる。ただしDecodeのITLは、running差の補正（約0.76ms）後も約1.1ms悪い。dgx007/dgx013の組はtwoshot run（§9）でもITLが高く、decodeを担ったnode（dgx013）の個体差を切り分けられない。Prefillが速くなった結果、同じc72でもDecodeのrunningが増えたことも違反増の一因である。単回のため判断を保留し、branchの設定はed8c534へ戻した。
+
+page 64を判断するには、同一node対でpage1と交互に走らせる比較と、Decodeのrunningをc64前後で揃えた比較が必要。
