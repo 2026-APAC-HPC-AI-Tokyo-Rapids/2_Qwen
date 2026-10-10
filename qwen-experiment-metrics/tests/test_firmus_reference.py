@@ -64,7 +64,7 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
-def test_sglang_launch_matches_p5tp2_mixed_decode_conditions(tmp_path: Path) -> None:
+def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 104, "official")
@@ -98,9 +98,9 @@ def test_sglang_launch_matches_p5tp2_mixed_decode_conditions(tmp_path: Path) -> 
         shuffle, routing, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
         name, port = args[:2]
         prefill = name.startswith("prefill")
-        expected_tp = 2 if prefill or name == "decode-1" else 4
+        expected_tp = 2 if prefill else 4
         assert f"--gres=gpu:{expected_tp}" in argv
-        assert f"--cpus-per-task={16 if expected_tp == 2 else 32}" in argv
+        assert f"--cpus-per-task={16 if prefill else 32}" in argv
         assert flags[flags.index("--tp-size") + 1] == str(expected_tp)
         fixture_port = "30100" if prefill else "30200"
         assert host_ip == ("192.0.2.1" if name in {"prefill-0", "prefill-1", "prefill-2", "prefill-3"} else "192.0.2.2")
@@ -109,11 +109,10 @@ def test_sglang_launch_matches_p5tp2_mixed_decode_conditions(tmp_path: Path) -> 
             expected = str(int(port) + 1000) if key == "nccl_port" else str(archived[fixture_port][key])
             # Decode appends a larger --max-total-tokens after the shared default; SGLang keeps the last value.
             value = flags[len(flags) - 1 - flags[::-1].index(flag) + 1]
-            pools = {"decode-0": config["decode_max_total_tokens"], "decode-1": config["decode_tp2"]["max_total_tokens"]}
-            assert value == (str(pools[name]) if key == "max_total_tokens" and name in pools else expected)
+            assert value == (str(config["decode_max_total_tokens"]) if key == "max_total_tokens" and not prefill else expected)
         assert flags[flags.index("--chunked-prefill-size") + 1] == "8192"
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
-        assert flags[flags.index("--max-running-requests") + 1] == (str(config["concurrency"]) if prefill else str(config["decode_tp2"]["max_running_requests"]) if name == "decode-1" else "256")
+        assert flags[flags.index("--max-running-requests") + 1] == (str(config["concurrency"]) if name.startswith("prefill") else "256")
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
         assert flags[flags.index("--speculative-num-steps") + 1] == "3"
@@ -126,15 +125,12 @@ def test_sglang_launch_matches_p5tp2_mixed_decode_conditions(tmp_path: Path) -> 
             assert "--enable-symm-mem" in flags and (shuffle, routing) == ("1", "1")
         else:
             start = flags.index("--cuda-graph-bs-decode") + 1
-            graph = [size for size in config["decode_cuda_graph_bs"] if name == "decode-0" or size <= config["decode_tp2"]["graph_max_bs"]]
-            assert [int(value) for value in flags[start:start + len(graph)]] == graph and (start + len(graph) == len(flags) or not flags[start + len(graph)].isdigit())
+            assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
-    assert observed == {"prefill-0": "node0", "prefill-1": "node0", "prefill-2": "node0", "prefill-3": "node0", "prefill-4": "node1", "decode-0": "node1", "decode-1": "node1"}
+    assert observed == {"prefill-0": "node0", "prefill-1": "node0", "prefill-2": "node0", "prefill-3": "node0", "prefill-4": "node1", "prefill-5": "node1", "decode-0": "node1"}
     router_argv = next(argv for argv in commands if "sglang_router.launch_router" in argv)
-    assert router_argv.count("--prefill") == 5 and router_argv.count("--decode") == 2
-    assert router_argv[router_argv.index("--prefill-policy") + 1] == "power_of_two"
-    assert router_argv[router_argv.index("--decode-policy") + 1] == "power_of_two"
-    assert router_argv[router_argv.index("--worker-startup-check-interval") + 1] == "1"
+    assert router_argv.count("--prefill") == 6 and router_argv.count("--decode") == 1
+    assert router_argv[router_argv.index("--prefill-policy") + 1] == "round_robin"
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
     assert client_argv[-2:] == [str(tmp_path), str(config["concurrency"])]
 
