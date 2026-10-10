@@ -176,3 +176,21 @@ AIPerfの計測開始から20秒後にDecodeの`/start_profile`（CUDA_PROFILER�
 3commitはrevertし、branchの設定はed8c534（P3/D1、D pool393216、c72、FA3、page size 1）と同一に戻した。revertで削除したpatchは、git履歴の6b7df28と662561fに残る。Decode attentionの帯域改善は、GPU 1基で既存FA3と出力を照合できるkernel単体の検証環境を用意してから再開するのが妥当。
 
 ASPIRE消費（myprojects 59010014）：本ノート全体で精算済み約2.2k SU、662561fの約0.43k SUは記入時点で未精算（balance 13347.163、In Doubt 1024）。
+
+## 9. Decode AR融合のtwoshot化（不採用）
+
+a37febb（新patch `decode-allreduce-twoshot.patch`を含めて再build）。§7で5.6ms/stepだったFlashInfer TRT-LLM AR＋residual＋RMSNorm融合は、FlashInfer 0.6.15のB200向けheuristicにより、TP4では1024 tokenまでoneshot（lamport）になる。この選択を、`SGLANG_FLASHINFER_AR_ONESHOT_MAX_TOKENS=128`を超える呼び出しでtwoshotに切り替えた。Decodeのみ。workspace初期化には手を入れていない。
+
+Actions 38016612848、PBS218289、dgx007/dgx013、walltime12分07秒、archive全SHA256一致。Decodeのargvで環境変数の適用を確認した。
+
+| 指標 | c72 oneshot（ed8c534、dgx004/026） | c72 twoshot（a37febb、dgx007/013） |
+|---|---:|---:|
+| D running 平均 | 61.6 | 63.0 |
+| ITL 平均 / p90 | 17.18 / 18.77 ms | 18.19 / 19.92 ms |
+| ITL >20ms | 28 | 183 |
+| good率 | 97.61% | 89.89%（不適格） |
+| accept len | 2.23 | 2.23 |
+
+greedy probeは8/8でc72と同一で、数値は保たれている。running差による伸び（約0.2ms）を除いても、ITLは約0.8ms（約5%）悪い。node対が異なるのでnodeの個体差を切り分けられないが、改善は確認できない。H100 NVLink上の約2MB・TP4では、twoshotの2段同期がoneshotの読出し量削減を上回ると考えられる。**不採用。** patchとconfigはrevertし、branchの設定をed8c534へ戻した。
+
+ASPIRE（myprojects 59010014）：記入時点でbalance 12918.790、In Doubt 1024（本runの未精算分）。本ノートの全試行で約3.1k SU。
