@@ -268,3 +268,18 @@ Decodeのrunningをほぼ揃えても、ITLはpage1をrunning 60.3へ補正し�
 受理長は予測どおり約5%伸びたが、同じnode対・同じrunningのtwoshot runと比べたITL短縮は約1%にとどまった。延ばしたverify tokenとdraftの費用が利得をほぼ相殺している。**不採用。**
 
 同じ設定でも、dgx007/dgx013ではdgx004/dgx026よりDecodeのITLが約0.6ms長い傾向がある（§9、§11、本節の3 runが一致）。3313 good tok/sは速いnode対での単回値であり、遅い組ではc72の余裕がほとんどない。主催者の再実行で割り当てられるnodeは選べないので、P3/D1を採用する場合は並行度をc66〜68程度に下げて余裕を持たせ、node対を変えた反復で確認するのが妥当。
+
+## 13. Firmus：Decode TP4＋TP2の混成（P6/D1を上回らず）
+
+Firmusにはポイント消費がなく、他ユーザーとの配分だけが制約となる（ユーザー確認）。そこで`research/firmus-p6tp2-d1tp4`で、P6/D1（Decode律速）とP4/D2（Prefill律速）の中間配置を試した。H200はTP2でもtarget重み（約110 GiB/rank）が載るので、P5×TP2（10 GPU）とDecode TP4＋TP2（6 GPU）に分けられる。Decodeの振り分けはsglang-router 0.3.2の`--decode-policy power_of_two`と、1秒間隔の`--worker-startup-check-interval 1`（LoadMonitorの取得間隔）で行った。すべてg1/g4、image・EAGLE3・FP8 KVは同一。
+
+| commit | 条件 | good tok/s | 主な観測 |
+|---|---|---:|---|
+| ff58ed8 | P6×TP2 / D1×TP4（pool524288）c104 | **4369.4**（93.57%） | Decode律速（ITL平均17.86ms） |
+| 322bc1d | P5×TP2 / D TP4＋TP2（TP2 pool131072・running48）c96 | 0（69.59%） | TP2 Decodeがrunning約28で受け入れ上限。prealloc待ち平均18.9、TTFT平均2177ms |
+| bb64553 | 同、TP2 pool393216（mem fractionで284315に制限）・running96 | 4262.5（96.31%） | ITL平均14.35ms（余裕あり）。同居prefill-4のqueue 5.28、TTFT平均1421ms |
+| 35af5e5 | 同、prefillもpower_of_two、c104 | 4187.9（94.07%） | prefill-4のqueue 6.80と負荷が逃げない。TTFT平均1739ms |
+
+混成Decodeにすると、Decode側の余裕は生まれた。しかしPrefillが5 workerに減ったうえ、Decodeと同じnodeのprefill workerが遅く、round robinでもpower_of_twoでも、そこに待ちが集中した。結果としてP6/D1を上回らない。branchの設定はff58ed8へ戻した（061a0c8）。
+
+ASPIREとFirmusに共通して、Decodeと同居するprefill workerが遅いことが、配置選択の制約になっている。ASPIREでは、page size 64でこの遅れが消えた（§11）。FirmusのP5/D混成やP6/D1でも、page 64と組み合わせれば同居prefillの遅れが解消する可能性がある。次に試すならこれが候補。
