@@ -6,6 +6,7 @@ import runpy
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -33,8 +34,10 @@ def test_profile_client_preserves_official_result(tmp_path: Path) -> None:
     client.write_text(f'#!{sys.executable}\nfrom pathlib import Path\np=Path("artifacts/profile")\np.mkdir(parents=True)\n(p/"profile_export_aiperf.json").write_text("{{}}")\n(p/"profile_export.jsonl").write_text("requests")\n')
     client.chmod(0o755)
     version = tmp_path / "python"
-    version.write_text('#!/bin/bash\n[[ "$1" == -c ]] || exit 99\necho 0.12.0\n')
+    version.write_text(f'#!/bin/bash\nif [[ "$1" == -c ]]; then echo 0.12.0; else exec {shlex.quote(sys.executable)} "$@"; fi\n')
     version.chmod(0o755)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/run-aiperf.py").write_text((REPOSITORY / "scripts/run-aiperf.py").read_text())
     script = script.replace("/opt/sglang/venv/bin/aiperf", shlex.quote(str(client))).replace("/opt/sglang/venv/bin/python", shlex.quote(str(version)))
     subprocess.run(["bash", "-euc", script, "fixture", str(tmp_path), "104", "profile"], check=True)
     output = tmp_path / "profile/client"
@@ -45,6 +48,35 @@ def test_profile_client_preserves_official_result(tmp_path: Path) -> None:
     assert (output / "profile_export.jsonl").read_text() == "requests"
     assert (tmp_path / "results/score.json").read_text() == 'original score\n'
     assert not (output / "score.json").exists()
+
+
+def test_c256_keeps_scoring_command_with_longer_registration(tmp_path: Path) -> None:
+    script = (REPOSITORY / "platforms/firmus/framework-comparison/official-aiperf.sh").read_text()
+    construction = script.split("printf '%q '", 1)[0]
+    result = subprocess.run(["bash", "-euc", construction + '\nprintf "%s\\0" "${command[@]}"; printf "%s/%s/%s/%s\\0" "$AIPERF_SERVICE_REGISTRATION_INTERVAL" "$AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS" "$AIPERF_SERVICE_REGISTRATION_TIMEOUT" "$AIPERF_RECORD_PROCESSOR_SCALE_FACTOR"', "fixture", str(tmp_path), "256"], capture_output=True, check=True)
+    values = result.stdout.decode().rstrip("\0").split("\0")
+    expected = runpy.run_path(str(PARSER))["expected_official_command"]("http://127.0.0.1:8000/v1/chat/completions", 256)
+    assert values[:-1] == expected
+    assert values[-1] == "1/60/60/32"
+
+
+@pytest.mark.parametrize("status", [0, 7])
+def test_client_monitor_preserves_logs_and_status(status: int) -> None:
+    result = subprocess.run([sys.executable, REPOSITORY / "scripts/run-aiperf.py", sys.executable, "-c", f"import sys; print('client stdout', flush=True); print('client stderr', file=sys.stderr, flush=True); sys.exit({status})"], capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode == status
+    assert result.stdout == "client stdout\nclient stderr\n"
+
+
+def test_client_monitor_stops_registration_failure_without_waiting() -> None:
+    # Replay the first fatal line, then simulate a controller stuck for 600s.
+    # Ignore TERM as AIPerf's children do; the client group must still be stopped.
+    code = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print(\"02:44:01.842 ERROR Failed to register service GPUTelemetryManager: TimeoutError()\", flush=True); time.sleep(600)"
+    started = time.monotonic()
+    result = subprocess.run([sys.executable, REPOSITORY / "scripts/run-aiperf.py", sys.executable, "-c", code], capture_output=True, text=True, timeout=15, check=False)
+    assert result.returncode == 1
+    assert "GPUTelemetryManager: TimeoutError()" in result.stdout
+    assert "aiperf_startup_failed:" in result.stdout
+    assert time.monotonic() - started < 10
 
 
 def metrics(
