@@ -64,12 +64,12 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
-def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path) -> None:
+def test_sglang_launch_uses_three_dp4_ep4_groups_and_decode_tp4(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert "#SBATCH -t 00:17:00" in source
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 104, "official")
-    assert config["decode_max_total_tokens"] == 524288
+    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 256, "official")
+    assert config["decode_max_total_tokens"] == 1572864
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
@@ -86,7 +86,7 @@ def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path)
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
     workers = [argv for argv in commands if "--exact" in argv]
-    assert len(workers) == 7
+    assert len(workers) == 4
     assert sum(2 if "--gres=gpu:2" in argv else 4 for argv in workers) == 16
     archived = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/aspire-integration-argv.json").read_text())["archived_server_info"]
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
@@ -100,19 +100,19 @@ def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path)
         shuffle, routing, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
         name, port = args[:2]
         prefill = name.startswith("prefill")
-        expected_tp = 2 if prefill else 4
+        expected_tp = 4
         assert f"--gres=gpu:{expected_tp}" in argv
-        assert f"--cpus-per-task={16 if prefill else 32}" in argv
+        assert "--cpus-per-task=32" in argv
         assert flags[flags.index("--tp-size") + 1] == str(expected_tp)
         fixture_port = "30100" if prefill else "30200"
-        assert host_ip == ("192.0.2.1" if name in {"prefill-0", "prefill-1", "prefill-2", "prefill-3"} else "192.0.2.2")
+        assert host_ip == ("192.0.2.1" if name in {"prefill-0", "prefill-1"} else "192.0.2.2")
         observed[name] = argv[argv.index("-w") + 1]
         for flag, key in {"--ep-size": "ep_size", "--kv-cache-dtype": "kv_cache_dtype", "--nccl-port": "nccl_port", "--max-total-tokens": "max_total_tokens"}.items():
-            expected = str(int(port) + 1000) if key == "nccl_port" else str(archived[fixture_port][key])
+            expected = str(int(port) + 1000) if key == "nccl_port" else str(4 if prefill and key == "ep_size" else archived[fixture_port][key])
             # Decode appends a larger --max-total-tokens after the shared default; SGLang keeps the last value.
             value = flags[len(flags) - 1 - flags[::-1].index(flag) + 1]
             assert value == (str(config["decode_max_total_tokens"]) if key == "max_total_tokens" and not prefill else expected)
-        assert flags[flags.index("--chunked-prefill-size") + 1] == "8192"
+        assert flags[flags.index("--chunked-prefill-size") + 1] == ("16384" if prefill else "8192")
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
         assert flags[flags.index("--page-size") + 1] == "64"
         assert flags[flags.index("--max-running-requests") + 1] == (str(config["concurrency"]) if name.startswith("prefill") else "256")
@@ -124,15 +124,18 @@ def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path)
         assert "--speculative-draft-model-quantization" not in flags
         assert "--container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER" in argv
         if name.startswith("prefill"):
-            assert flags[flags.index("--moe-runner-backend") + 1] == "cutlass"
-            assert "--enable-symm-mem" in flags and (shuffle, routing) == ("1", "1")
+            assert flags[flags.index("--moe-runner-backend") + 1] == config["prefill"]["moe_runner_backend"]
+            assert flags[flags.index("--moe-a2a-backend") + 1] == config["prefill"]["moe_a2a_backend"]
+            assert flags[flags.index("--dp-size") + 1] == "4"
+            assert "--enable-dp-attention" in flags and "--disable-cuda-graph" in flags
+            assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
         else:
             start = flags.index("--cuda-graph-bs-decode") + 1
             assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
-    assert observed == {"prefill-0": "node0", "prefill-1": "node0", "prefill-2": "node0", "prefill-3": "node0", "prefill-4": "node1", "prefill-5": "node1", "decode-0": "node1"}
+    assert observed == {"prefill-0": "node0", "prefill-1": "node0", "prefill-2": "node1", "decode-0": "node1"}
     router_argv = next(argv for argv in commands if "sglang_router.launch_router" in argv)
-    assert router_argv.count("--prefill") == 6 and router_argv.count("--decode") == 1
+    assert router_argv.count("--prefill") == 3 and router_argv.count("--decode") == 1
     assert router_argv[router_argv.index("--prefill-policy") + 1] == "round_robin"
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
     assert client_argv[-2:] == [str(tmp_path), str(config["concurrency"])]

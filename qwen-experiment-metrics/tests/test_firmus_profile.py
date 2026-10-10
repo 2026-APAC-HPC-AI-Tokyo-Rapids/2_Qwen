@@ -253,3 +253,14 @@ def test_vllm_launch_keeps_baseline_arguments_and_enables_cuda_only_for_profile(
     expected = ["serve", "/model", "--served-model-name", "qwen", "--trust-remote-code", "--host", "0.0.0.0", "--port", "30200", "--tensor-parallel-size", "4", "--max-model-len", "8192", "--gpu-memory-utilization", "0.90", "--kv-transfer-config", kv_config, "--enable-expert-parallel"]
     assert argv == expected + (["--profiler-config", '{"profiler":"cuda"}'] if profile else [])
     assert (tmp_path / "method").read_text() == ("spawn" if profile else "")
+
+
+def test_dp_ep_cpu_trace_names_require_all_global_tp_ranks(tmp_path):
+    module = runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"))
+    for rank in range(4):
+        with gzip.open(tmp_path / f"123-TP-{rank}-DP-{rank}-EP-{rank}.trace.json.gz", "wt") as handle:
+            json.dump({"traceEvents": [{"cat": "user_annotation", "name": "target_verify"}]}, handle)
+    assert module["validate_cpu_traces"](tmp_path, 4)["cpu_trace_count"] == 4
+    (tmp_path / "123-TP-3-DP-3-EP-3.trace.json.gz").unlink()
+    with pytest.raises(ValueError, match="TP3"):
+        module["validate_cpu_traces"](tmp_path, 4)

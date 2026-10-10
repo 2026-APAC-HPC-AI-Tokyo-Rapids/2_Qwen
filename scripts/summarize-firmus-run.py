@@ -34,6 +34,9 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         expected_reports = len(endpoints)
         groups = Counter(("P" if name.startswith("prefill-") else "D", int(tp)) for name, _host, _port, tp in endpoints)
         topology = " / ".join(f"{role}{count} × TP{tp}" for (role, tp), count in sorted(groups.items(), reverse=True))
+    if config.get("prefill"):
+        p = config["prefill"]
+        topology = f"P{p['workers']} × (Attention TP{p['tp'] // p['dp']} DP{p['dp']} / MoE EP{p['ep']}) / D1 × TP4 EP1"
     lines = ["### Firmus Qwen", "", f"- Status: **{status}**; Slurm `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'unavailable')}**; H200 × 16; {topology}; concurrency **{config.get('concurrency', 'unavailable')}**.", f"- Workload: {workload}, ISL 4000 / OSL 200, warmup / benchmark / grace **{phases} s**; **not an official submission**."]
     if identity.get("dynamo"):
         dynamo = identity["dynamo"]

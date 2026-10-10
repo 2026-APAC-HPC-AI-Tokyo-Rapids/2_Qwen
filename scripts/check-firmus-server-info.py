@@ -1,0 +1,31 @@
+"""Check effective settings for every Attention-DP scheduler before benchmarking."""
+import argparse
+import json
+from pathlib import Path
+
+
+def check(config, info, role):
+    prefill = role == "prefill"
+    p = config["prefill"]
+    expected = {"tp_size": 4, "dp_size": p["dp"] if prefill else 1, "ep_size": p["ep"] if prefill else 1, "enable_dp_attention": prefill, "kv_cache_dtype": "fp8_e4m3", "context_length": 8192, "page_size": 64, "attention_backend": "fa3", "max_total_tokens": 131072 if prefill else config["decode_max_total_tokens"], "chunked_prefill_size": p["chunked_prefill_size"] // p["dp"] if prefill else 8192, "max_running_requests": config["concurrency"] if prefill else 256, "speculative_algorithm": "EAGLE3", "speculative_draft_model_path": "/draft", "speculative_num_steps": config["speculation"]["steps"], "speculative_num_draft_tokens": config["speculation"]["draft_tokens"], "speculative_eagle_topk": 1, "speculative_draft_model_quantization": None, "enable_two_batch_overlap": False, "enable_symm_mem": False}
+    if prefill:
+        expected.update(moe_a2a_backend=p["moe_a2a_backend"], moe_runner_backend=p["moe_runner_backend"])
+    states = info.get("internal_states", [])
+    if len(states) != expected["dp_size"]:
+        raise ValueError(f"{role}: expected {expected['dp_size']} DP states, got {len(states)}")
+    for index, state in enumerate([info, *states]):
+        for name, value in expected.items():
+            if name not in state or state[name] != value:
+                raise ValueError(f"{role} state {index}: {name}={state.get(name)!r}, expected {value!r}")
+    if not prefill and info.get("cuda_graph_bs_decode") != config["decode_cuda_graph_bs"]:
+        raise ValueError("Decode CUDA graph request list changed")
+    print(f"PASS: {role} TP4, DP{expected['dp_size']}, EP{expected['ep_size']}; all DP schedulers checked")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("config", type=Path)
+    parser.add_argument("info", type=Path)
+    parser.add_argument("role", choices=["prefill", "decode"])
+    args = parser.parse_args()
+    check(json.loads(args.config.read_text()), json.loads(args.info.read_text()), args.role)

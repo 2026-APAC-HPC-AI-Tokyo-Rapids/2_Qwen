@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import re
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -23,7 +24,7 @@ def validate_capture(database: Path, tp: int) -> dict:
 def validate_cpu_traces(directory: Path, tp: int) -> dict:
     stages = set()
     for rank in range(tp):
-        traces = list(directory.glob(f"*-TP-{rank}.trace.json.gz"))
+        traces = [p for p in directory.glob("*.trace.json.gz") if re.search(rf"-TP-{rank}(?:-(?:DP|PP|EP)-\d+)*\.trace\.json\.gz$", p.name)]
         if len(traces) != 1:
             raise ValueError(f"expected one CPU trace for {directory.name} TP{rank}, got {len(traces)}")
         with gzip.open(traces[0], "rt") as handle:
