@@ -109,7 +109,8 @@ def test_sglang_launch_matches_p5tp2_mixed_decode_conditions(tmp_path: Path) -> 
             expected = str(int(port) + 1000) if key == "nccl_port" else str(archived[fixture_port][key])
             # Decode appends a larger --max-total-tokens after the shared default; SGLang keeps the last value.
             value = flags[len(flags) - 1 - flags[::-1].index(flag) + 1]
-            assert value == (str(config["decode_max_total_tokens"]) if key == "max_total_tokens" and name == "decode-0" else expected)
+            pools = {"decode-0": config["decode_max_total_tokens"], "decode-1": config["decode_tp2"]["max_total_tokens"]}
+            assert value == (str(pools[name]) if key == "max_total_tokens" and name in pools else expected)
         assert flags[flags.index("--chunked-prefill-size") + 1] == "8192"
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
         assert flags[flags.index("--max-running-requests") + 1] == (str(config["concurrency"]) if prefill else str(config["decode_tp2"]["max_running_requests"]) if name == "decode-1" else "256")
