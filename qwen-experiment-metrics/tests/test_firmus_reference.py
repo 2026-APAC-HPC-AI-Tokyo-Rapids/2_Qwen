@@ -112,6 +112,7 @@ def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path)
             assert value == (str(config["decode_max_total_tokens"]) if key == "max_total_tokens" and not prefill else expected)
         assert flags[flags.index("--chunked-prefill-size") + 1] == "8192"
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
+        assert flags[flags.index("--page-size") + 1] == "64"
         assert flags[flags.index("--max-running-requests") + 1] == (str(config["concurrency"]) if name.startswith("prefill") else "256")
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
