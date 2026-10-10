@@ -10,7 +10,10 @@ set -euo pipefail
 : "${PROFILE:?}"
 : "${REQUIRE_BUILD:?}"
 [[ "${PROFILE}" == true || "${PROFILE}" == false ]]
-[[ "${REQUIRE_BUILD}" == false ]] || { echo 'This branch reuses pinned baseline images; rebuild and update their hashes before requesting a source experiment.' >&2; exit 64; }
+[[ "${REQUIRE_BUILD}" == true || "${REQUIRE_BUILD}" == false ]]
+if [[ "${REQUIRE_BUILD}" == true ]]; then
+  [[ "${CONTAINER_SHA256:-}" =~ ^[0-9a-f]{64}$ && "${CONTAINER_SIZE:-}" =~ ^[1-9][0-9]*$ ]] || { echo 'A source experiment requires the successful CPU build SHA-256 and size.' >&2; exit 64; }
+fi
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${config}")"
@@ -20,6 +23,14 @@ runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEM
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/profile" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source" "${runtime_dir}/home"
 install -m 0644 "${config}" "${runtime_dir}/source/firmus-framework.json"
+config="${runtime_dir}/source/firmus-framework.json"
+if [[ "${REQUIRE_BUILD}" == true ]]; then
+  [[ "${framework}" == sglang ]]
+  archive=/scratch/home/ACCOUNT/qwen/containers
+  jq --arg path "${archive}/${GITHUB_RUN_ID}.sqsh" --arg sha "${CONTAINER_SHA256}" --argjson size "${CONTAINER_SIZE}" --arg provenance "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" '.images.sglang = {path:$path,sha256:$sha,size_bytes:$size,provenance:$provenance}' "${config}" >"${config}.tmp"
+  mv "${config}.tmp" "${config}"
+  jq -e --arg commit "${GITHUB_SHA}" --arg sha "${CONTAINER_SHA256}" '.source_commits.qwen == $commit and .container_artifact.sha256 == $sha' "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" >/dev/null
+fi
 for image_framework in sglang "${framework}"; do
   image="$(jq -er --arg framework "${image_framework}" '.images[$framework].path' "${config}")"
   expected_sha="$(jq -er --arg framework "${image_framework}" '.images[$framework].sha256' "${config}")"
@@ -41,6 +52,13 @@ for image_framework in sglang "${framework}"; do
   cp "${provenance}" "${runtime_dir}/source/${image_framework}-container.json"
   if [[ "${framework}" == sglang ]]; then cp "${provenance}" "${runtime_dir}/source/container-sidecar.json"; fi
 done
+if [[ "${framework}" == sglang && "$(jq -r .prefill.moe_a2a_backend "${config}")" == megamoe ]]; then
+  # Inspect the built image on the CPU before any GPU allocation is submitted.
+  unsquashfs -cat "${runtime_dir}/sglang.sqsh" opt/apac/sm90-megamoe-build.json >"${runtime_dir}/source/sm90-megamoe-build.json"
+  jq -e '.version == "0.1.5" and .header_sha256 == "5479807104bf1aeed4cc3ecc8ce57d2a835d68457f9cf4962ef3f15cc176e8d2" and .combine_accumulator == "FP32" and (.compiled_geometries | length == 3)' "${runtime_dir}/source/sm90-megamoe-build.json" >/dev/null
+  unsquashfs -cat "${runtime_dir}/sglang.sqsh" opt/apac/manifest.json >"${runtime_dir}/source/image-manifest.json"
+  jq -e '[.applied_patches[].path] | index("patches/sglang/firmus-staged-eagle-kv.patch") != null and index("patches/sglang/qwen3-sm90-megamoe.patch") != null' "${runtime_dir}/source/image-manifest.json" >/dev/null
+fi
 model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8
 [[ -s "${model}/config.json" && -s "${model}/model.safetensors.index.json" ]]
 [[ "$(head -n 1 "${model}/.cache/huggingface/download/config.json.metadata")" == e156cb4efae43fbee1a1ab073f946a1377e6b969 ]]
@@ -68,6 +86,7 @@ install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/offic
 install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/vllm-proxy.py" "${runtime_dir}/vllm-proxy.py"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${GITHUB_WORKSPACE}/scripts/parse-firmus-reference-result.py" "${GITHUB_WORKSPACE}/scripts/summarize-firmus-run.py" "${runtime_dir}/scripts/"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-server-info.py" "${runtime_dir}/scripts/"
+install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-megamoe.py" "${runtime_dir}/scripts/"
 if [[ "${PROFILE}" == true ]]; then
   install -m 0755 "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${GITHUB_WORKSPACE}/scripts/capture-firmus-profile.sh" "${runtime_dir}/scripts/"
   install -m 0644 "${GITHUB_WORKSPACE}/scripts/validate-firmus-profile.py" "${runtime_dir}/scripts/"

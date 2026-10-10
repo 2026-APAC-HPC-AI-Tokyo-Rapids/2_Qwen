@@ -105,6 +105,10 @@ done | paste -sd,)
 export UCX_NET_DEVICES=$UCX_IB
 export UCX_POSIX_USE_PROC_LINK=n
 export SGLANG_DISAGG_STAGING_BUFFER=1 SGLANG_DISAGG_STAGING_POOL_SIZE_MB=1024
+export SGLANG_DG_CACHE_DIR="${SLURM_SUBMIT_DIR}/home/deep-gemm"
+if [[ "$role" == prefill ]]; then
+  export SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096 SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1
+fi
 export TRITON_CACHE_DIR=/tmp/sglang-$name/triton
 export TORCHINDUCTOR_CACHE_DIR=/tmp/sglang-$name/inductor
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
@@ -125,6 +129,11 @@ if [[ -x /opt/nsys/bin/nsys ]]; then
 fi
 exec "${command[@]}"
 EOF
+
+# Part of this allocation: a finite numeric gate, then the full benchmark.
+# All later workers reuse its native compilation cache. No extra sbatch or retry.
+srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts megamoe-check)" timeout --signal=TERM --kill-after=15 240 env DG_JIT_CACHE_DIR="${ROOT}/home/deep-gemm" /opt/sglang/venv/bin/python -m torch.distributed.run --standalone --nproc-per-node=4 "${ROOT}/scripts/check-firmus-megamoe.py" >"${ART}/megamoe-numeric-check.log" 2>&1
+echo "SM90 MegaMoE numeric gate passed after ${SECONDS}s"
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")

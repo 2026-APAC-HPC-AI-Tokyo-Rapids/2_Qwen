@@ -22,6 +22,10 @@ RUN /opt/apac/install-python-dependencies.sh && rm /opt/apac/install-python-depe
 COPY containers/install-accelerator-dependencies.sh /opt/apac/install-accelerator-dependencies.sh
 RUN /opt/apac/install-accelerator-dependencies.sh && rm /opt/apac/install-accelerator-dependencies.sh
 
+COPY sm90-late-topk-fp32.patch /opt/apac/sm90-late-topk-fp32.patch
+COPY containers/build-sm90-megamoe.py /opt/apac/build-sm90-megamoe.py
+RUN /opt/sglang/venv/bin/python /opt/apac/build-sm90-megamoe.py
+
 COPY sglang-source /opt/sglang/source
 COPY sglang-commit.txt /opt/sglang/sglang-commit.txt
 COPY containers/install-sglang-source.sh /opt/apac/install-sglang-source.sh

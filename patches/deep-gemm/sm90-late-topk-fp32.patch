@@ -1,0 +1,81 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1650,22 +1650,16 @@
+                             float u0 = final_accum[i * 4 + 2];
+                             clamp_gate(g0);
+                             clamp_up(u0);
+-                            const float weight_0 = *l1_topk_weights_buffer
+-                                .get_data_buffer(m_idx + token_0)
+-                                .get_base_ptr<float>();
+                             smem_cd_swap_l1_fp32[token_0 * L1_OUT_BLOCK_N + out_col_base] =
+-                                silu(g0) * u0 * weight_0;
++                                silu(g0) * u0;
+                         }
+                         if (token_1 < valid_m) {
+                             float g1 = final_accum[i * 4 + 1];
+                             float u1 = final_accum[i * 4 + 3];
+                             clamp_gate(g1);
+                             clamp_up(u1);
+-                            const float weight_1 = *l1_topk_weights_buffer
+-                                .get_data_buffer(m_idx + token_1)
+-                                .get_base_ptr<float>();
+                             smem_cd_swap_l1_fp32[token_1 * L1_OUT_BLOCK_N + out_col_base] =
+-                                silu(g1) * u1 * weight_1;
++                                silu(g1) * u1;
+                         }
+                     };
+ 
+@@ -1818,23 +1812,8 @@
+                     }
+                 }
+ 
+-                // Apply token weight: SwiGLU * topk_weight (single load per row)
+-                const float weight_r0 = valid_r0 ? *l1_topk_weights_buffer
+-                    .get_data_buffer(m_idx + row_offset_r0)
+-                    .get_base_ptr<float>() : 0.0f;
+-                const float weight_r1 = valid_r1 ? *l1_topk_weights_buffer
+-                    .get_data_buffer(m_idx + row_offset_r1)
+-                    .get_base_ptr<float>() : 0.0f;
+-                #pragma unroll
+-                for (uint32_t p = 0; p < kNumPairs; ++ p) {
+-                    swiglu_r0[p][0] *= weight_r0;
+-                    swiglu_r0[p][1] *= weight_r0;
+-                    swiglu_r1[p][0] *= weight_r1;
+-                    swiglu_r1[p][1] *= weight_r1;
+-                }
+-
+-                amax_r0 *= cute::abs(weight_r0);
+-                amax_r1 *= cute::abs(weight_r1);
++                // Keep SwiGLU independent of routing weights. Apply those once,
++                // after FC2, in the FP32 combine below (including the SwapAB path).
+ 
+                 // Reduce amax across the 4 col-lanes that share the same row. In the
+                 // SM90 WGMMA output layout, lanes with the same `lane_idx >> 2` and
+@@ -2215,10 +2194,12 @@
+                 const uint32_t chunk_byte_offset = chunk * kNumChunkBytes;
+ 
+                 uint32_t mask = total_mask;
++                float combine_weights[2] = {};
+                 const auto move_mask_and_load = [&](const uint32_t& i) {
+                     if (mask) {
+                         const uint32_t slot_idx = __ffs(mask) - 1;
+                         mask ^= 1 << slot_idx;
++                        combine_weights[i] = __ldg(input_topk_weights_buffer.get_base_ptr<float>() + token_idx * kNumTopk + slot_idx);
+                         if (cute::elect_one_sync()) {
+                             const auto src_ptr = math::advance_ptr<uint8_t>(
+                                 combine_token_buffer.get_rank_buffer(slot_idx)
+@@ -2244,8 +2225,12 @@
+                         const auto uint4_values = combine_load_buffer[load_stage_idx][j * 32 + lane_idx];
+                         const auto bf16_values = reinterpret_cast<const nv_bfloat162*>(&uint4_values);
+                         #pragma unroll
+-                        for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l)
+-                            ptx::accumulate(reduced[j * kNumElemsPerUint4 + l], bf16_values[l]);
++                        for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l) {
++                            const auto value = __bfloat1622float2(bf16_values[l]);
++                            auto& sum = reduced[j * kNumElemsPerUint4 + l];
++                            sum.x = fmaf(value.x, combine_weights[load_stage_idx], sum.x);
++                            sum.y = fmaf(value.y, combine_weights[load_stage_idx], sum.y);
++                        }
+                     }
+                     combine_phase ^= load_stage_idx;
+                     load_stage_idx ^= 1;

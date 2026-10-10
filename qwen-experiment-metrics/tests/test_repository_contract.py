@@ -45,9 +45,8 @@ def test_workflow_keeps_build_and_cluster_controls_explicit() -> None:
     for cluster in ("genkai", "aspire2ap", "firmus"):
         assert f"[cluster:{cluster}]" in entry
         assert f"run_{cluster}:" in entry
-        if cluster != "firmus":
-            assert f"needs.container.outputs.{cluster}_container_sha256 != ''" in entry
-            assert f"needs.container.outputs.{cluster}_container_size != ''" in entry
+        assert f"needs.container.outputs.{cluster}_container_sha256 != ''" in entry
+        assert f"needs.container.outputs.{cluster}_container_size != ''" in entry
     for tag in ("[nodes:1]", "[nodes:4]", "[require-build]", "[profile]"):
         assert tag in entry
     assert "startsWith(github.event.head_commit.message, '[require-build]')" in entry
@@ -108,8 +107,8 @@ def test_cluster_branches_do_not_cancel_each_other() -> None:
 
     assert container.count("continue-on-error: true") >= 4
     assert "fail-fast: false" in container
-    assert entry.count("needs: [validate, container]") == 3
-    assert "name: Firmus\n    needs: validate" in entry
+    assert entry.count("needs: [validate, container]") == 4
+    assert "name: Firmus\n    needs: [validate, container]" in entry
 
 
 def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:

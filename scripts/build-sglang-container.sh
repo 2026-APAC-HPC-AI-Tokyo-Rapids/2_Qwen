@@ -63,12 +63,14 @@ draft_head_patch="patches/sglang/draft-extend-selected-head-rows.patch"
 fused_shuffle_patch="patches/sglang/prefill-fp8-scale-row-shuffle.patch"
 routing_patch="patches/sglang/prefill-tiled-routing.patch"
 staging_patch="patches/sglang/firmus-staged-eagle-kv.patch"
+mega_patch="patches/sglang/qwen3-sm90-megamoe.patch"
 # Later patches depend on additions made by earlier patches; check each updated private tree.
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}"; do
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}"; do
   git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${patch}"
   git -C "${source_dir}" apply "${GITHUB_WORKSPACE}/${patch}"
 done
 python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-staging.py" "${source_dir}"
+python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-megamoe-source.py" "${source_dir}"
 
 cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/build-nccl-tests.sh" "${GITHUB_WORKSPACE}/containers/install-accelerator-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-python-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-sglang-source.sh" "${GITHUB_WORKSPACE}/containers/install-system-toolchain.sh" "${context}/containers/"
 cp --no-preserve=ownership,xattr "${source_dir}/LICENSE" "${source_dir}/README.md" "${source_dir}/python/pyproject.toml" "${context}/sglang-project-metadata/python/"
@@ -76,6 +78,8 @@ cp -a --no-preserve=ownership,xattr "${source_dir}" "${context}/sglang-source"
 cp "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.sh" "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.py" "${context}/containers/"
 install -d "${context}/prefill-moe-routing"
 cp "${GITHUB_WORKSPACE}/kernels/prefill/moe_routing.cu" "${context}/prefill-moe-routing/"
+cp "${GITHUB_WORKSPACE}/containers/build-sm90-megamoe.py" "${context}/containers/"
+cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-late-topk-fp32.patch" "${context}/sm90-late-topk-fp32.patch"
 rm -rf -- "${context}/sglang-source/.git"
 printf '%s\n' "${sglang_commit}" >"${context}/sglang-commit.txt"
 
@@ -86,8 +90,9 @@ sglang_object_format="$(git -C "${source_dir}" rev-parse --show-object-format)"
 dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/Dockerfile)"
 build_steps_json="$(sed -n 's%^COPY \(containers/[^ ]*\.sh\) .*%\1%p' "${GITHUB_WORKSPACE}/containers/Dockerfile" | while read -r build_step; do build_step="${GITHUB_WORKSPACE}/${build_step}"; jq -cn --arg path "${build_step#"${GITHUB_WORKSPACE}/"}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${build_step}")" '{path:$path,blob_oid:$oid}'; done | jq -s '.')"
 patches_json='[]'
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}"; do
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}"; do
   case "${patch}" in
+    "${mega_patch}") targets=(python/sglang/srt/models/qwen3_moe.py) ;;
     "${staging_patch}") targets=(python/sglang/srt/disaggregation/common/staging_buffer.py python/sglang/srt/disaggregation/prefill.py python/sglang/srt/disaggregation/decode.py python/sglang/srt/disaggregation/nixl/conn.py) ;;
     "${draft_head_patch}") targets=(python/sglang/srt/speculative/eagle_worker_v2.py python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py) ;;
     "${fused_shuffle_patch}") targets=(python/sglang/srt/layers/moe/cutlass_moe.py python/sglang/kernels/ops/moe/prefill_fp8_row_shuffle.py) ;;
@@ -105,6 +110,9 @@ jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITH
 buildah --root "${storage_root}" --runroot "${run_root}" bud --isolation chroot --network host --layers --cache-from "${BUILD_CACHE_REPOSITORY}" --cache-to "${BUILD_CACHE_REPOSITORY}" --cache-ttl 336h --file "${context}/containers/Dockerfile" --tag "${image}" "${context}" 2>&1 | tee "${BUILD_DIR}/logs/buildah.log"
 test_container="$(buildah --root "${storage_root}" --runroot "${run_root}" from "${image}")"
 buildah --root "${storage_root}" --runroot "${run_root}" run --isolation chroot "${test_container}" /bin/bash -c 'set -euo pipefail; export XDG_CACHE_HOME=/var/tmp/sglang-recipe-test-cache; test -x /sbin/ldconfig; /opt/sglang/venv/bin/python -c "import sglang, sglang_router, torch; print(sglang.__file__); print(sglang_router.__file__); print(torch.__version__)"; /opt/sglang/venv/bin/python -c "from importlib.metadata import version; expected = {\"aiperf\": \"0.12.0\", \"sglang-router\": \"0.3.2\"}; actual = {package: version(package) for package in expected}; assert actual == expected, actual; print(actual)"; /opt/sglang/venv/bin/python -c "from importlib.metadata import version; packages = (\"flashinfer-python\", \"flashinfer-cubin\", \"flashinfer-jit-cache\"); versions = {package: version(package).split(\"+\", 1)[0] for package in packages}; assert len(set(versions.values())) == 1, versions; print(versions)"; /opt/sglang/venv/bin/python -c "from importlib.metadata import version; print({p: version(p) for p in (\"deep-ep\", \"mooncake-transfer-engine-cuda13\", \"mscclpp\", \"nixl\", \"nixl-cu13\")})"; /opt/sglang/venv/bin/python -m sglang_router.launch_router --help >/dev/null; mpirun --version; test "$(find /opt/nccl-tests/bin -maxdepth 1 -type f -name "*_perf" | wc -l)" -eq 11; for binary in all_reduce_perf all_gather_perf reduce_scatter_perf; do /opt/nccl-tests/bin/${binary} -h 2>&1 | grep -q -- "-J"; done; test "$(cat /opt/sglang/nccl-tests-commit.txt)" = 717b68318278e93f371d8ffb46b076069d7c7851; test -s /opt/sglang/server-args-source-blob-oid.txt; test -s /opt/apac/manifest.json; ! ldd /opt/nccl-tests/bin/all_reduce_perf | grep -q "not found"; ucx_info -v; uv --version; rm -rf "${XDG_CACHE_HOME}"' 2>&1 | tee "${BUILD_DIR}/logs/buildah-test.log"
+buildah --root "${storage_root}" --runroot "${run_root}" run --isolation chroot "${test_container}" /opt/sglang/venv/bin/python -m sglang.launch_server --help >"${BUILD_DIR}/logs/server-cli-help.log" 2>&1
+grep -q -- "--moe-a2a-backend" "${BUILD_DIR}/logs/server-cli-help.log"
+grep -q -- "megamoe" "${BUILD_DIR}/logs/server-cli-help.log"
 buildah --root "${storage_root}" --runroot "${run_root}" push "${image}" "oci:${oci_build}:sglang" 2>&1 | tee "${BUILD_DIR}/logs/buildah-push.log"
 skopeo copy "oci:${oci_build}:sglang" "oci:${oci_runtime}:sglang" 2>&1 | tee "${BUILD_DIR}/logs/skopeo-copy.log"
 skopeo inspect --raw "oci:${oci_runtime}:sglang" >"${BUILD_DIR}/logs/oci-manifest.json"

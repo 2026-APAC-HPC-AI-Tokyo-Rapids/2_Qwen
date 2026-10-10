@@ -85,7 +85,9 @@ def test_sglang_launch_uses_three_dp4_ep4_groups_and_decode_tp4(tmp_path: Path) 
     environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "SGLANG": "/image", "AIPERF": "/image", "MODEL": "/model", "N": str(config["concurrency"]), "R_PORT": "8000"}
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
-    workers = [argv for argv in commands if "--exact" in argv]
+    workers = [argv for argv in commands if "--exact" in argv and str(tmp_path / "source/worker.sh") in argv]
+    numeric = [argv for argv in commands if str(tmp_path / "scripts/check-firmus-megamoe.py") in argv]
+    assert len(numeric) == 1 and "--gres=gpu:4" in numeric[0] and "--nproc-per-node=4" in numeric[0]
     assert len(workers) == 4
     assert sum(2 if "--gres=gpu:2" in argv else 4 for argv in workers) == 16
     archived = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/aspire-integration-argv.json").read_text())["archived_server_info"]
@@ -294,5 +296,5 @@ def test_unsupported_modes_fail_before_container_staging(tmp_path: Path, profile
     environment = {**os.environ, "GITHUB_WORKSPACE": str(ROOT), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "a" * 40, "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(runtime), "PROFILE": profile, "REQUIRE_BUILD": require_build}
     result = subprocess.run(["bash", str(ROOT / "scripts/provision-firmus-framework.sh")], env=environment, capture_output=True, text=True, check=False)
     assert result.returncode == 64
-    assert "reuses pinned baseline images" in result.stderr
+    assert "requires the successful CPU build SHA-256 and size" in result.stderr
     assert not runtime.exists()
