@@ -14,12 +14,37 @@ REPOSITORY = Path(__file__).parents[2]
 PARSER = REPOSITORY / "scripts" / "parse-aiperf-result.py"
 
 
-def test_vllm_official_client_uses_fixed_scoring_command() -> None:
+def test_vllm_official_client_uses_fixed_scoring_command(tmp_path: Path) -> None:
     script = (REPOSITORY / "platforms/firmus/framework-comparison/official-aiperf.sh").read_text()
-    command_line = next(line for line in script.splitlines() if line.startswith("command=("))
-    result = subprocess.run(["bash", "-euc", command_line + '\nprintf "%s\\0" "${command[@]}"'], env={**os.environ, "N": "8"}, capture_output=True, check=True)
+    construction = script.split("printf '%q '", 1)[0]
+    result = subprocess.run(["bash", "-euc", construction + '\nprintf "%s\\0" "${command[@]}"', "fixture", str(tmp_path), "8"], capture_output=True, check=True)
     expected = runpy.run_path(str(PARSER))["expected_official_command"]("http://127.0.0.1:8000/v1/chat/completions", 8)
     assert result.stdout.decode().rstrip("\0").split("\0") == expected
+
+
+def test_profile_client_preserves_official_result(tmp_path: Path) -> None:
+    script = (REPOSITORY / "platforms/firmus/framework-comparison/official-aiperf.sh").read_text()
+    (tmp_path / "results").mkdir()
+    (tmp_path / "results/score.json").write_text('original score\n')
+    revision = tmp_path / "tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/refs/main"
+    revision.parent.mkdir(parents=True)
+    revision.write_text("pinned-tokenizer")
+    client = tmp_path / "aiperf"
+    client.write_text(f'#!{sys.executable}\nfrom pathlib import Path\np=Path("artifacts/profile")\np.mkdir(parents=True)\n(p/"profile_export_aiperf.json").write_text("{{}}")\n(p/"profile_export.jsonl").write_text("requests")\n')
+    client.chmod(0o755)
+    version = tmp_path / "python"
+    version.write_text('#!/bin/bash\n[[ "$1" == -c ]] || exit 99\necho 0.12.0\n')
+    version.chmod(0o755)
+    script = script.replace("/opt/sglang/venv/bin/aiperf", shlex.quote(str(client))).replace("/opt/sglang/venv/bin/python", shlex.quote(str(version)))
+    subprocess.run(["bash", "-euc", script, "fixture", str(tmp_path), "104", "profile"], check=True)
+    output = tmp_path / "profile/client"
+    argv = shlex.split((output / "aiperf-command.txt").read_text())
+    for flag, value in {"--warmup-duration": "20", "--benchmark-duration": "30", "--benchmark-grace-period": "90", "--concurrency": "104", "--synthetic-input-tokens-mean": "4000", "--output-tokens-mean": "200"}.items():
+        assert argv[argv.index(flag) + 1] == value
+    assert "mode=profile\n" in (output / "aiperf-provenance.txt").read_text()
+    assert (output / "profile_export.jsonl").read_text() == "requests"
+    assert (tmp_path / "results/score.json").read_text() == 'original score\n'
+    assert not (output / "score.json").exists()
 
 
 def metrics(

@@ -5,11 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections import Counter
 from pathlib import Path
 
 
 def read_artifact(root: Path, filename: str) -> dict:
-    paths = sorted(root.rglob(filename), key=lambda path: (len(path.parts), str(path))) if root.exists() else []
+    paths = sorted((path for path in root.rglob(filename) if not (path.parent.name == "client" and path.parent.parent.name == "profile")), key=lambda path: (len(path.parts), str(path))) if root.exists() else []
     return json.loads(paths[0].read_text()) if paths else {}
 
 
@@ -26,6 +27,13 @@ def summarize(root: Path, job_id: str, status: str) -> str:
     workload = identity.get("workload", "reference-07")
     phases = "60 / 120 / 30" if workload == "official" else "20 / 60 / 15"
     topology = "P2 × TP4 / D2 × TP4 EP1" if identity.get("framework") == "sglang" and workload == "official" else "P4 × TP2 / D2 × TP4 EP4"
+    endpoint_files = list(root.rglob("worker-endpoints.tsv")) if root.exists() else []
+    expected_reports = 6
+    if endpoint_files:
+        endpoints = [line.split("\t") for line in endpoint_files[0].read_text().splitlines()]
+        expected_reports = len(endpoints)
+        groups = Counter(("P" if name.startswith("prefill-") else "D", int(tp)) for name, _host, _port, tp in endpoints)
+        topology = " / ".join(f"{role}{count} × TP{tp}" for (role, tp), count in sorted(groups.items(), reverse=True))
     lines = ["### Firmus Qwen", "", f"- Status: **{status}**; Slurm `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'unavailable')}**; H200 × 16; {topology}; concurrency **{config.get('concurrency', 'unavailable')}**.", f"- Workload: {workload}, ISL 4000 / OSL 200, warmup / benchmark / grace **{phases} s**; **not an official submission**."]
     if identity.get("dynamo"):
         dynamo = identity["dynamo"]
@@ -44,7 +52,8 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         gpu_coverage = f"{sum(worker['gpu_count'] for worker in workers.values())} / 16 GPUs" if capture else "GPU coverage unverified"
         notes = sorted(root.rglob("interpretation.txt"))
         capture_note = notes[0].read_text().strip() if notes else "Capture timing unavailable; inspect profile-capture.log."
-        lines += ["", f"Nsight: **{len(reports)} / 6 reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **Instrumented score; do not use for performance comparison.**"]
+        score_note = "Normal score is from the earlier tracing-disabled pass; the separate profile/client pass is instrumented and must not be used for performance comparison." if identity.get("normal_benchmark_before_profile") else "Instrumented score; do not use for performance comparison."
+        lines += ["", f"Nsight: **{len(reports)} / {expected_reports} reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **{score_note}**"]
     else:
         lines += ["", "Nsight: disabled."]
     lines += ["", f"Archive after the archive job succeeds: `archive-host:/srv/qwen-artifacts/{run_id}/{attempt}/`.", "Reports: `profile/`; conditions and image hashes: `source/`; raw requests and score: `results/`.", ""]

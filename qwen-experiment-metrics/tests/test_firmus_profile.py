@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import runpy
 import sqlite3
 import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,9 +18,9 @@ VALIDATE = runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"))["val
 SUMMARY = runpy.run_path(str(ROOT / "scripts/summarize-firmus-run.py"))["summarize"]
 
 
-@pytest.mark.parametrize("framework", ["sglang", "vllm"])
+@pytest.mark.parametrize("framework,separate", [("sglang", False), ("vllm", False), ("sglang", True)])
 @pytest.mark.parametrize("failure", [None, "start", "stop"])
-def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None, framework: str) -> None:
+def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None, framework: str, separate: bool) -> None:
     requests = []
     request_lock = threading.Lock()
 
@@ -28,7 +30,7 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
             with request_lock:
                 requests.append((self.path, json.loads(body) if body else None, "Phase profiling (profiling) complete |" in (tmp_path / "logs/aiperf.log").read_text()))
                 number = len(requests)
-            self.send_response(500 if self.path == f"/{failure}_profile" and number % 6 == 1 else 200)
+            self.send_response(500 if self.path == f"/{failure}_profile" and number % len(workers) == 1 else 200)
             self.end_headers()
             self.wfile.write(b"response\n")
 
@@ -40,26 +42,33 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     thread.start()
     for directory in ("logs", "source", "profile", "bin"):
         (tmp_path / directory).mkdir()
-    (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"framework": framework}))
-    workers = [(f"prefill-{n}", 2) for n in range(4)] + [(f"decode-{n}", 4) for n in range(2)]
+    (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"framework": framework, "workload": "official" if separate else "reference-07"}))
+    workers = [(f"prefill-{n}", 2) for n in range(6 if separate else 4)] + [(f"decode-{n}", 4) for n in range(1 if separate else 2)]
     (tmp_path / "source/worker-endpoints.tsv").write_text("".join(f"{name}\t127.0.0.1\t{server.server_port}\t{tp}\n" for name, tp in workers))
     (tmp_path / "logs/aiperf.log").write_text("Phase profiling (profiling) started\n")
+    client_log = tmp_path / "logs" / ("profile-aiperf.log" if separate else "aiperf.log")
     sleep = tmp_path / "bin/sleep"
-    sleep.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >>\"$SLEEP_RECORD\"\nif [[ $1 == 1 ]]; then printf 'Phase profiling (profiling) complete | elapsed=75.00s\\n' >>\"${SLEEP_RECORD%/*}/logs/aiperf.log\"; fi\n")
+    sleep.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >>\"$SLEEP_RECORD\"\nif [[ $1 == 1 ]]; then printf 'Phase profiling (profiling) started\\nPhase profiling (profiling) complete | elapsed=75.00s\\n' >>\"$CLIENT_LOG\"; fi\n")
     sleep.chmod(0o755)
     try:
-        result = subprocess.run(["bash", str(ROOT / "scripts/capture-firmus-profile.sh"), str(tmp_path)], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLEEP_RECORD": str(tmp_path / "sleeps")}, capture_output=True, text=True, check=False)
+        result = subprocess.run(["bash", str(ROOT / "scripts/capture-firmus-profile.sh"), str(tmp_path)], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLEEP_RECORD": str(tmp_path / "sleeps"), "CLIENT_LOG": str(client_log)}, capture_output=True, text=True, check=False)
     finally:
         server.shutdown()
         thread.join()
         server.server_close()
     assert (result.returncode != 0) is (failure is not None)
-    assert [path for path, _, _ in requests].count("/start_profile") == 6
-    assert [path for path, _, _ in requests].count("/stop_profile") == 6
+    assert [path for path, _, _ in requests].count("/start_profile") == len(workers)
+    assert [path for path, _, _ in requests].count("/stop_profile") == len(workers)
     expected_body = {"activities": ["CUDA_PROFILER"]} if framework == "sglang" else None
-    assert all(body == expected_body for path, body, _ in requests if path == "/start_profile")
-    assert (tmp_path / "sleeps").read_text().splitlines() == (["5"] if failure == "start" else ["5", "1" if framework == "sglang" else "5"])
-    if framework == "sglang" and failure != "start":
+    if separate:
+        bodies = [body for path, body, _ in requests if path == "/start_profile"]
+        assert {body["output_dir"] for body in bodies} == {str(tmp_path / "profile/torch" / name) for name, _ in workers}
+        assert all(body["activities"] == ["CPU", "CUDA_PROFILER"] and body["with_stack"] is False and body["record_shapes"] is False for body in bodies)
+    else:
+        assert all(body == expected_body for path, body, _ in requests if path == "/start_profile")
+    expected_sleeps = (["1"] if separate else []) + (["5"] if failure == "start" else ["5", "1" if framework == "sglang" and not separate else "5"])
+    assert (tmp_path / "sleeps").read_text().splitlines() == expected_sleeps
+    if framework == "sglang" and not separate and failure != "start":
         assert all(complete for path, _, complete in requests if path == "/stop_profile")
     assert ("capture_stopped" in result.stdout) is (failure is None)
 
@@ -81,6 +90,45 @@ def test_profile_validation_explains_idle_worker_capture(tmp_path: Path) -> None
         connection.executemany("INSERT INTO TARGET_INFO_GPU VALUES (?)", [(0,), (1,)])
     with pytest.raises(ValueError, match=r"no CUDA kernels captured in nsys-prefill-1.sqlite; expected kernels on 2 GPUs"):
         VALIDATE(database, 2)
+
+
+def test_full_profile_retains_seven_reports_and_sixteen_cpu_traces(tmp_path: Path, monkeypatch) -> None:
+    module = runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"))
+    (tmp_path / "source").mkdir()
+    (tmp_path / "profile").mkdir()
+    (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"framework": "sglang", "workload": "official"}))
+    workers = [(f"prefill-{n}", 2) for n in range(6)] + [("decode-0", 4)]
+    (tmp_path / "source/worker-endpoints.tsv").write_text("".join(f"{name}\thost\t30000\t{tp}\n" for name, tp in workers))
+    for name, tp in workers:
+        (tmp_path / f"profile/nsys-{name}.nsys-rep").write_text("native report")
+        directory = tmp_path / "profile/torch" / name
+        directory.mkdir(parents=True)
+        for rank in range(tp):
+            with gzip.open(directory / f"123-TP-{rank}.trace.json.gz", "wt") as handle:
+                json.dump({"traceEvents": [{"cat": "user_annotation", "name": "draft_extend"}]}, handle)
+
+    def export(command, check):
+        assert check and command[:3] == ["/opt/nsys/bin/nsys", "export", "--type=sqlite"]
+        output = Path(command[3].removeprefix("--output="))
+        tp = 4 if "decode" in output.name else 2
+        with sqlite3.connect(output) as connection:
+            connection.execute("CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (deviceId INTEGER, start INTEGER, end INTEGER, demangledName INTEGER)")
+            connection.execute("CREATE TABLE StringIds (id INTEGER, value TEXT)")
+            connection.execute("INSERT INTO StringIds VALUES (1,'fused_moe_kernel')")
+            connection.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?,0,100,1)", [(rank,) for rank in range(tp)])
+
+    monkeypatch.setattr(subprocess, "run", export)
+    monkeypatch.setattr(sys, "argv", ["validate", str(tmp_path)])
+    module["main"]()
+    result = json.loads((tmp_path / "profile/validation.json").read_text())
+    assert result["valid"] and len(result["workers"]) == 7
+    assert sum(worker["gpu_count"] for worker in result["workers"].values()) == 16
+    assert sum(worker["cpu_trace_count"] for worker in result["workers"].values()) == 16
+    assert len(json.loads((tmp_path / "profile/kernel-summary.json").read_text())) == 7
+    assert not list((tmp_path / "profile").glob("*.sqlite"))
+    (tmp_path / "profile/torch/decode-0/123-TP-3.trace.json.gz").unlink()
+    with pytest.raises(ValueError, match="expected one CPU trace.*TP3"):
+        module["validate_cpu_traces"](tmp_path / "profile/torch/decode-0", 4)
 
 
 def test_summary_marks_profile_score_and_handles_missing_results(tmp_path: Path, monkeypatch) -> None:
@@ -115,6 +163,55 @@ def test_summary_uses_official_score_and_measured_latency(tmp_path: Path) -> Non
     assert "Official workload validation | True" in summary
     (tmp_path / "provenance.json").write_text(json.dumps({"framework": "sglang", "workload": "official"}))
     assert "P2 × TP4 / D2 × TP4 EP1" in SUMMARY(tmp_path, "456", "success")
+
+
+def test_full_profile_summary_keeps_normal_latency_and_actual_topology(tmp_path: Path) -> None:
+    (tmp_path / "provenance.json").write_text(json.dumps({"framework": "sglang", "workload": "official", "profile": True, "normal_benchmark_before_profile": True}))
+    (tmp_path / "score.json").write_text(json.dumps({"request_count": 360, "good_request_fraction": 1.0, "goodput_requests_per_second": 3.0, "score_output_tokens_per_second": 600.0, "eligible": True}))
+    normal = tmp_path / "results/results"
+    normal.mkdir(parents=True)
+    (normal / "profile_export_aiperf.json").write_text(json.dumps({"inter_token_latency": {"avg": 12, "p99": 13}}))
+    instrumented = tmp_path / "profile/client"
+    instrumented.mkdir(parents=True)
+    (instrumented / "profile_export_aiperf.json").write_text(json.dumps({"inter_token_latency": {"avg": 80, "p99": 90}}))
+    workers = {**{f"prefill-{i}": {"gpu_count": 2} for i in range(6)}, "decode-0": {"gpu_count": 4}}
+    (tmp_path / "worker-endpoints.tsv").write_text("".join(f"{name}\thost\t30000\t{info['gpu_count']}\n" for name, info in workers.items()))
+    (tmp_path / "validation.json").write_text(json.dumps({"valid": True, "workers": workers}))
+    for name in workers:
+        (tmp_path / f"nsys-{name}.nsys-rep").touch()
+    summary = SUMMARY(tmp_path, "456", "success")
+    assert "P6 × TP2 / D1 × TP4" in summary and "7 / 7 reports" in summary and "16 / 16 GPUs" in summary
+    assert "Normal score is from the earlier tracing-disabled pass" in summary
+    assert "12.000 / 13.000 ms" in summary and "80.000 / 90.000 ms" not in summary
+    (normal / "profile_export_aiperf.json").unlink()
+    assert "80.000 / 90.000 ms" not in SUMMARY(tmp_path, "456", "failure")
+
+
+def test_sglang_nsys_launch_preserves_uninstrumented_worker_arguments(tmp_path: Path) -> None:
+    (tmp_path / "source").mkdir()
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/exec-profiler.sh").write_bytes((ROOT / "scripts/exec-profiler.sh").read_bytes())
+    stub = '#!/bin/bash\nprintf "%s\\0" "$@" >"$ARGV_RECORD"\n'
+    python = tmp_path / "python"
+    python.write_text(stub)
+    python.chmod(0o755)
+    nsys = tmp_path / "nsys"
+    source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
+    worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    launch = worker.split("UCX_IB=", 1)[0] + "command=(" + worker.split("command=(", 1)[1]
+    launch = launch.replace("/opt/nsys/bin/nsys", str(nsys)).replace("/opt/sglang/venv/bin/python", str(python))
+    path = tmp_path / "source/worker.sh"
+    path.write_text(launch)
+    args = ["bash", str(path), "decode-0", "30200", "/model", "4", "192.0.2.1", "--speculative-algorithm", "EAGLE3"]
+    environment = {**os.environ, "ARGV_RECORD": str(tmp_path / "argv")}
+    subprocess.run(args, env=environment, check=True)
+    baseline = (tmp_path / "argv").read_text().rstrip("\0").split("\0")
+    nsys.write_text(stub)
+    nsys.chmod(0o755)
+    subprocess.run(args, env=environment, check=True)
+    instrumented = (tmp_path / "argv").read_text().rstrip("\0").split("\0")
+    assert "--trace-fork-before-exec=true" in instrumented and "--cuda-graph-trace=node" in instrumented
+    assert instrumented[instrumented.index(str(python)) + 1:] == baseline
 
 
 def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path) -> None:

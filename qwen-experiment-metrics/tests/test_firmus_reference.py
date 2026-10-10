@@ -90,7 +90,8 @@ def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path)
     archived = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/aspire-integration-argv.json").read_text())["archived_server_info"]
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     assert "jq" not in worker  # Not installed in the pinned image; parse on the host.
-    launch = worker.split("UCX_IB=", 1)[0] + 'printf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "$SGLANG_HOST_IP"\n' + "printf '%s\\0' " + worker.split("\nexec ", 1)[1]
+    command = next(line for line in worker.splitlines() if line.startswith("command=("))
+    launch = worker.split("UCX_IB=", 1)[0] + command + '\nprintf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "$SGLANG_HOST_IP" "${command[@]}"\n'
     observed = {}
     for argv in workers:
         args = argv[argv.index("bash") + 2:]

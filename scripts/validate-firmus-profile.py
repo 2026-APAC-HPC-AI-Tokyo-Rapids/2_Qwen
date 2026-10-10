@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import sqlite3
 import subprocess
@@ -19,12 +20,39 @@ def validate_capture(database: Path, tp: int) -> dict:
     return {"gpu_count": len(rows), "kernel_count": sum(count for _, count in rows)}
 
 
+def validate_cpu_traces(directory: Path, tp: int) -> dict:
+    stages = set()
+    for rank in range(tp):
+        traces = list(directory.glob(f"*-TP-{rank}.trace.json.gz"))
+        if len(traces) != 1:
+            raise ValueError(f"expected one CPU trace for {directory.name} TP{rank}, got {len(traces)}")
+        with gzip.open(traces[0], "rt") as handle:
+            events = json.load(handle)["traceEvents"]
+        annotations = {event.get("name", "") for event in events if event.get("cat") == "user_annotation"}
+        if not annotations:
+            raise ValueError(f"no CPU stage spans in {traces[0].name}")
+        stages.update(name for name in annotations if name.startswith("step[") or "draft" in name.lower() or "verify" in name.lower())
+    return {"cpu_trace_count": tp, "cpu_stage_names": sorted(stages)}
+
+
+def summarize_kernels(database: Path) -> dict:
+    """Retain the same compact kernel evidence as the recovered Firmus profiles."""
+    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
+        devices = connection.execute("SELECT deviceId, COUNT(*), MIN(start), MAX(end), SUM(end-start) FROM CUPTI_ACTIVITY_KIND_KERNEL GROUP BY deviceId").fetchall()
+        kernels = connection.execute("SELECT s.value, COUNT(*), SUM(k.end-k.start), AVG(k.end-k.start) FROM CUPTI_ACTIVITY_KIND_KERNEL k JOIN StringIds s ON s.id=k.demangledName GROUP BY s.value ORDER BY SUM(k.end-k.start) DESC LIMIT 40").fetchall()
+    return {"time_unit": "ns", "interpretation": "Summed kernel durations overlap across streams and GPUs; envelope includes idle gaps and profiler export tails. Use the recorded capture_active/stop_requested window and CPU stage correlations for latency attribution.", "devices": [{"device_id": device, "kernel_count": count, "first_kernel_ns": start, "last_kernel_ns": end, "kernel_envelope_ns": end - start, "summed_kernel_duration_ns": duration} for device, count, start, end, duration in devices], "top_kernels": [{"name": name, "calls": count, "summed_duration_ns": duration, "mean_duration_ns": average} for name, count, duration, average in kernels]}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("runtime", type=Path)
     args = parser.parse_args()
+    config = json.loads((args.runtime / "source/firmus-framework.json").read_text())
+    separate = config["framework"] == "sglang" and config.get("workload") == "official"
     results = {}
-    for row in (args.runtime / "source/worker-endpoints.tsv").read_text().splitlines():
+    summaries = {}
+    endpoints = (args.runtime / "source/worker-endpoints.tsv").read_text().splitlines()
+    for row in endpoints:
         name, _host, _port, tp = row.split("\t")
         report = args.runtime / f"profile/nsys-{name}.nsys-rep"
         if not report.is_file() or report.stat().st_size == 0:
@@ -32,10 +60,14 @@ def main() -> None:
         database = args.runtime / f"profile/nsys-{name}.sqlite"
         subprocess.run(["/opt/nsys/bin/nsys", "export", "--type=sqlite", f"--output={database}", str(report)], check=True)
         results[name] = {"report": report.name, **validate_capture(database, int(tp))}
+        summaries[name] = summarize_kernels(database)
+        if separate:
+            results[name].update(validate_cpu_traces(args.runtime / "profile/torch" / name, int(tp)))
         database.unlink()
-    if len(results) != 6:
-        raise ValueError("expected six worker captures")
+    if not endpoints or len(results) != len(endpoints):
+        raise ValueError("expected a capture for every distinct worker endpoint")
     (args.runtime / "profile/validation.json").write_text(json.dumps({"valid": True, "workers": results}, indent=2) + "\n")
+    (args.runtime / "profile/kernel-summary.json").write_text(json.dumps(summaries, indent=2) + "\n")
 
 
 if __name__ == "__main__":
