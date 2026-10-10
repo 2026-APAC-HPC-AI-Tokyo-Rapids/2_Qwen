@@ -192,6 +192,29 @@ def test_collection_retries_interrupted_artifacts_without_submitting(tmp_path: P
     assert all("sbatch" not in row for row in reads)
 
 
+@pytest.mark.parametrize("matching_runtime", [True, False])
+def test_existing_firmus_collection_only_reads_the_matching_job(tmp_path: Path, matching_runtime: bool) -> None:
+    workflow = (ROOT / ".github/workflows/qwen.yml").read_text()
+    job = workflow.split("  firmus-collect:\n", 1)[1].split("  archive-artifacts:", 1)[0]
+    script = textwrap.dedent(job.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+    shell = tmp_path / "firmus-shell"
+    shell.write_text(f"#!{sys.executable}\nimport os,sys\nfrom pathlib import Path\nroot=Path(os.environ['RUNNER_TEMP'])\nargs=sys.argv[1:]\nwith (root/'reads').open('a') as f: f.write(repr(args)+'\\n')\nif args[0]=='--pull':\n assert args[1].startswith(os.environ['RUNTIME_DIR']+'/')\n Path(args[2]).mkdir(parents=True)\n (Path(args[2])/'evidence.txt').write_text('copied')\nelif args[0]=='scontrol show job -o 22351':\n print('JobId=22351 JobState=PENDING Reason=PartitionTimeLimit WorkDir='+os.environ['OBSERVED_RUNTIME'])\nelif args[0].startswith(('squeue --noheader --jobs=22351 ', 'sacct --allocations --jobs=22351 ')) or args[0]=='scontrol show partition -o hpcai':\n print('read-only state')\nelse:\n raise AssertionError('Unexpected remote operation: '+repr(args))\n")
+    shell.chmod(0o755)
+    timeout = tmp_path / "timeout"
+    timeout.write_text('#!/bin/bash\nshift 2; exec "$@"\n')
+    timeout.chmod(0o755)
+    runtime = "/scratch/home/ACCOUNT/qwen/runs/pd-38039229663-1.dQNNKAwou6"
+    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path), "SLURM_JOB_ID": "22351", "RUNTIME_DIR": runtime, "OBSERVED_RUNTIME": runtime if matching_runtime else "/other-job", "GITHUB_RUN_ID": "collection"}
+    result = subprocess.run(["bash", "-euc", script], env=environment, check=False)
+    reads = (tmp_path / "reads").read_text().splitlines()
+    assert result.returncode == (0 if matching_runtime else 1)
+    assert len(reads) == (8 if matching_runtime else 1)
+    if matching_runtime:
+        destination = tmp_path / "qwen-firmus-existing"
+        assert "job_and_runtime_preserved=true" in (destination / "snapshot/collection.txt").read_text()
+        assert len(list(destination.glob("*/evidence.txt"))) == 4
+
+
 @pytest.mark.parametrize("profile,require_build", [("false", "true")])
 def test_unsupported_modes_fail_before_container_staging(tmp_path: Path, profile: str, require_build: str) -> None:
     runtime = tmp_path / "runs"
