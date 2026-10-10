@@ -129,30 +129,9 @@ def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path) -> None:
     assert argv[-5:] == ["/opt/python", "-m", "sglang.launch_server", "--port", "30200"]
 
 
-@pytest.mark.parametrize("profile", [False, True])
-def test_vllm_launch_keeps_baseline_arguments_and_enables_cuda_only_for_profile(tmp_path: Path, profile: bool) -> None:
-    (tmp_path / "source").mkdir()
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts/exec-profiler.sh").write_bytes((ROOT / "scripts/exec-profiler.sh").read_bytes())
-    stub = '#!/bin/bash\nprintf "%s\\0" "$@" >"$ARGV_RECORD"\nprintf "%s" "${VLLM_WORKER_MULTIPROC_METHOD:-}" >"$METHOD_RECORD"\n'
-    vllm = tmp_path / "vllm"
-    vllm.write_text(stub)
-    vllm.chmod(0o755)
-    nsys = tmp_path / "nsys"
-    if profile:
-        nsys.write_text(stub)
-        nsys.chmod(0o755)
+@pytest.mark.parametrize("profile,expected", [("false", 0), ("true", 1)])
+def test_optimized_vllm_rejects_profile_before_worker_launch(profile: str, expected: int) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
-    launch = 'runtime_dir=' + source.split('runtime_dir=', 1)[1].split('\nEOF', 1)[0]
-    launch = launch.replace('/opt/nsys/bin/nsys', str(nsys)).replace('/usr/local/bin/vllm', str(vllm))
-    kv_config = '{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}'
-    worker = tmp_path / "source/worker.sh"
-    worker.write_text('set -euo pipefail\nname=$1\nport=$2\nmodel=$3\ntp=$4\nshift 4\nKV_CONFIG=\'' + kv_config + "'\n" + launch)
-    subprocess.run(["bash", str(worker), "decode-0", "30200", "/model", "4", "--enable-expert-parallel"], env={**os.environ, "ARGV_RECORD": str(tmp_path / "argv"), "METHOD_RECORD": str(tmp_path / "method"), "VLLM_WORKER_MULTIPROC_METHOD": ""}, check=True)
-    argv = (tmp_path / "argv").read_text().rstrip("\0").split("\0")
-    if profile:
-        assert "--capture-range=cudaProfilerApi" in argv
-        argv = argv[argv.index(str(vllm)) + 1:]
-    expected = ["serve", "/model", "--served-model-name", "qwen", "--trust-remote-code", "--host", "0.0.0.0", "--port", "30200", "--tensor-parallel-size", "4", "--max-model-len", "8192", "--gpu-memory-utilization", "0.90", "--kv-transfer-config", kv_config, "--enable-expert-parallel"]
-    assert argv == expected + (["--profiler-config", '{"profiler":"cuda"}'] if profile else [])
-    assert (tmp_path / "method").read_text() == ("spawn" if profile else "")
+    guard = next(line for line in source.splitlines() if line.startswith('[[ "${PROFILE:'))
+    result = subprocess.run(["bash", "-euc", guard], env={**os.environ, "PROFILE": profile}, check=False)
+    assert result.returncode == expected
