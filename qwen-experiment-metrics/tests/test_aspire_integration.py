@@ -66,6 +66,10 @@ def test_worker_argv_matches_adopted_prefill_combination(platform: str, nodes: i
         single_decode = json.loads(archived["30201"].replace("decode-1/", "decode-0/").replace('"30201"', '"30200"').replace('"31201"', '"31200"'))
         single_decode["argv"][single_decode["argv"].index("--max-total-tokens") + 1] = str(config["decode_max_total_tokens"])
         expected = [json.loads(archived["30100"]), json.loads(archived["30101"]), third_prefill, single_decode]
+        # This trial pages KV in 64-token blocks on both roles.
+        for worker in expected:
+            page_index = worker["argv"].index("--kv-cache-dtype") + 2 + (2 if "--moe-runner-backend" in worker["argv"] else 0)
+            worker["argv"][page_index:page_index] = ["--page-size", "64"]
         for worker in expected:
             if worker["argv"][worker["argv"].index("--disaggregation-mode") + 1] == "decode":
                 worker["argv"] += ["--cuda-graph-bs-decode", *map(str, graph_bs)]
