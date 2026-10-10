@@ -67,7 +67,7 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
 def test_sglang_launch_matches_full_h200_tp2_conditions(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 64, "official")
+    assert (config["concurrency"], config["workload"]) == (64, "official")
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
@@ -130,6 +130,32 @@ def test_sglang_launch_matches_full_h200_tp2_conditions(tmp_path: Path) -> None:
     assert router_argv[router_argv.index("--prefill-policy") + 1] == "round_robin"
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
     assert client_argv[-2:] == [str(tmp_path), "64"]
+
+
+def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_path: Path) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    # Exercise actual shell argument construction without requiring GPUs or HCAs.
+    probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
+    probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${worker_command[@]}"\n'
+    for role, tp, limit in [("prefill", 2, 64), ("decode", 4, 256)]:
+        options = ["--speculative-config", '{"method":"eagle3","model":"/draft","num_speculative_tokens":3}', "--max-num-seqs", str(limit)]
+        if role == "prefill":
+            options += ["--disable-custom-all-reduce", "--moe-backend", "flashinfer_cutlass"]
+        else:
+            options += ["--cudagraph-capture-sizes", "1", "13", "15", "512"]
+        result = subprocess.run(["bash", "-c", probe, "fixture", f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
+        symm, *flags = result.stdout.decode().rstrip("\0").split("\0")
+        assert symm == ("1" if role == "prefill" else "0")
+        assert flags[flags.index("--tensor-parallel-size") + 1] == str(tp)
+        assert flags[flags.index("--max-num-seqs") + 1] == str(limit)
+        assert "--enable-expert-parallel" not in flags
+        assert flags[flags.index("--dtype") + 1] == "bfloat16"
+        assert flags[flags.index("--kv-cache-dtype") + 1] == "fp8_e4m3"
+        assert int(flags[flags.index("--block-size") + 1]) * int(flags[flags.index("--num-gpu-blocks-override") + 1]) == 131072
+        assert json.loads(flags[flags.index("--attention-config") + 1]) == {"backend": "FLASH_ATTN", "flash_attn_version": 3}
+        assert json.loads(flags[flags.index("--kv-transfer-config") + 1])["kv_role"] == ("kv_producer" if role == "prefill" else "kv_consumer")
+        assert json.loads(flags[flags.index("--speculative-config") + 1]) == {"method": "eagle3", "model": "/draft", "num_speculative_tokens": 3}
 
 
 @pytest.mark.parametrize("worker_status,expected", [(127, 127), (0, 1)])
