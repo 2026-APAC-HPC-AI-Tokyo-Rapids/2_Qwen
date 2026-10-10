@@ -1,0 +1,125 @@
+diff --git a/python/sglang/srt/disaggregation/common/staging_buffer.py b/python/sglang/srt/disaggregation/common/staging_buffer.py
+index e41071c..b213357 100644
+--- a/python/sglang/srt/disaggregation/common/staging_buffer.py
++++ b/python/sglang/srt/disaggregation/common/staging_buffer.py
+@@ -28,6 +28,34 @@ logger = logging.getLogger(__name__)
+ _USE_TRITON_STAGING = not bool(os.environ.get("SGLANG_STAGING_USE_TORCH", ""))
+ 
+ 
++def get_staging_kv_buffers(target_pool, draft_pool=None):
++    """Keep target and EAGLE KV in the same layer order on both endpoints."""
++    k_buffers, v_buffers = [], []
++    page_size = None
++    geometry = None
++    for pool in (target_pool, draft_pool):
++        if pool is None:
++            continue
++        pool = getattr(pool, "full_kv_pool", pool)
++        if not hasattr(pool, "k_buffer") or not hasattr(pool, "v_buffer"):
++            raise ValueError("Staged MHA transfer requires K and V tensors")
++        if page_size is None:
++            page_size = pool.page_size
++        if pool.page_size != page_size or len(pool.k_buffer) != len(pool.v_buffer):
++            raise ValueError("Target/draft staging page size or K/V count mismatch")
++        for tensor in (*pool.k_buffer, *pool.v_buffer):
++            current = (tensor.shape[1:], tensor.stride(), tensor.dtype, tensor.device)
++            if geometry is None:
++                geometry = current
++            if current != geometry or not tensor.is_contiguous():
++                raise ValueError("Staged target/draft KV must have identical geometry and dtype")
++        k_buffers.extend(pool.k_buffer)
++        v_buffers.extend(pool.v_buffer)
++    if not k_buffers:
++        raise ValueError("Staged MHA transfer has no KV tensors")
++    return k_buffers, v_buffers, page_size
++
++
+ @triton.jit
+ def _fused_gather_to_staging_kernel(
+     layer_ptrs,
+diff --git a/python/sglang/srt/disaggregation/decode.py b/python/sglang/srt/disaggregation/decode.py
+index 8bd0bb3..660169b 100644
+--- a/python/sglang/srt/disaggregation/decode.py
++++ b/python/sglang/srt/disaggregation/decode.py
+@@ -502,11 +502,15 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
+                 kv_args.kv_head_num = per_rank_kv_heads
+                 kv_args.total_kv_head_num = per_rank_kv_heads * attn_tp_size
+             if hasattr(kv_manager, "set_kv_buffer_tensors"):
+-                kv_pool = kv_pool_for_heads
+-                if hasattr(kv_pool, "k_buffer") and hasattr(kv_pool, "v_buffer"):
+-                    kv_manager.set_kv_buffer_tensors(
+-                        kv_pool.k_buffer, kv_pool.v_buffer, kv_pool.page_size
++                from sglang.srt.disaggregation.common.staging_buffer import (
++                    get_staging_kv_buffers,
++                )
++
++                kv_manager.set_kv_buffer_tensors(
++                    *get_staging_kv_buffers(
++                        self.token_to_kv_pool, self.draft_token_to_kv_pool
+                     )
++                )
+         return kv_manager
+ 
+     def add(
+diff --git a/python/sglang/srt/disaggregation/nixl/conn.py b/python/sglang/srt/disaggregation/nixl/conn.py
+index 831d2f2..c9b0010 100644
+--- a/python/sglang/srt/disaggregation/nixl/conn.py
++++ b/python/sglang/srt/disaggregation/nixl/conn.py
+@@ -541,6 +541,8 @@ class NixlKVManager(CommonKVManager):
+             )
+ 
+     def set_kv_buffer_tensors(self, k_buffers: list, v_buffers: list, page_size: int):
++        if len(k_buffers) + len(v_buffers) != len(self.kv_args.kv_data_ptrs):
++            raise ValueError("Staging tensors must include every registered target/draft KV layer")
+         # NOTE: matches mooncake behavior -- staging buffers are now
+         # created in __init__ (per-worker), independent of the kv
+         # tensors. This setter only stashes the tensor metadata used by
+@@ -1052,6 +1054,19 @@ class NixlKVManager(CommonKVManager):
+                     "NIXL heterogeneous-TP direct-to-host KV transfer is not "
+                     "implemented safely yet"
+                 )
++            if self.enable_staging:
++                # A negotiated staged peer never uses the full-pool slice dlists.
++                # Keep registration/metadata, but avoid O(pool tokens * layers)
++                # host allocations when increasing the H200 decode KV capacity.
++                if peer_info.staging is None or self.kv_buffer_tensors is None:
++                    raise ValueError("Heterogeneous NIXL staging must be enabled on both peers")
++                if n_src != n_dst or len(set(self.kv_args.kv_item_lens)) != 1 or len(set(peer_info.dst_kv_item_lens)) != 1:
++                    raise ValueError("Staged NIXL requires matching target/draft layers and uniform per-rank KV geometry")
++                logger.info(
++                    "NIXL staged peer=%s attn_tp=%s->%s kv_buffers=%s; full-pool dlists disabled",
++                    peer_info.agent_name, self.attn_tp_size, peer_info.decode_tp_size, n_src,
++                )
++                return
+             self._init_hetero_tp_prep_handle(
+                 peer_info.agent_name,
+                 peer_info,
+diff --git a/python/sglang/srt/disaggregation/prefill.py b/python/sglang/srt/disaggregation/prefill.py
+index b53f6e9..010fed0 100644
+--- a/python/sglang/srt/disaggregation/prefill.py
++++ b/python/sglang/srt/disaggregation/prefill.py
+@@ -271,15 +271,16 @@ class PrefillBootstrapQueue:
+             and hasattr(kv_manager, "set_kv_buffer_tensors")
+             and not self.is_mla_backend
+         ):
+-            kv_pool = self.token_to_kv_pool
+-            if hasattr(kv_pool, "full_kv_pool"):
+-                kv_pool = kv_pool.full_kv_pool
+-            if hasattr(kv_pool, "k_buffer") and hasattr(kv_pool, "v_buffer"):
+-                kv_manager.set_kv_buffer_tensors(
+-                    kv_pool.k_buffer,
+-                    kv_pool.v_buffer,
+-                    kv_pool.page_size,
++            from sglang.srt.disaggregation.common.staging_buffer import (
++                get_staging_kv_buffers,
++            )
++
++            kv_manager.set_kv_buffer_tensors(
++                *get_staging_kv_buffers(
++                    self.token_to_kv_pool,
++                    self.draft_token_to_kv_pool if transfer_draft_cache else None,
+                 )
++            )
+         return kv_manager
+ 
+     def create_sender(self, req: Req, num_kv_heads: int) -> bool:

@@ -106,6 +106,7 @@ done | paste -sd,)
 [ -n "$UCX_IB" ] || { echo "FATAL: no active HCA on $(hostname)"; exit 1; }
 export UCX_NET_DEVICES=$UCX_IB
 export UCX_POSIX_USE_PROC_LINK=n
+export SGLANG_DISAGG_STAGING_BUFFER=1 SGLANG_DISAGG_STAGING_POOL_SIZE_MB=1024
 export TRITON_CACHE_DIR=/tmp/sglang-$name/triton
 export TORCHINDUCTOR_CACHE_DIR=/tmp/sglang-$name/inductor
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
