@@ -26,5 +26,5 @@ command=(timeout 720 enroot start -e "NVIDIA_VISIBLE_DEVICES=${uuid}" -e NVIDIA_
 printf '%q ' "${command[@]}" >"${RUNTIME_DIR}/logs/probe-command.txt"
 printf '\n' >>"${RUNTIME_DIR}/logs/probe-command.txt"
 "${command[@]}" >"${RUNTIME_DIR}/logs/attention-probe.log" 2>&1
-jq -e '.schema == "decode-verify-attention-probe/v1" and .serving_adoption == false and .complete == true and (.cases | length) == 8' "${RUNTIME_DIR}/results/attention-probe.json" >/dev/null
+jq -e '.schema == "decode-verify-attention-probe/v2" and .serving_adoption == false and .complete == true and (.cases | length) == 10' "${RUNTIME_DIR}/results/attention-probe.json" >/dev/null
 touch "${RUNTIME_DIR}/run-success"
