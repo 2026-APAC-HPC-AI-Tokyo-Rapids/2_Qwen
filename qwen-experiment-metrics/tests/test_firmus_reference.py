@@ -67,7 +67,7 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
 def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 112, "official")
+    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 104, "official")
     assert config["decode_max_total_tokens"] == 524288
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
