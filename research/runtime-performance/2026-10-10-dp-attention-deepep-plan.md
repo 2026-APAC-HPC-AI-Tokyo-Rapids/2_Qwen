@@ -100,3 +100,6 @@ image `/scratch/home/ACCOUNT/qwen/containers/37886841020.sqsh`（sha256 4b919a74
 ## 結果記録
 
 （実行者が追記）
+
+- 2026-10-10 21:5x JST 実験Aを投入した。`research/firmus-p8dpep-d2tp4` 629b199（親3519fc0）、Actions 38053419849。prefillのフラグは、Firmusで動作実績のあるDeepEP run（41c12d6）のものを`--dp-size 8`にして流用した（`--moe-runner-backend deep_gemm`、`--speculative-moe-a2a-backend none --speculative-moe-runner-backend triton`、`--max-prefill-tokens 16384`、`SGLANG_CUTLASS_MOE=0`）。c160。
+- 参考：main `research/runtime-performance/2026-10-09-firmus-expert-sharing.md` のEP8 DeepEP normal（attention TP4×DP2、run 37877564253）は、DPあたり約26.6k work tok/s（GPUあたり約6.6k）、DP間queue 42.7/14.1で偏り、SLA不適格だった。attention TP4を残しており、飽和区間の速度でもないので、本実験（attention TP1×DP8）の予測には使えない。本実験の結果と並べて比較する。

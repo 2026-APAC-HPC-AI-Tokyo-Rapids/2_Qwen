@@ -298,3 +298,21 @@ ASPIREとFirmusに共通して、Decodeと同居するprefill workerが遅いこ
 | tail側P queue | 1.33 | 1.27 |
 
 +1.4%、単回。TTFTは縮み、同じc104でも処理request数が増えた。DecodeのITLはほぼ同じで、Decode律速は変わらない。ASPIREと違い、同居prefillの待ち（1.27）は残った。差は小さいがbranch headはこの条件のままとし、暫定最良とする。採用には同一node対での反復が必要。
+
+## 15. FA3 verify attentionのsplit-KV／GQA packing掃引（改善余地は小さい）
+
+7b36982（Actions 38052696917、PBS dgx039 H100 1基、walltime 26秒、Exit0、archive全SHA256一致）。§11のprobeをv2に書き換えた。sgl_kernelのFA3（servingの既定、`SGLANG_USE_SGL_FA3_KERNEL=1`）をtarget verifyと同じ呼び方で使い、`num_splits`（0＝自動、1〜16）×`pack_gqa`（None/True/False）を掃引した。page tableはcontext-length 8192の幅（servingと同じ）とし、各呼び出しの前にL2（50MB）をflushした（層ごとに別のKVを読むため）。自動設定はCUDA graph replayでも測った。
+
+| page | batch | 自動（µs） | graph（µs） | 最良（µs、設定） | 最良の実効KV帯域 |
+|---:|---:|---:|---:|---|---:|
+| 1 | 64 | 57.8 | 56.6 | 57.4（ほぼ全設定同等） | 1.17 TB/s |
+| 1 | 72 | 84.4 | 82.7 | 76.4（splits1） | 0.99 TB/s |
+| 1 | 96 | 87.1 | 86.4 | 79.8（splits1） | 1.26 TB/s |
+| 64 | 64 | 51.3 | 50.1 | 50.4（splits2） | 1.33 TB/s |
+| 64 | 72 | 69.7 | 69.4 | 59.7（splits1） | 1.27 TB/s |
+| 64 | 96 | 73.2 | 72.5 | 63.7（splits1） | 1.58 TB/s |
+| 64 | 112 | 67.3 | 67.1 | 67.3（自動） | 1.75 TB/s |
+
+誤差（batch 64、同じFP8 Qを使ったFP32参照に対する相対L2）は全設定で0.026〜0.027。graph replayは自動のeager実行と同じ速さで、捕捉時のsplit数が実行を悪くしている形跡はない。自動heuristicは、batch 72〜96でsplit 1より10〜17%遅い分割を選ぶ。それでも1層あたり約10µs、94層で約1ms/stepであり、ITLへの効果は1〜2%にとどまる。L2をflushした実測の帯域効率は約35〜52%で、§7の「28%」（Nsight下）から想定した4倍の余地はない。**servingへのpatchは見送る。** Decodeの1 requestあたりの傾きを大きく下げる手段は、FA3の設定調整では得られない。
+
+ASPIRE：投入前balance 11342.755 SU（In Doubt 0）、本probeは1 GPU×数分。
