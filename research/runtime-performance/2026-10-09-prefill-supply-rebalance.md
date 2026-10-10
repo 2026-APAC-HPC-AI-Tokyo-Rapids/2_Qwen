@@ -316,3 +316,23 @@ ASPIREとFirmusに共通して、Decodeと同居するprefill workerが遅いこ
 誤差（batch 64、同じFP8 Qを使ったFP32参照に対する相対L2）は全設定で0.026〜0.027。graph replayは自動のeager実行と同じ速さで、捕捉時のsplit数が実行を悪くしている形跡はない。自動heuristicは、batch 72〜96でsplit 1より10〜17%遅い分割を選ぶ。それでも1層あたり約10µs、94層で約1ms/stepであり、ITLへの効果は1〜2%にとどまる。L2をflushした実測の帯域効率は約35〜52%で、§7の「28%」（Nsight下）から想定した4倍の余地はない。**servingへのpatchは見送る。** Decodeの1 requestあたりの傾きを大きく下げる手段は、FA3の設定調整では得られない。
 
 ASPIRE：投入前balance 11342.755 SU（In Doubt 0）、本probeは1 GPU×数分。
+
+## 16. Firmus P6/D1 page64 c112（不適格）とDP8 attention＋DeepEP（不採用）
+
+**c112**（d039410、Actions 38037162346 attempt 2、Slurm 22359、g1/g4、11分12秒）。Actionsのrunnerはキュー待ちの間に落ちたので、runディレクトリからSSHで回収した。3067件・エラー0。good率86.31%で不適格（score 0）。D running平均63.9（c104は62.2）、ITL p90 20.1ms（c104は19.6ms）、20ms超383件、TTFT 3秒超233件。単一TP4 Decodeでは、c104を超える並行度は捌けない。`research/firmus-p6tp2-d1tp4`は52d9a3cでc104に戻した。rawは自宅サーバー`~/qwen-artifacts/research-runtime/20261010-firmus22359-c112/`（SHA256SUMS付き、NASはrunner権限のため書込み不可）。
+
+**DP8 attention＋DeepEP EP8**（`2026-10-10-dp-attention-deepep-plan.md`の実験A、`research/firmus-p8dpep-d2tp4`）。
+- 1回目は629b199（Actions 38053419849、Slurm 22395）。サーバーは292秒でready（DP8・chunk 65536→8192を確認）。しかし、160 workerのAIPerfクライアントが4 CPUで起動しきれなかった。サービス登録が10秒のtimeoutに間に合わず、`Configure Profiling`で停止した（計測なし）。
+- 2回目はbc64a59。クライアントのsrunを32 CPUに増やしただけで、公式コマンドは不変（Actions 38068166465、Slurm 22455、g1/g4、9分26秒）。
+
+| 指標 | P6×TP2/D1×TP4 c104（3519fc0） | P1×world8 DP8/EP8 DeepEP＋D2×TP4 c160（bc64a59） |
+|---|---:|---:|
+| good output tok/s | 4429.9 | 0（good率0.05%、1841件） |
+| TTFT 平均 / p90 | 755 / 1231 ms | 13143 / 21850 ms |
+| ITL 平均 / p90 | 17.91 / 19.57 ms | 6.08 / 7.51 ms |
+| 持続prefill（全rank合計） | — | 55.5k tok/s（8 rank全てにqueue、平均4.5〜22.9） |
+| **GPUあたり持続prefill** | 約10.75k（TP2） | **約6.9k** |
+
+8 rankはいずれも1バッチ約8.1k tokenで、1.1〜1.2秒に1バッチ、6.4k〜7.8k tok/sとほぼ均等に飽和した。DP間の偏りは律速ではない。GPUあたりの速度はTP2より約36%低く、計画の合格線（12k/GPU）に遠く届かない。main記録のattention TP4×DP2 DeepEP（約6.6k/GPU、run 37877564253）とほぼ同じ水準であり、attentionをTP1にしても改善しなかった。このimage・SGLang固定版では、DeepEP normal＋DeepGEMM（Prefill CUDA graphなし）の経路が、TP2＋CUTLASS（自作shuffle/routing patch込み）より遅い。Decode固定費の半減を狙う実験B（Aの成功が前提）は実施しない。rawと集計スクリプトは自宅サーバー`~/qwen-artifacts/research-runtime/20261011-firmus22455-p8dpep/`（SHA256SUMS付き）。
+
+**現時点の整理。** Firmusでは、GPUあたりPrefill効率が最も高いのは依然としてTP2＋CUTLASSで、約10.75k/GPUである。これを全GPUの14基に配っても上限は約7.5k good tok/sであり、10000にはPrefillのGPU効率を約1.33倍（MFU約27%→36%）にする必要がある。分割方式（DP attention／EP）の変更ではそれが得られなかった。残る手段は、同じTP2単位のまま通信を計算と重ねるか、通信を減らすことである。具体的にはreduce-scatter＋FP8 all-gather（§4候補2）と、MoE補助処理の削減（§4候補1）。
