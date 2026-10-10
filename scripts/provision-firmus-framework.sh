@@ -24,12 +24,12 @@ printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/profile" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source" "${runtime_dir}/home"
 install -m 0644 "${config}" "${runtime_dir}/source/firmus-framework.json"
 config="${runtime_dir}/source/firmus-framework.json"
-if [[ "${REQUIRE_BUILD}" == true ]]; then
-  [[ "${framework}" == sglang ]]
+if [[ "${framework}" == sglang && -n "${CONTAINER_SHA256:-}" ]]; then
+  [[ "${CONTAINER_SHA256}" =~ ^[0-9a-f]{64}$ && "${CONTAINER_SIZE:-}" =~ ^[1-9][0-9]*$ ]]
   archive=/scratch/home/ACCOUNT/qwen/containers
   jq --arg path "${archive}/${GITHUB_RUN_ID}.sqsh" --arg sha "${CONTAINER_SHA256}" --argjson size "${CONTAINER_SIZE}" --arg provenance "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" '.images.sglang = {path:$path,sha256:$sha,size_bytes:$size,provenance:$provenance}' "${config}" >"${config}.tmp"
   mv "${config}.tmp" "${config}"
-  jq -e --arg commit "${GITHUB_SHA}" --arg sha "${CONTAINER_SHA256}" '.source_commits.qwen == $commit and .container_artifact.sha256 == $sha' "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" >/dev/null
+  jq -e --arg commit "${GITHUB_SHA}" --arg sha "${CONTAINER_SHA256}" --argjson require_build "${REQUIRE_BUILD}" '.container_artifact.sha256 == $sha and ($require_build == false or .source_commits.qwen == $commit)' "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" >/dev/null
 fi
 for image_framework in sglang "${framework}"; do
   image="$(jq -er --arg framework "${image_framework}" '.images[$framework].path' "${config}")"
@@ -53,11 +53,7 @@ for image_framework in sglang "${framework}"; do
   if [[ "${framework}" == sglang ]]; then cp "${provenance}" "${runtime_dir}/source/container-sidecar.json"; fi
 done
 if [[ "${framework}" == sglang && "$(jq -r .prefill.moe_a2a_backend "${config}")" == megamoe ]]; then
-  # Inspect the built image on the CPU before any GPU allocation is submitted.
-  unsquashfs -cat "${runtime_dir}/sglang.sqsh" opt/apac/sm90-megamoe-build.json >"${runtime_dir}/source/sm90-megamoe-build.json"
-  jq -e '.version == "0.1.5" and .header_sha256 == "5479807104bf1aeed4cc3ecc8ce57d2a835d68457f9cf4962ef3f15cc176e8d2" and .combine_accumulator == "FP32" and (.compiled_geometries | length == 3)' "${runtime_dir}/source/sm90-megamoe-build.json" >/dev/null
-  unsquashfs -cat "${runtime_dir}/sglang.sqsh" opt/apac/manifest.json >"${runtime_dir}/source/image-manifest.json"
-  jq -e '[.applied_patches[].path] | index("patches/sglang/firmus-staged-eagle-kv.patch") != null and index("patches/sglang/qwen3-sm90-megamoe.patch") != null' "${runtime_dir}/source/image-manifest.json" >/dev/null
+  bash "${GITHUB_WORKSPACE}/scripts/check-firmus-image.sh" "${runtime_dir}/sglang.sqsh" "${runtime_dir}/source" "${GITHUB_WORKSPACE}"
 fi
 model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8
 [[ -s "${model}/config.json" && -s "${model}/model.safetensors.index.json" ]]
