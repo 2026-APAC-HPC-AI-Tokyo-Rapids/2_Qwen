@@ -243,3 +243,14 @@ H100 ASPIREと同じ構図で、律速はDecodeのITLに移った（平均17.9ms
 page 64ではPrefill側の待ちとTTFTが減り、decodeと同居するprefillの遅れも消えた。転送記述子が減った効果と考えられる。ただしDecodeのITLは、running差の補正（約0.76ms）後も約1.1ms悪い。dgx007/dgx013の組はtwoshot run（§9）でもITLが高く、decodeを担ったnode（dgx013）の個体差を切り分けられない。Prefillが速くなった結果、同じc72でもDecodeのrunningが増えたことも違反増の一因である。単回のため判断を保留し、branchの設定はed8c534へ戻した。
 
 page 64を判断するには、同一node対でpage1と交互に走らせる比較と、Decodeのrunningをc64前後で揃えた比較が必要。
+
+**page 64、c66での再試行**（56b6c5a、Actions 38026380332、PBS218329、dgx007/dgx013、11分57秒、Exit0、archive全SHA256一致）。server-infoで全workerがpage 64・FA3であることを確認した。
+
+| 指標 | c72 page1（ed8c534、dgx004/026） | c66 page64 FA3（56b6c5a、dgx007/013） |
+|---|---:|---:|
+| good output tok/s | 3313.0 | 3121.0（96.53%、適格） |
+| TTFT 平均 / p90 | 769 / 1253 ms | 549 / 906 ms |
+| D running 平均 | 61.6 | 60.3 |
+| ITL 平均 / p90 | 17.18 / 18.77 ms | 17.52 / 19.21 ms |
+
+Decodeのrunningをほぼ揃えても、ITLはpage1をrunning 60.3へ補正した値（約16.98ms）より約0.5ms長かった。並行度を下げた分だけ処理量も減り、goodputは5.8%低い。greedyはc72 page1と4/8一致で、page size変更による加算順序の差と整合する（出力の崩れはない）。node対の差は依然として切り分けられないが、page 64による利益は確認できなかった。**不採用**とし、branchの設定をed8c534へ戻した。page 64の利点はprefill／転送側（TTFT、同居prefillの遅れの解消）にとどまり、Decode律速のP3/D1では全体のgoodputを上げない。
