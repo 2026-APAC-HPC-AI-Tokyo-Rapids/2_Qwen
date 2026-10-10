@@ -254,3 +254,17 @@ page 64を判断するには、同一node対でpage1と交互に走らせる比�
 | ITL 平均 / p90 | 17.18 / 18.77 ms | 17.52 / 19.21 ms |
 
 Decodeのrunningをほぼ揃えても、ITLはpage1をrunning 60.3へ補正した値（約16.98ms）より約0.5ms長かった。並行度を下げた分だけ処理量も減り、goodputは5.8%低い。greedyはc72 page1と4/8一致で、page size変更による加算順序の差と整合する（出力の崩れはない）。node対の差は依然として切り分けられないが、page 64による利益は確認できなかった。**不採用**とし、branchの設定をed8c534へ戻した。page 64の利点はprefill／転送側（TTFT、同居prefillの遅れの解消）にとどまり、Decode律速のP3/D1では全体のgoodputを上げない。
+
+## 12. EAGLE3 steps4/draft5（中立）とnode対の差
+
+6eca4dd（Actions 38027751809、PBS218331、dgx007/dgx013、11分40秒、archive全SHA256一致）。P3/D1・c72・page1のまま、投機長をsteps3/draft4からsteps4/draft5に延ばした。good率88.35%で不適格。
+
+| run（すべてP3/D1 c72 page1） | node対 | accept len | D running | ITL 平均 / p90 |
+|---|---|---:|---:|---:|
+| ed8c534 steps3 | dgx004/026 | 2.23 | 61.6 | 17.18 / 18.77 |
+| a37febb steps3＋twoshot AR | dgx007/013 | 2.23 | 63.0 | 18.19 / 19.92 |
+| 6eca4dd steps4 | dgx007/013 | 2.34 | 63.0 | 18.03 / 20.04 |
+
+受理長は予測どおり約5%伸びたが、同じnode対・同じrunningのtwoshot runと比べたITL短縮は約1%にとどまった。延ばしたverify tokenとdraftの費用が利得をほぼ相殺している。**不採用。**
+
+同じ設定でも、dgx007/dgx013ではdgx004/dgx026よりDecodeのITLが約0.6ms長い傾向がある（§9、§11、本節の3 runが一致）。3313 good tok/sは速いnode対での単回値であり、遅い組ではc72の余裕がほとんどない。主催者の再実行で割り当てられるnodeは選べないので、P3/D1を採用する場合は並行度をc66〜68程度に下げて余裕を持たせ、node対を変えた反復で確認するのが妥当。
