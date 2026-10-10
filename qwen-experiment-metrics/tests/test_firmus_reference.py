@@ -67,7 +67,7 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
 def test_sglang_launch_matches_p5tp2_mixed_decode_conditions(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 96, "official")
+    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 104, "official")
     assert config["decode_max_total_tokens"] == 524288
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
@@ -132,7 +132,7 @@ def test_sglang_launch_matches_p5tp2_mixed_decode_conditions(tmp_path: Path) -> 
     assert observed == {"prefill-0": "node0", "prefill-1": "node0", "prefill-2": "node0", "prefill-3": "node0", "prefill-4": "node1", "decode-0": "node1", "decode-1": "node1"}
     router_argv = next(argv for argv in commands if "sglang_router.launch_router" in argv)
     assert router_argv.count("--prefill") == 5 and router_argv.count("--decode") == 2
-    assert router_argv[router_argv.index("--prefill-policy") + 1] == "round_robin"
+    assert router_argv[router_argv.index("--prefill-policy") + 1] == "power_of_two"
     assert router_argv[router_argv.index("--decode-policy") + 1] == "power_of_two"
     assert router_argv[router_argv.index("--worker-startup-check-interval") + 1] == "1"
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
