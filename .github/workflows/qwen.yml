@@ -76,7 +76,7 @@ jobs:
   aspire2ap:
     name: ASPIRE 2A+
     needs: [validate, container]
-    if: ${{ !contains(github.event.head_commit.message, '[build-only]') && !contains(github.event.head_commit.message, '[cutlass-grid-probe]') && !contains(github.event.head_commit.message, '[moe-routing-probe]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
+    if: ${{ !contains(github.event.head_commit.message, '[build-only]') && !contains(github.event.head_commit.message, '[cutlass-grid-probe]') && !contains(github.event.head_commit.message, '[moe-routing-probe]') && !contains(github.event.head_commit.message, '[attention-verify-probe]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
     uses: ./.github/workflows/aspire2ap.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
@@ -88,7 +88,7 @@ jobs:
   cutlass-grid:
     name: ASPIRE 2A+の1GPU有限kernel probe
     needs: [validate, container]
-    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]') && (contains(github.event.head_commit.message, '[cutlass-grid-probe]') || contains(github.event.head_commit.message, '[moe-routing-probe]')) && !contains(github.event.head_commit.message, '[build-only]') && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]') && (contains(github.event.head_commit.message, '[cutlass-grid-probe]') || contains(github.event.head_commit.message, '[moe-routing-probe]') || contains(github.event.head_commit.message, '[attention-verify-probe]')) && !contains(github.event.head_commit.message, '[build-only]') && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
     uses: ./.github/workflows/aspire2ap-grid.yml
     with:
       container_sha256: ${{ needs.container.outputs.aspire2ap_container_sha256 }}

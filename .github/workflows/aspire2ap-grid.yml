@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
       - name: 明示probe条件を検査
         run: |
-          [[ "${QWEN_COMMIT_MESSAGE}" == *'[cutlass-grid-probe]'* || "${QWEN_COMMIT_MESSAGE}" == *'[moe-routing-probe]'* ]]
+          [[ "${QWEN_COMMIT_MESSAGE}" == *'[cutlass-grid-probe]'* || "${QWEN_COMMIT_MESSAGE}" == *'[moe-routing-probe]'* || "${QWEN_COMMIT_MESSAGE}" == *'[attention-verify-probe]'* ]]
           [[ "${QWEN_COMMIT_MESSAGE}" != *'[build-only]'* && "${QWEN_COMMIT_MESSAGE}" != *'[profile]'* ]]
       - name: imageとprobeを配備
         id: provision
@@ -41,23 +41,27 @@ jobs:
           cp -a --no-preserve=ownership,xattr /home/ACCOUNT/.local/etc/enroot/. "${runtime}/enroot-system/"
           sed -i 's/local timeout=100 pid=-1 id=0/local timeout=5000 pid=-1 id=0/' "${runtime}/enroot-library/runtime.sh"
           sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${runtime}/enroot-system/hooks.d/98-nvidia.sh"
-          install -m 0644 scripts/benchmark-prefill-cutlass-grid.py "${runtime}/scripts/"
-          install -m 0755 platforms/aspire2ap/run-cutlass-grid.pbs platforms/aspire2ap/check-cutlass-grid.sh "${runtime}/scripts/"
+          probe=cutlass-grid
+          if [[ "${QWEN_COMMIT_MESSAGE}" == *'[attention-verify-probe]'* ]]; then probe=attention-probe; install -m 0644 scripts/probe-decode-verify-attention.py "${runtime}/scripts/"; else install -m 0644 scripts/benchmark-prefill-cutlass-grid.py "${runtime}/scripts/"; fi
+          install -m 0755 "platforms/aspire2ap/run-${probe}.pbs" "platforms/aspire2ap/check-${probe}.sh" "${runtime}/scripts/"
+          printf 'probe=%s\n' "${probe}" >>"${GITHUB_OUTPUT}"
           sha256sum "${runtime}/scripts/"* >"${runtime}/source/probe-sha256.txt"
           jq -n --arg commit "${GITHUB_SHA}" --arg image "${CONTAINER_SHA256}" '{purpose:"finite-grid-probe",commit:$commit,image_sha256:$image,ngpus:1,walltime_seconds:900,official_score:false}' >"${runtime}/source/provenance.json"
       - name: 共有1GPU PBSを投入
         id: submit
         env:
           RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+          PROBE: ${{ steps.provision.outputs.probe }}
         run: |
-          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=1:ncpus=14:ngpus=1:mem=235gb:mpiprocs=1' -l place=free -v "RUNTIME_DIR=${RUNTIME_DIR}" -o "${RUNTIME_DIR}/logs/pbs.log" -e "${RUNTIME_DIR}/logs/pbs.stderr.log" -N cutlass_grid "${RUNTIME_DIR}/scripts/run-cutlass-grid.pbs")"
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=1:ncpus=14:ngpus=1:mem=235gb:mpiprocs=1' -l place=free -v "RUNTIME_DIR=${RUNTIME_DIR}" -o "${RUNTIME_DIR}/logs/pbs.log" -e "${RUNTIME_DIR}/logs/pbs.stderr.log" -N "${PROBE//-/_}" "${RUNTIME_DIR}/scripts/run-${PROBE}.pbs")"
           printf 'PBS_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
       - name: PBS終端とmicro成果物を検査
         env:
           RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+          PROBE: ${{ steps.provision.outputs.probe }}
         run: |
-          while true; do output="$("${RUNTIME_DIR}/scripts/check-cutlass-grid.sh")"; printf '%s\n' "${output}"; if [[ "${output}" != scheduler_job_pending=* ]]; then break; fi; sleep 30; done
+          while true; do output="$("${RUNTIME_DIR}/scripts/check-${PROBE}.sh")"; printf '%s\n' "${output}"; if [[ "${output}" != scheduler_job_pending=* ]]; then break; fi; sleep 30; done
       - name: rawを回収
         if: always() && steps.submit.outputs.job_id != ''
         shell: bash

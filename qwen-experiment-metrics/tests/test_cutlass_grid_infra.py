@@ -9,12 +9,12 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
-@pytest.mark.parametrize('message', ['[cluster:aspire2ap] normal PD', '[skip ci] docs', '[require-build] [cluster:aspire2ap] [build-only]', '[cluster:aspire2ap] [nodes:1] [cutlass-grid-probe]', '[cluster:aspire2ap] [nodes:1] [moe-routing-probe]'])
+@pytest.mark.parametrize('message', ['[cluster:aspire2ap] normal PD', '[skip ci] docs', '[require-build] [cluster:aspire2ap] [build-only]', '[cluster:aspire2ap] [nodes:1] [cutlass-grid-probe]', '[cluster:aspire2ap] [nodes:1] [moe-routing-probe]', '[cluster:aspire2ap] [nodes:1] [attention-verify-probe]'])
 def test_explicit_supported_stages(message):
     module.validate(message)
 
 
-@pytest.mark.parametrize('message', ['[require-build] [cluster:aspire2ap] [build-only] [cutlass-grid-probe]', '[cluster:aspire2ap] [build-only]', '[cluster:aspire2ap] [cutlass-grid-probe]', '[cluster:aspire2ap] [nodes:1] [cutlass-grid-probe] [profile]', '[require-build] [cluster:aspire2ap] [nodes:1] [cutlass-grid-probe]', '[require-build] [cluster:firmus] [build-only]', '[cluster:aspire2ap] [nodes:1] [nodes:2] [cutlass-grid-probe]', '[cluster:aspire2ap] [nodes:1] [cutlass-grid-probe] [moe-routing-probe]', '[require-build] [cluster:aspire2ap] [build-only] [moe-routing-probe]'])
+@pytest.mark.parametrize('message', ['[require-build] [cluster:aspire2ap] [build-only] [cutlass-grid-probe]', '[cluster:aspire2ap] [build-only]', '[cluster:aspire2ap] [cutlass-grid-probe]', '[cluster:aspire2ap] [nodes:1] [cutlass-grid-probe] [profile]', '[require-build] [cluster:aspire2ap] [nodes:1] [cutlass-grid-probe]', '[require-build] [cluster:firmus] [build-only]', '[cluster:aspire2ap] [nodes:1] [nodes:2] [cutlass-grid-probe]', '[cluster:aspire2ap] [nodes:1] [cutlass-grid-probe] [moe-routing-probe]', '[require-build] [cluster:aspire2ap] [build-only] [moe-routing-probe]', '[cluster:aspire2ap] [nodes:1] [attention-verify-probe] [cutlass-grid-probe]', '[cluster:aspire2ap] [nodes:2] [attention-verify-probe]'])
 def test_ambiguous_or_unbounded_stages_are_rejected(message):
     with pytest.raises(ValueError):
         module.validate(message)
@@ -33,7 +33,7 @@ def test_gpu_only_path_has_no_official_score_or_unallocated_devices():
     assert 'test ! -e "${RUNTIME_DIR}/results/score.json"' in check
 
 
-@pytest.mark.parametrize("message,pd,probe", [("[cluster:aspire2ap] ordinary", True, False), ("[require-build] [cluster:aspire2ap] [build-only]", False, False), ("[cluster:aspire2ap] [nodes:1] [cutlass-grid-probe]", False, True), ("[cluster:aspire2ap] [nodes:1] [moe-routing-probe]", False, True)])
+@pytest.mark.parametrize("message,pd,probe", [("[cluster:aspire2ap] ordinary", True, False), ("[require-build] [cluster:aspire2ap] [build-only]", False, False), ("[cluster:aspire2ap] [nodes:1] [cutlass-grid-probe]", False, True), ("[cluster:aspire2ap] [nodes:1] [moe-routing-probe]", False, True), ("[cluster:aspire2ap] [nodes:1] [attention-verify-probe]", False, True)])
 def test_actual_push_workflow_routes(message, pd, probe):
     import re
     workflow = (ROOT/".github/workflows/qwen.yml").read_text()
@@ -46,3 +46,13 @@ def test_actual_push_workflow_routes(message, pd, probe):
         expression = expression.replace("&&", " and ").replace("||", " or ")
         expression = re.sub(r"!(?!=)", " not ", expression)
         assert eval(expression.strip(), {"__builtins__": {}}, {}) is expected
+
+
+def test_attention_probe_reuses_bounded_one_gpu_path():
+    driver = (ROOT/'platforms/aspire2ap/run-attention-probe.pbs').read_text()
+    assert 'walltime=00:15:00' in driver and 'timeout 720' in driver and 'NVIDIA_VISIBLE_DEVICES=${uuid}' in driver
+    assert '/probe/probe-decode-verify-attention.py /results/attention-probe.json' in driver
+    check = (ROOT/'platforms/aspire2ap/check-attention-probe.sh').read_text()
+    assert 'results/attention-probe.json' in check and 'test ! -e "${RUNTIME_DIR}/results/score.json"' in check
+    import ast
+    ast.parse((ROOT/'scripts/probe-decode-verify-attention.py').read_text())

@@ -4,9 +4,9 @@ import os
 
 def validate(message):
     build_only = '[build-only]' in message
-    probe_tags = ['[cutlass-grid-probe]', '[moe-routing-probe]']
+    probe_tags = ['[cutlass-grid-probe]', '[moe-routing-probe]', '[attention-verify-probe]']
     probe = any(tag in message for tag in probe_tags)
-    if all(tag in message for tag in probe_tags):
+    if sum(tag in message for tag in probe_tags) > 1:
         raise ValueError('distinct finite probes require separate tracked commits')
     if not (build_only or probe):
         return
