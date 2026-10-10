@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J sglang-firmus-p6d1
+#SBATCH -J sglang-firmus-p5d2
 #SBATCH -p hpcai
 #SBATCH -N 2
 #SBATCH -t 00:17:00
@@ -8,7 +8,7 @@
 #SBATCH --no-requeue
 #SBATCH -o runs/sglang-%j.out
 #SBATCH -e runs/sglang-%j.err
-# H200 layout: six TP2 prefill workers (four on head, two on tail) and one TP4 decode worker with a large pool, full EAGLE3/kernel bundle.
+# H200 layout: five TP2 prefill workers (four on head, one on tail) and two decode workers on tail (TP4 large pool + TP2), full EAGLE3/kernel bundle.
 # One full benchmark allocation, with the official 60/120/30 client.
 set -euo pipefail
 
@@ -23,6 +23,8 @@ N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")
 speculation=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -er '.speculation.steps' "${ROOT}/source/firmus-framework.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -er '.speculation.draft_tokens' "${ROOT}/source/firmus-framework.json")")
 decode_graph=(--cuda-graph-bs-decode)
 while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${ROOT}/source/firmus-framework.json")
+decode_tp2_graph=(--cuda-graph-bs-decode)
+while read -r size; do decode_tp2_graph+=("${size}"); done < <(jq -er '.decode_tp2.graph_max_bs as $max | .decode_cuda_graph_bs[] | select(. <= $max)' "${ROOT}/source/firmus-framework.json")
 ART=${ROOT}/logs
 export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
 export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
@@ -60,7 +62,7 @@ wait_http() {
 }
 
 echo "[$(date -Iseconds)] job=${SLURM_JOB_ID} user=$(whoami)"
-echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P6TP2-D1TP4-EP1 kv=fp8_e4m3 speculation=EAGLE3 kernels=aspire-full"
+echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P5TP2-D1TP4+D1TP2-EP1 kv=fp8_e4m3 speculation=EAGLE3 kernels=aspire-full"
 test -r "${SGLANG}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && test -s "${ROOT}/draft/model.safetensors"
 mkdir -p "${ART}"
 worker_pids=()
@@ -75,8 +77,9 @@ trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 for worker in 0 1 2 3; do printf 'prefill-%s\t%s\t%s\t2\n' "${worker}" "${HEAD_IP}" "$((30100 + worker))"; done >"${ROOT}/source/worker-endpoints.tsv"
-for worker in 4 5; do printf 'prefill-%s\t%s\t%s\t2\n' "${worker}" "${TAIL_IP}" "$((30100 + worker))"; done >>"${ROOT}/source/worker-endpoints.tsv"
+printf 'prefill-4\t%s\t30104\t2\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
 printf 'decode-0\t%s\t30200\t4\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
+printf 'decode-1\t%s\t30201\t2\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
 
 cat >"${ROOT}/source/worker.sh" <<'EOF'
 set -euo pipefail
@@ -116,9 +119,9 @@ srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-en
 worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-4)" bash "${ROOT}/source/worker.sh" prefill-4 30104 "${MODEL}" 2 "${TAIL_IP}" "${speculation[@]}" --enable-symm-mem --disaggregation-bootstrap-port 9004 --max-running-requests "${N}" --moe-runner-backend cutlass >"${ART}/prefill-4.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-5)" bash "${ROOT}/source/worker.sh" prefill-5 30105 "${MODEL}" 2 "${TAIL_IP}" "${speculation[@]}" --enable-symm-mem --disaggregation-bootstrap-port 9005 --max-running-requests "${N}" --moe-runner-backend cutlass >"${ART}/prefill-5.log" 2>&1 &
-worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --max-running-requests 256 --max-total-tokens "$(jq -er .decode_max_total_tokens "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-0.log" 2>&1 &
+worker_pids+=("$!")
+srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-1)" bash "${ROOT}/source/worker.sh" decode-1 30201 "${MODEL}" 2 "${TAIL_IP}" "${speculation[@]}" "${decode_tp2_graph[@]}" --max-running-requests "$(jq -er .decode_tp2.max_running_requests "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-1.log" 2>&1 &
 worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:30100/health"; echo "prefill-0 ready"
@@ -126,10 +129,10 @@ wait_http "http://${HEAD_IP}:30101/health"; echo "prefill-1 ready"
 wait_http "http://${HEAD_IP}:30102/health"; echo "prefill-2 ready"
 wait_http "http://${HEAD_IP}:30103/health"; echo "prefill-3 ready"
 wait_http "http://${TAIL_IP}:30104/health"; echo "prefill-4 ready"
-wait_http "http://${TAIL_IP}:30105/health"; echo "prefill-5 ready"
 wait_http "http://${TAIL_IP}:30200/health"; echo "decode-0 ready"
+wait_http "http://${TAIL_IP}:30201/health"; echo "decode-1 ready"
 
-srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts router)" /opt/sglang/venv/bin/python -m sglang_router.launch_router --pd-disaggregation --prefill "http://${HEAD_IP}:30100" 9000 --prefill "http://${HEAD_IP}:30101" 9001 --prefill "http://${HEAD_IP}:30102" 9002 --prefill "http://${HEAD_IP}:30103" 9003 --prefill "http://${TAIL_IP}:30104" 9004 --prefill "http://${TAIL_IP}:30105" 9005 --decode "http://${TAIL_IP}:30200" --prefill-policy round_robin --host 0.0.0.0 --port "${R_PORT}" >"${ART}/router.log" 2>&1 &
+srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts router)" /opt/sglang/venv/bin/python -m sglang_router.launch_router --pd-disaggregation --prefill "http://${HEAD_IP}:30100" 9000 --prefill "http://${HEAD_IP}:30101" 9001 --prefill "http://${HEAD_IP}:30102" 9002 --prefill "http://${HEAD_IP}:30103" 9003 --prefill "http://${TAIL_IP}:30104" 9004 --decode "http://${TAIL_IP}:30200" --decode "http://${TAIL_IP}:30201" --prefill-policy round_robin --decode-policy power_of_two --worker-startup-check-interval 1 --host 0.0.0.0 --port "${R_PORT}" >"${ART}/router.log" 2>&1 &
 worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:${R_PORT}/health"
@@ -137,7 +140,7 @@ echo "READY after ${SECONDS}s"
 
 while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"
-  jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.tp_size == $expected_tp and .ep_size == 1 and .kv_cache_dtype == "fp8_e4m3" and .context_length == 8192 and .max_total_tokens == (if $role == "prefill" then 131072 else $config[0].decode_max_total_tokens end) and .chunked_prefill_size == 8192 and .attention_backend == "fa3" and .speculative_algorithm == "EAGLE3" and .speculative_draft_model_path == "/draft" and .speculative_num_steps == $config[0].speculation.steps and .speculative_num_draft_tokens == $config[0].speculation.draft_tokens and .speculative_eagle_topk == 1 and .speculative_draft_model_quantization == null and .max_running_requests == (if $role == "prefill" then $config[0].concurrency else 256 end) and (if $role == "prefill" then .enable_symm_mem == true and .moe_runner_backend == "cutlass" else .enable_symm_mem == false and .cuda_graph_bs_decode == $config[0].decode_cuda_graph_bs end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
+  jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.tp_size == $expected_tp and .ep_size == 1 and .kv_cache_dtype == "fp8_e4m3" and .context_length == 8192 and .max_total_tokens == (if $role == "prefill" or $expected_tp == 2 then 131072 else $config[0].decode_max_total_tokens end) and .chunked_prefill_size == 8192 and .attention_backend == "fa3" and .speculative_algorithm == "EAGLE3" and .speculative_draft_model_path == "/draft" and .speculative_num_steps == $config[0].speculation.steps and .speculative_num_draft_tokens == $config[0].speculation.draft_tokens and .speculative_eagle_topk == 1 and .speculative_draft_model_quantization == null and .max_running_requests == (if $role == "prefill" then $config[0].concurrency elif $expected_tp == 2 then $config[0].decode_tp2.max_running_requests else 256 end) and (if $role == "prefill" then .enable_symm_mem == true and .moe_runner_backend == "cutlass" else .enable_symm_mem == false and .cuda_graph_bs_decode == (if $expected_tp == 2 then [$config[0].decode_cuda_graph_bs[] | select(. <= $config[0].decode_tp2.graph_max_bs)] else $config[0].decode_cuda_graph_bs end) end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
 done <"${ROOT}/source/worker-endpoints.tsv"
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1
 echo "AIPERF ok"
