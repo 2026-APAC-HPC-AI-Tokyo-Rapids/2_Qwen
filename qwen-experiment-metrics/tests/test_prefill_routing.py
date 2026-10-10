@@ -69,12 +69,12 @@ def test_cuda_integer_only_and_graph_reset():
     ast.parse(build)
 
 
-def test_actual_patch_chain(tmp_path):
+def test_actual_four_patch_chain(tmp_path):
     mirror = Path('/home/USER/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src')
     if not mirror.exists():
         pytest.skip('fixed source mirror unavailable')
     revision = 'fc275674a97d78553b22597ee72c8fd48f5420f4'
-    patches = ['prefill-cutlass-silu-quant.patch', 'draft-extend-selected-head-rows.patch', 'prefill-fp8-scale-row-shuffle.patch', 'prefill-tiled-routing.patch', 'decode-xqa-verify-mask.patch']
+    patches = ['prefill-cutlass-silu-quant.patch', 'draft-extend-selected-head-rows.patch', 'prefill-fp8-scale-row-shuffle.patch', 'prefill-tiled-routing.patch']
     for name in patches:
         text = (ROOT / 'patches/sglang' / name).read_text()
         for line in text.splitlines():
@@ -92,8 +92,3 @@ def test_actual_patch_chain(tmp_path):
     assert 'prepare_tiled_routing(topk_ids' in patched
     assert 'shuffle_fp8_rows_with_scales' in patched
     assert '_prefill_tile_modes' not in patched
-    xqa = (tmp_path / 'python/sglang/srt/layers/attention/trtllm_mha_backend.py').read_text()
-    assert xqa.index('self.is_xqa_impl = ') < xqa.index('self.xqa_spec_dec_mask = None')
-    assert 'mask=self._xqa_verify_mask(q, forward_batch),' in xqa
-    hybrid = (tmp_path / 'python/sglang/srt/layers/attention/hybrid_attn_backend.py').read_text()
-    assert '_select_backend(ForwardMode.TARGET_VERIFY).max_context_len' in hybrid

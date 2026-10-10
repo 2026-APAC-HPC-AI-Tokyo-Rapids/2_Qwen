@@ -158,3 +158,21 @@ AIPerfの計測開始から20秒後にDecodeの`/start_profile`（CUDA_PROFILER�
 3. dense入力のgroup128 FP8量子化をAR＋RMSNorm融合の出力側へ移す（約2.5ms/stepの見込み）。丸めは同じ値・同じgroupで行う。
 
 1〜3で約8ms/step（通常runの約20%）が見込め、running 63でのITLは約17.2ms→約14ms。ITL 18msで単一Dが扱えるrunningは約67→約90へ増える。P3/D1の上限はDecode側の約3.6kから、Prefill側（3 worker、約4.1–4.3k）へ移る。導出スクリプトと集計は`/home/USER/qwen-artifacts/research-runtime/20261009-p3d1-decode-profile/`（SHA256SUMS付き）。
+
+## 8. Decode verifyのSM90 XQA化（不採用、計算結果が壊れた）
+
+§7で特定したFP8 attentionの低帯域を、FlashInfer 0.6.15のXQA kernel（SGLang `trtllm_mha` backendがSM90で使う経路）で置き換えようとした。
+
+| commit | Actions / PBS | 結果 |
+|---|---|---|
+| 6b7df28（新patchと再build） | 37939137941 / 218213 | ServerArgsで停止。SM90では`trtllm_mha`をprefillに使えない（3分45秒） |
+| 526019a（prefill fa3、decode trtllm_mha、`--speculative-attention-mode decode`） | 37945511358 / 218219 | XQAのJITとgraph captureは通過。最初のverifyで`HybridAttnBackend`に`max_context_len`がなく停止 |
+| 662561f（`max_context_len`委譲を追加して再build） | 38012213131 / 218281 | 配信は動いたが、出力が壊れた |
+
+662561fでは、dgx007/dgx013、walltime12分33秒、archive全SHA256一致。good率0%、accept len 1.01、ITL平均39.9ms。8件のgreedy probeはすべて崩れた文になった（例「The sky的 sky appears sky appears blue字体 blue …」、baselineは正常な文）。draftの提案がほぼ受理されず、出力も別物になったので、XQA経由のverify attentionが誤った値を返している。計算内容を変える変更は規則上採用できない。
+
+固定sourceの状態としては、SM90の`trtllm_mha`は複数token verifyでXQAに必須のspec-dec mask（`xqa.py`: "Mask is required for speculative decoding"）を渡しておらず、上流でも検証されていない経路と考えられる。patchではFlashInferのテスト生成関数と同一のmaskを渡した。それでも結果が壊れたので、残る候補はspec-decでのseq_lens・位置の解釈、page 64でのKV layout、BF16 Q×FP8 KVのscale換算。kernel単体の数値比較なしに実機で試行を重ねることはしない（1回のキュー待ちが数時間）。
+
+3commitはrevertし、branchの設定はed8c534（P3/D1、D pool393216、c72、FA3、page size 1）と同一に戻した。revertで削除したpatchは、git履歴の6b7df28と662561fに残る。Decode attentionの帯域改善は、GPU 1基で既存FA3と出力を照合できるkernel単体の検証環境を用意してから再開するのが妥当。
+
+ASPIRE消費（myprojects 59010014）：本ノート全体で精算済み約2.2k SU、662561fの約0.43k SUは記入時点で未精算（balance 13347.163、In Doubt 1024）。
