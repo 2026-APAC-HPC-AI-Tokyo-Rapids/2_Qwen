@@ -2,7 +2,7 @@
 #SBATCH -J sglang-firmus-p6d1
 #SBATCH -p hpcai
 #SBATCH -N 2
-#SBATCH -t 00:30:00
+#SBATCH -t 00:17:00
 #SBATCH --gres=gpu:8
 #SBATCH --propagate=NONE
 #SBATCH --no-requeue
