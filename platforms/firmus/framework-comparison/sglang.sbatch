@@ -9,6 +9,7 @@
 #SBATCH -o runs/sglang-%j.out
 #SBATCH -e runs/sglang-%j.err
 # H200 layout: six TP2 prefill workers (four on head, two on tail) and one TP4 decode worker with a large pool, full EAGLE3/kernel bundle.
+# Matched to ff58ed8: change only the decode MoE runner from auto/Triton to DeepGEMM.
 # One full benchmark allocation, with the official 60/120/30 client.
 set -euo pipefail
 
@@ -118,7 +119,7 @@ srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:2 --cpus-per-task=16 --container-en
 worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-5)" bash "${ROOT}/source/worker.sh" prefill-5 30105 "${MODEL}" 2 "${TAIL_IP}" "${speculation[@]}" --enable-symm-mem --disaggregation-bootstrap-port 9005 --max-running-requests "${N}" --moe-runner-backend cutlass >"${ART}/prefill-5.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --max-running-requests 256 --max-total-tokens "$(jq -er .decode_max_total_tokens "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-0.log" 2>&1 &
+srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --moe-runner-backend deep_gemm --max-running-requests 256 --max-total-tokens "$(jq -er .decode_max_total_tokens "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-0.log" 2>&1 &
 worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:30100/health"; echo "prefill-0 ready"
@@ -137,7 +138,7 @@ echo "READY after ${SECONDS}s"
 
 while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"
-  jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.tp_size == $expected_tp and .ep_size == 1 and .kv_cache_dtype == "fp8_e4m3" and .context_length == 8192 and .max_total_tokens == (if $role == "prefill" then 131072 else $config[0].decode_max_total_tokens end) and .chunked_prefill_size == 8192 and .attention_backend == "fa3" and .speculative_algorithm == "EAGLE3" and .speculative_draft_model_path == "/draft" and .speculative_num_steps == $config[0].speculation.steps and .speculative_num_draft_tokens == $config[0].speculation.draft_tokens and .speculative_eagle_topk == 1 and .speculative_draft_model_quantization == null and .max_running_requests == (if $role == "prefill" then $config[0].concurrency else 256 end) and (if $role == "prefill" then .enable_symm_mem == true and .moe_runner_backend == "cutlass" else .enable_symm_mem == false and .cuda_graph_bs_decode == $config[0].decode_cuda_graph_bs end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
+  jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.tp_size == $expected_tp and .ep_size == 1 and .kv_cache_dtype == "fp8_e4m3" and .context_length == 8192 and .max_total_tokens == (if $role == "prefill" then 131072 else $config[0].decode_max_total_tokens end) and .chunked_prefill_size == 8192 and .attention_backend == "fa3" and .speculative_algorithm == "EAGLE3" and .speculative_draft_model_path == "/draft" and .speculative_num_steps == $config[0].speculation.steps and .speculative_num_draft_tokens == $config[0].speculation.draft_tokens and .speculative_eagle_topk == 1 and .speculative_draft_model_quantization == null and .max_running_requests == (if $role == "prefill" then $config[0].concurrency else 256 end) and (if $role == "prefill" then .enable_symm_mem == true and .moe_runner_backend == "cutlass" else .enable_symm_mem == false and .moe_runner_backend == "deep_gemm" and .moe_a2a_backend == "none" and .cuda_graph_bs_decode == $config[0].decode_cuda_graph_bs end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
 done <"${ROOT}/source/worker-endpoints.tsv"
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1
 echo "AIPERF ok"

@@ -124,6 +124,7 @@ def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path)
             assert flags[flags.index("--moe-runner-backend") + 1] == "cutlass"
             assert "--enable-symm-mem" in flags and (shuffle, routing) == ("1", "1")
         else:
+            assert flags[flags.index("--moe-runner-backend") + 1] == "deep_gemm"
             start = flags.index("--cuda-graph-bs-decode") + 1
             assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
