@@ -129,6 +129,13 @@ def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path) -> None:
     assert argv[-5:] == ["/opt/python", "-m", "sglang.launch_server", "--port", "30200"]
 
 
+@pytest.mark.parametrize("framework", ["vllm", "sglang"])
+def test_optimized_c64_summary_reports_ep1_topology(tmp_path: Path, framework: str) -> None:
+    (tmp_path / "provenance.json").write_text(json.dumps({"framework": framework, "workload": "official"}))
+    (tmp_path / "firmus-framework.json").write_text(json.dumps({"concurrency": 64, "speculation": {"algorithm": "EAGLE3"}}))
+    assert "P4 × TP2 / D2 × TP4 EP1" in SUMMARY(tmp_path, "22463", "success")
+
+
 @pytest.mark.parametrize("profile,expected", [("false", 0), ("true", 1)])
 def test_optimized_vllm_rejects_profile_before_worker_launch(profile: str, expected: int) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()

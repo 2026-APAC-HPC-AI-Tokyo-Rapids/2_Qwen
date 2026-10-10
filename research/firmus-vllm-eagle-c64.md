@@ -28,4 +28,12 @@ Before allocating GPUs, the exact argument schemas were checked inside the pinne
 
 ## Result
 
-Pending submission and execution. No performance claim is made until the official result is collected.
+Actions [38070007994](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38070007994), experiment commit `fb0845131e3dcc3ba987d1607bd52a7adeff0519`, submitted Slurm **22463**. Validation and provisioning passed. At submission the job was pending `Priority`; no performance claim is made until the official result is collected.
+
+The preceding Actions run 38069819876 stopped in CPU validation because two old tests expected the former baseline profiler launcher. It submitted no scheduler job. Those tests now check that this optimized launcher rejects profiling before starting workers; the active EAGLE3 argument tests and generic profiler-wrapper test remain.
+
+Provisioning retried a transient SSH interruption before submission. The unused staging directory was verified against the run provenance and active Slurm command, then removed. Only one compute job was submitted. The active directory is `/scratch/home/ACCOUNT/qwen/runs/pd-38070007994-1.Wxuwei5g1M`.
+
+The inherited Actions summary formatter has a stale topology label for this new configuration. Effective worker commands and server-info artifacts are authoritative. The reporting-only correction identifies the optimized c64 EAGLE3 layout as P4TP2/D2TP4 EP1; its 15 CPU tests passed. It does not alter the submitted job.
+
+Background follow-up `firmus-vllm-eagle3-comparison` checks this same job and its Actions collection every five minutes, remaining quiet while unchanged. Its scope includes collecting the official result, completing this comparison and stopping after completion; it does not authorize additional controls or optional profiling. The foreground read-only polling process was stopped when this follow-up was registered.

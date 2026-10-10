@@ -26,6 +26,8 @@ def summarize(root: Path, job_id: str, status: str) -> str:
     workload = identity.get("workload", "reference-07")
     phases = "60 / 120 / 30" if workload == "official" else "20 / 60 / 15"
     topology = "P2 × TP4 / D2 × TP4 EP1" if identity.get("framework") == "sglang" and workload == "official" else "P4 × TP2 / D2 × TP4 EP4"
+    if workload == "official" and config.get("concurrency") == 64 and config.get("speculation", {}).get("algorithm") == "EAGLE3":
+        topology = "P4 × TP2 / D2 × TP4 EP1"
     lines = ["### Firmus Qwen", "", f"- Status: **{status}**; Slurm `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'unavailable')}**; H200 × 16; {topology}; concurrency **{config.get('concurrency', 'unavailable')}**.", f"- Workload: {workload}, ISL 4000 / OSL 200, warmup / benchmark / grace **{phases} s**; **not an official submission**."]
     if identity.get("dynamo"):
         dynamo = identity["dynamo"]
