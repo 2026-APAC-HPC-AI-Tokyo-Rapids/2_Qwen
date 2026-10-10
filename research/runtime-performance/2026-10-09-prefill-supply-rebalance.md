@@ -194,3 +194,26 @@ Actions 38016612848、PBS218289、dgx007/dgx013、walltime12分07秒、archive�
 greedy probeは8/8でc72と同一で、数値は保たれている。running差による伸び（約0.2ms）を除いても、ITLは約0.8ms（約5%）悪い。node対が異なるのでnodeの個体差を切り分けられないが、改善は確認できない。H100 NVLink上の約2MB・TP4では、twoshotの2段同期がoneshotの読出し量削減を上回ると考えられる。**不採用。** patchとconfigはrevertし、branchの設定をed8c534へ戻した。
 
 ASPIRE（myprojects 59010014）：記入時点でbalance 12918.790、In Doubt 1024（本runの未精算分）。本ノートの全試行で約3.1k SU。
+
+## 10. Firmus H200：P6×TP2 / D1×TP4（採用候補）
+
+ユーザー承認のもと、チームメイトのFirmus経路（`codex/firmus-sglang-dynamo` 23463ed、P4×TP2/D2×TP4 c64）を親にして、別branch `research/firmus-p6tp2-d1tp4`（ff58ed8）で1条件だけ実行した。チームメイトのbranchは変更していない。
+
+親run 37888931369は3450.9 good tok/s（97.9%）、平均ITL 9.5ms、D runningは約18/worker。TP2 prefillはworkerあたりログ中央値約21.5k tok/s（GPUあたり約10.75k、H200 TP4の約8.1kより約33%高い）だった。H100と同じく、Decodeの余裕をPrefillへ回す配置とした。
+
+条件：TP2 prefillを6 worker（head nodeに4、tail nodeに2）、TP4 decodeを1 worker（tail node、`--max-total-tokens 524288`）、c104。image（37886841020、sha256 `4b919a74…`）、EAGLE3、FP8 KV、P kernel bundleは親と同じ。
+
+Actions 38020231725、Slurm 22269（g1/g4、COMPLETED 0:0、11分32秒）。archive全SHA256一致。server-infoでP×6がTP2/pool131072/max-running104/CUTLASS/symmetric memory、DがTP4/pool524288であることを確認した。
+
+| 指標 | P4×TP2/D2×TP4 c64（37888931369） | **P6×TP2/D1×TP4 c104（38020231725）** |
+|---|---:|---:|
+| good output tok/s | 3450.9 | **4369.4** |
+| good率 | 97.88% | 93.57%（2879 request） |
+| TTFT 平均 / p90 | 1687 / — ms | 840 / 1356 ms（>3s 38件） |
+| ITL 平均 / p90 | 9.53 / — ms | 17.86 / 19.53 ms（>20ms 153件） |
+| D running（ログ平均 / 最大） | 約18 / worker | 57.1 / 101 |
+| P queue（ログ平均） | — | head P0–3 約0.16、tail P4/5 1.33 |
+
+親より+26.6%、TP4 P2/D2 c48基準（3170、37868180304）より+37.8%。いずれも単回・別allocationの比較で、matched pairではない。
+
+H100 ASPIREと同じ構図で、律速はDecodeのITLに移った（平均17.9ms、p90 19.5ms）。Prefill側は、head nodeのworkerがほぼ待ちなし、decodeと同居するtail nodeの2 workerに軽い待ちがある。Firmusでのさらなる改善点は、単一Decodeのrequestあたりコスト（§7のattention帯域）と、同居prefillの遅さの原因特定。cの微調整（例：96）は、ITL違反を減らす代わりに並行数も減るので、取り得る幅は小さいと見込む。
