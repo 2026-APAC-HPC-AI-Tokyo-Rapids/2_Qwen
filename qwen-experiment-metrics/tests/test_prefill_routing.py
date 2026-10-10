@@ -95,3 +95,5 @@ def test_actual_patch_chain(tmp_path):
     xqa = (tmp_path / 'python/sglang/srt/layers/attention/trtllm_mha_backend.py').read_text()
     assert xqa.index('self.is_xqa_impl = ') < xqa.index('self.xqa_spec_dec_mask = None')
     assert 'mask=self._xqa_verify_mask(q, forward_batch),' in xqa
+    hybrid = (tmp_path / 'python/sglang/srt/layers/attention/hybrid_attn_backend.py').read_text()
+    assert '_select_backend(ForwardMode.TARGET_VERIFY).max_context_len' in hybrid

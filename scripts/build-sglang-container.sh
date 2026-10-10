@@ -90,7 +90,7 @@ for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "$
     "${draft_head_patch}") targets=(python/sglang/srt/speculative/eagle_worker_v2.py python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py) ;;
     "${fused_shuffle_patch}") targets=(python/sglang/srt/layers/moe/cutlass_moe.py python/sglang/kernels/ops/moe/prefill_fp8_row_shuffle.py) ;;
     "${routing_patch}") targets=(python/sglang/srt/layers/moe/cutlass_moe.py python/sglang/kernels/ops/moe/prefill_routing.py) ;;
-    "${xqa_mask_patch}") targets=(python/sglang/srt/layers/attention/trtllm_mha_backend.py) ;;
+    "${xqa_mask_patch}") targets=(python/sglang/srt/layers/attention/trtllm_mha_backend.py python/sglang/srt/layers/attention/hybrid_attn_backend.py) ;;
     *) targets=(python/sglang/srt/layers/moe/cutlass_moe.py) ;;
   esac
   targets_json='[]'

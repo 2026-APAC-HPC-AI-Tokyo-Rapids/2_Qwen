@@ -63,3 +63,17 @@
                  )
          else:
  
+--- a/python/sglang/srt/layers/attention/hybrid_attn_backend.py
++++ b/python/sglang/srt/layers/attention/hybrid_attn_backend.py
+@@ -116,6 +116,11 @@
+     def verify_mask(self) -> Optional[VerifyMask]:
+         return self._select_backend(ForwardMode.TARGET_VERIFY).verify_mask
+ 
++    @property
++    def max_context_len(self) -> int:
++        # build_eagle_verify_input sizes the tree mask from the target-verify child.
++        return self._select_backend(ForwardMode.TARGET_VERIFY).max_context_len
++
+     def update_verify_buffers_to_fill_after_draft(
+         self, spec_info: SpecInput, cuda_graph_bs: Optional[int]
+     ):
