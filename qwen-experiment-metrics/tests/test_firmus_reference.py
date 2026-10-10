@@ -91,7 +91,7 @@ def test_sglang_launch_uses_three_dp4_ep4_groups_and_decode_tp4(tmp_path: Path) 
     archived = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/aspire-integration-argv.json").read_text())["archived_server_info"]
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     assert "jq" not in worker  # Not installed in the pinned image; parse on the host.
-    command = next(line for line in worker.splitlines() if line.startswith("command=("))
+    command = "command=(" + worker.split("command=(", 1)[1].split('if [[ -x /opt/nsys', 1)[0]
     launch = worker.split("UCX_IB=", 1)[0] + command + '\nprintf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "$SGLANG_HOST_IP" "${command[@]}"\n'
     observed = {}
     for argv in workers:
@@ -127,6 +127,7 @@ def test_sglang_launch_uses_three_dp4_ep4_groups_and_decode_tp4(tmp_path: Path) 
             assert flags[flags.index("--moe-runner-backend") + 1] == config["prefill"]["moe_runner_backend"]
             assert flags[flags.index("--moe-a2a-backend") + 1] == config["prefill"]["moe_a2a_backend"]
             assert flags[flags.index("--dp-size") + 1] == "4"
+            assert flags[flags.index("--dist-init-addr") + 1] == f"127.0.0.1:{32000 + int(name[-1]) * 100}"
             assert "--enable-dp-attention" in flags and "--disable-cuda-graph" in flags
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
         else:

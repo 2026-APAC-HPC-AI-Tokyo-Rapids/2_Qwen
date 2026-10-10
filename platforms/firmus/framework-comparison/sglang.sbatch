@@ -112,6 +112,11 @@ mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 echo "$name host=$(hostname) ip=$SGLANG_HOST_IP hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp shuffle=${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0} routing=${SGLANG_PREFILL_TILED_ROUTING:-0}"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
 command=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path "$model" --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "$tp" --mem-fraction-static 0.90 --page-size 64 --kv-cache-dtype fp8_e4m3 --attention-backend fa3 --nccl-port "$((port + 1000))" --disaggregation-mode "$role" --disaggregation-transfer-backend nixl "$@" --host 0.0.0.0 --port "$port")
+if [[ "$role" == prefill ]]; then
+  # DP attention derives six TCP endpoints from this address. Adjacent HTTP
+  # ports would otherwise create overlapping endpoint ranges on the same node.
+  command+=(--dist-init-addr "127.0.0.1:$((32000 + ${name##*-} * 100))")
+fi
 if [[ -x /opt/nsys/bin/nsys ]]; then
   runtime_dir=$(dirname "$(dirname "$0")")
   export QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys
