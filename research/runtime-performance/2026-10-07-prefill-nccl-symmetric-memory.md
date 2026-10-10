@@ -106,3 +106,23 @@ rootはこの反復根拠でP-onlysymmの性能採用を判断した。採用前
 14existing/adopted build inputsはbuildsource9c5とbyte同一。既selectorを変更せず、隔離temp repoと実ASPIRE 12,231,192,576-byte archiveのSHA検査で、最新verifiedancestor37741311522→reuse182/selfskip→37727083061 reuse182/requirebuild→build/invalidnewer→次verifiedancestor reuse182/noeligible→buildの5ケースを確認。GHlookupだけ既公開実行来歴snapshotを使い認証を持ち込まず、archiveとhashは実物。最初のprobeはfixtureにsymlinkを使ったためstatがlinkサイズを見て正常除外され、同filesystem hardlinkへfixtureだけ直した。originalbuildarchive欠損と誤推定せず、selectorへsymlinkfallback等を追加していない。remote repo/payload/hardlink fixtureはEXITtrap削除後findで残留0、local bundle/tar/一時proofscriptも削除。証拠`main-adoption-{full-build-input-equivalence.json,selector-proof-summary.json,selector-real-archive-proof.txt,selector-focused-real-archive-proof.txt,remote-proof-cleanup.txt,validation-terminal.json}`を保持する。
 
 性能採用は2matchedpairの反復で判断したもので、生成分岐は総和順/丸めと整合するが各分岐原因を一意に実証していない。主催者accuracy維持・全logit分布・全collective適用・isolated NCCL削減幅を断定しない。通常性能とprofile診断は分離し、欠損旧runは参考のまま。残るpin217513/217516のQ/終端/cleanup監査はLuna監視で継続し、正常Qを取り下げない。
+
+### 残留反復の終端監査（2026-10-10）
+
+残っていたcontrol [37727321620](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37727321620)/PBS217516とcandidate [37727083061](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37727083061)/PBS217513はActions success、PBS F/Exit0/Stageout1/run_count1。実P007/D013でcontrol→candidate連続（Oct10 14:41:59→14:53:50→15:05:22SGT）、同16H100 physical UUID。各52正本全hash・公開規則準拠repository parser再算=保存score・公式60/120/30条件・同image182/source9c5/SGLangfc275674/model・4実argvはP symmだけ差・8×64finite・両runtime削除PASS。主催者提供parserではない点は従来どおり。
+
+|matched pair・実順|control score|P symm score|pair内増分|control→symm mean TTFT ms|control→symm mean ITL ms|
+|---|---:|---:|---:|---:|---:|
+|013/019 control→candidate・1880GB|2775.546377|2851.604172|+2.740282%|1402.964773→1268.981276|10.000491→10.224663|
+|024/032 candidate→control・1880GB|2784.690519|2865.540928|+2.903389%|1392.302867→1259.256283|9.988905→10.202385|
+|007/013 control→candidate・実1500GB|2769.743190|2846.577708|+2.774067%|1408.840522→1295.866523|9.970205→10.128115|
+
+第三組対照1718req/goodfraction.9895227008、候補1760req/.9920454545、error/cancel0、TTFT>3s18→14、ITL>20ms0。TTFT-8.018935%、ITL+1.583819%。3組の増分幅は0.163108percentage pointで、採用根拠の改善方向に整合する。ただし3組の物理pairと第三組の実memory admissionは異なるため、各pair内比較だけを用いrawを跨いでpoolせず、強い分散/信頼区間・kernel単独寄与を主張しない。
+
+この2本は当初013/019 host固定・1880GBの要求でQを観測したが、終端Resource_List.selectは `2:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1`（hostなし）、exec_hostとarchived node-addresses/GPU UUIDは007/013。Submit_argumentsは旧pin要求を保持する。したがってschedulerがhost制約を無視したとは解釈せず、要求変更後のfree-selector同pair実行として扱う。こちらからqalter/cancelしておらず、read-only tracejobは過去3日ログを取得できず変更主体・時刻は未特定。根拠は `pinned-pair-actual-allocation-20261010.txt`、初期PBS来歴、`pinned-request-change-tracejob-20261010.txt`。
+
+第三組の同条件greedy内容＋logprobsは先行024/032各条件と8/8exact一致し、条件間5/8分岐も再現した。NaN/invalid・新低精度castなし、総和順/丸め変化と整合するが原因を一意に証明せず、top2margin/選択順位・全logit分布・主催者accuracy維持は未取得。main採用済み実証組合せは変更しない。
+
+独立監査は `/tmp/qwen-routing-audit-20261005/{37727321620-audit.json,37727083061-audit.json,37727321620-runtime-pair-audit.json,37727083061-runtime-pair-audit.json,nccl-third-pair-comparison.json,nccl-third-pair-complete-audit.json}`。既4本はすべて終端、Luna監視を終了し、取り下げ・追加GPU投入なし。run directory削除とraw正本保持を確認した。
+
+完了棚卸し: この系統12 Actionsは全completed（成功7/失敗5）。旧Q接続障害3本はPBS未実行・各9rawhash、旧候補回収障害はPBS完走・17loghashのみで結果欠損、fixture失敗1本はPBS投入前でGPUなし。firstfatalと欠損範囲は上記記録を保持し、性能根拠へ混ぜない。全対象PBSは終端、各runtime消去、最終qstat対象activeなし。今回のclean NCCL worktree5個とmain系譜内の重複branch ref6個を削除、未merge対照・診断条件ref4個は実行来歴として保持した。monitorは終了、他作業のprocess/worktree/branchは未変更。再監査用raw・JSON・source snapshot・監査scriptは証拠として保持し、本番診断処理・一時proofrepo/hardlink/payloadは残さない。main採用234CPUtests/validation成功・14buildinput byte同一・selector reuse証明は変更せず保全。総括証拠 `nccl-all-started-actions-terminal.json`、`nccl-completion-cleanup.json`、`nccl-completion-audit.json`。
