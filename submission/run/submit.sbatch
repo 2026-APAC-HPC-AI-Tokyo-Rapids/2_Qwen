@@ -166,13 +166,16 @@ run_node() {
     prefill_env=()
     # Adopted prefill bit-copy shuffle and integer routing; D and wheel GEMMs unchanged.
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then prefill_env=(-e SGLANG_PREFILL_FUSED_FP8_SHUFFLE=1 -e SGLANG_PREFILL_TILED_ROUTING=1); fi
+    decode_env=()
+    # Decode verify all-reduce (~250 tokens at ~60 running) uses twoshot above this token count instead of FlashInfer's B200-tuned oneshot.
+    if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == decode && "$(jq -r '.decode_allreduce_oneshot_max_tokens // empty' "${OUTPUT_DIR}/source/aspire-serving.json")" != "" ]]; then decode_env=(-e "SGLANG_FLASHINFER_AR_ONESHOT_MAX_TOKENS=$(jq -r '.decode_allreduce_oneshot_max_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")"); fi
     profile_mounts=()
     # Decode-only bounded Nsight capture: /start_profile and /stop_profile with CUDA_PROFILER open and close the window.
     if [[ "${PROFILE}" == true && "${QWEN_PLATFORM}" == aspire2ap && "${role}" == decode ]]; then
       profile_mounts=(-m "${aspire_nsys_root}:/opt/nsys:bind,ro,x-create=dir" -m "${OUTPUT_DIR}/profile:/profiler-output")
       args=(/opt/nsys/bin/nsys profile --force-overwrite=true --trace-fork-before-exec=true --capture-range=cudaProfilerApi --capture-range-end=stop --trace=cuda,nvtx,osrt --cuda-graph-trace=node --sample=none --cpuctxsw=none "--output=/profiler-output/nsys-decode-${worker}" "${args[@]}")
     fi
-    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${profile_mounts[@]}" "${prefill_env[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
+    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${profile_mounts[@]}" "${prefill_env[@]}" "${decode_env[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
     printf '%q ' "${worker_command[@]}" >"${OUTPUT_DIR}/logs/${role}-${worker}-command.txt"
     printf '\n' >>"${OUTPUT_DIR}/logs/${role}-${worker}-command.txt"

@@ -74,7 +74,7 @@ def test_actual_four_patch_chain(tmp_path):
     if not mirror.exists():
         pytest.skip('fixed source mirror unavailable')
     revision = 'fc275674a97d78553b22597ee72c8fd48f5420f4'
-    patches = ['prefill-cutlass-silu-quant.patch', 'draft-extend-selected-head-rows.patch', 'prefill-fp8-scale-row-shuffle.patch', 'prefill-tiled-routing.patch']
+    patches = ['prefill-cutlass-silu-quant.patch', 'draft-extend-selected-head-rows.patch', 'prefill-fp8-scale-row-shuffle.patch', 'prefill-tiled-routing.patch', 'decode-allreduce-twoshot.patch']
     for name in patches:
         text = (ROOT / 'patches/sglang' / name).read_text()
         for line in text.splitlines():
@@ -92,3 +92,5 @@ def test_actual_four_patch_chain(tmp_path):
     assert 'prepare_tiled_routing(topk_ids' in patched
     assert 'shuffle_fp8_rows_with_scales' in patched
     assert '_prefill_tile_modes' not in patched
+    fusion = (tmp_path / 'python/sglang/srt/layers/flashinfer_comm_fusion.py').read_text()
+    assert fusion.index('use_oneshot = input_tensor.shape[0] <= max(_ONESHOT_MAX_TOKENS, world_size)') < fusion.index('kwargs = dict(\n        input=input_tensor,')

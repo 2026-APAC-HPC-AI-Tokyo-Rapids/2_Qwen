@@ -1,0 +1,36 @@
+--- a/python/sglang/srt/layers/flashinfer_comm_fusion.py
++++ b/python/sglang/srt/layers/flashinfer_comm_fusion.py
+@@ -1,5 +1,6 @@
+ import inspect
+ import logging
++import os
+ from typing import Optional, Tuple
+ 
+ import torch
+@@ -23,6 +24,15 @@
+ )
+ from sglang.srt.utils.custom_op import register_custom_op
+ 
++# FlashInfer's default oneshot/twoshot choice is tuned on B200 (TP4 oneshot up
++# to 1024 tokens). Above this token count the fused allreduce uses twoshot
++# (reduce-scatter + all-gather) instead. Unset keeps FlashInfer's heuristic.
++_ONESHOT_MAX_TOKENS = (
++    int(os.environ["SGLANG_FLASHINFER_AR_ONESHOT_MAX_TOKENS"])
++    if os.environ.get("SGLANG_FLASHINFER_AR_ONESHOT_MAX_TOKENS")
++    else None
++)
++
+ logger = logging.getLogger(__name__)
+ 
+ # FlashInfer allreduce fusion: set when flashinfer is available (see block below)
+@@ -839,6 +849,10 @@
+ 
+     residual_out = torch.empty_like(residual)
+     norm_out = torch.empty_like(input_tensor)
++    # Only the strategy changes; the workspace (TRT-LLM backend) supports both.
++    # Twoshot needs more tokens than ranks, so tiny batches stay oneshot.
++    if use_oneshot is None and _ONESHOT_MAX_TOKENS is not None:
++        use_oneshot = input_tensor.shape[0] <= max(_ONESHOT_MAX_TOKENS, world_size)
+ 
+     kwargs = dict(
+         input=input_tensor,
