@@ -283,3 +283,18 @@ Firmusにはポイント消費がなく、他ユーザーとの配分だけが�
 混成Decodeにすると、Decode側の余裕は生まれた。しかしPrefillが5 workerに減ったうえ、Decodeと同じnodeのprefill workerが遅く、round robinでもpower_of_twoでも、そこに待ちが集中した。結果としてP6/D1を上回らない。branchの設定はff58ed8へ戻した（061a0c8）。
 
 ASPIREとFirmusに共通して、Decodeと同居するprefill workerが遅いことが、配置選択の制約になっている。ASPIREでは、page size 64でこの遅れが消えた（§11）。FirmusのP5/D混成やP6/D1でも、page 64と組み合わせれば同居prefillの遅れが解消する可能性がある。次に試すならこれが候補。
+
+## 14. Firmus P6/D1＋page size 64（Firmus暫定最良）
+
+3519fc0（`research/firmus-p6tp2-d1tp4`）。ff58ed8の構成に、全workerの`--page-size 64`だけを加えた（FA3はworker.shで明示済み。server-infoでpage 64・fa3を確認）。Actions 38034080121、g1/g4、archive全SHA256一致。
+
+| 指標 | P6/D1 page1（ff58ed8） | **P6/D1 page64（3519fc0）** |
+|---|---:|---:|
+| good output tok/s | 4369.4（93.57%） | **4429.9**（93.33%） |
+| request数 | 2879 | 2940 |
+| TTFT 平均 / p90 | 840 / 1356 ms | 755 / 1231 ms |
+| ITL 平均 / p90 | 17.86 / 19.53 ms | 17.91 / 19.57 ms |
+| D running平均（ログ） | 57.1 | 62.2 |
+| tail側P queue | 1.33 | 1.27 |
+
++1.4%、単回。TTFTは縮み、同じc104でも処理request数が増えた。DecodeのITLはほぼ同じで、Decode律速は変わらない。ASPIREと違い、同居prefillの待ち（1.27）は残った。差は小さいがbranch headはこの条件のままとし、暫定最良とする。採用には同一node対での反復が必要。
