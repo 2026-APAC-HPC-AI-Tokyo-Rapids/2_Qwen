@@ -76,9 +76,22 @@ def check_chunk_release(source):
     print("PASS: ChunkCache uses fixed-shape page release with the correct protected-prefix offset")
 
 
+def check_moe_fusion_gate(source):
+    path = source / "python/sglang/srt/layers/moe/moe_runner/triton_utils/fused_moe.py"
+    tree = ast.parse(path.read_text())
+    gate = next(n.value for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "fuse_decode_silu_quant" for t in n.targets))
+    expression = compile(ast.Expression(gate), str(path), "eval")
+    base = dict(_is_cuda=True, is_sm90_supported=lambda: True, torch=SimpleNamespace(bfloat16="bf16"), hidden_states=SimpleNamespace(dtype="bf16"), E=128, N=768, w1=SimpleNamespace(shape=(128, 768, 4096)), topk=8, use_fp8_w8a8=True, block_shape=[128, 128], activation="silu", is_gated=True, gemm1_alpha=None, gemm1_limit=None, swiglu_limit=None, filter_expert=False, down_moe_use_tma=False, hooks=None)
+    assert eval(expression, base)
+    for key, value in dict(_is_cuda=False, is_sm90_supported=lambda: False, hidden_states=SimpleNamespace(dtype="fp16"), E=64, N=1536, w1=SimpleNamespace(shape=(128, 768, 2048)), topk=4, use_fp8_w8a8=False, block_shape=None, activation="gelu", is_gated=False, gemm1_alpha=1.0, gemm1_limit=7, swiglu_limit=10, filter_expert=True, down_moe_use_tma=True, hooks=object()).items():
+        assert not eval(expression, {**base, key: value}), key
+    print("PASS: fused FC2 boundary selects Qwen SM90 TP4 only; other precision, clamp, filter, TMA and LoRA paths retained")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
     source = parser.parse_args().source
     check_staging(source)
     check_chunk_release(source)
+    check_moe_fusion_gate(source)

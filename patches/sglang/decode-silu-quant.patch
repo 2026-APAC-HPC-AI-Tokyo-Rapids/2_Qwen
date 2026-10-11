@@ -1,0 +1,141 @@
+diff --git a/python/sglang/kernels/jit/csrc/gemm/per_token_group_quant.cuh b/python/sglang/kernels/jit/csrc/gemm/per_token_group_quant.cuh
+index f8ecbe3..3a53d3d 100644
+--- a/python/sglang/kernels/jit/csrc/gemm/per_token_group_quant.cuh
++++ b/python/sglang/kernels/jit/csrc/gemm/per_token_group_quant.cuh
+@@ -218,7 +218,8 @@ template <
+     bool kUe8m0_,
+     bool kRowMajor_,
+     bool kAligned_,
+-    bool kFuseSiluAndMul_>
++    bool kFuseSiluAndMul_,
++    bool kSiluMulFp32_ = false>
+ struct QuantTrait {
+   // rename
+   using InputType = InputType_;
+@@ -268,8 +269,17 @@ struct QuantTrait {
+ #pragma unroll
+       for (uint32_t i = 0; i < kVecSize / 2; ++i) {
+         const auto gate = cast<float2>(in[i]);
+-        const auto act = cast<T2>(float2{details::silu(gate.x), details::silu(gate.y)});
+-        in[i] = __hmul2(act, up[i]);
++        if constexpr (kSiluMulFp32_) {
++          // Match activation.cuh: FP32 SiLU and multiply, then one BF16/FP16
++          // rounding. The existing fusion rounds SiLU before multiplying.
++          const auto up_f32 = cast<float2>(up[i]);
++          in[i] = cast<T2>(float2{
++              (gate.x / (1.0f + expf(-gate.x))) * up_f32.x,
++              (gate.y / (1.0f + expf(-gate.y))) * up_f32.y});
++        } else {
++          const auto act = cast<T2>(float2{details::silu(gate.x), details::silu(gate.y)});
++          in[i] = __hmul2(act, up[i]);
++        }
+       }
+     }
+ 
+@@ -486,9 +496,10 @@ template <
+     bool kRowMajor,
+     bool kAligned,
+     bool kFuseSiluAndMul,
+-    bool kUsePDL>
++    bool kUsePDL,
++    bool kSiluMulFp32 = false>
+ struct PerTokenGroupQuantFlatKernel {
+-  using Trait = QuantTrait<InputType, QuantType, kGroupSize, kUe8m0, kRowMajor, kAligned, kFuseSiluAndMul>;
++  using Trait = QuantTrait<InputType, QuantType, kGroupSize, kUe8m0, kRowMajor, kAligned, kFuseSiluAndMul, kSiluMulFp32>;
+ 
+   static void run(tvm::ffi::TensorView input, tvm::ffi::TensorView output_q, tvm::ffi::TensorView output_s) {
+     using namespace host;
+diff --git a/python/sglang/kernels/ops/moe/decode_silu_quant.py b/python/sglang/kernels/ops/moe/decode_silu_quant.py
+new file mode 100644
+index 0000000..e1eae25
+--- /dev/null
++++ b/python/sglang/kernels/ops/moe/decode_silu_quant.py
+@@ -0,0 +1,35 @@
++"""Qwen TP4 FC2 input: preserve the unfused BF16 rounding boundary."""
++from __future__ import annotations
++
++import torch
++
++from sglang.kernels.jit.utils import cache_once, is_arch_support_pdl, load_jit, make_cpp_args
++from sglang.srt.utils.custom_op import register_custom_op
++
++
++@cache_once
++def decode_silu_quant_module(use_pdl: bool):
++    args = make_cpp_args(torch.bfloat16, torch.float8_e4m3fn, 128, False, True, True, True, use_pdl, True)
++    return load_jit(
++        "decode_silu_quant",
++        *args,
++        cuda_files=["gemm/per_token_group_quant.cuh"],
++        cuda_wrappers=[("run", f"PerTokenGroupQuantFlatKernel<{args}>::run")],
++        extra_cuda_cflags=["--use_fast_math"],
++    )
++
++
++@register_custom_op(mutates_args=["output", "scales"])
++def _decode_silu_quant(input: torch.Tensor, output: torch.Tensor, scales: torch.Tensor) -> None:
++    decode_silu_quant_module(is_arch_support_pdl()).run(input, output, scales)
++
++
++def decode_silu_quant(input: torch.Tensor):
++    assert input.dtype == torch.bfloat16 and input.ndim == 2 and input.shape[1] == 768
++    assert input.is_contiguous()
++    rows = input.shape[0]
++    output = torch.empty((rows, 384), dtype=torch.float8_e4m3fn, device=input.device)
++    scales = torch.empty((rows, 3), dtype=torch.float32, device=input.device)
++    if rows:
++        _decode_silu_quant(input, output, scales)
++    return output, scales
+diff --git a/python/sglang/srt/layers/moe/moe_runner/triton_utils/fused_moe.py b/python/sglang/srt/layers/moe/moe_runner/triton_utils/fused_moe.py
+index a22880b..d8016dd 100644
+--- a/python/sglang/srt/layers/moe/moe_runner/triton_utils/fused_moe.py
++++ b/python/sglang/srt/layers/moe/moe_runner/triton_utils/fused_moe.py
+@@ -36,6 +36,7 @@ from sglang.srt.utils import (
+     is_cuda,
+     is_hip,
+     is_musa,
++    is_sm90_supported,
+     is_xpu,
+     use_intel_xpu_backend,
+ )
+@@ -583,14 +584,35 @@ def _fused_moe_kernel_sequence(
+             topk_ids,
+         )
+ 
+-    intermediate_cache2 = torch.empty(
+-        (total_tokens, N // 2),
+-        device=hidden_states.device,
+-        dtype=hidden_states.dtype,
++    fuse_decode_silu_quant = (
++        _is_cuda
++        and is_sm90_supported()
++        and hidden_states.dtype == torch.bfloat16
++        and (E, N, w1.shape[2], topk) == (128, 768, 4096, 8)
++        and use_fp8_w8a8
++        and block_shape == [128, 128]
++        and activation == "silu"
++        and is_gated
++        and gemm1_alpha is None
++        and gemm1_limit is None
++        and swiglu_limit is None
++        and not filter_expert
++        and not down_moe_use_tma
++        and not hooks
+     )
++    if not fuse_decode_silu_quant:
++        intermediate_cache2 = torch.empty(
++            (total_tokens, N // 2),
++            device=hidden_states.device,
++            dtype=hidden_states.dtype,
++        )
+ 
+     # Activation function with multiplication
+-    if activation == "silu" and is_gated:
++    if fuse_decode_silu_quant:
++        from sglang.kernels.ops.moe.decode_silu_quant import decode_silu_quant
++
++        intermediate_cache2, a2_scale = decode_silu_quant(intermediate_cache1)
++    elif activation == "silu" and is_gated:
+         # - gemm1_alpha != None: GPT-OSS-style swiglu(alpha, limit)
+         # - gemm1_alpha == None and gemm1_limit != None: silu+clamp+mul(limit-only)
+         # - swiglu_limit != None: DeepSeek V4 swiglu clamp + silu_and_mul (CUDA/HIP only)

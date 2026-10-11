@@ -26,6 +26,10 @@ def main():
     rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(rank)
     assert torch.cuda.get_device_capability() == (9, 0)
+    from runpy import run_path
+    from pathlib import Path
+
+    run_path(str(Path(__file__).with_name("check-firmus-decode-kernels.py")), run_name="__main__")
     torch.backends.cuda.matmul.allow_tf32 = False
     dist.init_process_group("nccl", timeout=timedelta(seconds=240), device_id=torch.device("cuda", rank))
     assert dist.get_world_size() == 4
