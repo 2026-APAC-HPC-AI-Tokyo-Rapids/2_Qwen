@@ -89,7 +89,10 @@ role=${name%%-*}
 export VLLM_NIXL_SIDE_CHANNEL_PORT="$((port - 24500))"
 export VLLM_USE_NCCL_SYMM_MEM=0
 export VLLM_ALLREDUCE_USE_SYMM_MEM=0
+role_flags=()
 if [[ "$role" == prefill ]]; then
+  # Job 22463 failed in PIECEWISE graph capture; retain compilation and symmetric memory.
+  role_flags=(--compilation-config '{"cudagraph_mode":"NONE"}')
   export VLLM_ALLREDUCE_USE_SYMM_MEM=1
   export VLLM_ALLREDUCE_USE_FLASHINFER=0 VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=0
   KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer"}'
@@ -110,7 +113,7 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 echo "$name host=$(hostname) ip=$VLLM_NIXL_SIDE_CHANNEL_HOST hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp symm=$VLLM_ALLREDUCE_USE_SYMM_MEM"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
-worker_command=(/usr/local/bin/vllm serve "$model" --served-model-name qwen --trust-remote-code --dtype bfloat16 --max-model-len 8192 --tensor-parallel-size "$tp" --gpu-memory-utilization 0.90 --block-size 16 --num-gpu-blocks-override 8192 --max-num-batched-tokens 8192 --enable-chunked-prefill --kv-cache-dtype fp8_e4m3 --attention-config '{"backend":"FLASH_ATTN","flash_attn_version":3}' --kv-transfer-config "$KV_CONFIG" "$@" --host 0.0.0.0 --port "$port")
+worker_command=(/usr/local/bin/vllm serve "$model" --served-model-name qwen --trust-remote-code --dtype bfloat16 --max-model-len 8192 --tensor-parallel-size "$tp" --gpu-memory-utilization 0.90 --block-size 16 --num-gpu-blocks-override 8192 --max-num-batched-tokens 8192 --enable-chunked-prefill --kv-cache-dtype fp8_e4m3 --attention-config '{"backend":"FLASH_ATTN","flash_attn_version":3}' --kv-transfer-config "$KV_CONFIG" "${role_flags[@]}" "$@" --host 0.0.0.0 --port "$port")
 printf '%q ' "${worker_command[@]}" >"$(dirname "$0")/argv-${name}.txt"
 printf '\n' >>"$(dirname "$0")/argv-${name}.txt"
 exec "${worker_command[@]}"

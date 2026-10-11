@@ -147,6 +147,10 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         result = subprocess.run(["bash", "-c", probe, "fixture", f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
         symm, *flags = result.stdout.decode().rstrip("\0").split("\0")
         assert symm == ("1" if role == "prefill" else "0")
+        if role == "prefill":
+            assert json.loads(flags[flags.index("--compilation-config") + 1]) == {"cudagraph_mode": "NONE"}
+        else:
+            assert "--compilation-config" not in flags
         assert flags[flags.index("--tensor-parallel-size") + 1] == str(tp)
         assert flags[flags.index("--max-num-seqs") + 1] == str(limit)
         assert "--enable-expert-parallel" not in flags

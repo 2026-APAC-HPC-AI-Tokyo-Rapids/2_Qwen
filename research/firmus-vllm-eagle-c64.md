@@ -18,7 +18,7 @@ This experiment changes the serving framework while retaining the model and draf
 | Attention | FA3 | FLASH_ATTN with flash_attn_version3 |
 | Symmetric memory | Enabled on prefills, disabled on decoders | Native vLLM SymmMem selected on prefills; competing custom/FlashInfer all-reduce disabled there; disabled on decoders |
 | MoE | Prefill CUTLASS with SGLang shuffle/routing patches; decoder auto | Prefill flashinfer_cutlass supports H200 block-FP8; decoder auto |
-| Graph buckets | Committed decode batch-size list, 1..512 | Same numeric list passed to vLLM; capture units and speculative padding differ between engines |
+| Graph buckets | Committed decode batch-size list, 1..512; prefill graphs also captured | Same numeric decoder list; prefill graph capture disabled after the startup failure below. Capture units and speculative padding differ between engines |
 | Routing / transfer | SGLang router, round-robin prefill, NIXL | Existing vLLM proxy, round-robin prefill/decode, NixlConnector |
 | Client | AIPerf0.12.0; concurrency64; 60/120/30s; ISL4000, OSL200; seed2026 | Same image, tokenizer revision and official command/parser |
 
@@ -37,3 +37,13 @@ Provisioning retried a transient SSH interruption before submission. The unused 
 The inherited Actions summary formatter has a stale topology label for this new configuration. Effective worker commands and server-info artifacts are authoritative. The reporting-only correction identifies the optimized c64 EAGLE3 layout as P4TP2/D2TP4 EP1; its 15 CPU tests passed. It does not alter the submitted job.
 
 Background follow-up `firmus-vllm-eagle3-comparison` checks this same job and its Actions collection every five minutes, remaining quiet while unchanged. Its scope includes collecting the official result, completing this comparison and stopping after completion; it does not authorize additional controls or optional profiling. The foreground read-only polling process was stopped when this follow-up was registered.
+
+### First allocation: startup failure, no benchmark result
+
+Slurm 22463 ran on g1/g4 from 2026-10-10 22:18:36 to 22:23:34 (scheduler timestamps), then failed with exit 1:0 after 4m58s. The first fatal error is `CUDA error: invalid argument` in `logs/logs/prefill-2.log`, during target PIECEWISE CUDA graph capture at 46/51 buckets. The worker died at 06:23:12 +08:00; later `RuntimeError: cancelled` and other workers' cancellation messages are shutdown consequences, not the first error. No official client, score, server-info snapshots, or run-success marker was produced.
+
+Target and draft weights loaded successfully. Logs confirm EAGLE3 auxiliary layers (2,47,91), prefill FLASHINFER_CUTLASS FP8 MoE, decoder TRITON FP8 MoE, and prefill symmetric-memory environment enabled. This does not establish which CUDA kernel or communicator caused the capture error. Other prefill workers progressed past capture before cleanup.
+
+Actions collection and cleanup succeeded despite the benchmark failure. Canonical logs/source archive: `/srv/qwen-artifacts/38070007994/1/` on archive-host; its SHA256SUMS verified. The active Firmus run directory was removed by workflow cleanup.
+
+The necessary replacement disables CUDA graph capture only on prefills using `--compilation-config '{"cudagraph_mode":"NONE"}'`. Torch compilation, symmetric memory, target/draft precision, worker layout, cache capacity, decoder graph buckets, and official client remain as above. This bypasses the observed failing stage; it is not a claim that the underlying CUDA fault is diagnosed. SGLang's successful prefill graph capture makes this a material remaining comparison difference. Before replacement submission, the pinned vLLM CPU CLI schema validated this setting; shell syntax, 34 reference/profile CPU tests and Ruff passed. No image rebuild or optional experiment is submitted.
