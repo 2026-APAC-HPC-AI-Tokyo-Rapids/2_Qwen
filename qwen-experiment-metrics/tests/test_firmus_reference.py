@@ -168,9 +168,9 @@ def test_trtllm_launch_matches_recipe_layout(tmp_path: Path) -> None:
     assert {argv[argv.index("bash") + 2]: argv[argv.index("bash") + 6] for argv in workers} == {**{f"prefill-{i}": "1" for i in range(6)}, "decode-0": "4"}
     worker = source.split("cat >\"${ROOT}/source/worker.sh\" <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     final = worker.split("\nexec ", 1)[1]
-    for flag in ("--backend pytorch", "--served_model_name qwen", '--tp_size "$tp"', '--ep_size "$ep"', '--max_batch_size "$batch"', '--max_num_tokens "$tokens"', "--max_seq_len 8192", '--server_role "$server_role"', '--config "$config"'):
+    for flag in ("--backend pytorch", "--served_model_name qwen", '--tp_size "$tp"', '--ep_size "$ep"', '--max_batch_size "$batch"', '--max_num_tokens "$tokens"', "--max_seq_len 8192", '--config "$config"'):
         assert flag in final
-    assert 'batch=2; tokens=8192' in worker and 'batch=512; tokens=1024' in worker
+    assert 'batch=2; tokens=8192' in worker and 'batch=256; tokens=1024' in worker and "--server_role" not in final
     assert 'trtllm-serve disaggregated -c "$root/source/disagg.yaml"' in worker
     yaml_text = source.split("cat >\"${ROOT}/source/context.yaml\" <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     assert "tensor_parallel_size: 2" in yaml_text and "moe_tensor_parallel_size: 2" in yaml_text and "dtype: fp8" in yaml_text and "disable_overlap_scheduler: true" in yaml_text

@@ -76,6 +76,7 @@ for worker in 4 5; do printf 'prefill-%s\t%s\t%s\t2\n' "${worker}" "${TAIL_IP}" 
 printf 'decode-0\t%s\t30200\t4\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
 
 # Engine settings follow the recipe's prefill.yaml/decode.yaml; block reuse stays off because cache-bust defeats it.
+# Generation batch and CUDA graphs stop at 256 (recipe 512): c128 never needs more, and capture time counts against the 17-minute limit.
 cat >"${ROOT}/source/context.yaml" <<'EOF'
 backend: pytorch
 trust_remote_code: true
@@ -112,7 +113,7 @@ cache_transceiver_config:
   backend: DEFAULT
 cuda_graph_config:
   enable_padding: true
-  max_batch_size: 512
+  max_batch_size: 256
 disable_overlap_scheduler: false
 print_iter_log: false
 EOF
@@ -142,15 +143,16 @@ export UCX_POSIX_USE_PROC_LINK=n
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 # mpirun below starts the local TP ranks; hide the enclosing Slurm step so Open MPI launches locally.
 for variable in $(compgen -e | grep -E '^(SLURM_|PMI_|PMIX_)' || true); do unset "${variable}"; done
-if [[ "$role" == prefill ]]; then server_role=CONTEXT; config=$root/source/context.yaml; batch=2; tokens=8192; else server_role=GENERATION; config=$root/source/generation.yaml; batch=512; tokens=1024; fi
-echo "$name host=$(hostname) hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp ep=$ep role=$server_role batch=$batch tokens=$tokens"
+# Static URL disaggregation needs no --server_role; rc29 only converts it to ServerRole for metadata-server or cluster modes.
+if [[ "$role" == prefill ]]; then config=$root/source/context.yaml; batch=2; tokens=8192; else config=$root/source/generation.yaml; batch=256; tokens=1024; fi
+echo "$name host=$(hostname) hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp ep=$ep role=$role batch=$batch tokens=$tokens"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
 python3 -c "from importlib.metadata import version; print('tensorrt_llm', version('tensorrt_llm'))"
 if [[ "$name" == prefill-0 ]]; then
   # The gateway needs the CUDA driver to import tensorrt_llm; it polls every worker until ready.
   trtllm-serve disaggregated -c "$root/source/disagg.yaml" -t 900 -r 1800 >"$root/logs/gateway.log" 2>&1 &
 fi
-exec mpirun --oversubscribe --bind-to none -np "$tp" trtllm-llmapi-launch trtllm-serve "$model" --host 0.0.0.0 --port "$port" --backend pytorch --served_model_name qwen --tp_size "$tp" --ep_size "$ep" --max_batch_size "$batch" --max_num_tokens "$tokens" --max_seq_len 8192 --server_role "$server_role" --config "$config"
+exec mpirun --oversubscribe --bind-to none -np "$tp" trtllm-llmapi-launch trtllm-serve "$model" --host 0.0.0.0 --port "$port" --backend pytorch --served_model_name qwen --tp_size "$tp" --ep_size "$ep" --max_batch_size "$batch" --max_num_tokens "$tokens" --max_seq_len 8192 --config "$config"
 EOF
 
 for worker in 0 1 2 3; do
