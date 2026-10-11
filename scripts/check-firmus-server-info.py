@@ -21,6 +21,8 @@ def check(config, info, role):
                 raise ValueError(f"{role} state {index}: {name}={state.get(name)!r}, expected {value!r}")
     if not prefill and info.get("cuda_graph_bs_decode") != config["decode_cuda_graph_bs"]:
         raise ValueError("Decode CUDA graph request list changed")
+    if not prefill and any(state.get("effective_max_running_requests_per_dp") != config["decode_max_running_requests"] for state in states):
+        raise ValueError("Decode effective scheduler limit differs from requested batch cap")
     print(f"PASS: {role} TP4, DP{expected['dp_size']}, EP{expected['ep_size']}; all DP schedulers checked")
 
 

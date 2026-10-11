@@ -6,7 +6,8 @@ import shutil
 import subprocess
 import tempfile
 
-from tvm_ffi.libinfo import find_include_path
+import tvm_ffi
+from tvm_ffi.libinfo import find_include_path, find_libtvm_ffi
 
 
 root = Path("/opt/sglang/source/python/sglang/kernels/jit")
@@ -20,6 +21,11 @@ specializations = [
 ]
 with tempfile.TemporaryDirectory() as temp:
     source = Path(temp) / "decode-quant.cu"
-    source.write_text(f'#include "{header}"\n' + "\n".join(f"template struct PerTokenGroupQuantFlatKernel<__nv_bfloat16,__nv_fp8_e4m3,128,false,true,true,{flags}>;" for flags in specializations))
-    subprocess.run([nvcc, "-std=c++20", "-O3", "--use_fast_math", "--expt-relaxed-constexpr", "-DSGL_CUDA_ARCH=900", "-gencode", "arch=compute_90a,code=sm_90a", f"-I{root / 'include'}", f"-I{find_include_path()}", "-c", str(source), "-o", str(Path(temp) / "decode-quant.o")], check=True)
-print(json.dumps({"check": "decode_silu_quant", "target": "sm_90a", "specializations": len(specializations), "gpu_execution": False, "status": "PASS"}))
+    source.write_text(f'#include "{header}"\n' + "\n".join(f"TVM_FFI_DLL_EXPORT_TYPED_FUNC(run_{i}, (PerTokenGroupQuantFlatKernel<__nv_bfloat16,__nv_fp8_e4m3,128,false,true,true,{flags}>::run));" for i, flags in enumerate(specializations)))
+    library = Path(temp) / "decode-quant.so"
+    ffi_library = Path(find_libtvm_ffi())
+    subprocess.run([nvcc, "-std=c++20", "-O3", "--use_fast_math", "--expt-relaxed-constexpr", "-DSGL_CUDA_ARCH=900", "-gencode", "arch=compute_90a,code=sm_90a", f"-I{root / 'include'}", f"-I{find_include_path()}", "-shared", "-Xcompiler=-fPIC", str(source), str(ffi_library), f"-Xlinker=-rpath,{ffi_library.parent}", "-o", str(library)], check=True)
+    module = tvm_ffi.load_module(str(library))
+    for i in range(len(specializations)):
+        assert callable(module[f"run_{i}"])
+print(json.dumps({"check": "decode_silu_quant", "target": "sm_90a", "specializations": len(specializations), "ffi_load": "PASS", "gpu_execution": False, "status": "PASS"}))
