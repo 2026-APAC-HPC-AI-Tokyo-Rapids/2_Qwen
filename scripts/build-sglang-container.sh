@@ -64,13 +64,15 @@ fused_shuffle_patch="patches/sglang/prefill-fp8-scale-row-shuffle.patch"
 routing_patch="patches/sglang/prefill-tiled-routing.patch"
 staging_patch="patches/sglang/firmus-staged-eagle-kv.patch"
 mega_patch="patches/sglang/qwen3-sm90-megamoe.patch"
+completion_patch="patches/sglang/firmus-staging-completion.patch"
 # Later patches depend on additions made by earlier patches; check each updated private tree.
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}"; do
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}"; do
   git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${patch}"
   git -C "${source_dir}" apply "${GITHUB_WORKSPACE}/${patch}"
 done
 python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-staging.py" "${source_dir}"
 python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-megamoe-source.py" "${source_dir}"
+python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-latency-source.py" "${source_dir}"
 
 cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/build-nccl-tests.sh" "${GITHUB_WORKSPACE}/containers/install-accelerator-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-python-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-sglang-source.sh" "${GITHUB_WORKSPACE}/containers/install-system-toolchain.sh" "${context}/containers/"
 cp --no-preserve=ownership,xattr "${source_dir}/LICENSE" "${source_dir}/README.md" "${source_dir}/python/pyproject.toml" "${context}/sglang-project-metadata/python/"
@@ -90,8 +92,9 @@ sglang_object_format="$(git -C "${source_dir}" rev-parse --show-object-format)"
 dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/Dockerfile)"
 build_steps_json="$(sed -n 's%^COPY \(containers/[^ ]*\.sh\) .*%\1%p' "${GITHUB_WORKSPACE}/containers/Dockerfile" | while read -r build_step; do build_step="${GITHUB_WORKSPACE}/${build_step}"; jq -cn --arg path "${build_step#"${GITHUB_WORKSPACE}/"}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${build_step}")" '{path:$path,blob_oid:$oid}'; done | jq -s '.')"
 patches_json='[]'
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}"; do
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}"; do
   case "${patch}" in
+    "${completion_patch}") targets=(python/sglang/srt/disaggregation/common/staging_handler.py) ;;
     "${mega_patch}") targets=(python/sglang/srt/models/qwen3_moe.py) ;;
     "${staging_patch}") targets=(python/sglang/srt/disaggregation/common/staging_buffer.py python/sglang/srt/disaggregation/prefill.py python/sglang/srt/disaggregation/decode.py python/sglang/srt/disaggregation/nixl/conn.py) ;;
     "${draft_head_patch}") targets=(python/sglang/srt/speculative/eagle_worker_v2.py python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py) ;;
