@@ -171,7 +171,6 @@ while IFS=$'\t' read -r worker host port _tp; do
 done <"${ROOT}/source/worker-endpoints.tsv"
 wait_http "http://${HEAD_IP}:${R_PORT}/health"
 echo "READY after ${SECONDS}s"
-curl --fail --silent --show-error --max-time 15 "http://${HEAD_IP}:${R_PORT}/v1/models" >"${ROOT}/results/gateway-models.json"
 
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1
 echo "AIPERF ok"
