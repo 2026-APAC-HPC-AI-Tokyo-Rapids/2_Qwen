@@ -96,6 +96,8 @@ if [[ "$role" == prefill ]]; then
   # Match the verified SGLang prefill token buckets, using native breakable PIECEWISE graphs.
   role_flags=(--compilation-config "$(cat "$(dirname "$0")/prefill-cudagraph.json")")
   export VLLM_USE_BREAKABLE_CUDAGRAPH=1
+  # Bypass the intermittent native dense block-FP8 CUDA loader failure; keep MoE CUTLASS and graphs.
+  export VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER=0
   export VLLM_ALLREDUCE_USE_SYMM_MEM=1
   export VLLM_ALLREDUCE_USE_FLASHINFER=0 VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=0
   KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer"}'
