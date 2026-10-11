@@ -13,7 +13,7 @@ from sglang.kernels.ops.quantization.fp8_kernel import sglang_per_token_group_qu
 def check_decode_silu_quant():
     assert torch.cuda.get_device_capability() == (9, 0)
     torch.manual_seed(381108)
-    for rows in (0, 1, 7, 8, 31, 32, 257, 1024, 1536):
+    for rows in (0, 1, 7, 8, 31, 32, 257, 1024, 1536, 4096, 6144):
         x = torch.randn(rows, 768, device="cuda", dtype=torch.bfloat16) * 4
         if rows:
             x[0].zero_()

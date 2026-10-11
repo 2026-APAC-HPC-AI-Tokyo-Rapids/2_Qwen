@@ -7,9 +7,11 @@ from pathlib import Path
 def check(config, info, role):
     prefill = role == "prefill"
     p = config["prefill"]
-    expected = {"tp_size": 4, "dp_size": p["dp"] if prefill else 1, "ep_size": p["ep"] if prefill else 1, "enable_dp_attention": prefill, "kv_cache_dtype": "fp8_e4m3", "context_length": 8192, "page_size": 64, "attention_backend": "fa3", "max_total_tokens": 131072 if prefill else config["decode_max_total_tokens"], "chunked_prefill_size": p["chunked_prefill_size"] // p["dp"] if prefill else 8192, "max_running_requests": config["concurrency"] if prefill else 256, "speculative_algorithm": "EAGLE3", "speculative_draft_model_path": "/draft", "speculative_num_steps": config["speculation"]["steps"], "speculative_num_draft_tokens": config["speculation"]["draft_tokens"], "speculative_eagle_topk": 1, "speculative_draft_model_quantization": None, "enable_two_batch_overlap": False, "enable_symm_mem": False}
+    expected = {"tp_size": 4, "dp_size": p["dp"] if prefill else 1, "ep_size": p["ep"] if prefill else 1, "enable_dp_attention": prefill, "kv_cache_dtype": "fp8_e4m3", "context_length": 8192, "page_size": 64, "attention_backend": "fa3", "max_total_tokens": 131072 if prefill else config["decode_max_total_tokens"], "chunked_prefill_size": p["chunked_prefill_size"] // p["dp"] if prefill else 8192, "max_running_requests": config["concurrency"] if prefill else config["decode_max_running_requests"], "speculative_algorithm": "EAGLE3", "speculative_draft_model_path": "/draft", "speculative_num_steps": config["speculation"]["steps"], "speculative_num_draft_tokens": config["speculation"]["draft_tokens"], "speculative_eagle_topk": 1, "speculative_draft_model_quantization": None, "enable_two_batch_overlap": False, "enable_symm_mem": False}
     if prefill:
         expected.update(moe_a2a_backend=p["moe_a2a_backend"], moe_runner_backend=p["moe_runner_backend"])
+    else:
+        expected["disaggregation_decode_extra_slots"] = config["decode_extra_slots"]
     states = info.get("internal_states", [])
     if len(states) != expected["dp_size"]:
         raise ValueError(f"{role}: expected {expected['dp_size']} DP states, got {len(states)}")

@@ -21,7 +21,7 @@ def check_staging(source):
     ready = False
     event = SimpleNamespace(record=lambda _: calls.append("record"), query=lambda: ready)
     ns = {"torch": SimpleNamespace(cuda=SimpleNamespace(Event=lambda: event)), "logger": SimpleNamespace(warning=lambda *_: calls.append("warning"))}
-    methods = {name: method(path, name, ns) for name in ("submit_last_scatter_async", "advance_scatter", "is_done", "release_room")}
+    methods = {name: method(path, name, ns) for name in ("submit_last_scatter_async", "advance_scatter", "is_done", "release_room", "unregister_decode_req")}
 
     def room():
         receiver = SimpleNamespace(chunk_staging_infos=[(7, 0, 0, 0, 63)])
@@ -54,6 +54,42 @@ def check_staging(source):
     r._chunk_events = [(event, 6)]
     methods["release_room"](h, 1, r, rx)
     assert calls == ["sync", "warning", ("free", 7), ("free", 6)], calls
+    # Force an abort while the background thread is between submitting its
+    # scatter and publishing its event. Cleanup must wait for publication.
+    calls.clear()
+    h, r, rx = room()
+    submitted, allow_publish, abort_entered = (threading.Event() for _ in range(3))
+    raw_lock = threading.Lock()
+
+    class ObservedLock:
+        def __enter__(self):
+            if threading.current_thread().name == "abort":
+                abort_entered.set()
+            raw_lock.acquire()
+
+        def __exit__(self, *_):
+            raw_lock.release()
+
+    h._scatter_lock = ObservedLock()
+    h._room_to_receiver = {1: rx}
+    h.kv_manager = SimpleNamespace(_staging_ctx=SimpleNamespace(room_receivers={1: rx}, room_bootstrap={1: "peer"}))
+    h.release_room = lambda *args: methods["release_room"](h, *args)
+    h._submit_last_scatter = lambda _: (submitted.set(), allow_publish.wait(2), 7)[-1]
+    publisher = threading.Thread(target=lambda: methods["submit_last_scatter_async"](h, 1), daemon=True)
+    abort = threading.Thread(name="abort", target=lambda: methods["unregister_decode_req"](h, 1), daemon=True)
+    publisher.start()
+    try:
+        assert submitted.wait(2)
+        abort.start()
+        assert abort_entered.wait(2)
+        assert 1 in h._room_to_decode_req and calls == []
+    finally:
+        allow_publish.set()
+        publisher.join(2)
+        if abort.ident is not None:
+            abort.join(2)
+    assert not publisher.is_alive() and not abort.is_alive()
+    assert calls == ["record", "sync", ("free", 7)] and not h._room_to_decode_req, calls
     print("PASS: staging completes without duplicate frees/watermarks or unrelated stream waits; abort drains pending work")
 
 

@@ -68,8 +68,11 @@ def test_sglang_launch_uses_three_dp4_ep4_groups_and_decode_tp4(tmp_path: Path) 
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert "#SBATCH -t 00:17:00" in source
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 256, "official")
+    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
     assert config["decode_max_total_tokens"] == 1572864
+    assert config["decode_max_running_requests"] == 128
+    assert config["decode_max_running_requests"] + config["decode_extra_slots"] >= config["concurrency"]
+    assert max(config["decode_cuda_graph_bs"]) == config["decode_max_running_requests"]
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
@@ -117,7 +120,7 @@ def test_sglang_launch_uses_three_dp4_ep4_groups_and_decode_tp4(tmp_path: Path) 
         assert flags[flags.index("--chunked-prefill-size") + 1] == ("16384" if prefill else "8192")
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
         assert flags[flags.index("--page-size") + 1] == "64"
-        assert flags[flags.index("--max-running-requests") + 1] == (str(config["concurrency"]) if name.startswith("prefill") else "256")
+        assert flags[flags.index("--max-running-requests") + 1] == str(config["concurrency"] if prefill else config["decode_max_running_requests"])
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
         assert flags[flags.index("--speculative-num-steps") + 1] == "3"
@@ -133,6 +136,7 @@ def test_sglang_launch_uses_three_dp4_ep4_groups_and_decode_tp4(tmp_path: Path) 
             assert "--enable-dp-attention" in flags and "--disable-cuda-graph" in flags
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
         else:
+            assert flags[flags.index("--disaggregation-decode-extra-slots") + 1] == str(config["decode_extra_slots"])
             start = flags.index("--cuda-graph-bs-decode") + 1
             assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
