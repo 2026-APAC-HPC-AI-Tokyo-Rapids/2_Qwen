@@ -57,3 +57,26 @@ Actions 38098515413 submitted Slurm **22539**, run directory `pd-38098515413-1.9
 The pinned image's `entrypoints/launchers/api_server/routers.py` registers development routes only when `VLLM_SERVER_DEV_MODE` is true; `envs.py` defaults it to false. The launcher omitted this gate, so the earlier statement that server-info was enabled by default was incorrect. The minimum repair sets `VLLM_SERVER_DEV_MODE=1` inside each worker; no model, graph, kernel, parallelism or client setting changes. This enables the configuration-export API, not GPU profiling. CPU shell/reference/profile checks passed (34 tests).
 
 Read-only reinspection of the first allocation found three prefills and both decoders completed graph capture; only prefill-2 failed. Disabling all prefill graphs was therefore a broad workaround and does not establish incompatibility. The user was told that a narrower graph repair would improve parity; no graph-restoration experiment was authorized or submitted during that discussion. The existing replacement retains the explicitly documented prefill-graph limitation.
+
+### Verified final result
+
+Actions [38099891996](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38099891996), attempt 1, commit `a977333bd880117b389cde628eaf1dcc85766689`, submitted Slurm **22544**. Provenance, scheduler command and directory `pd-38099891996-1.fcjVDCRGek` verified this allocation. It completed 0:0 on g1/g4 in **12m47s**; all workers were ready after 494s. Validation, provisioning, execution, collection, summary, cleanup, canonical archival and GitHub artifact deletion all succeeded. The run-success marker is archived. No further compute is submitted.
+
+Canonical archive on archive-host: `/srv/qwen-artifacts/38099891996/1/`. Its SHA256SUMS passed for every file. Authoritative files are `results/results/score.json`, `profile_export_aiperf.json`, `profile_export.jsonl`, six `server-info-*.json` files, the client command/provenance, and `source/source/provenance.json` with launch commands and pinned model/image/draft evidence. Replaying `scripts/parse-aiperf-result.py` with concurrency64, require-eligible, archived command and provenance reproduced score.json exactly. Per-request records independently verified 1824 measured requests, 1689 good, 135 TTFT failures, zero ITL failures and zero cancellations. Official validation passed, with zero request errors and zero output-length mismatches.
+
+| Metric | Optimized SGLang control | vLLM recreation |
+|---|---:|---:|
+| Official good output tokens/s | 3450.893144 | 2721.475960 |
+| SLA eligible | Yes | Yes |
+| Measured requests | 2173 | 1824 |
+| Good requests | 2127 (97.8831%) | 1689 (92.5987%) |
+| Mean TTFT | 1686.710 ms | 2513.512972 ms |
+| Mean ITL | 9.530885 ms | 8.881052 ms |
+
+For this concrete configuration, vLLM's official score is **21.14% lower**. Mean TTFT is **49.02% higher**, while mean ITL is **6.82% lower**. All 135 vLLM SLA misses were from TTFT, not ITL; this identifies the request-level latency shortfall, not its underlying kernel cause. Raw vLLM output throughput was 2938.960399 tokens/s; that is not the SLA-filtered official score. Mean request latency was 4280.818377ms, p99 TTFT 3679.225167ms, maximum TTFT 4824.003135ms, maximum ITL 10.847267ms.
+
+Six effective server exports confirmed P4TP2/D2TP4, EP disabled (EP1), three EAGLE3 proposals and BF16 draft, the FP8 KV/cache capacity and admission settings. Prefill graph mode is NONE (0); decoder mode is FULL_AND_PIECEWISE ([2,1]). The symmetric-memory environment is true on prefills and false on decoders; this verifies configuration intent, not a measured share of collective operations using that communicator. Prefill logs selected FLASHINFER_CUTLASS FP8 MoE, while decoder logs selected TRITON FP8 MoE. Native decode-0 interval logs during the benchmark show mean acceptance length about 2.20–2.24 and draft acceptance about 39.9–41.3%, similar to the comparator's sampled ~2.2/~40% logs; these samples do not establish aggregate equivalence. Neither decoder log contains preemption messages; this is absence of logged evidence, not a counter-based proof of zero preemptions.
+
+The earlier baseline advantage for vLLM did **not** repeat in this optimized recreation. However, SGLang had working prefill graphs and framework-specific patches; vLLM used the graph workaround, native kernels/scheduler and a different decoder-routing policy. This single run cannot establish a general framework ranking, prove why TTFT is higher, or measure the cost of disabling prefill graphs. A graph-enabled result would be needed for closer parity. No additional graph diagnostic or rerun was performed to improve this result.
+
+The final Firmus run directory was removed by Actions cleanup, and no ACCOUNT scheduler jobs remained at verification. Local verification copies were removed after parser replay; old failed run directories, unused staging and CPU helpers were already cleaned. The experiment worktree and tracked report remain for review, with original-checkout user deletions preserved. The existing monitor is paused after this completed comparison.
