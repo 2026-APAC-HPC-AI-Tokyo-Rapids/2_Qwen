@@ -95,3 +95,29 @@ Pre-submission validation: all four archived SGLang prefill lists matched exactl
 Actions [38104689126](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38104689126), attempt1, was triggered by commit `02918a12c9f6b79cc25add910a47033d67637435`. Actions validation passed; provisioning is active in `pd-38104689126-1.dvUGxrMf0h`. Staged provenance confirms the compute commit, framework, official workload, profile false and pinned image hashes. No scheduler allocation was visible at this check; capture and performance remain unverified. The existing heartbeat follows this run through terminal collection.
 
 Actions validation and provisioning succeeded and submitted Slurm **22575**. Scheduler Command/WorkDir match `pd-38104689126-1.dvUGxrMf0h`. At verification it was PENDING with zero runtime: nodes required were down, drained or reserved for higher-priority partitions. No graph capture or benchmark result exists yet. The heartbeat continues monitoring this single allocation; no duplicate submission is made.
+
+### Graph-matched allocation: capture succeeds, official SLA fails
+
+Actions [38104689126](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38104689126), attempt 1, Slurm **22575**, ran on g1/g4 from 2026-10-11 03:00:18 to 03:11:53 (scheduler time), **11m35s**, exiting 1:0. All six workers loaded the target/EAGLE3 draft and completed target and draft graph capture; all were ready after 432s. Four prefill exports contain PIECEWISE mode, the exact 58 buckets and 8192 ceiling; two decoder exports contain FULL_DECODE_ONLY, the mapped 53 buckets and 1024 ceiling. Target/draft capture success does not measure runtime replay share. No profiler was used, so replay coverage frequency remains unmeasured.
+
+The official 60/120/30 client completed 1578 measured requests with zero request errors, zero OSL mismatches and no cancellation. The first fatal command was the official parser eligibility gate: `invalid official result: good_request_fraction is below 0.90`. There was no fatal CUDA capture or serving error. Only 697 requests (44.169835%) qualified; 28 missed TTFT, 861 missed ITL, and 8 missed both. The official score is **0**, and the run is SLA-ineligible. No run-success marker exists, as expected for this rejected result.
+
+| Metric | Optimized SGLang | vLLM prefill graphs disabled | vLLM matched graphs |
+|---|---:|---:|---:|
+| Official good output tokens/s | 3450.893144 | 2721.475960 | 0 (ineligible) |
+| Good requests | 2127 / 2173 (97.8831%) | 1689 / 1824 (92.5987%) | 697 / 1578 (44.1698%) |
+| Mean TTFT, ms | 1686.710 | 2513.512972 | 928.194903 |
+| Mean ITL, ms | 9.530885 | 8.881052 | 20.085887 |
+| Raw output tokens/s | — | 2938.960399 | 2577.042812 |
+
+Against the preceding vLLM run, mean TTFT improved 63.07%, ITL increased 126.17%, and raw throughput fell 12.31%. This configuration substantially improves the first-token path but fails the decode SLA. Both prefill and decoder graph settings changed, so the result does not isolate either change's effect. EAGLE3 interval acceptance remains around 2.2 tokens per verification and 40% draft acceptance; no acceptance collapse was observed. Decoders now have roughly 23–30 running requests and sampled KV occupancy 72–97%, versus about 14–16 and 47–56% previously. Faster prefill changes decoder load, so this is an additional explanation to investigate rather than proof of graph causality.
+
+Canonical archive: `/srv/qwen-artifacts/38104689126/1/` on archive-host. All SHA256SUMS verified; archived source provenance identifies compute commit 02918a1 and pinned images; raw JSON/JSONL and six server exports are present. Independent CPU official-parser replay exactly reproduces score.json and the eligibility rejection. Actions collection, upload, summary, run-directory cleanup and canonical archival succeeded; GitHub raw artifacts were removed after archival. The Firmus run directory is gone and no ACCOUNT jobs remained at verification. No duplicate allocation or optional profiling was submitted.
+
+### Authorized repair of decoder graph coverage
+
+After seeing the rejected result, the user authorized investigating and resolving the slowdown while away. Pinned vLLM `v1/worker/gpu/cudagraph_utils.py` builds FULL_DECODE_ONLY descriptors with uniform four-token requests. Its compatibility check rejects nonuniform batches, and dispatch returns NONE when no descriptor matches. A GPU-free reproduction executing the exact pinned candidate/compatibility/dispatch methods yields FULL for 30 requests / 120 uniform tokens, but NONE for 117 or 114 mixed tokens. FULL_AND_PIECEWISE retains FULL for the uniform case and PIECEWISE for both mixed cases. This is a verified graph-coverage gap, not a measured explanation of all wall-clock slowdown.
+
+The focused repair restores the previously working decoder FULL_AND_PIECEWISE mode while retaining all successful prefill graphs, the 53 mapped decoder buckets and 1024 ceiling, and all nongraph settings. It preserves a native fallback needed by mixed target/EAGLE batches instead of imposing SGLang's full-only decoder semantics on vLLM. This is an explicit material framework difference. No source/image change or rebuild is needed. A new official Actions run will determine whether this repair restores decode latency; no performance improvement is claimed before measurement.
+
+Repair validation: 34 targeted CPU tests and full Ruff passed; shell syntax passed. The temporary Linux test copy required normalization of inherited Windows CRLF shell files before execution. No runtime/source image files changed. Pinned-source CPU dispatch reproduction confirms the intended fallback; observed replay share and end-to-end performance still require the official allocation.

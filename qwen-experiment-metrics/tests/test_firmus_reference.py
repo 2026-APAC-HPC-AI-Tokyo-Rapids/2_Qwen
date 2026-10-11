@@ -146,14 +146,14 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         if role == "prefill":
             options += ["--disable-custom-all-reduce", "--moe-backend", "flashinfer_cutlass"]
         else:
-            options += ["--compilation-config", '{"cudagraph_mode":"FULL_DECODE_ONLY","max_cudagraph_capture_size":1024}', "--cudagraph-capture-sizes", *[str(n * 4) for n in config["decode_cuda_graph_bs"] if n <= 256]]
+            options += ["--compilation-config", '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":1024}', "--cudagraph-capture-sizes", *[str(n * 4) for n in config["decode_cuda_graph_bs"] if n <= 256]]
         result = subprocess.run(["bash", "-c", probe, str(tmp_path / "worker.sh"), f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
         symm, *flags = result.stdout.decode().rstrip("\0").split("\0")
         assert symm == ("1" if role == "prefill" else "0")
         if role == "prefill":
             assert json.loads(flags[flags.index("--compilation-config") + 1]) == graph_config
         else:
-            assert json.loads(flags[flags.index("--compilation-config") + 1]) == {"cudagraph_mode": "FULL_DECODE_ONLY", "max_cudagraph_capture_size": 1024}
+            assert json.loads(flags[flags.index("--compilation-config") + 1]) == {"cudagraph_mode": "FULL_AND_PIECEWISE", "max_cudagraph_capture_size": 1024}
             begin = flags.index("--cudagraph-capture-sizes") + 1
             buckets = [n * 4 for n in config["decode_cuda_graph_bs"] if n <= 256]
             assert [int(n) for n in flags[begin:begin + len(buckets)]] == buckets
