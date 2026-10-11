@@ -11,7 +11,8 @@ from types import SimpleNamespace
 def method(source, name, namespace):
     node = next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n, ast.FunctionDef) and n.name == name)
     tree = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), node], type_ignores=[])
-    exec(compile(ast.fix_missing_locations(tree), str(source), "exec"), namespace)
+    # Exercise the actual function from the pinned, locally patched source.
+    exec(compile(ast.fix_missing_locations(tree), str(source), "exec"), namespace)  # noqa: S102
     return namespace[name]
 
 
@@ -117,9 +118,9 @@ def check_moe_fusion_gate(source):
     tree = ast.parse(path.read_text())
     gate = next(n.value for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "fuse_decode_silu_quant" for t in n.targets))
     expression = compile(ast.Expression(gate), str(path), "eval")
-    base = dict(_is_cuda=True, is_sm90_supported=lambda: True, torch=SimpleNamespace(bfloat16="bf16"), hidden_states=SimpleNamespace(dtype="bf16"), E=128, N=768, w1=SimpleNamespace(shape=(128, 768, 4096)), topk=8, use_fp8_w8a8=True, block_shape=[128, 128], activation="silu", is_gated=True, gemm1_alpha=None, gemm1_limit=None, swiglu_limit=None, filter_expert=False, down_moe_use_tma=False, hooks=None)
+    base = {"_is_cuda": True, "is_sm90_supported": lambda: True, "torch": SimpleNamespace(bfloat16="bf16"), "hidden_states": SimpleNamespace(dtype="bf16"), "E": 128, "N": 768, "w1": SimpleNamespace(shape=(128, 768, 4096)), "topk": 8, "use_fp8_w8a8": True, "block_shape": [128, 128], "activation": "silu", "is_gated": True, "gemm1_alpha": None, "gemm1_limit": None, "swiglu_limit": None, "filter_expert": False, "down_moe_use_tma": False, "hooks": None}
     assert eval(expression, base)
-    for key, value in dict(_is_cuda=False, is_sm90_supported=lambda: False, hidden_states=SimpleNamespace(dtype="fp16"), E=64, N=1536, w1=SimpleNamespace(shape=(128, 768, 2048)), topk=4, use_fp8_w8a8=False, block_shape=None, activation="gelu", is_gated=False, gemm1_alpha=1.0, gemm1_limit=7, swiglu_limit=10, filter_expert=True, down_moe_use_tma=True, hooks=object()).items():
+    for key, value in {"_is_cuda": False, "is_sm90_supported": lambda: False, "hidden_states": SimpleNamespace(dtype="fp16"), "E": 64, "N": 1536, "w1": SimpleNamespace(shape=(128, 768, 2048)), "topk": 4, "use_fp8_w8a8": False, "block_shape": None, "activation": "gelu", "is_gated": False, "gemm1_alpha": 1.0, "gemm1_limit": 7, "swiglu_limit": 10, "filter_expert": True, "down_moe_use_tma": True, "hooks": object()}.items():
         assert not eval(expression, {**base, key: value}), key
     print("PASS: fused FC2 boundary selects Qwen SM90 TP4 only; other precision, clamp, filter, TMA and LoRA paths retained")
 

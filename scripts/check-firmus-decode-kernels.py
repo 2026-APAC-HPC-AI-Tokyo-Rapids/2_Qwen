@@ -4,7 +4,6 @@ No scheduler submission. Compare against the actual unfused CUDA operations,
 including exact FP8 bytes/scales and CUDA Graph replay with changed inputs.
 """
 import torch
-
 from sglang.kernels.ops.activation.activation import silu_and_mul
 from sglang.kernels.ops.moe.decode_silu_quant import decode_silu_quant
 from sglang.kernels.ops.quantization.fp8_kernel import sglang_per_token_group_quant_fp8
