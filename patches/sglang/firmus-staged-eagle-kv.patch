@@ -4,8 +4,8 @@ index e41071c..b213357 100644
 +++ b/python/sglang/srt/disaggregation/common/staging_buffer.py
 @@ -28,6 +28,34 @@ logger = logging.getLogger(__name__)
  _USE_TRITON_STAGING = not bool(os.environ.get("SGLANG_STAGING_USE_TORCH", ""))
- 
- 
+
+
 +def get_staging_kv_buffers(target_pool, draft_pool=None):
 +    """Keep target and EAGLE KV in the same layer order on both endpoints."""
 +    k_buffers, v_buffers = [], []
@@ -59,22 +59,30 @@ index 8bd0bb3..660169b 100644
                      )
 +                )
          return kv_manager
- 
+
      def add(
 diff --git a/python/sglang/srt/disaggregation/nixl/conn.py b/python/sglang/srt/disaggregation/nixl/conn.py
-index 831d2f2..c9b0010 100644
+index 831d2f2..fc8ff06 100644
 --- a/python/sglang/srt/disaggregation/nixl/conn.py
 +++ b/python/sglang/srt/disaggregation/nixl/conn.py
-@@ -541,6 +541,8 @@ class NixlKVManager(CommonKVManager):
+@@ -336,6 +336,7 @@ class TransferStatus:
+     num_pp_ranks_expected: Optional[int] = None
+     # Whether aux data has been received.
+     received_aux: bool = False
++    staging_scatter_submitted: bool = False
+     # PP ranks that have sent state data (state is layer-specific, each PP rank sends its portion).
+     received_state_per_pp: Set[int] = dataclasses.field(default_factory=set)
+     # Whether state data is expected (set based on state_type).
+@@ -541,6 +542,8 @@ class NixlKVManager(CommonKVManager):
              )
- 
+
      def set_kv_buffer_tensors(self, k_buffers: list, v_buffers: list, page_size: int):
 +        if len(k_buffers) + len(v_buffers) != len(self.kv_args.kv_data_ptrs):
 +            raise ValueError("Staging tensors must include every registered target/draft KV layer")
          # NOTE: matches mooncake behavior -- staging buffers are now
          # created in __init__ (per-worker), independent of the kv
          # tensors. This setter only stashes the tensor metadata used by
-@@ -1052,6 +1054,19 @@ class NixlKVManager(CommonKVManager):
+@@ -1052,6 +1055,19 @@ class NixlKVManager(CommonKVManager):
                      "NIXL heterogeneous-TP direct-to-host KV transfer is not "
                      "implemented safely yet"
                  )
@@ -94,6 +102,203 @@ index 831d2f2..c9b0010 100644
              self._init_hetero_tp_prep_handle(
                  peer_info.agent_name,
                  peer_info,
+@@ -1064,6 +1080,10 @@ class NixlKVManager(CommonKVManager):
+         # see kv_buffer_tensors (set by ModelRunner after engine init).
+         # Never cache on self -- multiple workers would race the ring.
+         staging_strategy = None
++        # Each room stays on this worker. A deferred chunk must retain both
++        # its ordering and the peers already sent; replay would overwrite a
++        # decode allocation that may already have been scattered and freed.
++        progress = {}  # room -> (next chunk_id, next peer index)
+
+         while True:
+             kv_chunk: TransferKVChunk = queue.get()
+@@ -1071,9 +1091,16 @@ class NixlKVManager(CommonKVManager):
+             handles: List[Any] = []
+             try:
+                 if self.check_status(room) == KVPoll.Failed:
++                    progress.pop(room, None)
+                     continue
+
+                 assert room in self.transfer_infos
++                next_chunk, next_peer = progress.get(room, (0, 0))
++                if kv_chunk.chunk_id > next_chunk:
++                    queue.put(kv_chunk)
++                    time.sleep(STAGING_WATERMARK_WAIT_S)
++                    continue
++                assert kv_chunk.chunk_id == next_chunk
+
+                 # Lazily build a per-worker staging strategy bound to this
+                 # worker's private staging buffer (matches mooncake).
+@@ -1094,7 +1121,8 @@ class NixlKVManager(CommonKVManager):
+                 # touching room status -- the next pop will retry.
+                 staging_deferred = False
+
+-                for req in reqs_to_be_processed:
++                for peer_idx in range(next_peer, len(reqs_to_be_processed)):
++                    req = reqs_to_be_processed[peer_idx]
+                     assert room == req.room
+                     if req.is_dummy():
+                         continue
+@@ -1246,9 +1274,7 @@ class NixlKVManager(CommonKVManager):
+                         )
+                         handles.append(aux_xfer_handle)
+
+-                if staging_deferred:
+-                    # Chunk has been re-enqueued; do not advance status.
+-                    continue
++                    progress[room] = (next_chunk, peer_idx + 1)
+
+                 while handles:
+                     all_done = True
+@@ -1264,7 +1290,13 @@ class NixlKVManager(CommonKVManager):
+                         break
+                     time.sleep(0)
+
++                if staging_deferred:
++                    # Drain posted aux/direct writes before dropping handles.
++                    # Resume at the first unsent peer on the next queue pass.
++                    continue
++
+                 if kv_chunk.is_last_chunk:
++                    progress.pop(room, None)
+                     self.update_status(room, KVPoll.Success)
+                     # Drop per-room state on Success (parity with mooncake
+                     # transfer_worker; staging prefetch sets are NIXL-only).
+@@ -1277,8 +1309,10 @@ class NixlKVManager(CommonKVManager):
+                             if k[0] == room:
+                                 self._staging_ctx.prefetch_requested.discard(k)
+                 else:
++                    progress[room] = (next_chunk + 1, 0)
+                     self.update_status(room, KVPoll.Transferring)
+             except Exception as e:
++                progress.pop(room, None)
+                 # Catch all exceptions to prevent silently killing this
+                 # worker thread, but still propagate via failure_exception().
+                 if isinstance(e, _NIXL_TRANSPORT_ERRORS):
+@@ -1746,6 +1780,16 @@ class NixlKVManager(CommonKVManager):
+         state = self.agent.transfer(xfer_handle)
+         if state == "ERR":
+             raise RuntimeError("[Staging] NIXL bulk transfer failed to post")
++        # The next peer gathers different heads into this same source buffer.
++        # CUDA gather completion is not RDMA completion: retain its contents
++        # until the NIC has finished reading, including on a deferred chunk.
++        while True:
++            state = self.agent.check_xfer_state(xfer_handle)
++            if state == "DONE":
++                break
++            if state == "ERR":
++                raise RuntimeError("[Staging] NIXL bulk transfer failed")
++            time.sleep(0)
+         return xfer_handle
+
+     def _try_create_staging_strategy(self, staging_buffer):
+@@ -2332,10 +2376,15 @@ class NixlKVManager(CommonKVManager):
+         page_start = int(components[6])
+         num_pages = int(components[7])
+         agent_name = components[8] if len(components) > 8 else ""
++        # The final allocation belongs to the kv+aux completion path below.
++        # Sending it through both paths can scatter/free the same slot twice
++        # when aux arrives before the final KV notification.
++        if not is_last_chunk:
++            self._handle_staging_chunk_arrived(
++                room, chunk_idx, page_start, num_pages, agent_name
++            )
+         self._track_kv_arrival(room, chunk_id, is_last_chunk, pp_rank)
+-        self._handle_staging_chunk_arrived(
+-            room, chunk_idx, page_start, num_pages, agent_name
+-        )
++        self._maybe_submit_last_scatter(room)
+
+     def _handle_aux_notification(self, room: int, components: List[str]):
+         """Handle an aux notification and trigger last scatter if staging is complete.
+@@ -2443,7 +2492,7 @@ class NixlKVManager(CommonKVManager):
+     def _maybe_submit_last_scatter(self, room: int):
+         """Check if all kv+aux transfers are done and submit last scatter if so."""
+         status = self.transfer_statuses.get(room)
+-        if status is None:
++        if status is None or status.staging_scatter_submitted:
+             return
+         if not status.received_aux:
+             return
+@@ -2456,8 +2505,9 @@ class NixlKVManager(CommonKVManager):
+                 return
+         handler = self._staging_handler
+         if handler is not None and handler.is_staging_room(room):
+-            handler.submit_last_scatter_async(room)
+-            self._chunk_writer_counts.pop(room, None)
++            if handler.submit_last_scatter_async(room):
++                status.staging_scatter_submitted = True
++                self._chunk_writer_counts.pop(room, None)
+
+     def check_transfer_done(self, room: int):
+         if room not in self.transfer_statuses:
+@@ -2589,6 +2639,7 @@ class NixlKVSender(CommonKVSender):
+         )
+         self.has_sent = False
+         self.chunk_id = 0
++        self._staging_pending_indices = np.empty(0, dtype=np.int32)
+         self._send_failed = False
+         self._send_error: Optional[Exception] = None
+         self._transfer_start_time: Optional[float] = None
+@@ -2612,17 +2663,47 @@ class NixlKVSender(CommonKVSender):
+         ):
+             self._transfer_start_time = time.perf_counter()
+
+-        self.kv_mgr.add_transfer_request(
+-            self.bootstrap_room,
+-            kv_indices,
+-            index_slice,
+-            is_last_chunk,
+-            self.chunk_id,
+-            self.aux_index,
+-            state_indices,
+-        )
++        if self.kv_mgr.enable_staging:
++            # Decode preallocates fixed chunks, but scheduler batches may
++            # finish only part of a request. Send each allocation exactly
++            # once, after every page in it has been computed.
++            pending = self._staging_pending_indices
++            page_start = index_slice.start - len(pending)
++            pending = np.concatenate((pending, kv_indices))
++            cps = self.kv_mgr.server_args.chunked_prefill_size or 8192
++            chunk_pages = max(1, cps // self.kv_mgr.kv_args.page_size)
++            ready_pages = (
++                len(pending)
++                if is_last_chunk
++                else len(pending) // chunk_pages * chunk_pages
++            )
++            # A fully cached request still needs its aux-only final message.
++            for start in range(0, max(ready_pages, int(is_last_chunk)), chunk_pages):
++                end = min(start + chunk_pages, ready_pages)
++                last = is_last_chunk and end == ready_pages
++                self.kv_mgr.add_transfer_request(
++                    self.bootstrap_room,
++                    pending[start:end],
++                    slice(page_start + start, page_start + end),
++                    last,
++                    self.chunk_id,
++                    self.aux_index if last else None,
++                    state_indices if last else None,
++                )
++                self.chunk_id += 1
++            self._staging_pending_indices = pending[ready_pages:]
++        else:
++            self.kv_mgr.add_transfer_request(
++                self.bootstrap_room,
++                kv_indices,
++                index_slice,
++                is_last_chunk,
++                self.chunk_id,
++                self.aux_index,
++                state_indices,
++            )
++            self.chunk_id += 1
+         self._record_transfer_indices(kv_indices, state_indices)
+-        self.chunk_id += 1
+         if is_last_chunk:
+             self.has_sent = True
+
 diff --git a/python/sglang/srt/disaggregation/prefill.py b/python/sglang/srt/disaggregation/prefill.py
 index b53f6e9..010fed0 100644
 --- a/python/sglang/srt/disaggregation/prefill.py
@@ -121,5 +326,5 @@ index b53f6e9..010fed0 100644
                  )
 +            )
          return kv_manager
- 
+
      def create_sender(self, req: Req, num_kv_heads: int) -> bool:
