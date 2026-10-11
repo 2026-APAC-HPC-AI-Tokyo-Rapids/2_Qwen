@@ -13,7 +13,7 @@ set -euo pipefail
 [[ "${REQUIRE_BUILD}" == false ]] || { echo 'This branch reuses pinned baseline images; rebuild and update their hashes before requesting a source experiment.' >&2; exit 64; }
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
-framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${config}")"
+framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm" or . == "trtllm")' "${config}")"
 jq -e --argjson profile "${PROFILE}" '((.workload == "reference-07" and .framework == "vllm") or (.workload == "official" and $profile == false)) and (.concurrency | type == "number" and . >= 1 and floor == .)' "${config}" >/dev/null
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"

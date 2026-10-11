@@ -66,8 +66,9 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
 
 def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
-    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 104, "official")
+    # The committed config selects TensorRT-LLM on this branch; keep the SGLang launch under its last measured load.
+    config = {**json.loads((ROOT / "configs/firmus-framework.json").read_text()), "framework": "sglang", "concurrency": 104}
+    assert config["workload"] == "official"
     assert config["decode_max_total_tokens"] == 524288
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
@@ -135,6 +136,48 @@ def test_sglang_launch_matches_p6tp2_d1tp4_large_pool_conditions(tmp_path: Path)
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
     assert client_argv[-2:] == [str(tmp_path), str(config["concurrency"])]
 
+
+
+def test_trtllm_launch_matches_recipe_layout(tmp_path: Path) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/trtllm.sbatch").read_text()
+    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    assert (config["framework"], config["workload"]) == ("trtllm", "official")
+    image = config["images"]["trtllm"]
+    assert image["path"].endswith("/trtllm.sqsh") and len(image["sha256"]) == 64
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "source").mkdir()
+    record = tmp_path / "commands.jsonl"
+    stub = tmp_path / "srun"
+    stub.write_text(f"#!{sys.executable}\nimport json,os,sys\nfd=os.open(os.environ['RECORD'],os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)\nos.write(fd,(json.dumps(sys.argv[1:])+'\\n').encode())\nos.close(fd)\n")
+    stub.chmod(0o755)
+    setup = "for worker in 0 1 2 3;" + source.split("for worker in 0 1 2 3;", 1)[1].split("\nwhile IFS=", 1)[0]
+    client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
+    harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + setup + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + client
+    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "TRTLLM": "/trtllm", "AIPERF": "/image", "MODEL": "/model", "N": str(config["concurrency"]), "R_PORT": "8000"}
+    subprocess.run(["bash", "-c", harness], env=environment, check=True)
+    commands = [json.loads(line) for line in record.read_text().splitlines()]
+    disagg = (tmp_path / "source/disagg.yaml").read_text()
+    assert disagg.count('"192.0.2.1:301') == 4 and disagg.count('"192.0.2.2:301') == 2 and disagg.count('"192.0.2.2:30200"') == 1
+    assert "context_servers:\n  num_instances: 6" in disagg and "generation_servers:\n  num_instances: 1" in disagg and "port: 8000" in disagg
+    workers = [argv for argv in commands if "--exact" in argv]
+    assert len(workers) == 7
+    assert sum(4 if "--gres=gpu:4" in argv else 2 for argv in workers) == 16
+    assert all("--container-image=/trtllm" in argv for argv in workers)
+    layout = {argv[argv.index("bash") + 2]: (argv[argv.index("-w") + 1], argv[argv.index("bash") + 3:argv.index("bash") + 6]) for argv in workers}
+    assert layout == {**{f"prefill-{i}": ("node0", [str(30100 + i), "/model", "2"]) for i in range(4)}, **{f"prefill-{i}": ("node1", [str(30100 + i), "/model", "2"]) for i in (4, 5)}, "decode-0": ("node1", ["30200", "/model", "4"])}
+    assert {argv[argv.index("bash") + 2]: argv[argv.index("bash") + 6] for argv in workers} == {**{f"prefill-{i}": "1" for i in range(6)}, "decode-0": "4"}
+    worker = source.split("cat >\"${ROOT}/source/worker.sh\" <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    final = worker.split("\nexec ", 1)[1]
+    for flag in ("--backend pytorch", "--served_model_name qwen", '--tp_size "$tp"', '--ep_size "$ep"', '--max_batch_size "$batch"', '--max_num_tokens "$tokens"', "--max_seq_len 8192", '--server_role "$server_role"', '--config "$config"'):
+        assert flag in final
+    assert 'batch=2; tokens=8192' in worker and 'batch=512; tokens=1024' in worker
+    assert 'trtllm-serve disaggregated -c "$root/source/disagg.yaml"' in worker
+    yaml_text = source.split("cat >\"${ROOT}/source/context.yaml\" <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    assert "tensor_parallel_size: 2" in yaml_text and "moe_tensor_parallel_size: 2" in yaml_text and "dtype: fp8" in yaml_text and "disable_overlap_scheduler: true" in yaml_text
+    yaml_text = source.split("cat >\"${ROOT}/source/generation.yaml\" <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    assert "tensor_parallel_size: 4" in yaml_text and "moe_expert_parallel_size: 4" in yaml_text and "dtype: fp8" in yaml_text and "disable_overlap_scheduler: false" in yaml_text
+    client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
+    assert client_argv[-2:] == [str(tmp_path), str(config["concurrency"])] and "--cpus-per-task=32" in client_argv
 
 @pytest.mark.parametrize("worker_status,expected", [(127, 127), (0, 1)])
 def test_readiness_stops_on_any_exited_server_before_curl(tmp_path: Path, worker_status: int, expected: int) -> None:
