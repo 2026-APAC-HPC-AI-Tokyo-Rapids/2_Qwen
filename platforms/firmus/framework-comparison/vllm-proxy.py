@@ -35,7 +35,8 @@ async def lifespan(app: FastAPI):
                     base_url=prefiller_base_url,
                     limits=httpx.Limits(
                         max_connections=None,
-                        max_keepalive_connections=None,
+                        # Avoid reusing a prefill connection closed by its server.
+                        max_keepalive_connections=0,
                     ),
                 ),
                 "host": host,
