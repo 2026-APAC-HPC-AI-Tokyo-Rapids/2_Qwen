@@ -65,8 +65,9 @@ routing_patch="patches/sglang/prefill-tiled-routing.patch"
 staging_patch="patches/sglang/firmus-staged-eagle-kv.patch"
 mega_patch="patches/sglang/qwen3-sm90-megamoe.patch"
 completion_patch="patches/sglang/firmus-staging-completion.patch"
+page_release_patch="patches/sglang/chunk-cache-page-release.patch"
 # Later patches depend on additions made by earlier patches; check each updated private tree.
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}"; do
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}"; do
   git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${patch}"
   git -C "${source_dir}" apply "${GITHUB_WORKSPACE}/${patch}"
 done
@@ -92,8 +93,9 @@ sglang_object_format="$(git -C "${source_dir}" rev-parse --show-object-format)"
 dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/Dockerfile)"
 build_steps_json="$(sed -n 's%^COPY \(containers/[^ ]*\.sh\) .*%\1%p' "${GITHUB_WORKSPACE}/containers/Dockerfile" | while read -r build_step; do build_step="${GITHUB_WORKSPACE}/${build_step}"; jq -cn --arg path "${build_step#"${GITHUB_WORKSPACE}/"}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${build_step}")" '{path:$path,blob_oid:$oid}'; done | jq -s '.')"
 patches_json='[]'
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}"; do
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}"; do
   case "${patch}" in
+    "${page_release_patch}") targets=(python/sglang/srt/mem_cache/chunk_cache.py) ;;
     "${completion_patch}") targets=(python/sglang/srt/disaggregation/common/staging_handler.py) ;;
     "${mega_patch}") targets=(python/sglang/srt/models/qwen3_moe.py) ;;
     "${staging_patch}") targets=(python/sglang/srt/disaggregation/common/staging_buffer.py python/sglang/srt/disaggregation/prefill.py python/sglang/srt/disaggregation/decode.py python/sglang/srt/disaggregation/nixl/conn.py) ;;

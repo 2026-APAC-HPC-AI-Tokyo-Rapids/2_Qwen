@@ -57,7 +57,28 @@ def check_staging(source):
     print("PASS: staging completes without duplicate frees/watermarks or unrelated stream waits; abort drains pending work")
 
 
+def check_chunk_release(source):
+    path = source / "python/sglang/srt/mem_cache/chunk_cache.py"
+    release = method(path, "cache_finished_req", {})
+    calls = []
+    # Preserve the real request-row slice, including a protected partial page.
+    class Rows:
+        def __getitem__(self, key):
+            row, span = key
+            assert row == 3
+            return list(range(span.start, span.stop))
+
+    allocator = SimpleNamespace(free_segment=lambda indices, *, start_pos: calls.append((indices, start_pos)))
+    cache = SimpleNamespace(req_to_token_pool=SimpleNamespace(req_to_token=Rows()), token_to_kv_pool_allocator=allocator)
+    for start, end in ((0, 0), (0, 4224), (64, 4187), (67, 4187)):
+        release(cache, SimpleNamespace(req_pool_idx=3, cache_protected_len=start), kv_len_to_handle=end)
+        assert calls[-1] == (list(range(start, end)), start)
+    print("PASS: ChunkCache uses fixed-shape page release with the correct protected-prefix offset")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
-    check_staging(parser.parse_args().source)
+    source = parser.parse_args().source
+    check_staging(source)
+    check_chunk_release(source)
