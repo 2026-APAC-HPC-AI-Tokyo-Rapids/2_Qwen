@@ -178,6 +178,24 @@ def check_source_lifetime(root: Path):
     print("PASS: asynchronous TP1 -> TP4 writes preserve all 94 target + 1 draft K/V layers; terminal transport errors fail")
 
 
+def check_expired_chunks(root: Path):
+    failures, statuses = {}, {13: POLL.Success, 14: POLL.Transferring}
+    namespace = {"logger": SimpleNamespace(exception=lambda *_: None, warning=lambda *_: None), "KVPoll": POLL, "_NIXL_TRANSPORT_ERRORS": ()}
+    worker = load_function(root / "nixl/conn.py", "transfer_worker", namespace)
+    # Cleared and completed rooms may still have deferred queue entries. An
+    # active room without metadata remains a real error, not a silent discard.
+    chunks = iter(SimpleNamespace(room=room) for room in (12, 13, 14))
+    mgr = SimpleNamespace(transfer_infos={}, request_status=statuses, check_status=lambda room: statuses.get(room, POLL.WaitingForInput), update_status=lambda room, value: statuses.__setitem__(room, value), exceptions={}, record_failure=lambda room, reason: failures.__setitem__(room, reason))
+    try:
+        worker(mgr, SimpleNamespace(get=lambda: next(chunks)))
+    except StopIteration:
+        pass
+    assert set(failures) == {14} and set(mgr.exceptions) == {14}, failures
+    assert statuses == {13: POLL.Success, 14: POLL.Failed}, statuses
+    assert "no transfer metadata" in failures[14]
+    print("PASS: expired queued chunks do not resurrect rooms; missing metadata in an active room still fails")
+
+
 def check_last_scatter(root: Path):
     namespace = {}
     names = ("_handle_stg_notification", "_handle_aux_notification", "_track_kv_arrival", "_maybe_submit_last_scatter")
@@ -242,6 +260,7 @@ def check(source: Path):
     print("PASS: target+draft KV ordering/geometry; negotiated staging skips full-pool descriptors; invalid peers rejected; legacy direct path retained")
     check_chunk_grid(root)
     check_worker_resume(root)
+    check_expired_chunks(root)
     check_source_lifetime(root)
     check_last_scatter(root)
 

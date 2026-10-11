@@ -1,0 +1,33 @@
+diff --git a/python/sglang/srt/disaggregation/nixl/conn.py b/python/sglang/srt/disaggregation/nixl/conn.py
+index fc8ff06..cc04b87 100644
+--- a/python/sglang/srt/disaggregation/nixl/conn.py
++++ b/python/sglang/srt/disaggregation/nixl/conn.py
+@@ -1094,7 +1094,18 @@ class NixlKVManager(CommonKVManager):
+                     progress.pop(room, None)
+                     continue
+ 
+-                assert room in self.transfer_infos
++                room_infos = self.transfer_infos.get(room)
++                if room_infos is None:
++                    # clear() can retire an aborted sender while a deferred
++                    # chunk is still queued. Do not recreate status or failure
++                    # records for that expired room on the next queue pass.
++                    if room not in self.request_status or self.check_status(room) in (
++                        KVPoll.Failed,
++                        KVPoll.Success,
++                    ):
++                        progress.pop(room, None)
++                        continue
++                    raise RuntimeError(f"Active NIXL room {room} has no transfer metadata")
+                 next_chunk, next_peer = progress.get(room, (0, 0))
+                 if kv_chunk.chunk_id > next_chunk:
+                     queue.put(kv_chunk)
+@@ -1113,7 +1124,7 @@ class NixlKVManager(CommonKVManager):
+ 
+                 self.update_status(room, KVPoll.Transferring)
+ 
+-                reqs_to_be_processed = list(self.transfer_infos[room].values())
++                reqs_to_be_processed = list(room_infos.values())
+ 
+                 # Set when staging allocation/watermark is not yet ready and
+                 # the chunk has been re-enqueued. We then break out of the
