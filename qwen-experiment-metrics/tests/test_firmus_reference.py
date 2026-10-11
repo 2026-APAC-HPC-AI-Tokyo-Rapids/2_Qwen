@@ -133,6 +133,9 @@ def test_sglang_launch_matches_full_h200_tp2_conditions(tmp_path: Path) -> None:
 
 
 def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_path: Path) -> None:
+    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    graph_config = {"cudagraph_mode": "PIECEWISE", "cudagraph_capture_sizes": config["prefill_cuda_graph_tokens"], "max_cudagraph_capture_size": 8192}
+    (tmp_path / "prefill-cudagraph.json").write_text(json.dumps(graph_config))
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     # Exercise actual shell argument construction without requiring GPUs or HCAs.
@@ -143,14 +146,17 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         if role == "prefill":
             options += ["--disable-custom-all-reduce", "--moe-backend", "flashinfer_cutlass"]
         else:
-            options += ["--cudagraph-capture-sizes", "1", "13", "15", "512"]
-        result = subprocess.run(["bash", "-c", probe, "fixture", f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
+            options += ["--compilation-config", '{"cudagraph_mode":"FULL_DECODE_ONLY","max_cudagraph_capture_size":1024}', "--cudagraph-capture-sizes", *[str(n * 4) for n in config["decode_cuda_graph_bs"] if n <= 256]]
+        result = subprocess.run(["bash", "-c", probe, str(tmp_path / "worker.sh"), f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
         symm, *flags = result.stdout.decode().rstrip("\0").split("\0")
         assert symm == ("1" if role == "prefill" else "0")
         if role == "prefill":
-            assert json.loads(flags[flags.index("--compilation-config") + 1]) == {"cudagraph_mode": "NONE"}
+            assert json.loads(flags[flags.index("--compilation-config") + 1]) == graph_config
         else:
-            assert "--compilation-config" not in flags
+            assert json.loads(flags[flags.index("--compilation-config") + 1]) == {"cudagraph_mode": "FULL_DECODE_ONLY", "max_cudagraph_capture_size": 1024}
+            begin = flags.index("--cudagraph-capture-sizes") + 1
+            buckets = [n * 4 for n in config["decode_cuda_graph_bs"] if n <= 256]
+            assert [int(n) for n in flags[begin:begin + len(buckets)]] == buckets
         assert flags[flags.index("--tensor-parallel-size") + 1] == str(tp)
         assert flags[flags.index("--max-num-seqs") + 1] == str(limit)
         assert "--enable-expert-parallel" not in flags
