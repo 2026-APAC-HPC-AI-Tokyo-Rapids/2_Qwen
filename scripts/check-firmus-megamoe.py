@@ -42,14 +42,13 @@ def main():
     s2 = torch.rand(32, 32, 12, device=device) * 0.005 + 0.005
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf = deep_gemm.get_symm_buffer_for_mega_moe(dist.group.WORLD, 128, 4096, 8, 4096, 1536, use_fp8_dispatch=True, activation="swiglu")
-    for case, counts in [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 0, 4])]:
+    for case, counts in [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4])]:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         ids = torch.stack([torch.randperm(128, device=device)[:8] for _ in range(4)]).to(torch.int32)
         if case == "capacity-hot-experts":
             ids[:] = torch.arange(8, dtype=torch.int32, device=device)
         weights = torch.rand(4, 8, device=device)
         ids[0, -1] = -1  # Masked/padded top-k slot must not read an expert.
-        weights[0, -1] = 0
         weights /= weights.sum(-1, keepdim=True)
         gathered = []
         for value in (patterns, ids, weights):
@@ -82,8 +81,9 @@ def main():
         torch.cuda.synchronize()
         graph = None
         if case == "decode-graph":
-            # All ranks capture pre-dispatch and the fused collective, including an idle
-            # rank. Replays change GPU input data without changing its addresses.
+            # An idle EAGLE3 rank replays the minimum one-request graph (four
+            # token rows), with every route masked, rather than a zero-row graph.
+            # Replays change GPU input data without changing its addresses.
             graph = torch.cuda.CUDAGraph()
             dist.barrier()
             with torch.cuda.graph(graph):
@@ -94,10 +94,10 @@ def main():
                 hidden.copy_(patterns[indices])
                 top_ids.copy_(ids[indices])
                 top_weights.copy_(weights[indices])
-                # Decode graph padding masks every route for inactive rows.
-                live = max(0, count - replay * 7)
+                # CUDA TopK masks IDs but leaves weights nonzero. Rank 2 also
+                # alternates idle/live to expose stale routes across replays.
+                live = (0 if replay % 2 == 0 else count) if rank == 2 else max(0, count - replay * 7)
                 top_ids[live:] = -1
-                top_weights[live:] = 0
                 graph.replay()
             else:
                 live = count
