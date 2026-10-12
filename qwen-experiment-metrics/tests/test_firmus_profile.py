@@ -18,7 +18,8 @@ SUMMARY = runpy.run_path(str(ROOT / "scripts/summarize-firmus-run.py"))["summari
 
 @pytest.mark.parametrize("framework", ["sglang", "vllm"])
 @pytest.mark.parametrize("failure", [None, "start", "stop"])
-def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None, framework: str) -> None:
+@pytest.mark.parametrize("worker_count", [6, 7])
+def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None, framework: str, worker_count: int) -> None:
     requests = []
     request_lock = threading.Lock()
 
@@ -28,7 +29,7 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
             with request_lock:
                 requests.append((self.path, json.loads(body) if body else None, "Phase profiling (profiling) complete |" in (tmp_path / "logs/aiperf.log").read_text()))
                 number = len(requests)
-            self.send_response(500 if self.path == f"/{failure}_profile" and number % 6 == 1 else 200)
+            self.send_response(500 if self.path == f"/{failure}_profile" and number % worker_count == 1 else 200)
             self.end_headers()
             self.wfile.write(b"response\n")
 
@@ -41,7 +42,7 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     for directory in ("logs", "source", "profile", "bin"):
         (tmp_path / directory).mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"framework": framework}))
-    workers = [(f"prefill-{n}", 2) for n in range(4)] + [(f"decode-{n}", 4) for n in range(2)]
+    workers = [(f"prefill-{n}", 2) for n in range(6)] + [("decode-0", 4)] if worker_count == 7 else [(f"prefill-{n}", 2) for n in range(4)] + [(f"decode-{n}", 4) for n in range(2)]
     (tmp_path / "source/worker-endpoints.tsv").write_text("".join(f"{name}\t127.0.0.1\t{server.server_port}\t{tp}\n" for name, tp in workers))
     (tmp_path / "logs/aiperf.log").write_text("Phase profiling (profiling) started\n")
     sleep = tmp_path / "bin/sleep"
@@ -54,8 +55,8 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
         thread.join()
         server.server_close()
     assert (result.returncode != 0) is (failure is not None)
-    assert [path for path, _, _ in requests].count("/start_profile") == 6
-    assert [path for path, _, _ in requests].count("/stop_profile") == 6
+    assert [path for path, _, _ in requests].count("/start_profile") == worker_count
+    assert [path for path, _, _ in requests].count("/stop_profile") == worker_count
     expected_body = {"activities": ["CUDA_PROFILER"]} if framework == "sglang" else None
     assert all(body == expected_body for path, body, _ in requests if path == "/start_profile")
     assert (tmp_path / "sleeps").read_text().splitlines() == (["5"] if failure == "start" else ["5", "1" if framework == "sglang" else "5"])
@@ -136,8 +137,8 @@ def test_optimized_c64_summary_reports_ep1_topology(tmp_path: Path, framework: s
     assert "P4 × TP2 / D2 × TP4 EP1" in SUMMARY(tmp_path, "22463", "success")
 
 
-@pytest.mark.parametrize("profile,expected", [("false", 0), ("true", 1)])
-def test_optimized_vllm_rejects_profile_before_worker_launch(profile: str, expected: int) -> None:
+@pytest.mark.parametrize("profile,expected", [("false", 0), ("true", 0), ("invalid", 1)])
+def test_optimized_vllm_accepts_explicit_profile_before_worker_launch(profile: str, expected: int) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
     guard = next(line for line in source.splitlines() if line.startswith('[[ "${PROFILE:'))
     result = subprocess.run(["bash", "-euc", guard], env={**os.environ, "PROFILE": profile}, check=False)
@@ -148,3 +149,31 @@ def test_vllm_c104_summary_reports_seven_worker_topology(tmp_path: Path) -> None
     (tmp_path / "provenance.json").write_text(json.dumps({"framework": "vllm", "workload": "official"}))
     (tmp_path / "firmus-framework.json").write_text(json.dumps({"concurrency": 104, "speculation": {"algorithm": "EAGLE3"}}))
     assert "P6 × TP2 / D1 × TP4 EP1" in SUMMARY(tmp_path, "new", "success")
+
+
+
+def test_vllm_seven_worker_profile_validation(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source"
+    profile = tmp_path / "profile"
+    source.mkdir()
+    profile.mkdir()
+    workers = [(f"prefill-{n}", 2) for n in range(6)] + [("decode-0", 4)]
+    (source / "worker-endpoints.tsv").write_text("".join(f"{name}\t127.0.0.1\t30000\t{tp}\n" for name, tp in workers))
+    for name, _tp in workers:
+        (profile / f"nsys-{name}.nsys-rep").write_text("report")
+
+    def export(command, **_kwargs):
+        database = Path(next(value for value in command if value.startswith("--output=")).split("=", 1)[1])
+        tp = 4 if "decode" in database.name else 2
+        with sqlite3.connect(database) as connection:
+            connection.execute("CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (deviceId INTEGER)")
+            connection.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?)", [(rank,) for rank in range(tp)])
+
+    monkeypatch.setattr(subprocess, "run", export)
+    monkeypatch.setattr("sys.argv", ["validate", str(tmp_path)])
+    runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"), run_name="__main__")
+    validation = json.loads((profile / "validation.json").read_text())
+    assert validation["valid"] is True
+    assert len(validation["workers"]) == 7
+    assert sum(worker["gpu_count"] for worker in validation["workers"].values()) == 16
+    assert not list(profile.glob("*.sqlite"))

@@ -33,8 +33,9 @@ def main() -> None:
         subprocess.run(["/opt/nsys/bin/nsys", "export", "--type=sqlite", f"--output={database}", str(report)], check=True)
         results[name] = {"report": report.name, **validate_capture(database, int(tp))}
         database.unlink()
-    if len(results) != 6:
-        raise ValueError("expected six worker captures")
+    expected_gpus = sum(int(row.split("\t")[3]) for row in (args.runtime / "source/worker-endpoints.tsv").read_text().splitlines())
+    if expected_gpus != 16 or sum(value["gpu_count"] for value in results.values()) != 16:
+        raise ValueError("expected complete 16-GPU worker coverage")
     (args.runtime / "profile/validation.json").write_text(json.dumps({"valid": True, "workers": results}, indent=2) + "\n")
 
 

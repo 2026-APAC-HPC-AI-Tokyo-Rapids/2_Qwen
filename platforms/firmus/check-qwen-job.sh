@@ -4,7 +4,7 @@ set -euo pipefail
 : "${SLURM_JOB_ID:?Slurm job ID is required}"
 : "${RUNTIME_DIR:?runtime directory is required}"
 
-state="$(squeue --noheader --jobs="${SLURM_JOB_ID}" --format='%T')"
+state="$(squeue --noheader --format='%i|%T' | awk -F'|' -v job_id="${SLURM_JOB_ID}" '$1 == job_id {print $2}')"
 if [[ -n "${state}" ]]; then printf 'scheduler_job_pending=%s state=%s\n' "${SLURM_JOB_ID}" "${state}"; exit 75; fi
 sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State,ExitCode,Elapsed,AllocNodes >"${RUNTIME_DIR}/logs/slurm-accounting.txt"
 cat "${RUNTIME_DIR}/logs/slurm-accounting.txt"

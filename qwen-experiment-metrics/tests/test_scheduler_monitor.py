@@ -131,3 +131,25 @@ class MonitorTest(unittest.TestCase):
                 self.assertEqual(result.returncode, expected)
                 self.assertIn('terminal', result.stdout)
                 self.assertIn('limit_seconds=none', result.stderr)
+
+
+
+def test_firmus_completed_job_removed_from_squeue_uses_accounting(tmp_path):
+    checker = MONITOR.parents[1] / "platforms/firmus/check-qwen-job.sh"
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    runtime = tmp_path / "runtime"
+    (runtime / "logs").mkdir(parents=True)
+    (runtime / "results").mkdir()
+    (runtime / "logs/slurm-123.log").write_text("AIPERF ok\n")
+    (runtime / "run-success").touch()
+    for name in ("profile_export_aiperf.json", "score.json"):
+        (runtime / "results" / name).write_text("{}")
+    for name, body in (("squeue", 'if [[ "$*" == *--jobs=* ]]; then echo "slurm_load_jobs error: Invalid job id specified" >&2; exit 1; fi\necho "999|RUNNING"'), ("sacct", "echo '123|COMPLETED|0:0|00:12:39|2'")):
+        tool = tools / name
+        tool.write_text("#!/bin/bash\n" + body + "\n")
+        tool.chmod(0o755)
+    result = subprocess.run(["bash", str(checker)], env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "SLURM_JOB_ID": "123", "RUNTIME_DIR": str(runtime)}, capture_output=True, text=True, check=False)
+    assert result.returncode == 0
+    assert "123|COMPLETED|0:0" in result.stdout
+    assert (runtime / "logs/slurm-accounting.txt").is_file()

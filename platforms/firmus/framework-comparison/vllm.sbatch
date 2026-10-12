@@ -28,7 +28,7 @@ jq -c '{cudagraph_mode:"PIECEWISE",cudagraph_capture_sizes:.prefill_cuda_graph_t
 ART=${ROOT}/logs
 export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
 export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
-[[ "${PROFILE:-false}" == false ]]
+[[ "${PROFILE:-false}" == false || "${PROFILE}" == true ]]
 jq -e '.framework == "vllm" and .workload == "official"' "${ROOT}/source/firmus-framework.json" >/dev/null
 
 NODES=($(scontrol show hostnames "${SLURM_JOB_NODELIST}"))
@@ -40,7 +40,9 @@ TAIL_IP=$(ip_of "${TAIL}")
 
 mounts() {
   mkdir -p "${ROOT}/home/$1"
-  echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,/dev/infiniband:/dev/infiniband"
+  local profiler_mount=
+  if [[ "${PROFILE:-false}" == true ]]; then profiler_mount=",${ROOT}/nsys:/opt/nsys:ro"; fi
+  echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,/dev/infiniband:/dev/infiniband${profiler_mount}"
 }
 
 wait_http() {
@@ -71,6 +73,7 @@ cleanup_all() {
   trap - EXIT INT TERM
   for pid in "${worker_pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
   for pid in "${worker_pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
+  if [[ -n "${profile_capture_pid:-}" ]]; then kill "${profile_capture_pid}" 2>/dev/null || true; wait "${profile_capture_pid}" 2>/dev/null || true; fi
   exit "${status}"
 }
 trap cleanup_all EXIT
@@ -125,6 +128,12 @@ nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --form
 worker_command=(/usr/local/bin/vllm serve "$model" --served-model-name qwen --trust-remote-code --dtype bfloat16 --max-model-len 8192 --tensor-parallel-size "$tp" --gpu-memory-utilization 0.90 --block-size 64 --num-gpu-blocks-override "$blocks" --max-num-batched-tokens 8192 --enable-chunked-prefill --kv-cache-dtype fp8_e4m3 --attention-config '{"backend":"FLASH_ATTN","flash_attn_version":3}' --kv-transfer-config "$KV_CONFIG" "${role_flags[@]}" "$@" --host 0.0.0.0 --port "$port")
 printf '%q ' "${worker_command[@]}" >"$(dirname "$0")/argv-${name}.txt"
 printf '\n' >>"$(dirname "$0")/argv-${name}.txt"
+if [[ -x /opt/nsys/bin/nsys ]]; then
+  export QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys
+  export QWEN_PROFILER_INVOCATION_PATH="$(dirname "$0")/../profile/nsys-${name}.argv"
+  worker_command+=(--profiler-config '{"profiler":"cuda"}')
+  exec bash "$(dirname "$0")/../scripts/exec-profiler.sh" "${worker_command[@]}"
+fi
 exec "${worker_command[@]}"
 EOF
 
@@ -163,4 +172,14 @@ while IFS=$'\t' read -r worker host port _tp; do
 done <"${ROOT}/source/worker-endpoints.tsv"
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1
 echo "AIPERF ok"
+if [[ "${PROFILE:-false}" == true ]]; then
+  mkdir -p "${ROOT}/profile/client"
+  printf 'The official results/ pass completes before CUDA capture. Nsight is attached but capture is off during that pass; compare its timings with the existing uninstrumented control. Diagnostic client:20/30/30 at the same c104 and workload; five-second CUDA/NVTX/OSRT trace; profile/client/ is not an official score.\n' >"${ROOT}/profile/interpretation.txt"
+  bash "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" "${ROOT}/profile/client/aiperf.log" >"${ROOT}/logs/profile-capture.log" 2>&1 &
+  profile_capture_pid=$!
+  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" profile >"${ROOT}/profile/client/aiperf.log" 2>&1
+  wait "${profile_capture_pid}"
+  profile_capture_pid=
+  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-image="${VLLM}" --container-mounts="$(mounts profile-validation)" /usr/bin/python3 "${ROOT}/scripts/validate-firmus-profile.py" "${ROOT}" >"${ROOT}/logs/profile-validation.log" 2>&1
+fi
 touch "${ROOT}/run-success"

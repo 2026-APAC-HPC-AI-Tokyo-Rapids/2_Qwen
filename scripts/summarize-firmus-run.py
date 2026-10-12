@@ -30,6 +30,7 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         topology = "P4 × TP2 / D2 × TP4 EP1"
     if workload == "official" and identity.get("framework") == "vllm" and config.get("concurrency") == 104:
         topology = "P6 × TP2 / D1 × TP4 EP1"
+    expected_reports = 7 if topology == "P6 × TP2 / D1 × TP4 EP1" else 6
     lines = ["### Firmus Qwen", "", f"- Status: **{status}**; Slurm `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'unavailable')}**; H200 × 16; {topology}; concurrency **{config.get('concurrency', 'unavailable')}**.", f"- Workload: {workload}, ISL 4000 / OSL 200, warmup / benchmark / grace **{phases} s**; **not an official submission**."]
     if identity.get("dynamo"):
         dynamo = identity["dynamo"]
@@ -48,7 +49,7 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         gpu_coverage = f"{sum(worker['gpu_count'] for worker in workers.values())} / 16 GPUs" if capture else "GPU coverage unverified"
         notes = sorted(root.rglob("interpretation.txt"))
         capture_note = notes[0].read_text().strip() if notes else "Capture timing unavailable; inspect profile-capture.log."
-        lines += ["", f"Nsight: **{len(reports)} / 6 reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **Instrumented score; do not use for performance comparison.**"]
+        lines += ["", f"Nsight: **{len(reports)} / {expected_reports} reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **Instrumented score; do not use for performance comparison.**"]
     else:
         lines += ["", "Nsight: disabled."]
     lines += ["", f"Archive after the archive job succeeds: `archive-host:/srv/qwen-artifacts/{run_id}/{attempt}/`.", "Reports: `profile/`; conditions and image hashes: `source/`; raw requests and score: `results/`.", ""]

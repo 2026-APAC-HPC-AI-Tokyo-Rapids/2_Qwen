@@ -3,6 +3,7 @@
 set -euo pipefail
 runtime_dir=${1:?runtime directory required}
 framework=$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${runtime_dir}/source/firmus-framework.json")
+client_log=${2:-${runtime_dir}/logs/aiperf.log}
 start_body=
 if [[ "${framework}" == sglang ]]; then start_body='{"activities":["CUDA_PROFILER"]}'; fi
 start_requested=false
@@ -27,7 +28,7 @@ trap cleanup_capture EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 deadline=$((SECONDS + 600))
-while ! grep -Fq 'Phase profiling (profiling) started' "${runtime_dir}/logs/aiperf.log"; do (( SECONDS < deadline )); sleep 1; done
+while ! grep -Fq 'Phase profiling (profiling) started' "${client_log}"; do (( SECONDS < deadline )); sleep 1; done
 sleep 5
 start_requested=true
 pids=()
@@ -38,14 +39,15 @@ while IFS=$'\t' read -r name host port tp; do
   pids+=("$!")
   count=$((count + 1))
 done <"${runtime_dir}/source/worker-endpoints.tsv"
-[[ "${count}" -eq 6 ]] || exit 1
+expected_workers=$(awk 'END {print NR}' "${runtime_dir}/source/worker-endpoints.tsv")
+[[ "${count}" -eq "${expected_workers}" && "${count}" -gt 0 ]] || exit 1
 start_status=0
 for pid in "${pids[@]}"; do wait "${pid}" || start_status=1; done
 [[ "${start_status}" -eq 0 ]] || exit 1
 printf 'capture_active utc=%s\n' "$(date -u +%FT%T.%NZ)"
 if [[ "${framework}" == sglang ]]; then
   deadline=$((SECONDS + 180))
-  while ! grep -Fq 'Phase profiling (profiling) complete |' "${runtime_dir}/logs/aiperf.log"; do
+  while ! grep -Fq 'Phase profiling (profiling) complete |' "${client_log}"; do
     (( SECONDS < deadline )) || exit 1
     sleep 1
   done
