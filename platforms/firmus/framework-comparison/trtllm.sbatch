@@ -50,6 +50,8 @@ wait_http() {
         return "${status}"
       fi
     done
+    # A segfaulted rank 0 leaves mpirun waiting on its peers (Slurm 22740, 22814); stop instead of holding the allocation.
+    if grep -l -F 'Segmentation fault' "${ART}"/prefill-*.log "${ART}"/decode-*.log >&2; then printf 'worker_segfault waiting_for=%s\n' "$1" >&2; return 139; fi
     if curl --fail --silent --max-time 2 -o /dev/null "$1"; then return 0; fi
     if (( SECONDS >= deadline )); then printf 'server_readiness_timeout url=%s\n' "$1" >&2; return 124; fi
     sleep 2
@@ -141,6 +143,8 @@ done | paste -sd,)
 export UCX_NET_DEVICES=$UCX_IB
 export UCX_POSIX_USE_PROC_LINK=n
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+# Firmus exposes no IMEX channel, so TRT-LLM falls back from NVLS by setenv() while NCCL bootstrap threads call getenv(); set it up front.
+export NCCL_NVLS_ENABLE=0
 # mpirun below starts the local TP ranks; hide the enclosing Slurm step so Open MPI launches locally.
 for variable in $(compgen -e | grep -E '^(SLURM_|PMI_|PMIX_)' || true); do unset "${variable}"; done
 # Static URL disaggregation needs no --server_role; rc29 only converts it to ServerRole for metadata-server or cluster modes.
