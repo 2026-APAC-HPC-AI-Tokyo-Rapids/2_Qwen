@@ -63,6 +63,17 @@ if [[ "${framework}" == sglang ]]; then
   jq -e '.revision == "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224" and .weight_sha256 == "bf226a966868fe413a22e62e471aa1130bd94f17fd2c40d322b1c8b4def1ae86" and .weight_bytes == 1145943008 and .precision == "BF16"' "${runtime_dir}/source/draft-provenance.json" >/dev/null
   cp "${GITHUB_WORKSPACE}/research/simulation/prepare_eagle.py" "${runtime_dir}/source/"
 fi
+if [[ "${framework}" == trtllm ]]; then
+  # rc29 rejects AIPerf's max_completion_tokens; mount a patched copy of the image's own protocol module.
+  protocol=usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py
+  unsquashfs -q -n -d "${runtime_dir}/trtllm-extract" "${runtime_dir}/trtllm.sqsh" "${protocol}" >/dev/null
+  [[ "$(sha256sum "${runtime_dir}/trtllm-extract/${protocol}" | awk '{print $1}')" == a6fccceb62365461b275bf860cc1b1c77858a8061622535ef1659528bce05783 ]]
+  install -m 0644 "${runtime_dir}/trtllm-extract/${protocol}" "${runtime_dir}/source/trtllm-openai_protocol.py"
+  rm -rf -- "${runtime_dir}/trtllm-extract"
+  patch --batch --quiet "${runtime_dir}/source/trtllm-openai_protocol.py" "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/trtllm-max-completion-tokens.patch"
+  install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/trtllm-max-completion-tokens.patch" "${runtime_dir}/source/"
+  sha256sum "${runtime_dir}/source/trtllm-openai_protocol.py" >"${runtime_dir}/source/trtllm-openai_protocol.sha256"
+fi
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/${framework}.sbatch" "${runtime_dir}/scripts/submit.sbatch"
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/official-aiperf.sh" "${runtime_dir}/scripts/official-aiperf.sh"
 install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/vllm-proxy.py" "${runtime_dir}/vllm-proxy.py"

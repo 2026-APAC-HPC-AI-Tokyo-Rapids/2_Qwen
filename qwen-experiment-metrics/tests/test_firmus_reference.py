@@ -152,7 +152,8 @@ def test_trtllm_launch_matches_recipe_layout(tmp_path: Path) -> None:
     stub.chmod(0o755)
     setup = "for worker in 0 1 2 3;" + source.split("for worker in 0 1 2 3;", 1)[1].split("\nwhile IFS=", 1)[0]
     client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
-    harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + setup + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + client
+    trtllm_mounts = "trtllm_mounts()" + source.split("\ntrtllm_mounts()", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+    harness = 'set -euo pipefail\nmounts() { printf /fixture; }\n' + trtllm_mounts + 'worker_pids=()\n' + setup + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + client
     environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "TRTLLM": "/trtllm", "AIPERF": "/image", "MODEL": "/model", "N": str(config["concurrency"]), "R_PORT": "8000"}
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
@@ -163,6 +164,14 @@ def test_trtllm_launch_matches_recipe_layout(tmp_path: Path) -> None:
     assert len(workers) == 7
     assert sum(4 if "--gres=gpu:4" in argv else 2 for argv in workers) == 16
     assert all("--container-image=/trtllm" in argv for argv in workers)
+    assert all(f"--container-mounts=/fixture,{tmp_path}/source/trtllm-openai_protocol.py:/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:ro" in argv for argv in workers)
+    patch = (ROOT / "platforms/firmus/framework-comparison/trtllm-max-completion-tokens.patch").read_text()
+    assert patch.startswith("--- a/tensorrt_llm/serve/openai_protocol.py\n+++ b/tensorrt_llm/serve/openai_protocol.py\n")
+    added = [line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++")]
+    assert not [line for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")]
+    assert 'value = data.pop("max_completion_tokens")' in added[-1 - added[::-1].index('            value = data.pop("max_completion_tokens")')] and '            data.setdefault("max_tokens", value)' in added
+    provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
+    assert "a6fccceb62365461b275bf860cc1b1c77858a8061622535ef1659528bce05783" in provision and "trtllm-max-completion-tokens.patch" in provision
     layout = {argv[argv.index("bash") + 2]: (argv[argv.index("-w") + 1], argv[argv.index("bash") + 3:argv.index("bash") + 6]) for argv in workers}
     assert layout == {**{f"prefill-{i}": ("node0", [str(30100 + i), "/model", "2"]) for i in range(4)}, **{f"prefill-{i}": ("node1", [str(30100 + i), "/model", "2"]) for i in (4, 5)}, "decode-0": ("node1", ["30200", "/model", "4"])}
     assert {argv[argv.index("bash") + 2]: argv[argv.index("bash") + 6] for argv in workers} == {**{f"prefill-{i}": "1" for i in range(6)}, "decode-0": "4"}

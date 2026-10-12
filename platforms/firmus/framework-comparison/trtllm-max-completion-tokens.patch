@@ -1,0 +1,21 @@
+--- a/tensorrt_llm/serve/openai_protocol.py
++++ b/tensorrt_llm/serve/openai_protocol.py
+@@ -1245,6 +1245,18 @@
+ 
+     @model_validator(mode="before")
+     @classmethod
++    def accept_max_completion_tokens_name(cls, data):
++        # The field is declared with validation_alias='max_tokens', so the
++        # OpenAI name itself is rejected as an extra input. Clients such as
++        # AIPerf send both; keep max_tokens when present.
++        if isinstance(data, dict) and "max_completion_tokens" in data:
++            data = dict(data)
++            value = data.pop("max_completion_tokens")
++            data.setdefault("max_tokens", value)
++        return data
++
++    @model_validator(mode="before")
++    @classmethod
+     def check_tool_choice(cls, data):
+         if not isinstance(data, dict):
+             return data

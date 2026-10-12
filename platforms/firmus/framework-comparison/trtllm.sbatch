@@ -37,6 +37,10 @@ mounts() {
   mkdir -p "${ROOT}/home/$1"
   echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},/dev/infiniband:/dev/infiniband"
 }
+# Workers and gateway use the provisioned max_completion_tokens patch of the image's protocol module.
+trtllm_mounts() {
+  echo "$(mounts "$1"),${ROOT}/source/trtllm-openai_protocol.py:/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:ro"
+}
 
 wait_http() {
   local deadline=$((SECONDS + READY_SECS)) pid status
@@ -60,7 +64,7 @@ wait_http() {
 
 echo "[$(date -Iseconds)] job=${SLURM_JOB_ID} user=$(whoami)"
 echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P6TP2-D1TP4EP4 engine=trtllm kv=fp8 speculation=none"
-test -r "${TRTLLM}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json"
+test -r "${TRTLLM}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && test -s "${ROOT}/source/trtllm-openai_protocol.py"
 mkdir -p "${ART}"
 worker_pids=()
 cleanup_all() {
@@ -160,14 +164,14 @@ exec mpirun --oversubscribe --bind-to none -np "$tp" trtllm-llmapi-launch trtllm
 EOF
 
 for worker in 0 1 2 3; do
-  srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${TRTLLM}" --container-mounts="$(mounts "prefill-${worker}")" bash "${ROOT}/source/worker.sh" "prefill-${worker}" "$((30100 + worker))" "${MODEL}" 2 1 "${ROOT}" >"${ART}/prefill-${worker}.log" 2>&1 &
+  srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${TRTLLM}" --container-mounts="$(trtllm_mounts "prefill-${worker}")" bash "${ROOT}/source/worker.sh" "prefill-${worker}" "$((30100 + worker))" "${MODEL}" 2 1 "${ROOT}" >"${ART}/prefill-${worker}.log" 2>&1 &
   worker_pids+=("$!")
 done
 for worker in 4 5; do
-  srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${TRTLLM}" --container-mounts="$(mounts "prefill-${worker}")" bash "${ROOT}/source/worker.sh" "prefill-${worker}" "$((30100 + worker))" "${MODEL}" 2 1 "${ROOT}" >"${ART}/prefill-${worker}.log" 2>&1 &
+  srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${TRTLLM}" --container-mounts="$(trtllm_mounts "prefill-${worker}")" bash "${ROOT}/source/worker.sh" "prefill-${worker}" "$((30100 + worker))" "${MODEL}" 2 1 "${ROOT}" >"${ART}/prefill-${worker}.log" 2>&1 &
   worker_pids+=("$!")
 done
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${TRTLLM}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 4 "${ROOT}" >"${ART}/decode-0.log" 2>&1 &
+srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${TRTLLM}" --container-mounts="$(trtllm_mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 4 "${ROOT}" >"${ART}/decode-0.log" 2>&1 &
 worker_pids+=("$!")
 
 while IFS=$'\t' read -r worker host port _tp; do
