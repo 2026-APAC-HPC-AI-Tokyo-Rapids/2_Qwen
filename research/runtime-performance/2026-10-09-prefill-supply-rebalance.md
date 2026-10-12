@@ -336,3 +336,34 @@ ASPIRE：投入前balance 11342.755 SU（In Doubt 0）、本probeは1 GPU×数�
 8 rankはいずれも1バッチ約8.1k tokenで、1.1〜1.2秒に1バッチ、6.4k〜7.8k tok/sとほぼ均等に飽和した。DP間の偏りは律速ではない。GPUあたりの速度はTP2より約36%低く、計画の合格線（12k/GPU）に遠く届かない。main記録のattention TP4×DP2 DeepEP（約6.6k/GPU、run 37877564253）とほぼ同じ水準であり、attentionをTP1にしても改善しなかった。このimage・SGLang固定版では、DeepEP normal＋DeepGEMM（Prefill CUDA graphなし）の経路が、TP2＋CUTLASS（自作shuffle/routing patch込み）より遅い。Decode固定費の半減を狙う実験B（Aの成功が前提）は実施しない。rawと集計スクリプトは自宅サーバー`~/qwen-artifacts/research-runtime/20261011-firmus22455-p8dpep/`（SHA256SUMS付き）。
 
 **現時点の整理。** Firmusでは、GPUあたりPrefill効率が最も高いのは依然としてTP2＋CUTLASSで、約10.75k/GPUである。これを全GPUの14基に配っても上限は約7.5k good tok/sであり、10000にはPrefillのGPU効率を約1.33倍（MFU約27%→36%）にする必要がある。分割方式（DP attention／EP）の変更ではそれが得られなかった。残る手段は、同じTP2単位のまま通信を計算と重ねるか、通信を減らすことである。具体的にはreduce-scatter＋FP8 all-gather（§4候補2）と、MoE補助処理の削減（§4候補1）。
+
+## 17. Firmus：TensorRT-LLM 1.3.0rc29 PD（エンジン差の測定）
+
+他チームとの差が「エンジン」にあるかを確かめた。SGLangの残りの手段はいずれも5〜15%規模である。一方、9月のTensorRT-LLM試行（ASPIRE、rc20）は全requestがHTTP 400で、性能を一度も測れていなかった。NVIDIAが公開しているDynamo recipe（Qwen3-235B-A22B-FP8、Hopper）は、私たちの最良配置と同じP6×TP2 / D1×TP4 EP4である。そこで、この配置を`trtllm-serve`（PDのworkerとdisaggregated gateway）で組み、Firmusで計測した。branchは`research/firmus-trtllm-p6tp2-d1tp4`。
+
+**image。** NGC公式`nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc29`（digest `sha256:124da3f1…`、TRT-LLM commit c76f4a85、CUDA 13.4、NIXL 1.3.0、Open MPI 5.0.10）を使った。Firmusのログインノードで、既存のvLLM imageと同じ手順（Skopeo→Umoci→mksquashfs）でsquashfsに変換した。AWSは使っていない。`/scratch/home/ACCOUNT/qwen/framework-comparison/images/trtllm.sqsh`、13.6 GB、sha256 `42937a72…`、来歴JSONは同じ場所にある。
+
+**稼働までの修正（失敗はすべて最初の致命的エラーから特定した）。**
+
+| commit | Slurm | 最初の致命的エラー | 対処 |
+|---|---|---|---|
+| 9813978 | 22605 | `openai_server.py:793` `'str' object has no attribute 'name'`。rc29は`--server_role`を、metadata serverまたはcluster設定があるときしか列挙型に変換しない | 静的URL方式ではroleが不要なので削除（8e11686） |
+| 8e11686 | 22740 | prefill-4がNCCL bootstrapの`getenv`（`ncclSocketDefaultMagic`）でsegfault。mpirunが残ったまま時間切れ | 1回だけ再実行（attempt 3、Slurm 22774）では再発しなかった |
+| 8e11686 a3 | 22774 | gatewayの`/v1/models`が404。参考用のcurlが`set -e`で停止させた | 該当行を削除（250f78c） |
+| 250f78c | 22814 | prefill-2とdecode-0が同じ箇所でsegfault（2 runで計3件）。いずれも、TRT-LLMが「IMEXがないのでNVLSを無効化する」とruntime中に環境変数を切り替えた直後だった | 起動前に`NCCL_NVLS_ENABLE=0`を設定。segfaultを検知したらready待ちを打ち切る処理も追加（07d0576） |
+| 07d0576 | 22902 | 全workerは675秒でready、segfaultなし。しかし公式clientの227776 requestがすべてHTTP 400（`extra_forbidden: max_completion_tokens`）。rc29の定義`Field(validation_alias='max_tokens')`とextra forbidの組み合わせで、OpenAI本来の名前が拒否される | `ChatCompletionRequest`に、検証前に`max_completion_tokens`を外し、`max_tokens`がないときだけ使うvalidatorを追加。imageのファイルをハッシュ確認のうえ抽出・patchし、read-onlyでmountした（7225b53、patchはrepoにテキストで保存）。生成条件は不変 |
+
+**計測結果**（7225b53、Actions 38281454810、Slurm 22997、g1/g4、ready 730秒、c128、投機デコードなし、FP8 KV）。
+
+| 指標 | SGLang P6TP2/D1TP4 EAGLE3 c104（3519fc0） | TRT-LLM P6TP2/D1TP4EP4 投機なし c128（7225b53） |
+|---|---:|---:|
+| good output tok/s | 4429.9 | 0（good率0.22%、2765 request、error 0） |
+| raw output tok/s | 約4700 | 4440 |
+| TTFT 中央値 / p90 | — / 1231 ms | 311 / 549 ms |
+| ITL 平均 / p90 | 17.91 / 19.57 ms | 26.34 / 26.69 ms |
+
+context worker（TP2）のiterationログから、1ステップのデバイス時間を集計した。6 workerがそろって、1 request（約4000 token）で約260 ms、2 request（約8000 token）で約435 msだった。GPUあたりに直すと**約7.7k〜9.2k tok/s**で、SGLang TP2の持続速度（約8.8k/GPU、親run 37888931369のgoodputからの逆算）と**同じ水準**である。Prefillの効率については、エンジンを替えても2倍の差は出ない。
+
+Decodeは投機なしで、runningが約118（4440 tok/s × 26.5 ms）のときにstepが26.5 msだった。SGLang EAGLE3では、runningが約62でITL 17.9 msである。TRT-LLMはrequestあたりの1ステップ費用が小さいので、EAGLE3を載せれば、同じITLでより多くのrunningを捌ける可能性がある。これが次に測る点である。
+
+**結論（現時点）。** 他チームとの差は、エンジンの単純な置換では説明できない。Prefillは両エンジンともGPUあたり約9k tok/sで、Firmus 16 GPUの算術上限は14 GPUをprefillに回しても約6.3k good tok/sになる。10000に届くには、GPUあたりのprefill効率を約1.6倍にする必要がある。rawは自宅サーバー`~/qwen-artifacts/research-runtime/20261011-firmus22740-trtllm/`、`20261012-firmus22814-trtllm/`、`20261013-firmus22902-trtllm/`、`20261013-firmus22997-trtllm/`（各SHA256SUMS付き）と、NAS（`/srv/qwen-artifacts/38112393135/`、`38138579539/`、`38160179298/`）にある。
