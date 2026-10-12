@@ -142,3 +142,9 @@ def test_optimized_vllm_rejects_profile_before_worker_launch(profile: str, expec
     guard = next(line for line in source.splitlines() if line.startswith('[[ "${PROFILE:'))
     result = subprocess.run(["bash", "-euc", guard], env={**os.environ, "PROFILE": profile}, check=False)
     assert result.returncode == expected
+
+
+def test_vllm_c104_summary_reports_seven_worker_topology(tmp_path: Path) -> None:
+    (tmp_path / "provenance.json").write_text(json.dumps({"framework": "vllm", "workload": "official"}))
+    (tmp_path / "firmus-framework.json").write_text(json.dumps({"concurrency": 104, "speculation": {"algorithm": "EAGLE3"}}))
+    assert "P6 × TP2 / D1 × TP4 EP1" in SUMMARY(tmp_path, "new", "success")

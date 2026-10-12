@@ -83,7 +83,7 @@ if [[ "${PROFILE}" == true ]]; then
 fi
 cp "${runtime_dir}/scripts/submit.sbatch" "${runtime_dir}/scripts/official-aiperf.sh" "${runtime_dir}/vllm-proxy.py" "${runtime_dir}/source/"
 if [[ "${framework}" == vllm ]]; then
-  for worker in prefill-0 prefill-1 prefill-2 prefill-3 decode-0 decode-1; do
+  for worker in prefill-0 prefill-1 prefill-2 prefill-3 prefill-4 prefill-5 decode-0; do
     source_cache="/scratch/home/ACCOUNT/qwen/framework-comparison/matched-settings-comparison/home/${worker}/.tensorrt_llm"
     if [[ -d "${source_cache}/cache" ]]; then
       install -d -m 0755 "${runtime_dir}/home/${worker}"

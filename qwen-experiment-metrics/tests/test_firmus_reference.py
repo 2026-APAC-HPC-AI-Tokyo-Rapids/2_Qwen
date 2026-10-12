@@ -67,7 +67,8 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
 def test_sglang_launch_matches_full_h200_tp2_conditions(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["concurrency"], config["workload"]) == (64, "official")
+    config["concurrency"] = 64  # The retained SGLang control launcher uses its original c64 layout.
+    assert config["workload"] == "official"
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
@@ -132,6 +133,39 @@ def test_sglang_launch_matches_full_h200_tp2_conditions(tmp_path: Path) -> None:
     assert client_argv[-2:] == [str(tmp_path), "64"]
 
 
+def test_vllm_launch_matches_page64_p6d1_comparator(tmp_path: Path) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    assert config["workload"] == "official"
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "source").mkdir()
+    (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
+    record = tmp_path / "commands.jsonl"
+    stub = tmp_path / "srun"
+    stub.write_text(f"#!{sys.executable}\nimport json,os,sys\nfd=os.open(os.environ['RECORD'],os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)\nos.write(fd,(json.dumps(sys.argv[1:])+'\\n').encode())\nos.close(fd)\n")
+    stub.chmod(0o755)
+    launches = "srun --exact" + source.split("srun --exact", 1)[1].split("\nwait_http", 1)[0]
+    router = next(line for line in source.splitlines() if line.startswith("srun ") and "vllm-proxy.py" in line)
+    client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
+    configuration = 'speculation=(' + source.split('speculation=(', 1)[1].split('\nART=', 1)[0]
+    harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + '\n' + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
+    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "VLLM": "/image", "AIPERF": "/image", "MODEL": "/model", "N": "104", "R_PORT": "8000"}
+    subprocess.run(["bash", "-c", harness], env=environment, check=True)
+    commands = [json.loads(line) for line in record.read_text().splitlines()]
+    workers = [argv for argv in commands if "--exact" in argv]
+    assert len(workers) == 7
+    assert sum(2 if "--gres=gpu:2" in argv else 4 for argv in workers) == 16
+    observed = {argv[argv.index("bash") + 2]: argv[argv.index("-w") + 1] for argv in workers}
+    assert observed == {**{f"prefill-{i}": "node0" for i in range(4)}, "prefill-4": "node1", "prefill-5": "node1", "decode-0": "node1"}
+    decoder = next(argv for argv in workers if "decode-0" in argv)
+    assert "--no-enable-prefix-caching" in decoder
+    router_argv = next(argv for argv in commands if any(arg.endswith("/vllm-proxy.py") for arg in argv))
+    begin = router_argv.index("--prefiller-ports") + 1
+    assert router_argv[begin:begin + 6] == ["30100", "30101", "30102", "30103", "30104", "30105"]
+    client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
+    assert client_argv[-2:] == [str(tmp_path), "104"]
+
+
 def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_path: Path) -> None:
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     graph_config = {"cudagraph_mode": "PIECEWISE", "cudagraph_capture_sizes": config["prefill_cuda_graph_tokens"], "max_cudagraph_capture_size": 8192}
@@ -141,7 +175,7 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
     # Exercise actual shell argument construction without requiring GPUs or HCAs.
     probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
     probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "${worker_command[@]}"\n'
-    for role, tp, limit in [("prefill", 2, 64), ("decode", 4, 256)]:
+    for role, tp, limit in [("prefill", 2, 104), ("decode", 4, 256)]:
         options = ["--speculative-config", '{"method":"eagle3","model":"/draft","num_speculative_tokens":3}', "--max-num-seqs", str(limit)]
         if role == "prefill":
             options += ["--disable-custom-all-reduce", "--moe-backend", "auto"]
@@ -164,7 +198,8 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         assert "--enable-expert-parallel" not in flags
         assert flags[flags.index("--dtype") + 1] == "bfloat16"
         assert flags[flags.index("--kv-cache-dtype") + 1] == "fp8_e4m3"
-        assert int(flags[flags.index("--block-size") + 1]) * int(flags[flags.index("--num-gpu-blocks-override") + 1]) == 131072
+        assert int(flags[flags.index("--block-size") + 1]) * int(flags[flags.index("--num-gpu-blocks-override") + 1]) == (131072 if role == "prefill" else 524288)
+        assert flags[flags.index("--block-size") + 1] == "64"
         assert json.loads(flags[flags.index("--attention-config") + 1]) == {"backend": "FLASH_ATTN", "flash_attn_version": 3}
         assert json.loads(flags[flags.index("--kv-transfer-config") + 1])["kv_role"] == ("kv_producer" if role == "prefill" else "kv_consumer")
         assert json.loads(flags[flags.index("--speculative-config") + 1]) == {"method": "eagle3", "model": "/draft", "num_speculative_tokens": 3}
