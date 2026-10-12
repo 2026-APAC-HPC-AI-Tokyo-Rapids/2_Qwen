@@ -10,6 +10,34 @@ def check(source):
     tree = ast.parse(path.read_text())
     method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "forward_megamoe")
     method.body = [n for n in method.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
+    # Evaluate the real adapter's constructor guard without loading GPU modules.
+    supported = next(n.value for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "supported" for t in n.targets))
+    guard = compile(ast.Expression(body=supported), str(path), "eval")
+    args = NS(enable_dp_attention=True, dp_size=4, disaggregation_mode="prefill", enable_two_batch_overlap=False, enable_eplb=False, ep_num_redundant_experts=0, enable_dp_lm_head=True, moe_dense_tp_size=1, speculative_moe_a2a_backend=None, speculative_algorithm="EAGLE3", speculative_eagle_topk=1, speculative_num_draft_tokens=4)
+    guard_ns = {"torch": NS(cuda=NS(get_device_capability=lambda: (9, 0))), "config": NS(hidden_size=4096, moe_intermediate_size=1536, num_experts=128, num_experts_per_tok=8), "self": NS(tp_size=1, ep_size=4), "args": args, "quant_config": NS(get_name=lambda: "fp8", weight_block_size=[128, 128])}
+    assert eval(guard, guard_ns)
+    args.disaggregation_mode = "decode"
+    assert eval(guard, guard_ns)
+    for key, bad in [("enable_dp_lm_head", False), ("moe_dense_tp_size", None), ("speculative_moe_a2a_backend", "none"), ("speculative_algorithm", None), ("speculative_eagle_topk", 2), ("speculative_num_draft_tokens", 8), ("dp_size", 2), ("enable_two_batch_overlap", True)]:
+        original = getattr(args, key)
+        setattr(args, key, bad)
+        assert not eval(guard, guard_ns), key
+        setattr(args, key, original)
+    # The dense EAGLE draft inherits MegaMoE's DP bookkeeping, even though it
+    # has no MoE layer. Overriding only its A2A backend to "none" makes the
+    # specialized draft graph runners incorrectly require global MLP buffers.
+    common = source / "python/sglang/srt/utils/common.py"
+    names = {"require_mlp_tp_gather", "require_attn_tp_gather", "require_gathered_buffer"}
+    functions = [n for n in ast.parse(common.read_text()).body if isinstance(n, ast.FunctionDef) and n.name in names]
+    for function in functions:
+        function.body = [n for n in function.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
+    backend = NS(is_none=lambda: False, is_flashinfer=lambda: False)
+    dp_ns = {"ServerArgs": NS, "get_moe_a2a_backend": lambda: backend}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=functions, type_ignores=[])), str(common), "exec"), dp_ns)  # noqa: S102 - pinned graph predicates
+    args.tp_size, args.elastic_ep_backend, args.disable_attn_tp_gather = 4, None, False
+    assert not dp_ns["require_gathered_buffer"](args)
+    backend.is_none = lambda: True
+    assert dp_ns["require_gathered_buffer"](args)
     calls = []
     tensor = NS(to=lambda dtype: tensor)
     topk = NS(topk_ids=tensor, topk_weights=tensor)
@@ -25,7 +53,7 @@ def check(source):
     namespace = {"torch": NS(int32="int32", float32="float32"), "get_moe_ep_group": lambda: NS(device_group="EP4"), "envs": NS(SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=NS(get=lambda: 4096)), "is_sm90_fp8_mega_moe_available": lambda _: True, "_get_mega_moe_symm_buffer": lambda *args, **kwargs: (args, kwargs), "run_sm90_mega_routed": lambda *args: calls.append(("native", args))}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), str(path), "exec"), namespace)  # noqa: S102 - named method from pinned build input
     block = NS(experts=object(), gate=lambda h: (tensor, None), topk=Router(), config=NS(num_experts=128, num_experts_per_tok=8, hidden_size=4096, moe_intermediate_size=1536))
-    for count in [0, 7, 4096]:
+    for count in [0, 4, 7, 120, 128, 4096]:
         calls.clear()
         namespace["forward_megamoe"](block, NS(shape=(count, 4096), device="cuda"), NS(num_token_non_padded="non-padded"))
         assert [c[0] for c in calls] == (["empty", "native"] if count == 0 else ["router", "native"])
@@ -44,7 +72,7 @@ def check(source):
         original_row = packed_row // 16 * 8 + packed_row % 8 + (1536 if up else 0)
         native_scale_row = packed_row // 128 // 2 + (12 if up else 0)
         assert native_scale_row == original_row // 128
-    print("PASS: empty/nonempty/cap DP paths; global expert IDs; original block128 scale mapping")
+    print("PASS: Prefill and DP-local Decode guards; empty/nonempty/cap DP paths; global expert IDs; original block128 scale mapping")
 
 
 if __name__ == "__main__":

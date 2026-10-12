@@ -8,7 +8,7 @@
 #SBATCH --no-requeue
 #SBATCH -o runs/sglang-%j.out
 #SBATCH -e runs/sglang-%j.err
-# H200: three 4-GPU attention-DP4/MoE-EP4 prefill groups and one TP4 decode group.
+# H200: three 4-GPU attention-DP4/MoE-EP4 prefill groups and one attention-DP4/MoE-EP4 decode group.
 # One full benchmark allocation, with the official 60/120/30 client.
 set -euo pipefail
 
@@ -64,7 +64,7 @@ wait_http() {
 }
 
 echo "[$(date -Iseconds)] job=${SLURM_JOB_ID} user=$(whoami)"
-echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P3-TP4-DP4-EP4-D1TP4-EP1 kv=fp8_e4m3 speculation=EAGLE3 kernels=aspire-full"
+echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P3-TP4-DP4-EP4-D1-TP4-DP4-EP4 kv=fp8_e4m3 speculation=EAGLE3 kernels=aspire-full"
 test -r "${SGLANG}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && test -s "${ROOT}/draft/model.safetensors"
 mkdir -p "${ART}"
 worker_pids=()
@@ -104,11 +104,11 @@ done | paste -sd,)
 [ -n "$UCX_IB" ] || { echo "FATAL: no active HCA on $(hostname)"; exit 1; }
 export UCX_NET_DEVICES=$UCX_IB
 export UCX_POSIX_USE_PROC_LINK=n
-export SGLANG_DISAGG_STAGING_BUFFER=1 SGLANG_DISAGG_STAGING_POOL_SIZE_MB=1024
+# Both endpoints now own all KV heads (attention TP1). Use direct NIXL
+# page transfer; heterogeneous-TP staging would only allocate unused pools.
+export SGLANG_DISAGG_STAGING_BUFFER=0
 export SGLANG_DG_CACHE_DIR="${SLURM_SUBMIT_DIR}/home/deep-gemm"
-if [[ "$role" == prefill ]]; then
-  export SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096 SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1
-fi
+export SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096 SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1
 export TRITON_CACHE_DIR=/tmp/sglang-$name/triton
 export TORCHINDUCTOR_CACHE_DIR=/tmp/sglang-$name/inductor
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
@@ -116,10 +116,12 @@ mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 echo "$name host=$(hostname) ip=$SGLANG_HOST_IP hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp shuffle=${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0} routing=${SGLANG_PREFILL_TILED_ROUTING:-0}"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
 command=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path "$model" --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "$tp" --mem-fraction-static 0.90 --page-size 64 --kv-cache-dtype fp8_e4m3 --attention-backend fa3 --nccl-port "$((port + 1000))" --disaggregation-mode "$role" --disaggregation-transfer-backend nixl "$@" --host 0.0.0.0 --port "$port")
+# DP attention derives six TCP endpoints from this address.
+# Adjacent HTTP ports need separate endpoint ranges on the same node.
 if [[ "$role" == prefill ]]; then
-  # DP attention derives six TCP endpoints from this address. Adjacent HTTP
-  # ports would otherwise create overlapping endpoint ranges on the same node.
   command+=(--dist-init-addr "127.0.0.1:$((32000 + ${name##*-} * 100))")
+else
+  command+=(--dist-init-addr "127.0.0.1:33000")
 fi
 if [[ -x /opt/nsys/bin/nsys ]]; then
   runtime_dir=$(dirname "$(dirname "$0")")
@@ -141,7 +143,7 @@ srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-en
 worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-2)" bash "${ROOT}/source/worker.sh" prefill-2 30102 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9002 >"${ART}/prefill-2.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --ep-size 1 --chunked-prefill-size 8192 --max-running-requests "$(jq -er .decode_max_running_requests "${ROOT}/source/firmus-framework.json")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${ROOT}/source/firmus-framework.json")" --max-total-tokens "$(jq -er .decode_max_total_tokens "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-0.log" 2>&1 &
+srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --ep-size 4 --dp-size "$(jq -er .decode_dp_size "${ROOT}/source/firmus-framework.json")" --enable-dp-attention --enable-dp-lm-head --moe-dense-tp-size 1 --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --chunked-prefill-size 8192 --max-running-requests "$(jq -er .decode_max_running_requests "${ROOT}/source/firmus-framework.json")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${ROOT}/source/firmus-framework.json")" --max-total-tokens "$(jq -er .decode_max_total_tokens "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-0.log" 2>&1 &
 worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:30100/health"; echo "prefill-0 ready"

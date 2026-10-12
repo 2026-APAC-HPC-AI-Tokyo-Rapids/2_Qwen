@@ -42,7 +42,7 @@ def main():
     s2 = torch.rand(32, 32, 12, device=device) * 0.005 + 0.005
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf = deep_gemm.get_symm_buffer_for_mega_moe(dist.group.WORLD, 128, 4096, 8, 4096, 1536, use_fp8_dispatch=True, activation="swiglu")
-    for case, counts in [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4)]:
+    for case, counts in [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 0, 4])]:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         ids = torch.stack([torch.randperm(128, device=device)[:8] for _ in range(4)]).to(torch.int32)
         if case == "capacity-hot-experts":
@@ -72,22 +72,49 @@ def main():
         count = counts[rank]
         indices = torch.arange(count, device=device) % 4
         hidden, top_ids, top_weights = patterns[indices].contiguous(), ids[indices].contiguous(), weights[indices].contiguous()
-        deep_gemm.mega_moe_pre_dispatch_sm90(hidden, top_ids, top_weights, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, num_tokens=count, group_size=128, routed_scaling_factor=1.0)
         actual = torch.empty(max(count, 1), 4096, dtype=torch.bfloat16, device=device)
-        deep_gemm.fp8_mega_moe(actual, l1, l2, buf, recipe=(128, 128, 128), activation="swiglu", fast_math=True)
+
+        def forward(hidden, top_ids, top_weights, count, actual):
+            deep_gemm.mega_moe_pre_dispatch_sm90(hidden, top_ids, top_weights, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, num_tokens=count, group_size=128, routed_scaling_factor=1.0)
+            deep_gemm.fp8_mega_moe(actual, l1, l2, buf, recipe=(128, 128, 128), activation="swiglu", fast_math=True)
+
+        forward(hidden, top_ids, top_weights, count, actual)
         torch.cuda.synchronize()
-        actual = actual[:count].float()
-        expected = reference[rank * 4 + indices].to(torch.bfloat16).float()
-        assert torch.isfinite(actual).all(), (case, rank, "non-finite output")
-        relative_l2 = ((actual - expected).norm() / expected.norm().clamp_min(1e-10)).item()
-        max_scaled_error = ((actual - expected).abs().max() / expected.abs().max().clamp_min(1e-10)).item() if count else 0.0
-        print(json.dumps({"case": case, "rank": rank, "tokens": count, "relative_l2": relative_l2, "max_scaled_error": max_scaled_error, "workspace_bytes": buf.buffer.numel()}), flush=True)
-        # Allow FP8 rounding and accumulation order, not missing/double routing
-        # weights, misplaced scales, incorrect expert IDs, or reduced precision.
-        assert relative_l2 < 0.025 and max_scaled_error < 0.08, (case, rank, relative_l2, max_scaled_error)
-        dist.barrier()
+        graph = None
+        if case == "decode-graph":
+            # All ranks capture pre-dispatch and the fused collective, including an idle
+            # rank. Replays change GPU input data without changing its addresses.
+            graph = torch.cuda.CUDAGraph()
+            dist.barrier()
+            with torch.cuda.graph(graph):
+                forward(hidden, top_ids, top_weights, count, actual)
+        for replay in range(4 if graph is not None else 1):
+            if graph is not None:
+                indices = (torch.arange(count, device=device) + replay) % 4
+                hidden.copy_(patterns[indices])
+                top_ids.copy_(ids[indices])
+                top_weights.copy_(weights[indices])
+                # Decode graph padding masks every route for inactive rows.
+                live = max(0, count - replay * 7)
+                top_ids[live:] = -1
+                top_weights[live:] = 0
+                graph.replay()
+            else:
+                live = count
+            torch.cuda.synchronize()
+            observed = actual[:count].float()
+            expected = reference[rank * 4 + indices].to(torch.bfloat16).float()
+            expected[live:] = 0
+            assert torch.isfinite(observed).all(), (case, rank, "non-finite output")
+            relative_l2 = ((observed - expected).norm() / expected.norm().clamp_min(1e-10)).item()
+            max_scaled_error = ((observed - expected).abs().max() / expected.abs().max().clamp_min(1e-10)).item() if count else 0.0
+            print(json.dumps({"case": case, "replay": replay, "rank": rank, "tokens": count, "live_tokens": live, "relative_l2": relative_l2, "max_scaled_error": max_scaled_error, "workspace_bytes": buf.buffer.numel()}), flush=True)
+            # Same tolerances as the validated prefill kernel; no missing or
+            # double routing weights, stale graph inputs, or misplaced scales.
+            assert relative_l2 < 0.025 and max_scaled_error < 0.08, (case, rank, relative_l2, max_scaled_error)
+            dist.barrier()
     if rank == 0:
-        print("PASS: SM90 MegaMoE EP4 numerical gate; original FP8 scales and late FP32 combine", flush=True)
+        print("PASS: SM90 MegaMoE EP4 numerical gate; original FP8 scales, late FP32 combine, changing masked Decode graph inputs", flush=True)
     dist.destroy_process_group()
 
 

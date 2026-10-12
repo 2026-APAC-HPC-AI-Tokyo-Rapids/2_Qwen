@@ -64,15 +64,15 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
-def test_sglang_launch_uses_three_dp4_ep4_groups_and_decode_tp4(tmp_path: Path) -> None:
+def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert "#SBATCH -t 00:17:00" in source
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
-    assert config["decode_max_total_tokens"] == 1572864
+    assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
     assert config["decode_max_running_requests"] == 128
-    assert config["decode_max_running_requests"] + config["decode_extra_slots"] >= config["concurrency"]
-    assert max(config["decode_cuda_graph_bs"]) == config["decode_max_running_requests"]
+    assert config["decode_max_running_requests"] + config["decode_extra_slots"] * config["decode_dp_size"] >= config["concurrency"]
+    assert max(config["decode_cuda_graph_bs"]) == config["decode_max_running_requests"] // config["decode_dp_size"]
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
@@ -113,7 +113,7 @@ def test_sglang_launch_uses_three_dp4_ep4_groups_and_decode_tp4(tmp_path: Path) 
         assert host_ip == ("192.0.2.1" if name in {"prefill-0", "prefill-1"} else "192.0.2.2")
         observed[name] = argv[argv.index("-w") + 1]
         for flag, key in {"--ep-size": "ep_size", "--kv-cache-dtype": "kv_cache_dtype", "--nccl-port": "nccl_port", "--max-total-tokens": "max_total_tokens"}.items():
-            expected = str(int(port) + 1000) if key == "nccl_port" else str(4 if prefill and key == "ep_size" else archived[fixture_port][key])
+            expected = str(int(port) + 1000) if key == "nccl_port" else str(4 if key == "ep_size" else archived[fixture_port][key])
             # Decode appends a larger --max-total-tokens after the shared default; SGLang keeps the last value.
             value = flags[len(flags) - 1 - flags[::-1].index(flag) + 1]
             assert value == (str(config["decode_max_total_tokens"]) if key == "max_total_tokens" and not prefill else expected)
@@ -136,6 +136,15 @@ def test_sglang_launch_uses_three_dp4_ep4_groups_and_decode_tp4(tmp_path: Path) 
             assert "--enable-dp-attention" in flags and "--disable-cuda-graph" in flags
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
         else:
+            assert flags[flags.index("--dp-size") + 1] == "4"
+            assert "--enable-dp-attention" in flags and "--enable-dp-lm-head" in flags
+            assert flags[flags.index("--moe-dense-tp-size") + 1] == "1"
+            assert flags[flags.index("--moe-a2a-backend") + 1] == "megamoe"
+            assert flags[flags.index("--moe-runner-backend") + 1] == "deep_gemm"
+            assert "--speculative-moe-a2a-backend" not in flags
+            assert "--speculative-moe-runner-backend" not in flags
+            assert flags[flags.index("--dist-init-addr") + 1] == "127.0.0.1:33000"
+            assert "--disable-cuda-graph" not in flags
             assert flags[flags.index("--disaggregation-decode-extra-slots") + 1] == str(config["decode_extra_slots"])
             start = flags.index("--cuda-graph-bs-decode") + 1
             assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
