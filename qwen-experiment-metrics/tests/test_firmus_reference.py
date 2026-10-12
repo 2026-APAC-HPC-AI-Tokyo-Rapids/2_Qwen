@@ -164,7 +164,7 @@ def test_trtllm_launch_matches_recipe_layout(tmp_path: Path) -> None:
     assert len(workers) == 7
     assert sum(4 if "--gres=gpu:4" in argv else 2 for argv in workers) == 16
     assert all("--container-image=/trtllm" in argv for argv in workers)
-    assert all(f"--container-mounts=/fixture,{tmp_path}/source/trtllm-openai_protocol.py:/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:ro" in argv for argv in workers)
+    assert all(f"--container-mounts=/fixture,{tmp_path}/draft:/draft:ro,{tmp_path}/source/trtllm-openai_protocol.py:/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:ro" in argv for argv in workers)
     patch = (ROOT / "platforms/firmus/framework-comparison/trtllm-max-completion-tokens.patch").read_text()
     assert patch.startswith("--- a/tensorrt_llm/serve/openai_protocol.py\n+++ b/tensorrt_llm/serve/openai_protocol.py\n")
     added = [line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++")]
@@ -186,6 +186,10 @@ def test_trtllm_launch_matches_recipe_layout(tmp_path: Path) -> None:
     assert "tensor_parallel_size: 2" in yaml_text and "moe_tensor_parallel_size: 2" in yaml_text and "dtype: fp8" in yaml_text and "disable_overlap_scheduler: true" in yaml_text
     yaml_text = source.split("cat >\"${ROOT}/source/generation.yaml\" <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     assert "tensor_parallel_size: 4" in yaml_text and "moe_expert_parallel_size: 4" in yaml_text and "dtype: fp8" in yaml_text and "disable_overlap_scheduler: false" in yaml_text
+    for role in ("context", "generation"):
+        role_yaml = source.split(f"cat >\"${{ROOT}}/source/{role}.yaml\" <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+        assert "speculative_config:\n  decoding_type: Eagle3\n  max_draft_len: 3\n  speculative_model_dir: /draft" in role_yaml
+    assert config["speculation"]["steps"] == 3 and config["speculation"]["draft_tokens"] == 4
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
     assert client_argv[-2:] == [str(tmp_path), str(config["concurrency"])] and "--cpus-per-task=32" in client_argv
 

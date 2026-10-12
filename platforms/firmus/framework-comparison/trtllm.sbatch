@@ -8,7 +8,7 @@
 #SBATCH --no-requeue
 #SBATCH -o runs/trtllm-%j.out
 #SBATCH -e runs/trtllm-%j.err
-# TensorRT-LLM PD with the layout of NVIDIA's Dynamo Qwen3-235B-A22B-FP8 Hopper recipe:
+# TensorRT-LLM PD with the layout of NVIDIA's Dynamo Qwen3-235B-A22B-FP8 Hopper recipe plus the EAGLE3 draft used with SGLang:
 # six TP2 context workers (four on head, two on tail) and one TP4/EP4 generation worker on tail.
 # Native trtllm-serve workers and disaggregated gateway, official 60/120/30 client.
 set -euo pipefail
@@ -39,7 +39,7 @@ mounts() {
 }
 # Workers and gateway use the provisioned max_completion_tokens patch of the image's protocol module.
 trtllm_mounts() {
-  echo "$(mounts "$1"),${ROOT}/source/trtllm-openai_protocol.py:/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:ro"
+  echo "$(mounts "$1"),${ROOT}/draft:/draft:ro,${ROOT}/source/trtllm-openai_protocol.py:/usr/local/lib/python3.12/dist-packages/tensorrt_llm/serve/openai_protocol.py:ro"
 }
 
 wait_http() {
@@ -63,8 +63,8 @@ wait_http() {
 }
 
 echo "[$(date -Iseconds)] job=${SLURM_JOB_ID} user=$(whoami)"
-echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P6TP2-D1TP4EP4 engine=trtllm kv=fp8 speculation=none"
-test -r "${TRTLLM}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && test -s "${ROOT}/source/trtllm-openai_protocol.py"
+echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P6TP2-D1TP4EP4 engine=trtllm kv=fp8 speculation=EAGLE3-steps3"
+test -r "${TRTLLM}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && test -s "${ROOT}/source/trtllm-openai_protocol.py" && test -s "${ROOT}/draft/model.safetensors"
 mkdir -p "${ART}"
 worker_pids=()
 cleanup_all() {
@@ -81,6 +81,7 @@ for worker in 0 1 2 3; do printf 'prefill-%s\t%s\t%s\t2\n' "${worker}" "${HEAD_I
 for worker in 4 5; do printf 'prefill-%s\t%s\t%s\t2\n' "${worker}" "${TAIL_IP}" "$((30100 + worker))"; done >>"${ROOT}/source/worker-endpoints.tsv"
 printf 'decode-0\t%s\t30200\t4\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
 
+# Same EAGLE3 draft and depth as the SGLang runs (steps 3, one token per step); both roles carry it as TensorRT-LLM disaggregation requires.
 # Engine settings follow the recipe's prefill.yaml/decode.yaml; block reuse stays off because cache-bust defeats it.
 # Generation batch and CUDA graphs stop at 256 (recipe 512): c128 never needs more, and capture time counts against the 17-minute limit.
 cat >"${ROOT}/source/context.yaml" <<'EOF'
@@ -102,6 +103,10 @@ cuda_graph_config:
   max_batch_size: 2
 disable_overlap_scheduler: true
 print_iter_log: true
+speculative_config:
+  decoding_type: Eagle3
+  max_draft_len: 3
+  speculative_model_dir: /draft
 EOF
 cat >"${ROOT}/source/generation.yaml" <<'EOF'
 backend: pytorch
@@ -122,6 +127,10 @@ cuda_graph_config:
   max_batch_size: 256
 disable_overlap_scheduler: false
 print_iter_log: false
+speculative_config:
+  decoding_type: Eagle3
+  max_draft_len: 3
+  speculative_model_dir: /draft
 EOF
 {
   printf 'hostname: 0.0.0.0\nport: %s\nbackend: pytorch\ncontext_servers:\n  num_instances: 6\n  urls:\n' "${R_PORT}"

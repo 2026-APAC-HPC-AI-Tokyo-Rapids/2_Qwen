@@ -55,7 +55,7 @@ if [[ "$(jq -r .workload "${config}")" == official ]]; then
   for file in config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json; do cp -L "${tokenizer}/${file}" "${tokenizer_cache}/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e/${file}"; done
   printf '%s' ac9c66cc9b46af7306746a9250f23d47083d689e >"${tokenizer_cache}/refs/main"
 fi
-if [[ "${framework}" == sglang ]]; then
+if [[ "${framework}" == sglang || "${framework}" == trtllm ]]; then
   jq -e '.speculation.algorithm == "EAGLE3" and .speculation.steps == 3 and .speculation.draft_tokens == 4' "${config}" >/dev/null
   export HF_HUB_DISABLE_XET=1 UV_CONCURRENT_BUILDS=1 UV_CONCURRENT_DOWNLOADS=1 UV_CONCURRENT_INSTALLS=1
   uvx --from 'huggingface_hub==0.36.0' hf download "$(jq -er '.speculation.draft_repository' "${config}")" config.json README.md model.safetensors --revision "$(jq -er '.speculation.draft_revision' "${config}")" --local-dir "${runtime_dir}/draft" --max-workers 1
