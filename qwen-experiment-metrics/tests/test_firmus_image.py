@@ -10,14 +10,16 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("bad_patch", [False, True])
-def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(tmp_path, bad_patch):
+@pytest.mark.parametrize("corruption", [None, "hash", "missing_dp_query"])
+def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(tmp_path, corruption):
     embedded = tmp_path / "embedded"
     embedded.mkdir()
-    patches = ["patches/sglang/firmus-staged-eagle-kv.patch", "patches/sglang/qwen3-sm90-megamoe.patch"]
+    patches = ["patches/sglang/firmus-staged-eagle-kv.patch", "patches/sglang/qwen3-sm90-megamoe.patch", "patches/sglang/firmus-dp-rank-query.patch"]
     manifest = {"applied_patches": [{"path": p, "sha256": hashlib.sha256((ROOT / p).read_bytes()).hexdigest()} for p in patches]}
-    if bad_patch:
+    if corruption == "hash":
         manifest["applied_patches"][0]["sha256"] = "0" * 64
+    elif corruption == "missing_dp_query":
+        manifest["applied_patches"].pop()
     (embedded / "manifest.json").write_text(json.dumps(manifest))
     (embedded / "sm90-megamoe-build.json").write_text(json.dumps({"version": "0.1.5", "header_sha256": "5479807104bf1aeed4cc3ecc8ce57d2a835d68457f9cf4962ef3f15cc176e8d2", "patch_sha256": hashlib.sha256((ROOT / "patches/deep-gemm/sm90-late-topk-fp32.patch").read_bytes()).hexdigest(), "combine_accumulator": "FP32", "compiled_geometries": [[64, 128, 256, True], [128, 128, 256, False], [128, 256, 512, False]]}))
     unpack = tmp_path / "unsquashfs"
@@ -26,9 +28,9 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
     destination = tmp_path / "metadata"
     destination.mkdir()
     result = subprocess.run(["bash", str(ROOT / "scripts/check-firmus-image.sh"), "/fixture.sqsh", str(destination), str(ROOT)], env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "EMBEDDED": str(embedded)}, capture_output=True, text=True, check=False)
-    assert (result.returncode == 0) is not bad_patch, result.stderr
+    assert (result.returncode == 0) is (corruption is None), result.stderr
     assert not list(destination.glob(".image-metadata.*"))
-    if not bad_patch:
+    if corruption is None:
         assert json.loads((destination / "image-manifest.json").read_text()) == manifest
 
 

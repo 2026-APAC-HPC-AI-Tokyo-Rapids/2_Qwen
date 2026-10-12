@@ -1,0 +1,69 @@
+diff --git a/python/sglang/srt/disaggregation/decode.py b/python/sglang/srt/disaggregation/decode.py
+--- a/python/sglang/srt/disaggregation/decode.py
++++ b/python/sglang/srt/disaggregation/decode.py
+@@ -23,6 +23,7 @@
+ import logging
+ import time
+ from collections import deque
++from concurrent.futures import Future, ThreadPoolExecutor
+ from dataclasses import dataclass
+ from http import HTTPStatus
+ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+@@ -341,6 +342,12 @@
+         self.queue: List[DecodeRequest] = []
+         self.retracted_queue: List[Req] = []
+         self.pending_reqs: List[DecodeRequest] = []
++        # One outstanding rank lookup per prefill address. HTTP waits must not
++        # stall token generation for the requests already in the running batch.
++        self._prefill_dp_rank_queries: Dict[str, Future] = {}
++        self._prefill_dp_rank_executor = ThreadPoolExecutor(
++            max_workers=4, thread_name_prefix="prefill-dp-rank"
++        )
+         self._ensure_retry_count: Dict[str, int] = {}
+         self._max_ensure_retries: int = 15  # scheduling cycles
+         self._ensure_last_attempt_time: Dict[str, float] = {}
+@@ -848,9 +855,35 @@
+ 
+         return ready, remaining
+ 
++    def _query_prefill_dp_ranks(self, bootstrap_addr: str, rooms: List[int]):
++        future = self._prefill_dp_rank_queries.get(bootstrap_addr)
++        if future is None:
++            future = self._prefill_dp_rank_executor.submit(
++                CommonKVReceiver.query_prefill_dp_ranks, bootstrap_addr, rooms
++            )
++            self._prefill_dp_rank_queries[bootstrap_addr] = future
++        if not future.done():
++            return {}
++        del self._prefill_dp_rank_queries[bootstrap_addr]
++        return future.result()
++
+     def _resolve_pending_reqs(self) -> None:
+         """Batch-resolve prefill_dp_ranks for pending requests and initialize receivers."""
++        # AbortReq can arrive while HTTP is in flight, before pop_preallocated
++        # has cleared the receiver. Do not restart its handshake on completion.
++        self.pending_reqs = [
++            req
++            for req in self.pending_reqs
++            if not isinstance(req.req.finished_reason, FINISH_ABORT)
++        ]
+         if not self.pending_reqs:
++            # Aborted requests need no result; retain only still-running calls
++            # so a new request cannot submit a duplicate for the same address.
++            self._prefill_dp_rank_queries = {
++                addr: future
++                for addr, future in self._prefill_dp_rank_queries.items()
++                if not future.done()
++            }
+             return
+ 
+         # Group pending requests by bootstrap_addr
+@@ -875,7 +908,7 @@
+             # Pass 2: resolve dp rank for addrs whose info is available
+             if need_query:
+                 rooms = [decode_req.req.bootstrap_room for decode_req in need_query]
+-                room_to_rank = CommonKVReceiver.query_prefill_dp_ranks(
++                room_to_rank = self._query_prefill_dp_ranks(
+                     bootstrap_addr, rooms
+                 )
+                 for decode_req in need_query:

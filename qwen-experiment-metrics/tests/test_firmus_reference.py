@@ -120,6 +120,8 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
         assert flags[flags.index("--chunked-prefill-size") + 1] == ("16384" if prefill else "8192")
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
         assert flags[flags.index("--page-size") + 1] == "64"
+        assert flags[flags.index("--load-balance-method") + 1] == "total_requests"
+        assert flags[flags.index("--load-snapshot-publish-interval") + 1] == "1"
         assert flags[flags.index("--max-running-requests") + 1] == str(config["concurrency"] if prefill else config["decode_max_running_requests"])
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
