@@ -1,6 +1,6 @@
 --- a/tensorrt_llm/serve/openai_protocol.py
 +++ b/tensorrt_llm/serve/openai_protocol.py
-@@ -1245,6 +1245,18 @@
+@@ -1245,6 +1245,27 @@
  
      @model_validator(mode="before")
      @classmethod
@@ -12,6 +12,15 @@
 +            data = dict(data)
 +            value = data.pop("max_completion_tokens")
 +            data.setdefault("max_tokens", value)
++        # One-model speculative decoding rejects min_length. With ignore_eos
++        # and no stop condition, min_tokens equal to max_tokens cannot change
++        # the output (generation always runs to max_tokens), so drop it.
++        if (isinstance(data, dict) and data.get("ignore_eos") is True
++                and not data.get("stop") and not data.get("stop_token_ids")
++                and data.get("min_tokens") is not None
++                and data.get("min_tokens") == data.get("max_tokens")):
++            data = dict(data)
++            data.pop("min_tokens")
 +        return data
 +
 +    @model_validator(mode="before")

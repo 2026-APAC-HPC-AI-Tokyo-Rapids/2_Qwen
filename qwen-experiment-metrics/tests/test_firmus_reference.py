@@ -171,6 +171,7 @@ def test_trtllm_launch_matches_recipe_layout(tmp_path: Path) -> None:
     assert not [line for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")]
     assert 'value = data.pop("max_completion_tokens")' in added[-1 - added[::-1].index('            value = data.pop("max_completion_tokens")')] and '            data.setdefault("max_tokens", value)' in added
     provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
+    assert '            data.pop("min_tokens")' in added and 'data.get("min_tokens") == data.get("max_tokens")' in patch and 'data.get("ignore_eos") is True' in patch
     assert "a6fccceb62365461b275bf860cc1b1c77858a8061622535ef1659528bce05783" in provision and "trtllm-max-completion-tokens.patch" in provision
     layout = {argv[argv.index("bash") + 2]: (argv[argv.index("-w") + 1], argv[argv.index("bash") + 3:argv.index("bash") + 6]) for argv in workers}
     assert layout == {**{f"prefill-{i}": ("node0", [str(30100 + i), "/model", "2"]) for i in range(4)}, **{f"prefill-{i}": ("node1", [str(30100 + i), "/model", "2"]) for i in (4, 5)}, "decode-0": ("node1", ["30200", "/model", "4"])}
