@@ -1,0 +1,53 @@
+{
+  "native_source_sha256": {
+    "model_executor__layers__fused_moe__oracle__fp8.py": "245bd36c285df1e6f7c51e52dcda31ad247894577a9f8d765613c2c2feae9aee",
+    "model_executor__layers__fused_moe__experts__deep_gemm_moe.py": "16911a64a72eafc26a1bcb544a91f90144d85dc41e3ee57cf20e89925227bbb7",
+    "model_executor__layers__fused_moe__experts__triton_moe.py": "806fbccfe30f5fbd578acf773add99bdf022b12d617958bd6281aef6de369701"
+  },
+  "simulated_hopper_ep1_auto_priority": "TRITON",
+  "explicit_prefill_backend_mapping": "DEEPGEMM",
+  "native_deepgemm_block_fp8_quant_scheme_supported": true,
+  "native_decoder_tp4_ep4_plan": {
+    "attention_tp": 4,
+    "moe_tp": 1,
+    "moe_ep": 4,
+    "uses_all2all_kernels": false,
+    "expert_intermediate_per_rank": 1536,
+    "local_experts": 32
+  },
+  "prefill_shape_checks": [
+    {
+      "tokens": 128,
+      "tp2_expert_intermediate": 768,
+      "hidden": 4096,
+      "aligned": true
+    },
+    {
+      "tokens": 256,
+      "tp2_expert_intermediate": 768,
+      "hidden": 4096,
+      "aligned": true
+    },
+    {
+      "tokens": 1024,
+      "tp2_expert_intermediate": 768,
+      "hidden": 4096,
+      "aligned": true
+    },
+    {
+      "tokens": 4096,
+      "tp2_expert_intermediate": 768,
+      "hidden": 4096,
+      "aligned": true
+    },
+    {
+      "tokens": 8192,
+      "tp2_expert_intermediate": 768,
+      "hidden": 4096,
+      "aligned": true
+    }
+  ],
+  "small_shape_alignment_fails_without_e8m0_bypass": true,
+  "decoder_n384_below_non_e8m0_deepgemm_heuristic_threshold": true,
+  "limitations": "Exact image function bodies with simulated Hopper/platform/package dependencies and alignment128. Not actual GPU kernel selection, performance, CUDA capture, package API availability, or accuracy validation."
+}
