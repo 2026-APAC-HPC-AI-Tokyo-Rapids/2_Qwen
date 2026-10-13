@@ -72,13 +72,14 @@ if [[ "${PROFILE}" == true ]]; then
   install -m 0644 "${GITHUB_WORKSPACE}/scripts/validate-firmus-profile.py" "${runtime_dir}/scripts/"
   command -v ar >/dev/null
   package="${runtime_dir}/nsight.deb"
-  curl --fail --location --show-error --max-time 600 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/nsight-systems-2025.3.2_2025.3.2.474-1_amd64.deb -o "${package}"
-  printf 'c7cfe27e2250eb91e1a67e7feb5f2c490c7f598e3b3a3d047aff000bc49f9d6b  %s\n' "${package}" | sha256sum --check >"${runtime_dir}/source/nsys-package.sha256"
+  curl --fail --location --show-error --max-time 600 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/nsight-systems-2026.3.2_2026.3.2.476-1_amd64.deb -o "${package}"
+  printf 'e9bf0ff9c613ff5545095a4177676a9579cb666e78c8621c3792f3559e2c1690  %s\n' "${package}" | sha256sum --check >"${runtime_dir}/source/nsys-package.sha256"
   install -d -m 0755 "${runtime_dir}/nsys-extract"
-  ar p "${package}" data.tar.gz | tar -xz -C "${runtime_dir}/nsys-extract" --wildcards './opt/nvidia/nsight-systems/2025.3.2/bin/*' './opt/nvidia/nsight-systems/2025.3.2/target-linux-x64/*' './opt/nvidia/nsight-systems/2025.3.2/host-linux-x64/*' './opt/nvidia/nsight-systems/2025.3.2/EULA.txt'
-  mv "${runtime_dir}/nsys-extract/opt/nvidia/nsight-systems/2025.3.2" "${runtime_dir}/nsys"
+  ar p "${package}" data.tar.gz | tar -xz -C "${runtime_dir}/nsys-extract" --wildcards './opt/nvidia/nsight-systems/2026.3.2/bin/*' './opt/nvidia/nsight-systems/2026.3.2/target-linux-x64/*' './opt/nvidia/nsight-systems/2026.3.2/host-linux-x64/*' './opt/nvidia/nsight-systems/2026.3.2/EULA.txt'
+  mv "${runtime_dir}/nsys-extract/opt/nvidia/nsight-systems/2026.3.2" "${runtime_dir}/nsys"
   rm -rf -- "${package}" "${runtime_dir}/nsys-extract"
   test -x "${runtime_dir}/nsys/bin/nsys"
+  "${runtime_dir}/nsys/bin/nsys" --version >"${runtime_dir}/source/nsys-version.txt"
   cp "${runtime_dir}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/capture-firmus-profile.sh" "${runtime_dir}/scripts/validate-firmus-profile.py" "${runtime_dir}/source/"
 fi
 cp "${runtime_dir}/scripts/submit.sbatch" "${runtime_dir}/scripts/official-aiperf.sh" "${runtime_dir}/vllm-proxy.py" "${runtime_dir}/source/"

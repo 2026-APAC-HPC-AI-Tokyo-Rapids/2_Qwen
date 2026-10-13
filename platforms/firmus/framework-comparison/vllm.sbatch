@@ -180,6 +180,6 @@ if [[ "${PROFILE:-false}" == true ]]; then
   srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" profile >"${ROOT}/profile/client/aiperf.log" 2>&1
   wait "${profile_capture_pid}"
   profile_capture_pid=
-  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-image="${VLLM}" --container-mounts="$(mounts profile-validation)" /usr/bin/python3 "${ROOT}/scripts/validate-firmus-profile.py" "${ROOT}" >"${ROOT}/logs/profile-validation.log" 2>&1
+  # CPU-only export/validation runs on the login runner after Slurm is terminal.
 fi
 touch "${ROOT}/run-success"

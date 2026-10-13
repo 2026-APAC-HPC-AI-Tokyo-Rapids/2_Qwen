@@ -84,6 +84,18 @@ def test_profile_validation_explains_idle_worker_capture(tmp_path: Path) -> None
         VALIDATE(database, 2)
 
 
+@pytest.mark.parametrize("warning", ["Not all CUDA events might have been collected.", "Installed CUDA driver version (13.3) is not supported by this build of Nsight Systems."])
+def test_profile_validation_rejects_incomplete_trace_despite_all_ranks(tmp_path: Path, warning: str) -> None:
+    database = tmp_path / "incomplete.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (deviceId INTEGER)")
+        connection.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?)", [(0,), (1,)])
+        connection.execute("CREATE TABLE DIAGNOSTIC_EVENT (severity INTEGER, text TEXT)")
+        connection.execute("INSERT INTO DIAGNOSTIC_EVENT VALUES (2, ?)", (warning,))
+    with pytest.raises(ValueError, match="incomplete CUDA capture"):
+        VALIDATE(database, 2)
+
+
 def test_summary_marks_profile_score_and_handles_missing_results(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("GITHUB_RUN_ID", "123")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")

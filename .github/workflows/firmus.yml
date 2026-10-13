@@ -149,6 +149,10 @@ jobs:
         shell: bash
         run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-qwen-job.sh
 
+      - name: 終了したprofileをlogin runnerで検証
+        if: inputs.profile && !inputs.dynamo
+        run: python3 "${RUNTIME_DIR}/scripts/validate-firmus-profile.py" "${RUNTIME_DIR}" --nsys "${RUNTIME_DIR}/nsys/bin/nsys" >"${RUNTIME_DIR}/logs/profile-validation.log" 2>&1
+
       - name: ログ・AIPerf・profile・来歴をrunnerへ回収
         id: collect
         if: always() && (steps.submit.outputs.job_id != '' || steps.recover.outputs.job_id != '')
@@ -161,13 +165,17 @@ jobs:
           retry_read() {
             local attempt status
             for attempt in 1 2 3 4 5 6; do
-              if timeout --foreground 180 "$@"; then return 0; else status=$?; fi
+              if timeout --foreground "${read_timeout}" "$@"; then return 0; else status=$?; fi
               if (( attempt == 6 )); then return "${status}"; fi
               printf 'Artifact read failed (exit %s); retry in 30s (%s/6).\n' "${status}" "${attempt}" >&2
               sleep 30
             done
           }
-          for part in logs profile results source; do retry_read firmus-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"; done
+          read_timeout=180
+          for part in logs profile results source; do
+            if [[ "${part}" == profile ]]; then read_timeout=900; else read_timeout=180; fi
+            retry_read firmus-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"
+          done
           marker=$(retry_read firmus-shell "if test -e '${RUNTIME_DIR}/run-success'; then echo present; else echo absent; fi")
           if [[ "${marker}" == present ]]; then retry_read firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; else [[ "${marker}" == absent ]]; fi
 
