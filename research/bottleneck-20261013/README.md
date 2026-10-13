@@ -1,0 +1,60 @@
+# 会話履歴・raw計測の再監査（2026-10-13）
+
+検証進行中。投入だけで性能改善とは判定しない。
+
+## 調査範囲と正本
+
+ローカルCodexの281履歴ファイルを検索し167候補を抽出、自宅サーバーの69履歴から13候補を抽出した。候補には本作業や無関係な言及も含む。既存 `research/optimization-history/` の横断索引と関連会話の結論を突き合わせ、最新判断に関係する会話本文を精読した。「全履歴を一行ずつ読んだ」という意味ではない。
+
+自宅サーバーのdiscrawl SQLiteには9,432 messages、123 channels、98 threadsがあり、最終同期は2026-10-13T03:50:32Z。全messageをローカル一時領域へ読み出して検索し、252 keyword hitsと関連thread文脈を確認した。特に最新ジョブのnsys解析thread `1558884373988905121` を参照した。OpenCodeの該当directoryにある3 sessionsも確認。古い会話の「decodeはHBM非飽和／CPU待ち」という解釈を、現行vLLMへそのまま移さない。私的な会話全文はリポジトリへ複製しない。
+
+raw正本は `ssh -o BatchMode=yes archive-host` の `/srv/qwen-artifacts/<run>/1/`。5 runsの431 files、約2.69 GBをSHA256SUMSと全バイト照合し、不一致なし（[artifact-audit.json](artifact-audit.json)）。基準4 runsは各commitのparserを取り出して再実行し、保存済みscoreと一致（[baseline-replay.json](baseline-replay.json)）。このparserは公開採点条件を実装したリポジトリのparserであり、主催者提供の完全accuracy評価ではない。
+
+## 定常性能とSLA
+
+| Actions run | 構成 | good tokens/s | good request fraction | 解釈 |
+|---|---|---:|---:|---|
+| [38194609674](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38194609674) | vLLM c104 / proposals 3 | 4710.02 | 98.44% | 非profile基準 |
+| [38331343958](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38331343958) | vLLM c104 / proposals 2 | 4732.87 | 98.72% | +0.485%の単一比較。優位性未確定 |
+| [38034080121](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38034080121) | SGLang c104 | 4429.95 | 93.33% | 別engine構成の参考値 |
+| [38164365415](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38164365415) | SGLang c192 / MegaMoE | 0 | 36.88% | raw throughputが高くてもSLA不適格 |
+
+vLLM基準はFirmus g1/g4、16 H200、P6×TP2 + D1×TP4、EP1、FA3、FP8 KV、公式FP8 target、BF16 EAGLE3 draft。同一の固定image、target/tokenizer/draft revisionsを使う。公式ISL4000 / OSL200、warmup60 / measurement120 / grace30、TTFT≤3000ms、平均ITL≤20ms、good fraction≥0.90で比較する。2 proposalsではITLが16.51→15.23msに改善する一方、TTFTは1000→1245msに増加した。[request-analysis.json](request-analysis.json) の全リクエスト再集計では、ITL違反8→0件、TTFT違反38→38件。decode duration平均3286→3032msの改善がTTFT増加でほぼ相殺され、平均request latencyは4286→4276msに留まる。少ない投機が全体のgoodputを必ず増やすとはいえない。
+
+## GPU内の時間配分
+
+[38268462101](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38268462101) の7 native Nsight reportsをCPUで再exportした。[analyze_nsys.py](analyze_nsys.py) は各workerの全rankに共通する時間窓を選び、GPU別の区間unionとkernel duration sumを分ける。結果は `vllm-decode-profile.json` と `vllm-prefill-*.json`。
+
+| recorded kernel durationの内訳 | Decode | Prefill |
+|---|---:|---:|
+| Triton fused MoE | 43.35% | 47.7–48.1% |
+| FA3 attention（device_kernel、demangled名で照合） | 16.89% | 約10.4% |
+| TP all-reduce | 12.66%（custom 2-stage） | 9.3–9.9%（symm two-shot） |
+| dense FP8 GEMM | 5.42% | 約8.4% |
+| per-token group quantization | 4.81% | 7.4–7.6% |
+
+Decodeは共通5.297秒窓で各GPUのrecorded kernel unionが96.98–97.06%、kernel recordsの約92.5%がCUDA Graph nodeに属する。単にPython呼び出しを減らせば大幅改善する、という根拠にはならない。MoEはP/DともTRITON backend。DeepGEMMのログだけを見てMoEもDeepGEMMと判断すると誤る。
+
+**制限:** 旧収録toolにはdriver13.3非対応とCUDA event欠損の警告がある。未記録の空白をCPU待ちと断定できず、duration shareはcritical path上の削減率でもない。GPU utilization、電力、memory utilizationだけではHBM帯域飽和／演算飽和を区別できない。これを解消する再収録を実施中。
+
+優先候補はMoEのtoken tileとDecodeのcollective。TP4のMoE中間幅は384。image内のH200向け設定はbatch256/512でM tile64を使うが、現行の小さなexpert batchではpaddingの影響が候補になる。実際のexpert分布・改善率はまだ未計測。activation+quantization融合も残るが、現行E8M0 scale条件ではnative融合が使われない。scale方式をまとめて変更するとdense GEMMも変わるため、まず限定した要因で比較する。
+
+## 実験全体の時間
+
+基準run 38331343958は配備115秒、Slurm割当12分51秒、READY473秒。scheduler accountingではSubmit01:19:38Z、Start03:02:26Z、End03:15:17Zで、queue待ちは1時間42分48秒。成果物回収60秒、Actions artifact保存52秒、実行環境削除25秒、自宅archive job25秒。queue待ちとGPU起動を混同しない。
+
+Decodeのtarget重みload21.92秒、model load全体28.57秒に対し、engine initialization275.06秒（compilation74.59秒を内包）。Graph収録68秒と30秒もこの初期化の内数。Prefillの重みload30–32秒、engine initialization132–168秒。これらは並行workerの値なので足し合わせて総時間にはしない。前runでもDecode initialization267.31秒／compilation74.32秒で、起動最適化には繰返し根拠がある。現在のvLLM配備でコピーしているcacheは主に `.tensorrt_llm` で、torch.compile cacheがrunを跨いで再利用されることは確認できていない。
+
+旧profile runは有効なbenchとnative reports生成後、CPU exportをGPU割当内で続けて17分枠を超えた。再収録branchでexportをterminal確認後のlogin runnerへ移し、GPUを使用しない処理で割当を消費しないようにした。既存rawは回収済みで再ビルド不要。
+
+## 今回の実装・検証
+
+すべて `f85c30b51958d4aaa8c093227d28a9329751e8bb` を親とする別commit。serving image／モデルは固定。mainへの採用は反復結果で判定する。
+
+| commit / branch | 単独で変える要因 | Actions |
+|---|---|---|
+| `3841c582` / `perf/vllm-decode-symm-20261013` | Decodeのcustom/FlashInfer dispatchを外しSYMM_MEMへ | [38345930105](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38345930105) |
+| `5b96e630` / `perf/vllm-decode-tile32-20261013` | Decodeだけnative tuned configのbatch256/512のM tile64→32 | [38346456470](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38346456470) |
+| `a54355ae` / `perf/vllm-profile-compatible-20261013` | 同一baselineのprofile収録をNsight2026.3.2に更新、CPU exportを割当外へ | [38346936664](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38346936664) |
+
+各branchでCPU単体テスト一式、静的検査、shell構文を通し、Actionsのvalidateも成功。profile validatorにはCUDA欠損・非対応driverの実警告を拒否するfixtureを追加した。今回の成果物は未回収、性能採否は未判定。既存の他者ジョブには介入しない。
