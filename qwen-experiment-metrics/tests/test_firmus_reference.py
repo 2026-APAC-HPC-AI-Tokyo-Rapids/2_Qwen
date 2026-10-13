@@ -176,7 +176,7 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
     # Exercise actual shell argument construction without requiring GPUs or HCAs.
     probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
     probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "${worker_command[@]}"\n'
-    for role, tp, limit in [("prefill", 2, 104), ("decode", 4, 256)]:
+    for role, tp, limit in [("prefill", 2, config["concurrency"]), ("decode", 4, 256)]:
         options = ["--speculative-config", '{"method":"eagle3","model":"/draft","num_speculative_tokens":2}', "--max-num-seqs", str(limit)]
         if role == "prefill":
             options += ["--disable-custom-all-reduce", "--moe-backend", "auto"]
