@@ -58,3 +58,9 @@ Decodeのtarget重みload21.92秒、model load全体28.57秒に対し、engine i
 | `a54355ae` / `perf/vllm-profile-compatible-20261013` | 同一baselineのprofile収録をNsight2026.3.2に更新、CPU exportを割当外へ | [38346936664](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38346936664) |
 
 各branchでCPU単体テスト一式、静的検査、shell構文を通し、Actionsのvalidateも成功。profile validatorにはCUDA欠損・非対応driverの実警告を拒否するfixtureを追加した。今回の成果物は未回収、性能採否は未判定。既存の他者ジョブには介入しない。
+
+## ジョブ数・占有時間の制約
+
+ジョブ数と時間がscheduler優先順位へ影響するため、追加投入は採否に必要な最小限に限定する。投入済み3本の結果を見る前に総当たりや反復を追加しない。通常benchの実測12分39秒／12分51秒を根拠に、今後の同等runは15分枠を目安にし、変更による起動コストも確認する。旧profileは開始20:48:26Z、capture_stopped21:04:35Zで収録停止まで16分09秒かかっていたため17分枠を維持する。CPU exportは割当外へ移した。その後、ユーザーが「待機中なら短縮版へ差し替える」を承認したため、profile 23087だけをPENDING状態フィルタで停止した。実行0秒・割当0ノード・Start=Noneを確認し、他の2実験は変更していない。
+
+ユーザー指摘を受け、短縮profile版 `f256abb` をCPU検証済み・`[skip ci]` で保存した。通常benchを省略し、診断用20/30/30・2,048入力候補・5秒収録のみとする。profile-only来歴と終了判定を分け、公式scoreを生成しない。承認後、commit `9815b6103b8068bd5f0a68d71754fdba1305d1eb` から [短縮profile 38350383403](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38350383403) を1本だけ差し替え投入した。短縮版の上限は14分。旧run 38346936664はCANCELLEDを検知してfailureで終了したが、ログ・sourceのarchive、SHA256SUMS生成、実行環境削除は成功した。正本の `logs/logs/slurm-accounting.txt` は `23087|CANCELLED by 3014|0:0|00:00:00|0`。意図した未実行停止であり、計測失敗として扱わない。現在の優先度設定はFairShare寄与377、Age寄与0、使用量減衰半減期2日だったため、今後の追加比較は特に限定する。
