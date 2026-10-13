@@ -81,3 +81,18 @@ The runtime confirms TP dispatch order['SYMM_MEM','PYNCCL'] and disable_custom_a
 Verification retained AIPerf's native goodput field: multiplying it by200 exactly reproduces4734.019107963232. Raw per-request good count and fraction independently match2928/2966. Dividing that count by the separate benchmark_duration123.696518912 would give4734.167179082919 because the exported goodput implies123.700387904seconds. The tiny time-basis difference is recorded rather than substituting a new score or weakening the official validator; its precise internal origin was not established in this review.
 
 The three other dependencies remain pending in the latest monitor snapshot. No structural GPU job has been submitted; the dependency gate remains active. Team-start events alone need not wake the discussion chat; future notices should focus on terminal results, usable profile/collection completion, or required action.
+
+## Second dependency reviewed: decoder tile32
+
+Actions38346456470 attempt1 / Slurm23086 / exact5b96e630 ran on g1/g4, COMPLETED0:0 in12m49. All65canonical hashes passed. In-memory replay of the exact commit's repository parser including official-workload validation exactly reproduced4728.963066412307. Raw2958measured requests independently give2918good,38TTFTmisses,2ITLmisses,0overlap/errors/mismatches/cancellations. All seven effective configuration exports, exact graph modes/buckets and completed signatures, target/draft/image identities, accounting and run-success were independently checked. The archived E128/N384 H200 block-FP8 tuned file has BLOCK_SIZE_M32 at batch256/512; the decoder log explicitly confirms loading that exact runtime source path. Config-file loading does not measure the distribution of selected runtime shapes.
+
+| c104 / proposals2 | Good tok/s | Raw tok/s | Good fraction | TTFT ms | ITL ms |
+|---|---:|---:|---:|---:|---:|
+| Control38331343958 |4732.869877|4794.111177|98.719245%|1244.653060|15.234328|
+| Tile32 38346456470 |4728.963066|4793.698649|98.647735%|1102.871253|15.961312|
+
+Score-0.08254%,raw-0.00860%,TTFT-11.39%,ITL+4.77%. This is a single-run latency tradeoff with essentially unchanged throughput, not evidence for adopting tile32 or rejecting all MoE optimizations. Do not launch a tile sweep or add this setting to the prepared candidate.
+
+GitHub's exact job endpoint and connector both reported execution115129709912 completed/success while retaining stale in_progress/pending step fields. Finalized execution logs reach post-job cleanup at21:28:26UTC; archive job115549308158 completed successfully. Canonical completeness/checksums/run-success, empty GitHub artifact list and absence of exact team-owned staging pd-38346456470-1.Ct8GJGyWSp independently establish execution/collection/cleanup completion despite that metadata inconsistency. No team data or resource was modified.
+
+Two dependencies are now reviewed with no demonstrated throughput gain: generic decoder SYMM_MEM and tile32. Await compatible profile-only38350383403/23091 and SGLang DP4/EP4 MegaMoE38369214512/23120 before the prepared native-prefill DeepGEMM submission. The initial finite structural campaign remains authorized and active; no owned GPU job has yet been submitted.
