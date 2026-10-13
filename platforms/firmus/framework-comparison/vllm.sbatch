@@ -108,6 +108,11 @@ if [[ "$role" == prefill ]]; then
   KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer"}'
 else
   blocks=8192
+  # Compare the TP4 symmetric-memory collective with the measured custom path.
+  # Disable earlier dispatch choices so this tests the requested backend.
+  export VLLM_ALLREDUCE_USE_SYMM_MEM=1
+  export VLLM_ALLREDUCE_USE_FLASHINFER=0 VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=0
+  role_flags=(--disable-custom-all-reduce)
   KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}'
 fi
 UCX_IB=$(for d in /sys/class/infiniband/*; do

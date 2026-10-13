@@ -184,7 +184,8 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
             options += ["--compilation-config", '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":768}', "--cudagraph-capture-sizes", *[str(n * 3) for n in config["decode_cuda_graph_bs"] if n <= 256]]
         result = subprocess.run(["bash", "-c", probe, str(tmp_path / "worker.sh"), f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
         symm, dense_flashinfer, trtllm_deepgemm, *flags = result.stdout.decode().rstrip("\0").split("\0")
-        assert symm == ("1" if role == "prefill" else "0")
+        assert symm == "1"
+        assert "--disable-custom-all-reduce" in flags
         assert dense_flashinfer == ("0" if role == "prefill" else "1")
         assert trtllm_deepgemm == "1"
         if role == "prefill":
