@@ -95,6 +95,8 @@ role=${name%%-*}
 export VLLM_NIXL_SIDE_CHANNEL_PORT="$((port - 24500))"
 export VLLM_USE_NCCL_SYMM_MEM=0
 export VLLM_ALLREDUCE_USE_SYMM_MEM=0
+# Serve the published FP32 block scales: with E8M0 on, the pinned vLLM re-quantizes DeepGEMM dense weights to power-of-two scales on Hopper.
+export VLLM_USE_DEEP_GEMM_E8M0=0
 role_flags=()
 blocks=2048
 if [[ "$role" == prefill ]]; then
@@ -170,7 +172,18 @@ while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/server_info?config_format=json" >"${ROOT}/results/server-info-${worker}.json"
   jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.vllm_config as $v | $v.parallel_config.tensor_parallel_size == $expected_tp and $v.parallel_config.enable_expert_parallel == false and $v.cache_config.cache_dtype == "fp8_e4m3" and $v.cache_config.block_size == 64 and ($v.cache_config.block_size * $v.cache_config.num_gpu_blocks_override) == (if $role == "prefill" then 131072 else $config[0].decode_max_total_tokens end) and $v.model_config.max_model_len == 8192 and $v.scheduler_config.max_num_batched_tokens == 8192 and (if $role == "prefill" then $v.compilation_config.cudagraph_mode == 1 and $v.compilation_config.cudagraph_capture_sizes == $config[0].prefill_cuda_graph_tokens and $v.compilation_config.max_cudagraph_capture_size == 8192 else $v.cache_config.enable_prefix_caching == false and $v.compilation_config.max_cudagraph_capture_size == 768 and $v.compilation_config.cudagraph_mode == [2,1] and $v.compilation_config.cudagraph_capture_sizes == [$config[0].decode_cuda_graph_bs[] | select(. <= 256) | . * 3] end) and $v.speculative_config.method == "eagle3" and $v.speculative_config.model == "/draft" and $v.speculative_config.num_speculative_tokens == 2 and $v.scheduler_config.max_num_seqs == (if $role == "prefill" then $config[0].concurrency else 256 end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
 done <"${ROOT}/source/worker-endpoints.tsv"
-srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1
+# Prometheus snapshots bracket the official pass; their deltas split TTFT into prefill queue, prefill, KV transfer and decoder admission without touching measured traffic.
+while IFS=$'\t' read -r worker host port _tp; do curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/metrics" >"${ROOT}/results/metrics-before-${worker}.prom"; done <"${ROOT}/source/worker-endpoints.tsv"
+aiperf_status=0
+srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || aiperf_status=$?
+while IFS=$'\t' read -r worker host port _tp; do curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/metrics" >"${ROOT}/results/metrics-after-${worker}.prom"; done <"${ROOT}/source/worker-endpoints.tsv"
+# The scheduler log reaches the Actions log, so print the decisive numbers there as well as in results/.
+jq -c -n --slurpfile s "${ROOT}/results/score.json" --slurpfile e "${ROOT}/results/profile_export_aiperf.json" '{score:$s[0].score_output_tokens_per_second, eligible:$s[0].eligible, good_fraction:$s[0].good_request_fraction, requests:$s[0].request_count, good:$s[0].good_request_count, ttft_ms:($e[0].time_to_first_token | {avg, p50, p90, p99}), itl_ms:($e[0].inter_token_latency | {avg, p50, p90, p99})}' || true
+(cd "${ROOT}/results" && grep -E '^vllm:(((request_queue_time|request_prefill_time|request_decode_time|time_to_first_token|inter_token_latency|e2e_request_latency|nixl_xfer_time|nixl_post_time)_seconds|nixl_bytes_transferred|nixl_num_descriptors|iteration_tokens_total)_(sum|count)|(prompt_tokens|generation_tokens|num_preemptions|spec_decode_num_drafts|spec_decode_num_draft_tokens|spec_decode_num_accepted_tokens)_total)[{ ]' metrics-before-*.prom metrics-after-*.prom) || true
+(cd "${ART}" && grep -o 'DeepGEMM E8M0 [a-z]*' prefill-*.log decode-0.log | sort | uniq -c) || true
+grep -hE 'Avg prompt throughput|SpecDecoding metrics|KV Transfer metrics' "${ART}/decode-0.log" | tail -n 30 || true
+grep -hE 'Avg prompt throughput' "${ART}/prefill-0.log" "${ART}/prefill-4.log" | tail -n 30 || true
+(( aiperf_status == 0 ))
 echo "AIPERF ok"
 if [[ "${PROFILE:-false}" == true ]]; then
   mkdir -p "${ROOT}/profile/client"
