@@ -21,6 +21,8 @@ raw正本は `ssh -o BatchMode=yes archive-host` の `/srv/qwen-artifacts/<run>/
 
 vLLM基準はFirmus g1/g4、16 H200、P6×TP2 + D1×TP4、EP1、FA3、FP8 KV、公式FP8 target、BF16 EAGLE3 draft。同一の固定image、target/tokenizer/draft revisionsを使う。公式ISL4000 / OSL200、warmup60 / measurement120 / grace30、TTFT≤3000ms、平均ITL≤20ms、good fraction≥0.90で比較する。2 proposalsではITLが16.51→15.23msに改善する一方、TTFTは1000→1245msに増加した。[request-analysis.json](request-analysis.json) の全リクエスト再集計では、ITL違反8→0件、TTFT違反38→38件。decode duration平均3286→3032msの改善がTTFT増加でほぼ相殺され、平均request latencyは4286→4276msに留まる。少ない投機が全体のgoodputを必ず増やすとはいえない。
 
+調査中に完了した別実験 [38335858973](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38335858973) はTensorRT-LLM、c128、P6TP2/D1TP4EP4、EAGLE3 steps3。READY685秒、計測2,732件・request error0だが、平均ITL26.025ms、TTFT550.598ms、good fraction1.4275%でscore0。Actions failureは採点条件不適合であり、起動失敗ではない。raw output throughput4398.78 tokens/sを有効scoreと扱わない。保存済み全artifactのSHA256SUMS照合とcommit `4fdca5b1` のparser再実行で保存scoreとの一致を確認した。vLLM基準と同時実行数・EP・engine等が異なるため、個別要因の効果は分離できないが、この構成を現行候補より有利とは判定しない。別実験のジョブ・branchには介入していない。
+
 ## GPU内の時間配分
 
 [38268462101](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38268462101) の7 native Nsight reportsをCPUで再exportした。[analyze_nsys.py](analyze_nsys.py) は各workerの全rankに共通する時間窓を選び、GPU別の区間unionとkernel duration sumを分ける。結果は `vllm-decode-profile.json` と `vllm-prefill-*.json`。
