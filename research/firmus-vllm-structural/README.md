@@ -64,3 +64,20 @@ Automatic approval review rejected uploading a nearly complete validation-source
 Submission uses a new traceable [cluster:firmus] [nodes:2] compute commit only after the dependency gate and CPU validation. Record exact compute/run/attempt and scheduler Command/WorkDir before mapping; never use commit-run PR-filter results as compute evidence. No manual sbatch, blind rerun, extra baseline or sweep. Expected normal run12-13minutes, existing17minute allocation cap; queue delay has no reliable bound.
 
 For each owned terminal run: archive attempt-correct /srv/qwen-artifacts/<run>/<attempt>/ before cleanup; check all hashes, independently replay the repository official-workload parser, inspect raw JSON/JSONL, all seven effective configs and target/draft captures, actual backend logs, provenance, accounting and run-success. Check Actions collection/cleanup and GitHub artifact removal. Identify the first fatal command/error before any minimum repair. Delete only owned exact provenance-verified terminal staging after canonical verification. Preserve all unrelated team work and original checkout's four build-file deletions. Finish the finite campaign with an honest [skip ci] report, cleanup of own helpers/temporary files, and pause monitoring.
+
+## First dependency reviewed: decoder SYMM_MEM
+
+Actions38345930105 attempt1 / Slurm23084 / exact3841c582 ran on g1/g4, COMPLETED0:0 in12m47. Execution115127999202 and archive115506670900 succeeded. Independently checked all64canonical hashes, exact repository parser replay including official-workload validation, raw JSON/JSONL and per-request counts, all seven effective exports and exact graph buckets, target/draft revision and draft weight hash, native backend and dispatcher logs, accounting/run-success. GitHub artifacts are empty and the exact team-owned staging directory is absent. No team resource or archive was modified.
+
+| c104 / proposals2 | Good tok/s | Raw tok/s | Good fraction | TTFT ms | ITL ms |
+|---|---:|---:|---:|---:|---:|
+| Ordinary decoder reduction control38331343958 |4732.869877|4794.111177|98.719245%|1244.653060|15.234328|
+| Decoder SYMM_MEM38345930105 |4734.019108|4795.320452|98.718813%|1227.975353|15.303856|
+
+There were2966measured requests,2928good,38TTFTmisses,0ITLmisses and no errors/mismatches/cancellations. Score changes only+0.02428%, raw+0.02522%, TTFT-1.340%; ITL+0.456%. Single observations at different times establish no meaningful improvement or reproducible superiority. Keep the current control and prepared native-prefill candidate; do not combine this setting based on its score.
+
+The runtime confirms TP dispatch order['SYMM_MEM','PYNCCL'] and disable_custom_all_reduce=true, while compilation still enables fuse_allreduce_rms and initializes a FlashInfer allreduce norm-fusion workspace with backend=mnnvl. This is evidence that the ordinary communicator changed, not proof that all dominant profiled reduction kernels were replaced. Compatible trace/active compiler-path inspection is needed before concluding reduction optimization has no headroom.
+
+Verification retained AIPerf's native goodput field: multiplying it by200 exactly reproduces4734.019107963232. Raw per-request good count and fraction independently match2928/2966. Dividing that count by the separate benchmark_duration123.696518912 would give4734.167179082919 because the exported goodput implies123.700387904seconds. The tiny time-basis difference is recorded rather than substituting a new score or weakening the official validator; its precise internal origin was not established in this review.
+
+The three other dependencies remain pending in the latest monitor snapshot. No structural GPU job has been submitted; the dependency gate remains active. Team-start events alone need not wake the discussion chat; future notices should focus on terminal results, usable profile/collection completion, or required action.
