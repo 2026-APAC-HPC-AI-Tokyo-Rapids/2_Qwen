@@ -9,7 +9,7 @@
 #SBATCH -o runs/sglang-%j.out
 #SBATCH -e runs/sglang-%j.err
 # H200 layout: six TP2 prefill and one TP4 decode worker, EAGLE3 and native vLLM kernels.
-# One full benchmark allocation, with the official 60/120/30 client.
+# Profile allocations run only the bounded diagnostic client; normal runs retain the official 60/120/30 client.
 set -euo pipefail
 
 ROOT=${SLURM_SUBMIT_DIR}
