@@ -32,7 +32,7 @@ hashes checked before Slurm submission. The SGLang image also runs the same AIPe
 client for both frameworks. The vLLM image includes the previously applied CUDA
 compiler PATH fix. Runtime experiments do not need an AWS rebuild. This branch
 rejects `[require-build]`: source/container experiments need a separately built
-image and an updated pin. `[profile]` captures all six workers of the selected SGLang or vLLM framework.
+image and an updated pin. `[profile]` captures every worker of the selected framework (seven for the current vLLM layout).
 The separate [vLLM image build on AWS](../../../research/vllm-container-build.md)
 produces a Docker archive and a new Firmus SquashFS without overwriting these
 baseline images or submitting a benchmark.
@@ -44,7 +44,7 @@ and scripts/configuration/provenance in `source/`, and raw AIPerf files and
 TensorRT-LLM JIT caches are copied into independent worker homes; their starting
 hashes are recorded. This is a prepared-cache serving comparison, not cold startup.
 
-The client is unchanged. A post-benchmark parser validates the exported workload,
+For normal benchmark runs, the client is unchanged. A post-benchmark parser validates the exported workload,
 excludes warmup records, checks token lengths and errors, and computes the joint
 TTFT <= 3000 ms / mean ITL <= 20 ms fraction from raw requests. It uses the existing
 repository score calculation, marks `official_submission=false`, and does not
@@ -134,3 +134,16 @@ between prefill and decode. Worker system-health checks and a chat request prece
 AIPerf. Worker arguments, metrics, logs, results and image provenance follow the
 existing artifact archive path and Actions summary. These controls establish a
 working Dynamo baseline before candidate TP or worker-count experiments.
+
+## Short vLLM profiling runs
+
+For vLLM, `[profile]` runs only a diagnostic client: c104, ISL4000/OSL200,
+20 seconds warmup, 30 seconds measurement and up to 30 seconds grace, with
+2,048 synthetic entries. It omits the normal 60/120/30 benchmark pass and collects
+five seconds of CUDA/NVTX activity from all seven workers. The profile branch
+requests 14 minutes instead of 17. Native reports and diagnostic requests live
+under `profile/`; `results/` holds server configuration, with no official score.
+Provenance records `measurement_mode=profile-only`; terminal validation requires
+the diagnostic export, then validates all 16 GPU traces on the login runner.
+Use existing uninstrumented benchmarks for performance comparison. A profile
+completion marker does not imply an official benchmark or accuracy result.

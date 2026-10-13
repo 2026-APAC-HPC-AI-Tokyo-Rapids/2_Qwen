@@ -79,7 +79,7 @@ def test_sglang_launch_matches_full_h200_tp2_conditions(tmp_path: Path) -> None:
     stub.chmod(0o755)
     launches = "srun --exact" + source.split("srun --exact", 1)[1].split("\nwait_http", 1)[0]
     router = next(line for line in source.splitlines() if line.startswith("srun ") and "sglang_router.launch_router" in line)
-    client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
+    client = next(line for line in source.splitlines() if line.lstrip().startswith("srun ") and "official-aiperf.sh" in line and " profile >" not in line)
     configuration = 'speculation=(' + source.split('speculation=(', 1)[1].split('\nART=', 1)[0]
     harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + '\n' + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
     environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "SGLANG": "/image", "AIPERF": "/image", "MODEL": "/model", "N": "64", "R_PORT": "8000"}
@@ -147,7 +147,7 @@ def test_vllm_launch_matches_page64_p6d1_comparator(tmp_path: Path) -> None:
     stub.chmod(0o755)
     launches = "srun --exact" + source.split("srun --exact", 1)[1].split("\nwait_http", 1)[0]
     router = next(line for line in source.splitlines() if line.startswith("srun ") and "vllm-proxy.py" in line)
-    client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
+    client = next(line for line in source.splitlines() if line.lstrip().startswith("srun ") and "official-aiperf.sh" in line and " profile >" not in line)
     configuration = 'speculation=(' + source.split('speculation=(', 1)[1].split('\nART=', 1)[0]
     harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + '\n' + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
     environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "VLLM": "/image", "AIPERF": "/image", "MODEL": "/model", "N": "104", "R_PORT": "8000"}
@@ -231,6 +231,7 @@ def test_provenance_distinguishes_server_client_and_prepared_cache(tmp_path: Pat
     identity = json.loads((runtime / "source/provenance.json").read_text())
     images = json.loads(config.read_text())["images"]
     assert identity["profile"] is (profile == "true")
+    assert identity["measurement_mode"] == ("profile-only" if framework == "vllm" and profile == "true" else "benchmark")
     assert identity["container"]["sha256"] == images[framework]["sha256"]
     assert identity["client_container"]["sha256"] == images["sglang"]["sha256"]
     assert identity["cache_source"] == ("matched-settings-comparison/home" if framework == "vllm" else None)

@@ -189,3 +189,53 @@ def test_vllm_seven_worker_profile_validation(tmp_path: Path, monkeypatch) -> No
     assert len(validation["workers"]) == 7
     assert sum(worker["gpu_count"] for worker in validation["workers"].values()) == 16
     assert not list(profile.glob("*.sqlite"))
+
+
+@pytest.mark.parametrize("profile", [False, True])
+def test_vllm_profile_runs_only_one_client(tmp_path: Path, profile: bool) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    start = source.index('if [[ "${PROFILE:-false}" == true ]]; then\n  mkdir -p "${ROOT}/profile/client"')
+    stage = source[start:source.index('touch "${ROOT}/run-success"', start)]
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/capture-firmus-profile.sh").write_text("exit 0\n")
+    harness = 'srun() { printf "%s\\0" "$@" >>"$ROOT/client-argv"; }; mounts() { :; };\n' + stage
+    environment = {**os.environ, "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "PROFILE": str(profile).lower(), "HEAD": "fixture", "AIPERF": "fixture.sqsh", "N": "104"}
+    subprocess.run(["bash", "-euc", harness], env=environment, check=True)
+    argv = (tmp_path / "client-argv").read_text().rstrip("\0").split("\0")
+    assert argv.count(str(tmp_path / "scripts/official-aiperf.sh")) == 1
+    assert (argv[-1] == "profile") is profile
+    assert not (tmp_path / "results/score.json").exists()
+
+
+@pytest.mark.parametrize("mode,expected", [("official", "60 120 30 12800"), ("profile", "20 30 30 2048")])
+def test_profile_client_reduces_dataset_without_changing_benchmark(tmp_path: Path, mode: str, expected: str) -> None:
+    (tmp_path / "results").mkdir()
+    source = (ROOT / "platforms/firmus/framework-comparison/official-aiperf.sh").read_text().split("export HF_HOME", 1)[0]
+    result = subprocess.run(["bash", "-euc", source + '\nprintf "%s %s %s %s" "$warmup" "$duration" "$grace" "$entries"', "fixture", str(tmp_path), "104", mode], capture_output=True, text=True, check=True)
+    assert result.stdout == expected
+
+
+def test_profile_only_summary_does_not_claim_an_official_score(tmp_path: Path) -> None:
+    (tmp_path / "provenance.json").write_text(json.dumps({"framework": "vllm", "workload": "official", "profile": True, "measurement_mode": "profile-only"}))
+    (tmp_path / "firmus-framework.json").write_text(json.dumps({"concurrency": 104}))
+    summary = SUMMARY(tmp_path, "456", "success")
+    assert "20 / 30 / 30 (diagnostic only)" in summary
+    assert "no official benchmark or score was requested" in summary
+    assert "Local score" not in summary and "60 / 120 / 30" not in summary
+
+
+@pytest.mark.parametrize("mode,expected", [("profile-only", 0), ("benchmark", 1)])
+def test_terminal_profile_does_not_require_a_fabricated_score(tmp_path: Path, mode: str, expected: int) -> None:
+    for name in ("bin", "logs", "source", "profile/client"):
+        (tmp_path / name).mkdir(parents=True)
+    for name, body in [("squeue", "exit 0"), ("sacct", "echo '123|COMPLETED|0:0|00:10:00|2'")]:
+        tool = tmp_path / "bin" / name
+        tool.write_text("#!/bin/bash\n" + body + "\n")
+        tool.chmod(0o755)
+    (tmp_path / "source/provenance.json").write_text(json.dumps({"measurement_mode": mode}))
+    (tmp_path / "profile/client/profile_export_aiperf.json").write_text("{}\n")
+    (tmp_path / "logs/slurm-123.log").touch()
+    (tmp_path / "run-success").touch()
+    result = subprocess.run(["bash", str(ROOT / "platforms/firmus/check-qwen-job.sh")], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLURM_JOB_ID": "123", "RUNTIME_DIR": str(tmp_path)}, capture_output=True, text=True, check=False)
+    assert result.returncode == expected

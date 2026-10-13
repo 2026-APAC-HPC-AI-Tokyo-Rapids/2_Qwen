@@ -20,11 +20,14 @@ def summarize(root: Path, job_id: str, status: str) -> str:
     export = read_artifact(root, "profile_export_aiperf.json")
     capture = read_artifact(root, "validation.json")
     profile = identity.get("profile", False)
+    profile_only = identity.get("measurement_mode") == "profile-only"
     reports = list(root.rglob("*.nsys-rep")) if root.exists() else []
     run_id = os.environ.get("GITHUB_RUN_ID", "unknown")
     attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "unknown")
     workload = identity.get("workload", "reference-07")
     phases = "60 / 120 / 30" if workload == "official" else "20 / 60 / 15"
+    if profile_only:
+        phases = "20 / 30 / 30 (diagnostic only)"
     topology = "P2 × TP4 / D2 × TP4 EP1" if identity.get("framework") == "sglang" and workload == "official" else "P4 × TP2 / D2 × TP4 EP4"
     if workload == "official" and config.get("concurrency") == 64 and config.get("speculation", {}).get("algorithm") == "EAGLE3":
         topology = "P4 × TP2 / D2 × TP4 EP1"
@@ -42,6 +45,8 @@ def summarize(root: Path, job_id: str, status: str) -> str:
             latency = export.get(name, {})
             if "avg" in latency and "p99" in latency:
                 lines.append(f"| {label} mean / p99 | {latency['avg']:.3f} / {latency['p99']:.3f} ms |")
+    elif profile_only:
+        lines += ["", "Diagnostic profile only; no official benchmark or score was requested."]
     else:
         lines += ["", "Validated AIPerf result unavailable; inspect the logs."]
     if profile:
@@ -49,7 +54,8 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         gpu_coverage = f"{sum(worker['gpu_count'] for worker in workers.values())} / 16 GPUs" if capture else "GPU coverage unverified"
         notes = sorted(root.rglob("interpretation.txt"))
         capture_note = notes[0].read_text().strip() if notes else "Capture timing unavailable; inspect profile-capture.log."
-        lines += ["", f"Nsight: **{len(reports)} / {expected_reports} reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **Instrumented score; do not use for performance comparison.**"]
+        score_note = "Diagnostic only; no official score." if profile_only else "Instrumented score; do not use for performance comparison."
+        lines += ["", f"Nsight: **{len(reports)} / {expected_reports} reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **{score_note}**"]
     else:
         lines += ["", "Nsight: disabled."]
     lines += ["", f"Archive after the archive job succeeds: `archive-host:/srv/qwen-artifacts/{run_id}/{attempt}/`.", "Reports: `profile/`; conditions and image hashes: `source/`; raw requests and score: `results/`.", ""]

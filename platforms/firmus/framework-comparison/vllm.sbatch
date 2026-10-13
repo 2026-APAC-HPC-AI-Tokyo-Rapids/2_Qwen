@@ -2,7 +2,7 @@
 #SBATCH -J vllm-firmus-eagle-c104
 #SBATCH -p hpcai
 #SBATCH -N 2
-#SBATCH -t 00:17:00
+#SBATCH -t 00:14:00
 #SBATCH --gres=gpu:8
 #SBATCH --propagate=NONE
 #SBATCH --no-requeue
@@ -170,16 +170,17 @@ while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/server_info?config_format=json" >"${ROOT}/results/server-info-${worker}.json"
   jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.vllm_config as $v | $v.parallel_config.tensor_parallel_size == $expected_tp and $v.parallel_config.enable_expert_parallel == false and $v.cache_config.cache_dtype == "fp8_e4m3" and $v.cache_config.block_size == 64 and ($v.cache_config.block_size * $v.cache_config.num_gpu_blocks_override) == (if $role == "prefill" then 131072 else $config[0].decode_max_total_tokens end) and $v.model_config.max_model_len == 8192 and $v.scheduler_config.max_num_batched_tokens == 8192 and (if $role == "prefill" then $v.compilation_config.cudagraph_mode == 1 and $v.compilation_config.cudagraph_capture_sizes == $config[0].prefill_cuda_graph_tokens and $v.compilation_config.max_cudagraph_capture_size == 8192 else $v.cache_config.enable_prefix_caching == false and $v.compilation_config.max_cudagraph_capture_size == 768 and $v.compilation_config.cudagraph_mode == [2,1] and $v.compilation_config.cudagraph_capture_sizes == [$config[0].decode_cuda_graph_bs[] | select(. <= 256) | . * 3] end) and $v.speculative_config.method == "eagle3" and $v.speculative_config.model == "/draft" and $v.speculative_config.num_speculative_tokens == 2 and $v.scheduler_config.max_num_seqs == (if $role == "prefill" then $config[0].concurrency else 256 end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
 done <"${ROOT}/source/worker-endpoints.tsv"
-srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1
-echo "AIPERF ok"
 if [[ "${PROFILE:-false}" == true ]]; then
   mkdir -p "${ROOT}/profile/client"
-  printf 'The official results/ pass completes before CUDA capture. Nsight is attached but capture is off during that pass; compare its timings with the existing uninstrumented control. Diagnostic client:20/30/30 at the same c104 and workload; five-second CUDA/NVTX/OSRT trace; profile/client/ is not an official score.\n' >"${ROOT}/profile/interpretation.txt"
+  printf 'Profile only: no official benchmark pass. Diagnostic client:20/30/30 at the same c104 and input/output lengths, with 2048 synthetic entries; five-second CUDA/NVTX/OSRT trace. Use existing uninstrumented runs for performance comparison; profile/client/ has no official score.\n' >"${ROOT}/profile/interpretation.txt"
   bash "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" "${ROOT}/profile/client/aiperf.log" >"${ROOT}/logs/profile-capture.log" 2>&1 &
   profile_capture_pid=$!
   srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" profile >"${ROOT}/profile/client/aiperf.log" 2>&1
   wait "${profile_capture_pid}"
   profile_capture_pid=
   # CPU-only export/validation runs on the login runner after Slurm is terminal.
+else
+  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1
+  echo "AIPERF ok"
 fi
 touch "${ROOT}/run-success"
