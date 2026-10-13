@@ -182,7 +182,7 @@ def test_trtllm_launch_matches_recipe_layout(tmp_path: Path) -> None:
         assert flag in final
     assert 'batch=2; tokens=8192' in worker and 'batch=256; tokens=1024' in worker and "--server_role" not in final
     assert 'trtllm-serve disaggregated -c "$root/source/disagg.yaml"' in worker
-    assert "export NCCL_NVLS_ENABLE=0" in worker.split("\nexec ", 1)[0]
+    assert "export NCCL_NVLS_ENABLE=0 NCCL_RUNTIME_CONNECT=0 NCCL_GRAPH_REGISTER=0" in worker.split("\nexec ", 1)[0]
     yaml_text = source.split("cat >\"${ROOT}/source/context.yaml\" <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     assert "tensor_parallel_size: 2" in yaml_text and "moe_tensor_parallel_size: 2" in yaml_text and "dtype: fp8" in yaml_text and "disable_overlap_scheduler: true" in yaml_text
     yaml_text = source.split("cat >\"${ROOT}/source/generation.yaml\" <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]

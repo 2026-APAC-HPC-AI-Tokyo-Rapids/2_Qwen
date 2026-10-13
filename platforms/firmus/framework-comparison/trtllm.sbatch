@@ -156,8 +156,10 @@ done | paste -sd,)
 export UCX_NET_DEVICES=$UCX_IB
 export UCX_POSIX_USE_PROC_LINK=n
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-# Firmus exposes no IMEX channel, so TRT-LLM falls back from NVLS by setenv() while NCCL bootstrap threads call getenv(); set it up front.
-export NCCL_NVLS_ENABLE=0
+# TRT-LLM's NCCL setup (cpp/tensorrt_llm/common/opUtils.cpp, runtime/ncclCommunicator.cpp) calls setenv(name, "0", 0) for these
+# three while NCCL bootstrap threads call getenv(); adding a new variable reallocates environ and crashed ranks in Slurm 22740,
+# 22814 and 23047. Pre-set the same values so those calls change nothing.
+export NCCL_NVLS_ENABLE=0 NCCL_RUNTIME_CONNECT=0 NCCL_GRAPH_REGISTER=0
 # mpirun below starts the local TP ranks; hide the enclosing Slurm step so Open MPI launches locally.
 for variable in $(compgen -e | grep -E '^(SLURM_|PMI_|PMIX_)' || true); do unset "${variable}"; done
 # Static URL disaggregation needs no --server_role; rc29 only converts it to ServerRole for metadata-server or cluster modes.
