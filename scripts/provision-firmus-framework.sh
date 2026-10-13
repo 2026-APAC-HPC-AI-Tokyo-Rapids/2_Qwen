@@ -56,7 +56,7 @@ if [[ "$(jq -r .workload "${config}")" == official ]]; then
   printf '%s' ac9c66cc9b46af7306746a9250f23d47083d689e >"${tokenizer_cache}/refs/main"
 fi
 if [[ "$(jq -r '.speculation.algorithm // empty' "${config}")" == EAGLE3 ]]; then
-  jq -e '.speculation.algorithm == "EAGLE3" and .speculation.steps == 3 and .speculation.draft_tokens == 4' "${config}" >/dev/null
+  jq -e '.speculation.algorithm == "EAGLE3" and ((.speculation.steps == 3 and .speculation.draft_tokens == 4) or (.framework == "vllm" and .speculation.steps == 2 and .speculation.draft_tokens == 3))' "${config}" >/dev/null
   export HF_HUB_DISABLE_XET=1 UV_CONCURRENT_BUILDS=1 UV_CONCURRENT_DOWNLOADS=1 UV_CONCURRENT_INSTALLS=1
   uvx --from 'huggingface_hub==0.36.0' hf download "$(jq -er '.speculation.draft_repository' "${config}")" config.json README.md model.safetensors --revision "$(jq -er '.speculation.draft_revision' "${config}")" --local-dir "${runtime_dir}/draft" --max-workers 1
   python3 "${GITHUB_WORKSPACE}/research/simulation/prepare_eagle.py" "${runtime_dir}/draft" "${runtime_dir}/source"

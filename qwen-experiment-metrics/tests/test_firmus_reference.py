@@ -68,6 +68,7 @@ def test_sglang_launch_matches_full_h200_tp2_conditions(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     config["concurrency"] = 64  # The retained SGLang control launcher uses its original c64 layout.
+    config["speculation"].update(steps=3, draft_tokens=4)
     assert config["workload"] == "official"
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
@@ -176,11 +177,11 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
     probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
     probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "${worker_command[@]}"\n'
     for role, tp, limit in [("prefill", 2, 104), ("decode", 4, 256)]:
-        options = ["--speculative-config", '{"method":"eagle3","model":"/draft","num_speculative_tokens":3}', "--max-num-seqs", str(limit)]
+        options = ["--speculative-config", '{"method":"eagle3","model":"/draft","num_speculative_tokens":2}', "--max-num-seqs", str(limit)]
         if role == "prefill":
             options += ["--disable-custom-all-reduce", "--moe-backend", "auto"]
         else:
-            options += ["--compilation-config", '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":1024}', "--cudagraph-capture-sizes", *[str(n * 4) for n in config["decode_cuda_graph_bs"] if n <= 256]]
+            options += ["--compilation-config", '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":768}', "--cudagraph-capture-sizes", *[str(n * 3) for n in config["decode_cuda_graph_bs"] if n <= 256]]
         result = subprocess.run(["bash", "-c", probe, str(tmp_path / "worker.sh"), f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
         symm, dense_flashinfer, trtllm_deepgemm, *flags = result.stdout.decode().rstrip("\0").split("\0")
         assert symm == ("1" if role == "prefill" else "0")
@@ -189,9 +190,9 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         if role == "prefill":
             assert json.loads(flags[flags.index("--compilation-config") + 1]) == graph_config
         else:
-            assert json.loads(flags[flags.index("--compilation-config") + 1]) == {"cudagraph_mode": "FULL_AND_PIECEWISE", "max_cudagraph_capture_size": 1024}
+            assert json.loads(flags[flags.index("--compilation-config") + 1]) == {"cudagraph_mode": "FULL_AND_PIECEWISE", "max_cudagraph_capture_size": 768}
             begin = flags.index("--cudagraph-capture-sizes") + 1
-            buckets = [n * 4 for n in config["decode_cuda_graph_bs"] if n <= 256]
+            buckets = [n * 3 for n in config["decode_cuda_graph_bs"] if n <= 256]
             assert [int(n) for n in flags[begin:begin + len(buckets)]] == buckets
         assert flags[flags.index("--tensor-parallel-size") + 1] == str(tp)
         assert flags[flags.index("--max-num-seqs") + 1] == str(limit)
@@ -202,7 +203,7 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         assert flags[flags.index("--block-size") + 1] == "64"
         assert json.loads(flags[flags.index("--attention-config") + 1]) == {"backend": "FLASH_ATTN", "flash_attn_version": 3}
         assert json.loads(flags[flags.index("--kv-transfer-config") + 1])["kv_role"] == ("kv_producer" if role == "prefill" else "kv_consumer")
-        assert json.loads(flags[flags.index("--speculative-config") + 1]) == {"method": "eagle3", "model": "/draft", "num_speculative_tokens": 3}
+        assert json.loads(flags[flags.index("--speculative-config") + 1]) == {"method": "eagle3", "model": "/draft", "num_speculative_tokens": 2}
 
 
 @pytest.mark.parametrize("worker_status,expected", [(127, 127), (0, 1)])
