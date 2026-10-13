@@ -1,6 +1,18 @@
 # 会話履歴・raw計測の再監査（2026-10-13）
 
-検証進行中。投入だけで性能改善とは判定しない。
+2026-10-14更新: 通常比較2本は完走したが改善を確認できず、採用しない。短縮profileは失敗し、完全な再収録は未達。
+
+## 投入した3本の結果（2026-10-14確認）
+
+| run | Slurm / elapsed | good tokens/s | 基準4732.87との差 | 判定 |
+|---|---|---:|---:|---|
+| 38345930105 / Decode SYMM_MEM | 23084 COMPLETED / 12:47 | 4734.0191 | +0.0243% | 優位性を確認できず |
+| 38346456470 / Decode MoE tile32 | 23086 COMPLETED / 12:49 | 4728.9631 | −0.0825% | 改善を確認できず |
+| 38350383403 / profile-only | 23091 FAILED / 13:53、exit134 | 対象外 | 対象外 | 完全なprofileを取得できず |
+
+通常2本はSLA適格で、保存済みscoreを同一parserで再計算して一致。SYMM_MEM runのDecodeログにdispatch `['SYMM_MEM', 'PYNCCL']`、tile32 runには専用 `source/vllm-decode-moe/` の設定読込を確認した。単一runの±0.1%未満を改善とは扱わず、追加反復やmainへの性能設定採用は行っていない。全3 runsのarchive SHA256SUMSを全件照合し一致、Actionsの回収・保存・runtime削除は成功。
+
+短縮profileはREADY604秒、capture_active21:56:33Z、stop_requested21:56:38Z。AIPerf終了処理で `Assertion failed: check () (src/msg.cpp:387)` → exit134となり、launcherのerrexitによるcleanupがDecodeのNsight report書出し中にworkerを停止した。これは14分のTIMEOUTではない。Decode reportは存在するが、同じNsight2026.3.2によるCPU exportが `Section Table Reference magic number mismatch` で失敗し、完全なreportとして使えない。Prefill6 reportsはCPU exportでき各2 GPUのkernelを含むが、CUDA event欠損等の診断警告が残っており、厳格なcapture validatorの合格とは扱わない。Actionsのprofile validation stepは失敗後にskipされていた。再投入せずCPUで検証した結果であり、計測終了時のclient failureとreport保存の寿命管理、警告の対象processの調査が残る。
 
 ## 調査範囲と正本
 
