@@ -47,6 +47,10 @@ Decodeは共通5.297秒窓で各GPUのrecorded kernel unionが96.98–97.06%、k
 
 Decodeのtarget重みload21.92秒、model load全体28.57秒に対し、engine initialization275.06秒（compilation74.59秒を内包）。Graph収録68秒と30秒もこの初期化の内数。Prefillの重みload30–32秒、engine initialization132–168秒。これらは並行workerの値なので足し合わせて総時間にはしない。前runでもDecode initialization267.31秒／compilation74.32秒で、起動最適化には繰返し根拠がある。現在のvLLM配備でコピーしているcacheは主に `.tensorrt_llm` で、torch.compile cacheがrunを跨いで再利用されることは確認できていない。
 
+具体的には `provision-firmus-framework.sh` はworkerごとの `.tensorrt_llm` をコピーし、vLLMのhomeはrun専用directoryへmountする。Decodeログのtorch.compile cache keyは2 proposalsで `727492dbb4`、3 proposalsで `c131bfe8f6`。既存保存cacheの別keyを強制流用してはならない。`TRITON_CACHE_DIR=/tmp/vllm-$name/triton` と `TORCHINDUCTOR_CACHE_DIR=/tmp/vllm-$name/inductor` も回収対象になっていない。nativeの互換性判定を保った保存・復元は次の起動改善候補だが、現時点で改善を実測したとは扱わない。
+
+DecodeのGraph設定は2 proposalsで53 request bucketsを3倍して最大768 tokensまで収録する。うち19 bucketsは現在のconcurrency104を超える112〜256用。旧3-proposal profileのNVTXにはgeneration68〜97 requests（272〜388 tokens）等が実際に記録されているが、短い定常窓だけでは起動・mixed batchを含む必要shape全体は保証できない。request数とtoken数、FULLとPIECEWISE、targetとdraftの必要shapeを区別して削減すべき候補であり、単純にtoken上限104へ切り詰めない。追加GPUジョブは投入していない。
+
 旧profile runは有効なbenchとnative reports生成後、CPU exportをGPU割当内で続けて17分枠を超えた。再収録branchでexportをterminal確認後のlogin runnerへ移し、GPUを使用しない処理で割当を消費しないようにした。既存rawは回収済みで再ビルド不要。
 
 ## 今回の実装・検証
