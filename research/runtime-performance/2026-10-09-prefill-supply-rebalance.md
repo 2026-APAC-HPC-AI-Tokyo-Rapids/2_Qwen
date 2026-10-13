@@ -367,3 +367,24 @@ context worker（TP2）のiterationログから、1ステップのデバイス�
 Decodeは投機なしで、runningが約118（4440 tok/s × 26.5 ms）のときにstepが26.5 msだった。SGLang EAGLE3では、runningが約62でITL 17.9 msである。TRT-LLMはrequestあたりの1ステップ費用が小さいので、EAGLE3を載せれば、同じITLでより多くのrunningを捌ける可能性がある。これが次に測る点である。
 
 **結論（現時点）。** 他チームとの差は、エンジンの単純な置換では説明できない。Prefillは両エンジンともGPUあたり約9k tok/sで、Firmus 16 GPUの算術上限は14 GPUをprefillに回しても約6.3k good tok/sになる。10000に届くには、GPUあたりのprefill効率を約1.6倍にする必要がある。rawは自宅サーバー`~/qwen-artifacts/research-runtime/20261011-firmus22740-trtllm/`、`20261012-firmus22814-trtllm/`、`20261013-firmus22902-trtllm/`、`20261013-firmus22997-trtllm/`（各SHA256SUMS付き）と、NAS（`/srv/qwen-artifacts/38112393135/`、`38138579539/`、`38160179298/`）にある。
+
+### 17.1 TensorRT-LLMにEAGLE3を追加（効果なし）
+
+SGLangと同じnebius EAGLE3 draft（BF16、重みは不変）を、contextとgenerationの両方に`speculative_config: {decoding_type: Eagle3, max_draft_len: 3}`で載せた。並行数はc128のまま、変更はこの1点だけである。稼働までに、さらに2点を直した。
+
+- **e1c603d（Slurm 23036）。** 全22645 requestがHTTP 400（`min_length is not supported with one-model speculative decoding`）になった。公式requestは`ignore_eos=true`かつ`min_tokens = max_tokens = 200`でstop指定もないので、生成は必ず200 tokenまで続き、min_tokensは結果に影響しない。プロトコルpatchに、この条件がそろうときだけmin_tokensを外す処理を加えた（53efaab）。
+- **53efaab（Slurm 23047）。** prefill-2が、NCCL bootstrapの`getenv`で再びsegfaultした。imageのcommit c76f4a85のソースを見ると、`opUtils.cpp`と`ncclCommunicator.cpp`が、communicatorを作るたびに`setenv("NCCL_RUNTIME_CONNECT"|"NCCL_GRAPH_REGISTER"|"NCCL_NVLS_ENABLE", "0", 0)`を呼んでいた。未定義の変数を追加すると`environ`が再確保され、同時に別のcommunicatorのbootstrap threadが`getenv`していると落ちる。3変数とも、TRT-LLMが設定するのと同じ値0で事前にexportした（4fdca5b）。
+
+**計測**（4fdca5b、Actions 38335858973、Slurm 23060、g1/g4、ready 685秒）。2732 request、error 0、segfaultなし。good率1.43%で、score 0。
+
+| TRT-LLM P6TP2/D1TP4EP4 c128 | 投機なし（7225b53） | EAGLE3 steps3（4fdca5b） |
+|---|---:|---:|
+| request数 | 2765 | 2732 |
+| TTFT 中央値 / p90 | 311 / 549 ms | 405 / 801 ms |
+| ITL 平均 | 26.34 ms | 26.10 ms |
+| 1 requestあたりのchunk数 | 200 | 90.9（2.2 token/chunk＝受理長） |
+| chunk間隔（＝1 step） | 約26.5 ms | 57.7 ms |
+
+受理長は2.2で、SGLangの2.23と同じである。しかし、runningが約119のときのstepは26.5 msから57.7 msへ2.2倍に伸び、ITLは変わらなかった。固定費を約12〜15 msとすると、EAGLE3付きのrequestあたりの増分は約0.36 ms/stepで、SGLangの約0.35 ms/stepとほぼ同じである。ITL 18.5 msに収まるrunningは約71、goodの見込みは約3.8k tok/sとなり、SGLangのc104（4429.9）を下回る。
+
+**結論。** TensorRT-LLM rc29は、Prefill（GPUあたり約8〜9k tok/s）とEAGLE3付きDecode（requestあたり約0.36 ms/step）のどちらも、SGLang fc275674＋採用patchと同じ水準だった。他チームとの2倍前後の差は、エンジンの選択では説明できない。TRT-LLM経路（imageと計5つの互換修正）は`research/firmus-trtllm-p6tp2-d1tp4`に残すが、採用はしない。rawは自宅サーバー`~/qwen-artifacts/research-runtime/20261013-firmus-trtllm-eagle3/`（23036）、`20261013-firmus-trtllm-eagle3-b/`（23047）、`20261013-firmus23060-trtllm-eagle3/`（23060、いずれもSHA256SUMS付き）にある。
