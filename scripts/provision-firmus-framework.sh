@@ -20,6 +20,7 @@ runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEM
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/profile" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source" "${runtime_dir}/home"
 install -m 0644 "${config}" "${runtime_dir}/source/firmus-framework.json"
+cp -a "${GITHUB_WORKSPACE}/configs/vllm-decode-moe" "${runtime_dir}/source/"
 for image_framework in sglang "${framework}"; do
   image="$(jq -er --arg framework "${image_framework}" '.images[$framework].path' "${config}")"
   expected_sha="$(jq -er --arg framework "${image_framework}" '.images[$framework].sha256' "${config}")"

@@ -108,6 +108,8 @@ if [[ "$role" == prefill ]]; then
   KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer"}'
 else
   blocks=8192
+  # Native vLLM runtime tuning; only target TP4 batch keys 256/512 change M64->32.
+  export VLLM_TUNED_CONFIG_FOLDER="$(dirname "$0")/vllm-decode-moe"
   KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}'
 fi
 UCX_IB=$(for d in /sys/class/infiniband/*; do

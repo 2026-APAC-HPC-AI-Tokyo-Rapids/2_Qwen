@@ -175,7 +175,7 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     # Exercise actual shell argument construction without requiring GPUs or HCAs.
     probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
-    probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "${worker_command[@]}"\n'
+    probe += '\nprintf "%s\\0" "${VLLM_TUNED_CONFIG_FOLDER:-}" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "${worker_command[@]}"\n'
     for role, tp, limit in [("prefill", 2, 104), ("decode", 4, 256)]:
         options = ["--speculative-config", '{"method":"eagle3","model":"/draft","num_speculative_tokens":2}', "--max-num-seqs", str(limit)]
         if role == "prefill":
@@ -183,7 +183,8 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         else:
             options += ["--compilation-config", '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":768}', "--cudagraph-capture-sizes", *[str(n * 3) for n in config["decode_cuda_graph_bs"] if n <= 256]]
         result = subprocess.run(["bash", "-c", probe, str(tmp_path / "worker.sh"), f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
-        symm, dense_flashinfer, trtllm_deepgemm, *flags = result.stdout.decode().rstrip("\0").split("\0")
+        tuning, symm, dense_flashinfer, trtllm_deepgemm, *flags = result.stdout.decode().rstrip("\0").split("\0")
+        assert tuning == (str(tmp_path / "vllm-decode-moe") if role == "decode" else "")
         assert symm == ("1" if role == "prefill" else "0")
         assert dense_flashinfer == ("0" if role == "prefill" else "1")
         assert trtllm_deepgemm == "1"
