@@ -23,6 +23,8 @@ vLLM基準はFirmus g1/g4、16 H200、P6×TP2 + D1×TP4、EP1、FA3、FP8 KV、�
 
 調査中に完了した別実験 [38335858973](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38335858973) はTensorRT-LLM、c128、P6TP2/D1TP4EP4、EAGLE3 steps3。READY685秒、計測2,732件・request error0だが、平均ITL26.025ms、TTFT550.598ms、good fraction1.4275%でscore0。Actions failureは採点条件不適合であり、起動失敗ではない。raw output throughput4398.78 tokens/sを有効scoreと扱わない。保存済み全artifactのSHA256SUMS照合とcommit `4fdca5b1` のparser再実行で保存scoreとの一致を確認した。vLLM基準と同時実行数・EP・engine等が異なるため、個別要因の効果は分離できないが、この構成を現行候補より有利とは判定しない。別実験のジョブ・branchには介入していない。
 
+TTFT違反38件は両基準runとも計測phase開始直後の最初の104件に限られた。request start順の0始まりindexは3 proposalsで65〜103、2 proposalsで66〜103、最初の開始からそれぞれ31.8〜43.2ms／40.4〜51.7msに送信されたrequestである。その後のTTFT違反は0件。warmup終了時にinflightをdrainしてから測定phaseの104並列を立ち上げるAIPerfログとも一致する。Prefillの10秒間隔ログの非ゼロWaitingも主にphase開始付近で、定常的な待ちの偏りと断定しない。30〜120秒に開始したrequestのTTFT平均は925→1194ms、ITLは16.63→15.28msで、定常域でもDecode短縮とTTFT増加が併存する。phase立ち上がりのrequestも公式scoreに含めたままとし、この区間別分析で採点条件を変更しない。
+
 ## GPU内の時間配分
 
 [38268462101](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38268462101) の7 native Nsight reportsをCPUで再exportした。[analyze_nsys.py](analyze_nsys.py) は各workerの全rankに共通する時間窓を選び、GPU別の区間unionとkernel duration sumを分ける。結果は `vllm-decode-profile.json` と `vllm-prefill-*.json`。
