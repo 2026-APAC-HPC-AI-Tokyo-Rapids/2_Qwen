@@ -55,9 +55,11 @@ def analyze(path):
                 **v, "mean_us": v["ns"] / v["count"] / 1000,
                 "kernel_duration_share_pct": 100 * v["ns"] / total}
                for k, v in sorted(groups.items(), key=lambda kv: kv[1]["ns"], reverse=True)]
-    warnings = [dict(r) for r in connection.execute(
-        "SELECT DISTINCT severity,text,globalPid FROM DIAGNOSTIC_EVENT WHERE severity > 1"
-    )]
+    warnings = []
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE name='DIAGNOSTIC_EVENT'").fetchone():
+        warnings = [dict(r) for r in connection.execute(
+            "SELECT DISTINCT severity,text,globalPid FROM DIAGNOSTIC_EVENT WHERE severity > 1"
+        )]
     summaries = collections.defaultdict(lambda: {"count": 0, "ns": 0})
     for kernel in kernels:
         item = summaries[kernel["name"]]
