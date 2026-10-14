@@ -129,3 +129,38 @@ Release one already CPU-validated candidate through a new [cluster:firmus] [node
 Compute c01d4612cc1ae1b6e7a68a98b30f56fd1115b998 created Actions38488898983 attempt1. Validation115609146279 and provisioning115609343205 succeeded; execution115610029147 is active waiting for terminal. Staged source/provenance.json independently verifies exact compute/run/attempt, vLLM, official workload, profile=false and the pinned serving/client hashes. Both staged image SHA files match. Command and WorkDir map uniquely to /scratch/home/ACCOUNT/qwen/runs/pd-38488898983-1.3NtGmltcGK and Slurm23239, submitted2026-10-14T00:16:25UTC. At00:16UTC it was PENDING Resources with zero runtime and17minute limit. Unrelated23235running/23236pending were left untouched.
 
 Canonical destination is /srv/qwen-artifacts/38488898983/1/. One owned compute submission exists; never resubmit or rerun merely because it queues. The separate authorized Luna-max heartbeat remains ACTIVE every15minutes and now follows this exact owned run, routing only meaningful terminal/fatal/collection events to Sol6.1medium in the discussion chat. Original dependencies are closed; the new campaign remains incomplete until runtime, official result and canonical collection/cleanup are verified. No observed performance or GPU-backend success is claimed at submission.
+## Verified first candidate result and user-directed hold
+
+Actions38488898983 attempt1 / exact compute c01d4612cc1ae1b6e7a68a98b30f56fd1115b998 / Slurm23239 completed0:0 on g1/g4 in12m35,2026-10-14T01:03:40-01:16:15UTC (10:03:40-10:16:15JST). All seven workers were ready after461seconds. Execution115610029147 and archive115628855281 succeeded, including workflow collection, staging cleanup and GitHub artifact removal. The exact own staging pd-38488898983-1.3NtGmltcGK is absent; archived and live accounting match. No other job or team archive was modified.
+
+All64canonical SHA256 entries independently pass under /srv/qwen-artifacts/38488898983/1/. In-memory replay of the exact compute commit's scripts/parse-aiperf-result.py, including fixed official-workload validation, exactly reproduces the entire stored score.json. Raw JSONL independently yields3323measured requests,3241good,34TTFTmisses,48ITLmisses,0overlap,0errors/cancellations and0OSLmismatches. All34TTFTmisses were issued0.0403-0.0574seconds after the earliest profiling request, consistent with the initial burst; this does not measure isolated prefill queue/execution time.
+
+| Normal c112/spec2 configuration | Good output tok/s | Good fraction | Mean TTFT ms | Mean ITL ms | Raw output tok/s |
+|---|---:|---:|---:|---:|---:|
+| Verified auto-prefill control38341761493 |4759.690607|98.395186%|1469.055067|15.551097|4837.183158|
+| Native prefill DeepGEMM38488898983, default E8M0 |5258.429575|97.532350%|560.398582|17.795079|5391.269415|
+
+Goodput+10.47839% relative to the verified control. This is one candidate/control observation, not a repeated same-configuration improvement estimate or a framework-wide claim. TTFT is materially lower and raw capacity rises, while more decoder ITL misses occur. No extra profiling was performed; backend configuration/capture logs do not establish shape-specific grouped-kernel use, runtime replay share, exposed critical path or hardware saturation.
+
+All seven effective server exports independently match the intended TP/EP1 topology, c112/P112-D256 admission, two EAGLE3 proposals, FA3, FP8E4M3 KV/block64, P2048/D8192blocks,8192context/chunk,.90memory and exact graph buckets/modes. Six prefill target/draft PIECEWISE58/58 signatures are complete, actual DEEPGEMM MoE selection and native DeepGemmFp8BlockScaledMMKernel/P SYMM_MEM are logged. Decoder retains actual TRITON and completes target PIECEWISE53/53+FULL2/2 plus draft-prefill PIECEWISE53/53+FULL53/53, identical to the exact spec2 control's signatures. A spec3-style separate FULL29/29 requirement is not appropriate to this spec2 control; no graph configuration or validation was weakened. Exact image/run/attempt/model/draft revision and BF16 draft weight hash, source, raw JSON/JSONL, accounting and run-success pass. No initiating worker fatal or prior proxy ReadError appears; Slurm stderr is empty.
+
+### Related team results and precision limitation
+
+After submission, read-only review discovered Nattyu3's issue21 already coordinated the same prepared prefill backend change, with E8M0 disabled. Their E2 explicitly credits this campaign's prepared launcher/server-info change3c0a396. Our run was independently submitted without first checking that issue; future submissions must review the shared issue and pending runs before selecting a distinct experiment. Do not claim sole ownership of their result or retroactively relabel our default-E8M0 run as their E8M0-off experiment.
+
+Read the team canonical stored scores/exports without changing them:
+
+| Nattyu3 configuration | Actions | Stored good tok/s | Good fraction | Mean TTFT ms | Mean ITL ms | Raw output tok/s |
+|---|---|---:|---:|---:|---:|---:|
+| DeepGEMM / E8M0 off / c112 |38485732174|5274.857591|97.832631%|574.051507|17.715414|5391.586132|
+| DeepGEMM / E8M0 off / c108 |38488532230|5265.312212|98.779744%|553.742890|17.335584|5330.177346|
+
+These team values were read from their canonical payloads and cross-referenced with issue21; this turn did not repeat their full checksum/exact-commit-parser/config/cleanup audits. Our default-E8M0 goodput is0.31144% below their c112-off result, with essentially identical raw throughput. Different timings, post/pre-pass metrics instrumentation and single observations prevent assigning the difference solely to scale mode. No evidence here supports enabling E8M0 for performance.
+
+Issue21 identifies vLLM's default E8M0 path as requantizing FP8 checkpoint weights to power-of-two scales and flags a potential competition rule conflict. All seven owned worker logs confirm E8M0 enabled. Preserve this result as research evidence, not a submission-approved configuration. The exact organizer-rule/precision/accuracy interpretation needs resolution; local workload/SLA eligibility is not organizer full accuracy or rules approval. No main merge or submission migration is authorized by this result.
+
+References: https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/21 and comments6157858214,6158080207,6158087218. Neither the issue nor team settings were edited.
+
+### Current stopping point
+
+The user explicitly agreed to let the submitted run finish and hold the second planned experiment until coordinated evidence review. This owned experiment's E2E verification and cleanup are now complete; the broader7k investigation is unresolved. No native decoderEP4 candidate, repeat, control, profile or extra GPU allocation was submitted. Preserve the conditional second design as a held proposal, not automatically scheduled work. Pause this owned-run heartbeat after documenting the verified result; restarting experiments requires the next coordinated decision. All current checks ran in memory, own prior temporary files/helpers were already removed, the worktree is clean after this report-only [skip ci] commit, and the original checkout's four preexisting build-file deletions remain unchanged.
