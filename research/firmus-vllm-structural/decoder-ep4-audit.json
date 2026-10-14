@@ -1,0 +1,496 @@
+{
+  "serving_image_sha256": "2012b52332deaecdab9a7a397a35412b7e098c40308f93560c7a419519ebfb0e",
+  "native_source_sha256": {
+    "model_executor__layers__fused_moe__experts__triton_moe.py": "806fbccfe30f5fbd578acf773add99bdf022b12d617958bd6281aef6de369701",
+    "model_executor__layers__fused_moe__modular_kernel.py": "8dc4e0dbbf35b3aac8add63ca6f2a7bbfdadaabbd60826e24598b22c7d8e5c22",
+    "model_executor__layers__fused_moe__fused_moe.py": "7072eb06237be9d33dcb0ef7101410f886a6363c98cbee70a014c68b70f639cb",
+    "model_executor__layers__fused_moe__prepare_finalize__no_dp_ep.py": "adbbf529cd22059c95b5380952943a70cf11e05e321dcd707f296bebde61a6e7",
+    "model_executor__layers__fused_moe__expert_map_manager.py": "308c00f63fcb6f44518ec3a56d8f902c7bba75928c2e3aea30fbe1f3f473973b"
+  },
+  "source_evidence": {
+    "prepare": "no_dp_ep.py:58-81 quantizes the original a1 and returns no compact expert metadata",
+    "assignment": "triton_moe.py:332-345 uses global expert alignment; fused_moe.py:1544-1590 defaults ignore_invalid_experts=False",
+    "nonlocal": "fused_moe.py:423-440 writes zero outputs and returns for expert_id=-1",
+    "activation": "triton_moe.py:475-485 invokes SiLU/block quantization over the full gate-up view in E8M0-off FP8 mode",
+    "combine": "triton_moe.py:576-580 reduces full M/topk/K output",
+    "alignment_wrapper": {
+      "path": "model_executor/layers/fused_moe/moe_align_block_size.py",
+      "sha256": "c3f7fc2087836f0160a32ab99ceb1d8f6e87c793679da34dd672e225cb7fa31b",
+      "lines": "23-45,90-103: default aligns global routes then maps nonlocal experts to -1; compact invalid-expert filtering exists but is not requested by this call"
+    }
+  },
+  "native_linear_expert_mappings": [
+    {
+      "ep_rank": 0,
+      "local_global_experts": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ],
+      "nonlocal_entries": 96
+    },
+    {
+      "ep_rank": 1,
+      "local_global_experts": [
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63
+      ],
+      "nonlocal_entries": 96
+    },
+    {
+      "ep_rank": 2,
+      "local_global_experts": [
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95
+      ],
+      "nonlocal_entries": 96
+    },
+    {
+      "ep_rank": 3,
+      "local_global_experts": [
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        125,
+        126,
+        127
+      ],
+      "nonlocal_entries": 96
+    }
+  ],
+  "shape_checks": [
+    {
+      "illustrative_tokens_not_measured": 128,
+      "layouts": {
+        "tp4_ep1": {
+          "local_experts": 128,
+          "intermediate_width": 384,
+          "gate_up_cache_shape": [
+            128,
+            8,
+            768
+          ],
+          "activation_cache_shape": [
+            1024,
+            384
+          ],
+          "down_cache_shape": [
+            128,
+            8,
+            4096
+          ],
+          "native_workspace_shapes": [
+            [
+              128,
+              8,
+              4096
+            ],
+            [
+              128,
+              8,
+              4096
+            ],
+            [
+              128,
+              4096
+            ]
+          ],
+          "fp8_expert_weight_elements_per_layer_per_rank": 603979776,
+          "gate_up_cache_elements": 786432,
+          "activation_cache_elements": 393216
+        },
+        "attention_tp4_moe_tp1_ep4": {
+          "local_experts": 32,
+          "intermediate_width": 1536,
+          "gate_up_cache_shape": [
+            128,
+            8,
+            3072
+          ],
+          "activation_cache_shape": [
+            1024,
+            1536
+          ],
+          "down_cache_shape": [
+            128,
+            8,
+            4096
+          ],
+          "native_workspace_shapes": [
+            [
+              128,
+              8,
+              4096
+            ],
+            [
+              128,
+              8,
+              4096
+            ],
+            [
+              128,
+              4096
+            ]
+          ],
+          "fp8_expert_weight_elements_per_layer_per_rank": 603979776,
+          "gate_up_cache_elements": 3145728,
+          "activation_cache_elements": 1572864
+        }
+      }
+    },
+    {
+      "illustrative_tokens_not_measured": 256,
+      "layouts": {
+        "tp4_ep1": {
+          "local_experts": 128,
+          "intermediate_width": 384,
+          "gate_up_cache_shape": [
+            256,
+            8,
+            768
+          ],
+          "activation_cache_shape": [
+            2048,
+            384
+          ],
+          "down_cache_shape": [
+            256,
+            8,
+            4096
+          ],
+          "native_workspace_shapes": [
+            [
+              256,
+              8,
+              4096
+            ],
+            [
+              256,
+              8,
+              4096
+            ],
+            [
+              256,
+              4096
+            ]
+          ],
+          "fp8_expert_weight_elements_per_layer_per_rank": 603979776,
+          "gate_up_cache_elements": 1572864,
+          "activation_cache_elements": 786432
+        },
+        "attention_tp4_moe_tp1_ep4": {
+          "local_experts": 32,
+          "intermediate_width": 1536,
+          "gate_up_cache_shape": [
+            256,
+            8,
+            3072
+          ],
+          "activation_cache_shape": [
+            2048,
+            1536
+          ],
+          "down_cache_shape": [
+            256,
+            8,
+            4096
+          ],
+          "native_workspace_shapes": [
+            [
+              256,
+              8,
+              4096
+            ],
+            [
+              256,
+              8,
+              4096
+            ],
+            [
+              256,
+              4096
+            ]
+          ],
+          "fp8_expert_weight_elements_per_layer_per_rank": 603979776,
+          "gate_up_cache_elements": 6291456,
+          "activation_cache_elements": 3145728
+        }
+      }
+    },
+    {
+      "illustrative_tokens_not_measured": 288,
+      "layouts": {
+        "tp4_ep1": {
+          "local_experts": 128,
+          "intermediate_width": 384,
+          "gate_up_cache_shape": [
+            288,
+            8,
+            768
+          ],
+          "activation_cache_shape": [
+            2304,
+            384
+          ],
+          "down_cache_shape": [
+            288,
+            8,
+            4096
+          ],
+          "native_workspace_shapes": [
+            [
+              288,
+              8,
+              4096
+            ],
+            [
+              288,
+              8,
+              4096
+            ],
+            [
+              288,
+              4096
+            ]
+          ],
+          "fp8_expert_weight_elements_per_layer_per_rank": 603979776,
+          "gate_up_cache_elements": 1769472,
+          "activation_cache_elements": 884736
+        },
+        "attention_tp4_moe_tp1_ep4": {
+          "local_experts": 32,
+          "intermediate_width": 1536,
+          "gate_up_cache_shape": [
+            288,
+            8,
+            3072
+          ],
+          "activation_cache_shape": [
+            2304,
+            1536
+          ],
+          "down_cache_shape": [
+            288,
+            8,
+            4096
+          ],
+          "native_workspace_shapes": [
+            [
+              288,
+              8,
+              4096
+            ],
+            [
+              288,
+              8,
+              4096
+            ],
+            [
+              288,
+              4096
+            ]
+          ],
+          "fp8_expert_weight_elements_per_layer_per_rank": 603979776,
+          "gate_up_cache_elements": 7077888,
+          "activation_cache_elements": 3538944
+        }
+      }
+    },
+    {
+      "illustrative_tokens_not_measured": 384,
+      "layouts": {
+        "tp4_ep1": {
+          "local_experts": 128,
+          "intermediate_width": 384,
+          "gate_up_cache_shape": [
+            384,
+            8,
+            768
+          ],
+          "activation_cache_shape": [
+            3072,
+            384
+          ],
+          "down_cache_shape": [
+            384,
+            8,
+            4096
+          ],
+          "native_workspace_shapes": [
+            [
+              384,
+              8,
+              4096
+            ],
+            [
+              384,
+              8,
+              4096
+            ],
+            [
+              384,
+              4096
+            ]
+          ],
+          "fp8_expert_weight_elements_per_layer_per_rank": 603979776,
+          "gate_up_cache_elements": 2359296,
+          "activation_cache_elements": 1179648
+        },
+        "attention_tp4_moe_tp1_ep4": {
+          "local_experts": 32,
+          "intermediate_width": 1536,
+          "gate_up_cache_shape": [
+            384,
+            8,
+            3072
+          ],
+          "activation_cache_shape": [
+            3072,
+            1536
+          ],
+          "down_cache_shape": [
+            384,
+            8,
+            4096
+          ],
+          "native_workspace_shapes": [
+            [
+              384,
+              8,
+              4096
+            ],
+            [
+              384,
+              8,
+              4096
+            ],
+            [
+              384,
+              4096
+            ]
+          ],
+          "fp8_expert_weight_elements_per_layer_per_rank": 603979776,
+          "gate_up_cache_elements": 9437184,
+          "activation_cache_elements": 4718592
+        }
+      }
+    }
+  ],
+  "decision": "Native EP4 is shape-compatible but is not a compact-local-route optimization. Keep candidate held pending profile/route evidence; do not assume lower activation/quantization traffic or4x speedup.",
+  "limitations": "Selected exact native Python CPU shape/placement functions with minimal CPU array stand-ins only. No CUDA/C++ alignment execution, weight loading, numerical validation, actual route histogram, memory peak, capture or speed measured. Illustrative token shapes are not observed batch samples. Wider GEMMs may help despite full-route overhead; net effect is unknown."
+}
