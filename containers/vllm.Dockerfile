@@ -15,5 +15,7 @@ RUN sed -i '/^PATH=/d; /^NVIDIA_VISIBLE_DEVICES=/d; /^NVIDIA_DRIVER_CAPABILITIES
 
 COPY apac-manifest.json /opt/apac/manifest.json
 COPY containers/check-vllm-image.py /opt/apac/check-vllm-image.py
+COPY containers/fix-vllm-dense-draft-ep.py /opt/apac/fix-vllm-dense-draft-ep.py
+RUN python3 /opt/apac/fix-vllm-dense-draft-ep.py /usr/local/lib/python3.12/dist-packages/vllm/config/speculative.py >/opt/apac/dense-draft-ep-repair.json
 
 # Keep the official OpenAI server entrypoint for docker run.

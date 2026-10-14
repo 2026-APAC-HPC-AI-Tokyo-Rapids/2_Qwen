@@ -47,13 +47,14 @@ trap 'exit 143' TERM
 install -d -m 2775 "${BUILD_DIR}/logs" "${context}/containers" "${CONTAINER_ARCHIVE_DIR}" "${storage_root}"
 storage_fstype="$(stat -f -c '%T' "${storage_root}")"
 case "${storage_fstype}" in ext2/ext3|xfs) :;; *) printf 'Unsupported Buildah storage filesystem %s: %s\n' "${storage_fstype}" "${storage_root}" >&2; exit 1;; esac
-cp "${GITHUB_WORKSPACE}/containers/vllm.Dockerfile" "${GITHUB_WORKSPACE}/containers/check-vllm-image.py" "${context}/containers/"
+cp "${GITHUB_WORKSPACE}/containers/vllm.Dockerfile" "${GITHUB_WORKSPACE}/containers/check-vllm-image.py" "${GITHUB_WORKSPACE}/containers/fix-vllm-dense-draft-ep.py" "${context}/containers/"
 base_reference="$(sed -n 's/^FROM //p' "${context}/containers/vllm.Dockerfile")"
 base_manifest_sha256="$(skopeo inspect --raw "docker://${base_reference}" | tee "${BUILD_DIR}/logs/base-oci-manifest.json" | sha256sum | awk '{print $1}')"
 qwen_object_format="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-object-format)"
 dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/vllm.Dockerfile)"
 check_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/check-vllm-image.py)"
-jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITHUB_SHA}" --arg dockerfile_blob_oid "${dockerfile_blob_oid}" --arg check_blob_oid "${check_blob_oid}" --arg base_reference "${base_reference}" --arg base_manifest_sha256 "${base_manifest_sha256}" '{schema_version:"oci-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"container_build_definition",object_hash_algorithm:$qwen_object_format,oid:$qwen_commit}],recipe:{path:"containers/vllm.Dockerfile",blob_oid:$dockerfile_blob_oid,build_steps:[{path:"containers/check-vllm-image.py",blob_oid:$check_blob_oid}]},applied_patches:[],base_oci:{reference:$base_reference,manifest_sha256:$base_manifest_sha256}}' >"${context}/apac-manifest.json"
+repair_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/fix-vllm-dense-draft-ep.py)"
+jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITHUB_SHA}" --arg dockerfile_blob_oid "${dockerfile_blob_oid}" --arg check_blob_oid "${check_blob_oid}" --arg repair_blob_oid "${repair_blob_oid}" --arg base_reference "${base_reference}" --arg base_manifest_sha256 "${base_manifest_sha256}" '{schema_version:"oci-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"container_build_definition",object_hash_algorithm:$qwen_object_format,oid:$qwen_commit}],recipe:{path:"containers/vllm.Dockerfile",blob_oid:$dockerfile_blob_oid,build_steps:[{path:"containers/check-vllm-image.py",blob_oid:$check_blob_oid}]},applied_patches:[{path:"containers/fix-vllm-dense-draft-ep.py",blob_oid:$repair_blob_oid}],base_oci:{reference:$base_reference,manifest_sha256:$base_manifest_sha256}}' >"${context}/apac-manifest.json"
 
 buildah --root "${storage_root}" --runroot "${run_root}" bud --isolation chroot --network host --layers --cache-from "${BUILD_CACHE_REPOSITORY}" --cache-to "${BUILD_CACHE_REPOSITORY}" --cache-ttl 336h --file "${context}/containers/vllm.Dockerfile" --tag "${image}" "${context}" 2>&1 | tee "${BUILD_DIR}/logs/buildah.log"
 test_container="$(buildah --root "${storage_root}" --runroot "${run_root}" from "${image}")"
