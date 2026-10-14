@@ -19,6 +19,10 @@ COPY sglang-project-metadata /opt/sglang-project-metadata
 COPY containers/install-python-dependencies.sh /opt/apac/install-python-dependencies.sh
 RUN /opt/apac/install-python-dependencies.sh && rm /opt/apac/install-python-dependencies.sh
 
+COPY prefill-load-lifetime.patch sglang-router.Cargo.lock /opt/apac/
+COPY containers/build-sglang-router.sh /opt/apac/build-sglang-router.sh
+RUN /opt/apac/build-sglang-router.sh && rm /opt/apac/build-sglang-router.sh
+
 COPY containers/install-accelerator-dependencies.sh /opt/apac/install-accelerator-dependencies.sh
 RUN /opt/apac/install-accelerator-dependencies.sh && rm /opt/apac/install-accelerator-dependencies.sh
 

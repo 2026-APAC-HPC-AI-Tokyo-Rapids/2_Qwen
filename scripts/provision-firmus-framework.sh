@@ -53,7 +53,7 @@ for image_framework in sglang "${framework}"; do
   cp "${provenance}" "${runtime_dir}/source/${image_framework}-container.json"
   if [[ "${framework}" == sglang ]]; then cp "${provenance}" "${runtime_dir}/source/container-sidecar.json"; fi
 done
-if [[ "${framework}" == sglang && "$(jq -r .prefill.moe_a2a_backend "${config}")" == megamoe ]]; then
+if [[ "${framework}" == sglang ]]; then
   bash "${GITHUB_WORKSPACE}/scripts/check-firmus-image.sh" "${runtime_dir}/sglang.sqsh" "${runtime_dir}/source" "${GITHUB_WORKSPACE}"
 fi
 model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8

@@ -8,7 +8,7 @@
 #SBATCH --no-requeue
 #SBATCH -o runs/sglang-%j.out
 #SBATCH -e runs/sglang-%j.err
-# H200: three 4-GPU attention-DP4/MoE-EP4 prefill groups and one attention-DP4/MoE-EP4 decode group.
+# H200: DeepEP normal Prefill on 3xDP4/EP4 and MegaMoE Decode on DP4/EP4.
 # One full benchmark allocation, with the official 60/120/30 client.
 set -euo pipefail
 
@@ -64,7 +64,7 @@ wait_http() {
 }
 
 echo "[$(date -Iseconds)] job=${SLURM_JOB_ID} user=$(whoami)"
-echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P3-TP4-DP4-EP4-D1-TP4-DP4-EP4 kv=fp8_e4m3 speculation=EAGLE3 kernels=aspire-full"
+echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P3-TP4-DP4-EP4-D1-TP4-DP4-EP4 kv=fp8_e4m3 speculation=EAGLE3 prefill=deepep-normal-deepgemm decode=megamoe router=live-prefill-min-load"
 test -r "${SGLANG}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && test -s "${ROOT}/draft/model.safetensors"
 mkdir -p "${ART}"
 worker_pids=()
@@ -135,8 +135,8 @@ fi
 exec "${command[@]}"
 EOF
 
-# This experiment reuses the identical image numerically validated in run 38369214512.
-# Provisioning checks its pinned SHA-256 before sbatch; do not repeat that GPU gate here.
+# Provisioning verifies the image's source patches and router before sbatch.
+# This DeepEP candidate requires a fresh build; prior MegaMoE checks do not validate it.
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
@@ -152,7 +152,7 @@ wait_http "http://${HEAD_IP}:30101/health"; echo "prefill-1 ready"
 wait_http "http://${TAIL_IP}:30102/health"; echo "prefill-2 ready"
 wait_http "http://${TAIL_IP}:30200/health"; echo "decode-0 ready"
 
-srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts router)" /opt/sglang/venv/bin/python -m sglang_router.launch_router --pd-disaggregation --prefill "http://${HEAD_IP}:30100" 9000 --prefill "http://${HEAD_IP}:30101" 9001 --prefill "http://${TAIL_IP}:30102" 9002 --decode "http://${TAIL_IP}:30200" --prefill-policy round_robin --host 0.0.0.0 --port "${R_PORT}" >"${ART}/router.log" 2>&1 &
+srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts router)" /opt/apac/bin/sglang-router launch --pd-disaggregation --prefill "http://${HEAD_IP}:30100" 9000 --prefill "http://${HEAD_IP}:30101" 9001 --prefill "http://${TAIL_IP}:30102" 9002 --decode "http://${TAIL_IP}:30200" --prefill-policy manual --assignment-mode min_load --host 0.0.0.0 --port "${R_PORT}" >"${ART}/router.log" 2>&1 &
 worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:${R_PORT}/health"

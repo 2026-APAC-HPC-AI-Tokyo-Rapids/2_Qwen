@@ -78,6 +78,22 @@ def test_server_info_checks_resolved_draft_backend_from_real_run() -> None:
                 check(raw["config"], info, "decode")
 
 
+def test_prefill_deepep_checks_normal_mode_without_changing_decode() -> None:
+    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
+    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    prefill = copy.deepcopy(raw["prefill"])
+    for state in [prefill, *prefill["internal_states"]]:
+        state.update(moe_a2a_backend="deepep", deepep_mode="normal", disable_cuda_graph=True)
+    check(config, prefill, "prefill")
+    check(config, raw["decode"], "decode")
+    for key, invalid in (("moe_a2a_backend", "megamoe"), ("deepep_mode", "low_latency"), ("disable_cuda_graph", False)):
+        changed = copy.deepcopy(prefill)
+        changed["internal_states"][2][key] = invalid
+        with pytest.raises(ValueError, match=key):
+            check(config, changed, "prefill")
+
+
 @pytest.mark.parametrize("invalid", [False, True])
 def test_server_info_validation_runs_after_gpu_collection(tmp_path: Path, invalid: bool) -> None:
     workflow = (ROOT / ".github/workflows/firmus.yml").read_text()
@@ -121,7 +137,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     stub.write_text(f"#!{sys.executable}\nimport json,os,sys\nfd=os.open(os.environ['RECORD'],os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)\nos.write(fd,(json.dumps(sys.argv[1:])+'\\n').encode())\nos.close(fd)\n")
     stub.chmod(0o755)
     launches = "srun --exact" + source.split("srun --exact", 1)[1].split("\nwait_http", 1)[0]
-    router = next(line for line in source.splitlines() if line.startswith("srun ") and "sglang_router.launch_router" in line)
+    router = next(line for line in source.splitlines() if line.startswith("srun ") and "/opt/apac/bin/sglang-router" in line)
     client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
     configuration = 'speculation=(' + source.split('speculation=(', 1)[1].split('\nART=', 1)[0]
     harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + '\n' + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
@@ -171,6 +187,8 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
         assert "--speculative-draft-model-quantization" not in flags
         assert "--container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER" in argv
         if name.startswith("prefill"):
+            assert config["prefill"]["moe_a2a_backend"] == "deepep"
+            assert flags[flags.index("--deepep-mode") + 1] == "normal"
             assert flags[flags.index("--moe-runner-backend") + 1] == config["prefill"]["moe_runner_backend"]
             assert flags[flags.index("--moe-a2a-backend") + 1] == config["prefill"]["moe_a2a_backend"]
             assert flags[flags.index("--dp-size") + 1] == "4"
@@ -192,9 +210,10 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
     assert observed == {"prefill-0": "node0", "prefill-1": "node0", "prefill-2": "node1", "decode-0": "node1"}
-    router_argv = next(argv for argv in commands if "sglang_router.launch_router" in argv)
+    router_argv = next(argv for argv in commands if "/opt/apac/bin/sglang-router" in argv)
     assert router_argv.count("--prefill") == 3 and router_argv.count("--decode") == 1
-    assert router_argv[router_argv.index("--prefill-policy") + 1] == "round_robin"
+    assert router_argv[router_argv.index("--prefill-policy") + 1] == "manual"
+    assert router_argv[router_argv.index("--assignment-mode") + 1] == "min_load"
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
     assert client_argv[-2:] == [str(tmp_path), str(config["concurrency"])]
 

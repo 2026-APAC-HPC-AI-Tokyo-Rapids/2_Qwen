@@ -10,17 +10,28 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("corruption", [None, "hash", "missing_dp_query"])
+@pytest.mark.parametrize("corruption", [None, "hash", "missing_dp_query", "missing_handoff", "missing_activation", "router_hash", "router_lock", "missing_router"])
 def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(tmp_path, corruption):
     embedded = tmp_path / "embedded"
     embedded.mkdir()
-    patches = ["patches/sglang/firmus-staged-eagle-kv.patch", "patches/sglang/qwen3-sm90-megamoe.patch", "patches/sglang/firmus-dp-rank-query.patch"]
+    patches = ["patches/sglang/firmus-staged-eagle-kv.patch", "patches/sglang/qwen3-sm90-megamoe.patch", "patches/sglang/firmus-dp-rank-query.patch", "patches/sglang/prefill-ready-handoff.patch", "patches/sglang/deepgemm-activation-layout.patch"]
     manifest = {"applied_patches": [{"path": p, "sha256": hashlib.sha256((ROOT / p).read_bytes()).hexdigest()} for p in patches]}
     if corruption == "hash":
         manifest["applied_patches"][0]["sha256"] = "0" * 64
     elif corruption == "missing_dp_query":
+        manifest["applied_patches"].pop(2)
+    elif corruption == "missing_handoff":
+        manifest["applied_patches"].pop(3)
+    elif corruption == "missing_activation":
         manifest["applied_patches"].pop()
     (embedded / "manifest.json").write_text(json.dumps(manifest))
+    router = {"version": "0.3.2", "source_sha256": "bdbea1d54cce879fb83d2885d01ee3c006f242d0adbbac806f2fb2b91a5fe73d", "prefill_load": "dispatch_through_body_completion", "patch_sha256": hashlib.sha256((ROOT / "patches/sglang-router/prefill-load-lifetime.patch").read_bytes()).hexdigest(), "cargo_lock_sha256": hashlib.sha256((ROOT / "patches/sglang-router/Cargo.lock").read_bytes()).hexdigest()}
+    if corruption == "router_hash":
+        router["patch_sha256"] = "0" * 64
+    if corruption == "router_lock":
+        router["cargo_lock_sha256"] = "0" * 64
+    if corruption != "missing_router":
+        (embedded / "sglang-router-build.json").write_text(json.dumps(router))
     (embedded / "sm90-megamoe-build.json").write_text(json.dumps({"version": "0.1.5", "header_sha256": "5479807104bf1aeed4cc3ecc8ce57d2a835d68457f9cf4962ef3f15cc176e8d2", "patch_sha256": hashlib.sha256((ROOT / "patches/deep-gemm/sm90-late-topk-fp32.patch").read_bytes()).hexdigest(), "combine_accumulator": "FP32", "compiled_geometries": [[64, 128, 256, True], [128, 128, 256, False], [128, 256, 512, False]]}))
     unpack = tmp_path / "unsquashfs"
     unpack.write_text('#!/bin/bash\nset -eu\n[[ "$*" != *"-cat"* ]] || exit 1\nwhile [[ "$1" != -d ]]; do shift; done\n[[ ! -e "$2" ]] || exit 1\nmkdir -p "$2/opt/apac"\ncp "$EMBEDDED"/*.json "$2/opt/apac/"\nchmod -R a-w "$2"\n')
@@ -39,6 +50,9 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
 def test_provision_uses_selected_image_for_reuse_and_keeps_fresh_build_commit_check(tmp_path, require_build, source_commit, pin_matches, success):
     workspace = tmp_path / "workspace"
     (workspace / "configs").mkdir(parents=True)
+    # The real metadata validator is exercised above; this test isolates image selection.
+    (workspace / "scripts").mkdir()
+    (workspace / "scripts/check-firmus-image.sh").write_text("#!/bin/bash\nexit 0\n")
     config = {"framework": "sglang", "workload": "official", "concurrency": 256, "prefill": {"moe_a2a_backend": "none"}, "images": {"sglang": {"path": "/stale-image.sqsh"}}}
     archive = tmp_path / "archive"
     archive.mkdir()

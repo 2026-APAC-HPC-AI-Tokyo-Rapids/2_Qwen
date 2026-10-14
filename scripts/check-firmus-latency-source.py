@@ -4,8 +4,11 @@ from __future__ import annotations
 import argparse
 import ast
 import asyncio
+import builtins
 import threading
+from collections import deque
 from concurrent.futures import Future
+from contextlib import nullcontext
 from enum import Enum, auto
 from pathlib import Path
 from types import SimpleNamespace
@@ -258,6 +261,139 @@ def check_dp_routing(source):
     print("PASS: DP load includes PD queues, refreshes every iteration and preserves stale-snapshot increments; KV lookup never waits on unfinished HTTP or duplicates calls; late arrivals and aborted requests retain correct source ranks (HTTP mocked)")
 
 
+def check_deepgemm_activation(source):
+    path = source / "python/sglang/srt/layers/moe/moe_runner/deep_gemm.py"
+    wrapper_path = source / "python/sglang/kernels/ops/attention/dsv4/moe.py"
+    calls, allocations = [], []
+
+    class Tensor:
+        def __init__(self, shape, *, device="cuda", dtype="fp8"):
+            self.shape, self.device, self.dtype = shape, device, dtype
+
+        def size(self, dim):
+            return self.shape[dim]
+
+    def empty(shape, **kwargs):
+        allocations.append((shape, kwargs["dtype"]))
+        return Tensor(shape, **kwargs)
+
+    def fused_module(group, ue8m0, swizzle, clamp):
+        assert (group, ue8m0, clamp) == (128, False, False)
+
+        def run(x, out, scales, transposed, limit):
+            assert x.shape[0] > 0, "zero expert rows must not launch a zero-block CUDA kernel"
+            assert (x.shape[1], out.shape[1], scales.shape[1]) == (3072, 1536, 12)
+            assert not transposed and limit == 0
+            calls.append(("activation", swizzle))
+
+        return SimpleNamespace(run=run)
+
+    fused = method(wrapper_path, "silu_and_mul_contig_post_quant", {"_jit_silu_mul_quant_contig_module": fused_module})
+    modules = {
+        "sglang.kernels.ops.attention.dsv4": SimpleNamespace(silu_and_mul_contig_post_quant=fused),
+        "sglang.kernels.ops.moe.ep_moe_kernels": SimpleNamespace(tma_align_input_scale=lambda x: x),
+        "sglang.kernels.ops.quantization.fp8_kernel": SimpleNamespace(create_per_token_group_quant_fp8_output_scale=lambda x_shape, device, group_size, **_: Tensor((x_shape[0], x_shape[1] // group_size), device=device, dtype="fp32")),
+    }
+
+    def import_dependency(name, *args, **kwargs):
+        return modules[name] if name in modules else builtins.__import__(name, *args, **kwargs)
+
+    class Base:
+        def __init__(self, config):
+            self.config = config
+
+    backend, flags = SimpleNamespace(mega=False), SimpleNamespace(fix=True)
+    ns = {"__builtins__": {**vars(builtins), "__import__": import_dependency}, "MoeRunnerCore": Base, "get_moe_a2a_backend": lambda: SimpleNamespace(is_megamoe=lambda: backend.mega), "envs": SimpleNamespace(SGLANG_OPT_FIX_MEGA_MOE_MEMORY=SimpleNamespace(get=lambda: flags.fix), SGLANG_OPT_SWIGLU_CLAMP_FUSION=SimpleNamespace(get=lambda: True), SGLANG_OPT_USE_JIT_EP_ACTIVATION=SimpleNamespace(get=lambda: True)), "torch": SimpleNamespace(empty=empty, bfloat16="bf16", float8_e4m3fn="fp8"), "deep_gemm_wrapper": SimpleNamespace(DEEPGEMM_NEED_TMA_ALIGNED_SCALES=True, DEEPGEMM_SCALE_UE8M0=False, grouped_gemm_nt_f8f8bf16_contig=lambda lhs, rhs, out, indices, **_: calls.append(("gemm", out.shape))), "dispose_tensor": lambda _: None, "use_symmetric_memory": lambda *_, **__: nullcontext(), "get_tp_group": lambda: None, "is_allocation_symmetric": lambda: False}
+    cls = next(n for n in ast.parse(path.read_text()).body if isinstance(n, ast.ClassDef) and n.name == "DeepGemmRunnerCore")
+    cls.body = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in {"__init__", "_run_contiguous_gemm"}]
+    tree = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), cls], type_ignores=[])
+    exec(compile(ast.fix_missing_locations(tree), str(path), "exec"), ns)  # noqa: S102
+    config = SimpleNamespace(activation="silu", is_gated=True, swiglu_limit=None)
+    for mega, fix in ((False, False), (False, True), (True, False), (True, True)):
+        backend.mega, flags.fix = mega, fix
+        runner = ns["DeepGemmRunnerCore"](config)
+        assert runner.use_swizzle is (mega and fix), "natural DeepEP weights were interpreted as interleaved MegaMoE weights"
+        if not fix:
+            continue
+        for rows in (128, 32768):
+            calls.clear()
+            allocations.clear()
+            inputs = SimpleNamespace(hidden_states=Tensor((rows, 4096)), hidden_states_scale=Tensor((rows, 32)), m_indices=object())
+            quant = SimpleNamespace(w13_weight=Tensor((32, 3072, 4096)), w2_weight=Tensor((32, 4096, 1536)), w13_scale=object(), w2_scale=object(), is_fp4_experts=False)
+            state = {"all_tokens": rows, "hidden_states_device": "cuda", "hidden_states_dtype": "fp8", "hidden_states_shape": (rows, 4096)}
+            out = runner._run_contiguous_gemm(inputs, quant, state)
+            assert out.shape == (rows, 4096)
+            assert calls == [("gemm", (rows, 3072)), ("activation", mega), ("gemm", (rows, 4096))], calls
+            assert ((rows, 1536), "bf16") not in allocations, "fusion regressed to a materialized BF16 intermediate"
+    calls.clear()
+    fused(Tensor((0, 3072)), Tensor((0, 1536)), Tensor((0, 12)), 128)
+    assert not calls, "empty expert rank must skip local activation"
+    forward = method(source / "python/sglang/srt/models/qwen3_moe.py", "forward_deepep", {})
+    block = SimpleNamespace(topk=SimpleNamespace(empty_topk_output=lambda _: "empty"), experts=lambda **kwargs: calls.append(kwargs))
+    forward(block, Tensor((0, 4096)), None)
+    assert len(calls) == 1 and calls[0]["topk_output"] == "empty", "an empty local DP rank must still enter distributed experts"
+    print("PASS: real DeepGEMM runner preserves natural/interleaved weight layouts, uses one fused activation without a BF16 intermediate, and skips empty activation while empty DP ranks still enter experts (CUDA arithmetic mocked)")
+
+
+def check_prefill_ready_handoff(source):
+    path = source / "python/sglang/srt/disaggregation/prefill.py"
+    loop = method(path, "event_loop_overlap_disagg_prefill", {"deque": deque, "torch": SimpleNamespace(no_grad=lambda: lambda f: f)})
+    # Exercise the real loop with ready/not-ready CUDA events and independent
+    # attention ranks. Transport, batches and events are CPU stand-ins.
+    def scenario(ready, tp, cp, has_event):
+        calls, processed = [], []
+        iterations = iter(range(5))
+        state = SimpleNamespace(iteration=-1)
+
+        def receive():
+            state.iteration = next(iterations)
+            return []
+
+        def prepare(**_):
+            calls.append(("prepare", state.iteration))
+            batch = SimpleNamespace(id=state.iteration) if state.iteration < 3 else None
+            if batch is not None:
+                batch.copy = lambda: SimpleNamespace(id=batch.id)
+            return SimpleNamespace(running_batch=None, batch_to_run=batch)
+
+        def query():
+            calls.append(("query", state.iteration))
+            return ready
+
+        def run(batch):
+            calls.append(("run", batch.id))
+            return SimpleNamespace(id=batch.id, copy_done=SimpleNamespace(query=query) if has_event else None)
+
+        def process(batch, result):
+            assert batch.id == result.id and batch.id not in processed
+            assert ("prepare", state.iteration) in calls, "chunk bounds/counters must be prepared before processing the previous result"
+            processed.append(batch.id)
+            calls.append(("result", batch.id))
+
+        def sample(result, batch):
+            if batch is not None:
+                assert result.id == batch.id
+                assert batch.id == 0 or batch.id - 1 in processed, "grammar/result processing must precede the next delayed sample"
+                calls.append(("sample", batch.id))
+
+        scheduler = SimpleNamespace(request_receiver=SimpleNamespace(recv_requests=receive), process_input_requests=lambda _: None, _engine_paused=False, waiting_queue=[], disagg_prefill_bootstrap_queue=SimpleNamespace(pop_bootstrapped=list), get_next_disagg_prefill_batch_to_run=prepare, running_batch=None, last_batch=None, chunked_req=None, ngram_embedding_manager=SimpleNamespace(prepare_for_forward=lambda batch, **_: batch), enable_staging=True, maybe_prefetch_staging_for_batch=lambda batch: calls.append(("staging", batch.id)), run_batch=run, _apply_war_barrier=lambda: calls.append(("war", state.iteration)), process_batch_result=process, process_disagg_prefill_inflight_queue=lambda: calls.append(("poll", state.iteration)), launch_batch_sample_if_needed=sample, on_idle=lambda: calls.append(("idle", state.iteration)), ps=SimpleNamespace(attn_tp_size=tp, attn_cp_size=cp))
+        try:
+            loop(scheduler)
+        except StopIteration:
+            pass
+        assert processed == [0, 1, 2] and not scheduler.result_queue, "each result must drain exactly once, including the final idle iteration"
+        early = ready and tp == cp == 1 and has_event
+        for i in (1, 2):
+            assert (calls.index(("result", i - 1)) < calls.index(("run", i))) is early
+            assert calls.index(("run", i)) < calls.index(("war", i)) < calls.index(("poll", i)), "KV release must stay after the forward WAR barrier"
+        assert ("idle", 3) not in calls and ("idle", 4) in calls
+        if tp > 1 or cp > 1 or not has_event:
+            assert not any(kind == "query" for kind, _ in calls), "rank-local readiness must not reorder multi-rank attention collectives"
+    for case in ((True, 1, 1, True), (False, 1, 1, True), (True, 2, 1, True), (True, 1, 2, True), (True, 1, 1, False)):
+        scenario(*case)
+    print("PASS: ready Prefill results start handoff before the next forward; unfinished/TP/CP results retain ordering, final results drain once, chunk preparation/WAR/delayed sampling remain ordered (CUDA and transport mocked)")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
@@ -266,3 +402,5 @@ if __name__ == "__main__":
     check_chunk_release(source)
     check_moe_fusion_gate(source)
     check_dp_routing(source)
+    check_deepgemm_activation(source)
+    check_prefill_ready_handoff(source)
