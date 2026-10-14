@@ -1,6 +1,13 @@
 name: AWSでvLLMイメージをビルド
 
 on:
+  push:
+    paths:
+      - "containers/vllm.Dockerfile"
+      - "containers/check-vllm-image.py"
+      - "containers/fix-vllm-dense-draft-ep.py"
+      - "scripts/build-vllm-container.sh"
+      - ".github/workflows/vllm-image.yml"
   workflow_dispatch:
 
 permissions:
@@ -13,6 +20,7 @@ env:
 
 jobs:
   validate:
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, '[require-build]') }}
     uses: ./.github/workflows/validate.yml
 
   stage:
