@@ -26,6 +26,7 @@ install -m 0644 "${config}" "${runtime_dir}/source/firmus-framework.json"
 config="${runtime_dir}/source/firmus-framework.json"
 if [[ "${framework}" == sglang && -n "${CONTAINER_SHA256:-}" ]]; then
   [[ "${CONTAINER_SHA256}" =~ ^[0-9a-f]{64}$ && "${CONTAINER_SIZE:-}" =~ ^[1-9][0-9]*$ ]]
+  if [[ "${REQUIRE_BUILD}" == false ]]; then [[ "${CONTAINER_SHA256}" == "$(jq -er .images.sglang.sha256 "${config}")" ]]; fi
   archive=/scratch/home/ACCOUNT/qwen/containers
   jq --arg path "${archive}/${GITHUB_RUN_ID}.sqsh" --arg sha "${CONTAINER_SHA256}" --argjson size "${CONTAINER_SIZE}" --arg provenance "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" '.images.sglang = {path:$path,sha256:$sha,size_bytes:$size,provenance:$provenance}' "${config}" >"${config}.tmp"
   mv "${config}.tmp" "${config}"
@@ -82,8 +83,6 @@ install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/offic
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/run-aiperf.py" "${runtime_dir}/scripts/run-aiperf.py"
 install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/vllm-proxy.py" "${runtime_dir}/vllm-proxy.py"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${GITHUB_WORKSPACE}/scripts/parse-firmus-reference-result.py" "${GITHUB_WORKSPACE}/scripts/summarize-firmus-run.py" "${runtime_dir}/scripts/"
-install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-server-info.py" "${runtime_dir}/scripts/"
-install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-megamoe.py" "${GITHUB_WORKSPACE}/scripts/check-firmus-decode-kernels.py" "${runtime_dir}/scripts/"
 if [[ "${PROFILE}" == true ]]; then
   install -m 0755 "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${GITHUB_WORKSPACE}/scripts/capture-firmus-profile.sh" "${runtime_dir}/scripts/"
   install -m 0644 "${GITHUB_WORKSPACE}/scripts/validate-firmus-profile.py" "${runtime_dir}/scripts/"

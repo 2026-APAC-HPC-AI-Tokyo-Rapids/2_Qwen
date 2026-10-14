@@ -7,7 +7,28 @@ import textwrap
 import unittest
 from pathlib import Path
 
+import pytest
+
 MONITOR = Path(__file__).resolve().parents[2] / 'scripts/monitor-qwen-job.sh'
+
+
+@pytest.mark.parametrize("state,exit_code,expected", [("COMPLETED", "0:0", 0), ("FAILED", "1:0", 1), ("COMPLETED", "1:0", 1)])
+def test_firmus_completed_job_missing_from_squeue_reaches_accounting(tmp_path: Path, state: str, exit_code: str, expected: int) -> None:
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "results").mkdir()
+    for file in ("run-success", "logs/slurm-23120.log", "results/profile_export_aiperf.json", "results/score.json"):
+        (tmp_path / file).write_text("fixture\n")
+    for name, body in {
+        "squeue": 'for arg in "$@"; do case "$arg" in --jobs=*) echo "slurm_load_jobs error: Invalid job id specified" >&2; exit 1;; esac; done\nprintf "99999|RUNNING\\n"',
+        "sacct": f'printf "23120|{state}|{exit_code}|00:06:00|2\\n"',
+    }.items():
+        tool = tmp_path / name
+        tool.write_text(f"#!/bin/bash\n{body}\n")
+        tool.chmod(0o755)
+    result = subprocess.run(["bash", str(MONITOR.parents[1] / "platforms/firmus/check-qwen-job.sh")], env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SLURM_JOB_ID": "23120", "RUNTIME_DIR": str(tmp_path)}, capture_output=True, text=True, check=False)
+    assert result.returncode == expected
+    assert f"23120|{state}|{exit_code}" in result.stdout
+    assert "scheduler_job_pending=" not in result.stdout
 
 
 class MonitorTest(unittest.TestCase):

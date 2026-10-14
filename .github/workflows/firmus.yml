@@ -184,6 +184,16 @@ jobs:
         if: always() && (steps.submit.outputs.job_id != '' || steps.recover.outputs.job_id != '')
         uses: astral-sh/setup-uv@v7
 
+      - name: GPU終了後に回収した実設定を検証
+        if: always() && steps.collect.outcome == 'success' && !inputs.dynamo
+        shell: bash
+        run: |
+          root="${RUNNER_TEMP}/qwen-firmus-pd"
+          config="${root}/source/source/firmus-framework.json"
+          if [[ "$(jq -er .framework "${config}")" == sglang ]]; then
+            for worker in prefill-0 prefill-1 prefill-2 decode-0; do uv run --no-project --python 3.13 python scripts/check-firmus-server-info.py "${config}" "${root}/results/results/server-info-${worker}.json" "${worker%%-*}"; done
+          fi
+
       - name: 実行条件・結果・Nsight成果物をsummaryに記録
         if: always() && (steps.submit.outputs.job_id != '' || steps.recover.outputs.job_id != '')
         shell: bash

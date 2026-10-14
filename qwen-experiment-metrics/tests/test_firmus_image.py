@@ -35,17 +35,18 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
 
 
 @pytest.mark.skipif(os.uname().sysname != "Linux", reason="provision uses Linux stat")
-@pytest.mark.parametrize("require_build,source_commit,success", [(False, "old-build", True), (True, "new-run", True), (True, "old-build", False)])
-def test_provision_uses_selected_image_for_reuse_and_keeps_fresh_build_commit_check(tmp_path, require_build, source_commit, success):
+@pytest.mark.parametrize("require_build,source_commit,pin_matches,success", [(False, "old-build", True, True), (False, "old-build", False, False), (True, "new-run", True, True), (True, "old-build", True, False)])
+def test_provision_uses_selected_image_for_reuse_and_keeps_fresh_build_commit_check(tmp_path, require_build, source_commit, pin_matches, success):
     workspace = tmp_path / "workspace"
     (workspace / "configs").mkdir(parents=True)
     config = {"framework": "sglang", "workload": "official", "concurrency": 256, "prefill": {"moe_a2a_backend": "none"}, "images": {"sglang": {"path": "/stale-image.sqsh"}}}
-    (workspace / "configs/firmus-framework.json").write_text(json.dumps(config))
     archive = tmp_path / "archive"
     archive.mkdir()
     image = archive / "123.sqsh"
     image.write_bytes(b"selected-image")
     digest = hashlib.sha256(image.read_bytes()).hexdigest()
+    config["images"]["sglang"]["sha256"] = digest if pin_matches else "0" * 64
+    (workspace / "configs/firmus-framework.json").write_text(json.dumps(config))
     (archive / "123.container-sidecar.json").write_text(json.dumps({"source_commits": {"qwen": source_commit}, "container_artifact": {"sha256": digest}}))
     # Execute the actual image-selection/hash/metadata phase; no model staging
     # or scheduler operation is part of this regression test.

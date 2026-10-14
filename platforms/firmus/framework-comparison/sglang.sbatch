@@ -135,10 +135,8 @@ fi
 exec "${command[@]}"
 EOF
 
-# Part of this allocation: a finite numeric gate, then the full benchmark.
-# All later workers reuse its native compilation cache. No extra sbatch or retry.
-srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts megamoe-check)" timeout --signal=TERM --kill-after=15 240 env DG_JIT_CACHE_DIR="${ROOT}/home/deep-gemm" /opt/sglang/venv/bin/python -m torch.distributed.run --standalone --nproc-per-node=4 "${ROOT}/scripts/check-firmus-megamoe.py" >"${ART}/megamoe-numeric-check.log" 2>&1
-echo "SM90 MegaMoE numeric gate passed after ${SECONDS}s"
+# This experiment reuses the identical image numerically validated in run 38369214512.
+# Provisioning checks its pinned SHA-256 before sbatch; do not repeat that GPU gate here.
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
@@ -162,7 +160,6 @@ echo "READY after ${SECONDS}s"
 
 while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"
-  python3 "${ROOT}/scripts/check-firmus-server-info.py" "${ROOT}/source/firmus-framework.json" "${ROOT}/results/server-info-${worker}.json" "${worker%%-*}"
 done <"${ROOT}/source/worker-endpoints.tsv"
 benchmark_status=0
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || benchmark_status=$?

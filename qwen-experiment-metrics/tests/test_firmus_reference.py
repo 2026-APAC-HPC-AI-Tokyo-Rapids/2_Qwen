@@ -64,6 +64,46 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
+def test_server_info_checks_resolved_draft_backend_from_real_run() -> None:
+    # The failed run reached readiness, then rejected SGLang's None -> deep_gemm normalization.
+    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
+    for role in ("prefill", "decode"):
+        check(raw["config"], raw[role], role)
+    for index in range(5):
+        for backend in (None, "triton"):
+            info = copy.deepcopy(raw["decode"])
+            [info, *info["internal_states"]][index]["speculative_moe_runner_backend"] = backend
+            with pytest.raises(ValueError, match="speculative_moe_runner_backend"):
+                check(raw["config"], info, "decode")
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+def test_server_info_validation_runs_after_gpu_collection(tmp_path: Path, invalid: bool) -> None:
+    workflow = (ROOT / ".github/workflows/firmus.yml").read_text()
+    step = workflow.split("      - name: GPU終了後に回収した実設定を検証\n", 1)[1].split("\n      - name:", 1)[0]
+    assert "steps.collect.outcome == 'success'" in step
+    assert workflow.index("GPU終了後に回収した実設定を検証") > workflow.index("uses: actions/upload-artifact@v7")
+    script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    artifact = tmp_path / "qwen-firmus-pd"
+    (artifact / "source/source").mkdir(parents=True)
+    (artifact / "results/results").mkdir(parents=True)
+    (artifact / "source/source/firmus-framework.json").write_text(json.dumps(raw["config"]))
+    if invalid:
+        raw["decode"]["internal_states"][3]["speculative_moe_runner_backend"] = "triton"
+    for worker in ("prefill-0", "prefill-1", "prefill-2", "decode-0"):
+        (artifact / f"results/results/server-info-{worker}.json").write_text(json.dumps(raw[worker.split("-")[0]]))
+    uv = tmp_path / "uv"
+    uv.write_text(f'#!/bin/bash\nshift 5\nexec "{sys.executable}" "$@"\n')
+    uv.chmod(0o755)
+    result = subprocess.run(["bash", "-euc", script], cwd=ROOT, env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path)}, capture_output=True, text=True, check=False)
+    assert result.returncode == (1 if invalid else 0)
+    assert result.stdout.count("PASS:") == (3 if invalid else 4)
+    if invalid:
+        assert "decode state 4: speculative_moe_runner_backend" in result.stderr
+
+
 def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert "#SBATCH -t 00:17:00" in source
@@ -89,8 +129,8 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
     workers = [argv for argv in commands if "--exact" in argv and str(tmp_path / "source/worker.sh") in argv]
-    numeric = [argv for argv in commands if str(tmp_path / "scripts/check-firmus-megamoe.py") in argv]
-    assert len(numeric) == 1 and "--gres=gpu:4" in numeric[0] and "--nproc-per-node=4" in numeric[0]
+    assert "check-firmus-megamoe.py" not in source
+    assert "check-firmus-server-info.py" not in source
     assert len(workers) == 4
     assert sum(2 if "--gres=gpu:2" in argv else 4 for argv in workers) == 16
     archived = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/aspire-integration-argv.json").read_text())["archived_server_info"]
