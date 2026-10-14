@@ -8,20 +8,25 @@ start_body=
 if [[ "${framework}" == sglang ]]; then start_body='{"activities":["CUDA_PROFILER"]}'; fi
 start_requested=false
 stop_requested=false
+control_sessions() {
+  local action=$1 status=0 name host port tp
+  while IFS=$'\t' read -r name host port tp; do
+    printf '%s_requested worker=%s utc=%s\n' "${action}" "${name}" "$(date -u +%FT%T.%NZ)"
+    touch "${runtime_dir}/profile/nsys-${name}.${action}-request"
+  done <"${runtime_dir}/source/worker-endpoints.tsv"
+  local control_deadline=$((SECONDS + 180))
+  while IFS=$'\t' read -r name host port tp; do
+    while [[ ! -s "${runtime_dir}/profile/nsys-${name}.${action}-status" ]]; do
+      if (( SECONDS >= control_deadline )); then printf 'Nsight session %s timed out: %s\n' "${action}" "${name}" >&2; return 1; fi
+      sleep 0.1
+    done
+    [[ "$(cat "${runtime_dir}/profile/nsys-${name}.${action}-status")" == 0 ]] || status=1
+  done <"${runtime_dir}/source/worker-endpoints.tsv"
+  return "${status}"
+}
 stop_workers() {
   local prefix=$1 status=0 name host port tp pid
-  if [[ "${framework}" == vllm ]]; then
-    while IFS=$'\t' read -r name host port tp; do touch "${runtime_dir}/profile/nsys-${name}.stop-request"; done <"${runtime_dir}/source/worker-endpoints.tsv"
-    local stop_deadline=$((SECONDS + 180))
-    while IFS=$'\t' read -r name host port tp; do
-      while [[ ! -s "${runtime_dir}/profile/nsys-${name}.stop-status" ]]; do
-        if (( SECONDS >= stop_deadline )); then printf 'Nsight session stop timed out: %s\n' "${name}" >&2; return 1; fi
-        sleep 0.1
-      done
-      [[ "$(cat "${runtime_dir}/profile/nsys-${name}.stop-status")" == 0 ]] || status=1
-    done <"${runtime_dir}/source/worker-endpoints.tsv"
-    return "${status}"
-  fi
+  if [[ "${framework}" == vllm ]]; then control_sessions stop; return "$?"; fi
   local pids=()
   while IFS=$'\t' read -r name host port tp; do
     curl --fail --silent --show-error --max-time 180 -X POST "http://${host}:${port}/stop_profile" >"${runtime_dir}/profile/${prefix}-${name}.txt" 2>"${runtime_dir}/profile/${prefix}-${name}.stderr" &
@@ -43,19 +48,23 @@ deadline=$((SECONDS + 600))
 while ! grep -Fq 'Phase profiling (profiling) started' "${client_log}"; do (( SECONDS < deadline )); sleep 1; done
 sleep 5
 start_requested=true
-pids=()
-count=0
-while IFS=$'\t' read -r name host port tp; do
-  printf 'start_requested worker=%s utc=%s\n' "${name}" "$(date -u +%FT%T.%NZ)"
-  curl --fail --silent --show-error --max-time 60 -X POST "http://${host}:${port}/start_profile" -H 'Content-Type: application/json' -d "${start_body}" >"${runtime_dir}/profile/start-${name}.txt" 2>"${runtime_dir}/profile/start-${name}.stderr" &
-  pids+=("$!")
-  count=$((count + 1))
-done <"${runtime_dir}/source/worker-endpoints.tsv"
-expected_workers=$(awk 'END {print NR}' "${runtime_dir}/source/worker-endpoints.tsv")
-[[ "${count}" -eq "${expected_workers}" && "${count}" -gt 0 ]] || exit 1
-start_status=0
-for pid in "${pids[@]}"; do wait "${pid}" || start_status=1; done
-[[ "${start_status}" -eq 0 ]] || exit 1
+if [[ "${framework}" == vllm ]]; then
+  control_sessions start
+else
+  pids=()
+  count=0
+  while IFS=$'\t' read -r name host port tp; do
+    printf 'start_requested worker=%s utc=%s\n' "${name}" "$(date -u +%FT%T.%NZ)"
+    curl --fail --silent --show-error --max-time 60 -X POST "http://${host}:${port}/start_profile" -H 'Content-Type: application/json' -d "${start_body}" >"${runtime_dir}/profile/start-${name}.txt" 2>"${runtime_dir}/profile/start-${name}.stderr" &
+    pids+=("$!")
+    count=$((count + 1))
+  done <"${runtime_dir}/source/worker-endpoints.tsv"
+  expected_workers=$(awk 'END {print NR}' "${runtime_dir}/source/worker-endpoints.tsv")
+  [[ "${count}" -eq "${expected_workers}" && "${count}" -gt 0 ]] || exit 1
+  start_status=0
+  for pid in "${pids[@]}"; do wait "${pid}" || start_status=1; done
+  [[ "${start_status}" -eq 0 ]] || exit 1
+fi
 printf 'capture_active utc=%s\n' "$(date -u +%FT%T.%NZ)"
 if [[ "${framework}" == sglang ]]; then
   deadline=$((SECONDS + 180))

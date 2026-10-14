@@ -48,18 +48,19 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     sleep = tmp_path / "bin/sleep"
     sleep.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >>\"$SLEEP_RECORD\"\nif [[ $1 == 1 ]]; then printf 'Phase profiling (profiling) complete | elapsed=75.00s\\n' >>\"${SLEEP_RECORD%/*}/logs/aiperf.log\"; fi\n")
     with sleep.open("a") as handle:
-        handle.write('for request in "${SLEEP_RECORD%/*}"/profile/*.stop-request; do [[ -e "$request" ]] || continue; status=0; if [[ "${STOP_FAILURE:-}" == true && "$request" == *nsys-prefill-0.stop-request ]]; then status=1; fi; printf "%s\\n" "$status" >"${request%.stop-request}.stop-status"; done\n')
+        handle.write('for action in start stop; do for request in "${SLEEP_RECORD%/*}"/profile/*.${action}-request; do [[ -e "$request" ]] || continue; status=0; if [[ "${CONTROL_FAILURE:-}" == "$action" && "$request" == *nsys-prefill-0.* ]]; then status=1; fi; printf "%s\\n" "$status" >"${request%-request}-status"; done; done\n')
     sleep.chmod(0o755)
     try:
-        result = subprocess.run(["bash", str(ROOT / "scripts/capture-firmus-profile.sh"), str(tmp_path)], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLEEP_RECORD": str(tmp_path / "sleeps"), "STOP_FAILURE": str(failure == "stop").lower()}, capture_output=True, text=True, check=False)
+        result = subprocess.run(["bash", str(ROOT / "scripts/capture-firmus-profile.sh"), str(tmp_path)], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLEEP_RECORD": str(tmp_path / "sleeps"), "CONTROL_FAILURE": failure or ""}, capture_output=True, text=True, check=False)
     finally:
         server.shutdown()
         thread.join()
         server.server_close()
     assert (result.returncode != 0) is (failure is not None)
-    assert [path for path, _, _ in requests].count("/start_profile") == worker_count
+    assert [path for path, _, _ in requests].count("/start_profile") == (worker_count if framework == "sglang" else 0)
     assert [path for path, _, _ in requests].count("/stop_profile") == (worker_count if framework == "sglang" else 0)
     if framework == "vllm":
+        assert len(list((tmp_path / "profile").glob("*.start-status"))) == worker_count
         assert len(list((tmp_path / "profile").glob("*.stop-status"))) == worker_count
     expected_body = {"activities": ["CUDA_PROFILER"]} if framework == "sglang" else None
     assert all(body == expected_body for path, body, _ in requests if path == "/start_profile")
@@ -262,18 +263,22 @@ def test_profile_waits_for_report_even_when_client_aborts(tmp_path: Path, client
 def test_vllm_profiler_stops_whole_session_before_acknowledging(tmp_path: Path) -> None:
     report = tmp_path / "nsys-decode-0"
     stub = tmp_path / "nsys"
-    stub.write_text('#!/bin/bash\nif [[ $1 == profile ]]; then printf "%s\\n" "$@" >"$RECORD/profile-args"; while [[ ! -e "$RECORD/released" ]]; do sleep 0.01; done; else printf "%s\\n" "$@" >"$RECORD/stop-args"; sleep 0.1; touch "$RECORD/nsys-decode-0.nsys-rep" "$RECORD/released"; fi\n')
+    stub.write_text('#!/bin/bash\ncase "$1" in\nlaunch) printf "%s\\n" "$@" >"$RECORD/launch-args"; while [[ ! -e "$RECORD/released" ]]; do sleep 0.01; done;;\nstart) printf "%s\\n" "$@" >"$RECORD/start-args";;\nstop) printf "%s\\n" "$@" >"$RECORD/stop-args"; sleep 0.1; touch "$RECORD/nsys-decode-0.nsys-rep" "$RECORD/released";;\nesac\n')
     stub.chmod(0o755)
     process = subprocess.Popen(["bash", str(ROOT / "scripts/exec-profiler.sh"), "/usr/local/bin/vllm", "serve", "/model"], env={**os.environ, "QWEN_PROFILER_INVOCATION_PATH": str(report) + ".argv", "QWEN_PROFILER_NSYS_BIN": str(stub), "RECORD": str(tmp_path)})
     try:
+        (tmp_path / "nsys-decode-0.start-request").touch()
         (tmp_path / "nsys-decode-0.stop-request").touch()
         assert process.wait(timeout=5) == 0
     finally:
         if process.poll() is None:
             process.kill()
             process.wait()
-    args = (tmp_path / "profile-args").read_text().splitlines()
-    assert "--capture-range-end=none" in args and "--kill=none" in args
+    args = (tmp_path / "launch-args").read_text().splitlines()
+    assert args[0] == "launch" and "--cuda-graph-trace=node" in args
+    assert not any("capture-range" in arg for arg in args)
+    assert (tmp_path / "start-args").read_text().splitlines() == ["start", "--session=qwen-nsys-decode-0", "--sample=none", "--cpuctxsw=none", "--force-overwrite=true", f"--output={report}"]
+    assert (tmp_path / "nsys-decode-0.start-status").read_text() == "0\n"
     assert (tmp_path / "stop-args").read_text().splitlines() == ["stop", "--session=qwen-nsys-decode-0"]
     assert (tmp_path / "nsys-decode-0.stop-status").read_text() == "0\n"
     assert (tmp_path / "nsys-decode-0.nsys-rep").exists()

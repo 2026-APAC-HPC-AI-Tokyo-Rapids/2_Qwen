@@ -16,10 +16,19 @@ if [[ -n "${QWEN_PROFILER_NSYS_BIN:-}" ]]; then
   if [[ "${1##*/}" == vllm ]]; then
     report=${QWEN_PROFILER_INVOCATION_PATH%.argv}
     session=qwen-${report##*/}
-    # A TP rank's cudaProfilerStop can close collection before other ranks flush.
-    # Stop the whole session in this container, and acknowledge only after import.
-    "${QWEN_PROFILER_NSYS_BIN}" profile --session-new="${session}" --force-overwrite=true --trace-fork-before-exec=true --capture-range=cudaProfilerApi --capture-range-end=none --kill=none --trace=cuda,nvtx,osrt --cuda-graph-trace=node --sample=none --cpuctxsw=none --output="${report}" "$@" &
+    # Nsight 2026.3.2 rejects external stop in API-triggered RangeCollection.
+    # Use interactive Collection for both boundaries and flush every TP process.
+    "${QWEN_PROFILER_NSYS_BIN}" launch --session-new="${session}" --trace-fork-before-exec=true --trace=cuda,nvtx,osrt --cuda-graph-trace=node "$@" &
     profiler_pid=$!
+    while [[ ! -e "${report}.start-request" ]]; do
+      if ! kill -0 "${profiler_pid}" 2>/dev/null; then wait "${profiler_pid}"; exit 1; fi
+      sleep 0.1
+    done
+    start_status=0
+    "${QWEN_PROFILER_NSYS_BIN}" start --session="${session}" --sample=none --cpuctxsw=none --force-overwrite=true --output="${report}" >"${report}.start.log" 2>&1 || start_status=$?
+    printf '%s\n' "${start_status}" >"${report}.start-status.tmp"
+    mv "${report}.start-status.tmp" "${report}.start-status"
+    (( start_status == 0 )) || exit "${start_status}"
     while [[ ! -e "${report}.stop-request" ]]; do
       if ! kill -0 "${profiler_pid}" 2>/dev/null; then wait "${profiler_pid}"; exit 1; fi
       sleep 0.1
