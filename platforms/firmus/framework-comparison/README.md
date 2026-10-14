@@ -138,12 +138,22 @@ working Dynamo baseline before candidate TP or worker-count experiments.
 ## Short vLLM profiling runs
 
 For vLLM, `[profile]` runs only a diagnostic client: c104, ISL4000/OSL200,
-20 seconds warmup, 30 seconds measurement and up to 30 seconds grace, with
+20 seconds warmup, 30 seconds measurement and up to 120 seconds grace, with
 2,048 synthetic entries. It omits the normal 60/120/30 benchmark pass and collects
 five seconds of CUDA/NVTX activity from all seven workers. The profile branch
-requests 14 minutes instead of 17. Native reports and diagnostic requests live
+requests 15 minutes instead of 17. Native reports and diagnostic requests live
 under `profile/`; `results/` holds server configuration, with no official score.
 Provenance records `measurement_mode=profile-only`; terminal validation requires
 the diagnostic export, then validates all 16 GPU traces on the login runner.
 Use existing uninstrumented benchmarks for performance comparison. A profile
 completion marker does not imply an official benchmark or accuracy result.
+
+The diagnostic client uses eight processes for 104 concurrent requests and a
+120-second drain allowance. The launcher waits for the capture to finish even
+if the client fails, then preserves both failure statuses. vLLM captures ignore
+per-rank CUDA stop APIs: each worker container runs `nsys stop` for its named
+session and acknowledges completion only after the native report is generated.
+This follows NVIDIA's multiprocess flush workaround:
+https://forums.developer.nvidia.com/t/question-when-prifilling-megatron-lm/350407/5
+The five-second controller window is unchanged; marker polling can add up to
+0.1 seconds. GPU coverage and CUDA-loss validation remain strict.

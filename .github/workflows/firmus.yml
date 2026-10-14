@@ -150,7 +150,7 @@ jobs:
         run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-qwen-job.sh
 
       - name: 終了したprofileをlogin runnerで検証
-        if: inputs.profile && !inputs.dynamo
+        if: always() && inputs.profile && !inputs.dynamo && steps.submit.outputs.job_id != ''
         run: python3 "${RUNTIME_DIR}/scripts/validate-firmus-profile.py" "${RUNTIME_DIR}" --nsys "${RUNTIME_DIR}/nsys/bin/nsys" >"${RUNTIME_DIR}/logs/profile-validation.log" 2>&1
 
       - name: ログ・AIPerf・profile・来歴をrunnerへ回収

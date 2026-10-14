@@ -10,6 +10,18 @@ start_requested=false
 stop_requested=false
 stop_workers() {
   local prefix=$1 status=0 name host port tp pid
+  if [[ "${framework}" == vllm ]]; then
+    while IFS=$'\t' read -r name host port tp; do touch "${runtime_dir}/profile/nsys-${name}.stop-request"; done <"${runtime_dir}/source/worker-endpoints.tsv"
+    local stop_deadline=$((SECONDS + 180))
+    while IFS=$'\t' read -r name host port tp; do
+      while [[ ! -s "${runtime_dir}/profile/nsys-${name}.stop-status" ]]; do
+        if (( SECONDS >= stop_deadline )); then printf 'Nsight session stop timed out: %s\n' "${name}" >&2; return 1; fi
+        sleep 0.1
+      done
+      [[ "$(cat "${runtime_dir}/profile/nsys-${name}.stop-status")" == 0 ]] || status=1
+    done <"${runtime_dir}/source/worker-endpoints.tsv"
+    return "${status}"
+  fi
   local pids=()
   while IFS=$'\t' read -r name host port tp; do
     curl --fail --silent --show-error --max-time 180 -X POST "http://${host}:${port}/stop_profile" >"${runtime_dir}/profile/${prefix}-${name}.txt" 2>"${runtime_dir}/profile/${prefix}-${name}.stderr" &

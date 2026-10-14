@@ -2,7 +2,7 @@
 #SBATCH -J vllm-firmus-eagle-c104
 #SBATCH -p hpcai
 #SBATCH -N 2
-#SBATCH -t 00:14:00
+#SBATCH -t 00:15:00
 #SBATCH --gres=gpu:8
 #SBATCH --propagate=NONE
 #SBATCH --no-requeue
@@ -172,12 +172,16 @@ while IFS=$'\t' read -r worker host port _tp; do
 done <"${ROOT}/source/worker-endpoints.tsv"
 if [[ "${PROFILE:-false}" == true ]]; then
   mkdir -p "${ROOT}/profile/client"
-  printf 'Profile only: no official benchmark pass. Diagnostic client:20/30/30 at the same c104 and input/output lengths, with 2048 synthetic entries; five-second CUDA/NVTX/OSRT trace. Use existing uninstrumented runs for performance comparison; profile/client/ has no official score.\n' >"${ROOT}/profile/interpretation.txt"
+  printf 'Profile only: no official benchmark pass. Diagnostic client:20/30/120, eight client processes at the same c104 and input/output lengths, with 2048 synthetic entries; five-second CUDA/NVTX/OSRT trace. Use existing uninstrumented runs for performance comparison; profile/client/ has no official score.\n' >"${ROOT}/profile/interpretation.txt"
   bash "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" "${ROOT}/profile/client/aiperf.log" >"${ROOT}/logs/profile-capture.log" 2>&1 &
   profile_capture_pid=$!
-  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" profile >"${ROOT}/profile/client/aiperf.log" 2>&1
-  wait "${profile_capture_pid}"
+  client_status=0
+  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" profile >"${ROOT}/profile/client/aiperf.log" 2>&1 || client_status=$?
+  capture_status=0
+  wait "${profile_capture_pid}" || capture_status=$?
   profile_capture_pid=
+  (( client_status == 0 )) || exit "${client_status}"
+  (( capture_status == 0 )) || exit "${capture_status}"
   # CPU-only export/validation runs on the login runner after Slurm is terminal.
 else
   srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1

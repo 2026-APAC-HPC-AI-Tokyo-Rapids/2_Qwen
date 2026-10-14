@@ -47,19 +47,23 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     (tmp_path / "logs/aiperf.log").write_text("Phase profiling (profiling) started\n")
     sleep = tmp_path / "bin/sleep"
     sleep.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >>\"$SLEEP_RECORD\"\nif [[ $1 == 1 ]]; then printf 'Phase profiling (profiling) complete | elapsed=75.00s\\n' >>\"${SLEEP_RECORD%/*}/logs/aiperf.log\"; fi\n")
+    with sleep.open("a") as handle:
+        handle.write('for request in "${SLEEP_RECORD%/*}"/profile/*.stop-request; do [[ -e "$request" ]] || continue; status=0; if [[ "${STOP_FAILURE:-}" == true && "$request" == *nsys-prefill-0.stop-request ]]; then status=1; fi; printf "%s\\n" "$status" >"${request%.stop-request}.stop-status"; done\n')
     sleep.chmod(0o755)
     try:
-        result = subprocess.run(["bash", str(ROOT / "scripts/capture-firmus-profile.sh"), str(tmp_path)], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLEEP_RECORD": str(tmp_path / "sleeps")}, capture_output=True, text=True, check=False)
+        result = subprocess.run(["bash", str(ROOT / "scripts/capture-firmus-profile.sh"), str(tmp_path)], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLEEP_RECORD": str(tmp_path / "sleeps"), "STOP_FAILURE": str(failure == "stop").lower()}, capture_output=True, text=True, check=False)
     finally:
         server.shutdown()
         thread.join()
         server.server_close()
     assert (result.returncode != 0) is (failure is not None)
     assert [path for path, _, _ in requests].count("/start_profile") == worker_count
-    assert [path for path, _, _ in requests].count("/stop_profile") == worker_count
+    assert [path for path, _, _ in requests].count("/stop_profile") == (worker_count if framework == "sglang" else 0)
+    if framework == "vllm":
+        assert len(list((tmp_path / "profile").glob("*.stop-status"))) == worker_count
     expected_body = {"activities": ["CUDA_PROFILER"]} if framework == "sglang" else None
     assert all(body == expected_body for path, body, _ in requests if path == "/start_profile")
-    assert (tmp_path / "sleeps").read_text().splitlines() == (["5"] if failure == "start" else ["5", "1" if framework == "sglang" else "5"])
+    assert [value for value in (tmp_path / "sleeps").read_text().splitlines() if value != "0.1"] == (["5"] if failure == "start" else ["5", "1" if framework == "sglang" else "5"])
     if framework == "sglang" and failure != "start":
         assert all(complete for path, _, complete in requests if path == "/stop_profile")
     assert ("capture_stopped" in result.stdout) is (failure is None)
@@ -208,11 +212,11 @@ def test_vllm_profile_runs_only_one_client(tmp_path: Path, profile: bool) -> Non
     assert not (tmp_path / "results/score.json").exists()
 
 
-@pytest.mark.parametrize("mode,expected", [("official", "60 120 30 12800"), ("profile", "20 30 30 2048")])
+@pytest.mark.parametrize("mode,expected", [("official", "60 120 30 12800 104"), ("profile", "20 30 120 2048 8")])
 def test_profile_client_reduces_dataset_without_changing_benchmark(tmp_path: Path, mode: str, expected: str) -> None:
     (tmp_path / "results").mkdir()
     source = (ROOT / "platforms/firmus/framework-comparison/official-aiperf.sh").read_text().split("export HF_HOME", 1)[0]
-    result = subprocess.run(["bash", "-euc", source + '\nprintf "%s %s %s %s" "$warmup" "$duration" "$grace" "$entries"', "fixture", str(tmp_path), "104", mode], capture_output=True, text=True, check=True)
+    result = subprocess.run(["bash", "-euc", source + '\nprintf "%s %s %s %s %s" "$warmup" "$duration" "$grace" "$entries" "$workers"', "fixture", str(tmp_path), "104", mode], capture_output=True, text=True, check=True)
     assert result.stdout == expected
 
 
@@ -220,7 +224,7 @@ def test_profile_only_summary_does_not_claim_an_official_score(tmp_path: Path) -
     (tmp_path / "provenance.json").write_text(json.dumps({"framework": "vllm", "workload": "official", "profile": True, "measurement_mode": "profile-only"}))
     (tmp_path / "firmus-framework.json").write_text(json.dumps({"concurrency": 104}))
     summary = SUMMARY(tmp_path, "456", "success")
-    assert "20 / 30 / 30 (diagnostic only)" in summary
+    assert "20 / 30 / 120 (diagnostic only)" in summary
     assert "no official benchmark or score was requested" in summary
     assert "Local score" not in summary and "60 / 120 / 30" not in summary
 
@@ -239,3 +243,37 @@ def test_terminal_profile_does_not_require_a_fabricated_score(tmp_path: Path, mo
     (tmp_path / "run-success").touch()
     result = subprocess.run(["bash", str(ROOT / "platforms/firmus/check-qwen-job.sh")], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLURM_JOB_ID": "123", "RUNTIME_DIR": str(tmp_path)}, capture_output=True, text=True, check=False)
     assert result.returncode == expected
+
+
+@pytest.mark.parametrize("client_status,capture_status,expected", [(134, 0, 134), (0, 1, 1), (0, 0, 0)])
+def test_profile_waits_for_report_even_when_client_aborts(tmp_path: Path, client_status: int, capture_status: int, expected: int) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    start = source.index('if [[ "${PROFILE:-false}" == true ]]; then\n  mkdir -p "${ROOT}/profile/client"')
+    stage = source[start:source.index('touch "${ROOT}/run-success"', start)]
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/capture-firmus-profile.sh").write_text(f'sleep 0.2\ntouch "$1/report-finished"\nexit {capture_status}\n')
+    harness = f'srun() {{ return {client_status}; }}; mounts() {{ :; }};\n' + stage
+    result = subprocess.run(["bash", "-euc", harness], env={**os.environ, "ROOT": str(tmp_path), "PROFILE": "true", "HEAD": "fixture", "AIPERF": "fixture.sqsh", "N": "104"}, capture_output=True, text=True, timeout=5, check=False)
+    assert result.returncode == expected
+    assert (tmp_path / "report-finished").exists()
+
+
+def test_vllm_profiler_stops_whole_session_before_acknowledging(tmp_path: Path) -> None:
+    report = tmp_path / "nsys-decode-0"
+    stub = tmp_path / "nsys"
+    stub.write_text('#!/bin/bash\nif [[ $1 == profile ]]; then printf "%s\\n" "$@" >"$RECORD/profile-args"; while [[ ! -e "$RECORD/released" ]]; do sleep 0.01; done; else printf "%s\\n" "$@" >"$RECORD/stop-args"; sleep 0.1; touch "$RECORD/nsys-decode-0.nsys-rep" "$RECORD/released"; fi\n')
+    stub.chmod(0o755)
+    process = subprocess.Popen(["bash", str(ROOT / "scripts/exec-profiler.sh"), "/usr/local/bin/vllm", "serve", "/model"], env={**os.environ, "QWEN_PROFILER_INVOCATION_PATH": str(report) + ".argv", "QWEN_PROFILER_NSYS_BIN": str(stub), "RECORD": str(tmp_path)})
+    try:
+        (tmp_path / "nsys-decode-0.stop-request").touch()
+        assert process.wait(timeout=5) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    args = (tmp_path / "profile-args").read_text().splitlines()
+    assert "--capture-range-end=none" in args and "--kill=none" in args
+    assert (tmp_path / "stop-args").read_text().splitlines() == ["stop", "--session=qwen-nsys-decode-0"]
+    assert (tmp_path / "nsys-decode-0.stop-status").read_text() == "0\n"
+    assert (tmp_path / "nsys-decode-0.nsys-rep").exists()

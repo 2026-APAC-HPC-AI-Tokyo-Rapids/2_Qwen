@@ -27,7 +27,7 @@ def summarize(root: Path, job_id: str, status: str) -> str:
     workload = identity.get("workload", "reference-07")
     phases = "60 / 120 / 30" if workload == "official" else "20 / 60 / 15"
     if profile_only:
-        phases = "20 / 30 / 30 (diagnostic only)"
+        phases = "20 / 30 / 120 (diagnostic only)"
     topology = "P2 × TP4 / D2 × TP4 EP1" if identity.get("framework") == "sglang" and workload == "official" else "P4 × TP2 / D2 × TP4 EP4"
     if workload == "official" and config.get("concurrency") == 64 and config.get("speculation", {}).get("algorithm") == "EAGLE3":
         topology = "P4 × TP2 / D2 × TP4 EP1"
