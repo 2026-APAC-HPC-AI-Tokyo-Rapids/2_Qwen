@@ -12,7 +12,23 @@
 
 通常2本はSLA適格で、保存済みscoreを同一parserで再計算して一致。SYMM_MEM runのDecodeログにdispatch `['SYMM_MEM', 'PYNCCL']`、tile32 runには専用 `source/vllm-decode-moe/` の設定読込を確認した。単一runの±0.1%未満を改善とは扱わず、追加反復やmainへの性能設定採用は行っていない。全3 runsのarchive SHA256SUMSを全件照合し一致、Actionsの回収・保存・runtime削除は成功。
 
-短縮profileはREADY604秒、capture_active21:56:33Z、stop_requested21:56:38Z。AIPerf終了処理で `Assertion failed: check () (src/msg.cpp:387)` → exit134となり、launcherのerrexitによるcleanupがDecodeのNsight report書出し中にworkerを停止した。これは14分のTIMEOUTではない。Decode reportは存在するが、同じNsight2026.3.2によるCPU exportが `Section Table Reference magic number mismatch` で失敗し、完全なreportとして使えない。Prefill6 reportsはCPU exportでき各2 GPUのkernelを含むが、CUDA event欠損等の診断警告が残っており、厳格なcapture validatorの合格とは扱わない。Actionsのprofile validation stepは失敗後にskipされていた。再投入せずCPUで検証した結果であり、計測終了時のclient failureとreport保存の寿命管理、警告の対象processの調査が残る。
+短縮profileはREADY604秒、capture_active21:56:33Z、stop_requested21:56:38Z。AIPerf終了処理で `Assertion failed: check () (src/msg.cpp:387)` → exit134となり、launcherのerrexitによるcleanupがDecodeのNsight report書出し中にworkerを停止した。これは14分のTIMEOUTではない。Decode reportは存在するが、同じNsight2026.3.2によるCPU exportが `Section Table Reference magic number mismatch` で失敗し、完全なreportとして使えない。Prefill6 reportsはCPU exportでき各2 GPUのkernelを含むが、CUDA event欠損等の診断警告が残っており、厳格なcapture validatorの合格とは扱わない。Actionsのprofile validation stepは失敗後にskipされていた。再投入せずCPUで検証した結果であり、計測終了時のclient failureとreport保存の寿命管理を修正した。Prefillの警告は親processだけでなく、CUDA kernelを記録したrank自身にも出ていた。
+
+## 短縮profileの取り直し（2026-10-14）
+
+ユーザーの取り直し指示により、commit `96f2a3d` から [38487911850](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38487911850) / Slurm23235を実行した。通常benchを省き、入力候補2,048件、client8 processes／104 concurrency、warmup20／measurement30／grace120秒、5秒収録、割当上限15分。client失敗時もcapture完了を待ち、Nsight session全体を停止して全rankのbufferをflushする構成にした。image・モデル・生成条件は維持した。 clientのservices configuredは前回33.55秒から7.44秒に短縮し、warmupは476件／23.46秒、error0（前回494件／23.49秒、error0）。この単一比較を公式性能改善とは扱わない。
+
+このrunのDecodeはmodel loading32.92–33.53秒、engine initialization390.33秒。初期化の内数としてcompilation90.72秒、target／draft側のGraph準備118＋32秒、DeepGEMM warmup88秒を記録した。並列rankの時間を合算せず、instrumented runの起動内訳として扱う。
+
+READY598秒後にcapture_active00:23:35Z、stop_requested00:23:40Zとなったが、全7 `nsys stop` が `The request was not completed properly: StopRequest.` / exit1で失敗した。Slurmは12:44でFAILED（TIMEOUTではない）。その後wrapper退出に伴ってservingが停止し、clientのrequest errorも増加した。native reportは0件で、profile validatorもmissing reportとして失敗。ログ・診断client出力のarchiveはSHA256SUMS全件一致、Actionsの回収・保存・runtime削除は成功した。
+
+追加GPUを使わず、自宅サーバーの同じNsight2026.3.2でCPU NVTX rangeを収録したところ、`RangeCollection` 状態の `nsys stop` で同じエラーを再現した。API rangeを使わず `nsys launch → start → stop` で `Collection` 状態にすると停止・native保存・SQLite exportが成功した。実際の修正wrapperを4子processで検証し、4 threadsのNVTX eventsを確認、全子processが停止後も正常に完走した。CPU検証334件と静的検査も成功。commit `e1d34c6` でこの開始・停止方式だけを修正し、[38490463905](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38490463905) へ短縮profileを1本投入した。
+
+再実行38490463905 / Slurm23243はqueue59分06秒、割当13分09秒でCOMPLETED・exit0。READY592秒、client準備6.87秒、warmup466件／23.74秒、measurement740件／33.63秒、両phaseともerror0・cancel0。全7 sessionのstart／stopはexit0、7 native reportsの保存・SQLite export・archive SHA256SUMS照合・runtime削除が成功した。しかし厳格なprofile validationはCUDA event欠損で失敗し、Actions全体はfailure。完全なprofileを取得できたとは扱わない。
+
+DIAGNOSTIC_EVENTをseverity1まで調べると、実際にkernelを記録した全16 GPU processに `Number of incomplete CUPTI events dropped` があり、「profiling session停止時にGPU timestamp情報が未回収」と記録されていた。Decodeのdevice0〜3で3,923／3,896／3,333／3,312 events、Prefill各2 ranksでP0=3,540／3,540、P1=4,936／4,938、P2=5,150／5,150、P3=5,178／5,177、P4=5,564／5,592、P5=5,520／5,453。親processだけの警告ではない。native破損・client異常・StopRequest失敗は解消したが、収録終了境界の欠損は未解消である。
+
+この新しい2-proposal traceでも、記録済みkernel durationではDecodeのMoE41.29%、FA3 17.01%、custom all-reduce8.38%＋two-shot3.52%、Prefill MoE約48%だった。これは欠損を含む診断用の参考値で、旧3-proposal traceとの性能比較や未記録区間のCPU待ち判定には使わない。raw正本は `qwen-artifacts/38490463905/1/`。追加のクラスタジョブは投げなかった。自宅GTX1660 SUPER／driver615.71.09／Nsight2026.3.2／CUDA13.4の小さなCUDA programで2秒収録し、(1)計算中の外部stop、(2)cudaDeviceSynchronize完了後1秒待ってstop、(3)さらにcudaProfilerStopを呼んで外部stop、を切り分けた。全3条件でnative保存・exportは成功する一方、CUDA不完全収録警告が残った。(3)ではcapture-range=noneによりcudaProfilerStopがignoredとも記録された。この単一GPU診断をH200分散系の完全再現とは扱わず、単なるdrain待ちやAPI stop追加では解決の根拠がないと判断した。検証条件は緩めず、根拠なく3本目のクラスタ再実行を投入しない。
 
 ## 調査範囲と正本
 
@@ -28,10 +44,13 @@ raw正本は `ssh -o BatchMode=yes archive-host` の `/srv/qwen-artifacts/<run>/
 |---|---|---:|---:|---|
 | [38194609674](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38194609674) | vLLM c104 / proposals 3 | 4710.02 | 98.44% | 非profile基準 |
 | [38331343958](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38331343958) | vLLM c104 / proposals 2 | 4732.87 | 98.72% | +0.485%の単一比較。優位性未確定 |
+| [38341761493](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38341761493) | vLLM c112 / proposals 2 | 4759.69 | 98.40% | c104比+0.567%の単一比較。優位性未確定 |
 | [38034080121](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38034080121) | SGLang c104 | 4429.95 | 93.33% | 別engine構成の参考値 |
 | [38164365415](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38164365415) | SGLang c192 / MegaMoE | 0 | 36.88% | raw throughputが高くてもSLA不適格 |
 
 vLLM基準はFirmus g1/g4、16 H200、P6×TP2 + D1×TP4、EP1、FA3、FP8 KV、公式FP8 target、BF16 EAGLE3 draft。同一の固定image、target/tokenizer/draft revisionsを使う。公式ISL4000 / OSL200、warmup60 / measurement120 / grace30、TTFT≤3000ms、平均ITL≤20ms、good fraction≥0.90で比較する。2 proposalsではITLが16.51→15.23msに改善する一方、TTFTは1000→1245msに増加した。[request-analysis.json](request-analysis.json) の全リクエスト再集計では、ITL違反8→0件、TTFT違反38→38件。decode duration平均3286→3032msの改善がTTFT増加でほぼ相殺され、平均request latencyは4286→4276msに留まる。少ない投機が全体のgoodputを必ず増やすとはいえない。
+
+10/14のdiscrawl差分確認時点では保存messageは9,579件だった。そこから見つけたc112 run [38341761493](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38341761493) はSlurm23076 COMPLETED12:49、2,991 requests・error0、raw4837.18／good4759.69 tokens/s、good fraction98.395%。archive全件のSHA256SUMS照合とcommit `7880056e` のparser再実行で保存scoreに一致した。c104比+0.567%だが、TTFT1469.06ms、ITL15.55msと両平均latencyは増加している。反復なしに優位性を確定せず、今回のprofileは元のc104 baselineを固定したままとする。
 
 調査中に完了した別実験 [38335858973](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38335858973) はTensorRT-LLM、c128、P6TP2/D1TP4EP4、EAGLE3 steps3。READY685秒、計測2,732件・request error0だが、平均ITL26.025ms、TTFT550.598ms、good fraction1.4275%でscore0。Actions failureは採点条件不適合であり、起動失敗ではない。raw output throughput4398.78 tokens/sを有効scoreと扱わない。保存済み全artifactのSHA256SUMS照合とcommit `4fdca5b1` のparser再実行で保存scoreとの一致を確認した。vLLM基準と同時実行数・EP・engine等が異なるため、個別要因の効果は分離できないが、この構成を現行候補より有利とは判定しない。別実験のジョブ・branchには介入していない。
 
@@ -53,7 +72,7 @@ Decodeは共通5.297秒窓で各GPUのrecorded kernel unionが96.98–97.06%、k
 
 **制限:** 旧収録toolにはdriver13.3非対応とCUDA event欠損の警告がある。未記録の空白をCPU待ちと断定できず、duration shareはcritical path上の削減率でもない。GPU utilization、電力、memory utilizationだけではHBM帯域飽和／演算飽和を区別できない。これを解消する再収録を実施中。
 
-優先候補はMoEのtoken tileとDecodeのcollective。TP4のMoE中間幅は384。image内のH200向け設定はbatch256/512でM tile64を使うが、現行の小さなexpert batchではpaddingの影響が候補になる。実際のexpert分布・改善率はまだ未計測。activation+quantization融合も残るが、現行E8M0 scale条件ではnative融合が使われない。scale方式をまとめて変更するとdense GEMMも変わるため、まず限定した要因で比較する。
+初期の優先候補はMoEのtoken tileとDecodeのcollectiveだったが、上記の単独比較では改善を確認できなかった。TP4のMoE中間幅は384。image内のH200向け設定はbatch256/512でM tile64を使うが、現行の小さなexpert batchではpaddingの影響が候補になる。実際のexpert分布・改善率はまだ未計測。activation+quantization融合も残るが、現行E8M0 scale条件ではnative融合が使われない。scale方式をまとめて変更するとdense GEMMも変わるため、まず限定した要因で比較する。
 
 ## 実験全体の時間
 
@@ -77,7 +96,7 @@ DecodeのGraph設定は2 proposalsで53 request bucketsを3倍して最大768 to
 | `5b96e630` / `perf/vllm-decode-tile32-20261013` | Decodeだけnative tuned configのbatch256/512のM tile64→32 | [38346456470](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38346456470) |
 | `a54355ae` / `perf/vllm-profile-compatible-20261013` | 同一baselineのprofile収録をNsight2026.3.2に更新、CPU exportを割当外へ | [38346936664](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38346936664) |
 
-各branchでCPU単体テスト一式、静的検査、shell構文を通し、Actionsのvalidateも成功。profile validatorにはCUDA欠損・非対応driverの実警告を拒否するfixtureを追加した。今回の成果物は未回収、性能採否は未判定。既存の他者ジョブには介入しない。
+各branchでCPU単体テスト一式、静的検査、shell構文を通し、Actionsのvalidateも成功。profile validatorにはCUDA欠損・非対応driverの実警告を拒否するfixtureを追加した。通常2本と最初の短縮profileの成果物は回収済み。通常2本は優位性を確認できず、不採用。既存の他者ジョブには介入していない。
 
 ## ジョブ数・占有時間の制約
 
