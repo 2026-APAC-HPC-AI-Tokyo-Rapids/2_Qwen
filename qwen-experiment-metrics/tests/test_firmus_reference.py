@@ -150,7 +150,7 @@ def test_vllm_launch_matches_page64_p6d1_comparator(tmp_path: Path) -> None:
     client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
     configuration = 'speculation=(' + source.split('speculation=(', 1)[1].split('\nART=', 1)[0]
     harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + '\n' + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
-    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "VLLM": "/image", "AIPERF": "/image", "MODEL": "/model", "N": "104", "R_PORT": "8000"}
+    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "VLLM": "/image", "AIPERF": "/image", "MODEL": "/model", "N": str(config["concurrency"]), "R_PORT": "8000"}
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
     workers = [argv for argv in commands if "--exact" in argv]
@@ -162,14 +162,15 @@ def test_vllm_launch_matches_page64_p6d1_comparator(tmp_path: Path) -> None:
         if any(arg.startswith("prefill-") for arg in argv):
             assert argv[argv.index("--moe-backend") + 1] == "deep_gemm"
         else:
-            assert "--moe-backend" not in argv
+            assert argv[argv.index("--moe-backend") + 1] == "triton"
+            assert "--enable-expert-parallel" in argv
     decoder = next(argv for argv in workers if "decode-0" in argv)
     assert "--no-enable-prefix-caching" in decoder
     router_argv = next(argv for argv in commands if any(arg.endswith("/vllm-proxy.py") for arg in argv))
     begin = router_argv.index("--prefiller-ports") + 1
     assert router_argv[begin:begin + 6] == ["30100", "30101", "30102", "30103", "30104", "30105"]
     client_argv = next(argv for argv in commands if str(tmp_path / "scripts/official-aiperf.sh") in argv)
-    assert client_argv[-2:] == [str(tmp_path), "104"]
+    assert client_argv[-2:] == [str(tmp_path), str(config["concurrency"])]
 
 
 def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_path: Path) -> None:
@@ -180,18 +181,19 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     # Exercise actual shell argument construction without requiring GPUs or HCAs.
     probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
-    probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "${worker_command[@]}"\n'
+    probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "$VLLM_USE_DEEP_GEMM_E8M0" "$VLLM_USE_NCCL_SYMM_MEM" "${worker_command[@]}"\n'
     for role, tp, limit in [("prefill", 2, config["concurrency"]), ("decode", 4, 256)]:
         options = ["--speculative-config", '{"method":"eagle3","model":"/draft","num_speculative_tokens":2}', "--max-num-seqs", str(limit)]
         if role == "prefill":
             options += ["--disable-custom-all-reduce", "--moe-backend", "deep_gemm"]
         else:
-            options += ["--compilation-config", '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":768}', "--cudagraph-capture-sizes", *[str(n * 3) for n in config["decode_cuda_graph_bs"] if n <= 256]]
+            options += ["--enable-expert-parallel", "--moe-backend", "triton", "--compilation-config", '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":768}', "--cudagraph-capture-sizes", *[str(n * 3) for n in config["decode_cuda_graph_bs"] if n <= 256]]
         result = subprocess.run(["bash", "-c", probe, str(tmp_path / "worker.sh"), f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
-        symm, dense_flashinfer, trtllm_deepgemm, *flags = result.stdout.decode().rstrip("\0").split("\0")
+        symm, dense_flashinfer, trtllm_deepgemm, e8m0, nccl_symm, *flags = result.stdout.decode().rstrip("\0").split("\0")
         assert symm == ("1" if role == "prefill" else "0")
         assert dense_flashinfer == ("0" if role == "prefill" else "1")
         assert trtllm_deepgemm == "1"
+        assert e8m0 == "0" and nccl_symm == "0"
         if role == "prefill":
             assert json.loads(flags[flags.index("--compilation-config") + 1]) == graph_config
         else:
@@ -201,7 +203,8 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
             assert [int(n) for n in flags[begin:begin + len(buckets)]] == buckets
         assert flags[flags.index("--tensor-parallel-size") + 1] == str(tp)
         assert flags[flags.index("--max-num-seqs") + 1] == str(limit)
-        assert "--enable-expert-parallel" not in flags
+        assert ("--enable-expert-parallel" in flags) == (role == "decode")
+        assert flags[flags.index("--moe-backend") + 1] == ("deep_gemm" if role == "prefill" else "triton")
         assert flags[flags.index("--dtype") + 1] == "bfloat16"
         assert flags[flags.index("--kv-cache-dtype") + 1] == "fp8_e4m3"
         assert int(flags[flags.index("--block-size") + 1]) * int(flags[flags.index("--num-gpu-blocks-override") + 1]) == (131072 if role == "prefill" else 524288)
