@@ -10,7 +10,7 @@
 #SBATCH -e runs/sglang-%j.err
 # Komori qualified6344.96 architecture: P3 DP4/EP4 plus D1 DP4/EP4, attention TP1.
 # Exact modified SM90 MegaMoE owns dispatch/math/combine; KV budgets are per DP rank.
-# No profiler; fresh image and finite adapter gate must pass before official serving.
+# No profiler; [require-build] verifies the fresh image before this measurement.
 set -euo pipefail
 
 ROOT=${SLURM_SUBMIT_DIR}

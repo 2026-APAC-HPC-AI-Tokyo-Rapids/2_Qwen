@@ -14,12 +14,28 @@ REPOSITORY = Path(__file__).parents[2]
 PARSER = REPOSITORY / "scripts" / "parse-aiperf-result.py"
 
 
-def test_vllm_official_client_uses_fixed_scoring_command() -> None:
+@pytest.mark.parametrize("concurrency", [8, 192])
+def test_vllm_official_client_uses_fixed_scoring_command(concurrency: int) -> None:
     script = (REPOSITORY / "platforms/firmus/framework-comparison/official-aiperf.sh").read_text()
     command_line = next(line for line in script.splitlines() if line.startswith("command=("))
-    result = subprocess.run(["bash", "-euc", command_line + '\nprintf "%s\\0" "${command[@]}"'], env={**os.environ, "N": "8"}, capture_output=True, check=True)
-    expected = runpy.run_path(str(PARSER))["expected_official_command"]("http://127.0.0.1:8000/v1/chat/completions", 8)
+    result = subprocess.run(["bash", "-euc", command_line + '\nprintf "%s\\0" "${command[@]}"'], env={**os.environ, "N": str(concurrency)}, capture_output=True, check=True)
+    expected = runpy.run_path(str(PARSER))["expected_official_command"]("http://127.0.0.1:8000/v1/chat/completions", concurrency)
     assert result.stdout.decode().rstrip("\0").split("\0") == expected
+
+
+def test_c192_client_exports_successful_sglang_startup_settings(tmp_path: Path) -> None:
+    script = (REPOSITORY / "platforms/firmus/framework-comparison/official-aiperf.sh").read_text()
+    (tmp_path / "results").mkdir()
+    setup = script.split("command=(", 1)[0]
+    probe = setup + f'\n{shlex.quote(sys.executable)} -c \'import json,os; print(json.dumps({{k:v for k,v in os.environ.items() if k.startswith("AIPERF_")}}))\'\n'
+    result = subprocess.run(["bash", "-c", probe, "fixture", str(tmp_path), "192"], env={**os.environ, "AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS": "10", "AIPERF_RECORD_PROCESSOR_SCALE_FACTOR": "4"}, capture_output=True, text=True, check=True)
+    environment = json.loads(result.stdout)
+    assert {key: environment[key] for key in ("AIPERF_SERVICE_REGISTRATION_INTERVAL", "AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS", "AIPERF_SERVICE_REGISTRATION_TIMEOUT", "AIPERF_RECORD_PROCESSOR_SCALE_FACTOR")} == {
+        "AIPERF_SERVICE_REGISTRATION_INTERVAL": "1",
+        "AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS": "60",
+        "AIPERF_SERVICE_REGISTRATION_TIMEOUT": "60",
+        "AIPERF_RECORD_PROCESSOR_SCALE_FACTOR": "32",
+    }
 
 
 def metrics(

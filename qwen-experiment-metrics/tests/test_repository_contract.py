@@ -64,6 +64,25 @@ def test_workflow_keeps_build_and_cluster_controls_explicit() -> None:
     assert "-name '*.slurm'" in validation
 
 
+def test_firmus_require_build_finishes_distribution_before_provision() -> None:
+    workflow = (ROOT / ".github/workflows/firmus.yml").read_text()
+    image_workflow = (ROOT / ".github/workflows/vllm-image.yml").read_text()
+    image = workflow.split("  image:\n", 1)[1].split("  provision:\n", 1)[0]
+    provision = workflow.split("  provision:\n", 1)[1].split("  run:\n", 1)[0]
+    assert "inputs.require_build && !inputs.dynamo && !inputs.megamoe_gate" in image
+    assert "uses: ./.github/workflows/vllm-image.yml" in image and "for_firmus: true" in image
+    assert "needs: image" in provision
+    assert "needs.image.result == 'success' || needs.image.result == 'skipped'" in provision
+    assert "needs.image.outputs.container_sha256 || inputs.container_sha256" in provision
+    assert "needs.image.outputs.container_size || inputs.container_size" in provision
+    assert "workflow_call:" in image_workflow
+    # The standalone push workflow must not duplicate the build called by Firmus.
+    assert "inputs.for_firmus ||" in image_workflow
+    assert "!contains(github.event.head_commit.message, '[cluster:firmus]')" in image_workflow
+    materialize = image_workflow.split("  materialize:\n", 1)[1]
+    assert "needs: build" in materialize and "scripts/materialize-qwen-container.sh" in materialize
+
+
 def test_container_reuse_hash_check_keeps_remote_shell_alive() -> None:
     selection = (ROOT / "scripts/select-qwen-container.sh").read_text()
 

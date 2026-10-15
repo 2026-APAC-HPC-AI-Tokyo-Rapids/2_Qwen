@@ -10,6 +10,16 @@ on:
       - "scripts/build-vllm-container.sh"
       - ".github/workflows/vllm-image.yml"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      for_firmus:
+        required: true
+        type: boolean
+    outputs:
+      container_sha256:
+        value: ${{ jobs.build.outputs.container_sha256 }}
+      container_size:
+        value: ${{ jobs.build.outputs.container_size }}
 
 permissions:
   contents: read
@@ -21,7 +31,7 @@ env:
 
 jobs:
   validate:
-    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, '[require-build]') }}
+    if: ${{ inputs.for_firmus || github.event_name == 'workflow_dispatch' || (startsWith(github.event.head_commit.message, '[require-build]') && !contains(github.event.head_commit.message, '[cluster:firmus]')) }}
     uses: ./.github/workflows/validate.yml
 
   stage:
@@ -32,6 +42,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Firmusで要求されたframeworkを確認
+        if: inputs.for_firmus
+        run: jq -e '.framework == "vllm"' configs/firmus-framework.json
 
       - name: AWSの一時資格情報を取得
         uses: aws-actions/configure-aws-credentials@v6.2.3

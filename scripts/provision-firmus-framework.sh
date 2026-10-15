@@ -10,7 +10,7 @@ set -euo pipefail
 : "${PROFILE:?}"
 : "${REQUIRE_BUILD:?}"
 [[ "${PROFILE}" == true || "${PROFILE}" == false ]]
-[[ "${REQUIRE_BUILD}" == false ]] || { echo 'This branch reuses pinned baseline images; rebuild and update their hashes before requesting a source experiment.' >&2; exit 64; }
+[[ "${REQUIRE_BUILD}" == true || "${REQUIRE_BUILD}" == false ]]
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${config}")"
@@ -20,6 +20,16 @@ runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEM
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/profile" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source" "${runtime_dir}/home"
 install -m 0644 "${config}" "${runtime_dir}/source/firmus-framework.json"
+if [[ "${REQUIRE_BUILD}" == true ]]; then
+  [[ "${framework}" == vllm ]]
+  : "${CONTAINER_SHA256:?fresh AWS build SHA-256 is required}"
+  : "${CONTAINER_SIZE:?fresh AWS build size is required}"
+  image="/scratch/home/ACCOUNT/qwen/vllm-containers/${GITHUB_RUN_ID}.sqsh"
+  provenance="/scratch/home/ACCOUNT/qwen/vllm-containers/${GITHUB_RUN_ID}.container-sidecar.json"
+  jq -e --arg commit "${GITHUB_SHA}" --arg sha "${CONTAINER_SHA256}" --argjson size "${CONTAINER_SIZE}" '.source_commits.qwen == $commit and .container_artifact.artifact_relative_path == "vllm.sqsh" and .container_artifact.sha256 == $sha and .container_artifact.size_bytes == $size' "${provenance}" >/dev/null
+  jq --arg image "${image}" --arg provenance "${provenance}" --arg sha "${CONTAINER_SHA256}" --argjson size "${CONTAINER_SIZE}" '.images.vllm = {path:$image,provenance:$provenance,sha256:$sha,size_bytes:$size}' "${config}" >"${runtime_dir}/source/firmus-framework.json"
+fi
+config="${runtime_dir}/source/firmus-framework.json"
 for image_framework in sglang "${framework}"; do
   image="$(jq -er --arg framework "${image_framework}" '.images[$framework].path' "${config}")"
   expected_sha="$(jq -er --arg framework "${image_framework}" '.images[$framework].sha256' "${config}")"

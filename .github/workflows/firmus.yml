@@ -40,6 +40,7 @@ on:
 permissions:
   actions: read
   contents: read
+  id-token: write
 
 env:
   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
@@ -49,8 +50,18 @@ defaults:
     shell: firmus-shell --github-shell {0}
 
 jobs:
+  image:
+    name: 要求されたvLLMイメージをAWSでビルドして配布
+    if: ${{ inputs.require_build && !inputs.dynamo && !inputs.megamoe_gate }}
+    uses: ./.github/workflows/vllm-image.yml
+    with:
+      for_firmus: true
+    secrets: inherit
+
   provision:
     name: 固定したイメージ・モデル・実行条件を配備
+    needs: image
+    if: ${{ always() && !cancelled() && (needs.image.result == 'success' || needs.image.result == 'skipped') }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     outputs:
@@ -82,8 +93,8 @@ jobs:
         env:
           PROFILE: ${{ inputs.profile }}
           REQUIRE_BUILD: ${{ inputs.require_build }}
-          CONTAINER_SHA256: ${{ inputs.container_sha256 }}
-          CONTAINER_SIZE: ${{ inputs.container_size }}
+          CONTAINER_SHA256: ${{ needs.image.outputs.container_sha256 || inputs.container_sha256 }}
+          CONTAINER_SIZE: ${{ needs.image.outputs.container_size || inputs.container_size }}
         run: |
           if [[ '${{ inputs.megamoe_gate }}' == true ]]; then provision=scripts/provision-firmus-megamoe-gate.sh; elif [[ '${{ inputs.dynamo }}' == true ]]; then provision=scripts/provision-firmus-dynamo.sh; else provision=scripts/provision-firmus-framework.sh; fi
           stderr=$(mktemp)
@@ -107,6 +118,7 @@ jobs:
   run:
     name: ${{ inputs.megamoe_gate && '4 H200で有限MegaMoE gateを実行' || '2ノード16 GPUでPDとAIPerfを実行' }}
     needs: provision
+    if: ${{ always() && !cancelled() && needs.provision.result == 'success' }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     env:

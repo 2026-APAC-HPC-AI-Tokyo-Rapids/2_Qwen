@@ -280,14 +280,35 @@ def test_collection_retries_interrupted_artifacts_without_submitting(tmp_path: P
     assert all("sbatch" not in row for row in reads)
 
 
-@pytest.mark.parametrize("profile,require_build", [("false", "true")])
-def test_unsupported_modes_fail_before_container_staging(tmp_path: Path, profile: str, require_build: str) -> None:
+@pytest.mark.parametrize("corrupt", [None, "commit", "sha256", "size", "missing_build_output"])
+def test_require_build_selects_only_this_runs_verified_image(tmp_path: Path, corrupt: str | None) -> None:
     runtime = tmp_path / "runs"
-    environment = {**os.environ, "GITHUB_WORKSPACE": str(ROOT), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "a" * 40, "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(runtime), "PROFILE": profile, "REQUIRE_BUILD": require_build}
-    result = subprocess.run(["bash", str(ROOT / "scripts/provision-firmus-framework.sh")], env=environment, capture_output=True, text=True, check=False)
-    assert result.returncode == 64
-    assert "reuses pinned baseline images" in result.stderr
-    assert not runtime.exists()
+    archive = tmp_path / "images"
+    archive.mkdir()
+    commit, digest, size = "a" * 40, "b" * 64, 1234
+    sidecar = {"source_commits": {"qwen": commit}, "container_artifact": {"artifact_relative_path": "vllm.sqsh", "sha256": digest, "size_bytes": size}}
+    if corrupt == "commit":
+        sidecar["source_commits"]["qwen"] = "c" * 40
+    elif corrupt == "sha256":
+        sidecar["container_artifact"]["sha256"] = "d" * 64
+    elif corrupt == "size":
+        sidecar["container_artifact"]["size_bytes"] += 1
+    (archive / "123.container-sidecar.json").write_text(json.dumps(sidecar))
+    provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
+    selection = provision.split("for image_framework in", 1)[0].replace("/scratch/home/ACCOUNT/qwen/vllm-containers", str(archive))
+    environment = {**os.environ, "GITHUB_WORKSPACE": str(ROOT), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": commit, "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(runtime), "PROFILE": "false", "REQUIRE_BUILD": "true", "CONTAINER_SHA256": digest, "CONTAINER_SIZE": str(size)}
+    if corrupt == "missing_build_output":
+        environment.pop("CONTAINER_SHA256")
+    result = subprocess.run(["bash", "-c", selection], env=environment, capture_output=True, text=True, check=False)
+    if corrupt:
+        assert result.returncode != 0
+        return
+    assert result.returncode == 0, result.stderr
+    prepared = json.loads(next(runtime.glob("*/source/firmus-framework.json")).read_text())
+    original = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    assert prepared["images"]["vllm"] == {"path": str(archive / "123.sqsh"), "provenance": str(archive / "123.container-sidecar.json"), "sha256": digest, "size_bytes": size}
+    assert prepared["images"]["sglang"] == original["images"]["sglang"]
+    assert original["images"]["vllm"]["path"] != prepared["images"]["vllm"]["path"]
 
 
 @pytest.mark.parametrize("role", ["prefill", "decode"])

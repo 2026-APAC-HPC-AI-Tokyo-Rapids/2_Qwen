@@ -214,3 +214,13 @@ GPU検証も合成TP4 groupとmethod直呼出しを除去し、native config/gro
 次は既存vLLM本番経路で16 H200、P3×DP4/EP4 + D1×DP4/EP4、concurrency192、公式60/120/30秒を実行する。
 イメージは成功したAWS `38771381500` を再利用し、追加ビルド・profile・独立診断ジョブは投入しない。
 判定対象は実起動エラー、全モデルの実行とNIXL、SLA適格goodputが6300 output tok/sを超えるか。
+
+## 本番測定38775681156の失敗と再投入条件
+
+Slurm23860は7分24秒でFAILED。16ランクのモデルロードとdecoderのgraph captureが完了し、4組のhealthとrouterが356秒でreadyになった。
+AIPerfは初期サービス登録の10秒制限で失敗し、その終了中にexit139となった。リクエスト送信前の失敗で、scoreとexportはなく、goodputは未測定。
+SGLang成功run38664373784では登録待ち60秒、record processorのscale factor32を使用していたが、この移植では欠落していた。両設定と来歴出力を移植する。公式の入力、c192、workers192、60/120/30、SLAは維持する。
+ユーザーがrequire-buildを再指定したため、上記の既存イメージ再利用方針を撤回する。
+`[require-build] [cluster:firmus] [nodes:2]`を先頭にした1つのコミットから、既存AWS vLLMビルドを呼び出し、配布完了後だけprovisionへ進む。
+provisionは同じActions runのイメージ、build commit、SHA256、sizeを照合し、実ファイルもSHA256検証する。旧イメージへ戻すfallbackはない。
+独立したGPU診断は追加せず、このイメージで既存の16H200本番測定を1件実行する。
