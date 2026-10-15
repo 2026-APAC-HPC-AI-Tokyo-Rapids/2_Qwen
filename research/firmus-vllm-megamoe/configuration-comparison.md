@@ -2,6 +2,8 @@
 
 Reference: SGLang `e6e295bd`, Actions 38664373784 / Slurm 23571. vLLM attempted baseline: `26b3631`, Actions 38781401340 / Slurm 23872 (failed during decoder graph capture, before readiness or benchmark traffic). Source of actual SGLang settings is the canonical `source/source/server-info-*.json` plus worker startup logs; the prior vLLM launch 38775681156 reached and exported the same serving configuration but sent no benchmark traffic.
 
+The table describes the matched baseline, including the repaired normal trials72688a7/76261bc and profileedd9929. The later prefill-admission experiment deliberately changes P48 to P2 and is described separately below.
+
 | Dimension | SGLang reference | vLLM reproduction / remaining difference |
 |---|---|---|
 | Hardware and topology | 2 nodes, 16 H200; three 4-GPU prefill groups and one 4-GPU decode group | Same; two P groups on head, one P and D on tail |
@@ -69,3 +71,11 @@ Both launches expose the same ten active HCAs to UCX. That equality does not pro
 Package metadata read directly from the immutable SGLang reference image confirms `nixl==1.5.0` and `nixl-cu13==1.5.0`; the vLLM image checks record1.4.1. The selected vLLM connector source files (`base_worker.py`, `pull_worker.py`, `nixl_utils.py`) have identical SHA256 hashes in both reproduction images and match the pinned v0.30.0 sources. No transport override or package upgrade has been applied.
 
 The next PDL-on profile retains the one-second CUPTI flush and capture stop after request/grace completion. Temporary DEBUG/stack-diagnostic environment settings from the old startup investigation are removed now that clean graph startup succeeds. Before serving, one worker per node records NIC link layer, state, rate and nonzero GIDs; this does not change UCX device selection. A separate read-only inventory step on23917 failed to complete launch and only that extra step was cancelled; embedding the inventory in the profile workers avoids another allocation step. Profile throughput remains diagnostic only.
+
+## Prefill-admission experiment
+
+The first normal workload38804183674 has1069 TTFT misses and only4 ITL misses, all overlapping TTFT misses. Even requests starting30–120 seconds into measurement have648 TTFT misses. Warmup-plus-measurement worker counters report roughly1.12 seconds each of P queue time and scheduler-defined prefill time, zero preemptions, and similar load across all three P groups. These are stage-level observations, not a kernel critical-path measurement.
+
+An earlier, incomplete diagnostic trace38786945340 records `execute_context_2(4096)_generation_0(0)` for the inspected P iterations. The native scheduler can fill a4096-token budget with one prompt and part of the next; its asynchronous pipeline may keep earlier results pending while further work is scheduled. The MP worker also has a separate output-copy thread, so enqueue order alone does not prove a whole-forward handoff delay. Do not use the incomplete trace for a speedup estimate.
+
+The next runtime-only candidate sets `--max-num-seqs 2` on all three P groups, versus48 in normal baseline38804437745. This tests whether restricting admission reduces prompt splitting and TTFT tails without losing material serving throughput. It is an intentional optimization deviation from Komori's admission limit, not a newly matched baseline. Keep client concurrency192, P4096/D2048 token budgets, P/D KV capacities, native asynchronous scheduling, graphs, routing, original scales, and the validated PDL-on modified MegaMoE image. Decode remains32 requests per rank. The result is unproven until the official parser, complete raw output and the same-image P48 comparison are available; a repeat is needed before a performance conclusion.
