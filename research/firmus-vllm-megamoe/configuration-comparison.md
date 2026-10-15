@@ -27,3 +27,18 @@ The vLLM adapter requires the production 4096-row symmetric workspace, observed 
 Performance must be reported from normal official passes only. Profile-only 20/30/30 runs diagnose kernels and communication and cannot supply official throughput. Numerical synthetic tests establish bounded adapter correctness, not the organizers' full-set accuracy score; their stated threshold is 99% of an unchanged official-FP8 reference score.
 
 The user confirmed that no separate organizer accuracy procedure/data is shared for this work. Preserve the published checkpoint, original scales and kernel arithmetic; do not claim the organizer accuracy threshold was measured. The active diagnostic uses the installed native adapter, independent reference and changing-input CUDA Graph replays at the production workspace capacity before full-model startup. Its results must be checked independently of serving readiness.
+
+## Observed kernel configuration
+
+The archived native reports from SGLang 38664373784 and vLLM 38786945340 were independently re-exported with Nsight 2026.5.1. For both `prefill-0` and `decode-0`, the complete demangled MegaMoE template signature and all recorded launch resource fields match exactly (one specialization per role in each capture):
+
+| Recorded field | Prefill, both frameworks | Decode, both frameworks |
+|---|---:|---:|
+| Grid CTAs | 132 | 132 |
+| Threads per CTA | 640 | 384 |
+| Registers per thread | 96 | 168 |
+| Static shared memory | 0 B | 0 B |
+| Dynamic shared memory per CTA | 225600 B | 230672 B |
+| Aligned capacity template argument | 4224 | 4224 |
+
+This verifies the selected kernel configuration as well as the shared patched source. It is not a throughput comparison: both traces retain completeness warnings, use different collectors at capture time, and contain instrumented workloads. CUDA/host scheduling, graph execution and actual routed-token distributions can still differ.
