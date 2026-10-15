@@ -82,6 +82,7 @@ def test_prefill_deepep_checks_normal_mode_without_changing_decode() -> None:
     raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
     check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    config["prefill"]["moe_a2a_backend"] = "deepep"
     prefill = copy.deepcopy(raw["prefill"])
     for state in [prefill, *prefill["internal_states"]]:
         state.update(moe_a2a_backend="deepep", deepep_mode="normal", disable_cuda_graph=True)
@@ -187,7 +188,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
         assert "--speculative-draft-model-quantization" not in flags
         assert "--container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER" in argv
         if name.startswith("prefill"):
-            assert config["prefill"]["moe_a2a_backend"] == "deepep"
+            assert config["prefill"]["moe_a2a_backend"] == "megamoe"
             assert flags[flags.index("--deepep-mode") + 1] == "normal"
             assert flags[flags.index("--moe-runner-backend") + 1] == config["prefill"]["moe_runner_backend"]
             assert flags[flags.index("--moe-a2a-backend") + 1] == config["prefill"]["moe_a2a_backend"]
