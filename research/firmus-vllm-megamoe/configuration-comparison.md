@@ -20,7 +20,9 @@ Reference: SGLang `e6e295bd`, Actions 38664373784 / Slurm 23571. vLLM attempted 
 | Inner DP routing | SGLang `total_requests` | vLLM native waiting/running/in-flight accounting with KV-pressure penalty; not an identical dispatch policy |
 | Prefill handoff | SGLang ready-result fast path before another long forward | vLLM native scheduler/NIXL response path; no literal scheduler-patch translation |
 | LM head / dense draft | P `enable_dp_lm_head=false`, TP4 group; D DP-local LM head and dense TP1 | Native TP1 replicates these weights per DP rank; P sharding differs |
-| NIXL | Native SGLang disaggregation | Native vLLM producer/consumer connector and HTTP proxy; both use NIXL but handoff/ownership differ |
+| NIXL transfer direction | Prefill initiates UCX WRITE to decode | Decode initiates UCX READ from prefill; native handoff, ownership and metadata lifetime differ |
+| NIXL thread configuration | P `num_threads=8`, D `num_threads=0` | Native `num_threads=4` for both roles; this is an agent configuration value, not a measured active-thread count |
+| UCX device candidates | Every active HCA on each node (`mlx5_0:1` through `mlx5_9:1` in the reference logs) | Same active-HCA enumeration; no link-layer filter in either launch |
 
 The vLLM adapter requires the production 4096-row symmetric workspace, observed as 1608529184 bytes per rank during the prior full-model startup. It is shared across 94 serialized MoE layers. Matching cache token budgets does not imply matching total GPU-memory accounting or identical scheduler overlap.
 
@@ -54,3 +56,9 @@ Clean PDL-off retry 38790949402 / Slurm23890 reproduced the earlier `CUDA error:
 The clean serving trial72688a7 sets `VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER=0` for decode as already done for prefill. It retains image38781401340, private MegaMoE PDL-off, original FP8 scales, all graph buckets, speculation, caches and topology. Only decoder dense FP8 selection changes to ordinary DeepGEMM. No profiler or debug instrumentation is added to this trial. The separate PDL-on image passed64 actual-adapter numerical/graph records in38801099834 / Slurm23911, but is deliberately not combined with this isolation trial.
 
 The following controlled trial pins image38798126037 (SHA256 `06d4f8e0778a94739aaf8230865d5f393a76d6c8192d68d4b5b2b8f24183f35b`) after the PDL-on actual-adapter gate passed. Relative to72688a7, only the serving image changes to enable private-provider pre-dispatch PDL. The same decoder dense-GEMM override is retained. Both releases may queue concurrently, but each has its own commit and immutable run identity. Neither has a clean performance result yet.
+
+## Native transport differences
+
+Pinned SGLang `fc275674` (`python/sglang/srt/disaggregation/nixl/conn.py`, `NixlKVManager.__init__`) explicitly creates its UCX backend with strict thread synchronization, configures eight threads on the producer and zero on the consumer, and submits WRITE transfers. Its default backend-parameter object is empty; the archived reference worker adds no per-NIC backend override. Pinned vLLM0.30.0 (`vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py`) uses the native UCX agent with `num_threads=4` and telemetry enabled; `pull_worker.py` submits READ transfers. The current worker supplies no `kv_connector_extra_config` override for these values.
+
+Both launches expose the same ten active HCAs to UCX. That equality does not prove that UCX selects identical transport lanes for READ and WRITE, or that NIC/GID state is stable across runs. Preserve the native transfer protocol in the reproduction. Copying SGLang's thread counts by P/D role without accounting for the reversed transfer initiator would not reproduce its communication behavior. Any network-device or thread-count trial must be tracked separately from the pending dense-kernel/PDL comparison.
