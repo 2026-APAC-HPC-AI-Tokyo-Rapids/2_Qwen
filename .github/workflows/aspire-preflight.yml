@@ -1,0 +1,51 @@
+name: ASPIRE MegaMoE read-only preflight
+
+on:
+  push:
+    branches: [perf/aspire-megamoe-port]
+    paths: [.github/workflows/aspire-preflight.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Read login environment, PBS state, model and exact image
+        shell: aspire2p-shell --github-shell {0}
+        run: |
+          set -euo pipefail
+          date -u +%FT%TZ
+          hostname
+          source "${HOME}/.local/.setenv"
+          command -v jq unsquashfs enroot
+          /opt/pbs/bin/pbsnodes -av a2ap-dgx026 a2ap-dgx030
+          /opt/pbs/bin/qstat -Q
+          /opt/pbs/bin/qstat -u "$(id -un)"
+          if command -v myprojects >/dev/null; then myprojects; else echo 'project_balance_not_exposed_in_login_PATH'; fi
+          model=/scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+          test "$(head -n 1 "${model}/.cache/huggingface/download/config.json.metadata")" = e156cb4efae43fbee1a1ab073f946a1377e6b969
+          jq -e '.model_type == "qwen3_moe" and .quantization_config.quant_method == "fp8" and .quantization_config.fmt == "e4m3"' "${model}/config.json"
+          count=0
+          while read -r shard; do test -s "${model}/${shard}"; count=$((count + 1)); done < <(jq -er '.weight_map | [.[]] | unique[]' "${model}/model.safetensors.index.json")
+          test "${count}" = 24
+          printf 'verified_model_shards=%s\n' "${count}"
+          archive=/scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+          image="${archive}/38664373784.sqsh"
+          sidecar="${archive}/38664373784.container-sidecar.json"
+          test -s "${image}" && test -s "${sidecar}"
+          expected=$(jq -er .container_sha256 configs/aspire-serving.json)
+          test "$(jq -er .container_artifact.sha256 "${sidecar}")" = "${expected}"
+          test "$(stat -c '%s' "${image}")" = "$(jq -er .container_artifact.size_bytes "${sidecar}")"
+          printf '%s  %s\n' "${expected}" "${image}" | sha256sum --check
+          metadata=$(mktemp -d)
+          trap 'rm -rf -- "${metadata}"' EXIT
+          bash scripts/check-firmus-image.sh "${image}" "${metadata}" "${GITHUB_WORKSPACE}"
+          jq '{package,version,header_sha256,compiled_geometries}' "${metadata}/sm90-megamoe-build.json"
+          df -h "${model}" "${archive}"
+          echo 'PASS: login-CPU preflight; no GPU job was submitted'

@@ -53,7 +53,7 @@ def capture_router(source: str, platform: str, tmp_path: Path) -> list[str]:
     return root.joinpath("argv").read_text().rstrip("\0").split("\0")
 
 
-@pytest.mark.parametrize("platform,nodes,profile", [("aspire2ap", 2, False), ("firmus", 2, False), ("firmus", 2, True), ("genkai", 2, False), ("genkai", 4, False), ("genkai", 4, True)])
+@pytest.mark.parametrize("platform,nodes,profile", [("firmus", 2, False), ("firmus", 2, True), ("genkai", 2, False), ("genkai", 4, False), ("genkai", 4, True)])
 def test_worker_argv_matches_validated_candidate_or_main(platform: str, nodes: int, profile: bool, tmp_path: Path) -> None:
     source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
     expected = json.loads(FIXTURE.read_text())["workers"][f"{platform}-{nodes}-{profile}"]
@@ -63,7 +63,14 @@ def test_worker_argv_matches_validated_candidate_or_main(platform: str, nodes: i
 @pytest.mark.parametrize("platform", ["aspire2ap", "firmus", "genkai"])
 def test_router_argv_matches_candidate_or_main(platform: str, tmp_path: Path) -> None:
     source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
-    assert capture_router(source, platform, tmp_path) == json.loads(FIXTURE.read_text())["routers"][platform]
+    expected = json.loads(FIXTURE.read_text())["routers"][platform]
+    if platform == "aspire2ap":
+        start = expected.index("/opt/sglang/venv/bin/python")
+        expected[start:start + 3] = ["/opt/apac/bin/sglang-router", "launch"]
+        index = expected.index("--pd-disaggregation") + 1
+        expected[index:index] = ["--assignment-mode", "min_load"]
+        expected[expected.index("--prefill-policy") + 1] = "manual"
+    assert capture_router(source, platform, tmp_path) == expected
 
 
 def test_candidate_flags_agree_with_archived_server_info() -> None:
@@ -204,3 +211,59 @@ def test_greedy_probe_records_fixed_requests_and_requires_logprobs(tmp_path: Pat
         assert request["min_tokens"] == request["max_tokens"] == 64
         assert request["ignore_eos"] and request["logprobs"]
         assert not request["stream"]
+
+
+@pytest.mark.parametrize("profile", [False, True])
+def test_aspire_megamoe_keeps_two_tp4_workers_per_role(tmp_path: Path, profile: bool) -> None:
+    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
+    assert config["concurrency"] == 64
+    assert [(w["node"], w["role"], w["gpus"]) for w in config["workers"]] == [(0, "prefill", "0,1,2,3"), (0, "prefill", "4,5,6,7"), (1, "decode", "0,1,2,3"), (1, "decode", "4,5,6,7")]
+    workers = capture_workers(source, "aspire2ap", 2, tmp_path, profile)
+    assert len(workers) == 4
+    addresses = []
+    for record in workers:
+        argv = record["argv"]
+        role = argv[argv.index("--disaggregation-mode") + 1]
+        expected = {"--tp-size": "4", "--ep-size": "4", "--dp-size": "4", "--moe-a2a-backend": "megamoe", "--moe-runner-backend": "deep_gemm", "--attention-backend": "fa3", "--kv-cache-dtype": "fp8_e4m3", "--page-size": "64", "--chunked-prefill-size": "16384" if role == "prefill" else "8192", "--max-running-requests": "64" if role == "prefill" else "40", "--max-total-tokens": "32768" if role == "prefill" else "57344", "--speculative-algorithm": "EAGLE3", "--speculative-num-steps": "3", "--speculative-num-draft-tokens": "4", "--load-balance-method": "total_requests", "--load-snapshot-publish-interval": "1"}
+        for flag, value in expected.items():
+            assert argv.count(flag) == 1
+            assert argv[argv.index(flag) + 1] == value
+        assert "--enable-dp-attention" in argv
+        assert "SGLANG_DISAGG_STAGING_BUFFER=0" in argv
+        assert "SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1" in argv
+        assert "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096" in argv
+        assert ("--disable-cuda-graph" in argv) == (role == "prefill")
+        assert ("--enable-dp-lm-head" in argv) == (role == "decode")
+        if role == "decode":
+            start = argv.index("--cuda-graph-bs-decode") + 1
+            assert argv[start:start + 9] == [str(n) for n in [1, 2, 3, 4, 5, 6, 7, 8, 10]]
+            assert argv[argv.index("--moe-dense-tp-size") + 1] == "1"
+            assert argv[argv.index("--disaggregation-decode-extra-slots") + 1] == "2"
+        addresses.append(int(argv[argv.index("--dist-init-addr") + 1].split(":")[1]))
+        assert bool(record["profiler"]) == profile
+    # Separate DP endpoint ranges; adjacent HTTP ports otherwise collide.
+    assert addresses == [32000, 32100, 33000, 33100]
+    assert config["container_sha256"] == "8df47c11d7ede66fd19f12c7012a9ab5c97b13387a2655fcbce9f13e1c334110"
+    workflow = (REPOSITORY / ".github/workflows/aspire2ap.yml").read_text()
+    assert workflow.index("jq -er .container_sha256 configs/aspire-serving.json") < workflow.index('PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh')
+
+
+@pytest.mark.parametrize("role", ["prefill", "decode"])
+def test_aspire_effective_settings_reject_clipped_kv_pool(role: str) -> None:
+    import runpy
+
+    check = runpy.run_path(str(REPOSITORY / "scripts/check-firmus-server-info.py"))["check"]
+    config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
+    # Reuse the real endpoint schema; these candidate values are synthetic, not an H100 run.
+    info = json.loads((REPOSITORY / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())[role]
+    capacity = config[f"{role}_max_total_tokens"]
+    for state in [info, *info["internal_states"]]:
+        state.update(max_total_tokens=capacity, max_running_requests=64 if role == "prefill" else 40, chunked_prefill_size=4096 if role == "prefill" else 2048, moe_a2a_backend="megamoe", moe_runner_backend="deep_gemm", disaggregation_decode_extra_slots=2, disable_cuda_graph=role == "prefill", effective_max_running_requests_per_dp=16 if role == "prefill" else 10, memory_usage={"token_capacity": capacity})
+    info["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
+    check(config, info, role)
+    for state in info["internal_states"]:
+        state["memory_usage"]["token_capacity"] -= 64
+        with pytest.raises(ValueError, match="actual KV capacity"):
+            check(config, info, role)
+        state["memory_usage"]["token_capacity"] += 64

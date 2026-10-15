@@ -144,16 +144,29 @@ run_node() {
     restore_worker_cache "${cache_root}/${role}-${worker}.tar" "${worker_tmp}/home/.cache"
     cache_workers+=("${role}-${worker}")
     args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --max-total-tokens 131072 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}")
-    if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--nccl-port "$((port + 1000))"); fi
-    if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--kv-cache-dtype "$(jq -r '.kv_cache_dtype // "auto"' "${OUTPUT_DIR}/source/aspire-serving.json")"); fi
-    if [[ "${QWEN_PLATFORM}" == aspire2ap && "${role}" == prefill ]]; then args+=(--moe-runner-backend cutlass); fi
-    if [[ "${role}" == prefill ]]; then args+=(--disaggregation-bootstrap-port "${bootstrap}"); if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then args+=(--ep-size "${ep:-1}"); fi; else args+=(--ep-size "${ep}" --max-running-requests 256); fi
+    worker_env=()
+    if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
+      config="${OUTPUT_DIR}/source/aspire-serving.json"
+      # Preserve the two TP4 workers per role; MegaMoE uses DP4/EP4 within each.
+      args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}" --nccl-port "$((port + 1000))" --page-size 64 --kv-cache-dtype "$(jq -er .kv_cache_dtype "${config}")" --attention-backend fa3 --ep-size "${ep}" --dp-size "$(jq -er .dp_size "${config}")" --enable-dp-attention --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --load-balance-method total_requests --load-snapshot-publish-interval 1)
+      worker_env=(-e UCX_POSIX_USE_PROC_LINK=n -e SGLANG_DISAGG_STAGING_BUFFER=0 -e SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1 -e SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096)
+      if [[ "${role}" == prefill ]]; then
+        args+=(--dist-init-addr "127.0.0.1:$((32000 + worker * 100))" --disaggregation-bootstrap-port "${bootstrap}" --chunked-prefill-size "$(jq -er .prefill_chunked_size "${config}")" --max-total-tokens "$(jq -er .prefill_max_total_tokens "${config}")" --max-running-requests "$(jq -er .concurrency "${config}")" --disable-cuda-graph)
+      else
+        args+=(--dist-init-addr "127.0.0.1:$((33000 + worker * 100))" --enable-dp-lm-head --moe-dense-tp-size 1 --chunked-prefill-size 8192 --max-total-tokens "$(jq -er .decode_max_total_tokens "${config}")" --max-running-requests "$(jq -er .decode_max_running_requests "${config}")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${config}")" --cuda-graph-bs-decode)
+        while read -r size; do args+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${config}")
+      fi
+    elif [[ "${role}" == prefill ]]; then
+      args+=(--disaggregation-bootstrap-port "${bootstrap}")
+    else
+      args+=(--ep-size "${ep}" --max-running-requests 256)
+    fi
     draft_mount=()
     if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.speculation.algorithm' "${OUTPUT_DIR}/source/aspire-serving.json")" == EAGLE3 ]]; then
       args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")")
       draft_mount=(-m "${OUTPUT_DIR}/draft:/draft")
     fi
-    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
+    worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${worker_env[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
     (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec "${worker_command[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
     pids+=("$!")
@@ -195,6 +208,7 @@ run_router() {
   export ENROOT_CACHE_PATH="${router_tmp}/cache" ENROOT_DATA_PATH="${router_tmp}/data" ENROOT_RUNTIME_PATH="${router_tmp}/runtime" ENROOT_TEMP_PATH="${router_tmp}/temp"
   install -d -m 0700 "${ENROOT_CACHE_PATH}" "${ENROOT_DATA_PATH}" "${ENROOT_RUNTIME_PATH}" "${ENROOT_TEMP_PATH}"
   router_args=(/opt/sglang/venv/bin/python -m sglang_router.launch_router --pd-disaggregation)
+  if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then router_args=(/opt/apac/bin/sglang-router launch --pd-disaggregation --assignment-mode min_load); fi
   while IFS=$'\t' read -r role host port bootstrap; do if [[ "${role}" == prefill ]]; then router_args+=(--prefill "http://${host}:${port}" "${bootstrap}"); else router_args+=(--decode "http://${host}:${port}"); fi; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
   router_args+=(--host 0.0.0.0 --port 8000)
   if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then router_args+=(--prefill-policy "$(jq -r ' .prefill_routing_policy' "${OUTPUT_DIR}/source/aspire-serving.json")"); fi

@@ -1,5 +1,5 @@
 {
-  "concurrency": 40,
+  "concurrency": 64,
   "speculation": {
     "algorithm": "EAGLE3",
     "draft_tokens": 4,
@@ -13,7 +13,7 @@
       "role": "prefill",
       "index": 0,
       "tp": 4,
-      "ep": 1,
+      "ep": 4,
       "port": 30100,
       "bootstrap": 9000,
       "gpus": "0,1,2,3"
@@ -23,7 +23,7 @@
       "role": "prefill",
       "index": 1,
       "tp": 4,
-      "ep": 1,
+      "ep": 4,
       "port": 30101,
       "bootstrap": 9001,
       "gpus": "4,5,6,7"
@@ -33,7 +33,7 @@
       "role": "decode",
       "index": 0,
       "tp": 4,
-      "ep": 1,
+      "ep": 4,
       "port": 30200,
       "bootstrap": "unused",
       "gpus": "0,1,2,3"
@@ -43,7 +43,7 @@
       "role": "decode",
       "index": 1,
       "tp": 4,
-      "ep": 1,
+      "ep": 4,
       "port": 30201,
       "bootstrap": "unused",
       "gpus": "4,5,6,7"
@@ -51,5 +51,23 @@
   ],
   "model_storage": "node_local",
   "kv_cache_dtype": "fp8_e4m3",
-  "prefill_routing_policy": "round_robin"
+  "prefill_routing_policy": "manual",
+  "container_sha256": "8df47c11d7ede66fd19f12c7012a9ab5c97b13387a2655fcbce9f13e1c334110",
+  "dp_size": 4,
+  "prefill_max_total_tokens": 32768,
+  "decode_max_total_tokens": 57344,
+  "prefill_chunked_size": 16384,
+  "decode_max_running_requests": 40,
+  "decode_extra_slots": 2,
+  "decode_cuda_graph_bs": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    10
+  ]
 }
