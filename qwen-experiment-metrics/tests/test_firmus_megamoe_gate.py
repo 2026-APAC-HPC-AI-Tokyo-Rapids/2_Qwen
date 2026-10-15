@@ -26,6 +26,9 @@ def test_megamoe_explicit_finite_stage():
     TAGS.validate("[cluster:firmus] [nodes:1] [megamoe-gate] finite numerical and graph gate")
     with pytest.raises(ValueError):
         TAGS.validate("[cluster:firmus] [megamoe-gate]")
+    batch = (ROOT / "platforms/firmus/megamoe-gate.sbatch").read_text()
+    assert "#SBATCH -J run\n" in batch
+    assert "#SBATCH -t 00:05:00\n" in batch
 
 
 @pytest.mark.parametrize("corrupt", [False, True, "image"])
