@@ -122,7 +122,7 @@ def test_summary_uses_official_score_and_measured_latency(tmp_path: Path) -> Non
 
 def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path) -> None:
     stub = tmp_path / "nsys"
-    stub.write_text("#!/bin/bash\nprintf '%s\\0' \"$@\" >\"$NSYS_RECORD\"\n")
+    stub.write_text("#!/bin/bash\nif [[ $1 == --version ]]; then echo 'NVIDIA Nsight Systems version 2026.5.1.161-265138896106v0'; exit; fi\nprintf '%s\\0' \"$@\" >\"$NSYS_RECORD\"\n")
     stub.chmod(0o755)
     invocation = tmp_path / "decode.argv"
     subprocess.run(["bash", str(ROOT / "scripts/exec-profiler.sh"), "/opt/python", "-m", "sglang.launch_server", "--port", "30200"], env={**os.environ, "QWEN_PROFILER_INVOCATION_PATH": str(invocation), "QWEN_PROFILER_NSYS_BIN": str(stub), "NSYS_RECORD": str(tmp_path / "argv")}, check=True)
@@ -130,6 +130,16 @@ def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path) -> None:
     assert "--capture-range=cudaProfilerApi" in argv and "--capture-range-end=stop" in argv
     assert "--cuda-graph-trace=node" in argv and "--sample=none" in argv
     assert argv[-5:] == ["/opt/python", "-m", "sglang.launch_server", "--port", "30200"]
+    assert "2026.5.1.161" in (tmp_path / "decode.nsys-version.txt").read_text()
+
+
+def test_nsys_wrapper_rejects_old_collector_before_launch(tmp_path: Path) -> None:
+    stub = tmp_path / "nsys"
+    stub.write_text("#!/bin/bash\nif [[ $1 == --version ]]; then echo 'NVIDIA Nsight Systems version 2025.3.2.367'; exit; fi\ntouch \"$NSYS_RECORD\"\n")
+    stub.chmod(0o755)
+    result = subprocess.run(["bash", str(ROOT / "scripts/exec-profiler.sh"), "/bin/true"], env={**os.environ, "QWEN_PROFILER_INVOCATION_PATH": str(tmp_path / "decode.argv"), "QWEN_PROFILER_NSYS_BIN": str(stub), "NSYS_RECORD": str(tmp_path / "launched")}, check=False)
+    assert result.returncode != 0
+    assert not (tmp_path / "launched").exists()
 
 
 @pytest.mark.parametrize("framework", ["vllm", "sglang"])
@@ -154,19 +164,22 @@ def test_vllm_c104_summary_reports_seven_worker_topology(tmp_path: Path) -> None
 
 
 
-def test_vllm_seven_worker_profile_validation(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("dp", [1, 4])
+def test_vllm_worker_profile_validation(tmp_path: Path, monkeypatch, dp: int) -> None:
     source = tmp_path / "source"
     profile = tmp_path / "profile"
     source.mkdir()
     profile.mkdir()
-    workers = [(f"prefill-{n}", 2) for n in range(6)] + [("decode-0", 4)]
+    workers = [(f"prefill-{n}", 2) for n in range(6)] + [("decode-0", 4)] if dp == 1 else [(f"prefill-{n}", 1) for n in range(3)] + [("decode-0", 1)]
     (source / "worker-endpoints.tsv").write_text("".join(f"{name}\t127.0.0.1\t30000\t{tp}\n" for name, tp in workers))
-    for name, _tp in workers:
+    (tmp_path / "results").mkdir()
+    for name, tp in workers:
         (profile / f"nsys-{name}.nsys-rep").write_text("report")
+        (tmp_path / f"results/server-info-{name}.json").write_text(json.dumps({"vllm_config": {"parallel_config": {"tensor_parallel_size": tp, "data_parallel_size": dp}}}))
 
     def export(command, **_kwargs):
         database = Path(next(value for value in command if value.startswith("--output=")).split("=", 1)[1])
-        tp = 4 if "decode" in database.name else 2
+        tp = 4 if dp == 4 or "decode" in database.name else 2
         with sqlite3.connect(database) as connection:
             connection.execute("CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (deviceId INTEGER)")
             connection.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?)", [(rank,) for rank in range(tp)])
@@ -176,7 +189,7 @@ def test_vllm_seven_worker_profile_validation(tmp_path: Path, monkeypatch) -> No
     runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"), run_name="__main__")
     validation = json.loads((profile / "validation.json").read_text())
     assert validation["valid"] is True
-    assert len(validation["workers"]) == 7
+    assert len(validation["workers"]) == len(workers)
     assert sum(worker["gpu_count"] for worker in validation["workers"].values()) == 16
     assert not list(profile.glob("*.sqlite"))
 
@@ -205,17 +218,18 @@ def test_decoder_only_profile_requires_selected_four_ranks(tmp_path: Path, monke
         assert result["scope"] == "decode-0" and result["workers"]["decode-0"]["gpu_count"] == 4
         assert not list(profile.glob("*.sqlite"))
     else:
-        with pytest.raises(ValueError, match="exactly decode-0 TP4"):
+        with pytest.raises(ValueError, match="exactly decode-0 with four GPUs"):
             runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"), run_name="__main__")
 
 
-def test_profile_rejects_missing_event_diagnostic(tmp_path: Path) -> None:
+@pytest.mark.parametrize("severity,text", [(2, "Not all CUDA events might have been collected"), (1, "Number of incomplete CUPTI events dropped: 3,923"), (1, "CUDA driver version is not supported")])
+def test_profile_rejects_missing_event_diagnostic(tmp_path: Path, severity: int, text: str) -> None:
     database = tmp_path / "report.sqlite"
     with sqlite3.connect(database) as connection:
         connection.execute("CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (deviceId INTEGER)")
         connection.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?)", [(rank,) for rank in range(4)])
         connection.execute("CREATE TABLE DIAGNOSTIC_EVENT (severity INTEGER, text TEXT)")
-        connection.execute("INSERT INTO DIAGNOSTIC_EVENT VALUES (2, 'Not all CUDA events might have been collected')")
+        connection.execute("INSERT INTO DIAGNOSTIC_EVENT VALUES (?, ?)", (severity, text))
     with pytest.raises(ValueError, match="incomplete CUDA capture"):
         VALIDATE(database, 4)
 

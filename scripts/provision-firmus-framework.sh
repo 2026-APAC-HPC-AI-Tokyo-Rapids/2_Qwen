@@ -82,11 +82,11 @@ if [[ "${PROFILE}" == true ]]; then
   install -m 0644 "${GITHUB_WORKSPACE}/scripts/validate-firmus-profile.py" "${runtime_dir}/scripts/"
   command -v ar >/dev/null
   package="${runtime_dir}/nsight.deb"
-  curl --fail --location --show-error --max-time 600 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/nsight-systems-2026.3.2_2026.3.2.476-1_amd64.deb -o "${package}"
-  printf 'e9bf0ff9c613ff5545095a4177676a9579cb666e78c8621c3792f3559e2c1690  %s\n' "${package}" | sha256sum --check >"${runtime_dir}/source/nsys-package.sha256"
+  curl --fail --location --show-error --max-time 600 https://developer.nvidia.com/downloads/assets/tools/secure/nsight-systems/2026_5/nsightsystems-linux-cli-public-2026.5.1.161-3889610.deb -o "${package}"
+  printf '61829db6392e5c293ada1319df86a97c3356bc810335a1975cb551fcfe3eca08  %s\n' "${package}" | sha256sum --check >"${runtime_dir}/source/nsys-package.sha256"
   install -d -m 0755 "${runtime_dir}/nsys-extract"
-  ar p "${package}" data.tar.gz | tar -xz -C "${runtime_dir}/nsys-extract" --wildcards './opt/nvidia/nsight-systems/2026.3.2/bin/*' './opt/nvidia/nsight-systems/2026.3.2/target-linux-x64/*' './opt/nvidia/nsight-systems/2026.3.2/host-linux-x64/*' './opt/nvidia/nsight-systems/2026.3.2/EULA.txt'
-  mv "${runtime_dir}/nsys-extract/opt/nvidia/nsight-systems/2026.3.2" "${runtime_dir}/nsys"
+  ar p "${package}" data.tar.gz | tar -xz -C "${runtime_dir}/nsys-extract" --wildcards './opt/nvidia/nsight-systems-cli/2026.5.1/bin/*' './opt/nvidia/nsight-systems-cli/2026.5.1/target-linux-x64/*' './opt/nvidia/nsight-systems-cli/2026.5.1/host-linux-x64/*' './opt/nvidia/nsight-systems-cli/2026.5.1/EULA.txt'
+  mv "${runtime_dir}/nsys-extract/opt/nvidia/nsight-systems-cli/2026.5.1" "${runtime_dir}/nsys"
   rm -rf -- "${package}" "${runtime_dir}/nsys-extract"
   test -x "${runtime_dir}/nsys/bin/nsys"
   cp "${runtime_dir}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/capture-firmus-profile.sh" "${runtime_dir}/scripts/validate-firmus-profile.py" "${runtime_dir}/source/"
