@@ -132,6 +132,10 @@ export TORCHINDUCTOR_CACHE_DIR=/tmp/vllm-$name/inductor
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_SERVER_DEV_MODE=1  # Required by the pinned image's /server_info registration gate.
+if [[ -x /opt/nsys/bin/nsys ]]; then
+  # The previous decoder exited during graph creation without a Python stack.
+  export PYTHONFAULTHANDLER=1 TORCH_SHOW_CPP_STACKTRACES=1 VLLM_LOGGING_LEVEL=DEBUG
+fi
 mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 echo "$name host=$(hostname) ip=$VLLM_NIXL_SIDE_CHANNEL_HOST hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp symm=$VLLM_ALLREDUCE_USE_SYMM_MEM"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
