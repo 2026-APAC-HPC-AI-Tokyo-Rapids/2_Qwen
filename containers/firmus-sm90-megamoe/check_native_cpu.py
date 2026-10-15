@@ -5,6 +5,7 @@ No method/group lookup is mocked; no GPU math or serving success is claimed.
 """
 
 import argparse
+import hashlib
 import json
 import os
 from datetime import timedelta
@@ -42,6 +43,8 @@ def check(model, output):
     from vllm.model_executor.layers.quantization.apac_sm90 import Sm90MegaMoEMethod
     from vllm.model_executor.layers.quantization.fp8 import Fp8Config
 
+    # Exact model metadata from Qwen revision e156cb4efae43fbee1a1ab073f946a1377e6b969.
+    assert hashlib.sha256((model / "config.json").read_bytes()).hexdigest() == "f056921e486d3e22aed125b5218b87146ea2ac838ccf1521dea5b08f809e8d59"
     rank = int(os.environ["RANK"])
     assert int(os.environ["WORLD_SIZE"]) == 4
     torch.set_num_threads(1)

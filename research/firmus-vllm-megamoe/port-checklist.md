@@ -102,7 +102,7 @@ SGLang の native router と同じく、Prefill グループを選ぶ処理を�
 | O01 | PyTorch ABI、TVM FFI、CUDA、private provider が実イメージで整合する | 既存 image の CPU tensor bridge と native compile の根拠 | 過去 build 合格。修正後の実イメージは未検証 |
 | O02 | 検証プログラムが本番と同じ分散初期化を通る | native init、TP1/DP4/EP4 group、graph context を検査 | 841e80bがnative worldの初期化漏れを修正。ただしgateはまだ合成TP4 group。本番TP1/DP4/EP4のNCCL経路は未完 |
 | O03 | 本番 native layer 作成、loader、method 選択、runner 初期化を CPU で通す | 部分 AST や mock だけで合格にしない | 新規check_native_cpu.pyをActionsで実行予定。Gloo/CPUとNCCL/CUDAを区別 |
-| O04 | GPU 非依存の設定エラーを scheduler 割当前に検出する | CLI config、モデル metadata、patch replay、静的検査、CPU suite | Linux既存395件合格。変更後suiteとCPUイメージ検証はActionsで追跡 |
+| O04 | GPU 非依存の設定エラーを scheduler 割当前に検出する | CLI config、モデル metadata、patch replay、静的検査、CPU suite | 変更後suiteはActions 38767519990で426件合格・1件skip。実イメージのnative factoryはAWS buildへ組込み |
 | O05 | full serving を未合格 adapter で投入できない | 同じ image/source の成功 gate を pre-submit で照合 | 実装済み。megamoe_gate_run未設定は配備前に停止。同一image SHA/size、診断source、数値、rank/replay、Slurm完了を照合 |
 | O06 | 起動した4グループと16 rank の readiness を確認する | argv と実 config、worker 生存、endpoint、GPU UUID | 未確認 |
 | O07 | CPU assertion の失敗で GPU 測定結果の回収を失わない | GPU 前の検査と回収後の設定判定を分離 | 未確認 |
@@ -173,3 +173,14 @@ GPUジョブの投入は0件。
 Actionsの `[megamoe-cpu]` は既存イメージを使うCPU診断専用。
 cluster/build/gateタグとの混在はvalidateで拒否する。
 `megamoe_gate_run` は成功した有限GPU gateの実行ディレクトリが確認できるまで `null` とする。
+
+## AWSでの実イメージ検証
+
+CPU検証は既存の `vllm-image.yml` → `aws-image-build.yml` の一時EC2ビルドに統合する。
+`[require-build]` のみを付け、クラスタタグは付けない。
+`containers/firmus-sm90-megamoe/check_native_cpu.py` は実vLLMの `ModelConfig`、TP1/DP4/EP4 group、`FusedMoEFactory`、FP8 weight/scale loaderをCPUで通す。
+GlooとCpuPlatformを使うため、NCCL、GPU演算、CUDA Graphの合格証拠にはしない。
+モデル重みはダウンロードせず、[固定revisionのconfig.json](https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8/blob/e156cb4efae43fbee1a1ab073f946a1377e6b969/config.json) と識別可能な合成weight/scaleで検査する。
+config.jsonのSHA256は `f056921e486d3e22aed125b5218b87146ea2ac838ccf1521dea5b08f809e8d59`。
+結果は `/opt/apac/sm90-megamoe-native-cpu-gate.json` に保存し、イメージ出力前にも再検証する。
+ログインノード上の専用CPUワークフローとBubblewrap経路は削除する。

@@ -3,10 +3,6 @@ import os
 
 
 def validate(message):
-    if '[megamoe-cpu]' in message:
-        if any(tag in message for tag in ['[cluster:', '[require-build]', '[megamoe-gate]', '[profile]', '[build-only]', '[cutlass-grid-probe]', '[moe-routing-probe]', '[firmus-dynamo-recover]']):
-            raise ValueError('MegaMoE CPU validation must not submit GPU jobs or rebuild the image')
-        return
     if '[megamoe-gate]' in message:
         if '[cluster:firmus]' not in message or '[nodes:1]' not in message:
             raise ValueError('MegaMoE gate requires only cluster:firmus and nodes:1')

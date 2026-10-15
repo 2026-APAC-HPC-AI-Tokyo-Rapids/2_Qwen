@@ -205,10 +205,3 @@ def test_full_serving_is_blocked_before_staging_without_adapter_gate(tmp_path):
     result = subprocess.run(["bash", str(ROOT / "scripts/provision-firmus-framework.sh")], env=environment, capture_output=True, text=True, check=False)
     assert result.returncode == 64 and "no successful actual-adapter GPU gate" in result.stderr
     assert not (tmp_path / "runs").exists() and not (tmp_path / "outputs").exists()
-
-
-@pytest.mark.parametrize("extra", ["[cluster:firmus]", "[cluster:aspire2ap]", "[cluster:genkai]", "[require-build]", "[megamoe-gate]", "[firmus-dynamo-recover]"])
-def test_cpu_image_validation_cannot_submit_jobs(extra):
-    TAGS.validate("[megamoe-cpu] validate existing image without GPU")
-    with pytest.raises(ValueError, match="must not submit GPU jobs"):
-        TAGS.validate("[megamoe-cpu] " + extra)

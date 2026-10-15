@@ -74,3 +74,15 @@ finally:
 print(json.dumps(mega_gate))
 
 assert mega_gate["vllm_adapter_cpu"]["passed"]
+
+# Full native construction and checkpoint loading, separate from mocked calls.
+native_gate = json.loads(Path("/opt/apac/sm90-megamoe-native-cpu-gate.json").read_text())
+assert native_gate["passed"] and native_gate["gpu_execution"] is False
+assert native_gate["transport"] == "gloo" and native_gate["platform"] == "cpu"
+assert {entry["rank"] for entry in native_gate["ranks"]} == set(range(4))
+for entry in native_gate["ranks"]:
+    assert entry["native_factory_loader_passed"] and not entry["cuda_initialized"]
+    assert entry["tp_ranks"] == [entry["rank"]]
+    assert entry["dp_ranks"] == entry["ep_ranks"] == list(range(4))
+    assert entry["loaded_experts"] == 32 and entry["rejected_nonlocal_experts"] == 96
+print(json.dumps(native_gate))
