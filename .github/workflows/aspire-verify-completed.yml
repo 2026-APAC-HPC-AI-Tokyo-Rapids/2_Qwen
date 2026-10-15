@@ -11,17 +11,25 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Verify the archived successful PBS job using system Python
+      - name: Copy the checksummed archive into the runner
         shell: home-lab-shell {0}
         run: |
           set -euo pipefail
           root=/srv/qwen-artifacts/38791490269/1
+          (cd "${root}" && sha256sum --check --quiet SHA256SUMS)
+          mkdir -p "${RUNNER_TEMP}/aspire-completed"
+          cp -a "${root}/." "${RUNNER_TEMP}/aspire-completed/"
+      - uses: astral-sh/setup-uv@v7
+      - name: Verify the archived successful PBS job in the runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/aspire-completed"
           config="${root}/source/source/aspire-serving.json"
-          python3 --version
           (cd "${root}" && sha256sum --check --quiet SHA256SUMS)
           test -e "${root}/run-success/run-success"
           grep -Eq '^ *job_state = F$' "${root}/logs/logs/pbs-accounting.txt"
           grep -Eq '^ *Exit_status = 0$' "${root}/logs/logs/pbs-accounting.txt"
-          while IFS=$'\t' read -r role port; do python3 scripts/check-firmus-server-info.py "${config}" "${root}/results/results/server-info-${role}-${port}.json" "${role}"; done < <(jq -r '.workers[] | [.role,.port] | @tsv' "${config}")
-          python3 scripts/parse-aiperf-result.py "${root}/results/results/profile_export_aiperf.json" "${RUNNER_TEMP}/aspire-replayed-score.json" --concurrency 40 --require-eligible --command "${root}/results/results/aiperf-command.txt" --provenance "${root}/results/results/aiperf-provenance.txt"
+          while IFS=$'\t' read -r role port; do uv run --no-project --python 3.13 python scripts/check-firmus-server-info.py "${config}" "${root}/results/results/server-info-${role}-${port}.json" "${role}"; done < <(jq -r '.workers[] | [.role,.port] | @tsv' "${config}")
+          uv run --no-project --python 3.13 python scripts/parse-aiperf-result.py "${root}/results/results/profile_export_aiperf.json" "${RUNNER_TEMP}/aspire-replayed-score.json" --concurrency 40 --require-eligible --command "${root}/results/results/aiperf-command.txt" --provenance "${root}/results/results/aiperf-provenance.txt"
           jq -e '.eligible and .official_validation.valid and .error_request_count == 0 and .good_request_fraction == 1' "${RUNNER_TEMP}/aspire-replayed-score.json"

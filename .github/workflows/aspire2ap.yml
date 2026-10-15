@@ -108,13 +108,16 @@ jobs:
           name: qwen-aspire2ap-pd-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/qwen-aspire2ap-pd
           if-no-files-found: error
+      - name: 回収結果の検証用Pythonを準備
+        if: always() && steps.collect.outcome == 'success'
+        uses: astral-sh/setup-uv@v7
       - name: 回収した全DP rankの実設定とKV容量を検証
         if: always() && steps.collect.outcome == 'success'
-        shell: home-lab-shell {0}
+        shell: bash
         run: |
           root="${RUNNER_TEMP}/qwen-aspire2ap-pd"
           config="${root}/source/source/aspire-serving.json"
-          while IFS=$'\t' read -r role port; do python3 scripts/check-firmus-server-info.py "${config}" "${root}/results/results/server-info-${role}-${port}.json" "${role}"; done < <(jq -r '.workers[] | [.role,.port] | @tsv' "${config}")
+          while IFS=$'\t' read -r role port; do uv run --no-project --python 3.13 python scripts/check-firmus-server-info.py "${config}" "${root}/results/results/server-info-${role}-${port}.json" "${role}"; done < <(jq -r '.workers[] | [.role,.port] | @tsv' "${config}")
       - name: 実行環境と残留ジョブを削除
         if: always()
         run: if [[ -n "${PBS_JOB_ID:-}" ]] && /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; then /opt/pbs/bin/qdel "${PBS_JOB_ID}"; fi; rm -rf -- "${RUNTIME_DIR:?}"
