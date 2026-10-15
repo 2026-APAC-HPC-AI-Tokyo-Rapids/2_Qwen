@@ -149,7 +149,8 @@ run_node() {
       config="${OUTPUT_DIR}/source/aspire-serving.json"
       # Preserve the two TP4 workers per role; MegaMoE uses DP4/EP4 within each.
       args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static 0.90 --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}" --nccl-port "$((port + 1000))" --page-size 64 --kv-cache-dtype "$(jq -er .kv_cache_dtype "${config}")" --attention-backend fa3 --ep-size "${ep}" --dp-size "$(jq -er .dp_size "${config}")" --enable-dp-attention --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --load-balance-method total_requests --load-snapshot-publish-interval 1)
-      worker_env=(-e UCX_POSIX_USE_PROC_LINK=n -e SGLANG_DISAGG_STAGING_BUFFER=0 -e SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1 -e SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096)
+      # Keep every UCX interface progressing during asymmetric DP-rank wireup (openucx/ucx#11971).
+      worker_env=(-e UCX_POSIX_USE_PROC_LINK=n -e UCX_ADAPTIVE_PROGRESS=n -e UCX_LOG_LEVEL=info -e SGLANG_DISAGG_STAGING_BUFFER=0 -e SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1 -e SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096)
       if [[ "${role}" == prefill ]]; then
         args+=(--dist-init-addr "127.0.0.1:$((32000 + worker * 100))" --disaggregation-bootstrap-port "${bootstrap}" --chunked-prefill-size "$(jq -er .prefill_chunked_size "${config}")" --max-total-tokens "$(jq -er .prefill_max_total_tokens "${config}")" --max-running-requests "$(jq -er .concurrency "${config}")" --disable-cuda-graph)
       else

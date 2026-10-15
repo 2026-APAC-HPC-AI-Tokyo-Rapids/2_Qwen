@@ -230,6 +230,8 @@ def test_aspire_megamoe_keeps_two_tp4_workers_per_role(tmp_path: Path, profile: 
             assert argv.count(flag) == 1
             assert argv[argv.index(flag) + 1] == value
         assert "--enable-dp-attention" in argv
+        assert "UCX_ADAPTIVE_PROGRESS=n" in argv
+        assert "UCX_LOG_LEVEL=info" in argv
         assert "SGLANG_DISAGG_STAGING_BUFFER=0" in argv
         assert "SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1" in argv
         assert "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096" in argv

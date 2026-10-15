@@ -10,11 +10,20 @@ jobs:
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 3
     steps:
-      - name: Read UCX defaults passed through the existing Enroot configuration
+      - name: Identify the native libraries in the exact completed-run image
         shell: aspire2p-shell --github-shell {0}
         run: |
           set -euo pipefail
           source "${HOME}/.local/.setenv"
           date -u +%FT%TZ
-          env | grep -E '^(UCX_|ENROOT_|LD_LIBRARY_PATH=)' || true
-          grep -R -n -E 'UCX_|machine-id|hostid|LD_LIBRARY_PATH' "${ENROOT_SYSCONF_PATH}" "${ENROOT_LIBRARY_PATH}" "${HOME}/.local/.setenv" || true
+          image=/scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers/38778072624.sqsh
+          directory=$(mktemp -d)
+          trap 'rm -rf -- "${directory}"' EXIT
+          unsquashfs -ll "${image}" | awk '$NF ~ /nixl.*(libucp-|libnixl_common[.]so)/ {sub(/^squashfs-root\//,"",$NF); print $NF}' >"${directory}/libraries"
+          test -s "${directory}/libraries"
+          while read -r library; do
+            printf '\nlibrary=%s\n' "${library}"
+            unsquashfs -cat "${image}" "${library}" >"${directory}/${library##*/}"
+            sha256sum "${directory}/${library##*/}"
+            if [[ "${library}" == *libucp-* ]]; then objdump -d --disassemble=ucp_get_version "${directory}/${library##*/}"; else strings "${directory}/${library##*/}" | grep -E '075b2397|git_hash|NIXL Version' || true; fi
+          done <"${directory}/libraries"
