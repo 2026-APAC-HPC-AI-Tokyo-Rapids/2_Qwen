@@ -10,13 +10,11 @@ jobs:
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 3
     steps:
-      - name: Read topology of the two completed-run hosts
+      - name: Read UCX defaults passed through the existing Enroot configuration
         shell: aspire2p-shell --github-shell {0}
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          source "${HOME}/.local/.setenv"
           date -u +%FT%TZ
-          for host in a2ap-dgx011 a2ap-dgx025; do
-            printf '\nhost=%s\n' "${host}"
-            ssh -o BatchMode=yes -o ConnectTimeout=5 "${host}" 'hostname; nvidia-smi topo -m; for port in /sys/class/infiniband/*/ports/1; do printf "\n%s\n" "$port"; cat "$port/state" "$port/link_layer" "$port/lid" "$port/gids/0"; readlink -f "$port/../../device"; done' || true
-          done
-          /opt/pbs/bin/pbsnodes -av a2ap-dgx011 a2ap-dgx025 | head -n 100
+          env | grep -E '^(UCX_|ENROOT_|LD_LIBRARY_PATH=)' || true
+          grep -R -n -E 'UCX_|machine-id|hostid|LD_LIBRARY_PATH' "${ENROOT_SYSCONF_PATH}" "${ENROOT_LIBRARY_PATH}" "${HOME}/.local/.setenv" || true
