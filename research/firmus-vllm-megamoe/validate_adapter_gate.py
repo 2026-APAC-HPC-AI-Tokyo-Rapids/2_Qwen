@@ -20,6 +20,8 @@ def validate(runtime, serving_config=None):
     assert result["schema"] == "vllm-sm90-actual-adapter-gate/v1"
     assert all(result[key] is True for key in ("completed", "correctness_passed", "graph_passed"))
     assert result["adapter_manifest"]["backend"] == "apac_sm90_megamoe"
+    assert result["native_factory_runner"] is True
+    assert result["parallelism"] == {"tp": 1, "dp": 4, "ep": 4}
     assert result["capacity_requested"] == 4096
     assert sorted(gpu["rank"] for gpu in result["gpus"]) == list(range(4))
     assert all(isinstance(gpu["uuid"], str) and gpu["uuid"] for gpu in result["gpus"])
@@ -29,6 +31,8 @@ def validate(runtime, serving_config=None):
         records = case["records"]
         assert sorted((record["rank"], record["replay"]) for record in records) == [(rank, replay) for rank in range(4) for replay in range(4)]
         for record in records:
+            assert record["eager_compared"] is True
+            assert record["pattern"] == ("random", "hot_rank0", "boundary_masked", "all_masked")[record["replay"]]
             assert record["rows"] == case["counts"][record["rank"]]
             error = record["errors"]
             if record["rows"] == 0:

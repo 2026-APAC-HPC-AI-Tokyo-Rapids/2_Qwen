@@ -72,7 +72,7 @@ def test_terminal_gate_requires_math_graph_four_ranks_without_score(tmp_path, fa
     (tmp_path / "logs/slurm-7.log").write_text("gate finished\n")
     (tmp_path / "source/provenance.json").write_text(json.dumps({"diagnostic": "vllm-sm90-megamoe", "measurement_mode": "kernel-gate", "profile": False, "world_size": 4}))
     result = {"schema": "vllm-sm90-actual-adapter-gate/v1", "completed": True, "correctness_passed": fault != "math", "graph_passed": fault != "graph", "world_size": 4, "gpus": [{"rank": rank, "uuid": f"GPU-{rank}"} for rank in range(3 if fault == "coverage" else 4)], "official_benchmark_score": None}
-    result.update(adapter_manifest={"backend": "apac_sm90_megamoe"}, capacity_requested=4096, cases=[{"counts": counts, "records": [{"rank": rank, "replay": replay, "rows": counts[rank], "errors": {"relative_l2": 0.01, "max_scaled_error": 0.02, "masked_rows_zero": True} if counts[rank] else {"empty_rank_participated": True}} for rank in range(4) for replay in range(4)]} for counts in [[1,1,1,1],[128,0,17,64],[128,128,128,128],[4096,4096,4096,4096]]])
+    result.update(native_factory_runner=True, parallelism={"tp": 1, "dp": 4, "ep": 4}, adapter_manifest={"backend": "apac_sm90_megamoe"}, capacity_requested=4096, cases=[{"counts": counts, "records": [{"rank": rank, "replay": replay, "pattern": ("random", "hot_rank0", "boundary_masked", "all_masked")[replay], "eager_compared": True, "rows": counts[rank], "errors": {"relative_l2": 0.01, "max_scaled_error": 0.02, "masked_rows_zero": True} if counts[rank] else {"empty_rank_participated": True}} for rank in range(4) for replay in range(4)]} for counts in [[1,1,1,1],[128,0,17,64],[128,128,128,128],[4096,4096,4096,4096]]])
     if fault == "rows":
         result["cases"][-1]["counts"] = [384] * 4
     elif fault == "replays":
@@ -161,18 +161,18 @@ def test_actual_adapter_initializes_native_world_before_device_communicator():
         assert timeout == timedelta(seconds=300)
         state["node_count"] = 1
 
-    def coordinator(ranks, local_rank, backend, **kwargs):
+    def initialize_model(*, tensor_model_parallel_size, backend):
         assert state.get("node_count") == 1, "distributed environment is not initialized"
-        assert ranks == [[0, 1, 2, 3]] and local_rank == 2
-        assert kwargs["use_device_communicator"] is True
+        assert tensor_model_parallel_size == 1 and backend == "nccl"
         state["coordinator"] = True
 
     path = ROOT / "research/firmus-vllm-megamoe/adapter_gpu_gate.py"
     run = next(node for node in ast.parse(path.read_text()).body if isinstance(node, ast.FunctionDef) and node.name == "run")
-    start = next(i for i, node in enumerate(run.body) if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and ast.unparse(node.value.func) == "dist.init_process_group")
-    end = next(i for i, node in enumerate(run.body) if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "group" for target in node.targets))
-    setup = ast.Module(body=run.body[start:end + 1], type_ignores=[])
-    namespace = {"dist": SimpleNamespace(init_process_group=torch_init), "device": "cuda:2", "rank": 2, "timedelta": timedelta, "init_distributed_environment": native_init, "GroupCoordinator": coordinator}
+    body = next(node.body for node in run.body if isinstance(node, ast.With) and "set_current_vllm_config" in ast.unparse(node.items[0].context_expr))
+    start = next(i for i, node in enumerate(body) if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and ast.unparse(node.value.func) == "dist.init_process_group")
+    end = next(i for i, node in enumerate(body) if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "group" for target in node.targets))
+    setup = ast.Module(body=body[start:end + 1], type_ignores=[])
+    namespace = {"dist": SimpleNamespace(init_process_group=torch_init), "device": "cuda:2", "rank": 2, "timedelta": timedelta, "init_distributed_environment": native_init, "initialize_model_parallel": initialize_model, "get_ep_group": lambda: object()}
     exec(compile(setup, str(path), "exec"), namespace)  # noqa: S102 -- Selected local probe initialization, with stubbed collectives.
     assert state == {"torch": True, "node_count": 1, "coordinator": True}
 

@@ -71,8 +71,7 @@ if [[ "$(jq -r '.speculation.algorithm // empty' "${config}")" == EAGLE3 ]]; the
   jq -e '.revision == "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224" and .weight_sha256 == "bf226a966868fe413a22e62e471aa1130bd94f17fd2c40d322b1c8b4def1ae86" and .weight_bytes == 1145943008 and .precision == "BF16"' "${runtime_dir}/source/draft-provenance.json" >/dev/null
   cp "${GITHUB_WORKSPACE}/research/simulation/prepare_eagle.py" "${runtime_dir}/source/"
 fi
-if [[ "${framework}" == vllm ]]; then launcher="${GITHUB_WORKSPACE}/submission/run/vllm.sbatch"; else launcher="${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/sglang.sbatch"; fi
-install -m 0755 "${launcher}" "${runtime_dir}/scripts/submit.sbatch"
+install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/${framework}.sbatch" "${runtime_dir}/scripts/submit.sbatch"
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/official-aiperf.sh" "${runtime_dir}/scripts/official-aiperf.sh"
 install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/vllm-proxy.py" "${runtime_dir}/vllm-proxy.py"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${GITHUB_WORKSPACE}/scripts/parse-firmus-reference-result.py" "${GITHUB_WORKSPACE}/scripts/summarize-firmus-run.py" "${runtime_dir}/scripts/"
