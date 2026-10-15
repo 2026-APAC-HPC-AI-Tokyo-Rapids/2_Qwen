@@ -19,7 +19,11 @@ def run(output):
     import torch
     import torch.distributed as dist
     import vllm
-    from vllm.distributed.parallel_state import GroupCoordinator
+    from vllm.distributed.parallel_state import (
+        GroupCoordinator,
+        destroy_distributed_environment,
+        init_distributed_environment,
+    )
     from vllm.model_executor.layers.fused_moe.activation import MoEActivation
     from vllm.model_executor.layers.fused_moe.config import (
         FusedMoEConfig,
@@ -39,6 +43,8 @@ def run(output):
     assert "H200" in props.name and (props.major, props.minor) == (9, 0)
     torch.backends.cuda.matmul.allow_tf32 = False
     dist.init_process_group("nccl", timeout=timedelta(seconds=300), device_id=device)
+    # Native communicator setup reads vLLM world/node state, not only Torch PG.
+    init_distributed_environment(world_size=4, rank=rank, local_rank=rank, backend="nccl", timeout=timedelta(seconds=300))
     group = GroupCoordinator([list(range(4))], rank, "nccl", use_device_communicator=True, group_name="tp")
     manifest = json.loads(Path("/opt/apac/vllm-sm90-adapter.json").read_text())
     assert manifest["adapter_sha256"] == hashlib.sha256(Path(adapter.__file__).read_bytes()).hexdigest()
@@ -149,7 +155,7 @@ def run(output):
         save(output, result)
     dist.barrier()
     group.destroy()
-    dist.destroy_process_group()
+    destroy_distributed_environment()
 
 
 if __name__ == "__main__":

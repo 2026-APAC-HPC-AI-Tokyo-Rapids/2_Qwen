@@ -1,4 +1,5 @@
 """Exercise finite-gate staging and terminal checks without GPU access."""
+import ast
 import hashlib
 import importlib.util
 import json
@@ -109,3 +110,36 @@ def test_batch_passes_four_local_devices_instead_of_global_job_ids(tmp_path, job
     assert (tmp_path / "visible").read_text() == "0,1,2,3"
     assert "--gres=gpu:4" in (tmp_path / "command").read_text()
     assert f"job_global_gpu_ids={job_ids}" in (tmp_path / "source/gpu-visibility.txt").read_text()
+
+
+def test_actual_adapter_initializes_native_world_before_device_communicator():
+    # Reproduce the failed dependency: Torch PG alone does not set vLLM node state.
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    state = {}
+
+    def torch_init(backend, *, timeout, device_id):
+        assert backend == "nccl" and device_id == "cuda:2"
+        state["torch"] = True
+
+    def native_init(*, world_size, rank, local_rank, backend, timeout):
+        assert state["torch"]
+        assert (world_size, rank, local_rank, backend) == (4, 2, 2, "nccl")
+        assert timeout == timedelta(seconds=300)
+        state["node_count"] = 1
+
+    def coordinator(ranks, local_rank, backend, **kwargs):
+        assert state.get("node_count") == 1, "distributed environment is not initialized"
+        assert ranks == [[0, 1, 2, 3]] and local_rank == 2
+        assert kwargs["use_device_communicator"] is True
+        state["coordinator"] = True
+
+    path = ROOT / "research/firmus-vllm-megamoe/adapter_gpu_gate.py"
+    run = next(node for node in ast.parse(path.read_text()).body if isinstance(node, ast.FunctionDef) and node.name == "run")
+    start = next(i for i, node in enumerate(run.body) if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and ast.unparse(node.value.func) == "dist.init_process_group")
+    end = next(i for i, node in enumerate(run.body) if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "group" for target in node.targets))
+    setup = ast.Module(body=run.body[start:end + 1], type_ignores=[])
+    namespace = {"dist": SimpleNamespace(init_process_group=torch_init), "device": "cuda:2", "rank": 2, "timedelta": timedelta, "init_distributed_environment": native_init, "GroupCoordinator": coordinator}
+    exec(compile(setup, str(path), "exec"), namespace)
+    assert state == {"torch": True, "node_count": 1, "coordinator": True}
