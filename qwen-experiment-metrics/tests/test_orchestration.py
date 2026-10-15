@@ -48,6 +48,6 @@ def test_cluster_topologies_use_every_allocated_gpu() -> None:
     assert 'genkai) [[ "${GPUS_PER_NODE}" -eq 4' in submission
     assert ".workers[] | select(.node==$node)" in submission
     config = json.loads((repository / "configs/aspire-serving.json").read_text())
-    assert [(w["role"], w["node"], w["tp"], w["ep"], w["gpus"]) for w in config["workers"]] == [("prefill", 0, 4, 4, "0,1,2,3"), ("prefill", 0, 4, 4, "4,5,6,7"), ("decode", 1, 4, 4, "0,1,2,3"), ("decode", 1, 4, 4, "4,5,6,7")]
+    assert [(w["role"], w["node"], w["tp"], w["ep"], w["gpus"]) for w in config["workers"]] == [("prefill", 0, 4, 4, "0,1,2,3"), ("prefill", 0, 4, 4, "4,5,6,7"), ("prefill", 1, 4, 4, "0,1,2,3"), ("decode", 1, 4, 4, "4,5,6,7")]
     assert 'start_worker prefill "${node_rank}" 4' in submission
     assert 'start_worker decode "${decode_index}" 4' in submission

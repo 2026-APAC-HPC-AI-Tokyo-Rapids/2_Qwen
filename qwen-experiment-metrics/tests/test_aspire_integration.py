@@ -49,7 +49,10 @@ def capture_router(source: str, platform: str, tmp_path: Path) -> list[str]:
     root = tmp_path / platform
     (root / "source").mkdir(parents=True)
     (root / "source/aspire-serving.json").write_bytes((REPOSITORY / "configs/aspire-serving.json").read_bytes())
-    (root / "source/worker-endpoints.tsv").write_text("prefill\t192.0.2.1\t30100\t9000\nprefill\t192.0.2.1\t30101\t9001\ndecode\t192.0.2.2\t30200\tunused\ndecode\t192.0.2.2\t30201\tunused\n")
+    endpoints = "prefill\t192.0.2.1\t30100\t9000\nprefill\t192.0.2.1\t30101\t9001\ndecode\t192.0.2.2\t30200\tunused\ndecode\t192.0.2.2\t30201\tunused\n"
+    if platform == "aspire2ap":
+        endpoints = "prefill\t192.0.2.1\t30100\t9000\nprefill\t192.0.2.1\t30101\t9001\nprefill\t192.0.2.2\t30102\t9002\ndecode\t192.0.2.2\t30200\tunused\n"
+    (root / "source/worker-endpoints.tsv").write_text(endpoints)
     function = source.split("run_router() {", 1)[1].split("\nrun_aiperf()", 1)[0]
     harness = "set -euo pipefail\nenroot() { printf '%s\\0' \"$@\" >\"${OUTPUT_DIR}/argv\"; }\nrun_router() {" + function + "\nrun_router\n"
     subprocess.run(["bash", "-c", harness], env={**os.environ, "QWEN_PLATFORM": platform, "OUTPUT_DIR": str(root), "MODEL_PATH": "/fixture/model", "CONTAINER_IMAGE": "/fixture/image.sqsh"}, check=True)
@@ -73,6 +76,9 @@ def test_router_argv_matches_candidate_or_main(platform: str, tmp_path: Path) ->
         index = expected.index("--pd-disaggregation") + 1
         expected[index:index] = ["--assignment-mode", "min_load"]
         expected[expected.index("--prefill-policy") + 1] = "manual"
+        start = expected.index("--decode")
+        end = expected.index("--host")
+        expected[start:end] = ["--prefill", "http://192.0.2.2:30102", "9002", "--decode", "http://192.0.2.2:30200"]
     assert capture_router(source, platform, tmp_path) == expected
 
 
@@ -217,18 +223,18 @@ def test_greedy_probe_records_fixed_requests_and_requires_logprobs(tmp_path: Pat
 
 
 @pytest.mark.parametrize("profile", [False, True])
-def test_aspire_megamoe_keeps_two_tp4_workers_per_role(tmp_path: Path, profile: bool) -> None:
+def test_aspire_megamoe_uses_three_prefill_workers_and_one_full_decode(tmp_path: Path, profile: bool) -> None:
     source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
     config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
-    assert config["concurrency"] == 40
-    assert [(w["node"], w["role"], w["gpus"]) for w in config["workers"]] == [(0, "prefill", "0,1,2,3"), (0, "prefill", "4,5,6,7"), (1, "decode", "0,1,2,3"), (1, "decode", "4,5,6,7")]
+    assert config["concurrency"] == 112
+    assert [(w["node"], w["role"], w["gpus"]) for w in config["workers"]] == [(0, "prefill", "0,1,2,3"), (0, "prefill", "4,5,6,7"), (1, "prefill", "0,1,2,3"), (1, "decode", "4,5,6,7")]
     workers = capture_workers(source, "aspire2ap", 2, tmp_path, profile)
     assert len(workers) == 4
     addresses = []
     for record in workers:
         argv = record["argv"]
         role = argv[argv.index("--disaggregation-mode") + 1]
-        expected = {"--tp-size": "4", "--ep-size": "4", "--dp-size": "4", "--moe-a2a-backend": "megamoe", "--moe-runner-backend": "deep_gemm", "--attention-backend": "fa3", "--kv-cache-dtype": "fp8_e4m3", "--page-size": "64", "--chunked-prefill-size": "16384" if role == "prefill" else "8192", "--max-running-requests": "40", "--max-total-tokens": "32768" if role == "prefill" else "57344", "--speculative-algorithm": "EAGLE3", "--speculative-num-steps": "3", "--speculative-num-draft-tokens": "4", "--load-balance-method": "total_requests", "--load-snapshot-publish-interval": "1"}
+        expected = {"--tp-size": "4", "--ep-size": "4", "--dp-size": "4", "--moe-a2a-backend": "megamoe", "--moe-runner-backend": "deep_gemm", "--attention-backend": "fa3", "--kv-cache-dtype": "fp8_e4m3", "--page-size": "64", "--chunked-prefill-size": "16384" if role == "prefill" else "8192", "--max-running-requests": "112" if role == "prefill" else "80", "--max-total-tokens": "32768" if role == "prefill" else "106496", "--mem-fraction-static": "0.90" if role == "prefill" else "0.96", "--speculative-algorithm": "EAGLE3", "--speculative-num-steps": "3", "--speculative-num-draft-tokens": "4", "--load-balance-method": "total_requests", "--load-snapshot-publish-interval": "1"}
         for flag, value in expected.items():
             assert argv.count(flag) == 1
             assert argv[argv.index(flag) + 1] == value
@@ -244,13 +250,13 @@ def test_aspire_megamoe_keeps_two_tp4_workers_per_role(tmp_path: Path, profile: 
         assert ("--enable-dp-lm-head" in argv) == (role == "decode")
         if role == "decode":
             start = argv.index("--cuda-graph-bs-decode") + 1
-            assert argv[start:start + 9] == [str(n) for n in [1, 2, 3, 4, 5, 6, 7, 8, 10]]
+            assert argv[start:start + len(config["decode_cuda_graph_bs"])] == [str(n) for n in config["decode_cuda_graph_bs"]]
             assert argv[argv.index("--moe-dense-tp-size") + 1] == "1"
             assert argv[argv.index("--disaggregation-decode-extra-slots") + 1] == "2"
         addresses.append(int(argv[argv.index("--dist-init-addr") + 1].split(":")[1]))
         assert bool(record["profiler"]) == profile
     # Separate DP endpoint ranges; adjacent HTTP ports otherwise collide.
-    assert addresses == [32000, 32100, 33000, 33100]
+    assert addresses == [32000, 32100, 32200, 33000]
     assert config["container_sha256"] == "8df47c11d7ede66fd19f12c7012a9ab5c97b13387a2655fcbce9f13e1c334110"
     workflow = (REPOSITORY / ".github/workflows/aspire2ap.yml").read_text()
     assert workflow.index("jq -er .container_sha256 configs/aspire-serving.json") < workflow.index('PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh')
@@ -266,7 +272,7 @@ def test_aspire_effective_settings_reject_clipped_kv_pool(role: str) -> None:
     info = json.loads((REPOSITORY / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())[role]
     capacity = config[f"{role}_max_total_tokens"]
     for state in [info, *info["internal_states"]]:
-        state.update(max_total_tokens=capacity, max_running_requests=40, chunked_prefill_size=4096 if role == "prefill" else 2048, moe_a2a_backend="megamoe", moe_runner_backend="deep_gemm", disaggregation_decode_extra_slots=2, disable_cuda_graph=role == "prefill", effective_max_running_requests_per_dp=10, memory_usage={"token_capacity": capacity})
+        state.update(max_total_tokens=capacity, max_running_requests=config["concurrency"] if role == "prefill" else config["decode_max_running_requests"], mem_fraction_static=0.90 if role == "prefill" else config["decode_mem_fraction_static"], chunked_prefill_size=4096 if role == "prefill" else 2048, moe_a2a_backend="megamoe", moe_runner_backend="deep_gemm", disaggregation_decode_extra_slots=2, disable_cuda_graph=role == "prefill", effective_max_running_requests_per_dp=config["decode_max_running_requests"] // config["dp_size"], memory_usage={"token_capacity": capacity})
     info["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
     check(config, info, role)
     for state in info["internal_states"]:
@@ -300,3 +306,12 @@ def test_aspire_excludes_active_storage_nics_and_requires_compute_fabric(tmp_pat
     else:
         assert process.returncode == 0, process.stderr
         assert process.stdout == ASPIRE_HCAS
+
+
+def test_decode_kv_pool_covers_full_batch_growth_and_transfer_slots() -> None:
+    config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
+    running = config["decode_max_running_requests"] // config["dp_size"]
+    # Official ~4K input plus page-rounded 200-token output; retain native 512-token reserve.
+    required = running * (4096 + 256 + 512) + config["decode_extra_slots"] * (4096 + 512)
+    assert config["decode_max_total_tokens"] >= required
+    assert max(config["decode_cuda_graph_bs"]) == running

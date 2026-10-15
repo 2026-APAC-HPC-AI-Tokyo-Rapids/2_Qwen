@@ -19,8 +19,10 @@ def check(config, info, role):
         # SGLang resolves an omitted draft runner to the target runner before serving this endpoint.
         expected.update(disaggregation_decode_extra_slots=config["decode_extra_slots"], moe_a2a_backend="megamoe", moe_runner_backend="deep_gemm", enable_dp_lm_head=True, moe_dense_tp_size=1, speculative_moe_a2a_backend=None, speculative_moe_runner_backend="deep_gemm")
     expected.update(load_balance_method="total_requests", load_snapshot_publish_interval=1)
-    if aspire and prefill:
-        expected["disable_cuda_graph"] = True
+    if aspire:
+        expected["mem_fraction_static"] = 0.90 if prefill else config["decode_mem_fraction_static"]
+        if prefill:
+            expected["disable_cuda_graph"] = True
     states = info.get("internal_states", [])
     if len(states) != expected["dp_size"]:
         raise ValueError(f"{role}: expected {expected['dp_size']} DP states, got {len(states)}")
