@@ -1,0 +1,29 @@
+name: Cancel only the queued ASPIRE job approved for replacement
+on:
+  push:
+    branches: [perf/aspire-megamoe-port]
+    paths: [.github/workflows/aspire-run-status.yml]
+permissions:
+  contents: read
+jobs:
+  cancel-queued:
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Cancel approved job 220463 only if it has never started
+        shell: aspire2p-shell --github-shell {0}
+        run: |
+          set -euo pipefail
+          root=/scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs/pd-38759737095-1.7oc4ncdjZw
+          jq -e '.cluster == "aspire2ap" and .commit == "6b116c69e911d292b32c4b698dc6a58f737b08fc"' "${root}/source/provenance.json"
+          /opt/pbs/bin/qstat -x -f -F json 220463.pbs111 >"${root}/source/cancel-before.json"
+          cat "${root}/source/cancel-before.json"
+          jq -e '.Jobs["220463.pbs111"] | .job_state == "Q" and .stime == null and (.Job_Owner | startswith("ACCOUNT@")) and (.project | tostring) == "59010014"' "${root}/source/cancel-before.json"
+          printf 'User explicitly approved replacing this never-started queued job with one unpinned allocation.\n' >"${root}/source/cancel-reason.txt"
+          /opt/pbs/bin/qdel 220463.pbs111
+          sleep 5
+          /opt/pbs/bin/qstat -x -f -F json 220463.pbs111 | tee "${root}/source/cancel-after.json"
+          jq -e '.Jobs["220463.pbs111"] | .job_state == "F" and .stime == null' "${root}/source/cancel-after.json"
