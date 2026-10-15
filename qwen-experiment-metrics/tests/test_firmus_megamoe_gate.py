@@ -86,3 +86,17 @@ def test_finite_harness_cpu_ownership_and_call_contract(tmp_path):
     assert result["passed"] is True and result["cuda_execution"] is False
     assert result["finite_layout_cases"] == 160
     assert result["pipeline_wiring"]["double_dispatch_or_allreduce"] is False
+
+
+@pytest.mark.parametrize("job_ids", ["0,1,2,3,4,5,6,7", "4,5,6,7"])
+def test_batch_passes_four_local_devices_instead_of_global_job_ids(tmp_path, job_ids):
+    for relative in ["bin", "source", "logs", "results"]:
+        (tmp_path / relative).mkdir()
+    launcher = tmp_path / "bin/srun"
+    launcher.write_text("#!/bin/sh\nprintf '%s' \"$NVIDIA_VISIBLE_DEVICES\" >\"$SLURM_SUBMIT_DIR/visible\"\nprintf '%s\\n' \"$*\" >\"$SLURM_SUBMIT_DIR/command\"\nprintf '{}' >\"$SLURM_SUBMIT_DIR/results/gate.json\"\n")
+    launcher.chmod(0o755)
+    result = subprocess.run(["bash", str(ROOT / "platforms/firmus/megamoe-gate.sbatch")], check=False, capture_output=True, text=True, env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLURM_SUBMIT_DIR": str(tmp_path), "SLURM_NNODES": "1", "SLURM_JOB_GPUS": job_ids, "CUDA_VISIBLE_DEVICES": job_ids})
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "visible").read_text() == "0,1,2,3"
+    assert "--gres=gpu:4" in (tmp_path / "command").read_text()
+    assert f"job_global_gpu_ids={job_ids}" in (tmp_path / "source/gpu-visibility.txt").read_text()
