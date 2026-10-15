@@ -206,3 +206,11 @@ GPU検証も合成TP4 groupとmethod直呼出しを除去し、native config/gro
 4 replayでrandom、rank0への集中、所有境界expertとpadding、全paddingを切り替え、eagerとgraphおよび独立数値参照を比較する。
 0～4096 rows/rankを通す有限検証が合格したら、既存の16 GPU本番経路で大会条件のgoodputを測定する。
 提出入口の移設と追加の採点処理は取り消し、既存の動作実績がある起動・AIPerf経路を維持する。
+
+## 測定への切替（ユーザー指示）
+
+診断Actions `38774972458` / Slurm `23855` は実行前に取消。Slurmは `CANCELLED by 3014`、Elapsed `00:00:00`、Start `None` でGPU使用なし。
+ユーザーの指示により診断Actionsの履歴を削除し、有限GPU gateを本番測定の前提とする追加制約も取り除いた。
+次は既存vLLM本番経路で16 H200、P3×DP4/EP4 + D1×DP4/EP4、concurrency192、公式60/120/30秒を実行する。
+イメージは成功したAWS `38771381500` を再利用し、追加ビルド・profile・独立診断ジョブは投入しない。
+判定対象は実起動エラー、全モデルの実行とNIXL、SLA適格goodputが6300 output tok/sを超えるか。

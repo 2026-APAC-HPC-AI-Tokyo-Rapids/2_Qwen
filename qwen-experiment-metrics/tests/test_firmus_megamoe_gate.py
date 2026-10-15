@@ -198,10 +198,3 @@ def test_adapter_initialization_failure_is_archived_without_collectives(tmp_path
         assert result["completed"] is False and result["phase"] == "initialization"
     else:
         assert not output.exists()  # Other ranks must not overwrite rank 0's evidence.
-
-
-def test_full_serving_is_blocked_before_staging_without_adapter_gate(tmp_path):
-    environment = {**os.environ, "GITHUB_WORKSPACE": str(ROOT), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "a" * 40, "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(tmp_path / "runs"), "PROFILE": "false", "REQUIRE_BUILD": "false"}
-    result = subprocess.run(["bash", str(ROOT / "scripts/provision-firmus-framework.sh")], env=environment, capture_output=True, text=True, check=False)
-    assert result.returncode == 64 and "no successful actual-adapter GPU gate" in result.stderr
-    assert not (tmp_path / "runs").exists() and not (tmp_path / "outputs").exists()

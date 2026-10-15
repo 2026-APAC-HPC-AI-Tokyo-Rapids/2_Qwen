@@ -14,20 +14,12 @@ set -euo pipefail
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${config}")"
-if [[ "${framework}" == vllm ]]; then
-  gate_run=$(jq -er '.megamoe_gate_run | select(type == "string" and length > 0)' "${config}") || { echo 'Full serving is blocked: no successful actual-adapter GPU gate is recorded.' >&2; exit 64; }
-  python3 "${GITHUB_WORKSPACE}/research/firmus-vllm-megamoe/validate_adapter_gate.py" "${gate_run}" --serving-config "${config}"
-fi
 jq -e --argjson profile "${PROFILE}" '((.workload == "reference-07" and .framework == "vllm") or (.workload == "official" and ($profile == false or .framework == "vllm"))) and (.concurrency | type == "number" and . >= 1 and floor == .)' "${config}" >/dev/null
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/profile" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source" "${runtime_dir}/home"
 install -m 0644 "${config}" "${runtime_dir}/source/firmus-framework.json"
-if [[ "${framework}" == vllm ]]; then
-  cp "${gate_run}/results/gate.json" "${runtime_dir}/source/adapter-gate.json"
-  cp "${gate_run}/source/provenance.json" "${runtime_dir}/source/adapter-gate-provenance.json"
-fi
 for image_framework in sglang "${framework}"; do
   image="$(jq -er --arg framework "${image_framework}" '.images[$framework].path' "${config}")"
   expected_sha="$(jq -er --arg framework "${image_framework}" '.images[$framework].sha256' "${config}")"
