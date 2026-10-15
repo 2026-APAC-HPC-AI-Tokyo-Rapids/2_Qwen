@@ -136,8 +136,21 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_SERVER_DEV_MODE=1  # Required by the pinned image's /server_info registration gate.
 if [[ -x /opt/nsys/bin/nsys ]]; then
-  # The previous decoder exited during graph creation without a Python stack.
-  export PYTHONFAULTHANDLER=1 TORCH_SHOW_CPP_STACKTRACES=1 VLLM_LOGGING_LEVEL=DEBUG
+  # Keep normal serving log verbosity after the dense-kernel startup repair.
+  # Inspect both nodes before serving; a separate login-launched step could not start.
+  if [[ "$name" == prefill-0 || "$name" == decode-0 ]]; then
+    for device in /sys/class/infiniband/*; do
+      [[ -d "$device/ports/1" ]] || continue
+      printf 'NIC device=%s link_layer=%s state=%s rate=%s\n' "${device##*/}" "$(cat "$device/ports/1/link_layer")" "$(cat "$device/ports/1/state")" "$(cat "$device/ports/1/rate")"
+      for gid in "$device/ports/1/gids/"*; do
+        [[ -r "$gid" ]] || continue
+        value=$(cat "$gid")
+        [[ -n "${value//[0:]/}" ]] || continue
+        index=${gid##*/}
+        printf 'NIC_GID device=%s index=%s value=%s netdev=%s type=%s\n' "${device##*/}" "$index" "$value" "$(cat "$device/ports/1/gid_attrs/ndevs/$index" 2>/dev/null)" "$(cat "$device/ports/1/gid_attrs/types/$index" 2>/dev/null)"
+      done
+    done
+  fi
 fi
 mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 echo "$name host=$(hostname) ip=$VLLM_NIXL_SIDE_CHANNEL_HOST hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp symm=$VLLM_ALLREDUCE_USE_SYMM_MEM"

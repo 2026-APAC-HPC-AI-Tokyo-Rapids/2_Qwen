@@ -345,3 +345,33 @@ def test_megamoe_effective_config_guard_rejects_wrong_runtime(tmp_path: Path, co
     guard = next(line for line in source.splitlines() if line.lstrip().startswith('jq -e --arg role'))
     result = subprocess.run(["bash", "-c", guard], env={**os.environ, "ROOT": str(tmp_path), "worker": f"{role}-0", "_tp": "1"}, check=False, capture_output=True)
     assert (result.returncode == 0) is (corruption is None), result.stderr.decode()
+
+
+@pytest.mark.parametrize("name", ["prefill-0", "decode-0", "prefill-1"])
+@pytest.mark.parametrize("profile", [False, True])
+def test_profile_worker_records_nic_inventory_without_changing_device_selection(tmp_path: Path, name: str, profile: bool) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    block = 'if [[ -x /opt/nsys/bin/nsys ]]; then' + source.split('if [[ -x /opt/nsys/bin/nsys ]]; then', 1)[1].split('\nmkdir -p "$TRITON_CACHE_DIR"', 1)[0]
+    binary = tmp_path / "nsys"
+    if profile:
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o755)
+    devices = tmp_path / "infiniband"
+    for device, layer, state, gid_index, gid in [("mlx5_0", "InfiniBand", "4: ACTIVE", "0", "fe80:0000:0000:0000:0000:0000:0000:0001"), ("mlx5_1", "Ethernet", "4: ACTIVE", "3", "0000:0000:0000:0000:0000:ffff:c612:3933"), ("mlx5_2", "InfiniBand", "1: DOWN", "0", "fe80:0000:0000:0000:0000:0000:0000:0002")]:
+        port = devices / device / "ports/1"
+        for directory in ("gids", "gid_attrs/ndevs", "gid_attrs/types"):
+            (port / directory).mkdir(parents=True)
+        for filename, content in {"link_layer": layer, "state": state, "rate": "400 Gb/sec", f"gids/{gid_index}": gid, "gids/1": "0000:0000:0000:0000:0000:0000:0000:0000", f"gid_attrs/ndevs/{gid_index}": "eth0" if layer == "Ethernet" else "", f"gid_attrs/types/{gid_index}": "RoCE v2" if layer == "Ethernet" else "IB/RoCE v1"}.items():
+            (port / filename).write_text(content + "\n")
+    block = block.replace("/opt/nsys/bin/nsys", str(binary)).replace("/sys/class/infiniband", str(devices))
+    result = subprocess.run(["bash", "-euo", "pipefail", "-c", block + '\nprintf "SELECTED=%s\\n" "$UCX_NET_DEVICES"'], env={**os.environ, "name": name, "UCX_NET_DEVICES": "unchanged:1"}, check=True, capture_output=True, text=True)
+    lines = result.stdout.splitlines()
+    assert lines[-1] == "SELECTED=unchanged:1"
+    if profile and name in {"prefill-0", "decode-0"}:
+        assert sum(line.startswith("NIC device=") for line in lines) == 3
+        assert sum(line.startswith("NIC_GID ") for line in lines) == 3
+        assert any("link_layer=Ethernet" in line and "state=4: ACTIVE" in line for line in lines)
+        assert any("index=3" in line and "netdev=eth0 type=RoCE v2" in line for line in lines)
+        assert not any("NIC_GID" in line and "index=1 " in line for line in lines)
+    else:
+        assert lines == ["SELECTED=unchanged:1"]
