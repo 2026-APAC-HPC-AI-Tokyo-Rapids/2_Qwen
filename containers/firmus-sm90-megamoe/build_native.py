@@ -65,13 +65,17 @@ def build(source: Path, package: Path) -> None:
         raise ValueError("Native build must not initialize CUDA")
     cuda = Path("/usr/local/cuda")
     torch_root = Path(torch.__file__).parent
+    nvidia_headers = torch_root.parent / "nvidia/cu13/include"
+    for name in ["cusparse.h", "cusolverDn.h", "cublasLt.h"]:
+        if not (nvidia_headers / name).is_file():
+            raise FileNotFoundError(nvidia_headers / name)
     os.environ["TVM_FFI_CUDA_ARCH_LIST"] = "9.0a"
     with tempfile.TemporaryDirectory(prefix="firmus-sm90-native-build-") as temp:
         root = Path(temp)
         (root / "build").mkdir()
         api = root / "tvm_ffi_api.cpp"
         api.write_text((source / "csrc/tvm_ffi_api.cpp").read_text() + CPU_PROBE)
-        include = [cuda / "include", cuda / "include/cccl", Path(sysconfig.get_path("include")), torch_root / "include", torch_root / "include/torch/csrc/api/include", package / "include", source / "csrc", source / "fmt"]
+        include = [cuda / "include", cuda / "include/cccl", nvidia_headers, Path(sysconfig.get_path("include")), torch_root / "include", torch_root / "include/torch/csrc/api/include", package / "include", source / "csrc", source / "fmt"]
         flags = ["-std=c++17", "-O3", "-fPIC", "-Wno-psabi", "-Wno-deprecated-declarations", "-D_GLIBCXX_USE_CXX11_ABI=" + str(int(torch.compiled_with_cxx11_abi()))]
         links = ["-L" + str(cuda / "lib64"), "-L" + str(torch_root / "lib"), "-lcudart", "-lnvrtc", "-lcublasLt", "-lcublas", "-ltorch", "-ltorch_cpu", "-lc10", "-lc10_cuda", "-ltorch_cuda"]
         library = tvm_ffi.cpp.build(name="_C", cpp_files=[str(api)], extra_cflags=flags, extra_ldflags=links, extra_include_paths=[str(p) for p in include], build_directory=str(root / "build"))
@@ -89,6 +93,7 @@ def build(source: Path, package: Path) -> None:
         "torch": torch.__version__,
         "tvm_ffi": version("apache-tvm-ffi"),
         "cxx11_abi": torch.compiled_with_cxx11_abi(),
+        "nvidia_headers": str(nvidia_headers),
         "cpu_bridge_probe": True,
         "cuda_initialized": torch.cuda.is_initialized(),
     }
