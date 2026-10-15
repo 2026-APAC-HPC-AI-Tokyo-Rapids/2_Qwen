@@ -12,6 +12,10 @@ on:
       require_build:
         required: true
         type: boolean
+      megamoe_gate:
+        required: false
+        default: false
+        type: boolean
       dynamo:
         required: false
         default: false
@@ -52,9 +56,9 @@ jobs:
     outputs:
       runtime_dir: ${{ steps.recover-runtime.outputs.runtime_dir || steps.provision.outputs.runtime_dir }}
     steps:
-      - name: 2ノードを検証
+      - name: 要求ノード数を検証
         shell: bash
-        run: "test '${{ inputs.node_count }}' = 2"
+        run: "if [[ '${{ inputs.megamoe_gate }}' == true ]]; then test '${{ inputs.node_count }}' = 1; else test '${{ inputs.node_count }}' = 2; fi"
 
       - name: 実行用ファイルを取得
         uses: actions/checkout@v7
@@ -81,7 +85,7 @@ jobs:
           CONTAINER_SHA256: ${{ inputs.container_sha256 }}
           CONTAINER_SIZE: ${{ inputs.container_size }}
         run: |
-          if [[ '${{ inputs.dynamo }}' == true ]]; then provision=scripts/provision-firmus-dynamo.sh; else provision=scripts/provision-firmus-framework.sh; fi
+          if [[ '${{ inputs.megamoe_gate }}' == true ]]; then provision=scripts/provision-firmus-megamoe-gate.sh; elif [[ '${{ inputs.dynamo }}' == true ]]; then provision=scripts/provision-firmus-dynamo.sh; else provision=scripts/provision-firmus-framework.sh; fi
           stderr=$(mktemp)
           trap 'rm -f -- "${stderr}"' EXIT
           deadline=$((SECONDS + 900))
@@ -101,7 +105,7 @@ jobs:
         run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
-    name: 2ノード16 GPUでPDとAIPerfを実行
+    name: ${{ inputs.megamoe_gate && '4 H200で有限MegaMoE gateを実行' || '2ノード16 GPUでPDとAIPerfを実行' }}
     needs: provision
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
@@ -119,7 +123,10 @@ jobs:
         if: inputs.recovery_job_id == ''
         run: |
           cd "${RUNTIME_DIR}"
-          job_id="$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/submit.sbatch")"
+          export_mode=ALL
+          job_name=qwen3_pd
+          if [[ '${{ inputs.megamoe_gate }}' == true ]]; then export_mode=NONE; job_name=vllm_sm90_gate; fi
+          job_id="$(sbatch --parsable --export="${export_mode}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name="${job_name}" "${RUNTIME_DIR}/scripts/submit.sbatch")"
           [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
@@ -147,7 +154,9 @@ jobs:
 
       - name: Slurmジョブの終了と比較成果物を確認
         shell: bash
-        run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-qwen-job.sh
+        run: |
+          if [[ '${{ inputs.megamoe_gate }}' == true ]]; then checker=platforms/firmus/check-megamoe-gate.sh; else checker=platforms/firmus/check-qwen-job.sh; fi
+          scripts/monitor-qwen-job.sh firmus-shell "${checker}"
 
       - name: ログ・AIPerf・profile・来歴をrunnerへ回収
         id: collect
@@ -189,10 +198,15 @@ jobs:
         shell: bash
         env:
           JOB_STATUS: ${{ job.status }}
-        run: uv run --no-project --python 3.13 python scripts/summarize-firmus-run.py "${RUNNER_TEMP}/qwen-firmus-pd" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
+        run: |
+          if [[ '${{ inputs.megamoe_gate }}' == true ]]; then
+            printf '### Four-H200 MegaMoE kernel gate\n\nSlurm `%s`; status **%s**. This is a numerical/graph/timing diagnostic, not an official benchmark. Inspect results/gate.json and logs/gpu-gate.log.\n' "${SLURM_JOB_ID}" "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
+          else
+            uv run --no-project --python 3.13 python scripts/summarize-firmus-run.py "${RUNNER_TEMP}/qwen-firmus-pd" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
+          fi
 
       - name: 回収済みで終了した実行環境を削除
-        if: always() && steps.collect.outcome == 'success' && steps.upload.outcome == 'success'
+        if: always() && !inputs.megamoe_gate && steps.collect.outcome == 'success' && steps.upload.outcome == 'success'
         run: |
           state="$(sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State | awk -F'|' -v id="${SLURM_JOB_ID}" '$1 == id {print $2}')"
           case "${state}" in COMPLETED|FAILED|TIMEOUT|CANCELLED*|OUT_OF_MEMORY|NODE_FAIL) rm -rf -- "${RUNTIME_DIR:?}";; *) printf 'Preserving runtime and Slurm job %s (state=%s)\n' "${SLURM_JOB_ID}" "${state}";; esac

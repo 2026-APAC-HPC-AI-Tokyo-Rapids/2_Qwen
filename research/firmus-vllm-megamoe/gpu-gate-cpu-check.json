@@ -1,0 +1,36 @@
+{
+  "schema": "vllm-sm90-megamoe-gpu-gate-cpu-check/v1",
+  "passed": true,
+  "finite_layout_cases": 160,
+  "rows": [
+    1,
+    4,
+    7,
+    32,
+    97,
+    128,
+    288,
+    324,
+    384,
+    768
+  ],
+  "patterns": [
+    "random",
+    "hot",
+    "empty_tail",
+    "masked"
+  ],
+  "changed_input_replays": 4,
+  "pipeline_wiring": {
+    "native": "native route/prepare/TritonExperts/finalize/ordinary allreduce",
+    "mega": "split/native route/predispatch/MegaMoE/allgather",
+    "double_dispatch_or_allreduce": false
+  },
+  "reference_identity_method": "same-runtime AST equality against SHA256-pinned upstream function source",
+  "reference_function_source_sha256": "e360d6603938bd46b4ba9bcef59607c3106df8bfb4972e593af3588d509ae27d",
+  "changed_equation_negative_control_rejected": true,
+  "reference_quantized_ast_sha256": "7cf58a92e8cc90e3e2713fd530f0172d15fc4b29dc0fc2fe04423de025ac1253",
+  "reference_dequantized_ast_sha256": "a392c4f7ddaea30ba32f03b15c60477445c7acfee34b1275cf840e2ad1bf98df",
+  "cuda_execution": false,
+  "limitations": "Host row ownership, call-order and ABI argument wiring with explicit sentinels only; no GPU math, capture, distributed communication or performance pass is claimed."
+}

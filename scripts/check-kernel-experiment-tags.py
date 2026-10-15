@@ -3,6 +3,12 @@ import os
 
 
 def validate(message):
+    if '[megamoe-gate]' in message:
+        if '[cluster:firmus]' not in message or '[nodes:1]' not in message:
+            raise ValueError('MegaMoE gate requires only cluster:firmus and nodes:1')
+        if any(tag in message for tag in ['[cluster:genkai]', '[cluster:aspire2ap]', '[nodes:2]', '[nodes:4]', '[profile]', '[dynamo]', '[require-build]', '[build-only]', '[cutlass-grid-probe]', '[moe-routing-probe]']):
+            raise ValueError('MegaMoE gate reuses its CPU-verified image on four local GPUs without profiling')
+        return
     build_only = '[build-only]' in message
     probe_tags = ['[cutlass-grid-probe]', '[moe-routing-probe]']
     probe = any(tag in message for tag in probe_tags)
