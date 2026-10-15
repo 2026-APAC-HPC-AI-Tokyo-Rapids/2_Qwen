@@ -44,5 +44,5 @@ def test_dynamo_run_tag_does_not_also_launch_reference() -> None:
     workflow = (ROOT / ".github/workflows/qwen.yml").read_text()
     native = workflow.split("  firmus:\n", 1)[1].split("  firmus-dynamo:\n", 1)[0]
     assert "!contains(github.event.head_commit.message, '[dynamo]')" in native
-    assert "needs: [genkai, aspire2ap, firmus, firmus-dynamo, firmus-dynamo-recover, cutlass-grid]" in workflow
+    assert "needs: [genkai, aspire2ap, firmus, firmus-dynamo, firmus-dynamo-recover, cutlass-grid, firmus-megamoe-cpu]" in workflow
     assert "uses: ./.github/workflows/firmus-dynamo.yml" in workflow
