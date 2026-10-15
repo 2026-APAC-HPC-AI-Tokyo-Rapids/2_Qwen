@@ -222,7 +222,7 @@ def test_decoder_only_profile_requires_selected_four_ranks(tmp_path: Path, monke
             runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"), run_name="__main__")
 
 
-@pytest.mark.parametrize("severity,text", [(2, "Not all CUDA events might have been collected"), (1, "Number of incomplete CUPTI events dropped: 3,923"), (1, "CUDA driver version is not supported")])
+@pytest.mark.parametrize("severity,text", [(2, "Not all CUDA events might have been collected"), (1, "Number of incomplete CUPTI events dropped: 3,923"), (1, "CUDA driver version is not supported"), (1, "CUPTI buffers: 49 of 50. Some CUPTI events might be missing.")])
 def test_profile_rejects_missing_event_diagnostic(tmp_path: Path, severity: int, text: str) -> None:
     database = tmp_path / "report.sqlite"
     with sqlite3.connect(database) as connection:
@@ -232,6 +232,48 @@ def test_profile_rejects_missing_event_diagnostic(tmp_path: Path, severity: int,
         connection.execute("INSERT INTO DIAGNOSTIC_EVENT VALUES (?, ?)", (severity, text))
     with pytest.raises(ValueError, match="incomplete CUDA capture"):
         VALIDATE(database, 4)
+
+
+@pytest.mark.parametrize("failure", ["warning", "export", "missing"])
+def test_profile_failure_still_checks_and_records_every_worker(tmp_path: Path, monkeypatch, failure: str) -> None:
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "provenance.json").write_text(json.dumps({"profile": True, "framework": "vllm"}))
+    names = ["prefill-0", "prefill-1", "prefill-2", "decode-0"]
+    (source / "worker-endpoints.tsv").write_text("".join(f"{name}\thost\t30000\t4\n" for name in names))
+    for name in names:
+        if failure != "missing" or name != names[0]:
+            (profile / f"nsys-{name}.nsys-rep").write_text("native report")
+    exported = []
+
+    def export(command, **_kwargs):
+        database = Path(next(value for value in command if value.startswith("--output=")).split("=", 1)[1])
+        name = database.stem.removeprefix("nsys-")
+        exported.append(name)
+        if name == names[0] and failure == "export":
+            raise subprocess.CalledProcessError(1, command)
+        with sqlite3.connect(database) as connection:
+            connection.execute("CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (deviceId INTEGER)")
+            connection.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?)", [(rank,) for rank in range(4)])
+            if name == names[0] and failure == "warning":
+                connection.execute("CREATE TABLE DIAGNOSTIC_EVENT (text TEXT)")
+                connection.execute("INSERT INTO DIAGNOSTIC_EVENT VALUES ('CUPTI buffers: 49 of 50. Some CUPTI events might be missing.')")
+
+    monkeypatch.setattr(subprocess, "run", export)
+    monkeypatch.setattr("sys.argv", ["validate", str(tmp_path)])
+    with pytest.raises(ValueError, match="see profile/validation.json"):
+        runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"), run_name="__main__")
+    result = json.loads((profile / "validation.json").read_text())
+    assert result["valid"] is False
+    assert list(result["workers"]) == names
+    assert "error" in result["workers"][names[0]]
+    assert all(result["workers"][name]["gpu_count"] == 4 for name in names[1:])
+    assert exported == (names[1:] if failure == "missing" else names)
+    assert not list(profile.glob("*.sqlite"))
+    assert len(list(profile.glob("*.nsys-rep"))) == (3 if failure == "missing" else 4)
+    assert "12 / 16 GPUs validated" in SUMMARY(tmp_path, "23881", "failure")
 
 
 @pytest.mark.parametrize("raw_error,coverage,gate_passed,expected", [(False, 4, True, 0), (True, 4, True, 1), (False, 3, True, 1), (False, 4, False, 1)])

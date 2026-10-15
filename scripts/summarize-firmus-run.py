@@ -61,7 +61,7 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         selected_decoder = capture.get("scope") == "decode-0" or bool(list(root.rglob("profile-worker-endpoints.tsv")))
         expected_reports = 1 if selected_decoder else expected_reports
         expected_gpus = 4 if selected_decoder else 16
-        gpu_coverage = f"{sum(worker['gpu_count'] for worker in workers.values())} / {expected_gpus} GPUs" if capture else "GPU coverage unverified"
+        gpu_coverage = f"{sum(worker.get('gpu_count', 0) for worker in workers.values())} / {expected_gpus} GPUs validated" if capture else "GPU coverage unverified"
         notes = sorted(root.rglob("interpretation.txt"))
         capture_note = notes[0].read_text().strip() if notes else "Capture timing unavailable; inspect profile-capture.log."
         lines += ["", f"Nsight: **{len(reports)} / {expected_reports} reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **Instrumented score; do not use for performance comparison.**"]

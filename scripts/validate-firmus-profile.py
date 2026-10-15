@@ -23,7 +23,7 @@ def validate_capture(database: Path, tp: int) -> dict:
             incomplete = []
             for text in warnings:
                 dropped = re.search(r"Number of incomplete CUPTI events dropped\s*:\s*([\d,]+)", text)
-                if "Not all CUDA events" in text or ("CUDA driver version" in text and "not supported" in text) or (dropped and int(dropped[1].replace(",", "")) > 0):
+                if "Not all CUDA events" in text or "Some CUPTI events might be missing" in text or ("CUDA driver version" in text and "not supported" in text) or (dropped and int(dropped[1].replace(",", "")) > 0):
                     incomplete.append(text)
             if incomplete:
                 raise ValueError(f"incomplete CUDA capture in {database.name}: {incomplete}")
@@ -63,19 +63,24 @@ def main() -> None:
     for row in endpoints.read_text().splitlines():
         name, _host, _port, tp = row.split("\t")
         report = args.runtime / f"profile/nsys-{name}.nsys-rep"
-        if not report.is_file() or report.stat().st_size == 0:
-            raise ValueError(f"missing Nsight report: {report}")
         database = args.runtime / f"profile/nsys-{name}.sqlite"
         try:
+            if not report.is_file() or report.stat().st_size == 0:
+                raise ValueError(f"missing Nsight report: {report}")
             subprocess.run([str(args.nsys), "export", "--type=sqlite", f"--output={database}", str(report)], check=True)
             results[name] = {"report": report.name, **validate_capture(database, worker_gpu_count(args.runtime, name, int(tp)))}
+        except (ValueError, subprocess.CalledProcessError) as error:
+            # Preserve every worker's diagnosis even if the first report fails.
+            # Native reports remain reusable; only the temporary export is removed.
+            results[name] = {"report": report.name, "error": str(error)}
         finally:
             database.unlink(missing_ok=True)
     expected_gpus = sum(worker_gpu_count(args.runtime, row.split("\t")[0], int(row.split("\t")[3])) for row in endpoints.read_text().splitlines())
     required_gpus = 4 if selected.is_file() else 16
-    if expected_gpus != required_gpus or sum(value["gpu_count"] for value in results.values()) != required_gpus:
-        raise ValueError("incomplete selected worker GPU coverage")
-    (args.runtime / "profile/validation.json").write_text(json.dumps({"valid": True, "workers": results, "scope": "decode-0" if selected.is_file() else "all-workers", "cuda_event_completion_trace": False, "limitations": "Kernel timing diagnostic only; no clean throughput or complete critical-path claim."}, indent=2) + "\n")
+    valid = expected_gpus == required_gpus and sum(value.get("gpu_count", 0) for value in results.values()) == required_gpus and not any("error" in value for value in results.values())
+    (args.runtime / "profile/validation.json").write_text(json.dumps({"valid": valid, "workers": results, "scope": "decode-0" if selected.is_file() else "all-workers", "cuda_event_completion_trace": False, "limitations": "Kernel timing diagnostic only; no clean throughput or complete critical-path claim."}, indent=2) + "\n")
+    if not valid:
+        raise ValueError("incomplete selected worker GPU capture; see profile/validation.json")
 
 
 if __name__ == "__main__":
