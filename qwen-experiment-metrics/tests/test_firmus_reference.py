@@ -201,7 +201,7 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         result = subprocess.run(["bash", "-c", probe, str(tmp_path / "worker.sh"), f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
         symm, dense_flashinfer, trtllm_deepgemm, e8m0, nccl_symm, *flags = result.stdout.decode().rstrip("\0").split("\0")
         assert symm == ("1" if role == "prefill" else "0")
-        assert dense_flashinfer == ("0" if role == "prefill" else "1")
+        assert dense_flashinfer == "0"
         assert trtllm_deepgemm == "1"
         assert e8m0 == "0" and nccl_symm == "0"
         if role == "prefill":

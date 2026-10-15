@@ -105,14 +105,15 @@ export VLLM_USE_NCCL_SYMM_MEM=0
 export VLLM_ALLREDUCE_USE_SYMM_MEM=0
 # Serve the published FP32 block scales: with E8M0 on, the pinned vLLM re-quantizes DeepGEMM dense weights to power-of-two scales on Hopper.
 export VLLM_USE_DEEP_GEMM_E8M0=0
+# Normal decoder startup fails at the first M<32 FlashInfer swapAB shape.
+# Use native DeepGEMM dense FP8 for both roles; MegaMoE stays unchanged.
+export VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER=0
 role_flags=()
 blocks=2048
 batch_tokens=4096
 if [[ "$role" == prefill ]]; then
   # The winning SGLang prefill is eager; disable target and draft graphs here.
   role_flags=(--enforce-eager)
-  # Keep dense FP8 outside the FlashInfer JIT path during prefill capture.
-  export VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER=0
   export VLLM_ALLREDUCE_USE_SYMM_MEM=1
   export VLLM_ALLREDUCE_USE_FLASHINFER=0 VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=0
   KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer"}'
