@@ -19,5 +19,5 @@ jobs:
           jq -e '.cluster == "aspire2ap" and .commit == "e11bbaa7d33df13a00050dd3cb3c0cac4c57ad9e"' "${root}/source/provenance.json"
           date -u +%FT%TZ
           if [[ -s "${root}/logs/pbs-accounting.txt" ]]; then job_id=$(awk '/^Job Id:/ {print $3}' "${root}/logs/pbs-accounting.txt"); [[ "${job_id}" =~ ^[0-9]+[.][A-Za-z0-9.-]+$ ]]; /opt/pbs/bin/qstat -x -f -F json "${job_id}" | jq '.Jobs | to_entries[] | {job_id: .key, state: .value.job_state, queue: .value.queue, started: .value.stime, hosts: .value.exec_host, used: (.value.resources_used | del(.gpu_usage)), comment: .value.comment, exit_status: .value.Exit_status}'; fi
-          for path in "${root}/logs/"*.log; do if [[ -s "${path}" ]]; then printf '\nlog=%s\n' "${path##*/}"; tail -n 12 "${path}" | cut -c 1-1500; fi; done
+          for path in "${root}/logs/"*.log; do if [[ -s "${path}" ]]; then printf '\nlog=%s\n' "${path##*/}"; { grep -nE 'NIXL_ERR|UCX.*(ERROR|WARN)|failed to transfer|Failed to transfer|TimeoutError|Traceback|CUDA out of memory|Failed.*KV|KV.*failed' "${path}" || true; } | head -n 30 | cut -c 1-1500; tail -n 12 "${path}" | cut -c 1-1500; fi; done
           if [[ -s "${root}/results/score.json" ]]; then cat "${root}/results/score.json"; fi
