@@ -1,4 +1,4 @@
-name: Inspect approved ASPIRE run 38759737095
+name: Unpin queued ASPIRE job 220463 without resubmitting
 on:
   push:
     branches: [perf/aspire-megamoe-port]
@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Read the existing PBS allocation and startup logs
+      - name: Remove only the host pins from the same queued allocation
         shell: aspire2p-shell --github-shell {0}
         run: |
           set -euo pipefail
@@ -21,9 +21,20 @@ jobs:
           test "${#roots[@]}" = 1
           root=${roots[0]}
           jq -e '.cluster == "aspire2ap" and .commit == "6b116c69e911d292b32c4b698dc6a58f737b08fc"' "${root}/source/provenance.json"
-          date -u +%FT%TZ
           job_id=$(awk '/^Job Id:/ {print $3}' "${root}/logs/pbs-accounting.txt")
-          [[ "${job_id}" =~ ^[0-9]+[.][A-Za-z0-9.-]+$ ]]
+          test "${job_id}" = 220463.pbs111
+          before="${root}/source/placement-before.json"
+          after="${root}/source/placement-after.json"
+          /opt/pbs/bin/qstat -x -f -F json "${job_id}" >"${before}"
+          jq '.Jobs[] | {job_state, queue, project, Resource_List, comment, estimated}' "${before}"
+          if [[ $(jq -r '.Jobs[].job_state' "${before}") != Q ]]; then echo 'Job already left the queue; leaving its allocation unchanged'; exit 0; fi
+          jq -e '.Jobs["220463.pbs111"] | .queue == "aiq2" and (.project | tostring) == "59010014" and (.Job_Owner | startswith("ACCOUNT@")) and .Resource_List.ncpus == 224 and .Resource_List.ngpus == 16 and .Resource_List.nodect == 2 and .Resource_List.place == "scatter:excl" and .Resource_List.walltime == "00:30:00" and (.Resource_List.select | ascii_downcase) == "1:host=a2ap-dgx026:ncpus=112:ngpus=8:mem=1880gb:mpiprocs=1+1:host=a2ap-dgx030:ncpus=112:ngpus=8:mem=1880gb:mpiprocs=1"' "${before}"
+          selection=$(jq -r '.Jobs[].Resource_List.select | gsub("host=a2ap-dgx(026|030):"; "")' "${before}")
+          date -u +%FT%TZ >"${root}/source/placement-change.txt"
+          printf 'Same queued job %s: remove historical comparison host pins to reduce waiting; preserve resources, walltime, image and runtime. New select=%s\n' "${job_id}" "${selection}" >>"${root}/source/placement-change.txt"
+          /opt/pbs/bin/qalter -l "select=${selection}" "${job_id}" 2>&1 | tee -a "${root}/source/placement-change.txt"
+          /opt/pbs/bin/qstat -x -f -F json "${job_id}" >"${after}"
+          jq -e --arg selection "${selection}" --slurpfile before "${before}" '.Jobs["220463.pbs111"].Resource_List as $a | $before[0].Jobs["220463.pbs111"].Resource_List as $b | ($a.select | ascii_downcase) == ($selection | ascii_downcase) and ([$a.ncpus, $a.ngpus, $a.nodect, $a.mpiprocs, $a.mem, $a.place, $a.walltime] == [$b.ncpus, $b.ngpus, $b.nodect, $b.mpiprocs, $b.mem, $b.place, $b.walltime])' "${after}"
+          echo 'Host pins removed from the original job; no submission or cancellation'
+          sleep 30
           /opt/pbs/bin/qstat -x -f "${job_id}"
-          for name in driver pbs pbs.stderr server-step prefill-0 prefill-1 decode-0 decode-1 router aiperf; do if [[ -s "${root}/logs/${name}.log" ]]; then printf '\nlog=%s\n' "${name}"; tail -n 6 "${root}/logs/${name}.log"; fi; done
-          echo 'Read-only status of the original allocation; no submission or cancellation'
