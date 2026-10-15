@@ -254,6 +254,7 @@ def test_profile_only_completion_requires_raw_all_workers_and_math(tmp_path: Pat
 
 def test_dp4_profile_is_separate_from_official_score_and_checks_math_first() -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    assert "#SBATCH -t 00:17:00" in source
     assert source.index("adapter_gpu_gate.py") < source.index("srun --exact")
     assert "timeout --signal=TERM --kill-after=30s 300s" in source
     assert "capture-firmus-profile.sh" in source

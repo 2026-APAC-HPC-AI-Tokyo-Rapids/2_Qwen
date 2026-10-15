@@ -98,7 +98,7 @@ jobs:
   firmus:
     name: Firmus
     needs: validate
-    if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus) }}
+    if: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]') && !contains(github.event.head_commit.message, '[firmus-profile-limit-repair]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus) }}
     uses: ./.github/workflows/firmus.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
@@ -127,6 +127,32 @@ jobs:
       recovery_job_id: '21736'
       recovery_runtime_dir: /scratch/home/ACCOUNT/qwen/runs/dynamo-37726750730-1.9k8iOb5LLl
     secrets: inherit
+
+  firmus-profile-limit-repair:
+    name: 既存の診断ジョブの制限時間を修正
+    needs: validate
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && contains(github.event.head_commit.message, '[firmus-profile-limit-repair]') }}
+    runs-on: [self-hosted, home-lab]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: 対象を検証して同じSlurmジョブを17分へ変更
+        shell: firmus-shell --github-shell {0}
+        run: |
+          set -euo pipefail
+          runtime=/scratch/home/ACCOUNT/qwen/runs/pd-38786945340-1.RvrNcQPUzP
+          job=$(scontrol show job 23881)
+          grep -Fq "WorkDir=${runtime}" <<<"${job}"
+          grep -Fq 'JobState=PENDING' <<<"${job}"
+          grep -Fq 'Reason=PartitionTimeLimit' <<<"${job}"
+          jq -e '.commit == "72ecda62accdc85015f9277a74d7fba297089c5d" and .workflow_run_id == "38786945340" and .profile == true' "${runtime}/source/provenance.json" >/dev/null
+          printf '%s\n' "${job}" >"${runtime}/logs/slurm-before-limit-repair.txt"
+          scontrol update JobId=23881 TimeLimit=00:17:00
+          scontrol show job 23881 >"${runtime}/logs/slurm-after-limit-repair.txt"
+          grep -Fq 'TimeLimit=00:17:00' "${runtime}/logs/slurm-after-limit-repair.txt"
+          cat "${runtime}/logs/slurm-after-limit-repair.txt"
+          jq -n --arg commit "${GITHUB_SHA}" --arg run "${GITHUB_RUN_ID}" '{repair_commit:$commit,repair_workflow_run_id:$run,slurm_job_id:"23881",time_limit:"00:17:00",new_job_submitted:false}' >"${runtime}/source/time-limit-repair.json"
 
   archive-artifacts:
     name: 成果物を自宅サーバーへ保管
