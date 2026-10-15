@@ -52,6 +52,34 @@ jobs:
     name: 制御処理を検証
     uses: ./.github/workflows/validate.yml
 
+  firmus-megamoe-cpu:
+    name: 既存vLLMイメージをCPUだけで検証
+    needs: validate
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[megamoe-cpu]') }}
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: 固定イメージのnative factoryとloaderをCPUで検証
+        id: cpu
+        shell: firmus-shell --github-shell {0}
+        run: bash scripts/check-firmus-megamoe-cpu.sh
+      - name: 成否にかかわらずCPU検証の根拠を回収
+        if: always() && steps.cpu.outputs.runtime_dir != ''
+        shell: home-lab-shell {0}
+        env:
+          CPU_RUNTIME: ${{ steps.cpu.outputs.runtime_dir }}
+        run: |
+          for part in source results logs; do firmus-shell --pull "${CPU_RUNTIME}/${part}" "${RUNNER_TEMP}/qwen-megamoe-cpu/${part}"; done
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qwen-megamoe-cpu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qwen-megamoe-cpu
+          retention-days: 14
+
   container:
     name: AWSでSquashFSを準備
     needs: validate
@@ -130,10 +158,10 @@ jobs:
 
   archive-artifacts:
     name: 成果物を自宅サーバーへ保管
-    needs: [genkai, aspire2ap, firmus, firmus-dynamo, firmus-dynamo-recover, cutlass-grid]
+    needs: [genkai, aspire2ap, firmus, firmus-dynamo, firmus-dynamo-recover, cutlass-grid, firmus-megamoe-cpu]
     if: >-
       always() &&
-      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.firmus-dynamo.result != 'skipped' || needs.firmus-dynamo-recover.result != 'skipped' || needs.cutlass-grid.result != 'skipped')
+      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.firmus-dynamo.result != 'skipped' || needs.firmus-dynamo-recover.result != 'skipped' || needs.cutlass-grid.result != 'skipped' || needs.firmus-megamoe-cpu.result != 'skipped')
     runs-on: [self-hosted, home-lab]
     permissions:
       actions: write

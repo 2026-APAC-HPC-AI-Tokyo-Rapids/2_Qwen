@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import traceback
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -158,7 +159,24 @@ def run(output):
     destroy_distributed_environment()
 
 
+def main(output):
+    rank = int(os.environ.get("RANK", "0"))
+    if rank == 0:
+        save(output, {"schema": "vllm-sm90-actual-adapter-gate/v1", "completed": False, "correctness_passed": False, "graph_passed": False, "phase": "initialization", "cases": [], "official_benchmark_score": None})
+    try:
+        run(output)
+    except BaseException:
+        # No collective here: one rank can fail before the others initialize.
+        error = {"rank": rank, "traceback": traceback.format_exc()}
+        save(output.with_name(f"{output.stem}.rank{rank}.error.json"), error)
+        if rank == 0:
+            result = json.loads(output.read_text())
+            result.update(completed=False, correctness_passed=False, graph_passed=False, error=error)
+            save(output, result)
+        raise
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    run(parser.parse_args().output)
+    main(parser.parse_args().output)

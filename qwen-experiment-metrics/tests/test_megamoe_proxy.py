@@ -16,8 +16,8 @@ ROOT = Path(__file__).parents[2]
 def test_live_prefill_reservations_survive_until_body_read_and_release_on_failure(fail):
     source = (ROOT / "platforms/firmus/framework-comparison/vllm-proxy.py").read_text()
     tree = ast.parse(source)
-    functions = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in ("get_next_client", "_handle_completions")]
-    namespace = {"Request": object, "uuid": uuid, "logger": logging.getLogger(__name__), "StreamingResponse": lambda generator, **kw: generator}
+    functions = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in ("get_next_client", "_prepare_completions")]
+    namespace = {"Request": object, "uuid": uuid, "logger": logging.getLogger(__name__), "StreamingResponse": lambda generator, **kw: generator, "BackgroundTask": lambda *_: None}
     exec(compile(ast.fix_missing_locations(ast.Module(body=functions, type_ignores=[])), "actual-proxy-reservation", "exec"), namespace)  # noqa: S102
 
     async def exercise():
@@ -34,18 +34,22 @@ def test_live_prefill_reservations_survive_until_body_read_and_release_on_failur
                 raise RuntimeError("observed prefill failure")
             async def close():
                 pass
-            return NS(json=lambda: {"kv_transfer_params": {"remote_engine_id": "producer-dp2"}}, aclose=close)
+            return NS(is_error=False, json=lambda: {"kv_transfer_params": {"remote_engine_id": "producer-dp2"}}, aclose=close)
 
-        async def stream(*_args, **_kwargs):
-            yield b"payload"
+        async def open_response(*_args, **_kwargs):
+            async def chunks():
+                yield b"payload"
+            async def close():
+                pass
+            return NS(is_error=False, aiter_bytes=chunks, aclose=close)
 
         async def request_json():
-            return {"prompt": "keep me", "max_tokens": 200}
+            return {"prompt": "keep me", "max_tokens": 200, "stream": True}
 
         namespace["send_request_to_service"] = send
-        namespace["stream_service_response"] = stream
+        namespace["open_decode_response"] = open_response
         request = NS(app=application, json=request_json)
-        tasks = [asyncio.create_task(namespace["_handle_completions"]("/completions", request)) for _ in range(4)]
+        tasks = [asyncio.create_task(namespace["_prepare_completions"]("/completions", request)) for _ in range(4)]
         await asyncio.sleep(0)
         assert started == [0, 1, 2, 0]
         assert [c["in_flight"] for c in clients] == [2, 1, 1]

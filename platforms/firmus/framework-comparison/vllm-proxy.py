@@ -8,9 +8,11 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 
+import anyio
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+from starlette.background import BackgroundTask
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -178,9 +180,9 @@ async def send_request_to_service(
         req_data["max_completion_tokens"] = 1
     if "stream_options" in req_data:
         del req_data["stream_options"]
-    # These args are not supported for P
-    min_tokens = req_data.pop("min_tokens", None)
-    min_completion_tokens = req_data.pop("min_completion_tokens", None)
+    # P uses a copy; the original sampling limits are retained for D.
+    req_data.pop("min_tokens", None)
+    req_data.pop("min_completion_tokens", None)
     headers = {
         "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
         "X-Request-Id": request_id,
@@ -189,39 +191,44 @@ async def send_request_to_service(
     response = await client_info["client"].post(
         endpoint, json=req_data, headers=headers
     )
-    response.raise_for_status()
-
-    # read/consume the response body to release the connection
-    # otherwise, it would http.ReadError
-    await response.aread()
-
-    # Add back the min_tokens and min_completion_tokens so D can use them
-    req_data["min_tokens"] = min_tokens
-    req_data["min_completion_tokens"] = min_completion_tokens
-
     return response
 
 
-async def stream_service_response(
+async def open_decode_response(
     client_info: dict, endpoint: str, req_data: dict, request_id: str
 ):
     """
-    Asynchronously stream response from a service using a client from the pool.
+    Read D's headers before committing the downstream HTTP status.
     """
     headers = {
         "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
         "X-Request-Id": request_id,
     }
 
-    async with client_info["client"].stream(
-        "POST", endpoint, json=req_data, headers=headers
-    ) as response:
-        response.raise_for_status()
-        async for chunk in response.aiter_bytes():
-            yield chunk
+    client = client_info["client"]
+    request = client.build_request("POST", endpoint, json=req_data, headers=headers)
+    return await client.send(request, stream=True)
 
 
 async def _handle_completions(api: str, request: Request):
+    # Consume the body before watching receive(), so only disconnects remain.
+    await request.body()
+    response = Response(status_code=499)
+    async with anyio.create_task_group() as tasks:
+        async def watch_disconnect():
+            while True:
+                if (await request.receive())["type"] == "http.disconnect":
+                    tasks.cancel_scope.cancel()
+                    return
+
+        tasks.start_soon(watch_disconnect)
+        response = await _prepare_completions(api, request)
+        # StreamingResponse takes over disconnect handling after headers.
+        tasks.cancel_scope.cancel()
+    return response
+
+
+async def _prepare_completions(api: str, request: Request):
     try:
         req_data = await request.json()
         request_id = str(uuid.uuid4())
@@ -237,9 +244,13 @@ async def _handle_completions(api: str, request: Request):
         finally:
             prefill_client_info["in_flight"] -= 1
 
-        # Extract the needed fields
-        response_json = response.json()
-        await response.aclose()  # CRITICAL: Release connection back to pool
+        # Always close P, including HTTP/JSON failures, before handing off to D.
+        try:
+            if response.is_error:
+                return Response(response.content, status_code=response.status_code, media_type=response.headers.get("content-type"))
+            response_json = response.json()
+        finally:
+            await response.aclose()
         kv_transfer_params = response_json.get("kv_transfer_params", {})
         if not kv_transfer_params:
             raise RuntimeError("prefill returned no KV transfer parameters")
@@ -250,14 +261,23 @@ async def _handle_completions(api: str, request: Request):
 
         logger.debug("Using %s %s", prefill_client_info, decode_client_info)
 
-        # Stream response from decode service
-        async def generate_stream():
-            async for chunk in stream_service_response(
-                decode_client_info, api, req_data, request_id=request_id
-            ):
-                yield chunk
+        response = await open_decode_response(
+            decode_client_info, api, req_data, request_id=request_id
+        )
+        if response.is_error or not req_data.get("stream", False):
+            try:
+                return Response(await response.aread(), status_code=response.status_code, media_type=response.headers.get("content-type"))
+            finally:
+                await response.aclose()
 
-        return StreamingResponse(generate_stream(), media_type="text/event-stream")
+        async def generate_stream():
+            try:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            finally:
+                await response.aclose()
+
+        return StreamingResponse(generate_stream(), media_type="text/event-stream", background=BackgroundTask(response.aclose))
 
     except Exception as e:
         import sys

@@ -63,19 +63,31 @@ def test_staging_checks_image_before_creating_runtime(tmp_path, corrupt):
         assert not (runtime / "model").exists() and not (runtime / "tokenizer").exists()
 
 
-@pytest.mark.parametrize("fault,expected", [(None, 0), ("math", 1), ("graph", 1), ("coverage", 1), ("score", 1), ("scheduler", 1), ("rows", 1), ("replays", 1)])
+@pytest.mark.parametrize("fault,expected", [(None, 0), *[(fault, 1) for fault in ("math", "graph", "coverage", "score", "scheduler", "rows", "replays", "uuid", "replay_domain", "record_rows", "nan", "l2", "maximum", "empty")]])
 def test_terminal_gate_requires_math_graph_four_ranks_without_score(tmp_path, fault, expected):
-    for relative in ["bin", "source", "logs", "results"]:
-        (tmp_path / relative).mkdir()
+    for relative in ["bin", "source", "logs", "results", "scripts/megamoe"]:
+        (tmp_path / relative).mkdir(parents=True)
+    (tmp_path / "scripts/megamoe/validate_adapter_gate.py").write_bytes((ROOT / "research/firmus-vllm-megamoe/validate_adapter_gate.py").read_bytes())
     (tmp_path / "run-success").touch()
     (tmp_path / "logs/slurm-7.log").write_text("gate finished\n")
     (tmp_path / "source/provenance.json").write_text(json.dumps({"diagnostic": "vllm-sm90-megamoe", "measurement_mode": "kernel-gate", "profile": False, "world_size": 4}))
-    result = {"schema": "vllm-sm90-actual-adapter-gate/v1", "completed": True, "correctness_passed": fault != "math", "graph_passed": fault != "graph", "world_size": 4, "gpus": [{"rank": rank} for rank in range(3 if fault == "coverage" else 4)], "useful_for_serving": False}
-    result.update(adapter_manifest={"backend": "apac_sm90_megamoe"}, capacity_requested=4096, cases=[{"counts": counts, "records": [{"rank": rank, "replay": replay} for rank in range(4) for replay in range(4)]} for counts in [[1,1,1,1],[128,0,17,64],[128,128,128,128],[4096,4096,4096,4096]]])
+    result = {"schema": "vllm-sm90-actual-adapter-gate/v1", "completed": True, "correctness_passed": fault != "math", "graph_passed": fault != "graph", "world_size": 4, "gpus": [{"rank": rank, "uuid": f"GPU-{rank}"} for rank in range(3 if fault == "coverage" else 4)], "official_benchmark_score": None}
+    result.update(adapter_manifest={"backend": "apac_sm90_megamoe"}, capacity_requested=4096, cases=[{"counts": counts, "records": [{"rank": rank, "replay": replay, "rows": counts[rank], "errors": {"relative_l2": 0.01, "max_scaled_error": 0.02, "masked_rows_zero": True} if counts[rank] else {"empty_rank_participated": True}} for rank in range(4) for replay in range(4)]} for counts in [[1,1,1,1],[128,0,17,64],[128,128,128,128],[4096,4096,4096,4096]]])
     if fault == "rows":
         result["cases"][-1]["counts"] = [384] * 4
     elif fault == "replays":
         result["cases"][0]["records"][-1] = result["cases"][0]["records"][0]
+    elif fault == "uuid":
+        result["gpus"][0]["uuid"] = "GPU-1"
+    elif fault == "replay_domain":
+        result["cases"][0]["records"][0]["replay"] = 4
+    elif fault == "record_rows":
+        result["cases"][0]["records"][0]["rows"] = 999
+    elif fault in ("nan", "l2", "maximum"):
+        key, value = {"nan": ("relative_l2", float("nan")), "l2": ("relative_l2", 0.025), "maximum": ("max_scaled_error", 0.08)}[fault]
+        result["cases"][0]["records"][0]["errors"][key] = value
+    elif fault == "empty":
+        result["cases"][1]["records"][4]["errors"]["empty_rank_participated"] = False
     (tmp_path / "results/gate.json").write_text(json.dumps(result))
     if fault == "score":
         (tmp_path / "results/score.json").write_text("{}")
@@ -86,6 +98,26 @@ def test_terminal_gate_requires_math_graph_four_ranks_without_score(tmp_path, fa
         path.chmod(0o755)
     checked = subprocess.run(["bash", str(ROOT / "platforms/firmus/check-megamoe-gate.sh")], check=False, capture_output=True, text=True, env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLURM_JOB_ID": "7", "RUNTIME_DIR": str(tmp_path)})
     assert checked.returncode == expected, checked.stdout + checked.stderr
+    if fault is None:
+        config_path = tmp_path / "serving.json"
+        config_path.write_text(json.dumps({"images": {"vllm": {"sha256": "a" * 64, "size_bytes": 123}}}))
+        provenance_path = tmp_path / "source/provenance.json"
+        provenance = json.loads(provenance_path.read_text())
+        provenance["container"] = {"sha256": "a" * 64, "size_bytes": 123}
+        provenance_path.write_text(json.dumps(provenance))
+        for name in ("adapter_gpu_gate.py", "gpu_gate.py"):
+            (tmp_path / "source" / name).write_bytes((ROOT / "research/firmus-vllm-megamoe" / name).read_bytes())
+        command = [sys.executable, str(ROOT / "research/firmus-vllm-megamoe/validate_adapter_gate.py"), str(tmp_path), "--serving-config", str(config_path)]
+        assert subprocess.run(command, capture_output=True, check=False).returncode == 0
+        for key, bad in (("sha256", "b" * 64), ("size_bytes", 124)):
+            original = provenance["container"][key]
+            provenance["container"][key] = bad
+            provenance_path.write_text(json.dumps(provenance))
+            assert subprocess.run(command, capture_output=True, check=False).returncode != 0
+            provenance["container"][key] = original
+        provenance_path.write_text(json.dumps(provenance))
+        (tmp_path / "source/adapter_gpu_gate.py").write_text("# stale diagnostic\n")
+        assert subprocess.run(command, capture_output=True, check=False).returncode != 0
 
 
 def test_finite_harness_cpu_ownership_and_call_contract(tmp_path):
@@ -141,5 +173,42 @@ def test_actual_adapter_initializes_native_world_before_device_communicator():
     end = next(i for i, node in enumerate(run.body) if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "group" for target in node.targets))
     setup = ast.Module(body=run.body[start:end + 1], type_ignores=[])
     namespace = {"dist": SimpleNamespace(init_process_group=torch_init), "device": "cuda:2", "rank": 2, "timedelta": timedelta, "init_distributed_environment": native_init, "GroupCoordinator": coordinator}
-    exec(compile(setup, str(path), "exec"), namespace)
+    exec(compile(setup, str(path), "exec"), namespace)  # noqa: S102 -- Selected local probe initialization, with stubbed collectives.
     assert state == {"torch": True, "node_count": 1, "coordinator": True}
+
+
+@pytest.mark.parametrize("rank", [0, 2])
+def test_adapter_initialization_failure_is_archived_without_collectives(tmp_path, monkeypatch, rank):
+    monkeypatch.syspath_prepend(str(ROOT / "research/firmus-vllm-megamoe"))
+    import adapter_gpu_gate
+
+    monkeypatch.setenv("RANK", str(rank))
+
+    def fail(_output):
+        raise RuntimeError("distributed environment is not initialized")
+
+    monkeypatch.setattr(adapter_gpu_gate, "run", fail)
+    output = tmp_path / "gate.json"
+    with pytest.raises(RuntimeError, match="distributed environment"):
+        adapter_gpu_gate.main(output)
+    error = json.loads((tmp_path / f"gate.rank{rank}.error.json").read_text())
+    assert error["rank"] == rank and "distributed environment is not initialized" in error["traceback"]
+    if rank == 0:
+        result = json.loads(output.read_text())
+        assert result["completed"] is False and result["phase"] == "initialization"
+    else:
+        assert not output.exists()  # Other ranks must not overwrite rank 0's evidence.
+
+
+def test_full_serving_is_blocked_before_staging_without_adapter_gate(tmp_path):
+    environment = {**os.environ, "GITHUB_WORKSPACE": str(ROOT), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "a" * 40, "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(tmp_path / "runs"), "PROFILE": "false", "REQUIRE_BUILD": "false"}
+    result = subprocess.run(["bash", str(ROOT / "scripts/provision-firmus-framework.sh")], env=environment, capture_output=True, text=True, check=False)
+    assert result.returncode == 64 and "no successful actual-adapter GPU gate" in result.stderr
+    assert not (tmp_path / "runs").exists() and not (tmp_path / "outputs").exists()
+
+
+@pytest.mark.parametrize("extra", ["[cluster:firmus]", "[cluster:aspire2ap]", "[cluster:genkai]", "[require-build]", "[megamoe-gate]", "[firmus-dynamo-recover]"])
+def test_cpu_image_validation_cannot_submit_jobs(extra):
+    TAGS.validate("[megamoe-cpu] validate existing image without GPU")
+    with pytest.raises(ValueError, match="must not submit GPU jobs"):
+        TAGS.validate("[megamoe-cpu] " + extra)
