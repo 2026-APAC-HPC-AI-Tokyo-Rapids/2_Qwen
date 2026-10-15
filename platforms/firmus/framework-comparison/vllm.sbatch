@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J vllm-firmus-attention-dp4-c108
+#SBATCH -J vllm-firmus-megamoe-c192
 #SBATCH -p hpcai
 #SBATCH -N 2
 #SBATCH -t 00:17:00
@@ -8,9 +8,9 @@
 #SBATCH --no-requeue
 #SBATCH -o runs/sglang-%j.out
 #SBATCH -e runs/sglang-%j.err
-# H200: unchanged six TP2 prefills; decoder attention TP1/DP4, native MoE EP4.
-# Divide D cache/admission/batch limits across four DP engines; remove attention TP reductions.
-# Runtime-only performance candidate. Native Triton experts retained; no MegaMoE or profiler.
+# Komori qualified6344.96 architecture: P3 DP4/EP4 plus D1 DP4/EP4, attention TP1.
+# Exact modified SM90 MegaMoE owns dispatch/math/combine; KV budgets are per DP rank.
+# No profiler; fresh image and finite adapter gate must pass before official serving.
 set -euo pipefail
 
 ROOT=${SLURM_SUBMIT_DIR}
@@ -21,11 +21,10 @@ R_PORT=8000
 READY_SECS=600  # ASPIRE full stack took 7m09s; leave time for the 60/120/30 client.
 N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")
 # Parse configuration on the host; the pinned serving image does not include jq.
-speculation=(--speculative-config '{"method":"eagle3","model":"/draft","num_speculative_tokens":2}')
-# Keep PIECEWISE coverage for mixed speculative batches; FULL alone requires uniform three-token requests.
-decode_graph=(--compilation-config '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":192}' --cudagraph-capture-sizes)
-while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[] | select(. <= 64) | . * 3' "${ROOT}/source/firmus-framework.json")
-jq -c '{cudagraph_mode:"PIECEWISE",cudagraph_capture_sizes:.prefill_cuda_graph_tokens,max_cudagraph_capture_size:8192}' "${ROOT}/source/firmus-framework.json" >"${ROOT}/source/prefill-cudagraph.json"
+speculation=(--speculative-config '{"method":"eagle3","model":"/draft","num_speculative_tokens":3}')
+# Native mixed EAGLE batches require PIECEWISE as well as full decode graphs.
+decode_graph=(--compilation-config '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":128}' --cudagraph-capture-sizes)
+while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[] | . * 4' "${ROOT}/source/firmus-framework.json")
 ART=${ROOT}/logs
 export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
 export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
@@ -63,7 +62,7 @@ wait_http() {
 }
 
 echo "[$(date -Iseconds)] job=${SLURM_JOB_ID} user=$(whoami)"
-echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P6TP2EP1-D4AttentionTP1DP4MoETP1EP4 kv=fp8_e4m3 speculation=EAGLE3 kernels=vllm-native"
+echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P3DP4EP4-D1DP4EP4-AttentionTP1 kv=fp8_e4m3 speculation=EAGLE3 kernels=apac_sm90_megamoe"
 test -r "${VLLM}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && test -s "${ROOT}/draft/model.safetensors"
 mkdir -p "${ART}"
 worker_pids=()
@@ -77,9 +76,9 @@ cleanup_all() {
 trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-for worker in 0 1 2 3; do printf 'prefill-%s\t%s\t%s\t2\n' "${worker}" "${HEAD_IP}" "$((30100 + worker))"; done >"${ROOT}/source/worker-endpoints.tsv"
-for worker in 4 5; do printf 'prefill-%s\t%s\t%s\t2\n' "${worker}" "${TAIL_IP}" "$((30100 + worker))"; done >>"${ROOT}/source/worker-endpoints.tsv"
-for worker in 0; do printf 'decode-%s\t%s\t%s\t1\n' "${worker}" "${TAIL_IP}" "$((30200 + worker))"; done >>"${ROOT}/source/worker-endpoints.tsv"
+for worker in 0 1; do printf 'prefill-%s\t%s\t%s\t1\n' "${worker}" "${HEAD_IP}" "$((30100 + worker * 10))"; done >"${ROOT}/source/worker-endpoints.tsv"
+printf 'prefill-2\t%s\t30120\t1\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
+printf 'decode-0\t%s\t30200\t1\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
 
 cat >"${ROOT}/source/worker.sh" <<'EOF'
 set -euo pipefail
@@ -97,18 +96,18 @@ export VLLM_ALLREDUCE_USE_SYMM_MEM=0
 export VLLM_USE_DEEP_GEMM_E8M0=0
 role_flags=()
 blocks=2048
-batch_tokens=8192
+batch_tokens=4096
 if [[ "$role" == prefill ]]; then
-  # Match the verified SGLang prefill token buckets, using native breakable PIECEWISE graphs.
-  role_flags=(--compilation-config "$(cat "$(dirname "$0")/prefill-cudagraph.json")")
-  export VLLM_USE_BREAKABLE_CUDAGRAPH=1
+  # The winning SGLang prefill is eager; disable target and draft graphs here.
+  role_flags=(--enforce-eager)
   # Keep dense FP8 outside the FlashInfer JIT path during prefill capture.
   export VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER=0
   export VLLM_ALLREDUCE_USE_SYMM_MEM=1
   export VLLM_ALLREDUCE_USE_FLASHINFER=0 VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=0
   KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer"}'
 else
-  # Per DP engine: aggregate 524288 KV tokens, 256 sequences and 8192 batch tokens.
+  # The winning decoder pool is393216 tokens PER DP rank, not divided by4.
+  blocks=6144
   batch_tokens=2048
   KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}'
 fi
@@ -133,30 +132,21 @@ printf '\n' >>"$(dirname "$0")/argv-${name}.txt"
 exec "${worker_command[@]}"
 EOF
 
-srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 2 "${HEAD_IP}" "${speculation[@]}" --disable-custom-all-reduce --max-num-seqs "${N}" --moe-backend deep_gemm >"${ART}/prefill-0.log" 2>&1 &
+srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 1 "${HEAD_IP}" "${speculation[@]}" --disable-custom-all-reduce --enable-expert-parallel --data-parallel-size 4 --data-parallel-size-local 4 --data-parallel-backend mp --all2all-backend allgather_reducescatter --moe-backend apac_sm90_megamoe --max-num-seqs 48 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" 2 "${HEAD_IP}" "${speculation[@]}" --disable-custom-all-reduce --max-num-seqs "${N}" --moe-backend deep_gemm >"${ART}/prefill-1.log" 2>&1 &
+srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30110 "${MODEL}" 1 "${HEAD_IP}" "${speculation[@]}" --disable-custom-all-reduce --enable-expert-parallel --data-parallel-size 4 --data-parallel-size-local 4 --data-parallel-backend mp --all2all-backend allgather_reducescatter --moe-backend apac_sm90_megamoe --max-num-seqs 48 >"${ART}/prefill-1.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts prefill-2)" bash "${ROOT}/source/worker.sh" prefill-2 30102 "${MODEL}" 2 "${HEAD_IP}" "${speculation[@]}" --disable-custom-all-reduce --max-num-seqs "${N}" --moe-backend deep_gemm >"${ART}/prefill-2.log" 2>&1 &
+srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts prefill-2)" bash "${ROOT}/source/worker.sh" prefill-2 30120 "${MODEL}" 1 "${TAIL_IP}" "${speculation[@]}" --disable-custom-all-reduce --enable-expert-parallel --data-parallel-size 4 --data-parallel-size-local 4 --data-parallel-backend mp --all2all-backend allgather_reducescatter --moe-backend apac_sm90_megamoe --max-num-seqs 48 >"${ART}/prefill-2.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts prefill-3)" bash "${ROOT}/source/worker.sh" prefill-3 30103 "${MODEL}" 2 "${HEAD_IP}" "${speculation[@]}" --disable-custom-all-reduce --max-num-seqs "${N}" --moe-backend deep_gemm >"${ART}/prefill-3.log" 2>&1 &
-worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts prefill-4)" bash "${ROOT}/source/worker.sh" prefill-4 30104 "${MODEL}" 2 "${TAIL_IP}" "${speculation[@]}" --disable-custom-all-reduce --max-num-seqs "${N}" --moe-backend deep_gemm >"${ART}/prefill-4.log" 2>&1 &
-worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:2 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts prefill-5)" bash "${ROOT}/source/worker.sh" prefill-5 30105 "${MODEL}" 2 "${TAIL_IP}" "${speculation[@]}" --disable-custom-all-reduce --max-num-seqs "${N}" --moe-backend deep_gemm >"${ART}/prefill-5.log" 2>&1 &
-worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 1 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --max-num-seqs 64 --no-enable-prefix-caching --enable-expert-parallel --data-parallel-size 4 --data-parallel-size-local 4 --data-parallel-backend mp --all2all-backend allgather_reducescatter --moe-backend triton >"${ART}/decode-0.log" 2>&1 &
+srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 1 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --disable-custom-all-reduce --enable-expert-parallel --data-parallel-size 4 --data-parallel-size-local 4 --data-parallel-backend mp --all2all-backend allgather_reducescatter --moe-backend apac_sm90_megamoe --max-num-seqs 32 --no-enable-prefix-caching >"${ART}/decode-0.log" 2>&1 &
 worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:30100/health"; echo "prefill-0 ready"
-wait_http "http://${HEAD_IP}:30101/health"; echo "prefill-1 ready"
-wait_http "http://${HEAD_IP}:30102/health"; echo "prefill-2 ready"
-wait_http "http://${HEAD_IP}:30103/health"; echo "prefill-3 ready"
+wait_http "http://${HEAD_IP}:30110/health"; echo "prefill-1 ready"
+wait_http "http://${TAIL_IP}:30120/health"; echo "prefill-2 ready"
 wait_http "http://${TAIL_IP}:30200/health"; echo "decode-0 ready"
-wait_http "http://${TAIL_IP}:30104/health"; echo "prefill-4 ready"
-wait_http "http://${TAIL_IP}:30105/health"; echo "prefill-5 ready"
 
-srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts router)" /usr/bin/python3 "${ROOT}/vllm-proxy.py" --host 0.0.0.0 --port "${R_PORT}" --prefiller-hosts "${HEAD_IP}" "${HEAD_IP}" "${HEAD_IP}" "${HEAD_IP}" "${TAIL_IP}" "${TAIL_IP}" --prefiller-ports 30100 30101 30102 30103 30104 30105 --decoder-hosts "${TAIL_IP}" --decoder-ports 30200 >"${ART}/router.log" 2>&1 &
+srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${VLLM}" --container-mounts="$(mounts router)" /usr/bin/python3 "${ROOT}/vllm-proxy.py" --host 0.0.0.0 --port "${R_PORT}" --prefiller-hosts "${HEAD_IP}" "${HEAD_IP}" "${TAIL_IP}" --prefiller-ports 30100 30110 30120 --decoder-hosts "${TAIL_IP}" --decoder-ports 30200 >"${ART}/router.log" 2>&1 &
 worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:${R_PORT}/v1/models"
@@ -164,7 +154,7 @@ echo "READY after ${SECONDS}s"
 
 while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/server_info?config_format=json" >"${ROOT}/results/server-info-${worker}.json"
-  jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.vllm_config as $v | $v.parallel_config.tensor_parallel_size == $expected_tp and $v.kernel_config.moe_backend == (if $role == "prefill" then "deep_gemm" else "triton" end) and $v.parallel_config.enable_expert_parallel == ($role == "decode") and $v.parallel_config.data_parallel_size == (if $role == "prefill" then 1 else 4 end) and (if $role == "prefill" then true else $v.parallel_config.all2all_backend == "allgather_reducescatter" end) and $v.cache_config.cache_dtype == "fp8_e4m3" and $v.cache_config.block_size == 64 and ($v.cache_config.block_size * $v.cache_config.num_gpu_blocks_override) == (if $role == "prefill" then 131072 else ($config[0].decode_max_total_tokens / 4) end) and $v.model_config.max_model_len == 8192 and $v.scheduler_config.max_num_batched_tokens == (if $role == "prefill" then 8192 else 2048 end) and (if $role == "prefill" then $v.compilation_config.cudagraph_mode == 1 and $v.compilation_config.cudagraph_capture_sizes == $config[0].prefill_cuda_graph_tokens and $v.compilation_config.max_cudagraph_capture_size == 8192 else $v.cache_config.enable_prefix_caching == false and $v.compilation_config.max_cudagraph_capture_size == 192 and $v.compilation_config.cudagraph_mode == [2,1] and $v.compilation_config.cudagraph_capture_sizes == [$config[0].decode_cuda_graph_bs[] | select(. <= 64) | . * 3] end) and $v.speculative_config.draft_parallel_config.enable_expert_parallel == false and $v.speculative_config.draft_parallel_config.tensor_parallel_size == $expected_tp and $v.speculative_config.method == "eagle3" and $v.speculative_config.model == "/draft" and $v.speculative_config.num_speculative_tokens == 2 and $v.scheduler_config.max_num_seqs == (if $role == "prefill" then $config[0].concurrency else 64 end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
+  jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.vllm_config as $v | $expected_tp == 1 and $v.parallel_config.tensor_parallel_size == 1 and $v.kernel_config.moe_backend == "apac_sm90_megamoe" and $v.parallel_config.enable_expert_parallel == true and $v.parallel_config.data_parallel_size == 4 and $v.parallel_config.all2all_backend == "allgather_reducescatter" and $v.cache_config.cache_dtype == "fp8_e4m3" and $v.cache_config.block_size == 64 and ($v.cache_config.block_size * $v.cache_config.num_gpu_blocks_override) == (if $role == "prefill" then 131072 else $config[0].decode_max_total_tokens end) and $v.model_config.max_model_len == 8192 and $v.scheduler_config.max_num_batched_tokens == (if $role == "prefill" then 4096 else 2048 end) and (if $role == "prefill" then $v.model_config.enforce_eager == true else $v.cache_config.enable_prefix_caching == false and $v.compilation_config.max_cudagraph_capture_size == 128 and $v.compilation_config.cudagraph_mode == [2,1] and $v.compilation_config.cudagraph_capture_sizes == [$config[0].decode_cuda_graph_bs[] | . * 4] end) and $v.speculative_config.draft_parallel_config.enable_expert_parallel == false and $v.speculative_config.draft_parallel_config.tensor_parallel_size == 1 and $v.speculative_config.method == "eagle3" and $v.speculative_config.model == "/draft" and $v.speculative_config.num_speculative_tokens == 3 and $v.scheduler_config.max_num_seqs == (if $role == "prefill" then 48 else 32 end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
 done <"${ROOT}/source/worker-endpoints.tsv"
 # Prometheus snapshots bracket the official pass; their deltas split TTFT into prefill queue, prefill, KV transfer and decoder admission without touching measured traffic.
 while IFS=$'\t' read -r worker host port _tp; do curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/metrics" >"${ROOT}/results/metrics-before-${worker}.prom"; done <"${ROOT}/source/worker-endpoints.tsv"
@@ -176,7 +166,7 @@ jq -c -n --slurpfile s "${ROOT}/results/score.json" --slurpfile e "${ROOT}/resul
 (cd "${ROOT}/results" && grep -E '^vllm:(((request_queue_time|request_prefill_time|request_decode_time|time_to_first_token|inter_token_latency|e2e_request_latency|nixl_xfer_time|nixl_post_time)_seconds|nixl_bytes_transferred|nixl_num_descriptors|iteration_tokens_total)_(sum|count)|(prompt_tokens|generation_tokens|num_preemptions|spec_decode_num_drafts|spec_decode_num_draft_tokens|spec_decode_num_accepted_tokens)_total)[{ ]' metrics-before-*.prom metrics-after-*.prom) || true
 (cd "${ART}" && grep -o 'DeepGEMM E8M0 [a-z]*' prefill-*.log decode-0.log | sort | uniq -c) || true
 grep -hE 'Avg prompt throughput|SpecDecoding metrics|KV Transfer metrics' "${ART}/decode-0.log" | tail -n 30 || true
-grep -hE 'Avg prompt throughput' "${ART}/prefill-0.log" "${ART}/prefill-4.log" | tail -n 30 || true
+grep -hE 'Avg prompt throughput' "${ART}/prefill-0.log" "${ART}/prefill-2.log" | tail -n 30 || true
 (( aiperf_status == 0 ))
 echo "AIPERF ok"
 

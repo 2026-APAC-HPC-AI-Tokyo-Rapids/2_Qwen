@@ -200,7 +200,7 @@ jobs:
           JOB_STATUS: ${{ job.status }}
         run: |
           if [[ '${{ inputs.megamoe_gate }}' == true ]]; then
-            printf '### Four-H200 MegaMoE kernel gate\n\nSlurm %s; status **%s**. This is a numerical/graph/timing diagnostic, not an official benchmark. Inspect results/gate.json and logs/gpu-gate.log.\n' "${SLURM_JOB_ID}" "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
+            printf '### Four-H200 MegaMoE kernel gate\n\nSlurm %s; status **%s**. This is an actual-adapter numerical/graph correctness diagnostic, not an official benchmark. Inspect results/gate.json and logs/gpu-gate.log.\n' "${SLURM_JOB_ID}" "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
           else
             uv run --no-project --python 3.13 python scripts/summarize-firmus-run.py "${RUNNER_TEMP}/qwen-firmus-pd" --job-id "${SLURM_JOB_ID}" --status "${JOB_STATUS}" >>"${GITHUB_STEP_SUMMARY}"
           fi

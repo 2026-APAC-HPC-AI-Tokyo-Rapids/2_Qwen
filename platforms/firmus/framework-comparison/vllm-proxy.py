@@ -42,6 +42,7 @@ async def lifespan(app: FastAPI):
                 "host": host,
                 "port": port,
                 "id": i,
+                "in_flight": 0,
             }
         )
 
@@ -64,7 +65,7 @@ async def lifespan(app: FastAPI):
             }
         )
 
-    # Initialize round-robin iterators
+    # Rotate ties between equally loaded prefills and round-robin decoders
     app.state.prefill_iterator = itertools.cycle(range(len(app.state.prefill_clients)))
     app.state.decode_iterator = itertools.cycle(range(len(app.state.decode_clients)))
 
@@ -134,7 +135,7 @@ def parse_args():
 
 def get_next_client(app, service_type: str):
     """
-    Get the next client in round-robin fashion.
+    Reserve the least-loaded prefiller; rotate ties and decoder selection.
 
     Args:
         app: The FastAPI app instance
@@ -144,8 +145,11 @@ def get_next_client(app, service_type: str):
         The next client to use
     """
     if service_type == "prefill":
-        client_idx = next(app.state.prefill_iterator)
-        return app.state.prefill_clients[client_idx]
+        clients = app.state.prefill_clients
+        start = next(app.state.prefill_iterator)
+        client_idx = min(range(len(clients)), key=lambda i: (clients[i]["in_flight"], (i - start) % len(clients)))
+        clients[client_idx]["in_flight"] += 1
+        return clients[client_idx]
     elif service_type == "decode":
         client_idx = next(app.state.decode_iterator)
         return app.state.decode_clients[client_idx]
@@ -222,13 +226,16 @@ async def _handle_completions(api: str, request: Request):
         req_data = await request.json()
         request_id = str(uuid.uuid4())
 
-        # Get the next prefill client in round-robin fashion
+        # Reserve the least-loaded prefiller before yielding to another request.
         prefill_client_info = get_next_client(request.app, "prefill")
 
         # Send request to prefill service
-        response = await send_request_to_service(
-            prefill_client_info, api, req_data, request_id
-        )
+        try:
+            response = await send_request_to_service(
+                prefill_client_info, api, req_data, request_id
+            )
+        finally:
+            prefill_client_info["in_flight"] -= 1
 
         # Extract the needed fields
         response_json = response.json()
@@ -292,7 +299,6 @@ async def healthcheck():
 
 
 if __name__ == "__main__":
-    global global_args
     global_args = parse_args()
 
     import uvicorn

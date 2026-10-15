@@ -63,6 +63,9 @@ def check(sources):
     assert plan.all_source_ranks == (0, 1) and plan.source_ranks_per_group == ((0, 1), (0, 1))
     assert plan.rank_to_attention_slot == {0: 0, 1: 1} and plan.rank_offset_factor == 0
     assert plan.local_consumers == 1
+    matching_plan = namespace["compute_tp_mapping"](topology, 1, (AttentionSpec, AttentionSpec))
+    assert matching_plan.all_source_ranks == (0,) and matching_plan.source_ranks_per_group == ((0,), (0,))
+    assert matching_plan.rank_to_attention_slot == {0: 0} and matching_plan.local_consumers == 1
 
     factors_tree = trees["distributed/kv_transfer/kv_connector/v1/nixl/metadata.py"]
     factor = next(n for n in factors_tree.body if isinstance(n, ast.FunctionDef) and n.name == "_get_speculative_compatibility_factors")
@@ -93,7 +96,7 @@ def check(sources):
     candidate_bytes = 95 * 2 * 64 * 128 * 4 * 2048
     assert baseline_bytes == candidate_bytes and 4 * 2048 * 64 == 524288
     assert 4 * 64 == 256 and 4 * 2048 == 8192
-    return {"schema": "vllm-dp4-cpu-contract/v1", "passed": True, "cuda_imported": False, "source_sha256": HASHES, "engine_ids": ids, "side_channel_ports": ports, "producer_tp2_decoder_tp1_mapping": asdict(plan), "speculative_compatibility_factors": factors[0], "aggregate_limits": {"cache_tokens": 524288, "max_sequences": 256, "batch_tokens": 8192}, "nominal_target_draft_attention_bytes_per_gpu": candidate_bytes, "limitations": "AST-selected source contracts and nominal payload only; not distributed execution, memory fit, KV contents, graph safety, accuracy or throughput proof."}
+    return {"schema": "vllm-dp4-cpu-contract/v1", "passed": True, "cuda_imported": False, "source_sha256": HASHES, "engine_ids": ids, "side_channel_ports": ports, "producer_tp2_decoder_tp1_mapping": asdict(plan), "full_mega_producer_tp1_decoder_tp1_mapping": asdict(matching_plan), "speculative_compatibility_factors": factors[0], "aggregate_limits": {"cache_tokens": 524288, "max_sequences": 256, "batch_tokens": 8192}, "nominal_target_draft_attention_bytes_per_gpu": candidate_bytes, "limitations": "AST-selected source contracts and nominal payload only; not distributed execution, memory fit, KV contents, graph safety, accuracy or throughput proof."}
 
 
 if __name__ == "__main__":

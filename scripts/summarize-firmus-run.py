@@ -38,6 +38,10 @@ def summarize(root: Path, job_id: str, status: str) -> str:
             topology = "P6 × TP2 / D4 × attention TP1, MoE EP4"
         else:
             topology = "P6 × TP2 / D1 × attention TP4" + (", MoE EP4" if ep is True else " (expert placement: see server-info)")
+    if identity.get("framework") == "vllm" and config.get("concurrency") == 192:
+        decoder = read_artifact(root, "server-info-decode-0.json").get("vllm_config", {})
+        if decoder.get("kernel_config", {}).get("moe_backend") == "apac_sm90_megamoe":
+            topology = "P3 × DP4 EP4 / D1 × DP4 EP4, attention TP1, modified SM90 MegaMoE"
     expected_reports = 7 if topology == "P6 × TP2 / D1 × TP4 EP1" else 6
     lines = ["### Firmus Qwen", "", f"- Status: **{status}**; Slurm `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'unavailable')}**; H200 × 16; {topology}; concurrency **{config.get('concurrency', 'unavailable')}**.", f"- Workload: {workload}, ISL 4000 / OSL 200, warmup / benchmark / grace **{phases} s**; **not an official submission**."]
     if identity.get("dynamo"):

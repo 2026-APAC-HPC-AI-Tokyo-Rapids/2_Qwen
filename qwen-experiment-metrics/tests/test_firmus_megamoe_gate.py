@@ -43,6 +43,7 @@ def test_staging_checks_image_before_creating_runtime(tmp_path, corrupt):
         image.write_bytes(b"Fixture image")
     (workspace / "platforms/firmus/megamoe-gate.sbatch").write_text("#!/bin/bash\nexit 0\n")
     (workspace / "research/firmus-vllm-megamoe/gpu_gate.py").write_text("# fixture\n")
+    (workspace / "research/firmus-vllm-megamoe/adapter_gpu_gate.py").write_text("# actual adapter fixture\n")
     output = tmp_path / "outputs"
     result = subprocess.run(["bash", str(ROOT / "scripts/provision-firmus-megamoe-gate.sh")], check=False, capture_output=True, text=True, env={**os.environ, "GITHUB_WORKSPACE": str(workspace), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "compute", "GITHUB_OUTPUT": str(output), "RUNTIME_ROOT": str(tmp_path / "runs"), "PROFILE": "false", "REQUIRE_BUILD": "false"})
     if corrupt:
@@ -56,17 +57,24 @@ def test_staging_checks_image_before_creating_runtime(tmp_path, corrupt):
         assert identity["commit"] == "compute" and identity["world_size"] == 4 and not identity["profile"]
         assert (runtime / "vllm.sqsh").resolve() == image
         assert (runtime / "source/diagnostic-sources.sha256").is_file()
+        assert (runtime / "source/adapter_gpu_gate.py").read_text() == "# actual adapter fixture\n"
+        assert (runtime / "source/gpu_gate.py").read_text() == "# fixture\n"
         assert not (runtime / "model").exists() and not (runtime / "tokenizer").exists()
 
 
-@pytest.mark.parametrize("fault,expected", [(None, 0), ("math", 1), ("graph", 1), ("coverage", 1), ("score", 1), ("scheduler", 1)])
+@pytest.mark.parametrize("fault,expected", [(None, 0), ("math", 1), ("graph", 1), ("coverage", 1), ("score", 1), ("scheduler", 1), ("rows", 1), ("replays", 1)])
 def test_terminal_gate_requires_math_graph_four_ranks_without_score(tmp_path, fault, expected):
     for relative in ["bin", "source", "logs", "results"]:
         (tmp_path / relative).mkdir()
     (tmp_path / "run-success").touch()
     (tmp_path / "logs/slurm-7.log").write_text("gate finished\n")
     (tmp_path / "source/provenance.json").write_text(json.dumps({"diagnostic": "vllm-sm90-megamoe", "measurement_mode": "kernel-gate", "profile": False, "world_size": 4}))
-    result = {"schema": "vllm-sm90-megamoe-gpu-gate/v1", "completed": True, "correctness_passed": fault != "math", "graph_passed": fault != "graph", "world_size": 4, "gpus": [{"rank": rank} for rank in range(3 if fault == "coverage" else 4)], "useful_for_serving": False}
+    result = {"schema": "vllm-sm90-actual-adapter-gate/v1", "completed": True, "correctness_passed": fault != "math", "graph_passed": fault != "graph", "world_size": 4, "gpus": [{"rank": rank} for rank in range(3 if fault == "coverage" else 4)], "useful_for_serving": False}
+    result.update(adapter_manifest={"backend": "apac_sm90_megamoe"}, capacity_requested=4096, cases=[{"counts": counts, "records": [{"rank": rank, "replay": replay} for rank in range(4) for replay in range(4)]} for counts in [[1,1,1,1],[128,0,17,64],[128,128,128,128],[4096,4096,4096,4096]]])
+    if fault == "rows":
+        result["cases"][-1]["counts"] = [384] * 4
+    elif fault == "replays":
+        result["cases"][0]["records"][-1] = result["cases"][0]["records"][0]
     (tmp_path / "results/gate.json").write_text(json.dumps(result))
     if fault == "score":
         (tmp_path / "results/score.json").write_text("{}")
