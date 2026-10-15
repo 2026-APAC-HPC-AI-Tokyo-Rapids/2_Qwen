@@ -236,7 +236,7 @@ run_aiperf() {
   cp "${export_file}" "${OUTPUT_DIR}/results/profile_export_aiperf.json"
   if enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}/results:/results" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json /results/score.json --concurrency "${CONCURRENCY}" --require-eligible --command /results/aiperf-command.txt --provenance /results/aiperf-provenance.txt <<'PY'
 #!/usr/bin/env python3
-"""Validate AIPerf's official Qwen metrics and emit the competition score."""
+"""Validate the official Qwen workload and report measured good-output throughput."""
 
 from __future__ import annotations
 
@@ -295,8 +295,11 @@ def parse_result(metrics: dict[str, Any], concurrency: int) -> dict[str, Any]:
         "schema_version": "qwen3-pd-score/v1",
         "concurrency": concurrency,
         "goodput_requests_per_second": goodput,
+        "good_output_tokens_per_second": goodput * 200,
         "good_request_fraction": fraction,
         "eligible": eligible,
+        # Legacy local gate, retained for existing consumers. This is neither
+        # measured throughput nor the organizer R4 reference-floor score.
         "score_output_tokens_per_second": goodput * 200 if eligible else 0.0,
         "request_count": requests,
         "error_request_count": errors,
@@ -384,8 +387,6 @@ def validate_official_result(metrics: dict[str, Any], result: dict[str, Any], co
         raise ValueError("official validation requires --command and --provenance")
     expected_command = validate_official_workload(command, provenance, result["concurrency"])
     validate_official_export(metrics, result, expected_command)
-    if not result["eligible"]:
-        raise ValueError("good_request_fraction is below 0.90")
     # AIPerf 0.12.0 subtracts the rounded 14-token cache-bust estimate from the
     # synthetic ISL. The actual first_turn_prefix marker varies from 12 to 16
     # tokens, so individual client observations span 3984 through 3988 tokens.
@@ -426,6 +427,8 @@ def validate_official_result(metrics: dict[str, Any], result: dict[str, Any], co
         raise ValueError("output sequence length is inconsistent with pinned AIPerf tolerance")
     if result["osl_mismatch_count"] != 0:
         raise ValueError("AIPerf reported output sequence length mismatches")
+    if not result["eligible"]:
+        raise ValueError("good_request_fraction is below 0.90")
     return {"valid": True, "configured_input_sequence_length": 4000, "configured_output_sequence_length": 200, "client_input_token_adjustment": 4000 - input_length, "aiperf_version": "0.12.0", "tokenizer_revision": TOKENIZER_REVISION}
 
 
