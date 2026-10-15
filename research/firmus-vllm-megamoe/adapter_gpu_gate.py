@@ -81,6 +81,7 @@ def run(output):
         raw = [getattr(layer, name).detach().clone() for name in ("w13_weight", "w13_weight_scale_inv", "w2_weight", "w2_weight_scale_inv")]
         method.process_weights_after_loading(layer)
         assert method.buffer is adapter.workspace(group.device_group)
+        assert adapter.provider().get_pdl() is True
         torch.manual_seed(713)
         basis = torch.randn(16, 4096, device=device, dtype=torch.bfloat16) * 0.25
         gate = torch.randn(128, 4096, device=device, dtype=torch.bfloat16) * 0.02
@@ -88,6 +89,7 @@ def run(output):
         dist.all_gather_object(gpus, {"rank": rank, "uuid": str(props.uuid), "name": props.name})
         assert len({x["uuid"] for x in gpus}) == 4
         result = {"schema": "vllm-sm90-actual-adapter-gate/v1", "completed": False, "correctness_passed": False, "graph_passed": False, "native_factory_runner": True, "parallelism": {"tp": 1, "dp": 4, "ep": 4}, "adapter_manifest": manifest, "gpus": gpus, "world_size": 4, "capacity_requested": adapter.CAPACITY, "capacity_aligned": method.buffer.num_max_tokens_per_rank, "workspace_bytes": method.buffer.buffer.numel() * method.buffer.buffer.element_size(), "cases": [], "official_benchmark_score": None, "limitations": "Native factory/router/runner and TP1/DP4/EP4; synthetic original-layout weights. Not trained-model accuracy, full-model KV coexistence or throughput proof."}
+        result["predispatch_pdl"] = True
         if rank == 0:
             save(output, result)
         for counts in COUNTS:

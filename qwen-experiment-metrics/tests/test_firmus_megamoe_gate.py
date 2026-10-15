@@ -63,7 +63,7 @@ def test_staging_checks_image_before_creating_runtime(tmp_path, corrupt):
         assert not (runtime / "model").exists() and not (runtime / "tokenizer").exists()
 
 
-@pytest.mark.parametrize("fault,expected", [(None, 0), *[(fault, 1) for fault in ("math", "graph", "coverage", "score", "scheduler", "rows", "replays", "uuid", "replay_domain", "record_rows", "nan", "l2", "maximum", "empty")]])
+@pytest.mark.parametrize("fault,expected", [(None, 0), *[(fault, 1) for fault in ("math", "graph", "coverage", "score", "scheduler", "rows", "replays", "uuid", "replay_domain", "record_rows", "nan", "l2", "maximum", "empty", "pdl")]])
 def test_terminal_gate_requires_math_graph_four_ranks_without_score(tmp_path, fault, expected):
     for relative in ["bin", "source", "logs", "results", "scripts/megamoe"]:
         (tmp_path / relative).mkdir(parents=True)
@@ -72,6 +72,7 @@ def test_terminal_gate_requires_math_graph_four_ranks_without_score(tmp_path, fa
     (tmp_path / "logs/slurm-7.log").write_text("gate finished\n")
     (tmp_path / "source/provenance.json").write_text(json.dumps({"diagnostic": "vllm-sm90-megamoe", "measurement_mode": "kernel-gate", "profile": False, "world_size": 4}))
     result = {"schema": "vllm-sm90-actual-adapter-gate/v1", "completed": True, "correctness_passed": fault != "math", "graph_passed": fault != "graph", "world_size": 4, "gpus": [{"rank": rank, "uuid": f"GPU-{rank}"} for rank in range(3 if fault == "coverage" else 4)], "official_benchmark_score": None}
+    result["predispatch_pdl"] = fault != "pdl"
     result.update(native_factory_runner=True, parallelism={"tp": 1, "dp": 4, "ep": 4}, adapter_manifest={"backend": "apac_sm90_megamoe"}, capacity_requested=4096, cases=[{"counts": counts, "records": [{"rank": rank, "replay": replay, "pattern": ("random", "hot_rank0", "boundary_masked", "all_masked")[replay], "eager_compared": True, "rows": counts[rank], "errors": {"relative_l2": 0.01, "max_scaled_error": 0.02, "masked_rows_zero": True} if counts[rank] else {"empty_rank_participated": True}} for rank in range(4) for replay in range(4)]} for counts in [[1,1,1,1],[128,0,17,64],[128,128,128,128],[4096,4096,4096,4096]]])
     if fault == "rows":
         result["cases"][-1]["counts"] = [384] * 4

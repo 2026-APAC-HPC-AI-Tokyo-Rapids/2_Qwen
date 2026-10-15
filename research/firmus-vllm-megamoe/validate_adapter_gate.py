@@ -21,6 +21,7 @@ def validate(runtime, serving_config=None):
     assert all(result[key] is True for key in ("completed", "correctness_passed", "graph_passed"))
     assert result["adapter_manifest"]["backend"] == "apac_sm90_megamoe"
     assert result["native_factory_runner"] is True
+    assert result["predispatch_pdl"] is True
     assert result["parallelism"] == {"tp": 1, "dp": 4, "ep": 4}
     assert result["capacity_requested"] == 4096
     assert sorted(gpu["rank"] for gpu in result["gpus"]) == list(range(4))

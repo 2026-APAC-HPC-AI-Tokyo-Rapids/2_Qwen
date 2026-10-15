@@ -37,7 +37,11 @@ def provider():
 @cache
 def workspace(group):
     # Reuse one symmetric workspace across serialized layers, never one per layer.
-    return provider().get_symm_buffer_for_mega_moe(
+    mega = provider()
+    # Match SGLang's pre-dispatch launch mode after this worker owns its GPU.
+    # Keep this out of provider import, which is also checked on CPU-only builds.
+    mega.set_pdl(True)
+    return mega.get_symm_buffer_for_mega_moe(
         group,
         128,
         CAPACITY,

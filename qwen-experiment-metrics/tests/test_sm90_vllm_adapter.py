@@ -3,6 +3,7 @@
 import ast
 import hashlib
 import runpy
+from functools import cache
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -152,3 +153,25 @@ def test_explicit_backend_and_image_cpu_gate_are_wired():
         "mega.fp8_mega_moe("
     )
     assert "all_reduce(" not in SOURCE and "all_gather(" not in SOURCE
+
+
+def test_workspace_enables_private_pdl_once_before_allocation():
+    tree = ast.parse(SOURCE)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "workspace")
+    calls = []
+    buffer = object()
+
+    def allocate(*args, **kwargs):
+        calls.append(("allocate", args, kwargs))
+        return buffer
+
+    mega = NS(set_pdl=lambda value: calls.append(("pdl", value)), get_symm_buffer_for_mega_moe=allocate)
+    namespace = {"cache": cache, "provider": lambda: mega, "CAPACITY": 4096}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[fn], type_ignores=[])), "workspace-contract", "exec"), namespace)  # noqa: S102 -- Selected local function with CPU mocks only.
+    assert calls == []
+    group = object()
+    assert namespace["workspace"](group) is buffer
+    assert namespace["workspace"](group) is buffer
+    assert calls == [("pdl", True), ("allocate", (group, 128, 4096, 8, 4096, 1536), {"use_fp8_dispatch": True, "activation": "swiglu"})]
+    provider_fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "provider")
+    assert "set_pdl" not in ast.unparse(provider_fn)
