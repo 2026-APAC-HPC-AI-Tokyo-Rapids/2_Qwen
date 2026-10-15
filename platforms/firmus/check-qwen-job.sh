@@ -14,5 +14,12 @@ exit_code="$(awk -F'|' -v job_id="${SLURM_JOB_ID}" '$1 == job_id {print $3}' "${
 test "${state}" = COMPLETED
 test "${exit_code}" = 0:0
 test -e "${RUNTIME_DIR}/run-success"
-test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
-test -s "${RUNTIME_DIR}/results/score.json"
+if jq -e '.measurement_mode == "profile-only" and .profile == true and .framework == "vllm"' "${RUNTIME_DIR}/source/provenance.json" >/dev/null; then
+  test ! -e "${RUNTIME_DIR}/results/score.json"
+  test -s "${RUNTIME_DIR}/profile/client/profile_export.jsonl"
+  jq -e '.was_cancelled == false and .error_summary == [] and .request_count.avg > 0' "${RUNTIME_DIR}/profile/client/profile_export_aiperf.json" >/dev/null
+  jq -e '.valid == true and .scope == "decode-0" and (.workers | keys) == ["decode-0"] and .workers["decode-0"].gpu_count == 4' "${RUNTIME_DIR}/profile/validation.json" >/dev/null
+else
+  test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
+  test -s "${RUNTIME_DIR}/results/score.json"
+fi

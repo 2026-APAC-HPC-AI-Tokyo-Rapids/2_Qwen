@@ -218,3 +218,36 @@ def test_profile_rejects_missing_event_diagnostic(tmp_path: Path) -> None:
         connection.execute("INSERT INTO DIAGNOSTIC_EVENT VALUES (2, 'Not all CUDA events might have been collected')")
     with pytest.raises(ValueError, match="incomplete CUDA capture"):
         VALIDATE(database, 4)
+
+
+@pytest.mark.parametrize("raw_error,coverage,expected", [(False, 4, 0), (True, 4, 1), (False, 3, 1)])
+def test_profile_only_completion_requires_raw_and_selected_coverage(tmp_path: Path, raw_error: bool, coverage: int, expected: int) -> None:
+    for name in ["bin", "logs", "source", "profile/client"]:
+        (tmp_path / name).mkdir(parents=True)
+    (tmp_path / "run-success").touch()
+    (tmp_path / "source/provenance.json").write_text(json.dumps({"profile": True, "framework": "vllm", "measurement_mode": "profile-only"}))
+    (tmp_path / "profile/client/profile_export.jsonl").write_text("{}\n")
+    (tmp_path / "profile/client/profile_export_aiperf.json").write_text(json.dumps({"was_cancelled": False, "error_summary": ["failure"] if raw_error else [], "request_count": {"avg": 10}}))
+    (tmp_path / "profile/validation.json").write_text(json.dumps({"valid": True, "scope": "decode-0", "workers": {"decode-0": {"gpu_count": coverage}}}))
+    (tmp_path / "logs/slurm-1.log").write_text("profile diagnostic\n")
+    for name, body in {"squeue": "#!/bin/sh\nexit 0\n", "sacct": "#!/bin/sh\necho '1|COMPLETED|0:0|00:12:00|2'\n"}.items():
+        (tmp_path / "bin" / name).write_text(body)
+        (tmp_path / "bin" / name).chmod(0o755)
+    r = subprocess.run(["bash", str(ROOT / "platforms/firmus/check-qwen-job.sh")], check=False, env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLURM_JOB_ID": "1", "RUNTIME_DIR": str(tmp_path)}, capture_output=True, text=True)
+    assert r.returncode == expected, r.stdout + r.stderr
+
+
+def test_profile_only_path_does_not_run_official_eligibility_gate(tmp_path: Path) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    start = source.index('# Profile-only execution is independent of official eligibility.')
+    end = source.index('# Prometheus snapshots bracket the official pass;', start)
+    for name in ["source", "scripts", "logs"]:
+        (tmp_path / name).mkdir()
+    (tmp_path / "source/worker-endpoints.tsv").write_text("prefill-0\t127.0.0.1\t30100\t2\ndecode-0\t127.0.0.1\t30200\t4\n")
+    (tmp_path / "scripts/capture-firmus-profile.sh").write_text("#!/bin/sh\necho captured\n")
+    script = 'set -euo pipefail\nROOT=$1; ART=$ROOT/logs; N=108; HEAD=head; AIPERF=client; VLLM=server; PROFILE=true\nmounts() { echo fixture; }\nsrun() { printf \'%s\\n\' "$*" >>"$ROOT/calls"; if [[ "$*" == *official-aiperf.sh* && "$*" != *\'108 profile\' ]]; then return 1; fi; }\n'
+    result = subprocess.run(["bash", "-c", script + source[start:end] + '\nexit 99', "fixture", str(tmp_path)], check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "run-success").exists()
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert len(calls) == 2 and calls[0].endswith('108 profile') and 'validate-firmus-profile.py' in calls[1]
