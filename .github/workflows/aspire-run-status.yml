@@ -40,7 +40,7 @@ jobs:
           aspire2p-shell --pull "${RUNTIME_DIR}/logs" "${destination}/logs"
           aspire2p-shell --pull "${RUNTIME_DIR}/profile" "${destination}/profile"
       - uses: actions/upload-artifact@v7
-        if: steps.inspect.outputs.runtime_dir != ''
+        if: always() && steps.inspect.outputs.runtime_dir != ''
         with:
           name: aspire-live-diagnosis-${{ github.run_id }}
           path: ${{ runner.temp }}/aspire-live-diagnosis-${{ github.run_id }}
