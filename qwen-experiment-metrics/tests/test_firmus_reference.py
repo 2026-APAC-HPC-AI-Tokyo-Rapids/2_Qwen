@@ -134,7 +134,7 @@ def test_sglang_launch_matches_full_h200_tp2_conditions(tmp_path: Path) -> None:
     assert client_argv[-2:] == [str(tmp_path), "64"]
 
 
-def test_vllm_launch_matches_page64_p6d1_comparator(tmp_path: Path) -> None:
+def test_vllm_launch_preserves_p6_and_maps_decoder_to_dp4(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert config["workload"] == "official"
@@ -166,6 +166,8 @@ def test_vllm_launch_matches_page64_p6d1_comparator(tmp_path: Path) -> None:
             assert "--enable-expert-parallel" in argv
     decoder = next(argv for argv in workers if "decode-0" in argv)
     assert "--no-enable-prefix-caching" in decoder
+    for option, value in [("--data-parallel-size", "4"), ("--data-parallel-size-local", "4"), ("--data-parallel-backend", "mp"), ("--all2all-backend", "allgather_reducescatter"), ("--max-num-seqs", "64")]:
+        assert decoder[decoder.index(option) + 1] == value
     router_argv = next(argv for argv in commands if any(arg.endswith("/vllm-proxy.py") for arg in argv))
     begin = router_argv.index("--prefiller-ports") + 1
     assert router_argv[begin:begin + 6] == ["30100", "30101", "30102", "30103", "30104", "30105"]
@@ -182,12 +184,12 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
     # Exercise actual shell argument construction without requiring GPUs or HCAs.
     probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
     probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "$VLLM_USE_DEEP_GEMM_E8M0" "$VLLM_USE_NCCL_SYMM_MEM" "${worker_command[@]}"\n'
-    for role, tp, limit in [("prefill", 2, config["concurrency"]), ("decode", 4, 256)]:
+    for role, tp, limit in [("prefill", 2, config["concurrency"]), ("decode", 1, 64)]:
         options = ["--speculative-config", '{"method":"eagle3","model":"/draft","num_speculative_tokens":2}', "--max-num-seqs", str(limit)]
         if role == "prefill":
             options += ["--disable-custom-all-reduce", "--moe-backend", "deep_gemm"]
         else:
-            options += ["--enable-expert-parallel", "--moe-backend", "triton", "--compilation-config", '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":768}', "--cudagraph-capture-sizes", *[str(n * 3) for n in config["decode_cuda_graph_bs"] if n <= 256]]
+            options += ["--enable-expert-parallel", "--moe-backend", "triton", "--compilation-config", '{"cudagraph_mode":"FULL_AND_PIECEWISE","max_cudagraph_capture_size":192}', "--cudagraph-capture-sizes", *[str(n * 3) for n in config["decode_cuda_graph_bs"] if n <= 64]]
         result = subprocess.run(["bash", "-c", probe, str(tmp_path / "worker.sh"), f"{role}-0", "30100", "/model", str(tp), "192.0.2.1", *options], check=True, capture_output=True)
         symm, dense_flashinfer, trtllm_deepgemm, e8m0, nccl_symm, *flags = result.stdout.decode().rstrip("\0").split("\0")
         assert symm == ("1" if role == "prefill" else "0")
@@ -197,9 +199,9 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         if role == "prefill":
             assert json.loads(flags[flags.index("--compilation-config") + 1]) == graph_config
         else:
-            assert json.loads(flags[flags.index("--compilation-config") + 1]) == {"cudagraph_mode": "FULL_AND_PIECEWISE", "max_cudagraph_capture_size": 768}
+            assert json.loads(flags[flags.index("--compilation-config") + 1]) == {"cudagraph_mode": "FULL_AND_PIECEWISE", "max_cudagraph_capture_size": 192}
             begin = flags.index("--cudagraph-capture-sizes") + 1
-            buckets = [n * 3 for n in config["decode_cuda_graph_bs"] if n <= 256]
+            buckets = [n * 3 for n in config["decode_cuda_graph_bs"] if n <= 64]
             assert [int(n) for n in flags[begin:begin + len(buckets)]] == buckets
         assert flags[flags.index("--tensor-parallel-size") + 1] == str(tp)
         assert flags[flags.index("--max-num-seqs") + 1] == str(limit)
@@ -207,8 +209,9 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         assert flags[flags.index("--moe-backend") + 1] == ("deep_gemm" if role == "prefill" else "triton")
         assert flags[flags.index("--dtype") + 1] == "bfloat16"
         assert flags[flags.index("--kv-cache-dtype") + 1] == "fp8_e4m3"
-        assert int(flags[flags.index("--block-size") + 1]) * int(flags[flags.index("--num-gpu-blocks-override") + 1]) == (131072 if role == "prefill" else 524288)
+        assert int(flags[flags.index("--block-size") + 1]) * int(flags[flags.index("--num-gpu-blocks-override") + 1]) == 131072
         assert flags[flags.index("--block-size") + 1] == "64"
+        assert flags[flags.index("--max-num-batched-tokens") + 1] == ("8192" if role == "prefill" else "2048")
         assert json.loads(flags[flags.index("--attention-config") + 1]) == {"backend": "FLASH_ATTN", "flash_attn_version": 3}
         assert json.loads(flags[flags.index("--kv-transfer-config") + 1])["kv_role"] == ("kv_producer" if role == "prefill" else "kv_consumer")
         assert json.loads(flags[flags.index("--speculative-config") + 1]) == {"method": "eagle3", "model": "/draft", "num_speculative_tokens": 2}
@@ -277,3 +280,35 @@ def test_unsupported_modes_fail_before_container_staging(tmp_path: Path, profile
     assert result.returncode == 64
     assert "reuses pinned baseline images" in result.stderr
     assert not runtime.exists()
+
+
+@pytest.mark.parametrize("corruption", [None, "dp", "cache", "backend", "admission", "draft_ep"])
+def test_dp4_effective_config_guard_rejects_wrong_runtime(tmp_path: Path, corruption: str | None) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    decoder = {
+        "parallel_config": {"tensor_parallel_size": 1, "data_parallel_size": 4, "enable_expert_parallel": True, "all2all_backend": "allgather_reducescatter"},
+        "kernel_config": {"moe_backend": "triton"},
+        "cache_config": {"cache_dtype": "fp8_e4m3", "block_size": 64, "num_gpu_blocks_override": 2048, "enable_prefix_caching": False},
+        "model_config": {"max_model_len": 8192},
+        "scheduler_config": {"max_num_batched_tokens": 2048, "max_num_seqs": 64},
+        "compilation_config": {"max_cudagraph_capture_size": 192, "cudagraph_mode": [2, 1], "cudagraph_capture_sizes": [n * 3 for n in config["decode_cuda_graph_bs"] if n <= 64]},
+        "speculative_config": {"draft_parallel_config": {"enable_expert_parallel": False, "tensor_parallel_size": 1}, "method": "eagle3", "model": "/draft", "num_speculative_tokens": 2},
+    }
+    if corruption == "dp":
+        decoder["parallel_config"]["data_parallel_size"] = 1
+    elif corruption == "cache":
+        decoder["cache_config"]["num_gpu_blocks_override"] = 8192
+    elif corruption == "backend":
+        decoder["parallel_config"]["all2all_backend"] = "naive"
+    elif corruption == "admission":
+        decoder["scheduler_config"]["max_num_seqs"] = 256
+    elif corruption == "draft_ep":
+        decoder["speculative_config"]["draft_parallel_config"]["enable_expert_parallel"] = True
+    (tmp_path / "source").mkdir()
+    (tmp_path / "results").mkdir()
+    (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
+    (tmp_path / "results/server-info-decode-0.json").write_text(json.dumps({"vllm_config": decoder}))
+    guard = next(line for line in source.splitlines() if line.lstrip().startswith('jq -e --arg role'))
+    result = subprocess.run(["bash", "-c", guard], env={**os.environ, "ROOT": str(tmp_path), "worker": "decode-0", "_tp": "1"}, check=False, capture_output=True)
+    assert (result.returncode == 0) is (corruption is None), result.stderr.decode()

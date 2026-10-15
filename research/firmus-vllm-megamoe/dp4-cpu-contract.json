@@ -1,0 +1,66 @@
+{
+  "schema": "vllm-dp4-cpu-contract/v1",
+  "passed": true,
+  "cuda_imported": false,
+  "source_sha256": {
+    "v1/engine/core.py": "268bf40534a853812867ae8e80040f190983cb364b41182b55969aace20c93f5",
+    "config/speculative.py": "ac877ed34977dc5226f52c0dd873963c20e9e37ff1782c7749221b50bc1bb533",
+    "config/parallel.py": "f012ace89e3fb730a467f729f602679bc145c49f0d10721811c9d818570e7b2b",
+    "distributed/kv_transfer/kv_connector/v1/nixl/base_scheduler.py": "7a1db8c54e4cd846bdac747344f2aea2c2fcf507817928796063225223b7e169",
+    "distributed/kv_transfer/kv_connector/v1/nixl/tp_mapping.py": "2d43607f98701b2fad6cc0ac2767619a80b7fc2b3a3c2eb6ed0da4fb05dcd8f6",
+    "distributed/kv_transfer/kv_connector/v1/nixl/metadata.py": "2b23a07c1ec5ac5490c3b818737c7192e344ea9f52cd5623f75939f741ab4e21",
+    "v1/spec_decode/llm_base_proposer.py": "5bd11c41f0a8cf1272b5880d9878043f876bee6c7e04fb781e613f92930b15ab"
+  },
+  "engine_ids": [
+    "decoder_dp0",
+    "decoder_dp1",
+    "decoder_dp2",
+    "decoder_dp3"
+  ],
+  "side_channel_ports": [
+    5700,
+    5701,
+    5702,
+    5703
+  ],
+  "producer_tp2_decoder_tp1_mapping": {
+    "source_ranks_per_group": [
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        1
+      ]
+    ],
+    "all_source_ranks": [
+      0,
+      1
+    ],
+    "rank_to_attention_slot": {
+      "0": 0,
+      "1": 1
+    },
+    "rank_offset_factor": 0,
+    "local_consumers": 1
+  },
+  "speculative_compatibility_factors": {
+    "method": "eagle3",
+    "model": "/draft",
+    "revision": null,
+    "code_revision": null,
+    "parallel_drafting": false,
+    "kv_cache_dtype": "fp8_e4m3",
+    "auxiliary_layer_ids": null
+  },
+  "aggregate_limits": {
+    "cache_tokens": 524288,
+    "max_sequences": 256,
+    "batch_tokens": 8192
+  },
+  "nominal_target_draft_attention_bytes_per_gpu": 12750684160,
+  "limitations": "AST-selected source contracts and nominal payload only; not distributed execution, memory fit, KV contents, graph safety, accuracy or throughput proof.",
+  "image_sha256": "d1b022670a5291cbc3ceff8a65048ea7572706c7ba7ccb217fe1d014bfc48aca",
+  "image_path": "/scratch/home/ACCOUNT/qwen/vllm-containers/38650006335.sqsh"
+}

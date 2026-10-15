@@ -33,7 +33,11 @@ def summarize(root: Path, job_id: str, status: str) -> str:
     if identity.get("framework") == "vllm" and config.get("concurrency") == 108:
         decoder = read_artifact(root, "server-info-decode-0.json").get("vllm_config", {})
         ep = decoder.get("parallel_config", {}).get("enable_expert_parallel")
-        topology = "P6 × TP2 / D1 × attention TP4" + (", MoE EP4" if ep is True else " (expert placement: see server-info)")
+        parallel = decoder.get("parallel_config", {})
+        if parallel.get("data_parallel_size") == 4 and parallel.get("tensor_parallel_size") == 1:
+            topology = "P6 × TP2 / D4 × attention TP1, MoE EP4"
+        else:
+            topology = "P6 × TP2 / D1 × attention TP4" + (", MoE EP4" if ep is True else " (expert placement: see server-info)")
     expected_reports = 7 if topology == "P6 × TP2 / D1 × TP4 EP1" else 6
     lines = ["### Firmus Qwen", "", f"- Status: **{status}**; Slurm `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'unavailable')}**; H200 × 16; {topology}; concurrency **{config.get('concurrency', 'unavailable')}**.", f"- Workload: {workload}, ISL 4000 / OSL 200, warmup / benchmark / grace **{phases} s**; **not an official submission**."]
     if identity.get("dynamo"):

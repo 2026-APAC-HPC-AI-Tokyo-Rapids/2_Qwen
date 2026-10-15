@@ -139,8 +139,8 @@ def test_optimized_c64_summary_reports_ep1_topology(tmp_path: Path, framework: s
     assert "P4 × TP2 / D2 × TP4 EP1" in SUMMARY(tmp_path, "22463", "success")
 
 
-@pytest.mark.parametrize("profile,expected", [("false", 0), ("true", 0), ("invalid", 1)])
-def test_optimized_vllm_accepts_explicit_profile_before_worker_launch(profile: str, expected: int) -> None:
+@pytest.mark.parametrize("profile,expected", [("false", 0), ("true", 1), ("invalid", 1)])
+def test_dp4_candidate_rejects_profile_before_worker_launch(profile: str, expected: int) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
     guard = next(line for line in source.splitlines() if line.startswith('[[ "${PROFILE:'))
     result = subprocess.run(["bash", "-euc", guard], env={**os.environ, "PROFILE": profile}, check=False)
@@ -237,17 +237,15 @@ def test_profile_only_completion_requires_raw_and_selected_coverage(tmp_path: Pa
     assert r.returncode == expected, r.stdout + r.stderr
 
 
-def test_profile_only_path_does_not_run_official_eligibility_gate(tmp_path: Path) -> None:
+def test_dp4_candidate_has_no_profiler_launch_path() -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
-    start = source.index('# Profile-only execution is independent of official eligibility.')
-    end = source.index('# Prometheus snapshots bracket the official pass;', start)
-    for name in ["source", "scripts", "logs"]:
-        (tmp_path / name).mkdir()
-    (tmp_path / "source/worker-endpoints.tsv").write_text("prefill-0\t127.0.0.1\t30100\t2\ndecode-0\t127.0.0.1\t30200\t4\n")
-    (tmp_path / "scripts/capture-firmus-profile.sh").write_text("#!/bin/sh\necho captured\n")
-    script = 'set -euo pipefail\nROOT=$1; ART=$ROOT/logs; N=108; HEAD=head; AIPERF=client; VLLM=server; PROFILE=true\nmounts() { echo fixture; }\nsrun() { printf \'%s\\n\' "$*" >>"$ROOT/calls"; if [[ "$*" == *official-aiperf.sh* && "$*" != *\'108 profile\' ]]; then return 1; fi; }\n'
-    result = subprocess.run(["bash", "-c", script + source[start:end] + '\nexit 99', "fixture", str(tmp_path)], check=False, capture_output=True, text=True)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert (tmp_path / "run-success").exists()
-    calls = (tmp_path / "calls").read_text().splitlines()
-    assert len(calls) == 2 and calls[0].endswith('108 profile') and 'validate-firmus-profile.py' in calls[1]
+    assert "nsys" not in source and "capture-firmus-profile.sh" not in source
+    assert '"${N}" profile' not in source
+    assert '"${N}" >"${ART}/aiperf.log"' in source
+
+
+def test_dp4_summary_uses_exported_attention_and_expert_topology(tmp_path: Path) -> None:
+    (tmp_path / "provenance.json").write_text(json.dumps({"framework": "vllm", "workload": "official"}))
+    (tmp_path / "firmus-framework.json").write_text(json.dumps({"concurrency": 108}))
+    (tmp_path / "server-info-decode-0.json").write_text(json.dumps({"vllm_config": {"parallel_config": {"tensor_parallel_size": 1, "data_parallel_size": 4, "enable_expert_parallel": True}}}))
+    assert "P6 × TP2 / D4 × attention TP1, MoE EP4" in SUMMARY(tmp_path, "candidate", "success")
