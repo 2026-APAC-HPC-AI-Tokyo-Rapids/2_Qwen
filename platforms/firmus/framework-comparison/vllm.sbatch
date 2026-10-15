@@ -180,7 +180,7 @@ done <"${ROOT}/source/worker-endpoints.tsv"
 if [[ "${PROFILE:-false}" == true ]]; then
   mkdir -p "${ROOT}/profile/client"
   : >"${ROOT}/profile/client/aiperf.log"
-  printf '%s\n' 'Instrumented diagnostic: all 16 GPUs, five-second CUDA API range; not an official throughput result.' >"${ROOT}/profile/interpretation.txt"
+  printf '%s\n' 'Instrumented diagnostic: all 16 GPUs, CUDA API range starts five seconds into measurement and ends after request/grace completion; one-second CUPTI flush interval; not an official throughput result.' >"${ROOT}/profile/interpretation.txt"
   bash "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" "${ROOT}/profile/client/aiperf.log" >"${ROOT}/profile/capture.log" 2>&1 &
   capture_pid=$!
   aiperf_status=0

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Capture SGLang through benchmark completion; retain the five-second vLLM window.
+# Stop collection after benchmark requests drain, including the grace period.
 set -euo pipefail
 runtime_dir=${1:?runtime directory required}
 framework=$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${runtime_dir}/source/firmus-framework.json")
@@ -47,15 +47,13 @@ start_status=0
 for pid in "${pids[@]}"; do wait "${pid}" || start_status=1; done
 [[ "${start_status}" -eq 0 ]] || exit 1
 printf 'capture_active utc=%s\n' "$(date -u +%FT%T.%NZ)"
-if [[ "${framework}" == sglang ]]; then
-  deadline=$((SECONDS + 180))
-  while ! grep -Fq 'Phase profiling (profiling) complete |' "${client_log}"; do
-    (( SECONDS < deadline )) || exit 1
-    sleep 1
-  done
-else
-  sleep 5
-fi
+# Run 38786945340 stopped capture during traffic and reported unreturned CUPTI
+# buffers. Drain traffic before the shared capture ends; validation stays strict.
+deadline=$((SECONDS + 180))
+while ! grep -Fq 'Phase profiling (profiling) complete |' "${client_log}"; do
+  (( SECONDS < deadline )) || exit 1
+  sleep 1
+done
 stop_requested=true
 printf 'stop_requested utc=%s\n' "$(date -u +%FT%T.%NZ)"
 stop_workers stop

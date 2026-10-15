@@ -15,6 +15,6 @@ mv -- "${invocation_tmp}" "${QWEN_PROFILER_INVOCATION_PATH}"
 if [[ -n "${QWEN_PROFILER_NSYS_BIN:-}" ]]; then
   "${QWEN_PROFILER_NSYS_BIN}" --version >"${QWEN_PROFILER_INVOCATION_PATH%.argv}.nsys-version.txt"
   grep -Eq '^NVIDIA Nsight Systems version 2026\.5\.1\.161([ -]|$)' "${QWEN_PROFILER_INVOCATION_PATH%.argv}.nsys-version.txt"
-  exec "${QWEN_PROFILER_NSYS_BIN}" profile --force-overwrite=true --trace-fork-before-exec=true --capture-range=cudaProfilerApi --capture-range-end=stop --trace=cuda,nvtx,osrt --cuda-graph-trace=node --cuda-event-trace=false --sample=none --cpuctxsw=none --output="${QWEN_PROFILER_INVOCATION_PATH%.argv}" "$@"
+  exec "${QWEN_PROFILER_NSYS_BIN}" profile --force-overwrite=true --trace-fork-before-exec=true --capture-range=cudaProfilerApi --capture-range-end=stop --trace=cuda,nvtx,osrt --cuda-graph-trace=node --cuda-event-trace=false --cuda-flush-interval=1000 --sample=none --cpuctxsw=none --output="${QWEN_PROFILER_INVOCATION_PATH%.argv}" "$@"
 fi
 exec "$@"

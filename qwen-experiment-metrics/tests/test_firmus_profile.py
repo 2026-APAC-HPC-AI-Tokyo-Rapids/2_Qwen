@@ -61,8 +61,8 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     assert [path for path, _, _ in requests].count("/stop_profile") == worker_count
     expected_body = {"activities": ["CUDA_PROFILER"]} if framework == "sglang" else None
     assert all(body == expected_body for path, body, _ in requests if path == "/start_profile")
-    assert (tmp_path / "sleeps").read_text().splitlines() == (["5"] if failure == "start" else ["5", "1" if framework == "sglang" else "5"])
-    if framework == "sglang" and failure != "start":
+    assert (tmp_path / "sleeps").read_text().splitlines() == (["5"] if failure == "start" else ["5", "1"])
+    if failure != "start":
         assert all(complete for path, _, complete in requests if path == "/stop_profile")
     assert ("capture_stopped" in result.stdout) is (failure is None)
 
@@ -129,6 +129,7 @@ def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path) -> None:
     argv = (tmp_path / "argv").read_text().rstrip("\0").split("\0")
     assert "--capture-range=cudaProfilerApi" in argv and "--capture-range-end=stop" in argv
     assert "--cuda-graph-trace=node" in argv and "--sample=none" in argv
+    assert "--cuda-flush-interval=1000" in argv
     assert argv[-5:] == ["/opt/python", "-m", "sglang.launch_server", "--port", "30200"]
     assert "2026.5.1.161" in (tmp_path / "decode.nsys-version.txt").read_text()
 
