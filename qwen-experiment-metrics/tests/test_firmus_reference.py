@@ -166,7 +166,7 @@ def test_vllm_launch_matches_komori_p3_d1_dp4_ep4(tmp_path: Path) -> None:
             assert argv[argv.index(option) + 1] == "4"
     for argv in workers:
         if any(arg.startswith("prefill-") for arg in argv):
-            assert argv[argv.index("--max-num-seqs") + 1] == "2"
+            assert argv[argv.index("--max-num-seqs") + 1] == "48"
     decoder = next(argv for argv in workers if "decode-0" in argv)
     assert "--no-enable-prefix-caching" in decoder
     for option, value in [("--data-parallel-size", "4"), ("--data-parallel-size-local", "4"), ("--data-parallel-backend", "mp"), ("--all2all-backend", "allgather_reducescatter"), ("--max-num-seqs", "32")]:
@@ -195,7 +195,7 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
     # Exercise actual shell argument construction without requiring GPUs or HCAs.
     probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
     probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "$VLLM_USE_DEEP_GEMM_E8M0" "$VLLM_USE_NCCL_SYMM_MEM" "${worker_command[@]}"\n'
-    for role, tp, limit in [("prefill", 1, 2), ("decode", 1, 32)]:
+    for role, tp, limit in [("prefill", 1, 48), ("decode", 1, 32)]:
         options = ["--speculative-config", '{"method":"eagle3","model":"/draft","num_speculative_tokens":3}', "--max-num-seqs", str(limit)]
         if role == "prefill":
             options += ["--disable-custom-all-reduce", "--enable-expert-parallel", "--moe-backend", "apac_sm90_megamoe"]
@@ -324,7 +324,7 @@ def test_megamoe_effective_config_guard_rejects_wrong_runtime(tmp_path: Path, co
         "kernel_config": {"moe_backend": "apac_sm90_megamoe"},
         "cache_config": {"cache_dtype": "fp8_e4m3", "block_size": 64, "num_gpu_blocks_override": 2048 if role == "prefill" else 6144, "enable_prefix_caching": False},
         "model_config": {"max_model_len": 8192, "enforce_eager": role == "prefill"},
-        "scheduler_config": {"max_num_batched_tokens": 4096 if role == "prefill" else 2048, "max_num_seqs": 2 if role == "prefill" else 32},
+        "scheduler_config": {"max_num_batched_tokens": 4096 if role == "prefill" else 2048, "max_num_seqs": 48 if role == "prefill" else 32},
         "compilation_config": {"max_cudagraph_capture_size": 128, "cudagraph_mode": [2, 1], "cudagraph_capture_sizes": [n * 4 for n in config["decode_cuda_graph_bs"]]},
         "speculative_config": {"draft_parallel_config": {"enable_expert_parallel": False, "tensor_parallel_size": 1}, "method": "eagle3", "model": "/draft", "num_speculative_tokens": 3},
     }
@@ -335,7 +335,7 @@ def test_megamoe_effective_config_guard_rejects_wrong_runtime(tmp_path: Path, co
     elif corruption == "backend":
         decoder["parallel_config"]["all2all_backend"] = "naive"
     elif corruption == "admission":
-        decoder["scheduler_config"]["max_num_seqs"] = 48
+        decoder["scheduler_config"]["max_num_seqs"] = 2
     elif corruption == "draft_ep":
         decoder["speculative_config"]["draft_parallel_config"]["enable_expert_parallel"] = True
     elif corruption == "graph":
