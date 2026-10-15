@@ -2,7 +2,7 @@
 #SBATCH -J run
 #SBATCH -p hpcai
 #SBATCH -N 2
-#SBATCH -t 00:17:00
+#SBATCH -t 00:25:00
 #SBATCH --gres=gpu:8
 #SBATCH --propagate=NONE
 #SBATCH --no-requeue
@@ -10,7 +10,7 @@
 #SBATCH -e runs/sglang-%j.err
 # Komori qualified6344.96 architecture: P3 DP4/EP4 plus D1 DP4/EP4, attention TP1.
 # Exact modified SM90 MegaMoE owns dispatch/math/combine; KV budgets are per DP rank.
-# No profiler; [require-build] verifies the fresh image before this measurement.
+# Profile allocations validate adapter math before loading the full serving topology.
 set -euo pipefail
 
 ROOT=${SLURM_SUBMIT_DIR}
@@ -28,7 +28,7 @@ while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_
 ART=${ROOT}/logs
 export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
 export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
-[[ "${PROFILE:-false}" == false ]]
+[[ "${PROFILE:-false}" == false || "${PROFILE:-false}" == true ]]
 jq -e '.framework == "vllm" and .workload == "official"' "${ROOT}/source/firmus-framework.json" >/dev/null
 
 NODES=($(scontrol show hostnames "${SLURM_JOB_NODELIST}"))
@@ -40,7 +40,9 @@ TAIL_IP=$(ip_of "${TAIL}")
 
 mounts() {
   mkdir -p "${ROOT}/home/$1"
-  echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,/dev/infiniband:/dev/infiniband"
+  local profiler_mount=
+  if [[ "${PROFILE:-false}" == true && ( "$1" == prefill-* || "$1" == decode-* || "$1" == profile-validation ) ]]; then profiler_mount=",${ROOT}/nsys:/opt/nsys:ro"; fi
+  echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,/dev/infiniband:/dev/infiniband${profiler_mount}"
 }
 
 wait_http() {
@@ -66,9 +68,11 @@ echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 
 test -r "${VLLM}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && test -s "${ROOT}/draft/model.safetensors"
 mkdir -p "${ART}"
 worker_pids=()
+capture_pid=
 cleanup_all() {
   status=$?
   trap - EXIT INT TERM
+  if [[ -n "${capture_pid}" ]]; then kill "${capture_pid}" 2>/dev/null || true; wait "${capture_pid}" 2>/dev/null || true; fi
   for pid in "${worker_pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
   for pid in "${worker_pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
   exit "${status}"
@@ -76,6 +80,11 @@ cleanup_all() {
 trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if [[ "${PROFILE:-false}" == true ]]; then
+  # Reuse this allocation and exact serving image; no profiler during numerical validation.
+  NVIDIA_VISIBLE_DEVICES=0,1,2,3 timeout --signal=TERM --kill-after=30s 300s srun --mpi=none --export=ALL --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=16 --gpu-bind=none --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${VLLM}" --container-mounts="$(mounts adapter-check)" bash -c 'export CUDA_VISIBLE_DEVICES=0,1,2,3; export HOME="$1/home/adapter-check" XDG_CACHE_HOME="$1/home/adapter-check/.cache" TRITON_CACHE_DIR="$1/home/adapter-check/.triton"; exec torchrun --standalone --nproc_per_node=4 "$1/scripts/megamoe/adapter_gpu_gate.py" --output "$1/results/gate.json"' gate "${ROOT}" >"${ART}/adapter-check.log" 2>&1
+  jq -e '.completed == true and .correctness_passed == true and .graph_passed == true and .native_factory_runner == true and .capacity_requested == 4096 and (.cases | length) == 4 and ([.cases[].records[]] | length) == 64' "${ROOT}/results/gate.json" >/dev/null
+fi
 for worker in 0 1; do printf 'prefill-%s\t%s\t%s\t1\n' "${worker}" "${HEAD_IP}" "$((30100 + worker * 10))"; done >"${ROOT}/source/worker-endpoints.tsv"
 printf 'prefill-2\t%s\t30120\t1\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
 printf 'decode-0\t%s\t30200\t1\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
@@ -127,8 +136,14 @@ mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 echo "$name host=$(hostname) ip=$VLLM_NIXL_SIDE_CHANNEL_HOST hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp symm=$VLLM_ALLREDUCE_USE_SYMM_MEM"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
 worker_command=(/usr/local/bin/vllm serve "$model" --served-model-name qwen --trust-remote-code --dtype bfloat16 --max-model-len 8192 --tensor-parallel-size "$tp" --gpu-memory-utilization 0.90 --block-size 64 --num-gpu-blocks-override "$blocks" --max-num-batched-tokens "$batch_tokens" --enable-chunked-prefill --kv-cache-dtype fp8_e4m3 --attention-config '{"backend":"FLASH_ATTN","flash_attn_version":3}' --kv-transfer-config "$KV_CONFIG" "${role_flags[@]}" "$@" --host 0.0.0.0 --port "$port")
+if [[ -x /opt/nsys/bin/nsys ]]; then worker_command+=(--profiler-config '{"profiler":"cuda"}'); fi
 printf '%q ' "${worker_command[@]}" >"$(dirname "$0")/argv-${name}.txt"
 printf '\n' >>"$(dirname "$0")/argv-${name}.txt"
+if [[ -x /opt/nsys/bin/nsys ]]; then
+  export QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys
+  export QWEN_PROFILER_INVOCATION_PATH="$(dirname "$(dirname "$0")")/profile/nsys-${name}.argv"
+  exec bash "$(dirname "$(dirname "$0")")/scripts/exec-profiler.sh" "${worker_command[@]}"
+fi
 exec "${worker_command[@]}"
 EOF
 
@@ -156,6 +171,23 @@ while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/server_info?config_format=json" >"${ROOT}/results/server-info-${worker}.json"
   jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.vllm_config as $v | $expected_tp == 1 and $v.parallel_config.tensor_parallel_size == 1 and $v.kernel_config.moe_backend == "apac_sm90_megamoe" and $v.parallel_config.enable_expert_parallel == true and $v.parallel_config.data_parallel_size == 4 and $v.parallel_config.all2all_backend == "allgather_reducescatter" and $v.cache_config.cache_dtype == "fp8_e4m3" and $v.cache_config.block_size == 64 and ($v.cache_config.block_size * $v.cache_config.num_gpu_blocks_override) == (if $role == "prefill" then 131072 else $config[0].decode_max_total_tokens end) and $v.model_config.max_model_len == 8192 and $v.scheduler_config.max_num_batched_tokens == (if $role == "prefill" then 4096 else 2048 end) and (if $role == "prefill" then $v.model_config.enforce_eager == true else $v.cache_config.enable_prefix_caching == false and $v.compilation_config.max_cudagraph_capture_size == 128 and $v.compilation_config.cudagraph_mode == [2,1] and $v.compilation_config.cudagraph_capture_sizes == [$config[0].decode_cuda_graph_bs[] | . * 4] end) and $v.speculative_config.draft_parallel_config.enable_expert_parallel == false and $v.speculative_config.draft_parallel_config.tensor_parallel_size == 1 and $v.speculative_config.method == "eagle3" and $v.speculative_config.model == "/draft" and $v.speculative_config.num_speculative_tokens == 3 and $v.scheduler_config.max_num_seqs == (if $role == "prefill" then 48 else 32 end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
 done <"${ROOT}/source/worker-endpoints.tsv"
+if [[ "${PROFILE:-false}" == true ]]; then
+  mkdir -p "${ROOT}/profile/client"
+  : >"${ROOT}/profile/client/aiperf.log"
+  printf '%s\n' 'Instrumented diagnostic: all 16 GPUs, five-second CUDA API range; not an official throughput result.' >"${ROOT}/profile/interpretation.txt"
+  bash "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" "${ROOT}/profile/client/aiperf.log" >"${ROOT}/profile/capture.log" 2>&1 &
+  capture_pid=$!
+  aiperf_status=0
+  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" profile >"${ROOT}/profile/client/aiperf.log" 2>&1 || aiperf_status=$?
+  capture_status=0
+  wait "${capture_pid}" || capture_status=$?
+  capture_pid=
+  validation_status=0
+  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${VLLM}" --container-mounts="$(mounts profile-validation)" python3 "${ROOT}/scripts/validate-firmus-profile.py" "${ROOT}" >"${ROOT}/profile/validation.log" 2>&1 || validation_status=$?
+  (( aiperf_status == 0 && capture_status == 0 && validation_status == 0 ))
+  touch "${ROOT}/run-success"
+  exit 0
+fi
 # Prometheus snapshots bracket the official pass; their deltas split TTFT into prefill queue, prefill, KV transfer and decoder admission without touching measured traffic.
 while IFS=$'\t' read -r worker host port _tp; do curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/metrics" >"${ROOT}/results/metrics-before-${worker}.prom"; done <"${ROOT}/source/worker-endpoints.tsv"
 aiperf_status=0

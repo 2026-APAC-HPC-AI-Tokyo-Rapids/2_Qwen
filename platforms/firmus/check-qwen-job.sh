@@ -18,7 +18,8 @@ if jq -e '.measurement_mode == "profile-only" and .profile == true and .framewor
   test ! -e "${RUNTIME_DIR}/results/score.json"
   test -s "${RUNTIME_DIR}/profile/client/profile_export.jsonl"
   jq -e '.was_cancelled == false and .error_summary == [] and .request_count.avg > 0' "${RUNTIME_DIR}/profile/client/profile_export_aiperf.json" >/dev/null
-  jq -e '.valid == true and .scope == "decode-0" and (.workers | keys) == ["decode-0"] and .workers["decode-0"].gpu_count == 4' "${RUNTIME_DIR}/profile/validation.json" >/dev/null
+  jq -e '.valid == true and .scope == "all-workers" and (.workers | keys) == ["decode-0", "prefill-0", "prefill-1", "prefill-2"] and all(.workers[]; .gpu_count == 4)' "${RUNTIME_DIR}/profile/validation.json" >/dev/null
+  jq -e '.completed == true and .correctness_passed == true and .graph_passed == true and .native_factory_runner == true and .capacity_requested == 4096 and (.cases | length) == 4 and ([.cases[].records[]] | length) == 64' "${RUNTIME_DIR}/results/gate.json" >/dev/null
 else
   test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
   test -s "${RUNTIME_DIR}/results/score.json"

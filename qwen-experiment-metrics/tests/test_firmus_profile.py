@@ -149,8 +149,8 @@ def test_optimized_c64_summary_reports_ep1_topology(tmp_path: Path, framework: s
     assert "P4 × TP2 / D2 × TP4 EP1" in SUMMARY(tmp_path, "22463", "success")
 
 
-@pytest.mark.parametrize("profile,expected", [("false", 0), ("true", 1), ("invalid", 1)])
-def test_dp4_candidate_rejects_profile_before_worker_launch(profile: str, expected: int) -> None:
+@pytest.mark.parametrize("profile,expected", [("false", 0), ("true", 0), ("invalid", 1)])
+def test_dp4_candidate_validates_profile_flag(profile: str, expected: int) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
     guard = next(line for line in source.splitlines() if line.startswith('[[ "${PROFILE:'))
     result = subprocess.run(["bash", "-euc", guard], env={**os.environ, "PROFILE": profile}, check=False)
@@ -234,15 +234,16 @@ def test_profile_rejects_missing_event_diagnostic(tmp_path: Path, severity: int,
         VALIDATE(database, 4)
 
 
-@pytest.mark.parametrize("raw_error,coverage,expected", [(False, 4, 0), (True, 4, 1), (False, 3, 1)])
-def test_profile_only_completion_requires_raw_and_selected_coverage(tmp_path: Path, raw_error: bool, coverage: int, expected: int) -> None:
-    for name in ["bin", "logs", "source", "profile/client"]:
+@pytest.mark.parametrize("raw_error,coverage,gate_passed,expected", [(False, 4, True, 0), (True, 4, True, 1), (False, 3, True, 1), (False, 4, False, 1)])
+def test_profile_only_completion_requires_raw_all_workers_and_math(tmp_path: Path, raw_error: bool, coverage: int, gate_passed: bool, expected: int) -> None:
+    for name in ["bin", "logs", "source", "profile/client", "results"]:
         (tmp_path / name).mkdir(parents=True)
     (tmp_path / "run-success").touch()
     (tmp_path / "source/provenance.json").write_text(json.dumps({"profile": True, "framework": "vllm", "measurement_mode": "profile-only"}))
     (tmp_path / "profile/client/profile_export.jsonl").write_text("{}\n")
     (tmp_path / "profile/client/profile_export_aiperf.json").write_text(json.dumps({"was_cancelled": False, "error_summary": ["failure"] if raw_error else [], "request_count": {"avg": 10}}))
-    (tmp_path / "profile/validation.json").write_text(json.dumps({"valid": True, "scope": "decode-0", "workers": {"decode-0": {"gpu_count": coverage}}}))
+    (tmp_path / "profile/validation.json").write_text(json.dumps({"valid": True, "scope": "all-workers", "workers": {name: {"gpu_count": coverage} for name in ["prefill-0", "prefill-1", "prefill-2", "decode-0"]}}))
+    (tmp_path / "results/gate.json").write_text(json.dumps({"completed": gate_passed, "correctness_passed": gate_passed, "graph_passed": gate_passed, "native_factory_runner": True, "capacity_requested": 4096, "cases": [{"records": [{}] * 16}] * 4}))
     (tmp_path / "logs/slurm-1.log").write_text("profile diagnostic\n")
     for name, body in {"squeue": "#!/bin/sh\nexit 0\n", "sacct": "#!/bin/sh\necho '1|COMPLETED|0:0|00:12:00|2'\n"}.items():
         (tmp_path / "bin" / name).write_text(body)
@@ -251,11 +252,23 @@ def test_profile_only_completion_requires_raw_and_selected_coverage(tmp_path: Pa
     assert r.returncode == expected, r.stdout + r.stderr
 
 
-def test_dp4_candidate_has_no_profiler_launch_path() -> None:
+def test_dp4_profile_is_separate_from_official_score_and_checks_math_first() -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
-    assert "nsys" not in source and "capture-firmus-profile.sh" not in source
-    assert '"${N}" profile' not in source
+    assert source.index("adapter_gpu_gate.py") < source.index("srun --exact")
+    assert "timeout --signal=TERM --kill-after=30s 300s" in source
+    assert "capture-firmus-profile.sh" in source
+    assert '"${N}" profile' in source
+    assert source.index('wait "${capture_pid}" || capture_status=$?') < source.index('python3 "${ROOT}/scripts/validate-firmus-profile.py"')
+    assert source.index('  exit 0\nfi\n# Prometheus') < source.index('>"${ROOT}/results/metrics-before-')
     assert '"${N}" >"${ART}/aiperf.log"' in source
+
+
+@pytest.mark.parametrize("profile,worker,expected", [("false", "decode-0", False), ("true", "decode-0", True), ("true", "prefill-2", True), ("true", "profile-validation", True), ("true", "adapter-check", False), ("true", "router", False), ("true", "aiperf", False)])
+def test_profiler_mount_only_enters_profile_workers(tmp_path: Path, profile: str, worker: str, expected: bool) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    function = "mounts() {" + source.split("mounts() {", 1)[1].split("\n}", 1)[0] + "\n}"
+    result = subprocess.run(["bash", "-euc", function + '\nmounts "$WORKER"'], env={**os.environ, "ROOT": str(tmp_path), "PROFILE": profile, "WORKER": worker}, check=True, capture_output=True, text=True)
+    assert ("/opt/nsys:ro" in result.stdout) == expected
 
 
 def test_dp4_summary_uses_exported_attention_and_expert_topology(tmp_path: Path) -> None:
