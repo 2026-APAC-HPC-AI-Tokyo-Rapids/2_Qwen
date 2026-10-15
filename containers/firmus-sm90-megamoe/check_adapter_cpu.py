@@ -143,8 +143,17 @@ def check():
         )
         assert namespace["_maybe_combine"](state, None, "rows") == "rows"
         assert namespace["_maybe_reduce_final_output"](state, "rows", None) == "rows"
-        with torch.device("meta"):
-            method.create_weights(layer, 32, 4096, 1536, torch.bfloat16)
+        # Native metadata validation asks the serving TP group for its size.
+        # This CPU-only probe declares TP1 without initializing distributed/CUDA.
+        from vllm.model_executor.layers.quantization.utils import fp8_utils
+
+        original_tp_size = fp8_utils.get_tensor_model_parallel_world_size
+        try:
+            fp8_utils.get_tensor_model_parallel_world_size = lambda: 1
+            with torch.device("meta"):
+                method.create_weights(layer, 32, 4096, 1536, torch.bfloat16)
+        finally:
+            fp8_utils.get_tensor_model_parallel_world_size = original_tp_size
         assert layer.w13_weight.shape == (32, 3072, 4096)
         assert layer.w2_weight.shape == (32, 4096, 1536)
         assert layer.w13_weight.dtype == torch.float8_e4m3fn
