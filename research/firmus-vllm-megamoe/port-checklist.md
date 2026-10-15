@@ -5,6 +5,16 @@
 対象は MegaMoE カーネルに加え、router、DP 制御、投機デコード、KV 転送、起動から公式結果回収まで。
 2026-10-16 に見直しを開始した。
 
+## 現在の検証状態（38804183674 回収後）
+
+- 実装差分の現状は [configuration-comparison.md](configuration-comparison.md)、実行結果と判断は [Issue #21](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/21#issuecomment-6203851528) に記録している。以下の初回棚卸しと過去の投入方針は経緯として残す。
+- 本番の TP1/DP4/EP4、native factory/router/runner を通す有限 GPU 検証は PDL 有効イメージでも完了した（38801099834 / 23911、64 records）。合成 TP4 group の旧検証とは異なる。主催者の全データによる精度評価を実施したという意味ではない。
+- 38804183674 / 23917 は全モデルのロード、全 decode graph、4グループの readiness、公式ワークロードと結果回収を完走した。公式 parser は SLA 達成率不足で不合格とした。起動成功と性能目標達成を区別する。
+- 同 run の全4グループで各 EP rank の94層に改造版 MegaMoE が初期化されている。dense FP8 の実装選択変更は、通常の MoE への置換ではない。アダプタは private provider の `fp8_mega_moe` を直接呼び、通常 MoE への fallback を持たない。
+- 原データは `/srv/qwen-artifacts/38804183674/1/`。61件のチェックサムと回収後の runtime directory 削除を確認済み。PDL 有効版の通常実行38804437745と profile38819084366は別の未完了実験であり、性能改善や完全な trace の証拠にはまだ数えない。
+
+## 初回棚卸し時点の判定と履歴
+
 **次の判定は実GPUでのエラー有無と、既存の本番経路でのSLA適格goodput 6300超。**
 AWS実イメージのCPU検証は合格したため、まず有限の4 H200検証へ進める。
 同じ設定名だけで同等と判定しない。

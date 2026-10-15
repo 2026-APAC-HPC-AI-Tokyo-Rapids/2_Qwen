@@ -73,6 +73,10 @@ def analyze(directory: Path) -> dict:
     latency = mean(metric(r, "request_latency") for r in measured) / 1000
     targets = []
     for output_tps in (7000, 2 * score["score_output_tokens_per_second"], 10000):
+        # An ineligible run has official score zero even when it serves traffic.
+        # Doubling that score is not a performance target and divides by zero.
+        if output_tps <= 0:
+            continue
         good_rps = output_tps / 200
         required_rps = good_rps / score["good_request_fraction"]
         targets.append(
