@@ -1,6 +1,7 @@
 """Immutable existing SM90 provider contracts; no kernel implementation."""
 
 import hashlib
+import json
 from pathlib import Path
 
 WHEEL_NAME = "sgl_deep_gemm-0.1.5-py3-none-manylinux2014_x86_64.whl"
@@ -49,3 +50,37 @@ def verify_package(package: Path) -> None:
     verify(package / HEADER, PATCHED_HEADER_SHA256)
     if (package / "VERSION").read_text().strip() != "0.1.5":
         raise ValueError("Unsupported SM90 provider version")
+
+
+# v0.1.5 sources match the exact wheel's Python module and SM90 kernel header.
+NATIVE_SOURCE_COMMIT = "1c8138a59b3df5dac50b76b730834ed57982fdfb"
+NATIVE_SOURCE_SHA256 = "1508b1034e23378dfaf7386c5dcdfb18c277c9480ce57e183ac3ecb14dfbf47b"
+FMT_COMMIT = "553ec11ec06fbe0beebfbb45f9dc3c9eabd83d28"
+FMT_SOURCE_SHA256 = "c314292789d28c3c3b420e75a7b2d1706f685f7fb63289128d46aeaea2c6be71"
+NATIVE_API_SHA256 = "c09aeec8187a2e29a3ebfc61c9ce1168a89fea775040a47bcf73739131ea57c0"
+
+
+def verify_runtime_package(package: Path) -> dict:
+    for name, expected in SOURCES.items():
+        verify(package / name, expected)
+    verify(package / HEADER, PATCHED_HEADER_SHA256)
+    report = json.loads((package / "native-build.json").read_text())
+    required = {
+        "schema": "apac-sm90-native-build/v1",
+        "source_commit": NATIVE_SOURCE_COMMIT,
+        "source_archive_sha256": NATIVE_SOURCE_SHA256,
+        "fmt_commit": FMT_COMMIT,
+        "fmt_archive_sha256": FMT_SOURCE_SHA256,
+        "original_native_sha256": NATIVE_LIBRARY_SHA256,
+        "torch": "2.13.0+cu130",
+        "tvm_ffi": "0.1.11",
+        "cpu_bridge_probe": True,
+    }
+    if any(report.get(k) != v for k, v in required.items()):
+        raise ValueError("Unsupported native build provenance")
+    if report["native_sha256"] == NATIVE_LIBRARY_SHA256:
+        raise ValueError("Prebuilt native library was not replaced")
+    verify(package / "_C.so", report["native_sha256"])
+    if (package / "VERSION").read_text().strip() != "0.1.5":
+        raise ValueError("Unsupported SM90 provider version")
+    return report

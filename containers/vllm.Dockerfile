@@ -21,6 +21,7 @@ RUN python3 /opt/apac/fix-vllm-dense-draft-ep.py /usr/local/lib/python3.12/dist-
 # CPU-only native-ABI gate for the future decoder adapter. No serving backend is changed.
 COPY containers/firmus-sm90-megamoe /opt/apac/firmus-sm90-megamoe
 COPY sm90-provider /opt/apac/sm90-provider
-RUN bash /opt/apac/firmus-sm90-megamoe/check_cpu_image.sh
+COPY sm90-native-source /tmp/apac-sm90-native-source
+RUN bash /opt/apac/firmus-sm90-megamoe/check_cpu_image.sh && rm -rf /tmp/apac-sm90-native-source
 
 # Keep the official OpenAI server entrypoint for docker run.

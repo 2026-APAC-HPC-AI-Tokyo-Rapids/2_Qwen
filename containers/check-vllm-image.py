@@ -63,9 +63,10 @@ assert mega_gate["passed"] and mega_gate["cuda_initialized"] is False
 assert mega_gate["ordinary_dense_provider"] == "vllm.third_party.deep_gemm"
 assert mega_gate["private_provider"] == "apac_sm90.deep_gemm"
 assert len(mega_gate["compiled_geometries"]) == 3
+assert mega_gate["cpu_tensor_bridge"] is True
 sys.path.insert(0, "/opt/apac/firmus-sm90-megamoe")
 try:
-    runpy.run_path("/opt/apac/firmus-sm90-megamoe/contract.py")["verify_package"](
+    runpy.run_path("/opt/apac/firmus-sm90-megamoe/contract.py")["verify_runtime_package"](
         Path("/opt/apac/sm90-provider/deep_gemm")
     )
 finally:

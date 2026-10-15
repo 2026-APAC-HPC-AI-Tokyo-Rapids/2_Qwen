@@ -10,6 +10,7 @@ import tempfile
 from importlib.metadata import version
 from pathlib import Path
 
+from build_native import check_cpu_bridge
 from contract import (
     HEADER,
     PATCHED_HEADER_SHA256,
@@ -44,6 +45,7 @@ def check(root: Path) -> dict:
     if "deep_gemm" in sys.modules:
         raise ValueError("Unexpected top-level deep_gemm provider")
     module = load_provider(root)
+    check_cpu_bridge(module._C, torch)
     if module.__version__ != "0.1.5":
         raise ValueError("Unsupported private provider version")
     symbols = [
@@ -120,8 +122,9 @@ extern "C" void* instantiate() {{
         "python_symbols": symbols,
         "native_symbols": native_symbols,
         "compiled_geometries": geometries,
+        "cpu_tensor_bridge": True,
         "cuda_initialized": False,
-        "limitations": "Native library import and SM90 compilation only. GPU launch, symmetric memory, math, changed-input graph replay, memory fit and throughput remain unverified.",
+        "limitations": "Native import, CPU tensor bridge and SM90 compilation only. CUDA buffer slicing, GPU launch, symmetric memory, math, changed-input graph replay, memory fit and throughput remain unverified.",
     }
 
 

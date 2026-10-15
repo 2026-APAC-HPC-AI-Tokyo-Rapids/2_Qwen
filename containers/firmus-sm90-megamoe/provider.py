@@ -5,13 +5,13 @@ import sys
 import types
 from pathlib import Path
 
-from contract import verify_package
+from contract import verify_runtime_package
 
 
 def load_provider(root: Path):
     root = root.resolve()
     package = root / "deep_gemm"
-    verify_package(package)
+    verify_runtime_package(package)
     if str(root) in sys.path or str(package) in sys.path:
         raise ValueError("Private provider root must not be on sys.path")
     name = "apac_sm90.deep_gemm"
