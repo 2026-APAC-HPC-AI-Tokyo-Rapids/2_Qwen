@@ -18,4 +18,8 @@ COPY containers/check-vllm-image.py /opt/apac/check-vllm-image.py
 COPY containers/fix-vllm-dense-draft-ep.py /opt/apac/fix-vllm-dense-draft-ep.py
 RUN python3 /opt/apac/fix-vllm-dense-draft-ep.py /usr/local/lib/python3.12/dist-packages/vllm/config/speculative.py >/opt/apac/dense-draft-ep-repair.json
 
+# CPU-only native-ABI gate for the future decoder adapter. No serving backend is changed.
+COPY containers/firmus-sm90-megamoe /opt/apac/firmus-sm90-megamoe
+RUN python3 -c 'import sys; sys.path.insert(0,"/opt/apac/firmus-sm90-megamoe"); from contract import WHEEL_URL; import urllib.request; urllib.request.urlretrieve(WHEEL_URL,"/tmp/sgl-deep-gemm.whl")' && python3 /opt/apac/firmus-sm90-megamoe/install.py /tmp/sgl-deep-gemm.whl /opt/apac/sm90-provider && rm /tmp/sgl-deep-gemm.whl && bash /opt/apac/firmus-sm90-megamoe/check_cpu_image.sh
+
 # Keep the official OpenAI server entrypoint for docker run.

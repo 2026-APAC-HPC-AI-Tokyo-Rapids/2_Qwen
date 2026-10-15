@@ -6,6 +6,7 @@ import os
 import runpy
 import shutil
 import subprocess
+import sys
 from importlib.metadata import version
 from pathlib import Path
 
@@ -54,3 +55,19 @@ print(
         }
     )
 )
+
+# The actual native-library imports and three SM90 compile cases ran in the
+# Docker build, so their report is embedded in the image rather than host state.
+mega_gate = json.loads(Path("/opt/apac/sm90-megamoe-cpu-gate.json").read_text())
+assert mega_gate["passed"] and mega_gate["cuda_initialized"] is False
+assert mega_gate["ordinary_dense_provider"] == "vllm.third_party.deep_gemm"
+assert mega_gate["private_provider"] == "apac_sm90.deep_gemm"
+assert len(mega_gate["compiled_geometries"]) == 3
+sys.path.insert(0, "/opt/apac/firmus-sm90-megamoe")
+try:
+    runpy.run_path("/opt/apac/firmus-sm90-megamoe/contract.py")["verify_package"](
+        Path("/opt/apac/sm90-provider/deep_gemm")
+    )
+finally:
+    sys.path.pop(0)
+print(json.dumps(mega_gate))
