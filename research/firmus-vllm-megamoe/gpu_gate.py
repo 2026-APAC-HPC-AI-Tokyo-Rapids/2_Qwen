@@ -121,7 +121,7 @@ def independent_reference(
     return reference.to(torch.bfloat16)
 
 
-def errors(observed, expected, live) -> dict:
+def errors(observed, expected, live, *, context=None) -> dict:
     import torch
 
     if not torch.isfinite(observed).all():
@@ -137,6 +137,7 @@ def errors(observed, expected, live) -> dict:
     if relative_l2 >= 0.025 or maximum >= 0.08 or not zero_ok:
         raise AssertionError(
             {
+                "context": context,
                 "relative_l2": relative_l2,
                 "max_scaled_error": maximum,
                 "masked_rows_zero": zero_ok,
@@ -147,6 +148,16 @@ def errors(observed, expected, live) -> dict:
         "max_scaled_error": maximum,
         "masked_rows_zero": zero_ok,
     }
+
+
+def mask_routes(weights, ids, masks, *, native):
+    # Native Triton assignment expects real global expert IDs. A disabled route
+    # contributes zero through its weight; Mega explicitly supports -1 IDs.
+    if native:
+        weights.masked_fill_(masks, 0.0)
+    else:
+        ids.masked_fill_(masks, -1)
+    return weights, ids
 
 
 class Pipeline:
@@ -217,18 +228,17 @@ class Pipeline:
         self.indices = indices
         self.info = info
 
-    def route(self, hidden, masks):
+    def route(self, hidden, masks, *, native=False):
         logits = self.lib.torch.nn.functional.linear(hidden, self.gate) + self.bias
         weights, ids, _ = self.lib.fused_topk(
             hidden, logits, 8, True, indices_type=self.lib.torch.int32
         )
-        ids.masked_fill_(masks, -1)
-        return weights, ids
+        return mask_routes(weights, ids, masks, native=native)
 
     def native_forward(self, marks=None):
         if marks:
             marks[0].record()
-        weights, ids = self.route(self.full, self.masks)
+        weights, ids = self.route(self.full, self.masks, native=True)
         self.native_routes = (weights, ids)
         if marks:
             marks[1].record()
@@ -636,6 +646,7 @@ def run(output: Path):
         "native_source_sha256": NATIVE_HASHES,
         "private_provider": mega.__name__,
         "memory": memory,
+        "route_mask_contract": {"native": "retain valid global expert IDs and zero masked weights", "mega": "set masked expert IDs to -1", "validation": "same effective weighted contributions; masked rows remain exactly zero"},
         "cases": [],
         "timings": [],
         "useful_for_serving": None,
@@ -659,7 +670,7 @@ def run(output: Path):
                 # Recompute each backend's routing with its exact GEMM shape.
                 # Shape-dependent BF16 gate GEMM rounding may choose different
                 # boundary routes; it must not cause a false kernel rejection.
-                nw, ni = case.route(case.full, case.masks)
+                nw, ni = case.route(case.full, case.masks, native=True)
                 mw, mi = case.route(
                     case.full[case.start : case.stop].contiguous(),
                     case.masks[case.start : case.stop],
@@ -694,7 +705,7 @@ def run(output: Path):
                 expected_native = independent_reference(
                     case.full, ni, nw, w13, s13, w2, s2, rank, mega_contract=False
                 )
-                active = case.live[:, None].expand(-1, 8)
+                active = ~case.masks
                 active_slots = int(active.sum().item())
                 route_id_differences = int(((mega_ids != ni) & active).sum().item())
                 weight_delta = (mega_weights - nw).abs()
@@ -720,9 +731,9 @@ def run(output: Path):
                         "replay": replay,
                         "routing_equivalence": routing_equivalence,
                         "live_per_rank": case.info["live_per_rank"],
-                        "mega": errors(case.mega_result, expected_mega, case.live),
+                        "mega": errors(case.mega_result, expected_mega, case.live, context={"rows": rows, "pattern": pattern, "replay": replay, "backend": "mega"}),
                         "native": errors(
-                            case.native_result, expected_native, case.live
+                            case.native_result, expected_native, case.live, context={"rows": rows, "pattern": pattern, "replay": replay, "backend": "native"}
                         ),
                     }
                 )

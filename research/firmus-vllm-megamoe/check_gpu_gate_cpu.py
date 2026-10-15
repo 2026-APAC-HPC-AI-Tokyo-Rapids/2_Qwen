@@ -65,8 +65,8 @@ def pipeline_wiring():
     case.workspace13, case.workspace2 = object(), object()
     case.start, case.stop, case.shard = 8, 16, 8
     weights, ids, quant, scale = object(), object(), object(), object()
-    case.route = lambda hidden, masks: (
-        calls.append(("routing", hidden, masks)) or (weights, ids)
+    case.route = lambda hidden, masks, **kwargs: (
+        calls.append(("routing", hidden, masks, kwargs)) or (weights, ids)
     )
     reduce_impl = object()
     case.experts = SimpleNamespace(
@@ -112,6 +112,7 @@ def pipeline_wiring():
         "finalize",
         "all_reduce",
     ]
+    assert calls[0][3] == {"native": True}
     apply = calls[2][1]
     assert apply[0] is case.native_output and apply[1] is quant
     assert (
@@ -135,6 +136,7 @@ def pipeline_wiring():
         "mega",
         "all_gather",
     ]
+    assert calls[1][3] == {}
     assert calls[1][1] is case.local
     assert calls[2][1][0] is case.local
     assert calls[2][2] == {
@@ -154,6 +156,47 @@ def pipeline_wiring():
         "mega": "split/native route/predispatch/MegaMoE/allgather",
         "double_dispatch_or_allreduce": False,
     }
+
+
+class MaskMatrix:
+    def __init__(self, rows):
+        self.rows = [list(row) for row in rows]
+
+    def masked_fill_(self, mask, value):
+        for row, flags in zip(self.rows, mask):
+            for slot, disabled in enumerate(flags):
+                if disabled:
+                    row[slot] = value
+
+
+def mask_contract():
+    count = 0
+    for rows in gate.ROWS:
+        for pattern in gate.PATTERNS:
+            for replay in range(gate.REPLAYS):
+                plan = gate.layout(rows, pattern, replay)
+                masks = [[not live or (slot == 7 and index == 0) for slot in range(8)] for live, index in zip(plan["live"], plan["indices"])]
+                original_ids = [[(index * 13 + slot) % 128 for slot in range(8)] for index in plan["indices"]]
+                original_weights = [[(slot + 1) / 36 for slot in range(8)] for _ in original_ids]
+                nw, ni = MaskMatrix(original_weights), MaskMatrix(original_ids)
+                mw, mi = MaskMatrix(original_weights), MaskMatrix(original_ids)
+                gate.mask_routes(nw, ni, masks, native=True)
+                gate.mask_routes(mw, mi, masks, native=False)
+                assert ni.rows == original_ids
+                for row in range(plan["padded"]):
+                    expected = sum(w * (expert + 1) for expert, w, disabled in zip(original_ids[row], original_weights[row], masks[row]) if not disabled)
+                    native = sum(w * (expert + 1) for expert, w in zip(ni.rows[row], nw.rows[row]))
+                    mega = sum(w * (expert + 1) for expert, w in zip(mi.rows[row], mw.rows[row]) if expert >= 0)
+                    assert abs(native - expected) < 1e-12 and abs(mega - expected) < 1e-12
+                    assert all(0 <= expert < 128 for expert in ni.rows[row])
+                    if not plan["live"][row]:
+                        assert native == mega == 0
+                # The previous shared -1 representation is deliberately rejected
+                # by the native input contract, including an all-empty replay.
+                if any(any(row) for row in masks):
+                    assert any(expert < 0 for row in mi.rows for expert in row)
+                count += 1
+    return count
 
 
 def check():
@@ -210,6 +253,7 @@ def check():
         "patterns": gate.PATTERNS,
         "changed_input_replays": gate.REPLAYS,
         "pipeline_wiring": pipeline_wiring(),
+        "native_mega_effective_mask_cases": mask_contract(),
         "reference_identity_method": "same-runtime AST equality against SHA256-pinned upstream function source",
         "reference_function_source_sha256": UPSTREAM_MATH_SHA256,
         "changed_equation_negative_control_rejected": True,

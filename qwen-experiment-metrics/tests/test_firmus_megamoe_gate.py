@@ -85,6 +85,7 @@ def test_finite_harness_cpu_ownership_and_call_contract(tmp_path):
     result = json.loads(report.read_text())
     assert result["passed"] is True and result["cuda_execution"] is False
     assert result["finite_layout_cases"] == 160
+    assert result["native_mega_effective_mask_cases"] == 160
     assert result["pipeline_wiring"]["double_dispatch_or_allreduce"] is False
 
 
