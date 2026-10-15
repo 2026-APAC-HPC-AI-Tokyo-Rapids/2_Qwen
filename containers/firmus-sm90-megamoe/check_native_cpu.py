@@ -51,7 +51,7 @@ def check(model, output):
     config = VllmConfig(
         model_config=ModelConfig(model=str(model), dtype="bfloat16", max_model_len=8192, enforce_eager=True, skip_tokenizer_init=True),
         parallel_config=ParallelConfig(tensor_parallel_size=1, data_parallel_size=4, data_parallel_size_local=4, data_parallel_rank=rank, enable_expert_parallel=True, distributed_executor_backend="external_launcher", all2all_backend="allgather_reducescatter"),
-        scheduler_config=SchedulerConfig(max_model_len=8192, max_num_batched_tokens=4096, max_num_seqs=48),
+        scheduler_config=SchedulerConfig(max_model_len=8192, is_encoder_decoder=False, max_num_batched_tokens=4096, max_num_seqs=48),
         device_config=DeviceConfig(device="cpu"),
         kernel_config=KernelConfig(moe_backend="apac_sm90_megamoe"),
     )

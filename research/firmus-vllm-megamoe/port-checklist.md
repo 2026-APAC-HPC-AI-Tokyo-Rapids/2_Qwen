@@ -41,17 +41,17 @@ SGLang の native router と同じく、Prefill グループを選ぶ処理を�
 | R09 | Decode が HTTP エラーを返した場合に 200 の SSE として隠さない | 上流 response header を受ける前後の失敗を試す | 修正済み。元実装は実HTTPで失敗、修正後はP503/D429をそのまま返す |
 | R10 | クライアント切断で上流 stream を閉じ、後続 request を汚さない | D body の途中で cancel。接続と予約の残留を検査 | 修正済み。P待ち切断の接続／予約残留を再現後に解消。D切断も実HTTP合格 |
 | R11 | 接続 pool、retry、timeout、keepalive の差が重複生成や待ちを作らない | 実装と遅延 HTTP。P は fresh connection、D は pool の理由を確認 | 未確認 |
-| R12 | 公式 client の streaming と router の API が一致する | 実際の AIPerf command とリクエスト fixture を照合 | 未確認 |
+| R12 | 公式 client の streaming と router の API が一致する | 実際の AIPerf command とリクエスト fixture を照合 | official-aiperf.shはchat/completions・streaming・min/max200・ignore_eosを使用。同API/条件のHTTP fixture合格。公式実行はGPU待ち |
 
 ## 内部 DP と scheduler
 
 | ID | 確認対象と合格条件 | 根拠と方法 | 状態 |
 | --- | --- | --- | --- |
 | D01 | P3×DP4 と D1×DP4、attention TP1、MoE EP4 が全 rank で成立 | native group の構築、rank mapping、worker argv を実行検査 | 未確認 |
-| D02 | P と D の内部 rank 選択が待機中と実行中の request を考慮する | SGLang total_requests と vLLM load balancer の値、更新周期を照合 | 差あり。SGLang total_requests/毎iteration、vLLMはinflight床値＋KV圧力加算／100ms。未再現 |
+| D02 | P と D の内部 rank 選択が待機中と実行中の request を考慮する | SGLang total_requests と vLLM load balancer の値、更新周期を照合 | 差あり。SGLangは毎iteration公開・読取りは20ms間隔・最初の最小rankへ投機加算。vLLMはinflight床値＋KV圧力加算・100ms更新・同点巡回。未再現 |
 | D03 | KV 受信待ちの request と実行 batch の上限を混同しない | admission、waiting、running、transfer pending の遷移を追う | vLLMはwaiting＋skipped_waitingを集計しKV受信待ちも含む。running上限とは分離。SGLangとの全遷移照合は未完 |
 | D04 | P48、D32 の request 上限と P4096、D2048 の token budget の意味が一致 | 投機 token と padding を含む native scheduler を照合 | 未確認 |
-| D05 | prefill chunk と前回結果の引渡しが追加の iteration 待ちを作らない | SGLang early handoff patch と vLLM output processing を追う | 未確認 |
+| D05 | prefill chunk と前回結果の引渡しが追加の iteration 待ちを作らない | SGLang early handoff patch と vLLM output processing を追う | 差あり。SGLangはreadyな前回結果を次forward前に処理。vLLM step_with_batch_queueは次executeから先に進む。時刻traceで確認が必要 |
 | D06 | 空 rank も他 rank と同じ回数、同じ順序で MoE collective に入る | idle dummy、prefill/decode 混在、EAGLE proposal の実コード検査 | 未確認 |
 | D07 | DP 同期時の padded rows が workspace と graph の上限内に収まる | 0、1、各 graph 境界、4096 と最大 dummy batch を検査 | 未確認 |
 | D08 | prefix cache、chunked prefill、preemption の有効条件が対応する | 両 framework の有効設定と cache lifecycle を照合 | 未確認 |
@@ -64,10 +64,10 @@ SGLang の native router と同じく、Prefill グループを選ぶ処理を�
 | M02 | topk、softmax、renormalize、global expert ID、同点時の扱いを対応付ける | SGLang と vLLM router の実装、固定 logits の比較 | 未確認 |
 | M03 | gate/up の連結順、interleave、scale 配置、down 配置が一致 | 識別可能な FP8 byte と scale で transform の往復検査 | 未確認 |
 | M04 | load 時の shard と packed weight が全層で正しく登録される | native loader を meta/CPU で通す。94層の重複保持を確認 | 新規CPU診断はnative factoryと全128 expertの所有／weight・scale loaderを通す。Actions実行待ち |
-| M05 | kernel 本体と precision patch が基準と一致 | provider、header、patch の hash と演算順の照合 | 未確認 |
+| M05 | kernel 本体と precision patch が基準と一致 | provider、header、patch の hash と演算順の照合 | header SHA54798071、precision patch SHA462d6823は基準と一致。native libraryはTorch ABI用に再build。GPU演算は別判定 |
 | M06 | activation FP8、SiLU、routing weight、FP32 combine の演算順が一致 | independent reference。許容値を変更せず比較 | CPU と実 GPU の対応を再確認待ち |
 | M07 | native runner が dispatch、combine、all-reduce を二重に実行しない | runner 全体から実 method まで呼出しを検証 | installed runnerの部分CPUテスト合格済み。native factoryからの構築をActionsで追加確認予定 |
-| M08 | workspace を層間で共有しても同時使用せず、graph replay が参照先を保持する | stream、DP group、lifetime、再入、DBO 無効を追跡 | 未確認 |
+| M08 | workspace を層間で共有しても同時使用せず、graph replay が参照先を保持する | stream、DP group、lifetime、再入、DBO 無効を追跡 | groupをkeyにworkspaceをcacheし、DBOを拒否する実装を確認。並行streamとgraphの実行時保証は未確認 |
 | M09 | 空 rank、hot expert、境界 expert、全 inactive、変更した入力を処理できる | eager と graph、実寸、4096 rows/rank。旧検証との対象差を確認 | 新 adapter の GPU 検証未到達 |
 | M10 | target の backend 選択が dense EAGLE と通常 DeepGEMM を変えない | native dispatch と module namespace、draft config を検査 | 未確認 |
 | M11 | 不対応設定をロード前に拒否し、CPU の stub が本番処理に混ざらない | TP、EP、placement、dtype、shared expert、LoRA の拒否検査 | 既存 guard あり。全拒否項目の再確認待ち |
@@ -106,7 +106,7 @@ SGLang の native router と同じく、Prefill グループを選ぶ処理を�
 | O05 | full serving を未合格 adapter で投入できない | 同じ image/source の成功 gate を pre-submit で照合 | 実装済み。megamoe_gate_run未設定は配備前に停止。同一image SHA/size、診断source、数値、rank/replay、Slurm完了を照合 |
 | O06 | 起動した4グループと16 rank の readiness を確認する | argv と実 config、worker 生存、endpoint、GPU UUID | 未確認 |
 | O07 | CPU assertion の失敗で GPU 測定結果の回収を失わない | GPU 前の検査と回収後の設定判定を分離 | 未確認 |
-| O08 | 公式 workload、warmup60/measure120/grace30、parser と入力を固定する | official-aiperf、実 command、raw 集計を照合 | 未確認 |
+| O08 | 公式 workload、warmup60/measure120/grace30、parser と入力を固定する | official-aiperf、実 command、raw 集計を照合 | shared official-aiperf.shで60/120/30、ISL4000/OSL200、seed2026、cache-bust、SLA3000/20とrequire-eligibleを確認。実行時command照合は残る |
 | O09 | profile、追加 probe、監視通信を公式測定に混ぜない | launcher と時間区間、metrics 前後 snapshot を検査 | 未確認 |
 | O10 | 失敗しても最初の traceback と各段階の結果を保存する | init 前の状態保存、finally、Actions の always 回収を検査 | 初期化前に失敗状態を保存し各rankのtracebackを残す。失敗再現fixture合格。Actions回収はalways |
 | O11 | 同じ実験の重複投入や無制限 retry をしない | commit/run/attempt/Slurm ID を一意に追跡。再投入前に terminal を確認 | この見直しからの投入0件 |
@@ -184,3 +184,15 @@ GlooとCpuPlatformを使うため、NCCL、GPU演算、CUDA Graphの合格証拠
 config.jsonのSHA256は `f056921e486d3e22aed125b5218b87146ea2ac838ccf1521dea5b08f809e8d59`。
 結果は `/opt/apac/sm90-megamoe-native-cpu-gate.json` に保存し、イメージ出力前にも再検証する。
 ログインノード上の専用CPUワークフローとBubblewrap経路は削除する。
+
+## 再現に残る処理の差
+
+- 内部DPの選択は、SGLangの `data_parallel_controller.py` とvLLMの `DPLBAsyncMPClient.get_core_engine_for_request` で異なる。外側のPD routerの未完了数を揃えても、この差は解消しない。
+- 基準の3個のprefill server-infoは `enable_dp_lm_head=false`。SGLangではattention TP1でもLM headはTP4で、vLLMの現在のTP1構成はLM headを各rankに保持する。decodeは基準もDP LM headを有効にしている。prefillのhead分割、通信、メモリ量を同等とみなせない。
+- SGLangのprefill早期引渡しは、前回のCPU転送完了を確認して次のforward前に結果処理する。vLLMのbatch queueは次のexecuteを先行させるため、既存のNIXL対応だけを根拠に同じ引渡し時刻と判定しない。
+- vLLM V2のEAGLE処理は `last_token_indices` でhidden stateを選んでからdraftのlogitsを計算する。SGLangのselected-head-row patchに対応する処理はあるが、KV転送やgraph内の一致まで証明するものではない。
+- 現行のadapter GPU gateは手製のTP4 groupと設定差替えを使用する。今回のAWS CPU検査が成功してから、GPU gateも本番のTP1/DP4/EP4、native factory/runnerへ揃え、masked/hot/空rankとeager/graphを検証する必要がある。
+
+AWS Actions `38769972984` はnative import・SM90 compile後、追加CPU診断の `SchedulerConfig` に必須の `is_encoder_decoder` がないため停止した。
+Qwenのdecoder-only構成に合わせ `false` を明示する。
+GPUジョブ投入は0件で、失敗したAWSインスタンスの終了とログ回収を確認した。
