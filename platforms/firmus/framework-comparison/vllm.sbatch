@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J vllm-firmus-megamoe-c192
+#SBATCH -J run
 #SBATCH -p hpcai
 #SBATCH -N 2
 #SBATCH -t 00:17:00

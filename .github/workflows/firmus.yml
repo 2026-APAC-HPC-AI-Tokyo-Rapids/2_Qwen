@@ -124,9 +124,8 @@ jobs:
         run: |
           cd "${RUNTIME_DIR}"
           export_mode=ALL
-          job_name=qwen3_pd
-          if [[ '${{ inputs.megamoe_gate }}' == true ]]; then export_mode=NONE; job_name=vllm_sm90_gate; fi
-          job_id="$(sbatch --parsable --export="${export_mode}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name="${job_name}" "${RUNTIME_DIR}/scripts/submit.sbatch")"
+          if [[ '${{ inputs.megamoe_gate }}' == true ]]; then export_mode=NONE; fi
+          job_id="$(sbatch --parsable --export="${export_mode}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=run "${RUNTIME_DIR}/scripts/submit.sbatch")"
           [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"

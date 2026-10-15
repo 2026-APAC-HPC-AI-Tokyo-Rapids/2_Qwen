@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J sglang-firmus-tp2
+#SBATCH -J run
 #SBATCH -p hpcai
 #SBATCH -N 2
 #SBATCH -t 00:17:00

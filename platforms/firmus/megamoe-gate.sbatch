@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -J vllm-sm90-megamoe-gate
+#SBATCH -J run
 #SBATCH -p hpcai
 #SBATCH -N 1
 #SBATCH -n 1

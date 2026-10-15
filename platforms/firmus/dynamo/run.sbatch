@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -J qwen-dynamo-pd
+#SBATCH -J run
 #SBATCH -p hpcai
 #SBATCH -N 2
 #SBATCH -t 00:17:00
