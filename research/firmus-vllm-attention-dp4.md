@@ -1,5 +1,7 @@
 # Native vLLM attention-DP4 candidate
 
+**Final result:** rejected. Official score0; raw4788.51tok/s;70.89%good. ITL caused839 misses versus30TTFT misses. Exact parser/rawrecords/77canonicalchecksums/exports/provenance/accounting/GitHub artifact removal and workflow cleanup verified; own terminal staging directly confirmed absent. Continue the separate full modified-MegaMoE recreation; no native tuning rerun.
+
 Owner: aizakovzky, issue21 vLLM structural track. Prepared2026-10-15. Komori retains SGLang MegaMoE/SLA; Nattyu3's basic-track tuning and Katayama's profiling are separate. No teammate branch/job is changed.
 
 ## Decision and comparison
@@ -48,3 +50,21 @@ Validation: full CPU372 passed, one existing skip,22 subtests; Ruff, shell synta
 Exact compute2a231009b6607c8ab17dfb5d5b2496cfa444466a created [Actions38716553408 attempt1](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38716553408). Full CI116360534655 and provisioning116360815347 succeeded; execution116362060724 is waiting for the scheduler. Exact source/run/attempt/profilefalse/benchmark/official/both image identities and seven staged Git blobs were independently verified before mapping Command/WorkDir to `/scratch/home/ACCOUNT/qwen/runs/pd-38716553408-1.4gms6V038B` and its scripts/submit.sbatch.
 
 Slurm23738 was submitted2026-10-15 10:00:02UTC(19:00:02JST); last check PENDING Priority, zero GPU runtime. No captures, readiness or performance result yet. Canonical expected `/srv/qwen-artifacts/38716553408/1/`. Never duplicate or clean staging before terminal canonical checks. Separate Luna max heartbeat follows this exact run every10minutes and escalates meaningful changes to Sol. Issue21comment6189486835 records the mapping. Previous gate23684 and profile23572 remain closed and cleaned. Original checkout's four submission/build deletions are preserved.
+
+
+## Terminal result: correct execution, rejected performance
+
+Actions38716553408attempt1 /compute2a231009 /Slurm23738 ran on g1/g4 from2026-10-15 14:04:56 to14:17:04UTC(23:04:56–23:17:04JST),12m08, FAILED1:0. Seven workers ready after422s; all seven server-info exports match P6TP2EP1/c108/spec2/P58graphs and DTP1DP4EP4/nativeTriton/perrank2048blocks64/admission64/batch2048/FULL_AND_PIECEWISE29mappedbuckets. All four decoder ranks log completed target/draft capture passes; capture/config does not measure replay share. Actual official60/120/30 benchmark completed,4384 total JSONL records including2961 measured,0requesterrors,0OSLmismatch,was_cancelledfalse.
+
+| Metric | Native DP4 result |
+|---|---:|
+| Official score |0, ineligible |
+| Raw output throughput |4788.508031953611 tok/s |
+| Good requests |2099/2961 (70.88821344140493%) |
+| TTFT mean / p99 |571.3148749780479 /2908.097104000023 ms |
+| ITL mean / p99 |19.47604366509797 /21.91144158492462 ms |
+| TTFT misses / ITL misses / both |30 /839 /7 |
+
+First fatal is the official parser eligibility gate `good_request_fraction is below 0.90`; no preceding worker/proxy fatal was found. Later scheduler cleanup signals are teardown, not the cause. Exact compute-pinned parser independently replays identical score.json and identical required rejection. Independent raw per-request SLA classification reproduces2099good and the miss counts. Server-side low TTFT alone does not make this configuration eligible: ITL misses dominate. Compared with E4 best5265.31qualified/5330.18raw and nativeEP44516.47qualified/4998.14raw, this single measured DP4 configuration is rejected. Do not claim an isolated architectural/framework effect or infer that MegaMoE shares the same outcome.
+
+Canonical `/srv/qwen-artifacts/38716553408/1/`: all77 SHA256SUMS entries independently pass; exact source/run/attempt/profilefalse/official/server+client images, raw JSON/JSONL, seven exports and accounting present. No run-success expected. Actions collection/upload/summary/terminal staging cleanup succeeded; archive116474788676success and GitHub artifacts empty. Direct read-only check confirms exact terminal staging absent. No native tuning rerun: human clarified full Komori modified-MegaMoE architecture recreation as primary. That distinct adapter is now CPU-image verified and has one finite correctness/graph gate before full serving.
