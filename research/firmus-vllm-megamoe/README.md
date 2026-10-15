@@ -294,3 +294,15 @@ Release the normal official 60/120/30, concurrency/workers 192 pass using the sa
 The completed diagnostic archive and cleanup are recorded in [issue 21](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/issues/21#issuecomment-6200232757). Nsight 2026.5.1 removes the old unsupported-driver warning and the explicit incomplete-event drop diagnostics in this run, but all reports still have a generic completeness warning. Five prefill GPU processes additionally report only 48 or 49 of 50 CUPTI buffers returned. All recorded launch APIs correlate to kernel activity, all recorded kernels correlate back to an API, and repeated decoder graph IDs have consistent node counts. Those consistency checks cannot exclude jointly missing API/kernel records, so strict capture acceptance remains failed.
 
 Prepare a bounded collection-lifecycle repair: use a one-second CUPTI flush interval, as suggested by the observed buffer diagnostic, and stop the vLLM range after the diagnostic client's measured requests and grace period finish. The prior five-second stop occurred while requests were still in flight. This intentionally lengthens only the diagnostic capture; no official workload, image, arithmetic or normal-benchmark path changes. The next GPU run must establish whether it actually fixes buffer closure; no successful repair is claimed from CPU checks. The validator now retains all worker diagnoses even when an earlier report fails.
+
+## Reproducible kernel-interval analysis
+
+After exporting all four native reports with the pinned Nsight2026.5.1 into a local analysis directory, run:
+
+```sh
+python3 research/firmus-vllm-megamoe/analyze_kernel_intervals.py /path/to/exported-sqlite-directory > /path/to/kernel-intervals.json
+```
+
+Expected names are `nsys-prefill-0.sqlite`, `nsys-prefill-1.sqlite`, `nsys-prefill-2.sqlite`, and `nsys-decode-0.sqlite`. This reader reuses the scheduler's strict CUDA-warning/coverage gate before summarizing any timings. It additionally requires16 distinct GPU UUIDs and the MegaMoE main/pre-dispatch kernels on every GPU. It records input database hashes and leaves the exports untouched. The older38786945340 exports are rejected for their unresolved completeness warnings; there is no option to override that rejection.
+
+Per GPU, the output distinguishes duration sums from interval unions, reports overlap and gaps within the first-to-last recorded kernel span, and retains the ten largest kernel names and the exact MegaMoE template names. Cross-host clocks are not aligned. These are instrumented kernel observations, not official throughput, complete critical-path measurements or recoverable speedup estimates; gaps may contain copies or communication. CPU fixtures cover overlaps, nesting, adjacency, malformed intervals, unresolved warnings, missing metadata/kernels, repeated physical GPUs and read-only behavior. The67 focused analysis/profile tests pass; actual accepted GPU evidence remains dependent on the queued repaired capture38819084366.
