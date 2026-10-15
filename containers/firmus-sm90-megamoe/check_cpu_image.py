@@ -109,6 +109,9 @@ extern "C" void* instantiate() {{
             )
             if output.stat().st_size == 0:
                 raise ValueError("Empty cubin")
+    from check_adapter_cpu import check as check_adapter
+
+    adapter_cpu = check_adapter()
     if torch.cuda.is_initialized():
         raise ValueError("CPU gate unexpectedly initialized CUDA")
     return {
@@ -123,6 +126,7 @@ extern "C" void* instantiate() {{
         "native_symbols": native_symbols,
         "compiled_geometries": geometries,
         "cpu_tensor_bridge": True,
+        "vllm_adapter_cpu": adapter_cpu,
         "cuda_initialized": False,
         "limitations": "Native import, CPU tensor bridge and SM90 compilation only. CUDA buffer slicing, GPU launch, symmetric memory, math, changed-input graph replay, memory fit and throughput remain unverified.",
     }

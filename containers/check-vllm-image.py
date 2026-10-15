@@ -72,3 +72,5 @@ try:
 finally:
     sys.path.pop(0)
 print(json.dumps(mega_gate))
+
+assert mega_gate["vllm_adapter_cpu"]["passed"]

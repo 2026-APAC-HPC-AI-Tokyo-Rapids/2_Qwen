@@ -18,10 +18,10 @@ COPY containers/check-vllm-image.py /opt/apac/check-vllm-image.py
 COPY containers/fix-vllm-dense-draft-ep.py /opt/apac/fix-vllm-dense-draft-ep.py
 RUN python3 /opt/apac/fix-vllm-dense-draft-ep.py /usr/local/lib/python3.12/dist-packages/vllm/config/speculative.py >/opt/apac/dense-draft-ep-repair.json
 
-# CPU-only native-ABI gate for the future decoder adapter. No serving backend is changed.
+# Private SM90 provider and explicit opt-in Qwen3 DP4/EP4 serving backend.
 COPY containers/firmus-sm90-megamoe /opt/apac/firmus-sm90-megamoe
 COPY sm90-provider /opt/apac/sm90-provider
 COPY sm90-native-source /tmp/apac-sm90-native-source
-RUN bash /opt/apac/firmus-sm90-megamoe/check_cpu_image.sh && rm -rf /tmp/apac-sm90-native-source
+RUN python3 /opt/apac/firmus-sm90-megamoe/install_vllm_adapter.py /usr/local/lib/python3.12/dist-packages/vllm >/opt/apac/vllm-sm90-adapter.json && bash /opt/apac/firmus-sm90-megamoe/check_cpu_image.sh && rm -rf /tmp/apac-sm90-native-source
 
 # Keep the official OpenAI server entrypoint for docker run.
