@@ -49,6 +49,10 @@ storage_fstype="$(stat -f -c '%T' "${storage_root}")"
 case "${storage_fstype}" in ext2/ext3|xfs) :;; *) printf 'Unsupported Buildah storage filesystem %s: %s\n' "${storage_fstype}" "${storage_root}" >&2; exit 1;; esac
 cp "${GITHUB_WORKSPACE}/containers/vllm.Dockerfile" "${GITHUB_WORKSPACE}/containers/check-vllm-image.py" "${GITHUB_WORKSPACE}/containers/fix-vllm-dense-draft-ep.py" "${context}/containers/"
 cp -a "${GITHUB_WORKSPACE}/containers/firmus-sm90-megamoe" "${context}/containers/"
+# Apply the existing patch on the builder, which owns git; keep the runtime lean.
+python3 -c 'import sys; sys.path.insert(0,sys.argv[1]); from contract import WHEEL_URL; import urllib.request; urllib.request.urlretrieve(WHEEL_URL,sys.argv[2])' "${context}/containers/firmus-sm90-megamoe" "${context}/sm90-provider.whl"
+python3 "${context}/containers/firmus-sm90-megamoe/install.py" "${context}/sm90-provider.whl" "${context}/sm90-provider"
+rm "${context}/sm90-provider.whl"
 mega_sources="$(git -C "${GITHUB_WORKSPACE}" ls-files containers/firmus-sm90-megamoe | while read -r path; do jq -n --arg path "${path}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${path}")" '{path:$path,blob_oid:$oid}'; done | jq -s .)"
 base_reference="$(sed -n 's/^FROM //p' "${context}/containers/vllm.Dockerfile")"
 base_manifest_sha256="$(skopeo inspect --raw "docker://${base_reference}" | tee "${BUILD_DIR}/logs/base-oci-manifest.json" | sha256sum | awk '{print $1}')"
