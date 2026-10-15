@@ -1,5 +1,19 @@
 # Qwen3 submission
 
+## vLLM MegaMoE candidate
+
+The vLLM candidate uses `run/vllm.sbatch`; GitHub Actions stages this exact file as the allocation's `scripts/submit.sbatch`. The former `platforms/firmus/framework-comparison/vllm.sbatch` path is a symlink to it. `run/submit.sbatch` below remains the historical SGLang entrypoint. The vLLM candidate has **no verified MegaMoE goodput result yet**; see [the port checklist](../research/firmus-vllm-megamoe/port-checklist.md).
+
+Use the repository checkout as the build input. `build/setup-vllm.sh` delegates to the same pinned Buildah recipe as `.github/workflows/vllm-image.yml`. A `[require-build]` push builds and checks the image on AWS without allocating Firmus GPUs. Record the resulting verified image path, SHA-256, size and sidecar in both `configs/firmus-vllm-megamoe-gate.json` and `configs/firmus-framework.json`. Full serving remains blocked until the actual adapter's finite GPU gate has passed for the same image and diagnostic source.
+
+For a benchmark, the existing Firmus Actions workflow runs `scripts/provision-firmus-framework.sh`, prepares the pinned model, BF16 EAGLE3 draft, tokenizer cache, serving image, AIPerf client image, proxy and scoring script, and submits `run/vllm.sbatch` from that prepared directory. The launcher expects this staged directory as `SLURM_SUBMIT_DIR`; it is not a standalone download of one file. All experiment allocations must go through Actions. Once the gate is recorded, a `[cluster:firmus] [nodes:2]` commit reuses the verified image and runs the candidate on 16 H200s.
+
+The submitted launcher starts three TP1/DP4/EP4 prefill groups and one TP1/DP4/EP4 decode group, checks effective server configurations, then invokes the shared fixed AIPerf 0.12.0 command with concurrency 192, ISL/OSL 4000/200, warmup/measurement/grace 60/120/30 seconds, and TTFT/ITL limits 3000/20 ms. The local validator accepts a good-request fraction of at least 0.90 and records `goodput_requests_per_second` and the score `goodput × 200`; it is not organizer-provided software. Profiles are rejected by this launcher.
+
+Completion requires Slurm `COMPLETED 0:0`, `run-success`, raw JSON and per-request JSONL, the exact client command and provenance, and a fresh parser replay matching the saved score. A failed post-measurement Prometheus snapshot is logged without replacing AIPerf's result. Actions archives logs, results and source provenance for independent review. CPU fixtures and a successful image build do not establish model execution, NIXL transfer, numerical accuracy, or a qualifying goodput result.
+
+## Historical SGLang submission
+
 `build/setup.sh` invokes the pinned Buildah recipe from this repository. The repository root, including `containers/` and `scripts/build-sglang-container.sh`, is part of the build input; `submission/` alone is not a standalone container-build context. The recipe checks out SGLang commit `fc275674a97d78553b22597ee72c8fd48f5420f4` and installs the versions fixed by the container files. It requires root, Buildah, Skopeo, Umoci, SquashFS tools, Git, GitHub CLI, and jq. `GIT_MIRROR_DIR` may contain a local bare mirror named `5_SGLang_Src.git`; otherwise the recipe clones the repository with GitHub CLI.
 
 From the repository root, build an Enroot-compatible SquashFS with a writable temporary directory, output directory, and OCI cache repository:

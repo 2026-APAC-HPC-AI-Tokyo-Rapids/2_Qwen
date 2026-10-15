@@ -37,7 +37,7 @@ async def serve(app):
 
 
 @pytest.mark.parametrize("endpoint", ["completions", "chat/completions"])
-@pytest.mark.parametrize("mode", ["stream", "json", "prefill_error", "decode_error", "bad_json", "cancel", "prefill_cancel"])
+@pytest.mark.parametrize("mode", ["stream", "json", "prefill_error", "decode_error", "bad_json", "cancel", "prefill_cancel", "prefill_timeout", "prefill_connect_failure"])
 def test_pd_http_contract(endpoint, mode):
     async def exercise():
         spec = importlib.util.spec_from_file_location("actual_pd_proxy", ROOT / "platforms/firmus/framework-comparison/vllm-proxy.py")
@@ -90,9 +90,25 @@ def test_pd_http_contract(endpoint, mode):
             d_port = await stack.enter_async_context(serve(decode))
             proxy.global_args = SimpleNamespace(prefiller_instances=[("127.0.0.1", p_port)], decoder_instances=[("127.0.0.1", d_port)])
             proxy_port = await stack.enter_async_context(serve(proxy.app))
+            if mode == "prefill_timeout":
+                proxy.app.state.prefill_clients[0]["client"].timeout = httpx.Timeout(0.2)
             client = await stack.enter_async_context(httpx.AsyncClient(base_url=f"http://127.0.0.1:{proxy_port}", timeout=5))
             original = {"model": "qwen", "stream": mode != "json", "max_tokens": 200, "min_tokens": 200, "ignore_eos": True, "temperature": 0, "stop": ["stop"], "stream_options": {"include_usage": True}}
             original.update({"messages": [{"role": "user", "content": "keep"}]} if endpoint.startswith("chat") else {"prompt": "keep"})
+            if mode == "prefill_connect_failure":
+                # Inject the transport error; the downstream still uses real HTTP.
+                def refuse(request):
+                    raise httpx.ConnectError("connection refused", request=request)
+
+                client_info = proxy.app.state.prefill_clients[0]
+                healthy_client = client_info["client"]
+                client_info["client"] = await stack.enter_async_context(httpx.AsyncClient(base_url=healthy_client.base_url, transport=httpx.MockTransport(refuse)))
+                response = await client.send(client.build_request("POST", "/v1/" + endpoint, json=original), stream=True)
+                assert response.status_code == 500
+                await response.aclose()
+                assert proxy.app.state.prefill_clients[0]["in_flight"] == 0
+                assert prefill_seen == decode_seen == []
+                client_info["client"] = healthy_client
             task = asyncio.create_task(client.send(client.build_request("POST", "/v1/" + endpoint, json=original), stream=True))
             await asyncio.wait_for(prefill_started.wait(), 5)
             assert proxy.app.state.prefill_clients[0]["in_flight"] == 1
@@ -107,14 +123,15 @@ def test_pd_http_contract(endpoint, mode):
                 finally:
                     release_prefill.set()
                 return
-            release_prefill.set()
+            if mode != "prefill_timeout":
+                release_prefill.set()
             response = await task
             try:
                 assert proxy.app.state.prefill_clients[0]["in_flight"] == 0
                 if mode.endswith("error"):
                     assert response.status_code == (503 if mode == "prefill_error" else 429)
                     assert json.loads(await response.aread())["error"].endswith("failed")
-                elif mode == "bad_json":
+                elif mode in ("bad_json", "prefill_timeout"):
                     assert response.status_code == 500
                 elif mode == "json":
                     assert response.headers["content-type"].startswith("application/json")
@@ -127,12 +144,15 @@ def test_pd_http_contract(endpoint, mode):
                     assert await response.aread() == b'data: {"text":"answer"}\n\ndata: [DONE]\n\n'
             finally:
                 await response.aclose()
+            if mode == "prefill_timeout":
+                await asyncio.wait_for(prefill_closed.wait(), 5)
+                assert decode_seen == []
             if mode in ("stream", "cancel"):
                 await asyncio.wait_for(decode_closed.wait(), 5)
             p_data, p_id = prefill_seen[0]
             assert p_data["max_tokens"] == 1 and p_data["stream"] is False
             assert "min_tokens" not in p_data and "stream_options" not in p_data
-            if mode not in ("prefill_error", "bad_json"):
+            if mode not in ("prefill_error", "bad_json", "prefill_timeout"):
                 d_data, d_id = decode_seen[0]
                 assert d_id == p_id
                 assert d_data == {**original, "kv_transfer_params": metadata}

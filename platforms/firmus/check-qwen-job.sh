@@ -22,4 +22,11 @@ if jq -e '.measurement_mode == "profile-only" and .profile == true and .framewor
 else
   test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
   test -s "${RUNTIME_DIR}/results/score.json"
+  if jq -e '.workload == "official"' "${RUNTIME_DIR}/source/provenance.json" >/dev/null; then
+    test -s "${RUNTIME_DIR}/results/profile_export.jsonl"
+    replay=$(mktemp)
+    trap 'rm -f -- "${replay}"' EXIT
+    python3 "${RUNTIME_DIR}/scripts/parse-aiperf-result.py" "${RUNTIME_DIR}/results/profile_export_aiperf.json" "${replay}" --concurrency "$(jq -er '.concurrency' "${RUNTIME_DIR}/source/firmus-framework.json")" --require-eligible --command "${RUNTIME_DIR}/results/aiperf-command.txt" --provenance "${RUNTIME_DIR}/results/aiperf-provenance.txt"
+    cmp "${replay}" "${RUNTIME_DIR}/results/score.json"
+  fi
 fi

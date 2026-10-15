@@ -12,6 +12,10 @@ CPU 合格、実イメージ CPU 合格、GPU 合格、公式実行合格を区�
 チェック完了には、対象の実装と実行した検証の根拠を併記する。
 チェックが未完了でも進める項目は、GPU が必要な理由と一度の割当での確認方法を記す。
 
+最終条件は、提出用 `submission/run/vllm.sbatch` をActionsから実行し、実モデルのPD処理と大会条件のAIPerfが完走すること。
+goodput、good率、TTFT/ITL、エラー数を生データから検証し、SLA適格のスコアを得るまで性能検証済みとはしない。
+ビルド成功と有限kernel診断だけでは、この条件を満たさない。
+
 ## 基準と判定
 
 | ID | 確認対象と合格条件 | 根拠と方法 | 状態 |
@@ -32,7 +36,7 @@ SGLang の native router と同じく、Prefill グループを選ぶ処理を�
 | --- | --- | --- | --- |
 | R01 | 最少の未完了数を持つ Prefill を選び、同数時は順番に回す | 非同期同時投入、偏った応答時間、回復後の選択を試す | 既存同時投入テスト合格。予約[2,1,1]、同数時の巡回とbusy回避。複数Pの実HTTP検証は残る |
 | R02 | 最初の await より前に予約し、応答 body 完了まで保持する | ヘッダー先行、body 遅延で予約数を観測 | 実HTTP合格。Pがヘッダーを返した後もbody完了まで予約保持 |
-| R03 | 成功、接続失敗、HTTP エラー、JSON 不正、timeout、cancel で一度だけ予約を解放 | 各出口で負荷計数、接続の close、次の request を検査 | P503、JSON不正、P待ちcancel、D429、D stream cancelを実HTTPで確認。connect/timeoutは未完 |
+| R03 | 成功、接続失敗、HTTP エラー、JSON 不正、timeout、cancel で一度だけ予約を解放 | 各出口で負荷計数、接続の close、次の request を検査 | P503、JSON不正、P待ちcancel、D429、D stream cancelとP body timeoutを実HTTPで確認。ConnectError注入後の予約解放・正常リクエスト復旧も合格 |
 | R04 | 未起動、異常、復旧した worker の選択が基準と対応する | SGLang health policy と vLLM の起動確認、実行中の扱いを照合 | 未確認 |
 | R05 | Prefill 完了後に不要な待機や同期を挟まず Decode に渡す | body 完了時刻と Decode POST 開始を CPU HTTP で検査 | 実HTTPでP body以前にDへ送らないことを確認。handoffの実測遅延はGPU待ち |
 | R06 | prompt、sampling、stop、ignore_eos、max/min tokens を保存する | P の一時的な max_tokens=1 が D へ漏れないことを検査 | 実HTTP合格。Pだけmax_tokens=1、Dは元のsampling/min/max/stop/ignore_eosを保持 |
@@ -110,7 +114,7 @@ SGLang の native router と同じく、Prefill グループを選ぶ処理を�
 | O09 | profile、追加 probe、監視通信を公式測定に混ぜない | launcher と時間区間、metrics 前後 snapshot を検査 | 未確認 |
 | O10 | 失敗しても最初の traceback と各段階の結果を保存する | init 前の状態保存、finally、Actions の always 回収を検査 | 初期化前に失敗状態を保存し各rankのtracebackを残す。失敗再現fixture合格。Actions回収はalways |
 | O11 | 同じ実験の重複投入や無制限 retry をしない | commit/run/attempt/Slurm ID を一意に追跡。再投入前に terminal を確認 | この見直しからの投入0件 |
-| O12 | terminal、公式結果、原データ、checksum、残留 job を確認して完了とする | Actions、Slurm accounting、保存正本を照合 | GPU 実行後 |
+| O12 | terminal、公式結果、原データ、checksum、残留 job を確認して完了とする | Actions、Slurm accounting、保存正本を照合 | 終了判定にraw exportの再採点とscoreの一致確認を追加。GPU 実行後に最終確認 |
 
 ## GPU 投入前の完了条件
 
@@ -170,8 +174,7 @@ GPUジョブの投入は0件。
 - EAGLE、early handoff、target/draft KVの寿命はソース照合が未完。
 - full modelのKV/workspace/graph同居、数値、SLA goodputはGPUでしか確定できない。
 
-Actionsの `[megamoe-cpu]` は既存イメージを使うCPU診断専用。
-cluster/build/gateタグとの混在はvalidateで拒否する。
+専用の `[megamoe-cpu]` 経路は廃止し、実イメージのCPU診断はAWSビルドに統合した。
 `megamoe_gate_run` は成功した有限GPU gateの実行ディレクトリが確認できるまで `null` とする。
 
 ## AWSでの実イメージ検証
