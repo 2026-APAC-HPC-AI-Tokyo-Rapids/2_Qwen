@@ -14,6 +14,11 @@ def validate_capture(database: Path, tp: int) -> dict:
         if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='CUPTI_ACTIVITY_KIND_KERNEL'").fetchone():
             raise ValueError(f"no CUDA kernels captured in {database.name}; expected kernels on {tp} GPUs")
         rows = connection.execute("SELECT deviceId, COUNT(*) FROM CUPTI_ACTIVITY_KIND_KERNEL GROUP BY deviceId").fetchall()
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE name='DIAGNOSTIC_EVENT'").fetchone():
+            warnings = [row[0] for row in connection.execute("SELECT DISTINCT text FROM DIAGNOSTIC_EVENT WHERE severity > 1")]
+            incomplete = [text for text in warnings if "Not all CUDA events" in text or ("CUDA driver version" in text and "not supported" in text)]
+            if incomplete:
+                raise ValueError(f"incomplete CUDA capture in {database.name}: {incomplete}")
     if len(rows) != tp or any(count <= 0 for _, count in rows):
         raise ValueError(f"expected kernels on {tp} GPUs, got {rows}")
     return {"gpu_count": len(rows), "kernel_count": sum(count for _, count in rows)}
@@ -22,21 +27,34 @@ def validate_capture(database: Path, tp: int) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("runtime", type=Path)
+    parser.add_argument("--nsys", type=Path, default=Path("/opt/nsys/bin/nsys"))
     args = parser.parse_args()
     results = {}
-    for row in (args.runtime / "source/worker-endpoints.tsv").read_text().splitlines():
+    endpoints = args.runtime / "source/worker-endpoints.tsv"
+    selected = args.runtime / "source/profile-worker-endpoints.tsv"
+    if selected.is_file():
+        rows = selected.read_text().splitlines()
+        if len(rows) != 1 or rows[0].split("\t")[0] != "decode-0" or rows[0].split("\t")[-1] != "4":
+            raise ValueError("decoder-only capture requires exactly decode-0 TP4")
+        if rows[0] not in endpoints.read_text().splitlines():
+            raise ValueError("profile worker is not a serving endpoint")
+        endpoints = selected
+    for row in endpoints.read_text().splitlines():
         name, _host, _port, tp = row.split("\t")
         report = args.runtime / f"profile/nsys-{name}.nsys-rep"
         if not report.is_file() or report.stat().st_size == 0:
             raise ValueError(f"missing Nsight report: {report}")
         database = args.runtime / f"profile/nsys-{name}.sqlite"
-        subprocess.run(["/opt/nsys/bin/nsys", "export", "--type=sqlite", f"--output={database}", str(report)], check=True)
-        results[name] = {"report": report.name, **validate_capture(database, int(tp))}
-        database.unlink()
-    expected_gpus = sum(int(row.split("\t")[3]) for row in (args.runtime / "source/worker-endpoints.tsv").read_text().splitlines())
-    if expected_gpus != 16 or sum(value["gpu_count"] for value in results.values()) != 16:
-        raise ValueError("expected complete 16-GPU worker coverage")
-    (args.runtime / "profile/validation.json").write_text(json.dumps({"valid": True, "workers": results}, indent=2) + "\n")
+        try:
+            subprocess.run([str(args.nsys), "export", "--type=sqlite", f"--output={database}", str(report)], check=True)
+            results[name] = {"report": report.name, **validate_capture(database, int(tp))}
+        finally:
+            database.unlink(missing_ok=True)
+    expected_gpus = sum(int(row.split("\t")[3]) for row in endpoints.read_text().splitlines())
+    required_gpus = 4 if selected.is_file() else 16
+    if expected_gpus != required_gpus or sum(value["gpu_count"] for value in results.values()) != required_gpus:
+        raise ValueError("incomplete selected worker GPU coverage")
+    (args.runtime / "profile/validation.json").write_text(json.dumps({"valid": True, "workers": results, "scope": "decode-0" if selected.is_file() else "all-workers", "cuda_event_completion_trace": False, "limitations": "Kernel timing diagnostic only; no clean throughput or complete critical-path claim."}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

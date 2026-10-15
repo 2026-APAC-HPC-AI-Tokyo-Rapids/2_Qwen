@@ -18,7 +18,7 @@ SUMMARY = runpy.run_path(str(ROOT / "scripts/summarize-firmus-run.py"))["summari
 
 @pytest.mark.parametrize("framework", ["sglang", "vllm"])
 @pytest.mark.parametrize("failure", [None, "start", "stop"])
-@pytest.mark.parametrize("worker_count", [6, 7])
+@pytest.mark.parametrize("worker_count", [1, 6, 7])
 def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None, framework: str, worker_count: int) -> None:
     requests = []
     request_lock = threading.Lock()
@@ -29,7 +29,7 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
             with request_lock:
                 requests.append((self.path, json.loads(body) if body else None, "Phase profiling (profiling) complete |" in (tmp_path / "logs/aiperf.log").read_text()))
                 number = len(requests)
-            self.send_response(500 if self.path == f"/{failure}_profile" and number % worker_count == 1 else 200)
+            self.send_response(500 if self.path == f"/{failure}_profile" and ((number - 1) % worker_count == 0) else 200)
             self.end_headers()
             self.wfile.write(b"response\n")
 
@@ -44,6 +44,8 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"framework": framework}))
     workers = [(f"prefill-{n}", 2) for n in range(6)] + [("decode-0", 4)] if worker_count == 7 else [(f"prefill-{n}", 2) for n in range(4)] + [(f"decode-{n}", 4) for n in range(2)]
     (tmp_path / "source/worker-endpoints.tsv").write_text("".join(f"{name}\t127.0.0.1\t{server.server_port}\t{tp}\n" for name, tp in workers))
+    if worker_count == 1:
+        (tmp_path / "source/profile-worker-endpoints.tsv").write_text(f"decode-0\t127.0.0.1\t{server.server_port}\t4\n")
     (tmp_path / "logs/aiperf.log").write_text("Phase profiling (profiling) started\n")
     sleep = tmp_path / "bin/sleep"
     sleep.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >>\"$SLEEP_RECORD\"\nif [[ $1 == 1 ]]; then printf 'Phase profiling (profiling) complete | elapsed=75.00s\\n' >>\"${SLEEP_RECORD%/*}/logs/aiperf.log\"; fi\n")
@@ -177,3 +179,42 @@ def test_vllm_seven_worker_profile_validation(tmp_path: Path, monkeypatch) -> No
     assert len(validation["workers"]) == 7
     assert sum(worker["gpu_count"] for worker in validation["workers"].values()) == 16
     assert not list(profile.glob("*.sqlite"))
+
+
+@pytest.mark.parametrize("selection", ["decode-0\t127.0.0.1\t30200\t4\n", "prefill-0\t127.0.0.1\t30100\t2\n", "decode-0\t127.0.0.1\t30200\t2\n"])
+def test_decoder_only_profile_requires_selected_four_ranks(tmp_path: Path, monkeypatch, selection: str) -> None:
+    source = tmp_path / "source"
+    profile = tmp_path / "profile"
+    source.mkdir()
+    profile.mkdir()
+    (source / "worker-endpoints.tsv").write_text("prefill-0\t127.0.0.1\t30100\t2\ndecode-0\t127.0.0.1\t30200\t4\n")
+    (source / "profile-worker-endpoints.tsv").write_text(selection)
+    (profile / "nsys-decode-0.nsys-rep").write_text("report")
+
+    def export(command, **_kwargs):
+        database = Path(next(value for value in command if value.startswith("--output=")).split("=", 1)[1])
+        with sqlite3.connect(database) as connection:
+            connection.execute("CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (deviceId INTEGER)")
+            connection.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?)", [(rank,) for rank in range(4)])
+
+    monkeypatch.setattr(subprocess, "run", export)
+    monkeypatch.setattr("sys.argv", ["validate", str(tmp_path)])
+    if selection.startswith("decode-0") and selection.endswith("4\n"):
+        runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"), run_name="__main__")
+        result = json.loads((profile / "validation.json").read_text())
+        assert result["scope"] == "decode-0" and result["workers"]["decode-0"]["gpu_count"] == 4
+        assert not list(profile.glob("*.sqlite"))
+    else:
+        with pytest.raises(ValueError, match="exactly decode-0 TP4"):
+            runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"), run_name="__main__")
+
+
+def test_profile_rejects_missing_event_diagnostic(tmp_path: Path) -> None:
+    database = tmp_path / "report.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (deviceId INTEGER)")
+        connection.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?)", [(rank,) for rank in range(4)])
+        connection.execute("CREATE TABLE DIAGNOSTIC_EVENT (severity INTEGER, text TEXT)")
+        connection.execute("INSERT INTO DIAGNOSTIC_EVENT VALUES (2, 'Not all CUDA events might have been collected')")
+    with pytest.raises(ValueError, match="incomplete CUDA capture"):
+        VALIDATE(database, 4)

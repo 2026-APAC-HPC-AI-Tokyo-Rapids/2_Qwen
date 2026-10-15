@@ -4,6 +4,8 @@ set -euo pipefail
 runtime_dir=${1:?runtime directory required}
 framework=$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${runtime_dir}/source/firmus-framework.json")
 client_log=${2:-${runtime_dir}/logs/aiperf.log}
+endpoints="${runtime_dir}/source/worker-endpoints.tsv"
+if [[ -s "${runtime_dir}/source/profile-worker-endpoints.tsv" ]]; then endpoints="${runtime_dir}/source/profile-worker-endpoints.tsv"; fi
 start_body=
 if [[ "${framework}" == sglang ]]; then start_body='{"activities":["CUDA_PROFILER"]}'; fi
 start_requested=false
@@ -14,7 +16,7 @@ stop_workers() {
   while IFS=$'\t' read -r name host port tp; do
     curl --fail --silent --show-error --max-time 180 -X POST "http://${host}:${port}/stop_profile" >"${runtime_dir}/profile/${prefix}-${name}.txt" 2>"${runtime_dir}/profile/${prefix}-${name}.stderr" &
     pids+=("$!")
-  done <"${runtime_dir}/source/worker-endpoints.tsv"
+  done <"${endpoints}"
   for pid in "${pids[@]}"; do wait "${pid}" || status=1; done
   return "${status}"
 }
@@ -38,8 +40,8 @@ while IFS=$'\t' read -r name host port tp; do
   curl --fail --silent --show-error --max-time 60 -X POST "http://${host}:${port}/start_profile" -H 'Content-Type: application/json' -d "${start_body}" >"${runtime_dir}/profile/start-${name}.txt" 2>"${runtime_dir}/profile/start-${name}.stderr" &
   pids+=("$!")
   count=$((count + 1))
-done <"${runtime_dir}/source/worker-endpoints.tsv"
-expected_workers=$(awk 'END {print NR}' "${runtime_dir}/source/worker-endpoints.tsv")
+done <"${endpoints}"
+expected_workers=$(awk 'END {print NR}' "${endpoints}")
 [[ "${count}" -eq "${expected_workers}" && "${count}" -gt 0 ]] || exit 1
 start_status=0
 for pid in "${pids[@]}"; do wait "${pid}" || start_status=1; done

@@ -30,6 +30,10 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         topology = "P4 × TP2 / D2 × TP4 EP1"
     if workload == "official" and identity.get("framework") == "vllm" and config.get("concurrency") == 104:
         topology = "P6 × TP2 / D1 × TP4 EP1"
+    if identity.get("framework") == "vllm" and config.get("concurrency") == 108:
+        decoder = read_artifact(root, "server-info-decode-0.json").get("vllm_config", {})
+        ep = decoder.get("parallel_config", {}).get("enable_expert_parallel")
+        topology = "P6 × TP2 / D1 × attention TP4" + (", MoE EP4" if ep is True else " (expert placement: see server-info)")
     expected_reports = 7 if topology == "P6 × TP2 / D1 × TP4 EP1" else 6
     lines = ["### Firmus Qwen", "", f"- Status: **{status}**; Slurm `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'unavailable')}**; H200 × 16; {topology}; concurrency **{config.get('concurrency', 'unavailable')}**.", f"- Workload: {workload}, ISL 4000 / OSL 200, warmup / benchmark / grace **{phases} s**; **not an official submission**."]
     if identity.get("dynamo"):
@@ -46,7 +50,10 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         lines += ["", "Validated AIPerf result unavailable; inspect the logs."]
     if profile:
         workers = capture.get("workers", {})
-        gpu_coverage = f"{sum(worker['gpu_count'] for worker in workers.values())} / 16 GPUs" if capture else "GPU coverage unverified"
+        selected_decoder = capture.get("scope") == "decode-0" or bool(list(root.rglob("profile-worker-endpoints.tsv")))
+        expected_reports = 1 if selected_decoder else expected_reports
+        expected_gpus = 4 if selected_decoder else 16
+        gpu_coverage = f"{sum(worker['gpu_count'] for worker in workers.values())} / {expected_gpus} GPUs" if capture else "GPU coverage unverified"
         notes = sorted(root.rglob("interpretation.txt"))
         capture_note = notes[0].read_text().strip() if notes else "Capture timing unavailable; inspect profile-capture.log."
         lines += ["", f"Nsight: **{len(reports)} / {expected_reports} reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **Instrumented score; do not use for performance comparison.**"]

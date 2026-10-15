@@ -10,7 +10,7 @@
 #SBATCH -e runs/sglang-%j.err
 # H200: six TP2/EP1 prefills, one attention TP4/MoE TP1/EP4 decoder; unchanged FP8 weights.
 # Native full-route EP4 versus E4/c108/E8M0-off. Wider expert GEMMs may improve decoder capacity; not compact routes.
-# One official 60/120/30 allocation, no profiler; ordinary decoder reduction retained (not teammate E5 NVLS).
+# Diagnostic: native EP4 decoder only; ordinary reduction and the previous clean configuration retained.
 set -euo pipefail
 
 ROOT=${SLURM_SUBMIT_DIR}
@@ -42,7 +42,7 @@ TAIL_IP=$(ip_of "${TAIL}")
 mounts() {
   mkdir -p "${ROOT}/home/$1"
   local profiler_mount=
-  if [[ "${PROFILE:-false}" == true ]]; then profiler_mount=",${ROOT}/nsys:/opt/nsys:ro"; fi
+  if [[ "${PROFILE:-false}" == true && ( "$1" == decode-0 || "$1" == profile-validation ) ]]; then profiler_mount=",${ROOT}/nsys:/opt/nsys:ro"; fi
   echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,/dev/infiniband:/dev/infiniband${profiler_mount}"
 }
 
@@ -188,7 +188,8 @@ grep -hE 'Avg prompt throughput' "${ART}/prefill-0.log" "${ART}/prefill-4.log" |
 echo "AIPERF ok"
 if [[ "${PROFILE:-false}" == true ]]; then
   mkdir -p "${ROOT}/profile/client"
-  printf 'The official results/ pass completes before CUDA capture. Nsight is attached but capture is off during that pass; compare its timings with the existing uninstrumented control. Diagnostic client:20/30/30 at the same c104 and workload; five-second CUDA/NVTX/OSRT trace; profile/client/ is not an official score.\n' >"${ROOT}/profile/interpretation.txt"
+  grep -F $'decode-0\t' "${ROOT}/source/worker-endpoints.tsv" >"${ROOT}/source/profile-worker-endpoints.tsv"
+  printf 'Decoder-only native EP4 diagnostic. All seven workers serve the unchanged c108/spec2 workload, but only decode-0 TP4 is instrumented. results/ is an instrumented diagnostic context, not a new clean baseline. CUDA capture occurs only in the later 20/30/30 client pass; profile/client/ is nonofficial. CUDA event completion tracing is disabled because graph/IPC events are unsupported; kernel node tracing remains enabled. No complete critical-path or hardware-saturation claim is permitted.\n' >"${ROOT}/profile/interpretation.txt"
   bash "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" "${ROOT}/profile/client/aiperf.log" >"${ROOT}/logs/profile-capture.log" 2>&1 &
   profile_capture_pid=$!
   srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" profile >"${ROOT}/profile/client/aiperf.log" 2>&1
