@@ -80,6 +80,8 @@ cleanup_all() {
 trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# The installed adapter passed 64 numerical/graph records in 38786945340.
+# Keep that finite check on the profile path; normal official runs stay uninstrumented.
 if [[ "${PROFILE:-false}" == true ]]; then
   # Reuse this allocation and exact serving image; no profiler during numerical validation.
   NVIDIA_VISIBLE_DEVICES=0,1,2,3 timeout --signal=TERM --kill-after=30s 300s srun --mpi=none --export=ALL --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=16 --gpu-bind=none --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${VLLM}" --container-mounts="$(mounts adapter-check)" bash -c 'export CUDA_VISIBLE_DEVICES=0,1,2,3; export HOME="$1/home/adapter-check" XDG_CACHE_HOME="$1/home/adapter-check/.cache" TRITON_CACHE_DIR="$1/home/adapter-check/.triton"; exec torchrun --standalone --nproc_per_node=4 "$1/scripts/megamoe/adapter_gpu_gate.py" --output "$1/results/gate.json"' gate "${ROOT}" >"${ART}/adapter-check.log" 2>&1
