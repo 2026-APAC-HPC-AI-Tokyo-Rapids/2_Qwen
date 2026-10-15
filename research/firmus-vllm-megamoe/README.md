@@ -2,7 +2,28 @@
 
 Owner: aizakovzky vLLM adapter track under issue 21; Komori retains SGLang MegaMoE and SLA repair. This audit did not submit a build or GPU job, modify serving/runtime files, or change a teammate branch. Inspected on 2026-10-15 JST. Source evidence is from cached compute bb77e51f79789c4861a4f0262d6a777443f98821 and selected public package files in the exact existing images.
 
-## Decision
+## Verified finite GPU result and next decision (2026-10-15)
+
+Compute `ead4b8e83ff9fe288807538c6fd4ffafa115f70e`, Actions [38699779914 attempt 1](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38699779914), Slurm23684 completed0:0 in1m11. Canonical `/srv/qwen-artifacts/38699779914/1/`: all11 checksums, exact provenance, raw timing recomputation, run-success and GitHub artifact removal independently verified. All40 cases (10 row counts, four patterns), four changing-input replays on four distinct H200s passed:640 paired records, unchanged numerical thresholds and exact-zero inactive rows. No ordered expert-ID differences were observed in887556 recorded active route slots; this is synthetic coverage, not trained-model equivalence.
+
+| Global rows | Native median ms | Mega median ms | Native p95 ms | Mega p95 ms | Latency reduction |
+|---|---:|---:|---:|---:|---:|
+|128|0.195360|0.186896|0.196576|0.189152|4.33%|
+|288|0.240224|0.231232|0.242656|0.233536|3.74%|
+|324|0.249552|0.233616|0.251392|0.236032|6.39%|
+|768|0.371088|0.298112|0.373056|0.300768|19.67%|
+
+Each timing uses100 paired graph samples and the maximum rank per iteration, including each complete routing/communication/expert path. Eager component medians must not be summed as an end-to-end critical path. Symmetric allocation197805344 bytes/rank and aligned capacity384 passed this standalone gate; full model/KV coexistence and larger warmup/draft-prefill shapes remain unproved. No official benchmark score exists for this diagnostic.
+
+Decision: do not promote the TP4-preserving adapter to a full serving experiment solely from these modest representative-size gains. Its comparator is our slower native MoE-EP4 run (4516.47 qualified /4998.14 raw tok/s), not the best expert-TP4/EP1 E4 baseline (5265.31 qualified /5330.18 raw). Komori's independently verified SGLang38664373784 result remains6344.96 qualified /6611.00 raw,95.9748% good. Neither kernel timing nor different-configuration scores establish an isolated cause or a7k prediction.
+
+Next bounded work: audit native vLLM attention-DP4/TP1 plus MoE-EP4 compatibility with NIXL, dense EAGLE, DP synchronization, KV allocation and complete dispatch/combine ownership before deciding whether to implement it. Pinned parallel.py matches release v0.30.0 exactly; release NIXL source explicitly offsets side-channel port by DP index and supports producerTP greater than decoderTP. These are source-level feasibility clues, not runtime proof. Other release files still require exact-image verification; DP engine identity and draft/idle-rank behavior remain open. No new serving job is released by this decision. Existing native profile23572 remains outstanding and untouched.
+
+Cleanup exception: exact terminal staging `megamoe-38699779914-1.ajjlZghW8M` has not been confirmed removed because Firmus closed two SSH connections before output. Canonical evidence is safe. Recheck existence and provenance after connectivity returns before cleaning only that owned terminal directory. Do not retry submission or alter teammate resources.
+
+The following initial audit is historical; subsequent verified results above supersede its unpassed-gate status.
+
+## Initial decision
 
 A bounded decoder-only port is plausible while retaining attention TP4, DP1, native dense draft TP4, and the existing NIXL KV topology. DP4 attention is required by Komori's SGLang adapter guard, not an intrinsic requirement established by the native MegaMoE API. This is an implementation proposal, not GPU compatibility or performance evidence.
 

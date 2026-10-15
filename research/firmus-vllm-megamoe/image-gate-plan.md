@@ -1,6 +1,6 @@
 # Private SM90 provider: first executable image gate
 
-Status: new gate files prepared and locally checked; **the actual Linux native image import/compile gate has not run**. Existing Dockerfile/build/check scripts are unchanged by this subtask. Root owns review, build integration, tagged Actions and GPU decisions.
+Current status (2026-10-15): native CPU image38693955483 and finite four-GPU gate38699779914 have passed independent verification. See README.md for exact evidence, timing limitations and the decision to audit the DP4 architecture before a full serving port. The original preparation notes below are historical; they are not current gate status.
 
 ## Concrete local evidence
 
