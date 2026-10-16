@@ -30,9 +30,10 @@ def check_rope_wiring(tree, path):
             calls.append(("old_rope", kwargs["fused_set_kv_buffer_arg"]))
             return q, k
 
-    args = NS(attention_backend="fa3", kv_cache_dtype="fp8_e4m3")
-    attention_layer = NS(use_fused_qk_norm_rope=False, head_dim=128, num_heads=64, num_kv_heads=4, q_size=8192, kv_size=512, rotary_emb=Rotary(), q_norm=None, k_norm=None, alt_stream=None)
-    ns = {"self": attention_layer, "_is_cuda": True, "get_moe_a2a_backend": lambda: NS(is_megamoe=lambda: True), "get_server_args": lambda: args, "MRotaryEmbedding": type("MRotaryEmbedding", (), {}), "torch": NS(bfloat16="bf16", float8_e4m3fn="fp8", empty=Tensor), "apply_qk_norm": lambda **kw: (kw["q"], kw["k"]), "apply_rope_fp8_q": lambda *xs: calls.append(("fp8_rope", xs)), "enable_fused_set_kv_buffer": lambda fb: True, "create_fused_set_kv_buffer_arg": lambda **kw: "fused_kv"}
+    args = NS(attention_backend="fa3", kv_cache_dtype="fp8_e4m3", cuda_graph_config=NS(prefill=NS(tc_compiler="piecewise")))
+    deterministic = NS(enabled=False)
+    attention_layer = NS(use_fused_qk_norm_rope=False, head_dim=128, num_heads=64, num_kv_heads=4, q_size=8192, kv_size=512, rotary_emb=Rotary(), q_norm=NS(weight=Tensor((128,)), variance_epsilon=1e-6), k_norm=NS(weight=Tensor((128,)), variance_epsilon=1e-6), alt_stream=None)
+    ns = {"self": attention_layer, "_is_cuda": True, "get_moe_a2a_backend": lambda: NS(is_megamoe=lambda: True), "get_server_args": lambda: args, "MRotaryEmbedding": type("MRotaryEmbedding", (), {}), "torch": NS(bfloat16="bf16", float8_e4m3fn="fp8", empty=Tensor), "envs": NS(SGLANG_ENABLE_DETERMINISTIC_INFERENCE=NS(get=lambda: deterministic.enabled)), "apply_qk_norm": lambda **kw: (calls.append(("norm",)), (kw["q"], kw["k"]))[1], "apply_qknorm_rope_fp8_q": lambda *xs: calls.append(("qknorm_fp8_rope", xs)), "apply_rope_fp8_q": lambda *xs: calls.append(("fp8_rope", xs)), "enable_fused_set_kv_buffer": lambda fb: True, "create_fused_set_kv_buffer_arg": lambda **kw: "fused_kv"}
     nodes = [n for n in attention.body if isinstance(n, ast.FunctionDef) and n.name in ("apply_qk_norm_rope", "forward_core")]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), ns)  # noqa: S102 - real pinned methods, CPU-only collaborators
     attention_layer.attn = lambda q, k, v, fb, **kw: (calls.append(("attention", kw["save_kv_cache"])), q)[1]
@@ -43,11 +44,22 @@ def check_rope_wiring(tree, path):
         attention_layer.compatible_with_fused_kv_buffer = True
         exec(guard, ns)  # noqa: S102
         q, k, v = ns["apply_qk_norm_rope"](attention_layer, Tensor((7, 9216), input_dtype), "positions", None)
-        assert calls[0][0] == ("fp8_rope" if fused else "old_rope")
+        assert [c[0] for c in calls] == (["qknorm_fp8_rope"] if fused else ["norm", "old_rope"])
         assert q.dtype == ("fp8" if fused else input_dtype) and k.dtype == v.dtype == input_dtype
         ns["forward_core"](attention_layer, (None, None, (q, k, v, None)))
         assert calls[-1] == ("attention", attention_layer.use_fp8_q_rope), "FP8 RoPE must still save KV exactly once"
-    print("PASS: FP8 Q consumed by FA3; original other-dtype/backend paths; KV is still stored")
+    args.attention_backend, args.kv_cache_dtype = "fa3", "fp8_e4m3"
+    exec(guard, ns)  # noqa: S102
+    # Preserve the existing unfused-normalization fallbacks, then cast in RoPE.
+    for condition in ("deterministic", "inductor", "epsilon", "weight_dtype"):
+        calls.clear()
+        deterministic.enabled = condition == "deterministic"
+        args.cuda_graph_config.prefill.tc_compiler = "inductor" if condition == "inductor" else "piecewise"
+        attention_layer.k_norm.variance_epsilon = 1e-5 if condition == "epsilon" else 1e-6
+        attention_layer.k_norm.weight.dtype = "fp32" if condition == "weight_dtype" else "bf16"
+        ns["apply_qk_norm_rope"](attention_layer, Tensor((7, 9216)), "positions", None)
+        assert [c[0] for c in calls] == ["norm", "fp8_rope"], condition
+    print("PASS: fused QK norm feeds FP8 Q to FA3 without a second norm; guarded fallbacks; KV stored once")
 
 
 def check(source):

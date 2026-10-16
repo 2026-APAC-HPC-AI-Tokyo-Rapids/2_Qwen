@@ -10,11 +10,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("corruption", [None, "hash", "missing_dp_query", "missing_handoff", "missing_activation", "missing_rope", "router_hash", "router_lock", "missing_router", "pipeline_hash", "prefill_hash", "prefill_mode", "decode_tiles_hash"])
+@pytest.mark.parametrize("corruption", [None, "hash", "missing_dp_query", "missing_handoff", "missing_activation", "missing_rope", "missing_qknorm_rope", "router_hash", "router_lock", "missing_router", "pipeline_hash", "prefill_hash", "prefill_mode", "decode_tiles_hash"])
 def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(tmp_path, corruption):
     embedded = tmp_path / "embedded"
     embedded.mkdir()
-    patches = ["patches/sglang/firmus-staged-eagle-kv.patch", "patches/sglang/qwen3-sm90-megamoe.patch", "patches/sglang/firmus-dp-rank-query.patch", "patches/sglang/prefill-ready-handoff.patch", "patches/sglang/deepgemm-activation-layout.patch", "patches/sglang/rope-fp8-q.patch"]
+    patches = ["patches/sglang/firmus-staged-eagle-kv.patch", "patches/sglang/qwen3-sm90-megamoe.patch", "patches/sglang/firmus-dp-rank-query.patch", "patches/sglang/prefill-ready-handoff.patch", "patches/sglang/deepgemm-activation-layout.patch", "patches/sglang/rope-fp8-q.patch", "patches/sglang/qknorm-rope-fp8.patch"]
     manifest = {"applied_patches": [{"path": p, "sha256": hashlib.sha256((ROOT / p).read_bytes()).hexdigest()} for p in patches]}
     if corruption == "hash":
         manifest["applied_patches"][0]["sha256"] = "0" * 64
@@ -25,6 +25,8 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
     elif corruption == "missing_activation":
         manifest["applied_patches"].pop(4)
     elif corruption == "missing_rope":
+        manifest["applied_patches"].pop(5)
+    elif corruption == "missing_qknorm_rope":
         manifest["applied_patches"].pop()
     (embedded / "manifest.json").write_text(json.dumps(manifest))
     router = {"version": "0.3.2", "source_sha256": "bdbea1d54cce879fb83d2885d01ee3c006f242d0adbbac806f2fb2b91a5fe73d", "prefill_load": "dispatch_through_body_completion", "patch_sha256": hashlib.sha256((ROOT / "patches/sglang-router/prefill-load-lifetime.patch").read_bytes()).hexdigest(), "cargo_lock_sha256": hashlib.sha256((ROOT / "patches/sglang-router/Cargo.lock").read_bytes()).hexdigest()}

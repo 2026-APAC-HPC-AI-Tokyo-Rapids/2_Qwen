@@ -13,6 +13,8 @@ root = Path("/opt/sglang/source/python/sglang/kernels/jit")
 header = root / "csrc/elementwise/rope.cuh"
 nvcc = shutil.which("nvcc") or str(Path(os.environ.get("CUDA_HOME", "/usr/local/cuda")) / "bin/nvcc")
 specializations = [
+    "FusedRopeKernel<true,128,true,bf16_t>::run_norm_fp8",
+    "FusedRopeKernel<true,128,false,bf16_t>::run_norm_fp8",
     "FusedRopeKernel<true,128,true,bf16_t>::run_fp8",
     "FusedRopeKernel<true,128,false,bf16_t>::run_fp8",
     "FusedRopeKernel<true,128,true,bf16_t>::run",
