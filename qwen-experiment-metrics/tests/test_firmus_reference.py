@@ -321,21 +321,27 @@ def test_require_build_selects_only_this_runs_verified_image(tmp_path: Path, cor
 
 
 @pytest.mark.parametrize("role", ["prefill", "decode"])
-@pytest.mark.parametrize("corruption", [None, "dp", "cache", "backend", "admission", "draft_ep", "graph", "pull_connector"])
+@pytest.mark.parametrize("corruption", [None, "dp", "cache", "backend", "admission", "draft_ep", "graph", "pull_connector", "executor", "pipeline", "async"])
 def test_megamoe_effective_config_guard_rejects_wrong_runtime(tmp_path: Path, corruption: str | None, role: str) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     decoder = {
-        "parallel_config": {"tensor_parallel_size": 1, "data_parallel_size": 4, "enable_expert_parallel": True, "all2all_backend": "allgather_reducescatter"},
+        "parallel_config": {"tensor_parallel_size": 1, "pipeline_parallel_size": 1, "distributed_executor_backend": "mp", "data_parallel_size": 4, "enable_expert_parallel": True, "all2all_backend": "allgather_reducescatter"},
         "kernel_config": {"moe_backend": "apac_sm90_megamoe"},
         "kv_transfer_config": {"kv_connector": "NixlPushConnector"},
         "cache_config": {"cache_dtype": "fp8_e4m3", "block_size": 64, "num_gpu_blocks_override": 2048 if role == "prefill" else 6144, "enable_prefix_caching": False},
         "model_config": {"max_model_len": 8192, "enforce_eager": role == "prefill"},
-        "scheduler_config": {"max_num_batched_tokens": 4096 if role == "prefill" else 2048, "max_num_seqs": 48 if role == "prefill" else 32},
+        "scheduler_config": {"async_scheduling": True, "max_num_batched_tokens": 4096 if role == "prefill" else 2048, "max_num_seqs": 48 if role == "prefill" else 32},
         "compilation_config": {"max_cudagraph_capture_size": 128, "cudagraph_mode": [2, 1], "cudagraph_capture_sizes": [n * 4 for n in config["decode_cuda_graph_bs"]]},
         "speculative_config": {"draft_parallel_config": {"enable_expert_parallel": False, "tensor_parallel_size": 1}, "method": "eagle3", "model": "/draft", "num_speculative_tokens": 3},
     }
-    if corruption == "dp":
+    if corruption == "executor":
+        decoder["parallel_config"]["distributed_executor_backend"] = "uni"
+    elif corruption == "pipeline":
+        decoder["parallel_config"]["pipeline_parallel_size"] = 2
+    elif corruption == "async":
+        decoder["scheduler_config"]["async_scheduling"] = False
+    elif corruption == "dp":
         decoder["parallel_config"]["data_parallel_size"] = 1
     elif corruption == "cache":
         decoder["cache_config"]["num_gpu_blocks_override"] = 8192
