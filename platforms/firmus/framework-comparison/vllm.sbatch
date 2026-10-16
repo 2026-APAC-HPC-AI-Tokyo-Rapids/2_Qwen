@@ -104,6 +104,7 @@ export VLLM_NIXL_SIDE_CHANNEL_HOST=$5
 shift 5
 [[ -r /opt/apac/prefill-handoff-repair.json ]] || { echo "FATAL: serving image lacks the reviewed prefill handoff repair"; exit 1; }
 python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); sys.exit(not (r.get("push_worker_source_sha256") == "87de3ea383dd3aa95fb2c287ea26ded8a330859cc1295f9faa69047e80865c2c" and r.get("push_release_cpu_contract", {}).get("passed") is True))' /opt/apac/prefill-handoff-repair.json || { echo "FATAL: serving image lacks the producer WRITE release repair"; exit 1; }
+python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); sys.exit(not (r.get("multiproc_source_sha256") == "3ed0149a8a8e1550c4f062af40e645d1b734e70f99981bc5bf15f0360507648a" and r.get("message_queue_source_sha256") == "f3e7a3f3ff713fccbd535e0d41650ee05bdf8677e83d4b90519910645022c30b" and r.get("executor_readiness_cpu_contract", {}).get("passed") is True))' /opt/apac/prefill-handoff-repair.json || { echo "FATAL: serving image lacks the MP response-readiness repair"; exit 1; }
 role=${name%%-*}
 engine_id="$(basename "$(dirname "$(dirname "$0")")")-${name}"
 export VLLM_NIXL_SIDE_CHANNEL_PORT="$((port - 24500))"

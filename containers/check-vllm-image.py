@@ -55,6 +55,18 @@ assert handoff["push_worker_source_sha256"] == "87de3ea383dd3aa95fb2c287ea26ded8
 assert hashlib.sha256(push_source.read_bytes()).hexdigest() == handoff["push_worker_patched_sha256"]
 assert runpy.run_path("/opt/apac/fix-vllm-prefill-handoff.py")["validate_push_release"](push_source.read_bytes()) == handoff["push_release_cpu_contract"]
 assert handoff["push_release_cpu_contract"]["passed"] is True
+mp_source = Path(vllm.__file__).parent / "v1/executor/multiproc_executor.py"
+mq_source = Path(vllm.__file__).parent / "distributed/device_communicators/shm_broadcast.py"
+assert handoff["multiproc_source_sha256"] == "3ed0149a8a8e1550c4f062af40e645d1b734e70f99981bc5bf15f0360507648a"
+assert handoff["message_queue_source_sha256"] == "f3e7a3f3ff713fccbd535e0d41650ee05bdf8677e83d4b90519910645022c30b"
+assert hashlib.sha256(mp_source.read_bytes()).hexdigest() == handoff["multiproc_patched_sha256"]
+assert hashlib.sha256(mq_source.read_bytes()).hexdigest() == handoff["message_queue_patched_sha256"]
+assert runpy.run_path("/opt/apac/fix-vllm-prefill-handoff.py")["validate_executor_readiness"](mp_source.read_bytes(), mq_source.read_bytes()) == handoff["executor_readiness_cpu_contract"]
+assert handoff["executor_readiness_cpu_contract"]["passed"] is True
+transport_check = subprocess.run([sys.executable, "-c", "import json,runpy; print(json.dumps(runpy.run_path('/opt/apac/fix-vllm-prefill-handoff.py')['validate_native_response_transport']()))"], check=False, timeout=60, text=True, capture_output=True)
+print(transport_check.stdout)
+print(transport_check.stderr, file=sys.stderr)
+transport_check.check_returncode()
 assert any(p["path"] == "containers/fix-vllm-prefill-handoff.py" for p in manifest["applied_patches"])
 assert KVConnectorFactory.get_connector_class_by_name("NixlPushConnector").__name__ == "NixlPushConnector"
 print(

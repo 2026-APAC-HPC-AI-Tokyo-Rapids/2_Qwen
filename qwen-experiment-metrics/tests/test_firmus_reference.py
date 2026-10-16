@@ -195,7 +195,7 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
     # Exercise actual shell argument construction without requiring GPUs or HCAs.
     probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
     repair = tmp_path / "prefill-handoff-repair.json"
-    repair.write_text(json.dumps({"push_worker_source_sha256": "87de3ea383dd3aa95fb2c287ea26ded8a330859cc1295f9faa69047e80865c2c", "push_release_cpu_contract": {"passed": True}}))
+    repair.write_text(json.dumps({"push_worker_source_sha256": "87de3ea383dd3aa95fb2c287ea26ded8a330859cc1295f9faa69047e80865c2c", "push_release_cpu_contract": {"passed": True}, "multiproc_source_sha256": "3ed0149a8a8e1550c4f062af40e645d1b734e70f99981bc5bf15f0360507648a", "message_queue_source_sha256": "f3e7a3f3ff713fccbd535e0d41650ee05bdf8677e83d4b90519910645022c30b", "executor_readiness_cpu_contract": {"passed": True}}))
     probe = probe.replace("/opt/apac/prefill-handoff-repair.json", str(repair))
     probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "$VLLM_USE_DEEP_GEMM_E8M0" "$VLLM_USE_NCCL_SYMM_MEM" "${worker_command[@]}"\n'
     for role, tp, limit in [("prefill", 1, 48), ("decode", 1, 32)]:

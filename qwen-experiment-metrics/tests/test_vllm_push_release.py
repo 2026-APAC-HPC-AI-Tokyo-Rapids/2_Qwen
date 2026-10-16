@@ -51,7 +51,7 @@ def test_combined_installer_validates_push_before_writing_engine(tmp_path, monke
     push.write_bytes(b"unreviewed push source")
     monkeypatch.setitem(PATCH["install"].__globals__, "patch", lambda source: source + b"modified")
     with pytest.raises(ValueError, match="Unsupported pinned.*push worker"):
-        PATCH["install"](engine, push)
+        PATCH["install"](engine, push, tmp_path / "mp.py", tmp_path / "mq.py")
     assert engine.read_bytes() == original
 
 
@@ -73,9 +73,25 @@ def test_worker_release_guard_needs_only_existing_python_not_jq(tmp_path):
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     report = tmp_path / "repair.json"
-    report.write_text(json.dumps({"push_worker_source_sha256": PATCH["PUSH_SOURCE_SHA256"], "push_release_cpu_contract": {"passed": True}}))
+    report.write_text(json.dumps({"push_worker_source_sha256": PATCH["PUSH_SOURCE_SHA256"], "push_release_cpu_contract": {"passed": True}, "multiproc_source_sha256": PATCH["MP_SOURCE_SHA256"], "message_queue_source_sha256": PATCH["MQ_SOURCE_SHA256"], "executor_readiness_cpu_contract": {"passed": True}}))
     init = worker.split("role=${name%%-*}", 1)[0].replace("/opt/apac/prefill-handoff-repair.json", str(report))
     executable = tmp_path / "bin"
     executable.mkdir()
     (executable / "python3").symlink_to(sys.executable)
     subprocess.run(["/bin/bash", "-c", init, "worker.sh", "prefill-0", "30100", "/model", "1", "192.0.2.1"], env={"PATH": str(executable)}, check=True, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("change", [{}, {"multiproc_source_sha256": "wrong"}, {"message_queue_source_sha256": "wrong"}, {"executor_readiness_cpu_contract": {"passed": False}}])
+def test_worker_rejects_missing_or_invalid_executor_repair(tmp_path, change):
+    metadata = {"push_worker_source_sha256": PATCH["PUSH_SOURCE_SHA256"], "push_release_cpu_contract": {"passed": True}}
+    if change:
+        metadata.update({"multiproc_source_sha256": PATCH["MP_SOURCE_SHA256"], "message_queue_source_sha256": PATCH["MQ_SOURCE_SHA256"], "executor_readiness_cpu_contract": {"passed": True}})
+        metadata.update(change)
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    report = tmp_path / "repair.json"
+    report.write_text(json.dumps(metadata))
+    init = worker.split("role=${name%%-*}", 1)[0].replace("/opt/apac/prefill-handoff-repair.json", str(report))
+    result = subprocess.run(["bash", "-c", init, "worker.sh", "prefill-0", "30100", "/model", "1", "192.0.2.1"], check=False, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "lacks the MP response-readiness repair" in result.stdout + result.stderr

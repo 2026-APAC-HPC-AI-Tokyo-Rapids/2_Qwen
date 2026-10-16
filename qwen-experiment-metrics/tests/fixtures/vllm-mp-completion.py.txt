@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# Excerpts of pinned full source SHA256 3ed0149a8a8e1550c4f062af40e645d1b734e70f99981bc5bf15f0360507648a
+class FutureWrapper(Future):
+    def __init__(
+        self,
+        futures_queue: deque["FutureWrapper"],
+        get_response: Callable[[], Any],
+        aggregate: Callable = lambda x: x,
+    ):
+        self.futures_queue = futures_queue
+        self.get_response = get_response
+        self.aggregate = aggregate
+        super().__init__()
+        self.futures_queue.appendleft(self)
+
+    def result(self, timeout=None):
+        if timeout is not None:
+            raise RuntimeError("timeout not implemented")
+
+        # Drain any futures ahead of us in the queue.
+        while not self.done():
+            future = self.futures_queue.pop()
+            future._wait_for_response()
+        return super().result()
+
+    def _wait_for_response(self):
+        try:
+            response = self.aggregate(self.get_response())
+            with suppress(InvalidStateError):
+                self.set_result(response)
+        except Exception as e:
+            with suppress(InvalidStateError):
+                self.set_exception(e)
+
+class MultiprocExecutor:
+    def collective_rpc(  # type: ignore[override]
+        self,
+        method: str | Callable,
+        timeout: float | None = None,
+        args: tuple = (),
+        kwargs: dict | None = None,
+        non_block: bool = False,
+        unique_reply_rank: int | None = None,
+        kv_output_aggregator: KVOutputAggregator | None = None,
+        ec_output_aggregator: ECOutputAggregator | None = None,
+    ) -> Any:
+        """Returns single result if unique_reply_rank and/or an output
+        aggregator is provided, otherwise list."""
+        assert self.rpc_broadcast_mq is not None, (
+            "collective_rpc should not be called on follower node"
+        )
+        if self.is_failed:
+            raise RuntimeError("Executor failed.")
+
+        deadline = None if timeout is None else time.monotonic() + timeout
+        kwargs = kwargs or {}
+
+        aggregators = [a for a in (kv_output_aggregator, ec_output_aggregator) if a]
+        aggregate: Callable[[Any], Any]
+        if aggregators:
+            output_rank = None
+
+            def _aggregate(outputs: Any) -> Any:
+                # Each aggregator merges its own connector's output onto
+                # outputs[output_rank] in place and returns it, so chaining is safe.
+                rank = unique_reply_rank or 0
+                result = outputs[rank]
+                for a in aggregators:
+                    result = a.aggregate(outputs, output_rank=rank)
+                return result
+
+            aggregate = _aggregate
+        else:
+            output_rank = unique_reply_rank
+            aggregate = lambda x: x
+
+        if isinstance(method, str):
+            send_method = method
+        else:
+            send_method = cloudpickle.dumps(method, protocol=pickle.HIGHEST_PROTOCOL)
+        self.rpc_broadcast_mq.enqueue((send_method, args, kwargs, output_rank))
+
+        response_mqs: Sequence[MessageQueue] = self.response_mqs
+        if output_rank is not None:
+            response_mqs = (response_mqs[output_rank],)
+
+        def get_response():
+            responses = []
+            for mq in response_mqs:
+                dequeue_timeout = (
+                    None if deadline is None else max(0.0, deadline - time.monotonic())
+                )
+                try:
+                    status, result = mq.dequeue(timeout=dequeue_timeout)
+                except TimeoutError as e:
+                    raise TimeoutError(f"RPC call to {method} timed out.") from e
+                if status != WorkerProc.ResponseStatus.SUCCESS:
+                    raise RuntimeError(
+                        f"Worker failed with error '{result}', please check the"
+                        " stack trace above for the root cause"
+                    )
+                responses.append(result)
+            return responses[0] if output_rank is not None else responses
+
+        future = FutureWrapper(
+            self.futures_queue, get_response=get_response, aggregate=aggregate
+        )
+
+        return future if non_block else future.result()
