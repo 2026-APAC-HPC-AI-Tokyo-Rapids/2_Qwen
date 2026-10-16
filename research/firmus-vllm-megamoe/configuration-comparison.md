@@ -1,10 +1,10 @@
 # Matched configuration: Komori 6344.96 TPS versus vLLM MegaMoE
 
-Current implementation status: the exact-client baseline38821794697 achieved4523.91 measured good-output TPS and6299.22 overall TPS. The concurrent/native-Push attempt38836513987 completed its request traffic but failed SLA eligibility:39.21 good /2462.67 overall TPS. Its producer-WRITE completion path retains completed KV leases until expiry; the pinned source reproduces this error on CPU. A focused lifecycle repair and CPU/image gates are being prepared before any further GPU job. The user prioritizes faster vLLM features when they preserve accuracy, so remaining implementation differences are not automatically defects requiring literal SGLang behavior.
+Current implementation status: the repaired concurrent/native-Push control38850339264 measured5345.43 SLA-passing output TPS and6218.34 overall TPS, with3343/3889 SLA-passing requests (85.9604%, below90% eligibility). Runtime accounting verifies completed producer KV is released:5864 WRITEs match all requests, lease expirations/failures/preemptions are0, and all16 final KV-cache gauges are0. Raw requests and the exact parser replay confirm540 TTFT misses and6 ITL misses;378 TTFT misses are in the first30 seconds and162 remain in30–120 seconds. The separate all16-GPU profile38850370631 remains needed before selecting further optimization. The user prioritizes faster vLLM features when they preserve accuracy; remaining framework differences do not require literal SGLang behavior.
 
 Reference: SGLang `e6e295bd`, Actions 38664373784 / Slurm 23571. vLLM attempted baseline: `26b3631`, Actions 38781401340 / Slurm 23872 (failed during decoder graph capture, before readiness or benchmark traffic). Source of actual SGLang settings is the canonical `source/source/server-info-*.json` plus worker startup logs; the prior vLLM launch 38775681156 reached and exported the same serving configuration but sent no benchmark traffic.
 
-The table describes the matched baseline, including the repaired normal trials72688a7/76261bc and profileedd9929. The later prefill-admission candidate deliberately changes P48 to P2 and is described separately below; it was cancelled before execution.
+The table describes the current repaired concurrent/native-Push control38850339264. Earlier serial/READ controls and their superseded differences are retained chronologically below. The historical P2 admission candidate was cancelled before execution; the current control keeps P48/D32.
 
 | Dimension | SGLang reference | vLLM reproduction / remaining difference |
 |---|---|---|
@@ -21,11 +21,11 @@ The table describes the matched baseline, including the repaired normal trials72
 | Graphs | P eager; D22 request-size buckets through32 | P target/draft eager; D native FULL_AND_PIECEWISE, same request buckets mapped to four verification tokens through128 |
 | Prefix cache | P radix cache enabled; D disaggregated radix cache disabled | P native prefix cache; D prefix cache disabled. Implementations differ; official cache bust preserved |
 | Outer P routing | Minimum live load, retain reservation through body completion | Least in-flight with rotating ties, reservation held through body consumption |
-| Inner DP routing | SGLang `total_requests` | vLLM native waiting/running/in-flight accounting with KV-pressure penalty; not an identical dispatch policy |
-| Prefill handoff | SGLang ready-result fast path before another long forward | vLLM native scheduler/NIXL response path; no literal scheduler-patch translation |
+| Inner DP routing | SGLang `total_requests` | P rank explicitly selected by proxy least-live load with rotating ties; D retains native waiting/running/in-flight accounting and KV-pressure penalty |
+| Prefill handoff | SGLang ready-result fast path before another long forward | P consumes/publishes an already-ready output before the regular DP step; preserves abort/metrics handling and one ordinary step per iteration |
 | LM head / dense draft | P `enable_dp_lm_head=false`, TP4 group; D DP-local LM head and dense TP1 | Native TP1 replicates these weights per DP rank; P sharding differs |
-| NIXL transfer direction | Prefill initiates UCX WRITE to decode | Decode initiates UCX READ from prefill; native handoff, ownership and metadata lifetime differ |
-| NIXL thread configuration | P `num_threads=8`, D `num_threads=0` | Native `num_threads=4` for both roles; this is an agent configuration value, not a measured active-thread count |
+| NIXL transfer direction | Prefill initiates UCX WRITE to decode | Native NixlPushConnector: concurrent P/D submission, P WRITE, D preregistration; pinned producer-completion ownership repair releases P leases |
+| NIXL thread configuration | P `num_threads=8`, D `num_threads=0` | Native agent `num_threads=4` for both roles plus the supported dedicated Push writer; configuration values are not measured active-thread counts |
 | Installed NIXL package | `nixl` and `nixl-cu13` 1.5.0 in reference image38664373784 | 1.4.1 in both reproduction images; native connector compatibility and transport changes need a separate controlled trial |
 | UCX device candidates | Every active HCA on each node (`mlx5_0:1` through `mlx5_9:1` in the reference logs) | Same active-HCA enumeration; no link-layer filter in either launch |
 
@@ -64,7 +64,9 @@ That trial (38804183674 / Slurm23917) selected `DeepGemmFp8BlockScaledMMKernel`,
 
 The following controlled trial pins image38798126037 (SHA256 `06d4f8e0778a94739aaf8230865d5f393a76d6c8192d68d4b5b2b8f24183f35b`) after the PDL-on actual-adapter gate passed. Relative to72688a7, only the serving image changes to enable private-provider pre-dispatch PDL. The same decoder dense-GEMM override is retained. Both releases may queue concurrently, but each has its own commit and immutable run identity. PDL-on normal trial38804437745 / Slurm23918 completed in10m30s with readiness after348 seconds,1952 warmup and3942 measurement requests, and zero request errors/cancellations. The repository validator rejected eligibility:2818/3942 good requests (71.4866%),1122 TTFT misses and3 ITL misses with1 overlap. Measured SLA-passing output throughput is4491.97 TPS (AIPerf goodput×200); the archived local gated-score field is0 because eligibility failed, overall6283.51 TPS, mean TTFT2845.01ms and mean ITL15.7864ms. All61 canonical archive checksums pass and remote staging is removed. One observation per PDL condition does not establish a repeatable performance effect; retain PDL-on for reference fidelity, not as a demonstrated speedup.
 
-## Native transport differences
+## Historical serial transport differences
+
+This section records the earlier serial/READ baseline. The current control uses the native producer WRITE path and completion repair described in the later combined-repair and lifecycle sections.
 
 Pinned SGLang `fc275674` (`python/sglang/srt/disaggregation/nixl/conn.py`, `NixlKVManager.__init__`) explicitly creates its UCX backend with strict thread synchronization, configures eight threads on the producer and zero on the consumer, and submits WRITE transfers. Its default backend-parameter object is empty; the archived reference worker adds no per-NIC backend override. Pinned vLLM0.30.0 (`vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py`) uses the native UCX agent with `num_threads=4` and telemetry enabled; `pull_worker.py` submits READ transfers. The current worker supplies no `kv_connector_extra_config` override for these values.
 
@@ -208,3 +210,29 @@ Image build38848488113 is running from2c3a1b6; its CPU CI38848488153 passed, wit
 Build38848488113 and Firmus distribution succeeded. Pin `/scratch/home/ACCOUNT/qwen/vllm-containers/38848488113.sqsh`, SHA256 `ed6899490506355450ed2f440b30cc8c3e29f830351da29639304088560e32f1`,9315172352 bytes, build source2c3a1b63555cbc02e8bd50004602a4bb6c6fd187. Independent extraction of the distributed image confirms the embedded source commit, engine-core hash ecb7233620dd75dff7a5ac20f60e73a2d03d50775ecc6fc84ac3e30234a03707 and Push-worker hash e353f4e6a35985c2c70fa7f72c6b3aadbf4b0c85e2075e09e05158d5c0f98bf5. Reexecution of the installed completion method passes all7 CPU cases and matches the repair report. The final build log passes native private-MegaMoE compilation/CPU checks and4-rank Gloo expert loading, with CUDA uninitialized. This is not a GPU performance or DMA validation.
 
 The runtime pin includes d4e25a8's Python-only worker guard. Keep the exact client38664373784, official c192/60s warmup/120s measurement/30s grace, unchanged P/D topology, original model/scales and modified PDL-on MegaMoE. Normal throughput and the all16-GPU profiler diagnostic are separate tracked releases using this same image. Check producer WRITE completion, expiry warnings and drained cache usage, D external-KV accounting, errors/preemptions, official measured good/raw TPS, eligibility, TTFT and ITL. The profile retains the actual-adapter numerical/graph gate, fixed Nsight2026.5.1.161 and strict complete-capture validation. If the normal run disproves the lifecycle repair, cancel an obsolete pending profile and diagnose before another allocation. No tuning candidate is bundled with this control.
+
+
+## Repaired producer lifecycle: official normal result38850339264
+
+Normal control256a9db / Slurm23995 ran on g1/g4 from05:49:02 to05:59:24 UTC (10m22), after1h22m07s queued. Readiness took342s. AIPerf completed1975 warmup and3889 measured requests with0 request errors/cancellations. The first decisive failure is the local official-workload validator's90% eligibility gate, not a server crash.3343/3889 requests pass SLA (85.9604011%). Measured SLA-passing output TPS is5345.425426983831; the local gated field is0 because eligibility failed. All61 canonical SHA256 entries pass at `/srv/qwen-artifacts/38850339264/1/`; the exact set of61 successful verification paths matches the manifest. Actions collection/archive succeeded, the owned runtime staging is absent, and exact-source parser replay reproduces the stored result after workload/ISL/OSL checks. All four server exports and provenance confirm the intended modified MegaMoE/native Push topology, P48/D32, original precision/cache/speculation settings, and exact image/client pins.
+
+| Normal official workload | Measured SLA-passing output TPS | Overall output TPS | SLA-passing fraction | TTFT mean / p95 / p99 ms | ITL mean / p95 / p99 ms |
+|---|---:|---:|---:|---:|---:|
+| Komori38664373784 |6344.964607|6611.002657|95.9748%|2564.022 /2901.299 /5753.043|15.749 /17.938 /19.092|
+| Exact-client serial vLLM38821794697 |4523.905166|6299.218910|71.8156%|2840.333 /3506.138 /5469.173|15.755 /17.577 /18.384|
+| Repaired concurrent Push vLLM38850339264 |5345.425427|6218.338356|85.9604%|2898.551 /3323.221 /7146.568|15.883 /17.624 /18.488|
+
+These are individual runs. The repaired batch improves the observed SLA-passing fraction relative to the serial control, but does not meet90% eligibility or the7k target. It does not isolate the contribution of each overlap/routing/publication change, and a higher mean TTFT with a lower p95 requires the raw request-time distribution rather than a simple average-only diagnosis.
+
+
+Independent raw JSONL accounting gives540 TTFT misses and6 ITL misses, with0 overlap and0 cancellations. The first30 seconds contain378 TTFT misses among984 starts (mean TTFT3346.148ms); starts30–120 seconds contain162 TTFT misses and6 ITL misses among2905 requests,94.2169% SLA-passing, mean TTFT2746.938ms. Both the phase-start tail and residual steady-period TTFT misses require explanation. The latter falls from685 misses among2916 starts in the serial control, but remains above Komori's2 among3060. These differently sized subsets are descriptive evidence, not a throughput score or isolated repeatable speedup.
+
+Actual output lengths are200 for3873 requests,199 for12,198 for3 and201 for1, with0 OSL mismatches under the pinned client's tolerance. Replaying the exact256a9db parser against canonical command/provenance and exported metrics reproduces every stored score field, including the expected eligibility rejection after workload/ISL/OSL checks. Raw archives remain unchanged.
+
+### Producer-release repair has direct runtime evidence
+
+The three P groups record1961/1954/1949 completed WRITEs,5864 total, exactly1975+3889 warmup-plus-measurement requests; transferred bytes total2300054077440. D records23434666 external-KV prompt tokens, exactly its total prompt-token count. All16 final KV-cache gauges are0. Lease expirations, failed transfers, failed notifications and engine preemptions are0 across all workers. This closes the prior observed30-second lease/cache retention failure under this workload. No TTL reduction or extra cache was used. Native request-level preemption histogram sample counts are request counts, not preemption events; use `num_preemptions_total` for actual engine preemptions.
+
+Warmup-plus-measurement native means are P queue0.331/0.348/0.333s, scheduler-prefill1.117/1.120/1.120s and server TTFT1.701/1.721/1.710s. Concurrent D queue2.676s includes upstream P/KV waiting; D scheduler-prefill0.0706s and decode3.197s. Producer NIXL telemetry interval means0.374s include completion-observation behavior and are not independently measured wire time. These intervals overlap and do not establish recoverable critical-path cost. A complete isolated profile is still required before choosing another optimization.
+
+The separate profile38850370631 / Slurm23996 remains needed and is not cancelled merely because the normal result is ineligible. It uses the same repaired image/serving settings and retains the installed-adapter numerical/graph check before the strict all16-GPU Nsight capture. No new performance-setting trial has been submitted from this result.
