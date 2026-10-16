@@ -1,4 +1,4 @@
-"""Patch the pinned FP8 kernel and compile both epilogues without a GPU."""
+"""Compile both FP8 FC2 pipelines on CPU; GPU correctness remains unverified."""
 import hashlib
 import importlib.util
 import json
