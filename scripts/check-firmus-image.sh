@@ -20,5 +20,5 @@ while read -r patch; do
   patch_sha=$(sha256sum "${workspace}/${patch}" | awk '{print $1}')
   jq -e --arg path "${patch}" --arg sha "${patch_sha}" 'any(.applied_patches[]; .path == $path and .sha256 == $sha)' "${destination}/image-manifest.json" >/dev/null
 done < <(jq -er '.applied_patches[].path' "${destination}/image-manifest.json")
-jq -e '[.applied_patches[].path] | index("patches/sglang/firmus-staged-eagle-kv.patch") != null and index("patches/sglang/qwen3-sm90-megamoe.patch") != null and index("patches/sglang/firmus-dp-rank-query.patch") != null and index("patches/sglang/prefill-ready-handoff.patch") != null and index("patches/sglang/deepgemm-activation-layout.patch") != null' "${destination}/image-manifest.json" >/dev/null
+jq -e '[.applied_patches[].path] | index("patches/sglang/firmus-staged-eagle-kv.patch") != null and index("patches/sglang/qwen3-sm90-megamoe.patch") != null and index("patches/sglang/firmus-dp-rank-query.patch") != null and index("patches/sglang/prefill-ready-handoff.patch") != null and index("patches/sglang/deepgemm-activation-layout.patch") != null and index("patches/sglang/rope-fp8-q.patch") != null' "${destination}/image-manifest.json" >/dev/null
 echo 'PASS: Firmus image metadata, SM90 build and applied patch SHA-256'

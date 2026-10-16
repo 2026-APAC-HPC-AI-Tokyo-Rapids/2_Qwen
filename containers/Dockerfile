@@ -37,6 +37,8 @@ COPY containers/install-sglang-source.sh /opt/apac/install-sglang-source.sh
 RUN /opt/apac/install-sglang-source.sh && rm /opt/apac/install-sglang-source.sh
 COPY containers/check-decode-kernel-build.py /opt/apac/check-decode-kernel-build.py
 RUN /opt/sglang/venv/bin/python /opt/apac/check-decode-kernel-build.py
+COPY containers/check-rope-kernel-build.py /opt/apac/check-rope-kernel-build.py
+RUN /opt/sglang/venv/bin/python /opt/apac/check-rope-kernel-build.py
 
 COPY prefill-moe-routing /opt/apac/prefill-moe-routing
 COPY containers/build-prefill-moe-routing.py /opt/apac/prefill-moe-routing/build.py

@@ -71,8 +71,9 @@ expired_chunk_patch="patches/sglang/nixl-expired-chunks.patch"
 dp_rank_query_patch="patches/sglang/firmus-dp-rank-query.patch"
 prefill_handoff_patch="patches/sglang/prefill-ready-handoff.patch"
 deepgemm_activation_patch="patches/sglang/deepgemm-activation-layout.patch"
+rope_fp8_patch="patches/sglang/rope-fp8-q.patch"
 # Later patches depend on additions made by earlier patches; check each updated private tree.
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}" "${decode_quant_patch}" "${expired_chunk_patch}" "${dp_rank_query_patch}" "${prefill_handoff_patch}" "${deepgemm_activation_patch}"; do
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}" "${decode_quant_patch}" "${expired_chunk_patch}" "${dp_rank_query_patch}" "${prefill_handoff_patch}" "${deepgemm_activation_patch}" "${rope_fp8_patch}"; do
   git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${patch}"
   git -C "${source_dir}" apply "${GITHUB_WORKSPACE}/${patch}"
 done
@@ -88,6 +89,7 @@ install -d "${context}/prefill-moe-routing"
 cp "${GITHUB_WORKSPACE}/kernels/prefill/moe_routing.cu" "${context}/prefill-moe-routing/"
 cp "${GITHUB_WORKSPACE}/containers/build-sm90-megamoe.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/check-decode-kernel-build.py" "${context}/containers/"
+cp "${GITHUB_WORKSPACE}/containers/check-rope-kernel-build.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/build-sglang-router.sh" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/patches/sglang-router/prefill-load-lifetime.patch" "${context}/prefill-load-lifetime.patch"
 cp "${GITHUB_WORKSPACE}/patches/sglang-router/Cargo.lock" "${context}/sglang-router.Cargo.lock"
@@ -103,8 +105,9 @@ sglang_object_format="$(git -C "${source_dir}" rev-parse --show-object-format)"
 dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/Dockerfile)"
 build_steps_json="$(sed -n 's%^COPY \(containers/[^ ]*\.sh\) .*%\1%p' "${GITHUB_WORKSPACE}/containers/Dockerfile" | while read -r build_step; do build_step="${GITHUB_WORKSPACE}/${build_step}"; jq -cn --arg path "${build_step#"${GITHUB_WORKSPACE}/"}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${build_step}")" '{path:$path,blob_oid:$oid}'; done | jq -s '.')"
 patches_json='[]'
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}" "${decode_quant_patch}" "${expired_chunk_patch}" "${dp_rank_query_patch}" "${prefill_handoff_patch}" "${deepgemm_activation_patch}"; do
+for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}" "${decode_quant_patch}" "${expired_chunk_patch}" "${dp_rank_query_patch}" "${prefill_handoff_patch}" "${deepgemm_activation_patch}" "${rope_fp8_patch}"; do
   case "${patch}" in
+    "${rope_fp8_patch}") targets=(python/sglang/kernels/jit/csrc/elementwise/rope.cuh python/sglang/kernels/ops/attention/rope.py python/sglang/srt/models/qwen3_moe.py) ;;
     "${deepgemm_activation_patch}") targets=(python/sglang/srt/layers/moe/moe_runner/deep_gemm.py python/sglang/kernels/ops/attention/dsv4/moe.py) ;;
     "${prefill_handoff_patch}") targets=(python/sglang/srt/disaggregation/prefill.py) ;;
     "${dp_rank_query_patch}") targets=(python/sglang/srt/disaggregation/decode.py) ;;

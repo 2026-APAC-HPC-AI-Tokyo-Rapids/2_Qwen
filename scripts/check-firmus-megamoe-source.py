@@ -5,9 +5,55 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 
+def check_rope_wiring(tree, path):
+    attention = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Qwen3MoeAttention")
+    init = next(n for n in attention.body if isinstance(n, ast.FunctionDef) and n.name == "__init__")
+    guard_index = next(i for i, n in enumerate(init.body) if isinstance(n, ast.Assign) and any(isinstance(t, ast.Attribute) and t.attr == "use_fp8_q_rope" for t in n.targets))
+    guard = compile(ast.Module(body=init.body[guard_index:guard_index + 2], type_ignores=[]), str(path), "exec")
+    calls = []
+
+    class Tensor:
+        def __init__(self, shape, dtype="bf16", device="cuda"):
+            self.shape, self.dtype, self.device = shape, dtype, device
+
+        def view(self, *shape):
+            return self
+
+        def split(self, sizes, dim):
+            return tuple(Tensor((self.shape[0], size), self.dtype) for size in sizes)
+
+    class Rotary:
+        use_fallback_kernel, is_neox_style, rotary_dim = False, True, 128
+        cos_sin_cache = object()
+
+        def __call__(self, positions, q, k, **kwargs):
+            calls.append(("old_rope", kwargs["fused_set_kv_buffer_arg"]))
+            return q, k
+
+    args = NS(attention_backend="fa3", kv_cache_dtype="fp8_e4m3")
+    attention_layer = NS(use_fused_qk_norm_rope=False, head_dim=128, num_heads=64, num_kv_heads=4, q_size=8192, kv_size=512, rotary_emb=Rotary(), q_norm=None, k_norm=None, alt_stream=None)
+    ns = {"self": attention_layer, "_is_cuda": True, "get_moe_a2a_backend": lambda: NS(is_megamoe=lambda: True), "get_server_args": lambda: args, "MRotaryEmbedding": type("MRotaryEmbedding", (), {}), "torch": NS(bfloat16="bf16", float8_e4m3fn="fp8", empty=Tensor), "apply_qk_norm": lambda **kw: (kw["q"], kw["k"]), "apply_rope_fp8_q": lambda *xs: calls.append(("fp8_rope", xs)), "enable_fused_set_kv_buffer": lambda fb: True, "create_fused_set_kv_buffer_arg": lambda **kw: "fused_kv"}
+    nodes = [n for n in attention.body if isinstance(n, ast.FunctionDef) and n.name in ("apply_qk_norm_rope", "forward_core")]
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), ns)  # noqa: S102 - real pinned methods, CPU-only collaborators
+    attention_layer.attn = lambda q, k, v, fb, **kw: (calls.append(("attention", kw["save_kv_cache"])), q)[1]
+    attention_layer.o_proj = lambda output: (output, None)
+    for backend, kv_dtype, input_dtype, fused in [("fa3", "fp8_e4m3", "bf16", True), ("fa4", "fp8_e4m3", "bf16", False), ("fa3", "auto", "bf16", False), ("fa3", "fp8_e4m3", "fp16", False)]:
+        calls.clear()
+        args.attention_backend, args.kv_cache_dtype = backend, kv_dtype
+        attention_layer.compatible_with_fused_kv_buffer = True
+        exec(guard, ns)  # noqa: S102
+        q, k, v = ns["apply_qk_norm_rope"](attention_layer, Tensor((7, 9216), input_dtype), "positions", None)
+        assert calls[0][0] == ("fp8_rope" if fused else "old_rope")
+        assert q.dtype == ("fp8" if fused else input_dtype) and k.dtype == v.dtype == input_dtype
+        ns["forward_core"](attention_layer, (None, None, (q, k, v, None)))
+        assert calls[-1] == ("attention", attention_layer.use_fp8_q_rope), "FP8 RoPE must still save KV exactly once"
+    print("PASS: FP8 Q consumed by FA3; original other-dtype/backend paths; KV is still stored")
+
+
 def check(source):
     path = source / "python/sglang/srt/models/qwen3_moe.py"
     tree = ast.parse(path.read_text())
+    check_rope_wiring(tree, path)
     method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "forward_megamoe")
     method.body = [n for n in method.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
     # Evaluate the real adapter's constructor guard without loading GPU modules.
