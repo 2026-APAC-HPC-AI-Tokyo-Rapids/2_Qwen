@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# Pinned vLLM v0.30.0 original producer-completion method.
+# Full source SHA256: 87de3ea383dd3aa95fb2c287ea26ded8a330859cc1295f9faa69047e80865c2c
+class NixlPushConnectorWorker(Base):
+    def get_transfer_results(self) -> KVConnectorTransferResults:
+        # Engine main thread asking for completions: also wake the writer
+        # so it gets a chance to drain NIXL notifs (heartbeats, completion
+        # notifs, late PUSH_REGs) even if it had been parked.
+        self._push_writer_wake.set()
+
+        results = super().get_transfer_results()
+        done_sending = results.finished_sending
+
+        # ``_pop_done_transfers`` mutates ``_sending_transfers``; the
+        # writer thread also appends to it, so guard the pop.
+        with self._sending_transfers_lock:
+            done_pushing, failed_pushing = self._pop_done_transfers(
+                self._sending_transfers
+            )
+        # A failed send must never be reported as done: its blocks
+        # are freed via the lease / watchdog instead.
+        done_pushing = {
+            req_id
+            for req_id in done_pushing - failed_pushing
+            if req_id in self._recving_metadata
+        }
+        for req_id in done_pushing:
+            self._reqs_to_send.pop(req_id, None)
+            self._reqs_to_process.discard(req_id)
+            self.consumer_notification_counts_by_req.pop(req_id, None)
+            done_sending.add(req_id)
+
+        # Tell the writer to drop any state it still holds for any
+        # request that just finished (push completed) or expired
+        # (lease ran out without a D registration ever arriving).
+        for req_id in done_sending:
+            self._evict_finished_inbox.put(req_id)
+        if done_sending:
+            self._push_writer_wake.set()
+
+        return results

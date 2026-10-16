@@ -102,6 +102,7 @@ tp=$4
 export VLLM_NIXL_SIDE_CHANNEL_HOST=$5
 shift 5
 [[ -r /opt/apac/prefill-handoff-repair.json ]] || { echo "FATAL: serving image lacks the reviewed prefill handoff repair"; exit 1; }
+jq -e '.push_worker_source_sha256 == "87de3ea383dd3aa95fb2c287ea26ded8a330859cc1295f9faa69047e80865c2c" and .push_release_cpu_contract.passed == true' /opt/apac/prefill-handoff-repair.json >/dev/null || { echo "FATAL: serving image lacks the producer WRITE release repair"; exit 1; }
 role=${name%%-*}
 engine_id="$(basename "$(dirname "$(dirname "$0")")")-${name}"
 export VLLM_NIXL_SIDE_CHANNEL_PORT="$((port - 24500))"
@@ -212,7 +213,8 @@ if [[ "${PROFILE:-false}" == true ]]; then
   touch "${ROOT}/run-success"
   exit 0
 fi
-# Prometheus snapshots bracket the official pass; their deltas split TTFT into prefill queue, prefill, KV transfer and decoder admission without touching measured traffic.
+# Prometheus snapshots bracket warmup plus measurement. Native intervals overlap;
+# concurrent D queue includes P/KV waiting, not an additive critical path.
 while IFS=$'\t' read -r worker host port _tp; do curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/metrics" >"${ROOT}/results/metrics-before-${worker}.prom"; done <"${ROOT}/source/worker-endpoints.tsv"
 aiperf_status=0
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || aiperf_status=$?

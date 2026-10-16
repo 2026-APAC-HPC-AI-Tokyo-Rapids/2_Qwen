@@ -50,6 +50,11 @@ handoff = json.loads(Path("/opt/apac/prefill-handoff-repair.json").read_text())
 engine_source = Path(vllm.__file__).parent / "v1/engine/core.py"
 assert hashlib.sha256(engine_source.read_bytes()).hexdigest() == handoff["patched_sha256"]
 assert handoff["source_sha256"] == "268bf40534a853812867ae8e80040f190983cb364b41182b55969aace20c93f5"
+push_source = Path(vllm.__file__).parent / "distributed/kv_transfer/kv_connector/v1/nixl/push_worker.py"
+assert handoff["push_worker_source_sha256"] == "87de3ea383dd3aa95fb2c287ea26ded8a330859cc1295f9faa69047e80865c2c"
+assert hashlib.sha256(push_source.read_bytes()).hexdigest() == handoff["push_worker_patched_sha256"]
+assert runpy.run_path("/opt/apac/fix-vllm-prefill-handoff.py")["validate_push_release"](push_source.read_bytes()) == handoff["push_release_cpu_contract"]
+assert handoff["push_release_cpu_contract"]["passed"] is True
 assert any(p["path"] == "containers/fix-vllm-prefill-handoff.py" for p in manifest["applied_patches"])
 assert KVConnectorFactory.get_connector_class_by_name("NixlPushConnector").__name__ == "NixlPushConnector"
 print(
