@@ -236,3 +236,20 @@ The three P groups record1961/1954/1949 completed WRITEs,5864 total, exactly1975
 Warmup-plus-measurement native means are P queue0.331/0.348/0.333s, scheduler-prefill1.117/1.120/1.120s and server TTFT1.701/1.721/1.710s. Concurrent D queue2.676s includes upstream P/KV waiting; D scheduler-prefill0.0706s and decode3.197s. Producer NIXL telemetry interval means0.374s include completion-observation behavior and are not independently measured wire time. These intervals overlap and do not establish recoverable critical-path cost. A complete isolated profile is still required before choosing another optimization.
 
 The separate profile38850370631 / Slurm23996 remains needed and is not cancelled merely because the normal result is ineligible. It uses the same repaired image/serving settings and retains the installed-adapter numerical/graph check before the strict all16-GPU Nsight capture. No new performance-setting trial has been submitted from this result.
+
+
+## Phase-start latency: matched client arrival burst, slower repaired-path response
+
+Additional read-only analysis of the canonical request JSONL compares the first192 requests by actual request-start timestamp in the measurement phase. Every run has192 distinct workers and all192 starts within0.1s, with reused HTTP connections for192/192 reference,181/192 serial vLLM and191/192 repaired vLLM requests.
+
+| Normal run | First192 start span ms | First192 mean TTFT ms | First192 TTFT misses | Mean credit-to-request-start ms |
+|---|---:|---:|---:|---:|
+| Komori38664373784 |79.886|3925.191|117|37.228|
+| Serial vLLM38821794697 |89.763|3713.191|119|41.122|
+| Repaired concurrent Push38850339264 |69.050|5372.265|175|13.196|
+
+The repaired path's first192 median/p95 TTFT is5280.154/7924.757ms, versus3683.600/6868.393ms in the reference. By2s after the first request start,0 repaired-path requests have received their first token, compared with39 reference requests; by5s the counts are87 versus135. These timings are derived from the same client-side request-start and TTFT fields, not cross-host clock alignment.
+
+The recorded start-burst and dispatch intervals do not explain the extra phase-start TTFT: the repaired run has a slightly tighter burst and a smaller credit-to-request-start interval. First192 mean `http_req_sending` is0.345ms repaired versus1.423ms reference; `http_req_connecting` is0.029ms versus0ms and `http_req_blocked` is0ms in both. Recorded `http_req_waiting` instead averages5371.851ms versus3923.568ms. These are client-side timing fields, not a GPU-time breakdown. They do not identify the delay within P execution, producer-result publication, KV registration/WRITE, D admission, or other client/server work. Inspect those paths using the pending trace and source evidence before selecting a fix. The entire fixed official120-second measurement remains the scored workload; these cohorts only explain its distribution.
+
+This also refines the earlier aggregate observation: the repaired path has a worse initial burst than the serial control, despite far fewer subsequent TTFT misses. The30–120s repaired cohort has p95/p99 TTFT3002.185/3115.703ms, versus3250.930/3556.200ms serial and2817.201/2893.828ms reference. Individual runs still do not isolate each combined repair or establish a repeatable speedup. No new runtime setting, build, or GPU allocation is introduced by this analysis; profile23996 remains the next required measurement.
