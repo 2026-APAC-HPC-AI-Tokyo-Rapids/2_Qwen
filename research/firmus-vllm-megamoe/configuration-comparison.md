@@ -347,3 +347,30 @@ python3 research/firmus-vllm-megamoe/diagnose_capture.py /path/to/exported-sqlit
 The script records input/script hashes, reads raw databases in read-only mode and uses only in-memory temporary indexes. It selects an explicit metadata allowlist rather than inherited environment variables. Its actual four-report replay, indexed PID/correlation lookup, Ruff and diff checks pass. It neither changes nor bypasses `validate_capture` and does not compute timing or accept the capture.
 
 [NVIDIA's explanation for the same2026.5.1 warning](https://forums.developer.nvidia.com/t/nsight-systems-2026-5-1-produced-112-collected-100-warning-despite-complete-coverage-of-32-kernels/384749) attributes a minimal32-kernel example to forced flushing even with all expected kernels recorded. That example synchronizes before stopping; it does not prove this distributed capture complete or establish that adding synchronization alone removes the warning. [NVIDIA's user guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html) recommends finishing GPU work before stopping/flushing. The pinned vLLM `CudaProfilerWrapper._stop()` directly invokes the CUDA profiler stop API; no new stop-protocol repair is established from the generic warning alone. Resolve the remaining uncertainty and analyze bounded recorded target work before selecting new GPU conditions; do not repeat the allocation merely to chase a warning-free log.
+
+## Conditional recorded target timing and rejection of a packing shortcut
+
+`summarize_recorded_targets.py` reproduces conditional timing from the same four local exports, with read-only source databases, in-memory indexes and input/script SHA256. Match launch API timestamps to CPU NVTX thread/context, then kernels to PID/correlation ID; retain only ranges containing94 main and94 pre-dispatch kernels. This does **not** accept the incomplete capture, establish global GPU utilization or estimate normal-workload speedup. Its selected counts are235/234/233/2981 for P0/P1/P2/D0, respectively.
+
+| Worker | Median recorded target GPU span, ms | Median recorded kernel union, ms | Median main-MegaMoE union, ms |
+|---|---:|---:|---:|
+| P0 | 371.429 | 369.107 | 227.723 |
+| P1 | 372.174 | 370.232 | 230.092 |
+| P2 | 374.101 | 371.871 | 230.099 |
+| D0 | 33.293 | 32.593 | 20.527 |
+
+Within these selected ranges, median main-MegaMoE/kernel-union ratios are61.6–62.1% for P and63.0% for D. Small gaps inside an individual recorded target forward do not exclude gaps between forwards, draft work, transfer delays or request waiting. Ratios of independently reported medians need not equal the median per-range ratios.
+
+P's standalone RMSNorm kernel averages16.00ms per selected range, group FP8 quantization11.67–11.77ms, and residual-add RMSNorm5.99–6.00ms. These broad name categories include operations that may not match fusion patterns; their duration sums are neither removable cost nor critical-path savings. D already records native fused `rms_norm_per_block_quant` and compiler-generated residual-normalization work. P's `--enforce-eager` is a historical fidelity choice, not a measured vLLM optimum. Investigate native compilation/fusion before selecting a runtime change. The native `MoERunner` invokes an opaque registered `moe_forward` custom op with a fake implementation, so compilation need not trace the private adapter's Python/FFI internals. Actual matching, retained MegaMoE selection, numerical agreement, compile/startup cost and serving still require validation; do not claim an improvement from source inspection alone. The older TP2 all-reduce fusion audit51419ae concerns a different topology and does not establish gains for the current TP1/DP4/EP4 layout.
+
+Reject the claim that splitting a prompt over two batches automatically adds one full forward to HTTP TTFT. With128 queued prompts of3996 tokens and a4096-token budget, constant-duration ideal packing completes request i at `floor(((i+1)*3996-1)/4096)`; whole-prompt admission completes it at i. The first16 completion steps are identical and packing needs125 rather than128 steps overall. This arithmetic is a counterexample, not a vLLM simulator: time can move from active prefill into the waiting queue without improving end-to-end latency. SGLang's measured reference also uses two-sequence4096-token batches, as documented above. No whole-prompt/context-cap change or GPU submission follows from chunk counts alone.
+
+Installed-image source extraction confirms the pinned scheduler, scheduler/model configuration, argument parser, NIXL compatibility metadata and Qwen3 model source hashes. Disabling chunked prefill with the current4096-token budget and8192 context fails native configuration validation, and the argument parser warns against manually disabling it for supported generation models. The private adapter's4096-row capacity also prevents simply raising the batch budget to8192. These are concrete constraints, not a reason to change context or workspace without a justified experiment.
+
+Reproduce the conditional recorded timing separately from strict validation:
+
+```sh
+python3 research/firmus-vllm-megamoe/summarize_recorded_targets.py /path/to/exported-sqlite-directory
+```
+
+The output is `recorded-target-timings.json` in that directory. Keep it with local/raw analysis artifacts; the tracked script and this interpretation are the reproducible record. No runtime settings, checkpoint precision, strict capture gates or submitted jobs change in this analysis.
