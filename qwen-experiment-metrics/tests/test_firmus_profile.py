@@ -107,7 +107,7 @@ def test_summary_marks_profile_score_and_handles_missing_results(tmp_path: Path,
     assert "/qwen-artifacts/123/1/" in summary
 
 
-def test_summary_uses_official_score_and_measured_latency(tmp_path: Path) -> None:
+def test_summary_uses_measured_throughput_and_latency(tmp_path: Path) -> None:
     (tmp_path / "provenance.json").write_text(json.dumps({"framework": "vllm", "workload": "official"}))
     (tmp_path / "score.json").write_text(json.dumps({"request_count": 360, "good_request_fraction": 1.0, "goodput_requests_per_second": 3.0, "score_output_tokens_per_second": 600.0, "eligible": True, "official_validation": {"valid": True}}))
     (tmp_path / "profile_export_aiperf.json").write_text(json.dumps({"good_request_count": {"avg": 360}, "output_token_throughput": {"avg": 610}, "time_to_first_token": {"avg": 330, "p99": 580}, "inter_token_latency": {"avg": 12, "p99": 13}}))
@@ -115,7 +115,7 @@ def test_summary_uses_official_score_and_measured_latency(tmp_path: Path) -> Non
     assert "60 / 120 / 30" in summary and "reference-07" not in summary
     assert "360 / 360" in summary and "600.000 output tok/s" in summary
     assert "330.000 / 580.000 ms" in summary and "12.000 / 13.000 ms" in summary
-    assert "Official workload validation | True" in summary
+    assert "Local workload/SLA validation | True" in summary
     assert "Overall output throughput | 610.000 output tok/s" in summary
     (tmp_path / "provenance.json").write_text(json.dumps({"framework": "sglang", "workload": "official"}))
     assert "P2 × TP4 / D2 × TP4 EP1" in SUMMARY(tmp_path, "456", "success")
@@ -333,3 +333,42 @@ def test_megamoe_profile_summary_reports_actual_phases_and_worker_count(tmp_path
     assert "20 / 30 / 30" in summary and "60 / 120 / 30" not in summary
     assert "4 / 4 reports" in summary
     assert "Instrumented score; do not use for performance comparison" in summary
+
+
+@pytest.mark.parametrize("explicit_throughput", [False, True])
+def test_ineligible_summary_preserves_measured_good_throughput(tmp_path: Path, explicit_throughput: bool) -> None:
+    score = {"request_count": 4000, "good_request_fraction": 0.72, "goodput_requests_per_second": 23.0, "score_output_tokens_per_second": 0.0, "eligible": False}
+    if explicit_throughput:
+        score["good_output_tokens_per_second"] = 4600.0
+    (tmp_path / "score.json").write_text(json.dumps(score))
+    (tmp_path / "profile_export_aiperf.json").write_text(json.dumps({"good_request_count": {"avg": 2880}, "output_token_throughput": {"avg": 6300}}))
+    summary = SUMMARY(tmp_path, "fixture", "failure")
+    assert "Measured SLA-passing output throughput | 4600.000 output tok/s" in summary
+    assert "Overall output throughput | 6300.000 output tok/s" in summary
+    assert "Legacy local gated value (not organizer R4 score) | 0.000" in summary
+    assert "SLA eligible | False" in summary
+
+
+def test_failed_megamoe_startup_uses_staged_profile_worker_count(tmp_path: Path) -> None:
+    (tmp_path / "provenance.json").write_text(json.dumps({"framework": "vllm", "workload": "official", "profile": True}))
+    (tmp_path / "firmus-framework.json").write_text(json.dumps({"concurrency": 192}))
+    (tmp_path / "worker-endpoints.tsv").write_text("".join(f"{name}\thost\t30000\t1\n" for name in ("prefill-0", "prefill-1", "prefill-2", "decode-0")))
+    summary = SUMMARY(tmp_path, "fixture", "failure")
+    assert "topology unverified" in summary
+    assert "0 / 4 reports" in summary
+
+
+def test_scheduler_summary_uses_export_good_count_and_both_throughputs(tmp_path: Path) -> None:
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "score.json").write_text(json.dumps({"score_output_tokens_per_second": 0, "goodput_requests_per_second": 23, "eligible": False, "good_request_fraction": 0.72, "request_count": 4000}))
+    (results / "profile_export_aiperf.json").write_text(json.dumps({"good_request_count": {"avg": 2880}, "output_token_throughput": {"avg": 6300}, "time_to_first_token": {"avg": 2800, "p95": 3500}, "inter_token_latency": {"avg": 15.8, "p95": 17.6}}))
+    line = next(line for line in (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text().splitlines() if line.startswith("jq -c -n --slurpfile"))
+    process = subprocess.run(["bash", "-euc", line], env={**os.environ, "ROOT": str(tmp_path)}, capture_output=True, text=True, check=True)
+    result = json.loads(process.stdout)
+    assert result["good_output_tokens_per_second"] == 4600
+    assert result["overall_output_tokens_per_second"] == 6300
+    assert result["good"] == 2880
+    assert result["local_gated_value"] == 0
+    assert result["eligible"] is False
+    assert result["ttft_ms"]["p95"] == 3500

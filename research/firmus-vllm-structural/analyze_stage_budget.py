@@ -71,26 +71,33 @@ def analyze(directory: Path) -> dict:
         }
 
     latency = mean(metric(r, "request_latency") for r in measured) / 1000
+    good_tps = export["goodput"]["avg"] * 200
     targets = []
-    for output_tps in (7000, 2 * score["score_output_tokens_per_second"], 10000):
-        # An ineligible run has official score zero even when it serves traffic.
-        # Doubling that score is not a performance target and divides by zero.
+    for output_tps in (7000, 2 * good_tps, 10000):
+        # A zero measured rate cannot define a meaningful doubling target.
         if output_tps <= 0:
             continue
         good_rps = output_tps / 200
-        required_rps = good_rps / score["good_request_fraction"]
+        fraction = score["good_request_fraction"]
+        required_rps = good_rps / fraction if fraction > 0 else None
         targets.append(
             {
                 "target_good_output_tokens_per_second": output_tps,
                 "minimum_good_requests_per_second": good_rps,
                 "minimum_configured_input_tokens_per_second": good_rps * 4000,
-                "input_tokens_per_second_at_current_good_fraction": required_rps * 4000,
+                "input_tokens_per_second_at_current_good_fraction": required_rps * 4000
+                if required_rps is not None
+                else None,
                 "mean_request_seconds_at_current_concurrency_and_good_fraction": score[
                     "concurrency"
                 ]
-                / required_rps,
+                / required_rps
+                if required_rps is not None
+                else None,
                 "needed_concurrency_at_current_mean_latency_and_good_fraction": required_rps
-                * latency,
+                * latency
+                if required_rps is not None
+                else None,
             }
         )
     return {
@@ -100,9 +107,11 @@ def analyze(directory: Path) -> dict:
         },
         "concurrency": score["concurrency"],
         "measured_requests": len(measured),
-        "official_stored_score": score["score_output_tokens_per_second"],
+        "good_output_tokens_per_second": good_tps,
+        "local_gated_value": score["score_output_tokens_per_second"],
+        "sla_eligible": score["eligible"],
         "good_request_fraction": score["good_request_fraction"],
-        "official_duration_seconds": export["benchmark_duration"]["avg"],
+        "benchmark_duration_seconds": export["benchmark_duration"]["avg"],
         "observed_input_processing_tokens_per_second": score[
             "observed_input_sequence_length_sum"
         ]
@@ -113,7 +122,8 @@ def analyze(directory: Path) -> dict:
         "limitations": [
             "Client-visible intervals cannot separate prefill execution, prefill queue, NIXL, decoder admission, or HTTP overhead.",
             "After-first-token inflight is not measured engine batch size.",
-            "Window origin is first measured request start; stationary slices never modify the stored official score.",
+            "Window origin is first measured request start; stationary slices never modify the stored raw result.",
+            "A zero good fraction makes current-fraction targets unattainable; their required rates and occupancy are null.",
             "Little-law target calculations hold current latency or good fraction hypothetically; they are not throughput predictions.",
         ],
     }

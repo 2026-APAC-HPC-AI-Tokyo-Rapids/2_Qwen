@@ -41,6 +41,7 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         else:
             topology = "P6 × TP2 / D1 × attention TP4" + (", MoE EP4" if ep is True else " (expert placement: see server-info)")
     if identity.get("framework") == "vllm" and config.get("concurrency") == 192:
+        topology = "topology unverified (server-info unavailable)"
         decoder = read_artifact(root, "server-info-decode-0.json").get("vllm_config", {})
         if decoder.get("kernel_config", {}).get("moe_backend") == "apac_sm90_megamoe":
             topology = "P3 × DP4 EP4 / D1 × DP4 EP4, attention TP1, modified SM90 MegaMoE"
@@ -52,8 +53,9 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         dynamo = identity["dynamo"]
         lines += [f"- Dynamo **{dynamo['version']}**; engine **{dynamo['engine_version']}**; frontend → TCP → PD workers; NIXL KV transfer. Engine version differs from the standalone baseline."]
     if score:
+        good_tps = score.get("good_output_tokens_per_second", score["goodput_requests_per_second"] * 200)
         good_count = score.get("good_request_count", (export.get("good_request_count") or {}).get("avg", "unavailable"))
-        lines += ["", "| Metric | Value |", "| --- | ---: |", f"| Requests / good requests | {score['request_count']} / {good_count} |", f"| Good request fraction (required ≥90%) | {score['good_request_fraction']:.2%} |", f"| Goodput | {score['goodput_requests_per_second']:.3f} req/s |", f"| Local score (goodput × 200; zero if ineligible) | {score['score_output_tokens_per_second']:.3f} output tok/s |", f"| SLA eligible | {score['eligible']} |", f"| Official workload validation | {score.get('official_validation', {}).get('valid', False)} |"]
+        lines += ["", "| Metric | Value |", "| --- | ---: |", f"| Requests / good requests | {score['request_count']} / {good_count} |", f"| Good request fraction (required ≥90%) | {score['good_request_fraction']:.2%} |", f"| Goodput | {score['goodput_requests_per_second']:.3f} req/s |", f"| Measured SLA-passing output throughput | {good_tps:.3f} output tok/s |", f"| Legacy local gated value (not organizer R4 score) | {score['score_output_tokens_per_second']:.3f} output tok/s |", f"| SLA eligible | {score['eligible']} |", f"| Local workload/SLA validation | {score.get('official_validation', {}).get('valid', False)} |"]
         raw_throughput = export.get("output_token_throughput", {}).get("avg")
         if raw_throughput is not None:
             lines.append(f"| Overall output throughput | {raw_throughput:.3f} output tok/s |")
@@ -65,6 +67,9 @@ def summarize(root: Path, job_id: str, status: str) -> str:
         lines += ["", "Validated AIPerf result unavailable; inspect the logs."]
     if profile:
         workers = capture.get("workers", {})
+        endpoint_files = sorted(root.rglob("worker-endpoints.tsv"))
+        if endpoint_files:
+            expected_reports = len(endpoint_files[0].read_text().splitlines())
         selected_decoder = capture.get("scope") == "decode-0" or bool(list(root.rglob("profile-worker-endpoints.tsv")))
         expected_reports = 1 if selected_decoder else expected_reports
         expected_gpus = 4 if selected_decoder else 16

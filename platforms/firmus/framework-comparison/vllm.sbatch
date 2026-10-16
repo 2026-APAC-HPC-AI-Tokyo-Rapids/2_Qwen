@@ -80,7 +80,7 @@ cleanup_all() {
 trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-# The installed adapter passed 64 numerical/graph records in 38786945340.
+# The PDL-on installed adapter passed 64 numerical/graph records in 38801099834.
 # Keep that finite check on the profile path; normal official runs stay uninstrumented.
 if [[ "${PROFILE:-false}" == true ]]; then
   # Reuse this allocation and exact serving image; no profiler during numerical validation.
@@ -214,7 +214,7 @@ aiperf_status=0
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || aiperf_status=$?
 while IFS=$'\t' read -r worker host port _tp; do curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/metrics" >"${ROOT}/results/metrics-after-${worker}.prom"; done <"${ROOT}/source/worker-endpoints.tsv"
 # The scheduler log reaches the Actions log, so print the decisive numbers there as well as in results/.
-jq -c -n --slurpfile s "${ROOT}/results/score.json" --slurpfile e "${ROOT}/results/profile_export_aiperf.json" '{score:$s[0].score_output_tokens_per_second, eligible:$s[0].eligible, good_fraction:$s[0].good_request_fraction, requests:$s[0].request_count, good:$s[0].good_request_count, ttft_ms:($e[0].time_to_first_token | {avg, p50, p90, p99}), itl_ms:($e[0].inter_token_latency | {avg, p50, p90, p99})}' || true
+jq -c -n --slurpfile s "${ROOT}/results/score.json" --slurpfile e "${ROOT}/results/profile_export_aiperf.json" '{good_output_tokens_per_second:($s[0].goodput_requests_per_second * 200), overall_output_tokens_per_second:$e[0].output_token_throughput.avg, local_gated_value:$s[0].score_output_tokens_per_second, eligible:$s[0].eligible, good_fraction:$s[0].good_request_fraction, requests:$s[0].request_count, good:$e[0].good_request_count.avg, ttft_ms:($e[0].time_to_first_token | {avg, p50, p90, p95, p99}), itl_ms:($e[0].inter_token_latency | {avg, p50, p90, p95, p99})}' || true
 (cd "${ROOT}/results" && grep -E '^vllm:(((request_queue_time|request_prefill_time|request_decode_time|time_to_first_token|inter_token_latency|e2e_request_latency|nixl_xfer_time|nixl_post_time)_seconds|nixl_bytes_transferred|nixl_num_descriptors|iteration_tokens_total)_(sum|count)|(prompt_tokens|generation_tokens|num_preemptions|spec_decode_num_drafts|spec_decode_num_draft_tokens|spec_decode_num_accepted_tokens)_total)[{ ]' metrics-before-*.prom metrics-after-*.prom) || true
 (cd "${ART}" && grep -o 'DeepGEMM E8M0 [a-z]*' prefill-*.log decode-0.log | sort | uniq -c) || true
 grep -hE 'Avg prompt throughput|SpecDecoding metrics|KV Transfer metrics' "${ART}/decode-0.log" | tail -n 30 || true
