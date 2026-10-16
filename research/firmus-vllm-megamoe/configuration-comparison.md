@@ -399,3 +399,41 @@ For direct-GPU NixlPushConnector with the mandatory modified-MegaMoE backend and
 `validate_push_start` executes the actual pre/post methods with CPU connector/stream fixtures:15 cases cover P data-ready order, D registration, absence of relevant work, current-ID overlap, host buffering, other connector/backend, TP/PP/PCP/DCP, disabled connector, original sync-load behavior and stream failure before any transfer. The unpatched actual method fails the required ordering; the patched method passes. The new original-source fixture retains its upstream license and exact pinned bytes. Full five-source installation replay on pristine v0.30.0 source validates old7-case completion ownership, native MP/MQ contracts and the new15-case ordering contract before writing; emitted file hashes agree with the repair report. Installed-image CPU checks rerun the new contract, and worker preflight checks the new report plus actual GPU-wrapper bytes.
 
 All known source/runtime changes are batched before replacement GPU submission. Keep the prepared P native-compilation/no-graphs setting and18-case numerical gate, while retaining all matched workload/precision/topology/cache/routing/decoder conditions. This combined candidate will not isolate compiler and Push-order contributions. Because installed source changes, build and independently verify a fresh image before replacing the runtime image pin. Local preflight:529 tests and22 subtests passed, two nonapplicable decoder cases skipped; changed scripts/container/tests Ruff,26 shell files plus embedded worker syntax, modified Python syntax, actionlint and diff checks pass. GPU ordering, correctness, potential synchronization cost, official metrics, archive and cleanup remain open. No replacement GPU allocation is submitted at this stage.
+
+## Verified batched image and normal release
+
+Image Actions38923173999 and CPU CI38923174151 both succeeded from
+source72955270e0f7e7874e60fc537012ab1974e8d6c5. Distribution to Firmus succeeded.
+Independent full-file hashing of the delivered38923173999.sqsh matches sidecar
+SHA256 `9896ec743629f5d93001b89a10c5779507a77109fa75f02f17b3156c3c95194c`,
+9315221504 bytes. Selective extraction verifies the embedded source commit,
+repair/checker Git blobs and actual files, unchanged private adapter source,
+and all five installed patched-source hashes against the repair report.
+Executing the actual installed methods locally reproduces the15-case
+Push-start ordering contract,7-case producer-release contract and MP/MQ
+readiness contract, all matching the embedded report. The actual embedded
+private-provider report passes threeSM90 compile geometries with CUDA
+uninitialized and ordinary dense-provider isolation; the native Gloo report
+passes all four ranks with CUDA uninitialized. The actual archived buildah-test
+log also passes the four-case native collective_rpc/Future and real local
+SHM/socket response-transport test with CUDA uninitialized; this is stronger
+than inferring success from a command invocation. The owned extraction directory
+on Firmus is removed by its EXIT trap. These are CPU/file checks, not GPU
+correctness, organizer accuracy, measured fusion matching or throughput.
+
+Pin this verified image for the batched normal candidate: native compiled P
+without CUDA graphs plus the data-ready early Push metadata repair. Keep the
+18-case native fusion numerical gate before full-model startup and unchanged
+D graphs, modified MegaMoE/PDL, original precision/scales, cache budgets,
+request limits, speculation, routing and official client. Submit via the
+commit-triggered Firmus Actions route with two nodes and neutral Slurm name
+`run`, without profiler instrumentation. This candidate combines two changes
+and cannot isolate their gains. No new performance result exists at release;
+latest verified normal good/raw TPS remains5260.920970/6212.493450 and fails
+90% eligibility. Record terminal official output, numerical gate, selected
+server-info settings, archive checksums and runtime cleanup before conclusions.
+
+Final release preflight on the updated pin passes529 tests,22 subtests and
+2 nonapplicable skips in41.33s; full metrics/scripts/container Ruff, all46
+shell files plus the embedded worker, runtime JSON and changed Python syntax,
+actionlint, experiment-tag and whitespace checks pass.

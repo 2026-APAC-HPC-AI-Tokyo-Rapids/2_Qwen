@@ -61,7 +61,7 @@ individual routing, publication and handoff contributions are not isolated.
 | Avoid stale/skewed rank and worker load | Outer P least-live reservation lasts through the entire response body; explicit P rank reservations rotate ties. D uses native waiting/running/in-flight accounting. These are framework-specific implementations, not proof of identical native SGLang queue budgets. Inspect per-rank latency/distribution before declaring the historical imbalance reproduced or solved. |
 | Ready output should not wait behind another long P forward | Current native MP nonconsuming queue readiness and early publication were validated through full serving, but did not demonstrate an improvement. SGLang's CUDA-copy-event readiness and vLLM's worker-RPC readiness are different boundaries; source similarity alone does not prove the same handoff latency. |
 | Fix real transfer ownership / lifetime errors | Native Push completion telemetry accounts for all5857 warmup+measurement transfers in38872232338; no failure/expiry/preemption events and final caches empty. Do not copy obsolete heterogeneous TP1->TP4 staging work into the current TP1->TP1 path. |
-| Do not port improvements targeting a superseded kernel path | Legacy TP4 Triton SiLU/quant and TP reduction fixes are not automatically applicable inside the current fused MegaMoE. Current P native-compilation candidate38917392565 targets separately recorded surrounding work. |
+| Do not port improvements targeting a superseded kernel path | Legacy TP4 Triton SiLU/quant and TP reduction fixes are not automatically applicable inside the current fused MegaMoE. P native compilation targets separately recorded surrounding work. Compile-only candidate38917392565 was cancelled before allocation after the subsequent native Push-order finding; source7295527 batches the changes and requires a fresh image. |
 
 The useful pattern is to retain both service capacity and reliable handoff/load
 behavior, using official TTFT/ITL and eligibility to assess the whole deployment.
@@ -70,3 +70,17 @@ ITL establishes that the GPU or the scheduler alone is responsible. No extra
 SGLang run, duplicate GPU experiment or new settings follow from this history
 audit. Follow Issue21 for the active vLLM experiment and Issue24 for the separate
 SGLang work.
+
+## Concrete follow-up from the handoff comparison
+
+Inspecting the actual pinned vLLM GPU wrapper exposed a later boundary than
+engine-RPC response publication: completed Push block metadata binds before a
+new forward but reaches the background writer only in post-forward. The guarded
+source7295527 change submits completed prior P blocks and D registrations before
+unrelated compute, fencing prior P target/draft stores on the current stream
+first. CPU execution of the actual methods verifies submission order; it does
+not measure its TTFT contribution or certify GPU transfer correctness. The
+compile-only queued run38917392565 /24104 was cancelled before allocation,
+archived with19 checksums and cleaned. Build38923173999 supplies the batched
+source repair; use its independently verified image before any replacement GPU
+submission. See configuration-comparison.md for the exact guards and evidence.
