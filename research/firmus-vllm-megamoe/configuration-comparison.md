@@ -277,3 +277,15 @@ The launch preflight also requires exported MP backend, pipeline size1 and async
 CPU CI38869212964 and image workflow38869212923 both succeeded. The AWS build took17m42 and Firmus distribution1m28. Independently hash the distributed image once: `/scratch/home/ACCOUNT/qwen/vllm-containers/38869212923.sqsh`, SHA256 `fa5eac4cce0a9376af4cbf23e3c27116f0434e9bef8e3f62b43cfe028772464b`,9315217408 bytes; sidecar identifies source014d3eaff34eeeefc0b8957a5a81c516191bf673. Parent verification of extracted actual installed bytes confirms all four patched source hashes, byte-identical repair script and source manifest, and reruns both installed AST-selected CPU contracts successfully. The build log passes the actual installed MP collective_rpc/Future plus real local SHM/socket response gate,4 cases with CUDA uninitialized, including delayed overflow and worker failure. Existing native SM90 compilation/private MegaMoE bridge and all four Gloo native expert-loader ranks also pass. These are CPU/compile checks; GPU/serving behavior and performance remain to be measured.
 
 Pin this image for both the normal official workload and separate profile. The only new serving implementation factor relative to38850339264 is native response readiness; the exported-config checks do not change runtime options. Preserve the original PDL-on modified MegaMoE and all precision/model/cache/routing/speculation settings. Check full official metrics, raw timing distribution, producer lease accounting and strict capture completeness before attributing any benefit or selecting further optimization. Normal and profile have distinct tracked commits and neutral Slurm names, with no rebuild for the runtime pin.
+
+## Reproducible latency figures
+
+`plot_request_latency.py` generates standalone PNG/PDF comparisons from canonical normal-run score/export files and every measurement-phase raw request. The panels show measured good/overall TPS, full TTFT and request-mean ITL empirical distributions, and per5-second TTFT miss fractions. It verifies scored concurrency/SLA/error/OSL fields, raw request/good counts and eligibility; it does not replace official result-parser replay. The whole measurement remains scored, and time bins are descriptive. Each figure embeds the analysis-script/data SHA256s and analysis-package versions. These are single observations, not isolated/repeated causal estimates.
+
+Reproduce the currently verified three controls using analysis-only packages (no serving image change):
+
+```bash
+uv run --with matplotlib==3.11.2 --with numpy==2.5.4 python research/firmus-vllm-megamoe/plot_request_latency.py 38664373784 38821794697 38850339264 --output /tmp/qwen-latency-comparison
+```
+
+Raw count/SLA consistency checks, rendering and Ruff pass for all three canonical inputs. The figure is visually checked. Add38872232338 only after its new normal result and official output have been verified; do not infer a new performance outcome from the prepared plotting code. No GPU allocation, source/kernel change or additional benchmark is needed to generate these figures.
