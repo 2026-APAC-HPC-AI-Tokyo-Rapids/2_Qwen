@@ -12,7 +12,7 @@
 # Exact modified SM90 MegaMoE owns dispatch/math/combine; KV budgets are per DP rank.
 # Profile allocations validate adapter math before loading the full serving topology.
 # Reviewed capture uses the exact Komori client and PDL-on image pinned in config.
-# Profile reuses the verified MP-readiness image and settings of normal control720b07d.
+# Reuse the verified MP-readiness image; compile prefill without CUDA graphs.
 # Keep the all-worker diagnostic separate from official uninstrumented throughput.
 set -euo pipefail
 
@@ -90,6 +90,9 @@ if [[ "${PROFILE:-false}" == true ]]; then
   NVIDIA_VISIBLE_DEVICES=0,1,2,3 timeout --signal=TERM --kill-after=30s 300s srun --mpi=none --export=ALL --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=16 --gpu-bind=none --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${VLLM}" --container-mounts="$(mounts adapter-check)" bash -c 'export CUDA_VISIBLE_DEVICES=0,1,2,3; export HOME="$1/home/adapter-check" XDG_CACHE_HOME="$1/home/adapter-check/.cache" TRITON_CACHE_DIR="$1/home/adapter-check/.triton"; exec torchrun --standalone --nproc_per_node=4 "$1/scripts/megamoe/adapter_gpu_gate.py" --output "$1/results/gate.json"' gate "${ROOT}" >"${ART}/adapter-check.log" 2>&1
   jq -e '.completed == true and .correctness_passed == true and .graph_passed == true and .native_factory_runner == true and .capacity_requested == 4096 and (.cases | length) == 4 and ([.cases[].records[]] | length) == 64' "${ROOT}/results/gate.json" >/dev/null
 fi
+# Validate the newly enabled native fusion kernels before full-model startup.
+NVIDIA_VISIBLE_DEVICES=0 timeout --signal=TERM --kill-after=15s 90s srun --mpi=none --export=ALL --exact -N1 -n1 -w "${HEAD}" --gres=gpu:1 --cpus-per-task=4 --gpu-bind=none --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${VLLM}" --container-mounts="$(mounts norm-quant-check)" bash -c 'export CUDA_VISIBLE_DEVICES=0; export HOME="$1/home/norm-quant-check" XDG_CACHE_HOME="$1/home/norm-quant-check/.cache" TRITON_CACHE_DIR="$1/home/norm-quant-check/.triton"; exec python3 "$1/scripts/megamoe/norm_quant_gpu_gate.py" --output "$1/results/norm-quant-gate.json"' gate "${ROOT}" >"${ART}/norm-quant-check.log" 2>&1
+jq -e '.completed == true and .passed == true and .e8m0 == false and .relative_l2_limit == 0.025 and (.records | length) == 18 and ([.records[].relative_l2] | max) <= 0.025' "${ROOT}/results/norm-quant-gate.json" >/dev/null
 for worker in 0 1; do printf 'prefill-%s\t%s\t%s\t1\n' "${worker}" "${HEAD_IP}" "$((30100 + worker * 10))"; done >"${ROOT}/source/worker-endpoints.tsv"
 printf 'prefill-2\t%s\t30120\t1\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
 printf 'decode-0\t%s\t30200\t1\n' "${TAIL_IP}" >>"${ROOT}/source/worker-endpoints.tsv"
@@ -119,8 +122,8 @@ role_flags=()
 blocks=2048
 batch_tokens=4096
 if [[ "$role" == prefill ]]; then
-  # The winning SGLang prefill is eager; disable target and draft graphs here.
-  role_flags=(--enforce-eager)
+  # Native compilation enables surrounding fusions; target/draft graphs stay off.
+  role_flags=(--compilation-config '{"mode":3,"cudagraph_mode":"NONE","pass_config":{"fuse_norm_quant":true}}')
   export VLLM_ALLREDUCE_USE_SYMM_MEM=1
   export VLLM_ALLREDUCE_USE_FLASHINFER=0 VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=0
   KV_CONFIG="{\"kv_connector\":\"NixlPushConnector\",\"kv_role\":\"kv_producer\",\"engine_id\":\"${engine_id}\"}"
@@ -196,7 +199,7 @@ echo "READY after ${SECONDS}s"
 
 while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 30 "http://${host}:${port}/server_info?config_format=json" >"${ROOT}/results/server-info-${worker}.json"
-  jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.vllm_config as $v | $expected_tp == 1 and $v.parallel_config.tensor_parallel_size == 1 and $v.parallel_config.pipeline_parallel_size == 1 and $v.parallel_config.distributed_executor_backend == "mp" and $v.scheduler_config.async_scheduling == true and $v.kv_transfer_config.kv_connector == "NixlPushConnector" and $v.kernel_config.moe_backend == "apac_sm90_megamoe" and $v.parallel_config.enable_expert_parallel == true and $v.parallel_config.data_parallel_size == 4 and $v.parallel_config.all2all_backend == "allgather_reducescatter" and $v.cache_config.cache_dtype == "fp8_e4m3" and $v.cache_config.block_size == 64 and ($v.cache_config.block_size * $v.cache_config.num_gpu_blocks_override) == (if $role == "prefill" then 131072 else $config[0].decode_max_total_tokens end) and $v.model_config.max_model_len == 8192 and $v.scheduler_config.max_num_batched_tokens == (if $role == "prefill" then 4096 else 2048 end) and (if $role == "prefill" then $v.model_config.enforce_eager == true else $v.cache_config.enable_prefix_caching == false and $v.compilation_config.max_cudagraph_capture_size == 128 and $v.compilation_config.cudagraph_mode == [2,1] and $v.compilation_config.cudagraph_capture_sizes == [$config[0].decode_cuda_graph_bs[] | . * 4] end) and $v.speculative_config.draft_parallel_config.enable_expert_parallel == false and $v.speculative_config.draft_parallel_config.tensor_parallel_size == 1 and $v.speculative_config.method == "eagle3" and $v.speculative_config.model == "/draft" and $v.speculative_config.num_speculative_tokens == 3 and $v.scheduler_config.max_num_seqs == (if $role == "prefill" then 48 else 32 end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
+  jq -e --arg role "${worker%%-*}" --argjson expected_tp "${_tp}" --slurpfile config "${ROOT}/source/firmus-framework.json" '.vllm_config as $v | $expected_tp == 1 and $v.parallel_config.tensor_parallel_size == 1 and $v.parallel_config.pipeline_parallel_size == 1 and $v.parallel_config.distributed_executor_backend == "mp" and $v.scheduler_config.async_scheduling == true and $v.kv_transfer_config.kv_connector == "NixlPushConnector" and $v.kernel_config.moe_backend == "apac_sm90_megamoe" and $v.parallel_config.enable_expert_parallel == true and $v.parallel_config.data_parallel_size == 4 and $v.parallel_config.all2all_backend == "allgather_reducescatter" and $v.cache_config.cache_dtype == "fp8_e4m3" and $v.cache_config.block_size == 64 and ($v.cache_config.block_size * $v.cache_config.num_gpu_blocks_override) == (if $role == "prefill" then 131072 else $config[0].decode_max_total_tokens end) and $v.model_config.max_model_len == 8192 and $v.scheduler_config.max_num_batched_tokens == (if $role == "prefill" then 4096 else 2048 end) and (if $role == "prefill" then $v.model_config.enforce_eager == false and $v.compilation_config.mode == 3 and $v.compilation_config.cudagraph_mode == 0 and $v.compilation_config.max_cudagraph_capture_size == 0 and $v.compilation_config.cudagraph_capture_sizes == [] and $v.compilation_config.pass_config.fuse_norm_quant == true else $v.cache_config.enable_prefix_caching == false and $v.compilation_config.max_cudagraph_capture_size == 128 and $v.compilation_config.cudagraph_mode == [2,1] and $v.compilation_config.cudagraph_capture_sizes == [$config[0].decode_cuda_graph_bs[] | . * 4] end) and $v.speculative_config.draft_parallel_config.enable_expert_parallel == false and $v.speculative_config.draft_parallel_config.tensor_parallel_size == 1 and $v.speculative_config.method == "eagle3" and $v.speculative_config.model == "/draft" and $v.speculative_config.num_speculative_tokens == 3 and $v.scheduler_config.max_num_seqs == (if $role == "prefill" then 48 else 32 end)' "${ROOT}/results/server-info-${worker}.json" >/dev/null
 done <"${ROOT}/source/worker-endpoints.tsv"
 if [[ "${PROFILE:-false}" == true ]]; then
   mkdir -p "${ROOT}/profile/client"

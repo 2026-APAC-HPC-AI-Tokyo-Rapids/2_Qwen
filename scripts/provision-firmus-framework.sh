@@ -77,6 +77,11 @@ install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/${fra
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/official-aiperf.sh" "${runtime_dir}/scripts/official-aiperf.sh"
 install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/vllm-proxy.py" "${runtime_dir}/vllm-proxy.py"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${GITHUB_WORKSPACE}/scripts/parse-firmus-reference-result.py" "${GITHUB_WORKSPACE}/scripts/summarize-firmus-run.py" "${runtime_dir}/scripts/"
+if [[ "${framework}" == vllm ]]; then
+  install -d -m 0755 "${runtime_dir}/scripts/megamoe" "${runtime_dir}/source/megamoe"
+  install -m 0644 "${GITHUB_WORKSPACE}/research/firmus-vllm-megamoe/norm_quant_gpu_gate.py" "${runtime_dir}/scripts/megamoe/"
+  cp "${runtime_dir}/scripts/megamoe/norm_quant_gpu_gate.py" "${runtime_dir}/source/megamoe/"
+fi
 if [[ "${PROFILE}" == true ]]; then
   install -d -m 0755 "${runtime_dir}/scripts/megamoe" "${runtime_dir}/source/megamoe"
   install -m 0644 "${GITHUB_WORKSPACE}/research/firmus-vllm-megamoe/adapter_gpu_gate.py" "${GITHUB_WORKSPACE}/research/firmus-vllm-megamoe/gpu_gate.py" "${runtime_dir}/scripts/megamoe/"
