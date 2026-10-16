@@ -28,6 +28,9 @@ def main():
     decode_tiles_patch = Path("/opt/apac/sm90-decode-exact-tiles.patch")
     subprocess.run(["git", "apply", "--check", str(decode_tiles_patch)], cwd=package.parent, check=True)
     subprocess.run(["git", "apply", str(decode_tiles_patch)], cwd=package.parent, check=True)
+    prefill_phase_patch = Path("/opt/apac/sm90-prefill-phase.patch")
+    subprocess.run(["git", "apply", "--check", str(prefill_phase_patch)], cwd=package.parent, check=True)
+    subprocess.run(["git", "apply", str(prefill_phase_patch)], cwd=package.parent, check=True)
     # Match the saved 6344.96 baseline kernel symbols, including accumulator
     # reuse, arrival mode, stage count, EP wave and padded pool capacities.
     # Prefill's reuse path is distinct from Decode's pipelined SwapAB path.
@@ -59,6 +62,7 @@ extern "C" void* instantiate() {{
     result["fc2_pipeline_patch_sha256"] = hashlib.sha256(pipeline_patch.read_bytes()).hexdigest()
     result["prefill_rescale_patch_sha256"] = hashlib.sha256(prefill_patch.read_bytes()).hexdigest()
     result["decode_tiles_patch_sha256"] = hashlib.sha256(decode_tiles_patch.read_bytes()).hexdigest()
+    result["prefill_phase_patch_sha256"] = hashlib.sha256(prefill_phase_patch.read_bytes()).hexdigest()
     Path("/opt/apac/sm90-megamoe-build.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result), flush=True)
 

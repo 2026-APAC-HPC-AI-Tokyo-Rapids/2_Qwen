@@ -1,0 +1,34 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -192,6 +192,13 @@
+                      "SM90 MegaMoE supports CTA BLOCK_N=128/256/512");
+     DG_STATIC_ASSERT(BLOCK_K == 128, "BLOCK_K is fixed to 128 (per-128 SF)");
+ 
++    // Specialize the same scheduler stream into FC1/FC2 loops for Qwen
++    // Prefill. This removes dynamic phase state from the register-heavy math
++    // loop while retaining the existing block order and pipeline barriers.
++    constexpr bool kSpecializePhase = kSplitPhaseHotPath ||
++        (kHidden == 4096 && kIntermediateHidden == 1536 && kNumRanks == 4 &&
++         BLOCK_M == 128 && BLOCK_N == 256 && kNumEpilogueThreads == 512 && kReuseAccumAsFinal);
++
+     // =====================================================================
+     // Thread / warp identification
+     // =====================================================================
+@@ -838,7 +845,7 @@
+             }
+         };
+ 
+-        if constexpr (kSplitPhaseHotPath) {
++        if constexpr (kSpecializePhase) {
+             sm90_fp8_mega_moe_for_each_block_split(
+                 scheduler,
+                 [&](const uint32_t& local_expert_idx,
+@@ -2117,7 +2124,7 @@
+             }
+         };
+ 
+-        if constexpr (kSplitPhaseHotPath) {
++        if constexpr (kSpecializePhase) {
+             sm90_fp8_mega_moe_for_each_block_split(
+                 scheduler,
+                 [&](const uint32_t& local_expert_idx,
