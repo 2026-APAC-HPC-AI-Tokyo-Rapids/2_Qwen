@@ -1,0 +1,64 @@
+{
+  "baseline": {
+    "run": 38945855851,
+    "commit": "a6acf5f11008c1e77170a53ac49fe585be5aeafd",
+    "goodput": 6521.975599520539
+  },
+  "scope": "Qwen H4096/I1536 EP4 Decode, SwapAB M64/N128, non-reuse accumulation. No runtime/batch/topology change.",
+  "changes": [
+    "Keep SwiGLU FP32 values in registers; share eight partial maxima per token, reduce the full group64 amax, then pack FP8 directly from registers.",
+    "Use pair-major partial-max layout without shared bank conflicts in the CPU address model; reuse consumed scratch for inverse scales.",
+    "Grant the math warpgroups 192 registers, within the existing 64512-register CTA budget; do not change static launch bounds or shared-memory allocation.",
+    "Load Qwen block128 FP32 weight scales cooperatively once per tile and broadcast by K index. FC1: 64 to 2 warp global-load instructions per tile; FC2: 12 to 1. Logical scale values unchanged."
+  ],
+  "preserved": [
+    "FP8 E4M3 precision",
+    "all 64 activation values in each amax",
+    "FP32 scale/clamp/reciprocal formula",
+    "FP8 conversion and FP32 SwiGLU inputs",
+    "top-k and all model operations",
+    "K accumulation order",
+    "existing TMA stores/arrival release",
+    "non-Qwen and Prefill path"
+  ],
+  "costs": [
+    "One extra CTA barrier per FC1 tile to share inverse scales.",
+    "Math warp allocation rises from 168 to 192; total role allocation 48640 to 54784, below 64512.",
+    "Compiled static instruction slots grow from 6536 to 6616 including padding; this is not a runtime instruction count or timing prediction."
+  ],
+  "compiler": {
+    "toolchain": "CUDA 12.9.86 / GCC 13 on Genkai login CPU",
+    "architecture": "sm_90a",
+    "final_header_sha256": "c06ea9a62985698599f3910e1a4bdc9c7e3b44ab4ce87246b26d9da84952e379",
+    "decode_reported_registers": 168,
+    "decode_math_register_allocation": 192,
+    "decode_spill_store_bytes": 0,
+    "decode_spill_load_bytes": 0,
+    "decode_stack_bytes": 8,
+    "prefill_byte_identical": true,
+    "prefill_reported_registers": 96,
+    "prefill_spill_store_bytes": 40,
+    "prefill_spill_load_bytes": 40
+  },
+  "validation": {
+    "patch_chain": "Seven native patches applied to original pinned wheel; final bytes match CPU compilation.",
+    "cpu_layout_model": "All 0..64 live-row counts, unique value/scale ownership, paired scratch reuse, per-row amax and FP8 conversion-input bits.",
+    "pytest_passed": 39,
+    "pytest_platform_skips": 4,
+    "ruff": "passed",
+    "shell_syntax": "passed",
+    "fp8_pack_cpu": "16385 finite FP8 pairs checked with CUDA headers and host C++; no CUDA device/runtime execution.",
+    "future_gpu_gate": "All eight widths, full tile/tail, live all-zero input, changing masked CUDA-graph inputs. Not run."
+  },
+  "rejected_variants": {
+    "loop_hoisting": "About 30% static code growth; excluded from active build.",
+    "register_quant_math_168": "32 B spill stores / 16 B loads; replaced by 192-register role allocation.",
+    "warp_cooperative_quantizer": "Compiled without spills; preserved in local evidence as the simpler alternative to register-resident quantization."
+  },
+  "performance_status": "Unmeasured. No 7200+ claim or GPU submission. The original profile lacks per-phase stall/duration evidence; the new extra barrier must be weighed against reduced shared traffic and dependent weight-scale loads.",
+  "sources": [
+    "https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html",
+    "https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/cpp-language-extensions.html"
+  ],
+  "evidence": "outputs/firmus-decode-7200-20261017/decode-quant-cpu-evidence.tar.gz and decode-quant-cpu-evidence.json"
+}
