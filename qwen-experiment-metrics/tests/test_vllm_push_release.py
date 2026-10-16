@@ -4,6 +4,7 @@ import hashlib
 import json
 import runpy
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -66,3 +67,15 @@ def test_worker_rejects_images_without_verified_push_release(tmp_path, metadata)
     result = subprocess.run(["bash", "-c", init, "worker.sh", "prefill-0", "30100", "/model", "1", "192.0.2.1"], check=False, capture_output=True, text=True)
     assert result.returncode != 0
     assert "FATAL: serving image lacks" in result.stdout + result.stderr
+
+
+def test_worker_release_guard_needs_only_existing_python_not_jq(tmp_path):
+    source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
+    worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    report = tmp_path / "repair.json"
+    report.write_text(json.dumps({"push_worker_source_sha256": PATCH["PUSH_SOURCE_SHA256"], "push_release_cpu_contract": {"passed": True}}))
+    init = worker.split("role=${name%%-*}", 1)[0].replace("/opt/apac/prefill-handoff-repair.json", str(report))
+    executable = tmp_path / "bin"
+    executable.mkdir()
+    (executable / "python3").symlink_to(sys.executable)
+    subprocess.run(["/bin/bash", "-c", init, "worker.sh", "prefill-0", "30100", "/model", "1", "192.0.2.1"], env={"PATH": str(executable)}, check=True, capture_output=True, text=True)
