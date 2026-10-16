@@ -12,7 +12,7 @@
 # Exact modified SM90 MegaMoE owns dispatch/math/combine; KV budgets are per DP rank.
 # Profile allocations validate adapter math before loading the full serving topology.
 # Reviewed capture uses the exact Komori client and PDL-on image pinned in config.
-# Normal and profile releases use the same independently verified immutable image.
+# Profile reuses the verified MP-readiness image and settings of normal control720b07d.
 # Keep the all-worker diagnostic separate from official uninstrumented throughput.
 set -euo pipefail
 
