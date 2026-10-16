@@ -11,6 +11,8 @@
 # Komori qualified6344.96 architecture: P3 DP4/EP4 plus D1 DP4/EP4, attention TP1.
 # Exact modified SM90 MegaMoE owns dispatch/math/combine; KV budgets are per DP rank.
 # Profile allocations validate adapter math before loading the full serving topology.
+# Reviewed capture uses the exact Komori client and PDL-on image pinned in config.
+# Keep this P48 diagnostic separate from the uninstrumented baseline and P2 hypothesis.
 set -euo pipefail
 
 ROOT=${SLURM_SUBMIT_DIR}
