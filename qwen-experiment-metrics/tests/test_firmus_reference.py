@@ -146,7 +146,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
     workers = [argv for argv in commands if "--exact" in argv and str(tmp_path / "source/worker.sh") in argv]
-    assert "check-firmus-megamoe.py" not in source
+    assert source.index("check-firmus-megamoe.py") < source.index("srun --exact")
     assert "check-firmus-server-info.py" not in source
     assert len(workers) == 4
     assert sum(2 if "--gres=gpu:2" in argv else 4 for argv in workers) == 16

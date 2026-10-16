@@ -19,6 +19,9 @@ def main():
     patch = Path("/opt/apac/sm90-late-topk-fp32.patch")
     subprocess.run(["git", "apply", "--check", str(patch)], cwd=package.parent, check=True)
     subprocess.run(["git", "apply", str(patch)], cwd=package.parent, check=True)
+    pipeline_patch = Path("/opt/apac/sm90-fc2-pipeline.patch")
+    subprocess.run(["git", "apply", "--check", str(pipeline_patch)], cwd=package.parent, check=True)
+    subprocess.run(["git", "apply", str(pipeline_patch)], cwd=package.parent, check=True)
     # Include the small-M SwapAB path and the split-M/split-N prefill paths.
     # This compiles CUDA code on the CPU; execution is checked in the one Slurm job.
     geometries = [(64, 128, 256, True), (128, 128, 256, False), (128, 256, 512, False)]
@@ -38,10 +41,11 @@ extern "C" void* instantiate() {{
         false, false, true, false, {str(swap_ab).lower()}>);
 }}
 """)
-            subprocess.run(["/usr/local/cuda/bin/nvcc", "--cubin", "--std=c++20", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-O3", "-gencode", "arch=compute_90a,code=sm_90a", "-I" + str(package / "include"), str(source), "-o", str(source.with_suffix(".cubin"))], check=True)
+            subprocess.run(["/usr/local/cuda/bin/nvcc", "--cubin", "--std=c++20", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-O3", "--ptxas-options=-v,-warn-spills", "-gencode", "arch=compute_90a,code=sm_90a", "-I" + str(package / "include"), str(source), "-o", str(source.with_suffix(".cubin"))], check=True)
             assert source.with_suffix(".cubin").stat().st_size > 0
             print(f"PASS: CPU CUDA compilation M{block_m}/N{block_n}, SwapAB={swap_ab}", flush=True)
     result = {"package": "sgl-deep-gemm", "version": "0.1.5", "original_header_sha256": original, "header_sha256": hashlib.sha256(header.read_bytes()).hexdigest(), "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(), "weight_scale": "original FP32 block128", "fc2_activation_scale": "FP32 group64", "topk_weight": "after FC2", "combine_accumulator": "FP32", "compiled_geometries": geometries}
+    result["fc2_pipeline_patch_sha256"] = hashlib.sha256(pipeline_patch.read_bytes()).hexdigest()
     Path("/opt/apac/sm90-megamoe-build.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result), flush=True)
 

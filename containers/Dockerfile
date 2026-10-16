@@ -27,6 +27,7 @@ COPY containers/install-accelerator-dependencies.sh /opt/apac/install-accelerato
 RUN /opt/apac/install-accelerator-dependencies.sh && rm /opt/apac/install-accelerator-dependencies.sh
 
 COPY sm90-late-topk-fp32.patch /opt/apac/sm90-late-topk-fp32.patch
+COPY sm90-fc2-pipeline.patch /opt/apac/sm90-fc2-pipeline.patch
 COPY containers/build-sm90-megamoe.py /opt/apac/build-sm90-megamoe.py
 RUN /opt/sglang/venv/bin/python /opt/apac/build-sm90-megamoe.py
 

@@ -14,7 +14,8 @@ router_patch_sha=$(sha256sum "${workspace}/patches/sglang-router/prefill-load-li
 router_lock_sha=$(sha256sum "${workspace}/patches/sglang-router/Cargo.lock" | awk '{print $1}')
 jq -e --arg patch "${router_patch_sha}" --arg lock "${router_lock_sha}" '.version == "0.3.2" and .source_sha256 == "bdbea1d54cce879fb83d2885d01ee3c006f242d0adbbac806f2fb2b91a5fe73d" and .patch_sha256 == $patch and .cargo_lock_sha256 == $lock and .prefill_load == "dispatch_through_body_completion"' "${destination}/sglang-router-build.json" >/dev/null
 native_patch_sha=$(sha256sum "${workspace}/patches/deep-gemm/sm90-late-topk-fp32.patch" | awk '{print $1}')
-jq -e --arg sha "${native_patch_sha}" '.version == "0.1.5" and .header_sha256 == "5479807104bf1aeed4cc3ecc8ce57d2a835d68457f9cf4962ef3f15cc176e8d2" and .patch_sha256 == $sha and .combine_accumulator == "FP32" and (.compiled_geometries | length == 3)' "${destination}/sm90-megamoe-build.json" >/dev/null
+pipeline_patch_sha=$(sha256sum "${workspace}/patches/deep-gemm/sm90-fc2-pipeline.patch" | awk '{print $1}')
+jq -e --arg sha "${native_patch_sha}" --arg pipeline "${pipeline_patch_sha}" '.version == "0.1.5" and .header_sha256 == "b4289b5e8b989a1410357a0057386ad6934496bbef0e4b6c8a3e1293e815107b" and .patch_sha256 == $sha and .fc2_pipeline_patch_sha256 == $pipeline and .combine_accumulator == "FP32" and (.compiled_geometries | length == 3)' "${destination}/sm90-megamoe-build.json" >/dev/null
 while read -r patch; do
   patch_sha=$(sha256sum "${workspace}/${patch}" | awk '{print $1}')
   jq -e --arg path "${patch}" --arg sha "${patch_sha}" 'any(.applied_patches[]; .path == $path and .sha256 == $sha)' "${destination}/image-manifest.json" >/dev/null

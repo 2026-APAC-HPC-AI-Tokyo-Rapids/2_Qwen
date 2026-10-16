@@ -10,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("corruption", [None, "hash", "missing_dp_query", "missing_handoff", "missing_activation", "router_hash", "router_lock", "missing_router"])
+@pytest.mark.parametrize("corruption", [None, "hash", "missing_dp_query", "missing_handoff", "missing_activation", "router_hash", "router_lock", "missing_router", "pipeline_hash"])
 def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(tmp_path, corruption):
     embedded = tmp_path / "embedded"
     embedded.mkdir()
@@ -32,7 +32,7 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
         router["cargo_lock_sha256"] = "0" * 64
     if corruption != "missing_router":
         (embedded / "sglang-router-build.json").write_text(json.dumps(router))
-    (embedded / "sm90-megamoe-build.json").write_text(json.dumps({"version": "0.1.5", "header_sha256": "5479807104bf1aeed4cc3ecc8ce57d2a835d68457f9cf4962ef3f15cc176e8d2", "patch_sha256": hashlib.sha256((ROOT / "patches/deep-gemm/sm90-late-topk-fp32.patch").read_bytes()).hexdigest(), "combine_accumulator": "FP32", "compiled_geometries": [[64, 128, 256, True], [128, 128, 256, False], [128, 256, 512, False]]}))
+    (embedded / "sm90-megamoe-build.json").write_text(json.dumps({"version": "0.1.5", "header_sha256": "b4289b5e8b989a1410357a0057386ad6934496bbef0e4b6c8a3e1293e815107b", "patch_sha256": hashlib.sha256((ROOT / "patches/deep-gemm/sm90-late-topk-fp32.patch").read_bytes()).hexdigest(), "fc2_pipeline_patch_sha256": "0" * 64 if corruption == "pipeline_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-fc2-pipeline.patch").read_bytes()).hexdigest(), "combine_accumulator": "FP32", "compiled_geometries": [[64, 128, 256, True], [128, 128, 256, False], [128, 256, 512, False]]}))
     unpack = tmp_path / "unsquashfs"
     unpack.write_text('#!/bin/bash\nset -eu\n[[ "$*" != *"-cat"* ]] || exit 1\nwhile [[ "$1" != -d ]]; do shift; done\n[[ ! -e "$2" ]] || exit 1\nmkdir -p "$2/opt/apac"\ncp "$EMBEDDED"/*.json "$2/opt/apac/"\nchmod -R a-w "$2"\n')
     unpack.chmod(0o755)

@@ -1,0 +1,137 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1467,8 +1467,9 @@
+                                 using SwapWGMMA = typename mma::sm90::FP8MMASelector<N_SWAP>::type;
+                                 constexpr uint32_t kSwapAccum = SwapWGMMA::kNumAccum;
+                                 float swap_accum[kSwapAccum];
+-
+-                                auto promote_swap_accum = [&](const uint32_t& sf_group) {
++                                float swap_accum_hi[kSwapAccum];
++
++                                auto promote_swap_accum = [&](const uint32_t& sf_group, const float* values) {
+                                     #pragma unroll
+                                     for (uint32_t i = 0; i < kSwapAccum / 4; ++ i) {
+                                         const uint32_t token_0 = i * 8 + col_idx * 2;
+@@ -1477,10 +1478,10 @@
+                                             ptx::ld_shared(smem_sfa[stage_idx] + sf_group * BLOCK_M + token_0) : 0.0f;
+                                         const float scale_1 = token_1 < valid_m ?
+                                             ptx::ld_shared(smem_sfa[stage_idx] + sf_group * BLOCK_M + token_1) : 0.0f;
+-                                        final_accum[i * 4 + 0] += scale_0 * l2_sf * swap_accum[i * 4 + 0];
+-                                        final_accum[i * 4 + 2] += scale_0 * l2_sf * swap_accum[i * 4 + 2];
+-                                        final_accum[i * 4 + 1] += scale_1 * l2_sf * swap_accum[i * 4 + 1];
+-                                        final_accum[i * 4 + 3] += scale_1 * l2_sf * swap_accum[i * 4 + 3];
++                                        final_accum[i * 4 + 0] += scale_0 * l2_sf * values[i * 4 + 0];
++                                        final_accum[i * 4 + 2] += scale_0 * l2_sf * values[i * 4 + 2];
++                                        final_accum[i * 4 + 1] += scale_1 * l2_sf * values[i * 4 + 1];
++                                        final_accum[i * 4 + 3] += scale_1 * l2_sf * values[i * 4 + 3];
+                                     }
+                                 };
+ 
+@@ -1500,12 +1501,9 @@
+                                 #pragma unroll
+                                 for (uint32_t i = 0; i < kSwapAccum; ++ i)
+                                     ptx::warpgroup_fence_operand(swap_accum[i]);
+-                                ptx::warpgroup_wait<0>();
+-                                promote_swap_accum(0);
+-
+                                 #pragma unroll
+                                 for (uint32_t i = 0; i < kSwapAccum; ++ i)
+-                                    ptx::warpgroup_fence_operand(swap_accum[i]);
++                                    ptx::warpgroup_fence_operand(swap_accum_hi[i]);
+                                 ptx::warpgroup_arrive();
+                                 #pragma unroll
+                                 for (uint32_t k = 0; k < (BLOCK_K / 2) / SwapWGMMA::K; ++ k) {
+@@ -1514,14 +1512,19 @@
+                                         smem_b[stage_idx] + smem_b_wg_offset + k_off, 1);
+                                     auto desc_b = mma::sm90::make_smem_desc(
+                                         smem_a[stage_idx] + k_off, 1);
+-                                    SwapWGMMA::wgmma(desc_a, desc_b, swap_accum, k);
++                                    SwapWGMMA::wgmma(desc_a, desc_b, swap_accum_hi, k);
+                                 }
+                                 ptx::warpgroup_commit_batch();
+                                 #pragma unroll
+                                 for (uint32_t i = 0; i < kSwapAccum; ++ i)
+-                                    ptx::warpgroup_fence_operand(swap_accum[i]);
++                                    ptx::warpgroup_fence_operand(swap_accum_hi[i]);
++                                // Separate groups let the second half run while we
++                                // promote the first. Preserve the original low/high
++                                // FP32 addition order and release SMEM only at wait<0>.
++                                ptx::warpgroup_wait<1>();
++                                promote_swap_accum(0, swap_accum);
+                                 ptx::warpgroup_wait<0>();
+-                                promote_swap_accum(1);
++                                promote_swap_accum(1, swap_accum_hi);
+ 
+                                 if (lane_idx == 0)
+                                     empty_barriers[stage_idx]->arrive();
+@@ -1552,6 +1555,7 @@
+                             }
+                         } else {
+                             // L2: split BLOCK_K=128 into two halves (per-64 SFA), each 2 WGMMAs.
++                            float accum_hi[kAccumPerThread];
+                             // First half: K=0..63, SFA = scale_a_*_lo
+                             #pragma unroll
+                             for (uint32_t i = 0; i < kAccumPerThread; ++ i) ptx::warpgroup_fence_operand(accum[i]);
+@@ -1567,7 +1571,23 @@
+                             ptx::warpgroup_commit_batch();
+                             #pragma unroll
+                             for (uint32_t i = 0; i < kAccumPerThread; ++ i) ptx::warpgroup_fence_operand(accum[i]);
+-                            ptx::warpgroup_wait<0>();
++                            // Second half: K=64..127, SFA = scale_a_*_hi
++                            #pragma unroll
++                            for (uint32_t i = 0; i < kAccumPerThread; ++ i) ptx::warpgroup_fence_operand(accum_hi[i]);
++                            ptx::warpgroup_arrive();
++                            #pragma unroll
++                            for (uint32_t k = 0; k < (BLOCK_K / 2) / WGMMA::K; ++ k) {
++                                const uint32_t k_off = (BLOCK_K / 2) + k * WGMMA::K;
++                                auto desc_a = mma::sm90::make_smem_desc(
++                                    smem_a[stage_idx] + smem_a_wg_offset + k_off, 1);
++                                auto desc_b = mma::sm90::make_smem_desc(
++                                    smem_b[stage_idx] + smem_b_wg_offset + k_off, 1);
++                                WGMMA::wgmma(desc_a, desc_b, accum_hi, k);
++                            }
++                            ptx::warpgroup_commit_batch();
++                            #pragma unroll
++                            for (uint32_t i = 0; i < kAccumPerThread; ++ i) ptx::warpgroup_fence_operand(accum_hi[i]);
++                            ptx::warpgroup_wait<1>();
+ 
+                             // L2 first half: single scalar `l2_sf` broadcast across N.
+                             #pragma unroll
+@@ -1578,22 +1598,6 @@
+                                 final_accum[i*4+3] += scale_a_1_lo * l2_sf * accum[i*4+3];
+                             }
+ 
+-                            // Second half: K=64..127, SFA = scale_a_*_hi
+-                            #pragma unroll
+-                            for (uint32_t i = 0; i < kAccumPerThread; ++ i) ptx::warpgroup_fence_operand(accum[i]);
+-                            ptx::warpgroup_arrive();
+-                            #pragma unroll
+-                            for (uint32_t k = 0; k < (BLOCK_K / 2) / WGMMA::K; ++ k) {
+-                                const uint32_t k_off = (BLOCK_K / 2) + k * WGMMA::K;
+-                                auto desc_a = mma::sm90::make_smem_desc(
+-                                    smem_a[stage_idx] + smem_a_wg_offset + k_off, 1);
+-                                auto desc_b = mma::sm90::make_smem_desc(
+-                                    smem_b[stage_idx] + smem_b_wg_offset + k_off, 1);
+-                                WGMMA::wgmma(desc_a, desc_b, accum, k);
+-                            }
+-                            ptx::warpgroup_commit_batch();
+-                            #pragma unroll
+-                            for (uint32_t i = 0; i < kAccumPerThread; ++ i) ptx::warpgroup_fence_operand(accum[i]);
+                             ptx::warpgroup_wait<0>();
+ 
+                             if (lane_idx == 0)
+@@ -1602,10 +1606,10 @@
+                             // L2 second half: same broadcast scalar `l2_sf`.
+                             #pragma unroll
+                             for (uint32_t i = 0; i < kAccumPerThread / 4; ++ i) {
+-                                final_accum[i*4+0] += scale_a_0_hi * l2_sf * accum[i*4+0];
+-                                final_accum[i*4+1] += scale_a_0_hi * l2_sf * accum[i*4+1];
+-                                final_accum[i*4+2] += scale_a_1_hi * l2_sf * accum[i*4+2];
+-                                final_accum[i*4+3] += scale_a_1_hi * l2_sf * accum[i*4+3];
++                                final_accum[i*4+0] += scale_a_0_hi * l2_sf * accum_hi[i*4+0];
++                                final_accum[i*4+1] += scale_a_0_hi * l2_sf * accum_hi[i*4+1];
++                                final_accum[i*4+2] += scale_a_1_hi * l2_sf * accum_hi[i*4+2];
++                                final_accum[i*4+3] += scale_a_1_hi * l2_sf * accum_hi[i*4+3];
+                             }
+                         }
+                     }

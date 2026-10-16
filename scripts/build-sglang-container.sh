@@ -92,6 +92,7 @@ cp "${GITHUB_WORKSPACE}/containers/build-sglang-router.sh" "${context}/container
 cp "${GITHUB_WORKSPACE}/patches/sglang-router/prefill-load-lifetime.patch" "${context}/prefill-load-lifetime.patch"
 cp "${GITHUB_WORKSPACE}/patches/sglang-router/Cargo.lock" "${context}/sglang-router.Cargo.lock"
 cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-late-topk-fp32.patch" "${context}/sm90-late-topk-fp32.patch"
+cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-fc2-pipeline.patch" "${context}/sm90-fc2-pipeline.patch"
 rm -rf -- "${context}/sglang-source/.git"
 printf '%s\n' "${sglang_commit}" >"${context}/sglang-commit.txt"
 

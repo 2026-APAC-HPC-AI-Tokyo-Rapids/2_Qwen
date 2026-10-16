@@ -81,6 +81,8 @@ fi
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/${framework}.sbatch" "${runtime_dir}/scripts/submit.sbatch"
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/official-aiperf.sh" "${runtime_dir}/scripts/official-aiperf.sh"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/run-aiperf.py" "${runtime_dir}/scripts/run-aiperf.py"
+install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-megamoe.py" "${GITHUB_WORKSPACE}/scripts/check-firmus-decode-kernels.py" "${runtime_dir}/scripts/"
+cp "${runtime_dir}/scripts/check-firmus-megamoe.py" "${runtime_dir}/scripts/check-firmus-decode-kernels.py" "${runtime_dir}/source/"
 install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/vllm-proxy.py" "${runtime_dir}/vllm-proxy.py"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${GITHUB_WORKSPACE}/scripts/parse-firmus-reference-result.py" "${GITHUB_WORKSPACE}/scripts/summarize-firmus-run.py" "${runtime_dir}/scripts/"
 if [[ "${PROFILE}" == true ]]; then

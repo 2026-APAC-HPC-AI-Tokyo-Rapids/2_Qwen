@@ -115,6 +115,38 @@ def main():
             dist.barrier()
     if rank == 0:
         print("PASS: SM90 MegaMoE EP4 numerical gate; original FP8 scales, late FP32 combine, changing masked Decode graph inputs", flush=True)
+    # Synthetic representative shapes, not a replay of measured expert routes.
+    # Record all-rank latency separately from the official serving score.
+    for label, count in (("decode-balanced", 128), ("prefill-balanced", 4096)):
+        hidden = torch.randn(count, 4096, dtype=torch.bfloat16, device=device) * 0.25
+        top_weights, top_ids = torch.rand(count, 128, device=device).topk(8, dim=1)
+        top_ids = top_ids.to(torch.int32)
+        top_weights /= top_weights.sum(-1, keepdim=True)
+        actual = torch.empty_like(hidden)
+        for _ in range(5):
+            forward(hidden, top_ids, top_weights, count, actual)
+        torch.cuda.synchronize()
+        graph = None
+        if count == 128:
+            graph = torch.cuda.CUDAGraph()
+            dist.barrier()
+            with torch.cuda.graph(graph):
+                forward(hidden, top_ids, top_weights, count, actual)
+        events = [(torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)) for _ in range(20)]
+        dist.barrier()
+        for start, end in events:
+            start.record()
+            if graph is not None:
+                graph.replay()
+            else:
+                forward(hidden, top_ids, top_weights, count, actual)
+            end.record()
+        torch.cuda.synchronize()
+        assert torch.isfinite(actual).all(), (label, rank)
+        durations = torch.tensor([start.elapsed_time(end) for start, end in events], device=device)
+        dist.all_reduce(durations, op=dist.ReduceOp.MAX)
+        if rank == 0:
+            print(json.dumps({"benchmark": label, "tokens_per_rank": count, "cuda_graph": graph is not None, "max_rank_ms": durations.tolist()}), flush=True)
     dist.destroy_process_group()
 
 
