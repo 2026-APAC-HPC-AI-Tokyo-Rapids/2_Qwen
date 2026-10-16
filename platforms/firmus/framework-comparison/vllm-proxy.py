@@ -45,6 +45,9 @@ async def lifespan(app: FastAPI):
                 "port": port,
                 "id": i,
                 "in_flight": 0,
+                "rank_in_flight": [0] * 4,
+                "rank_iterator": itertools.cycle(range(4)),
+                "engine_id": global_args.prefiller_engine_ids[i],
             }
         )
 
@@ -108,6 +111,7 @@ def parse_args():
     parser.add_argument(
         "--prefiller-ports", "--prefiller-port", type=int, nargs="+", default=[8100]
     )
+    parser.add_argument("--prefiller-engine-ids", nargs="+", required=True)
 
     # For decoder instances
     parser.add_argument(
@@ -130,6 +134,8 @@ def parse_args():
 
     # Create tuples of (host, port) for each service type
     args.prefiller_instances = list(zip(args.prefiller_hosts, args.prefiller_ports))
+    if len(args.prefiller_engine_ids) != len(args.prefiller_instances):
+        raise ValueError("Each prefill group requires its explicit KV engine ID")
     args.decoder_instances = list(zip(args.decoder_hosts, args.decoder_ports))
 
     return args
@@ -160,7 +166,7 @@ def get_next_client(app, service_type: str):
 
 
 async def send_request_to_service(
-    client_info: dict, endpoint: str, req_data: dict, request_id: str
+    client_info: dict, endpoint: str, req_data: dict, request_id: str, rank: int
 ):
     """
     Send a request to a service using a client from the pool.
@@ -186,12 +192,39 @@ async def send_request_to_service(
     headers = {
         "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
         "X-Request-Id": request_id,
+        "X-data-parallel-rank": str(rank),
     }
 
-    response = await client_info["client"].post(
-        endpoint, json=req_data, headers=headers
-    )
-    return response
+    client = client_info["client"]
+    upstream = client.build_request("POST", endpoint, json=req_data, headers=headers)
+    return await client.send(upstream, stream=True)
+
+
+class UpstreamError(Exception):
+    def __init__(self, response):
+        self.response = response
+
+
+def reserve_prefill_rank(client_info):
+    start = next(client_info["rank_iterator"])
+    counts = client_info["rank_in_flight"]
+    rank = min(range(4), key=lambda i: (counts[i], (i - start) % 4))
+    counts[rank] += 1
+    return rank
+
+
+def push_coordinates(client_info, rank, request_id):
+    # The native DP engine appends _dpN and adds N to the side-channel port.
+    return {
+        "do_remote_decode": False,
+        "do_remote_prefill": True,
+        "remote_engine_id": f'{client_info["engine_id"]}_dp{rank}',
+        "remote_request_id": request_id,
+        "remote_host": client_info["host"],
+        "remote_port": client_info["port"] - 24500 + rank,
+        "tp_size": 1,
+        "pp_size": 1,
+    }
 
 
 async def open_decode_response(
@@ -232,39 +265,72 @@ async def _prepare_completions(api: str, request: Request):
     try:
         req_data = await request.json()
         request_id = str(uuid.uuid4())
-
-        # Reserve the least-loaded prefiller before yielding to another request.
         prefill_client_info = get_next_client(request.app, "prefill")
-
-        # Send request to prefill service
-        try:
-            response = await send_request_to_service(
-                prefill_client_info, api, req_data, request_id
-            )
-        finally:
-            prefill_client_info["in_flight"] -= 1
-
-        # Always close P, including HTTP/JSON failures, before handing off to D.
-        try:
-            if response.is_error:
-                return Response(response.content, status_code=response.status_code, media_type=response.headers.get("content-type"))
-            response_json = response.json()
-        finally:
-            await response.aclose()
-        kv_transfer_params = response_json.get("kv_transfer_params", {})
-        if not kv_transfer_params:
-            raise RuntimeError("prefill returned no KV transfer parameters")
-        req_data["kv_transfer_params"] = kv_transfer_params
-
-        # Get the next decode client in round-robin fashion
+        rank = reserve_prefill_rank(prefill_client_info)
+        coordinates = push_coordinates(prefill_client_info, rank, request_id)
         decode_client_info = get_next_client(request.app, "decode")
+        decode_data = {**req_data, "kv_transfer_params": coordinates}
+        released = False
+
+        def release_prefill():
+            nonlocal released
+            if not released:
+                prefill_client_info["in_flight"] -= 1
+                prefill_client_info["rank_in_flight"][rank] -= 1
+                released = True
+
+        async def run_prefill():
+            try:
+                response = await send_request_to_service(prefill_client_info, api, req_data, request_id, rank)
+                try:
+                    await response.aread()
+                    if response.is_error:
+                        raise UpstreamError(Response(response.content, status_code=response.status_code, media_type=response.headers.get("content-type")))
+                    metadata = response.json().get("kv_transfer_params", {})
+                    if metadata.get("remote_engine_id") != coordinates["remote_engine_id"] or metadata.get("transfer_mode") != "push":
+                        raise RuntimeError("prefill did not confirm the selected push engine")
+                finally:
+                    with anyio.CancelScope(shield=True):
+                        await response.aclose()
+            finally:
+                release_prefill()
+
+        async def run_decode():
+            response = await open_decode_response(decode_client_info, api, decode_data, request_id=request_id)
+            if response.is_error:
+                try:
+                    raise UpstreamError(Response(await response.aread(), status_code=response.status_code, media_type=response.headers.get("content-type")))
+                finally:
+                    await response.aclose()
+            return response
+
+        # D preallocates/registers its blocks while P computes, then waits for
+        # the native producer WRITE. It does not need P's response block IDs.
+        response = None
+        upstream_error = None
+        try:
+            try:
+                async with anyio.create_task_group() as upstreams:
+                    upstreams.start_soon(run_prefill)
+                    response = await run_decode()
+            except* UpstreamError as errors:
+                upstream_error = errors.exceptions[0]
+            if upstream_error is not None:
+                if response is not None:
+                    with anyio.CancelScope(shield=True):
+                        await response.aclose()
+                return upstream_error.response
+        except BaseException:
+            if response is not None:
+                with anyio.CancelScope(shield=True):
+                    await response.aclose()
+            raise
+        finally:
+            # Cancellation can occur before a newly-created P task starts.
+            release_prefill()
 
         logger.debug("Using %s %s", prefill_client_info, decode_client_info)
-
-        response = await open_decode_response(
-            decode_client_info, api, req_data, request_id=request_id
-        )
-        if response.is_error or not req_data.get("stream", False):
+        if not req_data.get("stream", False):
             try:
                 return Response(await response.aread(), status_code=response.status_code, media_type=response.headers.get("content-type"))
             finally:
@@ -279,6 +345,8 @@ async def _prepare_completions(api: str, request: Request):
 
         return StreamingResponse(generate_stream(), media_type="text/event-stream", background=BackgroundTask(response.aclose))
 
+    except UpstreamError as error:
+        return error.response
     except Exception as e:
         import sys
         import traceback

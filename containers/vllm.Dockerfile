@@ -13,8 +13,6 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 # SquashFS has no OCI environment metadata; Enroot reads /etc/environment.
 RUN sed -i '/^PATH=/d; /^NVIDIA_VISIBLE_DEVICES=/d; /^NVIDIA_DRIVER_CAPABILITIES=/d' /etc/environment && printf 'PATH="%s"\nNVIDIA_VISIBLE_DEVICES=all\nNVIDIA_DRIVER_CAPABILITIES=compute,utility\n' "$PATH" >>/etc/environment
 
-COPY apac-manifest.json /opt/apac/manifest.json
-COPY containers/check-vllm-image.py /opt/apac/check-vllm-image.py
 COPY containers/fix-vllm-dense-draft-ep.py /opt/apac/fix-vllm-dense-draft-ep.py
 RUN python3 /opt/apac/fix-vllm-dense-draft-ep.py /usr/local/lib/python3.12/dist-packages/vllm/config/speculative.py >/opt/apac/dense-draft-ep-repair.json
 
@@ -23,5 +21,12 @@ COPY containers/firmus-sm90-megamoe /opt/apac/firmus-sm90-megamoe
 COPY sm90-provider /opt/apac/sm90-provider
 COPY sm90-native-source /tmp/apac-sm90-native-source
 RUN python3 /opt/apac/firmus-sm90-megamoe/install_vllm_adapter.py /usr/local/lib/python3.12/dist-packages/vllm >/opt/apac/vllm-sm90-adapter.json && bash /opt/apac/firmus-sm90-megamoe/check_cpu_image.sh && rm -rf /tmp/apac-sm90-native-source
+
+COPY containers/fix-vllm-prefill-handoff.py /opt/apac/fix-vllm-prefill-handoff.py
+RUN python3 /opt/apac/fix-vllm-prefill-handoff.py /usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py >/opt/apac/prefill-handoff-repair.json
+
+# Build identity and the final checker do not invalidate native compile layers.
+COPY containers/check-vllm-image.py /opt/apac/check-vllm-image.py
+COPY apac-manifest.json /opt/apac/manifest.json
 
 # Keep the official OpenAI server entrypoint for docker run.

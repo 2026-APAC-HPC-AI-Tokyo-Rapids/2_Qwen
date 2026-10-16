@@ -194,6 +194,9 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     # Exercise actual shell argument construction without requiring GPUs or HCAs.
     probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
+    repair = tmp_path / "prefill-handoff-repair.json"
+    repair.write_text("{}")
+    probe = probe.replace("/opt/apac/prefill-handoff-repair.json", str(repair))
     probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "$VLLM_USE_DEEP_GEMM_E8M0" "$VLLM_USE_NCCL_SYMM_MEM" "${worker_command[@]}"\n'
     for role, tp, limit in [("prefill", 1, 48), ("decode", 1, 32)]:
         options = ["--speculative-config", '{"method":"eagle3","model":"/draft","num_speculative_tokens":3}', "--max-num-seqs", str(limit)]
@@ -225,6 +228,9 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
         assert flags[flags.index("--max-num-batched-tokens") + 1] == ("4096" if role == "prefill" else "2048")
         assert json.loads(flags[flags.index("--attention-config") + 1]) == {"backend": "FLASH_ATTN", "flash_attn_version": 3}
         assert json.loads(flags[flags.index("--kv-transfer-config") + 1])["kv_role"] == ("kv_producer" if role == "prefill" else "kv_consumer")
+        kv = json.loads(flags[flags.index("--kv-transfer-config") + 1])
+        assert kv["kv_connector"] == "NixlPushConnector"
+        assert kv["engine_id"] == f"{tmp_path.parent.name}-{role}-0"
         assert json.loads(flags[flags.index("--speculative-config") + 1]) == {"method": "eagle3", "model": "/draft", "num_speculative_tokens": 3}
 
 
@@ -315,13 +321,14 @@ def test_require_build_selects_only_this_runs_verified_image(tmp_path: Path, cor
 
 
 @pytest.mark.parametrize("role", ["prefill", "decode"])
-@pytest.mark.parametrize("corruption", [None, "dp", "cache", "backend", "admission", "draft_ep", "graph"])
+@pytest.mark.parametrize("corruption", [None, "dp", "cache", "backend", "admission", "draft_ep", "graph", "pull_connector"])
 def test_megamoe_effective_config_guard_rejects_wrong_runtime(tmp_path: Path, corruption: str | None, role: str) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/vllm.sbatch").read_text()
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     decoder = {
         "parallel_config": {"tensor_parallel_size": 1, "data_parallel_size": 4, "enable_expert_parallel": True, "all2all_backend": "allgather_reducescatter"},
         "kernel_config": {"moe_backend": "apac_sm90_megamoe"},
+        "kv_transfer_config": {"kv_connector": "NixlPushConnector"},
         "cache_config": {"cache_dtype": "fp8_e4m3", "block_size": 64, "num_gpu_blocks_override": 2048 if role == "prefill" else 6144, "enable_prefix_caching": False},
         "model_config": {"max_model_len": 8192, "enforce_eager": role == "prefill"},
         "scheduler_config": {"max_num_batched_tokens": 4096 if role == "prefill" else 2048, "max_num_seqs": 48 if role == "prefill" else 32},
@@ -341,6 +348,8 @@ def test_megamoe_effective_config_guard_rejects_wrong_runtime(tmp_path: Path, co
     elif corruption == "graph":
         decoder["model_config"]["enforce_eager"] = False
         decoder["compilation_config"]["cudagraph_mode"] = 2
+    elif corruption == "pull_connector":
+        decoder["kv_transfer_config"]["kv_connector"] = "NixlConnector"
     (tmp_path / "source").mkdir()
     (tmp_path / "results").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))

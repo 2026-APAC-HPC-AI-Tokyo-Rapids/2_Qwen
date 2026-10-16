@@ -37,19 +37,24 @@ async def serve(app):
 
 
 @pytest.mark.parametrize("endpoint", ["completions", "chat/completions"])
-@pytest.mark.parametrize("mode", ["stream", "json", "prefill_error", "decode_error", "bad_json", "cancel", "prefill_cancel"])
+@pytest.mark.parametrize("mode", ["stream", "json", "prefill_error", "decode_error", "bad_json", "wrong_engine", "wrong_mode", "cancel", "prefill_cancel"])
 def test_pd_http_contract(endpoint, mode):
     async def exercise():
         spec = importlib.util.spec_from_file_location("actual_pd_proxy", ROOT / "platforms/firmus/framework-comparison/vllm-proxy.py")
         proxy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(proxy)
         prefill_seen, decode_seen = [], []
-        release_prefill, prefill_started, prefill_closed, decode_closed = (asyncio.Event() for _ in range(4))
-        metadata = {"remote_engine_id": "p0_dp2", "remote_host": "192.0.2.1", "remote_port": 5602, "remote_block_ids": [[2, 7]], "do_remote_prefill": True}
+        release_prefill, prefill_started, prefill_closed, decode_closed, decode_started = (asyncio.Event() for _ in range(5))
+        metadata = {"remote_engine_id": "p0_dp0", "transfer_mode": "push", "remote_block_ids": [[2, 7]], "do_remote_prefill": True}
+        if mode == "wrong_engine":
+            metadata["remote_engine_id"] = "wrong_dp_rank"
+        if mode == "wrong_mode":
+            metadata["transfer_mode"] = "pull"
         prefill, decode = FastAPI(), FastAPI()
 
         @prefill.post("/v1/" + endpoint)
         async def produce(request: Request):
+            assert request.headers["x-data-parallel-rank"] == "0"
             prefill_seen.append((await request.json(), request.headers["x-request-id"]))
 
             async def body():
@@ -69,13 +74,18 @@ def test_pd_http_contract(endpoint, mode):
         @decode.post("/v1/" + endpoint)
         async def consume(request: Request):
             decode_seen.append((await request.json(), request.headers["x-request-id"]))
+            decode_started.set()
             if mode == "decode_error":
+                await prefill_started.wait()
                 return JSONResponse({"error": "decode failed"}, status_code=429)
             if mode == "json":
+                await release_prefill.wait()
                 return {"choices": [{"text": "answer"}], "usage": {"completion_tokens": 200}}
 
             async def body():
                 try:
+                    # Simulate D waiting for a producer WRITE into its blocks.
+                    await release_prefill.wait()
                     yield b'data: {"text":"answer"}\n\n'
                     if mode == "cancel":
                         await asyncio.Event().wait()
@@ -88,22 +98,24 @@ def test_pd_http_contract(endpoint, mode):
         async with AsyncExitStack() as stack:
             p_port = await stack.enter_async_context(serve(prefill))
             d_port = await stack.enter_async_context(serve(decode))
-            proxy.global_args = SimpleNamespace(prefiller_instances=[("127.0.0.1", p_port)], decoder_instances=[("127.0.0.1", d_port)])
+            proxy.global_args = SimpleNamespace(prefiller_instances=[("127.0.0.1", p_port)], prefiller_engine_ids=["p0"], decoder_instances=[("127.0.0.1", d_port)])
             proxy_port = await stack.enter_async_context(serve(proxy.app))
             client = await stack.enter_async_context(httpx.AsyncClient(base_url=f"http://127.0.0.1:{proxy_port}", timeout=5))
             original = {"model": "qwen", "stream": mode != "json", "max_tokens": 200, "min_tokens": 200, "ignore_eos": True, "temperature": 0, "stop": ["stop"], "stream_options": {"include_usage": True}}
             original.update({"messages": [{"role": "user", "content": "keep"}]} if endpoint.startswith("chat") else {"prompt": "keep"})
             task = asyncio.create_task(client.send(client.build_request("POST", "/v1/" + endpoint, json=original), stream=True))
             await asyncio.wait_for(prefill_started.wait(), 5)
-            assert proxy.app.state.prefill_clients[0]["in_flight"] == 1
-            assert decode_seen == []
+            await asyncio.wait_for(decode_started.wait(), 5)
+            if mode != "decode_error":
+                assert proxy.app.state.prefill_clients[0]["in_flight"] == 1
+            assert len(decode_seen) == 1  # D arrives before P's body is released.
             if mode == "prefill_cancel":
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
                 try:
                     await asyncio.wait_for(prefill_closed.wait(), 2)
                     assert proxy.app.state.prefill_clients[0]["in_flight"] == 0
-                    assert decode_seen == []
+                    assert proxy.app.state.prefill_clients[0]["rank_in_flight"] == [0] * 4
                 finally:
                     release_prefill.set()
                 return
@@ -111,10 +123,11 @@ def test_pd_http_contract(endpoint, mode):
             response = await task
             try:
                 assert proxy.app.state.prefill_clients[0]["in_flight"] == 0
+                assert proxy.app.state.prefill_clients[0]["rank_in_flight"] == [0] * 4
                 if mode.endswith("error"):
                     assert response.status_code == (503 if mode == "prefill_error" else 429)
                     assert json.loads(await response.aread())["error"].endswith("failed")
-                elif mode == "bad_json":
+                elif mode in ("bad_json", "wrong_engine", "wrong_mode"):
                     assert response.status_code == 500
                 elif mode == "json":
                     assert response.headers["content-type"].startswith("application/json")
@@ -132,11 +145,10 @@ def test_pd_http_contract(endpoint, mode):
             p_data, p_id = prefill_seen[0]
             assert p_data["max_tokens"] == 1 and p_data["stream"] is False
             assert "min_tokens" not in p_data and "stream_options" not in p_data
-            if mode not in ("prefill_error", "bad_json"):
-                d_data, d_id = decode_seen[0]
-                assert d_id == p_id
-                assert d_data == {**original, "kv_transfer_params": metadata}
-            else:
-                assert decode_seen == []
+            d_data, d_id = decode_seen[0]
+            assert d_id == p_id
+            expected = proxy.push_coordinates(proxy.app.state.prefill_clients[0], 0, p_id)
+            assert d_data == {**original, "kv_transfer_params": expected}
+            assert "remote_block_ids" not in d_data["kv_transfer_params"]
 
     asyncio.run(exercise())

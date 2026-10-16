@@ -1,68 +1,29 @@
-"""Exercise least-live routing and reservation lifetime without network/GPU."""
-import ast
-import asyncio
+"""Check group/rank reservations and native push endpoint identity."""
+
+import importlib.util
 import itertools
-import logging
-import uuid
 from pathlib import Path
 from types import SimpleNamespace as NS
 
-import pytest
-
 ROOT = Path(__file__).parents[2]
+spec = importlib.util.spec_from_file_location("pd_proxy", ROOT / "platforms/firmus/framework-comparison/vllm-proxy.py")
+proxy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(proxy)
 
 
-@pytest.mark.parametrize("fail", [False, True])
-def test_live_prefill_reservations_survive_until_body_read_and_release_on_failure(fail):
-    source = (ROOT / "platforms/firmus/framework-comparison/vllm-proxy.py").read_text()
-    tree = ast.parse(source)
-    functions = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in ("get_next_client", "_prepare_completions")]
-    namespace = {"Request": object, "uuid": uuid, "logger": logging.getLogger(__name__), "StreamingResponse": lambda generator, **kw: generator, "BackgroundTask": lambda *_: None}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=functions, type_ignores=[])), "actual-proxy-reservation", "exec"), namespace)  # noqa: S102
+def test_least_live_groups_and_ranks_rotate_ties():
+    clients = [{"id": i, "in_flight": 0, "rank_in_flight": [0] * 4, "rank_iterator": itertools.cycle(range(4))} for i in range(3)]
+    application = NS(state=NS(prefill_clients=clients, prefill_iterator=itertools.cycle(range(3))))
+    assert [proxy.get_next_client(application, "prefill")["id"] for _ in range(4)] == [0, 1, 2, 0]
+    assert [client["in_flight"] for client in clients] == [2, 1, 1]
+    assert [proxy.reserve_prefill_rank(clients[0]) for _ in range(5)] == [0, 1, 2, 3, 0]
+    assert clients[0]["rank_in_flight"] == [2, 1, 1, 1]
+    clients[0]["rank_in_flight"][1] = 9
+    assert proxy.reserve_prefill_rank(clients[0]) == 2
 
-    async def exercise():
-        clients = [{"id": i, "in_flight": 0} for i in range(3)]
-        state = NS(prefill_clients=clients, prefill_iterator=itertools.cycle(range(3)), decode_clients=[{"id": 0}], decode_iterator=itertools.cycle(range(1)))
-        application = NS(state=state)
-        release_body = asyncio.Event()
-        started = []
 
-        async def send(client, *_args):
-            started.append(client["id"])
-            await release_body.wait()
-            if fail:
-                raise RuntimeError("observed prefill failure")
-            async def close():
-                pass
-            return NS(is_error=False, json=lambda: {"kv_transfer_params": {"remote_engine_id": "producer-dp2"}}, aclose=close)
-
-        async def open_response(*_args, **_kwargs):
-            async def chunks():
-                yield b"payload"
-            async def close():
-                pass
-            return NS(is_error=False, aiter_bytes=chunks, aclose=close)
-
-        async def request_json():
-            return {"prompt": "keep me", "max_tokens": 200, "stream": True}
-
-        namespace["send_request_to_service"] = send
-        namespace["open_decode_response"] = open_response
-        request = NS(app=application, json=request_json)
-        tasks = [asyncio.create_task(namespace["_prepare_completions"]("/completions", request)) for _ in range(4)]
-        await asyncio.sleep(0)
-        assert started == [0, 1, 2, 0]
-        assert [c["in_flight"] for c in clients] == [2, 1, 1]
-        release_body.set()
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        assert [c["in_flight"] for c in clients] == [0, 0, 0]
-        if fail:
-            assert all(isinstance(result, RuntimeError) for result in results)
-        else:
-            for result in results:
-                assert [chunk async for chunk in result] == [b"payload"]
-        # After completion ties rotate, and a busy worker is skipped.
-        clients[1]["in_flight"] = 9
-        selected = namespace["get_next_client"](application, "prefill")
-        assert selected["id"] == 2
-    asyncio.run(exercise())
+def test_native_dp_push_coordinates_do_not_require_finished_prefill_blocks():
+    client = {"engine_id": "unique-run-prefill-1", "host": "192.0.2.1", "port": 30110}
+    params = proxy.push_coordinates(client, 3, "same-id-for-both-legs")
+    assert params == {"do_remote_decode": False, "do_remote_prefill": True, "remote_engine_id": "unique-run-prefill-1_dp3", "remote_request_id": "same-id-for-both-legs", "remote_host": "192.0.2.1", "remote_port": 5613, "tp_size": 1, "pp_size": 1}
+    assert "remote_block_ids" not in params

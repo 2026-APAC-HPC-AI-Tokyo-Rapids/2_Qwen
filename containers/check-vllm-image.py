@@ -12,6 +12,7 @@ from pathlib import Path
 
 import torch
 import vllm
+from vllm.distributed.kv_transfer.kv_connector.factory import KVConnectorFactory
 
 expected = {"vllm": "0.30.0", "nixl": "1.4.1"}
 actual = {package: version(package) for package in expected}
@@ -45,6 +46,12 @@ assert any(
     p["path"] == "containers/fix-vllm-dense-draft-ep.py"
     for p in manifest["applied_patches"]
 )
+handoff = json.loads(Path("/opt/apac/prefill-handoff-repair.json").read_text())
+engine_source = Path(vllm.__file__).parent / "v1/engine/core.py"
+assert hashlib.sha256(engine_source.read_bytes()).hexdigest() == handoff["patched_sha256"]
+assert handoff["source_sha256"] == "268bf40534a853812867ae8e80040f190983cb364b41182b55969aace20c93f5"
+assert any(p["path"] == "containers/fix-vllm-prefill-handoff.py" for p in manifest["applied_patches"])
+assert KVConnectorFactory.get_connector_class_by_name("NixlPushConnector").__name__ == "NixlPushConnector"
 print(
     json.dumps(
         {
