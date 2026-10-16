@@ -91,11 +91,21 @@ def diagnose(database: Path) -> dict:
         # inherited environment variables, including ephemeral credentials.
         placeholders = ",".join("?" for _ in META)
         metadata = dict(db.execute(f"SELECT name,value FROM META_DATA_CAPTURE WHERE name IN ({placeholders})", META))
+        profiler_calls = [{"pid": tid & -16777216, "name": name, "start_ns": start, "end_ns": end} for tid, name, start, end in db.execute("SELECT r.globalTid,s.value,r.start,r.end FROM CUPTI_ACTIVITY_KIND_RUNTIME r JOIN StringIds s ON r.nameId=s.id WHERE s.value LIKE '%ProfilerStart%' OR s.value LIKE '%ProfilerStop%'")]
+        stops = [call["start_ns"] for call in profiler_calls if "ProfilerStop" in call["name"]]
+        last_kernels = dict(db.execute("SELECT globalPid,MAX(end) FROM CUPTI_ACTIVITY_KIND_KERNEL GROUP BY globalPid"))
         return {
             "sqlite_sha256": digest(database),
             "devices": devices,
             "active_processes": processes,
             "metadata_allowlist": metadata,
+            "recorded_stop_boundary": {
+                "scope": "Recorded activity ordering only; cannot exclude missing GPU activity or certify complete collection.",
+                "profiler_API_calls": profiler_calls,
+                "last_recorded_kernel_end_ns_by_pid": last_kernels,
+                "first_recorded_stop_start_ns": min(stops) if stops else None,
+                "gap_after_last_recorded_kernel_ns": min(stops) - max(last_kernels.values()) if stops else None,
+            },
             "loss_or_compatibility_diagnostics": [row for row in diagnostics if "dropped" in row["text"].lower() or "Some CUPTI events might be missing" in row["text"] or ("CUDA driver version" in row["text"] and "not supported" in row["text"])],
             "kernels_without_recorded_launch_API": missing,
             "launch_APIs_without_recorded_kernels": without_kernels,
