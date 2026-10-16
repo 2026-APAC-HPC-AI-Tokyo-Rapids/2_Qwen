@@ -44,10 +44,14 @@ def main():
     s2 = torch.rand(32, 32, 12, device=device) * 0.005 + 0.005
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf = deep_gemm.get_symm_buffer_for_mega_moe(dist.group.WORLD, 128, 4096, 8, 4096, 1536, use_fp8_dispatch=True, activation="swiglu")
-    for case, counts in [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4])]:
+    cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4])]
+    # Force all newly enabled SwapAB widths: 17->24, 33->40, 41->48, 49->56.
+    # Other ranks still participate in the collective with zero live tokens.
+    cases.extend((f"decode-tile-{count}", [count, 0, 0, 0]) for count in (17, 33, 41, 49))
+    for case, counts in cases:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         ids = torch.stack([torch.randperm(128, device=device)[:8] for _ in range(4)]).to(torch.int32)
-        if case == "capacity-hot-experts":
+        if case == "capacity-hot-experts" or case.startswith("decode-tile-"):
             ids[:] = torch.arange(8, dtype=torch.int32, device=device)
         weights = torch.rand(4, 8, device=device)
         ids[0, -1] = -1  # Masked/padded top-k slot must not read an expert.

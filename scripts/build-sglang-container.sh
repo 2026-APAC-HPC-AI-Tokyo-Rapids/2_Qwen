@@ -96,6 +96,7 @@ cp "${GITHUB_WORKSPACE}/patches/sglang-router/Cargo.lock" "${context}/sglang-rou
 cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-late-topk-fp32.patch" "${context}/sm90-late-topk-fp32.patch"
 cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-fc2-pipeline.patch" "${context}/sm90-fc2-pipeline.patch"
 cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-prefill-rescale.patch" "${context}/sm90-prefill-rescale.patch"
+cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-decode-exact-tiles.patch" "${context}/sm90-decode-exact-tiles.patch"
 rm -rf -- "${context}/sglang-source/.git"
 printf '%s\n' "${sglang_commit}" >"${context}/sglang-commit.txt"
 

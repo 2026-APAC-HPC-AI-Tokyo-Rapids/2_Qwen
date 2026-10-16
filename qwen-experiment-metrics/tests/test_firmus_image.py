@@ -10,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("corruption", [None, "hash", "missing_dp_query", "missing_handoff", "missing_activation", "missing_rope", "router_hash", "router_lock", "missing_router", "pipeline_hash", "prefill_hash", "prefill_mode"])
+@pytest.mark.parametrize("corruption", [None, "hash", "missing_dp_query", "missing_handoff", "missing_activation", "missing_rope", "router_hash", "router_lock", "missing_router", "pipeline_hash", "prefill_hash", "prefill_mode", "decode_tiles_hash"])
 def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(tmp_path, corruption):
     embedded = tmp_path / "embedded"
     embedded.mkdir()
@@ -35,7 +35,7 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
     if corruption != "missing_router":
         (embedded / "sglang-router-build.json").write_text(json.dumps(router))
     geometries = [{"role": "prefill", "block_m": 128, "block_n": 256, "epilogue_threads": 512, "stages": 3, "registers": 112, "reuse_accum": corruption != "prefill_mode", "arrival_counter": True, "full_sync": False, "swap_ab": False}, {"role": "decode", "block_m": 64, "block_n": 128, "epilogue_threads": 256, "stages": 8, "registers": 0, "reuse_accum": False, "arrival_counter": False, "full_sync": True, "swap_ab": True}]
-    (embedded / "sm90-megamoe-build.json").write_text(json.dumps({"version": "0.1.5", "header_sha256": "276bb1607d1b10f915277575ce6f847f63abdbaf05c54d3a4cdfede71fb92112", "patch_sha256": hashlib.sha256((ROOT / "patches/deep-gemm/sm90-late-topk-fp32.patch").read_bytes()).hexdigest(), "fc2_pipeline_patch_sha256": "0" * 64 if corruption == "pipeline_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-fc2-pipeline.patch").read_bytes()).hexdigest(), "prefill_rescale_patch_sha256": "0" * 64 if corruption == "prefill_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-prefill-rescale.patch").read_bytes()).hexdigest(), "combine_accumulator": "FP32", "compiled_geometries": geometries}))
+    (embedded / "sm90-megamoe-build.json").write_text(json.dumps({"version": "0.1.5", "header_sha256": "ac4a97fd02b8a9a2d4c155bd012e708cd56a16123c27b4eb5b4c9e726f011a60", "patch_sha256": hashlib.sha256((ROOT / "patches/deep-gemm/sm90-late-topk-fp32.patch").read_bytes()).hexdigest(), "fc2_pipeline_patch_sha256": "0" * 64 if corruption == "pipeline_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-fc2-pipeline.patch").read_bytes()).hexdigest(), "prefill_rescale_patch_sha256": "0" * 64 if corruption == "prefill_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-prefill-rescale.patch").read_bytes()).hexdigest(), "decode_tiles_patch_sha256": "0" * 64 if corruption == "decode_tiles_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-decode-exact-tiles.patch").read_bytes()).hexdigest(), "combine_accumulator": "FP32", "compiled_geometries": geometries}))
     unpack = tmp_path / "unsquashfs"
     unpack.write_text('#!/bin/bash\nset -eu\n[[ "$*" != *"-cat"* ]] || exit 1\nwhile [[ "$1" != -d ]]; do shift; done\n[[ ! -e "$2" ]] || exit 1\nmkdir -p "$2/opt/apac"\ncp "$EMBEDDED"/*.json "$2/opt/apac/"\nchmod -R a-w "$2"\n')
     unpack.chmod(0o755)

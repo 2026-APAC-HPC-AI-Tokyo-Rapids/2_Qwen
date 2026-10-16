@@ -25,6 +25,9 @@ def main():
     prefill_patch = Path("/opt/apac/sm90-prefill-rescale.patch")
     subprocess.run(["git", "apply", "--check", str(prefill_patch)], cwd=package.parent, check=True)
     subprocess.run(["git", "apply", str(prefill_patch)], cwd=package.parent, check=True)
+    decode_tiles_patch = Path("/opt/apac/sm90-decode-exact-tiles.patch")
+    subprocess.run(["git", "apply", "--check", str(decode_tiles_patch)], cwd=package.parent, check=True)
+    subprocess.run(["git", "apply", str(decode_tiles_patch)], cwd=package.parent, check=True)
     # Match the saved 6344.96 baseline kernel symbols, including accumulator
     # reuse, arrival mode, stage count, EP wave and padded pool capacities.
     # Prefill's reuse path is distinct from Decode's pipelined SwapAB path.
@@ -55,6 +58,7 @@ extern "C" void* instantiate() {{
     result = {"package": "sgl-deep-gemm", "version": "0.1.5", "original_header_sha256": original, "header_sha256": hashlib.sha256(header.read_bytes()).hexdigest(), "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(), "weight_scale": "original FP32 block128", "fc2_activation_scale": "FP32 group64", "topk_weight": "after FC2", "combine_accumulator": "FP32", "compiled_geometries": geometries}
     result["fc2_pipeline_patch_sha256"] = hashlib.sha256(pipeline_patch.read_bytes()).hexdigest()
     result["prefill_rescale_patch_sha256"] = hashlib.sha256(prefill_patch.read_bytes()).hexdigest()
+    result["decode_tiles_patch_sha256"] = hashlib.sha256(decode_tiles_patch.read_bytes()).hexdigest()
     Path("/opt/apac/sm90-megamoe-build.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result), flush=True)
 
