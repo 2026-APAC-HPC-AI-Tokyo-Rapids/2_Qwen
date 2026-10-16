@@ -23,7 +23,7 @@ COPY sm90-native-source /tmp/apac-sm90-native-source
 RUN python3 /opt/apac/firmus-sm90-megamoe/install_vllm_adapter.py /usr/local/lib/python3.12/dist-packages/vllm >/opt/apac/vllm-sm90-adapter.json && bash /opt/apac/firmus-sm90-megamoe/check_cpu_image.sh && rm -rf /tmp/apac-sm90-native-source
 
 COPY containers/fix-vllm-prefill-handoff.py /opt/apac/fix-vllm-prefill-handoff.py
-RUN python3 /opt/apac/fix-vllm-prefill-handoff.py /usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py /usr/local/lib/python3.12/dist-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl/push_worker.py /usr/local/lib/python3.12/dist-packages/vllm/v1/executor/multiproc_executor.py /usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators/shm_broadcast.py >/opt/apac/prefill-handoff-repair.json
+RUN python3 /opt/apac/fix-vllm-prefill-handoff.py /usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py /usr/local/lib/python3.12/dist-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl/push_worker.py /usr/local/lib/python3.12/dist-packages/vllm/v1/executor/multiproc_executor.py /usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators/shm_broadcast.py /usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/kv_connector.py >/opt/apac/prefill-handoff-repair.json
 
 # Build identity and the final checker do not invalidate native compile layers.
 COPY containers/check-vllm-image.py /opt/apac/check-vllm-image.py

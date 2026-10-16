@@ -3,6 +3,8 @@
 Keep the regular engine step in the same DP iteration: returning early would
 make DPEngineCoreProc insert a dummy forward and alter collective ordering.
 Completed WRITEs release live producer leases; receive metadata belongs to D.
+Submit completed GPU Push blocks / consumer registrations before unrelated
+forward work, fencing prior producer stream writes before the RDMA handoff.
 """
 
 import ast
@@ -21,6 +23,7 @@ from types import SimpleNamespace
 SOURCE_SHA256 = "268bf40534a853812867ae8e80040f190983cb364b41182b55969aace20c93f5"
 PUSH_SOURCE_SHA256 = "87de3ea383dd3aa95fb2c287ea26ded8a330859cc1295f9faa69047e80865c2c"
 MP_SOURCE_SHA256 = "3ed0149a8a8e1550c4f062af40e645d1b734e70f99981bc5bf15f0360507648a"
+GPU_KV_SOURCE_SHA256 = "b89a4333f1e552d86e1815674b59e9f1335f0f49c0a7b46082439076f62c6a81"
 MQ_SOURCE_SHA256 = "f3e7a3f3ff713fccbd535e0d41650ee05bdf8677e83d4b90519910645022c30b"
 MP_POLL = '''    def poll(self) -> bool:
         """Progress available responses in FIFO order without waiting."""
@@ -98,6 +101,60 @@ EARLY = '''        # Publish a ready P result before launching another long forw
                 self.output_queue.put_nowait(output)
 
 '''
+
+
+GPU_KV_ANCHOR = '''        if scheduler_output.has_sync_kv_loads:
+            # Sync loads need to run before this step's forward.
+            self._start_load_kv()
+        # Otherwise start the async load after forward to keep submission
+        # off the critical path.
+'''
+GPU_KV_EARLY = '''        # Completed producer blocks and consumer registrations concern prior
+        # work, not this forward. Do not defer them behind unrelated compute.
+        kv_config = self.vllm_config.kv_transfer_config
+        parallel = self.vllm_config.parallel_config
+        early_push = False
+        producer_ready = False
+        if (
+            kv_config is not None
+            and kv_config.kv_connector == "NixlPushConnector"
+            and kv_config.kv_buffer_device == "cuda"
+            and parallel.tensor_parallel_size == 1
+            and parallel.pipeline_parallel_size == 1
+            and parallel.prefill_context_parallel_size == 1
+            and parallel.decode_context_parallel_size == 1
+            and self.vllm_config.kernel_config.moe_backend == "apac_sm90_megamoe"
+        ):
+            finished = getattr(kv_connector_metadata, "push_finished_blocks", None)
+            producer_ready = (
+                kv_config.kv_role == "kv_producer"
+                and bool(finished)
+                and not set(finished).intersection(kwargs.get("request_ids") or ())
+            )
+            early_push = producer_ready or (
+                kv_config.kv_role == "kv_consumer"
+                and bool(getattr(kv_connector_metadata, "push_registrations", None))
+            )
+        if producer_ready:
+            # Sampling's output-copy event precedes draft work. Complete prior
+            # target/draft KV stores on this stream before handing blocks to
+            # the background RDMA writer; do not synchronize a new forward.
+            torch.cuda.current_stream().synchronize()
+        if scheduler_output.has_sync_kv_loads or early_push:
+            self._start_load_kv()
+        # Other async loads retain their original post-forward submission.
+'''
+
+
+def patch_gpu_kv(source: bytes) -> bytes:
+    if hashlib.sha256(source).hexdigest() != GPU_KV_SOURCE_SHA256:
+        raise ValueError("Unsupported pinned vLLM GPU KV wrapper source")
+    text = source.decode()
+    if text.count(GPU_KV_ANCHOR) != 1:
+        raise ValueError("Nonunique GPU KV pre-forward anchor")
+    result = text.replace(GPU_KV_ANCHOR, GPU_KV_EARLY).encode()
+    ast.parse(result)
+    return result
 
 
 def patch(source: bytes) -> bytes:
@@ -352,20 +409,91 @@ def validate_push_release(source: bytes) -> dict:
     return {"passed": True, "cases": len(cases), "scope": "AST-selected installed completion method; injected transfer outcomes; CPU only"}
 
 
-def install(engine: Path, push_worker: Path, multiproc: Path, message_queue: Path) -> dict:
+def validate_push_start(source: bytes) -> dict:
+    """Run actual wrapper methods with CPU ordering/data-readiness fixtures."""
+    tree = ast.parse(source)
+    wrapper = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ActiveKVConnector")
+    methods = [copy.deepcopy(n) for n in wrapper.body if isinstance(n, ast.FunctionDef) and n.name in ("pre_forward", "post_forward")]
+    assert len(methods) == 2
+    selected = ast.parse("from __future__ import annotations\n")
+    selected.body.extend(methods)
+    namespace = {"KVConnectorOutput": SimpleNamespace}
+    exec(compile(ast.fix_missing_locations(selected), "installed-push-start-contract", "exec"), namespace)  # noqa: S102
+
+    def exercise(**changes):
+        settings = {"role": "kv_producer", "connector": "NixlPushConnector", "buffer": "cuda", "backend": "apac_sm90_megamoe", "tp": 1, "pp": 1, "pcp": 1, "dcp": 1, "finished": True, "registrations": False, "overlap": False, "sync": False, "disabled": False, "fence_failure": False}
+        settings.update(changes)
+        events = []
+
+        def fence():
+            events.append("prior_stream_ready")
+            if settings["fence_failure"]:
+                raise RuntimeError("prior stream failed")
+
+        namespace["torch"] = SimpleNamespace(cuda=SimpleNamespace(current_stream=lambda: SimpleNamespace(synchronize=fence)))
+        connector = SimpleNamespace(handle_preemptions=lambda _: None, bind_connector_metadata=lambda _: None, wait_for_save=lambda: None, get_transfer_results=lambda _: SimpleNamespace(finished_sending=set(), finished_recving=set(), failed_recving=set()), get_block_ids_with_load_errors=list, get_kv_connector_stats=lambda: None, get_kv_connector_kv_cache_events=lambda: None, build_connector_worker_meta=lambda: None, clear_connector_metadata=lambda: None)
+        config = SimpleNamespace(kv_transfer_config=SimpleNamespace(kv_role=settings["role"], kv_connector=settings["connector"], kv_buffer_device=settings["buffer"]), parallel_config=SimpleNamespace(tensor_parallel_size=settings["tp"], pipeline_parallel_size=settings["pp"], prefill_context_parallel_size=settings["pcp"], decode_context_parallel_size=settings["dcp"]), kernel_config=SimpleNamespace(moe_backend=settings["backend"]))
+        state = SimpleNamespace(_disabled=settings["disabled"], vllm_config=config, kv_connector=connector, _pending_load_kwargs=None)
+
+        def start():
+            events.append("start_load_kv")
+            state._pending_load_kwargs = None
+
+        state._start_load_kv = start
+        metadata = SimpleNamespace(push_finished_blocks={"finished": [[1]]} if settings["finished"] else {}, push_registrations={"registration": {}} if settings["registrations"] else {})
+        schedule = SimpleNamespace(kv_connector_metadata=metadata, has_sync_kv_loads=settings["sync"])
+        try:
+            namespace["pre_forward"](state, schedule, request_ids=["finished"] if settings["overlap"] else ["current"])
+        except RuntimeError:
+            assert settings["fence_failure"] and events == ["prior_stream_ready"]
+            return events
+        assert not settings["fence_failure"]
+        events.append("new_forward")
+        namespace["post_forward"](state, set())
+        return events
+
+    early_p = ["prior_stream_ready", "start_load_kv", "new_forward"]
+    early_d = ["start_load_kv", "new_forward"]
+    deferred = ["new_forward", "start_load_kv"]
+    cases = [
+        ("producer_finished", {}, early_p),
+        ("consumer_registration", {"role": "kv_consumer", "registrations": True, "finished": False}, early_d),
+        ("consumer_without_registration", {"role": "kv_consumer", "finished": False}, deferred),
+        ("producer_without_finished_blocks", {"finished": False}, deferred),
+        ("current_request_overlap", {"overlap": True}, deferred),
+        ("host_buffer", {"buffer": "cpu"}, deferred),
+        ("other_connector", {"connector": "NixlConnector"}, deferred),
+        ("other_backend", {"backend": "triton"}, deferred),
+        ("tp2", {"tp": 2}, deferred),
+        ("pp2", {"pp": 2}, deferred),
+        ("pcp2", {"pcp": 2}, deferred),
+        ("dcp2", {"dcp": 2}, deferred),
+        ("disabled", {"disabled": True}, ["new_forward"]),
+        ("original_sync_load", {"finished": False, "sync": True}, early_d),
+        ("prior_stream_failure", {"fence_failure": True}, ["prior_stream_ready"]),
+    ]
+    for name, changes, expected in cases:
+        assert exercise(**changes) == expected, name
+    return {"passed": True, "cases": len(cases), "scope": "Actual GPU KV wrapper pre/post methods; CPU stubs establish submission/fence order, not DMA correctness or speed", "producer_prior_stream_fence": True, "current_request_overlap_retains_original_order": True}
+
+
+def install(engine: Path, push_worker: Path, multiproc: Path, message_queue: Path, gpu_kv: Path) -> dict:
     # Validate every source and CPU contract before modifying any installed file.
     output = patch(engine.read_bytes())
     push_output = patch_push_worker(push_worker.read_bytes())
     mp_output = patch_multiproc(multiproc.read_bytes())
     mq_output = patch_message_queue(message_queue.read_bytes())
+    gpu_output = patch_gpu_kv(gpu_kv.read_bytes())
+    push_start = validate_push_start(gpu_output)
     contract = validate_push_release(push_output)
     readiness = validate_executor_readiness(mp_output, mq_output)
+    gpu_kv.write_bytes(gpu_output)
     engine.write_bytes(output)
     push_worker.write_bytes(push_output)
     multiproc.write_bytes(mp_output)
     message_queue.write_bytes(mq_output)
-    return {"source_sha256": SOURCE_SHA256, "patched_sha256": hashlib.sha256(output).hexdigest(), "scope": "kv_producer/MP/TP1/PP1; preserve DP forward cadence", "push_worker_source_sha256": PUSH_SOURCE_SHA256, "push_worker_patched_sha256": hashlib.sha256(push_output).hexdigest(), "push_release_cpu_contract": contract, "multiproc_source_sha256": MP_SOURCE_SHA256, "multiproc_patched_sha256": hashlib.sha256(mp_output).hexdigest(), "message_queue_source_sha256": MQ_SOURCE_SHA256, "message_queue_patched_sha256": hashlib.sha256(mq_output).hexdigest(), "executor_readiness_cpu_contract": readiness}
+    return {"source_sha256": SOURCE_SHA256, "patched_sha256": hashlib.sha256(output).hexdigest(), "scope": "P output readiness plus direct-GPU Push metadata ordering; TP1/PP1/PCP1/DCP1; preserve DP forward cadence", "push_worker_source_sha256": PUSH_SOURCE_SHA256, "push_worker_patched_sha256": hashlib.sha256(push_output).hexdigest(), "push_release_cpu_contract": contract, "multiproc_source_sha256": MP_SOURCE_SHA256, "multiproc_patched_sha256": hashlib.sha256(mp_output).hexdigest(), "message_queue_source_sha256": MQ_SOURCE_SHA256, "message_queue_patched_sha256": hashlib.sha256(mq_output).hexdigest(), "executor_readiness_cpu_contract": readiness, "gpu_kv_source_sha256": GPU_KV_SOURCE_SHA256, "gpu_kv_patched_sha256": hashlib.sha256(gpu_output).hexdigest(), "push_start_cpu_contract": push_start}
 
 
 if __name__ == "__main__":
-    print(json.dumps(install(*(Path(arg) for arg in sys.argv[1:5])), indent=2))
+    print(json.dumps(install(*(Path(arg) for arg in sys.argv[1:6])), indent=2))

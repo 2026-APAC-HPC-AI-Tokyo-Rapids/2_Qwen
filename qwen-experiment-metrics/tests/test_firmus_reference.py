@@ -195,7 +195,10 @@ def test_vllm_worker_arguments_preserve_eagle_topology_and_role_settings(tmp_pat
     # Exercise actual shell argument construction without requiring GPUs or HCAs.
     probe = worker.split("UCX_IB=", 1)[0] + "worker_command=(" + worker.split("worker_command=(", 1)[1].split("\nprintf", 1)[0]
     repair = tmp_path / "prefill-handoff-repair.json"
-    repair.write_text(json.dumps({"push_worker_source_sha256": "87de3ea383dd3aa95fb2c287ea26ded8a330859cc1295f9faa69047e80865c2c", "push_release_cpu_contract": {"passed": True}, "multiproc_source_sha256": "3ed0149a8a8e1550c4f062af40e645d1b734e70f99981bc5bf15f0360507648a", "message_queue_source_sha256": "f3e7a3f3ff713fccbd535e0d41650ee05bdf8677e83d4b90519910645022c30b", "executor_readiness_cpu_contract": {"passed": True}}))
+    gpu_kv = tmp_path / "gpu-kv.py"
+    gpu_kv.write_bytes(runpy.run_path(str(ROOT / "containers/fix-vllm-prefill-handoff.py"))["patch_gpu_kv"]((ROOT / "qwen-experiment-metrics/tests/fixtures/vllm-gpu-kv.py.txt").read_bytes()))
+    probe = probe.replace("/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/kv_connector.py", str(gpu_kv))
+    repair.write_text(json.dumps({"push_worker_source_sha256": "87de3ea383dd3aa95fb2c287ea26ded8a330859cc1295f9faa69047e80865c2c", "push_release_cpu_contract": {"passed": True}, "multiproc_source_sha256": "3ed0149a8a8e1550c4f062af40e645d1b734e70f99981bc5bf15f0360507648a", "message_queue_source_sha256": "f3e7a3f3ff713fccbd535e0d41650ee05bdf8677e83d4b90519910645022c30b", "executor_readiness_cpu_contract": {"passed": True}, "gpu_kv_source_sha256": "b89a4333f1e552d86e1815674b59e9f1335f0f49c0a7b46082439076f62c6a81", "gpu_kv_patched_sha256": "6472ceefd8f1cba8a90c99bd99f3ac40bc101fd382295ab83275a199ce98407b", "push_start_cpu_contract": {"passed": True, "producer_prior_stream_fence": True}}))
     probe = probe.replace("/opt/apac/prefill-handoff-repair.json", str(repair))
     probe += '\nprintf "%s\\0" "$VLLM_ALLREDUCE_USE_SYMM_MEM" "${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-1}" "${TRTLLM_DG_ENABLED:-1}" "$VLLM_USE_DEEP_GEMM_E8M0" "$VLLM_USE_NCCL_SYMM_MEM" "${worker_command[@]}"\n'
     for role, tp, limit in [("prefill", 1, 48), ("decode", 1, 32)]:

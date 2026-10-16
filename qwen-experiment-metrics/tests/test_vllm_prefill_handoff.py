@@ -129,3 +129,23 @@ def test_real_mp_future_progresses_before_new_dp_step(monkeypatch):
     assert core._process_engine_step() is True
     assert events == ["aborts", ("publish", (0, ("old_schedule", "old_result"))), "submit", ("post", True)]
     assert not futures and not responses and not core.batch_queue
+
+
+def test_actual_gpu_kv_wrapper_fences_prior_data_and_submits_before_new_forward():
+    source = (Path(__file__).parent / "fixtures/vllm-gpu-kv.py.txt").read_bytes()
+    assert hashlib.sha256(source).hexdigest() == PATCH["GPU_KV_SOURCE_SHA256"]
+    with pytest.raises(AssertionError):
+        PATCH["validate_push_start"](source)
+    patched = PATCH["patch_gpu_kv"](source)
+    result = PATCH["validate_push_start"](patched)
+    assert result["passed"] and result["cases"] == 15
+    assert result["producer_prior_stream_fence"]
+    assert result["current_request_overlap_retains_original_order"]
+    with pytest.raises(ValueError, match="Unsupported pinned"):
+        PATCH["patch_gpu_kv"](patched)
+
+
+def test_gpu_kv_wrapper_rejects_source_corruption():
+    source = (Path(__file__).parent / "fixtures/vllm-gpu-kv.py.txt").read_bytes()
+    with pytest.raises(ValueError, match="Unsupported pinned"):
+        PATCH["patch_gpu_kv"](source + b"# changed\n")

@@ -63,6 +63,11 @@ assert hashlib.sha256(mp_source.read_bytes()).hexdigest() == handoff["multiproc_
 assert hashlib.sha256(mq_source.read_bytes()).hexdigest() == handoff["message_queue_patched_sha256"]
 assert runpy.run_path("/opt/apac/fix-vllm-prefill-handoff.py")["validate_executor_readiness"](mp_source.read_bytes(), mq_source.read_bytes()) == handoff["executor_readiness_cpu_contract"]
 assert handoff["executor_readiness_cpu_contract"]["passed"] is True
+gpu_kv_source = Path(vllm.__file__).parent / "v1/worker/gpu/kv_connector.py"
+assert handoff["gpu_kv_source_sha256"] == "b89a4333f1e552d86e1815674b59e9f1335f0f49c0a7b46082439076f62c6a81"
+assert hashlib.sha256(gpu_kv_source.read_bytes()).hexdigest() == handoff["gpu_kv_patched_sha256"]
+assert runpy.run_path("/opt/apac/fix-vllm-prefill-handoff.py")["validate_push_start"](gpu_kv_source.read_bytes()) == handoff["push_start_cpu_contract"]
+assert handoff["push_start_cpu_contract"]["passed"] is True
 transport_check = subprocess.run([sys.executable, "-c", "import json,runpy; print(json.dumps(runpy.run_path('/opt/apac/fix-vllm-prefill-handoff.py')['validate_native_response_transport']()))"], check=False, timeout=60, text=True, capture_output=True)
 print(transport_check.stdout)
 print(transport_check.stderr, file=sys.stderr)

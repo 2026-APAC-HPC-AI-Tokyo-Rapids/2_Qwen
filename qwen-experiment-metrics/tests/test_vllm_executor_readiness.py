@@ -68,7 +68,7 @@ def test_reject_changed_anchor(monkeypatch, name, fixture, key, old, new):
         PATCH[name](source)
 
 
-@pytest.mark.parametrize("invalid", ["mp", "mq"])
+@pytest.mark.parametrize("invalid", ["mp", "mq", "gpu"])
 def test_installer_validates_all_sources_before_any_write(tmp_path, monkeypatch, invalid):
     patched_sources(monkeypatch)
     sources = {
@@ -76,6 +76,7 @@ def test_installer_validates_all_sources_before_any_write(tmp_path, monkeypatch,
         "push": (FIXTURES / "vllm-push-completion.py.txt").read_bytes(),
         "mp": (FIXTURES / "vllm-mp-completion.py.txt").read_bytes(),
         "mq": (FIXTURES / "vllm-mq-dequeue.py.txt").read_bytes(),
+        "gpu": (FIXTURES / "vllm-gpu-kv.py.txt").read_bytes(),
     }
     sources[invalid] = b"unsupported source"
     paths = {name: tmp_path / name for name in sources}
@@ -84,5 +85,5 @@ def test_installer_validates_all_sources_before_any_write(tmp_path, monkeypatch,
     monkeypatch.setitem(PATCH["install"].__globals__, "patch", lambda source: source + b"modified")
     monkeypatch.setitem(PATCH["patch_push_worker"].__globals__, "PUSH_SOURCE_SHA256", hashlib.sha256(sources["push"]).hexdigest())
     with pytest.raises(ValueError, match="Unsupported pinned"):
-        PATCH["install"](*(paths[name] for name in ("engine", "push", "mp", "mq")))
+        PATCH["install"](*(paths[name] for name in ("engine", "push", "mp", "mq", "gpu")))
     assert all(paths[name].read_bytes() == source for name, source in sources.items())
