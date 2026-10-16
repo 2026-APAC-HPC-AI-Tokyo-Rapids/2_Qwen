@@ -214,16 +214,23 @@ def test_sglang_nsys_launch_preserves_uninstrumented_worker_arguments(tmp_path: 
     assert instrumented[instrumented.index(str(python)) + 1:] == baseline
 
 
-def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path) -> None:
+@pytest.mark.parametrize("counter_access", [False, True])
+def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path, counter_access: bool) -> None:
     stub = tmp_path / "nsys"
     stub.write_text("#!/bin/bash\nprintf '%s\\0' \"$@\" >\"$NSYS_RECORD\"\n")
     stub.chmod(0o755)
+    grep = tmp_path / "grep"
+    grep.write_text(f"#!/bin/bash\nexit {0 if counter_access else 1}\n")
+    grep.chmod(0o755)
     invocation = tmp_path / "decode.argv"
-    subprocess.run(["bash", str(ROOT / "scripts/exec-profiler.sh"), "/opt/python", "-m", "sglang.launch_server", "--port", "30200"], env={**os.environ, "QWEN_PROFILER_INVOCATION_PATH": str(invocation), "QWEN_PROFILER_NSYS_BIN": str(stub), "NSYS_RECORD": str(tmp_path / "argv")}, check=True)
+    subprocess.run(["bash", str(ROOT / "scripts/exec-profiler.sh"), "/opt/python", "-m", "sglang.launch_server", "--port", "30200"], env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "QWEN_PROFILER_INVOCATION_PATH": str(invocation), "QWEN_PROFILER_NSYS_BIN": str(stub), "NSYS_RECORD": str(tmp_path / "argv")}, check=True)
     argv = (tmp_path / "argv").read_text().rstrip("\0").split("\0")
     assert "--capture-range=cudaProfilerApi" in argv and "--capture-range-end=stop" in argv
     assert "--cuda-graph-trace=node" in argv and "--sample=none" in argv
     assert argv[-5:] == ["/opt/python", "-m", "sglang.launch_server", "--port", "30200"]
+    assert ("--gpu-metrics-devices=cuda-visible" in argv) is counter_access
+    assert ("--gpu-metrics-frequency=1000" in argv) is counter_access
+    assert (tmp_path / "decode.gpu-metrics.txt").read_text().startswith("requested:" if counter_access else "skipped:")
 
 
 @pytest.mark.parametrize("profile", [False, True])

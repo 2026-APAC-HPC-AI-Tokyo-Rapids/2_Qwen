@@ -13,6 +13,15 @@ printf '%q ' "$@" >"${invocation_tmp}"
 printf '\n' >>"${invocation_tmp}"
 mv -- "${invocation_tmp}" "${QWEN_PROFILER_INVOCATION_PATH}"
 if [[ -n "${QWEN_PROFILER_NSYS_BIN:-}" ]]; then
-  exec "${QWEN_PROFILER_NSYS_BIN}" profile --force-overwrite=true --trace-fork-before-exec=true --capture-range=cudaProfilerApi --capture-range-end=stop --trace=cuda,nvtx,osrt --cuda-graph-trace=node --sample=none --cpuctxsw=none --output="${QWEN_PROFILER_INVOCATION_PATH%.argv}" "$@"
+  gpu_metrics=()
+  # Counter sampling follows the CUDA capture range, after the normal score.
+  # Each Slurm worker owns distinct GPUs; never collect another worker's devices.
+  if grep -Eq '^RmProfilingAdminOnly:[[:space:]]*0[[:space:]]*$' /proc/driver/nvidia/params 2>/dev/null; then
+    gpu_metrics=(--gpu-metrics-devices=cuda-visible --gpu-metrics-frequency=1000)
+    printf 'requested: CUDA-visible GPUs at 1000 Hz during the capture range; verify samples in the report\n' >"${QWEN_PROFILER_INVOCATION_PATH%.argv}.gpu-metrics.txt"
+  else
+    printf 'skipped: unrestricted GPU performance counter access is not advertised by the driver; CUDA/NVTX trace remains enabled\n' >"${QWEN_PROFILER_INVOCATION_PATH%.argv}.gpu-metrics.txt"
+  fi
+  exec "${QWEN_PROFILER_NSYS_BIN}" profile --force-overwrite=true --trace-fork-before-exec=true --capture-range=cudaProfilerApi --capture-range-end=stop --trace=cuda,nvtx,osrt --cuda-graph-trace=node --sample=none --cpuctxsw=none "${gpu_metrics[@]}" --output="${QWEN_PROFILER_INVOCATION_PATH%.argv}" "$@"
 fi
 exec "$@"
