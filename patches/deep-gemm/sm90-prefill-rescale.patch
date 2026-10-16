@@ -1,0 +1,15 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1082,7 +1082,11 @@
+                     }
+                 };
+ 
+-                if constexpr (kHidden >= 7168) {
++                // The Qwen Prefill M128/N256 path reuses the accumulator.
++                // Carry its current scale across K tiles and reconstruct once,
++                // reusing the large-hidden path with different FP32 rounding.
++                if constexpr (kHidden >= 7168 ||
++                              (kHidden == 4096 && kIntermediateHidden == 1536 && BLOCK_M == 128 && BLOCK_N == 256)) {
+                     float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f;
+                     float prev_gate_sf = 1.0f, prev_up_sf = 1.0f, prev_l2_sf = 1.0f;
+                     for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {

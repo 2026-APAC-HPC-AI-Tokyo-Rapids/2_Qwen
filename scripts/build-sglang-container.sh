@@ -95,6 +95,7 @@ cp "${GITHUB_WORKSPACE}/patches/sglang-router/prefill-load-lifetime.patch" "${co
 cp "${GITHUB_WORKSPACE}/patches/sglang-router/Cargo.lock" "${context}/sglang-router.Cargo.lock"
 cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-late-topk-fp32.patch" "${context}/sm90-late-topk-fp32.patch"
 cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-fc2-pipeline.patch" "${context}/sm90-fc2-pipeline.patch"
+cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-prefill-rescale.patch" "${context}/sm90-prefill-rescale.patch"
 rm -rf -- "${context}/sglang-source/.git"
 printf '%s\n' "${sglang_commit}" >"${context}/sglang-commit.txt"
 

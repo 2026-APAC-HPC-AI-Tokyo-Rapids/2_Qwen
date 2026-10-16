@@ -2,6 +2,8 @@
 
 No scheduler submission. Compare the native kernel with independent FP32 GEMMs,
 the same FP8 activation groups, and late top-k weights with FP32 accumulation.
+This local numeric screen is not the organisers' benchmark accuracy check;
+Q1/Q4 require at least 99% of their reference score before official acceptance.
 """
 import json
 import os
