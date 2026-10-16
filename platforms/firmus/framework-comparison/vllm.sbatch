@@ -12,7 +12,8 @@
 # Exact modified SM90 MegaMoE owns dispatch/math/combine; KV budgets are per DP rank.
 # Profile allocations validate adapter math before loading the full serving topology.
 # Reviewed capture uses the exact Komori client and PDL-on image pinned in config.
-# Keep this P48 diagnostic separate from the uninstrumented baseline and P2 hypothesis.
+# Normal control256a9db and this profile reuse producer-release image38848488113.
+# Keep the all-worker diagnostic separate from official uninstrumented throughput.
 set -euo pipefail
 
 ROOT=${SLURM_SUBMIT_DIR}
