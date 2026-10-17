@@ -1,0 +1,62 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1320,6 +1320,32 @@
+                     }
+                 }
+             } else {
++                constexpr uint32_t kL1SFKBlocks   = kHidden / 128;
++                constexpr uint32_t kL2SFKBlocks   = kIntermediateHidden / 128;
++                constexpr uint32_t kL1SFGateBlks  = kIntermediateHidden / 128;
++                constexpr uint32_t kL1SFPerExpert = (kIntermediateHidden * 2 / 128) * kL1SFKBlocks;
++                constexpr uint32_t kL2SFPerExpert = (kHidden / 128) * kL2SFKBlocks;
++
++                // Qwen Decode has at most one warp of K-block scales. Each
++                // lane loads one original FP32 scale once per tile, then the
++                // warp broadcasts it at its K step instead of issuing a
++                // dependent global load after every full-barrier wait.
++                constexpr bool kCacheWeightSF = kSwapABActive && !kReuseAccumAsFinal &&
++                    kHidden == 4096 && kIntermediateHidden == 1536 && kNumRanks == 4;
++                float cached_sf = 0.0f, cached_up_sf = 0.0f;
++                if constexpr (kCacheWeightSF) {
++                    if (block_phase == sched::BlockPhase::Linear1) {
++                        const uint32_t gate_n = sf_n_block_idx / 2u;
++                        const uint32_t up_n = kL1SFGateBlks + gate_n;
++                        const float* base = l1_weights_sf + local_expert_idx * kL1SFPerExpert + lane_idx;
++                        cached_sf = __ldg(base + gate_n * kL1SFKBlocks);
++                        cached_up_sf = __ldg(base + up_n * kL1SFKBlocks);
++                    } else if (lane_idx < kL2SFKBlocks) {
++                        cached_sf = __ldg(l2_weights_sf + local_expert_idx * kL2SFPerExpert
++                            + sf_n_block_idx * kL2SFKBlocks + lane_idx);
++                    }
++                }
++
+                 float accum[kAccumPerThread];
+ 
+                 for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+@@ -1351,16 +1377,17 @@
+                     // logical 128x128 weight-SF tile, broadcast across the matching
+                     // WGMMA accumulators.
+                     //
+-                    // Load the weight scale after the barrier from all WG threads.
+-                    // This keeps scale loads close to their WGMMA use and lets the
+-                    // read-only cache coalesce the same-address accesses.
+-                    constexpr uint32_t kL1SFKBlocks   = kHidden / 128;
+-                    constexpr uint32_t kL2SFKBlocks   = kIntermediateHidden / 128;
+-                    constexpr uint32_t kL1SFGateBlks  = kIntermediateHidden / 128;
+-                    constexpr uint32_t kL1SFPerExpert = (kIntermediateHidden * 2 / 128) * kL1SFKBlocks;
+-                    constexpr uint32_t kL2SFPerExpert = (kHidden / 128) * kL2SFKBlocks;
++                    // Qwen Decode broadcasts the tile-cached scale. Other
++                    // configurations retain the existing read-only global load.
+                     float gate_sf = 0.0f, up_sf = 0.0f, l2_sf = 0.0f;
+-                    if (block_phase == sched::BlockPhase::Linear1) {
++                    if constexpr (kCacheWeightSF) {
++                        if (block_phase == sched::BlockPhase::Linear1) {
++                            gate_sf = __shfl_sync(0xffffffff, cached_sf, k_block_idx);
++                            up_sf = __shfl_sync(0xffffffff, cached_up_sf, k_block_idx);
++                        } else {
++                            l2_sf = __shfl_sync(0xffffffff, cached_sf, k_block_idx);
++                        }
++                    } else if (block_phase == sched::BlockPhase::Linear1) {
+                         const uint32_t gate_n = sf_n_block_idx / 2u;
+                         const uint32_t up_n   = kL1SFGateBlks + gate_n;
+                         const float* base = l1_weights_sf + local_expert_idx * kL1SFPerExpert + k_block_idx;
