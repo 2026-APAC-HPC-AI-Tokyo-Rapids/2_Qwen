@@ -31,8 +31,9 @@ COPY sm90-fc2-pipeline.patch /opt/apac/sm90-fc2-pipeline.patch
 COPY sm90-prefill-rescale.patch /opt/apac/sm90-prefill-rescale.patch
 COPY sm90-decode-exact-tiles.patch /opt/apac/sm90-decode-exact-tiles.patch
 COPY sm90-prefill-phase.patch /opt/apac/sm90-prefill-phase.patch
-COPY sm90-routing-communication.patch /opt/apac/sm90-routing-communication.patch
-COPY sm90-decode-mainloop-pipeline.patch /opt/apac/sm90-decode-mainloop-pipeline.patch
+COPY sm90-decode-swap-ab-hoist.patch /opt/apac/sm90-decode-swap-ab-hoist.patch
+COPY sm90-decode-swap-ab-l1-quant.patch /opt/apac/sm90-decode-swap-ab-l1-quant.patch
+COPY sm90-dispatch-pull-overlap.patch /opt/apac/sm90-dispatch-pull-overlap.patch
 COPY containers/build-sm90-megamoe.py /opt/apac/build-sm90-megamoe.py
 RUN /opt/sglang/venv/bin/python /opt/apac/build-sm90-megamoe.py
 

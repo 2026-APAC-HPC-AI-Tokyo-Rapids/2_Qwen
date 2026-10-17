@@ -1,43 +1,21 @@
 diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-index 9f5c25a..c4783d7 100644
+index 9f5c25a..df0a728 100644
 --- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 +++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-@@ -950,7 +950,7 @@ sm90_fp8_mega_moe_impl(void* y,
-         auto process_math_block = [&](const auto& block_phase,
-                                       const uint32_t& local_expert_idx,
-                                       const uint32_t& num_k_blocks,
--                                      const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
-+                                      const uint32_t& m_block_idx, const uint32_t& n_block_idx) CUTLASS_LAMBDA_FUNC_INLINE {
-             const uint32_t valid_m = scheduler.template get_valid_m<false>();
-             const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
-             const uint32_t m_idx = pool_block_idx * BLOCK_M;
-@@ -1319,6 +1319,170 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1319,6 +1319,123 @@ sm90_fp8_mega_moe_impl(void* y,
                          }
                      }
                  }
 +            } else if constexpr (kSwapABActive) {
-+                // SwapAB Decode mainloop (weights as WGMMA-M, tokens as WGMMA-N), software
-+                // pipelined: the WGMMAs of one unit run while the previous unit is promoted
-+                // into `final_accum` and its stage is released. A unit is one K block for
-+                // L1 and one per-64 K half for L2 (per-64 activation scales). Each unit
-+                // still starts from a zeroed accumulator and is promoted in the original K
-+                // order (L2: low half before high half), so the result is bit-identical to
-+                // the unpipelined loop.
-+                // ptxas serializes every WGMMA of the kernel (C7514) when a WGMMA is still
-+                // in flight at a loop back-edge and its accumulator is read afterwards, so
-+                // the pipeline runs over unrolled chunks of K blocks and drains at the end
-+                // of each chunk.
-+                // N_SWAP is fixed for the block: it is selected once and the whole K loop
-+                // runs inside the specialization, keeping both accumulators in registers.
++                // SwapAB Decode mainloop (weights as WGMMA-M, tokens as WGMMA-N). N_SWAP is
++                // fixed for the block, so it is selected once and the whole K loop runs
++                // inside that specialization instead of re-dispatching on every K block.
++                // The math, scales, waits and FP32 promotion order are unchanged, so the
++                // output is bit-identical.
 +                DG_STATIC_ASSERT(kL2ActsSFGranK == 64, "L2 swapAB assumes per-64 activation scales");
-+                constexpr uint32_t kL1ChunkKBlocks = 1;
-+                constexpr uint32_t kL2ChunkKBlocks = 1;
-+                DG_STATIC_ASSERT((kHidden / BLOCK_K) % kL1ChunkKBlocks == 0 and
-+                                 (kIntermediateHidden / BLOCK_K) % kL2ChunkKBlocks == 0,
-+                                 "K blocks must split into whole pipeline chunks");
 +                // Weight SF rows of this block's (expert, N tile): one float per K block.
-+                // L1 (E, 2*IH/128, H/128): gate row sf_n_block_idx/2, up row IH/128 later.
-+                // L2 (E, H/128, IH/128): row sf_n_block_idx.
++                // L1 (E, 2*IH/128, H/128): gate row sf_n_block_idx/2, up row IH/128 later
++                // (gran-8 gate/up interleave). L2 (E, H/128, IH/128): row sf_n_block_idx.
 +                constexpr uint32_t kL1SFKBlocks   = kHidden / 128;
 +                constexpr uint32_t kL2SFKBlocks   = kIntermediateHidden / 128;
 +                constexpr uint32_t kL1SFGateBlks  = kIntermediateHidden / 128;
@@ -50,31 +28,31 @@ index 9f5c25a..c4783d7 100644
 +                auto run_swap_ab = [&]<uint32_t N_SWAP>() {
 +                    using SwapWGMMA = typename mma::sm90::FP8MMASelector<N_SWAP>::type;
 +                    constexpr uint32_t kSwapAccum = SwapWGMMA::kNumAccum;
-+                    float accum[2][kSwapAccum];
++                    float swap_accum[kSwapAccum], swap_accum_hi[kSwapAccum];
 +
 +                    auto fence = [](float* acc) {
 +                        #pragma unroll
 +                        for (uint32_t i = 0; i < kSwapAccum; ++ i)
 +                            ptx::warpgroup_fence_operand(acc[i]);
 +                    };
-+                    // One WGMMA group over K [k_offset, k_offset + kNumK * 32) of `stage`.
-+                    auto issue = [&]<uint32_t kNumK>(float* acc, const uint32_t& stage, const uint32_t& k_offset) {
++                    // One WGMMA group over K [k_offset, k_offset + kNumK * 32) of the stage.
++                    auto issue = [&]<uint32_t kNumK>(float* acc, const uint32_t& k_offset) {
 +                        fence(acc);
 +                        ptx::warpgroup_arrive();
 +                        #pragma unroll
 +                        for (uint32_t k = 0; k < kNumK; ++ k) {
 +                            auto desc_a = mma::sm90::make_smem_desc(
-+                                smem_b[stage] + smem_b_wg_offset + k_offset + k * SwapWGMMA::K, 1);
++                                smem_b[stage_idx] + smem_b_wg_offset + k_offset + k * SwapWGMMA::K, 1);
 +                            auto desc_b = mma::sm90::make_smem_desc(
-+                                smem_a[stage] + k_offset + k * SwapWGMMA::K, 1);
++                                smem_a[stage_idx] + k_offset + k * SwapWGMMA::K, 1);
 +                            SwapWGMMA::wgmma(desc_a, desc_b, acc, k);
 +                        }
 +                        ptx::warpgroup_commit_batch();
 +                        fence(acc);
 +                    };
 +                    // Accumulator rows r0 (.x/.y) and r0 + 8 (.z/.w) take weight scales
-+                    // sf_0 and sf_1 (L1: gate and up of the gran-8 interleave); columns
-+                    // are tokens with per-token activation scales from `sfa`.
++                    // sf_0 and sf_1 (L1: gate and up); columns are tokens with per-token
++                    // activation scales from `sfa`.
 +                    auto promote = [&](float* acc, const float* sfa, const float& sf_0, const float& sf_1) {
 +                        fence(acc);
 +                        #pragma unroll
@@ -89,66 +67,32 @@ index 9f5c25a..c4783d7 100644
 +                            final_accum[i * 4 + 3] += scale_1 * sf_1 * acc[i * 4 + 3];
 +                        }
 +                    };
-+                    auto release = [&](const uint32_t& stage) {
-+                        if (lane_idx == 0)
-+                            empty_barriers[stage]->arrive();
-+                    };
 +
-+                    uint32_t k_block_idx = 0;
 +                    if (block_phase == sched::BlockPhase::Linear1) {
-+                        constexpr uint32_t kNumK = BLOCK_K / SwapWGMMA::K;
-+                        while (k_block_idx < num_k_blocks) {
-+                            // The previous K block's stage and weight scales; its activation
-+                            // scales stay readable in smem_sfa until its stage is released.
-+                            uint32_t prev_stage;
-+                            float prev_gate_sf, prev_up_sf;
-+                            #pragma unroll
-+                            for (uint32_t i = 0; i < kL1ChunkKBlocks; ++ i) {
-+                                const float gate_sf = __ldg(l1_gate_sf + k_block_idx);
-+                                const float up_sf = __ldg(l1_up_sf + k_block_idx);
-+                                full_barriers[stage_idx]->wait(phase);
-+                                issue.template operator()<kNumK>(accum[i % 2], stage_idx, 0);
-+                                if (i > 0) {
-+                                    ptx::warpgroup_wait<1>();
-+                                    promote(accum[(i - 1) % 2], smem_sfa[prev_stage], prev_gate_sf, prev_up_sf);
-+                                    release(prev_stage);
-+                                }
-+                                prev_stage = stage_idx;
-+                                prev_gate_sf = gate_sf;
-+                                prev_up_sf = up_sf;
-+                                advance_pipeline(k_block_idx);
-+                            }
++                        for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
++                            const float gate_sf = __ldg(l1_gate_sf + k_block_idx);
++                            const float up_sf = __ldg(l1_up_sf + k_block_idx);
++                            full_barriers[stage_idx]->wait(phase);
++                            issue.template operator()<BLOCK_K / SwapWGMMA::K>(swap_accum, 0);
 +                            ptx::warpgroup_wait<0>();
-+                            promote(accum[(kL1ChunkKBlocks - 1) % 2], smem_sfa[prev_stage], prev_gate_sf, prev_up_sf);
-+                            release(prev_stage);
++                            promote(swap_accum, smem_sfa[stage_idx], gate_sf, up_sf);
++                            if (lane_idx == 0)
++                                empty_barriers[stage_idx]->arrive();
 +                        }
 +                    } else {
-+                        constexpr uint32_t kNumK = (BLOCK_K / 2) / SwapWGMMA::K;
-+                        // Low halves use accum[0] and high halves accum[1]. SFA layout is
-+                        // (K=2, M=BLOCK_M): the high-half scales start at BLOCK_M.
-+                        while (k_block_idx < num_k_blocks) {
-+                            uint32_t prev_stage;
-+                            float prev_sf;
-+                            #pragma unroll
-+                            for (uint32_t i = 0; i < kL2ChunkKBlocks; ++ i) {
-+                                const float l2_sf = __ldg(l2_sf_row + k_block_idx);
-+                                full_barriers[stage_idx]->wait(phase);
-+                                issue.template operator()<kNumK>(accum[0], stage_idx, 0);
-+                                if (i > 0) {
-+                                    ptx::warpgroup_wait<1>();
-+                                    promote(accum[1], smem_sfa[prev_stage] + BLOCK_M, prev_sf, prev_sf);
-+                                    release(prev_stage);
-+                                }
-+                                issue.template operator()<kNumK>(accum[1], stage_idx, BLOCK_K / 2);
-+                                ptx::warpgroup_wait<1>();
-+                                promote(accum[0], smem_sfa[stage_idx], l2_sf, l2_sf);
-+                                prev_stage = stage_idx;
-+                                prev_sf = l2_sf;
-+                                advance_pipeline(k_block_idx);
-+                            }
++                        // Per-64 K halves in separate groups: the high half runs while the
++                        // low half is promoted. SFA layout is (K=2, M=BLOCK_M).
++                        for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
++                            const float l2_sf = __ldg(l2_sf_row + k_block_idx);
++                            full_barriers[stage_idx]->wait(phase);
++                            issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum, 0);
++                            issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum_hi, BLOCK_K / 2);
++                            ptx::warpgroup_wait<1>();
++                            promote(swap_accum, smem_sfa[stage_idx], l2_sf, l2_sf);
 +                            ptx::warpgroup_wait<0>();
-+                            promote(accum[1], smem_sfa[prev_stage] + BLOCK_M, prev_sf, prev_sf);
-+                            release(prev_stage);
++                            promote(swap_accum_hi, smem_sfa[stage_idx] + BLOCK_M, l2_sf, l2_sf);
++                            if (lane_idx == 0)
++                                empty_barriers[stage_idx]->arrive();
 +                        }
 +                    }
 +                };
@@ -182,7 +126,7 @@ index 9f5c25a..c4783d7 100644
              } else {
                  float accum[kAccumPerThread];
  
-@@ -1372,262 +1536,94 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1372,262 +1489,94 @@ sm90_fp8_mega_moe_impl(void* y,
                      }
  
                      if (block_phase == sched::BlockPhase::Linear1) {
@@ -525,12 +469,3 @@ index 9f5c25a..c4783d7 100644
                          }
                      }
                  }
-@@ -2145,7 +2141,7 @@ sm90_fp8_mega_moe_impl(void* y,
-             scheduler.for_each_block([&](const sched::BlockPhase& block_phase,
-                                          const uint32_t& local_expert_idx,
-                                          const uint32_t& num_k_blocks,
--                                         const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
-+                                         const uint32_t& m_block_idx, const uint32_t& n_block_idx) CUTLASS_LAMBDA_FUNC_INLINE {
-                 process_math_block(block_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
-             });
-         }
