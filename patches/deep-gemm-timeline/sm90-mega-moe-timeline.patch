@@ -1,5 +1,5 @@
 diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-index df0a728..3806108 100644
+index 4037967..dc22fdf 100644
 --- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 +++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 @@ -23,6 +23,7 @@
@@ -96,21 +96,51 @@ index df0a728..3806108 100644
  
          // Token / SF pull loop
          uint32_t pull_mbarrier_phase = 0;
-@@ -701,8 +728,10 @@ sm90_fp8_mega_moe_impl(void* y,
-                 __syncwarp();
+@@ -590,6 +617,7 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+         constexpr uint32_t kNumGlobalWarps = kNumSMs * kNumDispatchWarps;
+         for (uint32_t token_idx = sm_idx * kNumDispatchWarps + warp_idx; ; token_idx += kNumGlobalWarps) {
++                const uint32_t tl_d0 = sm90_timeline::cycles();
+                 int old_expert_idx = current_expert_idx;
+                 while (token_idx >= expert_end_idx) {
+                     if (++ current_expert_idx >= kNumExpertsPerRank)
+@@ -663,6 +691,9 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+                 const uint32_t pool_token_idx = expert_pool_block_offset * BLOCK_M + token_idx_in_expert;
+ 
++                const uint32_t tl_d1 = sm90_timeline::cycles();
++                if (warp_idx == 0 and lane_idx == 0)
++                    tl_smem[sm90_timeline::kDispIndexW0] += tl_d1 - tl_d0;
+                 // Pull token data. Overlap a remote TMA load with SF copy and
+                 // then use TMA store to materialize the local L1 input.
+                 if (cute::elect_one_sync()) {
+@@ -712,6 +743,8 @@ sm90_fp8_mega_moe_impl(void* y,
+                     if (lane_idx == 0)
+                         *l1_topk_weights_buffer.get_data_buffer(pool_token_idx).get_base_ptr<float>() = weight;
+                     __syncwarp();
++                    if (warp_idx == 0 and lane_idx == 0)
++                        tl_smem[sm90_timeline::kDispRemoteW0] += sm90_timeline::cycles() - tl_d1;
+                 } else {
+                 #pragma unroll
+                 for (uint32_t i = 0; i < math::constexpr_ceil_div(kNumSFFloats, 32u); ++ i) {
+@@ -731,8 +764,11 @@ sm90_fp8_mega_moe_impl(void* y,
+                 }
  
                  if (cute::elect_one_sync()) {
 +                    const uint32_t tl_t0 = sm90_timeline::cycles();
                      ptx::mbarrier_arrive_and_set_tx(pull_mbarrier, kHidden);
                      ptx::mbarrier_wait_and_flip_phase(pull_mbarrier, pull_mbarrier_phase);
-+                    tl_smem[sm90_timeline::kDispPullWaitW0 + warp_idx] += sm90_timeline::cycles() - tl_t0;
++                    const uint32_t tl_t1 = sm90_timeline::cycles();
++                    tl_smem[sm90_timeline::kDispPullWaitW0 + warp_idx] += tl_t1 - tl_t0;
  
                      ptx::tma_store_1d(
                          l1_token_buffer.get_data_buffer(pool_token_idx).get_base_ptr(),
-@@ -715,12 +744,26 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -745,12 +781,33 @@ sm90_fp8_mega_moe_impl(void* y,
                      ptx::tma_store_wait<0>();
                      ptx::red_add_rel(
                          workspace.get_l1_arrival_count_ptr(pool_block_idx), 1);
++                    if (warp_idx == 0)
++                        tl_smem[sm90_timeline::kDispStoreW0] += sm90_timeline::cycles() - tl_t1;
 +                    if (warp_idx == 0) {
 +                        if (tl_smem[sm90_timeline::kDispTokensW0] == 0)
 +                            timeline.record(sm90_timeline::kDispFirstPull);
@@ -125,6 +155,11 @@ index df0a728..3806108 100644
 +                timeline.record(sm90_timeline::kDispLoopExit);
 +            timeline.counter(sm90_timeline::kDispTokensW0 + warp_idx, tl_smem[sm90_timeline::kDispTokensW0 + warp_idx]);
 +            timeline.counter(sm90_timeline::kDispPullWaitW0 + warp_idx, tl_smem[sm90_timeline::kDispPullWaitW0 + warp_idx]);
++            if (warp_idx == 0) {
++                timeline.counter(sm90_timeline::kDispIndexW0, tl_smem[sm90_timeline::kDispIndexW0]);
++                timeline.counter(sm90_timeline::kDispRemoteW0, tl_smem[sm90_timeline::kDispRemoteW0]);
++                timeline.counter(sm90_timeline::kDispStoreW0, tl_smem[sm90_timeline::kDispStoreW0]);
++            }
 +        }
  
          // Cleanup workspace, overlapping with combine.
@@ -134,7 +169,7 @@ index df0a728..3806108 100644
  
          DG_STATIC_ASSERT(kNumSMs > 1, "Invalid SM count");
          if (sm_idx == 0) {
-@@ -758,11 +801,21 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -788,11 +845,21 @@ sm90_fp8_mega_moe_impl(void* y,
              }
          }
  
@@ -157,7 +192,7 @@ index df0a728..3806108 100644
  
      // =====================================================================
      // ROLE 2: GEMM TMA LOAD warps (load A+SFA, B+SFB)
-@@ -771,6 +824,8 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -801,6 +868,8 @@ sm90_fp8_mega_moe_impl(void* y,
      // =====================================================================
      } else if (warp_idx == kNumDispatchWarps) {
          cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
@@ -166,7 +201,7 @@ index df0a728..3806108 100644
  
          auto process_a_sfa_block = [&](const auto& block_phase,
                                         const uint32_t& local_expert_idx,
-@@ -782,12 +837,21 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -812,12 +881,21 @@ sm90_fp8_mega_moe_impl(void* y,
                  ? &tensor_map_l2_acts_sf : &tensor_map_l1_acts_sf;
  
              const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
@@ -188,7 +223,7 @@ index df0a728..3806108 100644
              } else {
                  constexpr uint32_t kNumL1BlockNs = L1_SHAPE_N / BLOCK_N;
                  if constexpr (kL2ArrivalCounter) {
-@@ -804,9 +868,18 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -834,9 +912,18 @@ sm90_fp8_mega_moe_impl(void* y,
                          ? ~0ull : ((1ull << kNumL1BlockNs) - 1ull);
                      while (ptx::ld_acq_gpu(ptr) != expected);
                  }
@@ -207,7 +242,7 @@ index df0a728..3806108 100644
  
                  if (cute::elect_one_sync()) {
                      const uint32_t m_idx = pool_block_idx * BLOCK_M;
-@@ -843,6 +916,8 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -873,6 +960,8 @@ sm90_fp8_mega_moe_impl(void* y,
                  }
                  __syncwarp();
              }
@@ -216,7 +251,7 @@ index df0a728..3806108 100644
          };
  
          if constexpr (kSpecializePhase) {
-@@ -870,9 +945,17 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -900,9 +989,17 @@ sm90_fp8_mega_moe_impl(void* y,
                  process_a_sfa_block(block_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
              });
          }
@@ -234,7 +269,7 @@ index df0a728..3806108 100644
  
          scheduler.for_each_block([&](const sched::BlockPhase& block_phase,
                                       const uint32_t& local_expert_idx,
-@@ -882,9 +965,17 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -912,9 +1009,17 @@ sm90_fp8_mega_moe_impl(void* y,
                  block_phase == sched::BlockPhase::Linear2 ? &tensor_map_l2_weights : &tensor_map_l1_weights;
  
              const uint32_t shape_n = block_phase == sched::BlockPhase::Linear2 ? L2_SHAPE_N : L1_SHAPE_N;
@@ -252,7 +287,7 @@ index df0a728..3806108 100644
  
                  if (cute::elect_one_sync()) {
                      const uint32_t n_idx = local_expert_idx * shape_n + n_block_idx * BLOCK_N;
-@@ -912,6 +1003,11 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -942,6 +1047,11 @@ sm90_fp8_mega_moe_impl(void* y,
                  __syncwarp();
              }
          });
@@ -264,7 +299,7 @@ index df0a728..3806108 100644
  
      } else if (warp_idx < kNumDispatchWarps + kNumMMANonEpilogueWarps) {
          // Idle non-epilogue warps (kNumDispatchWarps+2, +3). They must still
-@@ -944,13 +1040,46 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -974,13 +1084,46 @@ sm90_fp8_mega_moe_impl(void* y,
              kSplitNSharesSF ? L1_OUT_BLOCK_N : WG_L1_OUT_BLOCK_N;
          constexpr uint32_t WG_SMEM_CD_L2_STRIDE_N = WG_BLOCK_N;
  
@@ -311,7 +346,7 @@ index df0a728..3806108 100644
              const uint32_t valid_m = scheduler.template get_valid_m<false>();
              const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
              const uint32_t m_idx = pool_block_idx * BLOCK_M;
-@@ -1096,7 +1225,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1126,7 +1269,7 @@ sm90_fp8_mega_moe_impl(void* y,
                      float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f;
                      float prev_gate_sf = 1.0f, prev_up_sf = 1.0f, prev_l2_sf = 1.0f;
                      for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
@@ -320,7 +355,7 @@ index df0a728..3806108 100644
  
                          float scale_a_0_lo, scale_a_1_lo;
                          float scale_a_0_hi, scale_a_1_hi;
-@@ -1217,7 +1346,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1247,7 +1390,7 @@ sm90_fp8_mega_moe_impl(void* y,
                      }
                  } else {
                      for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
@@ -329,7 +364,7 @@ index df0a728..3806108 100644
  
                          float scale_a_0_lo, scale_a_1_lo;
                          float scale_a_0_hi, scale_a_1_hi;
-@@ -1385,7 +1514,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1415,7 +1558,7 @@ sm90_fp8_mega_moe_impl(void* y,
                          for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
                              const float gate_sf = __ldg(l1_gate_sf + k_block_idx);
                              const float up_sf = __ldg(l1_up_sf + k_block_idx);
@@ -338,7 +373,7 @@ index df0a728..3806108 100644
                              issue.template operator()<BLOCK_K / SwapWGMMA::K>(swap_accum, 0);
                              ptx::warpgroup_wait<0>();
                              promote(swap_accum, smem_sfa[stage_idx], gate_sf, up_sf);
-@@ -1397,7 +1526,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1427,7 +1570,7 @@ sm90_fp8_mega_moe_impl(void* y,
                          // low half is promoted. SFA layout is (K=2, M=BLOCK_M).
                          for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
                              const float l2_sf = __ldg(l2_sf_row + k_block_idx);
@@ -347,7 +382,7 @@ index df0a728..3806108 100644
                              issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum, 0);
                              issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum_hi, BLOCK_K / 2);
                              ptx::warpgroup_wait<1>();
-@@ -1440,7 +1569,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1470,7 +1613,7 @@ sm90_fp8_mega_moe_impl(void* y,
                  float accum[kAccumPerThread];
  
                  for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
@@ -356,7 +391,7 @@ index df0a728..3806108 100644
  
                      // Read SF (must precede warpgroup_arrive)
                      float scale_a_0_lo, scale_a_1_lo;
-@@ -1582,6 +1711,11 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1612,6 +1755,11 @@ sm90_fp8_mega_moe_impl(void* y,
                  }
              }
  
@@ -368,7 +403,7 @@ index df0a728..3806108 100644
              // Skip epilogue when block is past valid M (still must release via empty)
              if (row_base >= valid_m) {
                  if (block_phase == sched::BlockPhase::Linear1) {
-@@ -2079,38 +2213,60 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2136,38 +2284,60 @@ sm90_fp8_mega_moe_impl(void* y,
                  [&](const uint32_t& local_expert_idx,
                      const uint32_t& num_k_blocks,
                      const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
@@ -437,7 +472,7 @@ index df0a728..3806108 100644
  
          if (epilogue_warp_idx >= kNumCombineWarps)
              return;
-@@ -2153,9 +2309,11 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2210,9 +2380,11 @@ sm90_fp8_mega_moe_impl(void* y,
  
          uint32_t combine_phase = 0;
          uint32_t load_stage_idx = 0;
@@ -449,7 +484,7 @@ index df0a728..3806108 100644
              const int stored_topk_slot_idx = lane_idx < kNumTopk ?
                  static_cast<int>(__ldg(input_topk_idx_buffer.get_base_ptr<int64_t>() + token_idx * kNumTopk + lane_idx)) : -1;
              const uint32_t total_mask = __ballot_sync(0xffffffff, stored_topk_slot_idx >= 0);
-@@ -2189,7 +2347,9 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2246,7 +2418,9 @@ sm90_fp8_mega_moe_impl(void* y,
                  float2 reduced[kNumUint4PerLane * kNumElemsPerUint4] = {};
                  while (do_reduce) {
                      do_reduce = move_mask_and_load(load_stage_idx ^ 1);
@@ -459,7 +494,7 @@ index df0a728..3806108 100644
                      #pragma unroll
                      for (uint32_t j = 0; j < kNumUint4PerLane; ++ j) {
                          const auto uint4_values = combine_load_buffer[load_stage_idx][j * 32 + lane_idx];
-@@ -2233,6 +2393,13 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2290,6 +2464,13 @@ sm90_fp8_mega_moe_impl(void* y,
                  __syncwarp();
              }
          }
@@ -475,10 +510,10 @@ index df0a728..3806108 100644
      if (blockIdx.x == 0 and threadIdx.x == 0)
 diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe_timeline.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe_timeline.cuh
 new file mode 100644
-index 0000000..b3cdced
+index 0000000..5794097
 --- /dev/null
 +++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe_timeline.cuh
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,176 @@
 +#pragma once
 +
 +// Bench-only phase timeline for sm90_fp8_mega_moe_impl.
@@ -570,6 +605,12 @@ index 0000000..b3cdced
 +    // Math warpgroup 0: block start -> end of the K loop (before the epilogue)
 +    kML1Loop = 19,
 +    kML2Loop = 20,
++    // Dispatch warp 0, per pulled token (cycles): loop top -> token TMA issue (expert/rank
++    // selection and source-index load), TMA issue -> remote SF/weight copied (Decode path),
++    // TMA wait done -> local TMA store complete + arrival issued.
++    kDispIndexW0 = 21,
++    kDispRemoteW0 = 22,
++    kDispStoreW0 = 23,
 +};
 +
 +CUTLASS_DEVICE uint64_t global_ns() {

@@ -24,8 +24,8 @@ import numpy as np
 
 MAGIC = 0x314C544D4F45474D
 EVENTS = ["Entry", "DispCount", "DispSendCount", "DispGridSync", "DispRecvCount", "DispPrePullBarrier", "DispEpilogueSync", "DispFirstPull", "DispLastPull", "DispLoopExit", "DispCombineSync", "DispClean", "DispFinalGridSync", "DispExit", "AStart", "AFirstBlock", "AFirstL1Ready", "ALastL1Issued", "AFirstL2Ready", "AExit", "BStart", "BFirstBlock", "BExit", "MStart", "MDispatchSync", "MFirstL1Full", "MLastL1End", "MFirstL2Full", "MLastL2End", "MLoopExit", "MCombineGridSync", "MCombineBarrier", "MDispatchSync2", "MCombineEnd"]
-COUNTERS = ["DispTokensW0", "DispTokensW1", "DispPullWaitW0", "DispPullWaitW1", "AL1Blocks", "AL2Blocks", "AL1ArrivalWait", "AL2ArrivalWait", "AEmptyWait", "BEmptyWait", "ML1Blocks", "ML2Blocks", "ML1FullWait", "ML2FullWait", "ML1Busy", "ML2Busy", "MCombineTokensW0", "MCombineWaitW0", "BBlocks", "ML1Loop", "ML2Loop"]
-CYCLE_COUNTERS = {"DispPullWaitW0", "DispPullWaitW1", "AL1ArrivalWait", "AL2ArrivalWait", "AEmptyWait", "BEmptyWait", "ML1FullWait", "ML2FullWait", "ML1Busy", "ML2Busy", "MCombineWaitW0", "ML1Loop", "ML2Loop"}
+COUNTERS = ["DispTokensW0", "DispTokensW1", "DispPullWaitW0", "DispPullWaitW1", "AL1Blocks", "AL2Blocks", "AL1ArrivalWait", "AL2ArrivalWait", "AEmptyWait", "BEmptyWait", "ML1Blocks", "ML2Blocks", "ML1FullWait", "ML2FullWait", "ML1Busy", "ML2Busy", "MCombineTokensW0", "MCombineWaitW0", "BBlocks", "ML1Loop", "ML2Loop", "DispIndexW0", "DispRemoteW0", "DispStoreW0"]
+CYCLE_COUNTERS = {"DispPullWaitW0", "DispPullWaitW1", "AL1ArrivalWait", "AL2ArrivalWait", "AEmptyWait", "BEmptyWait", "ML1FullWait", "ML2FullWait", "ML1Busy", "ML2Busy", "MCombineWaitW0", "ML1Loop", "ML2Loop", "DispIndexW0", "DispRemoteW0", "DispStoreW0"}
 E = {name: index for index, name in enumerate(EVENTS)}
 PHASES = [
     ("dispatch: count routed tokens", "Entry", "DispCount"),
