@@ -47,12 +47,46 @@ ITL の回帰から、step 時間は固定分 13.7 ms（= 6.2 × 2.21）と要�
 
 閉ループでは Prefill 側に滞在する要求数 = c − Decode running = 192 − 117 = 75。内訳は Prefill rank あたり queue 0.9＋bootstrap 待ち 1.0＋計算中 1.0 の計 35、Decode の prealloc 待ち 9、残り約 31 は router 到着から Prefill 受付、dp-rank 問い合わせ、KV 転送のどこかにあり、worker ログの計数に現れない。この約 31 要求（約 0.9 s）が c を押し上げ、開始時一斉投入の不合格（114 件 ≒ 3 秒 × 34.4 req/s を超えて並んだ分）を増やしている。c を下げると Prefill の queue が切れて供給が落ちるので、c の調整ではなく handoff の遅延を削るのが筋。
 
+### 3.1 handoff の分解結果（router ログと worker カウンタの突き合わせ）
+
+router.log は request_id ごとに開始と終了（latency 付き、1 秒刻み）しか残さず、終了は patch 済み router の `try_join!(prefill body, decode headers)` の完了、すなわち Decode の最初のトークン時点に等しい（client TTFT − 41 ms、±1 ms）。worker カウンタを Little の法則（滞在数 / 34.4 req/s）で時間に直すと、TTFT 2.04 s は次のように埋まる。
+
+| 段 | 滞在数 | 時間 | 備考 |
+|---|---:|---:|---|
+| Decode: dp-rank 問い合わせ＋prealloc（`#prealloc-req`） | 9.5 | 0.28 s | Prefill 側の登録を待つ |
+| Prefill: scheduler の受信待ち（計数なし） | — | 約 0.17 s | 340 ms iteration の半分 |
+| Prefill: bootstrap 待ち（`#bootstrap-req`） | 12.0 | 0.35 s | handshake が iteration 途中に届き、次の境界で取り出す |
+| Prefill: waiting queue（`#queue-req`） | 6.7 | 0.20 s | |
+| Prefill: 起動済み batch 内（`#new-seq`） | 22.1 | 0.64 s | 3986 token の要求が 4096 token chunk を 2 回またぐ |
+| Prefill: KV 送信中（`#inflight-req`） | 12.1 | 0.35 s | 実転送は短く、1 iteration ごとの poll で量子化 |
+| Decode: running slot 待ち（Decode 行末の `#queue-req`） | 16.8 | 0.49 s | KV 到着済み、上限 32/rank が空くのを待つ |
+| router 返却 → client 最初の byte | — | 0.041 s | Linux の delayed-ACK/Nagle と整合する固定値。router の TCP_NODELAY を確認する価値あり |
+
+「ログに現れない約 31 要求」は、起動済み batch 内の 22 と Decode の slot 待ち 16.8 だった。含意は二つ。
+
+- **Firmus も Decode の slot 上限が同時に縛っている。** running は 84% のサンプルで 31〜32 で、KV が届いた要求が rank あたり 4 件 slot 待ちをしている。したがって run A（上限 31、Prefill round_robin）の raw の伸びは Decode 側で頭打ちになり、改善は主に ITL 不合格の解消（約 1.9%）と占有率の向上（29.2 → 30.5/31）で、score の見込みは 6950〜7150 ではなく **約 6850** に下方修正する。Decode の step 時間短縮（Tier 2）なしには raw は伸びない。
+- **Prefill は handshake 待ちで約 10% 空転している。** batch 起動の 55% は waiting queue が空で bootstrap 待ちの要求だけがある状態で起き、GPU 稼働は約 90%。bootstrap 待ちは iteration 境界に量子化された 0.35 s で、GPU を使わない。`--optimistic-prefill-attempts`（handshake 完了前に forward を始める）か、handshake を iteration 途中でも取り込む変更で、Prefill 供給 +5〜10% が見込める。安全性（出力不変、patch との整合、失敗時の挙動）は別途ソース確認のうえで判断する。
+
+Decode の上限を 40/rank に上げる案は、ITL の傾き（0.089 ms/要求）から p99 が 23 ms 近くになり不合格が急増するので採らない。
+
+### 3.2 optimistic prefill のソース確認（fc275674 ＋ 本リポジトリの patch）
+
+- `--optimistic-prefill-attempts N` は runtime 引数で、再ビルド不要。到着時に `create_sender` が同期で `/register_dp_rank` を済ませ（`common/conn.py:1028-1066`）、`pop_bootstrapped`（`prefill.py:419-432`）が handshake 未完了でも試行回数 < N なら waiting queue へ入れて同じ iteration で forward する。KV は自分の page に保持し、`pending_bootstrap` のあいだ送信を止める（`prefill.py:740,797,1037,1074`）。handshake が届いた時点で `finalize_bootstrap`（`:322-339`）が decode 側の page を受け取り、まとめて送る。decode の prealloc が先、転送が後という順序は保たれる。
+- chunk 境界で handshake 未完了かつ handshake 済みの要求が待っていれば譲り（`:1043-1048`）、試行回数 < N なら waiting queue 先頭へ、達していれば bootstrap queue 末尾へ戻す（`:1241-1271`）。3986 token の要求は 2 chunk なので **N=2** が妥当で、N=1 だと譲った要求が末尾へ回る。
+- 失敗時は `handle_bootstrap_failure`（`:965-996`）で KV を解放し HTTP 500。NIXL 側に bootstrap timeout はなく、parked 要求は decode が handshake するか abort するまで KV を持つ。decode の req slot は 49/rank × 4 = 196 ≥ c192 なので、prealloc 待ちで parked が溜まる構造ではない。
+- 本リポジトリの patch（dp-rank-query、prefill-ready-handoff、staged-eagle-kv、nixl-expired-chunks、chunk-cache-page-release、kernel 系）はこの経路と衝突しない。staged-eagle-kv が要求する chunk_id の連番は、pending 中に何も送らず retry でも sender を再利用するので保たれる。
+- 出力は同じ重み・同じ kernel・同じ KV で意味的に不変だが、batch 構成と chunk 分割位置が変わるので bit 一致は保証されない（round_robin や到着揺らぎと同種）。判定は公式 parser で行う。
+- 動作確認の指標: 起動ログの `optimistic_prefill_attempts=2`、Prefill batch 行の `#optimistic-req > 0`、`#bootstrap-req` がほぼ 0、「waiting queue 空かつ bootstrap 待ちあり」の起動割合が 55% から 0 に近づくこと。失敗の兆候: `Prefill bootstrap failed`、`finalize` の AssertionError、NIXL の `has no transfer metadata`、Prefill の `#inflight-req` と token usage が増え続ける。
+- bootstrap を iteration 途中で取り込む別の手段はこの版にない（`follow_bootstrap_room` は登録を省くが dispatch が実質ランダムになる）。
+
+run C = run A ＋ `--optimistic-prefill-attempts 2`（Prefill のみ、イメージ不変）とする。
+
 ## 4. 施策と期待値
 
 ### Tier 1：既存イメージのまま、runtime だけで 1 run
 
 1. **Prefill の DP dispatch を round_robin にする。** ASPIRE で rank 間差 37% → 2% に揃い、Firmus でも DP0 と DP3 の差は 24%。4 rank が同じ step を進む構成では、遊んだ rank の分がそのまま損失で、見込みは Prefill 供給 +5〜9%（34.4 → 36〜37.5 req/s）。Decode 側は `total_requests` のまま。
-2. **Decode 上限と ITL の整合。** 供給が増えると Decode は上限 32/rank（N=128）に張り付き、回帰では ITL 平均 17.6、p99 20.5 ms で ITL 不合格が増える。上限 30/rank（N=120）なら ITL は −0.5〜0.7 ms、p99 は 19.6〜19.9 ms で不合格はほぼ消え、Decode 容量は 120 / 3.4 s ≒ 35 req/s。供給 36〜37 req/s にはやや足りないので、Tier 2 の Decode 短縮がない間は上限 31 を基準にし、ITL 不合格と raw の収支で決める。
+2. **Decode 上限と ITL の整合。** 供給が増えると Decode は上限 32/rank（N=128）に張り付き、回帰では ITL 平均 17.6、p99 20.5 ms で ITL 不合格が増える。上限 30/rank（N=120）なら ITL は −0.5〜0.7 ms、p99 は 19.6〜19.9 ms で不合格はほぼ消え、Decode 容量は 120 / 3.4 s ≒ 35 req/s。供給 36〜37 req/s にはやや足りないので、Tier 2 の Decode 短縮がない間は上限 31 を基準にし、ITL 不合格と raw の収支で決める。上限は CUDA graph の bucket 列と一致させる必要がある。SGLang は decode batch を `bisect_left` で次の捕捉済み bucket へ padding するので（`model_executor/runner/base_cuda_graph_runner.py`）、現行の `[…, 28, 30, 32]` のまま上限 31 にしても 32 の graph で実行され、GPU の仕事量は 32 と変わらない。6521.98 run でも running 31 のサンプル 142 件は 32 graph で動いていた。上限 31 なら bucket 列の末尾を 32 → 31 に置き換える（graph 1 本分の捕捉時間と数十 MB だけの差）。2 のべき乗であることに依存する箇所は KV pool、req slot、MegaMoE の行数（8 の倍数に丸める）にはない。
 3. **c は 192 のまま。** §3 の通り、下げると Prefill が飢える。handoff が短くなった分だけ下げる。
 4. **handoff 遅延の計測（GPU 不要）。** router ログの request_id ごとの時刻と prefill/decode ログを突き合わせ、§3 の約 31 要求がどの状態にいるかを特定する。候補は `firmus-dp-rank-query` patch の問い合わせ（prefill address ごとに 1 件ずつの HTTP）、Decode の prealloc 周期、bootstrap handshake。0.3 s 削るごとに in-flight が約 10 減り、同じ Prefill 飽和を c −10 で保てる。開始一斉投入の不合格は c にほぼ比例する。
 
@@ -81,3 +115,39 @@ Tier 1 と Tier 2 の Decode 短縮 −10% が揃えば、上限 32 のまま IT
 | 事前 | router ログからの handoff 遅延分解（GPU 不要） | §3 の約 31 要求の所在を特定し、A の c を決める |
 
 各 run は条件ごとの commit から Actions で投入し、結果の正本は Actions summary と NAS の score.json とする。
+
+## 6. 結果（2026-10-17 夜）
+
+### run A：Prefill round_robin ＋ Decode 上限 31/rank（Actions 39019907035、`24fa557`、参照イメージ e29dfde…）
+
+最初の投入（39018316844、`d93ebab`）は Decode の `dist_init_port 33000` が自プロセスの別 socket に取られて起動失敗した。Firmus の一時ポート範囲は 32768–60999 で、33000 だけが範囲内だった。`a047c15` で Decode の dist-init を 29000 へ移し（main）、`24fa557` で再投入した。
+
+| 指標 | 参照 6521.98（38945855851） | **run A** | run B（A ＋ warp-redux-r176、39018872189） |
+|---|---:|---:|---:|
+| 公式 score | 6521.98 | **6336.27**（−2.8%） | 6105.73（−6.4%） |
+| raw tok/s / req/s | 6875 / 34.4 | 6728 / 33.6 | 6558 / 32.8 |
+| 良好率 | 94.9% | 94.2% | 93.1% |
+| 不合格 TTFT 一斉投入 / TTFT 定常 / ITL 定常 | 114 / 26 / 82 | 108 / 93 / 47 | 111 / 15 / 157 |
+| TTFT 平均 / p90 | 2.04 / 2.39 s | 2.20 / 2.68 s | 2.20 / 2.60 s |
+| ITL 平均 / p99 | 17.33 / 20.25 ms | 17.09 / 20.04 ms | 17.76 / 20.71 ms |
+| Decode running / rank（上限） | 29.2（32） | 28.4（31） | 28.4（31） |
+| Prefill DP rank 別 seq 数 | 5.9 / 5.8 / 5.3 / 4.5 seq/s | 1015 / 1043 / 1044 / 1039 | 911 / 948 / 939 / 921 |
+| Prefill queue あり割合（DP0） | 78% | 34% | 20% |
+| GPU 数値ゲート / 公式 validation | PASS / valid | PASS / valid | PASS / valid |
+
+読み取り:
+- **round_robin は意図通り効いた**（rank 間差 24% → 3% 以内）。ただし Decode 律速なので throughput には現れず、Prefill の queue が減っただけ。害はない。
+- **上限 31 は逆効果。** Decode slot が 128 → 124 になった分 throughput が −2.3%、待ちが増えて定常 TTFT 不合格が 26 → 93 件。ITL 不合格は 82 → 47 に減ったが補えない。上限 32 に戻す。
+- **run B の kernel（warp-redux-r176）は棄却。** A と同じ runtime で同じ batch（N≈120）の ITL が 17.1 → 17.8 ms（+3.8%）、1 step で約 +1.5 ms。棄却済みの 21c2927 と同規模の悪化で、数値ゲートと公式 validation は通るが遅い。`perf/firmus-decode-warp-redux-20261017` は patch を外して記録のみ残す。register-redux も register 常駐を共有するので、komoriyuta と相談なしには投入しない。
+
+### run A と参照の Decode step（ITL × accept）は一致する
+
+run A は N=113.6 で 37.6 ms、参照は N=116.8 で 38.3 ms。傾き 0.197 ms/要求で補正すると一致し、round_robin と上限変更は Decode の step 時間を変えていない。したがって次に効くのは step 時間そのものの短縮だけで、runtime で残る手段は **投機長の短縮**（verify 行数を減らす）である。
+
+### run D の根拠：steps 2 / draft 3
+
+参照 run の step は固定分 13.7 ms（重み読み出し＋draft 3 回など）と要求比例分 0.197 ms × N に分かれ、N≈117 では比例分 23 ms が支配的。比例分は MoE 行数・attention の query 行数・dense GEMM の M に比例し、いずれも要求あたり verify 4 token（draft 3 ＋ bonus 1）で決まる。draft を 3 token（steps 2）にすると行数 −25%、draft forward −1 回で、step は約 36.7 → 31〜32 ms。受理長は 4 draft で 2.21（位置ごとの受理率 ≒ 0.57 の幾何級数）なので 3 draft では約 2.08（−6%）。ITL = step / accept は 16.6 → 15.2 ms（−8%）の見込み。greedy verify は target の出力と一致するので精度は変わらない（campaign summary §12 の steps4/draft5 は中立、steps2/draft3 は未測定と記録済み）。
+
+- 上限は 32/rank に戻し、round_robin は残す（throughput に中立、Prefill 側の待ちは減る）。上限は D の ITL を見てから上げる（ITL p99 が 18 ms 台なら 34/rank）。
+- 期待: ITL 不合格 ≒ 0、Decode 容量 128 / (200 × 15.2 ms) ≒ 39 req/s で Prefill 律速（34〜37 req/s）に戻り、raw 7200 前後、score 7000 前後。受理長が 1.9 まで落ちれば ITL は現状並みで中立。
+- 判定: ITL 分布、accept len（Decode ログ）、score。不合格なら speculation を 3/4 に戻す。

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import runpy
 import subprocess
 import sys
@@ -292,3 +293,20 @@ def test_unsupported_modes_fail_before_container_staging(tmp_path: Path, profile
     assert result.returncode == 64
     assert "requires the successful CPU build SHA-256 and size" in result.stderr
     assert not runtime.exists()
+
+
+def test_firmus_provisioning_guards_accept_the_configured_speculation_and_count_shards(tmp_path: Path) -> None:
+    # Run 39032066280 failed in provisioning because the guard pinned steps 3 / draft 4 while the config asked for 2 / 3.
+    script = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
+    guard = re.search(r"jq -e '(\.speculation\.algorithm[^']*)' \"\$\{config\}\"", script).group(1)
+    config = ROOT / "configs/firmus-framework.json"
+    assert subprocess.run(["jq", "-e", guard, str(config)], capture_output=True, text=True, check=False).returncode == 0
+    wrong = tmp_path / "wrong.json"
+    wrong.write_text(json.dumps({"speculation": {"algorithm": "EAGLE3", "steps": 3, "draft_tokens": 3}}))
+    assert subprocess.run(["jq", "-e", guard, str(wrong)], capture_output=True, text=True, check=False).returncode == 1
+    # The shard list must come from the weight_map values; `.weight_map | values | unique` errors on the object and silently skipped every shard.
+    shards = re.search(r"jq -r '(\[\.weight_map\[\]\] \| unique\[\])' \"\$\{model\}/model\.safetensors\.index\.json\"", script).group(1)
+    index = tmp_path / "index.json"
+    index.write_text(json.dumps({"metadata": {}, "weight_map": {"a": "m2", "b": "m1", "c": "m2"}}))
+    result = subprocess.run(["jq", "-r", shards, str(index)], capture_output=True, text=True, check=True)
+    assert result.stdout.split() == ["m1", "m2"]
