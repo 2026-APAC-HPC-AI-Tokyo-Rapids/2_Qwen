@@ -84,13 +84,13 @@ def test_prefill_deepep_checks_normal_mode_without_changing_decode() -> None:
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     config["prefill"]["moe_a2a_backend"] = "deepep"
     prefill = copy.deepcopy(raw["prefill"])
+    speculation = {"speculative_num_steps": config["speculation"]["steps"], "speculative_num_draft_tokens": config["speculation"]["draft_tokens"]}
     for state in [prefill, *prefill["internal_states"]]:
-        state.update(moe_a2a_backend="deepep", deepep_mode="normal", disable_cuda_graph=True, load_balance_method=config["prefill_load_balance_method"])
-    # The archived run predates the 31-per-rank decode cap; carry the current cap, graph list and dispatch into its states.
+        state.update(moe_a2a_backend="deepep", deepep_mode="normal", disable_cuda_graph=True, load_balance_method=config["prefill_load_balance_method"], **speculation)
+    # The archived run predates the per-role dispatch and the current speculation; carry the current values into its decode states.
     decode = copy.deepcopy(raw["decode"])
-    decode["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
     for state in [decode, *decode["internal_states"]]:
-        state.update(max_running_requests=config["decode_max_running_requests"], disaggregation_decode_extra_slots=config["decode_extra_slots"], load_balance_method=config["decode_load_balance_method"], effective_max_running_requests_per_dp=config["decode_max_running_requests"] // config["decode_dp_size"])
+        state.update(load_balance_method=config["decode_load_balance_method"], **speculation)
     check(config, prefill, "prefill")
     check(config, decode, "decode")
     for key, invalid in (("moe_a2a_backend", "megamoe"), ("deepep_mode", "low_latency"), ("disable_cuda_graph", False)):
@@ -132,9 +132,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
-    # Run 38945855851 held ITL p99 at 20.1-20.6 ms with 32 per DP rank; 31 per rank trades one slot for the 20 ms SLA.
-    assert config["decode_max_running_requests"] == 124 and config["decode_max_running_requests"] % config["decode_dp_size"] == 0
-    # Every client can hold a decode req slot: cap 124 + 17 extra x 4 ranks = 192 = c, the same 49 slots per rank as the measured 128 + 16 run.
+    assert config["decode_max_running_requests"] == 128 and config["decode_max_running_requests"] % config["decode_dp_size"] == 0
     assert config["decode_max_running_requests"] + config["decode_extra_slots"] * config["decode_dp_size"] >= config["concurrency"]
     # SGLang pads a decode batch up to the next captured bucket, so the largest bucket must equal the per-rank cap.
     assert max(config["decode_cuda_graph_bs"]) == config["decode_max_running_requests"] // config["decode_dp_size"]
@@ -194,9 +192,9 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
         assert flags[flags.index("--max-running-requests") + 1] == str(config["concurrency"] if prefill else config["decode_max_running_requests"])
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
-        assert flags[flags.index("--speculative-num-steps") + 1] == "3"
+        assert flags[flags.index("--speculative-num-steps") + 1] == str(config["speculation"]["steps"])
         assert flags[flags.index("--speculative-eagle-topk") + 1] == "1"
-        assert flags[flags.index("--speculative-num-draft-tokens") + 1] == "4"
+        assert flags[flags.index("--speculative-num-draft-tokens") + 1] == str(config["speculation"]["draft_tokens"])
         assert "--speculative-draft-model-quantization" not in flags
         assert "--container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER" in argv
         if name.startswith("prefill"):
