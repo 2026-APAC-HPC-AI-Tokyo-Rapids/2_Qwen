@@ -1,5 +1,5 @@
 {
-  "concurrency": 112,
+  "concurrency": 88,
   "speculation": {
     "algorithm": "EAGLE3",
     "draft_tokens": 4,
@@ -30,21 +30,21 @@
     },
     {
       "node": 1,
-      "role": "prefill",
-      "index": 2,
-      "tp": 4,
-      "ep": 4,
-      "port": 30102,
-      "bootstrap": 9002,
-      "gpus": "0,1,2,3"
-    },
-    {
-      "node": 1,
       "role": "decode",
       "index": 0,
       "tp": 4,
       "ep": 4,
       "port": 30200,
+      "bootstrap": "unused",
+      "gpus": "0,1,2,3"
+    },
+    {
+      "node": 1,
+      "role": "decode",
+      "index": 1,
+      "tp": 4,
+      "ep": 4,
+      "port": 30201,
       "bootstrap": "unused",
       "gpus": "4,5,6,7"
     }
@@ -52,6 +52,8 @@
   "model_storage": "node_local",
   "kv_cache_dtype": "fp8_e4m3",
   "prefill_routing_policy": "manual",
+  "prefill_load_balance_method": "round_robin",
+  "decode_load_balance_method": "total_requests",
   "container_sha256": "e29dfde476fd2a8c7cd268f9be2c6d2a1f5e5404a34aed369aa84b4b4143909f",
   "dp_size": 4,
   "prefill_max_total_tokens": 32768,

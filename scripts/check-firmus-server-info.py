@@ -18,7 +18,7 @@ def check(config, info, role):
     else:
         # SGLang resolves an omitted draft runner to the target runner before serving this endpoint.
         expected.update(disaggregation_decode_extra_slots=config["decode_extra_slots"], moe_a2a_backend="megamoe", moe_runner_backend="deep_gemm", enable_dp_lm_head=True, moe_dense_tp_size=1, speculative_moe_a2a_backend=None, speculative_moe_runner_backend="deep_gemm")
-    expected.update(load_balance_method="total_requests", load_snapshot_publish_interval=1)
+    expected.update(load_balance_method=config[f"{role}_load_balance_method"] if aspire else "total_requests", load_snapshot_publish_interval=1)
     if aspire:
         expected["mem_fraction_static"] = 0.90 if prefill else config["decode_mem_fraction_static"]
         if prefill:
