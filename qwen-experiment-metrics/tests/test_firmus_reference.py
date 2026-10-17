@@ -171,6 +171,8 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
         shuffle, routing, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
         name, port = args[:2]
         prefill = name.startswith("prefill")
+        dist_port = int(flags[flags.index("--dist-init-addr") + 1].rsplit(":", 1)[1])
+        assert dist_port + 5 < 32768  # All DP TCP endpoints avoid Firmus ephemeral ports.
         expected_tp = 4
         assert f"--gres=gpu:{expected_tp}" in argv
         assert "--cpus-per-task=32" in argv
@@ -214,7 +216,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             assert flags[flags.index("--moe-runner-backend") + 1] == "deep_gemm"
             assert "--speculative-moe-a2a-backend" not in flags
             assert "--speculative-moe-runner-backend" not in flags
-            assert flags[flags.index("--dist-init-addr") + 1] == "127.0.0.1:33000"
+            assert flags[flags.index("--dist-init-addr") + 1] == "127.0.0.1:29000"
             assert "--disable-cuda-graph" not in flags
             assert flags[flags.index("--disaggregation-decode-extra-slots") + 1] == str(config["decode_extra_slots"])
             start = flags.index("--cuda-graph-bs-decode") + 1

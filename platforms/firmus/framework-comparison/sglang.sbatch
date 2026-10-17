@@ -125,10 +125,11 @@ nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --form
 command=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path "$model" --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "$tp" --mem-fraction-static 0.90 --page-size 64 --kv-cache-dtype fp8_e4m3 --attention-backend fa3 --nccl-port "$((port + 1000))" --disaggregation-mode "$role" --disaggregation-transfer-backend nixl --load-snapshot-publish-interval 1 "$@" --host 0.0.0.0 --port "$port")
 # DP attention derives six TCP endpoints from this address.
 # Adjacent HTTP ports need separate endpoint ranges on the same node.
+# Keep all six endpoints below the Firmus ephemeral range (32768-60999).
 if [[ "$role" == prefill ]]; then
   command+=(--dist-init-addr "127.0.0.1:$((32000 + ${name##*-} * 100))")
 else
-  command+=(--dist-init-addr "127.0.0.1:33000")
+  command+=(--dist-init-addr "127.0.0.1:29000")
 fi
 if [[ -x /opt/nsys/bin/nsys ]]; then
   runtime_dir=$(dirname "$(dirname "$0")")
