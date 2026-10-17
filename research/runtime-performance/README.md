@@ -2,6 +2,8 @@
 
 現行Qwen3-235B-A22B・公式4000/200タスクの調査:
 
+- [2026-10-17: ブランチ統合時の監査（統合した基点、取り込んだ修正、未取り込みの候補、残すブランチ）](2026-10-17-branch-integration-audit.md)
+- Firmus vLLM比較の記録: [初期プロファイル](../firmus-framework-profile-20261009.md)、[EAGLE3 c64](../firmus-vllm-eagle-c64.md)、[EAGLE3 c104](../firmus-vllm-eagle-c104.md)、[c104最適化](../firmus-vllm-c104-optimization.md)
 - [2026-10-13: 10/09〜10/13改善キャンペーンのまとめ（最良値、効いた手法・効かなかった手法、残る手段）](2026-10-13-campaign-summary.md)
 - [2026-10-09〜13: Prefill供給律速とP/D再配分、Decode律速、XQA・twoshot・page64・TensorRT-LLMの検証](2026-10-09-prefill-supply-rebalance.md)
 - [2026-10-10: DP attention＋DeepEPへの構成転換の計画と結果（不採用）](2026-10-10-dp-attention-deepep-plan.md)
