@@ -2,6 +2,7 @@
 
 現行Qwen3-235B-A22B・公式4000/200タスクの調査:
 
+- [2026-10-18: Prefill MegaMoE の EP rank 負荷不均衡（trivial配置 max/mean 1.338）と静的expert置換のbench（kernel −8%、score は単一runで判定不能・未採用）](2026-10-18-megamoe-expert-placement.md)
 - [2026-10-18: SM90 MegaMoE の kernel 単体 bench（`[kernel-bench]`）と kernel 内 timeline、Decode-128／Prefill-4096 の段階別内訳](2026-10-18-megamoe-kernel-timeline.md)
 - [2026-10-17: ブランチ統合時の監査（統合した基点、取り込んだ修正、未取り込みの候補、残すブランチ）](2026-10-17-branch-integration-audit.md)
 - Firmus vLLM比較の記録: [初期プロファイル](../firmus-framework-profile-20261009.md)、[EAGLE3 c64](../firmus-vllm-eagle-c64.md)、[EAGLE3 c104](../firmus-vllm-eagle-c104.md)、[c104最適化](../firmus-vllm-c104-optimization.md)
