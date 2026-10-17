@@ -23,7 +23,8 @@ N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")
 speculation=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -er '.speculation.steps' "${ROOT}/source/firmus-framework.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -er '.speculation.draft_tokens' "${ROOT}/source/firmus-framework.json")")
 decode_graph=(--cuda-graph-bs-decode)
 while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${ROOT}/source/firmus-framework.json")
-prefill_args=(--ep-size 4 --dp-size 4 --enable-dp-attention --chunked-prefill-size 16384 --max-total-tokens 131072 --max-running-requests "${N}" --moe-a2a-backend "$(jq -er .prefill.moe_a2a_backend "${ROOT}/source/firmus-framework.json")" --moe-runner-backend "$(jq -er .prefill.moe_runner_backend "${ROOT}/source/firmus-framework.json")" --deepep-mode normal --disable-cuda-graph)
+# The prefill bootstrap queue is polled once per iteration; start the forward before the decode handshake lands, with 2 attempts because each request spans two chunks.
+prefill_args=(--ep-size 4 --dp-size 4 --enable-dp-attention --chunked-prefill-size 16384 --max-total-tokens 131072 --max-running-requests "${N}" --moe-a2a-backend "$(jq -er .prefill.moe_a2a_backend "${ROOT}/source/firmus-framework.json")" --moe-runner-backend "$(jq -er .prefill.moe_runner_backend "${ROOT}/source/firmus-framework.json")" --deepep-mode normal --disable-cuda-graph --optimistic-prefill-attempts "$(jq -er .prefill.optimistic_prefill_attempts "${ROOT}/source/firmus-framework.json")")
 ART=${ROOT}/logs
 export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
 export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes

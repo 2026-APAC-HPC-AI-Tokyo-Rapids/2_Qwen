@@ -65,9 +65,20 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
+def archived_server_info() -> dict:
+    # The archived run predates optimistic prefill; carry the current setting into its config and every scheduler state.
+    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    attempts = json.loads((ROOT / "configs/firmus-framework.json").read_text())["prefill"]["optimistic_prefill_attempts"]
+    raw["config"]["prefill"]["optimistic_prefill_attempts"] = attempts
+    for role in ("prefill", "decode"):
+        for state in [raw[role], *raw[role]["internal_states"]]:
+            state["optimistic_prefill_attempts"] = attempts if role == "prefill" else 0
+    return raw
+
+
 def test_server_info_checks_resolved_draft_backend_from_real_run() -> None:
     # The failed run reached readiness, then rejected SGLang's None -> deep_gemm normalization.
-    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    raw = archived_server_info()
     check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
     for role in ("prefill", "decode"):
         check(raw["config"], raw[role], role)
@@ -80,13 +91,13 @@ def test_server_info_checks_resolved_draft_backend_from_real_run() -> None:
 
 
 def test_prefill_deepep_checks_normal_mode_without_changing_decode() -> None:
-    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    raw = archived_server_info()
     check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     config["prefill"]["moe_a2a_backend"] = "deepep"
     prefill = copy.deepcopy(raw["prefill"])
     for state in [prefill, *prefill["internal_states"]]:
-        state.update(moe_a2a_backend="deepep", deepep_mode="normal", disable_cuda_graph=True)
+        state.update(moe_a2a_backend="deepep", deepep_mode="normal", disable_cuda_graph=True, max_running_requests=config["concurrency"])
     check(config, prefill, "prefill")
     check(config, raw["decode"], "decode")
     for key, invalid in (("moe_a2a_backend", "megamoe"), ("deepep_mode", "low_latency"), ("disable_cuda_graph", False)):
@@ -103,7 +114,7 @@ def test_server_info_validation_runs_after_gpu_collection(tmp_path: Path, invali
     assert "steps.collect.outcome == 'success'" in step
     assert workflow.index("GPU終了後に回収した実設定を検証") > workflow.index("uses: actions/upload-artifact@v7")
     script = textwrap.dedent(step.split("        run: |\n", 1)[1])
-    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    raw = archived_server_info()
     artifact = tmp_path / "qwen-firmus-pd"
     (artifact / "source/source").mkdir(parents=True)
     (artifact / "results/results").mkdir(parents=True)
@@ -126,7 +137,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert "#SBATCH -t 00:17:00" in source
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
+    assert (config["framework"], config["workload"]) == ("sglang", "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
     assert config["decode_max_running_requests"] == 128
     assert config["decode_max_running_requests"] + config["decode_extra_slots"] * config["decode_dp_size"] >= config["concurrency"]
@@ -182,6 +193,10 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
         assert flags[flags.index("--page-size") + 1] == "64"
         assert flags[flags.index("--load-balance-method") + 1] == "total_requests"
         assert flags[flags.index("--load-snapshot-publish-interval") + 1] == "1"
+        optimistic = [index for index, flag in enumerate(flags) if flag == "--optimistic-prefill-attempts"]
+        assert len(optimistic) == (1 if prefill else 0)
+        if prefill:
+            assert flags[optimistic[0] + 1] == str(config["prefill"]["optimistic_prefill_attempts"])
         assert flags[flags.index("--max-running-requests") + 1] == str(config["concurrency"] if prefill else config["decode_max_running_requests"])
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"

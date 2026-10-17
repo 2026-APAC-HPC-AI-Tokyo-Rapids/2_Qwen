@@ -11,6 +11,8 @@ def check(config, info, role):
     prefill = role == "prefill"
     p = config["prefill"]
     expected = {"tp_size": 4, "dp_size": p["dp"] if prefill else config["decode_dp_size"], "ep_size": p["ep"] if prefill else 4, "enable_dp_attention": True, "kv_cache_dtype": "fp8_e4m3", "context_length": 8192, "page_size": 64, "attention_backend": "fa3", "max_total_tokens": config.get("prefill_max_total_tokens", 131072) if prefill else config["decode_max_total_tokens"], "chunked_prefill_size": p["chunked_prefill_size"] // p["dp"] if prefill else 8192 // config["decode_dp_size"], "max_running_requests": config["concurrency"] if prefill else config["decode_max_running_requests"], "speculative_algorithm": "EAGLE3", "speculative_draft_model_path": "/draft", "speculative_num_steps": config["speculation"]["steps"], "speculative_num_draft_tokens": config["speculation"]["draft_tokens"], "speculative_eagle_topk": 1, "speculative_draft_model_quantization": None, "enable_two_batch_overlap": False, "enable_symm_mem": False}
+    if not aspire:
+        expected.update(optimistic_prefill_attempts=p["optimistic_prefill_attempts"] if prefill else 0)
     if prefill:
         expected.update(moe_a2a_backend=p["moe_a2a_backend"], moe_runner_backend=p["moe_runner_backend"])
         if p["moe_a2a_backend"] == "deepep":
