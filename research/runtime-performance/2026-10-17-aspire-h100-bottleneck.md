@@ -60,3 +60,29 @@ Prefill 8 GPU（node 0）、Decode 8 GPU（node 1）。worker 内は TP4/DP4/EP4
 - **P3/D1 のまま extra slot 6・reserve 320。** running は 20 近くまで上がるが §2 の傾きで ITL p99 が 21 ms 付近になり、良好率が 90% を割る可能性がある。max_running 19 に抑えると raw +5% と ITL 不合格 +2〜3% で相殺される。
 - **Decode の EP8（node 1 を 1 worker TP8/DP8/EP8）。** 重み読み出しが半減して ITL の床は下がるが、MegaMoE の compiled geometry は `kNumRanks == 4` に特化しており、H100 での実行実績がない。
 - **投機長の変更（steps2/draft3）。** step 時間は減るが accept 長 2.21 も下がり、ITL は改善しない。steps4/draft5 は 2026-10-09 に不合格を確認済み。
+
+## 6. 1 回目の結果（Actions 39010679169、`e18f3c6`、c88）
+
+PBS walltime 11 分 46 秒（a2ap-dgx011 / dgx034）、約 400 SU。公式 parser で適格。
+
+| 指標 | P3/D1 c112（38796892855） | **P2/D2 c88（39010679169）** |
+|---|---:|---:|
+| 公式 score | 3895.05 | **4360.82**（+12.0%） |
+| raw output tok/s / req/s | 4020 / 20.1 | 4421 / 22.1 |
+| 良好率 | 96.9% | 98.6% |
+| TTFT 平均 / p99 | 2.12 / 3.55 s | 1.40 / 3.43 s |
+| ITL 平均 / p99 | 16.8 / 19.9 ms | 12.6 / 15.0 ms |
+| 不合格（TTFT / ITL） | 56 / 22 | 37 / 0 |
+| Decode running / rank | 17.4（上限 20） | 7.5（上限 20） |
+| Prefill rank の処理率 steady / queue あり秒 | 2.5 / 4.3 seq/s | 3.8 / 5.3 seq/s |
+| Prefill DP rank 間の seq 数 | 450 / 411 / 368 / 328 | 685 / 675 / 682 / 704 |
+
+- ITL 側の不合格は消え、Decode は rank あたり 7.5 で余裕がある。round_robin で Prefill DP rank 間の偏りは解消した。
+- TTFT 不合格 37 件は全件が計測フェーズ開始 0.0 秒の一斉投入分で、定常区間（20 秒以降）の TTFT p99 は 1.77〜1.85 s。開始時の一斉投入は公式ワークロードの仕様で、c に比例して増える。
+- Prefill は queue のある秒が 5% 未満、queue がある秒の処理率は 5.3 seq/s で steady 3.8 seq/s より約 4 割高い。Decode の running＋転送中は 10〜11 で slot 上限 23 から遠い。つまり 1 回目はどちらの段も飽和しておらず、閉ループの c=88 が throughput を決めていた（88 / 3.92 s = 22.4 req/s）。
+- TTFT 1.4 s の内訳は、Prefill rank あたり bootstrap 待ち 0.93 要求（decode 側の prealloc 応答と dp-rank 問い合わせ）、計算中 1、残りが KV 転送と最初の decode step。bootstrap 待ちは GPU を使わない遅延で、c を上げても throughput を縛らない。
+
+### 2 回目：c=104（他は不変）
+
+- 定常 TTFT は c の増分 / throughput だけ伸びる。Prefill capacity が全く伸びない最悪ケースでも +16 / 22 ≒ +0.7 s で p99 約 2.5 s、ITL は Decode 9 要求/rank で 13 ms 台。開始時一斉投入の不合格は約 50 件（2%）に増える。
+- Prefill capacity が 26〜28 req/s あれば throughput は +18〜27%、TTFT は 1.4〜1.6 s にとどまる。c=112 は最悪ケースで定常 p99 が 2.9 s に迫るため採らない。
