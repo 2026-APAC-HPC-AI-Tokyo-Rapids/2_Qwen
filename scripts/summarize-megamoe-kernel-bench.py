@@ -8,6 +8,13 @@ clock64 deltas from the CTA entry converted with that CTA's measured SM clock
 (clock64 / %globaltimer over the CTA lifetime); CTA entries are aligned with
 %globaltimer. The first call is skipped; the representative call is the one
 with the median kernel time over the remaining calls.
+
+Named-barrier handshakes between dispatch and math warps (barrier.sync 1)
+compile to BAR.SYNC.DEFER_BLOCKING, and the %globaltimer read placed after them
+retires before the barrier releases (run 39053820377: math "passes" its
+handshake 9 us before dispatch arrives). Phases therefore never end at those
+two events; the wait is attributed to the following phase instead. Grid-sync
+and NVLink-barrier events are taken by the spinning thread and are exact.
 """
 import argparse
 import json
@@ -26,20 +33,17 @@ PHASES = [
     ("dispatch: remote source-index writes + grid sync", "DispSendCount", "DispGridSync"),
     ("dispatch: publish recv counts (SM0)", "DispGridSync", "DispRecvCount"),
     ("dispatch: pre-pull NVLink barrier", "DispRecvCount", "DispPrePullBarrier"),
-    ("dispatch: handshake with math warps", "DispPrePullBarrier", "DispEpilogueSync"),
+    ("dispatch: barrier -> first token pulled (warp 0)", "DispPrePullBarrier", "DispFirstPull"),
     ("dispatch: first -> last token pulled (warp 0)", "DispFirstPull", "DispLastPull"),
-    ("math: entry -> dispatch handshake", "MStart", "MDispatchSync"),
-    ("math: handshake -> first FC1 stage ready", "MDispatchSync", "MFirstL1Full"),
+    ("math: entry -> first FC1 stage ready (incl. dispatch handshake)", "MStart", "MFirstL1Full"),
     ("math: FC1 span (first ready -> last end)", "MFirstL1Full", "MLastL1End"),
     ("math: last FC1 end -> first FC2 stage ready", "MLastL1End", "MFirstL2Full"),
     ("math: FC2 span (first ready -> last end)", "MFirstL2Full", "MLastL2End"),
     ("math: last block -> loop exit", "MLastL2End", "MLoopExit"),
     ("math: pre-combine grid sync (intra-rank straggler)", "MLoopExit", "MCombineGridSync"),
     ("math: pre-combine NVLink barrier + grid sync", "MCombineGridSync", "MCombineBarrier"),
-    ("math: handshake with dispatch", "MCombineBarrier", "MDispatchSync2"),
-    ("math: combine", "MDispatchSync2", "MCombineEnd"),
-    ("dispatch: wait for combine handshake", "DispLoopExit", "DispCombineSync"),
-    ("dispatch: workspace cleanup", "DispCombineSync", "DispClean"),
+    ("math: combine (after barrier)", "MCombineBarrier", "MCombineEnd"),
+    ("dispatch: loop exit -> cleanup done (incl. combine handshake)", "DispLoopExit", "DispClean"),
     ("dispatch: final grid sync", "DispClean", "DispFinalGridSync"),
     ("dispatch: final NVLink barrier (SM0 only waits)", "DispFinalGridSync", "DispExit"),
 ]
@@ -99,7 +103,7 @@ def report(path):
         waits = c[:, COUNTERS.index("ML1FullWait")] + c[:, COUNTERS.index("ML2FullWait")]
         first_fc1 = t[:, E["MFirstL1Full"]]
         last_fc2 = np.nanmax(t[:, E["MLastL2End"]])
-        lines.append(f"- rank {rank_index}: kernel {rank['end']:.1f} us; entry -> first FC1 stage ready median {np.nanmedian(first_fc1):.1f} / min {np.nanmin(first_fc1):.1f} us; GEMM window {np.nanmin(first_fc1):.1f} -> {last_fc2:.1f} us; math block time minus stage waits = {np.nansum(busy - waits) / (len(busy) * rank['end']):.1%} of CTA x kernel time (stage waits {np.nansum(waits) / (len(busy) * rank['end']):.1%}); last FC2 end -> kernel end {rank['end'] - last_fc2:.1f} us; combine phase (barrier done -> combine end) median {np.nanmedian(t[:, E['MCombineEnd']] - t[:, E['MCombineBarrier']]):.1f} us.")
+        lines.append(f"- rank {rank_index}: kernel {rank['end']:.1f} us at SM clock {np.nanmedian(rank['ghz']):.3f} GHz; entry -> first FC1 stage ready median {np.nanmedian(first_fc1):.1f} / min {np.nanmin(first_fc1):.1f} us; GEMM window {np.nanmin(first_fc1):.1f} -> {last_fc2:.1f} us; math block time minus stage waits = {np.nansum(busy - waits) / (len(busy) * rank['end']):.1%} of CTA x kernel time (stage waits {np.nansum(waits) / (len(busy) * rank['end']):.1%}); last FC2 end -> kernel end {rank['end'] - last_fc2:.1f} us; combine phase (barrier done -> combine end) median {np.nanmedian(t[:, E['MCombineEnd']] - t[:, E['MCombineBarrier']]):.1f} us.")
     return "\n".join(lines) + "\n"
 
 
