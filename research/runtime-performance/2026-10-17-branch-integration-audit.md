@@ -50,3 +50,14 @@ mainの文書が参照しているか、そこにしかないコードがある�
 - `research/aspire-eagle-decode-arfusion`（ASPIRE旧最良 `ed8c534`、attention probe）
 - `research/aspire-dynosim-aisimulate`（`c7f89db`。AISimulateの校正・予測ツール一式。文書だけ [../simulation/](../simulation/) へ取り込んだ）
 - `research/firmus-trtllm-p6tp2-d1tp4`（TensorRT-LLM rc29の互換patch。参照用）
+
+## ブランチの棚卸し（同日）
+
+- mainに完全に含まれていた26本は、そのまま削除した。
+- 結果を記録済みの実験ブランチ72本は、先端に注釈付きtag `archive/<元のブランチ名>` を打ってから削除した。復元は `git push origin 'archive/<名前>^{commit}:refs/heads/<名前>'`。
+- 残したブランチは、komoriyutaが作業中の `perf/firmus-*-20261017` 7本、上の「残すブランチ」4本、queuedのまま止まっているrunを持つ2本（`research/aspire-eagle-control-pair2` の36301755811、`research/aspire-moe-campaign-20261003` の37091361072）、Claude PR Assistantの雛形 `add-claude-github-actions-1792083267104`。
+
+tagのpushで注意すること:
+- tagのpushでは、tag先のコミットにある `qwen.yml` が使われる。mainで `branches: ["**"]` を指定（`b078913`）しても、古いコミットに打つtagには効かない。tag push ではpath filterも評価されない。
+- 古いブランチの先端にはクラスタタグ付きのコミットが多い。1本だけpushしたところrun 38996491119が起動し、Firmusの配備中（sbatch前）にキャンセルした。
+- GitHubは、1回のpushで4本以上のtagを作るとpushイベントを作らない。4本で確認したあと、残り67本を1回のpushで送り、runが起動しないことを確かめた。
