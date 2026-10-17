@@ -69,6 +69,18 @@ router.log は request_id ごとに開始と終了（latency 付き、1 秒刻�
 
 Decode の上限を 40/rank に上げる案は、ITL の傾き（0.089 ms/要求）から p99 が 23 ms 近くになり不合格が急増するので採らない。
 
+### 3.2 optimistic prefill のソース確認（fc275674 ＋ 本リポジトリの patch）
+
+- `--optimistic-prefill-attempts N` は runtime 引数で、再ビルド不要。到着時に `create_sender` が同期で `/register_dp_rank` を済ませ（`common/conn.py:1028-1066`）、`pop_bootstrapped`（`prefill.py:419-432`）が handshake 未完了でも試行回数 < N なら waiting queue へ入れて同じ iteration で forward する。KV は自分の page に保持し、`pending_bootstrap` のあいだ送信を止める（`prefill.py:740,797,1037,1074`）。handshake が届いた時点で `finalize_bootstrap`（`:322-339`）が decode 側の page を受け取り、まとめて送る。decode の prealloc が先、転送が後という順序は保たれる。
+- chunk 境界で handshake 未完了かつ handshake 済みの要求が待っていれば譲り（`:1043-1048`）、試行回数 < N なら waiting queue 先頭へ、達していれば bootstrap queue 末尾へ戻す（`:1241-1271`）。3986 token の要求は 2 chunk なので **N=2** が妥当で、N=1 だと譲った要求が末尾へ回る。
+- 失敗時は `handle_bootstrap_failure`（`:965-996`）で KV を解放し HTTP 500。NIXL 側に bootstrap timeout はなく、parked 要求は decode が handshake するか abort するまで KV を持つ。decode の req slot は 49/rank × 4 = 196 ≥ c192 なので、prealloc 待ちで parked が溜まる構造ではない。
+- 本リポジトリの patch（dp-rank-query、prefill-ready-handoff、staged-eagle-kv、nixl-expired-chunks、chunk-cache-page-release、kernel 系）はこの経路と衝突しない。staged-eagle-kv が要求する chunk_id の連番は、pending 中に何も送らず retry でも sender を再利用するので保たれる。
+- 出力は同じ重み・同じ kernel・同じ KV で意味的に不変だが、batch 構成と chunk 分割位置が変わるので bit 一致は保証されない（round_robin や到着揺らぎと同種）。判定は公式 parser で行う。
+- 動作確認の指標: 起動ログの `optimistic_prefill_attempts=2`、Prefill batch 行の `#optimistic-req > 0`、`#bootstrap-req` がほぼ 0、「waiting queue 空かつ bootstrap 待ちあり」の起動割合が 55% から 0 に近づくこと。失敗の兆候: `Prefill bootstrap failed`、`finalize` の AssertionError、NIXL の `has no transfer metadata`、Prefill の `#inflight-req` と token usage が増え続ける。
+- bootstrap を iteration 途中で取り込む別の手段はこの版にない（`follow_bootstrap_room` は登録を省くが dispatch が実質ランダムになる）。
+
+run C = run A ＋ `--optimistic-prefill-attempts 2`（Prefill のみ、イメージ不変）とする。
+
 ## 4. 施策と期待値
 
 ### Tier 1：既存イメージのまま、runtime だけで 1 run
