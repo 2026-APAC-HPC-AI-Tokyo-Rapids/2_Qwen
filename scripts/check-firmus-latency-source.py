@@ -394,6 +394,94 @@ def check_prefill_ready_handoff(source):
     print("PASS: ready Prefill results start handoff before the next forward; unfinished/TP/CP results retain ordering, final results drain once, chunk preparation/WAR/delayed sampling remain ordered (CUDA and transport mocked)")
 
 
+def check_topk_padding_guard(source):
+    path = source / "python/sglang/srt/layers/moe/topk.py"
+    tree = ast.parse(path.read_text())
+    node = next(n for n in ast.walk(tree) if isinstance(n, ast.If) and "get_moe_a2a_backend().is_megamoe()" in ast.unparse(n.test))
+    condition = compile(ast.Expression(node.test), str(path), "eval")
+    false = SimpleNamespace(get=lambda: False)
+    flags = SimpleNamespace(SGLANG_OPT_USE_JIT_KERNEL_FUSED_TOPK=false, SGLANG_SIMULATE_UNIFORM_EXPERTS=false, SGLANG_SIMULATE_ROUND_ROBIN_EXPERTS=false)
+    count = SimpleNamespace(dtype="int32", numel=lambda: 1)
+    base = {"_is_cuda": True, "_use_aiter": False, "get_moe_a2a_backend": lambda: SimpleNamespace(is_megamoe=lambda: True), "router_logits": SimpleNamespace(shape=(128, 128)), "top_k": 8, "scoring_func": "softmax", "correction_bias": None, "expert_location_dispatch_info": None, "num_fused_shared_experts": 0, "num_token_non_padded": count, "torch": SimpleNamespace(int32="int32"), "envs": flags}
+    assert eval(condition, base)
+    for key, value in {"_is_cuda": False, "_use_aiter": True, "get_moe_a2a_backend": lambda: SimpleNamespace(is_megamoe=lambda: False), "router_logits": SimpleNamespace(shape=(129, 128)), "top_k": 4, "scoring_func": "sigmoid", "correction_bias": object(), "expert_location_dispatch_info": object(), "num_fused_shared_experts": 1, "num_token_non_padded": None}.items():
+        assert not eval(condition, {**base, key: value}), key
+    for field in vars(flags):
+        setattr(flags, field, SimpleNamespace(get=lambda: True))
+        assert not eval(condition, base), field
+        setattr(flags, field, false)
+    for shape in ((0, 128), (128, 256)):
+        assert not eval(condition, {**base, "router_logits": SimpleNamespace(shape=shape)})
+    for count_bad in (SimpleNamespace(dtype="int64", numel=lambda: 1), SimpleNamespace(dtype="int32", numel=lambda: 2)):
+        assert not eval(condition, {**base, "num_token_non_padded": count_bad})
+    ns = {**base, "_fused_topk_kwargs": {}}
+    exec(compile(ast.Module(body=node.body, type_ignores=[]), str(path), "exec"), ns)  # noqa: S102
+    assert ns["_fused_topk_kwargs"]["num_token_non_padded"] is count and ns["num_token_non_padded"] is None
+    print("PASS: fused Top-K padding only bypasses the separate mask for CUDA MegaMoE Qwen Decode shapes without remapping, bias, shared experts or simulated routing")
+
+
+def check_fp8_kv_fusion(source):
+    path = source / "python/sglang/srt/models/qwen3_moe.py"
+    calls = []
+
+    class Tensor:
+        def __init__(self, shape, dtype="bf16", contiguous=True):
+            self.shape, self.dtype, self.device = shape, dtype, "cuda"
+            self.ndim, self.contiguous = len(shape), contiguous
+
+        def view(self, *shape):
+            return self
+
+        def is_contiguous(self):
+            return self.contiguous
+
+        def split(self, sizes, dim):
+            return [Tensor((4, size)) for size in sizes]
+
+    class Pool:
+        def get_kv_buffer(self, layer):
+            assert layer == 7
+            return buffers
+
+    class OtherPool(Pool):
+        pass
+
+    class Attention:
+        k_scale = v_scale = None
+        layer_id = 7
+
+        def __call__(self, *args, save_kv_cache):
+            calls.append(("attention", save_kv_cache))
+            return args[0]
+
+    args = SimpleNamespace(enable_prefill_cp=False, speculative_eagle_topk=1, cuda_graph_config=SimpleNamespace(prefill=SimpleNamespace(tc_compiler="eager")))
+    batch = SimpleNamespace(forward_mode=SimpleNamespace(is_target_verify=lambda: True), token_to_kv_pool=Pool(), out_cache_loc=Tensor((4,), "int64"))
+    norm = SimpleNamespace(weight=Tensor((128,)), variance_epsilon=1e-6)
+    layer = SimpleNamespace(use_fused_qk_norm_rope=False, use_fp8_q_rope=True, q_norm=norm, k_norm=norm, q_size=8192, kv_size=512, num_heads=64, num_kv_heads=4, head_dim=128, rotary_emb=SimpleNamespace(cos_sin_cache=object()), attn=Attention(), compatible_with_fused_kv_buffer=False, o_proj=lambda x: (x, None))
+    ns = {"torch": SimpleNamespace(bfloat16="bf16", float8_e4m3fn="fp8", empty=lambda shape, dtype, device: Tensor(shape, dtype)), "get_server_args": lambda: args, "envs": SimpleNamespace(SGLANG_ENABLE_DETERMINISTIC_INFERENCE=SimpleNamespace(get=lambda: False)), "MHATokenToKVPool": Pool, "apply_qknorm_rope_fp8_q": lambda *args: calls.append("legacy"), "apply_qknorm_rope_fp8_kv": lambda *args: calls.append("fused"), "enable_fused_set_kv_buffer": lambda _: False}
+    apply = method(path, "apply_qk_norm_rope", ns)
+    core = method(path, "forward_core", ns)
+    buffers = (Tensor((257, 4, 128), "fp8"), Tensor((257, 4, 128), "fp8"))
+    positions = Tensor((4,), "int64")
+
+    def check(fused):
+        calls.clear()
+        # An earlier graph capture/forward must not leak the cache-write flag.
+        layer._stored_fp8_kv_last_call = True
+        q, k, v = apply(layer, Tensor((4, 9216)), positions, batch)
+        core(layer, (None, batch, (q, k, v, batch)))
+        assert calls == ["fused" if fused else "legacy", ("attention", not fused)], calls
+
+    check(True)
+    for obj, field, value in ((args, "enable_prefill_cp", True), (args, "speculative_eagle_topk", 2), (batch, "token_to_kv_pool", OtherPool()), (layer.attn, "k_scale", 1.), (layer.attn, "v_scale", 1.), (positions, "dtype", "int32"), (batch.forward_mode, "is_target_verify", lambda: False), (buffers[0], "dtype", "bf16"), (buffers[0], "contiguous", False), (buffers[0], "shape", (257, 8, 128))):
+        old = getattr(obj, field)
+        setattr(obj, field, value)
+        check(False)
+        setattr(obj, field, old)
+    check(True)
+    print("PASS: FP8 KV fusion selects standard unscaled contiguous MHA TARGET_VERIFY/top1 only; other modes/scales/layouts retain the backend writer; stale per-call state resets (CUDA arithmetic mocked)")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
@@ -404,3 +492,5 @@ if __name__ == "__main__":
     check_dp_routing(source)
     check_deepgemm_activation(source)
     check_prefill_ready_handoff(source)
+    check_fp8_kv_fusion(source)
+    check_topk_padding_guard(source)

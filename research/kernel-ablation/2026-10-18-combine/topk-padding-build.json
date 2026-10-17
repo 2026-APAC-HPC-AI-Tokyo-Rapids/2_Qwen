@@ -1,0 +1,32 @@
+{
+  "gpu_execution": false,
+  "status": "PASS",
+  "header_sha256": "f8652ebb1dd6a67e09e11428ebe102497246a8af7450e8205e177cf3cf23cf4e",
+  "library_sha256": "4dc8e5be98ccf8985bf1e32173da21ce85d8c4a63ef7e5c7a728415250168063",
+  "specializations": [
+    "topk_softmax_masked",
+    "topk_softmax_pack"
+  ],
+  "command": [
+    "/home/app/cuda/12.9.1/bin/nvcc",
+    "--compiler-bindir",
+    "/opt/rh/gcc-toolset-13/root/usr/bin/g++",
+    "-std=c++20",
+    "-O3",
+    "--expt-relaxed-constexpr",
+    "--use_fast_math",
+    "--ptxas-options=-v,-warn-spills",
+    "-DSGL_CUDA_ARCH=900",
+    "-gencode",
+    "arch=compute_90a,code=sm_90a",
+    "-I/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/fp8-kv/python/sglang/kernels/jit/include",
+    "-I/home/ACCOUNT/ku60000565/.cache/uv/archive-v0/NpU7QyfPUZ43lTCn/lib/python3.12/site-packages/tvm_ffi/include",
+    "-shared",
+    "-Xcompiler=-fPIC",
+    "/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/build/topk-mask/topk.cu",
+    "/home/ACCOUNT/ku60000565/.cache/uv/archive-v0/NpU7QyfPUZ43lTCn/lib/python3.12/site-packages/tvm_ffi/lib/libtvm_ffi.so",
+    "-Xlinker=-rpath,/home/ACCOUNT/ku60000565/.cache/uv/archive-v0/NpU7QyfPUZ43lTCn/lib/python3.12/site-packages/tvm_ffi/lib",
+    "-o",
+    "/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/build/topk-mask/topk.so"
+  ]
+}

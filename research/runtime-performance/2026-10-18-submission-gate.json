@@ -1,11 +1,21 @@
 {
   "date": "2026-10-18",
   "base_commit": "9b2fbebefc82304d880179d2758a689f24b60893",
-  "status": "build_only_prepared_final_gpu_submission_pending",
+  "status": "cpu_verified_combined_candidate_build_pending",
   "firmus_jobs_submitted": 0,
   "aspire_jobs_submitted": 0,
   "other_gpu_jobs_submitted": 0,
-  "cloud_image_builds_started": 0,
+  "cloud_image_builds_started": 1,
+  "cpu_image_build": {
+    "run_id": 39054711416,
+    "commit": "ad28338b9780aeb4fd10c834f1cf6df8b2d83b71",
+    "conclusion": "success",
+    "image_sha256": "32c95dd1857c38da6968c5abfe0e699d40f161495731b451511b1cee28e35072",
+    "image_size_bytes": 12249702400,
+    "all_three_cluster_archives_materialized": true,
+    "gpu_workflows_skipped_by_build_only": true,
+    "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39054711416"
+  },
   "user_constraint": "At most one final Firmus job, only with strong confidence of >7000 good output tok/s; no comparison runs. User subsequently instructed continuing to the final submission and making the candidate at least a superset of the concurrent placement branch.",
   "latest_completed_results": [
     {
@@ -26,6 +36,13 @@
       "score": 6699.299221712264,
       "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39051152456",
       "scope": "Independent Prefill expert-stat diagnostic, not submitted by this task. Same reference image/runtime with recorder enabled; do not treat as a new uninstrumented baseline."
+    },
+    {
+      "cluster": "Firmus",
+      "run_id": 39053527142,
+      "score": 6418.502602339969,
+      "scope": "External placement-only run; official workload validation true, zero errors, good fraction 0.9440773949976404. No measured end-to-end gain over c192 reference. Not this task submission.",
+      "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39053527142"
     }
   ],
   "evidence_validation": {
@@ -66,6 +83,20 @@
     {
       "change": "Further concurrency-only increase or blind cap increase",
       "reason": "Firmus ITL p99 already exceeds 20 ms; ASPIRE steady Prefill is saturated. No threshold evidence."
+    },
+    {
+      "change": "SwapAB full unroll pipeline 32 FC1 /12 FC2 K blocks",
+      "run_id": 39058112448,
+      "reason": "All 12 numerical output hashes match baseline, but decode-balanced-128 regresses from 0.228864 to 0.371840 ms (+62.47%)."
+    },
+    {
+      "change": "SwapAB pipeline 8 FC1 /6 FC2 K blocks",
+      "run_id": 39058491946,
+      "reason": "All 12 numerical output hashes match baseline, but decode-balanced-128 regresses from 0.228864 to 0.249664 ms (+9.09%)."
+    },
+    {
+      "change": "Own rolled FC1 pipeline",
+      "reason": "CPU generated code serialized WGMMA at function/loop boundaries (C7510/C7514); excluded without a GPU allocation."
     }
   ],
   "already_present_not_counted_again": [
@@ -100,28 +131,78 @@
     "additional_random_strings": [
       "1838e3a7d284cb9554228edc",
       "c7c171b040666e4c39015dca",
-      "26c8afc02e4a06f65e5a951c"
+      "26c8afc02e4a06f65e5a951c",
+      "799c0e7476dd8af2d036349c",
+      "dfa4c22880668ea7b89c1a46",
+      "db9a6fe9792e1e033bdafbde",
+      "036209be7e460f347cd65116",
+      "c298f40f2d6d6199a966954c",
+      "4b76d9a21f305ec8a07b642d",
+      "8e2eb73fdafcf034c142d2bb"
+    ],
+    "additional_pairs_20261018_0357": [
+      [
+        "math loop",
+        "instruction footprint"
+      ],
+      [
+        "cycle saving",
+        "SLA headroom"
+      ]
+    ],
+    "other_screened_candidates": [
+      {
+        "change": "Reuse FA3 scheduler metadata for TARGET_VERIFY",
+        "decision": "defer: the pinned C++ path resets a semaphore per layer when num_splits=1; cannot credit the full prepare-kernel duration as savings. Existing DP precompute is disabled for stale-metadata safety. No serving change made.",
+        "source": "https://github.com/sgl-project/sgl-attn/blob/f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper/flash_api.cpp"
+      },
+      {
+        "change": "Skip DP scheduler collectives",
+        "decision": "defer: EAGLE3 is excluded by the native flag validator, and observed Gloo duration includes waiting for other ranks. No causal saving established; no serving change made."
+      }
+    ],
+    "additional_pairs_20261018_0425": [
+      [
+        "padding epilogue",
+        "kernel fusion"
+      ],
+      [
+        "quantization",
+        "existing input path"
+      ]
     ]
   },
   "implemented_candidate": {
     "placement_source_commit": "a61d08d3d7673d5cf300265526e8f5350c3dc32a",
     "placement_source_run": 39053527142,
-    "relationship": "All eight changed files from the placement branch imported byte-for-byte; additional native communication patch, numerical placement gate and CPU evidence.",
+    "relationship": "All eight placement files were imported exactly at ad28338. Static map and production runtime remain identical except the fresh image pin. The source-check fixture now supplies a real Prefill mode. The 1x1 mainloop patch is byte-identical to its external benchmark branch; communication and the two kernel fusions are additional independent changes.",
     "patch": "../../patches/deep-gemm/sm90-routing-communication.patch",
     "evidence": [
       "../kernel-ablation/2026-10-18-combine/communication-build.json",
-      "../kernel-ablation/2026-10-18-combine/placement-analysis.json"
+      "../kernel-ablation/2026-10-18-combine/placement-analysis.json",
+      "../kernel-ablation/2026-10-18-combine/existing-timeline.json",
+      "../kernel-ablation/2026-10-18-combine/branch-coverage.json"
     ],
     "native_changes": [
       "Reserve dispatch offsets only for nonempty CTA/expert pairs; retain grid completion and publish identical scheduler completion words.",
       "Remove unused remote top-k weight copy; retain ABI allocations.",
-      "Qwen SwapAB combine distributes eight chunks per row across CTAs and uses coalesced L2 cached uint4 loads instead of per-chunk TMA, with unchanged ascending FP32 FMA order and BF16 output."
+      "Qwen SwapAB combine distributes eight chunks per row across CTAs and uses coalesced L2 cached uint4 loads instead of per-chunk TMA, with unchanged ascending FP32 FMA order and BF16 output.",
+      "Import the exact externally measured 1x1 FC1/FC2 pipeline: Decode-128 0.228864 -> 0.203200 ms, all 12 benchmark output hashes unchanged. 2x2, 4x2, 2x1 and 1x2 are slower than this winner; 8x6 and 32x12 regress.",
+      "Extend the existing QK norm/RoPE kernel to write unscaled FP8 K/V caches on standard MHA TARGET_VERIFY/top1 only; preserve BF16 rounding and nonsaturating FP8 casts, skip reserved slot zero and retain bounds assertions.",
+      "Reuse the existing AOT-equivalent JIT Top-K kernel for id=-1 padding in its epilogue. Keep FP32 weights and SM90 AOT fast-math flags; limit to 128-expert/top8 MegaMoE with <=128 rows and no remap, bias or simulated routing."
     ],
     "superseded_candidate": "sm90-combine-parallel.patch (parallel TMA); retained as historical CPU evidence only, not applied to the image.",
     "source_integrated": true,
     "runtime_configuration": "Other branch's exact static Prefill placement, c192, P3/D1, TP4/DP4/EP4, EAGLE3 steps3/draft4; Decode placement unchanged.",
     "main_merged": false,
-    "gpu_speedup_measured": false
+    "gpu_speedup_measured": false,
+    "additional_patches": {
+      "patches/deep-gemm/sm90-decode-mainloop-pipeline.patch": "4f094a3dbcffa62075ca1e86683119643bdadef3ef457218024dbbe621da6a2d",
+      "patches/sglang/qknorm-rope-fp8-kv.patch": "8391a2917736e37bbcbfc41e9772eabdc9598d0ef809994426e96b1683d8912f",
+      "patches/sglang/qwen-topk-padding.patch": "303f873cbba6e5a7f060eae0c018f65688d63dea54bf60e76d256baa7de0ec00"
+    },
+    "mainloop_source_commit": "b21acb3cb4f6c4d7ebd5c7eb78161a3356e724b2",
+    "mainloop_source_run": 39060930640
   },
   "confidence_gate": {
     "target_score_exclusive": 7000,
@@ -131,17 +212,20 @@
       "Independent placement method fitted only on 273 worker-0 passes reduces the slowest rank's M128 tile work by 21.49-21.58% in all 1367 held-out passes.",
       "Exact imported production map reduces critical-rank tile work by 21.54-21.62% on the recorded workload. Those production-map counts are in-sample, separately labelled from the holdout method experiment.",
       "Serving Prefill MoE 2.17 ms/layer versus balanced gate 1.66 ms is consistent with the measured rank imbalance. Approximately 63.5% of Prefill forward GPU time is MoE; full translation gives about 13.6% forward-time reduction. This is a model, not a measured end-to-end gain.",
-      "128-row Decode dispatch counter atomics fall from 16896 to at most 1024 (813 in the deterministic random screen). Combine active CTAs rise 16 to 128 without increasing bytes or changing numerical order. These operation counts are not timing measurements."
+      "128-row Decode dispatch counter atomics fall from 16896 to at most 1024 (813 in the deterministic random screen). Combine active CTAs rise 16 to 128 without increasing bytes or changing numerical order. These operation counts are not timing measurements.",
+      "Independent kernel benchmark 39053820377 adds a useful limit: instrumented Decode send-count atomics take about 1.15 us and active combine about 8.49 us; only about 3.99 us remains after overlapping dispatch cleanup. The timeline adds 16% whole-call overhead. Communication reduction alone does not justify >7000; placement's actual serving result remains necessary.",
+      "External 1x1 run 39060930640 has 20 SHA-256-verified archive files and bitwise agreement on all 12 cases. Decode-128 median 203.200 us, p10 201.696 us, p90 204.480 us. The 2x1 and 1x2 archives also have 20 verified files and matching numerical hashes; both are slower."
     ],
-    "remaining": "Complete the CPU-only container build; read the already-running external placement result before committing the only GPU submission. Preserve the numerical gate inside that final allocation.",
-    "uncertainty": "Kernel work reduction does not by itself bound goodput: synchronization, Decode capacity, EAGLE acceptance, TTFT/ITL tails and finite-run variation still matter. No 7000 result is claimed before the official workload runs."
+    "remaining": "The 1x1 winner is measured independently, but the combined communication/fusion image still requires fresh CPU build and image verification. Recompute the whole-cycle/SLA projection without double-counting removed kernels before the one final Firmus allocation.",
+    "uncertainty": "Kernel work reduction does not by itself bound goodput: synchronization, Decode capacity, EAGLE acceptance, TTFT/ITL tails and finite-run variation still matter. No 7000 result is claimed before the official workload runs.",
+    "sensitivity_file": "../kernel-ablation/2026-10-18-combine/score-sensitivity.json"
   },
   "validation": {
-    "linux_tests": "349 passed, 1 skipped",
-    "source_patch_chain": "15 patches apply to pinned fc275674; all three CPU source checks pass",
+    "linux_tests": "352 passed, 1 skipped; one packaging-only failure caused by macOS AppleDouble files was rerun and passed after removing those metadata files",
+    "source_patch_chain": "17 patches apply cleanly to pinned fc275674; freshly reconstructed tree exactly matches all six modified CUDA/Python sources; all three source-check scripts pass",
     "placement": "All 94 permutations, EP4 dispatch tables and 1504 weight/scale loading checks pass",
-    "native": "CUDA12.9 CPU compilation passes both geometries, Decode168 registers/0 spills, Prefill96 registers/20-byte spills; GPU numerical/graph gate deferred to final allocation",
-    "static": "Ruff, bash syntax (41 files), actionlint and git diff --check pass"
+    "native": "Composed communication + 1x1 CUDA12.9 CPU build: Decode168 registers/0 spills, Prefill96 registers/20-byte spills; fused KV35 registers/0 spills, Top-K<=32 registers/0 spills; all public FFI entrypoints load. GPU exact numerical/Graph gates are part of the final allocation.",
+    "static": "Ruff, bash syntax (41 files), actionlint and image validator fixtures pass. git diff --check passes outside patch files; patch context blank lines are intentional and the exact patch chains apply cleanly."
   },
   "build_setup_failure": {
     "run_id": 39054590580,

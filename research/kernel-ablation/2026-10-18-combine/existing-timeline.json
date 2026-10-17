@@ -1,0 +1,343 @@
+{
+  "run_id": 39053820377,
+  "submitted_by_this_task": false,
+  "image_sha256": "e29dfde476fd2a8c7cd268f9be2c6d2a1f5e5404a34aed369aa84b4b4143909f",
+  "archive_files_sha256_verified": 19,
+  "summary_reader_commit": "ed0a9fb8d8a27edb6ea05fb0e26c294d2aa9f3b9",
+  "scope": "Synthetic balanced Decode 128 rows/rank, not the official workload. Timeline adds about 16% measured whole-call overhead; its phase times are not uninstrumented savings. The reader fixes deferred-handshake attribution; the raw data are unchanged.",
+  "quantiles_over_7_calls_4_ranks": {
+    "kernel_us": [
+      253.44,
+      254.72,
+      255.744
+    ],
+    "send_count_atomic_median_us": [
+      1.10469285942313,
+      1.1499546599233383,
+      1.210830670190829
+    ],
+    "combine_active_ctas": [
+      16.0,
+      16.0,
+      16.0
+    ],
+    "combine_active_median_us": [
+      7.970362492443883,
+      8.494729790571874,
+      9.211911176703566
+    ],
+    "combine_max_us": [
+      8.311327790849674,
+      8.937199380260907,
+      9.397731181488098
+    ],
+    "remaining_after_all_dispatch_cleanup_us": [
+      3.2222770153717875,
+      3.991920507120824,
+      4.715450118269075
+    ]
+  },
+  "interpretation": [
+    "The candidate attacks measured work, but atomics are only about 1 us and combine about 9 us. Do not equate 16x fewer atomics or 8x more combine CTAs with the whole-kernel speedup.",
+    "Dispatch cleanup overlaps combine, so only the remaining tail is removable by combine alone. This further limits the end-to-end upside.",
+    "This evidence does not independently establish >7000 good output tokens/s. Read the full placement result before deciding the final submission; do not add an unjustified concurrency increase."
+  ],
+  "records": [
+    {
+      "call": 2,
+      "rank": 0,
+      "kernel_us": 253.952,
+      "send_count_atomic_median_us": 1.1254585144261537,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.537913831825946,
+      "combine_max_us": 9.012919322604404,
+      "remaining_after_all_dispatch_cleanup_us": 3.501317906104248
+    },
+    {
+      "call": 2,
+      "rank": 1,
+      "kernel_us": 255.744,
+      "send_count_atomic_median_us": 1.1385812957146229,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.416304953617498,
+      "combine_max_us": 8.985261813793187,
+      "remaining_after_all_dispatch_cleanup_us": 3.985671690604846
+    },
+    {
+      "call": 2,
+      "rank": 2,
+      "kernel_us": 254.72000000000003,
+      "send_count_atomic_median_us": 1.1567614808026918,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.449024801553392,
+      "combine_max_us": 8.907843767037548,
+      "remaining_after_all_dispatch_cleanup_us": 3.749772801989195
+    },
+    {
+      "call": 2,
+      "rank": 3,
+      "kernel_us": 255.232,
+      "send_count_atomic_median_us": 1.152639500803812,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 9.211911176703566,
+      "combine_max_us": 9.397731181488098,
+      "remaining_after_all_dispatch_cleanup_us": 4.592580363465743
+    },
+    {
+      "call": 3,
+      "rank": 0,
+      "kernel_us": 255.232,
+      "send_count_atomic_median_us": 1.1524536043159797,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.604809837798243,
+      "combine_max_us": 9.334917979189214,
+      "remaining_after_all_dispatch_cleanup_us": 3.676620328378476
+    },
+    {
+      "call": 3,
+      "rank": 1,
+      "kernel_us": 254.976,
+      "send_count_atomic_median_us": 1.1066297102987237,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.34695844599922,
+      "combine_max_us": 8.988914657480137,
+      "remaining_after_all_dispatch_cleanup_us": 4.1696337975315885
+    },
+    {
+      "call": 3,
+      "rank": 2,
+      "kernel_us": 254.20800000000003,
+      "send_count_atomic_median_us": 1.1795601060164018,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.00631012381335,
+      "combine_max_us": 8.311532341314148,
+      "remaining_after_all_dispatch_cleanup_us": 3.2222770153717875
+    },
+    {
+      "call": 3,
+      "rank": 3,
+      "kernel_us": 254.72,
+      "send_count_atomic_median_us": 1.10469285942313,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.886942860266117,
+      "combine_max_us": 9.022608716906745,
+      "remaining_after_all_dispatch_cleanup_us": 4.226420655229191
+    },
+    {
+      "call": 4,
+      "rank": 0,
+      "kernel_us": 254.72,
+      "send_count_atomic_median_us": 1.1280713367052835,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.773978116046578,
+      "combine_max_us": 9.235624745962696,
+      "remaining_after_all_dispatch_cleanup_us": 3.9398355805161316
+    },
+    {
+      "call": 4,
+      "rank": 1,
+      "kernel_us": 254.72,
+      "send_count_atomic_median_us": 1.1065835883251829,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.331476056369738,
+      "combine_max_us": 8.511033623932121,
+      "remaining_after_all_dispatch_cleanup_us": 3.808387235800268
+    },
+    {
+      "call": 4,
+      "rank": 2,
+      "kernel_us": 254.464,
+      "send_count_atomic_median_us": 1.1759376203146141,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 7.991861321657439,
+      "combine_max_us": 8.440491290848797,
+      "remaining_after_all_dispatch_cleanup_us": 3.983795228846134
+    },
+    {
+      "call": 4,
+      "rank": 3,
+      "kernel_us": 254.72,
+      "send_count_atomic_median_us": 1.1623233729440845,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.62359272138994,
+      "combine_max_us": 9.072226466836184,
+      "remaining_after_all_dispatch_cleanup_us": 4.4475054108703205
+    },
+    {
+      "call": 5,
+      "rank": 0,
+      "kernel_us": 254.72,
+      "send_count_atomic_median_us": 1.1679879560942026,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.564859068575473,
+      "combine_max_us": 9.186624176283942,
+      "remaining_after_all_dispatch_cleanup_us": 3.821706635054568
+    },
+    {
+      "call": 5,
+      "rank": 1,
+      "kernel_us": 254.976,
+      "send_count_atomic_median_us": 1.1898113408915374,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.483631998392212,
+      "combine_max_us": 8.79982646602383,
+      "remaining_after_all_dispatch_cleanup_us": 4.021999755880643
+    },
+    {
+      "call": 5,
+      "rank": 2,
+      "kernel_us": 254.464,
+      "send_count_atomic_median_us": 1.1413934682714433,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 7.970362492443883,
+      "combine_max_us": 8.311327790849674,
+      "remaining_after_all_dispatch_cleanup_us": 3.4451584286233015
+    },
+    {
+      "call": 5,
+      "rank": 3,
+      "kernel_us": 254.72000000000003,
+      "send_count_atomic_median_us": 1.175095164521828,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.75179378726665,
+      "combine_max_us": 8.966554993484266,
+      "remaining_after_all_dispatch_cleanup_us": 4.602732247593764
+    },
+    {
+      "call": 6,
+      "rank": 0,
+      "kernel_us": 254.72,
+      "send_count_atomic_median_us": 1.1047386201998963,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.304455649456244,
+      "combine_max_us": 8.62186199346641,
+      "remaining_after_all_dispatch_cleanup_us": 3.7659726076292372
+    },
+    {
+      "call": 6,
+      "rank": 1,
+      "kernel_us": 254.976,
+      "send_count_atomic_median_us": 1.141087050347758,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.505827582751536,
+      "combine_max_us": 8.88809035621199,
+      "remaining_after_all_dispatch_cleanup_us": 4.437829824687839
+    },
+    {
+      "call": 6,
+      "rank": 2,
+      "kernel_us": 254.464,
+      "send_count_atomic_median_us": 1.1638612466955882,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.30210470545019,
+      "combine_max_us": 8.70098777625364,
+      "remaining_after_all_dispatch_cleanup_us": 3.9360347067781163
+    },
+    {
+      "call": 6,
+      "rank": 3,
+      "kernel_us": 254.976,
+      "send_count_atomic_median_us": 1.174710094909914,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.767194609317414,
+      "combine_max_us": 9.14880228705087,
+      "remaining_after_all_dispatch_cleanup_us": 4.174444458882903
+    },
+    {
+      "call": 7,
+      "rank": 0,
+      "kernel_us": 254.208,
+      "send_count_atomic_median_us": 1.1065086769675125,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.585757189304658,
+      "combine_max_us": 8.904837661518116,
+      "remaining_after_all_dispatch_cleanup_us": 3.9981693236368017
+    },
+    {
+      "call": 7,
+      "rank": 1,
+      "kernel_us": 253.44,
+      "send_count_atomic_median_us": 1.1571219127909371,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.32924657661897,
+      "combine_max_us": 8.872223021456506,
+      "remaining_after_all_dispatch_cleanup_us": 3.3753686906787834
+    },
+    {
+      "call": 7,
+      "rank": 2,
+      "kernel_us": 253.44,
+      "send_count_atomic_median_us": 1.1881726587139485,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.03548795573667,
+      "combine_max_us": 8.45127094591183,
+      "remaining_after_all_dispatch_cleanup_us": 4.278269343464615
+    },
+    {
+      "call": 7,
+      "rank": 3,
+      "kernel_us": 253.696,
+      "send_count_atomic_median_us": 1.1410615268630493,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.604814171180209,
+      "combine_max_us": 8.900089971352912,
+      "remaining_after_all_dispatch_cleanup_us": 4.0149785528336395
+    },
+    {
+      "call": 8,
+      "rank": 0,
+      "kernel_us": 253.952,
+      "send_count_atomic_median_us": 1.1449806824196074,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.59489473682838,
+      "combine_max_us": 9.012055027953096,
+      "remaining_after_all_dispatch_cleanup_us": 4.157960444016226
+    },
+    {
+      "call": 8,
+      "rank": 1,
+      "kernel_us": 254.464,
+      "send_count_atomic_median_us": 1.1310861091603646,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.373850878405023,
+      "combine_max_us": 9.216894989211738,
+      "remaining_after_all_dispatch_cleanup_us": 3.9402337447838534
+    },
+    {
+      "call": 8,
+      "rank": 2,
+      "kernel_us": 253.696,
+      "send_count_atomic_median_us": 1.210830670190829,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.10989548499225,
+      "combine_max_us": 8.479011764808746,
+      "remaining_after_all_dispatch_cleanup_us": 4.1720572110803005
+    },
+    {
+      "call": 8,
+      "rank": 3,
+      "kernel_us": 254.464,
+      "send_count_atomic_median_us": 1.1474557155306973,
+      "combine_active_ctas": 16,
+      "combine_active_median_us": 8.887859127616792,
+      "combine_max_us": 9.385457743038558,
+      "remaining_after_all_dispatch_cleanup_us": 4.715450118269075
+    }
+  ],
+  "independent_repeat": {
+    "run_id": 39054922367,
+    "submitted_by_this_task": false,
+    "scope": "Only a comment differs from the reference kernel; this is not the communication candidate.",
+    "all_12_output_hashes_equal_to_reference": true,
+    "archive_files_sha256_verified": 20,
+    "decode_128_median_ms": [
+      0.22915199398994446,
+      0.23052799701690674
+    ],
+    "prefill_4096_median_ms": [
+      1.6680320501327515,
+      1.7426879405975342
+    ],
+    "interpretation": "Decode baseline repeats within 0.6%; Prefill differs by about 4.5%. Small standalone Prefill timing changes alone do not establish a serving gain."
+  }
+}

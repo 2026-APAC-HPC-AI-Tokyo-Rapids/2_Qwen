@@ -1,0 +1,58 @@
+{
+  "source_branch": "perf/firmus-expert-placement-20261018",
+  "source_commit": "a61d08d3d7673d5cf300265526e8f5350c3dc32a",
+  "imported_commit": "ad28338b9780aeb4fd10c834f1cf6df8b2d83b71",
+  "files": [
+    {
+      "path": "configs/firmus-framework.json",
+      "source_sha256": "2cc86e39a3a337a0d2a82660097fa1636579b2c8acb1f0e2cd7964828e7705f7",
+      "imported_sha256": "2cc86e39a3a337a0d2a82660097fa1636579b2c8acb1f0e2cd7964828e7705f7"
+    },
+    {
+      "path": "configs/firmus-prefill-expert-location.json",
+      "source_sha256": "c31515f7ceeb5c26fe750bbb4098f15801c7ca8175a49a6d43e6365379cc9aee",
+      "imported_sha256": "c31515f7ceeb5c26fe750bbb4098f15801c7ca8175a49a6d43e6365379cc9aee"
+    },
+    {
+      "path": "patches/sglang/qwen3-sm90-megamoe.patch",
+      "source_sha256": "a5b4e320b9b64aef8a1110ffc8ca71cd3cf79edb5703e14a88457821e387c5a2",
+      "imported_sha256": "a5b4e320b9b64aef8a1110ffc8ca71cd3cf79edb5703e14a88457821e387c5a2"
+    },
+    {
+      "path": "platforms/firmus/framework-comparison/sglang.sbatch",
+      "source_sha256": "ac2d9eea7022903e393079fd82d1d20bdd012cd284f9013a500606a54562a2d7",
+      "imported_sha256": "ac2d9eea7022903e393079fd82d1d20bdd012cd284f9013a500606a54562a2d7"
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/test_firmus_reference.py",
+      "source_sha256": "0b586310641272b51fbc09b0f05d269e5e786d67056018dab3b9ae806aec492f",
+      "imported_sha256": "0b586310641272b51fbc09b0f05d269e5e786d67056018dab3b9ae806aec492f"
+    },
+    {
+      "path": "scripts/check-firmus-megamoe-source.py",
+      "source_sha256": "8abdbd55884e2f91f0897bd5d7945a7fc270b488d03b442dcb375d4af0e4b06f",
+      "imported_sha256": "8abdbd55884e2f91f0897bd5d7945a7fc270b488d03b442dcb375d4af0e4b06f"
+    },
+    {
+      "path": "scripts/check-firmus-server-info.py",
+      "source_sha256": "6950b50663a95c5d18658135dfff83f1761444b8fdcb2ae95a04a03042471466",
+      "imported_sha256": "6950b50663a95c5d18658135dfff83f1761444b8fdcb2ae95a04a03042471466"
+    },
+    {
+      "path": "scripts/provision-firmus-framework.sh",
+      "source_sha256": "b13f388d702573d6a165a1c1b6c4b60b95553941e5c9c75888291d8011d552fd",
+      "imported_sha256": "b13f388d702573d6a165a1c1b6c4b60b95553941e5c9c75888291d8011d552fd"
+    }
+  ],
+  "scope": "Exact functional superset at import: all eight placement-branch files match byte for byte. Final image pin will intentionally change to the fresh communication-patched build. Performance superiority is not claimed without the final workload result.",
+  "additional_integration": {
+    "mainloop_branch": "experiment/megamoe-mainloop-chunk1x1-20261018",
+    "commit": "b21acb3cb4f6c4d7ebd5c7eb78161a3356e724b2",
+    "patch_sha256": "4f094a3dbcffa62075ca1e86683119643bdadef3ef457218024dbbe621da6a2d",
+    "scope": "Exact mainloop patch plus independent communication, FP8 KV writes and Top-K padding fusion. Numerical improvements are not inferred from fewer instructions; the final workload remains the end-to-end criterion."
+  },
+  "post_import_changes": {
+    "configs/firmus-framework.json": "Fresh image pin only; placement/runtime retained",
+    "scripts/check-firmus-megamoe-source.py": "Supply a Prefill forward-mode fixture for the new guarded writer; original checks retained"
+  }
+}

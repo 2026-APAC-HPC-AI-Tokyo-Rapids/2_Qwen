@@ -35,6 +35,10 @@ def main():
     subprocess.run(["git", "apply", "--check", str(communication_patch)], cwd=package.parent, check=True)
     subprocess.run(["git", "apply", str(communication_patch)], cwd=package.parent, check=True)
     assert hashlib.sha256(header.read_bytes()).hexdigest() == "9f9f131ba56447a6de178ff4191ac147f0780d87b19f35fbf5006ba01330e8be"
+    mainloop_patch = Path("/opt/apac/sm90-decode-mainloop-pipeline.patch")
+    subprocess.run(["git", "apply", "--check", str(mainloop_patch)], cwd=package.parent, check=True)
+    subprocess.run(["git", "apply", str(mainloop_patch)], cwd=package.parent, check=True)
+    assert hashlib.sha256(header.read_bytes()).hexdigest() == "349e046d258d50a20f1fee428b5c18c3d7f97cd39d98020391fe24e19a5b78d7"
     # Match the saved 6344.96 baseline kernel symbols, including accumulator
     # reuse, arrival mode, stage count, EP wave and padded pool capacities.
     # Prefill's reuse path is distinct from Decode's pipelined SwapAB path.
@@ -68,6 +72,7 @@ extern "C" void* instantiate() {{
     result["decode_tiles_patch_sha256"] = hashlib.sha256(decode_tiles_patch.read_bytes()).hexdigest()
     result["prefill_phase_patch_sha256"] = hashlib.sha256(prefill_phase_patch.read_bytes()).hexdigest()
     result["routing_communication_patch_sha256"] = hashlib.sha256(communication_patch.read_bytes()).hexdigest()
+    result["decode_mainloop_patch_sha256"] = hashlib.sha256(mainloop_patch.read_bytes()).hexdigest()
     Path("/opt/apac/sm90-megamoe-build.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result), flush=True)
 

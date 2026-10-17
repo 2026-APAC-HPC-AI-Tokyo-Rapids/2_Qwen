@@ -1,0 +1,38 @@
+{
+  "gpu_execution": false,
+  "status": "PASS",
+  "header_sha256": "f227d077753b89e83d66d0a12e80775abc132812522aacd4a701a0911065a137",
+  "library_sha256": "bc069c690883bf918af6c5893185f01fca03881a1266e0ed79d84e4a281c6982",
+  "specializations": [
+    "FusedRopeKernel<true,128,true,bf16_t>::run_norm_fp8_store",
+    "FusedRopeKernel<true,128,false,bf16_t>::run_norm_fp8_store",
+    "FusedRopeKernel<true,128,true,bf16_t>::run_norm_fp8",
+    "FusedRopeKernel<true,128,false,bf16_t>::run_norm_fp8",
+    "FusedRopeKernel<true,128,true,bf16_t>::run_fp8",
+    "FusedRopeKernel<true,128,true,bf16_t>::run",
+    "FusedRopeKernel<true,128,true,bf16_t>::run_fused",
+    "FusedRopeKernel<false,128,true,bf16_t>::run",
+    "FusedRopeKernel<true,128,true,bf16_t,fp16_t>::run"
+  ],
+  "command": [
+    "/home/app/cuda/12.9.1/bin/nvcc",
+    "--compiler-bindir",
+    "/opt/rh/gcc-toolset-13/root/usr/bin/g++",
+    "-std=c++20",
+    "-O3",
+    "--expt-relaxed-constexpr",
+    "--ptxas-options=-v,-warn-spills",
+    "-DSGL_CUDA_ARCH=900",
+    "-gencode",
+    "arch=compute_90a,code=sm_90a",
+    "-I/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/fp8-kv/python/sglang/kernels/jit/include",
+    "-I/home/ACCOUNT/ku60000565/.cache/uv/archive-v0/NpU7QyfPUZ43lTCn/lib/python3.12/site-packages/tvm_ffi/include",
+    "-shared",
+    "-Xcompiler=-fPIC",
+    "/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/build/fp8-kv/rope.cu",
+    "/home/ACCOUNT/ku60000565/.cache/uv/archive-v0/NpU7QyfPUZ43lTCn/lib/python3.12/site-packages/tvm_ffi/lib/libtvm_ffi.so",
+    "-Xlinker=-rpath,/home/ACCOUNT/ku60000565/.cache/uv/archive-v0/NpU7QyfPUZ43lTCn/lib/python3.12/site-packages/tvm_ffi/lib",
+    "-o",
+    "/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/build/fp8-kv/rope.so"
+  ]
+}

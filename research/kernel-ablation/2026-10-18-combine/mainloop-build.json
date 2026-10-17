@@ -1,0 +1,71 @@
+{
+  "condition": {
+    "name": "communication-mainloop-1x1",
+    "baseline_header_sha256": "0e34a083941ae7e1fa22add3f1d2cd561903c1f7541cca82b559c47b5a3d3e9d",
+    "header_sha256": "349e046d258d50a20f1fee428b5c18c3d7f97cd39d98020391fe24e19a5b78d7",
+    "patch": "candidate.patch",
+    "external_source": "b21acb3cb4f6c4d7ebd5c7eb78161a3356e724b2",
+    "gpu_measured": false
+  },
+  "gpu_executed": false,
+  "wheel_sha256": "e5e9f92cdf0515fe878bd81131bc25d2984e00c005824d2932af01a5e0d75261",
+  "patches": {
+    "sm90-late-topk-fp32.patch": "462d68230da3ab9a1e69ca85d9fa804b8edaf6a77bf0975726611a08fda6622b",
+    "sm90-fc2-pipeline.patch": "08da0ad5661f1aad9e596242e50428141400ebc7530cb7cbbfd035cc503fd410",
+    "sm90-prefill-rescale.patch": "ea03dbd0a1c4cafe30afe61e9432bb67a35566dd92429cf22a9f9957a5d51bdc",
+    "sm90-decode-exact-tiles.patch": "6cd0e9dd84c92d65902893e7808fe2f91a1e4f264e5ef4be9aeee854d47399f7",
+    "sm90-prefill-phase.patch": "e95d0faa42d1bb512be3a78a660e627d911fc822d6cde486079583e075bec12a",
+    "candidate.patch": "04b3e8261984aa10d20cab106f2d27df99fc05e51538356ac104e1eacd84f62b"
+  },
+  "compiler": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Tue_May_27_02:21:03_PDT_2025\nCuda compilation tools, release 12.9, V12.9.86\nBuild cuda_12.9.r12.9/compiler.36037853_0\n",
+  "roles": {
+    "decode": {
+      "cubin_sha256": "6480ab3b5805e2c3867cb78013eb1c46a1ae343e7bcd8c71dc013f052e417871",
+      "registers": 168,
+      "stack_spills": [
+        "0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads"
+      ],
+      "compile_command": [
+        "/home/app/cuda/12.9.1/bin/nvcc",
+        "--cubin",
+        "--std=c++20",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-O3",
+        "--ptxas-options=-v,-warn-spills",
+        "-gencode",
+        "arch=compute_90a,code=sm_90a",
+        "-I/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/build/combined-1x1/deep_gemm/include",
+        "/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/build/combined-1x1/decode.cu",
+        "-o",
+        "/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/build/combined-1x1/decode.cubin",
+        "--compiler-bindir",
+        "/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+      ]
+    },
+    "prefill": {
+      "cubin_sha256": "2632ad7fe47e94ee45372840e6c300fb50d9428020df9449f6672f16729718bc",
+      "registers": 96,
+      "stack_spills": [
+        "32 bytes stack frame, 20 bytes spill stores, 20 bytes spill loads"
+      ],
+      "compile_command": [
+        "/home/app/cuda/12.9.1/bin/nvcc",
+        "--cubin",
+        "--std=c++20",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-O3",
+        "--ptxas-options=-v,-warn-spills",
+        "-gencode",
+        "arch=compute_90a,code=sm_90a",
+        "-I/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/build/combined-1x1/deep_gemm/include",
+        "/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/build/combined-1x1/prefill.cu",
+        "-o",
+        "/home/ACCOUNT/ku60000565/codex-fc1-cpu-20261018/build/combined-1x1/prefill.cubin",
+        "--compiler-bindir",
+        "/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+      ]
+    }
+  }
+}

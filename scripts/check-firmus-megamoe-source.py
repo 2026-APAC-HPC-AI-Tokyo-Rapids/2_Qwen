@@ -43,7 +43,8 @@ def check_rope_wiring(tree, path):
         args.attention_backend, args.kv_cache_dtype = backend, kv_dtype
         attention_layer.compatible_with_fused_kv_buffer = True
         exec(guard, ns)  # noqa: S102
-        q, k, v = ns["apply_qk_norm_rope"](attention_layer, Tensor((7, 9216), input_dtype), "positions", None)
+        prefill_batch = NS(forward_mode=NS(is_target_verify=lambda: False))
+        q, k, v = ns["apply_qk_norm_rope"](attention_layer, Tensor((7, 9216), input_dtype), "positions", prefill_batch)
         assert [c[0] for c in calls] == (["qknorm_fp8_rope"] if fused else ["norm", "old_rope"])
         assert q.dtype == ("fp8" if fused else input_dtype) and k.dtype == v.dtype == input_dtype
         ns["forward_core"](attention_layer, (None, None, (q, k, v, None)))
