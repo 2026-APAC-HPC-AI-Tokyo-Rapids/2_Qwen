@@ -132,7 +132,8 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     assert '--ep-size "${ep}" --max-running-requests 256' in submission
     assert "--disaggregation-transfer-backend nixl" in submission
     assert 'grep -q ACTIVE "${state_file}"' in submission
-    assert "/link_layer" not in submission
+    hca_selection = submission.split("  hca_devices=()", 1)[1].split('  [[ "${#hca_devices[@]}"', 1)[0]
+    assert "/link_layer" not in hca_selection.split("  else\n", 1)[1]
     assert 'SGLANG_HOST_IP=${node_ip}' in submission
     assert 'router_args+=(--prefill "http://${host}:${port}" "${bootstrap}")' in submission
     assert 'router_args+=(--decode "http://${host}:${port}")' in submission
@@ -161,7 +162,6 @@ def test_submission_script_keeps_profile_data_separate() -> None:
     assert '${OUTPUT_DIR}/profile' in submission
     assert 'SGLANG_HOST_IP=${node_ip}' in submission
     assert 'grep -q ACTIVE "${state_file}"' in submission
-    assert "/link_layer" not in submission
     assert 'if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=' in submission
     assert '"${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/"' in provision
     assert "profiler-invocation-*.argv" in submission

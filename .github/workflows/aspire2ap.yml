@@ -45,8 +45,10 @@ jobs:
           MODEL_PATH: /scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
           PROFILE: ${{ inputs.profile }}
         run: |
+          [[ "${CONTAINER_SHA256}" == "$(jq -er .container_sha256 configs/aspire-serving.json)" ]] || { echo "ASPIRE MegaMoE requires the verified Firmus 38664373784 image; stage that archive before submitting." >&2; exit 1; }
           PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          bash scripts/check-firmus-image.sh "${runtime_dir}/sglang.sqsh" "${runtime_dir}/source" "${GITHUB_WORKSPACE}"
           install -m 0755 scripts/stage-qwen-node-model.sh "${runtime_dir}/scripts/stage-qwen-node-model.sh"
           install -m 0644 research/simulation/greedy_probe.py "${runtime_dir}/scripts/greedy_probe.py"
           install -m 0644 configs/aspire-serving.json "${runtime_dir}/source/aspire-serving.json"
@@ -80,7 +82,7 @@ jobs:
         run: |
           cd "${RUNTIME_DIR}"
           variables="PROFILE=${PROFILE},RUNTIME_DIR=${RUNTIME_DIR}"
-          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=1:host=a2ap-dgx026:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1+1:host=a2ap-dgx030:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -e "${RUNTIME_DIR}/logs/pbs.stderr.log" -N qwen3_pd "${RUNTIME_DIR}/scripts/run-qwen-pd.pbs")"
+          job_id="$(/opt/pbs/bin/qsub -P 59010014 -l 'select=2:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1' -l place=scatter:excl -v "${variables}" -o "${RUNTIME_DIR}/logs/pbs.log" -e "${RUNTIME_DIR}/logs/pbs.stderr.log" -N qwen3_pd "${RUNTIME_DIR}/scripts/run-qwen-pd.pbs")"
           [[ "${job_id}" =~ ^[0-9]+([.][A-Za-z0-9.-]+)?$ ]]
           printf 'PBS_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
@@ -88,6 +90,7 @@ jobs:
         shell: bash
         run: scripts/monitor-qwen-job.sh aspire2p-shell platforms/aspire2ap/check-qwen-job.sh
       - name: ログ・AIPerf・profile・来歴をrunnerへ回収
+        id: collect
         if: always() && steps.submit.outputs.job_id != ''
         shell: home-lab-shell {0}
         run: |
@@ -105,6 +108,16 @@ jobs:
           name: qwen-aspire2ap-pd-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/qwen-aspire2ap-pd
           if-no-files-found: error
+      - name: 回収結果の検証用Pythonを準備
+        if: always() && steps.collect.outcome == 'success'
+        uses: astral-sh/setup-uv@v7
+      - name: 回収した全DP rankの実設定とKV容量を検証
+        if: always() && steps.collect.outcome == 'success'
+        shell: bash
+        run: |
+          root="${RUNNER_TEMP}/qwen-aspire2ap-pd"
+          config="${root}/source/source/aspire-serving.json"
+          while IFS=$'\t' read -r role port; do uv run --no-project --python 3.13 python scripts/check-firmus-server-info.py "${config}" "${root}/results/results/server-info-${role}-${port}.json" "${role}"; done < <(jq -r '.workers[] | [.role,.port] | @tsv' "${config}")
       - name: 実行環境と残留ジョブを削除
         if: always()
         run: if [[ -n "${PBS_JOB_ID:-}" ]] && /opt/pbs/bin/qstat "${PBS_JOB_ID}" >/dev/null 2>&1; then /opt/pbs/bin/qdel "${PBS_JOB_ID}"; fi; rm -rf -- "${RUNTIME_DIR:?}"

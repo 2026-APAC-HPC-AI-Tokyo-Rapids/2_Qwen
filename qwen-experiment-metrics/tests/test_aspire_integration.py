@@ -15,6 +15,7 @@ import pytest
 
 REPOSITORY = Path(__file__).parents[2]
 FIXTURE = Path(__file__).parent / "fixtures/aspire-integration-argv.json"
+ASPIRE_HCAS = "mlx5_0:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_9:1,mlx5_10:1,mlx5_11:1"
 
 
 def capture_workers(source: str, platform: str, nodes: int, tmp_path: Path, profile: bool = False) -> list[dict]:
@@ -37,6 +38,8 @@ def capture_workers(source: str, platform: str, nodes: int, tmp_path: Path, prof
     topology = source.split("\n  case \"${QWEN_PLATFORM}\"", 1)[1].split("\n  esac", 1)[0]
     harness = 'set -euo pipefail\nrestore_worker_cache() { mkdir -p "$2"; }\npids=()\ncache_workers=()\nstart_worker() {' + worker + '\nfor ((node_rank=0;node_rank<NODE_COUNT;node_rank++)); do\ncase "${QWEN_PLATFORM}"' + topology + '\nesac\ndone\nfor pid in "${pids[@]}"; do wait "$pid"; done\n'
     environment = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}", "ARGV_RECORD": str(record), "QWEN_PLATFORM": platform, "NODE_COUNT": str(nodes), "GPUS_PER_NODE": "4" if platform == "genkai" else "8", "PROFILE": "true" if profile else "false", "OUTPUT_DIR": str(output), "node_tmp": str(root / "node"), "cache_root": str(root / "cache"), "MODEL_PATH": "/fixture/model", "CONTAINER_IMAGE": "/fixture/image.sqsh", "ucx_devices": "mlx5_0:1,mlx5_1:1", "node_ip": "192.0.2.1"}
+    if platform == "aspire2ap":
+        environment["ucx_devices"] = ASPIRE_HCAS
     subprocess.run(["bash", "-c", harness], env=environment, check=True, capture_output=True, text=True)
     result = [json.loads(line.replace(str(root), "/fixture")) for line in record.read_text().splitlines()]
     return sorted(result, key=lambda item: item["argv"][item["argv"].index("--port") + 1])
@@ -46,14 +49,17 @@ def capture_router(source: str, platform: str, tmp_path: Path) -> list[str]:
     root = tmp_path / platform
     (root / "source").mkdir(parents=True)
     (root / "source/aspire-serving.json").write_bytes((REPOSITORY / "configs/aspire-serving.json").read_bytes())
-    (root / "source/worker-endpoints.tsv").write_text("prefill\t192.0.2.1\t30100\t9000\nprefill\t192.0.2.1\t30101\t9001\ndecode\t192.0.2.2\t30200\tunused\ndecode\t192.0.2.2\t30201\tunused\n")
+    endpoints = "prefill\t192.0.2.1\t30100\t9000\nprefill\t192.0.2.1\t30101\t9001\ndecode\t192.0.2.2\t30200\tunused\ndecode\t192.0.2.2\t30201\tunused\n"
+    if platform == "aspire2ap":
+        endpoints = "prefill\t192.0.2.1\t30100\t9000\nprefill\t192.0.2.1\t30101\t9001\nprefill\t192.0.2.2\t30102\t9002\ndecode\t192.0.2.2\t30200\tunused\n"
+    (root / "source/worker-endpoints.tsv").write_text(endpoints)
     function = source.split("run_router() {", 1)[1].split("\nrun_aiperf()", 1)[0]
     harness = "set -euo pipefail\nenroot() { printf '%s\\0' \"$@\" >\"${OUTPUT_DIR}/argv\"; }\nrun_router() {" + function + "\nrun_router\n"
     subprocess.run(["bash", "-c", harness], env={**os.environ, "QWEN_PLATFORM": platform, "OUTPUT_DIR": str(root), "MODEL_PATH": "/fixture/model", "CONTAINER_IMAGE": "/fixture/image.sqsh"}, check=True)
     return root.joinpath("argv").read_text().rstrip("\0").split("\0")
 
 
-@pytest.mark.parametrize("platform,nodes,profile", [("aspire2ap", 2, False), ("firmus", 2, False), ("firmus", 2, True), ("genkai", 2, False), ("genkai", 4, False), ("genkai", 4, True)])
+@pytest.mark.parametrize("platform,nodes,profile", [("firmus", 2, False), ("firmus", 2, True), ("genkai", 2, False), ("genkai", 4, False), ("genkai", 4, True)])
 def test_worker_argv_matches_validated_candidate_or_main(platform: str, nodes: int, profile: bool, tmp_path: Path) -> None:
     source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
     expected = json.loads(FIXTURE.read_text())["workers"][f"{platform}-{nodes}-{profile}"]
@@ -63,7 +69,17 @@ def test_worker_argv_matches_validated_candidate_or_main(platform: str, nodes: i
 @pytest.mark.parametrize("platform", ["aspire2ap", "firmus", "genkai"])
 def test_router_argv_matches_candidate_or_main(platform: str, tmp_path: Path) -> None:
     source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
-    assert capture_router(source, platform, tmp_path) == json.loads(FIXTURE.read_text())["routers"][platform]
+    expected = json.loads(FIXTURE.read_text())["routers"][platform]
+    if platform == "aspire2ap":
+        start = expected.index("/opt/sglang/venv/bin/python")
+        expected[start:start + 3] = ["/opt/apac/bin/sglang-router", "launch"]
+        index = expected.index("--pd-disaggregation") + 1
+        expected[index:index] = ["--assignment-mode", "min_load"]
+        expected[expected.index("--prefill-policy") + 1] = "manual"
+        start = expected.index("--decode")
+        end = expected.index("--host")
+        expected[start:end] = ["--prefill", "http://192.0.2.2:30102", "9002", "--decode", "http://192.0.2.2:30200"]
+    assert capture_router(source, platform, tmp_path) == expected
 
 
 def test_candidate_flags_agree_with_archived_server_info() -> None:
@@ -204,3 +220,98 @@ def test_greedy_probe_records_fixed_requests_and_requires_logprobs(tmp_path: Pat
         assert request["min_tokens"] == request["max_tokens"] == 64
         assert request["ignore_eos"] and request["logprobs"]
         assert not request["stream"]
+
+
+@pytest.mark.parametrize("profile", [False, True])
+def test_aspire_megamoe_uses_three_prefill_workers_and_one_full_decode(tmp_path: Path, profile: bool) -> None:
+    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
+    assert config["concurrency"] == 112
+    assert [(w["node"], w["role"], w["gpus"]) for w in config["workers"]] == [(0, "prefill", "0,1,2,3"), (0, "prefill", "4,5,6,7"), (1, "prefill", "0,1,2,3"), (1, "decode", "4,5,6,7")]
+    workers = capture_workers(source, "aspire2ap", 2, tmp_path, profile)
+    assert len(workers) == 4
+    addresses = []
+    for record in workers:
+        argv = record["argv"]
+        role = argv[argv.index("--disaggregation-mode") + 1]
+        expected = {"--tp-size": "4", "--ep-size": "4", "--dp-size": "4", "--moe-a2a-backend": "megamoe", "--moe-runner-backend": "deep_gemm", "--attention-backend": "fa3", "--kv-cache-dtype": "fp8_e4m3", "--page-size": "64", "--chunked-prefill-size": "16384" if role == "prefill" else "8192", "--max-running-requests": "112" if role == "prefill" else "80", "--max-total-tokens": "32768" if role == "prefill" else "106496", "--mem-fraction-static": "0.90" if role == "prefill" else "0.96", "--speculative-algorithm": "EAGLE3", "--speculative-num-steps": "3", "--speculative-num-draft-tokens": "4", "--load-balance-method": "total_requests", "--load-snapshot-publish-interval": "1"}
+        for flag, value in expected.items():
+            assert argv.count(flag) == 1
+            assert argv[argv.index(flag) + 1] == value
+        assert "--enable-dp-attention" in argv
+        assert "UCX_ADAPTIVE_PROGRESS=n" in argv
+        assert "UCX_LOG_LEVEL=info" in argv
+        assert f"UCX_NET_DEVICES={ASPIRE_HCAS}" in argv
+        assert f"NCCL_IB_HCA=={ASPIRE_HCAS}" in argv
+        assert "SGLANG_DISAGG_STAGING_BUFFER=0" in argv
+        assert "SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1" in argv
+        assert "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096" in argv
+        assert ("--disable-cuda-graph" in argv) == (role == "prefill")
+        assert ("--enable-dp-lm-head" in argv) == (role == "decode")
+        if role == "decode":
+            start = argv.index("--cuda-graph-bs-decode") + 1
+            assert argv[start:start + len(config["decode_cuda_graph_bs"])] == [str(n) for n in config["decode_cuda_graph_bs"]]
+            assert argv[argv.index("--moe-dense-tp-size") + 1] == "1"
+            assert argv[argv.index("--disaggregation-decode-extra-slots") + 1] == "2"
+        addresses.append(int(argv[argv.index("--dist-init-addr") + 1].split(":")[1]))
+        assert bool(record["profiler"]) == profile
+    # Separate DP endpoint ranges; adjacent HTTP ports otherwise collide.
+    assert addresses == [32000, 32100, 32200, 33000]
+    assert config["container_sha256"] == "8df47c11d7ede66fd19f12c7012a9ab5c97b13387a2655fcbce9f13e1c334110"
+    workflow = (REPOSITORY / ".github/workflows/aspire2ap.yml").read_text()
+    assert workflow.index("jq -er .container_sha256 configs/aspire-serving.json") < workflow.index('PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh')
+
+
+@pytest.mark.parametrize("role", ["prefill", "decode"])
+def test_aspire_effective_settings_reject_clipped_kv_pool(role: str) -> None:
+    import runpy
+
+    check = runpy.run_path(str(REPOSITORY / "scripts/check-firmus-server-info.py"))["check"]
+    config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
+    # Reuse the real endpoint schema; these candidate values are synthetic, not an H100 run.
+    info = json.loads((REPOSITORY / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())[role]
+    capacity = config[f"{role}_max_total_tokens"]
+    for state in [info, *info["internal_states"]]:
+        state.update(max_total_tokens=capacity, max_running_requests=config["concurrency"] if role == "prefill" else config["decode_max_running_requests"], mem_fraction_static=0.90 if role == "prefill" else config["decode_mem_fraction_static"], chunked_prefill_size=4096 if role == "prefill" else 2048, moe_a2a_backend="megamoe", moe_runner_backend="deep_gemm", disaggregation_decode_extra_slots=2, disable_cuda_graph=role == "prefill", effective_max_running_requests_per_dp=config["decode_max_running_requests"] // config["dp_size"], memory_usage={"token_capacity": capacity})
+    info["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
+    check(config, info, role)
+    for state in info["internal_states"]:
+        state["memory_usage"]["token_capacity"] -= 64
+        with pytest.raises(ValueError, match="actual KV capacity"):
+            check(config, info, role)
+        state["memory_usage"]["token_capacity"] += 64
+
+
+@pytest.mark.parametrize("fault", [None, "missing", "down", "ethernet"])
+def test_aspire_excludes_active_storage_nics_and_requires_compute_fabric(tmp_path: Path, fault: str | None) -> None:
+    for index in range(12):
+        port = tmp_path / f"mlx5_{index}/ports/1"
+        port.mkdir(parents=True)
+        (port / "state").write_text("4: ACTIVE\n")
+        (port / "link_layer").write_text("InfiniBand\n")
+    port = tmp_path / "mlx5_3/ports/1"
+    if fault == "missing":
+        (port / "state").unlink()
+    elif fault == "down":
+        (port / "state").write_text("1: DOWN\n")
+    elif fault == "ethernet":
+        (port / "link_layer").write_text("Ethernet\n")
+    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    selection = source.split("  hca_devices=()", 1)[1].split("  printf 'hostname=", 1)[0]
+    selection = selection.replace("/sys/class/infiniband", str(tmp_path))
+    process = subprocess.run(["bash", "-c", "set -euo pipefail\nhca_devices=()\n" + selection + '\nprintf "%s" "$ucx_devices"'], env={**os.environ, "QWEN_PLATFORM": "aspire2ap"}, capture_output=True, text=True, check=False)
+    if fault:
+        assert process.returncode != 0
+        assert process.stdout == ""
+    else:
+        assert process.returncode == 0, process.stderr
+        assert process.stdout == ASPIRE_HCAS
+
+
+def test_decode_kv_pool_covers_full_batch_growth_and_transfer_slots() -> None:
+    config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
+    running = config["decode_max_running_requests"] // config["dp_size"]
+    # Official ~4K input plus page-rounded 200-token output; retain native 512-token reserve.
+    required = running * (4096 + 256 + 512) + config["decode_extra_slots"] * (4096 + 512)
+    assert config["decode_max_total_tokens"] >= required
+    assert max(config["decode_cuda_graph_bs"]) == running
