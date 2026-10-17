@@ -32,5 +32,192 @@
   ],
   "coverage": "All three new native patches are byte-identical to external serving commit 0374c551. The complete native header is identical; all existing SGLang patches, placement map and production runtime match, excluding image pin. Our two exact KV/TopK fusions and their numerical gates are additional. No unmeasured native communication rewrite is applied.",
   "deferred_native_change": "Own native communication rewrite and 1x1 loop patch, preserved in commit a31d00b and historical CPU evidence. The final candidate uses the exact externally measured native kernel to reduce uncertainty within the one-job constraint.",
-  "raw_archive_validation": "pending local SHA verification and parser replay before final submission"
+  "raw_archive_validation": {
+    "39070273796": {
+      "verified_archive_files": 65,
+      "parser_replay_all_fields_equal": true,
+      "normal_pass_before_separate_profile": true,
+      "official_submission": false,
+      "normal": {
+        "requests": 4615,
+        "ttft_failures": 104,
+        "itl_failures": 7,
+        "either_failures": 111
+      },
+      "after_20s": {
+        "requests": 3803,
+        "ttft_failures": 0,
+        "itl_failures": 5,
+        "either_failures": 5
+      }
+    },
+    "39069954937": {
+      "verified_archive_files": 64,
+      "parser_replay_all_fields_equal": true,
+      "normal_pass_before_separate_profile": true,
+      "official_submission": false,
+      "normal": {
+        "requests": 4267,
+        "ttft_failures": 114,
+        "itl_failures": 106,
+        "either_failures": 220
+      },
+      "after_20s": {
+        "requests": 3510,
+        "ttft_failures": 1,
+        "itl_failures": 97,
+        "either_failures": 98
+      }
+    }
+  },
+  "native_header_matches_measured_image": true,
+  "runtime_matches_archived_actual_config_excluding_image": true,
+  "normal_serving_cycles": {
+    "scope": "40 Decode iterations per log entry; first/last interval differ by at most one second from log timestamp quantisation. Steady segment is normal benchmark seconds 20 to 115. This is measured log cadence, not profiler or individual kernel latency.",
+    "runs": {
+      "39069954937": {
+        "duration_s": 124.8078727722168,
+        "ranks": [
+          {
+            "rank": 0,
+            "samples": 60,
+            "cycle_count": 2360,
+            "cycle_ms": 39.83050847457627,
+            "timestamp_upper_cycle_ms": 40.25423728813559,
+            "mean_running": 31.683333333333334,
+            "mean_acceptance": 2.2235,
+            "mean_transfer_queue": 8.3,
+            "mean_generated_tok_s": 1773.6533333333334
+          },
+          {
+            "rank": 1,
+            "samples": 60,
+            "cycle_count": 2360,
+            "cycle_ms": 39.83050847457627,
+            "timestamp_upper_cycle_ms": 40.25423728813559,
+            "mean_running": 31.616666666666667,
+            "mean_acceptance": 2.2203333333333335,
+            "mean_transfer_queue": 8.05,
+            "mean_generated_tok_s": 1771.4505
+          },
+          {
+            "rank": 2,
+            "samples": 60,
+            "cycle_count": 2360,
+            "cycle_ms": 39.40677966101695,
+            "timestamp_upper_cycle_ms": 39.83050847457627,
+            "mean_running": 31.533333333333335,
+            "mean_acceptance": 2.2201666666666666,
+            "mean_transfer_queue": 7.95,
+            "mean_generated_tok_s": 1771.4773333333333
+          },
+          {
+            "rank": 3,
+            "samples": 60,
+            "cycle_count": 2360,
+            "cycle_ms": 39.40677966101695,
+            "timestamp_upper_cycle_ms": 39.83050847457627,
+            "mean_running": 31.583333333333332,
+            "mean_acceptance": 2.2268333333333334,
+            "mean_transfer_queue": 8.416666666666666,
+            "mean_generated_tok_s": 1776.1628333333333
+          }
+        ]
+      },
+      "39070273796": {
+        "duration_s": 124.21762800216675,
+        "ranks": [
+          {
+            "rank": 0,
+            "samples": 65,
+            "cycle_count": 2560,
+            "cycle_ms": 36.71875,
+            "timestamp_upper_cycle_ms": 37.109375,
+            "mean_running": 31.676923076923078,
+            "mean_acceptance": 2.224,
+            "mean_transfer_queue": 8.03076923076923,
+            "mean_generated_tok_s": 1921.2427692307692
+          },
+          {
+            "rank": 1,
+            "samples": 65,
+            "cycle_count": 2560,
+            "cycle_ms": 36.71875,
+            "timestamp_upper_cycle_ms": 37.109375,
+            "mean_running": 31.784615384615385,
+            "mean_acceptance": 2.2224615384615385,
+            "mean_transfer_queue": 8.261538461538462,
+            "mean_generated_tok_s": 1920.1553846153847
+          },
+          {
+            "rank": 2,
+            "samples": 65,
+            "cycle_count": 2560,
+            "cycle_ms": 36.71875,
+            "timestamp_upper_cycle_ms": 37.109375,
+            "mean_running": 31.630769230769232,
+            "mean_acceptance": 2.223076923076923,
+            "mean_transfer_queue": 7.8,
+            "mean_generated_tok_s": 1919.3963076923076
+          },
+          {
+            "rank": 3,
+            "samples": 65,
+            "cycle_count": 2560,
+            "cycle_ms": 36.71875,
+            "timestamp_upper_cycle_ms": 37.109375,
+            "mean_running": 31.646153846153847,
+            "mean_acceptance": 2.2215384615384615,
+            "mean_transfer_queue": 7.953846153846154,
+            "mean_generated_tok_s": 1919.0247692307692
+          }
+        ]
+      }
+    }
+  },
+  "separate_profile": {
+    "scope": "Separate instrumented profile, used only for attribution; not the normal benchmark score. Compare equivalent Decode shapes. No profiler speedup is added again to the normal measured score.",
+    "runs": {
+      "39069954937": {
+        "sha256": "f179154a2e86605969378c1166f170bf6864a5eb247e954944d0353a4dc18f4f",
+        "kernels": [
+          {
+            "name": "void deep_gemm::sm90_fp8_mega_moe_impl<(unsigned int)4224, (unsigned int)4096, (unsigned int)1536, (unsigned int)128, (unsigned int)8, (unsigned int)32, (unsigned int)64, (unsigned int)128, (unsigned int)128, (unsigned int)141312, (unsigned int)2260992, (unsigned int)8, (unsigned int)64, (unsigned int)64, (unsigned int)256, (unsigned int)132, (unsigned int)4, (float)inf, (bool)1, (unsigned int)0, (bool)0, (bool)0, (bool)1, (bool)0, (bool)1, (unsigned int)3072, (unsigned int)4096, (unsigned int)4096, (unsigned int)1536, (unsigned int)2, (unsigned int)2, (unsigned int)8, (unsigned int)2, (unsigned int)384, (unsigned int)4, (unsigned int)32>(void *, int *, unsigned int, deep_gemm::layout::SymBuffer<T17>, CUtensorMap_st, CUtensorMap_st, CUtensorMap_st, const float *, CUtensorMap_st, CUtensorMap_st, CUtensorMap_st, CUtensorMap_st, const float *)",
+            "calls": 46248,
+            "mean_us": 249.1206045018163
+          },
+          {
+            "name": "void <unnamed>::fused_rope_kernel<(bool)1, (long)128, (bool)1, __nv_bfloat16, __nv_bfloat16, long, (unsigned int)32, (bool)1, (bool)1>(<unnamed>::FusedRopeParams)",
+            "calls": 46248,
+            "mean_us": 5.305067159660958
+          },
+          {
+            "name": "<unnamed>::mask_topk_ids_padded_region(<unnamed>::TopKParams)",
+            "calls": 46248,
+            "mean_us": 1.2697022357723577
+          }
+        ]
+      },
+      "39070273796": {
+        "sha256": "9aa17a7571357d239abb0286fdbc0e5eb393459f370f79812731c682974f9653",
+        "kernels": [
+          {
+            "name": "void deep_gemm::sm90_fp8_mega_moe_impl<(unsigned int)4224, (unsigned int)4096, (unsigned int)1536, (unsigned int)128, (unsigned int)8, (unsigned int)32, (unsigned int)64, (unsigned int)128, (unsigned int)128, (unsigned int)141312, (unsigned int)2260992, (unsigned int)8, (unsigned int)64, (unsigned int)64, (unsigned int)256, (unsigned int)132, (unsigned int)4, (float)inf, (bool)1, (unsigned int)0, (bool)0, (bool)0, (bool)1, (bool)0, (bool)1, (unsigned int)3072, (unsigned int)4096, (unsigned int)4096, (unsigned int)1536, (unsigned int)2, (unsigned int)2, (unsigned int)8, (unsigned int)2, (unsigned int)384, (unsigned int)4, (unsigned int)32>(void *, int *, unsigned int, deep_gemm::layout::SymBuffer<T17>, CUtensorMap_st, CUtensorMap_st, CUtensorMap_st, const float *, CUtensorMap_st, CUtensorMap_st, CUtensorMap_st, CUtensorMap_st, const float *)",
+            "calls": 49632,
+            "mean_us": 212.59161859284333
+          },
+          {
+            "name": "void <unnamed>::fused_rope_kernel<(bool)1, (long)128, (bool)1, __nv_bfloat16, __nv_bfloat16, long, (unsigned int)32, (bool)1, (bool)1>(<unnamed>::FusedRopeParams)",
+            "calls": 49632,
+            "mean_us": 5.308972114764668
+          },
+          {
+            "name": "<unnamed>::mask_topk_ids_padded_region(<unnamed>::TopKParams)",
+            "calls": 49632,
+            "mean_us": 1.2697314232753063
+          }
+        ]
+      }
+    }
+  }
 }

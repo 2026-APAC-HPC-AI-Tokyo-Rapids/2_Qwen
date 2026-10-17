@@ -44,42 +44,11 @@
       "imported_sha256": "b13f388d702573d6a165a1c1b6c4b60b95553941e5c9c75888291d8011d552fd"
     }
   ],
-  "scope": "Exact functional superset at import: all eight placement-branch files match byte for byte. Final image pin will intentionally change to the fresh communication-patched build. Performance superiority is not claimed without the final workload result.",
+  "scope": "The eight original placement files matched byte for byte at import. The final runtime and measured native kernel are unchanged apart from the image pin; only exact KV and TopK fusions are additional. Performance superiority of those fusions awaits the sole final workload run.",
   "additional_integration": {
-    "native_commit": "0374c551d212f27f05127a68102897fb582029a9",
-    "header_sha256": "135a43befec61e04c27a51be3ca0e4c8b928669529a830acde134042379e1a6d",
-    "patches": {
-      "patches/deep-gemm/sm90-decode-swap-ab-hoist.patch": "88351653b3190a723a0b6e34e974756fe7a51a6faa401325f278487cc5c6013a",
-      "patches/deep-gemm/sm90-decode-swap-ab-l1-quant.patch": "012220e3293d1eb05c5a448c342435eff2e6141e7ba95b47df7fccb51560230e",
-      "patches/deep-gemm/sm90-dispatch-pull-overlap.patch": "450d274998b58b60c049f80d99a383a8b89cff26f67979c209dd5625cd58caf6",
-      "patches/sglang/qknorm-rope-fp8-kv.patch": "8391a2917736e37bbcbfc41e9772eabdc9598d0ef809994426e96b1683d8912f",
-      "patches/sglang/qwen-topk-padding.patch": "303f873cbba6e5a7f060eae0c018f65688d63dea54bf60e76d256baa7de0ec00"
-    },
-    "observed_runs": [
-      {
-        "cluster": "Firmus",
-        "run_id": 39070273796,
-        "score": 7251.583487377242,
-        "good_request_fraction": 0.9759479956663055,
-        "error_requests": 0.0,
-        "official_workload_validation": true,
-        "scope": "External normal benchmark, not submitted by this task. Local parser score on official workload; not organiser submission.",
-        "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39070273796"
-      },
-      {
-        "cluster": "Firmus",
-        "run_id": 39069954937,
-        "score": 6485.020503381219,
-        "good_request_fraction": 0.9484415280056245,
-        "error_requests": 0.0,
-        "official_workload_validation": true,
-        "scope": "External normal benchmark, not submitted by this task. Local parser score on official workload; not organiser submission.",
-        "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39069954937"
-      }
-    ],
-    "coverage": "All three new native patches are byte-identical to external serving commit 0374c551. The complete native header is identical; all existing SGLang patches, placement map and production runtime match, excluding image pin. Our two exact KV/TopK fusions and their numerical gates are additional. No unmeasured native communication rewrite is applied.",
-    "deferred_native_change": "Own native communication rewrite and 1x1 loop patch, preserved in commit a31d00b and historical CPU evidence. The final candidate uses the exact externally measured native kernel to reduce uncertainty within the one-job constraint.",
-    "raw_archive_validation": "pending local SHA verification and parser replay before final submission"
+    "source_branch": "perf/firmus-decode-kernel-placement-20261018",
+    "source_commit": "0374c551d212f27f05127a68102897fb582029a9",
+    "evidence": "measured-serving-base.json"
   },
   "post_import_changes": {
     "configs/firmus-framework.json": "Fresh image pin only; placement/runtime retained",

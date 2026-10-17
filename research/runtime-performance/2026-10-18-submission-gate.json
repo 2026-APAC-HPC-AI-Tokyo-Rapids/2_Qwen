@@ -1,12 +1,12 @@
 {
   "date": "2026-10-18",
   "base_commit": "9b2fbebefc82304d880179d2758a689f24b60893",
-  "status": "measured_7251_native_kernel_imported_cpu_build_pending",
+  "status": "ready_for_single_final_submission",
   "firmus_jobs_submitted": 0,
   "aspire_jobs_submitted": 0,
   "other_gpu_jobs_submitted": 0,
-  "cloud_image_builds_started": 2,
-  "user_constraint": "At most one final Firmus job, only with strong confidence of >7000 good output tok/s; no comparison runs. User subsequently instructed continuing to the final submission and making the candidate at least a superset of the concurrent placement branch.",
+  "cloud_image_builds_started": 3,
+  "user_constraint": "At most one final Firmus job, only with strong confidence of >7000 good output tok/s; no comparison runs. User subsequently instructed continuing to the final submission and making the candidate at least a superset of the concurrent placement branch. User subsequently explicitly instructed submitting now and ending after submission acceptance without checking results.",
   "latest_completed_results": [
     {
       "cluster": "Firmus",
@@ -149,7 +149,9 @@
       "c298f40f2d6d6199a966954c",
       "4b76d9a21f305ec8a07b642d",
       "8e2eb73fdafcf034c142d2bb",
-      "0e809a22378e05266889f445"
+      "0e809a22378e05266889f445",
+      "ae7c1cd899162743f9fa31ef",
+      "771bcbe791df64e8ceec6c0e"
     ],
     "additional_pairs_20261018_0357": [
       [
@@ -181,6 +183,16 @@
         "quantization",
         "existing input path"
       ]
+    ],
+    "additional_pairs_20261018_0734": [
+      [
+        "measured repeatability",
+        "SLA margin"
+      ],
+      [
+        "fusion overhead",
+        "actual dispatch conditions"
+      ]
     ]
   },
   "implemented_candidate": {
@@ -188,11 +200,8 @@
     "placement_source_run": 39053527142,
     "relationship": "All three new native patches are byte-identical to external serving commit 0374c551. The complete native header is identical; all existing SGLang patches, placement map and production runtime match, excluding image pin. Our two exact KV/TopK fusions and their numerical gates are additional. No unmeasured native communication rewrite is applied.",
     "evidence": [
-      "../kernel-ablation/2026-10-18-combine/communication-build.json",
-      "../kernel-ablation/2026-10-18-combine/placement-analysis.json",
-      "../kernel-ablation/2026-10-18-combine/existing-timeline.json",
-      "../kernel-ablation/2026-10-18-combine/branch-coverage.json",
-      "../kernel-ablation/2026-10-18-combine/measured-serving-base.json"
+      "../kernel-ablation/2026-10-18-combine/measured-serving-base.json",
+      "../kernel-ablation/2026-10-18-combine/branch-coverage.json"
     ],
     "native_changes": [
       "Exact measured N_SWAP block hoist, conflict-free four-thread FC1 quantizer, and overlapping remote SF/top-k loads from the 7251 serving image.",
@@ -225,18 +234,23 @@
     "evidence": [
       "All three new native patches are byte-identical to external serving commit 0374c551. The complete native header is identical; all existing SGLang patches, placement map and production runtime match, excluding image pin. Our two exact KV/TopK fusions and their numerical gates are additional. No unmeasured native communication rewrite is applied.",
       "The external normal benchmark validates the joint placement/Decode improvement end to end, replacing the old synthetic-only projection.",
-      "An independently submitted same-image serving rerun 39074570813 is already running; use its result before the final decision without starting a comparison job."
+      "An independently submitted same-image serving rerun 39074570813 exists; the user explicitly requested immediate submission without waiting for results."
     ],
-    "remaining": "Fresh CPU image build, image provenance verification, raw-score replay, and the already-running external repeat. Byte-exact GPU/Graph gates will run once inside the final allocation.",
-    "uncertainty": "The integrated fusions have no end-to-end GPU timing yet. Do not claim this branch has scored 7000 or guarantee performance."
+    "remaining": "Submit the prepared single final job. At the user explicit instruction, do not wait for the independent repeat or this job result.",
+    "uncertainty": "The integrated fusions have no end-to-end GPU timing yet. Do not claim this branch has scored 7000 or guarantee performance.",
+    "decision": "Proceed with the exact measured 7251 native kernel and fixed runtime plus CPU-validated exact fusions; no extra fusion speedup is credited to the base score. The final GPU gates still run inside the single allocation.",
+    "external_repeat_not_awaited": {
+      "run_id": 39074570813,
+      "reason": "User explicitly requested immediate submission and ending without result checks"
+    }
   },
   "validation": {
-    "linux_tests": "352 passed, 1 skipped; one packaging-only failure caused by macOS AppleDouble files was rerun and passed after removing those metadata files",
+    "linux_tests": "Latest CPU-build CI: 353 passed, 1 skipped; all validation steps succeeded.",
     "source_patch_chain": "17 patches apply cleanly to pinned fc275674; freshly reconstructed tree exactly matches all six modified CUDA/Python sources; all three source-check scripts pass",
     "placement": "All 94 permutations, EP4 dispatch tables and 1504 weight/scale loading checks pass",
-    "native": "The complete native header now equals the successful 7251 image (135a43be...). The two SGLang fusions are unchanged from the successful CPU build a31d00b: KV35 registers/0 spills and Top-K<=32 registers/0 spills, all FFI entrypoints loaded. Fresh image will compile both native geometries again.",
+    "native": "CPU image build 39075586288: CUDA 13 native Prefill/Decode compile and ABI import pass; 10 RoPE/QK/KV and two TopK public specializations compile and load. Extracted image metadata matches the exact 7251 native header and all 17 current SGLang patch hashes. GPU byte/Graph checks remain inside the sole final allocation.",
     "static": "Ruff, bash syntax (41 files), actionlint and image validator fixtures pass. git diff --check passes outside patch files; patch context blank lines are intentional and the exact patch chains apply cleanly.",
-    "latest_image_fixtures": "20 passed locally, 4 Linux-only provision tests skipped; CI will run the full Linux suite before CPU build."
+    "latest_image_fixtures": "20 passed locally; all four Linux-only provision cases passed in the full CI suite."
   },
   "build_setup_failure": {
     "run_id": 39054590580,
@@ -265,5 +279,17 @@
       "gpu_workflows_skipped_by_build_only": true,
       "scope": "Superseded before any GPU allocation by the exact native kernel from the external 7251 serving run."
     }
-  ]
+  ],
+  "cpu_image_build": {
+    "run_id": 39075586288,
+    "commit": "0abac1840f7a4bfce47eba2aa4a89f0b29c12cb1",
+    "conclusion": "success",
+    "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39075586288",
+    "scope": "CPU-only build of exact measured native kernel plus unchanged KV and TopK fusions",
+    "image_sha256": "645745e084eb1e72e60bdc7cfcfe3d852a409c57d1f7e9464352b7e291af3280",
+    "image_size_bytes": 12249710592,
+    "all_three_cluster_archives_materialized": true,
+    "gpu_workflows_skipped_by_build_only": true,
+    "metadata_verified_on_archived_image": true
+  }
 }
