@@ -1,5 +1,5 @@
 diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
-index 9524a7b..5f442db 100644
+index 9524a7b..740a434 100644
 --- a/python/sglang/srt/models/qwen3_moe.py
 +++ b/python/sglang/srt/models/qwen3_moe.py
 @@ -241,6 +241,44 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
@@ -56,7 +56,7 @@ index 9524a7b..5f442db 100644
          if (
              not get_moe_a2a_backend().is_deepep()
              and not get_moe_a2a_backend().is_ascend_fuseep()
-@@ -311,6 +351,46 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
+@@ -311,6 +351,51 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
          else:
              return self.forward_deepep(hidden_states, forward_batch)
  
@@ -77,10 +77,15 @@ index 9524a7b..5f442db 100644
 +            raise ValueError(f"Qwen SM90 MegaMoE has {num_tokens} tokens, exceeding cap {cap}")
 +        if num_tokens:
 +            router_logits, _ = self.gate(hidden_states)
++            # A static --init-expert-location loads FusedMoE weights in physical
++            # order; remap topk ids the same way. Trivial placement returns None.
 +            topk = self.topk(
 +                hidden_states,
 +                router_logits,
 +                num_token_non_padded=forward_batch.num_token_non_padded,
++                expert_location_dispatch_info=ExpertLocationDispatchInfo.init_new(
++                    layer_id=self.layer_id
++                ),
 +            )
 +        else:
 +            # Idle DP ranks must still enter pre-dispatch and the fused collective.
@@ -93,8 +98,8 @@ index 9524a7b..5f442db 100644
 +            hidden=self.config.hidden_size,
 +            intermediate_hidden=self.config.moe_intermediate_size,
 +        )
-+        # Global expert IDs enter the native dispatcher unchanged. The kernel
-+        # returns the combined local-DP output; no post-expert all-reduce applies.
++        # Physical expert IDs enter the native dispatcher; rank r owns 32r..32r+31.
++        # The kernel returns the combined local-DP output; no post-expert all-reduce applies.
 +        return run_sm90_mega_routed(
 +            self, hidden_states, topk.topk_ids.to(torch.int32),
 +            topk.topk_weights.to(torch.float32), buf, num_tokens,
