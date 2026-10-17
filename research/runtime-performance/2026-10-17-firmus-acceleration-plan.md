@@ -52,7 +52,7 @@ ITL の回帰から、step 時間は固定分 13.7 ms（= 6.2 × 2.21）と要�
 ### Tier 1：既存イメージのまま、runtime だけで 1 run
 
 1. **Prefill の DP dispatch を round_robin にする。** ASPIRE で rank 間差 37% → 2% に揃い、Firmus でも DP0 と DP3 の差は 24%。4 rank が同じ step を進む構成では、遊んだ rank の分がそのまま損失で、見込みは Prefill 供給 +5〜9%（34.4 → 36〜37.5 req/s）。Decode 側は `total_requests` のまま。
-2. **Decode 上限と ITL の整合。** 供給が増えると Decode は上限 32/rank（N=128）に張り付き、回帰では ITL 平均 17.6、p99 20.5 ms で ITL 不合格が増える。上限 30/rank（N=120）なら ITL は −0.5〜0.7 ms、p99 は 19.6〜19.9 ms で不合格はほぼ消え、Decode 容量は 120 / 3.4 s ≒ 35 req/s。供給 36〜37 req/s にはやや足りないので、Tier 2 の Decode 短縮がない間は上限 31 を基準にし、ITL 不合格と raw の収支で決める。
+2. **Decode 上限と ITL の整合。** 供給が増えると Decode は上限 32/rank（N=128）に張り付き、回帰では ITL 平均 17.6、p99 20.5 ms で ITL 不合格が増える。上限 30/rank（N=120）なら ITL は −0.5〜0.7 ms、p99 は 19.6〜19.9 ms で不合格はほぼ消え、Decode 容量は 120 / 3.4 s ≒ 35 req/s。供給 36〜37 req/s にはやや足りないので、Tier 2 の Decode 短縮がない間は上限 31 を基準にし、ITL 不合格と raw の収支で決める。上限は CUDA graph の bucket 列と一致させる必要がある。SGLang は decode batch を `bisect_left` で次の捕捉済み bucket へ padding するので（`model_executor/runner/base_cuda_graph_runner.py`）、現行の `[…, 28, 30, 32]` のまま上限 31 にしても 32 の graph で実行され、GPU の仕事量は 32 と変わらない。6521.98 run でも running 31 のサンプル 142 件は 32 graph で動いていた。上限 31 なら bucket 列の末尾を 32 → 31 に置き換える（graph 1 本分の捕捉時間と数十 MB だけの差）。2 のべき乗であることに依存する箇所は KV pool、req slot、MegaMoE の行数（8 の倍数に丸める）にはない。
 3. **c は 192 のまま。** §3 の通り、下げると Prefill が飢える。handoff が短くなった分だけ下げる。
 4. **handoff 遅延の計測（GPU 不要）。** router ログの request_id ごとの時刻と prefill/decode ログを突き合わせ、§3 の約 31 要求がどの状態にいるかを特定する。候補は `firmus-dp-rank-query` patch の問い合わせ（prefill address ごとに 1 件ずつの HTTP）、Decode の prealloc 周期、bootstrap handshake。0.3 s 削るごとに in-flight が約 10 減り、同じ Prefill 飽和を c −10 で保てる。開始一斉投入の不合格は c にほぼ比例する。
 
