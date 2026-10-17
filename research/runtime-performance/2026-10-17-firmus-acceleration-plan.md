@@ -23,13 +23,13 @@ raw 6875 に対して score 6522 なので、SLA 不合格だけで 5.2% を失�
 
 | kernel | 1 layer あたり | 割合 | 備考 |
 |---|---:|---:|---|
-| MegaMoE `sm90_fp8_mega_moe_impl` | 2.17 ms | 63.5% | 旧イメージ 2.44 ms から −11%。1.24 TFLOP/layer/rank → 約 570 TFLOPS、H200 dense FP8 peak の約 58% |
+| MegaMoE `sm90_fp8_mega_moe_impl` | 2.17 ms | 63.5% | 旧イメージ 2.44 ms から −11%。1.24 TFLOP/layer/rank → 約 570 TFLOPS、H200 dense FP8 peak 1979 TFLOPS の約 29%（2026-10-18 訂正、旧記載の 58% は BF16 dense peak 989 で割った誤り） |
 | FA3 prefill（cutlass device_kernel） | 0.46 ms | 13.7% | 4k causal、FP8 Q/KV |
 | dense GEMM `sm90_fp8_gemm_1d2d`×2 | 0.44 ms | 12.8% | QKV / O |
 | 融合 QK-norm＋RoPE＋FP8 Q | 0.13 ms | 3.9% | kernel chain で追加 |
 | その他（elementwise、quant、router） | 約 0.2 ms | 約 6% | |
 
-MegaMoE は grid 132 / 640 thread / 225.6 KB shared で 1 CTA/SM（再解析 §A）。peak の 58% は融合 kernel 内の all-to-all と同期を含む値なので、残り余地は kernel 内部の待機にある。
+MegaMoE は grid 132 / 640 thread / 225.6 KB shared で 1 CTA/SM（再解析 §A）。peak の 29% は融合 kernel 内の all-to-all と同期、serving 中の expert 偏りを含む値で、演算器は飽和していない。内訳は §7。
 
 ### Decode（N=126、1 step ≒ 38 ms、GPU 稼働 86%）
 
@@ -95,7 +95,7 @@ run C = run A ＋ `--optimistic-prefill-attempts 2`（Prefill のみ、イメー
 ### Tier 2：kernel（新イメージ、komoriyuta の作業と接続）
 
 5. **Decode MegaMoE の行あたり費用。** step の 63%。komoriyuta の `register-redux` と `warp-redux-r176` は CPU コンパイル・SASS 検査済みで GPU 未実行（`results.json`）。21c2927 の失敗は量子化器の barrier と scale cache のどちらが原因か分離できていないので、GPU で測るなら baseline＋候補 1 条件ずつの matched run にする。7200 に必要なのは「同じ batch で Decode cycle −9.4%」または「MoE 単独で −17%」（loop-hoist 記録の計算）。
-6. **Prefill MegaMoE の tile/pipeline。** 2.17 ms/layer、peak の 58%、1 CTA/SM。残り余地は kernel 内の待機なので、代表 shape（4096 token × 4 rank、expert 偏りあり）の hardware counter が要る。現行の nsys は driver 13.3 非対応で CUDA イベントが欠け、GPU metrics も取れていない。driver 13.3 対応の Nsight を image に入れ、ncu の単独 replay が分散 persistent kernel で成立するかを先に確認する（再解析の TODO）。
+6. **Prefill MegaMoE の tile/pipeline。** 2.17 ms/layer、FP8 peak の 29%、1 CTA/SM。残り余地は kernel 内の待機なので、代表 shape（4096 token × 4 rank、expert 偏りあり）の hardware counter が要る。現行の nsys は driver 13.3 非対応で CUDA イベントが欠け、GPU metrics も取れていない。driver 13.3 対応の Nsight を image に入れ、ncu の単独 replay が分散 persistent kernel で成立するかを先に確認する（再解析の TODO）。
 7. **Decode の非 MoE 部分。** FA3 decode 4.6 ms（split-KV 掃引は済みで約 1 ms の余地）、dense GEMM 2.9 ms、小 kernel 2.5 ms、空き 5 ms。空き 5 ms は欠損警告つきの値なので、欠損のない収録を取ってから `get_next_batch_to_run` の Gloo all_gather（12 ms、87% は GPU と重なる）や polling 周期を触る。
 
 Tier 1 と Tier 2 の Decode 短縮 −10% が揃えば、上限 32 のまま ITL p99 が 20 ms を割り、Prefill 供給 37 req/s が全部 goodput になって 7200 に届く計算になる。Prefill kernel の改善はその先の伸びしろ。
@@ -182,7 +182,7 @@ run A は N=113.6 で 37.6 ms、参照は N=116.8 で 38.3 ms。傾き 0.197 ms/
 2. **optimistic prefill（N=2）。** Prefill 側滞在を bootstrap 待ちの約 12 要求分減らし、同じ占有率をより低い c で保てる。一斉投入時の Prefill 処理も速くなる。安全性は §3.2 の通り。
 3. router → client の 41 ms（TCP_NODELAY）。
 
-合計で +1.5〜3%（6620〜6720）が上限で、7200 には Decode step の短縮（kernel）が不可欠。Decode MegaMoE は step の 63%、Prefill MegaMoE は FP8 peak の 58% で、komoriyuta の 2 候補は両方とも遅くなった。
+合計で +1.5〜3%（6620〜6720）が上限で、7200 には Decode step の短縮（kernel）が不可欠。Decode MegaMoE は step の 63%、Prefill MegaMoE は FP8 peak の 29% で、komoriyuta の 2 候補は両方とも遅くなった。
 
 ### run E の結果（Actions 39040135834、`32bcdb3`、参照イメージ、c176 ＋ optimistic prefill 2）
 
@@ -214,3 +214,31 @@ run A は N=113.6 で 37.6 ms、参照は N=116.8 で 38.3 ms。傾き 0.197 ms/
 | **E 39040135834** | **c176 ＋ optimistic prefill 2** | **6555.60** | 機構どおり、+0.5%（単回） |
 
 runtime 設定で得られる改善は E の水準が上限で、7200 には Decode step の短縮（kernel）が必要という結論は変わらない。E を main に採用するかは、同条件の反復 1 回で +0.5% の方向が保たれるかを見てから決める。
+
+## 7. MegaMoE の飽和度と serving 外の単独時間（2026-10-18）
+
+FP8 dense peak は 1979 TFLOPS（疎性込み 3958）、HBM は 4.8 TB/s。expert 1 個の FP8 重みは gate/up 4096×3072 と down 1536×4096 の 18.87 MB、EP4 の 32 expert で 604 MB/layer/rank。以下は FLOP とバイトの計算値で、hardware counter の実測ではない。
+
+| | Prefill（4096 token/rank） | Decode（126 token/rank） |
+|---|---:|---:|
+| serving 中の MegaMoE 平均 | 2.17 ms | 0.2415 ms |
+| 演算量 | 1.24 TFLOP | 38 GFLOP |
+| FP8 演算性能 | 570 TFLOPS（peak の 29%） | 157 TFLOPS（8%） |
+| 重みの実効帯域 | — | 2.5 TB/s（52%） |
+| 下限の目安 | 約 0.9 ms（DeepGEMM 実績の約 1400 TFLOPS 換算） | 約 0.13〜0.145 ms（重み読み出し） |
+
+毎回の serving 前に走る GPU ゲート（`scripts/check-firmus-megamoe.py`）は、偏りのない乱数 top-k で同じ kernel の時間も測っている（20 回の max-rank、中央値）。
+
+| run | prefill-balanced 4096 | decode-balanced 128（CUDA graph） |
+|---|---:|---:|
+| 38945855851（参照） | 1.662 ms | 0.231 ms |
+| 39040135834（run E） | 1.662 ms | 0.234 ms |
+
+- Prefill は serving 中 2.17 ms に対し単独 1.66 ms で、約 0.5 ms（23%）を serving 条件で失っている。38945855851 の Prefill ログでは batch あたり平均 4027〜4029 token/rank、4000 以上が 90〜91% なので、chunk の不足では説明できない。候補は実ルーティングの rank 間偏り、expert ごとの tile 端数、長時間負荷でのクロック低下で、まだ分離していない。
+- 偏りのない単独条件でも 1.66 ms（peak の 38%）で、下限の約 1.8 倍。残りは NVLink 通信（token と expert の組ごとの FP8 pull と BF16 scatter、片方向で約 300 MB/layer）、combine 前の 4 rank バリア、GEMM 効率（cluster 1、TMA multicast なし）のどれかで、ゲートのベンチに「自 rank の expert だけを選ぶ top-k」を足すと通信分を分けられる。
+- Decode は serving 中と単独の差が 4% で、偏りは効いていない。残りは kernel 内の同期と待ち（冒頭の件数交換、grid sync、NVLink バリアの間 HBM がほぼ遊ぶ）。
+
+### expert 配置の付け替え（静的 EPLB）を使う場合の注意
+
+SGLang は `--init-expert-location` で、expert 使用回数の統計（`--expert-distribution-recorder-mode stat`）から配置を決めて起動時に読み込める。冗長 expert 0 なら 128 expert の並べ替えだけで、出力はビット一致する。MegaMoE patch のガードは動的 EPLB と冗長 expert を禁止するが、`--init-expert-location` は禁止していない。一方、MegaMoE 経路は `self.topk(...)` に `expert_location_dispatch_info` を渡さず論理番号のまま kernel へ渡す（DeepEP 経路は渡す）。このまま配置ファイルを指定すると重みは物理順で読まれ、kernel は論理番号で引くので、エラーなしで誤った expert を計算する。使うには MegaMoE 経路にも同じ dispatch info を渡し、MegaMoE 用の重み変換が物理順を正しく扱うか確認する必要がある。偏りの大きさは未測定なので、先に使用回数を記録して rank の最大/平均を計算する。
+
