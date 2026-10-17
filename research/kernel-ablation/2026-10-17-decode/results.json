@@ -1,0 +1,204 @@
+{
+  "date": "2026-10-17",
+  "status": "CPU compilation and static checks complete; GPU attribution and speed unmeasured",
+  "gpu_jobs_submitted": 0,
+  "gpu_execution_performed": false,
+  "gpu_submission_authorized": false,
+  "production_enabled": false,
+  "baseline_commit": "a6acf5f11008c1e77170a53ac49fe585be5aeafd",
+  "failed_combined_commit": "21c29278309acd19a44e91158e0e2c980d3eb698",
+  "previous_gpu_evidence": "../../runtime-performance/2026-10-17-decode-register-quant.json",
+  "attribution": {
+    "controls": [
+      "baseline",
+      "quant-only",
+      "scale-only",
+      "combined"
+    ],
+    "known": "The rejected quantizer adds one CTA barrier site and 70 warp-shuffle sites to the compiled Decode kernel. Scale caching adds three warp-shuffle sites and no CTA barrier site. All four controls compile with zero Decode spills.",
+    "unknown": "The previous combined GPU run cannot identify which change dominated the regression, their interaction, or kernel-internal stall reasons. Static instruction sites are not executed instruction counts, latency, or throughput.",
+    "quant_only_scope": "The quantizer factor includes register-resident values, revised reduction/packing, a higher math-register budget and the extra barrier; it does not isolate the barrier alone.",
+    "barrier_candidate_scope": "The no-extra-barrier candidate retains read-only partial maxima and repeats scale reduction in each warp. Comparing it with quant-only would test that complete replacement, not a pure barrier-latency experiment.",
+    "future_contrasts_if_gpu_is_authorized": [
+      "quant-only minus baseline",
+      "scale-only minus baseline",
+      "combined minus quant-only minus scale-only plus baseline"
+    ],
+    "future_measurement_requirements": "Use identical numerical seeds, workloads, batching, routing comparisons and separate unprofiled score/profile windows. Preserve all four controls; do not infer causality from unmatched microbenchmark seeds."
+  },
+  "improvements": {
+    "register-redux": "Keep SwiGLU values in registers, publish immutable partial maxima, compute scales in each warp, and use exact eight-lane unsigned REDUX for nonnegative FP32 maxima. Removes inverse-scale scratch reuse and its additional CTA barrier.",
+    "warp-redux-r176": "Use a swizzled shared FP32 layout and one warp per group64 row, with exact full-warp REDUX. Increase math-register allocation from 168 to 176 to remove the observed 8-byte store/load spills.",
+    "preferred_candidates": [
+      "warp-redux-r176",
+      "register-redux"
+    ],
+    "deprioritized": "warp-redux at 168 math registers spills 8 bytes in each direction; retain only as the reproducible predecessor of warp-redux-r176.",
+    "numerical_scope": "Retain all group64 values, FP8 E4M3 conversion, SiLU, clamping, the existing scale formula and reciprocal helper. Integer ordering is used only for an exact maximum of nonnegative FP32 magnitudes.",
+    "tradeoffs": "REDUX reduces the shuffle tree but introduces collective/control instructions; register-redux repeats scale work. CPU compilation alone cannot rank their speed or establish a 7200-goodput projection."
+  },
+  "compilation": {
+    "host": "Genkai login CPU; no scheduler allocation or CUDA kernel execution",
+    "nvcc": "12.9.86",
+    "cuda_arch": "sm_90a",
+    "host_compiler": "/opt/rh/gcc-toolset-13/root/usr/bin/g++",
+    "wheel_sha256": "e5e9f92cdf0515fe878bd81131bc25d2984e00c005824d2932af01a5e0d75261",
+    "conditions": 9,
+    "cubins": 18,
+    "large_prefill": "All nine SASS files and all ELF section contents other than .strtab match the baseline. Cubin hashes differ because of source-path metadata in .strtab.",
+    "large_prefill_spills": "All conditions retain the baseline 40-byte store/load spill report. The zero-spill claim applies to Decode only.",
+    "scope_limit": "The large-Prefill check covers only the reuse-accumulator geometry. Small-Prefill SwapAB fallback uses the changed Decode geometry and still requires GPU validation.",
+    "failed_candidate_reproduction": "Both combined Decode and large-Prefill SASS files exactly match the CPU evidence from the previously failed candidate."
+  },
+  "checks": {
+    "cpu_layout": "PASS: all 0..64 valid-token tails, zero/tiny values, unique output/scale ownership, immutable scratch, swizzled layout, exact maxima and FP32 conversion-input model; REDUX lane masks and positive IEEE-754 ordering checked.",
+    "cpu_layout_limit": "The host model does not execute CUDA reciprocal/FP8 instructions, verify device memory ordering, or replace GPU numerical/race checks and the official accuracy check.",
+    "python_syntax": "PASS",
+    "ruff": "PASS",
+    "git_diff_check": "PASS",
+    "source_provenance": "All nine manifests and patches match their individual source commits. All 18 downloaded cubins match the recorded hashes.",
+    "baseline_preserved": [
+      "containers/Dockerfile",
+      "containers/build-sm90-megamoe.py",
+      "scripts/build-sglang-container.sh",
+      "scripts/check-firmus-image.sh",
+      "qwen-experiment-metrics/tests/test_firmus_image.py",
+      "configs/firmus-framework.json"
+    ]
+  },
+  "evidence": {
+    "archive_local_path": "/Users/yuta/Dev/APAC/outputs/firmus-decode-ablation-20261017/cpu-evidence.tar.gz",
+    "archive_sha256": "588dc1af720a2411ba15113af8c7661a444ab588af56325e16934dbbcb0fe69c",
+    "archive_contents": "Raw compiler logs, cubins, CUDA instantiations, SASS, per-condition evidence, summary and collector; rebuild using build.py and each condition manifest.",
+    "build_driver_sha256": "5dc4dc4da79277d078355fe2da2f2dc0e492cabfae926e48abb0c8190509372b",
+    "layout_checker_sha256": "6f48d40c3f4b665c136d6454fed05df65912567fcdedc0e08ce04607daf26431"
+  },
+  "conditions": [
+    {
+      "name": "baseline",
+      "source_commit": "909f505fdc6bf92545419a5429eb835ce20c597b",
+      "math_register_allocation": 168,
+      "decode_spill_store_bytes": 0,
+      "decode_spill_load_bytes": 0,
+      "decode_static_sites": {
+        "cta_barrier": 29,
+        "warp_shuffle": 22,
+        "warp_redux_max": 0,
+        "warp_collective_sync": 34,
+        "all_instructions_including_nop": 6536
+      }
+    },
+    {
+      "name": "quant-only",
+      "source_commit": "27abd48c496d26bbf59db77118f3a6c4dd418ae0",
+      "math_register_allocation": 192,
+      "decode_spill_store_bytes": 0,
+      "decode_spill_load_bytes": 0,
+      "decode_static_sites": {
+        "cta_barrier": 30,
+        "warp_shuffle": 92,
+        "warp_redux_max": 0,
+        "warp_collective_sync": 46,
+        "all_instructions_including_nop": 6616
+      }
+    },
+    {
+      "name": "scale-only",
+      "source_commit": "681712760ef0edbc448088fcd6cd44118baac52a",
+      "math_register_allocation": 168,
+      "decode_spill_store_bytes": 0,
+      "decode_spill_load_bytes": 0,
+      "decode_static_sites": {
+        "cta_barrier": 29,
+        "warp_shuffle": 25,
+        "warp_redux_max": 0,
+        "warp_collective_sync": 34,
+        "all_instructions_including_nop": 6504
+      }
+    },
+    {
+      "name": "combined",
+      "source_commit": "ef4b4c487842cb2d9e1a5d3092368f7042d05f97",
+      "math_register_allocation": 192,
+      "decode_spill_store_bytes": 0,
+      "decode_spill_load_bytes": 0,
+      "decode_static_sites": {
+        "cta_barrier": 30,
+        "warp_shuffle": 95,
+        "warp_redux_max": 0,
+        "warp_collective_sync": 46,
+        "all_instructions_including_nop": 6616
+      }
+    },
+    {
+      "name": "warp-quant",
+      "source_commit": "20e57bce3954e66117bac9d8500a401b99dd01c4",
+      "math_register_allocation": 168,
+      "decode_spill_store_bytes": 0,
+      "decode_spill_load_bytes": 0,
+      "decode_static_sites": {
+        "cta_barrier": 29,
+        "warp_shuffle": 82,
+        "warp_redux_max": 0,
+        "warp_collective_sync": 64,
+        "all_instructions_including_nop": 6720
+      }
+    },
+    {
+      "name": "register-no-extra-barrier",
+      "source_commit": "97703854cf74b2294e9f168fc80fc134ce3f8a40",
+      "math_register_allocation": 192,
+      "decode_spill_store_bytes": 0,
+      "decode_spill_load_bytes": 0,
+      "decode_static_sites": {
+        "cta_barrier": 29,
+        "warp_shuffle": 118,
+        "warp_redux_max": 0,
+        "warp_collective_sync": 34,
+        "all_instructions_including_nop": 7032
+      }
+    },
+    {
+      "name": "warp-redux",
+      "source_commit": "448beccc3de277dddaba203588adf8ec78f5930b",
+      "math_register_allocation": 168,
+      "decode_spill_store_bytes": 8,
+      "decode_spill_load_bytes": 8,
+      "decode_static_sites": {
+        "cta_barrier": 29,
+        "warp_shuffle": 22,
+        "warp_redux_max": 28,
+        "warp_collective_sync": 48,
+        "all_instructions_including_nop": 6824
+      }
+    },
+    {
+      "name": "register-redux",
+      "source_commit": "53c42c09ab16ed4eac8964c02b559814cbbe785b",
+      "math_register_allocation": 192,
+      "decode_spill_store_bytes": 0,
+      "decode_spill_load_bytes": 0,
+      "decode_static_sites": {
+        "cta_barrier": 29,
+        "warp_shuffle": 22,
+        "warp_redux_max": 64,
+        "warp_collective_sync": 66,
+        "all_instructions_including_nop": 7168
+      }
+    },
+    {
+      "name": "warp-redux-r176",
+      "source_commit": "cf5e35a063fe97c0af7d8d01a6ebc8151d503059",
+      "math_register_allocation": 176,
+      "decode_spill_store_bytes": 0,
+      "decode_spill_load_bytes": 0,
+      "decode_static_sites": {
+        "cta_barrier": 29,
+        "warp_shuffle": 22,
+        "warp_redux_max": 28,
+        "warp_collective_sync": 48,
+        "all_instructions_including_nop": 6824
+      }
+    }
+  ]
+}

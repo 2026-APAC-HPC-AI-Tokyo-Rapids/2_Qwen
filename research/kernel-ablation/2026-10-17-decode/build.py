@@ -41,7 +41,7 @@ def build(args):
     assert sha(header) == condition["header_sha256"]
     evidence = {"condition": condition, "gpu_executed": False,
                 "wheel_sha256": sha(args.wheel), "patches": {p.name: sha(p) for p in patches},
-                "compiler": subprocess.check_output([args.nvcc, "--version"], text=True), "roles": {}}
+                "compiler": subprocess.check_output([args.nvcc, "--version"], universal_newlines=True), "roles": {}}
     for role, config in [("decode", "64,128,128,141312,2260992,8,64,64,256,132,4,cute::numeric_limits<float>::infinity(),true,0,false,false,true,false,true"),
                          ("prefill", "128,256,128,141312,2260992,3,64,64,512,132,4,cute::numeric_limits<float>::infinity(),true,112,true,true,false,false,false")]:
         source = args.output / f"{role}.cu"
@@ -51,12 +51,12 @@ def build(args):
         command = [args.nvcc, "--cubin", "--std=c++20", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-O3", "--ptxas-options=-v,-warn-spills", "-gencode", "arch=compute_90a,code=sm_90a", "-I" + str(args.output / "deep_gemm/include"), str(source), "-o", str(cubin)]
         if args.ccbin:
             command += ["--compiler-bindir", args.ccbin]
-        result = subprocess.run(command, text=True, capture_output=True)
+        result = subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)  # noqa: UP021, UP022 - Genkai login Python is 3.6.
         log = result.stdout + result.stderr
         source.with_suffix(".build.log").write_text(log)
         if result.returncode:
             raise RuntimeError(log)
-        sass = subprocess.check_output([str(Path(args.nvcc).with_name("cuobjdump")), "--dump-sass", str(cubin)], text=True)
+        sass = subprocess.check_output([str(Path(args.nvcc).with_name("cuobjdump")), "--dump-sass", str(cubin)], universal_newlines=True)
         source.with_suffix(".sass").write_text(sass)
         evidence["roles"][role] = {"cubin_sha256": sha(cubin), "registers": int(re.search(r"Used (\d+) registers", log)[1]),
                                    "stack_spills": re.findall(r"(\d+ bytes stack frame, \d+ bytes spill stores, \d+ bytes spill loads)", log),

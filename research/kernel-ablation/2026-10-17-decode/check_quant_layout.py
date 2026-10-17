@@ -13,8 +13,16 @@ def f32(value):
 
 
 def reduce_columns(values):
+    expected = []
+    for lane in range(32):
+        mask = 0x11111111 << (lane % 4)
+        peers = [i for i in range(32) if mask & (1 << i)]
+        assert lane in peers and peers == list(range(lane % 4, 32, 4))
+        maximum_bits = max(struct.unpack("I", struct.pack("f", max(0.0, values[i])))[0] for i in peers)
+        expected.append(struct.unpack("f", struct.pack("I", maximum_bits))[0])
     for offset in (4, 8, 16):
         values = [max(values[lane], values[lane ^ offset]) for lane in range(32)]
+    assert values == expected
     return values
 
 
@@ -72,10 +80,17 @@ def check():
             loaded = [swizzled[token * 64 + (col ^ ((token & 6) << 2))] for col in range(64)]
             assert loaded == row
             assert max(map(abs, loaded)) == max(map(abs, row))
+            pairs = [max(abs(loaded[i]), abs(loaded[i + 1])) for i in range(0, 64, 2)]
+            maximum_bits = max(struct.unpack("I", struct.pack("f", v))[0] for v in pairs)
+            assert struct.unpack("f", struct.pack("I", maximum_bits))[0] == max(map(abs, row))
             for col, value in enumerate(row):
                 expected = f32(value * f32(1.0 / sf))
                 assert struct.pack("f", output[token, col]) == struct.pack("f", expected)
-    print("PASS: register no-extra-barrier and swizzled warp quantizers, all 0..64 tails")
+    # Positive IEEE-754 bit order also covers subnormals, ties and infinity.
+    special = [0, 1, 0x007fffff, 0x00800000, 0x3f800000, 0x7f7fffff, 0x7f800000]
+    floats = [struct.unpack("f", struct.pack("I", bits))[0] for bits in special]
+    assert floats == sorted(floats)
+    print("PASS: no-extra-barrier, swizzled and REDUX quantizers; masks and all 0..64 tails")
 
 
 if __name__ == "__main__":
