@@ -161,13 +161,18 @@ jobs:
           retry_read() {
             local attempt status
             for attempt in 1 2 3 4 5 6; do
-              if timeout --foreground 180 "$@"; then return 0; else status=$?; fi
+              if timeout --foreground "${read_timeout}" "$@"; then return 0; else status=$?; fi
               if (( attempt == 6 )); then return "${status}"; fi
               printf 'Artifact read failed (exit %s); retry in 30s (%s/6).\n' "${status}" "${attempt}" >&2
               sleep 30
             done
           }
-          for part in logs profile results source; do retry_read firmus-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"; done
+          # A 950 MiB Nsight profile exceeded 180 seconds (a54355a); other reads keep the old bound.
+          for part in logs profile results source; do
+            if [[ "${part}" == profile ]]; then read_timeout=900; else read_timeout=180; fi
+            retry_read firmus-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"
+          done
+          read_timeout=180
           marker=$(retry_read firmus-shell "if test -e '${RUNTIME_DIR}/run-success'; then echo present; else echo absent; fi")
           if [[ "${marker}" == present ]]; then retry_read firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; else [[ "${marker}" == absent ]]; fi
 
