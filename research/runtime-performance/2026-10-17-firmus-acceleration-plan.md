@@ -47,6 +47,28 @@ ITL の回帰から、step 時間は固定分 13.7 ms（= 6.2 × 2.21）と要�
 
 閉ループでは Prefill 側に滞在する要求数 = c − Decode running = 192 − 117 = 75。内訳は Prefill rank あたり queue 0.9＋bootstrap 待ち 1.0＋計算中 1.0 の計 35、Decode の prealloc 待ち 9、残り約 31 は router 到着から Prefill 受付、dp-rank 問い合わせ、KV 転送のどこかにあり、worker ログの計数に現れない。この約 31 要求（約 0.9 s）が c を押し上げ、開始時一斉投入の不合格（114 件 ≒ 3 秒 × 34.4 req/s を超えて並んだ分）を増やしている。c を下げると Prefill の queue が切れて供給が落ちるので、c の調整ではなく handoff の遅延を削るのが筋。
 
+### 3.1 handoff の分解結果（router ログと worker カウンタの突き合わせ）
+
+router.log は request_id ごとに開始と終了（latency 付き、1 秒刻み）しか残さず、終了は patch 済み router の `try_join!(prefill body, decode headers)` の完了、すなわち Decode の最初のトークン時点に等しい（client TTFT − 41 ms、±1 ms）。worker カウンタを Little の法則（滞在数 / 34.4 req/s）で時間に直すと、TTFT 2.04 s は次のように埋まる。
+
+| 段 | 滞在数 | 時間 | 備考 |
+|---|---:|---:|---|
+| Decode: dp-rank 問い合わせ＋prealloc（`#prealloc-req`） | 9.5 | 0.28 s | Prefill 側の登録を待つ |
+| Prefill: scheduler の受信待ち（計数なし） | — | 約 0.17 s | 340 ms iteration の半分 |
+| Prefill: bootstrap 待ち（`#bootstrap-req`） | 12.0 | 0.35 s | handshake が iteration 途中に届き、次の境界で取り出す |
+| Prefill: waiting queue（`#queue-req`） | 6.7 | 0.20 s | |
+| Prefill: 起動済み batch 内（`#new-seq`） | 22.1 | 0.64 s | 3986 token の要求が 4096 token chunk を 2 回またぐ |
+| Prefill: KV 送信中（`#inflight-req`） | 12.1 | 0.35 s | 実転送は短く、1 iteration ごとの poll で量子化 |
+| Decode: running slot 待ち（Decode 行末の `#queue-req`） | 16.8 | 0.49 s | KV 到着済み、上限 32/rank が空くのを待つ |
+| router 返却 → client 最初の byte | — | 0.041 s | Linux の delayed-ACK/Nagle と整合する固定値。router の TCP_NODELAY を確認する価値あり |
+
+「ログに現れない約 31 要求」は、起動済み batch 内の 22 と Decode の slot 待ち 16.8 だった。含意は二つ。
+
+- **Firmus も Decode の slot 上限が同時に縛っている。** running は 84% のサンプルで 31〜32 で、KV が届いた要求が rank あたり 4 件 slot 待ちをしている。したがって run A（上限 31、Prefill round_robin）の raw の伸びは Decode 側で頭打ちになり、改善は主に ITL 不合格の解消（約 1.9%）と占有率の向上（29.2 → 30.5/31）で、score の見込みは 6950〜7150 ではなく **約 6850** に下方修正する。Decode の step 時間短縮（Tier 2）なしには raw は伸びない。
+- **Prefill は handshake 待ちで約 10% 空転している。** batch 起動の 55% は waiting queue が空で bootstrap 待ちの要求だけがある状態で起き、GPU 稼働は約 90%。bootstrap 待ちは iteration 境界に量子化された 0.35 s で、GPU を使わない。`--optimistic-prefill-attempts`（handshake 完了前に forward を始める）か、handshake を iteration 途中でも取り込む変更で、Prefill 供給 +5〜10% が見込める。安全性（出力不変、patch との整合、失敗時の挙動）は別途ソース確認のうえで判断する。
+
+Decode の上限を 40/rank に上げる案は、ITL の傾き（0.089 ms/要求）から p99 が 23 ms 近くになり不合格が急増するので採らない。
+
 ## 4. 施策と期待値
 
 ### Tier 1：既存イメージのまま、runtime だけで 1 run
