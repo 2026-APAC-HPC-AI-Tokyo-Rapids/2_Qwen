@@ -24,14 +24,6 @@ on:
         required: false
         default: ''
         type: string
-      recovery_job_id:
-        required: false
-        default: ''
-        type: string
-      recovery_runtime_dir:
-        required: false
-        default: ''
-        type: string
 
 permissions:
   actions: read
@@ -50,7 +42,7 @@ jobs:
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     outputs:
-      runtime_dir: ${{ steps.recover-runtime.outputs.runtime_dir || steps.provision.outputs.runtime_dir }}
+      runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
     steps:
       - name: 2ノードを検証
         shell: bash
@@ -61,19 +53,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 既存の実行環境を指定
-        id: recover-runtime
-        if: inputs.recovery_runtime_dir != ''
-        shell: bash
-        env:
-          RECOVERY_RUNTIME_DIR: ${{ inputs.recovery_runtime_dir }}
-        run: |
-          [[ "${RECOVERY_RUNTIME_DIR}" == "${RUNTIME_ROOT}/dynamo-"* ]]
-          printf 'runtime_dir=%s\n' "${RECOVERY_RUNTIME_DIR}" >>"${GITHUB_OUTPUT}"
-
       - name: SquashFS・モデル・tokenizer・設定を配備
         id: provision
-        if: inputs.recovery_runtime_dir == ''
         shell: bash
         env:
           PROFILE: ${{ inputs.profile }}
@@ -95,7 +76,7 @@ jobs:
           done
 
       - name: 配備失敗時の実行環境を削除
-        if: failure() && steps.provision.outputs.runtime_dir != '' && inputs.recovery_runtime_dir == ''
+        if: failure() && steps.provision.outputs.runtime_dir != ''
         env:
           RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
         run: rm -rf -- "${RUNTIME_DIR:?}"
@@ -116,7 +97,6 @@ jobs:
           persist-credentials: false
       - name: Slurmジョブを投入
         id: submit
-        if: inputs.recovery_job_id == ''
         run: |
           cd "${RUNTIME_DIR}"
           job_id="$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/submit.sbatch")"
@@ -124,34 +104,13 @@ jobs:
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
 
-      - name: SSHの復帰を待って既存Slurmジョブを復旧
-        id: recover
-        if: inputs.recovery_job_id != ''
-        shell: bash
-        env:
-          RECOVERY_JOB_ID: ${{ inputs.recovery_job_id }}
-        run: |
-          stderr=$(mktemp)
-          trap 'rm -f -- "${stderr}"' EXIT
-          deadline=$((SECONDS + 600))
-          while true; do
-            if timeout --foreground 180 firmus-shell --github-shell platforms/firmus/recover-dynamo-job.sh 2>"${stderr}"; then break; else status=$?; fi
-            cat "${stderr}" >&2
-            if [[ "${status}" -eq 2 ]] && grep -Eq '^(Connection closed by .* port [0-9]+|exec request failed on channel [0-9]+)$' "${stderr}"; then status=255; fi
-            if [[ "${status}" -ne 255 && "${status}" -ne 124 ]] || (( SECONDS >= deadline )); then printf 'Existing Slurm job %s was preserved; recovery failed (exit %s). Inspect SSH and recovery logs.\n' "${RECOVERY_JOB_ID}" "${status}" >>"${GITHUB_STEP_SUMMARY}"; exit "${status}"; fi
-            printf 'Recovery SSH unavailable (exit %s); retry in 30s; no new Slurm job.\n' "${status}"
-            sleep 30
-          done
-          printf 'SLURM_JOB_ID=%s\n' "${RECOVERY_JOB_ID}" >>"${GITHUB_ENV}"
-          printf 'job_id=%s\n' "${RECOVERY_JOB_ID}" >>"${GITHUB_OUTPUT}"
-
       - name: Slurmジョブの終了と比較成果物を確認
         shell: bash
         run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-qwen-job.sh
 
       - name: ログ・AIPerf・profile・来歴をrunnerへ回収
         id: collect
-        if: always() && (steps.submit.outputs.job_id != '' || steps.recover.outputs.job_id != '')
+        if: always() && steps.submit.outputs.job_id != ''
         shell: home-lab-shell {0}
         run: |
           destination="${RUNNER_TEMP}/qwen-firmus-pd"
@@ -178,7 +137,7 @@ jobs:
 
       - name: 実行成果物を保存
         id: upload
-        if: always() && (steps.submit.outputs.job_id != '' || steps.recover.outputs.job_id != '')
+        if: always() && steps.submit.outputs.job_id != ''
         uses: actions/upload-artifact@v7
         with:
           name: qwen-firmus-pd-${{ github.run_id }}-${{ github.run_attempt }}
@@ -186,7 +145,7 @@ jobs:
           if-no-files-found: error
 
       - name: Summary用のuvを導入
-        if: always() && (steps.submit.outputs.job_id != '' || steps.recover.outputs.job_id != '')
+        if: always() && steps.submit.outputs.job_id != ''
         uses: astral-sh/setup-uv@v7
 
       - name: GPU終了後に回収した実設定を検証
@@ -200,7 +159,7 @@ jobs:
           fi
 
       - name: 実行条件・結果・Nsight成果物をsummaryに記録
-        if: always() && (steps.submit.outputs.job_id != '' || steps.recover.outputs.job_id != '')
+        if: always() && steps.submit.outputs.job_id != ''
         shell: bash
         env:
           JOB_STATUS: ${{ job.status }}

@@ -76,21 +76,11 @@ jobs:
   aspire2ap:
     name: ASPIRE 2A+
     needs: [validate, container]
-    if: ${{ !contains(github.event.head_commit.message, '[build-only]') && !contains(github.event.head_commit.message, '[cutlass-grid-probe]') && !contains(github.event.head_commit.message, '[moe-routing-probe]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
+    if: ${{ !contains(github.event.head_commit.message, '[build-only]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
     uses: ./.github/workflows/aspire2ap.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
       profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
-      container_sha256: ${{ needs.container.outputs.aspire2ap_container_sha256 }}
-      container_size: ${{ needs.container.outputs.aspire2ap_container_size }}
-    secrets: inherit
-
-  cutlass-grid:
-    name: ASPIRE 2A+の1GPU有限kernel probe
-    needs: [validate, container]
-    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]') && (contains(github.event.head_commit.message, '[cutlass-grid-probe]') || contains(github.event.head_commit.message, '[moe-routing-probe]')) && !contains(github.event.head_commit.message, '[build-only]') && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
-    uses: ./.github/workflows/aspire2ap-grid.yml
-    with:
       container_sha256: ${{ needs.container.outputs.aspire2ap_container_sha256 }}
       container_size: ${{ needs.container.outputs.aspire2ap_container_size }}
     secrets: inherit
@@ -115,97 +105,12 @@ jobs:
     uses: ./.github/workflows/firmus-dynamo.yml
     secrets: inherit
 
-  firmus-dynamo-recover:
-    name: 既存Dynamoジョブの制限時間を修正して回収
-    needs: validate
-    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[firmus-dynamo-recover]') }}
-    uses: ./.github/workflows/firmus.yml
-    with:
-      node_count: '2'
-      profile: false
-      require_build: false
-      dynamo: true
-      recovery_job_id: '21736'
-      recovery_runtime_dir: /scratch/home/ACCOUNT/qwen/runs/dynamo-37726750730-1.9k8iOb5LLl
-    secrets: inherit
-
-  firmus-collect:
-    name: Firmus既存22351を監視・回収
-    needs: validate
-    if: ${{ github.event_name == 'push' && (contains(github.event.head_commit.message, '[firmus-collect]') || contains(github.event.head_commit.message, '[firmus-resume]')) }}
-    runs-on: [self-hosted, home-lab]
-    timeout-minutes: 7200
-    env:
-      SLURM_JOB_ID: '22351'
-      RUNTIME_DIR: /scratch/home/ACCOUNT/qwen/runs/pd-38039229663-1.dQNNKAwou6
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: 既存22351の要求時間をpartition上限へ修正
-        id: resume-existing
-        if: contains(github.event.head_commit.message, '[firmus-resume]')
-        shell: firmus-shell --github-shell {0}
-        run: |
-          set -euo pipefail
-          state=$(scontrol show job -o "${SLURM_JOB_ID}")
-          [[ " ${state} " == *" JobId=${SLURM_JOB_ID} "* && " ${state} " == *" WorkDir=${RUNTIME_DIR} "* ]] || { echo 'Job ID or runtime mismatch; refusing scheduler change.' >&2; exit 1; }
-          partition=$(scontrol show partition -o hpcai)
-          [[ " ${partition} " == *" MaxTime=00:17:00 "* ]] || { echo 'Unexpected partition time limit.' >&2; exit 1; }
-          printf '%s\n' "${state}" "${partition}" >"${RUNTIME_DIR}/logs/scheduler-before-recovery-${GITHUB_RUN_ID}.txt"
-          if [[ " ${state} " == *" JobState=PENDING "* && " ${state} " == *" TimeLimit=00:30:00 "* ]]; then scontrol update "JobId=${SLURM_JOB_ID}" TimeLimit=00:17:00; fi
-          state=$(scontrol show job -o "${SLURM_JOB_ID}")
-          printf '%s\n' "${state}" | tee "${RUNTIME_DIR}/logs/scheduler-after-recovery-${GITHUB_RUN_ID}.txt"
-          [[ " ${state} " == *" TimeLimit=00:17:00 "* ]] || { echo 'Existing job time limit was not corrected.' >&2; exit 1; }
-
-      - name: 同じ22351の終了を監視
-        if: contains(github.event.head_commit.message, '[firmus-resume]')
-        shell: bash
-        run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-qwen-job.sh
-
-      - name: 既存ジョブを変更せず状態とファイルを読み取る
-        id: collect-existing
-        if: always()
-        shell: home-lab-shell {0}
-        run: |
-          set -euo pipefail
-          destination="${RUNNER_TEMP}/qwen-firmus-existing"
-          install -d -m 0755 "${destination}/snapshot"
-          timeout --foreground 180 firmus-shell "jq -e '.workflow_run_id == \"38039229663\" and .commit == \"791fa2f3bb1515eda9f7c9133d608785e89274a3\"' '${RUNTIME_DIR}/source/provenance.json'" >"${destination}/snapshot/provenance-check.txt"
-          state=$(timeout --foreground 180 firmus-shell "scontrol show job -o ${SLURM_JOB_ID}" 2>"${destination}/snapshot/scontrol.stderr") || state=
-          printf '%s\n' "${state}" >"${destination}/snapshot/slurm-job.txt"
-          if [[ -n "${state}" ]]; then [[ " ${state} " == *" JobId=${SLURM_JOB_ID} "* && " ${state} " == *" WorkDir=${RUNTIME_DIR} "* ]] || { echo 'Job ID or runtime mismatch; refusing collection.' >&2; exit 1; }; fi
-          timeout --foreground 180 firmus-shell "squeue --noheader --jobs=${SLURM_JOB_ID} --format='%i %T %M %l %R'" >"${destination}/snapshot/squeue.txt" 2>"${destination}/snapshot/squeue.stderr" || true
-          timeout --foreground 180 firmus-shell "sacct --allocations --jobs=${SLURM_JOB_ID} --noheader --parsable2 --format=JobID,State,ExitCode,Elapsed,AllocNodes" >"${destination}/snapshot/sacct.txt"
-          timeout --foreground 180 firmus-shell 'scontrol show partition -o hpcai' >"${destination}/snapshot/partition.txt"
-          for part in logs profile results source; do timeout --foreground 180 firmus-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"; done
-          marker=$(timeout --foreground 180 firmus-shell "if test -e '${RUNTIME_DIR}/run-success'; then echo present; else echo absent; fi")
-          if [[ "${marker}" == present ]]; then timeout --foreground 180 firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; else [[ "${marker}" == absent ]]; fi
-          printf 'origin_run=38039229663\norigin_attempt=1\njob_id=%s\nruntime_dir=%s\ncollection_run=%s\njob_id_and_runtime_preserved=true\n' "${SLURM_JOB_ID}" "${RUNTIME_DIR}" "${GITHUB_RUN_ID}" >"${destination}/snapshot/collection.txt"
-
-      - name: 回収成果物を保存
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: qwen-firmus-existing-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/qwen-firmus-existing
-          if-no-files-found: error
-
-      - name: 回収状態をsummaryへ記録
-        if: always()
-        shell: bash
-        run: |
-          printf '### Existing Firmus job 22351\n\nOriginal run 38039229663/1. No new Slurm submission, cancellation, or runtime cleanup. If requested, only its pending time limit is corrected to 17 minutes; see scheduler recovery logs.\n\n' >>"${GITHUB_STEP_SUMMARY}"
-          if [[ -s "${RUNNER_TEMP}/qwen-firmus-existing/snapshot/squeue.txt" ]]; then cat "${RUNNER_TEMP}/qwen-firmus-existing/snapshot/squeue.txt" >>"${GITHUB_STEP_SUMMARY}"; fi
-          if [[ -s "${RUNNER_TEMP}/qwen-firmus-existing/snapshot/sacct.txt" ]]; then cat "${RUNNER_TEMP}/qwen-firmus-existing/snapshot/sacct.txt" >>"${GITHUB_STEP_SUMMARY}"; fi
-
   archive-artifacts:
     name: 成果物を自宅サーバーへ保管
-    needs: [genkai, aspire2ap, firmus, firmus-dynamo, firmus-dynamo-recover, cutlass-grid, firmus-collect]
+    needs: [genkai, aspire2ap, firmus, firmus-dynamo]
     if: >-
       always() &&
-      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.firmus-dynamo.result != 'skipped' || needs.firmus-dynamo-recover.result != 'skipped' || needs.cutlass-grid.result != 'skipped' || needs.firmus-collect.result != 'skipped')
+      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.firmus-dynamo.result != 'skipped')
     runs-on: [self-hosted, home-lab]
     permissions:
       actions: write
