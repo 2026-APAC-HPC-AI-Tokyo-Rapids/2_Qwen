@@ -45,7 +45,7 @@ def main():
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf = deep_gemm.get_symm_buffer_for_mega_moe(dist.group.WORLD, 128, 4096, 8, 4096, 1536, use_fp8_dispatch=True, activation="swiglu")
     cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4]), ("decode-quant-zero", [9, 0, 0, 0])]
-    # Exercise all SwapAB widths and the warp quantizer, plus a full tile and tail.
+    # Exercise all SwapAB widths, plus a full tile and tail.
     # Other ranks still participate in the collective with zero live tokens.
     cases.extend((f"decode-tile-{count}", [count, 0, 0, 0]) for count in (1, 9, 17, 25, 33, 41, 49, 57, 65))
     for case, counts in cases:
