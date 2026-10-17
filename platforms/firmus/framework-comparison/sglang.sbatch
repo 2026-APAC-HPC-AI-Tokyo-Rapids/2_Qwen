@@ -160,7 +160,8 @@ wait_http "http://${TAIL_IP}:30200/health"; echo "decode-0 ready"
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts router)" /opt/apac/bin/sglang-router launch --pd-disaggregation --prefill "http://${HEAD_IP}:30100" 9000 --prefill "http://${HEAD_IP}:30101" 9001 --prefill "http://${TAIL_IP}:30102" 9002 --decode "http://${TAIL_IP}:30200" --prefill-policy manual --assignment-mode min_load --host 0.0.0.0 --port "${R_PORT}" >"${ART}/router.log" 2>&1 &
 worker_pids+=("$!")
 
-wait_http "http://${HEAD_IP}:${R_PORT}/health"
+# /health is liveness only; /readiness waits until a Prefill and a Decode worker are registered (39074570813 got 503 1 s after /health).
+wait_http "http://${HEAD_IP}:${R_PORT}/readiness"
 echo "READY after ${SECONDS}s"
 
 while IFS=$'\t' read -r worker host port _tp; do
