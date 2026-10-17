@@ -86,3 +86,32 @@ PBS walltime 11 分 46 秒（a2ap-dgx011 / dgx034）、約 400 SU。公式 parse
 
 - 定常 TTFT は c の増分 / throughput だけ伸びる。Prefill capacity が全く伸びない最悪ケースでも +16 / 22 ≒ +0.7 s で p99 約 2.5 s、ITL は Decode 9 要求/rank で 13 ms 台。開始時一斉投入の不合格は約 50 件（2%）に増える。
 - Prefill capacity が 26〜28 req/s あれば throughput は +18〜27%、TTFT は 1.4〜1.6 s にとどまる。c=112 は最悪ケースで定常 p99 が 2.9 s に迫るため採らない。
+
+## 7. 2 回目の結果（Actions 39013218562、`d7ade0e`、c104）
+
+PBS walltime 10 分 24 秒（a2ap-dgx010 / dgx030）。公式 parser で適格。
+
+| 指標 | P2/D2 c88（39010679169） | **P2/D2 c104（39013218562）** |
+|---|---:|---:|
+| 公式 score | 4360.82 | **4661.26**（c88 比 +6.9%、P3/D1 3895.05 比 +19.7%） |
+| raw output tok/s / req/s | 4421 / 22.1 | 4745 / 23.7 |
+| 良好率 | 98.6% | 98.2% |
+| TTFT 平均 / p99（定常 20 秒以降の p99） | 1.40 / 3.43 s（1.8 s） | 1.88 / 3.93 s（2.1〜2.3 s） |
+| ITL 平均 / p99 | 12.6 / 15.0 ms | 12.2 / 14.6 ms |
+| 不合格（TTFT / ITL） | 37 / 0（全件開始一斉投入） | 52 / 0（全件開始一斉投入） |
+| Decode running / rank | 7.5 | 8.2 |
+| Prefill に queue があった batch の割合 / 平均 queue | 4.8% / 0.14 | 60〜62% / 0.85 |
+| Prefill DP rank 間の seq 数 | 685 / 675 / 682 / 704 | 1066 / 1062 / 1084 / 1085 |
+
+- c104 で Prefill が飽和した。8 rank で 23.7 req/s、rank あたり 2.96 req/s は Firmus（H200、同じイメージ）の飽和値 2.9 req/s と一致し、H100 と H200 の Prefill 能力は同等という §4 の前提も実測で確認できた。
+- 定常 TTFT p99 は 2.1〜2.3 s で、c を更に上げても throughput は増えず TTFT だけ伸びる。TTFT 不合格は引き続き全件が計測開始時の一斉投入分（c に比例、現在 1.8%）。
+- ITL は Decode 8.2 要求/rank で 12.2 ms と余裕が大きい。Decode 側には slot・pool・ITL のいずれにも余地がある。
+
+### 現時点の ASPIRE 最良と次の改善点
+
+ASPIRE 2A+ の公式 score 最良は 4661.26（`d7ade0e`、P2/D2、kernel chain イメージ、Prefill round_robin、c104、単回）。2 回の実行は配置と c 以外を固定した系列で、どちらも 3895.05 を上回った。
+
+次に効くのは Prefill 側だけである。
+1. **Prefill の GPU あたり効率。** rank あたり 2.96 req/s（約 11.8k input tok/s/GPU）が上限。MegaMoE Prefill kernel（1 CTA/SM、shared memory 97%）の改善は Firmus 側の kernel 作業と共通。
+2. **handoff の遅延。** bootstrap 待ち（Prefill rank あたり約 0.9 要求）と転送は TTFT を押し上げ、必要な c を増やす。開始時一斉投入の不合格は c に比例するので、TTFT の固定遅延を削ると c を下げても throughput を保てる。
+3. **Decode 側は余っている。** D2 の 8 rank は running 8 で、P/D 比をさらに Prefill へ寄せたいが、TP4 単位では P2/D2 と P3/D1 の中間が取れない。Decode を 1 worker（4 GPU）に戻すと §2 の上限に戻る。
