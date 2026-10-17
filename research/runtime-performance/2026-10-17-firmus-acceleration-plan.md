@@ -115,3 +115,39 @@ Tier 1 と Tier 2 の Decode 短縮 −10% が揃えば、上限 32 のまま IT
 | 事前 | router ログからの handoff 遅延分解（GPU 不要） | §3 の約 31 要求の所在を特定し、A の c を決める |
 
 各 run は条件ごとの commit から Actions で投入し、結果の正本は Actions summary と NAS の score.json とする。
+
+## 6. 結果（2026-10-17 夜）
+
+### run A：Prefill round_robin ＋ Decode 上限 31/rank（Actions 39019907035、`24fa557`、参照イメージ e29dfde…）
+
+最初の投入（39018316844、`d93ebab`）は Decode の `dist_init_port 33000` が自プロセスの別 socket に取られて起動失敗した。Firmus の一時ポート範囲は 32768–60999 で、33000 だけが範囲内だった。`a047c15` で Decode の dist-init を 29000 へ移し（main）、`24fa557` で再投入した。
+
+| 指標 | 参照 6521.98（38945855851） | **run A** | run B（A ＋ warp-redux-r176、39018872189） |
+|---|---:|---:|---:|
+| 公式 score | 6521.98 | **6336.27**（−2.8%） | 6105.73（−6.4%） |
+| raw tok/s / req/s | 6875 / 34.4 | 6728 / 33.6 | 6558 / 32.8 |
+| 良好率 | 94.9% | 94.2% | 93.1% |
+| 不合格 TTFT 一斉投入 / TTFT 定常 / ITL 定常 | 114 / 26 / 82 | 108 / 93 / 47 | 111 / 15 / 157 |
+| TTFT 平均 / p90 | 2.04 / 2.39 s | 2.20 / 2.68 s | 2.20 / 2.60 s |
+| ITL 平均 / p99 | 17.33 / 20.25 ms | 17.09 / 20.04 ms | 17.76 / 20.71 ms |
+| Decode running / rank（上限） | 29.2（32） | 28.4（31） | 28.4（31） |
+| Prefill DP rank 別 seq 数 | 5.9 / 5.8 / 5.3 / 4.5 seq/s | 1015 / 1043 / 1044 / 1039 | 911 / 948 / 939 / 921 |
+| Prefill queue あり割合（DP0） | 78% | 34% | 20% |
+| GPU 数値ゲート / 公式 validation | PASS / valid | PASS / valid | PASS / valid |
+
+読み取り:
+- **round_robin は意図通り効いた**（rank 間差 24% → 3% 以内）。ただし Decode 律速なので throughput には現れず、Prefill の queue が減っただけ。害はない。
+- **上限 31 は逆効果。** Decode slot が 128 → 124 になった分 throughput が −2.3%、待ちが増えて定常 TTFT 不合格が 26 → 93 件。ITL 不合格は 82 → 47 に減ったが補えない。上限 32 に戻す。
+- **run B の kernel（warp-redux-r176）は棄却。** A と同じ runtime で同じ batch（N≈120）の ITL が 17.1 → 17.8 ms（+3.8%）、1 step で約 +1.5 ms。棄却済みの 21c2927 と同規模の悪化で、数値ゲートと公式 validation は通るが遅い。`perf/firmus-decode-warp-redux-20261017` は patch を外して記録のみ残す。register-redux も register 常駐を共有するので、komoriyuta と相談なしには投入しない。
+
+### run A と参照の Decode step（ITL × accept）は一致する
+
+run A は N=113.6 で 37.6 ms、参照は N=116.8 で 38.3 ms。傾き 0.197 ms/要求で補正すると一致し、round_robin と上限変更は Decode の step 時間を変えていない。したがって次に効くのは step 時間そのものの短縮だけで、runtime で残る手段は **投機長の短縮**（verify 行数を減らす）である。
+
+### run D の根拠：steps 2 / draft 3
+
+参照 run の step は固定分 13.7 ms（重み読み出し＋draft 3 回など）と要求比例分 0.197 ms × N に分かれ、N≈117 では比例分 23 ms が支配的。比例分は MoE 行数・attention の query 行数・dense GEMM の M に比例し、いずれも要求あたり verify 4 token（draft 3 ＋ bonus 1）で決まる。draft を 3 token（steps 2）にすると行数 −25%、draft forward −1 回で、step は約 36.7 → 31〜32 ms。受理長は 4 draft で 2.21（位置ごとの受理率 ≒ 0.57 の幾何級数）なので 3 draft では約 2.08（−6%）。ITL = step / accept は 16.6 → 15.2 ms（−8%）の見込み。greedy verify は target の出力と一致するので精度は変わらない（campaign summary §12 の steps4/draft5 は中立、steps2/draft3 は未測定と記録済み）。
+
+- 上限は 32/rank に戻し、round_robin は残す（throughput に中立、Prefill 側の待ちは減る）。上限は D の ITL を見てから上げる（ITL p99 が 18 ms 台なら 34/rank）。
+- 期待: ITL 不合格 ≒ 0、Decode 容量 128 / (200 × 15.2 ms) ≒ 39 req/s で Prefill 律速（34〜37 req/s）に戻り、raw 7200 前後、score 7000 前後。受理長が 1.9 まで落ちれば ITL は現状並みで中立。
+- 判定: ITL 分布、accept len（Decode ログ）、score。不合格なら speculation を 3/4 に戻す。
