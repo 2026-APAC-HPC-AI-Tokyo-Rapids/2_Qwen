@@ -1,0 +1,129 @@
+name: FirmusでSM90 MegaMoE kernel benchを実行
+
+on:
+  workflow_call:
+    inputs:
+      node_count:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+
+defaults:
+  run:
+    shell: firmus-shell --github-shell {0}
+
+jobs:
+  provision:
+    name: 固定イメージのDeepGEMMとheader overlayを配備
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 7200
+    outputs:
+      runtime_dir: ${{ steps.provision.outputs.runtime_dir }}
+    steps:
+      - name: 1ノードを検証
+        shell: bash
+        run: "test '${{ inputs.node_count }}' = 1"
+
+      - name: 実行用ファイルを取得
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: SquashFS・DeepGEMM・overlayを配備
+        id: provision
+        shell: bash
+        run: |
+          stderr=$(mktemp)
+          trap 'rm -f -- "${stderr}"' EXIT
+          deadline=$((SECONDS + 900))
+          while true; do
+            if timeout --foreground 600 firmus-shell --github-shell scripts/provision-firmus-kernel-bench.sh 2>"${stderr}"; then cat "${stderr}" >&2; break; else status=$?; fi
+            cat "${stderr}" >&2
+            if [[ "${status}" -eq 2 || "${status}" -eq 254 ]] && grep -Eq '^(Connection closed by .* port [0-9]+|exec request failed on channel [0-9]+|.*: fork: (retry: )?Resource temporarily unavailable)[[:space:]]*$' "${stderr}"; then status=255; fi
+            if [[ "${status}" -ne 255 && "${status}" -ne 124 ]] || (( SECONDS >= deadline )); then exit "${status}"; fi
+            printf 'Firmus preparation unavailable (exit %s); retry in 30s. No Slurm submission in this stage.\n' "${status}"
+            sleep 30
+          done
+
+      - name: 配備失敗時の実行環境を削除
+        if: failure() && steps.provision.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
+        run: rm -rf -- "${RUNTIME_DIR:?}"
+
+  run:
+    name: 1ノード4 GPUでgate・timing・timelineを実行
+    needs: provision
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 7200
+    env:
+      RUNTIME_DIR: ${{ needs.provision.outputs.runtime_dir }}
+    steps:
+      - name: 接続待ち処理を取得
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Slurmジョブを投入
+        id: submit
+        run: |
+          cd "${RUNTIME_DIR}"
+          job_id="$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=megamoe_kernel_bench "${RUNTIME_DIR}/scripts/run.sbatch")"
+          [[ "${job_id}" =~ ^[0-9]+$ ]]
+          printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+
+      - name: Slurmジョブの終了と結果を確認
+        shell: bash
+        run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/kernel-bench/check-job.sh
+
+      - name: ログ・結果・来歴をrunnerへ回収
+        id: collect
+        if: always() && steps.submit.outputs.job_id != ''
+        shell: home-lab-shell {0}
+        run: |
+          destination="${RUNNER_TEMP}/qwen-firmus-kernel-bench"
+          install -d -m 0755 "${destination}"
+          # Same artifact-read retry as firmus.yml: SSH tar streams have been cut off after successful runs.
+          retry_read() {
+            local attempt status
+            for attempt in 1 2 3 4 5 6; do
+              if timeout --foreground 180 "$@"; then return 0; else status=$?; fi
+              if (( attempt == 6 )); then return "${status}"; fi
+              printf 'Artifact read failed (exit %s); retry in 30s (%s/6).\n' "${status}" "${attempt}" >&2
+              sleep 30
+            done
+          }
+          for part in logs results source; do retry_read firmus-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"; done
+          marker=$(retry_read firmus-shell "if test -e '${RUNTIME_DIR}/run-success'; then echo present; else echo absent; fi")
+          if [[ "${marker}" == present ]]; then retry_read firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; else [[ "${marker}" == absent ]]; fi
+
+      - name: 実行成果物を保存
+        id: upload
+        if: always() && steps.collect.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen-firmus-kernel-bench-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qwen-firmus-kernel-bench
+          if-no-files-found: error
+
+      - name: Summary用のuvを導入
+        if: always() && steps.collect.outcome == 'success'
+        uses: astral-sh/setup-uv@v7
+
+      - name: timing表とtimeline表をsummaryに記録
+        if: always() && steps.collect.outcome == 'success'
+        shell: bash
+        run: uv run --no-project --python 3.13 --with numpy python scripts/summarize-megamoe-kernel-bench.py "${RUNNER_TEMP}/qwen-firmus-kernel-bench/results/results" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 回収済みで終了した実行環境を削除
+        if: always() && steps.collect.outcome == 'success' && steps.upload.outcome == 'success'
+        run: |
+          state="$(sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State | awk -F'|' -v id="${SLURM_JOB_ID}" '$1 == id {print $2}')"
+          case "${state}" in COMPLETED|FAILED|TIMEOUT|CANCELLED*|OUT_OF_MEMORY|NODE_FAIL) rm -rf -- "${RUNTIME_DIR:?}";; *) printf 'Preserving runtime and Slurm job %s (state=%s)\n' "${SLURM_JOB_ID}" "${state}";; esac

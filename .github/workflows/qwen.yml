@@ -56,7 +56,7 @@ jobs:
   container:
     name: AWSでSquashFSを準備
     needs: validate
-    if: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || (contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]')))) || (github.event_name == 'workflow_dispatch' && (inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)) }}
+    if: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || (contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]') && !contains(github.event.head_commit.message, '[kernel-bench]')))) || (github.event_name == 'workflow_dispatch' && (inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)) }}
     uses: ./.github/workflows/aws-container.yml
     with:
       require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
@@ -89,7 +89,7 @@ jobs:
   firmus:
     name: Firmus
     needs: [validate, container]
-    if: ${{ !contains(github.event.head_commit.message, '[build-only]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus)) && needs.container.outputs.firmus_container_sha256 != '' && needs.container.outputs.firmus_container_size != '' }}
+    if: ${{ !contains(github.event.head_commit.message, '[build-only]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]') && !contains(github.event.head_commit.message, '[kernel-bench]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus)) && needs.container.outputs.firmus_container_sha256 != '' && needs.container.outputs.firmus_container_size != '' }}
     uses: ./.github/workflows/firmus.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
@@ -106,12 +106,21 @@ jobs:
     uses: ./.github/workflows/firmus-dynamo.yml
     secrets: inherit
 
+  firmus-kernel-bench:
+    name: Firmus MegaMoE kernel bench
+    needs: validate
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && contains(github.event.head_commit.message, '[kernel-bench]') }}
+    uses: ./.github/workflows/firmus-kernel-bench.yml
+    with:
+      node_count: ${{ contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
+    secrets: inherit
+
   archive-artifacts:
     name: 成果物を自宅サーバーへ保管
-    needs: [genkai, aspire2ap, firmus, firmus-dynamo]
+    needs: [genkai, aspire2ap, firmus, firmus-dynamo, firmus-kernel-bench]
     if: >-
       always() &&
-      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.firmus-dynamo.result != 'skipped')
+      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.firmus-dynamo.result != 'skipped' || needs.firmus-kernel-bench.result != 'skipped')
     runs-on: [self-hosted, home-lab]
     permissions:
       actions: write

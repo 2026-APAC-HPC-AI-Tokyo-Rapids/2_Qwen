@@ -254,3 +254,21 @@ def test_submission_contains_reproducible_official_entrypoint() -> None:
     assert 'shared_script_path="${OUTPUT_DIR}/submit.sbatch"' in batch
     assert 'install -m 0755 "${script_path}" "${shared_script_path}"' in batch
     assert batch.index('install -m 0755 "${script_path}" "${shared_script_path}"') < batch.index('"${script_path}" node')
+
+
+def test_kernel_bench_tag_runs_only_the_one_node_image_bench() -> None:
+    entry = (ROOT / ".github/workflows/qwen.yml").read_text()
+    workflow = (ROOT / ".github/workflows/firmus-kernel-bench.yml").read_text()
+    provision = (ROOT / "scripts/provision-firmus-kernel-bench.sh").read_text()
+    container = entry.split("  container:\n", 1)[1].split("\n  genkai:\n", 1)[0]
+    serving = entry.split("  firmus:\n", 1)[1].split("\n  firmus-dynamo:\n", 1)[0]
+    bench = entry.split("  firmus-kernel-bench:\n", 1)[1].split("\n  archive-artifacts:\n", 1)[0]
+
+    assert "!contains(github.event.head_commit.message, '[kernel-bench]')" in container
+    assert "!contains(github.event.head_commit.message, '[kernel-bench]')" in serving
+    assert "needs: validate" in bench
+    assert "uses: ./.github/workflows/firmus-kernel-bench.yml" in bench
+    assert "test '${{ inputs.node_count }}' = 1" in workflow
+    assert "qwen-firmus-kernel-bench-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
+    assert 'patches/deep-gemm-bench/*.patch' in provision
+    assert "patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch" in provision
