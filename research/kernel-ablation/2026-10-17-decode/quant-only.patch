@@ -1,0 +1,267 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -304,6 +304,8 @@
+         kFP8SwapAB and kSplitNWarpgroups and (BLOCK_M == 64) and (BLOCK_N == 128) and
+         (kWarpgroupSplitN == 2);
+     constexpr bool kSwapABActive = kSwapABEligible;
++    constexpr bool kQwenDecode = kSwapABActive && !kReuseAccumAsFinal &&
++        kHidden == 4096 && kIntermediateHidden == 1536 && kNumRanks == 4;
+     constexpr uint32_t kSwapABTokenChunks = BLOCK_M / 8;
+     DG_STATIC_ASSERT(not kSwapABEligible or (BLOCK_M % 8 == 0),
+                      "swapAB epilogue token chunks assume BLOCK_M is a multiple of 8");
+@@ -463,6 +465,8 @@
+     // Register reconfiguration counts (chosen to fit in 64512 reg budget).
+     // For the 256-epilogue-thread split-N decode path:
+     //   64*48 + 64*40 + 256*168 = 48640 <= 64512.
++    // Qwen Decode keeps SwiGLU values in registers across the amax reduction:
++    //   64*48 + 64*40 + 256*192 = 54784 <= 64512 (same launch/CTA count).
+     // For the 512-epilogue-thread split-MN path, trim dispatch and loader roles
+     // so launch bounds still leave enough WGMMA registers.
+     // Reduced-thread decode (kNumThreads<=256) raises the launch-bounds
+@@ -472,7 +476,7 @@
+     constexpr uint32_t kNumEpilogueRegisters    =
+         kEpilogueRegisterBudget == 0 ?
+             (kNumEpilogueThreads == 512 ? 112 :
+-                (kNumEpilogueThreads == 256 ? 168 :
++                (kNumEpilogueThreads == 256 ? (kQwenDecode ? 192 : 168) :
+                     (kNumThreads <= 256u ? 256 : 208))) :
+             kEpilogueRegisterBudget;
+     // The 512-epilogue-thread path has only 3584 registers of headroom at
+@@ -1661,76 +1665,169 @@
+                             x = cute::min(cute::max(x, -kActivationClamp), kActivationClamp);
+                     };
+ 
+-                    const uint32_t out_col_base =
+-                        wg_l1_out_n_offset + warp_idx_in_wg * 8 + row_idx;
+-                    auto store_l1_swap_chunk = [&](const uint32_t& i) {
+-                        const uint32_t token_0 = i * 8 + col_idx * 2;
+-                        const uint32_t token_1 = token_0 + 1;
+-                        if (token_0 < valid_m) {
+-                            float g0 = final_accum[i * 4 + 0];
+-                            float u0 = final_accum[i * 4 + 2];
+-                            clamp_gate(g0);
+-                            clamp_up(u0);
+-                            smem_cd_swap_l1_fp32[token_0 * L1_OUT_BLOCK_N + out_col_base] =
+-                                silu(g0) * u0;
+-                        }
+-                        if (token_1 < valid_m) {
+-                            float g1 = final_accum[i * 4 + 1];
+-                            float u1 = final_accum[i * 4 + 3];
+-                            clamp_gate(g1);
+-                            clamp_up(u1);
+-                            smem_cd_swap_l1_fp32[token_1 * L1_OUT_BLOCK_N + out_col_base] =
+-                                silu(g1) * u1;
+-                        }
+-                    };
+-
+-                    const uint32_t num_swap_token_chunks = (valid_m + 7u) / 8u;
+-                    store_l1_swap_chunk(0);
+-                    if (valid_m > 8) {
++                    if constexpr (kQwenDecode) {
++                        static_assert(L1_OUT_BLOCK_N == 64 && kNumEpilogueWarps == 8);
++                        const uint32_t out_col_base =
++                            wg_l1_out_n_offset + warp_idx_in_wg * 8 + row_idx;
++                        float swiglu_0[kSwapABTokenChunks];
++                        float swiglu_1[kSwapABTokenChunks];
++                        const uint32_t num_chunks = (valid_m + 7u) / 8u;
+                         #pragma unroll
+-                        for (uint32_t i = 1; i < kSwapABTokenChunks; ++ i) {
+-                            if (i < num_swap_token_chunks)
+-                                store_l1_swap_chunk(i);
+-                        }
+-                    }
+-
+-                    ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+-
+-                    for (uint32_t token = epilogue_thread_idx; token < valid_m; token += kNumEpilogueThreads) {
+-                        float amax = 0.0f;
++                        for (uint32_t i = 0; i < kSwapABTokenChunks; ++ i) {
++                            if (i < num_chunks) {
++                                const uint32_t token_0 = i * 8 + col_idx * 2;
++                                const uint32_t token_1 = token_0 + 1;
++                                float g0 = final_accum[i * 4 + 0];
++                                float u0 = final_accum[i * 4 + 2];
++                                float g1 = final_accum[i * 4 + 1];
++                                float u1 = final_accum[i * 4 + 3];
++                                clamp_gate(g0);
++                                clamp_up(u0);
++                                clamp_gate(g1);
++                                clamp_up(u1);
++                                swiglu_0[i] = token_0 < valid_m ? silu(g0) * u0 : 0.0f;
++                                swiglu_1[i] = token_1 < valid_m ? silu(g1) * u1 : 0.0f;
++                                float amax_0 = cute::abs(swiglu_0[i]);
++                                float amax_1 = cute::abs(swiglu_1[i]);
++                                // The eight lanes with the same col_idx own eight
++                                // columns of a token. Reduce those columns first.
++                                #pragma unroll
++                                for (uint32_t offset = 4; offset <= 16; offset <<= 1) {
++                                    amax_0 = cute::max(amax_0, __shfl_xor_sync(0xffffffff, amax_0, offset));
++                                    amax_1 = cute::max(amax_1, __shfl_xor_sync(0xffffffff, amax_1, offset));
++                                }
++                                if (row_idx == 0) {
++                                    // Stage only eight partial maxima per token.
++                                    // Pair-major rows give conflict-free producer
++                                    // stores and consumer loads without extra SMEM.
++                                    smem_cd_swap_l1_fp32[i * 64 + col_idx * 8 + epilogue_warp_idx] = amax_0;
++                                    smem_cd_swap_l1_fp32[i * 64 + 32 + col_idx * 8 + epilogue_warp_idx] = amax_1;
++                                }
++                            }
++                        }
++                        ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++
++                        if (epilogue_warp_idx == 0) {
++                            #pragma unroll 1
++                            for (uint32_t i = 0; i < num_chunks; ++ i) {
++                                const uint32_t token_0 = i * 8 + col_idx * 2;
++                                const uint32_t token_1 = token_0 + 1;
++                                float amax_0 = smem_cd_swap_l1_fp32[i * 64 + col_idx * 8 + row_idx];
++                                float amax_1 = smem_cd_swap_l1_fp32[i * 64 + 32 + col_idx * 8 + row_idx];
++                                #pragma unroll
++                                for (uint32_t offset = 4; offset <= 16; offset <<= 1) {
++                                    amax_0 = cute::max(amax_0, __shfl_xor_sync(0xffffffff, amax_0, offset));
++                                    amax_1 = cute::max(amax_1, __shfl_xor_sync(0xffffffff, amax_1, offset));
++                                }
++                                float2 sf_pair, sf_inv_pair;
++                                sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(
++                                    make_float2(amax_0, amax_1), sf_pair, sf_inv_pair);
++                                if (row_idx == 0) {
++                                    auto* sf_ptr = l2_sf_buffer.get_base_ptr<float>()
++                                        + n_block_idx * kNumPaddedSFPoolTokens + pool_block_idx * SF_BLOCK_M;
++                                    // The first 64 words held chunk 0's partial
++                                    // maxima. Its reads/reduction are complete;
++                                    // subsequent chunks read at offsets >=64.
++                                    smem_cd_swap_l1_fp32[token_0] = sf_inv_pair.x;
++                                    smem_cd_swap_l1_fp32[token_1] = sf_inv_pair.y;
++                                    if (token_0 < valid_m) sf_ptr[token_0] = sf_pair.x;
++                                    if (token_1 < valid_m) sf_ptr[token_1] = sf_pair.y;
++                                }
++                            }
++                        }
++                        ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++
+                         #pragma unroll
+-                        for (uint32_t col = 0; col < L1_OUT_BLOCK_N; ++ col) {
+-                            const float v = smem_cd_swap_l1_fp32[token * L1_OUT_BLOCK_N + col];
+-                            amax = cute::max(amax, cute::abs(v));
+-                        }
+-                        float2 amax_pair = {amax, amax};
+-                        float2 sf_pair, sf_inv_pair;
+-                        sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(amax_pair, sf_pair, sf_inv_pair);
+-                        const float sf = sf_pair.x;
+-                        const float sf_inv = sf_inv_pair.x;
+-
+-                        auto sf_base_ptr = l2_sf_buffer.get_base_ptr<float>();
+-                        // ROOT-CAUSE FIX: the L2-activation SF pool is strided by SF_BLOCK_M
+-                        // (=align(BLOCK_M,128)=128), which is how the L2 producer reads it
+-                        // (sfa_m_idx = pool_block_idx * SF_BLOCK_M) and how the non-swap L1
+-                        // writes it. This swapAB path used BLOCK_M (64), so for pool_block_idx>=1
+-                        // the SF landed in the wrong rows -> L2 read stale SF -> every pool block
+-                        // after the first was corrupted (block 0 was correct because 0*64==0*128).
+-                        const uint32_t token_idx = pool_block_idx * SF_BLOCK_M + token;
+-                        sf_base_ptr[n_block_idx * kNumPaddedSFPoolTokens + token_idx] = sf;
+-
+-                        #pragma unroll
+-                        for (uint32_t col = 0; col < L1_OUT_BLOCK_N; col += 2) {
+-                            const float v0 = smem_cd_swap_l1_fp32[token * L1_OUT_BLOCK_N + col + 0] * sf_inv;
+-                            const float v1 = smem_cd_swap_l1_fp32[token * L1_OUT_BLOCK_N + col + 1] * sf_inv;
+-                            const __nv_fp8x2_e4m3 pair(make_float2(v0, v1));
+-                            auto* ptr = reinterpret_cast<uint16_t*>(
+-                                smem_cd_swap_l1_fp8 + token * L1_OUT_BLOCK_N + col);
+-                            *ptr = pair.__x;
+-                        }
+-                    }
+-
+-                    ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++                        for (uint32_t i = 0; i < kSwapABTokenChunks; ++ i) {
++                            if (i < num_chunks) {
++                                const uint32_t token_0 = i * 8 + col_idx * 2;
++                                const uint32_t token_1 = token_0 + 1;
++                                const float inv_0 = smem_cd_swap_l1_fp32[token_0];
++                                const float inv_1 = smem_cd_swap_l1_fp32[token_1];
++                                const __nv_fp8x2_e4m3 pair(make_float2(
++                                    swiglu_0[i] * inv_0, swiglu_1[i] * inv_1));
++                                auto* out = reinterpret_cast<uint8_t*>(smem_cd_swap_l1_fp8);
++                                if (token_0 < valid_m)
++                                    out[token_0 * L1_OUT_BLOCK_N + out_col_base] = pair.__x & 0xff;
++                                if (token_1 < valid_m)
++                                    out[token_1 * L1_OUT_BLOCK_N + out_col_base] = pair.__x >> 8;
++                            }
++                        }
++                        ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++
++                    } else {
++                        const uint32_t out_col_base =
++                            wg_l1_out_n_offset + warp_idx_in_wg * 8 + row_idx;
++                        auto store_l1_swap_chunk = [&](const uint32_t& i) {
++                            const uint32_t token_0 = i * 8 + col_idx * 2;
++                            const uint32_t token_1 = token_0 + 1;
++                            if (token_0 < valid_m) {
++                                float g0 = final_accum[i * 4 + 0];
++                                float u0 = final_accum[i * 4 + 2];
++                                clamp_gate(g0);
++                                clamp_up(u0);
++                                smem_cd_swap_l1_fp32[token_0 * L1_OUT_BLOCK_N + out_col_base] =
++                                    silu(g0) * u0;
++                            }
++                            if (token_1 < valid_m) {
++                                float g1 = final_accum[i * 4 + 1];
++                                float u1 = final_accum[i * 4 + 3];
++                                clamp_gate(g1);
++                                clamp_up(u1);
++                                smem_cd_swap_l1_fp32[token_1 * L1_OUT_BLOCK_N + out_col_base] =
++                                    silu(g1) * u1;
++                            }
++                        };
++
++                        const uint32_t num_swap_token_chunks = (valid_m + 7u) / 8u;
++                        store_l1_swap_chunk(0);
++                        if (valid_m > 8) {
++                            #pragma unroll
++                            for (uint32_t i = 1; i < kSwapABTokenChunks; ++ i) {
++                                if (i < num_swap_token_chunks)
++                                    store_l1_swap_chunk(i);
++                            }
++                        }
++
++                        ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++
++                        for (uint32_t token = epilogue_thread_idx; token < valid_m; token += kNumEpilogueThreads) {
++                            float amax = 0.0f;
++                            #pragma unroll
++                            for (uint32_t col = 0; col < L1_OUT_BLOCK_N; ++ col) {
++                                const float v = smem_cd_swap_l1_fp32[token * L1_OUT_BLOCK_N + col];
++                                amax = cute::max(amax, cute::abs(v));
++                            }
++                            float2 amax_pair = {amax, amax};
++                            float2 sf_pair, sf_inv_pair;
++                            sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(amax_pair, sf_pair, sf_inv_pair);
++                            const float sf = sf_pair.x;
++                            const float sf_inv = sf_inv_pair.x;
++
++                            auto sf_base_ptr = l2_sf_buffer.get_base_ptr<float>();
++                            // ROOT-CAUSE FIX: the L2-activation SF pool is strided by SF_BLOCK_M
++                            // (=align(BLOCK_M,128)=128), which is how the L2 producer reads it
++                            // (sfa_m_idx = pool_block_idx * SF_BLOCK_M) and how the non-swap L1
++                            // writes it. This swapAB path used BLOCK_M (64), so for pool_block_idx>=1
++                            // the SF landed in the wrong rows -> L2 read stale SF -> every pool block
++                            // after the first was corrupted (block 0 was correct because 0*64==0*128).
++                            const uint32_t token_idx = pool_block_idx * SF_BLOCK_M + token;
++                            sf_base_ptr[n_block_idx * kNumPaddedSFPoolTokens + token_idx] = sf;
++
++                            #pragma unroll
++                            for (uint32_t col = 0; col < L1_OUT_BLOCK_N; col += 2) {
++                                const float v0 = smem_cd_swap_l1_fp32[token * L1_OUT_BLOCK_N + col + 0] * sf_inv;
++                                const float v1 = smem_cd_swap_l1_fp32[token * L1_OUT_BLOCK_N + col + 1] * sf_inv;
++                                const __nv_fp8x2_e4m3 pair(make_float2(v0, v1));
++                                auto* ptr = reinterpret_cast<uint16_t*>(
++                                    smem_cd_swap_l1_fp8 + token * L1_OUT_BLOCK_N + col);
++                                *ptr = pair.__x;
++                            }
++                        }
++
++                        ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++
++                    }
+ 
+                     if (epilogue_wg_n_idx == 0 and warp_idx_in_wg == 0 and cute::elect_one_sync()) {
+                         cute::tma_store_fence();
