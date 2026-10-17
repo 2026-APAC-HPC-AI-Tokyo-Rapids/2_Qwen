@@ -179,6 +179,8 @@ run_node() {
     fi
     worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${worker_env[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
+    printf '%q ' "${worker_command[@]}" >"${OUTPUT_DIR}/logs/${role}-${worker}-command.txt"
+    printf '\n' >>"${OUTPUT_DIR}/logs/${role}-${worker}-command.txt"
     (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec "${worker_command[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
     pids+=("$!")
   }
@@ -250,7 +252,7 @@ run_aiperf() {
   cp "${export_file}" "${OUTPUT_DIR}/results/profile_export_aiperf.json"
   if enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}/results:/results" "${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json /results/score.json --concurrency "${CONCURRENCY}" --require-eligible --command /results/aiperf-command.txt --provenance /results/aiperf-provenance.txt <<'PY'
 #!/usr/bin/env python3
-"""Validate AIPerf's official Qwen metrics and emit the competition score."""
+"""Validate the official Qwen workload and report measured good-output throughput."""
 
 from __future__ import annotations
 
@@ -309,8 +311,11 @@ def parse_result(metrics: dict[str, Any], concurrency: int) -> dict[str, Any]:
         "schema_version": "qwen3-pd-score/v1",
         "concurrency": concurrency,
         "goodput_requests_per_second": goodput,
+        "good_output_tokens_per_second": goodput * 200,
         "good_request_fraction": fraction,
         "eligible": eligible,
+        # Legacy local gate, retained for existing consumers. This is neither
+        # measured throughput nor the organizer R4 reference-floor score.
         "score_output_tokens_per_second": goodput * 200 if eligible else 0.0,
         "request_count": requests,
         "error_request_count": errors,
@@ -398,8 +403,6 @@ def validate_official_result(metrics: dict[str, Any], result: dict[str, Any], co
         raise ValueError("official validation requires --command and --provenance")
     expected_command = validate_official_workload(command, provenance, result["concurrency"])
     validate_official_export(metrics, result, expected_command)
-    if not result["eligible"]:
-        raise ValueError("good_request_fraction is below 0.90")
     # AIPerf 0.12.0 subtracts the rounded 14-token cache-bust estimate from the
     # synthetic ISL. The actual first_turn_prefix marker varies from 12 to 16
     # tokens, so individual client observations span 3984 through 3988 tokens.
@@ -440,6 +443,8 @@ def validate_official_result(metrics: dict[str, Any], result: dict[str, Any], co
         raise ValueError("output sequence length is inconsistent with pinned AIPerf tolerance")
     if result["osl_mismatch_count"] != 0:
         raise ValueError("AIPerf reported output sequence length mismatches")
+    if not result["eligible"]:
+        raise ValueError("good_request_fraction is below 0.90")
     return {"valid": True, "configured_input_sequence_length": 4000, "configured_output_sequence_length": 200, "client_input_token_adjustment": 4000 - input_length, "aiperf_version": "0.12.0", "tokenizer_revision": TOKENIZER_REVISION}
 
 

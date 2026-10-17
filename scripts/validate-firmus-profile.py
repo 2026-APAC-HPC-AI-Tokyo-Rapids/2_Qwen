@@ -59,12 +59,15 @@ def main() -> None:
         if not report.is_file() or report.stat().st_size == 0:
             raise ValueError(f"missing Nsight report: {report}")
         database = args.runtime / f"profile/nsys-{name}.sqlite"
-        subprocess.run(["/opt/nsys/bin/nsys", "export", "--type=sqlite", f"--output={database}", str(report)], check=True)
-        results[name] = {"report": report.name, **validate_capture(database, int(tp))}
-        summaries[name] = summarize_kernels(database)
+        try:
+            subprocess.run(["/opt/nsys/bin/nsys", "export", "--type=sqlite", f"--output={database}", str(report)], check=True)
+            results[name] = {"report": report.name, **validate_capture(database, int(tp))}
+            summaries[name] = summarize_kernels(database)
+        finally:
+            # Keep native reports only, including after a failed export or check.
+            database.unlink(missing_ok=True)
         if separate:
             results[name].update(validate_cpu_traces(args.runtime / "profile/torch" / name, int(tp)))
-        database.unlink()
     if not endpoints or len(results) != len(endpoints):
         raise ValueError("expected a capture for every distinct worker endpoint")
     (args.runtime / "profile/validation.json").write_text(json.dumps({"valid": True, "workers": results}, indent=2) + "\n")

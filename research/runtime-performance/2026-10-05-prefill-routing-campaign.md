@@ -78,3 +78,44 @@ read-only scheduler再照合でoff216741は健全Qのまま、開始予測がOct
 今回の対応は両健全Qを維持し、Lunaの長め監視でR/terminal/ETA/期限接近を通知すること。取消・変更・再投入・追加GPU・条件変更は行わない。期限前にRへ進まなければその事実を報告し、terminal時には失敗段階/raw/cleanupを確認する。公式scoreと性能改善は未確定、terminal後の独立parser/精度診断/全hash/artifact/cleanup監査は維持する。
 
 期限で実terminalとなった場合の最小再投入候補は、まずActions結論・PBS F/削除・stime/使用walltime・raw全hash・runtime消去を確認して未実行取消とGPU実行後失敗を区別すること。onが成功済ならその来歴/rawを保存し、有効offがない状態で性能差を断定しない。必要な失敗側だけを同じimage182fbb6d・fixed026030・c48・Pshuffle1・Proute0または1・D/precision/profilefalseのまま、対応conditioncommitを親とする追跡commitで再投入する。paths-ignoreで空commitはworkflowを起動しなかった既知事実があるため、実行理由を記した実runtime commentの最小変更でpush triggerを残し、cluster/nodesタグを付け、require-buildを付けない。安価なargv/budgetfixture/bash/diff検証後、Actionsでsameimage選択とPBS来歴を再確認する。再投入は実terminal/cleanup後の必要側のみで、今回は実施しない。
+
+### 現在の開始予測への更新（10月7日）
+
+read-only再照合で両Actions37319361445/37389659143はin_progress、PBS off216741/on216810は健全Q・mem不足。offの現在ETAは**Oct9 16:49:29 SGT**へ前倒しされ、前回Oct11予測と異なりoff Actions期限目安Oct10 21:50:42 SGTの**29時間1分13秒前**となった。onは独立ETA無し。過去予測は履歴として上記に維持する。現在ETAもscheduler推定で開始を保証せず、両runの公式score・精度診断・terminal/raw/parser/全hash/cleanup監査は未完了。livejob取消・変更・追加投入を行わずLuna監視を継続する。
+
+## 自由pairの追加公式off/on（10月7日）
+
+ユーザーの「自由ペアで同じの投げなおしてみたら?」に続く「取り下げなくていいよ」に従い、旧fixed off37319361445/PBS216741・on37389659143/PBS216810を健全Qのまま維持し、自由pair2条件を**追加**投入した。旧job取消は行わない。各旧conditioncommitを親とするbranchで、固定026030だけを外し、既方式`select=2:ncpus=112:ngpus=8:mem=1500gb:mpiprocs=1`・scatter:excl・30minへ復元し、orchestrationfixtureを更新。P2TP4EP1/D2TP4/c48/Pshuffle1/Proute0or1/precision/EAGLE/profilefalseを維持し、source/mirror/container変更無し。公式複数条件を同allocationで実行する既存機能はなく、新infraは作らない。
+
+|条件|parent→commit|Actions/PBS|runtime|
+|---|---|---|---|
+|free off|77dab977→e580642a|[37576502357](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37576502357)/217224|pd-37576502357-1.0g2zAKFz3O|
+|free on|934636c5→e484c760|[37576508318](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37576508318)/217225|pd-37576508318-1.ID7qKbjfk4|
+
+各36 orchestration/actualargv/monitor tests＋15 repository contract tests、bash/actionlint/diff checks通過。実sidecar/runtime provenanceで同image182fbb6d・size12231192576・buildsource9c5a5a3・SGLangfc275674・各commit・profilefalseを照合し、serving JSON byte一致、EC2/mirror/S3buildskippedを確認した。PBSは両Q/aiq2・mem不足、admission後select2各112CPU/8GPU/1880GB・合計16GPU/3760GB・excl/30min、host指定無しを確認。実actualpair/GPU型/H100・workeractualargvはR後に現物を照合する。
+
+旧2本＋追加2本の4本を維持する。ユーザーが認可した追加2run予算で、異なるresourcesなら並行GPU実行の可能性がある。独立自由pairが別actualpairに割り当てられた場合、routingとhardwareが交絡するため厳密同pair改善の結論を出さず、旧fixedpairとも無条件に混合集計しない。Lunaへ新handlesを引継ぎ、全4runのterminal/raw/parser/TTFTITL/8greedy数値診断/全hash/artifact/cleanupまで監査を継続する。性能優位と主催者accuracyは未確認、main runtime採用は行わない。
+
+## 自由pair公式E2E終端監査（10月7日）
+
+両runはActions success、PBS F/Exit0、全回収/archive/cleanup成功。off217224は16:22:41–16:34:40SGT/wall11:52、on217225は16:34:40–16:46:35/wall11:51。独立自由pairだったが、現物は**P030/D032の同じpairで連続実行**となった。node-addressesと16基のH10080GB HBM3 UUIDを両runで照合し、今回の比較には別actualpair交絡は発生しなかった。旧fixed026030との混合集計は行わない。
+
+|項目|off37576502357|on37576508318|変化|
+|---|---:|---:|---:|
+|公開規則準拠repository score out tok/s|2712.079720|2779.551953|+2.487841%|
+|good request fraction|.989304813|.990708479|両eligible|
+|request count|1683|1722||
+|平均TTFT ms|1509.312749|1403.656081|-7.000316%|
+|平均ITL ms|9.822403|9.961746|+1.418622%|
+|TTFT>3000ms / ITL>20ms|18 / 0|16 / 0||
+|raw cancel / error|0 / 0|0 / 0||
+
+各正本`qwen-artifacts/<run>/1/`の52rawhash（計104）を全再計算し、archivedscoreとrepository parser再計算が等価、60/120/30公式commandとprovenanceを検査した。このparserは主催者提供ではなく公開規則に準拠するもの。sameimage182fbb6d/source9c5a5a3/c48/topology/precision/PROFILEfalse/4workersettingsを照合し、実4worker argvはallocationのruntime/node-local pathだけ正規化後、Proute0→1以外一致。Pshuffle1、Denv無し、profiler無しを確認。両runtimeの消去をterminal後のread-only SSHで確認した。
+
+同prompt8件×64tokenのrequest/content/tokenbytes/logprobsはすべて完全一致。整数routingのmicrobitwise期待と整合し、E2E数値差の原因解析は不要だった。ただし8件synthetic probeは主催者の完全accuracy評価ではない。benchmark窓のunweighted log sampleでPqueue平均1.613909→1.174014、Dacceptlen2.226411→2.231057、full8192割合.93765→.88515。これらはtime-weighted占有率や単独kernel latencyではなく、step分布も変わるので局所原因の厳密証明にはしない。
+
+**同pair一対では+2.49%の暫定的な有望結果**。TTFT改善とITL微悪化を併記し、順序/time drift/測定分散が未評価のため採用を断定せずmain runtimeへ統合しない。追加反復は投入せず、ユーザーの旧job維持指示に従いfixed off216741/on216810の監視とterminal監査を継続する。自由2runのGPU/PBS残留無し、成功imageは再利用可能なまま保持し、調査scriptは残る旧run監査に使用する。
+
+### 旧fixed2本の終端訂正（10月8日）
+
+37319361445/216741と37389659143/216810はlaststateQ監視SSH124が1800秒budgetを超過→workflowcleanup自身Q取消でfailure/PBSF、GPU無実行。mem不足は待機理由、終了fatalではない。各9正本hash/runtime消去確認。自由030032一対の暫定+2.49%を再解釈せず、未実行旧fixedを追加性能データとしない。最小Q観測修正acf2427後はsymmcontrol/onだけを先に再準備し、routing反復の無条件追加無し。
