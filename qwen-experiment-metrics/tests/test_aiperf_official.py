@@ -165,10 +165,11 @@ def parse(tmp_path: Path, parser_path: Path, artifacts: list[str], values: dict[
     return process, json.loads(output.read_text())
 
 
-def test_parser_emits_official_score(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
+def test_parser_emits_measured_throughput_and_local_gate(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
     process, result = parse(tmp_path, parser_path, official_artifacts, metrics(input_length=3986))
     assert process.returncode == 0, process.stderr
     assert result["eligible"] is True
+    assert result["good_output_tokens_per_second"] == 850
     assert result["score_output_tokens_per_second"] == 850
     assert result["error_request_count"] == 0
     assert result["observed_input_sequence_length_avg"] == 3986
@@ -212,6 +213,7 @@ def test_parser_rejects_incomplete_or_wrong_export_identity(tmp_path: Path, pars
 def test_parser_rejects_ineligible_official_run(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
     process, result = parse(tmp_path, parser_path, official_artifacts, metrics(0.899, input_length=3986))
     assert process.returncode != 0
+    assert result["good_output_tokens_per_second"] == 850
     assert result["score_output_tokens_per_second"] == 0
     assert result["official_validation"]["valid"] is False
     assert "below 0.90" in process.stderr
@@ -376,3 +378,13 @@ def test_provision_maps_main_to_pinned_tokenizer_revision() -> None:
         assert f"export {variable}=1" in script
     assert 'test -s "${tokenizer_snapshot}/${tokenizer_file}"' in script
     assert 'printf \'%s\' "${tokenizer_revision}" >"${tokenizer_cache_repository}/refs/main"' in script
+
+
+@pytest.mark.parametrize("field", ["input_sequence_length", "output_sequence_length"])
+def test_ineligible_run_still_validates_token_distribution(tmp_path: Path, parser_path: Path, official_artifacts: list[str], field: str) -> None:
+    values = metrics(fraction=0.899)
+    values[field].pop("min")
+    process, result = parse(tmp_path, parser_path, official_artifacts, values)
+    assert process.returncode != 0
+    assert result["good_output_tokens_per_second"] == 850
+    assert "lacks distribution evidence" in process.stderr
