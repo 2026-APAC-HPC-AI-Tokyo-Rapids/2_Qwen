@@ -151,3 +151,8 @@ run A は N=113.6 で 37.6 ms、参照は N=116.8 で 38.3 ms。傾き 0.197 ms/
 - 上限は 32/rank に戻し、round_robin は残す（throughput に中立、Prefill 側の待ちは減る）。上限は D の ITL を見てから上げる（ITL p99 が 18 ms 台なら 34/rank）。
 - 期待: ITL 不合格 ≒ 0、Decode 容量 128 / (200 × 15.2 ms) ≒ 39 req/s で Prefill 律速（34〜37 req/s）に戻り、raw 7200 前後、score 7000 前後。受理長が 1.9 まで落ちれば ITL は現状並みで中立。
 - 判定: ITL 分布、accept len（Decode ログ）、score。不合格なら speculation を 3/4 に戻す。
+
+### run D の投入記録（2 回とも GPU 計測に至らず）
+
+- 39032066280（`019fc60`）: 配備段階で失敗。`scripts/provision-firmus-framework.sh` の EAGLE3 ガードが steps 3 / draft 4 を固定していた。main `0984122` で「draft = steps + 1」の SGLang 側の不変条件に置き換え、同時に見つかった shard 検査の無効化（`.weight_map | values | unique` が object でエラーになりプロセス置換内で握り潰されていた）も修正した。
+- 39033000278（`afab218`、Slurm 24313、2 分 51 秒）: Decode worker が起動時に `Qwen SM90 MegaMoE requires FP8 block128 H4096/I1536/top8, DP4/EP4, Prefill or DP-local EAGLE3 Decode, without TBO/EPLB` で停止。`patches/sglang/qwen3-sm90-megamoe.patch` の Decode 側ガードが `speculative_num_draft_tokens == 4` を要求している。つまり steps 2 / draft 3 は現行イメージでは runtime だけでは通らず、少なくとも SGLang patch の変更（＝イメージ再ビルド）が要る。ガードだけの制約か、kernel 側に 4 token 前提（buffer サイズ、graph capture の token 数、tile 選択）があるかを監査中。実 kernel の GPU ゲートは 1〜65 行の任意行数を通しているので、ガードだけである可能性が高いが、確認してから進める。
