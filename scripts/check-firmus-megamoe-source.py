@@ -75,8 +75,11 @@ def check(source):
     guard_ns = {"torch": NS(cuda=NS(get_device_capability=lambda: (9, 0))), "config": NS(hidden_size=4096, moe_intermediate_size=1536, num_experts=128, num_experts_per_tok=8), "self": NS(tp_size=1, ep_size=4), "args": args, "quant_config": NS(get_name=lambda: "fp8", weight_block_size=[128, 128])}
     assert eval(guard, guard_ns)
     args.disaggregation_mode = "decode"
-    assert eval(guard, guard_ns)
-    for key, bad in [("enable_dp_lm_head", False), ("moe_dense_tp_size", None), ("speculative_moe_a2a_backend", "none"), ("speculative_algorithm", None), ("speculative_eagle_topk", 2), ("speculative_num_draft_tokens", 8), ("dp_size", 2), ("enable_two_batch_overlap", True)]:
+    # EAGLE3 topk 1 verifies steps + 1 rows per request; both measured chains pass.
+    for draft_tokens in (3, 4):
+        args.speculative_num_draft_tokens = draft_tokens
+        assert eval(guard, guard_ns), draft_tokens
+    for key, bad in [("enable_dp_lm_head", False), ("moe_dense_tp_size", None), ("speculative_moe_a2a_backend", "none"), ("speculative_algorithm", None), ("speculative_eagle_topk", 2), ("speculative_num_draft_tokens", 2), ("speculative_num_draft_tokens", 8), ("dp_size", 2), ("enable_two_batch_overlap", True)]:
         original = getattr(args, key)
         setattr(args, key, bad)
         assert not eval(guard, guard_ns), key
