@@ -1,0 +1,11 @@
+{
+  "name": "register-no-extra-barrier",
+  "baseline_commit": "a6acf5f11008c1e77170a53ac49fe585be5aeafd",
+  "baseline_header_sha256": "0e34a083941ae7e1fa22add3f1d2cd561903c1f7541cca82b559c47b5a3d3e9d",
+  "header_sha256": "ee555da5476c5b5a55f921e5909201853fb83c2264b8bc25db76178a1ecb6dba",
+  "patch": "register-no-extra-barrier.patch",
+  "gpu_measured": false,
+  "production_enabled": false,
+  "purpose": "Keep register-resident SwiGLU values and partial maxima, but let every warp compute its own scale from immutable shared partials. Remove inverse-scale scratch reuse and its extra CTA barrier. Retain the existing final FP8/scale publication barrier. Trade one barrier for redundant warp reductions and scale arithmetic.",
+  "gpu_submission_authorized": false
+}

@@ -1,0 +1,39 @@
+{
+  "baseline_run": 38945855851,
+  "baseline_goodput": 6521.975599520539,
+  "scope": "Decode kernel control-flow candidate; no measured GPU speedup or justified 7200 forecast.",
+  "change": [
+    "Specialize Qwen Decode FC1/FC2 callbacks",
+    "Select SwapAB width once per tile outside K loop; retain eight widths and original math, scales, waits and order"
+  ],
+  "compiler": "CUDA 12.9.86, GCC 13, sm_90a; CPU compilation on Genkai login, no GPU execution",
+  "decode": {
+    "baseline_registers": 168,
+    "candidate_registers": 168,
+    "spill_store_bytes": 0,
+    "spill_load_bytes": 0,
+    "baseline_static_sass_instructions": 6524,
+    "candidate_static_sass_instructions": 8468,
+    "interpretation": "Static code grows about 30%; fewer repeated runtime selections do not establish a latency win."
+  },
+  "prefill": {
+    "cubin_byte_identical": true,
+    "registers_reported": 96,
+    "spill_store_bytes": 40,
+    "spill_load_bytes": 40
+  },
+  "validation": "37 focused tests passed; 4 Linux-only tests skipped on macOS; Ruff/shell syntax/patch chain passed. Future GPU gate covers all eight tile widths.",
+  "gpu_submission": "User explicitly declined a comparison run without a justified >7200 expectation; no GPU submission.",
+  "capacity_limits": {
+    "required_goodput_gain_pct": 10.395997196452345,
+    "hypothetical_batch144_fixed_cost_score": 7428.041968845317,
+    "maximum_cycle_cost_increase_at_batch144_same_sla_pct": 3.16724956729606,
+    "caveat": "144-request cap only reaches 7200 if cycle cost rises <=3.17%, supply fills it and SLA fraction holds. Dense GEMM tile crossings and no measured expert histogram make that assumption unjustified. No batch-cap change made.",
+    "fixed_batch_same_sla_cycle_reduction_pct": 9.417005562214742,
+    "profile_cycle_ms": 41.57316625840336,
+    "profile_moe_ms": 22.779108329166665,
+    "profile_moe_only_required_time_reduction_pct": 17.186569914722597,
+    "interpretation": "Required savings under fixed-work and unchanged-SLA assumptions, not a prediction. Profile cycle differs from normal measurement; hardware counters do not isolate internal MegaMoE stalls."
+  },
+  "status": "Superseded by register-resident quantization and cooperative scale caching. Loop hoisting is not included in the active build; original patch and CPU evidence retained under outputs/firmus-decode-7200-20261017."
+}
