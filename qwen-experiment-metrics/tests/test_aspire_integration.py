@@ -257,7 +257,7 @@ def test_aspire_megamoe_uses_three_prefill_workers_and_one_full_decode(tmp_path:
         assert bool(record["profiler"]) == profile
     # Separate DP endpoint ranges; adjacent HTTP ports otherwise collide.
     assert addresses == [32000, 32100, 32200, 33000]
-    assert config["container_sha256"] == "8df47c11d7ede66fd19f12c7012a9ab5c97b13387a2655fcbce9f13e1c334110"
+    assert config["container_sha256"] == "e29dfde476fd2a8c7cd268f9be2c6d2a1f5e5404a34aed369aa84b4b4143909f"
     workflow = (REPOSITORY / ".github/workflows/aspire2ap.yml").read_text()
     assert workflow.index("jq -er .container_sha256 configs/aspire-serving.json") < workflow.index('PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh')
 
