@@ -1,12 +1,12 @@
 {
   "date": "2026-10-18",
   "base_commit": "9b2fbebefc82304d880179d2758a689f24b60893",
-  "status": "submission_withheld_user_confidence_threshold_not_met",
+  "status": "build_only_prepared_final_gpu_submission_pending",
   "firmus_jobs_submitted": 0,
   "aspire_jobs_submitted": 0,
   "other_gpu_jobs_submitted": 0,
   "cloud_image_builds_started": 0,
-  "user_constraint": "At most one final Firmus job, only with strong confidence of >7000 good output tok/s; no comparison runs.",
+  "user_constraint": "At most one final Firmus job, only with strong confidence of >7000 good output tok/s; no comparison runs. User subsequently instructed continuing to the final submission and making the candidate at least a superset of the concurrent placement branch.",
   "latest_completed_results": [
     {
       "cluster": "Firmus",
@@ -19,6 +19,13 @@
       "run_id": 39013218562,
       "score": 4661.260454451255,
       "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39013218562"
+    },
+    {
+      "cluster": "Firmus",
+      "run_id": 39051152456,
+      "score": 6699.299221712264,
+      "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39051152456",
+      "scope": "Independent Prefill expert-stat diagnostic, not submitted by this task. Same reference image/runtime with recorder enabled; do not treat as a new uninstrumented baseline."
     }
   ],
   "evidence_validation": {
@@ -89,25 +96,51 @@
       "Late FP32 top-k weighting left an unused remote coefficient load/local store in dispatch. Remove it.",
       "The Qwen SwapAB combine assigns 128 rows to only 16 CTAs; partition rows into eight disjoint chunks and spread work to 128 CTAs.",
       "Prior FA3 sweep used a different TP/H100 geometry; it cannot establish a speedup for current DP-local H200. Do not reuse its ~1 ms estimate as measured current savings."
+    ],
+    "additional_random_strings": [
+      "1838e3a7d284cb9554228edc",
+      "c7c171b040666e4c39015dca",
+      "26c8afc02e4a06f65e5a951c"
     ]
   },
   "implemented_candidate": {
-    "patch": "../../patches/deep-gemm/sm90-combine-parallel.patch",
-    "evidence": "../kernel-ablation/2026-10-18-combine/results.json",
+    "placement_source_commit": "a61d08d3d7673d5cf300265526e8f5350c3dc32a",
+    "placement_source_run": 39053527142,
+    "relationship": "All eight changed files from the placement branch imported byte-for-byte; additional native communication patch, numerical placement gate and CPU evidence.",
+    "patch": "../../patches/deep-gemm/sm90-routing-communication.patch",
+    "evidence": [
+      "../kernel-ablation/2026-10-18-combine/communication-build.json",
+      "../kernel-ablation/2026-10-18-combine/placement-analysis.json"
+    ],
+    "native_changes": [
+      "Reserve dispatch offsets only for nonempty CTA/expert pairs; retain grid completion and publish identical scheduler completion words.",
+      "Remove unused remote top-k weight copy; retain ABI allocations.",
+      "Qwen SwapAB combine distributes eight chunks per row across CTAs and uses coalesced L2 cached uint4 loads instead of per-chunk TMA, with unchanged ascending FP32 FMA order and BF16 output."
+    ],
+    "superseded_candidate": "sm90-combine-parallel.patch (parallel TMA); retained as historical CPU evidence only, not applied to the image.",
     "source_integrated": true,
-    "container_build_and_image_hash_checks_updated": true,
-    "runtime_configuration": "main c192 baseline preserved; the single +0.5% c176 result is not treated as a proven additive win",
+    "runtime_configuration": "Other branch's exact static Prefill placement, c192, P3/D1, TP4/DP4/EP4, EAGLE3 steps3/draft4; Decode placement unchanged.",
     "main_merged": false,
     "gpu_speedup_measured": false
   },
   "confidence_gate": {
     "target_score_exclusive": 7000,
-    "gain_needed_over_latest_pct": 6.7788622061905945,
-    "fixed_work_time_reduction_needed_over_latest_pct": 6.348505749293876,
-    "all_good_same_throughput_ceiling": 6817.637050388352,
+    "gain_needed_over_latest_unprofiled_pct": 6.7788622061905945,
     "gain_needed_over_main_baseline_pct": 7.329441718773122,
-    "goodput_gain_to_10000_pct": 52.541231723129414,
-    "why_not_submitted": "Saved nsys times cover whole fused kernels, not combine. More combine CTAs, fewer static SASS sites and fewer compiler spill bytes do not establish a lower bound on cycle savings. Extra small TMA commands can offset parallelism. With no measured positive lower bound, >7000 confidence is insufficient.",
-    "needed_evidence": "Matched representative GPU phase/cycle timing plus existing numerical/graph gates and official workload/model validation. No job is scheduled to obtain that evidence under the current restriction."
+    "evidence": [
+      "Independent placement method fitted only on 273 worker-0 passes reduces the slowest rank's M128 tile work by 21.49-21.58% in all 1367 held-out passes.",
+      "Exact imported production map reduces critical-rank tile work by 21.54-21.62% on the recorded workload. Those production-map counts are in-sample, separately labelled from the holdout method experiment.",
+      "Serving Prefill MoE 2.17 ms/layer versus balanced gate 1.66 ms is consistent with the measured rank imbalance. Approximately 63.5% of Prefill forward GPU time is MoE; full translation gives about 13.6% forward-time reduction. This is a model, not a measured end-to-end gain.",
+      "128-row Decode dispatch counter atomics fall from 16896 to at most 1024 (813 in the deterministic random screen). Combine active CTAs rise 16 to 128 without increasing bytes or changing numerical order. These operation counts are not timing measurements."
+    ],
+    "remaining": "Complete the CPU-only container build; read the already-running external placement result before committing the only GPU submission. Preserve the numerical gate inside that final allocation.",
+    "uncertainty": "Kernel work reduction does not by itself bound goodput: synchronization, Decode capacity, EAGLE acceptance, TTFT/ITL tails and finite-run variation still matter. No 7000 result is claimed before the official workload runs."
+  },
+  "validation": {
+    "linux_tests": "349 passed, 1 skipped",
+    "source_patch_chain": "15 patches apply to pinned fc275674; all three CPU source checks pass",
+    "placement": "All 94 permutations, EP4 dispatch tables and 1504 weight/scale loading checks pass",
+    "native": "CUDA12.9 CPU compilation passes both geometries, Decode168 registers/0 spills, Prefill96 registers/20-byte spills; GPU numerical/graph gate deferred to final allocation",
+    "static": "Ruff, bash syntax (41 files), actionlint and git diff --check pass"
   }
 }

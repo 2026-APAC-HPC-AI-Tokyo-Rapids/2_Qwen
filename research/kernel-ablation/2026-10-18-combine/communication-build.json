@@ -1,0 +1,77 @@
+{
+  "condition": {
+    "baseline_commit": "9b2fbeb",
+    "baseline_header_sha256": "0e34a083941ae7e1fa22add3f1d2cd561903c1f7541cca82b559c47b5a3d3e9d",
+    "gpu_measured": false,
+    "production_enabled": false,
+    "name": "routing-communication",
+    "header_sha256": "9f9f131ba56447a6de178ff4191ac147f0780d87b19f35fbf5006ba01330e8be",
+    "patch": "../../../patches/deep-gemm/sm90-routing-communication.patch"
+  },
+  "gpu_executed": false,
+  "wheel_sha256": "e5e9f92cdf0515fe878bd81131bc25d2984e00c005824d2932af01a5e0d75261",
+  "patches": {
+    "sm90-late-topk-fp32.patch": "462d68230da3ab9a1e69ca85d9fa804b8edaf6a77bf0975726611a08fda6622b",
+    "sm90-fc2-pipeline.patch": "08da0ad5661f1aad9e596242e50428141400ebc7530cb7cbbfd035cc503fd410",
+    "sm90-prefill-rescale.patch": "ea03dbd0a1c4cafe30afe61e9432bb67a35566dd92429cf22a9f9957a5d51bdc",
+    "sm90-decode-exact-tiles.patch": "6cd0e9dd84c92d65902893e7808fe2f91a1e4f264e5ef4be9aeee854d47399f7",
+    "sm90-prefill-phase.patch": "e95d0faa42d1bb512be3a78a660e627d911fc822d6cde486079583e075bec12a",
+    "sm90-routing-communication.patch": "e0babfac057d9f282c4a3d3ec1a5f242c42fcd62add7655b092317f48370ab5c"
+  },
+  "compiler": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Tue_May_27_02:21:03_PDT_2025\nCuda compilation tools, release 12.9, V12.9.86\nBuild cuda_12.9.r12.9/compiler.36037853_0\n",
+  "roles": {
+    "decode": {
+      "cubin_sha256": "0ed14a9bcfbc34f5acb0adccb3d8bfa56fe96ce4dd6b162bbe6a7acdd8393ba6",
+      "registers": 168,
+      "stack_spills": [
+        "0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads"
+      ],
+      "compile_command": [
+        "/usr/local/cuda/bin/nvcc",
+        "--cubin",
+        "--std=c++20",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-O3",
+        "--ptxas-options=-v,-warn-spills",
+        "-gencode",
+        "arch=compute_90a,code=sm_90a",
+        "-I/home/ACCOUNT/ku60000565/codex-communication-cpu-20261018/build/routing-communication-cg/deep_gemm/include",
+        "/home/ACCOUNT/ku60000565/codex-communication-cpu-20261018/build/routing-communication-cg/decode.cu",
+        "-o",
+        "/home/ACCOUNT/ku60000565/codex-communication-cpu-20261018/build/routing-communication-cg/decode.cubin",
+        "--compiler-bindir",
+        "/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+      ]
+    },
+    "prefill": {
+      "cubin_sha256": "2e783360d8914326932aa79501313d4790cc847bd94458820453234014b30175",
+      "registers": 96,
+      "stack_spills": [
+        "32 bytes stack frame, 20 bytes spill stores, 20 bytes spill loads"
+      ],
+      "compile_command": [
+        "/usr/local/cuda/bin/nvcc",
+        "--cubin",
+        "--std=c++20",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-O3",
+        "--ptxas-options=-v,-warn-spills",
+        "-gencode",
+        "arch=compute_90a,code=sm_90a",
+        "-I/home/ACCOUNT/ku60000565/codex-communication-cpu-20261018/build/routing-communication-cg/deep_gemm/include",
+        "/home/ACCOUNT/ku60000565/codex-communication-cpu-20261018/build/routing-communication-cg/prefill.cu",
+        "-o",
+        "/home/ACCOUNT/ku60000565/codex-communication-cpu-20261018/build/routing-communication-cg/prefill.cubin",
+        "--compiler-bindir",
+        "/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+      ]
+    }
+  },
+  "archive_sha256": "367739c98260f3c8c2ab9d76c8269e76398c3a6fb43f8b74b8127a9afc9d5ee7",
+  "archive_path": "/Users/yuta/Dev/APAC/outputs/sglang-evidence-20261018/communication-cg-cpu-evidence.tar.gz",
+  "purpose": "CPU compilation evidence only; no GPU timing. Final combine uses L2 cached loads after the unchanged system acquire barrier.",
+  "packaged_patch_sha256": "61b1eb48d087aea9f20ee8f7885c1196044f2e31244438544b2f22ba2dd2e661",
+  "packaging_note": "Empty context lines normalized after compilation; git apply verified the exact same header SHA-256. The archive retains the original compiler input."
+}

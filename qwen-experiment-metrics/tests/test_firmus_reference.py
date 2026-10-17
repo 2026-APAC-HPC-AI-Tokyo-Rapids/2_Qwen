@@ -65,9 +65,36 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
     assert result["score_output_tokens_per_second"] == 0
 
 
+def archived_server_info() -> dict:
+    # The archived run predates the placement keys; carry the current Prefill placement into its config and every scheduler state.
+    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    location = json.loads((ROOT / "configs/firmus-framework.json").read_text())["prefill"]["expert_location"]
+    raw["config"]["prefill"]["expert_location"] = location
+    for role in ("prefill", "decode"):
+        placed = role == "prefill" and location != "trivial"
+        for state in [raw[role], *raw[role]["internal_states"]]:
+            state.update(init_expert_location="/runtime/source/prefill-expert-location.json" if placed else "trivial", ep_dispatch_algorithm="static" if placed else None)
+    return raw
+
+
+def test_prefill_expert_location_is_a_permutation_checked_on_every_state() -> None:
+    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    placement = json.loads((ROOT / config["prefill"]["expert_location"]).read_text())
+    assert list(placement) == ["physical_to_logical_map"]
+    assert len(placement["physical_to_logical_map"]) == 94
+    assert all(sorted(row) == list(range(128)) for row in placement["physical_to_logical_map"])
+    raw = archived_server_info()
+    check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
+    for role, key, invalid in (("prefill", "init_expert_location", "trivial"), ("prefill", "ep_dispatch_algorithm", None), ("decode", "init_expert_location", "/runtime/source/prefill-expert-location.json"), ("decode", "ep_dispatch_algorithm", "static")):
+        info = copy.deepcopy(raw[role])
+        info["internal_states"][1][key] = invalid
+        with pytest.raises(ValueError, match=key):
+            check(raw["config"], info, role)
+
+
 def test_server_info_checks_resolved_draft_backend_from_real_run() -> None:
     # The failed run reached readiness, then rejected SGLang's None -> deep_gemm normalization.
-    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    raw = archived_server_info()
     check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
     for role in ("prefill", "decode"):
         check(raw["config"], raw[role], role)
@@ -80,7 +107,7 @@ def test_server_info_checks_resolved_draft_backend_from_real_run() -> None:
 
 
 def test_prefill_deepep_checks_normal_mode_without_changing_decode() -> None:
-    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    raw = archived_server_info()
     check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     config["prefill"]["moe_a2a_backend"] = "deepep"
@@ -103,7 +130,7 @@ def test_server_info_validation_runs_after_gpu_collection(tmp_path: Path, invali
     assert "steps.collect.outcome == 'success'" in step
     assert workflow.index("GPU終了後に回収した実設定を検証") > workflow.index("uses: actions/upload-artifact@v7")
     script = textwrap.dedent(step.split("        run: |\n", 1)[1])
-    raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
+    raw = archived_server_info()
     artifact = tmp_path / "qwen-firmus-pd"
     (artifact / "source/source").mkdir(parents=True)
     (artifact / "results/results").mkdir(parents=True)
@@ -183,6 +210,10 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
         assert flags[flags.index("--load-balance-method") + 1] == "total_requests"
         assert flags[flags.index("--load-snapshot-publish-interval") + 1] == "1"
         assert flags[flags.index("--max-running-requests") + 1] == str(config["concurrency"] if prefill else config["decode_max_running_requests"])
+        location = [index for index, flag in enumerate(flags) if flag == "--init-expert-location"]
+        assert len(location) == (1 if prefill else 0)
+        if prefill:
+            assert flags[location[0] + 1] == str(tmp_path / "source/prefill-expert-location.json")
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
         assert flags[flags.index("--speculative-num-steps") + 1] == "3"

@@ -44,11 +44,15 @@ def main():
     s2 = torch.rand(32, 32, 12, device=device) * 0.005 + 0.005
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf = deep_gemm.get_symm_buffer_for_mega_moe(dist.group.WORLD, 128, 4096, 8, 4096, 1536, use_fp8_dispatch=True, activation="swiglu")
-    cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4]), ("decode-quant-zero", [9, 0, 0, 0])]
+    placement = json.loads((Path(__file__).resolve().parents[1] / "source/prefill-expert-location.json").read_text())["physical_to_logical_map"]
+    assert len(placement) == 94 and all(sorted(row) == list(range(128)) for row in placement)
+    cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("prefill-static-placement", [257, 129, 0, 65]), ("decode-graph", [128, 120, 4, 4]), ("decode-quant-zero", [9, 0, 0, 0])]
     # Exercise all SwapAB widths, plus a full tile and tail.
     # Other ranks still participate in the collective with zero live tokens.
     cases.extend((f"decode-tile-{count}", [count, 0, 0, 0]) for count in (1, 9, 17, 25, 33, 41, 49, 57, 65))
     for case, counts in cases:
+        physical_to_logical = torch.tensor(placement[0], device=device) if case == "prefill-static-placement" else torch.arange(128, device=device)
+        logical_to_physical = physical_to_logical.argsort().to(torch.int32)
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         if case == "decode-quant-zero":
             patterns.zero_()
@@ -67,7 +71,7 @@ def main():
         x = quantized(all_x, 128)
         reference = torch.zeros(16, 4096, device=device)
         for local_expert in range(32):
-            rows, slots = torch.where(all_ids == rank * 32 + local_expert)
+            rows, slots = torch.where(all_ids == physical_to_logical[rank * 32 + local_expert])
             if rows.numel() == 0:
                 continue
             gate, up = (x[rows] @ dequantized(w13[local_expert], s13[local_expert]).T).chunk(2, dim=-1)
@@ -79,6 +83,8 @@ def main():
         count = counts[rank]
         indices = torch.arange(count, device=device) % 4
         hidden, top_ids, top_weights = patterns[indices].contiguous(), ids[indices].contiguous(), weights[indices].contiguous()
+        if case == "prefill-static-placement":
+            top_ids = torch.where(top_ids >= 0, logical_to_physical[top_ids.clamp_min(0)], top_ids)
         actual = torch.empty(max(count, 1), 4096, dtype=torch.bfloat16, device=device)
 
         def forward(hidden, top_ids, top_weights, count, actual):
