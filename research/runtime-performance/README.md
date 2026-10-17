@@ -2,6 +2,7 @@
 
 現行Qwen3-235B-A22B・公式4000/200タスクの調査:
 
+- [2026-10-18: SM90 MegaMoE Decode の FC1 量子化器（bank conflict 解消、epilogue 21→12.5 µs/CTA）と dispatch の remote load 重ねを hoist に追加（Decode −0.5〜2.4%、image 比 −3.6〜12.5%、出力 bit 一致、ブランチ止め）。arrival の後回しは不採用](2026-10-18-megamoe-decode-epilogue-dispatch.md)
 - [2026-10-18: SM90 MegaMoE Decode mainloop の software pipeline 案（不採用）と N_SWAP hoist（kernel 単体で Decode −2〜11%、出力 bit 一致、ブランチ止め）](2026-10-18-megamoe-decode-mainloop-pipeline.md)
 - [2026-10-18: Prefill MegaMoE の EP rank 負荷不均衡（trivial配置 max/mean 1.338）と静的expert置換のbench（kernel −8%、score は単一runで判定不能・未採用）](2026-10-18-megamoe-expert-placement.md)
 - [2026-10-18: SM90 MegaMoE の kernel 単体 bench（`[kernel-bench]`）と kernel 内 timeline、Decode-128／Prefill-4096 の段階別内訳](2026-10-18-megamoe-kernel-timeline.md)
