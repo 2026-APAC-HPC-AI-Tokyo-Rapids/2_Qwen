@@ -9,12 +9,12 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
-@pytest.mark.parametrize('message', ['[cluster:aspire2ap] normal PD', '[skip ci] docs', '[require-build] [cluster:aspire2ap] [build-only]'])
+@pytest.mark.parametrize('message', ['[cluster:aspire2ap] normal PD', '[skip ci] docs', '[require-build] [cluster:aspire2ap] [build-only]', '[cluster:firmus] [nodes:1] [kernel-bench] candidate'])
 def test_explicit_supported_stages(message):
     module.validate(message)
 
 
-@pytest.mark.parametrize('message', ['[cluster:aspire2ap] [build-only]', '[require-build] [cluster:firmus] [build-only]', '[require-build] [cluster:aspire2ap] [build-only] [profile]'])
+@pytest.mark.parametrize('message', ['[cluster:aspire2ap] [build-only]', '[require-build] [cluster:firmus] [build-only]', '[require-build] [cluster:aspire2ap] [build-only] [profile]', '[cluster:firmus] [kernel-bench]', '[require-build] [cluster:firmus] [nodes:1] [kernel-bench]', '[cluster:firmus] [nodes:1] [kernel-bench] like [dynamo]'])
 def test_ambiguous_or_unbounded_stages_are_rejected(message):
     with pytest.raises(ValueError):
         module.validate(message)
