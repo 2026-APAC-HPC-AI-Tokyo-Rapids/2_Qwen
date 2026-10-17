@@ -156,3 +156,30 @@ run A は N=113.6 で 37.6 ms、参照は N=116.8 で 38.3 ms。傾き 0.197 ms/
 
 - 39032066280（`019fc60`）: 配備段階で失敗。`scripts/provision-firmus-framework.sh` の EAGLE3 ガードが steps 3 / draft 4 を固定していた。main `0984122` で「draft = steps + 1」の SGLang 側の不変条件に置き換え、同時に見つかった shard 検査の無効化（`.weight_map | values | unique` が object でエラーになりプロセス置換内で握り潰されていた）も修正した。
 - 39033000278（`afab218`、Slurm 24313、2 分 51 秒）: Decode worker が起動時に `Qwen SM90 MegaMoE requires FP8 block128 H4096/I1536/top8, DP4/EP4, Prefill or DP-local EAGLE3 Decode, without TBO/EPLB` で停止。`patches/sglang/qwen3-sm90-megamoe.patch` の Decode 側ガードが `speculative_num_draft_tokens == 4` を要求している。つまり steps 2 / draft 3 は現行イメージでは runtime だけでは通らず、少なくとも SGLang patch の変更（＝イメージ再ビルド）が要る。ガードだけの制約か、kernel 側に 4 token 前提（buffer サイズ、graph capture の token 数、tile 選択）があるかを監査中。実 kernel の GPU ゲートは 1〜65 行の任意行数を通しているので、ガードだけである可能性が高いが、確認してから進める。
+
+### run D の結果（Actions 39035989837、`b996afd`、新イメージ＝guard 緩和のみ、header 0e34a083… 不変）
+
+| 指標 | 参照 6521.98 | run A（round_robin、上限31） | **run D（round_robin、steps 2 / draft 3、上限32）** |
+|---|---:|---:|---:|
+| 公式 score | 6521.98 | 6336.27 | **6320.39**（−3.1%） |
+| raw tok/s / req/s | 6875 / 34.4 | 6728 / 33.6 | 6728 / 33.6 |
+| 良好率 | 94.9% | 94.2% | 93.9% |
+| 不合格 TTFT 一斉投入 / TTFT 定常 / ITL 定常 | 114 / 26 / 82 | 108 / 93 / 47 | 107 / 91 / 58 |
+| 定常 TTFT p50 / p99 | 1.94 / 2.68 s | 2.09 / 3.08 s | 1.97 / 3.20 s |
+| ITL 平均 / p99 | 17.33 / 20.25 ms | 17.09 / 20.04 ms | 17.64 / 20.08 ms |
+| accept len | 2.21 | 2.20 | **2.00** |
+| 1 step（ITL × accept）、N≈117 | 38.3 ms | 37.6 ms（N=114） | **35.3 ms** |
+| Decode running / rank | 29.2 | 28.4 | 29.3 |
+
+読み取り:
+- **投機短縮は不成立。** step は 38.3 → 35.3 ms（−8%）と短くなったが、見込みの −14% に届かず、受理長は 2.21 → 2.00（−9.5%、見込み −6%）と大きく落ちた。ITL は 17.33 → 17.64 ms で悪化。要求比例分 0.197 ms のうち verify 行数に比例するのは半分程度で、残りは要求あたりの固定費（attention の KV 読み出し、scheduler）と見るべき。steps 3 / draft 4 に戻す。guard の緩和（3 か 4 を許可）は無害なので残してよいが、それだけのために再ビルドはしない。
+- **round_robin は定常 TTFT の裾を悪化させる。** 2 run とも定常 p99 が 2.68 → 3.1〜3.2 s に伸び、定常 TTFT 不合格が 26 → 91〜93 件。rank 別の queue 平均は揃っているので偏りではなく、到着した rank の瞬間的な待ちを見ずに割り当てることによる分散の増加と見られる。`total_requests` は最も空いた rank を選ぶので裾が短い。throughput は Decode 律速で変わらない。**total_requests に戻す。**
+- 参照構成（`a6acf5f` ＋ 上限 32、total_requests、steps 3 / draft 4、c192）は Firmus の runtime 設定として局所最適で、今回試した runtime 変更（上限 31、round_robin、投機短縮）と kernel 候補（warp-redux-r176）はすべて中立か悪化だった。
+
+### 残る runtime 候補（いずれも TTFT 不合格 3.3% の削減が対象）
+
+1. **concurrency を 192 → 176 程度に下げる。** c192 では KV 到着済みで Decode slot 待ちの要求が常時約 17 あり、これは TTFT を 0.49 s 押し上げるだけで throughput に寄与しない（§3.1）。c176 なら定常 TTFT 不合格（26 件）がほぼ消え、一斉投入分も 114 → 約 100。slot の空転が増える分は 1% 未満の見込み。
+2. **optimistic prefill（N=2）。** Prefill 側滞在を bootstrap 待ちの約 12 要求分減らし、同じ占有率をより低い c で保てる。一斉投入時の Prefill 処理も速くなる。安全性は §3.2 の通り。
+3. router → client の 41 ms（TCP_NODELAY）。
+
+合計で +1.5〜3%（6620〜6720）が上限で、7200 には Decode step の短縮（kernel）が不可欠。Decode MegaMoE は step の 63%、Prefill MegaMoE は FP8 peak の 58% で、komoriyuta の 2 候補は両方とも遅くなった。
