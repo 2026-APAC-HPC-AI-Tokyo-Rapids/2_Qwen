@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-18",
+  "base_commit": "9b2fbebefc82304d880179d2758a689f24b60893",
+  "status": "submission_withheld_user_confidence_threshold_not_met",
+  "firmus_jobs_submitted": 0,
+  "aspire_jobs_submitted": 0,
+  "other_gpu_jobs_submitted": 0,
+  "cloud_image_builds_started": 0,
+  "user_constraint": "At most one final Firmus job, only with strong confidence of >7000 good output tok/s; no comparison runs.",
+  "latest_completed_results": [
+    {
+      "cluster": "Firmus",
+      "run_id": 39040135834,
+      "score": 6555.604597549429,
+      "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39040135834"
+    },
+    {
+      "cluster": "ASPIRE",
+      "run_id": 39013218562,
+      "score": 4661.260454451255,
+      "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39013218562"
+    }
+  ],
+  "evidence_validation": {
+    "downloaded_files_sha256_verified": {
+      "firmus": 76,
+      "aspire": 44
+    },
+    "parser": "The repository parser replayed every original score field from archived AIPerf 0.12.0 exports with argv and provenance. It is a local validator for the official workload, not the organisers accuracy evaluation.",
+    "score_window": "Unprofiled normal run, excluding warmup; profile was a separate client/window.",
+    "raw_archive": "archive-host:/srv/qwen-artifacts/<run_id>/1/",
+    "local_normal_analysis": "/Users/yuta/Dev/APAC/outputs/sglang-evidence-20261018/normal-summary.json"
+  },
+  "prior_rejections": [
+    {
+      "change": "Decode register quantization plus scale cache",
+      "run_id": 38977662903,
+      "score": 0,
+      "reason": "78.76% good fraction, below 90% eligibility; no request errors but slower MegaMoE and ITL regression."
+    },
+    {
+      "change": "Prefill round_robin plus cap31",
+      "run_id": 39019907035,
+      "score": 6336.27,
+      "reason": "Lower raw throughput and worse steady TTFT tails; not a clean single-factor comparison."
+    },
+    {
+      "change": "warp-redux-r176 on the same A runtime",
+      "run_id": 39018872189,
+      "score": 6105.73,
+      "reason": "Compared with run A, same-batch ITL worsened; no new quantizer variant deployed."
+    },
+    {
+      "change": "steps2/draft3 plus round_robin",
+      "run_id": 39035989837,
+      "score": 6320.39,
+      "reason": "Shorter step did not compensate for lower acceptance; ITL worsened."
+    },
+    {
+      "change": "Further concurrency-only increase or blind cap increase",
+      "reason": "Firmus ITL p99 already exceeds 20 ms; ASPIRE steady Prefill is saturated. No threshold evidence."
+    }
+  ],
+  "already_present_not_counted_again": [
+    "QK normalization/RoPE/FP8 Q fusion",
+    "FC2 pipeline and exact Decode tail tiles",
+    "SiLU plus FP8 quantization inside MegaMoE",
+    "Staged EAGLE KV transfer and early Prefill handoff"
+  ],
+  "new_search": {
+    "random_string": "769a4fe4c0d33691c1b74956",
+    "method": "Sort six predefined source axes by successive four-digit hexadecimal chunks, then pair adjacent axes. Exploration order only; never performance evidence.",
+    "pairs": [
+      [
+        "GPU placement and DP synchronization",
+        "partial Prefill requests"
+      ],
+      [
+        "unnecessary MoE transfers",
+        "CUDA Graph boundaries"
+      ],
+      [
+        "attention parallelism",
+        "weight reuse"
+      ]
+    ],
+    "outcome": [
+      "Keep measured P3/D1 Firmus and P2/D2 ASPIRE topology. Existing overlapping schedule is already enabled.",
+      "Late FP32 top-k weighting left an unused remote coefficient load/local store in dispatch. Remove it.",
+      "The Qwen SwapAB combine assigns 128 rows to only 16 CTAs; partition rows into eight disjoint chunks and spread work to 128 CTAs.",
+      "Prior FA3 sweep used a different TP/H100 geometry; it cannot establish a speedup for current DP-local H200. Do not reuse its ~1 ms estimate as measured current savings."
+    ]
+  },
+  "implemented_candidate": {
+    "patch": "../../patches/deep-gemm/sm90-combine-parallel.patch",
+    "evidence": "../kernel-ablation/2026-10-18-combine/results.json",
+    "source_integrated": true,
+    "container_build_and_image_hash_checks_updated": true,
+    "runtime_configuration": "main c192 baseline preserved; the single +0.5% c176 result is not treated as a proven additive win",
+    "main_merged": false,
+    "gpu_speedup_measured": false
+  },
+  "confidence_gate": {
+    "target_score_exclusive": 7000,
+    "gain_needed_over_latest_pct": 6.7788622061905945,
+    "fixed_work_time_reduction_needed_over_latest_pct": 6.348505749293876,
+    "all_good_same_throughput_ceiling": 6817.637050388352,
+    "gain_needed_over_main_baseline_pct": 7.329441718773122,
+    "goodput_gain_to_10000_pct": 52.541231723129414,
+    "why_not_submitted": "Saved nsys times cover whole fused kernels, not combine. More combine CTAs, fewer static SASS sites and fewer compiler spill bytes do not establish a lower bound on cycle savings. Extra small TMA commands can offset parallelism. With no measured positive lower bound, >7000 confidence is insufficient.",
+    "needed_evidence": "Matched representative GPU phase/cycle timing plus existing numerical/graph gates and official workload/model validation. No job is scheduled to obtain that evidence under the current restriction."
+  }
+}

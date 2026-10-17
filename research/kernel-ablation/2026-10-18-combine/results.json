@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-18",
+  "source_base_commit": "9b2fbebefc82304d880179d2758a689f24b60893",
+  "gpu_execution_performed": false,
+  "gpu_jobs_submitted": 0,
+  "build_scope": "CPU-only nvcc 12.9.86 on Genkai login; no allocation, CUDA launch, image build, or cloud build",
+  "baseline_header_sha256": "0e34a083941ae7e1fa22add3f1d2cd561903c1f7541cca82b559c47b5a3d3e9d",
+  "candidate_header_sha256": "281f190bce289f8f0aafca6c71bb66cce7d18fba2ca5936dfc699df3926fc38c",
+  "conditions": {
+    "baseline": {
+      "prefill": {
+        "cubin_sha256": "808ed8d343a4a7e0cbe993a4d761e92e8f55f22f464f9b67cc79419bf3d2484b",
+        "compiler_stack_spills": [
+          "48 bytes stack frame, 40 bytes spill stores, 40 bytes spill loads"
+        ],
+        "static_instruction_sites_including_nop": 6048,
+        "cta_barrier_sites": 23
+      },
+      "decode": {
+        "cubin_sha256": "78a59bb913247ea8bed2f9d0695f771287dcb3babc6329c55f6332067d056a73",
+        "compiler_stack_spills": [
+          "8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads"
+        ],
+        "static_instruction_sites_including_nop": 6536,
+        "cta_barrier_sites": 29
+      }
+    },
+    "parallel-combine": {
+      "prefill": {
+        "cubin_sha256": "a151aa7f95d8866bdc6a04597d507c6d869b95eca9e530cf9b4afa7cde211333",
+        "compiler_stack_spills": [
+          "32 bytes stack frame, 20 bytes spill stores, 20 bytes spill loads"
+        ],
+        "static_instruction_sites_including_nop": 6024,
+        "cta_barrier_sites": 23
+      },
+      "decode": {
+        "cubin_sha256": "773d0de89e1fd6f9974ec53619949ebb7110f9cd7144038fed1393d1c99b1246",
+        "compiler_stack_spills": [
+          "8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads"
+        ],
+        "static_instruction_sites_including_nop": 6040,
+        "cta_barrier_sites": 29
+      }
+    }
+  },
+  "cpu_checks": {
+    "layout": "PASS: unique 16-byte output coverage, token counts 0..129/132/133/264/1024/4095/4096, all 256 live-slot masks, FP32 accumulation order, consecutive work-item barrier phases",
+    "source": "L1 routing-weight workspace has no consumer after late-topk patch; remove its remote load/local store, retain allocation offsets",
+    "numerical_limit": "CPU ownership/order model and nvcc do not validate GPU races, device numerical error, model accuracy or goodput",
+    "unchanged": "FP8 quantizer, scales, FC1/FC2 math, CTA barriers, kernel launch geometry, model weights, official workload and SLA"
+  },
+  "combine_geometry": {
+    "token_rows": 128,
+    "grid_ctas": 132,
+    "warps_per_cta": 8,
+    "baseline_active_combine_ctas": 16,
+    "candidate_active_combine_ctas": 128,
+    "baseline_warp_output_bytes": 8192,
+    "candidate_warp_output_bytes": 1024,
+    "scope": "Combine phase only. Not an eightfold kernel speedup. Small Prefill using SwapAB is also affected; large Prefill keeps its original combine partition."
+  },
+  "costs_not_removed": [
+    "Same total FC2 output bytes are read and written.",
+    "Eight times as many chunk work items increase top-k index/weight loads and TMA commands.",
+    "GEMM, dispatch grid barriers and cross-rank rendezvous still execute.",
+    "There is no measured combine-phase duration in the saved nsys trace."
+  ],
+  "evidence_archive": {
+    "path": "/Users/yuta/Dev/APAC/outputs/sglang-evidence-20261018/cpu-evidence.tar.gz",
+    "sha256": "3f400549705918fd8803c0db61ba482e4c502771bb3750c45d9ec1f71e57523d",
+    "contains": "Original compiler logs, cubins, SASS, CUDA instantiations and per-condition build metadata"
+  },
+  "reproduce": "python research/kernel-ablation/2026-10-17-decode/build.py research/kernel-ablation/2026-10-18-combine/parallel-combine.json WHEEL OUTPUT --nvcc /usr/local/cuda/bin/nvcc --ccbin /opt/rh/gcc-toolset-13/root/usr/bin/g++",
+  "decision": "No GPU submission: static changes do not establish a high-confidence >7000 goodput result. Keep candidate on its branch; do not merge into main.",
+  "validation": {
+    "linux_cpu_pytest": {
+      "passed": 348,
+      "skipped": 1,
+      "log": "/Users/yuta/Dev/APAC/outputs/sglang-evidence-20261018/linux-tests.log",
+      "log_sha256": "58d6ffbdbf5f1e9f2217b7dfcf9abf56acdba0d411b97582a5582608d7f81c18"
+    },
+    "ruff": "PASS",
+    "shell_syntax": "41 files PASS",
+    "actionlint": "PASS",
+    "yaml": "PASS",
+    "git_diff_check": "PASS",
+    "local_macos_suite": "Nine environment failures (Linux /proc, GNU tar, GNU stat, Git signing, Unix-socket path limit); full suite subsequently passed on Linux CPU. No production code changed to accommodate these test-host differences.",
+    "full_container_build": false,
+    "gpu_numeric_gate": false,
+    "official_benchmark": false
+  }
+}

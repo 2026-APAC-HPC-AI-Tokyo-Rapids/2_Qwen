@@ -1,0 +1,57 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -692,13 +692,9 @@
+                 }
+                 __syncwarp();
+ 
+-                if (cute::elect_one_sync()) {
+-                    const auto weight = *sym_buffer.map(
+-                        input_topk_weights_buffer.get_base_ptr<float>() + src_token_topk_idx,
+-                        current_rank_in_expert_idx);
+-                    *l1_topk_weights_buffer.get_data_buffer(pool_token_idx).get_base_ptr<float>() = weight;
+-                }
+-                __syncwarp();
++                // Routing weights are read locally by the late FP32 combine.
++                // Keep the unused L1 weight buffer in the shared host/device ABI,
++                // but do not fetch or populate it for every routed token.
+ 
+                 if (cute::elect_one_sync()) {
+                     ptx::mbarrier_arrive_and_set_tx(pull_mbarrier, kHidden);
+@@ -2178,7 +2174,14 @@
+         // keeps each lane's BF16 reduce accumulator much smaller without
+         // violating the 32-lane uint4 mapping.
+         constexpr uint32_t kSplitMNNumChunks = (kHidden % 7 == 0) ? 7 : (kHidden >= 1024 ? 4 : 1);
+-        constexpr uint32_t kNumChunks = kSplitMNWarpgroups ? kSplitMNNumChunks : kDefaultNumChunks;
++        // Qwen SwapAB batches have at most 128 rows in the measured Decode
++        // graphs. One whole-row warp leaves only 16 of 132 CTAs doing combine.
++        // Spread the eight 1-KiB chunks across CTAs; each element still visits
++        // its live top-k slots in the same order with the same FP32 FMAs.
++        constexpr bool kParallelCombine = kSwapABActive and kHidden == 4096 and kNumTopk == 8;
++        constexpr uint32_t kNumChunks = kParallelCombine ? 8 :
++            (kSplitMNWarpgroups ? kSplitMNNumChunks : kDefaultNumChunks);
++        constexpr uint32_t kWorkItemsPerToken = kParallelCombine ? kNumChunks : 1;
+         constexpr uint32_t kNumChunkBytes = kNumHiddenBytes / kNumChunks;
+         constexpr uint32_t kNumChunkUint4 = kNumChunkBytes / sizeof(uint4);
+         constexpr uint32_t kNumUint4PerLane = kNumChunkUint4 / 32;
+@@ -2204,14 +2207,17 @@
+ 
+         uint32_t combine_phase = 0;
+         uint32_t load_stage_idx = 0;
+-        for (uint32_t token_idx = sm_idx * kNumCombineWarps + epilogue_warp_idx;
+-             token_idx < num_tokens;
+-             token_idx += kNumSMs * kNumCombineWarps) {
++        for (uint32_t work_idx = sm_idx * kNumCombineWarps + epilogue_warp_idx;
++             work_idx < num_tokens * kWorkItemsPerToken;
++             work_idx += kNumSMs * kNumCombineWarps) {
++            const uint32_t token_idx = work_idx / kWorkItemsPerToken;
++            const uint32_t first_chunk = kParallelCombine ? work_idx % kNumChunks : 0;
++            const uint32_t end_chunk = kParallelCombine ? first_chunk + 1 : kNumChunks;
+             const int stored_topk_slot_idx = lane_idx < kNumTopk ?
+                 static_cast<int>(__ldg(input_topk_idx_buffer.get_base_ptr<int64_t>() + token_idx * kNumTopk + lane_idx)) : -1;
+             const uint32_t total_mask = __ballot_sync(0xffffffff, stored_topk_slot_idx >= 0);
+ 
+-            for (uint32_t chunk = 0; chunk < kNumChunks; ++ chunk) {
++            for (uint32_t chunk = first_chunk; chunk < end_chunk; ++ chunk) {
+                 const uint32_t chunk_byte_offset = chunk * kNumChunkBytes;
+ 
+                 uint32_t mask = total_mask;
