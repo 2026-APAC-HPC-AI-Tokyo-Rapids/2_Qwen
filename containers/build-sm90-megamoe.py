@@ -34,6 +34,7 @@ def main():
     communication_patch = Path("/opt/apac/sm90-routing-communication.patch")
     subprocess.run(["git", "apply", "--check", str(communication_patch)], cwd=package.parent, check=True)
     subprocess.run(["git", "apply", str(communication_patch)], cwd=package.parent, check=True)
+    assert hashlib.sha256(header.read_bytes()).hexdigest() == "9f9f131ba56447a6de178ff4191ac147f0780d87b19f35fbf5006ba01330e8be"
     # Match the saved 6344.96 baseline kernel symbols, including accumulator
     # reuse, arrival mode, stage count, EP wave and padded pool capacities.
     # Prefill's reuse path is distinct from Decode's pipelined SwapAB path.
