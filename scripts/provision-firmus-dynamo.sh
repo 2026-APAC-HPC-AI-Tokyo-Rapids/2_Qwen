@@ -44,7 +44,7 @@ done
 model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8
 [[ "$(head -n 1 "${model}/.cache/huggingface/download/config.json.metadata")" == e156cb4efae43fbee1a1ab073f946a1377e6b969 ]]
 jq -e '.model_type == "qwen3_moe" and .quantization_config.quant_method == "fp8"' "${model}/config.json" >/dev/null
-while read -r shard; do test -s "${model}/${shard}"; done < <(jq -r '.weight_map | values | unique[]' "${model}/model.safetensors.index.json")
+while read -r shard; do test -s "${model}/${shard}"; done < <(jq -r '[.weight_map[]] | unique[]' "${model}/model.safetensors.index.json")
 tokenizer=/scratch/home/ACCOUNT/qwen/framework-comparison/sources/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e
 test -s "${tokenizer}/tokenizer.json"
 sha256sum "${tokenizer}"/* >"${runtime_dir}/source/tokenizer.sha256"
