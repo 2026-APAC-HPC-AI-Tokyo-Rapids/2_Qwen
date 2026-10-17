@@ -23,7 +23,8 @@ N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")
 speculation=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -er '.speculation.steps' "${ROOT}/source/firmus-framework.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -er '.speculation.draft_tokens' "${ROOT}/source/firmus-framework.json")")
 decode_graph=(--cuda-graph-bs-decode)
 while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${ROOT}/source/firmus-framework.json")
-prefill_args=(--ep-size 4 --dp-size 4 --enable-dp-attention --chunked-prefill-size 16384 --max-total-tokens 131072 --max-running-requests "${N}" --moe-a2a-backend "$(jq -er .prefill.moe_a2a_backend "${ROOT}/source/firmus-framework.json")" --moe-runner-backend "$(jq -er .prefill.moe_runner_backend "${ROOT}/source/firmus-framework.json")" --deepep-mode normal --disable-cuda-graph)
+# Statistics run: record per-forward-pass expert counts on Prefill only; 2048 passes exceed the ~1200 target and draft passes of one official client run.
+prefill_args=(--ep-size 4 --dp-size 4 --enable-dp-attention --chunked-prefill-size 16384 --max-total-tokens 131072 --max-running-requests "${N}" --moe-a2a-backend "$(jq -er .prefill.moe_a2a_backend "${ROOT}/source/firmus-framework.json")" --moe-runner-backend "$(jq -er .prefill.moe_runner_backend "${ROOT}/source/firmus-framework.json")" --deepep-mode normal --disable-cuda-graph --expert-distribution-recorder-mode stat --expert-distribution-recorder-buffer-size 2048)
 ART=${ROOT}/logs
 export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
 export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
@@ -108,6 +109,8 @@ export UCX_POSIX_USE_PROC_LINK=n
 # page transfer; heterogeneous-TP staging would only allocate unused pools.
 export SGLANG_DISAGG_STAGING_BUFFER=0
 export SGLANG_DG_CACHE_DIR="${SLURM_SUBMIT_DIR}/home/deep-gemm"
+# Prefill rank 0 writes the recorder dump here so it is collected with results/.
+export SGLANG_EXPERT_DISTRIBUTION_RECORDER_DIR="${SLURM_SUBMIT_DIR}/results/expert-distribution/$name"
 export SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096 SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1
 export TRITON_CACHE_DIR=/tmp/sglang-$name/triton
 export TORCHINDUCTOR_CACHE_DIR=/tmp/sglang-$name/inductor
@@ -163,8 +166,18 @@ echo "READY after ${SECONDS}s"
 while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"
 done <"${ROOT}/source/worker-endpoints.tsv"
+while IFS=$'\t' read -r worker host port _tp; do
+  if [[ "${worker}" == prefill-* ]]; then curl --fail --silent --show-error --max-time 60 -X POST "http://${host}:${port}/start_expert_distribution_record" >/dev/null; fi
+done <"${ROOT}/source/worker-endpoints.tsv"
 benchmark_status=0
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || benchmark_status=$?
+# The record spans the whole official client run (warmup, measurement and grace); the dump sums each forward pass over the four EP ranks.
+while IFS=$'\t' read -r worker host port _tp; do
+  if [[ "${worker}" != prefill-* ]]; then continue; fi
+  curl --fail --silent --show-error --max-time 60 -X POST "http://${host}:${port}/stop_expert_distribution_record" >/dev/null
+  curl --fail --silent --show-error --max-time 600 -X POST "http://${host}:${port}/dump_expert_distribution_record" >/dev/null
+  ls -l "${ROOT}/results/expert-distribution/${worker}"/expert_distribution_recorder_*.pt
+done <"${ROOT}/source/worker-endpoints.tsv"
 test -s "${ROOT}/results/score.json"
 if [[ "${PROFILE}" == true ]]; then
   "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" >"${ART}/profile-capture.log" 2>&1 &
