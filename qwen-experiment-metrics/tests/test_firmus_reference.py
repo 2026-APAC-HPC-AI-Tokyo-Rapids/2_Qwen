@@ -85,9 +85,14 @@ def test_prefill_deepep_checks_normal_mode_without_changing_decode() -> None:
     config["prefill"]["moe_a2a_backend"] = "deepep"
     prefill = copy.deepcopy(raw["prefill"])
     for state in [prefill, *prefill["internal_states"]]:
-        state.update(moe_a2a_backend="deepep", deepep_mode="normal", disable_cuda_graph=True)
+        state.update(moe_a2a_backend="deepep", deepep_mode="normal", disable_cuda_graph=True, load_balance_method=config["prefill_load_balance_method"])
+    # The archived run predates the 31-per-rank decode cap; carry the current cap, graph list and dispatch into its states.
+    decode = copy.deepcopy(raw["decode"])
+    decode["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
+    for state in [decode, *decode["internal_states"]]:
+        state.update(max_running_requests=config["decode_max_running_requests"], disaggregation_decode_extra_slots=config["decode_extra_slots"], load_balance_method=config["decode_load_balance_method"], effective_max_running_requests_per_dp=config["decode_max_running_requests"] // config["decode_dp_size"])
     check(config, prefill, "prefill")
-    check(config, raw["decode"], "decode")
+    check(config, decode, "decode")
     for key, invalid in (("moe_a2a_backend", "megamoe"), ("deepep_mode", "low_latency"), ("disable_cuda_graph", False)):
         changed = copy.deepcopy(prefill)
         changed["internal_states"][2][key] = invalid
@@ -127,9 +132,13 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
-    assert config["decode_max_running_requests"] == 128
+    # Run 38945855851 held ITL p99 at 20.1-20.6 ms with 32 per DP rank; 31 per rank trades one slot for the 20 ms SLA.
+    assert config["decode_max_running_requests"] == 124 and config["decode_max_running_requests"] % config["decode_dp_size"] == 0
+    # Every client can hold a decode req slot: cap 124 + 17 extra x 4 ranks = 192 = c, the same 49 slots per rank as the measured 128 + 16 run.
     assert config["decode_max_running_requests"] + config["decode_extra_slots"] * config["decode_dp_size"] >= config["concurrency"]
+    # SGLang pads a decode batch up to the next captured bucket, so the largest bucket must equal the per-rank cap.
     assert max(config["decode_cuda_graph_bs"]) == config["decode_max_running_requests"] // config["decode_dp_size"]
+    assert config["prefill_load_balance_method"] == "round_robin" and config["decode_load_balance_method"] == "total_requests"
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
@@ -177,7 +186,8 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
         assert flags[flags.index("--chunked-prefill-size") + 1] == ("16384" if prefill else "8192")
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
         assert flags[flags.index("--page-size") + 1] == "64"
-        assert flags[flags.index("--load-balance-method") + 1] == "total_requests"
+        assert flags.count("--load-balance-method") == 1
+        assert flags[flags.index("--load-balance-method") + 1] == config[f"{'prefill' if prefill else 'decode'}_load_balance_method"]
         assert flags[flags.index("--load-snapshot-publish-interval") + 1] == "1"
         assert flags[flags.index("--max-running-requests") + 1] == str(config["concurrency"] if prefill else config["decode_max_running_requests"])
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
