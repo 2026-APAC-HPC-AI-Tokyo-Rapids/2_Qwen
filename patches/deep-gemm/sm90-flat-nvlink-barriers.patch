@@ -1,0 +1,127 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+index 20d5699..0e63492 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -68,6 +68,37 @@ __forceinline__ __device__ void sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(
+     sf.y = __fmul_rn(ay, kScale), sf_inv.y = 1.0f / sf.y;
+ }
+ 
++// Cross-rank barrier without grid syncs: after a CTA-wide sync, every CTA adds one to a
++// 64-bit counter on every rank with release semantics (thread r signals rank rank_idx + r),
++// so a rank has seen all of a call's writes once its counter grew by kNumSMs * kNumRanks.
++// One call's barrier completes on every rank before any rank can reach the same barrier
++// of the next call, so the target follows from the value this CTA's own local add
++// returned; the counter only grows and is never reset. Every geometry (Prefill and
++// Decode) must use the same barriers, because one EP collective can run different
++// geometries on different ranks (the host picks the geometry from each rank's token
++// count).
++template <uint32_t kNumRanks, uint32_t kNumSMs, typename sync_scope_t>
++__forceinline__ __device__ void sm90_fp8_mega_moe_flat_nvlink_barrier(
++    uint64_t* counter, const layout::SymBuffer<kNumRanks>& sym_buffer,
++    const uint32_t& thread_idx, const bool& wait, const sync_scope_t& sync_scope) {
++    constexpr uint64_t kNumSignals = static_cast<uint64_t>(kNumSMs) * kNumRanks;
++    sync_scope();
++    uint64_t old_value = 0;
++    if (thread_idx == 0) {
++        asm volatile("atom.release.sys.global.add.u64 %0, [%1], 1;" : "=l"(old_value) : "l"(counter) : "memory");
++    } else if (thread_idx < kNumRanks) {
++        const auto remote = sym_buffer.map(counter, (sym_buffer.rank_idx + thread_idx) % kNumRanks);
++        asm volatile("red.release.sys.global.add.u64 [%0], 1;" :: "l"(remote) : "memory");
++    }
++    if (wait) {
++        if (thread_idx == 0) {
++            const uint64_t target = (old_value / kNumSignals + 1) * kNumSignals;
++            while (ptx::ld_acq_sys(counter) < target);
++        }
++        sync_scope();
++    }
++}
++
+ template <uint32_t BLOCK_M, uint32_t BLOCK_N, uint32_t BLOCK_K,
+           uint32_t L1_SHAPE_N, uint32_t L1_SHAPE_K,
+           uint32_t L2_SHAPE_N, uint32_t L2_SHAPE_K,
+@@ -230,6 +261,14 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+     const auto workspace = layout::SM90Workspace(
+         sym_buffer.get_base_ptr(), kNumRanks, kNumExperts, kNumMaxTokensPerRank, kNumTopk);
++    // Flat-barrier counters: the last two L2 arrival-mask slots. The workspace sizes those
++    // slots for the smallest candidate BLOCK_M (8); with BLOCK_M >= 64 only the first
++    // kNumPoolBlocks are used, so these are zeroed with the buffer and never touched
++    // otherwise. The index must not depend on the geometry (remote ranks address them).
++    DG_STATIC_ASSERT(kNumMaxPoolTokens / BLOCK_M + 3 <= kNumMaxPoolTokens / layout::kMinCandidateBlockM,
++                     "No spare workspace slots for the flat-barrier counters");
++    uint64_t* const pre_combine_counter = workspace.get_l2_arrival_mask_ptr(workspace.num_max_pool_blocks - 1);
++    uint64_t* const final_counter = workspace.get_l2_arrival_mask_ptr(workspace.num_max_pool_blocks - 2);
+ 
+     constexpr auto fp8_token_layout              = layout::Data(kHidden);
+     constexpr auto bf16_token_layout             = layout::Data(kHidden * sizeof(nv_bfloat16));
+@@ -645,18 +684,19 @@ sm90_fp8_mega_moe_impl(void* y,
+                 *sym_buffer.map(
+                     workspace.get_expert_recv_count_ptr(sym_buffer.rank_idx, dst_local_expert_idx),
+                     dst_rank_idx) = expert_status & 0xffffffff;
+-                ptx::atomic_add_sys(
+-                    sym_buffer.map(workspace.get_expert_recv_count_sum_ptr(dst_local_expert_idx), dst_rank_idx),
+-                    expert_status);
++                // Release at system scope: a rank that sees the completed sum also sees this
++                // rank's per-rank count and the source indices that all of this rank's CTAs
++                // wrote before the grid sync above.
++                const auto sum_ptr = sym_buffer.map(workspace.get_expert_recv_count_sum_ptr(dst_local_expert_idx), dst_rank_idx);
++                asm volatile("red.release.sys.global.add.u64 [%0], %1;" :: "l"(sum_ptr), "l"(expert_status) : "memory");
+             }
+         }
+         ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
+ 
+-        comm::nvlink_barrier<kNumRanks, kNumSMs, kNumDispatchThreads,
+-                             kDispatchGridSyncIndex, kBeforeDispatchPullBarrierTag>(
+-            workspace, sym_buffer, sm_idx, thread_idx,
+-            [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); },
+-            false, true);
++        // No pre-pull NVLink barrier: the pull loop below (like the loaders and math warps)
++        // spins until every rank's SM 0 has added its counts to the per-expert sum, and
++        // acquires the published counts and source indices from there. Remote tokens are
++        // only read after their rank published, i.e. after its pre-dispatch finished.
+ 
+         // Sync with epilogue warps before pulling tokens.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
+@@ -667,6 +707,7 @@ sm90_fp8_mega_moe_impl(void* y,
+         const auto pull_mbarrier = dispatch_barriers[warp_idx];
+ 
+         scheduler.fetch_expert_recv_count();
++        asm volatile("fence.acq_rel.sys;" ::: "memory");
+ 
+         constexpr uint32_t kNumRanksPerLane = math::constexpr_ceil_div(kNumRanks, 32u);
+         int      current_expert_idx = -1;
+@@ -865,11 +906,11 @@ sm90_fp8_mega_moe_impl(void* y,
+             }
+         }
+ 
+-        comm::nvlink_barrier<kNumRanks, kNumSMs, kNumDispatchThreads,
+-                             kDispatchGridSyncIndex, kAfterWorkspaceCleanBarrierTag>(
+-            workspace, sym_buffer, sm_idx, thread_idx,
+-            [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); },
+-            true, false);
++        // Only SM 0 waits, as in the NVLink barrier: the kernel ends after every rank's
++        // cleanup, but no CTA waits for the other CTAs of its own rank.
++        sm90_fp8_mega_moe_flat_nvlink_barrier<kNumRanks, kNumSMs>(
++            final_counter, sym_buffer, thread_idx, sm_idx == 0,
++            [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); });
+ 
+     // =====================================================================
+     // ROLE 2: GEMM TMA LOAD warps (load A+SFA, B+SFB)
+@@ -2265,11 +2306,11 @@ sm90_fp8_mega_moe_impl(void* y,
+         // ---------------- COMBINE ----------------
+         // NVLink barrier first: signals remote ranks that this rank's GEMM
+         // outputs (NVLink scatter targets) are fully written.
+-        comm::nvlink_barrier<kNumRanks, kNumSMs, kNumEpilogueThreads,
+-                             kEpilogueGridSyncIndex, kBeforeCombineReduceBarrierTag>(
+-            workspace, sym_buffer, sm_idx, epilogue_thread_idx,
+-            [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); }
+-        );
++        // Each CTA signals as soon as its own scatters are issued instead of after a
++        // rank-wide grid sync, and waits once for all CTAs of all ranks.
++        sm90_fp8_mega_moe_flat_nvlink_barrier<kNumRanks, kNumSMs>(
++            pre_combine_counter, sym_buffer, epilogue_thread_idx, true,
++            [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); });
+ 
+         // Sync with dispatch (paired with dispatch's pre-cleanup sync) so that
+         // dispatch may now safely clean workspace state.
