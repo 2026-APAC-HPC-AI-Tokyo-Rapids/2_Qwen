@@ -1,5 +1,5 @@
 diff --git a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
-index c2b6f6c..747b92d 100644
+index c2b6f6c6..8d71f19d 100644
 --- a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
 +++ b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
 @@ -27,15 +27,6 @@ struct FusedRopeParams {
@@ -117,12 +117,12 @@ index c2b6f6c..747b92d 100644
    ] = base_params;
  
    const auto num_blks = gridDim.x;
-@@ -320,6 +270,276 @@ __global__ void fused_rope_store_kernel(const __grid_constant__ FusedRopeStorePa
+@@ -320,6 +270,282 @@ __global__ void fused_rope_store_kernel(const __grid_constant__ FusedRopeStorePa
    PDLTriggerSecondary<kUsePDL>();
  }
  
 +// Qwen3 attention prologue for BF16 QKV, head_dim 128, NeoX RoPE: per-head
-+// RMSNorm, cached RoPE, FP8 Q (no BF16 Q writeback), BF16 K in place and, with
++// RMSNorm, cached RoPE, FP8 Q (no BF16 Q writeback), and either BF16 K in place or, with
 +// kStoreKV, the unscaled FP8 K/V cache rows that set_kv_buffer would write.
 +//
 +// Every head is still processed by one full warp with the original 32-lane
@@ -249,9 +249,15 @@ index c2b6f6c..747b92d 100644
 +        continue;
 +      }
 +      qknorm_rope_head(x, y, k_wx, k_wy, cos_pair, sin_pair, params.eps);
-+      const auto k_out = pointer::offset(k_row, head * kHeadBytes);
-+      store_as<bf16x2_t>(k_out, x, lane_id);
-+      store_as<bf16x2_t>(pointer::offset(k_out, kHalfBytes), y, lane_id);
++      if constexpr (!kStoreKV) {
++        // Without the fused store the caller writes the rotated BF16 K to the
++        // cache itself. With it, the K input stays unmodified (komoriyuta's
++        // fused KV-store contract, checked by check_rope_fp8_kv): nothing reads
++        // the BF16 K after the FP8 cache row is written.
++        const auto k_out = pointer::offset(k_row, head * kHeadBytes);
++        store_as<bf16x2_t>(k_out, x, lane_id);
++        store_as<bf16x2_t>(pointer::offset(k_out, kHalfBytes), y, lane_id);
++      }
 +      if constexpr (kStoreKV) {
 +        // Mirror store_cache: device-asserted slot bound and the reserved
 +        // CUDA-graph padding slot 0, which padded rows target and must not
@@ -394,7 +400,7 @@ index c2b6f6c..747b92d 100644
  // QDType (default = DType) is q's dtype; k/v/caches use DType. Same-size
  // dtypes only (fp16 q with bf16 k for the fp8-KV fp16-Q feed).
  template <bool kIsNeox, int64_t kRopeDim, bool kUsePDL, typename DType, typename QDType = DType>
-@@ -331,8 +551,8 @@ struct FusedRopeKernel {
+@@ -331,8 +557,8 @@ struct FusedRopeKernel {
    static_assert(kBlockSize % kWorkThreads == 0);
    static_assert(sizeof(QDType) == sizeof(DType), "q/k must be same-size dtypes");
  
@@ -405,7 +411,7 @@ index c2b6f6c..747b92d 100644
    template <typename IdType>
    static constexpr auto _kernel_1 =
        fused_rope_store_kernel<kIsNeox, kRopeDim, kUsePDL, DType, QDType, IdType, kWorkThreads>;
-@@ -347,7 +567,7 @@ struct FusedRopeKernel {
+@@ -347,7 +573,7 @@ struct FusedRopeKernel {
        const tvm::ffi::TensorView k,
        const tvm::ffi::TensorView cos_sin_cache,
        const tvm::ffi::TensorView positions) {
@@ -414,7 +420,7 @@ index c2b6f6c..747b92d 100644
    }
  
    static void run_fp8(
-@@ -357,9 +577,11 @@ struct FusedRopeKernel {
+@@ -357,9 +583,11 @@ struct FusedRopeKernel {
        const tvm::ffi::TensorView positions,
        const tvm::ffi::TensorView q_fp8) {
      static_assert(kIsNeox && kRopeDim == 128 && std::is_same_v<QDType, bf16_t>);
@@ -427,7 +433,7 @@ index c2b6f6c..747b92d 100644
    static void run_norm_fp8(
        const tvm::ffi::TensorView q,
        const tvm::ffi::TensorView k,
-@@ -370,7 +592,7 @@ struct FusedRopeKernel {
+@@ -370,7 +598,7 @@ struct FusedRopeKernel {
        double eps,
        const tvm::ffi::TensorView q_fp8) {
      static_assert(kIsNeox && kRopeDim == 128 && std::is_same_v<QDType, bf16_t> && std::is_same_v<DType, bf16_t>);
@@ -436,7 +442,7 @@ index c2b6f6c..747b92d 100644
    }
  
    static void run_norm_fp8_store(
-@@ -387,23 +609,16 @@ struct FusedRopeKernel {
+@@ -387,23 +615,16 @@ struct FusedRopeKernel {
        const tvm::ffi::TensorView v_cache,
        const tvm::ffi::TensorView cache_loc) {
      static_assert(kIsNeox && kRopeDim == 128 && std::is_same_v<QDType, bf16_t> && std::is_same_v<DType, bf16_t>);
@@ -463,7 +469,7 @@ index c2b6f6c..747b92d 100644
      using namespace host;
      auto N = SymbolicSize{"num_tokens"};
      auto Q = SymbolicSize{"num_qo_heads"};
-@@ -435,22 +650,11 @@ struct FusedRopeKernel {
+@@ -435,22 +656,11 @@ struct FusedRopeKernel {
          .with_device(device)
          .verify(positions);
  
@@ -486,7 +492,7 @@ index c2b6f6c..747b92d 100644
      const auto num_tokens = static_cast<uint32_t>(N.unwrap());
      if (num_tokens == 0) return;
      const auto num_qo_heads = static_cast<uint32_t>(Q.unwrap());
-@@ -473,28 +677,18 @@ struct FusedRopeKernel {
+@@ -473,28 +683,18 @@ struct FusedRopeKernel {
          .num_kv_heads = num_kv_heads,
          .num_tokens = num_tokens,
          .q_fp8 = kFP8Output ? q_fp8.data_ptr() : nullptr,
@@ -519,14 +525,14 @@ index c2b6f6c..747b92d 100644
      const auto num_blocks = std::min(max_blocks, needed_blocks);
      LaunchKernel(num_blocks, kBlockSize, device.unwrap())  //
          .enable_pdl(kUsePDL)(kernel, params);
-@@ -629,4 +823,5 @@ struct FusedRopeKernel {
+@@ -629,4 +829,5 @@ struct FusedRopeKernel {
    }
  };
  
 +
  }  // namespace
 diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
-index 30ea36a..91b47ec 100644
+index 30ea36a8..91b47eca 100644
 --- a/python/sglang/srt/models/qwen3_moe.py
 +++ b/python/sglang/srt/models/qwen3_moe.py
 @@ -65,7 +65,7 @@ from sglang.srt.layers.utils.cp_utils import (
