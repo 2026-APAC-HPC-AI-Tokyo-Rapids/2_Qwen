@@ -48,6 +48,11 @@ def main():
     # Exercise all SwapAB widths, plus a full tile and tail.
     # Other ranks still participate in the collective with zero live tokens.
     cases.extend((f"decode-tile-{count}", [count, 0, 0, 0]) for count in (1, 9, 17, 25, 33, 41, 49, 57, 65))
+    # megamoe-idle-prefill-geometry.patch: an idle Prefill rank passes 256 masked
+    # output rows so DeepGEMM picks the Prefill geometry for the other ranks' tokens.
+    idle_prefill_rows = os.environ.get("SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY", "0") == "1"
+    if idle_prefill_rows:
+        cases.append(("idle-prefill-rows", [4096, 4096, 4096, 0]))
     for case, counts in cases:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         if case == "decode-quant-zero":
@@ -79,7 +84,8 @@ def main():
         count = counts[rank]
         indices = torch.arange(count, device=device) % 4
         hidden, top_ids, top_weights = patterns[indices].contiguous(), ids[indices].contiguous(), weights[indices].contiguous()
-        actual = torch.empty(max(count, 1), 4096, dtype=torch.bfloat16, device=device)
+        rows = 256 if case == "idle-prefill-rows" and count == 0 else max(count, 1)
+        actual = torch.empty(rows, 4096, dtype=torch.bfloat16, device=device)
 
         def forward(hidden, top_ids, top_weights, count, actual):
             deep_gemm.mega_moe_pre_dispatch_sm90(hidden, top_ids, top_weights, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, num_tokens=count, group_size=128, routed_scaling_factor=1.0)
@@ -120,6 +126,9 @@ def main():
             # Same tolerances as the validated prefill kernel; no missing or
             # double routing weights, stale graph inputs, or misplaced scales.
             assert relative_l2 < 0.025 and max_scaled_error < 0.08, (case, rank, relative_l2, max_scaled_error)
+            if case == "idle-prefill-rows" and count == 0:
+                # Every masked row dispatches nothing and combines to zero.
+                assert torch.count_nonzero(actual).item() == 0, (case, rank, "masked idle rows must combine to zero")
             dist.barrier()
     if rank == 0:
         print("PASS: SM90 MegaMoE EP4 numerical gate; original FP8 scales, late FP32 combine, changing masked Decode graph inputs", flush=True)
@@ -155,6 +164,31 @@ def main():
         dist.all_reduce(durations, op=dist.ReduceOp.MAX)
         if rank == 0:
             print(json.dumps({"benchmark": label, "tokens_per_rank": count, "cuda_graph": graph is not None, "max_rank_ms": durations.tolist()}), flush=True)
+    if idle_prefill_rows:
+        # Same collective with rank 3 idle: 1 output row (Decode SwapAB geometry
+        # on the idle rank, current serving) against 256 masked rows (patch).
+        busy = torch.randn(4096, 4096, dtype=torch.bfloat16, device=device) * 0.25
+        busy_weights, busy_ids = torch.rand(4096, 128, device=device).topk(8, dim=1)
+        busy_ids = busy_ids.to(torch.int32)
+        busy_weights /= busy_weights.sum(-1, keepdim=True)
+        for label, idle_rows in (("prefill-one-idle-1row", 1), ("prefill-one-idle-256rows", 256)):
+            count = 0 if rank == 3 else 4096
+            hidden, top_ids, top_weights = busy[:count].contiguous(), busy_ids[:count].contiguous(), busy_weights[:count].contiguous()
+            actual = torch.empty(idle_rows if count == 0 else count, 4096, dtype=torch.bfloat16, device=device)
+            for _ in range(5):
+                forward(hidden, top_ids, top_weights, count, actual)
+            torch.cuda.synchronize()
+            events = [(torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)) for _ in range(20)]
+            dist.barrier()
+            for start, end in events:
+                start.record()
+                forward(hidden, top_ids, top_weights, count, actual)
+                end.record()
+            torch.cuda.synchronize()
+            durations = torch.tensor([start.elapsed_time(end) for start, end in events], device=device)
+            dist.all_reduce(durations, op=dist.ReduceOp.MAX)
+            if rank == 0:
+                print(json.dumps({"benchmark": label, "tokens_per_rank": [4096, 4096, 4096, 0], "idle_output_rows": idle_rows, "max_rank_ms": durations.tolist()}), flush=True)
     dist.destroy_process_group()
 
 

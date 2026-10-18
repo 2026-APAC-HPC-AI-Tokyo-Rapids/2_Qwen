@@ -191,6 +191,8 @@ def test_server_info_validation_runs_after_gpu_collection(tmp_path: Path, invali
 def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert "#SBATCH -t 00:17:00" in source
+    # Tier 2 switches stay off until a serving run enables them by commit.
+    assert "\nexport SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=0\n" in source
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
@@ -223,12 +225,12 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     assert "jq" not in worker  # Not installed in the pinned image; parse on the host.
     command = "command=(" + worker.split("command=(", 1)[1].split('if [[ -x /opt/nsys', 1)[0]
-    launch = worker.split("UCX_IB=", 1)[0] + command + '\nprintf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0}" "$SGLANG_HOST_IP" "${command[@]}"\n'
+    launch = worker.split("UCX_IB=", 1)[0] + command + '\nprintf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0}" "${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0}" "${SGLANG_DECODE_ASYNC_ADMISSION:-0}" "$SGLANG_HOST_IP" "${command[@]}"\n'
     observed = {}
     for argv in workers:
         args = argv[argv.index("bash") + 2:]
         probe = subprocess.run(["bash", "-c", launch, "fixture", *args], env={**os.environ, "SLURM_SUBMIT_DIR": str(tmp_path)}, check=True, capture_output=True)
-        shuffle, routing, aligned, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
+        shuffle, routing, aligned, rotate_ties, async_admission, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
         name, port = args[:2]
         prefill = name.startswith("prefill")
         dist_port = int(flags[flags.index("--dist-init-addr") + 1].rsplit(":", 1)[1])
@@ -272,7 +274,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             assert "--enable-dp-attention" in flags and "--disable-cuda-graph" in flags
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
             assert flags[flags.index("--optimistic-prefill-attempts") + 1] == str(config["prefill"]["optimistic_prefill_attempts"])
-            assert aligned == "1"
+            assert aligned == "1" and rotate_ties == "0" and async_admission == "0"
         else:
             assert flags[flags.index("--dp-size") + 1] == "4"
             assert "--enable-dp-attention" in flags and "--enable-dp-lm-head" in flags
@@ -288,7 +290,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             start = flags.index("--cuda-graph-bs-decode") + 1
             assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
-            assert "--optimistic-prefill-attempts" not in flags and aligned == "0"
+            assert "--optimistic-prefill-attempts" not in flags and aligned == "0" and rotate_ties == "0" and async_admission == "0"
     assert observed == {"prefill-0": "node0", "prefill-1": "node0", "prefill-2": "node1", "decode-0": "node1"}
     router_argv = next(argv for argv in commands if "/opt/apac/bin/sglang-router" in argv)
     assert router_argv.count("--prefill") == 3 and router_argv.count("--decode") == 1
