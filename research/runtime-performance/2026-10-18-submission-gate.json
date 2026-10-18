@@ -1,8 +1,8 @@
 {
   "date": "2026-10-18",
   "base_commit": "9b2fbebefc82304d880179d2758a689f24b60893",
-  "status": "authorized_resubmission_after_empty_stride_fix",
-  "firmus_jobs_submitted": 1,
+  "status": "forward_context_api_fixed_cpu_image_validation_pending",
+  "firmus_jobs_submitted": 2,
   "aspire_jobs_submitted": 0,
   "other_gpu_jobs_submitted": 0,
   "cloud_image_builds_started": 3,
@@ -308,6 +308,17 @@
     "image_reused_from_build": 39075586288,
     "runtime_unchanged": true,
     "profile": false,
-    "monitoring": "Confirm Slurm acceptance only; do not wait for performance results."
+    "monitoring": "Confirm Slurm acceptance only; do not wait for performance results.",
+    "run_id": 39087648892,
+    "slurm_job_id": 24443,
+    "outcome": "GPU numerical/Graph gates passed, then Decode model initialization failed on ForwardBatch.token_to_kv_pool during CUDA graph capture; no benchmark result.",
+    "gpu_validation": "FP8 KV exact non-NaN bytes and changed-input CUDA Graph replay passed on all four ranks; TopK exact AOT weights/IDs and Graph count replay passed on all four ranks; native EP4 gate passed.",
+    "fix": "Use get_token_to_kv_pool from the real per-forward context. Regression reproduces the exact AttributeError before the fix and passes afterward using source-derived ForwardBatch fields and real ForwardContext.",
+    "next_submission": "Not authorized automatically; complete CPU image and installed model API validation first."
+  },
+  "current_fix_validation": {
+    "source": "17 patch chain applies to pinned source; three source regression scripts pass; modified patch reconstructs the exact three validated files.",
+    "image": "Fresh image required because the model source changed. Build must import and call installed Qwen3MoeAttention with real ForwardBatch and ForwardContext; CUDA math mocked in that CPU test.",
+    "gpu_kernels": "Unchanged from run 39087648892; do not count startup failure as a throughput result."
   }
 }

@@ -93,6 +93,7 @@ cp "${GITHUB_WORKSPACE}/kernels/prefill/moe_routing.cu" "${context}/prefill-moe-
 cp "${GITHUB_WORKSPACE}/containers/build-sm90-megamoe.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/check-decode-kernel-build.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/check-rope-kernel-build.py" "${context}/containers/"
+cp "${GITHUB_WORKSPACE}/scripts/check-firmus-latency-source.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/build-sglang-router.sh" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/patches/sglang-router/prefill-load-lifetime.patch" "${context}/prefill-load-lifetime.patch"
 cp "${GITHUB_WORKSPACE}/patches/sglang-router/Cargo.lock" "${context}/sglang-router.Cargo.lock"

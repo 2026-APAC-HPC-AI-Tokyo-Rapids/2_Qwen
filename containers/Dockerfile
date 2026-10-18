@@ -41,6 +41,8 @@ COPY sglang-source /opt/sglang/source
 COPY sglang-commit.txt /opt/sglang/sglang-commit.txt
 COPY containers/install-sglang-source.sh /opt/apac/install-sglang-source.sh
 RUN /opt/apac/install-sglang-source.sh && rm /opt/apac/install-sglang-source.sh
+COPY containers/check-firmus-latency-source.py /opt/apac/check-firmus-latency-source.py
+RUN /opt/sglang/venv/bin/python /opt/apac/check-firmus-latency-source.py /opt/sglang/source --installed
 COPY containers/check-decode-kernel-build.py /opt/apac/check-decode-kernel-build.py
 RUN /opt/sglang/venv/bin/python /opt/apac/check-decode-kernel-build.py
 COPY containers/check-rope-kernel-build.py /opt/apac/check-rope-kernel-build.py
