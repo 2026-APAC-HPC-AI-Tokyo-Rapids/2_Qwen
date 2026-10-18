@@ -1,0 +1,553 @@
+diff --git a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
+index c2b6f6c..747b92d 100644
+--- a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
++++ b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
+@@ -27,15 +27,6 @@ struct FusedRopeParams {
+   uint32_t num_kv_heads;
+   uint32_t num_tokens;
+   void* __restrict__ q_fp8 = nullptr;
+-  const void* __restrict__ q_weight = nullptr;
+-  const void* __restrict__ k_weight = nullptr;
+-  float eps = 0.0f;
+-  const void* v_ptr = nullptr;
+-  void* k_fp8_cache = nullptr;
+-  void* v_fp8_cache = nullptr;
+-  const void* cache_loc = nullptr;
+-  int64_t v_stride_bytes = 0;
+-  int64_t cache_slots = 0;
+ };
+ 
+ struct FusedRopeStoreParams {
+@@ -63,9 +54,9 @@ constexpr auto next_pow2(uint32_t target, uint32_t factor = 1) {
+ // by a fused QK-norm while k stays bf16. When cache_out is non-null the rotated
+ // row is additionally stored there (the fused KV-store k path); predicated so
+ // the q and k branches keep one instruction stream per instantiation.
+-template <typename T, bool kIsNeox, int64_t kRopeDim, int64_t kVecSize, bool kFP8Output = false, bool kQKNorm = false>
++template <typename T, bool kIsNeox, int64_t kRopeDim, int64_t kVecSize, bool kFP8Output = false>
+ __device__ __forceinline__ void
+-rope_rotate_head(void* input, const void* cos_ptr, const void* sin_ptr, uint32_t lane_id, void* cache_out = nullptr, void* fp8_out = nullptr, const void* weight = nullptr, float eps = 0.0f) {
++rope_rotate_head(void* input, const void* cos_ptr, const void* sin_ptr, uint32_t lane_id, void* cache_out = nullptr, void* fp8_out = nullptr) {
+   using namespace device;
+   using T2 = packed_t<T>;
+   using Storage = AlignedVector<T2, kVecSize>;
+@@ -75,19 +66,6 @@ rope_rotate_head(void* input, const void* cos_ptr, const void* sin_ptr, uint32_t
+     const auto input_y = pointer::offset(input, (kRopeDim / 2) * sizeof(T));
+     auto input_vec_x = load_as<Storage>(input_x, lane_id);
+     auto input_vec_y = load_as<Storage>(input_y, lane_id);
+-    if constexpr (kQKNorm) {
+-      // One full warp owns a head. Reuse the existing RMSNorm math on the
+-      // two NeoX halves, keeping its BF16 rounding before the rotation.
+-      static_assert(kRopeDim == 128 && kVecSize == 1);
+-      AlignedVector<T2, 2> input_vec, weight_vec;
+-      input_vec[0] = input_vec_x[0];
+-      input_vec[1] = input_vec_y[0];
+-      weight_vec[0] = load_as<Storage>(weight, lane_id)[0];
+-      weight_vec[1] = load_as<Storage>(pointer::offset(weight, (kRopeDim / 2) * sizeof(T)), lane_id)[0];
+-      const auto normalized = norm::apply_norm_warp<kRopeDim>(input_vec, weight_vec, eps);
+-      input_vec_x[0] = normalized[0];
+-      input_vec_y[0] = normalized[1];
+-    }
+     const auto cos_pair = load_as<CacheStorage>(cos_ptr, lane_id);
+     const auto sin_pair = load_as<CacheStorage>(sin_ptr, lane_id);
+ #pragma unroll
+@@ -158,9 +136,7 @@ template <
+     typename QDType,
+     typename IdType,
+     uint32_t kWorkThreads,
+-    bool kFP8Output = false,
+-    bool kQKNorm = false,
+-    bool kFP8KVStore = false>
++    bool kFP8Output = false>
+ __global__ void fused_rope_kernel(const __grid_constant__ FusedRopeParams params) {
+   using namespace device;
+ 
+@@ -175,8 +151,7 @@ __global__ void fused_rope_kernel(const __grid_constant__ FusedRopeParams params
+     q, k, cos_sin_cache_ptr, positions, // pointers
+     q_stride_bytes, k_stride_bytes, head_stride_bytes,  // strides
+     num_qo_heads, num_kv_heads, num_tokens, // dimensions
+-    q_fp8, q_weight, k_weight, eps, // optional FP8 output and RMSNorm inputs
+-    v_ptr, k_fp8_cache, v_fp8_cache, cache_loc, v_stride_bytes, cache_slots
++    q_fp8 // optional FP8 Q output
+   ] = params;
+ 
+   const auto num_blks = gridDim.x;
+@@ -209,33 +184,9 @@ __global__ void fused_rope_kernel(const __grid_constant__ FusedRopeParams params
+       void* output = nullptr;
+       if constexpr (kFP8Output)
+         output = pointer::offset(q_fp8, (token_id * num_qo_heads + head_id) * kRopeDim);
+-      rope_rotate_head<QDType, kIsNeox, kRopeDim, kVecSize, kFP8Output, kQKNorm>(
+-          input, cos_ptr, sin_ptr, lane_id, nullptr, output, q_weight, eps);
+-    } else if constexpr (kFP8KVStore) {
+-      static_assert(kFP8Output && kQKNorm && kRopeDim == 128 && kVecSize == 1);
+-      const auto slot = static_cast<const IdType*>(cache_loc)[token_id];
+-      assert(slot >= 0 && slot < cache_slots);
+-      // Match store_cache's reserved CUDA-graph padding sink. Multiple padded
+-      // rows must not race on slot zero; real cache rows are untouched by them.
+-      if (slot != 0) {
+-        const auto kv_head = head_id - num_qo_heads;
+-        const auto offset = (static_cast<int64_t>(slot) * num_kv_heads + kv_head) * kRopeDim;
+-        rope_rotate_head<DType, kIsNeox, kRopeDim, kVecSize, true, kQKNorm>(
+-            input, cos_ptr, sin_ptr, lane_id, nullptr, pointer::offset(k_fp8_cache, offset), k_weight, eps);
+-        using VStorage = AlignedVector<packed_t<DType>, 2>;
+-        using FP8Storage = AlignedVector<uint16_t, 2>;
+-        const auto value = load_as<VStorage>(pointer::offset(v_ptr, token_id * v_stride_bytes + kv_head * head_stride_bytes), lane_id);
+-        FP8Storage fp8;
+-#ifndef USE_ROCM
+-        #pragma unroll
+-        for (int j = 0; j < 2; ++j)
+-          fp8[j] = __nv_cvt_float2_to_fp8x2(cast<fp32x2_t>(value[j]), __NV_NOSAT, __NV_E4M3);
+-#endif
+-        store_as<FP8Storage>(pointer::offset(v_fp8_cache, offset), fp8, lane_id);
+-      }
++      rope_rotate_head<QDType, kIsNeox, kRopeDim, kVecSize, kFP8Output>(input, cos_ptr, sin_ptr, lane_id, nullptr, output);
+     } else {
+-      rope_rotate_head<DType, kIsNeox, kRopeDim, kVecSize, false, kQKNorm>(
+-          input, cos_ptr, sin_ptr, lane_id, nullptr, nullptr, k_weight, eps);
++      rope_rotate_head<DType, kIsNeox, kRopeDim, kVecSize>(input, cos_ptr, sin_ptr, lane_id);
+     }
+   }
+ 
+@@ -264,8 +215,7 @@ __global__ void fused_rope_store_kernel(const __grid_constant__ FusedRopeStorePa
+     q, k, cos_sin_cache_ptr, positions, // pointers
+     q_stride_bytes, k_stride_bytes, head_stride_bytes,  // strides
+     num_qo_heads, num_kv_heads, num_tokens, // dimensions
+-    q_fp8, q_weight, k_weight, eps, // optional FP8 output and RMSNorm inputs
+-    unused_fp8_v_ptr, k_fp8_cache, v_fp8_cache, cache_loc, unused_fp8_v_stride_bytes, cache_slots
++    q_fp8 // optional FP8 Q output
+   ] = base_params;
+ 
+   const auto num_blks = gridDim.x;
+@@ -320,6 +270,276 @@ __global__ void fused_rope_store_kernel(const __grid_constant__ FusedRopeStorePa
+   PDLTriggerSecondary<kUsePDL>();
+ }
+ 
++// Qwen3 attention prologue for BF16 QKV, head_dim 128, NeoX RoPE: per-head
++// RMSNorm, cached RoPE, FP8 Q (no BF16 Q writeback), BF16 K in place and, with
++// kStoreKV, the unscaled FP8 K/V cache rows that set_kv_buffer would write.
++//
++// Every head is still processed by one full warp with the original 32-lane
++// layout (lane l holds elements 2l, 2l+1 and 64+2l, 64+2l+1), so the RMSNorm
++// sum-of-squares order, the warp reduction tree and every rounding step are
++// those of the previous per-head kernel. Only the work distribution changed:
++// a warp owns one token's heads {g, g + G, g + 2G, ...}, loads the position,
++// cos/sin and both norm weights once, and issues a chunk of head loads before
++// any reduction so each warp keeps several 256-byte head rows in flight.
++constexpr uint32_t kQKNormRopeWarps = 4;
++constexpr uint32_t kQKNormRopeChunk = 6;
++
++struct QKNormRopeFP8Params {
++  const void* __restrict__ q;
++  void* __restrict__ k;
++  const void* __restrict__ v;
++  const void* __restrict__ cos_sin_cache;
++  const void* __restrict__ positions;
++  const void* __restrict__ q_weight;
++  const void* __restrict__ k_weight;
++  void* __restrict__ q_fp8;
++  void* __restrict__ k_cache;
++  void* __restrict__ v_cache;
++  const void* __restrict__ cache_loc;
++  int64_t q_stride_bytes;
++  int64_t k_stride_bytes;
++  int64_t v_stride_bytes;
++  int64_t cache_slots;
++  uint32_t num_qo_heads;
++  uint32_t num_kv_heads;
++  uint32_t num_tokens;
++  uint32_t head_groups;
++  float eps;
++};
++
++// Identical expressions to the former kQKNorm branch of rope_rotate_head.
++SGL_DEVICE void qknorm_rope_head(
++    bf16x2_t& x, bf16x2_t& y, const bf16x2_t wx, const bf16x2_t wy, const fp32x2_t cos_pair, const fp32x2_t sin_pair, const float eps) {
++  using namespace device;
++  AlignedVector<bf16x2_t, 2> input_vec, weight_vec;
++  input_vec[0] = x;
++  input_vec[1] = y;
++  weight_vec[0] = wx;
++  weight_vec[1] = wy;
++  const auto normalized = norm::apply_norm_warp<128>(input_vec, weight_vec, eps);
++  const auto [x0, x1] = cast<fp32x2_t>(normalized[0]);
++  const auto [y0, y1] = cast<fp32x2_t>(normalized[1]);
++  const auto [cos_0, cos_1] = cos_pair;
++  const auto [sin_0, sin_1] = sin_pair;
++  const auto out_x0 = x0 * cos_0 - y0 * sin_0;
++  const auto out_y0 = x0 * sin_0 + y0 * cos_0;
++  const auto out_x1 = x1 * cos_1 - y1 * sin_1;
++  const auto out_y1 = x1 * sin_1 + y1 * cos_1;
++  x = cast<bf16x2_t, fp32x2_t>({out_x0, out_x1});
++  y = cast<bf16x2_t, fp32x2_t>({out_y0, out_y1});
++}
++
++// BF16 -> FP8 E4M3 exactly as torch.Tensor.to(torch.float8_e4m3fn).
++SGL_DEVICE uint16_t to_fp8x2(const bf16x2_t value) {
++#ifdef USE_ROCM
++  static_assert(sizeof(bf16x2_t) == 0, "FP8 QK-norm RoPE requires CUDA");
++  return 0;
++#else
++  return __nv_cvt_float2_to_fp8x2(device::cast<fp32x2_t>(value), __NV_NOSAT, __NV_E4M3);
++#endif
++}
++
++template <bool kUsePDL, typename IdType, bool kStoreKV>
++__global__ void __launch_bounds__(kQKNormRopeWarps* device::kWarpThreads)
++    qknorm_rope_fp8_kernel(const __grid_constant__ QKNormRopeFP8Params params) {
++  using namespace device;
++  using Pair = AlignedVector<bf16x2_t, 1>;
++  using CachePair = AlignedVector<fp32x2_t, 1>;
++  constexpr int64_t kDim = 128;
++  constexpr int64_t kHeadBytes = kDim * sizeof(bf16_t);
++  constexpr int64_t kHalfBytes = kHeadBytes / 2;
++  constexpr int64_t kCosSinStrideBytes = kDim * sizeof(float);
++
++  const uint32_t lane_id = threadIdx.x % kWarpThreads;
++  const uint32_t warp_id = blockIdx.x * kQKNormRopeWarps + threadIdx.x / kWarpThreads;
++  const uint32_t token = warp_id / params.head_groups;
++  const uint32_t group = warp_id % params.head_groups;
++  if (token >= params.num_tokens) return;  // warp-uniform
++
++  PDLWaitPrimary<kUsePDL>();
++
++  const uint32_t num_qo_heads = params.num_qo_heads;
++  const uint32_t num_heads = num_qo_heads + params.num_kv_heads;
++  const int64_t pos = static_cast<const IdType*>(params.positions)[token];
++  const auto cos_ptr = pointer::offset(params.cos_sin_cache, pos * kCosSinStrideBytes);
++  const auto cos_pair = load_as<CachePair>(cos_ptr, lane_id)[0];
++  const auto sin_pair = load_as<CachePair>(pointer::offset(cos_ptr, kCosSinStrideBytes / 2), lane_id)[0];
++  const auto q_wx = load_as<Pair>(params.q_weight, lane_id)[0];
++  const auto q_wy = load_as<Pair>(pointer::offset(params.q_weight, kHalfBytes), lane_id)[0];
++  const auto k_wx = load_as<Pair>(params.k_weight, lane_id)[0];
++  const auto k_wy = load_as<Pair>(pointer::offset(params.k_weight, kHalfBytes), lane_id)[0];
++  const auto q_row = pointer::offset(params.q, static_cast<int64_t>(token) * params.q_stride_bytes);
++  // k is pre-offset by -num_qo_heads heads on the host, as in fused_rope_kernel.
++  const auto k_row = pointer::offset(params.k, static_cast<int64_t>(token) * params.k_stride_bytes);
++
++  const uint32_t stride = params.head_groups * kQKNormRopeChunk;
++  for (uint32_t first = group; first < num_heads; first += stride) {
++    bf16x2_t xs[kQKNormRopeChunk], ys[kQKNormRopeChunk];
++#pragma unroll
++    for (uint32_t i = 0; i < kQKNormRopeChunk; ++i) {
++      const uint32_t head = first + i * params.head_groups;
++      if (head < num_heads) {
++        const auto input = head < num_qo_heads ? pointer::offset(q_row, head * kHeadBytes) : pointer::offset(static_cast<const void*>(k_row), head * kHeadBytes);
++        xs[i] = load_as<Pair>(input, lane_id)[0];
++        ys[i] = load_as<Pair>(pointer::offset(input, kHalfBytes), lane_id)[0];
++      }
++    }
++#pragma unroll
++    for (uint32_t i = 0; i < kQKNormRopeChunk; ++i) {
++      const uint32_t head = first + i * params.head_groups;
++      if (head >= num_heads) break;  // warp-uniform; heads increase with i
++      auto x = xs[i];
++      auto y = ys[i];
++      if (head < num_qo_heads) {
++        qknorm_rope_head(x, y, q_wx, q_wy, cos_pair, sin_pair, params.eps);
++        const auto out = pointer::offset(params.q_fp8, (static_cast<int64_t>(token) * num_qo_heads + head) * kDim);
++        store_as<uint16_t>(out, to_fp8x2(x), lane_id);
++        store_as<uint16_t>(pointer::offset(out, kDim / 2), to_fp8x2(y), lane_id);
++        continue;
++      }
++      qknorm_rope_head(x, y, k_wx, k_wy, cos_pair, sin_pair, params.eps);
++      const auto k_out = pointer::offset(k_row, head * kHeadBytes);
++      store_as<bf16x2_t>(k_out, x, lane_id);
++      store_as<bf16x2_t>(pointer::offset(k_out, kHalfBytes), y, lane_id);
++      if constexpr (kStoreKV) {
++        // Mirror store_cache: device-asserted slot bound and the reserved
++        // CUDA-graph padding slot 0, which padded rows target and must not
++        // race on.
++        const int64_t slot = static_cast<const IdType*>(params.cache_loc)[token];
++        assert(slot >= 0 && slot < params.cache_slots);
++        if (slot != 0) {
++          const uint32_t kv_head = head - num_qo_heads;
++          const int64_t row = (slot * params.num_kv_heads + kv_head) * kDim;
++          const auto k_dst = pointer::offset(params.k_cache, row);
++          store_as<uint16_t>(k_dst, to_fp8x2(x), lane_id);
++          store_as<uint16_t>(pointer::offset(k_dst, kDim / 2), to_fp8x2(y), lane_id);
++          using VQuad = AlignedVector<bf16x2_t, 2>;
++          using FP8Quad = AlignedVector<uint16_t, 2>;
++          const auto v_src = pointer::offset(params.v, static_cast<int64_t>(token) * params.v_stride_bytes + kv_head * kHeadBytes);
++          const auto value = load_as<VQuad>(v_src, lane_id);
++          FP8Quad fp8;
++          fp8[0] = to_fp8x2(value[0]);
++          fp8[1] = to_fp8x2(value[1]);
++          store_as<FP8Quad>(pointer::offset(params.v_cache, row), fp8, lane_id);
++        }
++      }
++    }
++  }
++
++  PDLTriggerSecondary<kUsePDL>();
++}
++
++
++template <bool kUsePDL>
++struct QKNormRopeFP8Kernel {
++  template <typename IdType, bool kStoreKV>
++  static constexpr auto _kernel = qknorm_rope_fp8_kernel<kUsePDL, IdType, kStoreKV>;
++
++  static void
++  run(const tvm::ffi::TensorView q,
++      const tvm::ffi::TensorView k,
++      const tvm::ffi::TensorView q_weight,
++      const tvm::ffi::TensorView k_weight,
++      const tvm::ffi::TensorView cos_sin_cache,
++      const tvm::ffi::TensorView positions,
++      double eps,
++      const tvm::ffi::TensorView q_fp8) {
++    _run<false>(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, nullptr, nullptr, nullptr, nullptr);
++  }
++
++  static void run_store(
++      const tvm::ffi::TensorView q,
++      const tvm::ffi::TensorView k,
++      const tvm::ffi::TensorView q_weight,
++      const tvm::ffi::TensorView k_weight,
++      const tvm::ffi::TensorView cos_sin_cache,
++      const tvm::ffi::TensorView positions,
++      double eps,
++      const tvm::ffi::TensorView q_fp8,
++      const tvm::ffi::TensorView v,
++      const tvm::ffi::TensorView k_cache,
++      const tvm::ffi::TensorView v_cache,
++      const tvm::ffi::TensorView cache_loc) {
++    _run<true>(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, &v, &k_cache, &v_cache, &cache_loc);
++  }
++
++  template <bool kStoreKV>
++  static void _run(
++      const tvm::ffi::TensorView q,
++      const tvm::ffi::TensorView k,
++      const tvm::ffi::TensorView q_weight,
++      const tvm::ffi::TensorView k_weight,
++      const tvm::ffi::TensorView cos_sin_cache,
++      const tvm::ffi::TensorView positions,
++      double eps,
++      const tvm::ffi::TensorView q_fp8,
++      const tvm::ffi::TensorView* v,
++      const tvm::ffi::TensorView* k_cache,
++      const tvm::ffi::TensorView* v_cache,
++      const tvm::ffi::TensorView* cache_loc) {
++    using namespace host;
++    auto N = SymbolicSize{"num_tokens"};
++    auto Q = SymbolicSize{"num_qo_heads"};
++    auto K = SymbolicSize{"num_kv_heads"};
++    auto D = SymbolicSize{"head_dim"};
++    auto S = SymbolicSize{"cache_slots"};
++    auto Dq = SymbolicSize{"q_stride"};
++    auto Dk = SymbolicSize{"k_stride"};
++    auto Dv = SymbolicSize{"v_stride"};
++    auto device = SymbolicDevice{};
++    auto id_type = SymbolicDType{};
++    D.set_value(128);
++    device.set_options<kDLCUDA>();
++    TensorMatcher({N, Q, D}).with_strides({Dq, D, 1}).with_dtype<bf16_t>().with_device(device).verify(q);
++    TensorMatcher({N, K, D}).with_strides({Dk, D, 1}).with_dtype<bf16_t>().with_device(device).verify(k);
++    TensorMatcher({D}).with_dtype<bf16_t>().with_device(device).verify(q_weight).verify(k_weight);
++    TensorMatcher({-1, D}).with_dtype<float>().with_device(device).verify(cos_sin_cache);
++    TensorMatcher({N}).with_dtype<int32_t, int64_t>(id_type).with_device(device).verify(positions);
++    TensorMatcher({N, Q, D}).with_dtype<fp8_e4m3_t>().with_device(device).verify(q_fp8);
++    if constexpr (kStoreKV) {
++      TensorMatcher({N, K, D}).with_strides({Dv, D, 1}).with_dtype<bf16_t>().with_device(device).verify(*v);
++      TensorMatcher({S, K, D}).with_dtype<fp8_e4m3_t>().with_device(device).verify(*k_cache).verify(*v_cache);
++      TensorMatcher({N}).with_dtype<int32_t, int64_t>(id_type).with_device(device).verify(*cache_loc);
++    }
++    const auto num_tokens = static_cast<uint32_t>(N.unwrap());
++    if (num_tokens == 0) return;
++    RuntimeCheck(q_fp8.data_ptr() != q.data_ptr() && q_fp8.data_ptr() != k.data_ptr(), "FP8 Q output must not alias inputs");
++    const auto num_qo_heads = static_cast<uint32_t>(Q.unwrap());
++    const auto num_kv_heads = static_cast<uint32_t>(K.unwrap());
++    const auto num_heads = num_qo_heads + num_kv_heads;
++    constexpr int64_t kHeadBytes = 128 * sizeof(bf16_t);
++    // Large (Prefill) batches: four warps per token, one CTA per token.
++    // Small (Decode) batches: one chunk of heads per warp for latency.
++    const uint32_t head_groups = num_tokens >= 1024 ? kQKNormRopeWarps : div_ceil(num_heads, kQKNormRopeChunk);
++    const auto params = QKNormRopeFP8Params{
++        .q = q.data_ptr(),
++        .k = pointer::offset(k.data_ptr(), -static_cast<int64_t>(num_qo_heads) * kHeadBytes),
++        .v = kStoreKV ? v->data_ptr() : nullptr,
++        .cos_sin_cache = cos_sin_cache.data_ptr(),
++        .positions = positions.data_ptr(),
++        .q_weight = q_weight.data_ptr(),
++        .k_weight = k_weight.data_ptr(),
++        .q_fp8 = q_fp8.data_ptr(),
++        .k_cache = kStoreKV ? k_cache->data_ptr() : nullptr,
++        .v_cache = kStoreKV ? v_cache->data_ptr() : nullptr,
++        .cache_loc = kStoreKV ? cache_loc->data_ptr() : nullptr,
++        .q_stride_bytes = static_cast<int64_t>(Dq.unwrap() * sizeof(bf16_t)),
++        .k_stride_bytes = static_cast<int64_t>(Dk.unwrap() * sizeof(bf16_t)),
++        .v_stride_bytes = kStoreKV ? static_cast<int64_t>(Dv.unwrap() * sizeof(bf16_t)) : 0,
++        .cache_slots = kStoreKV ? static_cast<int64_t>(S.unwrap()) : 0,
++        .num_qo_heads = num_qo_heads,
++        .num_kv_heads = num_kv_heads,
++        .num_tokens = num_tokens,
++        .head_groups = head_groups,
++        .eps = static_cast<float>(eps),
++    };
++    const auto kernel = id_type.is_type<int32_t>() ? _kernel<int32_t, kStoreKV> : _kernel<int64_t, kStoreKV>;
++    const auto num_blocks = div_ceil(static_cast<uint64_t>(num_tokens) * head_groups, kQKNormRopeWarps);
++    LaunchKernel(static_cast<uint32_t>(num_blocks), kQKNormRopeWarps * device::kWarpThreads, device.unwrap())  //
++        .enable_pdl(kUsePDL)(kernel, params);
++  }
++};
++
+ // QDType (default = DType) is q's dtype; k/v/caches use DType. Same-size
+ // dtypes only (fp16 q with bf16 k for the fp8-KV fp16-Q feed).
+ template <bool kIsNeox, int64_t kRopeDim, bool kUsePDL, typename DType, typename QDType = DType>
+@@ -331,8 +551,8 @@ struct FusedRopeKernel {
+   static_assert(kBlockSize % kWorkThreads == 0);
+   static_assert(sizeof(QDType) == sizeof(DType), "q/k must be same-size dtypes");
+ 
+-  template <typename IdType, bool kFP8Output = false, bool kQKNorm = false, bool kFP8KVStore = false>
+-  static constexpr auto _kernel_0 = fused_rope_kernel<kIsNeox, kRopeDim, kUsePDL, DType, QDType, IdType, kQKNorm ? 32 : kWorkThreads, kFP8Output, kQKNorm, kFP8KVStore>;
++  template <typename IdType, bool kFP8Output = false>
++  static constexpr auto _kernel_0 = fused_rope_kernel<kIsNeox, kRopeDim, kUsePDL, DType, QDType, IdType, kWorkThreads, kFP8Output>;
+   template <typename IdType>
+   static constexpr auto _kernel_1 =
+       fused_rope_store_kernel<kIsNeox, kRopeDim, kUsePDL, DType, QDType, IdType, kWorkThreads>;
+@@ -347,7 +567,7 @@ struct FusedRopeKernel {
+       const tvm::ffi::TensorView k,
+       const tvm::ffi::TensorView cos_sin_cache,
+       const tvm::ffi::TensorView positions) {
+-    _run<false, false>(q, k, cos_sin_cache, positions, q, q, k, 0.0);
++    _run<false>(q, k, cos_sin_cache, positions, q);
+   }
+ 
+   static void run_fp8(
+@@ -357,9 +577,11 @@ struct FusedRopeKernel {
+       const tvm::ffi::TensorView positions,
+       const tvm::ffi::TensorView q_fp8) {
+     static_assert(kIsNeox && kRopeDim == 128 && std::is_same_v<QDType, bf16_t>);
+-    _run<true, false>(q, k, cos_sin_cache, positions, q_fp8, q, k, 0.0);
++    _run<true>(q, k, cos_sin_cache, positions, q_fp8);
+   }
+ 
++  // Entry points of qknorm-rope-fp8.patch / qknorm-rope-fp8-kv.patch, now served
++  // by the token-warp kernel above (same per-head arithmetic).
+   static void run_norm_fp8(
+       const tvm::ffi::TensorView q,
+       const tvm::ffi::TensorView k,
+@@ -370,7 +592,7 @@ struct FusedRopeKernel {
+       double eps,
+       const tvm::ffi::TensorView q_fp8) {
+     static_assert(kIsNeox && kRopeDim == 128 && std::is_same_v<QDType, bf16_t> && std::is_same_v<DType, bf16_t>);
+-    _run<true, true>(q, k, cos_sin_cache, positions, q_fp8, q_weight, k_weight, eps);
++    QKNormRopeFP8Kernel<kUsePDL>::run(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8);
+   }
+ 
+   static void run_norm_fp8_store(
+@@ -387,23 +609,16 @@ struct FusedRopeKernel {
+       const tvm::ffi::TensorView v_cache,
+       const tvm::ffi::TensorView cache_loc) {
+     static_assert(kIsNeox && kRopeDim == 128 && std::is_same_v<QDType, bf16_t> && std::is_same_v<DType, bf16_t>);
+-    _run<true, true, true>(q, k, cos_sin_cache, positions, q_fp8, q_weight, k_weight, eps, &v, &k_cache, &v_cache, &cache_loc);
++    QKNormRopeFP8Kernel<kUsePDL>::run_store(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, v, k_cache, v_cache, cache_loc);
+   }
+ 
+-  template <bool kFP8Output, bool kQKNorm, bool kFP8KVStore = false>
++  template <bool kFP8Output>
+   static void _run(
+       const tvm::ffi::TensorView q,
+       const tvm::ffi::TensorView k,
+       const tvm::ffi::TensorView cos_sin_cache,
+       const tvm::ffi::TensorView positions,
+-      const tvm::ffi::TensorView q_fp8,
+-      const tvm::ffi::TensorView q_weight,
+-      const tvm::ffi::TensorView k_weight,
+-      double eps,
+-      const tvm::ffi::TensorView* v = nullptr,
+-      const tvm::ffi::TensorView* k_cache = nullptr,
+-      const tvm::ffi::TensorView* v_cache = nullptr,
+-      const tvm::ffi::TensorView* cache_loc = nullptr) {
++      const tvm::ffi::TensorView q_fp8) {
+     using namespace host;
+     auto N = SymbolicSize{"num_tokens"};
+     auto Q = SymbolicSize{"num_qo_heads"};
+@@ -435,22 +650,11 @@ struct FusedRopeKernel {
+         .with_device(device)
+         .verify(positions);
+ 
+-    if constexpr (kQKNorm) {
+-      TensorMatcher({D}).with_dtype<DType>().with_device(device).verify(q_weight);
+-      TensorMatcher({D}).with_dtype<DType>().with_device(device).verify(k_weight);
+-    }
+     if constexpr (kFP8Output) {
+       TensorMatcher({N, Q, D}).with_dtype<fp8_e4m3_t>().with_device(device).verify(q_fp8);
+       if (N.unwrap() != 0)
+         RuntimeCheck(q_fp8.data_ptr() != q.data_ptr() && q_fp8.data_ptr() != k.data_ptr(), "FP8 Q output must not alias inputs");
+     }
+-    auto Dv = SymbolicSize{"v_stride"};
+-    auto S = SymbolicSize{"cache_slots"};
+-    if constexpr (kFP8KVStore) {
+-      TensorMatcher({N, K, D}).with_strides({Dv, Dd, 1}).with_dtype<DType>().with_device(device).verify(*v);
+-      TensorMatcher({S, K, D}).with_dtype<fp8_e4m3_t>().with_device(device).verify(*k_cache).verify(*v_cache);
+-      TensorMatcher({N}).with_dtype<int32_t, int64_t>(id_type).with_device(device).verify(*cache_loc);
+-    }
+     const auto num_tokens = static_cast<uint32_t>(N.unwrap());
+     if (num_tokens == 0) return;
+     const auto num_qo_heads = static_cast<uint32_t>(Q.unwrap());
+@@ -473,28 +677,18 @@ struct FusedRopeKernel {
+         .num_kv_heads = num_kv_heads,
+         .num_tokens = num_tokens,
+         .q_fp8 = kFP8Output ? q_fp8.data_ptr() : nullptr,
+-        .q_weight = kQKNorm ? q_weight.data_ptr() : nullptr,
+-        .k_weight = kQKNorm ? k_weight.data_ptr() : nullptr,
+-        .eps = static_cast<float>(eps),
+-        .v_ptr = kFP8KVStore ? v->data_ptr() : nullptr,
+-        .k_fp8_cache = kFP8KVStore ? k_cache->data_ptr() : nullptr,
+-        .v_fp8_cache = kFP8KVStore ? v_cache->data_ptr() : nullptr,
+-        .cache_loc = kFP8KVStore ? cache_loc->data_ptr() : nullptr,
+-        .v_stride_bytes = kFP8KVStore ? Dv.unwrap() * static_cast<int64_t>(sizeof(DType)) : 0,
+-        .cache_slots = kFP8KVStore ? S.unwrap() : 0,
+     };
+ 
+     const auto is_int32 = id_type.is_type<int32_t>();
+-    const auto kernel = is_int32 ? _kernel_0<int32_t, kFP8Output, kQKNorm, kFP8KVStore> : _kernel_0<int64_t, kFP8Output, kQKNorm, kFP8KVStore>;
++    const auto kernel = is_int32 ? _kernel_0<int32_t, kFP8Output> : _kernel_0<int64_t, kFP8Output>;
+     const uint32_t kNumSM = get_num_sm(device.unwrap());
+     static const uint32_t kOccupancyTable[2] = {
+-        runtime::get_blocks_per_sm(_kernel_0<int32_t, kFP8Output, kQKNorm, kFP8KVStore>, kBlockSize),
+-        runtime::get_blocks_per_sm(_kernel_0<int64_t, kFP8Output, kQKNorm, kFP8KVStore>, kBlockSize),
++        runtime::get_blocks_per_sm(_kernel_0<int32_t, kFP8Output>, kBlockSize),
++        runtime::get_blocks_per_sm(_kernel_0<int64_t, kFP8Output>, kBlockSize),
+     };
+     const auto max_blocks = kOccupancyTable[is_int32 ? 0 : 1] * kNumSM;
+     const auto num_works = (num_qo_heads + num_kv_heads) * num_tokens;
+-    constexpr auto kKernelWorkThreads = kQKNorm ? 32 : kWorkThreads;
+-    const auto needed_blocks = div_ceil(num_works, (kBlockSize / kKernelWorkThreads));
++    const auto needed_blocks = div_ceil(num_works, (kBlockSize / kWorkThreads));
+     const auto num_blocks = std::min(max_blocks, needed_blocks);
+     LaunchKernel(num_blocks, kBlockSize, device.unwrap())  //
+         .enable_pdl(kUsePDL)(kernel, params);
+@@ -629,4 +823,5 @@ struct FusedRopeKernel {
+   }
+ };
+ 
++
+ }  // namespace
+diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
+index 30ea36a..91b47ec 100644
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -65,7 +65,7 @@ from sglang.srt.layers.utils.cp_utils import (
+ )
+ from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
+ from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
+-from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
++from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode, PPProxyTensors
+ from sglang.srt.model_executor.forward_context import get_token_to_kv_pool
+ from sglang.srt.model_loader.weight_utils import default_weight_loader
+ from sglang.srt.models.qwen2_moe import Qwen2MoeMLP as Qwen3MoeMLP
+@@ -757,8 +757,10 @@ class Qwen3MoeAttention(nn.Module):
+             )
+             kv_args = None
+             if (
+-                forward_batch.forward_mode.is_target_verify()
+-                and get_server_args().speculative_eagle_topk == 1
++                # Decode TARGET_VERIFY (komoriyuta) and Prefill EXTEND both write
++                # their KV through FA3 set_kv_buffer(out_cache_loc) otherwise.
++                (forward_batch.forward_mode.is_target_verify() or forward_batch.forward_mode == ForwardMode.EXTEND)
++                and get_server_args().speculative_eagle_topk in (None, 1)
+                 and not get_server_args().enable_prefill_cp
+                 and type(token_to_kv_pool := get_token_to_kv_pool()) is MHATokenToKVPool
+                 and self.attn.k_scale is None and self.attn.v_scale is None
