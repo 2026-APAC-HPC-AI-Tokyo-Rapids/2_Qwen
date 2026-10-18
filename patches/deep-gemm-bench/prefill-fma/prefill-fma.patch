@@ -1,0 +1,14 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+index 4037967..95e92e8 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1010,7 +1010,8 @@ sm90_fp8_mega_moe_impl(void* y,
+             constexpr uint32_t kAccumPerThread = WGMMA::kNumAccum;
+             float final_accum[kAccumPerThread] = {};
+ 
+-            if constexpr (kReuseAccumAsFinal) {
++            constexpr bool kQwenPrefillFma = kHidden == 4096 && kIntermediateHidden == 1536 && BLOCK_M == 128 && BLOCK_N == 256 && kNumEpilogueThreads == 512;
++            if constexpr (kReuseAccumAsFinal and not kQwenPrefillFma) {
+                 auto prescale_l1_final = [&](const float& scale_a_0, const float& scale_a_1,
+                                              const float& gate_sf, const float& up_sf) {
+                     const float inv_s0_gate = kFastMath ? math::fast_rcp(scale_a_0 * gate_sf) : 1.0f / (scale_a_0 * gate_sf);
