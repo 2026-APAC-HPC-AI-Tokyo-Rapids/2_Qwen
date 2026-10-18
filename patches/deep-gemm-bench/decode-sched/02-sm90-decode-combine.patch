@@ -1,0 +1,125 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+index 2fd16e4..a24b9de 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -304,6 +304,9 @@ sm90_fp8_mega_moe_impl(void* y,
+         kFP8SwapAB and kSplitNWarpgroups and (BLOCK_M == 64) and (BLOCK_N == 128) and
+         (kWarpgroupSplitN == 2);
+     constexpr bool kSwapABActive = kSwapABEligible;
++
++    // Decode tail changes (SwapAB geometry only; Prefill code is untouched).
++    constexpr bool kDecodeTail = kSwapABActive;
+     constexpr uint32_t kSwapABTokenChunks = BLOCK_M / 8;
+     DG_STATIC_ASSERT(not kSwapABEligible or (BLOCK_M % 8 == 0),
+                      "swapAB epilogue token chunks assume BLOCK_M is a multiple of 8");
+@@ -2194,6 +2197,110 @@ sm90_fp8_mega_moe_impl(void* y,
+             return combine_barriers[i + epilogue_warp_idx * 2];
+         });
+ 
++        if constexpr (kDecodeTail) {
++            // Decode: one warp reduces one 1 KiB chunk of one token, so a 128-token batch is
++            // spread over 1024 warps (all 128+ CTAs) instead of 128 warps on 16 CTAs (idea from
++            // komoriyuta's sm90-combine-parallel). All live top-k rows of the chunk are fetched
++            // at once onto one mbarrier, then reduced in the same slot order with the same FP32
++            // FMAs and weights, so the output is bit-identical.
++            constexpr uint32_t kChunkBytes = 1024;
++            constexpr uint32_t kNumChunksPerToken = kNumHiddenBytes / kChunkBytes;
++            constexpr uint32_t kChunkUint4PerLane = kChunkBytes / sizeof(uint4) / 32;
++            DG_STATIC_ASSERT(kNumHiddenBytes % kChunkBytes == 0, "Invalid Decode combine chunk");
++            // Buffers start after the expert-count region, whose spare bytes stay untouched.
++            DG_STATIC_ASSERT(SMEM_EXPERT_COUNT_SIZE + kNumCombineWarps * (kNumTopk + 1) * kChunkBytes <= SMEM_BEFORE_BARRIER_SIZE,
++                             "Decode combine buffers do not fit");
++            const auto warp_smem = math::advance_ptr<uint8_t>(
++                smem_buffer, SMEM_EXPERT_COUNT_SIZE + epilogue_warp_idx * (kNumTopk + 1) * kChunkBytes);
++            const auto chunk_store_buffer = reinterpret_cast<uint4*>(warp_smem + kNumTopk * kChunkBytes);
++            const auto chunk_barrier = combine_barriers[epilogue_warp_idx * 2];
++            uint32_t chunk_phase = 0;
++            for (uint32_t work_idx = sm_idx * kNumCombineWarps + epilogue_warp_idx;
++                 work_idx < num_tokens * kNumChunksPerToken;
++                 work_idx += kNumSMs * kNumCombineWarps) {
++                const uint32_t token_idx = work_idx / kNumChunksPerToken;
++                const uint32_t chunk_byte_offset = (work_idx % kNumChunksPerToken) * kChunkBytes;
++                const int stored_topk_slot_idx = lane_idx < kNumTopk ?
++                    static_cast<int>(__ldg(input_topk_idx_buffer.get_base_ptr<int64_t>() + token_idx * kNumTopk + lane_idx)) : -1;
++                const float lane_weight = lane_idx < kNumTopk ?
++                    __ldg(input_topk_weights_buffer.get_base_ptr<float>() + token_idx * kNumTopk + lane_idx) : 0.0f;
++                const uint32_t total_mask = __ballot_sync(0xffffffff, stored_topk_slot_idx >= 0);
++
++                if (total_mask != 0) {
++                    if (cute::elect_one_sync()) {
++                        uint32_t mask = total_mask;
++                        #pragma unroll
++                        for (uint32_t i = 0; i < kNumTopk; ++ i) {
++                            if (mask) {
++                                const uint32_t slot_idx = __ffs(mask) - 1;
++                                mask ^= 1 << slot_idx;
++                                const auto src_ptr = math::advance_ptr<uint8_t>(
++                                    combine_token_buffer.get_rank_buffer(slot_idx)
++                                                        .get_data_buffer(token_idx).get_base_ptr(),
++                                    chunk_byte_offset);
++                                ptx::tma_load_1d(warp_smem + i * kChunkBytes, src_ptr, chunk_barrier, kChunkBytes);
++                            }
++                        }
++                        ptx::mbarrier_arrive_and_set_tx(chunk_barrier, __popc(total_mask) * kChunkBytes);
++                    }
++                    __syncwarp();
++                    chunk_barrier->wait(chunk_phase);
++                    chunk_phase ^= 1;
++                }
++
++                float2 reduced[kChunkUint4PerLane * kNumElemsPerUint4] = {};
++                uint32_t mask = total_mask;
++                #pragma unroll
++                for (uint32_t i = 0; i < kNumTopk; ++ i) {
++                    if (mask) {
++                        const uint32_t slot_idx = __ffs(mask) - 1;
++                        mask ^= 1 << slot_idx;
++                        const float weight = __shfl_sync(0xffffffff, lane_weight, slot_idx);
++                        const auto load_buffer = reinterpret_cast<const uint4*>(warp_smem + i * kChunkBytes);
++                        #pragma unroll
++                        for (uint32_t j = 0; j < kChunkUint4PerLane; ++ j) {
++                            const auto uint4_values = load_buffer[j * 32 + lane_idx];
++                            const auto bf16_values = reinterpret_cast<const nv_bfloat162*>(&uint4_values);
++                            #pragma unroll
++                            for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l) {
++                                const auto value = __bfloat1622float2(bf16_values[l]);
++                                auto& sum = reduced[j * kNumElemsPerUint4 + l];
++                                sum.x = fmaf(value.x, weight, sum.x);
++                                sum.y = fmaf(value.y, weight, sum.y);
++                            }
++                        }
++                    }
++                }
++
++                #pragma unroll
++                for (uint32_t j = 0; j < kChunkUint4PerLane; ++ j) {
++                    uint4 casted;
++                    auto casted_bf16 = reinterpret_cast<nv_bfloat162*>(&casted);
++                    #pragma unroll
++                    for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l)
++                        casted_bf16[l] = __float22bfloat162_rn(reduced[j * kNumElemsPerUint4 + l]);
++
++                    if (j == 0) {
++                        ptx::tma_store_wait<0>();
++                        __syncwarp();
++                    }
++                    ptx::st_shared(chunk_store_buffer + j * 32 + lane_idx,
++                                   casted.x, casted.y, casted.z, casted.w);
++                }
++                __syncwarp();
++
++                if (cute::elect_one_sync()) {
++                    cute::tma_store_fence();
++                    ptx::tma_store_1d(
++                        math::advance_ptr(y, static_cast<uint64_t>(token_idx) * kNumHiddenBytes + chunk_byte_offset),
++                        chunk_store_buffer, kChunkBytes);
++                    cute::tma_store_arrive();
++                }
++                __syncwarp();
++            }
++            return;
++        }
++
+         uint32_t combine_phase = 0;
+         uint32_t load_stage_idx = 0;
+         for (uint32_t token_idx = sm_idx * kNumCombineWarps + epilogue_warp_idx;

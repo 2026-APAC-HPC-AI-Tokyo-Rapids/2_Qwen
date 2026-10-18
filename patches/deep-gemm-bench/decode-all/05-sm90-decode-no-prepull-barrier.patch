@@ -1,0 +1,46 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+index 629901a..2f7a88b 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -675,18 +675,32 @@ sm90_fp8_mega_moe_impl(void* y,
+                 *sym_buffer.map(
+                     workspace.get_expert_recv_count_ptr(sym_buffer.rank_idx, dst_local_expert_idx),
+                     dst_rank_idx) = expert_status & 0xffffffff;
++                if constexpr (kDecodeTail) {
++                    // Release at system scope: a rank that sees the completed sum also sees
++                    // this rank's per-rank count and the source indices that all of this
++                    // rank's CTAs wrote before the grid sync above.
++                    const auto ptr = sym_buffer.map(workspace.get_expert_recv_count_sum_ptr(dst_local_expert_idx), dst_rank_idx);
++                    asm volatile("red.release.sys.global.add.u64 [%0], %1;" :: "l"(ptr), "l"(expert_status) : "memory");
++                } else {
+                 ptx::atomic_add_sys(
+                     sym_buffer.map(workspace.get_expert_recv_count_sum_ptr(dst_local_expert_idx), dst_rank_idx),
+                     expert_status);
++                }
+             }
+         }
+         ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
+ 
++        // Decode skips the pre-pull NVLink barrier: the pull loop below (like the loaders and
++        // math warps) spins until every rank's SM 0 has added its counts to the per-expert sum,
++        // and acquires the published counts and source indices from there. Remote tokens are
++        // only read after their rank published, i.e. after its pre-dispatch finished.
++        if constexpr (not kDecodeTail) {
+         comm::nvlink_barrier<kNumRanks, kNumSMs, kNumDispatchThreads,
+                              kDispatchGridSyncIndex, kBeforeDispatchPullBarrierTag>(
+             workspace, sym_buffer, sm_idx, thread_idx,
+             [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); },
+             false, true);
++        }
+ 
+         // Sync with epilogue warps before pulling tokens.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
+@@ -697,6 +711,8 @@ sm90_fp8_mega_moe_impl(void* y,
+         const auto pull_mbarrier = dispatch_barriers[warp_idx];
+ 
+         scheduler.fetch_expert_recv_count();
++        if constexpr (kDecodeTail)
++            asm volatile("fence.acq_rel.sys;" ::: "memory");
+ 
+         constexpr uint32_t kNumRanksPerLane = math::constexpr_ceil_div(kNumRanks, 32u);
+         int      current_expert_idx = -1;

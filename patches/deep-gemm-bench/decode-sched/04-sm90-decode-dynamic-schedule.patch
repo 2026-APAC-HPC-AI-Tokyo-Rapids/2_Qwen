@@ -1,0 +1,168 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+index a0de503..629901a 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -342,6 +342,12 @@ sm90_fp8_mega_moe_impl(void* y,
+                      "No spare workspace slots for the Decode counters");
+     uint64_t* const decode_pre_combine_counter = workspace.get_l2_arrival_mask_ptr(kNumPoolBlocks);
+     uint64_t* const decode_final_counter = workspace.get_l2_arrival_mask_ptr(kNumPoolBlocks + 1);
++    // Next dynamically assigned block (minus kNumSMs); SM 0 resets it during cleanup.
++    // Computed at each use: keeping the pointer live costs registers in the 48-register
++    // dispatch and 168-register math regions.
++    const auto decode_block_counter = [&]() {
++        return reinterpret_cast<uint32_t*>(workspace.get_l2_arrival_mask_ptr(kNumPoolBlocks + 2));
++    };
+     constexpr uint32_t kSwapABTokenChunks = BLOCK_M / 8;
+     DG_STATIC_ASSERT(not kSwapABEligible or (BLOCK_M % 8 == 0),
+                      "swapAB epilogue token chunks assume BLOCK_M is a multiple of 8");
+@@ -394,6 +400,17 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+     // SMEM pointers
+     auto smem_expert_count = reinterpret_cast<uint32_t*>(smem_buffer);
++
++    // Decode block-assignment ring (4 slots + full/empty barriers) in the spare bytes of the
++    // expert-count region, past the expert counters and the bench timeline's counters.
++    constexpr uint32_t kDecodeRingDepth = 4;
++    constexpr uint32_t kDecodeRingOffset = 768;
++    DG_STATIC_ASSERT(not kDecodeTail or (kNumExperts * sizeof(uint32_t) + 128 <= kDecodeRingOffset and
++                     kDecodeRingOffset + 32 + kDecodeRingDepth * 2 * sizeof(Barrier) <= SMEM_EXPERT_COUNT_SIZE),
++                     "No spare shared memory for the Decode block ring");
++    auto decode_ring_slots = reinterpret_cast<uint32_t*>(smem_buffer + kDecodeRingOffset);
++    auto decode_ring_full = reinterpret_cast<Barrier*>(smem_buffer + kDecodeRingOffset + 32);
++    auto decode_ring_empty = decode_ring_full + kDecodeRingDepth;
+     const auto smem_send_buffers = layout::Buffer(
+         fp8_token_layout, kNumDispatchWarps, 1,
+         math::advance_ptr(smem_buffer, SMEM_EXPERT_COUNT_SIZE));
+@@ -441,6 +458,14 @@ sm90_fp8_mega_moe_impl(void* y,
+         #pragma unroll
+         for (uint32_t i = lane_idx; i < kNumDispatchWarps; i += 32)
+             dispatch_barriers[i]->init(1);
++        if constexpr (kDecodeTail) {
++            // Full: the A loader publishes a block. Empty: every thread of the B loader warp
++            // and of the math warpgroups has read it.
++            if (lane_idx < kDecodeRingDepth) {
++                (decode_ring_full + lane_idx)->init(1);
++                (decode_ring_empty + lane_idx)->init(32 + kNumEpilogueThreads);
++            }
++        }
+         cutlass::arch::fence_barrier_init();
+     } else if (warp_idx == 2) {
+         // Init GEMM full/empty barriers and combine barriers
+@@ -487,6 +512,59 @@ sm90_fp8_mega_moe_impl(void* y,
+         phase ^= stage_idx == 0;
+     };
+ 
++    // Decode: dynamic block assignment. The static scheduler hands CTA i the blocks i,
++    // i + kNumSMs, ... so CTAs with six FC1 and eight FC2 blocks (and the heavier experts)
++    // finish up to ~10 us after the rest. Here each CTA starts with block sm_idx and then
++    // claims the next unassigned block from a rank-wide counter when its A loader has issued
++    // the current one; the A loader passes the claimed index to the B loader and the math
++    // warps through a shared-memory ring. The index space and its decoding are the
++    // scheduler's own (FC1 blocks of a wave, then its FC2 blocks), a CTA's claims only grow,
++    // and every block waits only on blocks with smaller indices, so the order is
++    // deadlock-free. A block's arithmetic does not depend on which CTA runs it.
++    auto decode_for_each_block = [&](const auto& func, const auto& next_block_delta) {
++        scheduler.fetch_expert_recv_count();
++        scheduler.set_expert_idx(0);
++        while (true) {
++            CUTE_TIE_DECL(scheduler.get_next_block(), block_phase, local_expert_idx, m_block_idx, n_block_idx);
++            if (block_phase == sched::BlockPhase::None)
++                break;
++            // Arithmetic select: a `?:` of the two constants became a local-memory table.
++            const uint32_t num_k_blocks = kNumL1BlockKs +
++                static_cast<uint32_t>(block_phase == sched::BlockPhase::Linear2) * (kNumL2BlockKs - kNumL1BlockKs);
++            func(block_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++            // `get_next_block` already advanced by kNumSMs; the ring carries the remaining
++            // distance to the claimed block (claimed - current - kNumSMs, never negative).
++            scheduler.block_idx += next_block_delta();
++        }
++    };
++    // Ring position: slot = iteration % depth, phase parity = (iteration / depth) % 2.
++    uint32_t decode_ring_iter = 0;
++    uint32_t decode_global_block_idx = sm_idx;  // A loader only
++    auto decode_claim_block = [&]() {
++        const uint32_t slot = decode_ring_iter % kDecodeRingDepth;
++        uint32_t next_global_block_idx = 0;
++        if (lane_idx == 0) {
++            (decode_ring_empty + slot)->wait(((decode_ring_iter / kDecodeRingDepth) & 1) ^ 1);
++            next_global_block_idx = atomicAdd(decode_block_counter(), 1u) + kNumSMs;
++            ptx::st_shared(decode_ring_slots + slot, next_global_block_idx - decode_global_block_idx - kNumSMs);
++            (decode_ring_full + slot)->arrive();
++        }
++        next_global_block_idx = __shfl_sync(0xffffffff, next_global_block_idx, 0);
++        const uint32_t delta = next_global_block_idx - decode_global_block_idx - kNumSMs;
++        decode_global_block_idx = next_global_block_idx;
++        ++ decode_ring_iter;
++        return delta;
++    };
++    auto decode_receive_block = [&]() {
++        const uint32_t slot = decode_ring_iter % kDecodeRingDepth;
++        (decode_ring_full + slot)->wait((decode_ring_iter / kDecodeRingDepth) & 1);
++        const uint32_t delta = ptx::ld_shared(decode_ring_slots + slot);
++        // Every reading thread releases the slot itself (no lane predicate to keep live).
++        (decode_ring_empty + slot)->arrive();
++        ++ decode_ring_iter;
++        return delta;
++    };
++
+     // Intra-SM barrier indices (mirroring SM100)
+     constexpr uint32_t kDispatchBarrierIdx              = 0;
+     constexpr uint32_t kDispatchWithEpilogueBarrierIdx  = 1;
+@@ -781,6 +859,11 @@ sm90_fp8_mega_moe_impl(void* y,
+             #pragma unroll
+             for (uint32_t i = thread_idx; i < kNumExperts; i += kNumDispatchThreads)
+                 *workspace.get_expert_send_count_ptr(i) = 0;
++            // Every CTA's math has finished, so all of this call's claims are done.
++            if constexpr (kDecodeTail) {
++                if (thread_idx == 0)
++                    *decode_block_counter() = 0;
++            }
+         } else {
+             for (uint32_t i = sm_idx - 1; i < kNumExpertsPerRank; i += kNumSMs - 1) {
+                 const auto num_recv_tokens = static_cast<uint32_t>(
+@@ -924,6 +1007,8 @@ sm90_fp8_mega_moe_impl(void* y,
+                         std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear2>{},
+                         local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
+                 });
++        } else if constexpr (kDecodeTail) {
++            decode_for_each_block(process_a_sfa_block, decode_claim_block);
+         } else {
+             scheduler.for_each_block([&](const sched::BlockPhase& block_phase,
+                                          const uint32_t& local_expert_idx,
+@@ -936,10 +1021,10 @@ sm90_fp8_mega_moe_impl(void* y,
+     } else if (warp_idx == kNumDispatchWarps + 1) {
+         cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
+ 
+-        scheduler.for_each_block([&](const sched::BlockPhase& block_phase,
+-                                     const uint32_t& local_expert_idx,
+-                                     const uint32_t& num_k_blocks,
+-                                     const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++        auto process_b_block = [&](const sched::BlockPhase& block_phase,
++                                   const uint32_t& local_expert_idx,
++                                   const uint32_t& num_k_blocks,
++                                   const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
+             const auto tensor_map_b_ptr =
+                 block_phase == sched::BlockPhase::Linear2 ? &tensor_map_l2_weights : &tensor_map_l1_weights;
+ 
+@@ -973,7 +1058,11 @@ sm90_fp8_mega_moe_impl(void* y,
+                 }
+                 __syncwarp();
+             }
+-        });
++        };
++        if constexpr (kDecodeTail)
++            decode_for_each_block(process_b_block, decode_receive_block);
++        else
++            scheduler.for_each_block(process_b_block);
+ 
+     } else if (warp_idx < kNumDispatchWarps + kNumMMANonEpilogueWarps) {
+         // Idle non-epilogue warps (kNumDispatchWarps+2, +3). They must still
+@@ -2179,6 +2268,8 @@ sm90_fp8_mega_moe_impl(void* y,
+                         std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear2>{},
+                         local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
+                 });
++        } else if constexpr (kDecodeTail) {
++            decode_for_each_block(process_math_block, decode_receive_block);
+         } else {
+             scheduler.for_each_block([&](const sched::BlockPhase& block_phase,
+                                          const uint32_t& local_expert_idx,
