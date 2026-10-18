@@ -9,6 +9,8 @@ import tempfile
 from importlib.metadata import version
 from pathlib import Path
 
+SERIES_DIR = Path("/opt/apac/deep-gemm")
+
 
 def main():
     assert version("sgl-deep-gemm") == "0.1.5"
@@ -16,31 +18,16 @@ def main():
     header = package / "include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
     original = hashlib.sha256(header.read_bytes()).hexdigest()
     assert original == "a53d83cad76109588b3d5053be02877a0c2a47c38b27472269dc1319df62676d", original
-    patch = Path("/opt/apac/sm90-late-topk-fp32.patch")
-    subprocess.run(["git", "apply", "--check", str(patch)], cwd=package.parent, check=True)
-    subprocess.run(["git", "apply", str(patch)], cwd=package.parent, check=True)
-    pipeline_patch = Path("/opt/apac/sm90-fc2-pipeline.patch")
-    subprocess.run(["git", "apply", "--check", str(pipeline_patch)], cwd=package.parent, check=True)
-    subprocess.run(["git", "apply", str(pipeline_patch)], cwd=package.parent, check=True)
-    prefill_patch = Path("/opt/apac/sm90-prefill-rescale.patch")
-    subprocess.run(["git", "apply", "--check", str(prefill_patch)], cwd=package.parent, check=True)
-    subprocess.run(["git", "apply", str(prefill_patch)], cwd=package.parent, check=True)
-    decode_tiles_patch = Path("/opt/apac/sm90-decode-exact-tiles.patch")
-    subprocess.run(["git", "apply", "--check", str(decode_tiles_patch)], cwd=package.parent, check=True)
-    subprocess.run(["git", "apply", str(decode_tiles_patch)], cwd=package.parent, check=True)
-    prefill_phase_patch = Path("/opt/apac/sm90-prefill-phase.patch")
-    subprocess.run(["git", "apply", "--check", str(prefill_phase_patch)], cwd=package.parent, check=True)
-    subprocess.run(["git", "apply", str(prefill_phase_patch)], cwd=package.parent, check=True)
-    # Decode-only SwapAB/dispatch changes; Prefill SASS stays byte-identical.
-    swap_ab_hoist_patch = Path("/opt/apac/sm90-decode-swap-ab-hoist.patch")
-    subprocess.run(["git", "apply", "--check", str(swap_ab_hoist_patch)], cwd=package.parent, check=True)
-    subprocess.run(["git", "apply", str(swap_ab_hoist_patch)], cwd=package.parent, check=True)
-    l1_quant_patch = Path("/opt/apac/sm90-decode-swap-ab-l1-quant.patch")
-    subprocess.run(["git", "apply", "--check", str(l1_quant_patch)], cwd=package.parent, check=True)
-    subprocess.run(["git", "apply", str(l1_quant_patch)], cwd=package.parent, check=True)
-    dispatch_overlap_patch = Path("/opt/apac/sm90-dispatch-pull-overlap.patch")
-    subprocess.run(["git", "apply", "--check", str(dispatch_overlap_patch)], cwd=package.parent, check=True)
-    subprocess.run(["git", "apply", str(dispatch_overlap_patch)], cwd=package.parent, check=True)
+    # The series lists the patches in application order; each applies to the header left by the previous one.
+    patches = {}
+    for name in (SERIES_DIR / "series").read_text().split():
+        patch = SERIES_DIR / name
+        subprocess.run(["git", "apply", "--check", str(patch)], cwd=package.parent, check=True)
+        subprocess.run(["git", "apply", str(patch)], cwd=package.parent, check=True)
+        patches[name] = hashlib.sha256(patch.read_bytes()).hexdigest()
+    patched = hashlib.sha256(header.read_bytes()).hexdigest()
+    expected = (SERIES_DIR / "header.sha256").read_text().strip()
+    assert patched == expected, (patched, expected)
     # Match the saved 6344.96 baseline kernel symbols, including accumulator
     # reuse, arrival mode, stage count, EP wave and padded pool capacities.
     # Prefill's reuse path is distinct from Decode's pipelined SwapAB path.
@@ -68,14 +55,7 @@ extern "C" void* instantiate() {{
             subprocess.run(["/usr/local/cuda/bin/nvcc", "--cubin", "--std=c++20", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-O3", "--ptxas-options=-v,-warn-spills", "-gencode", "arch=compute_90a,code=sm_90a", "-I" + str(package / "include"), str(source), "-o", str(source.with_suffix(".cubin"))], check=True)
             assert source.with_suffix(".cubin").stat().st_size > 0
             print("PASS: CPU CUDA compilation " + json.dumps(config), flush=True)
-    result = {"package": "sgl-deep-gemm", "version": "0.1.5", "original_header_sha256": original, "header_sha256": hashlib.sha256(header.read_bytes()).hexdigest(), "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(), "weight_scale": "original FP32 block128", "fc2_activation_scale": "FP32 group64", "topk_weight": "after FC2", "combine_accumulator": "FP32", "compiled_geometries": geometries}
-    result["fc2_pipeline_patch_sha256"] = hashlib.sha256(pipeline_patch.read_bytes()).hexdigest()
-    result["prefill_rescale_patch_sha256"] = hashlib.sha256(prefill_patch.read_bytes()).hexdigest()
-    result["decode_tiles_patch_sha256"] = hashlib.sha256(decode_tiles_patch.read_bytes()).hexdigest()
-    result["prefill_phase_patch_sha256"] = hashlib.sha256(prefill_phase_patch.read_bytes()).hexdigest()
-    result["swap_ab_hoist_patch_sha256"] = hashlib.sha256(swap_ab_hoist_patch.read_bytes()).hexdigest()
-    result["l1_quant_patch_sha256"] = hashlib.sha256(l1_quant_patch.read_bytes()).hexdigest()
-    result["dispatch_overlap_patch_sha256"] = hashlib.sha256(dispatch_overlap_patch.read_bytes()).hexdigest()
+    result = {"package": "sgl-deep-gemm", "version": "0.1.5", "original_header_sha256": original, "header_sha256": patched, "patches": patches, "weight_scale": "original FP32 block128", "fc2_activation_scale": "FP32 group64", "topk_weight": "after FC2", "combine_accumulator": "FP32", "compiled_geometries": geometries}
     Path("/opt/apac/sm90-megamoe-build.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result), flush=True)
 

@@ -32,7 +32,7 @@ export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVI
 export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
 # Tier 2 switch (megamoe-idle-prefill-geometry.patch): 256 masked rows on idle Prefill ranks.
 # The code acts only in Prefill mode; with 1 the MegaMoE GPU gate also checks and times that case.
-export SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=0
+export SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1
 PROFILE=${PROFILE:-false}
 [[ "${PROFILE}" == true || "${PROFILE}" == false ]]
 jq -e '.framework == "sglang" and .workload == "official"' "${ROOT}/source/firmus-framework.json" >/dev/null
@@ -104,9 +104,9 @@ export SGLANG_HOST_IP=$5
 shift 5
 role=${name%%-*}
 # Prefill: a 3994-token prompt must not straddle two 4096-token batches (prefill-request-aligned-chunks.patch; images without it ignore this).
-# Tier 2 switches, default off: equal-load DP ties rotate (dp-total-requests-rotate-ties.patch);
-# Decode admission without host waits on the WAR-fenced stream (decode-async-admission.patch).
-if [[ "$role" == prefill ]]; then export SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS=1 SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=0; else export SGLANG_DECODE_ASYNC_ADMISSION=0; fi
+# Tier 2 switches: equal-load DP ties rotate (dp-total-requests-rotate-ties.patch);
+# Decode admission without host waits on the WAR-fenced stream (decode-async-admission.patch, with decode_polling_interval 1).
+if [[ "$role" == prefill ]]; then export SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS=1 SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=1; else export SGLANG_DECODE_ASYNC_ADMISSION=1; fi
 UCX_IB=$(for d in /sys/class/infiniband/*; do
   [ "$(cat "$d/ports/1/state" 2>/dev/null)" = "4: ACTIVE" ] || continue
   echo "$(basename "$d"):1"

@@ -111,7 +111,7 @@ def test_decode_polling_interval_is_checked_on_every_decode_state() -> None:
     check(raw["config"], raw["decode"], "decode")
     for index in range(5):
         info = copy.deepcopy(raw["decode"])
-        [info, *info["internal_states"]][index]["disaggregation_decode_polling_interval"] = 1
+        [info, *info["internal_states"]][index]["disaggregation_decode_polling_interval"] = 2
         with pytest.raises(ValueError, match="disaggregation_decode_polling_interval"):
             check(raw["config"], info, "decode")
 
@@ -191,13 +191,16 @@ def test_server_info_validation_runs_after_gpu_collection(tmp_path: Path, invali
 def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert "#SBATCH -t 00:17:00" in source
-    # Tier 2 switches stay off until a serving run enables them by commit.
-    assert "\nexport SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=0\n" in source
+    # Tier 2 switches are all on for the bundled image; the startup line prints each value.
+    assert "\nexport SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1\n" in source
+    startup = next(line for line in source.splitlines() if line.startswith('echo "$name host='))
+    for switch in ("SGLANG_PREFILL_FUSED_FP8_SHUFFLE", "SGLANG_PREFILL_TILED_ROUTING", "SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS", "SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES", "SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY", "SGLANG_DECODE_ASYNC_ADMISSION"):
+        assert "${" + switch + ":-0}" in startup
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
     assert config["decode_max_running_requests"] == 136
-    assert config["decode_polling_interval"] == 2
+    assert config["decode_polling_interval"] == 1  # Async admission replaces the polling interval of 2
     assert config["prefill"]["optimistic_prefill_attempts"] == 2
     assert config["decode_max_running_requests"] + config["decode_extra_slots"] * config["decode_dp_size"] >= config["concurrency"]
     assert max(config["decode_cuda_graph_bs"]) == config["decode_max_running_requests"] // config["decode_dp_size"]
@@ -274,7 +277,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             assert "--enable-dp-attention" in flags and "--disable-cuda-graph" in flags
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
             assert flags[flags.index("--optimistic-prefill-attempts") + 1] == str(config["prefill"]["optimistic_prefill_attempts"])
-            assert aligned == "1" and rotate_ties == "0" and async_admission == "0"
+            assert aligned == "1" and rotate_ties == "1" and async_admission == "0"
         else:
             assert flags[flags.index("--dp-size") + 1] == "4"
             assert "--enable-dp-attention" in flags and "--enable-dp-lm-head" in flags
@@ -290,7 +293,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             start = flags.index("--cuda-graph-bs-decode") + 1
             assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
-            assert "--optimistic-prefill-attempts" not in flags and aligned == "0" and rotate_ties == "0" and async_admission == "0"
+            assert "--optimistic-prefill-attempts" not in flags and aligned == "0" and rotate_ties == "0" and async_admission == "1"
     assert observed == {"prefill-0": "node0", "prefill-1": "node0", "prefill-2": "node1", "decode-0": "node1"}
     router_argv = next(argv for argv in commands if "/opt/apac/bin/sglang-router" in argv)
     assert router_argv.count("--prefill") == 3 and router_argv.count("--decode") == 1
