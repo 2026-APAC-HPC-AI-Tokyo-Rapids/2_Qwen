@@ -1,5 +1,5 @@
 {
-  "status": "enroot_fstab_options_corrected; one_authorized_pbs_retry_still_unused",
+  "status": "manual_workflow_cancelled_before_pbs_at_user_request; ready_for_tagged_push",
   "branch": "perf/aspire-firmus7500-port-20261018",
   "base_commit": "203b78e5ec3fe10f1e3ea8766f619d834d13d775",
   "base_reason": "Use the exact successful Firmus source as first parent so the existing container selector reuses its measured e54b4def image. Preserve the earlier 7200 port branch without rewriting it.",
@@ -43,7 +43,7 @@
   },
   "retry": {
     "authorization": "User authorized exactly one additional submission, then required importing their measured 7500 branch before it.",
-    "actions_dispatched": 2,
+    "actions_dispatched": 3,
     "scheduler_jobs_submitted": 0,
     "run_aspire2ap": true,
     "run_firmus": false,
@@ -53,7 +53,10 @@
     "require_build": false,
     "monitor_model": "gpt-6-luna",
     "automatic_resubmission": false,
-    "monitor_agent": "/root/aspire_monitor"
+    "monitor_agent": "/root/aspire_monitor",
+    "trigger": "push",
+    "push_runs_started": 0,
+    "requested_execution_method": "User: 可能ならpush経由で実行してくれへんか"
   },
   "pre_submit_attempts": [
     {
@@ -80,6 +83,16 @@
       "fix": "Use the full fstab form source:/runtime:none:bind,ro,x-create=dir in both worker and CPU gate.",
       "reference": "https://github.com/NVIDIA/enroot/blob/main/bin/enroot-mount.c",
       "cleanup": "provision failure cleanup succeeded; compute skipped"
+    },
+    {
+      "run_id": 39098355069,
+      "commit": "400ee1ef297937b7fb7723121905c98295e64a77",
+      "created_at_utc": "2026-10-18T04:48:14Z",
+      "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39098355069",
+      "conclusion": "cancelled",
+      "scheduler_jobs_submitted": 0,
+      "reason": "User requested execution via push. Cancelled the in-flight manual workflow while only container selection was running; terminal cancelled and Aspire compute skipped confirmed before any tagged push.",
+      "terminal_at_utc": "2026-10-18T04:51:26Z"
     }
   ]
 }
