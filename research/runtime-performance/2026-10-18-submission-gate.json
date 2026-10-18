@@ -1,7 +1,7 @@
 {
   "date": "2026-10-18",
   "base_commit": "9b2fbebefc82304d880179d2758a689f24b60893",
-  "status": "precheck_empty_output_stride_fixed_not_resubmitted",
+  "status": "authorized_resubmission_after_empty_stride_fix",
   "firmus_jobs_submitted": 1,
   "aspire_jobs_submitted": 0,
   "other_gpu_jobs_submitted": 0,
@@ -299,5 +299,15 @@
     "outcome": "Pre-benchmark gate failed in the reference FP8 Q allocation: empty_like retained packed stride (9216,128,1), whereas the FFI requires dense output (8192,128,1). No throughput measured.",
     "fix": "Allocate reference and candidate Q outputs by shape. Keep rows=0 kernel calls and unchanged-cache checks. Production kernels and image remain unchanged; no resubmission.",
     "cpu_validation": "Reproduced old empty output stride with PyTorch 2.14.1; all 24 actual allocation expressions for rows 0/1/31/128 and packed/dense inputs return exact dense strides."
+  },
+  "resubmission": {
+    "authorization": "User explicitly authorized one additional Firmus submission after reviewing the fix and remaining GPU validation limits.",
+    "fix_commit": "6ca388de14e020280722e744efc4e91c74377fa9",
+    "validation_run": 39087292400,
+    "validation_conclusion": "success",
+    "image_reused_from_build": 39075586288,
+    "runtime_unchanged": true,
+    "profile": false,
+    "monitoring": "Confirm Slurm acceptance only; do not wait for performance results."
   }
 }
