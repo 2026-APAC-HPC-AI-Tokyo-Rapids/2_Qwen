@@ -148,7 +148,7 @@ def test_server_info_checks_resolved_draft_backend_from_real_run() -> None:
 def test_prefill_deepep_checks_normal_mode_without_changing_decode() -> None:
     raw = archived_server_info()
     check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
-    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    config = copy.deepcopy(raw["config"])
     config["prefill"]["moe_a2a_backend"] = "deepep"
     prefill = copy.deepcopy(raw["prefill"])
     for state in [prefill, *prefill["internal_states"]]:
@@ -160,6 +160,22 @@ def test_prefill_deepep_checks_normal_mode_without_changing_decode() -> None:
         changed["internal_states"][2][key] = invalid
         with pytest.raises(ValueError, match=key):
             check(config, changed, "prefill")
+
+
+def test_selected_tokenizer_backend_is_checked_on_every_worker_state() -> None:
+    raw = archived_server_info()
+    check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
+    config = {**raw["config"], "tokenizer_backend": "gigatoken"}
+    for role in ("prefill", "decode"):
+        info = copy.deepcopy(raw[role])
+        for state in [info, *info["internal_states"]]:
+            state["tokenizer_backend"] = "gigatoken"
+        check(config, info, role)
+        for index in range(5):
+            changed = copy.deepcopy(info)
+            [changed, *changed["internal_states"]][index]["tokenizer_backend"] = "huggingface"
+            with pytest.raises(ValueError, match="tokenizer_backend"):
+                check(config, changed, role)
 
 
 @pytest.mark.parametrize("invalid", [False, True])
