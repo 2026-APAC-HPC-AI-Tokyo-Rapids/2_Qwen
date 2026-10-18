@@ -18,6 +18,10 @@ def check(config, info, role):
     else:
         # SGLang resolves an omitted draft runner to the target runner before serving this endpoint.
         expected.update(disaggregation_decode_extra_slots=config["decode_extra_slots"], moe_a2a_backend="megamoe", moe_runner_backend="deep_gemm", enable_dp_lm_head=True, moe_dense_tp_size=1, speculative_moe_a2a_backend=None, speculative_moe_runner_backend="deep_gemm")
+    placed = not aspire and prefill and p["expert_location"] != "trivial"
+    if not aspire:
+        # A non-trivial --init-expert-location makes SGLang dispatch through its static logical-to-physical table.
+        expected.update(ep_dispatch_algorithm="static" if placed else None)
     expected.update(load_balance_method=config[f"{role}_load_balance_method"] if aspire else "total_requests", load_snapshot_publish_interval=1)
     if aspire:
         expected["mem_fraction_static"] = 0.90 if prefill else config["decode_mem_fraction_static"]
@@ -30,6 +34,9 @@ def check(config, info, role):
         for name, value in expected.items():
             if name not in state or state[name] != value:
                 raise ValueError(f"{role} state {index}: {name}={state.get(name)!r}, expected {value!r}")
+        location = state.get("init_expert_location")
+        if not aspire and not ((location or "").endswith("/source/prefill-expert-location.json") if placed else location == "trivial"):
+            raise ValueError(f"{role} state {index}: init_expert_location={location!r}")
     if not prefill and info.get("cuda_graph_bs_decode") != config["decode_cuda_graph_bs"]:
         raise ValueError("Decode CUDA graph request list changed")
     if not prefill and any(state.get("effective_max_running_requests_per_dp") != config["decode_max_running_requests"] // config["decode_dp_size"] for state in states):
