@@ -1,5 +1,5 @@
 diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-index 7544946..5df53a1 100644
+index dd555a5..d8879e8 100644
 --- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 +++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 @@ -23,6 +23,7 @@
@@ -10,7 +10,7 @@ index 7544946..5df53a1 100644
  #define __CLION_IDE__
  
  namespace deep_gemm {
-@@ -321,6 +322,15 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -373,6 +374,15 @@ sm90_fp8_mega_moe_impl(void* y,
      // Combine input area
      const auto combine_token_buffer = layout::Buffer(bf16_token_layout, kNumTopk, kNumMaxTokensPerRank, l2_sf_buffer.get_end_ptr());
  
@@ -26,7 +26,7 @@ index 7544946..5df53a1 100644
      // =====================================================================
      // GEMM data types and shape constants
      // =====================================================================
-@@ -431,6 +441,11 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -485,6 +495,11 @@ sm90_fp8_mega_moe_impl(void* y,
  
      // SMEM pointers
      auto smem_expert_count = reinterpret_cast<uint32_t*>(smem_buffer);
@@ -38,7 +38,7 @@ index 7544946..5df53a1 100644
      // Dynamic FC2 claims travel from the A loader (which claims) to the B loader
      // and the math warps through a small ring at the end of the padding after
      // the expert counters (the 128 bytes right after the counters stay free for
-@@ -506,7 +521,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -560,7 +575,7 @@ sm90_fp8_mega_moe_impl(void* y,
      if (warp_idx == 0) {
          // Clean expert-count shared memory
          #pragma unroll
@@ -47,7 +47,7 @@ index 7544946..5df53a1 100644
              ptx::st_shared(smem_expert_count + i, 0u);
      } else if (warp_idx == 1) {
          // Init dispatch m-barriers
-@@ -719,6 +734,8 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -773,6 +788,8 @@ sm90_fp8_mega_moe_impl(void* y,
              atomicAdd_block(smem_expert_count + expert_idx, 1);
          });
          ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
@@ -56,7 +56,7 @@ index 7544946..5df53a1 100644
  
          // Stake out per-expert SM offsets via global atomic
          #pragma unroll
-@@ -728,6 +745,8 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -782,6 +799,8 @@ sm90_fp8_mega_moe_impl(void* y,
                  ptx::atomic_add(workspace.get_expert_send_count_ptr(i), send_value));
          }
          ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
@@ -65,29 +65,25 @@ index 7544946..5df53a1 100644
  
          // Write source token-topk indices to remote ranks
          read_topk_idx([&](const uint32_t& token_topk_idx, const int& expert_idx) {
-@@ -742,6 +761,8 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -797,6 +816,8 @@ sm90_fp8_mega_moe_impl(void* y,
              workspace, sm_idx, thread_idx,
              [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); }
          );
 +        if (thread_idx == 0)
 +            timeline.record(sm90_timeline::kDispGridSync);
  
+         asm volatile("" ::: "memory");
          if (sm_idx == 0) {
-             #pragma unroll
-@@ -758,15 +779,21 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -816,6 +837,8 @@ sm90_fp8_mega_moe_impl(void* y,
              }
          }
          ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
 +        if (thread_idx == 0)
 +            timeline.record(sm90_timeline::kDispRecvCount);
  
-         comm::nvlink_barrier<kNumRanks, kNumSMs, kNumDispatchThreads,
-                              kDispatchGridSyncIndex, kBeforeDispatchPullBarrierTag>(
-             workspace, sym_buffer, sm_idx, thread_idx,
-             [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); },
-             false, true);
-+        if (thread_idx == 0)
-+            timeline.record(sm90_timeline::kDispPrePullBarrier);
+         // No pre-pull NVLink barrier: the pull loop below (like the loaders and math warps)
+         // spins on ld.volatile (relaxed.sys) until every rank's SM 0 has added its
+@@ -825,6 +848,8 @@ sm90_fp8_mega_moe_impl(void* y,
  
          // Sync with epilogue warps before pulling tokens.
          ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
@@ -96,7 +92,18 @@ index 7544946..5df53a1 100644
  
          // Token / SF pull loop
          uint32_t pull_mbarrier_phase = 0;
-@@ -783,6 +810,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -833,6 +858,10 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+         scheduler.fetch_expert_recv_count();
+         asm volatile("fence.acq_rel.sys; fence.proxy.async.global;" ::: "memory");
++        // The flat protocol has no pre-pull barrier; this count spin is its replacement,
++        // so kDispPrePullBarrier marks its completion (after kDispEpilogueSync).
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispPrePullBarrier);
+ 
+         constexpr uint32_t kNumRanksPerLane = math::constexpr_ceil_div(kNumRanks, 32u);
+         int      current_expert_idx = -1;
+@@ -842,6 +871,7 @@ sm90_fp8_mega_moe_impl(void* y,
  
          constexpr uint32_t kNumGlobalWarps = kNumSMs * kNumDispatchWarps;
          for (uint32_t token_idx = sm_idx * kNumDispatchWarps + warp_idx; ; token_idx += kNumGlobalWarps) {
@@ -104,7 +111,7 @@ index 7544946..5df53a1 100644
                  int old_expert_idx = current_expert_idx;
                  while (token_idx >= expert_end_idx) {
                      if (++ current_expert_idx >= kNumExpertsPerRank)
-@@ -856,6 +884,9 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -915,6 +945,9 @@ sm90_fp8_mega_moe_impl(void* y,
  
                  const uint32_t pool_token_idx = expert_pool_block_offset * BLOCK_M + token_idx_in_expert;
  
@@ -114,7 +121,7 @@ index 7544946..5df53a1 100644
                  // Pull token data. Overlap a remote TMA load with SF copy and
                  // then use TMA store to materialize the local L1 input.
                  if (cute::elect_one_sync()) {
-@@ -899,6 +930,8 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -958,6 +991,8 @@ sm90_fp8_mega_moe_impl(void* y,
                              local_sf_ptr[j * kNumPaddedSFPoolTokens + sf_pool_token_idx] = sf_values[i];
                      }
                      __syncwarp();
@@ -123,7 +130,7 @@ index 7544946..5df53a1 100644
                  } else {
                  #pragma unroll
                  for (uint32_t i = 0; i < math::constexpr_ceil_div(kNumSFFloats, 32u); ++ i) {
-@@ -910,8 +943,11 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -969,8 +1004,11 @@ sm90_fp8_mega_moe_impl(void* y,
                  }
  
                  if (cute::elect_one_sync()) {
@@ -135,7 +142,7 @@ index 7544946..5df53a1 100644
  
                      ptx::tma_store_1d(
                          l1_token_buffer.get_data_buffer(pool_token_idx).get_base_ptr(),
-@@ -924,12 +960,33 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -983,12 +1021,33 @@ sm90_fp8_mega_moe_impl(void* y,
                      ptx::tma_store_wait<0>();
                      ptx::red_add_rel(
                          workspace.get_l1_arrival_count_ptr(pool_block_idx), 1);
@@ -169,30 +176,27 @@ index 7544946..5df53a1 100644
  
          DG_STATIC_ASSERT(kNumSMs > 1, "Invalid SM count");
          if (sm_idx == 0) {
-@@ -976,11 +1033,21 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1035,11 +1094,19 @@ sm90_fp8_mega_moe_impl(void* y,
              }
          }
  
 +        if (thread_idx == 0)
 +            timeline.record(sm90_timeline::kDispClean);
-+        // Same barrier as before, with its prologue grid sync split out for timing.
-+        comm::grid_sync<kNumSMs, kDispatchGridSyncIndex>(
-+            workspace, sm_idx, thread_idx,
-+            [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); });
++        // The flat barrier has no grid-sync prologue, so kDispFinalGridSync is recorded at
++        // the same point (a zero-length phase) and kDispExit follows the whole barrier.
 +        if (thread_idx == 0)
 +            timeline.record(sm90_timeline::kDispFinalGridSync);
-         comm::nvlink_barrier<kNumRanks, kNumSMs, kNumDispatchThreads,
-                              kDispatchGridSyncIndex, kAfterWorkspaceCleanBarrierTag>(
-             workspace, sym_buffer, sm_idx, thread_idx,
-             [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); },
--            true, false);
-+            false, false);
+         // Only SM 0 waits, as in the NVLink barrier. Its acquire and kernel completion
+         // order every rank's cleanup before this rank's next stream-ordered call.
+         sm90_fp8_mega_moe_flat_nvlink_barrier<kNumRanks, kNumSMs>(
+             final_counter, sym_buffer, thread_idx, sm_idx == 0,
+             [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); });
 +        if (thread_idx == 0)
 +            timeline.record(sm90_timeline::kDispExit);
  
      // =====================================================================
      // ROLE 2: GEMM TMA LOAD warps (load A+SFA, B+SFB)
-@@ -989,6 +1056,8 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1048,6 +1115,8 @@ sm90_fp8_mega_moe_impl(void* y,
      // =====================================================================
      } else if (warp_idx == kNumDispatchWarps) {
          cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
@@ -201,7 +205,7 @@ index 7544946..5df53a1 100644
  
          auto process_a_sfa_block = [&](const auto& block_phase,
                                         const uint32_t& local_expert_idx,
-@@ -1000,12 +1069,21 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1059,12 +1128,21 @@ sm90_fp8_mega_moe_impl(void* y,
                  ? &tensor_map_l2_acts_sf : &tensor_map_l1_acts_sf;
  
              const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
@@ -223,7 +227,7 @@ index 7544946..5df53a1 100644
              } else {
                  constexpr uint32_t kNumL1BlockNs = L1_SHAPE_N / BLOCK_N;
                  if constexpr (kL2ArrivalCounter) {
-@@ -1022,9 +1100,18 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1081,9 +1159,18 @@ sm90_fp8_mega_moe_impl(void* y,
                          ? ~0ull : ((1ull << kNumL1BlockNs) - 1ull);
                      while (ptx::ld_acq_gpu(ptr) != expected);
                  }
@@ -242,7 +246,7 @@ index 7544946..5df53a1 100644
  
                  if (cute::elect_one_sync()) {
                      const uint32_t m_idx = pool_block_idx * BLOCK_M;
-@@ -1061,6 +1148,8 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1120,6 +1207,8 @@ sm90_fp8_mega_moe_impl(void* y,
                  }
                  __syncwarp();
              }
@@ -251,7 +255,7 @@ index 7544946..5df53a1 100644
          };
  
          if constexpr (kDynamicL2) {
-@@ -1137,9 +1226,17 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1196,9 +1285,17 @@ sm90_fp8_mega_moe_impl(void* y,
                  process_a_sfa_block(block_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
              });
          }
@@ -269,7 +273,7 @@ index 7544946..5df53a1 100644
  
          const auto process_b_block = [&](const sched::BlockPhase& block_phase,
                                           const uint32_t& local_expert_idx,
-@@ -1149,9 +1246,17 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1208,9 +1305,17 @@ sm90_fp8_mega_moe_impl(void* y,
                  block_phase == sched::BlockPhase::Linear2 ? &tensor_map_l2_weights : &tensor_map_l1_weights;
  
              const uint32_t shape_n = block_phase == sched::BlockPhase::Linear2 ? L2_SHAPE_N : L1_SHAPE_N;
@@ -287,7 +291,7 @@ index 7544946..5df53a1 100644
  
                  if (cute::elect_one_sync()) {
                      const uint32_t n_idx = local_expert_idx * shape_n + n_block_idx * BLOCK_N;
-@@ -1200,6 +1305,11 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1259,6 +1364,11 @@ sm90_fp8_mega_moe_impl(void* y,
          } else {
              scheduler.for_each_block(process_b_block);
          }
@@ -299,7 +303,7 @@ index 7544946..5df53a1 100644
  
      } else if (warp_idx < kNumDispatchWarps + kNumMMANonEpilogueWarps) {
          // Idle non-epilogue warps (kNumDispatchWarps+2, +3). They must still
-@@ -1232,13 +1342,46 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1291,13 +1401,46 @@ sm90_fp8_mega_moe_impl(void* y,
              kSplitNSharesSF ? L1_OUT_BLOCK_N : WG_L1_OUT_BLOCK_N;
          constexpr uint32_t WG_SMEM_CD_L2_STRIDE_N = WG_BLOCK_N;
  
@@ -346,7 +350,7 @@ index 7544946..5df53a1 100644
              const uint32_t valid_m = scheduler.template get_valid_m<false>();
              const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
              const uint32_t m_idx = pool_block_idx * BLOCK_M;
-@@ -1538,7 +1681,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1597,7 +1740,7 @@ sm90_fp8_mega_moe_impl(void* y,
                      float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f;
                      float prev_gate_sf = 1.0f, prev_up_sf = 1.0f, prev_l2_sf = 1.0f;
                      for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
@@ -355,7 +359,7 @@ index 7544946..5df53a1 100644
  
                          float scale_a_0_lo, scale_a_1_lo;
                          float scale_a_0_hi, scale_a_1_hi;
-@@ -1659,7 +1802,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1718,7 +1861,7 @@ sm90_fp8_mega_moe_impl(void* y,
                      }
                  } else {
                      for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
@@ -364,7 +368,7 @@ index 7544946..5df53a1 100644
  
                          float scale_a_0_lo, scale_a_1_lo;
                          float scale_a_0_hi, scale_a_1_hi;
-@@ -1827,7 +1970,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1886,7 +2029,7 @@ sm90_fp8_mega_moe_impl(void* y,
                          for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
                              const float gate_sf = __ldg(l1_gate_sf + k_block_idx);
                              const float up_sf = __ldg(l1_up_sf + k_block_idx);
@@ -373,7 +377,7 @@ index 7544946..5df53a1 100644
                              issue.template operator()<BLOCK_K / SwapWGMMA::K>(swap_accum, 0);
                              ptx::warpgroup_wait<0>();
                              promote(swap_accum, smem_sfa[stage_idx], gate_sf, up_sf);
-@@ -1839,7 +1982,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1898,7 +2041,7 @@ sm90_fp8_mega_moe_impl(void* y,
                          // low half is promoted. SFA layout is (K=2, M=BLOCK_M).
                          for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
                              const float l2_sf = __ldg(l2_sf_row + k_block_idx);
@@ -382,7 +386,7 @@ index 7544946..5df53a1 100644
                              issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum, 0);
                              issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum_hi, BLOCK_K / 2);
                              ptx::warpgroup_wait<1>();
-@@ -1882,7 +2025,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1941,7 +2084,7 @@ sm90_fp8_mega_moe_impl(void* y,
                  float accum[kAccumPerThread];
  
                  for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
@@ -391,7 +395,7 @@ index 7544946..5df53a1 100644
  
                      // Read SF (must precede warpgroup_arrive)
                      float scale_a_0_lo, scale_a_1_lo;
-@@ -2024,6 +2167,11 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2083,6 +2226,11 @@ sm90_fp8_mega_moe_impl(void* y,
                  }
              }
  
@@ -403,7 +407,7 @@ index 7544946..5df53a1 100644
              // Skip epilogue when block is past valid M (still must release via empty)
              if (row_base >= valid_m) {
                  if (block_phase == sched::BlockPhase::Linear1) {
-@@ -2571,16 +2719,18 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2630,16 +2778,18 @@ sm90_fp8_mega_moe_impl(void* y,
                  [&](const uint32_t& local_expert_idx,
                      const uint32_t& num_k_blocks,
                      const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
@@ -428,7 +432,7 @@ index 7544946..5df53a1 100644
                  });
          } else if constexpr (kSpecializePhase) {
              sm90_fp8_mega_moe_for_each_block_split(
-@@ -2588,40 +2738,69 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2647,42 +2797,69 @@ sm90_fp8_mega_moe_impl(void* y,
                  [&](const uint32_t& local_expert_idx,
                      const uint32_t& num_k_blocks,
                      const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
@@ -483,19 +487,17 @@ index 7544946..5df53a1 100644
          // ---------------- COMBINE ----------------
          // NVLink barrier first: signals remote ranks that this rank's GEMM
          // outputs (NVLink scatter targets) are fully written.
-+        // Same barrier as before, with its prologue grid sync split out for timing.
-+        comm::grid_sync<kNumSMs, kEpilogueGridSyncIndex>(
-+            workspace, sm_idx, epilogue_thread_idx,
-+            [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); });
+         // Each CTA publishes its completed generic-proxy scatters instead of using a
+         // rank-wide grid sync, and waits once for all CTAs of all ranks.
++        // There is no separate grid sync: kMCombineGridSync is recorded at the barrier
++        // entry (a zero-length straggler phase) and kMCombineBarrier after the whole flat barrier.
 +        if (tl_lead)
 +            timeline.record(sm90_timeline::kMCombineGridSync);
-         comm::nvlink_barrier<kNumRanks, kNumSMs, kNumEpilogueThreads,
-                              kEpilogueGridSyncIndex, kBeforeCombineReduceBarrierTag>(
-             workspace, sym_buffer, sm_idx, epilogue_thread_idx,
--            [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); }
--        );
-+            [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); },
-+            false, true);
+         sm90_fp8_mega_moe_flat_nvlink_barrier<kNumRanks, kNumSMs>(
+             pre_combine_counter, sym_buffer, epilogue_thread_idx, true,
+             [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); });
+         // Combine reads the generic-proxy scatter targets through the TMA async proxy.
+         asm volatile("fence.proxy.async.global;" ::: "memory");
 +        if (tl_lead)
 +            timeline.record(sm90_timeline::kMCombineBarrier);
  
@@ -507,7 +509,7 @@ index 7544946..5df53a1 100644
  
          if (epilogue_warp_idx >= kNumCombineWarps)
              return;
-@@ -2671,6 +2850,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2732,6 +2909,7 @@ sm90_fp8_mega_moe_impl(void* y,
              return combine_barriers[i + epilogue_warp_idx * 2];
          });
  
@@ -515,7 +517,7 @@ index 7544946..5df53a1 100644
          if constexpr (kPairedCombine) {
          // Qwen Prefill combine: the same per-chunk FP32 reduction in ascending
          // top-k slot order (bit-identical output), but the loads form one
-@@ -2758,6 +2938,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2819,6 +2997,7 @@ sm90_fp8_mega_moe_impl(void* y,
          issue_pair();
          uint32_t wait_stage = 0, wait_phase = 0;
          for (uint32_t token_idx = first_token_idx; token_idx < num_tokens; token_idx += kTokenStride) {
@@ -523,7 +525,7 @@ index 7544946..5df53a1 100644
              const uint32_t total_mask = read_token_mask(token_idx);
              const float lane_weight = (lane_idx < kNumTopk and ((total_mask >> lane_idx) & 1u)) ?
                  __ldg(input_topk_weights_buffer.get_base_ptr<float>() + token_idx * kNumTopk + lane_idx) : 0.0f;
-@@ -2776,7 +2957,9 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2837,7 +3016,9 @@ sm90_fp8_mega_moe_impl(void* y,
                      const float weight_0 = __shfl_sync(0xffffffff, lane_weight, slot_0);
                      const float weight_1 = __shfl_sync(0xffffffff, lane_weight, slot_1);
                      issue_pair();
@@ -533,7 +535,7 @@ index 7544946..5df53a1 100644
                      reduce_slot(reduced, pair_buffer(wait_stage * 2), weight_0);
                      if (has_slot_1)
                          reduce_slot(reduced, pair_buffer(wait_stage * 2 + 1), weight_1);
-@@ -2817,6 +3000,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2878,6 +3059,7 @@ sm90_fp8_mega_moe_impl(void* y,
          for (uint32_t work_idx = sm_idx * kNumCombineWarps + epilogue_warp_idx;
               work_idx < num_tokens * kWorkItemsPerToken;
               work_idx += kNumSMs * kNumCombineWarps) {
@@ -541,7 +543,7 @@ index 7544946..5df53a1 100644
              const uint32_t token_idx = work_idx / kWorkItemsPerToken;
              const uint32_t first_chunk = kParallelCombine ? work_idx % kNumChunks : 0;
              const uint32_t end_chunk = kParallelCombine ? first_chunk + 1 : kNumChunks;
-@@ -2853,7 +3037,9 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2914,7 +3096,9 @@ sm90_fp8_mega_moe_impl(void* y,
                  float2 reduced[kNumUint4PerLane * kNumElemsPerUint4] = {};
                  while (do_reduce) {
                      do_reduce = move_mask_and_load(load_stage_idx ^ 1);
@@ -551,7 +553,7 @@ index 7544946..5df53a1 100644
                      #pragma unroll
                      for (uint32_t j = 0; j < kNumUint4PerLane; ++ j) {
                          const auto uint4_values = combine_load_buffer[load_stage_idx][j * 32 + lane_idx];
-@@ -2898,6 +3084,13 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2959,6 +3143,13 @@ sm90_fp8_mega_moe_impl(void* y,
              }
          }
          }

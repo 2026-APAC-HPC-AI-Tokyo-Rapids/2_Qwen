@@ -10,6 +10,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 SERIES_DIR = Path("/opt/apac/deep-gemm")
+HOST_RECORD = Path("/opt/apac/deep-gemm-host-build.json")
 
 
 def main():
@@ -18,6 +19,11 @@ def main():
     header = package / "include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
     original = hashlib.sha256(header.read_bytes()).hexdigest()
     assert original == "a53d83cad76109588b3d5053be02877a0c2a47c38b27472269dc1319df62676d", original
+    # rebuild-deepgemm-host.py ran first and replaced only the host _C.so; it must still be the recorded one and the header must still be pristine.
+    host = json.loads(HOST_RECORD.read_text())
+    extension = package / "_C.so"
+    assert hashlib.sha256(extension.read_bytes()).hexdigest() == host["extension_sha256"], host
+    assert host["retained_header_sha256"] == original, (host, original)
     # The series lists the patches in application order; each applies to the header left by the previous one.
     patches = {}
     for name in (SERIES_DIR / "series").read_text().split():
@@ -55,7 +61,7 @@ extern "C" void* instantiate() {{
             subprocess.run(["/usr/local/cuda/bin/nvcc", "--cubin", "--std=c++20", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-O3", "--ptxas-options=-v,-warn-spills", "-gencode", "arch=compute_90a,code=sm_90a", "-I" + str(package / "include"), str(source), "-o", str(source.with_suffix(".cubin"))], check=True)
             assert source.with_suffix(".cubin").stat().st_size > 0
             print("PASS: CPU CUDA compilation " + json.dumps(config), flush=True)
-    result = {"package": "sgl-deep-gemm", "version": "0.1.5", "original_header_sha256": original, "header_sha256": patched, "patches": patches, "weight_scale": "original FP32 block128", "fc2_activation_scale": "FP32 group64", "topk_weight": "after FC2", "combine_accumulator": "FP32", "compiled_geometries": geometries}
+    result = {"package": "sgl-deep-gemm", "version": "0.1.5", "original_header_sha256": original, "header_sha256": patched, "patches": patches, "host_build": host, "weight_scale": "original FP32 block128", "fc2_activation_scale": "FP32 group64", "topk_weight": "after FC2", "combine_accumulator": "FP32", "compiled_geometries": geometries}
     Path("/opt/apac/sm90-megamoe-build.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result), flush=True)
 

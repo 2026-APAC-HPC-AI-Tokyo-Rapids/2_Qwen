@@ -26,6 +26,11 @@ RUN /opt/apac/build-sglang-router.sh && rm /opt/apac/build-sglang-router.sh
 COPY containers/install-accelerator-dependencies.sh /opt/apac/install-accelerator-dependencies.sh
 RUN /opt/apac/install-accelerator-dependencies.sh && rm /opt/apac/install-accelerator-dependencies.sh
 
+COPY deep-gemm-source /opt/apac/deep-gemm-source
+COPY deep-gemm-host /opt/apac/deep-gemm-host
+COPY containers/rebuild-deepgemm-host.py /opt/apac/rebuild-deepgemm-host.py
+RUN CUDA_HOME=/usr/local/cuda /opt/sglang/venv/bin/python /opt/apac/rebuild-deepgemm-host.py /opt/apac/deep-gemm-source && rm -rf /opt/apac/deep-gemm-source
+
 COPY deep-gemm /opt/apac/deep-gemm
 COPY containers/build-sm90-megamoe.py /opt/apac/build-sm90-megamoe.py
 RUN /opt/sglang/venv/bin/python /opt/apac/build-sm90-megamoe.py

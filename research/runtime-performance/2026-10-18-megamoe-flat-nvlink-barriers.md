@@ -113,3 +113,7 @@ Decode timeline の pre-pull 約7 µs、pre-combine grid-sync median 7–9 µs�
 - terminal gate成功、複数回の同条件bench、その後の公式task / parser / artifact回収までのE2E確認はintegratorが行う。本作業はローカルcommitだけであり、GPU検証済みという採用判断は行わない。
 
 自分のFirmus抽出toolchain・compile directoryは確認後に削除し、GPU / scheduler jobは一つも作成していない。
+
+## 9. 統合時の追記
+
+bundle 統合で SwapAB の header guard（series 16 本目）が barrier patch の後に加わったため、最終 header pin は `5d8e4ce386794e2153e400ab9e46974f23cc956278fa9fc92df7d8ffc63ee1fe` になった（上記 `cb0c5238…` は 15 本目までの pin）。`patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch` は 16 本の後ろに当たるよう再生成した。pre-pull barrier は無くなったため `kDispPrePullBarrier` は count spin の完了（`kDispEpilogueSync` の後）に、最終 barrier の grid sync と pre-combine grid sync は barrier 入口の長さ 0 の phase として `kDispFinalGridSync`・`kMCombineGridSync` を記録する。`kMCombineBarrier` は flat barrier 全体の後に記録する。`timeline.record` の呼び出し数（34）は再生成前と同じ。

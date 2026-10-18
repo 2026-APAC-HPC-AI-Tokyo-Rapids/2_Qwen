@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 SGLANG_PATCHES = ["firmus-staged-eagle-kv", "qwen3-sm90-megamoe", "firmus-dp-rank-query", "prefill-ready-handoff", "deepgemm-activation-layout", "rope-fp8-q", "qknorm-rope-fp8", "prefill-request-aligned-chunks", "qknorm-rope-fp8-kv", "qwen-topk-padding", "qknorm-rope-fp8-token-warps", "add-rmsnorm-group-quant", "decode-async-admission", "dp-total-requests-rotate-ties", "megamoe-idle-prefill-geometry"]
 ROUTER_PATCHES = ["prefill-load-lifetime", "no-delay-acceptor"]
-CORRUPTIONS = [None, "hash", "router_hash", "router_nodelay_hash", "router_lock", "missing_router", "prefill_mode", "header_hash", "deep_gemm_first_hash", "deep_gemm_last_hash", "deep_gemm_missing_last", "deep_gemm_order"] + [f"missing_{name}" for name in SGLANG_PATCHES] + [f"missing_router_{name}" for name in ROUTER_PATCHES]
+HOST_PATCH = "patches/deep-gemm-host/sm90-swap-ab-144.patch"
+CORRUPTIONS = [None, "hash", "router_hash", "router_nodelay_hash", "router_lock", "missing_router", "prefill_mode", "header_hash", "deep_gemm_first_hash", "deep_gemm_last_hash", "deep_gemm_missing_last", "deep_gemm_order", "host_patch_hash", "host_extension_hash", "host_extension_unchanged", "host_source_commit", "host_missing_record", "missing_host_patch"] + [f"missing_{name}" for name in SGLANG_PATCHES] + [f"missing_router_{name}" for name in ROUTER_PATCHES]
 
 
 def sha256(path):
@@ -32,11 +33,14 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
     embedded = tmp_path / "embedded"
     embedded.mkdir()
     patches = [f"patches/sglang/{name}.patch" for name in SGLANG_PATCHES] + [f"patches/sglang-router/{name}.patch" for name in ROUTER_PATCHES]
+    patches.append(HOST_PATCH)
     manifest = {"applied_patches": [{"path": p, "sha256": sha256(p)} for p in patches]}
     if corruption == "hash":
         manifest["applied_patches"][0]["sha256"] = "0" * 64
     elif corruption and corruption.startswith("missing_router_"):
         manifest["applied_patches"].pop(patches.index(f"patches/sglang-router/{corruption[len('missing_router_'):]}.patch"))
+    elif corruption == "missing_host_patch":
+        manifest["applied_patches"].pop()
     elif corruption and corruption.startswith("missing_") and corruption != "missing_router":
         manifest["applied_patches"].pop(patches.index(f"patches/sglang/{corruption[len('missing_'):]}.patch"))
     (embedded / "manifest.json").write_text(json.dumps(manifest))
@@ -61,9 +65,19 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
     if corruption == "deep_gemm_order":
         deep_gemm = {name: deep_gemm[name] for name in reversed(series)}
     header = "0" * 64 if corruption == "header_hash" else (ROOT / "patches/deep-gemm/header.sha256").read_text().strip()
-    (embedded / "sm90-megamoe-build.json").write_text(json.dumps({"version": "0.1.5", "header_sha256": header, "patches": deep_gemm, "combine_accumulator": "FP32", "compiled_geometries": geometries}))
+    original_header = "a53d83cad76109588b3d5053be02877a0c2a47c38b27472269dc1319df62676d"
+    extension = b"rebuilt host extension"
+    extension_sha = hashlib.sha256(extension).hexdigest()
+    host_build = {"source_commit": "1c8138a59b3df5dac50b76b730834ed57982fdfb", "abi": "tvm-ffi", "host_patch_sha256": "0" * 64 if corruption == "host_patch_hash" else sha256(HOST_PATCH), "previous_extension_sha256": extension_sha if corruption == "host_extension_unchanged" else hashlib.sha256(b"wheel host extension").hexdigest(), "extension_sha256": "0" * 64 if corruption == "host_extension_hash" else extension_sha, "retained_header_sha256": original_header}
+    if corruption == "host_source_commit":
+        host_build["source_commit"] = "0" * 40
+    record = {"version": "0.1.5", "original_header_sha256": original_header, "header_sha256": header, "patches": deep_gemm, "host_build": host_build, "combine_accumulator": "FP32", "compiled_geometries": geometries}
+    if corruption == "host_missing_record":
+        del record["host_build"]
+    (embedded / "sm90-megamoe-build.json").write_text(json.dumps(record))
+    (embedded / "_C.so").write_bytes(extension)
     unpack = tmp_path / "unsquashfs"
-    unpack.write_text('#!/bin/bash\nset -eu\n[[ "$*" != *"-cat"* ]] || exit 1\nwhile [[ "$1" != -d ]]; do shift; done\n[[ ! -e "$2" ]] || exit 1\nmkdir -p "$2/opt/apac"\ncp "$EMBEDDED"/*.json "$2/opt/apac/"\nchmod -R a-w "$2"\n')
+    unpack.write_text('#!/bin/bash\nset -eu\n[[ "$*" != *"-cat"* ]] || exit 1\nwhile [[ "$1" != -d ]]; do shift; done\n[[ ! -e "$2" ]] || exit 1\nmkdir -p "$2/opt/apac"\ncp "$EMBEDDED"/*.json "$2/opt/apac/"\nmkdir -p "$2/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm"\ncp "$EMBEDDED/_C.so" "$2/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm/"\nchmod -R a-w "$2"\n')
     unpack.chmod(0o755)
     destination = tmp_path / "metadata"
     destination.mkdir()

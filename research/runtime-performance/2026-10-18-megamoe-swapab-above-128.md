@@ -147,3 +147,14 @@ scriptはsource commitを固定確認し、private一時コピーにhost patch�
 5. servingで34/rankなら現行cap136・graph bs34を使える。36/rankを試す条件commitではcap144、graph bs36を追加する。padding後の実際のkernel行数が144以下であることもログで確認する。条件を同時に変更してpatch効果と混ぜない。公式入力・result parser・精度scoreとSLA、artifactを回収し、同条件複数runで採否を決める。
 
 この時点のdeliverableは未配線のbuild候補と検証caseであり、servingでの採用済み最適化ではない。
+
+## 7. 統合済みの配線（bundle 統合時に実施、build は未実施）
+
+§6.1 の手順を `perf/firmus-max-20261018` に配線した。GPU job・Actions は起動していない。
+
+- guard patch は `patches/deep-gemm/sm90-swap-ab-geometry-guard.patch` へ移し、series の 16 本目（flat NVLink barrier の後）に置いた。barrier patch の後でも適用でき、最終 header pin は `5d8e4ce386794e2153e400ab9e46974f23cc956278fa9fc92df7d8ffc63ee1fe`。host patch は `patches/deep-gemm-host/sm90-swap-ab-144.patch` のみが残る。
+- `scripts/build-sglang-container.sh` が v0.1.5 を `--recurse-submodules --shallow-submodules` で build context の `deep-gemm-source` に clone して commit `1c8138a5…` を確認し、`deep-gemm-host` と `containers/rebuild-deepgemm-host.py` を context に置く。host patch は manifest の `applied_patches` にも入る。
+- `containers/Dockerfile` は `install-accelerator-dependencies.sh` の後、`build-sm90-megamoe.py` の前で `rebuild-deepgemm-host.py` を実行し、source を消す。
+- `containers/build-sm90-megamoe.py` は header がまだ pristine で `_C.so` が記録通りであることを確認し、`/opt/apac/deep-gemm-host-build.json` を `sm90-megamoe-build.json` の `host_build` に取り込む。
+- `scripts/check-firmus-image.sh` は image の実 `_C.so` の SHA-256 を `host_build.extension_sha256` と照合し、source commit・ABI・host patch SHA-256、置換前後で extension が変わったことを確認する。
+- runtime config（Decode cap 136、graph bs 34）は変更していない。cap は run ごとに integrator が選ぶ。
