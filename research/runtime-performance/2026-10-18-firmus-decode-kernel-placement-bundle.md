@@ -10,7 +10,7 @@ P3/D1（c192）では、throughput は Prefill の供給量で決まり、Decode
 - 主因は ITL>20 ms 不合格の解消で、82 / 106 件から 7 / 9 件に減った。ITL の平均は 17.3–17.5 → 16.1 ms、p99 は 20.3–20.6 → 18.9 ms。raw の output tok/s は 6837–6875 → 7402–7430（+8%）、req/s は 34.2–34.4 → 37.0–37.2 に上がった。TTFT>3 s 不合格は 114–140 → 104–126 件で、ほぼ横ばいである。
 - profile pass の MegaMoE kernel 平均は次のとおり。Decode は 0.2415 / 0.2491 → 0.2126 / 0.2124 ms（−13%）、Prefill の主形状は 2.1635 / 2.1519 → 1.8205 / 1.8169 ms（−16%）。
 - 数値 gate、official validation、静的配置の読み込み、sanity chat の内容、EAGLE3 の accept length は全 run で期待どおりだった（§4）。
-- branch `perf/firmus-decode-kernel-placement-20261018` に置き、main には未 merge（merge 判断はユーザーが行う）。
+- branch `perf/firmus-decode-kernel-placement-20261018` で検証し、2 対 2 の比較で優位を確認したので main へ merge した（6c10548）。
 
 ## 2. 束ねた内容と commit
 
@@ -88,4 +88,4 @@ A2 の 1 回目（[39074570813](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids
 
 - 比較は束ね 2 run と参照 2 run（うち 1 run は同日の交互実行）である。差（+10–12%）は既知のばらつきの 3 倍以上あり、ITL 不合格の減少という機構とも合っている。ただし、Decode kernel 単独と配置単独の寄与は分けていない。配置単独では ITL 不合格が増えたので、2 つの変更は相補的に働いたと解釈している。
 - Decode の ITL 余裕（p99 18.9 ms）ができたので、次は Decode の slot 数（cap、c）か Prefill の供給を増やす方向を、この image を基点に評価できる。
-- branch: `perf/firmus-decode-kernel-placement-20261018` は残す。R2 branch は `archive/experiment/firmus-reference-rerun-20261018` tag にして削除した。元の 2 branch と mainloop pipeline branch の扱いは commit 本文と最終報告に記録する。
+- branch: `perf/firmus-decode-kernel-placement-20261018` は残す。R2 branch は `archive/experiment/firmus-reference-rerun-20261018` tag にして削除した。元の 2 branch（`perf/firmus-decode-kernel-20261018`、`perf/firmus-expert-placement-20261018`）と `perf/firmus-decode-mainloop-pipeline-20261018` は、それぞれ `archive/<branch>` tag にして削除した。束ね branch は main への merge 後に同様に退避する。
