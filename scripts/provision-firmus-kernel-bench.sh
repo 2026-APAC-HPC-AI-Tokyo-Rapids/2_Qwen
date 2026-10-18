@@ -2,7 +2,9 @@
 # Stage a 1-node SM90 MegaMoE kernel bench on the Firmus login node: the pinned
 # serving image (no rebuild), its DeepGEMM package and SGLang Python tree, one
 # header overlay per DeepGEMM candidate (patches/deep-gemm-bench/<name>/*.patch),
-# timeline overlays where a candidate directory holds a `timeline` marker, and
+# timeline overlays where a candidate directory holds a `timeline` marker (an
+# empty marker uses the stock timeline patch; a non-empty one is that
+# candidate's own timeline patch, for candidates the stock patch cannot hit), and
 # an SGLang tree with patches/sglang-bench/*.patch. A candidate patch that does
 # not apply stops here, before any Slurm submission; a timeline patch that does
 # not apply on top of a candidate is recorded and that timeline is skipped.
@@ -90,7 +92,9 @@ add_timeline() {
   if [[ ! -e "${dir}/timeline" ]]; then echo not-requested; return; fi
   install -d -m 0755 "${runtime_dir}/overlay/timeline/${name}"
   cp -a "${base}" "${runtime_dir}/overlay/timeline/${name}/deep_gemm"
-  if (cd "${runtime_dir}/overlay/timeline/${name}" && git apply --check "${timeline_patch}" 2>"${runtime_dir}/logs/timeline-apply-${name}.log" && git apply "${timeline_patch}"); then rm -f -- "${runtime_dir}/logs/timeline-apply-${name}.log"; echo ready; return; fi
+  local patch=${timeline_patch}
+  if [[ -s "${dir}/timeline" ]]; then patch="${dir}/timeline"; fi
+  if (cd "${runtime_dir}/overlay/timeline/${name}" && git apply --check "${patch}" 2>"${runtime_dir}/logs/timeline-apply-${name}.log" && git apply "${patch}"); then rm -f -- "${runtime_dir}/logs/timeline-apply-${name}.log"; echo ready; return; fi
   cat "${runtime_dir}/logs/timeline-apply-${name}.log" >&2
   rm -rf -- "${runtime_dir}/overlay/timeline/${name}"
   echo apply-failed

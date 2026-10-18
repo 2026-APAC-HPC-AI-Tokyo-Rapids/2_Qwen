@@ -80,11 +80,13 @@ def provision(tmp_path: Path, ws: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["bash", str(ws / "scripts/provision-firmus-kernel-bench.sh")], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
 
 
-def add_candidate(ws: Path, name: str, patch: str, timeline: bool = False) -> None:
+def add_candidate(ws: Path, name: str, patch: str, timeline: bool | str = False) -> None:
     directory = ws / "patches/deep-gemm-bench" / name
     directory.mkdir(parents=True)
     (directory / "000.patch").write_text(patch)
-    if timeline:
+    if isinstance(timeline, str):
+        (directory / "timeline").write_text(timeline)
+    elif timeline:
         (directory / "timeline").touch()
 
 
@@ -116,6 +118,24 @@ def test_provision_stages_each_candidate_and_records_timeline_failures(tmp_path:
     assert (runtime / "overlay/sglang/python/sglang/kernels/jit/csrc/gemm/per_token_group_quant.cuh").read_text().endswith("// comment only\n")
     assert (runtime / "source/patches/deep-gemm-bench/a-comment/timeline").exists()
     assert json.loads((runtime / "source/provenance.json").read_text())["schema_version"] == "qwen3-megamoe-kernel-bench/v2"
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+def test_candidate_timeline_marker_with_content_is_that_candidates_timeline_patch(tmp_path: Path) -> None:
+    ws, patches = workspace(tmp_path)
+    relative = "deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
+    header = "".join(f"line {index}\n" for index in range(1, 12))
+    # The stock timeline patch edits line 3, which this candidate changed; its own timeline patch edits line 9.
+    own = make_patch(tmp_path, relative, header.replace("line 3\n", "line 3 candidate\n"), header.replace("line 3\n", "line 3 candidate\n").replace("line 9\n", "line 9 own timeline\n"))
+    add_candidate(ws, "own", patches["conflict"], timeline=own)
+
+    result = provision(tmp_path, ws)
+
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    variants = json.loads((runtime / "results/variants.json").read_text())
+    assert [(v["name"], v["timeline"]) for v in variants["deep_gemm"]] == [("image", "not-requested"), ("own", "ready")]
+    assert "line 9 own timeline" in (runtime / "overlay/timeline/own" / relative).read_text()
 
 
 @pytest.mark.parametrize("layout", ["flat", "too-many", "too-many-timelines", "bad-name"])
