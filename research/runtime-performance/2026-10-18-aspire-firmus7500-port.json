@@ -1,5 +1,5 @@
 {
-  "status": "measured_7567_bundle_ported; cpu_validated; awaiting_single_authorized_dispatch",
+  "status": "login_cpu_gate_corrected; authorized_one_pbs_retry_still_unused",
   "branch": "perf/aspire-firmus7500-port-20261018",
   "base_commit": "203b78e5ec3fe10f1e3ea8766f619d834d13d775",
   "base_reason": "Use the exact successful Firmus source as first parent so the existing container selector reuses its measured e54b4def image. Preserve the earlier 7200 port branch without rewriting it.",
@@ -38,12 +38,12 @@
     "shell_syntax": "42 scripts passed",
     "patch_and_placement_identity": "passed",
     "linux_cpu_tests": "357 passed, 1 skipped, 22 subtests passed on tg1 in 56.98s; no GPU/scheduler used; temporary checkout removed",
-    "enroot_login_mount": "will run before PBS in the single Actions workflow",
+    "enroot_login_mount": "First login CPU check failed on a missing host NVML library; corrected none to void. Next actual mount check must pass before qsub.",
     "ruff": "Repository CI scope (qwen-experiment-metrics scripts containers): passed. Extra audit outside CI scope found one pre-existing redundant module-level global in the unchanged vllm-proxy.py; not part of the Aspire path."
   },
   "retry": {
     "authorization": "User authorized exactly one additional submission, then required importing their measured 7500 branch before it.",
-    "actions_dispatched": 0,
+    "actions_dispatched": 1,
     "scheduler_jobs_submitted": 0,
     "run_aspire2ap": true,
     "run_firmus": false,
@@ -52,6 +52,22 @@
     "profile": false,
     "require_build": false,
     "monitor_model": "gpt-6-luna",
-    "automatic_resubmission": false
-  }
+    "automatic_resubmission": false,
+    "monitor_agent": "/root/aspire_monitor"
+  },
+  "pre_submit_attempts": [
+    {
+      "run_id": 39097518209,
+      "commit": "563fffa0ab127726dcba30945b289b7b860ac973",
+      "created_at_utc": "2026-10-18T04:33:38Z",
+      "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39097518209",
+      "conclusion": "failure",
+      "scheduler_jobs_submitted": 0,
+      "image_integrity": "expected e54b4def image reused; metadata and patch hashes passed",
+      "failure": "Login CPU preflight used NVIDIA_VISIBLE_DEVICES=none, which still loads NVML. Aspire login has no libnvidia-ml.so.1; 98-nvidia.sh failed before the Python assertions. Compute job skipped.",
+      "fix": "Use NVIDIA_VISIBLE_DEVICES=void for the login CPU check, including host environment so the hook cannot inherit a driver-enabled setting. GPU serving commands unchanged.",
+      "reference": "https://github.com/NVIDIA/enroot/blob/main/conf/hooks/98-nvidia.sh",
+      "cleanup": "provision failure cleanup succeeded; no PBS allocation or compute artifacts"
+    }
+  ]
 }

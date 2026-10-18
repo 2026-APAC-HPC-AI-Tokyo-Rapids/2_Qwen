@@ -6,11 +6,13 @@ model_path="${2:?model path required}"
 preflight_dir="$(mktemp -d "${TMPDIR:-/tmp}/aspire-mount-preflight.XXXXXXXXXX")"
 trap 'rm -rf -- "${preflight_dir:?}"' EXIT
 export ENROOT_LIBRARY_PATH="${runtime_dir}/enroot-library" ENROOT_SYSCONF_PATH="${runtime_dir}/enroot-system" ENROOT_MOUNT_HOME=no
+# `none` still loads NVML; the login CPU has no NVIDIA driver (Actions 39097518209).
+export NVIDIA_VISIBLE_DEVICES=void
 export ENROOT_CACHE_PATH="${preflight_dir}/cache" ENROOT_DATA_PATH="${preflight_dir}/data" ENROOT_RUNTIME_PATH="${preflight_dir}/runtime" ENROOT_TEMP_PATH="${preflight_dir}/temp"
 install -d -m 0700 "${ENROOT_CACHE_PATH}" "${ENROOT_DATA_PATH}" "${ENROOT_RUNTIME_PATH}" "${ENROOT_TEMP_PATH}" "${preflight_dir}/home"
 expected="$(sha256sum "${runtime_dir}/source/prefill-expert-location.json" | cut -d ' ' -f 1)"
 # Exercise the actual image and directory mounts before qsub, without loading weights or using GPUs.
-timeout 180 enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/runtime-home -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${model_path}:/model" -m "${preflight_dir}/home:/runtime-home" -m "${runtime_dir}/draft:/draft" -m "${runtime_dir}:/runtime:ro" "${runtime_dir}/sglang.sqsh" /opt/sglang/venv/bin/python - "${expected}" <<'PY'
+timeout 180 enroot start -e NVIDIA_VISIBLE_DEVICES=void -e HOME=/runtime-home -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${model_path}:/model" -m "${preflight_dir}/home:/runtime-home" -m "${runtime_dir}/draft:/draft" -m "${runtime_dir}:/runtime:ro" "${runtime_dir}/sglang.sqsh" /opt/sglang/venv/bin/python - "${expected}" <<'PY'
 import hashlib
 import json
 import sys
