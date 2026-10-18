@@ -165,6 +165,32 @@ def test_summary_uses_official_score_and_measured_latency(tmp_path: Path) -> Non
     assert "P2 × TP4 / D2 × TP4 EP1" in SUMMARY(tmp_path, "456", "success")
 
 
+@pytest.mark.parametrize("has_score", [True, False])
+def test_aspire_summary_reads_collected_results_and_bootstrap_endpoints(tmp_path: Path, has_score: bool) -> None:
+    source = tmp_path / "source/source"
+    source.mkdir(parents=True)
+    (source / "provenance.json").write_text(json.dumps({"cluster": "aspire2ap", "profile": False}))
+    config = {"concurrency": 104, "dp_size": 4, "workers": [{"role": role, "tp": 4, "ep": 4} for role in ("prefill", "prefill", "decode", "decode")]}
+    (source / "aspire-serving.json").write_text(json.dumps(config))
+    (source / "worker-endpoints.tsv").write_text("prefill\thost\t30100\t9000\ndecode\thost\t30200\tunused\n")
+    if has_score:
+        results = tmp_path / "results/results"
+        results.mkdir(parents=True)
+        (results / "score.json").write_text(json.dumps({"request_count": 3178, "error_request_count": 0, "good_request_fraction": 0.985840151, "goodput_requests_per_second": 25.382131849, "score_output_tokens_per_second": 5076.42636986, "eligible": True, "official_validation": {"valid": True}}))
+    status = "success" if has_score else "failure"
+    summary = subprocess.check_output([sys.executable, str(ROOT / "scripts/summarize-firmus-run.py"), str(tmp_path), "--cluster", "aspire2ap", "--job-id", "221216.pbs111", "--status", status], text=True)
+    assert "ASPIRE 2A+ Qwen" in summary and "PBS `221216.pbs111`" in summary
+    assert "H100 × 16" in summary and "P2 × TP4 DP4 EP4 / D2 × TP4 DP4 EP4" in summary
+    assert "60 / 120 / 30" in summary and "concurrency **104**" in summary
+    if has_score:
+        assert "5076.426 output tok/s" in summary and "98.58%" in summary
+        assert "Official workload validation | True" in summary and "SLA eligible | True" in summary
+        assert "Request errors | 0" in summary
+    else:
+        assert "**failure**" in summary and "Validated AIPerf result unavailable" in summary
+        assert "ASPIRE 2A+ Qwen" in SUMMARY(tmp_path / "missing", "221216.pbs111", "failure", "aspire2ap")
+
+
 def test_full_profile_summary_keeps_normal_latency_and_actual_topology(tmp_path: Path) -> None:
     (tmp_path / "provenance.json").write_text(json.dumps({"framework": "sglang", "workload": "official", "profile": True, "normal_benchmark_before_profile": True}))
     (tmp_path / "score.json").write_text(json.dumps({"request_count": 360, "good_request_fraction": 1.0, "goodput_requests_per_second": 3.0, "score_output_tokens_per_second": 600.0, "eligible": True}))

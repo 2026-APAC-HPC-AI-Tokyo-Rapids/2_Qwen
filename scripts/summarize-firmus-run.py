@@ -14,9 +14,10 @@ def read_artifact(root: Path, filename: str) -> dict:
     return json.loads(paths[0].read_text()) if paths else {}
 
 
-def summarize(root: Path, job_id: str, status: str) -> str:
+def summarize(root: Path, job_id: str, status: str, cluster: str = "firmus") -> str:
     identity = read_artifact(root, "provenance.json")
-    config = read_artifact(root, "firmus-framework.json")
+    aspire = cluster == "aspire2ap"
+    config = read_artifact(root, "aspire-serving.json" if aspire else "firmus-framework.json")
     score = read_artifact(root, "score.json")
     export = read_artifact(root, "profile_export_aiperf.json")
     capture = read_artifact(root, "validation.json")
@@ -24,12 +25,12 @@ def summarize(root: Path, job_id: str, status: str) -> str:
     reports = list(root.rglob("*.nsys-rep")) if root.exists() else []
     run_id = os.environ.get("GITHUB_RUN_ID", "unknown")
     attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "unknown")
-    workload = identity.get("workload", "reference-07")
+    workload = identity.get("workload", "official" if aspire else "reference-07")
     phases = "60 / 120 / 30" if workload == "official" else "20 / 60 / 15"
     topology = "P2 × TP4 / D2 × TP4 EP1" if identity.get("framework") == "sglang" and workload == "official" else "P4 × TP2 / D2 × TP4 EP4"
     endpoint_files = list(root.rglob("worker-endpoints.tsv")) if root.exists() else []
     expected_reports = 6
-    if endpoint_files:
+    if endpoint_files and not aspire:
         endpoints = [line.split("\t") for line in endpoint_files[0].read_text().splitlines()]
         expected_reports = len(endpoints)
         groups = Counter(("P" if name.startswith("prefill-") else "D", int(tp)) for name, _host, _port, tp in endpoints)
@@ -37,13 +38,19 @@ def summarize(root: Path, job_id: str, status: str) -> str:
     if config.get("prefill"):
         p = config["prefill"]
         topology = f"P{p['workers']} × (Attention TP{p['tp'] // p['dp']} DP{p['dp']} / MoE EP{p['ep']}) / D1 × TP4 EP1"
-    lines = ["### Firmus Qwen", "", f"- Status: **{status}**; Slurm `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'unavailable')}**; H200 × 16; {topology}; concurrency **{config.get('concurrency', 'unavailable')}**.", f"- Workload: {workload}, ISL 4000 / OSL 200, warmup / benchmark / grace **{phases} s**; **not an official submission**."]
+    if aspire:
+        workers = config.get("workers", [])
+        expected_reports = len(workers)
+        groups = Counter(("P" if worker["role"] == "prefill" else "D", worker["tp"], worker["ep"]) for worker in workers)
+        topology = " / ".join(f"{role}{count} × TP{tp} DP{config['dp_size']} EP{ep}" for (role, tp, ep), count in sorted(groups.items(), reverse=True)) or "topology unavailable"
+    title, scheduler, hardware = ("ASPIRE 2A+", "PBS", "H100 × 16") if aspire else ("Firmus", "Slurm", "H200 × 16")
+    lines = [f"### {title} Qwen", "", f"- Status: **{status}**; {scheduler} `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'sglang' if aspire else 'unavailable')}**; {hardware}; {topology}; concurrency **{config.get('concurrency', 'unavailable')}**.", f"- Workload: {workload}, ISL 4000 / OSL 200, warmup / benchmark / grace **{phases} s**; **not an official submission**."]
     if identity.get("dynamo"):
         dynamo = identity["dynamo"]
         lines += [f"- Dynamo **{dynamo['version']}**; engine **{dynamo['engine_version']}**; frontend → TCP → PD workers; NIXL KV transfer. Engine version differs from the standalone baseline."]
     if score:
         good_count = score.get("good_request_count", (export.get("good_request_count") or {}).get("avg", "unavailable"))
-        lines += ["", "| Metric | Value |", "| --- | ---: |", f"| Requests / good requests | {score['request_count']} / {good_count} |", f"| Good request fraction (required ≥90%) | {score['good_request_fraction']:.2%} |", f"| Goodput | {score['goodput_requests_per_second']:.3f} req/s |", f"| Local score (goodput × 200; zero if ineligible) | {score['score_output_tokens_per_second']:.3f} output tok/s |", f"| SLA eligible | {score['eligible']} |", f"| Official workload validation | {score.get('official_validation', {}).get('valid', False)} |"]
+        lines += ["", "| Metric | Value |", "| --- | ---: |", f"| Requests / good requests | {score['request_count']} / {good_count} |", f"| Request errors | {score.get('error_request_count', 'unavailable')} |", f"| Good request fraction (required ≥90%) | {score['good_request_fraction']:.2%} |", f"| Goodput | {score['goodput_requests_per_second']:.3f} req/s |", f"| Local score (good output tokens; zero if ineligible) | {score['score_output_tokens_per_second']:.3f} output tok/s |", f"| SLA eligible | {score['eligible']} |", f"| Official workload validation | {score.get('official_validation', {}).get('valid', False)} |"]
         for name, label in (("time_to_first_token", "TTFT"), ("inter_token_latency", "ITL")):
             latency = export.get(name, {})
             if "avg" in latency and "p99" in latency:
@@ -68,8 +75,9 @@ def main() -> None:
     parser.add_argument("artifacts", type=Path)
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--status", required=True)
+    parser.add_argument("--cluster", choices=("firmus", "aspire2ap"), default="firmus")
     args = parser.parse_args()
-    print(summarize(args.artifacts, args.job_id, args.status))
+    print(summarize(args.artifacts, args.job_id, args.status, args.cluster))
 
 
 if __name__ == "__main__":
