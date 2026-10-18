@@ -15,6 +15,7 @@
 | 1-3 optimistic prefill | `--optimistic-prefill-attempts 2`（Prefill） | §7 |
 | 1-5 concurrency | 0% 改善前提の既定は **192 のまま**。他 worker の Decode 短縮量に応じた表は §7.3 | §7 |
 | 任意 router TCP_NODELAY | sglang-router 0.3.2 の listener は `TCP_NODELAY` を設定していない。axum-server 0.8.0 の `NoDelayAcceptor` を使う 1 行の patch を用意した | §8、`patches/sglang-router/no-delay-acceptor.patch`。配線は統合担当 |
+| Tier 2 (a)(b)(c) | Decode admission の停止除去、DP 同負荷 tie の回転、idle rank の MegaMoE 形状。各 env で既定 off | §11 |
 
 ## 2. M1: Decode の kernel 間の空き（A1 profile pass、decode-0、4 rank）
 
@@ -256,3 +257,96 @@ router patch（`patches/sglang-router/no-delay-acceptor.patch`、sha256 `de7f1a4
 3. router binary が変わるので `[require-build]`。
 
 runtime 設定は image を変えないので、この branch の config/sbatch をそのまま使える。§7.3 の表に沿って上限と c を選ぶ場合は、`decode_max_running_requests`・`decode_cuda_graph_bs`・`concurrency` を 1 commit で変える（`qwen-experiment-metrics/tests/test_firmus_reference.py` が上限 136 と c 192 を固定しているので一緒に直す）。
+
+## 11. Tier 2: 3 つの修正（同じ束ね image 向け、各 env で既定 off）
+
+精度方針（task/1 Q1/Q3/Q4 に照らしたユーザーの更新）: bit 一致は要求しない。浮動小数点の演算順・FMA の違いは許容。FP8 未満への低下、現在より高精度のデータの新たな FP8 化、計算の省略・近似は禁止。以下の 3 件はいずれも同じモデルを計算し、精度を変えない（(c) は idle rank が他 rank の token を処理するときの FP32 累算の tile 分割だけが変わる）。
+
+| 項目 | patch（sha256） | env（既定） | 期待 | run 1 での推奨 |
+|---|---|---|---|---|
+| (a) Decode admission の停止除去 | `decode-async-admission.patch`（`76b73681…`） | `SGLANG_DECODE_ASYNC_ADMISSION=0`（Decode） | Decode step 36.0 → 約 33 ms（−8%）、ITL 16.3 → 約 15.0 ms | 有効化してよい。有効にするときは `decode_polling_interval` を 1 に戻す |
+| (b) DP 同負荷 tie の回転 | `dp-total-requests-rotate-ties.patch`（`704cb92f…`） | `SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=0`（Prefill） | 供給はほぼ不変（どの rank が idle になるかが均等になるだけ） | どちらでもよい。危険は無いが効果も見込まない |
+| (c) idle rank の MegaMoE 形状 | `megamoe-idle-prefill-geometry.patch`（`74298370…`） | `SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=0`（job 全体、コードは Prefill だけで働く） | idle rank を含む step（15〜17%）が 1 回あたり −21〜−66 ms、Prefill 時間 −1.1〜−3.5% | 有効化してよい。GPU gate が同じ allocation 内で正しさと時間を先に確かめる |
+
+3 patch は 16 patch の chain（15 ＋ aligned chunk）の後に、どの順でも単独でも当たる（触るファイルが重ならない）。19 patch を fc275674 に順に `git apply --check` → `git apply` し、変更された Python 26 本の `py_compile`、既存の source 検査 4 本、新しい `scripts/check-firmus-tier2-source.py <source> admission dp-ties idle-geometry` がすべて PASS。新しい検査はそれぞれ patch の無い tree で失敗する。
+
+### 11.1 (a) Decode admission の停止除去
+
+**同期点の列挙（A1 profile、4 rank、`t1/m1b/syncs.py`、`episodes.py`）。** main thread の CUDA runtime 呼び出しのうち 1 ms を超えて止まった `cudaStreamSynchronize` は 319 回。うち 92 回は `copy_result_to_cpu`（結果の D2H、CPU が先行している step で起きる自然な待ち）で、残る 227 回が admission。止まる最初のコピーは、prealloc の H2D 8 B（112 回）か、prebuilt の `input_ids` H2D（3994 token × 4 B = 15976 B、1〜3 要求分で 15976/31952/47928 B、115 回）。どれも `schedule_stream` 上の pageable H2D の後の stream 同期。最初の 1 回が fence（実行中 step の verify 終了）を待ち、後続は数 µs で返るので、最初の 1 箇所だけ直すと次の箇所が待ちを引き継ぐ。admission 経路の同期点は次のとおりで、これ以外の同期（D2H、`.item()`、`nonzero` 等）は admission 区間に無かった。
+
+| 経路 | 順 | コピー | 箇所 |
+|---|---|---|---|
+| prealloc（要求ごと） | 1〜3 | H2D 8 B ×3 | `alloc_for_decode_prealloc` の `last_loc`、`prefix_lens`、`seq_lens`（`decode.py`） |
+| | 4 | **D2H 252 B**（63 page × int32） | `kv_to_page_indices(...).cpu()`（`mem_cache/common.py:35`）。Prefill へ送る page 番号 |
+| prebuilt（batch ごと） | 1〜4 | H2D 15976·n、8·n、8·n、4·n B | `prepare_for_prebuilt` の `input_ids`、`req_pool_indices`、`seq_lens`、`orig_seq_lens` |
+| | — | H2D 4 B ×4（非 blocking） | `SamplingBatchInfo.from_schedule_batch`（既に pinned ＋ non_blocking） |
+| | 5〜6 | H2D 4·n B、8〜16 B/要求 | `BatchedMinNewTokensPenalizer._prepare` の `min_new_tokens`、stop token id（AIPerf の `min_tokens:200` で有効） |
+| | 7 | H2D 8·n B | `process_prebuilt` の `last_tokens_tensor` |
+| | 8〜10 | H2D 4·n、8·n、8192·n B | `build_eagle_disagg_draft_input` の `topk_p`、`topk_index`、`hidden_states`（EAGLE3 の受け渡し状態） |
+
+**修正（env `SGLANG_DECODE_ASYNC_ADMISSION=1` のときだけ）。**
+
+- 上表の H2D 13 箇所と SWA tail 経路の 2 箇所を、新しい `disaggregation/async_admission.py` の `to_device(data, dtype, device)` に置き換える。CPU 側で新しい pinned buffer に値を写し（元が再利用される metadata buffer でも、この時点で snapshot になる）、同じ current stream に `non_blocking=True` で積む。値は `torch.tensor(data, dtype=dtype, device=device)` と同じ。env が 0 のときは元の式がそのまま走る（各箇所を `if async_admission.ENABLED: … else: 元の式` にした）。
+- page 番号の D2H は、同じ位置（`schedule_stream`、req_to_token の書き込みの後）に pinned buffer への non_blocking コピーと CUDA event を積み、要求を `(decode_req, pinned, event, state_indices, prefix_len)` として `_deferred_metadata` に入れる。`process_decode_queue` の先頭（polling interval に関係なく毎 iteration）で `flush_deferred_metadata` が先頭から順に `event.query()` を見て、終わったものだけ `send_metadata` する。終わっていない先頭があればそこで止める（同じ stream の event は順に終わるので順序は保たれる）。rebootstrap、hisparse、staging、CPU tensor の場合は従来の同期経路に戻る。
+
+**所有権と順序の論証（有効化の前提）。**
+
+1. GPU 上の順序は変わらない。どのコピーも元と同じ stream（`schedule_stream`、WAR fence の後ろ）の同じ位置に積まれ、消費側は同じ stream の後続か、launch 時に `forward_stream.wait_stream(schedule_stream)` する forward である。変わるのは CPU が `cudaStreamSynchronize` で待たないことだけ。
+2. 実行中 step の KV 書き込みとの競合: GPU 上の書き手（実行中 step）と新しい要求の page の関係は元と同じ stream 順序で決まる。外部の書き手（Prefill の NIXL RDMA）は Decode が page 番号を送った後にしか書けない。送信は event 完了後で、event は fence・割り当て kernel・req_to_token の書き込み・D2H の後に記録されるので、「page 番号が出るのは実行中 step の verify が終わってから」という元の happens-after 関係（元は `.cpu()` がそこまで CPU を止めることで保証）がそのまま保たれる。
+3. CUDA graph replay: graph が読む static buffer は forward の準備（forward_stream、schedule_stream を待つ）で batch tensor から写されるので、H2D の完了後にしか読まれない。graph の capture/replay の内容は変わらない。
+4. EAGLE の draft 状態: `topk_p`/`topk_index`/`hidden_states` は新しい device tensor で、`future_map.publish/stash` は同じ stream で後続する。CPU で読み戻す箇所は無い。
+5. host メモリ: pinned block は PyTorch の caching host allocator が non_blocking コピーに event を記録し、コピー完了まで再利用しない。device 側の一時 tensor（page 番号の slice 等）の再利用は同じ stream 上の順序で守られる。
+6. admission の判定は変わらない。予算は `len(free_pages)`、`len(release_pages)`、CPU のリストから計算され、tensor の中身を CPU で読まない。同じ要求が同じ順で入り、allocator は同じ kernel を同じ順に実行するので同じ page が同じ順で割り当たる。
+7. 中断・失敗: 送信待ちの間に abort や bootstrap 失敗が来ると receiver は `Failed`（`conclude_state`）になり、既存の `pop_transferred` の失敗経路が KV と metadata slot を解放して `kv_receiver=None` にする。flush は `receiver is None or receiver.poll() == Failed` のとき送らないので、Prefill は解放された page を知らない。送信前の receiver は `started_transfer=False` なので待ち時間の timeout も始まらない。
+8. 遅延: event は概ね同じ iteration の `pop_and_process`（直前 step の終了を待つ）より前に終わるので、次の `process_decode_queue` で送られる。元の送信（verify 終了直後）より数 ms、最悪 1 step（約 37 ms）遅れる。optimistic prefill では Prefill の計算（290 ms 以上）が先に進むので、TTFT にはほぼ現れない。
+
+**削減量（M1）。** admission の停止がある 108/131 step（空き 8.14 ms、周期 41.0 ms）が先行 step（空き 0.88 ms、周期 33.9 ms）と同じになれば、profile 時の step は 39.75 → 約 33.9 ms（−15%）。通常 pass（36.0 ms）では約 33.0 ms（−8%）、ITL は 16.3 → 約 15.0 ms。admission の Python（遅い rank で約 2.5 ms）は GPU 実行中に行われる（CPU には 25 ms 以上の余裕がある）。§7.3 の x = −8% の行に当たり、Decode は Prefill 供給より速くなって、上限 136〜144 と c 約 176 が適する。polling interval 2 は停止をまとめるための策なので、(a) を有効にするなら 1 に戻す（TTFT +37 ms を払う理由が無くなる）。
+
+**危険度: 中。** 変更は機械的（同じ stream の blocking → non-blocking、送信の後回し）で、上の論証で順序は保たれる。残る危険は (1) 見落とした同期点（効果が減るだけで害は無い。profile で残りの長い同期を確認できる）、(2) 送信の後回しに関する状態機械の見落とし（abort/失敗の経路は確認済み。rebootstrap・staging・hisparse は従来経路）、(3) GPU で未実行であること（pinned 確保の初回コスト数 ms 程度）。
+
+### 11.2 (b) Prefill の DP rank 選択と同負荷 tie
+
+**どこで選ばれるか。** router（`--prefill-policy manual --assignment-mode min_load`）は 3 つの Prefill worker のどれかを選ぶだけで、PD router は `data_parallel_rank` を付けない（`data_parallel_rank` を差し込むのは非 PD の `routers/http/router.rs` の `url@rank` 形式だけ）。`firmus-dp-rank-query.patch` は Decode 側が KV を持つ Prefill の DP rank を問い合わせるもので、選択には関わらない。DP rank は Prefill worker の `DataParallelController.total_requests_scheduler` → `DPBudget.dispatch` で決まる。負荷は各 rank が毎 iteration 公開する `running + waiting + bootstrap queue`（Prefill では batch 計算中・KV 送信中・chunk 継続中の要求は数えない）に、公開後の振り分けごとの +1 を足したもので、最小が複数あると `index(min)` で最小の index を選ぶ。
+
+**修正。** env `SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=1` のとき、最小負荷の rank のうち前回選んだ rank の次から順に探す。最小負荷が勝つことは変わらない（round_robin のように負荷を無視しないので、run A の定常 TTFT の裾の悪化は起きない）。
+
+**期待値（A1 の batch ログ、`grep -a`、`t1/model/idle_steps.py`）。**
+
+| run | idle の rank-forward（DP0/1/2/3、worker あたり） | 全 rank-forward に対する割合 | うち他 rank に queue があった分 |
+|---|---|---:|---:|
+| A1 | 0〜3 / 13〜16 / 37〜42 / 79〜85 | 4.9〜5.2% | 1.9〜2.1% |
+| A2 | 3〜5 / 7〜13 / 37〜39 / 76〜81 | 4.7〜5.0% | 1.6〜1.8% |
+| E | 0〜3 / 6〜9 / 20〜23 / 84〜97 | 4.5〜5.1% | 2.3〜3.1% |
+
+偏りは最小 index 優先と合う（DP3 が最も多く干上がる）。ただし 4 rank の lockstep、到着時の最小負荷振り分け、chunk の 2 方式を入れた模擬（`t1/model/dp_sim.py`、Poisson 到着 12〜13 req/s/worker）では、tie の選び方を変えても throughput・idle の総量・待ち時間はすべて同じで、変わるのはどの rank が idle になるかだけだった。idle の約 6 割は単なる余力（その step に処理できる要求がどこにも無い）で、Decode 律速の間は供給の損失ではない。残り約 4 割（rank-forward の 1.6〜3.1%）は「他 rank に要求が待っていたのに idle」で、Prefill 律速になれば効く損失だが、模擬では tie の順序からは生じない。原因の候補は、公開 snapshot が controller から送られて scheduler にまだ届いていない要求を数えないこと、bootstrap 待ちを負荷に数えること。したがって (b) の供給増は見込まない（上限 1.6〜3.1% はこの修正の効果ではない）。
+
+**危険度: 低。** 1 関数の選び方だけで、既定の動作と同じ最小負荷規則を保つ。
+
+### 11.3 (c) idle rank の MegaMoE 形状
+
+**原因。** `forward_megamoe` は idle rank でも pre-dispatch と集団 kernel に入る（`num_tokens=0`）。`run_sm90_mega_routed` は `y` を `max(0, 1) = 1` 行で確保し、DeepGEMM 0.1.5 の host（`csrc/apis/sm90_mega.hpp`）は `num_tokens = y.size(0)` として形状を選ぶ。`get_block_config_for_mega_moe_sm90` は `num_tokens × num_ranks × topk / num_experts ≥ 64`（EP4、top-8、128 expert では 256 行以上）で BLOCK_M 128 / epilogue 512 thread（Prefill 形状、block_n 256）、それ未満は BLOCK_M 64 で、128 行以下なら SwapAB（block_n 128）になる。M3 の idle forward はこの 1 行の SwapAB で、他 rank の 4058 token 分を Decode tile で処理していた（3.29 ms/層、他 rank の層時間も 1.74〜1.83 → 2.12 ms）。rank ごとに形状が違っても、rank 間で共有する量（行数上限 4224、pool、SF pool、expert 数）は同じなので正しさの問題ではない。
+
+**修正（env `SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1` かつ `disaggregation_mode == "prefill"`、局所 token 0 のときだけ）。** `y` を `idle_output_rows = ceil(64 × num_experts / (ep_size × topk)) = 256` 行で確保する。pre-dispatch は従来どおり `num_tokens=0` で呼ぶので、symmetric buffer の全 top-k slot（`padded_max` 行まで）が −1 で埋まる。kernel は `num_tokens` を `y.size(0)` から取るが、dispatch は −1 の slot を読まず（`expert_idx >= 0` の判定）、combine は有効 slot の無い行に 0 を書く（late-topk patch 後も無条件に store）。返すのは `y[:0]`。256 ≤ 4096（host の `num_tokens <= num_max_tokens_per_rank`）。256 行で選ばれる設定は 4058 行の Prefill rank と同じ（`num_experts_per_wave` も局所期待値 64 > 4 で 32、`decode_l2_counter`・`use_swap_ab` は false）で、JIT の template 引数が一致するので新しい kernel の compile は起きない。Decode（idle rank も 1〜128 行の SwapAB で他 rank と同形状）には効かない。
+
+**正しさの扱い。** 全 rank が Prefill 形状になるので、idle step で DP3 の expert に割り当たった token の出力は、DP3 が busy のときと同じ tile 分割で計算される。混在形状による FP32 累算順の差（許容範囲）が消える方向の変化である。
+
+**GPU 上の確認（同じ allocation 内、env=1 のときだけ）。** `scripts/check-firmus-megamoe.py` に `idle-prefill-rows`（[4096, 4096, 4096, 0]、idle rank は 256 行）を加えた。busy rank の出力を独立な FP32 参照と既存の許容値（relative L2 < 0.025、最大誤差 < 0.08）で比べ、idle rank の 256 行がすべて 0 であることを確かめる。さらに同じ集団呼び出しを 1 行と 256 行で 20 回ずつ測り、`prefill-one-idle-1row` / `prefill-one-idle-256rows` の max-rank 時間を `sm90-megamoe-gate.log` に出す。どちらの instance も既存の gate case で compile 済み（1 行 = `decode-tile-1`、256 行 = `capacity-hot-experts`）。env=0 の gate は従来と同じ。
+
+**期待値。** idle rank を含む step は 15〜17%（A1/A2/E）。1 回あたり、最低でも形状混在による +21 ms（309.8 → 289 ms 以下）、busy rank の MegaMoE が 3/4 負荷相当（約 1.4 ms/層）まで下がれば −66 ms。Prefill の時間で −1.1〜−3.5%。Decode 律速の間は主に TTFT に、Prefill 律速になれば供給に効く。
+
+**危険度: 低〜中。** SGLang 側は 1 行の行数変更で、pre-dispatch の −1 埋めと combine の 0 書きは upstream と late-topk patch のコードで確認した。残る危険は、image の DeepGEMM host（wheel）の heuristic が upstream 0.1.5 と違い 256 行で別の instance を選ぶ場合（serving 中の初回 idle で JIT compile が走り全 rank が待つ）で、env=1 の gate がその instance を serving 前に compile・検証するので、serving 中に初めて compile されることはない。gate が失敗すれば job は serving 前に止まる。
+
+### 11.4 serving run で確かめること（Tier 2）
+
+| 項目 | 効いた印 | 失敗・副作用の印 |
+|---|---|---|
+| (a) | profile pass の Decode step 周期が約 34 ms に揃い、1 ms 超の `cudaStreamSynchronize` が `copy_result_to_cpu` 以外に無い。通常 pass の ITL × accept ≒ 33 ms、ITL 約 15 ms | `Decode transfer failed`、`#transfer-req` の単調増加、TTFT の増加 > 40 ms、KV 転送 timeout |
+| (b) | Prefill の DP rank ごとの batch 数の差（IDLE forward）が DP3 偏重から均等へ | 定常 TTFT p99 の悪化（round_robin の症状） |
+| (c) | gate の `idle-prefill-rows` PASS、`prefill-one-idle-256rows` < `prefill-one-idle-1row`。profile の kernel-summary で Prefill worker に SwapAB 形状の MegaMoE が無い | gate 失敗、Prefill ログの DeepGEMM JIT compile（serving 中） |
+
+### 11.5 配線（統合担当）
+
+- `scripts/build-sglang-container.sh`: `decode-async-admission.patch`、`dp-total-requests-rotate-ties.patch`、`megamoe-idle-prefill-geometry.patch` を `prefill-request-aligned-chunks.patch` の後ろ（順は任意）に 2 つの patch 列へ加える。targets は順に `python/sglang/srt/disaggregation/async_admission.py python/sglang/srt/disaggregation/decode.py python/sglang/srt/disaggregation/decode_schedule_batch_mixin.py python/sglang/srt/sampling/penaltylib/min_new_tokens.py python/sglang/srt/speculative/eagle_disaggregation.py`、`python/sglang/srt/managers/data_parallel_controller.py`、`python/sglang/srt/layers/moe/mega_moe_sm90.py`。他の worker の patch が同じファイル（特に `decode.py`）に触れる場合は順序を決めて `git apply --check` を通し直す。
+- 同じ script の source 検査に `python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-tier2-source.py" "${source_dir}" admission dp-ties idle-geometry` を加える（当てた patch に対応する check 名だけを渡す）。`check-firmus-latency-source.py` の DP 振り分け検査は新しいモジュール定数を既定（off）で与えるよう直してあり、patch の有無にかかわらず通る。
+- Dockerfile と image test が patch の一覧・sha を固定していれば加える。source の変更なので `[require-build]`。
+- 有効化は commit で行う: (a) worker.sh の Decode 分岐の `SGLANG_DECODE_ASYNC_ADMISSION=0` → 1 と `decode_polling_interval` 2 → 1、(b) Prefill 分岐の `SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=0` → 1、(c) sbatch 冒頭の `SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=0` → 1（GPU gate と全 worker が継承する）。`test_firmus_reference.py` がこれらの既定値を固定しているので一緒に直す。起動行の `rotate_ties=`、`idle_prefill_geometry=`、`async_admission=` で値を確認できる。
