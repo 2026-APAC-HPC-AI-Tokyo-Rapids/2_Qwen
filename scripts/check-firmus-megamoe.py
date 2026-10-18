@@ -44,7 +44,8 @@ def main():
     s2 = torch.rand(32, 32, 12, device=device) * 0.005 + 0.005
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf = deep_gemm.get_symm_buffer_for_mega_moe(dist.group.WORLD, 128, 4096, 8, 4096, 1536, use_fp8_dispatch=True, activation="swiglu")
-    cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4]), ("decode-quant-zero", [9, 0, 0, 0])]
+    # Mixed graph spans SwapAB, non-swap, Prefill and a permanently idle rank.
+    cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4]), ("mixed-geometry-graph", [7, 0, 129, 256]), ("decode-quant-zero", [9, 0, 0, 0])]
     # Exercise all SwapAB widths, plus a full tile and tail.
     # Other ranks still participate in the collective with zero live tokens.
     cases.extend((f"decode-tile-{count}", [count, 0, 0, 0]) for count in (1, 9, 17, 25, 33, 41, 49, 57, 65))
@@ -94,10 +95,10 @@ def main():
         forward(hidden, top_ids, top_weights, count, actual)
         torch.cuda.synchronize()
         graph = None
-        if case == "decode-graph":
-            # An idle EAGLE3 rank replays the minimum one-request graph (four
-            # token rows), with every route masked, rather than a zero-row graph.
-            # Replays change GPU input data without changing its addresses.
+        if case in ("decode-graph", "mixed-geometry-graph"):
+            # Decode covers the minimum EAGLE3 request graph with four rows.
+            # The mixed case also covers non-swap/Prefill and a zero-token rank.
+            # Replays change GPU inputs and idle/live masks at fixed addresses.
             graph = torch.cuda.CUDAGraph()
             dist.barrier()
             with torch.cuda.graph(graph):

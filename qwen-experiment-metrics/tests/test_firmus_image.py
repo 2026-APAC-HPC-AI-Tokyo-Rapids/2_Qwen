@@ -19,15 +19,10 @@ def sha256(path):
     return hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
 
 
-# Kept on the branch but not wired into the image (changes the cross-rank protocol in every geometry; GPU-pending).
-UNWIRED_DEEP_GEMM_PATCHES = {"sm90-flat-nvlink-barriers.patch"}
-
-
 def test_deep_gemm_series_lists_every_wired_patch_and_pins_the_final_header() -> None:
     series = (ROOT / "patches/deep-gemm/series").read_text().split()
     assert len(series) == len(set(series))
-    assert set(series) | UNWIRED_DEEP_GEMM_PATCHES == {path.name for path in (ROOT / "patches/deep-gemm").glob("*.patch")}
-    assert not set(series) & UNWIRED_DEEP_GEMM_PATCHES
+    assert set(series) == {path.name for path in (ROOT / "patches/deep-gemm").glob("*.patch")}
     header = (ROOT / "patches/deep-gemm/header.sha256").read_text().strip()
     assert len(header) == 64 and int(header, 16) >= 0
 
