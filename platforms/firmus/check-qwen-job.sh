@@ -17,3 +17,4 @@ test "${exit_code}" = 0:0
 test -e "${RUNTIME_DIR}/run-success"
 test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
 test -s "${RUNTIME_DIR}/results/score.json"
+if [[ -s "${RUNTIME_DIR}/source/firmus-framework.json" && "$(jq -r '.framework' "${RUNTIME_DIR}/source/firmus-framework.json")" == sglang && "$(jq -r '.speculation.algorithm' "${RUNTIME_DIR}/source/firmus-framework.json")" == EAGLE3 ]]; then test -s "${RUNTIME_DIR}/results/eagle-acceptance.json"; fi

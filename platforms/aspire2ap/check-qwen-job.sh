@@ -16,4 +16,5 @@ else
   test -e "${RUNTIME_DIR}/run-success"
   test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
   test -s "${RUNTIME_DIR}/results/score.json"
+  if [[ -s "${RUNTIME_DIR}/source/aspire-serving.json" && "$(jq -r '.speculation.algorithm' "${RUNTIME_DIR}/source/aspire-serving.json")" == EAGLE3 ]]; then test -s "${RUNTIME_DIR}/results/eagle-acceptance.json"; fi
 fi

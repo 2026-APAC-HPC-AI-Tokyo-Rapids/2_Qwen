@@ -47,6 +47,8 @@ jobs:
         run: |
           PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          install -m 0644 configs/genkai-serving.json "${runtime_dir}/source/genkai-serving.json"
+          if [[ "$(jq -r '.speculation.algorithm' configs/genkai-serving.json)" == EAGLE3 ]]; then uvx --from 'huggingface_hub==0.36.0' hf download "$(jq -er '.speculation.draft_repository' configs/genkai-serving.json)" config.json README.md model.safetensors --revision "$(jq -er '.speculation.draft_revision' configs/genkai-serving.json)" --local-dir "${runtime_dir}/draft" --max-workers 1; uv run --no-project --python 3.12.12 python research/simulation/prepare_eagle.py "${runtime_dir}/draft" "${runtime_dir}/source"; fi
           install -m 0755 platforms/genkai/run-qwen-pd.pjm "${runtime_dir}/scripts/run-qwen-pd.pjm"
       - name: 配備失敗時の実行環境を削除
         if: failure() && steps.provision.outputs.runtime_dir != ''

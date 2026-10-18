@@ -173,8 +173,10 @@ run_node() {
       args+=(--ep-size "${ep}" --max-running-requests 256)
     fi
     draft_mount=()
-    if [[ "${QWEN_PLATFORM}" == aspire2ap && "$(jq -r '.speculation.algorithm' "${OUTPUT_DIR}/source/aspire-serving.json")" == EAGLE3 ]]; then
-      args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${OUTPUT_DIR}/source/aspire-serving.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${OUTPUT_DIR}/source/aspire-serving.json")")
+    speculation_config="${OUTPUT_DIR}/source/${QWEN_PLATFORM}-serving.json"
+    if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then speculation_config="${OUTPUT_DIR}/source/aspire-serving.json"; fi
+    if [[ -s "${speculation_config}" && "$(jq -r '.speculation.algorithm' "${speculation_config}")" == EAGLE3 ]]; then
+      args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${speculation_config}")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${speculation_config}")")
       draft_mount=(-m "${OUTPUT_DIR}/draft:/draft")
     fi
     worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${worker_env[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
@@ -476,8 +478,15 @@ if __name__ == "__main__":
     main()
 PY
   then parser_status=0; else parser_status=$?; fi
-  if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
+  speculation_config="${OUTPUT_DIR}/source/${QWEN_PLATFORM}-serving.json"
+  if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then speculation_config="${OUTPUT_DIR}/source/aspire-serving.json"; fi
+  if [[ "${QWEN_PLATFORM}" == aspire2ap || ( -s "${speculation_config}" && "$(jq -r '.speculation.algorithm' "${speculation_config}")" == EAGLE3 ) ]]; then
     while IFS=$'\t' read -r role host port _; do curl --fail --silent --max-time 10 "http://${host}:${port}/get_server_info" >"${OUTPUT_DIR}/results/server-info-${role}-${port}.json"; done <"${OUTPUT_DIR}/source/worker-endpoints.tsv"
+  fi
+  if [[ -s "${speculation_config}" && "$(jq -r '.speculation.algorithm' "${speculation_config}")" == EAGLE3 ]]; then
+    python3 "${OUTPUT_DIR}/scripts/collect-eagle-acceptance.py" --cluster "${QWEN_PLATFORM}" --config "${speculation_config}" --endpoints "${OUTPUT_DIR}/source/worker-endpoints.tsv" --server-info-dir "${OUTPUT_DIR}/results" --log-dir "${OUTPUT_DIR}/logs" --output "${OUTPUT_DIR}/results/eagle-acceptance.json"
+  fi
+  if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
     enroot start -e NVIDIA_VISIBLE_DEVICES=none -e HOME=/tmp -m "${OUTPUT_DIR}:/calibration" "${CONTAINER_IMAGE}" /usr/local/bin/uv run --offline --no-project --python /opt/sglang/venv/bin/python python /calibration/scripts/greedy_probe.py /calibration/results
   fi
   return "${parser_status}"
