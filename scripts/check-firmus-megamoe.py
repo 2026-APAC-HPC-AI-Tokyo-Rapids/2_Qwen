@@ -54,12 +54,15 @@ def main():
     idle_prefill_rows = os.environ.get("SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY", "0") == "1"
     if idle_prefill_rows:
         cases.append(("idle-prefill-rows", [4096, 4096, 4096, 0]))
+    # Cover the extended SwapAB range, its mixed-geometry boundary, and a
+    # second combine iteration above 132 rows (132 CTAs x 8 combine warps).
+    cases += [("swapab-boundary-mixed", [128, 129, 144, 145]), ("decode-graph-swapab-144", [144, 140, 136, 132]), ("swapab-hot-experts-144", [144] * 4)]
     for case, counts in cases:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         if case == "decode-quant-zero":
             patterns.zero_()
         ids = torch.stack([torch.randperm(128, device=device)[:8] for _ in range(4)]).to(torch.int32)
-        if case in ("capacity-hot-experts", "decode-quant-zero") or case.startswith("decode-tile-"):
+        if case in ("capacity-hot-experts", "decode-quant-zero", "swapab-hot-experts-144") or case.startswith("decode-tile-"):
             ids[:] = torch.arange(8, dtype=torch.int32, device=device)
         weights = torch.rand(4, 8, device=device)
         ids[0, -1] = -1  # Masked/padded top-k slot must not read an expert.
@@ -95,7 +98,7 @@ def main():
         forward(hidden, top_ids, top_weights, count, actual)
         torch.cuda.synchronize()
         graph = None
-        if case in ("decode-graph", "mixed-geometry-graph"):
+        if case.startswith("decode-graph") or case == "mixed-geometry-graph":
             # Decode covers the minimum EAGLE3 request graph with four rows.
             # The mixed case also covers non-swap/Prefill and a zero-token rank.
             # Replays change GPU inputs and idle/live masks at fixed addresses.
