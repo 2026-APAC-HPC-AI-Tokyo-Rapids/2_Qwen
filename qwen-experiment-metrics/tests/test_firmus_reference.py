@@ -72,11 +72,12 @@ def archived_server_info() -> dict:
     current = config["prefill"]
     location = current["expert_location"]
     raw["config"]["prefill"].update(expert_location=location, optimistic_prefill_attempts=current["optimistic_prefill_attempts"])
-    raw["config"].update({key: config[key] for key in ("decode_max_running_requests", "decode_cuda_graph_bs", "decode_polling_interval")})
+    raw["config"].update({key: config[key] for key in ("decode_max_running_requests", "decode_cuda_graph_bs", "decode_polling_interval", "speculation")})
     for role in ("prefill", "decode"):
         placed = role == "prefill" and location != "trivial"
         for state in [raw[role], *raw[role]["internal_states"]]:
             state.update(init_expert_location="/runtime/source/prefill-expert-location.json" if placed else "trivial", ep_dispatch_algorithm="static" if placed else None, optimistic_prefill_attempts=current["optimistic_prefill_attempts"] if role == "prefill" else 0)
+            state.update(speculative_num_steps=config["speculation"]["steps"], speculative_num_draft_tokens=config["speculation"]["draft_tokens"])
             if role == "decode":
                 state.update(max_running_requests=config["decode_max_running_requests"], disaggregation_decode_polling_interval=config["decode_polling_interval"])
     raw["decode"]["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
@@ -262,9 +263,9 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             assert flags[location[0] + 1] == str(tmp_path / "source/prefill-expert-location.json")
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
-        assert flags[flags.index("--speculative-num-steps") + 1] == "3"
+        assert flags[flags.index("--speculative-num-steps") + 1] == str(config["speculation"]["steps"])
         assert flags[flags.index("--speculative-eagle-topk") + 1] == "1"
-        assert flags[flags.index("--speculative-num-draft-tokens") + 1] == "4"
+        assert flags[flags.index("--speculative-num-draft-tokens") + 1] == str(config["speculation"]["draft_tokens"])
         assert "--speculative-draft-model-quantization" not in flags
         assert "--container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER" in argv
         if name.startswith("prefill"):
