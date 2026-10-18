@@ -1,5 +1,5 @@
 diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-index 4037967..c50deec 100644
+index 4037967..4f3ae6c 100644
 --- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 +++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 @@ -106,6 +106,63 @@ CUTLASS_DEVICE void sm90_fp8_mega_moe_for_each_block_split(
@@ -77,19 +77,20 @@ index 4037967..c50deec 100644
  
      // =====================================================================
      // Thread / warp identification
-@@ -356,6 +417,24 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -356,6 +417,25 @@ sm90_fp8_mega_moe_impl(void* y,
  
      // SMEM pointers
      auto smem_expert_count = reinterpret_cast<uint32_t*>(smem_buffer);
 +    // Dynamic FC2 claims travel from the A loader (which claims) to the B loader
-+    // and the math warps through a small ring in the padding after the expert
-+    // counters. The combine below starts past this padding when kDynamicL2.
++    // and the math warps through a small ring at the end of the padding after
++    // the expert counters (the 128 bytes right after the counters stay free for
++    // instrumentation). The combine below starts past this padding when kDynamicL2.
 +    constexpr uint32_t kL2RingSlots = 2;
-+    constexpr uint32_t kL2RingOffset = kNumExperts * sizeof(uint32_t);
-+    DG_STATIC_ASSERT(kL2RingOffset % 8 == 0, "Misaligned dynamic FC2 ring");
-+    constexpr uint32_t kL2RingBarrierOffset = kL2RingOffset + 64;
++    constexpr uint32_t kL2RingOffset = SMEM_EXPERT_COUNT_SIZE - 64;
++    constexpr uint32_t kL2RingBarrierOffset = kL2RingOffset + 2 * kL2RingSlots * sizeof(uint32_t);
 +    DG_STATIC_ASSERT(not kDynamicL2 or
-+                     kL2RingBarrierOffset + 2 * kL2RingSlots * sizeof(Barrier) <= SMEM_EXPERT_COUNT_SIZE,
++                     (kL2RingOffset % 8 == 0 and kL2RingOffset >= kNumExperts * sizeof(uint32_t) + 128 and
++                      kL2RingBarrierOffset + 2 * kL2RingSlots * sizeof(Barrier) <= SMEM_EXPERT_COUNT_SIZE),
 +                     "No room for the dynamic FC2 ring");
 +    auto smem_l2_ring = reinterpret_cast<uint32_t*>(smem_buffer + kL2RingOffset);
 +    auto l2_ring_full_barriers = utils::PatternVisitor([=](const uint32_t& i) {
@@ -102,7 +103,7 @@ index 4037967..c50deec 100644
      const auto smem_send_buffers = layout::Buffer(
          fp8_token_layout, kNumDispatchWarps, 1,
          math::advance_ptr(smem_buffer, SMEM_EXPERT_COUNT_SIZE));
-@@ -418,6 +497,14 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -418,6 +498,14 @@ sm90_fp8_mega_moe_impl(void* y,
              #pragma unroll
              for (uint32_t i = 0; i < kNumCombineWarps * 2; ++ i)
                  combine_barriers[i]->init(1);
@@ -117,7 +118,7 @@ index 4037967..c50deec 100644
          }
          cutlass::arch::fence_barrier_init();
      }
-@@ -490,6 +577,20 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -490,6 +578,20 @@ sm90_fp8_mega_moe_impl(void* y,
  
      constexpr uint32_t kDispatchGridSyncIndex = 0;
      constexpr uint32_t kEpilogueGridSyncIndex = 1;
@@ -138,7 +139,7 @@ index 4037967..c50deec 100644
  
      // =====================================================================
      // ROLE 1: DISPATCH WARPS
-@@ -757,6 +858,10 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -757,6 +859,10 @@ sm90_fp8_mega_moe_impl(void* y,
              #pragma unroll
              for (uint32_t i = thread_idx; i < kNumExperts; i += kNumDispatchThreads)
                  *workspace.get_expert_send_count_ptr(i) = 0;
@@ -149,7 +150,7 @@ index 4037967..c50deec 100644
          } else {
              for (uint32_t i = sm_idx - 1; i < kNumExpertsPerRank; i += kNumSMs - 1) {
                  const auto num_recv_tokens = static_cast<uint32_t>(
-@@ -875,7 +980,54 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -875,7 +981,54 @@ sm90_fp8_mega_moe_impl(void* y,
              }
          };
  
@@ -205,7 +206,7 @@ index 4037967..c50deec 100644
              sm90_fp8_mega_moe_for_each_block_split(
                  scheduler,
                  [&](const uint32_t& local_expert_idx,
-@@ -904,10 +1056,10 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -904,10 +1057,10 @@ sm90_fp8_mega_moe_impl(void* y,
      } else if (warp_idx == kNumDispatchWarps + 1) {
          cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
  
@@ -220,7 +221,7 @@ index 4037967..c50deec 100644
              const auto tensor_map_b_ptr =
                  block_phase == sched::BlockPhase::Linear2 ? &tensor_map_l2_weights : &tensor_map_l1_weights;
  
-@@ -941,7 +1093,26 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -941,7 +1094,26 @@ sm90_fp8_mega_moe_impl(void* y,
                  }
                  __syncwarp();
              }
@@ -248,7 +249,7 @@ index 4037967..c50deec 100644
  
      } else if (warp_idx < kNumDispatchWarps + kNumMMANonEpilogueWarps) {
          // Idle non-epilogue warps (kNumDispatchWarps+2, +3). They must still
-@@ -2130,7 +2301,26 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2130,7 +2302,26 @@ sm90_fp8_mega_moe_impl(void* y,
              }
          };
  
@@ -276,7 +277,7 @@ index 4037967..c50deec 100644
              sm90_fp8_mega_moe_for_each_block_split(
                  scheduler,
                  [&](const uint32_t& local_expert_idx,
-@@ -2195,14 +2385,14 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2195,14 +2386,14 @@ sm90_fp8_mega_moe_impl(void* y,
          DG_STATIC_ASSERT(kNumChunkUint4 % 32 == 0, "Combine chunk must be a multiple of 32 16-byte elements");
          DG_STATIC_ASSERT(kNumTopk <= 32, "Top-k must fit in a single warp");
  
