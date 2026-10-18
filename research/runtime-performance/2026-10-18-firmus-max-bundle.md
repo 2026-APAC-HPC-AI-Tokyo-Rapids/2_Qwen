@@ -63,3 +63,31 @@ W2+W5 の組み合わせ（drop 無し）の Decode SASS は image と byte 単�
 ## 5. runtime 設定（serving run 1）
 
 aligned chunks、async admission、DP tie rotation、idle-rank Prefill geometry をすべて 1 にした。`decode_polling_interval` は 1（async admission が代わりに効く）。`optimistic_prefill_attempts` は 2、Decode cap 136 と cuda-graph bs 34 は据え置き。worker の起動行は `shuffle`、`routing`、`aligned_chunks`、`rotate_ties`、`idle_prefill_geometry`、`async_admission` の値をすべて出す。
+
+## 6. serving の結果（2026-10-18 夜）
+
+条件はすべて公式 60/120/30 client、P3/D1、c192、`[profile]`。
+
+| run | commit | image | Decode cap | score | 良好率 | 定常 TTFT 平均 / p99 (ms) | 定常 ITL 平均 / p99 (ms) | ITL / TTFT 不合格 |
+|---|---|---|---:|---:|---:|---|---|---|
+| 39097156265 | bbebad5 | 新規 | 136 | — | — | — | — | gate で停止：`check_rope_fp8_kv` の "QKV input modified"（token-warp RoPE が fused KV store でも BF16 K を書き戻していた。23aabcc で修正） |
+| 39100197595 | 23aabcc | 新規 | 136 | — | — | — | — | gate で停止：`check_add_rmsnorm_group_quant` の FP8 code 数上限（3 行で 13/12288）。823b79f で一旦外した |
+| 39110496019 | 823b79f | `a8ed4592` | 136 | 7082.82 | 95.2% | 1528 / 2233 | 17.9 / 20.6 | 137 / 85 |
+| **39114949128** | 5066eaf（823b79f の子） | `a8ed4592` | **128** | **7999.37** | 98.3% | 1826 / 2154 | 14.0 / 16.3 | 0 / 84 |
+| 39119219065 | a7b9edd（913b88b の子） | `5a040d1e` | 128 | 8016.22 | 98.3% | 1731 / 2056 | 14.4 / 16.7 | 0 / 84 |
+| 参考 39094011392（komoriyuta） | 203b78e | `e54b4def` | 128 | 7567.56 | 97.4% | 1817 / 2427 | 15.0 / 17.7 | 1 / 125 |
+
+- cap 136 では Decode が rank あたり 33〜34 要求（verify 132〜136 token）に張り付いた。DeepGEMM 0.1.5 は 128 token 以下でしか SwapAB を選ばない（`sm90_mega_moe.hpp:98`）ので、Decode MegaMoE の 90%（43898/48880 call）が non-SwapAB の BLOCK_M 64 経路（229 µs）になり、Decode patch がすべて外れた。残りの SwapAB call も遅い rank を待って 269 µs。cap 128 に戻すと全 call が SwapAB で 194.5 µs（A1 は 212.6 µs）、FA3 decode と dense GEMM も 50.3 / 17.2 µs に戻った。
+- cap 128 の run では Decode の平均 running が 116 で上限に届かず、ITL 不合格は 0。throughput は Prefill の供給で決まっている。TTFT 不合格 84 件はすべて開始時の一斉投入分。
+- async admission で Decode GPU の稼働率は 83%（A1）→ 98% になった。
+- 913b88b の image（flat NVLink barrier、SwapAB 144、fused add-RMSNorm + QKV quant を追加）は score が誤差内（+0.2%）だった。kernel ごとでは:
+
+| 変更 | Prefill | Decode |
+|---|---|---|
+| flat NVLink barrier | MegaMoE 1704 → 1684 µs（−1.2%） | MegaMoE 194.5 → 200.9 µs（+3.3%、全 CTA の rank カウンタへの atomic 集中） |
+| fused add-RMSNorm + QKV quant | 31.4 + 19.9 → 46.4 µs/層 | 3.2 + 2.0 → 8.8 µs/層（2 行/CTA で約 126 行は 63 CTA） |
+| SwapAB 144 | cap 128 では未使用 | 同左 |
+
+  fused norm + quant の FP8 code は、行数・reduction variant によらず約 0.1% が 1 刻み違う（scale と残差は一致、値は E4M3 の 1 刻み以内）。加算順序ではない小さな系統差が残っているが、原因は未特定。
+- main には 5066eaf の構成（823b79f + cap 128）を 7589c59 で merge した。913b88b の 3 変更は branch に残し、次は flat barrier と fused norm + quant を Prefill の geometry / 行数に限定してから使う。
+- FA3 の再検討（runtime knob と no-prefix extend の連続 KV 経路）は [2026-10-18-firmus-fa3-reconsideration.md](2026-10-18-firmus-fa3-reconsideration.md) に記録した（Codex、CPU のみ）。測定なしで採用できるレバーはなかった。
