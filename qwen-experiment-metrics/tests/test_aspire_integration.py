@@ -256,7 +256,8 @@ def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, 
         assert "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096" in argv
         assert ("--disable-cuda-graph" in argv) == (role == "prefill")
         assert ("--enable-dp-lm-head" in argv) == (role == "decode")
-        placement_mount = "/fixture/output/source/prefill-expert-location.json:/runtime/source/prefill-expert-location.json:ro"
+        # Bind the directory tree so /runtime/source exists before the map is opened.
+        placement_mount = "/fixture/output:/runtime:ro"
         assert (placement_mount in argv) == (role == "prefill")
         assert ("--init-expert-location" in argv) == (role == "prefill")
         if role == "prefill":

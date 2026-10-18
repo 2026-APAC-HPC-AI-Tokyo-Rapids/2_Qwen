@@ -1,5 +1,5 @@
 {
-  "status": "ported_without_submission; GPU startup and Aspire throughput unmeasured",
+  "status": "single_authorized_run_failed_before_serving; directory_mount_fix_cpu_validated; no_resubmission",
   "branch": "perf/aspire-firmus7200-port-20261018",
   "base_commit": "bc207d64741ab0cf70194a2cc635585fd5b9d483",
   "base_reason": "Keep the measured 39070273796 build on the first-parent chain used by select-qwen-container.sh. This branch inherits its exact kernel and SGLang patches; only Aspire runtime wiring changes.",
@@ -45,10 +45,62 @@
     "archive_availability": "The saved Actions 39070273796 log records materialization of image 7c6286e5 on Aspire. Current direct SSH read timed out; current presence/hash was not independently rechecked. Normal pre-submit image verification remains enabled."
   },
   "execution": {
-    "actions_dispatched": 0,
-    "scheduler_jobs_submitted": 0,
+    "authorization": "User: \u4e00\u56de\u3060\u3051\u5165\u308c\u3088\u30466.0luna\u306b\u76e3\u8996\u3055\u305b\u3066",
+    "actions_dispatched": 1,
+    "run_id": 39096238237,
+    "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39096238237",
+    "commit": "a3c6d44ef8114a6b8b922020551a0c262ab97afd",
+    "created_at_utc": "2026-10-18T04:11:35Z",
+    "scheduler_submission": "accepted; terminated with failure",
+    "run_aspire2ap": true,
+    "run_firmus": false,
+    "run_genkai": false,
+    "node_count": 2,
+    "profile": false,
+    "require_build": false,
+    "pushed": true,
+    "monitor_model": "gpt-6-luna",
+    "monitor_agent": "/root/aspire_monitor",
+    "automatic_resubmission": false,
+    "further_submissions": "Not authorized.",
+    "scheduler_jobs_submitted": 1,
+    "scheduler_submission_completed_at_utc": "2026-10-18T04:16:42Z",
     "builds_started": 0,
-    "pushed": false,
-    "next_run": "Requires separate user authorization. Reuse the pinned image without require-build; keep this branch ancestry so the selector can find its build. GPU startup, effective placement and official score remain to be verified."
+    "compute_job_id": 117583999957,
+    "image_metadata_validation": "passed in Aspire deploy job",
+    "selected_archive_run_id": 39078761629,
+    "container_sha256": "7c6286e5dcfcd8f5fba37d03d0c1ac0b4f6e93562a24a147afa1063f8214bc82",
+    "container_size_bytes": 12249706496,
+    "runtime_dir": "/scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs/pd-39096238237-1.8fhgWYbmgi",
+    "pbs_job_id": "221215.pbs111",
+    "pbs_nodes": [
+      "a2ap-dgx015",
+      "a2ap-dgx017"
+    ],
+    "pbs_terminal_state": "F",
+    "pbs_exit_status": 1,
+    "workflow_conclusion": "failure"
+  },
+  "result": {
+    "score": null,
+    "official_validation": null,
+    "failure": "Both Prefill workers failed in Enroot while binding the expert map file into /runtime/source/prefill-expert-location.json. Its host source exists, but the container target path was absent. No server startup or benchmark result was reached.",
+    "primary_logs": [
+      "logs/logs/prefill-0.log",
+      "logs/logs/prefill-1.log"
+    ],
+    "secondary_failure": "Collection could not find run-success because the worker startup failed.",
+    "archive": "archive-host:/srv/qwen-artifacts/39096238237/1/",
+    "artifact_sha256_manifest_verified": true,
+    "verified_files": 27,
+    "monitor_model": "gpt-6-luna"
+  },
+  "post_run_fix": {
+    "change": "Bind the existing runtime directory read-only at /runtime instead of binding a single file into missing container directories. The expert-map argument stays /runtime/source/prefill-expert-location.json.",
+    "image_change": false,
+    "build_required": false,
+    "gpu_validation": "Not rerun; the one authorized submission has been used.",
+    "validation": "34 Aspire CPU tests passed; bash syntax, Ruff and diff checks passed. Enroot/GPU startup remains untested after this fix.",
+    "published": false
   }
 }

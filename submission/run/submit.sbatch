@@ -166,7 +166,8 @@ run_node() {
         prefill_location="$(jq -er .prefill_expert_location "${config}")"
         if [[ "${prefill_location}" != trivial ]]; then
           test -s "${OUTPUT_DIR}/source/prefill-expert-location.json"
-          worker_env+=(-m "${OUTPUT_DIR}/source/prefill-expert-location.json:/runtime/source/prefill-expert-location.json:ro")
+          # Enroot cannot create missing parent directories for a file bind mount (PBS 221215).
+          worker_env+=(-m "${OUTPUT_DIR}:/runtime:ro")
           prefill_location=/runtime/source/prefill-expert-location.json
         fi
         args+=(--init-expert-location "${prefill_location}")
