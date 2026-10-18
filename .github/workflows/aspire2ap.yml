@@ -45,6 +45,7 @@ jobs:
           MODEL_PATH: /scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
           PROFILE: ${{ inputs.profile }}
         run: |
+          set -euo pipefail
           [[ "${CONTAINER_SHA256}" == "$(jq -er .container_sha256 configs/aspire-serving.json)" ]] || { echo "ASPIRE MegaMoE requires the verified Firmus 39070273796 image (Decode kernels and Prefill expert placement, 7251.58 / 7185.18 tok/s); stage that archive before submitting." >&2; exit 1; }
           PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
@@ -58,6 +59,7 @@ jobs:
             uvx --from 'huggingface_hub==0.36.0' hf download nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507 config.json README.md model.safetensors --revision ff0f0c0999f6c86b21dfd2f5803eebc4ac712224 --local-dir "${runtime_dir}/draft" --max-workers 1
             uv run --no-project --python 3.12.12 python research/simulation/prepare_eagle.py "${runtime_dir}/draft" "${runtime_dir}/source"
           fi
+          bash scripts/check-aspire-runtime-mount.sh "${runtime_dir}" "${MODEL_PATH}" 2>&1 | tee "${runtime_dir}/logs/runtime-mount-preflight.log"
           install -m 0755 platforms/aspire2ap/run-qwen-pd.pbs "${runtime_dir}/scripts/run-qwen-pd.pbs"
       - name: 配備失敗時の実行環境を削除
         if: failure() && steps.provision.outputs.runtime_dir != ''

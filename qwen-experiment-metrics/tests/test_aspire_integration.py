@@ -18,6 +18,33 @@ FIXTURE = Path(__file__).parent / "fixtures/aspire-integration-argv.json"
 ASPIRE_HCAS = "mlx5_0:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_9:1,mlx5_10:1,mlx5_11:1"
 
 
+@pytest.mark.parametrize("corruption", [None, "layer_count", "duplicate_expert", "hash"])
+def test_runtime_mount_preflight_rejects_bad_placement(tmp_path: Path, corruption: str | None) -> None:
+    for directory in ("runtime/source", "model", "draft", "runtime-home"):
+        (tmp_path / directory).mkdir(parents=True)
+    mapping = [[3, 1, 0, 2], [2, 0, 3, 1]]
+    if corruption == "layer_count":
+        mapping.pop()
+    elif corruption == "duplicate_expert":
+        mapping[0][0] = 1
+    placement = json.dumps({"physical_to_logical_map": mapping}).encode()
+    (tmp_path / "runtime/source/prefill-expert-location.json").write_bytes(placement)
+    (tmp_path / "runtime/source/aspire-serving.json").write_text('{"dp_size":4}')
+    (tmp_path / "model/config.json").write_text('{"num_hidden_layers":2,"num_experts":4}')
+    (tmp_path / "draft/config.json").write_text('{"architectures":["LlamaForCausalLMEagle3"],"torch_dtype":"bfloat16"}')
+    (tmp_path / "draft/model.safetensors").write_bytes(b"fixture")
+    expected = "wrong-hash" if corruption == "hash" else hashlib.sha256(placement).hexdigest()
+    source = (REPOSITORY / "scripts/check-aspire-runtime-mount.sh").read_text().split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    source = source.replace("from pathlib import Path", "from pathlib import Path as RealPath\nPath = lambda value: RealPath(sys.argv[2]) / value.lstrip('/')")
+    result = subprocess.run([sys.executable, "-c", source, expected, str(tmp_path)], capture_output=True, text=True, check=False)
+    if corruption is None:
+        assert result.returncode == 0, result.stderr
+        assert "aspire_runtime_mount_ok" in result.stdout
+    else:
+        assert result.returncode != 0
+        assert "AssertionError" in result.stderr
+
+
 def capture_workers(source: str, platform: str, nodes: int, tmp_path: Path, profile: bool = False) -> list[dict]:
     """Execute the real worker function and topology with a recording Enroot stub."""
     root = tmp_path / f"{platform}-{nodes}-{profile}"
