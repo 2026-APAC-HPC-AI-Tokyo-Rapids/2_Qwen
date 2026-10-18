@@ -13,11 +13,17 @@ def check(config, info, role):
     expected = {"tp_size": 4, "dp_size": p["dp"] if prefill else config["decode_dp_size"], "ep_size": p["ep"] if prefill else 4, "enable_dp_attention": True, "kv_cache_dtype": "fp8_e4m3", "context_length": 8192, "page_size": 64, "attention_backend": "fa3", "max_total_tokens": config.get("prefill_max_total_tokens", 131072) if prefill else config["decode_max_total_tokens"], "chunked_prefill_size": p["chunked_prefill_size"] // p["dp"] if prefill else 8192 // config["decode_dp_size"], "max_running_requests": config["concurrency"] if prefill else config["decode_max_running_requests"], "speculative_algorithm": "EAGLE3", "speculative_draft_model_path": "/draft", "speculative_num_steps": config["speculation"]["steps"], "speculative_num_draft_tokens": config["speculation"]["draft_tokens"], "speculative_eagle_topk": 1, "speculative_draft_model_quantization": None, "enable_two_batch_overlap": False, "enable_symm_mem": False}
     if prefill:
         expected.update(moe_a2a_backend=p["moe_a2a_backend"], moe_runner_backend=p["moe_runner_backend"])
+        if not aspire:
+            # Configs before optimistic Prefill omit the key and ran with SGLang's default of 0.
+            expected.update(optimistic_prefill_attempts=p.get("optimistic_prefill_attempts", 0))
         if p["moe_a2a_backend"] == "deepep":
             expected.update(deepep_mode="normal", disable_cuda_graph=True)
     else:
         # SGLang resolves an omitted draft runner to the target runner before serving this endpoint.
         expected.update(disaggregation_decode_extra_slots=config["decode_extra_slots"], moe_a2a_backend="megamoe", moe_runner_backend="deep_gemm", enable_dp_lm_head=True, moe_dense_tp_size=1, speculative_moe_a2a_backend=None, speculative_moe_runner_backend="deep_gemm")
+        if not aspire:
+            # Configs before the polling knob omit it and ran with SGLang's default of 1.
+            expected.update(disaggregation_decode_polling_interval=config.get("decode_polling_interval", 1))
     placed = not aspire and prefill and p["expert_location"] != "trivial"
     if not aspire:
         # A non-trivial --init-expert-location makes SGLang dispatch through its static logical-to-physical table.

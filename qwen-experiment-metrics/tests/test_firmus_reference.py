@@ -66,15 +66,54 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
 
 
 def archived_server_info() -> dict:
-    # The archived run predates the placement keys; carry the current Prefill placement into its config and every scheduler state.
+    # The archived run predates placement, optimistic Prefill, the Decode cap 136 and the polling knob; carry the current settings into its config and every scheduler state.
     raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
-    location = json.loads((ROOT / "configs/firmus-framework.json").read_text())["prefill"]["expert_location"]
-    raw["config"]["prefill"]["expert_location"] = location
+    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    current = config["prefill"]
+    location = current["expert_location"]
+    raw["config"]["prefill"].update(expert_location=location, optimistic_prefill_attempts=current["optimistic_prefill_attempts"])
+    raw["config"].update({key: config[key] for key in ("decode_max_running_requests", "decode_cuda_graph_bs", "decode_polling_interval")})
     for role in ("prefill", "decode"):
         placed = role == "prefill" and location != "trivial"
         for state in [raw[role], *raw[role]["internal_states"]]:
-            state.update(init_expert_location="/runtime/source/prefill-expert-location.json" if placed else "trivial", ep_dispatch_algorithm="static" if placed else None)
+            state.update(init_expert_location="/runtime/source/prefill-expert-location.json" if placed else "trivial", ep_dispatch_algorithm="static" if placed else None, optimistic_prefill_attempts=current["optimistic_prefill_attempts"] if role == "prefill" else 0)
+            if role == "decode":
+                state.update(max_running_requests=config["decode_max_running_requests"], disaggregation_decode_polling_interval=config["decode_polling_interval"])
+    raw["decode"]["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
+    for state in raw["decode"]["internal_states"]:
+        state["effective_max_running_requests_per_dp"] = config["decode_max_running_requests"] // config["decode_dp_size"]
     return raw
+
+
+def test_optimistic_prefill_attempts_are_checked_on_every_prefill_state() -> None:
+    # Run E (39040135834) archived optimistic_prefill_attempts=2 on the top-level and all four DP states.
+    raw = archived_server_info()
+    check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
+    assert raw["config"]["prefill"]["optimistic_prefill_attempts"] == 2
+    check(raw["config"], raw["prefill"], "prefill")
+    for index in range(5):
+        info = copy.deepcopy(raw["prefill"])
+        [info, *info["internal_states"]][index]["optimistic_prefill_attempts"] = 0
+        with pytest.raises(ValueError, match="optimistic_prefill_attempts"):
+            check(raw["config"], info, "prefill")
+    # Configs written before the key existed ran with SGLang's default of 0.
+    legacy = copy.deepcopy(raw["config"])
+    del legacy["prefill"]["optimistic_prefill_attempts"]
+    info = copy.deepcopy(raw["prefill"])
+    for state in [info, *info["internal_states"]]:
+        state["optimistic_prefill_attempts"] = 0
+    check(legacy, info, "prefill")
+
+
+def test_decode_polling_interval_is_checked_on_every_decode_state() -> None:
+    raw = archived_server_info()
+    check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
+    check(raw["config"], raw["decode"], "decode")
+    for index in range(5):
+        info = copy.deepcopy(raw["decode"])
+        [info, *info["internal_states"]][index]["disaggregation_decode_polling_interval"] = 1
+        with pytest.raises(ValueError, match="disaggregation_decode_polling_interval"):
+            check(raw["config"], info, "decode")
 
 
 def test_prefill_expert_location_is_a_permutation_checked_on_every_state() -> None:
@@ -152,10 +191,14 @@ def test_server_info_validation_runs_after_gpu_collection(tmp_path: Path, invali
 def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert "#SBATCH -t 00:17:00" in source
+    # Tier 2 switches stay off until a serving run enables them by commit.
+    assert "\nexport SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=0\n" in source
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
-    assert config["decode_max_running_requests"] == 128
+    assert config["decode_max_running_requests"] == 136
+    assert config["decode_polling_interval"] == 2
+    assert config["prefill"]["optimistic_prefill_attempts"] == 2
     assert config["decode_max_running_requests"] + config["decode_extra_slots"] * config["decode_dp_size"] >= config["concurrency"]
     assert max(config["decode_cuda_graph_bs"]) == config["decode_max_running_requests"] // config["decode_dp_size"]
     (tmp_path / "logs").mkdir()
@@ -182,12 +225,12 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     assert "jq" not in worker  # Not installed in the pinned image; parse on the host.
     command = "command=(" + worker.split("command=(", 1)[1].split('if [[ -x /opt/nsys', 1)[0]
-    launch = worker.split("UCX_IB=", 1)[0] + command + '\nprintf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "$SGLANG_HOST_IP" "${command[@]}"\n'
+    launch = worker.split("UCX_IB=", 1)[0] + command + '\nprintf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0}" "${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0}" "${SGLANG_DECODE_ASYNC_ADMISSION:-0}" "$SGLANG_HOST_IP" "${command[@]}"\n'
     observed = {}
     for argv in workers:
         args = argv[argv.index("bash") + 2:]
         probe = subprocess.run(["bash", "-c", launch, "fixture", *args], env={**os.environ, "SLURM_SUBMIT_DIR": str(tmp_path)}, check=True, capture_output=True)
-        shuffle, routing, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
+        shuffle, routing, aligned, rotate_ties, async_admission, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
         name, port = args[:2]
         prefill = name.startswith("prefill")
         dist_port = int(flags[flags.index("--dist-init-addr") + 1].rsplit(":", 1)[1])
@@ -230,6 +273,8 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             assert flags[flags.index("--dist-init-addr") + 1] == f"127.0.0.1:{32000 + int(name[-1]) * 100}"
             assert "--enable-dp-attention" in flags and "--disable-cuda-graph" in flags
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
+            assert flags[flags.index("--optimistic-prefill-attempts") + 1] == str(config["prefill"]["optimistic_prefill_attempts"])
+            assert aligned == "1" and rotate_ties == "0" and async_admission == "0"
         else:
             assert flags[flags.index("--dp-size") + 1] == "4"
             assert "--enable-dp-attention" in flags and "--enable-dp-lm-head" in flags
@@ -241,9 +286,11 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             assert flags[flags.index("--dist-init-addr") + 1] == "127.0.0.1:29000"
             assert "--disable-cuda-graph" not in flags
             assert flags[flags.index("--disaggregation-decode-extra-slots") + 1] == str(config["decode_extra_slots"])
+            assert flags[flags.index("--disaggregation-decode-polling-interval") + 1] == str(config["decode_polling_interval"])
             start = flags.index("--cuda-graph-bs-decode") + 1
             assert [int(value) for value in flags[start:start + len(config["decode_cuda_graph_bs"])]] == config["decode_cuda_graph_bs"]
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
+            assert "--optimistic-prefill-attempts" not in flags and aligned == "0" and rotate_ties == "0" and async_admission == "0"
     assert observed == {"prefill-0": "node0", "prefill-1": "node0", "prefill-2": "node1", "decode-0": "node1"}
     router_argv = next(argv for argv in commands if "/opt/apac/bin/sglang-router" in argv)
     assert router_argv.count("--prefill") == 3 and router_argv.count("--decode") == 1

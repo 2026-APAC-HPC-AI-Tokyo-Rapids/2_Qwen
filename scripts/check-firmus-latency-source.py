@@ -132,7 +132,8 @@ def check_moe_fusion_gate(source):
 
 
 def check_dp_routing(source):
-    ns = {"Enum": Enum, "auto": auto}
+    # dp-total-requests-rotate-ties.patch adds a module switch; check the default (off) path here.
+    ns = {"Enum": Enum, "auto": auto, "_ROTATE_TOTAL_REQUESTS_TIES": False}
     controller = source / "python/sglang/srt/managers/data_parallel_controller.py"
     classes = [node for node in ast.parse(controller.read_text()).body if isinstance(node, ast.ClassDef) and node.name in {"LoadBalanceMethod", "DPBudget"}]
     exec(compile(ast.Module(body=classes, type_ignores=[]), str(controller), "exec"), ns)  # noqa: S102

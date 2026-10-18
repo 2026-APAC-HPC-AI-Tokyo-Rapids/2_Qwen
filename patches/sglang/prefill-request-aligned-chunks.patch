@@ -1,0 +1,63 @@
+diff --git a/python/sglang/srt/managers/schedule_policy.py b/python/sglang/srt/managers/schedule_policy.py
+--- a/python/sglang/srt/managers/schedule_policy.py
++++ b/python/sglang/srt/managers/schedule_policy.py
+@@ -88,6 +88,12 @@ IN_BATCH_PREFIX_CACHING_DEPRIORITIZE_THRESHOLD = int(
+ 
+ IGNORE_EOS_RESERVE_TOKENS = 1
+ 
++# Disaggregated prefill only: do not start a request in a batch that cannot
++# finish it once that batch already holds a request (see PrefillAdder).
++_PREFILL_REQUEST_ALIGNED_CHUNKS = (
++    os.environ.get("SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS", "0") == "1"
++)
++
+ 
+ def match_prefix_for_req(
+     tree_cache: BasePrefixCache,
+@@ -459,8 +465,12 @@ class PrefillAdder:
+         prefill_delayer_single_pass: Optional[PrefillDelayerSinglePassExecutor] = None,
+         dllm_config: Optional[DllmConfig] = None,
+         waiting_queue_len: int = 0,
++        request_aligned_chunks: bool = False,
+     ):
+         self.page_size = page_size
++        self.request_aligned_chunks = (
++            request_aligned_chunks and _PREFILL_REQUEST_ALIGNED_CHUNKS
++        )
+         self.tree_cache = tree_cache
+         self.token_to_kv_pool_allocator = token_to_kv_pool_allocator
+         self.running_batch = running_batch
+@@ -1036,6 +1046,8 @@ class PrefillAdder:
+         else:
+             if self.rem_chunk_tokens <= 0:
+                 return AddReqResult.OTHER
++            if self.request_aligned_chunks and self.can_run_list:
++                return AddReqResult.OTHER
+ 
+             # Chunked prefill
+             trunc_len = self.rem_chunk_tokens
+@@ -1211,6 +1223,12 @@ class PrefillAdder:
+                     mamba_gap_reserve=self._mamba_gap_budget_for_req(req),
+                 )
+             else:
++                # Starting a request here would carry its tail into the next
++                # batch and double its time in the prefill batch. Leave it at the
++                # head of the queue; a lone over-budget request still chunks.
++                if self.request_aligned_chunks and self.can_run_list:
++                    return AddReqResult.OTHER
++
+                 # Make sure at least one page is available
+                 trunc_len = chunk_tokens_limit // self.page_size * self.page_size
+ 
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -3009,6 +3009,8 @@ class Scheduler(
+             prefill_delayer_single_pass=prefill_delayer_single_pass,
+             dllm_config=self.dllm_config,
+             waiting_queue_len=len(self.waiting_queue),
++            request_aligned_chunks=self.disaggregation_mode
++            == DisaggregationMode.PREFILL,
+         )
+ 
+         if self.chunked_req is not None:

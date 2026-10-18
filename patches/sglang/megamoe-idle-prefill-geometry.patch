@@ -1,0 +1,62 @@
+diff --git a/python/sglang/srt/layers/moe/mega_moe_sm90.py b/python/sglang/srt/layers/moe/mega_moe_sm90.py
+--- a/python/sglang/srt/layers/moe/mega_moe_sm90.py
++++ b/python/sglang/srt/layers/moe/mega_moe_sm90.py
+@@ -15,6 +15,7 @@
+ 
+ from __future__ import annotations
+ 
++import os
+ from typing import TYPE_CHECKING
+ 
+ import torch
+@@ -28,6 +29,28 @@ if TYPE_CHECKING:
+     from sglang.srt.models.deepseek_v2 import DeepseekV2MoE
+ 
+ 
++# Prefill only: an idle DP rank (0 local tokens) still enters the collective
++# kernel and processes the other ranks' tokens for its local experts. With a
++# 1-row output DeepGEMM's host heuristic picks the Decode SwapAB geometry for
++# that work; enough masked rows make it pick the Prefill geometry instead.
++_IDLE_PREFILL_GEOMETRY = os.environ.get("SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY", "0") == "1"
++
++
++def idle_output_rows(num_experts: int, num_topk: int, num_ranks: int) -> int:
++    """Smallest local row count for which get_block_config_for_mega_moe_sm90
++    (DeepGEMM 0.1.5) chooses BLOCK_M 128 / 512 epilogue threads: expected
++    tokens per expert = rows * num_ranks * num_topk / num_experts >= 64."""
++    return -(-64 * num_experts // (num_ranks * num_topk))
++
++
++def _use_idle_prefill_geometry() -> bool:
++    if not _IDLE_PREFILL_GEOMETRY:
++        return False
++    from sglang.srt.runtime_context import get_server_args
++
++    return get_server_args().disaggregation_mode == "prefill"
++
++
+ def is_sm90_fp8_mega_moe_available(experts) -> bool:
+     if _device_sm != 90:
+         return False
+@@ -70,8 +93,20 @@ def run_sm90_mega_routed(
+         routed_scaling_factor=routed_scaling_factor,
+     )
+ 
++    rows = max(num_tokens, 1)
++    if num_tokens == 0 and _use_idle_prefill_geometry():
++        from sglang.srt.distributed import get_moe_ep_group
++
++        # Pre-dispatch (num_tokens=0) set every topk slot of the symmetric
++        # buffer to -1, so these rows dispatch nothing and combine to zeros.
++        rows = idle_output_rows(
++            moe.config.num_experts,
++            moe.config.num_experts_per_tok,
++            get_moe_ep_group().world_size,
++        )
++        assert rows <= buf.topk_idx.shape[0], (rows, tuple(buf.topk_idx.shape))
+     y = torch.empty(
+-        (max(num_tokens, 1), moe.config.hidden_size),
++        (rows, moe.config.hidden_size),
+         dtype=torch.bfloat16,
+         device=hidden_states.device,
+     )
