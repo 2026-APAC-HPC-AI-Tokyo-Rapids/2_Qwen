@@ -46,7 +46,7 @@ jobs:
           PROFILE: ${{ inputs.profile }}
         run: |
           set -euo pipefail
-          [[ "${CONTAINER_SHA256}" == "$(jq -er .container_sha256 configs/aspire-serving.json)" ]] || { echo "ASPIRE MegaMoE requires the verified Firmus 39070273796 image (Decode kernels and Prefill expert placement, 7251.58 / 7185.18 tok/s); stage that archive before submitting." >&2; exit 1; }
+          [[ "${CONTAINER_SHA256}" == "$(jq -er .container_sha256 configs/aspire-serving.json)" ]] || { echo "ASPIRE MegaMoE requires the verified Firmus 39094011392 image (build 39088958292, 7567.56 tok/s); stage that archive before submitting." >&2; exit 1; }
           PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
           bash scripts/check-firmus-image.sh "${runtime_dir}/sglang.sqsh" "${runtime_dir}/source" "${GITHUB_WORKSPACE}"

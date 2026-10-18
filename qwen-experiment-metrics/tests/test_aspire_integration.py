@@ -299,7 +299,7 @@ def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, 
     # Separate DP endpoint ranges; adjacent HTTP ports otherwise collide.
     assert addresses == [32000, 32100, 33000, 33100]
     firmus = json.loads((REPOSITORY / "configs/firmus-framework.json").read_text())
-    assert config["container_sha256"] == firmus["images"]["sglang"]["sha256"] == "7c6286e5dcfcd8f5fba37d03d0c1ac0b4f6e93562a24a147afa1063f8214bc82"
+    assert config["container_sha256"] == firmus["images"]["sglang"]["sha256"] == "e54b4defff7035c68458c98d33bc996423e50650e05bbd13b986e101ebf0913f"
     assert config["prefill_expert_location"] == firmus["prefill"]["expert_location"]
     workflow = (REPOSITORY / ".github/workflows/aspire2ap.yml").read_text()
     assert workflow.index("jq -er .container_sha256 configs/aspire-serving.json") < workflow.index('PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh')
