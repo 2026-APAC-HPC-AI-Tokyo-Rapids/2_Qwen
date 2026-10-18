@@ -1,8 +1,8 @@
 {
   "date": "2026-10-18",
   "base_commit": "9b2fbebefc82304d880179d2758a689f24b60893",
-  "status": "ready_for_single_final_submission",
-  "firmus_jobs_submitted": 0,
+  "status": "precheck_empty_output_stride_fixed_not_resubmitted",
+  "firmus_jobs_submitted": 1,
   "aspire_jobs_submitted": 0,
   "other_gpu_jobs_submitted": 0,
   "cloud_image_builds_started": 3,
@@ -291,5 +291,13 @@
     "all_three_cluster_archives_materialized": true,
     "gpu_workflows_skipped_by_build_only": true,
     "metadata_verified_on_archived_image": true
+  },
+  "final_submission": {
+    "run_id": 39077653567,
+    "commit": "29d723211c7b9d1ab912c1932d8042dc4f562006",
+    "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39077653567",
+    "outcome": "Pre-benchmark gate failed in the reference FP8 Q allocation: empty_like retained packed stride (9216,128,1), whereas the FFI requires dense output (8192,128,1). No throughput measured.",
+    "fix": "Allocate reference and candidate Q outputs by shape. Keep rows=0 kernel calls and unchanged-cache checks. Production kernels and image remain unchanged; no resubmission.",
+    "cpu_validation": "Reproduced old empty output stride with PyTorch 2.14.1; all 24 actual allocation expressions for rows 0/1/31/128 and packed/dense inputs return exact dense strides."
   }
 }

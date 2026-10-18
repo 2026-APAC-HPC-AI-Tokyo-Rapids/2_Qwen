@@ -212,7 +212,8 @@ def check_rope_fp8_kv():
     eps, slots = 1e-6, 257
 
     def reference(q, k, v, positions, loc):
-        expected_q = torch.empty_like(q, dtype=torch.float8_e4m3fn)
+        # empty_like preserves packed strides for zero rows; the FFI requires dense output strides.
+        expected_q = torch.empty(q.shape, device=q.device, dtype=torch.float8_e4m3fn)
         rotated_k = k.clone()
         apply_qknorm_rope_fp8_q(q, rotated_k, qw, kw, cache, positions, eps, expected_q)
         # Compare the actual store_cache path, including its reserved slot zero.
@@ -244,7 +245,7 @@ def check_rope_fp8_kv():
                 loc[-min(rows, 7):] = 0
             original = [x.clone() for x in (q, k, v)]
             expected = reference(q, k, v, positions, loc)
-            actual = (torch.empty_like(q, dtype=torch.float8_e4m3fn), torch.full_like(expected[1], 3.), torch.full_like(expected[2], 3.))
+            actual = (torch.empty(q.shape, device=q.device, dtype=torch.float8_e4m3fn), torch.full_like(expected[1], 3.), torch.full_like(expected[2], 3.))
             apply_qknorm_rope_fp8_kv(q, k, qw, kw, cache, positions, eps, actual[0], v, actual[1], actual[2], loc)
             compare(actual, expected, f"{rows}_{id_dtype}")
             assert all(torch.equal(x.view(torch.uint8), old.view(torch.uint8)) for x, old in zip((q, k, v), original)), "QKV input modified"
@@ -255,7 +256,7 @@ def check_rope_fp8_kv():
     positions = torch.arange(128, device="cuda", dtype=torch.int64)
     loc = positions.clone() + 1
     expected = reference(q, k, v, positions, loc)
-    actual = (torch.empty_like(q, dtype=torch.float8_e4m3fn), torch.full_like(expected[1], 3.), torch.full_like(expected[2], 3.))
+    actual = (torch.empty(q.shape, device=q.device, dtype=torch.float8_e4m3fn), torch.full_like(expected[1], 3.), torch.full_like(expected[2], 3.))
 
     def forward():
         apply_qknorm_rope_fp8_kv(q, k, qw, kw, cache, positions, eps, actual[0], v, actual[1], actual[2], loc)
