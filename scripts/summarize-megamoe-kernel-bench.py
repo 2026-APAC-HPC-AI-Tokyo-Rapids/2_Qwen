@@ -123,8 +123,11 @@ def load_rows(path):
 
 
 def slowest_clock(row):
-    # Kernel time follows the slowest GPU; average its before/after samples.
-    return min((before + after) / 2 for before, after in zip(row["sm_clock_mhz_before"], row["sm_clock_mhz_after"]))
+    # Kernel time follows the slowest GPU. The two NVML samples bracket the
+    # timed loop but are instantaneous: in run 39085655145 identical Prefill
+    # kernels read 1545-1935 MHz at the same median, so they flag throttled
+    # cases and are not used to normalize times.
+    return f"{min(row['sm_clock_mhz_before']):.0f} / {min(row['sm_clock_mhz_after']):.0f}"
 
 
 def step_cell(steps, variant, name):
@@ -177,25 +180,23 @@ def deep_gemm(results, steps):
                 mark = "" if row["output_sha256"] == image[case]["output_sha256"] else "*"
                 cells.append(f"{row['median_ms']:.4f} ({row['median_ms'] / image[case]['median_ms'] - 1:+.1%}){mark}")
         lines.append(f"| {case} | " + " | ".join(cells) + " |")
-    lines += ["", "Per variant detail (pre-dispatch + fused kernel, max over ranks per iteration). SM clock is the slowest GPU's NVML clock averaged before/after the timed iterations; the clock-normalized delta compares median x clock (cycle-equivalent) with the image.", "", "| Case | Variant | Median ms | p10 ms | p90 ms | Delta | SM MHz | Delta at equal clock | Power W (max rank) | Rank load max/mean | Deterministic | Hash = image |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"]
+    lines += ["", "Per variant detail (pre-dispatch + fused kernel, max over ranks per iteration). SM MHz is the lowest NVML SM clock over the GPUs, sampled right before / right after the timed iterations (instantaneous; the timeline's per-CTA clock is the accurate in-kernel value).", "", "| Case | Variant | Median ms | p10 ms | p90 ms | Delta | SM MHz before / after | Power W (max rank) | Rank load max/mean | Deterministic | Hash = image |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"]
     for case in cases:
         reference = image[case]
         for name in names:
             row = rows[name].get(case)
             if row is None:
                 continue
-            clock = slowest_clock(row)
             delta = "-" if name == "image" else f"{row['median_ms'] / reference['median_ms'] - 1:+.1%}"
-            normalized = "-" if name == "image" else f"{row['median_ms'] * clock / (reference['median_ms'] * slowest_clock(reference)) - 1:+.1%}"
             same = "-" if name == "image" else str(row["output_sha256"] == reference["output_sha256"])
             power = max(max(row["power_w_before"]), max(row["power_w_after"]))
-            lines.append(f"| {case} | {name} | {row['median_ms']:.4f} | {row['p10_ms']:.4f} | {row['p90_ms']:.4f} | {delta} | {clock:.0f} | {normalized} | {power:.0f} | {row['rank_load_max_over_mean']:.3f} | {row['deterministic']} | {same} |")
+            lines.append(f"| {case} | {name} | {row['median_ms']:.4f} | {row['p10_ms']:.4f} | {row['p90_ms']:.4f} | {delta} | {slowest_clock(row)} | {power:.0f} | {row['rank_load_max_over_mean']:.3f} | {row['deterministic']} | {same} |")
     timelines = [(variant["name"], load_rows(results / variant["name"] / "timeline.jsonl")) for variant in variants if variant["timeline"] == "ready"]
     if any(timeline for _, timeline in timelines):
-        lines += ["", "### Timeline runs (instrumented vs the same variant's bench)", "", "| Case | Variant | Median ms | Overhead | Bitwise equal | SM MHz |", "| --- | --- | ---: | ---: | --- | ---: |"]
+        lines += ["", "### Timeline runs (instrumented vs the same variant's bench)", "", "| Case | Variant | Median ms | Overhead | Bitwise equal | SM MHz before / after |", "| --- | --- | ---: | ---: | --- | ---: |"]
         for name, timeline in timelines:
             for case, row in timeline.items():
-                lines.append(f"| {case} | {name} | {row['median_ms']:.4f} | {row['delta_median_vs_reference']:+.1%} | {row['bitwise_equal_to_reference']} | {slowest_clock(row):.0f} |")
+                lines.append(f"| {case} | {name} | {row['median_ms']:.4f} | {row['delta_median_vs_reference']:+.1%} | {row['bitwise_equal_to_reference']} | {slowest_clock(row)} |")
     reports = [report(path, f"{name}: {path.stem}") for name, _ in timelines for path in sorted((results / name / "timeline").glob("*.npy"))]
     return "\n".join(lines) + "\n\n" + "\n".join(reports), failed
 

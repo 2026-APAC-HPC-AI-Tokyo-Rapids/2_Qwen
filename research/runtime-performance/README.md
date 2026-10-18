@@ -2,6 +2,7 @@
 
 現行Qwen3-235B-A22B・公式4000/200タスクの調査:
 
+- [2026-10-18: Claude Code 停止作業の引き継ぎ（multi-candidate 基盤検証、Prefill/Decode 実験の確定状態、未統合作業と判断待ち）](2026-10-18-claude-takeover-status.md)
 - [2026-10-18: Firmus で Decode MegaMoE kernel 3 patch と Prefill 静的 expert 配置を束ねた構成が 7251.58 / 7185.18（参照 6521.98 / 6485.02 比 +11%、ITL 不合格 82–106 → 7–9 件、Decode MegaMoE −13%、Prefill −16%）、ブランチ止め・merge 判断待ち](2026-10-18-firmus-decode-kernel-placement-bundle.md)
 - [2026-10-18: SM90 MegaMoE Decode の FC1 量子化器（bank conflict 解消、epilogue 21→12.5 µs/CTA）と dispatch の remote load 重ねを hoist に追加（Decode −0.5〜2.4%、image 比 −3.6〜12.5%、出力 bit 一致、ブランチ止め）。arrival の後回しは不採用](2026-10-18-megamoe-decode-epilogue-dispatch.md)
 - [2026-10-18: SM90 MegaMoE Decode mainloop の software pipeline 案（不採用）と N_SWAP hoist（kernel 単体で Decode −2〜11%、出力 bit 一致、ブランチ止め）](2026-10-18-megamoe-decode-mainloop-pipeline.md)

@@ -18,7 +18,8 @@ Routing generators (all global expert IDs, top-8 of 128, EP4 = 32 experts/rank):
 
 Each rank reads its GPU's SM clock and power through NVML right before and right
 after the timed iterations (outside the CUDA event pair), because Prefill power
-throttling (1.47-1.67 GHz) moves the kernel time by several percent.
+throttling (1.47-1.67 GHz) moves the kernel time by several percent. The samples
+are instantaneous and flag throttled cases; they are too noisy to normalize by.
 With --reference (another variant's bench.jsonl), rows carry the reference
 median and whether the output hash matches it; the caller judges mismatches.
 """

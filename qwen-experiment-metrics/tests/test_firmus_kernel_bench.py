@@ -112,20 +112,26 @@ def test_provision_stages_each_candidate_and_records_timeline_failures(tmp_path:
     assert (runtime / "overlay/timeline/a-comment" / header).read_text().endswith("// comment only\n")
     assert not (runtime / "overlay/timeline/b-conflict").exists()
     assert (runtime / "logs/timeline-apply-b-conflict.log").read_text()
+    assert not (runtime / "logs/timeline-apply-a-comment.log").exists()
     assert (runtime / "overlay/sglang/python/sglang/kernels/jit/csrc/gemm/per_token_group_quant.cuh").read_text().endswith("// comment only\n")
     assert (runtime / "source/patches/deep-gemm-bench/a-comment/timeline").exists()
     assert json.loads((runtime / "source/provenance.json").read_text())["schema_version"] == "qwen3-megamoe-kernel-bench/v2"
 
 
-@pytest.mark.parametrize("layout", ["flat", "too-many", "bad-name"])
+@pytest.mark.parametrize("layout", ["flat", "too-many", "too-many-timelines", "bad-name"])
 def test_provision_rejects_layouts_before_staging(tmp_path: Path, layout: str) -> None:
     ws, patches = workspace(tmp_path)
     if layout == "flat":
         (ws / "patches/deep-gemm-bench").mkdir(parents=True)
         (ws / "patches/deep-gemm-bench/000.patch").write_text(patches["comment"])
     elif layout == "too-many":
-        for index in range(5):
+        # 1 image bench + 6 x (gate + bench) = 13 steps > 12.
+        for index in range(6):
             add_candidate(ws, f"c{index}", patches["comment"])
+    elif layout == "too-many-timelines":
+        # 1 + 4 x (gate + bench + timeline) = 13 steps > 12.
+        for index in range(4):
+            add_candidate(ws, f"c{index}", patches["comment"], timeline=True)
     else:
         add_candidate(ws, "image", patches["comment"])
 
@@ -170,9 +176,8 @@ def test_summary_compares_candidates_and_flags_failures(tmp_path: Path, monkeypa
     assert "| wrong | 000.patch | pass | pass | 1/2 MISMATCH | timeline patch did not apply | FAILED |" in text
     assert "| broken | 000.patch | FAIL (exit 1) | not run | 0/2 MISMATCH | not run | FAILED |" in text
     assert "| decode-balanced-128 | 0.2000 | 0.1800 (-10.0%) | 0.1900 (-5.0%)* | - |" in text
-    # 1.6 ms at 1600 MHz is 2560 kcycles against 1.7 ms at 1500 MHz = 2550.
-    assert "| prefill-balanced-4096 | fast | 1.6000 | 1.5840 | 1.6160 | -5.9% | 1600 | +0.4% | 600 |" in text
-    assert "| decode-balanced-128 | image | 0.2300 | +15.0% | True | 1980 |" in text
+    assert "| prefill-balanced-4096 | fast | 1.6000 | 1.5840 | 1.6160 | -5.9% | 1600 / 1600 | 600 |" in text
+    assert "| decode-balanced-128 | image | 0.2300 | +15.0% | True | 1980 / 1980 |" in text
     assert "| silu-quant-128 | 10.00 | 8.00 | -20.0% | 7.90 / 8.10 | True |" in text
 
 
@@ -188,3 +193,30 @@ def test_summary_passes_clean_run_and_catches_sglang_hash(tmp_path: Path, monkey
     write_rows(tmp_path / "sglang/image.jsonl", [{"case": "rope", "median_us": 5.0, "p10_us": 5.0, "p90_us": 5.0, "output_sha256": "a"}])
     write_rows(tmp_path / "sglang/candidate.jsonl", [{"case": "rope", "median_us": 5.0, "p10_us": 5.0, "p90_us": 5.0, "output_sha256": "b"}])
     assert summarize(tmp_path)[1] == ["sglang rope hash"]
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+def test_provision_accepts_five_plain_candidates(tmp_path: Path) -> None:
+    ws, patches = workspace(tmp_path)
+    for index in range(5):
+        add_candidate(ws, f"c{index}", patches["comment"])
+    result = provision(tmp_path, ws)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("bench_script,expected_steps", [(False, 13), (True, 15)])
+def test_provision_counts_sglang_and_image_timeline_before_staging(tmp_path: Path, bench_script: bool, expected_steps: int) -> None:
+    ws, patches = workspace(tmp_path)
+    for index in range(3):
+        add_candidate(ws, f"c{index}", patches["comment"], timeline=True)
+    (ws / "patches/deep-gemm-bench/timeline").touch()
+    (ws / "patches/sglang-bench").mkdir(parents=True)
+    (ws / "patches/sglang-bench/000.patch").write_text(patches["sglang"])
+    if bench_script:
+        (ws / "scripts/bench-firmus-sglang-kernels.py").touch()
+
+    result = provision(tmp_path, ws)
+
+    assert result.returncode != 0
+    assert f"{expected_steps} Slurm steps" in result.stderr
+    assert not (tmp_path / "runs").exists()

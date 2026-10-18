@@ -16,9 +16,12 @@ shopt -s inherit_errexit
 : "${GITHUB_OUTPUT:?}"
 : "${RUNTIME_ROOT:?}"
 
-# The hpcai partition caps jobs at 17 minutes. Measured steps: image bench about
-# 70 s, candidate gate about 70 s, bench about 40 s, timeline about 35 s.
-max_candidates=4
+# The hpcai partition caps jobs at 17 minutes. Every Slurm step (container
+# start, imports, JIT, work) took 71-77 s in run 39085655145, so a job holds at
+# most 12 steps: the image bench, the image timeline if requested, 2 SGLang
+# checks (+2 benches with bench-firmus-sglang-kernels.py), and per DeepGEMM
+# candidate a gate, a bench and the timeline if requested.
+max_steps=12
 bench_dir="${GITHUB_WORKSPACE}/patches/deep-gemm-bench"
 shopt -s nullglob
 flat_patches=("${bench_dir}"/*.patch)
@@ -26,12 +29,18 @@ candidate_dirs=("${bench_dir}"/*/)
 sglang_patches=("${GITHUB_WORKSPACE}"/patches/sglang-bench/*.patch)
 shopt -u nullglob
 if (( ${#flat_patches[@]} )); then printf 'Move %s into patches/deep-gemm-bench/<candidate>/ (one directory per candidate).\n' "${flat_patches[@]#"${GITHUB_WORKSPACE}/"}" >&2; exit 1; fi
-if (( ${#candidate_dirs[@]} > max_candidates )); then printf '%s DeepGEMM candidates exceed the %s that fit in one 17-minute Slurm job.\n' "${#candidate_dirs[@]}" "${max_candidates}" >&2; exit 1; fi
+steps=1
+if [[ -e "${bench_dir}/timeline" ]]; then steps=$((steps + 1)); fi
+if (( ${#sglang_patches[@]} )); then steps=$((steps + 2)); fi
+if (( ${#sglang_patches[@]} )) && [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then steps=$((steps + 2)); fi
 for dir in "${candidate_dirs[@]}"; do
   name="$(basename "${dir}")"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9._-]*$ && "${name}" != image ]] || { printf 'Candidate directory name %s must match [a-z0-9][a-z0-9._-]* and not be "image".\n' "${name}" >&2; exit 1; }
   compgen -G "${dir}*.patch" >/dev/null || { printf 'Candidate directory %s has no .patch file.\n' "${name}" >&2; exit 1; }
+  steps=$((steps + 2))
+  if [[ -e "${dir}timeline" ]]; then steps=$((steps + 1)); fi
 done
+if (( steps > max_steps )); then printf '%s Slurm steps (about 75 s each) exceed the %s that fit in one 17-minute job; drop candidates or timeline markers.\n' "${steps}" "${max_steps}" >&2; exit 1; fi
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 image="$(jq -er .images.sglang.path "${config}")"
@@ -81,7 +90,7 @@ add_timeline() {
   if [[ ! -e "${dir}/timeline" ]]; then echo not-requested; return; fi
   install -d -m 0755 "${runtime_dir}/overlay/timeline/${name}"
   cp -a "${base}" "${runtime_dir}/overlay/timeline/${name}/deep_gemm"
-  if (cd "${runtime_dir}/overlay/timeline/${name}" && git apply --check "${timeline_patch}" 2>"${runtime_dir}/logs/timeline-apply-${name}.log" && git apply "${timeline_patch}"); then echo ready; return; fi
+  if (cd "${runtime_dir}/overlay/timeline/${name}" && git apply --check "${timeline_patch}" 2>"${runtime_dir}/logs/timeline-apply-${name}.log" && git apply "${timeline_patch}"); then rm -f -- "${runtime_dir}/logs/timeline-apply-${name}.log"; echo ready; return; fi
   cat "${runtime_dir}/logs/timeline-apply-${name}.log" >&2
   rm -rf -- "${runtime_dir}/overlay/timeline/${name}"
   echo apply-failed
