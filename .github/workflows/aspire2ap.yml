@@ -45,13 +45,15 @@ jobs:
           MODEL_PATH: /scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
           PROFILE: ${{ inputs.profile }}
         run: |
-          [[ "${CONTAINER_SHA256}" == "$(jq -er .container_sha256 configs/aspire-serving.json)" ]] || { echo "ASPIRE MegaMoE requires the verified Firmus 38945855851 image (SM90 kernel chain, 6521.98 tok/s); stage that archive before submitting." >&2; exit 1; }
+          [[ "${CONTAINER_SHA256}" == "$(jq -er .container_sha256 configs/aspire-serving.json)" ]] || { echo "ASPIRE MegaMoE requires the verified Firmus 39070273796 image (Decode kernels and Prefill expert placement, 7251.58 / 7185.18 tok/s); stage that archive before submitting." >&2; exit 1; }
           PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh
           runtime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
           bash scripts/check-firmus-image.sh "${runtime_dir}/sglang.sqsh" "${runtime_dir}/source" "${GITHUB_WORKSPACE}"
           install -m 0755 scripts/stage-qwen-node-model.sh "${runtime_dir}/scripts/stage-qwen-node-model.sh"
           install -m 0644 research/simulation/greedy_probe.py "${runtime_dir}/scripts/greedy_probe.py"
           install -m 0644 configs/aspire-serving.json "${runtime_dir}/source/aspire-serving.json"
+          prefill_location="$(jq -er .prefill_expert_location configs/aspire-serving.json)"
+          if [[ "${prefill_location}" != trivial ]]; then install -m 0644 "${GITHUB_WORKSPACE}/${prefill_location}" "${runtime_dir}/source/prefill-expert-location.json"; fi
           if [[ "$(jq -r '.speculation.algorithm' configs/aspire-serving.json)" == EAGLE3 ]]; then
             uvx --from 'huggingface_hub==0.36.0' hf download nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507 config.json README.md model.safetensors --revision ff0f0c0999f6c86b21dfd2f5803eebc4ac712224 --local-dir "${runtime_dir}/draft" --max-workers 1
             uv run --no-project --python 3.12.12 python research/simulation/prepare_eagle.py "${runtime_dir}/draft" "${runtime_dir}/source"

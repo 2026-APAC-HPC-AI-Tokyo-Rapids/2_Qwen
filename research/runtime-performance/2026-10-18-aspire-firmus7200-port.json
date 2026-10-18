@@ -1,0 +1,54 @@
+{
+  "status": "ported_without_submission; GPU startup and Aspire throughput unmeasured",
+  "branch": "perf/aspire-firmus7200-port-20261018",
+  "base_commit": "bc207d64741ab0cf70194a2cc635585fd5b9d483",
+  "base_reason": "Keep the measured 39070273796 build on the first-parent chain used by select-qwen-container.sh. This branch inherits its exact kernel and SGLang patches; only Aspire runtime wiring changes.",
+  "aspire_reference": {
+    "run_id": 39013218562,
+    "commit": "d7ade0e",
+    "good_output_tokens_per_second": 4661.260454451255,
+    "config_comparison": "Only container_sha256 and prefill_expert_location differ from d7ade0e. Preserve P2/D2, TP4/DP4/EP4, c104, EAGLE3 steps3/draft4, FP8 KV, Prefill round_robin, H100 pools, graph buckets and memory fractions."
+  },
+  "firmus_source": {
+    "run_id": 39070273796,
+    "commit": "0374c551d212f27f05127a68102897fb582029a9",
+    "good_output_tokens_per_second": 7251.583487377242,
+    "repeat_run_id": 39078761629,
+    "repeat_good_output_tokens_per_second": 7185.18,
+    "container_sha256": "7c6286e5dcfcd8f5fba37d03d0c1ac0b4f6e93562a24a147afa1063f8214bc82",
+    "size_bytes": 12249706496,
+    "prefill_expert_location": "configs/firmus-prefill-expert-location.json",
+    "reference": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/blob/d9d1c645e3527743296f58432790ac22d6ff93a0/research/runtime-performance/2026-10-18-firmus-decode-kernel-placement-bundle.md"
+  },
+  "changes": [
+    "Reuse the exact measured image containing the Decode N_SWAP hoist, FC1 quantizer and dispatch pull overlap patches.",
+    "Stage the same 94-layer / 128-expert permutation and mount it read-only for both Prefill workers. Decode retains trivial placement.",
+    "Validate static dispatch and placement on the top-level endpoint and all four DP states per worker, in addition to existing H100 KV-capacity checks."
+  ],
+  "target": {
+    "good_output_tokens_per_second": 5000,
+    "required_improvement_percent": 7.267123321230984,
+    "assessment": "Target only, not a prediction. Aspire c104 is Prefill-limited with no measured ITL violations; static expert placement addresses that bottleneck. Firmus improvements include Decode SLA recovery and cannot be applied proportionally to H100. No throughput claim without a new Aspire run."
+  },
+  "validation": {
+    "measured_artifacts": "All SGLang patch hashes, all three Decode patch hashes, and the placement bytes match archived run 39070273796.",
+    "local_checks": {
+      "linux_cpu_tests": "356 passed, 1 skipped, 22 subtests passed on tg1 in 56.83s; no GPU or scheduler invoked; temporary checkout removed on exit",
+      "ruff": "passed on macOS and Linux",
+      "actionlint": "passed for all workflows",
+      "shell_syntax": "passed for all repository shell/scheduler scripts",
+      "json_and_diff": "passed",
+      "aspire_baseline_diff": "Only container_sha256 and prefill_expert_location differ from d7ade0e",
+      "log": "outputs/aspire-firmus7200-port-20261018/linux-pytest.log",
+      "macos_full_suite": "345 passed, 5 skipped, 7 platform-dependent failures (/proc and UNIX-socket path limits); all those tests passed on Linux"
+    },
+    "archive_availability": "The saved Actions 39070273796 log records materialization of image 7c6286e5 on Aspire. Current direct SSH read timed out; current presence/hash was not independently rechecked. Normal pre-submit image verification remains enabled."
+  },
+  "execution": {
+    "actions_dispatched": 0,
+    "scheduler_jobs_submitted": 0,
+    "builds_started": 0,
+    "pushed": false,
+    "next_run": "Requires separate user authorization. Reuse the pinned image without require-build; keep this branch ancestry so the selector can find its build. GPU startup, effective placement and official score remain to be verified."
+  }
+}
