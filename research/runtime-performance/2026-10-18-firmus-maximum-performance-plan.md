@@ -135,6 +135,7 @@ Tier 2 後は Decode 40〜44/rank を ITL 平均 15〜16 ms で回せるので�
 | 3-2 | FA3 prefill の tile/pipeline（545 → 700 TFLOPS） | FA3 FP8 の公表値との差 | −10 ms | 単体 bench で差を確認してから |
 | 3-3 | EAGLE3 steps 4 / draft 5 | accept 2.21 は低く、Decode 行コストが下がれば verify 行の追加が割に合う可能性 | ITL ±5% | Tier 2 の後に 1 run |
 | 3-4 | Decode 上限 44〜48/rank、c 再設定 | 3-1 で Prefill 供給 50 req/s に届く場合 | score 9300〜9700 | Tier 2 の Decode 改善 |
+| 3-5 | Prefill のみ冗長 expert（R=4〜8、hot expert を 4 rank に複製、静的 routing） | 静的配置後も rank 負荷 max/mean 1.034 が残り、kernel 時間は最重 rank に比例。VRAM は 1 logical expert の全 rank 複製で 1.8 GB/rank。MegaMoE は 32 local 固定の instantiation と patch ガードが理由で未対応 | Prefill −2% 以下 | 3-1 と同じ host library 再ビルド。先に使用統計（`2026-10-18-megamoe-expert-placement.json`）で R ごとの max/mean を机上計算。Decode は重み読み出し床に張り付くので複製しない |
 
 ### 先に測るもの
 
@@ -148,7 +149,7 @@ Tier 2 後は Decode 40〜44/rank を ITL 平均 15〜16 ms で回せるので�
 - PD 統合（1 つの worker で prefill と decode）: Prefill の GPU 時間が支配的で、Decode GPU に prefill を混ぜると ITL が上限を超える。
 - P/D 比の変更: D を 2 GPU にすると重み 118 GB で KV が 86 要求分しか取れず slot が足りない。P を減らす理由はない。
 - 精度を変えるもの（INT4/FP4 重み、accept threshold の緩和、低精度 KV の追加）。
-- 動的 EPLB・冗長 expert（MegaMoE patch のガードで禁止、32 expert/rank 固定）。
+- 動的 EPLB（MegaMoE patch のガードで禁止）。冗長 expert は Prefill 限定で 3-5 として扱う。
 - 2 micro-batch overlap（TBO）の新規実装: MegaMoE は通信を kernel 内で既に重ねており、重ならない部分は 10% 程度。2-1 で直接削る方が安い。
 - prefix cache: 公式 client は `cache-bust first_turn_prefix` で prompt ごとに一意。
 
