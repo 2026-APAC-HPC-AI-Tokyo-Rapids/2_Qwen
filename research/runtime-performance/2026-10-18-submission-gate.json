@@ -1,12 +1,12 @@
 {
   "date": "2026-10-18",
   "base_commit": "9b2fbebefc82304d880179d2758a689f24b60893",
-  "status": "cpu_audit_complete_gpu_submission_prohibited",
-  "firmus_jobs_submitted": 2,
+  "status": "firmus_submission_accepted_results_not_checked",
+  "firmus_jobs_submitted": 3,
   "aspire_jobs_submitted": 0,
   "other_gpu_jobs_submitted": 0,
   "cloud_image_builds_started": 4,
-  "user_constraint": "At most one final Firmus job, only with strong confidence of >7000 good output tok/s; no comparison runs. User subsequently instructed continuing to the final submission and making the candidate at least a superset of the concurrent placement branch. User subsequently explicitly instructed submitting now and ending after submission acceptance without checking results. Latest instruction: do not submit any GPU or Firmus job; continue CPU-only inspection.",
+  "user_constraint": "No comparison runs or speculative extra allocations. Following the CPU audit and its explicit GPU/throughput limitations, the user instructed 投入して, authorizing one Firmus submission with the verified image. This supersedes the earlier no-GPU prohibition for this one run. Retain the earlier instruction to finish after submission acceptance without checking performance results.",
   "latest_completed_results": [
     {
       "cluster": "Firmus",
@@ -236,9 +236,9 @@
       "The external normal benchmark validates the joint placement/Decode improvement end to end, replacing the old synthetic-only projection.",
       "An independently submitted same-image serving rerun 39074570813 exists; the user explicitly requested immediate submission without waiting for results."
     ],
-    "remaining": "Reviewed CPU checks and image verification are complete. Corrected-image GPU serving remains unverified; do not submit without new explicit user authorization.",
+    "remaining": "The one newly authorized Slurm submission was accepted. Stop here under the user's instruction not to check results; do not submit again.",
     "uncertainty": "The integrated fusions have no end-to-end GPU timing yet. Do not claim this branch has scored 7000 or guarantee performance.",
-    "decision": "Do not submit. The previous submission decision was superseded after two startup failures and the explicit prohibition of further GPU/Firmus jobs. No end-to-end score exists for this branch.",
+    "decision": "One run explicitly authorized after the completed CPU audit. Use the verified image, exact measured native kernel and unchanged serving settings. Corrected-image end-to-end score and GPU startup were disclosed as unverified; no throughput guarantee is claimed.",
     "external_repeat_not_awaited": {
       "run_id": 39074570813,
       "reason": "User explicitly requested immediate submission and ending without result checks"
@@ -329,7 +329,7 @@
     "outcome": "GPU numerical/Graph gates passed, then Decode model initialization failed on ForwardBatch.token_to_kv_pool during CUDA graph capture; no benchmark result.",
     "gpu_validation": "FP8 KV exact non-NaN bytes and changed-input CUDA Graph replay passed on all four ranks; TopK exact AOT weights/IDs and Graph count replay passed on all four ranks; native EP4 gate passed.",
     "fix": "Use get_token_to_kv_pool from the real per-forward context. Regression reproduces the exact AttributeError before the fix and passes afterward using source-derived ForwardBatch fields and real ForwardContext.",
-    "next_submission": "Prohibited by latest explicit user instruction; no GPU or Firmus submission."
+    "next_submission": "The later no-GPU instruction was superseded by an explicit user authorization after the CPU audit; see audited_image_submission."
   },
   "current_fix_validation": {
     "source": "17 patch chain applies to pinned source; three source regression scripts pass; modified patch reconstructs the exact three validated files.",
@@ -365,5 +365,31 @@
       }
     },
     "cpu_build_conclusion": "success"
+  },
+  "audited_image_submission": {
+    "authorization": "User explicitly instructed 投入して after the completed CPU audit and disclosure of remaining GPU validation limits.",
+    "run_id": 39094011392,
+    "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39094011392",
+    "commit": "203b78e5ec3fe10f1e3ea8766f619d834d13d775",
+    "event": "workflow_dispatch",
+    "created_at_utc": "2026-10-18T03:32:54Z",
+    "verified_build": 39088958292,
+    "image_sha256": "e54b4defff7035c68458c98d33bc996423e50650e05bbd13b986e101ebf0913f",
+    "nodes": 2,
+    "profile": false,
+    "require_build": false,
+    "other_gpu_clusters": false,
+    "workflow_dispatch_count": 1,
+    "slurm_submission": "accepted",
+    "monitoring": "Confirm Slurm acceptance only; do not check performance results.",
+    "automatic_resubmission": false,
+    "acceptance_evidence": {
+      "actions_job_id": 117577599398,
+      "step": "Slurmジョブを投入",
+      "conclusion": "success",
+      "completed_at_utc": "2026-10-18T03:39:24Z"
+    },
+    "provision_validation": "Verified image SHA-256/size matched and the Firmus image metadata/SM90/applied-patch validator passed before sbatch.",
+    "results_checked": false
   }
 }
