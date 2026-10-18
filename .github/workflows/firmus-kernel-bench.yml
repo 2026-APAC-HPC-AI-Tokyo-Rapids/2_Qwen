@@ -20,7 +20,7 @@ defaults:
 
 jobs:
   provision:
-    name: 固定イメージのDeepGEMMとheader overlayを配備
+    name: 固定イメージのDeepGEMM・SGLangと候補overlayを配備
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     outputs:
@@ -58,7 +58,7 @@ jobs:
         run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
-    name: 1ノード4 GPUでgate・timing・timelineを実行
+    name: 1ノード4 GPUで候補ごとのgate・timing・timelineとSGLang JIT比較を実行
     needs: provision
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
@@ -117,7 +117,7 @@ jobs:
         if: always() && steps.collect.outcome == 'success'
         uses: astral-sh/setup-uv@v7
 
-      - name: timing表とtimeline表をsummaryに記録
+      - name: 候補比較表・timeline表・SGLang表をsummaryに記録して判定
         if: always() && steps.collect.outcome == 'success'
         shell: bash
         run: uv run --no-project --python 3.13 --with numpy python scripts/summarize-megamoe-kernel-bench.py "${RUNNER_TEMP}/qwen-firmus-kernel-bench/results/results" >>"${GITHUB_STEP_SUMMARY}"

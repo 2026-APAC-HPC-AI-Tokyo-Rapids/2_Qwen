@@ -15,6 +15,12 @@ Routing generators (all global expert IDs, top-8 of 128, EP4 = 32 experts/rank):
             rank r, f = (1.0, 1.1, 1.2, 1.3). Calibrated on 16384 tokens to rank loads
             1 : 1.11 : 1.21 : 1.31 and per-expert max/mean about 2.0; the realized
             loads of each case are reported.
+
+Each rank reads its GPU's SM clock and power through NVML right before and right
+after the timed iterations (outside the CUDA event pair), because Prefill power
+throttling (1.47-1.67 GHz) moves the kernel time by several percent.
+With --reference (another variant's bench.jsonl), rows carry the reference
+median and whether the output hash matches it; the caller judges mismatches.
 """
 import argparse
 import ctypes
@@ -122,6 +128,7 @@ def main():
     assert dist.get_world_size() == NUM_RANKS
     device = torch.device("cuda", RANK)
     libc = ctypes.CDLL(None)
+    torch.cuda.clock_rate(device)  # Initialize NVML before the first timed case.
     if RANK == 0:
         print(json.dumps({"deep_gemm": deep_gemm.__file__, "variant": args.variant, "timeline": timeline}), flush=True)
     torch.manual_seed(713 + RANK)
@@ -167,12 +174,14 @@ def main():
                 call()
         events = [(torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)) for _ in range(ITERATIONS)]
         torch.cuda.synchronize()
+        gpu_before = [torch.cuda.clock_rate(device), torch.cuda.power_draw(device) / 1000]
         dist.barrier()
         for start, end in events:
             start.record()
             call()
             end.record()
         torch.cuda.synchronize()
+        gpu_state = gather(torch.tensor(gpu_before + [torch.cuda.clock_rate(device), torch.cuda.power_draw(device) / 1000], dtype=torch.float64, device=device))
         assert torch.isfinite(actual).all(), (name, RANK)
         durations = torch.tensor([start.elapsed_time(end) for start, end in events], device=device)
         dist.all_reduce(durations, op=dist.ReduceOp.MAX)
@@ -187,6 +196,12 @@ def main():
             loads += torch.bincount(ids.flatten().long(), minlength=NUM_EXPERTS)
         rank_loads = loads.view(NUM_RANKS, -1).sum(1).tolist()
         row = {"case": name, "variant": args.variant, "stage": stage, "routing": kind, "tokens_per_rank": count, "cuda_graph": stage == "decode", "warmup": WARMUP, "iterations": ITERATIONS, "median_ms": ordered[len(ordered) // 2], "p10_ms": ordered[int(0.1 * (len(ordered) - 1))], "p90_ms": ordered[round(0.9 * (len(ordered) - 1))], "min_ms": ordered[0], "max_ms": ordered[-1], "max_rank_ms": durations.tolist(), "recv_pairs_per_rank": rank_loads, "rank_load_max_over_mean": max(rank_loads) / (sum(rank_loads) / NUM_RANKS), "expert_load_max_over_mean": loads.max().item() / loads.float().mean().item(), "deterministic": bool(deterministic.item()), "output_sha256": output_digest(actual, count)}
+        row.update({key: [part[index].item() for part in gpu_state] for index, key in enumerate(("sm_clock_mhz_before", "power_w_before", "sm_clock_mhz_after", "power_w_after"))})
+        if name in reference:
+            row["reference_variant"] = reference[name]["variant"]
+            row["reference_median_ms"] = reference[name]["median_ms"]
+            row["delta_median_vs_reference"] = row["median_ms"] / reference[name]["median_ms"] - 1
+            row["output_sha256_matches_reference"] = row["output_sha256"] == reference[name]["output_sha256"]
         saved = args.scratch / f"{name}-rank{RANK}.pt"
         if case in TIMELINE_CASES and not timeline:
             torch.save(actual.cpu(), saved)
@@ -212,9 +227,6 @@ def main():
             dist.all_reduce(difference, op=dist.ReduceOp.MAX)
             row["bitwise_equal_to_reference"] = difference[0].item() == 0
             row["max_abs_diff_to_reference"] = difference[1].item()
-            row["reference_variant"] = reference[name]["variant"]
-            row["reference_median_ms"] = reference[name]["median_ms"]
-            row["overhead_median"] = row["median_ms"] / reference[name]["median_ms"] - 1
         if RANK == 0:
             libc.fflush(None)
             print(json.dumps(row), flush=True)

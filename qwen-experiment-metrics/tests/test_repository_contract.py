@@ -270,5 +270,6 @@ def test_kernel_bench_tag_runs_only_the_one_node_image_bench() -> None:
     assert "uses: ./.github/workflows/firmus-kernel-bench.yml" in bench
     assert "test '${{ inputs.node_count }}' = 1" in workflow
     assert "qwen-firmus-kernel-bench-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
-    assert 'patches/deep-gemm-bench/*.patch' in provision
+    assert '"${bench_dir}"/*/' in provision
+    assert 'patches/sglang-bench/*.patch' in provision
     assert "patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch" in provision

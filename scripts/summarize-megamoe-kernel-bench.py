@@ -1,8 +1,19 @@
-"""Summarize a Firmus MegaMoE kernel bench: timing table and per-phase timeline.
+"""Summarize a Firmus kernel bench: candidate verdicts, timing, timeline, SGLang.
 
-Input: the job's results directory, holding bench.jsonl and timeline.jsonl from
-bench-firmus-megamoe.py and timeline/<case>.npy dumps shaped
-[calls, ranks, words] in the layout of sm90_fp8_mega_moe_timeline.cuh. Times are
+Input: the job's results directory (layout v2, since the multi-candidate bench):
+variants.json from provision-firmus-kernel-bench.sh, steps.tsv from run.sbatch
+(variant, step, exit code, seconds), <variant>/bench.jsonl and, when requested,
+<variant>/timeline.jsonl and <variant>/timeline/<case>.npy from
+bench-firmus-megamoe.py, and sglang/<image|candidate>.jsonl from
+bench-firmus-sglang-kernels.py. Archives from the single-candidate layout need
+the script as of commit 332e30c.
+
+Exit status 1 marks any failure: a non-zero step, a DeepGEMM output hash that
+differs from the image, a missing case, a timeline patch that did not apply, or
+an SGLang case whose output hash differs between the image and the candidate.
+
+Timeline dumps are shaped [calls, ranks, words] in the layout of
+sm90_fp8_mega_moe_timeline.cuh. Times are
 microseconds since the rank's first CTA entry. Within a CTA, event times use
 clock64 deltas from the CTA entry converted with that CTA's measured SM clock
 (clock64 / %globaltimer over the CTA lifetime); CTA entries are aligned with
@@ -78,14 +89,14 @@ def cell(values, suffix=""):
     return f"{np.median(values):.1f} / {np.max(values):.1f}{suffix}"
 
 
-def report(path):
+def report(path, title):
     data = np.load(path)
     calls = [[parse(data[call, rank]) for rank in range(data.shape[1])] for call in range(data.shape[0])]
     kernel = np.array([max(rank["end"] for rank in call) for call in calls[1:]])
     chosen = calls[1 + int(np.argsort(kernel)[len(kernel) // 2])]
     ranks = range(len(chosen))
     header = chosen[0]["header"]
-    lines = [f"### {path.stem}", "", f"Geometry from the kernel header: BLOCK_M {header['block_m']}, BLOCK_N {header['block_n']}, {header['epilogue_threads']} math threads, {header['stages']} stages, {header['num_sms']} CTAs, {header['num_tokens']} tokens/rank.", f"Kernel time (max over ranks of last CTA exit since that rank's first CTA entry), calls 2-{len(calls)}: median {np.median(kernel):.1f} us, min {kernel.min():.1f}, max {kernel.max():.1f}. SM clock {np.nanmedian(np.concatenate([rank['ghz'] for rank in chosen])):.3f} GHz; %globaltimer step {min(rank['granularity_ns'] for rank in chosen):.0f} ns.", ""]
+    lines = [f"### {title}", "", f"Geometry from the kernel header: BLOCK_M {header['block_m']}, BLOCK_N {header['block_n']}, {header['epilogue_threads']} math threads, {header['stages']} stages, {header['num_sms']} CTAs, {header['num_tokens']} tokens/rank.", f"Kernel time (max over ranks of last CTA exit since that rank's first CTA entry), calls 2-{len(calls)}: median {np.median(kernel):.1f} us, min {kernel.min():.1f}, max {kernel.max():.1f}. SM clock {np.nanmedian(np.concatenate([rank['ghz'] for rank in chosen])):.3f} GHz; %globaltimer step {min(rank['granularity_ns'] for rank in chosen):.0f} ns.", ""]
     lines += ["Per-phase duration, us (median over CTAs / max over CTAs):", "", "| Phase | " + " | ".join(f"rank {rank}" for rank in ranks) + " |", "| --- |" + " ---: |" * len(chosen)]
     for label, begin, finish in PHASES:
         lines.append(f"| {label} | " + " | ".join(cell(rank["times"][:, E[finish]] - rank["times"][:, E[begin]]) for rank in chosen) + " |")
@@ -107,26 +118,140 @@ def report(path):
     return "\n".join(lines) + "\n"
 
 
-def timing(results):
-    lines = ["### Kernel timing (pre-dispatch + fused kernel, max over ranks per iteration)", "", "| Case | Variant | Median ms | p10 ms | p90 ms | Rank load max/mean | Expert load max/mean | Deterministic | Note |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |"]
-    for name in ("bench.jsonl", "timeline.jsonl"):
-        path = results / name
-        if not path.exists():
-            continue
-        for row in map(json.loads, path.read_text().splitlines()):
-            note = ""
-            if "overhead_median" in row:
-                note = f"bitwise equal to {row['reference_variant']}: {row['bitwise_equal_to_reference']}; overhead {row['overhead_median']:+.1%}"
-            lines.append(f"| {row['case']} | {row['variant']} | {row['median_ms']:.4f} | {row['p10_ms']:.4f} | {row['p90_ms']:.4f} | {row['rank_load_max_over_mean']:.3f} | {row['expert_load_max_over_mean']:.2f} | {row['deterministic']} | {note} |")
-    return "\n".join(lines) + "\n"
+def load_rows(path):
+    return {row["case"]: row for row in map(json.loads, path.read_text().splitlines())} if path.exists() else {}
+
+
+def slowest_clock(row):
+    # Kernel time follows the slowest GPU; average its before/after samples.
+    return min((before + after) / 2 for before, after in zip(row["sm_clock_mhz_before"], row["sm_clock_mhz_after"]))
+
+
+def step_cell(steps, variant, name):
+    if (variant, name) not in steps:
+        return "not run", False
+    code = steps[(variant, name)]
+    return ("pass" if code == 0 else f"FAIL (exit {code})"), code == 0
+
+
+def deep_gemm(results, steps):
+    variants = json.loads((results / "variants.json").read_text())["deep_gemm"]
+    rows = {variant["name"]: load_rows(results / variant["name"] / "bench.jsonl") for variant in variants}
+    image = rows["image"]
+    cases = list(image)
+    failed = []
+    lines = ["### DeepGEMM candidates", "", "| Variant | Patches | Gate | Bench | Output hash = image | Timeline | Verdict |", "| --- | --- | --- | --- | --- | --- | --- |"]
+    for variant in variants:
+        name = variant["name"]
+        ok = True
+        gate, passed = ("- (image)", True) if name == "image" else step_cell(steps, name, "gate")
+        ok &= passed
+        bench, passed = step_cell(steps, name, "bench")
+        ok &= passed and len(rows[name]) == len(cases)
+        hashes = "-"
+        if name != "image":
+            matches = sum(rows[name].get(case, {}).get("output_sha256") == image[case]["output_sha256"] for case in cases)
+            hashes = f"{matches}/{len(cases)}" + ("" if matches == len(cases) else " MISMATCH")
+            ok &= matches == len(cases)
+        timeline = variant["timeline"]
+        if timeline == "apply-failed":
+            timeline, ok = "timeline patch did not apply", False
+        elif timeline == "ready":
+            timeline, passed = step_cell(steps, name, "timeline")
+            ok &= passed
+        if not ok:
+            failed.append(name)
+        patches = ", ".join(patch["path"].rsplit("/", 1)[-1] for patch in variant["patches"]) or "-"
+        lines.append(f"| {name} | {patches} | {gate} | {bench} | {hashes} | {timeline} | {'OK' if ok else 'FAILED'} |")
+    names = [variant["name"] for variant in variants]
+    lines += ["", "### Kernel timing, median ms (delta vs image; * = output hash differs from image)", "", "| Case | " + " | ".join(names) + " |", "| --- |" + " ---: |" * len(names)]
+    for case in cases:
+        cells = []
+        for name in names:
+            row = rows[name].get(case)
+            if row is None:
+                cells.append("-")
+            elif name == "image":
+                cells.append(f"{row['median_ms']:.4f}")
+            else:
+                mark = "" if row["output_sha256"] == image[case]["output_sha256"] else "*"
+                cells.append(f"{row['median_ms']:.4f} ({row['median_ms'] / image[case]['median_ms'] - 1:+.1%}){mark}")
+        lines.append(f"| {case} | " + " | ".join(cells) + " |")
+    lines += ["", "Per variant detail (pre-dispatch + fused kernel, max over ranks per iteration). SM clock is the slowest GPU's NVML clock averaged before/after the timed iterations; the clock-normalized delta compares median x clock (cycle-equivalent) with the image.", "", "| Case | Variant | Median ms | p10 ms | p90 ms | Delta | SM MHz | Delta at equal clock | Power W (max rank) | Rank load max/mean | Deterministic | Hash = image |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"]
+    for case in cases:
+        reference = image[case]
+        for name in names:
+            row = rows[name].get(case)
+            if row is None:
+                continue
+            clock = slowest_clock(row)
+            delta = "-" if name == "image" else f"{row['median_ms'] / reference['median_ms'] - 1:+.1%}"
+            normalized = "-" if name == "image" else f"{row['median_ms'] * clock / (reference['median_ms'] * slowest_clock(reference)) - 1:+.1%}"
+            same = "-" if name == "image" else str(row["output_sha256"] == reference["output_sha256"])
+            power = max(max(row["power_w_before"]), max(row["power_w_after"]))
+            lines.append(f"| {case} | {name} | {row['median_ms']:.4f} | {row['p10_ms']:.4f} | {row['p90_ms']:.4f} | {delta} | {clock:.0f} | {normalized} | {power:.0f} | {row['rank_load_max_over_mean']:.3f} | {row['deterministic']} | {same} |")
+    timelines = [(variant["name"], load_rows(results / variant["name"] / "timeline.jsonl")) for variant in variants if variant["timeline"] == "ready"]
+    if any(timeline for _, timeline in timelines):
+        lines += ["", "### Timeline runs (instrumented vs the same variant's bench)", "", "| Case | Variant | Median ms | Overhead | Bitwise equal | SM MHz |", "| --- | --- | ---: | ---: | --- | ---: |"]
+        for name, timeline in timelines:
+            for case, row in timeline.items():
+                lines.append(f"| {case} | {name} | {row['median_ms']:.4f} | {row['delta_median_vs_reference']:+.1%} | {row['bitwise_equal_to_reference']} | {slowest_clock(row):.0f} |")
+    reports = [report(path, f"{name}: {path.stem}") for name, _ in timelines for path in sorted((results / name / "timeline").glob("*.npy"))]
+    return "\n".join(lines) + "\n\n" + "\n".join(reports), failed
+
+
+def sglang(results, steps):
+    config = json.loads((results / "variants.json").read_text())["sglang"]
+    if config is None:
+        return "", []
+    failed = []
+    lines = ["### SGLang JIT kernels (image tree vs patched tree)", "", "Patches: " + ", ".join(patch["path"].rsplit("/", 1)[-1] for patch in config["patches"]), "", "| Tree | Decode-kernel check | Bench |", "| --- | --- | --- |"]
+    for tree in ("image", "candidate"):
+        check, passed = step_cell(steps, f"sglang-{tree}", "check")
+        if not passed:
+            failed.append(f"sglang-{tree} check")
+        bench = "no bench script"
+        if config["bench_script"]:
+            bench, passed = step_cell(steps, f"sglang-{tree}", "bench")
+            if not passed:
+                failed.append(f"sglang-{tree} bench")
+        lines.append(f"| {tree} | {check} | {bench} |")
+    if config["bench_script"]:
+        image, candidate = load_rows(results / "sglang" / "image.jsonl"), load_rows(results / "sglang" / "candidate.jsonl")
+        lines += ["", "| Case | Image median us | Candidate median us | Delta | Candidate p10 / p90 us | Hash equal |", "| --- | ---: | ---: | ---: | ---: | --- |"]
+        for case in dict.fromkeys(list(image) + list(candidate)):
+            base, row = image.get(case), candidate.get(case)
+            if base is None or row is None:
+                failed.append(f"sglang {case} missing")
+                lines.append(f"| {case} | {base['median_us'] if base else '-'} | {row['median_us'] if row else '-'} | - | - | - |")
+                continue
+            same = base["output_sha256"] == row["output_sha256"]
+            if not same:
+                failed.append(f"sglang {case} hash")
+            lines.append(f"| {case} | {base['median_us']:.2f} | {row['median_us']:.2f} | {row['median_us'] / base['median_us'] - 1:+.1%} | {row['p10_us']:.2f} / {row['p90_us']:.2f} | {same} |")
+    return "\n".join(lines) + "\n", failed
+
+
+def summarize(results):
+    steps = {}
+    if (results / "steps.tsv").exists():
+        for line in (results / "steps.tsv").read_text().splitlines():
+            variant, name, code, _ = line.split("\t")
+            steps[(variant, name)] = int(code)
+    text, failed = deep_gemm(results, steps)
+    sglang_text, sglang_failed = sglang(results, steps)
+    failed += sglang_failed
+    verdict = "All variants passed." if not failed else "FAILED: " + ", ".join(failed)
+    return f"### Verdict\n\n{verdict}\n\n{text}\n{sglang_text}", failed
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("results", type=Path)
     args = parser.parse_args()
-    print(timing(args.results))
-    print("\n".join(report(path) for path in sorted((args.results / "timeline").glob("*.npy"))))
+    text, failed = summarize(args.results)
+    print(text)
+    raise SystemExit(1 if failed else 0)
 
 
 if __name__ == "__main__":

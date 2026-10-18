@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Stage a 1-node SM90 MegaMoE kernel bench on the Firmus login node: the pinned
-# serving image (no rebuild), its DeepGEMM package, and header overlays built
-# from patches/deep-gemm-bench/*.patch (candidates, sorted) and the bench-only
-# timeline patch. Patch failures stop here, before any Slurm submission.
+# serving image (no rebuild), its DeepGEMM package and SGLang Python tree, one
+# header overlay per DeepGEMM candidate (patches/deep-gemm-bench/<name>/*.patch),
+# timeline overlays where a candidate directory holds a `timeline` marker, and
+# an SGLang tree with patches/sglang-bench/*.patch. A candidate patch that does
+# not apply stops here, before any Slurm submission; a timeline patch that does
+# not apply on top of a candidate is recorded and that timeline is skipped.
 set -euo pipefail
+shopt -s inherit_errexit
 
 : "${GITHUB_WORKSPACE:?}"
 : "${GITHUB_RUN_ID:?}"
@@ -12,6 +16,23 @@ set -euo pipefail
 : "${GITHUB_OUTPUT:?}"
 : "${RUNTIME_ROOT:?}"
 
+# The hpcai partition caps jobs at 17 minutes. Measured steps: image bench about
+# 70 s, candidate gate about 70 s, bench about 40 s, timeline about 35 s.
+max_candidates=4
+bench_dir="${GITHUB_WORKSPACE}/patches/deep-gemm-bench"
+shopt -s nullglob
+flat_patches=("${bench_dir}"/*.patch)
+candidate_dirs=("${bench_dir}"/*/)
+sglang_patches=("${GITHUB_WORKSPACE}"/patches/sglang-bench/*.patch)
+shopt -u nullglob
+if (( ${#flat_patches[@]} )); then printf 'Move %s into patches/deep-gemm-bench/<candidate>/ (one directory per candidate).\n' "${flat_patches[@]#"${GITHUB_WORKSPACE}/"}" >&2; exit 1; fi
+if (( ${#candidate_dirs[@]} > max_candidates )); then printf '%s DeepGEMM candidates exceed the %s that fit in one 17-minute Slurm job.\n' "${#candidate_dirs[@]}" "${max_candidates}" >&2; exit 1; fi
+for dir in "${candidate_dirs[@]}"; do
+  name="$(basename "${dir}")"
+  [[ "${name}" =~ ^[a-z0-9][a-z0-9._-]*$ && "${name}" != image ]] || { printf 'Candidate directory name %s must match [a-z0-9][a-z0-9._-]* and not be "image".\n' "${name}" >&2; exit 1; }
+  compgen -G "${dir}*.patch" >/dev/null || { printf 'Candidate directory %s has no .patch file.\n' "${name}" >&2; exit 1; }
+done
+
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 image="$(jq -er .images.sglang.path "${config}")"
 expected_sha="$(jq -er .images.sglang.sha256 "${config}")"
@@ -19,7 +40,7 @@ expected_sha="$(jq -er .images.sglang.sha256 "${config}")"
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/kernel-bench-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
-install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source" "${runtime_dir}/scratch" "${runtime_dir}/overlay" "${runtime_dir}/home"
+install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source/patches" "${runtime_dir}/scratch" "${runtime_dir}/overlay/candidates" "${runtime_dir}/overlay/timeline" "${runtime_dir}/home"
 echo "Checking sglang image SHA-256"
 while sleep 15; do echo "container_sha256_check_in_progress=sglang"; done &
 progress_pid=$!
@@ -31,34 +52,68 @@ trap - EXIT
 [[ "$(awk '{print $1}' "${runtime_dir}/source/sglang-image.sha256")" == "${expected_sha}" ]]
 ln -s "${image}" "${runtime_dir}/sglang.sqsh"
 
-# The image's DeepGEMM already carries patches/deep-gemm/*.patch (header SHA in its build record).
+# The image's DeepGEMM already carries patches/deep-gemm/*.patch (header SHA in
+# its build record), and its SGLang source already carries patches/sglang/*.patch.
 package=opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
-unsquashfs -no-progress -no-xattrs -processors 1 -d "${runtime_dir}/image" "${image}" "${package}" opt/apac/sm90-megamoe-build.json
+sglang_package=opt/sglang/source/python/sglang
+extract=("${package}" opt/apac/sm90-megamoe-build.json)
+if (( ${#sglang_patches[@]} )); then extract+=("${sglang_package}"); fi
+unsquashfs -no-progress -no-xattrs -processors 1 -d "${runtime_dir}/image" "${image}" "${extract[@]}"
 chmod -R u+w "${runtime_dir}/image"
 cp "${runtime_dir}/image/opt/apac/sm90-megamoe-build.json" "${runtime_dir}/source/"
 [[ "$(sha256sum "${runtime_dir}/image/${package}/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh" | awk '{print $1}')" == "$(jq -er .header_sha256 "${runtime_dir}/source/sm90-megamoe-build.json")" ]]
 
-shopt -s nullglob
-candidates=("${GITHUB_WORKSPACE}"/patches/deep-gemm-bench/*.patch)
-shopt -u nullglob
 timeline_patch="${GITHUB_WORKSPACE}/patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch"
-# Overlay roots mirror site-packages, where the image applied its DeepGEMM patches.
-build_overlay() {
-  local name=$1
+apply_patches() {
+  local root=$1
   shift
-  install -d -m 0755 "${runtime_dir}/overlay/${name}"
-  cp -a "${runtime_dir}/image/${package}" "${runtime_dir}/overlay/${name}/deep_gemm"
   for patch in "$@"; do
-    (cd "${runtime_dir}/overlay/${name}" && git apply --check "${patch}" && git apply "${patch}")
+    (cd "${root}" && git apply --check "${patch}" && git apply "${patch}")
   done
 }
-if (( ${#candidates[@]} )); then build_overlay candidate "${candidates[@]}"; fi
-build_overlay timeline "${candidates[@]}" "${timeline_patch}"
-install -d -m 0755 "${runtime_dir}/source/patches"
-cp "${candidates[@]}" "${timeline_patch}" "${runtime_dir}/source/patches/"
+patch_records() {
+  for patch in "$@"; do jq -n --arg path "${patch#"${GITHUB_WORKSPACE}/"}" --arg sha "$(sha256sum "${patch}" | awk '{print $1}')" '{path:$path,sha256:$sha}'; done | jq -s .
+}
+# Timeline overlay roots mirror site-packages like the candidate overlays; the
+# timeline patch's context lines can collide with a candidate's edits.
+add_timeline() {
+  local name=$1 base=$2 dir=$3
+  if [[ ! -e "${dir}/timeline" ]]; then echo not-requested; return; fi
+  install -d -m 0755 "${runtime_dir}/overlay/timeline/${name}"
+  cp -a "${base}" "${runtime_dir}/overlay/timeline/${name}/deep_gemm"
+  if (cd "${runtime_dir}/overlay/timeline/${name}" && git apply --check "${timeline_patch}" 2>"${runtime_dir}/logs/timeline-apply-${name}.log" && git apply "${timeline_patch}"); then echo ready; return; fi
+  cat "${runtime_dir}/logs/timeline-apply-${name}.log" >&2
+  rm -rf -- "${runtime_dir}/overlay/timeline/${name}"
+  echo apply-failed
+}
+timeline="$(add_timeline image "${runtime_dir}/image/${package}" "${bench_dir}")"
+variants="$(jq -n --arg timeline "${timeline}" '[{name:"image",patches:[],timeline:$timeline}]')"
+for dir in "${candidate_dirs[@]}"; do
+  name="$(basename "${dir}")"
+  patches=("${dir}"*.patch)
+  install -d -m 0755 "${runtime_dir}/overlay/candidates/${name}"
+  cp -a "${runtime_dir}/image/${package}" "${runtime_dir}/overlay/candidates/${name}/deep_gemm"
+  apply_patches "${runtime_dir}/overlay/candidates/${name}" "${patches[@]}"
+  timeline="$(add_timeline "${name}" "${runtime_dir}/overlay/candidates/${name}/deep_gemm" "${dir}")"
+  variants="$(jq --arg name "${name}" --argjson patches "$(patch_records "${patches[@]}")" --arg timeline "${timeline}" '. + [{name:$name,patches:$patches,timeline:$timeline}]' <<<"${variants}")"
+done
+sglang=null
+if (( ${#sglang_patches[@]} )); then
+  # git apply paths are relative to /opt/sglang/source (python/sglang/...).
+  install -d -m 0755 "${runtime_dir}/overlay/sglang/python"
+  cp -a "${runtime_dir}/image/${sglang_package}" "${runtime_dir}/overlay/sglang/python/sglang"
+  apply_patches "${runtime_dir}/overlay/sglang" "${sglang_patches[@]}"
+  sglang="$(jq -n --argjson patches "$(patch_records "${sglang_patches[@]}")" --argjson bench "$(if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then echo true; else echo false; fi)" '{patches:$patches,bench_script:$bench}')"
+fi
+jq -n --argjson deep_gemm "${variants}" --argjson sglang "${sglang}" '{deep_gemm:$deep_gemm,sglang:$sglang}' >"${runtime_dir}/results/variants.json"
+for part in deep-gemm-bench sglang-bench; do
+  if [[ -d "${GITHUB_WORKSPACE}/patches/${part}" ]]; then cp -a "${GITHUB_WORKSPACE}/patches/${part}" "${runtime_dir}/source/patches/"; fi
+done
+cp "${timeline_patch}" "${runtime_dir}/source/patches/"
 
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/kernel-bench/run.sbatch" "${runtime_dir}/scripts/run.sbatch"
-install -m 0644 "${GITHUB_WORKSPACE}/scripts/bench-firmus-megamoe.py" "${GITHUB_WORKSPACE}/scripts/check-firmus-megamoe.py" "${GITHUB_WORKSPACE}/scripts/check-firmus-decode-kernels.py" "${runtime_dir}/scripts/"
-cp "${runtime_dir}/scripts/run.sbatch" "${runtime_dir}/scripts/bench-firmus-megamoe.py" "${runtime_dir}/scripts/check-firmus-megamoe.py" "${runtime_dir}/scripts/check-firmus-decode-kernels.py" "${runtime_dir}/source/"
-patch_records="$(for patch in "${candidates[@]}"; do jq -n --arg path "${patch#"${GITHUB_WORKSPACE}/"}" --arg sha "$(sha256sum "${patch}" | awk '{print $1}')" '{path:$path,sha256:$sha}'; done | jq -s .)"
-jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson image "$(jq .images.sglang "${config}")" --argjson candidates "${patch_records}" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" '{schema_version:"qwen3-megamoe-kernel-bench/v1",cluster:"firmus",commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes}),candidate_patches:$candidates,timeline_patch_sha256:$timeline_sha}' >"${runtime_dir}/source/provenance.json"
+scripts=(bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-kernels.py)
+if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then scripts+=(bench-firmus-sglang-kernels.py); fi
+for script in "${scripts[@]}"; do install -m 0644 "${GITHUB_WORKSPACE}/scripts/${script}" "${runtime_dir}/scripts/"; cp "${runtime_dir}/scripts/${script}" "${runtime_dir}/source/"; done
+cp "${runtime_dir}/scripts/run.sbatch" "${runtime_dir}/source/"
+jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson image "$(jq .images.sglang "${config}")" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" '{schema_version:"qwen3-megamoe-kernel-bench/v2",cluster:"firmus",commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes}),timeline_patch_sha256:$timeline_sha,variants:"results/variants.json"}' >"${runtime_dir}/source/provenance.json"

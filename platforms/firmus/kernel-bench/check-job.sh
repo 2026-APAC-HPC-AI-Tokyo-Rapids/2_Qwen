@@ -14,5 +14,5 @@ exit_code="$(awk -F'|' -v job_id="${SLURM_JOB_ID}" '$1 == job_id {print $3}' "${
 test "${state}" = COMPLETED
 test "${exit_code}" = 0:0
 test -e "${RUNTIME_DIR}/run-success"
-test -s "${RUNTIME_DIR}/results/bench.jsonl"
-test -s "${RUNTIME_DIR}/results/timeline.jsonl"
+# Per-candidate failures are judged by summarize-megamoe-kernel-bench.py.
+test -s "${RUNTIME_DIR}/results/image/bench.jsonl"

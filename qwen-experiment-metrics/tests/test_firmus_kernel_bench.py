@@ -1,0 +1,190 @@
+"""GPU-free checks of the multi-candidate Firmus kernel bench staging and summary."""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import os
+import runpy
+import shutil
+import subprocess
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+HEADER = "opt/sglang/venv/lib/python3.12/site-packages/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
+JIT = "opt/sglang/source/python/sglang/kernels/jit/csrc/gemm/per_token_group_quant.cuh"
+UNSQUASHFS = """#!/usr/bin/env bash
+set -euo pipefail
+while [[ $1 != -d ]]; do shift; done
+dest=$2 image=$3
+shift 3
+for path in "$@"; do mkdir -p "${dest}/$(dirname "${path}")"; cp -a "$(dirname "${image}")/rootfs/${path}" "${dest}/${path}"; done
+"""
+
+
+def make_patch(tmp_path: Path, relative: str, before: str, after: str) -> str:
+    repo = tmp_path / "patch-repo"
+    shutil.rmtree(repo, ignore_errors=True)
+    (repo / relative).parent.mkdir(parents=True)
+    (repo / relative).write_text(before)
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "."], check=True)
+    subprocess.run([*git, "commit", "-qm", "base"], check=True)
+    (repo / relative).write_text(after)
+    return subprocess.run([*git, "diff"], check=True, capture_output=True, text=True).stdout
+
+
+def workspace(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    header = "".join(f"line {index}\n" for index in range(1, 12))
+    jit = "".join(f"jit {index}\n" for index in range(1, 8))
+    rootfs = tmp_path / "containers/rootfs"
+    for relative, text in ((HEADER, header), (JIT, jit)):
+        (rootfs / relative).parent.mkdir(parents=True, exist_ok=True)
+        (rootfs / relative).write_text(text)
+    (rootfs / "opt/apac").mkdir(parents=True)
+    (rootfs / "opt/apac/sm90-megamoe-build.json").write_text(json.dumps({"header_sha256": hashlib.sha256(header.encode()).hexdigest()}))
+    image = tmp_path / "containers/image.sqsh"
+    image.write_bytes(b"fake squashfs")
+    ws = tmp_path / "ws"
+    (ws / "configs").mkdir(parents=True)
+    (ws / "configs/firmus-framework.json").write_text(json.dumps({"images": {"sglang": {"path": str(image), "sha256": hashlib.sha256(b"fake squashfs").hexdigest(), "size_bytes": image.stat().st_size}}}))
+    (ws / "scripts").mkdir()
+    for script in ("provision-firmus-kernel-bench.sh", "bench-firmus-megamoe.py", "check-firmus-megamoe.py", "check-firmus-decode-kernels.py"):
+        shutil.copy(ROOT / "scripts" / script, ws / "scripts" / script)
+    (ws / "platforms/firmus/kernel-bench").mkdir(parents=True)
+    shutil.copy(ROOT / "platforms/firmus/kernel-bench/run.sbatch", ws / "platforms/firmus/kernel-bench/run.sbatch")
+    relative = "deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
+    timeline = ws / "patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch"
+    timeline.parent.mkdir(parents=True)
+    timeline.write_text(make_patch(tmp_path, relative, header, header.replace("line 3\n", "line 3 timeline\n")))
+    patches = {
+        "comment": make_patch(tmp_path, relative, header, header + "// comment only\n"),
+        "conflict": make_patch(tmp_path, relative, header, header.replace("line 3\n", "line 3 candidate\n")),
+        "sglang": make_patch(tmp_path, "python/sglang/kernels/jit/csrc/gemm/per_token_group_quant.cuh", jit, jit + "// comment only\n"),
+    }
+    shims = tmp_path / "bin"
+    shims.mkdir()
+    (shims / "unsquashfs").write_text(UNSQUASHFS)
+    (shims / "unsquashfs").chmod(0o755)
+    return ws, patches
+
+
+def provision(tmp_path: Path, ws: Path) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "GITHUB_WORKSPACE": str(ws), "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "abc", "GITHUB_OUTPUT": str(tmp_path / "output"), "RUNTIME_ROOT": str(tmp_path / "runs")}
+    return subprocess.run(["bash", str(ws / "scripts/provision-firmus-kernel-bench.sh")], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+
+
+def add_candidate(ws: Path, name: str, patch: str, timeline: bool = False) -> None:
+    directory = ws / "patches/deep-gemm-bench" / name
+    directory.mkdir(parents=True)
+    (directory / "000.patch").write_text(patch)
+    if timeline:
+        (directory / "timeline").touch()
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+def test_provision_stages_each_candidate_and_records_timeline_failures(tmp_path: Path) -> None:
+    ws, patches = workspace(tmp_path)
+    add_candidate(ws, "a-comment", patches["comment"], timeline=True)
+    add_candidate(ws, "b-conflict", patches["conflict"], timeline=True)
+    (ws / "patches/deep-gemm-bench/timeline").touch()
+    (ws / "patches/sglang-bench").mkdir(parents=True)
+    (ws / "patches/sglang-bench/000.patch").write_text(patches["sglang"])
+
+    result = provision(tmp_path, ws)
+
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    variants = json.loads((runtime / "results/variants.json").read_text())
+    assert [(v["name"], v["timeline"]) for v in variants["deep_gemm"]] == [("image", "ready"), ("a-comment", "ready"), ("b-conflict", "apply-failed")]
+    assert variants["deep_gemm"][1]["patches"][0]["path"] == "patches/deep-gemm-bench/a-comment/000.patch"
+    assert variants["sglang"]["bench_script"] is False
+    header = "deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
+    assert (runtime / "overlay/candidates/a-comment" / header).read_text().endswith("// comment only\n")
+    assert "line 3 candidate" in (runtime / "overlay/candidates/b-conflict" / header).read_text()
+    assert "line 3 timeline" in (runtime / "overlay/timeline/image" / header).read_text()
+    assert (runtime / "overlay/timeline/a-comment" / header).read_text().endswith("// comment only\n")
+    assert not (runtime / "overlay/timeline/b-conflict").exists()
+    assert (runtime / "logs/timeline-apply-b-conflict.log").read_text()
+    assert (runtime / "overlay/sglang/python/sglang/kernels/jit/csrc/gemm/per_token_group_quant.cuh").read_text().endswith("// comment only\n")
+    assert (runtime / "source/patches/deep-gemm-bench/a-comment/timeline").exists()
+    assert json.loads((runtime / "source/provenance.json").read_text())["schema_version"] == "qwen3-megamoe-kernel-bench/v2"
+
+
+@pytest.mark.parametrize("layout", ["flat", "too-many", "bad-name"])
+def test_provision_rejects_layouts_before_staging(tmp_path: Path, layout: str) -> None:
+    ws, patches = workspace(tmp_path)
+    if layout == "flat":
+        (ws / "patches/deep-gemm-bench").mkdir(parents=True)
+        (ws / "patches/deep-gemm-bench/000.patch").write_text(patches["comment"])
+    elif layout == "too-many":
+        for index in range(5):
+            add_candidate(ws, f"c{index}", patches["comment"])
+    else:
+        add_candidate(ws, "image", patches["comment"])
+
+    result = provision(tmp_path, ws)
+
+    assert result.returncode != 0
+    assert not (tmp_path / "runs").exists()
+
+
+def bench_row(case: str, median: float, digest: str, clock: float = 1980) -> dict:
+    return {"case": case, "variant": "x", "median_ms": median, "p10_ms": median * 0.99, "p90_ms": median * 1.01, "rank_load_max_over_mean": 1.0, "deterministic": True, "output_sha256": digest, "sm_clock_mhz_before": [clock] * 4, "sm_clock_mhz_after": [clock] * 4, "power_w_before": [500] * 4, "power_w_after": [600] * 4}
+
+
+def write_rows(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+
+def load_summary(monkeypatch: pytest.MonkeyPatch):
+    # Timeline .npy reports need numpy; these fixtures carry no dumps.
+    if importlib.util.find_spec("numpy") is None:
+        monkeypatch.setitem(sys.modules, "numpy", types.ModuleType("numpy"))
+    return runpy.run_path(str(ROOT / "scripts/summarize-megamoe-kernel-bench.py"))["summarize"]
+
+
+def test_summary_compares_candidates_and_flags_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    summarize = load_summary(monkeypatch)
+    patch = [{"path": "patches/deep-gemm-bench/x/000.patch", "sha256": "0"}]
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "ready"}, {"name": "fast", "patches": patch, "timeline": "not-requested"}, {"name": "wrong", "patches": patch, "timeline": "apply-failed"}, {"name": "broken", "patches": patch, "timeline": "ready"}], "sglang": {"patches": [{"path": "patches/sglang-bench/000.patch", "sha256": "1"}], "bench_script": True}}))
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t70\nimage\ttimeline\t0\t35\nsglang-image\tcheck\t0\t30\nsglang-image\tbench\t0\t20\nsglang-candidate\tcheck\t0\t60\nsglang-candidate\tbench\t0\t20\nfast\tgate\t0\t70\nfast\tbench\t0\t40\nwrong\tgate\t0\t70\nwrong\tbench\t0\t40\nbroken\tgate\t1\t50\n")
+    write_rows(tmp_path / "image/bench.jsonl", [bench_row("decode-balanced-128", 0.2, "d"), bench_row("prefill-balanced-4096", 1.7, "p", clock=1500)])
+    write_rows(tmp_path / "image/timeline.jsonl", [{**bench_row("decode-balanced-128", 0.23, "d"), "delta_median_vs_reference": 0.15, "bitwise_equal_to_reference": True}])
+    write_rows(tmp_path / "fast/bench.jsonl", [bench_row("decode-balanced-128", 0.18, "d"), bench_row("prefill-balanced-4096", 1.6, "p", clock=1600)])
+    write_rows(tmp_path / "wrong/bench.jsonl", [bench_row("decode-balanced-128", 0.19, "other"), bench_row("prefill-balanced-4096", 1.7, "p")])
+    write_rows(tmp_path / "sglang/image.jsonl", [{"case": "silu-quant-128", "median_us": 10.0, "p10_us": 9.9, "p90_us": 10.1, "output_sha256": "s"}])
+    write_rows(tmp_path / "sglang/candidate.jsonl", [{"case": "silu-quant-128", "median_us": 8.0, "p10_us": 7.9, "p90_us": 8.1, "output_sha256": "s"}])
+
+    text, failed = summarize(tmp_path)
+
+    assert failed == ["wrong", "broken"]
+    assert "| fast | 000.patch | pass | pass | 2/2 | not-requested | OK |" in text
+    assert "| wrong | 000.patch | pass | pass | 1/2 MISMATCH | timeline patch did not apply | FAILED |" in text
+    assert "| broken | 000.patch | FAIL (exit 1) | not run | 0/2 MISMATCH | not run | FAILED |" in text
+    assert "| decode-balanced-128 | 0.2000 | 0.1800 (-10.0%) | 0.1900 (-5.0%)* | - |" in text
+    # 1.6 ms at 1600 MHz is 2560 kcycles against 1.7 ms at 1500 MHz = 2550.
+    assert "| prefill-balanced-4096 | fast | 1.6000 | 1.5840 | 1.6160 | -5.9% | 1600 | +0.4% | 600 |" in text
+    assert "| decode-balanced-128 | image | 0.2300 | +15.0% | True | 1980 |" in text
+    assert "| silu-quant-128 | 10.00 | 8.00 | -20.0% | 7.90 / 8.10 | True |" in text
+
+
+def test_summary_passes_clean_run_and_catches_sglang_hash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    summarize = load_summary(monkeypatch)
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "not-requested"}], "sglang": None}))
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t70\n")
+    write_rows(tmp_path / "image/bench.jsonl", [bench_row("decode-balanced-128", 0.2, "d")])
+    assert summarize(tmp_path)[1] == []
+
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "not-requested"}], "sglang": {"patches": [], "bench_script": True}}))
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t70\nsglang-image\tcheck\t0\t1\nsglang-image\tbench\t0\t1\nsglang-candidate\tcheck\t0\t1\nsglang-candidate\tbench\t0\t1\n")
+    write_rows(tmp_path / "sglang/image.jsonl", [{"case": "rope", "median_us": 5.0, "p10_us": 5.0, "p90_us": 5.0, "output_sha256": "a"}])
+    write_rows(tmp_path / "sglang/candidate.jsonl", [{"case": "rope", "median_us": 5.0, "p10_us": 5.0, "p90_us": 5.0, "output_sha256": "b"}])
+    assert summarize(tmp_path)[1] == ["sglang rope hash"]
