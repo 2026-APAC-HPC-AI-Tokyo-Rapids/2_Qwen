@@ -1,12 +1,12 @@
 {
   "date": "2026-10-18",
   "base_commit": "9b2fbebefc82304d880179d2758a689f24b60893",
-  "status": "forward_context_api_fixed_cpu_image_validation_pending",
+  "status": "cpu_audit_complete_gpu_submission_prohibited",
   "firmus_jobs_submitted": 2,
   "aspire_jobs_submitted": 0,
   "other_gpu_jobs_submitted": 0,
-  "cloud_image_builds_started": 3,
-  "user_constraint": "At most one final Firmus job, only with strong confidence of >7000 good output tok/s; no comparison runs. User subsequently instructed continuing to the final submission and making the candidate at least a superset of the concurrent placement branch. User subsequently explicitly instructed submitting now and ending after submission acceptance without checking results.",
+  "cloud_image_builds_started": 4,
+  "user_constraint": "At most one final Firmus job, only with strong confidence of >7000 good output tok/s; no comparison runs. User subsequently instructed continuing to the final submission and making the candidate at least a superset of the concurrent placement branch. User subsequently explicitly instructed submitting now and ending after submission acceptance without checking results. Latest instruction: do not submit any GPU or Firmus job; continue CPU-only inspection.",
   "latest_completed_results": [
     {
       "cluster": "Firmus",
@@ -217,7 +217,7 @@
       "patches/deep-gemm/sm90-decode-swap-ab-hoist.patch": "88351653b3190a723a0b6e34e974756fe7a51a6faa401325f278487cc5c6013a",
       "patches/deep-gemm/sm90-decode-swap-ab-l1-quant.patch": "012220e3293d1eb05c5a448c342435eff2e6141e7ba95b47df7fccb51560230e",
       "patches/deep-gemm/sm90-dispatch-pull-overlap.patch": "450d274998b58b60c049f80d99a383a8b89cff26f67979c209dd5625cd58caf6",
-      "patches/sglang/qknorm-rope-fp8-kv.patch": "8391a2917736e37bbcbfc41e9772eabdc9598d0ef809994426e96b1683d8912f",
+      "patches/sglang/qknorm-rope-fp8-kv.patch": "6a82f68ba12f16808c33dd5e2dd09f580867d994610bd649b0f679dda5556ada",
       "patches/sglang/qwen-topk-padding.patch": "303f873cbba6e5a7f060eae0c018f65688d63dea54bf60e76d256baa7de0ec00"
     },
     "native_source_commit": "0374c551d212f27f05127a68102897fb582029a9",
@@ -236,21 +236,21 @@
       "The external normal benchmark validates the joint placement/Decode improvement end to end, replacing the old synthetic-only projection.",
       "An independently submitted same-image serving rerun 39074570813 exists; the user explicitly requested immediate submission without waiting for results."
     ],
-    "remaining": "Submit the prepared single final job. At the user explicit instruction, do not wait for the independent repeat or this job result.",
+    "remaining": "Reviewed CPU checks and image verification are complete. Corrected-image GPU serving remains unverified; do not submit without new explicit user authorization.",
     "uncertainty": "The integrated fusions have no end-to-end GPU timing yet. Do not claim this branch has scored 7000 or guarantee performance.",
-    "decision": "Proceed with the exact measured 7251 native kernel and fixed runtime plus CPU-validated exact fusions; no extra fusion speedup is credited to the base score. The final GPU gates still run inside the single allocation.",
+    "decision": "Do not submit. The previous submission decision was superseded after two startup failures and the explicit prohibition of further GPU/Firmus jobs. No end-to-end score exists for this branch.",
     "external_repeat_not_awaited": {
       "run_id": 39074570813,
       "reason": "User explicitly requested immediate submission and ending without result checks"
     }
   },
   "validation": {
-    "linux_tests": "Latest CPU-build CI: 353 passed, 1 skipped; all validation steps succeeded.",
+    "linux_tests": "CPU-build CI 39088958292 / job 117561360839: 353 passed, 1 skipped; all validation steps succeeded.",
     "source_patch_chain": "17 patches apply cleanly to pinned fc275674; freshly reconstructed tree exactly matches all six modified CUDA/Python sources; all three source-check scripts pass",
     "placement": "All 94 permutations, EP4 dispatch tables and 1504 weight/scale loading checks pass",
-    "native": "CPU image build 39075586288: CUDA 13 native Prefill/Decode compile and ABI import pass; 10 RoPE/QK/KV and two TopK public specializations compile and load. Extracted image metadata matches the exact 7251 native header and all 17 current SGLang patch hashes. GPU byte/Graph checks remain inside the sole final allocation.",
+    "native": "CPU build 39088958292: Prefill/Decode native compile and ABI import pass; four SiLU, ten RoPE/QK/KV and two TopK specializations compile/load. Archived native header matches the measured 7251 header exactly. Prior GPU gates passed in run 39087648892; the corrected image has no GPU serving result.",
     "static": "Ruff, bash syntax (41 files), actionlint and image validator fixtures pass. git diff --check passes outside patch files; patch context blank lines are intentional and the exact patch chains apply cleanly.",
-    "latest_image_fixtures": "20 passed locally; all four Linux-only provision cases passed in the full CI suite."
+    "latest_image_fixtures": "After updating the verified image pin: 44 passed, 4 Linux-only cases skipped on macOS. Those cases passed in the current full Linux CI."
   },
   "build_setup_failure": {
     "run_id": 39054590580,
@@ -278,19 +278,34 @@
       "all_three_cluster_archives_materialized": true,
       "gpu_workflows_skipped_by_build_only": true,
       "scope": "Superseded before any GPU allocation by the exact native kernel from the external 7251 serving run."
+    },
+    {
+      "run_id": 39075586288,
+      "commit": "0abac1840f7a4bfce47eba2aa4a89f0b29c12cb1",
+      "conclusion": "success",
+      "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39075586288",
+      "scope": "CPU-only build of exact measured native kernel plus unchanged KV and TopK fusions",
+      "image_sha256": "645745e084eb1e72e60bdc7cfcfe3d852a409c57d1f7e9464352b7e291af3280",
+      "image_size_bytes": 12249710592,
+      "all_three_cluster_archives_materialized": true,
+      "gpu_workflows_skipped_by_build_only": true,
+      "metadata_verified_on_archived_image": true
     }
   ],
   "cpu_image_build": {
-    "run_id": 39075586288,
-    "commit": "0abac1840f7a4bfce47eba2aa4a89f0b29c12cb1",
+    "run_id": 39088958292,
+    "commit": "6102745d93bd4c5198960c044e6c032aaa0c5050",
     "conclusion": "success",
-    "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39075586288",
-    "scope": "CPU-only build of exact measured native kernel plus unchanged KV and TopK fusions",
-    "image_sha256": "645745e084eb1e72e60bdc7cfcfe3d852a409c57d1f7e9464352b7e291af3280",
-    "image_size_bytes": 12249710592,
+    "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39088958292",
+    "scope": "CPU-only rebuild with ForwardContext API fix and installed-model import/call regression; CUDA math mocked in that regression",
+    "image_sha256": "e54b4defff7035c68458c98d33bc996423e50650e05bbd13b986e101ebf0913f",
+    "image_size_bytes": 12261933056,
     "all_three_cluster_archives_materialized": true,
     "gpu_workflows_skipped_by_build_only": true,
-    "metadata_verified_on_archived_image": true
+    "metadata_verified_on_archived_image": true,
+    "actual_embedded_sources_verified": 6,
+    "actual_native_header_verified": true,
+    "installed_model_api_test": "PASS"
   },
   "final_submission": {
     "run_id": 39077653567,
@@ -314,11 +329,41 @@
     "outcome": "GPU numerical/Graph gates passed, then Decode model initialization failed on ForwardBatch.token_to_kv_pool during CUDA graph capture; no benchmark result.",
     "gpu_validation": "FP8 KV exact non-NaN bytes and changed-input CUDA Graph replay passed on all four ranks; TopK exact AOT weights/IDs and Graph count replay passed on all four ranks; native EP4 gate passed.",
     "fix": "Use get_token_to_kv_pool from the real per-forward context. Regression reproduces the exact AttributeError before the fix and passes afterward using source-derived ForwardBatch fields and real ForwardContext.",
-    "next_submission": "Not authorized automatically; complete CPU image and installed model API validation first."
+    "next_submission": "Prohibited by latest explicit user instruction; no GPU or Firmus submission."
   },
   "current_fix_validation": {
     "source": "17 patch chain applies to pinned source; three source regression scripts pass; modified patch reconstructs the exact three validated files.",
-    "image": "Fresh image required because the model source changed. Build must import and call installed Qwen3MoeAttention with real ForwardBatch and ForwardContext; CUDA math mocked in that CPU test.",
-    "gpu_kernels": "Unchanged from run 39087648892; do not count startup failure as a throughput result."
+    "image": "Build 39088958292 succeeded. Installed Qwen3MoeAttention, ForwardBatch and ForwardContext imports/calls passed on CPU with CUDA math mocked. All 17 patch hashes, six actual modified source files and the actual native header were verified inside the archived image.",
+    "gpu_kernels": "Unchanged from run 39087648892; do not count startup failure as a throughput result.",
+    "cpu_build_run": 39088958292,
+    "cpu_build_commit": "6102745d93bd4c5198960c044e6c032aaa0c5050",
+    "audit": {
+      "scope": "23 non-research changed paths versus base 9b2fbeb; production source patches, kernels, placement/runtime, validation scripts, image provenance and submission path.",
+      "random_string": "5271e48644e873738f710483",
+      "source_api": "Verified ForwardContext ownership at ordinary forward and Decode graph capture, actual ForwardBatch fields, MHA accessors and RadixAttention save_kv_cache path. Installed model methods with real ForwardBatch/ForwardContext passed in the image build; CUDA operations mocked.",
+      "fallbacks": "Source regression covers Prefill, speculative top-k != 1, nonstandard pools, scales, dtype/layout mismatch and per-call cache-write flag reset; CPU tensor and kernel operations are mocked in this regression.",
+      "placement": "94 expert permutations, every EP4 dispatch table and 1504 weight/scale loader checks pass. Production runtime excluding the image pin and all three active native patches match external measured commit 0374c551.",
+      "deployment_tests": "44 image/reference tests passed after the pin update, 4 Linux-only cases skipped on macOS. Full Linux CI on the code commit passed 353 tests with 1 skip; earlier build-tag/image/reference checks passed 52 tests locally.",
+      "submission_path": "Image SHA/size/provenance validation precedes sbatch. Build 39088958292 completed successfully with all GPU workflows skipped. Configuration now pins that verified image; saving this audit does not submit a job.",
+      "unverified": "Corrected image full model initialization, distributed GPU runtime, whole-model CUDA Graph capture, official request workload, SLA and throughput remain unverified. CPU checks and prior kernel gates cannot guarantee failure-free serving or 7000+ throughput.",
+      "additional_gpu_submissions": 0,
+      "additional_random_string": "037d29e30099b4b3aeec1988",
+      "dependency_versions": {
+        "packages_compared": 273,
+        "changes": {
+          "filelock": {
+            "before": "4.2.0",
+            "after": "4.2.1"
+          },
+          "platformdirs": {
+            "before": "4.13.3",
+            "after": "4.13.4"
+          }
+        },
+        "cpu_validation": "Both image versions passed Linux FileLock(mode=0o666) cross-process contention, reentrant acquisition and post-release reacquisition. PlatformDirs cache/data/config/runtime results match; production Unix implementation is unchanged. GPU/compiler/communication package versions are unchanged.",
+        "limitation": "This checks the exercised Linux APIs, not every changed dependency path or Firmus filesystem."
+      }
+    },
+    "cpu_build_conclusion": "success"
   }
 }
