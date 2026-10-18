@@ -62,6 +62,7 @@ jobs:
           git -C "${RUNNER_TEMP}/gigatoken-source" apply --include=python/sglang/srt/utils/hf_transformers/gigatoken_encoder.py "${GITHUB_WORKSPACE}/patches/sglang/gigatoken-encode.patch"
 
       - name: token IDとHF API互換性を検証
+        shell: bash
         env:
           HF_HUB_OFFLINE: "1"
         run: uv run --no-project --python 3.12 --with gigatoken==0.10.0 --with transformers==5.12.1 --with tokenizers==0.22.2 --with jinja2==3.1.6 python scripts/check-gigatoken.py "${RUNNER_TEMP}/gigatoken-source" "${RUNNER_TEMP}/qwen-tokenizer" --adapter-only | tee gigatoken-cpu.json
@@ -76,6 +77,8 @@ jobs:
 
       - name: 検証範囲と参考速度を記録
         run: |
-          printf '### gigatoken CPU compatibility\n\nThe patched adapter is tested against the pinned Qwen tokenizer. Timing is informational on shared CPU runners. Full private SGLang patch application, archived workload parity and GPU throughput are separate checks.\n\n```json\n' >>"${GITHUB_STEP_SUMMARY}"
-          cat gigatoken-cpu.json >>"${GITHUB_STEP_SUMMARY}"
-          printf '\n```\n' >>"${GITHUB_STEP_SUMMARY}"
+          {
+            printf '### gigatoken CPU compatibility\n\nThe patched adapter is tested against the pinned Qwen tokenizer. Timing is informational on shared CPU runners. Full private SGLang patch application, archived workload parity and GPU throughput are separate checks.\n\n```json\n'
+            cat gigatoken-cpu.json
+            printf '\n```\n'
+          } >>"${GITHUB_STEP_SUMMARY}"
