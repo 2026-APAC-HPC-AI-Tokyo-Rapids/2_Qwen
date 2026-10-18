@@ -1,0 +1,296 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+index 4037967..c50deec 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -106,6 +106,63 @@ CUTLASS_DEVICE void sm90_fp8_mega_moe_for_each_block_split(
+     }
+ }
+ 
++// Qwen Prefill (single expert wave): FC1 blocks keep the static round-robin
++// assignment, FC2 blocks are claimed dynamically. With the static split the
++// CTAs of a rank finish the last FC2 wave tens of microseconds apart (uneven
++// FC1 block counts, staggered first dispatch arrivals) and the combine waits
++// for the slowest; claiming FC2 blocks in order evens that out without
++// changing what any block computes.
++// `get_l2_block()` returns the next FC2 block of this CTA already decoded:
++// x = local expert << 24 | n block << 16 | m block, y = expert pool block
++// offset << 16 | expert token count, or x = ~0 when the wave is exhausted.
++// One role claims and decodes (`sm90_fp8_mega_moe_decode_l2_block`), the
++// others receive the same words, so the consumers keep no scheduler state live
++// across FC2 blocks.
++template <uint32_t kNumSMs, uint32_t kNumL1BlockNs, uint32_t kNumL1BlockKs, uint32_t kNumL2BlockKs,
++          typename Scheduler, typename GetL2Block, typename L1Func, typename L2Func>
++CUTLASS_DEVICE void sm90_fp8_mega_moe_for_each_block_dynamic_l2(
++    Scheduler& scheduler, GetL2Block&& get_l2_block, L1Func&& l1_func, L2Func&& l2_func) {
++    scheduler.fetch_expert_recv_count();
++    scheduler.set_expert_idx(0);
++
++    while (scheduler.fetch_next_l1_block()) {
++        const uint32_t n_block_idx = scheduler.block_idx - scheduler.m_block_idx * kNumL1BlockNs;
++        scheduler.block_idx += kNumSMs;
++        l1_func(scheduler.current_local_expert_idx, kNumL1BlockKs, scheduler.m_block_idx, n_block_idx);
++    }
++
++    scheduler.set_expert_idx(0);
++    scheduler.block_idx = 0;
++    while (true) {
++        const uint2 info = get_l2_block();
++        if (info.x == 0xffffffffu)
++            break;
++        scheduler.current_local_expert_idx = info.x >> 24;
++        scheduler.m_block_idx = info.x & 0xffffu;
++        scheduler.current_pool_block_offset = info.y >> 16;
++        scheduler.current_num_tokens = info.y & 0xffffu;
++        l2_func(info.x >> 24, kNumL2BlockKs, info.x & 0xffffu, (info.x >> 16) & 0xffu);
++    }
++}
++
++// Decode a claimed FC2 block index (strictly increasing per CTA) with the
++// scheduler's expert walk; `scheduler.block_idx` holds the index relative to
++// the current expert and `prev_l2_block_idx` the previous claim.
++template <uint32_t kNumL2BlockNs, typename Scheduler>
++CUTLASS_DEVICE uint2 sm90_fp8_mega_moe_decode_l2_block(
++    Scheduler& scheduler, const uint32_t& l2_block_idx, uint32_t& prev_l2_block_idx) {
++    scheduler.block_idx += l2_block_idx - prev_l2_block_idx;
++    prev_l2_block_idx = l2_block_idx;
++    while (scheduler.block_idx >= scheduler.get_current_num_m_blocks() * kNumL2BlockNs) {
++        scheduler.block_idx -= scheduler.get_current_num_m_blocks() * kNumL2BlockNs;
++        scheduler.advance_expert_idx();
++    }
++    const uint32_t m_block_idx = scheduler.block_idx / kNumL2BlockNs;
++    const uint32_t n_block_idx = scheduler.block_idx - m_block_idx * kNumL2BlockNs;
++    return make_uint2((scheduler.current_local_expert_idx << 24) | (n_block_idx << 16) | m_block_idx,
++                      (scheduler.current_pool_block_offset << 16) | scheduler.current_num_tokens);
++}
++
+ // ============================================================================
+ // SM90 (Hopper) FP8 MegaMoE — full implementation
+ // ----------------------------------------------------------------------------
+@@ -198,6 +255,10 @@ sm90_fp8_mega_moe_impl(void* y,
+     constexpr bool kSpecializePhase = kSplitPhaseHotPath ||
+         (kHidden == 4096 && kIntermediateHidden == 1536 && kNumRanks == 4 &&
+          BLOCK_M == 128 && BLOCK_N == 256 && kNumEpilogueThreads == 512 && kReuseAccumAsFinal);
++    // Qwen Prefill only: FC2 blocks are claimed from a per-rank counter instead
++    // of the static round-robin split (see sm90_fp8_mega_moe_for_each_block_dynamic_l2).
++    constexpr bool kDynamicL2 = kSpecializePhase and not kFP8SwapAB and
++        kNumExpertsPerWave == kNumExpertsPerRank;
+ 
+     // =====================================================================
+     // Thread / warp identification
+@@ -356,6 +417,24 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+     // SMEM pointers
+     auto smem_expert_count = reinterpret_cast<uint32_t*>(smem_buffer);
++    // Dynamic FC2 claims travel from the A loader (which claims) to the B loader
++    // and the math warps through a small ring in the padding after the expert
++    // counters. The combine below starts past this padding when kDynamicL2.
++    constexpr uint32_t kL2RingSlots = 2;
++    constexpr uint32_t kL2RingOffset = kNumExperts * sizeof(uint32_t);
++    DG_STATIC_ASSERT(kL2RingOffset % 8 == 0, "Misaligned dynamic FC2 ring");
++    constexpr uint32_t kL2RingBarrierOffset = kL2RingOffset + 64;
++    DG_STATIC_ASSERT(not kDynamicL2 or
++                     kL2RingBarrierOffset + 2 * kL2RingSlots * sizeof(Barrier) <= SMEM_EXPERT_COUNT_SIZE,
++                     "No room for the dynamic FC2 ring");
++    auto smem_l2_ring = reinterpret_cast<uint32_t*>(smem_buffer + kL2RingOffset);
++    auto l2_ring_full_barriers = utils::PatternVisitor([=](const uint32_t& i) {
++        return reinterpret_cast<Barrier*>(smem_buffer + kL2RingBarrierOffset) + i;
++    });
++    auto l2_ring_empty_barriers = utils::PatternVisitor([=](const uint32_t& i) {
++        return reinterpret_cast<Barrier*>(smem_buffer + kL2RingBarrierOffset) + kL2RingSlots + i;
++    });
++    constexpr uint32_t kCombineSmemOffset = kDynamicL2 ? SMEM_EXPERT_COUNT_SIZE : 0;
+     const auto smem_send_buffers = layout::Buffer(
+         fp8_token_layout, kNumDispatchWarps, 1,
+         math::advance_ptr(smem_buffer, SMEM_EXPERT_COUNT_SIZE));
+@@ -418,6 +497,14 @@ sm90_fp8_mega_moe_impl(void* y,
+             #pragma unroll
+             for (uint32_t i = 0; i < kNumCombineWarps * 2; ++ i)
+                 combine_barriers[i]->init(1);
++            if constexpr (kDynamicL2) {
++                // Full: the A loader publishes. Empty: the B loader and every math warp.
++                #pragma unroll
++                for (uint32_t i = 0; i < kL2RingSlots; ++ i) {
++                    l2_ring_full_barriers[i]->init(1);
++                    l2_ring_empty_barriers[i]->init(1 + kNumEpilogueWarps);
++                }
++            }
+         }
+         cutlass::arch::fence_barrier_init();
+     }
+@@ -490,6 +577,20 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+     constexpr uint32_t kDispatchGridSyncIndex = 0;
+     constexpr uint32_t kEpilogueGridSyncIndex = 1;
++    // Grid-sync slot 3 is otherwise unused; Prefill uses it as the per-rank FC2
++    // claim counter, reset with the rest of the workspace after the combine barrier.
++    constexpr uint32_t kL2ClaimCounterIndex = 3;
++    const auto take_l2_block = [&](uint32_t& ring_count) {
++        const uint32_t slot = ring_count % kL2RingSlots;
++        l2_ring_full_barriers[slot]->wait((ring_count / kL2RingSlots) & 1);
++        const auto info = make_uint2(ptx::ld_shared(smem_l2_ring + slot * 2), ptx::ld_shared(smem_l2_ring + slot * 2 + 1));
++        __syncwarp();
++        if (lane_idx == 0)
++            l2_ring_empty_barriers[slot]->arrive();
++        __syncwarp();
++        ++ ring_count;
++        return info;
++    };
+ 
+     // =====================================================================
+     // ROLE 1: DISPATCH WARPS
+@@ -757,6 +858,10 @@ sm90_fp8_mega_moe_impl(void* y,
+             #pragma unroll
+             for (uint32_t i = thread_idx; i < kNumExperts; i += kNumDispatchThreads)
+                 *workspace.get_expert_send_count_ptr(i) = 0;
++            if constexpr (kDynamicL2) {
++                if (thread_idx == 0)
++                    *workspace.template get_grid_sync_count_ptr<kL2ClaimCounterIndex>() = 0;
++            }
+         } else {
+             for (uint32_t i = sm_idx - 1; i < kNumExpertsPerRank; i += kNumSMs - 1) {
+                 const auto num_recv_tokens = static_cast<uint32_t>(
+@@ -875,7 +980,54 @@ sm90_fp8_mega_moe_impl(void* y,
+             }
+         };
+ 
+-        if constexpr (kSpecializePhase) {
++        if constexpr (kDynamicL2) {
++            // The A loader is the first role to need the next FC2 block, so it
++            // claims (one relaxed atomic per block, issued a block ahead so its
++            // latency hides behind the current block), decodes and publishes it.
++            DG_STATIC_ASSERT(kNumExpertsPerRank <= 256 and kNumL2BlockNs <= 256 and
++                             kNumMaxPoolTokens / BLOCK_M <= 65536 and kNumRanks * kNumMaxTokensPerRank <= 65535,
++                             "Dynamic FC2 block info does not fit the packed ring words");
++            const auto claim_counter = workspace.template get_grid_sync_count_ptr<kL2ClaimCounterIndex>();
++            uint32_t ring_count = 0, claimed = 0, num_l2_blocks = 0, prev_l2_block_idx = 0;
++            sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs>(
++                scheduler,
++                [&]() {
++                    if (ring_count == 0) {
++                        num_l2_blocks = scheduler.get_pool_block_offset(kNumExpertsPerRank) * kNumL2BlockNs;
++                        if (lane_idx == 0)
++                            claimed = atomicAdd(claim_counter, 1u);
++                    }
++                    const uint32_t l2_block_idx = __shfl_sync(0xffffffff, claimed, 0);
++                    auto info = make_uint2(0xffffffffu, 0u);
++                    if (l2_block_idx < num_l2_blocks)
++                        info = sm90_fp8_mega_moe_decode_l2_block<kNumL2BlockNs>(scheduler, l2_block_idx, prev_l2_block_idx);
++                    const uint32_t slot = ring_count % kL2RingSlots;
++                    l2_ring_empty_barriers[slot]->wait(((ring_count / kL2RingSlots) & 1) ^ 1);
++                    if (lane_idx == 0) {
++                        ptx::st_shared(smem_l2_ring + slot * 2, info.x, info.y);
++                        l2_ring_full_barriers[slot]->arrive();
++                    }
++                    __syncwarp();
++                    ++ ring_count;
++                    if (l2_block_idx < num_l2_blocks and lane_idx == 0)
++                        claimed = atomicAdd(claim_counter, 1u);
++                    return info;
++                },
++                [&](const uint32_t& local_expert_idx,
++                    const uint32_t& num_k_blocks,
++                    const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++                    process_a_sfa_block(
++                        std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear1>{},
++                        local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                },
++                [&](const uint32_t& local_expert_idx,
++                    const uint32_t& num_k_blocks,
++                    const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++                    process_a_sfa_block(
++                        std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear2>{},
++                        local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                });
++        } else if constexpr (kSpecializePhase) {
+             sm90_fp8_mega_moe_for_each_block_split(
+                 scheduler,
+                 [&](const uint32_t& local_expert_idx,
+@@ -904,10 +1056,10 @@ sm90_fp8_mega_moe_impl(void* y,
+     } else if (warp_idx == kNumDispatchWarps + 1) {
+         cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
+ 
+-        scheduler.for_each_block([&](const sched::BlockPhase& block_phase,
+-                                     const uint32_t& local_expert_idx,
+-                                     const uint32_t& num_k_blocks,
+-                                     const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++        const auto process_b_block = [&](const sched::BlockPhase& block_phase,
++                                         const uint32_t& local_expert_idx,
++                                         const uint32_t& num_k_blocks,
++                                         const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
+             const auto tensor_map_b_ptr =
+                 block_phase == sched::BlockPhase::Linear2 ? &tensor_map_l2_weights : &tensor_map_l1_weights;
+ 
+@@ -941,7 +1093,26 @@ sm90_fp8_mega_moe_impl(void* y,
+                 }
+                 __syncwarp();
+             }
+-        });
++        };
++
++        if constexpr (kDynamicL2) {
++            uint32_t ring_count = 0;
++            sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs>(
++                scheduler,
++                [&]() { return take_l2_block(ring_count); },
++                [&](const uint32_t& local_expert_idx,
++                    const uint32_t& num_k_blocks,
++                    const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++                    process_b_block(sched::BlockPhase::Linear1, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                },
++                [&](const uint32_t& local_expert_idx,
++                    const uint32_t& num_k_blocks,
++                    const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++                    process_b_block(sched::BlockPhase::Linear2, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                });
++        } else {
++            scheduler.for_each_block(process_b_block);
++        }
+ 
+     } else if (warp_idx < kNumDispatchWarps + kNumMMANonEpilogueWarps) {
+         // Idle non-epilogue warps (kNumDispatchWarps+2, +3). They must still
+@@ -2130,7 +2301,26 @@ sm90_fp8_mega_moe_impl(void* y,
+             }
+         };
+ 
+-        if constexpr (kSpecializePhase) {
++        if constexpr (kDynamicL2) {
++            uint32_t ring_count = 0;
++            sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs>(
++                scheduler,
++                [&]() { return take_l2_block(ring_count); },
++                [&](const uint32_t& local_expert_idx,
++                    const uint32_t& num_k_blocks,
++                    const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++                    process_math_block(
++                        std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear1>{},
++                        local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                },
++                [&](const uint32_t& local_expert_idx,
++                    const uint32_t& num_k_blocks,
++                    const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++                    process_math_block(
++                        std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear2>{},
++                        local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                });
++        } else if constexpr (kSpecializePhase) {
+             sm90_fp8_mega_moe_for_each_block_split(
+                 scheduler,
+                 [&](const uint32_t& local_expert_idx,
+@@ -2195,14 +2385,14 @@ sm90_fp8_mega_moe_impl(void* y,
+         DG_STATIC_ASSERT(kNumChunkUint4 % 32 == 0, "Combine chunk must be a multiple of 32 16-byte elements");
+         DG_STATIC_ASSERT(kNumTopk <= 32, "Top-k must fit in a single warp");
+ 
+-        DG_TRAP_ONLY_DEVICE_ASSERT(kNumChunkSlots * kNumCombineWarps * kNumChunkBytes <= static_cast<uint32_t>(
++        DG_TRAP_ONLY_DEVICE_ASSERT(kCombineSmemOffset + kNumChunkSlots * kNumCombineWarps * kNumChunkBytes <= static_cast<uint32_t>(
+             reinterpret_cast<uint8_t*>(barrier_start_ptr) - smem_buffer));
+ 
+         const auto combine_load_buffer = utils::PatternVisitor([&](const uint32_t& i) {
+-            return math::advance_ptr<uint4>(smem_buffer, (epilogue_warp_idx + i * kNumCombineWarps) * kNumChunkBytes);
++            return math::advance_ptr<uint4>(smem_buffer, kCombineSmemOffset + (epilogue_warp_idx + i * kNumCombineWarps) * kNumChunkBytes);
+         });
+         const auto combine_store_buffer = math::advance_ptr<uint4>(
+-            smem_buffer, (epilogue_warp_idx + kNumCombineWarps * 2) * kNumChunkBytes);
++            smem_buffer, kCombineSmemOffset + (epilogue_warp_idx + kNumCombineWarps * 2) * kNumChunkBytes);
+ 
+         auto combine_load_barriers = utils::PatternVisitor([&](const uint32_t& i) {
+             return combine_barriers[i + epilogue_warp_idx * 2];

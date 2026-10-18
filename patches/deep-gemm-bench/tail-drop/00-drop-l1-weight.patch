@@ -1,0 +1,21 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+index 4037967..05a2905 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -720,14 +720,8 @@ sm90_fp8_mega_moe_impl(void* y,
+                         local_sf_ptr[j * kNumPaddedSFPoolTokens + sf_pool_token_idx] = remote_sf_ptr[j];
+                 }
+                 __syncwarp();
+-
+-                if (cute::elect_one_sync()) {
+-                    const auto weight = *sym_buffer.map(
+-                        input_topk_weights_buffer.get_base_ptr<float>() + src_token_topk_idx,
+-                        current_rank_in_expert_idx);
+-                    *l1_topk_weights_buffer.get_data_buffer(pool_token_idx).get_base_ptr<float>() = weight;
+-                }
+-                __syncwarp();
++                // The L1 top-k weight is never read (the late FP32 combine reads
++                // the weights locally), so Prefill skips its remote load.
+                 }
+ 
+                 if (cute::elect_one_sync()) {
