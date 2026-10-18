@@ -1,8 +1,8 @@
 diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-index 2fd16e4..388535c 100644
+index 0770272..de8683b 100644
 --- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 +++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-@@ -2170,7 +2170,14 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2517,7 +2517,14 @@ sm90_fp8_mega_moe_impl(void* y,
          // keeps each lane's BF16 reduce accumulator much smaller without
          // violating the 32-lane uint4 mapping.
          constexpr uint32_t kSplitMNNumChunks = (kHidden % 7 == 0) ? 7 : (kHidden >= 1024 ? 4 : 1);
@@ -18,8 +18,8 @@ index 2fd16e4..388535c 100644
          constexpr uint32_t kNumChunkBytes = kNumHiddenBytes / kNumChunks;
          constexpr uint32_t kNumChunkUint4 = kNumChunkBytes / sizeof(uint4);
          constexpr uint32_t kNumUint4PerLane = kNumChunkUint4 / 32;
-@@ -2196,14 +2203,17 @@ sm90_fp8_mega_moe_impl(void* y,
- 
+@@ -2684,14 +2691,17 @@ sm90_fp8_mega_moe_impl(void* y,
+         } else {
          uint32_t combine_phase = 0;
          uint32_t load_stage_idx = 0;
 -        for (uint32_t token_idx = sm_idx * kNumCombineWarps + epilogue_warp_idx;
