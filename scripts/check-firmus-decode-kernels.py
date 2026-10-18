@@ -4,9 +4,7 @@ No scheduler submission. Compare against the actual unfused CUDA operations
 and CUDA Graph replay with changed inputs. Existing activation/RoPE checks
 use a gross-error tolerance; the KV and Top-K fusions (komoriyuta) require
 exact non-NaN bytes against the same tree's FP8 Q kernel + torch casts +
-store_cache; the fused add-RMSNorm + group quant must stay within rounding of
-flashinfer fused_add_rmsnorm + per_token_group_quant (tolerances in
-check_add_rmsnorm_group_quant). Neither replaces the official workload or
+store_cache. Neither replaces the official workload or
 accuracy evaluation. The kernel bench also runs this file on the image tree,
 which lacks the new kernels; those checks print SKIP there.
 """
@@ -301,106 +299,9 @@ def check_rope_fp8_kv():
     print("PASS: exact FP8 KV fusion; packed/contiguous inputs; int32/int64 slots; reserved padding; all BF16 V patterns; graph replay changes inputs, positions and slots", flush=True)
 
 
-def check_add_rmsnorm_group_quant():
-    """Fused input_layernorm + QKV quant against flashinfer fused_add_rmsnorm +
-    column-major TMA-aligned group-128 quant.
-
-    Tolerances (rounding level): the residual (one FP32 add, rounded to BF16)
-    must be bitwise equal. The normed BF16 value may move by summation order,
-    so each scale may differ by at most 1 BF16 ulp (relative 2^-7), and each
-    dequantized FP8 element by at most one FP8 E4M3 step of its value (relative
-    2^-3, or 2^-9 x scale in the subnormal range) after allowing that scale
-    change; at most 0.1% of the FP8 codes may differ. The bitwise status of
-    every reduction variant is printed for information.
-    """
-    try:
-        import sglang.kernels.ops.layernorm.add_rmsnorm_group_quant as nq
-    except ImportError:
-        print("SKIP: add_rmsnorm_group_quant is not in this SGLang tree", flush=True)
-        return
-    from sgl_kernel import fused_add_rmsnorm
-
-    torch.manual_seed(52119)
-    weight = (torch.randn(4096, device="cuda") * 0.1 + 1).bfloat16()
-    eps = 1e-6
-
-    def reference(x, residual):
-        x, residual = x.clone(), residual.clone()
-        if x.shape[0]:
-            fused_add_rmsnorm(x, residual, weight, eps)
-        q, scale = sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
-        return q, scale, residual
-
-    def compare(actual, expected, label, strict=True):
-        q, scale, residual = actual
-        eq, es, eres = expected
-        assert q.shape == eq.shape and scale.shape == es.shape and scale.stride() == es.stride(), label
-        bitwise = torch.equal(q.view(torch.uint8), eq.view(torch.uint8)) and torch.equal(scale, es)
-        assert torch.equal(residual.view(torch.uint8), eres.view(torch.uint8)), (label, "residual")
-        rows = q.shape[0]
-        mismatch = int((q.view(torch.uint8) != eq.view(torch.uint8)).sum())
-        if rows:
-            scale_rel = ((scale - es).abs() / es).max().item()
-            a = q.float().view(rows, 32, 128) * scale[:, :, None]
-            b = eq.float().view(rows, 32, 128) * es[:, :, None]
-            # One E4M3 step of the larger magnitude (relative 2^-3), floor at the
-            # subnormal step 2^-9 x scale, plus the allowed scale change.
-            bound = torch.maximum(a.abs(), b.abs()) * (2.0**-3 + scale_rel) + 2.0**-9 * torch.maximum(scale, es)[:, :, None]
-            value_ok = bool(((a - b).abs() <= bound).all())
-        else:
-            scale_rel, value_ok = 0.0, True
-        print(json.dumps({"check": f"norm_quant_{label}", "bitwise_equal": bitwise, "fp8_codes_differing": mismatch, "max_scale_rel_diff": scale_rel}), flush=True)
-        if strict:
-            assert scale_rel <= 2.0**-7, (label, "scale", scale_rel)
-            assert value_ok, (label, "dequantized value")
-            assert mismatch <= q.numel() // 1000, (label, "FP8 codes", mismatch)
-        return bitwise
-
-    for rows in (0, 1, 2, 3, 7, 31, 126, 127, 128, 144, 3986, 4027):
-        x = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16) * 2
-        residual = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16) * 8
-        if rows:
-            x[0].zero_()
-            residual[0].zero_()  # all-zero row: amax clamp 1e-10 path
-        expected = reference(x, residual)
-        work = residual.clone()
-        q, scale = nq.add_rmsnorm_group_quant_fp8(x, work, weight, eps)
-        compare((q, scale, work), expected, str(rows))
-
-    # Information: which reduction variant reproduces the CuTe DSL kernel bit for bit.
-    x = torch.randn(4027, 4096, device="cuda", dtype=torch.bfloat16) * 2
-    residual = torch.randn(4027, 4096, device="cuda", dtype=torch.bfloat16) * 8
-    expected = reference(x, residual)
-    for variant in range(8):
-        work = residual.clone()
-        q, scale = nq.add_rmsnorm_group_quant_fp8(x, work, weight, eps, variant=variant)
-        compare((q, scale, work), expected, f"variant{variant}", strict=variant == nq.FLASHINFER_EXACT_VARIANT)
-
-    x = torch.randn(128, 4096, device="cuda", dtype=torch.bfloat16)
-    residual = torch.randn(128, 4096, device="cuda", dtype=torch.bfloat16)
-    work = residual.clone()
-    stream = torch.cuda.Stream()
-    stream.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(stream):
-        nq.add_rmsnorm_group_quant_fp8(x, work, weight, eps)
-    torch.cuda.current_stream().wait_stream(stream)
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph):
-        actual = nq.add_rmsnorm_group_quant_fp8(x, work, weight, eps)
-    for replay in range(3):
-        x.copy_(torch.randn_like(x) * (replay + 1))
-        residual.copy_(torch.randn_like(residual) * 4)
-        work.copy_(residual)
-        expected = reference(x, residual)
-        graph.replay()
-        compare((*actual, work), expected, f"graph_{replay}")
-    print("PASS: fused add-RMSNorm + group-128 FP8 quant within rounding of flashinfer fused_add_rmsnorm + per_token_group_quant (residual exact); zero/odd/Prefill rows; graph replay", flush=True)
-
-
 if __name__ == "__main__":
     check_decode_silu_quant()
     check_rope_fp8_q()
     check_rope_fp8_q(with_norm=True)
     check_rope_fp8_kv()
     check_topk_mask()
-    check_add_rmsnorm_group_quant()
