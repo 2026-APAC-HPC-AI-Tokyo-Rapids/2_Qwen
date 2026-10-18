@@ -26,6 +26,13 @@ def capture_workers(source: str, platform: str, nodes: int, tmp_path: Path, prof
     for directory in ("logs", "source", "scripts"):
         (output / directory).mkdir(parents=True, exist_ok=True)
     (output / "source/aspire-serving.json").write_bytes((REPOSITORY / "configs/aspire-serving.json").read_bytes())
+    if platform == "aspire2ap":
+        # Execute the workflow's real staging commands, then exercise the container mount below.
+        lines = (REPOSITORY / ".github/workflows/aspire2ap.yml").read_text().splitlines()
+        start = next(i for i, line in enumerate(lines) if line.strip().startswith('prefill_location='))
+        subprocess.run(["bash", "-c", "set -euo pipefail\n" + "\n".join(lines[start:start + 2])], cwd=REPOSITORY, env={**os.environ, "GITHUB_WORKSPACE": str(REPOSITORY), "runtime_dir": str(output)}, check=True)
+        config = json.loads((output / "source/aspire-serving.json").read_text())
+        assert (output / "source/prefill-expert-location.json").read_bytes() == (REPOSITORY / config["prefill_expert_location"]).read_bytes()
     record = root / "commands.jsonl"
     record.write_text("")
     stub = root / "enroot"
@@ -249,6 +256,11 @@ def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, 
         assert "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096" in argv
         assert ("--disable-cuda-graph" in argv) == (role == "prefill")
         assert ("--enable-dp-lm-head" in argv) == (role == "decode")
+        placement_mount = "/fixture/output/source/prefill-expert-location.json:/runtime/source/prefill-expert-location.json:ro"
+        assert (placement_mount in argv) == (role == "prefill")
+        assert ("--init-expert-location" in argv) == (role == "prefill")
+        if role == "prefill":
+            assert argv[argv.index("--init-expert-location") + 1] == "/runtime/source/prefill-expert-location.json"
         if role == "decode":
             start = argv.index("--cuda-graph-bs-decode") + 1
             assert argv[start:start + len(config["decode_cuda_graph_bs"])] == [str(n) for n in config["decode_cuda_graph_bs"]]
@@ -258,13 +270,15 @@ def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, 
         assert bool(record["profiler"]) == profile
     # Separate DP endpoint ranges; adjacent HTTP ports otherwise collide.
     assert addresses == [32000, 32100, 33000, 33100]
-    assert config["container_sha256"] == "e29dfde476fd2a8c7cd268f9be2c6d2a1f5e5404a34aed369aa84b4b4143909f"
+    firmus = json.loads((REPOSITORY / "configs/firmus-framework.json").read_text())
+    assert config["container_sha256"] == firmus["images"]["sglang"]["sha256"] == "7c6286e5dcfcd8f5fba37d03d0c1ac0b4f6e93562a24a147afa1063f8214bc82"
+    assert config["prefill_expert_location"] == firmus["prefill"]["expert_location"]
     workflow = (REPOSITORY / ".github/workflows/aspire2ap.yml").read_text()
     assert workflow.index("jq -er .container_sha256 configs/aspire-serving.json") < workflow.index('PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh')
 
 
 @pytest.mark.parametrize("role", ["prefill", "decode"])
-def test_aspire_effective_settings_reject_clipped_kv_pool(role: str) -> None:
+def test_aspire_effective_settings_reject_wrong_placement_and_clipped_kv_pool(role: str) -> None:
     import runpy
 
     check = runpy.run_path(str(REPOSITORY / "scripts/check-firmus-server-info.py"))["check"]
@@ -274,8 +288,16 @@ def test_aspire_effective_settings_reject_clipped_kv_pool(role: str) -> None:
     capacity = config[f"{role}_max_total_tokens"]
     for state in [info, *info["internal_states"]]:
         state.update(max_total_tokens=capacity, max_running_requests=config["concurrency"] if role == "prefill" else config["decode_max_running_requests"], mem_fraction_static=0.90 if role == "prefill" else config["decode_mem_fraction_static"], chunked_prefill_size=4096 if role == "prefill" else 2048, moe_a2a_backend="megamoe", moe_runner_backend="deep_gemm", disaggregation_decode_extra_slots=2, load_balance_method=config[f"{role}_load_balance_method"], disable_cuda_graph=role == "prefill", effective_max_running_requests_per_dp=config["decode_max_running_requests"] // config["dp_size"], memory_usage={"token_capacity": capacity})
+        state.update(init_expert_location="/runtime/source/prefill-expert-location.json" if role == "prefill" else "trivial", ep_dispatch_algorithm="static" if role == "prefill" else None)
     info["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
     check(config, info, role)
+    for state in [info, *info["internal_states"]]:
+        for key, invalid in (("init_expert_location", "trivial" if role == "prefill" else "/runtime/source/prefill-expert-location.json"), ("ep_dispatch_algorithm", None if role == "prefill" else "static")):
+            original = state[key]
+            state[key] = invalid
+            with pytest.raises(ValueError, match=key):
+                check(config, info, role)
+            state[key] = original
     for state in info["internal_states"]:
         state["memory_usage"]["token_capacity"] -= 64
         with pytest.raises(ValueError, match="actual KV capacity"):

@@ -163,6 +163,13 @@ run_node() {
       worker_env=(-e "NCCL_IB_HCA==${ucx_devices}" -e UCX_POSIX_USE_PROC_LINK=n -e UCX_ADAPTIVE_PROGRESS=n -e UCX_LOG_LEVEL=info -e SGLANG_DISAGG_STAGING_BUFFER=0 -e SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1 -e SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096)
       if [[ "${role}" == prefill ]]; then
         args+=(--dist-init-addr "127.0.0.1:$((32000 + worker * 100))" --disaggregation-bootstrap-port "${bootstrap}" --chunked-prefill-size "$(jq -er .prefill_chunked_size "${config}")" --max-total-tokens "$(jq -er .prefill_max_total_tokens "${config}")" --max-running-requests "$(jq -er .concurrency "${config}")" --disable-cuda-graph)
+        prefill_location="$(jq -er .prefill_expert_location "${config}")"
+        if [[ "${prefill_location}" != trivial ]]; then
+          test -s "${OUTPUT_DIR}/source/prefill-expert-location.json"
+          worker_env+=(-m "${OUTPUT_DIR}/source/prefill-expert-location.json:/runtime/source/prefill-expert-location.json:ro")
+          prefill_location=/runtime/source/prefill-expert-location.json
+        fi
+        args+=(--init-expert-location "${prefill_location}")
       else
         args+=(--dist-init-addr "127.0.0.1:$((33000 + worker * 100))" --enable-dp-lm-head --moe-dense-tp-size 1 --chunked-prefill-size 8192 --max-total-tokens "$(jq -er .decode_max_total_tokens "${config}")" --max-running-requests "$(jq -er .decode_max_running_requests "${config}")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${config}")" --cuda-graph-bs-decode)
         while read -r size; do args+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${config}")
