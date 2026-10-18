@@ -199,7 +199,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
-    assert config["decode_max_running_requests"] == 136
+    assert config["decode_max_running_requests"] == 128  # 32 requests x 4 verify tokens = 128: above that DeepGEMM 0.1.5 leaves SwapAB
     assert config["decode_polling_interval"] == 1  # Async admission replaces the polling interval of 2
     assert config["prefill"]["optimistic_prefill_attempts"] == 2
     assert config["decode_max_running_requests"] + config["decode_extra_slots"] * config["decode_dp_size"] >= config["concurrency"]
