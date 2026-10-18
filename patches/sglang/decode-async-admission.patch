@@ -1,0 +1,466 @@
+diff --git a/python/sglang/srt/disaggregation/async_admission.py b/python/sglang/srt/disaggregation/async_admission.py
+new file mode 100644
+--- /dev/null
++++ b/python/sglang/srt/disaggregation/async_admission.py
+@@ -0,0 +1,27 @@
++"""Decode admission without host waits on the WAR-fenced schedule stream.
++
++SGLANG_DECODE_ASYNC_ADMISSION=1 replaces the blocking host-to-device copies of
++the disaggregated Decode admission path (prealloc and prebuilt batch setup)
++with copies from a fresh pinned snapshot, enqueued on the same current stream.
++GPU-side ordering is unchanged; only the host cudaStreamSynchronize, which
++waits for the in-flight forward's WAR fence, is skipped.
++"""
++
++import os
++
++import torch
++
++ENABLED = os.environ.get("SGLANG_DECODE_ASYNC_ADMISSION", "0") == "1"
++
++
++def to_device(data, dtype, device) -> torch.Tensor:
++    """Same values as torch.tensor(data, dtype=dtype, device=device), no host wait."""
++    if isinstance(data, torch.Tensor):
++        source = data if dtype is None else data.to(dtype=dtype)
++        # Always copy: the source may be a reusable (e.g. metadata) buffer.
++        host = torch.empty(source.shape, dtype=source.dtype, pin_memory=True)
++        host.copy_(source)
++    else:
++        host = torch.tensor(data, dtype=dtype, pin_memory=True)
++    # The caching host allocator keeps the pinned block until this copy is done.
++    return host.to(device, non_blocking=True)
+diff --git a/python/sglang/srt/disaggregation/decode.py b/python/sglang/srt/disaggregation/decode.py
+--- a/python/sglang/srt/disaggregation/decode.py
++++ b/python/sglang/srt/disaggregation/decode.py
+@@ -34,6 +34,7 @@ from torch.distributed import ProcessGroup
+ 
+ from sglang.srt.configs.mamba_utils import Mamba2CacheParams
+ from sglang.srt.constants import GPU_MEMORY_TYPE_KV_CACHE
++from sglang.srt.disaggregation import async_admission
+ from sglang.srt.disaggregation.base import KVPoll
+ from sglang.srt.disaggregation.base.conn import StateType
+ from sglang.srt.disaggregation.common.conn import CommonKVManager, CommonKVReceiver
+@@ -342,6 +343,9 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
+         self.queue: List[DecodeRequest] = []
+         self.retracted_queue: List[Req] = []
+         self.pending_reqs: List[DecodeRequest] = []
++        # SGLANG_DECODE_ASYNC_ADMISSION: (decode_req, pinned page indices,
++        # copy-done event, state_indices, decode_prefix_len) in send order.
++        self._deferred_metadata: List[Tuple] = []
+         # One outstanding rank lookup per prefill address. HTTP waits must not
+         # stall token generation for the requests already in the running batch.
+         self._prefill_dp_rank_queries: Dict[str, Future] = {}
+@@ -1279,31 +1283,38 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
+                 self.req_to_metadata_buffer_idx_allocator.alloc()
+             )
+             assert decode_req.metadata_buffer_index is not None
+-            # int32 for ZMQ serialization -- from_zmq reads np.int32.
+-            page_indices = kv_to_page_indices(kv_indices, kv_transfer_page_size).astype(
+-                np.int32
+-            )
+-            if (
+-                self.transfer_queue.enable_staging
+-                and hasattr(decode_req.kv_receiver, "require_staging")
+-                and decode_req.kv_receiver.require_staging
+-            ):
+-                # Register before send_metadata, which triggers the STAGING_REQ
+-                # prefetch (dropped for an unregistered room); tiny race, correct order.
+-                self.transfer_queue.staging_handler.register_decode_req(
+-                    decode_req.req.bootstrap_room, decode_req
+-                )
+-            decode_req.kv_receiver.send_metadata(
+-                page_indices,
+-                decode_req.metadata_buffer_index,
++            if not self._defer_send_metadata(
++                decode_req,
++                kv_indices,
++                kv_transfer_page_size,
+                 state_indices,
+-                decode_prefix_len=total_prefix_len,
+-            )
+-            if decode_req.is_rebootstrap:
+-                self.kv_manager.submit_prefill_recompute(
+-                    decode_req.kv_receiver,
+-                    decode_req.req.build_rebootstrap_payload(),
++                total_prefix_len,
++            ):
++                # int32 for ZMQ serialization -- from_zmq reads np.int32.
++                page_indices = kv_to_page_indices(
++                    kv_indices, kv_transfer_page_size
++                ).astype(np.int32)
++                if (
++                    self.transfer_queue.enable_staging
++                    and hasattr(decode_req.kv_receiver, "require_staging")
++                    and decode_req.kv_receiver.require_staging
++                ):
++                    # Register before send_metadata, which triggers the STAGING_REQ
++                    # prefetch (dropped for an unregistered room); tiny race, correct order.
++                    self.transfer_queue.staging_handler.register_decode_req(
++                        decode_req.req.bootstrap_room, decode_req
++                    )
++                decode_req.kv_receiver.send_metadata(
++                    page_indices,
++                    decode_req.metadata_buffer_index,
++                    state_indices,
++                    decode_prefix_len=total_prefix_len,
+                 )
++                if decode_req.is_rebootstrap:
++                    self.kv_manager.submit_prefill_recompute(
++                        decode_req.kv_receiver,
++                        decode_req.req.build_rebootstrap_payload(),
++                    )
+             preallocated_reqs.append(decode_req)
+             indices_to_remove.add(i)
+             decode_req.req.time_stats.set_decode_transfer_queue_entry_time()
+@@ -1314,6 +1325,57 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
+ 
+         return preallocated_reqs, failed_reqs
+ 
++    def _defer_send_metadata(
++        self,
++        decode_req: DecodeRequest,
++        kv_indices: torch.Tensor,
++        kv_transfer_page_size: int,
++        state_indices: Optional[List],
++        total_prefix_len: int,
++    ) -> bool:
++        """Read the page indices back without a host wait; send them later.
++
++        The readback and its completion event are enqueued on the current
++        (schedule) stream where kv_to_page_indices would have synchronised, so
++        the Prefill still receives the indices only after the stream has passed
++        the WAR fence, the allocation and the req_to_token write.
++        """
++        if (
++            not async_admission.ENABLED
++            or not kv_indices.is_cuda
++            or decode_req.is_rebootstrap
++            or self.scheduler.enable_hisparse
++            or self.transfer_queue.enable_staging
++        ):
++            return False
++        pages = kv_indices[::kv_transfer_page_size] // kv_transfer_page_size
++        host = torch.empty(pages.shape, dtype=pages.dtype, pin_memory=True)
++        host.copy_(pages, non_blocking=True)
++        done = torch.cuda.Event()
++        done.record()
++        self._deferred_metadata.append(
++            (decode_req, host, done, state_indices, total_prefix_len)
++        )
++        return True
++
++    def flush_deferred_metadata(self) -> None:
++        """Send page indices whose readback finished, in allocation order."""
++        while self._deferred_metadata and self._deferred_metadata[0][2].query():
++            decode_req, host, _, state_indices, total_prefix_len = (
++                self._deferred_metadata.pop(0)
++            )
++            receiver = decode_req.kv_receiver
++            # Aborted or failed meanwhile: the transfer queue releases its pages
++            # and metadata slot; the Prefill never learns these indices.
++            if receiver is None or receiver.poll() == KVPoll.Failed:
++                continue
++            receiver.send_metadata(
++                host.numpy().astype(np.int32),
++                decode_req.metadata_buffer_index,
++                state_indices,
++                decode_prefix_len=total_prefix_len,
++            )
++
+     @property
+     def num_tokens_pre_allocated(self):
+         return sum(
+@@ -1713,7 +1775,11 @@ def alloc_for_decode_prealloc(
+         last_loc = (
+             prefix_indices[-1:].to(dtype=torch.int64, device=device)
+             if prefix_len > 0
+-            else torch.tensor([-1], dtype=torch.int64, device=device)
++            else (
++                async_admission.to_device([-1], torch.int64, device)
++                if async_admission.ENABLED
++                else torch.tensor([-1], dtype=torch.int64, device=device)
++            )
+         )
+         extra_kwargs = {}
+         dsv4_unwrap_prealloc = None
+@@ -1737,9 +1803,17 @@ def alloc_for_decode_prealloc(
+             # alloc_extend which allocates SWA at full page count; the
+             # SWA budget in that case may slightly under-estimate.
+             kv_loc = allocator.alloc_extend_swa_tail(
+-                prefix_lens=torch.tensor([0], dtype=torch.int64, device=device),
++                prefix_lens=(
++                    async_admission.to_device([0], torch.int64, device)
++                    if async_admission.ENABLED
++                    else torch.tensor([0], dtype=torch.int64, device=device)
++                ),
+                 prefix_lens_cpu=torch.tensor([0], dtype=torch.int64),
+-                seq_lens=torch.tensor([fill_len], dtype=torch.int64, device=device),
++                seq_lens=(
++                    async_admission.to_device([fill_len], torch.int64, device)
++                    if async_admission.ENABLED
++                    else torch.tensor([fill_len], dtype=torch.int64, device=device)
++                ),
+                 seq_lens_cpu=torch.tensor([fill_len], dtype=torch.int64),
+                 last_loc=last_loc,
+                 extend_num_tokens=fill_len,
+@@ -1747,6 +1821,18 @@ def alloc_for_decode_prealloc(
+                 **extra_kwargs,
+             )
+             req.kv.swa_evicted_seqlen = fill_len - swa_tail_len
++        elif async_admission.ENABLED:
++            kv_loc = allocator.alloc_extend(
++                prefix_lens=async_admission.to_device(
++                    [total_prefix_len], torch.int64, device
++                ),
++                prefix_lens_cpu=torch.tensor([total_prefix_len], dtype=torch.int64),
++                seq_lens=async_admission.to_device([fill_len], torch.int64, device),
++                seq_lens_cpu=torch.tensor([fill_len], dtype=torch.int64),
++                last_loc=last_loc,
++                extend_num_tokens=delta_len,
++                **extra_kwargs,
++            )
+         else:
+             kv_loc = allocator.alloc_extend(
+                 prefix_lens=torch.tensor(
+@@ -2318,6 +2404,9 @@ class SchedulerDisaggregationDecodeMixin:
+         return new_batch
+ 
+     def process_decode_queue(self: Scheduler):
++        # Every iteration, independent of the polling interval below.
++        self.disagg_decode_prealloc_queue.flush_deferred_metadata()
++
+         if self.enable_decode_hicache:
+             self.tree_cache.check_hicache_events()
+ 
+diff --git a/python/sglang/srt/disaggregation/decode_schedule_batch_mixin.py b/python/sglang/srt/disaggregation/decode_schedule_batch_mixin.py
+--- a/python/sglang/srt/disaggregation/decode_schedule_batch_mixin.py
++++ b/python/sglang/srt/disaggregation/decode_schedule_batch_mixin.py
+@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, List
+ 
+ import torch
+ 
++from sglang.srt.disaggregation import async_admission
+ from sglang.srt.managers.overlap_utils import RelayPayload
+ from sglang.srt.mem_cache.common import maybe_cache_unfinished_req
+ from sglang.srt.model_executor.forward_batch_info import ForwardMode
+@@ -77,18 +78,31 @@ class ScheduleBatchDisaggregationDecodeMixin:
+             pre_lens.append(pre_len)
+ 
+         # Set fields
+-        self.input_ids = torch.tensor(
+-            sum(input_ids, array("q")), dtype=torch.int32, device=self.device
+-        )
+-        self.req_pool_indices = torch.tensor(
+-            req_pool_indices, dtype=torch.int64, device=self.device
+-        )
++        if async_admission.ENABLED:
++            to_device = async_admission.to_device
++            self.input_ids = to_device(
++                sum(input_ids, array("q")), torch.int32, self.device
++            )
++            self.req_pool_indices = to_device(
++                req_pool_indices, torch.int64, self.device
++            )
++            self.seq_lens = to_device(seq_lens, torch.int64, self.device)
++            self.orig_seq_lens = to_device(seq_lens, torch.int32, self.device)
++        else:
++            self.input_ids = torch.tensor(
++                sum(input_ids, array("q")), dtype=torch.int32, device=self.device
++            )
++            self.req_pool_indices = torch.tensor(
++                req_pool_indices, dtype=torch.int64, device=self.device
++            )
++            self.seq_lens = torch.tensor(
++                seq_lens, dtype=torch.int64, device=self.device
++            )
++            self.orig_seq_lens = torch.tensor(
++                seq_lens, dtype=torch.int32, device=self.device
++            )
+         self.req_pool_indices_cpu = torch.tensor(req_pool_indices, dtype=torch.int64)
+-        self.seq_lens = torch.tensor(seq_lens, dtype=torch.int64, device=self.device)
+         self.seq_lens_cpu = torch.tensor(seq_lens, dtype=torch.int64)
+-        self.orig_seq_lens = torch.tensor(
+-            seq_lens, dtype=torch.int32, device=self.device
+-        )
+         self.out_cache_loc = out_cache_loc
+         self.seq_lens_sum = sum(seq_lens)
+ 
+@@ -138,8 +152,10 @@ class ScheduleBatchDisaggregationDecodeMixin:
+                         error_message, HTTPStatus.INTERNAL_SERVER_ERROR
+                     )
+                 req.grammar.finished = req.finished()
+-        last_tokens_tensor = torch.tensor(
+-            last_tokens, dtype=torch.int64, device=self.device
++        last_tokens_tensor = (
++            async_admission.to_device(last_tokens, torch.int64, self.device)
++            if async_admission.ENABLED
++            else torch.tensor(last_tokens, dtype=torch.int64, device=self.device)
+         )
+ 
+         spec_info = self.spec_algorithm.build_disagg_draft_input(
+diff --git a/python/sglang/srt/sampling/penaltylib/min_new_tokens.py b/python/sglang/srt/sampling/penaltylib/min_new_tokens.py
+--- a/python/sglang/srt/sampling/penaltylib/min_new_tokens.py
++++ b/python/sglang/srt/sampling/penaltylib/min_new_tokens.py
+@@ -1,5 +1,6 @@
+ import torch
+ 
++from sglang.srt.disaggregation import async_admission
+ from sglang.srt.sampling.penaltylib.orchestrator import _BatchedPenalizer
+ 
+ 
+@@ -14,30 +15,34 @@ class BatchedMinNewTokensPenalizer(_BatchedPenalizer):
+         )
+ 
+     def _prepare(self):
+-        self.min_new_tokens = torch.tensor(
+-            data=[
+-                req.sampling_params.min_new_tokens for req in self.orchestrator.reqs()
+-            ],
+-            dtype=torch.int32,
+-            device=self.orchestrator.device,
++        device = self.orchestrator.device
++        to_device = (
++            async_admission.to_device
++            if async_admission.ENABLED and torch.device(device).type == "cuda"
++            else lambda data, dtype, device: torch.tensor(
++                data=data, dtype=dtype, device=device
++            )
++        )
++        self.min_new_tokens = to_device(
++            [req.sampling_params.min_new_tokens for req in self.orchestrator.reqs()],
++            torch.int32,
++            device,
+         ).unsqueeze_(1)
+ 
+         padded_stop_token_ids = torch.nn.utils.rnn.pad_sequence(
+             sequences=[
+-                torch.tensor(
+-                    data=(
+-                        list(
+-                            (req.sampling_params.stop_token_ids or set())
+-                            | (req.tokenizer.additional_stop_token_ids or set())
+-                            | (
+-                                {req.tokenizer.eos_token_id}
+-                                if req.tokenizer.eos_token_id is not None
+-                                else set()
+-                            )
++                to_device(
++                    list(
++                        (req.sampling_params.stop_token_ids or set())
++                        | (req.tokenizer.additional_stop_token_ids or set())
++                        | (
++                            {req.tokenizer.eos_token_id}
++                            if req.tokenizer.eos_token_id is not None
++                            else set()
+                         )
+                     ),
+-                    dtype=torch.int64,
+-                    device=self.orchestrator.device,
++                    torch.int64,
++                    device,
+                 )
+                 for req in self.orchestrator.reqs()
+             ],
+diff --git a/python/sglang/srt/speculative/eagle_disaggregation.py b/python/sglang/srt/speculative/eagle_disaggregation.py
+--- a/python/sglang/srt/speculative/eagle_disaggregation.py
++++ b/python/sglang/srt/speculative/eagle_disaggregation.py
+@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
+ 
+ import torch
+ 
++from sglang.srt.disaggregation import async_admission
+ from sglang.srt.managers.overlap_utils import RelayPayload
+ from sglang.srt.model_executor.forward_batch_info import CaptureHiddenMode
+ from sglang.srt.speculative.eagle_info import EagleDraftInput
+@@ -24,32 +25,65 @@ def build_eagle_disagg_draft_input(
+     if server_args.enable_multi_layer_eagle:
+         num_states *= server_args.speculative_num_steps
+ 
+-    topk_p = torch.stack(
+-        [
+-            torch.as_tensor(
+-                req.output_topk_p[:num_states],
+-                device=batch.device,
+-                dtype=torch.float32,
+-            )
+-            for req in batch.reqs
+-        ],
+-        dim=0,
+-    )
+-    topk_index = torch.stack(
+-        [
+-            torch.as_tensor(
+-                req.output_topk_index[:num_states],
+-                device=batch.device,
+-                dtype=torch.int64,
+-            )
+-            for req in batch.reqs
+-        ],
+-        dim=0,
+-    )
++    if async_admission.ENABLED:
++        # Stack on the host, then one pinned non-blocking copy per tensor.
++        to_device = async_admission.to_device
++        topk_p = to_device(
++            torch.stack(
++                [
++                    torch.as_tensor(req.output_topk_p[:num_states], dtype=torch.float32)
++                    for req in batch.reqs
++                ],
++                dim=0,
++            ),
++            None,
++            batch.device,
++        )
++        topk_index = to_device(
++            torch.stack(
++                [
++                    torch.as_tensor(
++                        req.output_topk_index[:num_states], dtype=torch.int64
++                    )
++                    for req in batch.reqs
++                ],
++                dim=0,
++            ),
++            None,
++            batch.device,
++        )
++        hidden_states = to_device(
++            torch.stack([req.hidden_states_tensor for req in batch.reqs], dim=0),
++            None,
++            batch.device,
++        )
++    else:
++        topk_p = torch.stack(
++            [
++                torch.as_tensor(
++                    req.output_topk_p[:num_states],
++                    device=batch.device,
++                    dtype=torch.float32,
++                )
++                for req in batch.reqs
++            ],
++            dim=0,
++        )
++        topk_index = torch.stack(
++            [
++                torch.as_tensor(
++                    req.output_topk_index[:num_states],
++                    device=batch.device,
++                    dtype=torch.int64,
++                )
++                for req in batch.reqs
++            ],
++            dim=0,
++        )
+ 
+-    hidden_states = torch.stack(
+-        [req.hidden_states_tensor for req in batch.reqs], dim=0
+-    ).to(batch.device)
++        hidden_states = torch.stack(
++            [req.hidden_states_tensor for req in batch.reqs], dim=0
++        ).to(batch.device)
+ 
+     dsa_topk_indices = None
+     dsa_indices_list = [req.output_dsa_topk_indices for req in batch.reqs]
