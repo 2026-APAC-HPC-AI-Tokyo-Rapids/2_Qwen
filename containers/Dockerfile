@@ -19,21 +19,14 @@ COPY sglang-project-metadata /opt/sglang-project-metadata
 COPY containers/install-python-dependencies.sh /opt/apac/install-python-dependencies.sh
 RUN /opt/apac/install-python-dependencies.sh && rm /opt/apac/install-python-dependencies.sh
 
-COPY prefill-load-lifetime.patch sglang-router.Cargo.lock /opt/apac/
+COPY prefill-load-lifetime.patch no-delay-acceptor.patch sglang-router.Cargo.lock /opt/apac/
 COPY containers/build-sglang-router.sh /opt/apac/build-sglang-router.sh
 RUN /opt/apac/build-sglang-router.sh && rm /opt/apac/build-sglang-router.sh
 
 COPY containers/install-accelerator-dependencies.sh /opt/apac/install-accelerator-dependencies.sh
 RUN /opt/apac/install-accelerator-dependencies.sh && rm /opt/apac/install-accelerator-dependencies.sh
 
-COPY sm90-late-topk-fp32.patch /opt/apac/sm90-late-topk-fp32.patch
-COPY sm90-fc2-pipeline.patch /opt/apac/sm90-fc2-pipeline.patch
-COPY sm90-prefill-rescale.patch /opt/apac/sm90-prefill-rescale.patch
-COPY sm90-decode-exact-tiles.patch /opt/apac/sm90-decode-exact-tiles.patch
-COPY sm90-prefill-phase.patch /opt/apac/sm90-prefill-phase.patch
-COPY sm90-decode-swap-ab-hoist.patch /opt/apac/sm90-decode-swap-ab-hoist.patch
-COPY sm90-decode-swap-ab-l1-quant.patch /opt/apac/sm90-decode-swap-ab-l1-quant.patch
-COPY sm90-dispatch-pull-overlap.patch /opt/apac/sm90-dispatch-pull-overlap.patch
+COPY deep-gemm /opt/apac/deep-gemm
 COPY containers/build-sm90-megamoe.py /opt/apac/build-sm90-megamoe.py
 RUN /opt/sglang/venv/bin/python /opt/apac/build-sm90-megamoe.py
 
@@ -41,6 +34,8 @@ COPY sglang-source /opt/sglang/source
 COPY sglang-commit.txt /opt/sglang/sglang-commit.txt
 COPY containers/install-sglang-source.sh /opt/apac/install-sglang-source.sh
 RUN /opt/apac/install-sglang-source.sh && rm /opt/apac/install-sglang-source.sh
+COPY containers/check-firmus-latency-source.py /opt/apac/check-firmus-latency-source.py
+RUN /opt/sglang/venv/bin/python /opt/apac/check-firmus-latency-source.py /opt/sglang/source --installed
 COPY containers/check-decode-kernel-build.py /opt/apac/check-decode-kernel-build.py
 RUN /opt/sglang/venv/bin/python /opt/apac/check-decode-kernel-build.py
 COPY containers/check-rope-kernel-build.py /opt/apac/check-rope-kernel-build.py

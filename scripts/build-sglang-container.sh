@@ -73,14 +73,25 @@ prefill_handoff_patch="patches/sglang/prefill-ready-handoff.patch"
 deepgemm_activation_patch="patches/sglang/deepgemm-activation-layout.patch"
 rope_fp8_patch="patches/sglang/rope-fp8-q.patch"
 qknorm_rope_fp8_patch="patches/sglang/qknorm-rope-fp8.patch"
+aligned_chunks_patch="patches/sglang/prefill-request-aligned-chunks.patch"
+qknorm_rope_fp8_kv_patch="patches/sglang/qknorm-rope-fp8-kv.patch"
+topk_padding_patch="patches/sglang/qwen-topk-padding.patch"
+qknorm_rope_fp8_token_warps_patch="patches/sglang/qknorm-rope-fp8-token-warps.patch"
+async_admission_patch="patches/sglang/decode-async-admission.patch"
+rotate_ties_patch="patches/sglang/dp-total-requests-rotate-ties.patch"
+idle_geometry_patch="patches/sglang/megamoe-idle-prefill-geometry.patch"
+# Application order. The token-warps and group-quant patches build on the FP8 KV patch, and the Tier 2 patches come last.
+sglang_patches=("${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}" "${decode_quant_patch}" "${expired_chunk_patch}" "${dp_rank_query_patch}" "${prefill_handoff_patch}" "${deepgemm_activation_patch}" "${rope_fp8_patch}" "${qknorm_rope_fp8_patch}" "${aligned_chunks_patch}" "${qknorm_rope_fp8_kv_patch}" "${topk_padding_patch}" "${qknorm_rope_fp8_token_warps_patch}" "${async_admission_patch}" "${rotate_ties_patch}" "${idle_geometry_patch}")
 # Later patches depend on additions made by earlier patches; check each updated private tree.
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}" "${decode_quant_patch}" "${expired_chunk_patch}" "${dp_rank_query_patch}" "${prefill_handoff_patch}" "${deepgemm_activation_patch}" "${rope_fp8_patch}" "${qknorm_rope_fp8_patch}"; do
+for patch in "${sglang_patches[@]}"; do
   git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${patch}"
   git -C "${source_dir}" apply "${GITHUB_WORKSPACE}/${patch}"
 done
 python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-staging.py" "${source_dir}"
 python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-megamoe-source.py" "${source_dir}"
 python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-latency-source.py" "${source_dir}"
+python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-prefill-chunks.py" "${source_dir}"
+python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-tier2-source.py" "${source_dir}" admission dp-ties idle-geometry
 
 cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/build-nccl-tests.sh" "${GITHUB_WORKSPACE}/containers/install-accelerator-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-python-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-sglang-source.sh" "${GITHUB_WORKSPACE}/containers/install-system-toolchain.sh" "${context}/containers/"
 cp --no-preserve=ownership,xattr "${source_dir}/LICENSE" "${source_dir}/README.md" "${source_dir}/python/pyproject.toml" "${context}/sglang-project-metadata/python/"
@@ -91,17 +102,13 @@ cp "${GITHUB_WORKSPACE}/kernels/prefill/moe_routing.cu" "${context}/prefill-moe-
 cp "${GITHUB_WORKSPACE}/containers/build-sm90-megamoe.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/check-decode-kernel-build.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/check-rope-kernel-build.py" "${context}/containers/"
+cp "${GITHUB_WORKSPACE}/scripts/check-firmus-latency-source.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/build-sglang-router.sh" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/patches/sglang-router/prefill-load-lifetime.patch" "${context}/prefill-load-lifetime.patch"
+cp "${GITHUB_WORKSPACE}/patches/sglang-router/no-delay-acceptor.patch" "${context}/no-delay-acceptor.patch"
 cp "${GITHUB_WORKSPACE}/patches/sglang-router/Cargo.lock" "${context}/sglang-router.Cargo.lock"
-cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-late-topk-fp32.patch" "${context}/sm90-late-topk-fp32.patch"
-cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-fc2-pipeline.patch" "${context}/sm90-fc2-pipeline.patch"
-cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-prefill-rescale.patch" "${context}/sm90-prefill-rescale.patch"
-cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-decode-exact-tiles.patch" "${context}/sm90-decode-exact-tiles.patch"
-cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-prefill-phase.patch" "${context}/sm90-prefill-phase.patch"
-cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-decode-swap-ab-hoist.patch" "${context}/sm90-decode-swap-ab-hoist.patch"
-cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-decode-swap-ab-l1-quant.patch" "${context}/sm90-decode-swap-ab-l1-quant.patch"
-cp "${GITHUB_WORKSPACE}/patches/deep-gemm/sm90-dispatch-pull-overlap.patch" "${context}/sm90-dispatch-pull-overlap.patch"
+# Ordered patch series and the expected final header SHA-256 travel with the patches.
+cp -r "${GITHUB_WORKSPACE}/patches/deep-gemm" "${context}/deep-gemm"
 rm -rf -- "${context}/sglang-source/.git"
 printf '%s\n' "${sglang_commit}" >"${context}/sglang-commit.txt"
 
@@ -112,9 +119,14 @@ sglang_object_format="$(git -C "${source_dir}" rev-parse --show-object-format)"
 dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/Dockerfile)"
 build_steps_json="$(sed -n 's%^COPY \(containers/[^ ]*\.sh\) .*%\1%p' "${GITHUB_WORKSPACE}/containers/Dockerfile" | while read -r build_step; do build_step="${GITHUB_WORKSPACE}/${build_step}"; jq -cn --arg path "${build_step#"${GITHUB_WORKSPACE}/"}" --arg oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${build_step}")" '{path:$path,blob_oid:$oid}'; done | jq -s '.')"
 patches_json='[]'
-for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}" "${decode_quant_patch}" "${expired_chunk_patch}" "${dp_rank_query_patch}" "${prefill_handoff_patch}" "${deepgemm_activation_patch}" "${rope_fp8_patch}" "${qknorm_rope_fp8_patch}"; do
+for patch in "${sglang_patches[@]}"; do
   case "${patch}" in
-    "${rope_fp8_patch}"|"${qknorm_rope_fp8_patch}") targets=(python/sglang/kernels/jit/csrc/elementwise/rope.cuh python/sglang/kernels/ops/attention/rope.py python/sglang/srt/models/qwen3_moe.py) ;;
+    "${rope_fp8_patch}"|"${qknorm_rope_fp8_patch}"|"${qknorm_rope_fp8_kv_patch}"|"${qknorm_rope_fp8_token_warps_patch}") targets=(python/sglang/kernels/jit/csrc/elementwise/rope.cuh python/sglang/kernels/ops/attention/rope.py python/sglang/srt/models/qwen3_moe.py) ;;
+    "${topk_padding_patch}") targets=(python/sglang/kernels/jit/csrc/trtllm_lora_temp/topk_softmax_pack.cuh python/sglang/kernels/ops/moe/trtllm_lora_temp/topk_softmax_pack.py python/sglang/srt/layers/moe/topk.py) ;;
+    "${aligned_chunks_patch}") targets=(python/sglang/srt/managers/schedule_policy.py python/sglang/srt/managers/scheduler.py) ;;
+    "${async_admission_patch}") targets=(python/sglang/srt/disaggregation/async_admission.py python/sglang/srt/disaggregation/decode.py python/sglang/srt/disaggregation/decode_schedule_batch_mixin.py python/sglang/srt/sampling/penaltylib/min_new_tokens.py python/sglang/srt/speculative/eagle_disaggregation.py) ;;
+    "${rotate_ties_patch}") targets=(python/sglang/srt/managers/data_parallel_controller.py) ;;
+    "${idle_geometry_patch}") targets=(python/sglang/srt/layers/moe/mega_moe_sm90.py) ;;
     "${deepgemm_activation_patch}") targets=(python/sglang/srt/layers/moe/moe_runner/deep_gemm.py python/sglang/kernels/ops/attention/dsv4/moe.py) ;;
     "${prefill_handoff_patch}") targets=(python/sglang/srt/disaggregation/prefill.py) ;;
     "${dp_rank_query_patch}") targets=(python/sglang/srt/disaggregation/decode.py) ;;
@@ -135,8 +147,9 @@ for patch in "${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "$
   done
   patches_json="$(jq --arg path "${patch}" --arg blob_oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${patch}")" --arg sha256 "$(sha256sum "${GITHUB_WORKSPACE}/${patch}" | awk '{print $1}')" --argjson targets "${targets_json}" '. + [{path:$path,blob_oid:$blob_oid,sha256:$sha256,targets:$targets}]' <<<"${patches_json}")"
 done
-router_patch=patches/sglang-router/prefill-load-lifetime.patch
-patches_json="$(jq --arg path "${router_patch}" --arg blob_oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${router_patch}")" --arg sha256 "$(sha256sum "${GITHUB_WORKSPACE}/${router_patch}" | awk '{print $1}')" '. + [{path:$path,blob_oid:$blob_oid,sha256:$sha256,targets:[]}]' <<<"${patches_json}")"
+for router_patch in patches/sglang-router/prefill-load-lifetime.patch patches/sglang-router/no-delay-acceptor.patch; do
+  patches_json="$(jq --arg path "${router_patch}" --arg blob_oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${router_patch}")" --arg sha256 "$(sha256sum "${GITHUB_WORKSPACE}/${router_patch}" | awk '{print $1}')" '. + [{path:$path,blob_oid:$blob_oid,sha256:$sha256,targets:[]}]' <<<"${patches_json}")"
+done
 jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITHUB_SHA}" --arg sglang_object_format "${sglang_object_format}" --arg sglang_commit "${sglang_commit}" --arg dockerfile_blob_oid "${dockerfile_blob_oid}" --arg base_reference "${base_reference}" --arg base_manifest_sha256 "${base_manifest_sha256}" --arg routing_source_sha256 "$(sha256sum "${GITHUB_WORKSPACE}/kernels/prefill/moe_routing.cu" | awk '{print $1}')" --arg routing_build_sha256 "$(sha256sum "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.py" | awk '{print $1}')" --argjson build_steps "${build_steps_json}" --argjson patches "${patches_json}" '{schema_version:"oci-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"container_build_definition",object_hash_algorithm:$qwen_object_format,oid:$qwen_commit},{repository_id:"apac2026-sglang",commit_role:"sglang_source",object_hash_algorithm:$sglang_object_format,oid:$sglang_commit}],recipe:{path:"containers/Dockerfile",blob_oid:$dockerfile_blob_oid,build_steps:$build_steps},applied_patches:$patches,local_kernels:{path:"kernels/prefill/moe_routing.cu",sha256:$routing_source_sha256,build_sha256:$routing_build_sha256,architecture:"sm_90",translation_units:1,gemm_templates:0},base_oci:{reference:$base_reference,manifest_sha256:$base_manifest_sha256}}' >"${context}/apac-manifest.json"
 
 buildah --root "${storage_root}" --runroot "${run_root}" bud --isolation chroot --network host --layers --cache-from "${BUILD_CACHE_REPOSITORY}" --cache-to "${BUILD_CACHE_REPOSITORY}" --cache-ttl 336h --file "${context}/containers/Dockerfile" --tag "${image}" "${context}" 2>&1 | tee "${BUILD_DIR}/logs/buildah.log"

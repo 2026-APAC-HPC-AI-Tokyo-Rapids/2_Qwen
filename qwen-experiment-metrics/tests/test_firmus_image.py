@@ -10,34 +10,63 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("corruption", [None, "hash", "missing_dp_query", "missing_handoff", "missing_activation", "missing_rope", "missing_qknorm_rope", "router_hash", "router_lock", "missing_router", "pipeline_hash", "prefill_hash", "prefill_mode", "decode_tiles_hash", "prefill_phase_hash", "swap_ab_hoist_hash", "l1_quant_hash", "dispatch_overlap_hash"])
+SGLANG_PATCHES = ["firmus-staged-eagle-kv", "qwen3-sm90-megamoe", "firmus-dp-rank-query", "prefill-ready-handoff", "deepgemm-activation-layout", "rope-fp8-q", "qknorm-rope-fp8", "prefill-request-aligned-chunks", "qknorm-rope-fp8-kv", "qwen-topk-padding", "qknorm-rope-fp8-token-warps", "decode-async-admission", "dp-total-requests-rotate-ties", "megamoe-idle-prefill-geometry"]
+ROUTER_PATCHES = ["prefill-load-lifetime", "no-delay-acceptor"]
+CORRUPTIONS = [None, "hash", "router_hash", "router_nodelay_hash", "router_lock", "missing_router", "prefill_mode", "header_hash", "deep_gemm_first_hash", "deep_gemm_last_hash", "deep_gemm_missing_last", "deep_gemm_order"] + [f"missing_{name}" for name in SGLANG_PATCHES] + [f"missing_router_{name}" for name in ROUTER_PATCHES]
+
+
+def sha256(path):
+    return hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+
+
+# Kept on the branch but not wired into the image (changes the cross-rank protocol in every geometry; GPU-pending).
+UNWIRED_DEEP_GEMM_PATCHES = {"sm90-flat-nvlink-barriers.patch"}
+
+
+def test_deep_gemm_series_lists_every_wired_patch_and_pins_the_final_header() -> None:
+    series = (ROOT / "patches/deep-gemm/series").read_text().split()
+    assert len(series) == len(set(series))
+    assert set(series) | UNWIRED_DEEP_GEMM_PATCHES == {path.name for path in (ROOT / "patches/deep-gemm").glob("*.patch")}
+    assert not set(series) & UNWIRED_DEEP_GEMM_PATCHES
+    header = (ROOT / "patches/deep-gemm/header.sha256").read_text().strip()
+    assert len(header) == 64 and int(header, 16) >= 0
+
+
+@pytest.mark.parametrize("corruption", CORRUPTIONS)
 def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(tmp_path, corruption):
     embedded = tmp_path / "embedded"
     embedded.mkdir()
-    patches = ["patches/sglang/firmus-staged-eagle-kv.patch", "patches/sglang/qwen3-sm90-megamoe.patch", "patches/sglang/firmus-dp-rank-query.patch", "patches/sglang/prefill-ready-handoff.patch", "patches/sglang/deepgemm-activation-layout.patch", "patches/sglang/rope-fp8-q.patch", "patches/sglang/qknorm-rope-fp8.patch"]
-    manifest = {"applied_patches": [{"path": p, "sha256": hashlib.sha256((ROOT / p).read_bytes()).hexdigest()} for p in patches]}
+    patches = [f"patches/sglang/{name}.patch" for name in SGLANG_PATCHES] + [f"patches/sglang-router/{name}.patch" for name in ROUTER_PATCHES]
+    manifest = {"applied_patches": [{"path": p, "sha256": sha256(p)} for p in patches]}
     if corruption == "hash":
         manifest["applied_patches"][0]["sha256"] = "0" * 64
-    elif corruption == "missing_dp_query":
-        manifest["applied_patches"].pop(2)
-    elif corruption == "missing_handoff":
-        manifest["applied_patches"].pop(3)
-    elif corruption == "missing_activation":
-        manifest["applied_patches"].pop(4)
-    elif corruption == "missing_rope":
-        manifest["applied_patches"].pop(5)
-    elif corruption == "missing_qknorm_rope":
-        manifest["applied_patches"].pop()
+    elif corruption and corruption.startswith("missing_router_"):
+        manifest["applied_patches"].pop(patches.index(f"patches/sglang-router/{corruption[len('missing_router_'):]}.patch"))
+    elif corruption and corruption.startswith("missing_") and corruption != "missing_router":
+        manifest["applied_patches"].pop(patches.index(f"patches/sglang/{corruption[len('missing_'):]}.patch"))
     (embedded / "manifest.json").write_text(json.dumps(manifest))
-    router = {"version": "0.3.2", "source_sha256": "bdbea1d54cce879fb83d2885d01ee3c006f242d0adbbac806f2fb2b91a5fe73d", "prefill_load": "dispatch_through_body_completion", "patch_sha256": hashlib.sha256((ROOT / "patches/sglang-router/prefill-load-lifetime.patch").read_bytes()).hexdigest(), "cargo_lock_sha256": hashlib.sha256((ROOT / "patches/sglang-router/Cargo.lock").read_bytes()).hexdigest()}
+    router = {"version": "0.3.2", "source_sha256": "bdbea1d54cce879fb83d2885d01ee3c006f242d0adbbac806f2fb2b91a5fe73d", "prefill_load": "dispatch_through_body_completion", "patch_sha256": sha256("patches/sglang-router/prefill-load-lifetime.patch"), "nodelay_patch_sha256": sha256("patches/sglang-router/no-delay-acceptor.patch"), "cargo_lock_sha256": sha256("patches/sglang-router/Cargo.lock")}
     if corruption == "router_hash":
         router["patch_sha256"] = "0" * 64
+    if corruption == "router_nodelay_hash":
+        router["nodelay_patch_sha256"] = "0" * 64
     if corruption == "router_lock":
         router["cargo_lock_sha256"] = "0" * 64
     if corruption != "missing_router":
         (embedded / "sglang-router-build.json").write_text(json.dumps(router))
     geometries = [{"role": "prefill", "block_m": 128, "block_n": 256, "epilogue_threads": 512, "stages": 3, "registers": 112, "reuse_accum": corruption != "prefill_mode", "arrival_counter": True, "full_sync": False, "swap_ab": False}, {"role": "decode", "block_m": 64, "block_n": 128, "epilogue_threads": 256, "stages": 8, "registers": 0, "reuse_accum": False, "arrival_counter": False, "full_sync": True, "swap_ab": True}]
-    (embedded / "sm90-megamoe-build.json").write_text(json.dumps({"version": "0.1.5", "header_sha256": "135a43befec61e04c27a51be3ca0e4c8b928669529a830acde134042379e1a6d", "patch_sha256": hashlib.sha256((ROOT / "patches/deep-gemm/sm90-late-topk-fp32.patch").read_bytes()).hexdigest(), "fc2_pipeline_patch_sha256": "0" * 64 if corruption == "pipeline_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-fc2-pipeline.patch").read_bytes()).hexdigest(), "prefill_rescale_patch_sha256": "0" * 64 if corruption == "prefill_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-prefill-rescale.patch").read_bytes()).hexdigest(), "decode_tiles_patch_sha256": "0" * 64 if corruption == "decode_tiles_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-decode-exact-tiles.patch").read_bytes()).hexdigest(), "prefill_phase_patch_sha256": "0" * 64 if corruption == "prefill_phase_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-prefill-phase.patch").read_bytes()).hexdigest(), "swap_ab_hoist_patch_sha256": "0" * 64 if corruption == "swap_ab_hoist_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-decode-swap-ab-hoist.patch").read_bytes()).hexdigest(), "l1_quant_patch_sha256": "0" * 64 if corruption == "l1_quant_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-decode-swap-ab-l1-quant.patch").read_bytes()).hexdigest(), "dispatch_overlap_patch_sha256": "0" * 64 if corruption == "dispatch_overlap_hash" else hashlib.sha256((ROOT / "patches/deep-gemm/sm90-dispatch-pull-overlap.patch").read_bytes()).hexdigest(), "combine_accumulator": "FP32", "compiled_geometries": geometries}))
+    series = (ROOT / "patches/deep-gemm/series").read_text().split()
+    deep_gemm = {name: sha256(f"patches/deep-gemm/{name}") for name in series}
+    if corruption == "deep_gemm_first_hash":
+        deep_gemm[series[0]] = "0" * 64
+    if corruption == "deep_gemm_last_hash":
+        deep_gemm[series[-1]] = "0" * 64
+    if corruption == "deep_gemm_missing_last":
+        del deep_gemm[series[-1]]
+    if corruption == "deep_gemm_order":
+        deep_gemm = {name: deep_gemm[name] for name in reversed(series)}
+    header = "0" * 64 if corruption == "header_hash" else (ROOT / "patches/deep-gemm/header.sha256").read_text().strip()
+    (embedded / "sm90-megamoe-build.json").write_text(json.dumps({"version": "0.1.5", "header_sha256": header, "patches": deep_gemm, "combine_accumulator": "FP32", "compiled_geometries": geometries}))
     unpack = tmp_path / "unsquashfs"
     unpack.write_text('#!/bin/bash\nset -eu\n[[ "$*" != *"-cat"* ]] || exit 1\nwhile [[ "$1" != -d ]]; do shift; done\n[[ ! -e "$2" ]] || exit 1\nmkdir -p "$2/opt/apac"\ncp "$EMBEDDED"/*.json "$2/opt/apac/"\nchmod -R a-w "$2"\n')
     unpack.chmod(0o755)

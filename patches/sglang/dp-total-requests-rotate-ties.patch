@@ -1,0 +1,48 @@
+diff --git a/python/sglang/srt/managers/data_parallel_controller.py b/python/sglang/srt/managers/data_parallel_controller.py
+--- a/python/sglang/srt/managers/data_parallel_controller.py
++++ b/python/sglang/srt/managers/data_parallel_controller.py
+@@ -16,6 +16,7 @@
+ import faulthandler
+ import logging
+ import multiprocessing as mp
++import os
+ import signal
+ import threading
+ import time
+@@ -91,9 +92,17 @@ class LoadBalanceMethod(Enum):
+             raise ValueError(f"Invalid load balance method: {method}") from exc
+ 
+ 
++# Equal total_requests loads rotate over the ranks instead of always going to
++# the lowest DP index (which starves the highest index of work).
++_ROTATE_TOTAL_REQUESTS_TIES = (
++    os.environ.get("SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES", "0") == "1"
++)
++
++
+ class DPBudget:
+     def __init__(self, dp_size: int):
+         self.dp_size = dp_size
++        self.tie_cursor = 0
+         self.total_requests = [0] * dp_size
+         self.total_tokens = [0] * dp_size
+         self.last_timestamp = [0.0] * dp_size
+@@ -110,7 +119,17 @@ class DPBudget:
+             self.total_tokens[load.dp_rank] = load.num_total_tokens
+ 
+     def dispatch(self, method: LoadBalanceMethod, estimated_tokens: int = 0):
+-        if method == LoadBalanceMethod.TOTAL_REQUESTS:
++        if method == LoadBalanceMethod.TOTAL_REQUESTS and _ROTATE_TOTAL_REQUESTS_TIES:
++            least = min(self.total_requests)
++            target_rank = next(
++                rank
++                for rank in (
++                    (self.tie_cursor + i) % self.dp_size for i in range(self.dp_size)
++                )
++                if self.total_requests[rank] == least
++            )
++            self.tie_cursor = (target_rank + 1) % self.dp_size
++        elif method == LoadBalanceMethod.TOTAL_REQUESTS:
+             target_rank = self.total_requests.index(min(self.total_requests))
+         elif method == LoadBalanceMethod.TOTAL_TOKENS:
+             # Use total_requests as a tie-breaker when total_tokens are equal
