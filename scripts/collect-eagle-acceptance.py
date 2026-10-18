@@ -81,6 +81,9 @@ def speculation_config(path: Path) -> dict[str, object]:
     speculation = config.get("speculation")
     if not isinstance(speculation, dict) or speculation.get("algorithm") != "EAGLE3":
         raise ValueError(f"{path}: EAGLE3 speculation configuration is required")
+    tokenizer_backend = config.get("tokenizer_backend", "huggingface")
+    if not isinstance(tokenizer_backend, str) or not tokenizer_backend:
+        raise ValueError(f"{path}: tokenizer_backend must be a non-empty string")
     return {
         "algorithm": speculation["algorithm"],
         "steps": speculation.get("steps"),
@@ -88,6 +91,7 @@ def speculation_config(path: Path) -> dict[str, object]:
         "draft_repository": speculation.get("draft_repository"),
         "draft_revision": speculation.get("draft_revision"),
         "eagle_topk": 1,
+        "tokenizer_backend": tokenizer_backend,
     }
 
 
@@ -107,9 +111,14 @@ def server_info_path(directory: Path, endpoint: dict[str, object]) -> Path:
     raise FileNotFoundError(f"no server-info JSON for decode endpoint {role}:{port}")
 
 
-def acceptance_states(info: dict[str, Any], path: Path) -> list[dict[str, object]]:
+def acceptance_states(info: dict[str, Any], path: Path, tokenizer_backend: str) -> list[dict[str, object]]:
     if info.get("speculative_algorithm") not in (None, "EAGLE3"):
         raise ValueError(f"{path}: server is not using EAGLE3")
+    if tokenizer_backend != "huggingface":
+        states = info.get("internal_states")
+        observed = [info, *(states if isinstance(states, list) else [])]
+        if any(state.get("tokenizer_backend") != tokenizer_backend for state in observed if isinstance(state, dict)):
+            raise ValueError(f"{path}: server tokenizer_backend is not {tokenizer_backend}")
     states = info.get("internal_states")
     if not isinstance(states, list):
         raise TypeError(f"{path}: internal_states is missing")
@@ -160,7 +169,7 @@ def collect(arguments: argparse.Namespace) -> dict[str, object]:
             continue
         info_path = server_info_path(arguments.server_info_dir, endpoint)
         info = read_json(info_path)
-        states = acceptance_states(info, info_path)
+        states = acceptance_states(info, info_path, str(configured["tokenizer_backend"]))
         state_lengths.extend(
             float(state["accept_length_including_bonus"]) for state in states
         )
@@ -170,6 +179,7 @@ def collect(arguments: argparse.Namespace) -> dict[str, object]:
                 "host": endpoint["host"],
                 "port": endpoint["port"],
                 "server_info": info_path.name,
+                "tokenizer_backend": info.get("tokenizer_backend"),
                 "states": states,
             }
         )

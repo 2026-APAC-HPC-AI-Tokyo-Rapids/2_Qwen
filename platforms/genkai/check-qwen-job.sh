@@ -10,7 +10,7 @@ if timeout 20 pjwait -z "${PJM_JOB_ID}"; then
   test -e "${RUNTIME_DIR}/run-success"
   test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
   test -s "${RUNTIME_DIR}/results/score.json"
-  if [[ -s "${RUNTIME_DIR}/source/genkai-serving.json" && "$(jq -r '.speculation.algorithm' "${RUNTIME_DIR}/source/genkai-serving.json")" == EAGLE3 ]]; then test -s "${RUNTIME_DIR}/results/eagle-acceptance.json"; fi
+  if [[ -s "${RUNTIME_DIR}/source/genkai-serving.json" && "$(jq -r '.speculation.algorithm' "${RUNTIME_DIR}/source/genkai-serving.json")" == EAGLE3 ]]; then jq -e '.tokenizer_backend == "gigatoken"' "${RUNTIME_DIR}/source/genkai-serving.json" >/dev/null; test -s "${RUNTIME_DIR}/results/eagle-acceptance.json"; fi
   exit 0
 else
   status=$?

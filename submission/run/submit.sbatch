@@ -175,6 +175,10 @@ run_node() {
     draft_mount=()
     speculation_config="${OUTPUT_DIR}/source/${QWEN_PLATFORM}-serving.json"
     if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then speculation_config="${OUTPUT_DIR}/source/aspire-serving.json"; fi
+    if [[ -s "${speculation_config}" ]]; then
+      tokenizer_backend="$(jq -r '.tokenizer_backend // "huggingface"' "${speculation_config}")"
+      if [[ "${tokenizer_backend}" != huggingface ]]; then args+=(--tokenizer-backend "${tokenizer_backend}"); fi
+    fi
     if [[ -s "${speculation_config}" && "$(jq -r '.speculation.algorithm' "${speculation_config}")" == EAGLE3 ]]; then
       args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${speculation_config}")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${speculation_config}")")
       draft_mount=(-m "${OUTPUT_DIR}/draft:/draft")

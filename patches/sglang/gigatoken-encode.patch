@@ -1,0 +1,53 @@
+diff --git a/python/sglang/srt/utils/hf_transformers/tokenizer.py b/python/sglang/srt/utils/hf_transformers/tokenizer.py
+--- a/python/sglang/srt/utils/hf_transformers/tokenizer.py
++++ b/python/sglang/srt/utils/hf_transformers/tokenizer.py
+@@ -532,4 +532,10 @@
+-        return _apply_post_load_fixes(tokenizer, tokenizer_name, tokenizer_revision)
++        tokenizer = _apply_post_load_fixes(tokenizer, tokenizer_name, tokenizer_revision)
++        if tokenizer_backend == "gigatoken":
++            from .gigatoken_encoder import GigatokenEncoder
++
++            tokenizer.encode = GigatokenEncoder(tokenizer)
++            logger.info("gigatoken enabled for plain-text encode; HF templates and decoding retained")
++        return tokenizer
+     except Exception as e:
+         if tokenizer_backend == "fastokens":
+             raise RuntimeError(
+diff --git a/python/sglang/srt/server_args.py b/python/sglang/srt/server_args.py
+--- a/python/sglang/srt/server_args.py
++++ b/python/sglang/srt/server_args.py
+@@ -479,8 +479,10 @@
+         Arg(
+             help="Tokenizer backend. 'huggingface' uses the default HuggingFace "
+             "tokenizers library, and 'fastokens' uses the fastokens library "
+-            "for faster tokenization. Requires the fastokens package to be installed.",
+-            choices=["huggingface", "fastokens"],
++            "for faster tokenization. 'gigatoken' accelerates plain-text encode "
++            "while retaining HuggingFace templates, decoding and other APIs. "
++            "The selected backend package must be installed.",
++            choices=["huggingface", "fastokens", "gigatoken"],
+         ),
+         NS("serving"),
+     ] = "huggingface"
+diff --git a/python/sglang/srt/utils/hf_transformers/gigatoken_encoder.py b/python/sglang/srt/utils/hf_transformers/gigatoken_encoder.py
+new file mode 100644
+--- /dev/null
++++ b/python/sglang/srt/utils/hf_transformers/gigatoken_encoder.py
+@@ -0,0 +1,17 @@
++"""Accelerate the text encode used after OpenAI chat-template rendering.
++
++Keep the original HF tokenizer object, special-token metadata and decoder.
++Calls requesting other HF features retain their existing implementation.
++"""
++from gigatoken import Tokenizer
++
++
++class GigatokenEncoder:
++    def __init__(self, tokenizer):
++        self._reference_encode = tokenizer.encode
++        self._fast_encode = Tokenizer(tokenizer).as_hf().encode
++
++    def __call__(self, text, *args, **kwargs):
++        if isinstance(text, str) and not args and kwargs.keys() <= {"add_special_tokens"}:
++            return self._fast_encode(text, **kwargs)
++        return self._reference_encode(text, *args, **kwargs)
