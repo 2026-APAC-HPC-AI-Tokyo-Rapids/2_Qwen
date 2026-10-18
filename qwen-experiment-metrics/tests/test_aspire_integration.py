@@ -283,8 +283,8 @@ def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, 
         assert "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096" in argv
         assert ("--disable-cuda-graph" in argv) == (role == "prefill")
         assert ("--enable-dp-lm-head" in argv) == (role == "decode")
-        # Bind the directory tree so /runtime/source exists before the map is opened.
-        placement_mount = "/fixture/output:/runtime:ro"
+        # Explicit read-only mounts must retain bind and target creation (Enroot fstab semantics).
+        placement_mount = "/fixture/output:/runtime:none:bind,ro,x-create=dir"
         assert (placement_mount in argv) == (role == "prefill")
         assert ("--init-expert-location" in argv) == (role == "prefill")
         if role == "prefill":

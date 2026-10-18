@@ -12,7 +12,7 @@ export ENROOT_CACHE_PATH="${preflight_dir}/cache" ENROOT_DATA_PATH="${preflight_
 install -d -m 0700 "${ENROOT_CACHE_PATH}" "${ENROOT_DATA_PATH}" "${ENROOT_RUNTIME_PATH}" "${ENROOT_TEMP_PATH}" "${preflight_dir}/home"
 expected="$(sha256sum "${runtime_dir}/source/prefill-expert-location.json" | cut -d ' ' -f 1)"
 # Exercise the actual image and directory mounts before qsub, without loading weights or using GPUs.
-timeout 180 enroot start -e NVIDIA_VISIBLE_DEVICES=void -e HOME=/runtime-home -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${model_path}:/model" -m "${preflight_dir}/home:/runtime-home" -m "${runtime_dir}/draft:/draft" -m "${runtime_dir}:/runtime:ro" "${runtime_dir}/sglang.sqsh" /opt/sglang/venv/bin/python - "${expected}" <<'PY'
+timeout 180 enroot start -e NVIDIA_VISIBLE_DEVICES=void -e HOME=/runtime-home -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -m "${model_path}:/model" -m "${preflight_dir}/home:/runtime-home" -m "${runtime_dir}/draft:/draft" -m "${runtime_dir}:/runtime:none:bind,ro,x-create=dir" "${runtime_dir}/sglang.sqsh" /opt/sglang/venv/bin/python - "${expected}" <<'PY'
 import hashlib
 import json
 import sys

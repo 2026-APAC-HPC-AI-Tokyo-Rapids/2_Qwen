@@ -1,5 +1,5 @@
 {
-  "status": "login_cpu_gate_corrected; authorized_one_pbs_retry_still_unused",
+  "status": "enroot_fstab_options_corrected; one_authorized_pbs_retry_still_unused",
   "branch": "perf/aspire-firmus7500-port-20261018",
   "base_commit": "203b78e5ec3fe10f1e3ea8766f619d834d13d775",
   "base_reason": "Use the exact successful Firmus source as first parent so the existing container selector reuses its measured e54b4def image. Preserve the earlier 7200 port branch without rewriting it.",
@@ -28,7 +28,7 @@
     "aspire_reference_run_id": 39013218562,
     "aspire_reference_good_output_tokens_per_second": 4661.260454451255,
     "aspire_configuration": "Preserve measured H100 P2/D2, TP4/DP4/EP4, c104, EAGLE3, memory fractions, KV pools, graph buckets and routing. Only image SHA and Prefill expert placement differ from d7ade0e.",
-    "mount_fix": "Bind the existing runtime directory at /runtime read-only; never bind a file into absent parent directories.",
+    "mount_fix": "Use explicit Enroot fstab source:/runtime:none:bind,ro,x-create=dir. Bare :ro suppresses default bind and x-create options; changing source file to directory alone was insufficient.",
     "pre_submit_gate": "On the Aspire login CPU, run the actual Enroot image with runtime/model/draft/home mounts. Verify map SHA, every model layer and expert permutation, and prepared EAGLE3 files. Failure prevents qsub. No GPU or model weights are loaded.",
     "target_good_output_tokens_per_second": 5000,
     "target_is_prediction": false
@@ -38,12 +38,12 @@
     "shell_syntax": "42 scripts passed",
     "patch_and_placement_identity": "passed",
     "linux_cpu_tests": "357 passed, 1 skipped, 22 subtests passed on tg1 in 56.98s; no GPU/scheduler used; temporary checkout removed",
-    "enroot_login_mount": "First login CPU check failed on a missing host NVML library; corrected none to void. Next actual mount check must pass before qsub.",
+    "enroot_login_mount": "NVML problem resolved in second CPU-only attempt; actual mount then caught missing bind/x-create defaults. Both real worker and gate corrected to explicit full fstab options; gate must pass before qsub.",
     "ruff": "Repository CI scope (qwen-experiment-metrics scripts containers): passed. Extra audit outside CI scope found one pre-existing redundant module-level global in the unchanged vllm-proxy.py; not part of the Aspire path."
   },
   "retry": {
     "authorization": "User authorized exactly one additional submission, then required importing their measured 7500 branch before it.",
-    "actions_dispatched": 1,
+    "actions_dispatched": 2,
     "scheduler_jobs_submitted": 0,
     "run_aspire2ap": true,
     "run_firmus": false,
@@ -68,6 +68,18 @@
       "fix": "Use NVIDIA_VISIBLE_DEVICES=void for the login CPU check, including host environment so the hook cannot inherit a driver-enabled setting. GPU serving commands unchanged.",
       "reference": "https://github.com/NVIDIA/enroot/blob/main/conf/hooks/98-nvidia.sh",
       "cleanup": "provision failure cleanup succeeded; no PBS allocation or compute artifacts"
+    },
+    {
+      "run_id": 39097908930,
+      "commit": "9488c8bb397b9d5d38eef5f0837159d0d79d4aaa",
+      "created_at_utc": "2026-10-18T04:40:30Z",
+      "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39097908930",
+      "conclusion": "failure",
+      "scheduler_jobs_submitted": 0,
+      "failure": "The directory-only change still used :ro. Explicit options replace default rbind,x-create=auto, so this had neither bind nor target creation. Enroot failed to mount the runtime directory at missing /runtime.",
+      "fix": "Use the full fstab form source:/runtime:none:bind,ro,x-create=dir in both worker and CPU gate.",
+      "reference": "https://github.com/NVIDIA/enroot/blob/main/bin/enroot-mount.c",
+      "cleanup": "provision failure cleanup succeeded; compute skipped"
     }
   ]
 }
