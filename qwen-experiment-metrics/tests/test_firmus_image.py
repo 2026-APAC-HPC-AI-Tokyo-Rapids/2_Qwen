@@ -1,7 +1,9 @@
 """Regression checks for the pre-Slurm image selection and metadata inspection."""
 import hashlib
+import importlib.util
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -12,11 +14,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 SGLANG_PATCHES = ["firmus-staged-eagle-kv", "qwen3-sm90-megamoe", "firmus-dp-rank-query", "prefill-ready-handoff", "deepgemm-activation-layout", "rope-fp8-q", "qknorm-rope-fp8", "prefill-request-aligned-chunks", "qknorm-rope-fp8-kv", "qwen-topk-padding", "qknorm-rope-fp8-token-warps", "add-rmsnorm-group-quant", "decode-async-admission", "dp-total-requests-rotate-ties", "megamoe-idle-prefill-geometry"]
 ROUTER_PATCHES = ["prefill-load-lifetime", "no-delay-acceptor"]
-CORRUPTIONS = [None, "hash", "router_hash", "router_nodelay_hash", "router_lock", "missing_router", "prefill_mode", "header_hash", "deep_gemm_first_hash", "deep_gemm_last_hash", "deep_gemm_missing_last", "deep_gemm_order"] + [f"missing_{name}" for name in SGLANG_PATCHES] + [f"missing_router_{name}" for name in ROUTER_PATCHES]
+# The metadata test brings its own host series so that ordering over several patches is covered whatever the repository lists.
+HOST_PATCHES = {"first-host-heuristic.patch": b"--- a/csrc/first\n+++ b/csrc/first\n", "second-host-heuristic.patch": b"--- a/csrc/second\n+++ b/csrc/second\n"}
+CORRUPTIONS = [None, "hash", "router_hash", "router_nodelay_hash", "router_lock", "missing_router", "prefill_mode", "header_hash", "deep_gemm_first_hash", "deep_gemm_last_hash", "deep_gemm_missing_last", "deep_gemm_order", "host_first_patch_hash", "host_last_patch_hash", "host_missing_last_patch", "host_order", "host_extension_hash", "host_extension_unchanged", "host_source_commit", "host_missing_record", "host_empty_series", "missing_host_patch"] + [f"missing_{name}" for name in SGLANG_PATCHES] + [f"missing_router_{name}" for name in ROUTER_PATCHES]
 
 
-def sha256(path):
-    return hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+def sha256(path, base=ROOT):
+    return hashlib.sha256((base / path).read_bytes()).hexdigest()
 
 
 # Kept on the branch but not wired into the image (changes the cross-rank protocol in every geometry; GPU-pending).
@@ -32,16 +36,59 @@ def test_deep_gemm_series_lists_every_wired_patch_and_pins_the_final_header() ->
     assert len(header) == 64 and int(header, 16) >= 0
 
 
+def load_host_rebuild():
+    spec = importlib.util.spec_from_file_location("rebuild_deepgemm_host", ROOT / "containers/rebuild-deepgemm-host.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_host_series_lists_every_host_patch() -> None:
+    series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
+    assert series, "the host rebuild and the image check require at least one host patch"
+    assert len(series) == len(set(series))
+    assert set(series) == {path.name for path in (ROOT / "patches/deep-gemm-host").glob("*.patch")}
+
+
+def test_host_rebuild_reads_the_series_in_order_and_refuses_an_empty_one(tmp_path) -> None:
+    rebuild = load_host_rebuild()
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (empty / "series").write_text("\n")
+    with pytest.raises(AssertionError, match="at least one host patch"):
+        rebuild.read_series(empty)
+    ordered = tmp_path / "ordered"
+    ordered.mkdir()
+    (ordered / "series").write_text("b.patch\na.patch\n")
+    assert list(rebuild.read_series(ordered)) == ["b.patch", "a.patch"]
+    assert rebuild.read_series(ordered)["a.patch"] == (ordered / "a.patch").resolve()
+    duplicate = tmp_path / "duplicate"
+    duplicate.mkdir()
+    (duplicate / "series").write_text("a.patch\na.patch\n")
+    with pytest.raises(AssertionError):
+        rebuild.read_series(duplicate)
+
+
 @pytest.mark.parametrize("corruption", CORRUPTIONS)
 def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(tmp_path, corruption):
     embedded = tmp_path / "embedded"
     embedded.mkdir()
-    patches = [f"patches/sglang/{name}.patch" for name in SGLANG_PATCHES] + [f"patches/sglang-router/{name}.patch" for name in ROUTER_PATCHES]
-    manifest = {"applied_patches": [{"path": p, "sha256": sha256(p)} for p in patches]}
+    workspace = tmp_path / "workspace"
+    shutil.copytree(ROOT / "patches", workspace / "patches")
+    host_dir = workspace / "patches/deep-gemm-host"
+    for name, content in HOST_PATCHES.items():
+        (host_dir / name).write_bytes(content)
+    host_series = list(HOST_PATCHES)
+    (host_dir / "series").write_text("" if corruption == "host_empty_series" else "\n".join(host_series) + "\n")
+    host_paths = [f"patches/deep-gemm-host/{name}" for name in host_series]
+    patches = [f"patches/sglang/{name}.patch" for name in SGLANG_PATCHES] + [f"patches/sglang-router/{name}.patch" for name in ROUTER_PATCHES] + host_paths
+    manifest = {"applied_patches": [{"path": p, "sha256": sha256(p, workspace)} for p in patches]}
     if corruption == "hash":
         manifest["applied_patches"][0]["sha256"] = "0" * 64
     elif corruption and corruption.startswith("missing_router_"):
         manifest["applied_patches"].pop(patches.index(f"patches/sglang-router/{corruption[len('missing_router_'):]}.patch"))
+    elif corruption == "missing_host_patch":
+        manifest["applied_patches"].pop(patches.index(host_paths[-1]))
     elif corruption and corruption.startswith("missing_") and corruption != "missing_router":
         manifest["applied_patches"].pop(patches.index(f"patches/sglang/{corruption[len('missing_'):]}.patch"))
     (embedded / "manifest.json").write_text(json.dumps(manifest))
@@ -66,13 +113,30 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
     if corruption == "deep_gemm_order":
         deep_gemm = {name: deep_gemm[name] for name in reversed(series)}
     header = "0" * 64 if corruption == "header_hash" else (ROOT / "patches/deep-gemm/header.sha256").read_text().strip()
-    (embedded / "sm90-megamoe-build.json").write_text(json.dumps({"version": "0.1.5", "header_sha256": header, "patches": deep_gemm, "combine_accumulator": "FP32", "compiled_geometries": geometries}))
+    original_header = "a53d83cad76109588b3d5053be02877a0c2a47c38b27472269dc1319df62676d"
+    extension = b"rebuilt host extension"
+    extension_sha = hashlib.sha256(extension).hexdigest()
+    host_hashes = {name: sha256(f"patches/deep-gemm-host/{name}", workspace) for name in host_series}
+    if corruption == "host_first_patch_hash":
+        host_hashes[host_series[0]] = "0" * 64
+    if corruption == "host_last_patch_hash":
+        host_hashes[host_series[-1]] = "0" * 64
+    if corruption == "host_missing_last_patch":
+        del host_hashes[host_series[-1]]
+    if corruption == "host_order":
+        host_hashes = {name: host_hashes[name] for name in reversed(host_series)}
+    host_build = {"source_commit": "0" * 40 if corruption == "host_source_commit" else "1c8138a59b3df5dac50b76b730834ed57982fdfb", "abi": "tvm-ffi", "patches": host_hashes, "previous_extension_sha256": extension_sha if corruption == "host_extension_unchanged" else hashlib.sha256(b"wheel host extension").hexdigest(), "extension_sha256": "0" * 64 if corruption == "host_extension_hash" else extension_sha, "retained_header_sha256": original_header}
+    record = {"version": "0.1.5", "original_header_sha256": original_header, "header_sha256": header, "patches": deep_gemm, "host_build": host_build, "combine_accumulator": "FP32", "compiled_geometries": geometries}
+    if corruption == "host_missing_record":
+        del record["host_build"]
+    (embedded / "sm90-megamoe-build.json").write_text(json.dumps(record))
+    (embedded / "_C.so").write_bytes(extension)
     unpack = tmp_path / "unsquashfs"
-    unpack.write_text('#!/bin/bash\nset -eu\n[[ "$*" != *"-cat"* ]] || exit 1\nwhile [[ "$1" != -d ]]; do shift; done\n[[ ! -e "$2" ]] || exit 1\nmkdir -p "$2/opt/apac"\ncp "$EMBEDDED"/*.json "$2/opt/apac/"\nchmod -R a-w "$2"\n')
+    unpack.write_text('#!/bin/bash\nset -eu\n[[ "$*" != *"-cat"* ]] || exit 1\nwhile [[ "$1" != -d ]]; do shift; done\n[[ ! -e "$2" ]] || exit 1\nmkdir -p "$2/opt/apac"\ncp "$EMBEDDED"/*.json "$2/opt/apac/"\nmkdir -p "$2/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm"\ncp "$EMBEDDED/_C.so" "$2/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm/"\nchmod -R a-w "$2"\n')
     unpack.chmod(0o755)
     destination = tmp_path / "metadata"
     destination.mkdir()
-    result = subprocess.run(["bash", str(ROOT / "scripts/check-firmus-image.sh"), "/fixture.sqsh", str(destination), str(ROOT)], env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "EMBEDDED": str(embedded)}, capture_output=True, text=True, check=False)
+    result = subprocess.run(["bash", str(ROOT / "scripts/check-firmus-image.sh"), "/fixture.sqsh", str(destination), str(workspace)], env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "EMBEDDED": str(embedded)}, capture_output=True, text=True, check=False)
     assert (result.returncode == 0) is (corruption is None), result.stderr
     assert not list(destination.glob(".image-metadata.*"))
     if corruption is None:

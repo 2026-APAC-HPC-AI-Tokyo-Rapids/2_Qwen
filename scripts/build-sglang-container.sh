@@ -102,6 +102,7 @@ cp "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.sh" "${GITHUB_WORKS
 install -d "${context}/prefill-moe-routing"
 cp "${GITHUB_WORKSPACE}/kernels/prefill/moe_routing.cu" "${context}/prefill-moe-routing/"
 cp "${GITHUB_WORKSPACE}/containers/build-sm90-megamoe.py" "${context}/containers/"
+cp "${GITHUB_WORKSPACE}/containers/rebuild-deepgemm-host.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/check-decode-kernel-build.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/check-rope-kernel-build.py" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/scripts/check-firmus-latency-source.py" "${context}/containers/"
@@ -111,6 +112,10 @@ cp "${GITHUB_WORKSPACE}/patches/sglang-router/no-delay-acceptor.patch" "${contex
 cp "${GITHUB_WORKSPACE}/patches/sglang-router/Cargo.lock" "${context}/sglang-router.Cargo.lock"
 # Ordered patch series and the expected final header SHA-256 travel with the patches.
 cp -r "${GITHUB_WORKSPACE}/patches/deep-gemm" "${context}/deep-gemm"
+# The host extension is rebuilt from the v0.1.5 sources plus the host-only patches listed in the series (the JIT headers stay with the series above).
+cp -r "${GITHUB_WORKSPACE}/patches/deep-gemm-host" "${context}/deep-gemm-host"
+git clone --depth=1 --branch v0.1.5 --recurse-submodules --shallow-submodules https://github.com/sgl-project/DeepGEMM.git "${context}/deep-gemm-source"
+[[ "$(git -C "${context}/deep-gemm-source" rev-parse HEAD)" = "1c8138a59b3df5dac50b76b730834ed57982fdfb" ]]
 rm -rf -- "${context}/sglang-source/.git"
 printf '%s\n' "${sglang_commit}" >"${context}/sglang-commit.txt"
 
@@ -151,8 +156,11 @@ for patch in "${sglang_patches[@]}"; do
   done
   patches_json="$(jq --arg path "${patch}" --arg blob_oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${patch}")" --arg sha256 "$(sha256sum "${GITHUB_WORKSPACE}/${patch}" | awk '{print $1}')" --argjson targets "${targets_json}" '. + [{path:$path,blob_oid:$blob_oid,sha256:$sha256,targets:$targets}]' <<<"${patches_json}")"
 done
-for router_patch in patches/sglang-router/prefill-load-lifetime.patch patches/sglang-router/no-delay-acceptor.patch; do
-  patches_json="$(jq --arg path "${router_patch}" --arg blob_oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${router_patch}")" --arg sha256 "$(sha256sum "${GITHUB_WORKSPACE}/${router_patch}" | awk '{print $1}')" '. + [{path:$path,blob_oid:$blob_oid,sha256:$sha256,targets:[]}]' <<<"${patches_json}")"
+# Router and DeepGEMM host patches apply to other source trees, so they carry no SGLang target files.
+host_patches=()
+while read -r name; do host_patches+=("patches/deep-gemm-host/${name}"); done <"${GITHUB_WORKSPACE}/patches/deep-gemm-host/series"
+for untargeted_patch in patches/sglang-router/prefill-load-lifetime.patch patches/sglang-router/no-delay-acceptor.patch "${host_patches[@]}"; do
+  patches_json="$(jq --arg path "${untargeted_patch}" --arg blob_oid "$(git -C "${GITHUB_WORKSPACE}" hash-object "${untargeted_patch}")" --arg sha256 "$(sha256sum "${GITHUB_WORKSPACE}/${untargeted_patch}" | awk '{print $1}')" '. + [{path:$path,blob_oid:$blob_oid,sha256:$sha256,targets:[]}]' <<<"${patches_json}")"
 done
 jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITHUB_SHA}" --arg sglang_object_format "${sglang_object_format}" --arg sglang_commit "${sglang_commit}" --arg dockerfile_blob_oid "${dockerfile_blob_oid}" --arg base_reference "${base_reference}" --arg base_manifest_sha256 "${base_manifest_sha256}" --arg routing_source_sha256 "$(sha256sum "${GITHUB_WORKSPACE}/kernels/prefill/moe_routing.cu" | awk '{print $1}')" --arg routing_build_sha256 "$(sha256sum "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.py" | awk '{print $1}')" --argjson build_steps "${build_steps_json}" --argjson patches "${patches_json}" '{schema_version:"oci-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"container_build_definition",object_hash_algorithm:$qwen_object_format,oid:$qwen_commit},{repository_id:"apac2026-sglang",commit_role:"sglang_source",object_hash_algorithm:$sglang_object_format,oid:$sglang_commit}],recipe:{path:"containers/Dockerfile",blob_oid:$dockerfile_blob_oid,build_steps:$build_steps},applied_patches:$patches,local_kernels:{path:"kernels/prefill/moe_routing.cu",sha256:$routing_source_sha256,build_sha256:$routing_build_sha256,architecture:"sm_90",translation_units:1,gemm_templates:0},base_oci:{reference:$base_reference,manifest_sha256:$base_manifest_sha256}}' >"${context}/apac-manifest.json"
 

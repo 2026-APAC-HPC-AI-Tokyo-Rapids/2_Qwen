@@ -44,7 +44,8 @@ def main():
     s2 = torch.rand(32, 32, 12, device=device) * 0.005 + 0.005
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf = deep_gemm.get_symm_buffer_for_mega_moe(dist.group.WORLD, 128, 4096, 8, 4096, 1536, use_fp8_dispatch=True, activation="swiglu")
-    cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4]), ("decode-quant-zero", [9, 0, 0, 0])]
+    # Mixed graph spans SwapAB, non-swap, Prefill and a permanently idle rank.
+    cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4]), ("mixed-geometry-graph", [7, 0, 129, 256]), ("decode-quant-zero", [9, 0, 0, 0])]
     # Exercise all SwapAB widths, plus a full tile and tail.
     # Other ranks still participate in the collective with zero live tokens.
     cases.extend((f"decode-tile-{count}", [count, 0, 0, 0]) for count in (1, 9, 17, 25, 33, 41, 49, 57, 65))
@@ -53,12 +54,15 @@ def main():
     idle_prefill_rows = os.environ.get("SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY", "0") == "1"
     if idle_prefill_rows:
         cases.append(("idle-prefill-rows", [4096, 4096, 4096, 0]))
+    # Cover the extended SwapAB range, its mixed-geometry boundary, and a
+    # second combine iteration above 132 rows (132 CTAs x 8 combine warps).
+    cases += [("swapab-boundary-mixed", [128, 129, 144, 145]), ("decode-graph-swapab-144", [144, 140, 136, 132]), ("swapab-hot-experts-144", [144] * 4)]
     for case, counts in cases:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         if case == "decode-quant-zero":
             patterns.zero_()
         ids = torch.stack([torch.randperm(128, device=device)[:8] for _ in range(4)]).to(torch.int32)
-        if case in ("capacity-hot-experts", "decode-quant-zero") or case.startswith("decode-tile-"):
+        if case in ("capacity-hot-experts", "decode-quant-zero", "swapab-hot-experts-144") or case.startswith("decode-tile-"):
             ids[:] = torch.arange(8, dtype=torch.int32, device=device)
         weights = torch.rand(4, 8, device=device)
         ids[0, -1] = -1  # Masked/padded top-k slot must not read an expert.
@@ -94,10 +98,10 @@ def main():
         forward(hidden, top_ids, top_weights, count, actual)
         torch.cuda.synchronize()
         graph = None
-        if case == "decode-graph":
-            # An idle EAGLE3 rank replays the minimum one-request graph (four
-            # token rows), with every route masked, rather than a zero-row graph.
-            # Replays change GPU input data without changing its addresses.
+        if case.startswith("decode-graph") or case == "mixed-geometry-graph":
+            # Decode covers the minimum EAGLE3 request graph with four rows.
+            # The mixed case also covers non-swap/Prefill and a zero-token rank.
+            # Replays change GPU inputs and idle/live masks at fixed addresses.
             graph = torch.cuda.CUDAGraph()
             dist.barrier()
             with torch.cuda.graph(graph):
