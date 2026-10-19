@@ -24,7 +24,7 @@ class ForwardMode(Enum):
 helper = ast.parse((root / "srt/layers/attention/prefill_contiguous.py").read_text())
 helper.body = [n for n in helper.body if isinstance(n, ast.FunctionDef)]
 ns = {"ForwardMode": ForwardMode}
-exec(compile(helper, "prefill_contiguous.py", "exec"), ns)
+exec(compile(helper, "prefill_contiguous.py", "exec"), ns)  # noqa: S102
 select = ns["use_contiguous_prefill"]
 
 
@@ -108,11 +108,11 @@ def fa(**kw):
 
 def environment():
     metadata = NS(cu_seqlens_q=object(), max_seq_len_q=17)
-    return dict(self=NS(fa_impl_ver=3, use_mla=False, full_cg_prefill_metadata=None, attn_cp_size=1, num_splits=0, flash_attn_varlen_func=fa), metadata=metadata, use_contiguous_prefill=select, forward_batch=batch(), q=Tensor(37), k=Tensor(37), v=Tensor(37), save_kv_cache=False, is_cp_mode=False, use_local_attn=False, is_swa_layer=False, causal=True, torch=NS(float8_e4m3fn="fp8", bfloat16="bf16", empty=lambda shape, device, dtype: Tensor(shape[0], dtype)), layer=NS(is_cross_attention=False, k_scale=None, v_scale=None, tp_q_head_num=64, tp_k_head_num=4, tp_v_head_num=4, head_dim=128, v_head_dim=128, scaling=128 ** -.5, logit_cap=0.), window_size=(-1, -1), _fa_out=None, kwargs={})
+    return dict(self=NS(fa_impl_ver=3, use_mla=False, full_cg_prefill_metadata=None, attn_cp_size=1, num_splits=0, flash_attn_varlen_func=fa), metadata=metadata, use_contiguous_prefill=select, forward_batch=batch(), q=Tensor(37), k=Tensor(37), v=Tensor(37), save_kv_cache=False, is_cp_mode=False, use_local_attn=False, is_swa_layer=False, causal=True, torch=NS(float8_e4m3fn="fp8", bfloat16="bf16", empty=lambda shape, device, dtype: Tensor(shape[0], dtype)), layer=NS(is_cross_attention=False, k_scale=None, v_scale=None, tp_q_head_num=64, tp_k_head_num=4, tp_v_head_num=4, head_dim=128, v_head_dim=128, scaling=128 ** -.5, logit_cap=0.), window_size=(-1, -1), _fa_out=None, kwargs={})  # noqa: C408
 
 
 def run(env):
-    exec(compile(module, "forward_extend branch", "exec"), env)
+    exec(compile(module, "forward_extend branch", "exec"), env)  # noqa: S102
     return env["route"]()
 
 
@@ -158,9 +158,9 @@ for t in caches:
     t.shape = (256, 4, 128)
 args = NS(cuda_graph_config=NS(prefill=NS(tc_compiler="eager", backend="disabled")), speculative_eagle_topk=1, enable_prefill_cp=False)
 prologue_calls = []
-env = dict(ForwardMode=ForwardMode, use_contiguous_prefill=select, get_server_args=lambda: args, get_token_to_kv_pool=lambda: pool, MHATokenToKVPool=Pool, envs=NS(SGLANG_ENABLE_DETERMINISTIC_INFERENCE=NS(get=lambda: False)), torch=NS(bfloat16="bf16", float8_e4m3fn="fp8", empty=lambda shape, dtype, device: Tensor(shape[0], dtype), empty_like=lambda t: Tensor(t.shape[0], t.dtype)), apply_qknorm_rope_fp8_prefill=lambda *a: prologue_calls.append("contiguous"), apply_qknorm_rope_fp8_kv=lambda *a: prologue_calls.append("paged"))
+env = dict(ForwardMode=ForwardMode, use_contiguous_prefill=select, get_server_args=lambda: args, get_token_to_kv_pool=lambda: pool, MHATokenToKVPool=Pool, envs=NS(SGLANG_ENABLE_DETERMINISTIC_INFERENCE=NS(get=lambda: False)), torch=NS(bfloat16="bf16", float8_e4m3fn="fp8", empty=lambda shape, dtype, device: Tensor(shape[0], dtype), empty_like=lambda t: Tensor(t.shape[0], t.dtype)), apply_qknorm_rope_fp8_prefill=lambda *a: prologue_calls.append("contiguous"), apply_qknorm_rope_fp8_kv=lambda *a: prologue_calls.append("paged"))  # noqa: C408
 pool = Pool()
-exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), "Qwen prologue", "exec"), env)
+exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), "Qwen prologue", "exec"), env)  # noqa: S102
 for mode, prefixes, expected in ((ForwardMode.EXTEND, (0, 0), "contiguous"), (ForwardMode.EXTEND, (0, 1), "paged"), (ForwardMode.TARGET_VERIFY, (0, 0), "paged")):
     fb = batch(mode, prefixes)
     fb.out_cache_loc = Tensor(37, "int64")

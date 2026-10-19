@@ -1,4 +1,8 @@
-"""CPU-only comparison using CUDA and DeepGEMM extracted from image 39110496019.
+"""CPU-only comparison using CUDA and DeepGEMM extracted from image 39110496019 (the 14-patch header).
+
+Offline tool, not a build step: it needs the extracted toolchain and compares the guard + ping-pong
+header against that image. The image build itself compiles the same Prefill and Decode geometries in
+containers/build-sm90-megamoe.py.
 
 Never imports CUDA Python libraries or launches a kernel. The installed package
 is read-only; only the new header patch is applied to a temporary include tree.
@@ -36,9 +40,10 @@ def main():
         header = temp / HEADER
         header.parent.mkdir(parents=True)
         header.write_bytes(baseline)
-        patch = repo / "patches/deep-gemm/sm90-prefill-pingpong.patch"
-        subprocess.run(["git", "apply", "--check", str(patch)], cwd=temp, check=True)
-        subprocess.run(["git", "apply", str(patch)], cwd=temp, check=True)
+        # The image header is the 14 main patches; the series continues with the SwapAB guard, then the ping-pong patch.
+        for name in ("sm90-swap-ab-geometry-guard.patch", "sm90-prefill-pingpong.patch"):
+            subprocess.run(["git", "apply", "--check", str(repo / "patches/deep-gemm" / name)], cwd=temp, check=True)
+            subprocess.run(["git", "apply", str(repo / "patches/deep-gemm" / name)], cwd=temp, check=True)
         assert digest(header.read_bytes()) == (repo / "patches/deep-gemm/header.sha256").read_text().strip()
         for role, config in configs.items():
             sass = []

@@ -23,6 +23,8 @@ specializations = [
     "FusedRopeKernel<true,128,true,bf16_t>::run_fused",
     "FusedRopeKernel<false,128,true,bf16_t>::run",
     "FusedRopeKernel<true,128,true,bf16_t,fp16_t>::run",
+    "QKNormRopeFP8Kernel<true>::run_prefill",
+    "QKNormRopeFP8Kernel<false>::run_prefill",
 ]
 for name, header, kernels, flags in (
     ("rope_fp8_q_kv", rope_header, specializations, []),

@@ -34,11 +34,12 @@ def main():
     patched = hashlib.sha256(header.read_bytes()).hexdigest()
     expected = (SERIES_DIR / "header.sha256").read_text().strip()
     assert patched == expected, (patched, expected)
-    # Match the saved 6344.96 baseline kernel symbols, including accumulator
-    # reuse, arrival mode, stage count, EP wave and padded pool capacities.
-    # Prefill's reuse path is distinct from Decode's pipelined SwapAB path.
+    # Match the kernel symbols the patched host selects: Prefill is the ping-pong
+    # 128x128 tile with two consumer warpgroups (256 math threads, 5 stages, no
+    # accumulator reuse), Decode the SwapAB 64x128 tile; EP wave and padded pool
+    # capacities are the serving values.
     geometries = [
-        {"role": "prefill", "block_m": 128, "block_n": 256, "epilogue_threads": 512, "stages": 3, "registers": 112, "reuse_accum": True, "arrival_counter": True, "full_sync": False, "swap_ab": False},
+        {"role": "prefill", "block_m": 128, "block_n": 128, "epilogue_threads": 256, "stages": 5, "registers": 168, "reuse_accum": False, "arrival_counter": True, "full_sync": False, "swap_ab": False},
         {"role": "decode", "block_m": 64, "block_n": 128, "epilogue_threads": 256, "stages": 8, "registers": 0, "reuse_accum": False, "arrival_counter": False, "full_sync": True, "swap_ab": True},
     ]
     with tempfile.TemporaryDirectory(prefix="sm90-megamoe-build-") as temp:

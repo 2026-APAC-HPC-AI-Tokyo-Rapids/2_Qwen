@@ -1,6 +1,6 @@
 # 2026-10-19 Firmus Prefill bundle の統合 branch（`perf/firmus-prefill-20261019`）
 
-origin/main（7999.37 構成 + ノート、起点 16bdbe1）から切った、次の Prefill bundle の統合先。`perf/firmus-max-20261018`（a7b9edd）にあって main に無い 3 変更のうち、Prefill に限定できるものだけを持ち込み、MegaMoE と attention の Codex 作業（`perf/firmus-prefill-megamoe-20261019`、`perf/firmus-prefill-attn-20261019`）を後から載せる土台を作った。runtime 設定は main のまま（Decode cap 128、graph bs 34）。GPU job・Actions は起動していない。
+origin/main（7999.37 構成 + ノート、起点 16bdbe1）から切った、次の Prefill bundle の統合先。`perf/firmus-max-20261018`（a7b9edd）にあって main に無い 3 変更のうち、Prefill に限定できるものだけを持ち込み、MegaMoE と attention の Codex 作業（`perf/firmus-prefill-megamoe-20261019` d9b1b2a、`perf/firmus-prefill-attn-20261019` 2e85ef7）は §5 のとおり merge commit で取り込んで配線した。runtime 設定は main のまま（Decode cap 128、graph bs 34）。GPU job・Actions は起動していない。
 
 | 変更 | 扱い |
 |---|---|
@@ -57,15 +57,38 @@ DeepGEMM 0.1.5 の geometry 選択は wheel の `_C.so`（host C++）にあり�
 
 CPU のみ。pytest 全件、ruff、`bash -n`（scripts / platforms / containers / aws / submission）、行継続 grep、`check-kernel-experiment-tags.py` は通過。SGLang の 24 本（既存 23 + fused norm + quant）を fc275674 の full tree（sparse checkout 無効）に順に当て、`check-firmus-staging.py`、`-megamoe-source.py`、`-latency-source.py`、`-prefill-chunks.py`、`-tier2-source.py admission dp-ties idle-geometry` がすべて PASS。
 
-## 5. Codex の作業を後から載せる手順
+## 5. Codex 2 branch の取り込みと最終構成
 
-branch は自動 merge しない。それぞれの成果物を次の場所へ置き、順序を守る。
+両 branch は merge commit で取り込んだ（由来を残す）。conflict は、DeepGEMM の series と header pin、`check-firmus-megamoe.py` の gate case、`check-firmus-decode-kernels.py` の check 関数と `__main__` の呼び出し。後者は両方の関数を残して両方を呼ぶ（fused norm + quant と contiguous Prefill attention）。attn branch の check script は CI の ruff 規則（B023、S102、C408、RUF059）に通らなかったので、行単位 noqa、file 単位の B023 noqa（入れ子の helper はそれを定義した loop の反復内で呼ばれる）、未使用変数の改名で通した。
 
-1. **MegaMoE（`perf/firmus-prefill-megamoe-20261019`）**
-   - host patch `patches/deep-gemm-host/sm90-prefill-pingpong.patch` を置き、`patches/deep-gemm-host/series` の **`sm90-swap-ab-144.patch` の次の行**に追加（この patch は 144 の上に作られている）。
-   - header patch（ping-pong）を `patches/deep-gemm/` に置き、`patches/deep-gemm/series` の**末尾**（`sm90-swap-ab-geometry-guard.patch` の後）に追加。`git apply` で 15 本の結果の上に当たるか確認し、`header.sha256` を最終 header の SHA-256 で更新する。
-   - image check・build script・test はいずれも series から導出されるので、ほかの配線の変更は要らない（geometry の記述 `compiled_geometries` や gate の期待値が変わる場合だけ `check-firmus-image.sh` と gate を直す）。新 image の build（source 変更なので `[require-build]`）が必要。
-2. **attention（`perf/firmus-prefill-attn-20261019`）**
-   - `patches/sglang/prefill-attention-contiguous-kv.patch` を、`scripts/build-sglang-container.sh` の `sglang_patches` の**末尾（`gigatoken-encode` の後）**に追加し、patch 変数の定義と target 一覧の `case` 行（`rope.cuh`、`ops/attention/rope.py`、`flashattention_backend.py`、`prefill_contiguous.py`、`qwen3_moe.py`）も足す。`scripts/check-firmus-image.sh` の `required` と `tests/test_firmus_image.py` の `SGLANG_PATCHES` にも名前を足す。
-   - この patch は本 branch の 24 本の tree（fused norm + quant と gigatoken を含む）にそのまま当たることを確認済み。`scripts/check-firmus-prefill-attention-source.py` は `build-sglang-container.sh` の source check 列に足す。
-   - `check-firmus-latency-source.py`、`check-firmus-decode-kernels.py`、`bench-firmus-sglang-kernels.py` は本 branch と両方が変更しているので、取り込み時に textual な衝突が出る場合は手で統合する（本 branch の追加は関数と定数が中心）。
+最終構成（image は新規 build が要る。Decode cap 128 のまま）。
+
+- DeepGEMM host series：`sm90-swap-ab-144.patch` → `sm90-prefill-pingpong.patch`（pristine v0.1.5 `1c8138a5` に順に `git apply` できることを確認）。
+- DeepGEMM header series：main の 14 本 → `sm90-swap-ab-geometry-guard.patch` → `sm90-prefill-pingpong.patch`。pristine v0.1.5 の header から順に当てた最終 header は `0c9880757092e4713ab9ff13fb1388fbee2e198b6aff324d0c772118e8fafdb2`（worker 自身の pin `13664810…` は guard を含まない 15 本のもの）。
+- `containers/build-sm90-megamoe.py` の Prefill compile 設定は block_m 128、block_n 128、epilogue_threads 256、stages 5、registers 168、reuse_accum False、arrival_counter True、full_sync False、swap_ab False。Decode は従来どおり。`scripts/check-firmus-image.sh` の geometry 照合と image test も同じ値にした。
+- `scripts/check-firmus-megamoe-pingpong-build.py` は image 39110496019 の抽出 toolchain を要る offline の比較ツールで、build step ではない（image build 内の compile は `build-sm90-megamoe.py` が同じ geometry で行う）。guard を先に当てるよう直した。
+- SGLang chain：既存 23 本（`add-rmsnorm-group-quant` を含め 24 本）→ `prefill-attention-contiguous-kv`（`gigatoken-encode` の後が最後）。manifest の target は rope.cuh、ops/attention/rope.py、qwen3_moe.py、flashattention_backend.py、prefill_contiguous.py。`build-sglang-container.sh` は `check-firmus-prefill-attention-source.py` も実行し、`containers/check-rope-kernel-build.py` は `QKNormRopeFP8Kernel<true/false>::run_prefill` を compile する。image の必須 patch 一覧とテストにも追加した。
+
+Prefill MegaMoE の ping-pong は 128×128 / 256 math thread / 5 stage / 168 register に host と header の両方が変わるため、header だけの overlay の kernel bench では新経路に入らない。新しい `_C.so` と header の両方が要る。host 再 build の実行は本 branch ではまだ走っていない。
+
+## 6. 最終 compile（Firmus login、image の CUDA 13.0.88、CPU のみ）
+
+`build-sm90-megamoe.py` と同じ instantiation を、最終 header（16 本、上の pin）から compile した。
+
+| geometry | register | spill store/load B | stack B | SASS（先頭 16 桁） |
+|---|---:|---:|---:|---|
+| Prefill 128×128 / 256 math thread / 5 stage（ping-pong） | 168 | 0 / 0 | 0 | `5ffea0804097b207` |
+| Decode wave 32 | 168 | 0 / 0 | 8 | `5bcd675b848f5341` |
+| Decode-16 | 168 | 0 / 0 | 8 | `a0e029dd6a8078fc` |
+
+Decode の 2 つの SASS は、ping-pong を足す前の 15 本（guard まで）の compile と byte 単位で同一（Prefill は旧 96 register・44/60 B spill から変わった）。`check-firmus-megamoe-pingpong-build.py` も同じ toolchain で PASS（候補に spill と WGMMA 直列化警告が無く、Decode の base と候補が同一）。抽出した toolchain は削除した。
+
+## 7. 検査
+
+CPU のみ。pytest 全件、ruff、`bash -n`、行継続 grep、`check-kernel-experiment-tags.py` は通過。SGLang の 25 本を fc275674 の full tree に順に当て、`check-firmus-staging.py`、`-megamoe-source.py`、`-latency-source.py`、`-prefill-attention-source.py`、`-prefill-chunks.py`、`-tier2-source.py admission dp-ties idle-geometry` がすべて PASS。GPU の gate と性能は未実行。
+
+## 8. 今後 patch を足すとき
+
+- host patch：`patches/deep-gemm-host/` に置き、`series` の末尾に 1 行。
+- header patch：`patches/deep-gemm/` に置き、`series` の末尾に 1 行、`header.sha256` を pristine v0.1.5 から全 series を当てた最終 header で更新。
+- SGLang patch：`build-sglang-container.sh` の変数、`sglang_patches` の末尾、target の `case`、`check-firmus-image.sh` の必須一覧、`test_firmus_image.py` の `SGLANG_PATCHES`。

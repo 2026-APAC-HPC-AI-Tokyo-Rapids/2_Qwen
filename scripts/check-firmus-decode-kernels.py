@@ -10,6 +10,7 @@ check_add_rmsnorm_group_quant). Neither replaces the official workload or
 accuracy evaluation. The kernel bench also runs this file on the image tree,
 which lacks the new kernels; those checks print SKIP there.
 """
+# ruff: noqa: B023 - the nested helpers run inside the loop iteration that defines them, so the loop variables are current
 import json
 
 import sglang.kernels.ops.attention.rope as rope_ops

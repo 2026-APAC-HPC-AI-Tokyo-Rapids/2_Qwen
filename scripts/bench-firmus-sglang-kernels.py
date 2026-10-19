@@ -18,6 +18,7 @@ runtime knobs (num_splits, pack_gqa, precomputed scheduler metadata) do not
 depend on the tree; their rows carry the largest absolute difference from the
 default call.
 """
+# ruff: noqa: B023 - the nested helpers run inside the loop iteration that defines them, so the loop variables are current
 import argparse
 import hashlib
 import json
@@ -199,7 +200,7 @@ def bench_prefill_attention(write):
                 rope_ops.apply_qknorm_rope_fp8_kv(q, k, qw, kw, trig, pos, EPS, oq, v, kc, vc, loc)
 
         def attention(b):
-            q, k, v, oq, ck, cv, kc, vc = b
+            _q, _k, _v, oq, ck, cv, kc, vc = b
             if candidate:
                 return flash_attn_varlen_func(q=oq, k=ck, v=cv, cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max(lengths), max_seqlen_k=max(lengths), softmax_scale=128 ** -.5, causal=True, num_splits=0)
             return flash_attn_with_kvcache(q=oq, k_cache=kc.view(-1, 64, 4, 128), v_cache=vc.view(-1, 64, 4, 128), page_table=table, cache_seqlens=lens, cu_seqlens_q=cu, max_seqlen_q=max(lengths), softmax_scale=128 ** -.5, causal=True, num_splits=0)
