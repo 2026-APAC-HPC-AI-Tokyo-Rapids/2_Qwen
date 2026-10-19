@@ -4,10 +4,10 @@
   "workload": "official",
   "images": {
     "sglang": {
-      "path": "/scratch/home/ACCOUNT/qwen/containers/39110496019.sqsh",
-      "sha256": "a8ed45928e94b70ea592feb9fbe606d9cff574b8f6c330c1bc0e9186c6fab07e",
-      "size_bytes": 12261965824,
-      "provenance": "/scratch/home/ACCOUNT/qwen/containers/39110496019.container-sidecar.json"
+      "path": "/scratch/home/ACCOUNT/qwen/containers/39126563684.sqsh",
+      "sha256": "317ab7c7febfea4a777d4eaa6a6b78837402bc31b31f08be046b67fbabbcb932",
+      "size_bytes": 12269371392,
+      "provenance": "/scratch/home/ACCOUNT/qwen/containers/39126563684.container-sidecar.json"
     },
     "vllm": {
       "path": "/scratch/home/ACCOUNT/qwen/framework-comparison/images/vllm.sqsh",
@@ -62,5 +62,13 @@
     "moe_runner_backend": "deep_gemm",
     "optimistic_prefill_attempts": 2
   },
-  "decode_dp_size": 4
+  "decode_dp_size": 4,
+  "sglang_overlay_patches": [
+    "patches/sglang/add-rmsnorm-group-quant.patch",
+    "patches/sglang/prefill-attention-contiguous-kv.patch"
+  ],
+  "deep_gemm_overlay_patches": [
+    "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
+    "patches/deep-gemm-overlay/sm90-prefill-fc2-swizzle.patch"
+  ]
 }
