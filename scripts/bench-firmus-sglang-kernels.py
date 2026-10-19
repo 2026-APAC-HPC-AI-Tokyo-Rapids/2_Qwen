@@ -150,6 +150,70 @@ def bench_rope(write):
             write(f"{name}-{rows}", sha, timing)
 
 
+
+def bench_prefill_attention(write):
+    """Same varlen FA3 configuration as forward_extend's no-prefix route.
+
+    Image baseline keeps the old prologue and paged FA3. Candidate writes both
+    KV layouts. Identical case names retain direct image/candidate pairing.
+    """
+    from sgl_kernel.flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
+
+    trig = cos_sin_cache()
+    gen = torch.Generator(device="cuda").manual_seed(31819)
+    qw, kw = [(torch.randn(128, device="cuda", generator=gen) * .25 + 1).bfloat16() for _ in range(2)]
+    candidate = hasattr(rope_ops, "apply_qknorm_rope_fp8_prefill")
+    for lengths in ((3986,), (4027,), (17, 13), (129, 257)):
+        rows = sum(lengths)
+        counts = [(n + 63) // 64 for n in lengths]
+        slots = (sum(counts) + 1) * 64
+        table = torch.zeros(len(lengths), max(counts), device="cuda", dtype=torch.int32)
+        locs = []
+        page = 1
+        for i, (n, count) in enumerate(zip(lengths, counts)):
+            table[i, :count] = torch.arange(page, page + count, device="cuda", dtype=torch.int32)
+            locs.append(torch.arange(page * 64, page * 64 + n, device="cuda", dtype=torch.int64))
+            page += count
+        loc = torch.cat(locs)
+        cu = torch.tensor([0] + list(__import__("itertools").accumulate(lengths)), device="cuda", dtype=torch.int32)
+        lens = torch.tensor(lengths, device="cuda", dtype=torch.int32)
+        pos = torch.arange(rows, device="cuda", dtype=torch.int64)
+        buffers = []
+        for _ in range(input_sets(rows)):
+            packed = torch.randn(rows, 72, 128, device="cuda", dtype=torch.bfloat16, generator=gen) * 4
+            q, k, v = packed[:, :64], packed[:, 64:68], packed[:, 68:]
+            oq = torch.empty((rows, 64, 128), device="cuda", dtype=torch.float8_e4m3fn)
+            ck = torch.empty((rows, 4, 128), device="cuda", dtype=oq.dtype)
+            cv = torch.empty_like(ck)
+            kc = torch.zeros(slots, 4, 128, device="cuda", dtype=oq.dtype)
+            vc = torch.zeros_like(kc)
+            buffers.append((q, k, v, oq, ck, cv, kc, vc))
+
+        def prologue(b):
+            q, k, v, oq, ck, cv, kc, vc = b
+            if candidate:
+                rope_ops.apply_qknorm_rope_fp8_prefill(q, k, qw, kw, trig, pos, EPS, oq, v, kc, vc, loc, ck, cv)
+            else:
+                rope_ops.apply_qknorm_rope_fp8_kv(q, k, qw, kw, trig, pos, EPS, oq, v, kc, vc, loc)
+
+        def attention(b):
+            q, k, v, oq, ck, cv, kc, vc = b
+            if candidate:
+                return flash_attn_varlen_func(q=oq, k=ck, v=cv, cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max(lengths), max_seqlen_k=max(lengths), softmax_scale=128 ** -.5, causal=True, num_splits=0)
+            return flash_attn_with_kvcache(q=oq, k_cache=kc.view(-1, 64, 4, 128), v_cache=vc.view(-1, 64, 4, 128), page_table=table, cache_seqlens=lens, cu_seqlens_q=cu, max_seqlen_q=max(lengths), softmax_scale=128 ** -.5, causal=True, num_splits=0)
+
+        def combined(b):
+            prologue(b)
+            return attention(b)
+
+        for b in buffers:
+            prologue(b)
+        label = "x".join(map(str, lengths))
+        for name, call in (("prefill-prologue-dual-kv", prologue), ("prefill-extend-attention", attention), ("prefill-prologue-and-extend", combined)):
+            output = call(buffers[0])
+            digest = sha256(output) if output is not None else sha256(*buffers[0][3:])
+            write(f"{name}-{label}", digest, time_graph([lambda b=b: call(b) for b in buffers]), contiguous_kv=candidate)
+
 def bench_norm_quant(write):
     gen = torch.Generator(device="cuda").manual_seed(9031)
     weight = (torch.randn(4096, device="cuda", generator=gen) * 0.1 + 1).bfloat16()
@@ -234,6 +298,7 @@ def main():
     print(json.dumps({"device": torch.cuda.get_device_name(), "fused_kv": HAS_FUSED_KV, "fused_norm_quant": add_rmsnorm_group_quant_fp8 is not None, "masked_topk": topk_softmax_masked is not None}), flush=True)
     write = Writer(args.output, args.variant)
     bench_rope(write)
+    bench_prefill_attention(write)
     bench_norm_quant(write)
     bench_topk(write)
     bench_fa3_verify(write)
