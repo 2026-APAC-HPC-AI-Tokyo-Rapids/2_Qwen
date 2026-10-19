@@ -455,12 +455,13 @@ def check_prefill_attention():
                 check_numerics(out, rq, label + "_unfused_q")
                 check_numerics(ck, rk, label + "_unfused_k")
                 equal(cv, rv, label + "_unfused_v")
-                # The virtual-lane tree must additionally match the existing
-                # fused kernel byte for byte, including both BF16 roundings.
+                # Record the distance to the existing fused kernel under the same
+                # bounds. Run 39194911829 found its BF16 K writeback one FP8 step
+                # off the unfused reference where this kernel matched it exactly.
                 old_q, old_k = torch.empty_like(out), k.clone()
                 apply_qknorm_rope_fp8_q(q, old_k, qw, kw, trig, pos, 1e-6, old_q)
-                equal(out, old_q, label + "_exact_q")
-                equal(ck, old_k.to(out.dtype), label + "_exact_k")
+                check_numerics(out, old_q, label + "_fused_q")
+                check_numerics(ck, old_k.to(out.dtype), label + "_fused_k")
                 ek, ev = torch.full_like(kc, 3.), torch.full_like(vc, 3.)
                 if rows:
                     store_cache(ck.view(-1, 512), cv.view(-1, 512), ek.view(-1, 512), ev.view(-1, 512), loc, row_bytes=512, v_row_bytes=512, size_limit=slots)
@@ -513,7 +514,7 @@ def check_prefill_attention():
         actual = flash_attn_varlen_func(q=q[:rows], k=k[:rows], v=v[:rows], cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max(lengths), max_seqlen_k=max(lengths), softmax_scale=128 ** -.5, causal=True, num_splits=0)
         expected = flash_attn_with_kvcache(q=q[:rows], k_cache=kc.view(pages, 64, 4, 128), v_cache=vc.view(pages, 64, 4, 128), page_table=table, cache_seqlens=torch.tensor(lengths, device="cuda", dtype=torch.int32), cu_seqlens_q=cu, max_seqlen_q=max(lengths), softmax_scale=128 ** -.5, causal=True, num_splits=0)
         check_numerics(actual, expected, f"prefill_varlen_{lengths}_pad{padding}")
-    print("PASS: Prefill prologue exact fused bytes, unfused reference, zero/odd/4k rows, paged + contiguous KV, graph replay and FA3 multi-request boundaries", flush=True)
+    print("PASS: Prefill prologue within bounds of the unfused reference and the existing fused kernel, zero/odd/4k rows, paged + contiguous KV, graph replay and FA3 multi-request boundaries", flush=True)
 
 
 if __name__ == "__main__":
