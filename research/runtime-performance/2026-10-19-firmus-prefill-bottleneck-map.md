@@ -101,3 +101,14 @@ kernel 外の損失：Prefill GPU は電力上限 700 W（仕様上限）で 1.4
 | 5 | MegaMoE の ping-pong 化と register 再配分 | −8〜9% | 大 | kernel bench → 確認 run |
 
 1〜4 を合わせて −6% 前後、5 が成功すれば単独で −8〜9%。komoriyuta の [7999 → 8500 ノート](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/blob/perf/firmus-7999-gigatoken-20261018/research/runtime-performance/2026-10-18-firmus-7999-to-8500.md) も 1 と 2 を次の候補に挙げているので、着手前に分担を決める。
+
+## 6. 測定結果（run 39190318626、1 GPU、serving image `a8ed4592`、2026-10-19）
+
+clock は単体なので約 1.98 GHz（DeepGEMM の GEMM だけは 693 W で 1.26〜1.35 GHz まで落ちた）。serving では電力制限で約 1.25 倍遅く出る（serving の FA3 prefill 492 µs ÷ 単体の paged 399 µs ≒ 1.23）。
+
+- **FA3 prefill（3986 token、FP8、causal）**：paged page 64 が 399 µs（652 TFLOPS）、連続 KV の varlen が 353.5 µs、非 paged の kvcache が 350.7 µs（742 TFLOPS）。−11.5%。出力差は相対 L2 3e-3（FP8 の P の tiling 差）。V 列優先の変種は非対応。
+- **FA3 decode の knob**：rank 32 要求では scheduler metadata の事前計算が −2.4%、num_splits / pack_gqa は差なし。**36 要求で 50.7 → 89.9 µs（+77%）**。cap 136 の run（39110496019）で FA3 decode が 76 µs だった原因の一つ。cap を 128 より上げるなら MegaMoE の SwapAB 上限と並ぶ壁になる。
+- **QK-norm/RoPE**：KV store 込みで 4027 行 121 µs、128 行 7.0 µs。同じバイト数の単純コピーは 38 µs / 2.4 µs で、約 3 倍の余地。torch の BF16→FP8 cast（96 µs）は floor にならない。
+- **MegaMoE の GEMM の上限**：DeepGEMM 単体の `m_grouped_fp8_gemm_nt_contiguous` で rank あたり 32768 行（32 expert、FC1 3072×4096 + FC2 4096×1536）が 1.16 ms（1065 TFLOPS、routed padding 込みで 1.26 ms）。電力上限で 1.26〜1.35 GHz に落ちていても、MegaMoE の GEMM 区間（約 1.5 ms、約 1.55 GHz）より 2〜3 割速く、clock あたり約 1.5 倍の効率。§4.1 の「register 予算の再配分と ping-pong 化」で取れる差が実在する。MegaMoE の GEMM 区間をこの効率に寄せれば MegaMoE −14%、Prefill 約 −8%。
+
+更新した優先順位：1. MegaMoE GEMM 部の構造変更（約 −8%）、2. QK-norm/RoPE の帯域化（約 −2.8%）、3. FA3 prefill の連続 KV 経路（約 −1.8%、2 と同じ kernel で連続 FP8 K/V を出す）、4. flat barrier と norm＋quant の Prefill 限定（約 −0.8%）。Prefill と Decode で別の attention 経路を使うことは許可済みなので、3 は Prefill extend だけに適用する。
