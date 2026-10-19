@@ -15,6 +15,10 @@
 # the image tree and the patched tree. Every step's exit code goes to
 # results/steps.tsv and the job continues; only a failed image bench stops it.
 # The summary script turns steps.tsv and the results into the verdict.
+# When the Prefill probe script is staged (patches/sglang-bench/probes marker),
+# three more steps measure the image's own FA3 / QK-norm-RoPE / DeepGEMM grouped
+# GEMM on one GPU. They use the image tree only; a failed probe step is recorded
+# in steps.tsv like any other and the summary reports it.
 set -euo pipefail
 
 ROOT=${SLURM_SUBMIT_DIR}
@@ -40,6 +44,13 @@ install -d "${ROOT}/results/image" "${ROOT}/scratch/image"
 step image bench "${torchrun[@]}" "${ROOT}/scripts/bench-firmus-megamoe.py" --variant image --output "${ROOT}/results/image/bench.jsonl" --scratch "${ROOT}/scratch/image"
 (( step_exit == 0 ))
 timeline image
+
+if [[ -e "${ROOT}/scripts/bench-firmus-deepgemm-gemm.py" ]]; then
+  install -d "${ROOT}/results/probe"
+  step probe fa3 /opt/sglang/venv/bin/python "${ROOT}/scripts/bench-firmus-sglang-kernels.py" --output "${ROOT}/results/probe/fa3.jsonl" --variant image --probe fa3
+  step probe gemm /opt/sglang/venv/bin/python "${ROOT}/scripts/bench-firmus-deepgemm-gemm.py" --output "${ROOT}/results/probe/gemm.jsonl"
+  step probe rope /opt/sglang/venv/bin/python "${ROOT}/scripts/bench-firmus-sglang-kernels.py" --output "${ROOT}/results/probe/rope.jsonl" --variant image --probe rope
+fi
 
 if [[ -d "${ROOT}/overlay/sglang" ]]; then
   # The candidate builds its JIT kernels in its own TVM-FFI cache; the image

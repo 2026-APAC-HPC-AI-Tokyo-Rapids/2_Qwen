@@ -161,6 +161,67 @@ def test_provision_rejects_layouts_before_staging(tmp_path: Path, layout: str) -
     assert not (tmp_path / "runs").exists()
 
 
+def add_probes(ws: Path) -> None:
+    (ws / "patches/sglang-bench").mkdir(parents=True, exist_ok=True)
+    (ws / "patches/sglang-bench/probes").touch()
+    for script in ("bench-firmus-sglang-kernels.py", "bench-firmus-deepgemm-gemm.py"):
+        shutil.copy(ROOT / "scripts" / script, ws / "scripts" / script)
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+def test_probe_marker_installs_the_probe_scripts_and_needs_no_patch(tmp_path: Path) -> None:
+    ws, _ = workspace(tmp_path)
+    add_probes(ws)
+
+    result = provision(tmp_path, ws)
+
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    variants = json.loads((runtime / "results/variants.json").read_text())
+    assert variants["sglang"] is None
+    assert not (runtime / "overlay/sglang").exists()
+    assert (runtime / "scripts/bench-firmus-deepgemm-gemm.py").exists()
+    assert (runtime / "scripts/bench-firmus-sglang-kernels.py").exists()
+    assert (runtime / "source/patches/sglang-bench/probes").exists()
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+def test_provision_without_the_probe_marker_leaves_out_the_gemm_script(tmp_path: Path) -> None:
+    ws, _ = workspace(tmp_path)
+    shutil.copy(ROOT / "scripts/bench-firmus-deepgemm-gemm.py", ws / "scripts/bench-firmus-deepgemm-gemm.py")
+
+    result = provision(tmp_path, ws)
+
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    assert not (runtime / "scripts/bench-firmus-deepgemm-gemm.py").exists()
+
+
+@pytest.mark.parametrize("candidates,accepted", [(4, True), (5, False)])
+def test_provision_counts_the_three_probe_steps(tmp_path: Path, candidates: int, accepted: bool) -> None:
+    ws, patches = workspace(tmp_path)
+    add_probes(ws)
+    for index in range(candidates):
+        add_candidate(ws, f"c{index}", patches["comment"])
+
+    result = provision(tmp_path, ws)
+
+    # 1 image bench + 3 probe steps + candidates x (gate + bench): 12 fit, 14 do not.
+    assert (result.returncode == 0) == accepted
+    if not accepted:
+        assert "14 Slurm steps" in result.stderr
+        assert not (tmp_path / "runs").exists()
+
+
+def test_run_sbatch_runs_the_probe_steps_on_the_image_tree_after_the_image_bench() -> None:
+    sbatch = (ROOT / "platforms/firmus/kernel-bench/run.sbatch").read_text()
+    probes = sbatch.split('if [[ -e "${ROOT}/scripts/bench-firmus-deepgemm-gemm.py" ]]; then', 1)[1].split("\nfi\n", 1)[0]
+
+    assert sbatch.index("timeline image") < sbatch.index("bench-firmus-deepgemm-gemm.py")
+    assert [line.split()[1:3] for line in probes.splitlines() if line.lstrip().startswith("step ")] == [["probe", "fa3"], ["probe", "gemm"], ["probe", "rope"]]
+    assert "PYTHONPATH" not in probes
+
+
 def bench_row(case: str, median: float, digest: str, clock: float = 1980) -> dict:
     return {"case": case, "variant": "x", "median_ms": median, "p10_ms": median * 0.99, "p90_ms": median * 1.01, "rank_load_max_over_mean": 1.0, "deterministic": True, "output_sha256": digest, "sm_clock_mhz_before": [clock] * 4, "sm_clock_mhz_after": [clock] * 4, "power_w_before": [500] * 4, "power_w_after": [600] * 4}
 
@@ -240,3 +301,31 @@ def test_provision_counts_sglang_and_image_timeline_before_staging(tmp_path: Pat
     assert result.returncode != 0
     assert f"{expected_steps} Slurm steps" in result.stderr
     assert not (tmp_path / "runs").exists()
+
+
+def test_summary_tables_the_probes_and_records_unsupported_cases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    summarize = load_summary(monkeypatch)
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "not-requested"}], "sglang": None}))
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t70\nprobe\tfa3\t0\t60\nprobe\tgemm\t0\t90\nprobe\trope\t0\t60\n")
+    write_rows(tmp_path / "image/bench.jsonl", [bench_row("decode-balanced-128", 0.2, "d")])
+    clocks = {"sm_clock_mhz_before": 1755, "sm_clock_mhz_after": 1620, "power_w_before": 650.2, "power_w_after": 698.7}
+    write_rows(tmp_path / "probe/fa3.jsonl", [
+        {"case": "fa3-prefill-paged", "variant": "image", "median_us": 490.0, "p10_us": 488.0, "p90_us": 495.0, "tflops": 531.2, "max_abs_diff": 0.0, "rel_max": 0.0, **clocks},
+        {"case": "fa3-prefill-varlen", "variant": "image", "unsupported": "FP8 | needs V col-major"},
+        {"case": "fa3-verify-splits-2-b32", "variant": "image", "median_us": 60.0, "p10_us": 59.0, "p90_us": 61.0, "max_abs_diff_vs_default": 0.5, **clocks},
+    ])
+    write_rows(tmp_path / "probe/gemm.jsonl", [{"case": "dgemm-fc1-even-1024", "variant": "image", "median_us": 1400.0, "p10_us": 1390.0, "p90_us": 1410.0, "tflops": 590.1, "tflops_useful": 590.1, **clocks}])
+    write_rows(tmp_path / "probe/rope.jsonl", [{"case": "rope-floor-copy-3986", "variant": "image", "median_us": 40.0, "p10_us": 39.0, "p90_us": 41.0, "gb_per_s": 3680.4, **clocks}])
+
+    text, failed = summarize(tmp_path)
+
+    assert failed == []
+    assert "| DeepGEMM m-grouped FP8 GEMM (contiguous layout, 1d2d) on the Prefill expert workload | pass |" in text
+    assert "| fa3-prefill-paged | 490.00 | 488.00 / 495.00 | - | 531.2 | - | 0 | 0 | 1755 / 1620 | 650 / 699 |" in text
+    assert "| fa3-prefill-varlen | not supported: FP8 / needs V col-major | - |" in text
+    assert "| fa3-verify-splits-2-b32 | 60.00 | 59.00 / 61.00 | - | - | - | 0.5 | - | 1755 / 1620 | 650 / 699 |" in text
+    assert "| dgemm-fc1-even-1024 | 1400.00 | 1390.00 / 1410.00 | - | 590.1 | 590.1 |" in text
+    assert "| rope-floor-copy-3986 | 40.00 | 39.00 / 41.00 | 3680 | - | - |" in text
+
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t70\nprobe\tfa3\t0\t60\nprobe\tgemm\t1\t90\n")
+    assert summarize(tmp_path)[1] == ["probe gemm", "probe rope"]

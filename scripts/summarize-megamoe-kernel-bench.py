@@ -6,7 +6,11 @@ variants.json from provision-firmus-kernel-bench.sh, steps.tsv from run.sbatch
 <variant>/timeline.jsonl and <variant>/timeline/<case>.npy from
 bench-firmus-megamoe.py, and sglang/<image|candidate>.jsonl from
 bench-firmus-sglang-kernels.py. Archives from the single-candidate layout need
-the script as of commit 332e30c.
+the script as of commit 332e30c. With the Prefill probes staged (steps.tsv rows
+of variant "probe"), probe/{fa3,rope}.jsonl from bench-firmus-sglang-kernels.py
+--probe and probe/gemm.jsonl from bench-firmus-deepgemm-gemm.py are tabled with
+their SM clock and power; a failed probe step is a failure, a case the installed
+sgl_kernel rejects (an `unsupported` row) is a result.
 
 Exit status 1 marks any failure: a non-zero step, a DeepGEMM output hash that
 differs from the image, a missing case, a timeline patch that did not apply, or
@@ -233,6 +237,41 @@ def sglang(results, steps):
     return "\n".join(lines) + "\n", failed
 
 
+PROBES = (
+    ("fa3", "FA3 Prefill EXTEND, paged against contiguous FP8 K/V, and the Decode TARGET_VERIFY knobs"),
+    ("gemm", "DeepGEMM m-grouped FP8 GEMM (contiguous layout, 1d2d) on the Prefill expert workload"),
+    ("rope", "QK-norm/RoPE/FP8 kernels and the plain-copy bandwidth floor"),
+)
+
+
+def probe_cell(row, key, spec):
+    return "-" if key not in row else format(row[key], spec)
+
+
+def probes(results, steps):
+    if not any(variant == "probe" for variant, _ in steps):
+        return "", []
+    failed = []
+    lines = ["### Image-tree probes (Prefill investigation, one GPU)", "", "| Probe | Step |", "| --- | --- |"]
+    for name, title in PROBES:
+        step, passed = step_cell(steps, "probe", name)
+        if not passed:
+            failed.append(f"probe {name}")
+        lines.append(f"| {title} | {step} |")
+    for name, title in PROBES:
+        rows = load_rows(results / "probe" / f"{name}.jsonl")
+        if not rows:
+            continue
+        lines += ["", f"#### {title}", "", "SM MHz and power are NVML samples right before / after the timed replays (instantaneous; see the Prefill clock-throttle note in the kernel timeline).", "", "| Case | Median us | p10 / p90 us | GB/s | TFLOPS | TFLOPS useful | Max abs diff | Rel max diff | SM MHz before / after | Power W before / after |", "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+        for case, row in rows.items():
+            if "unsupported" in row:
+                lines.append(f"| {case} | not supported: {row['unsupported'].replace('|', '/')} | - | - | - | - | - | - | - | - |")
+                continue
+            diff = "max_abs_diff" if "max_abs_diff" in row else "max_abs_diff_vs_default"
+            lines.append(f"| {case} | {row['median_us']:.2f} | {row['p10_us']:.2f} / {row['p90_us']:.2f} | {probe_cell(row, 'gb_per_s', '.0f')} | {probe_cell(row, 'tflops', '.1f')} | {probe_cell(row, 'tflops_useful', '.1f')} | {probe_cell(row, diff, '.4g')} | {probe_cell(row, 'rel_max', '.3g')} | {row['sm_clock_mhz_before']:.0f} / {row['sm_clock_mhz_after']:.0f} | {row['power_w_before']:.0f} / {row['power_w_after']:.0f} |")
+    return "\n".join(lines) + "\n", failed
+
+
 def summarize(results):
     steps = {}
     if (results / "steps.tsv").exists():
@@ -241,9 +280,10 @@ def summarize(results):
             steps[(variant, name)] = int(code)
     text, failed = deep_gemm(results, steps)
     sglang_text, sglang_failed = sglang(results, steps)
-    failed += sglang_failed
+    probe_text, probe_failed = probes(results, steps)
+    failed += sglang_failed + probe_failed
     verdict = "All variants passed." if not failed else "FAILED: " + ", ".join(failed)
-    return f"### Verdict\n\n{verdict}\n\n{text}\n{sglang_text}", failed
+    return f"### Verdict\n\n{verdict}\n\n{text}\n{sglang_text}\n{probe_text}", failed
 
 
 def main():

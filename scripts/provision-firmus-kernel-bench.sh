@@ -22,7 +22,8 @@ shopt -s inherit_errexit
 # start, imports, JIT, work) took 71-77 s in run 39085655145, so a job holds at
 # most 12 steps: the image bench, the image timeline if requested, 2 SGLang
 # checks (+2 benches with bench-firmus-sglang-kernels.py), and per DeepGEMM
-# candidate a gate, a bench and the timeline if requested.
+# candidate a gate, a bench and the timeline if requested. The Prefill probes
+# (an empty patches/sglang-bench/probes marker) add 3 steps on the image tree.
 max_steps=12
 bench_dir="${GITHUB_WORKSPACE}/patches/deep-gemm-bench"
 shopt -s nullglob
@@ -35,6 +36,8 @@ steps=1
 if [[ -e "${bench_dir}/timeline" ]]; then steps=$((steps + 1)); fi
 if (( ${#sglang_patches[@]} )); then steps=$((steps + 2)); fi
 if (( ${#sglang_patches[@]} )) && [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then steps=$((steps + 2)); fi
+probes=false
+if [[ -e "${GITHUB_WORKSPACE}/patches/sglang-bench/probes" ]]; then probes=true; steps=$((steps + 3)); fi
 for dir in "${candidate_dirs[@]}"; do
   name="$(basename "${dir}")"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9._-]*$ && "${name}" != image ]] || { printf 'Candidate directory name %s must match [a-z0-9][a-z0-9._-]* and not be "image".\n' "${name}" >&2; exit 1; }
@@ -127,6 +130,7 @@ cp "${timeline_patch}" "${runtime_dir}/source/patches/"
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/kernel-bench/run.sbatch" "${runtime_dir}/scripts/run.sbatch"
 scripts=(bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-kernels.py)
 if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then scripts+=(bench-firmus-sglang-kernels.py); fi
+if [[ "${probes}" == true ]]; then scripts+=(bench-firmus-deepgemm-gemm.py); fi
 for script in "${scripts[@]}"; do install -m 0644 "${GITHUB_WORKSPACE}/scripts/${script}" "${runtime_dir}/scripts/"; cp "${runtime_dir}/scripts/${script}" "${runtime_dir}/source/"; done
 cp "${runtime_dir}/scripts/run.sbatch" "${runtime_dir}/source/"
 jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson image "$(jq .images.sglang "${config}")" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" '{schema_version:"qwen3-megamoe-kernel-bench/v2",cluster:"firmus",commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes}),timeline_patch_sha256:$timeline_sha,variants:"results/variants.json"}' >"${runtime_dir}/source/provenance.json"
