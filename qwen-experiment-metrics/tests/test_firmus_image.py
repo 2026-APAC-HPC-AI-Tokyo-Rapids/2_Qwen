@@ -12,7 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-SGLANG_PATCHES = ["firmus-staged-eagle-kv", "qwen3-sm90-megamoe", "firmus-dp-rank-query", "prefill-ready-handoff", "deepgemm-activation-layout", "rope-fp8-q", "qknorm-rope-fp8", "prefill-request-aligned-chunks", "qknorm-rope-fp8-kv", "qwen-topk-padding", "qknorm-rope-fp8-token-warps", "add-rmsnorm-group-quant", "decode-async-admission", "dp-total-requests-rotate-ties", "megamoe-idle-prefill-geometry", "prefill-attention-contiguous-kv"]
+SGLANG_PATCHES = ["firmus-staged-eagle-kv", "qwen3-sm90-megamoe", "firmus-dp-rank-query", "prefill-ready-handoff", "deepgemm-activation-layout", "rope-fp8-q", "qknorm-rope-fp8", "prefill-request-aligned-chunks", "qknorm-rope-fp8-kv", "qwen-topk-padding", "qknorm-rope-fp8-token-warps", "add-rmsnorm-group-quant", "decode-async-admission", "dp-total-requests-rotate-ties", "megamoe-idle-prefill-geometry", "gigatoken-encode", "prefill-attention-contiguous-kv"]
 ROUTER_PATCHES = ["prefill-load-lifetime", "no-delay-acceptor"]
 # The metadata test brings its own host series so that ordering over several patches is covered whatever the repository lists.
 HOST_PATCHES = {"first-host-heuristic.patch": b"--- a/csrc/first\n+++ b/csrc/first\n", "second-host-heuristic.patch": b"--- a/csrc/second\n+++ b/csrc/second\n"}
