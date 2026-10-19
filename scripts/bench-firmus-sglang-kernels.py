@@ -48,6 +48,8 @@ REPS = 20
 REPLAYS = 25
 ROWS = (4027, 3986, 4096, 144, 128, 126, 16, 4)
 TOPK_ROWS = (144, 128, 126, 16, 4)
+# Row counts around the fused input norm + quant break-even (the model routes only EXTEND batches with at least 2048 rows to it).
+NORM_ROWS = (4027, 3986, 4096, 3072, 2048, 1536, 1024, 768, 512, 256, 144, 128, 126, 16, 4)
 SLOTS = 8192 + 64
 EPS = 1e-6
 
@@ -165,7 +167,7 @@ def bench_norm_quant(write):
         fused_add_rmsnorm(x, residual, weight, EPS)
         return sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
 
-    for rows in ROWS:
+    for rows in NORM_ROWS:
         x, residual = inputs(rows, 11)
         q, scale = op(x, residual)
         sha = sha256(q, scale, residual)

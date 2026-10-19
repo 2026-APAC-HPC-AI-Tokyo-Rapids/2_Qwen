@@ -77,12 +77,13 @@ aligned_chunks_patch="patches/sglang/prefill-request-aligned-chunks.patch"
 qknorm_rope_fp8_kv_patch="patches/sglang/qknorm-rope-fp8-kv.patch"
 topk_padding_patch="patches/sglang/qwen-topk-padding.patch"
 qknorm_rope_fp8_token_warps_patch="patches/sglang/qknorm-rope-fp8-token-warps.patch"
+add_rmsnorm_group_quant_patch="patches/sglang/add-rmsnorm-group-quant.patch"
 async_admission_patch="patches/sglang/decode-async-admission.patch"
 rotate_ties_patch="patches/sglang/dp-total-requests-rotate-ties.patch"
 idle_geometry_patch="patches/sglang/megamoe-idle-prefill-geometry.patch"
 gigatoken_patch="patches/sglang/gigatoken-encode.patch"
 # Application order. The token-warps and group-quant patches build on the FP8 KV patch, and the Tier 2 patches come last.
-sglang_patches=("${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}" "${decode_quant_patch}" "${expired_chunk_patch}" "${dp_rank_query_patch}" "${prefill_handoff_patch}" "${deepgemm_activation_patch}" "${rope_fp8_patch}" "${qknorm_rope_fp8_patch}" "${aligned_chunks_patch}" "${qknorm_rope_fp8_kv_patch}" "${topk_padding_patch}" "${qknorm_rope_fp8_token_warps_patch}" "${async_admission_patch}" "${rotate_ties_patch}" "${idle_geometry_patch}" "${gigatoken_patch}")
+sglang_patches=("${sglang_patch}" "${draft_head_patch}" "${fused_shuffle_patch}" "${routing_patch}" "${staging_patch}" "${mega_patch}" "${completion_patch}" "${page_release_patch}" "${decode_quant_patch}" "${expired_chunk_patch}" "${dp_rank_query_patch}" "${prefill_handoff_patch}" "${deepgemm_activation_patch}" "${rope_fp8_patch}" "${qknorm_rope_fp8_patch}" "${aligned_chunks_patch}" "${qknorm_rope_fp8_kv_patch}" "${topk_padding_patch}" "${qknorm_rope_fp8_token_warps_patch}" "${add_rmsnorm_group_quant_patch}" "${async_admission_patch}" "${rotate_ties_patch}" "${idle_geometry_patch}" "${gigatoken_patch}")
 # Later patches depend on additions made by earlier patches; check each updated private tree.
 for patch in "${sglang_patches[@]}"; do
   git -C "${source_dir}" apply --check "${GITHUB_WORKSPACE}/${patch}"
@@ -125,6 +126,7 @@ for patch in "${sglang_patches[@]}"; do
     "${gigatoken_patch}") targets=(python/sglang/srt/server_args.py python/sglang/srt/utils/hf_transformers/tokenizer.py python/sglang/srt/utils/hf_transformers/gigatoken_encoder.py) ;;
     "${rope_fp8_patch}"|"${qknorm_rope_fp8_patch}"|"${qknorm_rope_fp8_kv_patch}"|"${qknorm_rope_fp8_token_warps_patch}") targets=(python/sglang/kernels/jit/csrc/elementwise/rope.cuh python/sglang/kernels/ops/attention/rope.py python/sglang/srt/models/qwen3_moe.py) ;;
     "${topk_padding_patch}") targets=(python/sglang/kernels/jit/csrc/trtllm_lora_temp/topk_softmax_pack.cuh python/sglang/kernels/ops/moe/trtllm_lora_temp/topk_softmax_pack.py python/sglang/srt/layers/moe/topk.py) ;;
+    "${add_rmsnorm_group_quant_patch}") targets=(python/sglang/kernels/jit/csrc/elementwise/add_rmsnorm_group_quant.cuh python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py python/sglang/srt/models/qwen3_moe.py) ;;
     "${aligned_chunks_patch}") targets=(python/sglang/srt/managers/schedule_policy.py python/sglang/srt/managers/scheduler.py) ;;
     "${async_admission_patch}") targets=(python/sglang/srt/disaggregation/async_admission.py python/sglang/srt/disaggregation/decode.py python/sglang/srt/disaggregation/decode_schedule_batch_mixin.py python/sglang/srt/sampling/penaltylib/min_new_tokens.py python/sglang/srt/speculative/eagle_disaggregation.py) ;;
     "${rotate_ties_patch}") targets=(python/sglang/srt/managers/data_parallel_controller.py) ;;

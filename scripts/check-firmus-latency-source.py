@@ -5,6 +5,7 @@ import argparse
 import ast
 import asyncio
 import builtins
+import re
 import runpy
 import threading
 from collections import deque
@@ -534,6 +535,95 @@ def check_fp8_kv_fusion(source, installed=False):
         print("PASS: installed Qwen3MoeAttention + real ForwardBatch/ForwardContext imports and calls on CPU")
 
 
+def check_input_norm_quant(source):
+    """Selection of the fused input RMSNorm + QKV quant (add-rmsnorm-group-quant.patch): Prefill EXTEND batches with at least 2048 rows only."""
+    path = source / "python/sglang/srt/models/qwen3_moe.py"
+    calls = []
+    min_rows = int(re.search(r"^_INPUT_NORM_QUANT_MIN_ROWS = (\d+)$", path.read_text(), re.MULTILINE).group(1))
+
+    class Tensor:
+        def __init__(self, rows, dtype="bf16", contiguous=True):
+            self.shape, self.dtype, self.contiguous = (rows, 4096), dtype, contiguous
+
+        def is_contiguous(self):
+            return self.contiguous
+
+    class Communicator:
+        def prepare_attn_and_capture_last_layer_outputs(self, hidden, residual, fb, captured_last_layer_outputs=None, **kw):
+            calls.append("communicator")
+            return hidden, residual if residual is not None else hidden
+
+        def prepare_mlp(self, hidden, residual, fb):
+            return hidden, residual
+
+        def should_fuse_mlp_allreduce_with_next_layer(self, fb):
+            return False
+
+        def should_use_reduce_scatter(self, fb):
+            return False
+
+        def postprocess_layer(self, hidden, residual, fb):
+            return hidden, residual
+
+    context = SimpleNamespace(input_scattered=False)
+    invariant = SimpleNamespace(enabled=False)
+    ns = {"torch": SimpleNamespace(bfloat16="bf16"), "get_attn_tp_context": lambda: context, "is_batch_invariant_mode_enabled": lambda: invariant.enabled, "ForwardMode": SimpleNamespace(EXTEND="extend", DECODE="decode", TARGET_VERIFY="target_verify", MIXED="mixed"), "_INPUT_NORM_QUANT_MIN_ROWS": min_rows, "add_rmsnorm_group_quant_fp8": lambda x, r, w, eps: (calls.append("fused"), ("q", "scale"))[1], "get_forward": lambda: SimpleNamespace(scoped=lambda **kw: nullcontext())}
+    use = method(path, "_use_input_norm_quant", ns)
+    tree = ast.parse(path.read_text())
+    layer_cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Qwen3MoeDecoderLayer")
+    forward_node = next(n for n in layer_cls.body if isinstance(n, ast.FunctionDef) and n.name == "forward")
+    module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), forward_node], type_ignores=[])
+    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), ns)  # noqa: S102
+    forward = ns["forward"]
+    supported = SimpleNamespace(value=True)
+    seen = []
+    mode = SimpleNamespace(value="extend")
+    layer = SimpleNamespace(layer_communicator=Communicator(), input_layernorm=SimpleNamespace(weight="w", variance_epsilon=1e-6), _input_norm_quant_supported=lambda: supported.value, self_attn=lambda positions, hidden_states, forward_batch: (seen.append(hidden_states), hidden_states)[1], mlp=lambda hidden, fb: hidden)
+    layer._use_input_norm_quant = lambda *a: use(layer, *a)
+
+    def run(hidden, residual, fused, captured=None, **kw):
+        calls.clear()
+        seen.clear()
+        forward(layer, "positions", hidden, SimpleNamespace(forward_mode=mode.value), residual, captured, **kw)
+        assert calls == (["fused"] if fused else ["communicator"]), calls
+        # The attention receives the FP8 (q, scale) tuple only from the fused path.
+        if hidden.shape[0] or fused:
+            assert seen == ([("q", "scale")] if fused else [hidden]), seen
+
+    run(Tensor(4027), Tensor(4027), True)
+    run(Tensor(3986), Tensor(3986), True)
+    run(Tensor(min_rows), Tensor(min_rows), True)
+    # Too few rows: the kernel's 2 rows per CTA leave most SMs idle and it measured slower.
+    run(Tensor(min_rows - 1), Tensor(min_rows - 1), False)
+    run(Tensor(126), Tensor(126), False)
+    run(Tensor(1), Tensor(1), False)
+    run(Tensor(0), Tensor(0), False)  # idle DP rank
+    # Decode-side batches never take the fused kernel, whatever their row count.
+    for other in ("decode", "target_verify", "mixed"):
+        mode.value = other
+        run(Tensor(4027), Tensor(4027), False)
+        run(Tensor(128), Tensor(128), False)
+    mode.value = "extend"
+    run(Tensor(4027), None, False)  # layer 0: plain RMSNorm without residual add
+    run(Tensor(4027), Tensor(4027), False, captured=[])  # EAGLE3 aux-hidden capture layer
+    run(Tensor(4027), Tensor(4027), False, post_residual_addition="extra")
+    run(Tensor(4027, "fp16"), Tensor(4027, "fp16"), False)
+    run(Tensor(4027, contiguous=False), Tensor(4027), False)
+    run(Tensor(4027), Tensor(4027, contiguous=False), False)
+    marked = Tensor(4027)
+    marked._sglang_needs_allreduce_fusion = True
+    run(marked, Tensor(4027), False)
+    context.input_scattered = True
+    run(Tensor(4027), Tensor(4027), False)
+    context.input_scattered = False
+    invariant.enabled = True
+    run(Tensor(4027), Tensor(4027), False)
+    invariant.enabled = False
+    supported.value = False
+    run(Tensor(4027), Tensor(4027), False)
+    print("PASS: fused input RMSNorm + QKV group quant only for Prefill EXTEND batches with at least 2048 rows (never Decode, TARGET_VERIFY, MIXED or idle), residual layers, BF16 contiguous inputs, no aux capture, all-reduce fusion, scattered input or batch-invariant mode; it hands the FP8 (q, scale) tuple to attention (CUDA mocked)")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
@@ -548,3 +638,4 @@ if __name__ == "__main__":
     check_prefill_ready_handoff(source)
     check_fp8_kv_fusion(source, installed=args.installed)
     check_topk_padding_guard(source)
+    check_input_norm_quant(source)

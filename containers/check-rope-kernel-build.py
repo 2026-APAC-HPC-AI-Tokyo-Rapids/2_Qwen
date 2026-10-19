@@ -27,13 +27,14 @@ specializations = [
 for name, header, kernels, flags in (
     ("rope_fp8_q_kv", rope_header, specializations, []),
     ("topk_padding", root / "csrc/trtllm_lora_temp/topk_softmax_pack.cuh", ["topk_softmax_masked", "topk_softmax_pack"], ["--use_fast_math"]),
+    ("add_rmsnorm_group_quant", root / "csrc/elementwise/add_rmsnorm_group_quant.cuh", ["AddRMSNormGroupQuantKernel<true,0>::run", "AddRMSNormGroupQuantKernel<false,0>::run"], []),
 ):
     with tempfile.TemporaryDirectory() as temp:
         source = Path(temp) / f"{name}.cu"
         source.write_text(f'#include "{header}"\n' + "\n".join(f"TVM_FFI_DLL_EXPORT_TYPED_FUNC(run_{i}, ({kernel}));" for i, kernel in enumerate(kernels)))
         library = Path(temp) / f"{name}.so"
         ffi_library = Path(find_libtvm_ffi())
-        # Match each JIT's flags: RoPE has no fast_math; AOT-equivalent Top-K does.
+        # Match each JIT's flags: RoPE and the fused norm + quant have no fast_math; AOT-equivalent Top-K does.
         subprocess.run([nvcc, "-std=c++20", "-O3", "--expt-relaxed-constexpr", "--ptxas-options=-v,-warn-spills", "-DSGL_CUDA_ARCH=900", "-gencode", "arch=compute_90a,code=sm_90a", f"-I{root / 'include'}", f"-I{find_include_path()}", "-shared", "-Xcompiler=-fPIC", *flags, str(source), str(ffi_library), f"-Xlinker=-rpath,{ffi_library.parent}", "-o", str(library)], check=True)
         module = tvm_ffi.load_module(str(library))
         for i in range(len(kernels)):
