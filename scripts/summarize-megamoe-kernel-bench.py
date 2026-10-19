@@ -8,9 +8,11 @@ bench-firmus-megamoe.py, and sglang/<image|candidate>.jsonl from
 bench-firmus-sglang-kernels.py. Archives from the single-candidate layout need
 the script as of commit 332e30c.
 
-Exit status 1 marks any failure: a non-zero step, a DeepGEMM output hash that
-differs from the image, a missing case, a timeline patch that did not apply, or
-an SGLang case whose output hash differs between the image and the candidate.
+Exit status 1 marks any failure: a non-zero step (including a candidate's
+numerical gate or SGLang check), a missing case, or a timeline patch that did
+not apply. Output hashes that differ from the image are reported, not failed:
+candidates may change accumulation order, tiling or FMA contraction, and the
+numerical gates decide correctness.
 
 Timeline dumps are shaped [calls, ranks, words] in the layout of
 sm90_fp8_mega_moe_timeline.cuh. Times are
@@ -154,8 +156,7 @@ def deep_gemm(results, steps):
         hashes = "-"
         if name != "image":
             matches = sum(rows[name].get(case, {}).get("output_sha256") == image[case]["output_sha256"] for case in cases)
-            hashes = f"{matches}/{len(cases)}" + ("" if matches == len(cases) else " MISMATCH")
-            ok &= matches == len(cases)
+            hashes = f"{matches}/{len(cases)}" + ("" if matches == len(cases) else " (rest differ)")
         timeline = variant["timeline"]
         if timeline == "apply-failed":
             timeline, ok = "timeline patch did not apply", False
@@ -227,8 +228,6 @@ def sglang(results, steps):
                 lines.append(f"| {case} | {base['median_us'] if base else '-'} | {row['median_us'] if row else '-'} | - | - | - |")
                 continue
             same = base["output_sha256"] == row["output_sha256"]
-            if not same:
-                failed.append(f"sglang {case} hash")
             lines.append(f"| {case} | {base['median_us']:.2f} | {row['median_us']:.2f} | {row['median_us'] / base['median_us'] - 1:+.1%} | {row['p10_us']:.2f} / {row['p90_us']:.2f} | {same} |")
     return "\n".join(lines) + "\n", failed
 
