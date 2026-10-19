@@ -45,6 +45,10 @@ def main():
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf = deep_gemm.get_symm_buffer_for_mega_moe(dist.group.WORLD, 128, 4096, 8, 4096, 1536, use_fp8_dispatch=True, activation="swiglu")
     cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4]), ("decode-quant-zero", [9, 0, 0, 0])]
+    # New Prefill 128x128 / two-WG path starts at 256 rows. Exercise it
+    # against idle and Decode ranks in the same collective, around the host
+    # threshold and with changing graph inputs; keep the original cases too.
+    cases.extend([("prefill-mixed-geometry", [7, 0, 65, 257]), ("prefill-threshold", [255, 256, 257, 513]), ("prefill-graph", [256, 257, 512, 1024]), ("prefill-quant-zero", [256, 0, 0, 0])])
     # Exercise all SwapAB widths, plus a full tile and tail.
     # Other ranks still participate in the collective with zero live tokens.
     cases.extend((f"decode-tile-{count}", [count, 0, 0, 0]) for count in (1, 9, 17, 25, 33, 41, 49, 57, 65))
@@ -55,10 +59,10 @@ def main():
         cases.append(("idle-prefill-rows", [4096, 4096, 4096, 0]))
     for case, counts in cases:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
-        if case == "decode-quant-zero":
+        if case in ("decode-quant-zero", "prefill-quant-zero"):
             patterns.zero_()
         ids = torch.stack([torch.randperm(128, device=device)[:8] for _ in range(4)]).to(torch.int32)
-        if case in ("capacity-hot-experts", "decode-quant-zero") or case.startswith("decode-tile-"):
+        if case in ("capacity-hot-experts", "decode-quant-zero", "prefill-quant-zero") or case.startswith("decode-tile-"):
             ids[:] = torch.arange(8, dtype=torch.int32, device=device)
         weights = torch.rand(4, 8, device=device)
         ids[0, -1] = -1  # Masked/padded top-k slot must not read an expert.
@@ -94,10 +98,10 @@ def main():
         forward(hidden, top_ids, top_weights, count, actual)
         torch.cuda.synchronize()
         graph = None
-        if case == "decode-graph":
-            # An idle EAGLE3 rank replays the minimum one-request graph (four
-            # token rows), with every route masked, rather than a zero-row graph.
-            # Replays change GPU input data without changing its addresses.
+        if case in ("decode-graph", "prefill-graph"):
+            # Replays change inputs and idle/live routes at fixed addresses.
+            # Decode retains the minimum four-row EAGLE3 graph on idle ranks;
+            # Prefill covers both math WGs and partial pool blocks.
             graph = torch.cuda.CUDAGraph()
             dist.barrier()
             with torch.cuda.graph(graph):
@@ -131,7 +135,7 @@ def main():
                 assert torch.count_nonzero(actual).item() == 0, (case, rank, "masked idle rows must combine to zero")
             dist.barrier()
     if rank == 0:
-        print("PASS: SM90 MegaMoE EP4 numerical gate; original FP8 scales, late FP32 combine, changing masked Decode graph inputs", flush=True)
+        print("PASS: SM90 MegaMoE EP4 numerical gate; original FP8 scales, late FP32 combine, changing masked Decode/Prefill graph inputs", flush=True)
     # Synthetic representative shapes, not a replay of measured expert routes.
     # Record all-rank latency separately from the official serving score.
     for label, count in (("decode-balanced", 128), ("prefill-balanced", 4096)):
