@@ -70,6 +70,12 @@ def main():
             gathered.append(torch.cat(all_ranks))
         all_x, all_ids, all_weights = gathered
         x = quantized(all_x, 128)
+        # FC2 activation scale granularity of the kernel geometry under test: the
+        # Prefill geometry (host picks it from 256 rows per rank; idle Prefill ranks
+        # pass 256 masked rows) quantizes the SwiGLU output per 128 K, Decode per 64.
+        # The error bounds below are unchanged.
+        prefill_geometry = max(counts) >= 256
+        l2_group = 128 if prefill_geometry else 64
         reference = torch.zeros(16, 4096, device=device)
         for local_expert in range(32):
             rows, slots = torch.where(all_ids == rank * 32 + local_expert)
@@ -77,7 +83,7 @@ def main():
                 continue
             gate, up = (x[rows] @ dequantized(w13[local_expert], s13[local_expert]).T).chunk(2, dim=-1)
             activation = torch.nn.functional.silu(gate) * up
-            out = quantized(activation, 64) @ dequantized(w2[local_expert], s2[local_expert]).T
+            out = quantized(activation, l2_group) @ dequantized(w2[local_expert], s2[local_expert]).T
             # Native FC2 stores BF16 terms, then multiplies and sums in FP32.
             reference.index_add_(0, rows, out.to(torch.bfloat16).float() * all_weights[rows, slots, None])
         dist.all_reduce(reference)
