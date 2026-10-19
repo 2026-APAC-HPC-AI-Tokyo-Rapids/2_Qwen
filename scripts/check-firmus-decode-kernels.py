@@ -400,6 +400,121 @@ def check_add_rmsnorm_group_quant():
     print("PASS: fused add-RMSNorm + group-128 FP8 quant within rounding of flashinfer fused_add_rmsnorm + per_token_group_quant (residual exact); zero/odd/Prefill rows; graph replay", flush=True)
 
 
+def check_prefill_attention():
+    if not hasattr(rope_ops, "apply_qknorm_rope_fp8_prefill"):
+        print("SKIP: contiguous Prefill is not in this SGLang tree", flush=True)
+        return
+    from sgl_kernel.flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
+    from sglang.kernels.ops.kvcache.kvcache import store_cache
+
+    torch.manual_seed(319104)
+    angles = torch.arange(8192, device="cuda").float()[:, None] * (1000000.0 ** (-torch.arange(0, 128, 2, device="cuda").float() / 128))
+    trig = torch.cat((angles.cos(), angles.sin()), dim=-1).contiguous()
+    qw, kw = [(torch.randn(128, device="cuda") * .25 + 1).bfloat16() for _ in range(2)]
+    slots = 8256
+
+    def equal(a, b, label):
+        check_numerics(a, b, label)
+        finite = ~b.float().isnan()
+        assert torch.equal(a.view(torch.uint8)[finite], b.view(torch.uint8)[finite]), (label, "not exact")
+
+    for rows in (0, 1, 3, 31, 128, 129, 1023, 1024, 3986, 4027, 4096):
+        for ids in (torch.int32, torch.int64):
+            packed = torch.randn(rows, 72, 128, device="cuda", dtype=torch.bfloat16) * 4
+            q, k, v = packed[:, :64], packed[:, 64:68], packed[:, 68:]
+            if ids == torch.int64:
+                q, k, v = [x.contiguous() for x in (q, k, v)]
+            if rows == 128 and ids == torch.int64:
+                v.copy_(torch.arange(65536, device="cuda", dtype=torch.int32).to(torch.uint16).view(torch.bfloat16).reshape(128, 4, 128))
+            original = [x.clone() for x in (q, k, v)]
+            pos = torch.randint(0, 8192, (rows,), device="cuda", dtype=ids)
+            loc = torch.randperm(slots - 1, device="cuda")[:rows].to(ids) + 1
+            if rows > 1:
+                loc[-min(rows, 7):] = 0
+            out = torch.empty((rows, 64, 128), dtype=torch.float8_e4m3fn, device="cuda")
+            ck = torch.empty((rows, 4, 128), dtype=out.dtype, device="cuda")
+            cv = torch.empty_like(ck)
+            kc = torch.full((slots, 4, 128), 3., device="cuda", dtype=out.dtype)
+            vc = torch.full_like(kc, 3.)
+
+            def reference():
+                # Unfused RMSNorm -> BF16 RoPE -> FP8 casts/store_cache.
+                rq, rk = q.clone(), k.clone()
+                if rows:
+                    fused_inplace_qknorm(rq, rk, qw, kw, eps=1e-6, head_dim=128)
+                    apply_rope_inplace(rq, rk, trig, pos, is_neox=True)
+                return rq.to(out.dtype), rk.to(out.dtype), v.to(out.dtype)
+
+            def forward():
+                rope_ops.apply_qknorm_rope_fp8_prefill(q, k, qw, kw, trig, pos, 1e-6, out, v, kc, vc, loc, ck, cv)
+
+            def compare(label):
+                rq, rk, rv = reference()
+                # Keep the existing unfused-reference numerical tolerances.
+                check_numerics(out, rq, label + "_unfused_q")
+                check_numerics(ck, rk, label + "_unfused_k")
+                equal(cv, rv, label + "_unfused_v")
+                # The virtual-lane tree must additionally match the existing
+                # fused kernel byte for byte, including both BF16 roundings.
+                old_q, old_k = torch.empty_like(out), k.clone()
+                apply_qknorm_rope_fp8_q(q, old_k, qw, kw, trig, pos, 1e-6, old_q)
+                equal(out, old_q, label + "_exact_q")
+                equal(ck, old_k.to(out.dtype), label + "_exact_k")
+                ek, ev = torch.full_like(kc, 3.), torch.full_like(vc, 3.)
+                if rows:
+                    store_cache(ck.view(-1, 512), cv.view(-1, 512), ek.view(-1, 512), ev.view(-1, 512), loc, row_bytes=512, v_row_bytes=512, size_limit=slots)
+                equal(kc, ek, label + "_paged_k")
+                equal(vc, ev, label + "_paged_v")
+
+            forward()
+            compare(f"prefill_{rows}_{ids}")
+            assert all(torch.equal(x.view(torch.uint8), old.view(torch.uint8)) for x, old in zip((q, k, v), original))
+            if rows in (128, 4027):
+                stream = torch.cuda.Stream()
+                stream.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(stream):
+                    forward()
+                torch.cuda.current_stream().wait_stream(stream)
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph):
+                    forward()
+                for replay in range(3):
+                    for x in (q, k, v):
+                        x.copy_(torch.randn_like(x) * (replay + 1))
+                    pos.copy_(torch.randint(0, 8192, (rows,), device="cuda", dtype=ids))
+                    loc.copy_(torch.randperm(slots - 1, device="cuda")[:rows].to(ids) + 1)
+                    loc[-7:] = 0
+                    kc.fill_(3.)
+                    vc.fill_(3.)
+                    graph.replay()
+                    compare(f"prefill_graph_{rows}_{ids}_{replay}")
+
+    # FA3 consumes the same FP8 Q and byte-identical paged/contiguous KV.
+    # Multiple requests and DP/BCG-style padding exercise rank-local boundaries.
+    for lengths, padding in (([1], 0), ([17, 13], 7), ([129, 257], 14), ([3986], 41)):
+        rows = sum(lengths)
+        q = torch.randn(rows + padding, 64, 128, device="cuda", dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        k = torch.randn(rows + padding, 4, 128, device="cuda", dtype=torch.bfloat16).to(q.dtype)
+        v = torch.randn_like(k.bfloat16()).to(q.dtype)
+        cu = torch.tensor([0] + list(__import__("itertools").accumulate(lengths)), device="cuda", dtype=torch.int32)
+        page_counts = [(n + 63) // 64 for n in lengths]
+        pages = sum(page_counts) + 1
+        kc = torch.zeros(pages * 64, 4, 128, device="cuda", dtype=q.dtype)
+        vc = torch.zeros_like(kc)
+        table = torch.zeros(len(lengths), max(page_counts), device="cuda", dtype=torch.int32)
+        first_page = 1
+        for i, (n, count) in enumerate(zip(lengths, page_counts)):
+            table[i, :count] = torch.arange(first_page, first_page + count, device="cuda", dtype=torch.int32)
+            start = sum(lengths[:i])
+            kc[first_page * 64:first_page * 64 + n].copy_(k[start:start + n])
+            vc[first_page * 64:first_page * 64 + n].copy_(v[start:start + n])
+            first_page += count
+        actual = flash_attn_varlen_func(q=q[:rows], k=k[:rows], v=v[:rows], cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max(lengths), max_seqlen_k=max(lengths), softmax_scale=128 ** -.5, causal=True, num_splits=0)
+        expected = flash_attn_with_kvcache(q=q[:rows], k_cache=kc.view(pages, 64, 4, 128), v_cache=vc.view(pages, 64, 4, 128), page_table=table, cache_seqlens=torch.tensor(lengths, device="cuda", dtype=torch.int32), cu_seqlens_q=cu, max_seqlen_q=max(lengths), softmax_scale=128 ** -.5, causal=True, num_splits=0)
+        check_numerics(actual, expected, f"prefill_varlen_{lengths}_pad{padding}")
+    print("PASS: Prefill prologue exact fused bytes, unfused reference, zero/odd/4k rows, paged + contiguous KV, graph replay and FA3 multi-request boundaries", flush=True)
+
+
 if __name__ == "__main__":
     check_decode_silu_quant()
     check_rope_fp8_q()
@@ -407,3 +522,4 @@ if __name__ == "__main__":
     check_rope_fp8_kv()
     check_topk_mask()
     check_add_rmsnorm_group_quant()
+    check_prefill_attention()

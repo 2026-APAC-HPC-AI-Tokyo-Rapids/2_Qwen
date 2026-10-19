@@ -479,7 +479,7 @@ def check_fp8_kv_fusion(source, installed=False):
             calls.append(("attention", save_kv_cache))
             return args[0]
 
-    args = SimpleNamespace(enable_prefill_cp=False, speculative_eagle_topk=1, cuda_graph_config=SimpleNamespace(prefill=SimpleNamespace(tc_compiler="eager")))
+    args = SimpleNamespace(enable_prefill_cp=False, speculative_eagle_topk=1, cuda_graph_config=SimpleNamespace(prefill=SimpleNamespace(tc_compiler="eager", backend="disabled")))
     batch = batch_ns["ForwardBatch"](forward_mode=SimpleNamespace(is_target_verify=lambda: True), batch_size=1, input_ids=None, req_pool_indices=None, seq_lens=None, out_cache_loc=Tensor((4,), "int64"), seq_lens_sum=4)
     if installed:
         batch.forward_mode = ForwardMode.TARGET_VERIFY
@@ -489,6 +489,9 @@ def check_fp8_kv_fusion(source, installed=False):
     ns = {"torch": SimpleNamespace(bfloat16="bf16", float8_e4m3fn="fp8", empty=lambda shape, dtype, device: Tensor(shape, dtype)), "get_server_args": lambda: args, "envs": SimpleNamespace(SGLANG_ENABLE_DETERMINISTIC_INFERENCE=SimpleNamespace(get=lambda: False)), "MHATokenToKVPool": Pool, "apply_qknorm_rope_fp8_q": lambda *args: calls.append("legacy"), "apply_qknorm_rope_fp8_kv": lambda *args: calls.append("fused"), "enable_fused_set_kv_buffer": lambda _: False}
     ns["get_token_to_kv_pool"] = context["get_token_to_kv_pool"]
     ns["ForwardMode"] = ForwardMode if installed else SimpleNamespace(EXTEND="EXTEND")
+    prefill_helper = source / "python/sglang/srt/layers/attention/prefill_contiguous.py"
+    if prefill_helper.exists():
+        method(prefill_helper, "use_contiguous_prefill", ns)
     apply = method(path, "apply_qk_norm_rope", ns)
     core = method(path, "forward_core", ns)
     if installed:
