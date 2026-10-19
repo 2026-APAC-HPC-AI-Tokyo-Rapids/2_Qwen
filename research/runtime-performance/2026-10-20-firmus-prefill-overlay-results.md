@@ -34,3 +34,17 @@ Prefill の kernel（prefill-0、1 回あたり）：MegaMoE 1704（main）→ 1
 FC2 tile を ready になり次第 FC1 と交互に流し、FC1 を rank 共有 counter で動的に配る案（header のみ、出力は control と同一の見込み）。gate は通過したが prefill-balanced-4096 で control（sf128 + swizzle）1.575 ms に対し 1.701 ms（+8%）、skew-4096 は +8.5%。不採用。
 
 timeline（per CTA、rank 1）：FC1 K loop 686 → 804 µs、FC1 store 27 → 34 µs、FC2 scatter 170 → 204 µs。FC1 と FC2 の重みが同時に L2 を使うことと、FC1 が scatter と競合することで FC1 が遅くなり、scatter 自体も短くならなかった。scatter 時間は FC2 相に集中しているかどうかにかかわらず CTA あたり 160〜200 µs で、帯域より math warp による 1 行ずつの remote store 発行が律速の可能性がある。次の候補は scatter の非同期 bulk copy 化（math warp を解放）。rank 内 expert 出力の事前合算は symmetric buffer の追加（host 変更と image 再 build）が必要。
+
+## EAGLE3 steps 2 / draft 3（serving [39336644243](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39336644243)、ba7b370）
+
+main（8258.34）の構成から EAGLE3 を steps 3 / draft 4 → 2 / 3 に変えただけの run。image の MegaMoE decode guard が draft 4 固定だったため（1 回目 [39333825784](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39333825784) は Decode 起動時に停止）、guard を `in (3, 4)` にする 1 行（2026-10-17 の b996afd と同じ）を SGLang overlay に追加した。
+
+| | main 39225913979 | steps 2 / draft 3 |
+| --- | ---: | ---: |
+| score | 8258.34 | 8238.82 |
+| accept 長（bonus 込み） | 2.21 | 2.01 |
+| ITL 平均 | 14.3 ms | 14.6 ms |
+| TTFT 平均 / p90 | 1659 / 1825 ms | 1608 / 1792 ms |
+| Decode 実行中 / rank | 29.5 | 29.7 |
+
+Decode step は約 31.6 → 29.3 ms（ITL × accept）と約 7% 短いが、accept 長の低下でほぼ相殺し、Prefill 律速のため score は同等（−0.2%、run 間のばらつき ±3% の範囲）。不採用で steps 3 / draft 4 のまま。
