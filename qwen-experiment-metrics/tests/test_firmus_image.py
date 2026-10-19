@@ -106,3 +106,39 @@ def test_provision_uses_selected_image_for_reuse_and_keeps_fresh_build_commit_ch
         runtime = next((tmp_path / "runs").iterdir())
         assert (runtime / "sglang.sqsh").resolve() == image
         assert json.loads((runtime / "source/firmus-framework.json").read_text())["images"]["sglang"]["sha256"] == digest
+
+
+@pytest.mark.skipif(os.uname().sysname != "Linux", reason="provision uses Linux stat")
+@pytest.mark.parametrize("applies", [True, False])
+def test_provision_stages_sglang_overlay_patches_on_the_selected_image(tmp_path, applies):
+    workspace = tmp_path / "workspace"
+    (workspace / "configs").mkdir(parents=True)
+    (workspace / "scripts").mkdir()
+    (workspace / "scripts/check-firmus-image.sh").write_text("#!/bin/bash\nexit 0\n")
+    (workspace / "patches/sglang").mkdir(parents=True)
+    old = "x = 1\n" if applies else "x = 0\n"
+    (workspace / "patches/sglang/first.patch").write_text(f"--- a/python/sglang/kernel.py\n+++ b/python/sglang/kernel.py\n@@ -1 +1 @@\n-{old}+x = 2\n")
+    (workspace / "patches/sglang/second.patch").write_text("--- a/python/sglang/kernel.py\n+++ b/python/sglang/kernel.py\n@@ -1 +1 @@\n-x = 2\n+x = 3\n")
+    image = tmp_path / "image.sqsh"
+    image.write_bytes(b"base-image")
+    digest = hashlib.sha256(image.read_bytes()).hexdigest()
+    (tmp_path / "image.container-sidecar.json").write_text("{}")
+    overlay = ["patches/sglang/first.patch", "patches/sglang/second.patch"]
+    config = {"framework": "sglang", "workload": "official", "concurrency": 192, "images": {"sglang": {"path": str(image), "sha256": digest, "size_bytes": image.stat().st_size, "provenance": str(tmp_path / "image.container-sidecar.json")}}, "sglang_overlay_patches": overlay}
+    (workspace / "configs/firmus-framework.json").write_text(json.dumps(config))
+    # Stand-in for the image's SGLang package, read-only like an unsquashfs extraction.
+    unpack = tmp_path / "bin/unsquashfs"
+    unpack.parent.mkdir()
+    unpack.write_text('#!/bin/bash\nset -eu\nwhile [[ "$1" != -d ]]; do shift; done\nmkdir -p "$2/opt/sglang/source/python/sglang"\nprintf "x = 1\\n" >"$2/opt/sglang/source/python/sglang/kernel.py"\nchmod -R a-w "$2/opt"\n')
+    unpack.chmod(0o755)
+    script = (ROOT / "scripts/provision-firmus-framework.sh").read_text().split("model=/scratch/models/", 1)[0]
+    result = subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{unpack.parent}:{os.environ['PATH']}", "GITHUB_WORKSPACE": str(workspace), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "new-run", "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(tmp_path / "runs"), "PROFILE": "false", "REQUIRE_BUILD": "false"}, capture_output=True, text=True, check=False)
+    assert (result.returncode == 0) is applies, result.stderr
+    runtime = next((tmp_path / "runs").iterdir())
+    if applies:
+        assert (runtime / "overlay/sglang/python/sglang/kernel.py").read_text() == "x = 3\n"
+        assert not (runtime / "overlay/extract").exists()
+        record = json.loads((runtime / "source/sglang-overlay.json").read_text())
+        assert record["base_image_sha256"] == digest and [p["path"] for p in record["patches"]] == overlay
+        assert record["patches"][0]["sha256"] == hashlib.sha256((workspace / "patches/sglang/first.patch").read_bytes()).hexdigest()
+        assert sorted(p.name for p in (runtime / "source/sglang-overlay").iterdir()) == ["first.patch", "second.patch"]

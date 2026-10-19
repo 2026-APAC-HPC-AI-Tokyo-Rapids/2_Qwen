@@ -45,10 +45,12 @@ HEAD_IP=$(ip_of "${HEAD}")
 TAIL_IP=$(ip_of "${TAIL}")
 
 mounts() {
-  local profiler_mount=
+  local profiler_mount= overlay_mount=
   if [[ "${PROFILE}" == true ]]; then profiler_mount=",${ROOT}/nsys:/opt/nsys:ro"; fi
+  # Patched SGLang package staged by provision-firmus-framework.sh (sglang_overlay_patches).
+  if [[ -d "${ROOT}/overlay/sglang/python/sglang" ]]; then overlay_mount=",${ROOT}/overlay/sglang/python/sglang:/opt/sglang/source/python/sglang"; fi
   mkdir -p "${ROOT}/home/$1"
-  echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,/dev/infiniband:/dev/infiniband${profiler_mount}"
+  echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,/dev/infiniband:/dev/infiniband${profiler_mount}${overlay_mount}"
 }
 
 wait_http() {

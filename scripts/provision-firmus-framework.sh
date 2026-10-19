@@ -56,6 +56,22 @@ done
 if [[ "${framework}" == sglang ]]; then
   bash "${GITHUB_WORKSPACE}/scripts/check-firmus-image.sh" "${runtime_dir}/sglang.sqsh" "${runtime_dir}/source" "${GITHUB_WORKSPACE}"
 fi
+# SGLang source patches (JIT kernels and Python) can run on an existing image
+# without a container build: apply them, in order, to a copy of the image's
+# SGLang package that sglang.sbatch mounts over /opt/sglang/source/python/sglang.
+mapfile -t overlay_patches < <(jq -r '.sglang_overlay_patches // [] | .[]' "${config}")
+if [[ "${framework}" == sglang && ${#overlay_patches[@]} -gt 0 ]]; then
+  unsquashfs -no-progress -no-xattrs -processors 1 -d "${runtime_dir}/overlay/extract" "${runtime_dir}/sglang.sqsh" opt/sglang/source/python/sglang
+  chmod -R u+w "${runtime_dir}/overlay/extract"
+  install -d -m 0755 "${runtime_dir}/overlay/sglang/python" "${runtime_dir}/source/sglang-overlay"
+  mv "${runtime_dir}/overlay/extract/opt/sglang/source/python/sglang" "${runtime_dir}/overlay/sglang/python/sglang"
+  rm -rf -- "${runtime_dir}/overlay/extract"
+  for patch in "${overlay_patches[@]}"; do
+    (cd "${runtime_dir}/overlay/sglang" && git apply --check "${GITHUB_WORKSPACE}/${patch}" && git apply "${GITHUB_WORKSPACE}/${patch}")
+    cp "${GITHUB_WORKSPACE}/${patch}" "${runtime_dir}/source/sglang-overlay/"
+  done
+  for patch in "${overlay_patches[@]}"; do jq -n --arg path "${patch}" --arg sha "$(sha256sum "${GITHUB_WORKSPACE}/${patch}" | awk '{print $1}')" '{path:$path,sha256:$sha}'; done | jq -s --arg image "$(jq -r .images.sglang.sha256 "${config}")" '{base_image_sha256:$image,mount:"/opt/sglang/source/python/sglang",patches:.}' >"${runtime_dir}/source/sglang-overlay.json"
+fi
 model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8
 [[ -s "${model}/config.json" && -s "${model}/model.safetensors.index.json" ]]
 [[ "$(head -n 1 "${model}/.cache/huggingface/download/config.json.metadata")" == e156cb4efae43fbee1a1ab073f946a1377e6b969 ]]
