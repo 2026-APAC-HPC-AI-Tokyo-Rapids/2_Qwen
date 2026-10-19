@@ -1,0 +1,108 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -252,7 +252,11 @@
+     // Specialize the same scheduler stream into FC1/FC2 loops for Qwen
+     // Prefill. This removes dynamic phase state from the register-heavy math
+     // loop while retaining the existing block order and pipeline barriers.
+-    constexpr bool kSpecializePhase = kSplitPhaseHotPath ||
++    constexpr bool kPrefillPingPong =
++        kHidden == 4096 and kIntermediateHidden == 1536 and kNumRanks == 4 and
++        kNumExperts == 128 and kNumTopk == 8 and BLOCK_M == 128 and BLOCK_N == 128 and kNumEpilogueThreads == 256 and
++        not kReuseAccumAsFinal and not kFP8SwapAB;
++    constexpr bool kSpecializePhase = kPrefillPingPong || kSplitPhaseHotPath ||
+         (kHidden == 4096 && kIntermediateHidden == 1536 && kNumRanks == 4 &&
+          BLOCK_M == 128 && BLOCK_N == 256 && kNumEpilogueThreads == 512 && kReuseAccumAsFinal);
+     // Qwen Prefill only: FC2 blocks are claimed from a per-rank counter instead
+@@ -1235,6 +1239,10 @@
+         // Sync with dispatch in the full communication path.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
+ 
++        // Barrier 7/8 are disjoint from dispatch (0/1), full math (2),
++        // and per-WG epilogue barriers (3..6). Keep turns across tiles:
++        // WG1's final release is consumed by WG0 at the next tile.
++        bool first_mma_turn = true;
+         auto process_math_block = [&](const auto& block_phase,
+                                       const uint32_t& local_expert_idx,
+                                       const uint32_t& num_k_blocks,
+@@ -1268,7 +1276,71 @@
+             constexpr uint32_t kAccumPerThread = WGMMA::kNumAccum;
+             float final_accum[kAccumPerThread] = {};
+ 
+-            if constexpr (kReuseAccumAsFinal) {
++            if constexpr (kPrefillPingPong) {
++                float accum[kAccumPerThread];
++                auto a = mma::sm90::make_smem_desc(smem_a[0] + smem_a_wg_offset, 1);
++                auto b = mma::sm90::make_smem_desc(smem_b[0] + smem_b_wg_offset, 1);
++                const uint32_t a_lo = __shfl_sync(0xffffffff, a.reg32_[0], 0);
++                const uint32_t b_lo = __shfl_sync(0xffffffff, b.reg32_[0], 0);
++                auto take_turn = [&]() {
++                    if (epilogue_wg_idx == 0) {
++                        if (not first_mma_turn) ptx::sync_aligned(256, 7);
++                    } else {
++                        ptx::sync_aligned(256, 8);
++                    }
++                    first_mma_turn = false;
++                };
++                auto release_turn = [&]() {
++                    const uint32_t peer_barrier = 7 + (epilogue_wg_idx ^ 1u);
++                    // Raw IDs are intentional: CUTLASS adds 8 to user IDs.
++                    asm volatile("bar.arrive %0, 256;" : : "r"(peer_barrier) : "memory");
++                };
++                for (uint32_t kb = 0; kb < num_k_blocks; advance_pipeline(kb)) {
++                    full_barriers[stage_idx]->wait(phase);
++                    constexpr bool fc1 = std::remove_cvref_t<decltype(block_phase)>::value == sched::BlockPhase::Linear1;
++                    constexpr uint32_t halves = fc1 ? 1 : 2;
++                    const float* sf_base = fc1
++                        ? l1_weights_sf + local_expert_idx * (kIntermediateHidden * 2 / 128) * (kHidden / 128) + kb
++                        : l2_weights_sf + local_expert_idx * (kHidden / 128) * (kIntermediateHidden / 128) + sf_n_block_idx * (kIntermediateHidden / 128) + kb;
++                    const float gate_sf = __ldg(sf_base + (fc1 ? (sf_n_block_idx / 2) * (kHidden / 128) : 0));
++                    const float up_sf = fc1 ? __ldg(sf_base + (kIntermediateHidden / 128 + sf_n_block_idx / 2) * (kHidden / 128)) : gate_sf;
++                    #pragma unroll
++                    for (uint32_t half = 0; half < halves; ++half) {
++                        // Read the exact existing per-128 FC1 / per-64 FC2 scales.
++                        const float sa0 = ptx::ld_shared(smem_sfa[stage_idx] + half * BLOCK_M + row_offset_r0);
++                        const float sa1 = ptx::ld_shared(smem_sfa[stage_idx] + half * BLOCK_M + row_offset_r1);
++                        take_turn();
++                        #pragma unroll
++                        for (uint32_t i = 0; i < kAccumPerThread; ++i) ptx::warpgroup_fence_operand(accum[i]);
++                        ptx::warpgroup_arrive();
++                        #pragma unroll
++                        for (uint32_t k = 0; k < (BLOCK_K / halves) / WGMMA::K; ++k) {
++                            const uint32_t off = half * (BLOCK_K / halves) + k * WGMMA::K;
++                            // Same descriptor address updates as standalone 1d2d.
++                            a.reg32_[0] = a_lo + (stage_idx * SMEM_A_SIZE_PER_STAGE + off) / 16;
++                            b.reg32_[0] = b_lo + (stage_idx * SMEM_B_SIZE_PER_STAGE + off) / 16;
++                            WGMMA::wgmma(a, b, accum, k);
++                        }
++                        ptx::warpgroup_commit_batch();
++                        #pragma unroll
++                        for (uint32_t i = 0; i < kAccumPerThread; ++i) ptx::warpgroup_fence_operand(accum[i]);
++                        ptx::warpgroup_wait<0>();
++                        // The other WG executes WGMMA while this WG promotes.
++                        release_turn();
++                        #pragma unroll
++                        for (uint32_t i = 0; i < kAccumPerThread / 4; ++i) {
++                            const float sb = fc1 and (i & 1u) ? up_sf : gate_sf;
++                            final_accum[i*4+0] += (sa0 * sb) * accum[i*4+0];
++                            final_accum[i*4+1] += (sa0 * sb) * accum[i*4+1];
++                            final_accum[i*4+2] += (sa1 * sb) * accum[i*4+2];
++                            final_accum[i*4+3] += (sa1 * sb) * accum[i*4+3];
++                        }
++                    }
++                    // Every consumer warp releases the shared stage after its
++                    // last WGMMA read; no producer or cross-rank protocol changes.
++                    if (lane_idx == 0) empty_barriers[stage_idx]->arrive();
++                }
++            } else if constexpr (kReuseAccumAsFinal) {
+                 auto prescale_l1_final = [&](const float& scale_a_0, const float& scale_a_1,
+                                              const float& gate_sf, const float& up_sf) {
+                     const float inv_s0_gate = kFastMath ? math::fast_rcp(scale_a_0 * gate_sf) : 1.0f / (scale_a_0 * gate_sf);
+@@ -2644,7 +2716,7 @@
+         // its live top-k slots in the same order with the same FP32 FMAs.
+         constexpr bool kParallelCombine = kSwapABActive and kHidden == 4096 and kNumTopk == 8;
+         constexpr uint32_t kNumChunks = kParallelCombine ? 8 :
+-            (kSplitMNWarpgroups ? kSplitMNNumChunks : kDefaultNumChunks);
++            ((kSplitMNWarpgroups or kPrefillPingPong) ? kSplitMNNumChunks : kDefaultNumChunks);
+         constexpr uint32_t kWorkItemsPerToken = kParallelCombine ? kNumChunks : 1;
+         constexpr uint32_t kNumChunkBytes = kNumHiddenBytes / kNumChunks;
+         constexpr uint32_t kNumChunkUint4 = kNumChunkBytes / sizeof(uint4);

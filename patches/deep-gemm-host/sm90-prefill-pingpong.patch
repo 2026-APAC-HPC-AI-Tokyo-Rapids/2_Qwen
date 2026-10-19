@@ -1,0 +1,68 @@
+--- a/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
++++ b/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
+@@ -145,12 +145,15 @@
+     const int& num_max_tokens_per_rank, const int& num_tokens, const int& num_topk,
+     const int& hidden, const int& intermediate_hidden,
+     const int& num_padded_sf_pool_tokens) {
+-    const auto [block_m, num_epilogue_threads] = get_block_config_for_mega_moe_sm90(
++    auto [block_m, num_epilogue_threads] = get_block_config_for_mega_moe_sm90(
+         num_ranks, num_experts, num_topk, num_tokens);
+     const float expected_tokens_per_expert =
+         static_cast<float>(num_tokens) * num_ranks * num_topk / num_experts;
+     const bool auto_split_mn =
+         block_m == 128 and num_epilogue_threads == 512;
++    const bool prefill_pingpong = block_m == 128 and hidden == 4096 and intermediate_hidden == 1536 and num_ranks == 4 and num_experts == 128 and num_topk == 8;
++    // Keep BLOCK_M and all symmetric-buffer layouts; halve N and consumers.
++    if (prefill_pingpong) num_epilogue_threads = 256;
+     const bool decode_split_n_path =
+         block_m == 64 and num_epilogue_threads == 256;
+     const bool decode_use_block_n_256 =
+@@ -160,7 +163,7 @@
+     const bool use_swap_ab = should_use_swap_ab_for_mega_moe_sm90(
+         num_experts_per_rank, num_tokens, num_topk,
+         block_m, num_epilogue_threads);
+-    int block_n = use_swap_ab ? 128
++    int block_n = (use_swap_ab or prefill_pingpong) ? 128
+                               : (auto_split_mn ? 256 :
+                                  (decode_use_block_n_256 ? 256 : 128));
+     const int block_k = 128;
+@@ -179,7 +182,7 @@
+     const bool reduce_decode_threads = num_epilogue_threads == 128;
+     const bool decode_split_n =
+         block_m == 64 and num_epilogue_threads == 256;
+-    const bool shrink_non_epilogue = reduce_decode_threads or decode_split_n;
++    const bool shrink_non_epilogue = reduce_decode_threads or decode_split_n or prefill_pingpong;
+     const int num_dispatch_threads =
+         (num_epilogue_threads == 512 or shrink_non_epilogue) ? 64 : 128;
+     const bool split_sfa_loader_warp = false;
+--- a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+@@ -162,8 +162,9 @@
+         num_ranks, num_experts, num_experts_per_rank,
+         num_max_tokens_per_rank, num_tokens, num_topk,
+         hidden, intermediate_hidden, num_padded_sf_pool_tokens);
++    const bool prefill_pingpong = config.block_m == 128 and config.block_n == 128 and config.num_epilogue_threads == 256 and hidden == 4096 and intermediate_hidden == 1536 and num_ranks == 4 and num_experts == 128 and num_topk == 8;
+     const int default_epilogue_registers =
+-        config.num_epilogue_threads == 512 ? 112 : 0;
++        prefill_pingpong ? 168 : (config.num_epilogue_threads == 512 ? 112 : 0);
+     const int epilogue_registers = default_epilogue_registers;
+     if (epilogue_registers > 0) {
+         const int dispatch_registers =
+@@ -174,7 +175,7 @@
+                        non_epilogue_registers * config.num_non_epilogue_threads +
+                        epilogue_registers * config.num_epilogue_threads <= 64512);
+     }
+-    const bool reuse_accum_as_final = config.block_m == 128;
++    const bool reuse_accum_as_final = config.block_m == 128 and not prefill_pingpong;
+     const bool default_split_mn_barrier_opt =
+         config.block_m == 128 and config.block_n == 256 and
+         config.num_epilogue_threads == 512;
+@@ -187,7 +188,7 @@
+     const bool decode_l2_counter =
+         decode_split_n_bn256 and num_tokens >= 4 and num_tokens <= 128;
+     const bool l2_arrival_counter =
+-        default_split_mn_barrier_opt or decode_l2_counter;
++        prefill_pingpong or default_split_mn_barrier_opt or decode_l2_counter;
+     const bool l2_epilogue_requires_full_sync =
+         not l2_arrival_counter;
+     const bool use_swap_ab = should_use_swap_ab_for_mega_moe_sm90(
