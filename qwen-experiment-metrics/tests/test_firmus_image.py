@@ -119,18 +119,20 @@ def test_provision_stages_sglang_overlay_patches_on_the_selected_image(tmp_path,
     old = "x = 1\n" if applies else "x = 0\n"
     (workspace / "patches/sglang/first.patch").write_text(f"--- a/python/sglang/kernel.py\n+++ b/python/sglang/kernel.py\n@@ -1 +1 @@\n-{old}+x = 2\n")
     (workspace / "patches/sglang/second.patch").write_text("--- a/python/sglang/kernel.py\n+++ b/python/sglang/kernel.py\n@@ -1 +1 @@\n-x = 2\n+x = 3\n")
+    (workspace / "patches/deep-gemm").mkdir(parents=True)
+    (workspace / "patches/deep-gemm/header.patch").write_text("--- a/deep_gemm/kernel.py\n+++ b/deep_gemm/kernel.py\n@@ -1 +1 @@\n-x = 1\n+x = 5\n")
     image = tmp_path / "image.sqsh"
     image.write_bytes(b"base-image")
     digest = hashlib.sha256(image.read_bytes()).hexdigest()
     (tmp_path / "image.container-sidecar.json").write_text("{}")
     overlay = ["patches/sglang/first.patch", "patches/sglang/second.patch"]
-    config = {"framework": "sglang", "workload": "official", "concurrency": 192, "images": {"sglang": {"path": str(image), "sha256": digest, "size_bytes": image.stat().st_size, "provenance": str(tmp_path / "image.container-sidecar.json")}}, "sglang_overlay_patches": overlay}
+    config = {"framework": "sglang", "workload": "official", "concurrency": 192, "images": {"sglang": {"path": str(image), "sha256": digest, "size_bytes": image.stat().st_size, "provenance": str(tmp_path / "image.container-sidecar.json")}}, "sglang_overlay_patches": overlay, "deep_gemm_overlay_patches": ["patches/deep-gemm/header.patch"]}
     (workspace / "configs/firmus-framework.json").write_text(json.dumps(config))
-    # Stand-in for the image's SGLang package, read-only like an unsquashfs extraction;
-    # like unsquashfs it creates the -d directory but not its parent.
+    # Stand-in for the image's packages (the extracted path is the last argument), read-only
+    # like an unsquashfs extraction; like unsquashfs it creates the -d directory but not its parent.
     unpack = tmp_path / "bin/unsquashfs"
     unpack.parent.mkdir()
-    unpack.write_text('#!/bin/bash\nset -eu\nwhile [[ "$1" != -d ]]; do shift; done\n[[ -d "$(dirname "$2")" && ! -e "$2" ]]\nmkdir -p "$2/opt/sglang/source/python/sglang"\nprintf "x = 1\\n" >"$2/opt/sglang/source/python/sglang/kernel.py"\nchmod -R a-w "$2/opt"\n')
+    unpack.write_text('#!/bin/bash\nset -eu\nfor last; do :; done\nwhile [[ "$1" != -d ]]; do shift; done\n[[ -d "$(dirname "$2")" && ! -e "$2" ]]\nmkdir -p "$2/$last"\nprintf "x = 1\\n" >"$2/$last/kernel.py"\nchmod -R a-w "$2/opt"\n')
     unpack.chmod(0o755)
     script = (ROOT / "scripts/provision-firmus-framework.sh").read_text().split("model=/scratch/models/", 1)[0]
     result = subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{unpack.parent}:{os.environ['PATH']}", "GITHUB_WORKSPACE": str(workspace), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "new-run", "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(tmp_path / "runs"), "PROFILE": "false", "REQUIRE_BUILD": "false"}, capture_output=True, text=True, check=False)
@@ -138,7 +140,9 @@ def test_provision_stages_sglang_overlay_patches_on_the_selected_image(tmp_path,
     runtime = next((tmp_path / "runs").iterdir())
     if applies:
         assert (runtime / "overlay/sglang/python/sglang/kernel.py").read_text() == "x = 3\n"
-        assert not (runtime / "overlay/extract").exists()
+        assert not list((runtime / "overlay").glob("extract*"))
+        assert (runtime / "overlay/deep-gemm/deep_gemm/kernel.py").read_text() == "x = 5\n"
+        assert json.loads((runtime / "source/deep-gemm-overlay.json").read_text())["mount"] == "/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm"
         record = json.loads((runtime / "source/sglang-overlay.json").read_text())
         assert record["base_image_sha256"] == digest and [p["path"] for p in record["patches"]] == overlay
         assert record["patches"][0]["sha256"] == hashlib.sha256((workspace / "patches/sglang/first.patch").read_bytes()).hexdigest()
