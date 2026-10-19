@@ -47,8 +47,9 @@ TAIL_IP=$(ip_of "${TAIL}")
 mounts() {
   local profiler_mount= overlay_mount=
   if [[ "${PROFILE}" == true ]]; then profiler_mount=",${ROOT}/nsys:/opt/nsys:ro"; fi
-  # Patched SGLang package staged by provision-firmus-framework.sh (sglang_overlay_patches).
+  # Patched packages staged by provision-firmus-framework.sh (sglang_overlay_patches, deep_gemm_overlay_patches).
   if [[ -d "${ROOT}/overlay/sglang/python/sglang" ]]; then overlay_mount=",${ROOT}/overlay/sglang/python/sglang:/opt/sglang/source/python/sglang"; fi
+  if [[ -d "${ROOT}/overlay/deep-gemm/deep_gemm" ]]; then overlay_mount+=",${ROOT}/overlay/deep-gemm/deep_gemm:/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm"; fi
   mkdir -p "${ROOT}/home/$1"
   echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,/dev/infiniband:/dev/infiniband${profiler_mount}${overlay_mount}"
 }

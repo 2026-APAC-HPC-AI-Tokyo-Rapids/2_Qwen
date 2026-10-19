@@ -56,22 +56,33 @@ done
 if [[ "${framework}" == sglang ]]; then
   bash "${GITHUB_WORKSPACE}/scripts/check-firmus-image.sh" "${runtime_dir}/sglang.sqsh" "${runtime_dir}/source" "${GITHUB_WORKSPACE}"
 fi
-# SGLang source patches (JIT kernels and Python) can run on an existing image
-# without a container build: apply them, in order, to a copy of the image's
-# SGLang package that sglang.sbatch mounts over /opt/sglang/source/python/sglang.
-mapfile -t overlay_patches < <(jq -r '.sglang_overlay_patches // [] | .[]' "${config}")
-if [[ "${framework}" == sglang && ${#overlay_patches[@]} -gt 0 ]]; then
+# Source patches to packages that are compiled or imported at run time (the
+# SGLang JIT kernels and Python, the DeepGEMM JIT headers) can run on an
+# existing image without a container build: apply them, in order, to a copy of
+# the image's package that sglang.sbatch mounts over the original path. Paths
+# in the patches are relative to the overlay root (python/sglang/..., or
+# deep_gemm/... as under site-packages).
+stage_overlay() {
+  local name=$1 key=$2 image_path=$3 package_path=$4 patch
+  local patches=()
+  mapfile -t patches < <(jq -r --arg key "${key}" '.[$key] // [] | .[]' "${config}")
+  if (( ${#patches[@]} == 0 )); then return 0; fi
+  local root="${runtime_dir}/overlay/${name}" extract="${runtime_dir}/overlay/extract-${name}"
   install -d -m 0755 "${runtime_dir}/overlay"
-  unsquashfs -no-progress -no-xattrs -processors 1 -d "${runtime_dir}/overlay/extract" "${runtime_dir}/sglang.sqsh" opt/sglang/source/python/sglang
-  chmod -R u+w "${runtime_dir}/overlay/extract"
-  install -d -m 0755 "${runtime_dir}/overlay/sglang/python" "${runtime_dir}/source/sglang-overlay"
-  mv "${runtime_dir}/overlay/extract/opt/sglang/source/python/sglang" "${runtime_dir}/overlay/sglang/python/sglang"
-  rm -rf -- "${runtime_dir}/overlay/extract"
-  for patch in "${overlay_patches[@]}"; do
-    (cd "${runtime_dir}/overlay/sglang" && git apply --check "${GITHUB_WORKSPACE}/${patch}" && git apply "${GITHUB_WORKSPACE}/${patch}")
-    cp "${GITHUB_WORKSPACE}/${patch}" "${runtime_dir}/source/sglang-overlay/"
+  unsquashfs -no-progress -no-xattrs -processors 1 -d "${extract}" "${runtime_dir}/sglang.sqsh" "${image_path}"
+  chmod -R u+w "${extract}"
+  install -d -m 0755 "$(dirname "${root}/${package_path}")" "${runtime_dir}/source/${name}-overlay"
+  mv "${extract}/${image_path}" "${root}/${package_path}"
+  rm -rf -- "${extract}"
+  for patch in "${patches[@]}"; do
+    (cd "${root}" && git apply --check "${GITHUB_WORKSPACE}/${patch}" && git apply "${GITHUB_WORKSPACE}/${patch}")
+    cp "${GITHUB_WORKSPACE}/${patch}" "${runtime_dir}/source/${name}-overlay/"
   done
-  for patch in "${overlay_patches[@]}"; do jq -n --arg path "${patch}" --arg sha "$(sha256sum "${GITHUB_WORKSPACE}/${patch}" | awk '{print $1}')" '{path:$path,sha256:$sha}'; done | jq -s --arg image "$(jq -r .images.sglang.sha256 "${config}")" '{base_image_sha256:$image,mount:"/opt/sglang/source/python/sglang",patches:.}' >"${runtime_dir}/source/sglang-overlay.json"
+  for patch in "${patches[@]}"; do jq -n --arg path "${patch}" --arg sha "$(sha256sum "${GITHUB_WORKSPACE}/${patch}" | awk '{print $1}')" '{path:$path,sha256:$sha}'; done | jq -s --arg image "$(jq -r .images.sglang.sha256 "${config}")" --arg mount "/${image_path}" '{base_image_sha256:$image,mount:$mount,patches:.}' >"${runtime_dir}/source/${name}-overlay.json"
+}
+if [[ "${framework}" == sglang ]]; then
+  stage_overlay sglang sglang_overlay_patches opt/sglang/source/python/sglang python/sglang
+  stage_overlay deep-gemm deep_gemm_overlay_patches opt/sglang/venv/lib/python3.12/site-packages/deep_gemm deep_gemm
 fi
 model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8
 [[ -s "${model}/config.json" && -s "${model}/model.safetensors.index.json" ]]

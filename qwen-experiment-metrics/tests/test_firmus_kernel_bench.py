@@ -180,12 +180,14 @@ def load_summary(monkeypatch: pytest.MonkeyPatch):
 def test_summary_compares_candidates_and_flags_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     summarize = load_summary(monkeypatch)
     patch = [{"path": "patches/deep-gemm-bench/x/000.patch", "sha256": "0"}]
-    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "ready"}, {"name": "fast", "patches": patch, "timeline": "not-requested"}, {"name": "wrong", "patches": patch, "timeline": "apply-failed"}, {"name": "broken", "patches": patch, "timeline": "ready"}], "sglang": {"patches": [{"path": "patches/sglang-bench/000.patch", "sha256": "1"}], "bench_script": True}}))
-    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t70\nimage\ttimeline\t0\t35\nsglang-image\tcheck\t0\t30\nsglang-image\tbench\t0\t20\nsglang-candidate\tcheck\t0\t60\nsglang-candidate\tbench\t0\t20\nfast\tgate\t0\t70\nfast\tbench\t0\t40\nwrong\tgate\t0\t70\nwrong\tbench\t0\t40\nbroken\tgate\t1\t50\n")
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "ready"}, {"name": "fast", "patches": patch, "timeline": "not-requested"}, {"name": "wrong", "patches": patch, "timeline": "apply-failed"}, {"name": "broken", "patches": patch, "timeline": "ready"}, {"name": "reordered", "patches": patch, "timeline": "not-requested"}], "sglang": {"patches": [{"path": "patches/sglang-bench/000.patch", "sha256": "1"}], "bench_script": True}}))
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t70\nimage\ttimeline\t0\t35\nsglang-image\tcheck\t0\t30\nsglang-image\tbench\t0\t20\nsglang-candidate\tcheck\t0\t60\nsglang-candidate\tbench\t0\t20\nfast\tgate\t0\t70\nfast\tbench\t0\t40\nwrong\tgate\t0\t70\nwrong\tbench\t0\t40\nbroken\tgate\t1\t50\nreordered\tgate\t0\t70\nreordered\tbench\t0\t40\n")
     write_rows(tmp_path / "image/bench.jsonl", [bench_row("decode-balanced-128", 0.2, "d"), bench_row("prefill-balanced-4096", 1.7, "p", clock=1500)])
     write_rows(tmp_path / "image/timeline.jsonl", [{**bench_row("decode-balanced-128", 0.23, "d"), "delta_median_vs_reference": 0.15, "bitwise_equal_to_reference": True}])
     write_rows(tmp_path / "fast/bench.jsonl", [bench_row("decode-balanced-128", 0.18, "d"), bench_row("prefill-balanced-4096", 1.6, "p", clock=1600)])
     write_rows(tmp_path / "wrong/bench.jsonl", [bench_row("decode-balanced-128", 0.19, "other"), bench_row("prefill-balanced-4096", 1.7, "p")])
+    # A different accumulation order changes the bytes; the passing gate decides.
+    write_rows(tmp_path / "reordered/bench.jsonl", [bench_row("decode-balanced-128", 0.19, "d"), bench_row("prefill-balanced-4096", 1.5, "reordered")])
     write_rows(tmp_path / "sglang/image.jsonl", [{"case": "silu-quant-128", "median_us": 10.0, "p10_us": 9.9, "p90_us": 10.1, "output_sha256": "s"}])
     write_rows(tmp_path / "sglang/candidate.jsonl", [{"case": "silu-quant-128", "median_us": 8.0, "p10_us": 7.9, "p90_us": 8.1, "output_sha256": "s"}])
 
@@ -193,15 +195,16 @@ def test_summary_compares_candidates_and_flags_failures(tmp_path: Path, monkeypa
 
     assert failed == ["wrong", "broken"]
     assert "| fast | 000.patch | pass | pass | 2/2 | not-requested | OK |" in text
-    assert "| wrong | 000.patch | pass | pass | 1/2 MISMATCH | timeline patch did not apply | FAILED |" in text
-    assert "| broken | 000.patch | FAIL (exit 1) | not run | 0/2 MISMATCH | not run | FAILED |" in text
+    assert "| reordered | 000.patch | pass | pass | 1/2 (rest differ) | not-requested | OK |" in text
+    assert "| wrong | 000.patch | pass | pass | 1/2 (rest differ) | timeline patch did not apply | FAILED |" in text
+    assert "| broken | 000.patch | FAIL (exit 1) | not run | 0/2 (rest differ) | not run | FAILED |" in text
     assert "| decode-balanced-128 | 0.2000 | 0.1800 (-10.0%) | 0.1900 (-5.0%)* | - |" in text
     assert "| prefill-balanced-4096 | fast | 1.6000 | 1.5840 | 1.6160 | -5.9% | 1600 / 1600 | 600 |" in text
     assert "| decode-balanced-128 | image | 0.2300 | +15.0% | True | 1980 / 1980 |" in text
     assert "| silu-quant-128 | 10.00 | 8.00 | -20.0% | 7.90 / 8.10 | True |" in text
 
 
-def test_summary_passes_clean_run_and_catches_sglang_hash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_summary_passes_clean_run_and_reports_differing_hashes_without_failing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     summarize = load_summary(monkeypatch)
     (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "not-requested"}], "sglang": None}))
     (tmp_path / "steps.tsv").write_text("image\tbench\t0\t70\n")
@@ -212,7 +215,9 @@ def test_summary_passes_clean_run_and_catches_sglang_hash(tmp_path: Path, monkey
     (tmp_path / "steps.tsv").write_text("image\tbench\t0\t70\nsglang-image\tcheck\t0\t1\nsglang-image\tbench\t0\t1\nsglang-candidate\tcheck\t0\t1\nsglang-candidate\tbench\t0\t1\n")
     write_rows(tmp_path / "sglang/image.jsonl", [{"case": "rope", "median_us": 5.0, "p10_us": 5.0, "p90_us": 5.0, "output_sha256": "a"}])
     write_rows(tmp_path / "sglang/candidate.jsonl", [{"case": "rope", "median_us": 5.0, "p10_us": 5.0, "p90_us": 5.0, "output_sha256": "b"}])
-    assert summarize(tmp_path)[1] == ["sglang rope hash"]
+    text, failed = summarize(tmp_path)
+    assert failed == []
+    assert "| rope | 5.00 | 5.00 | +0.0% | 5.00 / 5.00 | False |" in text
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
