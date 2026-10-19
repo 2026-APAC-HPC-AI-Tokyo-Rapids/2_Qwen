@@ -126,10 +126,11 @@ def test_provision_stages_sglang_overlay_patches_on_the_selected_image(tmp_path,
     overlay = ["patches/sglang/first.patch", "patches/sglang/second.patch"]
     config = {"framework": "sglang", "workload": "official", "concurrency": 192, "images": {"sglang": {"path": str(image), "sha256": digest, "size_bytes": image.stat().st_size, "provenance": str(tmp_path / "image.container-sidecar.json")}}, "sglang_overlay_patches": overlay}
     (workspace / "configs/firmus-framework.json").write_text(json.dumps(config))
-    # Stand-in for the image's SGLang package, read-only like an unsquashfs extraction.
+    # Stand-in for the image's SGLang package, read-only like an unsquashfs extraction;
+    # like unsquashfs it creates the -d directory but not its parent.
     unpack = tmp_path / "bin/unsquashfs"
     unpack.parent.mkdir()
-    unpack.write_text('#!/bin/bash\nset -eu\nwhile [[ "$1" != -d ]]; do shift; done\nmkdir -p "$2/opt/sglang/source/python/sglang"\nprintf "x = 1\\n" >"$2/opt/sglang/source/python/sglang/kernel.py"\nchmod -R a-w "$2/opt"\n')
+    unpack.write_text('#!/bin/bash\nset -eu\nwhile [[ "$1" != -d ]]; do shift; done\n[[ -d "$(dirname "$2")" && ! -e "$2" ]]\nmkdir -p "$2/opt/sglang/source/python/sglang"\nprintf "x = 1\\n" >"$2/opt/sglang/source/python/sglang/kernel.py"\nchmod -R a-w "$2/opt"\n')
     unpack.chmod(0o755)
     script = (ROOT / "scripts/provision-firmus-framework.sh").read_text().split("model=/scratch/models/", 1)[0]
     result = subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{unpack.parent}:{os.environ['PATH']}", "GITHUB_WORKSPACE": str(workspace), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "new-run", "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(tmp_path / "runs"), "PROFILE": "false", "REQUIRE_BUILD": "false"}, capture_output=True, text=True, check=False)

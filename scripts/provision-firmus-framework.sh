@@ -61,6 +61,7 @@ fi
 # SGLang package that sglang.sbatch mounts over /opt/sglang/source/python/sglang.
 mapfile -t overlay_patches < <(jq -r '.sglang_overlay_patches // [] | .[]' "${config}")
 if [[ "${framework}" == sglang && ${#overlay_patches[@]} -gt 0 ]]; then
+  install -d -m 0755 "${runtime_dir}/overlay"
   unsquashfs -no-progress -no-xattrs -processors 1 -d "${runtime_dir}/overlay/extract" "${runtime_dir}/sglang.sqsh" opt/sglang/source/python/sglang
   chmod -R u+w "${runtime_dir}/overlay/extract"
   install -d -m 0755 "${runtime_dir}/overlay/sglang/python" "${runtime_dir}/source/sglang-overlay"
