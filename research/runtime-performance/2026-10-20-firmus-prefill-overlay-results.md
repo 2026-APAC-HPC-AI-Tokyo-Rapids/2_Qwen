@@ -136,3 +136,31 @@ timeline（prefill-balanced-4096、control は rank 2 だけが遅く（MLastL1E
 | kernel | 約 1550 µs（前回の control） | 1520 µs |
 
 本物の SS m64n256 で、初めて K loop が縮んだ（FC1 −7%、FC2 −12%）。header 版の RS m64n128 ×2 で縮まなかったのは、ldmatrix と RS の経路の分だったと考えられる。ただし epilogue・scatter を担当する warp が 16 → 8 に半減した分（ML1Epi +35 µs、ML2Epi +12 µs、ML2Scatter +20 µs）が K loop の利得をほぼ相殺し、kernel 全体は −0.4〜−3.5%（timeline で約 −2%）にとどまる。serving 1 回のばらつき（±3%）では判定できない幅なので、epilogue 側を詰めてから serving で確認する。branch perf/firmus-megamoe-2wg-host-20261020 と image 39379223361 は残す。
+
+## 2 WG の FC1 epilogue 改善と WGMMA 交互発行（kernel bench [39429313746](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39429313746)、da53188、image 39379223361）
+
+候補 `fc1-2wg-host-epi-turn`（2 WG host 版の上で、FC2 は NVLink 律速のため FC1 だけを変更）:
+- FC1 epilogue：SwiGLU を分岐なしで計算する（行の有効判定は amax と store だけ）。FP8 staging は warp ごとの 144 B pitch で bank conflict をなくし、16 B の global store で直接書く（WG barrier、TMA store、その完了待ちを廃止）。
+- FC2 開始可否の通知：warp 単位の arrival を次 tile の K block 2 で出す。CTA の最後の tile は FC2 block を取る直前に出す。
+- FC1 WGMMA：2 WG が named barrier 8/9 で交互に発行する（turn は発行時点で渡す）。
+
+gate 通過。出力 hash は 12 case すべてで control、2 WG host と一致した。
+
+| case | control | 2 WG host | epi-turn |
+| --- | ---: | ---: | ---: |
+| prefill-balanced-1024 | 0.4803 ms | 0.4671 | 0.4576（−4.7%） |
+| prefill-balanced-2048 | 0.8497 | 0.8374 | 0.8221（−3.2%） |
+| prefill-balanced-4096 | 1.5666 | 1.5443 | 1.5217（−2.9%） |
+| prefill-local-4096 | 1.4331 | 1.3441 | 1.3596（−5.1%） |
+| prefill-skew-4096 | 1.7435 | 1.7088 | 1.7038（−2.3%） |
+
+timeline（prefill-balanced-4096、CTA 中央値）:
+
+| 指標 | 2 WG host（1.622 GHz） | epi-turn（1.550 GHz） |
+| --- | ---: | ---: |
+| ML1Epi | 98〜103 µs | 45〜52 µs |
+| ML1Store | 29 µs | 2 µs |
+| ML1MmaWait | 67〜69 µs | 15〜17 µs |
+| ML1Loop | 631〜652 µs | 697〜797 µs（clk 換算で約 +5%） |
+
+epilogue の改善は狙いどおり効いた（FC1 epilogue + store が約 −80 µs/CTA）。一方、交互発行は K loop を悪化させた。次は交互発行を外した epilogue のみの版を出す。
