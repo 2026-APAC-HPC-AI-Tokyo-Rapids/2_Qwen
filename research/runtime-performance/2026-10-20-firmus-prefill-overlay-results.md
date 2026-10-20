@@ -164,3 +164,19 @@ timeline（prefill-balanced-4096、CTA 中央値）:
 | ML1Loop | 631〜652 µs | 697〜797 µs（clk 換算で約 +5%） |
 
 epilogue の改善は狙いどおり効いた（FC1 epilogue + store が約 −80 µs/CTA）。一方、交互発行は K loop を悪化させた。次は交互発行を外した epilogue のみの版を出す。
+
+## epilogue のみの版と、FC2 scatter の dispatch warp への移設（kernel bench [39439372069](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39439372069)、image 39379223361）
+
+`fc1-2wg-host-epi` は epi-turn から交互発行を外したもの。`fc1-2wg-host-epi-scatter` はその上で、FC2 の NVLink scatter を dispatch warp（2 warp）に移したもの（Codex が実装、64 KiB の staging 1 面、full/empty mbarrier、END 通知）。gate はどちらも通過し、出力 hash は 12 case すべてで control と一致した。
+
+| case | control | epi | epi-scatter |
+| --- | ---: | ---: | ---: |
+| prefill-balanced-1024 | 0.4806 ms | 0.4553（−5.3%） | 0.4638 |
+| prefill-balanced-2048 | 0.8564 | 0.8217（−4.1%） | 0.8252 |
+| prefill-balanced-4096 | 1.5724 | 1.5157（−3.6%） | 1.5170 |
+| prefill-local-4096 | 1.4133 | 1.3095（−7.3%） | 1.3734 |
+| prefill-skew-4096 | 1.7384 | 1.6679（−4.1%） | 1.6989 |
+
+timeline（prefill-balanced-4096）では、epi-scatter で math 側の ML2Scatter は 0 になった。しかし ML2Loop が 360 → 510〜535 µs、ML2FullWait が 30 → 140〜200 µs に増え、MLastL2End は epi と同程度だった（kernel 1525 µs 対 epi 1505 µs）。FC2 区間は NVLink 律速のままで、送信を別 warp に移しても math が FC2 stage を待つだけになった。scatter 移設は不採用（branch perf/firmus-megamoe-2wg-scatter-20261020 は削除）。
+
+epi が最良なので、serving で確認する（run 39447708936、perf/firmus-megamoe-2wg-host-20261020、image 39379223361、Prefill の worker にだけ `DG_SM90_PREFILL_2WG=1`）。
