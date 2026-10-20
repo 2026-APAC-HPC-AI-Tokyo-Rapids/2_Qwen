@@ -228,12 +228,12 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
     assert "jq" not in worker  # Not installed in the pinned image; parse on the host.
     command = "command=(" + worker.split("command=(", 1)[1].split('if [[ -x /opt/nsys', 1)[0]
-    launch = worker.split("UCX_IB=", 1)[0] + command + '\nprintf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0}" "${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0}" "${SGLANG_DECODE_ASYNC_ADMISSION:-0}" "$SGLANG_HOST_IP" "${command[@]}"\n'
+    launch = worker.split("UCX_IB=", 1)[0] + command + '\nprintf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0}" "${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0}" "${SGLANG_DECODE_ASYNC_ADMISSION:-0}" "$SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK" "$SGLANG_HOST_IP" "${command[@]}"\n'
     observed = {}
     for argv in workers:
         args = argv[argv.index("bash") + 2:]
         probe = subprocess.run(["bash", "-c", launch, "fixture", *args], env={**os.environ, "SLURM_SUBMIT_DIR": str(tmp_path)}, check=True, capture_output=True)
-        shuffle, routing, aligned, rotate_ties, async_admission, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
+        shuffle, routing, aligned, rotate_ties, async_admission, megamoe_tokens, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
         name, port = args[:2]
         prefill = name.startswith("prefill")
         dist_port = int(flags[flags.index("--dist-init-addr") + 1].rsplit(":", 1)[1])
@@ -250,7 +250,8 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             # Decode appends a larger --max-total-tokens after the shared default; SGLang keeps the last value.
             value = flags[len(flags) - 1 - flags[::-1].index(flag) + 1]
             assert value == (str(config["decode_max_total_tokens"]) if key == "max_total_tokens" and not prefill else expected)
-        assert flags[flags.index("--chunked-prefill-size") + 1] == ("16384" if prefill else "8192")
+        assert flags[flags.index("--chunked-prefill-size") + 1] == (str(config["prefill"]["chunked_prefill_size"]) if prefill else "8192")
+        assert megamoe_tokens == str(config["prefill"]["chunked_prefill_size"] // config["prefill"]["dp"] if prefill else 4096)
         assert flags[flags.index("--attention-backend") + 1] == "fa3"
         assert flags[flags.index("--page-size") + 1] == "64"
         assert flags[flags.index("--load-balance-method") + 1] == "total_requests"
