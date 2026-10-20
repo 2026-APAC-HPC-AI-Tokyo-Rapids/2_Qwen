@@ -8,7 +8,7 @@ The buffer is allocated with extra tail bytes that only the bench-only timeline
 patch writes. Each timed iteration is pre-dispatch + fused kernel, exactly the
 serving call pair; the reported value per iteration is the maximum over ranks.
 
-Routing generators (all global expert IDs, top-8 of 128, EP4 = 32 experts/rank):
+Routing generators (top-8 distinct logical experts, EP4):
   balanced: per token, the 8 largest of 128 uniform randoms (uniform subsets).
   local:    rank r's tokens choose 8 of its own experts 32r..32r+31 (no NVLink payload).
   mixed50/mixed64: token t has floor((t+1)*8*p)-floor(t*8*p) local slots,
@@ -24,6 +24,16 @@ Routing generators (all global expert IDs, top-8 of 128, EP4 = 32 experts/rank):
             rank r, f = (1.0, 1.1, 1.2, 1.3). Calibrated on 16384 tokens to rank loads
             1 : 1.11 : 1.21 : 1.31 and per-expert max/mean about 2.0; the realized
             loads of each case are reported.
+  real<L>:  Gumbel top-8 with log(logical_count) from run 39051152456, using
+            independent source-rank RNG streams. The median/p90/p10 hot-8 layers
+            and their exact static maps are embedded in firmus_megamoe_replicas.
+            Each real<L>/real<L>-replica8 pair uses the same seed, hidden states,
+            logical top-8, routing weights and per-logical-expert weight/scale
+            seeds. Only placement changes: 128 static slots versus 152 with
+            local-copy preference. Zero counts have zero selection probability.
+            Sampling without replacement changes the marginal slot frequencies
+            from the input weights; JSONL records the realized hot/local shares
+            and logical-routing hash, not just the original hot-8 share.
 
 Each rank reads its GPU's SM clock and power through NVML right before and right
 after the timed iterations (outside the CUDA event pair), because Prefill power
@@ -42,7 +52,7 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
-from firmus_megamoe_replicas import remap, replica_weights
+from firmus_megamoe_replicas import REAL_ROUTING_LAYERS, remap, replica_weights
 
 RANK = int(os.environ["LOCAL_RANK"])
 if RANK == 0:
@@ -59,6 +69,7 @@ CASES = [("decode", "balanced", n) for n in (4, 16, 32, 64, 96, 128)] + [("decod
 CASES += [("prefill", "balanced", n) for n in (1024, 2048, 4096)] + [("prefill", "local", 4096), ("prefill", "skew", 4096)]
 CASES += [("prefill", kind, 4096) for kind in ("mixed50", "mixed64")]
 CASES += [("prefill", "replica8", 4096)]
+CASES += [("prefill", f"real{layer}{suffix}", 4096) for layer in REAL_ROUTING_LAYERS for suffix in ("", "-replica8")]
 TIMELINE_CASES = [("decode", "balanced", 128), ("prefill", "balanced", 4096)]
 
 
@@ -109,6 +120,27 @@ def routing(kind, count, generator, device):
         _, ids = (logits - (-uniform.log()).log()).topk(TOPK, dim=1)
         weights = torch.rand(count, TOPK, generator=generator, device=device)
     return ids.to(torch.int32).contiguous(), (weights / weights.sum(-1, keepdim=True)).contiguous()
+
+
+def case_seed(case, rank):
+    kind = case[1]
+    if kind.startswith("real"):
+        return 100000 + int(kind.split("-")[0].removeprefix("real")) * NUM_RANKS + rank
+    return CASES.index(case) * 8 + rank
+
+
+def real_routing(layer, replicated, count, generator, device):
+    data = REAL_ROUTING_LAYERS[layer]
+    logits = torch.tensor(data["counts"], dtype=torch.float64, device=device).log()
+    uniform = torch.rand(count, NUM_EXPERTS, generator=generator, device=device, dtype=torch.float64).clamp_min(1e-20)
+    logical = (logits - (-uniform.log()).log()).topk(TOPK, dim=1).indices
+    weights = torch.rand(count, TOPK, generator=generator, device=device)
+    mapping = data["replica_map" if replicated else "baseline_map"]
+    width = len(mapping) // NUM_RANKS
+    rank = dist.get_rank()
+    table = [next((p for p in range(rank * width, (rank + 1) * width) if mapping[p] == expert), mapping.index(expert)) for expert in range(NUM_EXPERTS)]
+    ids = torch.tensor(table, dtype=torch.int32, device=device)[logical]
+    return ids.contiguous(), (weights / weights.sum(-1, keepdim=True)).contiguous(), logical.to(torch.int32)
 
 
 def gather(value):
@@ -162,6 +194,7 @@ def main():
     s2 = torch.rand(32, 32, 12, device=device) * 0.005 + 0.005
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf, num_bytes = bench_symm_buffer(dist.group.WORLD)
+    buffers = {NUM_EXPERTS: (buf, num_bytes)}
     reference = {}
     if args.reference is not None:
         reference = {row["case"]: row for row in map(json.loads, args.reference.read_text().splitlines())}
@@ -171,16 +204,29 @@ def main():
         name = case_name(case)
         stage, kind, count = case
         if kind == "replica8":
-            # Last case only: retain all existing cases' seeds/weights/timings.
+            # Keep the original cases' seeds/weights/timings unchanged.
             # Same logical balanced top-8, mapped to local hot copies and sole
             # cold owners; uniform routing is only 29.6875% local in expectation.
             w13, w2, s13, s2 = replica_weights(RANK, device)
             l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
             buf, num_bytes = bench_symm_buffer(dist.group.WORLD, 152)
+            buffers[152] = (buf, num_bytes)
+        real = kind.startswith("real")
+        if real:
+            layer = int(kind.split("-")[0].removeprefix("real"))
+            replicated = kind.endswith("-replica8")
+            data = REAL_ROUTING_LAYERS[layer]
+            mapping = data["replica_map" if replicated else "baseline_map"]
+            w13, w2, s13, s2 = replica_weights(RANK, device, mapping)
+            l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
+            buf, num_bytes = buffers[len(mapping)]
         generator = torch.Generator(device=device)
-        generator.manual_seed(CASES.index(case) * 8 + RANK)
+        generator.manual_seed(case_seed(case, RANK))
         hidden = (torch.randn(count, HIDDEN, generator=generator, device=device) * 0.25).to(torch.bfloat16)
-        top_ids, top_weights = routing(kind, count, generator, device)
+        if real:
+            top_ids, top_weights, logical_ids = real_routing(layer, replicated, count, generator, device)
+        else:
+            top_ids, top_weights = routing(kind, count, generator, device)
         actual = torch.empty(count, HIDDEN, dtype=torch.bfloat16, device=device)
         if RANK == 0:
             print(f"### case {name} variant {args.variant}", flush=True)
@@ -231,6 +277,9 @@ def main():
         row = {"case": name, "variant": args.variant, "stage": stage, "routing": kind, "tokens_per_rank": count, "cuda_graph": stage == "decode", "warmup": WARMUP, "iterations": ITERATIONS, "median_ms": ordered[len(ordered) // 2], "p10_ms": ordered[int(0.1 * (len(ordered) - 1))], "p90_ms": ordered[round(0.9 * (len(ordered) - 1))], "min_ms": ordered[0], "max_ms": ordered[-1], "max_rank_ms": durations.tolist(), "recv_pairs_per_rank": rank_loads, "rank_load_max_over_mean": max(rank_loads) / (sum(rank_loads) / NUM_RANKS), "expert_load_max_over_mean": loads.max().item() / loads.float().mean().item(), "deterministic": bool(deterministic.item()), "output_sha256": output_digest(actual, count)}
         row.update({key: [part[index].item() for part in gpu_state] for index, key in enumerate(("sm_clock_mhz_before", "power_w_before", "sm_clock_mhz_after", "power_w_after"))})
         row.update({"physical_experts": buf.num_experts, "local_slot_fraction": local_pairs / (count * NUM_RANKS * TOPK)})
+        if real:
+            hot_mask = torch.tensor([expert in data["hot8"] for expert in mapping], device=device)
+            row.update({"logical_layer": layer, "layer_selection": data["selection"], "routing_seed_per_rank": [case_seed(case, rank) for rank in range(NUM_RANKS)], "source_hot8_slot_fraction": data["hot8_share"], "sampled_hot8_slot_fraction": loads[hot_mask].sum().item() / (count * NUM_RANKS * TOPK), "logical_routing_sha256": output_digest(logical_ids, count)})
         if name in reference:
             row["reference_variant"] = reference[name]["variant"]
             row["reference_median_ms"] = reference[name]["median_ms"]
