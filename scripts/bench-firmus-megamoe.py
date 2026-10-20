@@ -42,6 +42,7 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
+from firmus_megamoe_replicas import remap, replica_weights
 
 RANK = int(os.environ["LOCAL_RANK"])
 if RANK == 0:
@@ -57,6 +58,7 @@ WARMUP, ITERATIONS = 5, 30
 CASES = [("decode", "balanced", n) for n in (4, 16, 32, 64, 96, 128)] + [("decode", "local", 128)]
 CASES += [("prefill", "balanced", n) for n in (1024, 2048, 4096)] + [("prefill", "local", 4096), ("prefill", "skew", 4096)]
 CASES += [("prefill", kind, 4096) for kind in ("mixed50", "mixed64")]
+CASES += [("prefill", "replica8", 4096)]
 TIMELINE_CASES = [("decode", "balanced", 128), ("prefill", "balanced", 4096)]
 
 
@@ -64,12 +66,12 @@ def case_name(case):
     return f"{case[0]}-{case[1]}-{case[2]}"
 
 
-def bench_symm_buffer(group):
+def bench_symm_buffer(group, num_experts=NUM_EXPERTS):
     # Mirrors deep_gemm.SM90SymmBuffer; only the allocation grows by the tail.
     buf = deep_gemm.SM90SymmBuffer.__new__(deep_gemm.SM90SymmBuffer)
-    buf.group, buf.num_experts, buf.num_topk, buf.hidden, buf.intermediate_hidden = group, NUM_EXPERTS, TOPK, HIDDEN, INTERMEDIATE
+    buf.group, buf.num_experts, buf.num_topk, buf.hidden, buf.intermediate_hidden = group, num_experts, TOPK, HIDDEN, INTERMEDIATE
     buf.num_max_tokens_per_rank = (CAP + deep_gemm._C.get_token_alignment_for_mega_moe() - 1) // deep_gemm._C.get_token_alignment_for_mega_moe() * deep_gemm._C.get_token_alignment_for_mega_moe()
-    num_bytes, slice_input_buffers = deep_gemm._C.get_symm_buffer_size_for_sm90_mega_moe(NUM_RANKS, NUM_EXPERTS, buf.num_max_tokens_per_rank, TOPK, HIDDEN, INTERMEDIATE, True, "swiglu")
+    num_bytes, slice_input_buffers = deep_gemm._C.get_symm_buffer_size_for_sm90_mega_moe(NUM_RANKS, num_experts, buf.num_max_tokens_per_rank, TOPK, HIDDEN, INTERMEDIATE, True, "swiglu")
     buf.buffer = symm_mem.empty(num_bytes + TIMELINE_EXTRA_BYTES, dtype=torch.int8, device="cuda")
     buf.handle = symm_mem.rendezvous(buf.buffer, group=group)
     buf.buffer.zero_()
@@ -83,8 +85,10 @@ def bench_symm_buffer(group):
 
 def routing(kind, count, generator, device):
     rank = dist.get_rank()
-    if kind == "balanced":
+    if kind in ("balanced", "replica8"):
         weights, ids = torch.rand(count, NUM_EXPERTS, generator=generator, device=device).topk(TOPK, dim=1)
+        if kind == "replica8":
+            ids = remap(ids, rank)
     elif kind == "local":
         weights, ids = torch.rand(count, NUM_EXPERTS // NUM_RANKS, generator=generator, device=device).topk(TOPK, dim=1)
         ids += rank * (NUM_EXPERTS // NUM_RANKS)
@@ -166,6 +170,13 @@ def main():
     for case in TIMELINE_CASES if timeline else CASES:
         name = case_name(case)
         stage, kind, count = case
+        if kind == "replica8":
+            # Last case only: retain all existing cases' seeds/weights/timings.
+            # Same logical balanced top-8, mapped to local hot copies and sole
+            # cold owners; uniform routing is only 29.6875% local in expectation.
+            w13, w2, s13, s2 = replica_weights(RANK, device)
+            l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
+            buf, num_bytes = bench_symm_buffer(dist.group.WORLD, 152)
         generator = torch.Generator(device=device)
         generator.manual_seed(CASES.index(case) * 8 + RANK)
         hidden = (torch.randn(count, HIDDEN, generator=generator, device=device) * 0.25).to(torch.bfloat16)
@@ -174,7 +185,7 @@ def main():
         if RANK == 0:
             print(f"### case {name} variant {args.variant}", flush=True)
 
-        def forward(hidden=hidden, top_ids=top_ids, top_weights=top_weights, count=count, actual=actual):
+        def forward(hidden=hidden, top_ids=top_ids, top_weights=top_weights, count=count, actual=actual, buf=buf, l1=l1, l2=l2):
             deep_gemm.mega_moe_pre_dispatch_sm90(hidden, top_ids, top_weights, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, num_tokens=count, group_size=128, routed_scaling_factor=1.0)
             deep_gemm.fp8_mega_moe(actual, l1, l2, buf, recipe=(128, 128, 128), activation="swiglu", fast_math=True)
 
@@ -211,12 +222,15 @@ def main():
         torch.cuda.synchronize()
         deterministic = torch.tensor(int(torch.equal(first, actual)), device=device)
         dist.all_reduce(deterministic, op=dist.ReduceOp.MIN)
-        loads = torch.zeros(NUM_EXPERTS, dtype=torch.int64, device=device)
-        for ids in gather(top_ids):
-            loads += torch.bincount(ids.flatten().long(), minlength=NUM_EXPERTS)
+        loads = torch.zeros(buf.num_experts, dtype=torch.int64, device=device)
+        local_pairs = 0
+        for source, ids in enumerate(gather(top_ids)):
+            loads += torch.bincount(ids.flatten().long(), minlength=buf.num_experts)
+            local_pairs += (ids // (buf.num_experts // NUM_RANKS) == source).sum().item()
         rank_loads = loads.view(NUM_RANKS, -1).sum(1).tolist()
         row = {"case": name, "variant": args.variant, "stage": stage, "routing": kind, "tokens_per_rank": count, "cuda_graph": stage == "decode", "warmup": WARMUP, "iterations": ITERATIONS, "median_ms": ordered[len(ordered) // 2], "p10_ms": ordered[int(0.1 * (len(ordered) - 1))], "p90_ms": ordered[round(0.9 * (len(ordered) - 1))], "min_ms": ordered[0], "max_ms": ordered[-1], "max_rank_ms": durations.tolist(), "recv_pairs_per_rank": rank_loads, "rank_load_max_over_mean": max(rank_loads) / (sum(rank_loads) / NUM_RANKS), "expert_load_max_over_mean": loads.max().item() / loads.float().mean().item(), "deterministic": bool(deterministic.item()), "output_sha256": output_digest(actual, count)}
         row.update({key: [part[index].item() for part in gpu_state] for index, key in enumerate(("sm_clock_mhz_before", "power_w_before", "sm_clock_mhz_after", "power_w_after"))})
+        row.update({"physical_experts": buf.num_experts, "local_slot_fraction": local_pairs / (count * NUM_RANKS * TOPK)})
         if name in reference:
             row["reference_variant"] = reference[name]["variant"]
             row["reference_median_ms"] = reference[name]["median_ms"]

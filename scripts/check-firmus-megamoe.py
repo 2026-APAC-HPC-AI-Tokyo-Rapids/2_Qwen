@@ -12,6 +12,7 @@ from datetime import timedelta
 import deep_gemm
 import torch
 import torch.distributed as dist
+from firmus_megamoe_replicas import check_replicas
 
 
 def quantized(x, group):
@@ -195,6 +196,7 @@ def main():
             dist.all_reduce(durations, op=dist.ReduceOp.MAX)
             if rank == 0:
                 print(json.dumps({"benchmark": label, "tokens_per_rank": [4096, 4096, 4096, 0], "idle_output_rows": idle_rows, "max_rank_ms": durations.tolist()}), flush=True)
+    check_replicas(quantized, dequantized)
     dist.destroy_process_group()
 
 

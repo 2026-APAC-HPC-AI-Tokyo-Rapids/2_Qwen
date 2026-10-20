@@ -56,7 +56,7 @@ def workspace(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     (ws / "configs").mkdir(parents=True)
     (ws / "configs/firmus-framework.json").write_text(json.dumps({"images": {"sglang": {"path": str(image), "sha256": hashlib.sha256(b"fake squashfs").hexdigest(), "size_bytes": image.stat().st_size}}}))
     (ws / "scripts").mkdir()
-    for script in ("provision-firmus-kernel-bench.sh", "bench-firmus-megamoe.py", "check-firmus-megamoe.py", "check-firmus-decode-kernels.py"):
+    for script in ("provision-firmus-kernel-bench.sh", "bench-firmus-megamoe.py", "check-firmus-megamoe.py", "check-firmus-decode-kernels.py", "firmus_megamoe_replicas.py"):
         shutil.copy(ROOT / "scripts" / script, ws / "scripts" / script)
     (ws / "platforms/firmus/kernel-bench").mkdir(parents=True)
     shutil.copy(ROOT / "platforms/firmus/kernel-bench/run.sbatch", ws / "platforms/firmus/kernel-bench/run.sbatch")
@@ -300,13 +300,39 @@ def test_summary_displays_mixed_locality_cases(tmp_path: Path, monkeypatch: pyte
     summarize = load_summary(monkeypatch)
     (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "not-requested"}, {"name": "control-sf128-swizzle", "patches": [], "timeline": "not-requested"}], "sglang": None}))
     (tmp_path / "steps.tsv").write_text("image\tbench\t0\t65\ncontrol-sf128-swizzle\tgate\t0\t80\ncontrol-sf128-swizzle\tbench\t0\t65\n")
-    rows = [bench_row(f"prefill-{kind}-4096", 1.5, kind) for kind in ("mixed50", "mixed64")]
+    rows = [bench_row(f"prefill-{kind}-4096", 1.5, kind) for kind in ("mixed50", "mixed64", "replica8")]
     write_rows(tmp_path / "image/bench.jsonl", rows)
     write_rows(tmp_path / "control-sf128-swizzle/bench.jsonl", rows)
     text, failed = summarize(tmp_path)
     assert failed == []
     for row in rows:
         assert f"| {row['case']} | 1.5000 | 1.5000 (+0.0%) |" in text
+
+
+def test_replica_mapping_preserves_logical_experts_and_masks() -> None:
+    torch = pytest.importorskip("torch")
+    replicas = runpy.run_path(str(ROOT / "scripts/firmus_megamoe_replicas.py"))
+    mapping = replicas["physical_to_logical"]()
+    assert len(mapping) == 152
+    assert [mapping.count(e) for e in range(128)] == [4] * 8 + [1] * 120
+    loads = torch.zeros(4, dtype=torch.int64)
+    for rank in range(4):
+        ids = torch.arange(-1, 128, dtype=torch.int32)
+        physical = replicas["remap"](ids, rank)
+        assert physical[0] == -1
+        assert torch.tensor(mapping)[physical[1:].long()].tolist() == list(range(128))
+        assert (physical[1:9] // 38 == rank).all()
+        assert (physical[1:] // 38 == rank).sum().item() == 38
+        loads += torch.bincount((physical[1:] // 38).long(), minlength=4)
+    assert loads.tolist() == [128] * 4
+    source = ast.parse((ROOT / "scripts/bench-firmus-megamoe.py").read_text())
+    function = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "routing")
+    context = {"torch": torch, "NUM_EXPERTS": 128, "NUM_RANKS": 4, "TOPK": 8, "remap": replicas["remap"], "dist": types.SimpleNamespace(get_rank=lambda: 3)}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), "routing", "exec"), context)  # noqa: S102 - trusted repository function, without CUDA initialization
+    logical, weights = context["routing"]("balanced", 4096, torch.Generator().manual_seed(9), "cpu")
+    physical, replica_weights = context["routing"]("replica8", 4096, torch.Generator().manual_seed(9), "cpu")
+    assert torch.equal(torch.tensor(mapping)[physical.long()], logical.long())
+    assert torch.equal(weights, replica_weights)
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
