@@ -34,3 +34,13 @@ main の 8258.34 run（39225913979）の Prefill ログ（batch 行の `#new-tok
 - 残る損失は計測開始時の一斉投入直後の 2 forward（全体の 0.21%）だけで、これは忘却では説明できない（原因未特定）。
 
 送る側で数える patch（`dp-inflight-request-accounting`、4 file、+19 行、CPU テスト付き）は作ったが、現構成での効果はノイズ以下と見積もり、serving には出さない。一斉投入直後の偏りを追うなら、ms 単位の振り分けログと snapshot 公開ログを入れた診断 run が先。
+
+## 追記：DeepInfer 由来の候補の追加検討（2026-10-20、Codex に分担）
+
+| 候補 | 結論 | 根拠 |
+|---|---|---|
+| post-attention の add＋RMSNorm が FP8 を MegaMoE buffer へ直接書く（pre-dispatch の廃止） | 見送り | main run 39225913979 の profile で pre-dispatch 16.1 µs/層。ただし norm に量子化を足すと、量子化なしの norm 31.6 µs → 既存の入力側融合 norm＋quant 47.0 µs と約 15.4 µs 増えるので、差し引きは約 0.7 µs/層。DeepGEMM host の変更は不要で、SGLang overlay だけで実装できることは確認した |
+| FA3 Prefill の epilogue で O を FP8（FP32 per-128）にする | 条件付きで実現可能。保留 | BF16 staging は残し、global store の直前で FP8 化する。Prefill 専用の FA3 を companion `.so` として image に追加する必要がある（image 再 build）。見込みは 1 層 20〜30 µs（Prefill 約 0.8%）。難所は FA3 の register 増加と、graph 経路を 2 出力にすること |
+| kernel 間の gap・PDL・GC・NUMA | 対応不要 | Prefill の 94 層で gap 1.29〜1.61 ms（forward の 0.48〜0.60%）。gap がすべて消えても上限は 0.84〜0.98%。PDL は既定で有効。GC イベントの記録はなく、NUMA の自動 bind は既定で有効（成否はログ不足で未確認） |
+| combine 前の readiness tag | 作らない | SM90 で `%gridid` を世代値に使う場合、CUDA graph replay での一意性を裏付けられなかった |
+| flat barrier を Prefill geometry に限定する | そのままでは不可 | Prefill instance の中でも、token 0 の rank は Decode geometry を選ぶ（gate の混在 case）。片方の geometry だけ protocol を変えると、待ち合いが成立せず hang する。全 geometry 版の header を Prefill の worker にだけ配る方式で作り直している |
