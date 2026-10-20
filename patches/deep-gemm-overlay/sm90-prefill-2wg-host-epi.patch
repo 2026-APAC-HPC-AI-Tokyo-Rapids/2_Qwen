@@ -1,8 +1,8 @@
 diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-index 045231e..efd1d18 100644
+index 045231e..b2f1105 100644
 --- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 +++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-@@ -249,12 +249,25 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -249,12 +249,27 @@ sm90_fp8_mega_moe_impl(void* y,
                       "SM90 MegaMoE supports CTA BLOCK_N=128/256/512");
      DG_STATIC_ASSERT(BLOCK_K == 128, "BLOCK_K is fixed to 128 (per-128 SF)");
  
@@ -16,6 +16,8 @@ index 045231e..efd1d18 100644
 +    // 4 x 16) to 80 KiB (A 2 x 8, B 2 x 32). Same tile, scheduler, pipeline, K
 +    // order, FP32 accumulation, scales and quantization granularity. The
 +    // 512-thread instantiation is unchanged (every edit below is constexpr-gated).
++    // Every warp writes and publishes its own FC1 output rows (see the
++    // kPrefill2WG L1 epilogue).
 +    constexpr bool kPrefill2WG =
 +        kHidden == 4096 && kIntermediateHidden == 1536 && kNumRanks == 4 &&
 +        BLOCK_M == 128 && BLOCK_N == 256 && kNumEpilogueThreads == 256 && kReuseAccumAsFinal;
@@ -29,7 +31,7 @@ index 045231e..efd1d18 100644
      // Qwen Prefill only: FC2 blocks are claimed from a per-rank counter instead
      // of the static round-robin split (see sm90_fp8_mega_moe_for_each_block_dynamic_l2).
      constexpr bool kDynamicL2 = kSpecializePhase and not kFP8SwapAB and
-@@ -271,7 +284,10 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -271,7 +286,10 @@ sm90_fp8_mega_moe_impl(void* y,
      // group slots); only slots 0..11 are used, so no host change is needed.
      // Decode keeps its per-64 path untouched.
      constexpr bool kL2ActsSF128 = kDynamicL2 and kL2ArrivalCounter and
@@ -41,7 +43,48 @@ index 045231e..efd1d18 100644
  
      // =====================================================================
      // Thread / warp identification
-@@ -1413,7 +1429,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -354,7 +372,8 @@ sm90_fp8_mega_moe_impl(void* y,
+     constexpr uint32_t kNumCombineWarps = kNumEpilogueWarps;
+     using L1WGMMA   = typename mma::sm90::FP8MMASelector<WG_BLOCK_N>::type;  // M=64, N=WG_BLOCK_N, K=32
+     using L2WGMMA   = typename mma::sm90::FP8MMASelector<WG_BLOCK_N>::type;
+-    constexpr uint32_t kL1OutputArrivalParts = 1;
++    // kPrefill2WG publishes every FC1 tile per warp (16 rows each, see its L1 epilogue).
++    constexpr uint32_t kL1OutputArrivalParts = kPrefill2WG ? 4 : 1;
+     static_assert(L1WGMMA::M == 64 and L1WGMMA::N == WG_BLOCK_N and L1WGMMA::K == 32,
+                   "Unexpected WGMMA shape");
+     DG_STATIC_ASSERT(kWarpgroupSplitM * kWarpgroupSplitN == kNumEpilogueWarpgroups,
+@@ -1029,6 +1048,10 @@ sm90_fp8_mega_moe_impl(void* y,
+                     const uint32_t expected =
+                         kNumL1BlockNs * active_m_wgs * kWarpgroupSplitN * kL1OutputArrivalParts;
+                     while (ptx::ld_acq(ptr) != expected);
++                    // kPrefill2WG writes the FC1 output tile with generic stores: order
++                    // them (acquired above) before this warp's TMA loads of it.
++                    if constexpr (kPrefill2WG)
++                        asm volatile("fence.proxy.async.global;" ::: "memory");
+                 } else {
+                     const auto ptr = workspace.get_l2_arrival_mask_ptr(pool_block_idx);
+                     const uint64_t expected = (kNumL1BlockNs >= 64)
+@@ -1259,6 +1282,19 @@ sm90_fp8_mega_moe_impl(void* y,
+             kSplitNSharesSF ? L1_OUT_BLOCK_N : WG_L1_OUT_BLOCK_N;
+         constexpr uint32_t WG_SMEM_CD_L2_STRIDE_N = WG_BLOCK_N;
+ 
++        // kPrefill2WG: every warp stores its 16 FC1 output rows itself and publishes
++        // the arrival late, in the next FC1 tile's mainloop (K block 2) or before
++        // the first FC2 block is taken, when the stores have long completed. Holds
++        // the pool block of the unpublished rows, or ~0.
++        [[maybe_unused]] uint32_t l1_unpublished_block = 0xffffffffu;
++        [[maybe_unused]] const auto publish_l1_rows = [&]() {
++            if (l1_unpublished_block != 0xffffffffu) {
++                if (lane_idx == 0)
++                    ptx::red_add_rel(reinterpret_cast<uint32_t*>(workspace.get_l2_arrival_mask_ptr(l1_unpublished_block)), 1);
++                l1_unpublished_block = 0xffffffffu;
++            }
++        };
++
+         // Sync with dispatch in the full communication path.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
+ 
+@@ -1413,7 +1449,7 @@ sm90_fp8_mega_moe_impl(void* y,
                  // The rescale path below keeps serving every other reuse geometry.
                  constexpr bool kQwenPrefillMainloop =
                      kHidden == 4096 && kIntermediateHidden == 1536 && BLOCK_M == 128 &&
@@ -50,7 +93,7 @@ index 045231e..efd1d18 100644
                  if constexpr (kQwenPrefillMainloop) {
                      constexpr uint32_t kL1SFKBlocks   = kHidden / 128;
                      constexpr uint32_t kL2SFKBlocks   = kIntermediateHidden / 128;
-@@ -1451,7 +1467,10 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1451,7 +1487,10 @@ sm90_fp8_mega_moe_impl(void* y,
                      };
  
                      if (block_phase == sched::BlockPhase::Linear1) {
@@ -62,7 +105,18 @@ index 045231e..efd1d18 100644
                          const uint32_t up_row = gate_row + kL1SFGateBlks * kL1SFKBlocks;
                          float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f, prev_gate_sf = 1.0f, prev_up_sf = 1.0f;
                          float r0_gate = 1.0f, r1_gate = 1.0f, r0_up = 1.0f, r1_up = 1.0f;
-@@ -1504,6 +1523,76 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1470,6 +1509,10 @@ sm90_fp8_mega_moe_impl(void* y,
+                                 }
+                             }
+                             issue(0, BLOCK_K / WGMMA::K);
++                            if constexpr (kPrefill2WG) {
++                                if (k_block_idx == 2)
++                                    publish_l1_rows();
++                            }
+ 
+                             if (k_block_idx == 0) {
+                                 prev_scale_a_0 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r0);
+@@ -1504,6 +1547,76 @@ sm90_fp8_mega_moe_impl(void* y,
                          // Per-128 activation scales: one WGMMA group per K block and one
                          // carried-scale rescale, the same structure as FC1.
                          DG_STATIC_ASSERT(kL2ActsSF128, "The Qwen Prefill FC2 loop assumes per-128 activation scales");
@@ -139,7 +193,7 @@ index 045231e..efd1d18 100644
                          const uint32_t l2_row = local_expert_idx * kL2SFPerExpert + sf_n_block_idx * kL2SFKBlocks;
                          float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f, prev_l2_sf = 1.0f;
                          float r0_start = 1.0f, r1_start = 1.0f;
-@@ -1545,6 +1634,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1545,6 +1658,7 @@ sm90_fp8_mega_moe_impl(void* y,
                          }
                          if (num_k_blocks != 0)
                              postscale_l2_final(prev_scale_a_0, prev_scale_a_1, prev_l2_sf);
@@ -147,7 +201,116 @@ index 045231e..efd1d18 100644
                      }
                  } else
                  // The Qwen Prefill M128/N256 path reuses the accumulator.
-@@ -2322,7 +2412,9 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2217,6 +2331,108 @@ sm90_fp8_mega_moe_impl(void* y,
+                     if constexpr (kL2ArrivalCounter)
+                         ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+                     }
++                } else if constexpr (kPrefill2WG) {
++                    // Qwen Prefill with two math warpgroups: the same SwiGLU, per-row amax
++                    // over the warpgroup's 128 output columns (one per-128 group), E4M3
++                    // scale and saturating conversion as the path below, so the stored
++                    // bytes and scales are the same. What changes is how 8 math warps (2 per
++                    // scheduler instead of 4) get through it:
++                    //  * SwiGLU runs for every element without the per-pair row branches
++                    //    (the row masks only gate the amax and the stores), so a thread's
++                    //    64 independent EX2/RCP chains overlap instead of 32 short branchy
++                    //    blocks of two. EX2 is the .ftz form: e = 2^(-g log2 e) below 2^-126
++                    //    only occurs where 1 + e rounds to 1 anyway.
++                    //  * Each warp stages its 16 rows in its own 16 x 144-byte slice (the
++                    //    16-byte pad puts the 8 rows of a fragment on distinct banks; the
++                    //    128-byte rows of the TMA-store tile were 8-way conflicted) and
++                    //    writes them to the L1-output pool with 16-byte global stores, 8
++                    //    lanes per 128-byte row segment, valid rows only. No warpgroup
++                    //    barrier, TMA store or store drain.
++                    //  * The warp's arrival (kL1OutputArrivalParts = 4 per warpgroup tile)
++                    //    is published by publish_l1_rows: in the next FC1 tile's K block 2,
++                    //    or, for the CTA's last FC1 tile, before its first FC2 block is
++                    //    taken, which every CTA does once even without FC2 blocks.
++                    constexpr uint32_t kNumPairs = kAccumPerThread / 8;
++                    constexpr uint32_t kStageRowBytes = WG_L1_OUT_BLOCK_N + 16;
++                    DG_STATIC_ASSERT(WG_L1_OUT_BLOCK_N == 128 and kNumPairs == 16 and kL2ActsSF128,
++                                     "kPrefill2WG L1 epilogue shape");
++                    DG_STATIC_ASSERT(kNumEpilogueWarps * 16 * kStageRowBytes <= SMEM_CD_SIZE,
++                                     "kPrefill2WG L1 staging");
++                    auto silu_mul = [](float g, float u) -> float {
++                        if constexpr (kActivationClamp != cute::numeric_limits<float>::infinity()) {
++                            g = cute::min(g, kActivationClamp);
++                            u = cute::min(cute::max(u, -kActivationClamp), kActivationClamp);
++                        }
++                        float sig;
++                        if constexpr (kFastMath) {
++                            float e;
++                            asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(e) : "f"(g * -1.44269502162933349609375f));
++                            asm("rcp.approx.ftz.f32 %0, %1;" : "=f"(sig) : "f"(1.0f + e));
++                        } else {
++                            sig = 1.0f / (1.0f + expf(-g));
++                        }
++                        return (g * sig) * u;
++                    };
++                    // Pair p: gate chunk 2p = final_accum[p*8 + 0..3], up chunk 2p+1 =
++                    // final_accum[p*8 + 4..7], each (r0c0, r0c1, r1c0, r1c1); output columns
++                    // p*8 + col_idx*2 + {0, 1}.
++                    float swiglu_r0[kNumPairs][2], swiglu_r1[kNumPairs][2];
++                    float amax_r0 = 0.0f, amax_r1 = 0.0f;
++                    #pragma unroll
++                    for (uint32_t p = 0; p < kNumPairs; ++ p) {
++                        swiglu_r0[p][0] = silu_mul(final_accum[p * 8 + 0], final_accum[p * 8 + 4]);
++                        swiglu_r0[p][1] = silu_mul(final_accum[p * 8 + 1], final_accum[p * 8 + 5]);
++                        swiglu_r1[p][0] = silu_mul(final_accum[p * 8 + 2], final_accum[p * 8 + 6]);
++                        swiglu_r1[p][1] = silu_mul(final_accum[p * 8 + 3], final_accum[p * 8 + 7]);
++                        amax_r0 = fmaxf(amax_r0, fmaxf(fabsf(swiglu_r0[p][0]), fabsf(swiglu_r0[p][1])));
++                        amax_r1 = fmaxf(amax_r1, fmaxf(fabsf(swiglu_r1[p][0]), fabsf(swiglu_r1[p][1])));
++                    }
++                    // Rows past valid_m (a partial tile) keep amax 0 as before; their values
++                    // are never stored.
++                    amax_r0 = valid_r0 ? amax_r0 : 0.0f;
++                    amax_r1 = valid_r1 ? amax_r1 : 0.0f;
++                    amax_r0 = math::warp_reduce<4, false>(amax_r0, math::ReduceMax<float>());
++                    amax_r1 = math::warp_reduce<4, false>(amax_r1, math::ReduceMax<float>());
++                    float2 sf_pair, sf_inv_pair;
++                    sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(make_float2(amax_r0, amax_r1), sf_pair, sf_inv_pair);
++
++                    // Quantize into the warp's staging slice (local rows row_idx and row_idx + 8).
++                    auto* stage = reinterpret_cast<uint8_t*>(smem_cd_l1) + epilogue_warp_idx * (16 * kStageRowBytes);
++                    auto* stage_r0 = stage + row_idx * kStageRowBytes + col_idx * 2;
++                    auto* stage_r1 = stage_r0 + 8 * kStageRowBytes;
++                    #pragma unroll
++                    for (uint32_t p = 0; p < kNumPairs; ++ p) {
++                        const __nv_fp8x2_e4m3 r0_pair(make_float2(swiglu_r0[p][0] * sf_inv_pair.x, swiglu_r0[p][1] * sf_inv_pair.x));
++                        const __nv_fp8x2_e4m3 r1_pair(make_float2(swiglu_r1[p][0] * sf_inv_pair.y, swiglu_r1[p][1] * sf_inv_pair.y));
++                        *reinterpret_cast<uint16_t*>(stage_r0 + p * 8) = r0_pair.__x;
++                        *reinterpret_cast<uint16_t*>(stage_r1 + p * 8) = r1_pair.__x;
++                    }
++
++                    // The per-128 scale of the row at `[n_block_idx, token]` (MN-major).
++                    if (col_idx == 0) {
++                        auto sf_base_ptr = l2_sf_buffer.get_base_ptr<float>() + n_block_idx * kNumPaddedSFPoolTokens + pool_block_idx * SF_BLOCK_M;
++                        if (valid_r0)
++                            sf_base_ptr[row_offset_r0] = sf_pair.x;
++                        if (valid_r1)
++                            sf_base_ptr[row_offset_r1] = sf_pair.y;
++                    }
++                    __syncwarp();
++
++                    // 16 rows x 128 bytes: lane l copies 16-byte chunk l % 8 of local row 4 i + l / 8.
++                    const uint32_t warp_row = row_base + warp_idx_in_wg * 16;
++                    auto* l1_out = l2_token_buffer.get_base_ptr<uint8_t>() +
++                        static_cast<uint64_t>(m_idx + warp_row) * kIntermediateHidden + n_block_idx * L1_OUT_BLOCK_N + (lane_idx % 8) * 16;
++                    #pragma unroll
++                    for (uint32_t i = 0; i < 4; ++ i) {
++                        const uint32_t row = i * 4 + lane_idx / 8;
++                        const auto chunk = *reinterpret_cast<const uint4*>(stage + row * kStageRowBytes + (lane_idx % 8) * 16);
++                        if (warp_row + row < valid_m)
++                            *reinterpret_cast<uint4*>(l1_out + row * kIntermediateHidden) = chunk;
++                    }
++                    // Orders the lanes' stores before lane 0's release in publish_l1_rows, and
++                    // the staging reads before this warp's next writes to its slice.
++                    __syncwarp();
++                    l1_unpublished_block = pool_block_idx;
+                 } else {
+ 
+                 // ---------------- L1 EPILOGUE: activation + FP8 quantize + TMA store ----------------
+@@ -2322,7 +2538,9 @@ sm90_fp8_mega_moe_impl(void* y,
                      amax_r0 = amax_scratch[r_0];
                      amax_r1 = amax_scratch[r_1];
                      ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
@@ -158,7 +321,7 @@ index 045231e..efd1d18 100644
                      // One per-128 group spans both N-split warpgroups of the row pair:
                      // take the max of the partner's per-row amax (scratch in the upper,
                      // otherwise unused half of the CD region; 2 parities x 2 pairs x
-@@ -2568,6 +2660,34 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2568,6 +2786,34 @@ sm90_fp8_mega_moe_impl(void* y,
                  else
                      __syncwarp();
  
@@ -193,7 +356,7 @@ index 045231e..efd1d18 100644
                  // Scatter to remote ranks via NVLink (one row per warp-pair)
                  // Each warpgroup-warp covers 8 unique rows x 2 (r_0 + r_1 doubled by warps)
                  // Lane group of 16 within a warp -> 1 row.
-@@ -2603,6 +2723,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2603,6 +2849,7 @@ sm90_fp8_mega_moe_impl(void* y,
                          (n_idx + wg_n_offset) * sizeof(nv_bfloat16) + lane_in_row * sizeof(ScatterVec));
                      *sym_buffer.map(dst_ptr, dst_rank_idx) = packed;
                  }
@@ -201,7 +364,23 @@ index 045231e..efd1d18 100644
  
                  if constexpr (kL2EpilogueRequiresFullSync)
                      ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
-@@ -2690,7 +2811,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2613,7 +2860,14 @@ sm90_fp8_mega_moe_impl(void* y,
+             uint32_t ring_count = 0;
+             sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs>(
+                 scheduler,
+-                [&]() { return take_l2_block(ring_count); },
++                [&]() {
++                    if constexpr (kPrefill2WG) {
++                        // FC1 is over (every CTA gets here, with or without FC2 blocks):
++                        // publish this warp's last FC1 rows.
++                        publish_l1_rows();
++                    }
++                    return take_l2_block(ring_count);
++                },
+                 [&](const uint32_t& local_expert_idx,
+                     const uint32_t& num_k_blocks,
+                     const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
+@@ -2690,7 +2944,7 @@ sm90_fp8_mega_moe_impl(void* y,
          // its live top-k slots in the same order with the same FP32 FMAs.
          constexpr bool kParallelCombine = kSwapABActive and kHidden == 4096 and kNumTopk == 8;
          constexpr uint32_t kNumChunks = kParallelCombine ? 8 :
