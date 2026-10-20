@@ -29,7 +29,7 @@ def test_real_layer_data_and_case_selection():
     assert list(data) == [43, 62, 7]
     assert [row["ascending_position"] for row in data.values()] == [47, 85, 10]
     assert [row["selection"] for row in data.values()] == ["median", "upper10", "lower10"]
-    assert len(ns["CASES"]) == 21
+    assert len(ns["CASES"]) == 24
     for layer, row in data.items():
         assert len(row["counts"]) == 128 and min(row["counts"]) >= 0
         assert sum(row["counts"]) == 205343824
@@ -37,11 +37,13 @@ def test_real_layer_data_and_case_selection():
         assert row["hot8"] == hot
         assert row["hot8_share"] == sum(row["counts"][e] for e in hot) / sum(row["counts"])
         assert row["baseline_map"] == baseline[layer]
-        mapping = row["replica_map"]
-        assert len(mapping) == 152
-        assert all(mapping.count(e) == (4 if e in hot else 1) for e in range(128))
-        assert all(len(set(mapping[r * 38:(r + 1) * 38])) == 38 and set(hot) <= set(mapping[r * 38:(r + 1) * 38]) for r in range(4))
-        for suffix in ("", "-replica8"):
+        for replicas, key in ((4, "replica4_map"), (8, "replica_map")):
+            mapping = row[key]
+            width = (128 + 3 * replicas) // 4
+            assert len(mapping) == 128 + 3 * replicas
+            assert all(mapping.count(e) == (4 if e in hot[:replicas] else 1) for e in range(128))
+            assert all(len(set(mapping[r * width:(r + 1) * width])) == width and mapping[r * width:r * width + replicas] == hot[:replicas] for r in range(4))
+        for suffix in ("", "-replica4", "-replica8"):
             assert ("prefill", f"real{layer}{suffix}", 4096) in ns["CASES"]
     for index, case in enumerate(ns["CASES"][:15]):
         assert ns["case_seed"](case, 3) == index * 8 + 3
@@ -56,13 +58,13 @@ def test_paired_inputs_routing_and_local_preference(layer):
     for rank in range(4):
         ns["dist"].get_rank = lambda rank=rank: rank
         pair = []
-        for replicated in (False, True):
-            case = ("prefill", f"real{layer}" + ("-replica8" if replicated else ""), 4096)
+        for replicas in (0, 4, 8):
+            case = ("prefill", f"real{layer}" + (f"-replica{replicas}" if replicas else ""), 4096)
             generator = torch.Generator().manual_seed(ns["case_seed"](case, rank))
             hidden = torch.randn(128, 16, generator=generator)
-            ids, weights, logical = ns["real_routing"](layer, replicated, 128, generator, "cpu")
+            ids, weights, logical = ns["real_routing"](layer, replicas, 128, generator, "cpu")
             pair.append((hidden, weights, logical))
-            mapping = row["replica_map" if replicated else "baseline_map"]
+            mapping = row[{0: "baseline_map", 4: "replica4_map", 8: "replica_map"}[replicas]]
             width = len(mapping) // 4
             assert ids.dtype == torch.int32 and ids.is_contiguous()
             assert torch.equal(torch.tensor(mapping)[ids.long()], logical.long())
@@ -70,9 +72,9 @@ def test_paired_inputs_routing_and_local_preference(layer):
             assert torch.allclose(weights.sum(1), torch.ones(128))
             local_available = torch.isin(logical, torch.tensor(mapping[rank * width:(rank + 1) * width]))
             assert torch.equal(ids // width == rank, local_available)
-            if replicated:
-                assert ((ids // width == rank) | ~torch.isin(logical, torch.tensor(row["hot8"]))).all()
-        assert all(torch.equal(a, b) for a, b in zip(*pair))
+            if replicas:
+                assert ((ids // width == rank) | ~torch.isin(logical, torch.tensor(row["hot8"][:replicas]))).all()
+        assert all(torch.equal(a, b) for candidate in pair[1:] for a, b in zip(pair[0], candidate))
         rank_hashes.append(hashlib.sha256(pair[0][2].numpy().tobytes()).hexdigest())
     assert len(set(rank_hashes)) == 4
 
@@ -81,7 +83,7 @@ def test_gumbel_zero_counts_and_unique_top8():
     ns = bench_namespace()
     ns["REAL_ROUTING_LAYERS"][43]["counts"] = [0] * 120 + list(range(1, 9))
     torch = ns["torch"]
-    _, _, logical = ns["real_routing"](43, False, 64, torch.Generator().manual_seed(17), "cpu")
+    _, _, logical = ns["real_routing"](43, 0, 64, torch.Generator().manual_seed(17), "cpu")
     assert torch.equal(logical.sort(1).values, torch.arange(120, 128).expand(64, 8))
 
 
@@ -98,7 +100,7 @@ def test_logical_weight_and_scale_identity_across_placements():
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "weights_cpu", "exec"), context)  # noqa: S102
     reference = {}
     maps = [list(range(128)), context["physical_to_logical"]()]
-    maps += [row[key] for row in ns["REAL_ROUTING_LAYERS"].values() for key in ("baseline_map", "replica_map")]
+    maps += [row[key] for row in ns["REAL_ROUTING_LAYERS"].values() for key in ("baseline_map", "replica4_map", "replica_map")]
     for mapping in maps:
         width = len(mapping) // 4
         for rank in range(4):
@@ -115,7 +117,7 @@ def test_summary_displays_all_real_routing_pairs(tmp_path, monkeypatch):
     summarize = existing["load_summary"](monkeypatch)
     (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "not-requested"}, {"name": "control-sf128-swizzle", "patches": [], "timeline": "not-requested"}], "sglang": None}))
     (tmp_path / "steps.tsv").write_text("image\tbench\t0\t50\ncontrol-sf128-swizzle\tgate\t0\t87\ncontrol-sf128-swizzle\tbench\t0\t85\n")
-    rows = [existing["bench_row"](f"prefill-real{layer}{suffix}-4096", 1.5, f"{layer}{suffix}") for layer in (43, 62, 7) for suffix in ("", "-replica8")]
+    rows = [existing["bench_row"](f"prefill-real{layer}{suffix}-4096", 1.5, f"{layer}{suffix}") for layer in (43, 62, 7) for suffix in ("", "-replica4", "-replica8")]
     for variant in ("image", "control-sf128-swizzle"):
         existing["write_rows"](tmp_path / variant / "bench.jsonl", rows)
     text, failed = summarize(tmp_path)
