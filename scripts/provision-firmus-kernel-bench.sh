@@ -5,9 +5,12 @@
 # timeline overlays where a candidate directory holds a `timeline` marker (an
 # empty marker uses the stock timeline patch; a non-empty one is that
 # candidate's own timeline patch, for candidates the stock patch cannot hit), and
-# an SGLang tree with patches/sglang-bench/*.patch. A candidate patch that does
-# not apply stops here, before any Slurm submission; a timeline patch that does
-# not apply on top of a candidate is recorded and that timeline is skipped.
+# an SGLang tree with patches/sglang-bench/*.patch. A candidate directory may hold
+# an `env` file of KEY=VALUE lines (e.g. a DeepGEMM host switch in the image's
+# _C.so) that run.sbatch passes to that candidate's gate, bench and timeline
+# steps only. A candidate patch that does not apply or a malformed env file stops
+# here, before any Slurm submission; a timeline patch that does not apply on top
+# of a candidate is recorded and that timeline is skipped.
 set -euo pipefail
 shopt -s inherit_errexit
 
@@ -39,6 +42,13 @@ for dir in "${candidate_dirs[@]}"; do
   name="$(basename "${dir}")"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9._-]*$ && "${name}" != image ]] || { printf 'Candidate directory name %s must match [a-z0-9][a-z0-9._-]* and not be "image".\n' "${name}" >&2; exit 1; }
   compgen -G "${dir}*.patch" >/dev/null || { printf 'Candidate directory %s has no .patch file.\n' "${name}" >&2; exit 1; }
+  # env: one KEY=VALUE per line, nothing else; the step's own PYTHONPATH and JIT cache cannot be overridden.
+  if [[ -e "${dir}env" ]]; then
+    [[ -s "${dir}env" ]] || { printf 'Candidate %s: env is empty.\n' "${name}" >&2; exit 1; }
+    if grep -nvE '^[A-Z][A-Z0-9_]*=[A-Za-z0-9._,:/-]+$' "${dir}env" >&2; then printf 'Candidate %s: env lines must match KEY=VALUE with KEY [A-Z][A-Z0-9_]* and VALUE [A-Za-z0-9._,:/-]+ (lines above).\n' "${name}" >&2; exit 1; fi
+    if cut -d= -f1 "${dir}env" | sort | uniq -d | grep . >&2; then printf 'Candidate %s: env repeats the keys above.\n' "${name}" >&2; exit 1; fi
+    if cut -d= -f1 "${dir}env" | grep -xE 'PYTHONPATH|DG_JIT_CACHE_DIR' >&2; then printf 'Candidate %s: env must not set the keys above (run.sbatch sets them per step).\n' "${name}" >&2; exit 1; fi
+  fi
   steps=$((steps + 2))
   if [[ -e "${dir}timeline" ]]; then steps=$((steps + 1)); fi
 done
@@ -51,7 +61,7 @@ expected_sha="$(jq -er .images.sglang.sha256 "${config}")"
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/kernel-bench-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
-install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source/patches" "${runtime_dir}/scratch" "${runtime_dir}/overlay/candidates" "${runtime_dir}/overlay/timeline" "${runtime_dir}/home"
+install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source/patches" "${runtime_dir}/scratch" "${runtime_dir}/overlay/candidates" "${runtime_dir}/overlay/timeline" "${runtime_dir}/overlay/env" "${runtime_dir}/home"
 echo "Checking sglang image SHA-256"
 while sleep 15; do echo "container_sha256_check_in_progress=sglang"; done &
 progress_pid=$!
@@ -100,7 +110,7 @@ add_timeline() {
   echo apply-failed
 }
 timeline="$(add_timeline image "${runtime_dir}/image/${package}" "${bench_dir}")"
-variants="$(jq -n --arg timeline "${timeline}" '[{name:"image",patches:[],timeline:$timeline}]')"
+variants="$(jq -n --arg timeline "${timeline}" '[{name:"image",patches:[],env:[],timeline:$timeline}]')"
 for dir in "${candidate_dirs[@]}"; do
   name="$(basename "${dir}")"
   patches=("${dir}"*.patch)
@@ -108,7 +118,12 @@ for dir in "${candidate_dirs[@]}"; do
   cp -a "${runtime_dir}/image/${package}" "${runtime_dir}/overlay/candidates/${name}/deep_gemm"
   apply_patches "${runtime_dir}/overlay/candidates/${name}" "${patches[@]}"
   timeline="$(add_timeline "${name}" "${runtime_dir}/overlay/candidates/${name}/deep_gemm" "${dir}")"
-  variants="$(jq --arg name "${name}" --argjson patches "$(patch_records "${patches[@]}")" --arg timeline "${timeline}" '. + [{name:$name,patches:$patches,timeline:$timeline}]' <<<"${variants}")"
+  env_json='[]'
+  if [[ -e "${dir}env" ]]; then
+    cp "${dir}env" "${runtime_dir}/overlay/env/${name}"
+    env_json="$(jq -R . "${dir}env" | jq -s .)"
+  fi
+  variants="$(jq --arg name "${name}" --argjson patches "$(patch_records "${patches[@]}")" --argjson env "${env_json}" --arg timeline "${timeline}" '. + [{name:$name,patches:$patches,env:$env,timeline:$timeline}]' <<<"${variants}")"
 done
 sglang=null
 if (( ${#sglang_patches[@]} )); then

@@ -10,7 +10,9 @@
 # The image's own DeepGEMM is timed first as the in-job reference. Each
 # DeepGEMM candidate overlay then gets the numerical gate, the timing bench
 # (output hashes compared with the image) and, when staged, the instrumented
-# timeline run compared bitwise with its own bench. With an SGLang overlay the
+# timeline run compared bitwise with its own bench, all three with the
+# candidate's overlay/env/<name> KEY=VALUE lines when it has one (validated by the
+# provisioning script; the image steps never get them). With an SGLang overlay the
 # decode-kernel checks (and bench-firmus-sglang-kernels.py when staged) run for
 # the image tree and the patched tree. Every step's exit code goes to
 # results/steps.tsv and the job continues; only a failed image bench stops it.
@@ -33,7 +35,8 @@ step() {
 }
 timeline() {
   local variant=$1
-  if [[ -d "${ROOT}/overlay/timeline/${variant}" ]]; then step "${variant}" timeline PYTHONPATH="${ROOT}/overlay/timeline/${variant}" "${torchrun[@]}" "${ROOT}/scripts/bench-firmus-megamoe.py" --variant "${variant}+timeline" --output "${ROOT}/results/${variant}/timeline.jsonl" --timeline-dir "${ROOT}/results/${variant}/timeline" --reference "${ROOT}/results/${variant}/bench.jsonl" --scratch "${ROOT}/scratch/${variant}"; fi
+  shift
+  if [[ -d "${ROOT}/overlay/timeline/${variant}" ]]; then step "${variant}" timeline PYTHONPATH="${ROOT}/overlay/timeline/${variant}" "$@" "${torchrun[@]}" "${ROOT}/scripts/bench-firmus-megamoe.py" --variant "${variant}+timeline" --output "${ROOT}/results/${variant}/timeline.jsonl" --timeline-dir "${ROOT}/results/${variant}/timeline" --reference "${ROOT}/results/${variant}/bench.jsonl" --scratch "${ROOT}/scratch/${variant}"; fi
 }
 
 install -d "${ROOT}/results/image" "${ROOT}/scratch/image"
@@ -59,11 +62,13 @@ fi
 for dir in "${ROOT}"/overlay/candidates/*/; do
   [[ -d "${dir}" ]] || continue
   variant="$(basename "${dir}")"
+  candidate_env=()
+  if [[ -e "${ROOT}/overlay/env/${variant}" ]]; then mapfile -t candidate_env <"${ROOT}/overlay/env/${variant}"; fi
   install -d "${ROOT}/results/${variant}" "${ROOT}/scratch/${variant}"
-  step "${variant}" gate PYTHONPATH="${dir%/}" "${torchrun[@]}" "${ROOT}/scripts/check-firmus-megamoe.py"
+  step "${variant}" gate PYTHONPATH="${dir%/}" "${candidate_env[@]}" "${torchrun[@]}" "${ROOT}/scripts/check-firmus-megamoe.py"
   (( step_exit == 0 )) || continue
-  step "${variant}" bench PYTHONPATH="${dir%/}" "${torchrun[@]}" "${ROOT}/scripts/bench-firmus-megamoe.py" --variant "${variant}" --output "${ROOT}/results/${variant}/bench.jsonl" --reference "${ROOT}/results/image/bench.jsonl" --scratch "${ROOT}/scratch/${variant}"
+  step "${variant}" bench PYTHONPATH="${dir%/}" "${candidate_env[@]}" "${torchrun[@]}" "${ROOT}/scripts/bench-firmus-megamoe.py" --variant "${variant}" --output "${ROOT}/results/${variant}/bench.jsonl" --reference "${ROOT}/results/image/bench.jsonl" --scratch "${ROOT}/scratch/${variant}"
   (( step_exit == 0 )) || continue
-  timeline "${variant}"
+  timeline "${variant}" "${candidate_env[@]}"
 done
 touch "${ROOT}/run-success"

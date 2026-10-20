@@ -166,6 +166,9 @@ def deep_gemm(results, steps):
         if not ok:
             failed.append(name)
         patches = ", ".join(patch["path"].rsplit("/", 1)[-1] for patch in variant["patches"]) or "-"
+        # The candidate's env file (KEY=VALUE lines); archives staged before it existed have no "env".
+        if variant.get("env"):
+            patches += "; env " + " ".join(variant["env"])
         lines.append(f"| {name} | {patches} | {gate} | {bench} | {hashes} | {timeline} | {'OK' if ok else 'FAILED'} |")
     names = [variant["name"] for variant in variants]
     lines += ["", "### Kernel timing, median ms (delta vs image; * = output hash differs from image)", "", "| Case | " + " | ".join(names) + " |", "| --- |" + " ---: |" * len(names)]

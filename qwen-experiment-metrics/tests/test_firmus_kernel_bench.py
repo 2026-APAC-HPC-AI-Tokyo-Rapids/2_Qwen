@@ -80,7 +80,7 @@ def provision(tmp_path: Path, ws: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["bash", str(ws / "scripts/provision-firmus-kernel-bench.sh")], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
 
 
-def add_candidate(ws: Path, name: str, patch: str, timeline: bool | str = False) -> None:
+def add_candidate(ws: Path, name: str, patch: str, timeline: bool | str = False, env: str | None = None) -> None:
     directory = ws / "patches/deep-gemm-bench" / name
     directory.mkdir(parents=True)
     (directory / "000.patch").write_text(patch)
@@ -88,6 +88,8 @@ def add_candidate(ws: Path, name: str, patch: str, timeline: bool | str = False)
         (directory / "timeline").write_text(timeline)
     elif timeline:
         (directory / "timeline").touch()
+    if env is not None:
+        (directory / "env").write_text(env)
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
@@ -138,6 +140,54 @@ def test_candidate_timeline_marker_with_content_is_that_candidates_timeline_patc
     assert "line 9 own timeline" in (runtime / "overlay/timeline/own" / relative).read_text()
 
 
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+def test_candidate_env_reaches_only_that_candidates_steps(tmp_path: Path) -> None:
+    ws, patches = workspace(tmp_path)
+    add_candidate(ws, "a-host", patches["comment"], timeline=True, env="DG_SM90_PREFILL_2WG=1\nDG_EXTRA=a.b/c,d:e-f\n")
+    add_candidate(ws, "b-plain", patches["comment"])
+    (ws / "patches/deep-gemm-bench/timeline").touch()
+
+    result = provision(tmp_path, ws)
+
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    variants = json.loads((runtime / "results/variants.json").read_text())
+    assert [(v["name"], v["env"]) for v in variants["deep_gemm"]] == [("image", []), ("a-host", ["DG_SM90_PREFILL_2WG=1", "DG_EXTRA=a.b/c,d:e-f"]), ("b-plain", [])]
+    assert (runtime / "overlay/env/a-host").read_text() == "DG_SM90_PREFILL_2WG=1\nDG_EXTRA=a.b/c,d:e-f\n"
+    assert not (runtime / "overlay/env/b-plain").exists()
+    assert (runtime / "source/patches/deep-gemm-bench/a-host/env").exists()
+
+    # run.sbatch with an srun stub that records each step's command line.
+    shims = tmp_path / "bin"
+    (shims / "srun").write_text('#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >>"${SRUN_LOG}"\n')
+    (shims / "srun").chmod(0o755)
+    srun_log = tmp_path / "srun.log"
+    env = {**os.environ, "PATH": f"{shims}:{os.environ['PATH']}", "SLURM_SUBMIT_DIR": str(runtime), "SLURM_JOB_ID": "1", "SRUN_LOG": str(srun_log)}
+    run = subprocess.run(["bash", str(runtime / "scripts/run.sbatch")], cwd=runtime, env=env, capture_output=True, text=True, check=False)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    lines = srun_log.read_text().splitlines()
+    steps = [line for line in lines if "--variant" in line or "check-firmus-megamoe.py" in line]
+    assert len(steps) == 7  # image bench + timeline, a-host gate + bench + timeline, b-plain gate + bench
+    for line in steps:
+        candidate = f"{runtime}/overlay/candidates/a-host" in line or f"{runtime}/overlay/timeline/a-host" in line
+        assert ("DG_SM90_PREFILL_2WG=1 DG_EXTRA=a.b/c,d:e-f " in line) is candidate, line
+    assert (runtime / "run-success").exists()
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+@pytest.mark.parametrize("env", ["", "dg_lower=1\n", "DG_EMPTY=\n", "DG_SPACE=1 2\n", "DG_QUOTE='1'\n", "# comment\nDG_A=1\n", "DG_A=1\n\n", "DG_A=1\nDG_A=2\n", "PYTHONPATH=/x\n", "DG_JIT_CACHE_DIR=/x\n"])
+def test_provision_rejects_malformed_candidate_env_before_staging(tmp_path: Path, env: str) -> None:
+    ws, patches = workspace(tmp_path)
+    add_candidate(ws, "c0", patches["comment"], env=env)
+
+    result = provision(tmp_path, ws)
+
+    assert result.returncode != 0
+    assert "env" in result.stderr
+    assert not (tmp_path / "runs").exists()
+
+
 @pytest.mark.parametrize("layout", ["flat", "too-many", "too-many-timelines", "bad-name"])
 def test_provision_rejects_layouts_before_staging(tmp_path: Path, layout: str) -> None:
     ws, patches = workspace(tmp_path)
@@ -180,7 +230,7 @@ def load_summary(monkeypatch: pytest.MonkeyPatch):
 def test_summary_compares_candidates_and_flags_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     summarize = load_summary(monkeypatch)
     patch = [{"path": "patches/deep-gemm-bench/x/000.patch", "sha256": "0"}]
-    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "ready"}, {"name": "fast", "patches": patch, "timeline": "not-requested"}, {"name": "wrong", "patches": patch, "timeline": "apply-failed"}, {"name": "broken", "patches": patch, "timeline": "ready"}, {"name": "reordered", "patches": patch, "timeline": "not-requested"}], "sglang": {"patches": [{"path": "patches/sglang-bench/000.patch", "sha256": "1"}], "bench_script": True}}))
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "env": [], "timeline": "ready"}, {"name": "fast", "patches": patch, "env": ["DG_SM90_PREFILL_2WG=1"], "timeline": "not-requested"}, {"name": "wrong", "patches": patch, "timeline": "apply-failed"}, {"name": "broken", "patches": patch, "timeline": "ready"}, {"name": "reordered", "patches": patch, "timeline": "not-requested"}], "sglang": {"patches": [{"path": "patches/sglang-bench/000.patch", "sha256": "1"}], "bench_script": True}}))
     (tmp_path / "steps.tsv").write_text("image\tbench\t0\t70\nimage\ttimeline\t0\t35\nsglang-image\tcheck\t0\t30\nsglang-image\tbench\t0\t20\nsglang-candidate\tcheck\t0\t60\nsglang-candidate\tbench\t0\t20\nfast\tgate\t0\t70\nfast\tbench\t0\t40\nwrong\tgate\t0\t70\nwrong\tbench\t0\t40\nbroken\tgate\t1\t50\nreordered\tgate\t0\t70\nreordered\tbench\t0\t40\n")
     write_rows(tmp_path / "image/bench.jsonl", [bench_row("decode-balanced-128", 0.2, "d"), bench_row("prefill-balanced-4096", 1.7, "p", clock=1500)])
     write_rows(tmp_path / "image/timeline.jsonl", [{**bench_row("decode-balanced-128", 0.23, "d"), "delta_median_vs_reference": 0.15, "bitwise_equal_to_reference": True}])
@@ -194,7 +244,7 @@ def test_summary_compares_candidates_and_flags_failures(tmp_path: Path, monkeypa
     text, failed = summarize(tmp_path)
 
     assert failed == ["wrong", "broken"]
-    assert "| fast | 000.patch | pass | pass | 2/2 | not-requested | OK |" in text
+    assert "| fast | 000.patch; env DG_SM90_PREFILL_2WG=1 | pass | pass | 2/2 | not-requested | OK |" in text
     assert "| reordered | 000.patch | pass | pass | 1/2 (rest differ) | not-requested | OK |" in text
     assert "| wrong | 000.patch | pass | pass | 1/2 (rest differ) | timeline patch did not apply | FAILED |" in text
     assert "| broken | 000.patch | FAIL (exit 1) | not run | 0/2 (rest differ) | not run | FAILED |" in text
