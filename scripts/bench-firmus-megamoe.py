@@ -27,9 +27,9 @@ Routing generators (top-8 distinct logical experts, EP4):
   real<L>:  Gumbel top-8 with log(logical_count) from run 39051152456, using
             independent source-rank RNG streams. The median/p90/p10 hot-8 layers
             and their exact static maps are embedded in firmus_megamoe_replicas.
-            Each real<L>/replica4/replica8 comparison uses the same seed, hidden states,
+            Each real<L>/replica4 comparison uses the same seed, hidden states,
             logical top-8, routing weights and per-logical-expert weight/scale
-            seeds. Only placement changes: 128 static slots versus 140/152 with
+            seeds. Only placement changes: 128 static slots versus 140 with
             local-copy preference. Zero counts have zero selection probability.
             Sampling without replacement changes the marginal slot frequencies
             from the input weights; JSONL records the realized hot/local shares
@@ -52,7 +52,7 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
-from firmus_megamoe_replicas import REAL_ROUTING_LAYERS, remap, replica_weights
+from firmus_megamoe_replicas import REAL_ROUTING_LAYERS, replica_weights
 
 RANK = int(os.environ["LOCAL_RANK"])
 if RANK == 0:
@@ -67,9 +67,7 @@ TIMELINE_CALLS = 8
 WARMUP, ITERATIONS = 5, 30
 CASES = [("decode", "balanced", n) for n in (4, 16, 32, 64, 96, 128)] + [("decode", "local", 128)]
 CASES += [("prefill", "balanced", n) for n in (1024, 2048, 4096)] + [("prefill", "local", 4096), ("prefill", "skew", 4096)]
-CASES += [("prefill", kind, 4096) for kind in ("mixed50", "mixed64")]
-CASES += [("prefill", "replica8", 4096)]
-CASES += [("prefill", f"real{layer}{suffix}", 4096) for layer in REAL_ROUTING_LAYERS for suffix in ("", "-replica4", "-replica8")]
+CASES += [("prefill", f"real{layer}{suffix}", 4096) for layer in REAL_ROUTING_LAYERS for suffix in ("", "-replica4")]
 TIMELINE_CASES = [("decode", "balanced", 128), ("prefill", "balanced", 4096)]
 
 
@@ -96,10 +94,8 @@ def bench_symm_buffer(group, num_experts=NUM_EXPERTS):
 
 def routing(kind, count, generator, device):
     rank = dist.get_rank()
-    if kind in ("balanced", "replica8"):
+    if kind == "balanced":
         weights, ids = torch.rand(count, NUM_EXPERTS, generator=generator, device=device).topk(TOPK, dim=1)
-        if kind == "replica8":
-            ids = remap(ids, rank)
     elif kind == "local":
         weights, ids = torch.rand(count, NUM_EXPERTS // NUM_RANKS, generator=generator, device=device).topk(TOPK, dim=1)
         ids += rank * (NUM_EXPERTS // NUM_RANKS)
@@ -135,7 +131,7 @@ def real_routing(layer, replicas, count, generator, device):
     uniform = torch.rand(count, NUM_EXPERTS, generator=generator, device=device, dtype=torch.float64).clamp_min(1e-20)
     logical = (logits - (-uniform.log()).log()).topk(TOPK, dim=1).indices
     weights = torch.rand(count, TOPK, generator=generator, device=device)
-    mapping = data[{0: "baseline_map", 4: "replica4_map", 8: "replica_map"}[replicas]]
+    mapping = data[{0: "baseline_map", 4: "replica4_map"}[replicas]]
     width = len(mapping) // NUM_RANKS
     rank = dist.get_rank()
     table = [next((p for p in range(rank * width, (rank + 1) * width) if mapping[p] == expert), mapping.index(expert)) for expert in range(NUM_EXPERTS)]
@@ -203,20 +199,12 @@ def main():
     for case in TIMELINE_CASES if timeline else CASES:
         name = case_name(case)
         stage, kind, count = case
-        if kind == "replica8":
-            # Keep the original cases' seeds/weights/timings unchanged.
-            # Same logical balanced top-8, mapped to local hot copies and sole
-            # cold owners; uniform routing is only 29.6875% local in expectation.
-            w13, w2, s13, s2 = replica_weights(RANK, device)
-            l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
-            buf, num_bytes = bench_symm_buffer(dist.group.WORLD, 152)
-            buffers[152] = (buf, num_bytes)
         real = kind.startswith("real")
         if real:
             layer = int(kind.split("-")[0].removeprefix("real"))
             replicas = int(kind.rsplit("-replica", 1)[1]) if "-replica" in kind else 0
             data = REAL_ROUTING_LAYERS[layer]
-            mapping = data[{0: "baseline_map", 4: "replica4_map", 8: "replica_map"}[replicas]]
+            mapping = data[{0: "baseline_map", 4: "replica4_map"}[replicas]]
             w13, w2, s13, s2 = replica_weights(RANK, device, mapping)
             l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
             if len(mapping) not in buffers:
