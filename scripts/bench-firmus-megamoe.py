@@ -11,6 +11,15 @@ serving call pair; the reported value per iteration is the maximum over ranks.
 Routing generators (all global expert IDs, top-8 of 128, EP4 = 32 experts/rank):
   balanced: per token, the 8 largest of 128 uniform randoms (uniform subsets).
   local:    rank r's tokens choose 8 of its own experts 32r..32r+31 (no NVLink payload).
+  mixed50/mixed64: token t has floor((t+1)*8*p)-floor(t*8*p) local slots,
+            computed with integer percentages. Remaining slots cycle through the
+            other three ranks by (8*t+slot) modulo 3. Every source rank uses the
+            same pattern relative to itself, so aggregate destination-rank loads
+            are exactly equal. Within each destination, random top-8 candidates
+            supply distinct experts (candidate index = slot); weights are random
+            and normalized as usual. Local fraction differs from p by less than
+            one slot over the case. This measures locality at 32 experts/rank,
+            not replication's extra tiles, hot-expert skew or memory footprint.
   skew:     Gumbel top-8 over logits log(f[r]) - 0.25 * log(j + 1) for expert j of
             rank r, f = (1.0, 1.1, 1.2, 1.3). Calibrated on 16384 tokens to rank loads
             1 : 1.11 : 1.21 : 1.31 and per-expert max/mean about 2.0; the realized
@@ -47,6 +56,7 @@ TIMELINE_CALLS = 8
 WARMUP, ITERATIONS = 5, 30
 CASES = [("decode", "balanced", n) for n in (4, 16, 32, 64, 96, 128)] + [("decode", "local", 128)]
 CASES += [("prefill", "balanced", n) for n in (1024, 2048, 4096)] + [("prefill", "local", 4096), ("prefill", "skew", 4096)]
+CASES += [("prefill", kind, 4096) for kind in ("mixed50", "mixed64")]
 TIMELINE_CASES = [("decode", "balanced", 128), ("prefill", "balanced", 4096)]
 
 
@@ -78,6 +88,15 @@ def routing(kind, count, generator, device):
     elif kind == "local":
         weights, ids = torch.rand(count, NUM_EXPERTS // NUM_RANKS, generator=generator, device=device).topk(TOPK, dim=1)
         ids += rank * (NUM_EXPERTS // NUM_RANKS)
+    elif kind in ("mixed50", "mixed64"):
+        percent = int(kind.removeprefix("mixed"))
+        token = torch.arange(count, device=device)[:, None]
+        slot = torch.arange(TOPK, device=device)[None, :]
+        local_slots = ((token + 1) * TOPK * percent) // 100 - (token * TOPK * percent) // 100
+        destination = torch.where(slot < local_slots, rank, (rank + 1 + (token * TOPK + slot) % (NUM_RANKS - 1)) % NUM_RANKS)
+        candidates = torch.rand(count, NUM_RANKS, NUM_EXPERTS // NUM_RANKS, generator=generator, device=device).topk(TOPK, dim=2).indices
+        ids = candidates.transpose(1, 2).gather(2, destination[:, :, None]).squeeze(2) + destination * (NUM_EXPERTS // NUM_RANKS)
+        weights = torch.rand(count, TOPK, generator=generator, device=device)
     else:
         local = torch.arange(NUM_EXPERTS // NUM_RANKS, device=device, dtype=torch.float32)
         factor = torch.tensor([1.0, 1.1, 1.2, 1.3], device=device).repeat_interleave(NUM_EXPERTS // NUM_RANKS)
