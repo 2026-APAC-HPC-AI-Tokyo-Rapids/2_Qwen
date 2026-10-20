@@ -70,3 +70,18 @@ main の 8258.34 run（39225913979）の Prefill ログ（batch 行の `#new-tok
 - Decode geometry は +1.7〜+2.5%。過去の serving で見た Decode +3.3% と同じ傾向。
 
 branch perf/firmus-megamoe-barrier-20261020 は削除。
+
+**expert 複製（k=8、152 物理 expert）の kernel 単体確認（[39453214395](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39453214395)、[39457799091](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39457799091)、Codex 実装、DeepGEMM host・image は変更なし）**
+- gate：logical 128 の参照と physical 152 の比較は、mixed geometry、all idle、live after idle、CUDA graph replay のすべてで PASS。
+- 一様 routing（`replica8`、local 0.30）は 1.6393 ms で、128 expert の balanced 1.5652 ms より +4.7%。これは 38 expert/rank の費用だけを測ったもの（M tile の padding 増加、weight 読み込み 38/32 倍）。
+- 実測の頻度（run 39051152456）から Gumbel top-8 で引いた routing で、同じ seed・同じ論理 routing のまま配置だけを変えて比べた（control header、MegaMoE median）：
+
+| 層（hot-8 集中度） | 現行配置 128 | 複製 152 | local 割合 |
+| --- | ---: | ---: | --- |
+| 43（中央値、53%） | 1.6348 ms | 1.5786 ms（−3.4%） | 0.25 → 0.60 |
+| 62（上位 10%、62%） | 1.6217 ms | 1.5745 ms（−2.9%） | 0.25 → 0.65 |
+| 7（下位 10%、39%） | 1.6008 ms | 1.6073 ms（+0.4%） | 0.25 → 0.52 |
+
+- 実分布では、現行配置そのものが balanced より 2〜4% 遅い（expert の偏り）。複製はこの偏りも均す。
+- 層平均で MegaMoE 約 −2%（clock の揺れが大きく、幅は ±1% 程度）。Prefill では約 −1.2% 相当で、serving 1 回では判定しにくい幅。
+- serving 用の変更（SGLang overlay、94×152 の配置、Prefill の起動引数）は、branch experiment/firmus-megamoe-replication-20261020 の stash `replica-B` に用意してある。
