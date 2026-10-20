@@ -94,3 +94,18 @@ Prefill の FC1 で、同じ token tile（A）を読む隣接 2 CTA を `__clust
 timeline（prefill-balanced-4096、rank 中央値）では ML1FullWait が 70〜73 → 78〜82 µs、ML1Loop が 679〜696 → 689〜708 µs と逆に増えた。cluster の 2 CTA が smem の空き（empty barrier）を互いに待つようになり、L2 読み込み削減の効果より大きかった。FC1 K loop の遅れは TMA の供給ではなく math 側（WGMMA の smem operand 読み込みと 4 math WG の発行間隔）で決まっていると判断し、不採用。
 
 次の候補は math WG を 2 つ × m64n256 にして B operand の smem 読み込みを減らす再構成だが、math WG 内の `trap`（nvlink barrier の timeout と combine の assert）が setmaxnreg を無効にしているため、その除去と host 側のスレッド数変更（image 再 build か host overlay）が前提になる。
+
+## math 2 warpgroup × 64×256（header のみ、RS m64n128 ×2）（kernel bench [39374402355](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39374402355)、aaedc3e、branch experiment/firmus-megamoe-2wg-kb-20261020 は削除）
+
+FC1 K loop の不足（約 1400 clk / K block、MMA は 1024 clk）が SMEM の operand 読み出し（4 WG × SS m64n128 で K block あたり 96 KiB + TMA 書き込み 48 KiB）によるという仮説を試した。host の 640 thread 起動では kernel 全体の register 上限が 96 で m64n256 の WGMMA が ptxas に拒否される（C7602）ため、math WG 0/1 が setmaxnreg で 200 register を持って 64×256 の accumulator を持ち、A を ldmatrix で register に 1 回読んで RS m64n128 を 2 本発行する形にした（operand 読み出し 80 KiB / K block）。WG 2/3 は GEMM 中 24 register で待機し、combine は 16 warp のまま。gate 通過、Decode の SASS は不変。
+
+| case | control | 2 WG |
+| --- | ---: | ---: |
+| prefill-balanced-2048 | 0.8403 ms | 0.8395 ms（−0.1%） |
+| prefill-balanced-4096 | 1.5795 ms | 1.5615 ms（−1.1%） |
+| prefill-local-4096 | 1.3987 ms | 1.3674 ms（−2.2%） |
+| prefill-skew-4096 | 1.7091 ms | 1.7035 ms（−0.3%） |
+
+この run の control は前回（39367977620、1.5611 ms）より遅く、clock も 1980 → 1620 MHz と揺れているので、balanced の差は誤差の範囲。timeline（prefill-balanced-4096、rank 中央値）の決定的な結果は、ML1Loop が 679〜716 → 684〜703 µs とほとんど変わらず、clock 差（1.616 → 1.683 GHz）で割り戻すと K block あたりの clk はむしろ約 3% 増えたこと。ML2Loop も clk 換算で同等だった。一方、epilogue は warp が半分になって ML1Epi が 64〜67 → 87〜89 µs、ML2Epi が 26〜28 → 37〜38 µs に伸び、ML1MmaWait は 7 → 18 µs に増えた（kernel は 1552 → 1567 µs）。
+
+SMEM 読み出しを 17% 減らしても K loop は縮まず、**FC1 K loop の不足は SMEM 帯域では説明できない**。残る候補は、K block ごとの `wgmma.wait_group 0` → FP32 rescale の直列部（convoy）と、WGMMA の発行間隔。不採用。
