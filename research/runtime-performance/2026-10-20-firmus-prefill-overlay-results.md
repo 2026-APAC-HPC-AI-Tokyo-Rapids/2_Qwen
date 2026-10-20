@@ -75,3 +75,22 @@ expert rank 上で同じ token の expert 出力を FP32 で合算し、BF16 1 �
 送信量の削減より、local staging の書き込み（約 233 MB）と読み出し（約 147 MB）、行ごとの acq_rel counter、FC2 K loop に入った spill（20/20 → 112/128 B）の増加が大きかった。不採用。host 再 build の配線は d2fd691 と 82a7f54 の履歴に残る。
 
 FC2 の NVLink 律速に対し、header で試せる手（interleave、bulk copy、事前合算）はいずれも負けた。MegaMoE の次の改善は、FC1 K loop（理論 1024 clk に対し約 1330 clk / K block）の効率か、combine を BF16 のまま減らせない以上、通信と計算の重なりを kernel の外（micro-batch など）で作る方向になる。
+
+## Micro-batch による通信と計算の重ね（試算のみ、実装せず）
+
+Prefill の 1 forward を 2 micro-batch に分け、片方の MegaMoE（FC2 の NVLink scatter）ともう片方の attention 等を重ねる案を、main の profile の stage 時間から試算した。kernel 内の固定費（dispatch、grid sync、NVLink barrier）が 2 回分に増え、tile が小さくなって FC1/FC2 の K loop 効率も下がるため、試算は中央値 −1.2%（p10 −3.3%、p90 +0.9%）で、良くなる条件も狭い。No-Go。FC1 が大きく縮んで FC2 通信の比率が上がった場合に再検討する。
+
+## FC1 A operand の 2 CTA cluster TMA multicast（kernel bench [39367977620](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39367977620)、7d7e5d3、branch experiment/firmus-megamoe-fc1-multicast-kb-20261020 は削除）
+
+Prefill の FC1 で、同じ token tile（A）を読む隣接 2 CTA を `__cluster_dims__(2,1,1)` の cluster にし、A を片方の TMA から両方の smem へ multicast する案（header のみ、Decode の SASS は不変、Prefill は 96 regs・spill 20/20 で main と同じ）。L2 からの読み込みは CTA・K block あたり 48 → 40 KiB。gate は通過。
+
+| case | control（sf128 + swizzle） | multicast |
+| --- | ---: | ---: |
+| prefill-balanced-2048 | 0.8417 ms | 0.8473 ms（+0.7%） |
+| prefill-balanced-4096 | 1.5611 ms | 1.5644 ms（+0.2%） |
+| prefill-local-4096 | 1.3923 ms | 1.4055 ms（+0.9%） |
+| prefill-skew-4096 | 1.7114 ms | 1.7162 ms（+0.3%） |
+
+timeline（prefill-balanced-4096、rank 中央値）では ML1FullWait が 70〜73 → 78〜82 µs、ML1Loop が 679〜696 → 689〜708 µs と逆に増えた。cluster の 2 CTA が smem の空き（empty barrier）を互いに待つようになり、L2 読み込み削減の効果より大きかった。FC1 K loop の遅れは TMA の供給ではなく math 側（WGMMA の smem operand 読み込みと 4 math WG の発行間隔）で決まっていると判断し、不採用。
+
+次の候補は math WG を 2 つ × m64n256 にして B operand の smem 読み込みを減らす再構成だが、math WG 内の `trap`（nvlink barrier の timeout と combine の assert）が setmaxnreg を無効にしているため、その除去と host 側のスレッド数変更（image 再 build か host overlay）が前提になる。
