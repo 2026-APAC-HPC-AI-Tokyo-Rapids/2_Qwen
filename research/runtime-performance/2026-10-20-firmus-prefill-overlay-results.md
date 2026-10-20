@@ -109,3 +109,30 @@ FC1 K loop の不足（約 1400 clk / K block、MMA は 1024 clk）が SMEM の 
 この run の control は前回（39367977620、1.5611 ms）より遅く、clock も 1980 → 1620 MHz と揺れているので、balanced の差は誤差の範囲。timeline（prefill-balanced-4096、rank 中央値）の決定的な結果は、ML1Loop が 679〜716 → 684〜703 µs とほとんど変わらず、clock 差（1.616 → 1.683 GHz）で割り戻すと K block あたりの clk はむしろ約 3% 増えたこと。ML2Loop も clk 換算で同等だった。一方、epilogue は warp が半分になって ML1Epi が 64〜67 → 87〜89 µs、ML2Epi が 26〜28 → 37〜38 µs に伸び、ML1MmaWait は 7 → 18 µs に増えた（kernel は 1552 → 1567 µs）。
 
 SMEM 読み出しを 17% 減らしても K loop は縮まず、**FC1 K loop の不足は SMEM 帯域では説明できない**。残る候補は、K block ごとの `wgmma.wait_group 0` → FP32 rescale の直列部（convoy）と、WGMMA の発行間隔。不採用。
+
+## math 2 warpgroup × 本物の m64n256 SS（host 切り替え、kernel bench [39382077358](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39382077358)、4260933、image 39379223361）
+
+DeepGEMM host（`_C.so`）を v0.1.5 から再 build し、`DG_SM90_PREFILL_2WG=1` のときだけ Qwen Prefill の 128×256 tile を math 256 thread（全体 384 thread、kernel 全体の register 上限 168）で起動する image を作った（913f7bb、run 39379223361、sha256 652aaeef）。header は本物の m64n256k32 SS WGMMA を 2 WG で発行し、待機 WG も register の受け渡しもない（168 regs、spill 0、max R154）。変数なしの image は従来どおりで、image variant の時間は前回までと同等だった。gate は全 case 通過。
+
+| case | control | 2 WG host |
+| --- | ---: | ---: |
+| prefill-balanced-1024 | 0.4738 ms | 0.4595 ms（−3.0%） |
+| prefill-balanced-2048 | 0.8395 ms | 0.8285 ms（−1.3%） |
+| prefill-balanced-4096 | 1.5552 ms | 1.5486 ms（−0.4%、候補の clock は 1680 MHz、control は 1890〜1980） |
+| prefill-local-4096 | 1.3925 ms | 1.3436 ms（−3.5%） |
+| prefill-skew-4096 | 1.7111 ms | 1.6833 ms（−1.6%） |
+
+timeline（prefill-balanced-4096、control は rank 2 だけが遅く（MLastL1End 945 µs）kernel 1639 µs になったので、rank 0/1/3 で比べる。clock は 1.652 / 1.642 GHz でほぼ同じ）:
+
+| 指標（CTA 中央値） | control | 2 WG host |
+| --- | ---: | ---: |
+| ML1Loop | 674〜677 µs | 619〜631 µs（−7%） |
+| ML2Loop | 380〜385 µs | 331〜344 µs（−12%） |
+| ML1MmaWait | 7 µs | 68〜74 µs |
+| ML1Epi | 63 µs | 97〜101 µs |
+| ML2Epi | 25〜26 µs | 38 µs |
+| ML2Scatter | 165〜181 µs | 186〜204 µs |
+| MLastL2End | 1388〜1401 µs | 1381〜1394 µs |
+| kernel | 約 1550 µs（前回の control） | 1520 µs |
+
+本物の SS m64n256 で、初めて K loop が縮んだ（FC1 −7%、FC2 −12%）。header 版の RS m64n128 ×2 で縮まなかったのは、ldmatrix と RS の経路の分だったと考えられる。ただし epilogue・scatter を担当する warp が 16 → 8 に半減した分（ML1Epi +35 µs、ML2Epi +12 µs、ML2Scatter +20 µs）が K loop の利得をほぼ相殺し、kernel 全体は −0.4〜−3.5%（timeline で約 −2%）にとどまる。serving 1 回のばらつき（±3%）では判定できない幅なので、epilogue 側を詰めてから serving で確認する。branch perf/firmus-megamoe-2wg-host-20261020 と image 39379223361 は残す。
