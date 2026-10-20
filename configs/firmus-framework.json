@@ -57,7 +57,8 @@
     "dp": 4,
     "ep": 4,
     "chunked_prefill_size": 16384,
-    "expert_location": "configs/firmus-prefill-expert-location.json",
+    "expert_location": "configs/firmus-prefill-replica4-expert-location.json",
+    "ep_num_redundant_experts": 12,
     "moe_a2a_backend": "megamoe",
     "moe_runner_backend": "deep_gemm",
     "optimistic_prefill_attempts": 2
@@ -65,7 +66,8 @@
   "decode_dp_size": 4,
   "sglang_overlay_patches": [
     "patches/sglang/add-rmsnorm-group-quant.patch",
-    "patches/sglang/prefill-attention-contiguous-kv.patch"
+    "patches/sglang/prefill-attention-contiguous-kv.patch",
+    "patches/sglang/megamoe-prefill-replicas.patch"
   ],
   "deep_gemm_overlay_patches": [
     "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
