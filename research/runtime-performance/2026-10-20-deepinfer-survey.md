@@ -24,3 +24,13 @@
 - DSpark / 可変長検証は、Decode が律速でない今は効かない（DeepInfer 自身の表でも 32 seq/rank で +1.6%）。Decode が詰まったときの候補として残す。
 - balanced CP、動的 EPLB（静的配置で偏り 1.034 と DeepInfer の 1.074 より良い）、prefix 再利用（client が cache-bust）、DeepEP の FP8/LogFMT combine、BF16 の remote 加算、multimem。
 - doc にある compute-quota による chunk 長の決定と各 Load Balancer は OSS に入っていない（`flops_estimator.hpp` は MFU の記録用）。
+
+## 追記：DP 振り分けの負荷会計（候補 2）のログ検証
+
+main の 8258.34 run（39225913979）の Prefill ログ（batch 行の `#new-token / input throughput` から各行の時刻を 20 ms 以内で復元）で検証した。
+- 仮説の仕組みは実在する。Prefill は要求を受け取ってから snapshot を公開するまで約 150 ms かかり、その間に送られた要求は controller の推定 +1 が上書きされて忘れられる。
+- 計測区間の定常状態では、他 rank に待ちがあるのに idle だった rank-forward は 0 だった。Prefill が飽和していて、各 rank に常に 2〜4 件の待ちがあるため。
+- 以前の 1.6〜3.1% は、rotate-ties 導入前に「忘却」と「同負荷なら小さい index」が重なって出ていたもの。CPU 模擬では、旧方式で 2.6〜5.9%、現行の回転方式で 0.1〜0.2% になった。
+- 残る損失は計測開始時の一斉投入直後の 2 forward（全体の 0.21%）だけで、これは忘却では説明できない（原因未特定）。
+
+送る側で数える patch（`dp-inflight-request-accounting`、4 file、+19 行、CPU テスト付き）は作ったが、現構成での効果はノイズ以下と見積もり、serving には出さない。一斉投入直後の偏りを追うなら、ms 単位の振り分けログと snapshot 公開ログを入れた診断 run が先。
