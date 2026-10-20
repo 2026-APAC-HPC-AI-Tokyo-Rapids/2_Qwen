@@ -44,3 +44,22 @@ main の 8258.34 run（39225913979）の Prefill ログ（batch 行の `#new-tok
 | kernel 間の gap・PDL・GC・NUMA | 対応不要 | Prefill の 94 層で gap 1.29〜1.61 ms（forward の 0.48〜0.60%）。gap がすべて消えても上限は 0.84〜0.98%。PDL は既定で有効。GC イベントの記録はなく、NUMA の自動 bind は既定で有効（成否はログ不足で未確認） |
 | combine 前の readiness tag | 作らない | SM90 で `%gridid` を世代値に使う場合、CUDA graph replay での一意性を裏付けられなかった |
 | flat barrier を Prefill geometry に限定する | そのままでは不可 | Prefill instance の中でも、token 0 の rank は Decode geometry を選ぶ（gate の混在 case）。片方の geometry だけ protocol を変えると、待ち合いが成立せず hang する。全 geometry 版の header を Prefill の worker にだけ配る方式で作り直している |
+
+## 追記：kernel bench の結果（2026-10-21）
+
+**QK-norm/RoPE prologue の書き直し（kernel bench [39444953559](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39444953559)、Codex 実装）は不採用。** 68 head を 1 CTA（544 thread）にまとめ、Q/K の load を同期より前に出した版。prologue と連続 KV 出力の合計は 4027 行で 131.5 µs だった。比較対象は次のとおりで、どちらより遅い。
+- image の unfused 列：120.7 µs
+- 現行 overlay の prologue：102.9〜104.7 µs（run 39206818509）
+
+出力 hash は image と異なる（paged/連続の両方を書く経路のため。数値検査は通過）。branch perf/firmus-prefill-prologue-20261020 は削除。
+
+**expert 複製の上限（kernel bench [39445270596](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39445270596)）。** control（main の header）で、自 rank の expert に行く top-8 slot の割合だけを変えた。rank 間の負荷は均等にしてある。
+
+| routing | local 割合 | median |
+| --- | ---: | ---: |
+| balanced | 0.25 | 1.5577 ms |
+| mixed50 | 0.50 | 1.4801 ms（−5.0%） |
+| mixed64 | 0.64 | 1.4562 ms（−6.5%） |
+| local | 1.00 | 1.4314 ms（−8.1%） |
+
+上位 8 expert の全 rank 複製（local 割合 約 0.64）の上限は、MegaMoE −6.5% 程度（clock の揺れは大きい）。実装（第 2 段階）に進む。
