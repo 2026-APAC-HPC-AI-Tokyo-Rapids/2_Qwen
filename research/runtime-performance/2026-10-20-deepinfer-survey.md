@@ -85,3 +85,13 @@ branch perf/firmus-megamoe-barrier-20261020 は削除。
 - 実分布では、現行配置そのものが balanced より 2〜4% 遅い（expert の偏り）。複製はこの偏りも均す。
 - 層平均で MegaMoE 約 −2%（clock の揺れが大きく、幅は ±1% 程度）。Prefill では約 −1.2% 相当で、serving 1 回では判定しにくい幅。
 - serving 用の変更（SGLang overlay、94×152 の配置、Prefill の起動引数）は、branch experiment/firmus-megamoe-replication-20261020 の stash `replica-B` に用意してある。
+
+**複製数 k の比較（kernel bench [39462905249](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39462905249)、実測頻度の routing、control header）。** 物理数は 128+3k で、4 の倍数でなければならないので、k は 4 か 8。k=12/16 は tiny Decode geometry の shared memory ring が足りず compile できない。
+
+| 層 | k=0（128） | k=4（140、35/rank） | k=8（152、38/rank） |
+| --- | ---: | ---: | ---: |
+| 43 | 1.6252 ms | 1.4865 ms（−8.5%） | 1.5866 ms（−2.4%） |
+| 62 | 1.5997 | 1.4958（−6.5%） | 1.5498（−3.1%） |
+| 7 | 1.5846 | 1.5076（−4.9%） | 1.6044（+1.2%） |
+
+k=4（追加 5.0 GiB/GPU）を採用し、gate と serving 用の変更を k=4 に切り替える。
