@@ -60,3 +60,18 @@ FC2 epilogue の行 scatter を、lane ごとの 16 B remote store から、1 �
 | prefill-skew-4096 | 1.709 ms | 1.764 ms（+3.3%） |
 
 local（remote 転送なし）では発行コストが減って速くなるが、balanced では FC2 scatter（前 tile の copy 待ちを含む）が CTA あたり 170〜176 → 180〜217 µs と縮まず、kernel は遅くなった。FC2 相は NVLink 帯域で頭打ちであることがこれで確定し、不採用。転送量そのものを減らす rank 内事前合算（host 変更を伴う）を進める。
+
+## Combine の rank 内事前合算（serving [39355994503](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39355994503)、82a7f54、branch perf/firmus-prereduce-20261020 は削除）
+
+expert rank 上で同じ token の expert 出力を FP32 で合算し、BF16 1 行にして送る案。remote combine は試算で rank あたり 201 → 91 MB。DeepGEMM host を image 内で再 build し（symmetric buffer に約 1.25 GB/GPU の staging・counter・合算行の領域、`DG_SM90_PRE_REDUCE=0` で無効、Decode worker は 0）、header は overlay で追加した。gate は通過し、公式判定も有効だが **7775.63**（main 8258.34 比 −5.8%）。
+
+| | main 39225913979 | pre-reduce |
+| --- | ---: | ---: |
+| Prefill MegaMoE / call | 1682 µs | 1904 µs（+13%） |
+| TTFT 平均 / p90 | 1659 / 1825 ms | 2030 / 2179 ms |
+| ITL 平均 | 14.3 ms | 13.8 ms |
+| Decode MegaMoE | 194 µs | 192 µs |
+
+送信量の削減より、local staging の書き込み（約 233 MB）と読み出し（約 147 MB）、行ごとの acq_rel counter、FC2 K loop に入った spill（20/20 → 112/128 B）の増加が大きかった。不採用。host 再 build の配線は d2fd691 と 82a7f54 の履歴に残る。
+
+FC2 の NVLink 律速に対し、header で試せる手（interleave、bulk copy、事前合算）はいずれも負けた。MegaMoE の次の改善は、FC1 K loop（理論 1024 clk に対し約 1330 clk / K block）の効率か、combine を BF16 のまま減らせない以上、通信と計算の重なりを kernel の外（micro-batch など）で作る方向になる。
