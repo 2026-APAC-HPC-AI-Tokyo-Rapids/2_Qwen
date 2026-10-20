@@ -63,3 +63,10 @@ main の 8258.34 run（39225913979）の Prefill ログ（batch 行の `#new-tok
 | local | 1.00 | 1.4314 ms（−8.1%） |
 
 上位 8 expert の全 rank 複製（local 割合 約 0.64）の上限は、MegaMoE −6.5% 程度（clock の揺れは大きい）。実装（第 2 段階）に進む。
+
+**flat NVLink barrier（全 geometry 版、Prefill の worker にだけ配る想定。kernel bench [39446543672](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39446543672)）は不採用。**
+- Prefill：balanced-4096 は 1.5849 → 1.5706 ms（−0.9%）、balanced-1024/2048 と local は +0.3〜+0.7%、skew は同等。timeline の kernel は control 1590.0 µs、候補 1589.8 µs。
+- combine 前の待ちは遅い rank（MLastL2End の rank 差、最大約 50 µs）で決まっていて、barrier の実装を軽くしても縮まない。
+- Decode geometry は +1.7〜+2.5%。過去の serving で見た Decode +3.3% と同じ傾向。
+
+branch perf/firmus-megamoe-barrier-20261020 は削除。
