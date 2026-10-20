@@ -48,3 +48,15 @@ main（8258.34）の構成から EAGLE3 を steps 3 / draft 4 → 2 / 3 に変�
 | Decode 実行中 / rank | 29.5 | 29.7 |
 
 Decode step は約 31.6 → 29.3 ms（ITL × accept）と約 7% 短いが、accept 長の低下でほぼ相殺し、Prefill 律速のため score は同等（−0.2%、run 間のばらつき ±3% の範囲）。不採用で steps 3 / draft 4 のまま。
+
+## FC2 scatter の非同期 bulk copy 化（kernel bench [39352299232](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39352299232)、0056a46）
+
+FC2 epilogue の行 scatter を、lane ごとの 16 B remote store から、1 行 256 B の `cp.async.bulk`（TMA store 1D、宛先は `sym_buffer.map()`）に置き換え、完了待ちを次 tile の staging 上書き前と combine 前の grid sync の直前に移した案（header のみ、出力は control と同一の見込み、gate 通過）。
+
+| case | control（sf128 + swizzle） | bulk scatter |
+| --- | ---: | ---: |
+| prefill-balanced-4096 | 1.564 ms | 1.614 ms（+3.2%） |
+| prefill-local-4096 | 1.440 ms | 1.371 ms（−4.8%） |
+| prefill-skew-4096 | 1.709 ms | 1.764 ms（+3.3%） |
+
+local（remote 転送なし）では発行コストが減って速くなるが、balanced では FC2 scatter（前 tile の copy 待ちを含む）が CTA あたり 170〜176 → 180〜217 µs と縮まず、kernel は遅くなった。FC2 相は NVLink 帯域で頭打ちであることがこれで確定し、不採用。転送量そのものを減らす rank 内事前合算（host 変更を伴う）を進める。
