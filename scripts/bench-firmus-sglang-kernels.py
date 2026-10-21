@@ -21,7 +21,9 @@ default call.
 import argparse
 import hashlib
 import json
+import runpy
 import statistics
+from pathlib import Path
 
 import sglang.kernels.ops.attention.rope as rope_ops
 import torch
@@ -196,8 +198,14 @@ def bench_fa3_verify(write):
     (FP8 Q/KV, page 64, 4 query tokens per request, causal), and its knobs."""
     from sgl_kernel.flash_attn import flash_attn_with_kvcache, get_scheduler_metadata
 
+    # Provisioning stages this pure Python bench helper. Load the same file
+    # in both trees so the summary has matching cases without putting the
+    # candidate SGLang package on the image tree's import path.
+    helper = Path(__file__).resolve().parents[1] / "overlay/sglang/python/sglang/kernels/ops/attention/fa3_verify_splitkv.py"
+    get_verify_splitkv_metadata = runpy.run_path(str(helper))["get_verify_splitkv_metadata"]
+
     page = 64
-    for batch in (32, 36):
+    for batch in (32, 33, 34, 35, 36):
         gen = torch.Generator(device="cuda").manual_seed(batch)
         seqlens = torch.randint(3900, 4200, (batch,), device="cuda", dtype=torch.int32, generator=gen)
         pages_per_req = (int(seqlens.max()) + page - 1) // page
@@ -212,16 +220,41 @@ def bench_fa3_verify(write):
         meta = get_scheduler_metadata(batch_size=batch, max_seqlen_q=4, max_seqlen_k=int(seqlens.max()), num_heads=64, num_heads_k=4, headdim=128, cache_seqlens=seqlens, qkv_dtype=torch.float8_e4m3fn, cu_seqlens_q=cu_q, page_size=page, causal=True)
         knobs = {"default": {}, "pack-gqa-on": {"pack_gqa": True}, "pack-gqa-off": {"pack_gqa": False}, "sched-meta": {"scheduler_metadata": meta}}
         knobs.update({f"splits-{n}": {"num_splits": n} for n in (1, 2, 3, 4, 6, 8)})
-        reference = None
+        prepared = {n: get_scheduler_metadata(batch_size=batch, max_seqlen_q=4, max_seqlen_k=pages_per_req * page, num_heads=64, num_heads_k=4, headdim=128, cache_seqlens=seqlens, qkv_dtype=q.dtype, cu_seqlens_q=cu_q, page_size=page, causal=True, num_splits=n, pack_gqa=True) for n in (0, 1, 2, 3, 4, 6, 8)}
+        knobs.update({f"sched-meta-splits-{n}": {"num_splits": n, "pack_gqa": True, "scheduler_metadata": prepared[n]} for n in (2, 3, 4, 6, 8)})
+        knobs.update({f"forced-meta-splits-{n}": {"num_splits": n, "pack_gqa": True, "scheduler_metadata": get_verify_splitkv_metadata(q, k_cache, page_table, seqlens, cu_q, n)} for n in (2, 3, 4, 6, 8)})
+
+        reference = flash_attn_with_kvcache(**common)
+
+        def report(name, call, metadata, static_splits, metadata_origin, batch=batch, reference=reference):
+            output = call()
+            diff = (output.float() - reference.float()).abs().max().item()
+            rounded = (batch + 3) // 4 * 4
+            # Read before timing: distinguish measured device metadata from
+            # source-derived work/grid predictions. The semaphore is mutable.
+            dynamic = metadata[:batch].cpu().tolist()
+            m_blocks = metadata[rounded:rounded + batch].cpu().tolist()
+            work = 4 * sum(n * m for n, m in zip(dynamic, m_blocks))
+            sms = torch.cuda.get_device_properties(0).multi_processor_count
+            write(f"fa3-verify-{name}-b{batch}", sha256(output), time_graph([call]), max_abs_diff_vs_default=diff, static_num_splits=static_splits, scheduler_dynamic_splits=dynamic, metadata_origin=metadata_origin, source_grid_ctas=sms, source_logical_work=work, source_work_rounds=(work + sms - 1) // sms)
+
         for name, extra in knobs.items():
             def call(extra=extra, common=common):
                 result = flash_attn_with_kvcache(**common, **extra)
                 return result[0] if isinstance(result, tuple) else result
 
-            output = call()
-            reference = output if reference is None else reference
-            diff = (output.float() - reference.float()).abs().max().item()
-            write(f"fa3-verify-{name}-b{batch}", sha256(output), time_graph([call]), max_abs_diff_vs_default=diff)
+            n = extra.get("num_splits", 0)
+            origin = "passed_metadata" if "scheduler_metadata" in extra else "separate_matching_prepare"
+            report(name, call, extra.get("scheduler_metadata", prepared[n]), n or 1, origin)
+
+        for n in (2, 3, 4, 6, 8):
+            def live_call(n=n, q=q, k_cache=k_cache, page_table=page_table, seqlens=seqlens, cu_q=cu_q, common=common):
+                live_meta = get_verify_splitkv_metadata(q, k_cache, page_table, seqlens, cu_q, n)
+                return flash_attn_with_kvcache(**common, num_splits=n, pack_gqa=True, scheduler_metadata=live_meta)
+
+            # Includes prepare + fill + reset/combine in every graph call;
+            # the reused-metadata row above is only an amortized bound.
+            report(f"forced-live-splits-{n}", live_call, knobs[f"forced-meta-splits-{n}"]["scheduler_metadata"], n, "separate_forced_prepare")
 
 
 def main():

@@ -1,0 +1,29 @@
+--- /dev/null
++++ b/python/sglang/kernels/ops/attention/fa3_verify_splitkv.py
+@@ -0,0 +1,26 @@
++"""Bench-only split-KV control for sgl-attn f89bc230 (sgl-kernel 0.4.5).
++
++The public num_splits is a capacity, not a forced device split count. Keep
++all other prepared scheduling fields and force a uniform count within that
++capacity. Never reuse this metadata across forwards with changed inputs.
++"""
++
++import torch
++from sgl_kernel.flash_attn import get_scheduler_metadata
++
++
++def get_verify_splitkv_metadata(q, k_cache, page_table, cache_seqlens, cu_seqlens_q, num_splits):
++    batch = cache_seqlens.numel()
++    assert q.shape == (batch * 4, 64, 128)
++    assert q.dtype == k_cache.dtype == torch.float8_e4m3fn
++    assert k_cache.shape[1:] == (64, 4, 128)
++    assert page_table.shape[0] == batch and cu_seqlens_q.numel() == batch + 1
++    assert num_splits in (2, 3, 4, 6, 8)
++    metadata = get_scheduler_metadata(batch_size=batch, max_seqlen_q=4, max_seqlen_k=page_table.shape[1] * 64, num_heads=64, num_heads_k=4, headdim=128, cache_seqlens=cache_seqlens, qkv_dtype=q.dtype, cu_seqlens_q=cu_seqlens_q, page_size=64, causal=True, num_splits=num_splits, pack_gqa=True)
++    # flash_api.cpp:1016-1023: dynamic[B-rounded], M[B-rounded], sorted
++    # batch map[B-rounded], head swizzle[B-rounded], semaphore[1]. Only
++    # dynamic[:B] changes. Both the scheduler and combine read virtual
++    # batch order and use the prepared map to locate original requests.
++    assert metadata.numel() == 4 * ((batch + 3) // 4 * 4) + 1
++    metadata[:batch].fill_(num_splits)
++    return metadata

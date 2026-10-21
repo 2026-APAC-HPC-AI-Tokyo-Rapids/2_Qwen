@@ -517,6 +517,61 @@ def check_prefill_attention():
     print("PASS: Prefill prologue within bounds of the unfused reference and the existing fused kernel, zero/odd/4k rows, paged + contiguous KV, graph replay and FA3 multi-request boundaries", flush=True)
 
 
+def check_fa3_verify_splitkv():
+    """Compare forced splits with unmodified FA3, including live graph inputs."""
+    try:
+        from sglang.kernels.ops.attention.fa3_verify_splitkv import (
+            get_verify_splitkv_metadata,
+        )
+    except ImportError:
+        print("SKIP: bench-only FA3 split-KV helper is not in this tree", flush=True)
+        return
+    from sgl_kernel.flash_attn import flash_attn_with_kvcache
+
+    torch.manual_seed(20261022)
+    for batch in (32, 33, 34, 35, 36):
+        pages_per_req = 66
+        pages = batch * pages_per_req + 1
+        table = (torch.randperm(pages - 1, device="cuda") + 1).view(batch, pages_per_req).to(torch.int32)
+        k = (torch.randn(pages, 64, 4, 128, device="cuda") * 2).to(torch.float8_e4m3fn)
+        v = (torch.randn(pages, 64, 4, 128, device="cuda") * 2).to(torch.float8_e4m3fn)
+        q = (torch.randn(batch * 4, 64, 128, device="cuda") * 2).to(torch.float8_e4m3fn)
+        lengths = torch.randint(3900, 4200, (batch,), device="cuda", dtype=torch.int32)
+        lengths[:6] = torch.tensor([4, 63, 64, 65, 96, 97], device="cuda", dtype=torch.int32)
+        cu_q = torch.arange(0, batch * 4 + 1, 4, device="cuda", dtype=torch.int32)
+        common = {"q": q, "k_cache": k, "v_cache": v, "page_table": table, "cache_seqlens": lengths, "cu_seqlens_q": cu_q, "max_seqlen_q": 4, "softmax_scale": 128**-0.5, "causal": True}
+        for n in (2, 3, 4, 6, 8):
+            def candidate():
+                metadata = get_verify_splitkv_metadata(q, k, table, lengths, cu_q, n)
+                return flash_attn_with_kvcache(**common, num_splits=n, pack_gqa=True, scheduler_metadata=metadata)
+
+            def compare(actual, label):
+                expected = flash_attn_with_kvcache(**common, num_splits=1)
+                assert torch.isfinite(actual.float()).all() and torch.isfinite(expected.float()).all(), label
+                check_numerics(actual, expected, label)
+
+            metadata = get_verify_splitkv_metadata(q, k, table, lengths, cu_q, n)
+            assert torch.equal(metadata[:batch], torch.full_like(metadata[:batch], n))
+            compare(flash_attn_with_kvcache(**common, num_splits=n, pack_gqa=True, scheduler_metadata=metadata), f"fa3_verify_reused_b{batch}_s{n}")
+            stream = torch.cuda.Stream()
+            stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(stream):
+                candidate()
+            torch.cuda.current_stream().wait_stream(stream)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                actual = candidate()
+            for replay in range(2):
+                q.copy_((torch.randn(q.shape, device="cuda") * (replay + 1)).to(q.dtype))
+                k.copy_((torch.randn(k.shape, device="cuda") * 2).to(k.dtype))
+                v.copy_((torch.randn(v.shape, device="cuda") * 2).to(v.dtype))
+                lengths.copy_(lengths.roll(1))
+                table.copy_(table.roll(1, 0))
+                graph.replay()
+                compare(actual, f"fa3_verify_live_b{batch}_s{n}_replay{replay}")
+    print("PASS: FA3 forced splits 2/3/4/6/8, b32..36, FP8 paged KV, short/uneven cache lengths and changing graph Q/K/V/page table/lengths", flush=True)
+
+
 if __name__ == "__main__":
     check_decode_silu_quant()
     check_rope_fp8_q()
@@ -525,3 +580,4 @@ if __name__ == "__main__":
     check_topk_mask()
     check_add_rmsnorm_group_quant()
     check_prefill_attention()
+    check_fa3_verify_splitkv()
