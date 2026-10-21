@@ -214,3 +214,37 @@ batch の大部分は 2 要求（8064 token）になったが、Prefill の toke
 kernel bench での MegaMoE −3.6%（balanced-4096）が、Prefill の処理速度 +2.2% と TTFT −6% として現れた。出力は kernel bench で control と bit 一致している。
 
 main に入れる際、image の選択（`scripts/select-qwen-container.sh` は first-parent をたどる）が 913f7bb の build を見つけられるよう、branch 側に main を merge し、main をその merge commit へ fast-forward した。
+## 2 WG ＋ hot-4 複製の serving（[39550627795](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39550627795)、fd122bc）：8366.32
+
+kernel bench [39550917343](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39550917343) では、2 WG header の物理 140 gate が PASS し、出力は control と bit 一致した。実測 routing（層 43/62/7）の MegaMoE は、control・現行配置に対して −11.5% / −11.4% / −9.4% で、2 つの利得はほぼ足し算になった。
+
+| | main bc4e5c7（2 WG） | 2 WG ＋ 複製 |
+| --- | ---: | ---: |
+| score | 8356.18 | 8366.32（+0.1%） |
+| TTFT 平均 / p99 | 1562 / 3610 ms | 1551 / 3591 ms |
+| prefill-0 input throughput | 14648 token/s | 14808 token/s |
+| prefill-0 の `#queue-req` 平均 / 0 の割合 | 1.68 / 24.6% | 1.30 / 41.7% |
+| Decode running / rank | 29.9 | 29.8 |
+
+（8258 run は queue 2.88 / 0 の割合 6.2%。）Prefill の速度が上がるほど、Prefill の待ち行列が空になる時間が増えた。score は closed loop の concurrency 192 と、Decode の 1 周期（ITL 14.5 ms × 200 token ≈ 2.9 s）でほぼ決まる。TTFT（約 1.55 s）が少し縮んでも、cycle 全体（約 4.45 s）への効きは小さい。
+
+concurrency はチームが宣言する値（task rules）。Prefill に余力ができたので、次は c208 にして Decode を上限（128 = 32/rank）近くまで埋める。Decode の slot は max_running 128 ＋ extra × DP で concurrency を覆う必要があるので、`decode_extra_slots` を 16 → 20 にする。
+
+## 2 WG ＋ hot-4 複製、concurrency 208（[39622940739](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39622940739)、0037d97）：8352.94
+
+| | c192（39550627795） | c208 |
+| --- | ---: | ---: |
+| score | 8366.32 | 8352.94 |
+| good fraction | 98.54% | 98.30% |
+| TTFT 平均 / p99 | 1551 / 3591 ms | 1915 / 3908 ms |
+| ITL 平均 | 14.5 ms | 14.5 ms |
+| prefill-0 queue 平均 / 0 の割合 | 1.30 / 41.7% | 1.70 / 35.7% |
+| Decode running / rank（平均） | 29.8 | 30.0 |
+
+c208 の decode-0 の running は、上限 32 の時間が 60.7%、31 が 23.7% で、Decode はすでに上限で詰まっている。concurrency を増やした 16 要求は Decode の slot 待ちに並ぶだけで、TTFT が約 0.36 s（16 ÷ 44 req/s）延びた。
+
+現構成の上限は、Prefill（3 instance、余力は小さい）と Decode（cap 128 = 32 req/rank × 4 verify token）の両方がほぼ同時に詰まる点にある。Decode cap は DeepGEMM の SwapAB 上限（128 token/rank）で決まっている。次の伸びしろは次の 2 つ。
+- Decode の容量を上げる：SwapAB-144 の host patch（d2fd691 の `sm90-swap-ab-144.patch`）を host series に追加して cap 144 にする。ただし、36 req/rank での FA3 decode の悪化（39190318626 で +77%）を同時に解く必要がある。
+- Decode step（ITL 14.5 ms）そのものを速くする。
+
+複製は、この状態では score に出ない（Prefill 側の余力を増やすだけ）。branch perf/firmus-2wg-replica4-20261021 に残し、Decode の容量を上げるときに再評価する。
