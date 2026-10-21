@@ -72,7 +72,7 @@ def archived_server_info() -> dict:
     current = config["prefill"]
     location = current["expert_location"]
     raw["config"]["prefill"].update(expert_location=location, optimistic_prefill_attempts=current["optimistic_prefill_attempts"], chunked_prefill_size=current["chunked_prefill_size"])
-    raw["config"].update({key: config[key] for key in ("concurrency", "decode_max_running_requests", "decode_cuda_graph_bs", "decode_polling_interval")})
+    raw["config"].update({key: config[key] for key in ("concurrency", "decode_max_running_requests", "decode_extra_slots", "decode_cuda_graph_bs", "decode_polling_interval")})
     for role in ("prefill", "decode"):
         placed = role == "prefill" and location != "trivial"
         for state in [raw[role], *raw[role]["internal_states"]]:
@@ -80,7 +80,7 @@ def archived_server_info() -> dict:
             if role == "prefill":
                 state.update(chunked_prefill_size=current["chunked_prefill_size"] // current["dp"], max_running_requests=config["concurrency"])
             if role == "decode":
-                state.update(max_running_requests=config["decode_max_running_requests"], disaggregation_decode_polling_interval=config["decode_polling_interval"])
+                state.update(max_running_requests=config["decode_max_running_requests"], disaggregation_decode_polling_interval=config["decode_polling_interval"], disaggregation_decode_extra_slots=config["decode_extra_slots"])
     raw["decode"]["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
     for state in raw["decode"]["internal_states"]:
         state["effective_max_running_requests_per_dp"] = config["decode_max_running_requests"] // config["decode_dp_size"]
