@@ -95,3 +95,15 @@ branch perf/firmus-megamoe-barrier-20261020 は削除。
 | 7 | 1.5846 | 1.5076（−4.9%） | 1.6044（+1.2%） |
 
 k=4（追加 5.0 GiB/GPU）を採用し、gate と serving 用の変更を k=4 に切り替える。
+
+**hot-4 複製の serving（[39479904180](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39479904180)、21ab54e、2 WG 導入前の main 上）：8360.73。**
+
+| | main 39225913979 | hot-4 複製 |
+| --- | ---: | ---: |
+| score | 8258.34 | 8360.73（+1.2%） |
+| good requests | 5121 / 5205 | 5191 / 5265 |
+| TTFT 平均 / p99 | 1659 / 3856 ms | 1568 / 3537 ms |
+| ITL 平均 / p99 | 14.3 / 16.6 ms | 14.5 / 16.9 ms |
+| prefill-0 の input throughput | 14332 token/s | 14557 token/s（+1.6%） |
+
+2 WG（8356.18、main bc4e5c7）とは効く場所が違うので、両方を重ねた serving（[39550627795](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39550627795)、branch perf/firmus-2wg-replica4-20261021）と、2 WG header で物理 140 の gate を通す kernel bench（4d14e8b）を出した。
