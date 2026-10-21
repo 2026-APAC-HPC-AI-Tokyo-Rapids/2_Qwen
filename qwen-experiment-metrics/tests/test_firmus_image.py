@@ -69,8 +69,9 @@ def test_host_rebuild_reads_the_series_in_order_and_refuses_an_empty_one(tmp_pat
         rebuild.read_series(duplicate)
 
 
+@pytest.mark.parametrize("host_series_kind", ["fixture", "repository"])
 @pytest.mark.parametrize("corruption", CORRUPTIONS)
-def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(tmp_path, corruption):
+def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(tmp_path, corruption, host_series_kind):
     embedded = tmp_path / "embedded"
     embedded.mkdir()
     workspace = tmp_path / "workspace"
@@ -78,7 +79,7 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
     host_dir = workspace / "patches/deep-gemm-host"
     for name, content in HOST_PATCHES.items():
         (host_dir / name).write_bytes(content)
-    host_series = list(HOST_PATCHES)
+    host_series = list(HOST_PATCHES) if host_series_kind == "fixture" else (ROOT / "patches/deep-gemm-host/series").read_text().split()
     (host_dir / "series").write_text("" if corruption == "host_empty_series" else "\n".join(host_series) + "\n")
     host_paths = [f"patches/deep-gemm-host/{name}" for name in host_series]
     patches = [f"patches/sglang/{name}.patch" for name in SGLANG_PATCHES] + [f"patches/sglang-router/{name}.patch" for name in ROUTER_PATCHES] + host_paths
