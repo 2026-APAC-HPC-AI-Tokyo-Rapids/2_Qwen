@@ -66,19 +66,19 @@ def test_benchmark_completion_does_not_claim_sla_success() -> None:
 
 
 def archived_server_info() -> dict:
-    # The archived run predates placement, optimistic Prefill, the configured Prefill chunk, the Decode cap 136 and the polling knob; carry the current settings into its config and every scheduler state.
+    # The archived run predates placement, optimistic Prefill, the configured Prefill chunk and concurrency, the Decode cap 136 and the polling knob; carry the current settings into its config and every scheduler state.
     raw = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     current = config["prefill"]
     location = current["expert_location"]
     raw["config"]["prefill"].update(expert_location=location, optimistic_prefill_attempts=current["optimistic_prefill_attempts"], chunked_prefill_size=current["chunked_prefill_size"])
-    raw["config"].update({key: config[key] for key in ("decode_max_running_requests", "decode_cuda_graph_bs", "decode_polling_interval")})
+    raw["config"].update({key: config[key] for key in ("concurrency", "decode_max_running_requests", "decode_cuda_graph_bs", "decode_polling_interval")})
     for role in ("prefill", "decode"):
         placed = role == "prefill" and location != "trivial"
         for state in [raw[role], *raw[role]["internal_states"]]:
             state.update(init_expert_location="/runtime/source/prefill-expert-location.json" if placed else "trivial", ep_dispatch_algorithm="static" if placed else None, optimistic_prefill_attempts=current["optimistic_prefill_attempts"] if role == "prefill" else 0)
             if role == "prefill":
-                state.update(chunked_prefill_size=current["chunked_prefill_size"] // current["dp"])
+                state.update(chunked_prefill_size=current["chunked_prefill_size"] // current["dp"], max_running_requests=config["concurrency"])
             if role == "decode":
                 state.update(max_running_requests=config["decode_max_running_requests"], disaggregation_decode_polling_interval=config["decode_polling_interval"])
     raw["decode"]["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
