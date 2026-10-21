@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -55,7 +56,7 @@ def workspace(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     (ws / "configs").mkdir(parents=True)
     (ws / "configs/firmus-framework.json").write_text(json.dumps({"images": {"sglang": {"path": str(image), "sha256": hashlib.sha256(b"fake squashfs").hexdigest(), "size_bytes": image.stat().st_size}}}))
     (ws / "scripts").mkdir()
-    for script in ("provision-firmus-kernel-bench.sh", "bench-firmus-megamoe.py", "check-firmus-megamoe.py", "check-firmus-decode-kernels.py"):
+    for script in ("provision-firmus-kernel-bench.sh", "bench-firmus-megamoe.py", "check-firmus-megamoe.py", "check-firmus-decode-kernels.py", "firmus_megamoe_replicas.py"):
         shutil.copy(ROOT / "scripts" / script, ws / "scripts" / script)
     (ws / "platforms/firmus/kernel-bench").mkdir(parents=True)
     shutil.copy(ROOT / "platforms/firmus/kernel-bench/run.sbatch", ws / "platforms/firmus/kernel-bench/run.sbatch")
@@ -268,6 +269,69 @@ def test_summary_passes_clean_run_and_reports_differing_hashes_without_failing(t
     text, failed = summarize(tmp_path)
     assert failed == []
     assert "| rope | 5.00 | 5.00 | +0.0% | 5.00 / 5.00 | False |" in text
+
+
+@pytest.mark.parametrize("kind,percent", [("mixed50", 50), ("mixed64", 64)])
+def test_mixed_routing_is_local_unique_and_rank_balanced(kind: str, percent: int) -> None:
+    torch = pytest.importorskip("torch")
+    # Load only routing: the benchmark's module initialization requires CUDA,
+    # a distributed process group and DeepGEMM, none needed for this CPU check.
+    source = ast.parse((ROOT / "scripts/bench-firmus-megamoe.py").read_text())
+    function = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "routing")
+    context = {"torch": torch, "NUM_EXPERTS": 128, "NUM_RANKS": 4, "TOPK": 8}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), "routing", "exec"), context)  # noqa: S102 - trusted repository function, without CUDA initialization
+    loads = torch.zeros(4, dtype=torch.int64)
+    for rank in range(4):
+        context["dist"] = types.SimpleNamespace(get_rank=lambda rank=rank: rank)
+        generator = torch.Generator().manual_seed(104 + rank)
+        ids, weights = context["routing"](kind, 4096, generator, "cpu")
+        assert ids.shape == weights.shape == (4096, 8)
+        assert ids.dtype == torch.int32 and ids.is_contiguous() and weights.is_contiguous()
+        assert ids.min() >= 0 and ids.max() < 128
+        assert (ids.sort(dim=1).values.diff(dim=1) > 0).all()
+        local = ((ids // 32) == rank).sum().item()
+        assert local == (4096 * 8 * percent) // 100
+        assert torch.allclose(weights.sum(dim=1), torch.ones(4096))
+        loads += torch.bincount((ids // 32).flatten().long(), minlength=4)
+    assert loads.tolist() == [32768] * 4
+
+
+def test_summary_displays_mixed_locality_cases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    summarize = load_summary(monkeypatch)
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "not-requested"}, {"name": "control-sf128-swizzle", "patches": [], "timeline": "not-requested"}], "sglang": None}))
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t65\ncontrol-sf128-swizzle\tgate\t0\t80\ncontrol-sf128-swizzle\tbench\t0\t65\n")
+    rows = [bench_row(f"prefill-{kind}-4096", 1.5, kind) for kind in ("mixed50", "mixed64", "replica8")]
+    write_rows(tmp_path / "image/bench.jsonl", rows)
+    write_rows(tmp_path / "control-sf128-swizzle/bench.jsonl", rows)
+    text, failed = summarize(tmp_path)
+    assert failed == []
+    for row in rows:
+        assert f"| {row['case']} | 1.5000 | 1.5000 (+0.0%) |" in text
+
+
+def test_replica_mapping_preserves_logical_experts_and_masks() -> None:
+    torch = pytest.importorskip("torch")
+    replicas = runpy.run_path(str(ROOT / "scripts/firmus_megamoe_replicas.py"))
+    mapping = replicas["physical_to_logical"]()
+    assert len(mapping) == 140
+    assert [mapping.count(e) for e in range(128)] == [4] * 4 + [1] * 124
+    loads = torch.zeros(4, dtype=torch.int64)
+    for rank in range(4):
+        ids = torch.arange(-1, 128, dtype=torch.int32)
+        physical = replicas["remap"](ids, rank)
+        assert physical[0] == -1
+        assert torch.tensor(mapping)[physical[1:].long()].tolist() == list(range(128))
+        assert (physical[1:5] // 35 == rank).all()
+        assert (physical[1:] // 35 == rank).sum().item() == 35
+        loads += torch.bincount((physical[1:] // 35).long(), minlength=4)
+    assert loads.tolist() == [128] * 4
+    source = ast.parse((ROOT / "scripts/bench-firmus-megamoe.py").read_text())
+    function = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "routing")
+    context = {"torch": torch, "NUM_EXPERTS": 128, "NUM_RANKS": 4, "TOPK": 8, "dist": types.SimpleNamespace(get_rank=lambda: 3)}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), "routing", "exec"), context)  # noqa: S102 - trusted repository function, without CUDA initialization
+    logical, _ = context["routing"]("balanced", 4096, torch.Generator().manual_seed(9), "cpu")
+    physical = replicas["remap"](logical, 3)
+    assert torch.equal(torch.tensor(mapping)[physical.long()], logical.long())
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
