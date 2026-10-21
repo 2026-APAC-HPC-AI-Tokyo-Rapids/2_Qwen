@@ -180,3 +180,18 @@ epilogue の改善は狙いどおり効いた（FC1 epilogue + store が約 −8
 timeline（prefill-balanced-4096）では、epi-scatter で math 側の ML2Scatter は 0 になった。しかし ML2Loop が 360 → 510〜535 µs、ML2FullWait が 30 → 140〜200 µs に増え、MLastL2End は epi と同程度だった（kernel 1525 µs 対 epi 1505 µs）。FC2 区間は NVLink 律速のままで、送信を別 warp に移しても math が FC2 stage を待つだけになった。scatter 移設は不採用（branch perf/firmus-megamoe-2wg-scatter-20261020 は削除）。
 
 epi が最良なので、serving で確認する（run 39447708936、perf/firmus-megamoe-2wg-host-20261020、image 39379223361、Prefill の worker にだけ `DG_SM90_PREFILL_2WG=1`）。
+
+## Prefill の batch を 8192 token/rank に倍増（serving [39379601121](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39379601121)、4559d2d、branch experiment/firmus-prefill-chunk8192-20261020 は削除）
+
+`chunked_prefill_size` を 16384 から 32768 にし、MegaMoE の token 上限も 8192/rank にした（f0fed01 の配線）。他は main と同じ。
+
+| | main 39225913979 | chunk 8192 |
+| --- | ---: | ---: |
+| score | 8258.34 | 8202.54（−0.7%） |
+| good requests | 5121 / 5205 | 5088 / 5172 |
+| TTFT 平均 / p99 | 1659 / 3856 ms | 1948 / 3954 ms |
+| ITL 平均 / p99 | 14.3 / 16.6 ms | 13.0 / 16.0 ms |
+| prefill-0 の batch | 4032 token が主 | 8064 token が 1369 回、4032 token が 234 回 |
+| prefill-0 の input throughput（batch 行の平均） | 14332 token/s | 14162 token/s |
+
+batch の大部分は 2 要求（8064 token）になったが、Prefill の token あたり処理速度は上がらなかった（−1.2%）。1 forward あたりの固定費（MegaMoE の dispatch と末尾の同期など）は、4k token でもすでに forward 時間に比べて小さく、行数を倍にしても償却の効果が出ない。TTFT が約 0.3 s 延び、score は誤差の範囲で下がったので、不採用。
