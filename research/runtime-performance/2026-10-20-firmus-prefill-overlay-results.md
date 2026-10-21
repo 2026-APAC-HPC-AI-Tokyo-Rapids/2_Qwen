@@ -248,3 +248,25 @@ c208 の decode-0 の running は、上限 32 の時間が 60.7%、31 が 23.7% 
 - Decode step（ITL 14.5 ms）そのものを速くする。
 
 複製は、この状態では score に出ない（Prefill 側の余力を増やすだけ）。branch perf/firmus-2wg-replica4-20261021 に残し、Decode の容量を上げるときに再評価する。
+
+## FA3 decode（TARGET_VERIFY）の 33 要求/rank を超えたときの崖（kernel bench [39692814746](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39692814746)、ec47c09、Codex 調査）
+
+**原因：**
+- FA3 は 132 CTA の persistent scheduler で動く（`tile_scheduler.hpp:548-550`）。仕事の単位は「要求 × kv head 4」で、32 要求なら 128、33 要求なら 132 で 1 巡に収まる。34 要求以上は 2 巡目に 4〜12 単位だけが残る。
+- `num_splits` は上限の指定にすぎず、prepare の heuristic が実効値を 1 に戻す（`flash_prepare_scheduler.cu:140-158`）。以前の knob sweep が効かなかったのはこのため。
+
+| 要求/rank | default | sched-meta ＋ splits | split を実効値で固定（meta 事前計算）の最良 |
+| --- | ---: | ---: | ---: |
+| 32 | 50.6 µs | 47.6 | 57.2（split 2） |
+| 33 | 50.4 | 48.0 | 58.5（split 2） |
+| 34 | 89.1 | 84.2 | 73.8（split 3） |
+| 35 | 90.2 | 85.2 | 74.2（split 3） |
+| 36 | 90.1 | 85.2 | 75.4（split 3） |
+
+split を固定すると 36 要求で −16% になるが、理想（約 57 µs）には遠く、split の combine の費用が大きい。
+
+Decode の step（約 32 ms ＝ ITL 14.5 ms × accept 2.2）の内訳の目安は、MegaMoE 18 ms（token 数にほぼ依存しない）と FA3 4.5 ms。そのうえで：
+- 36 要求/rank（split 3）：FA3 が約 +2.6 ms で step 約 +9%、要求 +12.5%。差し引き +3% 前後。
+- 33 要求/rank：FA3 の追加は 0 で step はほぼ不変、要求 +3.1%。差し引き +3% 前後。
+
+**Decode の上限は 132（33 要求/rank）を先に試す。** SwapAB-144 の image で 132 token が SwapAB に入る。FA3 の変更は不要。
