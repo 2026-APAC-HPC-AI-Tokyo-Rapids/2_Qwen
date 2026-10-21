@@ -109,3 +109,108 @@ FC1 K loop の不足（約 1400 clk / K block、MMA は 1024 clk）が SMEM の 
 この run の control は前回（39367977620、1.5611 ms）より遅く、clock も 1980 → 1620 MHz と揺れているので、balanced の差は誤差の範囲。timeline（prefill-balanced-4096、rank 中央値）の決定的な結果は、ML1Loop が 679〜716 → 684〜703 µs とほとんど変わらず、clock 差（1.616 → 1.683 GHz）で割り戻すと K block あたりの clk はむしろ約 3% 増えたこと。ML2Loop も clk 換算で同等だった。一方、epilogue は warp が半分になって ML1Epi が 64〜67 → 87〜89 µs、ML2Epi が 26〜28 → 37〜38 µs に伸び、ML1MmaWait は 7 → 18 µs に増えた（kernel は 1552 → 1567 µs）。
 
 SMEM 読み出しを 17% 減らしても K loop は縮まず、**FC1 K loop の不足は SMEM 帯域では説明できない**。残る候補は、K block ごとの `wgmma.wait_group 0` → FP32 rescale の直列部（convoy）と、WGMMA の発行間隔。不採用。
+
+## math 2 warpgroup × 本物の m64n256 SS（host 切り替え、kernel bench [39382077358](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39382077358)、4260933、image 39379223361）
+
+DeepGEMM host（`_C.so`）を v0.1.5 から再 build し、`DG_SM90_PREFILL_2WG=1` のときだけ Qwen Prefill の 128×256 tile を math 256 thread（全体 384 thread、kernel 全体の register 上限 168）で起動する image を作った（913f7bb、run 39379223361、sha256 652aaeef）。header は本物の m64n256k32 SS WGMMA を 2 WG で発行し、待機 WG も register の受け渡しもない（168 regs、spill 0、max R154）。変数なしの image は従来どおりで、image variant の時間は前回までと同等だった。gate は全 case 通過。
+
+| case | control | 2 WG host |
+| --- | ---: | ---: |
+| prefill-balanced-1024 | 0.4738 ms | 0.4595 ms（−3.0%） |
+| prefill-balanced-2048 | 0.8395 ms | 0.8285 ms（−1.3%） |
+| prefill-balanced-4096 | 1.5552 ms | 1.5486 ms（−0.4%、候補の clock は 1680 MHz、control は 1890〜1980） |
+| prefill-local-4096 | 1.3925 ms | 1.3436 ms（−3.5%） |
+| prefill-skew-4096 | 1.7111 ms | 1.6833 ms（−1.6%） |
+
+timeline（prefill-balanced-4096、control は rank 2 だけが遅く（MLastL1End 945 µs）kernel 1639 µs になったので、rank 0/1/3 で比べる。clock は 1.652 / 1.642 GHz でほぼ同じ）:
+
+| 指標（CTA 中央値） | control | 2 WG host |
+| --- | ---: | ---: |
+| ML1Loop | 674〜677 µs | 619〜631 µs（−7%） |
+| ML2Loop | 380〜385 µs | 331〜344 µs（−12%） |
+| ML1MmaWait | 7 µs | 68〜74 µs |
+| ML1Epi | 63 µs | 97〜101 µs |
+| ML2Epi | 25〜26 µs | 38 µs |
+| ML2Scatter | 165〜181 µs | 186〜204 µs |
+| MLastL2End | 1388〜1401 µs | 1381〜1394 µs |
+| kernel | 約 1550 µs（前回の control） | 1520 µs |
+
+本物の SS m64n256 で、初めて K loop が縮んだ（FC1 −7%、FC2 −12%）。header 版の RS m64n128 ×2 で縮まなかったのは、ldmatrix と RS の経路の分だったと考えられる。ただし epilogue・scatter を担当する warp が 16 → 8 に半減した分（ML1Epi +35 µs、ML2Epi +12 µs、ML2Scatter +20 µs）が K loop の利得をほぼ相殺し、kernel 全体は −0.4〜−3.5%（timeline で約 −2%）にとどまる。serving 1 回のばらつき（±3%）では判定できない幅なので、epilogue 側を詰めてから serving で確認する。branch perf/firmus-megamoe-2wg-host-20261020 と image 39379223361 は残す。
+
+## 2 WG の FC1 epilogue 改善と WGMMA 交互発行（kernel bench [39429313746](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39429313746)、da53188、image 39379223361）
+
+候補 `fc1-2wg-host-epi-turn`（2 WG host 版の上で、FC2 は NVLink 律速のため FC1 だけを変更）:
+- FC1 epilogue：SwiGLU を分岐なしで計算する（行の有効判定は amax と store だけ）。FP8 staging は warp ごとの 144 B pitch で bank conflict をなくし、16 B の global store で直接書く（WG barrier、TMA store、その完了待ちを廃止）。
+- FC2 開始可否の通知：warp 単位の arrival を次 tile の K block 2 で出す。CTA の最後の tile は FC2 block を取る直前に出す。
+- FC1 WGMMA：2 WG が named barrier 8/9 で交互に発行する（turn は発行時点で渡す）。
+
+gate 通過。出力 hash は 12 case すべてで control、2 WG host と一致した。
+
+| case | control | 2 WG host | epi-turn |
+| --- | ---: | ---: | ---: |
+| prefill-balanced-1024 | 0.4803 ms | 0.4671 | 0.4576（−4.7%） |
+| prefill-balanced-2048 | 0.8497 | 0.8374 | 0.8221（−3.2%） |
+| prefill-balanced-4096 | 1.5666 | 1.5443 | 1.5217（−2.9%） |
+| prefill-local-4096 | 1.4331 | 1.3441 | 1.3596（−5.1%） |
+| prefill-skew-4096 | 1.7435 | 1.7088 | 1.7038（−2.3%） |
+
+timeline（prefill-balanced-4096、CTA 中央値）:
+
+| 指標 | 2 WG host（1.622 GHz） | epi-turn（1.550 GHz） |
+| --- | ---: | ---: |
+| ML1Epi | 98〜103 µs | 45〜52 µs |
+| ML1Store | 29 µs | 2 µs |
+| ML1MmaWait | 67〜69 µs | 15〜17 µs |
+| ML1Loop | 631〜652 µs | 697〜797 µs（clk 換算で約 +5%） |
+
+epilogue の改善は狙いどおり効いた（FC1 epilogue + store が約 −80 µs/CTA）。一方、交互発行は K loop を悪化させた。次は交互発行を外した epilogue のみの版を出す。
+
+## epilogue のみの版と、FC2 scatter の dispatch warp への移設（kernel bench [39439372069](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39439372069)、image 39379223361）
+
+`fc1-2wg-host-epi` は epi-turn から交互発行を外したもの。`fc1-2wg-host-epi-scatter` はその上で、FC2 の NVLink scatter を dispatch warp（2 warp）に移したもの（Codex が実装、64 KiB の staging 1 面、full/empty mbarrier、END 通知）。gate はどちらも通過し、出力 hash は 12 case すべてで control と一致した。
+
+| case | control | epi | epi-scatter |
+| --- | ---: | ---: | ---: |
+| prefill-balanced-1024 | 0.4806 ms | 0.4553（−5.3%） | 0.4638 |
+| prefill-balanced-2048 | 0.8564 | 0.8217（−4.1%） | 0.8252 |
+| prefill-balanced-4096 | 1.5724 | 1.5157（−3.6%） | 1.5170 |
+| prefill-local-4096 | 1.4133 | 1.3095（−7.3%） | 1.3734 |
+| prefill-skew-4096 | 1.7384 | 1.6679（−4.1%） | 1.6989 |
+
+timeline（prefill-balanced-4096）では、epi-scatter で math 側の ML2Scatter は 0 になった。しかし ML2Loop が 360 → 510〜535 µs、ML2FullWait が 30 → 140〜200 µs に増え、MLastL2End は epi と同程度だった（kernel 1525 µs 対 epi 1505 µs）。FC2 区間は NVLink 律速のままで、送信を別 warp に移しても math が FC2 stage を待つだけになった。scatter 移設は不採用（branch perf/firmus-megamoe-2wg-scatter-20261020 は削除）。
+
+epi が最良なので、serving で確認する（run 39447708936、perf/firmus-megamoe-2wg-host-20261020、image 39379223361、Prefill の worker にだけ `DG_SM90_PREFILL_2WG=1`）。
+
+## Prefill の batch を 8192 token/rank に倍増（serving [39379601121](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39379601121)、4559d2d、branch experiment/firmus-prefill-chunk8192-20261020 は削除）
+
+`chunked_prefill_size` を 16384 から 32768 にし、MegaMoE の token 上限も 8192/rank にした（f0fed01 の配線）。他は main と同じ。
+
+| | main 39225913979 | chunk 8192 |
+| --- | ---: | ---: |
+| score | 8258.34 | 8202.54（−0.7%） |
+| good requests | 5121 / 5205 | 5088 / 5172 |
+| TTFT 平均 / p99 | 1659 / 3856 ms | 1948 / 3954 ms |
+| ITL 平均 / p99 | 14.3 / 16.6 ms | 13.0 / 16.0 ms |
+| prefill-0 の batch | 4032 token が主 | 8064 token が 1369 回、4032 token が 234 回 |
+| prefill-0 の input throughput（batch 行の平均） | 14332 token/s | 14162 token/s |
+
+batch の大部分は 2 要求（8064 token）になったが、Prefill の token あたり処理速度は上がらなかった（−1.2%）。1 forward あたりの固定費（MegaMoE の dispatch と末尾の同期など）は、4k token でもすでに forward 時間に比べて小さく、行数を倍にしても償却の効果が出ない。TTFT が約 0.3 s 延び、score は誤差の範囲で下がったので、不採用。
+
+## 2 math warpgroup ＋ per-warp FC1 epilogue の serving（[39447708936](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39447708936)）：**8356.18**、main に採用
+
+構成は main（8258.34）と同じで、次の 3 点だけが違う。
+- image：39379223361（913f7bb の build。v0.1.5 の `_C.so` を host patch `sm90-prefill-2wg.patch` 付きで再 build したもの）
+- DeepGEMM overlay：`sm90-prefill-2wg-host-epi.patch` を追加
+- Prefill の worker：`DG_SM90_PREFILL_2WG=1`
+
+| | main 39225913979 | 2 WG + epi |
+| --- | ---: | ---: |
+| score | 8258.34 | **8356.18（+1.2%）** |
+| good requests | 5121 / 5205 | 5185 / 5260 |
+| TTFT 平均 / p99 | 1659 / 3856 ms | 1562 / 3610 ms |
+| ITL 平均 / p99 | 14.3 / 16.6 ms | 14.5 / 16.9 ms |
+| prefill-0 の input throughput（batch 行の平均） | 14332 token/s | 14648 token/s（+2.2%） |
+
+kernel bench での MegaMoE −3.6%（balanced-4096）が、Prefill の処理速度 +2.2% と TTFT −6% として現れた。出力は kernel bench で control と bit 一致している。
+
+main に入れる際、image の選択（`scripts/select-qwen-container.sh` は first-parent をたどる）が 913f7bb の build を見つけられるよう、branch 側に main を merge し、main をその merge commit へ fast-forward した。
