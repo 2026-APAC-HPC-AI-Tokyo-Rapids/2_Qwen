@@ -72,16 +72,16 @@ def archived_server_info() -> dict:
     current = config["prefill"]
     location = current["expert_location"]
     raw["config"]["prefill"].update(expert_location=location, ep_num_redundant_experts=current["ep_num_redundant_experts"], optimistic_prefill_attempts=current["optimistic_prefill_attempts"], chunked_prefill_size=current["chunked_prefill_size"])
-    raw["config"].update({key: config[key] for key in ("decode_max_running_requests", "decode_cuda_graph_bs", "decode_polling_interval")})
+    raw["config"].update({key: config[key] for key in ("concurrency", "decode_max_running_requests", "decode_extra_slots", "decode_cuda_graph_bs", "decode_polling_interval")})
     for role in ("prefill", "decode"):
         placed = role == "prefill" and location != "trivial"
         for state in [raw[role], *raw[role]["internal_states"]]:
             state.update(init_expert_location="/runtime/source/prefill-expert-location.json" if placed else "trivial", ep_dispatch_algorithm="static" if placed else None, optimistic_prefill_attempts=current["optimistic_prefill_attempts"] if role == "prefill" else 0)
             state.update(ep_num_redundant_experts=current["ep_num_redundant_experts"] if role == "prefill" else 0, enable_eplb=False)
             if role == "prefill":
-                state.update(chunked_prefill_size=current["chunked_prefill_size"] // current["dp"])
+                state.update(max_running_requests=config["concurrency"], chunked_prefill_size=current["chunked_prefill_size"] // current["dp"])
             if role == "decode":
-                state.update(max_running_requests=config["decode_max_running_requests"], disaggregation_decode_polling_interval=config["decode_polling_interval"])
+                state.update(max_running_requests=config["decode_max_running_requests"], disaggregation_decode_polling_interval=config["decode_polling_interval"], disaggregation_decode_extra_slots=config["decode_extra_slots"])
     raw["decode"]["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
     for state in raw["decode"]["internal_states"]:
         state["effective_max_running_requests_per_dp"] = config["decode_max_running_requests"] // config["decode_dp_size"]
@@ -208,7 +208,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     for switch in ("SGLANG_PREFILL_FUSED_FP8_SHUFFLE", "SGLANG_PREFILL_TILED_ROUTING", "SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS", "SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES", "SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY", "SGLANG_DECODE_ASYNC_ADMISSION"):
         assert "${" + switch + ":-0}" in startup
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
+    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 208, "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
     assert config["decode_max_running_requests"] == 128  # 32 requests x 4 verify tokens = 128: above that DeepGEMM leaves SwapAB
     assert config["decode_polling_interval"] == 1  # Async admission replaces the polling interval of 2
