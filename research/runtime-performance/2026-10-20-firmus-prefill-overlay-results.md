@@ -248,3 +248,43 @@ c208 の decode-0 の running は、上限 32 の時間が 60.7%、31 が 23.7% 
 - Decode step（ITL 14.5 ms）そのものを速くする。
 
 複製は、この状態では score に出ない（Prefill 側の余力を増やすだけ）。branch perf/firmus-2wg-replica4-20261021 に残し、Decode の容量を上げるときに再評価する。
+
+## FA3 decode（TARGET_VERIFY）の 33 要求/rank を超えたときの崖（kernel bench [39692814746](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39692814746)、ec47c09、Codex 調査）
+
+**原因：**
+- FA3 は 132 CTA の persistent scheduler で動く（`tile_scheduler.hpp:548-550`）。仕事の単位は「要求 × kv head 4」で、32 要求なら 128、33 要求なら 132 で 1 巡に収まる。34 要求以上は 2 巡目に 4〜12 単位だけが残る。
+- `num_splits` は上限の指定にすぎず、prepare の heuristic が実効値を 1 に戻す（`flash_prepare_scheduler.cu:140-158`）。以前の knob sweep が効かなかったのはこのため。
+
+| 要求/rank | default | sched-meta ＋ splits | split を実効値で固定（meta 事前計算）の最良 |
+| --- | ---: | ---: | ---: |
+| 32 | 50.6 µs | 47.6 | 57.2（split 2） |
+| 33 | 50.4 | 48.0 | 58.5（split 2） |
+| 34 | 89.1 | 84.2 | 73.8（split 3） |
+| 35 | 90.2 | 85.2 | 74.2（split 3） |
+| 36 | 90.1 | 85.2 | 75.4（split 3） |
+
+split を固定すると 36 要求で −16% になるが、理想（約 57 µs）には遠く、split の combine の費用が大きい。
+
+Decode の step（約 32 ms ＝ ITL 14.5 ms × accept 2.2）の内訳の目安は、MegaMoE 18 ms（token 数にほぼ依存しない）と FA3 4.5 ms。そのうえで：
+- 36 要求/rank（split 3）：FA3 が約 +2.6 ms で step 約 +9%、要求 +12.5%。差し引き +3% 前後。
+- 33 要求/rank：FA3 の追加は 0 で step はほぼ不変、要求 +3.1%。差し引き +3% 前後。
+
+**Decode の上限は 132（33 要求/rank）を先に試す。** SwapAB-144 の image で 132 token が SwapAB に入る。FA3 の変更は不要。
+
+## Decode 上限 132（33 要求/rank）＋ SwapAB-144 image ＋ 2 WG ＋ hot-4 複製（serving [39699383079](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39699383079)、531c78a、image 39693217189）：8155.07、不採用
+
+| | main（2 WG、cap 128、c192） | 2 WG ＋ 複製、c192 | cap 132、c196 |
+| --- | ---: | ---: | ---: |
+| score | 8356.18 | 8366.32 | **8155.07** |
+| ITL 平均 / p99 | 14.5 / 16.9 ms | 14.5 / 16.9 ms | 15.3 / 17.9 ms |
+| Decode running / rank | 29.9 | 29.8 | 30.7（33 が 61%） |
+| accept 長 | 2.2 | 2.2 | 2.21 |
+| prefill queue 0 の割合 | 24.6% | 41.7% | 52.2% |
+
+Decode の running は +3% になったが、ITL が +5.8% 延びて score は −2.4%。decode-0 の profile（kernel-summary の平均時間、cap 128 の run 39550627795 との比較）：
+- DeepGEMM の dense FP8 GEMM（`sm90_fp8_gemm_1d2d`、QKV と O）：15.8 → **21.6 µs（+37%）**。M = 33 × 4 = 132 行が BLOCK_M 128 の 1 tile を超え、2 tile 目が 4 行だけになる。
+- Decode MegaMoE（SwapAB）：199.2 → 207.0 µs（+3.9%）。
+- FA3 verify（cutlass device_kernel）：50.8 → 50.8 µs（33 要求までは 1 巡、予想どおり）。
+- 1 step あたり dense GEMM で約 +1.1 ms、MegaMoE で約 +0.7 ms、計約 +1.8 ms（+6%）となり、ITL の増加と合う。
+
+Decode の 128 行（32 要求 × 4 検証 token）は、dense GEMM・MegaMoE SwapAB・FA3 の 3 つで同時に tile 境界になっていて、上限を少し上げるだけでは step が割高になる。Decode の容量を増やすには、128 行を超える範囲で dense GEMM の tile の選び方（BLOCK_M、SwapAB）を直すか、Decode step そのものを速くする必要がある。branch perf/firmus-swapab144-20261022 と image 39693217189 は残す。
