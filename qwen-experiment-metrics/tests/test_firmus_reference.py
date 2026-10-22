@@ -208,13 +208,17 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     for switch in ("SGLANG_PREFILL_FUSED_FP8_SHUFFLE", "SGLANG_PREFILL_TILED_ROUTING", "SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS", "SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES", "SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY", "SGLANG_DECODE_ASYNC_ADMISSION"):
         assert "${" + switch + ":-0}" in startup
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 192, "official")
+    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 196, "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
-    assert config["decode_max_running_requests"] == 128  # 32 requests x 4 verify tokens = 128: above that DeepGEMM leaves SwapAB
+    assert config["decode_max_running_requests"] == 132  # 33 requests x 4 verify tokens = 132: FA3 verify keeps one 132-CTA round up to 33 requests per rank; SwapAB covers up to 144
     assert config["decode_polling_interval"] == 1  # Async admission replaces the polling interval of 2
     assert config["prefill"]["optimistic_prefill_attempts"] == 2
     assert config["decode_max_running_requests"] + config["decode_extra_slots"] * config["decode_dp_size"] >= config["concurrency"]
     assert max(config["decode_cuda_graph_bs"]) == config["decode_max_running_requests"] // config["decode_dp_size"]
+    assert config["decode_cuda_graph_bs"][-2:] == [32, 33]
+    # KV capacity is per DP rank and includes both running and transfer slots.
+    slots_per_rank = config["decode_max_running_requests"] // config["decode_dp_size"] + config["decode_extra_slots"]
+    assert config["decode_max_total_tokens"] >= slots_per_rank * (4096 + 128)
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
