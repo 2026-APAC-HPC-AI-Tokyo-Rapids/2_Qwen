@@ -99,3 +99,37 @@ Buffer overflow when allocating memory for batch_prefill_tmp_s with size 1048576
 image内のPython wrapperには、同じplan条件から必要なfloat/int workspace bytesを返す `workspace_size(...)` と、その容量を渡す `reset_workspace_buffer(...)` が存在する。次に修正するなら、固定容量の推測上の増量より、このAPIで候補ごとの必要量を確保してからplanするのが直接的な対応。検査の削除や精度判定変更は不要。今回はこの追加修正やGPU再投入は行っていない。
 
 raw正本は `/srv/qwen-artifacts/39754745523/2/`。48ファイルのSHA256を照合し、commitとimage SHAが予定どおりであることを確認した。Actionsもfailureで終了し、runtime削除stepは成功。通常benchmark・profileには到達せずscoreなし、最適化の採否は引き続き未判定。今回のGPU投入は1件、buildは0件。継続調査用に実験branchを保持し、今回作成したローカルworktreeは削除した。
+
+## 未採用候補のgateを外した再実行：E2E成功、7582.76
+
+ユーザーから「使ってない奴まで試すのは要らない」と指示があり、性能探索は別kernel benchに保持し、serving前の必須gateから未採用候補の検査だけを外す方針を確認したうえで、再投入の明示指示を受けた。
+
+同じ実験branchの commit `9f93944bebd4a175b2776789d04190e9691ba066` は、`check_verify_attention_candidates()` のFlashInfer prefill/decode・Triton attention・FA3 knob/要求分割の探索検査と、norm-quantの8種類の演算順序診断を削除した。本番B1/B4/B5/B6の検査、通常実装との数値参照比較、許容誤差、境界条件、CUDA Graph再実行、B4の94層metadata共有検査は保持。別benchとhelperは変更していない（helperはB4検査の入力生成にも使用するが、未採用候補関数は呼び出さない）。FlashInfer workspaceの増量やimage変更は行っていない。
+
+事前Ruffと関連pytestは44件成功・Torch未導入による31件skip。Actions側の全検査も成功した。[Actions 39759800897](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39759800897) は **success**。既存image `39711569005` を再利用し、build・別kernel benchなし、GPU jobは1件のみ。Slurm **25453** は10:08:06 UTC投入、10:09:35開始、**COMPLETED / 0:0 / 15分18秒**。全数値gate、モデル起動、通常benchmark、別profile、設定検証、回収と退避まで完走した。
+
+| 通常benchmark | 値 |
+| --- | ---: |
+| good output tok/s | **7582.756** |
+| 要求数 / 要求エラー | 4793 / 0 |
+| good request fraction | 98.3518% |
+| TTFT 平均 / p99 | 1700.357 / 3663.497 ms |
+| ITL 平均 / p99 | 16.056 / 18.656 ms |
+| SLA eligible / official workload validation | true / true |
+
+保存したexport・command・client provenanceを用い、リポジトリの `parse_result()` と `validate_official_result()` を再実行し、保存済みscoreの一致と公式workload条件の成功を確認した。これはtask accuracyの公式受理を主張するものではない。スコアは先行する通常計測のもので、後続のinstrumented profile/clientの値は採用スコアに使っていない。
+
+mainの記録8356.18、2WG + replica4・c192の参照run 39550627795の8366.32より、今回のスコアは低かった。1回のbundle実行であり、個々の変更の採否や再現性は確定しない。Decode profileのkernel-summaryには次の内訳がある（µs/call、いずれも同じworkerの集計値。kernel合計をそのままstep時間としない）。
+
+| Decode kernel | 参照39550627795 | 今回39759800897 |
+| --- | ---: | ---: |
+| dense FP8 QKV | 17.255 | **44.330** |
+| dense FP8 O | 14.284 | **30.538** |
+| MegaMoE | 199.172 | 198.381 |
+| FA3 verifyの主要kernel | 50.789 | 48.998 |
+
+B5 small-Mのdense GEMM時間増加が目立つ。単純に94層分のcall増分を足すと約4.07 ms/step相当だが、これはprofile内訳の目安であり、bundle全体の通常scoreへの独立した因果効果の測定ではない。最適化のmain採用、B5の削除、追加実験は行っていない。
+
+raw正本は `/srv/qwen-artifacts/39759800897/1/`。CIFS経由の読み出しが遅かったため、保存サーバーへ `ssh tomokazu@100.85.119.7` で接続し、同じ共有の実体 `/srv/qwen-artifacts/39759800897/1/` で144ファイルすべてのSHA256を照合した。`run-success`、予定のcommit/image SHA、4本の `.nsys-rep`、`validation.json` のvalid=true・4worker各4GPU（計16GPU）を確認した。
+
+`ssh firmus` でSlurmのCOMPLETEDとruntime `/scratch/home/ACCOUNT/qwen/runs/pd-39759800897-1.hiTWjH3DEr` の削除を再確認。今回のローカルworktreeと一時再解析ファイルも削除した。継続評価用に実験branchは保持し、他のbranch・ジョブ・既存未追跡ファイルには変更を加えていない。
