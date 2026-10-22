@@ -79,3 +79,23 @@ BeeGFS共有の9件はいずれも、今回のgateと同じ `cannot open shared 
 最小修正として、`sglang.sbatch` のnumeric gateのコンテナ内で `TRITON_CACHE_DIR=/tmp/qwen-numeric-gate-${SLURM_JOB_ID}` を指定する。4 rankは引き続き同じcacheを共有し、BeeGFSへの配置を避ける。serving workerは既に`/tmp`を使っている。rank別wrapper、retry、lock、image再ビルド、精度判定変更は不要。
 
 診断で作成した `/tmp` とBeeGFS上のディレクトリはすべて削除した。CPU再現経路での切り分けと修正のshell検証までを完了とし、新しいGPU jobは投入しない。修正を適用した公式servingのE2E完走は未確認であり、次の必要な実験にこの修正を含める。
+
+## ユーザー指示による再投入：router通過、後続の候補検査でworkspace不足
+
+ユーザーの「じゃあそれで投げて」を受け、`b327b87` を親とする branch `experiment/firmus-decode-combo-local-cache-20261022` に、numeric gateのcache配置変更だけを適用した。commit `fb1c7d2ae0022315fa49e4f826a56936b069c4b8`。[Actions 39754745523](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39754745523) は既存imageを再利用。事前のRuff、shell構文、全ローカルpytestは成功。条件・overlay・判定基準は前回と同じ。
+
+attempt 1はNsight package取得時の `curl: (6) Could not resolve host: developer.download.nvidia.com` で配備に失敗し、Slurm未投入。DNS解決が復旧したことをlogin nodeで確認し、同じrunの失敗したjobから再試行した。Nsight取得処理は新規追加ではなく、2026-10-07の `276911a` から存在する。
+
+attempt 2は配備に成功し、Slurm **25447** を1件投入。09:32:12 UTC投入、09:41:51開始、09:44:14 FAILED、実行2分23秒。**4 rankすべてで `PASS: Decode Triton router exact weights/IDs` を確認し、前回のlauncher ImportErrorはなし。** `/tmp`へのcache移動は実機の当該検査まで確認できた。
+
+その後、`check_verify_attention_candidates()` → helper `alternative_cases()` の `BatchPrefillWithPagedKVCacheWrapper.plan()` で次のエラーとなった。
+
+```text
+Buffer overflow when allocating memory for batch_prefill_tmp_s with size 1048576 and alignment 16, but only 0 bytes available in AlignedAllocator. Increase the workspace buffer size.
+```
+
+根拠は回収した `logs/logs/sm90-megamoe-gate.log:3172`（他rankも同じ）。helperはworkspaceを **128 MiB固定** で確保している。実際のimageのFlashInfer `attention/scheduler.cuh` はsplit-KV時に一時出力 `batch_prefill_tmp_v`、次にsoftmax統計 `batch_prefill_tmp_s` をfloat workspaceへ割り当てる。今回は前者の割当後に残量0となり、後者の1 MiBを確保できなかった。GPU全体のメモリ不足や数値比較の失敗ではなく、検査helperが渡すworkspace容量の不足である。
+
+image内のPython wrapperには、同じplan条件から必要なfloat/int workspace bytesを返す `workspace_size(...)` と、その容量を渡す `reset_workspace_buffer(...)` が存在する。次に修正するなら、固定容量の推測上の増量より、このAPIで候補ごとの必要量を確保してからplanするのが直接的な対応。検査の削除や精度判定変更は不要。今回はこの追加修正やGPU再投入は行っていない。
+
+raw正本は `/srv/qwen-artifacts/39754745523/2/`。48ファイルのSHA256を照合し、commitとimage SHAが予定どおりであることを確認した。Actionsもfailureで終了し、runtime削除stepは成功。通常benchmark・profileには到達せずscoreなし、最適化の採否は引き続き未判定。今回のGPU投入は1件、buildは0件。継続調査用に実験branchを保持し、今回作成したローカルworktreeは削除した。
