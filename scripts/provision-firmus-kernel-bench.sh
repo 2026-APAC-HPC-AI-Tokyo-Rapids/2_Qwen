@@ -140,7 +140,7 @@ done
 cp "${timeline_patch}" "${runtime_dir}/source/patches/"
 
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/kernel-bench/run.sbatch" "${runtime_dir}/scripts/run.sbatch"
-scripts=(bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-kernels.py)
+scripts=(bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-kernels.py firmus_megamoe_replicas.py)
 if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then scripts+=(bench-firmus-sglang-kernels.py); fi
 for script in "${scripts[@]}"; do install -m 0644 "${GITHUB_WORKSPACE}/scripts/${script}" "${runtime_dir}/scripts/"; cp "${runtime_dir}/scripts/${script}" "${runtime_dir}/source/"; done
 cp "${runtime_dir}/scripts/run.sbatch" "${runtime_dir}/source/"

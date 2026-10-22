@@ -23,14 +23,15 @@ N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")
 speculation=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -er '.speculation.steps' "${ROOT}/source/firmus-framework.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -er '.speculation.draft_tokens' "${ROOT}/source/firmus-framework.json")")
 decode_graph=(--cuda-graph-bs-decode)
 while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${ROOT}/source/firmus-framework.json")
-# A placement file is a static permutation of the 128 experts over the four Prefill EP ranks; Decode keeps the trivial placement.
+# Prefill maps 128 logical experts to physical slots, including hot replicas; Decode keeps trivial placement.
 prefill_location=$(jq -er .prefill.expert_location "${ROOT}/source/firmus-framework.json")
 if [[ "${prefill_location}" != trivial ]]; then prefill_location=${ROOT}/source/prefill-expert-location.json; fi
-prefill_args=(--ep-size 4 --dp-size 4 --enable-dp-attention --chunked-prefill-size "$(jq -er .prefill.chunked_prefill_size "${ROOT}/source/firmus-framework.json")" --max-total-tokens 131072 --max-running-requests "${N}" --moe-a2a-backend "$(jq -er .prefill.moe_a2a_backend "${ROOT}/source/firmus-framework.json")" --moe-runner-backend "$(jq -er .prefill.moe_runner_backend "${ROOT}/source/firmus-framework.json")" --deepep-mode normal --disable-cuda-graph --init-expert-location "${prefill_location}" --optimistic-prefill-attempts "$(jq -er .prefill.optimistic_prefill_attempts "${ROOT}/source/firmus-framework.json")")
+prefill_args=(--ep-size 4 --dp-size 4 --enable-dp-attention --chunked-prefill-size "$(jq -er .prefill.chunked_prefill_size "${ROOT}/source/firmus-framework.json")" --max-total-tokens 131072 --max-running-requests "${N}" --moe-a2a-backend "$(jq -er .prefill.moe_a2a_backend "${ROOT}/source/firmus-framework.json")" --moe-runner-backend "$(jq -er .prefill.moe_runner_backend "${ROOT}/source/firmus-framework.json")" --deepep-mode normal --disable-cuda-graph --init-expert-location "${prefill_location}" --ep-num-redundant-experts "$(jq -er .prefill.ep_num_redundant_experts "${ROOT}/source/firmus-framework.json")" --optimistic-prefill-attempts "$(jq -er .prefill.optimistic_prefill_attempts "${ROOT}/source/firmus-framework.json")")
 ART=${ROOT}/logs
 export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
 export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
-# Tier 2 switch (megamoe-idle-prefill-geometry.patch): 256 masked rows on idle Prefill ranks.
+# Tier 2 switch: idle Prefill uses 256 rows, or 280 with physical-140 replicas.
+# The replica overlay also pads tiny live Prefill ranks to 280 rows.
 # The code acts only in Prefill mode; with 1 the MegaMoE GPU gate also checks and times that case.
 export SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1
 PROFILE=${PROFILE:-false}

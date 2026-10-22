@@ -71,12 +71,13 @@ def archived_server_info() -> dict:
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     current = config["prefill"]
     location = current["expert_location"]
-    raw["config"]["prefill"].update(expert_location=location, optimistic_prefill_attempts=current["optimistic_prefill_attempts"], chunked_prefill_size=current["chunked_prefill_size"])
+    raw["config"]["prefill"].update(expert_location=location, ep_num_redundant_experts=current["ep_num_redundant_experts"], optimistic_prefill_attempts=current["optimistic_prefill_attempts"], chunked_prefill_size=current["chunked_prefill_size"])
     raw["config"].update({key: config[key] for key in ("concurrency", "decode_max_running_requests", "decode_extra_slots", "decode_cuda_graph_bs", "decode_polling_interval")})
     for role in ("prefill", "decode"):
         placed = role == "prefill" and location != "trivial"
         for state in [raw[role], *raw[role]["internal_states"]]:
             state.update(init_expert_location="/runtime/source/prefill-expert-location.json" if placed else "trivial", ep_dispatch_algorithm="static" if placed else None, optimistic_prefill_attempts=current["optimistic_prefill_attempts"] if role == "prefill" else 0)
+            state.update(ep_num_redundant_experts=current["ep_num_redundant_experts"] if role == "prefill" else 0, enable_eplb=False)
             if role == "prefill":
                 state.update(chunked_prefill_size=current["chunked_prefill_size"] // current["dp"], max_running_requests=config["concurrency"])
             if role == "decode":
@@ -118,19 +119,27 @@ def test_decode_polling_interval_is_checked_on_every_decode_state() -> None:
             check(raw["config"], info, "decode")
 
 
-def test_prefill_expert_location_is_a_permutation_checked_on_every_state() -> None:
+def test_prefill_expert_replicas_and_static_dispatch_checked_on_every_state() -> None:
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     placement = json.loads((ROOT / config["prefill"]["expert_location"]).read_text())
     assert list(placement) == ["physical_to_logical_map"]
     assert len(placement["physical_to_logical_map"]) == 94
-    assert all(sorted(row) == list(range(128)) for row in placement["physical_to_logical_map"])
+    assert config["prefill"]["ep_num_redundant_experts"] == 12
+    for row in placement["physical_to_logical_map"]:
+        hot = {e for e in range(128) if row.count(e) == 4}
+        assert len(row) == 140 and set(row) == set(range(128)) and len(hot) == 4
+        assert all(row.count(e) == (4 if e in hot else 1) for e in range(128))
+        for rank in range(4):
+            local = row[rank * 35:(rank + 1) * 35]
+            assert len(set(local)) == 35 and hot <= set(local)
     raw = archived_server_info()
     check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
-    for role, key, invalid in (("prefill", "init_expert_location", "trivial"), ("prefill", "ep_dispatch_algorithm", None), ("decode", "init_expert_location", "/runtime/source/prefill-expert-location.json"), ("decode", "ep_dispatch_algorithm", "static")):
-        info = copy.deepcopy(raw[role])
-        info["internal_states"][1][key] = invalid
-        with pytest.raises(ValueError, match=key):
-            check(raw["config"], info, role)
+    for role, key, invalid in (("prefill", "init_expert_location", "trivial"), ("prefill", "ep_dispatch_algorithm", None), ("prefill", "ep_num_redundant_experts", 0), ("prefill", "enable_eplb", True), ("decode", "init_expert_location", "/runtime/source/prefill-expert-location.json"), ("decode", "ep_dispatch_algorithm", "static"), ("decode", "ep_num_redundant_experts", 12), ("decode", "enable_eplb", True)):
+        for index in range(5):
+            info = copy.deepcopy(raw[role])
+            [info, *info["internal_states"]][index][key] = invalid
+            with pytest.raises(ValueError, match=key):
+                check(raw["config"], info, role)
 
 
 def test_server_info_checks_resolved_draft_backend_from_real_run() -> None:
@@ -263,6 +272,9 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
         assert len(location) == (1 if prefill else 0)
         if prefill:
             assert flags[location[0] + 1] == str(tmp_path / "source/prefill-expert-location.json")
+            assert flags[flags.index("--ep-num-redundant-experts") + 1] == "12"
+        else:
+            assert "--ep-num-redundant-experts" not in flags
         assert flags[flags.index("--speculative-algorithm") + 1] == "EAGLE3"
         assert flags[flags.index("--speculative-draft-model-path") + 1] == "/draft"
         assert flags[flags.index("--speculative-num-steps") + 1] == "3"

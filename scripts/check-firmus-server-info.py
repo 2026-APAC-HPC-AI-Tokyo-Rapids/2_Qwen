@@ -27,7 +27,7 @@ def check(config, info, role):
     placed = not aspire and prefill and p["expert_location"] != "trivial"
     if not aspire:
         # A non-trivial --init-expert-location makes SGLang dispatch through its static logical-to-physical table.
-        expected.update(ep_dispatch_algorithm="static" if placed else None)
+        expected.update(ep_dispatch_algorithm="static" if placed else None, ep_num_redundant_experts=p.get("ep_num_redundant_experts", 0) if prefill else 0, enable_eplb=False)
     expected.update(load_balance_method=config[f"{role}_load_balance_method"] if aspire else "total_requests", load_snapshot_publish_interval=1)
     if aspire:
         expected["mem_fraction_static"] = 0.90 if prefill else config["decode_mem_fraction_static"]
