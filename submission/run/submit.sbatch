@@ -163,10 +163,17 @@ run_node() {
       worker_env=(-e "NCCL_IB_HCA==${ucx_devices}" -e UCX_POSIX_USE_PROC_LINK=n -e UCX_ADAPTIVE_PROGRESS=n -e UCX_LOG_LEVEL=info -e SGLANG_DISAGG_STAGING_BUFFER=0 -e SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1 -e SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096)
       if [[ "${role}" == prefill ]]; then
         args+=(--dist-init-addr "127.0.0.1:$((32000 + worker * 100))" --disaggregation-bootstrap-port "${bootstrap}" --chunked-prefill-size "$(jq -er .prefill_chunked_size "${config}")" --max-total-tokens "$(jq -er .prefill_max_total_tokens "${config}")" --max-running-requests "$(jq -er .concurrency "${config}")" --disable-cuda-graph)
+        test -s "${OUTPUT_DIR}/source/prefill-expert-location.json"
+        worker_env+=(-m "${OUTPUT_DIR}:/runtime:none:bind,ro,x-create=dir" -e SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS=1 -e SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=1 -e SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1 -e DG_SM90_PREFILL_2WG=1)
+        args+=(--init-expert-location /runtime/source/prefill-expert-location.json --ep-num-redundant-experts "$(jq -er .prefill_ep_num_redundant_experts "${config}")" --optimistic-prefill-attempts "$(jq -er .prefill_optimistic_attempts "${config}")")
       else
+        worker_env+=(-e SGLANG_DECODE_ASYNC_ADMISSION=1)
         args+=(--dist-init-addr "127.0.0.1:$((33000 + worker * 100))" --enable-dp-lm-head --moe-dense-tp-size 1 --chunked-prefill-size 8192 --max-total-tokens "$(jq -er .decode_max_total_tokens "${config}")" --max-running-requests "$(jq -er .decode_max_running_requests "${config}")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${config}")" --cuda-graph-bs-decode)
         while read -r size; do args+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${config}")
       fi
+      # Both packages come from the pinned image; provisioning records and applies the ordered patches.
+      test -d "${OUTPUT_DIR}/overlay/sglang/python/sglang" && test -d "${OUTPUT_DIR}/overlay/deep-gemm/deep_gemm"
+      worker_env+=(-m "${OUTPUT_DIR}/overlay/sglang/python/sglang:/opt/sglang/source/python/sglang:none:bind,ro,x-create=dir" -m "${OUTPUT_DIR}/overlay/deep-gemm/deep_gemm:/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm:none:bind,ro,x-create=dir")
     elif [[ "${role}" == prefill ]]; then
       args+=(--disaggregation-bootstrap-port "${bootstrap}")
     else

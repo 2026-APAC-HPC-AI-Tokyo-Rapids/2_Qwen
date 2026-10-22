@@ -7,15 +7,14 @@ from pathlib import Path
 def check(config, info, role):
     aspire = "workers" in config
     if aspire:
-        config = {**config, "decode_dp_size": config["dp_size"], "prefill": {"dp": config["dp_size"], "ep": 4, "chunked_prefill_size": config["prefill_chunked_size"], "moe_a2a_backend": "megamoe", "moe_runner_backend": "deep_gemm"}}
+        config = {**config, "decode_dp_size": config["dp_size"], "prefill": {"dp": config["dp_size"], "ep": 4, "chunked_prefill_size": config["prefill_chunked_size"], "moe_a2a_backend": "megamoe", "moe_runner_backend": "deep_gemm", "expert_location": config.get("prefill_expert_location", "trivial"), "ep_num_redundant_experts": config.get("prefill_ep_num_redundant_experts", 0), "optimistic_prefill_attempts": config.get("prefill_optimistic_attempts", 0)}}
     prefill = role == "prefill"
     p = config["prefill"]
     expected = {"tp_size": 4, "dp_size": p["dp"] if prefill else config["decode_dp_size"], "ep_size": p["ep"] if prefill else 4, "enable_dp_attention": True, "kv_cache_dtype": "fp8_e4m3", "context_length": 8192, "page_size": 64, "attention_backend": "fa3", "max_total_tokens": config.get("prefill_max_total_tokens", 131072) if prefill else config["decode_max_total_tokens"], "chunked_prefill_size": p["chunked_prefill_size"] // p["dp"] if prefill else 8192 // config["decode_dp_size"], "max_running_requests": config["concurrency"] if prefill else config["decode_max_running_requests"], "speculative_algorithm": "EAGLE3", "speculative_draft_model_path": "/draft", "speculative_num_steps": config["speculation"]["steps"], "speculative_num_draft_tokens": config["speculation"]["draft_tokens"], "speculative_eagle_topk": 1, "speculative_draft_model_quantization": None, "enable_two_batch_overlap": False, "enable_symm_mem": False}
     if prefill:
         expected.update(moe_a2a_backend=p["moe_a2a_backend"], moe_runner_backend=p["moe_runner_backend"])
-        if not aspire:
-            # Configs before optimistic Prefill omit the key and ran with SGLang's default of 0.
-            expected.update(optimistic_prefill_attempts=p.get("optimistic_prefill_attempts", 0))
+        # Configs before optimistic Prefill omit the key and ran with SGLang's default of 0.
+        expected.update(optimistic_prefill_attempts=p.get("optimistic_prefill_attempts", 0))
         if p["moe_a2a_backend"] == "deepep":
             expected.update(deepep_mode="normal", disable_cuda_graph=True)
     else:
@@ -24,10 +23,12 @@ def check(config, info, role):
         if not aspire:
             # Configs before the polling knob omit it and ran with SGLang's default of 1.
             expected.update(disaggregation_decode_polling_interval=config.get("decode_polling_interval", 1))
-    placed = not aspire and prefill and p["expert_location"] != "trivial"
-    if not aspire:
+    placed = prefill and p["expert_location"] != "trivial"
+    if not aspire or "prefill_expert_location" in config:
         # A non-trivial --init-expert-location makes SGLang dispatch through its static logical-to-physical table.
         expected.update(ep_dispatch_algorithm="static" if placed else None)
+    if aspire and "prefill_ep_num_redundant_experts" in config:
+        expected.update(ep_num_redundant_experts=p["ep_num_redundant_experts"] if prefill else 0, enable_eplb=False)
     expected.update(load_balance_method=config[f"{role}_load_balance_method"] if aspire else "total_requests", load_snapshot_publish_interval=1)
     if aspire:
         expected["mem_fraction_static"] = 0.90 if prefill else config["decode_mem_fraction_static"]
@@ -41,7 +42,7 @@ def check(config, info, role):
             if name not in state or state[name] != value:
                 raise ValueError(f"{role} state {index}: {name}={state.get(name)!r}, expected {value!r}")
         location = state.get("init_expert_location")
-        if not aspire and not ((location or "").endswith("/source/prefill-expert-location.json") if placed else location == "trivial"):
+        if (not aspire or "prefill_expert_location" in config) and not ((location or "").endswith("/source/prefill-expert-location.json") if placed else location == "trivial"):
             raise ValueError(f"{role} state {index}: init_expert_location={location!r}")
     if not prefill and info.get("cuda_graph_bs_decode") != config["decode_cuda_graph_bs"]:
         raise ValueError("Decode CUDA graph request list changed")

@@ -54,7 +54,8 @@
   "prefill_routing_policy": "manual",
   "prefill_load_balance_method": "round_robin",
   "decode_load_balance_method": "total_requests",
-  "container_sha256": "e29dfde476fd2a8c7cd268f9be2c6d2a1f5e5404a34aed369aa84b4b4143909f",
+  "container_sha256": "652aaeef5486140efaa9acfe9c90a05db870dd3a1ad65c70228cdbef6e0c6f01",
+  "prefill_expert_location": "configs/firmus-prefill-replica4-expert-location.json",
   "dp_size": 4,
   "prefill_max_total_tokens": 32768,
   "decode_max_total_tokens": 106496,
@@ -79,5 +80,17 @@
     18,
     20
   ],
-  "decode_mem_fraction_static": 0.96
+  "decode_mem_fraction_static": 0.96,
+  "prefill_ep_num_redundant_experts": 12,
+  "prefill_optimistic_attempts": 2,
+  "sglang_overlay_patches": [
+    "patches/sglang/add-rmsnorm-group-quant.patch",
+    "patches/sglang/prefill-attention-contiguous-kv.patch",
+    "patches/sglang/megamoe-prefill-replicas.patch"
+  ],
+  "deep_gemm_overlay_patches": [
+    "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
+    "patches/deep-gemm-overlay/sm90-prefill-fc2-swizzle.patch",
+    "patches/deep-gemm-overlay/sm90-prefill-2wg-host-epi.patch"
+  ]
 }

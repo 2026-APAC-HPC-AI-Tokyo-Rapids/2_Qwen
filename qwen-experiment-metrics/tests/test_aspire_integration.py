@@ -18,6 +18,52 @@ FIXTURE = Path(__file__).parent / "fixtures/aspire-integration-argv.json"
 ASPIRE_HCAS = "mlx5_0:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_9:1,mlx5_10:1,mlx5_11:1"
 
 
+@pytest.mark.parametrize("corruption", [None, "layer_count", "duplicate_expert", "hash", "replica_owner", "overlay_mount", "overlay_hash", "overlay_image"])
+def test_runtime_mount_preflight_rejects_bad_placement(tmp_path: Path, corruption: str | None) -> None:
+    for directory in ("runtime/source", "model", "draft", "runtime-home"):
+        (tmp_path / directory).mkdir(parents=True)
+    config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
+    mapping = json.loads((REPOSITORY / config["prefill_expert_location"]).read_text())["physical_to_logical_map"]
+    if corruption == "layer_count":
+        mapping.pop()
+    elif corruption == "duplicate_expert":
+        mapping[0][4] = mapping[0][0]
+    elif corruption == "replica_owner":
+        # Preserve global counts but move a hot replica to the wrong GPU.
+        mapping[0][0], mapping[0][39] = mapping[0][39], mapping[0][0]
+    placement = json.dumps({"physical_to_logical_map": mapping}).encode()
+    (tmp_path / "runtime/source/prefill-expert-location.json").write_bytes(placement)
+    for name, prefix, mount in (("sglang", "python/sglang", "opt/sglang/source/python/sglang"), ("deep-gemm", "deep_gemm", "opt/sglang/venv/lib/python3.12/site-packages/deep_gemm")):
+        path = f"patches/{name}/fixture.patch"
+        config[f"{name.replace('-', '_')}_overlay_patches"] = [path]
+        content = f"+++ b/{prefix}/kernel.py\n".encode()
+        patches = tmp_path / f"runtime/source/{name}-overlay"
+        patches.mkdir()
+        (patches / "fixture.patch").write_bytes(content)
+        record = {"base_image_sha256": "wrong" if corruption == "overlay_image" else config["container_sha256"], "mount": "/" + mount, "patches": [{"path": path, "sha256": "wrong" if corruption == "overlay_hash" else hashlib.sha256(content).hexdigest()}]}
+        (tmp_path / f"runtime/source/{name}-overlay.json").write_text(json.dumps(record))
+        overlay = tmp_path / f"runtime/overlay/{name}/{prefix}"
+        overlay.mkdir(parents=True)
+        (overlay / "kernel.py").write_text("patched")
+        mounted = tmp_path / mount
+        mounted.mkdir(parents=True)
+        (mounted / "kernel.py").write_text("old" if corruption == "overlay_mount" else "patched")
+    (tmp_path / "runtime/source/aspire-serving.json").write_text(json.dumps(config))
+    (tmp_path / "model/config.json").write_text('{"num_hidden_layers":94,"num_experts":128}')
+    (tmp_path / "draft/config.json").write_text('{"architectures":["LlamaForCausalLMEagle3"],"torch_dtype":"bfloat16"}')
+    (tmp_path / "draft/model.safetensors").write_bytes(b"fixture")
+    expected = "wrong-hash" if corruption == "hash" else hashlib.sha256(placement).hexdigest()
+    source = (REPOSITORY / "scripts/check-aspire-runtime-mount.sh").read_text().split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    source = source.replace("from pathlib import Path", "from pathlib import Path as RealPath\nPath = lambda value: RealPath(sys.argv[2]) / value.lstrip('/')")
+    result = subprocess.run([sys.executable, "-c", source, expected, str(tmp_path)], capture_output=True, text=True, check=False)
+    if corruption is None:
+        assert result.returncode == 0, result.stderr
+        assert "aspire_runtime_mount_ok" in result.stdout
+    else:
+        assert result.returncode != 0
+        assert "AssertionError" in result.stderr
+
+
 def capture_workers(source: str, platform: str, nodes: int, tmp_path: Path, profile: bool = False) -> list[dict]:
     """Execute the real worker function and topology with a recording Enroot stub."""
     root = tmp_path / f"{platform}-{nodes}-{profile}"
@@ -26,6 +72,15 @@ def capture_workers(source: str, platform: str, nodes: int, tmp_path: Path, prof
     for directory in ("logs", "source", "scripts"):
         (output / directory).mkdir(parents=True, exist_ok=True)
     (output / "source/aspire-serving.json").write_bytes((REPOSITORY / "configs/aspire-serving.json").read_bytes())
+    if platform == "aspire2ap":
+        # Execute the workflow's real staging commands, then exercise the container mount below.
+        lines = (REPOSITORY / ".github/workflows/aspire2ap.yml").read_text().splitlines()
+        start = next(i for i, line in enumerate(lines) if line.strip().startswith('prefill_location='))
+        subprocess.run(["bash", "-c", "set -euo pipefail\n" + "\n".join(lines[start:start + 2])], cwd=REPOSITORY, env={**os.environ, "GITHUB_WORKSPACE": str(REPOSITORY), "runtime_dir": str(output)}, check=True)
+        config = json.loads((output / "source/aspire-serving.json").read_text())
+        for directory in ("sglang/python/sglang", "deep-gemm/deep_gemm"):
+            (output / "overlay" / directory).mkdir(parents=True)
+        assert (output / "source/prefill-expert-location.json").read_bytes() == (REPOSITORY / config["prefill_expert_location"]).read_bytes()
     record = root / "commands.jsonl"
     record.write_text("")
     stub = root / "enroot"
@@ -249,6 +304,23 @@ def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, 
         assert "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096" in argv
         assert ("--disable-cuda-graph" in argv) == (role == "prefill")
         assert ("--enable-dp-lm-head" in argv) == (role == "decode")
+        # Explicit read-only mounts must retain bind and target creation (Enroot fstab semantics).
+        placement_mount = "/fixture/output:/runtime:none:bind,ro,x-create=dir"
+        assert (placement_mount in argv) == (role == "prefill")
+        assert ("--init-expert-location" in argv) == (role == "prefill")
+        if role == "prefill":
+            assert argv[argv.index("--init-expert-location") + 1] == "/runtime/source/prefill-expert-location.json"
+        for variable in ("DG_SM90_PREFILL_2WG=1", "SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1", "SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS=1", "SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=1"):
+            assert (variable in argv) == (role == "prefill")
+        assert ("SGLANG_DECODE_ASYNC_ADMISSION=1" in argv) == (role == "decode")
+        assert "/fixture/output/overlay/sglang/python/sglang:/opt/sglang/source/python/sglang:none:bind,ro,x-create=dir" in argv
+        assert "/fixture/output/overlay/deep-gemm/deep_gemm:/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm:none:bind,ro,x-create=dir" in argv
+        if role == "prefill":
+            assert argv[argv.index("--ep-num-redundant-experts") + 1] == "12"
+            assert argv[argv.index("--optimistic-prefill-attempts") + 1] == "2"
+        else:
+            assert "--ep-num-redundant-experts" not in argv
+            assert "--optimistic-prefill-attempts" not in argv
         if role == "decode":
             start = argv.index("--cuda-graph-bs-decode") + 1
             assert argv[start:start + len(config["decode_cuda_graph_bs"])] == [str(n) for n in config["decode_cuda_graph_bs"]]
@@ -258,13 +330,17 @@ def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, 
         assert bool(record["profiler"]) == profile
     # Separate DP endpoint ranges; adjacent HTTP ports otherwise collide.
     assert addresses == [32000, 32100, 33000, 33100]
-    assert config["container_sha256"] == "e29dfde476fd2a8c7cd268f9be2c6d2a1f5e5404a34aed369aa84b4b4143909f"
+    firmus = json.loads((REPOSITORY / "configs/firmus-framework.json").read_text())
+    assert config["container_sha256"] == firmus["images"]["sglang"]["sha256"] == "652aaeef5486140efaa9acfe9c90a05db870dd3a1ad65c70228cdbef6e0c6f01"
+    assert config["prefill_expert_location"] == "configs/firmus-prefill-replica4-expert-location.json"
+    assert config["sglang_overlay_patches"] == [*firmus["sglang_overlay_patches"], "patches/sglang/megamoe-prefill-replicas.patch"]
+    assert config["deep_gemm_overlay_patches"] == firmus["deep_gemm_overlay_patches"]
     workflow = (REPOSITORY / ".github/workflows/aspire2ap.yml").read_text()
     assert workflow.index("jq -er .container_sha256 configs/aspire-serving.json") < workflow.index('PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh')
 
 
 @pytest.mark.parametrize("role", ["prefill", "decode"])
-def test_aspire_effective_settings_reject_clipped_kv_pool(role: str) -> None:
+def test_aspire_effective_settings_reject_wrong_placement_and_clipped_kv_pool(role: str) -> None:
     import runpy
 
     check = runpy.run_path(str(REPOSITORY / "scripts/check-firmus-server-info.py"))["check"]
@@ -274,8 +350,17 @@ def test_aspire_effective_settings_reject_clipped_kv_pool(role: str) -> None:
     capacity = config[f"{role}_max_total_tokens"]
     for state in [info, *info["internal_states"]]:
         state.update(max_total_tokens=capacity, max_running_requests=config["concurrency"] if role == "prefill" else config["decode_max_running_requests"], mem_fraction_static=0.90 if role == "prefill" else config["decode_mem_fraction_static"], chunked_prefill_size=4096 if role == "prefill" else 2048, moe_a2a_backend="megamoe", moe_runner_backend="deep_gemm", disaggregation_decode_extra_slots=2, load_balance_method=config[f"{role}_load_balance_method"], disable_cuda_graph=role == "prefill", effective_max_running_requests_per_dp=config["decode_max_running_requests"] // config["dp_size"], memory_usage={"token_capacity": capacity})
+        state.update(init_expert_location="/runtime/source/prefill-expert-location.json" if role == "prefill" else "trivial", ep_dispatch_algorithm="static" if role == "prefill" else None)
+        state.update(ep_num_redundant_experts=12 if role == "prefill" else 0, enable_eplb=False, optimistic_prefill_attempts=2 if role == "prefill" else 0)
     info["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
     check(config, info, role)
+    for state in [info, *info["internal_states"]]:
+        for key, invalid in (("init_expert_location", "trivial" if role == "prefill" else "/runtime/source/prefill-expert-location.json"), ("ep_dispatch_algorithm", None if role == "prefill" else "static"), ("ep_num_redundant_experts", 0 if role == "prefill" else 12), ("enable_eplb", True)):
+            original = state[key]
+            state[key] = invalid
+            with pytest.raises(ValueError, match=key):
+                check(config, info, role)
+            state[key] = original
     for state in info["internal_states"]:
         state["memory_usage"]["token_capacity"] -= 64
         with pytest.raises(ValueError, match="actual KV capacity"):

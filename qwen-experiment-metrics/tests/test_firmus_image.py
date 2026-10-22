@@ -151,6 +151,7 @@ def test_provision_uses_selected_image_for_reuse_and_keeps_fresh_build_commit_ch
     # The real metadata validator is exercised above; this test isolates image selection.
     (workspace / "scripts").mkdir()
     (workspace / "scripts/check-firmus-image.sh").write_text("#!/bin/bash\nexit 0\n")
+    (workspace / "scripts/stage-qwen-overlays.sh").write_bytes((ROOT / "scripts/stage-qwen-overlays.sh").read_bytes())
     config = {"framework": "sglang", "workload": "official", "concurrency": 256, "prefill": {"moe_a2a_backend": "none"}, "images": {"sglang": {"path": "/stale-image.sqsh"}}}
     archive = tmp_path / "archive"
     archive.mkdir()
@@ -174,11 +175,13 @@ def test_provision_uses_selected_image_for_reuse_and_keeps_fresh_build_commit_ch
 
 @pytest.mark.skipif(os.uname().sysname != "Linux", reason="provision uses Linux stat")
 @pytest.mark.parametrize("applies", [True, False])
-def test_provision_stages_sglang_overlay_patches_on_the_selected_image(tmp_path, applies):
+@pytest.mark.parametrize("platform", ["firmus", "aspire2ap"])
+def test_provision_stages_sglang_overlay_patches_on_the_selected_image(tmp_path, applies, platform):
     workspace = tmp_path / "workspace"
     (workspace / "configs").mkdir(parents=True)
     (workspace / "scripts").mkdir()
     (workspace / "scripts/check-firmus-image.sh").write_text("#!/bin/bash\nexit 0\n")
+    (workspace / "scripts/stage-qwen-overlays.sh").write_bytes((ROOT / "scripts/stage-qwen-overlays.sh").read_bytes())
     (workspace / "patches/sglang").mkdir(parents=True)
     old = "x = 1\n" if applies else "x = 0\n"
     (workspace / "patches/sglang/first.patch").write_text(f"--- a/python/sglang/kernel.py\n+++ b/python/sglang/kernel.py\n@@ -1 +1 @@\n-{old}+x = 2\n")
@@ -199,6 +202,16 @@ def test_provision_stages_sglang_overlay_patches_on_the_selected_image(tmp_path,
     unpack.write_text('#!/bin/bash\nset -eu\nfor last; do :; done\nwhile [[ "$1" != -d ]]; do shift; done\n[[ -d "$(dirname "$2")" && ! -e "$2" ]]\nmkdir -p "$2/$last"\nprintf "x = 1\\n" >"$2/$last/kernel.py"\nchmod -R a-w "$2/opt"\n')
     unpack.chmod(0o755)
     script = (ROOT / "scripts/provision-firmus-framework.sh").read_text().split("model=/scratch/models/", 1)[0]
+    if platform == "aspire2ap":
+        runtime = tmp_path / "runs/aspire"
+        (runtime / "source").mkdir(parents=True)
+        (runtime / "sglang.sqsh").symlink_to(image)
+        config["container_sha256"] = digest
+        del config["images"]
+        (runtime / "source/aspire-serving.json").write_text(json.dumps(config))
+        workflow = (ROOT / ".github/workflows/aspire2ap.yml").read_text()
+        command = next(line.strip() for line in workflow.splitlines() if line.strip().startswith("bash scripts/stage-qwen-overlays.sh"))
+        script = f"runtime_dir={runtime}\nGITHUB_WORKSPACE={workspace}\ncd {workspace}\n" + command
     result = subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{unpack.parent}:{os.environ['PATH']}", "GITHUB_WORKSPACE": str(workspace), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "new-run", "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(tmp_path / "runs"), "PROFILE": "false", "REQUIRE_BUILD": "false"}, capture_output=True, text=True, check=False)
     assert (result.returncode == 0) is applies, result.stderr
     runtime = next((tmp_path / "runs").iterdir())

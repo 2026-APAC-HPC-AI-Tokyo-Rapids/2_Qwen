@@ -1,0 +1,70 @@
+{
+  "status": "ported; CPU validated; GPU not submitted",
+  "base_main_commit": "db8c835b1ce89fab61abc22d14a646a56dcfb171",
+  "branch": "perf/aspire-firmus8366-port-20261022",
+  "source": {
+    "run_id": 39550627795,
+    "commit": "fd122bc3ef9d1cc92e7077848343dea2b33d5710",
+    "good_output_tokens_per_second": 8366.32282620254,
+    "official_validation_valid": true,
+    "eligible": true,
+    "container_build_run_id": 39379223361,
+    "container_sha256": "652aaeef5486140efaa9acfe9c90a05db870dd3a1ad65c70228cdbef6e0c6f01",
+    "archive": "archive-host:/srv/qwen-artifacts/39550627795/1/",
+    "selected_archive_files_sha256_verified": 38,
+    "identity": "All six ordered overlay patch files and the expert-placement bytes match the archived serving run."
+  },
+  "aspire_baseline": {
+    "run_id": 39098592938,
+    "commit": "29c3cae8f166f207b0f98000abab6605264da9cc",
+    "good_output_tokens_per_second": 5076.426369859986,
+    "branch": "perf/aspire-firmus7500-port-20261018"
+  },
+  "port": {
+    "reused_image": true,
+    "overlays": "The six source overlays in configs/aspire-serving.json, applied by the shared Firmus/Aspire staging script. The image contains the rebuilt 2WG DeepGEMM host extension.",
+    "replication": "Prefill: hot-4 on every EP rank, 140 physical / 128 logical experts, 35 physical per rank. Decode: original 128 logical/physical experts.",
+    "runtime_switches": [
+      "Prefill DG_SM90_PREFILL_2WG=1",
+      "Prefill request-aligned chunks and idle geometry",
+      "Prefill optimistic attempts 2",
+      "Decode asynchronous admission"
+    ],
+    "retained_from_aspire": [
+      "P2/D2 placement on H100 x16, TP4/DP4/EP4",
+      "c104 and EAGLE3 steps3/draft4",
+      "FP8 KV, P32768/D106496 pools",
+      "Decode max running 80, extra slots 2, graph buckets through 20, memory fraction 0.96",
+      "Prefill round_robin, Decode total_requests, manual router policy",
+      "node-local model staging and compute-fabric HCA filtering",
+      "Official 4000/200 workload, 60/120/30 timing and unchanged result parser"
+    ]
+  },
+  "validation": {
+    "linux_full_cpu_suite": "417 passed, 1 skipped, 22 subtests passed on tg1 in 157.96s. No GPU or scheduler.",
+    "additional_overlay_fixtures": "49 image/provision tests passed on Linux in 70.14s after adding Aspire config-shape cases. Includes ordered application, provenance hashes and rejection before serving when a patch does not apply.",
+    "local_focused_cpu_suite": "83 passed, 6 Linux-only cases skipped",
+    "macos_full_cpu_suite": "384 passed, 27 failed, 7 skipped; host-specific GPG signing, Unix socket path length and Linux runtime requirements. The complete suite passed on Linux.",
+    "source_check": {
+      "image_manifest_target_files_verified": 33,
+      "sglang_overlay_existing_preimages_verified": 5,
+      "deep_gemm_base_header_sha256_verified": "ff7a58cca00aa42a90386d12b0437b5d8caf35eb0ad082a8a1a0b4b74001a2a1",
+      "ordered_overlay_patches_applied": 6,
+      "patched_python_files_parsed": 6,
+      "gpu_used": false
+    },
+    "ruff": "passed",
+    "actionlint": "passed",
+    "shell_syntax": "passed",
+    "diff_check": "passed",
+    "actual_enroot_mount_preflight": "Implemented in the PBS provisioning path; not executed on the Aspire login host in this task."
+  },
+  "execution": {
+    "actions_started": 0,
+    "container_builds_started": 0,
+    "scheduler_jobs_submitted": 0,
+    "gpu_used": false,
+    "aspire_score": null
+  },
+  "unmeasured": "H100 memory peak, correctness and throughput of this combined candidate require an Aspire run. Three additional FP8 experts per rank add approximately 4.96 GiB of weights plus scales over the baseline; no peak-memory guarantee is inferred from CPU checks."
+}
