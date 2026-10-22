@@ -11,6 +11,8 @@ accuracy evaluation. The kernel bench also runs this file on the image tree,
 which lacks the new kernels; those checks print SKIP there.
 The dense FP8 check requires the new small-M host image for both trees and
 screens both host layouts against FP32 dequantized GEMM and changed-input graphs.
+Serving gates cover the selected kernels and their references. Exploratory
+attention candidates remain in the separate kernel benchmark, not this gate.
 """
 # ruff: noqa: B023 - the nested helpers run inside the loop iteration that defines them, so the loop variables are current
 import json
@@ -416,8 +418,7 @@ def check_add_rmsnorm_group_quant():
     rounding-level change of the normed BF16 value moves an FP8 code by one
     step only when it sits next to an E4M3 rounding boundary, and run
     39100197595 showed 13 of 12288 such one-step moves with identical scales
-    (the task rules allow FP summation-order differences). The bitwise status of
-    every reduction variant is printed for information.
+    (the task rules allow FP summation-order differences).
     """
     try:
         import sglang.kernels.ops.layernorm.add_rmsnorm_group_quant as nq
@@ -437,7 +438,7 @@ def check_add_rmsnorm_group_quant():
         q, scale = sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
         return q, scale, residual
 
-    def compare(actual, expected, label, strict=True):
+    def compare(actual, expected, label):
         q, scale, residual = actual
         eq, es, eres = expected
         assert q.shape == eq.shape and scale.shape == es.shape and scale.stride() == es.stride(), label
@@ -456,9 +457,8 @@ def check_add_rmsnorm_group_quant():
         else:
             scale_rel, value_ok = 0.0, True
         print(json.dumps({"check": f"norm_quant_{label}", "bitwise_equal": bitwise, "fp8_codes_differing": mismatch, "max_scale_rel_diff": scale_rel}), flush=True)
-        if strict:
-            assert scale_rel <= 2.0**-7, (label, "scale", scale_rel)
-            assert value_ok, (label, "dequantized value")
+        assert scale_rel <= 2.0**-7, (label, "scale", scale_rel)
+        assert value_ok, (label, "dequantized value")
         return bitwise
 
     for rows in (0, 1, 2, 3, 7, 31, 126, 127, 128, 144, 2047, 2048, 2049, 3986, 4027):
@@ -471,15 +471,6 @@ def check_add_rmsnorm_group_quant():
         work = residual.clone()
         q, scale = nq.add_rmsnorm_group_quant_fp8(x, work, weight, eps)
         compare((q, scale, work), expected, str(rows))
-
-    # Information: which reduction variant reproduces the CuTe DSL kernel bit for bit.
-    x = torch.randn(4027, 4096, device="cuda", dtype=torch.bfloat16) * 2
-    residual = torch.randn(4027, 4096, device="cuda", dtype=torch.bfloat16) * 8
-    expected = reference(x, residual)
-    for variant in range(8):
-        work = residual.clone()
-        q, scale = nq.add_rmsnorm_group_quant_fp8(x, work, weight, eps, variant=variant)
-        compare((q, scale, work), expected, f"variant{variant}", strict=variant == nq.FLASHINFER_EXACT_VARIANT)
 
     x = torch.randn(128, 4096, device="cuda", dtype=torch.bfloat16)
     residual = torch.randn(128, 4096, device="cuda", dtype=torch.bfloat16)
@@ -618,45 +609,6 @@ def check_prefill_attention():
     print("PASS: Prefill prologue within bounds of the unfused reference and the existing fused kernel, zero/odd/4k rows, paged + contiguous KV, graph replay and FA3 multi-request boundaries", flush=True)
 
 
-def check_verify_attention_candidates():
-    """All rows, causal/page boundaries and changed-input graph replay.
-
-    Plans are rebuilt when lengths/page IDs change. That cost is deliberately
-    outside the per-layer benchmark. Numerical screens are not official accuracy.
-    """
-    helper = Path(__file__).resolve().parents[1] / "overlay/sglang/python/sglang/kernels/ops/attention/verify_attention_candidates.py"
-    ops = runpy.run_path(str(helper))
-    for batch in ops["BATCHES"]:
-        for boundary in (False, True):
-            common = ops["make_inputs"](batch, boundary=boundary)
-            cases = ops["fa3_cases"](common)
-            cases.update(ops["alternative_cases"](common))
-            expected = cases["fa3-verify-default"]().clone()
-            for name, call in cases.items():
-                actual = call()
-                assert actual.isfinite().all(), name
-                check_numerics(actual, expected, f"verify_{batch}_{boundary}_{name}")
-                stream = torch.cuda.Stream()
-                stream.wait_stream(torch.cuda.current_stream())
-                with torch.cuda.stream(stream):
-                    call()
-                torch.cuda.current_stream().wait_stream(stream)
-                graph = torch.cuda.CUDAGraph()
-                with torch.cuda.graph(graph):
-                    captured = call()
-                # Exact negation preserves the FP8 grid; all queries and both
-                # caches change at fixed graph addresses. Restore after replay.
-                for key in ("q", "k_cache", "v_cache"):
-                    common[key].copy_((-common[key].float()).to(common[key].dtype))
-                graph.replay()
-                expected_changed = cases["fa3-verify-default"]().clone()
-                assert captured.isfinite().all(), name
-                check_numerics(captured, expected_changed, f"verify_graph_{batch}_{boundary}_{name}")
-                for key in ("q", "k_cache", "v_cache"):
-                    common[key].copy_((-common[key].float()).to(common[key].dtype))
-    print("PASS: all verify candidates, 32..36 requests, FP8 KV, causal/page boundaries and graph replay", flush=True)
-
-
 def check_verify_scheduler_sharing():
     from sgl_kernel.flash_attn import flash_attn_with_kvcache, get_scheduler_metadata
     from sglang.srt.layers.attention.flashattention_backend import (
@@ -665,7 +617,7 @@ def check_verify_scheduler_sharing():
     )
 
     if not hasattr(FlashAttentionBackend, "_get_verify_scheduler_metadata"):
-        print("SKIP: image lacks verify scheduler sharing; alternative attention gates still run", flush=True)
+        print("SKIP: image lacks verify scheduler sharing", flush=True)
         return
     helper = Path(__file__).resolve().parents[1] / "overlay/sglang/python/sglang/kernels/ops/attention/verify_attention_candidates.py"
     ops = runpy.run_path(str(helper))
@@ -842,5 +794,4 @@ if __name__ == "__main__":
     check_decode_router_padding()
     check_add_rmsnorm_group_quant()
     check_prefill_attention()
-    check_verify_attention_candidates()
     check_verify_scheduler_sharing()

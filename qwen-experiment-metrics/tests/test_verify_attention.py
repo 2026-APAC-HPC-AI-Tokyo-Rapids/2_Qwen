@@ -74,14 +74,19 @@ def test_fa3_partition_keeps_all_tokens_heads_causal_offsets_and_output_slices(t
             assert len(calls) == 1 and calls[0]["max_seqlen_q"] >= 4
 
 
-def test_helper_is_identical_for_image_and_candidate_and_gate_has_no_skip():
+def test_serving_gate_keeps_shared_metadata_check_and_exploration_stays_in_bench():
     for filename in ("bench-firmus-sglang-kernels.py", "check-firmus-decode-kernels.py"):
         source = (ROOT / "scripts" / filename).read_text()
         ast.parse(source)
         assert 'overlay/sglang/python/sglang/kernels/ops/attention/verify_attention_candidates.py' in source
     gate = (ROOT / "scripts/check-firmus-decode-kernels.py").read_text()
-    assert 'check_verify_attention_candidates()' in gate
-    assert 'for boundary in (False, True)' in gate
+    assert 'check_verify_scheduler_sharing()' in gate
+    assert 'check_verify_attention_candidates' not in gate
+    assert 'alternative_cases' not in gate and 'fa3_cases' not in gate
+    assert 'variant=variant' not in gate
+    bench = (ROOT / "scripts/bench-firmus-sglang-kernels.py").read_text()
+    assert 'ops["alternative_cases"](common)' in bench
+    assert 'ops["fa3_cases"](common)' in bench
 
 
 @pytest.fixture
