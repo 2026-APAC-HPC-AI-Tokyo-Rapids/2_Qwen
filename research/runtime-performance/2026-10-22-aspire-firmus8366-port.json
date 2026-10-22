@@ -1,5 +1,5 @@
 {
-  "status": "single Aspire trial authorized; launching via tagged push",
+  "status": "Aspire benchmark completed; Actions failed the post-run Prefill KV-capacity check",
   "base_main_commit": "db8c835b1ce89fab61abc22d14a646a56dcfb171",
   "branch": "perf/aspire-firmus8366-port-20261022",
   "source": {
@@ -60,11 +60,11 @@
     "actual_enroot_mount_preflight": "Implemented in the PBS provisioning path; not executed on the Aspire login host in this task."
   },
   "execution": {
-    "actions_started": 1,
+    "actions_started": 2,
     "container_builds_started": 0,
-    "scheduler_jobs_submitted": 0,
-    "gpu_used": false,
-    "aspire_score": null,
+    "scheduler_jobs_submitted": 1,
+    "gpu_used": true,
+    "aspire_score": 5811.187226228371,
     "requested_trigger": "push",
     "run_aspire2ap": true,
     "run_firmus": false,
@@ -78,7 +78,49 @@
       "reason": "User requested a push-triggered run instead. Cancellation completed during CPU validation; container preparation and Aspire compute were skipped.",
       "scheduler_jobs_submitted": 0
     },
-    "monitor_model": "gpt-5.6-luna"
+    "monitor_model": "gpt-5.6-luna",
+    "run_id": 39741427701,
+    "commit": "08dffdb034bc892431cb1abe628944fefe493aaa",
+    "event": "push",
+    "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39741427701",
+    "workflow_conclusion": "failure",
+    "pbs_job_id": "223324.pbs111",
+    "pbs_exit_status": 0,
+    "pbs_walltime": "00:10:20",
+    "pbs_nodes": [
+      "a2ap-dgx024",
+      "a2ap-dgx032"
+    ],
+    "archive": "archive-host:/srv/qwen-artifacts/39741427701/1/",
+    "verified_archive_files": 66
   },
-  "unmeasured": "H100 memory peak, correctness and throughput of this combined candidate require an Aspire run. Three additional FP8 experts per rank add approximately 4.96 GiB of weights plus scales over the baseline; no peak-memory guarantee is inferred from CPU checks."
+  "result": {
+    "score_output_tokens_per_second": 5811.187226228371,
+    "official_validation_valid": true,
+    "eligible": true,
+    "request_count": 3600,
+    "error_request_count": 0,
+    "good_request_fraction": 0.9933333333333333,
+    "ttft_mean_ms": 991.6344574855555,
+    "ttft_p99_ms": 2665.4005993199944,
+    "itl_mean_ms": 12.649596026599282,
+    "itl_p99_ms": 15.033054594924621,
+    "observed_change_from_prior_single_aspire_run_percent": 14.473978402027932,
+    "comparison_scope": "Single runs; kernels and actual Prefill KV capacity differ. This is not a controlled comparison or a repeatability claim."
+  },
+  "failure": {
+    "step": "\u56de\u53ce\u3057\u305f\u5168DP rank\u306e\u5b9f\u8a2d\u5b9a\u3068KV\u5bb9\u91cf\u3092\u691c\u8a3c",
+    "exception": "ValueError: prefill: actual KV capacity differs from requested pool; inspect memory profiling logs",
+    "cause": "The four hot-expert replicas add about 4.95 GiB of target weights per rank (60.86 -> 65.81 GiB). With mem_fraction_static=0.90, SGLang profiles only 17152 Prefill KV tokens and clamps the requested 32768-token pool. Both Prefill workers and all eight Prefill DP ranks report the same actual capacity.",
+    "prefill_requested_tokens_per_rank": 32768,
+    "prefill_actual_tokens_per_rank": 17152,
+    "decode_requested_and_actual_tokens_per_rank": 106496,
+    "decode_all_dp_checks": "PASS for both workers, all eight ranks",
+    "other_prefill_flags": "All configured settings, placement, replica count and optimistic attempts pass before the final actual-capacity comparison.",
+    "decisive_log": "logs/logs/prefill-0.log:67: max_total_tokens=32768 is larger than the profiled value 17152. Use the profiled value instead.",
+    "validator_is_correct": true,
+    "next_change": "Increase the Prefill memory budget to preserve 32768 tokens, or explicitly choose a smaller intended pool. A changed memory budget requires a new measured run; do not suppress this guard to turn the old run green.",
+    "additional_submissions": 0
+  },
+  "remaining_validation": "The current runtime cap is inconsistent with the declared configuration. A runtime fix and another authorized run are required before calling the configured 32768-token candidate verified."
 }
