@@ -40,7 +40,7 @@ ImportError: /home/ACCOUNT/.triton/cache/X2KRTMQYOFQKLJBW46E3N7VELF3JRDD5CBMXFJE
 
 新 router 検査は `993077c` で追加された。従来の `check_topk_padding()` と別の検査で、Triton router の padding 融合と非融合参照を比較する。以前の成功runはこの新経路の成功実績にはならない。一方、上の確認範囲を超えて「過去に同種のキャッシュ障害が一度もない」とまでは断定しない。
 
-## 原因は未確定、推測だけで変更しない
+## 初回調査時点：原因は未確定、推測だけで変更しない
 
 4プロセスは numeric-gate 用 HOME を共有する。`mounts numeric-gate` は run 配下の `home/numeric-gate` を HOME に bind mount し、保存元の `/scratch` は login node の `findmnt` / `stat -f` では BeeGFS。serving worker は別途 `/tmp/sglang-$name/triton` を使う。gate と serving の cache 配置は異なる。
 
@@ -59,3 +59,23 @@ image `39711569005.sqsh` 内の実際の `triton/runtime/build.py` と `cache.py
 関連するローカル検査 `test_firmus_reference.py` / `test_firmus_kernel_bench.py` は48件成功（65.39秒）。一時的な cache 分離案の shell 構文と4プロセスの引数・cache分離もCPU上では成功したが、GPU障害の再現・解消確認には数えない。コード差分は残していない。
 
 `ssh firmus` で Slurm の terminal 状態を再確認し、元 runtime directory `/scratch/home/ACCOUNT/qwen/runs/pd-39727354451-1.O49y6DdhCl` が削除済みであること、同ユーザーの queue が空であることを確認した。今回作った login node の一時展開ディレクトリも削除済み。既存の未追跡ファイル、他のworktree、branch、ジョブには変更を加えていない。
+
+## 追調査：BeeGFS共有cacheの並行置換直後のロード失敗をCPUで再現
+
+ユーザーから原因を特定するよう指示を受け、`ssh firmus` のlogin node上で短時間のCPU診断を行った。GPU、scheduler、Actionsは使っていない。上記の「原因未確定」は初回調査時点の記録であり、以下が追調査の結論。
+
+実際のimageから抽出した `FileCacheManager` クラスを変更せず実行した（Triton本体のGPU依存を避けるため、ASTでクラスだけ抽出し、cache directoryを指定するknobsを注入）。GCCで作った `int qwen_cache_probe(void) { return 42; }` の共有ライブラリを `put()` で公開し、直後に `ctypes.CDLL()`（dlopen）でロードして戻り値を検査する。4プロセスを各反復の `put()` 直前でbarrier同期し、同じキーを使う。500反復×4プロセス＝2,000ロードを条件ごとに実施。
+
+| 保存先・共有方法 | ロード回数 | ENOENT失敗 |
+| --- | ---: | ---: |
+| `/tmp`、4プロセスで同じキーを共有 | 2,000 | 0 |
+| `/scratch/home/ACCOUNT/qwen/diagnostics`（BeeGFS）、同じキーを共有 | 2,000 | **9** |
+| 同じBeeGFS、rankごとにキーを分離 | 2,000 | 0 |
+
+BeeGFS共有の9件はいずれも、今回のgateと同じ `cannot open shared object file: No such file or directory`。失敗直後の `os.path.exists()` はtrueで、直後の再ロードは全件成功した。同期を入れない先行診断でもBeeGFS共有で同じ失敗を1件確認したが、別の3回×100反復では再現せず、タイミング依存である。
+
+**結論：この環境ではBeeGFS上の共有cacheを並行置換した直後のdlopenが一時的に失敗する。** Tritonのatomic公開だけを読んで「分離なしで動く」と断言した説明は不十分だった。GPU計算、routerの数値、rank別CUDA contextを使わずに同種の障害を再現し、cacheの配置・共有だけで発生を切り分けられた。BeeGFS内部のどの処理がENOENTを返すかまでは調査対象にしていない。
+
+最小修正として、`sglang.sbatch` のnumeric gateのコンテナ内で `TRITON_CACHE_DIR=/tmp/qwen-numeric-gate-${SLURM_JOB_ID}` を指定する。4 rankは引き続き同じcacheを共有し、BeeGFSへの配置を避ける。serving workerは既に`/tmp`を使っている。rank別wrapper、retry、lock、image再ビルド、精度判定変更は不要。
+
+診断で作成した `/tmp` とBeeGFS上のディレクトリはすべて削除した。CPU再現経路での切り分けと修正のshell検証までを完了とし、新しいGPU jobは投入しない。修正を適用した公式servingのE2E完走は未確認であり、次の必要な実験にこの修正を含める。
