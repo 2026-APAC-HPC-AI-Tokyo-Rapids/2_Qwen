@@ -9,9 +9,16 @@ flashinfer fused_add_rmsnorm + per_token_group_quant (tolerances in
 check_add_rmsnorm_group_quant). Neither replaces the official workload or
 accuracy evaluation. The kernel bench also runs this file on the image tree,
 which lacks the new kernels; those checks print SKIP there.
+The dense FP8 check requires the new small-M host image for both trees and
+screens both host layouts against FP32 dequantized GEMM and changed-input graphs.
 """
 # ruff: noqa: B023 - the nested helpers run inside the loop iteration that defines them, so the loop variables are current
 import json
+import os
+import runpy
+from contextlib import contextmanager
+from pathlib import Path
+from types import SimpleNamespace
 
 import sglang.kernels.ops.attention.rope as rope_ops
 import torch
@@ -249,7 +256,7 @@ def check_rope_fp8_kv():
             assert torch.equal(a.view(torch.uint8)[non_nan], b.view(torch.uint8)[non_nan]), (label, name, "not bitwise equal")
 
     # Zero rows, odd tails, Decode verify sizes and Prefill chunks (token-warp grid).
-    for rows in (0, 1, 3, 31, 126, 128, 144, 3986, 4027):
+    for rows in (0, 1, 3, 31, 126, 128, 129, 132, 136, 140, 144, 145, 3986, 4027):
         for id_dtype in (torch.int32, torch.int64):
             packed = torch.randn(rows, 72, 128, device="cuda", dtype=torch.bfloat16) * 4
             q, k, v = packed[:, :64], packed[:, 64:68], packed[:, 68:]
@@ -265,6 +272,36 @@ def check_rope_fp8_kv():
             apply_qknorm_rope_fp8_kv(q, k, qw, kw, cache, positions, eps, actual[0], v, actual[1], actual[2], loc)
             compare(actual, expected, f"{rows}_{id_dtype}")
             assert all(torch.equal(x.view(torch.uint8), old.view(torch.uint8)) for x, old in zip((q, k, v), original)), "QKV input modified"
+            if rows in (128, 129, 132, 144):
+                # Same production API and fixed addresses; runtime input values,
+                # cache locations and the number of slot-zero padding rows vary.
+                def decode_forward():
+                    apply_qknorm_rope_fp8_kv(q, k, qw, kw, cache, positions, eps, actual[0], v, actual[1], actual[2], loc)
+
+                stream = torch.cuda.Stream()
+                stream.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(stream):
+                    decode_forward()
+                torch.cuda.current_stream().wait_stream(stream)
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph):
+                    decode_forward()
+                for replay in range(3):
+                    packed.copy_(torch.randn_like(packed) * (replay + 1))
+                    if id_dtype == torch.int64:
+                        q.copy_(packed[:, :64])
+                        k.copy_(packed[:, 64:68])
+                        v.copy_(packed[:, 68:])
+                    positions.copy_(torch.randint(0, 8192, (rows,), device="cuda", dtype=id_dtype))
+                    loc.copy_(torch.randperm(slots - 1, device="cuda")[:rows].to(id_dtype) + 1)
+                    loc[-(1 + 3 * replay):] = 0
+                    original = [x.clone() for x in (q, k, v)]
+                    actual[1].fill_(3.)
+                    actual[2].fill_(3.)
+                    expected = reference(q, k, v, positions, loc)
+                    graph.replay()
+                    compare(actual, expected, f"decode_graph_{rows}_{id_dtype}_{replay}")
+                    assert all(torch.equal(x.view(torch.uint8), old.view(torch.uint8)) for x, old in zip((q, k, v), original)), "graph modified QKV input"
 
     q = torch.randn(128, 64, 128, device="cuda", dtype=torch.bfloat16)
     k = torch.randn(128, 4, 128, device="cuda", dtype=torch.bfloat16)
@@ -300,6 +337,61 @@ def check_rope_fp8_kv():
         graph.replay()
         compare(actual, expected, f"graph_{replay}")
     print("PASS: exact FP8 KV fusion; packed/contiguous inputs; int32/int64 slots; reserved padding; all BF16 V patterns; graph replay changes inputs, positions and slots", flush=True)
+
+
+def check_decode_router_padding():
+    """Exact existing Triton router arithmetic, including ties and graph padding."""
+    import inspect
+
+    from sglang.kernels.ops.moe.moe_fused_gate import moe_fused_gate
+    from sglang.srt.layers.moe.topk import _mask_topk_ids_padded_region
+
+    if "num_token_non_padded" not in inspect.signature(moe_fused_gate).parameters:
+        print("SKIP: fused Decode Triton router is not in this tree", flush=True)
+        return
+    torch.manual_seed(61022)
+    for dtype in (torch.bfloat16, torch.float32):
+        for rows in (1, 7, 31, 32, 128, 129, 132, 136, 140, 144):
+            logits = torch.randn(rows, 128, device="cuda", dtype=dtype) * 4
+            logits[0].zero_()  # exact tie ordering
+            if rows > 1:
+                logits[1] *= 1000  # stable softmax, no new approximation
+            bias = torch.zeros(128, device="cuda", dtype=torch.float32)
+            count = torch.tensor(rows, device="cuda", dtype=torch.int32)
+            for renormalize in (False, True):
+                def reference():
+                    weights, ids = moe_fused_gate(logits, bias, 8, scoring_func="softmax", renormalize=renormalize)
+                    _mask_topk_ids_padded_region(ids, count)
+                    return weights, ids
+
+                def forward():
+                    return moe_fused_gate(logits, None, 8, scoring_func="softmax", renormalize=renormalize, num_token_non_padded=count)
+
+                def compare(actual, label):
+                    expected = reference()
+                    for name, a, b in zip(("weights", "ids"), actual, expected):
+                        assert torch.equal(a.view(torch.uint8), b.view(torch.uint8)), (label, name)
+                    print(json.dumps({"check": label, "bitwise_equal": True}), flush=True)
+
+                for valid in (0, max(0, rows - 3), rows):
+                    count.fill_(valid)
+                    compare(forward(), f"decode_router_{dtype}_{rows}_{valid}_renorm{renormalize}")
+                if rows in (128, 129, 132, 144):
+                    stream = torch.cuda.Stream()
+                    stream.wait_stream(torch.cuda.current_stream())
+                    with torch.cuda.stream(stream):
+                        forward()
+                    torch.cuda.current_stream().wait_stream(stream)
+                    graph = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(graph):
+                        actual = forward()
+                    for replay, valid in enumerate((rows, 0, rows - 7)):
+                        logits.copy_(torch.randn_like(logits) * (replay + 1))
+                        logits[0].zero_()
+                        count.fill_(valid)
+                        graph.replay()
+                        compare(actual, f"decode_router_graph_{dtype}_{rows}_{replay}_renorm{renormalize}")
+    print("PASS: Decode Triton router exact weights/IDs; ties, extreme logits, zero/live padding and changed-input graph replay", flush=True)
 
 
 def check_add_rmsnorm_group_quant():
@@ -517,11 +609,229 @@ def check_prefill_attention():
     print("PASS: Prefill prologue within bounds of the unfused reference and the existing fused kernel, zero/odd/4k rows, paged + contiguous KV, graph replay and FA3 multi-request boundaries", flush=True)
 
 
+def check_verify_attention_candidates():
+    """All rows, causal/page boundaries and changed-input graph replay.
+
+    Plans are rebuilt when lengths/page IDs change. That cost is deliberately
+    outside the per-layer benchmark. Numerical screens are not official accuracy.
+    """
+    helper = Path(__file__).resolve().parents[1] / "overlay/sglang/python/sglang/kernels/ops/attention/verify_attention_candidates.py"
+    ops = runpy.run_path(str(helper))
+    for batch in ops["BATCHES"]:
+        for boundary in (False, True):
+            common = ops["make_inputs"](batch, boundary=boundary)
+            cases = ops["fa3_cases"](common)
+            cases.update(ops["alternative_cases"](common))
+            expected = cases["fa3-verify-default"]().clone()
+            for name, call in cases.items():
+                actual = call()
+                assert actual.isfinite().all(), name
+                check_numerics(actual, expected, f"verify_{batch}_{boundary}_{name}")
+                stream = torch.cuda.Stream()
+                stream.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(stream):
+                    call()
+                torch.cuda.current_stream().wait_stream(stream)
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph):
+                    captured = call()
+                # Exact negation preserves the FP8 grid; all queries and both
+                # caches change at fixed graph addresses. Restore after replay.
+                for key in ("q", "k_cache", "v_cache"):
+                    common[key].copy_((-common[key].float()).to(common[key].dtype))
+                graph.replay()
+                expected_changed = cases["fa3-verify-default"]().clone()
+                assert captured.isfinite().all(), name
+                check_numerics(captured, expected_changed, f"verify_graph_{batch}_{boundary}_{name}")
+                for key in ("q", "k_cache", "v_cache"):
+                    common[key].copy_((-common[key].float()).to(common[key].dtype))
+    print("PASS: all verify candidates, 32..36 requests, FP8 KV, causal/page boundaries and graph replay", flush=True)
+
+
+def check_verify_scheduler_sharing():
+    from sgl_kernel.flash_attn import flash_attn_with_kvcache, get_scheduler_metadata
+    from sglang.srt.layers.attention.flashattention_backend import (
+        FlashAttentionBackend,
+        FlashAttentionMetadata,
+    )
+
+    if not hasattr(FlashAttentionBackend, "_get_verify_scheduler_metadata"):
+        print("SKIP: image lacks verify scheduler sharing; alternative attention gates still run", flush=True)
+        return
+    helper = Path(__file__).resolve().parents[1] / "overlay/sglang/python/sglang/kernels/ops/attention/verify_attention_candidates.py"
+    ops = runpy.run_path(str(helper))
+    backend = FlashAttentionBackend.__new__(FlashAttentionBackend)
+    backend.fa_impl_ver, backend.use_mla, backend.attn_cp_size = 3, False, 1
+    backend.topk, backend.page_size = 1, 64
+    backend._get_scheduler_metadata = get_scheduler_metadata
+    layer = SimpleNamespace(tp_q_head_num=64, tp_k_head_num=4, tp_v_head_num=4, head_dim=128, v_head_dim=128, logit_cap=0, is_cross_attention=False)
+    fb = SimpleNamespace(forward_mode=SimpleNamespace(is_target_verify=lambda: True), spec_info=None)
+    captured_buckets = []
+    for batch in ops["BATCHES"]:
+        common = ops["make_inputs"](batch, boundary=True)
+        metadata = FlashAttentionMetadata(cache_seqlens_int32=common["cache_seqlens"], cu_seqlens_q=common["cu_seqlens_q"], page_table=common["page_table"], max_seq_len_q=4)
+        backend.forward_metadata = metadata
+        out = torch.empty_like(common["q"], dtype=torch.bfloat16)
+
+        def forward(common=common, out=out):
+            backend.init_forward_metadata_in_graph(fb)
+            for _ in range(94):
+                sched = backend._get_verify_scheduler_metadata(common["q"], common["k_cache"], layer, fb, True, (-1, -1), False, False)
+                assert sched is not None
+                flash_attn_with_kvcache(**common, out=out, scheduler_metadata=sched, num_splits=1, pack_gqa=True)
+            return out
+
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            forward()  # warmup populates metadata: capture must refresh it
+        torch.cuda.current_stream().wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            actual = forward()
+        # Replay uses the same buffer addresses, fresh lengths and page IDs.
+        # Include page/tile boundaries and bucket-owned allocations.
+        common["cache_seqlens"].add_(1)
+        common["cu_seqlens_k_new"][1:].copy_(common["cache_seqlens"].cumsum(0, dtype=torch.int32))
+        common["page_table"].copy_(common["page_table"].flip(0))
+        for key in ("q", "k_cache", "v_cache"):
+            common[key].copy_((-common[key].float()).to(common[key].dtype))
+        captured_buckets.append((batch, graph, actual, common, metadata))
+    assert len({m.verify_scheduler_metadata.data_ptr() for _, _, _, _, m in captured_buckets}) == 5
+    # Replay old buckets after capturing other buckets, including different B.
+    for batch, graph, actual, common, metadata in reversed(captured_buckets):
+        graph.replay()
+        expected = flash_attn_with_kvcache(**common)
+        assert actual.isfinite().all(), batch
+        check_numerics(actual, expected, f"verify_shared94_graph_changed_lengths_pages_b{batch}")
+    print("PASS: verify shared metadata, 94 layers, warmup/capture and changed-length/page replay across buckets", flush=True)
+
+
+DENSE_PROJECTIONS = (("qkv", 9216, 4096), ("o", 4096, 8192))
+
+
+@contextmanager
+def dense_gemm_mode(enabled):
+    """The rebuilt host reads this switch before generating each JIT launch."""
+    key = "DG_SM90_1D2D_SMALL_M"
+    previous = os.environ.get(key)
+    os.environ[key] = "1" if enabled else "0"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = previous
+
+
+def require_dense_host(path=Path("/opt/apac/deep-gemm-host-build.json")):
+    """An old image silently ignores the switch; never label that a candidate."""
+    record = json.loads(path.read_text())
+    digest = record["patches"].get("sm90-1d2d-small-m.patch", "")
+    assert record["source_commit"] == "1c8138a59b3df5dac50b76b730834ed57982fdfb", record
+    assert len(digest) == 64 and all(c in "0123456789abcdef" for c in digest), "dense GEMM bench requires the rebuilt small-M host image"
+    return digest
+
+
+def dense_inputs(rows, n, k, seed):
+    gen = torch.Generator(device="cuda").manual_seed(seed)
+    x = torch.randn(rows, k, device="cuda", dtype=torch.bfloat16, generator=gen) * 4
+    x[0].zero_()
+    a, sa = sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
+    b = (torch.randn(n, k, device="cuda", dtype=torch.bfloat16, generator=gen) * 4).to(torch.float8_e4m3fn)
+    # Distinct scales across both N and K catch BN80's scale-boundary mapping.
+    sb = 10.0 ** (torch.rand(n // 128, k // 128, device="cuda", generator=gen) * 3 - 3)
+    out = torch.empty(rows, n, device="cuda", dtype=torch.bfloat16)
+    assert sa.dtype == sb.dtype == torch.float32
+    return (a, sa), (b, sb), out
+
+
+def dense_reference(lhs, rhs):
+    a, sa = lhs
+    b, sb = rhs
+    x = a.float() * sa.repeat_interleave(128, 1)
+    w = b.float() * sb.repeat_interleave(128, 0).repeat_interleave(128, 1)
+    return x @ w.T
+
+
+def check_dense_errors(metrics):
+    # BF16 rounding plus changed FP32 accumulation order, not an accuracy waiver.
+    assert metrics["finite"], metrics
+    assert 0 <= metrics["relative_l2"] <= 0.005, metrics
+    assert 0 <= metrics["max_scaled_error"] <= 0.01, metrics
+
+
+def dense_errors(actual, expected):
+    assert actual.shape == expected.shape and actual.dtype == torch.bfloat16
+    error = actual.float() - expected
+    metrics = {"finite": bool(actual.isfinite().all() and expected.isfinite().all()), "relative_l2": (error.norm() / expected.norm().clamp_min(1e-12)).item(), "max_scaled_error": (error.abs().amax() / expected.abs().amax().clamp_min(1e-12)).item()}
+    check_dense_errors(metrics)
+    return metrics
+
+
+@contextmanager
+def dense_fp32_reference():
+    previous = torch.backends.cuda.matmul.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = False
+    try:
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = previous
+
+
+def check_dense_gemm():
+    """Both host choices vs independent FP32 dequantized GEMM, plus graph replay."""
+    import deep_gemm
+
+    host_sha = require_dense_host()
+    assert torch.cuda.get_device_properties(torch.cuda.current_device()).multi_processor_count == 132
+    os.environ.setdefault("DG_PRINT_CONFIGS", "1")
+    with dense_fp32_reference():
+        for op, n, k in DENSE_PROJECTIONS:
+            # Include host boundaries and non-four-aligned tails in the numeric gate.
+            for rows in (64, 65, 128, 129, 132, 136, 144, 145):
+                for enabled in (False, True):
+                    lhs, rhs, out = dense_inputs(rows, n, k, 31000 + rows + n)
+
+                    def call(lhs=lhs, rhs=rhs, out=out):
+                        deep_gemm.fp8_gemm_nt(lhs, rhs, out)
+
+                    out.fill_(float("nan"))
+                    with dense_gemm_mode(enabled):
+                        call()
+                        metrics = dense_errors(out, dense_reference(lhs, rhs))
+                        print(json.dumps({"check": f"dense-{op}-{rows}", "small_m": enabled, "host_patch_sha256": host_sha, **metrics}), flush=True)
+                        stream = torch.cuda.Stream()
+                        stream.wait_stream(torch.cuda.current_stream())
+                        with torch.cuda.stream(stream):
+                            call()
+                        torch.cuda.current_stream().wait_stream(stream)
+                        graph = torch.cuda.CUDAGraph()
+                        with torch.cuda.graph(graph):
+                            call()
+                    # Replay has no host call: it must use the captured choice and
+                    # current input/scales, even after restoring the process switch.
+                    for replay in range(2):
+                        new_lhs, new_rhs, _ = dense_inputs(rows, n, k, 41000 + rows + n + replay)
+                        for actual, fresh in zip((*lhs, *rhs), (*new_lhs, *new_rhs)):
+                            actual.copy_(fresh)
+                        out.fill_(float("nan"))
+                        graph.replay()
+                        metrics = dense_errors(out, dense_reference(lhs, rhs))
+                        print(json.dumps({"check": f"dense-graph-{op}-{rows}-{replay}", "small_m": enabled, **metrics}), flush=True)
+    print("PASS: dense FP8 group128 / block128 projections, stock and small-M, eager and changed-input CUDA graph replay", flush=True)
+
+
 if __name__ == "__main__":
+    check_dense_gemm()
     check_decode_silu_quant()
     check_rope_fp8_q()
     check_rope_fp8_q(with_norm=True)
     check_rope_fp8_kv()
     check_topk_mask()
+    check_decode_router_padding()
     check_add_rmsnorm_group_quant()
     check_prefill_attention()
+    check_verify_attention_candidates()
+    check_verify_scheduler_sharing()

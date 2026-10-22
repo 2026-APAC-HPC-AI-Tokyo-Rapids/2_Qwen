@@ -14,14 +14,24 @@ check-firmus-decode-kernels.py.
 
 Shapes: Prefill 3986/4027/4096 tokens per DP rank, Decode verify 4..144 rows
 (EAGLE3 4 tokens per request, up to 36 requests). The FA3 TARGET_VERIFY
-runtime knobs (num_splits, pack_gqa, precomputed scheduler metadata) do not
-depend on the tree; their rows carry the largest absolute difference from the
-default call.
+runtime knobs, request partitions and existing FlashInfer/Triton alternatives
+use the same helper on both trees. Their rows carry full-output differences
+from the default call. Timing is per call; layers_per_call=94 marks the paired
+step probes. FlashInfer planning and page/token-index construction are excluded.
+
+Dense QKV/O cases compare stock and opt-in small-M host layouts in each tree,
+using four rotating FP8 weight sets. They require the image rebuilt with
+sm90-1d2d-small-m.patch. Dense case suffixes identify the host switch separately
+from the image/candidate SGLang tree variant; speedup_vs_stock pairs the layouts.
 """
 import argparse
 import hashlib
+import inspect
 import json
+import runpy
 import statistics
+from pathlib import Path
+from runpy import run_path
 
 import sglang.kernels.ops.attention.rope as rope_ops
 import torch
@@ -46,10 +56,11 @@ HAS_FUSED_KV = hasattr(rope_ops, "apply_qknorm_rope_fp8_kv")
 
 REPS = 20
 REPLAYS = 25
-ROWS = (4027, 3986, 4096, 144, 128, 126, 16, 4)
-TOPK_ROWS = (144, 128, 126, 16, 4)
+ROWS = (4027, 3986, 4096, 144, 140, 136, 132, 129, 128, 126, 16, 4)
+TOPK_ROWS = (144, 140, 136, 132, 129, 128, 126, 16, 4)
 SLOTS = 8192 + 64
 EPS = 1e-6
+DENSE_ROWS = (128, 132, 136, 144)
 
 
 def sha256(*tensors):
@@ -147,7 +158,7 @@ def bench_rope(write):
             sha = sha256(q_fp8, qkv, k_cache, v_cache)
             sets = [inputs(rows, 100 + i) for i in range(input_sets(rows))]
             timing = time_graph([lambda s=s, op=op, out=(q_fp8, k_cache, v_cache): op(*s, *out) for s in sets])
-            write(f"{name}-{rows}", sha, timing)
+            write(f"{name}-{rows}", sha, timing, calls_per_decode_step=94 if name == "attn-prologue-kv" and rows <= 144 else None)
 
 
 def bench_norm_quant(write):
@@ -191,37 +202,83 @@ def bench_topk(write):
         write(f"topk-mask-{rows}", sha256(*op()), time_graph([op]))
 
 
+def bench_decode_router(write):
+    """Production JIT router + zero bias + padding mask, before/after fusion.
+
+    One call per layer (94 per target verify); all timed calls retain the
+    full top-8 arithmetic. Candidate fusion is also compared with its own
+    unfused path so the other three serving overlays cannot confound it.
+    """
+    from sglang.kernels.ops.moe.moe_fused_gate import moe_fused_gate
+
+    fused = "num_token_non_padded" in inspect.signature(moe_fused_gate).parameters
+    for rows in TOPK_ROWS:
+        gen = torch.Generator(device="cuda").manual_seed(61000 + rows)
+        logits = torch.randn(rows, 128, device="cuda", dtype=torch.bfloat16, generator=gen) * 4
+        count = torch.tensor(max(0, rows - 3), device="cuda", dtype=torch.int32)
+
+        def unfused(logits=logits, count=count):
+            # Match fused_topk's allocation inside every layer invocation.
+            bias = torch.zeros(128, device="cuda", dtype=torch.float32)
+            weights, ids = moe_fused_gate(logits, bias, 8, scoring_func="softmax", renormalize=True)
+            _mask_topk_ids_padded_region(ids, count)
+            return weights, ids
+
+        def production(logits=logits, count=count, unfused=unfused):
+            if fused:
+                return moe_fused_gate(logits, None, 8, scoring_func="softmax", renormalize=True, num_token_non_padded=count)
+            return unfused()
+
+        for name, op in (("decode-router-unfused", unfused), ("decode-router-production", production)):
+            write(f"{name}-{rows}", sha256(*op()), time_graph([op]), calls_per_decode_step=94, fused_padding=fused and name.endswith("production"))
+
+
 def bench_fa3_verify(write):
-    """FA3 TARGET_VERIFY as flashattention_backend.forward_extend issues it
-    (FP8 Q/KV, page 64, 4 query tokens per request, causal), and its knobs."""
-    from sgl_kernel.flash_attn import flash_attn_with_kvcache, get_scheduler_metadata
+    """Compare every verify row on identical FP8 bytes, including Q casts.
 
-    page = 64
-    for batch in (32, 36):
-        gen = torch.Generator(device="cuda").manual_seed(batch)
-        seqlens = torch.randint(3900, 4200, (batch,), device="cuda", dtype=torch.int32, generator=gen)
-        pages_per_req = (int(seqlens.max()) + page - 1) // page
-        num_pages = batch * pages_per_req + 1
-        page_table = (torch.randperm(num_pages - 1, device="cuda", generator=gen)[: batch * pages_per_req] + 1).view(batch, pages_per_req).to(torch.int32)
-        k_cache = (torch.randn(num_pages, page, 4, 128, device="cuda", generator=gen) * 2).to(torch.float8_e4m3fn)
-        v_cache = (torch.randn(num_pages, page, 4, 128, device="cuda", generator=gen) * 2).to(torch.float8_e4m3fn)
-        q = (torch.randn(batch * 4, 64, 128, device="cuda", generator=gen) * 2).to(torch.float8_e4m3fn)
-        cu_q = torch.arange(0, batch * 4 + 1, 4, device="cuda", dtype=torch.int32)
-        cu_k = torch.nn.functional.pad(seqlens.cumsum(0, dtype=torch.int32), (1, 0))
-        common = {"q": q, "k_cache": k_cache, "v_cache": v_cache, "page_table": page_table, "cache_seqlens": seqlens, "cu_seqlens_q": cu_q, "cu_seqlens_k_new": cu_k, "max_seqlen_q": 4, "softmax_scale": 128**-0.5, "causal": True}
-        meta = get_scheduler_metadata(batch_size=batch, max_seqlen_q=4, max_seqlen_k=int(seqlens.max()), num_heads=64, num_heads_k=4, headdim=128, cache_seqlens=seqlens, qkv_dtype=torch.float8_e4m3fn, cu_seqlens_q=cu_q, page_size=page, causal=True)
-        knobs = {"default": {}, "pack-gqa-on": {"pack_gqa": True}, "pack-gqa-off": {"pack_gqa": False}, "sched-meta": {"scheduler_metadata": meta}}
-        knobs.update({f"splits-{n}": {"num_splits": n} for n in (1, 2, 3, 4, 6, 8)})
-        reference = None
-        for name, extra in knobs.items():
-            def call(extra=extra, common=common):
-                result = flash_attn_with_kvcache(**common, **extra)
-                return result[0] if isinstance(result, tuple) else result
-
+    FlashInfer planning and token/page index construction are excluded from
+    per-layer timings; those are step-level costs, not a serving speed claim.
+    """
+    helper = Path(__file__).resolve().parents[1] / "overlay/sglang/python/sglang/kernels/ops/attention/verify_attention_candidates.py"
+    ops = runpy.run_path(str(helper))
+    for batch in ops["BATCHES"]:
+        common = ops["make_inputs"](batch)
+        cases = ops["fa3_cases"](common)
+        cases.update(ops["alternative_cases"](common))
+        cases.update(ops["step_cases"](common))
+        reference = cases["fa3-verify-default"]().clone()
+        for name, call in cases.items():
             output = call()
-            reference = output if reference is None else reference
-            diff = (output.float() - reference.float()).abs().max().item()
-            write(f"fa3-verify-{name}-b{batch}", sha256(output), time_graph([call]), max_abs_diff_vs_default=diff)
+            error = output.float() - reference.float()
+            assert output.dtype == torch.bfloat16 and output.isfinite().all(), name
+            write(f"{name}-b{batch}", sha256(output), time_graph([call]), max_abs_diff_vs_default=error.abs().max().item(), relative_l2_vs_default=(error.norm() / reference.float().norm().clamp_min(1e-12)).item(), kv_dtype=str(common["k_cache"].dtype), planning_included=False, layers_per_call=94 if "step94" in name else 1)
+
+
+def bench_dense_gemm(write):
+    """Paired stock/new-host geometry, with >L2 weight working sets at every M."""
+    import deep_gemm
+
+    checks = run_path(str(Path(__file__).with_name("check-firmus-decode-kernels.py")))
+    host_sha = checks["require_dense_host"]()
+    assert torch.cuda.get_device_properties(torch.cuda.current_device()).multi_processor_count == 132
+    with checks["dense_fp32_reference"]():
+        for op, n, k in checks["DENSE_PROJECTIONS"]:
+            for rows in DENSE_ROWS:
+                # QKV=144MiB / O=128MiB FP8 weights alone, beyond H200's L2.
+                # The same buffers and seed are shared by the paired configurations.
+                sets = [checks["dense_inputs"](rows, n, k, 51000 + rows + n + i) for i in range(4)]
+                reference = checks["dense_reference"](sets[0][0], sets[0][1])
+                stock_us = None
+                for enabled in (False, True):
+                    with checks["dense_gemm_mode"](enabled):
+                        deep_gemm.fp8_gemm_nt(*sets[0])
+                        metrics = checks["dense_errors"](sets[0][2], reference)
+                        digest = sha256(sets[0][2])
+                        timing = time_graph([lambda s=s: deep_gemm.fp8_gemm_nt(*s) for s in sets])
+                    if not enabled:
+                        stock_us = timing["median_us"]
+                    config = "small-m" if enabled else "stock"
+                    write(f"dense-fp8-{op}-m{rows}-{config}", digest, timing, m=rows, n=n, k=k, dense_config=config, weight_sets=4, weight_bytes=4 * n * k, speedup_vs_stock=stock_us / timing["median_us"], host_patch_sha256=host_sha, **metrics)
 
 
 def main():
@@ -236,7 +293,9 @@ def main():
     bench_rope(write)
     bench_norm_quant(write)
     bench_topk(write)
+    bench_decode_router(write)
     bench_fa3_verify(write)
+    bench_dense_gemm(write)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,13 @@
 {
   "framework": "sglang",
-  "concurrency": 196,
+  "concurrency": 192,
   "workload": "official",
   "images": {
     "sglang": {
-      "path": "/scratch/home/ACCOUNT/qwen/containers/39693217189.sqsh",
-      "sha256": "a7ff4c75eb744e692d8591eaa845cc6f4b51837cc662be87a564736adbff50cb",
+      "path": "/scratch/home/ACCOUNT/qwen/containers/39711569005.sqsh",
+      "sha256": "98d1c1138308fcd204f13d9b44d4cc9853462b00d8310fd31481df179426fe5f",
       "size_bytes": 12269379584,
-      "provenance": "/scratch/home/ACCOUNT/qwen/containers/39693217189.container-sidecar.json"
+      "provenance": "/scratch/home/ACCOUNT/qwen/containers/39711569005.container-sidecar.json"
     },
     "vllm": {
       "path": "/scratch/home/ACCOUNT/qwen/framework-comparison/images/vllm.sqsh",
@@ -24,7 +24,7 @@
     "draft_revision": "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224"
   },
   "decode_max_total_tokens": 393216,
-  "decode_max_running_requests": 132,
+  "decode_max_running_requests": 128,
   "decode_extra_slots": 16,
   "decode_polling_interval": 1,
   "decode_cuda_graph_bs": [
@@ -49,8 +49,7 @@
     26,
     28,
     30,
-    32,
-    33
+    32
   ],
   "prefill": {
     "workers": 3,
@@ -68,12 +67,16 @@
   "sglang_overlay_patches": [
     "patches/sglang/add-rmsnorm-group-quant.patch",
     "patches/sglang/prefill-attention-contiguous-kv.patch",
-    "patches/sglang/megamoe-prefill-replicas.patch"
+    "patches/sglang/megamoe-prefill-replicas.patch",
+    "patches/sglang/verify-attention-candidates.patch",
+    "patches/sglang/decode-verify-scheduler-metadata.patch",
+    "patches/sglang/decode-fusions.patch"
   ],
   "deep_gemm_overlay_patches": [
     "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
     "patches/deep-gemm-overlay/sm90-prefill-fc2-swizzle.patch",
     "patches/deep-gemm-overlay/sm90-prefill-2wg-host-epi.patch",
-    "patches/deep-gemm-overlay/sm90-swap-ab-geometry-guard.patch"
+    "patches/deep-gemm-overlay/sm90-swap-ab-geometry-guard.patch",
+    "patches/deep-gemm-overlay/sm90-decode-swapab-prefetch.patch"
   ]
 }

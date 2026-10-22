@@ -59,6 +59,8 @@ def main():
     # Cover the extended SwapAB range, its mixed-geometry boundary, and a
     # second combine iteration above 132 rows (132 CTAs x 8 combine warps).
     cases += [("swapab-boundary-mixed", [128, 129, 144, 145]), ("decode-graph-swapab-144", [144, 140, 136, 132]), ("swapab-hot-experts-144", [144] * 4)]
+    # The early-publish assignment ring must leave no state after an empty call.
+    cases += [("decode-all-idle", [0] * 4), ("decode-live-after-idle", [144] * 4)]
     for case, counts in cases:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         if case == "decode-quant-zero":
