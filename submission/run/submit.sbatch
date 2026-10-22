@@ -163,6 +163,7 @@ run_node() {
       worker_env=(-e "NCCL_IB_HCA==${ucx_devices}" -e UCX_POSIX_USE_PROC_LINK=n -e UCX_ADAPTIVE_PROGRESS=n -e UCX_LOG_LEVEL=info -e SGLANG_DISAGG_STAGING_BUFFER=0 -e SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1 -e SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096)
       if [[ "${role}" == prefill ]]; then
         args+=(--dist-init-addr "127.0.0.1:$((32000 + worker * 100))" --disaggregation-bootstrap-port "${bootstrap}" --chunked-prefill-size "$(jq -er .prefill_chunked_size "${config}")" --max-total-tokens "$(jq -er .prefill_max_total_tokens "${config}")" --max-running-requests "$(jq -er .concurrency "${config}")" --disable-cuda-graph)
+        # Firmus run 39550627795's 2WG/hot-4 Prefill kernels retain Aspire's measured H100 KV pools and Decode cap.
         test -s "${OUTPUT_DIR}/source/prefill-expert-location.json"
         worker_env+=(-m "${OUTPUT_DIR}:/runtime:none:bind,ro,x-create=dir" -e SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS=1 -e SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=1 -e SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1 -e DG_SM90_PREFILL_2WG=1)
         args+=(--init-expert-location /runtime/source/prefill-expert-location.json --ep-num-redundant-experts "$(jq -er .prefill_ep_num_redundant_experts "${config}")" --optimistic-prefill-attempts "$(jq -er .prefill_optimistic_attempts "${config}")")
