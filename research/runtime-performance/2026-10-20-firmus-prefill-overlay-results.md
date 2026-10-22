@@ -288,3 +288,27 @@ Decode の running は +3% になったが、ITL が +5.8% 延びて score は �
 - 1 step あたり dense GEMM で約 +1.1 ms、MegaMoE で約 +0.7 ms、計約 +1.8 ms（+6%）となり、ITL の増加と合う。
 
 Decode の 128 行（32 要求 × 4 検証 token）は、dense GEMM・MegaMoE SwapAB・FA3 の 3 つで同時に tile 境界になっていて、上限を少し上げるだけでは step が割高になる。Decode の容量を増やすには、128 行を超える範囲で dense GEMM の tile の選び方（BLOCK_M、SwapAB）を直すか、Decode step そのものを速くする必要がある。branch perf/firmus-swapab144-20261022 と image 39693217189 は残す。
+
+## Decode step の削減 B1・B4・B6（B5 なし）（serving [39764967207](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39764967207)、a9a6ba6、image 39711569005）：**8481.99**、採用
+
+B1・B4・B5・B6 をまとめた run 39759800897（9f93944）は 7582.76 だった。B5（`DG_SM90_1D2D_SMALL_M=1`）を有効にすると、Decode の dense FP8 GEMM の 128 行に BLOCK_M 256 / BLOCK_N 32（QKV）・80（O）が選ばれ、1 呼び出しが 17.3 → 44.3 µs、14.3 → 30.5 µs に延びた（約 +4.1 ms/step）。そこで、Decode にこの環境変数を渡すのをやめた。B5 の host patch（`sm90-1d2d-small-m.patch`）は image に入ったまま opt-in で、変数がなければ元の heuristic になる。それ以外の条件は 9f93944 と同じ（hot-4 複製、cap 128、c192、EAGLE3 3/4）。
+
+| | main（2 WG） | 2 WG ＋ 複製（39550627795） | B1/B4/B5/B6（39759800897） | **B1/B4/B6（39764967207）** |
+| --- | ---: | ---: | ---: | ---: |
+| score | 8356.18 | 8366.32 | 7582.76 | **8481.99** |
+| TTFT 平均 / p99 | — | 1551 / 3591 ms | 1700 / 3663 ms | 1539 / 3407 ms |
+| ITL 平均 / p99 | 14.5 / 16.9 ms | 14.54 / 16.91 ms | 16.06 / 18.66 ms | **14.33 / 16.74 ms** |
+
+decode-0 の kernel-summary を、MegaMoE の 1 呼び出し（＝ 1 層）あたりに直した比較（39550627795 → 39764967207）：
+
+| kernel | 前 | 後 | 担当 |
+| --- | ---: | ---: | --- |
+| `flash::prepare_varlen_num_blocks_kernel` | 3.65 µs（1.03 回/層） | 0.30 µs（0.09 回/層） | B4（scheduler metadata を step で共有） |
+| FA3 verify（cutlass device_kernel） | 52.4 | 51.7 | B4 |
+| 名前なし kernel（QK-norm/RoPE など） | 14.4 ＋ 1.3 | 13.0 ＋ 0 | B6 |
+| `_router_triton_kernel` | 3.04 | 3.53 | B6（router 後処理の融合で増えた） |
+| MegaMoE | 199.2 | 200.8 | B1（39759800897 では 198.4。差は run の揺れの範囲で、効果は確認できない） |
+| dense FP8 GEMM（QKV ＋ O） | 31.5 | 31.9 | B5 なし（元の config） |
+| 合計（上位 kernel） | 338.4 | 334.5 | 約 −0.37 ms/step（31.81 → 31.44 ms） |
+
+score は main 比 +1.5%、同じ構成の参照（39550627795）比 +1.4%。step の短縮（−1.2%）に、ITL p99 と TTFT p99 の改善が加わった。B5 は Decode の M=128 では逆効果なので使わない。B1 は効果が見えないが、Decode の SwapAB 経路にだけ効く overlay で害もないため、まとめて残す。
