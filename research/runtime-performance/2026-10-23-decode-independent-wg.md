@@ -4,7 +4,7 @@
 
 `perf/firmus-decode-independent-wg-20261023` に独立task/queue/outputの実装を置いた。現行image 39899235870のheader（SHA256 `ff7a58cca00aa42a90386d12b0437b5d8caf35eb0ad082a8a1a0b4b74001a2a1`）へ `configs/firmus-framework.json` の既存5 overlayを適用した状態を対照とする。source mirrorは変更していない。
 
-CUDA 13.0.88によるCPU compileは成功した。384 threads、168 registersでWGMMA直列化warningはないが、**8 bytes spill stores / 8 bytes spill loadsが残り、spill 0の資源目標は未達**。GPU correctness、CUDA graph replay、速度、公式result parser、servingは未検証。126 µs達成やmainに対する性能優位性を主張しない。ユーザーの追加指示に従いpush、Actions、scheduler、GPUジョブ、新OCI buildは実行していない。
+CUDA 13.0.88によるCPU compileは成功した。384 threads、168 registersでWGMMA直列化warningはないが、**8 bytes spill stores / 8 bytes spill loadsが残り、spill 0の資源目標は未達**。GPU correctness、CUDA graph replay、速度、公式result parser、servingは未検証。126 µs達成やmainに対する性能優位性を主張しない。初回実装ではpush・Actions・新OCI buildを行わず、後続のビルド専用許可に基づいて [AWS run 39932105942](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39932105942) のattempt 2で新イメージを構築・配備した。`c49bc67`で実成果物へimage指定を更新し、Firmus login CPUで実イメージのmetadata・host拡張・SHA256・provisionがすべて成功した。GPUジョブは未実行。
 
 ## 変更
 
@@ -50,7 +50,7 @@ CUDA 13.0.88によるCPU compileは成功した。384 threads、168 registersで
 
 ## Buildと後続の検証
 
-host patchを`patches/deep-gemm-host/series`へ追加したため、opt-in使用には新しいhost extensionを含む新OCI buildが必要。host `_C.so`自体の再buildは今回実行していない。candidate JIT patchの正本は `patches/deep-gemm-bench/independent-wg/sm90-decode-independent-wg.patch`。同directoryの`env`がopt-inを設定する。configの対照overlayは既存5本のままで、既存bench provisionerが候補copyにだけ6本目を適用する。Dockerfileとbuild contextへCPU compile helperを接続したが、installed base headerは変更せずoverlayをcopy上で検査する。
+host patchを`patches/deep-gemm-host/series`へ追加したため、opt-in使用には新しいhost extensionを含む新OCI buildが必要。host `_C.so`の再buildとABI importは、その後のローカル検査と上記AWS buildで成功した。candidate JIT patchの正本は `patches/deep-gemm-bench/independent-wg/sm90-decode-independent-wg.patch`。同directoryの`env`がopt-inを設定する。configの対照overlayは既存5本のままで、既存bench provisionerが候補copyにだけ6本目を適用する。Dockerfileとbuild contextへCPU compile helperを接続したが、installed base headerは変更せずoverlayをcopy上で検査する。
 
 build helperはcompile failure、WGMMA直列化、opt-outのDecode/Prefill SASS変化では失敗する。spill量はJSONとwarningへ残し、`spill_zero_target_met=false`、`gpu_validated=false`を記録する。**sourceがcompile可能であることとspill 0の性能目標を分け、新image構築そのものはspillだけでは失敗させない。** この仕組みは性能採用の承認を意味しない。
 
@@ -89,3 +89,5 @@ assert追加後の候補header SHA256は `c40d4c141aea45bb17a864ae8d7088a97363f1
 これはCUDA driverのdescriptor encoding・GPU計算・native `_C.so` ABI importを実行した検査ではない。これらの未実施区間はJSONにもfalseとして記録しており、実CUDA compile・native extensionの検査とは区別する。本作業ではSSH・remote compile・ジョブ投入・pushを行っていない。
 
 別担当の最終native build記録ともsource commitとhost patch全4本のSHA256が一致した。固定v0.1.5 sourceから実際の `_C.so` をローカルbuildし、torch 2.11.0 / apache-tvm-ffi 0.1.11でABI import成功、extension SHA256は `60aebb872919fd3a25d3fa9d98115b6ee895d2debc41e605b77eb042d1b9bacc`。GPUは実行していない。この別検査の成功によって上のCPU checkerのmock境界が変わるわけではない。既存imageのhost extensionには新envの実装が入っていないため、本候補の実行には新imageが引き続き必要である。
+
+上記AWS buildではassert追加後header `c40d4c14…` を使う実container compile helperも成功し、表のSASS値と一致した。staged control/candidate header、4本のhost patch、実 `_C.so`、embedded host record、候補envも実イメージ上で照合した。image指定の正本は本branchの `configs/firmus-framework.json`、raw CPU検査記録は `/tmp/qwen-preflight-20261023/aws-build-39932105942/` に保存。これで旧imageによる投入前拒否は解消した。残るGPU数値gate・replay・性能・公式scoreの検証前にmainへ採用しない。
