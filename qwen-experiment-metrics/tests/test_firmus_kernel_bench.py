@@ -458,3 +458,14 @@ def test_provision_counts_sglang_and_image_timeline_before_staging(tmp_path: Pat
     assert result.returncode != 0
     assert f"{expected_steps} Slurm steps" in result.stderr
     assert not (tmp_path / "runs").exists()
+
+
+def test_kernel_bench_gate_is_megamoe_only_and_serving_gate_keeps_decode_checks():
+    # 39942794259: the kernel-bench SGLang tree has no serving overlays, so the Decode-kernel
+    # checks (decode_fa3_verify) cannot import there; serving still runs them before startup.
+    bench = (ROOT / "platforms/firmus/kernel-bench/run.sbatch").read_text()
+    serving = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
+    gate = (ROOT / "scripts/check-firmus-megamoe.py").read_text()
+    assert '"${ROOT}/scripts/check-firmus-megamoe.py" --megamoe-only' in bench
+    assert "--megamoe-only" not in serving
+    assert 'if "--megamoe-only" not in sys.argv[1:]:\n        run_path(str(Path(__file__).with_name("check-firmus-decode-kernels.py")), run_name="__main__")' in gate

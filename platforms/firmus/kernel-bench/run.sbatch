@@ -67,7 +67,7 @@ for dir in "${ROOT}"/overlay/candidates/*/; do
   candidate_env=()
   if [[ -e "${ROOT}/overlay/env/${variant}" ]]; then mapfile -t candidate_env <"${ROOT}/overlay/env/${variant}"; fi
   install -d "${ROOT}/results/${variant}" "${ROOT}/scratch/${variant}"
-  step "${variant}" gate PYTHONPATH="${dir%/}" "${candidate_env[@]}" "${torchrun[@]}" "${ROOT}/scripts/check-firmus-megamoe.py"
+  step "${variant}" gate PYTHONPATH="${dir%/}" "${candidate_env[@]}" "${torchrun[@]}" "${ROOT}/scripts/check-firmus-megamoe.py" --megamoe-only
   (( step_exit == 0 )) || continue
   step "${variant}" bench PYTHONPATH="${dir%/}" "${candidate_env[@]}" "${torchrun[@]}" "${ROOT}/scripts/bench-firmus-megamoe.py" --variant "${variant}" --output "${ROOT}/results/${variant}/bench.jsonl" --reference "${ROOT}/results/image/bench.jsonl" --scratch "${ROOT}/scratch/${variant}"
   (( step_exit == 0 )) || continue
