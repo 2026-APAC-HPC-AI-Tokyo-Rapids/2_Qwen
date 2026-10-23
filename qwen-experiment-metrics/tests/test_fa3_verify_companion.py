@@ -139,7 +139,7 @@ def test_build_and_serving_are_wired_without_rejected_probes():
     assert '"${ROOT}" fa3' in job and 'decode-selection/fa3.env' in job
     assert "select-firmus-decode-fa3.py" in (ROOT / "scripts/provision-firmus-framework.sh").read_text()
     assert "containers/build-fa3-verify.sh" in (ROOT / "containers/Dockerfile").read_text()
-    assert 'max_workers=2' in (ROOT / "containers/fa3-verify/build.py").read_text()
+    assert 'max_workers=2' in (ROOT / "kernels/fa3-verify/build.py").read_text()
 
 
 def test_serving_gate_only_checks_the_selected_fa3(monkeypatch):
