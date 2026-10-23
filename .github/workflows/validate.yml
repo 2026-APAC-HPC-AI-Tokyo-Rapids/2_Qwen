@@ -21,6 +21,9 @@ jobs:
           QWEN_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: uv run --no-project python scripts/check-kernel-experiment-tags.py
 
+      - name: 独立warpgroupの配置とtask割当を検証
+        run: uv run --no-project python scripts/check-sm90-independent-wg.py
+
       - name: シェル構文を検証
         run: find scripts platforms containers aws submission -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' -o -name '*.slurm' -o -name '*.sbatch' \) -print0 | xargs -0 -r -n1 bash -n
 
