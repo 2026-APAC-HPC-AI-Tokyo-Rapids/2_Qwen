@@ -1,0 +1,186 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -2193,101 +2193,118 @@
+                         if constexpr (kActivationClamp != cute::numeric_limits<float>::infinity())
+                             x = cute::min(cute::max(x, -kActivationClamp), kActivationClamp);
+                     };
+
+-                    // The FP32 SwiGLU tile is staged as [token][64] with the column XOR-swizzled
+-                    // by 8 * ((token / 2) % 4). A warp's stores then cover all 32 banks (the
+-                    // unswizzled row stride of 64 floats put the four token pairs of a store on
+-                    // the same 8 banks), and the quad readers below can load float4 rows without
+-                    // conflicts. The swizzle keeps 4-column groups contiguous and aligned.
+-                    DG_STATIC_ASSERT(L1_OUT_BLOCK_N == 64, "swapAB L1 staging assumes one 64-wide SF group");
+-                    auto swap_l1_swizzle = [](const uint32_t& token) { return ((token >> 1) & 3u) << 3; };
+-                    const uint32_t out_col_base =
+-                        wg_l1_out_n_offset + warp_idx_in_wg * 8 + row_idx;
+-                    auto store_l1_swap_chunk = [&](const uint32_t& i) {
++                    // Keep each lane's SwiGLU values in the now-dead gate accumulator
++                    // slots. A warp owns eight output channels of every token; exchange
++                    // only its per-token amax (8 warps x 64 tokens = 2 KiB), not the
++                    // complete 16 KiB FP32 tile. Both N-split WGs share the same SF.
++                    DG_STATIC_ASSERT(L1_OUT_BLOCK_N == 64 and BLOCK_M == 64 and kNumEpilogueWarps == 8,
++                                     "swapAB register quantizer requires the Decode 64x64 tile");
++                    auto* amax_scratch = smem_cd_swap_l1_fp32;
++                    auto amax_index = [](const uint32_t& warp, const uint32_t& token) { return warp * BLOCK_M + (token ^ (warp * 4)); };
++                    const uint32_t out_col_base = wg_l1_out_n_offset + warp_idx_in_wg * 8 + row_idx;
++                    auto stage_l1_amax = [&](const uint32_t& i) {
+                         const uint32_t token_0 = i * 8 + col_idx * 2;
+                         const uint32_t token_1 = token_0 + 1;
+-                        const uint32_t smem_col = out_col_base ^ swap_l1_swizzle(token_0);
++                        float v0 = 0.0f, v1 = 0.0f;
+                         if (token_0 < valid_m) {
+                             float g0 = final_accum[i * 4 + 0];
+                             float u0 = final_accum[i * 4 + 2];
+                             clamp_gate(g0);
+                             clamp_up(u0);
+-                            smem_cd_swap_l1_fp32[token_0 * L1_OUT_BLOCK_N + smem_col] =
+-                                silu(g0) * u0;
++                            v0 = silu(g0) * u0;
+                         }
+                         if (token_1 < valid_m) {
+                             float g1 = final_accum[i * 4 + 1];
+                             float u1 = final_accum[i * 4 + 3];
+                             clamp_gate(g1);
+                             clamp_up(u1);
+-                            smem_cd_swap_l1_fp32[token_1 * L1_OUT_BLOCK_N + smem_col] =
+-                                silu(g1) * u1;
++                            v1 = silu(g1) * u1;
++                        }
++                        final_accum[i * 4 + 0] = v0;
++                        final_accum[i * 4 + 1] = v1;
++                        // Starting at zero preserves the old cute::max NaN handling:
++                        // a NaN value does not enter amax, but is still quantized below.
++                        float a0 = cute::max(0.0f, cute::abs(v0));
++                        float a1 = cute::max(0.0f, cute::abs(v1));
++                        #pragma unroll
++                        for (uint32_t mask = 4; mask <= 16; mask *= 2) {
++                            a0 = cute::max(a0, __shfl_xor_sync(0xffffffff, a0, mask));
++                            a1 = cute::max(a1, __shfl_xor_sync(0xffffffff, a1, mask));
++                        }
++                        if (row_idx == 0) {
++                            // XOR the token with warp * 4: both the four writer lanes
++                            // and the four-thread/token gather below avoid bank conflicts.
++                            amax_scratch[amax_index(epilogue_warp_idx, token_0)] = a0;
++                            amax_scratch[amax_index(epilogue_warp_idx, token_1)] = a1;
+                         }
+                     };
+-
+                     const uint32_t num_swap_token_chunks = (valid_m + 7u) / 8u;
+-                    store_l1_swap_chunk(0);
++                    stage_l1_amax(0);
+                     if (valid_m > 8) {
+                         #pragma unroll
+                         for (uint32_t i = 1; i < kSwapABTokenChunks; ++ i) {
+                             if (i < num_swap_token_chunks)
+-                                store_l1_swap_chunk(i);
+-                        }
+-                    }
+-
++                                stage_l1_amax(i);
++                        }
++                    }
++
++                    // Also protects the previous tile's asynchronous FP8 TMA read:
++                    // its issuing warp reaches this barrier only after wait<0>.
+                     ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+
+-                    // Per-token amax over the 64-wide SF group and FP8 quantization, with four
+-                    // threads per token so that all 256 threads take part: each thread loads 16
+-                    // values as four float4 (slot order rotated by (token + 1) / 2 so that loads
+-                    // and the packed FP8 stores are bank-conflict free), the quad reduces its
+-                    // maxima with two XOR shuffles (max is exact, so the amax is the same), and
+-                    // every value is scaled and converted exactly as before.
+-                    DG_STATIC_ASSERT(BLOCK_M * 4 == kNumEpilogueThreads, "swapAB L1 quantizer uses four threads per token");
++                    // Four threads per token reduce the eight warp partials. Compute
++                    // SF once per quad, not again in every warp/chunk, and publish only
++                    // the 64 inverse scales in a disjoint 256-byte scratch tail.
++                    auto* sf_inv_scratch = amax_scratch + kNumEpilogueWarps * BLOCK_M;
++                    DG_STATIC_ASSERT((kNumEpilogueWarps + 1) * BLOCK_M * sizeof(float) <= SMEM_CD_SWAP_L1_FP32_SIZE,
++                                     "amax and inverse scales must not overlap the FP8 tile");
+                     {
+                         const uint32_t token = epilogue_thread_idx / 4;
+                         const uint32_t quad_idx = epilogue_thread_idx % 4;
+-                        const uint32_t slot_rotation = (token + 1) / 2;
+-                        const bool valid_token = token < valid_m;
+-                        float4 values[4];
+-                        float amax = 0.0f;
+-                        #pragma unroll
+-                        for (uint32_t j = 0; j < 4; ++ j) {
+-                            const uint32_t col = (quad_idx + 4 * ((j + slot_rotation) & 3u)) * 4;
+-                            values[j] = valid_token ?
+-                                *reinterpret_cast<const float4*>(
+-                                    smem_cd_swap_l1_fp32 + token * L1_OUT_BLOCK_N + (col ^ swap_l1_swizzle(token))) :
+-                                make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+-                            amax = cute::max(amax, cute::abs(values[j].x));
+-                            amax = cute::max(amax, cute::abs(values[j].y));
+-                            amax = cute::max(amax, cute::abs(values[j].z));
+-                            amax = cute::max(amax, cute::abs(values[j].w));
+-                        }
++                        float amax = token < valid_m ? cute::max(amax_scratch[amax_index(quad_idx * 2, token)],
++                                                                 amax_scratch[amax_index(quad_idx * 2 + 1, token)]) : 0.0f;
+                         amax = cute::max(amax, __shfl_xor_sync(0xffffffff, amax, 1));
+                         amax = cute::max(amax, __shfl_xor_sync(0xffffffff, amax, 2));
+-                        if (valid_token) {
+-                            float2 amax_pair = {amax, amax};
++                        if (token < valid_m and quad_idx == 0) {
+                             float2 sf_pair, sf_inv_pair;
+-                            sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(amax_pair, sf_pair, sf_inv_pair);
+-                            const float sf = sf_pair.x;
+-                            const float sf_inv = sf_inv_pair.x;
+-
+-                            // The L2-activation SF pool is strided by SF_BLOCK_M (=128), as the
+-                            // L2 producer and the non-swap L1 epilogue read and write it.
+-                            if (quad_idx == 0) {
+-                                const uint32_t token_idx = pool_block_idx * SF_BLOCK_M + token;
+-                                l2_sf_buffer.get_base_ptr<float>()[n_block_idx * kNumPaddedSFPoolTokens + token_idx] = sf;
+-                            }
+-
+-                            #pragma unroll
+-                            for (uint32_t j = 0; j < 4; ++ j) {
+-                                const uint32_t col = (quad_idx + 4 * ((j + slot_rotation) & 3u)) * 4;
+-                                const __nv_fp8x2_e4m3 lo(make_float2(values[j].x * sf_inv, values[j].y * sf_inv));
+-                                const __nv_fp8x2_e4m3 hi(make_float2(values[j].z * sf_inv, values[j].w * sf_inv));
+-                                *reinterpret_cast<uint32_t*>(smem_cd_swap_l1_fp8 + token * L1_OUT_BLOCK_N + col) =
+-                                    static_cast<uint32_t>(lo.__x) | (static_cast<uint32_t>(hi.__x) << 16);
+-                            }
++                            sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(make_float2(amax, amax), sf_pair, sf_inv_pair);
++                            sf_inv_scratch[token] = sf_inv_pair.x;
++                            const uint32_t token_idx = pool_block_idx * SF_BLOCK_M + token;
++                            l2_sf_buffer.get_base_ptr<float>()[n_block_idx * kNumPaddedSFPoolTokens + token_idx] = sf_pair.x;
++                        }
++                    }
++                    ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++
++                    auto quant_l1_register_chunk = [&](const uint32_t& i) {
++                        const uint32_t token_0 = i * 8 + col_idx * 2;
++                        const uint32_t token_1 = token_0 + 1;
++                        const float inv0 = token_0 < valid_m ? sf_inv_scratch[token_0] : 0.0f;
++                        const float inv1 = token_1 < valid_m ? sf_inv_scratch[token_1] : 0.0f;
++                        const float v0 = final_accum[i * 4 + 0] * inv0;
++                        const float v1 = final_accum[i * 4 + 1] * inv1;
++                        // Adjacent channels are four lanes apart in SwapAB. All lanes
++                        // execute the shuffles, including a partial tile's invalid rows.
++                        const float next0 = __shfl_xor_sync(0xffffffff, v0, 4);
++                        const float next1 = __shfl_xor_sync(0xffffffff, v1, 4);
++                        const __nv_fp8x2_e4m3 q0(make_float2(v0, next0));
++                        const __nv_fp8x2_e4m3 q1(make_float2(v1, next1));
++                        const uint32_t hi0 = __shfl_xor_sync(0xffffffff, static_cast<uint32_t>(q0.__x), 8);
++                        const uint32_t hi1 = __shfl_xor_sync(0xffffffff, static_cast<uint32_t>(q1.__x), 8);
++                        if (row_idx % 4 == 0) {
++                            if (token_0 < valid_m)
++                                *reinterpret_cast<uint32_t*>(smem_cd_swap_l1_fp8 + token_0 * L1_OUT_BLOCK_N + out_col_base) = static_cast<uint32_t>(q0.__x) | (hi0 << 16);
++                            if (token_1 < valid_m)
++                                *reinterpret_cast<uint32_t*>(smem_cd_swap_l1_fp8 + token_1 * L1_OUT_BLOCK_N + out_col_base) = static_cast<uint32_t>(q1.__x) | (hi1 << 16);
++                        }
++                    };
++                    quant_l1_register_chunk(0);
++                    if (valid_m > 8) {
++                        #pragma unroll
++                        for (uint32_t i = 1; i < kSwapABTokenChunks; ++ i) {
++                            if (i < num_swap_token_chunks)
++                                quant_l1_register_chunk(i);
+                         }
+                     }
+
+                     ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
