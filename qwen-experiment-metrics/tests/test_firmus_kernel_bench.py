@@ -143,7 +143,7 @@ def test_candidate_timeline_marker_with_content_is_that_candidates_timeline_patc
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
 def test_control_and_candidate_share_ordered_serving_overlays(tmp_path: Path) -> None:
-    ws, patches = workspace(tmp_path)
+    ws, _ = workspace(tmp_path)
     relative = "deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
     original = "".join(f"line {index}\n" for index in range(1, 12))
     first = original.replace("line 7\n", "serving stage one\n")
