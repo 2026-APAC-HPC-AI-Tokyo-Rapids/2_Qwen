@@ -4,7 +4,11 @@ No model checkpoint or distributed MoE: the latter has a separate EP4 gate.
 Inputs stand in for the already-validated QK-norm/RoPE/KV-store prologue.
 """
 import json
+import os
 from unittest.mock import patch
+
+# Only compile the exercised shapes for this bounded integration probe.
+os.environ["SGLANG_JIT_DEEPGEMM_PRECOMPILE"] = "0"
 
 import torch
 from sgl_kernel.flash_attn import flash_attn_varlen_func
