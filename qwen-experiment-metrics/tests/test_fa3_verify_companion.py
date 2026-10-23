@@ -249,7 +249,7 @@ def test_image_compile_control_excludes_the_serving_candidate(tmp_path, serving_
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     candidate = "sm90-decode-independent-wg.patch"
     config["deep_gemm_overlay_patches"] = [p for p in config["deep_gemm_overlay_patches"] if Path(p).name != candidate]
-    expected = [Path(p).name for p in config["deep_gemm_overlay_patches"]]
+    expected = [ROOT / p for p in config["deep_gemm_overlay_patches"]]
     if serving_enabled:
         config["deep_gemm_overlay_patches"].append("patches/deep-gemm-bench/independent-wg/" + candidate)
     path = tmp_path / "config.json"
@@ -257,6 +257,7 @@ def test_image_compile_control_excludes_the_serving_candidate(tmp_path, serving_
     tree = ast.parse((ROOT / "containers/check-sm90-independent-wg.py").read_text())
     main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
     node = next(n for n in main.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "patches" for t in n.targets))
-    ns = {"args": types.SimpleNamespace(config=path), "Path": Path, "json": json, "CANDIDATE": candidate}
+    ns = {"args": types.SimpleNamespace(config=path, patch_dir=ROOT / "patches/deep-gemm-overlay"), "Path": Path, "json": json, "CANDIDATE": candidate}
     exec(compile(ast.Module(body=[node], type_ignores=[]), "image-control-patches", "exec"), ns)  # noqa: S102 - actual build-helper selection
     assert ns["patches"] == expected
+    assert all(p.read_bytes() for p in ns["patches"])
