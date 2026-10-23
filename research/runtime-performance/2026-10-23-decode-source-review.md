@@ -179,3 +179,39 @@ C（independent WG）を Decode worker と serving gate で有効にした。他
 | good fraction | 98.64% | 98.64% |
 
 ITL の短縮（−1.6%）は kernel bench の −4.4 µs/層（約 −0.41 ms/step、−1.3%）と合う。
+
+## Decode 上限 160 の試行（serving [39970713547](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39970713547)、688ee20、image 39963470904、branch perf/firmus-decode-cap160-20261024）：8674.09、不採用
+
+Fable 5.1 の設計（cap 160 は条件付き go、見込み +4〜5%）に沿って、次の変更を入れた。
+- FA3 split の修正：combine は weight 0 の split を読まない。土台は p128。
+- MegaMoE SwapAB を 192 token/rank まで。
+- dense の設定指定を M192 まで。
+- 上限 160（40 要求/rank）、concurrency 240、graph bs 40 まで、extra slots 20。
+
+| | main（cap 128、39950338791） | cap 160 |
+| --- | ---: | ---: |
+| score | 8682.63 | 8674.09（−0.1%） |
+| 要求数 / good | 5455 / 5381 | 5536 / 5407（要求 +1.5%） |
+| good fraction | 98.64% | 97.67% |
+| TTFT 平均 / p99 | 1507 / 3407 ms | 2055 / 4461 ms |
+| ITL 平均 / p99 | 13.98 / 16.30 ms | 16.34 / 19.08 ms |
+
+job 内の選択：
+- FA3 は p128split3。修正後の split は数値検査を通過した。
+- dense は QKV が BM128/BN144/5 stage。
+
+| FA3（1 層） | stock N96 | p128s2 | p128split2 | p128split3 |
+| --- | ---: | ---: | ---: | ---: |
+| 36 要求 | 88.3 µs | 79.8 | 70.4 | **68.1** |
+| 40 要求 | 88.6 | 81.0 | 71.1 | **70.8**（設計の推定 71.0） |
+
+dense（M=160、1 呼び出し）：
+- QKV：stock 24.9 µs、BM128/BN144/5 で 23.7 µs。M=128 では 15.2 µs だった。
+- O：stock 18.1 µs のまま（M=128 では 15.2 µs）。
+
+結論：
+- Decode の容量は増えた。ITL は ×1.17 で、要求は ×1.25。
+- しかし処理できた要求は +1.5% だけで、TTFT（平均 +36%、p99 4.5 s）が悪化し、good fraction が 1 point 落ちて相殺された。
+- **Prefill の壁が設計の見積もり（+7.4%）より手前にあり、今の構成はすでに Prefill 律速**と見られる。
+- Decode を広げる手は、Prefill を速くするまで効かない。cap は 128 に戻す。
+- FA3 split の修正と SwapAB-192 は動作を確認できたので、Prefill の改善後に cap を上げるときに再利用する。
