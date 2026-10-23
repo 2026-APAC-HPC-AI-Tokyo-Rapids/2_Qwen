@@ -1,6 +1,6 @@
 """Check the independent-WG resource layout, ownership and task stream on CPU."""
-from collections import Counter
 import random
+from collections import Counter
 
 
 def main():
@@ -26,7 +26,8 @@ def main():
     assert set(range(4)).isdisjoint(range(4, 8))
     assert 768 + 32 + 8 * 2 * 8 <= 1024
     smem = 1024 + 8192 + 2 * 20480 + (2 + 2 * 8) * 8 + 6 * (8192 + 16384 + 512 + 2 * 8)
-    assert smem == 200944 <= 232448
+    assert smem == 200944
+    assert smem <= 232448
     # Simulate asynchronous claims, including fewer tasks than workers, FC1->FC2
     # and expert transitions. Scheduler adds 132; ring carries the unsigned delta.
     # This wrap occurs immediately when initial task 263 finishes first.

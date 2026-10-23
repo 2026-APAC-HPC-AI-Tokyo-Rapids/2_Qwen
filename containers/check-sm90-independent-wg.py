@@ -4,9 +4,9 @@ import hashlib
 import json
 import re
 import shutil
-import warnings
 import subprocess
 import tempfile
+import warnings
 from pathlib import Path
 
 CANDIDATE = "sm90-decode-independent-wg.patch"
@@ -19,7 +19,7 @@ def compile_one(nvcc, package, overlay, directory, name, geometry):
     source.write_text('#include <deep_gemm/impls/sm90_fp8_mega_moe.cuh>\nextern "C" void* instantiate() {\nreturn reinterpret_cast<void*>(&deep_gemm::sm90_fp8_mega_moe_impl<4224,4096,1536,128,8,32,' + f'{m},{n},128,141312,2260992,{stages},64,64,{threads},132,4,cute::numeric_limits<float>::infinity(),true,0,{reuse},{arrival},{sync},false,{swap}>);\n}}\n')
     cubin = source.with_suffix(".cubin")
     command = [str(nvcc), "--cubin", "--std=c++20", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-O3", "--ptxas-options=-v,-warn-spills,--register-usage-level=10", "-gencode", "arch=compute_90a,code=sm_90a", "-I" + str(overlay / "deep_gemm/include"), "-I" + str(package / "include"), str(source), "-o", str(cubin)]
-    compiled = subprocess.run(command, text=True, capture_output=True)
+    compiled = subprocess.run(command, text=True, capture_output=True, check=False)
     log = compiled.stdout + compiled.stderr
     (directory / (name + ".log")).write_text(log)
     assert compiled.returncode == 0, log
