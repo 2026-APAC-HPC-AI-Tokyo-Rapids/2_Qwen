@@ -326,6 +326,29 @@ def test_mixed_routing_is_local_unique_and_rank_balanced(kind: str, percent: int
     assert loads.tolist() == [32768] * 4
 
 
+@pytest.mark.parametrize("case,counts,expected_rows,expected_groups", [
+    ("mixed-geometry-graph", [7, 0, 145, 256], [7, 1, 145, 256], [64, 64, 64, 128]),
+    ("boundary", [255, 256, 257, 0], [255, 256, 257, 1], [64, 128, 128, 64]),
+    ("idle-prefill-rows", [4096, 4096, 4096, 0], [4096, 4096, 4096, 256], [128] * 4),
+    ("decode-all-idle", [0] * 4, [1] * 4, [64] * 4),
+    ("decode-graph-swapab-144", [144, 140, 136, 132], [144, 140, 136, 132], [64] * 4),
+])
+def test_numeric_gate_reference_matches_each_expert_owner_geometry(case, counts, expected_rows, expected_groups):
+    # Execute the gate's actual selection statements without importing CUDA.
+    # A global max(counts) incorrectly makes the first three mixed ranks SF128.
+    source = ast.parse((ROOT / "scripts/check-firmus-megamoe.py").read_text())
+    main = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+    loop = next(node for node in main.body if isinstance(node, ast.For) and ast.unparse(node.target) == "(case, counts)")
+    names = {"count", "rows", "prefill_geometry", "l2_group"}
+    assignments = [node for node in loop.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)]
+    selection = compile(ast.Module(body=assignments, type_ignores=[]), "gate_geometry", "exec")
+    for rank in range(4):
+        context = {"case": case, "counts": counts, "rank": rank}
+        exec(selection, context)  # noqa: S102 - trusted repository selection, without CUDA initialization
+        assert context["rows"] == expected_rows[rank]
+        assert context["l2_group"] == expected_groups[rank]
+
+
 def test_summary_displays_mixed_locality_cases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     summarize = load_summary(monkeypatch)
     (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "not-requested"}, {"name": "control-sf128-swizzle", "patches": [], "timeline": "not-requested"}], "sglang": None}))
