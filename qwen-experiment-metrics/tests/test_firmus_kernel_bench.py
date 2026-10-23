@@ -142,6 +142,35 @@ def test_candidate_timeline_marker_with_content_is_that_candidates_timeline_patc
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+def test_control_and_candidate_share_ordered_serving_overlays(tmp_path: Path) -> None:
+    ws, patches = workspace(tmp_path)
+    relative = "deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
+    original = "".join(f"line {index}\n" for index in range(1, 12))
+    first = original.replace("line 7\n", "serving stage one\n")
+    second = first.replace("serving stage one\n", "serving stage two\n")
+    overlay = ws / "patches/deep-gemm-overlay"
+    overlay.mkdir(parents=True)
+    (overlay / "first.patch").write_text(make_patch(tmp_path, relative, original, first))
+    (overlay / "second.patch").write_text(make_patch(tmp_path, relative, first, second))
+    config_path = ws / "configs/firmus-framework.json"
+    config = json.loads(config_path.read_text())
+    config["deep_gemm_overlay_patches"] = ["patches/deep-gemm-overlay/first.patch", "patches/deep-gemm-overlay/second.patch"]
+    config_path.write_text(json.dumps(config))
+    add_candidate(ws, "change", make_patch(tmp_path, relative, second, second.replace("serving stage two\n", "candidate after serving\n")))
+
+    result = provision(tmp_path, ws)
+
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    assert (runtime / "image" / HEADER).read_text() == second
+    assert "candidate after serving" in (runtime / "overlay/candidates/change" / relative).read_text()
+    variants = json.loads((runtime / "results/variants.json").read_text())
+    assert [p["path"] for p in variants["deep_gemm"][0]["patches"]] == config["deep_gemm_overlay_patches"]
+    for path in config["deep_gemm_overlay_patches"]:
+        assert (runtime / "source" / path).read_bytes() == (ws / path).read_bytes()
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
 def test_candidate_env_reaches_only_that_candidates_steps(tmp_path: Path) -> None:
     ws, patches = workspace(tmp_path)
     add_candidate(ws, "a-host", patches["comment"], timeline=True, env="DG_SM90_PREFILL_2WG=1\nDG_EXTRA=a.b/c,d:e-f\n")
@@ -170,6 +199,7 @@ def test_candidate_env_reaches_only_that_candidates_steps(tmp_path: Path) -> Non
     lines = srun_log.read_text().splitlines()
     steps = [line for line in lines if "--variant" in line or "check-firmus-megamoe.py" in line]
     assert len(steps) == 7  # image bench + timeline, a-host gate + bench + timeline, b-plain gate + bench
+    assert f"PYTHONPATH={runtime}/image/opt/sglang/venv/lib/python3.12/site-packages" in steps[0]
     for line in steps:
         candidate = f"{runtime}/overlay/candidates/a-host" in line or f"{runtime}/overlay/timeline/a-host" in line
         assert ("DG_SM90_PREFILL_2WG=1 DG_EXTRA=a.b/c,d:e-f " in line) is candidate, line

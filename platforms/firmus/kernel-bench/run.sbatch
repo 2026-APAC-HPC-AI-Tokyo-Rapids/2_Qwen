@@ -7,7 +7,7 @@
 #SBATCH --propagate=NONE
 #SBATCH --no-requeue
 # SM90 MegaMoE EP4 kernel bench inside the pinned serving image on one H200 node.
-# The image's own DeepGEMM is timed first as the in-job reference. Each
+# The image plus configured serving overlays is the in-job reference. Each
 # DeepGEMM candidate overlay then gets the numerical gate, the timing bench
 # (output hashes compared with the image) and, when staged, the instrumented
 # timeline run compared bitwise with its own bench, all three with the
@@ -40,7 +40,7 @@ timeline() {
 }
 
 install -d "${ROOT}/results/image" "${ROOT}/scratch/image"
-step image bench "${torchrun[@]}" "${ROOT}/scripts/bench-firmus-megamoe.py" --variant image --output "${ROOT}/results/image/bench.jsonl" --scratch "${ROOT}/scratch/image"
+step image bench PYTHONPATH="${ROOT}/image/opt/sglang/venv/lib/python3.12/site-packages" "${torchrun[@]}" "${ROOT}/scripts/bench-firmus-megamoe.py" --variant image --output "${ROOT}/results/image/bench.jsonl" --scratch "${ROOT}/scratch/image"
 (( step_exit == 0 ))
 timeline image
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stage a 1-node SM90 MegaMoE kernel bench on the Firmus login node: the pinned
-# serving image (no rebuild), its DeepGEMM package and SGLang Python tree, one
+# serving image as toolchain, its configured DeepGEMM overlays and SGLang tree, one
 # header overlay per DeepGEMM candidate (patches/deep-gemm-bench/<name>/*.patch),
 # timeline overlays where a candidate directory holds a `timeline` marker (an
 # empty marker uses the stock timeline patch; a non-empty one is that
@@ -95,6 +95,14 @@ apply_patches() {
 patch_records() {
   for patch in "$@"; do jq -n --arg path "${patch#"${GITHUB_WORKSPACE}/"}" --arg sha "$(sha256sum "${patch}" | awk '{print $1}')" '{path:$path,sha256:$sha}'; done | jq -s .
 }
+# The control must include the serving overlays, not only the older image
+# header. Each candidate starts from this same tree and gets a fresh JIT build
+# in this run's cache. Preserve the image manifest as the pre-overlay record.
+mapfile -t baseline_patches < <(jq -r '.deep_gemm_overlay_patches // [] | .[]' "${config}")
+for i in "${!baseline_patches[@]}"; do baseline_patches[i]="${GITHUB_WORKSPACE}/${baseline_patches[i]}"; done
+apply_patches "${runtime_dir}/image/opt/sglang/venv/lib/python3.12/site-packages" "${baseline_patches[@]}"
+baseline_records="$(patch_records "${baseline_patches[@]}")"
+for patch in "${baseline_patches[@]}"; do install -D -m 0644 "${patch}" "${runtime_dir}/source/${patch#"${GITHUB_WORKSPACE}/"}"; done
 # Timeline overlay roots mirror site-packages like the candidate overlays; the
 # timeline patch's context lines can collide with a candidate's edits.
 add_timeline() {
@@ -110,7 +118,7 @@ add_timeline() {
   echo apply-failed
 }
 timeline="$(add_timeline image "${runtime_dir}/image/${package}" "${bench_dir}")"
-variants="$(jq -n --arg timeline "${timeline}" '[{name:"image",patches:[],env:[],timeline:$timeline}]')"
+variants="$(jq -n --arg timeline "${timeline}" --argjson patches "${baseline_records}" '[{name:"image",patches:$patches,env:[],timeline:$timeline}]')"
 for dir in "${candidate_dirs[@]}"; do
   name="$(basename "${dir}")"
   patches=("${dir}"*.patch)
