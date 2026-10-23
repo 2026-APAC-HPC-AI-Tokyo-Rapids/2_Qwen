@@ -245,9 +245,11 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     command = "command=(" + worker.split("command=(", 1)[1].split('if [[ -x /opt/nsys', 1)[0]
     launch = worker.split("UCX_IB=", 1)[0] + command + '\nprintf "%s\\0" "${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0}" "${SGLANG_PREFILL_TILED_ROUTING:-0}" "${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0}" "${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0}" "${SGLANG_DECODE_ASYNC_ADMISSION:-0}" "$SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK" "$SGLANG_HOST_IP" "${command[@]}"\n'
     observed = {}
+    # The Decode worker sources the pre-serving kernel selection next to worker.sh ($0 is "fixture" here).
+    (tmp_path / "decode-kernels.env").write_text("")
     for argv in workers:
         args = argv[argv.index("bash") + 2:]
-        probe = subprocess.run(["bash", "-c", launch, "fixture", *args], env={**os.environ, "SLURM_SUBMIT_DIR": str(tmp_path)}, check=True, capture_output=True)
+        probe = subprocess.run(["bash", "-c", launch, "fixture", *args], cwd=tmp_path, env={**os.environ, "SLURM_SUBMIT_DIR": str(tmp_path)}, check=True, capture_output=True)
         shuffle, routing, aligned, rotate_ties, async_admission, megamoe_tokens, host_ip, *flags = probe.stdout.decode().rstrip("\0").split("\0")
         name, port = args[:2]
         prefill = name.startswith("prefill")

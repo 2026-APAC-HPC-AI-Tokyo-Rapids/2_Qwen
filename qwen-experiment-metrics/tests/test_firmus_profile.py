@@ -215,6 +215,7 @@ def test_full_profile_summary_keeps_normal_latency_and_actual_topology(tmp_path:
 
 def test_sglang_nsys_launch_preserves_uninstrumented_worker_arguments(tmp_path: Path) -> None:
     (tmp_path / "source").mkdir()
+    (tmp_path / "source/decode-kernels.env").write_text("")
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts/exec-profiler.sh").write_bytes((ROOT / "scripts/exec-profiler.sh").read_bytes())
     stub = '#!/bin/bash\nprintf "%s\\0" "$@" >"$ARGV_RECORD"\n'

@@ -1,0 +1,108 @@
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -701,7 +701,9 @@
+         hidden_states: torch.Tensor,
+         forward_batch: ForwardBatch,
+     ):
+-        qkv, _ = self.qkv_proj(hidden_states)
++        from sglang.srt.layers.quantization.decode_dense_gemm import decode_dense_linear
++
++        qkv, _ = decode_dense_linear(self, "QKV", self.qkv_proj, hidden_states, forward_batch, decode_worker=get_server_args().disaggregation_mode == "decode")
+ 
+         q, k, v = self.apply_qk_norm_rope(qkv, positions, forward_batch)
+ 
+@@ -861,7 +863,9 @@
+             fb,
+             save_kv_cache=save_kv_cache,
+         )
+-        output, _ = self.o_proj(attn_output)
++        from sglang.srt.layers.quantization.decode_dense_gemm import decode_dense_linear
++
++        output, _ = decode_dense_linear(self, "O", self.o_proj, attn_output, forward_batch, decode_worker=get_server_args().disaggregation_mode == "decode")
+         return output
+ 
+     def forward(
+--- /dev/null
++++ b/python/sglang/srt/layers/quantization/decode_dense_gemm.py
+@@ -0,0 +1,81 @@
++"""Opt-in Decode QKV/O backend selection; unchanged block128 FP8 numerics."""
++
++import os
++
++import torch
++
++TRITON_CONFIGS = {
++    "QKV": {"triton-64-128-128-s3-w4": (64, 128), "triton-128-64-128-s3-w4": (128, 64)},
++    "O": {"triton-64-128-128-s3-w4": (64, 128), "triton-128-32-128-s3-w4": (128, 32)},
++}
++
++
++def run_decode_dense_gemm(projection, backend, lhs, rhs, out):
++    """Same prequantized operation for worker capture and job-local selection."""
++    a, sa = lhs
++    b, sb = rhs
++    m, k = a.shape
++    n = b.shape[0]
++    assert a.dtype == b.dtype == torch.float8_e4m3fn
++    assert sa.dtype == sb.dtype == torch.float32 and out.dtype == torch.bfloat16
++    assert a.is_contiguous() and b.is_contiguous()
++    assert tuple(sa.shape) == (m, k // 128) and tuple(sb.shape) == (n // 128, k // 128)
++    if backend == "flashinfer-sm90":
++        # The SM90 binding takes raw pointers, not arbitrary scale strides.
++        assert sa.stride(0) == 1 and sa.stride(1) == ((m + 3) // 4) * 4
++        assert sb.is_contiguous()
++        from flashinfer.gemm import fp8_blockscale_gemm_sm90
++
++        fp8_blockscale_gemm_sm90(a, b, sa, sb, out=out, out_dtype=torch.bfloat16)
++    else:
++        from sglang.kernels.ops.quantization.fp8_kernel import _w8a8_block_fp8_matmul
++
++        bm, bn = TRITON_CONFIGS[projection][backend]
++        grid = (((m + bm - 1) // bm) * ((n + bn - 1) // bn),)
++        _w8a8_block_fp8_matmul[grid](a, b, out, sa, sb, m, n, k, 128, 128, a.stride(0), a.stride(1), b.stride(1), b.stride(0), out.stride(0), out.stride(1), sa.stride(0), sa.stride(1), sb.stride(1), sb.stride(0), BLOCK_SIZE_M=bm, BLOCK_SIZE_N=bn, BLOCK_SIZE_K=128, GROUP_SIZE_M=32, needs_masking=False, num_stages=3, num_warps=4)
++
++
++def decode_dense_linear(attention, projection, layer, x, forward_batch, *, decode_worker):
++    backend = os.environ.get("SGLANG_DECODE_DENSE_GEMM_" + projection, "")
++    # Return before inspecting inputs/modes/dtypes when unset: the original
++    # linear owns all default behavior, including prequantized input tuples.
++    if not backend or not decode_worker:
++        return layer(x)
++    mode = forward_batch.forward_mode
++    if not (mode.is_decode() or mode.is_target_verify()):
++        return layer(x)
++    assert backend == "flashinfer-sm90" or backend in TRITON_CONFIGS[projection], backend
++    tensor = x[0] if isinstance(x, tuple) else x
++    shape = (9216, 4096) if projection == "QKV" else (4096, 8192)
++    method = layer.quant_method
++    if not (
++        tensor.ndim == 2 and 0 < tensor.shape[0] <= 128
++        and tensor.shape[1] == shape[1]
++        and tuple(layer.weight.shape) == shape
++        and layer.weight.dtype == torch.float8_e4m3fn
++        and attention.num_heads == attention.total_num_heads == 64
++        and attention.num_kv_heads == attention.total_num_kv_heads == 4
++        and attention.hidden_size == 4096 and attention.head_dim == 128
++        and getattr(method, "block_quant", False)
++        and not getattr(method, "use_mxfp8", False)
++        and not getattr(method, "use_marlin", False)
++        and method.weight_block_size == [128, 128]
++        and layer.weight_scale_inv.dtype == torch.float32
++        and layer.bias is None
++    ):
++        return layer(x)
++    assert torch.cuda.get_device_capability(tensor.device) == (9, 0)
++    if isinstance(x, tuple):
++        a, sa = x
++    else:
++        assert x.dtype == torch.bfloat16
++        from sglang.kernels.ops.quantization.fp8_kernel import (
++            sglang_per_token_group_quant_fp8,
++        )
++
++        a, sa = sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
++    out = torch.empty((a.shape[0], shape[0]), device=a.device, dtype=torch.bfloat16)
++    run_decode_dense_gemm(projection, backend, (a, sa), (layer.weight, layer.weight_scale_inv), out)
++    # Exact guarded head/weight shapes imply attention TP1. Both original
++    # linear calls have no bias or output collective under this guard.
++    return out, None

@@ -122,6 +122,8 @@ def test_eight_lane_head_reduction_retains_original_fp32_tree():
             assert all(result == old[4 * lane + j] for j in range(4))
 
 
+@pytest.mark.parametrize("rows", [1, 128, 144])
+@pytest.mark.parametrize("padding", [False, True])
 def test_fused_topk_passes_runtime_count_without_zero_bias_launch(source, monkeypatch, rows, padding):
     import sys
 

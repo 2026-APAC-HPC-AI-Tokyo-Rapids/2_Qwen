@@ -9,8 +9,8 @@ flashinfer fused_add_rmsnorm + per_token_group_quant (tolerances in
 check_add_rmsnorm_group_quant). Neither replaces the official workload or
 accuracy evaluation. The kernel bench also runs this file on the image tree,
 which lacks the new kernels; those checks print SKIP there.
-The dense FP8 check requires the new small-M host image for both trees and
-screens both host layouts against FP32 dequantized GEMM and changed-input graphs.
+The dense FP8 check requires the Decode-config host image for both trees and
+screens every dense candidate against stock, FP32 dequantized GEMM and changed-input graphs.
 Serving gates cover the selected kernels and their references. Exploratory
 attention candidates remain in the separate kernel benchmark, not this gate.
 """
@@ -18,6 +18,7 @@ attention candidates remain in the separate kernel benchmark, not this gate.
 import json
 import os
 import runpy
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -405,6 +406,82 @@ def check_decode_router_padding():
     print("PASS: Decode Triton router exact weights/IDs; ties, extreme logits, zero/live padding and changed-input graph replay", flush=True)
 
 
+def check_decode_gate():
+    """Full BF16 gate vs cuBLAS/FP32; deterministic ties and graph replay."""
+    import importlib.util
+
+    if importlib.util.find_spec("sglang.kernels.ops.moe.decode_gate") is None:
+        print("SKIP: single-reduction Decode gate is not in this tree", flush=True)
+        return False
+    from sglang.kernels.ops.moe.decode_gate import decode_gate
+    from sglang.kernels.ops.moe.moe_fused_gate import moe_fused_gate
+
+    torch.manual_seed(61023)
+    for rows in (64, 65, 96, 127, 128, 129, 132, 136, 140, 144):
+        hidden = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16)
+        weight = torch.randn(128, 4096, device="cuda", dtype=torch.bfloat16) / 64
+        count = torch.tensor(rows - 3, device="cuda", dtype=torch.int32)
+
+        def route(logits):
+            return moe_fused_gate(logits, None, 8, scoring_func="softmax", renormalize=True, num_token_non_padded=count)
+
+        def compare(logits, weights, ids, label):
+            with dense_fp32_reference():
+                reference = hidden.float() @ weight.float().T
+            cublas = torch.nn.functional.linear(hidden, weight)
+            # FP32 summation order may differ; retain BF16 storage precision.
+            torch.testing.assert_close(logits.float(), reference, rtol=2**-7, atol=2**-10)
+            torch.testing.assert_close(logits.float(), cublas.float(), rtol=2**-7, atol=2**-10)
+            expected_weights, expected_ids = route(logits)
+            assert torch.equal(weights, expected_weights) and torch.equal(ids, expected_ids)
+            assert torch.all(ids[count.item():] == -1)
+            base_weights, base_ids = route(cublas)
+            # Near a BF16 rounding boundary, legal GEMM reordering can change
+            # the selected expert. Record it; ties with exact logits are strict.
+            mismatches = int((ids != base_ids).sum().item())
+            torch.testing.assert_close(weights, base_weights, rtol=0.02, atol=0.002)
+            print(json.dumps({"check": label, "max_abs_vs_fp32": (logits.float() - reference).abs().max().item(), "router_id_differences": mismatches}), flush=True)
+            return cublas, base_ids
+
+        logits = decode_gate(hidden, weight)
+        compare(logits, *route(logits), f"decode_gate_{rows}")
+        if rows in (64, 128, 144):
+            # Adjacent products cancel exactly in real arithmetic; this probes
+            # FP32 accumulation error around zero rather than only relative error.
+            hidden[:, 1::2] = -hidden[:, ::2]
+            weight[:, 1::2] = weight[:, ::2]
+            logits = decode_gate(hidden, weight)
+            compare(logits, *route(logits), f"decode_gate_cancellation_{rows}")
+        # One exact nonzero term per output, tied across all experts. Both
+        # cuBLAS and the new reduction must select lowest expert IDs identically.
+        weight.zero_()
+        weight[:, 0] = 1
+        logits = decode_gate(hidden, weight)
+        weights, ids = route(logits)
+        cublas, base_ids = compare(logits, weights, ids, f"decode_gate_ties_{rows}")
+        assert torch.equal(logits, cublas) and torch.equal(ids, base_ids)
+        assert torch.equal(ids[0], torch.arange(8, device="cuda", dtype=torch.int32))
+        if rows not in (64, 128, 129, 144):
+            continue
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            route(decode_gate(hidden, weight))
+        torch.cuda.current_stream().wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            graph_logits = decode_gate(hidden, weight)
+            graph_weights, graph_ids = route(graph_logits)
+        for replay, valid in enumerate((rows, 0, rows - 7)):
+            hidden.copy_(torch.randn_like(hidden) * (replay + 1))
+            weight.copy_(torch.randn_like(weight) / 64)
+            count.fill_(valid)
+            graph.replay()
+            compare(graph_logits, graph_weights, graph_ids, f"decode_gate_graph_{rows}_{replay}")
+    print("PASS: full BF16 gate, FP32 reference, exact ties, padding and changed-input/weight CUDA graph replay", flush=True)
+    return True
+
+
 def check_add_rmsnorm_group_quant():
     """Fused input_layernorm + QKV quant against flashinfer fused_add_rmsnorm +
     column-major TMA-aligned group-128 quant.
@@ -669,14 +746,34 @@ def check_verify_scheduler_sharing():
 
 
 DENSE_PROJECTIONS = (("qkv", 9216, 4096), ("o", 4096, 8192))
+# (BM, BN, stages, multicast, multicast_on_A); one factor at a time where possible.
+DENSE_CONFIGS = {
+    "qkv": ((64, 144, 5, 1, 0), (64, 144, 7, 2, 1), (64, 144, 7, 2, 0), (64, 128, 8, 1, 0), (128, 80, 7, 1, 0), (128, 80, 5, 1, 0), (128, 80, 7, 2, 1), (128, 64, 8, 1, 0)),
+    "o": ((64, 64, 9, 1, 0), (64, 64, 13, 2, 1), (64, 64, 13, 2, 0), (64, 80, 11, 1, 0), (128, 32, 10, 1, 0), (128, 32, 7, 1, 0), (128, 32, 10, 2, 1), (128, 64, 8, 1, 0)),
+}
+DENSE_HOST_SHA256 = "8af3cbc8b29bbb15f708867fe582b35351bd1a35a58db663bcb54ebdc91c26a9"
+
+
+def dense_candidates(op):
+    candidates = [{"name": "stock", "backend": "deepgemm", "config": None}]
+    for config in DENSE_CONFIGS[op]:
+        candidates.append({"name": "dg-" + "-".join(map(str, config)), "backend": "deepgemm", "config": config})
+    for bm, bn in ((64, 128), (128, 64 if op == "qkv" else 32)):
+        candidates.append({"name": f"triton-{bm}-{bn}-128-s3-w4", "backend": "triton", "config": (bm, bn, 3, 4)})
+    candidates.append({"name": "flashinfer-sm90", "backend": "flashinfer", "config": None})
+    return candidates
 
 
 @contextmanager
-def dense_gemm_mode(enabled):
-    """The rebuilt host reads this switch before generating each JIT launch."""
-    key = "DG_SM90_1D2D_SMALL_M"
+def dense_gemm_mode(op, candidate):
+    """The host reads this before each launch; graph replay keeps the captured choice."""
+    key = "DG_SM90_1D2D_DECODE_CONFIG"
     previous = os.environ.get(key)
-    os.environ[key] = "1" if enabled else "0"
+    config = candidate["config"] if candidate["backend"] == "deepgemm" else None
+    if config is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = op.upper() + ":" + ",".join(map(str, config))
     try:
         yield
     finally:
@@ -687,12 +784,35 @@ def dense_gemm_mode(enabled):
 
 
 def require_dense_host(path=Path("/opt/apac/deep-gemm-host-build.json")):
-    """An old image silently ignores the switch; never label that a candidate."""
+    """Pin patch bytes too: the previous B5 image has a different override API."""
     record = json.loads(path.read_text())
-    digest = record["patches"].get("sm90-1d2d-small-m.patch", "")
+    digest = record["patches"].get("sm90-1d2d-decode-config.patch", "")
     assert record["source_commit"] == "1c8138a59b3df5dac50b76b730834ed57982fdfb", record
-    assert len(digest) == 64 and all(c in "0123456789abcdef" for c in digest), "dense GEMM bench requires the rebuilt small-M host image"
+    assert digest == DENSE_HOST_SHA256, "dense GEMM bench requires the rebuilt Decode-config host image matching this script"
     return digest
+
+
+def dense_call(candidate, inputs):
+    lhs, rhs, out = inputs
+    a, sa = lhs
+    b, sb = rhs
+    if candidate["backend"] == "deepgemm":
+        import deep_gemm
+
+        return lambda: deep_gemm.fp8_gemm_nt(lhs, rhs, out)
+    if candidate["backend"] == "flashinfer":
+        from flashinfer.gemm import fp8_blockscale_gemm_sm90
+
+        return lambda: fp8_blockscale_gemm_sm90(a, b, sa, sb, out=out, out_dtype=torch.bfloat16)
+    # Call the image's existing kernel directly: the public wrapper chooses a
+    # JSON/default config and allocates output. No global config monkeypatching.
+    from sglang.kernels.ops.quantization.fp8_kernel import _w8a8_block_fp8_matmul
+
+    bm, bn, stages, warps = candidate["config"]
+    m, k = a.shape
+    n = b.shape[0]
+    grid = (((m + bm - 1) // bm) * ((n + bn - 1) // bn),)
+    return lambda: _w8a8_block_fp8_matmul[grid](a, b, out, sa, sb, m, n, k, 128, 128, a.stride(0), a.stride(1), b.stride(1), b.stride(0), out.stride(0), out.stride(1), sa.stride(0), sa.stride(1), sb.stride(1), sb.stride(0), BLOCK_SIZE_M=bm, BLOCK_SIZE_N=bn, BLOCK_SIZE_K=128, GROUP_SIZE_M=32, needs_masking=False, num_stages=stages, num_warps=warps)
 
 
 def dense_inputs(rows, n, k, seed):
@@ -741,57 +861,100 @@ def dense_fp32_reference():
         torch.backends.cuda.matmul.allow_tf32 = previous
 
 
-def check_dense_gemm():
-    """Both host choices vs independent FP32 dequantized GEMM, plus graph replay."""
-    import deep_gemm
+def dense_validate_candidate(op, candidate, inputs, reference, stock):
+    """Screen eager and changed-input graph results; never time a rejected candidate."""
+    lhs, rhs, out = inputs
+    call = dense_call(candidate, inputs)
+    out.fill_(float("nan"))
+    call()
+    metrics = dense_errors(out, reference)
+    stock_metrics = dense_errors(out, stock.float())
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        call()
+    torch.cuda.current_stream().wait_stream(stream)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        call()
+    # Modify values, not pointers/layouts, after capture. Restore before timing.
+    original = lhs[0].clone(), lhs[1].clone(), rhs[0].clone(), rhs[1].clone()
+    rows, k = lhs[0].shape
+    n = rhs[0].shape[0]
+    fresh_lhs, fresh_rhs, _ = dense_inputs(rows, n, k, 91000 + rows + n)
+    try:
+        for actual, fresh in zip((*lhs, *rhs), (*fresh_lhs, *fresh_rhs)):
+            actual.copy_(fresh)
+        changed_reference = dense_reference(lhs, rhs)
+        changed_stock = torch.empty_like(out)
+        with dense_gemm_mode(op, dense_candidates(op)[0]):
+            dense_call(dense_candidates(op)[0], (lhs, rhs, changed_stock))()
+            # Replay under the stock host env: a captured override must persist.
+            out.fill_(float("nan"))
+            graph.replay()
+        dense_errors(out, changed_reference)
+        dense_errors(out, changed_stock.float())
+    finally:
+        for actual, saved in zip((*lhs, *rhs), original):
+            actual.copy_(saved)
+    call()
+    return {**metrics, "relative_l2_vs_stock": stock_metrics["relative_l2"], "max_scaled_error_vs_stock": stock_metrics["max_scaled_error"], "changed_input_graph_passed": True}
 
+
+def selected_dense_candidates(op):
+    """Serving preflight: check the selected setting, including the stock fallback."""
+    choices = dense_candidates(op)
+    backend = os.environ.get("SGLANG_DECODE_DENSE_GEMM_" + op.upper(), "")
+    entries = {}
+    for entry in os.environ.get("DG_SM90_1D2D_DECODE_CONFIG", "").split(";"):
+        if not entry:
+            continue
+        name, fields = entry.split(":")
+        assert name in ("QKV", "O") and name not in entries, entry
+        entries[name] = tuple(map(int, fields.split(",")))
+    config = entries.get(op.upper())
+    assert not (backend and config), "choose only one dense backend per projection"
+    if backend:
+        selected = [c for c in choices if c["backend"] != "deepgemm" and c["name"] == backend]
+    elif config:
+        selected = [c for c in choices if c["backend"] == "deepgemm" and c["config"] == config]
+    else:
+        selected = choices[:1]
+    assert len(selected) == 1, (op, backend, config)
+    return selected
+
+
+def check_dense_gemm(selected_only=False):
+    """All candidates, FP32 oracle + stock, eager + changed-input CUDA graphs."""
     host_sha = require_dense_host()
     assert torch.cuda.get_device_properties(torch.cuda.current_device()).multi_processor_count == 132
-    os.environ.setdefault("DG_PRINT_CONFIGS", "1")
     with dense_fp32_reference():
         for op, n, k in DENSE_PROJECTIONS:
-            # Include host boundaries and non-four-aligned tails in the numeric gate.
-            for rows in (64, 65, 128, 129, 132, 136, 144, 145):
-                for enabled in (False, True):
-                    lhs, rhs, out = dense_inputs(rows, n, k, 31000 + rows + n)
-
-                    def call(lhs=lhs, rhs=rhs, out=out):
-                        deep_gemm.fp8_gemm_nt(lhs, rhs, out)
-
-                    out.fill_(float("nan"))
-                    with dense_gemm_mode(enabled):
-                        call()
-                        metrics = dense_errors(out, dense_reference(lhs, rhs))
-                        print(json.dumps({"check": f"dense-{op}-{rows}", "small_m": enabled, "host_patch_sha256": host_sha, **metrics}), flush=True)
-                        stream = torch.cuda.Stream()
-                        stream.wait_stream(torch.cuda.current_stream())
-                        with torch.cuda.stream(stream):
-                            call()
-                        torch.cuda.current_stream().wait_stream(stream)
-                        graph = torch.cuda.CUDAGraph()
-                        with torch.cuda.graph(graph):
-                            call()
-                    # Replay has no host call: it must use the captured choice and
-                    # current input/scales, even after restoring the process switch.
-                    for replay in range(2):
-                        new_lhs, new_rhs, _ = dense_inputs(rows, n, k, 41000 + rows + n + replay)
-                        for actual, fresh in zip((*lhs, *rhs), (*new_lhs, *new_rhs)):
-                            actual.copy_(fresh)
-                        out.fill_(float("nan"))
-                        graph.replay()
-                        metrics = dense_errors(out, dense_reference(lhs, rhs))
-                        print(json.dumps({"check": f"dense-graph-{op}-{rows}-{replay}", "small_m": enabled, **metrics}), flush=True)
-    print("PASS: dense FP8 group128 / block128 projections, stock and small-M, eager and changed-input CUDA graph replay", flush=True)
+            for rows in (64, 65, 128, 129, 132, 144):
+                inputs = dense_inputs(rows, n, k, 31000 + rows + n)
+                reference = dense_reference(inputs[0], inputs[1])
+                with dense_gemm_mode(op, dense_candidates(op)[0]):
+                    dense_call(dense_candidates(op)[0], inputs)()
+                stock = inputs[2].clone()
+                for candidate in selected_dense_candidates(op) if selected_only else dense_candidates(op):
+                    with dense_gemm_mode(op, candidate):
+                        metrics = dense_validate_candidate(op, candidate, inputs, reference, stock)
+                    print(json.dumps({"check": f"dense-{op}-{rows}", "candidate": candidate["name"], "override_active": rows <= 128 and candidate["config"] is not None and candidate["backend"] == "deepgemm", "host_patch_sha256": host_sha, **metrics}), flush=True)
+    print("PASS: dense FP8 group128 / block128 projections, selected/all candidate settings, eager and changed-input CUDA graph replay", flush=True)
 
 
 if __name__ == "__main__":
-    check_dense_gemm()
+    # Existing gates embed this file with run_path and retain their own argv.
+    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
+    check_dense_gemm(selected_only="--dense-selected" in sys.argv[1:])
     check_decode_silu_quant()
     check_rope_fp8_q()
     check_rope_fp8_q(with_norm=True)
     check_rope_fp8_kv()
     check_topk_mask()
     check_decode_router_padding()
+    if os.environ.get("SGLANG_DECODE_GATE_GEMM") == "triton":
+        check_decode_gate()
     check_add_rmsnorm_group_quant()
     check_prefill_attention()
     check_verify_scheduler_sharing()
