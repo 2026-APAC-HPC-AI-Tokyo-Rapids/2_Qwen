@@ -5,6 +5,7 @@ Inputs stand in for the already-validated QK-norm/RoPE/KV-store prologue.
 """
 import json
 import os
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 # Only compile the exercised shapes for this bounded integration probe.
@@ -13,6 +14,12 @@ os.environ["SGLANG_JIT_DEEPGEMM_PRECOMPILE"] = "0"
 import torch
 from sgl_kernel.flash_attn import flash_attn_varlen_func
 from sglang.kernels.ops.quantization.fp8_kernel import sglang_per_token_group_quant_fp8
+from sglang.srt.distributed.parallel_state import (
+    destroy_distributed_environment,
+    destroy_model_parallel,
+    init_distributed_environment,
+    initialize_model_parallel,
+)
 from sglang.srt.layers.attention import prefill_fp8
 from sglang.srt.layers.attention.flashattention_backend import (
     FlashAttentionBackend,
@@ -96,4 +103,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with TemporaryDirectory(prefix="qwen-prefill-probe-") as rendezvous:
+        init_distributed_environment(world_size=1, rank=0, local_rank=0, distributed_init_method=f"file://{rendezvous}/store", timeout=30)
+        initialize_model_parallel()
+        try:
+            main()
+        finally:
+            destroy_model_parallel()
+            destroy_distributed_environment()
