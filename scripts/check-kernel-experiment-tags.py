@@ -12,8 +12,9 @@ def validate(message):
             raise ValueError('kernel bench requires nodes:1 and the pinned image')
     if '[build-only]' not in message:
         return
-    if '[cluster:aspire2ap]' not in message or any(tag in message for tag in ['[cluster:genkai]', '[cluster:firmus]']):
-        raise ValueError('kernel build requires only cluster:aspire2ap')
+    clusters = [tag for tag in ['[cluster:aspire2ap]', '[cluster:firmus]'] if tag in message]
+    if len(clusters) != 1 or any(tag in message for tag in ['[cluster:genkai]', '[dynamo]']):
+        raise ValueError('kernel build requires exactly one of cluster:aspire2ap or cluster:firmus, without dynamo')
     if '[profile]' in message:
         raise ValueError('build-only stages do not capture a profiler')
     if not message.startswith('[require-build]'):

@@ -9,26 +9,31 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
-@pytest.mark.parametrize('message', ['[cluster:aspire2ap] normal PD', '[skip ci] docs', '[require-build] [cluster:aspire2ap] [build-only]', '[cluster:firmus] [nodes:1] [kernel-bench] candidate'])
+@pytest.mark.parametrize('message', ['[cluster:aspire2ap] normal PD', '[skip ci] docs', '[require-build] [cluster:aspire2ap] [build-only]', '[require-build] [cluster:firmus] [build-only]', '[cluster:firmus] [nodes:1] [kernel-bench] candidate'])
 def test_explicit_supported_stages(message):
     module.validate(message)
 
 
-@pytest.mark.parametrize('message', ['[cluster:aspire2ap] [build-only]', '[require-build] [cluster:firmus] [build-only]', '[require-build] [cluster:aspire2ap] [build-only] [profile]', '[cluster:firmus] [kernel-bench]', '[require-build] [cluster:firmus] [nodes:1] [kernel-bench]', '[cluster:firmus] [nodes:1] [kernel-bench] like [dynamo]'])
+@pytest.mark.parametrize('message', ['[cluster:aspire2ap] [build-only]', '[cluster:firmus] [build-only]', '[require-build] [build-only]', '[require-build] [cluster:genkai] [build-only]', '[require-build] [cluster:firmus] [cluster:aspire2ap] [build-only]', '[require-build] [cluster:firmus] [build-only] [dynamo]', '[require-build] [cluster:firmus] [build-only] [profile]', '[require-build] [cluster:aspire2ap] [build-only] [profile]', '[cluster:firmus] [kernel-bench]', '[require-build] [cluster:firmus] [nodes:1] [kernel-bench]', '[require-build] [cluster:firmus] [nodes:1] [kernel-bench] [build-only]', '[cluster:firmus] [nodes:1] [kernel-bench] like [dynamo]'])
 def test_ambiguous_or_unbounded_stages_are_rejected(message):
     with pytest.raises(ValueError):
         module.validate(message)
 
 
-@pytest.mark.parametrize("message,pd", [("[cluster:aspire2ap] ordinary", True), ("[require-build] [cluster:aspire2ap] [build-only]", False)])
-def test_actual_push_workflow_routes(message, pd):
+@pytest.mark.parametrize("cluster", ["aspire2ap", "firmus"])
+@pytest.mark.parametrize("build_only", [False, True])
+def test_actual_push_workflow_routes(cluster, build_only):
     import re
+    message = f"[require-build] [cluster:{cluster}]" + (" [build-only]" if build_only else "")
+    module.validate(message)
     workflow = (ROOT/".github/workflows/qwen.yml").read_text()
-    for name, expected in [("aspire2ap", pd)]:
+    for name in ["container", "genkai", "aspire2ap", "firmus", "firmus-dynamo", "firmus-kernel-bench"]:
+        expected = name == "container" or (name == cluster and not build_only)
         job_block = re.split(r"\n  [a-zA-Z-]+:\n", workflow.split(f"\n  {name}:\n", 1)[1], maxsplit=1)[0]
         expression = re.search(r"^    if: (.+)$", job_block, re.MULTILINE).group(1).removeprefix("${{ ").removesuffix(" }}")
         expression = re.sub(r"contains\(github.event.head_commit.message, '([^']+)'\)", lambda match: str(match[1] in message), expression)
-        expression = expression.replace("github.event_name", repr("push")).replace("inputs.run_aspire2ap", "False")
+        expression = expression.replace("github.event_name", repr("push"))
+        expression = re.sub(r"inputs.run_\w+", "False", expression)
         expression = re.sub(r"needs.container.outputs.\w+", repr("available"), expression)
         expression = expression.replace("&&", " and ").replace("||", " or ")
         expression = re.sub(r"!(?!=)", " not ", expression)
