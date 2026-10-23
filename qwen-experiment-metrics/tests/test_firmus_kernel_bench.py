@@ -50,6 +50,9 @@ def workspace(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         (rootfs / relative).write_text(text)
     (rootfs / "opt/apac").mkdir(parents=True)
     (rootfs / "opt/apac/sm90-megamoe-build.json").write_text(json.dumps({"header_sha256": hashlib.sha256(header.encode()).hexdigest()}))
+    # The real image also supplies this extracted record. These fixture
+    # candidates do not enable the independent-WG host switch.
+    (rootfs / "opt/apac/deep-gemm-host-build.json").write_text(json.dumps({"abi": "tvm-ffi", "patches": {}}))
     image = tmp_path / "containers/image.sqsh"
     image.write_bytes(b"fake squashfs")
     ws = tmp_path / "ws"

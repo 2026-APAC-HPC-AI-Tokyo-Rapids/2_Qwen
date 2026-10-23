@@ -3,11 +3,10 @@
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = (ROOT / "scripts/provision-firmus-kernel-bench.sh").read_text()
@@ -31,7 +30,7 @@ class HostGuardTests(unittest.TestCase):
                 patch_sha = hashlib.sha256((ROOT / "patches/deep-gemm-host" / PATCH).read_bytes()).hexdigest()
                 patches = {} if record_kind == "old" else {PATCH: "0" * 64 if record_kind == "stale" else patch_sha}
                 record.write_text(json.dumps({"abi": "tvm-ffi", "patches": patches, "extension_sha256": hashlib.sha256(extension.read_bytes()).hexdigest() if extension_matches else "0" * 64}))
-            return subprocess.run(["bash", "-euo", "pipefail", "-c", FUNCTION + '\ncheck_candidate_host "$1" "$2" "$3"\n', "guard", str(candidate) + "/", str(record), str(extension)], env={**os.environ, "GITHUB_WORKSPACE": str(ROOT)}, capture_output=True, text=True)
+            return subprocess.run(["bash", "-euo", "pipefail", "-c", FUNCTION + '\ncheck_candidate_host "$1" "$2" "$3"\n', "guard", str(candidate) + "/", str(record), str(extension)], env={**os.environ, "GITHUB_WORKSPACE": str(ROOT)}, capture_output=True, text=True, check=False)
 
     def test_exact_patch_and_extension_accept(self):
         result = self.check_guard("DG_SM90_DECODE_INDEPENDENT_WG=1\n", "current")
