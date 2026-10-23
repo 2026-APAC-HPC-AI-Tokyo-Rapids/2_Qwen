@@ -100,7 +100,7 @@
  
  
  def decode_dense_linear(attention, projection, layer, x, forward_batch, *, decode_worker):
-+    from sglang.srt.server_args import get_server_args
++    from sglang.srt.runtime_context import get_server_args
 +
 +    if not decode_worker and forward_batch.forward_mode.is_extend() and not get_server_args().enable_lora:
 +        from sglang.srt.layers.attention.prefill_fp8 import linear
@@ -111,12 +111,21 @@
      # linear owns all default behavior, including prequantized input tuples.
 --- a/python/sglang/srt/models/qwen3_moe.py
 +++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -74,7 +74,7 @@
+ from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
+ from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
+ from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode, PPProxyTensors
+-from sglang.srt.model_executor.forward_context import get_token_to_kv_pool
++from sglang.srt.model_executor.forward_context import get_attn_backend, get_token_to_kv_pool
+ from sglang.srt.model_loader.weight_utils import default_weight_loader
+ from sglang.srt.models.qwen2_moe import Qwen2MoeMLP as Qwen3MoeMLP
+ from sglang.srt.models.qwen2_moe import Qwen2MoeModel
 @@ -888,12 +888,18 @@
              enable_fused_set_kv_buffer(forward_batch)
              and self.compatible_with_fused_kv_buffer
          ))
 +        attn_kwargs = {}
-+        if get_server_args().disaggregation_mode == "prefill" and not get_server_args().enable_lora and forward_batch.forward_mode.is_extend() and getattr(fb.attn_backend, "fa_impl_ver", None) == 3:
++        if get_server_args().disaggregation_mode == "prefill" and not get_server_args().enable_lora and forward_batch.forward_mode.is_extend() and get_server_args().cuda_graph_config.prefill.backend == "disabled" and getattr(get_attn_backend(), "fa_impl_ver", None) == 3:
 +            from sglang.srt.layers.attention.prefill_fp8 import linear_supported
 +
 +            attn_kwargs["prefill_fp8_output"] = linear_supported(self, "O", self.o_proj)
