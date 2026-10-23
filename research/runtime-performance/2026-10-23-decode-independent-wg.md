@@ -73,3 +73,19 @@ canonical 5-overlay header（SHA256 `77ee7caea6e5736803b6034f83575f9a846d30c54ce
 今回の追補ではCUDA/nvcc compile、host `_C.so` build、GPU、SSH、Actions、scheduler、pushは行っていない。上表のCUDA資源・SASS値はassert追加前の実測であり、追加後headerのCUDA再compile結果ではない。
 
 assert追加後の候補header SHA256は `c40d4c141aea45bb17a864ae8d7088a97363f12d0188b2584e558203aacb11ad`。基準headerからの再適用を親担当でも照合した。
+
+## 実host selector/JIT契約のCPU検査
+
+`scripts/check-sm90-independent-wg-host.py` と [全条件の記録](2026-10-23-independent-wg-host-contract.json) を追加した。v0.1.5の固定git objectから取得したsource copyへhost `series` 全4本を適用し、実際のSM90 heuristic、共通wave選択、pool/layout、環境変数読出し、`make_tma_2d_desc` / `make_tma_sf_desc`、host entrypointのArgs構築、`generate_impl` を通常C++で実行する。選択式やJIT引数をPythonへ書き直したモデルではない。入力Tensorのメタデータ、132 SMというdevice属性、CUDA descriptor encode API、compiler/launcherの境界だけをCPU用に置き換えた。fmtは実際のheaderを使用する。
+
+検査は36種類のoutput row数（既存gate/benchの全値、0、128/144/145、255/256、279/280/281、303/304を含む）×experts128/140/152×Prefill2WG env0/1×independent env0/1の**432組**。全て通過し、実JIT templateは**17種類**に集約された。実 `generate_impl` の25引数をkernel側の実template宣言順で照合し、さらにcandidate headerから取り出した実constexpr宣言を、そのJIT引数で通常C++ instantiateして、共有メモリ総量、stage/queue数、全7個のTMA descriptor boxとSF stride、host flagsと突き合わせた。
+
+- 独立WGはexperts128・SwapAB範囲・env1だけで6 stages/200,944 bytes。env0は8 stages/230,672 bytes、非SwapAB M64は8 stages/226,576 bytes。
+- Prefillは3 stages、4WG=225,600 bytes、2WG=225,472 bytes。TMA出力boxは4WGが64×64、2WGが128×64。独立Decodeは64×64。
+- tiny側にはfull-wave以外も実在する。experts128の4/8/9 rowsはwave16、experts140の8/9/17 rowsはwave18、experts152の8/9/17 rowsはwave19。残るfull-waveは32/35/38。この17種類の実JIT引数を、後続のCUDA compile対象選定にも渡した。
+
+記録にはsource/patch/header hash、g++とfmtの来歴、全input条件と選択kernelへの対応、各kernelの実JIT引数・geometry・flags・TMA値を保存した。image内headerと5-overlay後headerのSHA256も検査する。CLIは `--source-repo`（固定commitを持つローカルrepo）、`--fmt-include`、`--image-header`、`--output` を受け取り、元repoへ書き込まず一時copyを自動削除する。
+
+これはCUDA driverのdescriptor encoding・GPU計算・native `_C.so` ABI importを実行した検査ではない。これらの未実施区間はJSONにもfalseとして記録しており、実CUDA compile・native extensionの検査とは区別する。本作業ではSSH・remote compile・ジョブ投入・pushを行っていない。
+
+別担当の最終native build記録ともsource commitとhost patch全4本のSHA256が一致した。固定v0.1.5 sourceから実際の `_C.so` をローカルbuildし、torch 2.11.0 / apache-tvm-ffi 0.1.11でABI import成功、extension SHA256は `60aebb872919fd3a25d3fa9d98115b6ee895d2debc41e605b77eb042d1b9bacc`。GPUは実行していない。この別検査の成功によって上のCPU checkerのmock境界が変わるわけではない。既存imageのhost extensionには新envの実装が入っていないため、本候補の実行には新imageが引き続き必要である。
