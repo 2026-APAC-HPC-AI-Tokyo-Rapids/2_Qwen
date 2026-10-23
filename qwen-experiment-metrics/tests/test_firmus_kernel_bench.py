@@ -334,18 +334,23 @@ def test_mixed_routing_is_local_unique_and_rank_balanced(kind: str, percent: int
     ("decode-graph-swapab-144", [144, 140, 136, 132], [144, 140, 136, 132], [64] * 4),
 ])
 def test_numeric_gate_reference_matches_each_expert_owner_geometry(case, counts, expected_rows, expected_groups):
-    # Execute the gate's actual selection statements without importing CUDA.
+    # Execute selection, the real empty-expert reference loop, and allocation.
+    # The loop reassigns `rows` to index tensors; allocation must keep its size.
     # A global max(counts) incorrectly makes the first three mixed ranks SF128.
     source = ast.parse((ROOT / "scripts/check-firmus-megamoe.py").read_text())
     main = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "main")
     loop = next(node for node in main.body if isinstance(node, ast.For) and ast.unparse(node.target) == "(case, counts)")
-    names = {"count", "rows", "prefill_geometry", "l2_group"}
-    assignments = [node for node in loop.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)]
-    selection = compile(ast.Module(body=assignments, type_ignores=[]), "gate_geometry", "exec")
+    names = {"count", "rows", "output_rows", "prefill_geometry", "l2_group", "actual"}
+    statements = [node for node in loop.body if (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)) or (isinstance(node, ast.For) and isinstance(node.target, ast.Name) and node.target.id == "local_expert")]
+    selection = compile(ast.Module(body=statements, type_ignores=[]), "gate_geometry", "exec")
+    def empty(row_count, columns, **kwargs):
+        assert isinstance(row_count, int), "Output row count was overwritten by reference indices"
+        return row_count, columns
+    torch = types.SimpleNamespace(empty=empty, bfloat16="bf16", where=lambda _: (types.SimpleNamespace(numel=lambda: 0), None))
     for rank in range(4):
-        context = {"case": case, "counts": counts, "rank": rank}
+        context = {"case": case, "counts": counts, "rank": rank, "torch": torch, "device": "cpu", "all_ids": None}
         exec(selection, context)  # noqa: S102 - trusted repository selection, without CUDA initialization
-        assert context["rows"] == expected_rows[rank]
+        assert context["actual"] == (expected_rows[rank], 4096)
         assert context["l2_group"] == expected_groups[rank]
 
 
