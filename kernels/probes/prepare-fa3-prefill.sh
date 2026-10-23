@@ -18,7 +18,7 @@ for name,(repo,commit,digest) in pins.items():
     sources[name]=next(dest.iterdir())
 # Only reuse the launch-template override; Decode's B32..36 scheduler is unrelated.
 patch=(root/'kernels/fa3-verify/fixed-specializations.patch').read_text().split('--- a/hopper/flash_prepare_scheduler.cu')[0]
-subprocess.run(['patch','--batch','--fuzz=0','-p1'],input=patch,text=True,cwd=sources['fa3'],check=True)
+subprocess.run(['patch','--batch','--fuzz=0','-p1'],input=patch,universal_newlines=True,cwd=sources['fa3'],check=True)
 scheduler=sources['fa3']/'hopper/flash_prepare_scheduler.cu'
 s=scheduler.read_text().replace('int num_warps = cutlass::ceil_div(params.b, 31);','assert(params.b >= 1 && params.b <= 4); int num_warps = 1;')
 s=s.replace('BOOL_SWITCH(params.varlen_sort_batches, Sort, [&] {','{ constexpr bool Sort = true; [&] {').replace('NUM_WARP_SWITCH(num_warps, NumWarps, [&] {','{ constexpr int NumWarps = 1; [&] {')
