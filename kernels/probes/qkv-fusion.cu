@@ -13,8 +13,12 @@ struct QKVParams {
     uint8_t *q, *k, *v, *kc, *vc;
 };
 
-template<int BM, int THREADS>
-__device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int first_row, int head, int rows, const QKVParams& p) {
+template<int BM, int BN, int THREADS>
+__device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int first_row, int block_n, int rows, const QKVParams& p) {
+    constexpr int HEADS = BN / 128, HEAD_THREADS = THREADS / HEADS;
+    const int local_head = threadIdx.x / HEAD_THREADS;
+    const int head = block_n * HEADS + local_head;
+    tile += local_head * BM * 128;
     const int lane = threadIdx.x % 8;
     const int col = lane * 8;
     float wx[8], wy[8];
@@ -29,7 +33,7 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
         }
     }
     // Same eight-lane/head reduction tree as the deployed SGLang prologue.
-    for (int row = threadIdx.x / 8; row < BM; row += THREADS / 8) {
+    for (int row = (threadIdx.x % HEAD_THREADS) / 8; row < BM; row += HEAD_THREADS / 8) {
         const int token = first_row + row;
         float x[8], y[8], partial[4];
         uint16_t ox[4], oy[4];
@@ -97,11 +101,10 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
 
 #include "qkv-fused.cuh"
 using namespace deep_gemm;
-constexpr int BM=128, BN=128, STAGES=5, THREADS=384;
-constexpr int SMEM=BM*BN*2+STAGES*(BM*128+BN*128+BM*4)+32*4+STAGES*16;
-#define GEMM_ARGS cute::UMMA::Major::K,0,9216,4096,1,BM,BN,128,128,128,128,STAGES,128,256,1,false,132,GemmType::Normal,cutlass::bfloat16_t,epilogue::transform::EpilogueIdentity
-static auto plain_kernel=&sm90_fp8_gemm_1d2d_impl<GEMM_ARGS>;
-static auto fused_kernel=&qkv_fused_impl<GEMM_ARGS>;
+constexpr int BM=128, THREADS=384;
+#define GEMM_ARGS cute::UMMA::Major::K,0,9216,4096,1,BM,BN,128,128,128,128,STAGES,128,256,CLUSTER,(CLUSTER>1),132,GemmType::Normal,cutlass::bfloat16_t,epilogue::transform::EpilogueIdentity
+template<int BN, int STAGES>
+constexpr int smem_bytes = BM*BN*2+STAGES*(BM*128+BN*128+BM*4)+32*4*(BN/128)+STAGES*16;
 
 static CUtensorMap descriptor(void* ptr, CUtensorMapDataType type, uint64_t x, uint64_t y, uint32_t bx, uint32_t by, unsigned bytes, CUtensorMapSwizzle swizzle) {
     CUtensorMap map{};
@@ -111,20 +114,27 @@ static CUtensorMap descriptor(void* ptr, CUtensorMapDataType type, uint64_t x, u
     if(result!=CUDA_SUCCESS) { std::fprintf(stderr,"tensor map error %d\n",int(result)); std::abort(); }
     return map;
 }
-extern "C" int qkv_init() {
-    int sms=0; cudaDeviceGetAttribute(&sms,cudaDevAttrMultiProcessorCount,0);
-    if(sms!=132) return -1;
-    for(auto fn:{reinterpret_cast<const void*>(plain_kernel),reinterpret_cast<const void*>(fused_kernel)}) {
+template<int BN, int STAGES, int CLUSTER>
+int init_variant() {
+    constexpr int SMEM=smem_bytes<BN,STAGES>;
+    for(auto fn:{reinterpret_cast<const void*>(&sm90_fp8_gemm_1d2d_impl<GEMM_ARGS>),reinterpret_cast<const void*>(&qkv_fused_impl<GEMM_ARGS>)}) {
         auto status=cudaFuncSetAttribute(fn,cudaFuncAttributeMaxDynamicSharedMemorySize,SMEM);
         if(status!=cudaSuccess) return int(status);
         cudaFuncAttributes attr{}; cudaFuncGetAttributes(&attr,fn);
         int resident=0; cudaOccupancyMaxActiveBlocksPerMultiprocessor(&resident,fn,THREADS,SMEM);
-        std::printf("qkv_resources regs=%d local=%zu smem=%d resident=%d\n",attr.numRegs,attr.localSizeBytes,SMEM,resident);
+        std::printf("qkv_resources bn=%d stages=%d cluster=%d regs=%d local=%zu smem=%d resident=%d\n",BN,STAGES,CLUSTER,attr.numRegs,attr.localSizeBytes,SMEM,resident);
         if(resident<1 || attr.localSizeBytes) return -2;
     }
     return 0;
 }
-extern "C" int qkv_run(int fused,int rows,int sf_stride,void* a,void* sa,void* b,void* sb,void* out,QKVParams p,void* stream_ptr) {
+extern "C" int qkv_init() {
+    int sms=0; cudaDeviceGetAttribute(&sms,cudaDevAttrMultiProcessorCount,0);
+    if(sms!=132) return -1;
+    int status=init_variant<128,5,1>();
+    return status ? status : init_variant<256,3,2>();
+}
+template<int BN, int STAGES, int CLUSTER>
+int run_variant(bool fused,int rows,int sf_stride,void* a,void* sa,void* b,void* sb,void* out,QKVParams p,void* stream_ptr) {
     const auto ta=descriptor(a,CU_TENSOR_MAP_DATA_TYPE_UINT8,4096,rows,128,BM,1,CU_TENSOR_MAP_SWIZZLE_128B);
     const auto tb=descriptor(b,CU_TENSOR_MAP_DATA_TYPE_UINT8,4096,9216,128,BN,1,CU_TENSOR_MAP_SWIZZLE_128B);
     const auto td=descriptor(out,CU_TENSOR_MAP_DATA_TYPE_BFLOAT16,9216,rows,64,BM,2,CU_TENSOR_MAP_SWIZZLE_128B);
@@ -132,7 +142,17 @@ extern "C" int qkv_run(int fused,int rows,int sf_stride,void* a,void* sa,void* b
     const auto ca=*reinterpret_cast<const cute::TmaDescriptor*>(&ta), cb=*reinterpret_cast<const cute::TmaDescriptor*>(&tb);
     const auto cd=*reinterpret_cast<const cute::TmaDescriptor*>(&td), cs=*reinterpret_cast<const cute::TmaDescriptor*>(&ts);
     auto stream=static_cast<cudaStream_t>(stream_ptr);
-    if(fused) qkv_fused_impl<GEMM_ARGS><<<132,THREADS,SMEM,stream>>>(static_cast<float*>(sb),nullptr,rows,9216,4096,ca,cb,cd,cs,p);
-    else sm90_fp8_gemm_1d2d_impl<GEMM_ARGS><<<132,THREADS,SMEM,stream>>>(static_cast<float*>(sb),nullptr,rows,9216,4096,ca,cb,cd,cs);
-    return int(cudaGetLastError());
+    cudaLaunchAttribute attr{};
+    attr.id=cudaLaunchAttributeClusterDimension;
+    attr.val.clusterDim.x=CLUSTER; attr.val.clusterDim.y=1; attr.val.clusterDim.z=1;
+    cudaLaunchConfig_t config{};
+    config.gridDim=dim3(132); config.blockDim=dim3(THREADS);
+    config.dynamicSmemBytes=smem_bytes<BN,STAGES>; config.stream=stream;
+    config.attrs=&attr; config.numAttrs=1;
+    if(fused) return int(cudaLaunchKernelEx(&config,qkv_fused_impl<GEMM_ARGS>,static_cast<float*>(sb),static_cast<int*>(nullptr),unsigned(rows),9216u,4096u,ca,cb,cd,cs,p));
+    return int(cudaLaunchKernelEx(&config,sm90_fp8_gemm_1d2d_impl<GEMM_ARGS>,static_cast<float*>(sb),static_cast<int*>(nullptr),unsigned(rows),9216u,4096u,ca,cb,cd,cs));
+}
+extern "C" int qkv_run(int mode,int rows,int sf_stride,void* a,void* sa,void* b,void* sb,void* out,QKVParams p,void* stream_ptr) {
+    if(mode<2) return run_variant<128,5,1>(mode%2,rows,sf_stride,a,sa,b,sb,out,p,stream_ptr);
+    return run_variant<256,3,2>(mode%2,rows,sf_stride,a,sa,b,sb,out,p,stream_ptr);
 }

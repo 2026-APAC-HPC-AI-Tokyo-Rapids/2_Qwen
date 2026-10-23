@@ -1,4 +1,4 @@
-"""Compare deployed QKV + prologue, head-aligned GEMM + prologue, and fusion."""
+"""Compare deployed QKV, the previous BN128 fusion, and a BN256 fusion."""
 import ctypes
 import json
 import runpy
@@ -25,7 +25,7 @@ class Params(ctypes.Structure):
 lib.qkv_run.argtypes = [ctypes.c_int] * 3 + [ctypes.c_void_p] * 5 + [Params, ctypes.c_void_p]
 lib.qkv_run.restype = ctypes.c_int
 assert lib.qkv_init() == 0
-print(json.dumps({"device": torch.cuda.get_device_name(), "scope": "QKV GEMM + QK norm/RoPE/FP8 Q and contiguous/paged KV", "tile": [128, 128, 5], "serving": False}), flush=True)
+print(json.dumps({"device": torch.cuda.get_device_name(), "scope": "QKV GEMM + QK norm/RoPE/FP8 Q and contiguous/paged KV", "tiles_bm_bn_stages_cluster": [[128, 128, 5, 1], [128, 256, 3, 2]], "serving": False}), flush=True)
 qw, kw = [(torch.randn(128, device="cuda") * .25 + 1).bfloat16() for _ in range(2)]
 angles = torch.arange(8192, device="cuda").float()[:, None] * (1000000.0 ** (-torch.arange(0, 128, 2, device="cuda").float() / 128))
 trig = torch.cat((angles.cos(), angles.sin()), dim=-1).contiguous()
@@ -50,24 +50,29 @@ def post(data, out):
     apply_qknorm_rope_fp8_prefill(q, k, qw, kw, trig, pos, 1e-6, oq, v, kc, vc, loc, ck, cv)
 
 
-def native(data, out, fused):
+def native(data, out, mode):
     (a, sa), (b, sb), packed, pos, loc = data
     p = Params(*(tensor.data_ptr() for tensor in (qw, kw, trig, pos, loc, *out)))
-    result = lib.qkv_run(fused, a.shape[0], sa.stride(1), *(tensor.data_ptr() for tensor in (a, sa, b, sb, packed)), p, torch.cuda.current_stream().cuda_stream)
+    result = lib.qkv_run(mode, a.shape[0], sa.stride(1), *(tensor.data_ptr() for tensor in (a, sa, b, sb, packed)), p, torch.cuda.current_stream().cuda_stream)
     assert result == 0, result
 
 
 def call(data, out, mode):
     if mode == "stock":
-        deep_gemm.fp8_gemm_nt(data[0], data[1], data[2])
+        deep_gemm.fp8_gemm_nt(data[0], data[1], data[2], compiled_dims="nk")
         post(data, out)
     elif mode == "head128":
-        native(data, out, False)
+        native(data, out, 0)
+        post(data, out)
+    elif mode == "old_fused":
+        native(data, out, 1)
+    elif mode == "head256":
+        native(data, out, 2)
         post(data, out)
     elif mode == "fused":
-        native(data, out, True)
+        native(data, out, 3)
     elif mode == "gemm":
-        deep_gemm.fp8_gemm_nt(data[0], data[1], data[2])
+        deep_gemm.fp8_gemm_nt(data[0], data[1], data[2], compiled_dims="nk")
     else:
         post(data, out)
 
@@ -97,19 +102,20 @@ for rows in (129, 3986, 4027, 4096):
     stock, head, fused = [outputs(rows) for _ in range(3)]
     call(data, stock, "stock")
     baseline = data[2].clone()
-    call(data, head, "head128")
-    checks["dense_errors"](data[2], baseline.float())
     # Independent FP32 reference on sampled rows, without a full 4096-row FP32 GEMM.
     indices = torch.tensor(sorted({0, rows // 2, rows - 1}), device="cuda")
     a, sa = data[0]
     b, sb = data[1]
     reference = (a[indices].float() * sa[indices].repeat_interleave(128, 1)) @ (b.float() * sb.repeat_interleave(128, 0).repeat_interleave(128, 1)).T
-    checks["dense_errors"](data[2][indices], reference)
-    call(data, fused, "fused")
-    compare(fused, head, f"rows={rows}/same_gemm", exact=True)
-    compare(fused, stock, f"rows={rows}/stock")
+    for plain_mode, fused_mode in (("head128", "old_fused"), ("head256", "fused")):
+        call(data, head, plain_mode)
+        checks["dense_errors"](data[2], baseline.float())
+        checks["dense_errors"](data[2][indices], reference)
+        call(data, fused, fused_mode)
+        compare(fused, head, f"rows={rows}/{fused_mode}/same_gemm", exact=True)
+        compare(fused, stock, f"rows={rows}/{fused_mode}/stock")
     if rows in (129, 4027):
-        graph = capture(lambda: call(data, fused, "fused"))
+        graph = capture(lambda data=data, fused=fused: call(data, fused, "fused"))
         for replay in range(2):
             a.copy_((-a.float()).to(a.dtype))
             data[3].copy_(torch.randint_like(data[3], 0, 8192))
@@ -118,21 +124,22 @@ for rows in (129, 3986, 4027, 4096):
                 for tensor in out:
                     tensor.fill_(3.)
             call(data, stock, "stock")
-            call(data, head, "head128")
+            call(data, head, "head256")
             graph.replay()
             compare(fused, head, f"rows={rows}/graph={replay}", exact=True)
             compare(fused, stock, f"rows={rows}/stock_graph={replay}")
+    print(f"CHECK rows={rows} old_and_new_epilogue_exact=true independent_dense_reference=true", flush=True)
     del data, stock, head, fused, reference, baseline, a, sa, b, sb
 torch.cuda.synchronize()
 
 for rows in (3986, 4027, 4096):
     data_sets = [inputs(rows, 5200 + i) for i in range(4)]
     out_sets = [outputs(rows) for _ in data_sets]
-    modes = ("stock", "head128", "fused", "gemm", "post")
+    modes = ("stock", "head128", "old_fused", "head256", "fused", "gemm", "post")
     graphs = {}
     repeats = 12
     for mode in modes:
-        def batch(mode=mode):
+        def batch(mode=mode, repeats=repeats, data_sets=data_sets, out_sets=out_sets):
             for i in range(repeats):
                 call(data_sets[i % 4], out_sets[i % 4], mode)
         graphs[mode] = capture(batch)
@@ -148,5 +155,5 @@ for rows in (3986, 4027, 4096):
             end.synchronize()
             samples[mode].append(start.elapsed_time(end) * 1000 / repeats)
     result = {mode: statistics.median(values) for mode, values in samples.items()}
-    print(f"PASS rows={rows} baseline_median_us={result['stock']:.3f} candidate_median_us={result['fused']:.3f} saved_us={result['stock']-result['fused']:.3f} ratio={result['fused']/result['stock']:.5f} head128_total_us={result['head128']:.3f} stock_gemm_us={result['gemm']:.3f} prologue_us={result['post']:.3f} samples=25 rotating_sets=4", flush=True)
+    print(f"PASS rows={rows} baseline_median_us={result['stock']:.3f} candidate_median_us={result['fused']:.3f} saved_us={result['stock']-result['fused']:.3f} ratio={result['fused']/result['stock']:.5f} old_fused_us={result['old_fused']:.3f} head128_total_us={result['head128']:.3f} head256_total_us={result['head256']:.3f} stock_gemm_us={result['gemm']:.3f} prologue_us={result['post']:.3f} samples=25 rotating_sets=4", flush=True)
     del graphs, data_sets, out_sets
