@@ -1,0 +1,44 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1576,6 +1576,10 @@
+                                 prev_gate_sf = __ldg(l1_weights_sf + gate_row);
+                                 prev_up_sf = __ldg(l1_weights_sf + up_row);
+                             }
++                            // Release the consumed tile before waiting for the next TMA stage.
++                            ptx::warpgroup_wait<0>();
++                            if (lane_idx == 0)
++                                empty_barriers[stage_idx]->arrive();
+                             if (k_block_idx + 1 < num_k_blocks) {
+                                 uint32_t next_stage, next_phase;
+                                 next_stage_and_phase(next_stage, next_phase);
+@@ -1593,9 +1597,6 @@
+                                 prev_gate_sf = gate_sf;
+                                 prev_up_sf = up_sf;
+                             }
+-                            ptx::warpgroup_wait<0>();
+-                            if (lane_idx == 0)
+-                                empty_barriers[stage_idx]->arrive();
+                         }
+                         if (num_k_blocks != 0)
+                             postscale_l1_final(prev_scale_a_0, prev_scale_a_1, prev_gate_sf, prev_up_sf);
+@@ -1638,6 +1639,10 @@
+                                 for (uint32_t j = 0; j < kNumWSF; ++ j)
+                                     prev_l2_sf[j] = __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks);
+                             }
++                            // Release the consumed tile before waiting for the next TMA stage.
++                            ptx::warpgroup_wait<0>();
++                            if (lane_idx == 0)
++                                empty_barriers[stage_idx]->arrive();
+                             if (k_block_idx + 1 < num_k_blocks) {
+                                 uint32_t next_stage, next_phase;
+                                 next_stage_and_phase(next_stage, next_phase);
+@@ -1657,9 +1662,6 @@
+                                 prev_scale_a_0 = scale_a_0;
+                                 prev_scale_a_1 = scale_a_1;
+                             }
+-                            ptx::warpgroup_wait<0>();
+-                            if (lane_idx == 0)
+-                                empty_barriers[stage_idx]->arrive();
+                         }
+                         if (num_k_blocks != 0) {
+                             #pragma unroll
