@@ -31,4 +31,4 @@ mapfile -t includes <fa3-includes
 module load cuda/12.9.1
 nvcc --std=c++17 --use_fast_math --expt-relaxed-constexpr --expt-extended-lambda -O3 --ptxas-options=-v,-warn-spills -ccbin /opt/rh/gcc-toolset-13/root/usr/bin/g++ -gencode arch=compute_90a,code=sm_90a -DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED -DNDEBUG -I"${includes[0]}" -I"${includes[1]}" --shared --cudart static -Xcompiler -fPIC fa3-prefill.cu "${includes[0]}/flash_prepare_scheduler.cu" -o fa3-prefill.so >"${RUNTIME_DIR}/logs/build.log" 2>&1 || { tail -100 "${RUNTIME_DIR}/logs/build.log"; exit 1; }
 cat "${RUNTIME_DIR}/logs/build.log"
-jq -n --arg commit "${GITHUB_SHA}" '{commit:$commit,kernel:"FA3 Prefill N192 fused group-128 FP8 output",scope:"one GPU, no serving"}' >provenance.json
+jq -n --arg commit "${GITHUB_SHA}" '{commit:$commit,kernel:"FA3 Prefill fused group-128 FP8 output, N224 and N192",scope:"one GPU, no serving"}' >provenance.json

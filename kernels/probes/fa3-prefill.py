@@ -154,11 +154,15 @@ for rows in (3986,4027,4096):
 checks = runpy.run_path(str(Path(__file__).with_name("check-firmus-decode-kernels.py")))
 for rows in (3986,4027,4096):
     data = [inputs([rows]) for _ in range(4)]
-    dense = [checks["dense_inputs"](rows,4096,8192,6100+i) for i in range(4)]
+    dense = []
+    for _ in range(4):
+        weight = (torch.randn(4096,8192,device="cuda",dtype=torch.bfloat16)*4).to(torch.float8_e4m3fn)
+        weight_scale = 10.**(torch.rand(32,64,device="cuda")*3-3)
+        dense.append(((weight,weight_scale),torch.empty(rows,4096,device="cuda",dtype=torch.bfloat16)))
     def attention_o(i, mode):
         q,s = call(data[i],mode)
-        deep_gemm.fp8_gemm_nt((q.view(rows,8192),s),dense[i][1],dense[i][2])
-        return dense[i][2]
+        deep_gemm.fp8_gemm_nt((q.view(rows,8192),s),dense[i][0],dense[i][1])
+        return dense[i][1]
     expected = attention_o(0,"n192_quant").clone()
     actual = attention_o(0,"fp8").clone()
     assert torch.equal(actual,expected), "O GEMM must match the unfused N192 path exactly"
@@ -167,14 +171,14 @@ for rows in (3986,4027,4096):
     assert torch.equal(attention_o(0,"fp8_n224"),stock), "N224 fused O GEMM must match stock exactly"
     q,s = call(data[0],"fp8")
     indices = torch.tensor([0,rows//2,rows-1],device="cuda")
-    fp32 = checks["dense_reference"]((q.view(rows,8192)[indices],s[indices]),dense[0][1])
+    fp32 = checks["dense_reference"]((q.view(rows,8192)[indices],s[indices]),dense[0][0])
     print(dict(check="fa3_o_fp32_gemm", rows=rows, **checks["dense_errors"](actual[indices],fp32)),flush=True)
     if rows == 4027:
         graph = capture(lambda: attention_o(0,"fp8_n224"))
         for x in data[0][1:4]: x.copy_((-x.float()).to(x.dtype))
         expected = attention_o(0,"stock_quant").clone()
         graph.replay()
-        assert torch.equal(dense[0][2],expected), "O GEMM changed-input graph"
+        assert torch.equal(dense[0][1],expected), "O GEMM changed-input graph"
     modes = ("stock_quant","n192_quant","fp8","fp8_n224")
     graphs = {}
     for mode in modes:
