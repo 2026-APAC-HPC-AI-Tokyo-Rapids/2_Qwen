@@ -59,14 +59,14 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
                     a[h]=__bfloat162float(__float2bfloat16_rn(u*c-v*s));
                     b[h]=__bfloat162float(__float2bfloat16_rn(u*s+v*c));
                 }
-                ox[j]=__nv_fp8x2_e4m3(make_float2(a[0],a[1])).__x;
-                oy[j]=__nv_fp8x2_e4m3(make_float2(b[0],b[1])).__x;
+                ox[j]=__nv_cvt_float2_to_fp8x2(make_float2(a[0],a[1]), __NV_NOSAT, __NV_E4M3);
+                oy[j]=__nv_cvt_float2_to_fp8x2(make_float2(b[0],b[1]), __NV_NOSAT, __NV_E4M3);
             }
         } else {
             #pragma unroll
             for(int j=0;j<4;++j) {
-                ox[j]=__nv_fp8x2_e4m3(make_float2(x[j*2],x[j*2+1])).__x;
-                oy[j]=__nv_fp8x2_e4m3(make_float2(y[j*2],y[j*2+1])).__x;
+                ox[j]=__nv_cvt_float2_to_fp8x2(make_float2(x[j*2],x[j*2+1]), __NV_NOSAT, __NV_E4M3);
+                oy[j]=__nv_cvt_float2_to_fp8x2(make_float2(y[j*2],y[j*2+1]), __NV_NOSAT, __NV_E4M3);
             }
         }
         if(token<rows) {
