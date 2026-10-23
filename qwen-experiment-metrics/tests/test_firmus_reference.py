@@ -230,7 +230,9 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     router = next(line for line in source.splitlines() if line.startswith("srun ") and "/opt/apac/bin/sglang-router" in line)
     client = next(line for line in source.splitlines() if line.startswith("srun ") and "official-aiperf.sh" in line)
     configuration = 'speculation=(' + source.split('speculation=(', 1)[1].split('\nART=', 1)[0]
-    harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + '\n' + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
+    # The Decode worker launch waits for the dense selection started before the numeric gate and merges both env parts.
+    selection = 'mkdir -p "$ROOT/results/decode-selection"\n: >"$ROOT/results/decode-selection/moe.env"\n: >"$ROOT/results/decode-selection/dense.env"\ntrue &\ndense_selection=$!\n'
+    harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + '\n' + selection + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n' + router + '\nwait "$!"\n' + client
     environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "SGLANG": "/image", "AIPERF": "/image", "MODEL": "/model", "N": str(config["concurrency"]), "R_PORT": "8000"}
     subprocess.run(["bash", "-c", harness], env=environment, check=True)
     commands = [json.loads(line) for line in record.read_text().splitlines()]
