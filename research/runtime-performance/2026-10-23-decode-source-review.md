@@ -107,3 +107,28 @@ raw idle rankについて補足する。現在のgateはzero live tokensでも�
 この順序を可能にするため、既存workflowで既に用意されていたFirmus build-only経路をtag validatorでも許可した（main `4919de0`、4候補へ反映済み）。21 CPU fixtureで実workflow条件を評価し、`[require-build][build-only][cluster:firmus]` がcontainerだけを選び、serving/GPU jobを選ばないことを確認した。新buildの配備は失敗許容stepなので、Actions全体成功だけで判断せずimage/sidecarの存在・hash・size・source commitを確認してからpinを更新する。
 
 静的点検・CPU検査・compileで判明した不具合は修正したが、C/DのGPU間同期、入力を変えたCUDA graph replay、実GPU丸め、公式score、126 us達成は今回の結果だけでは確認できない。GPU待ちキュー前に可能な検査と、実GPUで初めて確認できる事項を区別する。
+
+## 実イメージを使用した最終provision検査
+
+取得した `39899235870.sqsh` は12,270,067,712 bytesで、実provisionerのSHA256照合がconfigの `3b3d4a8d46671f6264204b35ea797e3f34aad91e6ec806ae252ece77ec22f8c8` と一致した。各branchからscripts/configs/platforms/patchesをGit外のローカルdirectoryへcopyし、configのimage pathだけを取得先へ変更して、実 `scripts/provision-firmus-kernel-bench.sh` を最初から最後まで実行した。scheduler scriptは生成だけで実行しない。
+
+| 候補 | 検査対象commit | 実provision結果 |
+| --- | --- | --- |
+| A | `ea79ef3` | exit 0、候補header SHAは52特殊化compileの対象と一致 |
+| B | `6967826` | exit 0、候補header SHAは52特殊化compileの対象と一致 |
+| C | `d3860eb` | exit 1、実旧imageのhost patch不足をguardが検出。意図した投入前拒否 |
+| D | `dc8304e` | exit 0、候補header SHAは52特殊化compileの対象と一致 |
+
+正本は `/tmp/qwen-preflight-20261023/real-provision-results.json` と同directory下の `real-provision/`（各log、生成script、provenance、variants、適用後source）。これはfixtureの展開mockではなく、実unsquashfs・実image・実patchを使用した検査。SSHはimage/sidecarの読取りのみ。
+
+compileに使用した依存についても、実imageのDeepGEMM header 56 files、CUTLASS/cute 802 filesがすべてhash一致した。compile用include treeにだけ存在するtimeline headerは今回の非instrumented候補からincludeされない。実imageのtorch 2.11.0、apache-tvm-ffi 0.1.11、sgl-deep-gemm 0.1.5も確認した。numpyは実image 2.3.5、CPU fixture環境2.5.4で差があるが、今回のhost拡張はnumpy C ABIを使用しておらず、数値境界checkerもnumpy計算に依存しない。
+
+実imageから抽出したtorch・tvm_ffi・deep_gemmに候補 `_C.so` を組み合わせ、driver stubでABI importを再確認した。3 packageとも実image抽出先からimportされ、両entrypointが存在することを確認した（`image-abi-result.json`、`image-abi-import.log`）。旧image自体は変更していない。この検査を新imageの完成とは扱わない。
+
+また、Cの実Dockerfileが呼ぶ `containers/check-sm90-independent-wg.py` 全体をローカルで実行し、5 compile・対照SASS一致・直列化warningなし・結果JSON生成までexit 0を確認した（`container-compile-result.json`、`container-compile.log`）。assert追加後headerでも既存tableのSASS値と一致し、8/8-byte spillは引き続き未解消。
+
+### 残る投入条件
+
+A/B/Dは現pinで投入前のCPU検査とprovisionを完走した。Cは新規imageの完成が必須で、現pinのGPU数値gateへは進めない。既存builderは固定CUDA OCIからBuildah chrootで全レシピを構築し、Skopeo/Umoci検証後にSquashFSを生成する。旧SquashFSを入力とする差分更新経路はない。`_C.so`だけ差し替えた再packでは埋込host記録とmanifestが古くなり、image検査を満たさない。今回のためだけに別のimage構築経路は追加しない。
+
+次にCで実行すべきものは既存のCPU build-only jobであり、成功したartifactとsidecarを照合して4つのpin値を更新し、provisionが成功した後にGPU数値gateへ進む。ジョブ投入禁止を維持しているため、新imageは未作成。全4案が現在のconfigのままGPU jobを投入可能だという結論にはしていない。
