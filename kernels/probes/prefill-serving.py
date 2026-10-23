@@ -3,6 +3,7 @@
 No model checkpoint or distributed MoE: the latter has a separate EP4 gate.
 Inputs stand in for the already-validated QK-norm/RoPE/KV-store prologue.
 """
+import faulthandler
 import json
 import os
 from tempfile import TemporaryDirectory
@@ -103,11 +104,16 @@ def main():
 
 
 if __name__ == "__main__":
+    faulthandler.dump_traceback_later(35, exit=True)
     with TemporaryDirectory(prefix="qwen-prefill-probe-") as rendezvous:
+        print("Initialize single-rank distributed environment", flush=True)
         init_distributed_environment(world_size=1, rank=0, local_rank=0, distributed_init_method=f"file://{rendezvous}/store", timeout=30)
+        print("Initialize model-parallel groups", flush=True)
         initialize_model_parallel()
         try:
+            print("Run production entry-point checks", flush=True)
             main()
         finally:
             destroy_model_parallel()
             destroy_distributed_environment()
+            faulthandler.cancel_dump_traceback_later()
