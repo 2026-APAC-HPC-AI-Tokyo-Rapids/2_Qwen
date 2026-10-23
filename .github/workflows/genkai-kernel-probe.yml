@@ -3,8 +3,12 @@ name: Genkai 1 GPU kernel probe
 on:
   workflow_dispatch:
     inputs:
+      benchmark:
+        description: ベンチ準備スクリプト（共通runnerが生成された実行ファイルを起動）
+        type: string
+        default: kernels/probes/prepare-fc1.sh
       candidate_patch:
-        description: FC1候補patchのリポジトリ内パス（空欄は現行同士の動作確認）
+        description: 候補patchのリポジトリ内パス（空欄は現行同士の動作確認）
         type: string
         default: ""
 
@@ -27,9 +31,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: login nodeでヘッダ抽出・差分検査・CUDAコンパイル
+      - name: login nodeでベンチを準備
         id: prepare
         env:
+          BENCHMARK: ${{ inputs.benchmark }}
           CANDIDATE_PATCH: ${{ inputs.candidate_patch }}
         run: scripts/provision-genkai-kernel-probe.sh
 
@@ -58,7 +63,7 @@ jobs:
           RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
         shell: bash
         run: |
-          printf '### Genkai 1 GPU: isolated Prefill FC1\n\nRouting, NVLink, FC2, SwiGLU and serving are excluded. These are not serving tok/s.\n\n' >>"${GITHUB_STEP_SUMMARY}"
+          printf '### Genkai 1 GPU kernel benchmark\n\n' >>"${GITHUB_STEP_SUMMARY}"
           genkai-shell --github-shell platforms/genkai/kernel-probe/summary.sh >>"${GITHUB_STEP_SUMMARY}"
 
       - name: 終了済みの一時ファイルを削除

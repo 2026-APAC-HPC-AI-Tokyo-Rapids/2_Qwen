@@ -6,7 +6,7 @@ if timeout 20 pjwait -z "${PJM_JOB_ID}"; then
   cat "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.pjm.log"
   test -e "${RUNTIME_DIR}/run-success"
   test "$(cat "${RUNTIME_DIR}/results/exit-code")" = 0
-  for trial in 1 2 3; do grep -q '^PASS baseline_median_us=' "${RUNTIME_DIR}/results/trial-${trial}.log"; done
+  for trial in 1 2 3; do grep -q '^PASS ' "${RUNTIME_DIR}/results/trial-${trial}.log"; done
   exit 0
 else
   status=$?
