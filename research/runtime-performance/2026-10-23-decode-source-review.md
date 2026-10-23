@@ -144,3 +144,25 @@ C branchは `c49bc67` で実成果物をpinした。Firmus login CPUで実 `chec
 正本はC branchのimage config、Actionsのbuild履歴、Firmusの `containers/39932105942.sqsh` とsidecar。回収したraw build logsとCPU検査metadataは `/tmp/qwen-preflight-20261023/aws-build-39932105942/`。検査専用のremote source/package展開先は回収後に削除し、配備済みimageは保持した。
 
 これによりCの旧host/imageによる投入前blockerを解消した。A/B/Dの検証済みsource/configは変更していない。4案とも初回の数値gate付きGPU検証に進める投入前状態を確認できたが、GPU数値一致・非同期実行・graph replay・速度・公式scoreは未実行のままであり、保証しない。Cの8/8-byte spillも既知の未達性能目標として残る。今回GPU jobは投入していない。
+
+## GPU での検証（kernel bench [39945097647](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39945097647)、af54dfe、image 39932105942）
+
+4 案を 1 回の 1 ノード job（9 step、8 分 59 秒）でまとめて検査した。最初の run 39942794259 は、kernel bench の gate が Decode の他の kernel の検査（`decode_fa3_verify` の import）まで呼び、serving の overlay を持たない kernel bench の SGLang tree で 4 案とも import 時に落ちた。kernel bench の gate だけに `--megamoe-only` を渡して再実行した（serving の gate は従来どおり全部を検査する）。
+
+4 案とも数値 gate を通過し、出力 hash は 18 case すべてで control と一致した。中央値（pre-dispatch ＋ 本体、rank の最大）：
+
+| case | control | A sparse dispatch | B FC1 register | C independent WG | D stream combine |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| decode-balanced-4 | 128.4 µs | −0.7% | +6.1% | +7.0% | +13.6% |
+| decode-balanced-32 | 183.1 | −0.5% | 0.0% | −2.2% | +22.4% |
+| decode-balanced-64 | 190.2 | −0.5% | +0.3% | −2.9% | +24.3% |
+| decode-balanced-128 | 195.6 | +0.1% | +3.7% | **−2.3%（191.2）** | +29.4% |
+| decode-local-128 | 194.3 | −0.5% | +4.2% | **−2.5%** | +16.0% |
+| prefill-balanced-4096 | 1508.6 | +4.0% | −0.1% | +0.7% | +23.9% |
+| prefill-real43-replica4-4096 | 1411.3 | +0.1% | +1.7% | +0.9% | +21.5% |
+
+- **C だけが Decode の 128 token で速い**（−4.4 µs/層、94 層で約 −0.41 ms/step）。4〜16 token では遅くなるが、serving の Decode は 1 rank 120 token 前後で動く。Prefill は env が Decode の形だけに効くので、差は揺れの範囲。
+- A は差なし。B は FC1 の register 保持で遅くなった。D は Prefill まで 22% 前後遅くなる。いずれも不採用。
+- 126 µs への到達とは遠く、C の効果も 2.3% にとどまる。
+
+C を serving（image 39932105942、Decode worker と serving gate に `DG_SM90_DECODE_INDEPENDENT_WG=1`、header patch を `deep_gemm_overlay_patches` の末尾に追加）で確認する。
