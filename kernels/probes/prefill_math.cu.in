@@ -1,6 +1,6 @@
-// One-GPU diagnostic: actual Prefill FC1 math loops, two TMA producer warps,
-// the serving stage layout and register budgets. No routing, NVLink, FC2,
-// SwiGLU or serving workload. Its timing is NOT an end-to-end MegaMoE result.
+// One-GPU diagnostic: serving FC1/FC2 math, TMA layout and register budgets.
+// Persistent tiles cover 32 experts x 1024 received tokens. No routing,
+// NVLink, SwiGLU, combine or serving. Outputs here are materialized as FP32.
 #include <deep_gemm/impls/sm90_fp8_mega_moe.cuh>
 #include <cuda_runtime.h>
 #include <cuda_fp8.h>
@@ -12,20 +12,22 @@
 
 #define CUDA_OK(expr) do { auto e=(expr); if(e!=cudaSuccess) { std::fprintf(stderr,"%s: %s at %d\n",#expr,cudaGetErrorString(e),__LINE__); std::exit(1); } } while(0)
 #define CU_OK(expr) do { auto e=(expr); if(e!=CUDA_SUCCESS) { std::fprintf(stderr,"%s: driver error %d at %d\n",#expr,int(e),__LINE__); std::exit(1); } } while(0)
-constexpr unsigned H=4096, M=128, N=256, EXPERTS=32, SMEM=225472;
+constexpr unsigned M=128, N=256, EXPERTS=32, MTILES=8, SMEM=225472;
 namespace deep_gemm {
 // EXTRACTED_KERNEL
 CUTLASS_GLOBAL __launch_bounds__(384,1)
 void @NAME@(const __grid_constant__ CUtensorMap tensor_a,
            const __grid_constant__ CUtensorMap tensor_b,
            const __grid_constant__ CUtensorMap tensor_sf,
-           const float* l1_weights_sf, float* output) {
+           const float* weights_sf, float* output) {
     constexpr bool kPrefill2WG=true, kFastMath=true;
     constexpr uint32_t BLOCK_K=128, kAccumPerThread=128, kNumStages=3;
     constexpr uint32_t SMEM_A_SIZE_PER_STAGE=16384, SMEM_B_SIZE_PER_STAGE=32768;
     constexpr uint32_t kL1SFKBlocks=32, kL1SFGateBlks=12, kL1SFPerExpert=768;
-    constexpr uint32_t n_block_idx=0, sf_n_block_idx=0;
-    const uint32_t local_expert_idx=blockIdx.x%EXPERTS;
+    constexpr uint32_t K=@K@, NFULL=@N@, NTILES=NFULL/N, TILES=EXPERTS*MTILES*NTILES;
+    constexpr uint32_t kL2SFKBlocks=12, kL2SFPerExpert=384, WG_BLOCK_N=256;
+    const float* l1_weights_sf=weights_sf;
+    const float* l2_weights_sf=weights_sf;
     const uint32_t warp_idx=threadIdx.x/32, lane_idx=threadIdx.x%32;
     using a_dtype_t=cutlass::float_e4m3_t;
     using b_dtype_t=cutlass::float_e4m3_t;
@@ -48,19 +50,22 @@ void @NAME@(const __grid_constant__ CUtensorMap tensor_a,
         cutlass::arch::warpgroup_reg_dealloc<48>();
     } else if(warp_idx<4) {
         cutlass::arch::warpgroup_reg_dealloc<40>();
-        for(uint32_t k=0;k<32;advance_pipeline(k)) {
+        for(uint32_t tile=blockIdx.x;tile<TILES;tile+=gridDim.x) {
+        const uint32_t expert=tile/(MTILES*NTILES), mtile=(tile/NTILES)%MTILES, ntile=tile%NTILES;
+        for(uint32_t k=0;k<K/128;advance_pipeline(k)) {
             empty_barriers[stage_idx]->wait(phase^1);
             if(cute::elect_one_sync()) {
                 if(warp_idx==2) {
-                    tma::copy<128,128,128,a_dtype_t>(&tensor_a,full_barriers[stage_idx],smem_a[stage_idx],k*128,blockIdx.x*128,1);
-                    tma::copy<128,1,0,float>(&tensor_sf,full_barriers[stage_idx],smem_sfa[stage_idx],blockIdx.x*128,k,1);
+                    tma::copy<128,128,128,a_dtype_t>(&tensor_a,full_barriers[stage_idx],smem_a[stage_idx],k*128,(expert*MTILES+mtile)*128,1);
+                    tma::copy<128,1,0,float>(&tensor_sf,full_barriers[stage_idx],smem_sfa[stage_idx],(expert*MTILES+mtile)*128,k,1);
                     full_barriers[stage_idx]->arrive_and_expect_tx(16384+128*sizeof(float));
                 } else {
-                    tma::copy<128,256,128,b_dtype_t>(&tensor_b,full_barriers[stage_idx],smem_b[stage_idx],k*128,local_expert_idx*256,1);
+                    tma::copy<128,256,128,b_dtype_t>(&tensor_b,full_barriers[stage_idx],smem_b[stage_idx],k*128,expert*NFULL+ntile*256,1);
                     full_barriers[stage_idx]->arrive_and_expect_tx(32768);
                 }
             }
             __syncwarp();
+        }
         }
     } else {
         cutlass::arch::warpgroup_reg_alloc<168>();
@@ -71,19 +76,24 @@ void @NAME@(const __grid_constant__ CUtensorMap tensor_a,
         const auto db=mma::sm90::make_smem_desc(smem_b[0],1);
         const uint32_t desc_a_lo=da.reg32_[0], desc_b_lo=db.reg32_[0];
         const uint64_t desc_a_hi=uint64_t(da.reg32_[1])<<32, desc_b_hi=uint64_t(db.reg32_[1])<<32;
-        constexpr uint32_t num_k_blocks=32;
+        constexpr uint32_t num_k_blocks=K/128;
+        for(uint32_t tile=blockIdx.x;tile<TILES;tile+=gridDim.x) {
+        const uint32_t local_expert_idx=tile/(MTILES*NTILES), mtile=(tile/NTILES)%MTILES;
+        const uint32_t n_block_idx=tile%NTILES, sf_n_block_idx=n_block_idx*2;
+        const uint32_t first_row=(local_expert_idx*MTILES+mtile)*128;
         float final_accum[128]={};
-        auto publish_l1_rows=[]() {}; // No preceding tile/FC2 in this diagnostic.
+        auto publish_l1_rows=[]() {}; // No dispatch or FC1/FC2 handoff in this diagnostic.
         @POSTSCALE@
         @ISSUE@
         @LOOP@
         #pragma unroll
         for(unsigned i=0;i<32;++i) {
             const unsigned col=i*8+(lane_idx%4)*2;
-            output[(blockIdx.x*128+row_offset_r0)*256+col]=final_accum[i*4];
-            output[(blockIdx.x*128+row_offset_r0)*256+col+1]=final_accum[i*4+1];
-            output[(blockIdx.x*128+row_offset_r1)*256+col]=final_accum[i*4+2];
-            output[(blockIdx.x*128+row_offset_r1)*256+col+1]=final_accum[i*4+3];
+            output[(first_row+row_offset_r0)*NFULL+n_block_idx*256+col]=final_accum[i*4];
+            output[(first_row+row_offset_r0)*NFULL+n_block_idx*256+col+1]=final_accum[i*4+1];
+            output[(first_row+row_offset_r1)*NFULL+n_block_idx*256+col]=final_accum[i*4+2];
+            output[(first_row+row_offset_r1)*NFULL+n_block_idx*256+col+1]=final_accum[i*4+3];
+        }
         }
     }
 }
@@ -110,7 +120,7 @@ int main() {
     cudaDeviceProp prop{}; CUDA_OK(cudaGetDeviceProperties(&prop,0));
     if(prop.major!=9 || prop.minor!=0) { std::fprintf(stderr,"Hopper sm_90a required\n"); return 1; }
     unsigned blocks=prop.multiProcessorCount;
-    for(auto kernel: {deep_gemm::baseline,deep_gemm::candidate}) {
+    for(auto kernel: {deep_gemm::baseline_fc1,deep_gemm::candidate_fc1,deep_gemm::baseline_fc2,deep_gemm::candidate_fc2}) {
         CUDA_OK(cudaFuncSetAttribute(kernel,cudaFuncAttributeMaxDynamicSharedMemorySize,SMEM));
         int resident=0; CUDA_OK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&resident,kernel,384,SMEM));
         cudaFuncAttributes attr{}; CUDA_OK(cudaFuncGetAttributes(&attr,kernel));
@@ -118,9 +128,12 @@ int main() {
         std::printf("resources registers=%d local_bytes=%zu resident_ctas_per_sm=%d dynamic_smem=%u\n",attr.numRegs,attr.localSizeBytes,resident,SMEM);
     }
     std::printf("device=%s sm_count=%u blocks=%u threads=384\n",prop.name,blocks,blocks);
-    const size_t rows=blocks*M, outputs=rows*N;
-    std::vector<uint8_t> a(rows*H), b(EXPERTS*N*H);
-    std::vector<float> sf(rows*32), weights(EXPERTS*768), ref(outputs), got(outputs), previous;
+    for(bool fc2:{false,true}) {
+    const unsigned K=fc2?1536:4096, nfull=fc2?4096:3072, kblocks=K/128, sf_per_expert=(nfull/128)*kblocks;
+    const size_t rows=EXPERTS*MTILES*M, outputs=rows*nfull;
+    std::printf("phase=%s experts=%u rows_per_expert=%u tiles=%zu K=%u N=%u\n",fc2?"fc2":"fc1",EXPERTS,MTILES*M,rows/M*(nfull/N),K,nfull);
+    std::vector<uint8_t> a(rows*K), b(EXPERTS*nfull*K);
+    std::vector<float> sf(rows*kblocks), weights(EXPERTS*sf_per_expert), ref(outputs), got(outputs), previous;
     for(size_t i=0;i<a.size();++i) a[i]=uint8_t(0x20+(i*17+i/113)%32)|((i/7%2)?128:0);
     for(size_t i=0;i<b.size();++i) b[i]=uint8_t(0x20+(i*13+i/97)%32)|((i/11%2)?128:0);
     for(size_t i=0;i<sf.size();++i) sf[i]=0.03f+0.007f*(i%11);
@@ -128,13 +141,18 @@ int main() {
     auto ad=device_copy(a), bd=device_copy(b);
     auto sd=device_copy(sf), wd=device_copy(weights);
     float *out0,*out1; CUDA_OK(cudaMalloc(&out0,outputs*sizeof(float))); CUDA_OK(cudaMalloc(&out1,outputs*sizeof(float)));
-    const auto ta=descriptor(ad,CU_TENSOR_MAP_DATA_TYPE_UINT8,H,rows,128,128,1,CU_TENSOR_MAP_SWIZZLE_128B);
-    const auto tb=descriptor(bd,CU_TENSOR_MAP_DATA_TYPE_UINT8,H,EXPERTS*N,128,256,1,CU_TENSOR_MAP_SWIZZLE_128B);
-    const auto ts=descriptor(sd,CU_TENSOR_MAP_DATA_TYPE_FLOAT32,rows,32,128,1,4,CU_TENSOR_MAP_SWIZZLE_NONE);
+    const auto ta=descriptor(ad,CU_TENSOR_MAP_DATA_TYPE_UINT8,K,rows,128,128,1,CU_TENSOR_MAP_SWIZZLE_128B);
+    const auto tb=descriptor(bd,CU_TENSOR_MAP_DATA_TYPE_UINT8,K,EXPERTS*nfull,128,256,1,CU_TENSOR_MAP_SWIZZLE_128B);
+    const auto ts=descriptor(sd,CU_TENSOR_MAP_DATA_TYPE_FLOAT32,rows,kblocks,128,1,4,CU_TENSOR_MAP_SWIZZLE_NONE);
     cudaStream_t stream; CUDA_OK(cudaStreamCreate(&stream));
     auto launch=[&](bool candidate) {
-        if(candidate) deep_gemm::candidate<<<blocks,384,SMEM,stream>>>(ta,tb,ts,wd,out1);
-        else deep_gemm::baseline<<<blocks,384,SMEM,stream>>>(ta,tb,ts,wd,out0);
+        if(fc2) {
+            if(candidate) deep_gemm::candidate_fc2<<<blocks,384,SMEM,stream>>>(ta,tb,ts,wd,out1);
+            else deep_gemm::baseline_fc2<<<blocks,384,SMEM,stream>>>(ta,tb,ts,wd,out0);
+        } else {
+            if(candidate) deep_gemm::candidate_fc1<<<blocks,384,SMEM,stream>>>(ta,tb,ts,wd,out1);
+            else deep_gemm::baseline_fc1<<<blocks,384,SMEM,stream>>>(ta,tb,ts,wd,out0);
+        }
         CUDA_OK(cudaGetLastError());
     };
     cudaGraph_t graph; cudaGraphExec_t graph_exec;
@@ -156,14 +174,16 @@ int main() {
         previous=got;
         // Independent double-precision reference catches shared TMA/layout mistakes.
         double worst=0;
-        for(unsigned block: {0u,blocks/2,blocks-1}) for(unsigned row: {0u,63u,127u}) for(unsigned col: {0u,7u,8u,127u,128u,255u}) {
+        for(unsigned expert: {0u,EXPERTS/2,EXPERTS-1}) for(unsigned row: {0u,63u,MTILES*M-1}) for(unsigned col: {0u,7u,8u,127u,128u,255u,nfull/2,nfull-1}) {
             double expected=0;
-            for(unsigned k=0;k<H;++k) {
-                float scale_a=sf[(k/128)*rows+block*128+row];
-                float scale_b=weights[(block%EXPERTS)*768+((col/8)%2?12:0)*32+k/128];
-                expected+=double(fp8(a[(block*128+row)*H+k]))*fp8(b[((block%EXPERTS)*256+col)*H+k])*scale_a*scale_b;
+            const unsigned token=expert*MTILES*M+row;
+            const unsigned weight_group=fc2?col/128:col/256+((col/8)%2?12:0);
+            for(unsigned k=0;k<K;++k) {
+                float scale_a=sf[(k/128)*rows+token];
+                float scale_b=weights[expert*sf_per_expert+weight_group*kblocks+k/128];
+                expected+=double(fp8(a[token*K+k]))*fp8(b[(expert*nfull+col)*K+k])*scale_a*scale_b;
             }
-            double error=std::abs(ref[(block*128+row)*256+col]-expected)/(1+std::abs(expected));
+            double error=std::abs(ref[token*nfull+col]-expected)/(1+std::abs(expected));
             worst=std::max(worst,error);
         }
         std::printf("replay=%u reference_max_normalized_error=%.9g\n",replay,worst);
@@ -179,9 +199,10 @@ int main() {
         float ms; CUDA_OK(cudaEventElapsedTime(&ms,begin,end)); times[which].push_back(ms*1000);
     }
     for(auto& t:times) std::sort(t.begin(),t.end());
-    std::printf("PASS baseline_median_us=%.3f candidate_median_us=%.3f ratio=%.5f samples=30\n",times[0][15],times[1][15],times[1][15]/times[0][15]);
+    std::printf("PASS kernel=megamoe_%s baseline_median_us=%.3f candidate_median_us=%.3f ratio=%.5f samples=30\n",fc2?"fc2":"fc1",times[0][15],times[1][15],times[1][15]/times[0][15]);
     CUDA_OK(cudaGraphExecDestroy(graph_exec)); CUDA_OK(cudaGraphDestroy(graph));
     CUDA_OK(cudaEventDestroy(begin)); CUDA_OK(cudaEventDestroy(end)); CUDA_OK(cudaStreamDestroy(stream));
     for(void* p: {static_cast<void*>(ad),static_cast<void*>(bd),static_cast<void*>(sd),static_cast<void*>(wd),static_cast<void*>(out0),static_cast<void*>(out1)}) CUDA_OK(cudaFree(p));
+    }
     return 0;
 }
