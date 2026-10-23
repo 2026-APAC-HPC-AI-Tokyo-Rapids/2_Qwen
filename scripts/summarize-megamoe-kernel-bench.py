@@ -10,9 +10,10 @@ the script as of commit 332e30c.
 
 Exit status 1 marks any failure: a non-zero step (including a candidate's
 numerical gate or SGLang check), a missing case, or a timeline patch that did
-not apply. Output hashes that differ from the image are reported, not failed:
-candidates may change accumulation order, tiling or FMA contraction, and the
-numerical gates decide correctness.
+not apply. Replays must be deterministic. The four arithmetic-preserving Decode
+candidates below must also match the control's output hashes. For other
+candidates, changed hashes remain informational: their numerical gates decide
+whether a deliberately changed accumulation order or quantization is acceptable.
 
 Timeline dumps are shaped [calls, ranks, words] in the layout of
 sm90_fp8_mega_moe_timeline.cuh. Times are
@@ -34,6 +35,10 @@ import json
 from pathlib import Path
 
 import numpy as np
+
+# These candidates promise to retain each output element's arithmetic. Use the
+# recorded patch identity, so renaming a candidate directory cannot relax this.
+EXACT_OUTPUT_PATCHES = {"sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch"}
 
 MAGIC = 0x314C544D4F45474D
 EVENTS = ["Entry", "DispCount", "DispSendCount", "DispGridSync", "DispRecvCount", "DispPrePullBarrier", "DispEpilogueSync", "DispFirstPull", "DispLastPull", "DispLoopExit", "DispCombineSync", "DispClean", "DispFinalGridSync", "DispExit", "AStart", "AFirstBlock", "AFirstL1Ready", "ALastL1Issued", "AFirstL2Ready", "AExit", "BStart", "BFirstBlock", "BExit", "MStart", "MDispatchSync", "MFirstL1Full", "MLastL1End", "MFirstL2Full", "MLastL2End", "MLoopExit", "MCombineGridSync", "MCombineBarrier", "MDispatchSync2", "MCombineEnd"]
@@ -144,6 +149,7 @@ def deep_gemm(results, steps):
     rows = {variant["name"]: load_rows(results / variant["name"] / "bench.jsonl") for variant in variants}
     image = rows["image"]
     cases = list(image)
+    control_valid = steps.get(("image", "bench")) == 0 and bool(image) and all(row.get("deterministic") is True for row in image.values())
     failed = []
     lines = ["### DeepGEMM candidates", "", "| Variant | Patches | Gate | Bench | Output hash = image | Timeline | Verdict |", "| --- | --- | --- | --- | --- | --- | --- |"]
     for variant in variants:
@@ -152,11 +158,20 @@ def deep_gemm(results, steps):
         gate, passed = ("- (image)", True) if name == "image" else step_cell(steps, name, "gate")
         ok &= passed
         bench, passed = step_cell(steps, name, "bench")
-        ok &= passed and len(rows[name]) == len(cases)
+        ok &= passed and bool(cases) and set(rows[name]) == set(cases)
+        deterministic = all(row.get("deterministic") is True for row in rows[name].values())
+        ok &= deterministic
+        if not deterministic:
+            bench += " (non-deterministic or missing replay check)"
         hashes = "-"
         if name != "image":
+            ok &= control_valid
+            if not control_valid:
+                bench += " (invalid control bench or replay)"
             matches = sum(rows[name].get(case, {}).get("output_sha256") == image[case]["output_sha256"] for case in cases)
             hashes = f"{matches}/{len(cases)}" + ("" if matches == len(cases) else " (rest differ)")
+            if any(Path(patch["path"]).name in EXACT_OUTPUT_PATCHES for patch in variant["patches"]):
+                ok &= matches == len(cases)
         timeline = variant["timeline"]
         if timeline == "apply-failed":
             timeline, ok = "timeline patch did not apply", False
@@ -194,7 +209,7 @@ def deep_gemm(results, steps):
             delta = "-" if name == "image" else f"{row['median_ms'] / reference['median_ms'] - 1:+.1%}"
             same = "-" if name == "image" else str(row["output_sha256"] == reference["output_sha256"])
             power = max(max(row["power_w_before"]), max(row["power_w_after"]))
-            lines.append(f"| {case} | {name} | {row['median_ms']:.4f} | {row['p10_ms']:.4f} | {row['p90_ms']:.4f} | {delta} | {slowest_clock(row)} | {power:.0f} | {row['rank_load_max_over_mean']:.3f} | {row['deterministic']} | {same} |")
+            lines.append(f"| {case} | {name} | {row['median_ms']:.4f} | {row['p10_ms']:.4f} | {row['p90_ms']:.4f} | {delta} | {slowest_clock(row)} | {power:.0f} | {row['rank_load_max_over_mean']:.3f} | {row.get('deterministic', 'missing')} | {same} |")
     timelines = [(variant["name"], load_rows(results / variant["name"] / "timeline.jsonl")) for variant in variants if variant["timeline"] == "ready"]
     if any(timeline for _, timeline in timelines):
         lines += ["", "### Timeline runs (instrumented vs the same variant's bench)", "", "| Case | Variant | Median ms | Overhead | Bitwise equal | SM MHz before / after |", "| --- | --- | ---: | ---: | --- | ---: |"]
