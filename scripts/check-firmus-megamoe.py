@@ -78,13 +78,13 @@ def main():
             gathered.append(torch.cat(all_ranks))
         all_x, all_ids, all_weights = gathered
         count = counts[rank]
-        rows = 256 if case == "idle-prefill-rows" and count == 0 else max(count, 1)
+        output_rows = 256 if case == "idle-prefill-rows" and count == 0 else max(count, 1)
         x = quantized(all_x, 128)
         # This rank computes its locally owned experts, including remote tokens.
         # The host selects its geometry from y.size(0), not max(counts): Qwen EP4
         # uses SF128 from 256 output rows and SF64 below that boundary. An idle
         # Prefill rank deliberately allocates 256 masked output rows as well.
-        l2_group = 128 if rows >= 256 else 64
+        l2_group = 128 if output_rows >= 256 else 64
         reference = torch.zeros(16, 4096, device=device)
         for local_expert in range(32):
             rows, slots = torch.where(all_ids == rank * 32 + local_expert)
@@ -98,7 +98,7 @@ def main():
         dist.all_reduce(reference)
         indices = torch.arange(count, device=device) % 4
         hidden, top_ids, top_weights = patterns[indices].contiguous(), ids[indices].contiguous(), weights[indices].contiguous()
-        actual = torch.empty(rows, 4096, dtype=torch.bfloat16, device=device)
+        actual = torch.empty(output_rows, 4096, dtype=torch.bfloat16, device=device)
 
         def forward(hidden, top_ids, top_weights, count, actual):
             deep_gemm.mega_moe_pre_dispatch_sm90(hidden, top_ids, top_weights, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, num_tokens=count, group_size=128, routed_scaling_factor=1.0)
