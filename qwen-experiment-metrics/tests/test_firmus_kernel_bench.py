@@ -201,6 +201,7 @@ def test_candidate_env_reaches_only_that_candidates_steps(tmp_path: Path) -> Non
     assert len(steps) == 7  # image bench + timeline, a-host gate + bench + timeline, b-plain gate + bench
     assert f"PYTHONPATH={runtime}/image/opt/sglang/venv/lib/python3.12/site-packages" in steps[0]
     for line in steps:
+        assert "env DG_SM90_PREFILL_2WG=1 SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1 DG_JIT_CACHE_DIR=" in line
         candidate = f"{runtime}/overlay/candidates/a-host" in line or f"{runtime}/overlay/timeline/a-host" in line
         assert ("DG_SM90_PREFILL_2WG=1 DG_EXTRA=a.b/c,d:e-f " in line) is candidate, line
     assert (runtime / "run-success").exists()
@@ -299,6 +300,43 @@ def test_summary_passes_clean_run_and_reports_differing_hashes_without_failing(t
     text, failed = summarize(tmp_path)
     assert failed == []
     assert "| rope | 5.00 | 5.00 | +0.0% | 5.00 / 5.00 | False |" in text
+
+
+@pytest.mark.parametrize("patch_name", ["sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch"])
+@pytest.mark.parametrize("same", [False, True])
+def test_arithmetic_preserving_candidates_require_equal_outputs(tmp_path, monkeypatch, patch_name, same):
+    summarize = load_summary(monkeypatch)
+    variants = [{"name": "image", "patches": [], "timeline": "not-requested"}, {"name": "renamed", "patches": [{"path": f"patches/deep-gemm-bench/renamed/{patch_name}"}], "timeline": "not-requested"}]
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": variants, "sglang": None}))
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t1\nrenamed\tgate\t0\t1\nrenamed\tbench\t0\t1\n")
+    write_rows(tmp_path / "image/bench.jsonl", [bench_row("decode", 0.2, "control")])
+    write_rows(tmp_path / "renamed/bench.jsonl", [bench_row("decode", 0.1, "control" if same else "changed")])
+    assert summarize(tmp_path)[1] == ([] if same else ["renamed"])
+
+
+@pytest.mark.parametrize("failure", ["image-replay", "image-missing-replay", "image-bench", "image-missing-bench", "candidate-replay", "missing-replay", "wrong-case", "empty"])
+def test_summary_rejects_unverified_replay_and_case_coverage(tmp_path, monkeypatch, failure):
+    summarize = load_summary(monkeypatch)
+    variants = [{"name": name, "patches": [], "timeline": "not-requested"} for name in ("image", "candidate")]
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": variants, "sglang": None}))
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t1\ncandidate\tgate\t0\t1\ncandidate\tbench\t0\t1\n")
+    image_row, candidate_row = bench_row("decode", 0.2, "same"), bench_row("decode", 0.1, "same")
+    if failure == "image-replay":
+        image_row["deterministic"] = False
+    elif failure == "image-missing-replay":
+        del image_row["deterministic"]
+    elif failure in ("image-bench", "image-missing-bench"):
+        (tmp_path / "steps.tsv").write_text(("image\tbench\t1\t1\n" if failure == "image-bench" else "") + "candidate\tgate\t0\t1\ncandidate\tbench\t0\t1\n")
+    elif failure == "candidate-replay":
+        candidate_row["deterministic"] = False
+    elif failure == "missing-replay":
+        del candidate_row["deterministic"]
+    elif failure == "wrong-case":
+        candidate_row["case"] = "different"
+    write_rows(tmp_path / "image/bench.jsonl", [] if failure == "empty" else [image_row])
+    write_rows(tmp_path / "candidate/bench.jsonl", [] if failure == "empty" else [candidate_row])
+    failed = summarize(tmp_path)[1]
+    assert failed == (["image", "candidate"] if failure.startswith("image-") or failure == "empty" else ["candidate"])
 
 
 @pytest.mark.parametrize("kind,percent", [("mixed50", 50), ("mixed64", 64)])
