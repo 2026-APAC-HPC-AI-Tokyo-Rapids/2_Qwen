@@ -26,7 +26,7 @@ cp -a --no-preserve=ownership,xattr /home/ACCOUNT/ku60000563/.local/lib/enroot/.
 cp -a --no-preserve=ownership,xattr /home/ACCOUNT/ku60000563/.local/etc/enroot/. "${RUNTIME_DIR}/enroot-system/"
 sed -i 's/local timeout=100 pid=-1 id=0/local timeout=5000 pid=-1 id=0/' "${RUNTIME_DIR}/enroot-library/runtime.sh"
 sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${RUNTIME_DIR}/enroot-system/hooks.d/98-nvidia.sh"
-chmod -x "${RUNTIME_DIR}/enroot-system/hooks.d/10-cgroups.sh"
+if [[ -e "${RUNTIME_DIR}/enroot-system/hooks.d/10-cgroups.sh" ]]; then chmod -x "${RUNTIME_DIR}/enroot-system/hooks.d/10-cgroups.sh"; fi
 ln -s "${image}" "${RUNTIME_DIR}/sglang.sqsh"
 install -m 0755 "${GITHUB_WORKSPACE}/kernels/probes/run-qkv-fusion.sh" probe
 jq -n --arg commit "${GITHUB_SHA}" --arg image "${image}" '{commit:$commit,image:$image,kernel:"QKV GEMM epilogue fusion",scope:"one GPU, QKV and postprocessing only, no serving"}' >provenance.json
