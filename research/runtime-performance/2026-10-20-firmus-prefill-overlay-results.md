@@ -326,3 +326,45 @@ branch perf/firmus-decode-r2-20261023。build（5451914、run 39875650446）で 
 score は 8501.98（ITL 14.35 / 16.72 ms、TTFT p99 3411 ms）。どの候補も選ばれていないので、構成は main（3642c64）と同じであり、8481.99 との差は run 間の揺れ（+0.2%）として扱う。READY は 437 s（前回 439 s）で、選択の重ね合わせは起動を遅らせなかった。
 
 L2 先読みは、token の dispatch を待つ間の HBM の空きを使う狙いだったが、実際には遅くなった。先読みが dispatch の通信や最初の stage の通常 load と競合しているか、L2 に残らないと見られる（未確認）。Decode MegaMoE の残り（約 200 µs/層、下限 約 126 µs）を縮めるには、別の手が要る。dense GEMM は FlashInfer 候補を外し、候補ごとの失敗で selector を止めない形にすれば、次の serving で同じ仕組みのまま測れる。
+
+## FA3 verify の候補と dense GEMM の測り直し（serving [39901974117](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39901974117)、b60f2e3、image 39899235870）：**8576.66**、採用
+
+branch perf/firmus-decode-fa3v-20261023。build（89936a3、run 39899235870）で、固定 source（sgl-attn f89bc23、CUTLASS 57e3cfb）から TARGET_VERIFY 専用の FA3 の specialization だけを集めた companion `/opt/apac/fa3-verify`（2.4 MB）を image に足した。既存の `flash_ops.abi3.so` は変えていない。serving の job の中で、モデル起動前に候補と今の kernel を交互に測った（`results/decode-selection/`）。FA3 は HEAD ノードの空き 4 GPU で 21 秒、dense は Decode の 4 GPU で 48 秒。
+
+FA3 verify（1 層、94 層 graph、4 GPU の中央値、b32 で選択）：
+
+| 要求/rank | 今の FA3（B4 あり） | p128s2（N128、non-TMA、2 stage） | t64s3（N64、paged TMA、3 stage） |
+| --- | ---: | ---: | ---: |
+| 32 | 49.5 µs | **46.1** | 53.2 |
+| 33 | 50.4 | 47.0 | 53.6 |
+| 34 | 87.6 | 80.8 | 88.4 |
+| 36 | 88.6 | 79.9 | 89.3 |
+
+- p128s2 が全 GPU・全ブロックで 3.2〜3.7 µs/層 速く、選ばれた（`SGLANG_DECODE_FA3_VERIFY=p128s2`）。
+- paged TMA を使う N64（t64s2 54.4、t64s3 53.2）は遅かった。page のずれではなく、N block の数（44 → 66）が増えた分の反復の費用が上回った。
+- split 2/3 ＋ 専用 combine は数値検査に落ちた（t64split2 は出力の不一致、t64split3 は空 split の出力）。採用候補から外れ、原因は未調査。
+- 同じ設定を companion で compile し直した control96 は、wheel の FA3 より 1.3 µs 遅い（50.6 µs）。toolchain の差と見られる。
+- 34〜36 要求の 2 巡目の段差は残る（p128s2 でも 80 µs 前後）。上限を 128 より上げる根拠にはならない。
+
+dense GEMM（1 呼び出し、M=128）：
+
+| 候補 | QKV（N9216/K4096） | O（N4096/K8192） |
+| --- | ---: | ---: |
+| stock（BM64） | 17.0 µs | 15.2 µs |
+| BM128/BN80/7 stage | **15.2**（選択） | — |
+| BM128/BN32/10 stage | — | 15.5 |
+| BM64 で stage だけ変更 | 16.5 | 15.1（差 0.1、規則未満で stock のまま） |
+| TMA multicast あり | 15.5〜20.2 | 16.2〜19.6 |
+| Triton block FP8 | 30.8〜31.6 | 50.3〜50.5 |
+
+選ばれたのは QKV だけ（`DG_SM90_1D2D_DECODE_CONFIG=QKV:128,80,7,1,0`、1.8 µs/呼び出し短縮）。
+
+合計の見込みは、FA3 が約 −0.32 ms/step、QKV が約 −0.17 ms/step。
+
+| | main（39764967207） | 再測定（39881882325） | **今回（39901974117）** |
+| --- | ---: | ---: | ---: |
+| score | 8481.99 | 8501.98 | **8576.66** |
+| ITL 平均 / p99 | 14.33 / 16.74 ms | 14.35 / 16.72 ms | **14.20 / 16.48 ms** |
+| TTFT p99 | 3407 ms | 3411 ms | 3410 ms |
+
+同じ構成の 2 run の差は 0.24% で、今回は両方の平均（8492）より +1.0%。kernel の短縮の見込み（約 −0.49 ms/step、+1.6%）よりやや小さいが、方向は合う。job は 15:44 で、17 分の上限内に収まった。
