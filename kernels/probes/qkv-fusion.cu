@@ -16,12 +16,23 @@ struct QKVParams {
 template<int BM, int THREADS>
 __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int first_row, int head, int rows, const QKVParams& p) {
     const int lane = threadIdx.x % 8;
+    const int col = lane * 8;
+    float wx[8], wy[8];
+    if (head < 68) {
+        const auto w = head < 64 ? p.qw : p.kw;
+        const uint4 vx = *reinterpret_cast<const uint4*>(w + col);
+        const uint4 vy = *reinterpret_cast<const uint4*>(w + 64 + col);
+        #pragma unroll
+        for (int i=0;i<8;++i) {
+            wx[i] = __bfloat162float(reinterpret_cast<const __nv_bfloat16*>(&vx)[i]);
+            wy[i] = __bfloat162float(reinterpret_cast<const __nv_bfloat16*>(&vy)[i]);
+        }
+    }
     // Same eight-lane/head reduction tree as the deployed SGLang prologue.
     for (int row = threadIdx.x / 8; row < BM; row += THREADS / 8) {
         const int token = first_row + row;
         float x[8], y[8], partial[4];
         uint16_t ox[4], oy[4];
-        const int col = lane * 8;
         const int offset = row * 64 + (col ^ ((row % 8) * 8));
         const uint4 vx = *reinterpret_cast<const uint4*>(tile + offset);
         const uint4 vy = *reinterpret_cast<const uint4*>(tile + BM * 64 + offset);
@@ -45,17 +56,18 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
             }
             const float sum02=partial[0]+partial[2], sum13=partial[1]+partial[3];
             const float scale=rsqrtf((sum02+sum13)/128.f+1e-6f);
-            const auto w=head<64?p.qw:p.kw;
             const int64_t pos=token<rows?p.pos[token]:0;
+            const float4 cos4[2] = {*reinterpret_cast<const float4*>(p.trig+pos*128+col), *reinterpret_cast<const float4*>(p.trig+pos*128+col+4)};
+            const float4 sin4[2] = {*reinterpret_cast<const float4*>(p.trig+pos*128+64+col), *reinterpret_cast<const float4*>(p.trig+pos*128+64+col+4)};
             #pragma unroll
             for(int j=0;j<4;++j) {
                 float a[2], b[2];
                 #pragma unroll
                 for(int h=0;h<2;++h) {
-                    const int d=col+j*2+h;
-                    const float u=__bfloat162float(__float2bfloat16_rn(x[j*2+h]*scale*__bfloat162float(w[d])));
-                    const float v=__bfloat162float(__float2bfloat16_rn(y[j*2+h]*scale*__bfloat162float(w[64+d])));
-                    const float c=p.trig[pos*128+d], s=p.trig[pos*128+64+d];
+                    const int d=j*2+h;
+                    const float u=__bfloat162float(__float2bfloat16_rn(x[d]*scale*wx[d]));
+                    const float v=__bfloat162float(__float2bfloat16_rn(y[d]*scale*wy[d]));
+                    const float c=reinterpret_cast<const float*>(cos4)[d], s=reinterpret_cast<const float*>(sin4)[d];
                     a[h]=__bfloat162float(__float2bfloat16_rn(u*c-v*s));
                     b[h]=__bfloat162float(__float2bfloat16_rn(u*s+v*c));
                 }
