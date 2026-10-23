@@ -31,7 +31,7 @@ class Tensor:
 
 
 def load_candidates(tmp_path, monkeypatch):
-    subprocess.run(["git", "apply", str(ROOT / "patches/sglang-bench/04-verify-attention-candidates.patch")], cwd=tmp_path, check=True)
+    subprocess.run(["git", "apply", str(ROOT / "patches/sglang/verify-attention-candidates.patch")], cwd=tmp_path, check=True)
     calls, prepares = [], []
 
     def flash(**kwargs):
