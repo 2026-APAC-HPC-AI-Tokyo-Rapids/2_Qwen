@@ -14,7 +14,7 @@ PINS = {
     "fa3": ("sgl-project/sgl-attn", "f89bc2306632d1ec5f97b014dded4254f5b4a907", "418b5681584dc3efff496a1cab5ffd58d2728d89dcfe0ea16e6985d6ef35c68c"),
     "cutlass": ("NVIDIA/cutlass", "57e3cfb47a2d9e0d46eb6335c3dc411498efa198", "09237099a70f80bff1dc8bb80c843a674bb4fdcb46e43cc6993e711c5ca89bb5"),
 }
-IDS = ("control96", "t64s2", "t64s3", "p128s2", "t64split2", "t64split3")
+IDS = ("control96", "p128s2", "p128split2", "p128split3")
 
 
 def sha(path):
@@ -47,7 +47,7 @@ def build(root):
     common += ["-Dflash=apac_fa3_private", "-DFlash_fwd_params=ApacFA3VerifyParams"]
     flags = ["-O3", "-std=c++17", "--use_fast_math", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-lineinfo", "-gencode=arch=compute_90a,code=sm_90a", "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED", "-DCUTLASS_DEBUG_TRACE_LEVEL=0", "-DNDEBUG", "-Xptxas=-v,--warn-on-spills", "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique", *common[6:]]
     tasks = [(root / "wrapper.cpp", "wrapper", False)]
-    tasks += [(root / (name + ".cu"), name, True) for name in ("control96", "t64s2", "t64s3", "p128s2", "t64split", "combine")]
+    tasks += [(root / (name + ".cu"), name, True) for name in ("control96", "p128s2", "p128split", "combine")]
     tasks += [(sources["fa3"] / "hopper/flash_prepare_scheduler.cu", "prepare", True)]
 
     def compile_one(task):

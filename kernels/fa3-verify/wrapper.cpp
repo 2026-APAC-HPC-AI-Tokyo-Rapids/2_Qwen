@@ -7,16 +7,16 @@
 #include "verify.h"
 
 namespace apac_fa3_verify {
-static Launch launches[] = {control96, t64s2, t64s3, p128s2, t64split, t64split};
-static int splits(int64_t id) { TORCH_CHECK(id >= 0 && id < 6, "invalid FA3 verify candidate"); return id < 4 ? 1 : id - 2; }
-static int block_n(int64_t id) { return id == 0 ? 96 : id == 3 ? 128 : 64; }
+static Launch launches[] = {control96, p128s2, p128split, p128split};
+static int splits(int64_t id) { TORCH_CHECK(id >= 0 && id < 4, "invalid FA3 verify candidate"); return id < 2 ? 1 : id; }
+static int block_n(int64_t id) { return id == 0 ? 96 : 128; }
 static void tensor(const at::Tensor& t, const at::Tensor& ref, at::ScalarType dtype) {
     TORCH_CHECK(t.is_cuda() && t.device() == ref.device() && t.scalar_type() == dtype && t.is_contiguous(), "FA3 verify tensor dtype/device/stride mismatch");
 }
 static Flash_fwd_params base(const at::Tensor& lengths, const at::Tensor& cu, const at::Tensor& metadata, int64_t id) {
     int s = splits(id), b = lengths.numel(), rounded = (b + 3) / 4 * 4;
     tensor(lengths, lengths, at::kInt); tensor(cu, lengths, at::kInt); tensor(metadata, lengths, at::kInt);
-    TORCH_CHECK(lengths.dim() == 1 && b >= 32 && b <= 36 && cu.dim() == 1 && cu.numel() == b + 1, "FA3 verify requires B32..36 and Q4");
+    TORCH_CHECK(lengths.dim() == 1 && b >= 32 && b <= 48 && cu.dim() == 1 && cu.numel() == b + 1, "FA3 verify requires B32..48 and Q4");
     TORCH_CHECK(metadata.dim() == 1 && metadata.numel() == rounded * 4 + 1, "FA3 verify metadata size");
     Flash_fwd_params p{};
     p.b = b; p.b_k = b; p.seqlen_q = 4; p.total_q = 4 * b; p.h = 64; p.h_k = 4;
@@ -56,7 +56,7 @@ void fwd(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v, const at
     p.page_table = pages.data_ptr<int>(); p.page_table_batch_stride = pages.stride(0); p.page_size = 64; p.num_pages = k.size(0);
     p.seqlen_k = pages.size(1) * 64; p.seqlen_k_rounded = p.seqlen_k;
     p.window_size_left = p.seqlen_k - 1; p.window_size_right = 0; p.scale_softmax = scale;
-    p.softmax_lse_ptr = lse.data_ptr(); p.pagedkv_tma = block_n(id) == 64;
+    p.softmax_lse_ptr = lse.data_ptr(); p.pagedkv_tma = false;
     if (p.num_splits > 1) {
         p.oaccum_ptr = partial.data_ptr(); p.softmax_lseaccum_ptr = partial_lse.data_ptr();
         p.oaccum_split_stride = int64_t(64) * p.total_q * 128; p.oaccum_row_stride = 128; p.oaccum_head_stride = int64_t(p.total_q) * 128;

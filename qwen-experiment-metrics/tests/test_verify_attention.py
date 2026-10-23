@@ -49,7 +49,7 @@ def load_candidates(tmp_path, monkeypatch):
     return module, calls, prepares
 
 
-@pytest.mark.parametrize("batch", range(32, 37))
+@pytest.mark.parametrize("batch", range(32, 49))
 def test_fa3_partition_keeps_all_tokens_heads_causal_offsets_and_output_slices(tmp_path, monkeypatch, batch):
     module, calls, prepares = load_candidates(tmp_path, monkeypatch)
     common = {"q": Tensor((batch * 4, 64, 128)), "cache_seqlens": Tensor((batch,)), "page_table": Tensor((batch, 66)), "cu_seqlens_q": Tensor((batch + 1,), list(range(0, batch * 4 + 1, 4))), "cu_seqlens_k_new": Tensor((batch + 1,), [i * 4117 for i in range(batch + 1)]), "max_seqlen_q": 4, "causal": True}
@@ -129,7 +129,7 @@ def verify_fixture(methods, batch=32):
     return args, calls
 
 
-@pytest.mark.parametrize("batch", range(32, 37))
+@pytest.mark.parametrize("batch", range(32, 49))
 def test_prepare_once_across_94_layers_and_recapture_after_warmup(backend_methods, batch):
     args, calls = verify_fixture(backend_methods, batch)
     prepare = backend_methods["_get_verify_scheduler_metadata"]
@@ -156,7 +156,7 @@ def test_other_backends_shapes_and_cp_keep_original_path(backend_methods, field,
     assert calls == []
 
 
-@pytest.mark.parametrize("batch", [0, 1, 31, 37])
+@pytest.mark.parametrize("batch", [0, 1, 31, 49])
 def test_unmeasured_batches_keep_original_split_heuristic(backend_methods, batch):
     args, calls = verify_fixture(backend_methods, batch)
     assert backend_methods["_get_verify_scheduler_metadata"](*args) is None

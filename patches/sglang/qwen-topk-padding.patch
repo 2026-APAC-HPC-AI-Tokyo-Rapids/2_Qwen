@@ -101,7 +101,7 @@
          # ===== END TO BE REFACTORED ====
 +        elif (
 +            _is_cuda and num_token_non_padded is not None
-+            and gating_output.shape[1] == 128 and 0 < M <= 128 and topk == 8
++            and gating_output.shape[1] == 128 and 0 < M <= 192 and topk == 8
 +        ):
 +            from sglang.kernels.ops.moe.trtllm_lora_temp.topk_softmax_pack import (
 +                topk_softmax_masked,
@@ -118,7 +118,7 @@
 +            elif (
 +                _is_cuda and not _use_aiter
 +                and get_moe_a2a_backend().is_megamoe()
-+                and router_logits.shape[1] == 128 and 0 < router_logits.shape[0] <= 128
++                and router_logits.shape[1] == 128 and 0 < router_logits.shape[0] <= 192
 +                and top_k == 8 and scoring_func == "softmax"
 +                and correction_bias is None and expert_location_dispatch_info is None
 +                and num_fused_shared_experts == 0

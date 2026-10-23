@@ -40,7 +40,7 @@
 +            and not self.use_mla and self.attn_cp_size == 1
 +            and forward_batch.forward_mode.is_target_verify() and self.topk <= 1
 +            and getattr(forward_batch.spec_info, "ragged_verify_layout", None) is None
-+            and 32 <= batch <= 36 and metadata.max_seq_len_q == 4
++            and 32 <= batch <= 48 and metadata.max_seq_len_q == 4
 +            and self.page_size == 64
 +            and (layer.tp_q_head_num, layer.tp_k_head_num, layer.tp_v_head_num) == (64, 4, 4)
 +            and (layer.head_dim, layer.v_head_dim) == (128, 128)
@@ -140,7 +140,7 @@
 +
 +import torch
 +
-+NAMES = ("control96", "t64s2", "t64s3", "p128s2", "t64split2", "t64split3")
++NAMES = ("control96", "p128s2", "p128split2", "p128split3")
 +LIBRARY = Path("/opt/apac/fa3-verify/libapac_fa3_verify.so")
 +_loaded = False
 +
@@ -165,8 +165,8 @@
 +    load()
 +    candidate = NAMES.index(name)
 +    batch = lengths.numel()
-+    assert 32 <= batch <= 36
-+    splits = 1 if candidate < 4 else candidate - 2
++    assert 32 <= batch <= 48
++    splits = 1 if candidate < 2 else candidate
 +    options = {"device": lengths.device, "dtype": torch.float32}
 +    return {
 +        "candidate": candidate,

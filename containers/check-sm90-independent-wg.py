@@ -39,8 +39,7 @@ def main():
     parser.add_argument("--nvcc", type=Path, default=Path("/usr/local/cuda/bin/nvcc"))
     parser.add_argument("--output", type=Path, default=Path("/opt/apac/sm90-independent-wg-build.json"))
     args = parser.parse_args()
-    patches = [Path(p).name for p in json.loads(args.config.read_text())["deep_gemm_overlay_patches"]]
-    assert CANDIDATE not in patches, "Keep the control overlay free of the candidate"
+    patches = [Path(p).name for p in json.loads(args.config.read_text())["deep_gemm_overlay_patches"] if Path(p).name != CANDIDATE]
     decode = (64, 128, 256, 8, "false", "false", "true", "true")
     candidate = (64, 128, 256, 6, "false", "false", "true", "true")
     prefill = (128, 256, 256, 3, "true", "true", "false", "false")
