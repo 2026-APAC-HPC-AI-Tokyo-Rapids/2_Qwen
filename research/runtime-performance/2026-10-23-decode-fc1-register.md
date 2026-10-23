@@ -22,7 +22,7 @@ SwiGLUのclamp、`expf`/`__expf`、逆数、積の順序、SF helper、`__nv_fp8
 
 Firmus loginからimage内CUDA 13.0.88を用い、実JIT相当の `--register-usage-level=10` で対照・候補をcompile。共有toolchain/headersは読取り専用、出力は専用directory。Decode wave32/wave16とPrefill 2WGを検査し、register/spill、WGMMA warning、Prefill SASS不変を確認した。結果とhashは後掲。
 
-raw source、compile script/log、cubin、SASSは `ssh firmus` の `/scratch/home/ACCOUNT/qwen-astra-fc1-20261023/`。ローカル回収先は `/tmp/qwen-astra-fc1-register-evidence-20261023/`。この候補からschedulerジョブは作成していない。
+raw source、compile script/log、cubin、SASSは `/tmp/qwen-astra-fc1-register-evidence-20261023/compile-evidence.tar.gz` へ回収済み。Firmus側の専用compile directoryと共有抽出toolchainは全候補のCPU検査後に削除した。この候補からschedulerジョブは作成していない。
 
 | geometry | 対照/候補 registers | spill store/load | stack bytes | normalized SASS行数 対照→候補 |
 | --- | --- | --- | --- | --- |
