@@ -52,37 +52,19 @@ jobs:
         shell: bash
         run: scripts/monitor-qwen-job.sh genkai-shell platforms/genkai/kernel-probe/check-job.sh
 
-      - name: ソース・実行ログ・結果を回収
-        id: collect
+      - name: 結果をsummaryに表示
         if: always() && steps.prepare.outputs.runtime_dir != ''
         env:
           RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
-        shell: home-lab-shell {0}
-        run: |
-          destination="${RUNNER_TEMP}/qwen-genkai-kernel-probe"
-          install -d "${destination}"
-          for part in source logs results scripts; do genkai-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"; done
-
-      - name: 成果物を保存
-        id: upload
-        if: always() && steps.collect.outcome == 'success'
-        uses: actions/upload-artifact@v7
-        with:
-          name: qwen-genkai-kernel-probe-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/qwen-genkai-kernel-probe
-          if-no-files-found: error
-
-      - name: 結果をsummaryに表示
-        if: always() && steps.collect.outcome == 'success'
         shell: bash
         run: |
           printf '### Genkai 1 GPU: isolated Prefill FC1\n\nRouting, NVLink, FC2, SwiGLU and serving are excluded. These are not serving tok/s.\n\n' >>"${GITHUB_STEP_SUMMARY}"
-          find "${RUNNER_TEMP}/qwen-genkai-kernel-probe/results" -name 'trial-*.log' -exec grep -H '^PASS ' {} + >>"${GITHUB_STEP_SUMMARY}" || true
+          genkai-shell --github-shell platforms/genkai/kernel-probe/summary.sh >>"${GITHUB_STEP_SUMMARY}"
 
-      - name: 終了・回収済みの一時ファイルを削除
-        if: always() && steps.upload.outcome == 'success'
+      - name: 終了済みの一時ファイルを削除
+        if: always() && steps.prepare.outputs.runtime_dir != ''
         env:
           RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
           PJM_JOB_ID: ${{ steps.submit.outputs.job_id }}
         run: |
-          if [[ -z "${PJM_JOB_ID}" ]] || timeout 20 pjwait -z "${PJM_JOB_ID}"; then rm -rf -- "${RUNTIME_DIR:?}"; else printf 'Preserving runtime for pending job %s\n' "${PJM_JOB_ID}"; fi
+          if [[ -z "${PJM_JOB_ID}" ]] || timeout 20 pjwait -z "${PJM_JOB_ID}"; then chmod -R u+w "${RUNTIME_DIR:?}"; rm -rf -- "${RUNTIME_DIR:?}"; else printf 'Preserving runtime for pending job %s\n' "${PJM_JOB_ID}"; fi
