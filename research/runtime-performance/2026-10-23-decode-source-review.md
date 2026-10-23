@@ -132,3 +132,15 @@ compileに使用した依存についても、実imageのDeepGEMM header 56 file
 A/B/Dは現pinで投入前のCPU検査とprovisionを完走した。Cは新規imageの完成が必須で、現pinのGPU数値gateへは進めない。既存builderは固定CUDA OCIからBuildah chrootで全レシピを構築し、Skopeo/Umoci検証後にSquashFSを生成する。旧SquashFSを入力とする差分更新経路はない。`_C.so`だけ差し替えた再packでは埋込host記録とmanifestが古くなり、image検査を満たさない。今回のためだけに別のimage構築経路は追加しない。
 
 次にCで実行すべきものは既存のCPU build-only jobであり、成功したartifactとsidecarを照合して4つのpin値を更新し、provisionが成功した後にGPU数値gateへ進む。ジョブ投入禁止を維持しているため、新imageは未作成。全4案が現在のconfigのままGPU jobを投入可能だという結論にはしていない。
+
+## ビルド専用許可後の完了確認
+
+ユーザーのビルド専用許可に基づき、C branchの `f234b8e` から [AWS run 39932105942](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39932105942) を起動した。起動前のrepository-wide CI確認では、C専用host guardテストのRuff指摘2件と、既存provision fixtureのhost記録欠落を修正した。実コンテナにこの記録が存在することは既に確認済みで、kernel本体は変更していない。ActionsのCI検証も成功した。
+
+初回はEC2 bootstrapのUbuntu mirror索引不整合で、container buildに入る前に失敗。ミラーのInReleaseとPackages.xzのsize/SHA一致を確認して同じcommitから全workflowを再実行し、attempt 2が成功した。AWS build、Skopeo/Umoci、S3成果物照合、Firmusを含む3クラスタの実archive配備stepまで成功。GPU・serving実行jobはすべてskipped。
+
+C branchは `c49bc67` で実成果物をpinした。Firmus login CPUで実 `check-firmus-image.sh` と実provisionerを実行し、両方exit 0。新imageの全体SHA256・size、sidecarとembedded manifestのbuild commit、4本のhost patch、実host extensionとembedded/standalone host record、staged control/candidate header、candidate env、container compile helperのSASS比較が一致した。後続のdoc commit `f9f6f25` はsource/configを変えていない。C branchの更新はskip-ciでpush済み。
+
+正本はC branchのimage config、Actionsのbuild履歴、Firmusの `containers/39932105942.sqsh` とsidecar。回収したraw build logsとCPU検査metadataは `/tmp/qwen-preflight-20261023/aws-build-39932105942/`。検査専用のremote source/package展開先は回収後に削除し、配備済みimageは保持した。
+
+これによりCの旧host/imageによる投入前blockerを解消した。A/B/Dの検証済みsource/configは変更していない。4案とも初回の数値gate付きGPU検証に進める投入前状態を確認できたが、GPU数値一致・非同期実行・graph replay・速度・公式scoreは未実行のままであり、保証しない。Cの8/8-byte spillも既知の未達性能目標として残る。今回GPU jobは投入していない。
