@@ -1,0 +1,176 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -350,4 +350,12 @@
+     const auto l2_sf_buffer    = layout::Buffer(fp8_intermediate_sf_layout, 1, kNumPaddedSFPoolTokens, l2_token_buffer.get_end_ptr());
+
++    // All Qwen geometries publish this protocol, including mixed Decode/Prefill ranks.
++    // The obsolete L1 weight pool is layout-stable across BM/BN specializations.
++    constexpr bool kChunkReadyProtocol = kHidden == 4096 and kIntermediateHidden == 1536 and kNumRanks == 4 and kNumTopk == 8;
++    constexpr uint32_t kStreamChunks = 8;
++    DG_STATIC_ASSERT(not kChunkReadyProtocol or kNumMaxPoolTokens >= kNumExpertsPerRank * kStreamChunks, "Chunk counters exceed the unused weight pool");
++    DG_STATIC_ASSERT(not kChunkReadyProtocol or (BLOCK_N <= 512 and 512 % BLOCK_N == 0), "FC2 tiles must divide a streaming chunk");
++    auto chunk_ready = reinterpret_cast<uint32_t*>(l1_topk_weights_buffer.get_base_ptr());
++
+     // Combine input area
+     const auto combine_token_buffer = layout::Buffer(bf16_token_layout, kNumTopk, kNumMaxTokensPerRank, l2_sf_buffer.get_end_ptr());
+@@ -403,4 +411,5 @@
+     // Decode-only changes (SwapAB geometry; Prefill code is untouched).
+     constexpr bool kDecodeTail = kSwapABActive;
++    constexpr bool kStreamingCombine = kChunkReadyProtocol and kSwapABActive and kNumExpertsPerWave == kNumExpertsPerRank;
+     // Next dynamically assigned Decode block (minus kNumSMs), in the L2 arrival-mask slots
+     // past this geometry's pool blocks: the workspace sizes those slots for the smallest
+@@ -623,4 +632,38 @@
+     auto decode_for_each_block = [&]<bool kClaimAhead = false>(const auto& func, const auto& next_block_delta) {
+         scheduler.fetch_expert_recv_count();
++        if constexpr (kStreamingCombine) {
++            // Preserve the dynamic claim ring, but decode its absolute index as
++            // all FC1 followed by FC2 chunk -> pool block -> four N128 tiles.
++            // All FC1 tasks precede FC2 tasks; consumers never hold producer roles.
++            uint32_t local_blocks = 0;
++            #pragma unroll
++            for (uint32_t i = 0; i < kNumExpertsPerLane; ++ i)
++                local_blocks += math::ceil_div(scheduler.stored_num_tokens_per_expert[i], BLOCK_M);
++            const uint32_t pool_blocks = __reduce_add_sync(0xffffffff, local_blocks);
++            const uint32_t fc1_tasks = pool_blocks * kNumL1BlockNs;
++            const uint32_t total_tasks = fc1_tasks + pool_blocks * kNumL2BlockNs;
++            uint32_t task = sm_idx;
++            while (task < total_tasks) {
++                const bool fc2 = task >= fc1_tasks;
++                const uint32_t relative = fc2 ? task - fc1_tasks : task;
++                uint32_t pool_block = fc2 ? (relative % (pool_blocks * 4)) / 4 : relative / kNumL1BlockNs;
++                const uint32_t n = fc2 ? (relative / (pool_blocks * 4)) * 4 + relative % 4 : relative % kNumL1BlockNs;
++                uint32_t expert = 0;
++                while (pool_block >= math::ceil_div(scheduler.get_num_tokens(expert), BLOCK_M)) {
++                    pool_block -= math::ceil_div(scheduler.get_num_tokens(expert), BLOCK_M);
++                    ++ expert;
++                }
++                scheduler.set_expert_idx(expert);
++                scheduler.m_block_idx = pool_block;
++                uint32_t delta = 0;
++                if constexpr (kClaimAhead)
++                    delta = next_block_delta();
++                func(fc2 ? sched::BlockPhase::Linear2 : sched::BlockPhase::Linear1, expert, kNumL1BlockKs + static_cast<uint32_t>(fc2) * (kNumL2BlockKs - kNumL1BlockKs), pool_block, n);
++                if constexpr (not kClaimAhead)
++                    delta = next_block_delta();
++                task += kNumSMs + delta;
++            }
++            return;
++        }
+         scheduler.set_expert_idx(0);
+         while (true) {
+@@ -703,5 +746,5 @@
+     // non-epilogue=16 is below ptxas' setmaxnreg.dec legal minimum.
+     constexpr uint32_t kNumDispatchRegisters =
+-        kNumEpilogueThreads == 512 ? 32 : 48;
++        kStreamingCombine ? 64 : (kNumEpilogueThreads == 512 ? 32 : 48);
+     constexpr uint32_t kNumNonEpilogueRegisters =
+         kNumEpilogueThreads == 512 ? 24 : 40;
+@@ -757,4 +800,11 @@
+             }
+         };
++
++        // Explicit reset, ordered before all producer work by the existing
++        // before-pull rank barrier. No unproven grid ID epoch or host memset.
++        if constexpr (kChunkReadyProtocol) {
++            for (uint32_t i = sm_idx * kNumDispatchThreads + thread_idx; i < kNumExpertsPerRank * kStreamChunks; i += kNumSMs * kNumDispatchThreads)
++                chunk_ready[i] = 0;
++        }
+
+         // Count tokens per expert
+@@ -972,7 +1022,56 @@
+             }
+
+-        // Cleanup workspace, overlapping with combine.
++        if constexpr (kStreamingCombine) {
++            // Registers only: no alias with concurrently live GEMM stages, CD
++            // buffers, assignment rings, dispatch buffers or mbarriers.
++            // Chunk-major work gives the first completed chunk all consumers.
++            for (uint32_t work = sm_idx * kNumDispatchWarps + warp_idx; work < num_tokens * kStreamChunks; work += kNumSMs * kNumDispatchWarps) {
++                const uint32_t chunk = work / num_tokens;
++                const uint32_t token = work % num_tokens;
++                float2 sum[8] = {};
++                #pragma unroll
++                for (uint32_t slot = 0; slot < kNumTopk; ++ slot) {
++                    const int expert = static_cast<int>(input_topk_idx_buffer.template get_base_ptr<int64_t>()[token * kNumTopk + slot]);
++                    if (expert < 0)
++                        continue;
++                    const uint32_t rank = expert / kNumExpertsPerRank;
++                    const uint32_t local_expert = expert % kNumExpertsPerRank;
++                    if (lane_idx == 0) {
++                        // Expert counts are stable until every streaming consumer
++                        // reaches the collective below. Count in units of 128 cols
++                        // so BM64/128 and BN128/256/512 producers interoperate.
++                        const uint32_t expected = static_cast<uint32_t>(ptx::ld_volatile(sym_buffer.map(workspace.get_expert_recv_count_sum_ptr(local_expert), rank))) * 4;
++                        const auto ready = sym_buffer.map(chunk_ready + local_expert * kStreamChunks + chunk, rank);
++                        uint32_t observed;
++                        do {
++                            asm volatile("ld.acquire.sys.global.u32 %0, [%1];" : "=r"(observed) : "l"(ready) : "memory");
++                        } while (observed != expected);
++                    }
++                    __syncwarp();
++                    const float weight = input_topk_weights_buffer.template get_base_ptr<float>()[token * kNumTopk + slot];
++                    const auto values = reinterpret_cast<const nv_bfloat162*>(combine_token_buffer.get_rank_buffer(slot).get_data_buffer(token).get_base_ptr()) + chunk * 256;
++                    #pragma unroll
++                    for (uint32_t j = 0; j < 8; ++ j) {
++                        const float2 value = __bfloat1622float2(values[j * 32 + lane_idx]);
++                        sum[j].x = fmaf(value.x, weight, sum[j].x);
++                        sum[j].y = fmaf(value.y, weight, sum[j].y);
++                    }
++                }
++                auto output = reinterpret_cast<nv_bfloat162*>(y) + static_cast<uint64_t>(token) * (kHidden / 2) + chunk * 256;
++                #pragma unroll
++                for (uint32_t j = 0; j < 8; ++ j)
++                    output[j * 32 + lane_idx] = __float22bfloat162_rn(sum[j]);
++            }
++        }
++        // Join the existing math completion barrier first: NVLink barriers use
++        // one shared rank phase counter and must never run concurrently by role.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
+-
++        if constexpr (kChunkReadyProtocol) {
++            // Every geometry participates. Both grid sides are required before
++            // any CTA may clear counts that remote streaming consumers read.
++            comm::nvlink_barrier<kNumRanks, kNumSMs, kNumDispatchThreads, kDispatchGridSyncIndex, 4>(workspace, sym_buffer, sm_idx, thread_idx, [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); });
++        }
++
++        // Cleanup workspace, overlapping with non-streaming math combine.
+         DG_STATIC_ASSERT(kNumSMs > 1, "Invalid SM count");
+         if (sm_idx == 0) {
+@@ -2173,5 +2272,9 @@
+                         ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+                 } else {
+-                    if constexpr (kL2EpilogueRequiresFullSync)
++                    // Inactive M warpgroups must join the publication barrier
++                    // too (notably partial BM128 Prefill with fullsync=false).
++                    if constexpr (kChunkReadyProtocol)
++                        __threadfence_system();
++                    if constexpr (kChunkReadyProtocol or kL2EpilogueRequiresFullSync)
+                         ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+                 }
+@@ -2863,5 +2966,17 @@
+                 }
+
+-                if constexpr (kL2EpilogueRequiresFullSync)
++                if constexpr (kChunkReadyProtocol) {
++                    // Each scatter writer makes its own remote stores visible.
++                    // The math-only barrier carries every writer to the leader;
++                    // acq_rel RMW chains all M/N tile publications for an expert.
++                    __threadfence_system();
++                    ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++                    if (epilogue_thread_idx == 0) {
++                        const uint32_t contribution = valid_m * (BLOCK_N / 128);
++                        const auto ready = chunk_ready + local_expert_idx * kStreamChunks + n_idx / 512;
++                        uint32_t ignored;
++                        asm volatile("atom.acq_rel.sys.global.add.u32 %0, [%1], %2;" : "=r"(ignored) : "l"(ready), "r"(contribution) : "memory");
++                    }
++                } else if constexpr (kL2EpilogueRequiresFullSync)
+                     ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+             }
+@@ -2935,4 +3050,7 @@
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
+
++        if constexpr (kStreamingCombine)
++            return;
++
+         if (epilogue_warp_idx >= kNumCombineWarps)
+             return;
