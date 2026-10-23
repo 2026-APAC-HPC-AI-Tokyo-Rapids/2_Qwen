@@ -14,7 +14,7 @@ PINS = {
     "fa3": ("sgl-project/sgl-attn", "f89bc2306632d1ec5f97b014dded4254f5b4a907", "418b5681584dc3efff496a1cab5ffd58d2728d89dcfe0ea16e6985d6ef35c68c"),
     "cutlass": ("NVIDIA/cutlass", "57e3cfb47a2d9e0d46eb6335c3dc411498efa198", "09237099a70f80bff1dc8bb80c843a674bb4fdcb46e43cc6993e711c5ca89bb5"),
 }
-IDS = ("control96", "t64s2", "t64s3", "p128s2", "t64split2", "t64split3")
+IDS = ("control96", "p128s2", "p128split2", "p128split3")
 
 
 def sha(path):
@@ -41,13 +41,14 @@ def build(root):
             tar.extractall(target, filter="data")
         sources[name] = next(target.iterdir())
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fixed-specializations.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fp8-output.patch")], cwd=sources["fa3"], check=True)
     cuda = Path("/usr/local/cuda")
     includes = [str(root), str(sources["fa3"] / "hopper"), str(sources["cutlass"] / "include"), str(sources["cutlass"] / "tools/util/include"), str(cuda / "include"), str(cuda / "include/cccl"), *include_paths()]
     common = ["-O3", "-std=c++17", "-fPIC", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fno-gnu-unique", f"-D_GLIBCXX_USE_CXX11_ABI={int(torch._C._GLIBCXX_USE_CXX11_ABI)}"]
     common += ["-Dflash=apac_fa3_private", "-DFlash_fwd_params=ApacFA3VerifyParams"]
     flags = ["-O3", "-std=c++17", "--use_fast_math", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-lineinfo", "-gencode=arch=compute_90a,code=sm_90a", "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED", "-DCUTLASS_DEBUG_TRACE_LEVEL=0", "-DNDEBUG", "-Xptxas=-v,--warn-on-spills", "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique", *common[6:]]
     tasks = [(root / "wrapper.cpp", "wrapper", False)]
-    tasks += [(root / (name + ".cu"), name, True) for name in ("control96", "t64s2", "t64s3", "p128s2", "t64split", "combine")]
+    tasks += [(root / (name + ".cu"), name, True) for name in ("control96", "p128s2", "p128split", "combine", "prefill")]
     tasks += [(sources["fa3"] / "hopper/flash_prepare_scheduler.cu", "prepare", True)]
 
     def compile_one(task):
@@ -75,7 +76,10 @@ def build(root):
     subprocess.run(cmd, check=True)
     torch.ops.load_library(str(binary))
     smem = torch.ops.apac_fa3_verify.resources()
+    prefill_smem = torch.ops.apac_fa3_verify.prefill_resources()
+    assert prefill_smem == 191488, prefill_smem
     manifest = {"schema": "apac-fa3-verify/v1", "pins": {name: {"repository": repo, "commit": commit, "archive_sha256": digest} for name, (repo, commit, digest) in PINS.items()}, "architecture": "sm_90a", "cuda": subprocess.check_output([str(cuda / "bin/nvcc"), "--version"], text=True), "ptxas": subprocess.check_output([str(cuda / "bin/ptxas"), "--version"], text=True), "torch": torch.__version__, "cuda_flags": flags, "max_compile_jobs": 2, "translation_units": [r for r, _ in compiled], "specializations": [{"id": name, "shared_bytes": size} for name, size in zip(IDS, smem)], "source_sha256": {p.name: sha(p) for p in root.iterdir() if p.suffix in (".cu", ".cpp", ".h", ".py", ".patch")}, "binary_sha256": sha(binary), "binary_bytes": binary.stat().st_size, "elapsed_seconds": time.monotonic() - started, "gpu_executed": False}
+    manifest["prefill"] = {"tile_n": 224, "shared_bytes": prefill_smem, "output": "group128-fp8-fp32-scales"}
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     subprocess.run([str(cuda / "bin/cuobjdump"), "--dump-resource-usage", str(binary)], stdout=(logs / "resources.txt").open("w"), check=True)
     subprocess.run(["nm", "-D", "--defined-only", str(binary)], stdout=(logs / "symbols.txt").open("w"), check=True)

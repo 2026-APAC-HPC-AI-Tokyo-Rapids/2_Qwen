@@ -68,12 +68,12 @@ def test_numeric_gate_rejects_missing_work_scale_errors_and_nonfinite(bad):
 
 
 @pytest.mark.parametrize("op,n,k", [("qkv", 9216, 4096), ("o", 4096, 8192)])
-def test_bounded_candidate_table_is_legal_and_separates_stage_and_multicast(op, n, k):
+def test_bounded_candidate_table_fits_smem_and_keeps_design_geometries(op, n, k):
     from math import gcd
 
     ns = load_dense()
     candidates = ns["dense_candidates"](op)
-    assert len(candidates) == len({c["name"] for c in candidates}) == 11
+    assert len(candidates) == len({c["name"] for c in candidates}) == 5
     assert candidates[0]["name"] == "stock"
     for bm, bn, stages, mc, on_a in ns["DENSE_CONFIGS"][op]:
         assert bm in (64, 128) and bn % 16 == 0
@@ -82,11 +82,10 @@ def test_bounded_candidate_table_is_legal_and_separates_stage_and_multicast(op, 
         align = lambda x, a: ((x + a - 1) // a) * a
         smem = align(bm * bn * 2, 1024) + 16 * 8 * 2 + align((k // 128) * 4 * (1 if 128 % bn == 0 else 2), 8) + stages * ((bm + bn) * 128 + align(bm * 4, 128))
         assert smem <= 232448
-    # Same tile/stages isolate A and B multicast; same tile/mc isolate stages.
-    cfgs = set(ns["DENSE_CONFIGS"][op])
-    base = (64, 144, 7) if op == "qkv" else (64, 64, 13)
-    assert (*base, 2, 0) in cfgs and (*base, 2, 1) in cfgs
-    assert any(c[:2] == base[:2] and c[2] < base[2] and c[3:] == (1, 0) for c in cfgs)
+    assert all(c["backend"] == "deepgemm" for c in candidates)
+    expected = {"qkv": ((64, 144, 5), (64, 144, 7), (128, 144, 5), (128, 80, 7)), "o": ((64, 64, 9), (64, 64, 13), (128, 64, 8), (128, 32, 10))}
+    assert tuple(c[:3] for c in ns["DENSE_CONFIGS"][op]) == expected[op]
+
 
 
 class Output:
@@ -124,7 +123,7 @@ def test_image_triton_call_keeps_group128_fp32_scale_strides_and_bf16_output(mon
     a, sa = Tensor((132, 4096), (4096, 1)), Tensor((132, 32), (1, 132))
     b, sb = Tensor((9216, 4096), (4096, 1)), Tensor((72, 32), (32, 1))
     out = Tensor((132, 9216), (9216, 1))
-    candidate = next(c for c in ns["dense_candidates"]("qkv") if c["backend"] == "triton")
+    candidate = {"name": "triton-64-128-128-s3-w4", "backend": "triton", "config": (64, 128, 3, 4)}
     ns["dense_call"](candidate, ((a, sa), (b, sb), out))()
     grid, args, kwargs = launches[0]
     assert grid == (3 * 72,)
@@ -186,15 +185,15 @@ def test_selection_applies_pooled_rule_and_reports_rank_local_noise():
 @pytest.mark.parametrize("op1,op2", [(0, 0), (1, 0), (0, 1), (1, 2), (2, 1)])
 def test_selection_writes_mixed_worker_environment_and_clears_stock(op1, op2):
     ns = load_dense()
-    choices = {op: [ns["dense_candidates"](op)[i] for i in (0, 1, 9)] for op in ("qkv", "o")}
+    choices = {op: [ns["dense_candidates"](op)[i] for i in (0, 1, 2)] for op in ("qkv", "o")}
     selected = {op: {"winner": choices[op][i]["name"]} for op, i in (("qkv", op1), ("o", op2))}
     env = selector()["worker_environment"](selected, choices)
     assert set(env) == {ENV, "SGLANG_DECODE_DENSE_GEMM_QKV", "SGLANG_DECODE_DENSE_GEMM_O"}
     direct = []
     for op, i in (("qkv", op1), ("o", op2)):
         c = choices[op][i]
-        assert env["SGLANG_DECODE_DENSE_GEMM_" + op.upper()] == (c["name"] if i == 2 else "")
-        if i == 1:
+        assert env["SGLANG_DECODE_DENSE_GEMM_" + op.upper()] == ""
+        if i != 0:
             direct.append(op.upper() + ":" + ",".join(map(str, c["config"])))
     assert env[ENV] == ";".join(direct)
 
@@ -212,9 +211,9 @@ def test_selector_candidate_mode_restores_all_worker_envs_on_failure(monkeypatch
     for key, value in previous.items():
         monkeypatch.setenv(key, value)
     mode = selector()["candidate_mode"]
-    with pytest.raises(ValueError), mode(ns, "qkv", ns["dense_candidates"]("qkv")[9]):
-        assert ENV not in os.environ
-        assert os.environ["SGLANG_DECODE_DENSE_GEMM_QKV"].startswith("triton-")
+    with pytest.raises(ValueError), mode(ns, "qkv", ns["dense_candidates"]("qkv")[1]):
+        assert os.environ[ENV] == "QKV:64,144,5,1,0"
+        assert "SGLANG_DECODE_DENSE_GEMM_QKV" not in os.environ
         assert "SGLANG_DECODE_DENSE_GEMM_O" not in os.environ
         raise ValueError("rejected")
     assert {key: os.environ[key] for key in previous} == previous
@@ -282,17 +281,19 @@ def test_overlay_applies_to_pinned_image_qwen_source_and_has_only_two_call_sites
 def test_serving_preflight_checks_only_selected_and_rejects_ambiguous_env(monkeypatch):
     ns = load_dense()
     monkeypatch.setenv(ENV, "QKV:128,80,7,1,0")
-    monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_O", "triton-64-128-128-s3-w4")
+    monkeypatch.delenv("SGLANG_DECODE_DENSE_GEMM_O", raising=False)
     monkeypatch.delenv("SGLANG_DECODE_DENSE_GEMM_QKV", raising=False)
     assert ns["selected_dense_candidates"]("qkv")[0]["config"] == (128, 80, 7, 1, 0)
-    assert ns["selected_dense_candidates"]("o")[0]["name"] == "triton-64-128-128-s3-w4"
+    assert ns["selected_dense_candidates"]("o")[0]["name"] == "stock"
     monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_QKV", "triton-64-128-128-s3-w4")
     with pytest.raises(AssertionError, match="only one"):
         ns["selected_dense_candidates"]("qkv")
     monkeypatch.delenv(ENV)
-    assert ns["selected_dense_candidates"]("qkv")[0]["backend"] == "triton"
+    with pytest.raises(AssertionError):
+        ns["selected_dense_candidates"]("qkv")
     monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_QKV", "")
     assert ns["selected_dense_candidates"]("qkv")[0]["name"] == "stock"
+
 
 
 class OverlayTensor:
@@ -361,7 +362,7 @@ def test_overlay_target_guards_keep_other_linear_paths(monkeypatch, case):
     if case == "bf16-draft":
         layer.weight = OverlayTensor(layer.weight.shape, "bf16")
     elif case == "large-m":
-        x = OverlayTensor((132, 4096), "bf16")
+        x = OverlayTensor((193, 4096), "bf16")
     elif case == "wrong-heads":
         attention.num_heads = 32
     elif case == "bias":
@@ -373,13 +374,14 @@ def test_overlay_target_guards_keep_other_linear_paths(monkeypatch, case):
 
 
 @pytest.mark.parametrize("error_type", [AssertionError, RuntimeError, ValueError])
-@pytest.mark.parametrize("boundaries", [(), (4, 64, 65)])
+@pytest.mark.parametrize("boundaries", [(), (4, 64, 65, 129)])
 def test_selector_prepares_same_four_weights_rejects_bad_candidate_and_continues(monkeypatch, boundaries, error_type):
     ns, checks = selector(), load_dense()
-    made, validated, captured, comparisons = [], [], [], []
+    made, validated, captured, comparisons, requested_rows = [], [], [], [], []
     candidates = [{"name": "stock", "backend": "deepgemm", "config": None}, {"name": "bad", "backend": "triton", "config": None}, {"name": "fast", "backend": "triton", "config": None}]
 
-    def inputs(*_):
+    def inputs(rows, *_):
+        requested_rows.append(rows)
         result = (object(), object(), Output())
         made.append(result)
         return result
@@ -405,7 +407,8 @@ def test_selector_prepares_same_four_weights_rejects_bad_candidate_and_continues
     checks.update(dense_inputs=inputs, dense_reference=lambda *_: object(), dense_call=call, dense_validate_candidate=validate, dense_errors=lambda *_: {})
     monkeypatch.setitem(ns["prepare_projection"].__globals__, "capture_graph", capture)
     torch = types.SimpleNamespace(cuda=types.SimpleNamespace(synchronize=lambda: None))
-    result = ns["prepare_projection"](torch, checks, "qkv", 9216, 4096, candidates, boundary_rows=boundaries)
+    result = ns["prepare_projection"](torch, checks, "qkv", 9216, 4096, candidates, 160, boundary_rows=boundaries)
+    assert requested_rows == [160] * 4 + list(boundaries)
     assert len(made) == 4 + len(boundaries)
     assert validated == ["stock"] * (1 + len(boundaries)) + ["bad"] + ["fast"] * (1 + len(boundaries))
     assert captured == ["stock", "fast"] and set(result["graphs"]) == {"stock", "fast"}
@@ -438,3 +441,17 @@ def test_numeric_gate_retains_run_path_caller_arguments(monkeypatch, argv, selec
     ns["check_dense_gemm"] = lambda **kwargs: calls.append(kwargs)
     exec(compile(ast.Module(body=[entry], type_ignores=[]), "numeric-entry", "exec"), ns)  # noqa: S102 - tracked entrypoint with CPU mocks
     assert calls == [{"selected_only": selected}] and devices == [2]
+
+
+def test_dense_rows_read_the_staged_config(tmp_path):
+    script = tmp_path / "scripts/check-firmus-decode-kernels.py"
+    script.parent.mkdir()
+    (tmp_path / "source").mkdir()
+    config = tmp_path / "source/firmus-framework.json"
+    tree = ast.parse((ROOT / "scripts/check-firmus-decode-kernels.py").read_text())
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "decode_cap_tokens")
+    ns = {"Path": Path, "json": json, "__file__": str(script)}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(script), "exec"), ns)  # noqa: S102 - actual config reader
+    for cap in (160, 192):
+        config.write_text(json.dumps({"decode_max_running_requests": cap}))
+        assert ns["decode_cap_tokens"]() == cap

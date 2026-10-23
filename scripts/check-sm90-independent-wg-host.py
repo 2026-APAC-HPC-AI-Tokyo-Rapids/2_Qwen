@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "1c8138a59b3df5dac50b76b730834ed57982fdfb"
-TOKENS = (0, 1, 4, 7, 8, 9, 16, 17, 25, 32, 33, 41, 49, 57, 64, 65, 96, 120, 127, 128, 129, 132, 136, 140, 144, 145, 255, 256, 279, 280, 281, 303, 304, 1024, 2048, 4096)
+TOKENS = (0, 1, 4, 7, 8, 9, 16, 17, 25, 32, 33, 41, 49, 57, 64, 65, 96, 120, 127, 128, 129, 132, 136, 140, 144, 145, 160, 161, 192, 193, 255, 256, 279, 280, 281, 303, 304, 1024, 2048, 4096)
 IMAGE_SHA256 = "ff7a58cca00aa42a90386d12b0437b5d8caf35eb0ad082a8a1a0b4b74001a2a1"
 BASELINE_SHA256 = "77ee7caea6e5736803b6034f83575f9a846d30c54ce4970ced7c65450a9be497"
 KERNEL = Path("deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh")
@@ -247,7 +247,7 @@ def compare_contract(row, values):
     for key in ("l1_sf", "l2_sf"):
         assert maps[key]["box"] == [host["block_m"], 1], row
         assert maps[key]["stride_bytes"] == host["sf_pool_tokens"] * 4, row
-    expected_independent = inputs["experts"] == 128 and 0 < inputs["tokens"] <= 144 and inputs["independent_wg_env"] == 1
+    expected_independent = inputs["experts"] == 128 and 0 < inputs["tokens"] <= 192 and inputs["independent_wg_env"] == 1
     assert bool(kernel["independent_wg"]) == expected_independent, row
     if kernel["independent_wg"]:
         assert not any(host[name] for name in ("reuse_accum", "arrival_counter", "split_phase")), row
@@ -278,7 +278,8 @@ def main():
         assert hashlib.sha256(args.image_header.read_bytes()).hexdigest() == IMAGE_SHA256
         shutil.copy2(args.image_header, overlay / KERNEL)
         overlay_patches = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
-        overlay_patches.append("patches/deep-gemm-bench/independent-wg/sm90-decode-independent-wg.patch")
+        if "patches/deep-gemm-bench/independent-wg/sm90-decode-independent-wg.patch" not in overlay_patches:
+            overlay_patches.append("patches/deep-gemm-bench/independent-wg/sm90-decode-independent-wg.patch")
         for i, patch in enumerate(overlay_patches):
             if i == len(overlay_patches) - 1:
                 assert hashlib.sha256((overlay / KERNEL).read_bytes()).hexdigest() == BASELINE_SHA256

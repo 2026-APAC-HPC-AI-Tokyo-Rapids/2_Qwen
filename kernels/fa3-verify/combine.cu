@@ -33,6 +33,7 @@ __global__ void combine_fixed(const float* __restrict__ partial, const float* __
         float4 sum = {0.f, 0.f, 0.f, 0.f};
         #pragma unroll
         for (int s = 0; s < S; ++s) {
+            if (weight[s] == 0.f) { continue; }
             float4 x = *reinterpret_cast<const float4*>(partial + (s * rows + row) * 128 + d);
             sum.x += weight[s] * x.x; sum.y += weight[s] * x.y; sum.z += weight[s] * x.z; sum.w += weight[s] * x.w;
         }

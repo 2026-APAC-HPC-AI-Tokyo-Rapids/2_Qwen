@@ -98,6 +98,7 @@ cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/b
 cp --no-preserve=ownership,xattr "${source_dir}/LICENSE" "${source_dir}/README.md" "${source_dir}/python/pyproject.toml" "${context}/sglang-project-metadata/python/"
 cp -a --no-preserve=ownership,xattr "${source_dir}" "${context}/sglang-source"
 cp -r "${GITHUB_WORKSPACE}/kernels/fa3-verify" "${context}/containers/fa3-verify"
+cp "${GITHUB_WORKSPACE}/kernels/probes/fa3-fp8-output.patch" "${context}/containers/fa3-verify/fp8-output.patch"
 cp "${GITHUB_WORKSPACE}/containers/build-fa3-verify.sh" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.sh" "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.py" "${context}/containers/"
 install -d "${context}/prefill-moe-routing"

@@ -82,6 +82,7 @@ TIMELINE_CALLS = 8
 WARMUP, ITERATIONS = 5, 30
 HBM_READ_BYTES = 128 << 20
 CASES = [("decode", "balanced", n) for n in (4, 16, 32, 64, 96, 128)] + [("decode", "local", 128)]
+CASES += [("decode", routing, n) for routing in ("balanced", "skew") for n in (160, 192)]
 CASES += [("prefill", "balanced", n) for n in (1024, 2048, 4096)] + [("prefill", "local", 4096), ("prefill", "skew", 4096)]
 CASES += [("prefill", f"real{layer}{suffix}", 4096) for layer in REAL_ROUTING_LAYERS for suffix in ("", "-replica4")]
 TIMELINE_CASES = [("decode", "balanced", 128), ("prefill", "balanced", 4096)]

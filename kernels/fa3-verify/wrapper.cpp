@@ -7,16 +7,16 @@
 #include "verify.h"
 
 namespace apac_fa3_verify {
-static Launch launches[] = {control96, t64s2, t64s3, p128s2, t64split, t64split};
-static int splits(int64_t id) { TORCH_CHECK(id >= 0 && id < 6, "invalid FA3 verify candidate"); return id < 4 ? 1 : id - 2; }
-static int block_n(int64_t id) { return id == 0 ? 96 : id == 3 ? 128 : 64; }
+static Launch launches[] = {control96, p128s2, p128split, p128split};
+static int splits(int64_t id) { TORCH_CHECK(id >= 0 && id < 4, "invalid FA3 verify candidate"); return id < 2 ? 1 : id; }
+static int block_n(int64_t id) { return id == 0 ? 96 : 128; }
 static void tensor(const at::Tensor& t, const at::Tensor& ref, at::ScalarType dtype) {
     TORCH_CHECK(t.is_cuda() && t.device() == ref.device() && t.scalar_type() == dtype && t.is_contiguous(), "FA3 verify tensor dtype/device/stride mismatch");
 }
 static Flash_fwd_params base(const at::Tensor& lengths, const at::Tensor& cu, const at::Tensor& metadata, int64_t id) {
     int s = splits(id), b = lengths.numel(), rounded = (b + 3) / 4 * 4;
     tensor(lengths, lengths, at::kInt); tensor(cu, lengths, at::kInt); tensor(metadata, lengths, at::kInt);
-    TORCH_CHECK(lengths.dim() == 1 && b >= 32 && b <= 36 && cu.dim() == 1 && cu.numel() == b + 1, "FA3 verify requires B32..36 and Q4");
+    TORCH_CHECK(lengths.dim() == 1 && b >= 32 && b <= 48 && cu.dim() == 1 && cu.numel() == b + 1, "FA3 verify requires B32..48 and Q4");
     TORCH_CHECK(metadata.dim() == 1 && metadata.numel() == rounded * 4 + 1, "FA3 verify metadata size");
     Flash_fwd_params p{};
     p.b = b; p.b_k = b; p.seqlen_q = 4; p.total_q = 4 * b; p.h = 64; p.h_k = 4;
@@ -56,7 +56,7 @@ void fwd(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v, const at
     p.page_table = pages.data_ptr<int>(); p.page_table_batch_stride = pages.stride(0); p.page_size = 64; p.num_pages = k.size(0);
     p.seqlen_k = pages.size(1) * 64; p.seqlen_k_rounded = p.seqlen_k;
     p.window_size_left = p.seqlen_k - 1; p.window_size_right = 0; p.scale_softmax = scale;
-    p.softmax_lse_ptr = lse.data_ptr(); p.pagedkv_tma = block_n(id) == 64;
+    p.softmax_lse_ptr = lse.data_ptr(); p.pagedkv_tma = false;
     if (p.num_splits > 1) {
         p.oaccum_ptr = partial.data_ptr(); p.softmax_lseaccum_ptr = partial_lse.data_ptr();
         p.oaccum_split_stride = int64_t(64) * p.total_q * 128; p.oaccum_row_stride = 128; p.oaccum_head_stride = int64_t(p.total_q) * 128;
@@ -72,13 +72,54 @@ std::vector<int64_t> resources() {
     for (auto launch : launches) { Flash_fwd_params p{}; int bytes = 0; launch(p, nullptr, &bytes); result.push_back(bytes); }
     return result;
 }
+int64_t prefill_resources() {
+    Flash_fwd_params p{}; int bytes=0; prefill(p, nullptr, &bytes); return bytes;
+}
+void prefill_fwd(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v,
+                 const at::Tensor& cu, const at::Tensor& out, const at::Tensor& scales,
+                 const at::Tensor& lse, const at::Tensor& metadata, int64_t maxlen, double scale) {
+    c10::cuda::CUDAGuard guard(q.device());
+    tensor(q,q,at::ScalarType::Float8_e4m3fn); tensor(k,q,q.scalar_type()); tensor(v,q,q.scalar_type());
+    tensor(cu,q,at::kInt); tensor(out,q,q.scalar_type()); tensor(lse,q,at::kFloat); tensor(metadata,q,at::kInt);
+    int64_t rows=q.size(0), batch=cu.numel()-1;
+    TORCH_CHECK(rows>0 && batch>=1 && batch<=4 && maxlen>0 && maxlen<=rows, "FA3 Prefill lengths");
+    TORCH_CHECK(q.sizes()==at::IntArrayRef({rows,64,128}) && k.sizes()==at::IntArrayRef({rows,4,128}) && v.sizes()==k.sizes(), "FA3 Prefill QKV shape");
+    TORCH_CHECK(out.dim()==3 && out.size(0)>=rows && out.size(1)==64 && out.size(2)==128, "FA3 Prefill output shape");
+    TORCH_CHECK(scales.is_cuda() && scales.device()==q.device() && scales.scalar_type()==at::kFloat && scales.sizes()==at::IntArrayRef({out.size(0),64}) && scales.stride(0)==1 && scales.stride(1)>=out.size(0) && scales.stride(1)%4==0, "FA3 Prefill scale layout");
+    TORCH_CHECK(cu.dim()==1 && metadata.numel()==17 && lse.sizes()==at::IntArrayRef({64,rows}), "FA3 Prefill metadata shape");
+    TORCH_CHECK(std::isfinite(scale) && scale>0, "FA3 Prefill scale");
+    auto props=at::cuda::getCurrentDeviceProperties();
+    TORCH_CHECK(props->major==9 && props->minor==0 && prefill_resources()<=props->sharedMemPerBlockOptin, "FA3 Prefill requires SM90 with sufficient shared memory");
+    Flash_fwd_params p{};
+    p.arch=90; p.num_sm=props->multiProcessorCount; p.b=p.b_k=batch;
+    p.total_q=p.total_k=rows; p.seqlen_q=p.seqlen_k=maxlen;
+    p.seqlen_q_rounded=p.seqlen_k_rounded=(maxlen+127)/128*128;
+    p.h=64; p.h_k=4; p.d=p.dv=p.d_rounded=p.dv_rounded=128;
+    p.q_ptr=q.data_ptr(); p.k_ptr=k.data_ptr(); p.v_ptr=v.data_ptr(); p.o_ptr=out.data_ptr();
+    p.o_fp8_ptr=out.data_ptr(); p.o_scale_ptr=scales.data_ptr<float>(); p.o_scale_stride=scales.stride(1);
+    p.softmax_lse_ptr=lse.data_ptr();
+    p.q_row_stride=p.o_row_stride=8192; p.k_row_stride=p.v_row_stride=512;
+    p.q_head_stride=p.k_head_stride=p.v_head_stride=p.o_head_stride=128; p.v_dim_stride=1;
+    p.cu_seqlens_q=p.cu_seqlens_k=cu.data_ptr<int>();
+    p.is_e4m3=true; p.is_causal=true; p.pack_gqa=true;
+    p.varlen_sort_batches=true; p.head_swizzle=true; p.num_splits=1;
+    p.window_size_left=maxlen-1; p.window_size_right=0; p.scale_softmax=scale;
+    p.num_splits_dynamic_ptr=metadata.data_ptr<int>();
+    p.num_m_blocks_ptr=p.num_splits_dynamic_ptr+4; p.varlen_batch_idx_ptr=p.num_splits_dynamic_ptr+8;
+    p.num_nheads_in_l2_ptr=p.num_splits_dynamic_ptr+12; p.tile_count_semaphore=p.num_splits_dynamic_ptr+16;
+    prefill(p,at::cuda::getCurrentCUDAStream(),nullptr);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
 }
 TORCH_LIBRARY(apac_fa3_verify, m) {
     m.def("prepare(Tensor lengths, Tensor cu_q, Tensor(a!) metadata, int candidate) -> ()");
     m.def("fwd_out(Tensor q, Tensor k, Tensor v, Tensor pages, Tensor lengths, Tensor cu_q, Tensor(a!) out, Tensor(b!) lse, Tensor(c!) partial, Tensor(d!) partial_lse, Tensor(e!) metadata, int candidate, float scale) -> ()");
     m.def("resources() -> int[]", &apac_fa3_verify::resources);
+    m.def("prefill_resources() -> int", &apac_fa3_verify::prefill_resources);
+    m.def("prefill_fwd_out(Tensor q, Tensor k, Tensor v, Tensor cu, Tensor(a!) out, Tensor(b!) scales, Tensor(c!) lse, Tensor(d!) metadata, int maxlen, float scale) -> ()");
 }
 TORCH_LIBRARY_IMPL(apac_fa3_verify, CUDA, m) {
     m.impl("prepare", &apac_fa3_verify::prepare);
     m.impl("fwd_out", &apac_fa3_verify::fwd);
+    m.impl("prefill_fwd_out", &apac_fa3_verify::prefill_fwd);
 }

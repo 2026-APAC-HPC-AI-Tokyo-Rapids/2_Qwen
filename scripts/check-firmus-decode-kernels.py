@@ -36,6 +36,11 @@ from sglang.kernels.ops.moe.decode_silu_quant import decode_silu_quant
 from sglang.kernels.ops.quantization.fp8_kernel import sglang_per_token_group_quant_fp8
 
 
+def decode_cap_tokens():
+    config = json.loads((Path(__file__).resolve().parents[1] / "source/firmus-framework.json").read_text())
+    return config["decode_max_running_requests"]
+
+
 def check_numerics(actual, expected, label):
     assert actual.shape == expected.shape and actual.dtype == expected.dtype, label
     bitwise = torch.equal(actual.view(torch.uint8), expected.view(torch.uint8))
@@ -180,7 +185,7 @@ def check_topk_mask():
 
     torch.manual_seed(83719)
     for dtype in (torch.bfloat16, torch.float32):
-        for rows in (1, 7, 31, 128):
+        for rows in (1, 7, 31, 128, 160, 192):
             logits = torch.randn(rows, 128, dtype=dtype, device="cuda") * 4
             logits[0].zero_()  # tie order must match the actual AOT router
             if rows > 1:
@@ -268,7 +273,7 @@ def check_rope_fp8_kv():
                 assert codes.numel() == 0 or int(codes.max()) <= 1, (label, name, "more than one FP8 code apart")
 
     # Zero rows, odd tails, Decode verify sizes and Prefill chunks (token-warp grid).
-    for rows in (0, 1, 3, 31, 126, 128, 129, 132, 136, 140, 144, 145, 3986, 4027):
+    for rows in (0, 1, 3, 31, 126, 128, 129, 132, 136, 140, 144, 145, 160, 192, 193, 3986, 4027):
         for id_dtype in (torch.int32, torch.int64):
             packed = torch.randn(rows, 72, 128, device="cuda", dtype=torch.bfloat16) * 4
             q, k, v = packed[:, :64], packed[:, 64:68], packed[:, 68:]
@@ -284,7 +289,7 @@ def check_rope_fp8_kv():
             apply_qknorm_rope_fp8_kv(q, k, qw, kw, cache, positions, eps, actual[0], v, actual[1], actual[2], loc)
             compare(actual, expected, f"{rows}_{id_dtype}")
             assert all(torch.equal(x.view(torch.uint8), old.view(torch.uint8)) for x, old in zip((q, k, v), original)), "QKV input modified"
-            if rows in (128, 129, 132, 144):
+            if rows in (128, 129, 132, 144, 160, 192):
                 # Same production API and fixed addresses; runtime input values,
                 # cache locations and the number of slot-zero padding rows vary.
                 def decode_forward():
@@ -363,7 +368,7 @@ def check_decode_router_padding():
         return
     torch.manual_seed(61022)
     for dtype in (torch.bfloat16, torch.float32):
-        for rows in (1, 7, 31, 32, 128, 129, 132, 136, 140, 144):
+        for rows in (1, 7, 31, 32, 128, 129, 132, 136, 140, 144, 160, 192):
             logits = torch.randn(rows, 128, device="cuda", dtype=dtype) * 4
             logits[0].zero_()  # exact tie ordering
             if rows > 1:
@@ -388,7 +393,7 @@ def check_decode_router_padding():
                 for valid in (0, max(0, rows - 3), rows):
                     count.fill_(valid)
                     compare(forward(), f"decode_router_{dtype}_{rows}_{valid}_renorm{renormalize}")
-                if rows in (128, 129, 132, 144):
+                if rows in (128, 129, 132, 144, 160, 192):
                     stream = torch.cuda.Stream()
                     stream.wait_stream(torch.cuda.current_stream())
                     with torch.cuda.stream(stream):
@@ -661,7 +666,7 @@ def check_verify_scheduler_sharing():
         for key in ("q", "k_cache", "v_cache"):
             common[key].copy_((-common[key].float()).to(common[key].dtype))
         captured_buckets.append((batch, graph, actual, common, metadata))
-    assert len({m.verify_scheduler_metadata.data_ptr() for _, _, _, _, m in captured_buckets}) == 5
+    assert len({m.verify_scheduler_metadata.data_ptr() for _, _, _, _, m in captured_buckets}) == len(ops["BATCHES"])
     # Replay old buckets after capturing other buckets, including different B.
     for batch, graph, actual, common, metadata in reversed(captured_buckets):
         graph.replay()
@@ -672,12 +677,13 @@ def check_verify_scheduler_sharing():
 
 
 # Companion verify helpers are shared by the numeric gate and job-local selector.
-FA3_VERIFY_NAMES = ("control96", "t64s2", "t64s3", "p128s2", "t64split2", "t64split3")
+FA3_VERIFY_NAMES = ("control96", "p128s2", "p128split2", "p128split3")
 
 
 def verify_inputs(batch, seed=93101, boundary=False):
+    assert 32 <= batch <= 48
     generator = torch.Generator(device="cuda").manual_seed(seed)
-    lengths = ([4, 63, 64, 65, 95, 96, 97, 127, 128, 129] * 4)[:batch] if boundary else [3900 + (37 * i + 13) % 301 for i in range(batch)]
+    lengths = ([4, 63, 64, 65, 95, 96, 97, 127, 128, 129] * 5)[:batch] if boundary else [3900 + (37 * i + 13) % 301 for i in range(batch)]
     columns = (max(lengths) + 63) // 64
     pages = batch * columns
     dtype = torch.float8_e4m3fn
@@ -772,6 +778,8 @@ def verify_validate_candidate(batch, name):
     for boundary in (False, True):
         common, lengths = verify_inputs(batch, 93101 + batch, boundary)
         step = verify_step([common], name)
+        if boundary and step.state is not None:
+            step.state["partial"].fill_(float("nan"))
         step()
         stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
         metrics.append({"boundary": boundary, "stock": verify_errors(step.output, stock, name), "fp32": verify_errors(step.output, verify_fp32_reference(common, lengths), name + "_fp32")})
@@ -785,19 +793,20 @@ def verify_validate_candidate(batch, name):
             common["cache_seqlens"].copy_(torch.tensor(lengths, device="cuda", dtype=torch.int32))
             # cu_q is also live graph input; keep this fixed Q4 specialization valid.
             common["cu_seqlens_q"].copy_(torch.arange(0, 4 * batch + 1, 4, device="cuda", dtype=torch.int32))
+            if boundary and step.state is not None:
+                step.state["partial"].fill_(float("nan"))
             graph.replay()
             stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
             metrics.append({"boundary": boundary, "replay": replay, "stock": verify_errors(step.output, stock, name + "_changed94"), "fp32": verify_errors(step.output, verify_fp32_reference(common, lengths), name + "_changed_fp32")})
             state = step.state
-            if state is not None and state["candidate"] >= 4:
-                splits = state["candidate"] - 2
+            if state is not None and state["candidate"] >= 2:
+                splits = state["candidate"]
                 for b, length in enumerate(lengths):
-                    blocks = (length + 63) // 64
+                    blocks = (length + 127) // 128
                     per_split = (blocks + splits - 1) // splits
                     for split in range(splits):
                         if split * per_split >= blocks:
                             assert state["partial_lse"][split, :, 4 * b:4 * b + 4].isneginf().all(), "empty split LSE"
-                            assert (state["partial"][split, :, 4 * b:4 * b + 4] == 0).all(), "empty split O"
     return {"numeric_passed": True, "metrics": metrics, "changed_input_replays": 2, "layers_per_replay": 94}
 
 
@@ -809,7 +818,7 @@ def check_fa3_verify(selected_only=False):
     names = (selected,) if selected_only else FA3_VERIFY_NAMES
     for name in names:
         assert name in FA3_VERIFY_NAMES
-        for batch in range(32, 37):
+        for batch in range(32, 49):
             result = verify_validate_candidate(batch, name)
             print(json.dumps({"check": "fa3_verify", "candidate": name, "batch": batch, **result}), flush=True)
 
@@ -817,18 +826,16 @@ def check_fa3_verify(selected_only=False):
 DENSE_PROJECTIONS = (("qkv", 9216, 4096), ("o", 4096, 8192))
 # (BM, BN, stages, multicast, multicast_on_A); one factor at a time where possible.
 DENSE_CONFIGS = {
-    "qkv": ((64, 144, 5, 1, 0), (64, 144, 7, 2, 1), (64, 144, 7, 2, 0), (64, 128, 8, 1, 0), (128, 80, 7, 1, 0), (128, 80, 5, 1, 0), (128, 80, 7, 2, 1), (128, 64, 8, 1, 0)),
-    "o": ((64, 64, 9, 1, 0), (64, 64, 13, 2, 1), (64, 64, 13, 2, 0), (64, 80, 11, 1, 0), (128, 32, 10, 1, 0), (128, 32, 7, 1, 0), (128, 32, 10, 2, 1), (128, 64, 8, 1, 0)),
+    "qkv": ((64, 144, 5, 1, 0), (64, 144, 7, 1, 0), (128, 144, 5, 1, 0), (128, 80, 7, 1, 0)),
+    "o": ((64, 64, 9, 1, 0), (64, 64, 13, 1, 0), (128, 64, 8, 1, 0), (128, 32, 10, 1, 0)),
 }
-DENSE_HOST_SHA256 = "8af3cbc8b29bbb15f708867fe582b35351bd1a35a58db663bcb54ebdc91c26a9"
+DENSE_HOST_SHA256 = "3ed1a5f562c2e10f9f8c438225eb63fcc36ef31378a2262267a062abcf090326"
 
 
 def dense_candidates(op):
     candidates = [{"name": "stock", "backend": "deepgemm", "config": None}]
     for config in DENSE_CONFIGS[op]:
         candidates.append({"name": "dg-" + "-".join(map(str, config)), "backend": "deepgemm", "config": config})
-    for bm, bn in ((64, 128), (128, 64 if op == "qkv" else 32)):
-        candidates.append({"name": f"triton-{bm}-{bn}-128-s3-w4", "backend": "triton", "config": (bm, bn, 3, 4)})
     return candidates
 
 
@@ -994,7 +1001,7 @@ def check_dense_gemm(selected_only=False):
     assert torch.cuda.get_device_properties(torch.cuda.current_device()).multi_processor_count == 132
     with dense_fp32_reference():
         for op, n, k in DENSE_PROJECTIONS:
-            for rows in (64, 65, 128, 129, 132, 144):
+            for rows in (4, 64, 65, 129, decode_cap_tokens()):
                 inputs = dense_inputs(rows, n, k, 31000 + rows + n)
                 reference = dense_reference(inputs[0], inputs[1])
                 with dense_gemm_mode(op, dense_candidates(op)[0]):
@@ -1003,8 +1010,79 @@ def check_dense_gemm(selected_only=False):
                 for candidate in selected_dense_candidates(op) if selected_only else dense_candidates(op):
                     with dense_gemm_mode(op, candidate):
                         metrics = dense_validate_candidate(op, candidate, inputs, reference, stock)
-                    print(json.dumps({"check": f"dense-{op}-{rows}", "candidate": candidate["name"], "override_active": rows <= 128 and candidate["config"] is not None and candidate["backend"] == "deepgemm", "host_patch_sha256": host_sha, **metrics}), flush=True)
+                    print(json.dumps({"check": f"dense-{op}-{rows}", "candidate": candidate["name"], "override_active": rows <= 192 and candidate["config"] is not None and candidate["backend"] == "deepgemm", "host_patch_sha256": host_sha, **metrics}), flush=True)
     print("PASS: dense FP8 group128 / block128 projections, selected/all candidate settings, eager and changed-input CUDA graph replay", flush=True)
+
+
+def check_prefill_fp8_integration():
+    """Exercise the installed companion and real FP8-to-O consumer before serving."""
+    from itertools import accumulate
+    from types import SimpleNamespace
+
+    import deep_gemm
+    from sgl_kernel.flash_attn import flash_attn_varlen_func
+    from sglang.srt.layers.attention import prefill_fp8
+    from sglang.srt.layers.quantization.fp8 import Fp8LinearMethod
+    from sglang.srt.layers.quantization.fp8_utils import (
+        deepgemm_w8a8_block_fp8_linear_with_fallback,
+    )
+
+    for lengths in ([1], [17, 13], [129, 257], [3986], [4096]):
+        rows = sum(lengths)
+        padded = (rows + 3) // 4 * 4 + 4
+        q, k, v = [(torch.randn(rows, h, 128, device="cuda", dtype=torch.bfloat16) * .5).to(torch.float8_e4m3fn) for h in (64, 4, 4)]
+        cu = torch.tensor([0, *accumulate(lengths)], device="cuda", dtype=torch.int32)
+
+        def reference():
+            bf16 = flash_attn_varlen_func(q=q, k=k, v=v, cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max(lengths), max_seqlen_k=max(lengths), causal=True, softmax_scale=128**-.5, num_splits=1)
+            if isinstance(bf16, tuple):
+                bf16 = bf16[0]
+            return sglang_per_token_group_quant_fp8(bf16.reshape(rows, 8192), 128, column_major_scales=True, scale_tma_aligned=True)
+
+        def validate(actual):
+            expected = reference()
+            assert torch.equal(actual[0][:rows].view(torch.uint8), expected[0].view(torch.uint8)), lengths
+            assert torch.equal(actual[1][:rows], expected[1]), lengths
+            assert (actual[0][rows:].float() == 0).all() and (actual[1] > 0).all()
+            return expected
+
+        def call():
+            return prefill_fp8.attention(q, k, v, cu, max(lengths), 128**-.5, padded)
+        pair = call()
+        validate(pair)
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            call()
+        torch.cuda.current_stream().wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            captured = call()
+        for value in (q, k, v):
+            value.copy_((-value.float()).to(value.dtype))
+        if len(lengths) == 2:
+            cu[1].add_(1 if lengths[0] < lengths[1] else -1)
+        graph.replay()
+        validate(captured)
+        v.zero_()
+        pair = call()
+        validate(pair)
+        print(json.dumps({"check": "prefill_fp8_fused", "lengths": lengths, "padded_rows": padded, "bitwise_equal": True, "changed_input_graph": True, "changed_cu_seqlens": len(lengths) == 2}), flush=True)
+
+    attention = SimpleNamespace(num_heads=64, total_num_heads=64, num_kv_heads=4, total_num_kv_heads=4, hidden_size=4096, head_dim=128)
+    method = object.__new__(Fp8LinearMethod)
+    method.block_quant = True
+    method.use_marlin = method.use_mxfp8 = False
+    method.weight_block_size = [128, 128]
+    method.w8a8_block_fp8_linear = deepgemm_w8a8_block_fp8_linear_with_fallback
+    for name, n, k in (("QKV", 9216, 4096), ("O", 4096, 8192)):
+        data = dense_inputs(4096, n, k, 42024 + n)
+        layer = SimpleNamespace(weight=data[1][0], weight_scale_inv=data[1][1], bias=None, quant_method=method)
+        deep_gemm.fp8_gemm_nt(*data)
+        actual, bias = prefill_fp8.linear(attention, name, layer, data[0])
+        assert bias is None and torch.equal(actual, data[2]), name
+        print(json.dumps({"check": "prefill_dense_nk", "projection": name, "bitwise_equal": True}), flush=True)
+    print("PASS: installed Prefill FP8 companion, padding, changed-input/length graph, zero-V, and specialized QKV/O", flush=True)
 
 
 if __name__ == "__main__":
@@ -1019,5 +1097,6 @@ if __name__ == "__main__":
     check_topk_mask()
     check_decode_router_padding()
     check_add_rmsnorm_group_quant()
+    check_prefill_fp8_integration()
     check_prefill_attention()
     check_verify_scheduler_sharing()

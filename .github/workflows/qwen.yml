@@ -120,6 +120,7 @@ jobs:
     needs: [genkai, aspire2ap, firmus, firmus-dynamo, firmus-kernel-bench]
     if: >-
       always() &&
+      needs.firmus.result == 'skipped' &&
       (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.firmus-dynamo.result != 'skipped' || needs.firmus-kernel-bench.result != 'skipped')
     runs-on: [self-hosted, home-lab]
     permissions:

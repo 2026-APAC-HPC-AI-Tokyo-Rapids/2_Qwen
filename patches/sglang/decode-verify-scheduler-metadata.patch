@@ -30,7 +30,7 @@
 +            and not self.use_mla and self.attn_cp_size == 1
 +            and forward_batch.forward_mode.is_target_verify() and self.topk <= 1
 +            and getattr(forward_batch.spec_info, "ragged_verify_layout", None) is None
-+            and 32 <= batch <= 36 and metadata.max_seq_len_q == 4
++            and 32 <= batch <= 48 and metadata.max_seq_len_q == 4
 +            and self.page_size == 64
 +            and (layer.tp_q_head_num, layer.tp_k_head_num, layer.tp_v_head_num) == (64, 4, 4)
 +            and (layer.head_dim, layer.v_head_dim) == (128, 128)

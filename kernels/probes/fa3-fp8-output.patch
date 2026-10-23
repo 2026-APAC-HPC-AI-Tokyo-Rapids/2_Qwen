@@ -39,7 +39,7 @@
  
      static constexpr bool LargeHeadDimV = kHeadDimV > 256;
 +    static constexpr bool SupportsFP8Output = ArchTag::kMinComputeCapability == 90 &&
-+        Varlen && PackGQA && !Split && kHeadDimV == 128 &&
++        Varlen && PackGQA && !Split && kBlockM == 128 && kHeadDimV == 128 &&
 +        cute::is_same_v<Element, cutlass::bfloat16_t>;
  
      using GmemTiledCopyOTMA = cute::SM90_TMA_STORE;
