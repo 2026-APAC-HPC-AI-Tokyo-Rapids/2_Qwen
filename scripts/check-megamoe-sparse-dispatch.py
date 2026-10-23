@@ -6,6 +6,7 @@ that the dispatch boundary, token/SF pull and final cleanup remain unchanged.
 """
 
 import argparse
+import hashlib
 import itertools
 import random
 from collections import Counter
@@ -63,6 +64,9 @@ def routing(count, kind, rng):
 
 
 def check_headers(baseline, candidate):
+    expected = "77ee7caea6e5736803b6034f83575f9a846d30c54ce4970ced7c65450a9be497"
+    actual = hashlib.sha256(baseline.read_bytes()).hexdigest()
+    assert actual == expected, f"Incomplete or wrong production overlay: {actual}; expected {expected}"
     old, new = baseline.read_text(), candidate.read_text()
     begin = "        // Stake out per-expert SM offsets via global atomic"
     end = "        // Write source token-topk indices to remote ranks"

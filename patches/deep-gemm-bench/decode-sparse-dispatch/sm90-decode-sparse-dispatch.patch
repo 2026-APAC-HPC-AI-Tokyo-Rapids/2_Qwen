@@ -1,6 +1,6 @@
 --- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 +++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-@@ -734,9 +734,19 @@
+@@ -766,9 +766,19 @@
          // Stake out per-expert SM offsets via global atomic
          #pragma unroll
          for (uint32_t i = thread_idx; i < kNumExperts; i += kNumDispatchThreads) {
@@ -23,7 +23,7 @@
          }
          ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
 
-@@ -759,7 +769,12 @@
+@@ -791,7 +801,12 @@
              for (uint32_t i = thread_idx; i < kNumExperts; i += kNumDispatchThreads) {
                  const auto dst_rank_idx = i / kNumExpertsPerRank;
                  const auto dst_local_expert_idx = i % kNumExpertsPerRank;

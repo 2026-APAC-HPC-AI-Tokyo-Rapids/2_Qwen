@@ -4,9 +4,9 @@
 
 ## Source and execution path
 
-The control is image `39899235870`, header SHA256 `ff7a58cca00aa42a90386d12b0437b5d8caf35eb0ad082a8a1a0b4b74001a2a1`, plus the five `deep_gemm_overlay_patches` in `configs/firmus-framework.json` at `b165d1d`. Applying those patches in their listed order produces control header SHA256 `0f18d32a53ebf57df22ae703381efde5ba5d96c75a4b33828ca807579bd04f55`. The candidate then applies `patches/deep-gemm-bench/decode-sparse-dispatch/sm90-decode-sparse-dispatch.patch`, producing `f0475d94bf0ca1e6e71a9618d13eb9dc03ef252693a1f8ccd7c4cc6d25798621`.
+The control is image `39899235870`, header SHA256 `ff7a58cca00aa42a90386d12b0437b5d8caf35eb0ad082a8a1a0b4b74001a2a1`, plus the five `deep_gemm_overlay_patches` in `configs/firmus-framework.json` at `b165d1d`. Applying those patches in their listed order produces control header SHA256 `77ee7caea6e5736803b6034f83575f9a846d30c54ce4970ced7c65450a9be497`. The candidate then applies `patches/deep-gemm-bench/decode-sparse-dispatch/sm90-decode-sparse-dispatch.patch`, producing `360d066b26f472acb2747d6ddf2c4248a021bdcf44ab5122f84a617d2a2025e8`.
 
-The patch lives in the existing kernel-bench candidate directory. Its empty `timeline` marker requests the existing, separate instrumentation pass; that patch applies cleanly. The shared kernel-bench provisioning update must apply the current five overlays to both control and candidate before applying this patch. Benchmarking against the bare image would use an obsolete control. A fresh JIT build is required; the image supplies the unchanged host ABI and toolchain. No host, workspace layout, or serving config changes are needed.
+The patch lives in the existing kernel-bench candidate directory. No `timeline` marker is included: the existing instrumentation patch does not apply to the canonical baseline plus this candidate, and requires a separate rebase before profiling. The shared kernel-bench provisioning update must apply the current five overlays to both control and candidate before applying this patch. Benchmarking against the bare image would use an obsolete control. A fresh JIT build is required; the image supplies the unchanged host ABI and toolchain. No host, workspace layout, or serving config changes are needed.
 
 ## Implementation and invariants
 
@@ -31,7 +31,7 @@ These are source invariants and CPU model checks. They do not replace GPU race, 
 
 `scripts/check-megamoe-sparse-dispatch.py BASELINE_HEADER CANDIDATE_HEADER` passed 210 reservation cases. The model covers 0–4,096 tokens, partial warp/CTA boundaries, padded entries, balanced/random/concentrated routes, duplicate entries as an arithmetic stress case, CTA grid-stride traversal, and randomized reservation/write ordering. Candidate and control have identical published counts and source-index lists. It also checks 64 combinations of mixed geometry, idle ranks, all-idle ranks and changed-input replay/reset, including that no receiver reaches its ready high word before the final rank publishes. Header comparison checks that all code outside the reservation and SM0 normalization regions is byte-identical.
 
-The candidate patch and the optional timeline patch both pass `git apply --check` on the reconstructed control. Python AST parsing and `git diff --check` pass.
+The candidate patch passes `git apply --check` on the reconstructed control outside any Git worktree. The checker pins the canonical baseline SHA256 before running its structural checks. Python AST parsing and `git diff --check` pass.
 
 CPU-only compilation used the image's CUDA 13.0.88 `nvcc` on the Firmus login node. No GPU program, scheduler job or Actions run was started by this implementation task. Compile flags were `--cubin --std=c++20 --expt-relaxed-constexpr --expt-extended-lambda -O3 --ptxas-options=-v,-warn-spills,--register-usage-level=10 -gencode arch=compute_90a,code=sm_90a`. The explicit instantiation was:
 
@@ -43,8 +43,15 @@ sm90_fp8_mega_moe_impl<4224, 4096, 1536, 128, 8, 32, 64, 128, 128, 141312, 22609
 | --- | --- | --- | --- | --- | --- |
 | SwapAB Decode (`SWAP=true`) | 168 / 168 | 0 / 0 bytes, both | 8 bytes, both | 16, both | Changed |
 | M64/N128 non-SwapAB (`SWAP=false`) | 168 / 168 | 0 / 0 bytes, both | 8 bytes, both | 3, both | Identical |
+| M128/N256 Prefill, 2WG | 168 / 168 | 0 / 0 bytes, both | 0 bytes, both | 3, both | Identical |
 
-Normalized `cuobjdump -sass` instruction-line SHA256 values: Decode control `8e0160674daa64256ef054a267c79e20ff44bbf08071cee8683f26678e1306a4`, Decode candidate `b02c9d31ebabb4e4a4c64c61d50d6b82ae83a4ec28852b1351e5cd64f1b6f96f`, both non-SwapAB variants `f4aad2c3e9c2ad5319dcb1b4603e17fb22c58c651f3dc92b976fafee3e056e66`. Compiler warnings were existing unused variables; there were no spills or WGMMA serialization warnings. Full Prefill geometries were not compiled in this local check.
+Normalized `cuobjdump -sass` instruction-line SHA256 values: Decode control `8e0160674daa64256ef054a267c79e20ff44bbf08071cee8683f26678e1306a4`, Decode candidate `b02c9d31ebabb4e4a4c64c61d50d6b82ae83a4ec28852b1351e5cd64f1b6f96f`, both non-SwapAB variants `5842e79afae442ce63eab31f0f20ec8de117ae7547e6cc2f3bc790c05e754ad8`. Compiler warnings were existing unused variables; there were no spills or WGMMA serialization warnings. The Prefill 2WG variants also have identical SASS, SHA256 `f4dfa3b8bba194252571e838604df44885ea652d8bb06b15e8d4d074edcc3f86`. That instantiation changes BLOCK_M/N to 128/256, stages to 3, reuse/arrival to true and fullsync/SwapAB to false. Other Prefill geometries were not compiled.
+
+## Baseline correction
+
+Root review detected a hash mismatch in the initial validation record. The original reconstruction ran `git apply` from a subdirectory inside the experiment worktree. The first three overlays use `diff --git` headers and were silently skipped (exit status 0); the final two plain unified patches applied. `git apply --verbose` reproduced the skip and the old partial baseline SHA `0f18d32a53ebf57df22ae703381efde5ba5d96c75a4b33828ca807579bd04f55`. That baseline omitted the Prefill SF128, swizzle and 2WG epilogue overlays.
+
+The results above replace the initial record: all five patches were applied outside any Git worktree, yielding canonical `77ee7cae…`; candidate application, all 274 CPU cases and six CUDA compilations were rerun. Decode SASS hashes happened to remain unchanged because the missing overlays affect other geometries; the non-SwapAB hash changed and has been corrected. The checker now rejects the partial baseline before testing. The earlier timeline apply check had likewise silently skipped; an actual canonical apply fails, so the timeline marker was removed. No GPU validation or runtime conclusion was based on the erroneous checks.
 
 ## Pending GPU acceptance
 
