@@ -1,6 +1,6 @@
 # Decode FC1 register保持・部分amax交換（実装候補、GPU未検証）
 
-`patches/deep-gemm-bench/sm90-decode-fc1-register.patch` は image 39899235870 のheaderと `configs/firmus-framework.json` の採用overlay 5本を適用した対照に重ねる。対照header SHA256は `77ee7caea6e5736803b6034f83575f9a846d30c54ce4970ced7c65450a9be497`。本変更は候補であり、GPU正しさ・速度・公式serving結果は未確認。ユーザーの追加指示に従いActions、scheduler、GPUジョブ、pushは実施していない。
+`patches/deep-gemm-bench/decode-fc1-register/sm90-decode-fc1-register.patch` は image 39899235870 のheaderと `configs/firmus-framework.json` の採用overlay 5本を適用した対照に重ねる。対照header SHA256は `77ee7caea6e5736803b6034f83575f9a846d30c54ce4970ced7c65450a9be497`。本変更は候補であり、GPU正しさ・速度・公式serving結果は未確認。ユーザーの追加指示に従いActions、scheduler、GPUジョブ、pushは実施していない。
 
 2026-10-18のFC1量子化改善は全量FP32 shared stagingのbank conflictを除いた。本候補は残る16 KiBのSwiGLU store→loadを削る。gate accumulatorの死んだslotsに各laneのSwiGLU値を保持し、8 warp×64 tokenの部分amax（2 KiB）だけを書き出す。両N-split WGの64 channelを4 threads/tokenで集約し、SFは1 thread/tokenが従来helperで計算する。inverse SFの64 float（256 B）を別scratchへ公開して、元のlaneが保持値を量子化する。shared allocation自体と最終FP8 tileの位置は変えない。
 
@@ -16,7 +16,7 @@ SwiGLUのclamp、`expf`/`__expf`、逆数、積の順序、SF helper、`__nv_fp8
 
 ## CPU検査
 
-`qwen-experiment-metrics/tests/test_decode_fc1_register_layout.py` の2 testは全 `valid_m=1..64` についてlane所有の全単射、cross-WG amax（NaN/Inf/signed zero/別WG最大値を含む）、FP8の任意byte列の4-byte packと出力番地の一意性、scratchの全単射・writer/gather bank配置を列挙して検査する。pytest、ruffを通過。GPU演算やmemory orderingをCPUテストで実証したとは扱わない。
+`qwen-experiment-metrics/tests/test_decode_fc1_register_layout.py` の2 testは全 `valid_m=1..64` についてlane所有の全単射、cross-WG amax（NaN/Inf/signed zero/別WG最大値を含む）、FP8の任意byte列の4-byte packと出力番地の一意性、scratchの全単射・writer/gather bank配置を列挙して検査する。pytest、ruffを通過。候補はprovisionerの要求する `deep-gemm-bench/<candidate>/` 配下に置き、flat patch拒否を含む既存kernel-bench fixtureも再検証した。GPU演算やmemory orderingをCPUテストで実証したとは扱わない。
 
 ## CPU CUDA compile
 
