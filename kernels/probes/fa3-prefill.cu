@@ -1,4 +1,4 @@
-// Same pinned FA3 algorithm, comparing N224 and N192 with two stages.
+// Pinned FA3 with optional group-128 FP8 output; BF16 controls use the same launch.
 #include <cstdio>
 #include "flash_fwd_launch_template.h"
 
@@ -22,7 +22,7 @@ extern "C" int prefill_init() {
     return 0;
 }
 
-extern "C" int prefill_run(int id,int rows,int batch,int maxlen,void* q,void* k,void* v,void* cu,void* out,void* lse,void* metadata,void* stream_ptr) {
+extern "C" int prefill_run(int id,int rows,int batch,int maxlen,void* q,void* k,void* v,void* cu,void* out,void* lse,void* metadata,void* fp8,void* scale,int scale_stride,void* stream_ptr) {
     if(id<0 || id>1 || batch<1 || batch>4 || rows<1) return -1;
     Flash_fwd_params p{};
     p.arch=90; p.num_sm=132; p.b=p.b_k=batch;
@@ -30,6 +30,7 @@ extern "C" int prefill_run(int id,int rows,int batch,int maxlen,void* q,void* k,
     p.seqlen_q_rounded=p.seqlen_k_rounded=(maxlen+127)/128*128;
     p.h=64; p.h_k=4; p.d=p.dv=p.d_rounded=p.dv_rounded=128;
     p.q_ptr=q; p.k_ptr=k; p.v_ptr=v; p.o_ptr=out; p.softmax_lse_ptr=lse;
+    p.o_fp8_ptr=fp8; p.o_scale_ptr=static_cast<float*>(scale); p.o_scale_stride=scale_stride;
     p.q_row_stride=p.o_row_stride=64*128; p.k_row_stride=p.v_row_stride=4*128;
     p.q_head_stride=p.k_head_stride=p.v_head_stride=p.o_head_stride=128;
     p.v_dim_stride=1; p.cu_seqlens_q=p.cu_seqlens_k=static_cast<int*>(cu);
