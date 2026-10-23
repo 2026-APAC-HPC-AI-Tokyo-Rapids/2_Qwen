@@ -73,7 +73,7 @@ def test_bounded_candidate_table_is_legal_and_separates_stage_and_multicast(op, 
 
     ns = load_dense()
     candidates = ns["dense_candidates"](op)
-    assert len(candidates) == len({c["name"] for c in candidates}) == 12
+    assert len(candidates) == len({c["name"] for c in candidates}) == 11
     assert candidates[0]["name"] == "stock"
     for bm, bn, stages, mc, on_a in ns["DENSE_CONFIGS"][op]:
         assert bm in (64, 128) and bn % 16 == 0
@@ -134,17 +134,6 @@ def test_image_triton_call_keeps_group128_fp32_scale_strides_and_bf16_output(mon
     assert kwargs == {"BLOCK_SIZE_M": 64, "BLOCK_SIZE_N": 128, "BLOCK_SIZE_K": 128, "GROUP_SIZE_M": 32, "needs_masking": False, "num_stages": 3, "num_warps": 4}
 
 
-def test_flashinfer_uses_prequantized_bytes_and_existing_output(monkeypatch):
-    import sys
-
-    calls = []
-    monkeypatch.setitem(sys.modules, "flashinfer.gemm", types.SimpleNamespace(fp8_blockscale_gemm_sm90=lambda *args, **kwargs: calls.append((args, kwargs))))
-    ns = load_dense()
-    ns["torch"] = types.SimpleNamespace(bfloat16="bf16")
-    a, sa, b, sb, out = (object() for _ in range(5))
-    candidate = next(c for c in ns["dense_candidates"]("o") if c["backend"] == "flashinfer")
-    ns["dense_call"](candidate, ((a, sa), (b, sb), out))()
-    assert calls == [((a, b, sa, sb), {"out": out, "out_dtype": "bf16"})]
 
 
 def selector():
@@ -261,7 +250,7 @@ def test_overlay_unset_and_prefill_return_original_linear_without_inspection(mon
 
 def test_overlay_decode_extend_keeps_original_path(monkeypatch):
     ns = load_overlay(monkeypatch)
-    monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_O", "flashinfer-sm90")
+    monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_O", "triton-64-128-128-s3-w4")
     batch = types.SimpleNamespace(forward_mode=types.SimpleNamespace(is_decode=lambda: False, is_target_verify=lambda: False))
     x = object()
     assert ns["decode_dense_linear"](None, "O", lambda actual: actual, x, batch, decode_worker=True) is x
@@ -293,10 +282,10 @@ def test_overlay_applies_to_pinned_image_qwen_source_and_has_only_two_call_sites
 def test_serving_preflight_checks_only_selected_and_rejects_ambiguous_env(monkeypatch):
     ns = load_dense()
     monkeypatch.setenv(ENV, "QKV:128,80,7,1,0")
-    monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_O", "flashinfer-sm90")
+    monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_O", "triton-64-128-128-s3-w4")
     monkeypatch.delenv("SGLANG_DECODE_DENSE_GEMM_QKV", raising=False)
     assert ns["selected_dense_candidates"]("qkv")[0]["config"] == (128, 80, 7, 1, 0)
-    assert ns["selected_dense_candidates"]("o")[0]["name"] == "flashinfer-sm90"
+    assert ns["selected_dense_candidates"]("o")[0]["name"] == "triton-64-128-128-s3-w4"
     monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_QKV", "triton-64-128-128-s3-w4")
     with pytest.raises(AssertionError, match="only one"):
         ns["selected_dense_candidates"]("qkv")
@@ -367,7 +356,7 @@ def test_overlay_selected_target_path_quantizes_once_or_preserves_tuple(monkeypa
 @pytest.mark.parametrize("case", ["bf16-draft", "large-m", "wrong-heads", "bias", "other-scale"])
 def test_overlay_target_guards_keep_other_linear_paths(monkeypatch, case):
     ns = load_overlay(monkeypatch)
-    monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_QKV", "flashinfer-sm90")
+    monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_QKV", "triton-64-128-128-s3-w4")
     attention, layer, batch, x, fallback = overlay_fixture()
     if case == "bf16-draft":
         layer.weight = OverlayTensor(layer.weight.shape, "bf16")
@@ -383,8 +372,9 @@ def test_overlay_target_guards_keep_other_linear_paths(monkeypatch, case):
     assert fallback == [x]
 
 
+@pytest.mark.parametrize("error_type", [AssertionError, RuntimeError, ValueError])
 @pytest.mark.parametrize("boundaries", [(), (4, 64, 65)])
-def test_selector_prepares_same_four_weights_rejects_bad_candidate_and_continues(monkeypatch, boundaries):
+def test_selector_prepares_same_four_weights_rejects_bad_candidate_and_continues(monkeypatch, boundaries, error_type):
     ns, checks = selector(), load_dense()
     made, validated, captured, comparisons = [], [], [], []
     candidates = [{"name": "stock", "backend": "deepgemm", "config": None}, {"name": "bad", "backend": "triton", "config": None}, {"name": "fast", "backend": "triton", "config": None}]
@@ -401,7 +391,7 @@ def test_selector_prepares_same_four_weights_rejects_bad_candidate_and_continues
         assert values in made
         validated.append(candidate["name"])
         if candidate["name"] == "bad":
-            raise AssertionError("numeric mismatch")
+            raise error_type("candidate mismatch")
         return {"changed_input_graph_passed": True}
 
     def capture(_, calls):
@@ -420,7 +410,7 @@ def test_selector_prepares_same_four_weights_rejects_bad_candidate_and_continues
     assert validated == ["stock"] * (1 + len(boundaries)) + ["bad"] + ["fast"] * (1 + len(boundaries))
     assert captured == ["stock", "fast"] and set(result["graphs"]) == {"stock", "fast"}
     assert not result["results"]["bad"]["numeric_passed"]
-    assert "numeric mismatch" in result["results"]["bad"]["error"]
+    assert "candidate mismatch" in result["results"]["bad"]["error"]
     assert result["results"]["fast"]["numeric_passed"]
 
 

@@ -163,12 +163,10 @@ def prepare_projection(torch, checks, op, n, k, candidates, boundary_rows=()):
                     checks["dense_errors"](s[2], baseline.float())
                 graphs[candidate["name"]] = capture_graph(torch, calls)
             results[candidate["name"]] = {"numeric_passed": True, "numeric": metrics, "boundary_numeric": boundary_metrics, "blocks": [[] for _ in range(BLOCKS)], "prepare_seconds": time.monotonic() - begin}
-        except AssertionError as error:
-            # A numeric rejection is recoverable; CUDA/runtime/JIT errors are
-            # not swallowed because an unhealthy context must not start serving.
+        except Exception as error:
+            # Reject this candidate only; stock failures still abort the probe.
             if candidate["name"] == "stock":
                 raise
-            torch.cuda.synchronize()
             results[candidate["name"]] = {"numeric_passed": False, "error": str(error), "blocks": [[] for _ in range(BLOCKS)], "prepare_seconds": time.monotonic() - begin}
         print(json.dumps({"phase": "prepare", "rank": int(os.environ.get("LOCAL_RANK", "0")), "op": op, "candidate": candidate["name"], **results[candidate["name"]]}), flush=True)
     # Keep graph inputs alive across all round-robin blocks.
@@ -224,9 +222,18 @@ def run_selection(output, env_output):
         for block in range(BLOCKS):
             for name in round_robin(active, block):
                 dist.barrier()
-                samples = measure_graph(torch, prepared[op]["graphs"][name])
-                prepared[op]["results"][name]["blocks"][block].extend(samples)
-                print(json.dumps({"phase": "measure", "rank": rank, "op": op, "candidate": name, "block": block, **distribution(samples)}), flush=True)
+                entry = prepared[op]["results"][name]
+                if not entry["numeric_passed"]:
+                    continue
+                try:
+                    samples = measure_graph(torch, prepared[op]["graphs"][name])
+                    entry["blocks"][block].extend(samples)
+                    print(json.dumps({"phase": "measure", "rank": rank, "op": op, "candidate": name, "block": block, **distribution(samples)}), flush=True)
+                except Exception as error:
+                    if name == "stock":
+                        raise
+                    entry.update(numeric_passed=False, error=f"timing {type(error).__name__}: {error}")
+                    print(json.dumps({"phase": "candidate-rejected", "rank": rank, "op": op, "candidate": name, "error": entry["error"]}), flush=True)
     local["elapsed_seconds"] = time.monotonic() - begin
     dist.all_gather_object(all_records, local)
     if rank == 0:

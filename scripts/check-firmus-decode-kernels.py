@@ -406,80 +406,6 @@ def check_decode_router_padding():
     print("PASS: Decode Triton router exact weights/IDs; ties, extreme logits, zero/live padding and changed-input graph replay", flush=True)
 
 
-def check_decode_gate():
-    """Full BF16 gate vs cuBLAS/FP32; deterministic ties and graph replay."""
-    import importlib.util
-
-    if importlib.util.find_spec("sglang.kernels.ops.moe.decode_gate") is None:
-        print("SKIP: single-reduction Decode gate is not in this tree", flush=True)
-        return False
-    from sglang.kernels.ops.moe.decode_gate import decode_gate
-    from sglang.kernels.ops.moe.moe_fused_gate import moe_fused_gate
-
-    torch.manual_seed(61023)
-    for rows in (64, 65, 96, 127, 128, 129, 132, 136, 140, 144):
-        hidden = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16)
-        weight = torch.randn(128, 4096, device="cuda", dtype=torch.bfloat16) / 64
-        count = torch.tensor(rows - 3, device="cuda", dtype=torch.int32)
-
-        def route(logits):
-            return moe_fused_gate(logits, None, 8, scoring_func="softmax", renormalize=True, num_token_non_padded=count)
-
-        def compare(logits, weights, ids, label):
-            with dense_fp32_reference():
-                reference = hidden.float() @ weight.float().T
-            cublas = torch.nn.functional.linear(hidden, weight)
-            # FP32 summation order may differ; retain BF16 storage precision.
-            torch.testing.assert_close(logits.float(), reference, rtol=2**-7, atol=2**-10)
-            torch.testing.assert_close(logits.float(), cublas.float(), rtol=2**-7, atol=2**-10)
-            expected_weights, expected_ids = route(logits)
-            assert torch.equal(weights, expected_weights) and torch.equal(ids, expected_ids)
-            assert torch.all(ids[count.item():] == -1)
-            base_weights, base_ids = route(cublas)
-            # Near a BF16 rounding boundary, legal GEMM reordering can change
-            # the selected expert. Record it; ties with exact logits are strict.
-            mismatches = int((ids != base_ids).sum().item())
-            torch.testing.assert_close(weights, base_weights, rtol=0.02, atol=0.002)
-            print(json.dumps({"check": label, "max_abs_vs_fp32": (logits.float() - reference).abs().max().item(), "router_id_differences": mismatches}), flush=True)
-            return cublas, base_ids
-
-        logits = decode_gate(hidden, weight)
-        compare(logits, *route(logits), f"decode_gate_{rows}")
-        if rows in (64, 128, 144):
-            # Adjacent products cancel exactly in real arithmetic; this probes
-            # FP32 accumulation error around zero rather than only relative error.
-            hidden[:, 1::2] = -hidden[:, ::2]
-            weight[:, 1::2] = weight[:, ::2]
-            logits = decode_gate(hidden, weight)
-            compare(logits, *route(logits), f"decode_gate_cancellation_{rows}")
-        # One exact nonzero term per output, tied across all experts. Both
-        # cuBLAS and the new reduction must select lowest expert IDs identically.
-        weight.zero_()
-        weight[:, 0] = 1
-        logits = decode_gate(hidden, weight)
-        weights, ids = route(logits)
-        cublas, base_ids = compare(logits, weights, ids, f"decode_gate_ties_{rows}")
-        assert torch.equal(logits, cublas) and torch.equal(ids, base_ids)
-        assert torch.equal(ids[0], torch.arange(8, device="cuda", dtype=torch.int32))
-        if rows not in (64, 128, 129, 144):
-            continue
-        stream = torch.cuda.Stream()
-        stream.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(stream):
-            route(decode_gate(hidden, weight))
-        torch.cuda.current_stream().wait_stream(stream)
-        graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph):
-            graph_logits = decode_gate(hidden, weight)
-            graph_weights, graph_ids = route(graph_logits)
-        for replay, valid in enumerate((rows, 0, rows - 7)):
-            hidden.copy_(torch.randn_like(hidden) * (replay + 1))
-            weight.copy_(torch.randn_like(weight) / 64)
-            count.fill_(valid)
-            graph.replay()
-            compare(graph_logits, graph_weights, graph_ids, f"decode_gate_graph_{rows}_{replay}")
-    print("PASS: full BF16 gate, FP32 reference, exact ties, padding and changed-input/weight CUDA graph replay", flush=True)
-    return True
 
 
 def check_add_rmsnorm_group_quant():
@@ -745,6 +671,149 @@ def check_verify_scheduler_sharing():
     print("PASS: verify shared metadata, 94 layers, warmup/capture and changed-length/page replay across buckets", flush=True)
 
 
+# Companion verify helpers are shared by the numeric gate and job-local selector.
+FA3_VERIFY_NAMES = ("control96", "t64s2", "t64s3", "p128s2", "t64split2", "t64split3")
+
+
+def verify_inputs(batch, seed=93101, boundary=False):
+    generator = torch.Generator(device="cuda").manual_seed(seed)
+    lengths = ([4, 63, 64, 65, 95, 96, 97, 127, 128, 129] * 4)[:batch] if boundary else [3900 + (37 * i + 13) % 301 for i in range(batch)]
+    columns = (max(lengths) + 63) // 64
+    pages = batch * columns
+    dtype = torch.float8_e4m3fn
+
+    def values(shape):
+        return (torch.randn(shape, device="cuda", dtype=torch.bfloat16, generator=generator) * .5).to(dtype)
+
+    common = {"q": values((4 * batch, 64, 128)), "k_cache": values((pages, 64, 4, 128)), "v_cache": values((pages, 64, 4, 128)), "page_table": torch.randperm(pages, device="cuda", generator=generator).reshape(batch, columns).int(), "cache_seqlens": torch.tensor(lengths, device="cuda", dtype=torch.int32), "cu_seqlens_q": torch.arange(0, 4 * batch + 1, 4, device="cuda", dtype=torch.int32), "max_seqlen_q": 4, "softmax_scale": 128**-.5, "causal": True}
+    return common, lengths
+
+
+def verify_stock_metadata(common):
+    from sgl_kernel.flash_attn import get_scheduler_metadata
+
+    return get_scheduler_metadata(batch_size=common["cache_seqlens"].numel(), max_seqlen_q=4, max_seqlen_k=common["page_table"].shape[1] * 64, num_heads=64, num_heads_k=4, headdim=128, cache_seqlens=common["cache_seqlens"], qkv_dtype=common["q"].dtype, cu_seqlens_q=common["cu_seqlens_q"], page_size=64, causal=True, num_splits=1, pack_gqa=True)
+
+
+def verify_fp32_reference(common, lengths):
+    # Grouped Q heads avoid materializing 16 copies of the KV cache.
+    previous = torch.backends.cuda.matmul.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = False
+    try:
+        output = torch.empty_like(common["q"], dtype=torch.float32)
+        for batch, length in enumerate(lengths):
+            ids = common["page_table"][batch, :(length + 63) // 64].long()
+            k = common["k_cache"].view(torch.uint8)[ids].view(common["q"].dtype).reshape(-1, 4, 128)[:length].float()
+            v = common["v_cache"].view(torch.uint8)[ids].view(common["q"].dtype).reshape(-1, 4, 128)[:length].float()
+            q = common["q"][4 * batch:4 * batch + 4].float().reshape(4, 4, 16, 128)
+            scores = torch.einsum("qhgd,khd->hgqk", q, k) * common["softmax_scale"]
+            mask = torch.arange(length, device=q.device)[None, :] > length - 4 + torch.arange(4, device=q.device)[:, None]
+            scores.masked_fill_(mask[None, None], float("-inf"))
+            output[4 * batch:4 * batch + 4] = torch.einsum("hgqk,khd->qhgd", scores.softmax(-1), v).reshape(4, 64, 128)
+        return output
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = previous
+
+
+def verify_step(commons, name):
+    from sgl_kernel.flash_attn import flash_attn_with_kvcache
+    from sglang.srt.layers.attention import decode_fa3_verify as native
+
+    common = commons[0]
+    outputs = [torch.empty_like(c["q"], dtype=torch.bfloat16) for c in commons]
+    state = None if name == "stock" else native.allocate(common["cache_seqlens"], name)
+
+    def step():
+        if state is None:
+            metadata = verify_stock_metadata(common)
+        else:
+            native.prepare(state, common["cache_seqlens"], common["cu_seqlens_q"])
+        for layer in range(94):
+            c, out = commons[layer % len(commons)], outputs[layer % len(commons)]
+            if state is None:
+                flash_attn_with_kvcache(**c, out=out, scheduler_metadata=metadata, num_splits=1, pack_gqa=True)
+            else:
+                native.forward(state, c["q"], c["k_cache"], c["v_cache"], c["page_table"], c["cache_seqlens"], c["cu_seqlens_q"], c["softmax_scale"], out)
+        return outputs[93 % len(commons)]
+
+    step.output = outputs[93 % len(commons)]
+    step.state = state
+    return step
+
+
+def verify_capture(step):
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        step()
+    torch.cuda.current_stream().wait_stream(stream)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        step()
+    return graph
+
+
+def verify_errors(actual, expected, label):
+    assert actual.shape == expected.shape and actual.dtype == torch.bfloat16, label
+    assert actual.isfinite().all() and expected.isfinite().all(), label
+    a, b = actual.float(), expected.float()
+    error = a - b
+    l2 = (error.norm() / b.norm().clamp_min(1e-12)).item()
+    scaled = (error.abs().amax() / b.abs().amax().clamp_min(1e-12)).item()
+    result = {"relative_l2": l2, "max_scaled_error": scaled, "max_abs": error.abs().amax().item(), "rms": error.square().mean().sqrt().item()}
+    assert l2 <= .05 and scaled <= .25, (label, result)
+    return result
+
+
+def verify_validate_candidate(batch, name):
+    from sgl_kernel.flash_attn import flash_attn_with_kvcache
+
+    metrics = []
+    for boundary in (False, True):
+        common, lengths = verify_inputs(batch, 93101 + batch, boundary)
+        step = verify_step([common], name)
+        step()
+        stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
+        metrics.append({"boundary": boundary, "stock": verify_errors(step.output, stock, name), "fp32": verify_errors(step.output, verify_fp32_reference(common, lengths), name + "_fp32")})
+        graph = verify_capture(step)
+        for replay in range(2):
+            for key in ("q", "k_cache", "v_cache"):
+                tensor = common[key]
+                tensor.copy_((torch.randn(tensor.shape, device=tensor.device, dtype=torch.bfloat16) * (.25 + replay * .1)).to(tensor.dtype))
+            common["page_table"].copy_(common["page_table"].roll(1, 0))
+            lengths = [max(4, length - 1) for length in lengths]
+            common["cache_seqlens"].copy_(torch.tensor(lengths, device="cuda", dtype=torch.int32))
+            # cu_q is also live graph input; keep this fixed Q4 specialization valid.
+            common["cu_seqlens_q"].copy_(torch.arange(0, 4 * batch + 1, 4, device="cuda", dtype=torch.int32))
+            graph.replay()
+            stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
+            metrics.append({"boundary": boundary, "replay": replay, "stock": verify_errors(step.output, stock, name + "_changed94"), "fp32": verify_errors(step.output, verify_fp32_reference(common, lengths), name + "_changed_fp32")})
+            state = step.state
+            if state is not None and state["candidate"] >= 4:
+                splits = state["candidate"] - 2
+                for b, length in enumerate(lengths):
+                    blocks = (length + 63) // 64
+                    per_split = (blocks + splits - 1) // splits
+                    for split in range(splits):
+                        if split * per_split >= blocks:
+                            assert state["partial_lse"][split, :, 4 * b:4 * b + 4].isneginf().all(), "empty split LSE"
+                            assert (state["partial"][split, :, 4 * b:4 * b + 4] == 0).all(), "empty split O"
+    return {"numeric_passed": True, "metrics": metrics, "changed_input_replays": 2, "layers_per_replay": 94}
+
+
+def check_fa3_verify(selected_only=False):
+    selected = os.environ.get("SGLANG_DECODE_FA3_VERIFY", "")
+    if selected_only and not selected:
+        print("SKIP: no companion FA3 verify selected", flush=True)
+        return
+    names = (selected,) if selected_only else FA3_VERIFY_NAMES
+    for name in names:
+        assert name in FA3_VERIFY_NAMES
+        for batch in range(32, 37):
+            result = verify_validate_candidate(batch, name)
+            print(json.dumps({"check": "fa3_verify", "candidate": name, "batch": batch, **result}), flush=True)
+
+
 DENSE_PROJECTIONS = (("qkv", 9216, 4096), ("o", 4096, 8192))
 # (BM, BN, stages, multicast, multicast_on_A); one factor at a time where possible.
 DENSE_CONFIGS = {
@@ -760,7 +829,6 @@ def dense_candidates(op):
         candidates.append({"name": "dg-" + "-".join(map(str, config)), "backend": "deepgemm", "config": config})
     for bm, bn in ((64, 128), (128, 64 if op == "qkv" else 32)):
         candidates.append({"name": f"triton-{bm}-{bn}-128-s3-w4", "backend": "triton", "config": (bm, bn, 3, 4)})
-    candidates.append({"name": "flashinfer-sm90", "backend": "flashinfer", "config": None})
     return candidates
 
 
@@ -800,10 +868,6 @@ def dense_call(candidate, inputs):
         import deep_gemm
 
         return lambda: deep_gemm.fp8_gemm_nt(lhs, rhs, out)
-    if candidate["backend"] == "flashinfer":
-        from flashinfer.gemm import fp8_blockscale_gemm_sm90
-
-        return lambda: fp8_blockscale_gemm_sm90(a, b, sa, sb, out=out, out_dtype=torch.bfloat16)
     # Call the image's existing kernel directly: the public wrapper chooses a
     # JSON/default config and allocates output. No global config monkeypatching.
     from sglang.kernels.ops.quantization.fp8_kernel import _w8a8_block_fp8_matmul
@@ -946,6 +1010,7 @@ def check_dense_gemm(selected_only=False):
 if __name__ == "__main__":
     # Existing gates embed this file with run_path and retain their own argv.
     torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
+    check_fa3_verify(selected_only="--fa3-selected" in sys.argv[1:])
     check_dense_gemm(selected_only="--dense-selected" in sys.argv[1:])
     check_decode_silu_quant()
     check_rope_fp8_q()
@@ -953,8 +1018,6 @@ if __name__ == "__main__":
     check_rope_fp8_kv()
     check_topk_mask()
     check_decode_router_padding()
-    if os.environ.get("SGLANG_DECODE_GATE_GEMM") == "triton":
-        check_decode_gate()
     check_add_rmsnorm_group_quant()
     check_prefill_attention()
     check_verify_scheduler_sharing()

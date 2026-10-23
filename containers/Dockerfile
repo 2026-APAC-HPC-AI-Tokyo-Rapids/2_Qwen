@@ -35,6 +35,10 @@ COPY deep-gemm /opt/apac/deep-gemm
 COPY containers/build-sm90-megamoe.py /opt/apac/build-sm90-megamoe.py
 RUN /opt/sglang/venv/bin/python /opt/apac/build-sm90-megamoe.py
 
+COPY containers/fa3-verify /opt/apac/fa3-verify
+COPY containers/build-fa3-verify.sh /opt/apac/build-fa3-verify.sh
+RUN /opt/apac/build-fa3-verify.sh && rm /opt/apac/build-fa3-verify.sh
+
 COPY sglang-source /opt/sglang/source
 COPY sglang-commit.txt /opt/sglang/sglang-commit.txt
 COPY containers/install-sglang-source.sh /opt/apac/install-sglang-source.sh

@@ -97,6 +97,8 @@ python3 "${GITHUB_WORKSPACE}/scripts/check-firmus-tier2-source.py" "${source_dir
 cp "${GITHUB_WORKSPACE}/containers/Dockerfile" "${GITHUB_WORKSPACE}/containers/build-nccl-tests.sh" "${GITHUB_WORKSPACE}/containers/install-accelerator-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-python-dependencies.sh" "${GITHUB_WORKSPACE}/containers/install-sglang-source.sh" "${GITHUB_WORKSPACE}/containers/install-system-toolchain.sh" "${context}/containers/"
 cp --no-preserve=ownership,xattr "${source_dir}/LICENSE" "${source_dir}/README.md" "${source_dir}/python/pyproject.toml" "${context}/sglang-project-metadata/python/"
 cp -a --no-preserve=ownership,xattr "${source_dir}" "${context}/sglang-source"
+cp -r "${GITHUB_WORKSPACE}/containers/fa3-verify" "${context}/containers/fa3-verify"
+cp "${GITHUB_WORKSPACE}/containers/build-fa3-verify.sh" "${context}/containers/"
 cp "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.sh" "${GITHUB_WORKSPACE}/containers/build-prefill-moe-routing.py" "${context}/containers/"
 install -d "${context}/prefill-moe-routing"
 cp "${GITHUB_WORKSPACE}/kernels/prefill/moe_routing.cu" "${context}/prefill-moe-routing/"

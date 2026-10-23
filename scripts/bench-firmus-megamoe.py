@@ -42,7 +42,6 @@ are instantaneous and flag throttled cases; they are too noisy to normalize by.
 With --reference (another variant's bench.jsonl), rows carry the reference
 median and whether the output hash matches it; the caller judges mismatches.
 
---tune-l2-prefetch writes one JSON result for the pre-serving Decode probe.
 It requires --decode-routing JSON with source.phase ("decode", or
 "prefill-proxy" for measured Prefill frequencies while no Decode dump exists),
 source.run_id and layers[{layer, counts[128], physical_to_logical_map[128]}].
@@ -61,7 +60,6 @@ import hashlib
 import json
 import os
 import statistics
-import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -82,8 +80,6 @@ TIMELINE_MAGIC = 0x314C544D4F45474D
 TIMELINE_EXTRA_BYTES = 1 << 20
 TIMELINE_CALLS = 8
 WARMUP, ITERATIONS = 5, 30
-L2_PREFETCH_ENV = "DG_SM90_DECODE_L2_PREFETCH_STAGES"
-L2_PREFETCH_STAGES = (0, 8, 16)
 HBM_READ_BYTES = 128 << 20
 CASES = [("decode", "balanced", n) for n in (4, 16, 32, 64, 96, 128)] + [("decode", "local", 128)]
 CASES += [("prefill", "balanced", n) for n in (1024, 2048, 4096)] + [("prefill", "local", 4096), ("prefill", "skew", 4096)]
@@ -190,42 +186,8 @@ def sample_summary(samples):
     return {"median_us": statistics.median(ordered), "p10_us": ordered[int(0.1 * (len(ordered) - 1))], "p90_us": ordered[round(0.9 * (len(ordered) - 1))], "rank_max_us": samples}
 
 
-def select_l2_prefetch(cases, min_gain_us=2.13):
-    """Require >=0.2 ms/94 layers in every case and improvement in both blocks."""
-    candidates = []
-    gains = {}
-    for stages in (8, 16):
-        case_gains = []
-        eligible = bool(cases)
-        for case in cases:
-            rows = {row["stages"]: row for row in case["measurements"] if row["cache"] == "cold"}
-            control, candidate = rows[0], rows[stages]
-            gain = control["median_us"] - candidate["median_us"]
-            case_gains.append(gain)
-            eligible &= gain >= min_gain_us and all(a["median_us"] > b["median_us"] for a, b in zip(control["blocks"], candidate["blocks"], strict=True))
-        gains[str(stages)] = case_gains
-        if eligible:
-            candidates.append((min(case_gains), -stages, stages))
-    selected = max(candidates)[2] if candidates else 0
-    return {"selected_stages": selected, "min_gain_us": min_gain_us, "per_case_gain_us": gains, "rule": "gain >= threshold in every cold case; both blocks faster; maximize worst-case gain; ties prefer 8"}
 
 
-def load_decode_routing(path):
-    """Measured logical-expert counts. No Decode dump exists yet, so the serving
-    job passes the measured Prefill frequencies (REAL_ROUTING_LAYERS) labelled
-    phase="prefill-proxy"; the label is carried into the result JSON."""
-    data = json.loads(path.read_text())
-    assert data["source"]["phase"] in ("decode", "prefill-proxy") and data["source"]["run_id"]
-    assert data["layers"]
-    seen = set()
-    for layer in data["layers"]:
-        assert layer["layer"] not in seen
-        seen.add(layer["layer"])
-        counts = layer["counts"]
-        assert len(counts) == NUM_EXPERTS and all(type(n) is int and n >= 0 for n in counts)
-        assert sum(n > 0 for n in counts) >= TOPK
-        assert sorted(layer["physical_to_logical_map"]) == list(range(NUM_EXPERTS))
-    return data
 
 
 @triton.jit
@@ -271,121 +233,6 @@ def hbm_reference(read, data, checksum, device):
     return {**sample_summary(samples.tolist()), "read_bytes": HBM_READ_BYTES, "sm_clock_mhz_before": [x.item() for x in clocks_before], "sm_clock_mhz_after": [x.item() for x in clocks_after]}
 
 
-def tune_l2_prefetch(args, device, read, read_data, checksum, clock_start):
-    started = time.monotonic()
-    host_record = json.loads(Path("/opt/apac/deep-gemm-host-build.json").read_text())
-    host_patch_sha = host_record["patches"]["sm90-decode-l2-prefetch.patch"]
-    routing_data = load_decode_routing(args.decode_routing)
-    count = 128
-    cases = [{"name": "decode-balanced-128", "layer": None}, *[{"name": f"decode-measured-layer{row['layer']}-128", **row} for row in routing_data["layers"]]]
-    buf, _ = bench_symm_buffer(dist.group.WORLD)
-    results = []
-    previous_env = os.environ.get(L2_PREFETCH_ENV)
-    try:
-        for case in cases:
-            generator = torch.Generator(device=device).manual_seed(28000 + RANK + (0 if case["layer"] is None else case["layer"] * NUM_RANKS))
-            hidden = (torch.randn(count, HIDDEN, generator=generator, dtype=torch.bfloat16, device=device) * 0.25).contiguous()
-            mapping = list(range(NUM_EXPERTS)) if case["layer"] is None else case["physical_to_logical_map"]
-            w13, w2, s13, s2 = replica_weights(RANK, device, mapping)
-            l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
-            if case["layer"] is None:
-                top_ids, top_weights = routing("balanced", count, generator, device)
-            else:
-                logits = torch.tensor(case["counts"], device=device, dtype=torch.float64).log()
-                uniform = torch.rand(count, NUM_EXPERTS, generator=generator, device=device, dtype=torch.float64).clamp_min(1e-20)
-                logical_ids = (logits - (-uniform.log()).log()).topk(TOPK, dim=1).indices
-                inverse = torch.tensor([mapping.index(expert) for expert in range(NUM_EXPERTS)], device=device, dtype=torch.int32)
-                top_ids = inverse[logical_ids].contiguous()
-                top_weights = torch.rand(count, TOPK, generator=generator, device=device)
-                top_weights = (top_weights / top_weights.sum(-1, keepdim=True)).contiguous()
-            actual = torch.empty(count, HIDDEN, dtype=torch.bfloat16, device=device)
-
-            def pre_dispatch(hidden=hidden, top_ids=top_ids, top_weights=top_weights, buf=buf, count=count):
-                deep_gemm.mega_moe_pre_dispatch_sm90(hidden, top_ids, top_weights, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, num_tokens=count, group_size=128, routed_scaling_factor=1.0)
-
-            def moe(actual=actual, l1=l1, l2=l2, buf=buf):
-                deep_gemm.fp8_mega_moe(actual, l1, l2, buf, recipe=(128, 128, 128), activation="swiglu", fast_math=True)
-
-            graphs = {}
-            expected = None
-            for stages in L2_PREFETCH_STAGES:
-                os.environ[L2_PREFETCH_ENV] = str(stages)
-                for _ in range(WARMUP):
-                    pre_dispatch()
-                    moe()
-                torch.cuda.synchronize()
-                assert torch.isfinite(actual).all(), (case["name"], stages)
-                if expected is None:
-                    expected = actual.clone()
-                else:
-                    assert torch.equal(expected, actual), (case["name"], stages, "prefetch changed output")
-                for cache in ("warm", "cold"):
-                    start, end = (torch.cuda.Event(enable_timing=True, external=True) for _ in range(2))
-                    graph = torch.cuda.CUDAGraph()
-                    dist.barrier()
-                    with torch.cuda.graph(graph):
-                        if cache == "cold":
-                            read()
-                        pre_dispatch()
-                        start.record()
-                        moe()
-                        end.record()
-                    graphs[stages, cache] = (graph, start, end)
-                    for _ in range(WARMUP):
-                        graph.replay()
-                    torch.cuda.synchronize()
-            samples = {(stages, cache): [] for stages in L2_PREFETCH_STAGES for cache in ("warm", "cold")}
-            for block in range(2):
-                for cache in ("warm", "cold"):
-                    block_samples = {stages: [] for stages in L2_PREFETCH_STAGES}
-                    if cache == "warm":
-                        # Continuous same-variant replays retain the original bench mode.
-                        for stages in L2_PREFETCH_STAGES:
-                            graph, _, _ = graphs[stages, cache]
-                            events = [(torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)) for _ in range(ITERATIONS)]
-                            dist.barrier()
-                            for start, end in events:
-                                start.record()
-                                graph.replay()
-                                end.record()
-                            torch.cuda.synchronize()
-                            block_samples[stages] = [a.elapsed_time(b) * 1000 for a, b in events]
-                    else:
-                        # Capture fixes each native JIT kernel; replay order is ABCABC...
-                        for _ in range(ITERATIONS):
-                            for stages in L2_PREFETCH_STAGES:
-                                graph, start, end = graphs[stages, cache]
-                                dist.barrier()
-                                graph.replay()
-                                end.synchronize()
-                                block_samples[stages].append(start.elapsed_time(end) * 1000)
-                                assert torch.equal(expected, actual), (case["name"], stages, block)
-                    for stages in L2_PREFETCH_STAGES:
-                        durations = torch.tensor(block_samples[stages], device=device)
-                        dist.all_reduce(durations, op=dist.ReduceOp.MAX)
-                        samples[stages, cache].append(sample_summary(durations.tolist()))
-            measurements = []
-            for (stages, cache), blocks in samples.items():
-                combined = [value for block in blocks for value in block["rank_max_us"]]
-                spread = abs(blocks[0]["median_us"] - blocks[1]["median_us"])
-                measurements.append({"stages": stages, "cache": cache, **sample_summary(combined), "blocks": blocks, "block_median_spread_us": spread, "timed_region": "MegaMoE" if cache == "cold" else "pre_dispatch+MegaMoE graph replay"})
-            assert checksum.long().sum().item() == read_data.numel()
-            loads = torch.zeros(NUM_EXPERTS, dtype=torch.int64, device=device)
-            for ids in gather(top_ids):
-                loads += torch.bincount(ids.flatten().long(), minlength=NUM_EXPERTS)
-            seeds = [28000 + rank + (0 if case["layer"] is None else case["layer"] * NUM_RANKS) for rank in range(NUM_RANKS)]
-            results.append({"case": case["name"], "tokens_per_rank": count, "physical_experts": NUM_EXPERTS, "experts_per_rank": 32, "replicas": 0, "routing_method": "uniform-top8" if case["layer"] is None else "gumbel-top8-without-replacement-from-decode-counts", "routing_seed_per_rank": seeds, "sampled_expert_recv_pairs": loads.tolist(), "routing_sha256": output_digest(top_ids, count), "output_sha256": output_digest(actual, count), "measurements": measurements})
-    finally:
-        if previous_env is None:
-            os.environ.pop(L2_PREFETCH_ENV, None)
-        else:
-            os.environ[L2_PREFETCH_ENV] = previous_env
-    clock_end = hbm_reference(read, read_data, checksum, device)
-    selection = select_l2_prefetch(results)
-    result = {"schema_version": "decode-l2-prefetch-probe/v1", **selection, "env": {L2_PREFETCH_ENV: str(selection["selected_stages"])}, "host": {"source_commit": host_record["source_commit"], "extension_sha256": host_record["extension_sha256"], "prefetch_patch_sha256": host_patch_sha}, "warmup": WARMUP, "blocks": 2, "iterations_per_block": ITERATIONS, "cold_read_bytes": HBM_READ_BYTES, "cold_order": list(L2_PREFETCH_STAGES), "routing_source": routing_data["source"], "routing_file_sha256": hashlib.sha256(args.decode_routing.read_bytes()).hexdigest(), "clock_reference_start": clock_start, "clock_reference_end": clock_end, "clock_reference_ratio": clock_end["median_us"] / clock_start["median_us"], "elapsed_s": time.monotonic() - started, "cases": results}
-    if RANK == 0:
-        args.output.write_text(json.dumps(result, indent=2) + "\n")
-        print(json.dumps({"output": str(args.output), "selected_stages": selection["selected_stages"], "elapsed_s": result["elapsed_s"]}), flush=True)
 
 
 def main():
@@ -395,11 +242,7 @@ def main():
     parser.add_argument("--scratch", type=Path, required=True)
     parser.add_argument("--timeline-dir", type=Path)
     parser.add_argument("--reference", type=Path)
-    parser.add_argument("--tune-l2-prefetch", action="store_true")
-    parser.add_argument("--decode-routing", type=Path)
     args = parser.parse_args()
-    if args.tune_l2_prefetch and (args.decode_routing is None or args.timeline_dir is not None):
-        parser.error("--tune-l2-prefetch requires --decode-routing and excludes --timeline-dir")
     timeline = args.timeline_dir is not None
     torch.cuda.set_device(RANK)
     assert torch.cuda.get_device_capability() == (9, 0)
@@ -412,10 +255,6 @@ def main():
         print(json.dumps({"deep_gemm": deep_gemm.__file__, "variant": args.variant, "timeline": timeline}), flush=True)
     read, read_data, checksum = make_hbm_read(device)
     clock_start = hbm_reference(read, read_data, checksum, device)
-    if args.tune_l2_prefetch:
-        tune_l2_prefetch(args, device, read, read_data, checksum, clock_start)
-        dist.destroy_process_group()
-        return
     torch.manual_seed(713 + RANK)
     w13 = (torch.randn(32, 3072, 4096, dtype=torch.bfloat16, device=device) * 4).to(torch.float8_e4m3fn)
     w2 = (torch.randn(32, 4096, 1536, dtype=torch.bfloat16, device=device) * 4).to(torch.float8_e4m3fn)
