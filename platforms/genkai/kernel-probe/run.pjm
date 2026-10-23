@@ -1,0 +1,19 @@
+#!/bin/bash
+#PJM -L rscgrp=b-batch
+#PJM -L gpu=1
+#PJM -L elapse=00:03:00
+#PJM -j
+#PJM -s
+set -euo pipefail
+: "${RUNTIME_DIR:?}"
+cd "${RUNTIME_DIR}"
+trap 'status=$?; printf "%s\n" "$status" > results/exit-code' EXIT
+module load cuda/12.9.1
+date -u
+cat source/provenance.json
+for trial in 1 2 3; do
+  printf 'trial=%s\n' "${trial}"
+  timeout 30 ./source/probe | tee "results/trial-${trial}.log"
+done
+touch run-success
+date -u
