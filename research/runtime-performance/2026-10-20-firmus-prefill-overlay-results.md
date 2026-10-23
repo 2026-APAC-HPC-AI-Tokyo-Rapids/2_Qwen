@@ -312,3 +312,17 @@ decode-0 の kernel-summary を、MegaMoE の 1 呼び出し（＝ 1 層）あ�
 | 合計（上位 kernel） | 338.4 | 334.5 | 約 −0.37 ms/step（31.81 → 31.44 ms） |
 
 score は main 比 +1.5%、同じ構成の参照（39550627795）比 +1.4%。step の短縮（−1.2%）に、ITL p99 と TTFT p99 の改善が加わった。B5 は Decode の M=128 では逆効果なので使わない。B1 は効果が見えないが、Decode の SwapAB 経路にだけ効く overlay で害もないため、まとめて残す。
+
+## Decode round 2：job 内の比較計測（serving [39881882325](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39881882325)、bb91047、image 39875650446）：8501.98、どの候補も選ばれず
+
+branch perf/firmus-decode-r2-20261023。build（5451914、run 39875650446）で DeepGEMM host に Decode 用の dense GEMM config 指定（`DG_SM90_1D2D_DECODE_CONFIG`）と MegaMoE の L2 先読み stage 数（`DG_SM90_DECODE_L2_PREFETCH_STAGES`）を足した。serving の job の中で、モデル起動前に 4 GPU で候補と現行を交互に測り、明確に速いものだけを Decode に渡す形にした（17 分の上限に収めるため、gate と Prefill の起動に重ねた。profile なし）。結果は `results/decode-selection/`。
+
+| 候補 | 結果 | 判断 |
+| --- | --- | --- |
+| router の gate GEMM を Triton 1 kernel に（cuBLAS split-K 6.9 µs/層の置き換え） | 94 層で **+314〜318 µs 遅い**（全 4 GPU、2 ブロックとも）。数値検査は通過 | 不採用 |
+| MegaMoE の L2 先読み（最初の FC1 block、K8 以降 8/16 stage） | cold-L2、balanced と実 routing 代用 3 層で、8 stage は **+1.8〜3.7 µs/層 遅い**、16 stage は +2.7〜7.6 µs 遅い。無効時 203.7 µs | 不採用 |
+| dense GEMM（DeepGEMM 8 config、Triton 2、FlashInfer 1） | DeepGEMM と Triton の全候補は数値検査を通過。FlashInfer 候補が TensorRT-LLM の JIT cache（`~/.tensorrt_llm`、BeeGFS 上）の rename に失敗し、selector 全体が停止して**計測なし** | 未判定 |
+
+score は 8501.98（ITL 14.35 / 16.72 ms、TTFT p99 3411 ms）。どの候補も選ばれていないので、構成は main（3642c64）と同じであり、8481.99 との差は run 間の揺れ（+0.2%）として扱う。READY は 437 s（前回 439 s）で、選択の重ね合わせは起動を遅らせなかった。
+
+L2 先読みは、token の dispatch を待つ間の HBM の空きを使う狙いだったが、実際には遅くなった。先読みが dispatch の通信や最初の stage の通常 load と競合しているか、L2 に残らないと見られる（未確認）。Decode MegaMoE の残り（約 200 µs/層、下限 約 126 µs）を縮めるには、別の手が要る。dense GEMM は FlashInfer 候補を外し、候補ごとの失敗で selector を止めない形にすれば、次の serving で同じ仕組みのまま測れる。
