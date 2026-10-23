@@ -166,3 +166,16 @@ C branchは `c49bc67` で実成果物をpinした。Firmus login CPUで実 `chec
 - 126 µs への到達とは遠く、C の効果も 2.3% にとどまる。
 
 C を serving（image 39932105942、Decode worker と serving gate に `DG_SM90_DECODE_INDEPENDENT_WG=1`、header patch を `deep_gemm_overlay_patches` の末尾に追加）で確認する。
+
+## serving での確認（run [39950338791](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39950338791)、c86356d、image 39932105942）：**8682.63**、採用
+
+C（independent WG）を Decode worker と serving gate で有効にした。他は main b165d1d と同じ。job 内の選択は前回と同じく FA3 p128s2、QKV BM128/BN80。job 11:24。
+
+| | main（39901974117） | **C（39950338791）** |
+| --- | ---: | ---: |
+| score | 8576.66 | **8682.63（+1.2%）** |
+| ITL 平均 / p99 | 14.20 / 16.48 ms | **13.98 / 16.30 ms** |
+| TTFT p99 | 3410 ms | 3407 ms |
+| good fraction | 98.64% | 98.64% |
+
+ITL の短縮（−1.6%）は kernel bench の −4.4 µs/層（約 −0.41 ms/step、−1.3%）と合う。
