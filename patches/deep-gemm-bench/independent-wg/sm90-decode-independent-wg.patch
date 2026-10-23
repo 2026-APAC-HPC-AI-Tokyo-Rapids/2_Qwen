@@ -1,7 +1,7 @@
 diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 --- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 +++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-@@ -357,6 +357,13 @@
+@@ -357,6 +357,14 @@
      // =====================================================================
      using a_dtype_t = cutlass::float_e4m3_t;
      using b_dtype_t = cutlass::float_e4m3_t;
@@ -11,11 +11,12 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
 +    constexpr uint32_t kTaskQueues = kIndependentWG ? 2 : 1;
 +    constexpr uint32_t kQueueStages = kIndependentWG ? 3 : kNumStages;
 +    DG_STATIC_ASSERT(not kIndependentWG or (kNumDispatchThreads == 64 and kNumNonEpilogueThreads == 64), "Independent WG requires two dispatch and two load warps");
++    DG_STATIC_ASSERT(not kIndependentWG or (not kSplitPhaseHotPath and not kL2ArrivalCounter and not kReuseAccumAsFinal), "Independent WG requires dynamic Decode scheduling, mask arrivals and explicit accumulators");
 +    const uint32_t task_queue = kIndependentWG ? (warp_idx < 4 ? warp_idx % 2 : (warp_idx - 4) / 4) : 0;
      constexpr bool kSplitNWarpgroups =
          BLOCK_M == 64 and kNumEpilogueWarpgroups > 1 and
          BLOCK_N % kNumEpilogueWarpgroups == 0 and
-@@ -368,7 +375,7 @@
+@@ -368,7 +376,7 @@
      constexpr uint32_t kWarpgroupSplitN = kSplitNWarpgroups ? kNumEpilogueWarpgroups :
          (kSplitMNWarpgroups ? 2 : 1);
      constexpr uint32_t WG_BLOCK_M = BLOCK_M / kWarpgroupSplitM;
@@ -24,7 +25,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
      constexpr uint32_t kNumCombineWarps = kNumEpilogueWarps;
      using L1WGMMA   = typename mma::sm90::FP8MMASelector<WG_BLOCK_N>::type;  // M=64, N=WG_BLOCK_N, K=32
      using L2WGMMA   = typename mma::sm90::FP8MMASelector<WG_BLOCK_N>::type;
-@@ -455,9 +462,11 @@
+@@ -455,9 +463,11 @@
          kSwapABActive ? (SMEM_CD_SWAP_L1_FP32_SIZE + SMEM_CD_SWAP_L1_FP8_SIZE) : 0;
      constexpr uint32_t SMEM_CD_BASE_SIZE =
          SMEM_CD_L1_SIZE > SMEM_CD_L2_SIZE ? SMEM_CD_L1_SIZE : SMEM_CD_L2_SIZE;
@@ -37,7 +38,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
 
      constexpr uint32_t SMEM_BEFORE_BARRIER_SIZE =
          SMEM_EXPERT_COUNT_SIZE + SMEM_SEND_BUFFER_SIZE + SMEM_CD_SIZE +
-@@ -495,11 +504,11 @@
+@@ -495,11 +505,11 @@
      constexpr uint32_t kDecodeRingDepth = 4;
      constexpr uint32_t kDecodeRingOffset = 768;
      DG_STATIC_ASSERT(not kDecodeTail or (kNumExperts * sizeof(uint32_t) + 128 <= kDecodeRingOffset and
@@ -51,7 +52,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
      const auto smem_send_buffers = layout::Buffer(
          fp8_token_layout, kNumDispatchWarps, 1,
          math::advance_ptr(smem_buffer, SMEM_EXPERT_COUNT_SIZE));
-@@ -508,11 +517,12 @@
+@@ -508,11 +518,12 @@
          smem_buffer, SMEM_EXPERT_COUNT_SIZE + SMEM_SEND_BUFFER_SIZE);
 
      // CD output is shared by L1 (FP8) and L2 (BF16); reinterpret-cast as needed.
@@ -68,7 +69,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
 
      auto smem_a = utils::PatternVisitor([=](const uint32_t& i) {
          return math::advance_ptr<a_dtype_t>(smem_gemm_base, SMEM_CD_SIZE + i * SMEM_A_SIZE_PER_STAGE);
-@@ -548,11 +558,11 @@
+@@ -548,11 +559,11 @@
          for (uint32_t i = lane_idx; i < kNumDispatchWarps; i += 32)
              dispatch_barriers[i]->init(1);
          if constexpr (kDecodeTail) {
@@ -84,7 +85,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
              }
          }
          cutlass::arch::fence_barrier_init();
-@@ -561,11 +571,11 @@
+@@ -561,11 +572,11 @@
          if (cute::elect_one_sync()) {
              #pragma unroll
              for (uint32_t i = 0; i < kNumStages; ++ i) {
@@ -100,7 +101,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
              }
              #pragma unroll
              for (uint32_t i = 0; i < kNumCombineWarps * 2; ++ i)
-@@ -602,11 +612,11 @@
+@@ -602,11 +613,11 @@
          layout::SM90Workspace>(workspace);
 
      // Pipeline state shared by TMA loaders and math warpgroups
@@ -115,7 +116,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
      };
 
      // Decode: dynamic block assignment. The static scheduler hands CTA i the blocks i,
-@@ -620,7 +630,9 @@
+@@ -620,7 +631,9 @@
      // scheduler's own (FC1 blocks of a wave, then its FC2 blocks), a CTA's claims only grow,
      // and every block waits only on blocks with smaller indices, so the order is
      // deadlock-free. A block's arithmetic does not depend on which CTA runs it.
@@ -126,7 +127,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
          scheduler.fetch_expert_recv_count();
          scheduler.set_expert_idx(0);
          while (true) {
-@@ -637,7 +649,9 @@
+@@ -637,7 +650,9 @@
                  next_delta = next_block_delta();
              func(block_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
              // `get_next_block` already advanced by kNumSMs; the ring carries the remaining
@@ -137,7 +138,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
              if constexpr (not kClaimAhead)
                  next_delta = next_block_delta();
              scheduler.block_idx += next_delta;
-@@ -645,13 +659,13 @@
+@@ -645,13 +660,13 @@
      };
      // Ring position: slot = iteration % depth, phase parity = (iteration / depth) % 2.
      uint32_t decode_ring_iter = 0;
@@ -154,7 +155,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
              ptx::st_shared(decode_ring_slots + slot, next_global_block_idx - decode_global_block_idx - kNumSMs);
              (decode_ring_full + slot)->arrive();
          }
-@@ -662,7 +676,7 @@
+@@ -662,7 +677,7 @@
          return delta;
      };
      auto decode_receive_block = [&]() {
@@ -163,7 +164,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
          (decode_ring_full + slot)->wait((decode_ring_iter / kDecodeRingDepth) & 1);
          const uint32_t delta = ptx::ld_shared(decode_ring_slots + slot);
          // Every reading thread releases the slot itself (no lane predicate to keep live).
-@@ -1030,6 +1044,36 @@
+@@ -1030,6 +1045,36 @@
      //   Warps inside `kNumNonEpilogueThreads`: warp 0 loads A + SFA,
      //   warp 1 loads B.
      // =====================================================================
@@ -200,7 +201,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
      } else if (warp_idx == kNumDispatchWarps) {
          cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
 
-@@ -1312,19 +1356,19 @@
+@@ -1312,19 +1357,19 @@
          auto process_math_block = [&](const auto& block_phase,
                                        const uint32_t& local_expert_idx,
                                        const uint32_t& num_k_blocks,
@@ -224,7 +225,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                  : (n_block_idx * kWarpgroupSplitN + epilogue_wg_n_idx);
              const uint32_t smem_a_wg_offset = epilogue_wg_m_idx * WG_BLOCK_M * BLOCK_K;
              const uint32_t smem_b_wg_offset = epilogue_wg_n_idx * WG_BLOCK_N * BLOCK_K;
-@@ -1333,7 +1377,7 @@
+@@ -1333,7 +1378,7 @@
              // WG owns a disjoint contiguous WG_BLOCK_M x WG_L1_OUT_BLOCK_N slice.
              const uint32_t smem_cd_l1_wg_offset = kSplitNSharesSF ? wg_l1_out_n_offset
                  : (epilogue_wg_idx * WG_BLOCK_M * WG_L1_OUT_BLOCK_N);
@@ -233,7 +234,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
              const bool valid_r0 = row_offset_r0 < valid_m;
              const bool valid_r1 = row_offset_r1 < valid_m;
 
-@@ -1922,7 +1966,7 @@
+@@ -1922,7 +1967,7 @@
                  const float* l1_up_sf = l1_gate_sf + kL1SFGateBlks * kL1SFKBlocks;
                  const float* l2_sf_row = l2_weights_sf + local_expert_idx * kL2SFPerExpert + sf_n_block_idx * kL2SFKBlocks;
 
@@ -242,7 +243,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                      using SwapWGMMA = typename mma::sm90::FP8MMASelector<N_SWAP>::type;
                      constexpr uint32_t kSwapAccum = SwapWGMMA::kNumAccum;
                      float swap_accum[kSwapAccum], swap_accum_hi[kSwapAccum];
-@@ -1933,13 +1977,13 @@
+@@ -1933,13 +1978,13 @@
                              ptx::warpgroup_fence_operand(acc[i]);
                      };
                      // One WGMMA group over K [k_offset, k_offset + kNumK * 32) of the stage.
@@ -258,7 +259,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                              auto desc_b = mma::sm90::make_smem_desc(
                                  smem_a[stage_idx] + k_offset + k * SwapWGMMA::K, 1);
                              SwapWGMMA::wgmma(desc_a, desc_b, acc, k);
-@@ -1950,18 +1994,18 @@
+@@ -1950,18 +1995,18 @@
                      // Accumulator rows r0 (.x/.y) and r0 + 8 (.z/.w) take weight scales
                      // sf_0 and sf_1 (L1: gate and up); columns are tokens with per-token
                      // activation scales from `sfa`.
@@ -284,7 +285,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                          }
                      };
 
-@@ -1970,9 +2014,12 @@
+@@ -1970,9 +2015,12 @@
                              const float gate_sf = __ldg(l1_gate_sf + k_block_idx);
                              const float up_sf = __ldg(l1_up_sf + k_block_idx);
                              full_barriers[stage_idx]->wait(phase);
@@ -300,7 +301,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                              if (lane_idx == 0)
                                  empty_barriers[stage_idx]->arrive();
                          }
-@@ -1982,12 +2029,15 @@
+@@ -1982,12 +2030,15 @@
                          for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
                              const float l2_sf = __ldg(l2_sf_row + k_block_idx);
                              full_barriers[stage_idx]->wait(phase);
@@ -322,7 +323,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                              if (lane_idx == 0)
                                  empty_barriers[stage_idx]->arrive();
                          }
-@@ -2203,21 +2253,21 @@
+@@ -2203,21 +2254,21 @@
                      auto swap_l1_swizzle = [](const uint32_t& token) { return ((token >> 1) & 3u) << 3; };
                      const uint32_t out_col_base =
                          wg_l1_out_n_offset + warp_idx_in_wg * 8 + row_idx;
@@ -350,7 +351,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                              clamp_gate(g1);
                              clamp_up(u1);
                              smem_cd_swap_l1_fp32[token_1 * L1_OUT_BLOCK_N + smem_col] =
-@@ -2226,16 +2276,19 @@
+@@ -2226,16 +2277,19 @@
                      };
 
                      const uint32_t num_swap_token_chunks = (valid_m + 7u) / 8u;
@@ -380,7 +381,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
 
                      // Per-token amax over the 64-wide SF group and FP8 quantization, with four
                      // threads per token so that all 256 threads take part: each thread loads 16
-@@ -2244,8 +2297,9 @@
+@@ -2244,8 +2298,9 @@
                      // maxima with two XOR shuffles (max is exact, so the amax is the same), and
                      // every value is scaled and converted exactly as before.
                      DG_STATIC_ASSERT(BLOCK_M * 4 == kNumEpilogueThreads, "swapAB L1 quantizer uses four threads per token");
@@ -392,7 +393,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                          const uint32_t quad_idx = epilogue_thread_idx % 4;
                          const uint32_t slot_rotation = (token + 1) / 2;
                          const bool valid_token = token < valid_m;
-@@ -2290,14 +2344,14 @@
+@@ -2290,14 +2345,14 @@
                          }
                      }
 
@@ -409,7 +410,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                              cute::tma_store_fence();
                              cute::SM90_TMA_STORE_2D::copy(
                                  &tensor_map_l1_output,
-@@ -2332,7 +2386,7 @@
+@@ -2332,7 +2387,7 @@
                          }
                      } else {
                          ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
@@ -418,7 +419,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                              ptx::red_or_rel_gpu(
                                  workspace.get_l2_arrival_mask_ptr(pool_block_idx),
                                  1ull << n_block_idx);
-@@ -2730,26 +2784,29 @@
+@@ -2730,26 +2785,29 @@
                              __float2bfloat16_rn(value);
                      };
 
@@ -459,7 +460,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                          }
                      }
                  } else {
-@@ -2862,7 +2919,9 @@
+@@ -2862,7 +2920,9 @@
                  }
                  }
 

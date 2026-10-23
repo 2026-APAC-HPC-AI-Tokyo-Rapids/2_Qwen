@@ -55,3 +55,21 @@ host patchを`patches/deep-gemm-host/series`へ追加したため、opt-in使用
 build helperはcompile failure、WGMMA直列化、opt-outのDecode/Prefill SASS変化では失敗する。spill量はJSONとwarningへ残し、`spill_zero_target_met=false`、`gpu_validated=false`を記録する。**sourceがcompile可能であることとspill 0の性能目標を分け、新image構築そのものはspillだけでは失敗させない。** この仕組みは性能採用の承認を意味しない。
 
 次に実行が許可された場合は、同一新imageのcontrolは既存5overlay・env未設定、candidateはそれに6本目のheader patch・env1を加えて既存kernel-benchで比較できる。candidate headerのenv0経路も対照SASSと同一であることは上記CPU compileで確認済み。まずofficial routing由来、balanced/local、valid_m端数、idle/mixed rank、changed-input graph replayの数値gate、次に複数runの交互順timingを行う。3stageへの削減、B先読み専属warpの廃止、cubin増大、残spillが性能を悪化させる可能性がある。公式serving/result parserまで確認する以前にmainへ採用しない。
+
+## 直接ソース再点検（同日、CUDA再compileなし）
+
+canonical 5-overlay header（SHA256 `77ee7caea6e5736803b6034f83575f9a846d30c54ce4970ced7c65450a9be497`）から再構成して、ring・stage・epilogue・host生成引数を直接確認した。現行hostが生成する独立WG Decode条件で新たな確定バグは見つかっていない。これは実機の正当性確認ではない。
+
+一方、kernel templateを手動instantiateする場合の未サポート組合せを拒否していなかったため、独立WGに限り `kSplitPhaseHotPath=false`、`kL2ArrivalCounter=false`、`kReuseAccumAsFinal=false` を要求する `DG_STATIC_ASSERT` を追加した。
+
+- split-phase=true: loaderは独立2queueだがmathは `kSpecializePhase` 分岐を優先し、従来のstatic task streamへ入る。例えばSM0/WG1のmath task 0に対してloader queue 1はtask 1を供給し、ringもmath側から消費されない。
+- arrival-counter=true: 専属loaderは24bitのFC1完了maskを待つが、FC1側はcounter方式へ入る。プロトコルが一致しない。
+- reuse-accum=true: mathはSwapAB専用mainloopより先に通常layoutのaccumulator再利用分岐へ入り、その後のSwapAB epilogueとの対応を保証していない。
+
+現在のhostはBM64/BN128/256math threadsのDecodeについて、上記3値をすべてfalseにするので拒否されない。独立WGを選ばない既存geometryには新しい制約を掛けない。`kL2EpilogueRequiresFullSync` は独立WG分岐で専用128-thread barrierへ置き換えるため、新たな値制限は不要。
+
+`check-sm90-independent-wg.py` はpatchに実在するassert式を抽出し、通常C++の `static_assert` としてg++/clang++の `-fsyntax-only` で検査する。独立WGの現行host flagsは成功、他の7組合せは同assertにより拒否、非独立の8組合せは成功。既存配置checker、Ruff、canonicalからの `git apply --check` も成功した。レビュー時にはschedulerのexpert/phase/wave遷移をそのまま写した別CPUモデルと独立したflatten列を照合し、wave=1/2/4/8/16/32・空expert・複数M tileを含む102条件で、2×132 workerの非同期claimとunsigned補正が一致した。
+
+今回の追補ではCUDA/nvcc compile、host `_C.so` build、GPU、SSH、Actions、scheduler、pushは行っていない。上表のCUDA資源・SASS値はassert追加前の実測であり、追加後headerのCUDA再compile結果ではない。
+
+assert追加後の候補header SHA256は `c40d4c141aea45bb17a864ae8d7088a97363f12d0188b2584e558203aacb11ad`。基準headerからの再適用を親担当でも照合した。

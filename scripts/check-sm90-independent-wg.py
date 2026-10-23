@@ -1,9 +1,39 @@
 """Check the independent-WG resource layout, ownership and task stream on CPU."""
+import itertools
 import random
+import shutil
+import subprocess
 from collections import Counter
+from pathlib import Path
+
+
+def check_mode_contract():
+    # Compile the actual assertion from the patch with an ordinary host C++
+    # compiler. Do not duplicate the accepted predicate in a Python model.
+    patch = Path(__file__).resolve().parents[1] / "patches/deep-gemm-bench/independent-wg/sm90-decode-independent-wg.patch"
+    marker = "Independent WG requires dynamic Decode scheduling, mask arrivals and explicit accumulators"
+    assertions = [line[1:].strip() for line in patch.read_text().splitlines() if line.startswith("+") and marker in line]
+    assert len(assertions) == 1
+    assertion = assertions[0].replace("DG_STATIC_ASSERT", "static_assert", 1)
+    compiler = shutil.which("g++") or shutil.which("clang++")
+    assert compiler is not None, "A host C++ compiler is required for the mode-contract check"
+    names = ("kIndependentWG", "kSplitPhaseHotPath", "kL2ArrivalCounter", "kReuseAccumAsFinal")
+    for values in itertools.product((False, True), repeat=4):
+        declarations = "\n".join(f"constexpr bool {name} = {str(value).lower()};" for name, value in zip(names, values, strict=True))
+        source = declarations + "\n" + assertion + "\n"
+        compiled = subprocess.run([compiler, "-std=c++17", "-fsyntax-only", "-x", "c++", "-"], input=source, capture_output=True, text=True, check=False)
+        # The current host selects (independent, split, counter, reuse) =
+        # (true, false, false, false). Every other independent combination is
+        # unsupported; opt-out must leave all pre-existing modes available.
+        should_pass = not values[0] or values[1:] == (False, False, False)
+        assert (compiled.returncode == 0) == should_pass, (values, compiled.stderr)
+        if not should_pass:
+            assert marker in compiled.stderr, compiled.stderr
+    print("PASS: original mode assertion host-compiles for the current Decode flags and rejects all 7 unsupported independent combinations; 8 opt-out combinations remain accepted")
 
 
 def main():
+    check_mode_contract()
     # Same complete N128 task, now owned by one WG instead of two N64 WGs.
     for valid_m in range(1, 65):
         fc1, fc2 = Counter(), Counter()
