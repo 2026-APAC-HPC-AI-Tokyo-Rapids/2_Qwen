@@ -77,13 +77,14 @@ def main():
             dist.all_gather(all_ranks, value)
             gathered.append(torch.cat(all_ranks))
         all_x, all_ids, all_weights = gathered
+        count = counts[rank]
+        rows = 256 if case == "idle-prefill-rows" and count == 0 else max(count, 1)
         x = quantized(all_x, 128)
-        # FC2 activation scale granularity of the kernel geometry under test: the
-        # Prefill geometry (host picks it from 256 rows per rank; idle Prefill ranks
-        # pass 256 masked rows) quantizes the SwiGLU output per 128 K, Decode per 64.
-        # The error bounds below are unchanged.
-        prefill_geometry = max(counts) >= 256
-        l2_group = 128 if prefill_geometry else 64
+        # This rank computes its locally owned experts, including remote tokens.
+        # The host selects its geometry from y.size(0), not max(counts): Qwen EP4
+        # uses SF128 from 256 output rows and SF64 below that boundary. An idle
+        # Prefill rank deliberately allocates 256 masked output rows as well.
+        l2_group = 128 if rows >= 256 else 64
         reference = torch.zeros(16, 4096, device=device)
         for local_expert in range(32):
             rows, slots = torch.where(all_ids == rank * 32 + local_expert)
@@ -95,10 +96,8 @@ def main():
             # Native FC2 stores BF16 terms, then multiplies and sums in FP32.
             reference.index_add_(0, rows, out.to(torch.bfloat16).float() * all_weights[rows, slots, None])
         dist.all_reduce(reference)
-        count = counts[rank]
         indices = torch.arange(count, device=device) % 4
         hidden, top_ids, top_weights = patterns[indices].contiguous(), ids[indices].contiguous(), weights[indices].contiguous()
-        rows = 256 if case == "idle-prefill-rows" and count == 0 else max(count, 1)
         actual = torch.empty(rows, 4096, dtype=torch.bfloat16, device=device)
 
         def forward(hidden, top_ids, top_weights, count, actual):
@@ -136,7 +135,7 @@ def main():
             assert torch.isfinite(observed).all(), (case, rank, "non-finite output")
             relative_l2 = ((observed - expected).norm() / expected.norm().clamp_min(1e-10)).item()
             max_scaled_error = ((observed - expected).abs().max() / expected.abs().max().clamp_min(1e-10)).item() if count else 0.0
-            print(json.dumps({"case": case, "replay": replay, "rank": rank, "tokens": count, "live_tokens": live, "relative_l2": relative_l2, "max_scaled_error": max_scaled_error, "workspace_bytes": buf.buffer.numel()}), flush=True)
+            print(json.dumps({"case": case, "replay": replay, "rank": rank, "tokens": count, "live_tokens": live, "l2_activation_group": l2_group, "relative_l2": relative_l2, "max_scaled_error": max_scaled_error, "workspace_bytes": buf.buffer.numel()}), flush=True)
             # Same tolerances as the validated prefill kernel; no missing or
             # double routing weights, stale graph inputs, or misplaced scales.
             assert relative_l2 < 0.025 and max_scaled_error < 0.08, (case, rank, relative_l2, max_scaled_error)
