@@ -18,6 +18,22 @@ SwiGLUのclamp、`expf`/`__expf`、逆数、積の順序、SF helper、`__nv_fp8
 
 `qwen-experiment-metrics/tests/test_decode_fc1_register_layout.py` の2 testは全 `valid_m=1..64` についてlane所有の全単射、cross-WG amax（NaN/Inf/signed zero/別WG最大値を含む）、FP8の任意byte列の4-byte packと出力番地の一意性、scratchの全単射・writer/gather bank配置を列挙して検査する。pytest、ruffを通過。候補はprovisionerの要求する `deep-gemm-bench/<candidate>/` 配下に置き、flat patch拒否を含む既存kernel-bench fixtureも再検証した。GPU演算やmemory orderingをCPUテストで実証したとは扱わない。
 
+## CUDA式を抽出したhost数値検査
+
+`scripts/check-decode-fc1-arithmetic.py` は canonical image header のコピーに対照overlay 5本と候補patchを順に適用し、両方の実C++からSwiGLU本体、SF helper、amaxのscalar fold、FP8変換の乗算・constructor・pack式を抽出する。g++ 13.3の `-O2 -fno-fast-math -ffp-contract=off` でhost shared libraryを作り、CUDA 13.0.88の公式 `cuda_fp8.h` にある `__nv_fp8x2_e4m3(float2)` のhost fallbackを実行する。CUTLASSの `cute/numeric/math.hpp` も直接includeしてmax/min/absのNaN規則を使用する。独自FP8 converterやcute演算shimで置換していない。生成C++と結果JSONは `--output-dir` に残す。
+
+2577組のgate/up入力をfast math 2条件×clamp無効/8で検査した。入力は±0、subnormal、最大有限値、NaN payload、±Inf、任意のFP32 bit列を含む。全有限E4M3中点とその上下1 FP32 ULP、SF下限 `1e-10f` 前後、別WG最大値、全NaN行などを含め、`valid_m=1..64` の有効行で144196値を量子化した。非NaNのSwiGLU・量子化直前積（±0を含む）、amax、SF、inverse SF、packed FP8が対照と候補でbit一致した。独立Python scalarモデルは各演算の後にFP32へ丸め、SwiGLUには同じhost `expf` primitiveを使用する。FP8参照は全127非負有限値を列挙したnearest-neighbor/ties-to-even判定で、公式headerのhost変換と一致した。
+
+NaNのpayload/符号は同一演算でもhost最適化された対照と候補でclamp無効の各mode10件、対照とPython scalarモデルでclamp無効の各mode78件異なった（clamp=8はいずれも0件）。両方NaNであることを必須とし、差を結果JSONへ記録する。公式host FP8変換によるcanonical化後のpacked bytesは一致した。これをNaN中間値までbit一致したとは扱わない。
+
+この検査はCUDAの `__expf` と `math::fast_rcp` を共通host演算で代替する。device近似命令、CUDA compilerによる融合/FTZ/register保持の影響、WGMMA結果、実shuffle・barrier・TMA・無効行のmemory accessは証明しない。amaxのshuffle topologyはhostで組み直しているため、実際のlane/invalid-row mappingは前掲の独立layout testとソースレビューで補う。CPU数値検査をGPU replayや公式servingの代替としない。
+
+再現例（header、CUDA、CUTLASS includeの所在は環境に合わせる）:
+
+```bash
+python3 scripts/check-decode-fc1-arithmetic.py --base-header /path/to/image/sm90_fp8_mega_moe.cuh --cuda-include /path/to/cuda/include --cutlass-include /path/to/cutlass/include --output-dir /tmp/fc1-host-arithmetic
+```
+
 ## CPU CUDA compile
 
 Firmus loginからimage内CUDA 13.0.88を用い、実JIT相当の `--register-usage-level=10` で対照・候補をcompile。共有toolchain/headersは読取り専用、出力は専用directory。Decode wave32/wave16とPrefill 2WGを検査し、register/spill、WGMMA warning、Prefill SASS不変を確認した。結果とhashは後掲。
