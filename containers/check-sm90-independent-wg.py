@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--nvcc", type=Path, default=Path("/usr/local/cuda/bin/nvcc"))
     parser.add_argument("--output", type=Path, default=Path("/opt/apac/sm90-independent-wg-build.json"))
     args = parser.parse_args()
-    patches = [Path(p).name for p in json.loads(args.config.read_text())["deep_gemm_overlay_patches"] if Path(p).name != CANDIDATE]
+    patches = [args.patch_dir.parent / Path(p).relative_to("patches") for p in json.loads(args.config.read_text())["deep_gemm_overlay_patches"] if Path(p).name != CANDIDATE]
     decode = (64, 128, 256, 8, "false", "false", "true", "true")
     candidate = (64, 128, 256, 6, "false", "false", "true", "true")
     prefill = (128, 256, 256, 3, "true", "true", "false", "false")
@@ -48,8 +48,8 @@ def main():
         overlay = directory / "overlay"
         (overlay / HEADER).parent.mkdir(parents=True)
         shutil.copy2(args.package / "include/deep_gemm/impls/sm90_fp8_mega_moe.cuh", overlay / HEADER)
-        for name in patches:
-            subprocess.run(["git", "apply", str(args.patch_dir / name)], cwd=overlay, check=True)
+        for patch in patches:
+            subprocess.run(["git", "apply", str(patch)], cwd=overlay, check=True)
         base_decode = compile_one(args.nvcc, args.package, overlay, directory, "base-decode", decode)
         base_prefill = compile_one(args.nvcc, args.package, overlay, directory, "base-prefill", prefill)
         subprocess.run(["git", "apply", str(args.candidate)], cwd=overlay, check=True)
@@ -57,7 +57,7 @@ def main():
         control_prefill = compile_one(args.nvcc, args.package, overlay, directory, "control-prefill", prefill)
         experimental = compile_one(args.nvcc, args.package, overlay, directory, "independent-decode", candidate)
         spill_free = bool(experimental["spill_bytes"]) and all(tuple(map(int, pair)) == (0, 0) for pair in experimental["spill_bytes"])
-        result = {"spill_zero_target_met": spill_free, "gpu_validated": False, "base_decode": base_decode, "base_prefill": base_prefill, "control_decode": control, "control_prefill": control_prefill, "independent_decode": experimental, "header_sha256": hashlib.sha256((overlay / HEADER).read_bytes()).hexdigest(), "patches": {**{p: hashlib.sha256((args.patch_dir / p).read_bytes()).hexdigest() for p in patches}, CANDIDATE: hashlib.sha256(args.candidate.read_bytes()).hexdigest()}}
+        result = {"spill_zero_target_met": spill_free, "gpu_validated": False, "base_decode": base_decode, "base_prefill": base_prefill, "control_decode": control, "control_prefill": control_prefill, "independent_decode": experimental, "header_sha256": hashlib.sha256((overlay / HEADER).read_bytes()).hexdigest(), "patches": {**{p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in patches}, CANDIDATE: hashlib.sha256(args.candidate.read_bytes()).hexdigest()}}
         args.output.write_text(json.dumps(result, indent=2) + "\n")
         for log in directory.glob("*.log"):
             shutil.copy2(log, args.output.with_name(args.output.stem + "-" + log.name))
