@@ -54,6 +54,20 @@ for dir in "${candidate_dirs[@]}"; do
 done
 if (( steps > max_steps )); then printf '%s Slurm steps (about 75 s each) exceed the %s that fit in one 17-minute job; drop candidates or timeline markers.\n' "${steps}" "${max_steps}" >&2; exit 1; fi
 
+check_candidate_host() {
+  local dir=$1 record=$2 extension=$3 enabled=0
+  if [[ -e "${dir}env" ]]; then enabled=$(sed -n 's/^DG_SM90_DECODE_INDEPENDENT_WG=//p' "${dir}env"); fi
+  if [[ -z "${enabled}" || "${enabled}" == 0 ]]; then return 0; fi
+  local patch_name=sm90-decode-independent-wg.patch patch_sha extension_sha
+  grep -Fxq "${patch_name}" "${GITHUB_WORKSPACE}/patches/deep-gemm-host/series" || { echo 'Independent WG host patch is missing from the host build series.' >&2; return 1; }
+  patch_sha=$(sha256sum "${GITHUB_WORKSPACE}/patches/deep-gemm-host/${patch_name}" | awk '{print $1}')
+  extension_sha=$(sha256sum "${extension}" | awk '{print $1}')
+  if [[ ! -s "${record}" ]] || ! jq -e --arg patch "${patch_name}" --arg sha "${patch_sha}" --arg extension "${extension_sha}" '.abi == "tvm-ffi" and .patches[$patch] == $sha and .extension_sha256 == $extension' "${record}" >/dev/null; then
+    printf 'Candidate %s requires a rebuilt DeepGEMM host with %s SHA256 %s and its matching _C.so. Build a fresh image and update configs/firmus-framework.json before kernel-bench; the old host silently ignores DG_SM90_DECODE_INDEPENDENT_WG.\n' "$(basename "${dir}")" "${patch_name}" "${patch_sha}" >&2
+    return 1
+  fi
+}
+
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 image="$(jq -er .images.sglang.path "${config}")"
 expected_sha="$(jq -er .images.sglang.sha256 "${config}")"
@@ -77,12 +91,13 @@ ln -s "${image}" "${runtime_dir}/sglang.sqsh"
 # its build record), and its SGLang source already carries patches/sglang/*.patch.
 package=opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
 sglang_package=opt/sglang/source/python/sglang
-extract=("${package}" opt/apac/sm90-megamoe-build.json)
+extract=("${package}" opt/apac/sm90-megamoe-build.json opt/apac/deep-gemm-host-build.json)
 if (( ${#sglang_patches[@]} )); then extract+=("${sglang_package}"); fi
 unsquashfs -no-progress -no-xattrs -processors 1 -d "${runtime_dir}/image" "${image}" "${extract[@]}"
 chmod -R u+w "${runtime_dir}/image"
 cp "${runtime_dir}/image/opt/apac/sm90-megamoe-build.json" "${runtime_dir}/source/"
 [[ "$(sha256sum "${runtime_dir}/image/${package}/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh" | awk '{print $1}')" == "$(jq -er .header_sha256 "${runtime_dir}/source/sm90-megamoe-build.json")" ]]
+for dir in "${candidate_dirs[@]}"; do check_candidate_host "${dir}" "${runtime_dir}/image/opt/apac/deep-gemm-host-build.json" "${runtime_dir}/image/${package}/_C.so"; done
 
 timeline_patch="${GITHUB_WORKSPACE}/patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch"
 apply_patches() {
