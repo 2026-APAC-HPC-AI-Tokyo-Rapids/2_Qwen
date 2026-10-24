@@ -37,7 +37,7 @@ extern "C" int qkv_check_fp8(void* reference,void* candidate,void* stream) {
     return int(cudaGetLastError());
 }
 
-template<int BM, int THREADS>
+template<int BM, int THREADS, bool Global=false>
 __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int first_row, int head, int rows, const QKVParams& p) {
     const int lane = threadIdx.x % 8;
     const int col = lane * 8;
@@ -57,9 +57,12 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
         const int token = first_row + row;
         float x[8], y[8], partial[4];
         uint16_t ox[4], oy[4];
-        const int offset = row * 64 + (col ^ ((row % 8) * 8));
-        const uint4 vx = *reinterpret_cast<const uint4*>(tile + offset);
-        const uint4 vy = *reinterpret_cast<const uint4*>(tile + BM * 64 + offset);
+        const int offset = Global ? token * 9216 + head * 128 + col : row * 64 + (col ^ ((row % 8) * 8));
+        uint4 vx{}, vy{};
+        if (!Global || token<rows) {
+            vx = *reinterpret_cast<const uint4*>(tile + offset);
+            vy = *reinterpret_cast<const uint4*>(tile + (Global ? 64 : BM * 64) + offset);
+        }
         #pragma unroll
         for (int i=0;i<8;++i) {
             x[i] = __bfloat162float(reinterpret_cast<const __nv_bfloat16*>(&vx)[i]);
@@ -95,14 +98,14 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
                     a[h]=__bfloat162float(__float2bfloat16_rn(u*c-v*s));
                     b[h]=__bfloat162float(__float2bfloat16_rn(u*s+v*c));
                 }
-                ox[j]=qkv_fp8<(BM==256)>(make_float2(a[0],a[1]));
-                oy[j]=qkv_fp8<(BM==256)>(make_float2(b[0],b[1]));
+                ox[j]=qkv_fp8<(Global || BM==256)>(make_float2(a[0],a[1]));
+                oy[j]=qkv_fp8<(Global || BM==256)>(make_float2(b[0],b[1]));
             }
         } else {
             #pragma unroll
             for(int j=0;j<4;++j) {
-                ox[j]=qkv_fp8<(BM==256)>(make_float2(x[j*2],x[j*2+1]));
-                oy[j]=qkv_fp8<(BM==256)>(make_float2(y[j*2],y[j*2+1]));
+                ox[j]=qkv_fp8<(Global || BM==256)>(make_float2(x[j*2],x[j*2+1]));
+                oy[j]=qkv_fp8<(Global || BM==256)>(make_float2(y[j*2],y[j*2+1]));
             }
         }
         if(token<rows) {
@@ -117,6 +120,14 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
             }
         }
     }
+}
+
+__global__ __launch_bounds__(256) void qkv_post_global(const __nv_bfloat16* packed,int rows,const __grid_constant__ QKVParams p) {
+    qkv_epilogue<32,256,true>(packed,blockIdx.x*32,blockIdx.y,rows,p);
+}
+extern "C" int qkv_post(int rows,void* packed,QKVParams p,void* stream) {
+    qkv_post_global<<<dim3((rows+31)/32,72),256,0,static_cast<cudaStream_t>(stream)>>>(static_cast<const __nv_bfloat16*>(packed),rows,p);
+    return int(cudaGetLastError());
 }
 
 #include "qkv-fused.cuh"

@@ -27,6 +27,8 @@ class Params(ctypes.Structure):
 
 lib.qkv_run.argtypes = [ctypes.c_int] * 3 + [ctypes.c_void_p] * 5 + [Params, ctypes.c_void_p]
 lib.qkv_run.restype = ctypes.c_int
+lib.qkv_post.argtypes = [ctypes.c_int, ctypes.c_void_p, Params, ctypes.c_void_p]
+lib.qkv_post.restype = ctypes.c_int
 assert lib.qkv_init() == 0
 lib.qkv_check_fp8.argtypes = [ctypes.c_void_p] * 3
 lib.qkv_check_fp8.restype = ctypes.c_int
@@ -67,6 +69,11 @@ def native(data, out, mode):
     assert result == 0, result
 
 
+def fast_post(data, out):
+    p = Params(*(tensor.data_ptr() for tensor in (qw, kw, trig, data[3], data[4], *out)))
+    assert lib.qkv_post(data[2].shape[0], data[2].data_ptr(), p, torch.cuda.current_stream().cuda_stream) == 0
+
+
 def call(data, out, mode):
     if mode == "stock":
         deep_gemm.fp8_gemm_nt(data[0], data[1], data[2], compiled_dims="nk")
@@ -81,6 +88,11 @@ def call(data, out, mode):
         post(data, out)
     elif mode == "fused":
         native(data, out, 3)
+    elif mode == "fast_stock":
+        deep_gemm.fp8_gemm_nt(data[0], data[1], data[2], compiled_dims="nk")
+        fast_post(data, out)
+    elif mode == "fast_post":
+        fast_post(data, out)
     elif mode == "gemm":
         deep_gemm.fp8_gemm_nt(data[0], data[1], data[2], compiled_dims="nk")
     else:
@@ -124,8 +136,11 @@ for rows in (129, 3986, 4027, 4096):
         call(data, fused, fused_mode)
         compare(fused, head, f"rows={rows}/{fused_mode}/same_gemm", exact=True)
         compare(fused, stock, f"rows={rows}/{fused_mode}/stock")
+    call(data, head, "fast_stock")
+    compare(head, stock, f"rows={rows}/fast_post", exact=True)
     if rows in (129, 4027):
         graph = capture(lambda data=data, fused=fused: call(data, fused, "fused"))
+        fast_graph = capture(lambda data=data, head=head: call(data, head, "fast_stock"))
         for replay in range(2):
             a.copy_((-a.float()).to(a.dtype))
             data[3].copy_(torch.randint_like(data[3], 0, 8192))
@@ -134,6 +149,8 @@ for rows in (129, 3986, 4027, 4096):
                 for tensor in out:
                     tensor.fill_(3.)
             call(data, stock, "stock")
+            fast_graph.replay()
+            compare(head, stock, f"rows={rows}/fast_graph={replay}", exact=True)
             call(data, head, "m256")
             graph.replay()
             compare(fused, head, f"rows={rows}/graph={replay}", exact=True)
@@ -145,7 +162,7 @@ torch.cuda.synchronize()
 for rows in (3986, 4027, 4096):
     data_sets = [inputs(rows, 5200 + i) for i in range(4)]
     out_sets = [outputs(rows) for _ in data_sets]
-    modes = ("stock", "m128", "old_fused", "m256", "fused", "gemm", "post")
+    modes = ("stock", "m128", "old_fused", "m256", "fused", "fast_stock", "gemm", "post", "fast_post")
     graphs = {}
     repeats = 12
     for mode in modes:
@@ -165,5 +182,5 @@ for rows in (3986, 4027, 4096):
             end.synchronize()
             samples[mode].append(start.elapsed_time(end) * 1000 / repeats)
     result = {mode: statistics.median(values) for mode, values in samples.items()}
-    print(f"PASS rows={rows} baseline_median_us={result['stock']:.3f} candidate_median_us={result['fused']:.3f} saved_us={result['stock']-result['fused']:.3f} ratio={result['fused']/result['stock']:.5f} old_fused_us={result['old_fused']:.3f} m128_total_us={result['m128']:.3f} m256_total_us={result['m256']:.3f} stock_gemm_us={result['gemm']:.3f} prologue_us={result['post']:.3f} samples=25 rotating_sets=4", flush=True)
+    print(f"PASS rows={rows} baseline_median_us={result['stock']:.3f} candidate_median_us={result['fused']:.3f} saved_us={result['stock']-result['fused']:.3f} ratio={result['fused']/result['stock']:.5f} old_fused_us={result['old_fused']:.3f} m128_total_us={result['m128']:.3f} m256_total_us={result['m256']:.3f} stock_gemm_us={result['gemm']:.3f} prologue_us={result['post']:.3f} fast_stock_us={result['fast_stock']:.3f} fast_post_us={result['fast_post']:.3f} samples=25 rotating_sets=4", flush=True)
     del graphs, data_sets, out_sets
