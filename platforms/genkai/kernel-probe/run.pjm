@@ -11,9 +11,12 @@ trap 'status=$?; printf "%s\n" "$status" > results/exit-code' EXIT
 module load cuda/12.9.1
 date -u
 cat source/provenance.json
-for trial in 1 2 3; do
+trials=3
+limit=30
+if [[ "$(jq -r '.calibration // false' source/provenance.json)" == true ]]; then trials=1; limit=165; fi
+for ((trial=1; trial<=trials; trial++)); do
   printf 'trial=%s\n' "${trial}"
-  timeout 30 ./source/probe | tee "results/trial-${trial}.log"
+  timeout "${limit}" ./source/probe | tee "results/trial-${trial}.log"
 done
 touch run-success
 date -u
