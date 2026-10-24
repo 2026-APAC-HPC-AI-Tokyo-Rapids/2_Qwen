@@ -1,0 +1,72 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1548,6 +1548,18 @@
+                         // warpgroup owns all 256 columns (kPrefill2WG) or two own 128 each.
+                         const uint32_t gate_row = local_expert_idx * kL1SFPerExpert + (kPrefill2WG ? n_block_idx : sf_n_block_idx / 2u) * kL1SFKBlocks;
+                         const uint32_t up_row = gate_row + kL1SFGateBlks * kL1SFKBlocks;
++                        // One coalesced load per warp covers all 32 K blocks. Keep these
++                        // uniform weight scales out of the per-K global-load dependency.
++                        const float cached_gate_sf = kPrefill2WG ? __ldg(l1_weights_sf + gate_row + lane_idx) : 0.0f;
++                        const float cached_up_sf = kPrefill2WG ? __ldg(l1_weights_sf + up_row + lane_idx) : 0.0f;
++                        auto gate_sf_at = [&](uint32_t k) {
++                            if constexpr (kPrefill2WG) return __shfl_sync(0xffffffff, cached_gate_sf, k);
++                            else return __ldg(l1_weights_sf + gate_row + k);
++                        };
++                        auto up_sf_at = [&](uint32_t k) {
++                            if constexpr (kPrefill2WG) return __shfl_sync(0xffffffff, cached_up_sf, k);
++                            else return __ldg(l1_weights_sf + up_row + k);
++                        };
+                         float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f, prev_gate_sf = 1.0f, prev_up_sf = 1.0f;
+                         float r0_gate = 1.0f, r1_gate = 1.0f, r0_up = 1.0f, r1_up = 1.0f;
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+@@ -1573,8 +1585,8 @@
+                             if (k_block_idx == 0) {
+                                 prev_scale_a_0 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r0);
+                                 prev_scale_a_1 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r1);
+-                                prev_gate_sf = __ldg(l1_weights_sf + gate_row);
+-                                prev_up_sf = __ldg(l1_weights_sf + up_row);
++                                prev_gate_sf = gate_sf_at(0);
++                                prev_up_sf = up_sf_at(0);
+                             }
+                             // Let TMA recycle this stage while the next scale is loaded.
+                             if constexpr (kPrefill2WG) {
+@@ -1585,8 +1597,8 @@
+                             if (k_block_idx + 1 < num_k_blocks) {
+                                 uint32_t next_stage, next_phase;
+                                 next_stage_and_phase(next_stage, next_phase);
+-                                const float gate_sf = __ldg(l1_weights_sf + gate_row + k_block_idx + 1);
+-                                const float up_sf = __ldg(l1_weights_sf + up_row + k_block_idx + 1);
++                                const float gate_sf = gate_sf_at(k_block_idx + 1);
++                                const float up_sf = up_sf_at(k_block_idx + 1);
+                                 full_barriers[next_stage]->wait(next_phase);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+@@ -1620,6 +1632,10 @@
+                         constexpr uint32_t kChunksPerWSF = kAccumPerThread / 4 / kNumWSF;
+                         DG_STATIC_ASSERT(kNumWSF == 2 and kChunksPerWSF == 16, "FC2 weight-SF blocks per warpgroup");
+                         const uint32_t l2_row = local_expert_idx * kL2SFPerExpert + n_block_idx * kNumWSF * kL2SFKBlocks;
++                        float cached_l2_sf[kNumWSF];
++                        #pragma unroll
++                        for (uint32_t j = 0; j < kNumWSF; ++ j)
++                            cached_l2_sf[j] = lane_idx < kL2SFKBlocks ? __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks + lane_idx) : 0.0f;
+                         float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f, prev_l2_sf[kNumWSF];
+                         float r0_start[kNumWSF], r1_start[kNumWSF];
+                         #pragma unroll
+@@ -1644,7 +1660,7 @@
+                                 prev_scale_a_1 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r1);
+                                 #pragma unroll
+                                 for (uint32_t j = 0; j < kNumWSF; ++ j)
+-                                    prev_l2_sf[j] = __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks);
++                                    prev_l2_sf[j] = __shfl_sync(0xffffffff, cached_l2_sf[j], 0);
+                             }
+                             if (k_block_idx + 1 < num_k_blocks) {
+                                 uint32_t next_stage, next_phase;
+@@ -1652,7 +1668,7 @@
+                                 float l2_sf[kNumWSF];
+                                 #pragma unroll
+                                 for (uint32_t j = 0; j < kNumWSF; ++ j)
+-                                    l2_sf[j] = __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks + k_block_idx + 1);
++                                    l2_sf[j] = __shfl_sync(0xffffffff, cached_l2_sf[j], k_block_idx + 1);
+                                 full_barriers[next_stage]->wait(next_phase);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
