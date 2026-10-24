@@ -74,7 +74,7 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert config["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch"
     bench = ROOT / "patches/deep-gemm-bench"
-    assert sorted(p.name for p in bench.iterdir()) == ["prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip", "prefill-wg1-skip", "timeline", "z-control-repeat"]
+    assert sorted(p.name for p in bench.iterdir()) == ["fc2-fragment-combine", "fc2-producer-transpose", "timeline", "z-control-repeat"]
     assert not list(bench.glob("*/env"))
     assert (bench / "timeline").stat().st_size == 0
     for name in ("containers/Dockerfile", "scripts/build-sglang-container.sh", "containers/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg-host.py"):
@@ -83,8 +83,9 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     assert 'if Path(p).name != CANDIDATE' in checker
 
 
-def test_patch_layout_matches_reader_and_only_wraps_existing_stage_waits():
-    patch = (ROOT / "patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch").read_text()
+@pytest.mark.parametrize("path", ["patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch", "patches/deep-gemm-bench/fc2-fragment-combine/timeline"])
+def test_patch_layout_matches_reader_and_only_wraps_existing_stage_waits(path):
+    patch = (ROOT / path).read_text()
     removed = [line[1:] for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")]
     # Every removed operation is either counter initialization (same SMEM
     # allocation) or one of the exact existing waits now wrapped in timing.
@@ -237,7 +238,7 @@ def test_bulk_timeline_v4_separates_issue_reuse_drain_and_barrier(tmp_path, summ
 
 @pytest.mark.parametrize("candidate", ["prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip"])
 def test_bulk_timeline_is_candidate_only(candidate):
-    patch = (ROOT / "patches/deep-gemm-bench" / candidate / "timeline").read_text()
+    patch = (ROOT / "patches/deep-gemm-experiments/20261024-bulk-scatter" / candidate / "timeline").read_text()
     added = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
     assert "base[1] = 4;" in added
     assert "kCountersPerWG = 11" in added
