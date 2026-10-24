@@ -43,7 +43,8 @@ timeline() {
 }
 
 if [[ -f "${ROOT}/scripts/firmus-fc2-output.sh" ]]; then
-  step fc2-output probe CUDA_VISIBLE_DEVICES=0 timeout 180 bash "${ROOT}/scripts/firmus-fc2-output.sh" "${ROOT}"
+  # The probe uses CUDA device 0 within Slurm's assigned visibility mask.
+  step fc2-output probe timeout 180 bash "${ROOT}/scripts/firmus-fc2-output.sh" "${ROOT}"
 fi
 
 install -d "${ROOT}/results/image" "${ROOT}/scratch/image"

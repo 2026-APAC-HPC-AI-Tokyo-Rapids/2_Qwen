@@ -75,3 +75,46 @@ CUDA 12.9 reports extra Prefill spills for the producer ablation (24-byte store,
 resources. This is a known cost to measure, not an assumed winning variant.
 The candidate-specific timeline patch only resolves the adjacent declaration
 insertion; its instrumentation is otherwise the stock timeline patch.
+
+## First Firmus result: 40107915306
+
+[Run 40107915306](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40107915306)
+used commit `e5608e8`, Slurm 25954, one H200 node / four GPUs. All nine EP4
+steps succeeded. Both candidates and the final control matched the image's
+output hashes in all 19 cases; candidate A's instrumented results also passed.
+The overall run failed only because the additional native probe called `nvcc`
+through a PATH that did not contain the container compiler (`exit 127`). It never
+compiled or executed its single-GPU checks. Use the pinned image's absolute
+compiler and Python paths, as the existing EP4 scripts do; retain Slurm's GPU
+visibility mask and select logical device zero in the probe.
+
+Raw data were archived with checksums at
+`archive-host:/srv/qwen-artifacts/40107915306/1/` and recovered
+locally with all SHA256SUMS entries verified. GitHub artifacts are deleted by the
+existing workflow only after that archive succeeds. The overall red status does
+not invalidate the completed EP4 measurements.
+
+| Case | image ms | fragment/combine ms | producer transpose ms | final control ms |
+| --- | ---: | ---: | ---: | ---: |
+| decode-balanced-160 | 0.1996 | 0.2006 | 0.2005 | 0.2001 |
+| prefill-balanced-4096 | 1.5236 | 1.6179 | 2.0866 | 1.5244 |
+| prefill-local-4096 | 1.3020 | 1.2892 | 1.7283 | 1.3051 |
+| prefill-real43-4096 | 1.5521 | 1.6657 | 2.1481 | 1.5565 |
+| prefill-real43-replica4-4096 | 1.4249 | 1.4792 | 2.0026 | 1.4326 |
+| prefill-real62-replica4-4096 | 1.4318 | 1.4728 | 2.0106 | 1.4389 |
+| prefill-real7-replica4-4096 | 1.4419 | 1.4876 | 2.0469 | 1.4405 |
+
+This run provides no adoption evidence. A regresses real routing by 2.9–7.3%;
+B by 37.9–42.0%. Decode changes are within about 0.7%, with control drift of a
+similar scale. A's local-only case is slightly faster, while peer-scatter cases
+are slower. The balanced Prefill timeline has comparable median SM clocks
+(1.611 vs 1.621 GHz): A's WG0 FC2 epilogue median increases from 235–251 us to
+302–309 us across ranks, while combine stays about 86–88 us. Removing shared
+staging did not save the critical peer-scatter time. Smaller per-instruction
+coalescing groups in the register-native scatter are a hypothesis for this
+increase, not a measured transaction-level conclusion. Local timeline clocks
+are less comparable and must not be used as a clean speedup measurement.
+
+A repeat with only the probe launcher corrected will complete the missing native
+checks and test reproducibility under the same bounded one-node allocation. No
+serving throughput or 9500+ tok/s claim follows from these kernel measurements.
