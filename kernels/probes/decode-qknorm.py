@@ -89,4 +89,4 @@ for rows in (0, 1, 3, 31, 126, 128, 129, 132, 144, 145, 160, 192, 193):
                     samples[i].append(start.elapsed_time(end) * 1000 / 20)
             print(json.dumps({"rows": rows, "baseline_median_us": statistics.median(samples[0]), "candidate_median_us": statistics.median(samples[1]), "samples": 25, "serving_score": False}), flush=True)
         print(f"CHECK rows={rows} ids={dtype} packed_or_contiguous=true old_new_bitwise_equal=true changed_graphs=2", flush=True)
-print("PASS: Decode QK-norm/RoPE exact conversion, old/new kernel bytes, tails, cache slot zero and changed-input graphs", flush=True)
+print("PASS Decode QK-norm/RoPE exact conversion, old/new kernel bytes, tails, cache slot zero and changed-input graphs", flush=True)
