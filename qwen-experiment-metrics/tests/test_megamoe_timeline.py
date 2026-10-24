@@ -72,7 +72,7 @@ def test_unknown_timeline_schema_is_rejected(summary):
 
 def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert config["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch"
+    assert "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch" in config["deep_gemm_overlay_patches"]
     bench = ROOT / "patches/deep-gemm-bench"
     assert sorted(p.name for p in bench.iterdir()) == ["fc2-fragment-combine", "fc2-producer-transpose", "timeline", "z-control-repeat"]
     assert not list(bench.glob("*/env"))

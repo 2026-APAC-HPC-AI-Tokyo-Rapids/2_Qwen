@@ -118,3 +118,52 @@ are less comparable and must not be used as a clean speedup measurement.
 A repeat with only the probe launcher corrected will complete the missing native
 checks and test reproducibility under the same bounded one-node allocation. No
 serving throughput or 9500+ tok/s claim follows from these kernel measurements.
+
+## Completed repeat and submission stop
+
+[Run 40110180897](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40110180897),
+commit `251dbad`, completed successfully. Slurm 25959 ran on `g1` for 8m38s;
+all ten steps exited zero. Native probes passed 192 checks in each of six
+processes, 1,152 checks total. Both full-kernel candidates again matched all
+19 image hashes, and both requested timelines passed. The full archive at
+`archive-host:/srv/qwen-artifacts/40110180897/1/` was recovered
+and every SHA256SUMS entry verified locally.
+
+| Case | image ms | fragment/combine ms | producer transpose ms | final control ms |
+| --- | ---: | ---: | ---: | ---: |
+| decode-balanced-160 | 0.2011 | 0.2007 | 0.2012 | 0.1994 |
+| prefill-balanced-4096 | 1.5122 | 1.6128 | 2.0862 | 1.5138 |
+| prefill-local-4096 | 1.3053 | 1.3356 | 1.7358 | 1.3071 |
+| prefill-real43-4096 | 1.5616 | 1.6601 | 2.1566 | 1.5596 |
+| prefill-real43-replica4-4096 | 1.4250 | 1.4746 | 2.0014 | 1.4262 |
+| prefill-real62-replica4-4096 | 1.4297 | 1.4808 | 1.9918 | 1.4330 |
+| prefill-real7-replica4-4096 | 1.4381 | 1.4880 | 2.0328 | 1.4432 |
+
+The regression is reproduced: A loses 3.5–7.4% on real routing, B loses
+38.1–41.3%. Neither is adopted. The small local-only gain from the first run
+is not reproduced, so it is not an established full-kernel improvement.
+
+The native, local-only output probe is informative but cannot select a winner:
+for Prefill T4096, A's isolated scatter is 69.2–70.7 us versus 104.6–104.8 us,
+and B's is 76.5–76.9 us versus 104.5–105.0 us. Combine stays approximately
+77 us. Both look faster in this synthetic single-GPU setting while losing in
+the real EP4 kernel. Peer transactions and the full kernel's register/code
+integration must remain part of performance qualification. A single-GPU probe
+is useful for correctness and isolation, not evidence of a serving speedup.
+
+During the repeat, CPU-only scratch alternatives were inspected: direct combine
+output stores retain the baseline six-geometry resource counts; a regular-load
+register combine adds Prefill spills and is not ready. Neither alternative was
+activated, pushed, or submitted to a GPU. These are not measured improvements.
+
+The user explicitly stopped further submissions and then allowed already
+submitted work to proceed. **No more jobs, automatic retries, or new candidate
+GPU runs are authorized in this session.** The Firmus repeat was already
+submitted before that instruction. Its runtime was removed by the workflow;
+the separate Genkai CPU compilation scratch directory was removed after logs
+were recovered. The earlier Genkai one-GPU job 7170396 / Actions 40105137999
+was still QUE at the last read, with backfill estimate `(10/27 12:00)<`; it was
+not cancelled. No final multi-node serving run was submitted, and 9500+ tok/s
+has not been demonstrated.
+
+On 2026-10-25 the user subsequently authorized one final **two-node serving measurement**, triggered by the push prefix. The FC2 address/guard/dependency bundle is activated for that measurement; the failed fragment-layout candidates remain inactive. See `2026-10-25-fc2-dependency-audit.md`.
