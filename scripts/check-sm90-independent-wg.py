@@ -10,7 +10,7 @@ from pathlib import Path
 def check_mode_contract():
     # Compile the actual assertion from the patch with an ordinary host C++
     # compiler. Do not duplicate the accepted predicate in a Python model.
-    patch = Path(__file__).resolve().parents[1] / "patches/deep-gemm-bench/independent-wg/sm90-decode-independent-wg.patch"
+    patch = Path(__file__).resolve().parents[1] / "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch"
     marker = "Independent WG requires dynamic Decode scheduling, mask arrivals and explicit accumulators"
     assertions = [line[1:].strip() for line in patch.read_text().splitlines() if line.startswith("+") and marker in line]
     assert len(assertions) == 1

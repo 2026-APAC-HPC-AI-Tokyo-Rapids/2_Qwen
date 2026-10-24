@@ -34,13 +34,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--patch-dir", type=Path, default=Path("/opt/apac/deep-gemm-overlay"))
-    parser.add_argument("--candidate", type=Path, default=Path("/opt/apac/deep-gemm-bench/independent-wg") / CANDIDATE)
     parser.add_argument("--config", type=Path, default=Path("/opt/apac/firmus-framework.json"))
     parser.add_argument("--nvcc", type=Path, default=Path("/usr/local/cuda/bin/nvcc"))
     parser.add_argument("--output", type=Path, default=Path("/opt/apac/sm90-independent-wg-build.json"))
     args = parser.parse_args()
     patches = [Path(p).name for p in json.loads(args.config.read_text())["deep_gemm_overlay_patches"]]
-    assert CANDIDATE not in patches, "Keep the control overlay free of the candidate"
+    assert patches[-1] == CANDIDATE, "The adopted independent-WG header must be the final serving overlay"
+    base_patches = patches[:-1]
     decode = (64, 128, 256, 8, "false", "false", "true", "true")
     candidate = (64, 128, 256, 6, "false", "false", "true", "true")
     prefill = (128, 256, 256, 3, "true", "true", "false", "false")
@@ -49,16 +49,16 @@ def main():
         overlay = directory / "overlay"
         (overlay / HEADER).parent.mkdir(parents=True)
         shutil.copy2(args.package / "include/deep_gemm/impls/sm90_fp8_mega_moe.cuh", overlay / HEADER)
-        for name in patches:
+        for name in base_patches:
             subprocess.run(["git", "apply", str(args.patch_dir / name)], cwd=overlay, check=True)
         base_decode = compile_one(args.nvcc, args.package, overlay, directory, "base-decode", decode)
         base_prefill = compile_one(args.nvcc, args.package, overlay, directory, "base-prefill", prefill)
-        subprocess.run(["git", "apply", str(args.candidate)], cwd=overlay, check=True)
+        subprocess.run(["git", "apply", str(args.patch_dir / CANDIDATE)], cwd=overlay, check=True)
         control = compile_one(args.nvcc, args.package, overlay, directory, "control-decode", decode)
         control_prefill = compile_one(args.nvcc, args.package, overlay, directory, "control-prefill", prefill)
         experimental = compile_one(args.nvcc, args.package, overlay, directory, "independent-decode", candidate)
         spill_free = bool(experimental["spill_bytes"]) and all(tuple(map(int, pair)) == (0, 0) for pair in experimental["spill_bytes"])
-        result = {"spill_zero_target_met": spill_free, "gpu_validated": False, "base_decode": base_decode, "base_prefill": base_prefill, "control_decode": control, "control_prefill": control_prefill, "independent_decode": experimental, "header_sha256": hashlib.sha256((overlay / HEADER).read_bytes()).hexdigest(), "patches": {**{p: hashlib.sha256((args.patch_dir / p).read_bytes()).hexdigest() for p in patches}, CANDIDATE: hashlib.sha256(args.candidate.read_bytes()).hexdigest()}}
+        result = {"spill_zero_target_met": spill_free, "gpu_validated": False, "base_decode": base_decode, "base_prefill": base_prefill, "control_decode": control, "control_prefill": control_prefill, "independent_decode": experimental, "header_sha256": hashlib.sha256((overlay / HEADER).read_bytes()).hexdigest(), "patches": {**{p: hashlib.sha256((args.patch_dir / p).read_bytes()).hexdigest() for p in patches}, CANDIDATE: hashlib.sha256((args.patch_dir / CANDIDATE).read_bytes()).hexdigest()}}
         args.output.write_text(json.dumps(result, indent=2) + "\n")
         for log in directory.glob("*.log"):
             shutil.copy2(log, args.output.with_name(args.output.stem + "-" + log.name))

@@ -29,9 +29,9 @@ step() {
   shift 2
   echo "[$(date -Iseconds)] start ${variant} ${name}"
   step_exit=0
-  # Match serving's Prefill geometry for both the control and every candidate.
+  # Match serving's Prefill geometry and adopted Decode implementation.
   # Also exercise the 256-row masked idle rank in the numerical gate.
-  srun -N1 -n1 --exact --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${ROOT}/sglang.sqsh" --container-mounts="/scratch:/scratch,${ROOT}/home:${HOME},${ROOT}:${ROOT}" env DG_SM90_PREFILL_2WG=1 SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1 DG_JIT_CACHE_DIR="${ROOT}/scratch/deep-gemm-jit" "$@" >"${ROOT}/logs/${variant}-${name}.log" 2>&1 || step_exit=$?
+  srun -N1 -n1 --exact --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${ROOT}/sglang.sqsh" --container-mounts="/scratch:/scratch,${ROOT}/home:${HOME},${ROOT}:${ROOT}" env DG_SM90_PREFILL_2WG=1 DG_SM90_DECODE_INDEPENDENT_WG=1 SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1 DG_JIT_CACHE_DIR="${ROOT}/scratch/deep-gemm-jit" "$@" >"${ROOT}/logs/${variant}-${name}.log" 2>&1 || step_exit=$?
   printf '%s\t%s\t%s\t%s\n' "${variant}" "${name}" "${step_exit}" "$((SECONDS - started))" >>"${ROOT}/results/steps.tsv"
   echo "[$(date -Iseconds)] done ${variant} ${name} exit=${step_exit}"
 }

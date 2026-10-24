@@ -35,7 +35,6 @@ COPY deep-gemm /opt/apac/deep-gemm
 COPY containers/build-sm90-megamoe.py /opt/apac/build-sm90-megamoe.py
 RUN /opt/sglang/venv/bin/python /opt/apac/build-sm90-megamoe.py
 COPY deep-gemm-overlay /opt/apac/deep-gemm-overlay
-COPY deep-gemm-bench /opt/apac/deep-gemm-bench
 COPY firmus-framework.json /opt/apac/firmus-framework.json
 COPY containers/check-sm90-independent-wg.py /opt/apac/check-sm90-independent-wg.py
 RUN /opt/sglang/venv/bin/python /opt/apac/check-sm90-independent-wg.py --package /opt/sglang/venv/lib/python3.12/site-packages/deep_gemm

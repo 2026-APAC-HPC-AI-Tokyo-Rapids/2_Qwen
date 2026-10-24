@@ -85,6 +85,7 @@ CASES = [("decode", "balanced", n) for n in (4, 16, 32, 64, 96, 128)] + [("decod
 CASES += [("prefill", "balanced", n) for n in (1024, 2048, 4096)] + [("prefill", "local", 4096), ("prefill", "skew", 4096)]
 CASES += [("prefill", f"real{layer}{suffix}", 4096) for layer in REAL_ROUTING_LAYERS for suffix in ("", "-replica4")]
 TIMELINE_CASES = [("decode", "balanced", 128), ("prefill", "balanced", 4096)]
+TIMELINE_CASES += [("prefill", f"real{layer}{suffix}", 4096) for layer in REAL_ROUTING_LAYERS for suffix in ("", "-replica4")]
 
 
 def case_name(case):
@@ -266,7 +267,6 @@ def main():
     reference = {}
     if args.reference is not None:
         reference = {row["case"]: row for row in map(json.loads, args.reference.read_text().splitlines())}
-    region = None
     output = args.output.open("w") if RANK == 0 else None
     for case in TIMELINE_CASES if timeline else CASES:
         name = case_name(case)
@@ -354,10 +354,11 @@ def main():
         if case in TIMELINE_CASES and not timeline:
             torch.save(actual.cpu(), saved)
         if timeline:
-            if region is None:
-                offset, words = locate_timeline(buf, num_bytes)
-                region = buf.buffer[offset:offset + words * 8].view(torch.int64)
-                row["timeline_offset_minus_layout_bytes"] = offset - num_bytes
+            # Routing can switch between the 128- and 140-expert allocations.
+            # Resolve the current case's tail, not the preceding buffer's view.
+            offset, words = locate_timeline(buf, num_bytes)
+            region = buf.buffer[offset:offset + words * 8].view(torch.int64)
+            row["timeline_offset_minus_layout_bytes"] = offset - num_bytes
             snapshots = []
             for _ in range(TIMELINE_CALLS):
                 region.zero_()

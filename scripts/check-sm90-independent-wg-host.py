@@ -278,7 +278,6 @@ def main():
         assert hashlib.sha256(args.image_header.read_bytes()).hexdigest() == IMAGE_SHA256
         shutil.copy2(args.image_header, overlay / KERNEL)
         overlay_patches = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
-        overlay_patches.append("patches/deep-gemm-bench/independent-wg/sm90-decode-independent-wg.patch")
         for i, patch in enumerate(overlay_patches):
             if i == len(overlay_patches) - 1:
                 assert hashlib.sha256((overlay / KERNEL).read_bytes()).hexdigest() == BASELINE_SHA256

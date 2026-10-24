@@ -50,14 +50,19 @@ def workspace(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         (rootfs / relative).write_text(text)
     (rootfs / "opt/apac").mkdir(parents=True)
     (rootfs / "opt/apac/sm90-megamoe-build.json").write_text(json.dumps({"header_sha256": hashlib.sha256(header.encode()).hexdigest()}))
-    # The real image also supplies this extracted record. These fixture
-    # candidates do not enable the independent-WG host switch.
-    (rootfs / "opt/apac/deep-gemm-host-build.json").write_text(json.dumps({"abi": "tvm-ffi", "patches": {}}))
+    # All steps inherit the adopted Decode mode, including the control.
+    extension = rootfs / HEADER.split("/include/")[0] / "_C.so"
+    extension.write_bytes(b"fixture extension")
+    host_patch = ROOT / "patches/deep-gemm-host/sm90-decode-independent-wg.patch"
+    (rootfs / "opt/apac/deep-gemm-host-build.json").write_text(json.dumps({"abi": "tvm-ffi", "patches": {host_patch.name: hashlib.sha256(host_patch.read_bytes()).hexdigest()}, "extension_sha256": hashlib.sha256(extension.read_bytes()).hexdigest()}))
     image = tmp_path / "containers/image.sqsh"
     image.write_bytes(b"fake squashfs")
     ws = tmp_path / "ws"
     (ws / "configs").mkdir(parents=True)
     (ws / "configs/firmus-framework.json").write_text(json.dumps({"images": {"sglang": {"path": str(image), "sha256": hashlib.sha256(b"fake squashfs").hexdigest(), "size_bytes": image.stat().st_size}}}))
+    (ws / "patches/deep-gemm-host").mkdir(parents=True)
+    shutil.copy(host_patch, ws / "patches/deep-gemm-host" / host_patch.name)
+    (ws / "patches/deep-gemm-host/series").write_text(host_patch.name + "\n")
     (ws / "scripts").mkdir()
     for script in ("provision-firmus-kernel-bench.sh", "bench-firmus-megamoe.py", "check-firmus-megamoe.py", "check-firmus-decode-kernels.py", "firmus_megamoe_replicas.py"):
         shutil.copy(ROOT / "scripts" / script, ws / "scripts" / script)
@@ -204,7 +209,7 @@ def test_candidate_env_reaches_only_that_candidates_steps(tmp_path: Path) -> Non
     assert len(steps) == 7  # image bench + timeline, a-host gate + bench + timeline, b-plain gate + bench
     assert f"PYTHONPATH={runtime}/image/opt/sglang/venv/lib/python3.12/site-packages" in steps[0]
     for line in steps:
-        assert "env DG_SM90_PREFILL_2WG=1 SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1 DG_JIT_CACHE_DIR=" in line
+        assert "env DG_SM90_PREFILL_2WG=1 DG_SM90_DECODE_INDEPENDENT_WG=1 SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1 DG_JIT_CACHE_DIR=" in line
         candidate = f"{runtime}/overlay/candidates/a-host" in line or f"{runtime}/overlay/timeline/a-host" in line
         assert ("DG_SM90_PREFILL_2WG=1 DG_EXTRA=a.b/c,d:e-f " in line) is candidate, line
     assert (runtime / "run-success").exists()
@@ -469,3 +474,34 @@ def test_kernel_bench_gate_is_megamoe_only_and_serving_gate_keeps_decode_checks(
     assert '"${ROOT}/scripts/check-firmus-megamoe.py" --megamoe-only' in bench
     assert "--megamoe-only" not in serving
     assert 'if "--megamoe-only" not in sys.argv[1:]:\n        run_path(str(Path(__file__).with_name("check-firmus-decode-kernels.py")), run_name="__main__")' in gate
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+def test_control_only_timeline_stages_exactly_two_steps(tmp_path: Path) -> None:
+    ws, _ = workspace(tmp_path)
+    (ws / "patches/deep-gemm-bench").mkdir()
+    (ws / "patches/deep-gemm-bench/timeline").touch()
+    result = provision(tmp_path, ws)
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    variants = json.loads((runtime / "results/variants.json").read_text())
+    assert variants == {"deep_gemm": [{"name": "image", "patches": [], "env": [], "timeline": "ready"}], "sglang": None}
+    assert not list((runtime / "overlay/candidates").iterdir())
+    srun = tmp_path / "bin/srun"
+    srun.write_text('#!/bin/bash\nprintf \'%s\\n\' "$*" >>"${SRUN_LOG}"\n')
+    srun.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "SLURM_SUBMIT_DIR": str(runtime), "SLURM_JOB_ID": "fixture", "SRUN_LOG": str(tmp_path / "srun.log")}
+    run = subprocess.run(["bash", str(runtime / "scripts/run.sbatch")], cwd=runtime, env=env, text=True, capture_output=True, check=False)
+    assert run.returncode == 0, run.stderr
+    assert [(line.split("\t")[0], line.split("\t")[1]) for line in (runtime / "results/steps.tsv").read_text().splitlines()] == [("image", "bench"), ("image", "timeline")]
+    assert all("DG_SM90_DECODE_INDEPENDENT_WG=1" in line for line in (tmp_path / "srun.log").read_text().splitlines())
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+def test_control_rejects_old_host_even_without_candidates(tmp_path: Path) -> None:
+    ws, _ = workspace(tmp_path)
+    record = tmp_path / "containers/rootfs/opt/apac/deep-gemm-host-build.json"
+    record.write_text(json.dumps({"abi": "tvm-ffi", "patches": {}}))
+    result = provision(tmp_path, ws)
+    assert result.returncode != 0
+    assert "requires a rebuilt DeepGEMM host" in result.stderr

@@ -55,7 +55,7 @@ done
 if (( steps > max_steps )); then printf '%s Slurm steps (about 75 s each) exceed the %s that fit in one 17-minute job; drop candidates or timeline markers.\n' "${steps}" "${max_steps}" >&2; exit 1; fi
 
 check_candidate_host() {
-  local dir=$1 record=$2 extension=$3 enabled=0
+  local dir=$1 record=$2 extension=$3 enabled=${4:-0}
   if [[ -e "${dir}env" ]]; then enabled=$(sed -n 's/^DG_SM90_DECODE_INDEPENDENT_WG=//p' "${dir}env"); fi
   if [[ -z "${enabled}" || "${enabled}" == 0 ]]; then return 0; fi
   local patch_name=sm90-decode-independent-wg.patch patch_sha extension_sha
@@ -97,6 +97,8 @@ unsquashfs -no-progress -no-xattrs -processors 1 -d "${runtime_dir}/image" "${im
 chmod -R u+w "${runtime_dir}/image"
 cp "${runtime_dir}/image/opt/apac/sm90-megamoe-build.json" "${runtime_dir}/source/"
 [[ "$(sha256sum "${runtime_dir}/image/${package}/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh" | awk '{print $1}')" == "$(jq -er .header_sha256 "${runtime_dir}/source/sm90-megamoe-build.json")" ]]
+# The common step environment enables the adopted host path for the control too.
+check_candidate_host "${bench_dir}/" "${runtime_dir}/image/opt/apac/deep-gemm-host-build.json" "${runtime_dir}/image/${package}/_C.so" 1
 for dir in "${candidate_dirs[@]}"; do check_candidate_host "${dir}" "${runtime_dir}/image/opt/apac/deep-gemm-host-build.json" "${runtime_dir}/image/${package}/_C.so"; done
 
 timeline_patch="${GITHUB_WORKSPACE}/patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch"
