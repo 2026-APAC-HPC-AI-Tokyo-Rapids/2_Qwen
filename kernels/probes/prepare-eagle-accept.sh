@@ -19,7 +19,7 @@ install -d "${RUNTIME_DIR}/source" "${RUNTIME_DIR}/logs" "${RUNTIME_DIR}/results
 export HF_HUB_DISABLE_XET=1 HF_HOME="${RUNTIME_DIR}/tokenizer-cache" UV_CACHE_DIR="${RUNTIME_DIR}/uv-cache"
 export UV_CONCURRENT_BUILDS=1 UV_CONCURRENT_DOWNLOADS=1 UV_CONCURRENT_INSTALLS=1
 uvx --from 'huggingface_hub==0.36.0' hf download "$(jq -er .speculation.draft_repository "${config}")" config.json README.md model.safetensors --revision "$(jq -er .speculation.draft_revision "${config}")" --local-dir "${RUNTIME_DIR}/draft" --max-workers 1
-python3 "${GITHUB_WORKSPACE}/research/simulation/prepare_eagle.py" "${RUNTIME_DIR}/draft" "${RUNTIME_DIR}/source"
+/usr/bin/python3.9 "${GITHUB_WORKSPACE}/research/simulation/prepare_eagle.py" "${RUNTIME_DIR}/draft" "${RUNTIME_DIR}/source"
 jq -e '.revision == "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224" and .weight_sha256 == "bf226a966868fe413a22e62e471aa1130bd94f17fd2c40d322b1c8b4def1ae86" and .weight_bytes == 1145943008 and .precision == "BF16" and .runtime_config_sha256 == "85dc5a49b8644d070c396b5b993a4ec9d0ec19aaf41dfa5025500c0f5578329c"' "${RUNTIME_DIR}/source/draft-provenance.json" >/dev/null
 tokenizer_revision=ac9c66cc9b46af7306746a9250f23d47083d689e
 uvx --from 'huggingface_hub==0.36.0' hf download Qwen/Qwen3-235B-A22B-Instruct-2507 config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --max-workers 1 --revision "${tokenizer_revision}"
