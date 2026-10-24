@@ -1,0 +1,209 @@
+// One GPU, no peer traffic: actual FC2 output and combine bodies, synthetic
+// FP32 accumulators. Checks routing, partial tiles, slot masks and graph replay.
+// Timings isolate output processing, not end-to-end MegaMoE or serving.
+#include <deep_gemm/impls/sm90_fp8_mega_moe.cuh>
+#include <cuda_runtime.h>
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+#include <cstring>
+#define CUDA_OK(expr) do { auto e=(expr); if(e!=cudaSuccess) { std::fprintf(stderr,"%s: %s at %d\n",#expr,cudaGetErrorString(e),__LINE__); std::exit(1); } } while(0)
+enum : unsigned { H=4096, TOPK=8, SMEM=225472 };
+using Meta=deep_gemm::layout::TokenSrcMetadata;
+struct Workspace {
+    Meta* ptr;
+    __device__ Meta* get_token_src_metadata_ptr(unsigned row) const { return ptr+row; }
+};
+struct LocalSymmetric {
+    template<class T> __device__ T* map(T* p,unsigned) const { return p; }
+};
+__device__ float sample(unsigned row,unsigned col,unsigned seed) {
+    unsigned x=(row+1)*1664525u+(col+1)*1013904223u+seed*2654435761u;
+    x^=x>>13; x*=2246822519u; x^=x>>16;
+    return (int(x&65535)-32768)*0.000731f;
+}
+__global__ void initialize(Meta* meta, int64_t* indices,float* weights,unsigned tokens,unsigned seed) {
+    for(unsigned row=blockIdx.x*blockDim.x+threadIdx.x;row<tokens*TOPK;row+=gridDim.x*blockDim.x) {
+        // Odd multiplier permutes power-of-two and non-power-of-two token sizes
+        // only when coprime; reversal always remains bijective.
+        unsigned slot=row/tokens, token=tokens-1-row%tokens;
+        meta[row]={0,token,slot};
+        bool live=seed%3==0 ? false : (seed%3==1 || (token+slot)%3!=0);
+        indices[token*TOPK+slot]=live ? int64_t(slot) : -1;
+        weights[token*TOPK+slot]=(int((token*7+slot*13+seed)%101)-50)*0.0031f;
+    }
+}
+__global__ void reference(nv_bfloat16* out,const int64_t* idx,const float* weights,unsigned tokens,unsigned seed) {
+    for(unsigned i=blockIdx.x*blockDim.x+threadIdx.x;i<tokens*H;i+=gridDim.x*blockDim.x) {
+        unsigned token=i/H,col=i%H; float sum=0;
+        for(unsigned slot=0;slot<TOPK;++slot) if(idx[token*TOPK+slot]>=0) {
+            float value=__bfloat162float(__float2bfloat16_rn(sample(slot*tokens+tokens-1-token,col,seed)));
+            sum=fmaf(value,weights[token*TOPK+slot],sum);
+        }
+        out[i]=__float2bfloat16_rn(sum);
+    }
+}
+namespace deep_gemm {
+// EXTRACTED_KERNEL
+template<unsigned Mode>
+CUTLASS_GLOBAL __launch_bounds__(384,1)
+void @NAME@_scatter(nv_bfloat16* slots,Meta* metadata,unsigned tokens,unsigned seed) {
+    constexpr unsigned kHidden=4096,kIntermediateHidden=1536,kNumRanks=4,kNumTopk=8;
+    constexpr bool kPrefill2WG=Mode==0,kSwapABActive=Mode==1 || Mode==2,kIndependentWG=Mode==1;
+    constexpr bool kL2EpilogueRequiresFullSync=Mode!=0;
+    constexpr unsigned WG_BLOCK_M=64,WG_BLOCK_N=Mode==0 ? 256 : (Mode==1 ? 128 : 64);
+    constexpr unsigned kAccumPerThread=kSwapABActive ? (kIndependentWG ? 64 : 32) : WG_BLOCK_N/2;
+    constexpr unsigned kSwapABTokenChunks=8,kNumEpilogueThreads=256;
+    constexpr unsigned kEpilogueFullBarrierIdx=2,kEpilogueWGBarrierStartIdx=3;
+    constexpr unsigned BM=Mode==0 ? 128 : 64,BN=Mode<2 ? 256 : 128;
+    const unsigned warp_idx=threadIdx.x/32,lane_idx=threadIdx.x%32;
+    extern __shared__ __align__(1024) uint8_t smem_buffer[];
+    auto smem_cd_l2=reinterpret_cast<nv_bfloat16*>(smem_buffer+9216);
+    if(warp_idx<2) {cutlass::arch::warpgroup_reg_dealloc<48>(); return;}
+    if(warp_idx<4) {cutlass::arch::warpgroup_reg_dealloc<40>(); return;}
+    cutlass::arch::warpgroup_reg_alloc<168>();
+    const unsigned epilogue_warp_idx=warp_idx-4,epilogue_wg_idx=epilogue_warp_idx/4;
+    const unsigned warp_idx_in_wg=epilogue_warp_idx%4,row_idx=lane_idx/4,col_idx=lane_idx%4;
+    const unsigned r_0=warp_idx_in_wg*16+row_idx,r_1=r_0+8;
+    const unsigned row_base=Mode==0 ? epilogue_wg_idx*64 : 0;
+    const unsigned wg_n_offset=Mode>=2 ? epilogue_wg_idx*WG_BLOCK_N : 0;
+    const unsigned smem_cd_l2_wg_offset=epilogue_wg_idx*64*WG_BLOCK_N;
+    const Workspace workspace{metadata}; const LocalSymmetric sym_buffer{};
+    const auto combine_token_buffer=layout::Buffer(layout::Data(H*2),TOPK,tokens,slots);
+    @HELPERS@
+    const unsigned rows=tokens*TOPK,tiles=((rows+BM-1)/BM)*(H/BN);
+    for(unsigned tile=blockIdx.x;tile<tiles;tile+=gridDim.x) {
+        const unsigned m_idx=tile/(H/BN)*BM;
+        const unsigned n_idx=(tile%(H/BN))*BN+(Mode==1 ? epilogue_wg_idx*128 : 0);
+        const unsigned valid_m=min(BM,rows-m_idx);
+        const bool valid_r0=row_base+r_0<valid_m,valid_r1=row_base+r_1<valid_m;
+        float final_accum[kAccumPerThread];
+        if constexpr(kSwapABActive) {
+            #pragma unroll
+            for(unsigned f=0;f<(kIndependentWG ? 2 : 1);++f) {
+                #pragma unroll
+                for(unsigned i=0;i<8;++i) {
+                    const unsigned t0=i*8+col_idx*2;
+                    final_accum[f*32+i*4]=sample(m_idx+t0,n_idx+wg_n_offset+f*64+r_0,seed);
+                    final_accum[f*32+i*4+1]=sample(m_idx+t0+1,n_idx+wg_n_offset+f*64+r_0,seed);
+                    final_accum[f*32+i*4+2]=sample(m_idx+t0,n_idx+wg_n_offset+f*64+r_1,seed);
+                    final_accum[f*32+i*4+3]=sample(m_idx+t0+1,n_idx+wg_n_offset+f*64+r_1,seed);
+                }
+            }
+        } else {
+            #pragma unroll
+            for(unsigned i=0;i<WG_BLOCK_N/8;++i) {
+                unsigned c=n_idx+wg_n_offset+i*8+col_idx*2;
+                final_accum[i*4]=sample(m_idx+row_base+r_0,c,seed);
+                final_accum[i*4+1]=sample(m_idx+row_base+r_0,c+1,seed);
+                final_accum[i*4+2]=sample(m_idx+row_base+r_1,c,seed);
+                final_accum[i*4+3]=sample(m_idx+row_base+r_1,c+1,seed);
+            }
+        }
+        @EPILOGUE@
+    }
+}
+template<bool Prefill>
+CUTLASS_GLOBAL __launch_bounds__(384,1)
+void @NAME@_combine(nv_bfloat16* slots,void* y,int64_t* idx,float* weights,unsigned num_tokens) {
+    constexpr unsigned kHidden=4096,kIntermediateHidden=1536,kNumRanks=4,kNumTopk=8;
+    constexpr unsigned kNumCombineWarps=8,kNumSMs=132,SMEM_BEFORE_BARRIER_SIZE=225280,kCombineSmemOffset=1024;
+    constexpr bool kPairedCombine=Prefill,kPrefill2WG=Prefill,kSplitMNWarpgroups=false,kSwapABActive=!Prefill;
+    const unsigned sm_idx=blockIdx.x,lane_idx=threadIdx.x%32,warp_idx=threadIdx.x/32;
+    const unsigned epilogue_warp_idx=warp_idx-4;
+    using Barrier=cutlass::arch::ClusterTransactionBarrier;
+    extern __shared__ __align__(1024) uint8_t smem_buffer[];
+    auto barrier_start_ptr=reinterpret_cast<Barrier*>(smem_buffer+225280);
+    auto combine_barriers=utils::PatternVisitor([&](unsigned i){return barrier_start_ptr+i;});
+    if(threadIdx.x==0) {for(unsigned i=0;i<16;++i) combine_barriers[i]->init(1);cutlass::arch::fence_barrier_init();}
+    __syncthreads();
+    if(warp_idx<2) {cutlass::arch::warpgroup_reg_dealloc<48>(); return;}
+    if(warp_idx<4) {cutlass::arch::warpgroup_reg_dealloc<40>(); return;}
+    cutlass::arch::warpgroup_reg_alloc<168>();
+    const auto combine_token_buffer=layout::Buffer(layout::Data(H*2),TOPK,num_tokens,slots);
+    const auto input_topk_idx_buffer=layout::Buffer(layout::Data(TOPK*8,false),1,num_tokens,idx);
+    const auto input_topk_weights_buffer=layout::Buffer(layout::Data(TOPK*4,false),1,num_tokens,weights);
+    @HELPERS@
+    @COMBINE@
+}
+// EXTRACTED_KERNEL
+}
+using Scatter=void(*)(nv_bfloat16*,Meta*,unsigned,unsigned);
+using Combine=void(*)(nv_bfloat16*,void*,int64_t*,float*,unsigned);
+void scatter(Scatter f,nv_bfloat16* slots,Meta* metadata,unsigned tokens,cudaStream_t stream) {
+    f<<<132,384,SMEM,stream>>>(slots,metadata,tokens,1);
+    CUDA_OK(cudaGetLastError());
+}
+void combine(Combine f,nv_bfloat16* slots,nv_bfloat16* out,int64_t* idx,float* weights,unsigned tokens,cudaStream_t stream) {
+    f<<<132,384,SMEM,stream>>>(slots,out,idx,weights,tokens);
+    CUDA_OK(cudaGetLastError());
+}
+int main() {
+    using namespace deep_gemm;
+    cudaDeviceProp prop;CUDA_OK(cudaGetDeviceProperties(&prop,0));
+    if(prop.major!=9) {std::fprintf(stderr,"requires SM90\n");return 1;}
+    printf("GPU %s SMs=%d\n",prop.name,prop.multiProcessorCount);
+    Scatter scatters[2][4]={{baseline_scatter<0>,baseline_scatter<1>,baseline_scatter<2>,baseline_scatter<3>},
+                          {candidate_scatter<0>,candidate_scatter<1>,candidate_scatter<2>,candidate_scatter<3>}};
+    Combine combines[2][2]={{baseline_combine<true>,baseline_combine<false>},{candidate_combine<true>,candidate_combine<false>}};
+    for(auto& fs:scatters)for(auto f:fs)CUDA_OK(cudaFuncSetAttribute(f,cudaFuncAttributeMaxDynamicSharedMemorySize,SMEM));
+    for(auto& fs:combines)for(auto f:fs)CUDA_OK(cudaFuncSetAttribute(f,cudaFuncAttributeMaxDynamicSharedMemorySize,SMEM));
+    nv_bfloat16 *slots[2],*out[2],*ref;Meta* meta;int64_t* idx;float* weights;
+    constexpr unsigned MAX=4096;
+    for(int v=0;v<2;++v){CUDA_OK(cudaMalloc(&slots[v],size_t(MAX)*TOPK*H*2));CUDA_OK(cudaMalloc(&out[v],size_t(MAX)*H*2));}
+    CUDA_OK(cudaMalloc(&ref,size_t(MAX)*H*2));CUDA_OK(cudaMalloc(&meta,MAX*TOPK*sizeof(Meta)));
+    CUDA_OK(cudaMalloc(&idx,MAX*TOPK*8));CUDA_OK(cudaMalloc(&weights,MAX*TOPK*4));
+    cudaStream_t stream;CUDA_OK(cudaStreamCreate(&stream));
+    unsigned checks=0;
+    for(unsigned mode=0;mode<4;++mode)for(unsigned tokens:{1u,7u,9u,63u,64u,65u,127u,129u,160u,256u,4032u,4096u}) {
+        std::vector<unsigned short> a(tokens*H),b(tokens*H),expected(tokens*H);
+        // Capture output stages once, then change masks/weights across replays.
+        cudaGraph_t graph;cudaGraphExec_t exec;
+        CUDA_OK(cudaStreamBeginCapture(stream,cudaStreamCaptureModeGlobal));
+        for(unsigned v=0;v<2;++v) {
+            scatter(scatters[v][mode],slots[v],meta,tokens,stream);
+            combine(combines[v][mode==0?0:1],slots[v],out[v],idx,weights,tokens,stream);
+        }
+        CUDA_OK(cudaStreamEndCapture(stream,&graph));CUDA_OK(cudaGraphInstantiate(&exec,graph,0));
+        for(unsigned seed:{1u,2u,3u,4u}) {
+            initialize<<<132,256,0,stream>>>(meta,idx,weights,tokens,seed);
+            CUDA_OK(cudaMemsetAsync(out[0],0x7f,size_t(tokens)*H*2,stream));
+            CUDA_OK(cudaMemsetAsync(out[1],0x7f,size_t(tokens)*H*2,stream));
+            CUDA_OK(cudaGraphLaunch(exec,stream));
+            reference<<<132,256,0,stream>>>(ref,idx,weights,tokens,1);
+            CUDA_OK(cudaMemcpyAsync(a.data(),out[0],a.size()*2,cudaMemcpyDeviceToHost,stream));
+            CUDA_OK(cudaMemcpyAsync(b.data(),out[1],b.size()*2,cudaMemcpyDeviceToHost,stream));
+            CUDA_OK(cudaMemcpyAsync(expected.data(),ref,expected.size()*2,cudaMemcpyDeviceToHost,stream));
+            CUDA_OK(cudaStreamSynchronize(stream));
+            for(size_t i=0;i<a.size();++i)if(a[i]!=b[i] || a[i]!=expected[i]) {
+                fprintf(stderr,"FAIL mode=%u tokens=%u seed=%u i=%zu baseline=%04x candidate=%04x reference=%04x\n",mode,tokens,seed,i,a[i],b[i],expected[i]);return 2;
+            }
+            ++checks;
+        }
+        CUDA_OK(cudaGraphExecDestroy(exec));CUDA_OK(cudaGraphDestroy(graph));
+        if(tokens==160 || tokens==4096) {
+            // Interleave A/B order and report medians for individual stages and
+            // their sum. Sample generation stays identical in both variants.
+            initialize<<<132,256,0,stream>>>(meta,idx,weights,tokens,1);
+            float times[2][2][6]={};cudaEvent_t begin,end;CUDA_OK(cudaEventCreate(&begin));CUDA_OK(cudaEventCreate(&end));
+            for(unsigned trial=0;trial<6;++trial)for(unsigned vv=0;vv<2;++vv) {
+                unsigned v=vv^(trial&1);
+                for(unsigned phase=0;phase<2;++phase) {
+                    auto run=[&](){if(phase==0)scatter(scatters[v][mode],slots[v],meta,tokens,stream);else combine(combines[v][mode==0?0:1],slots[v],out[v],idx,weights,tokens,stream);};
+                    for(unsigned j=0;j<3;++j)run();
+                    CUDA_OK(cudaEventRecord(begin,stream));for(unsigned j=0;j<10;++j)run();
+                    CUDA_OK(cudaEventRecord(end,stream));CUDA_OK(cudaEventSynchronize(end));
+                    CUDA_OK(cudaEventElapsedTime(&times[v][phase][trial],begin,end));times[v][phase][trial]*=100;
+                }
+            }
+            float med[2][2];for(unsigned v=0;v<2;++v)for(unsigned p=0;p<2;++p){std::sort(times[v][p],times[v][p]+6);med[v][p]=(times[v][p][2]+times[v][p][3])*0.5f;}
+            printf("TIMING mode=%u tokens=%u baseline_scatter_us=%.3f candidate_scatter_us=%.3f baseline_combine_us=%.3f candidate_combine_us=%.3f ratio=%.4f\n",mode,tokens,med[0][0],med[1][0],med[0][1],med[1][1],(med[1][0]+med[1][1])/(med[0][0]+med[0][1]));
+            CUDA_OK(cudaEventDestroy(begin));CUDA_OK(cudaEventDestroy(end));
+        }
+    }
+    printf("PASS FC2 output/combine: %u bitwise checks against baseline and independent reference, 4 geometries, masked/all-padding and changed-weight graph replays; local traffic only\n",checks);
+    CUDA_OK(cudaStreamDestroy(stream));
+    for(unsigned v=0;v<2;++v){CUDA_OK(cudaFree(slots[v]));CUDA_OK(cudaFree(out[v]));}
+    CUDA_OK(cudaFree(meta));CUDA_OK(cudaFree(idx));CUDA_OK(cudaFree(weights));CUDA_OK(cudaFree(ref));
+}

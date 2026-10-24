@@ -1,0 +1,99 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -351,6 +351,34 @@
+ 
+     // Combine input area
+     const auto combine_token_buffer = layout::Buffer(bf16_token_layout, kNumTopk, kNumMaxTokensPerRank, l2_sf_buffer.get_end_ptr());
++
++    // All Qwen ranks use the same 32-column permutation, including masked idle
++    // ranks with a different GEMM geometry. It swaps the two 2-bit BF16-pair
++    // coordinates, so FC2 can store its register fragment without a shared
++    // memory transpose. Combine restores column order once after top-k reduce.
++    constexpr bool kFragmentCombine = kHidden == 4096 and kIntermediateHidden == 1536 and
++        kNumRanks == 4 and kNumTopk == 8;
++    const auto fragment_col = [](uint32_t col) {
++        return (col & ~31u) | ((col & 6u) << 2) | ((col & 24u) >> 2) | (col & 1u);
++    };
++    const auto restore_fragment = [&](uint4 value) {
++        if constexpr (kFragmentCombine) {
++            const uint32_t c = lane_idx & 3u;
++            const uint32_t ab = __shfl_xor_sync(0xffffffff, (c & 1u) ? value.x : value.y, 1, 4);
++            const uint32_t cd = __shfl_xor_sync(0xffffffff, (c & 1u) ? value.z : value.w, 1, 4);
++            value.x = (c & 1u) ? ab : value.x;
++            value.y = (c & 1u) ? value.y : ab;
++            value.z = (c & 1u) ? cd : value.z;
++            value.w = (c & 1u) ? value.w : cd;
++            const uint32_t ac = __shfl_xor_sync(0xffffffff, (c & 2u) ? value.x : value.z, 2, 4);
++            const uint32_t bd = __shfl_xor_sync(0xffffffff, (c & 2u) ? value.y : value.w, 2, 4);
++            value.x = (c & 2u) ? ac : value.x;
++            value.y = (c & 2u) ? bd : value.y;
++            value.z = (c & 2u) ? value.z : ac;
++            value.w = (c & 2u) ? value.w : bd;
++        }
++        return value;
++    };
+ 
+     // =====================================================================
+     // GEMM data types and shape constants
+@@ -2779,9 +2807,35 @@
+                     return (((col / 8) ^ (row % 8)) * 8) + col % 8;
+                 };
+ 
++                if constexpr (kFragmentCombine and not kSwapABActive) {
++                    // One quad owns eight BF16 values per lane, covering one
++                    // 32-column fragment. Write register-native uint4 vectors
++                    // straight to the owner's slot; no CD store/load, shuffle,
++                    // async proxy or extra synchronization in this path.
++                    DG_STATIC_ASSERT(WG_BLOCK_N % 32 == 0, "Fragment scatter needs complete 32-column groups");
++                    #pragma unroll
++                    for (uint32_t half = 0; half < 2; ++ half) {
++                        const uint32_t row = row_base + r_0 + 8 * half;
++                        if (row < valid_m) {
++                            const auto meta = *workspace.get_token_src_metadata_ptr(m_idx + row);
++                            const auto dst_token = combine_token_buffer.get_rank_buffer(meta.topk_idx).get_data_buffer(meta.token_idx);
++                            auto* dst = sym_buffer.map(math::advance_ptr<uint4>(dst_token.get_base_ptr(),
++                                (n_idx + wg_n_offset + col_idx * 8) * sizeof(nv_bfloat16)), meta.rank_idx);
++                            #pragma unroll
++                            for (uint32_t group = 0; group < WG_BLOCK_N / 32; ++ group) {
++                                uint4 packed;
++                                packed.x = math::cast_into_bf16_and_pack(final_accum[group * 16 + 2 * half], final_accum[group * 16 + 2 * half + 1]);
++                                packed.y = math::cast_into_bf16_and_pack(final_accum[group * 16 + 4 + 2 * half], final_accum[group * 16 + 5 + 2 * half]);
++                                packed.z = math::cast_into_bf16_and_pack(final_accum[group * 16 + 8 + 2 * half], final_accum[group * 16 + 9 + 2 * half]);
++                                packed.w = math::cast_into_bf16_and_pack(final_accum[group * 16 + 12 + 2 * half], final_accum[group * 16 + 13 + 2 * half]);
++                                dst[group * 4] = packed;
++                            }
++                        }
++                    }
++                } else {
+                 if constexpr (kSwapABActive) {
+                     auto store_bf16 = [&](const uint32_t& token, const uint32_t& col, float value) {
+-                        smem_cd_l2[smem_cd_l2_wg_offset + token * WG_BLOCK_N + col] =
++                        smem_cd_l2[smem_cd_l2_wg_offset + token * WG_BLOCK_N + (kFragmentCombine ? fragment_col(col) : col)] =
+                             __float2bfloat16_rn(value);
+                     };
+ 
+@@ -2919,6 +2973,8 @@
+                     *sym_buffer.map(dst_ptr, dst_rank_idx) = packed;
+                 }
+                 }
++
++                } // register-native scatter or the shared-memory path
+ 
+                 if constexpr (kIndependentWG)
+                     ptx::sync_aligned(128, kEpilogueWGBarrierStartIdx + epilogue_wg_idx);
+@@ -3162,6 +3218,7 @@
+                     #pragma unroll
+                     for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l)
+                         casted_bf16[l] = __float22bfloat162_rn(reduced[j * kNumElemsPerUint4 + l]);
++                    casted = restore_fragment(casted);
+ 
+                     if (j == 0) {
+                         ptx::tma_store_wait<0>();
+@@ -3248,6 +3305,7 @@
+                     #pragma unroll
+                     for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l)
+                         casted_bf16[l] = __float22bfloat162_rn(reduced[j * kNumElemsPerUint4 + l]);
++                    casted = restore_fragment(casted);
+ 
+                     if (j == 0) {
+                         ptx::tma_store_wait<0>();
