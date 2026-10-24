@@ -13,12 +13,8 @@ struct QKVParams {
     uint8_t *q, *k, *v, *kc, *vc;
 };
 
-template<int BM, int BN, int THREADS>
-__device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int first_row, int block_n, int rows, const QKVParams& p) {
-    constexpr int HEADS = BN / 128, HEAD_THREADS = THREADS / HEADS;
-    const int local_head = threadIdx.x / HEAD_THREADS;
-    const int head = block_n * HEADS + local_head;
-    tile += local_head * BM * 128;
+template<int BM, int THREADS>
+__device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int first_row, int head, int rows, const QKVParams& p) {
     const int lane = threadIdx.x % 8;
     const int col = lane * 8;
     float wx[8], wy[8];
@@ -33,7 +29,7 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
         }
     }
     // Same eight-lane/head reduction tree as the deployed SGLang prologue.
-    for (int row = (threadIdx.x % HEAD_THREADS) / 8; row < BM; row += HEAD_THREADS / 8) {
+    for (int row = threadIdx.x / 8; row < BM; row += THREADS / 8) {
         const int token = first_row + row;
         float x[8], y[8], partial[4];
         uint16_t ox[4], oy[4];
@@ -99,81 +95,11 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
     }
 }
 
-// Each four-lane WGMMA row owns pairs at columns (lane*2 + 8*t).
-// Fold the eight chunks in the same XOR-4/2/1 order as the deployed
-// eight-lane norm, then combine its four partial sums across these lanes.
-template<int BN>
-__device__ __forceinline__ void qkv_register_epilogue(const float* accum, int first_row, int block_n, int rows, const QKVParams& p) {
-    const int lane = threadIdx.x % 4;
-    const int first = first_row + (threadIdx.x / 32) * 16 + (threadIdx.x % 32) / 4;
-    #pragma unroll
-    for(int h=0;h<BN/128;++h) {
-        const int head=block_n*(BN/128)+h;
-        #pragma unroll
-        for(int r=0;r<2;++r) {
-            const int token=first+r*8;
-            float x[16],y[16],part[8];
-            #pragma unroll
-            for(int t=0;t<8;++t) {
-                const int base=(h*16+t)*4+r*2;
-                x[t*2]=__bfloat162float(__float2bfloat16_rn(accum[base]));
-                x[t*2+1]=__bfloat162float(__float2bfloat16_rn(accum[base+1]));
-                y[t*2]=__bfloat162float(__float2bfloat16_rn(accum[base+32]));
-                y[t*2+1]=__bfloat162float(__float2bfloat16_rn(accum[base+33]));
-                float sum=0.f;
-                sum+=x[t*2]*x[t*2]; sum+=x[t*2+1]*x[t*2+1];
-                sum+=y[t*2]*y[t*2]; sum+=y[t*2+1]*y[t*2+1];
-                part[t]=sum;
-            }
-            float scale=1.f;
-            if(head<68) {
-                float sum=((part[0]+part[4])+(part[2]+part[6]))+((part[1]+part[5])+(part[3]+part[7]));
-                sum+=__shfl_xor_sync(0xffffffff,sum,2,4);
-                sum+=__shfl_xor_sync(0xffffffff,sum,1,4);
-                scale=rsqrtf(sum/128.f+1e-6f);
-            }
-            const int64_t pos=token<rows?p.pos[token]:0;
-            const int64_t loc=token<rows && head>=64?p.loc[token]:0;
-            const auto w=head<64?p.qw:p.kw;
-            #pragma unroll
-            for(int t=0;t<8;++t) {
-                const int col=t*8+lane*2;
-                float2 a=make_float2(x[t*2],x[t*2+1]),b=make_float2(y[t*2],y[t*2+1]);
-                if(head<68) {
-                    const float2 wx=__bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(w+col));
-                    const float2 wy=__bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(w+64+col));
-                    const float2 c=*reinterpret_cast<const float2*>(p.trig+pos*128+col);
-                    const float2 s=*reinterpret_cast<const float2*>(p.trig+pos*128+64+col);
-                    const float u0=__bfloat162float(__float2bfloat16_rn(a.x*scale*wx.x));
-                    const float u1=__bfloat162float(__float2bfloat16_rn(a.y*scale*wx.y));
-                    const float v0=__bfloat162float(__float2bfloat16_rn(b.x*scale*wy.x));
-                    const float v1=__bfloat162float(__float2bfloat16_rn(b.y*scale*wy.y));
-                    a=__bfloat1622float2(__float22bfloat162_rn(make_float2(u0*c.x-v0*s.x,u1*c.y-v1*s.y)));
-                    b=__bfloat1622float2(__float22bfloat162_rn(make_float2(u0*s.x+v0*c.x,u1*s.y+v1*c.y)));
-                }
-                if(token<rows) {
-                    const uint16_t lo=__nv_cvt_float2_to_fp8x2(a,__NV_NOSAT,__NV_E4M3);
-                    const uint16_t hi=__nv_cvt_float2_to_fp8x2(b,__NV_NOSAT,__NV_E4M3);
-                    uint8_t* dst=head<64?p.q+(int64_t(token)*64+head)*128:(head<68?p.k:p.v)+(int64_t(token)*4+head%4)*128;
-                    *reinterpret_cast<uint16_t*>(dst+col)=lo;
-                    *reinterpret_cast<uint16_t*>(dst+64+col)=hi;
-                    if(head>=64 && loc!=0) {
-                        dst=(head<68?p.kc:p.vc)+(loc*4+head%4)*128;
-                        *reinterpret_cast<uint16_t*>(dst+col)=lo;
-                        *reinterpret_cast<uint16_t*>(dst+64+col)=hi;
-                    }
-                }
-            }
-        }
-    }
-}
-
 #include "qkv-fused.cuh"
-#include "qkv-register.cuh"
 using namespace deep_gemm;
-constexpr int BM=128, THREADS=384;
+constexpr int THREADS=384;
 #define GEMM_ARGS cute::UMMA::Major::K,0,9216,4096,1,BM,BN,128,128,128,128,STAGES,128,256,CLUSTER,(CLUSTER>1),132,GemmType::Normal,cutlass::bfloat16_t,epilogue::transform::EpilogueIdentity
-template<int BN, int STAGES>
+template<int BM, int BN, int STAGES>
 constexpr int smem_bytes = BM*BN*2+STAGES*(BM*128+BN*128+BM*4)+32*4*(BN/128)+STAGES*16;
 
 static CUtensorMap descriptor(void* ptr, CUtensorMapDataType type, uint64_t x, uint64_t y, uint32_t bx, uint32_t by, unsigned bytes, CUtensorMapSwizzle swizzle) {
@@ -184,16 +110,16 @@ static CUtensorMap descriptor(void* ptr, CUtensorMapDataType type, uint64_t x, u
     if(result!=CUDA_SUCCESS) { std::fprintf(stderr,"tensor map error %d\n",int(result)); std::abort(); }
     return map;
 }
-template<int BN, int STAGES, int CLUSTER>
+template<int BM, int BN, int STAGES, int CLUSTER>
 int init_variant() {
-    constexpr int SMEM=smem_bytes<BN,STAGES>;
+    constexpr int SMEM=smem_bytes<BM,BN,STAGES>;
     int kind=0;
-    for(auto fn:{reinterpret_cast<const void*>(&sm90_fp8_gemm_1d2d_impl<GEMM_ARGS>),reinterpret_cast<const void*>(&qkv_fused_impl<GEMM_ARGS>),reinterpret_cast<const void*>(&qkv_register_impl<GEMM_ARGS>)}) {
+    for(auto fn:{reinterpret_cast<const void*>(&sm90_fp8_gemm_1d2d_impl<GEMM_ARGS>),reinterpret_cast<const void*>(&qkv_fused_impl<GEMM_ARGS>)}) {
         auto status=cudaFuncSetAttribute(fn,cudaFuncAttributeMaxDynamicSharedMemorySize,SMEM);
         if(status!=cudaSuccess) return int(status);
         cudaFuncAttributes attr{}; cudaFuncGetAttributes(&attr,fn);
         int resident=0; cudaOccupancyMaxActiveBlocksPerMultiprocessor(&resident,fn,THREADS,SMEM);
-        std::printf("qkv_resources bn=%d stages=%d cluster=%d kind=%d regs=%d local=%zu smem=%d resident=%d\n",BN,STAGES,CLUSTER,kind++,attr.numRegs,attr.localSizeBytes,SMEM,resident);
+        std::printf("qkv_resources bm=%d bn=%d stages=%d cluster=%d kind=%d regs=%d local=%zu smem=%d resident=%d\n",BM,BN,STAGES,CLUSTER,kind++,attr.numRegs,attr.localSizeBytes,SMEM,resident);
         if(resident<1) return -2;
     }
     return 0;
@@ -201,10 +127,10 @@ int init_variant() {
 extern "C" int qkv_init() {
     int sms=0; cudaDeviceGetAttribute(&sms,cudaDevAttrMultiProcessorCount,0);
     if(sms!=132) return -1;
-    int status=init_variant<128,5,1>();
-    return status ? status : init_variant<256,3,2>();
+    int status=init_variant<128,128,5,1>();
+    return status ? status : init_variant<256,128,3,2>();
 }
-template<int BN, int STAGES, int CLUSTER>
+template<int BM, int BN, int STAGES, int CLUSTER>
 int run_variant(int kind,int rows,int sf_stride,void* a,void* sa,void* b,void* sb,void* out,QKVParams p,void* stream_ptr) {
     const auto ta=descriptor(a,CU_TENSOR_MAP_DATA_TYPE_UINT8,4096,rows,128,BM,1,CU_TENSOR_MAP_SWIZZLE_128B);
     const auto tb=descriptor(b,CU_TENSOR_MAP_DATA_TYPE_UINT8,4096,9216,128,BN,1,CU_TENSOR_MAP_SWIZZLE_128B);
@@ -218,15 +144,12 @@ int run_variant(int kind,int rows,int sf_stride,void* a,void* sa,void* b,void* s
     attr.val.clusterDim.x=CLUSTER; attr.val.clusterDim.y=1; attr.val.clusterDim.z=1;
     cudaLaunchConfig_t config{};
     config.gridDim=dim3(132); config.blockDim=dim3(THREADS);
-    config.dynamicSmemBytes=smem_bytes<BN,STAGES>; config.stream=stream;
+    config.dynamicSmemBytes=smem_bytes<BM,BN,STAGES>; config.stream=stream;
     config.attrs=&attr; config.numAttrs=1;
-    if(kind==2) return int(cudaLaunchKernelEx(&config,qkv_register_impl<GEMM_ARGS>,static_cast<float*>(sb),static_cast<int*>(nullptr),unsigned(rows),9216u,4096u,ca,cb,cd,cs,p));
     if(kind==1) return int(cudaLaunchKernelEx(&config,qkv_fused_impl<GEMM_ARGS>,static_cast<float*>(sb),static_cast<int*>(nullptr),unsigned(rows),9216u,4096u,ca,cb,cd,cs,p));
     return int(cudaLaunchKernelEx(&config,sm90_fp8_gemm_1d2d_impl<GEMM_ARGS>,static_cast<float*>(sb),static_cast<int*>(nullptr),unsigned(rows),9216u,4096u,ca,cb,cd,cs));
 }
 extern "C" int qkv_run(int mode,int rows,int sf_stride,void* a,void* sa,void* b,void* sb,void* out,QKVParams p,void* stream_ptr) {
-    if(mode<2) return run_variant<128,5,1>(mode%2,rows,sf_stride,a,sa,b,sb,out,p,stream_ptr);
-    if(mode<4) return run_variant<256,3,2>(mode%2,rows,sf_stride,a,sa,b,sb,out,p,stream_ptr);
-    if(mode==4) return run_variant<128,5,1>(2,rows,sf_stride,a,sa,b,sb,out,p,stream_ptr);
-    return run_variant<256,3,2>(2,rows,sf_stride,a,sa,b,sb,out,p,stream_ptr);
+    if(mode<2) return run_variant<128,128,5,1>(mode%2,rows,sf_stride,a,sa,b,sb,out,p,stream_ptr);
+    return run_variant<256,128,3,2>(mode%2,rows,sf_stride,a,sa,b,sb,out,p,stream_ptr);
 }

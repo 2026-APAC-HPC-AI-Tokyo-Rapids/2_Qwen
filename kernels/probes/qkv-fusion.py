@@ -1,6 +1,5 @@
-"""Compare deployed QKV, the previous BN128 fusion, and a BN256 fusion."""
+"""Compare deployed QKV, the previous BM128 fusion, and a BM256 fusion."""
 import ctypes
-import faulthandler
 import json
 import os
 import runpy
@@ -8,7 +7,6 @@ import statistics
 from pathlib import Path
 
 os.environ["DG_JIT_PTXAS_VERBOSE"] = "1"
-os.environ["DG_JIT_PRINT_COMPILER_COMMAND"] = "1"
 
 import deep_gemm
 import torch
@@ -30,7 +28,7 @@ class Params(ctypes.Structure):
 lib.qkv_run.argtypes = [ctypes.c_int] * 3 + [ctypes.c_void_p] * 5 + [Params, ctypes.c_void_p]
 lib.qkv_run.restype = ctypes.c_int
 assert lib.qkv_init() == 0
-print(json.dumps({"device": torch.cuda.get_device_name(), "scope": "QKV GEMM + QK norm/RoPE/FP8 Q and contiguous/paged KV", "tiles_bm_bn_stages_cluster": [[128, 128, 5, 1], [128, 256, 3, 2]], "serving": False}), flush=True)
+print(json.dumps({"device": torch.cuda.get_device_name(), "scope": "QKV GEMM + QK norm/RoPE/FP8 Q and contiguous/paged KV", "tiles_bm_bn_stages_cluster": [[128, 128, 5, 1], [256, 128, 3, 2]], "serving": False}), flush=True)
 qw, kw = [(torch.randn(128, device="cuda") * .25 + 1).bfloat16() for _ in range(2)]
 angles = torch.arange(8192, device="cuda").float()[:, None] * (1000000.0 ** (-torch.arange(0, 128, 2, device="cuda").float() / 128))
 trig = torch.cat((angles.cos(), angles.sin()), dim=-1).contiguous()
@@ -66,20 +64,16 @@ def call(data, out, mode):
     if mode == "stock":
         deep_gemm.fp8_gemm_nt(data[0], data[1], data[2], compiled_dims="nk")
         post(data, out)
-    elif mode == "head128":
+    elif mode == "m128":
         native(data, out, 0)
         post(data, out)
     elif mode == "old_fused":
         native(data, out, 1)
-    elif mode == "head256":
+    elif mode == "m256":
         native(data, out, 2)
         post(data, out)
-    elif mode == "shared256":
-        native(data, out, 3)
-    elif mode == "register128":
-        native(data, out, 4)
     elif mode == "fused":
-        native(data, out, 5)
+        native(data, out, 3)
     elif mode == "gemm":
         deep_gemm.fp8_gemm_nt(data[0], data[1], data[2], compiled_dims="nk")
     else:
@@ -106,11 +100,9 @@ def compare(actual, expected, label, exact=False):
 
 
 # Tail tiles, normal Prefill sizes, changed inputs and cache slot-zero masking.
-faulthandler.dump_traceback_later(30)
 for rows in (129, 3986, 4027, 4096):
     data = inputs(rows, rows + 91)
     stock, head, fused = [outputs(rows) for _ in range(3)]
-    print(f"CHECK starting rows={rows} mode=stock", flush=True)
     call(data, stock, "stock")
     baseline = data[2].clone()
     # Independent FP32 reference on sampled rows, without a full 4096-row FP32 GEMM.
@@ -118,8 +110,7 @@ for rows in (129, 3986, 4027, 4096):
     a, sa = data[0]
     b, sb = data[1]
     reference = (a[indices].float() * sa[indices].repeat_interleave(128, 1)) @ (b.float() * sb.repeat_interleave(128, 0).repeat_interleave(128, 1)).T
-    for plain_mode, fused_mode in (("head128", "old_fused"), ("head256", "shared256"), ("head128", "register128"), ("head256", "fused")):
-        print(f"CHECK starting rows={rows} plain={plain_mode} candidate={fused_mode}", flush=True)
+    for plain_mode, fused_mode in (("m128", "old_fused"), ("m256", "fused")):
         call(data, head, plain_mode)
         checks["dense_errors"](data[2], baseline.float())
         checks["dense_errors"](data[2][indices], reference)
@@ -136,19 +127,18 @@ for rows in (129, 3986, 4027, 4096):
                 for tensor in out:
                     tensor.fill_(3.)
             call(data, stock, "stock")
-            call(data, head, "head256")
+            call(data, head, "m256")
             graph.replay()
             compare(fused, head, f"rows={rows}/graph={replay}", exact=True)
             compare(fused, stock, f"rows={rows}/stock_graph={replay}")
     print(f"CHECK rows={rows} old_and_new_epilogue_exact=true independent_dense_reference=true", flush=True)
     del data, stock, head, fused, reference, baseline, a, sa, b, sb
 torch.cuda.synchronize()
-faulthandler.cancel_dump_traceback_later()
 
 for rows in (3986, 4027, 4096):
     data_sets = [inputs(rows, 5200 + i) for i in range(4)]
     out_sets = [outputs(rows) for _ in data_sets]
-    modes = ("stock", "head128", "old_fused", "head256", "shared256", "register128", "fused", "gemm", "post")
+    modes = ("stock", "m128", "old_fused", "m256", "fused", "gemm", "post")
     graphs = {}
     repeats = 12
     for mode in modes:
@@ -168,5 +158,5 @@ for rows in (3986, 4027, 4096):
             end.synchronize()
             samples[mode].append(start.elapsed_time(end) * 1000 / repeats)
     result = {mode: statistics.median(values) for mode, values in samples.items()}
-    print(f"PASS rows={rows} baseline_median_us={result['stock']:.3f} candidate_median_us={result['fused']:.3f} saved_us={result['stock']-result['fused']:.3f} ratio={result['fused']/result['stock']:.5f} old_fused_us={result['old_fused']:.3f} shared256_us={result['shared256']:.3f} register128_us={result['register128']:.3f} head128_total_us={result['head128']:.3f} head256_total_us={result['head256']:.3f} stock_gemm_us={result['gemm']:.3f} prologue_us={result['post']:.3f} samples=25 rotating_sets=4", flush=True)
+    print(f"PASS rows={rows} baseline_median_us={result['stock']:.3f} candidate_median_us={result['fused']:.3f} saved_us={result['stock']-result['fused']:.3f} ratio={result['fused']/result['stock']:.5f} old_fused_us={result['old_fused']:.3f} m128_total_us={result['m128']:.3f} m256_total_us={result['m256']:.3f} stock_gemm_us={result['gemm']:.3f} prologue_us={result['post']:.3f} samples=25 rotating_sets=4", flush=True)
     del graphs, data_sets, out_sets
