@@ -1,0 +1,54 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1576,18 +1576,16 @@
+                                 prev_gate_sf = __ldg(l1_weights_sf + gate_row);
+                                 prev_up_sf = __ldg(l1_weights_sf + up_row);
+                             }
+-                            // Let TMA recycle this stage while the next scale is loaded.
+-                            if constexpr (kPrefill2WG) {
+-                                ptx::warpgroup_wait<0>();
+-                                if (lane_idx == 0)
+-                                    empty_barriers[stage_idx]->arrive();
++                            uint32_t next_stage = 0, next_phase = 0;
++                            const bool has_next = k_block_idx + 1 < num_k_blocks;
++                            if (has_next)
++                                next_stage_and_phase(next_stage, next_phase);
++                            float gate_sf = 0.0f, up_sf = 0.0f;
++                            if (has_next) {
++                                gate_sf = __ldg(l1_weights_sf + gate_row + k_block_idx + 1);
++                                up_sf = __ldg(l1_weights_sf + up_row + k_block_idx + 1);
+                             }
+-                            if (k_block_idx + 1 < num_k_blocks) {
+-                                uint32_t next_stage, next_phase;
+-                                next_stage_and_phase(next_stage, next_phase);
+-                                const float gate_sf = __ldg(l1_weights_sf + gate_row + k_block_idx + 1);
+-                                const float up_sf = __ldg(l1_weights_sf + up_row + k_block_idx + 1);
+-                                full_barriers[next_stage]->wait(next_phase);
++                            auto prepare_next_scale = [&]() {
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+                                 r0_gate = (prev_scale_a_0 * prev_gate_sf) * rcp(scale_a_0 * gate_sf);
+@@ -1598,6 +1596,23 @@
+                                 prev_scale_a_1 = scale_a_1;
+                                 prev_gate_sf = gate_sf;
+                                 prev_up_sf = up_sf;
++                            };
++                            bool prepared = false;
++                            if constexpr (kPrefill2WG) {
++                                // Test without blocking: use Tensor Core latency for scale
++                                // arithmetic only when the next TMA stage is already ready.
++                                // All lanes reconverge at the same WGMMA wait instruction.
++                                if (has_next && full_barriers[next_stage]->test_wait(next_phase)) {
++                                    prepare_next_scale();
++                                    prepared = true;
++                                }
++                                ptx::warpgroup_wait<0>();
++                                if (lane_idx == 0)
++                                    empty_barriers[stage_idx]->arrive();
++                            }
++                            if (has_next && !prepared) {
++                                full_barriers[next_stage]->wait(next_phase);
++                                prepare_next_scale();
+                             }
+                             if constexpr (not kPrefill2WG) {
+                                 ptx::warpgroup_wait<0>();
