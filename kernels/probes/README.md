@@ -132,6 +132,32 @@ Firmus serving throughput predictions or infer a serving win from one run.
 
 CPU protocol/aggregation fixtures: `python3 kernels/probes/test-calibration.py`.
 
+## Single-server EAGLE3 acceptance on Genkai
+
+Select `benchmark=kernels/probes/prepare-eagle-accept.sh`, `gpu_count=4`, and an
+empty `candidate_patch`. Login preparation downloads the pinned Nebius BF16
+draft and Instruct-2507 tokenizer, applies the exact Firmus `prepare_eagle.py`
+config adaptation, and checks the existing image and FP8 target. Compute runs
+offline: one TP4 SGLang server, EAGLE3 steps3/topk1/draft4, context8192, FP8 KV,
+concurrency32, no PD/DP attention/MegaMoE/runtime overlays, and no CUDA graphs.
+This measures acceptance only; its timings and throughput are not meaningful
+performance comparisons or official scores. AIPerf uses the official synthetic
+prompt settings, with no warmup, 20 seconds of measurement and 30 seconds grace.
+
+The 570-second calibration process budget leaves 30 seconds of the four-GPU PJM
+allocation for finalization. Historical TP4 loads took 360–368 seconds in runs
+35105770792/35108498091; graph capture took another 147–150 seconds. Disabling
+graphs and exhaustive DeepGEMM precompilation leaves an estimated 560 seconds
+including client setup and cleanup; cold on-demand compilation remains.
+Startup must finish by 450 seconds, and collection stops at 555 seconds to allow
+process cleanup. Budget overruns fail without `PASS`. All server-info states
+and `accept len` log samples are collected; `PASS` reports bonus-inclusive X,
+accepted draft X−1, completed requests and startup seconds. Raw server-info,
+AIPerf export and server/client logs are also printed into Actions/PJM logs
+before the existing workflow removes its runtime directory. The calibration
+summary has no acceptance table; read the `PASS`/`EAGLE_ACCEPTANCE` log lines.
+CPU checks: `python3 kernels/probes/test-eagle-accept.py`.
+
 ## Calibration against Firmus, 2026-10-24
 
 Runs [40043191081](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40043191081) (dense, M128) and [40043193928](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40043193928) (FA3 TARGET_VERIFY, 32 requests, 94-layer graph) measured cases whose Firmus H200 results were already known from the in-job selections of runs 39901974117 / 39970713547. Ratios are candidate / stock (median).
