@@ -9,6 +9,8 @@ cat > probe <<'PROBE'
 #!/usr/bin/env bash
 set -euo pipefail
 # Normal timings come from the unprofiled probe. These runs only diagnose stalls.
-ncu --filter-mode per-kernel --kernel-name 'regex:baseline_fc[12]' --launch-skip 3 --launch-count 1 --cache-control none --clock-control none --section SpeedOfLight --section ComputeWorkloadAnalysis --section SchedulerStats --section WarpStateStats --section MemoryWorkloadAnalysis_Tables --section LaunchStats --page raw --csv --print-metric-name name "${RUNTIME_DIR}/source/math-probe"
+for phase in fc1 fc2; do
+    ncu --kernel-name "regex:baseline_${phase}" --launch-skip 3 --launch-count 1 --cache-control none --clock-control none --section SpeedOfLight --section ComputeWorkloadAnalysis --section SchedulerStats --section WarpStateStats --section MemoryWorkloadAnalysis_Tables --section LaunchStats --page raw --csv --print-metric-name name "${RUNTIME_DIR}/source/math-probe"
+done
 PROBE
 chmod +x probe
