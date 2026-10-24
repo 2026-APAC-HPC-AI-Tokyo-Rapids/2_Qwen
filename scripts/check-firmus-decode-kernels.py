@@ -61,6 +61,21 @@ def check_numerics(actual, expected, label):
     assert relative_l2 <= 0.05 and max_scaled <= 0.25, label
 
 
+def check_decode_fp8_conversion():
+    """All BF16 encodings in each packed lane against the old CUDA NOSAT call."""
+    from sglang.kernels.jit.utils import load_jit
+
+    module = load_jit("decode_fp8_check", cuda_files=["elementwise/decode_fp8_check.cuh"], cuda_wrappers=[("run", "DecodeFP8Check::run")])
+    bits = torch.arange(65536, device="cuda", dtype=torch.int32)
+    # A bijective permutation puts every encoding in both positions and makes
+    # the neighbours different, catching swapped bytes and cross-lane repair.
+    pairs = torch.stack((bits, bits ^ 0xA55A), dim=1).to(torch.uint16).view(torch.bfloat16)
+    reference, actual = [torch.empty(65536, device="cuda", dtype=torch.uint16) for _ in range(2)]
+    module.run(pairs, reference, actual)
+    assert torch.equal(actual.view(torch.uint8), reference.view(torch.uint8)), "packed BF16 -> FP8 differs from CUDA NOSAT"
+    print(json.dumps({"check": "decode_fp8_all_bf16", "patterns_per_lane": 65536, "packed_lanes": 2, "bitwise_equal": True}), flush=True)
+
+
 def check_decode_silu_quant():
     assert torch.cuda.get_device_capability() == (9, 0)
     torch.manual_seed(381108)
@@ -1088,6 +1103,7 @@ def check_prefill_fp8_integration():
 if __name__ == "__main__":
     # Existing gates embed this file with run_path and retain their own argv.
     torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
+    check_decode_fp8_conversion()
     check_fa3_verify(selected_only="--fa3-selected" in sys.argv[1:])
     check_dense_gemm(selected_only="--dense-selected" in sys.argv[1:])
     check_decode_silu_quant()

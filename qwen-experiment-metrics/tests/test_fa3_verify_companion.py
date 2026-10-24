@@ -130,9 +130,10 @@ def test_build_and_serving_are_wired_without_rejected_probes():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert config["decode_max_running_requests"] == 160
     assert "patches/sglang/decode-fa3-verify.patch" in config["sglang_overlay_patches"]
-    assert config["sglang_overlay_patches"][-2:] == [
+    assert config["sglang_overlay_patches"][-3:] == [
         "patches/sglang/prefill-fp8-integration.patch",
         "patches/sglang/prefill-qkv-fast-fp8.patch",
+        "patches/sglang/decode-qknorm-fast-fp8.patch",
     ]
     assert not any("decode-gate" in p or "l2-prefetch" in p for p in config["sglang_overlay_patches"] + config["deep_gemm_overlay_patches"])
     assert "sm90-decode-l2-prefetch" not in (ROOT / "patches/deep-gemm-host/series").read_text()
