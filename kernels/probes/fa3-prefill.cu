@@ -1,18 +1,19 @@
 // Pinned FA3 with optional group-128 FP8 output; BF16 controls use the same launch.
 #include <cstdio>
+#ifndef APAC_PREFILL_FP8_ONLY
+#define APAC_PREFILL_FP8_ONLY 0
+#endif
 #include "flash_fwd_launch_template.h"
 
-template<int N>
 void launch(Flash_fwd_params& p, cudaStream_t stream, int* resource=nullptr) {
     run_flash_fwd<90,128,128,1,cutlass::float_e4m3_t,cutlass::bfloat16_t,
-        true,false,false,true,false,false,false,false,true,false,false,false,false,N,2>(p,stream,resource);
+        true,false,false,true,false,false,false,false,true,false,false,false,false,224,2>(p,stream,resource);
 }
 
 extern "C" int prefill_shared_bytes(int id) {
     Flash_fwd_params p{}; int bytes=0;
-    if(id==0) launch<224>(p,nullptr,&bytes);
-    else if(id==1) launch<256>(p,nullptr,&bytes);
-    else return -1;
+    if(id!=0) return -1;
+    launch(p,nullptr,&bytes);
     return bytes;
 }
 
@@ -21,16 +22,15 @@ extern "C" int prefill_init() {
     cudaDeviceGetAttribute(&sms,cudaDevAttrMultiProcessorCount,0);
     cudaDeviceGetAttribute(&limit,cudaDevAttrMaxSharedMemoryPerBlockOptin,0);
     if(sms!=132) return -1;
-    for(int id=0;id<2;++id) {
-        int bytes=prefill_shared_bytes(id);
-        std::printf("fa3_resources tile_n=%d smem=%d limit=%d\n",id?256:224,bytes,limit);
-        if(bytes>limit) return -2;
-    }
+    int bytes=prefill_shared_bytes(0);
+    std::printf("fa3_resources fp8_only=%d tile_n=224 smem=%d limit=%d\n",APAC_PREFILL_FP8_ONLY,bytes,limit);
+    if(bytes>limit) return -2;
     return 0;
 }
 
 extern "C" int prefill_run(int id,int rows,int batch,int maxlen,void* q,void* k,void* v,void* cu,void* out,void* lse,void* metadata,void* fp8,void* scale,int scale_stride,void* stream_ptr) {
-    if(id<0 || id>1 || batch<1 || batch>4 || rows<1) return -1;
+    if(id!=0 || batch<1 || batch>4 || rows<1) return -1;
+    if(APAC_PREFILL_FP8_ONLY && (!fp8 || !scale)) return -2;
     Flash_fwd_params p{};
     p.arch=90; p.num_sm=132; p.b=p.b_k=batch;
     p.total_q=p.total_k=rows; p.seqlen_q=p.seqlen_k=maxlen;
@@ -50,6 +50,6 @@ extern "C" int prefill_run(int id,int rows,int batch,int maxlen,void* q,void* k,
     p.num_nheads_in_l2_ptr=p.num_splits_dynamic_ptr+12;
     p.tile_count_semaphore=p.num_splits_dynamic_ptr+16;
     auto stream=static_cast<cudaStream_t>(stream_ptr);
-    if(id) launch<256>(p,stream); else launch<224>(p,stream);
+    launch(p,stream);
     return int(cudaGetLastError());
 }

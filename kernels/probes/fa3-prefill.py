@@ -1,4 +1,4 @@
-"""Compare FA3 plus group-128 FP8 quantization with a fused native epilogue."""
+"""Compare identical N224 attention with runtime versus FP8-only epilogues."""
 import ctypes
 import itertools
 import json
@@ -14,10 +14,11 @@ from sglang.kernels.ops.quantization import per_token_group_quant
 assert torch.cuda.device_count() == 1 and torch.cuda.get_device_capability() == (9, 0)
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.manual_seed(20261024)
-lib = ctypes.CDLL(str(Path(__file__).with_name("fa3-prefill.so")))
-lib.prefill_run.argtypes = [ctypes.c_int] * 4 + [ctypes.c_void_p] * 9 + [ctypes.c_int, ctypes.c_void_p]
-lib.prefill_run.restype = ctypes.c_int
-assert lib.prefill_init() == 0
+libraries = [ctypes.CDLL(str(Path(__file__).with_name(name))) for name in ("fa3-prefill.so", "fa3-prefill-candidate.so")]
+for lib in libraries:
+    lib.prefill_run.argtypes = [ctypes.c_int] * 4 + [ctypes.c_void_p] * 9 + [ctypes.c_int, ctypes.c_void_p]
+    lib.prefill_run.restype = ctypes.c_int
+    assert lib.prefill_init() == 0
 
 
 def inputs(lengths):
@@ -38,11 +39,12 @@ def call(data, mode):
     if mode in ("stock", "stock_quant"):
         flash_attn_varlen_func(q=q, k=k, v=v, cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max(lengths), max_seqlen_k=max(lengths), causal=True, softmax_scale=128**-.5, num_splits=0, out=out)
     elif mode != "quant":
-        rc = lib.prefill_run(mode in ("n256", "n256_quant", "fp8"), q.shape[0], len(lengths), max(lengths), *(t.data_ptr() for t in (q, k, v, cu, out, lse, metadata)), fp8.data_ptr() if fused else None, scale.data_ptr() if fused else None, scale.stride(1), torch.cuda.current_stream().cuda_stream)
+        lib = libraries[mode == "fp8"]
+        rc = lib.prefill_run(0, q.shape[0], len(lengths), max(lengths), *(t.data_ptr() for t in (q, k, v, cu, out, lse, metadata)), fp8.data_ptr() if fused else None, scale.data_ptr() if fused else None, scale.stride(1), torch.cuda.current_stream().cuda_stream)
         assert rc == 0, rc
-    if mode in ("stock_quant", "n256_quant", "quant"):
+    if mode in ("stock_quant", "n224_quant", "quant"):
         per_token_group_quant(out.view(-1,8192), fp8.view(-1,8192), scale, 128)
-    if fused or mode in ("stock_quant", "n256_quant", "quant"):
+    if fused or mode in ("stock_quant", "n224_quant", "quant"):
         return fp8, scale
     return out
 
@@ -103,11 +105,11 @@ for lengths in ([1], [17,13], [129,257], [3986], [4027], [4096]):
     stock = call(data,"stock").clone()
     indices, expected = reference(data)
     compare(stock[indices],expected,f"stock_fp32/{lengths}")
-    for mode in ("n224","n256"):
+    for mode in ("n224",):
         out = call(data,mode)
         compare(out,stock,f"{mode}_stock/{lengths}")
         compare(out[indices],expected,f"{mode}_fp32/{lengths}")
-    quant_ref = tuple(x.clone() for x in call(data,"n256_quant"))
+    quant_ref = tuple(x.clone() for x in call(data,"n224_quant"))
     data[5].fill_(123.)
     call(data,"fp8")
     assert (data[5] == 123.).all(), "fused path must omit the BF16 global store"
@@ -119,7 +121,7 @@ for lengths in ([1], [17,13], [129,257], [3986], [4027], [4096]):
         graph = capture(lambda: call(data,"fp8"))
         for replay in range(2):
             for x in data[1:4]: x.copy_(torch.randn(x.shape,device="cuda",dtype=torch.bfloat16).to(x.dtype))
-            quant_ref = tuple(x.clone() for x in call(data,"n256_quant"))
+            quant_ref = tuple(x.clone() for x in call(data,"n224_quant"))
             graph.replay()
             compare_quant(data[8:10],quant_ref,f"graph/{replay}")
             indices, expected = reference(data)
@@ -127,13 +129,13 @@ for lengths in ([1], [17,13], [129,257], [3986], [4027], [4096]):
 
 data = inputs([17,13])
 data[3].zero_()
-quant_ref = tuple(x.clone() for x in call(data,"n256_quant"))
+quant_ref = tuple(x.clone() for x in call(data,"n224_quant"))
 compare_quant(call(data,"fp8"),quant_ref,"zero_value_scale_floor")
 compare_quant(call(data,"fp8_n224"),quant_ref,"zero_value_scale_floor_n224")
 
 for rows in (3986,4027,4096):
     data = [inputs([rows]) for _ in range(4)]
-    modes = ("stock_quant","n256_quant","fp8","fp8_n224","quant")
+    modes = ("stock_quant","n224_quant","fp8","fp8_n224","quant")
     graphs = {}
     for mode in modes:
         def batch(mode=mode):
@@ -147,7 +149,7 @@ for rows in (3986,4027,4096):
             start.record(); graphs[mode].replay(); end.record(); end.synchronize()
             samples[mode].append(start.elapsed_time(end)*1000/8)
     b,control,c,exact,quant = [statistics.median(samples[mode]) for mode in modes]
-    print(f"PASS kernel=fa3_fp8 rows={rows} baseline_median_us={exact:.3f} candidate_median_us={c:.3f} stock_quant_us={b:.3f} native_n256_quant_us={control:.3f} n224_fused_us={exact:.3f} quant_us={quant:.3f} saved_us={exact-c:.3f} ratio={c/exact:.5f} samples=25 rotating_sets=4",flush=True)
+    print(f"PASS kernel=fa3_fp8 rows={rows} baseline_median_us={exact:.3f} candidate_median_us={c:.3f} stock_quant_us={b:.3f} native_n224_quant_us={control:.3f} n224_fused_us={exact:.3f} quant_us={quant:.3f} saved_us={exact-c:.3f} ratio={c/exact:.5f} samples=25 rotating_sets=4",flush=True)
     del data,graphs
 
 # Verify the direct FP8 buffer and column-major scales with the real consumer.
@@ -163,9 +165,9 @@ for rows in (3986,4027,4096):
         q,s = call(data[i],mode)
         deep_gemm.fp8_gemm_nt((q.view(rows,8192),s),dense[i][0],dense[i][1])
         return dense[i][1]
-    expected = attention_o(0,"n256_quant").clone()
+    expected = attention_o(0,"n224_quant").clone()
     actual = attention_o(0,"fp8").clone()
-    assert torch.equal(actual,expected), "O GEMM must match the unfused N256 path exactly"
+    assert torch.equal(actual,expected), "O GEMM must match the unfused N224 path exactly"
     stock = attention_o(0,"stock_quant").clone()
     compare(actual,stock,f"fa3_o_stock/{rows}")
     assert torch.equal(attention_o(0,"fp8_n224"),stock), "N224 fused O GEMM must match stock exactly"
@@ -179,7 +181,7 @@ for rows in (3986,4027,4096):
         expected = attention_o(0,"stock_quant").clone()
         graph.replay()
         assert torch.equal(dense[0][1],expected), "O GEMM changed-input graph"
-    modes = ("stock_quant","n256_quant","fp8","fp8_n224")
+    modes = ("stock_quant","n224_quant","fp8","fp8_n224")
     graphs = {}
     for mode in modes:
         def batch(mode=mode):
@@ -192,5 +194,5 @@ for rows in (3986,4027,4096):
             start.record(); graphs[mode].replay(); end.record(); end.synchronize()
             samples[mode].append(start.elapsed_time(end)*1000/8)
     b,control,c,exact = [statistics.median(samples[mode]) for mode in modes]
-    print(f"PASS kernel=fa3_fp8_o rows={rows} baseline_median_us={exact:.3f} candidate_median_us={c:.3f} stock_quant_us={b:.3f} native_n256_quant_o_us={control:.3f} n224_fused_o_us={exact:.3f} saved_us={exact-c:.3f} ratio={c/exact:.5f} samples=25 rotating_sets=4",flush=True)
+    print(f"PASS kernel=fa3_fp8_o rows={rows} baseline_median_us={exact:.3f} candidate_median_us={c:.3f} stock_quant_us={b:.3f} native_n224_quant_o_us={control:.3f} n224_fused_o_us={exact:.3f} saved_us={exact-c:.3f} ratio={c/exact:.5f} samples=25 rotating_sets=4",flush=True)
     del data,dense,graphs
