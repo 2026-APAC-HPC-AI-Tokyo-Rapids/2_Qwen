@@ -42,6 +42,10 @@ timeline() {
   if [[ -d "${ROOT}/overlay/timeline/${variant}" ]]; then step "${variant}" timeline PYTHONPATH="${ROOT}/overlay/timeline/${variant}" "$@" "${torchrun[@]}" "${ROOT}/scripts/bench-firmus-megamoe.py" --variant "${variant}+timeline" --output "${ROOT}/results/${variant}/timeline.jsonl" --timeline-dir "${ROOT}/results/${variant}/timeline" --reference "${ROOT}/results/${variant}/bench.jsonl" --scratch "${ROOT}/scratch/${variant}"; fi
 }
 
+if [[ -f "${ROOT}/scripts/firmus-fc2-output.sh" ]]; then
+  step fc2-output probe CUDA_VISIBLE_DEVICES=0 timeout 180 bash "${ROOT}/scripts/firmus-fc2-output.sh" "${ROOT}"
+fi
+
 install -d "${ROOT}/results/image" "${ROOT}/scratch/image"
 step image bench PYTHONPATH="${ROOT}/image/opt/sglang/venv/lib/python3.12/site-packages" "${torchrun[@]}" "${ROOT}/scripts/bench-firmus-megamoe.py" --variant image --output "${ROOT}/results/image/bench.jsonl" --scratch "${ROOT}/scratch/image"
 (( step_exit == 0 ))
@@ -63,7 +67,7 @@ if [[ -d "${ROOT}/overlay/sglang" ]]; then
 fi
 
 # Omit the trailing slash from the glob so a base candidate precedes its
-# longer combined name (bulk-scatter before bulk-scatter-wg1-skip).
+# longer combined name. The final z-control-repeat brackets timing drift.
 for dir in "${ROOT}"/overlay/candidates/*; do
   [[ -d "${dir}" ]] || continue
   variant="$(basename "${dir}")"

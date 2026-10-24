@@ -6,7 +6,7 @@ The FC2 non-SwapAB epilogue currently casts FP32 to BF16, writes a swizzled shar
 
 No extra memory, atomic operations, publication counters, rank barriers, readiness protocol, quantization, or reduction reordering is introduced. The total BF16 payload remains unchanged. The intended saving is shared-memory round trips and instructions; NVLink bandwidth is still a possible limit. The existing grid/NVLink release and cleanup protocol remains in place. Every Qwen rank uses the same format regardless of its GEMM geometry, including idle nonswap ranks. SwapAB currently writes the new column permutation through its existing shared-memory transpose, preserving its cross-warpgroup synchronization.
 
-`patches/deep-gemm-experiments/fc2-fragment-combine.patch` applies after the configured serving overlays. It is outside the active Firmus campaign so merely adding it does not launch or expand a multi-GPU experiment. The complete kernel must be newly compiled/JITed for this header; the host ABI and container dependencies do not change.
+`patches/deep-gemm-bench/fc2-fragment-combine/fc2-fragment-combine.patch` applies after the configured serving overlays. The initial Genkai commit stored it under `patches/deep-gemm-experiments/`; the follow-up one-node Firmus campaign activates it alongside the producer-transpose ablation. The complete kernel must be newly compiled/JITed for this header; the host ABI and container dependencies do not change.
 
 ## Validation and resource policy
 
@@ -30,3 +30,48 @@ on macOS (the initial BSD `stat` invocation is incompatible with Linux fixtures)
 
 One-GPU Actions run: [40105137999](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40105137999),
 commit `c647097`. Results remain pending at submission; no Firmus job was launched.
+
+
+## One-node Firmus campaign
+
+The user selected Firmus one node after Genkai's shared one-GPU pool filled, and
+requested packing useful tests into the allocation. The Genkai job remains
+queued; it has not been cancelled. No multi-node serving run is launched here.
+
+The second candidate, `fc2-producer-transpose`, uses the same register-packed
+BF16 vectors but transposes them across each quad *before* scattering. Four
+shuffles restore natural channel order; SwapAB and combine are unchanged. A
+ballot before the partial-row branch supplies the shuffle participation mask,
+so inactive row quads are excluded without excluding any source lane in a live
+quad. This distinguishes shared-memory staging removal from moving the transpose
+to the consumer. Both candidates preserve BF16 rounding and FP32 FMA order and
+must match the control's output hashes exactly.
+
+One allocation requests four H200 GPUs on one node, with the existing 17-minute
+limit. It contains:
+
+1. A single-GPU native output probe for both candidates, three processes each;
+   192 independent-reference/bitwise checks per process (1,152 total). It builds
+   in the serving container and has a 180-second overall limit, 30 seconds per
+   process. Results distinguish local synthetic output timing from full MegaMoE.
+2. Current serving-overlay full MegaMoE bench and separate timeline.
+3. Fragment-combine EP4 numerical gate, full bench, and separate timeline.
+4. Producer-transpose EP4 numerical gate and full bench.
+5. Current implementation numerical gate and final repeat bench to expose drift.
+
+The nine EP4 steps plus the bounded native step fit within the existing twelve
+75-second provisioning budget units: the native step reserves three units.
+The full benches already include balanced/local and observed routing from
+layers 43, 62 and 7, with four replicas; gates include mixed geometries, idle
+ranks, hot experts, all-idle/live transitions and changing CUDA Graph inputs.
+Previously measured bulk-scatter/WG-padding candidates are archived outside the
+active campaign, avoiding repeated work from run 40095847738. A successful kernel
+campaign still does not establish 9500+ serving throughput.
+
+Local campaign fixtures: 66 passed, 3 skipped (GNU tools on macOS). Producer
+ablation compiles in all six full-kernel geometries and the extracted probe.
+CUDA 12.9 reports extra Prefill spills for the producer ablation (24-byte store,
+32-byte load, 16-byte stack); the fragment-combine candidate retains baseline
+resources. This is a known cost to measure, not an assumed winning variant.
+The candidate-specific timeline patch only resolves the adjacent declaration
+insertion; its instrumentation is otherwise the stock timeline patch.

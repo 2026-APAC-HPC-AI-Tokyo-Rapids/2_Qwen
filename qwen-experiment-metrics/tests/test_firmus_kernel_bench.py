@@ -310,7 +310,7 @@ def test_summary_passes_clean_run_and_reports_differing_hashes_without_failing(t
     assert "| rope | 5.00 | 5.00 | +0.0% | 5.00 / 5.00 | False |" in text
 
 
-@pytest.mark.parametrize("patch_name", ["prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch"])
+@pytest.mark.parametrize("patch_name", ["fc2-fragment-combine.patch", "fc2-producer-transpose.patch", "prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch"])
 @pytest.mark.parametrize("same", [False, True])
 def test_arithmetic_preserving_candidates_require_equal_outputs(tmp_path, monkeypatch, patch_name, same):
     summarize = load_summary(monkeypatch)
@@ -508,11 +508,15 @@ def test_control_rejects_old_host_even_without_candidates(tmp_path: Path) -> Non
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
-def test_bulk_campaign_real_step_generation_is_twelve_with_final_control(tmp_path):
+def test_fc2_campaign_native_probe_and_nine_ep4_steps_with_final_control(tmp_path):
     ws, patches = workspace(tmp_path)
     campaign = ROOT / "patches/deep-gemm-bench"
     names = sorted(path.name for path in campaign.iterdir() if path.is_dir())
-    assert names == ["prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip", "prefill-wg1-skip", "z-control-repeat"]
+    assert names == ["fc2-fragment-combine", "fc2-producer-transpose", "z-control-repeat"]
+    (ws / "kernels/probes").mkdir(parents=True)
+    for name in ("firmus-fc2-output.sh", "fc2_output.cu.in"):
+        shutil.copy(ROOT / "kernels/probes" / name, ws / "kernels/probes" / name)
+    shutil.copy(ROOT / "scripts/build-fc2-output-probe.py", ws / "scripts/build-fc2-output-probe.py")
     for name in names:
         add_candidate(ws, name, patches["comment"], timeline=(campaign / name / "timeline").exists())
     (ws / "patches/deep-gemm-bench/timeline").touch()
@@ -526,14 +530,15 @@ def test_bulk_campaign_real_step_generation_is_twelve_with_final_control(tmp_pat
     run = subprocess.run(["bash", str(runtime / "scripts/run.sbatch")], cwd=runtime, env=env, text=True, capture_output=True, check=False)
     assert run.returncode == 0, run.stdout + run.stderr
     steps = [tuple(line.split("\t")[:2]) for line in (runtime / "results/steps.tsv").read_text().splitlines()]
-    expected = [("image", "bench"), ("image", "timeline")]
+    expected = [("fc2-output", "probe"), ("image", "bench"), ("image", "timeline")]
     for name in names:
         expected += [(name, "gate"), (name, "bench")]
         if (campaign / name / "timeline").exists():
             expected.append((name, "timeline"))
-    assert steps == expected and len(steps) == 12
+    assert steps == expected and len(steps) == 10
+    assert (runtime / "results/fc2-output-requested").exists()
     assert steps[-1] == ("z-control-repeat", "bench")
-    assert len((tmp_path / "srun.log").read_text().splitlines()) == 12
+    assert len((tmp_path / "srun.log").read_text().splitlines()) == 10
 
 
 def test_bulk_campaign_local_and_real_cases_reach_timeline():
@@ -550,3 +555,23 @@ def test_bulk_campaign_local_and_real_cases_reach_timeline():
             assert ("prefill", f"real{layer}-replica4", 4096) in ns[key]
     # real7 is already the remote p90 tail (86/94), so no fourth layer is needed.
     assert list(data) == [43, 62, 7]
+
+
+@pytest.mark.parametrize("failure", [None, "exit", "missing", "incomplete"])
+def test_native_fc2_probe_requires_success_and_all_six_references(tmp_path, monkeypatch, failure):
+    summarize = load_summary(monkeypatch)
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": [{"name": "image", "patches": [], "timeline": "not-requested"}], "sglang": None}))
+    (tmp_path / "fc2-output-requested").touch()
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t1\nfc2-output\tprobe\t" + ("1" if failure == "exit" else "0") + "\t1\n")
+    write_rows(tmp_path / "image/bench.jsonl", [bench_row("decode", 0.2, "same")])
+    folder = tmp_path / "fc2-output"
+    folder.mkdir()
+    for variant in ("fc2-fragment-combine", "fc2-producer-transpose"):
+        for trial in (1, 2, 3):
+            path = folder / f"{variant}-{trial}.log"
+            path.write_text("PASS FC2 output/combine: 192 bitwise checks against reference\n")
+    if failure == "missing":
+        path.unlink()
+    elif failure == "incomplete":
+        path.write_text("PASS FC2 output/combine: 191 bitwise checks\n")
+    assert summarize(tmp_path)[1] == ([] if failure is None else ["fc2-output"])

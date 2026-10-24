@@ -39,6 +39,7 @@ import numpy as np
 # These candidates promise to retain each output element's arithmetic. Use the
 # recorded patch identity, so renaming a candidate directory cannot relax this.
 EXACT_OUTPUT_PATCHES = {"prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "prefill-fc1-early-release.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "sm90-prefill-iwg-a.patch", "sm90-prefill-iwg-b.patch"}
+EXACT_OUTPUT_PATCHES |= {"fc2-fragment-combine.patch", "fc2-producer-transpose.patch"}
 
 MAGIC = 0x314C544D4F45474D
 EVENTS = ["Entry", "DispCount", "DispSendCount", "DispGridSync", "DispRecvCount", "DispPrePullBarrier", "DispEpilogueSync", "DispFirstPull", "DispLastPull", "DispLoopExit", "DispCombineSync", "DispClean", "DispFinalGridSync", "DispExit", "AStart", "AFirstBlock", "AFirstL1Ready", "ALastL1Issued", "AFirstL2Ready", "AExit", "BStart", "BFirstBlock", "BExit", "MStart", "MDispatchSync", "MFirstL1Full", "MLastL1End", "MFirstL2Full", "MLastL2End", "MLoopExit", "MCombineGridSync", "MCombineBarrier", "MDispatchSync2", "MCombineEnd"]
@@ -336,6 +337,19 @@ def summarize(results):
     text, failed = deep_gemm(results, steps)
     sglang_text, sglang_failed = sglang(results, steps)
     failed += sglang_failed
+    if (results / "fc2-output-requested").exists():
+        native_ok = steps.get(("fc2-output", "probe")) == 0
+        native = ["### Single-GPU FC2 output probe", "", "Synthetic accumulators and local traffic; timings do not measure full MegaMoE or NVLink.", ""]
+        for variant in ("fc2-fragment-combine", "fc2-producer-transpose"):
+            for trial in (1, 2, 3):
+                path = results / "fc2-output" / f"{variant}-{trial}.log"
+                lines = path.read_text().splitlines() if path.exists() else []
+                passed = any(line.startswith("PASS FC2 output/combine: 192 bitwise checks") for line in lines)
+                native_ok &= passed
+                native += [f"{variant}, trial {trial}: {'PASS' if passed else 'FAIL'}", "```text", *[line for line in lines if line.startswith(("GPU ", "TIMING "))], "```", ""]
+        if not native_ok:
+            failed.append("fc2-output")
+        text += "\n" + "\n".join(native)
     verdict = "All variants passed." if not failed else "FAILED: " + ", ".join(failed)
     return f"### Verdict\n\n{verdict}\n\n{text}\n{sglang_text}", failed
 

@@ -35,6 +35,9 @@ sglang_patches=("${GITHUB_WORKSPACE}"/patches/sglang-bench/*.patch)
 shopt -u nullglob
 if (( ${#flat_patches[@]} )); then printf 'Move %s into patches/deep-gemm-bench/<candidate>/ (one directory per candidate).\n' "${flat_patches[@]#"${GITHUB_WORKSPACE}/"}" >&2; exit 1; fi
 steps=1
+# This campaign's single-GPU diagnostic builds both output paths in-container.
+# Reserve three ordinary step budgets for its 180-second hard limit.
+if [[ -f "${GITHUB_WORKSPACE}/kernels/probes/firmus-fc2-output.sh" ]]; then steps=$((steps + 3)); fi
 if [[ -e "${bench_dir}/timeline" ]]; then steps=$((steps + 1)); fi
 if (( ${#sglang_patches[@]} )); then steps=$((steps + 2)); fi
 if (( ${#sglang_patches[@]} )) && [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then steps=$((steps + 2)); fi
@@ -177,6 +180,14 @@ cp "${timeline_patch}" "${runtime_dir}/source/patches/"
 
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/kernel-bench/run.sbatch" "${runtime_dir}/scripts/run.sbatch"
 scripts=(bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-kernels.py firmus_megamoe_replicas.py)
+if [[ -f "${GITHUB_WORKSPACE}/kernels/probes/firmus-fc2-output.sh" ]]; then
+  install -D -m 0755 "${GITHUB_WORKSPACE}/kernels/probes/firmus-fc2-output.sh" "${runtime_dir}/scripts/firmus-fc2-output.sh"
+  install -D -m 0644 "${GITHUB_WORKSPACE}/kernels/probes/fc2_output.cu.in" "${runtime_dir}/kernels/probes/fc2_output.cu.in"
+  cp "${runtime_dir}/scripts/firmus-fc2-output.sh" "${runtime_dir}/source/"
+  cp "${runtime_dir}/kernels/probes/fc2_output.cu.in" "${runtime_dir}/source/"
+  touch "${runtime_dir}/results/fc2-output-requested"
+  scripts+=(build-fc2-output-probe.py)
+fi
 if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then scripts+=(bench-firmus-sglang-kernels.py); fi
 for script in "${scripts[@]}"; do install -m 0644 "${GITHUB_WORKSPACE}/scripts/${script}" "${runtime_dir}/scripts/"; cp "${runtime_dir}/scripts/${script}" "${runtime_dir}/source/"; done
 cp "${runtime_dir}/scripts/run.sbatch" "${runtime_dir}/source/"

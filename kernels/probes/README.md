@@ -200,7 +200,7 @@ changed-weight CUDA Graph replays. Both complete MegaMoE kernels are also compil
 on the login node for six geometries, with ptxas register/spill reports in Actions.
 
 The first candidate is
-`patches/deep-gemm-experiments/fc2-fragment-combine.patch`. Select `gpu_count=1`.
+`patches/deep-gemm-bench/fc2-fragment-combine/fc2-fragment-combine.patch`. Select `gpu_count=1`.
 It writes register-native BF16 fragments directly from non-SwapAB FC2 accumulators
 and restores normal channel order once after top-k combine. This preserves the
 FP32 FMA order and BF16 rounding. The probe supplies synthetic accumulators and
