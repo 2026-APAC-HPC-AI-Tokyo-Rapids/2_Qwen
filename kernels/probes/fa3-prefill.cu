@@ -8,15 +8,22 @@ void launch(Flash_fwd_params& p, cudaStream_t stream, int* resource=nullptr) {
         true,false,false,true,false,false,false,false,true,false,false,false,false,N,2>(p,stream,resource);
 }
 
+extern "C" int prefill_shared_bytes(int id) {
+    Flash_fwd_params p{}; int bytes=0;
+    if(id==0) launch<224>(p,nullptr,&bytes);
+    else if(id==1) launch<256>(p,nullptr,&bytes);
+    else return -1;
+    return bytes;
+}
+
 extern "C" int prefill_init() {
     int sms=0, limit=0;
     cudaDeviceGetAttribute(&sms,cudaDevAttrMultiProcessorCount,0);
     cudaDeviceGetAttribute(&limit,cudaDevAttrMaxSharedMemoryPerBlockOptin,0);
     if(sms!=132) return -1;
     for(int id=0;id<2;++id) {
-        Flash_fwd_params p{}; int bytes=0;
-        if(id) launch<192>(p,nullptr,&bytes); else launch<224>(p,nullptr,&bytes);
-        std::printf("fa3_resources tile_n=%d smem=%d limit=%d\n",id?192:224,bytes,limit);
+        int bytes=prefill_shared_bytes(id);
+        std::printf("fa3_resources tile_n=%d smem=%d limit=%d\n",id?256:224,bytes,limit);
         if(bytes>limit) return -2;
     }
     return 0;
@@ -43,6 +50,6 @@ extern "C" int prefill_run(int id,int rows,int batch,int maxlen,void* q,void* k,
     p.num_nheads_in_l2_ptr=p.num_splits_dynamic_ptr+12;
     p.tile_count_semaphore=p.num_splits_dynamic_ptr+16;
     auto stream=static_cast<cudaStream_t>(stream_ptr);
-    if(id) launch<192>(p,stream); else launch<224>(p,stream);
+    if(id) launch<256>(p,stream); else launch<224>(p,stream);
     return int(cudaGetLastError());
 }

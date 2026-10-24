@@ -31,4 +31,17 @@ mapfile -t includes <fa3-includes
 module load cuda/12.9.1
 nvcc --std=c++17 --use_fast_math --expt-relaxed-constexpr --expt-extended-lambda -O3 --ptxas-options=-v,-warn-spills -ccbin /opt/rh/gcc-toolset-13/root/usr/bin/g++ -gencode arch=compute_90a,code=sm_90a -DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED -DNDEBUG -I"${includes[0]}" -I"${includes[1]}" --shared --cudart static -Xcompiler -fPIC fa3-prefill.cu "${includes[0]}/flash_prepare_scheduler.cu" -o fa3-prefill.so >"${RUNTIME_DIR}/logs/build.log" 2>&1 || { tail -100 "${RUNTIME_DIR}/logs/build.log"; exit 1; }
 cat "${RUNTIME_DIR}/logs/build.log"
-jq -n --arg commit "${GITHUB_SHA}" '{commit:$commit,kernel:"FA3 Prefill fused group-128 FP8 output, N224 and N192",scope:"one GPU, no serving"}' >provenance.json
+python3 - <<'PY_CHECK'
+import ctypes, os, re
+from pathlib import Path
+log=(Path(os.environ["RUNTIME_DIR"])/"logs/build.log").read_text()
+assert not re.search(r"[1-9][0-9]* bytes spill (?:stores|loads)",log), "Spilling FA3 candidate"
+lib=ctypes.CDLL(str(Path("fa3-prefill.so").resolve()))
+lib.prefill_shared_bytes.argtypes=[ctypes.c_int]
+lib.prefill_shared_bytes.restype=ctypes.c_int
+for i,n in enumerate((224,256)):
+    size=lib.prefill_shared_bytes(i)
+    print(f"host_resources tile_n={n} shared_bytes={size}",flush=True)
+    assert 0<size<=227*1024, (n,size,"H100 per-block shared-memory limit")
+PY_CHECK
+jq -n --arg commit "${GITHUB_SHA}" '{commit:$commit,kernel:"FA3 Prefill fused group-128 FP8 output, N224 control and N256 candidate",scope:"one GPU, no serving"}' >provenance.json
