@@ -50,3 +50,29 @@ Prefill と Decode を必ず対で速くする。第 1 段の合格線は Prefil
 ## 5. 正本
 
 分析の作業ファイル（SQLite、全 kernel CSV、全 94 層台帳、計算スクリプト）は作業端末の scratchpad にあり、リポジトリには入れていない。本稿の数値はそこから転記した。
+
+## 6. 長期課題 1 回目：FC2 非同期 bulk scatter（D1）と padding WG skip（D5a）、kernel bench [40095847738](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40095847738)（4f64903）
+
+Opus が source と過去の失敗を要約し、Fable が「実ルーティング（replica4、remote 比率 中央値 48.6%、p90 56.7%）では FC2 の送信を計算の裏に隠せるはず」と判断して D1 を最優先にした。過去の bulk scatter 否定（39352299232）は均等ルーティングだけの測定だったため、実ルーティングで再評価した。host と SMEM 確保量（225,472 B）は変えず、CD は 128 行 × 512 B の行優先、quad 内 shuffle と奇数行の chunk 回転で STS.128 は全 phase 1-way。全候補で出力は control と bit 一致（19/19 ケース）、末尾の control 再実行は ±0.3%。
+
+| case | control ms | D1 | D5a | D1＋D5a |
+|---|---:|---:|---:|---:|
+| real43-replica4 | 1.4113 | +1.3% | −0.4% | +0.9% |
+| real62-replica4 | 1.4262 | +1.3% | −1.8% | +0.2% |
+| real7-replica4 | 1.4294 | +1.4% | −1.0% | +0.1% |
+| local | 1.3043 | +4.9% | −2.0% | +0.8% |
+| balanced | 1.4958 | +3.2% | −1.5% | +2.6% |
+
+timeline（per CTA、µs、WG0 rank0）：
+
+| | control real43-replica4 | D1 real43-replica4 | control local | D1 local |
+|---|---:|---:|---:|---:|
+| FC2 stage wait | 38.5 | 57.1 | 32.3 | 32.7 |
+| FC2 epilogue | 189.3 | 198.8 | 94.1 | 114.9 |
+| ML2Drain（最終の完了待ち） | — | 0.0 | — | 0.0 |
+
+**D1 は不採用。** 機構は 2 つ。(1) bulk store が同じ SM の TMA load と TMA 機構を取り合い、FC2 の stage wait が +19 µs。(2) epilogue は短くならない。NVLink を使わない local でも FC2 epilogue は 94 µs かかり、これは rank あたり 268 MB の BF16 combine payload を書く時間（≈ 2.85 TB/s）に相当する。つまり FC2 epilogue は発行コストではなく combine payload の書き込み量そのもので決まっており、remote 分（実ルーティングで約 +95 µs）が NVLink に乗る。最終 drain が 0 µs なのは、次 tile の STS 前の `.read` 待ちで転送待ちがすでに吸収されているためで、CD が 1 面しかないため重ねられる区間は次 tile の mainloop 1 回分しかない。
+
+**D5a は採用候補。** 有効行 64 以下の tile で WG1 の WGMMA・rescale・SF load を省くだけ（padding 行のみ、出力 bit 一致）で、実ルーティング −0.4〜−1.8%、local −2.0%。D1 と組むと D1 の損で相殺される。serving overlay への組み込みは次の build に同乗させる。
+
+**次の論点。** FC2 epilogue（約 190 µs）と combine（約 80 µs）は、どちらも combine payload（1 token あたり top-8 × 4096 × BF16 = 64 KiB）の書き込みと読み出しで決まる。重ねるより、payload を減らす方が筋が良い。同じ expert rank 上の同一 token の出力を FP32 で合算し、1 度だけ BF16 に丸めて送れば、丸め回数は現行（expert ごとに BF16）以下になる。演算順序の違いに当たるので規則上は許容と読めるが、確認は要る。過去の pre-reduce（39355994503、serving −5.8%）は、HBM staging と行ごとの atomic で負けており、方式の問題だった。
