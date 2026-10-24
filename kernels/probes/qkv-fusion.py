@@ -1,5 +1,6 @@
 """Compare deployed QKV, the previous BM128 fusion, and a BM256 fusion."""
 import ctypes
+import faulthandler
 import json
 import os
 import runpy
@@ -100,9 +101,11 @@ def compare(actual, expected, label, exact=False):
 
 
 # Tail tiles, normal Prefill sizes, changed inputs and cache slot-zero masking.
+faulthandler.dump_traceback_later(30, repeat=True)
 for rows in (129, 3986, 4027, 4096):
     data = inputs(rows, rows + 91)
     stock, head, fused = [outputs(rows) for _ in range(3)]
+    print(f"CHECK starting rows={rows}", flush=True)
     call(data, stock, "stock")
     baseline = data[2].clone()
     # Independent FP32 reference on sampled rows, without a full 4096-row FP32 GEMM.
@@ -134,6 +137,7 @@ for rows in (129, 3986, 4027, 4096):
     print(f"CHECK rows={rows} old_and_new_epilogue_exact=true independent_dense_reference=true", flush=True)
     del data, stock, head, fused, reference, baseline, a, sa, b, sb
 torch.cuda.synchronize()
+faulthandler.cancel_dump_traceback_later()
 
 for rows in (3986, 4027, 4096):
     data_sets = [inputs(rows, 5200 + i) for i in range(4)]

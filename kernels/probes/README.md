@@ -6,7 +6,7 @@ The default `prepare-megamoe-math.sh` extracts the Prefill FC1 and FC2 math loop
 
 The login node extracts headers from the already deployed Genkai copy of `configs/firmus-framework.json`'s SGLang image and compiles with CUDA 12.9.1 / GCC 13. It checks the sidecar identity, image size and extracted base-header hash, rather than rescanning the entire image. Results appear in the Actions summary; no artifact archive is uploaded.
 
-PJM receives `b-batch`, `gpu=1`, and a three-minute limit. There is no node or MPI allocation request. Three processes each check occupancy, changed-input graph replays, full bit equality, and a sampled independent arithmetic reference, then take 30 interleaved timings per variant. A failed process stops the job. After terminal-state confirmation, the workflow removes its temporary run directory. No Firmus or Aspire job is submitted.
+PJM receives `b-batch`, `gpu=1`, and a five-minute limit. There is no node or MPI allocation request. Three processes each check occupancy, changed-input graph replays, full bit equality, and a sampled independent arithmetic reference, then take interleaved timings per variant. Each process has 90 seconds including container startup and cold JIT compilation; a failed process stops the job. After terminal-state confirmation, the workflow removes its temporary run directory. No Firmus or Aspire job is submitted.
 
 MegaMoE findings on 2026-10-24 (H100, math probe only):
 
