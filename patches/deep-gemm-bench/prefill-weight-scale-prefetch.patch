@@ -41,32 +41,3 @@
                                  full_barriers[next_stage]->wait(next_phase);
                                  const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
                                  const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
-@@ -1620,6 +1632,10 @@
-                         constexpr uint32_t kChunksPerWSF = kAccumPerThread / 4 / kNumWSF;
-                         DG_STATIC_ASSERT(kNumWSF == 2 and kChunksPerWSF == 16, "FC2 weight-SF blocks per warpgroup");
-                         const uint32_t l2_row = local_expert_idx * kL2SFPerExpert + n_block_idx * kNumWSF * kL2SFKBlocks;
-+                        float cached_l2_sf[kNumWSF];
-+                        #pragma unroll
-+                        for (uint32_t j = 0; j < kNumWSF; ++ j)
-+                            cached_l2_sf[j] = lane_idx < kL2SFKBlocks ? __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks + lane_idx) : 0.0f;
-                         float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f, prev_l2_sf[kNumWSF];
-                         float r0_start[kNumWSF], r1_start[kNumWSF];
-                         #pragma unroll
-@@ -1644,7 +1660,7 @@
-                                 prev_scale_a_1 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r1);
-                                 #pragma unroll
-                                 for (uint32_t j = 0; j < kNumWSF; ++ j)
--                                    prev_l2_sf[j] = __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks);
-+                                    prev_l2_sf[j] = __shfl_sync(0xffffffff, cached_l2_sf[j], 0);
-                             }
-                             if (k_block_idx + 1 < num_k_blocks) {
-                                 uint32_t next_stage, next_phase;
-@@ -1652,7 +1668,7 @@
-                                 float l2_sf[kNumWSF];
-                                 #pragma unroll
-                                 for (uint32_t j = 0; j < kNumWSF; ++ j)
--                                    l2_sf[j] = __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks + k_block_idx + 1);
-+                                    l2_sf[j] = __shfl_sync(0xffffffff, cached_l2_sf[j], k_block_idx + 1);
-                                 full_barriers[next_stage]->wait(next_phase);
-                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
-                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
