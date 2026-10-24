@@ -74,7 +74,8 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert config["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch"
     bench = ROOT / "patches/deep-gemm-bench"
-    assert sorted(p.name for p in bench.iterdir()) == ["timeline"]
+    assert sorted(p.name for p in bench.iterdir()) == ["prefill-iwg-a", "prefill-iwg-b", "timeline"]
+    assert (bench / "prefill-iwg-b/env").read_text() == "DG_SM90_PREFILL_INDEPENDENT_WG=b\n"
     assert (bench / "timeline").stat().st_size == 0
     for name in ("containers/Dockerfile", "scripts/build-sglang-container.sh", "containers/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg-host.py"):
         assert "deep-gemm-bench" not in (ROOT / name).read_text()

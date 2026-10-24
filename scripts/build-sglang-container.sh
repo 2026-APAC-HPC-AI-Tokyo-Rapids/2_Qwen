@@ -118,6 +118,7 @@ cp -r "${GITHUB_WORKSPACE}/patches/deep-gemm-host" "${context}/deep-gemm-host"
 cp -r "${GITHUB_WORKSPACE}/patches/deep-gemm-overlay" "${context}/deep-gemm-overlay"
 cp "${GITHUB_WORKSPACE}/configs/firmus-framework.json" "${context}/firmus-framework.json"
 cp "${GITHUB_WORKSPACE}/containers/check-sm90-independent-wg.py" "${context}/containers/"
+cp "${GITHUB_WORKSPACE}/containers/check-sm90-prefill-independent-wg.py" "${context}/containers/"
 git clone --depth=1 --branch v0.1.5 --recurse-submodules --shallow-submodules https://github.com/sgl-project/DeepGEMM.git "${context}/deep-gemm-source"
 [[ "$(git -C "${context}/deep-gemm-source" rev-parse HEAD)" = "1c8138a59b3df5dac50b76b730834ed57982fdfb" ]]
 rm -rf -- "${context}/sglang-source/.git"

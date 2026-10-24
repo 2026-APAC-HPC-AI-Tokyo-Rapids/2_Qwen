@@ -57,15 +57,26 @@ if (( steps > max_steps )); then printf '%s Slurm steps (about 75 s each) exceed
 check_candidate_host() {
   local dir=$1 record=$2 extension=$3 enabled=${4:-0}
   if [[ -e "${dir}env" ]]; then enabled=$(sed -n 's/^DG_SM90_DECODE_INDEPENDENT_WG=//p' "${dir}env"); fi
-  if [[ -z "${enabled}" || "${enabled}" == 0 ]]; then return 0; fi
-  local patch_name=sm90-decode-independent-wg.patch patch_sha extension_sha
-  grep -Fxq "${patch_name}" "${GITHUB_WORKSPACE}/patches/deep-gemm-host/series" || { echo 'Independent WG host patch is missing from the host build series.' >&2; return 1; }
-  patch_sha=$(sha256sum "${GITHUB_WORKSPACE}/patches/deep-gemm-host/${patch_name}" | awk '{print $1}')
-  extension_sha=$(sha256sum "${extension}" | awk '{print $1}')
-  if [[ ! -s "${record}" ]] || ! jq -e --arg patch "${patch_name}" --arg sha "${patch_sha}" --arg extension "${extension_sha}" '.abi == "tvm-ffi" and .patches[$patch] == $sha and .extension_sha256 == $extension' "${record}" >/dev/null; then
-    printf 'Candidate %s requires a rebuilt DeepGEMM host with %s SHA256 %s and its matching _C.so. Build a fresh image and update configs/firmus-framework.json before kernel-bench; the old host silently ignores DG_SM90_DECODE_INDEPENDENT_WG.\n' "$(basename "${dir}")" "${patch_name}" "${patch_sha}" >&2
-    return 1
-  fi
+  local prefill=0
+  if [[ -e "${dir}env" ]]; then prefill=$(sed -n 's/^DG_SM90_PREFILL_INDEPENDENT_WG=//p' "${dir}env"); fi
+  local patch_name patch_sha extension_sha switch
+  for switch in decode prefill; do
+    if [[ "${switch}" == decode ]]; then
+      if [[ -z "${enabled}" || "${enabled}" == 0 ]]; then continue; fi
+      patch_name=sm90-decode-independent-wg.patch
+    else
+      if [[ -z "${prefill}" || "${prefill}" == 0 ]]; then continue; fi
+      [[ "${prefill}" == a || "${prefill}" == b ]] || { echo 'Invalid Prefill independent-WG mode.' >&2; return 1; }
+      patch_name=sm90-prefill-independent-wg.patch
+    fi
+    grep -Fxq "${patch_name}" "${GITHUB_WORKSPACE}/patches/deep-gemm-host/series" || { echo 'Independent WG host patch is missing from the host build series.' >&2; return 1; }
+    patch_sha=$(sha256sum "${GITHUB_WORKSPACE}/patches/deep-gemm-host/${patch_name}" | awk '{print $1}')
+    extension_sha=$(sha256sum "${extension}" | awk '{print $1}')
+    if [[ ! -s "${record}" ]] || ! jq -e --arg patch "${patch_name}" --arg sha "${patch_sha}" --arg extension "${extension_sha}" '.abi == "tvm-ffi" and .patches[$patch] == $sha and .extension_sha256 == $extension' "${record}" >/dev/null; then
+      printf 'Candidate %s requires a rebuilt DeepGEMM host with %s SHA256 %s and its matching _C.so. Build a fresh image and update configs/firmus-framework.json before kernel-bench; the old host ignores the requested independent WG switch.\n' "$(basename "${dir}")" "${patch_name}" "${patch_sha}" >&2
+      return 1
+    fi
+  done
 }
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
