@@ -53,7 +53,7 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
         }
     }
     // Same eight-lane/head reduction tree as the deployed SGLang prologue.
-    for (int row = Global ? 0 : threadIdx.x / 8; row < BM; row += THREADS / 8) {
+    for (int row = threadIdx.x / 8; row < BM; row += THREADS / 8) {
         const int token = first_row + row;
         float x[8], y[8], partial[4];
         uint16_t ox[4], oy[4];
@@ -123,13 +123,10 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
 }
 
 __global__ __launch_bounds__(256) void qkv_post_global(const __nv_bfloat16* packed,int rows,const __grid_constant__ QKVParams p) {
-    const int head=blockIdx.y*32+threadIdx.x/8;
-    // In the final head tile only two complete warps are active.
-    if(head>=72) return;
-    qkv_epilogue<1,256,true>(packed,blockIdx.x,head,rows,p);
+    qkv_epilogue<32,256,true>(packed,blockIdx.x*32,blockIdx.y,rows,p);
 }
 extern "C" int qkv_post(int rows,void* packed,QKVParams p,void* stream) {
-    qkv_post_global<<<dim3(rows,3),256,0,static_cast<cudaStream_t>(stream)>>>(static_cast<const __nv_bfloat16*>(packed),rows,p);
+    qkv_post_global<<<dim3((rows+31)/32,72),256,0,static_cast<cudaStream_t>(stream)>>>(static_cast<const __nv_bfloat16*>(packed),rows,p);
     return int(cudaGetLastError());
 }
 
