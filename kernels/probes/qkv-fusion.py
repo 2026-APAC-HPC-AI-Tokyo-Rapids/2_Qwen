@@ -1,6 +1,5 @@
 """Compare deployed QKV, the previous BM128 fusion, and a BM256 fusion."""
 import ctypes
-import faulthandler
 import json
 import os
 import runpy
@@ -29,6 +28,13 @@ class Params(ctypes.Structure):
 lib.qkv_run.argtypes = [ctypes.c_int] * 3 + [ctypes.c_void_p] * 5 + [Params, ctypes.c_void_p]
 lib.qkv_run.restype = ctypes.c_int
 assert lib.qkv_init() == 0
+lib.qkv_check_fp8.argtypes = [ctypes.c_void_p] * 3
+lib.qkv_check_fp8.restype = ctypes.c_int
+reference_bits, candidate_bits = [torch.empty(65536, device="cuda", dtype=torch.uint16) for _ in range(2)]
+assert lib.qkv_check_fp8(reference_bits.data_ptr(), candidate_bits.data_ptr(), torch.cuda.current_stream().cuda_stream) == 0
+assert torch.equal(reference_bits.view(torch.uint8), candidate_bits.view(torch.uint8)), "FP8 conversion differs"
+print("CHECK fp8_all_65536_bf16_patterns_exact=true", flush=True)
+del reference_bits, candidate_bits
 print(json.dumps({"device": torch.cuda.get_device_name(), "scope": "QKV GEMM + QK norm/RoPE/FP8 Q and contiguous/paged KV", "tiles_bm_bn_stages_cluster": [[128, 128, 5, 1], [256, 128, 3, 2]], "serving": False}), flush=True)
 qw, kw = [(torch.randn(128, device="cuda") * .25 + 1).bfloat16() for _ in range(2)]
 angles = torch.arange(8192, device="cuda").float()[:, None] * (1000000.0 ** (-torch.arange(0, 128, 2, device="cuda").float() / 128))
@@ -101,11 +107,9 @@ def compare(actual, expected, label, exact=False):
 
 
 # Tail tiles, normal Prefill sizes, changed inputs and cache slot-zero masking.
-faulthandler.dump_traceback_later(30, repeat=True)
 for rows in (129, 3986, 4027, 4096):
     data = inputs(rows, rows + 91)
     stock, head, fused = [outputs(rows) for _ in range(3)]
-    print(f"CHECK starting rows={rows}", flush=True)
     call(data, stock, "stock")
     baseline = data[2].clone()
     # Independent FP32 reference on sampled rows, without a full 4096-row FP32 GEMM.
@@ -137,7 +141,6 @@ for rows in (129, 3986, 4027, 4096):
     print(f"CHECK rows={rows} old_and_new_epilogue_exact=true independent_dense_reference=true", flush=True)
     del data, stock, head, fused, reference, baseline, a, sa, b, sb
 torch.cuda.synchronize()
-faulthandler.cancel_dump_traceback_later()
 
 for rows in (3986, 4027, 4096):
     data_sets = [inputs(rows, 5200 + i) for i in range(4)]

@@ -13,6 +13,30 @@ struct QKVParams {
     uint8_t *q, *k, *v, *kc, *vc;
 };
 
+template<bool Fast>
+__device__ __forceinline__ uint16_t qkv_fp8(float2 x) {
+    if constexpr (!Fast) return __nv_cvt_float2_to_fp8x2(x, __NV_NOSAT, __NV_E4M3);
+    // NOSAT in CUDA 12.9 falls back to double/integer conversion. Use the
+    // hardware conversion and restore its exact overflow/canonical-NaN rules.
+    const uint16_t packed=__nv_cvt_float2_to_fp8x2(x, __NV_SATFINITE, __NV_E4M3);
+    const unsigned a=__float_as_uint(x.x), b=__float_as_uint(x.y);
+    const unsigned aa=a&0x7fffffff, bb=b&0x7fffffff;
+    const unsigned lo=aa>0x43e80000 ? (aa>0x7f800000 ? 0x7f : ((a>>24)&0x80)|0x7f) : packed&0xff;
+    const unsigned hi=bb>0x43e80000 ? (bb>0x7f800000 ? 0x7f : ((b>>24)&0x80)|0x7f) : packed>>8;
+    return lo|(hi<<8);
+}
+
+__global__ void check_fp8(uint16_t* reference,uint16_t* candidate) {
+    const unsigned i=blockIdx.x*blockDim.x+threadIdx.x;
+    const float2 x=make_float2(__bfloat162float(__ushort_as_bfloat16(i)),__bfloat162float(__ushort_as_bfloat16(i^0x8000)));
+    reference[i]=qkv_fp8<false>(x);
+    candidate[i]=qkv_fp8<true>(x);
+}
+extern "C" int qkv_check_fp8(void* reference,void* candidate,void* stream) {
+    check_fp8<<<256,256,0,static_cast<cudaStream_t>(stream)>>>(static_cast<uint16_t*>(reference),static_cast<uint16_t*>(candidate));
+    return int(cudaGetLastError());
+}
+
 template<int BM, int THREADS>
 __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int first_row, int head, int rows, const QKVParams& p) {
     const int lane = threadIdx.x % 8;
@@ -71,14 +95,14 @@ __device__ __forceinline__ void qkv_epilogue(const __nv_bfloat16* tile, int firs
                     a[h]=__bfloat162float(__float2bfloat16_rn(u*c-v*s));
                     b[h]=__bfloat162float(__float2bfloat16_rn(u*s+v*c));
                 }
-                ox[j]=__nv_cvt_float2_to_fp8x2(make_float2(a[0],a[1]), __NV_NOSAT, __NV_E4M3);
-                oy[j]=__nv_cvt_float2_to_fp8x2(make_float2(b[0],b[1]), __NV_NOSAT, __NV_E4M3);
+                ox[j]=qkv_fp8<(BM==256)>(make_float2(a[0],a[1]));
+                oy[j]=qkv_fp8<(BM==256)>(make_float2(b[0],b[1]));
             }
         } else {
             #pragma unroll
             for(int j=0;j<4;++j) {
-                ox[j]=__nv_cvt_float2_to_fp8x2(make_float2(x[j*2],x[j*2+1]), __NV_NOSAT, __NV_E4M3);
-                oy[j]=__nv_cvt_float2_to_fp8x2(make_float2(y[j*2],y[j*2+1]), __NV_NOSAT, __NV_E4M3);
+                ox[j]=qkv_fp8<(BM==256)>(make_float2(x[j*2],x[j*2+1]));
+                oy[j]=qkv_fp8<(BM==256)>(make_float2(y[j*2],y[j*2+1]));
             }
         }
         if(token<rows) {
