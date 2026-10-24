@@ -17,3 +17,16 @@ Per the user's instruction, GPU development tests run on Genkai with **one GPU**
 - The one-GPU executable checks four producer geometries, Prefill paired/Decode parallel combine, 12 token counts, masked/all-padding slots and changed-weight CUDA Graph replays against both the baseline and an independent scalar FP32-FMA reference. It interleaves A/B timing, and the runner repeats three times.
 - Synthetic FP32 accumulators replace GEMM in the output-only probe. This can reject regressions cheaply but does not establish full-kernel speed, NVLink correctness/performance or serving throughput. Full-kernel compiler resource logs are separate from the synthetic probe.
 - A successful candidate still needs real routing, mixed-rank geometry, full MegaMoE numerical gate, and final official workload/parser validation before adoption.
+
+## CPU results before GPU submission
+
+CUDA 12.9.1 / GCC 13 on Genkai compiled Prefill128, Prefill140, independent/shared
+Decode, nonswap masked geometry and partial-wave SwapAB for both headers. Resource
+usage is identical in all six pairs: 168 registers; no spills except the existing
+8-byte store/load spill in independent Decode. Prefill has zero stack/spills.
+The extracted output/combine probe compiles without spills in all four geometries.
+Four layout tests pass. Existing Firmus kernel-bench fixtures pass using GNU tools
+on macOS (the initial BSD `stat` invocation is incompatible with Linux fixtures).
+
+One-GPU Actions run: [40105137999](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40105137999),
+commit `c647097`. Results remain pending at submission; no Firmus job was launched.

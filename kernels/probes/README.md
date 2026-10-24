@@ -190,3 +190,20 @@ Serving retains the cap160 configuration, FP8 integration and fast QKV overlay, 
 FA3 calibration now takes the current selector's four companion IDs: control96, p128s2, p128split2 and p128split3. The historical table above retains the removed t64 measurements; split candidates have no paired historical reference in that table. The calibration still runs B32 with shared metadata and the same numeric checks.
 
 Both timeline instruments are retained as alternative overlays on the same control, not composed: the Firmus control uses the main v2 per-WG phase instrument; Genkai EP4 uses the upstream producer/transfer plus WG0/WG1 instrument, now ABI v3 to avoid its original v2 collision. All recording points remain in their respective patches. The shared decoder accepts v1/v2/v3 and the EP4 summary retains producer/transfer and both-WG records. A/B have no timeline marker.
+
+## MegaMoE FC2 output and combine (one GPU)
+
+`prepare-fc2-output.sh` extracts the actual FC2 epilogue and combine bodies from
+baseline and candidate headers. It checks the output layout against an independent
+scalar reference, including partial tiles, masked slots, all-padding inputs and
+changed-weight CUDA Graph replays. Both complete MegaMoE kernels are also compiled
+on the login node for six geometries, with ptxas register/spill reports in Actions.
+
+The first candidate is
+`patches/deep-gemm-experiments/fc2-fragment-combine.patch`. Select `gpu_count=1`.
+It writes register-native BF16 fragments directly from non-SwapAB FC2 accumulators
+and restores normal channel order once after top-k combine. This preserves the
+FP32 FMA order and BF16 rounding. The probe supplies synthetic accumulators and
+local routing: its timings do not measure GEMM, NVLink or serving throughput.
+For this campaign, only necessary peer validation uses Firmus one node; multiple
+nodes are reserved for the final official measurement.
