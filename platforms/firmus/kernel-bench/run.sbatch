@@ -62,7 +62,9 @@ if [[ -d "${ROOT}/overlay/sglang" ]]; then
   done
 fi
 
-for dir in "${ROOT}"/overlay/candidates/*/; do
+# Omit the trailing slash from the glob so a base candidate precedes its
+# longer combined name (bulk-scatter before bulk-scatter-wg1-skip).
+for dir in "${ROOT}"/overlay/candidates/*; do
   [[ -d "${dir}" ]] || continue
   variant="$(basename "${dir}")"
   candidate_env=()

@@ -38,7 +38,7 @@ import numpy as np
 
 # These candidates promise to retain each output element's arithmetic. Use the
 # recorded patch identity, so renaming a candidate directory cannot relax this.
-EXACT_OUTPUT_PATCHES = {"prefill-fc1-early-release.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "sm90-prefill-iwg-a.patch", "sm90-prefill-iwg-b.patch"}
+EXACT_OUTPUT_PATCHES = {"prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "prefill-fc1-early-release.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "sm90-prefill-iwg-a.patch", "sm90-prefill-iwg-b.patch"}
 
 MAGIC = 0x314C544D4F45474D
 EVENTS = ["Entry", "DispCount", "DispSendCount", "DispGridSync", "DispRecvCount", "DispPrePullBarrier", "DispEpilogueSync", "DispFirstPull", "DispLastPull", "DispLoopExit", "DispCombineSync", "DispClean", "DispFinalGridSync", "DispExit", "AStart", "AFirstBlock", "AFirstL1Ready", "ALastL1Issued", "AFirstL2Ready", "AExit", "BStart", "BFirstBlock", "BExit", "MStart", "MDispatchSync", "MFirstL1Full", "MLastL1End", "MFirstL2Full", "MLastL2End", "MLoopExit", "MCombineGridSync", "MCombineBarrier", "MDispatchSync2", "MCombineEnd"]
@@ -73,18 +73,24 @@ WG_EVENTS = ["Start", "FirstFC1", "LastFC1", "FirstFC2", "LastFC2", "LoopExit", 
 WG_COUNTERS = ["FC1Blocks", "FC2Blocks", "FC1Wait", "FC2Wait", "FC1Loop", "FC2Loop", "FC1Epilogue", "FC2Epilogue"]
 V2_EVENTS = EVENTS[:14] + [f"WG{wg}{event}" for wg in range(4) for event in WG_EVENTS]
 V2_COUNTERS = [f"WG{wg}{counter}" for wg in range(4) for counter in WG_COUNTERS]
+V4_WG_EVENTS = WG_EVENTS[:6] + ["DrainEnd"] + WG_EVENTS[6:]
+V4_EVENTS = EVENTS[:14] + [f"WG{wg}{event}" for wg in range(4) for event in V4_WG_EVENTS]
+V4_COUNTERS = [f"WG{wg}{counter}" for wg in range(4) for counter in WG_COUNTERS + ["ML2Scatter", "ML2RowWait", "ML2Drain"]]
 
 
 def report_warpgroups(chosen, title, kernel, calls):
     header = chosen[0]["header"]
     groups = range(header["math_warpgroups"])
+    event_names = V4_EVENTS if header["version"] == 4 else V2_EVENTS
+    counter_names = V4_COUNTERS if header["version"] == 4 else V2_COUNTERS
+    wg_events = V4_WG_EVENTS if header["version"] == 4 else WG_EVENTS
     lines = [f"### {title}", "", f"Geometry: BLOCK_M {header['block_m']}, BLOCK_N {header['block_n']}, {header['epilogue_threads']} math threads ({header['math_warpgroups']} WGs), {header['stages']} stages, {header['num_sms']} CTAs, {header['num_tokens']} tokens/rank.", f"Kernel time, calls 2-{calls}: median {np.median(kernel):.1f} us, min {kernel.min():.1f}, max {kernel.max():.1f}. SM clock {np.nanmedian(np.concatenate([rank['ghz'] for rank in chosen])):.3f} GHz.", "", "Per-CTA duration, us (median / max); counters sum all blocks in each WG. Mainloop includes setup, stage waits and FP32 promotion; the separate stage-wait row is a subset. Epilogue includes SwiGLU/FP8/store for FC1 and BF16/NVLink scatter for FC2, including existing epilogue barriers. Prefill FC1's deferred publication remains in the following mainloop or scheduler transition, as in serving. The first-ready interval includes dispatch handshake and loader/stage arrival; it is not pure dispatch time. Pre-combine wait includes intra-rank and inter-rank synchronization together. No barrier was split or added for measurement.", "", "| WG | Phase | " + " | ".join(f"rank {rank}" for rank in range(len(chosen))) + " |", "| --- | --- |" + " ---: |" * len(chosen)]
     for wg in groups:
         def event(rank, name, wg=wg):
-            return rank["times"][:, V2_EVENTS.index(f"WG{wg}{name}")]
+            return rank["times"][:, event_names.index(f"WG{wg}{name}")]
 
         def counter(rank, name, wg=wg):
-            return rank["counters"][:, V2_COUNTERS.index(f"WG{wg}{name}")]
+            return rank["counters"][:, counter_names.index(f"WG{wg}{name}")]
 
         phases = [
             ("dispatch/first-stage wait (WG start -> first FC1 ready)", lambda r: event(r, "FirstFC1") - event(r, "Start")),
@@ -95,18 +101,26 @@ def report_warpgroups(chosen, title, kernel, calls):
             ("FC2 stage wait (within mainloop)", lambda r: counter(r, "FC2Wait")),
             ("FC2 epilogue (BF16 + NVLink scatter)", lambda r: counter(r, "FC2Epilogue")),
             ("last FC2 -> loop exit (scheduler/publication tail)", lambda r: event(r, "LoopExit") - event(r, "LastFC2")),
-            ("pre-combine wait (grid + NVLink)", lambda r: event(r, "BarrierEnd") - event(r, "LoopExit")),
+            ("pre-combine wait (grid + NVLink)", lambda r: event(r, "BarrierEnd") - event(r, "DrainEnd" if header["version"] == 4 else "LoopExit")),
             ("combine (incl. dispatch cleanup handshake)", lambda r: event(r, "CombineEnd") - event(r, "BarrierEnd")),
         ]
+        if header["version"] == 4:
+            phases[7:7] = [
+                ("ML2Scatter (issue only, within FC2 epilogue)", lambda r: counter(r, "ML2Scatter")),
+                ("ML2RowWait (CD reuse, within FC2 epilogue)", lambda r: counter(r, "ML2RowWait")),
+                ("ML2Drain (final full wait, before grid/NVLink)", lambda r: counter(r, "ML2Drain")),
+            ]
         for label, values in phases:
             lines.append(f"| {wg} | {label} | " + " | ".join(cell(values(rank)) for rank in chosen) + " |")
         for name in ("FC1Blocks", "FC2Blocks"):
             lines.append(f"| {wg} | {name} (count) | " + " | ".join(cell(counter(rank, name)) for rank in chosen) + " |")
     lines += ["", "Event time since rank entry, us (median / max over CTAs):", "", "| Event | " + " | ".join(f"rank {rank}" for rank in range(len(chosen))) + " |", "| --- |" + " ---: |" * len(chosen)]
-    names = V2_EVENTS[:12] + [f"WG{wg}{event}" for wg in groups for event in WG_EVENTS] + ["DispExit"]
+    names = event_names[:12] + [f"WG{wg}{event}" for wg in groups for event in wg_events] + ["DispExit"]
     for name in names:
-        lines.append(f"| {name} | " + " | ".join(cell(rank["times"][:, V2_EVENTS.index(name)]) for rank in chosen) + " |")
+        lines.append(f"| {name} | " + " | ".join(cell(rank["times"][:, event_names.index(name)]) for rank in chosen) + " |")
     lines += ["", "Instrumented durations include measurement overhead; use the uninstrumented bench for performance comparisons. BAR.SYNC.DEFER_BLOCKING can retire the immediate timestamp before release; no phase ends at the dispatch/math handshake timestamp. Missing event timestamps are shown as '-'."]
+    if header["version"] == 4:
+        lines.append("ML2Scatter measures issue, not completion. ML2RowWait/ML2Drain are the WG leader warp timings; other math warps also drain before the barrier. Legacy control timelines do not record these counters; absent counters are not zero-valued measurements. FC2 stage wait is the ML2FullWait diagnostic; LastFC2 is MLastL2End. The barrier interval starts after DrainEnd.")
     return "\n".join(lines) + "\n"
 
 
@@ -124,15 +138,17 @@ def parse(words):
     start = np.nanmin(ns[:, 0])
     times = (ns[:, :1] - start + (clk - clk[:, :1]) / ghz[:, None]) / 1000.0
     version = int(words[1])
-    assert version in (1, 2, 3), f"Unknown timeline version {version}"
+    assert version in (1, 2, 3, 4), f"Unknown timeline version {version}"
     counter_us = counters.copy()
-    if version == 2:
-        assert num_events == len(V2_EVENTS) and num_counters == len(V2_COUNTERS)
+    if version in (2, 4):
+        event_names = V4_EVENTS if version == 4 else V2_EVENTS
+        counter_names = V4_COUNTERS if version == 4 else V2_COUNTERS
+        assert num_events == len(event_names) and num_counters == len(counter_names)
         assert int(words[13]) in (2, 4), "Unexpected math WG count"
-        for index, name in enumerate(V2_COUNTERS):
+        for index, name in enumerate(counter_names):
             if not name.endswith("Blocks"):
                 counter_us[:, index] = counters[:, index] / ghz / 1000.0
-        exits = [V2_EVENTS.index("DispExit")] + [V2_EVENTS.index(f"WG{wg}CombineEnd") for wg in range(int(words[13]))]
+        exits = [event_names.index("DispExit")] + [event_names.index(f"WG{wg}CombineEnd") for wg in range(int(words[13]))]
         end = np.nanmax(times[:, exits])
     else:
         if version == 3:
@@ -143,7 +159,7 @@ def parse(words):
             counter_us[:, COUNTERS.index(name)] = counters[:, COUNTERS.index(name)] / ghz / 1000.0
         end = np.nanmax(np.fmax(times[:, E["DispExit"]], times[:, E["MCombineEnd"]]))
     header = {"num_sms": num_sms, "num_tokens": int(words[5]), "rank": int(words[6]), "block_m": int(words[7]), "block_n": int(words[8]), "epilogue_threads": int(words[9]), "stages": int(words[10])}
-    header.update(version=version, math_warpgroups=int(words[13]) if version == 2 else int(words[9]) // 128)
+    header.update(version=version, math_warpgroups=int(words[13]) if version in (2, 4) else int(words[9]) // 128)
     granularity = np.diff(np.unique(ns[~np.isnan(ns)]))
     return {"times": times, "counters": counter_us, "end": end, "ghz": ghz, "header": header, "granularity_ns": float(np.min(granularity)) if granularity.size else float("nan")}
 
@@ -162,7 +178,7 @@ def report(path, title):
     chosen = calls[1 + int(np.argsort(kernel)[len(kernel) // 2])]
     ranks = range(len(chosen))
     header = chosen[0]["header"]
-    if header["version"] == 2:
+    if header["version"] in (2, 4):
         return report_warpgroups(chosen, title, kernel, len(calls))
     lines = [f"### {title}", "", f"Geometry from the kernel header: BLOCK_M {header['block_m']}, BLOCK_N {header['block_n']}, {header['epilogue_threads']} math threads, {header['stages']} stages, {header['num_sms']} CTAs, {header['num_tokens']} tokens/rank.", f"Kernel time (max over ranks of last CTA exit since that rank's first CTA entry), calls 2-{len(calls)}: median {np.median(kernel):.1f} us, min {kernel.min():.1f}, max {kernel.max():.1f}. SM clock {np.nanmedian(np.concatenate([rank['ghz'] for rank in chosen])):.3f} GHz; %globaltimer step {min(rank['granularity_ns'] for rank in chosen):.0f} ns.", ""]
     lines += ["Per-phase duration, us (median over CTAs / max over CTAs):", "", "| Phase | " + " | ".join(f"rank {rank}" for rank in ranks) + " |", "| --- |" + " ---: |" * len(chosen)]

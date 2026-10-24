@@ -37,12 +37,12 @@ def test_prefill_provision_guard_checks_actual_requested_host(tmp_path, mode, co
     assert (result.returncode == 0) == (corruption is None), result.stderr
 
 
-def test_bench_candidates_and_image_compile_use_same_patch():
+def test_rejected_bench_candidates_removed_but_host_compile_kept():
     patch = ROOT / "patches/deep-gemm-overlay/sm90-prefill-independent-wg.patch"
     candidate = ROOT / "patches/deep-gemm-bench/prefill-iwg-b"
-    assert (candidate / "sm90-prefill-iwg-b.patch").read_bytes() == patch.read_bytes()
-    assert not (candidate / "timeline").exists()
-    assert not (ROOT / "patches/deep-gemm-bench/prefill-iwg-a/timeline").exists()
+    assert not candidate.exists()
+    assert not (ROOT / "patches/deep-gemm-bench/prefill-iwg-a").exists()
+    assert patch.is_file()
     assert (ROOT / "patches/deep-gemm-bench/timeline").is_file()
     assert "check-sm90-prefill-independent-wg.py" in (ROOT / "containers/Dockerfile").read_text()
     assert "check-sm90-prefill-independent-wg.py" in (ROOT / "scripts/build-sglang-container.sh").read_text()

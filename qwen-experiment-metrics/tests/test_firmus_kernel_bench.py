@@ -310,7 +310,7 @@ def test_summary_passes_clean_run_and_reports_differing_hashes_without_failing(t
     assert "| rope | 5.00 | 5.00 | +0.0% | 5.00 / 5.00 | False |" in text
 
 
-@pytest.mark.parametrize("patch_name", ["sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch"])
+@pytest.mark.parametrize("patch_name", ["prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch"])
 @pytest.mark.parametrize("same", [False, True])
 def test_arithmetic_preserving_candidates_require_equal_outputs(tmp_path, monkeypatch, patch_name, same):
     summarize = load_summary(monkeypatch)
@@ -505,3 +505,48 @@ def test_control_rejects_old_host_even_without_candidates(tmp_path: Path) -> Non
     result = provision(tmp_path, ws)
     assert result.returncode != 0
     assert "requires a rebuilt DeepGEMM host" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+def test_bulk_campaign_real_step_generation_is_twelve_with_final_control(tmp_path):
+    ws, patches = workspace(tmp_path)
+    campaign = ROOT / "patches/deep-gemm-bench"
+    names = sorted(path.name for path in campaign.iterdir() if path.is_dir())
+    assert names == ["prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip", "prefill-wg1-skip", "z-control-repeat"]
+    for name in names:
+        add_candidate(ws, name, patches["comment"], timeline=(campaign / name / "timeline").exists())
+    (ws / "patches/deep-gemm-bench/timeline").touch()
+    result = provision(tmp_path, ws)
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    stub = tmp_path / "bin/srun"
+    stub.write_text('#!/bin/bash\nprintf \'%s\\n\' "$*" >>"${SRUN_LOG}"\n')
+    stub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "SLURM_SUBMIT_DIR": str(runtime), "SLURM_JOB_ID": "fixture", "SRUN_LOG": str(tmp_path / "srun.log")}
+    run = subprocess.run(["bash", str(runtime / "scripts/run.sbatch")], cwd=runtime, env=env, text=True, capture_output=True, check=False)
+    assert run.returncode == 0, run.stdout + run.stderr
+    steps = [tuple(line.split("\t")[:2]) for line in (runtime / "results/steps.tsv").read_text().splitlines()]
+    expected = [("image", "bench"), ("image", "timeline")]
+    for name in names:
+        expected += [(name, "gate"), (name, "bench")]
+        if (campaign / name / "timeline").exists():
+            expected.append((name, "timeline"))
+    assert steps == expected and len(steps) == 12
+    assert steps[-1] == ("z-control-repeat", "bench")
+    assert len((tmp_path / "srun.log").read_text().splitlines()) == 12
+
+
+def test_bulk_campaign_local_and_real_cases_reach_timeline():
+    helper = ast.parse((ROOT / "scripts/firmus_megamoe_replicas.py").read_text())
+    data = next(ast.literal_eval(n.value) for n in helper.body if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "REAL_ROUTING_LAYERS")
+    tree = ast.parse((ROOT / "scripts/bench-firmus-megamoe.py").read_text())
+    nodes = [n for n in tree.body if isinstance(n, (ast.Assign, ast.AugAssign)) and isinstance(n.targets[0] if isinstance(n, ast.Assign) else n.target, ast.Name) and (n.targets[0] if isinstance(n, ast.Assign) else n.target).id in ("CASES", "TIMELINE_CASES")]
+    ns = {"REAL_ROUTING_LAYERS": data}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "cases", "exec"), ns)  # noqa: S102
+    for key in ("CASES", "TIMELINE_CASES"):
+        assert ("prefill", "local", 4096) in ns[key]
+        assert not any(kind == "skew" for _, kind, _ in ns[key])
+        for layer in data:
+            assert ("prefill", f"real{layer}-replica4", 4096) in ns[key]
+    # real7 is already the remote p90 tail (86/94), so no fourth layer is needed.
+    assert list(data) == [43, 62, 7]

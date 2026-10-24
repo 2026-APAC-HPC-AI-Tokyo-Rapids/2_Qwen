@@ -74,8 +74,8 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert config["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch"
     bench = ROOT / "patches/deep-gemm-bench"
-    assert sorted(p.name for p in bench.iterdir()) == ["prefill-fc1-early-release", "prefill-iwg-a", "prefill-iwg-b", "timeline"]
-    assert (bench / "prefill-iwg-b/env").read_text() == "DG_SM90_PREFILL_INDEPENDENT_WG=b\n"
+    assert sorted(p.name for p in bench.iterdir()) == ["prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip", "prefill-wg1-skip", "timeline", "z-control-repeat"]
+    assert not list(bench.glob("*/env"))
     assert (bench / "timeline").stat().st_size == 0
     for name in ("containers/Dockerfile", "scripts/build-sglang-container.sh", "containers/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg-host.py"):
         assert "deep-gemm-bench" not in (ROOT / name).read_text()
@@ -197,3 +197,87 @@ def test_genkai_extended_timeline_has_distinct_abi_and_cycle_units(tmp_path, sum
     probe.ROOT = ROOT / "scripts"
     probe.summary(path)
     assert 'kVersion = 3;' in (ROOT / "patches/deep-gemm-timeline/sm90-mega-moe-prefill-2wg.patch").read_text()
+
+
+def dump_v4(summary):
+    np = summary.np
+    events = np.zeros((2, len(summary.V4_EVENTS), 2), dtype=np.uint64)
+    counters = np.zeros((2, len(summary.V4_COUNTERS)), dtype=np.uint64)
+    for cta in range(2):
+        start = 1_000_000 + cta * 1000
+        for name, elapsed in [("Entry", 0), ("DispExit", 100_000)]:
+            events[cta, summary.V4_EVENTS.index(name)] = start + elapsed, 2 * (start + elapsed)
+        for wg in range(2):
+            for name, elapsed in zip(summary.V4_WG_EVENTS, [1000, 10_000, 30_000, 32_000, 60_000, 61_000, 65_000, 70_000, 90_000], strict=True):
+                events[cta, summary.V4_EVENTS.index(f"WG{wg}{name}")] = start + elapsed, 2 * (start + elapsed)
+            counters[cta, wg * 11:(wg + 1) * 11] = [3, 4, 2000, 4000, 20_000, 30_000, 6000, 8000, 4000, 1000, 8000]
+    header = np.array([summary.MAGIC, 4, 2, 50, 44, 4096, 0, 128, 256, 256, 3, 64, 35, 2, 0, 0], dtype=np.uint64)
+    words = np.concatenate([header, events.ravel(), counters.ravel()])
+    return words
+
+
+def test_bulk_timeline_v4_separates_issue_reuse_drain_and_barrier(tmp_path, summary):
+    np = summary.np
+    words = dump_v4(summary)
+    parsed = summary.parse(words)
+    assert parsed["end"] == 101
+    assert parsed["counters"][0, summary.V4_COUNTERS.index("WG1ML2Drain")] == 4
+    assert parsed["counters"][0, summary.V4_COUNTERS.index("WG1FC2Blocks")] == 4
+    path = tmp_path / "bulk.npy"
+    np.save(path, np.tile(words, (3, 4, 1)))
+    text = summary.report(path, "bulk")
+    assert "ML2Scatter (issue only, within FC2 epilogue) | 2.0 / 2.0" in text
+    assert "ML2RowWait (CD reuse, within FC2 epilogue) | 0.5 / 0.5" in text
+    assert "ML2Drain (final full wait, before grid/NVLink) | 4.0 / 4.0" in text
+    assert "pre-combine wait (grid + NVLink) | 5.0 / 5.0" in text
+    assert "WG1DrainEnd" in text
+    assert "WG2DrainEnd" not in text
+    assert "ML2FullWait" in text and "MLastL2End" in text
+
+
+@pytest.mark.parametrize("candidate", ["prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip"])
+def test_bulk_timeline_is_candidate_only(candidate):
+    patch = (ROOT / "patches/deep-gemm-bench" / candidate / "timeline").read_text()
+    added = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    assert "base[1] = 4;" in added
+    assert "kCountersPerWG = 11" in added
+    assert "kEventsPerWG = 9" in added
+    assert "kNumCounters * sizeof(uint32_t) == 176" in added
+    assert "kML2Drain" in added and "kDrainEnd" in added
+    assert "cp.async.bulk.wait_group 0;" in patch
+    stock = (ROOT / "patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch").read_text()
+    assert "base[1] = 2;" in stock
+    assert "kML2Drain" not in stock
+
+
+def test_summary_combines_control_v2_and_bulk_v4_timelines(tmp_path, summary):
+    case = "prefill-real43-replica4-4096"
+    names = ["image", "prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip"]
+    variants = [{"name": name, "patches": [] if name == "image" else [{"path": f"{name}.patch"}], "timeline": "ready"} for name in names]
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": variants}))
+    bench = {"case": case, "median_ms": 1.0, "p10_ms": 0.9, "p90_ms": 1.1, "output_sha256": "identical", "deterministic": True, "sm_clock_mhz_before": [2000] * 4, "sm_clock_mhz_after": [2000] * 4, "power_w_before": [300] * 4, "power_w_after": [300] * 4, "rank_load_max_over_mean": 1.0}
+    steps = {}
+    for name in names:
+        directory = tmp_path / name
+        (directory / "timeline").mkdir(parents=True)
+        (directory / "bench.jsonl").write_text(json.dumps(bench) + "\n")
+        (directory / "timeline.jsonl").write_text(json.dumps({**bench, "delta_median_vs_reference": 0.0, "bitwise_equal_to_reference": True}) + "\n")
+        words = dump_v2(summary) if name == "image" else dump_v4(summary)
+        summary.np.save(directory / "timeline" / f"{case}.npy", summary.np.tile(words, (3, 4, 1)))
+        steps.update({(name, step): 0 for step in ("gate", "bench", "timeline")})
+    text, failed = summary.deep_gemm(tmp_path, steps)
+    assert failed == []
+    prefix, control = text.split(f"### image: {case}\n", 1)
+    control, bulk = control.split(f"### {names[1]}: {case}\n", 1)
+    bulk, combined = bulk.split(f"### {names[2]}: {case}\n", 1)
+    assert "### Timeline runs" in prefix
+    for name in names:
+        assert f"| {case} | {name} | 1.0000 | +0.0% | True | 2000 / 2000 |" in prefix
+    assert "ML2Drain" not in control and "DrainEnd" not in control
+    assert "pre-combine wait (grid + NVLink) | 9.0 / 9.0" in control
+    for candidate in (bulk, combined):
+        assert "ML2Scatter (issue only, within FC2 epilogue) | 2.0 / 2.0" in candidate
+        assert "ML2RowWait (CD reuse, within FC2 epilogue) | 0.5 / 0.5" in candidate
+        assert "ML2Drain (final full wait, before grid/NVLink) | 4.0 / 4.0" in candidate
+        assert "pre-combine wait (grid + NVLink) | 5.0 / 5.0" in candidate
+        assert "WG1DrainEnd" in candidate and "WG2DrainEnd" not in candidate
