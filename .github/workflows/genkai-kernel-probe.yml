@@ -1,25 +1,84 @@
 name: Genkai kernel probe
+
 on:
   workflow_dispatch:
+    inputs:
+      benchmark:
+        description: ベンチ準備スクリプト（共通runnerが生成された実行ファイルを起動）
+        type: string
+        default: kernels/probes/prepare-megamoe-math.sh
+      candidate_patch:
+        description: 候補patchのリポジトリ内パス（空欄は現行同士の動作確認）
+        type: string
+        default: ""
+      gpu_count:
+        description: 単体kernelは1、NVLinkを含むMegaMoEは4
+        type: choice
+        default: "1"
+        options: ["1", "4"]
+
 permissions:
   contents: read
+
+env:
+  RUNTIME_ROOT: /fast/PROJECT/sglang-runs
+
+defaults:
+  run:
+    shell: genkai-shell --github-shell {0}
+
 jobs:
-  withdraw-owned-ep4:
+  probe:
     runs-on: [self-hosted, home-lab]
-    timeout-minutes: 5
+    timeout-minutes: 7200
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Withdraw only this task's queued EP4 job
-        shell: genkai-shell --github-shell {0}
+
+      - name: login nodeでベンチを準備
+        id: prepare
+        env:
+          BENCHMARK: ${{ inputs.benchmark }}
+          CANDIDATE_PATCH: ${{ inputs.candidate_patch }}
+        run: scripts/provision-genkai-kernel-probe.sh
+
+      - name: PJMジョブを投入（1 GPUは5分、4 GPUは10分上限）
+        id: submit
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+          GPU_COUNT: ${{ inputs.gpu_count }}
         run: |
-          set -euo pipefail
-          state=$(pjstat -A -S 7165140)
-          grep -q 'JOB ID *: 7165140' <<<"${state}"
-          grep -q 'JOB NAME *: qwen_kernel_probe' <<<"${state}"
-          grep -q 'kernel-probe-40063020691-2.NTIuThpb' <<<"${state}"
-          grep -q 'STATE *: QUE' <<<"${state}"
-          pjdel 7165140
-          timeout 60 pjwait -z 7165140
-          pjstat -H -S 7165140 | grep -E 'JOB ID|STATE|PJM CODE|REASON|DELETE DATE'
+          cd "${RUNTIME_DIR}"
+          [[ "${GPU_COUNT}" == 1 || "${GPU_COUNT}" == 4 ]]
+          limit=00:05:00
+          if [[ "${GPU_COUNT}" == 4 ]]; then limit=00:10:00; fi
+          submission=$(pjsub -L "gpu=${GPU_COUNT}" -L "elapse=${limit}" -x "RUNTIME_DIR=${RUNTIME_DIR},GPU_COUNT=${GPU_COUNT}" -N qwen_kernel_probe -o "${RUNTIME_DIR}/logs/%j.pjm.log" --spath "${RUNTIME_DIR}/logs/%j.pjm.stats" "${RUNTIME_DIR}/scripts/run.pjm")
+          printf '%s\n' "${submission}"
+          job_id=$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<<"${submission}")
+          [[ "${job_id}" =~ ^[0-9]+$ ]]
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+
+      - name: 終了・数値検査・3回の計時を確認
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+          PJM_JOB_ID: ${{ steps.submit.outputs.job_id }}
+        shell: bash
+        run: scripts/monitor-qwen-job.sh genkai-shell platforms/genkai/kernel-probe/check-job.sh
+
+      - name: 結果をsummaryに表示
+        if: always() && steps.prepare.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        shell: bash
+        run: |
+          printf '### Genkai kernel benchmark\n\n' >>"${GITHUB_STEP_SUMMARY}"
+          genkai-shell --github-shell platforms/genkai/kernel-probe/summary.sh >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 終了済みの一時ファイルを削除
+        if: always() && steps.prepare.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+          PJM_JOB_ID: ${{ steps.submit.outputs.job_id }}
+        run: |
+          if [[ -z "${PJM_JOB_ID}" ]] || timeout 20 pjwait -z "${PJM_JOB_ID}"; then chmod -R u+w "${RUNTIME_DIR:?}"; rm -rf -- "${RUNTIME_DIR:?}"; else printf 'Preserving runtime for pending job %s\n' "${PJM_JOB_ID}"; fi
