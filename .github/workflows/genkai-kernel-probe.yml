@@ -1,4 +1,4 @@
-name: Genkai 1 GPU kernel probe
+name: Genkai kernel probe
 
 on:
   workflow_dispatch:
@@ -11,6 +11,11 @@ on:
         description: 候補patchのリポジトリ内パス（空欄は現行同士の動作確認）
         type: string
         default: ""
+      gpu_count:
+        description: 単体kernelは1、NVLinkを含むMegaMoEは4
+        type: choice
+        default: "1"
+        options: ["1", "4"]
 
 permissions:
   contents: read
@@ -38,13 +43,17 @@ jobs:
           CANDIDATE_PATCH: ${{ inputs.candidate_patch }}
         run: scripts/provision-genkai-kernel-probe.sh
 
-      - name: 1 GPU・上限5分のPJMジョブを投入
+      - name: PJMジョブを投入（1 GPUは5分、4 GPUは10分上限）
         id: submit
         env:
           RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+          GPU_COUNT: ${{ inputs.gpu_count }}
         run: |
           cd "${RUNTIME_DIR}"
-          submission=$(pjsub -x "RUNTIME_DIR=${RUNTIME_DIR}" -N qwen_kernel_probe -o "${RUNTIME_DIR}/logs/%j.pjm.log" --spath "${RUNTIME_DIR}/logs/%j.pjm.stats" "${RUNTIME_DIR}/scripts/run.pjm")
+          [[ "${GPU_COUNT}" == 1 || "${GPU_COUNT}" == 4 ]]
+          limit=00:05:00
+          if [[ "${GPU_COUNT}" == 4 ]]; then limit=00:10:00; fi
+          submission=$(pjsub -L "gpu=${GPU_COUNT}" -L "elapse=${limit}" -x "RUNTIME_DIR=${RUNTIME_DIR},GPU_COUNT=${GPU_COUNT}" -N qwen_kernel_probe -o "${RUNTIME_DIR}/logs/%j.pjm.log" --spath "${RUNTIME_DIR}/logs/%j.pjm.stats" "${RUNTIME_DIR}/scripts/run.pjm")
           printf '%s\n' "${submission}"
           job_id=$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<<"${submission}")
           [[ "${job_id}" =~ ^[0-9]+$ ]]
@@ -63,7 +72,7 @@ jobs:
           RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
         shell: bash
         run: |
-          printf '### Genkai 1 GPU kernel benchmark\n\n' >>"${GITHUB_STEP_SUMMARY}"
+          printf '### Genkai kernel benchmark\n\n' >>"${GITHUB_STEP_SUMMARY}"
           genkai-shell --github-shell platforms/genkai/kernel-probe/summary.sh >>"${GITHUB_STEP_SUMMARY}"
 
       - name: 終了済みの一時ファイルを削除

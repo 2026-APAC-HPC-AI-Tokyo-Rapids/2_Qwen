@@ -11,9 +11,11 @@ trap 'status=$?; printf "%s\n" "$status" > results/exit-code; printf "probe_exit
 module load cuda/12.9.1
 date -u
 cat source/provenance.json
+trial_timeout=90
+if [[ "${GPU_COUNT:-1}" == 4 ]]; then trial_timeout=180; fi
 for trial in 1 2 3; do
   printf 'trial=%s\n' "${trial}"
-  timeout 90 ./source/probe | tee "results/trial-${trial}.log"
+  timeout "${trial_timeout}" ./source/probe | tee "results/trial-${trial}.log"
 done
 touch run-success
 date -u

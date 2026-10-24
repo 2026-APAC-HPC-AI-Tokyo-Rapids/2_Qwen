@@ -1,0 +1,804 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -23,6 +23,7 @@
+ #include <deep_gemm/ptx/tma.cuh>
+ #include <deep_gemm/ptx/utils.cuh>
+ #include <deep_gemm/ptx/wgmma.cuh>
++#include <deep_gemm/impls/sm90_fp8_mega_moe_timeline.cuh>
+ #define __CLION_IDE__
+ 
+ namespace deep_gemm {
+@@ -352,6 +353,15 @@
+     // Combine input area
+     const auto combine_token_buffer = layout::Buffer(bf16_token_layout, kNumTopk, kNumMaxTokensPerRank, l2_sf_buffer.get_end_ptr());
+ 
++    // Bench timeline records past the end of the kernel's known layout.
++    const auto timeline = sm90_timeline::Timeline(combine_token_buffer.get_end_ptr());
++    if (thread_idx == 0) {
++        timeline.record(sm90_timeline::kEntry);
++        if (sm_idx == 0)
++            timeline.header(num_tokens, sym_buffer.rank_idx, BLOCK_M, BLOCK_N, kNumEpilogueThreads,
++                            kNumStages, kNumDispatchThreads, kNumExpertsPerRank);
++    }
++
+     // =====================================================================
+     // GEMM data types and shape constants
+     // =====================================================================
+@@ -475,6 +485,11 @@
+ 
+     // SMEM pointers
+     auto smem_expert_count = reinterpret_cast<uint32_t*>(smem_buffer);
++    // Timeline counters live in the unused tail of the expert-count block.
++    // Combine reuses this SMEM later, so every role flushes before combine.
++    const auto tl_smem = smem_expert_count + kNumExperts;
++    DG_STATIC_ASSERT((kNumExperts + sm90_timeline::kNumCounters) * sizeof(uint32_t) <= SMEM_EXPERT_COUNT_SIZE,
++                     "No spare SMEM for timeline counters");
+     // Dynamic FC2 claims travel from the A loader (which claims) to the B loader
+     // and the math warps through a small ring at the end of the padding after
+     // the expert counters (the 128 bytes right after the counters stay free for
+@@ -551,7 +566,7 @@
+     if (warp_idx == 0) {
+         // Clean expert-count shared memory
+         #pragma unroll
+-        for (uint32_t i = lane_idx; i < kNumExperts; i += 32)
++        for (uint32_t i = lane_idx; i < kNumExperts + sm90_timeline::kNumCounters; i += 32)
+             ptx::st_shared(smem_expert_count + i, 0u);
+     } else if (warp_idx == 1) {
+         // Init dispatch m-barriers
+@@ -777,6 +792,8 @@
+             atomicAdd_block(smem_expert_count + expert_idx, 1);
+         });
+         ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispCount);
+ 
+         // Stake out per-expert SM offsets via global atomic
+         #pragma unroll
+@@ -786,6 +803,8 @@
+                 ptx::atomic_add(workspace.get_expert_send_count_ptr(i), send_value));
+         }
+         ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispSendCount);
+ 
+         // Write source token-topk indices to remote ranks
+         read_topk_idx([&](const uint32_t& token_topk_idx, const int& expert_idx) {
+@@ -800,6 +819,8 @@
+             workspace, sm_idx, thread_idx,
+             [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); }
+         );
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispGridSync);
+ 
+         if (sm_idx == 0) {
+             #pragma unroll
+@@ -816,15 +837,21 @@
+             }
+         }
+         ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispRecvCount);
+ 
+         comm::nvlink_barrier<kNumRanks, kNumSMs, kNumDispatchThreads,
+                              kDispatchGridSyncIndex, kBeforeDispatchPullBarrierTag>(
+             workspace, sym_buffer, sm_idx, thread_idx,
+             [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); },
+             false, true);
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispPrePullBarrier);
+ 
+         // Sync with epilogue warps before pulling tokens.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispEpilogueSync);
+ 
+         // Token / SF pull loop
+         uint32_t pull_mbarrier_phase = 0;
+@@ -841,6 +868,7 @@
+ 
+         constexpr uint32_t kNumGlobalWarps = kNumSMs * kNumDispatchWarps;
+         for (uint32_t token_idx = sm_idx * kNumDispatchWarps + warp_idx; ; token_idx += kNumGlobalWarps) {
++                const uint32_t tl_d0 = sm90_timeline::cycles();
+                 int old_expert_idx = current_expert_idx;
+                 while (token_idx >= expert_end_idx) {
+                     if (++ current_expert_idx >= kNumExpertsPerRank)
+@@ -914,6 +942,9 @@
+ 
+                 const uint32_t pool_token_idx = expert_pool_block_offset * BLOCK_M + token_idx_in_expert;
+ 
++                const uint32_t tl_d1 = sm90_timeline::cycles();
++                if (warp_idx == 0 and lane_idx == 0)
++                    tl_smem[sm90_timeline::kDispIndexW0] += tl_d1 - tl_d0;
+                 // Pull token data. Overlap a remote TMA load with SF copy and
+                 // then use TMA store to materialize the local L1 input.
+                 if (cute::elect_one_sync()) {
+@@ -957,6 +988,8 @@
+                             local_sf_ptr[j * kNumPaddedSFPoolTokens + sf_pool_token_idx] = sf_values[i];
+                     }
+                     __syncwarp();
++                    if (warp_idx == 0 and lane_idx == 0)
++                        tl_smem[sm90_timeline::kDispRemoteW0] += sm90_timeline::cycles() - tl_d1;
+                 } else {
+                 #pragma unroll
+                 for (uint32_t i = 0; i < math::constexpr_ceil_div(kNumSFFloats, 32u); ++ i) {
+@@ -968,8 +1001,11 @@
+                 }
+ 
+                 if (cute::elect_one_sync()) {
++                    const uint32_t tl_t0 = sm90_timeline::cycles();
+                     ptx::mbarrier_arrive_and_set_tx(pull_mbarrier, kHidden);
+                     ptx::mbarrier_wait_and_flip_phase(pull_mbarrier, pull_mbarrier_phase);
++                    const uint32_t tl_t1 = sm90_timeline::cycles();
++                    tl_smem[sm90_timeline::kDispPullWaitW0 + warp_idx] += tl_t1 - tl_t0;
+ 
+                     ptx::tma_store_1d(
+                         l1_token_buffer.get_data_buffer(pool_token_idx).get_base_ptr(),
+@@ -982,12 +1018,33 @@
+                     ptx::tma_store_wait<0>();
+                     ptx::red_add_rel(
+                         workspace.get_l1_arrival_count_ptr(pool_block_idx), 1);
++                    if (warp_idx == 0)
++                        tl_smem[sm90_timeline::kDispStoreW0] += sm90_timeline::cycles() - tl_t1;
++                    if (warp_idx == 0) {
++                        if (tl_smem[sm90_timeline::kDispTokensW0] == 0)
++                            timeline.record(sm90_timeline::kDispFirstPull);
++                        timeline.record(sm90_timeline::kDispLastPull);
++                    }
++                    tl_smem[sm90_timeline::kDispTokensW0 + warp_idx] += 1;
+                 }
+                 __syncwarp();
+             }
++        if (lane_idx == 0) {
++            if (warp_idx == 0)
++                timeline.record(sm90_timeline::kDispLoopExit);
++            timeline.counter(sm90_timeline::kDispTokensW0 + warp_idx, tl_smem[sm90_timeline::kDispTokensW0 + warp_idx]);
++            timeline.counter(sm90_timeline::kDispPullWaitW0 + warp_idx, tl_smem[sm90_timeline::kDispPullWaitW0 + warp_idx]);
++            if (warp_idx == 0) {
++                timeline.counter(sm90_timeline::kDispIndexW0, tl_smem[sm90_timeline::kDispIndexW0]);
++                timeline.counter(sm90_timeline::kDispRemoteW0, tl_smem[sm90_timeline::kDispRemoteW0]);
++                timeline.counter(sm90_timeline::kDispStoreW0, tl_smem[sm90_timeline::kDispStoreW0]);
++            }
++        }
+ 
+         // Cleanup workspace, overlapping with combine.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispCombineSync);
+ 
+         DG_STATIC_ASSERT(kNumSMs > 1, "Invalid SM count");
+         if (sm_idx == 0) {
+@@ -1034,11 +1091,21 @@
+             }
+         }
+ 
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispClean);
++        // Same barrier as before, with its prologue grid sync split out for timing.
++        comm::grid_sync<kNumSMs, kDispatchGridSyncIndex>(
++            workspace, sm_idx, thread_idx,
++            [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); });
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispFinalGridSync);
+         comm::nvlink_barrier<kNumRanks, kNumSMs, kNumDispatchThreads,
+                              kDispatchGridSyncIndex, kAfterWorkspaceCleanBarrierTag>(
+             workspace, sym_buffer, sm_idx, thread_idx,
+             [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); },
+-            true, false);
++            false, false);
++        if (thread_idx == 0)
++            timeline.record(sm90_timeline::kDispExit);
+ 
+     // =====================================================================
+     // ROLE 2: GEMM TMA LOAD warps (load A+SFA, B+SFB)
+@@ -1078,6 +1145,8 @@
+     } else if (warp_idx == kNumDispatchWarps) {
+         cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
+ 
++        if (lane_idx == 0) timeline.record(sm90_timeline::kAStart);
++
+         auto process_a_sfa_block = [&](const auto& block_phase,
+                                        const uint32_t& local_expert_idx,
+                                        const uint32_t& num_k_blocks,
+@@ -1088,12 +1157,21 @@
+                 ? &tensor_map_l2_acts_sf : &tensor_map_l1_acts_sf;
+ 
+             const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
++            if (lane_idx == 0 and tl_smem[sm90_timeline::kAL1Blocks] + tl_smem[sm90_timeline::kAL2Blocks] == 0)
++                timeline.record(sm90_timeline::kAFirstBlock);
+ 
+             // Wait for the pool to be ready
++            const uint32_t tl_t0 = sm90_timeline::cycles();
+             if (block_phase == sched::BlockPhase::Linear1) {
+                 const auto ptr = workspace.get_l1_arrival_count_ptr(pool_block_idx);
+                 const auto expected = scheduler.template get_valid_m<false>();
+                 while (ptx::ld_acq(ptr) != expected);
++                if (lane_idx == 0) {
++                    tl_smem[sm90_timeline::kAL1ArrivalWait] += sm90_timeline::cycles() - tl_t0;
++                    if (tl_smem[sm90_timeline::kAL1Blocks] == 0)
++                        timeline.record(sm90_timeline::kAFirstL1Ready);
++                    tl_smem[sm90_timeline::kAL1Blocks] += 1;
++                }
+             } else {
+                 constexpr uint32_t kNumL1BlockNs = L1_SHAPE_N / BLOCK_N;
+                 if constexpr (kL2ArrivalCounter) {
+@@ -1114,9 +1192,18 @@
+                         ? ~0ull : ((1ull << kNumL1BlockNs) - 1ull);
+                     while (ptx::ld_acq_gpu(ptr) != expected);
+                 }
++                if (lane_idx == 0) {
++                    tl_smem[sm90_timeline::kAL2ArrivalWait] += sm90_timeline::cycles() - tl_t0;
++                    if (tl_smem[sm90_timeline::kAL2Blocks] == 0)
++                        timeline.record(sm90_timeline::kAFirstL2Ready);
++                    tl_smem[sm90_timeline::kAL2Blocks] += 1;
++                }
+             }
+             for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
++                const uint32_t tl_e0 = sm90_timeline::cycles();
+                 empty_barriers[stage_idx]->wait(phase ^ 1);
++                if (lane_idx == 0)
++                    tl_smem[sm90_timeline::kAEmptyWait] += sm90_timeline::cycles() - tl_e0;
+ 
+                 if (cute::elect_one_sync()) {
+                     const uint32_t m_idx = pool_block_idx * BLOCK_M;
+@@ -1160,6 +1247,8 @@
+                 }
+                 __syncwarp();
+             }
++            if (block_phase == sched::BlockPhase::Linear1 and lane_idx == 0)
++                timeline.record(sm90_timeline::kALastL1Issued);
+         };
+ 
+         if constexpr (kDynamicL2) {
+@@ -1236,9 +1325,17 @@
+                 process_a_sfa_block(block_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
+             });
+         }
++        if (lane_idx == 0) {
++            timeline.record(sm90_timeline::kAExit);
++            #pragma unroll
++            for (uint32_t i = sm90_timeline::kAL1Blocks; i <= sm90_timeline::kAEmptyWait; ++ i)
++                timeline.counter(i, tl_smem[i]);
++        }
+ 
+     } else if (warp_idx == kNumDispatchWarps + 1) {
+         cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
++        if (lane_idx == 0)
++            timeline.record(sm90_timeline::kBStart);
+ 
+         const auto process_b_block = [&](const sched::BlockPhase& block_phase,
+                                          const uint32_t& local_expert_idx,
+@@ -1248,9 +1345,17 @@
+                 block_phase == sched::BlockPhase::Linear2 ? &tensor_map_l2_weights : &tensor_map_l1_weights;
+ 
+             const uint32_t shape_n = block_phase == sched::BlockPhase::Linear2 ? L2_SHAPE_N : L1_SHAPE_N;
++            if (lane_idx == 0) {
++                if (tl_smem[sm90_timeline::kBBlocks] == 0)
++                    timeline.record(sm90_timeline::kBFirstBlock);
++                tl_smem[sm90_timeline::kBBlocks] += 1;
++            }
+ 
+             for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
++                const uint32_t tl_e0 = sm90_timeline::cycles();
+                 empty_barriers[stage_idx]->wait(phase ^ 1);
++                if (lane_idx == 0)
++                    tl_smem[sm90_timeline::kBEmptyWait] += sm90_timeline::cycles() - tl_e0;
+ 
+                 if (cute::elect_one_sync()) {
+                     const uint32_t n_idx = local_expert_idx * shape_n + n_block_idx * BLOCK_N;
+@@ -1299,6 +1404,11 @@
+         } else {
+             scheduler.for_each_block(process_b_block);
+         }
++        if (lane_idx == 0) {
++            timeline.record(sm90_timeline::kBExit);
++            timeline.counter(sm90_timeline::kBEmptyWait, tl_smem[sm90_timeline::kBEmptyWait]);
++            timeline.counter(sm90_timeline::kBBlocks, tl_smem[sm90_timeline::kBBlocks]);
++        }
+ 
+     } else if (warp_idx < kNumDispatchWarps + kNumMMANonEpilogueWarps) {
+         // Idle non-epilogue warps (kNumDispatchWarps+2, +3). They must still
+@@ -1351,13 +1461,51 @@
+             }
+         };
+ 
++        const uint32_t tl_wg = kPrefill2WG ? epilogue_thread_idx / 128 : 0;
++        const bool tl_lead = kPrefill2WG ? epilogue_thread_idx % 128 == 0 : epilogue_thread_idx == 0;
++        auto tl_record = [&](uint32_t event) { timeline.record(event + (tl_wg ? 17 : 0)); };
++        auto tl_counter_index = [&](uint32_t i) { return i + (tl_wg ? (i >= sm90_timeline::kML1Loop ? 11 : 14) : 0); };
++        auto tl_counter = [&](uint32_t i) -> uint32_t& { return tl_smem[tl_counter_index(i)]; };
++
++        if (tl_lead)
++            tl_record(sm90_timeline::kMStart);
++
+         // Sync with dispatch in the full communication path.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
++        if (tl_lead)
++            tl_record(sm90_timeline::kMDispatchSync);
++
++        auto tl_wait_full = [&](const auto& block_phase, uint32_t k_block_idx, uint32_t wait_stage, uint32_t wait_phase) {
++            const uint32_t tl_t0 = sm90_timeline::cycles();
++            full_barriers[wait_stage]->wait(wait_phase);
++            if (tl_lead) {
++                const uint32_t tl_dt = sm90_timeline::cycles() - tl_t0;
++                if (block_phase == sched::BlockPhase::Linear1) {
++                    tl_counter(sm90_timeline::kML1FullWait) += tl_dt;
++                    if (k_block_idx == 0 and tl_counter(sm90_timeline::kML1Blocks) == 0)
++                        tl_record(sm90_timeline::kMFirstL1Full);
++                } else {
++                    tl_counter(sm90_timeline::kML2FullWait) += tl_dt;
++                    if (k_block_idx == 0 and tl_counter(sm90_timeline::kML2Blocks) == 0)
++                        tl_record(sm90_timeline::kMFirstL2Full);
++                }
++            }
++        };
++        auto tl_end_block = [&](const auto& block_phase, const uint32_t& tl_t0) {
++            if (tl_lead) {
++                const uint32_t tl_dt = sm90_timeline::cycles() - tl_t0;
++                const bool tl_l1 = block_phase == sched::BlockPhase::Linear1;
++                tl_counter(tl_l1 ? sm90_timeline::kML1Blocks : sm90_timeline::kML2Blocks) += 1;
++                tl_counter(tl_l1 ? sm90_timeline::kML1Busy : sm90_timeline::kML2Busy) += tl_dt;
++                tl_record(tl_l1 ? sm90_timeline::kMLastL1End : sm90_timeline::kMLastL2End);
++            }
++        };
+ 
+         auto process_math_block = [&](const auto& block_phase,
+                                       const uint32_t& local_expert_idx,
+                                       const uint32_t& num_k_blocks,
+                                       const uint32_t& m_block_idx, const uint32_t& n_block_idx) CUTLASS_LAMBDA_FUNC_INLINE {
++            const uint32_t tl_b0 = sm90_timeline::cycles();
+             const uint32_t valid_m = scheduler.template get_valid_m<false>();
+             const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
+             const uint32_t m_idx = pool_block_idx * BLOCK_M;
+@@ -1552,7 +1700,7 @@
+                         float r0_gate = 1.0f, r1_gate = 1.0f, r0_up = 1.0f, r1_up = 1.0f;
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             if (k_block_idx == 0) {
+-                                full_barriers[stage_idx]->wait(phase);
++                                tl_wait_full(block_phase, k_block_idx, stage_idx, phase);
+                             } else {
+                                 #pragma unroll
+                                 for (uint32_t i = 0; i < kAccumPerThread / 4; ++ i) {
+@@ -1587,7 +1735,7 @@
+                                 next_stage_and_phase(next_stage, next_phase);
+                                 const float gate_sf = __ldg(l1_weights_sf + gate_row + k_block_idx + 1);
+                                 const float up_sf = __ldg(l1_weights_sf + up_row + k_block_idx + 1);
+-                                full_barriers[next_stage]->wait(next_phase);
++                                tl_wait_full(block_phase, k_block_idx + 1, next_stage, next_phase);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+                                 r0_gate = (prev_scale_a_0 * prev_gate_sf) * rcp(scale_a_0 * gate_sf);
+@@ -1627,7 +1775,7 @@
+                             prev_l2_sf[j] = 1.0f, r0_start[j] = 1.0f, r1_start[j] = 1.0f;
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             if (k_block_idx == 0) {
+-                                full_barriers[stage_idx]->wait(phase);
++                                tl_wait_full(block_phase, k_block_idx, stage_idx, phase);
+                             } else {
+                                 #pragma unroll
+                                 for (uint32_t i = 0; i < kAccumPerThread / 4; ++ i) {
+@@ -1653,7 +1801,7 @@
+                                 #pragma unroll
+                                 for (uint32_t j = 0; j < kNumWSF; ++ j)
+                                     l2_sf[j] = __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks + k_block_idx + 1);
+-                                full_barriers[next_stage]->wait(next_phase);
++                                tl_wait_full(block_phase, k_block_idx + 1, next_stage, next_phase);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+                                 #pragma unroll
+@@ -1686,7 +1834,7 @@
+                         float r0_start = 1.0f, r1_start = 1.0f;
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             if (k_block_idx == 0) {
+-                                full_barriers[stage_idx]->wait(phase);
++                                tl_wait_full(block_phase, k_block_idx, stage_idx, phase);
+                             } else {
+                                 #pragma unroll
+                                 for (uint32_t i = 0; i < kAccumPerThread / 4; ++ i) {
+@@ -1707,7 +1855,7 @@
+                                 uint32_t next_stage, next_phase;
+                                 next_stage_and_phase(next_stage, next_phase);
+                                 const float l2_sf = __ldg(l2_weights_sf + l2_row + k_block_idx + 1);
+-                                full_barriers[next_stage]->wait(next_phase);
++                                tl_wait_full(block_phase, k_block_idx + 1, next_stage, next_phase);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+                                 r0_start = (prev_scale_a_0 * prev_l2_sf) * rcp(scale_a_0 * l2_sf);
+@@ -1733,7 +1881,7 @@
+                     float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f;
+                     float prev_gate_sf = 1.0f, prev_up_sf = 1.0f, prev_l2_sf = 1.0f;
+                     for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+-                        full_barriers[stage_idx]->wait(phase);
++                        tl_wait_full(block_phase, k_block_idx, stage_idx, phase);
+ 
+                         float scale_a_0_lo, scale_a_1_lo;
+                         float scale_a_0_hi, scale_a_1_hi;
+@@ -1854,7 +2002,7 @@
+                     }
+                 } else {
+                     for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+-                        full_barriers[stage_idx]->wait(phase);
++                        tl_wait_full(block_phase, k_block_idx, stage_idx, phase);
+ 
+                         float scale_a_0_lo, scale_a_1_lo;
+                         float scale_a_0_hi, scale_a_1_hi;
+@@ -2022,7 +2170,7 @@
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             const float gate_sf = __ldg(l1_gate_sf + k_block_idx);
+                             const float up_sf = __ldg(l1_up_sf + k_block_idx);
+-                            full_barriers[stage_idx]->wait(phase);
++                            tl_wait_full(block_phase, k_block_idx, stage_idx, phase);
+                             #pragma unroll
+                             for (uint32_t fragment = 0; fragment < (kIndependentWG ? 2 : 1); ++ fragment) {
+                                 issue.template operator()<BLOCK_K / SwapWGMMA::K>(swap_accum, 0, fragment);
+@@ -2037,7 +2185,7 @@
+                         // low half is promoted. SFA layout is (K=2, M=BLOCK_M).
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             const float l2_sf = __ldg(l2_sf_row + k_block_idx);
+-                            full_barriers[stage_idx]->wait(phase);
++                            tl_wait_full(block_phase, k_block_idx, stage_idx, phase);
+                             #pragma unroll
+                             for (uint32_t fragment = 0; fragment < (kIndependentWG ? 2 : 1); ++ fragment) {
+                                 issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum, 0, fragment);
+@@ -2083,7 +2231,7 @@
+                 float accum[kAccumPerThread];
+ 
+                 for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+-                    full_barriers[stage_idx]->wait(phase);
++                    tl_wait_full(block_phase, k_block_idx, stage_idx, phase);
+ 
+                     // Read SF (must precede warpgroup_arrive)
+                     float scale_a_0_lo, scale_a_1_lo;
+@@ -2223,6 +2371,11 @@
+                         }
+                     }
+                 }
++            }
++
++            if (tl_lead) {
++                const uint32_t tl_dt = sm90_timeline::cycles() - tl_b0;
++                tl_counter(block_phase == sched::BlockPhase::Linear1 ? sm90_timeline::kML1Loop : sm90_timeline::kML2Loop) += tl_dt;
+             }
+ 
+             // Skip epilogue when block is past valid M (still must release via empty)
+@@ -2950,16 +3103,18 @@
+                 [&](const uint32_t& local_expert_idx,
+                     const uint32_t& num_k_blocks,
+                     const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
+-                    process_math_block(
+-                        std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear1>{},
+-                        local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                    const std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear1> tl_phase{};
++                    const uint32_t tl_t0 = sm90_timeline::cycles();
++                    process_math_block(tl_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                    tl_end_block(tl_phase, tl_t0);
+                 },
+                 [&](const uint32_t& local_expert_idx,
+                     const uint32_t& num_k_blocks,
+                     const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
+-                    process_math_block(
+-                        std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear2>{},
+-                        local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                    const std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear2> tl_phase{};
++                    const uint32_t tl_t0 = sm90_timeline::cycles();
++                    process_math_block(tl_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                    tl_end_block(tl_phase, tl_t0);
+                 });
+         } else if constexpr (kSpecializePhase) {
+             sm90_fp8_mega_moe_for_each_block_split(
+@@ -2967,40 +3122,69 @@
+                 [&](const uint32_t& local_expert_idx,
+                     const uint32_t& num_k_blocks,
+                     const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
+-                    process_math_block(
+-                        std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear1>{},
+-                        local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                    const std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear1> tl_phase{};
++                    const uint32_t tl_t0 = sm90_timeline::cycles();
++                    process_math_block(tl_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                    tl_end_block(tl_phase, tl_t0);
+                 },
+                 [&](const uint32_t& local_expert_idx,
+                     const uint32_t& num_k_blocks,
+                     const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
+-                    process_math_block(
+-                        std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear2>{},
+-                        local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                    const std::integral_constant<sched::BlockPhase, sched::BlockPhase::Linear2> tl_phase{};
++                    const uint32_t tl_t0 = sm90_timeline::cycles();
++                    process_math_block(tl_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                    tl_end_block(tl_phase, tl_t0);
+                 });
+         } else if constexpr (kDecodeTail) {
+-            decode_for_each_block(process_math_block, decode_receive_block);
++            decode_for_each_block([&](const sched::BlockPhase& block_phase,
++                                      const uint32_t& local_expert_idx,
++                                      const uint32_t& num_k_blocks,
++                                      const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++                const uint32_t tl_t0 = sm90_timeline::cycles();
++                process_math_block(block_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                tl_end_block(block_phase, tl_t0);
++            }, decode_receive_block);
+         } else {
+             scheduler.for_each_block([&](const sched::BlockPhase& block_phase,
+                                          const uint32_t& local_expert_idx,
+                                          const uint32_t& num_k_blocks,
+                                          const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++                const uint32_t tl_t0 = sm90_timeline::cycles();
+                 process_math_block(block_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
++                tl_end_block(block_phase, tl_t0);
+             });
++        }
++        if (tl_lead) {
++            tl_record(sm90_timeline::kMLoopExit);
++            #pragma unroll
++            for (uint32_t i = sm90_timeline::kML1Blocks; i <= sm90_timeline::kML2Busy; ++ i)
++                timeline.counter(tl_counter_index(i), tl_counter(i));
++            timeline.counter(tl_counter_index(sm90_timeline::kML1Loop), tl_counter(sm90_timeline::kML1Loop));
++            timeline.counter(tl_counter_index(sm90_timeline::kML2Loop), tl_counter(sm90_timeline::kML2Loop));
+         }
+ 
+         // ---------------- COMBINE ----------------
+         // NVLink barrier first: signals remote ranks that this rank's GEMM
+         // outputs (NVLink scatter targets) are fully written.
++        // Same barrier as before, with its prologue grid sync split out for timing.
++        comm::grid_sync<kNumSMs, kEpilogueGridSyncIndex>(
++            workspace, sm_idx, epilogue_thread_idx,
++            [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); });
++        if (epilogue_thread_idx == 0)
++            timeline.record(sm90_timeline::kMCombineGridSync);
+         comm::nvlink_barrier<kNumRanks, kNumSMs, kNumEpilogueThreads,
+                              kEpilogueGridSyncIndex, kBeforeCombineReduceBarrierTag>(
+             workspace, sym_buffer, sm_idx, epilogue_thread_idx,
+-            [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); }
+-        );
++            [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); },
++            false, true);
++        if (epilogue_thread_idx == 0)
++            timeline.record(sm90_timeline::kMCombineBarrier);
+ 
+         // Sync with dispatch (paired with dispatch's pre-cleanup sync) so that
+         // dispatch may now safely clean workspace state.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
++        if (epilogue_thread_idx == 0)
++            timeline.record(sm90_timeline::kMDispatchSync2);
+ 
+         if (epilogue_warp_idx >= kNumCombineWarps)
+             return;
+@@ -3050,6 +3234,7 @@
+             return combine_barriers[i + epilogue_warp_idx * 2];
+         });
+ 
++        uint32_t tl_combine_tokens = 0, tl_combine_wait = 0;
+         if constexpr (kPairedCombine) {
+         // Qwen Prefill combine: the same per-chunk FP32 reduction in ascending
+         // top-k slot order (bit-identical output), but the loads form one
+@@ -3137,6 +3322,7 @@
+         issue_pair();
+         uint32_t wait_stage = 0, wait_phase = 0;
+         for (uint32_t token_idx = first_token_idx; token_idx < num_tokens; token_idx += kTokenStride) {
++            ++ tl_combine_tokens;
+             const uint32_t total_mask = read_token_mask(token_idx);
+             const float lane_weight = (lane_idx < kNumTopk and ((total_mask >> lane_idx) & 1u)) ?
+                 __ldg(input_topk_weights_buffer.get_base_ptr<float>() + token_idx * kNumTopk + lane_idx) : 0.0f;
+@@ -3155,7 +3341,9 @@
+                     const float weight_0 = __shfl_sync(0xffffffff, lane_weight, slot_0);
+                     const float weight_1 = __shfl_sync(0xffffffff, lane_weight, slot_1);
+                     issue_pair();
++                    const uint32_t tl_c0 = sm90_timeline::cycles();
+                     combine_load_barriers[wait_stage]->wait(wait_phase);
++                    tl_combine_wait += sm90_timeline::cycles() - tl_c0;
+                     reduce_slot(reduced, pair_buffer(wait_stage * 2), weight_0);
+                     if (has_slot_1)
+                         reduce_slot(reduced, pair_buffer(wait_stage * 2 + 1), weight_1);
+@@ -3196,6 +3384,7 @@
+         for (uint32_t work_idx = sm_idx * kNumCombineWarps + epilogue_warp_idx;
+              work_idx < num_tokens * kWorkItemsPerToken;
+              work_idx += kNumSMs * kNumCombineWarps) {
++            ++ tl_combine_tokens;
+             const uint32_t token_idx = work_idx / kWorkItemsPerToken;
+             const uint32_t first_chunk = kParallelCombine ? work_idx % kNumChunks : 0;
+             const uint32_t end_chunk = kParallelCombine ? first_chunk + 1 : kNumChunks;
+@@ -3232,7 +3421,9 @@
+                 float2 reduced[kNumUint4PerLane * kNumElemsPerUint4] = {};
+                 while (do_reduce) {
+                     do_reduce = move_mask_and_load(load_stage_idx ^ 1);
++                    const uint32_t tl_c0 = sm90_timeline::cycles();
+                     combine_load_barriers[load_stage_idx]->wait(combine_phase);
++                    tl_combine_wait += sm90_timeline::cycles() - tl_c0;
+                     #pragma unroll
+                     for (uint32_t j = 0; j < kNumUint4PerLane; ++ j) {
+                         const auto uint4_values = combine_load_buffer[load_stage_idx][j * 32 + lane_idx];
+@@ -3277,6 +3468,13 @@
+             }
+         }
+         }
++        if (lane_idx == 0) {
++            timeline.record_max(sm90_timeline::kMCombineEnd);
++            if (epilogue_warp_idx == 0) {
++                timeline.counter(sm90_timeline::kMCombineTokensW0, tl_combine_tokens);
++                timeline.counter(sm90_timeline::kMCombineWaitW0, tl_combine_wait);
++            }
++        }
+     }
+ #else
+     if (blockIdx.x == 0 and threadIdx.x == 0)
+--- /dev/null
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe_timeline.cuh
+@@ -0,0 +1,177 @@
++#pragma once
++
++// Bench-only phase timeline for sm90_fp8_mega_moe_impl.
++//
++// The compiled host code fixes the kernel signature, so the records live in
++// extra bytes that the benchmark appends to the symmetric buffer: the first
++// 4096-byte boundary after the last layout region the kernel knows (the
++// combine buffer). Each CTA writes its own rows; nothing reads them on device.
++// Layout (uint64 words): header[kHeaderWords],
++// events[gridDim.x][kNumEvents][2] = {%globaltimer ns, clock64},
++// counters[gridDim.x][kNumCounters].
++// Counters accumulate in the unused tail of the 1024-byte expert-count SMEM
++// block (one writer lane per counter) to keep them out of the tight
++// producer-warp register budgets; each role flushes its own at its end.
++
++#include <cstdint>
++#include <cutlass/cutlass.h>
++
++namespace deep_gemm::sm90_timeline {
++
++constexpr uint64_t kMagic = 0x314c544d4f45474dull;
++constexpr uint64_t kVersion = 2;
++constexpr uint32_t kHeaderWords = 16;
++constexpr uint32_t kNumEvents = 48;
++constexpr uint32_t kNumCounters = 32;
++constexpr uint64_t kAlignment = 4096;
++
++enum Event : uint32_t {
++    kEntry = 0,
++    // Dispatch warp 0 (thread 0)
++    kDispCount = 1,
++    kDispSendCount = 2,
++    kDispGridSync = 3,
++    kDispRecvCount = 4,
++    kDispPrePullBarrier = 5,
++    kDispEpilogueSync = 6,
++    kDispFirstPull = 7,
++    kDispLastPull = 8,
++    kDispLoopExit = 9,
++    kDispCombineSync = 10,
++    kDispClean = 11,
++    kDispFinalGridSync = 12,
++    kDispExit = 13,
++    // TMA A + SFA warp
++    kAStart = 14,
++    kAFirstBlock = 15,
++    kAFirstL1Ready = 16,
++    kALastL1Issued = 17,
++    kAFirstL2Ready = 18,
++    kAExit = 19,
++    // TMA B warp
++    kBStart = 20,
++    kBFirstBlock = 21,
++    kBExit = 22,
++    // Math WG0: events 23..29; Prefill WG1 duplicates them at 40..46.
++    kMStart = 23,
++    kMDispatchSync = 24,
++    kMFirstL1Full = 25,
++    kMLastL1End = 26,
++    kMFirstL2Full = 27,
++    kMLastL2End = 28,
++    kMLoopExit = 29,
++    kMCombineGridSync = 30,
++    kMCombineBarrier = 31,
++    kMDispatchSync2 = 32,
++    kMCombineEnd = 33,  // max over all combine warps of the CTA (same SM clock)
++};
++
++enum Counter : uint32_t {
++    kDispTokensW0 = 0,
++    kDispTokensW1 = 1,
++    kDispPullWaitW0 = 2,
++    kDispPullWaitW1 = 3,
++    kAL1Blocks = 4,
++    kAL2Blocks = 5,
++    kAL1ArrivalWait = 6,
++    kAL2ArrivalWait = 7,
++    kAEmptyWait = 8,
++    kBEmptyWait = 9,
++    kML1Blocks = 10,
++    kML2Blocks = 11,
++    kML1FullWait = 12,
++    kML2FullWait = 13,
++    kML1Busy = 14,
++    kML2Busy = 15,
++    kMCombineTokensW0 = 16,
++    kMCombineWaitW0 = 17,
++    kBBlocks = 18,
++    // WG1 copies math counters 10..15 at 24..29, loops 19..20 at 30..31.
++    // Math warpgroup 0: block start -> end of the K loop (before the epilogue)
++    kML1Loop = 19,
++    kML2Loop = 20,
++    // Dispatch warp 0, per pulled token (cycles): loop top -> token TMA issue (expert/rank
++    // selection and source-index load), TMA issue -> remote SF/weight copied (Decode path),
++    // TMA wait done -> local TMA store complete + arrival issued.
++    kDispIndexW0 = 21,
++    kDispRemoteW0 = 22,
++    kDispStoreW0 = 23,
++};
++
++CUTLASS_DEVICE uint64_t global_ns() {
++    uint64_t t;
++    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t) :: "memory");
++    return t;
++}
++
++CUTLASS_DEVICE uint64_t cycles64() {
++    uint64_t c;
++    asm volatile("mov.u64 %0, %%clock64;" : "=l"(c) :: "memory");
++    return c;
++}
++
++// 32-bit SM cycles for accumulated waits; no memory clobber in hot loops.
++CUTLASS_DEVICE uint32_t cycles() {
++    uint32_t c;
++    asm volatile("mov.u32 %0, %%clock;" : "=r"(c));
++    return c;
++}
++
++struct Timeline {
++    uint64_t* base;
++
++    CUTLASS_DEVICE explicit Timeline(const void* layout_end) {
++        base = reinterpret_cast<uint64_t*>(
++            (reinterpret_cast<uint64_t>(layout_end) + kAlignment - 1) / kAlignment * kAlignment);
++    }
++
++    CUTLASS_DEVICE uint64_t* event_ptr(const uint32_t& event) const {
++        return base + kHeaderWords + (static_cast<uint64_t>(blockIdx.x) * kNumEvents + event) * 2;
++    }
++
++    CUTLASS_DEVICE void record(const uint32_t& event, const uint64_t& ns, const uint64_t& clk) const {
++        const auto ptr = event_ptr(event);
++        ptr[0] = ns;
++        ptr[1] = clk;
++    }
++
++    CUTLASS_DEVICE void record(const uint32_t& event) const {
++        const auto ns = global_ns();
++        record(event, ns, cycles64());
++    }
++
++    // Region is zeroed by the host before each call.
++    CUTLASS_DEVICE void record_max(const uint32_t& event) const {
++        const auto ns = global_ns();
++        const auto clk = cycles64();
++        const auto ptr = reinterpret_cast<unsigned long long*>(event_ptr(event));
++        atomicMax(ptr, static_cast<unsigned long long>(ns));
++        atomicMax(ptr + 1, static_cast<unsigned long long>(clk));
++    }
++
++    CUTLASS_DEVICE void counter(const uint32_t& index, const uint64_t& value) const {
++        base[kHeaderWords + static_cast<uint64_t>(gridDim.x) * kNumEvents * 2 +
++             static_cast<uint64_t>(blockIdx.x) * kNumCounters + index] = value;
++    }
++
++    CUTLASS_DEVICE void header(const uint32_t& num_tokens, const uint32_t& rank_idx,
++                               const uint32_t& block_m, const uint32_t& block_n,
++                               const uint32_t& num_epilogue_threads, const uint32_t& num_stages,
++                               const uint32_t& num_dispatch_threads, const uint32_t& num_experts_per_rank) const {
++        base[1] = kVersion;
++        base[2] = gridDim.x;
++        base[3] = kNumEvents;
++        base[4] = kNumCounters;
++        base[5] = num_tokens;
++        base[6] = rank_idx;
++        base[7] = block_m;
++        base[8] = block_n;
++        base[9] = num_epilogue_threads;
++        base[10] = num_stages;
++        base[11] = num_dispatch_threads;
++        base[12] = num_experts_per_rank;
++        base[0] = kMagic;
++    }
++};
++
++} // namespace deep_gemm::sm90_timeline
