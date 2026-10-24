@@ -78,3 +78,28 @@ with these same-shape references; do not treat H100 absolute times as
 Firmus serving throughput predictions or infer a serving win from one run.
 
 CPU protocol/aggregation fixtures: `python3 kernels/probes/test-calibration.py`.
+
+## Calibration against Firmus, 2026-10-24
+
+Runs [40043191081](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40043191081) (dense, M128) and [40043193928](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40043193928) (FA3 TARGET_VERIFY, 32 requests, 94-layer graph) measured cases whose Firmus H200 results were already known from the in-job selections of runs 39901974117 / 39970713547. Ratios are candidate / stock (median).
+
+| case | candidate | Firmus H200 | Genkai H100 |
+| --- | --- | ---: | ---: |
+| QKV M128 | BM128/BN80/7 (Firmus winner) | 0.894 (15.2 / 17.0 µs) | 1.003 (23.7 / 23.6 µs) |
+| QKV M128 | BM64/BN144/5 | 0.971 | 0.985 |
+| QKV M128 | BM128/BN80/7, multicast A | 0.912 | 0.993 |
+| QKV M128 | Triton 64x128 | 1.81 | 1.42 |
+| O M128 | BM128/BN32/10 | 1.02 | 1.03 |
+| O M128 | BM128/BN64/8 | 1.22 | 1.08 |
+| O M128 | multicast A | 1.27 | 1.04 |
+| O M128 | Triton 64x128 | 3.31 | 2.41 |
+| FA3 B32 | p128s2 (Firmus winner) | 0.931 (46.1 / 49.5 µs) | 1.010 (71.1 / 70.0 µs) |
+| FA3 B32 | control96 | 1.022 | 1.019 |
+| FA3 B32 | t64s3 | 1.075 | 1.052 |
+| FA3 B32 | t64s2 | 1.099 | 1.056 |
+
+What the comparison shows:
+- Genkai ranks the clear losers correctly (Triton, the N64 TMA FA3 tiles, BM128/BN64 for O): every candidate that is 5% or more slower on Firmus is also slower on Genkai.
+- It misses both Firmus winners. They are memory-path improvements for Decode-sized (memory-bound) shapes. On H100, HBM is 3.35 TB/s against 4.8 TB/s on H200, and the stock kernels are already about 1.4x slower in absolute terms, so the same change does not help.
+
+Use the one-GPU probe as a correctness gate (bit equality, changed-input graph replay, boundary shapes) and to drop candidates that are clearly slower. Do not use it to reject a candidate that is neutral or slightly slower on Genkai. Decide performance on Firmus: the in-job selection in the serving job, or the one-node kernel bench. Compute-bound Prefill kernels have not been calibrated here.
