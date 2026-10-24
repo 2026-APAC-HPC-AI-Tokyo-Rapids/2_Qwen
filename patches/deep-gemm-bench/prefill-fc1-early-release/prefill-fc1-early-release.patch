@@ -1,0 +1,30 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1576,6 +1576,12 @@
+                                 prev_gate_sf = __ldg(l1_weights_sf + gate_row);
+                                 prev_up_sf = __ldg(l1_weights_sf + up_row);
+                             }
++                            // Let TMA recycle this stage while the next scale is loaded.
++                            if constexpr (kPrefill2WG) {
++                                ptx::warpgroup_wait<0>();
++                                if (lane_idx == 0)
++                                    empty_barriers[stage_idx]->arrive();
++                            }
+                             if (k_block_idx + 1 < num_k_blocks) {
+                                 uint32_t next_stage, next_phase;
+                                 next_stage_and_phase(next_stage, next_phase);
+@@ -1593,9 +1599,11 @@
+                                 prev_gate_sf = gate_sf;
+                                 prev_up_sf = up_sf;
+                             }
+-                            ptx::warpgroup_wait<0>();
+-                            if (lane_idx == 0)
+-                                empty_barriers[stage_idx]->arrive();
++                            if constexpr (not kPrefill2WG) {
++                                ptx::warpgroup_wait<0>();
++                                if (lane_idx == 0)
++                                    empty_barriers[stage_idx]->arrive();
++                            }
+                         }
+                         if (num_k_blocks != 0)
+                             postscale_l1_final(prev_scale_a_0, prev_scale_a_1, prev_gate_sf, prev_up_sf);

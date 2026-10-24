@@ -16,8 +16,13 @@ constexpr bool kQwenPrefillMainloop = true;
                         const uint32_t gate_row = 0;
                         original_loop();
                     } else {
-                        // Per-128 activation scales:
-                        fc2_unchanged();
+                        // Per-128 activation scales: one WGMMA group per K block
+                        if constexpr (kPrefill2WG) {
+                        // The warpgroup's 256 output columns
+                        original_fc2();
+                        } else {
+                        const uint32_t l2_row = 0;
+                        other_geometry();
 """
 
 
@@ -25,20 +30,22 @@ constexpr bool kQwenPrefillMainloop = true;
 def test_probe_extraction_rejects_unmeasured_changes(tmp_path, outside):
     baseline, candidate, output = (tmp_path / name for name in ("base.cuh", "candidate.cuh", "probe.cu"))
     baseline.write_text(HEADER)
-    text = HEADER.replace("original_loop()", "candidate_loop()")
-    candidate.write_text(text.replace("fc2_unchanged", "changed_fc2") if outside else text)
-    result = subprocess.run([sys.executable, str(ROOT / "scripts/build-prefill-fc1-probe.py"), str(baseline), str(candidate), str(output)], capture_output=True, text=True, check=False)
+    text = HEADER.replace("original_loop()", "candidate_loop()").replace("original_fc2()", "candidate_fc2()")
+    candidate.write_text(text.replace("other_geometry", "changed_geometry") if outside else text)
+    result = subprocess.run([sys.executable, str(ROOT / "scripts/build-prefill-math-probe.py"), str(baseline), str(candidate), str(output)], capture_output=True, text=True, check=False)
     if outside:
         assert result.returncode != 0
-        assert "specialized FC1 body only" in result.stderr
+        assert "specialized FC1/FC2 bodies only" in result.stderr
         assert not output.exists()
     else:
         assert result.returncode == 0, result.stderr
         generated = output.read_text()
         assert generated.count("original_loop();") == 1
         assert generated.count("candidate_loop();") == 1
+        assert generated.count("original_fc2();") == 1
+        assert generated.count("candidate_fc2();") == 1
         assert "@LOOP@" not in generated
-        assert "fc2_unchanged" not in generated
+        assert "other_geometry" not in generated
 
 
 @pytest.mark.parametrize("probe_exit", [0, 7])

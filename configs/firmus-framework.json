@@ -1,13 +1,13 @@
 {
   "framework": "sglang",
-  "concurrency": 192,
+  "concurrency": 240,
   "workload": "official",
   "images": {
     "sglang": {
-      "path": "/scratch/home/ACCOUNT/qwen/containers/39932105942.sqsh",
-      "sha256": "d710f894dee754f6a1e2048966dda7a2ea1e007ec1da4a68a82265519af510d6",
-      "size_bytes": 12270104576,
-      "provenance": "/scratch/home/ACCOUNT/qwen/containers/39932105942.container-sidecar.json"
+      "path": "/scratch/home/ACCOUNT/qwen/containers/40012459952.sqsh",
+      "sha256": "ba57eee78bc8c17b792c45f9018e8c5f73b392e3cdf0146ff85e5f64bff2d068",
+      "size_bytes": 12270145536,
+      "provenance": "/scratch/home/ACCOUNT/qwen/containers/40012459952.container-sidecar.json"
     },
     "vllm": {
       "path": "/scratch/home/ACCOUNT/qwen/framework-comparison/images/vllm.sqsh",
@@ -24,8 +24,8 @@
     "draft_revision": "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224"
   },
   "decode_max_total_tokens": 393216,
-  "decode_max_running_requests": 128,
-  "decode_extra_slots": 16,
+  "decode_max_running_requests": 160,
+  "decode_extra_slots": 20,
   "decode_polling_interval": 1,
   "decode_cuda_graph_bs": [
     1,
@@ -49,7 +49,11 @@
     26,
     28,
     30,
-    32
+    32,
+    34,
+    36,
+    38,
+    40
   ],
   "prefill": {
     "workers": 3,
@@ -72,7 +76,9 @@
     "patches/sglang/decode-verify-scheduler-metadata.patch",
     "patches/sglang/decode-fusions.patch",
     "patches/sglang/decode-dense-gemm.patch",
-    "patches/sglang/decode-fa3-verify.patch"
+    "patches/sglang/decode-fa3-verify.patch",
+    "patches/sglang/prefill-fp8-integration.patch",
+    "patches/sglang/prefill-qkv-fast-fp8.patch"
   ],
   "deep_gemm_overlay_patches": [
     "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",

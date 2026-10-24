@@ -373,7 +373,7 @@ def test_mixed_routing_is_local_unique_and_rank_balanced(kind: str, percent: int
 
 
 @pytest.mark.parametrize("case,counts,expected_rows,expected_groups", [
-    ("mixed-geometry-graph", [7, 0, 145, 256], [7, 1, 145, 256], [64, 64, 64, 128]),
+    ("mixed-geometry-graph", [7, 0, 193, 256], [7, 1, 193, 256], [64, 64, 64, 128]),
     ("boundary", [255, 256, 257, 0], [255, 256, 257, 1], [64, 128, 128, 64]),
     ("idle-prefill-rows", [4096, 4096, 4096, 0], [4096, 4096, 4096, 256], [128] * 4),
     ("decode-all-idle", [0] * 4, [1] * 4, [64] * 4),

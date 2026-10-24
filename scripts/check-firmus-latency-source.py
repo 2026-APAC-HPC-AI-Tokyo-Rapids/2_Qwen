@@ -407,8 +407,9 @@ def check_topk_padding_guard(source):
     flags = SimpleNamespace(SGLANG_OPT_USE_JIT_KERNEL_FUSED_TOPK=false, SGLANG_SIMULATE_UNIFORM_EXPERTS=false, SGLANG_SIMULATE_ROUND_ROBIN_EXPERTS=false)
     count = SimpleNamespace(dtype="int32", numel=lambda: 1)
     base = {"_is_cuda": True, "_use_aiter": False, "get_moe_a2a_backend": lambda: SimpleNamespace(is_megamoe=lambda: True), "router_logits": SimpleNamespace(shape=(128, 128)), "top_k": 8, "scoring_func": "softmax", "correction_bias": None, "expert_location_dispatch_info": None, "num_fused_shared_experts": 0, "num_token_non_padded": count, "torch": SimpleNamespace(int32="int32"), "envs": flags}
-    assert eval(condition, base)
-    for key, value in {"_is_cuda": False, "_use_aiter": True, "get_moe_a2a_backend": lambda: SimpleNamespace(is_megamoe=lambda: False), "router_logits": SimpleNamespace(shape=(129, 128)), "top_k": 4, "scoring_func": "sigmoid", "correction_bias": object(), "expert_location_dispatch_info": object(), "num_fused_shared_experts": 1, "num_token_non_padded": None}.items():
+    for rows in (4, 128, 160, 192):
+        assert eval(condition, {**base, "router_logits": SimpleNamespace(shape=(rows, 128))})
+    for key, value in {"_is_cuda": False, "_use_aiter": True, "get_moe_a2a_backend": lambda: SimpleNamespace(is_megamoe=lambda: False), "router_logits": SimpleNamespace(shape=(193, 128)), "top_k": 4, "scoring_func": "sigmoid", "correction_bias": object(), "expert_location_dispatch_info": object(), "num_fused_shared_experts": 1, "num_token_non_padded": None}.items():
         assert not eval(condition, {**base, key: value}), key
     for field in vars(flags):
         setattr(flags, field, SimpleNamespace(get=lambda: True))

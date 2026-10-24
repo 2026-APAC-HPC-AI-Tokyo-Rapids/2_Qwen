@@ -106,7 +106,7 @@ diff --git a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh b/python/sglang
        return;
      }
 +    if constexpr (kStoreKV) {
-+      if (num_tokens <= 144 && num_qo_heads == 64 && num_kv_heads == 4) {
++      if (num_tokens <= 192 && num_qo_heads == 64 && num_kv_heads == 4) {
 +        const auto decode = id_type.is_type<int32_t>() ? qknorm_rope_decode_kernel<kUsePDL, int32_t> : qknorm_rope_decode_kernel<kUsePDL, int64_t>;
 +        LaunchKernel(div_ceil(static_cast<uint64_t>(num_tokens) * num_heads, uint64_t{16}), 128, device.unwrap()).enable_pdl(kUsePDL)(decode, params);
 +        return;
@@ -181,7 +181,7 @@ diff --git a/python/sglang/kernels/ops/moe/moe_fused_gate.py b/python/sglang/ker
 +    if num_token_non_padded is not None:
 +        # Plain Qwen Decode only. All row calculations still run; only the ID
 +        # store folds in the post-process mask, with a device count for replay.
-+        assert bias is None and scores.shape[1] == 128 and 0 < scores.shape[0] <= 144
++        assert bias is None and scores.shape[1] == 128 and 0 < scores.shape[0] <= 192
 +        assert topk == 8 and scoring_func == "softmax" and num_fused_shared_experts == 0
 +        assert num_expert_group == 1 and moe_softcapping == 0.0
 +        assert num_token_non_padded.dtype == torch.int32 and num_token_non_padded.numel() == 1
@@ -208,7 +208,7 @@ diff --git a/python/sglang/srt/layers/moe/topk.py b/python/sglang/srt/layers/moe
 @@ -853,6 +853,7 @@
          elif (
              _is_cuda and num_token_non_padded is not None
-             and gating_output.shape[1] == 128 and 0 < M <= 128 and topk == 8
+             and gating_output.shape[1] == 128 and 0 < M <= 192 and topk == 8
 +            and not envs.SGLANG_OPT_USE_JIT_KERNEL_FUSED_TOPK.get()
          ):
              from sglang.kernels.ops.moe.trtllm_lora_temp.topk_softmax_pack import (
@@ -234,15 +234,15 @@ diff --git a/python/sglang/srt/layers/moe/topk.py b/python/sglang/srt/layers/moe
              elif (
                  _is_cuda and not _use_aiter
                  and get_moe_a2a_backend().is_megamoe()
--                and router_logits.shape[1] == 128 and 0 < router_logits.shape[0] <= 128
-+                and router_logits.shape[1] == 128 and 0 < router_logits.shape[0] <= 144
+-                and router_logits.shape[1] == 128 and 0 < router_logits.shape[0] <= 192
++                and router_logits.shape[1] == 128 and 0 < router_logits.shape[0] <= 192
                  and top_k == 8 and scoring_func == "softmax"
                  and correction_bias is None and expert_location_dispatch_info is None
                  and num_fused_shared_experts == 0
                  and num_token_non_padded is not None
                  and num_token_non_padded.dtype == torch.int32 and num_token_non_padded.numel() == 1
 -                and not envs.SGLANG_OPT_USE_JIT_KERNEL_FUSED_TOPK.get()
-+                and (envs.SGLANG_OPT_USE_JIT_KERNEL_FUSED_TOPK.get() or router_logits.shape[0] <= 128)
++                and (envs.SGLANG_OPT_USE_JIT_KERNEL_FUSED_TOPK.get() or router_logits.shape[0] <= 192)
                  and not envs.SGLANG_SIMULATE_UNIFORM_EXPERTS.get()
                  and not envs.SGLANG_SIMULATE_ROUND_ROBIN_EXPERTS.get()
              ):

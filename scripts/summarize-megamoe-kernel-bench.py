@@ -38,7 +38,7 @@ import numpy as np
 
 # These candidates promise to retain each output element's arithmetic. Use the
 # recorded patch identity, so renaming a candidate directory cannot relax this.
-EXACT_OUTPUT_PATCHES = {"sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "sm90-prefill-iwg-a.patch", "sm90-prefill-iwg-b.patch"}
+EXACT_OUTPUT_PATCHES = {"prefill-fc1-early-release.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "sm90-prefill-iwg-a.patch", "sm90-prefill-iwg-b.patch"}
 
 MAGIC = 0x314C544D4F45474D
 EVENTS = ["Entry", "DispCount", "DispSendCount", "DispGridSync", "DispRecvCount", "DispPrePullBarrier", "DispEpilogueSync", "DispFirstPull", "DispLastPull", "DispLoopExit", "DispCombineSync", "DispClean", "DispFinalGridSync", "DispExit", "AStart", "AFirstBlock", "AFirstL1Ready", "ALastL1Issued", "AFirstL2Ready", "AExit", "BStart", "BFirstBlock", "BExit", "MStart", "MDispatchSync", "MFirstL1Full", "MLastL1End", "MFirstL2Full", "MLastL2End", "MLoopExit", "MCombineGridSync", "MCombineBarrier", "MDispatchSync2", "MCombineEnd"]
@@ -124,7 +124,7 @@ def parse(words):
     start = np.nanmin(ns[:, 0])
     times = (ns[:, :1] - start + (clk - clk[:, :1]) / ghz[:, None]) / 1000.0
     version = int(words[1])
-    assert version in (1, 2), f"Unknown timeline version {version}"
+    assert version in (1, 2, 3), f"Unknown timeline version {version}"
     counter_us = counters.copy()
     if version == 2:
         assert num_events == len(V2_EVENTS) and num_counters == len(V2_COUNTERS)
@@ -135,6 +135,10 @@ def parse(words):
         exits = [V2_EVENTS.index("DispExit")] + [V2_EVENTS.index(f"WG{wg}CombineEnd") for wg in range(int(words[13]))]
         end = np.nanmax(times[:, exits])
     else:
+        if version == 3:
+            assert num_events == 48 and num_counters == 32
+            for index in range(26, 32):
+                counter_us[:, index] = counters[:, index] / ghz / 1000.0
         for name in CYCLE_COUNTERS:
             counter_us[:, COUNTERS.index(name)] = counters[:, COUNTERS.index(name)] / ghz / 1000.0
         end = np.nanmax(np.fmax(times[:, E["DispExit"]], times[:, E["MCombineEnd"]]))

@@ -1,0 +1,22 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1549,8 +1549,9 @@
+                         const uint32_t gate_row = local_expert_idx * kL1SFPerExpert + (kPrefill2WG ? n_block_idx : sf_n_block_idx / 2u) * kL1SFKBlocks;
+                         const uint32_t up_row = gate_row + kL1SFGateBlks * kL1SFKBlocks;
+                         float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f, prev_gate_sf = 1.0f, prev_up_sf = 1.0f;
+                         float r0_gate = 1.0f, r1_gate = 1.0f, r0_up = 1.0f, r1_up = 1.0f;
++                        #pragma unroll 3
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             if (k_block_idx == 0) {
+                                 full_barriers[stage_idx]->wait(phase);
+                             } else {
+@@ -1616,8 +1617,9 @@
+                         float r0_start[kNumWSF], r1_start[kNumWSF];
+                         #pragma unroll
+                         for (uint32_t j = 0; j < kNumWSF; ++ j)
+                             prev_l2_sf[j] = 1.0f, r0_start[j] = 1.0f, r1_start[j] = 1.0f;
++                        #pragma unroll 3
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             if (k_block_idx == 0) {
+                                 full_barriers[stage_idx]->wait(phase);
+                             } else {

@@ -1,0 +1,34 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1584,10 +1584,26 @@ sm90_fp8_mega_moe_impl(void* y,
+                                 full_barriers[next_stage]->wait(next_phase);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+-                                r0_gate = (prev_scale_a_0 * prev_gate_sf) * rcp(scale_a_0 * gate_sf);
+-                                r1_gate = (prev_scale_a_1 * prev_gate_sf) * rcp(scale_a_1 * gate_sf);
+-                                r0_up = (prev_scale_a_0 * prev_up_sf) * rcp(scale_a_0 * up_sf);
+-                                r1_up = (prev_scale_a_1 * prev_up_sf) * rcp(scale_a_1 * up_sf);
++                                if constexpr (kPrefill2WG) {
++                                    // Four adjacent lanes share both row offsets and all
++                                    // weight scales. Each computes one unchanged ratio;
++                                    // the width-4 shuffles distribute it within that quad.
++                                    const uint32_t scale_lane = lane_idx & 3u;
++                                    const float prev_a = (scale_lane & 1u) ? prev_scale_a_1 : prev_scale_a_0;
++                                    const float next_a = (scale_lane & 1u) ? scale_a_1 : scale_a_0;
++                                    const float prev_w = (scale_lane & 2u) ? prev_up_sf : prev_gate_sf;
++                                    const float next_w = (scale_lane & 2u) ? up_sf : gate_sf;
++                                    const float ratio = (prev_a * prev_w) * rcp(next_a * next_w);
++                                    r0_gate = __shfl_sync(0xffffffff, ratio, 0, 4);
++                                    r1_gate = __shfl_sync(0xffffffff, ratio, 1, 4);
++                                    r0_up = __shfl_sync(0xffffffff, ratio, 2, 4);
++                                    r1_up = __shfl_sync(0xffffffff, ratio, 3, 4);
++                                } else {
++                                    r0_gate = (prev_scale_a_0 * prev_gate_sf) * rcp(scale_a_0 * gate_sf);
++                                    r1_gate = (prev_scale_a_1 * prev_gate_sf) * rcp(scale_a_1 * gate_sf);
++                                    r0_up = (prev_scale_a_0 * prev_up_sf) * rcp(scale_a_0 * up_sf);
++                                    r1_up = (prev_scale_a_1 * prev_up_sf) * rcp(scale_a_1 * up_sf);
++                                }
+                                 prev_scale_a_0 = scale_a_0;
+                                 prev_scale_a_1 = scale_a_1;
+                                 prev_gate_sf = gate_sf;

@@ -65,7 +65,7 @@ def test_wg_without_combine_work_has_missing_end_not_zero_duration(tmp_path, sum
 
 def test_unknown_timeline_schema_is_rejected(summary):
     words = dump_v2(summary)
-    words[1] = 3
+    words[1] = 99
     with pytest.raises(AssertionError, match="Unknown timeline version"):
         summary.parse(words)
 
@@ -74,14 +74,13 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert config["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch"
     bench = ROOT / "patches/deep-gemm-bench"
-    assert sorted(p.name for p in bench.iterdir()) == ["prefill-iwg-a", "prefill-iwg-b", "timeline"]
+    assert sorted(p.name for p in bench.iterdir()) == ["prefill-fc1-early-release", "prefill-iwg-a", "prefill-iwg-b", "timeline"]
     assert (bench / "prefill-iwg-b/env").read_text() == "DG_SM90_PREFILL_INDEPENDENT_WG=b\n"
     assert (bench / "timeline").stat().st_size == 0
     for name in ("containers/Dockerfile", "scripts/build-sglang-container.sh", "containers/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg-host.py"):
         assert "deep-gemm-bench" not in (ROOT / name).read_text()
     checker = (ROOT / "containers/check-sm90-independent-wg.py").read_text()
-    assert "patches[:-1]" in checker
-    assert 'assert patches[-1] == CANDIDATE' in checker
+    assert 'if Path(p).name != CANDIDATE' in checker
 
 
 def test_patch_layout_matches_reader_and_only_wraps_existing_stage_waits():
@@ -114,8 +113,8 @@ def test_build_checker_applies_adopted_overlay_once(tmp_path, monkeypatch):
     header = package / "include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
     header.parent.mkdir(parents=True)
     header.write_text("image\n")
-    patches = tmp_path / "patches"
-    patches.mkdir()
+    patches = tmp_path / "patches/deep-gemm-overlay"
+    patches.mkdir(parents=True)
     previous = "image\n"
     for name, text in [("prior.patch", "serving before adoption\n"), (checker.CANDIDATE, "serving after adoption\n")]:
         patch = "".join(difflib.unified_diff(previous.splitlines(True), text.splitlines(True), fromfile="a/" + str(checker.HEADER), tofile="b/" + str(checker.HEADER)))
@@ -172,3 +171,29 @@ def test_timeline_switches_tail_when_replica_routing_switches_buffer(summary):
         assert summary.np.shares_memory(region, array)
         assert region.tobytes() == bytes([int(array[0])]) * 16
         assert namespace["row"]["timeline_offset_minus_layout_bytes"] == 0
+
+
+def test_genkai_extended_timeline_has_distinct_abi_and_cycle_units(tmp_path, summary):
+    np = summary.np
+    events = np.zeros((2, 48, 2), dtype=np.uint64)
+    for cta in range(2):
+        for index in list(range(34)) + list(range(40, 47)):
+            t = 1_000_000 + cta * 1000 + index * 1000
+            events[cta, index] = t, t * 2
+    counters = np.zeros((2, 32), dtype=np.uint64)
+    counters[:, 24:26] = [3, 4]
+    counters[:, 26:] = 4000
+    header = np.array([summary.MAGIC, 3, 2, 48, 32, 4096, 0, 128, 256, 256, 3, 64, 35, 0, 0, 0], dtype=np.uint64)
+    words = np.concatenate([header, events.ravel(), counters.ravel()])
+    row = summary.parse(words)
+    assert row["header"]["version"] == 3
+    assert row["counters"][0, 24] == 3
+    assert row["counters"][0, 26] == 2
+    path = tmp_path / "extended.npy"
+    np.save(path, np.tile(words, (5, 4, 1)))
+    spec = importlib.util.spec_from_file_location("ep4_probe", ROOT / "kernels/probes/megamoe-full.py")
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    probe.ROOT = ROOT / "scripts"
+    probe.summary(path)
+    assert 'kVersion = 3;' in (ROOT / "patches/deep-gemm-timeline/sm90-mega-moe-prefill-2wg.patch").read_text()

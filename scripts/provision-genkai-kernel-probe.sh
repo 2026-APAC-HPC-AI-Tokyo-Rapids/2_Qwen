@@ -2,7 +2,7 @@
 # Shared allocation/build entry point: the selected script creates source/probe.
 set -euo pipefail
 : "${GITHUB_WORKSPACE:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}" "${GITHUB_OUTPUT:?}" "${RUNTIME_ROOT:?}"
-benchmark=${BENCHMARK:-kernels/probes/prepare-fc1.sh}
+benchmark=${BENCHMARK:-kernels/probes/prepare-megamoe-math.sh}
 [[ "${benchmark}" =~ ^kernels/probes/[a-zA-Z0-9_./-]+\.sh$ && "${benchmark}" != *..* && -f "${GITHUB_WORKSPACE}/${benchmark}" ]]
 install -d -m 2775 "${RUNTIME_ROOT}"
 export RUNTIME_DIR

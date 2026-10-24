@@ -1,7 +1,7 @@
 """Screen/tune the AOT verify companion on four GPUs within 180 seconds.
 
-No model, compiler, profiler or scheduler submission. Only b32 selects a worker
-setting; b33..36 are measured and retained as diagnostics at unchanged cap128.
+No model, compiler, profiler or scheduler submission. The configured cap/4
+selects a worker setting; cap/4-4 and cap/4-2 are retained as diagnostics.
 """
 
 import argparse
@@ -17,7 +17,7 @@ from runpy import run_path
 BLOCKS = 2
 PAIRS = 20
 LAYERS = 94
-NAMES = ("control96", "t64s2", "t64s3", "p128s2", "t64split2", "t64split3")
+NAMES = ("control96", "p128s2", "p128split2", "p128split3")
 
 
 def summary(values):
@@ -26,12 +26,12 @@ def summary(values):
     return {"median_us": statistics.median(values), "p10_us": values[len(values) // 10], "p90_us": values[len(values) * 9 // 10]}
 
 
-def choose_candidate(ranks):
-    """All four GPUs, b32 only, both blocks and >=3.2us/layer on every GPU."""
+def choose_candidate(ranks, selection_batch):
+    """All four GPUs, configured cap/4 only, both blocks and >=3.2us/layer on every GPU."""
     assert len(ranks) == 4 and {r["rank"] for r in ranks} == set(range(4))
     choices = {}
     for name in NAMES:
-        entries = [r["batches"]["32"][name] for r in ranks]
+        entries = [r["batches"][str(selection_batch)][name] for r in ranks]
         if any(not entry.get("numeric_passed") or entry.get("error") or len(entry.get("blocks", [])) != BLOCKS for entry in entries):
             choices[name] = {"eligible": False, "reason": "candidate-failed", "ranks": entries}
             continue
@@ -44,7 +44,7 @@ def choose_candidate(ranks):
         choices[name] = {**timing, "savings_us_by_rank_block": savings, "eligible": name != "control96" and min(savings) >= 3.2, "minimum_saving_us": min(savings)}
     eligible = [name for name, result in choices.items() if result["eligible"]]
     winner = min(eligible, key=lambda name: (choices[name]["median_us"], NAMES.index(name))) if eligible else None
-    return {"winner": winner, "choices": choices, "rule": {"selection_batch": 32, "minimum_saving_us_per_layer": 3.2, "blocks": BLOCKS, "gpus": 4, "all_rank_blocks_faster": True}, "env": {"SGLANG_DECODE_FA3_VERIFY": winner or ""}}
+    return {"winner": winner, "choices": choices, "rule": {"selection_batch": selection_batch, "minimum_saving_us_per_layer": 3.2, "blocks": BLOCKS, "gpus": 4, "all_rank_blocks_faster": True}, "env": {"SGLANG_DECODE_FA3_VERIFY": winner or ""}}
 
 
 def measure(torch, graph):
@@ -87,7 +87,11 @@ def run_selection(output, env_output):
     manifest = json.loads(Path("/opt/apac/fa3-verify/manifest.json").read_text())
     local = {"rank": rank, "device": torch.cuda.get_device_name(rank), "batches": {}, "binary_sha256": manifest["binary_sha256"], "uuid": str(torch.cuda.get_device_properties(rank).uuid), "clock_mhz_start": torch.cuda.clock_rate(rank), "power_w_start": torch.cuda.power_draw(rank) / 1000}
     gathered = [None] * 4
-    for batch in range(32, 37):
+    config = json.loads((Path(__file__).resolve().parents[1] / "source/firmus-framework.json").read_text())
+    cap = config["decode_max_running_requests"]
+    selection_batch = cap // config["decode_dp_size"]
+    batches = (selection_batch - 4, selection_batch - 2, selection_batch)
+    for batch in batches:
         common_sets = [checks["verify_inputs"](batch, 93101 + batch + i)[0] for i in range(4)]
         # Same live metadata tensors for every layer, as in the B4 serving path.
         for c in common_sets[1:]:
@@ -130,7 +134,7 @@ def run_selection(output, env_output):
     local["elapsed_seconds"] = time.monotonic() - begin
     dist.all_gather_object(gathered, local)
     if rank == 0:
-        result = {"schema": "firmus-decode-fa3-selection/v1", **choose_candidate(gathered), "ranks": gathered, "elapsed_seconds": max(r["elapsed_seconds"] for r in gathered), "layers": LAYERS, "kv_sets": 4, "pairs_per_block": PAIRS, "cap": 128, "selection_batches": [32], "diagnostic_batches": [33, 34, 35, 36]}
+        result = {"schema": "firmus-decode-fa3-selection/v1", **choose_candidate(gathered, selection_batch), "ranks": gathered, "elapsed_seconds": max(r["elapsed_seconds"] for r in gathered), "layers": LAYERS, "kv_sets": 4, "pairs_per_block": PAIRS, "cap": cap, "selection_batches": [selection_batch], "diagnostic_batches": list(batches[:-1])}
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
         env_output.write_text("".join(f"{key}={value}\n" for key, value in result["env"].items()))

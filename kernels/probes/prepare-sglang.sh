@@ -8,9 +8,10 @@ image="/home/ACCOUNT/share/sglang-containers/$(basename "$(jq -er .images.sglang
 [[ "$(stat -c '%s' "${image}")" == "$(jq -er .images.sglang.size_bytes "${config}")" ]]
 [[ "$(jq -er .container_artifact.sha256 "${image%.sqsh}.container-sidecar.json")" == "$(jq -er .images.sglang.sha256 "${config}")" ]]
 package=opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
-unsquashfs -no-progress -no-xattrs -processors 1 -d "${RUNTIME_DIR}/image" "${image}" "${package}/include" opt/sglang/source/python/sglang >"${RUNTIME_DIR}/logs/extract.log" 2>&1
+unsquashfs -no-progress -no-xattrs -processors 1 -d "${RUNTIME_DIR}/image" "${image}" "${package}" opt/apac/sm90-megamoe-build.json opt/sglang/source/python/sglang >"${RUNTIME_DIR}/logs/extract.log" 2>&1
 chmod -R u+w "${RUNTIME_DIR}/image"
 mv "${RUNTIME_DIR}/image/${package}" "${RUNTIME_DIR}/source/deep_gemm"
+mv "${RUNTIME_DIR}/image/opt/apac/sm90-megamoe-build.json" "${RUNTIME_DIR}/source/"
 mv "${RUNTIME_DIR}/image/opt/sglang/source/python" "${RUNTIME_DIR}/source/python"
 rm -rf -- "${RUNTIME_DIR}/image"
 cd "${RUNTIME_DIR}/source"

@@ -1,22 +1,23 @@
 #!/bin/bash
 #PJM -L rscgrp=b-batch
 #PJM -L gpu=1
-#PJM -L elapse=00:03:00
+#PJM -L elapse=00:05:00
 #PJM -j
 #PJM -s
 set -euo pipefail
 : "${RUNTIME_DIR:?}"
 cd "${RUNTIME_DIR}"
-trap 'status=$?; printf "%s\n" "$status" > results/exit-code' EXIT
+trap 'status=$?; printf "%s\n" "$status" > results/exit-code; printf "probe_exit_code=%s\n" "$status"' EXIT
 module load cuda/12.9.1
 date -u
 cat source/provenance.json
 trials=3
-limit=30
-if [[ "$(jq -r '.calibration // false' source/provenance.json)" == true ]]; then trials=1; limit=165; fi
+trial_timeout=90
+if [[ "${GPU_COUNT:-1}" == 4 ]]; then trial_timeout=180; fi
+if [[ "$(jq -r '.calibration // false' source/provenance.json)" == true ]]; then trials=1; trial_timeout=165; fi
 for ((trial=1; trial<=trials; trial++)); do
   printf 'trial=%s\n' "${trial}"
-  timeout "${limit}" ./source/probe | tee "results/trial-${trial}.log"
+  timeout "${trial_timeout}" ./source/probe | tee "results/trial-${trial}.log"
 done
 touch run-success
 date -u
