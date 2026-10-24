@@ -169,8 +169,8 @@ def main():
             rq,rk,rv = packed.view(padded,72,128).split((64,4,4),dim=1)
             invoke(reference,rq,rk,rv,model.q_norm.weight,model.k_norm.weight,model.rotary_emb.cos_sin_cache,positions,batch.out_cache_loc,reference_out)
             pool = object.__new__(MHATokenToKVPool)
-            batch.token_to_kv_pool = pool
-            with patch.object(pool,"get_kv_buffer",return_value=tuple(actual_out[3:])), patch.object(qwen3_moe,"apply_qknorm_rope_fp8_prefill",wraps=apply_qknorm_rope_fp8_prefill) as prologue:
+            backend.token_to_kv_pool = pool
+            with forward_context(ForwardContext(backend)), patch.object(pool,"get_kv_buffer",return_value=tuple(actual_out[3:])), patch.object(qwen3_moe,"apply_qknorm_rope_fp8_prefill",wraps=apply_qknorm_rope_fp8_prefill) as prologue:
                 q,k,v = model.apply_qk_norm_rope(packed,positions,batch)
                 assert prologue.call_count==1 and model._stored_fp8_kv_last_call
             q,k,v = [x.view(padded,h,128) for x,h in zip((q,k,v),(64,4,4))]
