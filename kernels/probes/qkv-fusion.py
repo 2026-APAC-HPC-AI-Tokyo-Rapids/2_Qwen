@@ -72,8 +72,12 @@ def call(data, out, mode):
     elif mode == "head256":
         native(data, out, 2)
         post(data, out)
-    elif mode == "fused":
+    elif mode == "shared256":
         native(data, out, 3)
+    elif mode == "register128":
+        native(data, out, 4)
+    elif mode == "fused":
+        native(data, out, 5)
     elif mode == "gemm":
         deep_gemm.fp8_gemm_nt(data[0], data[1], data[2], compiled_dims="nk")
     else:
@@ -110,7 +114,7 @@ for rows in (129, 3986, 4027, 4096):
     a, sa = data[0]
     b, sb = data[1]
     reference = (a[indices].float() * sa[indices].repeat_interleave(128, 1)) @ (b.float() * sb.repeat_interleave(128, 0).repeat_interleave(128, 1)).T
-    for plain_mode, fused_mode in (("head128", "old_fused"), ("head256", "fused")):
+    for plain_mode, fused_mode in (("head128", "old_fused"), ("head256", "shared256"), ("head128", "register128"), ("head256", "fused")):
         call(data, head, plain_mode)
         checks["dense_errors"](data[2], baseline.float())
         checks["dense_errors"](data[2][indices], reference)
@@ -138,7 +142,7 @@ torch.cuda.synchronize()
 for rows in (3986, 4027, 4096):
     data_sets = [inputs(rows, 5200 + i) for i in range(4)]
     out_sets = [outputs(rows) for _ in data_sets]
-    modes = ("stock", "head128", "old_fused", "head256", "fused", "gemm", "post")
+    modes = ("stock", "head128", "old_fused", "head256", "shared256", "register128", "fused", "gemm", "post")
     graphs = {}
     repeats = 12
     for mode in modes:
@@ -158,5 +162,5 @@ for rows in (3986, 4027, 4096):
             end.synchronize()
             samples[mode].append(start.elapsed_time(end) * 1000 / repeats)
     result = {mode: statistics.median(values) for mode, values in samples.items()}
-    print(f"PASS rows={rows} baseline_median_us={result['stock']:.3f} candidate_median_us={result['fused']:.3f} saved_us={result['stock']-result['fused']:.3f} ratio={result['fused']/result['stock']:.5f} old_fused_us={result['old_fused']:.3f} head128_total_us={result['head128']:.3f} head256_total_us={result['head256']:.3f} stock_gemm_us={result['gemm']:.3f} prologue_us={result['post']:.3f} samples=25 rotating_sets=4", flush=True)
+    print(f"PASS rows={rows} baseline_median_us={result['stock']:.3f} candidate_median_us={result['fused']:.3f} saved_us={result['stock']-result['fused']:.3f} ratio={result['fused']/result['stock']:.5f} old_fused_us={result['old_fused']:.3f} shared256_us={result['shared256']:.3f} register128_us={result['register128']:.3f} head128_total_us={result['head128']:.3f} head256_total_us={result['head256']:.3f} stock_gemm_us={result['gemm']:.3f} prologue_us={result['post']:.3f} samples=25 rotating_sets=4", flush=True)
     del graphs, data_sets, out_sets
