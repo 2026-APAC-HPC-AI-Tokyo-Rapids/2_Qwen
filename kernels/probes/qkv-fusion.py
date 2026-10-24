@@ -1,9 +1,12 @@
 """Compare deployed QKV, the previous BN128 fusion, and a BN256 fusion."""
 import ctypes
 import json
+import os
 import runpy
 import statistics
 from pathlib import Path
+
+os.environ["DG_JIT_PTXAS_VERBOSE"] = "1"
 
 import deep_gemm
 import torch

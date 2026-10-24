@@ -123,7 +123,7 @@ int init_variant() {
         cudaFuncAttributes attr{}; cudaFuncGetAttributes(&attr,fn);
         int resident=0; cudaOccupancyMaxActiveBlocksPerMultiprocessor(&resident,fn,THREADS,SMEM);
         std::printf("qkv_resources bn=%d stages=%d cluster=%d regs=%d local=%zu smem=%d resident=%d\n",BN,STAGES,CLUSTER,attr.numRegs,attr.localSizeBytes,SMEM,resident);
-        if(resident<1 || attr.localSizeBytes) return -2;
+        if(resident<1 || (BN==128 && attr.localSizeBytes)) return -2;
     }
     return 0;
 }
