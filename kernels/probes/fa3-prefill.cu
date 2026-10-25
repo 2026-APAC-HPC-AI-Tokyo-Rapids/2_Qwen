@@ -1,5 +1,8 @@
 // Pinned FA3 with optional group-128 FP8 output; BF16 controls use the same launch.
 #include <cstdio>
+#ifndef FA3_PROBE_E4
+#define FA3_PROBE_E4 0
+#endif
 #ifndef FA3_PROBE_M
 #define FA3_PROBE_M 0
 #endif

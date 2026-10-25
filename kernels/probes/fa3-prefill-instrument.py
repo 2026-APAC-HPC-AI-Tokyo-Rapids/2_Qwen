@@ -48,3 +48,6 @@ for i, line in enumerate(lines):
         changed += 1
 assert changed == 4
 path.write_text(''.join(lines))
+
+# The same max-reduction source is applied to probe and serving builds.
+replace('flash_fwd_kernel_sm90.h', '/*Max_offset=*/!Is_FP8 ? 0 : 8> softmax', '/*Max_offset=*/!Is_FP8 ? 0 : 8, FA3_PROBE_E4> softmax')

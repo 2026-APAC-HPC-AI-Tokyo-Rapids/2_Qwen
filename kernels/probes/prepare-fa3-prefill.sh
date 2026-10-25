@@ -25,6 +25,9 @@ for name,(repo,commit,digest) in pins.items():
 patch=(root/'kernels/fa3-verify/fixed-specializations.patch').read_text().split('--- a/hopper/flash_prepare_scheduler.cu')[0]
 subprocess.run(['patch','--batch','--fuzz=0','-p1'],input=patch,universal_newlines=True,cwd=sources['fa3'],check=True)
 subprocess.run(['patch','--batch','--fuzz=0','-p1','-i',str(root/'kernels/probes/fa3-fp8-output.patch')],cwd=sources['fa3'],check=True)
+# Share the exact softmax implementation with the fixed-path companion.
+overlap=(root/'kernels/fa3-verify/prefill-overlap.patch').read_text().split('--- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp')[0]
+subprocess.run(['patch','--batch','--fuzz=0','-p1'],input=overlap,universal_newlines=True,cwd=sources['fa3'],check=True)
 scheduler=sources['fa3']/'hopper/flash_prepare_scheduler.cu'
 s=scheduler.read_text().replace('int num_warps = cutlass::ceil_div(params.b, 31);','assert(params.b >= 1 && params.b <= 4); int num_warps = 1;')
 s=s.replace('BOOL_SWITCH(params.varlen_sort_batches, Sort, [&] {','{ constexpr bool Sort = true; [&] {').replace('NUM_WARP_SWITCH(num_warps, NumWarps, [&] {','{ constexpr int NumWarps = 1; [&] {')
@@ -35,7 +38,7 @@ PY
 mapfile -t includes <fa3-includes
 python3 "${GITHUB_WORKSPACE}/kernels/probes/fa3-prefill-instrument.py" "${includes[0]}"
 if [[ -f "${RUNTIME_DIR}/scripts/build-env.sh" ]]; then source "${RUNTIME_DIR}/scripts/build-env.sh"; else source "${GITHUB_WORKSPACE}/platforms/genkai/kernel-probe/build-env.sh"; fi
-variants=(control nobarrier regs232 lazy lazy-counter)
+variants=(control nobarrier regs232 lazy lazy-counter e4 e4-regs232 e4-n192)
 if [[ "${1:-}" == --profile ]]; then variants=(control); fi
 for variant in "${variants[@]}"; do
     flags=()
@@ -45,6 +48,9 @@ for variant in "${variants[@]}"; do
         regs232) flags+=(-DFA3_PROBE_REGS232=1) ;;
         lazy) flags+=(-DFA3_PROBE_LAZY=1) ;;
         lazy-counter) flags+=(-DFA3_PROBE_LAZY=1 -DFA3_PROBE_COUNTER=1) ;;
+        e4) flags+=(-DFA3_PROBE_E4=1) ;;
+        e4-regs232) flags+=(-DFA3_PROBE_E4=1 -DFA3_PROBE_REGS232=1) ;;
+        e4-n192) flags+=(-DFA3_PROBE_E4=1); n=192 ;;
     esac
     if [[ "${variant}" != control ]]; then flags+=(-DFA3_PROBE_SINGLE_N="${n}"); fi
     # Resource-main queries only constexpr host resources, never CUDA attributes.
@@ -61,7 +67,7 @@ python3 - <<'PYMETA'
 import json, os
 from pathlib import Path
 runtime = Path(os.environ['RUNTIME_DIR'])
-info = {name: {'ptxas': (runtime/'logs'/('build-'+name+'.log')).read_text(), 'resource': (runtime/'logs'/('resource-'+name+'.log')).read_text()} for name in ('control','nobarrier','regs232','lazy','lazy-counter') if (runtime/'logs'/('build-'+name+'.log')).exists()}
+info = {name: {'ptxas': (runtime/'logs'/('build-'+name+'.log')).read_text(), 'resource': (runtime/'logs'/('resource-'+name+'.log')).read_text()} for name in ('control','nobarrier','regs232','lazy','lazy-counter','e4','e4-regs232','e4-n192') if (runtime/'logs'/('build-'+name+'.log')).exists()}
 (runtime/'results'/'ptxas.json').write_text(json.dumps(info, indent=2))
 PYMETA
 jq -n --arg commit "${GITHUB_SHA}" '{commit:$commit,kernel:"FA3 Prefill M0/M1",scope:"one GPU, no serving",calibration:true}' >provenance.json

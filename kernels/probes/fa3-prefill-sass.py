@@ -10,6 +10,33 @@ def counts(instructions):
     return {op: sum(mnemonic == op or mnemonic.startswith(op + '.') for _, mnemonic, _ in instructions) for op in OPS}
 
 
+
+def softmax_schedule(instructions):
+    """Static register dependencies, including quad-reduction FMNMX merges.
+
+    PCs describe emitted order, not dynamic timings. Loop selection still needs
+    the backedge and caller's inspection of masked versus unmasked iterations.
+    """
+    depths = {}
+    maximum = 0
+    positions = {key: [] for key in ('max', 'exp', 'wait0')}
+    for address, op, operands in instructions:
+        registers = re.findall(r'\bR\d+\b', operands)
+        destination = re.match(r'R\d+\b', operands)
+        if op.startswith('FMNMX'):
+            depth = 1 + max((depths.get(reg, 0) for reg in registers[1:]), default=0)
+            depths[registers[0]] = depth
+            maximum = max(maximum, depth)
+            positions['max'].append(hex(address))
+        elif destination:
+            depths[destination[0]] = depths.get(registers[1], 0) if op == 'MOV' and len(registers) > 1 else 0
+        if op == 'MUFU.EX2':
+            positions['exp'].append(hex(address))
+        if op == 'WARPGROUP.DEPBAR.LE' and re.search(r'0x0\b', operands):
+            positions['wait0'].append(hex(address))
+    return {'fmnmx_dependency_depth': maximum, **{key + '_pcs': values if len(values) < 3 else [values[0], values[-1]] for key, values in positions.items()}}
+
+
 def register_role(op, operands):
     if 'DEALLOC' in op or op.endswith('.DEC'):
         return 'producer'
@@ -59,6 +86,7 @@ def report(text):
                     census = counts(body)
                     if census['MUFU.EX2'] and census['F2FP']:
                         print(f'  arithmetic-backedge-loop 0x{target_addr:x}..0x{addr:x} {census}')
+                        print(f'  softmax-schedule {softmax_schedule(body)}')
 
 
 if __name__ == '__main__':
