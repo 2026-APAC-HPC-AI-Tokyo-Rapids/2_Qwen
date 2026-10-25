@@ -22,7 +22,8 @@ def test_prepare_snapshots_candidate_table_for_both_wrappers(tmp_path):
         path.mkdir(parents=True)
     (workspace / "configs/firmus-framework.json").write_text('{"sglang_overlay_patches":[]}')
     shutil.copyfile(TABLE, workspace / "kernels/fa3-verify/candidates.json")
-    shutil.copyfile(ROOT / "kernels/probes/run-sglang.sh", workspace / "kernels/probes/run-sglang.sh")
+    for name in ("run-sglang.sh", "run-container.sh"):
+        shutil.copyfile(ROOT / "kernels/probes" / name, workspace / "kernels/probes" / name)
     (runtime / "sglang.sqsh").touch()
     executable(bin_dir / "unsquashfs", '''#!/bin/bash
 set -eu
@@ -48,6 +49,7 @@ def test_wrappers_bind_metadata_and_preserve_diagnostics(tmp_path, platform, pro
         (tmp_path / name).mkdir(parents=True)
     (tmp_path / "home/.local/.setenv").write_text("")
     (tmp_path / "scripts/build-env.sh").write_text("")
+    shutil.copyfile(ROOT / "kernels/probes/run-container.sh", tmp_path / "scripts/run-container.sh")
     (tmp_path / "source/provenance.json").write_text('{"calibration":true}')
     shutil.copyfile(TABLE, tmp_path / "source/fa3-verify-candidates.json")
     name = "run-fa3-prefill-profile.sh" if profile else "run-sglang.sh"

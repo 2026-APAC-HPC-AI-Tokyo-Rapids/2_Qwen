@@ -239,3 +239,44 @@ access on the allocated compute node; retry M2 only after NSCC has confirmed
 that access. The application's own `PASS` line does not mean profiling
 succeeded. Failed profiler output is now copied into the trial log, and both
 PBS and PJM trial logs include stderr while preserving the process exit code.
+
+## Firmus one-GPU FA3 probes on an exclusive node
+
+The **Firmus kernel probe** workflow (`firmus-kernel-probe.yml`) accepts the same
+M1 / M2 `benchmark` values and empty `candidate_patch` as ASPIRE. Register this
+workflow file on the default branch (`main`) before dispatching the ref that
+contains all its provision, platform and shared probe dependencies.
+
+The `hpcai` partition uses `Exclusive=NODE`. This workflow intentionally reserves
+one whole eight-H200 node, account `hpcai`, for at most five minutes. Its single
+Pyxis/Enroot step requests one GPU and the process sets `CUDA_VISIBLE_DEVICES=0`.
+The permission kernel also checks that CUDA sees exactly one GPU. This is a
+one-GPU experiment occupying a whole node; it does not share the node with
+other jobs. Firmus has no ASPIRE SU charge.
+
+Provision checks the pinned image's size, sidecar identity and SHA256, and
+selectively extracts CUDA 13.0 and Nsight Compute 2025.3.1. Host GCC 11.5 is
+used to compile M1/M2 and a tiny permission kernel without a GPU. Both protocols
+first profile that kernel once with a hardware counter (30-second limit).
+`ERR_NVGPUCTRPERM` is printed explicitly and prevents the trial from starting.
+A successful preflight is followed by one `calibration:true` trial with a
+165-second process limit. The five-minute walltime includes container startup,
+the preflight, trial and teardown. Compute-node counter access remains subject
+to this preflight; nsys GPU-metric history alone does not establish NCU access.
+
+Shared preparation installs a runtime `scripts/run-container.sh` interface.
+Genkai and ASPIRE retain their Enroot launcher and read-only candidate-table
+file mount. Firmus supplies an in-container launcher because the entire trial
+already runs inside its one Pyxis step; it mounts the snapshot table directory
+read-only at `/opt/apac/fa3-verify` and the image-pinned NCU directory at
+`/opt/fa3-ncu`. No cluster selection is embedded in the preparation scripts.
+Firmus uses node-local temporary compiler/JIT caches and removes them on exit.
+
+The driver and trial retain stderr and preserve failures. The artifact
+`firmus-kernel-probe-<run_id>-<attempt>` retains logs, image identity, provenance,
+permission results, M1 results and M2 CSV / `.ncu-rep` files. Cleanup requires
+an empty active-job lookup, a terminal Slurm accounting state and successful
+artifact upload, then makes the runtime writable, removes it and checks its
+absence. No cancellation or automatic GPU retry is performed. Compare each
+cluster/toolchain independently; successful login compilation is not a GPU
+correctness or performance result.

@@ -19,3 +19,6 @@ install -m 0644 "${GITHUB_WORKSPACE}/kernels/fa3-verify/candidates.json" fa3-ver
 mapfile -t overlays < <(jq -r '.sglang_overlay_patches[]' "${config}")
 for patch in "${overlays[@]}"; do git apply --check "${GITHUB_WORKSPACE}/${patch}"; git apply "${GITHUB_WORKSPACE}/${patch}"; done
 install -m 0755 "${GITHUB_WORKSPACE}/kernels/probes/run-sglang.sh" probe
+# Provision may supply an in-container launcher (Firmus uses a single Pyxis step).
+install -d "${RUNTIME_DIR}/scripts"
+if [[ ! -f "${RUNTIME_DIR}/scripts/run-container.sh" ]]; then install -m 0755 "${GITHUB_WORKSPACE}/kernels/probes/run-container.sh" "${RUNTIME_DIR}/scripts/run-container.sh"; fi
