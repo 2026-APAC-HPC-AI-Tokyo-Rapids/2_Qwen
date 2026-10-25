@@ -190,3 +190,39 @@ Serving retains the cap160 configuration, FP8 integration and fast QKV overlay, 
 FA3 calibration now takes the current selector's four companion IDs: control96, p128s2, p128split2 and p128split3. The historical table above retains the removed t64 measurements; split candidates have no paired historical reference in that table. The calibration still runs B32 with shared metadata and the same numeric checks.
 
 Both timeline instruments are retained as alternative overlays on the same control, not composed: the Firmus control uses the main v2 per-WG phase instrument; Genkai EP4 uses the upstream producer/transfer plus WG0/WG1 instrument, now ABI v3 to avoid its original v2 collision. All recording points remain in their respective patches. The shared decoder accepts v1/v2/v3 and the EP4 summary retains producer/transfer and both-WG records. A/B have no timeline marker.
+
+## ASPIRE single-GPU FA3 probes
+
+The **ASPIRE kernel probe** workflow (`aspire-kernel-probe.yml`) accepts
+`benchmark=kernels/probes/prepare-fa3-prefill.sh` (M1) or
+`benchmark=kernels/probes/prepare-fa3-prefill-profile.sh` (M2), with
+`candidate_patch` empty. Select the ref containing this workflow and its
+preparation scripts. GPU count is fixed at one; other benchmarks and nonempty
+patch inputs are rejected before submission.
+
+The login node provisions the ASPIRE copy of the image pinned in
+`configs/firmus-framework.json`, then compiles with host CUDA 12.6.2 / GCC 13.3.
+Genkai retains CUDA 12.9.1 / GCC 13 and its existing image and Enroot setup.
+Preparation reads `scripts/build-env.sh` and `sglang.sqsh` from the runtime;
+direct Genkai preparation still supplies the original defaults.
+M2 extracts Nsight Compute 2025.3.1 from the pinned image and uses it for both
+collection and report import. The existing common M1/M2 probe commands and
+numerical gates are unchanged. Treat results from different toolchains and
+clusters separately.
+
+PBS receives project 59010014, queue `normal`,
+`select=1:ngpus=1:ncpus=14:mem=180gb`, and a five-minute walltime, without
+exclusive-node placement. Both protocols use one calibration trial with a
+165-second process limit. At 128 SU per GPU hour, five minutes costs about
+10.67 SU per run; the 165-second process alone is 5.87 SU. Actual scheduler
+billing includes job startup and teardown. Summary records project balance
+before submission and after observation using `myprojects -p 59010014`;
+concurrent project activity can affect the balance difference.
+
+Logs, provenance, sidecar identity, M1 JSON and M2 CSV / binary `.ncu-rep` are
+recovered in the `aspire-kernel-probe-<run_id>-<attempt>` Actions artifact before
+runtime deletion. Cleanup requires a terminal PBS state and successful artifact
+upload. An active or unobservable job is preserved, and no job is cancelled.
+The parent must validate GPU execution, NCU counter access and actual runtime
+through workflow dispatch; login-only compilation and CPU fixtures do not
+establish GPU correctness or performance.

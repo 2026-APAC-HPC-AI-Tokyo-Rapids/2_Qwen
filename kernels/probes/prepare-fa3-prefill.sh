@@ -34,7 +34,7 @@ Path('fa3-includes').write_text(str(sources['fa3']/'hopper')+'\n'+str(sources['c
 PY
 mapfile -t includes <fa3-includes
 python3 "${GITHUB_WORKSPACE}/kernels/probes/fa3-prefill-instrument.py" "${includes[0]}"
-module load cuda/12.9.1
+if [[ -f "${RUNTIME_DIR}/scripts/build-env.sh" ]]; then source "${RUNTIME_DIR}/scripts/build-env.sh"; else source "${GITHUB_WORKSPACE}/platforms/genkai/kernel-probe/build-env.sh"; fi
 variants=(control nobarrier regs232 lazy lazy-counter)
 if [[ "${1:-}" == --profile ]]; then variants=(control); fi
 for variant in "${variants[@]}"; do
@@ -48,8 +48,8 @@ for variant in "${variants[@]}"; do
     esac
     if [[ "${variant}" != control ]]; then flags+=(-DFA3_PROBE_SINGLE_N="${n}"); fi
     # Resource-main queries only constexpr host resources, never CUDA attributes.
-    nvcc --std=c++17 --use_fast_math --expt-relaxed-constexpr --expt-extended-lambda -O3 -lineinfo --ptxas-options=-v,-warn-spills -ccbin /opt/rh/gcc-toolset-13/root/usr/bin/g++ -gencode arch=compute_90a,code=sm_90a -DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED -DNDEBUG -I"${includes[0]}" -I"${includes[1]}" "${flags[@]}" -DFA3_PROBE_RESOURCE_MAIN="${n}" -Xcompiler -fPIC -c fa3-prefill.cu -o "${variant}.o" >"${RUNTIME_DIR}/logs/build-${variant}.log" 2>&1 || { tail -100 "${RUNTIME_DIR}/logs/build-${variant}.log"; exit 1; }
-    nvcc "${variant}.o" "${includes[0]}/flash_prepare_scheduler.cu" --std=c++17 -O3 --expt-relaxed-constexpr --expt-extended-lambda -gencode arch=compute_90a,code=sm_90a -ccbin /opt/rh/gcc-toolset-13/root/usr/bin/g++ -I"${includes[0]}" -I"${includes[1]}" -Xcompiler -fPIC --shared --cudart static -o "fa3-prefill-${variant}.so" >>"${RUNTIME_DIR}/logs/build-${variant}.log" 2>&1
+    nvcc --std=c++17 --use_fast_math --expt-relaxed-constexpr --expt-extended-lambda -O3 -lineinfo --ptxas-options=-v,-warn-spills -ccbin "${CXX}" -gencode arch=compute_90a,code=sm_90a -DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED -DNDEBUG -I"${includes[0]}" -I"${includes[1]}" "${flags[@]}" -DFA3_PROBE_RESOURCE_MAIN="${n}" -Xcompiler -fPIC -c fa3-prefill.cu -o "${variant}.o" >"${RUNTIME_DIR}/logs/build-${variant}.log" 2>&1 || { tail -100 "${RUNTIME_DIR}/logs/build-${variant}.log"; exit 1; }
+    nvcc "${variant}.o" "${includes[0]}/flash_prepare_scheduler.cu" --std=c++17 -O3 --expt-relaxed-constexpr --expt-extended-lambda -gencode arch=compute_90a,code=sm_90a -ccbin "${CXX}" -I"${includes[0]}" -I"${includes[1]}" -Xcompiler -fPIC --shared --cudart static -o "fa3-prefill-${variant}.so" >>"${RUNTIME_DIR}/logs/build-${variant}.log" 2>&1
     nvcc "${variant}.o" -L. -l:fa3-prefill-${variant}.so --cudart static -Xlinker -rpath -Xlinker '$ORIGIN' -o "resource-${variant}"
     ./resource-"${variant}" | tee "${RUNTIME_DIR}/logs/resource-${variant}.log"
     cuobjdump -sass "${variant}.o" >"${RUNTIME_DIR}/logs/sass-${variant}.txt"
