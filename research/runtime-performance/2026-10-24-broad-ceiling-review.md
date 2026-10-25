@@ -91,3 +91,21 @@ timeline（per CTA、µs、WG0 rank0）：
 Prefill selector は 94 層 graph（QKV producer 込み）で計り、1 GPU probe（regs232 −5.3%、N192 −4.0%）と違い、serving 形では regs の効果が消えた。固定経路の control は probe の control と register 配分が違う（spill 72/120 B 対 80/140 B）ことが一因とみられる。Decode selector の所要は 46.7 秒、Prefill selector と合わせて MaxTime 内に収まった。
 
 残課題：c2 の byte image の照合失敗と、Decode の kernel 内 merge の失敗はどちらも実装の不具合で、次の build までに直す。e4（木構造の行最大値）は Firmus probe 40179002643 で +1.2〜+6% と遅く不採用。e1（PV 待ちの位置）は 22 通りの source 変更で ptxas の配置を変えられず未達。
+
+## 8. 2 回目の serving：PV 待ち対策・c2 修正・DG1・merge 修正・norm 融合・上限 176 [40201493911](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40201493911)（3287a43、image 40197369083）
+
+**9036.12 tok/s**（公式判定 有効）。9022.10 比 +0.16% で、単回差としては区別できない。要求 5749、good 97.67%、TTFT 平均 / p99 1818 / 4250 ms、ITL 平均 / p99 16.5 / 19.2 ms、受理長 2.21。image build の run [40197369083](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40197369083)（cbca2b3）は、Decode norm 融合の gate が flashinfer との bit 一致を要求していたため、server 起動前に停止した。既存の 2 行融合も同じ比較で 127 行あたり約 500 code 異なる（scale は一致）ので、Prefill と同じ丸め水準の判定に揃え（3287a43）、同じ image で再実行した。
+
+| 項目 | 結果 |
+|---|---|
+| Prefill FA3 の PV 待ち対策（pv-live-regs / -n192 / -regs-n192） | control 比 中央値 **+10〜+17 µs/層の悪化**。checksum と恒等 PRMT の追加命令が PV の重なりの利得を上回った。不採用 |
+| c2（V byte image 修正） | 数値 gate は通過。中央値 −1.9 µs/層、最小 +3.1 µs で閾値未満。不採用 |
+| Prefill 勝者 | n192（中央値 −9.3 µs/層、前回と同じ） |
+| Decode dense DG1（SwapAB + stream-K、176 行） | QKV 107.4 µs・O 118.1 µs、stock は 24.2・17.4 µs。**不採用**。QKV は dg-128-144-5（23.4 µs）、O は stock |
+| Decode FA3 の merge 可視性修正 | 全 merge 候補が修正前と同じ相対 L2 0.7315 で失敗。原因は L1 可視性ではない。勝者は p128split2-s3-fp8（71.6 µs、control96 は 93.7 µs） |
+| Decode norm 1 行/CTA | 丸め水準の gate を通過（127/128/144 行で 483/533/644 code 差、scale 一致）。単独の時間は未計測 |
+| Decode 上限 176 | Decode の running は中央値 40 / p90 43 / 最大 44。**Decode の待ち行列は平均 3.81 → 0.13** |
+
+**律速が Prefill に戻った。** Decode の待ちはほぼ消えた一方、Prefill 3 worker の待ち行列は平均 4.24（前回 3.3）。Decode 側の余力は Prefill の供給を超えたので、Decode 側の改善（MegaMoE M1 など）は今の構成では score に効かない。
+
+**Prefill は電力上限で動いている。** 1 Hz の telemetry（今回から記録）で、負荷中の Prefill 12 GPU は電力中央値 676〜693 W、SM クロック中央値 1500〜1560 MHz（最低 1380 MHz）。throttle 理由は SW power cap（0x4）だった。Decode の 4 GPU は同じ約 690 W で 1860〜1935 MHz。Prefill の速さは命令数よりも 1 演算あたりのエネルギーで決まる。命令を足して重なりを増やす変更（今回の PV 待ち対策、e4）が serving 形で負けるのと整合する。次に効く方向は、Prefill の総仕事量またはデータ移動量を減らす変更（FC2 combine payload の削減、GEMM の無駄な tile の除去など）であり、重なりの改善ではない。
