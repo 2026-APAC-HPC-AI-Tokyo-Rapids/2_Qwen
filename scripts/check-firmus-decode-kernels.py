@@ -692,7 +692,11 @@ def check_verify_scheduler_sharing():
 
 
 # Companion verify helpers are shared by the numeric gate and job-local selector.
-FA3_VERIFY_NAMES = ("control96", "p128s2", "p128split2", "p128split3")
+_candidate_table = Path(__file__).resolve().parents[1] / "kernels/fa3-verify/candidates.json"
+if not _candidate_table.is_file():
+    _candidate_table = Path("/opt/apac/fa3-verify/candidates.json")
+FA3_VERIFY_CANDIDATES = json.loads(_candidate_table.read_text())
+FA3_VERIFY_NAMES = tuple(c["name"] for c in FA3_VERIFY_CANDIDATES)
 
 
 def verify_inputs(batch, seed=93101, boundary=False):
@@ -741,7 +745,11 @@ def verify_step(commons, name):
     from sglang.srt.layers.attention import decode_fa3_verify as native
 
     common = commons[0]
-    outputs = [torch.empty_like(c["q"], dtype=torch.bfloat16) for c in commons]
+    fp8 = name != "stock" and native.output_fp8(name)
+    if fp8:
+        outputs = [(torch.empty_like(c["q"]).view(-1, 8192), torch.empty((64, c["q"].shape[0]), device=c["q"].device, dtype=torch.float32).T) for c in commons]
+    else:
+        outputs = [torch.empty_like(c["q"], dtype=torch.bfloat16) for c in commons]
     state = None if name == "stock" else native.allocate(common["cache_seqlens"], name)
 
     def step():
@@ -754,7 +762,11 @@ def verify_step(commons, name):
             if state is None:
                 flash_attn_with_kvcache(**c, out=out, scheduler_metadata=metadata, num_splits=1, pack_gqa=True)
             else:
-                native.forward(state, c["q"], c["k_cache"], c["v_cache"], c["page_table"], c["cache_seqlens"], c["cu_seqlens_q"], c["softmax_scale"], out)
+                native.forward(state, c["q"], c["k_cache"], c["v_cache"], c["page_table"], c["cache_seqlens"], c["cu_seqlens_q"], c["softmax_scale"], (out[0].view(-1,64,128), out[1]) if fp8 else out)
+            if not fp8:
+                # Include the actual downstream quant kernel and its launch gap
+                # for stock and every BF16 candidate, just as serving does.
+                sglang_per_token_group_quant_fp8(out.view(-1,8192), 128, column_major_scales=True, scale_tma_aligned=True)
         return outputs[93 % len(commons)]
 
     step.output = outputs[93 % len(commons)]
@@ -775,7 +787,7 @@ def verify_capture(step):
 
 
 def verify_errors(actual, expected, label):
-    assert actual.shape == expected.shape and actual.dtype == torch.bfloat16, label
+    assert actual.shape == expected.shape and actual.dtype in (torch.bfloat16, torch.float32), label
     assert actual.isfinite().all() and expected.isfinite().all(), label
     a, b = actual.float(), expected.float()
     error = a - b
@@ -784,6 +796,25 @@ def verify_errors(actual, expected, label):
     result = {"relative_l2": l2, "max_scaled_error": scaled, "max_abs": error.abs().amax().item(), "rms": error.square().mean().sqrt().item()}
     assert l2 <= .05 and scaled <= .25, (label, result)
     return result
+
+
+def verify_dequant(output):
+    if isinstance(output, tuple):
+        a, scale = output
+        return (a.float().view(-1,64,128) * scale[...,None]).view(-1,64,128)
+    return output
+
+
+def verify_quant_gate(output, stock):
+    if not isinstance(output, tuple):
+        return {}
+    a, scale = output
+    q, expected_scale = sglang_per_token_group_quant_fp8(stock.view(-1,8192), 128, column_major_scales=True, scale_tma_aligned=True)
+    assert scale.stride(0) == 1 and scale.stride(1) % 4 == 0
+    assert scale.isfinite().all() and (scale > 0).all()
+    # FP32 merge intentionally avoids BF16 rounding, so compare values and
+    # scales numerically; exact codes would reject the permitted finer result.
+    return {"quantized_values": verify_errors(a.float(), q.float(), "verify_fp8_codes"), "scales": verify_errors(scale, expected_scale, "verify_fp8_scales"), "stock_quant_dequant": verify_errors(verify_dequant(output), verify_dequant((q, expected_scale)), "verify_stock_quant_dequant"), "differing_codes": (a.view(torch.uint8) != q.view(torch.uint8)).sum().item()}
 
 
 def verify_validate_candidate(batch, name):
@@ -797,7 +828,7 @@ def verify_validate_candidate(batch, name):
             step.state["partial"].fill_(float("nan"))
         step()
         stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
-        metrics.append({"boundary": boundary, "stock": verify_errors(step.output, stock, name), "fp32": verify_errors(step.output, verify_fp32_reference(common, lengths), name + "_fp32")})
+        metrics.append({"boundary": boundary, "o_gemm_input": verify_quant_gate(step.output, stock), "stock": verify_errors(verify_dequant(step.output), stock, name), "fp32": verify_errors(verify_dequant(step.output), verify_fp32_reference(common, lengths), name + "_fp32")})
         graph = verify_capture(step)
         for replay in range(2):
             for key in ("q", "k_cache", "v_cache"):
@@ -812,12 +843,12 @@ def verify_validate_candidate(batch, name):
                 step.state["partial"].fill_(float("nan"))
             graph.replay()
             stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
-            metrics.append({"boundary": boundary, "replay": replay, "stock": verify_errors(step.output, stock, name + "_changed94"), "fp32": verify_errors(step.output, verify_fp32_reference(common, lengths), name + "_changed_fp32")})
+            metrics.append({"boundary": boundary, "replay": replay, "o_gemm_input": verify_quant_gate(step.output, stock), "stock": verify_errors(verify_dequant(step.output), stock, name + "_changed94"), "fp32": verify_errors(verify_dequant(step.output), verify_fp32_reference(common, lengths), name + "_changed_fp32")})
             state = step.state
-            if state is not None and state["candidate"] >= 2:
-                splits = state["candidate"]
+            if state is not None and state["spec"]["splits"] > 1:
+                splits = state["spec"]["splits"]
                 for b, length in enumerate(lengths):
-                    blocks = (length + 127) // 128
+                    blocks = (length + state["spec"]["block_n"] - 1) // state["spec"]["block_n"]
                     per_split = (blocks + splits - 1) // splits
                     for split in range(splits):
                         if split * per_split >= blocks:
@@ -930,7 +961,7 @@ def check_dense_errors(metrics):
 
 
 def dense_errors(actual, expected):
-    assert actual.shape == expected.shape and actual.dtype == torch.bfloat16
+    assert actual.shape == expected.shape and actual.dtype in (torch.bfloat16, torch.float32)
     error = actual.float() - expected
     metrics = {"finite": bool(actual.isfinite().all() and expected.isfinite().all()), "relative_l2": (error.norm() / expected.norm().clamp_min(1e-12)).item(), "max_scaled_error": (error.abs().amax() / expected.abs().amax().clamp_min(1e-12)).item()}
     check_dense_errors(metrics)
@@ -1042,7 +1073,7 @@ def check_prefill_fp8_integration():
         deepgemm_w8a8_block_fp8_linear_with_fallback,
     )
 
-    for lengths in ([1], [17, 13], [129, 257], [3986], [4096]):
+    for lengths in ([1], [17, 13], [129, 257], [2048, 2048], [3986], [4027], [4096]):
         rows = sum(lengths)
         padded = (rows + 3) // 4 * 4 + 4
         q, k, v = [(torch.randn(rows, h, 128, device="cuda", dtype=torch.bfloat16) * .5).to(torch.float8_e4m3fn) for h in (64, 4, 4)]
@@ -1056,13 +1087,19 @@ def check_prefill_fp8_integration():
 
         def validate(actual):
             expected = reference()
+            if fixed:
+                fallback = prefill_fp8.attention(q, k, v, cu, max(lengths), 128**-.5, padded)
+                assert torch.equal(actual[0].view(torch.uint8), fallback[0].view(torch.uint8)), (lengths, "fixed/fallback bytes")
+                assert torch.equal(actual[1], fallback[1]), (lengths, "fixed/fallback scales")
             assert torch.equal(actual[0][:rows].view(torch.uint8), expected[0].view(torch.uint8)), lengths
             assert torch.equal(actual[1][:rows], expected[1]), lengths
             assert (actual[0][rows:].float() == 0).all() and (actual[1] > 0).all()
             return expected
 
+        fixed = len(lengths) == 1 and 3584 <= rows <= 4096
+
         def call():
-            return prefill_fp8.attention(q, k, v, cu, max(lengths), 128**-.5, padded)
+            return prefill_fp8.attention(q, k, v, cu, max(lengths), 128**-.5, padded, fixed=fixed)
         pair = call()
         validate(pair)
         stream = torch.cuda.Stream()

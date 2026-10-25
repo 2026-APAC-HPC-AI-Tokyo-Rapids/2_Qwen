@@ -28,7 +28,7 @@
  
          assert not (
              model_runner.sliding_window_size is not None
-@@ -392,6 +400,33 @@
+@@ -392,6 +400,35 @@
              )
          return metadata.verify_scheduler_metadata
  
@@ -52,6 +52,8 @@
 +            return None
 +        from sglang.srt.layers.attention import decode_fa3_verify
 +
++        if decode_fa3_verify.output_fp8(self._decode_fa3_verify_name) and not getattr(layer, "decode_fp8_output", False):
++            return None
 +        if value_cache.dtype != key_cache.dtype:
 +            return None
 +        if metadata.verify_fa3_state is None:
@@ -70,7 +72,7 @@
              return
          # Single-CG has no Python between steps, so one capturable kernel updates
          # the persistent metadata.
-@@ -1517,31 +1553,35 @@
+@@ -1517,31 +1553,37 @@
                      **kwargs,
                  )
              else:
@@ -102,6 +104,8 @@
 +                result = None
 +                if self._decode_fa3_verify_name:
 +                    result = self._run_decode_fa3_verify(q, key_cache, value_cache, layer, forward_batch, causal, window_size, use_cascade_attn, use_local_attn, page_table, cache_seqlens, cu_seqlens_q, _fa_out, kwargs)
++                    if isinstance(result, tuple):
++                        return result
 +                if result is None:
 +                    verify_sched = self._get_verify_scheduler_metadata(
 +                        q, key_cache, layer, forward_batch, causal, window_size,
@@ -133,15 +137,17 @@
                  o, softmax_lse, *rest = result
 --- /dev/null
 +++ b/python/sglang/srt/layers/attention/decode_fa3_verify.py
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,81 @@
 +"""Bounded opt-in EAGLE3 verify kernels; fixed image companion ABI."""
 +
++import json
 +from pathlib import Path
 +
 +import torch
 +
-+NAMES = ("control96", "p128s2", "p128split2", "p128split3")
 +LIBRARY = Path("/opt/apac/fa3-verify/libapac_fa3_verify.so")
++CANDIDATES = json.loads(LIBRARY.with_name("candidates.json").read_text())
++NAMES = tuple(c["name"] for c in CANDIDATES)
 +_loaded = False
 +
 +
@@ -158,7 +164,23 @@
 +        def fwd_fake(q, k, v, pages, lengths, cu_q, out, lse, partial, partial_lse, metadata, candidate, scale):
 +            return None
 +
++        @torch.library.register_fake("apac_fa3_verify::fwd_fp8_out")
++        def fwd_fp8_fake(q, k, v, pages, lengths, cu_q, out, lse, partial, partial_lse, metadata, candidate, scale, scales):
++            return None
++
++        @torch.library.register_fake("apac_fa3_verify::prefill_fwd_out")
++        def prefill_fake(q, k, v, cu, out, scales, lse, metadata, maxlen, scale):
++            return None
++
++        @torch.library.register_fake("apac_fa3_verify::prefill_fixed_fwd_out")
++        def prefill_fixed_fake(q, k, v, cu, out, scales, lse, metadata, maxlen, scale):
++            return None
++
 +        _loaded = True
++
++
++def output_fp8(name):
++    return CANDIDATES[NAMES.index(name)]["output"] == "fp8"
 +
 +
 +def allocate(lengths, name):
@@ -166,10 +188,12 @@
 +    candidate = NAMES.index(name)
 +    batch = lengths.numel()
 +    assert 32 <= batch <= 48
-+    splits = 1 if candidate < 2 else candidate
++    spec = CANDIDATES[candidate]
++    splits = spec["splits"]
 +    options = {"device": lengths.device, "dtype": torch.float32}
 +    return {
 +        "candidate": candidate,
++        "spec": spec,
 +        "metadata": torch.empty(4 * ((batch + 3) // 4 * 4) + 1, device=lengths.device, dtype=torch.int32),
 +        "lse": torch.empty((64, 4 * batch), **options),
 +        "partial": torch.empty((splits, 64, 4 * batch, 128) if splits > 1 else (0,), **options),
@@ -182,6 +206,15 @@
 +
 +
 +def forward(state, q, k, v, pages, lengths, cu_q, scale, out=None):
++    if state["spec"]["output"] == "fp8":
++        rows = q.shape[0]
++        if isinstance(out, tuple):
++            out, scales = out
++        else:
++            out = torch.empty_like(q)
++            scales = torch.empty((64, (rows + 3) // 4 * 4), device=q.device, dtype=torch.float32).T[:rows]
++        torch.ops.apac_fa3_verify.fwd_fp8_out(q, k, v, pages, lengths, cu_q, out, state["lse"], state["partial"], state["partial_lse"], state["metadata"], state["candidate"], scale, scales)
++        return out.view(rows, 8192), scales
 +    if out is None:
 +        out = torch.empty_like(q, dtype=torch.bfloat16)
 +    torch.ops.apac_fa3_verify.fwd_out(q, k, v, pages, lengths, cu_q, out, state["lse"], state["partial"], state["partial_lse"], state["metadata"], state["candidate"], scale)

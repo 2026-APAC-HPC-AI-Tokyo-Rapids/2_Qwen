@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+CANDIDATES = json.loads((ROOT / "kernels/fa3-verify/candidates.json").read_text())
 
 
 def selector():
@@ -99,15 +100,17 @@ def helper(tmp_path, monkeypatch):
         shapes.append((shape, kwargs))
         return object()
 
-    ops = types.SimpleNamespace(prepare=lambda *args: calls.append(("prepare", args)), fwd_out=lambda *args: calls.append(("fwd", args)))
+    ops = types.SimpleNamespace(prepare=lambda *args: calls.append(("prepare", args)), fwd_out=lambda *args: calls.append(("fwd", args)), fwd_fp8_out=lambda *args: calls.append(("fp8", args)))
     torch = types.SimpleNamespace(ops=types.SimpleNamespace(load_library=loads.append, apac_fa3_verify=ops), library=types.SimpleNamespace(register_fake=lambda _: lambda f: f), empty=empty, float32="fp32", int32="int32", bfloat16="bf16")
     monkeypatch.setitem(sys.modules, "torch", torch)
-    ns = runpy.run_path(str(tmp_path / "python/sglang/srt/layers/attention/decode_fa3_verify.py"))
+    module = tmp_path / "python/sglang/srt/layers/attention/decode_fa3_verify.py"
+    module.write_text(module.read_text().replace("/opt/apac/fa3-verify", str(ROOT / "kernels/fa3-verify")))
+    ns = runpy.run_path(str(module))
     return ns, loads, calls, shapes
 
 
 @pytest.mark.parametrize("batch", range(32, 49))
-@pytest.mark.parametrize("name,splits", [("control96", 1), ("p128s2", 1), ("p128split2", 2), ("p128split3", 3)])
+@pytest.mark.parametrize("name,splits", [(c["name"], c["splits"]) for c in CANDIDATES if c["output"] == "bf16"])
 def test_workspace_is_owned_by_forward_and_split_buffers_stay_fp32(helper, batch, name, splits):
     ns, loads, calls, shapes = helper
     assert not loads, "import alone must not load the companion"
@@ -189,7 +192,7 @@ def backend_method(monkeypatch):
     ns = {"torch": types.SimpleNamespace(float8_e4m3fn="fp8")}
     exec(compile(ast.Module(body=[method], type_ignores=[]), 'companion-backend', 'exec'), ns)  # noqa: S102 - complete tracked production method
     calls = []
-    native = types.SimpleNamespace(allocate=lambda *args: calls.append(("allocate", args)) or object(), prepare=lambda *args: calls.append(("prepare", args)), forward=lambda *args: calls.append(("forward", args)) or args[-1])
+    native = types.SimpleNamespace(output_fp8=lambda name: False, allocate=lambda *args: calls.append(("allocate", args)) or object(), prepare=lambda *args: calls.append(("prepare", args)), forward=lambda *args: calls.append(("forward", args)) or args[-1])
     monkeypatch.setitem(sys.modules, "sglang.srt.layers.attention", types.SimpleNamespace(decode_fa3_verify=native))
     metadata = types.SimpleNamespace(cache_seqlens_int32=VerifyTensor(32), max_seq_len_q=4, verify_fa3_state=None)
     backend = types.SimpleNamespace(forward_metadata=metadata, fa_impl_ver=3, use_mla=False, attn_cp_size=1, topk=1, page_size=64, _decode_fa3_verify_name="p128split2")
@@ -265,3 +268,25 @@ def test_image_compile_control_excludes_the_serving_candidate(tmp_path, serving_
     exec(compile(ast.Module(body=[node], type_ignores=[]), "image-control-patches", "exec"), ns)  # noqa: S102 - actual build-helper selection
     assert ns["patches"] == expected
     assert all(p.read_bytes() for p in ns["patches"])
+
+
+@pytest.mark.parametrize("spec", [c for c in CANDIDATES if c["output"] == "fp8"])
+def test_fp8_forward_preserves_preallocated_gemm_input_and_never_calls_bf16_op(helper, spec):
+    ns, _, calls, shapes = helper
+    lengths = types.SimpleNamespace(numel=lambda: 40, device="cuda:0")
+    state = ns["allocate"](lengths, spec["name"])
+    assert shapes[2][0][0] == spec["splits"]
+    assert ns["output_fp8"](spec["name"])
+
+    class Tensor:
+        shape = (160,64,128)
+
+        def view(self, *shape):
+            return self
+
+    output, scales = Tensor(), object()
+    before = len(shapes)
+    q = Tensor()
+    pair = ns["forward"](state,q,object(),object(),object(),lengths,object(),.1,(output,scales))
+    assert pair == (output,scales) and len(shapes) == before
+    assert calls[-1][0] == "fp8" and calls[-1][1][-1] is scales

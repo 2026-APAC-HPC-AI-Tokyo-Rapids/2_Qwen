@@ -51,19 +51,6 @@
  
  
  def add_rmsnorm_group_quant_fp8(
---- a/python/sglang/srt/layers/attention/decode_fa3_verify.py
-+++ b/python/sglang/srt/layers/attention/decode_fa3_verify.py
-@@ -20,6 +20,10 @@
- 
-         @torch.library.register_fake("apac_fa3_verify::fwd_out")
-         def fwd_fake(q, k, v, pages, lengths, cu_q, out, lse, partial, partial_lse, metadata, candidate, scale):
-+            return None
-+
-+        @torch.library.register_fake("apac_fa3_verify::prefill_fwd_out")
-+        def prefill_fake(q, k, v, cu, out, scales, lse, metadata, maxlen, scale):
-             return None
- 
-         _loaded = True
 --- a/python/sglang/srt/layers/attention/flashattention_backend.py
 +++ b/python/sglang/srt/layers/attention/flashattention_backend.py
 @@ -1201,6 +1201,7 @@
@@ -74,7 +61,7 @@
      ):
          if score_mod is not None and self.fa_impl_ver != 4:
              raise RuntimeError("score_mod is only supported by the FA4 backend.")
-@@ -1382,6 +1383,19 @@
+@@ -1382,6 +1383,20 @@
              # range. Slice all inputs and the supplied output consistently;
              # paged KV has already been written by the prologue, for transfer.
              rows = sum(forward_batch.extend_seq_lens_cpu)
@@ -90,7 +77,8 @@
 +            ):
 +                from sglang.srt.layers.attention.prefill_fp8 import attention
 +
-+                return attention(q.view(-1,64,128)[:rows], k.view(-1,4,128)[:rows], v.view(-1,4,128)[:rows], metadata.cu_seqlens_q, metadata.max_seq_len_q, layer.scaling, q.shape[0])
++                fixed = getattr(layer, "fixed_prefill_output", False) and use_fixed_prefill(forward_batch, layer, self, q.view(-1,64,128), k.view(-1,4,128), v.view(-1,4,128), output_supported=prefill_fp8_output, out=_fa_out, descales=(q_descale,k_descale,v_descale), extras=(sinks,score_mod,aux_tensors,rel_bias,rel_bias_event), cp_mode=is_cp_mode, local=use_local_attn, swa=is_swa_layer, causal=causal, save_kv_cache=save_kv_cache)
++                return attention(q.view(-1,64,128)[:rows], k.view(-1,4,128)[:rows], v.view(-1,4,128)[:rows], metadata.cu_seqlens_q, metadata.max_seq_len_q, layer.scaling, q.shape[0], fixed=fixed)
              contiguous_out = _fa_out
              if rows != q.shape[0] and contiguous_out is None:
                  contiguous_out = torch.empty((q.shape[0], layer.tp_q_head_num, layer.v_head_dim), device=q.device, dtype=torch.bfloat16)
@@ -120,7 +108,7 @@
  from sglang.srt.model_loader.weight_utils import default_weight_loader
  from sglang.srt.models.qwen2_moe import Qwen2MoeMLP as Qwen3MoeMLP
  from sglang.srt.models.qwen2_moe import Qwen2MoeModel
-@@ -888,12 +888,18 @@
+@@ -888,12 +888,23 @@
              enable_fused_set_kv_buffer(forward_batch)
              and self.compatible_with_fused_kv_buffer
          ))
@@ -129,6 +117,11 @@
 +            from sglang.srt.layers.attention.prefill_fp8 import linear_supported
 +
 +            attn_kwargs["prefill_fp8_output"] = linear_supported(self, "O", self.o_proj)
++        self.attn.decode_fp8_output = False
++        if get_server_args().disaggregation_mode == "decode" and not get_server_args().enable_lora and forward_batch.forward_mode.is_target_verify():
++            from sglang.srt.layers.attention.prefill_fp8 import linear_supported
++
++            self.attn.decode_fp8_output = linear_supported(self, "O", self.o_proj)
          attn_output = self.attn(
              q,
              k,
@@ -141,7 +134,7 @@
  
 --- /dev/null
 +++ b/python/sglang/srt/layers/attention/prefill_fp8.py
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,63 @@
 +"""Qwen TP1 Prefill: FP8 attention output and specialized dense projections."""
 +
 +import torch
@@ -189,7 +182,7 @@
 +    return out, None
 +
 +
-+def attention(q, k, v, cu, maxlen, softmax_scale, padded_rows):
++def attention(q, k, v, cu, maxlen, softmax_scale, padded_rows, *, fixed=False):
 +    from sglang.srt.layers.attention.decode_fa3_verify import load
 +
 +    load()
@@ -199,7 +192,8 @@
 +    scales = torch.empty((64, (padded_rows + 3) // 4 * 4), device=q.device, dtype=torch.float32).T[:padded_rows]
 +    lse = torch.empty((64, rows), device=q.device, dtype=torch.float32)
 +    metadata = torch.empty(17, device=q.device, dtype=torch.int32)
-+    torch.ops.apac_fa3_verify.prefill_fwd_out(q, k, v, cu, out, scales, lse, metadata, maxlen, softmax_scale)
++    op = torch.ops.apac_fa3_verify.prefill_fixed_fwd_out if fixed else torch.ops.apac_fa3_verify.prefill_fwd_out
++    op(q, k, v, cu, out, scales, lse, metadata, maxlen, softmax_scale)
 +    if padded_rows > rows:
 +        out[rows:].zero_()
 +        scales[rows:].fill_(1.0e-10 / 448.0)

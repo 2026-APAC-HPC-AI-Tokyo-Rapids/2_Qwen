@@ -17,7 +17,11 @@ from runpy import run_path
 BLOCKS = 2
 PAIRS = 20
 LAYERS = 94
-NAMES = ("control96", "p128s2", "p128split2", "p128split3")
+_candidate_table = Path(__file__).resolve().parents[1] / "kernels/fa3-verify/candidates.json"
+if not _candidate_table.is_file():
+    _candidate_table = Path("/opt/apac/fa3-verify/candidates.json")
+FA3_VERIFY_CANDIDATES = json.loads(_candidate_table.read_text())
+NAMES = tuple(c["name"] for c in FA3_VERIFY_CANDIDATES)
 
 
 def summary(values):

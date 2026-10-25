@@ -210,7 +210,7 @@ index 7448e8d3..502a7122 100644
  from typing import TYPE_CHECKING, Optional
  
  import numpy as np
-+from sglang.srt.layers.attention.prefill_contiguous import use_contiguous_prefill
++from sglang.srt.layers.attention.prefill_contiguous import use_contiguous_prefill, use_fixed_prefill
 +
  import torch
  
@@ -267,7 +267,7 @@ new file mode 100644
 index 00000000..9dbb0ac2
 --- /dev/null
 +++ b/python/sglang/srt/layers/attention/prefill_contiguous.py
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,50 @@
 +"""Host-only eligibility shared by the Qwen prologue and FA3 consumer."""
 +from sglang.srt.model_executor.forward_batch_info import ForwardMode
 +
@@ -287,6 +287,37 @@ index 00000000..9dbb0ac2
 +        and forward_batch.encoder_lens is None
 +        and not forward_batch.mha_return_lse
 +    )
++
++def use_fixed_prefill(forward_batch, layer, backend, q, k, v, *, output_supported, out=None, descales=(None, None, None), extras=(None, None, None, None, None), cp_mode=False, local=False, swa=False, causal=True, save_kv_cache=False):
++    """One guard for the row-major producer and the fixed N224 consumer."""
++    import torch
++    from sglang.srt.runtime_context import get_server_args
++
++    lengths = forward_batch.extend_seq_lens_cpu
++    args = get_server_args()
++    if not (
++        use_contiguous_prefill(forward_batch)
++        and lengths is not None and len(lengths) == 1 and 3584 <= lengths[0] <= 4096
++        and args.disaggregation_mode == "prefill" and not args.enable_lora
++        and args.cuda_graph_config.prefill.backend == "disabled"
++        and getattr(backend, "fa_impl_ver", None) == 3 and not backend.use_mla
++        and backend.num_splits in (0, 1) and backend.attn_cp_size == 1
++        and output_supported and out is None and not save_kv_cache
++        and not cp_mode and not local and not swa and causal
++        and (layer.tp_q_head_num, layer.tp_k_head_num, layer.tp_v_head_num) == (64, 4, 4)
++        and layer.head_dim == layer.v_head_dim == 128
++        and not layer.is_cross_attention and layer.logit_cap == 0
++        and layer.k_scale is None and layer.v_scale is None
++        and all(x is None for x in (*descales, *extras))
++        and k is not None and v is not None
++        and q.dtype == k.dtype == v.dtype == torch.float8_e4m3fn
++        and q.shape[0] >= lengths[0]
++        and backend.forward_metadata.cu_seqlens_q.numel() == 2
++    ):
++        return False
++    props = torch.cuda.get_device_properties(q.device)
++    return (props.major, props.minor, props.multi_processor_count) == (9, 0, 132) and props.shared_memory_per_block_optin >= 191488
++
 diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
 index 91b47eca..22160913 100644
 --- a/python/sglang/srt/models/qwen3_moe.py
@@ -295,7 +326,7 @@ index 91b47eca..22160913 100644
  import math
  from typing import Any, Dict, Iterable, List, Optional, Tuple, TypeVar
  
-+from sglang.srt.layers.attention.prefill_contiguous import use_contiguous_prefill
++from sglang.srt.layers.attention.prefill_contiguous import use_contiguous_prefill, use_fixed_prefill
 +
  import torch
  from torch import nn
@@ -308,7 +339,7 @@ index 91b47eca..22160913 100644
          apply_qknorm_rope_fp8_q,
          apply_rope_fp8_q,
      )
-@@ -776,6 +779,15 @@ class Qwen3MoeAttention(nn.Module):
+@@ -776,6 +779,19 @@ class Qwen3MoeAttention(nn.Module):
                      kv_args = (v.view(-1, self.num_kv_heads, self.head_dim), k_cache, v_cache, forward_batch.out_cache_loc)
              if kv_args is None:
                  apply_qknorm_rope_fp8_q(*rope_args)
@@ -319,6 +350,10 @@ index 91b47eca..22160913 100644
 +                contiguous_k = torch.empty(kv_args[0].shape, dtype=torch.float8_e4m3fn, device=k.device)
 +                contiguous_v = torch.empty_like(contiguous_k)
 +                apply_qknorm_rope_fp8_prefill(*rope_args, *kv_args, contiguous_k, contiguous_v)
++                from sglang.srt.layers.attention.prefill_fp8 import linear_supported
++                from sglang.srt.model_executor.forward_context import get_attn_backend
++
++                self.attn.fixed_prefill_output = use_fixed_prefill(forward_batch, self.attn, get_attn_backend(), q_fp8.view(-1,self.num_heads,self.head_dim), contiguous_k, contiguous_v, output_supported=linear_supported(self, "O", self.o_proj))
 +                k, v = contiguous_k, contiguous_v
 +                self._stored_fp8_kv_last_call = True
              else:
