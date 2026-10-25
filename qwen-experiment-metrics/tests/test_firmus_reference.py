@@ -210,12 +210,12 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 240, "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
-    assert config["decode_max_running_requests"] == 160  # 40 requests/rank, four verification rows/request
+    assert config["decode_max_running_requests"] == 176  # 44 requests/rank, four verification rows/request
     assert config["decode_polling_interval"] == 1  # Async admission replaces the polling interval of 2
     assert config["prefill"]["optimistic_prefill_attempts"] == 2
     assert config["decode_max_running_requests"] + config["decode_extra_slots"] * config["decode_dp_size"] >= config["concurrency"]
     assert max(config["decode_cuda_graph_bs"]) == config["decode_max_running_requests"] // config["decode_dp_size"]
-    assert config["decode_cuda_graph_bs"][-1] == 40
+    assert config["decode_cuda_graph_bs"][-1] == 44
     # KV capacity is per DP rank and includes both running and transfer slots.
     slots_per_rank = config["decode_max_running_requests"] // config["decode_dp_size"] + config["decode_extra_slots"]
     assert config["decode_max_total_tokens"] >= slots_per_rank * (4096 + 128)

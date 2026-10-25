@@ -48,7 +48,7 @@ def test_failed_or_inconsistent_candidate_is_excluded_without_losing_others(fail
         result["blocks"][0]["candidate"] = [46.9]
     else:
         result["blocks"][1]["candidate"] = [51.]
-    assert ns["choose_candidate"](ranks, 40)["winner"] == "p128split2"
+    assert ns["choose_candidate"](ranks, 40)["winner"] == "p128split2-fp8"
 
 
 def test_no_eligible_candidate_clears_the_environment():
@@ -131,12 +131,13 @@ def test_workspace_is_owned_by_forward_and_split_buffers_stay_fp32(helper, batch
 
 def test_build_and_serving_are_wired_without_rejected_probes():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert config["decode_max_running_requests"] == 160
+    assert config["decode_max_running_requests"] == 176
     assert "patches/sglang/decode-fa3-verify.patch" in config["sglang_overlay_patches"]
-    assert config["sglang_overlay_patches"][-3:] == [
+    assert config["sglang_overlay_patches"][-4:] == [
         "patches/sglang/prefill-fp8-integration.patch",
         "patches/sglang/prefill-qkv-fast-fp8.patch",
         "patches/sglang/decode-qknorm-fast-fp8.patch",
+        "patches/sglang/decode-add-rmsnorm-group-quant.patch",
     ]
     assert not any("decode-gate" in p or "l2-prefetch" in p for p in config["sglang_overlay_patches"] + config["deep_gemm_overlay_patches"])
     assert "sm90-decode-l2-prefetch" not in (ROOT / "patches/deep-gemm-host/series").read_text()
@@ -161,9 +162,9 @@ def test_serving_gate_only_checks_the_selected_fa3(monkeypatch):
     monkeypatch.delenv("SGLANG_DECODE_FA3_VERIFY", raising=False)
     ns["check_fa3_verify"](selected_only=True)
     assert calls == []
-    monkeypatch.setenv("SGLANG_DECODE_FA3_VERIFY", "p128split2")
+    monkeypatch.setenv("SGLANG_DECODE_FA3_VERIFY", "p128split2-fp8")
     ns["check_fa3_verify"](selected_only=True)
-    assert calls == [(b, "p128split2") for b in range(32, 49)]
+    assert calls == [(b, "p128split2-fp8") for b in range(32, 49)]
 
 
 class VerifyTensor:
@@ -195,7 +196,7 @@ def backend_method(monkeypatch):
     native = types.SimpleNamespace(output_fp8=lambda name: False, allocate=lambda *args: calls.append(("allocate", args)) or object(), prepare=lambda *args: calls.append(("prepare", args)), forward=lambda *args: calls.append(("forward", args)) or args[-1])
     monkeypatch.setitem(sys.modules, "sglang.srt.layers.attention", types.SimpleNamespace(decode_fa3_verify=native))
     metadata = types.SimpleNamespace(cache_seqlens_int32=VerifyTensor(32), max_seq_len_q=4, verify_fa3_state=None)
-    backend = types.SimpleNamespace(forward_metadata=metadata, fa_impl_ver=3, use_mla=False, attn_cp_size=1, topk=1, page_size=64, _decode_fa3_verify_name="p128split2")
+    backend = types.SimpleNamespace(forward_metadata=metadata, fa_impl_ver=3, use_mla=False, attn_cp_size=1, topk=1, page_size=64, _decode_fa3_verify_name="p128split2-fp8")
     layer = types.SimpleNamespace(tp_q_head_num=64, tp_k_head_num=4, tp_v_head_num=4, head_dim=128, v_head_dim=128, logit_cap=0, is_cross_attention=False, scaling=.1)
     fb = types.SimpleNamespace(forward_mode=types.SimpleNamespace(is_target_verify=lambda: True), spec_info=None)
     q, kv = VerifyTensor(32 * 4 * 64 * 128), VerifyTensor(1)
@@ -241,7 +242,7 @@ def test_unsupported_geometry_returns_before_companion_import_or_allocation(back
     assert method(*args) is None and calls == []
 
 
-@pytest.mark.parametrize("cap,expected", [(160, (36, 38, 40)), (192, (44, 46, 48))])
+@pytest.mark.parametrize("cap,expected", [(176, (40, 42, 44)), (160, (36, 38, 40)), (192, (44, 46, 48))])
 def test_measurement_and_selection_batches_follow_the_config(cap, expected):
     tree = ast.parse((ROOT / "scripts/select-firmus-decode-fa3.py").read_text())
     run = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run_selection")

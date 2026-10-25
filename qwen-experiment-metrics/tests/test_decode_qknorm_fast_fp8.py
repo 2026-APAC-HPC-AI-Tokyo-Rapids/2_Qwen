@@ -78,6 +78,6 @@ def test_overlay_only_changes_shared_helper_and_adds_separate_gpu_check(tmp_path
     check = header.with_name("decode_fp8_check.cuh").read_text()
     assert '#include "rope.cuh"' in check and "__NV_NOSAT" in check and "actual[i] = to_fp8x2(value)" in check
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert config["sglang_overlay_patches"][-1] == str(PATCH.relative_to(ROOT))
+    assert config["sglang_overlay_patches"][-2:] == [str(PATCH.relative_to(ROOT)), "patches/sglang/decode-add-rmsnorm-group-quant.patch"]
     gate = (ROOT / "scripts/check-firmus-decode-kernels.py").read_text()
     assert "    check_decode_fp8_conversion()\n" in gate.split('if __name__ == "__main__":')[1]

@@ -18,13 +18,13 @@ def test_dispatch_compiles_unique_main_kernels_and_keeps_split_counts(tmp_path):
     tasks = ns['generate_dispatch'](ROOT / 'kernels/fa3-verify', tmp_path)
     assert len(tasks) == 8  # output and split-count variants share their main kernel
     header = (tmp_path / 'candidates.h').read_text()
-    assert len(TABLE) == 22 and len({c['name'] for c in TABLE}) == 22
+    assert len(TABLE) == 16 and len({c['name'] for c in TABLE}) == 16
     for row in TABLE:
         assert row['name'] in header
         assert 11264 + 384 * row['block_n'] * row['stages'] <= ns['SM90_OPTIN_BYTES']
-    for name, splits in [('p128split3-s3', 3), ('p128split3-s4', 3), ('p128split2-s3', 2)]:
+    for name, splits in [('p128split3-s3-fp8', 3), ('p128split3-s4-fp8', 3), ('p128split2-s3-fp8', 2)]:
         assert next(c for c in TABLE if c['name'] == name)['splits'] == splits
-        assert next(c for c in TABLE if c['name'] == name + '-fp8')['output'] == 'fp8'
+        assert next(c for c in TABLE if c['name'] == name)['output'] == 'fp8'
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ def test_fixed_guard_rejects_unsupported_contracts(fixed, failure):
     assert not ns['use_fixed_prefill'](batch,layer,backend,q,q,q,**kw)
 
 
-@pytest.mark.parametrize('name,expected_quant', [('stock',94),('p128split3-s3',94),('p128split3-s3-fp8',0)])
+@pytest.mark.parametrize('name,expected_quant', [('stock',94),('control96',94),('p128split3-s3-fp8',0)])
 def test_timed_step_quantizes_bf16_paths_once_per_layer(monkeypatch, name, expected_quant):
     tree = ast.parse((ROOT / 'scripts/check-firmus-decode-kernels.py').read_text())
     function = next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name == 'verify_step')

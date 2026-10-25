@@ -516,6 +516,67 @@ def check_add_rmsnorm_group_quant():
     print("PASS: fused add-RMSNorm + group-128 FP8 quant within rounding of flashinfer fused_add_rmsnorm + per_token_group_quant (residual exact); zero/odd/Prefill rows; graph replay", flush=True)
 
 
+
+def check_decode_add_rmsnorm_group_quant():
+    """Strict Decode gate; no tolerance inherited from the Prefill screen."""
+    from sgl_kernel import fused_add_rmsnorm
+
+    try:
+        import sglang.kernels.ops.layernorm.add_rmsnorm_group_quant as nq
+    except ImportError:
+        print("SKIP: norm/quant overlay is not in this SGLang tree", flush=True)
+        return
+
+    if not hasattr(nq, "decode_add_rmsnorm_group_quant_fp8"):
+        print("SKIP: one-row Decode norm/quant is not in this SGLang tree", flush=True)
+        return
+    decode_add_rmsnorm_group_quant_fp8 = nq.decode_add_rmsnorm_group_quant_fp8
+
+    torch.manual_seed(1764096)
+    weight = (torch.randn(4096, device="cuda") * .1 + 1).bfloat16()
+    for rows in (0, 1, 127, 128, 144, 160, 164, 168, 172, 176, 177, 192):
+        x = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16)
+        residual = torch.randn_like(x)
+        work = residual.clone()
+
+        def reference():
+            y, r = x.clone(), residual.clone()
+            if rows:
+                fused_add_rmsnorm(y, r, weight, 1e-6)
+            q, s = sglang_per_token_group_quant_fp8(y, 128, column_major_scales=True, scale_tma_aligned=True)
+            return q, s, r
+
+        def compare(actual, label):
+            expected = reference()
+            assert actual[1].stride() == expected[1].stride(), (label, "scale strides")
+            for name, a, b in zip(("fp8", "scale", "residual"), actual, expected):
+                assert torch.equal(a.contiguous().view(torch.uint8), b.contiguous().view(torch.uint8)), (label, name, "not bitwise equal")
+            print(json.dumps({"check": label, "bitwise_equal": True}), flush=True)
+
+        if rows:
+            x[0].zero_()
+            residual[0].zero_()
+            work.copy_(residual)
+        out = decode_add_rmsnorm_group_quant_fp8(x, work, weight, 1e-6)
+        compare((*out, work), f"decode_norm_quant_{rows}")
+        if rows not in (160, 176, 192):
+            continue
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            decode_add_rmsnorm_group_quant_fp8(x, work, weight, 1e-6)
+        torch.cuda.current_stream().wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            out = decode_add_rmsnorm_group_quant_fp8(x, work, weight, 1e-6)
+        for replay in range(3):
+            x.copy_(torch.randn_like(x) * (replay + 1))
+            residual.copy_(torch.randn_like(residual) * 8)
+            work.copy_(residual)
+            graph.replay()
+            compare((*out, work), f"decode_norm_quant_graph_{rows}_{replay}")
+
+
 def check_prefill_attention():
     if not hasattr(rope_ops, "apply_qknorm_rope_fp8_prefill"):
         print("SKIP: contiguous Prefill is not in this SGLang tree", flush=True)
@@ -1327,6 +1388,7 @@ if __name__ == "__main__":
     check_topk_mask()
     check_decode_router_padding()
     check_add_rmsnorm_group_quant()
+    check_decode_add_rmsnorm_group_quant()
     check_prefill_fp8_integration()
     check_prefill_fixed_variants()
     check_prefill_attention()

@@ -43,6 +43,12 @@ try:
 except ImportError:
     add_rmsnorm_group_quant_fp8 = None
 try:
+    from sglang.kernels.ops.layernorm.add_rmsnorm_group_quant import (
+        decode_add_rmsnorm_group_quant_fp8,
+    )
+except ImportError:
+    decode_add_rmsnorm_group_quant_fp8 = None
+try:
     from sglang.kernels.ops.moe.trtllm_lora_temp.topk_softmax_pack import (
         topk_softmax_masked,
     )
@@ -167,12 +173,14 @@ def bench_norm_quant(write):
 
     def op(x, residual):
         # input_layernorm (fused add) + the QKV GEMM's group-128 FP8 quant.
+        if 128 <= x.shape[0] <= 192 and decode_add_rmsnorm_group_quant_fp8 is not None:
+            return decode_add_rmsnorm_group_quant_fp8(x, residual, weight, EPS)
         if add_rmsnorm_group_quant_fp8 is not None:
             return add_rmsnorm_group_quant_fp8(x, residual, weight, EPS)
         fused_add_rmsnorm(x, residual, weight, EPS)
         return sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
 
-    for rows in ROWS:
+    for rows in (*ROWS, 160, 164, 168, 172, 176, 192):
         x, residual = inputs(rows, 11)
         q, scale = op(x, residual)
         sha = sha256(q, scale, residual)

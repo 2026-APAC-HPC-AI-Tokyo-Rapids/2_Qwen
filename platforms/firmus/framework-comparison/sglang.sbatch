@@ -79,10 +79,13 @@ test -r "${SGLANG}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && 
 mkdir -p "${ART}"
 worker_pids=()
 profile_capture_pid=
+telemetry_pids=()
 cleanup_all() {
   status=$?
   trap - EXIT INT TERM
   if [[ -n "${profile_capture_pid}" ]]; then kill "${profile_capture_pid}" 2>/dev/null || true; wait "${profile_capture_pid}" 2>/dev/null || true; fi
+  for pid in "${telemetry_pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
+  for pid in "${telemetry_pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
   for pid in "${worker_pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
   for pid in "${worker_pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
   exit "${status}"
@@ -158,6 +161,13 @@ if [[ -x /opt/nsys/bin/nsys ]]; then
 fi
 exec "${command[@]}"
 EOF
+
+# One low-frequency NVML query process per node, outside the serving workers.
+# Explicit GPU UUIDs identify all eight GPUs on each node without rank duplication.
+for host in "${HEAD}" "${TAIL}"; do
+  srun --overlap --exact -N1 -n1 -w "${host}" --gres=gpu:8 --cpus-per-task=1 nvidia-smi --query-gpu=timestamp,index,uuid,power.draw,clocks.sm,clocks.mem,clocks_throttle_reasons.active,temperature.gpu --format=csv --loop=1 >"${ART}/gpu-telemetry-${host}.csv" 2>"${ART}/gpu-telemetry-${host}.stderr.log" &
+  telemetry_pids+=("$!")
+done
 
 # Provisioning verifies the image's source patches and router before sbatch.
 # Validate the new FC2 kernel before model startup in this same allocation.
