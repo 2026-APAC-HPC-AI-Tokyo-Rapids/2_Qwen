@@ -125,3 +125,11 @@ Prefill 1 反復（約 258 ms）の内訳は、MegaMoE 142 ms（55%）、dense Q
 | 約 0.8 ms、約 0.4 ms | gloo DP all_gather、nixl 送信 thread の GIL | CPU のみで、GPU 実行と重なる |
 
 D2H の 4 か所は H2D と同時に直す必要がある。H2D だけ直すと、N の結果処理が N+1 の起動後に回る。そこで `.cpu()` が N+1 全体の後ろで待ち、同じ空きが再発するうえ、N の KV 送信も 1 forward 遅れる。修正は `patches/sglang/prefill-async-admission.patch`（runtime overlay、build 不要）にまとめた。GPU 上の順序は元と同じ stream の同じ位置なので、計算結果は bit 一致する。serving の tree（fc275674 ＋ image patch ＋ 既存 overlay 13 本）で `git apply` と `py_compile` を通したが、GPU 上では未実行。見込みは Prefill −5 ms/反復（供給 +2% 弱）。電力上限下で空きが消えると平均電力が上がり、clock がわずかに下がる可能性があるので、実効は 2% を下回り得る。確認には次の profile 付き run で、反復間の空きが 1 ms 未満になることと、1 ms を超える `cudaStreamSynchronize` が scheduler thread に無いことを見る。
+
+## 10. 3 回目の serving：Prefill host 待ち除去と qknorm wide 候補 [40225743220](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40225743220)（f600847、image 40197369083、build なし）
+
+公式 score は **9120.51 tok/s**（good fraction 0.9771、5802 request、error 0、valid）。前回 [40201493911](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40201493911) の 9036.12（0.9767、5749 request）から +0.9%。同じ image・同じ構成で 9036.12 と 9022.10 の差が 0.15% だったので、ノイズより大きい。ただし 1 run だけの結果である。job は 13:51（前回 13:38、+13 s は qknorm 選択の分）。KV 転送の error はない。終了時の `STEP ... CANCELLED` は前回と同じ teardown である。
+
+Prefill の 1 反復（`Prefill batch` 行の間隔、12 DP rank それぞれの定常 80% の区間）は、平均 258.7 ms から **256.8 ms（−1.9 ms、−0.7%）** になった。見込みの −5 ms には届いていない。telemetry（g1 = prefill-0/1、400 W 超の sample）では、電力の中央値は 691 W で変わらない。SM clock は平均 1605 → 1596 MHz、中央値 1530 → 1515 MHz に下がった。空きが減った分だけ平均電力が上がり、上限 700 W の下で clock が約 0.6〜1% 下がって、短縮の半分以上を相殺した。§9 で予想したとおりの形である。空きが実際に 1 ms 未満になったかどうかは、profile なしでは確かめられない。
+
+qknorm の wide kernel（BM=4 token × 32 head／CTA）は、12 GPU × 3 長さ × int32/int64 のすべてで出力が bit 一致した。しかし control（53〜64 µs/回）より **22〜29 µs 遅く**、不採用になった（`SGLANG_PREFILL_QKNORM=control`）。考えられる原因は、CTA 数が約 1/8 に減ったこと（ceil(T/4)×3 対 ceil(T/32)×72）、97 register で occupancy が下がったこと、4 行分を全部読んでから計算する直列化が、memory 並列度の増加分を上回ったことである。cos/sin の再利用で減る L2 読み出しは、律速ではなかった。この候補は打ち切る。次の整理で、overlay と選択（約 13 s）を削除する。
