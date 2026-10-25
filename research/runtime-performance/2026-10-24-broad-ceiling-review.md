@@ -109,3 +109,19 @@ Prefill selector は 94 層 graph（QKV producer 込み）で計り、1 GPU prob
 **律速が Prefill に戻った。** Decode の待ちはほぼ消えた一方、Prefill 3 worker の待ち行列は平均 4.24（前回 3.3）。Decode 側の余力は Prefill の供給を超えたので、Decode 側の改善（MegaMoE M1 など）は今の構成では score に効かない。
 
 **Prefill は電力上限で動いている。** 1 Hz の telemetry（今回から記録）で、負荷中の Prefill 12 GPU は電力中央値 676〜693 W、SM クロック中央値 1500〜1560 MHz（最低 1380 MHz）。throttle 理由は SW power cap（0x4）だった。Decode の 4 GPU は同じ約 690 W で 1860〜1935 MHz。Prefill の速さは命令数よりも 1 演算あたりのエネルギーで決まる。命令を足して重なりを増やす変更（今回の PV 待ち対策、e4）が serving 形で負けるのと整合する。次に効く方向は、Prefill の総仕事量またはデータ移動量を減らす変更（FC2 combine payload の削減、GEMM の無駄な tile の除去など）であり、重なりの改善ではない。
+
+## 9. Prefill の反復間の空き：scheduler の host 待ち（profile 40071892077 の再解析、GPU job なし）
+
+Prefill 1 反復（約 258 ms）の内訳は、MegaMoE 142 ms（55%）、dense QKV＋O 44 ms、FA3 41 ms、小 kernel 16.5 ms（うち `qknorm_rope_prefill_fast_kernel` 65.5 µs/層 = 6.2 ms）、EAGLE draft extend 4.7 ms（BF16 GEMM はほぼ peak）、**反復間の GPU 空き 5.2〜5.4 ms（2.1%）**。空きは prefill-0 と prefill-2 の全 GPU、全反復で同じ大きさだった。
+
+原因は Decode で 10-18 に直したもの（[Tier 1 §2・§11.1](2026-10-18-firmus-runtime-tier1.md)）と同じ機構である。batch N の起動直後に `_apply_war_barrier` が `schedule_stream` を N の draft extend の終了まで待たせる。そのあと N+1 を組み立てる途中の blocking なコピーで、CPU が N の終わりまで止まる。nsys の CUDA API 列では、`alloc_for_extend` の `torch.tensor([-1], device=...)`（空 prefix の新規要求）の直後の `cudaStreamSynchronize` が約 124 ms 止まり、終わるのは N の draft extend の終了時刻だった。そこから N+1 の準備（約 5 ms）が GPU と重ならずに走る。同じ区間の host 待ちは全部で 8 か所あり、42 反復中 40 反復で同じ順に現れる。
+
+| trace | 箇所 | 対処 |
+|---|---|---|
+| H2D 8 B ＋ sync | `mem_cache/allocation.py` `last_loc` の `torch.tensor([-1], device=)` | `torch.full`（device 上の fill） |
+| H2D 4 B / 8 B ＋ sync | `penaltylib/min_new_tokens.py`（AIPerf の `min_tokens`） | image 内の `async_admission.to_device` を使う。`SGLANG_DECODE_ASYNC_ADMISSION=1` を Prefill にも export する。Prefill でこの flag が効くのはこの penalizer だけ |
+| D2H 8192 / 4 / 8 B ＋ sync | `prefill.py` の EAGLE `hidden_states[i].cpu()`、`set_buf` の topk_p / topk_index | copy stream で `copy_done` の前に `_async_d2h` |
+| D2H 252 B ＋ sync | `send_kv_chunk` → `kv_to_page_indices(...).cpu()`（63 page × int32） | page 番号の pinned mirror を result 側に積み、`copy_done.synchronize()` 後に req へ渡す。窓が合わなければ従来経路 |
+| 約 0.8 ms、約 0.4 ms | gloo DP all_gather、nixl 送信 thread の GIL | CPU のみで、GPU 実行と重なる |
+
+D2H の 4 か所は H2D と同時に直す必要がある。H2D だけ直すと、N の結果処理が N+1 の起動後に回る。そこで `.cpu()` が N+1 全体の後ろで待ち、同じ空きが再発するうえ、N の KV 送信も 1 forward 遅れる。修正は `patches/sglang/prefill-async-admission.patch`（runtime overlay、build 不要）にまとめた。GPU 上の順序は元と同じ stream の同じ位置なので、計算結果は bit 一致する。serving の tree（fc275674 ＋ image patch ＋ 既存 overlay 13 本）で `git apply` と `py_compile` を通したが、GPU 上では未実行。見込みは Prefill −5 ms/反復（供給 +2% 弱）。電力上限下で空きが消えると平均電力が上がり、clock がわずかに下がる可能性があるので、実効は 2% を下回り得る。確認には次の profile 付き run で、反復間の空きが 1 ms 未満になることと、1 ms を超える `cudaStreamSynchronize` が scheduler thread に無いことを見る。

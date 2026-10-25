@@ -300,7 +300,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
             assert "--enable-dp-attention" in flags and "--disable-cuda-graph" in flags
             assert "--enable-symm-mem" not in flags and (shuffle, routing) == ("0", "0")
             assert flags[flags.index("--optimistic-prefill-attempts") + 1] == str(config["prefill"]["optimistic_prefill_attempts"])
-            assert aligned == "1" and rotate_ties == "1" and async_admission == "0"
+            assert aligned == "1" and rotate_ties == "1" and async_admission == "1"
         else:
             assert flags[flags.index("--dp-size") + 1] == "4"
             assert "--enable-dp-attention" in flags and "--enable-dp-lm-head" in flags
