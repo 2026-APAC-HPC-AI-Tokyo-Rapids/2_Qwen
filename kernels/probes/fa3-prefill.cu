@@ -1,5 +1,8 @@
 // Pinned FA3 with optional group-128 FP8 output; BF16 controls use the same launch.
 #include <cstdio>
+#ifndef FA3_PROBE_PV
+#define FA3_PROBE_PV 0
+#endif
 #ifndef FA3_PROBE_E4
 #define FA3_PROBE_E4 0
 #endif
@@ -38,7 +41,7 @@ extern "C" int prefill_counts_reset() {
 template<int N>
 void launch(Flash_fwd_params& p, cudaStream_t stream, int* resource=nullptr) {
     run_flash_fwd<90,128,128,1,cutlass::float_e4m3_t,cutlass::bfloat16_t,
-        true,false,false,true,false,false,false,false,true,false,FA3_PROBE_VCOL,false,false,N,2>(p,stream,resource);
+        true,false,false,true,false,false,false,false,true,false,FA3_PROBE_VCOL,false,false,N,2,false,((FA3_PROBE_REGS232 ? 1 : 0) | (FA3_PROBE_E4 ? 8 : 0) | FA3_PROBE_PV)>(p,stream,resource);
 }
 
 void dispatch(int id, Flash_fwd_params& p, cudaStream_t stream, int* resource=nullptr) {

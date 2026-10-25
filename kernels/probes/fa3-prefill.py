@@ -21,8 +21,9 @@ lib = ctypes.CDLL(str(Path(__file__).with_name("fa3-prefill.so")))
 lib.prefill_run.argtypes = [ctypes.c_int] * 4 + [ctypes.c_void_p] * 9 + [ctypes.c_int, ctypes.c_void_p]
 lib.prefill_run.restype = ctypes.c_int
 assert lib.prefill_init() == 0
+PV_MODES = ("pv-live-regs", "pv-live-n192", "pv-live-regs-n192")
 E4_MODES = ("e4", "e4-regs232", "e4-n192")
-VARIANT_MODES = ("nobarrier", "regs232", "lazy", "lazy-counter", *E4_MODES)
+VARIANT_MODES = ("nobarrier", "regs232", "lazy", "lazy-counter", *E4_MODES, *PV_MODES)
 libraries = {"control": lib}
 for variant in VARIANT_MODES:
     path = Path(__file__).with_name(f"fa3-prefill-{variant}.so")
@@ -49,7 +50,7 @@ def inputs(lengths):
 def call(data, mode):
     lengths, q, k, v, cu, out, lse, metadata, fp8, scale = data
     variant = mode if mode in VARIANT_MODES else "control"
-    fused = mode in ("fp8", "fp8_n224", "shape4096", "shape4x1024", "nobarrier", "regs232", "lazy", "lazy-counter", *E4_MODES)
+    fused = mode in ("fp8", "fp8_n224", "shape4096", "shape4x1024", "nobarrier", "regs232", "lazy", "lazy-counter", *E4_MODES, *PV_MODES)
     if mode in ("stock", "stock_quant"):
         flash_attn_varlen_func(q=q, k=k, v=v, cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max(lengths), max_seqlen_k=max(lengths), causal=True, softmax_scale=128**-.5, num_splits=0, out=out)
     elif mode != "quant":
@@ -122,7 +123,7 @@ def work_counts(lengths, block_n=224):
 
 def m1():
     began = time.monotonic()
-    modes = ("shape4096", "shape4x1024", "n192", "fp8", "nobarrier", "regs232", "lazy", *E4_MODES)
+    modes = ("shape4096", "shape4x1024", "n192", "fp8", "nobarrier", "regs232", "lazy", *E4_MODES, *PV_MODES)
     # n192 is the existing BF16 mode; fp8 is its fused epilogue.
     gates = {mode: [] for mode in modes}
     for lengths in ([1], [17,13], [129,257], [2048,2048], [3986], [4027], [4096], [1024]*4):
@@ -142,23 +143,23 @@ def m1():
                 data[5].fill_(123.)
                 result = call(data, mode)
                 assert (data[5] == 123.).all(), (mode, "fused BF16 global store")
-                compare_quant(result, quant192 if mode in ("fp8", "e4-n192") else exact, f"{mode}/{lengths}")
+                compare_quant(result, quant192 if mode in ("fp8", "e4-n192", "pv-live-n192", "pv-live-regs-n192") else exact, f"{mode}/{lengths}")
                 compare(dequant(result)[indices], expected, f"{mode}_fp32/{lengths}")
             gates[mode].append(str(lengths))
         compare_quant(call(data, "lazy-counter"), exact, f"counter/{lengths}")
         if lengths == [4027]:
-            for mode in ("fp8", "nobarrier", "regs232", "lazy", *E4_MODES):
+            for mode in ("fp8", "nobarrier", "regs232", "lazy", *E4_MODES, *PV_MODES):
                 graph = capture(lambda data=data, mode=mode: call(data, mode))
                 for replay in range(2):
                     for x in data[1:4]:
                         x.copy_(torch.randn(x.shape, device="cuda", dtype=torch.bfloat16).to(x.dtype))
-                    ref = tuple(x.clone() for x in call(data, "n192_quant" if mode in ("fp8", "e4-n192") else "stock_quant"))
+                    ref = tuple(x.clone() for x in call(data, "n192_quant" if mode in ("fp8", "e4-n192", "pv-live-n192", "pv-live-regs-n192") else "stock_quant"))
                     graph.replay()
                     compare_quant(data[8:10], ref, f"changed_input/{mode}/{replay}")
     data = inputs([17,13])
     data[3].zero_()
     ref = tuple(x.clone() for x in call(data, "stock_quant"))
-    for mode in ("shape4096", "nobarrier", "regs232", "lazy", "lazy-counter", *E4_MODES):
+    for mode in ("shape4096", "nobarrier", "regs232", "lazy", "lazy-counter", *E4_MODES, *PV_MODES):
         compare_quant(call(data, mode), ref, "zero_v/" + mode)
 
     # O GEMM bitwise gate for every exact variant and for N192 versus its own quant path.
@@ -174,8 +175,8 @@ def m1():
             return out
         expected224 = dense("stock_quant").clone()
         expected192 = dense("n192_quant").clone()
-        for mode in ("shape4096", "fp8", "nobarrier", "regs232", "lazy", *E4_MODES):
-            assert torch.equal(dense(mode), expected192 if mode in ("fp8", "e4-n192") else expected224), ("O GEMM", mode, rows)
+        for mode in ("shape4096", "fp8", "nobarrier", "regs232", "lazy", *E4_MODES, *PV_MODES):
+            assert torch.equal(dense(mode), expected192 if mode in ("fp8", "e4-n192", "pv-live-n192", "pv-live-regs-n192") else expected224), ("O GEMM", mode, rows)
         q, scale = call(data, "lazy")
         selected = torch.tensor([0, rows//2, rows-1], device="cuda")
         expected_fp32 = checks["dense_reference"]((q.view(rows,8192)[selected], scale[selected]), (weight,ws))
@@ -236,7 +237,7 @@ def m1():
                   "skip_rate": skip/total, "skip": skip, "total": total,
                   "ptxas": json.loads((runtime/"results"/"ptxas.json").read_text()),
                   "modes": [{"mode": mode, "median_us": medians[mode], "cycles": medians[mode]*sm_clock,
-                              "samples_us": samples[mode], "gate": {"passed": True, "shapes": gates[mode], "fp8": "numeric BF16" if mode=="n192" else "bitwise", "o_gemm": "N192 quant control via fused fp8" if mode=="n192" else "N192 quant control" if mode in ("fp8", "e4-n192") else "N224 stock quant control"}} for mode in modes],
+                              "samples_us": samples[mode], "gate": {"passed": True, "shapes": gates[mode], "fp8": "numeric BF16" if mode=="n192" else "bitwise", "o_gemm": "N192 quant control via fused fp8" if mode=="n192" else "N192 quant control" if mode in ("fp8", "e4-n192", "pv-live-n192", "pv-live-regs-n192") else "N224 stock quant control"}} for mode in modes],
                   "elapsed_s": time.monotonic()-began}
     (runtime/"results"/"fa3-prefill-m1.json").write_text(json.dumps(output, indent=2))
     print("RESULT_JSON " + json.dumps(output), flush=True)

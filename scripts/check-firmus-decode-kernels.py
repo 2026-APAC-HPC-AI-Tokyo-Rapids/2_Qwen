@@ -1344,6 +1344,10 @@ def prefill_validate_candidate(common, name):
         graph.replay()
         out, scales = step.output
         torch.ops.apac_fa3_verify.prefill_fwd_out(common["q"], common["k"], common["v"], common["cu"], control, control_scales, lse, metadata, rows, 128**-.5)
+        if spec["byte_image"]:
+            dump = torch.empty_like(common["image"])
+            torch.ops.apac_fa3_verify.prefill_dump_v(common["v"], dump)
+            assert torch.equal(dump, common["image"]), (name, rows, replay, "STSM dump / global image including zero padding")
         assert scales.isfinite().all() and (scales > 0).all(), name
         if spec["bitwise"]:
             assert torch.equal(out.view(torch.uint8), control.view(torch.uint8)), (name, rows, replay, "FP8 bytes")
@@ -1354,10 +1358,6 @@ def prefill_validate_candidate(common, name):
         # Verify paged transfer payload and fallback row-major V are still exact.
         assert torch.equal(common["v"].view(torch.uint8), common["packed"][:rows, 68:].to(out.dtype).contiguous().view(torch.uint8)), name
         assert torch.equal(common["v"].view(torch.uint8), common["vc"][1:rows+1].view(torch.uint8)), name
-        if spec["byte_image"]:
-            dump = torch.empty_like(common["image"])
-            torch.ops.apac_fa3_verify.prefill_dump_v(common["v"], dump)
-            assert torch.equal(dump, common["image"]), (name, rows, replay, "STSM dump / global image including zero padding")
         indices, reference = prefill_fp32_reference(common)
         actual = out.float()[indices]*scales[indices, :, None]
         metrics.append(prefill_assert_errors(actual, reference, name+"_fp32"))

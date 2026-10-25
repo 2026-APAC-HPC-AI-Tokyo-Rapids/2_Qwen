@@ -45,7 +45,7 @@ def test_rejected_candidate_does_not_hide_another_winner(selector):
     ranks = records(selector)
     ranks[0]['lengths']['4096']['regs']['error'] = 'byte mismatch'
     original = copy.deepcopy(ranks)
-    assert selector['choose_candidate'](ranks)['winner'] == 'lazy'
+    assert selector['choose_candidate'](ranks)['winner'] == 'c2'
     assert ranks == original
 
 
@@ -54,8 +54,8 @@ def test_prefill_dispatch_is_independent_of_decode(tmp_path):
     tasks = ns['generate_prefill_dispatch'](ROOT / 'kernels/fa3-verify', tmp_path)
     rows = json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text())
     assert len(tasks) == len(rows) - 1
-    assert {r["name"] for r in rows if r["variant"] & 8} == {"e4", "e4-regs232", "e4-n192"}
-    assert {r['name'] for r in rows if r['byte_image']} == {'c2', 'regs-c2', 'regs-lazy-c2'}
+    assert {r["name"] for r in rows if r["variant"] & 8} == set()
+    assert {r['name'] for r in rows if r['byte_image']} == {'c2', 'regs-c2'}
     assert (tmp_path / 'prefill-candidates.h').read_text().count('prefill_fixed') == 2
     assert all('prefill_variant.cu' in p.read_text() for p, _, _ in tasks)
 

@@ -66,7 +66,7 @@ int main() {
 
 def test_probe_new_modes_use_dedicated_library_and_fused_output():
     tree = ast.parse((ROOT / 'kernels/probes/fa3-prefill.py').read_text())
-    nodes = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in ('E4_MODES', 'VARIANT_MODES') for t in n.targets)]
+    nodes = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in ('PV_MODES', 'E4_MODES', 'VARIANT_MODES') for t in n.targets)]
     nodes += [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'call']
     calls = []
     namespace = {'torch': SimpleNamespace(cuda=SimpleNamespace(current_stream=lambda: SimpleNamespace(cuda_stream=99)))}
@@ -78,13 +78,13 @@ def test_probe_new_modes_use_dedicated_library_and_fused_output():
         def stride(self, axis):
             return 20
     data = ([17], *(Tensor() for _ in range(9)))
-    namespace['libraries'] = {mode: SimpleNamespace(prefill_run=lambda *args, mode=mode: calls.append((mode, args)) or 0) for mode in namespace['E4_MODES']}
-    for mode in namespace['E4_MODES']:
+    namespace['libraries'] = {mode: SimpleNamespace(prefill_run=lambda *args, mode=mode: calls.append((mode, args)) or 0) for mode in (*namespace['E4_MODES'], *namespace['PV_MODES'])}
+    for mode in (*namespace['E4_MODES'], *namespace['PV_MODES']):
         assert namespace['call'](data, mode) == data[8:10]
         assert calls[-1][0] == mode
         assert calls[-1][1][11:13] == (123, 123)
     rows = json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text())
-    assert {r['name'] for r in rows if r['variant'] & 8} == set(namespace['E4_MODES'])
+    assert not any(r['variant'] & (2 | 8) for r in rows)  # Rejected serving candidates; retain probe modes.
 
 
 def test_sass_max_depth_tracks_independent_chains_and_wait_position():
@@ -103,3 +103,21 @@ def test_sass_max_depth_tracks_independent_chains_and_wait_position():
     assert result['max_pcs'] == ['0x0', '0x40']
     assert result['exp_pcs'] == ['0x50']
     assert result['wait0_pcs'] == ['0x60']
+
+
+def test_sass_pv_reads_and_full_softmax_wait_gate(capsys):
+    module = runpy.run_path(str(ROOT / 'kernels/probes/fa3-prefill-sass.py'))
+    instructions = [
+        (0, 'QGMMA.64x128x32.F32.E4M3.E4M3', 'R136, R220, gdesc[UR12], R136'),
+        (16, 'MUFU.EX2', 'R24, R24'),
+        (32, 'WARPGROUP.DEPBAR.LE', 'gsb0, 0x0'),
+        *[(48 + i*16, 'PRMT', f'R{220+i}, R24, UR11, R{220+i}') for i in range(4)],
+    ]
+    result = module['softmax_schedule'](instructions)
+    assert result['pv_a_register_words'] == result['pv_a_words_read_by_prmt_after_last_exp'] == 4
+    assert result['wait0_after_last_exp']
+    instructions[1], instructions[2] = instructions[2], instructions[1]
+    instructions = [(i*16, op, operands) for i, (_, op, operands) in enumerate(instructions)]
+    assert not module['softmax_schedule'](instructions)['wait0_after_last_exp']
+    module['report']('Function : test\n /*0000*/ SETMAXNREG.INC 0xf0;\n /*0010*/ WARPGROUP.ARRIVE;\n /*0020*/ QGMMA.64x128x32.F32.E4M3.E4M3 R136, R220, gdesc[UR12], R136;\n /*0030*/ MUFU.EX2 R24, R24;\n /*0040*/ F2FP.F8.PACK_AB R25, R24, R24;\n /*0050*/ BRA 0x10;\n')
+    assert "'pv_a_register_words': 4" in capsys.readouterr().out

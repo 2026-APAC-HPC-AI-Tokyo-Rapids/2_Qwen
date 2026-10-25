@@ -11,16 +11,40 @@ int main() {
     map.fill(-1); inverse.fill(-1);
     auto src=make_tensor(counting_iterator<int>{}, make_layout(make_shape(Int<128>{},Int<224>{},Int<2>{}), make_stride(_1{},Int<128>{},Int<bytes>{})));
     auto dst=make_tensor(counting_iterator<int>{}, make_composed_layout(M::SmemLayoutVtMma{}.layout_a(),_0{},M::SmemLayoutVtMma{}.layout_b()));
-    for(int stage=0;stage<2;++stage) for(int thread=0;thread<128;++thread) {
-        auto s=M::S2RTiledCopyVt{}.get_thread_slice(thread).partition_S(flat_divide(src,M::LDSM_divide_shape{}));
-        auto d=M::R2STiledCopyV{}.get_thread_slice(thread).partition_D(flat_divide(dst,M::STSM_divide_shape{}));
-        constexpr int ilp=(size<2>(s)*size<3>(s))%2==0?2:1;
-        auto ss=logical_divide(group_modes<1,rank(s)-1>(s),Shape<Underscore,Int<ilp>>{});
-        auto dd=logical_divide(group_modes<1,rank(d)-1>(d),Shape<Underscore,Int<ilp>>{});
-        // PRMT 6420/7531 maps each register-byte group of eight this way.
+    // Emulate the cross-lane routing of each actual matrix instruction.
+    // partition_S/D describe issuing-thread memory addresses, not register
+    // ownership: LDSM.T and STSM.N both redistribute bytes within a warp.
+    using Load = Copy_Traits<SM75_U16x8_LDSM_T>;
+    using Store = Copy_Traits<SM90_U32x4_STSM_N>;
+    // The two memory-side instruction layouts are one 16-byte row per lane.
+    // Check this assumption before using /128 and %128 to invert bit addresses.
+    for(int lane=0;lane<32;++lane) for(int bit=0;bit<128;++bit) {
+        if(Load::SrcLayout{}(make_coord(lane,bit))!=lane*128+bit || Store::DstLayout{}(make_coord(lane,bit))!=lane*128+bit) {
+            std::fputs("matrix memory-side layout changed\n",stderr); return 4;
+        }
+    }
+    int source[128][32], dest[128][32];
+    for(int stage=0;stage<2;++stage) for(int i=0;i<bytes/(128*32);++i) {
+        for(int thread=0;thread<128;++thread) {
+            auto s=M::S2RTiledCopyVt{}.get_thread_slice(thread).partition_S(flat_divide(src,M::LDSM_divide_shape{}));
+            auto d=M::R2STiledCopyV{}.get_thread_slice(thread).partition_D(flat_divide(dst,M::STSM_divide_shape{}));
+            constexpr int ilp=(size<2>(s)*size<3>(s))%2==0?2:1;
+            static_assert(ilp==2);
+            auto ss=logical_divide(group_modes<1,rank(s)-1>(s),Shape<Underscore,Int<ilp>>{});
+            auto dd=logical_divide(group_modes<1,rank(d)-1>(d),Shape<Underscore,Int<ilp>>{});
+            for(int j=0;j<32;++j) {
+                source[thread][j]=ss(j%16,make_coord(j/16,i),stage)-stage*bytes;
+                dest[thread][j]=dd(j%16,make_coord(j/16,i),stage)-stage*bytes;
+            }
+        }
         constexpr int perm[8]={0,2,4,6,1,3,5,7};
-        for(int i=0;i<size<1,1>(ss);++i) for(int j=0;j<32;++j) {
-            int from=ss(((j/8)*8+perm[j%8])%16,make_coord(j/16,i),stage)-stage*bytes, to=dd(j%16,make_coord(j/16,i),stage)-stage*bytes;
+        for(int thread=0;thread<128;++thread) for(int j=0;j<32;++j) {
+            int group=j/16, out_byte=j%16;
+            int in_byte=(out_byte/8)*8+perm[out_byte%8];
+            int lbit=Load::DstLayout{}(make_coord(thread%32,in_byte*8));
+            int from=source[thread/32*32+lbit/128][group*16+(lbit%128)/8];
+            int sbit=Store::SrcLayout{}(make_coord(thread%32,out_byte*8));
+            int to=dest[thread/32*32+sbit/128][group*16+(sbit%128)/8];
             if(stage) { if(from<0||from>=bytes||map[from]!=to) { std::fputs("stage-dependent byte map\n",stderr); return 3; } continue; }
             if(from<0||from>=bytes||to<0||to>=bytes||map[from]!=-1||inverse[to]!=-1) { std::fprintf(stderr,"nonbijective %d %d\n",from,to); return 1; }
             map[from]=to;inverse[to]=from;

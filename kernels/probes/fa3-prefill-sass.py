@@ -19,7 +19,9 @@ def softmax_schedule(instructions):
     """
     depths = {}
     maximum = 0
-    positions = {key: [] for key in ('max', 'exp', 'wait0')}
+    positions = {key: [] for key in ('max', 'exp', 'wait0', 'prmt')}
+    pv_registers = set()
+    prmt_reads = []
     for address, op, operands in instructions:
         registers = re.findall(r'\bR\d+\b', operands)
         destination = re.match(r'R\d+\b', operands)
@@ -30,11 +32,24 @@ def softmax_schedule(instructions):
             positions['max'].append(hex(address))
         elif destination:
             depths[destination[0]] = depths.get(registers[1], 0) if op == 'MOV' and len(registers) > 1 else 0
+        # Each RS FP8 m64n128k32 PV instruction reads four A registers.
+        pv = re.match(r'R\d+, R(\d+)(?:\.reuse)?, gdesc', operands) if op.startswith('QGMMA.64x128x32.') else None
+        if pv:
+            base = int(pv[1])
+            pv_registers.update(f'R{r}' for r in range(base, base + 4))
+        if op.startswith('PRMT'):
+            positions['prmt'].append(hex(address))
+            prmt_reads.append((address, set(registers[1:])))
         if op == 'MUFU.EX2':
             positions['exp'].append(hex(address))
         if op == 'WARPGROUP.DEPBAR.LE' and re.search(r'0x0\b', operands):
             positions['wait0'].append(hex(address))
-    return {'fmnmx_dependency_depth': maximum, **{key + '_pcs': values if len(values) < 3 else [values[0], values[-1]] for key, values in positions.items()}}
+    last_exp = int(positions['exp'][-1], 16) if positions['exp'] else None
+    late_reads = set().union(*(regs for pc, regs in prmt_reads if last_exp is not None and pc > last_exp))
+    return {'fmnmx_dependency_depth': maximum, 'pv_a_register_words': len(pv_registers),
+            'pv_a_words_read_by_prmt_after_last_exp': len(pv_registers & late_reads),
+            'wait0_after_last_exp': bool(last_exp is not None and positions['wait0'] and all(int(pc, 16) > last_exp for pc in positions['wait0'])),
+            **{key + '_pcs': values if len(values) < 3 else [values[0], values[-1]] for key, values in positions.items()}}
 
 
 def register_role(op, operands):
@@ -56,7 +71,7 @@ def report(text):
         name, _, body = function.partition('\n')
         ins = []
         for line in body.splitlines():
-            match = re.search(r'/\*([0-9a-f]+)\*/\s+(?:@!?[UP]\d+\s+)?([A-Z][A-Z0-9_.]*)\s*(.*?);', line)
+            match = re.search(r'/\*([0-9a-f]+)\*/\s+(?:@!?[UP]\d+\s+)?([A-Z][A-Za-z0-9_.]*)\s*(.*?);', line)
             if match:
                 ins.append((int(match[1], 16), match[2], match[3]))
         if not any('SETMAX' in op for _, op, _ in ins):
