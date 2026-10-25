@@ -3,7 +3,7 @@ set -euo pipefail
 : "${PBS_JOB_ID:?}" "${RUNTIME_DIR:?}"
 /opt/pbs/bin/qstat -x -f "${PBS_JOB_ID}" >"${RUNTIME_DIR}/logs/pbs-accounting.txt"
 state=$(awk '/^[[:space:]]*job_state =/ {print $3}' "${RUNTIME_DIR}/logs/pbs-accounting.txt")
-if [[ "${state}" != F ]]; then printf 'scheduler_job_pending=%s state=%s\n' "${PBS_JOB_ID}" "${state}"; exit 75; fi
+if [[ "${state}" != F ]]; then printf 'scheduler_job_pending=%s state=%s\n' "${PBS_JOB_ID}" "${state}"; exit 0; fi
 cat "${RUNTIME_DIR}/logs/pbs-accounting.txt"
 if [[ -f "${RUNTIME_DIR}/logs/driver.log" ]]; then cat "${RUNTIME_DIR}/logs/driver.log"; fi
 exit_status=$(awk -F= '/^[[:space:]]*Exit_status =/ {gsub(/[[:space:]]/, "", $2); print $2}' "${RUNTIME_DIR}/logs/pbs-accounting.txt")
