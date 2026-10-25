@@ -1,11 +1,49 @@
 // Pinned FA3 with optional group-128 FP8 output; BF16 controls use the same launch.
 #include <cstdio>
+#ifndef FA3_PROBE_M
+#define FA3_PROBE_M 0
+#endif
+#ifndef FA3_PROBE_NOBARRIER
+#define FA3_PROBE_NOBARRIER 0
+#endif
+#ifndef FA3_PROBE_REGS232
+#define FA3_PROBE_REGS232 0
+#endif
+#ifndef FA3_PROBE_LAZY
+#define FA3_PROBE_LAZY 0
+#endif
+#ifndef FA3_PROBE_COUNTER
+#define FA3_PROBE_COUNTER 0
+#endif
+#ifndef FA3_PROBE_VCOL
+#define FA3_PROBE_VCOL 0
+#endif
+#if FA3_PROBE_COUNTER
+__device__ unsigned long long fa3_probe_counts[2];
+#endif
 #include "flash_fwd_launch_template.h"
+#if FA3_PROBE_COUNTER
+extern "C" int prefill_counts(void* output, void* stream) {
+    return int(cudaMemcpyFromSymbolAsync(output, fa3_probe_counts, sizeof(fa3_probe_counts), 0, cudaMemcpyDeviceToDevice, static_cast<cudaStream_t>(stream)));
+}
+extern "C" int prefill_counts_reset() {
+    unsigned long long zero[2] = {};
+    return int(cudaMemcpyToSymbol(fa3_probe_counts, zero, sizeof(zero)));
+}
+#endif
 
 template<int N>
 void launch(Flash_fwd_params& p, cudaStream_t stream, int* resource=nullptr) {
     run_flash_fwd<90,128,128,1,cutlass::float_e4m3_t,cutlass::bfloat16_t,
-        true,false,false,true,false,false,false,false,true,false,false,false,false,N,2>(p,stream,resource);
+        true,false,false,true,false,false,false,false,true,false,FA3_PROBE_VCOL,false,false,N,2>(p,stream,resource);
+}
+
+void dispatch(int id, Flash_fwd_params& p, cudaStream_t stream, int* resource=nullptr) {
+#ifdef FA3_PROBE_SINGLE_N
+    launch<FA3_PROBE_SINGLE_N>(p, stream, resource);
+#else
+    if(id) launch<192>(p, stream, resource); else launch<224>(p, stream, resource);
+#endif
 }
 
 extern "C" int prefill_init() {
@@ -13,10 +51,20 @@ extern "C" int prefill_init() {
     cudaDeviceGetAttribute(&sms,cudaDevAttrMultiProcessorCount,0);
     cudaDeviceGetAttribute(&limit,cudaDevAttrMaxSharedMemoryPerBlockOptin,0);
     if(sms!=132) return -1;
-    for(int id=0;id<2;++id) {
+#ifdef FA3_PROBE_SINGLE_N
+    constexpr int variants = 1;
+#else
+    constexpr int variants = 2;
+#endif
+    for(int id=0;id<variants;++id) {
         Flash_fwd_params p{}; int bytes=0;
-        if(id) launch<192>(p,nullptr,&bytes); else launch<224>(p,nullptr,&bytes);
-        std::printf("fa3_resources tile_n=%d smem=%d limit=%d\n",id?192:224,bytes,limit);
+        dispatch(id,p,nullptr,&bytes);
+#ifdef FA3_PROBE_SINGLE_N
+        constexpr int tile_n = FA3_PROBE_SINGLE_N;
+#else
+        int tile_n = id ? 192 : 224;
+#endif
+        std::printf("fa3_resources tile_n=%d smem=%d limit=%d\n",tile_n,bytes,limit);
         if(bytes>limit) return -2;
     }
     return 0;
@@ -43,6 +91,16 @@ extern "C" int prefill_run(int id,int rows,int batch,int maxlen,void* q,void* k,
     p.num_nheads_in_l2_ptr=p.num_splits_dynamic_ptr+12;
     p.tile_count_semaphore=p.num_splits_dynamic_ptr+16;
     auto stream=static_cast<cudaStream_t>(stream_ptr);
-    if(id) launch<192>(p,stream); else launch<224>(p,stream);
+    dispatch(id,p,stream);
     return int(cudaGetLastError());
 }
+
+#ifdef FA3_PROBE_RESOURCE_MAIN
+int main() {
+    Flash_fwd_params p{};
+    int bytes = 0;
+    launch<FA3_PROBE_RESOURCE_MAIN>(p, nullptr, &bytes);
+    std::printf("probe_resource M=%d N=%d V_colmajor=%d smem=%d\n", FA3_PROBE_M ? FA3_PROBE_M : 128, FA3_PROBE_RESOURCE_MAIN, FA3_PROBE_VCOL, bytes);
+    return 0;
+}
+#endif
