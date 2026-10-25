@@ -38,8 +38,6 @@ COPY deep-gemm-overlay /opt/apac/deep-gemm-overlay
 COPY firmus-framework.json /opt/apac/firmus-framework.json
 COPY containers/check-sm90-independent-wg.py /opt/apac/check-sm90-independent-wg.py
 RUN /opt/sglang/venv/bin/python /opt/apac/check-sm90-independent-wg.py --package /opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
-COPY containers/check-sm90-prefill-independent-wg.py /opt/apac/check-sm90-prefill-independent-wg.py
-RUN /opt/sglang/venv/bin/python /opt/apac/check-sm90-prefill-independent-wg.py --package /opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
 
 COPY containers/fa3-verify /opt/apac/fa3-verify
 COPY containers/build-fa3-verify.sh /opt/apac/build-fa3-verify.sh

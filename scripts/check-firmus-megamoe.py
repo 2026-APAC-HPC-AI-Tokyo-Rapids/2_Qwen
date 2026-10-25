@@ -27,9 +27,6 @@ def dequantized(w, scale):
 
 
 def main():
-    prefill_iwg = os.environ.get("DG_SM90_PREFILL_INDEPENDENT_WG", "0")
-    assert prefill_iwg in ("0", "a", "b"), prefill_iwg
-    print(json.dumps({"prefill_independent_wg": prefill_iwg, "gate": "all existing MegaMoE cases"}), flush=True)
     rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(rank)
     assert torch.cuda.get_device_capability() == (9, 0)

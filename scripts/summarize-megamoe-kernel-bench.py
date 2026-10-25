@@ -38,7 +38,7 @@ import numpy as np
 
 # These candidates promise to retain each output element's arithmetic. Use the
 # recorded patch identity, so renaming a candidate directory cannot relax this.
-EXACT_OUTPUT_PATCHES = {"prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "prefill-fc1-early-release.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "sm90-prefill-iwg-a.patch", "sm90-prefill-iwg-b.patch"}
+EXACT_OUTPUT_PATCHES = {"prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "prefill-fc1-early-release.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch"}
 
 MAGIC = 0x314C544D4F45474D
 EVENTS = ["Entry", "DispCount", "DispSendCount", "DispGridSync", "DispRecvCount", "DispPrePullBarrier", "DispEpilogueSync", "DispFirstPull", "DispLastPull", "DispLoopExit", "DispCombineSync", "DispClean", "DispFinalGridSync", "DispExit", "AStart", "AFirstBlock", "AFirstL1Ready", "ALastL1Issued", "AFirstL2Ready", "AExit", "BStart", "BFirstBlock", "BExit", "MStart", "MDispatchSync", "MFirstL1Full", "MLastL1End", "MFirstL2Full", "MLastL2End", "MLoopExit", "MCombineGridSync", "MCombineBarrier", "MDispatchSync2", "MCombineEnd"]

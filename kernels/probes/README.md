@@ -185,11 +185,11 @@ Use the one-GPU probe as a correctness gate (bit equality, changed-input graph r
 
 ## Merged probe and bench configuration, 2026-10-24
 
-Serving retains the cap160 configuration, FP8 integration and fast QKV overlay, but no FC1 early-release overlay. The Firmus one-node bench compares `prefill-fc1-early-release` (no env), `prefill-iwg-a` and `prefill-iwg-b` against that common control. Only the control has a timeline marker: eight Slurm steps in total, below the twelve-step limit. Rejected scale-share and unroll probe patches remain under `patches/deep-gemm-probes/`, outside candidate discovery and still accepted by the Genkai candidate-patch path check.
+Serving retains the cap160 configuration, FP8 integration and fast QKV overlay, but no FC1 early-release overlay. The rejected Prefill queue experiments and their image-build support have been removed; the measured rejection remains in [the Prefill timeline](../../research/runtime-performance/2026-10-24-prefill-megamoe-timeline.md). The current Firmus candidate directories are `prefill-fc2-bulk-scatter` and `z-control-repeat`; only the control has a timeline marker. Rejected scale-share and unroll probe patches remain under `patches/deep-gemm-probes/`, outside candidate discovery and still accepted by the Genkai candidate-patch path check.
 
 FA3 calibration now takes the current selector's four companion IDs: control96, p128s2, p128split2 and p128split3. The historical table above retains the removed t64 measurements; split candidates have no paired historical reference in that table. The calibration still runs B32 with shared metadata and the same numeric checks.
 
-Both timeline instruments are retained as alternative overlays on the same control, not composed: the Firmus control uses the main v2 per-WG phase instrument; Genkai EP4 uses the upstream producer/transfer plus WG0/WG1 instrument, now ABI v3 to avoid its original v2 collision. All recording points remain in their respective patches. The shared decoder accepts v1/v2/v3 and the EP4 summary retains producer/transfer and both-WG records. A/B have no timeline marker.
+Both timeline instruments are retained as alternative overlays on the same control, not composed: the Firmus control uses the main v2 per-WG phase instrument; Genkai EP4 uses the upstream producer/transfer plus WG0/WG1 instrument, now ABI v3 to avoid its original v2 collision. All recording points remain in their respective patches. The shared decoder accepts v1/v2/v3 and the EP4 summary retains producer/transfer and both-WG records.
 
 ## ASPIRE single-GPU FA3 probes
 

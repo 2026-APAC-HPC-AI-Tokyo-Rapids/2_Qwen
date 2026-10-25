@@ -278,8 +278,9 @@ def main():
         assert hashlib.sha256(args.image_header.read_bytes()).hexdigest() == IMAGE_SHA256
         shutil.copy2(args.image_header, overlay / KERNEL)
         overlay_patches = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
-        for i, patch in enumerate(overlay_patches):
-            if i == len(overlay_patches) - 1:
+        for patch in overlay_patches:
+            # This hash identifies the input to Decode IWG, even when later overlays follow.
+            if Path(patch).name == "sm90-decode-independent-wg.patch":
                 assert hashlib.sha256((overlay / KERNEL).read_bytes()).hexdigest() == BASELINE_SHA256
             subprocess.run(["git", "apply", "--check", str(ROOT / patch)], cwd=overlay, check=True)
             subprocess.run(["git", "apply", str(ROOT / patch)], cwd=overlay, check=True)
