@@ -903,6 +903,7 @@ def dense_candidates(op):
     candidates = [{"name": "stock", "backend": "deepgemm", "config": None}]
     for config in DENSE_CONFIGS[op]:
         candidates.append({"name": "dg-" + "-".join(map(str, config)), "backend": "deepgemm", "config": config})
+    candidates.append({"name": "dg1-swapab-streamk", "backend": "companion", "config": None})
     return candidates
 
 
@@ -942,6 +943,14 @@ def dense_call(candidate, inputs):
         import deep_gemm
 
         return lambda: deep_gemm.fp8_gemm_nt(lhs, rhs, out)
+    if candidate["backend"] == "companion":
+        import sys
+
+        if "/opt/apac/dense-dg1" not in sys.path:
+            sys.path.insert(0, "/opt/apac/dense-dg1")
+        from dense_dg1 import prepare
+
+        return prepare(lhs, rhs, out)
     # Call the image's existing kernel directly: the public wrapper chooses a
     # JSON/default config and allocates output. No global config monkeypatching.
     from sglang.kernels.ops.quantization.fp8_kernel import _w8a8_block_fp8_matmul
@@ -1006,6 +1015,10 @@ def dense_validate_candidate(op, candidate, inputs, reference, stock):
     out.fill_(float("nan"))
     call()
     metrics = dense_errors(out, reference)
+    if candidate["backend"] == "companion":
+        first = out.clone()
+        call()
+        assert torch.equal(out, first), "dense DG1 output must be deterministic"
     stock_metrics = dense_errors(out, stock.float())
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())

@@ -73,7 +73,7 @@ def test_bounded_candidate_table_fits_smem_and_keeps_design_geometries(op, n, k)
 
     ns = load_dense()
     candidates = ns["dense_candidates"](op)
-    assert len(candidates) == len({c["name"] for c in candidates}) == 5
+    assert len(candidates) == len({c["name"] for c in candidates}) == 6
     assert candidates[0]["name"] == "stock"
     for bm, bn, stages, mc, on_a in ns["DENSE_CONFIGS"][op]:
         assert bm in (64, 128) and bn % 16 == 0
@@ -82,7 +82,8 @@ def test_bounded_candidate_table_fits_smem_and_keeps_design_geometries(op, n, k)
         align = lambda x, a: ((x + a - 1) // a) * a
         smem = align(bm * bn * 2, 1024) + 16 * 8 * 2 + align((k // 128) * 4 * (1 if 128 % bn == 0 else 2), 8) + stages * ((bm + bn) * 128 + align(bm * 4, 128))
         assert smem <= 232448
-    assert all(c["backend"] == "deepgemm" for c in candidates)
+    assert all(c["backend"] == "deepgemm" for c in candidates[:-1])
+    assert candidates[-1] == {"name": "dg1-swapab-streamk", "backend": "companion", "config": None}
     expected = {"qkv": ((64, 144, 5), (64, 144, 7), (128, 144, 5), (128, 80, 7)), "o": ((64, 64, 9), (64, 64, 13), (128, 64, 8), (128, 32, 10))}
     assert tuple(c[:3] for c in ns["DENSE_CONFIGS"][op]) == expected[op]
 
@@ -455,3 +456,29 @@ def test_dense_rows_read_the_staged_config(tmp_path):
     for cap in (160, 192):
         config.write_text(json.dumps({"decode_max_running_requests": cap}))
         assert ns["decode_cap_tokens"]() == cap
+
+
+@pytest.mark.parametrize("op", ["QKV", "O"])
+@pytest.mark.parametrize("rows", [4, 128, 160, 176, 177])
+def test_dg1_overlay_cap_and_prequantized_serving_route(monkeypatch, op, rows):
+    ns = load_overlay(monkeypatch)
+    monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_" + op, "dg1-swapab-streamk")
+    attention, layer, batch, x, fallback = overlay_fixture(op, rows)
+    a = OverlayTensor(x.shape, "fp8")
+    sa = OverlayTensor((rows, x.shape[1] // 128), "fp32")
+    runs = []
+    ns["torch"].empty = lambda shape, **kwargs: OverlayTensor(shape, kwargs["dtype"])
+    ns["run_decode_dense_gemm"] = lambda *args: runs.append(args)
+    result = ns["decode_dense_linear"](attention, op, layer, (a, sa), batch, decode_worker=True)
+    if rows > 176:
+        assert result == "stock-result" and fallback == [(a, sa)] and not runs
+    else:
+        assert result[1] is None and not fallback
+        assert runs[0][:4] == (op, "dg1-swapab-streamk", (a, sa), (layer.weight, layer.weight_scale_inv))
+
+
+def test_dg1_selected_env_routes_to_the_numeric_gate(monkeypatch):
+    ns = load_dense()
+    monkeypatch.delenv(ENV, raising=False)
+    monkeypatch.setenv("SGLANG_DECODE_DENSE_GEMM_QKV", "dg1-swapab-streamk")
+    assert ns["selected_dense_candidates"]("qkv") == [{"name": "dg1-swapab-streamk", "backend": "companion", "config": None}]

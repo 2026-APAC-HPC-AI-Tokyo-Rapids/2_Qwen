@@ -39,6 +39,9 @@ COPY firmus-framework.json /opt/apac/firmus-framework.json
 COPY containers/check-sm90-independent-wg.py /opt/apac/check-sm90-independent-wg.py
 RUN /opt/sglang/venv/bin/python /opt/apac/check-sm90-independent-wg.py --package /opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
 
+COPY containers/dense-dg1 /opt/apac/dense-dg1
+RUN /opt/apac/dense-dg1/build.sh
+
 COPY containers/fa3-verify /opt/apac/fa3-verify
 COPY containers/build-fa3-verify.sh /opt/apac/build-fa3-verify.sh
 RUN /opt/apac/build-fa3-verify.sh && rm /opt/apac/build-fa3-verify.sh

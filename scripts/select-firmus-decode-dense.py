@@ -208,7 +208,7 @@ def run_selection(output, env_output):
         # subsequent ranks import/load those kernels, avoiding four cold builds.
         if rank == 0:
             for op, n, k in checks["DENSE_PROJECTIONS"]:
-                prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], rows, boundary_rows=(4, 64, 65, 129))
+                prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], rows, boundary_rows=tuple(sorted({4, 64, 65, 128, 129, 160, 176, rows})))
         dist.barrier()
         if rank != 0:
             for op, n, k in checks["DENSE_PROJECTIONS"]:

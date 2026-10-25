@@ -3,7 +3,7 @@
 set -euo pipefail
 : "${GITHUB_WORKSPACE:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}" "${GITHUB_SHA:?}" "${GITHUB_OUTPUT:?}" "${RUNTIME_ROOT:?}"
 benchmark=${BENCHMARK:-kernels/probes/prepare-fa3-prefill.sh}
-case "${benchmark}" in kernels/probes/prepare-fa3-prefill.sh|kernels/probes/prepare-fa3-prefill-profile.sh) ;; *) printf 'Unsupported Firmus probe: %s\n' "${benchmark}" >&2; exit 64 ;; esac
+case "${benchmark}" in kernels/probes/prepare-fa3-prefill.sh|kernels/probes/prepare-fa3-prefill-profile.sh|kernels/probes/prepare-dense-decode.sh) ;; *) printf 'Unsupported Firmus probe: %s\n' "${benchmark}" >&2; exit 64 ;; esac
 [[ -z "${CANDIDATE_PATCH:-}" ]]
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 image=$(jq -er .images.sglang.path "${config}")
@@ -33,6 +33,7 @@ nvcc -ccbin "${CXX}" -gencode arch=compute_90a,code=sm_90a --cudart static "${RU
 bash "${GITHUB_WORKSPACE}/${benchmark}"
 test -x "${RUNTIME_DIR}/source/probe"
 install -m 0644 "${RUNTIME_DIR}/source/fa3-verify-candidates.json" "${RUNTIME_DIR}/metadata/candidates.json"
+if [[ "${benchmark}" == kernels/probes/prepare-dense-decode.sh ]]; then install -m 0644 "${RUNTIME_DIR}/source/dense-candidates.json" "${RUNTIME_DIR}/metadata/dense-candidates.json"; fi
 jq --arg benchmark "${benchmark}" --arg image "${image}" '. + {cluster:"firmus",benchmark:$benchmark,image:$image,cuda:"13.0",cxx:"/usr/bin/g++",allocated_gpus:8,probe_gpus:1}' "${RUNTIME_DIR}/source/provenance.json" >"${RUNTIME_DIR}/source/provenance.tmp"
 mv "${RUNTIME_DIR}/source/provenance.tmp" "${RUNTIME_DIR}/source/provenance.json"
 cp "${RUNTIME_DIR}/source/provenance.json" "${RUNTIME_DIR}/logs/provenance.json"
