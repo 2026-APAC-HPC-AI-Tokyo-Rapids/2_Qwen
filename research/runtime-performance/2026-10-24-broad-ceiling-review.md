@@ -76,3 +76,18 @@ timeline（per CTA、µs、WG0 rank0）：
 **D5a は採用候補。** 有効行 64 以下の tile で WG1 の WGMMA・rescale・SF load を省くだけ（padding 行のみ、出力 bit 一致）で、実ルーティング −0.4〜−1.8%、local −2.0%。D1 と組むと D1 の損で相殺される。serving overlay への組み込みは次の build に同乗させる。
 
 **次の論点。** FC2 epilogue（約 190 µs）と combine（約 80 µs）は、どちらも combine payload（1 token あたり top-8 × 4096 × BF16 = 64 KiB）の書き込みと読み出しで決まる。重ねるより、payload を減らす方が筋が良い。同じ expert rank 上の同一 token の出力を FP32 で合算し、1 度だけ BF16 に丸めて送れば、丸め回数は現行（expert ごとに BF16）以下になる。演算順序の違いに当たるので規則上は許容と読めるが、確認は要る。過去の pre-reduce（39355994503、serving −5.8%）は、HBM staging と行ごとの atomic で負けており、方式の問題だった。
+
+## 7. attention・MegaMoE 候補の job 内選択つき serving [40175897453](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40175897453)（87a85dd、新 image）
+
+**9022.10 tok/s**（公式判定 有効）。8854.80（40071892077）比 +1.9%、komoriyuta の 8922.77（40116925551）比 +1.1%。要求 5744 / good 5611（97.68%）、TTFT 平均 / p99 1819 / 4248 ms、ITL 平均 / p99 16.52 / 19.30 ms、受理長 2.21。profile なし（selector 込みで 17 分枠に収めるため）。
+
+| 選択 | 勝者 | 根拠（selector の計測） |
+|---|---|---|
+| Prefill FA3（3 worker × 4 rank、L=3986/4027/4096） | **n192** | control 比 中央値 −9.3 µs/層（最小 −7.1）。regs −1.5、lazy −0.4、regs-lazy −1.4 は閾値 5 µs 未満で不採用。c2・regs-c2・regs-lazy-c2 は V byte image の dump 照合に失敗（gate-or-timing-failed） |
+| Decode FA3 verify（B40） | **p128split3-s3-fp8** | stock 比 −21.7 µs/層（従来の p128split3 は −18.2）。FP8 出力の融合で約 −3 µs、3 段で約 −0.5 µs。上位は split2-s3-fp8 −22.0、uneven-s3-fp8 −21.8 と僅差。kernel 内 merge の 7 候補はすべて candidate-failed |
+| Decode dense | QKV 128,144,5（従来どおり） | |
+| MegaMoE | padding-WG skip（D5a）を overlay で常時適用 | |
+
+Prefill selector は 94 層 graph（QKV producer 込み）で計り、1 GPU probe（regs232 −5.3%、N192 −4.0%）と違い、serving 形では regs の効果が消えた。固定経路の control は probe の control と register 配分が違う（spill 72/120 B 対 80/140 B）ことが一因とみられる。Decode selector の所要は 46.7 秒、Prefill selector と合わせて MaxTime 内に収まった。
+
+残課題：c2 の byte image の照合失敗と、Decode の kernel 内 merge の失敗はどちらも実装の不具合で、次の build までに直す。e4（木構造の行最大値）は Firmus probe 40179002643 で +1.2〜+6% と遅く不採用。e1（PV 待ちの位置）は 22 通りの source 変更で ptxas の配置を変えられず未達。
