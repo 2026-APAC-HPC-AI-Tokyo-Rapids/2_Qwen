@@ -198,7 +198,7 @@ def m1():
     start, end = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
     samples = {mode: [] for mode in modes}
     clock_samples = []
-    gpu_uuid = str(torch.cuda.get_device_properties(0).uuid)
+    gpu_uuid = "GPU-" + str(torch.cuda.get_device_properties(0).uuid)
     def clock():
         return int(subprocess.check_output(["nvidia-smi", "--id="+gpu_uuid, "--query-gpu=clocks.sm", "--format=csv,noheader,nounits"], text=True).strip())
     for i in range(25):
