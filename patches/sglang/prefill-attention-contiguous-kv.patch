@@ -339,7 +339,7 @@ index 91b47eca..22160913 100644
          apply_qknorm_rope_fp8_q,
          apply_rope_fp8_q,
      )
-@@ -776,6 +779,19 @@ class Qwen3MoeAttention(nn.Module):
+@@ -776,6 +779,23 @@ class Qwen3MoeAttention(nn.Module):
                      kv_args = (v.view(-1, self.num_kv_heads, self.head_dim), k_cache, v_cache, forward_batch.out_cache_loc)
              if kv_args is None:
                  apply_qknorm_rope_fp8_q(*rope_args)
@@ -349,11 +349,15 @@ index 91b47eca..22160913 100644
 +            ):
 +                contiguous_k = torch.empty(kv_args[0].shape, dtype=torch.float8_e4m3fn, device=k.device)
 +                contiguous_v = torch.empty_like(contiguous_k)
-+                apply_qknorm_rope_fp8_prefill(*rope_args, *kv_args, contiguous_k, contiguous_v)
 +                from sglang.srt.layers.attention.prefill_fp8 import linear_supported
 +                from sglang.srt.model_executor.forward_context import get_attn_backend
 +
 +                self.attn.fixed_prefill_output = use_fixed_prefill(forward_batch, self.attn, get_attn_backend(), q_fp8.view(-1,self.num_heads,self.head_dim), contiguous_k, contiguous_v, output_supported=linear_supported(self, "O", self.o_proj))
++                from sglang.srt.layers.attention.prefill_fp8 import prefill_candidate
++
++                selected = prefill_candidate()
++                self.attn.prefill_v_image = torch.empty((4, (sum(forward_batch.extend_seq_lens_cpu)+223)//224, 224*128), dtype=torch.uint8, device=k.device) if self.attn.fixed_prefill_output and selected["byte_image"] else None
++                apply_qknorm_rope_fp8_prefill(*rope_args, *kv_args, contiguous_k, contiguous_v, self.attn.prefill_v_image, sum(forward_batch.extend_seq_lens_cpu) if self.attn.prefill_v_image is not None else 0)
 +                k, v = contiguous_k, contiguous_v
 +                self._stored_fp8_kv_last_call = True
              else:

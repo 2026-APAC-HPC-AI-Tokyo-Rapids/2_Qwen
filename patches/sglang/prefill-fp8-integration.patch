@@ -78,7 +78,7 @@
 +                from sglang.srt.layers.attention.prefill_fp8 import attention
 +
 +                fixed = getattr(layer, "fixed_prefill_output", False) and use_fixed_prefill(forward_batch, layer, self, q.view(-1,64,128), k.view(-1,4,128), v.view(-1,4,128), output_supported=prefill_fp8_output, out=_fa_out, descales=(q_descale,k_descale,v_descale), extras=(sinks,score_mod,aux_tensors,rel_bias,rel_bias_event), cp_mode=is_cp_mode, local=use_local_attn, swa=is_swa_layer, causal=causal, save_kv_cache=save_kv_cache)
-+                return attention(q.view(-1,64,128)[:rows], k.view(-1,4,128)[:rows], v.view(-1,4,128)[:rows], metadata.cu_seqlens_q, metadata.max_seq_len_q, layer.scaling, q.shape[0], fixed=fixed)
++                return attention(q.view(-1,64,128)[:rows], k.view(-1,4,128)[:rows], v.view(-1,4,128)[:rows], metadata.cu_seqlens_q, metadata.max_seq_len_q, layer.scaling, q.shape[0], fixed=fixed, v_image=getattr(layer, "prefill_v_image", None))
              contiguous_out = _fa_out
              if rows != q.shape[0] and contiguous_out is None:
                  contiguous_out = torch.empty((q.shape[0], layer.tp_q_head_num, layer.v_head_dim), device=q.device, dtype=torch.bfloat16)
@@ -134,10 +134,14 @@
  
 --- /dev/null
 +++ b/python/sglang/srt/layers/attention/prefill_fp8.py
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,80 @@
 +"""Qwen TP1 Prefill: FP8 attention output and specialized dense projections."""
 +
 +import torch
++import json
++import os
++from functools import lru_cache
++from pathlib import Path
 +
 +
 +def linear_supported(attention, projection, layer):
@@ -182,7 +186,14 @@
 +    return out, None
 +
 +
-+def attention(q, k, v, cu, maxlen, softmax_scale, padded_rows, *, fixed=False):
++@lru_cache(maxsize=1)
++def prefill_candidate():
++    rows = json.loads(Path("/opt/apac/fa3-verify/prefill-candidates.json").read_text())
++    name = os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "control")
++    return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name)
++
++
++def attention(q, k, v, cu, maxlen, softmax_scale, padded_rows, *, fixed=False, v_image=None):
 +    from sglang.srt.layers.attention.decode_fa3_verify import load
 +
 +    load()
@@ -192,8 +203,14 @@
 +    scales = torch.empty((64, (padded_rows + 3) // 4 * 4), device=q.device, dtype=torch.float32).T[:padded_rows]
 +    lse = torch.empty((64, rows), device=q.device, dtype=torch.float32)
 +    metadata = torch.empty(17, device=q.device, dtype=torch.int32)
-+    op = torch.ops.apac_fa3_verify.prefill_fixed_fwd_out if fixed else torch.ops.apac_fa3_verify.prefill_fwd_out
-+    op(q, k, v, cu, out, scales, lse, metadata, maxlen, softmax_scale)
++    selected = prefill_candidate() if fixed else None
++    if fixed and selected["name"] != "control":
++        image = v_image if selected["byte_image"] else torch.empty(0, dtype=torch.uint8, device=q.device)
++        assert not selected["byte_image"] or image is not None
++        torch.ops.apac_fa3_verify.prefill_variant_fwd_out(q, k, v, image, cu, out, scales, lse, metadata, maxlen, softmax_scale, selected["id"])
++    else:
++        op = torch.ops.apac_fa3_verify.prefill_fixed_fwd_out if fixed else torch.ops.apac_fa3_verify.prefill_fwd_out
++        op(q, k, v, cu, out, scales, lse, metadata, maxlen, softmax_scale)
 +    if padded_rows > rows:
 +        out[rows:].zero_()
 +        scales[rows:].fill_(1.0e-10 / 448.0)

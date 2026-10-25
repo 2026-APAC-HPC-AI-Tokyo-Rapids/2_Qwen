@@ -134,7 +134,9 @@ export TRITON_CACHE_DIR=/tmp/sglang-$name/triton
 export TORCHINDUCTOR_CACHE_DIR=/tmp/sglang-$name/inductor
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
-echo "$name host=$(hostname) ip=$SGLANG_HOST_IP hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp shuffle=${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0} routing=${SGLANG_PREFILL_TILED_ROUTING:-0} aligned_chunks=${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0} rotate_ties=${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0} idle_prefill_geometry=${SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY:-0} async_admission=${SGLANG_DECODE_ASYNC_ADMISSION:-0} megamoe_tokens=${SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK} prefill_2wg=${DG_SM90_PREFILL_2WG:-0} dense_config=${DG_SM90_1D2D_DECODE_CONFIG:-stock} dense_qkv=${SGLANG_DECODE_DENSE_GEMM_QKV:-deepgemm} dense_o=${SGLANG_DECODE_DENSE_GEMM_O:-deepgemm} fa3_verify=${SGLANG_DECODE_FA3_VERIFY:-stock} independent_wg=${DG_SM90_DECODE_INDEPENDENT_WG:-0}"
+# Only Prefill sources the common result, screened on all twelve Prefill GPUs.
+if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi
+echo "$name host=$(hostname) ip=$SGLANG_HOST_IP hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp shuffle=${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0} routing=${SGLANG_PREFILL_TILED_ROUTING:-0} aligned_chunks=${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0} rotate_ties=${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0} idle_prefill_geometry=${SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY:-0} async_admission=${SGLANG_DECODE_ASYNC_ADMISSION:-0} megamoe_tokens=${SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK} prefill_2wg=${DG_SM90_PREFILL_2WG:-0} dense_config=${DG_SM90_1D2D_DECODE_CONFIG:-stock} dense_qkv=${SGLANG_DECODE_DENSE_GEMM_QKV:-deepgemm} dense_o=${SGLANG_DECODE_DENSE_GEMM_O:-deepgemm} fa3_verify=${SGLANG_DECODE_FA3_VERIFY:-stock} prefill_fa3=${SGLANG_PREFILL_FA3_VERIFY:-control} independent_wg=${DG_SM90_DECODE_INDEPENDENT_WG:-0}"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
 # Queue-aware DP routing replaces bootstrap-room hashing on P and round-robin
 # on D. Publish every iteration so completed requests release routing budget.
@@ -171,6 +173,18 @@ dense_selection=$!
 # --dense-selected: the dense candidates were checked by the selection; the gate keeps the configured path.
 srun -N1 -n1 --exact -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts numeric-gate)" env TRITON_CACHE_DIR="/tmp/qwen-numeric-gate-${SLURM_JOB_ID}" DG_SM90_DECODE_INDEPENDENT_WG=1 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/check-firmus-megamoe.py" --dense-selected --fa3-selected >"${ART}/sm90-megamoe-gate.log" 2>&1
 wait "${fa3_selection}"
+
+# Measure all twelve physical Prefill GPUs before model load. The two head
+# groups and one tail group run concurrently; serving then reuses these GPUs.
+prefill_selections=()
+for worker in 0 1 2; do
+  node=${HEAD}
+  if (( worker == 2 )); then node=${TAIL}; fi
+  srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-selection-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-select-${SLURM_JOB_ID}-${worker}" bash "${ROOT}/scripts/select-firmus-prefill-kernels.sh" "${ROOT}" "prefill-${worker}" >"${ART}/prefill-selection-${worker}.log" 2>&1 &
+  prefill_selections+=("$!")
+done
+for pid in "${prefill_selections[@]}"; do wait "${pid}" || true; done
+python3 "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")

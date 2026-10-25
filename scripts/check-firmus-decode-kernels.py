@@ -1137,6 +1137,149 @@ def check_prefill_fp8_integration():
     print("PASS: installed Prefill FP8 companion, padding, changed-input/length graph, zero-V, and specialized QKV/O", flush=True)
 
 
+# Fixed Prefill helpers: independent from Decode candidate functions/tables.
+def prefill_specs():
+    path = Path(__file__).resolve().parents[1] / "kernels/fa3-verify/prefill-candidates.json"
+    if not path.is_file():
+        path = Path("/opt/apac/fa3-verify/prefill-candidates.json")
+    return json.loads(path.read_text())
+
+
+def prefill_selection_inputs(rows, padding=4):
+    torch.manual_seed(93517 + rows)
+    packed = (torch.randn(rows+padding, 72, 128, device="cuda", dtype=torch.bfloat16) * .5)
+    q, k, v = packed[:, :64], packed[:, 64:68], packed[:, 68:]
+    qw, kw = [torch.ones(128, device="cuda", dtype=torch.bfloat16) for _ in range(2)]
+    angles = torch.arange(8192, device="cuda").float()[:, None] * (1000000.0 ** (-torch.arange(0, 128, 2, device="cuda").float() / 128))
+    trig = torch.cat((angles.cos(), angles.sin()), dim=-1).contiguous()
+    pos = torch.arange(rows+padding, device="cuda", dtype=torch.int64)
+    loc = pos + 1
+    q_fp8 = torch.empty((rows+padding, 64, 128), device="cuda", dtype=torch.float8_e4m3fn)
+    ck, cv = [torch.empty((rows+padding, 4, 128), device="cuda", dtype=q_fp8.dtype) for _ in range(2)]
+    kc, vc = [torch.empty((rows+padding+1, 4, 128), device="cuda", dtype=q_fp8.dtype) for _ in range(2)]
+    cu = torch.tensor([0, rows], device="cuda", dtype=torch.int32)
+    image = torch.full((4, (rows+223)//224, 224*128), 0x7f, device="cuda", dtype=torch.uint8)
+    args = (q, k, qw, kw, trig, pos, 1e-6, q_fp8, v, kc, vc, loc, ck, cv)
+    return {"packed": packed, "q": q_fp8[:rows], "k": ck[:rows], "v": cv[:rows], "kc": kc, "vc": vc, "cu": cu, "image": image, "rope_args": args, "rows": rows}
+
+
+def prefill_selection_step(common, name, layers=94):
+    specs = prefill_specs()
+    spec = next(c for c in specs if c["name"] == name)
+    candidate = specs.index(spec)
+    rows = common["rows"]
+    out = torch.empty((rows, 64, 128), device="cuda", dtype=common["q"].dtype)
+    scales = torch.empty((64, (rows+3)//4*4), device="cuda", dtype=torch.float32).T[:rows]
+    lse = torch.empty((64, rows), device="cuda", dtype=torch.float32)
+    metadata = torch.empty(17, device="cuda", dtype=torch.int32)
+    empty = torch.empty(0, device="cuda", dtype=torch.uint8)
+    image = common["image"] if spec["byte_image"] else empty
+
+    def step():
+        for _ in range(layers):
+            # Includes the real extra producer work for c2, in every timed layer.
+            rope_ops.apply_qknorm_rope_fp8_prefill(*common["rope_args"], image if spec["byte_image"] else None, rows if spec["byte_image"] else 0)
+            torch.ops.apac_fa3_verify.prefill_variant_fwd_out(common["q"], common["k"], common["v"], image, common["cu"], out, scales, lse, metadata, rows, 128**-.5, candidate)
+        return out, scales
+
+    step.output = out, scales
+    return step
+
+
+def prefill_selection_capture(step):
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        for _ in range(3):
+            step()
+    torch.cuda.current_stream().wait_stream(stream)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        step()
+    graph.replay()
+    torch.cuda.synchronize()
+    return graph
+
+
+def prefill_fp32_reference(common):
+    rows = common["rows"]
+    indices = sorted({0, 1, 7, 31, 127, 223, rows//2, rows-2, rows-1})
+    q = common["q"].float()[indices].transpose(0, 1)
+    k = common["k"].float().repeat_interleave(16, dim=1).transpose(0, 1)
+    v = common["v"].float().repeat_interleave(16, dim=1).transpose(0, 1)
+    tf32 = torch.backends.cuda.matmul.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+        scores = (q @ k.transpose(1, 2)) * (128**-.5)
+        allowed = torch.arange(rows, device="cuda")[None, :] <= torch.tensor(indices, device="cuda")[:, None]
+        scores.masked_fill_(~allowed[None, :, :], -float("inf"))
+        return indices, (scores.softmax(-1) @ v).transpose(0, 1)
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = tf32
+
+
+def prefill_assert_errors(actual, expected, label):
+    assert actual.shape == expected.shape and actual.isfinite().all() and expected.isfinite().all(), label
+    a, b = actual.float(), expected.float()
+    error = a - b
+    result = {"relative_l2": (error.norm()/b.norm().clamp_min(1e-12)).item(), "max_scaled_error": (error.abs().amax()/b.abs().amax().clamp_min(1e-12)).item()}
+    # The existing Prefill check_numerics gate thresholds, also for N192.
+    assert result["relative_l2"] <= .05 and result["max_scaled_error"] <= .25, (label, result)
+    return result
+
+
+def prefill_validate_candidate(common, name):
+    from sglang.srt.layers.attention.decode_fa3_verify import load
+
+    load()
+    spec = next(c for c in prefill_specs() if c["name"] == name)
+    step = prefill_selection_step(common, name, 1)
+    graph = prefill_selection_capture(step)
+    rows = common["rows"]
+    control = torch.empty_like(step.output[0])
+    control_scales = torch.empty((64, (rows+3)//4*4), device="cuda", dtype=torch.float32).T[:rows]
+    lse = torch.empty((64, rows), device="cuda", dtype=torch.float32)
+    metadata = torch.empty(17, device="cuda", dtype=torch.int32)
+    metrics = []
+    for replay in range(3):
+        if replay:
+            common["packed"].copy_(torch.randn_like(common["packed"]) * (replay+.5))
+        if spec["byte_image"]:
+            common["image"].fill_(0x7f)
+        graph.replay()
+        out, scales = step.output
+        torch.ops.apac_fa3_verify.prefill_fwd_out(common["q"], common["k"], common["v"], common["cu"], control, control_scales, lse, metadata, rows, 128**-.5)
+        assert scales.isfinite().all() and (scales > 0).all(), name
+        if spec["bitwise"]:
+            assert torch.equal(out.view(torch.uint8), control.view(torch.uint8)), (name, rows, replay, "FP8 bytes")
+            assert torch.equal(scales, control_scales), (name, rows, replay, "FP32 scales")
+        else:
+            prefill_assert_errors(out.float(), control.float(), name+"_codes")
+            prefill_assert_errors(scales, control_scales, name+"_scales")
+        # Verify paged transfer payload and fallback row-major V are still exact.
+        assert torch.equal(common["v"].view(torch.uint8), common["packed"][:rows, 68:].to(out.dtype).contiguous().view(torch.uint8)), name
+        assert torch.equal(common["v"].view(torch.uint8), common["vc"][1:rows+1].view(torch.uint8)), name
+        if spec["byte_image"]:
+            dump = torch.empty_like(common["image"])
+            torch.ops.apac_fa3_verify.prefill_dump_v(common["v"], dump)
+            assert torch.equal(dump, common["image"]), (name, rows, replay, "STSM dump / global image including zero padding")
+        indices, reference = prefill_fp32_reference(common)
+        actual = out.float()[indices]*scales[indices, :, None]
+        metrics.append(prefill_assert_errors(actual, reference, name+"_fp32"))
+    return {"numeric_passed": True, "bitwise": spec["bitwise"], "metrics": metrics, "changed_input_replays": 2, "byte_image_dump_passed": spec["byte_image"]}
+
+
+def check_prefill_fixed_variants():
+    from sglang.srt.layers.attention.decode_fa3_verify import load
+
+    load()
+    # The job-local selector screens all candidates on the actual Prefill GPUs.
+    # The existing check_prefill_fp8_integration covers multisequence fallbacks.
+    name = os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "control")
+    for rows in (3986, 4027, 4096):
+        print(json.dumps({"check": "prefill_fixed_variant", "name": name, "rows": rows, **prefill_validate_candidate(prefill_selection_inputs(rows), name)}), flush=True)
+
+
 if __name__ == "__main__":
     # Existing gates embed this file with run_path and retain their own argv.
     torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
@@ -1151,5 +1294,6 @@ if __name__ == "__main__":
     check_decode_router_padding()
     check_add_rmsnorm_group_quant()
     check_prefill_fp8_integration()
+    check_prefill_fixed_variants()
     check_prefill_attention()
     check_verify_scheduler_sharing()
