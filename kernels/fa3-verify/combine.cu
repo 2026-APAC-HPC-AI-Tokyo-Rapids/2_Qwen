@@ -5,7 +5,7 @@
 namespace apac_fa3_verify {
 // Eight lanes cooperate on each D128 row; all partial arithmetic stays FP32.
 template<int S, bool FP8>
-__global__ void combine_fixed(const float* __restrict__ partial, const float* __restrict__ plse, __nv_bfloat16* __restrict__ out, float* __restrict__ lse, int tq, int* semaphore, uint8_t* fp8, float* scales, int64_t scale_stride) {
+__global__ void combine_fixed(const float* __restrict__ partial, const float* __restrict__ plse, __nv_bfloat16* __restrict__ out, float* __restrict__ lse, int tq, int* semaphore, uint8_t* fp8, float* scales, int64_t scale_stride, const int* dynamic, const int* order, int batch) {
     int lane = threadIdx.x % 8;
     int row = blockIdx.x * 16 + threadIdx.x / 8;
     int rows = tq * 64;
@@ -13,11 +13,16 @@ __global__ void combine_fixed(const float* __restrict__ partial, const float* __
     if (row >= rows) { return; }
     // Partial storage is head-major; final output is token-major.
     int head = row / tq, token = row % tq;
+    int active = S;
+    if (S == 4) {
+        // Dynamic split counts are indexed by virtual (sorted) batch id.
+        for (int i = 0; i < batch; ++i) { if (order[i] == token / 4) { active = dynamic[i]; break; } }
+    }
     float weight[S] = {};
     if (lane == 0) {
         float local[S], maximum = -INFINITY;
         #pragma unroll
-        for (int s = 0; s < S; ++s) { local[s] = plse[s * rows + row]; maximum = fmaxf(maximum, local[s]); }
+        for (int s = 0; s < S; ++s) { local[s] = s < active ? plse[s * rows + row] : -INFINITY; maximum = fmaxf(maximum, local[s]); }
         float m = maximum == -INFINITY ? 0.f : maximum, sum = 0.f;
         #pragma unroll
         for (int s = 0; s < S; ++s) { weight[s] = expf(local[s] - m); sum += weight[s]; }
@@ -50,14 +55,16 @@ __global__ void combine_fixed(const float* __restrict__ partial, const float* __
 }
 template<int S, bool FP8>
 void launch_combine(Flash_fwd_params& p, cudaStream_t stream) {
-    combine_fixed<S, FP8><<<(p.total_q * 64 + 15) / 16, 128, 0, stream>>>((float*)p.oaccum_ptr, (float*)p.softmax_lseaccum_ptr, (__nv_bfloat16*)p.o_ptr, (float*)p.softmax_lse_ptr, p.total_q, p.tile_count_semaphore, (uint8_t*)p.o_fp8_ptr, p.o_scale_ptr, p.o_scale_stride);
+    combine_fixed<S, FP8><<<(p.total_q * 64 + 15) / 16, 128, 0, stream>>>((float*)p.oaccum_ptr, (float*)p.softmax_lseaccum_ptr, (__nv_bfloat16*)p.o_ptr, (float*)p.softmax_lse_ptr, p.total_q, p.tile_count_semaphore, (uint8_t*)p.o_fp8_ptr, p.o_scale_ptr, p.o_scale_stride, p.num_splits_dynamic_ptr, p.varlen_batch_idx_ptr, p.b);
 }
 void combine(Flash_fwd_params& p, cudaStream_t stream) {
     if (p.o_fp8_ptr) {
         if (p.num_splits == 2) { launch_combine<2, true>(p, stream); }
+        else if (p.num_splits == 4) { launch_combine<4, true>(p, stream); }
         else { launch_combine<3, true>(p, stream); }
     } else {
         if (p.num_splits == 2) { launch_combine<2, false>(p, stream); }
+        else if (p.num_splits == 4) { launch_combine<4, false>(p, stream); }
         else { launch_combine<3, false>(p, stream); }
     }
     CHECK_CUDA_KERNEL_LAUNCH();

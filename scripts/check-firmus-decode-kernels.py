@@ -826,6 +826,7 @@ def verify_validate_candidate(batch, name):
         step = verify_step([common], name)
         if boundary and step.state is not None:
             step.state["partial"].fill_(float("nan"))
+            step.state["partial_lse"].fill_(float("nan"))
         step()
         stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
         metrics.append({"boundary": boundary, "o_gemm_input": verify_quant_gate(step.output, stock), "stock": verify_errors(verify_dequant(step.output), stock, name), "fp32": verify_errors(verify_dequant(step.output), verify_fp32_reference(common, lengths), name + "_fp32")})
@@ -841,18 +842,38 @@ def verify_validate_candidate(batch, name):
             common["cu_seqlens_q"].copy_(torch.arange(0, 4 * batch + 1, 4, device="cuda", dtype=torch.int32))
             if boundary and step.state is not None:
                 step.state["partial"].fill_(float("nan"))
+                step.state["partial_lse"].fill_(float("nan"))
             graph.replay()
             stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
             metrics.append({"boundary": boundary, "replay": replay, "o_gemm_input": verify_quant_gate(step.output, stock), "stock": verify_errors(verify_dequant(step.output), stock, name + "_changed94"), "fp32": verify_errors(verify_dequant(step.output), verify_fp32_reference(common, lengths), name + "_changed_fp32")})
             state = step.state
             if state is not None and state["spec"]["splits"] > 1:
                 splits = state["spec"]["splits"]
+                counts = [splits] * batch
+                if state["spec"].get("uneven"):
+                    rounded = (batch + 3) // 4 * 4
+                    metadata = state["metadata"].cpu().tolist()
+                    for virtual in range(batch):
+                        counts[metadata[rounded * 2 + virtual]] = metadata[virtual]
+                    four = max(0, min(batch, 132 - 3 * batch))
+                    assert sorted(counts) == [3] * (batch - four) + [4] * four
+                if state["spec"].get("merge"):
+                    rounded = (batch + 3) // 4 * 4
+                    assert (state["metadata"][4 * rounded + 1:] == 0).all(), "merge counters survive graph replay"
+                    # Resetting prepare runs once per step; every layer must
+                    # return its own arrival counters to zero without prepare.
                 for b, length in enumerate(lengths):
+                    active_splits = counts[b]
                     blocks = (length + state["spec"]["block_n"] - 1) // state["spec"]["block_n"]
-                    per_split = (blocks + splits - 1) // splits
-                    for split in range(splits):
+                    per_split = (blocks + active_splits - 1) // active_splits
+                    for split in range(active_splits):
                         if split * per_split >= blocks:
                             assert state["partial_lse"][split, :, 4 * b:4 * b + 4].isneginf().all(), "empty split LSE"
+        if step.state is not None and step.state["spec"].get("merge"):
+            output = step.output if isinstance(step.output, tuple) else (step.output,)
+            saved = [x.contiguous().view(torch.uint8).clone() for x in output]
+            graph.replay()
+            assert all((x.contiguous().view(torch.uint8) == y).all() for x, y in zip(output, saved)), "in-kernel merge is not deterministic"
     return {"numeric_passed": True, "metrics": metrics, "changed_input_replays": 2, "layers_per_replay": 94}
 
 

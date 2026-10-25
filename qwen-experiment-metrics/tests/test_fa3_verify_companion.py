@@ -118,7 +118,7 @@ def test_workspace_is_owned_by_forward_and_split_buffers_stay_fp32(helper, batch
     state = ns["allocate"](lengths, name)
     other = ns["allocate"](lengths, name)
     assert len(loads) == 1 and state["metadata"] is not other["metadata"]
-    assert shapes[0][0] == 4 * ((batch + 3) // 4 * 4) + 1
+    assert shapes[0][0] == 4 * ((batch + 3) // 4 * 4) + 1 + (batch * 4 if state["spec"].get("merge") else 0)
     assert shapes[2][0] == ((splits, 64, 4 * batch, 128) if splits > 1 else (0,))
     assert shapes[2][1]["dtype"] == "fp32"
     q, k, v, pages, cu, out = [object() for _ in range(6)]

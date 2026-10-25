@@ -16,9 +16,9 @@ TABLE = json.loads((ROOT / 'kernels/fa3-verify/candidates.json').read_text())
 def test_dispatch_compiles_unique_main_kernels_and_keeps_split_counts(tmp_path):
     ns = runpy.run_path(str(ROOT / 'kernels/fa3-verify/build.py'))
     tasks = ns['generate_dispatch'](ROOT / 'kernels/fa3-verify', tmp_path)
-    assert len(tasks) == 5  # output and split-count variants share their main kernel
+    assert len(tasks) == 8  # output and split-count variants share their main kernel
     header = (tmp_path / 'candidates.h').read_text()
-    assert len(TABLE) == 12 and len({c['name'] for c in TABLE}) == 12
+    assert len(TABLE) == 22 and len({c['name'] for c in TABLE}) == 22
     for row in TABLE:
         assert row['name'] in header
         assert 11264 + 384 * row['block_n'] * row['stages'] <= ns['SM90_OPTIN_BYTES']

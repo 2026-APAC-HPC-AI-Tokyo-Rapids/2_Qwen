@@ -194,7 +194,7 @@
 +    return {
 +        "candidate": candidate,
 +        "spec": spec,
-+        "metadata": torch.empty(4 * ((batch + 3) // 4 * 4) + 1, device=lengths.device, dtype=torch.int32),
++        "metadata": torch.empty(4 * ((batch + 3) // 4 * 4) + 1 + (batch * 4 if spec.get("merge") else 0), device=lengths.device, dtype=torch.int32),
 +        "lse": torch.empty((64, 4 * batch), **options),
 +        "partial": torch.empty((splits, 64, 4 * batch, 128) if splits > 1 else (0,), **options),
 +        "partial_lse": torch.empty((splits, 64, 4 * batch) if splits > 1 else (0,), **options),

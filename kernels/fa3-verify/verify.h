@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 namespace apac_fa3_verify {
 using Launch = void (*)(Flash_fwd_params&, cudaStream_t, int*);
+void decode_prepare(Flash_fwd_params&, cudaStream_t);
 void combine(Flash_fwd_params&, cudaStream_t);
 void prefill_dump_v_launch(const void*, void*, int, cudaStream_t);
 void prefill_fixed(Flash_fwd_params&, cudaStream_t, int*);

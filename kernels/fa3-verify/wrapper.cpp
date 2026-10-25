@@ -7,7 +7,7 @@
 #include "verify.h"
 
 namespace apac_fa3_verify {
-struct Candidate { const char* name; int block_n, stages, splits; bool fp8; Launch launch; };
+struct Candidate { const char* name; int block_n, stages, splits; bool fp8, merge, uneven; Launch launch; };
 #include "candidates.h"
 static const Candidate& candidate(int64_t id) {
     TORCH_CHECK(id >= 0 && id < int64_t(sizeof(candidates) / sizeof(candidates[0])), "invalid FA3 verify candidate");
@@ -22,7 +22,7 @@ static Flash_fwd_params base(const at::Tensor& lengths, const at::Tensor& cu, co
     int s = splits(id), b = lengths.numel(), rounded = (b + 3) / 4 * 4;
     tensor(lengths, lengths, at::kInt); tensor(cu, lengths, at::kInt); tensor(metadata, lengths, at::kInt);
     TORCH_CHECK(lengths.dim() == 1 && b >= 32 && b <= 48 && cu.dim() == 1 && cu.numel() == b + 1, "FA3 verify requires B32..48 and Q4");
-    TORCH_CHECK(metadata.dim() == 1 && metadata.numel() == rounded * 4 + 1, "FA3 verify metadata size");
+    TORCH_CHECK(metadata.dim() == 1 && metadata.numel() == rounded * 4 + 1 + (candidate(id).merge ? b * 4 : 0), "FA3 verify metadata size");
     Flash_fwd_params p{};
     p.b = b; p.b_k = b; p.seqlen_q = 4; p.total_q = 4 * b; p.h = 64; p.h_k = 4;
     p.d = p.dv = p.d_rounded = p.dv_rounded = 128; p.seqlen_q_rounded = 128;
@@ -39,7 +39,10 @@ static Flash_fwd_params base(const at::Tensor& lengths, const at::Tensor& cu, co
 void prepare(const at::Tensor& lengths, const at::Tensor& cu, const at::Tensor& metadata, int64_t id) {
     c10::cuda::CUDAGuard guard(lengths.device());
     auto p = base(lengths, cu, metadata, id);
-    prepare_varlen_num_blocks(p, at::cuda::getCurrentCUDAStream(), true, 64, block_n(id), false);
+    auto stream = at::cuda::getCurrentCUDAStream();
+    if (candidate(id).uneven) { decode_prepare(p, stream); }
+    else { prepare_varlen_num_blocks(p, stream, true, 64, block_n(id), false); }
+    if (candidate(id).merge) { C10_CUDA_CHECK(cudaMemsetAsync(p.tile_count_semaphore + 1, 0, p.b * 4 * sizeof(int), stream)); }
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 void fwd_impl(const at::Tensor& scales, const at::Tensor& q, const at::Tensor& k, const at::Tensor& v, const at::Tensor& pages, const at::Tensor& lengths, const at::Tensor& cu, const at::Tensor& out, const at::Tensor& lse, const at::Tensor& partial, const at::Tensor& partial_lse, const at::Tensor& metadata, int64_t id, double scale) {
@@ -74,9 +77,15 @@ void fwd_impl(const at::Tensor& scales, const at::Tensor& q, const at::Tensor& k
         p.lseaccum_split_stride = 64 * p.total_q; p.lseaccum_head_stride = p.total_q;
     }
     auto stream = at::cuda::getCurrentCUDAStream();
+    if (candidate(id).merge) {
+        p.verify_merge = {p.tile_count_semaphore + 1, (const float*)p.oaccum_ptr, (const float*)p.softmax_lseaccum_ptr, p.o_ptr, (float*)p.softmax_lse_ptr, candidate(id).fp8 ? (uint8_t*)p.o_ptr : nullptr, p.o_scale_ptr, p.o_scale_stride, p.total_q};
+        // Persistent producer CTAs can still fetch work after the last group
+        // merges. Reset only at the next stream-ordered launch, never in merge.
+        C10_CUDA_CHECK(cudaMemsetAsync(p.tile_count_semaphore, 0, sizeof(int), stream));
+    }
     candidate(id).launch(p, stream, nullptr);
-    if (p.num_splits > 1) { p.o_fp8_ptr = candidate(id).fp8 ? out.data_ptr() : nullptr; combine(p, stream); }
-    else { C10_CUDA_CHECK(cudaMemsetAsync(p.tile_count_semaphore, 0, sizeof(int), stream)); }
+    if (p.num_splits > 1 && !candidate(id).merge) { p.o_fp8_ptr = candidate(id).fp8 ? out.data_ptr() : nullptr; combine(p, stream); }
+    else if (!candidate(id).merge) { C10_CUDA_CHECK(cudaMemsetAsync(p.tile_count_semaphore, 0, sizeof(int), stream)); }
 }
 void fwd(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v, const at::Tensor& pages, const at::Tensor& lengths, const at::Tensor& cu, const at::Tensor& out, const at::Tensor& lse, const at::Tensor& partial, const at::Tensor& partial_lse, const at::Tensor& metadata, int64_t id, double scale) {
     TORCH_CHECK(!candidate(id).fp8, "FP8 candidate requires scales");
