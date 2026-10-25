@@ -17,7 +17,7 @@ cat results/ncu-permission.csv
 if grep -q ERR_NVGPUCTRPERM results/ncu-permission.csv; then printf 'FATAL: ERR_NVGPUCTRPERM: Firmus GPU performance counters are not permitted; no probe trial was run.\n' >&2; exit 1; fi
 if (( status != 0 )); then printf 'FATAL: Nsight Compute permission preflight failed (exit=%s); no probe trial was run.\n' "${status}" >&2; exit "${status}"; fi
 grep -q 'sm__cycles_elapsed.avg' results/ncu-permission.csv || { printf 'FATAL: NCU preflight produced no hardware-counter result; no probe trial was run.\n' >&2; exit 1; }
-[[ "$(jq -r '.calibration' source/provenance.json)" == true ]]
+python3 -c 'import json, sys; sys.exit(0 if json.load(open("source/provenance.json")).get("calibration") is True else 1)'
 printf 'trial=1\n'
 timeout 165 ./source/probe 2>&1 | tee results/trial-1.log
 grep -q '^PASS ' results/trial-1.log
