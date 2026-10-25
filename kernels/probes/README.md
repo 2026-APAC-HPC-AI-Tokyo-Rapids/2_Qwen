@@ -226,3 +226,16 @@ upload. An active or unobservable job is preserved, and no job is cancelled.
 The parent must validate GPU execution, NCU counter access and actual runtime
 through workflow dispatch; login-only compilation and CPU fixtures do not
 establish GPU correctness or performance.
+
+The shared preparation snapshots the checkout's FA3 candidate table into the
+runtime. Both the normal and profile wrappers bind this file read-only at
+`/opt/apac/fa3-verify/candidates.json`, so the numeric helper can import with
+older pinned images that do not contain the table. Genkai and ASPIRE use the
+same wrappers.
+
+The initial ASPIRE M2 run (40167593977, PBS 224680.pbs111) failed with
+`ERR_NVGPUCTRPERM` in `results/fa3-prefill-m2-sass.csv`. This requires profiling
+access on the allocated compute node; retry M2 only after NSCC has confirmed
+that access. The application's own `PASS` line does not mean profiling
+succeeded. Failed profiler output is now copied into the trial log, and both
+PBS and PJM trial logs include stderr while preserving the process exit code.

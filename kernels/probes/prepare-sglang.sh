@@ -14,6 +14,8 @@ mv "${RUNTIME_DIR}/image/opt/apac/sm90-megamoe-build.json" "${RUNTIME_DIR}/sourc
 mv "${RUNTIME_DIR}/image/opt/sglang/source/python" "${RUNTIME_DIR}/source/python"
 rm -rf -- "${RUNTIME_DIR}/image"
 cd "${RUNTIME_DIR}/source"
+# Snapshot the helper's import-time table from the same checkout as the probe.
+install -m 0644 "${GITHUB_WORKSPACE}/kernels/fa3-verify/candidates.json" fa3-verify-candidates.json
 mapfile -t overlays < <(jq -r '.sglang_overlay_patches[]' "${config}")
 for patch in "${overlays[@]}"; do git apply --check "${GITHUB_WORKSPACE}/${patch}"; git apply "${GITHUB_WORKSPACE}/${patch}"; done
 install -m 0755 "${GITHUB_WORKSPACE}/kernels/probes/run-sglang.sh" probe

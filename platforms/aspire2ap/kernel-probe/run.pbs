@@ -19,7 +19,7 @@ trial_timeout=90
 if [[ "$(jq -r '.calibration // false' source/provenance.json)" == true ]]; then trials=1; trial_timeout=165; fi
 for ((trial=1; trial<=trials; trial++)); do
   printf 'trial=%s\n' "${trial}"
-  timeout "${trial_timeout}" ./source/probe | tee "results/trial-${trial}.log"
+  timeout "${trial_timeout}" ./source/probe 2>&1 | tee "results/trial-${trial}.log"
 done
 touch run-success
 date -u

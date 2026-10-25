@@ -37,7 +37,7 @@ def test_pbs_trial_protocol(tmp_path, calibration, probe_exit):
     assert (tmp_path / "timeouts").read_text().splitlines() == (["165"] if calibration else ["90"] * 3)
 
 
-@pytest.mark.parametrize("state,scheduler_exit,marker,passed,expected", [("Q", 0, False, False, 75), ("R", 0, False, False, 75), ("F", 0, True, True, 0), ("F", 7, True, True, 1), ("F", 0, False, True, 1), ("F", 0, True, False, 1)])
+@pytest.mark.parametrize("state,scheduler_exit,marker,passed,expected", [("Q", 0, False, False, 0), ("R", 0, False, False, 0), ("F", 0, True, True, 0), ("F", 7, True, True, 1), ("F", 0, False, True, 1), ("F", 0, True, False, 1)])
 def test_pbs_terminal_and_numeric_gates(tmp_path, state, scheduler_exit, marker, passed, expected):
     env = runtime(tmp_path)
     env["PBS_JOB_ID"] = "123.pbs101"
@@ -49,6 +49,8 @@ def test_pbs_terminal_and_numeric_gates(tmp_path, state, scheduler_exit, marker,
     command = f'/opt/pbs/bin/qstat() {{ printf "job_state = {state}\\nExit_status = {scheduler_exit}\\n"; }}\nsource "$1"'
     result = subprocess.run(["bash", "-c", command, "fixture", str(PLATFORM / "check-job.sh")], env=env, capture_output=True, text=True, check=False)
     assert result.returncode == expected, result.stdout + result.stderr
+    if state != "F":
+        assert result.stdout == f"scheduler_job_pending=123.pbs101 state={state}\n"
 
 
 @pytest.mark.parametrize("benchmark,patch", [("kernels/probes/prepare-megamoe-full.sh", ""), ("kernels/probes/../../unsafe.sh", ""), ("kernels/probes/prepare-fa3-prefill.sh", "candidate.patch")])

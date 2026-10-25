@@ -17,7 +17,7 @@ if [[ "${GPU_COUNT:-1}" == 4 ]]; then trial_timeout=180; fi
 if [[ "$(jq -r '.calibration // false' source/provenance.json)" == true ]]; then trials=1; if [[ "${GPU_COUNT:-1}" == 4 ]]; then trial_timeout=570; else trial_timeout=165; fi; fi
 for ((trial=1; trial<=trials; trial++)); do
   printf 'trial=%s\n' "${trial}"
-  timeout "${trial_timeout}" ./source/probe | tee "results/trial-${trial}.log"
+  timeout "${trial_timeout}" ./source/probe 2>&1 | tee "results/trial-${trial}.log"
 done
 touch run-success
 date -u
