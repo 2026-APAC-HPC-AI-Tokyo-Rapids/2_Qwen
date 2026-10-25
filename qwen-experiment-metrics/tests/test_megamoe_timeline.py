@@ -74,7 +74,7 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert config["deep_gemm_overlay_patches"][-2:] == ["patches/deep-gemm-overlay/sm90-decode-independent-wg.patch", "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch"]
     bench = ROOT / "patches/deep-gemm-bench"
-    assert sorted(p.name for p in bench.iterdir()) == ["prefill-fc2-bulk-scatter", "timeline", "z-control-repeat"]
+    assert sorted(p.name for p in bench.iterdir()) == ["decode-m1-b-first", "timeline", "z-control-repeat"]
     assert not list(bench.glob("*/env"))
     assert (bench / "timeline").stat().st_size == 0
     for name in ("containers/Dockerfile", "scripts/build-sglang-container.sh", "containers/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg-host.py"):
@@ -240,19 +240,12 @@ def test_bulk_timeline_v4_separates_issue_reuse_drain_and_barrier(tmp_path, summ
     assert "ML2FullWait" in text and "MLastL2End" in text
 
 
-@pytest.mark.parametrize("candidate", ["prefill-fc2-bulk-scatter"])
-def test_bulk_timeline_is_candidate_only(candidate):
-    patch = (ROOT / "patches/deep-gemm-bench" / candidate / "timeline").read_text()
-    added = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
-    assert "base[1] = 4;" in added
-    assert "kCountersPerWG = 11" in added
-    assert "kEventsPerWG = 9" in added
-    assert "kNumCounters * sizeof(uint32_t) == 176" in added
-    assert "kML2Drain" in added and "kDrainEnd" in added
-    assert "cp.async.bulk.wait_group 0;" in patch
+def test_decode_m1_uses_stock_iwg_math_timeline():
+    marker = ROOT / "patches/deep-gemm-bench/decode-m1-b-first/timeline"
+    assert marker.exists() and marker.stat().st_size == 0
     stock = (ROOT / "patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch").read_text()
     assert "base[1] = 2;" in stock
-    assert "kML2Drain" not in stock
+    assert "tl_wait_full(stage_idx, phase, block_phase)" in stock
 
 
 def test_summary_combines_control_v2_and_bulk_v4_timelines(tmp_path, summary):

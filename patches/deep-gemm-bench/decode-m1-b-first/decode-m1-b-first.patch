@@ -1,0 +1,32 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1050,6 +1050,14 @@
+         auto process_task_load = [&](const auto& block_phase, const uint32_t& local_expert_idx, const uint32_t& num_k_blocks, const uint32_t& m_block_idx, const uint32_t& n_block_idx) CUTLASS_LAMBDA_FUNC_INLINE {
+             const bool l2 = block_phase == sched::BlockPhase::Linear2;
+             const uint32_t pool_block = scheduler.get_current_pool_block_offset() + m_block_idx;
++            // Decode IWG only: reserve B without consuming the full-barrier arrival.
++            // The first empty-stage wait still protects the previous task's consumer.
++            empty_barriers[stage_idx]->wait(phase ^ 1);
++            if (cute::elect_one_sync()) {
++                full_barriers[stage_idx]->expect_transaction(SMEM_B_SIZE_PER_STAGE);
++                tma::copy<BLOCK_K, LOAD_BLOCK_N, kSwizzleBMode, b_dtype_t>(l2 ? &tensor_map_l2_weights : &tensor_map_l1_weights, full_barriers[stage_idx], smem_b[stage_idx], 0, local_expert_idx * (l2 ? L2_SHAPE_N : L1_SHAPE_N) + n_block_idx * BLOCK_N, 1);
++            }
++            __syncwarp();
+             if (l2) {
+                 constexpr uint64_t expected = (1ull << kNumL1BlockNs) - 1ull;
+                 while (ptx::ld_acq_gpu(workspace.get_l2_arrival_mask_ptr(pool_block)) != expected);
+@@ -1065,11 +1073,12 @@
+                 empty_barriers[stage_idx]->wait(phase ^ 1);
+                 if (cute::elect_one_sync()) {
+                     tma::copy<BLOCK_K, LOAD_BLOCK_M, kSwizzleAMode, a_dtype_t>(acts, full_barriers[stage_idx], smem_a[stage_idx], k * BLOCK_K, pool_block * BLOCK_M, 1);
+-                    tma::copy<BLOCK_K, LOAD_BLOCK_N, kSwizzleBMode, b_dtype_t>(weights, full_barriers[stage_idx], smem_b[stage_idx], k * BLOCK_K, weight_row, 1);
++                    if (k != 0)
++                        tma::copy<BLOCK_K, LOAD_BLOCK_N, kSwizzleBMode, b_dtype_t>(weights, full_barriers[stage_idx], smem_b[stage_idx], k * BLOCK_K, weight_row, 1);
+                     tma::copy<BLOCK_M, 1, 0, float>(scales, full_barriers[stage_idx], smem_sfa[stage_idx], pool_block * SF_BLOCK_M, k * (l2 ? 2 : 1), 1);
+                     if (l2)
+                         tma::copy<BLOCK_M, 1, 0, float>(scales, full_barriers[stage_idx], smem_sfa[stage_idx] + BLOCK_M, pool_block * SF_BLOCK_M, k * 2 + 1, 1);
+-                    full_barriers[stage_idx]->arrive_and_expect_tx(SMEM_A_SIZE_PER_STAGE + SMEM_B_SIZE_PER_STAGE + BLOCK_M * sizeof(float) * (l2 ? 2 : 1));
++                    full_barriers[stage_idx]->arrive_and_expect_tx(SMEM_A_SIZE_PER_STAGE + (k == 0 ? 0 : SMEM_B_SIZE_PER_STAGE) + BLOCK_M * sizeof(float) * (l2 ? 2 : 1));
+                 }
+                 __syncwarp();
+             }

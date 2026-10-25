@@ -508,11 +508,11 @@ def test_control_rejects_old_host_even_without_candidates(tmp_path: Path) -> Non
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
-def test_bulk_campaign_after_wg_skip_adoption_keeps_final_control(tmp_path):
+def test_decode_m1_campaign_keeps_final_control(tmp_path):
     ws, patches = workspace(tmp_path)
     campaign = ROOT / "patches/deep-gemm-bench"
     names = sorted(path.name for path in campaign.iterdir() if path.is_dir())
-    assert names == ["prefill-fc2-bulk-scatter", "z-control-repeat"]
+    assert names == ["decode-m1-b-first", "z-control-repeat"]
     for name in names:
         add_candidate(ws, name, patches["comment"], timeline=(campaign / name / "timeline").exists())
     (ws / "patches/deep-gemm-bench/timeline").touch()

@@ -118,6 +118,10 @@ role=${name%%-*}
 if [[ "$role" == prefill ]]; then export SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS=1 SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=1 DG_SM90_PREFILL_2WG=1; else export SGLANG_DECODE_ASYNC_ADMISSION=1 DG_SM90_DECODE_INDEPENDENT_WG=1; fi
 # Decode kernel choices measured before serving by select-firmus-decode-kernels.sh (empty file = current kernels).
 if [[ "$role" == decode ]]; then set -a; source "$(dirname "$0")/decode-kernels.env"; set +a; fi
+# To opt in for a separate diagnostic run, uncomment the next line.
+# if [[ "$role" == decode ]]; then export SGLANG_DECODE_ROUTING_DIR="${SLURM_SUBMIT_DIR}/results/decode-routing"; fi
+# Optional graph-safe routing diagnostics: set SGLANG_DECODE_ROUTING_DIR to a run-dir path and create its active marker during measurement.
+if [[ "$role" != decode ]]; then unset SGLANG_DECODE_ROUTING_DIR; fi
 # The MegaMoE symmetric buffer must hold one Prefill batch per DP rank (chunked prefill size / DP size); Decode batches stay far below 4096 tokens per rank.
 megamoe_tokens=4096
 if [[ "$role" == prefill ]]; then args=" $* "; chunk=${args##* --chunked-prefill-size }; dp=${args##* --dp-size }; megamoe_tokens=$(( ${chunk%% *} / ${dp%% *} )); fi

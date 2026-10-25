@@ -1,0 +1,186 @@
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -264,6 +264,9 @@
+         self.tp_size = get_parallel().moe_tp_size
+         self.ep_size = get_parallel().moe_ep_size
+         self.layer_id = layer_id
++        from sglang.srt.layers.moe.decode_routing_capture import make_capture
++
++        self._decode_routing_capture = make_capture(layer_id)
+         if get_moe_a2a_backend().is_megamoe():
+             # This path uses SM90 FP8 MegaMoE's original block-128 weight scales.
+             # Weight post-processing interleaves w13, so an unsupported setup
+@@ -411,6 +414,8 @@
+         else:
+             # Idle DP ranks must still enter pre-dispatch and the fused collective.
+             topk = self.topk.empty_topk_output(hidden_states.device)
++        if self._decode_routing_capture is not None:
++            self._decode_routing_capture.record(topk.topk_ids, forward_batch.num_token_non_padded)
+         buf = _get_mega_moe_symm_buffer(
+             get_moe_ep_group().device_group,
+             num_experts=self.experts.num_experts,
+--- a/python/sglang/srt/model_executor/model_runner.py
++++ b/python/sglang/srt/model_executor/model_runner.py
+@@ -23,6 +23,12 @@
+ from typing import Optional, Union
+ 
+ import torch
++
++from sglang.srt.layers.moe.decode_routing_capture import (
++    ENABLED as _DECODE_ROUTING_CAPTURE,
++    begin_forward as _begin_decode_routing,
++    end_forward as _end_decode_routing,
++)
+ import torch.distributed as dist
+ 
+ from sglang.srt.configs.load_config import LoadConfig
+@@ -1343,6 +1349,15 @@
+ 
+         self.forward_pass_id += 1
+ 
++        capture_decode_routing = (
++            _DECODE_ROUTING_CAPTURE
++            and not self.is_draft_worker
++            and self.server_args.disaggregation_mode == "decode"
++            and (forward_batch.forward_mode.is_target_verify() or forward_batch.forward_mode.is_decode())
++        )
++        if capture_decode_routing:
++            _begin_decode_routing()
++
+         # Try msprob debugger
+         if self.msprobe_debugger is not None:
+             rank_id = (
+@@ -1423,6 +1438,9 @@
+ 
+         if self.server_args.elastic_ep_backend is not None:
+             self.maybe_join_ep_ranks()
++
++        if capture_decode_routing:
++            _end_decode_routing()
+ 
+         return output
+ 
+--- /dev/null
++++ b/python/sglang/srt/layers/moe/decode_routing_capture.py
+@@ -0,0 +1,121 @@
++"""Opt-in diagnostic capture of physical Decode top-k rows, including graphs.
++
++Create DIR/active during the desired measurement window and remove it to stop.
++Each JSONL line is one sampled target forward on one source EP rank. Sum counts
++across source ranks to obtain rows received by each destination expert. This
++probe adds GPU kernels and synchronous host copies when enabled; its run is not
++a throughput comparison. With no DIR configured, no tensors or kernels exist.
++"""
++import json
++import os
++import time
++from pathlib import Path
++
++import torch
++import triton
++import triton.language as tl
++
++DIRECTORY = os.environ.get("SGLANG_DECODE_ROUTING_DIR", "")
++ENABLED = bool(DIRECTORY)
++_state = None
++
++
++@triton.jit
++def _histogram(IDS, LIVE, GATE, OUT, NUM_IDS: tl.constexpr, TOPK: tl.constexpr,
++               LIVE_IS_PTR: tl.constexpr, BLOCK: tl.constexpr):
++    if tl.load(GATE) != 0:
++        live = tl.load(LIVE) if LIVE_IS_PTR else LIVE
++        i = tl.arange(0, BLOCK)
++        expert = tl.load(IDS + i, (i < NUM_IDS) & (i < live * TOPK), other=-1).to(tl.int32)
++        valid = (expert >= 0) & (expert < 128)
++        counts = tl.histogram(tl.where(valid, expert, 0), 128, mask=valid)
++        tl.store(OUT + tl.arange(0, 128), counts)
++        tl.store(OUT + 128, live)
++        tl.store(OUT + 129, tl.sum(valid.to(tl.int32), 0))
++
++
++class CaptureState:
++    def __init__(self):
++        from sglang.srt.distributed import get_moe_ep_group
++
++        self.rank = get_moe_ep_group().rank_in_group
++        self.directory = Path(DIRECTORY)
++        self.directory.mkdir(parents=True, exist_ok=True)
++        self.interval = int(os.environ.get("SGLANG_DECODE_ROUTING_INTERVAL", "10"))
++        self.limit = int(os.environ.get("SGLANG_DECODE_ROUTING_SAMPLES", "256"))
++        if self.interval <= 0 or self.limit <= 0:
++            raise ValueError("Decode routing interval and sample count must be positive")
++        self.gate = torch.zeros((), dtype=torch.int32, device="cuda")
++        self.layers = {}
++        self.step = 0
++        self.samples = 0
++        self.selected = False
++        self.path = self.directory / f"rank-{self.rank}-pid-{os.getpid()}.jsonl"
++
++    def begin(self):
++        self.selected = False
++        if self.samples < self.limit and (self.directory / "active").exists():
++            self.selected = self.step % self.interval == 0
++        self.step += 1
++        self.gate.fill_(int(self.selected))
++
++    def end(self):
++        if not self.selected:
++            return
++        layers = sorted(self.layers)
++        packed = torch.stack([self.layers[layer] for layer in layers]).cpu().tolist()
++        rows = {str(layer): values for layer, values in zip(layers, packed, strict=True)}
++        record = {
++            "schema": "decode-routing/v1", "source_ep_rank": self.rank,
++            "sample": self.samples, "target_forward_step": self.step - 1,
++            "time_ns": time.time_ns(), "physical_experts": 128,
++            "experts_per_destination_rank": 32,
++            "counts_by_layer": {key: value[:128] for key, value in rows.items()},
++            "live_rows_by_layer": {key: value[128] for key, value in rows.items()},
++            "valid_topk_slots_by_layer": {key: value[129] for key, value in rows.items()},
++        }
++        with self.path.open("a") as stream:
++            stream.write(json.dumps(record, separators=(",", ":")) + "\n")
++        self.samples += 1
++        self.gate.zero_()
++        self.selected = False
++
++
++class LayerCapture:
++    def __init__(self, layer_id):
++        global _state
++        if _state is None:
++            _state = CaptureState()
++        if layer_id in _state.layers:
++            raise ValueError(f"Duplicate Decode capture layer {layer_id}")
++        self.output = torch.zeros(130, dtype=torch.int32, device="cuda")
++        _state.layers[layer_id] = self.output
++
++    def record(self, topk_ids, live_rows):
++        assert topk_ids.is_contiguous() and topk_ids.ndim == 2
++        if live_rows is None:
++            live_rows = topk_ids.shape[0]
++        is_ptr = isinstance(live_rows, torch.Tensor)
++        if is_ptr:
++            assert live_rows.is_cuda, "Capture needs the graph's device live-row scalar"
++        _histogram[(1,)](topk_ids, live_rows, _state.gate, self.output, topk_ids.numel(), topk_ids.shape[1], is_ptr, triton.next_power_of_2(max(128, topk_ids.numel())))
++
++
++def make_capture(layer_id):
++    if not ENABLED:
++        return None
++    from sglang.srt.runtime_context import get_server_args
++
++    if get_server_args().disaggregation_mode != "decode":
++        return None
++    return LayerCapture(layer_id)
++
++
++def begin_forward():
++    if _state is not None:
++        _state.begin()
++
++
++def end_forward():
++    if _state is not None:
++        _state.end()
