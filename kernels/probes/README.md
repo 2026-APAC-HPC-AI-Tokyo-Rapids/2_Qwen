@@ -280,3 +280,13 @@ artifact upload, then makes the runtime writable, removes it and checks its
 absence. No cancellation or automatic GPU retry is performed. Compare each
 cluster/toolchain independently; successful login compilation is not a GPU
 correctness or performance result.
+
+### Firmus EAGLE acceptance (single node / TP4 / no PD)
+
+Use `firmus-kernel-probe.yml`, benchmark `kernels/probes/prepare-firmus-eagle-accept.sh`, candidate_patch empty. GPU count is selected by benchmark, not a workflow input: EAGLE gets four visible GPUs, existing FA3 probes retain one GPU, NCU preflight and 165-second trial / five-minute allocation. EAGLE reserves one exclusive hpcai node (8 GPUs allocated), requests a four-GPU step and 17 minutes, and runs no NCU. Reuses the pinned image without the serving overlays; target FP8, draft BF16, target and draft FP8 KV, stock MoE, CUDA graphs disabled.
+
+The same server measures official synthetic generation arguments at concurrency 32 for 20 seconds (30-second grace), then flushes cache and acceptance counters and runs 32 repository-authored English questions concurrently with the same 200-token greedy generation settings. English inputs are shorter; differences cannot be attributed to language alone. Each phase saves server-info and positional prefix acceptance from CPU-settled draft counts in server logs; no GPU copy or acceptance logic is added. Decode log interval 1 ensures server-info counters include the tail. This diagnostic is not an official throughput score. Output truncation can make request completion counts differ from verification histograms.
+
+Startup limit 600 seconds; process limit 960 seconds (internal cleanup starts at 945); Slurm 1020 seconds, leaving 60 seconds for step startup/finalization. Firmus run 38030890137 decode-0 logged target load 27.41–28.49 seconds, draft 0.35 seconds, server start 14:31:55 to post-graph settings 14:34:47 (172 seconds). Cold stock MoE JIT and filesystem variance are unmeasured. Required phases fail rather than claim PASS if insufficient time remains. `results/synthetic-eagle-acceptance.json` survives a later English failure. Full JSON, English responses, AIPerf artifacts and logs use existing terminal-state artifact recovery. PASS is emitted after process cleanup only when both phases succeed.
+
+Independent BF16 draft KV is deferred: the pinned image deep-copies server args in `speculative/draft_worker_common.py`, exposes no independent draft KV dtype CLI, and routes KV dtype configuration through `mem_cache/kv_cache_dtype.py`. The compute-dtype KV override for the FA4 draft backend is DFLASH-only, so it does not provide an EAGLE switch. A source adaptation would need a separate server run. This probe does not change target KV or claim to measure that condition.

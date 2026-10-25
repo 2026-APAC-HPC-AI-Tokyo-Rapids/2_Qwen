@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -14,6 +15,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import version
 from pathlib import Path
 
@@ -77,6 +79,64 @@ def collect(info: dict, server_log: str, export: dict, startup_s: float) -> dict
     return {"schema": "genkai-eagle-accept/v1", "scope": "single TP4 server, no PD; acceptance only, not an official score", "method": "GET /get_server_info internal_states[].avg_spec_accept_length; unweighted state mean including bonus", "states": states, "accept_length": stats["mean"], "accepted_draft": stats["mean"] - 1, "requests": completed_requests(export), "startup_s": startup_s, "benchmark_duration_s": BENCHMARK_SECONDS, "log_samples": {"accept_length": summary([sample["accept_length_including_bonus"] for sample in samples]), "accept_rate": summary([sample["accept_rate"] for sample in samples])}}
 
 
+def position_acceptance(log: str) -> dict:
+    hist = [0] * 4
+    for match in re.finditer(r"EAGLE_POSITION histogram=(\[[0-9, ]+\])", log):
+        sample = json.loads(match[1])
+        if len(sample) != 4 or any(type(n) is not int or n < 0 for n in sample):
+            raise ValueError("invalid positional acceptance histogram")
+        hist = [a + b for a, b in zip(hist, sample)]
+    total = sum(hist)
+    if not total:
+        raise ValueError("no positional acceptance evidence in server log")
+    return {"correct_drafts_histogram": hist, "verification_requests": total, "unconditional_prefix_acceptance": [sum(hist[n:]) / total for n in (1, 2, 3)], "method": "P(correct drafts >= position), including unfinished requests; statistics rank only; CPU settlement before output truncation"}
+
+
+def english_workload(root: Path) -> int:
+    prompts = json.loads((root / "source/eagle-english-prompts.json").read_text())["prompts"]
+    if len(prompts) != 32 or len(set(prompts)) != 32:
+        raise ValueError("expected 32 unique fixed English prompts")
+
+    def request(item):
+        index, prompt = item
+        body = {"model": "qwen", "messages": [{"role": "user", "content": prompt}], "min_tokens": 200, "max_tokens": 200, "ignore_eos": True, "temperature": 0.0, "repetition_penalty": 1.0}
+        req = urllib.request.Request(URL + "/v1/chat/completions", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=150) as response:
+            result = json.load(response)
+        (root / f"results/english-response-{index:02}.json").write_text(json.dumps(result) + "\n")
+        if result.get("error") or result.get("usage", {}).get("completion_tokens") != 200 or not result.get("choices"):
+            raise ValueError("English request failed or did not generate 200 tokens")
+        return 1
+
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        return sum(pool.map(request, enumerate(prompts)))
+
+
+def collect_english(root: Path, server_path: Path, startup_s: float) -> dict:
+    # Pinned flush_cache resets lifetime acceptance counters, without restarting.
+    with urllib.request.urlopen(URL + "/flush_cache", timeout=5) as response:
+        if response.status != 200:
+            raise ValueError("cache/statistics reset failed")
+    baseline = get_json("/get_server_info")
+    if any(state.get("avg_spec_accept_length") is not None for state in baseline["internal_states"]):
+        raise ValueError("acceptance counters were not reset")
+    (root / "results/english-baseline-server-info.json").write_text(json.dumps(baseline, indent=2) + "\n")
+    offset = server_path.stat().st_size
+    count = english_workload(root)
+    info = get_json("/get_server_info")
+    (root / "results/english-server-info.json").write_text(json.dumps(info, indent=2) + "\n")
+    with server_path.open("rb") as stream:
+        stream.seek(offset)
+        log = stream.read().decode(errors="replace")
+    (root / "logs/english-server.log").write_text(log)
+    # Reuse setting/state validation; synthetic export validation belongs to (a).
+    states = acceptance_states(info, Path("english-server-info.json"), "huggingface")
+    lengths = [state["accept_length_including_bonus"] for state in states]
+    if len(states) != len(info["internal_states"]) or any(not 1 <= n <= 4 for n in lengths):
+        raise ValueError("incomplete English acceptance states")
+    return {"workload": "fixed English questions, concurrency 32, 200 output tokens", "requests": count, "states": states, "accept_length": summary(lengths)["mean"], "startup_s": startup_s, "positions": position_acceptance(log), "server_log": "logs/english-server.log", "prompt_note": "Short English questions differ in length from 4000-token synthetic input; this is not an isolated language comparison"}
+
+
 def stop(child: subprocess.Popen | None) -> None:
     if child is None:
         return
@@ -105,28 +165,33 @@ def get_json(path: str) -> dict:
         return json.load(response)
 
 
-def execute(root: Path, started_at: float) -> dict:
+def execute(root: Path, started_at: float, firmus: bool = False) -> dict:
     origin = time.monotonic() - (time.time() - started_at)
 
     def elapsed() -> float:
         return time.monotonic() - origin
 
+    startup_limit = 600 if firmus else 450
+    deadline = 945 if firmus else 555
+    process_limit = 960 if firmus else 570
     if version("aiperf") != "0.12.0":
         raise ValueError("expected the image's AIPerf 0.12.0")
     if os.environ.get("HF_HUB_OFFLINE") != "1" or os.environ.get("TRANSFORMERS_OFFLINE") != "1":
         raise ValueError("compute execution must be offline")
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGALRM):
         signal.signal(sig, interrupted)
-    if elapsed() >= 450:
+    if elapsed() >= startup_limit:
         raise TimeoutError("container setup exhausted the startup budget")
     # Leave 15 seconds for both process groups and the Enroot wrapper to exit.
-    signal.setitimer(signal.ITIMER_REAL, 555 - elapsed())
+    signal.setitimer(signal.ITIMER_REAL, deadline - elapsed())
     results = root / "results"
     server_path = root / "logs/server.log"
     client_path = root / "logs/aiperf.log"
     server = client = None
     try:
         command = server_command(root)
+        if firmus:
+            command += ["--decode-log-interval", "1", "--random-seed", "2026"]
         (results / "server-command.txt").write_text(shlex.join(command) + "\n")
         print(f"server_start elapsed_s={elapsed():.1f} command={shlex.join(command)}", flush=True)
         with server_path.open("w") as output:
@@ -134,8 +199,8 @@ def execute(root: Path, started_at: float) -> dict:
         while True:
             if server.poll() is not None:
                 raise RuntimeError(f"server exited before health: {server.returncode}")
-            if elapsed() >= 450:
-                raise TimeoutError("health did not pass within the 450-second startup budget")
+            if elapsed() >= startup_limit:
+                raise TimeoutError(f"health did not pass within the {startup_limit}-second startup budget")
             try:
                 with urllib.request.urlopen(URL + "/health", timeout=2) as response:
                     if response.status == 200:
@@ -145,7 +210,13 @@ def execute(root: Path, started_at: float) -> dict:
             print(f"waiting_health elapsed_s={elapsed():.1f}", flush=True)
             time.sleep(2)
         startup_s = elapsed()
-        print(f"server_ready startup_s={startup_s:.3f} remaining_until_cleanup_s={555 - elapsed():.1f}", flush=True)
+        print(f"server_ready startup_s={startup_s:.3f} remaining_until_cleanup_s={deadline - elapsed():.1f}", flush=True)
+        synthetic_offset = 0
+        if firmus:
+            with urllib.request.urlopen(URL + "/flush_cache", timeout=5) as response:
+                if response.status != 200:
+                    raise ValueError("initial cache/statistics reset failed")
+            synthetic_offset = server_path.stat().st_size
         command = aiperf_command()
         (results / "aiperf-command.txt").write_text(shlex.join(command) + "\n")
         client_env = dict(os.environ, AIPERF_SERVICE_REGISTRATION_INTERVAL="1", AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS="60", AIPERF_SERVICE_REGISTRATION_TIMEOUT="60", AIPERF_RECORD_PROCESSOR_SCALE_FACTOR="32")
@@ -170,7 +241,19 @@ def execute(root: Path, started_at: float) -> dict:
         shutil.copyfile(exports[0].with_name("profile_export.jsonl"), results / "profile_export.jsonl")
         export = json.loads(exports[0].read_text())
         print("AIPERF_EXPORT " + json.dumps(export), flush=True)
-        result = collect(info, server_path.read_text(errors="replace"), export, startup_s)
+        with server_path.open("rb") as stream:
+            stream.seek(synthetic_offset)
+            synthetic_log = stream.read().decode(errors="replace")
+        result = collect(info, synthetic_log, export, startup_s)
+        if firmus:
+            (root / "logs/synthetic-server.log").write_text(synthetic_log)
+            result["positions"] = position_acceptance(synthetic_log)
+            result["schema"] = "firmus-eagle-accept/v1"
+            (results / "synthetic-eagle-acceptance.json").write_text(json.dumps(result, indent=2) + "\n")
+            if deadline - elapsed() < 180:
+                raise TimeoutError("less than 180 seconds remain for required English phase")
+            result["english"] = collect_english(root, server_path, startup_s)
+            (results / "english-eagle-acceptance.json").write_text(json.dumps(result["english"], indent=2) + "\n")
         (results / "eagle-acceptance.json").write_text(json.dumps(result, indent=2) + "\n")
         # The existing workflow deletes the runtime; retain primary evidence in its log.
         print("EAGLE_ACCEPTANCE " + json.dumps(result), flush=True)
@@ -185,12 +268,14 @@ def execute(root: Path, started_at: float) -> dict:
             if path.exists():
                 print(f"BEGIN_LOG {path.name}\n{path.read_text(errors='replace')}\nEND_LOG {path.name}", flush=True)
         print(f"cleanup_end elapsed_s={elapsed():.1f}", flush=True)
-    if elapsed() >= 570:
+    if elapsed() >= process_limit:
         raise TimeoutError("probe exceeded its total process budget")
     return result
 
 
 if __name__ == "__main__":
-    result = execute(Path(sys.argv[1]), float(sys.argv[2]))
+    result = execute(Path(sys.argv[1]), float(sys.argv[2]), firmus="--firmus" in sys.argv[3:])
+    if "english" in result:
+        print("PASS workload=english accept_length={accept_length:.6f} requests={requests}".format(**result["english"]), flush=True)
     # run.pjm tees this into results/trial-1.log. Never write the same file twice.
     print("PASS accept_length={accept_length:.6f} accepted_draft={accepted_draft:.6f} requests={requests} startup_s={startup_s:.3f}".format(**result), flush=True)

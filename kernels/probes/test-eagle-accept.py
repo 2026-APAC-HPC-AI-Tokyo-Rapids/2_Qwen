@@ -83,8 +83,8 @@ class ProbeTests(unittest.TestCase):
 
     def test_execute_saves_results_and_always_stops_both_processes(self):
         info, export = fixture()
-        for fail in (False, True):
-            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as directory:
+        for fail, firmus in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(fail=fail, firmus=firmus), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / "logs").mkdir()
                 artifact = root / "results/artifacts/qwen"
@@ -94,9 +94,12 @@ class ProbeTests(unittest.TestCase):
                 children = []
 
                 class Child:
-                    def __init__(self, command, failure=fail, registered=children, **kwargs):
+                    def __init__(self, command, failure=fail, registered=children, runtime=root, **kwargs):
                         self.returncode = 1 if failure else 0
                         self.server = "sglang.launch_server" in command
+                        if not self.server:
+                            with (runtime / "logs/server.log").open("a") as log:
+                                log.write("EAGLE_POSITION histogram=[1, 2, 3, 4]\n")
                         registered.append(self)
 
                     def poll(self):
@@ -110,18 +113,127 @@ class ProbeTests(unittest.TestCase):
                     stack.enter_context(patch.object(probe.signal, "setitimer"))
                     stack.enter_context(patch.object(probe.urllib.request, "urlopen")).return_value.__enter__.return_value.status = 200
                     stack.enter_context(patch.object(probe, "get_json", return_value=info))
+                    stack.enter_context(patch.object(probe, "collect_english", return_value={"accept_length": 2.7, "requests": 32}))
                     stopped = stack.enter_context(patch.object(probe, "stop"))
                     output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                     if fail:
                         with self.assertRaises(RuntimeError):
-                            probe.execute(root, time.time())
+                            probe.execute(root, time.time(), firmus=firmus)
                         self.assertFalse((root / "results/eagle-acceptance.json").exists())
                         self.assertNotIn("PASS ", output.getvalue())
                     else:
-                        self.assertEqual(probe.execute(root, time.time())["requests"], 32)
+                        self.assertEqual(probe.execute(root, time.time(), firmus=firmus)["requests"], 32)
                         self.assertTrue((root / "results/server-info.json").is_file())
                         self.assertTrue((root / "results/eagle-acceptance.json").is_file())
                     self.assertEqual([call.args[0] for call in stopped.call_args_list], list(reversed(children)))
+
+    def test_positions_histogram_and_missing_evidence(self):
+        log = "EAGLE_POSITION histogram=[1, 2, 3, 4]\nEAGLE_POSITION histogram=[4, 3, 2, 1]"
+        result = probe.position_acceptance(log)
+        self.assertEqual(result["correct_drafts_histogram"], [5, 5, 5, 5])
+        self.assertEqual(result["unconditional_prefix_acceptance"], [0.75, 0.5, 0.25])
+        with self.assertRaises(ValueError):
+            probe.position_acceptance("accept len: 2.2")
+        with self.assertRaises(ValueError):
+            probe.position_acceptance("EAGLE_POSITION histogram=[1, 2]")
+
+    def test_instrumentation_uses_existing_cpu_counts(self):
+        instrument = load("instrument_eagle", ROOT / "kernels/probes/instrument-eagle-accept.py")
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "processor.py"
+            path.write_text("def settle(self, result):\n        predict_tokens = []\n        # In adaptive spec-v2\n        return result.num_correct_drafts_per_req_cpu\n")
+            instrument.instrument(path)
+            calls = []
+            processor = load("diagnostic_fixture", path)
+            processor.logger = SimpleNamespace(info=lambda *args: calls.append(args))
+            counts = [0, 1, 2, 3, 3]
+            result = SimpleNamespace(num_correct_drafts_per_req_cpu=counts)
+            owner = SimpleNamespace(metrics_reporter=SimpleNamespace(is_stats_logging_rank=True))
+            self.assertIs(processor.settle(owner, result), counts)
+            self.assertEqual(calls[0][1], [1, 1, 1, 2])
+            owner.metrics_reporter.is_stats_logging_rank = False
+            processor.settle(owner, result)
+            self.assertEqual(len(calls), 1)
+            with self.assertRaises(AssertionError):
+                instrument.instrument(path)
+
+    def test_english_reset_and_separate_log_window(self):
+        info, _ = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "results").mkdir()
+            (root / "logs").mkdir()
+            log = root / "logs/server.log"
+            log.write_text("EAGLE_POSITION histogram=[99, 0, 0, 0]\n")
+
+            def english(_):
+                with log.open("a") as stream:
+                    stream.write("EAGLE_POSITION histogram=[0, 1, 1, 2]\n")
+                return 32
+
+            with patch.object(probe.urllib.request, "urlopen") as http, patch.object(probe, "get_json", side_effect=[dict(info, internal_states=[{}]), info]), patch.object(probe, "english_workload", english):
+                http.return_value.__enter__.return_value.status = 200
+                result = probe.collect_english(root, log, 100)
+                self.assertEqual(result["positions"]["correct_drafts_histogram"], [0, 1, 1, 2])
+                self.assertEqual(result["requests"], 32)
+                self.assertAlmostEqual(result["accept_length"], 2.3)
+            with patch.object(probe.urllib.request, "urlopen") as http, patch.object(probe, "get_json", return_value=info), patch.object(probe, "english_workload") as work:
+                http.return_value.__enter__.return_value.status = 200
+                with self.assertRaises(ValueError):
+                    probe.collect_english(root, log, 100)
+                work.assert_not_called()
+
+    def test_english_requests_use_fixed_prompts_and_sampling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir()
+            (root / "results").mkdir()
+            shutil_source = ROOT / "kernels/probes/eagle-english-prompts.json"
+            (root / "source/eagle-english-prompts.json").write_bytes(shutil_source.read_bytes())
+            calls = []
+
+            class Response:
+                def __enter__(self):
+                    return io.StringIO(json.dumps({"usage": {"completion_tokens": 200}, "choices": [{}]}))
+
+                def __exit__(self, *args):
+                    pass
+
+            def http(request, timeout):
+                calls.append(json.loads(request.data))
+                self.assertEqual(timeout, 150)
+                return Response()
+
+            with patch.object(probe.urllib.request, "urlopen", http):
+                self.assertEqual(probe.english_workload(root), 32)
+            self.assertEqual(len(list((root / "results").glob("english-response-*.json"))), 32)
+            self.assertEqual(len({c["messages"][0]["content"] for c in calls}), 32)
+            self.assertTrue(all(c["temperature"] == 0 and c["max_tokens"] == 200 and c["min_tokens"] == 200 and c["ignore_eos"] for c in calls))
+
+    def test_firmus_trial_protocol_preserves_one_gpu(self):
+        for gpus, limit in ((1, 165), (4, 960)):
+            with self.subTest(gpus=gpus), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                for folder in ("source", "results", "bin"):
+                    (root / folder).mkdir()
+                (root / "source/provenance.json").write_text(json.dumps({"probe_gpus": gpus, "calibration": True}))
+                scripts = {
+                    "bin/timeout": '#!/bin/bash\nprintf "%s\\n" "$1" >> "$RUNTIME_DIR/results/timeouts"\nshift\nexec "$@"\n',
+                    "bin/ncu": '#!/bin/bash\necho sm__cycles_elapsed.avg\n',
+                    "source/probe": '#!/bin/bash\necho "PASS visible=$CUDA_VISIBLE_DEVICES"\n',
+                }
+                for name, content in scripts.items():
+                    path = root / name
+                    path.write_text(content)
+                    path.chmod(0o755)
+                result = subprocess.run(["bash", str(ROOT / "platforms/firmus/kernel-probe/run-trials.sh")], env=dict(os.environ, RUNTIME_DIR=str(root)), capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                visible = "0" if gpus == 1 else "0,1,2,3"
+                self.assertIn(f"PASS visible={visible}", result.stdout)
+                self.assertEqual((root / "results/timeouts").read_text().splitlines(), (["30"] if gpus == 1 else []) + [str(limit)])
+                self.assertTrue((root / "run-success").exists())
+                self.assertEqual((root / "results/ncu-permission.csv").exists(), gpus == 1)
 
     def test_stop_real_cpu_process_group(self):
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
