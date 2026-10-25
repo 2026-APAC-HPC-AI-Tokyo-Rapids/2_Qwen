@@ -1,0 +1,106 @@
+name: ASPIRE kernel probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      benchmark:
+        description: 1 GPU FA3 preparation script (M1 or M2)
+        type: choice
+        default: kernels/probes/prepare-fa3-prefill.sh
+        options:
+          - kernels/probes/prepare-fa3-prefill.sh
+          - kernels/probes/prepare-fa3-prefill-profile.sh
+      candidate_patch:
+        description: Leave empty for the existing FA3 protocols
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
+
+defaults:
+  run:
+    shell: aspire2p-shell --github-shell {0}
+
+jobs:
+  probe:
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 7200
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Prepare on the login node without a GPU
+        id: prepare
+        env:
+          BENCHMARK: ${{ inputs.benchmark }}
+          CANDIDATE_PATCH: ${{ inputs.candidate_patch }}
+        run: scripts/provision-aspire-kernel-probe.sh
+
+      - name: Submit one GPU for at most five minutes
+        id: submit
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        run: |
+          cd "${RUNTIME_DIR}"
+          bash -lc 'myprojects -p 59010014' >logs/su-before.txt
+          job_id=$(/opt/pbs/bin/qsub -P 59010014 -q normal -l select=1:ngpus=1:ncpus=14:mem=180gb -l walltime=00:05:00 -v "RUNTIME_DIR=${RUNTIME_DIR}" -o "${RUNTIME_DIR}/logs/pbs.log" -N qwen_kernel_probe scripts/run.pbs)
+          printf '%s\n' "${job_id}"
+          [[ "${job_id}" =~ ^[0-9]+([.][A-Za-z0-9.-]+)?$ ]]
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+
+      - name: Wait for PBS and check the probe protocol
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+          PBS_JOB_ID: ${{ steps.submit.outputs.job_id }}
+        shell: bash
+        run: scripts/monitor-qwen-job.sh aspire2p-shell platforms/aspire2ap/kernel-probe/check-job.sh
+
+      - name: Record results and project SU balance
+        if: always() && steps.prepare.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        shell: bash
+        run: |
+          aspire2p-shell --github-shell platforms/aspire2ap/kernel-probe/summary.sh >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Recover logs and results including the NCU report
+        id: collect
+        if: always() && steps.prepare.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        shell: bash
+        run: |
+          destination="${RUNNER_TEMP}/aspire-kernel-probe"
+          install -d "${destination}"
+          aspire2p-shell --pull "${RUNTIME_DIR}/logs" "${destination}/logs"
+          aspire2p-shell --pull "${RUNTIME_DIR}/results" "${destination}/results"
+
+      - uses: actions/upload-artifact@v7
+        id: archive
+        if: always() && steps.collect.outcome == 'success'
+        with:
+          name: aspire-kernel-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aspire-kernel-probe
+          if-no-files-found: error
+
+      - name: Remove runtime only after terminal confirmation and artifact recovery
+        if: always() && steps.prepare.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+          PBS_JOB_ID: ${{ steps.submit.outputs.job_id }}
+        run: |
+          if [[ -n "${PBS_JOB_ID}" ]]; then
+            /opt/pbs/bin/qstat -x -f "${PBS_JOB_ID}" >"${RUNTIME_DIR}/logs/cleanup-accounting.txt"
+            state=$(awk '/^[[:space:]]*job_state =/ {print $3}' "${RUNTIME_DIR}/logs/cleanup-accounting.txt")
+            [[ "${state}" == F ]] || { printf 'Preserving runtime for nonterminal job %s state=%s\n' "${PBS_JOB_ID}" "${state}"; exit 1; }
+            printf 'No remaining active probe job: %s state=%s\n' "${PBS_JOB_ID}" "${state}"
+          fi
+          [[ '${{ steps.archive.outcome }}' == success ]] || { printf 'Preserving runtime because artifact recovery failed\n'; exit 1; }
+          chmod -R u+w "${RUNTIME_DIR:?}"
+          rm -rf -- "${RUNTIME_DIR:?}"
+          test ! -e "${RUNTIME_DIR}"
