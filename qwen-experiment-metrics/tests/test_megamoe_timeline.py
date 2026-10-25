@@ -72,15 +72,15 @@ def test_unknown_timeline_schema_is_rejected(summary):
 
 def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert config["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch"
+    assert config["deep_gemm_overlay_patches"][-2:] == ["patches/deep-gemm-overlay/sm90-decode-independent-wg.patch", "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch"]
     bench = ROOT / "patches/deep-gemm-bench"
-    assert sorted(p.name for p in bench.iterdir()) == ["prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip", "prefill-wg1-skip", "timeline", "z-control-repeat"]
+    assert sorted(p.name for p in bench.iterdir()) == ["prefill-fc2-bulk-scatter", "timeline", "z-control-repeat"]
     assert not list(bench.glob("*/env"))
     assert (bench / "timeline").stat().st_size == 0
     for name in ("containers/Dockerfile", "scripts/build-sglang-container.sh", "containers/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg-host.py"):
         assert "deep-gemm-bench" not in (ROOT / name).read_text()
     checker = (ROOT / "containers/check-sm90-independent-wg.py").read_text()
-    assert 'if Path(p).name != CANDIDATE' in checker
+    assert 'if patch.name == CANDIDATE:' in checker
 
 
 def test_patch_layout_matches_reader_and_only_wraps_existing_stage_waits():
@@ -112,28 +112,33 @@ def test_build_checker_applies_adopted_overlay_once(tmp_path, monkeypatch):
     package = tmp_path / "package"
     header = package / "include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
     header.parent.mkdir(parents=True)
-    header.write_text("image\n")
+    header.write_text("image\n" + "stable context\n" * 8 + "tail\n")
     patches = tmp_path / "patches/deep-gemm-overlay"
     patches.mkdir(parents=True)
-    previous = "image\n"
+    suffix = "stable context\n" * 8 + "tail\n"
+    previous = "image\n" + suffix
     for name, text in [("prior.patch", "serving before adoption\n"), (checker.CANDIDATE, "serving after adoption\n")]:
+        text += suffix
         patch = "".join(difflib.unified_diff(previous.splitlines(True), text.splitlines(True), fromfile="a/" + str(checker.HEADER), tofile="b/" + str(checker.HEADER)))
         (patches / name).write_text(patch)
         previous = text
+    later = "".join(difflib.unified_diff(previous.splitlines(True), previous.replace("tail\n", "patched tail\n").splitlines(True), fromfile="a/" + str(checker.HEADER), tofile="b/" + str(checker.HEADER)))
+    (patches / "later.patch").write_text(later)
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"deep_gemm_overlay_patches": ["patches/deep-gemm-overlay/prior.patch", "patches/deep-gemm-overlay/" + checker.CANDIDATE]}))
+    config.write_text(json.dumps({"deep_gemm_overlay_patches": ["patches/deep-gemm-overlay/prior.patch", "patches/deep-gemm-overlay/" + checker.CANDIDATE, "patches/deep-gemm-overlay/later.patch"]}))
     output = tmp_path / "result.json"
     seen = []
 
     def compile_fixture(nvcc, package, overlay, directory, name, geometry):
-        seen.append((name, (overlay / checker.HEADER).read_text()))
+        seen.append((name, (overlay / checker.HEADER).read_text().splitlines()[0]))
+        assert (overlay / checker.HEADER).read_text().endswith("patched tail\n")
         return {"spill_bytes": [["0", "0"]], "sass_sha256": "same opt-out SASS", "serialization_warning": False}
 
     monkeypatch.setattr(checker, "compile_one", compile_fixture)
     monkeypatch.setattr(sys, "argv", ["check", "--package", str(package), "--patch-dir", str(patches), "--config", str(config), "--output", str(output)])
     checker.main()
-    assert seen == [("base-decode", "serving before adoption\n"), ("base-prefill", "serving before adoption\n"), ("control-decode", "serving after adoption\n"), ("control-prefill", "serving after adoption\n"), ("independent-decode", "serving after adoption\n")]
-    assert set(json.loads(output.read_text())["patches"]) == {"prior.patch", checker.CANDIDATE}
+    assert seen == [("base-decode", "serving before adoption"), ("base-prefill", "serving before adoption"), ("control-decode", "serving after adoption"), ("control-prefill", "serving after adoption"), ("independent-decode", "serving after adoption")]
+    assert set(json.loads(output.read_text())["patches"]) == {"prior.patch", checker.CANDIDATE, "later.patch"}
 
 
 def test_legacy_v1_timeline_is_still_readable(tmp_path, summary):
@@ -235,7 +240,7 @@ def test_bulk_timeline_v4_separates_issue_reuse_drain_and_barrier(tmp_path, summ
     assert "ML2FullWait" in text and "MLastL2End" in text
 
 
-@pytest.mark.parametrize("candidate", ["prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip"])
+@pytest.mark.parametrize("candidate", ["prefill-fc2-bulk-scatter"])
 def test_bulk_timeline_is_candidate_only(candidate):
     patch = (ROOT / "patches/deep-gemm-bench" / candidate / "timeline").read_text()
     added = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++"))

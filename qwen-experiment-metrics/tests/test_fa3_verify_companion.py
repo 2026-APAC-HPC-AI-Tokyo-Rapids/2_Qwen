@@ -252,13 +252,13 @@ def test_measurement_and_selection_batches_follow_the_config(cap, expected):
 
 
 @pytest.mark.parametrize("serving_enabled", [False, True])
-def test_image_compile_control_excludes_the_serving_candidate(tmp_path, serving_enabled):
+def test_image_compile_control_preserves_configured_overlay_order(tmp_path, serving_enabled):
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     candidate = "sm90-decode-independent-wg.patch"
     config["deep_gemm_overlay_patches"] = [p for p in config["deep_gemm_overlay_patches"] if Path(p).name != candidate]
-    expected = [ROOT / p for p in config["deep_gemm_overlay_patches"]]
     if serving_enabled:
-        config["deep_gemm_overlay_patches"].append("patches/deep-gemm-overlay/" + candidate)
+        config["deep_gemm_overlay_patches"].insert(-1, "patches/deep-gemm-overlay/" + candidate)
+    expected = [ROOT / p for p in config["deep_gemm_overlay_patches"]]
     path = tmp_path / "config.json"
     path.write_text(json.dumps(config))
     tree = ast.parse((ROOT / "containers/check-sm90-independent-wg.py").read_text())

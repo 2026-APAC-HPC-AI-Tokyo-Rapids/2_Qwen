@@ -508,11 +508,11 @@ def test_control_rejects_old_host_even_without_candidates(tmp_path: Path) -> Non
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
-def test_bulk_campaign_real_step_generation_is_twelve_with_final_control(tmp_path):
+def test_bulk_campaign_after_wg_skip_adoption_keeps_final_control(tmp_path):
     ws, patches = workspace(tmp_path)
     campaign = ROOT / "patches/deep-gemm-bench"
     names = sorted(path.name for path in campaign.iterdir() if path.is_dir())
-    assert names == ["prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip", "prefill-wg1-skip", "z-control-repeat"]
+    assert names == ["prefill-fc2-bulk-scatter", "z-control-repeat"]
     for name in names:
         add_candidate(ws, name, patches["comment"], timeline=(campaign / name / "timeline").exists())
     (ws / "patches/deep-gemm-bench/timeline").touch()
@@ -531,9 +531,9 @@ def test_bulk_campaign_real_step_generation_is_twelve_with_final_control(tmp_pat
         expected += [(name, "gate"), (name, "bench")]
         if (campaign / name / "timeline").exists():
             expected.append((name, "timeline"))
-    assert steps == expected and len(steps) == 12
+    assert steps == expected and len(steps) == 7
     assert steps[-1] == ("z-control-repeat", "bench")
-    assert len((tmp_path / "srun.log").read_text().splitlines()) == 12
+    assert len((tmp_path / "srun.log").read_text().splitlines()) == 7
 
 
 def test_bulk_campaign_local_and_real_cases_reach_timeline():

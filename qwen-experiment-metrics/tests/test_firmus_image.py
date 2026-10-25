@@ -83,6 +83,10 @@ def test_metadata_extraction_supports_old_squashfs_and_rejects_changed_patches(t
     (host_dir / "series").write_text("" if corruption == "host_empty_series" else "\n".join(host_series) + "\n")
     host_paths = [f"patches/deep-gemm-host/{name}" for name in host_series]
     patches = [f"patches/sglang/{name}.patch" for name in SGLANG_PATCHES] + [f"patches/sglang-router/{name}.patch" for name in ROUTER_PATCHES] + host_paths
+    # Serving JIT overlays are recorded separately and must not invalidate the fixed image.
+    overlays = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
+    assert "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch" in overlays
+    assert not set(overlays) & set(patches)
     manifest = {"applied_patches": [{"path": p, "sha256": sha256(p, workspace)} for p in patches]}
     if corruption == "hash":
         manifest["applied_patches"][0]["sha256"] = "0" * 64
