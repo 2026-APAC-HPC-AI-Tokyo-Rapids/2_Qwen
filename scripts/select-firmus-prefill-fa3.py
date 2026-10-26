@@ -3,7 +3,6 @@ import argparse
 import json
 import math
 import os
-import signal
 import statistics
 import time
 from datetime import timedelta
@@ -13,8 +12,6 @@ from runpy import run_path
 LAYERS = 94
 PAIRS = 20
 LENGTHS = (3986, 4027, 4096)
-QKNORM_PAIRS = 50
-QKNORM_ID_TYPES = ("int32", "int64")
 _table = Path(__file__).resolve().parents[1] / "kernels/fa3-verify/prefill-candidates.json"
 if not _table.is_file():
     _table = Path(__file__).resolve().parents[1] / "source/prefill-candidates.json"
@@ -49,129 +46,6 @@ def measure(torch, graph):
     return start.elapsed_time(end) * 1000 / LAYERS
 
 
-def choose_qknorm(ranks, expected_ranks=4):
-    """Fail closed, including missing, malformed or nonfinite timing fragments."""
-    result = {"winner": "control", "rule": {"all_ranks_lengths_and_id_types": True, "minimum_saving_us_per_call": 8.0, "pairs": QKNORM_PAIRS, "lengths": LENGTHS, "id_types": QKNORM_ID_TYPES, "gpus": expected_ranks}}
-    try:
-        assert len(ranks) == expected_ranks and {r["rank"] for r in ranks} == set(range(expected_ranks))
-        savings = []
-        for rank in ranks:
-            assert not rank["qknorm"].get("error")
-            for length in LENGTHS:
-                for id_type in QKNORM_ID_TYPES:
-                    entry = rank["qknorm"]["lengths"][str(length)][id_type]
-                    assert entry["bitwise_passed"] is True and not entry.get("error")
-                    control, wide = entry["control"], entry["wide"]
-                    assert len(control) == len(wide) == QKNORM_PAIRS
-                    assert all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x > 0 for x in control + wide)
-                    savings.append(statistics.median(control) - statistics.median(wide))
-        result.update(savings_us_by_rank_length_id_type=savings, minimum_saving_us=min(savings))
-        if min(savings) >= 8.0:
-            result["winner"] = "wide"
-    except Exception as error:  # noqa: BLE001 - never select on incomplete evidence
-        result["error"] = f"{type(error).__name__}: {error}"
-    return result
-
-
-def qknorm_selection(torch):
-    """Use the already-compiled serving module; add at most a 14-second screen.
-
-    No distributed collectives inside the deadline: each rank can fail closed
-    independently, then the existing final all_gather collects all four gates.
-    """
-    from sglang.kernels.ops.attention.rope import apply_qknorm_rope_fp8_prefill
-
-    begin = time.monotonic()
-    result = {"lengths": {}}
-    previous = os.environ.get("SGLANG_PREFILL_QKNORM")
-    old_handler = signal.getsignal(signal.SIGALRM)
-
-    def deadline(_signum, _frame):
-        raise TimeoutError("QK-norm screen exceeded 14 seconds")
-
-    signal.signal(signal.SIGALRM, deadline)
-    signal.setitimer(signal.ITIMER_REAL, 14)
-    try:
-        # Reproduce serving's packed QKV strides. Large weights and V values
-        # exercise FP8 overflow; injected BF16 bits include both signed zeros,
-        # both signed subnormals, finite extremes and the FP8 boundary.
-        torch.manual_seed(9261026)
-        angles = torch.arange(8192, device="cuda").float()[:, None] * (1000000.0 ** (-torch.arange(0, 128, 2, device="cuda").float() / 128))
-        trig = torch.cat((angles.cos(), angles.sin()), dim=-1).contiguous()
-        qw = torch.ones(128, device="cuda", dtype=torch.bfloat16)
-        kw = torch.full((128,), .75, device="cuda", dtype=torch.bfloat16)
-        qw[::4], qw[1::4] = 512, -2048
-        kw[::4], kw[1::4] = -1024, 256
-        special = torch.tensor([0, -32768, 1, -32767, 127, -32641, 0x43e8, -15384, 0x5d80, -8832], device="cuda", dtype=torch.int16)
-        for length in LENGTHS:
-            packed = torch.randn(length, 72, 128, device="cuda", dtype=torch.bfloat16) * 512
-            bits = packed.view(torch.int16).view(-1)
-            count = bits[::257].numel()
-            bits[::257] = special.repeat((count + special.numel() - 1) // special.numel())[:count]
-            q, k, v = packed[:, :64], packed[:, 64:68], packed[:, 68:]
-            # Unique destinations avoid store races. Slot zero and untouched
-            # sentinel-filled slots are compared along with every written row.
-            loc64 = torch.randperm(8192, device="cuda")[:length] + 1
-            loc64[0] = 0
-            pos64 = torch.randint(8192, (length,), device="cuda", dtype=torch.int64)
-            pos64[0], pos64[-1] = 0, 8191
-            outputs = {}
-            for name in ("control", "wide"):
-                shapes = ((length, 64, 128), (8193, 4, 128), (8193, 4, 128), (length, 4, 128), (length, 4, 128))
-                outputs[name] = [torch.full(shape, 0xa5, device="cuda", dtype=torch.uint8).view(torch.float8_e4m3fn) for shape in shapes]
-            result["lengths"][str(length)] = {}
-            for id_type in QKNORM_ID_TYPES:
-                dtype = getattr(torch, id_type)
-                pos, loc = pos64.to(dtype), loc64.to(dtype)
-                graphs = {}
-                for name in ("control", "wide"):
-                    os.environ["SGLANG_PREFILL_QKNORM"] = name
-                    out, kc, vc, ck, cv = outputs[name]
-                    args = (q, k, qw, kw, trig, pos, 1e-6, out, v, kc, vc, loc, ck, cv)
-                    for tensor in outputs[name]:
-                        tensor.view(torch.uint8).fill_(0xa5)
-                    apply_qknorm_rope_fp8_prefill(*args)
-                    torch.cuda.synchronize()
-                    graph = torch.cuda.CUDAGraph()
-                    # Amortize Python replay overhead without including other
-                    # kernels or changing the prologue's memory footprint.
-                    with torch.cuda.graph(graph):
-                        for _ in range(8):
-                            apply_qknorm_rope_fp8_prefill(*args)
-                    graphs[name] = graph
-                assert all(torch.equal(a.view(torch.uint8), b.view(torch.uint8)) for a, b in zip(outputs["control"], outputs["wide"])), f"byte mismatch at {length}/{id_type}"
-                entry = {"bitwise_passed": True, "control": [], "wide": []}
-                for graph in graphs.values():
-                    for _ in range(3):
-                        graph.replay()
-                torch.cuda.synchronize()
-                for pair in range(QKNORM_PAIRS):
-                    order = ("control", "wide") if pair % 2 == 0 else ("wide", "control")
-                    for name in order:
-                        start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-                        start.record()
-                        graphs[name].replay()
-                        end.record()
-                        end.synchronize()
-                        entry[name].append(start.elapsed_time(end) * 1000 / 8)
-                result["lengths"][str(length)][id_type] = entry
-                del graphs
-            del outputs, packed, q, k, v
-    except Exception as error:  # noqa: BLE001 - any gate/timing failure retains control
-        result["error"] = f"{type(error).__name__}: {error}"
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, old_handler)
-        if previous is None:
-            os.environ.pop("SGLANG_PREFILL_QKNORM", None)
-        else:
-            os.environ["SGLANG_PREFILL_QKNORM"] = previous
-    result["elapsed_seconds"] = time.monotonic() - begin
-    if result["elapsed_seconds"] >= 15:
-        result["error"] = "QK-norm screen exceeded 15-second total budget"
-    return result
-
-
 def run_selection(output):
     begin = time.monotonic()
     import torch
@@ -179,9 +53,6 @@ def run_selection(output):
     from sglang.srt.layers.attention.decode_fa3_verify import load
 
     rank = int(os.environ["LOCAL_RANK"])
-    # FA3 candidates must see the unchanged control prologue, independent of
-    # inherited environment. QK-norm is measured only after FA3 finishes.
-    os.environ["SGLANG_PREFILL_QKNORM"] = "control"
     assert int(os.environ["WORLD_SIZE"]) == 4
     torch.cuda.set_device(rank)
     assert torch.cuda.get_device_capability() == (9, 0)
@@ -227,8 +98,6 @@ def run_selection(output):
             print(json.dumps({"rank": rank, "length": length, "name": name, **result}), flush=True)
             del graph, step
         del common, control, control_graph, original_inputs
-    local["qknorm"] = qknorm_selection(torch)
-    print(json.dumps({"rank": rank, "qknorm": local["qknorm"]}), flush=True)
     local["elapsed_seconds"] = time.monotonic() - begin
     dist.all_gather_object(gathered, local)
     if rank == 0:
@@ -244,23 +113,16 @@ def aggregate_selection(directory, output, env_output):
     failed = []
     for worker in range(3):
         path = directory / f"prefill-{worker}"
-        try:
-            assert (path / "status.txt").read_text().strip() == "fa3=0"
-            fragment = json.loads((path / "fa3.json").read_text())
-            entries = fragment["ranks"]
-            assert len(entries) == 4 and {r["rank"] for r in entries} == set(range(4))
-            ranks.extend({**entry, "local_rank": entry["rank"], "rank": worker*4 + entry["rank"], "worker": worker} for entry in entries)
-        except Exception:  # noqa: BLE001 - failed or incomplete workers retain control
+        if not (path / "status.txt").is_file() or (path / "status.txt").read_text().strip() != "fa3=0":
             failed.append(worker)
+            continue
+        fragment = json.loads((path / "fa3.json").read_text())
+        for entry in fragment["ranks"]:
+            ranks.append({**entry, "local_rank": entry["rank"], "rank": worker*4 + entry["rank"], "worker": worker})
     if failed:
         selection = {"winner": "control", "env": {"SGLANG_PREFILL_FA3_VERIFY": "control"}, "failed_workers": failed}
     else:
-        try:
-            selection = choose_candidate(ranks, expected_ranks=12)
-        except Exception as error:  # noqa: BLE001 - malformed timing retains control
-            selection = {"winner": "control", "env": {"SGLANG_PREFILL_FA3_VERIFY": "control"}, "error": f"{type(error).__name__}: {error}"}
-    selection["qknorm"] = choose_qknorm(ranks, expected_ranks=12) if not failed else {"winner": "control", "failed_workers": failed}
-    selection["env"]["SGLANG_PREFILL_QKNORM"] = selection["qknorm"]["winner"]
+        selection = choose_candidate(ranks, expected_ranks=12)
     result = {"schema": "firmus-prefill-fa3-selection-all-workers/v1", **selection, "fragments": [f"prefill-{i}/fa3.json" for i in range(3)]}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")

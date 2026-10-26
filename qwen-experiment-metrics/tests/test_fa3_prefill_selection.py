@@ -89,4 +89,4 @@ def test_aggregation_requires_every_worker_and_every_rank(selector, tmp_path):
     (tmp_path / 'prefill-2/status.txt').write_text('fa3=124\n')
     selector['aggregate_selection'](tmp_path, out, env)
     assert json.loads(out.read_text())['failed_workers'] == [2]
-    assert env.read_text() == 'SGLANG_PREFILL_FA3_VERIFY=control\nSGLANG_PREFILL_QKNORM=control\n'
+    assert env.read_text() == 'SGLANG_PREFILL_FA3_VERIFY=control\n'

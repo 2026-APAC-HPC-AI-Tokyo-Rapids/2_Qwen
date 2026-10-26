@@ -1,7 +1,6 @@
 #!/bin/bash
 # Run inside each Prefill worker's allocation, on exactly its four visible GPUs.
-# FA3 and exact QK-norm screens share the same 175-second process budget.
-# A failed screen leaves the worker on the fixed controls.
+# A failed screen leaves the worker on the fixed N224 control.
 set -uo pipefail
 root=$1
 worker=$2
