@@ -1,0 +1,78 @@
+diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -293,7 +293,14 @@
+                 )
+                 and not args.enable_two_batch_overlap
+                 and not args.enable_eplb
+-                and args.ep_num_redundant_experts == 0
++                and (
++                    args.ep_num_redundant_experts == 0
++                    or (
++                        args.disaggregation_mode == "prefill"
++                        and args.ep_num_redundant_experts == 12
++                        and args.init_expert_location != "trivial"
++                    )
++                )
+                 and quant_config is not None
+                 and quant_config.get_name() == "fp8"
+                 and quant_config.weight_block_size == [128, 128]
+@@ -406,13 +413,13 @@
+             topk = self.topk.empty_topk_output(hidden_states.device)
+         buf = _get_mega_moe_symm_buffer(
+             get_moe_ep_group().device_group,
+-            num_experts=self.config.num_experts,
++            num_experts=self.experts.num_experts,
+             num_max_tokens_per_rank=cap,
+             num_topk=self.config.num_experts_per_tok,
+             hidden=self.config.hidden_size,
+             intermediate_hidden=self.config.moe_intermediate_size,
+         )
+-        # Physical expert IDs enter the native dispatcher; rank r owns 32r..32r+31.
++        # Physical IDs address the loaded weights: 32/rank normally, 35 with replicas.
+         # The kernel returns the combined local-DP output; no post-expert all-reduce applies.
+         return run_sm90_mega_routed(
+             self, hidden_states, topk.topk_ids.to(torch.int32),
+diff --git a/python/sglang/srt/layers/moe/mega_moe_sm90.py b/python/sglang/srt/layers/moe/mega_moe_sm90.py
+--- a/python/sglang/srt/layers/moe/mega_moe_sm90.py
++++ b/python/sglang/srt/layers/moe/mega_moe_sm90.py
+@@ -44,11 +44,12 @@
+ 
+ 
+ def _use_idle_prefill_geometry() -> bool:
+-    if not _IDLE_PREFILL_GEOMETRY:
+-        return False
+     from sglang.srt.runtime_context import get_server_args
+ 
+-    return get_server_args().disaggregation_mode == "prefill"
++    args = get_server_args()
++    return args.disaggregation_mode == "prefill" and (
++        _IDLE_PREFILL_GEOMETRY or args.ep_num_redundant_experts == 12
++    )
+ 
+ 
+ def is_sm90_fp8_mega_moe_available(experts) -> bool:
+@@ -94,16 +95,17 @@
+     )
+ 
+     rows = max(num_tokens, 1)
+-    if num_tokens == 0 and _use_idle_prefill_geometry():
++    if (num_tokens == 0 or buf.num_experts == 140) and _use_idle_prefill_geometry():
+         from sglang.srt.distributed import get_moe_ep_group
+ 
+-        # Pre-dispatch (num_tokens=0) set every topk slot of the symmetric
+-        # buffer to -1, so these rows dispatch nothing and combine to zeros.
+-        rows = idle_output_rows(
+-            moe.config.num_experts,
++        # Pre-dispatch masks every slot after num_tokens. Replica Prefill also
++        # pads live tiny ranks to 280 rows so all ranks use the same geometry
++        # and FC2 scale granularity. The returned tensor is sliced to live rows.
++        rows = max(rows, idle_output_rows(
++            buf.num_experts,
+             moe.config.num_experts_per_tok,
+             get_moe_ep_group().world_size,
+-        )
++        ))
+         assert rows <= buf.topk_idx.shape[0], (rows, tuple(buf.topk_idx.shape))
+     y = torch.empty(
+         (rows, moe.config.hidden_size),

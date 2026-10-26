@@ -20,7 +20,7 @@ uv run --offline --no-project --python /tmp/qwen-simulation-env/bin/python pytho
 
 ## 入力の来歴
 
-- 開始時のmain: `aa28a7d`。ASPIREは1×TP8 prefill / 1×TP8 EP8 decode、concurrency 16。`submission/run/submit.sbatch` が正本。
+- 開始時のmain: `aa28a7d`。ASPIREは1×TP8 prefill / 1×TP8 EP8 decode、concurrency 16。`platforms/shared/qwen-pd.sbatch` が正本。
 - AISimulate wheel: `0.13.0.dev202609240000000055`、Python 3.12.12。参照したupstream source: `992dddc7ee2bad8fd523e7db99eea4ac64254766`（wheelとの同一性を主張しない）。実行APIはインストールしたwheelでも確認した。
 - `model/config.json`: [公式FP8 checkpointの固定revision](https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8/blob/e156cb4efae43fbee1a1ab073f946a1377e6b969/config.json)。SHA-256 `f056921e486d3e22aed125b5218b87146ea2ac838ccf1521dea5b08f809e8d59`。重みは同梱しない。ローカルconfigによりHF mainの変化を避ける。
 - 性能データ: H100 SXM / SGLang `0.5.14`。実配備のSGLang source `fc275674a97d78553b22597ee72c8fd48f5420f4` と同一ではない。

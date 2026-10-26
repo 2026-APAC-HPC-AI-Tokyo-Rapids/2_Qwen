@@ -89,7 +89,7 @@ image `/scratch/home/ACCOUNT/qwen/containers/37886841020.sqsh`（sha256 4b919a74
 
 ## 4. ASPIRE（H100）への展開
 
-- H100 80 GB では TP2 に重みが載らないが、**world8/EP8 なら MoE 重みは node 内 1 コピー（約 27 GiB/rank）**なので載る。A が Firmus で成立してから、`submission/run/submit.sbatch` に同じフラグで P1×world8（node0）＋ D 側（node1: D2×TP4 または D1×TP8）を 1 回だけ投入する。
+- H100 80 GB では TP2 に重みが載らないが、**world8/EP8 なら MoE 重みは node 内 1 コピー（約 27 GiB/rank）**なので載る。A が Firmus で成立してから、`platforms/shared/qwen-pd.sbatch` に同じフラグで P1×world8（node0）＋ D 側（node1: D2×TP4 または D1×TP8）を 1 回だけ投入する。
 - 1 run 約 420 SU。投入前後に `myprojects -p 59010014` で残高（直近 11505、In Doubt 1024、保護分 6144 は未使用）を確認し報告に含める。
 
 ## 5. 未回収の結果（先に片付ける）

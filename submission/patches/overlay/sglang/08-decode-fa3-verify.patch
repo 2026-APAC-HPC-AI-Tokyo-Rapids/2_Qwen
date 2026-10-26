@@ -1,0 +1,221 @@
+--- a/python/sglang/srt/layers/attention/flashattention_backend.py
++++ b/python/sglang/srt/layers/attention/flashattention_backend.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import os
+ from dataclasses import dataclass
+ from typing import TYPE_CHECKING, Optional
+ 
+@@ -92,6 +93,7 @@
+     # Verify-only, prepared in the first layer from the real layer geometry.
+     # Captured prepare/reset nodes run on every replay, not just at capture.
+     verify_scheduler_metadata: torch.Tensor = None
++    verify_fa3_state: object = None
+     # Per-forward-pass cache for the FA4 sheared-bias block schedule.
+     # Created lazily by the first rel_bias layer; lives as long as this metadata
+     # object, which for CUDA-graph captures keeps the buffers owned by the graph.
+@@ -156,6 +158,12 @@
+         fa_impl_ver=3,
+     ):
+         super().__init__()
++        self._decode_fa3_verify_name = os.environ.get("SGLANG_DECODE_FA3_VERIFY", "")
++        if self._decode_fa3_verify_name:
++            from sglang.srt.layers.attention import decode_fa3_verify
++
++            assert self._decode_fa3_verify_name in decode_fa3_verify.NAMES[1:]
++
+ 
+         assert not (
+             model_runner.sliding_window_size is not None
+@@ -392,6 +400,35 @@
+             )
+         return metadata.verify_scheduler_metadata
+ 
++    def _run_decode_fa3_verify(self, q, key_cache, value_cache, layer, forward_batch, causal, window_size, use_cascade_attn, use_local_attn, page_table, cache_seqlens, cu_seqlens_q, out, kwargs):
++        metadata = self.forward_metadata
++        batch = metadata.cache_seqlens_int32.numel()
++        if not (
++            self.fa_impl_ver == 3 and not kwargs
++            and not self.use_mla and self.attn_cp_size == 1
++            and forward_batch.forward_mode.is_target_verify() and self.topk <= 1
++            and getattr(forward_batch.spec_info, "ragged_verify_layout", None) is None
++            and 32 <= batch <= 48 and metadata.max_seq_len_q == 4
++            and self.page_size == 64
++            and (layer.tp_q_head_num, layer.tp_k_head_num, layer.tp_v_head_num) == (64, 4, 4)
++            and (layer.head_dim, layer.v_head_dim) == (128, 128)
++            and q.numel() == batch * 4 * 64 * 128
++            and q.dtype == key_cache.dtype == torch.float8_e4m3fn
++            and causal and window_size == (-1, -1) and layer.logit_cap == 0
++            and not layer.is_cross_attention and not use_cascade_attn and not use_local_attn
++        ):
++            return None
++        from sglang.srt.layers.attention import decode_fa3_verify
++
++        if decode_fa3_verify.output_fp8(self._decode_fa3_verify_name) and not getattr(layer, "decode_fp8_output", False):
++            return None
++        if value_cache.dtype != key_cache.dtype:
++            return None
++        if metadata.verify_fa3_state is None:
++            metadata.verify_fa3_state = decode_fa3_verify.allocate(cache_seqlens, self._decode_fa3_verify_name)
++            decode_fa3_verify.prepare(metadata.verify_fa3_state, cache_seqlens, cu_seqlens_q)
++        return decode_fa3_verify.forward(metadata.verify_fa3_state, q.contiguous().view(-1, 64, 128), key_cache, value_cache, page_table, cache_seqlens, cu_seqlens_q, layer.scaling, out)
++
+     def _mxfp8_sf_kwargs(self, layer, forward_batch, q_descale=None):
+         """Block-scaled UE8M0 scale factors for the FA4 MXFP8 attention path.
+ 
+@@ -422,6 +457,7 @@
+             # prepare node with live cache lengths/cu_q, then all 94 layers use
+             # it sequentially. Native FA3 resets its semaphore after each call.
+             self.forward_metadata.verify_scheduler_metadata = None
++            self.forward_metadata.verify_fa3_state = None
+             return
+         # Single-CG has no Python between steps, so one capturable kernel updates
+         # the persistent metadata.
+@@ -1517,31 +1553,37 @@
+                     **kwargs,
+                 )
+             else:
+-                verify_sched = self._get_verify_scheduler_metadata(
+-                    q, key_cache, layer, forward_batch, causal, window_size,
+-                    use_cascade_attn, use_local_attn,
+-                )
+-                result = flash_attn_with_kvcache(
+-                    q=q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),
+-                    k_cache=key_cache,
+-                    v_cache=value_cache,
+-                    page_table=page_table,
+-                    cache_seqlens=cache_seqlens,
+-                    cu_seqlens_q=cu_seqlens_q,
+-                    cu_seqlens_k_new=cu_seqlens_k if not use_local_attn else None,
+-                    max_seqlen_q=max_seqlen_q,
+-                    softmax_scale=layer.scaling,
+-                    causal=False if use_cascade_attn else causal,
+-                    window_size=window_size,
+-                    softcap=layer.logit_cap,
+-                    return_softmax_lse=use_cascade_attn,
+-                    num_splits=1 if verify_sched is not None else self.num_splits,
+-                    pack_gqa=True if verify_sched is not None else None,
+-                    scheduler_metadata=verify_sched,
+-                    out=_fa_out,
+-                    ver=self.fa_impl_ver,
+-                    **kwargs,
+-                )
++                result = None
++                if self._decode_fa3_verify_name:
++                    result = self._run_decode_fa3_verify(q, key_cache, value_cache, layer, forward_batch, causal, window_size, use_cascade_attn, use_local_attn, page_table, cache_seqlens, cu_seqlens_q, _fa_out, kwargs)
++                    if isinstance(result, tuple):
++                        return result
++                if result is None:
++                    verify_sched = self._get_verify_scheduler_metadata(
++                        q, key_cache, layer, forward_batch, causal, window_size,
++                        use_cascade_attn, use_local_attn,
++                    )
++                    result = flash_attn_with_kvcache(
++                        q=q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),
++                        k_cache=key_cache,
++                        v_cache=value_cache,
++                        page_table=page_table,
++                        cache_seqlens=cache_seqlens,
++                        cu_seqlens_q=cu_seqlens_q,
++                        cu_seqlens_k_new=cu_seqlens_k if not use_local_attn else None,
++                        max_seqlen_q=max_seqlen_q,
++                        softmax_scale=layer.scaling,
++                        causal=False if use_cascade_attn else causal,
++                        window_size=window_size,
++                        softcap=layer.logit_cap,
++                        return_softmax_lse=use_cascade_attn,
++                        num_splits=1 if verify_sched is not None else self.num_splits,
++                        pack_gqa=True if verify_sched is not None else None,
++                        scheduler_metadata=verify_sched,
++                        out=_fa_out,
++                        ver=self.fa_impl_ver,
++                        **kwargs,
++                    )
+ 
+             if use_cascade_attn:
+                 o, softmax_lse, *rest = result
+--- /dev/null
++++ b/python/sglang/srt/layers/attention/decode_fa3_verify.py
+@@ -0,0 +1,81 @@
++"""Bounded opt-in EAGLE3 verify kernels; fixed image companion ABI."""
++
++import json
++from pathlib import Path
++
++import torch
++
++LIBRARY = Path("/opt/apac/fa3-verify/libapac_fa3_verify.so")
++CANDIDATES = json.loads(LIBRARY.with_name("candidates.json").read_text())
++NAMES = tuple(c["name"] for c in CANDIDATES)
++_loaded = False
++
++
++def load():
++    global _loaded
++    if not _loaded:
++        torch.ops.load_library(str(LIBRARY))
++
++        @torch.library.register_fake("apac_fa3_verify::prepare")
++        def prepare_fake(lengths, cu_q, metadata, candidate):
++            return None
++
++        @torch.library.register_fake("apac_fa3_verify::fwd_out")
++        def fwd_fake(q, k, v, pages, lengths, cu_q, out, lse, partial, partial_lse, metadata, candidate, scale):
++            return None
++
++        @torch.library.register_fake("apac_fa3_verify::fwd_fp8_out")
++        def fwd_fp8_fake(q, k, v, pages, lengths, cu_q, out, lse, partial, partial_lse, metadata, candidate, scale, scales):
++            return None
++
++        @torch.library.register_fake("apac_fa3_verify::prefill_fwd_out")
++        def prefill_fake(q, k, v, cu, out, scales, lse, metadata, maxlen, scale):
++            return None
++
++        @torch.library.register_fake("apac_fa3_verify::prefill_fixed_fwd_out")
++        def prefill_fixed_fake(q, k, v, cu, out, scales, lse, metadata, maxlen, scale):
++            return None
++
++        _loaded = True
++
++
++def output_fp8(name):
++    return CANDIDATES[NAMES.index(name)]["output"] == "fp8"
++
++
++def allocate(lengths, name):
++    load()
++    candidate = NAMES.index(name)
++    batch = lengths.numel()
++    assert 32 <= batch <= 48
++    spec = CANDIDATES[candidate]
++    splits = spec["splits"]
++    options = {"device": lengths.device, "dtype": torch.float32}
++    return {
++        "candidate": candidate,
++        "spec": spec,
++        "metadata": torch.empty(4 * ((batch + 3) // 4 * 4) + 1 + (batch * 4 if spec.get("merge") else 0), device=lengths.device, dtype=torch.int32),
++        "lse": torch.empty((64, 4 * batch), **options),
++        "partial": torch.empty((splits, 64, 4 * batch, 128) if splits > 1 else (0,), **options),
++        "partial_lse": torch.empty((splits, 64, 4 * batch) if splits > 1 else (0,), **options),
++    }
++
++
++def prepare(state, lengths, cu_q):
++    torch.ops.apac_fa3_verify.prepare(lengths, cu_q, state["metadata"], state["candidate"])
++
++
++def forward(state, q, k, v, pages, lengths, cu_q, scale, out=None):
++    if state["spec"]["output"] == "fp8":
++        rows = q.shape[0]
++        if isinstance(out, tuple):
++            out, scales = out
++        else:
++            out = torch.empty_like(q)
++            scales = torch.empty((64, (rows + 3) // 4 * 4), device=q.device, dtype=torch.float32).T[:rows]
++        torch.ops.apac_fa3_verify.fwd_fp8_out(q, k, v, pages, lengths, cu_q, out, state["lse"], state["partial"], state["partial_lse"], state["metadata"], state["candidate"], scale, scales)
++        return out.view(rows, 8192), scales
++    if out is None:
++        out = torch.empty_like(q, dtype=torch.bfloat16)
++    torch.ops.apac_fa3_verify.fwd_out(q, k, v, pages, lengths, cu_q, out, state["lse"], state["partial"], state["partial_lse"], state["metadata"], state["candidate"], scale)
++    return out

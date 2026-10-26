@@ -48,8 +48,15 @@ nvidia_hook="${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
 if [[ -x "${nvidia_hook}" ]]; then sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${nvidia_hook}"; fi
 if [[ "${CLUSTER_NAME}" == genkai && -e "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh" ]]; then chmod -x "${runtime_dir}/enroot-system/hooks.d/10-cgroups.sh"; fi
 
-install -m 0755 "${GITHUB_WORKSPACE}/submission/run/submit.sbatch" "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/"
+install -m 0755 "${GITHUB_WORKSPACE}/platforms/shared/qwen-pd.sbatch" "${runtime_dir}/scripts/submit.sbatch"
+install -m 0755 "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/"
 install -m 0755 "${GITHUB_WORKSPACE}/scripts/collect-eagle-acceptance.py" "${runtime_dir}/scripts/"
+if [[ "${CLUSTER_NAME}" == aspire2ap ]]; then
+  install -m 0755 "${GITHUB_WORKSPACE}/scripts/select-aspire-kernels.sh" "${runtime_dir}/scripts/"
+  install -m 0644 "${GITHUB_WORKSPACE}/kernels/fa3-verify/prefill-candidates.json" "${runtime_dir}/source/"
+  install -m 0644 "${GITHUB_WORKSPACE}/configs/firmus-framework.json" "${runtime_dir}/source/"
+  install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-kernels.sh" "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-fa3.py" "${GITHUB_WORKSPACE}/scripts/check-firmus-megamoe.py" "${GITHUB_WORKSPACE}/scripts/check-firmus-decode-kernels.py" "${GITHUB_WORKSPACE}/scripts/firmus_megamoe_replicas.py" "${runtime_dir}/scripts/"
+fi
 export HF_HOME="${runtime_dir}/tokenizer-cache"
 export HF_HUB_DISABLE_XET=1
 export UV_CACHE_DIR="${RUNNER_TEMP}/uv-cache"
