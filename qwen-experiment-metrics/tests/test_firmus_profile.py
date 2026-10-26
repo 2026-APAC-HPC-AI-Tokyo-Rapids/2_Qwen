@@ -18,9 +18,9 @@ VALIDATE = runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"))["val
 SUMMARY = runpy.run_path(str(ROOT / "scripts/summarize-firmus-run.py"))["summarize"]
 
 
-@pytest.mark.parametrize("framework,separate,endpoints_override", [("sglang", False, False), ("vllm", False, False), ("sglang", True, False), ("sglang", True, True)])
+@pytest.mark.parametrize("framework,separate", [("sglang", False), ("vllm", False), ("sglang", True)])
 @pytest.mark.parametrize("failure", [None, "start", "stop"])
-def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None, framework: str, separate: bool, endpoints_override: bool) -> None:
+def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None, framework: str, separate: bool) -> None:
     requests = []
     request_lock = threading.Lock()
 
@@ -44,15 +44,14 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
         (tmp_path / directory).mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"framework": framework, "workload": "official" if separate else "reference-07"}))
     workers = [(f"prefill-{n}", 2) for n in range(6 if separate else 4)] + [(f"decode-{n}", 4) for n in range(1 if separate else 2)]
-    endpoints = tmp_path / ("profile/worker-endpoints.tsv" if endpoints_override else "source/worker-endpoints.tsv")
-    endpoints.write_text("".join(f"{name}\t127.0.0.1\t{server.server_port}\t{tp}\n" for name, tp in workers))
+    (tmp_path / "source/worker-endpoints.tsv").write_text("".join(f"{name}\t127.0.0.1\t{server.server_port}\t{tp}\n" for name, tp in workers))
     (tmp_path / "logs/aiperf.log").write_text("Phase profiling (profiling) started\n")
     client_log = tmp_path / "logs" / ("profile-aiperf.log" if separate else "aiperf.log")
     sleep = tmp_path / "bin/sleep"
     sleep.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >>\"$SLEEP_RECORD\"\nif [[ $1 == 1 ]]; then printf 'Phase profiling (profiling) started\\nPhase profiling (profiling) complete | elapsed=75.00s\\n' >>\"$CLIENT_LOG\"; fi\n")
     sleep.chmod(0o755)
     try:
-        result = subprocess.run(["bash", str(ROOT / "scripts/capture-firmus-profile.sh"), str(tmp_path), *([str(endpoints)] if endpoints_override else [])], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLEEP_RECORD": str(tmp_path / "sleeps"), "CLIENT_LOG": str(client_log)}, capture_output=True, text=True, check=False)
+        result = subprocess.run(["bash", str(ROOT / "scripts/capture-firmus-profile.sh"), str(tmp_path)], env={**os.environ, "PATH": f"{tmp_path}/bin:{os.environ['PATH']}", "SLEEP_RECORD": str(tmp_path / "sleeps"), "CLIENT_LOG": str(client_log)}, capture_output=True, text=True, check=False)
     finally:
         server.shutdown()
         thread.join()
@@ -93,17 +92,13 @@ def test_profile_validation_explains_idle_worker_capture(tmp_path: Path) -> None
         VALIDATE(database, 2)
 
 
-@pytest.mark.parametrize("aspire", [False, True])
-def test_full_profile_retains_all_reports_and_sixteen_cpu_traces(tmp_path: Path, monkeypatch, aspire: bool) -> None:
+def test_full_profile_retains_seven_reports_and_sixteen_cpu_traces(tmp_path: Path, monkeypatch) -> None:
     module = runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"))
     (tmp_path / "source").mkdir()
     (tmp_path / "profile").mkdir()
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"framework": "sglang", "workload": "official"}))
     workers = [(f"prefill-{n}", 2) for n in range(6)] + [("decode-0", 4)]
-    if aspire:
-        workers = [(f"{role}-{n}", 4) for role in ("prefill", "decode") for n in range(2)]
-    endpoints = tmp_path / ("profile/worker-endpoints.tsv" if aspire else "source/worker-endpoints.tsv")
-    endpoints.write_text("".join(f"{name}\thost\t30000\t{tp}\n" for name, tp in workers))
+    (tmp_path / "source/worker-endpoints.tsv").write_text("".join(f"{name}\thost\t30000\t{tp}\n" for name, tp in workers))
     for name, tp in workers:
         (tmp_path / f"profile/nsys-{name}.nsys-rep").write_text("native report")
         directory = tmp_path / "profile/torch" / name
@@ -115,7 +110,7 @@ def test_full_profile_retains_all_reports_and_sixteen_cpu_traces(tmp_path: Path,
     def export(command, check):
         assert check and command[:3] == ["/opt/nsys/bin/nsys", "export", "--type=sqlite"]
         output = Path(command[3].removeprefix("--output="))
-        tp = 4 if aspire or "decode" in output.name else 2
+        tp = 4 if "decode" in output.name else 2
         with sqlite3.connect(output) as connection:
             connection.execute("CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (deviceId INTEGER, start INTEGER, end INTEGER, demangledName INTEGER)")
             connection.execute("CREATE TABLE StringIds (id INTEGER, value TEXT)")
@@ -123,13 +118,13 @@ def test_full_profile_retains_all_reports_and_sixteen_cpu_traces(tmp_path: Path,
             connection.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?,0,100,1)", [(rank,) for rank in range(tp)])
 
     monkeypatch.setattr(subprocess, "run", export)
-    monkeypatch.setattr(sys, "argv", ["validate", str(tmp_path), *(["--endpoints", str(endpoints)] if aspire else [])])
+    monkeypatch.setattr(sys, "argv", ["validate", str(tmp_path)])
     module["main"]()
     result = json.loads((tmp_path / "profile/validation.json").read_text())
-    assert result["valid"] and len(result["workers"]) == len(workers)
+    assert result["valid"] and len(result["workers"]) == 7
     assert sum(worker["gpu_count"] for worker in result["workers"].values()) == 16
     assert sum(worker["cpu_trace_count"] for worker in result["workers"].values()) == 16
-    assert len(json.loads((tmp_path / "profile/kernel-summary.json").read_text())) == len(workers)
+    assert len(json.loads((tmp_path / "profile/kernel-summary.json").read_text())) == 7
     assert not list((tmp_path / "profile").glob("*.sqlite"))
     (tmp_path / "profile/torch/decode-0/123-TP-3.trace.json.gz").unlink()
     with pytest.raises(ValueError, match="expected one CPU trace.*TP3"):

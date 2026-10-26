@@ -162,9 +162,7 @@ def test_submission_script_keeps_profile_data_separate() -> None:
     assert '${OUTPUT_DIR}/profile' in submission
     assert 'SGLANG_HOST_IP=${node_ip}' in submission
     assert 'grep -q ACTIVE "${state_file}"' in submission
-    assert 'if [[ "${PROFILE}" == true && "${QWEN_PLATFORM}" != aspire2ap ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=' in submission
-    assert 'args=(env QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys' in submission
-    assert submission.rindex('"${script_path}" aiperf') < submission.index('bash "${OUTPUT_DIR}/scripts/run-aspire-profile.sh"')
+    assert 'if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=' in submission
     assert '"${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/"' in provision
     assert "profiler-invocation-*.argv" in submission
 

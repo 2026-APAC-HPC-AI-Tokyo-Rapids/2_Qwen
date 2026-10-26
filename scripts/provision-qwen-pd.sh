@@ -55,7 +55,6 @@ if [[ "${CLUSTER_NAME}" == aspire2ap ]]; then
   install -m 0644 "${GITHUB_WORKSPACE}/kernels/fa3-verify/prefill-candidates.json" "${runtime_dir}/source/"
   install -m 0644 "${GITHUB_WORKSPACE}/configs/firmus-framework.json" "${runtime_dir}/source/"
   install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-kernels.sh" "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-fa3.py" "${GITHUB_WORKSPACE}/scripts/check-firmus-megamoe.py" "${GITHUB_WORKSPACE}/scripts/check-firmus-decode-kernels.py" "${GITHUB_WORKSPACE}/scripts/firmus_megamoe_replicas.py" "${runtime_dir}/scripts/"
-  if [[ "${PROFILE}" == true ]]; then bash "${GITHUB_WORKSPACE}/scripts/provision-aspire-profile.sh" "${runtime_dir}" "${GITHUB_WORKSPACE}"; fi
 fi
 export HF_HOME="${runtime_dir}/tokenizer-cache"
 export HF_HUB_DISABLE_XET=1
@@ -70,4 +69,4 @@ for tokenizer_file in config.json generation_config.json merges.txt tokenizer.js
 install -d -m 0755 "${tokenizer_cache_repository}/refs"
 printf '%s' "${tokenizer_revision}" >"${tokenizer_cache_repository}/refs/main"
 jq -n --arg repository "${model_repository}" --arg revision "${model_revision}" --arg path "${MODEL_PATH}" --arg tokenizer_repository "${tokenizer_repository}" --arg tokenizer_revision "${tokenizer_revision}" '{schema_version:"qwen3-pd-model/v1",model:{repository:$repository,revision:$revision,path:$path,precision:"fp8",shards:24},tokenizer:{repository:$tokenizer_repository,revision:$tokenizer_revision}}' >"${runtime_dir}/source/model.json"
-jq -n --arg cluster "${CLUSTER_NAME}" --arg commit "${GITHUB_SHA}" --argjson profile "${PROFILE}" --arg container_sha256 "${CONTAINER_SHA256}" --argjson container_size "${CONTAINER_SIZE}" '{schema_version:"qwen3-pd-provenance/v1",cluster:$cluster,commit:$commit,profile:$profile,container:{sha256:$container_sha256,size_bytes:$container_size},aiperf:{version:"0.12.0",commit:"be53bf2953d30e46c500e6a80fc1f8b6f84bc718"},sglang_router:{version:"0.3.2"}} + (if $cluster == "aspire2ap" and $profile then {normal_benchmark_before_profile:true} else {} end)' >"${runtime_dir}/source/provenance.json"
+jq -n --arg cluster "${CLUSTER_NAME}" --arg commit "${GITHUB_SHA}" --argjson profile "${PROFILE}" --arg container_sha256 "${CONTAINER_SHA256}" --argjson container_size "${CONTAINER_SIZE}" '{schema_version:"qwen3-pd-provenance/v1",cluster:$cluster,commit:$commit,profile:$profile,container:{sha256:$container_sha256,size_bytes:$container_size},aiperf:{version:"0.12.0",commit:"be53bf2953d30e46c500e6a80fc1f8b6f84bc718"},sglang_router:{version:"0.3.2"}}' >"${runtime_dir}/source/provenance.json"
