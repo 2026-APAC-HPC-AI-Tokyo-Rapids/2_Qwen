@@ -1,0 +1,248 @@
+diff --git a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
+--- a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
++++ b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
+@@ -543,6 +543,99 @@
+   PDLTriggerSecondary<kUsePDL>();
+ }
+ 
++
++// Decode: four independent H128 heads per warp, vectorized 16-byte halves.
++// Virtual old lanes (4*lane+j) retain the original XOR sum and both BF16
++// rounding points. No shared memory or CTA barrier on the latency path.
++template <bool kUsePDL, typename IdType>
++__global__ void __launch_bounds__(128) qknorm_rope_decode_kernel(
++    const __grid_constant__ QKNormRopeFP8Params p) {
++  using namespace device;
++  using Vec = AlignedVector<bf16x2_t, 4>;
++  using Out = AlignedVector<uint16_t, 4>;
++  const uint32_t work = blockIdx.x * 16 + threadIdx.x / 8;
++  const uint32_t heads = p.num_qo_heads + p.num_kv_heads;
++  const uint32_t token = work / heads;
++  const uint32_t head = work % heads;
++  const uint32_t lane = threadIdx.x % 8;
++  const bool valid = token < p.num_tokens;
++  PDLWaitPrimary<kUsePDL>();
++  Vec x{}, y{};
++  if (valid) {
++    const void* src = head < p.num_qo_heads
++        ? pointer::offset(p.q, static_cast<int64_t>(token) * p.q_stride_bytes + head * 256)
++        : pointer::offset(p.k, static_cast<int64_t>(token) * p.k_stride_bytes + head * 256);
++    x = load_as<Vec>(src, lane);
++    y = load_as<Vec>(pointer::offset(src, 128), lane);
++  }
++  float partial[4];
++#pragma unroll
++  for (int j = 0; j < 4; ++j) {
++    const auto a = cast<fp32x2_t>(x[j]);
++    const auto b = cast<fp32x2_t>(y[j]);
++    float sum = 0.f;
++    sum += a.x * a.x;
++    sum += a.y * a.y;
++    sum += b.x * b.x;
++    sum += b.y * b.y;
++    partial[j] = sum;
++  }
++#pragma unroll
++  for (int mask = 4; mask >= 1; mask >>= 1) {
++#pragma unroll
++    for (int j = 0; j < 4; ++j) partial[j] += __shfl_xor_sync(0xffffffff, partial[j], mask, 8);
++  }
++  const float sum02 = partial[0] + partial[2];
++  const float sum13 = partial[1] + partial[3];
++  const float scale = math::rsqrt((sum02 + sum13) / 128.f + p.eps);
++  if (valid) {
++    const auto w = head < p.num_qo_heads ? p.q_weight : p.k_weight;
++    const auto wx = load_as<Vec>(w, lane);
++    const auto wy = load_as<Vec>(pointer::offset(w, 128), lane);
++    const int64_t pos = static_cast<const IdType*>(p.positions)[token];
++    const auto trig = static_cast<const float*>(p.cos_sin_cache) + pos * 128;
++    Out ox, oy;
++#pragma unroll
++    for (int j = 0; j < 4; ++j) {
++      auto a = cast<fp32x2_t>(x[j]);
++      auto b = cast<fp32x2_t>(y[j]);
++      const auto u = cast<fp32x2_t>(wx[j]);
++      const auto v = cast<fp32x2_t>(wy[j]);
++      a = cast<fp32x2_t>(cast<bf16x2_t, fp32x2_t>({a.x * scale * u.x, a.y * scale * u.y}));
++      b = cast<fp32x2_t>(cast<bf16x2_t, fp32x2_t>({b.x * scale * v.x, b.y * scale * v.y}));
++      const int d = lane * 8 + j * 2;
++      const float c0 = trig[d], c1 = trig[d + 1], s0 = trig[64 + d], s1 = trig[65 + d];
++      ox[j] = to_fp8x2(cast<bf16x2_t, fp32x2_t>({a.x * c0 - b.x * s0, a.y * c1 - b.y * s1}));
++      oy[j] = to_fp8x2(cast<bf16x2_t, fp32x2_t>({a.x * s0 + b.x * c0, a.y * s1 + b.y * c1}));
++    }
++    if (head < p.num_qo_heads) {
++      auto dst = pointer::offset(p.q_fp8, (static_cast<int64_t>(token) * p.num_qo_heads + head) * 128);
++      store_as<Out>(dst, ox, lane);
++      store_as<Out>(pointer::offset(dst, 64), oy, lane);
++    } else {
++      const int h = head - p.num_qo_heads;
++      const int64_t slot = static_cast<const IdType*>(p.cache_loc)[token];
++      assert(slot >= 0 && slot < p.cache_slots);
++      if (slot != 0) {
++        const int64_t offset = (slot * p.num_kv_heads + h) * 128;
++        auto dst = pointer::offset(p.k_cache, offset);
++        store_as<Out>(dst, ox, lane);
++        store_as<Out>(pointer::offset(dst, 64), oy, lane);
++        const auto src = pointer::offset(p.v, static_cast<int64_t>(token) * p.v_stride_bytes + h * 256);
++        const auto vx = load_as<Vec>(src, lane);
++        const auto vy = load_as<Vec>(pointer::offset(src, 128), lane);
++        Out ovx, ovy;
++#pragma unroll
++        for (int j = 0; j < 4; ++j) { ovx[j] = to_fp8x2(vx[j]); ovy[j] = to_fp8x2(vy[j]); }
++        dst = pointer::offset(p.v_cache, offset);
++        store_as<Out>(dst, ovx, lane);
++        store_as<Out>(pointer::offset(dst, 64), ovy, lane);
++      }
++    }
++  }
++  PDLTriggerSecondary<kUsePDL>();
++}
++
+ template <bool kUsePDL>
+ struct QKNormRopeFP8Kernel {
+   template <typename IdType, bool kStoreKV>
+@@ -674,6 +767,13 @@
+       LaunchKernel(dim3(num_tokens, div_ceil(num_heads, 32u)), 256, device.unwrap()).enable_pdl(kUsePDL)(prefill, params, contiguous_k->data_ptr(), contiguous_v->data_ptr());
+       return;
+     }
++    if constexpr (kStoreKV) {
++      if (num_tokens <= 192 && num_qo_heads == 64 && num_kv_heads == 4) {
++        const auto decode = id_type.is_type<int32_t>() ? qknorm_rope_decode_kernel<kUsePDL, int32_t> : qknorm_rope_decode_kernel<kUsePDL, int64_t>;
++        LaunchKernel(div_ceil(static_cast<uint64_t>(num_tokens) * num_heads, uint64_t{16}), 128, device.unwrap()).enable_pdl(kUsePDL)(decode, params);
++        return;
++      }
++    }
+     const auto kernel = id_type.is_type<int32_t>() ? _kernel<int32_t, kStoreKV> : _kernel<int64_t, kStoreKV>;
+     const auto num_blocks = div_ceil(static_cast<uint64_t>(num_tokens) * head_groups, kQKNormRopeWarps);
+     LaunchKernel(static_cast<uint32_t>(num_blocks), kQKNormRopeWarps * device::kWarpThreads, device.unwrap())  //
+diff --git a/python/sglang/kernels/ops/moe/moe_fused_gate.py b/python/sglang/kernels/ops/moe/moe_fused_gate.py
+--- a/python/sglang/kernels/ops/moe/moe_fused_gate.py
++++ b/python/sglang/kernels/ops/moe/moe_fused_gate.py
+@@ -1,7 +1,7 @@
+ from __future__ import annotations
+ 
+ import logging
+-from typing import TYPE_CHECKING, Tuple
++from typing import TYPE_CHECKING, Optional, Tuple
+ 
+ import torch
+ import triton
+@@ -116,6 +116,8 @@
+     stride_wk,
+     stride_im,
+     stride_ik,
++    num_token_non_padded=None,
++    FUSE_DECODE_PADDING: tl.constexpr = False,
+ ) -> None:
+     # Row-tiled: each program handles BLOCK_M rows; all reductions run along the
+     # expert (N) axis. Tiling rows keeps CTAs large enough to stay occupancy-bound
+@@ -127,9 +129,12 @@
+     mask_n = offs_n < N
+ 
+     # prefetch bias before PDL wait
+-    bias = tl.load(bias_ptr + offs_n, mask=mask_n, other=0.0).to(
+-        tl.float32
+-    )  # [BLOCK_N]
++    if FUSE_DECODE_PADDING:
++        bias = tl.full([BLOCK_N], 0.0, tl.float32)
++    else:
++        bias = tl.load(bias_ptr + offs_n, mask=mask_n, other=0.0).to(
++            tl.float32
++        )  # [BLOCK_N]
+ 
+     if USE_PDL:
+         tl.extra.cuda.gdc_wait()
+@@ -248,6 +253,9 @@
+     )
+     store_mask = mask_m[:, None] & mask_k_total[None, :]
+     tl.store(out_w_ptr, selected_vals, mask=store_mask)
++    if FUSE_DECODE_PADDING:
++        count = tl.load(num_token_non_padded)
++        selected_idx = tl.where(offs_m[:, None] < count, selected_idx, -1)
+     tl.store(out_i_ptr, selected_idx, mask=store_mask)
+ 
+ 
+@@ -264,6 +272,7 @@
+     moe_softcapping: float = 0.0,
+     num_expert_group: int = 1,
+     topk_group: int = 1,
++    num_token_non_padded: Optional[torch.Tensor] = None,
+ ) -> Tuple[torch.Tensor, torch.Tensor]:
+     """Triton fused router: scoring + bias + topk + (optional) renorm/scale.
+ 
+@@ -282,10 +291,19 @@
+         torch.float16,
+         torch.bfloat16,
+     ), "scores must be float32/float16/bfloat16"
+-    assert bias.dtype == torch.float32, "bias must be float32"
+     assert scores.ndim == 2, "scores must be 2D"
+-    assert bias.ndim == 1, "bias must be 1D"
+-    assert scores.size(1) == bias.size(0), "scores and bias must have same num_experts"
++    if num_token_non_padded is not None:
++        # Plain Qwen Decode only. All row calculations still run; only the ID
++        # store folds in the post-process mask, with a device count for replay.
++        assert bias is None and scores.shape[1] == 128 and 0 < scores.shape[0] <= 192
++        assert topk == 8 and scoring_func == "softmax" and num_fused_shared_experts == 0
++        assert num_expert_group == 1 and moe_softcapping == 0.0
++        assert num_token_non_padded.dtype == torch.int32 and num_token_non_padded.numel() == 1
++        assert num_token_non_padded.device == scores.device
++    else:
++        assert bias.dtype == torch.float32, "bias must be float32"
++        assert bias.ndim == 1, "bias must be 1D"
++        assert scores.size(1) == bias.size(0), "scores and bias must have same num_experts"
+     assert topk > num_fused_shared_experts, "topk must be > num_fused_shared_experts"
+     if routed_scaling_factor is None:
+         routed_scaling_factor = 1.0
+@@ -342,6 +360,8 @@
+         stride_wk=weights.stride(1),
+         stride_im=indices.stride(0),
+         stride_ik=indices.stride(1),
++        num_token_non_padded=num_token_non_padded,
++        FUSE_DECODE_PADDING=num_token_non_padded is not None,
+         num_warps=num_warps,
+         **extra,
+     )
+diff --git a/python/sglang/srt/layers/moe/topk.py b/python/sglang/srt/layers/moe/topk.py
+--- a/python/sglang/srt/layers/moe/topk.py
++++ b/python/sglang/srt/layers/moe/topk.py
+@@ -853,6 +853,7 @@
+         elif (
+             _is_cuda and num_token_non_padded is not None
+             and gating_output.shape[1] == 128 and 0 < M <= 192 and topk == 8
++            and not envs.SGLANG_OPT_USE_JIT_KERNEL_FUSED_TOPK.get()
+         ):
+             from sglang.kernels.ops.moe.trtllm_lora_temp.topk_softmax_pack import (
+                 topk_softmax_masked,
+@@ -865,7 +866,7 @@
+                 moe_fused_gate as _jit_moe_fused_gate,
+             )
+ 
+-            zero_bias = torch.zeros(
++            zero_bias = None if num_token_non_padded is not None else torch.zeros(
+                 gating_output.shape[1],
+                 dtype=torch.float32,
+                 device=gating_output.device,
+@@ -876,6 +877,7 @@
+                 topk,
+                 scoring_func="softmax",
+                 renormalize=renormalize,
++                num_token_non_padded=num_token_non_padded,
+             )
+         else:
+             topk_softmax(
+@@ -2185,13 +2187,13 @@
+             elif (
+                 _is_cuda and not _use_aiter
+                 and get_moe_a2a_backend().is_megamoe()
+-                and router_logits.shape[1] == 128 and 0 < router_logits.shape[0] <= 192
++                and router_logits.shape[1] == 128 and 0 < router_logits.shape[0] <= 192
+                 and top_k == 8 and scoring_func == "softmax"
+                 and correction_bias is None and expert_location_dispatch_info is None
+                 and num_fused_shared_experts == 0
+                 and num_token_non_padded is not None
+                 and num_token_non_padded.dtype == torch.int32 and num_token_non_padded.numel() == 1
+-                and not envs.SGLANG_OPT_USE_JIT_KERNEL_FUSED_TOPK.get()
++                and (envs.SGLANG_OPT_USE_JIT_KERNEL_FUSED_TOPK.get() or router_logits.shape[0] <= 192)
+                 and not envs.SGLANG_SIMULATE_UNIFORM_EXPERTS.get()
+                 and not envs.SGLANG_SIMULATE_ROUND_ROBIN_EXPERTS.get()
+             ):

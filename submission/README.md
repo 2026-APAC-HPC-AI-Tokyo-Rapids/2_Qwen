@@ -1,44 +1,70 @@
-# Qwen3 submission
+# Qwen3 PD submission — Firmus, Tokyo Rapids
 
-`build/setup.sh` invokes the pinned Buildah recipe from this repository. The repository root, including `containers/` and `scripts/build-sglang-container.sh`, is part of the build input; `submission/` alone is not a standalone container-build context. The recipe checks out SGLang commit `fc275674a97d78553b22597ee72c8fd48f5420f4` and installs the versions fixed by the container files. It requires root, Buildah, Skopeo, Umoci, SquashFS tools, Git, GitHub CLI, and jq. `GIT_MIRROR_DIR` may contain a local bare mirror named `5_SGLang_Src.git`; otherwise the recipe clones the repository with GitHub CLI.
+The measured best run is **9120.51 good output tok/s**, Actions [40225743220](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40225743220), Slurm 26232: 5802 requests, zero errors, good request fraction 0.97708. This is one measured run, not a repeatability claim. Its text evidence and checksums are in `results/40225743220/`.
 
-From the repository root, build an Enroot-compatible SquashFS with a writable temporary directory, output directory, and OCI cache repository:
+Standalone re-run of this package: pending
+
+Common baseline: **1,832 good output tok/s** on Firmus 2×8 H200 (official task `5. Common Baselines.md`, job 25013). The baseline uses different serving settings.
+
+The submission uses all 16 H200 GPUs: **P3 TP4/DP4/EP4 Prefill + D1 TP4/DP4/EP4 Decode**, concurrency 240, MegaMoE, EAGLE3 steps/draft tokens **3/4**, and **FP8 E4M3 KV**. Node 0 hosts two Prefill workers; node 1 hosts the third Prefill worker and Decode. The router uses manual Prefill assignment with minimum live load. `config/serving.json` and the single `run/submit.sbatch` pin the serving configuration. The measured kernel choices are fixed in role-specific env files before worker launch; the tuning screens and diagnostics have been removed.
+
+## What is here
+
+- `build/`: build entrypoint, public-source mirror reconstruction, three-commit Git bundle, and build 40197369083's original Buildah log and image sidecar.
+- `run/`: login-node preparation, one Slurm serving/benchmark job, unchanged AIPerf wrapper and local scorer, and unchanged EAGLE preparation helper.
+- `config/`: serving settings and static Prefill expert placement.
+- [patches/README.md](patches/README.md): every image patch, kernel source and runtime overlay, with hashes, application points and numerical classifications (unestablished classes are marked `to confirm`).
+- `results/40225743220/`: curated evidence of the measured run, not the pending standalone check.
+
+The whole accompanying repository is required for rebuilding: `containers/`, `scripts/build-sglang-container.sh`, repository patches and `kernels/` are build inputs. Once an image exists, `submission/` is sufficient for preparation and execution. No private SGLang mirror, team credentials, GitHub Actions, or team-specific runtime directory is needed by the organisers.
+
+## Build
+
+Use a root Linux build host with Buildah, Skopeo, Umoci, SquashFS tools (`mksquashfs`, `unsquashfs`), Git, jq, Python 3, GNU coreutils and tar. Buildah storage must be on local ext4 or XFS. The build uses `chroot` isolation, checks the OCI layout through Skopeo/Umoci, and produces an Enroot-compatible SquashFS. It does not require a GPU.
+
+Network access is needed to GitHub, PyPI/files.pythonhosted.org, flashinfer.ai, the PyTorch package hosts, Ubuntu/NVIDIA package repositories, and the Rust toolchain/crates registries. `containers/Dockerfile` uses **Docker Hub `docker.io/nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41cfc5d037f`**, rather than an NGC image.
+
+From the repository root, create a new mirror directory and choose a new numeric build ID:
 
 ```bash
-sudo env BUILD_CACHE_REPOSITORY=registry.example/team/qwen-build-cache BUILD_DIR=/var/tmp/qwen-build CONTAINER_ARCHIVE_DIR="$PWD/submission/build/output" GITHUB_RUN_ATTEMPT=1 GITHUB_RUN_ID=100001 GITHUB_SHA="$(git rev-parse HEAD)" GIT_MIRROR_DIR=/path/to/git-mirrors submission/build/setup.sh
+export GIT_MIRROR_DIR=/var/tmp/qwen-submission-mirrors
+submission/build/sglang-mirror.sh
+sudo env BUILD_DIR=/var/tmp/qwen-submission-build CONTAINER_ARCHIVE_DIR="$PWD/submission/build/output" GITHUB_RUN_ATTEMPT=1 GITHUB_RUN_ID=100001 GITHUB_SHA="$(git rev-parse HEAD)" GIT_MIRROR_DIR="$GIT_MIRROR_DIR" submission/build/setup.sh
 ```
 
-Choose a numeric build ID that does not collide with an existing output. The command publishes `submission/build/output/100001.sqsh` and `100001.container-sidecar.json`; the OCI cache repository must be writable by Buildah. `build/build.log` is the complete container-build log from the successful build job in GitHub Actions run 34681001728; the overall workflow later failed in a cluster execution job. `build/build-test.log` records the package and runtime checks executed inside that image. `build/provenance.json` records the verified SquashFS and OCI digests, source commits, and build tool versions from that build.
+The mirror script shallow-fetches public SGLang `0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb`, whose tree is `9ea4c7300d38bd9e024330b45bf5fc9cbf70f97d`. That tree matches the team mirror boundary `6b3506869d4840b18678de19d18d751a34f9b737`, recreated from the supplied raw commit object. The bundle imports three publication commits and produces HEAD `a60ed3656341ffbc37d5ddd73e7935b65fab08f4`, pinned by the standalone builder. The internal mirror-maintenance workflow was removed from all three commits. The runtime `python/sglang` tree and `python/uv.lock` are byte-identical to recorded source `fc275674a97d78553b22597ee72c8fd48f5420f4`; measurement provenance retains that original source ID. The legacy bundle filename identifies the recorded source from which it was exported. Serving changes remain the separate text patches listed in `patches/README.md`. `BUILD_CACHE_REPOSITORY` is optional.
 
-On a Firmus login node, submit the official two-node run with:
+Build outputs are `submission/build/output/100001.sqsh` and `100001.container-sidecar.json`. The recorded measured image is build **40197369083**, built from Qwen `cbca2b30514dae898921867ae47c83db4acea8ab`: **12272513024 bytes**, SHA-256 **1f247668933c7252d3dfbe8f6c23897d354f095d56842788d4415a85d7dc5e55**. The serving source, kernel and dependency inputs match that build; registry-cache use is now optional. Bit-for-bit reproducibility of a fresh container archive has not been established.
+
+For a new build, in the organisers' deployment copy, record that build's image integrity fields before preparation; this changes no serving parameter:
 
 ```bash
-CONTAINER_IMAGE=/path/to/sglang.sqsh TOKENIZER_PATH=/path/to/Qwen3-235B-A22B-Instruct-2507-ac9c66cc sbatch run/submit.sbatch
+jq --slurpfile built submission/build/output/100001.container-sidecar.json '.images.sglang = ($built[0].container_artifact | {sha256,size_bytes})' submission/config/serving.json >submission/config/serving.json.tmp
+mv submission/config/serving.json.tmp submission/config/serving.json
 ```
 
-The script uses `/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8` by default. `TOKENIZER_PATH` must point to a pre-staged snapshot of `Qwen/Qwen3-235B-A22B-Instruct-2507` revision `ac9c66cc9b46af7306746a9250f23d47083d689e`; the compute job does not access the network. Before allocating model memory, the script verifies the model and all 24 shard metadata revisions, the index shard set, the Qwen3 MoE FP8 configuration, and the exact tokenizer-file hashes. It copies the tokenizer into the mounted run cache, starts four TP2 prefill workers on the first node, two TP4/EP4 decode workers on the second node, and one SGLang PD router backed by NIXL. It resolves each compute hostname to IPv4 and supplies the same addresses to the router, health checks, and SGLang's internal control plane through `SGLANG_HOST_IP`. It sets `UCX_NET_DEVICES` to all ten active Firmus HCAs: eight InfiniBand and two Ethernet. After all workers and the router are ready, AIPerf 0.12.0 immediately runs the fixed official 60/120/30 second workload through the single OpenAI-compatible gateway. Logs, the raw `profile_export_aiperf.json`, and `score.json` are written below `results/logs/$SLURM_JOB_ID`.
+## Prepare and run
 
-Set `PROFILE=true` only for a separate diagnostic run. This records one-second GPU, CPU, NIC, and InfiniBand telemetry below the run's `profile` directory and must not be treated as the performance result.
+Copy `submission/`, the built image and its sidecar to storage accessible to the dedicated account on Firmus. On the login node, preparation requires **unsquashfs, git, jq, python3, sha256sum, uvx**, GNU coreutils and network access to Hugging Face for the pinned public draft. Slurm, Pyxis/Enroot and the site GPU/InfiniBand drivers are required for execution. The image, model and new run directory must be readable on both allocated nodes; all generated overlays and caches are in that shared run directory.
 
-The run records the exact AIPerf command and runtime version/tokenizer revision in `aiperf-command.txt` and `aiperf-provenance.txt`. The local validator checks those artifacts and the raw export against the fixed official workload before accepting the pinned client's cache-bust input-length distribution. For the configured OSL of 200, it also requires internally consistent `min`, `max`, `count`, and `sum` observations within AIPerf 0.12.0's pinned 190–210 tolerance and an `osl_mismatch_count` of zero. Good request fractions below 0.90 fail validation. Raw observations remain unchanged, and the score remains goodput multiplied by the configured 200 tokens; `score.json` records the local validation result under `official_validation`. See the [token-length investigation](../research/aiperf-isl-validation.md) for the source and diagnostic evidence.
+`prepare.sh RUN_DIR IMAGE MODEL TOKENIZER_SNAPSHOT` takes four required positional arguments and fails if RUN_DIR already exists. It verifies image bytes, the official FP8 checkpoint revision/configuration and all 24 shards, stages the tokenizer cache, downloads/verifies the draft, and applies the numbered overlays to packages extracted from the image. It prints the submission command. Use a pre-staged tokenizer snapshot of `Qwen/Qwen3-235B-A22B-Instruct-2507` revision `ac9c66cc9b46af7306746a9250f23d47083d689e`.
 
-`analysis/profiling_data/16928` contains the recovered telemetry and aggregate notes from a separate concurrency-16 diagnostic run. That allocation reached the Firmus time limit during AIPerf warm-up and has no benchmark score; it is retained only to document the observed low utilization and transfer stall.
+For the recorded image and site snapshots, from the repository root:
 
-`results/17005` contains the complete service logs and raw AIPerf export from the fixed official 60/120/30-second workload on Firmus Slurm job 17005. The workload completed 558 requests with zero errors, a good request fraction of 1.0, goodput of 4.536230620411887 requests/s, and a score of 907.2461240823774 output tokens/s. The original wrapper exited with code 1 because its OSL check incorrectly required an exact average of 200; `score-original.json` preserves that rejection, while `score.json` records the corrected parser replay with `official_validation.valid` set to true. `results/17005/RESULT.md` documents the distinction and the replay command.
+```bash
+submission/run/prepare.sh "/scratch/home/$USER/qwen-submission-001" /scratch/home/ACCOUNT/qwen/containers/40197369083.sqsh /scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8 /scratch/home/ACCOUNT/qwen/framework-comparison/sources/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e
+cd "/scratch/home/$USER/qwen-submission-001"
+sbatch scripts/submit.sbatch
+```
 
-## Final verified result
+For a rebuild, substitute the new image's shared path and a tokenizer snapshot readable by the organisers' account. The model is the published `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8`, revision `e156cb4efae43fbee1a1ab073f946a1377e6b969`. Preparation happens before allocating GPUs; the compute job uses offline caches.
 
-Actions run `34732532321` executed commit `909dae3f198593da1ea704f6d31d570629da4773` through the standalone entrypoint as Firmus Slurm job `17021`. The two-node, 16-H200 job completed with `COMPLETED 0:0` in `00:11:16`. The fixed AIPerf workload completed 558 requests with zero errors, a good-request fraction of 1.0, and goodput of 4.548422736312085 requests/s. The locally normalized score (goodput times the configured OSL of 200) was 909.6845472624169 output tokens/s, while raw AIPerf output-token throughput was 909.6763959671906 tokens/s. The repository-local validator returned `official_validation.valid: true`; it is not organizer-provided software. The curated evidence is stored in `results/logs/17021`; the full artifact is archived at `/srv/qwen-artifacts/34732532321/1`. Slurm 17005 remains historical evidence and is superseded by this terminal-success run.
+The single job requests partition `hpcai`, two nodes, eight GPUs per node, and 17 minutes. It launches the workers and router, waits for readiness, captures server info, sends one non-dataset connection warm-up chat through the gateway, then runs the unchanged official AIPerf 0.12.0 command (60/120/30 seconds, seed 2026, closed-loop c240). There is no profiling option.
 
-## Controlled concurrency comparison
+Allow **about 12–14 minutes** for the job, excluding preparation and queue time. This is a planning estimate: the archived Slurm log starts at 06:13:08 +08:00 and accounting records 13m51s; subtracting the approximately 68-second Prefill screen gives about 12m43s. The numeric gate and overlapping Decode screens are also removed; cold startup/compilation can vary. Standalone elapsed time remains to be measured.
 
-Actions run `34734863213` executed commit `b2ae58604edbd7590889db8f47bf62e769ed3467` as Firmus Slurm job `17023`, changing the declared execution-affecting condition from concurrency 16 to concurrency 8. The job completed with `COMPLETED 0:0` in `00:11:17`. It completed 320 requests with zero errors and a good-request fraction of 1.0. Goodput was 2.61749910791334 requests/s, the locally normalized score was 523.499821582668 output tokens/s, raw AIPerf output-token throughput was 523.4916418979558 tokens/s, and local validation returned `official_validation.valid: true`. Its curated evidence is stored in `results/logs/17023`; the full artifact is archived at `/srv/qwen-artifacts/34734863213/1`.
+Outputs are in `RUN_DIR/logs/`, `RUN_DIR/results/` and `RUN_DIR/source/`. `logs/slurm-<job>.log` ends with `AIPERF ok` and `run-success` exists on success. The raw official metrics are `results/profile_export_aiperf.json`; **good output tok/s = `goodput.avg × 200`**. `results/score.json` records that value as `good_output_tokens_per_second`, eligibility and the repository-local official-workload checks. This scorer is not an organiser accuracy check. `aiperf-command.txt`, `aiperf-provenance.txt`, server-info files, the sanity answer, draft evidence and overlay hashes remain available for review. Preserve these outputs before deleting the run directory.
 
-The concurrency-16 goodput was 73.76979126988392% higher than the concurrency-8 result. Each condition was measured once, so the comparison has no dispersion estimate. The comparison supports only the observed difference between concurrency 8 and 16 under the declared conditions; it does not attribute the difference to HCA selection or any other factor.
+## Draft declaration
 
-
-### Persistent JIT caches
-
-Before starting each worker, the launcher restores its library caches into the node-local `/runtime-home/.cache` mount. DeepGEMM, Triton, TorchInductor, FlashInfer and the CUDA driver cache use this directory. After workers stop, including on benchmark failure, the launcher saves it as `<parent of OUTPUT_DIR>/jit-cache/<platform>/<role>-<worker>.tar`. These archives live outside the per-run directory removed by Actions. An archive is replaced only after collection succeeds; a collection failure is logged and leaves the preceding archive intact without changing the benchmark exit status.
-
-Cache compatibility and invalidation belong to the libraries; no image, model or compiler compatibility keys are added by the launcher. Workers retain separate local directories. Concurrent jobs publish complete archives atomically (the last completed collection wins); they never write directly into another worker's live cache. Cache files are reusable working data, not benchmark artifacts. CUDA Graph capture still runs in each new process and is not restored from these archives. Hard termination that prevents the shell cleanup trap from running cannot collect the current job's cache.
+The sole draft is public [nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507](https://huggingface.co/nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507), revision `ff0f0c0999f6c86b21dfd2f5803eebc4ac712224`: **572,538,880 parameters, BF16, 1,145,943,008 weight bytes** (CC-BY-4.0). `run/prepare_eagle.py` changes only the architecture selector and explicit dtype declaration; weights are unchanged. The downloaded weight SHA-256 is checked against `bf226a966868fe413a22e62e471aa1130bd94f17fd2c40d322b1c8b4def1ae86`. No draft is trained or fine-tuned by this package.

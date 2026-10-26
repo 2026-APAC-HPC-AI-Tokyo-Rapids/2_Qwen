@@ -84,7 +84,7 @@ SiLU/group128融合は統合候補で既に測定したため、再び未実装�
 
 現在のCUTLASS prefillについて、route prepare、shuffle、up GEMM、SiLU/quant、down GEMM、combine、大容量ARの各時間は未分離。旧decodeのカーネル合算時間をここへ流用しない。次に計測するなら、この境界と実expert件数を同じ入力で確認し、採点中のinstrumentationは避ける。必要な短時間診断を後続の同じ割当の採点前にまとめ、追加ジョブの総当たりはしない。
 
-実装時はQwen側 `submission/run/submit.sbatch` のASPIREかつprefill分岐へ必要な既存引数を追加し、decodeを固定する。新しい汎用設定・中継envを増やさない。ソース改修はQwen所有パッチとして私有build cloneへ適用し、管理mirrorを更新しない。現行buildは`sglang-kernel==0.4.5`のwheelを入れており、`aot/csrc`を編集してeditable SGLangを入れるだけではnative kernelは変わらない。native wheelの明示的なビルドか、範囲を限定したTriton/JIT実装が必要。Pythonから既存ESを呼ぶ改修でも新規イメージと来歴を残す。
+実装時はQwen側 `platforms/shared/qwen-pd.sbatch` のASPIREかつprefill分岐へ必要な既存引数を追加し、decodeを固定する。新しい汎用設定・中継envを増やさない。ソース改修はQwen所有パッチとして私有build cloneへ適用し、管理mirrorを更新しない。現行buildは`sglang-kernel==0.4.5`のwheelを入れており、`aot/csrc`を編集してeditable SGLangを入れるだけではnative kernelは変わらない。native wheelの明示的なビルドか、範囲を限定したTriton/JIT実装が必要。Pythonから既存ESを呼ぶ改修でも新規イメージと来歴を残す。
 
 当面は**NVLS＋断片抑制のruntime案**と、**CUTLASS＋既存ESのsource案**に絞る。単純DeepGEMM切替は容量・graph問題を先に解決し、大規模down/combine融合は局所時間を確認してから着手する。依存バージョン差を管理し、比較は公開SLA内のgood tok/sで評価する。ここでは実装・投入を行っていない。
 

@@ -1,0 +1,435 @@
+diff --git a/python/sglang/kernels/jit/csrc/elementwise/add_rmsnorm_group_quant.cuh b/python/sglang/kernels/jit/csrc/elementwise/add_rmsnorm_group_quant.cuh
+new file mode 100644
+index 00000000..9a59513a
+--- /dev/null
++++ b/python/sglang/kernels/jit/csrc/elementwise/add_rmsnorm_group_quant.cuh
+@@ -0,0 +1,190 @@
++#include <sgl_kernel/tensor.h>
++#include <sgl_kernel/utils.h>
++
++#include <sgl_kernel/math.cuh>
++#include <sgl_kernel/type.cuh>
++#include <sgl_kernel/utils.cuh>
++#include <sgl_kernel/vec.cuh>
++#include <sgl_kernel/warp.cuh>
++
++#include <dlpack/dlpack.h>
++
++#include <cstdint>
++#include <cuda_fp8.h>
++
++// residual += x; y = RMSNorm(residual) * w; (q, s) = per-token-group-128 FP8
++// quant of BF16 y, without materializing y. Bit-identical to the pair
++//   flashinfer fused_add_rmsnorm (CuTe DSL FusedAddRMSNormKernel, BF16, H=4096)
++//   + sglang per_token_group_quant (FP32 scales, column-major, TMA-aligned)
++// that feeds the Qwen3 QKV GEMM: the thread/value layout, the sum-of-squares
++// order and every rounding step follow FusedAddRMSNormKernel for H=4096
++// (128 threads, 2 rows per CTA, 64 threads per row, 16-byte vectors at
++// columns 512*b + 8*t), and the quant follows QuantTrait<bf16, fp8, 128>.
++//
++// kVariant selects the reduction details that the DSL leaves to its compiler
++// (bit 0: element order of the per-thread sum, bit 1: FMA contraction of the
++// squares, bit 2: FMA contraction of mean + eps); the bench picks the variant
++// that is bitwise equal to flashinfer.
++
++namespace {
++
++struct AddRMSNormGroupQuantParams {
++  const void* __restrict__ x;
++  void* __restrict__ residual;
++  const void* __restrict__ weight;
++  void* __restrict__ q;
++  float* __restrict__ scale;
++  int64_t scale_group_stride;
++  uint32_t num_tokens;
++  float eps;
++};
++
++constexpr uint32_t kNormHidden = 4096;
++constexpr uint32_t kNormThreadsPerRow = 64;
++constexpr uint32_t kNormRowsPerBlock = 2;
++constexpr uint32_t kNormChunks = kNormHidden / (8 * kNormThreadsPerRow);  // 8 vectors of 8 BF16
++
++SGL_DEVICE float rsqrt_approx_ftz(const float x) {
++  float y;
++  asm("rsqrt.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
++  return y;
++}
++
++template <bool kUsePDL, uint32_t kVariant>
++__global__ void __launch_bounds__(kNormThreadsPerRow* kNormRowsPerBlock)
++    add_rmsnorm_group_quant_kernel(const __grid_constant__ AddRMSNormGroupQuantParams params) {
++  using namespace device;
++  using Vec = AlignedVector<bf16x2_t, 4>;
++  using FP8Vec = AlignedVector<fp8x2_e4m3_t, 4>;
++  constexpr bool kBlockMajorSum = (kVariant & 1) != 0;
++  constexpr bool kSeparateSquares = (kVariant & 2) != 0;
++  constexpr bool kSeparateMean = (kVariant & 4) != 0;
++  constexpr float kFP8Max = 448.0f;
++  constexpr float kFP8MaxInv = 1.f / kFP8Max;
++
++  __shared__ float partial[kNormRowsPerBlock][kNormThreadsPerRow / kWarpThreads];
++  const uint32_t t = threadIdx.x % kNormThreadsPerRow;
++  const uint32_t r = threadIdx.x / kNormThreadsPerRow;
++  const uint32_t row = blockIdx.x * kNormRowsPerBlock + r;
++  const bool valid = row < params.num_tokens;
++  const int64_t row_offset = static_cast<int64_t>(row) * kNormHidden;
++
++  PDLWaitPrimary<kUsePDL>();
++
++  float h[kNormChunks][8];
++#pragma unroll
++  for (uint32_t b = 0; b < kNormChunks; ++b) {
++    const int64_t col = 512 * b + 8 * t;
++    Vec xv, rv;
++    if (valid) {
++      xv = load_as<Vec>(params.x, (row_offset + col) / 8);
++      rv = load_as<Vec>(params.residual, (row_offset + col) / 8);
++    } else {
++#pragma unroll
++      for (uint32_t j = 0; j < 4; ++j) xv[j] = rv[j] = bf16x2_t{};
++    }
++    Vec out;
++#pragma unroll
++    for (uint32_t j = 0; j < 4; ++j) {
++      const auto xf = cast<fp32x2_t>(xv[j]);
++      const auto rf = cast<fp32x2_t>(rv[j]);
++      h[b][2 * j] = __fadd_rn(xf.x, rf.x);
++      h[b][2 * j + 1] = __fadd_rn(xf.y, rf.y);
++      out[j] = cast<bf16x2_t, fp32x2_t>({h[b][2 * j], h[b][2 * j + 1]});
++    }
++    if (valid) store_as<Vec>(params.residual, out, (row_offset + col) / 8);
++  }
++
++  float sum = 0.0f;
++#pragma unroll
++  for (uint32_t i = 0; i < kNormChunks * 8; ++i) {
++    const float v = kBlockMajorSum ? h[i % kNormChunks][i / kNormChunks] : h[i / 8][i % 8];
++    sum = kSeparateSquares ? __fadd_rn(sum, __fmul_rn(v, v)) : __fmaf_rn(v, v, sum);
++  }
++#pragma unroll
++  for (uint32_t offset = 1; offset < kWarpThreads; offset <<= 1) {
++    sum = __fadd_rn(sum, __shfl_xor_sync(0xffffffffu, sum, offset));
++  }
++  if (threadIdx.x % kWarpThreads == 0) partial[r][t / kWarpThreads] = sum;
++  __syncthreads();
++  sum = __fadd_rn(partial[r][0], partial[r][1]);
++  constexpr float kInvHidden = 1.0f / kNormHidden;
++  const float mean = kSeparateMean ? __fadd_rn(__fmul_rn(sum, kInvHidden), params.eps) : __fmaf_rn(sum, kInvHidden, params.eps);
++  const float rstd = rsqrt_approx_ftz(mean);
++
++#pragma unroll
++  for (uint32_t b = 0; b < kNormChunks; ++b) {
++    const int64_t col = 512 * b + 8 * t;
++    const auto wv = load_as<Vec>(params.weight, col / 8);
++    Vec y;
++#pragma unroll
++    for (uint32_t j = 0; j < 4; ++j) {
++      const auto wf = cast<fp32x2_t>(wv[j]);
++      y[j] = cast<bf16x2_t, fp32x2_t>({
++          __fmul_rn(__fmul_rn(h[b][2 * j], rstd), __fadd_rn(wf.x, 0.0f)),
++          __fmul_rn(__fmul_rn(h[b][2 * j + 1], rstd), __fadd_rn(wf.y, 0.0f)),
++      });
++    }
++    // QuantTrait<bf16, fp8, 128>: a 128-column group is 16 consecutive lanes.
++    auto amax2 = math::abs(y[0]);
++#pragma unroll
++    for (uint32_t j = 1; j < 4; ++j) amax2 = math::max(amax2, math::abs(y[j]));
++    const auto amax_pair = cast<fp32x2_t>(warp::reduce_max<16>(amax2));
++    const float amax = math::max(math::max(amax_pair.x, amax_pair.y), 1e-10f);
++    const float quant_scale = kFP8Max / amax;
++    FP8Vec qv;
++#pragma unroll
++    for (uint32_t j = 0; j < 4; ++j) {
++      const auto yf = cast<fp32x2_t>(y[j]);
++      qv[j] = fp8x2_e4m3_t{float2{fminf(yf.x * quant_scale, kFP8Max), fminf(yf.y * quant_scale, kFP8Max)}};
++    }
++    if (valid) {
++      store_as<FP8Vec>(params.q, qv, (row_offset + col) / 8);
++      if (t % 16 == 0) params.scale[(col / 128) * params.scale_group_stride + row] = amax * kFP8MaxInv;
++    }
++  }
++
++  PDLTriggerSecondary<kUsePDL>();
++}
++
++template <bool kUsePDL, uint32_t kVariant>
++struct AddRMSNormGroupQuantKernel {
++  static void
++  run(const tvm::ffi::TensorView x,
++      const tvm::ffi::TensorView residual,
++      const tvm::ffi::TensorView weight,
++      double eps,
++      const tvm::ffi::TensorView q,
++      const tvm::ffi::TensorView scale) {
++    using namespace host;
++    auto N = SymbolicSize{"num_tokens"};
++    auto H = SymbolicSize{"hidden_size"};
++    auto G = SymbolicSize{"num_groups"};
++    auto Sg = SymbolicSize{"scale_group_stride"};
++    auto device = SymbolicDevice{};
++    H.set_value(kNormHidden);
++    G.set_value(kNormHidden / 128);
++    device.set_options<kDLCUDA>();
++    TensorMatcher({N, H}).with_dtype<bf16_t>().with_device(device).verify(x).verify(residual);
++    TensorMatcher({H}).with_dtype<bf16_t>().with_device(device).verify(weight);
++    TensorMatcher({N, H}).with_dtype<fp8_e4m3_t>().with_device(device).verify(q);
++    TensorMatcher({N, G}).with_strides({1, Sg}).with_dtype<float>().with_device(device).verify(scale);
++    const auto num_tokens = static_cast<uint32_t>(N.unwrap());
++    if (num_tokens == 0) return;
++    RuntimeCheck(Sg.unwrap() >= N.unwrap(), "scale group stride must cover every token");
++    const auto params = AddRMSNormGroupQuantParams{
++        .x = x.data_ptr(),
++        .residual = residual.data_ptr(),
++        .weight = weight.data_ptr(),
++        .q = q.data_ptr(),
++        .scale = static_cast<float*>(scale.data_ptr()),
++        .scale_group_stride = static_cast<int64_t>(Sg.unwrap()),
++        .num_tokens = num_tokens,
++        .eps = static_cast<float>(eps),
++    };
++    LaunchKernel(div_ceil(num_tokens, kNormRowsPerBlock), kNormThreadsPerRow * kNormRowsPerBlock, device.unwrap())  //
++        .enable_pdl(kUsePDL)(add_rmsnorm_group_quant_kernel<kUsePDL, kVariant>, params);
++  }
++};
++
++}  // namespace
+diff --git a/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py b/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py
+new file mode 100644
+index 00000000..cd4ca4a1
+--- /dev/null
++++ b/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py
+@@ -0,0 +1,64 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, Tuple
++
++import torch
++
++from sglang.kernels.jit.utils import (
++    cache_once,
++    is_arch_support_pdl,
++    load_jit,
++    make_cpp_args,
++)
++from sglang.srt.utils.custom_op import register_custom_op
++
++if TYPE_CHECKING:
++    from tvm_ffi.module import Module
++
++# Reduction variant of add_rmsnorm_group_quant.cuh that is bitwise equal to
++# flashinfer's CuTe DSL fused_add_rmsnorm on SM90 (selected by the kernel bench).
++FLASHINFER_EXACT_VARIANT = 0
++
++
++@cache_once
++def _jit_add_rmsnorm_group_quant_module(variant: int) -> Module:
++    args = make_cpp_args(is_arch_support_pdl(), variant)
++    return load_jit(
++        "add_rmsnorm_group_quant",
++        *args,
++        cuda_files=["elementwise/add_rmsnorm_group_quant.cuh"],
++        cuda_wrappers=[("run", f"AddRMSNormGroupQuantKernel<{args}>::run")],
++    )
++
++
++@register_custom_op(mutates_args=["residual", "q", "scale"])
++def add_rmsnorm_group_quant_fp8_out(
++    x: torch.Tensor,
++    residual: torch.Tensor,
++    weight: torch.Tensor,
++    eps: float,
++    q: torch.Tensor,
++    scale: torch.Tensor,
++    variant: int = FLASHINFER_EXACT_VARIANT,
++) -> None:
++    _jit_add_rmsnorm_group_quant_module(variant).run(x, residual, weight, eps, q, scale)
++
++
++def add_rmsnorm_group_quant_fp8(
++    x: torch.Tensor,
++    residual: torch.Tensor,
++    weight: torch.Tensor,
++    eps: float,
++    variant: int = FLASHINFER_EXACT_VARIANT,
++) -> Tuple[torch.Tensor, torch.Tensor]:
++    """residual += x, then the FP8 (q, scale) that
++    sglang_per_token_group_quant_fp8(fused_add_rmsnorm output, 128,
++    column_major_scales=True, scale_tma_aligned=True) would return, for BF16
++    hidden size 4096. x itself is left unchanged (no BF16 normed output)."""
++    rows = x.shape[0]
++    q = torch.empty(x.shape, dtype=torch.float8_e4m3fn, device=x.device)
++    # Same layout as create_per_token_group_quant_fp8_output_scale with
++    # column-major TMA-aligned FP32 scales.
++    scale = torch.empty((x.shape[1] // 128, (rows + 3) // 4 * 4), dtype=torch.float32, device=x.device).transpose(0, 1)[:rows]
++    add_rmsnorm_group_quant_fp8_out(x, residual, weight, eps, q, scale, variant)
++    return q, scale
+diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
+index 91b47eca..fa32d725 100644
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -34,7 +34,13 @@ from sglang.srt.environ import envs
+ from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
+ from sglang.srt.eplb.expert_location import ModelConfigForExpertLocation
+ from sglang.srt.eplb.expert_location_dispatch import ExpertLocationDispatchInfo
+-from sglang.srt.layers.communicator import LayerCommunicator, LayerScatterModes
++from sglang.srt.batch_invariant_ops import is_batch_invariant_mode_enabled
++from sglang.srt.layers.communicator import (
++    CommunicateSimpleFn,
++    LayerCommunicator,
++    LayerScatterModes,
++    get_attn_tp_context,
++)
+ from sglang.srt.layers.cp.utils import is_cp_v2_active
+ from sglang.srt.layers.layernorm import RMSNorm
+ from sglang.srt.layers.linear import (
+@@ -98,6 +104,9 @@ if _is_cuda:
+         can_use_fused_qk_norm_rope,
+         fused_qk_norm_rope,
+     )
++    from sglang.kernels.ops.layernorm.add_rmsnorm_group_quant import (
++        add_rmsnorm_group_quant_fp8,
++    )
+     from sglang.kernels.ops.attention.rope import (
+         apply_qknorm_rope_fp8_kv,
+         apply_qknorm_rope_fp8_q,
+@@ -110,6 +119,9 @@ Qwen3MoeConfig = None
+ 
+ _is_flashinfer_available = is_flashinfer_available()
+ 
++# Fewest EXTEND rows for which the fused input RMSNorm + QKV quant beats flashinfer + group quant.
++_INPUT_NORM_QUANT_MIN_ROWS = 2048
++
+ logger = logging.getLogger(__name__)
+ _is_cuda = is_cuda()
+ _is_npu = is_npu()
+@@ -827,7 +839,8 @@ class Qwen3MoeAttention(nn.Module):
+         hidden_states: torch.Tensor,
+         forward_batch: ForwardBatch,
+     ):
+-        if hidden_states.shape[0] == 0:
++        # A (q, scale) tuple is the FP8 QKV input from add_rmsnorm_group_quant_fp8.
++        if not isinstance(hidden_states, tuple) and hidden_states.shape[0] == 0:
+             return hidden_states, forward_batch, None
+         if not _is_npu:
+             return self.forward_prepare_native(
+@@ -966,6 +979,83 @@ class Qwen3MoeDecoderLayer(nn.Module):
+             allow_reduce_scatter=True,
+             is_last_layer=(self.layer_id == self.config.num_hidden_layers - 1),
+         )
++        self._input_norm_quant = None
++
++    def _input_norm_quant_supported(self) -> bool:
++        """Whether input_layernorm (fused add) + the QKV GEMM's per-token-group
++        FP8 quant can be one kernel with bit-identical (q, scale): the BF16
++        normed output feeds only qkv_proj, the norm runs as flashinfer's CuTe
++        DSL fused_add_rmsnorm (the arithmetic the kernel reproduces), and the
++        QKV GEMM is the DeepGEMM block-FP8 linear with FP32 column-major
++        scales, which accepts a pre-quantized (q, scale) input."""
++        if self._input_norm_quant is None:
++            self._input_norm_quant = False
++            if not (_is_cuda and get_moe_a2a_backend().is_megamoe()):
++                return False
++            import sgl_kernel.elementwise
++            from sglang.srt.layers import deep_gemm_wrapper
++            from sglang.srt.layers.quantization.fp8 import Fp8LinearMethod
++            from sglang.srt.layers.quantization.fp8_utils import (
++                deepgemm_w8a8_block_fp8_linear_with_fallback,
++            )
++
++            try:
++                import flashinfer.norm as flashinfer_norm
++            except ImportError:
++                return False
++            norm = self.input_layernorm
++            qkv = self.self_attn.qkv_proj
++            method = qkv.quant_method
++            communicator = self.layer_communicator
++            self._input_norm_quant = (
++                self.attn_tp_size == 1
++                and self.hidden_size == 4096
++                and norm.weight.dtype == torch.bfloat16
++                and norm.has_weight
++                and norm.variance_size_override is None
++                and not norm.cast_x_before_out_mul
++                and not norm.fp32_residual
++                and getattr(sgl_kernel.elementwise, "_has_flashinfer", False)
++                and getattr(flashinfer_norm, "_USE_CUDA_NORM", True) is False
++                and isinstance(method, Fp8LinearMethod)
++                and method.block_quant
++                and not method.use_marlin
++                and not getattr(method, "use_mxfp8", False)
++                and method.weight_block_size == [128, 128]
++                and method.w8a8_block_fp8_linear
++                is deepgemm_w8a8_block_fp8_linear_with_fallback
++                and not deep_gemm_wrapper.DEEPGEMM_SCALE_UE8M0
++                and qkv.weight.shape[0] % 64 == 0
++                and qkv.weight.shape[1] == 4096
++                and communicator.qkv_latent_func is None
++                and communicator._communicate_simple_fn
++                is CommunicateSimpleFn._trivial
++            )
++        return self._input_norm_quant
++
++    def _use_input_norm_quant(
++        self, hidden_states, residual, forward_batch, captured_last_layer_outputs, kwargs
++    ) -> bool:
++        # Prefill only. The kernel takes 2 rows per CTA, so ~126 Decode rows fill
++        # 63 CTAs and it is slower than flashinfer + group quant there (8.8 vs
++        # 5.2 us/layer, run 39119219065); it wins only with many rows (46.4 vs
++        # 51.3 us at ~3986). Break-even of a linear fit through those two
++        # measurements is ~1760 rows, so require at least 2048. Decode and
++        # TARGET_VERIFY keep the unfused pair whatever their row count.
++        return (
++            forward_batch.forward_mode == ForwardMode.EXTEND
++            and hidden_states.shape[0] >= _INPUT_NORM_QUANT_MIN_ROWS
++            and residual is not None
++            and captured_last_layer_outputs is None
++            and kwargs.get("post_residual_addition") is None
++            and hidden_states.dtype == residual.dtype == torch.bfloat16
++            and hidden_states.is_contiguous()
++            and residual.is_contiguous()
++            and not getattr(hidden_states, "_sglang_needs_allreduce_fusion", False)
++            and not get_attn_tp_context().input_scattered
++            and not is_batch_invariant_mode_enabled()
++            and self._input_norm_quant_supported()
++        )
+ 
+     def forward(
+         self,
+@@ -977,17 +1067,28 @@ class Qwen3MoeDecoderLayer(nn.Module):
+         **kwargs,
+     ) -> Tuple[torch.Tensor, torch.Tensor]:
+ 
+-        hidden_states, residual = (
+-            self.layer_communicator.prepare_attn_and_capture_last_layer_outputs(
++        if self._use_input_norm_quant(
++            hidden_states, residual, forward_batch, captured_last_layer_outputs, kwargs
++        ):
++            # residual += hidden_states in place; the QKV GEMM gets (q, scale).
++            hidden_states = add_rmsnorm_group_quant_fp8(
+                 hidden_states,
+                 residual,
+-                forward_batch,
+-                captured_last_layer_outputs=captured_last_layer_outputs,
+-                **kwargs,
++                self.input_layernorm.weight,
++                self.input_layernorm.variance_epsilon,
++            )
++        else:
++            hidden_states, residual = (
++                self.layer_communicator.prepare_attn_and_capture_last_layer_outputs(
++                    hidden_states,
++                    residual,
++                    forward_batch,
++                    captured_last_layer_outputs=captured_last_layer_outputs,
++                    **kwargs,
++                )
+             )
+-        )
+ 
+-        if hidden_states.shape[0] != 0:
++        if isinstance(hidden_states, tuple) or hidden_states.shape[0] != 0:
+             hidden_states = self.self_attn(
+                 positions=positions,
+                 hidden_states=hidden_states,

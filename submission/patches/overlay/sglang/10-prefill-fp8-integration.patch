@@ -1,0 +1,217 @@
+--- a/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py
++++ b/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py
+@@ -3,6 +3,8 @@
+ from typing import TYPE_CHECKING, Tuple
+ 
+ import torch
++import triton
++import triton.language as tl
+ 
+ from sglang.kernels.jit.utils import (
+     cache_once,
+@@ -18,6 +20,24 @@
+ # Reduction variant of add_rmsnorm_group_quant.cuh that is bitwise equal to
+ # flashinfer's CuTe DSL fused_add_rmsnorm on SM90 (selected by the kernel bench).
+ FLASHINFER_EXACT_VARIANT = 0
++
++
++@triton.jit
++def norm_quant(X, R, W, Q, S, stride, eps: tl.constexpr):
++    row = tl.program_id(0)
++    col = tl.arange(0, 4096)
++    # Keep the unrounded FP32 sum for normalization, BF16 for residual storage.
++    h = tl.load(X + row * 4096 + col).to(tl.float32) + tl.load(R + row * 4096 + col).to(tl.float32)
++    tl.store(R + row * 4096 + col, h)
++    rstd = tl.rsqrt(tl.sum(h * h, 0) / 4096.0 + eps)
++    y = ((h * rstd) * tl.load(W + col).to(tl.float32)).to(tl.bfloat16).to(tl.float32)
++    groups = tl.reshape(y, (32, 128))
++    amax = tl.maximum(tl.max(tl.abs(groups), 1), 1.0e-10)
++    gain = tl.div_rn(448.0, amax)
++    q = tl.minimum(groups * gain[:, None], 448.0).to(tl.float8e4nv)
++    tl.store(Q + row * 4096 + col, tl.reshape(q, (4096,)))
++    tl.store(S + row + tl.arange(0, 32) * stride, amax * (1.0 / 448.0))
++
+ 
+ 
+ @cache_once
+@@ -41,7 +61,15 @@
+     scale: torch.Tensor,
+     variant: int = FLASHINFER_EXACT_VARIANT,
+ ) -> None:
+-    _jit_add_rmsnorm_group_quant_module(variant).run(x, residual, weight, eps, q, scale)
++    if x.shape[0] >= 2048 and variant == FLASHINFER_EXACT_VARIANT:
++        assert x.shape[1] == 4096 and x.dtype == residual.dtype == weight.dtype == torch.bfloat16
++        assert x.is_contiguous() and residual.is_contiguous() and weight.is_contiguous()
++        assert q.dtype == torch.float8_e4m3fn and q.shape == x.shape and q.is_contiguous()
++        assert scale.dtype == torch.float32 and scale.shape == (x.shape[0], 32)
++        assert scale.stride(0) == 1 and scale.stride(1) >= x.shape[0] and scale.stride(1) % 4 == 0
++        norm_quant[(x.shape[0],)](x, residual, weight, q, scale, scale.stride(1), eps, num_warps=8, enable_fp_fusion=False)
++    else:
++        _jit_add_rmsnorm_group_quant_module(variant).run(x, residual, weight, eps, q, scale)
+ 
+ 
+ def add_rmsnorm_group_quant_fp8(
+--- a/python/sglang/srt/layers/attention/flashattention_backend.py
++++ b/python/sglang/srt/layers/attention/flashattention_backend.py
+@@ -1201,6 +1201,7 @@
+         aux_tensors=None,
+         rel_bias=None,
+         rel_bias_event=None,
++        prefill_fp8_output=False,
+     ):
+         if score_mod is not None and self.fa_impl_ver != 4:
+             raise RuntimeError("score_mod is only supported by the FA4 backend.")
+@@ -1382,6 +1383,20 @@
+             # range. Slice all inputs and the supplied output consistently;
+             # paged KV has already been written by the prologue, for transfer.
+             rows = sum(forward_batch.extend_seq_lens_cpu)
++            if (
++                prefill_fp8_output and _fa_out is None and self.num_splits in (0, 1)
++                and layer.tp_q_head_num == 64 and layer.tp_k_head_num == 4
++                and layer.head_dim == layer.v_head_dim == 128
++                and layer.logit_cap == 0 and window_size == (-1, -1)
++                and q_descale is None and k_descale is None and v_descale is None
++                and sinks is None and score_mod is None and aux_tensors is None and rel_bias is None
++                and 1 <= len(forward_batch.extend_seq_lens_cpu) <= 4
++                and metadata.cu_seqlens_q.numel() == len(forward_batch.extend_seq_lens_cpu) + 1
++            ):
++                from sglang.srt.layers.attention.prefill_fp8 import attention
++
++                fixed = getattr(layer, "fixed_prefill_output", False) and use_fixed_prefill(forward_batch, layer, self, q.view(-1,64,128), k.view(-1,4,128), v.view(-1,4,128), output_supported=prefill_fp8_output, out=_fa_out, descales=(q_descale,k_descale,v_descale), extras=(sinks,score_mod,aux_tensors,rel_bias,rel_bias_event), cp_mode=is_cp_mode, local=use_local_attn, swa=is_swa_layer, causal=causal, save_kv_cache=save_kv_cache)
++                return attention(q.view(-1,64,128)[:rows], k.view(-1,4,128)[:rows], v.view(-1,4,128)[:rows], metadata.cu_seqlens_q, metadata.max_seq_len_q, layer.scaling, q.shape[0], fixed=fixed, v_image=getattr(layer, "prefill_v_image", None))
+             contiguous_out = _fa_out
+             if rows != q.shape[0] and contiguous_out is None:
+                 contiguous_out = torch.empty((q.shape[0], layer.tp_q_head_num, layer.v_head_dim), device=q.device, dtype=torch.bfloat16)
+--- a/python/sglang/srt/layers/quantization/decode_dense_gemm.py
++++ b/python/sglang/srt/layers/quantization/decode_dense_gemm.py
+@@ -28,6 +28,12 @@
+ 
+ 
+ def decode_dense_linear(attention, projection, layer, x, forward_batch, *, decode_worker):
++    from sglang.srt.runtime_context import get_server_args
++
++    if not decode_worker and forward_batch.forward_mode.is_extend() and not get_server_args().enable_lora:
++        from sglang.srt.layers.attention.prefill_fp8 import linear
++
++        return linear(attention, projection, layer, x)
+     backend = os.environ.get("SGLANG_DECODE_DENSE_GEMM_" + projection, "")
+     # Return before inspecting inputs/modes/dtypes when unset: the original
+     # linear owns all default behavior, including prequantized input tuples.
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -74,7 +74,7 @@
+ from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
+ from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
+ from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode, PPProxyTensors
+-from sglang.srt.model_executor.forward_context import get_token_to_kv_pool
++from sglang.srt.model_executor.forward_context import get_attn_backend, get_token_to_kv_pool
+ from sglang.srt.model_loader.weight_utils import default_weight_loader
+ from sglang.srt.models.qwen2_moe import Qwen2MoeMLP as Qwen3MoeMLP
+ from sglang.srt.models.qwen2_moe import Qwen2MoeModel
+@@ -888,12 +888,23 @@
+             enable_fused_set_kv_buffer(forward_batch)
+             and self.compatible_with_fused_kv_buffer
+         ))
++        attn_kwargs = {}
++        if get_server_args().disaggregation_mode == "prefill" and not get_server_args().enable_lora and forward_batch.forward_mode.is_extend() and get_server_args().cuda_graph_config.prefill.backend == "disabled" and getattr(get_attn_backend(), "fa_impl_ver", None) == 3:
++            from sglang.srt.layers.attention.prefill_fp8 import linear_supported
++
++            attn_kwargs["prefill_fp8_output"] = linear_supported(self, "O", self.o_proj)
++        self.attn.decode_fp8_output = False
++        if get_server_args().disaggregation_mode == "decode" and not get_server_args().enable_lora and forward_batch.forward_mode.is_target_verify():
++            from sglang.srt.layers.attention.prefill_fp8 import linear_supported
++
++            self.attn.decode_fp8_output = linear_supported(self, "O", self.o_proj)
+         attn_output = self.attn(
+             q,
+             k,
+             v,
+             fb,
+             save_kv_cache=save_kv_cache,
++            **attn_kwargs,
+         )
+         from sglang.srt.layers.quantization.decode_dense_gemm import decode_dense_linear
+ 
+--- /dev/null
++++ b/python/sglang/srt/layers/attention/prefill_fp8.py
+@@ -0,0 +1,80 @@
++"""Qwen TP1 Prefill: FP8 attention output and specialized dense projections."""
++
++import torch
++import json
++import os
++from functools import lru_cache
++from pathlib import Path
++
++
++def linear_supported(attention, projection, layer):
++    from sglang.srt.layers import deep_gemm_wrapper
++    from sglang.srt.layers.quantization.fp8 import Fp8LinearMethod
++    from sglang.srt.layers.quantization.fp8_utils import deepgemm_w8a8_block_fp8_linear_with_fallback
++
++    method = layer.quant_method
++    shape = (9216, 4096) if projection == "QKV" else (4096, 8192)
++    return (
++        attention.num_heads == attention.total_num_heads == 64
++        and attention.num_kv_heads == attention.total_num_kv_heads == 4
++        and attention.hidden_size == 4096 and attention.head_dim == 128
++        and isinstance(method, Fp8LinearMethod) and method.block_quant
++        and not method.use_marlin and not getattr(method, "use_mxfp8", False)
++        and method.weight_block_size == [128, 128]
++        and method.w8a8_block_fp8_linear is deepgemm_w8a8_block_fp8_linear_with_fallback
++        and not deep_gemm_wrapper.DEEPGEMM_SCALE_UE8M0
++        and tuple(layer.weight.shape) == shape
++        and layer.weight.dtype == torch.float8_e4m3fn and layer.weight.is_contiguous()
++        and layer.weight_scale_inv.dtype == torch.float32 and layer.bias is None
++        and torch.cuda.get_device_capability(layer.weight.device) == (9, 0)
++    )
++
++
++def linear(attention, projection, layer, x):
++    tensor = x[0] if isinstance(x, tuple) else x
++    if tensor.ndim != 2 or tensor.shape[0] < 2048 or not linear_supported(attention, projection, layer):
++        return layer(x)
++    if isinstance(x, tuple):
++        a, sa = x
++    else:
++        if x.dtype != torch.bfloat16 or not x.is_contiguous():
++            return layer(x)
++        from sglang.kernels.ops.quantization.fp8_kernel import sglang_per_token_group_quant_fp8
++
++        a, sa = sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
++    import deep_gemm
++
++    out = torch.empty((a.shape[0], layer.weight.shape[0]), device=a.device, dtype=torch.bfloat16)
++    deep_gemm.fp8_gemm_nt((a, sa), (layer.weight, layer.weight_scale_inv), out, compiled_dims="nk")
++    return out, None
++
++
++@lru_cache(maxsize=1)
++def prefill_candidate():
++    rows = json.loads(Path("/opt/apac/fa3-verify/prefill-candidates.json").read_text())
++    name = os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "control")
++    return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name)
++
++
++def attention(q, k, v, cu, maxlen, softmax_scale, padded_rows, *, fixed=False, v_image=None):
++    from sglang.srt.layers.attention.decode_fa3_verify import load
++
++    load()
++    rows = q.shape[0]
++    assert padded_rows >= rows > 0
++    out = torch.empty((padded_rows, 64, 128), device=q.device, dtype=torch.float8_e4m3fn)
++    scales = torch.empty((64, (padded_rows + 3) // 4 * 4), device=q.device, dtype=torch.float32).T[:padded_rows]
++    lse = torch.empty((64, rows), device=q.device, dtype=torch.float32)
++    metadata = torch.empty(17, device=q.device, dtype=torch.int32)
++    selected = prefill_candidate() if fixed else None
++    if fixed and selected["name"] != "control":
++        image = v_image if selected["byte_image"] else torch.empty(0, dtype=torch.uint8, device=q.device)
++        assert not selected["byte_image"] or image is not None
++        torch.ops.apac_fa3_verify.prefill_variant_fwd_out(q, k, v, image, cu, out, scales, lse, metadata, maxlen, softmax_scale, selected["id"])
++    else:
++        op = torch.ops.apac_fa3_verify.prefill_fixed_fwd_out if fixed else torch.ops.apac_fa3_verify.prefill_fwd_out
++        op(q, k, v, cu, out, scales, lse, metadata, maxlen, softmax_scale)
++    if padded_rows > rows:
++        out[rows:].zero_()
++        scales[rows:].fill_(1.0e-10 / 448.0)
++    return out.view(padded_rows, 8192), scales

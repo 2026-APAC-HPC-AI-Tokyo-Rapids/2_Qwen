@@ -94,7 +94,7 @@ def test_genkai_uses_bounded_concurrency_for_its_eight_gpu_allocation() -> None:
 
 
 def test_submission_selects_the_final_export_and_uses_container_python() -> None:
-    submission = (ROOT / "submission/run/submit.sbatch").read_text()
+    submission = (ROOT / "platforms/shared/qwen-pd.sbatch").read_text()
 
     assert '-mindepth 2 -maxdepth 2 -type f -name profile_export_aiperf.json' in submission
     assert '"${CONTAINER_IMAGE}" /opt/sglang/venv/bin/python - /results/profile_export_aiperf.json' in submission
@@ -113,7 +113,7 @@ def test_cluster_branches_do_not_cancel_each_other() -> None:
 
 def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
     workflow = (ROOT / ".github/workflows/firmus.yml").read_text()
-    submission = (ROOT / "submission/run/submit.sbatch").read_text()
+    submission = (ROOT / "platforms/shared/qwen-pd.sbatch").read_text()
 
     assert "test '${{ inputs.node_count }}' = 2" in workflow
     assert '"${RUNTIME_DIR}/scripts/submit.sbatch"' in workflow
@@ -144,14 +144,14 @@ def test_firmus_pd_contract_uses_all_sixteen_gpus() -> None:
 
 
 def test_firmus_pd_bounds_each_workers_kv_capacity() -> None:
-    submission = (ROOT / "submission/run/submit.sbatch").read_text()
+    submission = (ROOT / "platforms/shared/qwen-pd.sbatch").read_text()
 
     expected_arg = "--max-total-tokens 131072"
     assert expected_arg in submission
 
 
 def test_submission_script_keeps_profile_data_separate() -> None:
-    submission = (ROOT / "submission/run/submit.sbatch").read_text()
+    submission = (ROOT / "platforms/shared/qwen-pd.sbatch").read_text()
     provision = (ROOT / "scripts/provision-qwen-pd.sh").read_text()
 
     assert "nixl-prewarm" not in submission
@@ -196,7 +196,7 @@ def test_submission_is_the_only_firmus_pd_runtime() -> None:
 
 
 def test_compute_scripts_have_no_cloud_credentials() -> None:
-    compute_files = [ROOT / "submission/run/submit.sbatch"]
+    compute_files = [ROOT / "platforms/shared/qwen-pd.sbatch"]
     for path in compute_files:
         content = path.read_text()
         assert "GOOGLE_CREDENTIAL" not in content
@@ -220,7 +220,7 @@ def test_active_shell_commands_have_no_line_continuations() -> None:
 
 def test_submission_contains_reproducible_official_entrypoint() -> None:
     setup = (ROOT / "submission" / "build" / "setup.sh").read_text()
-    batch = (ROOT / "submission" / "run" / "submit.sbatch").read_text()
+    batch = (ROOT / "platforms" / "shared" / "qwen-pd.sbatch").read_text()
 
     assert 'exec "${repository}/scripts/build-sglang-container.sh"' in setup
     assert "#SBATCH --nodes=2" in batch

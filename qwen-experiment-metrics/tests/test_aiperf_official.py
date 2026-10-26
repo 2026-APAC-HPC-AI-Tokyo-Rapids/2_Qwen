@@ -137,7 +137,7 @@ def metrics(
 def parser_path(request: pytest.FixtureRequest, tmp_path: Path) -> Path:
     if request.param == "repository":
         return PARSER
-    script = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    script = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     embedded = script.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0] + "\n"
     assert embedded == PARSER.read_text()
     destination = tmp_path / "embedded-parser.py"
@@ -148,7 +148,7 @@ def parser_path(request: pytest.FixtureRequest, tmp_path: Path) -> Path:
 @pytest.fixture
 def official_artifacts(tmp_path: Path) -> list[str]:
     # Exercise the actual Bash array construction and printf %q serialization.
-    script = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    script = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     command_line = next(line for line in script.splitlines() if line.startswith("  command=("))
     recording = command_line + f"\nprintf '%q ' \"${{command[@]}}\" >{shlex.quote(str(tmp_path / 'aiperf-command.txt'))}"
     subprocess.run(["bash", "-c", recording], env={**os.environ, "CONCURRENCY": "16"}, check=True)
@@ -347,14 +347,14 @@ def test_parser_rejects_missing_official_evidence(tmp_path: Path, parser_path: P
 
 
 def test_submission_records_same_official_command(tmp_path: Path, official_artifacts: list[str]) -> None:
-    script = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    script = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     command_line = next(line for line in script.splitlines() if line.startswith("  command=("))
     process = subprocess.run(["bash", "-c", command_line + "\nprintf '%q ' \"${command[@]}\""], env={**os.environ, "CONCURRENCY": "16"}, check=True, capture_output=True, text=True)
     assert shlex.split(process.stdout) == shlex.split(Path(official_artifacts[1]).read_text())
 
 
 def test_submission_records_runtime_provenance(tmp_path: Path, official_artifacts: list[str]) -> None:
-    script = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    script = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     line = next(line for line in script.splitlines() if "/bin/bash -ec" in line)
     arguments = shlex.split(line)
     program = arguments[arguments.index("-ec") + 1]
