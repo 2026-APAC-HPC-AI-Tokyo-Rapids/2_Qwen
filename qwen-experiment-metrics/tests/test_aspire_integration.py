@@ -281,7 +281,7 @@ def test_greedy_probe_records_fixed_requests_and_requires_logprobs(tmp_path: Pat
 def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, profile: bool) -> None:
     source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
     config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
-    assert config["concurrency"] == 104
+    assert config["concurrency"] == 112
     assert [(w["node"], w["role"], w["gpus"]) for w in config["workers"]] == [(0, "prefill", "0,1,2,3"), (0, "prefill", "4,5,6,7"), (1, "decode", "0,1,2,3"), (1, "decode", "4,5,6,7")]
     assert config["prefill_load_balance_method"] == "total_requests" and config["decode_load_balance_method"] == "total_requests"
     workers = capture_workers(source, "aspire2ap", 2, tmp_path, profile)
@@ -290,7 +290,7 @@ def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, 
     for record in workers:
         argv = record["argv"]
         role = argv[argv.index("--disaggregation-mode") + 1]
-        expected = {"--model-path": "/model", "--served-model-name": "qwen", "--context-length": "8192", "--host": "0.0.0.0", "--disaggregation-transfer-backend": "nixl", "--speculative-draft-model-path": "/draft", "--speculative-eagle-topk": "1", "--tp-size": "4", "--ep-size": "4", "--dp-size": "4", "--moe-a2a-backend": "megamoe", "--moe-runner-backend": "deep_gemm", "--attention-backend": "fa3", "--kv-cache-dtype": "fp8_e4m3", "--page-size": "64", "--chunked-prefill-size": "16384" if role == "prefill" else "8192", "--max-running-requests": "104" if role == "prefill" else "80", "--max-total-tokens": "16384" if role == "prefill" else "106496", "--mem-fraction-static": "0.9" if role == "prefill" else "0.96", "--speculative-algorithm": "EAGLE3", "--speculative-num-steps": "3", "--speculative-num-draft-tokens": "4", "--load-balance-method": "total_requests", "--load-snapshot-publish-interval": "1"}
+        expected = {"--model-path": "/model", "--served-model-name": "qwen", "--context-length": "8192", "--host": "0.0.0.0", "--disaggregation-transfer-backend": "nixl", "--speculative-draft-model-path": "/draft", "--speculative-eagle-topk": "1", "--tp-size": "4", "--ep-size": "4", "--dp-size": "4", "--moe-a2a-backend": "megamoe", "--moe-runner-backend": "deep_gemm", "--attention-backend": "fa3", "--kv-cache-dtype": "fp8_e4m3", "--page-size": "64", "--chunked-prefill-size": "16384" if role == "prefill" else "8192", "--max-running-requests": "112" if role == "prefill" else "80", "--max-total-tokens": "16384" if role == "prefill" else "106496", "--mem-fraction-static": "0.9" if role == "prefill" else "0.96", "--speculative-algorithm": "EAGLE3", "--speculative-num-steps": "3", "--speculative-num-draft-tokens": "4", "--load-balance-method": "total_requests", "--load-snapshot-publish-interval": "1"}
         for flag, value in expected.items():
             assert argv.count(flag) == 1
             assert argv[argv.index(flag) + 1] == value
