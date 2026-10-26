@@ -197,9 +197,14 @@ run_node() {
     if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
       # Source only this role's selection inside its container, as on Firmus.
       args=(bash -c 'set -euo pipefail; set -a; source "$1"; set +a; shift; exec "$@"' bash "/runtime/source/${role}-kernels.env" "${args[@]}")
+      if [[ "${PROFILE}" == true ]]; then
+        # Start Nsight inside the container. Its CUDA capture range stays off until the separate profile client.
+        worker_env+=(-m "${OUTPUT_DIR}:${OUTPUT_DIR}:none:bind,rw,x-create=dir" -m "${OUTPUT_DIR}/nsys:/opt/nsys:none:bind,ro,x-create=dir")
+        args=(env QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/nsys-${role}-${worker}.argv" bash "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${args[@]}")
+      fi
     fi
     worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${worker_env[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
-    if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
+    if [[ "${PROFILE}" == true && "${QWEN_PLATFORM}" != aspire2ap ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
     printf '%q ' "${worker_command[@]}" >"${OUTPUT_DIR}/logs/${role}-${worker}-command.txt"
     printf '\n' >>"${OUTPUT_DIR}/logs/${role}-${worker}-command.txt"
     (export ENROOT_CACHE_PATH="${worker_tmp}/cache" ENROOT_DATA_PATH="${worker_tmp}/data" ENROOT_RUNTIME_PATH="${worker_tmp}/runtime" ENROOT_TEMP_PATH="${worker_tmp}/temp"; exec "${worker_command[@]}") >"${OUTPUT_DIR}/logs/${role}-${worker}.log" 2>&1 &
@@ -606,6 +611,18 @@ while true; do
   (( SECONDS < deadline ))
   sleep 2
 done
-"${script_path}" aiperf >"${OUTPUT_DIR}/logs/aiperf.log" 2>&1
-if [[ "${PROFILE}" == true ]]; then [[ "$(find "${OUTPUT_DIR}/profile" -maxdepth 1 -type f -name 'profiler-invocation-*.argv' | wc -l)" -eq "$(wc -l <"${OUTPUT_DIR}/source/worker-endpoints.tsv")" ]]; fi
+benchmark_status=0
+if [[ "${QWEN_PLATFORM}" == aspire2ap && "${PROFILE}" == true ]]; then
+  "${script_path}" aiperf >"${OUTPUT_DIR}/logs/aiperf.log" 2>&1 || benchmark_status=$?
+else
+  "${script_path}" aiperf >"${OUTPUT_DIR}/logs/aiperf.log" 2>&1
+fi
+if [[ "${PROFILE}" == true ]]; then
+  if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
+    bash "${OUTPUT_DIR}/scripts/run-aspire-profile.sh" "${OUTPUT_DIR}"
+  else
+    [[ "$(find "${OUTPUT_DIR}/profile" -maxdepth 1 -type f -name 'profiler-invocation-*.argv' | wc -l)" -eq "$(wc -l <"${OUTPUT_DIR}/source/worker-endpoints.tsv")" ]]
+  fi
+fi
+(( benchmark_status == 0 )) || exit "${benchmark_status}"
 touch "${OUTPUT_DIR}/run-success"

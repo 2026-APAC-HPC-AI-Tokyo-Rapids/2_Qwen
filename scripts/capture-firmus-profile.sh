@@ -2,6 +2,7 @@
 # The full SGLang stack uses a separate, bounded profiling workload.
 set -euo pipefail
 runtime_dir=${1:?runtime directory required}
+endpoints=${2:-${runtime_dir}/source/worker-endpoints.tsv}
 framework=$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${runtime_dir}/source/firmus-framework.json")
 separate=$(jq -r '.framework == "sglang" and .workload == "official"' "${runtime_dir}/source/firmus-framework.json")
 client_log=${runtime_dir}/logs/aiperf.log
@@ -16,7 +17,7 @@ stop_workers() {
   while IFS=$'\t' read -r name host port tp; do
     curl --fail --silent --show-error --max-time 180 -X POST "http://${host}:${port}/stop_profile" >"${runtime_dir}/profile/${prefix}-${name}.txt" 2>"${runtime_dir}/profile/${prefix}-${name}.stderr" &
     pids+=("$!")
-  done <"${runtime_dir}/source/worker-endpoints.tsv"
+  done <"${endpoints}"
   for pid in "${pids[@]}"; do wait "${pid}" || status=1; done
   return "${status}"
 }
@@ -44,7 +45,7 @@ while IFS=$'\t' read -r name host port tp; do
   curl --fail --silent --show-error --max-time 60 -X POST "http://${host}:${port}/start_profile" -H 'Content-Type: application/json' -d "${start_body}" >"${runtime_dir}/profile/start-${name}.txt" 2>"${runtime_dir}/profile/start-${name}.stderr" &
   pids+=("$!")
   count=$((count + 1))
-done <"${runtime_dir}/source/worker-endpoints.tsv"
+done <"${endpoints}"
 [[ "${count}" -gt 0 ]] || exit 1
 start_status=0
 for pid in "${pids[@]}"; do wait "${pid}" || start_status=1; done

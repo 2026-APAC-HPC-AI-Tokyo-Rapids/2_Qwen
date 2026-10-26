@@ -337,7 +337,14 @@ def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, 
             assert argv[argv.index("--disaggregation-decode-extra-slots") + 1] == "2"
             assert argv[argv.index("--disaggregation-decode-polling-interval") + 1] == "1"
         addresses.append(int(argv[argv.index("--dist-init-addr") + 1].split(":")[1]))
-        assert bool(record["profiler"]) == profile
+        # Nsight must execute inside Enroot, after GPU/driver mounts are available.
+        assert record["profiler"] is None
+        assert ("QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys" in argv) == profile
+        assert ("/fixture/output/nsys:/opt/nsys:none:bind,ro,x-create=dir" in argv) == profile
+        if profile:
+            worker = next(w for w in config["workers"] if str(w["port"]) == argv[argv.index("--port") + 1])
+            assert f"QWEN_PROFILER_INVOCATION_PATH=/fixture/output/profile/nsys-{role}-{worker['index']}.argv" in argv
+            assert argv.index("/fixture/image.sqsh") < argv.index("QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys")
     # Separate DP endpoint ranges; adjacent HTTP ports otherwise collide.
     assert addresses == [32000, 32100, 33000, 33100]
     firmus = json.loads((REPOSITORY / "configs/firmus-framework.json").read_text())

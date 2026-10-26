@@ -47,12 +47,13 @@ def summarize_kernels(database: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("runtime", type=Path)
+    parser.add_argument("--endpoints", type=Path)
     args = parser.parse_args()
     config = json.loads((args.runtime / "source/firmus-framework.json").read_text())
     separate = config["framework"] == "sglang" and config.get("workload") == "official"
     results = {}
     summaries = {}
-    endpoints = (args.runtime / "source/worker-endpoints.tsv").read_text().splitlines()
+    endpoints = (args.endpoints or args.runtime / "source/worker-endpoints.tsv").read_text().splitlines()
     for row in endpoints:
         name, _host, _port, tp = row.split("\t")
         report = args.runtime / f"profile/nsys-{name}.nsys-rep"
