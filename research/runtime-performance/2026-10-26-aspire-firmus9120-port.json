@@ -1,0 +1,905 @@
+{
+  "status": "Aspire benchmark completed; all post-run checks passed",
+  "base_main_commit": "82865efc19eb67737a4a1ed3a0a32ae46462badf",
+  "branch": "perf/aspire-firmus9120-port-20261026",
+  "merged_port_commits": [
+    "1896ba0bcae12fe8b735a33da600409a038b6ce8",
+    "08dffdb034bc892431cb1abe628944fefe493aaa",
+    "5cd630be56d120482f66a51469c98eda78d55fbb"
+  ],
+  "source": {
+    "run_id": 40225743220,
+    "good_output_tokens_per_second": 9120.51,
+    "container_build_run_id": 40197369083,
+    "container_sha256": "1f247668933c7252d3dfbe8f6c23897d354f095d56842788d4415a85d7dc5e55",
+    "container_size_bytes": 12272513024,
+    "wide_qknorm_removed_by": "4a9a953f880e29f8e30e7350d64903aa48d1352c",
+    "config": "configs/firmus-framework.json",
+    "launch": "platforms/firmus/framework-comparison/sglang.sbatch",
+    "serving_commit": "f600847ee3312a73aedd55e142660da62e716d33"
+  },
+  "aspire_baseline": {
+    "run_id": 39741427701,
+    "good_output_tokens_per_second": 5811.187226228371,
+    "walltime_seconds": 620,
+    "actual_prefill_capacity": 17152,
+    "requested_prefill_pool": 32768,
+    "prefill_mem_fraction_static": 0.9,
+    "caveat": "Benchmark valid, but post-run capacity guard failed. New 16384 request is 768 tokens below that actual capacity; do not describe the two pool sizes as exactly equal."
+  },
+  "call_paths": {
+    "aspire": "qwen.yml -> aws-container.yml (pinned reuse and materialize) -> aspire2ap.yml -> provision-qwen-pd.sh + overlay staging + CPU Enroot mount preflight -> run-qwen-pd.pbs -> submit.sbatch -> pbsdsh kernels (pre-model barrier) -> pbsdsh node -> Enroot workers -> router -> official AIPerf + parser -> terminal PBS check -> artifact collection -> all-DP settings/capacity guard",
+    "firmus": "qwen.yml -> firmus.yml -> provision-firmus-framework.sh -> framework-comparison/sglang.sbatch -> in-job gates/selectors -> generated source/worker.sh -> serving/router/official-aiperf.sh -> parser/artifacts"
+  },
+  "merge_conflicts": [
+    {
+      "file": "scripts/check-firmus-server-info.py",
+      "resolution": "Keep main newer combined ep_dispatch_algorithm, ep_num_redundant_experts and enable_eplb check. Reapply ASPIRE port config normalization and placed predicate so those checks also cover ASPIRE. Keep capacity comparison unchanged."
+    }
+  ],
+  "decisions": {
+    "D1": "Merge 5cd630b into main-based worktree with --no-commit; one conflict resolved in favor of main strict checks. Newer main overlays, replica map and provisioning script additions retained.",
+    "D2": "Pin build/size/SHA in aspire-serving.json. ASPIRE passes config to select-qwen-container.sh; when require_build=false verify exact staged image and sidecar, hash it, and reuse build 40197369083 without ancestor search. ASPIRE output/materialization follow its own selector even if another cluster requests a build. qwen.yml cluster-specific push predicates remain unchanged; aspire-only push starts no Firmus/Genkai compute.",
+    "D3": "Preserve all four ASPIRE workers, nodes, TP4/DP4/EP4, GPUs, ports, c104, EAGLE3 3/4, FP8 KV/page64, P chunk16384, D pool106496/cap80/slots2/graph list/memory0.96.",
+    "D4": "ASPIRE Prefill memory fraction remains 0.90; pool explicitly 16384. Post-run actual capacity guard unchanged; Firmus launch and config unchanged.",
+    "D5": "Exact ordered 14 SGLang and 7 DeepGEMM overlays; full active runtime switches/args ported, total_requests on both roles, polling1, hot4/12/optimistic2, manual/min_load router. See env_arg_table.",
+    "D6": "Before model load, pbsdsh runs select-aspire-kernels.sh per node: concurrent node0 P0/P1 torchrun screens on GPU sets 0..3/4..7; node1 unchanged numeric gate on 0..3, same --dense-selected --fa3-selected flags. Aggregate with --workers 2 to eight-GPU common env. Only Prefill sources it; Decode sources empty env. No changes to kernels, overlays, numeric gates, measured shape lists or selection thresholds.",
+    "D7": "Provision selection wrapper, Prefill scripts, numeric gate and decode-check/replica helpers, prefill-candidates.json, and source Firmus config for unchanged diagnostic shapes. Existing ordered stage-qwen-overlays.sh and CPU Enroot preflight retained."
+  },
+  "env_arg_table": [
+    {
+      "scope": "topology",
+      "setting": "workers / placement",
+      "firmus": "P3/D1; P0,P1 on node0; P2,D0 on node1",
+      "aspire": "P2/D2; P0,P1 on node0; D0,D1 on node1",
+      "reason": "Retain the measured H100 P2/D2 topology and its GPU/port layout."
+    },
+    {
+      "scope": "client",
+      "setting": "concurrency",
+      "firmus": 240,
+      "aspire": 104,
+      "reason": "Retain the measured H100 P2/D2 concurrency."
+    },
+    {
+      "scope": "both",
+      "setting": "SGLANG_DECODE_ASYNC_ADMISSION",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "SGLANG_OPT_FIX_MEGA_MOE_MEMORY",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "SGLANG_DISAGG_STAGING_BUFFER",
+      "firmus": "0",
+      "aspire": "0",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "UCX_POSIX_USE_PROC_LINK",
+      "firmus": "n",
+      "aspire": "n",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "HF_HUB_OFFLINE",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "TRANSFORMERS_OFFLINE",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "DG_SM90_PREFILL_2WG",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "decode",
+      "setting": "DG_SM90_DECODE_INDEPENDENT_WG",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK",
+      "firmus": "Prefill chunk / dp = 16384 / 4 = 4096; Decode 4096",
+      "aspire": "Prefill chunk / dp = 16384 / 4 = 4096; Decode 4096",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "SGLANG_PREFILL_FA3_VERIFY",
+      "firmus": "All assigned Prefill GPUs select a common winner or control",
+      "aspire": "Same rule on 8 GPUs instead of 12",
+      "reason": "P2/D2 has eight Prefill GPUs; shapes and numeric/performance thresholds unchanged. --workers 2 only changes aggregation population, default remains 3 for Firmus."
+    },
+    {
+      "scope": "prefill",
+      "setting": "SGLANG_PREFILL_FUSED_FP8_SHUFFLE",
+      "firmus": "Unset (overlay defaults)",
+      "aspire": "Unset (overlay defaults)",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "SGLANG_PREFILL_TILED_ROUTING",
+      "firmus": "Unset (overlay defaults)",
+      "aspire": "Unset (overlay defaults)",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "decode",
+      "setting": "DG_SM90_1D2D_DECODE_CONFIG",
+      "firmus": "From in-job Decode selection; empty means stock",
+      "aspire": "Unset; empty source/decode-kernels.env",
+      "reason": "ASPIRE B<=22, M<=88; Firmus FA3 measures B40/42/44 and requires B32..48, dense measures M176. D6 excludes mismatched selections; no shape lists or guards changed."
+    },
+    {
+      "scope": "decode",
+      "setting": "SGLANG_DECODE_DENSE_GEMM_QKV",
+      "firmus": "From in-job Decode selection; empty means stock",
+      "aspire": "Unset; empty source/decode-kernels.env",
+      "reason": "ASPIRE B<=22, M<=88; Firmus FA3 measures B40/42/44 and requires B32..48, dense measures M176. D6 excludes mismatched selections; no shape lists or guards changed."
+    },
+    {
+      "scope": "decode",
+      "setting": "SGLANG_DECODE_DENSE_GEMM_O",
+      "firmus": "From in-job Decode selection; empty means stock",
+      "aspire": "Unset; empty source/decode-kernels.env",
+      "reason": "ASPIRE B<=22, M<=88; Firmus FA3 measures B40/42/44 and requires B32..48, dense measures M176. D6 excludes mismatched selections; no shape lists or guards changed."
+    },
+    {
+      "scope": "decode",
+      "setting": "SGLANG_DECODE_FA3_VERIFY",
+      "firmus": "From in-job Decode selection; empty means stock",
+      "aspire": "Unset; empty source/decode-kernels.env",
+      "reason": "ASPIRE B<=22, M<=88; Firmus FA3 measures B40/42/44 and requires B32..48, dense measures M176. D6 excludes mismatched selections; no shape lists or guards changed."
+    },
+    {
+      "scope": "both",
+      "setting": "SGLANG_DECODE_ROUTING_DIR",
+      "firmus": "Unset (optional diagnostic disabled; explicitly unset on Prefill)",
+      "aspire": "Unset (optional diagnostic disabled; explicitly unset on Prefill)",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "SGLANG_HOST_IP",
+      "firmus": "Worker node IPv4",
+      "aspire": "Worker node IPv4",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "UCX_NET_DEVICES",
+      "firmus": "Active Firmus HCAs",
+      "aspire": "Existing ASPIRE compute HCAs: mlx5_0:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_9:1,mlx5_10:1,mlx5_11:1",
+      "reason": "Preserve ASPIRE fabric wiring and exclude storage NICs, as required for its node topology."
+    },
+    {
+      "scope": "both",
+      "setting": "UCX_IB",
+      "firmus": "Worker-local variable deriving UCX_NET_DEVICES",
+      "aspire": "Existing ucx_devices local variable; same purpose",
+      "reason": "Host-local variable spelling only; no relay environment variable."
+    },
+    {
+      "scope": "both",
+      "setting": "SGLANG_DG_CACHE_DIR",
+      "firmus": "Shared run/home/deep-gemm",
+      "aspire": "Existing per-worker node-local /runtime-home/.cache/deep-gemm",
+      "reason": "Preserve ASPIRE Enroot filesystem/cache mounts for its existing worker topology; no kernel choice changes."
+    },
+    {
+      "scope": "both",
+      "setting": "TRITON_CACHE_DIR",
+      "firmus": "/tmp/sglang-$name/triton",
+      "aspire": "Existing per-worker node-local /runtime-home/.cache/triton",
+      "reason": "Preserve ASPIRE Enroot filesystem/cache mounts for its existing worker topology; no kernel choice changes."
+    },
+    {
+      "scope": "both",
+      "setting": "TORCHINDUCTOR_CACHE_DIR",
+      "firmus": "/tmp/sglang-$name/inductor",
+      "aspire": "Existing per-worker node-local /runtime-home/.cache/torchinductor",
+      "reason": "Preserve ASPIRE Enroot filesystem/cache mounts for its existing worker topology; no kernel choice changes."
+    },
+    {
+      "scope": "container",
+      "setting": "NVIDIA_VISIBLE_DEVICES",
+      "firmus": "all",
+      "aspire": "all",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "container",
+      "setting": "NVIDIA_DISABLE_REQUIRE",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "container",
+      "setting": "MELLANOX_VISIBLE_DEVICES",
+      "firmus": "all",
+      "aspire": "all",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "container",
+      "setting": "MELLANOX_MOUNT_DRIVER",
+      "firmus": "yes",
+      "aspire": "yes",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "container",
+      "setting": "NVIDIA_DRIVER_CAPABILITIES",
+      "firmus": "compute,utility",
+      "aspire": "all (existing ASPIRE Enroot invocation)",
+      "reason": "Retain ASPIRE driver-hook setup for its Enroot node environment; compute and utility remain included."
+    },
+    {
+      "scope": "container",
+      "setting": "CUDA_VISIBLE_DEVICES",
+      "firmus": "Assigned four GPUs per worker",
+      "aspire": "P0/D0 0,1,2,3; P1/D1 4,5,6,7 on their nodes",
+      "reason": "P2/D2 worker layout retained; Firmus uses scheduler-assigned four-GPU steps."
+    },
+    {
+      "scope": "both",
+      "setting": "executable",
+      "firmus": "/opt/sglang/venv/bin/python -m sglang.launch_server",
+      "aspire": "/opt/sglang/venv/bin/python -m sglang.launch_server",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--model-path",
+      "firmus": "Same pinned FP8 weights at /scratch/models/...",
+      "aspire": "Same pinned FP8 weights at /model (node-local staged copy)",
+      "reason": "Preserve ASPIRE node-local model staging/mounts for its filesystem and topology."
+    },
+    {
+      "scope": "both",
+      "setting": "--served-model-name",
+      "firmus": "qwen",
+      "aspire": "qwen",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--trust-remote-code",
+      "firmus": "enabled",
+      "aspire": "enabled",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--context-length",
+      "firmus": "8192",
+      "aspire": "8192",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--tp-size",
+      "firmus": "4",
+      "aspire": "4",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--page-size",
+      "firmus": "64",
+      "aspire": "64",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--kv-cache-dtype",
+      "firmus": "fp8_e4m3",
+      "aspire": "fp8_e4m3",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--attention-backend",
+      "firmus": "fa3",
+      "aspire": "fa3",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--nccl-port",
+      "firmus": "HTTP port + 1000",
+      "aspire": "HTTP port + 1000",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--disaggregation-mode",
+      "firmus": "Worker role",
+      "aspire": "Worker role",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--disaggregation-transfer-backend",
+      "firmus": "nixl",
+      "aspire": "nixl",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--load-balance-method",
+      "firmus": "total_requests",
+      "aspire": "total_requests",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--load-snapshot-publish-interval",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--host",
+      "firmus": "0.0.0.0",
+      "aspire": "0.0.0.0",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--ep-size",
+      "firmus": "4",
+      "aspire": "4",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--dp-size",
+      "firmus": "4",
+      "aspire": "4",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--enable-dp-attention",
+      "firmus": "enabled",
+      "aspire": "enabled",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--moe-a2a-backend",
+      "firmus": "megamoe",
+      "aspire": "megamoe",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--moe-runner-backend",
+      "firmus": "deep_gemm",
+      "aspire": "deep_gemm",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--speculative-algorithm",
+      "firmus": "EAGLE3",
+      "aspire": "EAGLE3",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--speculative-draft-model-path",
+      "firmus": "/draft",
+      "aspire": "/draft",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--speculative-num-steps",
+      "firmus": "3",
+      "aspire": "3",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--speculative-eagle-topk",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "both",
+      "setting": "--speculative-num-draft-tokens",
+      "firmus": "4",
+      "aspire": "4",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--mem-fraction-static",
+      "firmus": "0.90",
+      "aspire": "0.90 (ASPIRE config key prefill_mem_fraction_static)",
+      "reason": "H100 budget deliberately unchanged; Firmus unchanged."
+    },
+    {
+      "scope": "decode",
+      "setting": "--mem-fraction-static",
+      "firmus": "0.90",
+      "aspire": "0.96",
+      "reason": "Retain measured H100 Decode memory budget for its pool and graphs."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--chunked-prefill-size",
+      "firmus": "16384 (4096 after DP division)",
+      "aspire": "16384 (4096 after DP division)",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--deepep-mode",
+      "firmus": "normal",
+      "aspire": "normal",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--disable-cuda-graph",
+      "firmus": "enabled",
+      "aspire": "enabled",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--ep-num-redundant-experts",
+      "firmus": "12",
+      "aspire": "12",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--optimistic-prefill-attempts",
+      "firmus": "2",
+      "aspire": "2",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--init-expert-location",
+      "firmus": "Run/source/prefill-expert-location.json",
+      "aspire": "/runtime/source/prefill-expert-location.json (identical placement bytes)",
+      "reason": "Existing ASPIRE runtime bind mount; hot-4 physical-140 placement unchanged."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--max-total-tokens",
+      "firmus": 131072,
+      "aspire": 16384,
+      "reason": "H100 hot-4 memory: prior capacity 17152 at 0.90; request 16384 and keep actual-capacity guard."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--max-running-requests",
+      "firmus": 240,
+      "aspire": 104,
+      "reason": "Retain H100 P2/D2 concurrency."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--disaggregation-bootstrap-port",
+      "firmus": "9000/9001/9002",
+      "aspire": "9000/9001",
+      "reason": "P2 instead of P3."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--dist-init-addr",
+      "firmus": "127.0.0.1:32000/32100/32200",
+      "aspire": "127.0.0.1:32000/32100",
+      "reason": "P2 instead of P3; same disjoint endpoint ranges."
+    },
+    {
+      "scope": "prefill",
+      "setting": "--port",
+      "firmus": "30100/30101/30102",
+      "aspire": "30100/30101",
+      "reason": "P2 instead of P3."
+    },
+    {
+      "scope": "decode",
+      "setting": "--enable-dp-lm-head",
+      "firmus": "enabled",
+      "aspire": "enabled",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "decode",
+      "setting": "--moe-dense-tp-size",
+      "firmus": "1",
+      "aspire": "1",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "decode",
+      "setting": "--chunked-prefill-size",
+      "firmus": "8192 (2048 after DP division)",
+      "aspire": "8192 (2048 after DP division)",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "decode",
+      "setting": "--disaggregation-decode-polling-interval",
+      "firmus": "1 (from config)",
+      "aspire": "1 (from config)",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "decode",
+      "setting": "--max-total-tokens",
+      "firmus": 393216,
+      "aspire": 106496,
+      "reason": "Retain measured H100 Decode pool, cap, slots and graph budget for P2/D2."
+    },
+    {
+      "scope": "decode",
+      "setting": "--max-running-requests",
+      "firmus": 176,
+      "aspire": 80,
+      "reason": "Retain measured H100 Decode pool, cap, slots and graph budget for P2/D2."
+    },
+    {
+      "scope": "decode",
+      "setting": "--disaggregation-decode-extra-slots",
+      "firmus": 20,
+      "aspire": 2,
+      "reason": "Retain measured H100 Decode pool, cap, slots and graph budget for P2/D2."
+    },
+    {
+      "scope": "decode",
+      "setting": "--cuda-graph-bs-decode",
+      "firmus": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        10,
+        12,
+        13,
+        14,
+        15,
+        16,
+        18,
+        20,
+        22,
+        24,
+        26,
+        28,
+        30,
+        32,
+        34,
+        36,
+        38,
+        40,
+        42,
+        44
+      ],
+      "aspire": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        10,
+        12,
+        13,
+        14,
+        15,
+        16,
+        18,
+        20
+      ],
+      "reason": "Retain measured H100 Decode pool, cap, slots and graph budget for P2/D2."
+    },
+    {
+      "scope": "decode",
+      "setting": "--dist-init-addr",
+      "firmus": "127.0.0.1:29000",
+      "aspire": "127.0.0.1:33000/33100",
+      "reason": "Retain the measured ASPIRE P2/D2 endpoint ranges, distinct for both Decode workers."
+    },
+    {
+      "scope": "decode",
+      "setting": "--port",
+      "firmus": "30200",
+      "aspire": "30200/30201",
+      "reason": "D2 instead of D1."
+    },
+    {
+      "scope": "router",
+      "setting": "executable",
+      "firmus": "/opt/apac/bin/sglang-router launch",
+      "aspire": "/opt/apac/bin/sglang-router launch",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "router",
+      "setting": "--pd-disaggregation",
+      "firmus": "enabled",
+      "aspire": "enabled",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "router",
+      "setting": "--prefill-policy",
+      "firmus": "manual",
+      "aspire": "manual",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "router",
+      "setting": "--assignment-mode",
+      "firmus": "min_load",
+      "aspire": "min_load",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "router",
+      "setting": "--host",
+      "firmus": "0.0.0.0",
+      "aspire": "0.0.0.0",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "router",
+      "setting": "--port",
+      "firmus": "8000",
+      "aspire": "8000",
+      "reason": "Identical serving behavior."
+    },
+    {
+      "scope": "router",
+      "setting": "--prefill / --decode",
+      "firmus": "P3/D1 endpoints",
+      "aspire": "P2/D2 endpoints",
+      "reason": "Match retained H100 worker topology."
+    },
+    {
+      "scope": "optional profiler",
+      "setting": "launcher and env",
+      "firmus": "exec-profiler.sh; QWEN_PROFILER_NSYS_BIN and QWEN_PROFILER_INVOCATION_PATH when enabled",
+      "aspire": "Existing exec-profiler.sh; QWEN_PROFILER_INVOCATION_PATH when enabled",
+      "reason": "Normal push has no profile tag; preserve ASPIRE node-local profiler invocation for P2/D2. No profiling in this candidate measurement."
+    },
+    {
+      "scope": "ASPIRE fabric",
+      "setting": "NCCL_IB_HCA",
+      "firmus": "Unset",
+      "aspire": "Same eight compute HCAs as UCX_NET_DEVICES",
+      "reason": "Retain ASPIRE compute-fabric selection for its two-node topology; exclude storage NICs."
+    },
+    {
+      "scope": "ASPIRE fabric",
+      "setting": "UCX_ADAPTIVE_PROGRESS",
+      "firmus": "Unset",
+      "aspire": "n",
+      "reason": "Retain the measured ASPIRE fix for asymmetric DP-rank wireup across the P2/D2 node topology."
+    },
+    {
+      "scope": "ASPIRE fabric",
+      "setting": "UCX_LOG_LEVEL",
+      "firmus": "Unset",
+      "aspire": "info",
+      "reason": "Retain ASPIRE fabric diagnostics for the same node topology; no profiler or instrumentation is added."
+    }
+  ],
+  "prefill_pool": {
+    "mem_fraction_static": 0.9,
+    "requested_tokens": 16384,
+    "prior_profiled_tokens": 17152,
+    "headroom_tokens": 768,
+    "page_size": 64,
+    "headroom_pages": 12,
+    "arithmetic": "17152 - 16384 = 768 = 12 * 64 tokens. Old 32768 request exceeded capacity by 15616 tokens; 16384 is half the old requested pool. Target FP8 KV uses 94 layers * 2 (K,V) * 4 local KV heads * 128 bytes = 96256 bytes/token; lowering from 17152 to 16384 saves 0.06884765625 GiB target KV per rank. Additional target KV for 32768 would be 1.39990234375 GiB, excluding draft/runtime allocations. Parent prior total memory-budget estimate for preserving 32768 was about 0.931 (increase 0.031); retain measured-safe 0.90 instead.",
+    "capacity_guard": "Unchanged actual-capacity equality check; future run must still pass on all eight Prefill DP ranks."
+  },
+  "decode_selection": {
+    "run_fa3": false,
+    "run_dense": false,
+    "env_file": "source/decode-kernels.env (empty)",
+    "fa3_measured_batches": [
+      40,
+      42,
+      44
+    ],
+    "fa3_runtime_batch_range": [
+      32,
+      48
+    ],
+    "dense_timed_m": 176,
+    "dense_boundary_numeric_rows": [
+      4,
+      64,
+      65,
+      128,
+      129,
+      160,
+      176
+    ],
+    "dense_runtime_max_m": {
+      "dg1-swapab-streamk": 176,
+      "other_backends": 192
+    },
+    "aspire_requests_per_dp": 20,
+    "aspire_extra_slots": 2,
+    "aspire_max_verify_rows": 88,
+    "reason": "FA3 runtime guard excludes even the conservative ASPIRE B22 upper bound. Dense guard can accept M<=88, but its performance selection times M176; smaller boundary rows are numeric checks only. Neither selection measures serving performance at ASPIRE shapes. Keep stock Decode selections; other automatic overlay fusions remain enabled, and unchanged full numeric gate still runs."
+  },
+  "walltime_estimate": {
+    "pbs_limit_seconds": 1800,
+    "previous_aspire_seconds": 620,
+    "firmus_prefill_selection_seconds": [
+      67.80436764284968,
+      58.455174879636616,
+      62.00805115280673
+    ],
+    "evidence": "40225743220 logs/logs/slurm-26232.log starts 06:13:08+08; sm90-megamoe-gate.log torchrun starts 06:13:38; earliest Prefill serving log timestamp 06:18:10, after the gate and Prefill selection. This bounds that whole screen/startup segment by 272 seconds, overestimating gate-only time. Firmus READY after 542s; full allocation 00:13:51.",
+    "concurrent_added_seconds_budget": 272,
+    "estimated_total_seconds": 892,
+    "estimated_total": "00:14:52",
+    "two_times_screen_budget_total_seconds": 1164,
+    "two_times_screen_budget_total": "00:19:24",
+    "limit_unchanged": true,
+    "caveat": "Estimate only; H100 cold compile and staging time remain unmeasured. The parent must verify terminal PBS state and official results within the existing walltime."
+  },
+  "validation": {
+    "full_cpu_suite": {
+      "command": "cd qwen-experiment-metrics && uv run --quiet pytest -q",
+      "exit_code": 0,
+      "elapsed_seconds": 249.56,
+      "collected_cases": 846,
+      "passed_markers": 774,
+      "skipped_markers": 72
+    },
+    "focused_suite": "142 cases passed (48 ASPIRE integration, 7 Prefill selection, 87 image/provision cases).",
+    "merge_suite": "Completed with only two expected stale ASPIRE image/overlay assertions from the earlier port; updated for the new source configuration.",
+    "ruff": "PASS on all five changed Python files",
+    "actionlint": "PASS (local actionlint, exit 0, no diagnostics)",
+    "shell_syntax": "PASS on all seven changed shell scripts/launchers",
+    "json_validation": "PASS on all three changed JSON files",
+    "added_line_backslash_continuations": 0,
+    "git_diff_check": "PASS",
+    "protected_files": "No changes under patches/ or kernels/, or to Firmus config/serving launcher or GPU numeric gate scripts.",
+    "runtime_mount_preflight": "Preserved and CPU-fixture tested; actual cluster Enroot preflight is deferred to parent Actions run.",
+    "execution_scope": "CPU tests only; no Actions runs, container builds, cluster connections, scheduler jobs or GPUs."
+  },
+  "execution": {
+    "actions_started": 1,
+    "container_builds_started": 0,
+    "scheduler_jobs_submitted": 1,
+    "ssh_connections": 0,
+    "gpu_used": true,
+    "pushes": 1,
+    "commits": 1,
+    "requested_trigger": "parent push with aspire2ap and nodes2 tags; no require-build or profile tag",
+    "node_count": 2,
+    "profile": false,
+    "require_build": false,
+    "run_id": 40251123706,
+    "commit": "07fa252",
+    "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40251123706",
+    "workflow_conclusion": "success",
+    "pbs_job_id": "224916.pbs111",
+    "pbs_exit_status": 0,
+    "pbs_walltime": "00:13:00",
+    "pbs_nodes": [
+      "a2ap-dgx010",
+      "a2ap-dgx015"
+    ],
+    "archive": "archive-host:/srv/qwen-artifacts/40251123706/1/"
+  },
+  "result": {
+    "score_output_tokens_per_second": 5925.07,
+    "official_validation_valid": true,
+    "eligible": true,
+    "request_count": 3683,
+    "error_request_count": 0,
+    "good_request_fraction": 0.991,
+    "ttft_ms": {
+      "mean": 1074.2,
+      "p50": 1018.7,
+      "p99": 2798.0
+    },
+    "itl_ms": {
+      "mean": 11.9,
+      "p50": 11.9,
+      "p99": 14.2
+    },
+    "request_throughput_per_s": 29.9,
+    "prefill_selection": {
+      "winner": "n192",
+      "workers": 2,
+      "gpus": 8
+    },
+    "prefill_kv_capacity": "16384 requested, no profiler clamp on any Prefill rank; all-DP capacity guard passed",
+    "prefill_iteration_ms": {
+      "method": "interval between 'Prefill batch' log lines, steady middle 80% per DP rank, mean of 8 ranks",
+      "baseline_39741427701": 273.9,
+      "this_run": 266.8
+    },
+    "baseline": {
+      "run_id": 39741427701,
+      "score": 5811.19,
+      "good_request_fraction": 0.9933,
+      "request_count": 3600,
+      "ttft_ms": {
+        "mean": 991.6,
+        "p99": 2665.4
+      },
+      "itl_ms": {
+        "mean": 12.6,
+        "p99": 15.0
+      },
+      "request_throughput_per_s": 29.3
+    },
+    "change_from_baseline_percent": 1.96,
+    "interpretation": "Prefill-capacity bound: 8 Prefill DP ranks each take about one 3986-token request per 4096-token iteration, so capacity is 8 / 0.2668 s = 30.0 req/s against 29.9 req/s served. The 2.6% shorter Prefill iteration explains the gain; Decode ITL also fell 5% but Decode does not bind. Single run against a single baseline run with a different Prefill pool (17152 actual vs 16384); not a repeatability claim."
+  },
+  "residual_risks": [
+    "H100 kernel-screen runtime, memory and serving throughput require the parent-run PBS allocation; CPU checks cannot establish them.",
+    "The prior 17152-token capacity was observed with older overlays; the unchanged post-run guard remains authoritative for the new image/overlays.",
+    "The workload/parser remains unchanged. No new throughput or numerical acceptance claim is made before official results."
+  ]
+}
