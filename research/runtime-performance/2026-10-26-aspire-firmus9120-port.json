@@ -1,5 +1,5 @@
 {
-  "status": "CPU-validated candidate; uncommitted merge for parent review; no execution",
+  "status": "Aspire benchmark completed; all post-run checks passed",
   "base_main_commit": "82865efc19eb67737a4a1ed3a0a32ae46462badf",
   "branch": "perf/aspire-firmus9120-port-20261026",
   "merged_port_commits": [
@@ -826,19 +826,77 @@
     "execution_scope": "CPU tests only; no Actions runs, container builds, cluster connections, scheduler jobs or GPUs."
   },
   "execution": {
-    "actions_started": 0,
+    "actions_started": 1,
     "container_builds_started": 0,
-    "scheduler_jobs_submitted": 0,
+    "scheduler_jobs_submitted": 1,
     "ssh_connections": 0,
-    "gpu_used": false,
-    "pushes": 0,
-    "commits": 0,
+    "gpu_used": true,
+    "pushes": 1,
+    "commits": 1,
     "requested_trigger": "parent push with aspire2ap and nodes2 tags; no require-build or profile tag",
     "node_count": 2,
     "profile": false,
-    "require_build": false
+    "require_build": false,
+    "run_id": 40251123706,
+    "commit": "07fa252",
+    "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40251123706",
+    "workflow_conclusion": "success",
+    "pbs_job_id": "224916.pbs111",
+    "pbs_exit_status": 0,
+    "pbs_walltime": "00:13:00",
+    "pbs_nodes": [
+      "a2ap-dgx010",
+      "a2ap-dgx015"
+    ],
+    "archive": "archive-host:/srv/qwen-artifacts/40251123706/1/"
   },
-  "result": null,
+  "result": {
+    "score_output_tokens_per_second": 5925.07,
+    "official_validation_valid": true,
+    "eligible": true,
+    "request_count": 3683,
+    "error_request_count": 0,
+    "good_request_fraction": 0.991,
+    "ttft_ms": {
+      "mean": 1074.2,
+      "p50": 1018.7,
+      "p99": 2798.0
+    },
+    "itl_ms": {
+      "mean": 11.9,
+      "p50": 11.9,
+      "p99": 14.2
+    },
+    "request_throughput_per_s": 29.9,
+    "prefill_selection": {
+      "winner": "n192",
+      "workers": 2,
+      "gpus": 8
+    },
+    "prefill_kv_capacity": "16384 requested, no profiler clamp on any Prefill rank; all-DP capacity guard passed",
+    "prefill_iteration_ms": {
+      "method": "interval between 'Prefill batch' log lines, steady middle 80% per DP rank, mean of 8 ranks",
+      "baseline_39741427701": 273.9,
+      "this_run": 266.8
+    },
+    "baseline": {
+      "run_id": 39741427701,
+      "score": 5811.19,
+      "good_request_fraction": 0.9933,
+      "request_count": 3600,
+      "ttft_ms": {
+        "mean": 991.6,
+        "p99": 2665.4
+      },
+      "itl_ms": {
+        "mean": 12.6,
+        "p99": 15.0
+      },
+      "request_throughput_per_s": 29.3
+    },
+    "change_from_baseline_percent": 1.96,
+    "interpretation": "Prefill-capacity bound: 8 Prefill DP ranks each take about one 3986-token request per 4096-token iteration, so capacity is 8 / 0.2668 s = 30.0 req/s against 29.9 req/s served. The 2.6% shorter Prefill iteration explains the gain; Decode ITL also fell 5% but Decode does not bind. Single run against a single baseline run with a different Prefill pool (17152 actual vs 16384); not a repeatability claim."
+  },
   "residual_risks": [
     "H100 kernel-screen runtime, memory and serving throughput require the parent-run PBS allocation; CPU checks cannot establish them.",
     "The prior 17152-token capacity was observed with older overlays; the unchanged post-run guard remains authoritative for the new image/overlays.",
