@@ -50,9 +50,9 @@ def main():
     s2 = torch.rand(32, 32, 12, device=device) * 0.005 + 0.005
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf = deep_gemm.get_symm_buffer_for_mega_moe(dist.group.WORLD, 128, 4096, 8, 4096, 1536, use_fp8_dispatch=True, activation="swiglu")
-    # 145 is the first non-SwapAB batch after extending the limit to 144.
+    # 193 is the first non-SwapAB batch after extending the limit to 192.
     # Mixed graph spans SwapAB, non-swap, Prefill and a permanently idle rank.
-    cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4]), ("mixed-geometry-graph", [7, 0, 145, 256]), ("decode-quant-zero", [9, 0, 0, 0])]
+    cases = [("cross-rank-empty-tail", [7, 0, 65, 129]), ("capacity-hot-experts", [4096] * 4), ("decode-graph", [128, 120, 4, 4]), ("mixed-geometry-graph", [7, 0, 193, 256]), ("decode-quant-zero", [9, 0, 0, 0])]
     # Exercise all SwapAB widths, plus a full tile and tail.
     # Other ranks still participate in the collective with zero live tokens.
     cases.extend((f"decode-tile-{count}", [count, 0, 0, 0]) for count in (1, 9, 17, 25, 33, 41, 49, 57, 65))
@@ -63,7 +63,8 @@ def main():
         cases.append(("idle-prefill-rows", [4096, 4096, 4096, 0]))
     # Cover the extended SwapAB range, its mixed-geometry boundary, and a
     # second combine iteration above 132 rows (132 CTAs x 8 combine warps).
-    cases += [("swapab-boundary-mixed", [128, 129, 144, 145]), ("decode-graph-swapab-144", [144, 140, 136, 132]), ("swapab-hot-experts-144", [144] * 4)]
+    cases += [("decode-graph-swapab-192", [192, 188, 160, 156]), ("swapab-hot-experts-192", [192] * 4)]
+    cases += [("swapab-boundary-mixed", [160, 161, 192, 193]), ("decode-graph-swapab-144", [144, 140, 136, 132]), ("swapab-hot-experts-144", [144] * 4)]
     # The early-publish assignment ring must leave no state after an empty call.
     cases += [("decode-all-idle", [0] * 4), ("decode-live-after-idle", [144] * 4)]
     for case, counts in cases:
@@ -71,7 +72,7 @@ def main():
         if case == "decode-quant-zero":
             patterns.zero_()
         ids = torch.stack([torch.randperm(128, device=device)[:8] for _ in range(4)]).to(torch.int32)
-        if case in ("capacity-hot-experts", "decode-quant-zero", "swapab-hot-experts-144") or case.startswith("decode-tile-"):
+        if case in ("capacity-hot-experts", "decode-quant-zero", "swapab-hot-experts-144", "swapab-hot-experts-192") or case.startswith("decode-tile-"):
             ids[:] = torch.arange(8, dtype=torch.int32, device=device)
         weights = torch.rand(4, 8, device=device)
         ids[0, -1] = -1  # Masked/padded top-k slot must not read an expert.

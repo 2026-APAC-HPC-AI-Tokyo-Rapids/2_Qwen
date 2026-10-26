@@ -14,7 +14,49 @@ PINS = {
     "fa3": ("sgl-project/sgl-attn", "f89bc2306632d1ec5f97b014dded4254f5b4a907", "418b5681584dc3efff496a1cab5ffd58d2728d89dcfe0ea16e6985d6ef35c68c"),
     "cutlass": ("NVIDIA/cutlass", "57e3cfb47a2d9e0d46eb6335c3dc411498efa198", "09237099a70f80bff1dc8bb80c843a674bb4fdcb46e43cc6993e711c5ca89bb5"),
 }
-IDS = ("control96", "t64s2", "t64s3", "p128s2", "t64split2", "t64split3")
+SM90_OPTIN_BYTES = 227 * 1024
+
+
+def candidates(root):
+    return json.loads((root / "candidates.json").read_text())
+
+
+def generate_dispatch(root, work):
+    """Generate C++ dispatch and unique main-kernel TUs from the sole table."""
+    rows = candidates(root)
+    kernels = {}
+    entries = []
+    for row in rows:
+        key = (row["block_n"], row["stages"], row["splits"] > 1, row.get("merge", False))
+        symbol = f"verify_n{key[0]}_s{key[1]}_split{int(key[2])}_merge{int(key[3])}"
+        kernels[key] = symbol
+        entries.append(f'    {{"{row["name"]}", {row["block_n"]}, {row["stages"]}, {row["splits"]}, {str(row["output"] == "fp8").lower()}, {str(row.get("merge", False)).lower()}, {str(row.get("uneven", False)).lower()}, {symbol}}},')
+    declarations = [f"void {symbol}(Flash_fwd_params&, cudaStream_t, int*);" for symbol in kernels.values()]
+    (work / "candidates.h").write_text("\n".join([*declarations, "static const Candidate candidates[] = {", *entries, "};", ""]))
+    tasks = []
+    for (block_n, stages, split, merge), symbol in kernels.items():
+        source = work / (symbol + ".cu")
+        source.write_text(f'#define VERIFY_NAME {symbol}\n#define VERIFY_BLOCK_N {block_n}\n#define VERIFY_STAGES {stages}\n#define VERIFY_SPLIT {str(split).lower()}\n#define VERIFY_MERGE {str(merge).lower()}\n#include "p128split.cu"\n')
+        tasks.append((source, symbol, True))
+    return tasks
+
+
+def generate_prefill_dispatch(root, work):
+    """Independent Prefill candidate table; Decode dispatch is unchanged."""
+    rows = json.loads((root / "prefill-candidates.json").read_text())
+    tasks, declarations, entries = [], [], []
+    for row in rows:
+        symbol = "prefill_" + row["name"].replace("-", "_")
+        if row["name"] == "control":
+            symbol = "prefill_fixed"
+        else:
+            source = work / (symbol + ".cu")
+            source.write_text(f'#define PREFILL_NAME {symbol}\n#define PREFILL_N {row["block_n"]}\n#define PREFILL_VARIANT {row["variant"]}\n#include "prefill_variant.cu"\n')
+            tasks.append((source, symbol, True))
+        declarations.append(f"void {symbol}(Flash_fwd_params&, cudaStream_t, int*);")
+        entries.append(f'    {{"{row["name"]}", {str(row["byte_image"]).lower()}, {symbol}}},')
+    (work / "prefill-candidates.h").write_text("\n".join([*declarations, "static const PrefillCandidate prefill_candidates[] = {", *entries, "};", ""]))
+    return tasks
 
 
 def sha(path):
@@ -41,13 +83,25 @@ def build(root):
             tar.extractall(target, filter="data")
         sources[name] = next(target.iterdir())
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fixed-specializations.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fp8-output.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fixed-prefill.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-variants.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-overlap.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-pv.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "decode-merge.patch")], cwd=sources["fa3"], check=True)
     cuda = Path("/usr/local/cuda")
-    includes = [str(root), str(sources["fa3"] / "hopper"), str(sources["cutlass"] / "include"), str(sources["cutlass"] / "tools/util/include"), str(cuda / "include"), str(cuda / "include/cccl"), *include_paths()]
+    includes = [str(root), str(work), str(sources["fa3"] / "hopper"), str(sources["cutlass"] / "include"), str(sources["cutlass"] / "tools/util/include"), str(cuda / "include"), str(cuda / "include/cccl"), *include_paths()]
     common = ["-O3", "-std=c++17", "-fPIC", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fno-gnu-unique", f"-D_GLIBCXX_USE_CXX11_ABI={int(torch._C._GLIBCXX_USE_CXX11_ABI)}"]
     common += ["-Dflash=apac_fa3_private", "-DFlash_fwd_params=ApacFA3VerifyParams"]
     flags = ["-O3", "-std=c++17", "--use_fast_math", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-lineinfo", "-gencode=arch=compute_90a,code=sm_90a", "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED", "-DCUTLASS_DEBUG_TRACE_LEVEL=0", "-DNDEBUG", "-Xptxas=-v,--warn-on-spills", "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique", *common[6:]]
+    layout_cmd = [str(cuda / "bin/nvcc"), *flags, *["-I" + p for p in includes], str(root / "prefill_layout_host.cu"), "-o", str(work / "prefill-layout-host")]
+    subprocess.run(layout_cmd, check=True)
+    generated = subprocess.check_output([str(work / "prefill-layout-host")], text=True)
+    assert generated == (root / "prefill_v_layout.cuh").read_text(), "CuTe V byte map changed"
     tasks = [(root / "wrapper.cpp", "wrapper", False)]
-    tasks += [(root / (name + ".cu"), name, True) for name in ("control96", "t64s2", "t64s3", "p128s2", "t64split", "combine")]
+    tasks += generate_dispatch(root, work)
+    tasks += generate_prefill_dispatch(root, work)
+    tasks += [(root / (name + ".cu"), name, True) for name in ("combine", "prefill", "prefill_fixed", "prefill_image", "decode_prepare")]
     tasks += [(sources["fa3"] / "hopper/flash_prepare_scheduler.cu", "prepare", True)]
 
     def compile_one(task):
@@ -75,7 +129,21 @@ def build(root):
     subprocess.run(cmd, check=True)
     torch.ops.load_library(str(binary))
     smem = torch.ops.apac_fa3_verify.resources()
-    manifest = {"schema": "apac-fa3-verify/v1", "pins": {name: {"repository": repo, "commit": commit, "archive_sha256": digest} for name, (repo, commit, digest) in PINS.items()}, "architecture": "sm_90a", "cuda": subprocess.check_output([str(cuda / "bin/nvcc"), "--version"], text=True), "ptxas": subprocess.check_output([str(cuda / "bin/ptxas"), "--version"], text=True), "torch": torch.__version__, "cuda_flags": flags, "max_compile_jobs": 2, "translation_units": [r for r, _ in compiled], "specializations": [{"id": name, "shared_bytes": size} for name, size in zip(IDS, smem)], "source_sha256": {p.name: sha(p) for p in root.iterdir() if p.suffix in (".cu", ".cpp", ".h", ".py", ".patch")}, "binary_sha256": sha(binary), "binary_bytes": binary.stat().st_size, "elapsed_seconds": time.monotonic() - started, "gpu_executed": False}
+    prefill_smem = torch.ops.apac_fa3_verify.prefill_resources()
+    assert prefill_smem == 191488, prefill_smem
+    prefill_rows = json.loads((root / "prefill-candidates.json").read_text())
+    prefill_sizes = torch.ops.apac_fa3_verify.prefill_variant_resources()
+    assert len(prefill_rows) == len(prefill_sizes)
+    assert all(0 < x <= SM90_OPTIN_BYTES for x in prefill_sizes)
+    rows = candidates(root)
+    assert len(rows) == len(smem)
+    for row, size in zip(rows, smem):
+        assert 0 < size <= SM90_OPTIN_BYTES, (row, size, SM90_OPTIN_BYTES)
+    fixed_smem = torch.ops.apac_fa3_verify.prefill_fixed_resources()
+    assert fixed_smem == prefill_smem and fixed_smem <= SM90_OPTIN_BYTES, fixed_smem
+    manifest = {"schema": "apac-fa3-verify/v1", "pins": {name: {"repository": repo, "commit": commit, "archive_sha256": digest} for name, (repo, commit, digest) in PINS.items()}, "architecture": "sm_90a", "cuda": subprocess.check_output([str(cuda / "bin/nvcc"), "--version"], text=True), "ptxas": subprocess.check_output([str(cuda / "bin/ptxas"), "--version"], text=True), "torch": torch.__version__, "cuda_flags": flags, "max_compile_jobs": 2, "translation_units": [r for r, _ in compiled], "specializations": [{**row, "shared_bytes": size} for row, size in zip(rows, smem)], "source_sha256": {p.name: sha(p) for p in root.iterdir() if p.suffix in (".cu", ".cpp", ".h", ".cuh", ".py", ".patch") or p.name in ("candidates.json", "prefill-candidates.json")}, "binary_sha256": sha(binary), "binary_bytes": binary.stat().st_size, "elapsed_seconds": time.monotonic() - started, "gpu_executed": False}
+    manifest["prefill"] = {"tile_n": 224, "shared_bytes": prefill_smem, "output": "group128-fp8-fp32-scales", "fixed_shared_bytes": fixed_smem, "fixed": "single-sequence-3584..4096-analytic-LPT-no-LSE-PDL"}
+    manifest["prefill_candidates"] = [{**row, "shared_bytes": size} for row, size in zip(prefill_rows, prefill_sizes)]
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     subprocess.run([str(cuda / "bin/cuobjdump"), "--dump-resource-usage", str(binary)], stdout=(logs / "resources.txt").open("w"), check=True)
     subprocess.run(["nm", "-D", "--defined-only", str(binary)], stdout=(logs / "symbols.txt").open("w"), check=True)

@@ -1,0 +1,92 @@
+"""CPU coverage for the fail-closed all-rank Prefill performance rule."""
+import copy
+import json
+import runpy
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture
+def selector():
+    return runpy.run_path(str(ROOT / 'scripts/select-firmus-prefill-fa3.py'))
+
+
+def records(selector):
+    return [{'rank': rank, 'lengths': {str(length): {name: {'numeric_passed': True, 'control': [350.0]*20, 'candidate': [344.0]*20} for name in selector['NAMES'][1:]} for length in selector['LENGTHS']}} for rank in range(4)]
+
+
+def test_no_winner_when_one_rank_or_tail_misses_threshold(selector):
+    ranks = records(selector)
+    for name in selector['NAMES'][1:]:
+        ranks[3]['lengths']['4027'][name]['candidate'] = [345.01]*20
+    assert selector['choose_candidate'](ranks)['winner'] == 'control'
+    assert selector['choose_candidate'](ranks)['env'] == {'SGLANG_PREFILL_FA3_VERIFY': 'control'}
+
+
+def test_exact_boundary_and_numeric_failure(selector):
+    ranks = records(selector)
+    for rank in ranks:
+        for row in rank['lengths'].values():
+            for entry in row.values():
+                entry['candidate'] = [345.0]*20
+    assert selector['choose_candidate'](ranks)['winner'] == 'regs'
+    for name in selector['NAMES'][1:-1]:
+        ranks[1]['lengths']['3986'][name]['numeric_passed'] = False
+    assert selector['choose_candidate'](ranks)['winner'] == 'n192'
+    ranks[0]['lengths']['4096']['n192']['candidate'].pop()
+    assert selector['choose_candidate'](ranks)['winner'] == 'control'
+
+
+def test_rejected_candidate_does_not_hide_another_winner(selector):
+    ranks = records(selector)
+    ranks[0]['lengths']['4096']['regs']['error'] = 'byte mismatch'
+    original = copy.deepcopy(ranks)
+    assert selector['choose_candidate'](ranks)['winner'] == 'c2'
+    assert ranks == original
+
+
+def test_prefill_dispatch_is_independent_of_decode(tmp_path):
+    ns = runpy.run_path(str(ROOT / 'kernels/fa3-verify/build.py'))
+    tasks = ns['generate_prefill_dispatch'](ROOT / 'kernels/fa3-verify', tmp_path)
+    rows = json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text())
+    assert len(tasks) == len(rows) - 1
+    assert {r["name"] for r in rows if r["variant"] & 8} == set()
+    assert {r['name'] for r in rows if r['byte_image']} == {'c2', 'regs-c2'}
+    assert (tmp_path / 'prefill-candidates.h').read_text().count('prefill_fixed') == 2
+    assert all('prefill_variant.cu' in p.read_text() for p, _, _ in tasks)
+
+
+def test_generated_worker_checks_only_prefill_and_uses_assigned_gpus(tmp_path):
+    shell = (ROOT / 'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
+    worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split('\nEOF', 1)[0]
+    path = tmp_path / 'worker.sh'
+    path.write_text(worker)
+    subprocess.run(['bash', '-n', str(path)], check=True)
+    assert 'if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi' in worker
+    assert 'CUDA_VISIBLE_DEVICES=' not in worker
+    assert shell.index('select-firmus-prefill-kernels.sh') < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
+    assert 'for worker in 0 1 2; do' in shell and '--aggregate' in shell
+
+
+def test_aggregation_requires_every_worker_and_every_rank(selector, tmp_path):
+    out, env = tmp_path / 'selection.json', tmp_path / 'prefill.env'
+    for worker in range(3):
+        path = tmp_path / f'prefill-{worker}'
+        path.mkdir()
+        ranks = records(selector)
+        (path / 'status.txt').write_text('fa3=0\n')
+        if worker == 2:
+            for name in selector['NAMES'][1:]:
+                ranks[3]['lengths']['4096'][name]['candidate'] = [345.1]*20
+        (path / 'fa3.json').write_text(json.dumps({'ranks': ranks}))
+    selector['aggregate_selection'](tmp_path, out, env)
+    assert json.loads(out.read_text())['winner'] == 'control'
+    assert json.loads(out.read_text())['rule']['gpus'] == 12
+    (tmp_path / 'prefill-2/status.txt').write_text('fa3=124\n')
+    selector['aggregate_selection'](tmp_path, out, env)
+    assert json.loads(out.read_text())['failed_workers'] == [2]
+    assert env.read_text() == 'SGLANG_PREFILL_FA3_VERIFY=control\n'

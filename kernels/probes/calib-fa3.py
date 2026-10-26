@@ -19,7 +19,7 @@ def main():
     selector = run_path(str(root / "select-firmus-decode-fa3.py"))
     checks = run_path(str(root / "check-firmus-decode-kernels.py"))
     decode_fa3_verify.load()
-    names = ("control96", "p128s2", "t64s2", "t64s3")
+    names = selector["NAMES"]
     assert all(n in decode_fa3_verify.NAMES for n in names)
     commons = [checks["verify_inputs"](32, 93101 + 32 + i)[0] for i in range(4)]
     for c in commons[1:]:

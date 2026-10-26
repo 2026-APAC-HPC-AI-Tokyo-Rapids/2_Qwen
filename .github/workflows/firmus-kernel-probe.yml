@@ -4,12 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       benchmark:
-        description: 1 GPU FA3 preparation script (M1 or M2)
+        description: Probe preparation script (FA3 or Decode dense 1 GPU, EAGLE TP4)
         type: choice
         default: kernels/probes/prepare-fa3-prefill.sh
         options:
           - kernels/probes/prepare-fa3-prefill.sh
           - kernels/probes/prepare-fa3-prefill-profile.sh
+          - kernels/probes/prepare-dense-decode.sh
+          - kernels/probes/prepare-firmus-eagle-accept.sh
       candidate_patch:
         description: Leave empty for the existing FA3 protocols
         type: string
@@ -41,7 +43,7 @@ jobs:
           CANDIDATE_PATCH: ${{ inputs.candidate_patch }}
         run: scripts/provision-firmus-kernel-probe.sh
 
-      - name: Reserve one node for five minutes; run the probe on one GPU
+      - name: Reserve one node; run the benchmark with its GPU and time budget
         id: submit
         env:
           RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}

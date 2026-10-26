@@ -1,0 +1,113 @@
+--- a/python/sglang/kernels/jit/csrc/elementwise/add_rmsnorm_group_quant.cuh
++++ b/python/sglang/kernels/jit/csrc/elementwise/add_rmsnorm_group_quant.cuh
+@@ -41,7 +41,6 @@
+ 
+ constexpr uint32_t kNormHidden = 4096;
+ constexpr uint32_t kNormThreadsPerRow = 64;
+-constexpr uint32_t kNormRowsPerBlock = 2;
+ constexpr uint32_t kNormChunks = kNormHidden / (8 * kNormThreadsPerRow);  // 8 vectors of 8 BF16
+ 
+ SGL_DEVICE float rsqrt_approx_ftz(const float x) {
+@@ -50,9 +49,10 @@
+   return y;
+ }
+ 
+-template <bool kUsePDL, uint32_t kVariant>
++template <bool kUsePDL, uint32_t kVariant, uint32_t kNormRowsPerBlock = 2>
+ __global__ void __launch_bounds__(kNormThreadsPerRow* kNormRowsPerBlock)
+     add_rmsnorm_group_quant_kernel(const __grid_constant__ AddRMSNormGroupQuantParams params) {
++  static_assert(kNormRowsPerBlock == 1 || kNormRowsPerBlock == 2);
+   using namespace device;
+   using Vec = AlignedVector<bf16x2_t, 4>;
+   using FP8Vec = AlignedVector<fp8x2_e4m3_t, 4>;
+@@ -147,7 +147,7 @@
+   PDLTriggerSecondary<kUsePDL>();
+ }
+ 
+-template <bool kUsePDL, uint32_t kVariant>
++template <bool kUsePDL, uint32_t kVariant, uint32_t kNormRowsPerBlock = 2>
+ struct AddRMSNormGroupQuantKernel {
+   static void
+   run(const tvm::ffi::TensorView x,
+@@ -183,7 +183,7 @@
+         .eps = static_cast<float>(eps),
+     };
+     LaunchKernel(div_ceil(num_tokens, kNormRowsPerBlock), kNormThreadsPerRow * kNormRowsPerBlock, device.unwrap())  //
+-        .enable_pdl(kUsePDL)(add_rmsnorm_group_quant_kernel<kUsePDL, kVariant>, params);
++        .enable_pdl(kUsePDL)(add_rmsnorm_group_quant_kernel<kUsePDL, kVariant, kNormRowsPerBlock>, params);
+   }
+ };
+ 
+--- a/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py
++++ b/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py
+@@ -62,3 +62,29 @@
+     scale = torch.empty((x.shape[1] // 128, (rows + 3) // 4 * 4), dtype=torch.float32, device=x.device).transpose(0, 1)[:rows]
+     add_rmsnorm_group_quant_fp8_out(x, residual, weight, eps, q, scale, variant)
+     return q, scale
++
++
++@cache_once
++def _jit_decode_add_rmsnorm_group_quant_module() -> Module:
++    # Preserve 64 lanes/row and every FP operation of the existing fusion.
++    # One row/CTA supplies 160..176 CTAs for TARGET_VERIFY instead of 80..88.
++    args = make_cpp_args(is_arch_support_pdl(), FLASHINFER_EXACT_VARIANT, 1)
++    return load_jit(
++        "decode_add_rmsnorm_group_quant",
++        *args,
++        cuda_files=["elementwise/add_rmsnorm_group_quant.cuh"],
++        cuda_wrappers=[("run", f"AddRMSNormGroupQuantKernel<{args}>::run")],
++    )
++
++
++@register_custom_op(mutates_args=["residual", "q", "scale"])
++def decode_add_rmsnorm_group_quant_fp8_out(x: torch.Tensor, residual: torch.Tensor, weight: torch.Tensor, eps: float, q: torch.Tensor, scale: torch.Tensor) -> None:
++    _jit_decode_add_rmsnorm_group_quant_module().run(x, residual, weight, eps, q, scale)
++
++
++def decode_add_rmsnorm_group_quant_fp8(x: torch.Tensor, residual: torch.Tensor, weight: torch.Tensor, eps: float) -> Tuple[torch.Tensor, torch.Tensor]:
++    rows = x.shape[0]
++    q = torch.empty(x.shape, dtype=torch.float8_e4m3fn, device=x.device)
++    scale = torch.empty((32, (rows + 3) // 4 * 4), dtype=torch.float32, device=x.device).T[:rows]
++    decode_add_rmsnorm_group_quant_fp8_out(x, residual, weight, eps, q, scale)
++    return q, scale
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -106,6 +106,7 @@
+     )
+     from sglang.kernels.ops.layernorm.add_rmsnorm_group_quant import (
+         add_rmsnorm_group_quant_fp8,
++        decode_add_rmsnorm_group_quant_fp8,
+     )
+     from sglang.kernels.ops.attention.rope import (
+         apply_qknorm_rope_fp8_kv,
+@@ -1036,15 +1037,12 @@
+     def _use_input_norm_quant(
+         self, hidden_states, residual, forward_batch, captured_last_layer_outputs, kwargs
+     ) -> bool:
+-        # Prefill only. The kernel takes 2 rows per CTA, so ~126 Decode rows fill
+-        # 63 CTAs and it is slower than flashinfer + group quant there (8.8 vs
+-        # 5.2 us/layer, run 39119219065); it wins only with many rows (46.4 vs
+-        # 51.3 us at ~3986). Break-even of a linear fit through those two
+-        # measurements is ~1760 rows, so require at least 2048. Decode and
+-        # TARGET_VERIFY keep the unfused pair whatever their row count.
++        # Decode uses one row/CTA; Prefill retains its measured two-row layout.
+         return (
+-            forward_batch.forward_mode == ForwardMode.EXTEND
+-            and hidden_states.shape[0] >= _INPUT_NORM_QUANT_MIN_ROWS
++            (
++                (forward_batch.forward_mode == ForwardMode.EXTEND and hidden_states.shape[0] >= _INPUT_NORM_QUANT_MIN_ROWS)
++                or (forward_batch.forward_mode.is_target_verify() and 128 <= hidden_states.shape[0] <= 192)
++            )
+             and residual is not None
+             and captured_last_layer_outputs is None
+             and kwargs.get("post_residual_addition") is None
+@@ -1071,7 +1069,8 @@
+             hidden_states, residual, forward_batch, captured_last_layer_outputs, kwargs
+         ):
+             # residual += hidden_states in place; the QKV GEMM gets (q, scale).
+-            hidden_states = add_rmsnorm_group_quant_fp8(
++            norm_quant = decode_add_rmsnorm_group_quant_fp8 if forward_batch.forward_mode.is_target_verify() else add_rmsnorm_group_quant_fp8
++            hidden_states = norm_quant(
+                 hidden_states,
+                 residual,
+                 self.input_layernorm.weight,

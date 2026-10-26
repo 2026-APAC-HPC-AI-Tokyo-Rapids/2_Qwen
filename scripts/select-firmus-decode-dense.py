@@ -132,10 +132,10 @@ def measure_graph(torch, graph):
     return samples
 
 
-def prepare_projection(torch, checks, op, n, k, candidates, boundary_rows=()):
+def prepare_projection(torch, checks, op, n, k, candidates, cap_rows, boundary_rows=()):
     """Compile and screen outside measurement. All candidates share four weights."""
     started = time.monotonic()
-    sets = [checks["dense_inputs"](128, n, k, 71200 + n + i) for i in range(4)]
+    sets = [checks["dense_inputs"](cap_rows, n, k, 71200 + n + i) for i in range(4)]
     references = [checks["dense_reference"](s[0], s[1]) for s in sets]
     with candidate_mode(checks, op, candidates[0]):
         for s in sets:
@@ -200,6 +200,7 @@ def run_selection(output, env_output):
     # namespace too so changed-input replay validates the actual overlay code.
     checks["dense_call"] = serving_call
     checks["dense_validate_candidate"].__globals__["dense_call"] = serving_call
+    rows = checks["decode_cap_tokens"]()
     candidates = {op: checks["dense_candidates"](op) for op, _, _ in checks["DENSE_PROJECTIONS"]}
     prepared = {}
     with checks["dense_fp32_reference"]():
@@ -207,11 +208,11 @@ def run_selection(output, env_output):
         # subsequent ranks import/load those kernels, avoiding four cold builds.
         if rank == 0:
             for op, n, k in checks["DENSE_PROJECTIONS"]:
-                prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], boundary_rows=(4, 64, 65))
+                prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], rows, boundary_rows=tuple(sorted({4, 64, 65, 128, 129, 160, 176, rows})))
         dist.barrier()
         if rank != 0:
             for op, n, k in checks["DENSE_PROJECTIONS"]:
-                prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op])
+                prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], rows)
         dist.barrier()
     local = {"rank": rank, "device": torch.cuda.get_device_name(rank), "projections": {op: {"rank": rank, "candidates": choices, "results": prepared[op]["results"], "prepare_seconds": prepared[op]["prepare_seconds"]} for op, choices in candidates.items()}}
     all_records = [None] * 4
@@ -239,7 +240,7 @@ def run_selection(output, env_output):
     if rank == 0:
         selections = {op: choose_candidate([r["projections"][op] for r in all_records]) for op in candidates}
         env = worker_environment(selections, candidates)
-        result = {"schema": "firmus-decode-dense-selection/v1", "hostname": socket.gethostname(), "host_patch_sha256": host_sha, "shapes": {op: {"m": 128, "n": n, "k": k, "weight_bytes": 4 * n * k} for op, n, k in checks["DENSE_PROJECTIONS"]}, "blocks": BLOCKS, "replays": REPLAYS, "calls_per_replay": REPS, "weight_sets": 4, "timing": "CUDA graph replay; prequantized inputs; rotating weights", "elapsed_seconds": max(r["elapsed_seconds"] for r in all_records), "selections": selections, "worker_environment": env, "ranks": all_records}
+        result = {"schema": "firmus-decode-dense-selection/v1", "hostname": socket.gethostname(), "host_patch_sha256": host_sha, "shapes": {op: {"m": rows, "n": n, "k": k, "weight_bytes": 4 * n * k} for op, n, k in checks["DENSE_PROJECTIONS"]}, "blocks": BLOCKS, "replays": REPLAYS, "calls_per_replay": REPS, "weight_sets": 4, "timing": "CUDA graph replay; prequantized inputs; rotating weights", "elapsed_seconds": max(r["elapsed_seconds"] for r in all_records), "selections": selections, "worker_environment": env, "ranks": all_records}
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
         env_output.parent.mkdir(parents=True, exist_ok=True)

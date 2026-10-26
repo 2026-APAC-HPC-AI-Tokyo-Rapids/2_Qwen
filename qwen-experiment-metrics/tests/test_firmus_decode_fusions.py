@@ -37,7 +37,7 @@ def flag(value):
     return types.SimpleNamespace(get=lambda: value)
 
 
-@pytest.mark.parametrize("rows", [1, 128, 129, 132, 144, 145, 2048])
+@pytest.mark.parametrize("rows", [1, 128, 129, 132, 144, 145, 160, 192, 193, 2048])
 @pytest.mark.parametrize("jit", [False, True])
 @pytest.mark.parametrize("remap", [False, True])
 def test_select_experts_padding_fusion_eligibility(source, rows, jit, remap):
@@ -50,7 +50,7 @@ def test_select_experts_padding_fusion_eligibility(source, rows, jit, remap):
     ns = {"_is_cuda": True, "_use_aiter": False, "get_moe_a2a_backend": lambda: types.SimpleNamespace(is_megamoe=lambda: True), "router_logits": types.SimpleNamespace(shape=(rows, 128)), "top_k": 8, "scoring_func": "softmax", "correction_bias": None, "expert_location_dispatch_info": object() if remap else None, "num_fused_shared_experts": 0, "num_token_non_padded": count, "torch": types.SimpleNamespace(int32="int32"), "envs": types.SimpleNamespace(SGLANG_OPT_USE_JIT_KERNEL_FUSED_TOPK=flag(jit), SGLANG_SIMULATE_UNIFORM_EXPERTS=flag(False), SGLANG_SIMULATE_ROUND_ROBIN_EXPERTS=flag(False)), "_fused_topk_kwargs": {}}
     branch.orelse = []
     exec(compile(ast.fix_missing_locations(ast.Module(body=[branch], type_ignores=[])), "eligibility", "exec"), ns)  # noqa: S102
-    enabled = not remap and rows <= (144 if jit else 128)
+    enabled = not remap and rows <= 192
     assert ns["_fused_topk_kwargs"] == ({"num_token_non_padded": count} if enabled else {})
     assert ns["num_token_non_padded"] is (None if enabled else count)
 
@@ -98,7 +98,7 @@ def test_router_wrapper_preserves_launch_geometry_and_runtime_count(source, fuse
         with pytest.raises(AssertionError):
             call(scores, Tensor((128,), "fp32"), 8, scoring_func="softmax", num_token_non_padded=count)
         with pytest.raises(AssertionError):
-            call(Tensor((145, 128)), None, 8, scoring_func="softmax", num_token_non_padded=count)
+            call(Tensor((193, 128)), None, 8, scoring_func="softmax", num_token_non_padded=count)
         with pytest.raises(AssertionError):
             call(scores, None, 8, scoring_func="sigmoid", num_token_non_padded=count)
 
@@ -122,7 +122,7 @@ def test_eight_lane_head_reduction_retains_original_fp32_tree():
             assert all(result == old[4 * lane + j] for j in range(4))
 
 
-@pytest.mark.parametrize("rows", [1, 128, 144])
+@pytest.mark.parametrize("rows", [1, 128, 144, 160, 192])
 @pytest.mark.parametrize("padding", [False, True])
 def test_fused_topk_passes_runtime_count_without_zero_bias_launch(source, monkeypatch, rows, padding):
     import sys

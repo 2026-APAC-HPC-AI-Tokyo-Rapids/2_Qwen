@@ -24,7 +24,7 @@
      def forward(
 --- /dev/null
 +++ b/python/sglang/srt/layers/quantization/decode_dense_gemm.py
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,81 @@
 +"""Opt-in Decode QKV/O backend selection; unchanged block128 FP8 numerics."""
 +
 +import os
@@ -47,6 +47,14 @@
 +    assert sa.dtype == sb.dtype == torch.float32 and out.dtype == torch.bfloat16
 +    assert a.is_contiguous() and b.is_contiguous()
 +    assert tuple(sa.shape) == (m, k // 128) and tuple(sb.shape) == (n // 128, k // 128)
++    if backend == "dg1-swapab-streamk":
++        import sys
++
++        if "/opt/apac/dense-dg1" not in sys.path:
++            sys.path.insert(0, "/opt/apac/dense-dg1")
++        from dense_dg1 import run
++
++        return run(lhs, rhs, out)
 +    from sglang.kernels.ops.quantization.fp8_kernel import _w8a8_block_fp8_matmul
 +
 +    bm, bn = TRITON_CONFIGS[projection][backend]
@@ -63,12 +71,12 @@
 +    mode = forward_batch.forward_mode
 +    if not (mode.is_decode() or mode.is_target_verify()):
 +        return layer(x)
-+    assert backend in TRITON_CONFIGS[projection], backend
++    assert backend in TRITON_CONFIGS[projection] or backend == "dg1-swapab-streamk", backend
 +    tensor = x[0] if isinstance(x, tuple) else x
 +    shape = (9216, 4096) if projection == "QKV" else (4096, 8192)
 +    method = layer.quant_method
 +    if not (
-+        tensor.ndim == 2 and 0 < tensor.shape[0] <= 128
++        tensor.ndim == 2 and 0 < tensor.shape[0] <= (176 if backend == "dg1-swapab-streamk" else 192)
 +        and tensor.shape[1] == shape[1]
 +        and tuple(layer.weight.shape) == shape
 +        and layer.weight.dtype == torch.float8_e4m3fn

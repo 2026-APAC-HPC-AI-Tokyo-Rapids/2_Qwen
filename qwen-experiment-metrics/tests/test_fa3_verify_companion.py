@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+CANDIDATES = json.loads((ROOT / "kernels/fa3-verify/candidates.json").read_text())
 
 
 def selector():
@@ -18,25 +19,25 @@ def selector():
 
 
 def records(ns):
-    return [{"rank": rank, "batches": {str(batch): {name: {"numeric_passed": True, "blocks": [{"stock": [50., 50.1, 49.9], "candidate": [45., 45.1, 44.9]} for _ in range(2)]} for name in ns["NAMES"]} for batch in range(32, 37)}} for rank in range(4)]
+    return [{"rank": rank, "batches": {str(batch): {name: {"numeric_passed": True, "blocks": [{"stock": [50., 50.1, 49.9], "candidate": [45., 45.1, 44.9]} for _ in range(2)]} for name in ns["NAMES"]} for batch in (36, 38, 40)}} for rank in range(4)]
 
 
-def test_only_b32_selects_and_control_is_never_selected():
+def test_only_cap_batch_selects_and_control_is_never_selected():
     ns = selector()
     ranks = records(ns)
     for rank in ranks:
-        rank["batches"]["32"]["control96"]["blocks"] = [{"stock": [50.], "candidate": [1.]}] * 2
-        rank["batches"]["36"]["t64s2"] = {"numeric_passed": False, "error": "diagnostic only"}
-    result = ns["choose_candidate"](ranks)
-    assert result["winner"] == "t64s2"
-    assert result["env"] == {"SGLANG_DECODE_FA3_VERIFY": "t64s2"}
+        rank["batches"]["40"]["control96"]["blocks"] = [{"stock": [50.], "candidate": [1.]}] * 2
+        rank["batches"]["36"]["p128s2"] = {"numeric_passed": False, "error": "diagnostic only"}
+    result = ns["choose_candidate"](ranks, 40)
+    assert result["winner"] == "p128s2"
+    assert result["env"] == {"SGLANG_DECODE_FA3_VERIFY": "p128s2"}
 
 
 @pytest.mark.parametrize("failure", ["numeric", "exception", "missing-block", "too-small", "second-block-slower"])
 def test_failed_or_inconsistent_candidate_is_excluded_without_losing_others(failure):
     ns = selector()
     ranks = records(ns)
-    result = ranks[2]["batches"]["32"]["t64s2"]
+    result = ranks[2]["batches"]["40"]["p128s2"]
     if failure == "numeric":
         result["numeric_passed"] = False
     elif failure == "exception":
@@ -47,16 +48,16 @@ def test_failed_or_inconsistent_candidate_is_excluded_without_losing_others(fail
         result["blocks"][0]["candidate"] = [46.9]
     else:
         result["blocks"][1]["candidate"] = [51.]
-    assert ns["choose_candidate"](ranks)["winner"] == "t64s3"
+    assert ns["choose_candidate"](ranks, 40)["winner"] == "p128split2-fp8"
 
 
 def test_no_eligible_candidate_clears_the_environment():
     ns = selector()
     ranks = records(ns)
     for rank in ranks:
-        for entry in rank["batches"]["32"].values():
+        for entry in rank["batches"]["40"].values():
             entry["numeric_passed"] = False
-    result = ns["choose_candidate"](ranks)
+    result = ns["choose_candidate"](ranks, 40)
     assert result["winner"] is None and result["env"] == {"SGLANG_DECODE_FA3_VERIFY": ""}
 
 
@@ -99,15 +100,17 @@ def helper(tmp_path, monkeypatch):
         shapes.append((shape, kwargs))
         return object()
 
-    ops = types.SimpleNamespace(prepare=lambda *args: calls.append(("prepare", args)), fwd_out=lambda *args: calls.append(("fwd", args)))
+    ops = types.SimpleNamespace(prepare=lambda *args: calls.append(("prepare", args)), fwd_out=lambda *args: calls.append(("fwd", args)), fwd_fp8_out=lambda *args: calls.append(("fp8", args)))
     torch = types.SimpleNamespace(ops=types.SimpleNamespace(load_library=loads.append, apac_fa3_verify=ops), library=types.SimpleNamespace(register_fake=lambda _: lambda f: f), empty=empty, float32="fp32", int32="int32", bfloat16="bf16")
     monkeypatch.setitem(sys.modules, "torch", torch)
-    ns = runpy.run_path(str(tmp_path / "python/sglang/srt/layers/attention/decode_fa3_verify.py"))
+    module = tmp_path / "python/sglang/srt/layers/attention/decode_fa3_verify.py"
+    module.write_text(module.read_text().replace("/opt/apac/fa3-verify", str(ROOT / "kernels/fa3-verify")))
+    ns = runpy.run_path(str(module))
     return ns, loads, calls, shapes
 
 
-@pytest.mark.parametrize("batch", range(32, 37))
-@pytest.mark.parametrize("name,splits", [("t64s2", 1), ("t64s3", 1), ("p128s2", 1), ("t64split2", 2), ("t64split3", 3)])
+@pytest.mark.parametrize("batch", range(32, 49))
+@pytest.mark.parametrize("name,splits", [(c["name"], c["splits"]) for c in CANDIDATES if c["output"] == "bf16"])
 def test_workspace_is_owned_by_forward_and_split_buffers_stay_fp32(helper, batch, name, splits):
     ns, loads, calls, shapes = helper
     assert not loads, "import alone must not load the companion"
@@ -115,7 +118,7 @@ def test_workspace_is_owned_by_forward_and_split_buffers_stay_fp32(helper, batch
     state = ns["allocate"](lengths, name)
     other = ns["allocate"](lengths, name)
     assert len(loads) == 1 and state["metadata"] is not other["metadata"]
-    assert shapes[0][0] == 4 * ((batch + 3) // 4 * 4) + 1
+    assert shapes[0][0] == 4 * ((batch + 3) // 4 * 4) + 1 + (batch * 4 if state["spec"].get("merge") else 0)
     assert shapes[2][0] == ((splits, 64, 4 * batch, 128) if splits > 1 else (0,))
     assert shapes[2][1]["dtype"] == "fp32"
     q, k, v, pages, cu, out = [object() for _ in range(6)]
@@ -128,8 +131,15 @@ def test_workspace_is_owned_by_forward_and_split_buffers_stay_fp32(helper, batch
 
 def test_build_and_serving_are_wired_without_rejected_probes():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert config["decode_max_running_requests"] == 128
-    assert config["sglang_overlay_patches"][-1] == "patches/sglang/decode-fa3-verify.patch"
+    assert config["decode_max_running_requests"] == 176
+    assert "patches/sglang/decode-fa3-verify.patch" in config["sglang_overlay_patches"]
+    assert config["sglang_overlay_patches"][-5:-1] == [
+        "patches/sglang/prefill-fp8-integration.patch",
+        "patches/sglang/prefill-qkv-fast-fp8.patch",
+        "patches/sglang/decode-qknorm-fast-fp8.patch",
+        "patches/sglang/decode-add-rmsnorm-group-quant.patch",
+    ]
+    assert config["sglang_overlay_patches"][-1] == "patches/sglang/prefill-async-admission.patch"
     assert not any("decode-gate" in p or "l2-prefetch" in p for p in config["sglang_overlay_patches"] + config["deep_gemm_overlay_patches"])
     assert "sm90-decode-l2-prefetch" not in (ROOT / "patches/deep-gemm-host/series").read_text()
     shell = (ROOT / "scripts/select-firmus-decode-kernels.sh").read_text()
@@ -153,9 +163,9 @@ def test_serving_gate_only_checks_the_selected_fa3(monkeypatch):
     monkeypatch.delenv("SGLANG_DECODE_FA3_VERIFY", raising=False)
     ns["check_fa3_verify"](selected_only=True)
     assert calls == []
-    monkeypatch.setenv("SGLANG_DECODE_FA3_VERIFY", "t64s3")
+    monkeypatch.setenv("SGLANG_DECODE_FA3_VERIFY", "p128split2-fp8")
     ns["check_fa3_verify"](selected_only=True)
-    assert calls == [(b, "t64s3") for b in range(32, 37)]
+    assert calls == [(b, "p128split2-fp8") for b in range(32, 49)]
 
 
 class VerifyTensor:
@@ -184,10 +194,10 @@ def backend_method(monkeypatch):
     ns = {"torch": types.SimpleNamespace(float8_e4m3fn="fp8")}
     exec(compile(ast.Module(body=[method], type_ignores=[]), 'companion-backend', 'exec'), ns)  # noqa: S102 - complete tracked production method
     calls = []
-    native = types.SimpleNamespace(allocate=lambda *args: calls.append(("allocate", args)) or object(), prepare=lambda *args: calls.append(("prepare", args)), forward=lambda *args: calls.append(("forward", args)) or args[-1])
+    native = types.SimpleNamespace(output_fp8=lambda name: False, allocate=lambda *args: calls.append(("allocate", args)) or object(), prepare=lambda *args: calls.append(("prepare", args)), forward=lambda *args: calls.append(("forward", args)) or args[-1])
     monkeypatch.setitem(sys.modules, "sglang.srt.layers.attention", types.SimpleNamespace(decode_fa3_verify=native))
     metadata = types.SimpleNamespace(cache_seqlens_int32=VerifyTensor(32), max_seq_len_q=4, verify_fa3_state=None)
-    backend = types.SimpleNamespace(forward_metadata=metadata, fa_impl_ver=3, use_mla=False, attn_cp_size=1, topk=1, page_size=64, _decode_fa3_verify_name="t64s3")
+    backend = types.SimpleNamespace(forward_metadata=metadata, fa_impl_ver=3, use_mla=False, attn_cp_size=1, topk=1, page_size=64, _decode_fa3_verify_name="p128split2-fp8")
     layer = types.SimpleNamespace(tp_q_head_num=64, tp_k_head_num=4, tp_v_head_num=4, head_dim=128, v_head_dim=128, logit_cap=0, is_cross_attention=False, scaling=.1)
     fb = types.SimpleNamespace(forward_mode=types.SimpleNamespace(is_target_verify=lambda: True), spec_info=None)
     q, kv = VerifyTensor(32 * 4 * 64 * 128), VerifyTensor(1)
@@ -231,3 +241,54 @@ def test_unsupported_geometry_returns_before_companion_import_or_allocation(back
         args[0].fa_impl_ver = 4
     monkeypatch.delitem(sys.modules, "sglang.srt.layers.attention")
     assert method(*args) is None and calls == []
+
+
+@pytest.mark.parametrize("cap,expected", [(176, (40, 42, 44)), (160, (36, 38, 40)), (192, (44, 46, 48))])
+def test_measurement_and_selection_batches_follow_the_config(cap, expected):
+    tree = ast.parse((ROOT / "scripts/select-firmus-decode-fa3.py").read_text())
+    run = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run_selection")
+    nodes = [n for n in run.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {"cap", "selection_batch", "batches"} for t in n.targets)]
+    ns = {"config": {"decode_max_running_requests": cap, "decode_dp_size": 4}}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "selection-geometry", "exec"), ns)  # noqa: S102 - actual production assignments
+    assert ns["batches"] == expected and ns["selection_batch"] == expected[-1]
+
+
+@pytest.mark.parametrize("serving_enabled", [False, True])
+def test_image_compile_control_preserves_configured_overlay_order(tmp_path, serving_enabled):
+    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    candidate = "sm90-decode-independent-wg.patch"
+    config["deep_gemm_overlay_patches"] = [p for p in config["deep_gemm_overlay_patches"] if Path(p).name != candidate]
+    if serving_enabled:
+        config["deep_gemm_overlay_patches"].insert(-1, "patches/deep-gemm-overlay/" + candidate)
+    expected = [ROOT / p for p in config["deep_gemm_overlay_patches"]]
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config))
+    tree = ast.parse((ROOT / "containers/check-sm90-independent-wg.py").read_text())
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    node = next(n for n in main.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "patches" for t in n.targets))
+    ns = {"args": types.SimpleNamespace(config=path, patch_dir=ROOT / "patches/deep-gemm-overlay"), "Path": Path, "json": json, "CANDIDATE": candidate}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), "image-control-patches", "exec"), ns)  # noqa: S102 - actual build-helper selection
+    assert ns["patches"] == expected
+    assert all(p.read_bytes() for p in ns["patches"])
+
+
+@pytest.mark.parametrize("spec", [c for c in CANDIDATES if c["output"] == "fp8"])
+def test_fp8_forward_preserves_preallocated_gemm_input_and_never_calls_bf16_op(helper, spec):
+    ns, _, calls, shapes = helper
+    lengths = types.SimpleNamespace(numel=lambda: 40, device="cuda:0")
+    state = ns["allocate"](lengths, spec["name"])
+    assert shapes[2][0][0] == spec["splits"]
+    assert ns["output_fp8"](spec["name"])
+
+    class Tensor:
+        shape = (160,64,128)
+
+        def view(self, *shape):
+            return self
+
+    output, scales = Tensor(), object()
+    before = len(shapes)
+    q = Tensor()
+    pair = ns["forward"](state,q,object(),object(),object(),lengths,object(),.1,(output,scales))
+    assert pair == (output,scales) and len(shapes) == before
+    assert calls[-1][0] == "fp8" and calls[-1][1][-1] is scales

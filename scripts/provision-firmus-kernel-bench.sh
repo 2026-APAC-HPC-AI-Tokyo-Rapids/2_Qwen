@@ -63,7 +63,7 @@ check_candidate_host() {
   patch_sha=$(sha256sum "${GITHUB_WORKSPACE}/patches/deep-gemm-host/${patch_name}" | awk '{print $1}')
   extension_sha=$(sha256sum "${extension}" | awk '{print $1}')
   if [[ ! -s "${record}" ]] || ! jq -e --arg patch "${patch_name}" --arg sha "${patch_sha}" --arg extension "${extension_sha}" '.abi == "tvm-ffi" and .patches[$patch] == $sha and .extension_sha256 == $extension' "${record}" >/dev/null; then
-    printf 'Candidate %s requires a rebuilt DeepGEMM host with %s SHA256 %s and its matching _C.so. Build a fresh image and update configs/firmus-framework.json before kernel-bench; the old host silently ignores DG_SM90_DECODE_INDEPENDENT_WG.\n' "$(basename "${dir}")" "${patch_name}" "${patch_sha}" >&2
+    printf 'Candidate %s requires a rebuilt DeepGEMM host with %s SHA256 %s and its matching _C.so. Build a fresh image and update configs/firmus-framework.json before kernel-bench; the old host ignores the requested independent WG switch.\n' "$(basename "${dir}")" "${patch_name}" "${patch_sha}" >&2
     return 1
   fi
 }

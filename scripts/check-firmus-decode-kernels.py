@@ -36,6 +36,11 @@ from sglang.kernels.ops.moe.decode_silu_quant import decode_silu_quant
 from sglang.kernels.ops.quantization.fp8_kernel import sglang_per_token_group_quant_fp8
 
 
+def decode_cap_tokens():
+    config = json.loads((Path(__file__).resolve().parents[1] / "source/firmus-framework.json").read_text())
+    return config["decode_max_running_requests"]
+
+
 def check_numerics(actual, expected, label):
     assert actual.shape == expected.shape and actual.dtype == expected.dtype, label
     bitwise = torch.equal(actual.view(torch.uint8), expected.view(torch.uint8))
@@ -54,6 +59,21 @@ def check_numerics(actual, expected, label):
     # Allow rounding differences. These bounds reject broken indexing/scaling;
     # they do not establish end-to-end model quality or official eligibility.
     assert relative_l2 <= 0.05 and max_scaled <= 0.25, label
+
+
+def check_decode_fp8_conversion():
+    """All BF16 encodings in each packed lane against the old CUDA NOSAT call."""
+    from sglang.kernels.jit.utils import load_jit
+
+    module = load_jit("decode_fp8_check", cuda_files=["elementwise/decode_fp8_check.cuh"], cuda_wrappers=[("run", "DecodeFP8Check::run")])
+    bits = torch.arange(65536, device="cuda", dtype=torch.int32)
+    # A bijective permutation puts every encoding in both positions and makes
+    # the neighbours different, catching swapped bytes and cross-lane repair.
+    pairs = torch.stack((bits, bits ^ 0xA55A), dim=1).to(torch.uint16).view(torch.bfloat16)
+    reference, actual = [torch.empty(65536, device="cuda", dtype=torch.uint16) for _ in range(2)]
+    module.run(pairs, reference, actual)
+    assert torch.equal(actual.view(torch.uint8), reference.view(torch.uint8)), "packed BF16 -> FP8 differs from CUDA NOSAT"
+    print(json.dumps({"check": "decode_fp8_all_bf16", "patterns_per_lane": 65536, "packed_lanes": 2, "bitwise_equal": True}), flush=True)
 
 
 def check_decode_silu_quant():
@@ -180,7 +200,7 @@ def check_topk_mask():
 
     torch.manual_seed(83719)
     for dtype in (torch.bfloat16, torch.float32):
-        for rows in (1, 7, 31, 128):
+        for rows in (1, 7, 31, 128, 160, 192):
             logits = torch.randn(rows, 128, dtype=dtype, device="cuda") * 4
             logits[0].zero_()  # tie order must match the actual AOT router
             if rows > 1:
@@ -268,7 +288,7 @@ def check_rope_fp8_kv():
                 assert codes.numel() == 0 or int(codes.max()) <= 1, (label, name, "more than one FP8 code apart")
 
     # Zero rows, odd tails, Decode verify sizes and Prefill chunks (token-warp grid).
-    for rows in (0, 1, 3, 31, 126, 128, 129, 132, 136, 140, 144, 145, 3986, 4027):
+    for rows in (0, 1, 3, 31, 126, 128, 129, 132, 136, 140, 144, 145, 160, 192, 193, 3986, 4027):
         for id_dtype in (torch.int32, torch.int64):
             packed = torch.randn(rows, 72, 128, device="cuda", dtype=torch.bfloat16) * 4
             q, k, v = packed[:, :64], packed[:, 64:68], packed[:, 68:]
@@ -284,7 +304,7 @@ def check_rope_fp8_kv():
             apply_qknorm_rope_fp8_kv(q, k, qw, kw, cache, positions, eps, actual[0], v, actual[1], actual[2], loc)
             compare(actual, expected, f"{rows}_{id_dtype}")
             assert all(torch.equal(x.view(torch.uint8), old.view(torch.uint8)) for x, old in zip((q, k, v), original)), "QKV input modified"
-            if rows in (128, 129, 132, 144):
+            if rows in (128, 129, 132, 144, 160, 192):
                 # Same production API and fixed addresses; runtime input values,
                 # cache locations and the number of slot-zero padding rows vary.
                 def decode_forward():
@@ -363,7 +383,7 @@ def check_decode_router_padding():
         return
     torch.manual_seed(61022)
     for dtype in (torch.bfloat16, torch.float32):
-        for rows in (1, 7, 31, 32, 128, 129, 132, 136, 140, 144):
+        for rows in (1, 7, 31, 32, 128, 129, 132, 136, 140, 144, 160, 192):
             logits = torch.randn(rows, 128, device="cuda", dtype=dtype) * 4
             logits[0].zero_()  # exact tie ordering
             if rows > 1:
@@ -388,7 +408,7 @@ def check_decode_router_padding():
                 for valid in (0, max(0, rows - 3), rows):
                     count.fill_(valid)
                     compare(forward(), f"decode_router_{dtype}_{rows}_{valid}_renorm{renormalize}")
-                if rows in (128, 129, 132, 144):
+                if rows in (128, 129, 132, 144, 160, 192):
                     stream = torch.cuda.Stream()
                     stream.wait_stream(torch.cuda.current_stream())
                     with torch.cuda.stream(stream):
@@ -406,6 +426,30 @@ def check_decode_router_padding():
     print("PASS: Decode Triton router exact weights/IDs; ties, extreme logits, zero/live padding and changed-input graph replay", flush=True)
 
 
+
+
+def compare_norm_quant(actual, expected, label):
+    q, scale, residual = actual
+    eq, es, eres = expected
+    assert q.shape == eq.shape and scale.shape == es.shape and scale.stride() == es.stride(), label
+    bitwise = torch.equal(q.view(torch.uint8), eq.view(torch.uint8)) and torch.equal(scale, es)
+    assert torch.equal(residual.view(torch.uint8), eres.view(torch.uint8)), (label, "residual")
+    rows = q.shape[0]
+    mismatch = int((q.view(torch.uint8) != eq.view(torch.uint8)).sum())
+    if rows:
+        scale_rel = ((scale - es).abs() / es).max().item()
+        a = q.float().view(rows, 32, 128) * scale[:, :, None]
+        b = eq.float().view(rows, 32, 128) * es[:, :, None]
+        # One E4M3 step of the larger magnitude (relative 2^-3), floor at the
+        # subnormal step 2^-9 x scale, plus the allowed scale change.
+        bound = torch.maximum(a.abs(), b.abs()) * (2.0**-3 + scale_rel) + 2.0**-9 * torch.maximum(scale, es)[:, :, None]
+        value_ok = bool(((a - b).abs() <= bound).all())
+    else:
+        scale_rel, value_ok = 0.0, True
+    print(json.dumps({"check": f"norm_quant_{label}", "bitwise_equal": bitwise, "fp8_codes_differing": mismatch, "max_scale_rel_diff": scale_rel}), flush=True)
+    assert scale_rel <= 2.0**-7, (label, "scale", scale_rel)
+    assert value_ok, (label, "dequantized value")
+    return bitwise
 
 
 def check_add_rmsnorm_group_quant():
@@ -441,29 +485,6 @@ def check_add_rmsnorm_group_quant():
         q, scale = sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
         return q, scale, residual
 
-    def compare(actual, expected, label):
-        q, scale, residual = actual
-        eq, es, eres = expected
-        assert q.shape == eq.shape and scale.shape == es.shape and scale.stride() == es.stride(), label
-        bitwise = torch.equal(q.view(torch.uint8), eq.view(torch.uint8)) and torch.equal(scale, es)
-        assert torch.equal(residual.view(torch.uint8), eres.view(torch.uint8)), (label, "residual")
-        rows = q.shape[0]
-        mismatch = int((q.view(torch.uint8) != eq.view(torch.uint8)).sum())
-        if rows:
-            scale_rel = ((scale - es).abs() / es).max().item()
-            a = q.float().view(rows, 32, 128) * scale[:, :, None]
-            b = eq.float().view(rows, 32, 128) * es[:, :, None]
-            # One E4M3 step of the larger magnitude (relative 2^-3), floor at the
-            # subnormal step 2^-9 x scale, plus the allowed scale change.
-            bound = torch.maximum(a.abs(), b.abs()) * (2.0**-3 + scale_rel) + 2.0**-9 * torch.maximum(scale, es)[:, :, None]
-            value_ok = bool(((a - b).abs() <= bound).all())
-        else:
-            scale_rel, value_ok = 0.0, True
-        print(json.dumps({"check": f"norm_quant_{label}", "bitwise_equal": bitwise, "fp8_codes_differing": mismatch, "max_scale_rel_diff": scale_rel}), flush=True)
-        assert scale_rel <= 2.0**-7, (label, "scale", scale_rel)
-        assert value_ok, (label, "dequantized value")
-        return bitwise
-
     for rows in (0, 1, 2, 3, 7, 31, 126, 127, 128, 144, 2047, 2048, 2049, 3986, 4027):
         x = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16) * 2
         residual = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16) * 8
@@ -473,7 +494,7 @@ def check_add_rmsnorm_group_quant():
         expected = reference(x, residual)
         work = residual.clone()
         q, scale = nq.add_rmsnorm_group_quant_fp8(x, work, weight, eps)
-        compare((q, scale, work), expected, str(rows))
+        compare_norm_quant((q, scale, work), expected, str(rows))
 
     x = torch.randn(128, 4096, device="cuda", dtype=torch.bfloat16)
     residual = torch.randn(128, 4096, device="cuda", dtype=torch.bfloat16)
@@ -492,8 +513,70 @@ def check_add_rmsnorm_group_quant():
         work.copy_(residual)
         expected = reference(x, residual)
         graph.replay()
-        compare((*actual, work), expected, f"graph_{replay}")
+        compare_norm_quant((*actual, work), expected, f"graph_{replay}")
     print("PASS: fused add-RMSNorm + group-128 FP8 quant within rounding of flashinfer fused_add_rmsnorm + per_token_group_quant (residual exact); zero/odd/Prefill rows; graph replay", flush=True)
+
+
+
+def check_decode_add_rmsnorm_group_quant():
+    """One-row Decode layout under the same rounding-level bounds as the Prefill screen.
+
+    The two-row kernel already differs from flashinfer in a few FP8 codes per
+    row (run 40197369083: 512 of 127x4096 codes, identical scales), so a
+    bitwise gate rejects the unchanged arithmetic as well.
+    """
+    from sgl_kernel import fused_add_rmsnorm
+
+    try:
+        import sglang.kernels.ops.layernorm.add_rmsnorm_group_quant as nq
+    except ImportError:
+        print("SKIP: norm/quant overlay is not in this SGLang tree", flush=True)
+        return
+
+    if not hasattr(nq, "decode_add_rmsnorm_group_quant_fp8"):
+        print("SKIP: one-row Decode norm/quant is not in this SGLang tree", flush=True)
+        return
+    decode_add_rmsnorm_group_quant_fp8 = nq.decode_add_rmsnorm_group_quant_fp8
+
+    torch.manual_seed(1764096)
+    weight = (torch.randn(4096, device="cuda") * .1 + 1).bfloat16()
+    for rows in (0, 1, 127, 128, 144, 160, 164, 168, 172, 176, 177, 192):
+        x = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16)
+        residual = torch.randn_like(x)
+        work = residual.clone()
+
+        def reference():
+            y, r = x.clone(), residual.clone()
+            if rows:
+                fused_add_rmsnorm(y, r, weight, 1e-6)
+            q, s = sglang_per_token_group_quant_fp8(y, 128, column_major_scales=True, scale_tma_aligned=True)
+            return q, s, r
+
+        def compare(actual, label):
+            compare_norm_quant(actual, reference(), label)
+
+        if rows:
+            x[0].zero_()
+            residual[0].zero_()
+            work.copy_(residual)
+        out = decode_add_rmsnorm_group_quant_fp8(x, work, weight, 1e-6)
+        compare((*out, work), f"decode_{rows}")
+        if rows not in (160, 176, 192):
+            continue
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            decode_add_rmsnorm_group_quant_fp8(x, work, weight, 1e-6)
+        torch.cuda.current_stream().wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            out = decode_add_rmsnorm_group_quant_fp8(x, work, weight, 1e-6)
+        for replay in range(3):
+            x.copy_(torch.randn_like(x) * (replay + 1))
+            residual.copy_(torch.randn_like(residual) * 8)
+            work.copy_(residual)
+            graph.replay()
+            compare((*out, work), f"decode_graph_{rows}_{replay}")
 
 
 def check_prefill_attention():
@@ -661,7 +744,7 @@ def check_verify_scheduler_sharing():
         for key in ("q", "k_cache", "v_cache"):
             common[key].copy_((-common[key].float()).to(common[key].dtype))
         captured_buckets.append((batch, graph, actual, common, metadata))
-    assert len({m.verify_scheduler_metadata.data_ptr() for _, _, _, _, m in captured_buckets}) == 5
+    assert len({m.verify_scheduler_metadata.data_ptr() for _, _, _, _, m in captured_buckets}) == len(ops["BATCHES"])
     # Replay old buckets after capturing other buckets, including different B.
     for batch, graph, actual, common, metadata in reversed(captured_buckets):
         graph.replay()
@@ -672,12 +755,17 @@ def check_verify_scheduler_sharing():
 
 
 # Companion verify helpers are shared by the numeric gate and job-local selector.
-FA3_VERIFY_NAMES = ("control96", "t64s2", "t64s3", "p128s2", "t64split2", "t64split3")
+_candidate_table = Path(__file__).resolve().parents[1] / "kernels/fa3-verify/candidates.json"
+if not _candidate_table.is_file():
+    _candidate_table = Path("/opt/apac/fa3-verify/candidates.json")
+FA3_VERIFY_CANDIDATES = json.loads(_candidate_table.read_text())
+FA3_VERIFY_NAMES = tuple(c["name"] for c in FA3_VERIFY_CANDIDATES)
 
 
 def verify_inputs(batch, seed=93101, boundary=False):
+    assert 32 <= batch <= 48
     generator = torch.Generator(device="cuda").manual_seed(seed)
-    lengths = ([4, 63, 64, 65, 95, 96, 97, 127, 128, 129] * 4)[:batch] if boundary else [3900 + (37 * i + 13) % 301 for i in range(batch)]
+    lengths = ([4, 63, 64, 65, 95, 96, 97, 127, 128, 129] * 5)[:batch] if boundary else [3900 + (37 * i + 13) % 301 for i in range(batch)]
     columns = (max(lengths) + 63) // 64
     pages = batch * columns
     dtype = torch.float8_e4m3fn
@@ -720,7 +808,11 @@ def verify_step(commons, name):
     from sglang.srt.layers.attention import decode_fa3_verify as native
 
     common = commons[0]
-    outputs = [torch.empty_like(c["q"], dtype=torch.bfloat16) for c in commons]
+    fp8 = name != "stock" and native.output_fp8(name)
+    if fp8:
+        outputs = [(torch.empty_like(c["q"]).view(-1, 8192), torch.empty((64, c["q"].shape[0]), device=c["q"].device, dtype=torch.float32).T) for c in commons]
+    else:
+        outputs = [torch.empty_like(c["q"], dtype=torch.bfloat16) for c in commons]
     state = None if name == "stock" else native.allocate(common["cache_seqlens"], name)
 
     def step():
@@ -733,7 +825,11 @@ def verify_step(commons, name):
             if state is None:
                 flash_attn_with_kvcache(**c, out=out, scheduler_metadata=metadata, num_splits=1, pack_gqa=True)
             else:
-                native.forward(state, c["q"], c["k_cache"], c["v_cache"], c["page_table"], c["cache_seqlens"], c["cu_seqlens_q"], c["softmax_scale"], out)
+                native.forward(state, c["q"], c["k_cache"], c["v_cache"], c["page_table"], c["cache_seqlens"], c["cu_seqlens_q"], c["softmax_scale"], (out[0].view(-1,64,128), out[1]) if fp8 else out)
+            if not fp8:
+                # Include the actual downstream quant kernel and its launch gap
+                # for stock and every BF16 candidate, just as serving does.
+                sglang_per_token_group_quant_fp8(out.view(-1,8192), 128, column_major_scales=True, scale_tma_aligned=True)
         return outputs[93 % len(commons)]
 
     step.output = outputs[93 % len(commons)]
@@ -754,7 +850,7 @@ def verify_capture(step):
 
 
 def verify_errors(actual, expected, label):
-    assert actual.shape == expected.shape and actual.dtype == torch.bfloat16, label
+    assert actual.shape == expected.shape and actual.dtype in (torch.bfloat16, torch.float32), label
     assert actual.isfinite().all() and expected.isfinite().all(), label
     a, b = actual.float(), expected.float()
     error = a - b
@@ -765,6 +861,25 @@ def verify_errors(actual, expected, label):
     return result
 
 
+def verify_dequant(output):
+    if isinstance(output, tuple):
+        a, scale = output
+        return (a.float().view(-1,64,128) * scale[...,None]).view(-1,64,128)
+    return output
+
+
+def verify_quant_gate(output, stock):
+    if not isinstance(output, tuple):
+        return {}
+    a, scale = output
+    q, expected_scale = sglang_per_token_group_quant_fp8(stock.view(-1,8192), 128, column_major_scales=True, scale_tma_aligned=True)
+    assert scale.stride(0) == 1 and scale.stride(1) % 4 == 0
+    assert scale.isfinite().all() and (scale > 0).all()
+    # FP32 merge intentionally avoids BF16 rounding, so compare values and
+    # scales numerically; exact codes would reject the permitted finer result.
+    return {"quantized_values": verify_errors(a.float(), q.float(), "verify_fp8_codes"), "scales": verify_errors(scale, expected_scale, "verify_fp8_scales"), "stock_quant_dequant": verify_errors(verify_dequant(output), verify_dequant((q, expected_scale)), "verify_stock_quant_dequant"), "differing_codes": (a.view(torch.uint8) != q.view(torch.uint8)).sum().item()}
+
+
 def verify_validate_candidate(batch, name):
     from sgl_kernel.flash_attn import flash_attn_with_kvcache
 
@@ -772,9 +887,12 @@ def verify_validate_candidate(batch, name):
     for boundary in (False, True):
         common, lengths = verify_inputs(batch, 93101 + batch, boundary)
         step = verify_step([common], name)
+        if boundary and step.state is not None:
+            step.state["partial"].fill_(float("nan"))
+            step.state["partial_lse"].fill_(float("nan"))
         step()
         stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
-        metrics.append({"boundary": boundary, "stock": verify_errors(step.output, stock, name), "fp32": verify_errors(step.output, verify_fp32_reference(common, lengths), name + "_fp32")})
+        metrics.append({"boundary": boundary, "o_gemm_input": verify_quant_gate(step.output, stock), "stock": verify_errors(verify_dequant(step.output), stock, name), "fp32": verify_errors(verify_dequant(step.output), verify_fp32_reference(common, lengths), name + "_fp32")})
         graph = verify_capture(step)
         for replay in range(2):
             for key in ("q", "k_cache", "v_cache"):
@@ -785,19 +903,40 @@ def verify_validate_candidate(batch, name):
             common["cache_seqlens"].copy_(torch.tensor(lengths, device="cuda", dtype=torch.int32))
             # cu_q is also live graph input; keep this fixed Q4 specialization valid.
             common["cu_seqlens_q"].copy_(torch.arange(0, 4 * batch + 1, 4, device="cuda", dtype=torch.int32))
+            if boundary and step.state is not None:
+                step.state["partial"].fill_(float("nan"))
+                step.state["partial_lse"].fill_(float("nan"))
             graph.replay()
             stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
-            metrics.append({"boundary": boundary, "replay": replay, "stock": verify_errors(step.output, stock, name + "_changed94"), "fp32": verify_errors(step.output, verify_fp32_reference(common, lengths), name + "_changed_fp32")})
+            metrics.append({"boundary": boundary, "replay": replay, "o_gemm_input": verify_quant_gate(step.output, stock), "stock": verify_errors(verify_dequant(step.output), stock, name + "_changed94"), "fp32": verify_errors(verify_dequant(step.output), verify_fp32_reference(common, lengths), name + "_changed_fp32")})
             state = step.state
-            if state is not None and state["candidate"] >= 4:
-                splits = state["candidate"] - 2
+            if state is not None and state["spec"]["splits"] > 1:
+                splits = state["spec"]["splits"]
+                counts = [splits] * batch
+                if state["spec"].get("uneven"):
+                    rounded = (batch + 3) // 4 * 4
+                    metadata = state["metadata"].cpu().tolist()
+                    for virtual in range(batch):
+                        counts[metadata[rounded * 2 + virtual]] = metadata[virtual]
+                    four = max(0, min(batch, 132 - 3 * batch))
+                    assert sorted(counts) == [3] * (batch - four) + [4] * four
+                if state["spec"].get("merge"):
+                    rounded = (batch + 3) // 4 * 4
+                    assert (state["metadata"][4 * rounded + 1:] == 0).all(), "merge counters survive graph replay"
+                    # Resetting prepare runs once per step; every layer must
+                    # return its own arrival counters to zero without prepare.
                 for b, length in enumerate(lengths):
-                    blocks = (length + 63) // 64
-                    per_split = (blocks + splits - 1) // splits
-                    for split in range(splits):
+                    active_splits = counts[b]
+                    blocks = (length + state["spec"]["block_n"] - 1) // state["spec"]["block_n"]
+                    per_split = (blocks + active_splits - 1) // active_splits
+                    for split in range(active_splits):
                         if split * per_split >= blocks:
                             assert state["partial_lse"][split, :, 4 * b:4 * b + 4].isneginf().all(), "empty split LSE"
-                            assert (state["partial"][split, :, 4 * b:4 * b + 4] == 0).all(), "empty split O"
+        if step.state is not None and step.state["spec"].get("merge"):
+            output = step.output if isinstance(step.output, tuple) else (step.output,)
+            saved = [x.contiguous().view(torch.uint8).clone() for x in output]
+            graph.replay()
+            assert all((x.contiguous().view(torch.uint8) == y).all() for x, y in zip(output, saved)), "in-kernel merge is not deterministic"
     return {"numeric_passed": True, "metrics": metrics, "changed_input_replays": 2, "layers_per_replay": 94}
 
 
@@ -809,7 +948,7 @@ def check_fa3_verify(selected_only=False):
     names = (selected,) if selected_only else FA3_VERIFY_NAMES
     for name in names:
         assert name in FA3_VERIFY_NAMES
-        for batch in range(32, 37):
+        for batch in range(32, 49):
             result = verify_validate_candidate(batch, name)
             print(json.dumps({"check": "fa3_verify", "candidate": name, "batch": batch, **result}), flush=True)
 
@@ -817,18 +956,17 @@ def check_fa3_verify(selected_only=False):
 DENSE_PROJECTIONS = (("qkv", 9216, 4096), ("o", 4096, 8192))
 # (BM, BN, stages, multicast, multicast_on_A); one factor at a time where possible.
 DENSE_CONFIGS = {
-    "qkv": ((64, 144, 5, 1, 0), (64, 144, 7, 2, 1), (64, 144, 7, 2, 0), (64, 128, 8, 1, 0), (128, 80, 7, 1, 0), (128, 80, 5, 1, 0), (128, 80, 7, 2, 1), (128, 64, 8, 1, 0)),
-    "o": ((64, 64, 9, 1, 0), (64, 64, 13, 2, 1), (64, 64, 13, 2, 0), (64, 80, 11, 1, 0), (128, 32, 10, 1, 0), (128, 32, 7, 1, 0), (128, 32, 10, 2, 1), (128, 64, 8, 1, 0)),
+    "qkv": ((64, 144, 5, 1, 0), (64, 144, 7, 1, 0), (128, 144, 5, 1, 0), (128, 80, 7, 1, 0)),
+    "o": ((64, 64, 9, 1, 0), (64, 64, 13, 1, 0), (128, 64, 8, 1, 0), (128, 32, 10, 1, 0)),
 }
-DENSE_HOST_SHA256 = "8af3cbc8b29bbb15f708867fe582b35351bd1a35a58db663bcb54ebdc91c26a9"
+DENSE_HOST_SHA256 = "3ed1a5f562c2e10f9f8c438225eb63fcc36ef31378a2262267a062abcf090326"
 
 
 def dense_candidates(op):
     candidates = [{"name": "stock", "backend": "deepgemm", "config": None}]
     for config in DENSE_CONFIGS[op]:
         candidates.append({"name": "dg-" + "-".join(map(str, config)), "backend": "deepgemm", "config": config})
-    for bm, bn in ((64, 128), (128, 64 if op == "qkv" else 32)):
-        candidates.append({"name": f"triton-{bm}-{bn}-128-s3-w4", "backend": "triton", "config": (bm, bn, 3, 4)})
+    candidates.append({"name": "dg1-swapab-streamk", "backend": "companion", "config": None})
     return candidates
 
 
@@ -868,6 +1006,14 @@ def dense_call(candidate, inputs):
         import deep_gemm
 
         return lambda: deep_gemm.fp8_gemm_nt(lhs, rhs, out)
+    if candidate["backend"] == "companion":
+        import sys
+
+        if "/opt/apac/dense-dg1" not in sys.path:
+            sys.path.insert(0, "/opt/apac/dense-dg1")
+        from dense_dg1 import prepare
+
+        return prepare(lhs, rhs, out)
     # Call the image's existing kernel directly: the public wrapper chooses a
     # JSON/default config and allocates output. No global config monkeypatching.
     from sglang.kernels.ops.quantization.fp8_kernel import _w8a8_block_fp8_matmul
@@ -908,7 +1054,7 @@ def check_dense_errors(metrics):
 
 
 def dense_errors(actual, expected):
-    assert actual.shape == expected.shape and actual.dtype == torch.bfloat16
+    assert actual.shape == expected.shape and actual.dtype in (torch.bfloat16, torch.float32)
     error = actual.float() - expected
     metrics = {"finite": bool(actual.isfinite().all() and expected.isfinite().all()), "relative_l2": (error.norm() / expected.norm().clamp_min(1e-12)).item(), "max_scaled_error": (error.abs().amax() / expected.abs().amax().clamp_min(1e-12)).item()}
     check_dense_errors(metrics)
@@ -932,6 +1078,10 @@ def dense_validate_candidate(op, candidate, inputs, reference, stock):
     out.fill_(float("nan"))
     call()
     metrics = dense_errors(out, reference)
+    if candidate["backend"] == "companion":
+        first = out.clone()
+        call()
+        assert torch.equal(out, first), "dense DG1 output must be deterministic"
     stock_metrics = dense_errors(out, stock.float())
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
@@ -994,7 +1144,7 @@ def check_dense_gemm(selected_only=False):
     assert torch.cuda.get_device_properties(torch.cuda.current_device()).multi_processor_count == 132
     with dense_fp32_reference():
         for op, n, k in DENSE_PROJECTIONS:
-            for rows in (64, 65, 128, 129, 132, 144):
+            for rows in (4, 64, 65, 129, decode_cap_tokens()):
                 inputs = dense_inputs(rows, n, k, 31000 + rows + n)
                 reference = dense_reference(inputs[0], inputs[1])
                 with dense_gemm_mode(op, dense_candidates(op)[0]):
@@ -1003,13 +1153,234 @@ def check_dense_gemm(selected_only=False):
                 for candidate in selected_dense_candidates(op) if selected_only else dense_candidates(op):
                     with dense_gemm_mode(op, candidate):
                         metrics = dense_validate_candidate(op, candidate, inputs, reference, stock)
-                    print(json.dumps({"check": f"dense-{op}-{rows}", "candidate": candidate["name"], "override_active": rows <= 128 and candidate["config"] is not None and candidate["backend"] == "deepgemm", "host_patch_sha256": host_sha, **metrics}), flush=True)
+                    print(json.dumps({"check": f"dense-{op}-{rows}", "candidate": candidate["name"], "override_active": rows <= 192 and candidate["config"] is not None and candidate["backend"] == "deepgemm", "host_patch_sha256": host_sha, **metrics}), flush=True)
     print("PASS: dense FP8 group128 / block128 projections, selected/all candidate settings, eager and changed-input CUDA graph replay", flush=True)
+
+
+def check_prefill_fp8_integration():
+    """Exercise the installed companion and real FP8-to-O consumer before serving."""
+    from itertools import accumulate
+    from types import SimpleNamespace
+
+    import deep_gemm
+    from sgl_kernel.flash_attn import flash_attn_varlen_func
+    from sglang.srt.layers.attention import prefill_fp8
+    from sglang.srt.layers.quantization.fp8 import Fp8LinearMethod
+    from sglang.srt.layers.quantization.fp8_utils import (
+        deepgemm_w8a8_block_fp8_linear_with_fallback,
+    )
+
+    for lengths in ([1], [17, 13], [129, 257], [2048, 2048], [3986], [4027], [4096]):
+        rows = sum(lengths)
+        padded = (rows + 3) // 4 * 4 + 4
+        q, k, v = [(torch.randn(rows, h, 128, device="cuda", dtype=torch.bfloat16) * .5).to(torch.float8_e4m3fn) for h in (64, 4, 4)]
+        cu = torch.tensor([0, *accumulate(lengths)], device="cuda", dtype=torch.int32)
+
+        def reference():
+            bf16 = flash_attn_varlen_func(q=q, k=k, v=v, cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max(lengths), max_seqlen_k=max(lengths), causal=True, softmax_scale=128**-.5, num_splits=1)
+            if isinstance(bf16, tuple):
+                bf16 = bf16[0]
+            return sglang_per_token_group_quant_fp8(bf16.reshape(rows, 8192), 128, column_major_scales=True, scale_tma_aligned=True)
+
+        def validate(actual):
+            expected = reference()
+            if fixed:
+                fallback = prefill_fp8.attention(q, k, v, cu, max(lengths), 128**-.5, padded)
+                assert torch.equal(actual[0].view(torch.uint8), fallback[0].view(torch.uint8)), (lengths, "fixed/fallback bytes")
+                assert torch.equal(actual[1], fallback[1]), (lengths, "fixed/fallback scales")
+            assert torch.equal(actual[0][:rows].view(torch.uint8), expected[0].view(torch.uint8)), lengths
+            assert torch.equal(actual[1][:rows], expected[1]), lengths
+            assert (actual[0][rows:].float() == 0).all() and (actual[1] > 0).all()
+            return expected
+
+        fixed = len(lengths) == 1 and 3584 <= rows <= 4096
+
+        def call():
+            return prefill_fp8.attention(q, k, v, cu, max(lengths), 128**-.5, padded, fixed=fixed)
+        pair = call()
+        validate(pair)
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            call()
+        torch.cuda.current_stream().wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            captured = call()
+        for value in (q, k, v):
+            value.copy_((-value.float()).to(value.dtype))
+        if len(lengths) == 2:
+            cu[1].add_(1 if lengths[0] < lengths[1] else -1)
+        graph.replay()
+        validate(captured)
+        v.zero_()
+        pair = call()
+        validate(pair)
+        print(json.dumps({"check": "prefill_fp8_fused", "lengths": lengths, "padded_rows": padded, "bitwise_equal": True, "changed_input_graph": True, "changed_cu_seqlens": len(lengths) == 2}), flush=True)
+
+    attention = SimpleNamespace(num_heads=64, total_num_heads=64, num_kv_heads=4, total_num_kv_heads=4, hidden_size=4096, head_dim=128)
+    method = object.__new__(Fp8LinearMethod)
+    method.block_quant = True
+    method.use_marlin = method.use_mxfp8 = False
+    method.weight_block_size = [128, 128]
+    method.w8a8_block_fp8_linear = deepgemm_w8a8_block_fp8_linear_with_fallback
+    for name, n, k in (("QKV", 9216, 4096), ("O", 4096, 8192)):
+        data = dense_inputs(4096, n, k, 42024 + n)
+        layer = SimpleNamespace(weight=data[1][0], weight_scale_inv=data[1][1], bias=None, quant_method=method)
+        deep_gemm.fp8_gemm_nt(*data)
+        actual, bias = prefill_fp8.linear(attention, name, layer, data[0])
+        assert bias is None and torch.equal(actual, data[2]), name
+        print(json.dumps({"check": "prefill_dense_nk", "projection": name, "bitwise_equal": True}), flush=True)
+    print("PASS: installed Prefill FP8 companion, padding, changed-input/length graph, zero-V, and specialized QKV/O", flush=True)
+
+
+# Fixed Prefill helpers: independent from Decode candidate functions/tables.
+def prefill_specs():
+    path = Path(__file__).resolve().parents[1] / "kernels/fa3-verify/prefill-candidates.json"
+    if not path.is_file():
+        path = Path("/opt/apac/fa3-verify/prefill-candidates.json")
+    return json.loads(path.read_text())
+
+
+def prefill_selection_inputs(rows, padding=4):
+    torch.manual_seed(93517 + rows)
+    packed = (torch.randn(rows+padding, 72, 128, device="cuda", dtype=torch.bfloat16) * .5)
+    q, k, v = packed[:, :64], packed[:, 64:68], packed[:, 68:]
+    qw, kw = [torch.ones(128, device="cuda", dtype=torch.bfloat16) for _ in range(2)]
+    angles = torch.arange(8192, device="cuda").float()[:, None] * (1000000.0 ** (-torch.arange(0, 128, 2, device="cuda").float() / 128))
+    trig = torch.cat((angles.cos(), angles.sin()), dim=-1).contiguous()
+    pos = torch.arange(rows+padding, device="cuda", dtype=torch.int64)
+    loc = pos + 1
+    q_fp8 = torch.empty((rows+padding, 64, 128), device="cuda", dtype=torch.float8_e4m3fn)
+    ck, cv = [torch.empty((rows+padding, 4, 128), device="cuda", dtype=q_fp8.dtype) for _ in range(2)]
+    kc, vc = [torch.empty((rows+padding+1, 4, 128), device="cuda", dtype=q_fp8.dtype) for _ in range(2)]
+    cu = torch.tensor([0, rows], device="cuda", dtype=torch.int32)
+    image = torch.full((4, (rows+223)//224, 224*128), 0x7f, device="cuda", dtype=torch.uint8)
+    args = (q, k, qw, kw, trig, pos, 1e-6, q_fp8, v, kc, vc, loc, ck, cv)
+    return {"packed": packed, "q": q_fp8[:rows], "k": ck[:rows], "v": cv[:rows], "kc": kc, "vc": vc, "cu": cu, "image": image, "rope_args": args, "rows": rows}
+
+
+def prefill_selection_step(common, name, layers=94):
+    specs = prefill_specs()
+    spec = next(c for c in specs if c["name"] == name)
+    candidate = specs.index(spec)
+    rows = common["rows"]
+    out = torch.empty((rows, 64, 128), device="cuda", dtype=common["q"].dtype)
+    scales = torch.empty((64, (rows+3)//4*4), device="cuda", dtype=torch.float32).T[:rows]
+    lse = torch.empty((64, rows), device="cuda", dtype=torch.float32)
+    metadata = torch.empty(17, device="cuda", dtype=torch.int32)
+    empty = torch.empty(0, device="cuda", dtype=torch.uint8)
+    image = common["image"] if spec["byte_image"] else empty
+
+    def step():
+        for _ in range(layers):
+            # Includes the real extra producer work for c2, in every timed layer.
+            rope_ops.apply_qknorm_rope_fp8_prefill(*common["rope_args"], image if spec["byte_image"] else None, rows if spec["byte_image"] else 0)
+            torch.ops.apac_fa3_verify.prefill_variant_fwd_out(common["q"], common["k"], common["v"], image, common["cu"], out, scales, lse, metadata, rows, 128**-.5, candidate)
+        return out, scales
+
+    step.output = out, scales
+    return step
+
+
+def prefill_selection_capture(step):
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        for _ in range(3):
+            step()
+    torch.cuda.current_stream().wait_stream(stream)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        step()
+    graph.replay()
+    torch.cuda.synchronize()
+    return graph
+
+
+def prefill_fp32_reference(common):
+    rows = common["rows"]
+    indices = sorted({0, 1, 7, 31, 127, 223, rows//2, rows-2, rows-1})
+    q = common["q"].float()[indices].transpose(0, 1)
+    k = common["k"].float().repeat_interleave(16, dim=1).transpose(0, 1)
+    v = common["v"].float().repeat_interleave(16, dim=1).transpose(0, 1)
+    tf32 = torch.backends.cuda.matmul.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+        scores = (q @ k.transpose(1, 2)) * (128**-.5)
+        allowed = torch.arange(rows, device="cuda")[None, :] <= torch.tensor(indices, device="cuda")[:, None]
+        scores.masked_fill_(~allowed[None, :, :], -float("inf"))
+        return indices, (scores.softmax(-1) @ v).transpose(0, 1)
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = tf32
+
+
+def prefill_assert_errors(actual, expected, label):
+    assert actual.shape == expected.shape and actual.isfinite().all() and expected.isfinite().all(), label
+    a, b = actual.float(), expected.float()
+    error = a - b
+    result = {"relative_l2": (error.norm()/b.norm().clamp_min(1e-12)).item(), "max_scaled_error": (error.abs().amax()/b.abs().amax().clamp_min(1e-12)).item()}
+    # The existing Prefill check_numerics gate thresholds, also for N192.
+    assert result["relative_l2"] <= .05 and result["max_scaled_error"] <= .25, (label, result)
+    return result
+
+
+def prefill_validate_candidate(common, name):
+    from sglang.srt.layers.attention.decode_fa3_verify import load
+
+    load()
+    spec = next(c for c in prefill_specs() if c["name"] == name)
+    step = prefill_selection_step(common, name, 1)
+    graph = prefill_selection_capture(step)
+    rows = common["rows"]
+    control = torch.empty_like(step.output[0])
+    control_scales = torch.empty((64, (rows+3)//4*4), device="cuda", dtype=torch.float32).T[:rows]
+    lse = torch.empty((64, rows), device="cuda", dtype=torch.float32)
+    metadata = torch.empty(17, device="cuda", dtype=torch.int32)
+    metrics = []
+    for replay in range(3):
+        if replay:
+            common["packed"].copy_(torch.randn_like(common["packed"]) * (replay+.5))
+        if spec["byte_image"]:
+            common["image"].fill_(0x7f)
+        graph.replay()
+        out, scales = step.output
+        torch.ops.apac_fa3_verify.prefill_fwd_out(common["q"], common["k"], common["v"], common["cu"], control, control_scales, lse, metadata, rows, 128**-.5)
+        if spec["byte_image"]:
+            dump = torch.empty_like(common["image"])
+            torch.ops.apac_fa3_verify.prefill_dump_v(common["v"], dump)
+            assert torch.equal(dump, common["image"]), (name, rows, replay, "STSM dump / global image including zero padding")
+        assert scales.isfinite().all() and (scales > 0).all(), name
+        if spec["bitwise"]:
+            assert torch.equal(out.view(torch.uint8), control.view(torch.uint8)), (name, rows, replay, "FP8 bytes")
+            assert torch.equal(scales, control_scales), (name, rows, replay, "FP32 scales")
+        else:
+            prefill_assert_errors(out.float(), control.float(), name+"_codes")
+            prefill_assert_errors(scales, control_scales, name+"_scales")
+        # Verify paged transfer payload and fallback row-major V are still exact.
+        assert torch.equal(common["v"].view(torch.uint8), common["packed"][:rows, 68:].to(out.dtype).contiguous().view(torch.uint8)), name
+        assert torch.equal(common["v"].view(torch.uint8), common["vc"][1:rows+1].view(torch.uint8)), name
+        indices, reference = prefill_fp32_reference(common)
+        actual = out.float()[indices]*scales[indices, :, None]
+        metrics.append(prefill_assert_errors(actual, reference, name+"_fp32"))
+    return {"numeric_passed": True, "bitwise": spec["bitwise"], "metrics": metrics, "changed_input_replays": 2, "byte_image_dump_passed": spec["byte_image"]}
+
+
+def check_prefill_fixed_variants():
+    from sglang.srt.layers.attention.decode_fa3_verify import load
+
+    load()
+    # The job-local selector screens all candidates on the actual Prefill GPUs.
+    # The existing check_prefill_fp8_integration covers multisequence fallbacks.
+    name = os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "control")
+    for rows in (3986, 4027, 4096):
+        print(json.dumps({"check": "prefill_fixed_variant", "name": name, "rows": rows, **prefill_validate_candidate(prefill_selection_inputs(rows), name)}), flush=True)
 
 
 if __name__ == "__main__":
     # Existing gates embed this file with run_path and retain their own argv.
     torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
+    check_decode_fp8_conversion()
     check_fa3_verify(selected_only="--fa3-selected" in sys.argv[1:])
     check_dense_gemm(selected_only="--dense-selected" in sys.argv[1:])
     check_decode_silu_quant()
@@ -1019,5 +1390,8 @@ if __name__ == "__main__":
     check_topk_mask()
     check_decode_router_padding()
     check_add_rmsnorm_group_quant()
+    check_decode_add_rmsnorm_group_quant()
+    check_prefill_fp8_integration()
+    check_prefill_fixed_variants()
     check_prefill_attention()
     check_verify_scheduler_sharing()

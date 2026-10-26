@@ -29,7 +29,7 @@ def test_real_layer_data_and_case_selection():
     assert list(data) == [43, 62, 7]
     assert [row["ascending_position"] for row in data.values()] == [47, 85, 10]
     assert [row["selection"] for row in data.values()] == ["median", "upper10", "lower10"]
-    assert len(ns["CASES"]) == 18
+    assert len(ns["CASES"]) == 19
     assert not any(case[1] in ("mixed50", "mixed64", "replica8") or case[1].endswith("-replica8") for case in ns["CASES"])
     for layer, row in data.items():
         assert len(row["counts"]) == 128 and min(row["counts"]) >= 0

@@ -79,10 +79,13 @@ test -r "${SGLANG}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && 
 mkdir -p "${ART}"
 worker_pids=()
 profile_capture_pid=
+telemetry_pids=()
 cleanup_all() {
   status=$?
   trap - EXIT INT TERM
   if [[ -n "${profile_capture_pid}" ]]; then kill "${profile_capture_pid}" 2>/dev/null || true; wait "${profile_capture_pid}" 2>/dev/null || true; fi
+  for pid in "${telemetry_pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
+  for pid in "${telemetry_pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
   for pid in "${worker_pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
   for pid in "${worker_pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
   exit "${status}"
@@ -110,11 +113,16 @@ role=${name%%-*}
 # Prefill: a 3994-token prompt must not straddle two 4096-token batches (prefill-request-aligned-chunks.patch; images without it ignore this).
 # Tier 2 switches: equal-load DP ties rotate (dp-total-requests-rotate-ties.patch);
 # Decode admission without host waits on the WAR-fenced stream (decode-async-admission.patch, with decode_polling_interval 1).
+# Prefill sets the same switch: it only reaches the min_new_tokens penalizer there, and prefill-async-admission.patch removes the other host waits that stalled each Prefill launch until the in-flight batch ended (~5 ms GPU idle per iteration).
 # DG_SM90_PREFILL_2WG: the rebuilt DeepGEMM host launches the Qwen Prefill MegaMoE tile with two math warpgroups (sm90-prefill-2wg-host-epi.patch carries the header path).
 # DG_SM90_DECODE_INDEPENDENT_WG: the rebuilt host gives the Decode SwapAB MegaMoE two independent math-WG task queues (sm90-decode-independent-wg host + header patches; kernel bench 39945097647: -2.3% at 128 tokens/rank).
-if [[ "$role" == prefill ]]; then export SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS=1 SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=1 DG_SM90_PREFILL_2WG=1; else export SGLANG_DECODE_ASYNC_ADMISSION=1 DG_SM90_DECODE_INDEPENDENT_WG=1; fi
+if [[ "$role" == prefill ]]; then export SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS=1 SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=1 SGLANG_DECODE_ASYNC_ADMISSION=1 DG_SM90_PREFILL_2WG=1; else export SGLANG_DECODE_ASYNC_ADMISSION=1 DG_SM90_DECODE_INDEPENDENT_WG=1; fi
 # Decode kernel choices measured before serving by select-firmus-decode-kernels.sh (empty file = current kernels).
 if [[ "$role" == decode ]]; then set -a; source "$(dirname "$0")/decode-kernels.env"; set +a; fi
+# To opt in for a separate diagnostic run, uncomment the next line.
+# if [[ "$role" == decode ]]; then export SGLANG_DECODE_ROUTING_DIR="${SLURM_SUBMIT_DIR}/results/decode-routing"; fi
+# Optional graph-safe routing diagnostics: set SGLANG_DECODE_ROUTING_DIR to a run-dir path and create its active marker during measurement.
+if [[ "$role" != decode ]]; then unset SGLANG_DECODE_ROUTING_DIR; fi
 # The MegaMoE symmetric buffer must hold one Prefill batch per DP rank (chunked prefill size / DP size); Decode batches stay far below 4096 tokens per rank.
 megamoe_tokens=4096
 if [[ "$role" == prefill ]]; then args=" $* "; chunk=${args##* --chunked-prefill-size }; dp=${args##* --dp-size }; megamoe_tokens=$(( ${chunk%% *} / ${dp%% *} )); fi
@@ -134,7 +142,9 @@ export TRITON_CACHE_DIR=/tmp/sglang-$name/triton
 export TORCHINDUCTOR_CACHE_DIR=/tmp/sglang-$name/inductor
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
-echo "$name host=$(hostname) ip=$SGLANG_HOST_IP hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp shuffle=${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0} routing=${SGLANG_PREFILL_TILED_ROUTING:-0} aligned_chunks=${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0} rotate_ties=${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0} idle_prefill_geometry=${SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY:-0} async_admission=${SGLANG_DECODE_ASYNC_ADMISSION:-0} megamoe_tokens=${SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK} prefill_2wg=${DG_SM90_PREFILL_2WG:-0} dense_config=${DG_SM90_1D2D_DECODE_CONFIG:-stock} dense_qkv=${SGLANG_DECODE_DENSE_GEMM_QKV:-deepgemm} dense_o=${SGLANG_DECODE_DENSE_GEMM_O:-deepgemm} fa3_verify=${SGLANG_DECODE_FA3_VERIFY:-stock} independent_wg=${DG_SM90_DECODE_INDEPENDENT_WG:-0}"
+# Only Prefill sources the common result, screened on all twelve Prefill GPUs.
+if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi
+echo "$name host=$(hostname) ip=$SGLANG_HOST_IP hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp shuffle=${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0} routing=${SGLANG_PREFILL_TILED_ROUTING:-0} aligned_chunks=${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0} rotate_ties=${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0} idle_prefill_geometry=${SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY:-0} async_admission=${SGLANG_DECODE_ASYNC_ADMISSION:-0} megamoe_tokens=${SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK} prefill_2wg=${DG_SM90_PREFILL_2WG:-0} dense_config=${DG_SM90_1D2D_DECODE_CONFIG:-stock} dense_qkv=${SGLANG_DECODE_DENSE_GEMM_QKV:-deepgemm} dense_o=${SGLANG_DECODE_DENSE_GEMM_O:-deepgemm} fa3_verify=${SGLANG_DECODE_FA3_VERIFY:-stock} prefill_fa3=${SGLANG_PREFILL_FA3_VERIFY:-control} independent_wg=${DG_SM90_DECODE_INDEPENDENT_WG:-0}"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
 # Queue-aware DP routing replaces bootstrap-room hashing on P and round-robin
 # on D. Publish every iteration so completed requests release routing budget.
@@ -157,6 +167,13 @@ fi
 exec "${command[@]}"
 EOF
 
+# One low-frequency NVML query process per node, outside the serving workers.
+# Explicit GPU UUIDs identify all eight GPUs on each node without rank duplication.
+for host in "${HEAD}" "${TAIL}"; do
+  srun --overlap --exact -N1 -n1 -w "${host}" --gres=gpu:8 --cpus-per-task=1 nvidia-smi --query-gpu=timestamp,index,uuid,power.draw,clocks.sm,clocks.mem,clocks_throttle_reasons.active,temperature.gpu --format=csv --loop=1 >"${ART}/gpu-telemetry-${host}.csv" 2>"${ART}/gpu-telemetry-${host}.stderr.log" &
+  telemetry_pids+=("$!")
+done
+
 # Provisioning verifies the image's source patches and router before sbatch.
 # Validate the new FC2 kernel before model startup in this same allocation.
 # BeeGFS shared-cache replacement can transiently fail dlopen (39727354451;
@@ -171,6 +188,18 @@ dense_selection=$!
 # --dense-selected: the dense candidates were checked by the selection; the gate keeps the configured path.
 srun -N1 -n1 --exact -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts numeric-gate)" env TRITON_CACHE_DIR="/tmp/qwen-numeric-gate-${SLURM_JOB_ID}" DG_SM90_DECODE_INDEPENDENT_WG=1 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/check-firmus-megamoe.py" --dense-selected --fa3-selected >"${ART}/sm90-megamoe-gate.log" 2>&1
 wait "${fa3_selection}"
+
+# Measure all twelve physical Prefill GPUs before model load. The two head
+# groups and one tail group run concurrently; serving then reuses these GPUs.
+prefill_selections=()
+for worker in 0 1 2; do
+  node=${HEAD}
+  if (( worker == 2 )); then node=${TAIL}; fi
+  srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-selection-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-select-${SLURM_JOB_ID}-${worker}" bash "${ROOT}/scripts/select-firmus-prefill-kernels.sh" "${ROOT}" "prefill-${worker}" >"${ART}/prefill-selection-${worker}.log" 2>&1 &
+  prefill_selections+=("$!")
+done
+for pid in "${prefill_selections[@]}"; do wait "${pid}" || true; done
+python3 "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")

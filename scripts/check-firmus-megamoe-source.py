@@ -125,7 +125,7 @@ def check(source, replicas=False):
 
     namespace = {"torch": NS(int32="int32", float32="float32"), "get_moe_ep_group": lambda: NS(device_group="EP4"), "envs": NS(SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=NS(get=lambda: 4096)), "is_sm90_fp8_mega_moe_available": lambda _: True, "_get_mega_moe_symm_buffer": lambda *args, **kwargs: (args, kwargs), "run_sm90_mega_routed": lambda *args: calls.append(("native", args)), "ExpertLocationDispatchInfo": NS(init_new=lambda layer_id: ("dispatch", layer_id))}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), str(path), "exec"), namespace)  # noqa: S102 - named method from pinned build input
-    block = NS(layer_id=7, experts=NS(num_experts=140 if replicas else 128), gate=lambda h: (tensor, None), topk=Router(), config=NS(num_experts=128, num_experts_per_tok=8, hidden_size=4096, moe_intermediate_size=1536))
+    block = NS(layer_id=7, _decode_routing_capture=None, experts=NS(num_experts=140 if replicas else 128), gate=lambda h: (tensor, None), topk=Router(), config=NS(num_experts=128, num_experts_per_tok=8, hidden_size=4096, moe_intermediate_size=1536))
     for count in [0, 4, 7, 120, 128, 4096]:
         calls.clear()
         namespace["forward_megamoe"](block, NS(shape=(count, 4096), device="cuda"), NS(num_token_non_padded="non-padded"))

@@ -51,7 +51,7 @@ class CalibrationTests(unittest.TestCase):
                 self.assertEqual(job.returncode, probe_exit, job.stderr)
                 count = 1 if calibration or probe_exit else 3
                 self.assertEqual(len((root / "calls").read_text().splitlines()), count)
-                self.assertEqual((root / "limits").read_text().splitlines(), ["165" if calibration else "30"] * count)
+                self.assertEqual((root / "limits").read_text().splitlines(), ["165" if calibration else "90"] * count)
                 self.assertEqual((root / "results/exit-code").read_text().strip(), str(probe_exit))
                 (root / "logs/123.pjm.log").write_text(job.stdout)
                 checked = subprocess.run(["bash", str(ROOT / "platforms/genkai/kernel-probe/check-job.sh")], env=env, capture_output=True, text=True, check=False)

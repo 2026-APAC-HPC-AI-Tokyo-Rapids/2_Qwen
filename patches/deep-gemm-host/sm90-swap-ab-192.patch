@@ -1,0 +1,11 @@
+--- a/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
++++ b/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
+@@ -97,3 +97,7 @@
+         block_m == 64 and num_epilogue_threads == 256;
+-    return decode_split_n_path and num_tokens <= 128 and expected_tokens_per_expert > 0.0f;
++    // This is a rollout limit, not a tile capacity: each expert is split into
++    // BLOCK_M=64 pool blocks and SwapAB rounds only a block's valid rows to 8.
++    // Cover EAGLE's 4 verification tokens for up to 48 requests per DP rank.
++    // Keep larger, unbenchmarked batches on the existing path.
++    return decode_split_n_path and num_tokens <= 192 and expected_tokens_per_expert > 0.0f;
+ }

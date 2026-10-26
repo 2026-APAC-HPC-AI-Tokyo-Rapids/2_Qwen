@@ -65,22 +65,22 @@ def test_wg_without_combine_work_has_missing_end_not_zero_duration(tmp_path, sum
 
 def test_unknown_timeline_schema_is_rejected(summary):
     words = dump_v2(summary)
-    words[1] = 3
+    words[1] = 99
     with pytest.raises(AssertionError, match="Unknown timeline version"):
         summary.parse(words)
 
 
 def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert config["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch"
+    assert config["deep_gemm_overlay_patches"][-2:] == ["patches/deep-gemm-overlay/sm90-decode-independent-wg.patch", "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch"]
     bench = ROOT / "patches/deep-gemm-bench"
-    assert sorted(p.name for p in bench.iterdir()) == ["timeline"]
+    assert sorted(p.name for p in bench.iterdir()) == ["decode-m1-b-first", "timeline", "z-control-repeat"]
+    assert not list(bench.glob("*/env"))
     assert (bench / "timeline").stat().st_size == 0
     for name in ("containers/Dockerfile", "scripts/build-sglang-container.sh", "containers/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg-host.py"):
         assert "deep-gemm-bench" not in (ROOT / name).read_text()
     checker = (ROOT / "containers/check-sm90-independent-wg.py").read_text()
-    assert "patches[:-1]" in checker
-    assert 'assert patches[-1] == CANDIDATE' in checker
+    assert 'if patch.name == CANDIDATE:' in checker
 
 
 def test_patch_layout_matches_reader_and_only_wraps_existing_stage_waits():
@@ -112,28 +112,33 @@ def test_build_checker_applies_adopted_overlay_once(tmp_path, monkeypatch):
     package = tmp_path / "package"
     header = package / "include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
     header.parent.mkdir(parents=True)
-    header.write_text("image\n")
-    patches = tmp_path / "patches"
-    patches.mkdir()
-    previous = "image\n"
+    header.write_text("image\n" + "stable context\n" * 8 + "tail\n")
+    patches = tmp_path / "patches/deep-gemm-overlay"
+    patches.mkdir(parents=True)
+    suffix = "stable context\n" * 8 + "tail\n"
+    previous = "image\n" + suffix
     for name, text in [("prior.patch", "serving before adoption\n"), (checker.CANDIDATE, "serving after adoption\n")]:
+        text += suffix
         patch = "".join(difflib.unified_diff(previous.splitlines(True), text.splitlines(True), fromfile="a/" + str(checker.HEADER), tofile="b/" + str(checker.HEADER)))
         (patches / name).write_text(patch)
         previous = text
+    later = "".join(difflib.unified_diff(previous.splitlines(True), previous.replace("tail\n", "patched tail\n").splitlines(True), fromfile="a/" + str(checker.HEADER), tofile="b/" + str(checker.HEADER)))
+    (patches / "later.patch").write_text(later)
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"deep_gemm_overlay_patches": ["patches/deep-gemm-overlay/prior.patch", "patches/deep-gemm-overlay/" + checker.CANDIDATE]}))
+    config.write_text(json.dumps({"deep_gemm_overlay_patches": ["patches/deep-gemm-overlay/prior.patch", "patches/deep-gemm-overlay/" + checker.CANDIDATE, "patches/deep-gemm-overlay/later.patch"]}))
     output = tmp_path / "result.json"
     seen = []
 
     def compile_fixture(nvcc, package, overlay, directory, name, geometry):
-        seen.append((name, (overlay / checker.HEADER).read_text()))
+        seen.append((name, (overlay / checker.HEADER).read_text().splitlines()[0]))
+        assert (overlay / checker.HEADER).read_text().endswith("patched tail\n")
         return {"spill_bytes": [["0", "0"]], "sass_sha256": "same opt-out SASS", "serialization_warning": False}
 
     monkeypatch.setattr(checker, "compile_one", compile_fixture)
     monkeypatch.setattr(sys, "argv", ["check", "--package", str(package), "--patch-dir", str(patches), "--config", str(config), "--output", str(output)])
     checker.main()
-    assert seen == [("base-decode", "serving before adoption\n"), ("base-prefill", "serving before adoption\n"), ("control-decode", "serving after adoption\n"), ("control-prefill", "serving after adoption\n"), ("independent-decode", "serving after adoption\n")]
-    assert set(json.loads(output.read_text())["patches"]) == {"prior.patch", checker.CANDIDATE}
+    assert seen == [("base-decode", "serving before adoption"), ("base-prefill", "serving before adoption"), ("control-decode", "serving after adoption"), ("control-prefill", "serving after adoption"), ("independent-decode", "serving after adoption")]
+    assert set(json.loads(output.read_text())["patches"]) == {"prior.patch", checker.CANDIDATE, "later.patch"}
 
 
 def test_legacy_v1_timeline_is_still_readable(tmp_path, summary):
@@ -171,3 +176,106 @@ def test_timeline_switches_tail_when_replica_routing_switches_buffer(summary):
         assert summary.np.shares_memory(region, array)
         assert region.tobytes() == bytes([int(array[0])]) * 16
         assert namespace["row"]["timeline_offset_minus_layout_bytes"] == 0
+
+
+def test_genkai_extended_timeline_has_distinct_abi_and_cycle_units(tmp_path, summary):
+    np = summary.np
+    events = np.zeros((2, 48, 2), dtype=np.uint64)
+    for cta in range(2):
+        for index in list(range(34)) + list(range(40, 47)):
+            t = 1_000_000 + cta * 1000 + index * 1000
+            events[cta, index] = t, t * 2
+    counters = np.zeros((2, 32), dtype=np.uint64)
+    counters[:, 24:26] = [3, 4]
+    counters[:, 26:] = 4000
+    header = np.array([summary.MAGIC, 3, 2, 48, 32, 4096, 0, 128, 256, 256, 3, 64, 35, 0, 0, 0], dtype=np.uint64)
+    words = np.concatenate([header, events.ravel(), counters.ravel()])
+    row = summary.parse(words)
+    assert row["header"]["version"] == 3
+    assert row["counters"][0, 24] == 3
+    assert row["counters"][0, 26] == 2
+    path = tmp_path / "extended.npy"
+    np.save(path, np.tile(words, (5, 4, 1)))
+    spec = importlib.util.spec_from_file_location("ep4_probe", ROOT / "kernels/probes/megamoe-full.py")
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    probe.ROOT = ROOT / "scripts"
+    probe.summary(path)
+    assert 'kVersion = 3;' in (ROOT / "patches/deep-gemm-timeline/sm90-mega-moe-prefill-2wg.patch").read_text()
+
+
+def dump_v4(summary):
+    np = summary.np
+    events = np.zeros((2, len(summary.V4_EVENTS), 2), dtype=np.uint64)
+    counters = np.zeros((2, len(summary.V4_COUNTERS)), dtype=np.uint64)
+    for cta in range(2):
+        start = 1_000_000 + cta * 1000
+        for name, elapsed in [("Entry", 0), ("DispExit", 100_000)]:
+            events[cta, summary.V4_EVENTS.index(name)] = start + elapsed, 2 * (start + elapsed)
+        for wg in range(2):
+            for name, elapsed in zip(summary.V4_WG_EVENTS, [1000, 10_000, 30_000, 32_000, 60_000, 61_000, 65_000, 70_000, 90_000], strict=True):
+                events[cta, summary.V4_EVENTS.index(f"WG{wg}{name}")] = start + elapsed, 2 * (start + elapsed)
+            counters[cta, wg * 11:(wg + 1) * 11] = [3, 4, 2000, 4000, 20_000, 30_000, 6000, 8000, 4000, 1000, 8000]
+    header = np.array([summary.MAGIC, 4, 2, 50, 44, 4096, 0, 128, 256, 256, 3, 64, 35, 2, 0, 0], dtype=np.uint64)
+    words = np.concatenate([header, events.ravel(), counters.ravel()])
+    return words
+
+
+def test_bulk_timeline_v4_separates_issue_reuse_drain_and_barrier(tmp_path, summary):
+    np = summary.np
+    words = dump_v4(summary)
+    parsed = summary.parse(words)
+    assert parsed["end"] == 101
+    assert parsed["counters"][0, summary.V4_COUNTERS.index("WG1ML2Drain")] == 4
+    assert parsed["counters"][0, summary.V4_COUNTERS.index("WG1FC2Blocks")] == 4
+    path = tmp_path / "bulk.npy"
+    np.save(path, np.tile(words, (3, 4, 1)))
+    text = summary.report(path, "bulk")
+    assert "ML2Scatter (issue only, within FC2 epilogue) | 2.0 / 2.0" in text
+    assert "ML2RowWait (CD reuse, within FC2 epilogue) | 0.5 / 0.5" in text
+    assert "ML2Drain (final full wait, before grid/NVLink) | 4.0 / 4.0" in text
+    assert "pre-combine wait (grid + NVLink) | 5.0 / 5.0" in text
+    assert "WG1DrainEnd" in text
+    assert "WG2DrainEnd" not in text
+    assert "ML2FullWait" in text and "MLastL2End" in text
+
+
+def test_decode_m1_uses_stock_iwg_math_timeline():
+    marker = ROOT / "patches/deep-gemm-bench/decode-m1-b-first/timeline"
+    assert marker.exists() and marker.stat().st_size == 0
+    stock = (ROOT / "patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch").read_text()
+    assert "base[1] = 2;" in stock
+    assert "tl_wait_full(stage_idx, phase, block_phase)" in stock
+
+
+def test_summary_combines_control_v2_and_bulk_v4_timelines(tmp_path, summary):
+    case = "prefill-real43-replica4-4096"
+    names = ["image", "prefill-fc2-bulk-scatter", "prefill-fc2-bulk-scatter-wg1-skip"]
+    variants = [{"name": name, "patches": [] if name == "image" else [{"path": f"{name}.patch"}], "timeline": "ready"} for name in names]
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": variants}))
+    bench = {"case": case, "median_ms": 1.0, "p10_ms": 0.9, "p90_ms": 1.1, "output_sha256": "identical", "deterministic": True, "sm_clock_mhz_before": [2000] * 4, "sm_clock_mhz_after": [2000] * 4, "power_w_before": [300] * 4, "power_w_after": [300] * 4, "rank_load_max_over_mean": 1.0}
+    steps = {}
+    for name in names:
+        directory = tmp_path / name
+        (directory / "timeline").mkdir(parents=True)
+        (directory / "bench.jsonl").write_text(json.dumps(bench) + "\n")
+        (directory / "timeline.jsonl").write_text(json.dumps({**bench, "delta_median_vs_reference": 0.0, "bitwise_equal_to_reference": True}) + "\n")
+        words = dump_v2(summary) if name == "image" else dump_v4(summary)
+        summary.np.save(directory / "timeline" / f"{case}.npy", summary.np.tile(words, (3, 4, 1)))
+        steps.update({(name, step): 0 for step in ("gate", "bench", "timeline")})
+    text, failed = summary.deep_gemm(tmp_path, steps)
+    assert failed == []
+    prefix, control = text.split(f"### image: {case}\n", 1)
+    control, bulk = control.split(f"### {names[1]}: {case}\n", 1)
+    bulk, combined = bulk.split(f"### {names[2]}: {case}\n", 1)
+    assert "### Timeline runs" in prefix
+    for name in names:
+        assert f"| {case} | {name} | 1.0000 | +0.0% | True | 2000 / 2000 |" in prefix
+    assert "ML2Drain" not in control and "DrainEnd" not in control
+    assert "pre-combine wait (grid + NVLink) | 9.0 / 9.0" in control
+    for candidate in (bulk, combined):
+        assert "ML2Scatter (issue only, within FC2 epilogue) | 2.0 / 2.0" in candidate
+        assert "ML2RowWait (CD reuse, within FC2 epilogue) | 0.5 / 0.5" in candidate
+        assert "ML2Drain (final full wait, before grid/NVLink) | 4.0 / 4.0" in candidate
+        assert "pre-combine wait (grid + NVLink) | 5.0 / 5.0" in candidate
+        assert "WG1DrainEnd" in candidate and "WG2DrainEnd" not in candidate

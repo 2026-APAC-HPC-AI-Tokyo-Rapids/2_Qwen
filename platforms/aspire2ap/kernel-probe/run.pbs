@@ -1,0 +1,25 @@
+#!/bin/bash
+#PBS -q normal
+#PBS -l select=1:ngpus=1:ncpus=14:mem=180gb
+#PBS -l walltime=00:05:00
+#PBS -j oe
+set -euo pipefail
+: "${RUNTIME_DIR:?}"
+cd "${RUNTIME_DIR}"
+exec >"${RUNTIME_DIR}/logs/driver.log" 2>&1
+trap 'status=$?; printf "%s\n" "$status" > results/exit-code; printf "probe_exit_code=%s\n" "$status"' EXIT
+source "${HOME}/.local/.setenv"
+source scripts/build-env.sh
+# Prefer the image-pinned profiler for M2 over the older host toolkit profiler.
+export PATH="${RUNTIME_DIR}/bin:${PATH}"
+date -u
+cat source/provenance.json
+trials=3
+trial_timeout=90
+if [[ "$(jq -r '.calibration // false' source/provenance.json)" == true ]]; then trials=1; trial_timeout=165; fi
+for ((trial=1; trial<=trials; trial++)); do
+  printf 'trial=%s\n' "${trial}"
+  timeout "${trial_timeout}" ./source/probe 2>&1 | tee "results/trial-${trial}.log"
+done
+touch run-success
+date -u

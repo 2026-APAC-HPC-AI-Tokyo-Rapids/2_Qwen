@@ -31,7 +31,8 @@ step() {
   step_exit=0
   # Match serving's Prefill geometry and adopted Decode implementation.
   # Also exercise the 256-row masked idle rank in the numerical gate.
-  srun -N1 -n1 --exact --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${ROOT}/sglang.sqsh" --container-mounts="/scratch:/scratch,${ROOT}/home:${HOME},${ROOT}:${ROOT}" env DG_SM90_PREFILL_2WG=1 DG_SM90_DECODE_INDEPENDENT_WG=1 SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1 DG_JIT_CACHE_DIR="${ROOT}/scratch/deep-gemm-jit" "$@" >"${ROOT}/logs/${variant}-${name}.log" 2>&1 || step_exit=$?
+  # Node-local Triton cache: four ranks sharing ~/.triton on BeeGFS hit dlopen ENOENT (39727354451, 40068470782).
+  srun -N1 -n1 --exact --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${ROOT}/sglang.sqsh" --container-mounts="/scratch:/scratch,${ROOT}/home:${HOME},${ROOT}:${ROOT}" env DG_SM90_PREFILL_2WG=1 DG_SM90_DECODE_INDEPENDENT_WG=1 SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1 DG_JIT_CACHE_DIR="${ROOT}/scratch/deep-gemm-jit" TRITON_CACHE_DIR="/tmp/qwen-kernel-bench-${SLURM_JOB_ID}-${variant}-${name}/triton" "$@" >"${ROOT}/logs/${variant}-${name}.log" 2>&1 || step_exit=$?
   printf '%s\t%s\t%s\t%s\n' "${variant}" "${name}" "${step_exit}" "$((SECONDS - started))" >>"${ROOT}/results/steps.tsv"
   echo "[$(date -Iseconds)] done ${variant} ${name} exit=${step_exit}"
 }
@@ -61,7 +62,9 @@ if [[ -d "${ROOT}/overlay/sglang" ]]; then
   done
 fi
 
-for dir in "${ROOT}"/overlay/candidates/*/; do
+# Omit the trailing slash from the glob so a base candidate precedes its
+# longer combined name (bulk-scatter before bulk-scatter-wg1-skip).
+for dir in "${ROOT}"/overlay/candidates/*; do
   [[ -d "${dir}" ]] || continue
   variant="$(basename "${dir}")"
   candidate_env=()

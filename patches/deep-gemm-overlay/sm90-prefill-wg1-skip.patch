@@ -1,0 +1,30 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1507,6 +1507,19 @@
+                     kHidden == 4096 && kIntermediateHidden == 1536 && BLOCK_M == 128 &&
+                     BLOCK_N == 256 && (kNumEpilogueThreads == 512 || kPrefill2WG) && kSpecializePhase;
+                 if constexpr (kQwenPrefillMainloop) {
++                    if (kPrefill2WG and row_base >= valid_m) {
++                        // Padding-only WG: consume the shared stage stream, with
++                        // identical phase advancement and four empty arrivals.
++                        // Deferred FC1 publication belongs to the PREVIOUS tile
++                        // and must still happen even if this tile has no rows.
++                        for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
++                            full_barriers[stage_idx]->wait(phase);
++                            if (block_phase == sched::BlockPhase::Linear1 and k_block_idx == 2)
++                                publish_l1_rows();
++                            if (lane_idx == 0)
++                                empty_barriers[stage_idx]->arrive();
++                        }
++                    } else {
+                     constexpr uint32_t kL1SFKBlocks   = kHidden / 128;
+                     constexpr uint32_t kL2SFKBlocks   = kIntermediateHidden / 128;
+                     constexpr uint32_t kL1SFGateBlks  = kIntermediateHidden / 128;
+@@ -1715,6 +1728,7 @@
+                         if (num_k_blocks != 0)
+                             postscale_l2_final(prev_scale_a_0, prev_scale_a_1, prev_l2_sf);
+                         }
++                    }
+                     }
+                 } else
+                 // The Qwen Prefill M128/N256 path reuses the accumulator.
