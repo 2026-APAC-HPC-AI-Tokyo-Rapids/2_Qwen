@@ -1,0 +1,49 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -612,13 +612,15 @@
+     // Decode: dynamic block assignment. The static scheduler hands CTA i the blocks i,
+     // i + kNumSMs, ... so CTAs with six FC1 and eight FC2 blocks (and the heavier experts)
+     // finish up to ~10 us after the rest. Here each CTA starts with block sm_idx and then
+-    // claims the next unassigned block from a rank-wide counter when its A loader has issued
+-    // the current one; the A loader passes the claimed index to the B loader and the math
++    // claims the next unassigned block from a rank-wide counter before its A loader waits
++    // for the current block's activations. The B loader can then prefetch the next block's
++    // weights as soon as it has issued this block's weights, independently of A's progress.
++    // The A loader passes the claimed index to the B loader and the math
+     // warps through a shared-memory ring. The index space and its decoding are the
+     // scheduler's own (FC1 blocks of a wave, then its FC2 blocks), a CTA's claims only grow,
+     // and every block waits only on blocks with smaller indices, so the order is
+     // deadlock-free. A block's arithmetic does not depend on which CTA runs it.
+-    auto decode_for_each_block = [&](const auto& func, const auto& next_block_delta) {
++    auto decode_for_each_block = [&]<bool kClaimAhead = false>(const auto& func, const auto& next_block_delta) {
+         scheduler.fetch_expert_recv_count();
+         scheduler.set_expert_idx(0);
+         while (true) {
+@@ -628,10 +630,17 @@
+             // Arithmetic select: a `?:` of the two constants became a local-memory table.
+             const uint32_t num_k_blocks = kNumL1BlockKs +
+                 static_cast<uint32_t>(block_phase == sched::BlockPhase::Linear2) * (kNumL2BlockKs - kNumL1BlockKs);
++            // Only the A loader publishes ahead. B and math still consume after their
++            // current block, so every role observes the same block stream and stage phases.
++            uint32_t next_delta = 0;
++            if constexpr (kClaimAhead)
++                next_delta = next_block_delta();
+             func(block_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
+             // `get_next_block` already advanced by kNumSMs; the ring carries the remaining
+             // distance to the claimed block (claimed - current - kNumSMs, never negative).
+-            scheduler.block_idx += next_block_delta();
++            if constexpr (not kClaimAhead)
++                next_delta = next_block_delta();
++            scheduler.block_idx += next_delta;
+         }
+     };
+     // Ring position: slot = iteration % depth, phase parity = (iteration / depth) % 2.
+@@ -1173,7 +1182,7 @@
+                         local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
+                 });
+         } else if constexpr (kDecodeTail) {
+-            decode_for_each_block(process_a_sfa_block, decode_claim_block);
++            decode_for_each_block.template operator()<true>(process_a_sfa_block, decode_claim_block);
+         } else {
+             scheduler.for_each_block([&](const sched::BlockPhase& block_phase,
+                                          const uint32_t& local_expert_idx,

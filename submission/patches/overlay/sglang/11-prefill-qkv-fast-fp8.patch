@@ -1,0 +1,352 @@
+--- a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
++++ b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
+@@ -437,112 +437,152 @@
+
+
+
+-// Prefill only: four independent heads per warp, 32 heads per CTA/token tile.
+-// Each lane loads 16 bytes from each NeoX half. Four virtual old lanes per
+-// physical lane preserve the old 32-lane XOR reduction tree exactly.
+-template <bool kUsePDL, typename IdType>
+-__global__ void __launch_bounds__(256) qknorm_rope_prefill_kernel(
+-    const __grid_constant__ QKNormRopeFP8Params p, void* contiguous_k, void* contiguous_v) {
+-  using namespace device;
+-  using Vec = AlignedVector<bf16x2_t, 4>;
+-  using Out = AlignedVector<uint16_t, 4>;
+-  __shared__ __align__(16) bf16_t weights[256];
+-  __shared__ float trig[128];
+-  const int token = blockIdx.x;
+-  const int lane = threadIdx.x % 8;
+-  const int head = blockIdx.y * 32 + threadIdx.x / 8;
+-  PDLWaitPrimary<kUsePDL>();
+-  const int64_t pos = static_cast<const IdType*>(p.positions)[token];
+-  if (threadIdx.x < 128) {
+-    weights[threadIdx.x] = static_cast<const bf16_t*>(p.q_weight)[threadIdx.x];
+-    weights[128 + threadIdx.x] = static_cast<const bf16_t*>(p.k_weight)[threadIdx.x];
+-    trig[threadIdx.x] = static_cast<const float*>(p.cos_sin_cache)[pos * 128 + threadIdx.x];
+-  }
+-  __syncthreads();
+-  const bool valid = head < p.num_qo_heads + p.num_kv_heads;
+-  // Keep all lanes active through shuffles, including the last head tile.
+-  Vec x{}, y{};
+-  if (valid) {
+-    const void* src = head < p.num_qo_heads
+-        ? pointer::offset(p.q, token * p.q_stride_bytes + head * 256)
+-        : pointer::offset(p.k, token * p.k_stride_bytes + head * 256);
+-    x = load_as<Vec>(src, lane);
+-    y = load_as<Vec>(pointer::offset(src, 128), lane);
+-  }
+-  float partial[4];
+-#pragma unroll
+-  for (int j = 0; j < 4; ++j) {
+-    const auto a = cast<fp32x2_t>(x[j]);
+-    const auto b = cast<fp32x2_t>(y[j]);
+-    float sum = 0.f;
+-    sum += a.x * a.x;
+-    sum += a.y * a.y;
+-    sum += b.x * b.x;
+-    sum += b.y * b.y;
+-    partial[j] = sum;
+-  }
+-#pragma unroll
+-  for (int mask = 4; mask >= 1; mask >>= 1) {
+-#pragma unroll
+-    for (int j = 0; j < 4; ++j) partial[j] += __shfl_xor_sync(0xffffffff, partial[j], mask, 8);
+-  }
+-  const float sum02 = partial[0] + partial[2];
+-  const float sum13 = partial[1] + partial[3];
+-  const float scale = math::rsqrt((sum02 + sum13) / 128.f + p.eps);
+-  if (valid) {
+-    const auto w = weights + (head < p.num_qo_heads ? 0 : 128);
+-    const auto wx = load_as<Vec>(w, lane);
+-    const auto wy = load_as<Vec>(w + 64, lane);
+-    Out ox, oy;
+-#pragma unroll
+-    for (int j = 0; j < 4; ++j) {
+-      auto a = cast<fp32x2_t>(x[j]);
+-      auto b = cast<fp32x2_t>(y[j]);
+-      const auto u = cast<fp32x2_t>(wx[j]);
+-      const auto v = cast<fp32x2_t>(wy[j]);
+-      // Preserve BF16 rounding after RMSNorm and after RoPE before FP8.
+-      a = cast<fp32x2_t>(cast<bf16x2_t, fp32x2_t>({a.x * scale * u.x, a.y * scale * u.y}));
+-      b = cast<fp32x2_t>(cast<bf16x2_t, fp32x2_t>({b.x * scale * v.x, b.y * scale * v.y}));
+-      const int d = lane * 8 + j * 2;
+-      const float c0 = trig[d], c1 = trig[d + 1], s0 = trig[64 + d], s1 = trig[65 + d];
+-      ox[j] = to_fp8x2(cast<bf16x2_t, fp32x2_t>({a.x * c0 - b.x * s0, a.y * c1 - b.y * s1}));
+-      oy[j] = to_fp8x2(cast<bf16x2_t, fp32x2_t>({a.x * s0 + b.x * c0, a.y * s1 + b.y * c1}));
+-    }
+-    if (head < p.num_qo_heads) {
+-      auto dst = pointer::offset(p.q_fp8, (static_cast<int64_t>(token) * p.num_qo_heads + head) * 128);
+-      store_as<Out>(dst, ox, lane);
+-      store_as<Out>(pointer::offset(dst, 64), oy, lane);
+-    } else {
+-      const int h = head - p.num_qo_heads;
+-      const int64_t slot = static_cast<const IdType*>(p.cache_loc)[token];
+-      assert(slot >= 0 && slot < p.cache_slots);
+-      const int64_t row = (static_cast<int64_t>(token) * p.num_kv_heads + h) * 128;
+-      auto dst = pointer::offset(contiguous_k, row);
+-      store_as<Out>(dst, ox, lane);
+-      store_as<Out>(pointer::offset(dst, 64), oy, lane);
+-      const auto src = pointer::offset(p.v, token * p.v_stride_bytes + h * 256);
+-      const auto vx = load_as<Vec>(src, lane);
+-      const auto vy = load_as<Vec>(pointer::offset(src, 128), lane);
+-      Out ovx, ovy;
+-#pragma unroll
+-      for (int j = 0; j < 4; ++j) { ovx[j] = to_fp8x2(vx[j]); ovy[j] = to_fp8x2(vy[j]); }
+-      dst = pointer::offset(contiguous_v, row);
+-      store_as<Out>(dst, ovx, lane);
+-      store_as<Out>(pointer::offset(dst, 64), ovy, lane);
+-      if (slot != 0) {
+-        const int64_t offset = (slot * p.num_kv_heads + h) * 128;
+-        dst = pointer::offset(p.k_cache, offset);
+-        store_as<Out>(dst, ox, lane);
+-        store_as<Out>(pointer::offset(dst, 64), oy, lane);
+-        dst = pointer::offset(p.v_cache, offset);
+-        store_as<Out>(dst, ovx, lane);
+-        store_as<Out>(pointer::offset(dst, 64), ovy, lane);
+-      }
+-    }
+-  }
+-  PDLTriggerSecondary<kUsePDL>();
++// Prefill: 32 tokens per CTA, eight lanes per head; exact hardware FP8 conversion.
++__device__ __forceinline__ uint16_t qkv_prefill_fp8(float2 x) {
++    // NOSAT in CUDA 12.9 falls back to double/integer conversion. Use the
++    // hardware conversion and restore its exact overflow/canonical-NaN rules.
++    const uint16_t packed=__nv_cvt_float2_to_fp8x2(x, __NV_SATFINITE, __NV_E4M3);
++    const unsigned a=__float_as_uint(x.x), b=__float_as_uint(x.y);
++    const unsigned aa=a&0x7fffffff, bb=b&0x7fffffff;
++    const unsigned lo=aa>0x43e80000 ? (aa>0x7f800000 ? 0x7f : ((a>>24)&0x80)|0x7f) : packed&0xff;
++    const unsigned hi=bb>0x43e80000 ? (bb>0x7f800000 ? 0x7f : ((b>>24)&0x80)|0x7f) : packed>>8;
++    return lo|(hi<<8);
+ }
+
++// Generated by prefill_layout_host.cu from pinned CuTe copy partitions.
++__host__ __device__ inline int prefill_v_byte_offset(int token, int dim) {
++    int x=(token%32)*128+dim;
++    int out=(token/32)*4096;
++    out ^= ((x >> 0) & 1) * 256;
++    out ^= ((x >> 1) & 1) * 32;
++    out ^= ((x >> 2) & 1) * 64;
++    out ^= ((x >> 3) & 1) * 144;
++    out ^= ((x >> 4) & 1) * 512;
++    out ^= ((x >> 5) & 1) * 1024;
++    out ^= ((x >> 6) & 1) * 2048;
++    out ^= ((x >> 7) & 1) * 1;
++    out ^= ((x >> 8) & 1) * 4;
++    out ^= ((x >> 9) & 1) * 8;
++    out ^= ((x >> 10) & 1) * 2;
++    out ^= ((x >> 11) & 1) * 16;
++    return out;
++}
++
++template<bool kUsePDL, typename IdType, bool kVImage=false>
++__global__ __launch_bounds__(256) void qknorm_rope_prefill_fast_kernel(
++    const __grid_constant__ QKNormRopeFP8Params p, void* contiguous_k, void* contiguous_v, void* v_image, int image_rows) {
++    device::PDLWaitPrimary<kUsePDL>();
++    constexpr int BM=32, THREADS=256;
++    const int head=blockIdx.y, first_row=blockIdx.x*BM, rows=p.num_tokens;
++    const int q_heads=p.num_qo_heads, kv_heads=p.num_kv_heads;
++    const int lane = threadIdx.x % 8;
++    const int col = lane * 8;
++    float wx[8], wy[8];
++    if (head < q_heads + kv_heads) {
++        const auto w = static_cast<const __nv_bfloat16*>(head < q_heads ? p.q_weight : p.k_weight);
++        const uint4 vx = *reinterpret_cast<const uint4*>(w + col);
++        const uint4 vy = *reinterpret_cast<const uint4*>(w + 64 + col);
++        #pragma unroll
++        for (int i=0;i<8;++i) {
++            wx[i] = __bfloat162float(reinterpret_cast<const __nv_bfloat16*>(&vx)[i]);
++            wy[i] = __bfloat162float(reinterpret_cast<const __nv_bfloat16*>(&vy)[i]);
++        }
++    }
++    // Same eight-lane/head reduction tree as the deployed SGLang prologue.
++    for (int row = threadIdx.x / 8; row < BM; row += THREADS / 8) {
++        const int token = first_row + row;
++        float x[8], y[8], partial[4];
++        uint16_t ox[4], oy[4];
++        const bool is_q=head<q_heads, is_k=head<q_heads+kv_heads;
++        const int h=is_k ? head : head-q_heads-kv_heads;
++        const auto src=static_cast<const char*>(is_q ? p.q : (is_k ? p.k : p.v));
++        const int64_t stride=is_q ? p.q_stride_bytes : (is_k ? p.k_stride_bytes : p.v_stride_bytes);
++        const auto tile=reinterpret_cast<const __nv_bfloat16*>(src+int64_t(token)*stride+int64_t(h)*256);
++        uint4 vx{}, vy{};
++        if(token<rows) {
++            vx=*reinterpret_cast<const uint4*>(tile+col);
++            vy=*reinterpret_cast<const uint4*>(tile+64+col);
++        }
++        #pragma unroll
++        for (int i=0;i<8;++i) {
++            x[i] = __bfloat162float(reinterpret_cast<const __nv_bfloat16*>(&vx)[i]);
++            y[i] = __bfloat162float(reinterpret_cast<const __nv_bfloat16*>(&vy)[i]);
++        }
++        if (head < q_heads + kv_heads) {
++            #pragma unroll
++            for (int j=0;j<4;++j) {
++                float sum=0.f;
++                sum += x[j*2]*x[j*2]; sum += x[j*2+1]*x[j*2+1];
++                sum += y[j*2]*y[j*2]; sum += y[j*2+1]*y[j*2+1];
++                partial[j]=sum;
++            }
++            #pragma unroll
++            for (int mask=4;mask>=1;mask>>=1) {
++                #pragma unroll
++                for(int j=0;j<4;++j) partial[j] += __shfl_xor_sync(0xffffffff,partial[j],mask,8);
++            }
++            const float sum02=partial[0]+partial[2], sum13=partial[1]+partial[3];
++            const float scale=rsqrtf((sum02+sum13)/128.f+p.eps);
++            const int64_t pos=token<rows?static_cast<const IdType*>(p.positions)[token]:0;
++            const float4 cos4[2] = {*reinterpret_cast<const float4*>(static_cast<const float*>(p.cos_sin_cache)+pos*128+col), *reinterpret_cast<const float4*>(static_cast<const float*>(p.cos_sin_cache)+pos*128+col+4)};
++            const float4 sin4[2] = {*reinterpret_cast<const float4*>(static_cast<const float*>(p.cos_sin_cache)+pos*128+64+col), *reinterpret_cast<const float4*>(static_cast<const float*>(p.cos_sin_cache)+pos*128+64+col+4)};
++            #pragma unroll
++            for(int j=0;j<4;++j) {
++                float a[2], b[2];
++                #pragma unroll
++                for(int h=0;h<2;++h) {
++                    const int d=j*2+h;
++                    const float u=__bfloat162float(__float2bfloat16_rn(x[d]*scale*wx[d]));
++                    const float v=__bfloat162float(__float2bfloat16_rn(y[d]*scale*wy[d]));
++                    const float c=reinterpret_cast<const float*>(cos4)[d], s=reinterpret_cast<const float*>(sin4)[d];
++                    a[h]=__bfloat162float(__float2bfloat16_rn(u*c-v*s));
++                    b[h]=__bfloat162float(__float2bfloat16_rn(u*s+v*c));
++                }
++                ox[j]=qkv_prefill_fp8(make_float2(a[0],a[1]));
++                oy[j]=qkv_prefill_fp8(make_float2(b[0],b[1]));
++            }
++        } else {
++            #pragma unroll
++            for(int j=0;j<4;++j) {
++                ox[j]=qkv_prefill_fp8(make_float2(x[j*2],x[j*2+1]));
++                oy[j]=qkv_prefill_fp8(make_float2(y[j*2],y[j*2+1]));
++            }
++        }
++        if constexpr (kVImage) {
++            if (head >= q_heads+kv_heads && token < ((image_rows+223)/224)*224) {
++                // Every V CTA writes its full 32-token tile, including zero
++                // padding through ceil(rows/224)*224. Row-major and paged V
++                // below remain present for the fallback and Decode transfer.
++                int blocks=(image_rows+223)/224;
++                auto image=static_cast<uint8_t*>(v_image)+(h*blocks+token/224)*224*128;
++                #pragma unroll
++                for(int j=0;j<8;++j) {
++                    image[prefill_v_byte_offset(token%224,col+j)]=token<image_rows?reinterpret_cast<uint8_t*>(ox)[j]:0;
++                    image[prefill_v_byte_offset(token%224,64+col+j)]=token<image_rows?reinterpret_cast<uint8_t*>(oy)[j]:0;
++                }
++            }
++        }
++        if(token<rows) {
++            const uint2 lo=*reinterpret_cast<const uint2*>(ox), hi=*reinterpret_cast<const uint2*>(oy);
++            const int kv_head=head<q_heads+kv_heads ? head-q_heads : head-q_heads-kv_heads;
++            uint8_t* dst=head<q_heads
++                ? static_cast<uint8_t*>(p.q_fp8)+(int64_t(token)*q_heads+head)*128
++                : static_cast<uint8_t*>(head<q_heads+kv_heads ? contiguous_k : contiguous_v)+(int64_t(token)*kv_heads+kv_head)*128;
++            *reinterpret_cast<uint2*>(dst+col)=lo;
++            *reinterpret_cast<uint2*>(dst+64+col)=hi;
++            if(head>=q_heads) {
++                const int64_t slot=static_cast<const IdType*>(p.cache_loc)[token];
++                assert(slot>=0 && slot<p.cache_slots);
++                if(slot!=0) {
++                    dst=static_cast<uint8_t*>(head<q_heads+kv_heads ? p.k_cache : p.v_cache)+(slot*kv_heads+kv_head)*128;
++                    *reinterpret_cast<uint2*>(dst+col)=lo;
++                    *reinterpret_cast<uint2*>(dst+64+col)=hi;
++                }
++            }
++        }
++    }
++    device::PDLTriggerSecondary<kUsePDL>();
++}
+
+ // Decode: four independent H128 heads per warp, vectorized 16-byte halves.
+ // Virtual old lanes (4*lane+j) retain the original XOR sum and both BF16
+@@ -687,6 +727,25 @@
+     _run<true>(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, &v, &k_cache, &v_cache, &cache_loc, &contiguous_k, &contiguous_v);
+   }
+
++  static void run_prefill_image(
++      const tvm::ffi::TensorView q,
++      const tvm::ffi::TensorView k,
++      const tvm::ffi::TensorView q_weight,
++      const tvm::ffi::TensorView k_weight,
++      const tvm::ffi::TensorView cos_sin_cache,
++      const tvm::ffi::TensorView positions,
++      double eps,
++      const tvm::ffi::TensorView q_fp8,
++      const tvm::ffi::TensorView v,
++      const tvm::ffi::TensorView k_cache,
++      const tvm::ffi::TensorView v_cache,
++      const tvm::ffi::TensorView cache_loc,
++      const tvm::ffi::TensorView contiguous_k,
++      const tvm::ffi::TensorView contiguous_v,
++      const tvm::ffi::TensorView v_image, int64_t image_rows) {
++    _run<true>(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, &v, &k_cache, &v_cache, &cache_loc, &contiguous_k, &contiguous_v, &v_image, image_rows);
++  }
++
+   template <bool kStoreKV>
+   static void _run(
+       const tvm::ffi::TensorView q,
+@@ -702,7 +761,8 @@
+       const tvm::ffi::TensorView* v_cache,
+       const tvm::ffi::TensorView* cache_loc,
+       const tvm::ffi::TensorView* contiguous_k = nullptr,
+-      const tvm::ffi::TensorView* contiguous_v = nullptr) {
++      const tvm::ffi::TensorView* contiguous_v = nullptr,
++      const tvm::ffi::TensorView* v_image = nullptr, int64_t image_rows = 0) {
+     using namespace host;
+     auto N = SymbolicSize{"num_tokens"};
+     auto Q = SymbolicSize{"num_qo_heads"};
+@@ -729,6 +789,11 @@
+     }
+     if (contiguous_k) {
+       TensorMatcher({N, K, D}).with_dtype<fp8_e4m3_t>().with_device(device).verify(*contiguous_k).verify(*contiguous_v);
++    }
++    if (v_image) {
++      RuntimeCheck(contiguous_k != nullptr, "Prefill image requires contiguous KV");
++      TensorMatcher({4, static_cast<int64_t>((image_rows+223)/224), 224*128}).with_dtype<uint8_t>().with_device(device).verify(*v_image);
++      RuntimeCheck(image_rows>=3584 && image_rows<=4096 && image_rows<=N.unwrap() && K.unwrap()==4 && Q.unwrap()==64, "Fixed Prefill image shape");
+     }
+     const auto num_tokens = static_cast<uint32_t>(N.unwrap());
+     if (num_tokens == 0) return;
+@@ -763,8 +828,11 @@
+         .eps = static_cast<float>(eps),
+     };
+     if (contiguous_k) {
+-      const auto prefill = id_type.is_type<int32_t>() ? qknorm_rope_prefill_kernel<kUsePDL, int32_t> : qknorm_rope_prefill_kernel<kUsePDL, int64_t>;
+-      LaunchKernel(dim3(num_tokens, div_ceil(num_heads, 32u)), 256, device.unwrap()).enable_pdl(kUsePDL)(prefill, params, contiguous_k->data_ptr(), contiguous_v->data_ptr());
++      const auto prefill = v_image
++          ? (id_type.is_type<int32_t>() ? qknorm_rope_prefill_fast_kernel<kUsePDL, int32_t, true> : qknorm_rope_prefill_fast_kernel<kUsePDL, int64_t, true>)
++          : (id_type.is_type<int32_t>() ? qknorm_rope_prefill_fast_kernel<kUsePDL, int32_t> : qknorm_rope_prefill_fast_kernel<kUsePDL, int64_t>);
++      const auto tiles = v_image ? std::max(div_ceil(num_tokens, 32u), static_cast<uint32_t>((image_rows+223)/224*7)) : div_ceil(num_tokens, 32u);
++      LaunchKernel(dim3(tiles, num_qo_heads+2*num_kv_heads), 256, device.unwrap()).enable_pdl(kUsePDL)(prefill, params, contiguous_k->data_ptr(), contiguous_v->data_ptr(), v_image ? v_image->data_ptr() : nullptr, image_rows);
+       return;
+     }
+     if constexpr (kStoreKV) {
+--- a/python/sglang/kernels/ops/attention/rope.py
++++ b/python/sglang/kernels/ops/attention/rope.py
+@@ -55,6 +55,7 @@
+             ("run", f"FusedRopeKernel<{args}>::run_fp8"),
+             ("run_norm", f"FusedRopeKernel<{args}>::run_norm_fp8"),
+             ("run_norm_store", f"FusedRopeKernel<{args}>::run_norm_fp8_store"),
++            ("run_prefill_image", f"QKNormRopeFP8Kernel<{make_cpp_args(is_arch_support_pdl())}>::run_prefill_image"),
+             ("run_prefill", f"QKNormRopeFP8Kernel<{make_cpp_args(is_arch_support_pdl())}>::run_prefill"),
+         ],
+     )
+@@ -292,13 +293,18 @@
+         )
+
+
+-@register_custom_op(mutates_args=["q_fp8", "k_cache", "v_cache", "contiguous_k", "contiguous_v"])
++@register_custom_op(mutates_args=["q_fp8", "k_cache", "v_cache", "contiguous_k", "contiguous_v", "v_image"])
+ def apply_qknorm_rope_fp8_prefill(
+     q: torch.Tensor, k: torch.Tensor, q_weight: torch.Tensor, k_weight: torch.Tensor,
+     cos_sin_cache: torch.Tensor, positions: torch.Tensor, eps: float,
+     q_fp8: torch.Tensor, v: torch.Tensor, k_cache: torch.Tensor,
+     v_cache: torch.Tensor, cache_loc: torch.Tensor,
+     contiguous_k: torch.Tensor, contiguous_v: torch.Tensor,
++    v_image: Optional[torch.Tensor] = None, image_rows: int = 0,
+ ) -> None:
+     """Prefill prologue: FP8 Q, paged KV and contiguous KV, BF16 rounding intact."""
+-    _jit_rope_fp8_q_module().run_prefill(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, v, k_cache, v_cache, cache_loc, contiguous_k, contiguous_v)
++    args = (q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, v, k_cache, v_cache, cache_loc, contiguous_k, contiguous_v)
++    if v_image is None:
++        _jit_rope_fp8_q_module().run_prefill(*args)
++    else:
++        _jit_rope_fp8_q_module().run_prefill_image(*args, v_image, image_rows)

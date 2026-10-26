@@ -7,7 +7,7 @@ def test_workflows_keep_the_shared_pd_result_and_archive_contract() -> None:
     genkai = (repository / ".github/workflows/genkai.yml").read_text()
     aspire = (repository / ".github/workflows/aspire2ap.yml").read_text()
     firmus = (repository / ".github/workflows/firmus.yml").read_text()
-    submission = (repository / "submission/run/submit.sbatch").read_text()
+    submission = (repository / "platforms/shared/qwen-pd.sbatch").read_text()
     genkai_job = (repository / "platforms/genkai/run-qwen-pd.pjm").read_text()
     aspire_job = (repository / "platforms/aspire2ap/run-qwen-pd.pbs").read_text()
     checkers = [
@@ -41,7 +41,7 @@ def test_workflows_keep_the_shared_pd_result_and_archive_contract() -> None:
 
 def test_cluster_topologies_use_every_allocated_gpu() -> None:
     repository = Path(__file__).parents[2]
-    submission = (repository / "submission/run/submit.sbatch").read_text()
+    submission = (repository / "platforms/shared/qwen-pd.sbatch").read_text()
 
     assert 'firmus) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]]' in submission
     assert 'aspire2ap) [[ "${NODE_COUNT}" -eq 2 && "${GPUS_PER_NODE}" -eq 8 ]]' in submission

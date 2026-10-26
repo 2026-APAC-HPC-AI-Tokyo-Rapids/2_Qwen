@@ -1,0 +1,46 @@
+--- a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
++++ b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
+@@ -335,7 +335,16 @@
+   static_assert(sizeof(bf16x2_t) == 0, "FP8 QK-norm RoPE requires CUDA");
+   return 0;
+ #else
+-  return __nv_cvt_float2_to_fp8x2(device::cast<fp32x2_t>(value), __NV_NOSAT, __NV_E4M3);
++  // Same exact NOSAT repair as qkv_prefill_fp8; keep the BF16 input rounding.
++  const auto x = device::cast<fp32x2_t>(value);
++  const uint16_t packed = __nv_cvt_float2_to_fp8x2(x, __NV_SATFINITE, __NV_E4M3);
++  const unsigned a = __float_as_uint(x.x), b = __float_as_uint(x.y);
++  const unsigned aa = a & 0x7fffffff, bb = b & 0x7fffffff;
++  // 464 is the RNE midpoint above 448: the tie stays finite (even code).
++  // Overflow and infinity retain sign; input NaNs become positive canonical NaN.
++  const unsigned lo = aa > 0x43e80000 ? (aa > 0x7f800000 ? 0x7f : ((a >> 24) & 0x80) | 0x7f) : packed & 0xff;
++  const unsigned hi = bb > 0x43e80000 ? (bb > 0x7f800000 ? 0x7f : ((b >> 24) & 0x80) | 0x7f) : packed >> 8;
++  return lo | (hi << 8);
+ #endif
+ }
+ 
+--- /dev/null
++++ b/python/sglang/kernels/jit/csrc/elementwise/decode_fp8_check.cuh
+@@ -0,0 +1,23 @@
++// Test-only JIT module: compare the installed helper with CUDA's old NOSAT path.
++// Kept separate from the serving module so the software reference is not emitted there.
++#include "rope.cuh"
++
++namespace {
++__global__ void decode_fp8_check_kernel(const bf16x2_t* input, uint16_t* reference, uint16_t* actual) {
++  const unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
++  const auto value = input[i];
++  reference[i] = __nv_cvt_float2_to_fp8x2(device::cast<fp32x2_t>(value), __NV_NOSAT, __NV_E4M3);
++  actual[i] = to_fp8x2(value);
++}
++
++struct DecodeFP8Check {
++  static void run(tvm::ffi::TensorView input, tvm::ffi::TensorView reference, tvm::ffi::TensorView actual) {
++    using namespace host;
++    auto device = SymbolicDevice{};
++    device.set_options<kDLCUDA>();
++    TensorMatcher({65536, 2}).with_dtype<bf16_t>().with_device(device).verify(input);
++    TensorMatcher({65536}).with_dtype<uint16_t>().with_device(device).verify(reference).verify(actual);
++    LaunchKernel(256, 256, device.unwrap())(decode_fp8_check_kernel, static_cast<const bf16x2_t*>(input.data_ptr()), static_cast<uint16_t*>(reference.data_ptr()), static_cast<uint16_t*>(actual.data_ptr()));
++  }
++};
++}  // namespace

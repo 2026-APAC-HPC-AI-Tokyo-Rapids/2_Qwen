@@ -116,14 +116,14 @@ def capture_router(source: str, platform: str, tmp_path: Path) -> list[str]:
 
 @pytest.mark.parametrize("platform,nodes,profile", [("firmus", 2, False), ("firmus", 2, True), ("genkai", 2, False), ("genkai", 4, False), ("genkai", 4, True)])
 def test_worker_argv_matches_validated_candidate_or_main(platform: str, nodes: int, profile: bool, tmp_path: Path) -> None:
-    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    source = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     expected = json.loads(FIXTURE.read_text())["workers"][f"{platform}-{nodes}-{profile}"]
     assert capture_workers(source, platform, nodes, tmp_path, profile) == expected
 
 
 @pytest.mark.parametrize("platform", ["aspire2ap", "firmus", "genkai"])
 def test_router_argv_matches_candidate_or_main(platform: str, tmp_path: Path) -> None:
-    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    source = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     expected = json.loads(FIXTURE.read_text())["routers"][platform]
     if platform == "aspire2ap":
         start = expected.index("/opt/sglang/venv/bin/python")
@@ -213,7 +213,7 @@ def test_pbs_checker_requires_terminal_success_and_artifacts(tmp_path: Path, sta
 
 
 def test_aiperf_argv_matches_archived_candidate(tmp_path: Path) -> None:
-    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    source = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     command = next(line for line in source.splitlines() if line.startswith("  command=("))
     recording = command + "\nprintf '%s\\0' \"${command[@]}\""
     process = subprocess.run(["bash", "-c", recording], env={**os.environ, "CONCURRENCY": "40"}, check=True, capture_output=True, text=True)
@@ -226,7 +226,7 @@ def test_parser_status_survives_post_benchmark_evidence(tmp_path: Path, platform
         (tmp_path / directory).mkdir(parents=True)
     (tmp_path / "source/worker-endpoints.tsv").write_text("prefill\t192.0.2.1\t30100\t9000\ndecode\t192.0.2.2\t30200\tunused\n")
     (tmp_path / "results/artifacts/run/profile_export_aiperf.json").write_text("{}")
-    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    source = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     function = source.split("run_aiperf() {", 1)[1].split('\nif [[ "${mode}" == kernels ]]', 1)[0]
     stubs = '''set -euo pipefail
 enroot() {
@@ -279,7 +279,7 @@ def test_greedy_probe_records_fixed_requests_and_requires_logprobs(tmp_path: Pat
 
 @pytest.mark.parametrize("profile", [False, True])
 def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, profile: bool) -> None:
-    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    source = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     config = json.loads((REPOSITORY / "configs/aspire-serving.json").read_text())
     assert config["concurrency"] == 104
     assert [(w["node"], w["role"], w["gpus"]) for w in config["workers"]] == [(0, "prefill", "0,1,2,3"), (0, "prefill", "4,5,6,7"), (1, "decode", "0,1,2,3"), (1, "decode", "4,5,6,7")]
@@ -392,7 +392,7 @@ def test_aspire_excludes_active_storage_nics_and_requires_compute_fabric(tmp_pat
         (port / "state").write_text("1: DOWN\n")
     elif fault == "ethernet":
         (port / "link_layer").write_text("Ethernet\n")
-    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    source = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     selection = source.split("  hca_devices=()", 1)[1].split("  printf 'hostname=", 1)[0]
     selection = selection.replace("/sys/class/infiniband", str(tmp_path))
     process = subprocess.run(["bash", "-c", "set -euo pipefail\nhca_devices=()\n" + selection + '\nprintf "%s" "$ucx_devices"'], env={**os.environ, "QWEN_PLATFORM": "aspire2ap"}, capture_output=True, text=True, check=False)
@@ -414,7 +414,7 @@ def test_decode_kv_pool_covers_full_batch_growth_and_transfer_slots() -> None:
 
 
 def test_aspire_memory_override_does_not_change_other_platforms(tmp_path: Path) -> None:
-    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    source = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     # Use a distinctive value to prove this setting remains inside the ASPIRE branch.
     source = source.replace('jq -er .prefill_mem_fraction_static "${config}"', 'printf 0.901')
     for platform in ("aspire2ap", "firmus", "genkai"):
@@ -477,7 +477,7 @@ else:
     for args in commands:
         assert "SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1" in args
         assert any(":/runtime:none:bind,rw" in arg for arg in args)
-    submission = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    submission = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     barrier = submission.index('"${script_path}" kernels')
     assert barrier < submission.index('"${script_path}" node')
     assert "#PBS -l walltime=00:30:00" in (REPOSITORY / "platforms/aspire2ap/run-qwen-pd.pbs").read_text()
@@ -520,7 +520,7 @@ def test_aspire_container_pin_selects_staged_build_without_history_search(tmp_pa
 
 
 def test_aspire_worker_sources_selection_in_only_its_own_role(tmp_path: Path) -> None:
-    source = (REPOSITORY / "submission/run/submit.sbatch").read_text()
+    source = (REPOSITORY / "platforms/shared/qwen-pd.sbatch").read_text()
     selected = tmp_path / "prefill-kernels.env"
     selected.write_text("SGLANG_PREFILL_FA3_VERIFY=regs\n")
     empty = tmp_path / "decode-kernels.env"

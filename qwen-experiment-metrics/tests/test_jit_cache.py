@@ -4,7 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 
-SCRIPT = Path(__file__).parents[2] / "submission/run/submit.sbatch"
+SCRIPT = Path(__file__).parents[2] / "platforms/shared/qwen-pd.sbatch"
 FUNCTIONS = SCRIPT.read_text().split("restore_worker_cache() {", 1)[1].split("run_node() {", 1)[0]
 FUNCTIONS = "restore_worker_cache() {" + FUNCTIONS
 

@@ -1,5 +1,7 @@
 # 公式Qwen3 PD実装記録
 
+This document records the earlier generic launcher and its historical Firmus runs. The current 9120.51 submission package is documented in [submission/README.md](../submission/README.md); the unchanged generic launcher now lives at `platforms/shared/qwen-pd.sbatch`.
+
 ## 正本
 
 - 公式Task Rules: <https://github.com/hpcac/2026-APAC-HPC-AI/blob/main/task/1.%20Qwen3%20AI%20Task%20Rules.md>
@@ -34,7 +36,7 @@ ASPIRE 2A+のPBS job 208754.pbs111は34秒、`Exit_status=0`で完了した。ra
 
 最終候補トポロジは、node 0に4基のTP2 Prefillワーカー、node 1に2基のTP4/EP4 Decodeワーカーを配置し、Decode側の`max-running-requests`を256、全ワーカーの`max-total-tokens`を131072とする。この容量は、公式の16リクエスト（入力4000＋出力200トークン）がすべて単一ワーカーに集中した場合に必要となる67200トークンを上回りつつ、自動推定容量1531197トークン全体に対するNIXLのeagerなprepared descriptor構築を防止する。最終トポロジではNIXLを維持し、8基のInfiniBandおよび2基のEthernet HCAを含むFirmus上のすべてのアクティブなHCAをUCX_NET_DEVICESに設定するとともに、各ワーカーに対して個別のAPI/ブートストラップポートを維持する。
 
-現在の Firmus の実行パスは `submission/run/submit.sbatch` のみに一本化されており、ワーカーおよびルーターを起動した後、単一の v1 chat completions ゲートウェイ経由で固定の公式 AIPerf コマンドを実行します。旧来のモジュール式実行スクリプト群や個別の JSON 実行設定は、スタンドアロン契約との重複を排除するため、最終成功ランの完了後に削除されました。なお、リポジトリ内のパーサーと埋め込みスタンドアロンパーサーはバイト単位で同一なローカル検証器として維持されており、オープンループのリクエストレートは一切使用されません。
+現在の Firmus の実行パスは `platforms/shared/qwen-pd.sbatch` のみに一本化されており、ワーカーおよびルーターを起動した後、単一の v1 chat completions ゲートウェイ経由で固定の公式 AIPerf コマンドを実行します。旧来のモジュール式実行スクリプト群や個別の JSON 実行設定は、スタンドアロン契約との重複を排除するため、最終成功ランの完了後に削除されました。なお、リポジトリ内のパーサーと埋め込みスタンドアロンパーサーはバイト単位で同一なローカル検証器として維持されており、オープンループのリクエストレートは一切使用されません。
 
 Actions `34728353522` / Firmus Slurm `17007` では、`g1`/`g4` 上で同一の bounded-KV 構成を使用しました。全 16 ランクで CUDA graph キャプチャおよび内部 PD warmup を完了し、OOM、UCX、NIXL エラーは発生しませんでしたが、選択された `prefill-3` から `decode-0` への外部 prewarm が、`bootstrap-req` が 1 のまま推移する中でクライアント側の 120 秒の `curl` 制限によりアボートされました。7分50秒後に `FAILED 28:0` で終了したものの、アーティファクト `10308936949` は回収され、ランタイムはクリーンアップされて残留ジョブはなく、AIPerf には到達しませんでした。
 
@@ -44,7 +46,7 @@ GitHub Actions 34729264020 / Firmus Slurm 17011 では、g1/g4 上で bounded-KV
 
 Slurm 17005 は、558 リクエスト、エラー 0 件、good request fraction 1.0、goodput 4.536230620411887 requests/s、スコア 907.2461240823774 output tokens/s で固定の公式 AIPerf ワークロードを完了した。job exit が 1 となったのは、当時のラッパーが観測された平均 OSL に対して厳密に 200 であることを誤って要求したことのみが原因である。バージョン固定された AIPerf 0.12.0 は、観測された 200..201 の分布を osl_mismatch_count 0 として許容する。修正済みパーサーを用いて不変の raw export をリプレイすると、official_validation.valid は true となる。リポジトリの submission/results/17005 配下には、raw export、すべてのサービスログ、当初のリジェクト内容、修正後スコア、provenance、および SHA-256 マニフェストが格納されている。
 
-GitHub Actions `34732532321` において、コミット `909dae3f198593da1ea704f6d31d570629da4773` がスタンドアロンの `submission/run/submit.sbatch` 経由で実行され、`g1` および `g4` 上の `16` 基の `H200` GPU を用いた Firmus Slurm ジョブ `17021` として処理された。本ジョブは所要時間 `00:11:16`、ステータス `COMPLETED`、ExitCode `0:0` で正常に完了した。固定された AIPerf `0.12.0` のフェーズ `60/120/30`、並行度 `16` の条件下で計 `558` リクエストをエラー `0` 件で処理し、good request fraction は `1.0`、goodput は `4.548422736312085` requests/s を記録したほか、設定された OSL `200` を乗じたローカル正規化スコア（goodput × OSL）は `909.6845472624169` output tokens/s、raw AIPerf 出力トークンスループットは `909.6763959671906` tokens/s であった。なお、ローカル検証の `official_validation.valid` は `true` であったが、これは主催者側のソフトウェアではなくローカルのバリデータによるものである。アーカイブパスは `/srv/qwen-artifacts/34732532321/1` であり、クリーンアップも完了して残存する Slurm ジョブは存在しない。本実行結果は、履歴として `17005` を保持しつつ、それを置き換える最終エビデンスとなる。
+GitHub Actions `34732532321` において、コミット `909dae3f198593da1ea704f6d31d570629da4773` がスタンドアロンの `platforms/shared/qwen-pd.sbatch` 経由で実行され、`g1` および `g4` 上の `16` 基の `H200` GPU を用いた Firmus Slurm ジョブ `17021` として処理された。本ジョブは所要時間 `00:11:16`、ステータス `COMPLETED`、ExitCode `0:0` で正常に完了した。固定された AIPerf `0.12.0` のフェーズ `60/120/30`、並行度 `16` の条件下で計 `558` リクエストをエラー `0` 件で処理し、good request fraction は `1.0`、goodput は `4.548422736312085` requests/s を記録したほか、設定された OSL `200` を乗じたローカル正規化スコア（goodput × OSL）は `909.6845472624169` output tokens/s、raw AIPerf 出力トークンスループットは `909.6763959671906` tokens/s であった。なお、ローカル検証の `official_validation.valid` は `true` であったが、これは主催者側のソフトウェアではなくローカルのバリデータによるものである。アーカイブパスは `/srv/qwen-artifacts/34732532321/1` であり、クリーンアップも完了して残存する Slurm ジョブは存在しない。本実行結果は、履歴として `17005` を保持しつつ、それを置き換える最終エビデンスとなる。
 
 並行数8（Actions `34734863213` / Slurm `17023` / commit `b2ae586`）との制御比較では、320リクエスト、エラー0件、good request fraction 1.0、goodput 2.61749910791334 requests/s、ローカル正規化スコア523.499821582668 output tokens/s、生のAIPerf出力トークンスループット523.4916418979558 output tokens/sを記録し、`official_validation.valid`は`true`であった。並行数16のgoodputは並行数8より73.76979126988392%高かった。ローカル正規化スコアはgoodputに設定OSL 200を乗じた値であり、生のAIPerf出力トークンスループットとは区別する。
 
@@ -64,4 +66,4 @@ fresh container buildはActions run 34681001728で成功した。生成したSqu
 
 ## 提出用バンドル
 
-`submission/run/submit.sbatch`は、コンテナパスとモデルパス以外の実行構成を1つのSlurmスクリプトに固定している。2ノードのプロセス起動、6ワーカーのヘルスチェック、PDルーター、公式AIPerf、raw exportの探索、good request fractionの適格判定、およびスコア生成を同一allocation内で実行する。固定された公式 `argv` および来歴の保持を必須とし、OSL `200`、`good_request_fraction >= 0.90`、ならびに整合するISL分布を確認できた実行だけを有効とする。設定値、観測値、判定結果は`score.json`へ分けて保存する。
+`platforms/shared/qwen-pd.sbatch`は、コンテナパスとモデルパス以外の実行構成を1つのSlurmスクリプトに固定している。2ノードのプロセス起動、6ワーカーのヘルスチェック、PDルーター、公式AIPerf、raw exportの探索、good request fractionの適格判定、およびスコア生成を同一allocation内で実行する。固定された公式 `argv` および来歴の保持を必須とし、OSL `200`、`good_request_fraction >= 0.90`、ならびに整合するISL分布を確認できた実行だけを有効とする。設定値、観測値、判定結果は`score.json`へ分けて保存する。

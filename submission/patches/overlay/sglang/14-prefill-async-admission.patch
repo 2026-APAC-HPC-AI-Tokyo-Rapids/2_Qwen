@@ -1,0 +1,167 @@
+diff --git a/python/sglang/srt/disaggregation/prefill.py b/python/sglang/srt/disaggregation/prefill.py
+--- a/python/sglang/srt/disaggregation/prefill.py
++++ b/python/sglang/srt/disaggregation/prefill.py
+@@ -681,6 +681,10 @@ class SchedulerDisaggregationPrefillMixin:
+ 
+         if copy_done is not None:
+             copy_done.synchronize()
++        if result.page_indices_cpu is not None:
++            # Complete now that copy_done has been synchronized.
++            for req, mirror in zip(batch.reqs, result.page_indices_cpu, strict=True):
++                req.page_indices_cpu = mirror
+         if result.routed_experts_output is not None:
+             result.routed_experts_output.finalize()
+             result.routed_experts_output = None
+@@ -722,7 +726,18 @@ class SchedulerDisaggregationPrefillMixin:
+                 req.output_ids.append(next_token_id)
+                 maybe_cache_unfinished_req(req, self.tree_cache)
+                 self.disagg_prefill_inflight_queue.append(req)
+-                if self.spec_algorithm.is_eagle() and draft_input is not None:
++                if (
++                    self.spec_algorithm.is_eagle()
++                    and result.draft_output_cpu is not None
++                ):
++                    # Host copies made on the copy stream; copy_done above
++                    # already covered them.
++                    hidden_cpu, topk_p_cpu, topk_index_cpu = result.draft_output_cpu
++                    req.output_topk_p = topk_p_cpu[i]
++                    req.output_topk_index = topk_index_cpu[i]
++                    req.hidden_states_tensor = hidden_cpu[i].clone()
++                    req.output_dsa_topk_indices = None
++                elif self.spec_algorithm.is_eagle() and draft_input is not None:
+                     req.output_topk_p = draft_input.topk_p[i]
+                     req.output_topk_index = draft_input.topk_index[i]
+                     req.hidden_states_tensor = (
+@@ -1112,6 +1127,45 @@ class SchedulerDisaggregationPrefillMixin:
+             req.disagg_kv_sender._early_send_wait_event = ev
+         self.send_kv_chunk(req, last_chunk=False, end_idx=cached_end)
+ 
++    def prefetch_disagg_prefill_outputs(
++        self: Scheduler, batch: ScheduleBatch, result: GenerationBatchResult
++    ) -> None:
++        """Issue the D2H copies that result processing needs, on the copy stream
++        (already ordered after this forward) and before copy_done is recorded.
++        Result processing then reads host memory only, so it never waits on the
++        WAR-fenced schedule stream, which by then is behind the next forward."""
++        from sglang.srt.managers.utils import _async_d2h
++
++        draft = result.next_draft_input
++        if (
++            self.spec_algorithm.is_eagle()
++            and draft is not None
++            and draft.hidden_states is not None
++            and draft.dsa_topk_indices is None
++        ):
++            result.draft_output_cpu = (
++                _async_d2h(draft.hidden_states),
++                _async_d2h(draft.topk_p),
++                _async_d2h(draft.topk_index),
++            )
++        # Page table rows [0, end) of every request; rows are written on the
++        # schedule stream before this forward, and send_kv_chunk only reads
++        # page-aligned windows that end at or before `end`.
++        # Kept on the result, not the req: the next run_batch can launch before
++        # this result is processed, and only this result's copy_done covers it.
++        page_size = self.token_to_kv_pool_allocator.page_size
++        req_to_token = self.req_to_token_pool.req_to_token
++        result.page_indices_cpu = [
++            _async_d2h(
++                req_to_token[
++                    req.req_pool_idx,
++                    0 : min(req.extend_range.end, len(req.origin_input_ids)) : page_size,
++                ]
++                // page_size
++            )
++            for req in batch.reqs
++        ]
++
+     def send_kv_chunk(
+         self: Scheduler,
+         req: Req,
+@@ -1247,10 +1301,22 @@ class SchedulerDisaggregationPrefillMixin:
+                 payloads[st]() if st in payloads else None for st in state_types
+             ]
+ 
+-        kv_indices = self.req_to_token_pool.req_to_token[
+-            req.req_pool_idx, start_idx:end_idx
+-        ]
+-        page_indices = kv_to_page_indices(kv_indices, page_size)
++        mirror = getattr(req, "page_indices_cpu", None)
++        if (
++            mirror is not None
++            and start_idx % page_size == 0
++            and -(-end_idx // page_size) <= mirror.shape[0]
++        ):
++            # Host mirror from prefetch_disagg_prefill_outputs, attached to the
++            # req only after its batch's copy_done was synchronized.
++            page_indices = mirror[
++                start_idx // page_size : -(-end_idx // page_size)
++            ].numpy()
++        else:
++            kv_indices = self.req_to_token_pool.req_to_token[
++                req.req_pool_idx, start_idx:end_idx
++            ]
++            page_indices = kv_to_page_indices(kv_indices, page_size)
+         if not req.disagg_kv_sender.should_send_kv_chunk(len(page_indices), last_chunk):
+             return
+         req.disagg_kv_sender.send(page_indices, state_indices)
+@@ -1267,6 +1333,7 @@ class SchedulerDisaggregationPrefillMixin:
+         req.tmp_end_idx = -1
+         req.hidden_states_tensor = None
+         req.output_dsa_topk_indices = None
++        req.page_indices_cpu = None
+         req.pending_bootstrap = True
+         req.time_stats.reset_prefill_retry_time()
+         if req.prefill_attempt_count >= max_attempts:
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -3473,6 +3473,13 @@ class Scheduler(
+                                 # gated by copy_done, so nothing on forward_stream waits.
+                                 self.copy_stream.wait_stream(self.forward_stream)
+                                 with self.copy_stream_ctx:
++                                    if (
++                                        self.disaggregation_mode
++                                        == DisaggregationMode.PREFILL
++                                    ):
++                                        self.prefetch_disagg_prefill_outputs(
++                                            batch, batch_result
++                                        )
+                                     batch_result.copy_to_cpu(
+                                         return_logprob=batch.return_logprob,
+                                         return_hidden_states=batch.return_hidden_states,
+diff --git a/python/sglang/srt/managers/utils.py b/python/sglang/srt/managers/utils.py
+--- a/python/sglang/srt/managers/utils.py
++++ b/python/sglang/srt/managers/utils.py
+@@ -86,6 +86,12 @@ class GenerationBatchResult:
+ 
+     # relay path: forward stream -> next step forward
+     next_draft_input: Optional[EagleDraftInput] = None
++    # PD prefill: pinned host copies of next_draft_input's
++    # (hidden_states, topk_p, topk_index), issued on the copy stream before
++    # copy_done is recorded.
++    draft_output_cpu: Optional[tuple] = None
++    # PD prefill: per-request pinned page-index mirrors (see send_kv_chunk).
++    page_indices_cpu: Optional[list] = None
+ 
+     # Refs the worker wants scheduler to keep alive for the same 2-iter window
+     # as batch_record_buf. Used for cross-stream tensor lifetime (e.g. a spec
+diff --git a/python/sglang/srt/mem_cache/allocation.py b/python/sglang/srt/mem_cache/allocation.py
+--- a/python/sglang/srt/mem_cache/allocation.py
++++ b/python/sglang/srt/mem_cache/allocation.py
+@@ -352,7 +352,14 @@ def alloc_for_extend(
+     else:
+         # Paged allocation - build last_loc
+         last_loc = [
+-            (t[-1:] if len(t) > 0 else torch.tensor([-1], device=batch.device))
++            (
++                t[-1:]
++                if len(t) > 0
++                # Device fill: torch.tensor([-1], device=...) is a pageable H2D
++                # copy followed by cudaStreamSynchronize on the WAR-fenced
++                # schedule stream, i.e. a host wait for the in-flight forward.
++                else torch.full((1,), -1, dtype=torch.int64, device=batch.device)
++            )
+             for t in prefix_tensors
+         ]
+         out_cache_loc = alloc_paged_token_slots_extend(
