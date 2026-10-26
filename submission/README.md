@@ -2,7 +2,7 @@
 
 The measured best run is **9120.51 good output tok/s**, Actions [40225743220](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40225743220), Slurm 26232: 5802 requests, zero errors, good request fraction 0.97708. This is one measured run, not a repeatability claim. Its text evidence and checksums are in `results/40225743220/`.
 
-Standalone re-run of this package: pending
+Standalone re-run of this package: **9132.03 good output tok/s**, Actions [40273247322](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40273247322), Slurm 26298, COMPLETED 0:0 in 9m13s: 5801 requests, zero errors, good request fraction 0.97776. It ran exactly `run/prepare.sh` followed by `sbatch scripts/submit.sbatch` on the recorded image; evidence is in `results/40273247322/`.
 
 Common baseline: **1,832 good output tok/s** on Firmus 2×8 H200 (official task `5. Common Baselines.md`, job 25013). The baseline uses different serving settings.
 
@@ -14,7 +14,8 @@ The submission uses all 16 H200 GPUs: **P3 TP4/DP4/EP4 Prefill + D1 TP4/DP4/EP4 
 - `run/`: login-node preparation, one Slurm serving/benchmark job, unchanged AIPerf wrapper and local scorer, and unchanged EAGLE preparation helper.
 - `config/`: serving settings and static Prefill expert placement.
 - [patches/README.md](patches/README.md): every image patch, kernel source and runtime overlay, with hashes, application points and numerical classifications (unestablished classes are marked `to confirm`).
-- `results/40225743220/`: curated evidence of the measured run, not the pending standalone check.
+- `results/40225743220/`: curated evidence of the measured tuning run.
+- `results/40273247322/`: curated evidence of the standalone re-run of this package.
 
 The whole accompanying repository is required for rebuilding: `containers/`, `scripts/build-sglang-container.sh`, repository patches and `kernels/` are build inputs. Once an image exists, `submission/` is sufficient for preparation and execution. No private SGLang mirror, team credentials, GitHub Actions, or team-specific runtime directory is needed by the organisers.
 
@@ -61,7 +62,7 @@ For a rebuild, substitute the new image's shared path and a tokenizer snapshot r
 
 The single job requests partition `hpcai`, two nodes, eight GPUs per node, and 17 minutes. It launches the workers and router, waits for readiness, captures server info, sends one non-dataset connection warm-up chat through the gateway, then runs the unchanged official AIPerf 0.12.0 command (60/120/30 seconds, seed 2026, closed-loop c240). There is no profiling option.
 
-Allow **about 12–14 minutes** for the job, excluding preparation and queue time. This is a planning estimate: the archived Slurm log starts at 06:13:08 +08:00 and accounting records 13m51s; subtracting the approximately 68-second Prefill screen gives about 12m43s. The numeric gate and overlapping Decode screens are also removed; cold startup/compilation can vary. Standalone elapsed time remains to be measured.
+Allow **about 10 minutes** for the job, excluding preparation and queue time. The standalone re-run took 9m13s (Slurm accounting): readiness after 264 s, then the warm-up request and the official AIPerf phases. Cold startup and compilation time can vary.
 
 Outputs are in `RUN_DIR/logs/`, `RUN_DIR/results/` and `RUN_DIR/source/`. `logs/slurm-<job>.log` ends with `AIPERF ok` and `run-success` exists on success. The raw official metrics are `results/profile_export_aiperf.json`; **good output tok/s = `goodput.avg × 200`**. `results/score.json` records that value as `good_output_tokens_per_second`, eligibility and the repository-local official-workload checks. This scorer is not an organiser accuracy check. `aiperf-command.txt`, `aiperf-provenance.txt`, server-info files, the sanity answer, draft evidence and overlay hashes remain available for review. Preserve these outputs before deleting the run directory.
 
