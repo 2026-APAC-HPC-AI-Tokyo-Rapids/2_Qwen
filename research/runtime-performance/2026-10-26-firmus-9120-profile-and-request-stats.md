@@ -65,3 +65,24 @@ AIPerf は warmup の要求を全部終えてから、profiling 開始時に 240
 ## 5. 以前の EAGLE draft FP8 試験（記録漏れの補記）
 
 2026-09-29 に ASPIRE（c40、P2/D2）で BF16 draft を `--speculative-draft-model-quantization fp8` で読み込んだ（759227b、run [36538766257](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/36538766257)）。score 2468.02 で、BF16 対照 2473.60（run 36390750421）と差がなく不採用。Actions の failure は成果物回収の失敗で、benchmark は完走している。現在の Firmus では、draft extend の BF16 GEMM 約 3.9 ms/反復が対象になる。FP8 化の上限は Prefill −0.8%、電力上限下で実効はその半分程度。受理長への影響は未測定。
+
+## 6. 開始時の TTFT 不合格の原因（40313004834 の再解析）
+
+最初の 240 要求のうち、3 s 以内に最初の token が届いたのは 109。以下の模型（Decode の KV 検知時刻 + 遅れ 0.227 s）はこの 109 を再現する。
+
+**(a) 容量で決まる分（約 108 件、避けられない）。** 240 × 4032 token を 12 rank が 1 反復 250 ms で 1 要求ずつ処理する。全 rank が 0.31 s に最初の KV を出したとしても、3 s 以内に収まるのは rank あたり 10〜11 件（計 120〜132）である。
+
+**(b) 立ち上がりの遅れ（約 11 件）。** 各 rank は最初の 1 件を出した後、0.25 s ごとに規則正しく KV を出している（間隔の中央値 0.25〜0.26 s）。損失は最初の 1 件の遅れに集中している。最初の KV は 0.31 s（P0DP0、P1DP3、P2DP0）、0.55〜0.62 s（7 rank）、0.82 s（P0DP3、P2DP3）。しかも遅れた P0DP3 と P2DP3 は最多の 23 件を受け持っていた。
+- Prefill scheduler が新しい要求を受け取るのは、loop 1 周に 1 回だけである。DP attention で 4 rank が lockstep なので、空いている rank も 1 反復 250 ms ごとにしか受け取らない。scheduler への到着（entry_time）は 0.0〜0.05 s、0.15〜0.2 s、0.4〜0.45 s、0.65 s の塊に分かれる。
+- 開始直後は front-end（各 server の tokenizer manager 1 worker が 4000 token の prompt を順に処理）が要求を少しずつしか渡せない。最初の反復は、1 rank にしか要求がない状態で始まる。
+- tie 回転（`SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=1`）は有効だが、最初の塊は 1 rank に 7 件偏った。
+- 全 rank が最初の反復から動けば、3 s 以内は 109 から 120 になる。
+
+**(c) router が最初の token を約 0.22 s 止めている（約 12 件、全要求の TTFT にも効く）。** router の request_id は AIPerf の x_request_id と同じで、5802 要求すべてで client TTFT − router latency は 0.6 ms（p90 1.4 ms）である。つまり client の最初の token は、router が応答を返し始めた時刻そのものである。`patches/sglang-router/prefill-load-lifetime.patch` は `tokio::try_join!(prefill_response, decode_response)` の prefill 側で、`process_prefill_response` により **Prefill の応答 body を最後まで読む**。upstream は両方の `send()`（header）だけを join していた。
+
+Prefill の応答が終わるのは、Prefill scheduler が KV 送信の完了に気付いたときである。それは次の loop、つまり 1 反復（250 ms）後になる（Prefill 側の transfer 時間がちょうど 250 ms になる理由と同じ）。Decode は KV 到着の約 30 ms 後に最初の token を出しているのに、router が Prefill の完了まで流さない。差は 0.22 s（定常 p10 0.18、p90 0.24）で、上の模型の遅れと一致する。0.05 s にすれば、3 s 以内は 120 から 132 になる。
+
+**対策の候補。**
+1. router：Prefill の load guard を保持したまま Prefill body の消費を別 task に移し、Decode の header が来た時点で stream を返す。Decode が KV 受信前に拒否した場合に Prefill を取り消す処理は残す。全要求の TTFT が約 −0.2 s。router は image 内の binary なので build が要る。
+2. Prefill：worker 全体が空いている状態から要求が来たとき、最初の forward を数十 ms だけ待ち、全 DP rank に要求が入ってから始める。定常では待ち行列があるので発動しない。runtime overlay で済む。
+3. 1 と 2 を合わせて開始時の不合格を約 23 件減らす。score で約 +0.4%（不合格 131 → 約 108）。残りは (a) の容量の限界である。
