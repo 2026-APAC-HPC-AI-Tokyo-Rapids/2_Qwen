@@ -72,21 +72,22 @@ def test_generated_worker_checks_only_prefill_and_uses_assigned_gpus(tmp_path):
     assert 'for worker in 0 1 2; do' in shell and '--aggregate' in shell
 
 
-def test_aggregation_requires_every_worker_and_every_rank(selector, tmp_path):
+@pytest.mark.parametrize("workers", [2, 3])
+def test_aggregation_requires_every_worker_and_every_rank(selector, tmp_path, workers):
     out, env = tmp_path / 'selection.json', tmp_path / 'prefill.env'
-    for worker in range(3):
+    for worker in range(workers):
         path = tmp_path / f'prefill-{worker}'
         path.mkdir()
         ranks = records(selector)
         (path / 'status.txt').write_text('fa3=0\n')
-        if worker == 2:
+        if worker == workers - 1:
             for name in selector['NAMES'][1:]:
                 ranks[3]['lengths']['4096'][name]['candidate'] = [345.1]*20
         (path / 'fa3.json').write_text(json.dumps({'ranks': ranks}))
-    selector['aggregate_selection'](tmp_path, out, env)
+    selector['aggregate_selection'](tmp_path, out, env, workers)
     assert json.loads(out.read_text())['winner'] == 'control'
-    assert json.loads(out.read_text())['rule']['gpus'] == 12
-    (tmp_path / 'prefill-2/status.txt').write_text('fa3=124\n')
-    selector['aggregate_selection'](tmp_path, out, env)
-    assert json.loads(out.read_text())['failed_workers'] == [2]
+    assert json.loads(out.read_text())['rule']['gpus'] == workers * 4
+    (tmp_path / f'prefill-{workers - 1}/status.txt').write_text('fa3=124\n')
+    selector['aggregate_selection'](tmp_path, out, env, workers)
+    assert json.loads(out.read_text())['failed_workers'] == [workers - 1]
     assert env.read_text() == 'SGLANG_PREFILL_FA3_VERIFY=control\n'

@@ -158,15 +158,26 @@ run_node() {
     if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
       config="${OUTPUT_DIR}/source/aspire-serving.json"
       # Configured TP4 workers use DP4/EP4 MegaMoE within each.
-      args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static "$(if [[ "${role}" == decode ]]; then jq -er .decode_mem_fraction_static "${config}"; else printf 0.90; fi)" --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}" --nccl-port "$((port + 1000))" --page-size 64 --kv-cache-dtype "$(jq -er .kv_cache_dtype "${config}")" --attention-backend fa3 --ep-size "${ep}" --dp-size "$(jq -er .dp_size "${config}")" --enable-dp-attention --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --load-balance-method "$(jq -er ".${role}_load_balance_method" "${config}")" --load-snapshot-publish-interval 1)
+      args=(/opt/sglang/venv/bin/python -m sglang.launch_server --model-path /model --served-model-name qwen --trust-remote-code --context-length 8192 --tp-size "${tp}" --mem-fraction-static "$(if [[ "${role}" == decode ]]; then jq -er .decode_mem_fraction_static "${config}"; else jq -er .prefill_mem_fraction_static "${config}"; fi)" --disaggregation-mode "${role}" --disaggregation-transfer-backend nixl --host 0.0.0.0 --port "${port}" --nccl-port "$((port + 1000))" --page-size 64 --kv-cache-dtype "$(jq -er .kv_cache_dtype "${config}")" --attention-backend fa3 --ep-size "${ep}" --dp-size "$(jq -er .dp_size "${config}")" --enable-dp-attention --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --load-balance-method "$(jq -er ".${role}_load_balance_method" "${config}")" --load-snapshot-publish-interval 1)
       # Keep every UCX interface progressing during asymmetric DP-rank wireup (openucx/ucx#11971).
-      worker_env=(-e "NCCL_IB_HCA==${ucx_devices}" -e UCX_POSIX_USE_PROC_LINK=n -e UCX_ADAPTIVE_PROGRESS=n -e UCX_LOG_LEVEL=info -e SGLANG_DISAGG_STAGING_BUFFER=0 -e SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1 -e SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=4096)
+      worker_env=(-e "NCCL_IB_HCA==${ucx_devices}" -e UCX_POSIX_USE_PROC_LINK=n -e UCX_ADAPTIVE_PROGRESS=n -e UCX_LOG_LEVEL=info -e SGLANG_DISAGG_STAGING_BUFFER=0 -e SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1 -e SGLANG_DECODE_ASYNC_ADMISSION=1 -e SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1 -m "${OUTPUT_DIR}:/runtime:none:bind,ro,x-create=dir")
+      megamoe_tokens=4096
+      if [[ "${role}" == prefill ]]; then megamoe_tokens=$(( $(jq -er .prefill_chunked_size "${config}") / $(jq -er .dp_size "${config}") )); fi
+      worker_env+=(-e "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=${megamoe_tokens}")
       if [[ "${role}" == prefill ]]; then
-        args+=(--dist-init-addr "127.0.0.1:$((32000 + worker * 100))" --disaggregation-bootstrap-port "${bootstrap}" --chunked-prefill-size "$(jq -er .prefill_chunked_size "${config}")" --max-total-tokens "$(jq -er .prefill_max_total_tokens "${config}")" --max-running-requests "$(jq -er .concurrency "${config}")" --disable-cuda-graph)
+        args+=(--dist-init-addr "127.0.0.1:$((32000 + worker * 100))" --disaggregation-bootstrap-port "${bootstrap}" --chunked-prefill-size "$(jq -er .prefill_chunked_size "${config}")" --max-total-tokens "$(jq -er .prefill_max_total_tokens "${config}")" --max-running-requests "$(jq -er .concurrency "${config}")" --disable-cuda-graph --deepep-mode normal)
+        # Firmus run 40225743220 runtime switches; retain the measured ASPIRE H100 P2/D2 shape.
+        test -s "${OUTPUT_DIR}/source/prefill-expert-location.json"
+        worker_env+=(-e SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS=1 -e SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES=1 -e DG_SM90_PREFILL_2WG=1)
+        args+=(--init-expert-location /runtime/source/prefill-expert-location.json --ep-num-redundant-experts "$(jq -er .prefill_ep_num_redundant_experts "${config}")" --optimistic-prefill-attempts "$(jq -er .prefill_optimistic_attempts "${config}")")
       else
-        args+=(--dist-init-addr "127.0.0.1:$((33000 + worker * 100))" --enable-dp-lm-head --moe-dense-tp-size 1 --chunked-prefill-size 8192 --max-total-tokens "$(jq -er .decode_max_total_tokens "${config}")" --max-running-requests "$(jq -er .decode_max_running_requests "${config}")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${config}")" --cuda-graph-bs-decode)
+        worker_env+=(-e DG_SM90_DECODE_INDEPENDENT_WG=1)
+        args+=(--dist-init-addr "127.0.0.1:$((33000 + worker * 100))" --enable-dp-lm-head --moe-dense-tp-size 1 --chunked-prefill-size 8192 --max-total-tokens "$(jq -er .decode_max_total_tokens "${config}")" --max-running-requests "$(jq -er .decode_max_running_requests "${config}")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${config}")" --disaggregation-decode-polling-interval "$(jq -er .decode_polling_interval "${config}")" --cuda-graph-bs-decode)
         while read -r size; do args+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${config}")
       fi
+      # Both packages come from the pinned image; provisioning records and applies the ordered patches.
+      test -d "${OUTPUT_DIR}/overlay/sglang/python/sglang" && test -d "${OUTPUT_DIR}/overlay/deep-gemm/deep_gemm"
+      worker_env+=(-m "${OUTPUT_DIR}/overlay/sglang/python/sglang:/opt/sglang/source/python/sglang:none:bind,ro,x-create=dir" -m "${OUTPUT_DIR}/overlay/deep-gemm/deep_gemm:/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm:none:bind,ro,x-create=dir")
     elif [[ "${role}" == prefill ]]; then
       args+=(--disaggregation-bootstrap-port "${bootstrap}")
     else
@@ -182,6 +193,10 @@ run_node() {
     if [[ -s "${speculation_config}" && "$(jq -r '.speculation.algorithm' "${speculation_config}")" == EAGLE3 ]]; then
       args+=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -r '.speculation.steps' "${speculation_config}")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -r '.speculation.draft_tokens' "${speculation_config}")")
       draft_mount=(-m "${OUTPUT_DIR}/draft:/draft")
+    fi
+    if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
+      # Source only this role's selection inside its container, as on Firmus.
+      args=(bash -c 'set -euo pipefail; set -a; source "$1"; set +a; shift; exec "$@"' bash "/runtime/source/${role}-kernels.env" "${args[@]}")
     fi
     worker_command=(enroot start -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_DISABLE_REQUIRE=1 -e MELLANOX_VISIBLE_DEVICES=all -e MELLANOX_MOUNT_DRIVER=yes -e "CUDA_VISIBLE_DEVICES=${gpus}" -e "UCX_NET_DEVICES=${ucx_devices}" -e "SGLANG_HOST_IP=${node_ip}" -e HOME=/runtime-home -e XDG_CACHE_HOME=/runtime-home/.cache -e CUDA_CACHE_PATH=/runtime-home/.cache/cuda -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e FLASHINFER_WORKSPACE_BASE=/runtime-home/.cache/flashinfer -e SGLANG_DG_CACHE_DIR=/runtime-home/.cache/deep-gemm -e TORCHINDUCTOR_CACHE_DIR=/runtime-home/.cache/torchinductor -e TRITON_CACHE_DIR=/runtime-home/.cache/triton -m "${MODEL_PATH}:/model" -m "${worker_tmp}/home:/runtime-home" "${draft_mount[@]}" "${worker_env[@]}" "${CONTAINER_IMAGE}" "${args[@]}")
     if [[ "${PROFILE}" == true ]]; then worker_command=(env "QWEN_PROFILER_INVOCATION_PATH=${OUTPUT_DIR}/profile/profiler-invocation-node-${node_rank}-${role}-${worker}.argv" "${OUTPUT_DIR}/scripts/exec-profiler.sh" "${worker_command[@]}"); fi
@@ -496,6 +511,11 @@ PY
   return "${parser_status}"
 }
 
+if [[ "${mode}" == kernels ]]; then
+  [[ "${QWEN_PLATFORM}" == aspire2ap ]]
+  node_rank="$(awk -v host="$(hostname -s)" '$2 == host {print $1}' "${OUTPUT_DIR}/source/node-addresses.tsv")"
+  exec bash "${OUTPUT_DIR}/scripts/select-aspire-kernels.sh" "${OUTPUT_DIR}" "${node_rank}"
+fi
 if [[ "${mode}" == node ]]; then run_node; exit; fi
 if [[ "${mode}" == router ]]; then run_router; exit; fi
 if [[ "${mode}" == aiperf ]]; then run_aiperf; exit; fi
@@ -555,6 +575,11 @@ cleanup_all() { status=$?; trap - EXIT INT TERM; if [[ -n "${router_pid}" ]]; th
 trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# Both nodes finish their pre-model screens in this same PBS allocation.
+# Node 0 screens both Prefill GPU sets while node 1 runs the EP4 numeric gate.
+if [[ "${QWEN_PLATFORM}" == aspire2ap ]]; then
+  /opt/pbs/bin/pbsdsh -- env "QWEN_PLATFORM=${QWEN_PLATFORM}" "OUTPUT_DIR=${OUTPUT_DIR}" "CONTAINER_IMAGE=${CONTAINER_IMAGE}" "ENROOT_LIBRARY_PATH=${ENROOT_LIBRARY_PATH}" "ENROOT_SYSCONF_PATH=${ENROOT_SYSCONF_PATH}" "ENROOT_MOUNT_HOME=${ENROOT_MOUNT_HOME}" "${script_path}" kernels >"${OUTPUT_DIR}/logs/kernel-gates-step.log" 2>&1
+fi
 case "${QWEN_PLATFORM}" in
   firmus) srun --overlap --nodes="${NODE_COUNT}" --ntasks="${NODE_COUNT}" --ntasks-per-node=1 --distribution=block:block "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;
   aspire2ap) /opt/pbs/bin/pbsdsh -- env "QWEN_PLATFORM=${QWEN_PLATFORM}" "OUTPUT_DIR=${OUTPUT_DIR}" "MODEL_PATH=${MODEL_PATH}" "CONTAINER_IMAGE=${CONTAINER_IMAGE}" "PROFILE=${PROFILE}" "NODE_COUNT=${NODE_COUNT}" "GPUS_PER_NODE=${GPUS_PER_NODE}" "ENROOT_LIBRARY_PATH=${ENROOT_LIBRARY_PATH}" "ENROOT_SYSCONF_PATH=${ENROOT_SYSCONF_PATH}" "ENROOT_MOUNT_HOME=${ENROOT_MOUNT_HOME}" "${script_path}" node >"${OUTPUT_DIR}/logs/server-step.log" 2>&1 & ;;

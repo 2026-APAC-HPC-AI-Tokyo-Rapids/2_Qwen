@@ -107,11 +107,11 @@ def run_selection(output):
     dist.destroy_process_group()
 
 
-def aggregate_selection(directory, output, env_output):
-    """All twelve Prefill GPUs must pass; an incomplete worker retains control."""
+def aggregate_selection(directory, output, env_output, workers=3):
+    """All assigned Prefill GPUs must pass; an incomplete worker retains control."""
     ranks = []
     failed = []
-    for worker in range(3):
+    for worker in range(workers):
         path = directory / f"prefill-{worker}"
         if not (path / "status.txt").is_file() or (path / "status.txt").read_text().strip() != "fa3=0":
             failed.append(worker)
@@ -122,8 +122,8 @@ def aggregate_selection(directory, output, env_output):
     if failed:
         selection = {"winner": "control", "env": {"SGLANG_PREFILL_FA3_VERIFY": "control"}, "failed_workers": failed}
     else:
-        selection = choose_candidate(ranks, expected_ranks=12)
-    result = {"schema": "firmus-prefill-fa3-selection-all-workers/v1", **selection, "fragments": [f"prefill-{i}/fa3.json" for i in range(3)]}
+        selection = choose_candidate(ranks, expected_ranks=workers * 4)
+    result = {"schema": "firmus-prefill-fa3-selection-all-workers/v1", **selection, "fragments": [f"prefill-{i}/fa3.json" for i in range(workers)]}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     env_output.write_text("".join(f"{k}={v}\n" for k, v in result["env"].items()))
@@ -134,9 +134,10 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--env-output", type=Path)
     parser.add_argument("--aggregate", type=Path)
+    parser.add_argument("--workers", type=int, choices=(2, 3), default=3)
     args = parser.parse_args()
     if args.aggregate:
         assert args.env_output is not None
-        aggregate_selection(args.aggregate, args.output, args.env_output)
+        aggregate_selection(args.aggregate, args.output, args.env_output, args.workers)
     else:
         run_selection(args.output)

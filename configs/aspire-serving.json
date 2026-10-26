@@ -52,11 +52,12 @@
   "model_storage": "node_local",
   "kv_cache_dtype": "fp8_e4m3",
   "prefill_routing_policy": "manual",
-  "prefill_load_balance_method": "round_robin",
+  "prefill_load_balance_method": "total_requests",
   "decode_load_balance_method": "total_requests",
-  "container_sha256": "e29dfde476fd2a8c7cd268f9be2c6d2a1f5e5404a34aed369aa84b4b4143909f",
+  "container_sha256": "1f247668933c7252d3dfbe8f6c23897d354f095d56842788d4415a85d7dc5e55",
+  "prefill_expert_location": "configs/firmus-prefill-replica4-expert-location.json",
   "dp_size": 4,
-  "prefill_max_total_tokens": 32768,
+  "prefill_max_total_tokens": 16384,
   "decode_max_total_tokens": 106496,
   "prefill_chunked_size": 16384,
   "decode_max_running_requests": 80,
@@ -79,5 +80,36 @@
     18,
     20
   ],
-  "decode_mem_fraction_static": 0.96
+  "decode_mem_fraction_static": 0.96,
+  "prefill_ep_num_redundant_experts": 12,
+  "prefill_optimistic_attempts": 2,
+  "sglang_overlay_patches": [
+    "patches/sglang/add-rmsnorm-group-quant.patch",
+    "patches/sglang/prefill-attention-contiguous-kv.patch",
+    "patches/sglang/megamoe-prefill-replicas.patch",
+    "patches/sglang/verify-attention-candidates.patch",
+    "patches/sglang/decode-verify-scheduler-metadata.patch",
+    "patches/sglang/decode-fusions.patch",
+    "patches/sglang/decode-dense-gemm.patch",
+    "patches/sglang/decode-fa3-verify.patch",
+    "patches/sglang/decode-routing-capture.patch",
+    "patches/sglang/prefill-fp8-integration.patch",
+    "patches/sglang/prefill-qkv-fast-fp8.patch",
+    "patches/sglang/decode-qknorm-fast-fp8.patch",
+    "patches/sglang/decode-add-rmsnorm-group-quant.patch",
+    "patches/sglang/prefill-async-admission.patch"
+  ],
+  "deep_gemm_overlay_patches": [
+    "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
+    "patches/deep-gemm-overlay/sm90-prefill-fc2-swizzle.patch",
+    "patches/deep-gemm-overlay/sm90-prefill-2wg-host-epi.patch",
+    "patches/deep-gemm-overlay/sm90-swap-ab-geometry-guard.patch",
+    "patches/deep-gemm-overlay/sm90-decode-swapab-prefetch.patch",
+    "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch",
+    "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch"
+  ],
+  "container_build_run_id": 40197369083,
+  "container_size_bytes": 12272513024,
+  "prefill_mem_fraction_static": 0.9,
+  "decode_polling_interval": 1
 }

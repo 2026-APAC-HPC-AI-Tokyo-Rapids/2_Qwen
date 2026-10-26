@@ -12,9 +12,9 @@ on:
       genkai_container_size:
         value: ${{ (jobs.select-genkai.outputs.action == 'build' || jobs.select-aspire2ap.outputs.action == 'build' || jobs.select-firmus.outputs.action == 'build') && jobs.resolve.outputs.container_size || jobs.select-genkai.outputs.container_size }}
       aspire2ap_container_sha256:
-        value: ${{ (jobs.select-genkai.outputs.action == 'build' || jobs.select-aspire2ap.outputs.action == 'build' || jobs.select-firmus.outputs.action == 'build') && jobs.resolve.outputs.container_sha256 || jobs.select-aspire2ap.outputs.container_sha256 }}
+        value: ${{ (jobs.select-aspire2ap.outputs.action == 'build') && jobs.resolve.outputs.container_sha256 || jobs.select-aspire2ap.outputs.container_sha256 }}
       aspire2ap_container_size:
-        value: ${{ (jobs.select-genkai.outputs.action == 'build' || jobs.select-aspire2ap.outputs.action == 'build' || jobs.select-firmus.outputs.action == 'build') && jobs.resolve.outputs.container_size || jobs.select-aspire2ap.outputs.container_size }}
+        value: ${{ (jobs.select-aspire2ap.outputs.action == 'build') && jobs.resolve.outputs.container_size || jobs.select-aspire2ap.outputs.container_size }}
       firmus_container_sha256:
         value: ${{ (jobs.select-genkai.outputs.action == 'build' || jobs.select-aspire2ap.outputs.action == 'build' || jobs.select-firmus.outputs.action == 'build') && jobs.resolve.outputs.container_sha256 || jobs.select-firmus.outputs.container_sha256 }}
       firmus_container_size:
@@ -84,7 +84,7 @@ jobs:
           CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
           GH_TOKEN: ${{ github.token }}
           REQUIRE_BUILD: ${{ inputs.require_build }}
-        run: scripts/select-qwen-container.sh
+        run: scripts/select-qwen-container.sh configs/aspire-serving.json
 
   select-firmus:
     name: Firmusのローカル成果物を選択
@@ -204,7 +204,7 @@ jobs:
           - cluster: ASPIRE 2A+
             remote_shell: aspire2p-shell
             archive_dir: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
-            action: ${{ (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') && 'build' || needs.select-aspire2ap.outputs.action }}
+            action: ${{ (needs.select-aspire2ap.outputs.action == 'build') && 'build' || needs.select-aspire2ap.outputs.action }}
             source_run_id: ${{ needs.select-aspire2ap.outputs.source_run_id }}
           - cluster: Firmus
             remote_shell: firmus-shell

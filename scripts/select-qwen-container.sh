@@ -31,6 +31,21 @@ verify_sha256() {
 
 if [[ "${REQUIRE_BUILD}" == true ]]; then printf 'action=build\n' >>"${GITHUB_OUTPUT}"; exit 0; fi
 
+# ASPIRE serving pins a verified, already staged build rather than an ancestor's latest run.
+if [[ -n "${1:-}" ]]; then
+  config=$1
+  run_id="$(jq -er .container_build_run_id "${config}")"
+  expected_size="$(jq -er .container_size_bytes "${config}")"
+  expected_sha256="$(jq -er .container_sha256 "${config}")"
+  archive="${CONTAINER_ARCHIVE_DIR}/${run_id}.sqsh"
+  sidecar="${CONTAINER_ARCHIVE_DIR}/${run_id}.container-sidecar.json"
+  [[ "$(stat -c '%s' "${archive}")" == "${expected_size}" ]]
+  jq -e --arg sha "${expected_sha256}" --argjson size "${expected_size}" '.schema_version == "container-sidecar/v1" and .container_artifact.artifact_relative_path == "sglang.sqsh" and .container_artifact.sha256 == $sha and .container_artifact.size_bytes == $size' "${sidecar}" >/dev/null
+  verify_sha256 "${archive}" "${expected_sha256}"
+  printf 'action=reuse\nsource_run_id=%s\ncontainer_sha256=%s\ncontainer_size=%s\n' "${run_id}" "${expected_sha256}" "${expected_size}" >>"${GITHUB_OUTPUT}"
+  exit 0
+fi
+
 commit="${GITHUB_SHA}"
 while [[ -n "${commit}" ]]; do
   while IFS= read -r run_id; do
