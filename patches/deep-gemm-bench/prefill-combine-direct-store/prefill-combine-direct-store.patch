@@ -1,0 +1,52 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -3163,23 +3163,32 @@
+                     for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l)
+                         casted_bf16[l] = __float22bfloat162_rn(reduced[j * kNumElemsPerUint4 + l]);
+ 
+-                    if (j == 0) {
+-                        ptx::tma_store_wait<0>();
+-                        __syncwarp();
+-                    }
+-                    ptx::st_shared(paired_store_buffer + j * 32 + lane_idx,
+-                                   casted.x, casted.y, casted.z, casted.w);
+-                }
+-                __syncwarp();
+-
+-                if (cute::elect_one_sync()) {
+-                    cute::tma_store_fence();
+-                    ptx::tma_store_1d(
+-                        math::advance_ptr(y, static_cast<uint64_t>(token_idx) * kNumHiddenBytes + chunk_byte_offset),
+-                        paired_store_buffer, kNumChunkBytes);
+-                    cute::tma_store_arrive();
+-                }
+-                __syncwarp();
++                    if constexpr (kPrefill2WG) {
++                        // Each lane owns one aligned 16-byte output vector. Keep
++                        // input TMA, FP32 slot order and BF16 rounding unchanged.
++                        auto dst = math::advance_ptr<uint4>(y,
++                            static_cast<uint64_t>(token_idx) * kNumHiddenBytes + chunk_byte_offset);
++                        dst[j * 32 + lane_idx] = casted;
++                    } else {
++                        if (j == 0) {
++                            ptx::tma_store_wait<0>();
++                            __syncwarp();
++                        }
++                        ptx::st_shared(paired_store_buffer + j * 32 + lane_idx,
++                                       casted.x, casted.y, casted.z, casted.w);
++                    }
++                }
++                if constexpr (not kPrefill2WG) {
++                    __syncwarp();
++                    if (cute::elect_one_sync()) {
++                        cute::tma_store_fence();
++                        ptx::tma_store_1d(
++                            math::advance_ptr(y, static_cast<uint64_t>(token_idx) * kNumHiddenBytes + chunk_byte_offset),
++                            paired_store_buffer, kNumChunkBytes);
++                        cute::tma_store_arrive();
++                    }
++                    __syncwarp();
++                }
+             }
+         }
+         } else {

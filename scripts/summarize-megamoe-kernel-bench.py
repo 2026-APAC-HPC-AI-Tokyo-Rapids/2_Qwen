@@ -32,13 +32,14 @@ and NVLink-barrier events are taken by the spinning thread and are exact.
 """
 import argparse
 import json
+import statistics
 from pathlib import Path
 
 import numpy as np
 
 # These candidates promise to retain each output element's arithmetic. Use the
 # recorded patch identity, so renaming a candidate directory cannot relax this.
-EXACT_OUTPUT_PATCHES = {"prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "prefill-fc1-early-release.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch"}
+EXACT_OUTPUT_PATCHES = {"prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "prefill-fc1-early-release.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "prefill-combine-direct-store.patch"}
 
 MAGIC = 0x314C544D4F45474D
 EVENTS = ["Entry", "DispCount", "DispSendCount", "DispGridSync", "DispRecvCount", "DispPrePullBarrier", "DispEpilogueSync", "DispFirstPull", "DispLastPull", "DispLoopExit", "DispCombineSync", "DispClean", "DispFinalGridSync", "DispExit", "AStart", "AFirstBlock", "AFirstL1Ready", "ALastL1Issued", "AFirstL2Ready", "AExit", "BStart", "BFirstBlock", "BExit", "MStart", "MDispatchSync", "MFirstL1Full", "MLastL1End", "MFirstL2Full", "MLastL2End", "MLoopExit", "MCombineGridSync", "MCombineBarrier", "MDispatchSync2", "MCombineEnd"]
@@ -327,6 +328,61 @@ def sglang(results, steps):
     return "\n".join(lines) + "\n", failed
 
 
+def prefill_memory(results, steps):
+    config = json.loads((results / "variants.json").read_text())
+    if not config.get("prefill_memory"):
+        return "", []
+    failed = []
+    lines = ["### Prefill memory experiments", "", "These measurements decide admission to a serving experiment, not end-to-end throughput.", ""]
+    path = results / "prefill-memory/results.json"
+    if steps.get(("prefill-memory", "probe")) != 0 or not path.exists():
+        failed.append("prefill-memory probe")
+        lines.append("QKV numerical/timing gate is missing or failed.")
+    else:
+        probe = json.loads(path.read_text())
+        expected = {(n, dtype) for n in (0, 1, 7, 8, 9, 31, 32, 33, 129, 3986, 4032, 4096) for dtype in ("torch.int32", "torch.int64")}
+        cases = probe.get("cases", [])
+        coverage = {(row["rows"], row["dtype"]) for row in cases}
+        valid = coverage == expected and len(cases) == len(expected) and all(row.get("finite_and_nonfinite_five_buffers_bitwise") is True and (row["rows"] not in (33, 3986, 4032, 4096) or row.get("changed_input_graph_bitwise") is True) for row in cases)
+        timing = probe.get("timing", [])
+        valid &= len(timing) == 3 and {row["rows"] for row in timing} == {3986, 4032, 4096}
+        if not valid:
+            failed.append("prefill-memory coverage")
+        eligible = valid and probe.get("candidate_eligible") is True
+        lines += [f"QKV exact output/graph coverage: {'PASS' if valid else 'FAIL'}. Candidate eligible: **{eligible}**.", "", "| Rows | Control µs | Head4 µs | Change |", "| --- | ---: | ---: | ---: |"]
+        for row in timing:
+            base, candidate = row["median_us"]["control"], row["median_us"]["heads4"]
+            lines.append(f"| {row['rows']} | {base:.2f} | {candidate:.2f} | {candidate / base - 1:+.2%} |")
+    initial = load_rows(results / "image/bench.jsonl")
+    repeat = load_rows(results / "control-repeat/bench.jsonl")
+    valid = steps.get(("control-repeat", "bench")) == 0 and bool(initial) and set(initial) == set(repeat)
+    valid &= all(row.get("deterministic") is True and row.get("output_sha256") == initial.get(case, {}).get("output_sha256") for case, row in repeat.items())
+    if not valid:
+        failed.append("control-repeat bench")
+    lines += ["", "| Case | Initial control ms | Final control ms | Drift |", "| --- | ---: | ---: | ---: |"]
+    stable = valid
+    for case, base in initial.items():
+        if case not in repeat:
+            continue
+        drift = repeat[case]["median_ms"] / base["median_ms"] - 1
+        stable &= abs(drift) <= .02
+        lines.append(f"| {case} | {base['median_ms']:.4f} | {repeat[case]['median_ms']:.4f} | {drift:+.2%} |")
+    selections = {}
+    for variant in config["deep_gemm"]:
+        name = variant["name"]
+        if name == "image":
+            continue
+        rows = load_rows(results / name / "bench.jsonl")
+        exact = set(rows) == set(initial) and all(row.get("deterministic") is True and row.get("output_sha256") == initial[case]["output_sha256"] for case, row in rows.items())
+        ratios = {case: row["median_ms"] / min(initial[case]["median_ms"], repeat[case]["median_ms"]) for case, row in rows.items()} if valid and exact else {}
+        replicated = [ratio for case, ratio in ratios.items() if "-replica4-" in case]
+        eligible = stable and exact and steps.get((name, "gate")) == 0 and steps.get((name, "bench")) == 0 and len(replicated) == 3 and all(ratio < .995 for ratio in replicated) and statistics.median(replicated) < .99 and all(ratio <= 1.01 for ratio in ratios.values())
+        selections[name] = {"candidate_eligible": bool(eligible), "controls_stable_within_two_percent": bool(stable), "ratios_to_faster_control": ratios}
+        lines += ["", f"MegaMoE {name}: serving candidate eligible **{bool(eligible)}**. Requires exact hashes, stable controls, three replica4 cases each >0.5% faster than both controls, median >1%, and no case >1% slower."]
+    (results / "prefill-memory-selection.json").write_text(json.dumps(selections, indent=2) + "\n")
+    return "\n".join(lines) + "\n", failed
+
+
 def summarize(results):
     steps = {}
     if (results / "steps.tsv").exists():
@@ -336,8 +392,10 @@ def summarize(results):
     text, failed = deep_gemm(results, steps)
     sglang_text, sglang_failed = sglang(results, steps)
     failed += sglang_failed
+    memory_text, memory_failed = prefill_memory(results, steps)
+    failed += memory_failed
     verdict = "All variants passed." if not failed else "FAILED: " + ", ".join(failed)
-    return f"### Verdict\n\n{verdict}\n\n{text}\n{sglang_text}", failed
+    return f"### Verdict\n\n{verdict}\n\n{text}\n{sglang_text}\n{memory_text}", failed
 
 
 def main():

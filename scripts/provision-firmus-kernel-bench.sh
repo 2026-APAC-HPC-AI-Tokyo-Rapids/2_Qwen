@@ -35,6 +35,7 @@ sglang_patches=("${GITHUB_WORKSPACE}"/patches/sglang-bench/*.patch)
 shopt -u nullglob
 if (( ${#flat_patches[@]} )); then printf 'Move %s into patches/deep-gemm-bench/<candidate>/ (one directory per candidate).\n' "${flat_patches[@]#"${GITHUB_WORKSPACE}/"}" >&2; exit 1; fi
 steps=1
+if [[ -e "${GITHUB_WORKSPACE}/kernels/probes/prefill-memory.py" ]]; then steps=$((steps + 2)); fi
 if [[ -e "${bench_dir}/timeline" ]]; then steps=$((steps + 1)); fi
 if (( ${#sglang_patches[@]} )); then steps=$((steps + 2)); fi
 if (( ${#sglang_patches[@]} )) && [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then steps=$((steps + 2)); fi
@@ -92,7 +93,7 @@ ln -s "${image}" "${runtime_dir}/sglang.sqsh"
 package=opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
 sglang_package=opt/sglang/source/python/sglang
 extract=("${package}" opt/apac/sm90-megamoe-build.json opt/apac/deep-gemm-host-build.json)
-if (( ${#sglang_patches[@]} )); then extract+=("${sglang_package}"); fi
+if (( ${#sglang_patches[@]} )) || [[ -e "${GITHUB_WORKSPACE}/kernels/probes/prefill-memory.py" ]]; then extract+=("${sglang_package}"); fi
 unsquashfs -no-progress -no-xattrs -processors 1 -d "${runtime_dir}/image" "${image}" "${extract[@]}"
 chmod -R u+w "${runtime_dir}/image"
 cp "${runtime_dir}/image/opt/apac/sm90-megamoe-build.json" "${runtime_dir}/source/"
@@ -119,6 +120,19 @@ mapfile -t baseline_patches < <(jq -r '.deep_gemm_overlay_patches // [] | .[]' "
 for i in "${!baseline_patches[@]}"; do baseline_patches[i]="${GITHUB_WORKSPACE}/${baseline_patches[i]}"; done
 apply_patches "${runtime_dir}/image/opt/sglang/venv/lib/python3.12/site-packages" "${baseline_patches[@]}"
 baseline_records="$(patch_records "${baseline_patches[@]}")"
+# Keep the QKV control identical to configured serving, including overlays
+# newer than the pinned image. Preparation imports only the Python stdlib.
+prefill_memory=null
+if [[ -e "${GITHUB_WORKSPACE}/kernels/probes/prefill-memory.py" ]]; then
+  mapfile -t qkv_baseline_patches < <(jq -r '.sglang_overlay_patches // [] | .[]' "${config}")
+  for i in "${!qkv_baseline_patches[@]}"; do qkv_baseline_patches[i]="${GITHUB_WORKSPACE}/${qkv_baseline_patches[i]}"; done
+  apply_patches "${runtime_dir}/image/opt/sglang/source" "${qkv_baseline_patches[@]}"
+  for patch in "${qkv_baseline_patches[@]}"; do install -D -m 0644 "${patch}" "${runtime_dir}/source/${patch#"${GITHUB_WORKSPACE}/"}"; done
+  install -m 0644 "${GITHUB_WORKSPACE}/kernels/probes/prefill-memory.py" "${runtime_dir}/scripts/prefill-memory.py"
+  cp "${runtime_dir}/scripts/prefill-memory.py" "${runtime_dir}/source/"
+  python3 "${runtime_dir}/scripts/prefill-memory.py" --header "${runtime_dir}/image/${sglang_package}/kernels/jit/csrc/elementwise/rope.cuh" --output "${runtime_dir}/source/prefill-memory"
+  prefill_memory="$(jq --arg script_sha "$(sha256sum "${runtime_dir}/scripts/prefill-memory.py" | awk '{print $1}')" --argjson overlays "$(patch_records "${qkv_baseline_patches[@]}")" --arg patch_sha "$(sha256sum "${runtime_dir}/source/prefill-memory/prefill-qkv-heads4.patch" | awk '{print $1}')" '. + {script_sha256:$script_sha,overlay_patches:$overlays,candidate_patch_sha256:$patch_sha,preparation:"source/prefill-memory/preparation.json"}' "${runtime_dir}/source/prefill-memory/preparation.json")"
+fi
 for patch in "${baseline_patches[@]}"; do install -D -m 0644 "${patch}" "${runtime_dir}/source/${patch#"${GITHUB_WORKSPACE}/"}"; done
 # Timeline overlay roots mirror site-packages like the candidate overlays; the
 # timeline patch's context lines can collide with a candidate's edits.
@@ -158,7 +172,7 @@ if (( ${#sglang_patches[@]} )); then
   apply_patches "${runtime_dir}/overlay/sglang" "${sglang_patches[@]}"
   sglang="$(jq -n --argjson patches "$(patch_records "${sglang_patches[@]}")" --argjson bench "$(if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then echo true; else echo false; fi)" '{patches:$patches,bench_script:$bench}')"
 fi
-jq -n --argjson deep_gemm "${variants}" --argjson sglang "${sglang}" '{deep_gemm:$deep_gemm,sglang:$sglang}' >"${runtime_dir}/results/variants.json"
+jq -n --argjson deep_gemm "${variants}" --argjson sglang "${sglang}" --argjson prefill_memory "${prefill_memory}" '{deep_gemm:$deep_gemm,sglang:$sglang,prefill_memory:$prefill_memory}' >"${runtime_dir}/results/variants.json"
 for part in deep-gemm-bench sglang-bench; do
   if [[ -d "${GITHUB_WORKSPACE}/patches/${part}" ]]; then cp -a "${GITHUB_WORKSPACE}/patches/${part}" "${runtime_dir}/source/patches/"; fi
 done
@@ -169,4 +183,4 @@ scripts=(bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-ker
 if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then scripts+=(bench-firmus-sglang-kernels.py); fi
 for script in "${scripts[@]}"; do install -m 0644 "${GITHUB_WORKSPACE}/scripts/${script}" "${runtime_dir}/scripts/"; cp "${runtime_dir}/scripts/${script}" "${runtime_dir}/source/"; done
 cp "${runtime_dir}/scripts/run.sbatch" "${runtime_dir}/source/"
-jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson image "$(jq .images.sglang "${config}")" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" '{schema_version:"qwen3-megamoe-kernel-bench/v2",cluster:"firmus",commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes}),timeline_patch_sha256:$timeline_sha,variants:"results/variants.json"}' >"${runtime_dir}/source/provenance.json"
+jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson image "$(jq .images.sglang "${config}")" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" --argjson prefill_memory "${prefill_memory}" '{prefill_memory:$prefill_memory,schema_version:"qwen3-megamoe-kernel-bench/v2",cluster:"firmus",commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes}),timeline_patch_sha256:$timeline_sha,variants:"results/variants.json"}' >"${runtime_dir}/source/provenance.json"
