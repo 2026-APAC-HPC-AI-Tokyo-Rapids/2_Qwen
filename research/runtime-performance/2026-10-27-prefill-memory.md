@@ -319,3 +319,10 @@ is not sufficient for adoption: require error-free official results, inspect
 acceptance and telemetry, and confirm a promising improvement before merging.
 This opportunity alone is not expected to supply the roughly 10 ms needed
 for 9500 at otherwise unchanged conditions.
+
+Run 40477321435 stopped in CPU CI before provisioning or Slurm allocation:
+the self-contained submission config had not received the draft-precision
+field. Synchronize its config, launch argument and pre-client server-info
+check with the research launcher. The prior-run selection record remains
+research-only because the package already writes the identical pinned role
+environment files. No GPU measurement occurred in this failed attempt.
