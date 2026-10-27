@@ -1,111 +1,16 @@
-name: Firmus kernel probe
-
+name: Stop user-requested Firmus job 26800
 on:
   workflow_dispatch:
-    inputs:
-      benchmark:
-        description: Probe preparation script (FA3, dense or Prefill memory 1 GPU, EAGLE TP4)
-        type: choice
-        default: kernels/probes/prepare-fa3-prefill.sh
-        options:
-          - kernels/probes/prepare-fa3-prefill.sh
-          - kernels/probes/prepare-fa3-prefill-profile.sh
-          - kernels/probes/prepare-dense-decode.sh
-          - kernels/probes/prepare-prefill-memory.sh
-          - kernels/probes/prepare-fa3-exp.sh
-          - kernels/probes/prepare-firmus-eagle-accept.sh
-      candidate_patch:
-        description: Leave empty for the existing FA3 protocols
-        type: string
-        default: ""
-
 permissions:
   contents: read
-
-env:
-  RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
-
-defaults:
-  run:
-    shell: firmus-shell --github-shell {0}
-
 jobs:
-  probe:
+  stop:
     runs-on: [self-hosted, home-lab]
-    timeout-minutes: 7200
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-
-      - name: Prepare on the login node without a GPU
-        id: prepare
-        env:
-          BENCHMARK: ${{ inputs.benchmark }}
-          CANDIDATE_PATCH: ${{ inputs.candidate_patch }}
-        run: scripts/provision-firmus-kernel-probe.sh
-
-      - name: Reserve one node; run the benchmark with its GPU and time budget
-        id: submit
-        env:
-          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
-        run: |
-          cd "${RUNTIME_DIR}"
-          job_id=$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm.log" --error="${RUNTIME_DIR}/logs/slurm.stderr.log" scripts/run.sbatch)
-          printf '%s\n' "${job_id}"
-          [[ "${job_id}" =~ ^[0-9]+$ ]]
-          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
-
-      - name: Wait for Slurm and check the probe protocol
-        env:
-          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
-          SLURM_JOB_ID: ${{ steps.submit.outputs.job_id }}
+      - name: Cancel only Slurm 26800 and verify terminal state
         shell: bash
-        run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/kernel-probe/check-job.sh
-
-      - name: Record results and counter permission
-        if: always() && steps.prepare.outputs.runtime_dir != ''
-        env:
-          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
-        shell: bash
-        run: |
-          firmus-shell --github-shell platforms/firmus/kernel-probe/summary.sh >>"${GITHUB_STEP_SUMMARY}"
-
-      - name: Recover logs and results including the NCU report
-        id: collect
-        if: always() && steps.prepare.outputs.runtime_dir != ''
-        env:
-          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
-        shell: home-lab-shell {0}
-        run: |
-          destination="${RUNNER_TEMP}/firmus-kernel-probe"
-          install -d "${destination}"
-          firmus-shell --pull "${RUNTIME_DIR}/logs" "${destination}/logs"
-          firmus-shell --pull "${RUNTIME_DIR}/results" "${destination}/results"
-
-      - uses: actions/upload-artifact@v7
-        id: archive
-        if: always() && steps.collect.outcome == 'success'
-        with:
-          name: firmus-kernel-probe-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/firmus-kernel-probe
-          if-no-files-found: error
-
-      - name: Remove runtime only after terminal confirmation and artifact recovery
-        if: always() && steps.prepare.outputs.runtime_dir != ''
-        env:
-          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
-          SLURM_JOB_ID: ${{ steps.submit.outputs.job_id }}
-        run: |
-          if [[ -n "${SLURM_JOB_ID}" ]]; then
-            active=$(squeue --noheader --user="$(id -un)" --format='%i|%T' | awk -F'|' -v id="${SLURM_JOB_ID}" '$1 == id {print $2}')
-            [[ -z "${active}" ]] || { printf 'Preserving runtime for active job %s state=%s\n' "${SLURM_JOB_ID}" "${active}"; exit 1; }
-            sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State >"${RUNTIME_DIR}/logs/cleanup-accounting.txt"
-            state=$(awk -F'|' -v id="${SLURM_JOB_ID}" '$1 == id {print $2}' "${RUNTIME_DIR}/logs/cleanup-accounting.txt")
-            case "${state}" in COMPLETED|FAILED|TIMEOUT|CANCELLED*|OUT_OF_MEMORY|NODE_FAIL|PREEMPTED|BOOT_FAIL|DEADLINE) ;; *) printf 'Preserving runtime for nonterminal job %s state=%s\n' "${SLURM_JOB_ID}" "${state}"; exit 1 ;; esac
-            printf 'No remaining active probe job: %s state=%s\n' "${SLURM_JOB_ID}" "${state}"
-          fi
-          [[ '${{ steps.archive.outcome }}' == success ]] || { printf 'Preserving runtime because artifact recovery failed\n'; exit 1; }
-          chmod -R u+w "${RUNTIME_DIR:?}"
-          rm -rf -- "${RUNTIME_DIR:?}"
-          test ! -e "${RUNTIME_DIR}"
+        run: firmus-shell --github-shell scripts/stop-firmus-26800.sh
