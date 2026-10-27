@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVISION = (ROOT / "scripts/provision-firmus-kernel-bench.sh").read_text()
-RUN = (ROOT / "platforms/firmus/kernel-bench/run.sbatch").read_text()
+RUN = (ROOT / "scripts/run-megamoe-kernel-bench.sh").read_text()
 
 
 def function(name):

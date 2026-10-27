@@ -267,7 +267,7 @@
     "shape": "EP4, H4096, I1536, top8, FP8 weights/activation, BF16 partial, FP32 combine; five Prefill4096 cases, three actual-routing distributions with hot4",
     "removed_work": "Repeated row-validity branches, BF16 shared-address math, destination rank table loads/address math. Metadata loads issued ahead of packing; next row loaded before remote store. No changed useful FLOPs, payload bytes or reduction order.",
     "measurement_question": "Does the recovered FC2 bundle reduce the current D5a kernel on stable same-job controls, and which phase changes?",
-    "status": "firmus_cancelled_by_user_before_gpu_execution",
+    "status": "aspire_ep4_preparing",
     "serving_change_enabled": false,
     "cpu_validation": "megamoe-fc2-cpu-validation-20261028.json",
     "timeline_policy": "Control only: candidate instrumentation introduces 32B spill stores and 80/84B spill loads. Do not run or compare its perturbed phases. Ordinary control/candidate/repeat use zero-spill kernels.",
@@ -302,8 +302,20 @@
       }
     ],
     "serving_validation_note": "Restored existing FP8-draft post-run validator fix and its tests from7980d10; no launch settings changed.",
-    "execution_preference": "User requests ASPIRE for kernel bench when possible and explicitly stopped Firmus. No Firmus resubmission authorized. Existing ASPIRE probe is 1GPU FA3; EP4 MegaMoE needs a four-GPU execution path before use.",
-    "performance_conclusion": "Not measured on the recovered current candidate; static instruction reduction and CPU correctness only. Do not claim a speedup or adopt in serving."
+    "execution_preference": "Use ASPIRE H100 EP4 kernel bench first. User conditionally authorizes Firmus once sufficient ASPIRE improvement is demonstrated, with ordinary serving official score ~6500 output tok/s as the target; kernel timing alone does not satisfy this condition.",
+    "performance_conclusion": "Not measured on the recovered current candidate; static instruction reduction and CPU correctness only. Do not claim a speedup or adopt in serving.",
+    "aspire_serving_baseline": {
+      "run_id": 40274854588,
+      "commit": "e2124d8124314f0440fc45336fee7c2a8076113e",
+      "official_good_output_tok_s": 6081.539720673862,
+      "target_output_tok_s": 6500,
+      "required_gain_percent": 6.8808278585044125,
+      "concurrency": 112,
+      "draft_dtype": "bf16",
+      "prefill_fa3_selection": "control",
+      "current_checkout_concurrency": 104,
+      "comparison_caveat": "Previous c104 run40251123706 selected n192, while c112 selected control; the 2.64% cross-run gain cannot be attributed solely to concurrency. No current H100 profile."
+    }
   },
   "megamoe_communication_evidence": {
     "file": "megamoe-communication-metrics.json",

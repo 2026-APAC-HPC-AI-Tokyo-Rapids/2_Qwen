@@ -24,7 +24,7 @@ GEMMはFMAを2 FLOPとし、`2MNK`。MoEはFC1とFC2を分け、有効行数とt
 
 2026-10-28、ユーザー指示でFirmus実行を停止。Actions40563900060を取消し、停止専用workflow40567082710でSlurm26800のCANCELLED・経過0秒・割当0台・残存runtime削除を確認した。今回のGPU測定は0回。復元候補はCPU検証のみで、速度改善・serving採用は未確認。
 
-kernel benchはASPIREを優先する。現在のASPIRE経路は1GPU FA3 probeで、MegaMoE EP4通信benchには4GPU経路が必要。Firmusには再投入しない。以下の候補の測定計画は、実行先を整えるまで未実行。
+kernel benchはASPIRE H100 EP4を優先する。最新の指示ではASPIREで十分速くなったらFirmusへ進む。目安は通常serving公式6500 output tok/sで、kernel単体の改善率では代替しない。最新ASPIREはc112の6081.54（run40274854588、BF16 draft、FA3 control）。6500には約6.88%必要。c104の5925.07はFA3 n192だったため、差をconcurrencyだけの効果としない。以下のFC2候補にはまだGPU測定結果がない。
 
 ## Prefill の収支
 

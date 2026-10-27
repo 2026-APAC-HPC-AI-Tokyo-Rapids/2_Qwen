@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage a 1-node SM90 MegaMoE kernel bench on the Firmus login node: the pinned
+# Stage a 1-node SM90 MegaMoE kernel bench on the selected login node: the pinned
 # serving image as toolchain, its configured DeepGEMM overlays and SGLang tree, one
 # header overlay per DeepGEMM candidate (patches/deep-gemm-bench/<name>/*.patch),
 # timeline overlays where a candidate directory holds a `timeline` marker (an
@@ -28,7 +28,16 @@ shopt -s inherit_errexit
 # most 12 steps: the image bench, the image timeline if requested, 2 SGLang
 # checks (+2 benches with bench-firmus-sglang-kernels.py), and per DeepGEMM
 # candidate a gate, a bench and the timeline if requested.
+platform=${1:-firmus}
+[[ $# -le 1 ]] || { echo 'Usage: provision-firmus-kernel-bench.sh [firmus|aspire2ap]' >&2; exit 64; }
 max_steps=12
+scheduler=Slurm
+budget_minutes=17
+case "${platform}" in
+  firmus) ;;
+  aspire2ap) source "${HOME}/.local/.setenv"; max_steps=10; scheduler=PBS; budget_minutes=15 ;;
+  *) printf 'Unsupported kernel-bench platform: %s\n' "${platform}" >&2; exit 64 ;;
+esac
 bench_dir="${GITHUB_WORKSPACE}/patches/deep-gemm-bench"
 shopt -s nullglob
 flat_patches=("${bench_dir}"/*.patch)
@@ -69,7 +78,7 @@ for dir in "${candidate_dirs[@]}"; do
   steps=$((steps + 2))
   if [[ -e "${dir}timeline" ]]; then steps=$((steps + 1)); fi
 done
-if (( steps > max_steps )); then printf '%s Slurm steps (about 75 s each) exceed the %s that fit in one 17-minute job; drop candidates or timeline markers.\n' "${steps}" "${max_steps}" >&2; exit 1; fi
+if (( steps > max_steps )); then printf '%s %s steps (about 75 s each) exceed the %s that fit in one %s-minute job; drop candidates or timeline markers.\n' "${steps}" "${scheduler}" "${max_steps}" "${budget_minutes}" >&2; exit 1; fi
 
 check_candidate_host() {
   local dir=$1 record=$2 extension=$3 enabled=${4:-0}
@@ -86,13 +95,22 @@ check_candidate_host() {
 }
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
+if [[ "${platform}" == aspire2ap ]]; then
+  # This A/B uses the ASPIRE serving baseline, even though staging is shared.
+  if ! jq -e --slurpfile aspire "${GITHUB_WORKSPACE}/configs/aspire-serving.json" '.images.sglang as $image | $aspire[0] as $serving | $serving.container_sha256 == $image.sha256 and $serving.container_size_bytes == $image.size_bytes and ($image.path | split("/") | last) == (($serving.container_build_run_id | tostring) + ".sqsh") and (.deep_gemm_overlay_patches | type) == "array" and .deep_gemm_overlay_patches == $serving.deep_gemm_overlay_patches' "${config}" >/dev/null; then
+    echo 'ASPIRE serving baseline differs from the shared bench image or DeepGEMM overlays.' >&2
+    exit 1
+  fi
+fi
 image="$(jq -er .images.sglang.path "${config}")"
+if [[ "${platform}" == aspire2ap ]]; then image="/scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers/$(basename "${image}")"; fi
 expected_sha="$(jq -er .images.sglang.sha256 "${config}")"
 [[ "$(stat -c '%s' "${image}")" == "$(jq -er .images.sglang.size_bytes "${config}")" ]]
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/kernel-bench-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source/patches" "${runtime_dir}/scratch" "${runtime_dir}/overlay/candidates" "${runtime_dir}/overlay/timeline" "${runtime_dir}/overlay/env" "${runtime_dir}/home"
+if [[ "${platform}" == aspire2ap ]]; then cp "${GITHUB_WORKSPACE}/configs/aspire-serving.json" "${runtime_dir}/source/aspire-serving.json"; fi
 echo "Checking sglang image SHA-256"
 while sleep 15; do echo "container_sha256_check_in_progress=sglang"; done &
 progress_pid=$!
@@ -197,8 +215,21 @@ done
 cp "${timeline_patch}" "${runtime_dir}/source/patches/"
 
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/kernel-bench/run.sbatch" "${runtime_dir}/scripts/run.sbatch"
-scripts=(bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-kernels.py firmus_megamoe_replicas.py)
+scripts=(run-megamoe-kernel-bench.sh bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-kernels.py firmus_megamoe_replicas.py)
 if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then scripts+=(bench-firmus-sglang-kernels.py); fi
 for script in "${scripts[@]}"; do install -m 0644 "${GITHUB_WORKSPACE}/scripts/${script}" "${runtime_dir}/scripts/"; cp "${runtime_dir}/scripts/${script}" "${runtime_dir}/source/"; done
 cp "${runtime_dir}/scripts/run.sbatch" "${runtime_dir}/source/"
-jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson image "$(jq .images.sglang "${config}")" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" --argjson prefill_memory "${prefill_memory}" --argjson prefill_only "${prefill_only}" '{prefill_only:$prefill_only,prefill_memory:$prefill_memory,schema_version:"qwen3-megamoe-kernel-bench/v2",cluster:"firmus",commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes}),timeline_patch_sha256:$timeline_sha,variants:"results/variants.json"}' >"${runtime_dir}/source/provenance.json"
+jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --arg cluster "${platform}" --arg image_path "${image}" --argjson image "$(jq .images.sglang "${config}")" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" --argjson prefill_memory "${prefill_memory}" --argjson prefill_only "${prefill_only}" '{prefill_only:$prefill_only,prefill_memory:$prefill_memory,schema_version:"qwen3-megamoe-kernel-bench/v2",cluster:$cluster,commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes} | .path=$image_path),timeline_patch_sha256:$timeline_sha,variants:"results/variants.json"}' >"${runtime_dir}/source/provenance.json"
+
+if [[ "${platform}" == aspire2ap ]]; then
+  # Reuse ASPIRE's observed Enroot runtime and NVIDIA hook fixes.
+  install -d "${runtime_dir}/enroot-library" "${runtime_dir}/enroot-system"
+  cp -a --no-preserve=ownership,xattr "${ENROOT_LIBRARY_PATH}/." "${runtime_dir}/enroot-library/"
+  cp -a --no-preserve=ownership,xattr "${ENROOT_SYSCONF_PATH}/." "${runtime_dir}/enroot-system/"
+  sed -i 's/local timeout=100 pid=-1 id=0/local timeout=5000 pid=-1 id=0/' "${runtime_dir}/enroot-library/runtime.sh"
+  sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
+  install -m 0755 "${GITHUB_WORKSPACE}/platforms/aspire2ap/kernel-bench/run.pbs" "${runtime_dir}/scripts/run.pbs"
+  install -m 0755 "${GITHUB_WORKSPACE}/platforms/aspire2ap/kernel-bench/preflight.sh" "${runtime_dir}/scripts/preflight.sh"
+  cp "${runtime_dir}/scripts/"{run.pbs,preflight.sh} "${runtime_dir}/source/"
+  bash "${runtime_dir}/scripts/preflight.sh" "${runtime_dir}" >"${runtime_dir}/logs/cpu-preflight.log" 2>&1
+fi

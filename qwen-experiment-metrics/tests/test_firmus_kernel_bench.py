@@ -64,7 +64,7 @@ def workspace(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     shutil.copy(host_patch, ws / "patches/deep-gemm-host" / host_patch.name)
     (ws / "patches/deep-gemm-host/series").write_text(host_patch.name + "\n")
     (ws / "scripts").mkdir()
-    for script in ("provision-firmus-kernel-bench.sh", "bench-firmus-megamoe.py", "check-firmus-megamoe.py", "check-firmus-decode-kernels.py", "firmus_megamoe_replicas.py"):
+    for script in ("run-megamoe-kernel-bench.sh", "provision-firmus-kernel-bench.sh", "bench-firmus-megamoe.py", "check-firmus-megamoe.py", "check-firmus-decode-kernels.py", "firmus_megamoe_replicas.py"):
         shutil.copy(ROOT / "scripts" / script, ws / "scripts" / script)
     (ws / "platforms/firmus/kernel-bench").mkdir(parents=True)
     shutil.copy(ROOT / "platforms/firmus/kernel-bench/run.sbatch", ws / "platforms/firmus/kernel-bench/run.sbatch")
@@ -496,7 +496,7 @@ def test_provision_counts_sglang_and_image_timeline_before_staging(tmp_path: Pat
 def test_kernel_bench_gate_is_megamoe_only_and_serving_gate_keeps_decode_checks():
     # 39942794259: the kernel-bench SGLang tree has no serving overlays, so the Decode-kernel
     # checks (decode_fa3_verify) cannot import there; serving still runs them before startup.
-    bench = (ROOT / "platforms/firmus/kernel-bench/run.sbatch").read_text()
+    bench = (ROOT / "scripts/run-megamoe-kernel-bench.sh").read_text()
     serving = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     gate = (ROOT / "scripts/check-firmus-megamoe.py").read_text()
     assert '"${ROOT}/scripts/check-firmus-megamoe.py" --megamoe-only' in bench
