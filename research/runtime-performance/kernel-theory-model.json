@@ -1,0 +1,110 @@
+{
+  "schema_version": "kernel-theory/1",
+  "updated_at": "2026-10-28",
+  "profile_run": "40310899466",
+  "scope": "Firmus H200, prefill-0/decode-0 GPU0. Historical BF16-draft image 40197369083; not a kernel profile of the newer FP8-draft normal run 40480817670 or router run 40528222753.",
+  "hardware": {
+    "sm_count": 132,
+    "dense_fp8_flops_per_sm_cycle": 8192,
+    "dense_bf16_flops_per_sm_cycle": 4096,
+    "scalar_exp2_results_per_sm_cycle": 16,
+    "nominal_dense_fp8_tflops": 1979,
+    "nominal_dense_bf16_tflops": 989.5,
+    "hbm_bytes_per_second": 4800000000000,
+    "nvlink_one_direction_bytes_per_second": 450000000000,
+    "prefill_clock_scenario_mhz": [1350, 1400],
+    "decode_clock_scenario_mhz": [1650, 1740],
+    "clock_basis": "Same-window raw GPC series means are about 1.35e9-1.38e9 for Prefill and 1.65e9-1.73e9 for Decode. Treating these as Hz gives the rounded worker-wide scenario ranges above. Nsight labels them MHz; device mapping and per-kernel frequency are not established. These are explicit scenarios, not measured per-kernel ceilings. Never normalize 1979 TFLOPS by the CUDA-core maximum 1980 MHz.",
+    "sources": [
+      "https://www.nvidia.com/en-us/data-center/h200/",
+      "https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/",
+      "https://forums.developer.nvidia.com/t/how-to-calculate-the-tensor-core-fp16-performance-of-h100/244727",
+      "https://docs.nvidia.com/cuda/archive/12.9.0/cuda-c-programming-guide/index.html#arithmetic-instructions"
+    ]
+  },
+  "model": {
+    "hidden": 4096,
+    "expert_intermediate": 1536,
+    "logical_experts": 128,
+    "topk": 8,
+    "layers": 94,
+    "q_heads": 64,
+    "kv_heads": 4,
+    "head_dim": 128,
+    "ep_size": 4,
+    "prefill_physical_experts_per_rank": 35,
+    "decode_physical_experts_per_rank": 32,
+    "prefill_representative_rows": 3994,
+    "prefill_row_evidence": "norm_quant gridX: 3994 and 3995; source uses one CTA per row. QKnorm gridX125 x gridY72 is consistent. Use 3994 as a representative shape, not 4032 or template capacity4224. One full causal sequence per rank is the attention scenario; cache hits/multiple sequences require their actual lengths.",
+    "decode_representative_rows": 176,
+    "decode_representative_requests": 44,
+    "decode_representative_kv_length": 4100,
+    "decode_shape_evidence": "176 rows / 44 requests is the largest observed add_rmsnorm_group_quant grid and configured cap176/4. The profile also contains144/152/160/168 rows. KV length4100 is a scenario, not recovered per-call lengths. Do not treat the scenario vs mixed-shape timing as an exact efficiency measurement."
+  },
+  "profiles": {
+    "prefill": {
+      "file": "kernel-profile-40310899466-prefill.json",
+      "archive": "archive-host:/srv/qwen-artifacts/40310899466/1/profile/profile/nsys-prefill-0.nsys-rep",
+      "nsys_rep_sha256": "63c5296bbf7ea280f84fa9e14b41d9d45755122d025af44c71ec07eb5cfdd4e6",
+      "archive_manifest_verified": true
+    },
+    "decode": {
+      "file": "kernel-profile-40310899466-decode.json",
+      "archive": "archive-host:/srv/qwen-artifacts/40310899466/1/profile/profile/nsys-decode-0.nsys-rep",
+      "nsys_rep_sha256": "1beb4e3796631f682b76160c3694304c83e44d63d6b779e529dde01c82c98af0",
+      "archive_manifest_verified": true
+    }
+  },
+  "approach": {
+    "p_moe": {
+      "priority": 1,
+      "next": "FC1/FC2の有効FLOPとexpert別tile padding、出力264MB前後、source rank別remote rowsを別々に勘定する。最新profile内のFC1/FC2時間は未分解。旧timelineを同じrunの内訳にしない。まずsource-rank別routingが既存成果物から復元できるか確認し、配置変更の通信削減上限とrank最大負荷をCPUで求める。",
+      "gap_to_explain": "GEMM外のBF16出力・combine・通信、tile padding、rank待ち。完全均衡のFLOP下限との差全量を削減可能としない。",
+      "gate": "変更前後のremote bytesと追加HBM bytes、padding FLOPが算出でき、critical pathを短くする根拠があること。単なる並列度増加を再試行しない。",
+      "evidence": ["2026-10-24-prefill-megamoe-timeline.md", "2026-10-27-prefill-memory.md", "2026-10-20-firmus-prefill-overlay-results.md"],
+      "blocked_by": ["same-run FC1/FC2 subphase durations", "source-rank-conditioned routing histogram", "actual HBM/NVLink bytes"]
+    },
+    "p_attention": {
+      "priority": 2,
+      "next": "現在のN192についてM/N tile数、有効演算とpadding、softmaxのexp/変換命令、KV再読出し、fill/drain依存を数える。N224 NCUの命令数を流用しない。次の候補は削減命令または削減tileをnative compileで示してから測る。",
+      "gap_to_explain": "Tensor Coreだけの床に加えてsoftmax・FP8変換・転置・同期がある。全I/OをHBMへ流す模型も、全てL2 hitとする模型も実測帯域ではない。",
+      "gate": "現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。",
+      "evidence": ["2026-10-25-fa3-prefill-measurement.md", "2026-10-27-prefill-memory.md"],
+      "blocked_by": ["current N192 opcode counts and critical dependency accounting"]
+    },
+    "p_qkv": {"priority": 4, "next": "M256のpaddingとepilogueを確認。FP8入力化は実装済み。小さい残差を理由に独立した全体測定をしない。", "gap_to_explain": "tile padding、scale、epilogue。", "gate": "既存選択より速い同shapeの候補だけを他の検証に同乗。"},
+    "p_o": {"priority": 4, "next": "FA3出力FP8化は実装済み。M256 paddingとepilogueを確認。", "gap_to_explain": "tile padding、scale、epilogue。", "gate": "同shapeでの改善と全体の電力・clock変化を照合。"},
+    "p_qknorm": {"priority": 3, "next": "Q/K正規化・RoPE・FP8 Q・contiguous/paged KV書出しの既存融合を前提に、変換/アドレス/転送の命令量を減らす。入力はH4096ではなくQKV9216。", "gap_to_explain": "BF16丸め保存、reduction、trig、FP8変換、複数出力。", "gate": "head4/paired-roundの再試行はしない。現在の演算順を守り、追加loadやregister圧を含めて比較。"},
+    "p_add_norm": {"priority": 3, "next": "post-attention normからgate用BF16とMegaMoE用FP8を一度に作るconsumer契約を検討する。gate用BF16出力は残す。", "gap_to_explain": "残差を含む4本のBF16 read/write。33MBだけを分母にしない。draft由来の呼出しも混在。", "gate": "pre_dispatchとの組でBF16再読出し1回を削る。追加書出し/同期で相殺されないこと。"},
+    "p_norm_quant": {"priority": 5, "next": "input add+RMSNorm+FP8 quantは既に融合。これを再度『融合余地』に数えない。", "gap_to_explain": "2 BF16 reads、BF16 residual write、FP8 outputとFP32 scales、reduction。", "gate": "既存融合より少ない命令/trafficを示せる場合のみ。"},
+    "p_dispatch": {"priority": 3, "next": "post-attention normがMegaMoE対称bufferへ直接FP8/scaleを書く経路を設計し、routing metadata部分を独立させる。", "gap_to_explain": "入力quantとrouting metadataの境界。", "gate": "norm側に融合して減るBF16 readは約33MB/層。これを12ms削減と誇張しない。"},
+    "p_gate": {"priority": 5, "next": "gateが必要とするBF16入力を保存する。norm/dispatch融合の正当性の制約として追う。", "gap_to_explain": "小N128 GEMM、起動、scale/epilogue。", "gate": "計算または中間bufferを消せる変更だけを検討。"},
+    "d_moe": {"priority": 2, "next": "604MB/rankの重み読出しと、実際のHBM/L2 bytesを対応づける。次にpaddingとdescriptor/同期の依存を確認する。", "gap_to_explain": "cold-weight時間は125.8usだが、activation/通信/epilogueを含む下限ではない。", "gate": "stage数やprefetchの再掃引を避け、実転送/依存の減少を示す。"},
+    "d_attention": {"priority": 2, "next": "request別KV長・verify rows・split2のKV読出しとpartial buffer bytesを追う。", "gap_to_explain": "KV read、softmax、tile数/並列仕事量、split後merge。", "gate": "過去に数値不一致だったmerge統合は、誤りの特定とCPU/source証拠を先に必要とする。"},
+    "d_qkv": {"priority": 4, "next": "M128の末端paddingと実row分布を追う。", "gap_to_explain": "小Mのwave不足とtile padding。", "gate": "平均shapeでなく各graph bucketの条件一致。"},
+    "d_o": {"priority": 4, "next": "M64/N96の末端paddingと実row分布を追う。", "gap_to_explain": "小Mとepilogue。", "gate": "他の検証に同乗する小さい改善候補。"},
+    "d_add_quant": {"priority": 3, "next": "現行の融合でも約9usある。HBM床だけで評価せず、CTA数とreduction依存を数える。", "gap_to_explain": "小MでHBMを埋められずreduction/launchが支配し得る。", "gate": "Prefillのwide-row結果をDecodeへ流用しない。"},
+    "d_merge": {"priority": 3, "next": "FA3 split2のpartial FP32入出力を実shapeから勘定し、attention本体との合計で比較。", "gap_to_explain": "partial reduction、FP8出力scale、起動。", "gate": "merge単独の削除効果をattention本体の増加と相殺する。"},
+    "other": {"priority": 6, "next": "raw kernel名とgeometryごとに時間を保持。shape未確定なら理論値null。現在未分類の費用が優先順位を変える大きさになったらsourceと対応づける。", "gap_to_explain": "draft/小kernelを含む。未モデル化をゼロ時間と扱わない。", "gate": "現在のFP8 draftへ旧BF16 draft費用を流用しない。"}
+  },
+  "previous_trials": [
+    {"candidate": "Prefill independent WG", "run": "40069880580", "status": "rejected", "result": "+22-36% kernel latency; extra TMA/stage pressure"},
+    {"candidate": "Prefill bulk scatter", "run": "40095847738", "status": "rejected", "result": "+1.3-4.9%; see broad-ceiling-review before any repeat"},
+    {"candidate": "FP32 precombine", "run": "39355994503", "status": "rejected", "result": "serving -5.8%; added scratch traffic"},
+    {"candidate": "hot8 replicas vs hot4", "run": "39462905249", "status": "rejected", "result": "all three recorded layers slower; hot4 already adopted"},
+    {"candidate": "combine direct store", "run": "40459750245", "status": "rejected", "result": "numerically exact; did not pass control-paired speed gate"},
+    {"candidate": "QKV head4", "run": "40459750245", "status": "rejected", "result": "1.1-1.4% improvement below predeclared 3% gate"},
+    {"candidate": "QKV paired rounding", "run": "40463471079", "status": "rejected", "result": "about5% slower"},
+    {"candidate": "FA3 half2 exp", "run": null, "status": "rejected_without_gpu", "result": "native compile emits two MUFU; conversions/spills increase"},
+    {"candidate": "FA3 polynomial exp", "run": "40472152140", "status": "rejected", "result": "numerical gate passed; about5.2% slower"},
+    {"candidate": "router early first response", "run": "40528222753", "status": "not_adopted_for_goodput", "result": "TTFT -201ms; completion -0.9ms; ITL +1.006ms; score9161.67->9135.42. NIXL version confound."}
+  ],
+  "followup_contract": [
+    "Every candidate names the kernel, exact shape/precision/source hash, work removed (FLOPs/bytes/instructions), and predicted resource limit before GPU dispatch.",
+    "Keep theory, conditional scenario, measured microbenchmark and measured normal serving results distinct. Unknown is null, never zero.",
+    "Do not sum per-kernel opportunities across overlapped phases, count FC1/FC2 twice under the fused MegaMoE, or translate logical bytes directly into measured HBM bandwidth.",
+    "Update previous_trials and source/profile identity after a run. No repeat of failed candidates without an explicitly changed failure mechanism.",
+    "Use existing archived data first. A new measurement must resolve a named uncertainty that can change the decision. No job is dispatched by these scripts.",
+    "Normal serving completion time, goodput, ITL and acceptance are the final check. TTFT movement alone does not prove less work."
+  ]
+}
