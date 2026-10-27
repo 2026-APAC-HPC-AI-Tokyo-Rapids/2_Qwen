@@ -77,4 +77,41 @@ MegaMoE needs the numerical gate, exact hashes and deterministic replay,
 median >1%, and no tested case >1% slower before a full serving run.
 Source/patch hashes, numerical results, raw timings and final control are
 retained in the Actions artifacts. A successful diagnostic is not a serving
-throughput claim. GPU results are pending at submission.
+throughput claim.
+
+## Run 40459750245: no serving promotion
+
+[Actions 40459750245](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40459750245),
+commit `d80d858180f4617f93dfb90969dbc0e2ce7f9423`, completed successfully.
+Slurm 26605 on g1: COMPLETED, exit 0, elapsed 3:25. All five steps passed
+(34/62/34/38/35 seconds). Raw logs/results/source were archived at
+`archive-host:/srv/qwen-artifacts/40459750245/1/`; 52 downloaded files
+matched the archive SHA256 manifest. Runtime cleanup and GitHub artifact
+deletion after archival succeeded.
+
+| MegaMoE case | Initial control ms | Direct store ms | Final control ms |
+| --- | ---: | ---: | ---: |
+| balanced | 1.54237 | 1.54493 | 1.54675 |
+| local | 1.38432 | 1.37408 | 1.37357 |
+| real43 replica4 | 1.47123 | 1.47229 | 1.47293 |
+| real62 replica4 | 1.43258 | 1.43190 | 1.43082 |
+| real7 replica4 | 1.48246 | 1.47600 | 1.48144 |
+
+All five output hashes match, including deterministic replay, and the
+logical-128/physical-140 numerical gate passed. The local case's apparent
+0.7% improvement is also present in the final control. Three replicated
+cases do not satisfy the predeclared gate. **Do not promote or remeasure
+this candidate.**
+
+| QKV rows | Control us | Head4 us | Change |
+| --- | ---: | ---: | ---: |
+| 3986 | 52.49 | 51.75 | -1.41% |
+| 4032 | 52.94 | 52.37 | -1.08% |
+| 4096 | 53.73 | 53.06 | -1.25% |
+
+All 24 shape/dtype cases passed finite/nonfinite five-buffer bit equality
+and the applicable changed-input graph checks. The 0.57–0.74 us reduction
+is below the predeclared 3% admission threshold. Even extrapolated over 94
+layers, it is only about 0.05–0.07 ms, far below the 9.81 ms target. These
+standalone timings must not be compared directly with the 66 us serving
+profile. **No full serving run is justified by this result.**
