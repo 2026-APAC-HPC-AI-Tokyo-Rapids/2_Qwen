@@ -33,15 +33,19 @@ bench_dir="${GITHUB_WORKSPACE}/patches/deep-gemm-bench"
 shopt -s nullglob
 flat_patches=("${bench_dir}"/*.patch)
 candidate_dirs=()
-# The remote workspace transfer can leave empty directories after a tracked
-# candidate is deleted (run40561028271). Git carries files, not empty directories.
-# Ignore only truly empty directories; marker-only/broken candidates still fail.
-for dir in "${bench_dir}"/*/; do
-  shopt -s dotglob
-  entries=("${dir}"*)
-  shopt -u dotglob
-  if (( ${#entries[@]} )); then candidate_dirs+=("${dir}"); fi
-done
+# Remote workspace transfers retained a retired directory even after its patch
+# was deleted (40561028271/40562465381). A tracked inventory owns the campaign;
+# stale files on the remote host must never add or resurrect a GPU candidate.
+if [[ -e "${bench_dir}/candidates" ]]; then
+  [[ -s "${bench_dir}/candidates" ]] || { echo 'Candidate inventory is empty.' >&2; exit 1; }
+  while IFS= read -r name || [[ -n "${name}" ]]; do
+    [[ "${name}" =~ ^[a-z0-9][a-z0-9._-]*$ && "${name}" != image ]] || { echo "Invalid candidate inventory entry: ${name}" >&2; exit 1; }
+    candidate_dirs+=("${bench_dir}/${name}/")
+  done <"${bench_dir}/candidates"
+  [[ $(printf '%s\n' "${candidate_dirs[@]}" | sort -u | wc -l) -eq ${#candidate_dirs[@]} ]] || { echo 'Duplicate candidate inventory entry.' >&2; exit 1; }
+else
+  candidate_dirs=("${bench_dir}"/*/)
+fi
 sglang_patches=("${GITHUB_WORKSPACE}"/patches/sglang-bench/*.patch)
 shopt -u nullglob
 if (( ${#flat_patches[@]} )); then printf 'Move %s into patches/deep-gemm-bench/<candidate>/ (one directory per candidate).\n' "${flat_patches[@]#"${GITHUB_WORKSPACE}/"}" >&2; exit 1; fi

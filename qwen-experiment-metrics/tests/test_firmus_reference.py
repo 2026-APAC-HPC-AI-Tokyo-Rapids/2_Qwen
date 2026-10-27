@@ -73,9 +73,11 @@ def archived_server_info() -> dict:
     location = current["expert_location"]
     raw["config"]["prefill"].update(expert_location=location, ep_num_redundant_experts=current["ep_num_redundant_experts"], optimistic_prefill_attempts=current["optimistic_prefill_attempts"], chunked_prefill_size=current["chunked_prefill_size"])
     raw["config"].update({key: config[key] for key in ("concurrency", "decode_max_running_requests", "decode_extra_slots", "decode_cuda_graph_bs", "decode_polling_interval")})
+    raw["config"]["speculation"]["draft_quantization"] = config["speculation"].get("draft_quantization")
     for role in ("prefill", "decode"):
         placed = role == "prefill" and location != "trivial"
         for state in [raw[role], *raw[role]["internal_states"]]:
+            state["speculative_draft_model_quantization"] = config["speculation"].get("draft_quantization")
             state.update(init_expert_location="/runtime/source/prefill-expert-location.json" if placed else "trivial", ep_dispatch_algorithm="static" if placed else None, optimistic_prefill_attempts=current["optimistic_prefill_attempts"] if role == "prefill" else 0)
             state.update(ep_num_redundant_experts=current["ep_num_redundant_experts"] if role == "prefill" else 0, enable_eplb=False)
             if role == "prefill":
@@ -154,6 +156,26 @@ def test_server_info_checks_resolved_draft_backend_from_real_run() -> None:
             [info, *info["internal_states"]][index]["speculative_moe_runner_backend"] = backend
             with pytest.raises(ValueError, match="speculative_moe_runner_backend"):
                 check(raw["config"], info, "decode")
+
+
+@pytest.mark.parametrize("draft_quantization", ["fp8", None, "unset"])
+@pytest.mark.parametrize("role", ["prefill", "decode"])
+def test_draft_precision_matches_config_on_every_scheduler(draft_quantization, role) -> None:
+    raw = archived_server_info()
+    check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
+    if draft_quantization == "unset":
+        raw["config"]["speculation"].pop("draft_quantization", None)
+    else:
+        raw["config"]["speculation"]["draft_quantization"] = draft_quantization
+    expected = raw["config"]["speculation"].get("draft_quantization")
+    for state in [raw[role], *raw[role]["internal_states"]]:
+        state["speculative_draft_model_quantization"] = expected
+    check(raw["config"], raw[role], role)
+    for index in range(5):
+        changed = copy.deepcopy(raw[role])
+        [changed, *changed["internal_states"]][index]["speculative_draft_model_quantization"] = None if expected == "fp8" else "fp8"
+        with pytest.raises(ValueError, match="speculative_draft_model_quantization"):
+            check(raw["config"], changed, role)
 
 
 def test_prefill_deepep_checks_normal_mode_without_changing_decode() -> None:

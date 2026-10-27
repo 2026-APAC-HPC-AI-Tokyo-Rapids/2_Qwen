@@ -279,8 +279,18 @@
         "status": "provision_failed_before_gpu",
         "error": "Candidate directory prefill-combine-direct-store has no .patch file.",
         "gpu_jobs": 0,
-        "fix": "Ignore truly empty candidate directories left by remote workspace transfer. Nonempty directories without a patch still fail. CPU regression covers retired directory and marker/dotfile-only invalid candidates."
+        "fix": "Initial empty-directory filter was insufficient; superseded by a tracked candidate inventory after second pre-GPU failure."
+      },
+      {
+        "run": "40562465381",
+        "commit": "d904c92",
+        "status": "provision_failed_before_gpu",
+        "error": "Candidate directory prefill-combine-direct-store has no .patch file.",
+        "gpu_jobs": 0,
+        "finding": "The retired directory was not truly empty; its exact residual contents were not recovered. Directory discovery was the wrong source of campaign membership.",
+        "fix": "Tracked candidates inventory names only fc2-address. CPU fixtures cover empty, timeline-only, hidden-file and stale-patch directories, and prove none is reactivated."
       }
-    ]
+    ],
+    "serving_validation_note": "Restored existing FP8-draft post-run validator fix and its tests from7980d10; no launch settings changed."
   }
 }

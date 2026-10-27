@@ -102,10 +102,15 @@ def add_candidate(ws: Path, name: str, patch: str, timeline: bool | str = False,
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq")
-def test_retired_empty_candidate_directory_is_not_reactivated(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stale_content", [None, "timeline", ".hidden", "old.patch"])
+def test_retired_candidate_directory_is_not_reactivated(tmp_path: Path, stale_content: str | None) -> None:
     ws, patches = workspace(tmp_path)
     add_candidate(ws, "fc2-address", patches["comment"])
-    (ws / "patches/deep-gemm-bench/prefill-combine-direct-store").mkdir()
+    stale = ws / "patches/deep-gemm-bench/prefill-combine-direct-store"
+    stale.mkdir()
+    if stale_content is not None:
+        (stale / stale_content).write_text(patches["comment"] if stale_content.endswith(".patch") else "")
+    (ws / "patches/deep-gemm-bench/candidates").write_text("fc2-address\n")
     result = provision(tmp_path, ws)
     assert result.returncode == 0, result.stderr
     runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
