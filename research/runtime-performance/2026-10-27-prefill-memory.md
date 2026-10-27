@@ -216,3 +216,11 @@ Performance admission requires all three large shapes to save ≥3% and
 input sets and 24 alternating pairs. A failed gate must not be relaxed
 after looking at measurements. One exclusive node is reserved, eight GPUs
 allocated, one visible; the trial timeout is 165 seconds within five minutes.
+
+The first dispatch, [40471657626](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40471657626),
+commit `952c7ef1d01a8fbd7ecd89870b31cec72dc4aac4`, stopped during CPU
+provision because the cluster's `unsquashfs` has no `-cat` option. No Slurm
+reservation, numerical test or timing ran. The image SHA check passed;
+source-manifest checks were not reached. Logs were recovered and runtime
+cleanup succeeded. Replace `-cat` with the existing selective directory
+extraction protocol, keeping the candidate and all gates unchanged.

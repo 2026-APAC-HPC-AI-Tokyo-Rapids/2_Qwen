@@ -19,11 +19,10 @@ PROBE
 chmod 0755 "${RUNTIME_DIR}/source/probe"
 # The probe mounts metadata over /opt/apac/fa3-verify, so preserve the pinned
 # native control and its candidate table before entering that container.
-unsquashfs -cat "${RUNTIME_DIR}/sglang.sqsh" opt/apac/fa3-verify/libapac_fa3_verify.so >"${RUNTIME_DIR}/metadata/libapac_fa3_verify.so"
-unsquashfs -cat "${RUNTIME_DIR}/sglang.sqsh" opt/apac/fa3-verify/manifest.json >"${RUNTIME_DIR}/metadata/manifest.json"
-for table in candidates.json prefill-candidates.json; do
-    unsquashfs -cat "${RUNTIME_DIR}/sglang.sqsh" "opt/apac/fa3-verify/${table}" >"${RUNTIME_DIR}/metadata/${table}"
-done
+unsquashfs -no-progress -no-xattrs -processors 1 -d "${RUNTIME_DIR}/native-control" "${RUNTIME_DIR}/sglang.sqsh" opt/apac/fa3-verify/libapac_fa3_verify.so opt/apac/fa3-verify/manifest.json opt/apac/fa3-verify/candidates.json opt/apac/fa3-verify/prefill-candidates.json >"${RUNTIME_DIR}/logs/extract-native-control.log" 2>&1
+chmod -R u+w "${RUNTIME_DIR}/native-control"
+mv "${RUNTIME_DIR}/native-control/opt/apac/fa3-verify/"* "${RUNTIME_DIR}/metadata/"
+rm -rf -- "${RUNTIME_DIR}/native-control"
 [[ -s "${RUNTIME_DIR}/metadata/libapac_fa3_verify.so" && -s "${RUNTIME_DIR}/metadata/manifest.json" ]]
 cp "${RUNTIME_DIR}/metadata/manifest.json" "${RUNTIME_DIR}/results/source/image-fa3-manifest.json"
 python3 - <<'PY'
