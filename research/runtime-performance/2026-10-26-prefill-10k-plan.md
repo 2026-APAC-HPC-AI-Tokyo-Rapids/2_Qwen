@@ -2,6 +2,8 @@
 
 起点は main の 9120 構成（image 40197369083）。数値は 40310899466（Nsight）、40313004834（`ReqTimeStats`、telemetry）、FA3 probe 40172396762（NCU）と 40172404753（M1 計時）から取った。GPU job は使っていない。
 
+**2026-10-28 更新:** 以下の改善幅・合計予測は過去の検討として保存する。今後の優先順位と理論比較は[カーネルの理論値と改善台帳](kernel-theory-tracker.md)を正本とする。同runのraw profileを再集計し、Prefill実row3994/3995、target/draft分離、PDLの重なりを補正した。公称1979 TFLOPSを1.98GHzで割る補正、33MBだけによるnorm類の床、融合済み処理の再計上を撤回。§2の一律50〜60%電力係数と§9の到達予測は採用判断に使わない。hot4複製とinput norm/quant・QKnorm/RoPE/FP8 Q融合は導入済み。§8のDecode workerでPrefillする案はBasicの候補にしない。routerの通常測定結果は[2026-10-27-router-first-response.json](2026-10-27-router-first-response.json)に記録済みで、TTFT短縮だけではgoodput改善にならなかった。
+
 **2026-10-27 検証による訂正:** §4.5 F1 の「`ex2.approx.f16x2` で MUFU 命令が半減する」という前提は、CUDA 13.0.88 / SM90a の本番形状の native compile で否定された。2要素は2本の `MUFU.EX2.F16` に展開され、変換とspillも増えたためGPU測定は行っていない。したがって F1 の −3.5〜−7 ms と、それを含む §9 の 9,500〜9,900 見積りは現時点の到達予測として使用しない。QKVの追加2案も採用条件に届かなかった。実測と次の限定候補は [10-27 の台帳](2026-10-27-prefill-memory.md) を参照。
 
 ## 1. 現状の収支
