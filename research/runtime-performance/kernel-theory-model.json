@@ -271,6 +271,16 @@
     "serving_change_enabled": false,
     "cpu_validation": "megamoe-fc2-cpu-validation-20261028.json",
     "timeline_policy": "Control only: candidate instrumentation introduces 32B spill stores and 80/84B spill loads. Do not run or compare its perturbed phases. Ordinary control/candidate/repeat use zero-spill kernels.",
-    "new_gpu_work": "One node, four H200; five ordinary cases each for control/candidate/control-repeat, candidate numeric gate, two control timeline cases. No QKV, unrelated Decode timing, or candidate timeline."
+    "new_gpu_work": "One node, four H200; five ordinary cases each for control/candidate/control-repeat, candidate numeric gate, two control timeline cases. No QKV, unrelated Decode timing, or candidate timeline.",
+    "attempts": [
+      {
+        "run": "40561028271",
+        "commit": "0193098f5d4ed5d3ac11e327b8695897e3d94468",
+        "status": "provision_failed_before_gpu",
+        "error": "Candidate directory prefill-combine-direct-store has no .patch file.",
+        "gpu_jobs": 0,
+        "fix": "Ignore truly empty candidate directories left by remote workspace transfer. Nonempty directories without a patch still fail. CPU regression covers retired directory and marker/dotfile-only invalid candidates."
+      }
+    ]
   }
 }

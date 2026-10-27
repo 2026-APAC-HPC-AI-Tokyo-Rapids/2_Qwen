@@ -101,6 +101,29 @@ def add_candidate(ws: Path, name: str, patch: str, timeline: bool | str = False,
         (directory / "env").write_text(env)
 
 
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq")
+def test_retired_empty_candidate_directory_is_not_reactivated(tmp_path: Path) -> None:
+    ws, patches = workspace(tmp_path)
+    add_candidate(ws, "fc2-address", patches["comment"])
+    (ws / "patches/deep-gemm-bench/prefill-combine-direct-store").mkdir()
+    result = provision(tmp_path, ws)
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    variants = json.loads((runtime / "results/variants.json").read_text())
+    assert [v["name"] for v in variants["deep_gemm"]] == ["image", "fc2-address"]
+
+
+@pytest.mark.parametrize("marker", ["timeline", "env", ".hidden"])
+def test_nonempty_candidate_missing_patch_still_fails(tmp_path: Path, marker: str) -> None:
+    ws, _ = workspace(tmp_path)
+    broken = ws / "patches/deep-gemm-bench/broken"
+    broken.mkdir(parents=True)
+    (broken / marker).touch()
+    result = provision(tmp_path, ws)
+    assert result.returncode != 0
+    assert "Candidate directory broken has no .patch file" in result.stderr
+
+
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
 def test_provision_stages_each_candidate_and_records_timeline_failures(tmp_path: Path) -> None:
     ws, patches = workspace(tmp_path)

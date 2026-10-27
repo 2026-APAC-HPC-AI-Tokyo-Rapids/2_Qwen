@@ -54,9 +54,13 @@ def extract(directory, case, run, image):
         assert [sum(destinations[s][d] for s in range(4)) for d in range(4)] == bench["recv_pairs_per_rank"]
         # FC2 executes at destination expert rank and returns BF16 partials to source.
         remote = [sum(destinations[s][d] for s in range(4) if s != d) * 4096 * 2 for d in range(4)]
+        receive = [sum(destinations[s][d] for d in range(4) if s != d) * 4096 * 2 for s in range(4)]
+        assert sum(remote) == sum(receive)
         padded_rows = [sum(((v + 63)//64)*64 for v in loads[d*epr:(d+1)*epr]) for d in range(4)]
         transfer = {"source_to_expert_rank_pairs": destinations, "fc2_remote_payload_bytes_per_producer_rank": remote,
+                    "fc2_remote_receive_bytes_per_source_rank": receive,
                     "fc2_remote_payload_at_450GBs_us": [b / 450e9 * 1e6 for b in remote],
+                    "fc2_send_receive_peak_reference_us_per_rank": [max(tx, rx) / 450e9 * 1e6 for tx, rx in zip(remote, receive)],
                     "scope": "logical BF16 payload; excludes protocol/transactions and is not measured link utilization"}
     for i, rank in enumerate(chosen):
         ghz = float(np.nanmedian(rank["ghz"]))
@@ -65,6 +69,7 @@ def extract(directory, case, run, image):
                 "fc2_useful_flops": pairs*2*4096*1536, "peak_fp8_flops_per_second": 8192*132*ghz*1e9,
                 "fc2_partial_bytes": pairs*4096*2,
                 "combine_logical_read_write_bytes": bench["tokens_per_rank"]*4096*2*9,
+                "combine_fp32_fma_flops": bench["tokens_per_rank"]*4096*8*2,
                 "padded_rows_64": None if padded_rows is None else padded_rows[i]}
         work["combine_logical_hbm_peak_us"] = work["combine_logical_read_write_bytes"]/4.8e12*1e6
         for fc in ("fc1", "fc2"):
@@ -104,7 +109,8 @@ def extract(directory, case, run, image):
                             "Grid/NVLink pre-combine waiting includes other ranks finishing computation, not only wire transfer.",
                             "Useful/peak over median CTA loop is a diagnostic proxy including padding, setup, stage waits and FP32 promotion.",
                             "64-row padded work applies to the current adopted full-padding-WG skip only; older runs leave padded_rows_64 null.",
-                            "Logical bytes/peak bandwidth are resource references, not measured HBM/NVLink bandwidth."]}
+                            "Logical bytes/peak bandwidth are resource references, not measured HBM/NVLink bandwidth.",
+                            "Real-layer cases are sampled fixtures from archived pooled expert totals, not production source-conditioned token routing. Their matrix cannot justify a production placement change."]}
 
 
 def main():

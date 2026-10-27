@@ -32,7 +32,16 @@ max_steps=12
 bench_dir="${GITHUB_WORKSPACE}/patches/deep-gemm-bench"
 shopt -s nullglob
 flat_patches=("${bench_dir}"/*.patch)
-candidate_dirs=("${bench_dir}"/*/)
+candidate_dirs=()
+# The remote workspace transfer can leave empty directories after a tracked
+# candidate is deleted (run40561028271). Git carries files, not empty directories.
+# Ignore only truly empty directories; marker-only/broken candidates still fail.
+for dir in "${bench_dir}"/*/; do
+  shopt -s dotglob
+  entries=("${dir}"*)
+  shopt -u dotglob
+  if (( ${#entries[@]} )); then candidate_dirs+=("${dir}"); fi
+done
 sglang_patches=("${GITHUB_WORKSPACE}"/patches/sglang-bench/*.patch)
 shopt -u nullglob
 if (( ${#flat_patches[@]} )); then printf 'Move %s into patches/deep-gemm-bench/<candidate>/ (one directory per candidate).\n' "${flat_patches[@]#"${GITHUB_WORKSPACE}/"}" >&2; exit 1; fi
