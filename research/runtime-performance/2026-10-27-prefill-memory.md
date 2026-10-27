@@ -115,3 +115,28 @@ is below the predeclared 3% admission threshold. Even extrapolated over 94
 layers, it is only about 0.05–0.07 ms, far below the 9.81 ms target. These
 standalone timings must not be compared directly with the 66 us serving
 profile. **No full serving run is justified by this result.**
+
+## Next bounded candidate: exact BF16 paired rounding
+
+The head4 result does not support another layout sweep. Current SASS still
+has 32 scalar `F2F.BF16.F32` instructions per Prefill QKV lane. Pairing RN-even
+conversion retains both existing BF16 rounding points and every scalar
+multiply/FMA expression; it does not lower model precision.
+
+The first CUDA-intrinsic version halved BF16 conversion instructions but
+introduced 20 additional PRMTs: non-NOP instructions 763→768. It was
+rejected before GPU submission. An explicit packed-u32 result with bit-shift
+unpacking removes that overhead. CUDA 13's own `cuda_bf16.hpp` confirms the
+PTX operand order. Final SM90a compile: slots 776→768, non-NOP 763→755 for
+PDL/int64, registers 57→56, zero stack/spills. All four PDL/id-type variants
+have fewer non-NOP instructions; FP32 arithmetic, reduction and FP8 repair
+opcode counts are unchanged. The original 32-token/one-head CTA is retained.
+
+One Firmus kernel-probe invocation runs only this candidate and its control,
+using the same exact-output/changed-input/alternating-timing gate and the same
+3% admission threshold. No MegaMoE rerun, no NCU permission preflight and no
+new image. The existing partition route reserves one node for at most five
+minutes; the probe exposes one GPU and has a 165-second trial timeout.
+The source generator, control header, output patch, hashes and raw samples
+are archived with the probe results. GPU correctness/performance remain
+unverified until this job completes.

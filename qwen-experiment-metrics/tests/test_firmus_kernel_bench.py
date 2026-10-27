@@ -572,4 +572,4 @@ def test_prefill_memory_requires_exact_graph_and_terminal_control(tmp_path, monk
     assert bool(failed) == (missing is not None)
     selection = json.loads((tmp_path / "prefill-memory-selection.json").read_text())
     assert selection["direct-store"]["candidate_eligible"] == (missing != "repeat")
-    assert "Head4" in text if missing != "probe" else "missing or failed" in text
+    assert "heads4" in text if missing != "probe" else "missing or failed" in text

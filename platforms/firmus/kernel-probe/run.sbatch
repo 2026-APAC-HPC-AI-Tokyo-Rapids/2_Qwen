@@ -24,7 +24,9 @@ if [[ "${probe_gpus}" == 4 ]]; then
     mounts+=",${RUNTIME_DIR}/diagnostic/opt/sglang/source/python/sglang/srt/managers/scheduler_components/batch_result_processor.py:/opt/sglang/source/python/sglang/srt/managers/scheduler_components/batch_result_processor.py:ro,/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8:/model:ro"
 else
     [[ "${probe_gpus}" == 1 ]]
-    mounts+=",${RUNTIME_DIR}/metadata:/opt/apac/fa3-verify:ro,${RUNTIME_DIR}/profiler/opt/nvidia/nsight-compute/2025.3.1:/opt/fa3-ncu:ro"
+    mounts+=",${RUNTIME_DIR}/metadata:/opt/apac/fa3-verify:ro"
+    benchmark=$(jq -er .benchmark source/provenance.json)
+    if [[ "${benchmark}" != kernels/probes/prepare-prefill-memory.sh ]]; then mounts+=",${RUNTIME_DIR}/profiler/opt/nvidia/nsight-compute/2025.3.1:/opt/fa3-ncu:ro"; fi
 fi
 srun -N1 -n1 --exact --gres=gpu:"${probe_gpus}" --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${RUNTIME_DIR}/sglang.sqsh" --container-mounts="${mounts}" env RUNTIME_DIR="${RUNTIME_DIR}" bash "${RUNTIME_DIR}/scripts/run-trials.sh"
 date -u

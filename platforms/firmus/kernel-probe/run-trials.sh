@@ -22,6 +22,14 @@ if [[ "${probe_gpus}" == 4 ]]; then
     touch run-success
     exit 0
 fi
+benchmark=$(python3 -c 'import json; print(json.load(open("source/provenance.json"))["benchmark"])')
+if [[ "${benchmark}" == kernels/probes/prepare-prefill-memory.sh ]]; then
+    printf 'trial=1 Prefill memory; no NCU instrumentation\n'
+    timeout 165 ./source/probe 2>&1 | tee results/trial-1.log
+    grep -q '^PASS ' results/trial-1.log
+    touch run-success
+    exit 0
+fi
 # Check a hardware metric, not merely kernel tracing, for M1 as well as M2.
 printf 'Checking Nsight Compute GPU performance-counter permission on one GPU\n'
 status=0

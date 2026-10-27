@@ -95,13 +95,14 @@ def run(headers, output):
     from sglang.kernels.jit.utils import is_arch_support_pdl, load_jit, make_cpp_args
 
     assert torch.cuda.device_count() == 1 and torch.cuda.get_device_capability() == (9, 0)
+    candidate_name, = (name for name in headers if name != "control")
     funcs = {name: load_jit("prefill_memory_" + name, cuda_files=[str(path.resolve())], cuda_wrappers=[("run", f"QKNormRopeFP8Kernel<{make_cpp_args(is_arch_support_pdl())}>::run_prefill")]).run for name, path in headers.items()}
     torch.manual_seed(9261027)
     angles = torch.randn(8192, 64, device="cuda")
     trig = torch.cat((angles.cos(), angles.sin()), dim=1)
     qw, kw = [(torch.randn(128, device="cuda") * .25 + v).bfloat16() for v in (1, .75)]
     qw[::4], kw[1::4] = 512, -2048
-    result = {"scope": "bounded one-GPU head4 QKV gate, not serving throughput", "rotating_input_sets": 4, "cases": []}
+    result = {"scope": "bounded one-GPU exact QKV gate, not serving throughput", "candidate_name": candidate_name, "rotating_input_sets": 4, "cases": []}
 
     def make_case(rows, dtype, special=False):
         packed = torch.randn(rows, 72, 128, device="cuda", dtype=torch.bfloat16) * 512
@@ -191,13 +192,13 @@ def run(headers, output):
                 measure(name)
         measure("control")
         medians = {name: statistics.median(values) for name, values in samples.items()}
-        entry = {"rows": rows, "dtype": "torch.int64", "samples_us": samples, "order": order, "median_us": medians, "ratio": medians["heads4"]/medians["control"]}
+        entry = {"rows": rows, "dtype": "torch.int64", "samples_us": samples, "order": order, "median_us": medians, "ratio": medians[candidate_name]/medians["control"]}
         result.setdefault("timing", []).append(entry)
         print(json.dumps(entry), flush=True)
     # Selection requires a useful consistent reduction and bounded control drift.
     result["candidate_eligible"] = all(case["ratio"] < .97 and abs(case["samples_us"]["control"][-1] / statistics.median(case["samples_us"]["control"][:-1]) - 1) < .05 for case in result["timing"])
     (output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
-    print("PASS exact QKV head4 gate; eligible=" + str(result["candidate_eligible"]), flush=True)
+    print(f"PASS exact QKV {candidate_name} gate; eligible=" + str(result["candidate_eligible"]), flush=True)
 
 
 if __name__ == "__main__":

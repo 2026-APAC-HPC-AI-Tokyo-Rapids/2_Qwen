@@ -340,6 +340,7 @@ def prefill_memory(results, steps):
         lines.append("QKV numerical/timing gate is missing or failed.")
     else:
         probe = json.loads(path.read_text())
+        candidate_name = probe.get("candidate_name", "heads4")
         expected = {(n, dtype) for n in (0, 1, 7, 8, 9, 31, 32, 33, 129, 3986, 4032, 4096) for dtype in ("torch.int32", "torch.int64")}
         cases = probe.get("cases", [])
         coverage = {(row["rows"], row["dtype"]) for row in cases}
@@ -349,9 +350,9 @@ def prefill_memory(results, steps):
         if not valid:
             failed.append("prefill-memory coverage")
         eligible = valid and probe.get("candidate_eligible") is True
-        lines += [f"QKV exact output/graph coverage: {'PASS' if valid else 'FAIL'}. Candidate eligible: **{eligible}**.", "", "| Rows | Control µs | Head4 µs | Change |", "| --- | ---: | ---: | ---: |"]
+        lines += [f"QKV exact output/graph coverage: {'PASS' if valid else 'FAIL'}. Candidate eligible: **{eligible}**.", "", f"| Rows | Control µs | {candidate_name} µs | Change |", "| --- | ---: | ---: | ---: |"]
         for row in timing:
-            base, candidate = row["median_us"]["control"], row["median_us"]["heads4"]
+            base, candidate = row["median_us"]["control"], row["median_us"][candidate_name]
             lines.append(f"| {row['rows']} | {base:.2f} | {candidate:.2f} | {candidate / base - 1:+.2%} |")
     initial = load_rows(results / "image/bench.jsonl")
     repeat = load_rows(results / "control-repeat/bench.jsonl")
