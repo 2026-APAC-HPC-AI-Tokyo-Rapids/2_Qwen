@@ -64,6 +64,41 @@ GEMMはFMAを2 FLOPとし、`2MNK`。MoEはFC1とFC2を分け、有効行数とt
 
 µs/回はその分類の実測平均。shape混在・draft混在の行に単一shapeの床を掛けて周期全体の『余地』を作らない。
 
+## MegaMoEの既存内部計装と今回の変更
+
+run40057117293、image39932105942、prefill-real43-replica4-4096。代表callのWG0、CTA中央値（µs）。rawとparserのhashは`megamoe-phases-40057117293.json`に保存。両WGのmedian/maxも同JSONに保持。現行servingとは別条件。
+
+| 区間 | rank0 | rank1 | rank2 | rank3 |
+|---|---:|---:|---:|---:|
+| 最初のstage待ち | 22.8 | 24.2 | 27.2 | 28.5 |
+| FC1 mainloop | 653.9 | 668.4 | 689.0 | 682.8 |
+| うちFC1 stage待ち | 61.2 | 61.7 | 63.0 | 63.5 |
+| FC1 SwiGLU/FP8/store | 47.4 | 48.6 | 50.1 | 49.6 |
+| FC2 mainloop | 342.2 | 339.2 | 349.9 | 345.2 |
+| うちFC2 stage待ち | 40.0 | 36.9 | 36.1 | 35.6 |
+| FC2 BF16/address/scatter | 186.7 | 198.3 | 200.8 | 208.7 |
+| combine前grid/NVLink待ち | 75.1 | 49.8 | 11.8 | 16.2 |
+| combine/cleanup | 80.6 | 80.3 | 78.1 | 79.3 |
+
+通常bench中央値1407.1µs、計装bench中央値1450.8µs、別の8-call dumpのcalls2–8中央値1423.9µs。これらを同じ測定値にしない。CTA中央値の和もcritical pathではない。stage待ちはmainloopの内数。
+
+FC2出力の変換・アドレス・store発行はepilogueに入り、完了待ちはgrid/NVLink同期に混ざる。転送の単独所要時間は未確定。localケースとの差もcache/仕事分布が変わるため純NVLink時間にはならない。
+
+| rank | 同call SM GHz | FC1 compute床 µs | FC2 compute床 µs | FC1 useful/peak÷loop | FC2 useful/peak÷loop |
+|---|---:|---:|---:|---:|---:|
+| 0 | 1.6531 | 453.0 | 226.5 | 69.3% | 66.2% |
+| 1 | 1.6498 | 461.2 | 230.6 | 69.0% | 68.0% |
+| 2 | 1.6027 | 478.0 | 239.0 | 69.4% | 68.3% |
+| 3 | 1.6186 | 478.5 | 239.2 | 70.1% | 69.3% |
+
+この比率はpadding/setup/stage待ち/FP32 promotionを含むCTA中央値との診断比で、Tensor pipe実測稼働率ではない。旧73–75%を訂正するが、残差全部を短縮可能と主張しない。
+
+このfixtureのremote率は53.40%。FC2 partialは平均268.44MB/rank、remote平均は143.34MB/rank。combineの論理read+writeは301.99MB/rankで、4.8TB/s換算62.9µs。実転送量のcounterではない。source別expert countsがない旧runのrank別remote量とpadding量は未確定として残す。
+
+今回の候補：6f0164dの5つのFC2出力改善が別branchのまま未統合だった。アドレスを行単位で先に計算し、行の有効性分岐・shared address計算を減らし、metadata loadをBF16 packingに先行させる。BF16 payload、combine加算順、同期は保持。転送量削減とは呼ばない。
+
+旧run40116925551はscore8854.80→8922.77だったが、単回・別run比較で因果効果は未確立。現行D5aとの組合せをcontrol/candidate/control-repeatで一度検証する。無関係なQKV候補は再実行しない。現行controlの代表routingとlocalだけに別passのtimelineを付け、同時にsource-rank×expert countsを保存する。候補timelineはCPU compileでspill増加（store32B/load80–84B）が出たため実行しない。通常版は双方168 registers、stack/spill 0、Prefill命令slotは7512→7200 / 8072→7768、Decode3形状のencodingは完全一致。
+
 ## 仕事量と改善の対応
 
 ### Prefill MegaMoE
@@ -74,9 +109,9 @@ FC1=4*T*topk*H*I, FC2=2*T*topk*H*I。
 
 追う差：GEMM外のBF16出力・combine・通信、tile padding、rank待ち。完全均衡のFLOP下限との差全量を削減可能としない。
 
-次の作業：FC1/FC2の有効FLOPとexpert別tile padding、出力264MB前後、source rank別remote rowsを別々に勘定する。最新profile内のFC1/FC2時間は未分解。旧timelineを同じrunの内訳にしない。まずsource-rank別routingが既存成果物から復元できるか確認し、配置変更の通信削減上限とrank最大負荷をCPUで求める。
+次の作業：5本のFC2出力/アドレス改善6f0164dが現行へ未統合だった。現行D5a付きheaderへ復元し、CPUの数値配置・full codegenを先に検証。同一job内control/candidate/control-repeatと代表2ケースの別timelineで採否を決める。source-rank×expert countsを既存集計から保存し、remote payloadと64行paddingをCPU算出する。
 
-測定へ進む条件：変更前後のremote bytesと追加HBM bytes、padding FLOPが算出でき、critical pathを短くする根拠があること。単なる並列度増加を再試行しない。
+測定へ進む条件：出力BF16と加算順序、通信量・同期を保持。stable controls、exact hash、replica4の3ケース各>0.5%短縮・中央値>1%短縮、全ケース>1%悪化なしを満たしてから通常servingへ進む。
 
 内部の仕事量（時間の分解とは別）：
 
@@ -278,7 +313,7 @@ split2 FP32 partial O/LSE read + FP8 O/scale write。
 
 ## 優先順位と不足する証拠
 
-1. Prefill MegaMoE：142ms/周期が最大。FC1/FC2の時間は最新runでは未分解。旧40057117293のFC1 main654〜690µs、FC2 main339〜355µs、FC2 epilogue182〜209µs、combine78〜81µsは別条件の参考値として保持し、このprofileへ差し引かない。旧『主計算はpeakの73〜75%』にも周波数分母の再計算が必要。source rank別remote行数が無ければ配置の得は未判定。hot4複製は既に有効。
+1. Prefill MegaMoE：142ms/周期が最大。旧40057117293のFC1/FC2をrawから分解し、同callのclockで演算比を訂正した。上記表をこのserving profileへ差し引かない。未統合だったFC2 address bundleを現行D5aと組み合わせて検証する。source rank別remote行数が無ければ配置の得は未判定。hot4複製は既に有効。
 
 2. Prefill FA3：41ms/周期。N192のtile仕事量と有効演算の差を分離した。Tensorだけの床との差にはsoftmax/FP8変換/転置/同期がある。旧N224 NCUのpipe比率を現在の内訳へ転用しない。
 
@@ -292,6 +327,7 @@ split2 FP32 partial O/LSE read + FP8 O/scale write。
 
 | 候補 | run | 状態と結果 |
 |---|---|---|
+| FC2 address/guards/metadata/pair bundle | 40116925551 | previously_unmerged_recovered_for_validation: 6f0164d separate branch, absent from current image40197369083 and its seven overlays. Historical serving8854.80->8922.77 is one cross-run comparison, not causal proof. Current D5a combination requires one paired kernel gate. |
 | Prefill independent WG | 40069880580 | rejected: +22-36% kernel latency; extra TMA/stage pressure |
 | Prefill bulk scatter | 40095847738 | rejected: +1.3-4.9%; see broad-ceiling-review before any repeat |
 | FP32 precombine | 39355994503 | rejected: serving -5.8%; added scratch traffic |

@@ -48,7 +48,10 @@ a.output.mkdir(parents=True)
             config.write_text(json.dumps({"sglang_overlay_patches":["control.patch"]}))
             (runtime / "scripts").mkdir()
             (runtime / "source").mkdir()
-            setup = 'runtime_dir="$1"; config="$2"; sglang_package=opt/sglang/source/python/sglang\n'
+            marker = workspace / "patches/deep-gemm-bench/prefill-memory"
+            marker.parent.mkdir(parents=True)
+            marker.touch()
+            setup = 'bench_dir="${GITHUB_WORKSPACE}/patches/deep-gemm-bench"; runtime_dir="$1"; config="$2"; sglang_package=opt/sglang/source/python/sglang\n'
             gnu_install = 'install() { command ginstall "$@"; }\n' if shutil.which("ginstall") else ""
             shell = gnu_install + function("apply_patches") + function("patch_records") + setup + block + '\nprintf "%s" "$prefill_memory"\n'
             result = subprocess.run(["bash", "-euo", "pipefail", "-c", shell, "fixture", str(runtime), str(config)], env={**os.environ, "GITHUB_WORKSPACE":str(workspace)}, capture_output=True, text=True, check=False)
@@ -65,7 +68,7 @@ a.output.mkdir(parents=True)
         self.assertIn('--header "${ROOT}/source/prefill-memory/rope-heads1.cuh" --output "${ROOT}/results/prefill-memory" --run', RUN)
         self.assertLess(RUN.index('step prefill-memory probe'), RUN.index('step control-repeat bench'))
         self.assertIn('--output "${ROOT}/results/control-repeat/bench.jsonl" --reference "${ROOT}/results/image/bench.jsonl"', RUN)
-        self.assertIn('then steps=$((steps + 2)); fi', PROVISION)
+        self.assertIn('if [[ -e "${bench_dir}/prefill-memory" ]]; then steps=$((steps + 1)); fi', PROVISION)
 
 
 if __name__ == "__main__":

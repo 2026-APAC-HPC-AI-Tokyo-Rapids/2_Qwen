@@ -10,7 +10,9 @@
 # _C.so) that run.sbatch passes to that candidate's gate, bench and timeline
 # steps only. A candidate patch that does not apply or a malformed env file stops
 # here, before any Slurm submission; a timeline patch that does not apply on top
-# of a candidate is recorded and that timeline is skipped.
+# of a candidate is recorded and that timeline is skipped. The top-level
+# prefill-only marker selects the focused MoE campaign; prefill-memory explicitly
+# enables the separate QKV probe. Merely keeping the probe script does not run it.
 set -euo pipefail
 shopt -s inherit_errexit
 
@@ -35,7 +37,8 @@ sglang_patches=("${GITHUB_WORKSPACE}"/patches/sglang-bench/*.patch)
 shopt -u nullglob
 if (( ${#flat_patches[@]} )); then printf 'Move %s into patches/deep-gemm-bench/<candidate>/ (one directory per candidate).\n' "${flat_patches[@]#"${GITHUB_WORKSPACE}/"}" >&2; exit 1; fi
 steps=1
-if [[ -e "${GITHUB_WORKSPACE}/kernels/probes/prefill-memory.py" ]]; then steps=$((steps + 2)); fi
+if [[ -e "${bench_dir}/prefill-only" || -e "${bench_dir}/prefill-memory" ]]; then steps=$((steps + 1)); fi
+if [[ -e "${bench_dir}/prefill-memory" ]]; then steps=$((steps + 1)); fi
 if [[ -e "${bench_dir}/timeline" ]]; then steps=$((steps + 1)); fi
 if (( ${#sglang_patches[@]} )); then steps=$((steps + 2)); fi
 if (( ${#sglang_patches[@]} )) && [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then steps=$((steps + 2)); fi
@@ -93,7 +96,7 @@ ln -s "${image}" "${runtime_dir}/sglang.sqsh"
 package=opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
 sglang_package=opt/sglang/source/python/sglang
 extract=("${package}" opt/apac/sm90-megamoe-build.json opt/apac/deep-gemm-host-build.json)
-if (( ${#sglang_patches[@]} )) || [[ -e "${GITHUB_WORKSPACE}/kernels/probes/prefill-memory.py" ]]; then extract+=("${sglang_package}"); fi
+if (( ${#sglang_patches[@]} )) || [[ -e "${bench_dir}/prefill-memory" ]]; then extract+=("${sglang_package}"); fi
 unsquashfs -no-progress -no-xattrs -processors 1 -d "${runtime_dir}/image" "${image}" "${extract[@]}"
 chmod -R u+w "${runtime_dir}/image"
 cp "${runtime_dir}/image/opt/apac/sm90-megamoe-build.json" "${runtime_dir}/source/"
@@ -123,7 +126,7 @@ baseline_records="$(patch_records "${baseline_patches[@]}")"
 # Keep the QKV control identical to configured serving, including overlays
 # newer than the pinned image. Preparation imports only the Python stdlib.
 prefill_memory=null
-if [[ -e "${GITHUB_WORKSPACE}/kernels/probes/prefill-memory.py" ]]; then
+if [[ -e "${bench_dir}/prefill-memory" ]]; then
   mapfile -t qkv_baseline_patches < <(jq -r '.sglang_overlay_patches // [] | .[]' "${config}")
   for i in "${!qkv_baseline_patches[@]}"; do qkv_baseline_patches[i]="${GITHUB_WORKSPACE}/${qkv_baseline_patches[i]}"; done
   apply_patches "${runtime_dir}/image/opt/sglang/source" "${qkv_baseline_patches[@]}"
@@ -172,7 +175,9 @@ if (( ${#sglang_patches[@]} )); then
   apply_patches "${runtime_dir}/overlay/sglang" "${sglang_patches[@]}"
   sglang="$(jq -n --argjson patches "$(patch_records "${sglang_patches[@]}")" --argjson bench "$(if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then echo true; else echo false; fi)" '{patches:$patches,bench_script:$bench}')"
 fi
-jq -n --argjson deep_gemm "${variants}" --argjson sglang "${sglang}" --argjson prefill_memory "${prefill_memory}" '{deep_gemm:$deep_gemm,sglang:$sglang,prefill_memory:$prefill_memory}' >"${runtime_dir}/results/variants.json"
+prefill_only=false
+if [[ -e "${bench_dir}/prefill-only" ]]; then prefill_only=true; fi
+jq -n --argjson prefill_only "${prefill_only}" --argjson deep_gemm "${variants}" --argjson sglang "${sglang}" --argjson prefill_memory "${prefill_memory}" '{deep_gemm:$deep_gemm,sglang:$sglang,prefill_memory:$prefill_memory,prefill_only:$prefill_only}' >"${runtime_dir}/results/variants.json"
 for part in deep-gemm-bench sglang-bench; do
   if [[ -d "${GITHUB_WORKSPACE}/patches/${part}" ]]; then cp -a "${GITHUB_WORKSPACE}/patches/${part}" "${runtime_dir}/source/patches/"; fi
 done
@@ -183,4 +188,4 @@ scripts=(bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-ker
 if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then scripts+=(bench-firmus-sglang-kernels.py); fi
 for script in "${scripts[@]}"; do install -m 0644 "${GITHUB_WORKSPACE}/scripts/${script}" "${runtime_dir}/scripts/"; cp "${runtime_dir}/scripts/${script}" "${runtime_dir}/source/"; done
 cp "${runtime_dir}/scripts/run.sbatch" "${runtime_dir}/source/"
-jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson image "$(jq .images.sglang "${config}")" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" --argjson prefill_memory "${prefill_memory}" '{prefill_memory:$prefill_memory,schema_version:"qwen3-megamoe-kernel-bench/v2",cluster:"firmus",commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes}),timeline_patch_sha256:$timeline_sha,variants:"results/variants.json"}' >"${runtime_dir}/source/provenance.json"
+jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson image "$(jq .images.sglang "${config}")" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" --argjson prefill_memory "${prefill_memory}" --argjson prefill_only "${prefill_only}" '{prefill_only:$prefill_only,prefill_memory:$prefill_memory,schema_version:"qwen3-megamoe-kernel-bench/v2",cluster:"firmus",commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes}),timeline_patch_sha256:$timeline_sha,variants:"results/variants.json"}' >"${runtime_dir}/source/provenance.json"

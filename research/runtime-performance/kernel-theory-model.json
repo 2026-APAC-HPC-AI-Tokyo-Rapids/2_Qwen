@@ -12,8 +12,14 @@
     "nominal_dense_bf16_tflops": 989.5,
     "hbm_bytes_per_second": 4800000000000,
     "nvlink_one_direction_bytes_per_second": 450000000000,
-    "prefill_clock_scenario_mhz": [1350, 1400],
-    "decode_clock_scenario_mhz": [1650, 1740],
+    "prefill_clock_scenario_mhz": [
+      1350,
+      1400
+    ],
+    "decode_clock_scenario_mhz": [
+      1650,
+      1740
+    ],
     "clock_basis": "Same-window raw GPC series means are about 1.35e9-1.38e9 for Prefill and 1.65e9-1.73e9 for Decode. Treating these as Hz gives the rounded worker-wide scenario ranges above. Nsight labels them MHz; device mapping and per-kernel frequency are not established. These are explicit scenarios, not measured per-kernel ceilings. Never normalize 1979 TFLOPS by the CUDA-core maximum 1980 MHz.",
     "sources": [
       "https://www.nvidia.com/en-us/data-center/h200/",
@@ -58,46 +64,184 @@
   "approach": {
     "p_moe": {
       "priority": 1,
-      "next": "FC1/FC2の有効FLOPとexpert別tile padding、出力264MB前後、source rank別remote rowsを別々に勘定する。最新profile内のFC1/FC2時間は未分解。旧timelineを同じrunの内訳にしない。まずsource-rank別routingが既存成果物から復元できるか確認し、配置変更の通信削減上限とrank最大負荷をCPUで求める。",
+      "next": "5本のFC2出力/アドレス改善6f0164dが現行へ未統合だった。現行D5a付きheaderへ復元し、CPUの数値配置・full codegenを先に検証。同一job内control/candidate/control-repeatと代表2ケースの別timelineで採否を決める。source-rank×expert countsを既存集計から保存し、remote payloadと64行paddingをCPU算出する。",
       "gap_to_explain": "GEMM外のBF16出力・combine・通信、tile padding、rank待ち。完全均衡のFLOP下限との差全量を削減可能としない。",
-      "gate": "変更前後のremote bytesと追加HBM bytes、padding FLOPが算出でき、critical pathを短くする根拠があること。単なる並列度増加を再試行しない。",
-      "evidence": ["2026-10-24-prefill-megamoe-timeline.md", "2026-10-27-prefill-memory.md", "2026-10-20-firmus-prefill-overlay-results.md"],
-      "blocked_by": ["same-run FC1/FC2 subphase durations", "source-rank-conditioned routing histogram", "actual HBM/NVLink bytes"]
+      "gate": "出力BF16と加算順序、通信量・同期を保持。stable controls、exact hash、replica4の3ケース各>0.5%短縮・中央値>1%短縮、全ケース>1%悪化なしを満たしてから通常servingへ進む。",
+      "evidence": [
+        "megamoe-phases-40057117293.json",
+        "2026-10-24-prefill-megamoe-timeline.md",
+        "2026-10-27-prefill-memory.md"
+      ],
+      "blocked_by": [
+        "current combined candidate timing with D5a",
+        "actual HBM/NVLink transactions and per-PC stalls"
+      ]
     },
     "p_attention": {
       "priority": 2,
       "next": "現在のN192についてM/N tile数、有効演算とpadding、softmaxのexp/変換命令、KV再読出し、fill/drain依存を数える。N224 NCUの命令数を流用しない。次の候補は削減命令または削減tileをnative compileで示してから測る。",
       "gap_to_explain": "Tensor Coreだけの床に加えてsoftmax・FP8変換・転置・同期がある。全I/OをHBMへ流す模型も、全てL2 hitとする模型も実測帯域ではない。",
       "gate": "現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。",
-      "evidence": ["2026-10-25-fa3-prefill-measurement.md", "2026-10-27-prefill-memory.md"],
-      "blocked_by": ["current N192 opcode counts and critical dependency accounting"]
+      "evidence": [
+        "2026-10-25-fa3-prefill-measurement.md",
+        "2026-10-27-prefill-memory.md"
+      ],
+      "blocked_by": [
+        "current N192 opcode counts and critical dependency accounting"
+      ]
     },
-    "p_qkv": {"priority": 4, "next": "M256のpaddingとepilogueを確認。FP8入力化は実装済み。小さい残差を理由に独立した全体測定をしない。", "gap_to_explain": "tile padding、scale、epilogue。", "gate": "既存選択より速い同shapeの候補だけを他の検証に同乗。"},
-    "p_o": {"priority": 4, "next": "FA3出力FP8化は実装済み。M256 paddingとepilogueを確認。", "gap_to_explain": "tile padding、scale、epilogue。", "gate": "同shapeでの改善と全体の電力・clock変化を照合。"},
-    "p_qknorm": {"priority": 3, "next": "Q/K正規化・RoPE・FP8 Q・contiguous/paged KV書出しの既存融合を前提に、変換/アドレス/転送の命令量を減らす。入力はH4096ではなくQKV9216。", "gap_to_explain": "BF16丸め保存、reduction、trig、FP8変換、複数出力。", "gate": "head4/paired-roundの再試行はしない。現在の演算順を守り、追加loadやregister圧を含めて比較。"},
-    "p_add_norm": {"priority": 3, "next": "post-attention normからgate用BF16とMegaMoE用FP8を一度に作るconsumer契約を検討する。gate用BF16出力は残す。", "gap_to_explain": "残差を含む4本のBF16 read/write。33MBだけを分母にしない。draft由来の呼出しも混在。", "gate": "pre_dispatchとの組でBF16再読出し1回を削る。追加書出し/同期で相殺されないこと。"},
-    "p_norm_quant": {"priority": 5, "next": "input add+RMSNorm+FP8 quantは既に融合。これを再度『融合余地』に数えない。", "gap_to_explain": "2 BF16 reads、BF16 residual write、FP8 outputとFP32 scales、reduction。", "gate": "既存融合より少ない命令/trafficを示せる場合のみ。"},
-    "p_dispatch": {"priority": 3, "next": "post-attention normがMegaMoE対称bufferへ直接FP8/scaleを書く経路を設計し、routing metadata部分を独立させる。", "gap_to_explain": "入力quantとrouting metadataの境界。", "gate": "norm側に融合して減るBF16 readは約33MB/層。これを12ms削減と誇張しない。"},
-    "p_gate": {"priority": 5, "next": "gateが必要とするBF16入力を保存する。norm/dispatch融合の正当性の制約として追う。", "gap_to_explain": "小N128 GEMM、起動、scale/epilogue。", "gate": "計算または中間bufferを消せる変更だけを検討。"},
-    "d_moe": {"priority": 2, "next": "604MB/rankの重み読出しと、実際のHBM/L2 bytesを対応づける。次にpaddingとdescriptor/同期の依存を確認する。", "gap_to_explain": "cold-weight時間は125.8usだが、activation/通信/epilogueを含む下限ではない。", "gate": "stage数やprefetchの再掃引を避け、実転送/依存の減少を示す。"},
-    "d_attention": {"priority": 2, "next": "request別KV長・verify rows・split2のKV読出しとpartial buffer bytesを追う。", "gap_to_explain": "KV read、softmax、tile数/並列仕事量、split後merge。", "gate": "過去に数値不一致だったmerge統合は、誤りの特定とCPU/source証拠を先に必要とする。"},
-    "d_qkv": {"priority": 4, "next": "M128の末端paddingと実row分布を追う。", "gap_to_explain": "小Mのwave不足とtile padding。", "gate": "平均shapeでなく各graph bucketの条件一致。"},
-    "d_o": {"priority": 4, "next": "M64/N96の末端paddingと実row分布を追う。", "gap_to_explain": "小Mとepilogue。", "gate": "他の検証に同乗する小さい改善候補。"},
-    "d_add_quant": {"priority": 3, "next": "現行の融合でも約9usある。HBM床だけで評価せず、CTA数とreduction依存を数える。", "gap_to_explain": "小MでHBMを埋められずreduction/launchが支配し得る。", "gate": "Prefillのwide-row結果をDecodeへ流用しない。"},
-    "d_merge": {"priority": 3, "next": "FA3 split2のpartial FP32入出力を実shapeから勘定し、attention本体との合計で比較。", "gap_to_explain": "partial reduction、FP8出力scale、起動。", "gate": "merge単独の削除効果をattention本体の増加と相殺する。"},
-    "other": {"priority": 6, "next": "raw kernel名とgeometryごとに時間を保持。shape未確定なら理論値null。現在未分類の費用が優先順位を変える大きさになったらsourceと対応づける。", "gap_to_explain": "draft/小kernelを含む。未モデル化をゼロ時間と扱わない。", "gate": "現在のFP8 draftへ旧BF16 draft費用を流用しない。"}
+    "p_qkv": {
+      "priority": 4,
+      "next": "M256のpaddingとepilogueを確認。FP8入力化は実装済み。小さい残差を理由に独立した全体測定をしない。",
+      "gap_to_explain": "tile padding、scale、epilogue。",
+      "gate": "既存選択より速い同shapeの候補だけを他の検証に同乗。"
+    },
+    "p_o": {
+      "priority": 4,
+      "next": "FA3出力FP8化は実装済み。M256 paddingとepilogueを確認。",
+      "gap_to_explain": "tile padding、scale、epilogue。",
+      "gate": "同shapeでの改善と全体の電力・clock変化を照合。"
+    },
+    "p_qknorm": {
+      "priority": 3,
+      "next": "Q/K正規化・RoPE・FP8 Q・contiguous/paged KV書出しの既存融合を前提に、変換/アドレス/転送の命令量を減らす。入力はH4096ではなくQKV9216。",
+      "gap_to_explain": "BF16丸め保存、reduction、trig、FP8変換、複数出力。",
+      "gate": "head4/paired-roundの再試行はしない。現在の演算順を守り、追加loadやregister圧を含めて比較。"
+    },
+    "p_add_norm": {
+      "priority": 3,
+      "next": "post-attention normからgate用BF16とMegaMoE用FP8を一度に作るconsumer契約を検討する。gate用BF16出力は残す。",
+      "gap_to_explain": "残差を含む4本のBF16 read/write。33MBだけを分母にしない。draft由来の呼出しも混在。",
+      "gate": "pre_dispatchとの組でBF16再読出し1回を削る。追加書出し/同期で相殺されないこと。"
+    },
+    "p_norm_quant": {
+      "priority": 5,
+      "next": "input add+RMSNorm+FP8 quantは既に融合。これを再度『融合余地』に数えない。",
+      "gap_to_explain": "2 BF16 reads、BF16 residual write、FP8 outputとFP32 scales、reduction。",
+      "gate": "既存融合より少ない命令/trafficを示せる場合のみ。"
+    },
+    "p_dispatch": {
+      "priority": 3,
+      "next": "post-attention normがMegaMoE対称bufferへ直接FP8/scaleを書く経路を設計し、routing metadata部分を独立させる。",
+      "gap_to_explain": "入力quantとrouting metadataの境界。",
+      "gate": "norm側に融合して減るBF16 readは約33MB/層。これを12ms削減と誇張しない。"
+    },
+    "p_gate": {
+      "priority": 5,
+      "next": "gateが必要とするBF16入力を保存する。norm/dispatch融合の正当性の制約として追う。",
+      "gap_to_explain": "小N128 GEMM、起動、scale/epilogue。",
+      "gate": "計算または中間bufferを消せる変更だけを検討。"
+    },
+    "d_moe": {
+      "priority": 2,
+      "next": "604MB/rankの重み読出しと、実際のHBM/L2 bytesを対応づける。次にpaddingとdescriptor/同期の依存を確認する。",
+      "gap_to_explain": "cold-weight時間は125.8usだが、activation/通信/epilogueを含む下限ではない。",
+      "gate": "stage数やprefetchの再掃引を避け、実転送/依存の減少を示す。"
+    },
+    "d_attention": {
+      "priority": 2,
+      "next": "request別KV長・verify rows・split2のKV読出しとpartial buffer bytesを追う。",
+      "gap_to_explain": "KV read、softmax、tile数/並列仕事量、split後merge。",
+      "gate": "過去に数値不一致だったmerge統合は、誤りの特定とCPU/source証拠を先に必要とする。"
+    },
+    "d_qkv": {
+      "priority": 4,
+      "next": "M128の末端paddingと実row分布を追う。",
+      "gap_to_explain": "小Mのwave不足とtile padding。",
+      "gate": "平均shapeでなく各graph bucketの条件一致。"
+    },
+    "d_o": {
+      "priority": 4,
+      "next": "M64/N96の末端paddingと実row分布を追う。",
+      "gap_to_explain": "小Mとepilogue。",
+      "gate": "他の検証に同乗する小さい改善候補。"
+    },
+    "d_add_quant": {
+      "priority": 3,
+      "next": "現行の融合でも約9usある。HBM床だけで評価せず、CTA数とreduction依存を数える。",
+      "gap_to_explain": "小MでHBMを埋められずreduction/launchが支配し得る。",
+      "gate": "Prefillのwide-row結果をDecodeへ流用しない。"
+    },
+    "d_merge": {
+      "priority": 3,
+      "next": "FA3 split2のpartial FP32入出力を実shapeから勘定し、attention本体との合計で比較。",
+      "gap_to_explain": "partial reduction、FP8出力scale、起動。",
+      "gate": "merge単独の削除効果をattention本体の増加と相殺する。"
+    },
+    "other": {
+      "priority": 6,
+      "next": "raw kernel名とgeometryごとに時間を保持。shape未確定なら理論値null。現在未分類の費用が優先順位を変える大きさになったらsourceと対応づける。",
+      "gap_to_explain": "draft/小kernelを含む。未モデル化をゼロ時間と扱わない。",
+      "gate": "現在のFP8 draftへ旧BF16 draft費用を流用しない。"
+    }
   },
   "previous_trials": [
-    {"candidate": "Prefill independent WG", "run": "40069880580", "status": "rejected", "result": "+22-36% kernel latency; extra TMA/stage pressure"},
-    {"candidate": "Prefill bulk scatter", "run": "40095847738", "status": "rejected", "result": "+1.3-4.9%; see broad-ceiling-review before any repeat"},
-    {"candidate": "FP32 precombine", "run": "39355994503", "status": "rejected", "result": "serving -5.8%; added scratch traffic"},
-    {"candidate": "hot8 replicas vs hot4", "run": "39462905249", "status": "rejected", "result": "all three recorded layers slower; hot4 already adopted"},
-    {"candidate": "combine direct store", "run": "40459750245", "status": "rejected", "result": "numerically exact; did not pass control-paired speed gate"},
-    {"candidate": "QKV head4", "run": "40459750245", "status": "rejected", "result": "1.1-1.4% improvement below predeclared 3% gate"},
-    {"candidate": "QKV paired rounding", "run": "40463471079", "status": "rejected", "result": "about5% slower"},
-    {"candidate": "FA3 half2 exp", "run": null, "status": "rejected_without_gpu", "result": "native compile emits two MUFU; conversions/spills increase"},
-    {"candidate": "FA3 polynomial exp", "run": "40472152140", "status": "rejected", "result": "numerical gate passed; about5.2% slower"},
-    {"candidate": "router early first response", "run": "40528222753", "status": "not_adopted_for_goodput", "result": "TTFT -201ms; completion -0.9ms; ITL +1.006ms; score9161.67->9135.42. NIXL version confound."}
+    {
+      "candidate": "FC2 address/guards/metadata/pair bundle",
+      "run": "40116925551",
+      "status": "previously_unmerged_recovered_for_validation",
+      "result": "6f0164d separate branch, absent from current image40197369083 and its seven overlays. Historical serving8854.80->8922.77 is one cross-run comparison, not causal proof. Current D5a combination requires one paired kernel gate."
+    },
+    {
+      "candidate": "Prefill independent WG",
+      "run": "40069880580",
+      "status": "rejected",
+      "result": "+22-36% kernel latency; extra TMA/stage pressure"
+    },
+    {
+      "candidate": "Prefill bulk scatter",
+      "run": "40095847738",
+      "status": "rejected",
+      "result": "+1.3-4.9%; see broad-ceiling-review before any repeat"
+    },
+    {
+      "candidate": "FP32 precombine",
+      "run": "39355994503",
+      "status": "rejected",
+      "result": "serving -5.8%; added scratch traffic"
+    },
+    {
+      "candidate": "hot8 replicas vs hot4",
+      "run": "39462905249",
+      "status": "rejected",
+      "result": "all three recorded layers slower; hot4 already adopted"
+    },
+    {
+      "candidate": "combine direct store",
+      "run": "40459750245",
+      "status": "rejected",
+      "result": "numerically exact; did not pass control-paired speed gate"
+    },
+    {
+      "candidate": "QKV head4",
+      "run": "40459750245",
+      "status": "rejected",
+      "result": "1.1-1.4% improvement below predeclared 3% gate"
+    },
+    {
+      "candidate": "QKV paired rounding",
+      "run": "40463471079",
+      "status": "rejected",
+      "result": "about5% slower"
+    },
+    {
+      "candidate": "FA3 half2 exp",
+      "run": null,
+      "status": "rejected_without_gpu",
+      "result": "native compile emits two MUFU; conversions/spills increase"
+    },
+    {
+      "candidate": "FA3 polynomial exp",
+      "run": "40472152140",
+      "status": "rejected",
+      "result": "numerical gate passed; about5.2% slower"
+    },
+    {
+      "candidate": "router early first response",
+      "run": "40528222753",
+      "status": "not_adopted_for_goodput",
+      "result": "TTFT -201ms; completion -0.9ms; ITL +1.006ms; score9161.67->9135.42. NIXL version confound."
+    }
   ],
   "followup_contract": [
     "Every candidate names the kernel, exact shape/precision/source hash, work removed (FLOPs/bytes/instructions), and predicted resource limit before GPU dispatch.",
@@ -106,5 +250,27 @@
     "Update previous_trials and source/profile identity after a run. No repeat of failed candidates without an explicitly changed failure mechanism.",
     "Use existing archived data first. A new measurement must resolve a named uncertainty that can change the decision. No job is dispatched by these scripts.",
     "Normal serving completion time, goodput, ITL and acceptance are the final check. TTFT movement alone does not prove less work."
-  ]
+  ],
+  "megamoe_phase_evidence": {
+    "file": "megamoe-phases-40057117293.json",
+    "archive": "archive-host:/srv/qwen-artifacts/40057117293/1/results/results/image/",
+    "scope": "Historical v2 instrumented microbenchmark, distinct from current serving profile. Source-conditioned counts absent in this archive."
+  },
+  "current_megamoe_candidate": {
+    "branch": "perf/moe-fc2-recovery-20261028",
+    "serving_base_commit": "68c4f122a67659a786ce6540bfabfc962c278a04",
+    "previous_candidate_commit": "6f0164d7486036ba387550bd8bbc993b7ff52c97",
+    "base_image_run": "40197369083",
+    "control_header_sha256": "220f409fd723d931cdad4e70b8e149646ececb5d1ee8554048683043ae413aa2",
+    "candidate_header_sha256": "7aa48a3e10eb5a16e2d1e9b48efc126194aff3df1c74989eb60ccde1da44f8e8",
+    "patch": "patches/deep-gemm-bench/fc2-address/fc2-output-address.patch",
+    "shape": "EP4, H4096, I1536, top8, FP8 weights/activation, BF16 partial, FP32 combine; five Prefill4096 cases, three actual-routing distributions with hot4",
+    "removed_work": "Repeated row-validity branches, BF16 shared-address math, destination rank table loads/address math. Metadata loads issued ahead of packing; next row loaded before remote store. No changed useful FLOPs, payload bytes or reduction order.",
+    "measurement_question": "Does the recovered FC2 bundle reduce the current D5a kernel on stable same-job controls, and which phase changes?",
+    "status": "cpu_validation_passed_ready_for_single_kernel_gate",
+    "serving_change_enabled": false,
+    "cpu_validation": "megamoe-fc2-cpu-validation-20261028.json",
+    "timeline_policy": "Control only: candidate instrumentation introduces 32B spill stores and 80/84B spill loads. Do not run or compare its perturbed phases. Ordinary control/candidate/repeat use zero-spill kernels.",
+    "new_gpu_work": "One node, four H200; five ordinary cases each for control/candidate/control-repeat, candidate numeric gate, two control timeline cases. No QKV, unrelated Decode timing, or candidate timeline."
+  }
 }

@@ -1,4 +1,6 @@
-# Prefill MegaMoE timeline（2 WG、今の serving と同じ kernel）（2026-10-24）
+# Prefill MegaMoE timeline（2 WG、2026-10-24時点の kernel）
+
+> 2026-10-28訂正：以下は旧runの記録。現行の内部時間として流用しない。`megamoe-phases-40057117293.json`にraw再解析を保存した。dense FP8 peakは`8192×132×clock`で、同call/rank別clockとrecv_pairsを用いたuseful/peak÷CTA中央値mainloopはFC1約69–70%、FC2約66–69%。旧73–75%と1.98GHz基準は不正確。real43 fixtureのremote率は53.40%、全rank平均FC2 remote payload約143.34MB/rankであり、下記190MBは過大。転送完了時間は独立に未測定。独立WGの−9〜10%予想は後述の失敗により棄却済み。
 
 kernel bench [40057117293](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40057117293)（24de06f、image 39932105942、control = serving の overlay chain ＋ `DG_SM90_DECODE_INDEPENDENT_WG=1`）。timeline 版の出力は bench 版と bit 一致、計装の遅れは +0.9〜3.1%。全表は run の summary（`scripts/summarize-megamoe-kernel-bench.py`）。
 

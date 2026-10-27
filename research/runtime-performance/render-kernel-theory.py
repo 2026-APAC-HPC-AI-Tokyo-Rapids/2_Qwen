@@ -164,6 +164,34 @@ def analyze(config):
     return output
 
 
+def megamoe_phase_lines(config):
+    evidence = config.get("megamoe_phase_evidence")
+    if evidence is None:
+        return []
+    d = json.loads((ROOT/evidence["file"]).read_text())
+    phases = [("first_stage_wait", "最初のstage待ち"), ("fc1_loop", "FC1 mainloop"),
+              ("fc1_stage_wait_subset", "うちFC1 stage待ち"), ("fc1_epilogue", "FC1 SwiGLU/FP8/store"),
+              ("fc2_loop", "FC2 mainloop"), ("fc2_stage_wait_subset", "うちFC2 stage待ち"),
+              ("fc2_epilogue_scatter", "FC2 BF16/address/scatter"),
+              ("pre_combine_grid_nvlink_wait", "combine前grid/NVLink待ち"), ("combine_cleanup", "combine/cleanup")]
+    lines = ["## MegaMoEの既存内部計装と今回の変更", "",
+             f"run{d['run']}、image{d['image_run']}、{d['case']}。代表callのWG0、CTA中央値（µs）。rawとparserのhashは`{evidence['file']}`に保存。両WGのmedian/maxも同JSONに保持。現行servingとは別条件。", "",
+             "| 区間 | rank0 | rank1 | rank2 | rank3 |", "|---|---:|---:|---:|---:|"]
+    for key, name in phases:
+        lines.append("| "+name+" | "+" | ".join(f"{r['warpgroups'][0]['phases_us'][key]['cta_median']:.1f}" for r in d["ranks"])+" |")
+    lines += ["", f"通常bench中央値{d['bench_median_us']:.1f}µs、計装bench中央値{d['instrumented_bench_median_us']:.1f}µs、別の8-call dumpのcalls2–8中央値{d['timeline_calls_2_end_median_us']:.1f}µs。これらを同じ測定値にしない。CTA中央値の和もcritical pathではない。stage待ちはmainloopの内数。", "",
+              "FC2出力の変換・アドレス・store発行はepilogueに入り、完了待ちはgrid/NVLink同期に混ざる。転送の単独所要時間は未確定。localケースとの差もcache/仕事分布が変わるため純NVLink時間にはならない。", "",
+              "| rank | 同call SM GHz | FC1 compute床 µs | FC2 compute床 µs | FC1 useful/peak÷loop | FC2 useful/peak÷loop |", "|---|---:|---:|---:|---:|---:|"]
+    for r in d["ranks"]:
+        w, ratios = r["work"], r["warpgroups"][0]["useful_to_peak_over_median_cta_loop"]
+        lines.append(f"| {r['rank']} | {r['sm_clock_ghz_cta_median']:.4f} | {w['fc1_compute_only_us']:.1f} | {w['fc2_compute_only_us']:.1f} | {ratios['fc1']:.1%} | {ratios['fc2']:.1%} |")
+    lines += ["", "この比率はpadding/setup/stage待ち/FP32 promotionを含むCTA中央値との診断比で、Tensor pipe実測稼働率ではない。旧73–75%を訂正するが、残差全部を短縮可能と主張しない。", "",
+              f"このfixtureのremote率は{d['remote_fraction_all_ranks']:.2%}。FC2 partialは平均268.44MB/rank、remote平均は{268435456*d['remote_fraction_all_ranks']/1e6:.2f}MB/rank。combineの論理read+writeは301.99MB/rankで、4.8TB/s換算62.9µs。実転送量のcounterではない。source別expert countsがない旧runのrank別remote量とpadding量は未確定として残す。", "",
+              "今回の候補：6f0164dの5つのFC2出力改善が別branchのまま未統合だった。アドレスを行単位で先に計算し、行の有効性分岐・shared address計算を減らし、metadata loadをBF16 packingに先行させる。BF16 payload、combine加算順、同期は保持。転送量削減とは呼ばない。", "",
+              "旧run40116925551はscore8854.80→8922.77だったが、単回・別run比較で因果効果は未確立。現行D5aとの組合せをcontrol/candidate/control-repeatで一度検証する。無関係なQKV候補は再実行しない。現行controlの代表routingとlocalだけに別passのtimelineを付け、同時にsource-rank×expert countsを保存する。候補timelineはCPU compileでspill増加（store32B/load80–84B）が出たため実行しない。通常版は双方168 registers、stack/spill 0、Prefill命令slotは7512→7200 / 8072→7768、Decode3形状のencodingは完全一致。", ""]
+    return lines
+
+
 def render(config, data):
     lines = ["# カーネルの理論値と改善台帳", "",
              f"更新日 {config['updated_at']}。時間と仕事量の正本は `kernel-profile-40310899466-*.json` と `kernel-theory-model.json`。この文書は `python3 research/runtime-performance/render-kernel-theory.py --write` で再生成する。計算・解析のみでGPU jobは起動しない。", "",
@@ -189,6 +217,7 @@ def render(config, data):
             io = th.get("logical_io_at_hbm_peak_us")
             lines.append(f"| {row['label']} | {row['ms']:.3f} | {row['mean_us']:.2f} | "+(f"{tensor[0]:.1f}–{tensor[1]:.1f}" if tensor else "未算定")+" | "+(f"{io:.1f}" if io is not None else "未算定")+" |")
         lines += ["", "µs/回はその分類の実測平均。shape混在・draft混在の行に単一shapeの床を掛けて周期全体の『余地』を作らない。", ""]
+    lines += megamoe_phase_lines(config)
     lines += ["## 仕事量と改善の対応", ""]
     for role in ("prefill", "decode"):
         for row in data[role]["rows"]:
@@ -222,7 +251,7 @@ def render(config, data):
                 lines += [f"N192の条件模型ではKV tile訪問{th['kv_tile_visits']:,}回、softmax対象{th['softmax_tile_elements']/1e6:.3f}M要素。tile単位のKV読出しは{th['kv_tile_global_bytes']/1e9:.3f}GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は{th['tile_tensor_only_us'][0]:.1f}〜{th['tile_tensor_only_us'][1]:.1f}µs。", ""]
                 lines += [f"各tile要素にscalar exp2を1回実行する模型では、[CUDAの16結果/SM/cycle](https://docs.nvidia.com/cuda/archive/12.9.0/cuda-c-programming-guide/index.html#arithmetic-instructions)からexpだけで{th['tile_exp2_only_us'][0]:.1f}〜{th['tile_exp2_only_us'][1]:.1f}µs。同じ条件のTensor時間とほぼ等しい。これらは重なり得るので足し算しない。追加rescale exp、変換、ALU、転置、依存latencyを加えた現在の命令モデルは未完成であり、436µsとの差を単に『expが遅い』とは判定しない。", ""]
     lines += ["## 優先順位と不足する証拠", "",
-              "1. Prefill MegaMoE：142ms/周期が最大。FC1/FC2の時間は最新runでは未分解。旧40057117293のFC1 main654〜690µs、FC2 main339〜355µs、FC2 epilogue182〜209µs、combine78〜81µsは別条件の参考値として保持し、このprofileへ差し引かない。旧『主計算はpeakの73〜75%』にも周波数分母の再計算が必要。source rank別remote行数が無ければ配置の得は未判定。hot4複製は既に有効。", "",
+              "1. Prefill MegaMoE：142ms/周期が最大。旧40057117293のFC1/FC2をrawから分解し、同callのclockで演算比を訂正した。上記表をこのserving profileへ差し引かない。未統合だったFC2 address bundleを現行D5aと組み合わせて検証する。source rank別remote行数が無ければ配置の得は未判定。hot4複製は既に有効。", "",
               "2. Prefill FA3：41ms/周期。N192のtile仕事量と有効演算の差を分離した。Tensorだけの床との差にはsoftmax/FP8変換/転置/同期がある。旧N224 NCUのpipe比率を現在の内訳へ転用しない。", "",
               "3. post-attention norm→MegaMoE入力：gate用BF16を残しつつFP8/scaleを直接書くと、BF16再読出し1回を削れる可能性がある。3994×4096×2=32.72MB/層、94層で3.08GB。4.8TB/s換算0.64ms/周期はbyteだけの参考値で、予測短縮ではない。12.3ms丸ごとの削減案ではない。", "",
               "4. Decodeも同時に追う：MoEの重み604MB/層、verifyのKV読出しを別の上限として記録。Prefill供給だけを増やすとITLが悪化し得る。CPU起動間隙の除去だけで大幅改善とは見積もらない。", "",

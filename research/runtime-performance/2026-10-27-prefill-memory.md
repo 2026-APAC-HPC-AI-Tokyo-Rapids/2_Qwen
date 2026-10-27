@@ -54,7 +54,15 @@ CPU compile sources/logs/cubins/SASS were recovered under the task's
 No quartet combine experiment: the earlier paired combine already reached
 about 301 MB / 86 us and did not shorten its measured interval. No repeat of
 independent Prefill WG, bulk scatter, FP32 precombine, interleaved FC2, old
-wide QKV, already-adopted FP8 conversion or the already-adopted address changes.
+wide QKV or already-adopted FP8 conversion.
+
+2026-10-28 lineage correction: the five FC2 address/guard/metadata patches in
+`6f0164d` were **not adopted** in the current line. They remain on the separate
+`perf/firmus-fc2-owner-combine-20261024` branch. Run40116925551 used all five,
+but image40197369083 and its seven runtime overlays do not contain them.
+The earlier description as already adopted was incorrect. A recovered bundle
+on top of the current padding-WG skip is tracked in `kernel-theory-model.json`;
+the old single-run serving score is not proof of its current combined effect.
 The unrelated Decode M1 campaign is retained under
 `patches/deep-gemm-archive/decode-m1/` and excluded from this submission.
 

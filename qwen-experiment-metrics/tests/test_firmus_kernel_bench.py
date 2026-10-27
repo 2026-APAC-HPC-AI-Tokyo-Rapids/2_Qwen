@@ -310,7 +310,7 @@ def test_summary_passes_clean_run_and_reports_differing_hashes_without_failing(t
     assert "| rope | 5.00 | 5.00 | +0.0% | 5.00 / 5.00 | False |" in text
 
 
-@pytest.mark.parametrize("patch_name", ["prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "prefill-combine-direct-store.patch"])
+@pytest.mark.parametrize("patch_name", ["fc2-output-address.patch", "prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "prefill-combine-direct-store.patch"])
 @pytest.mark.parametrize("same", [False, True])
 def test_arithmetic_preserving_candidates_require_equal_outputs(tmp_path, monkeypatch, patch_name, same):
     summarize = load_summary(monkeypatch)
@@ -485,7 +485,7 @@ def test_control_only_timeline_stages_exactly_two_steps(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
     variants = json.loads((runtime / "results/variants.json").read_text())
-    assert variants == {"deep_gemm": [{"name": "image", "patches": [], "env": [], "timeline": "ready"}], "sglang": None, "prefill_memory": None}
+    assert variants == {"deep_gemm": [{"name": "image", "patches": [], "env": [], "timeline": "ready"}], "sglang": None, "prefill_memory": None, "prefill_only": False}
     assert not list((runtime / "overlay/candidates").iterdir())
     srun = tmp_path / "bin/srun"
     srun.write_text('#!/bin/bash\nprintf \'%s\\n\' "$*" >>"${SRUN_LOG}"\n')
@@ -573,3 +573,104 @@ def test_prefill_memory_requires_exact_graph_and_terminal_control(tmp_path, monk
     selection = json.loads((tmp_path / "prefill-memory-selection.json").read_text())
     assert selection["direct-store"]["candidate_eligible"] == (missing != "repeat")
     assert "heads4" in text if missing != "probe" else "missing or failed" in text
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+@pytest.mark.parametrize("focused", [False, True])
+def test_prefill_campaign_requires_explicit_marker_and_defers_timeline(tmp_path, focused):
+    ws, patches = workspace(tmp_path)
+    add_candidate(ws, "fc2-bundle", patches["comment"], timeline=True)
+    campaign = ws / "patches/deep-gemm-bench"
+    (campaign / "timeline").touch()
+    if focused:
+        (campaign / "prefill-only").touch()
+    # A retained rejected probe must cause neither preparation nor execution.
+    probe = ws / "kernels/probes/prefill-memory.py"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("raise AssertionError('QKV campaign was not requested')\n")
+    result = provision(tmp_path, ws)
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    config = json.loads((runtime / "results/variants.json").read_text())
+    assert config["prefill_memory"] is None
+    assert config["prefill_only"] is focused
+    assert not (runtime / "scripts/prefill-memory.py").exists()
+    stub = tmp_path / "bin/srun"
+    stub.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >>\"${SRUN_LOG}\"\n")
+    stub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "SLURM_SUBMIT_DIR": str(runtime), "SLURM_JOB_ID": "fixture", "SRUN_LOG": str(tmp_path / "srun.log")}
+    run = subprocess.run(["bash", str(runtime / "scripts/run.sbatch")], cwd=runtime, env=env, text=True, capture_output=True, check=False)
+    assert run.returncode == 0, run.stdout + run.stderr
+    steps = [tuple(line.split("\t")[:2]) for line in (runtime / "results/steps.tsv").read_text().splitlines()]
+    if focused:
+        assert steps == [("image", "bench"), ("fc2-bundle", "gate"), ("fc2-bundle", "bench"), ("control-repeat", "bench"), ("image", "timeline"), ("fc2-bundle", "timeline")]
+    else:
+        assert steps == [("image", "bench"), ("image", "timeline"), ("fc2-bundle", "gate"), ("fc2-bundle", "bench"), ("fc2-bundle", "timeline")]
+    commands = (tmp_path / "srun.log").read_text().splitlines()
+    assert all(("--prefill-only" in command) is focused for command in commands if "bench-firmus-megamoe.py" in command)
+    assert not any("prefill-memory.py" in command for command in commands)
+
+
+@pytest.mark.parametrize("timeline", [False, True])
+@pytest.mark.parametrize("focused,memory", [(False, False), (False, True), (True, False)])
+def test_prefill_scope_selects_five_bench_and_two_diagnostic_cases(focused, memory, timeline):
+    tree = ast.parse((ROOT / "scripts/bench-firmus-megamoe.py").read_text())
+    names = {"CASES", "PREFILL_MEMORY_CASES", "TIMELINE_CASES", "PREFILL_ONLY_TIMELINE_CASES"}
+    constants = [node for node in tree.body if isinstance(node, (ast.Assign, ast.AugAssign)) and isinstance(node.targets[0] if isinstance(node, ast.Assign) else node.target, ast.Name) and (node.targets[0] if isinstance(node, ast.Assign) else node.target).id in names]
+    main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+    selection = next(node for node in main.body if isinstance(node, ast.If) and ast.unparse(node.test) == "args.prefill_only and timeline")
+    ns = {"REAL_ROUTING_LAYERS": {43: {}, 62: {}, 7: {}}, "args": types.SimpleNamespace(prefill_only=focused, prefill_memory=memory), "timeline": timeline}
+    exec(compile(ast.Module(body=constants + [selection], type_ignores=[]), "scope", "exec"), ns)  # noqa: S102 - source case-selection AST only, no GPU imports
+    if focused and timeline:
+        assert ns["cases"] == [("prefill", "local", 4096), ("prefill", "real43-replica4", 4096)]
+    elif focused or memory:
+        assert len(ns["cases"]) == 5 and all(stage == "prefill" and count == 4096 for stage, _, count in ns["cases"])
+    else:
+        assert ns["cases"] == ns["TIMELINE_CASES" if timeline else "CASES"]
+
+
+@pytest.mark.parametrize("failure", [None, "repeat-missing", "repeat-hash", "initial-replay", "drift", "candidate-hash", "one-replica-slow", "median-too-small", "local-regression", "scope-missing", "candidate-counts", "repeat-counts", "faster-repeat"])
+def test_prefill_only_selection_independent_of_qkv_and_keeps_benefit_gate(tmp_path, monkeypatch, failure):
+    summarize = load_summary(monkeypatch)
+    variants = [{"name": "image", "patches": [], "timeline": "not-requested"}, {"name": "fc2-bundle", "patches": [], "timeline": "not-requested"}]
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": variants, "sglang": None, "prefill_memory": None, "prefill_only": True}))
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t1\nfc2-bundle\tgate\t0\t1\nfc2-bundle\tbench\t0\t1\ncontrol-repeat\tbench\t0\t1\n")
+    kinds = ["balanced", "local", "real43-replica4", "real62-replica4", "real7-replica4"]
+    cases = [f"prefill-{kind}-4096" for kind in kinds if failure != "scope-missing" or kind != "local"]
+    initial = [bench_row(case, 1, case) for case in cases]
+    repeat = [bench_row(case, 1, case) for case in cases]
+    candidate = [bench_row(case, .98, case) for case in cases]
+    for row in initial + repeat + candidate:
+        row["source_rank_expert_counts"] = [[1, 0], [0, 1], [0, 0], [0, 0]]
+    if failure in {"candidate-counts", "repeat-counts"}:
+        rows = candidate if failure == "candidate-counts" else repeat
+        # Swapping sources keeps expert/rank totals equal but changes locality.
+        rows[0]["source_rank_expert_counts"] = [[0, 1], [1, 0], [0, 0], [0, 0]]
+    if failure == "faster-repeat":
+        for row in repeat:
+            row["median_ms"] = .984
+    if failure == "repeat-hash":
+        repeat[0]["output_sha256"] = "wrong"
+    if failure == "initial-replay":
+        initial[0]["deterministic"] = False
+    if failure == "drift":
+        repeat[0]["median_ms"] = 1.021
+    if failure == "candidate-hash":
+        candidate[0]["output_sha256"] = "wrong"
+    if failure == "one-replica-slow":
+        candidate[2]["median_ms"] = .996
+    if failure == "median-too-small":
+        for row in candidate[2:]:
+            row["median_ms"] = .991
+    if failure == "local-regression":
+        candidate[1]["median_ms"] = 1.011
+    write_rows(tmp_path / "image/bench.jsonl", initial)
+    write_rows(tmp_path / "fc2-bundle/bench.jsonl", candidate)
+    if failure != "repeat-missing":
+        write_rows(tmp_path / "control-repeat/bench.jsonl", repeat)
+    text, failed = summarize(tmp_path)
+    selection = json.loads((tmp_path / "prefill-memory-selection.json").read_text())["fc2-bundle"]
+    assert selection["candidate_eligible"] is (failure is None)
+    assert "QKV" not in text
+    assert "Exact hash / replay" in text
+    assert bool(failed) is (failure in {"repeat-missing", "repeat-hash", "initial-replay", "scope-missing", "candidate-counts", "repeat-counts"})
