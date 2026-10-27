@@ -1,0 +1,40 @@
+--- a/hopper/softmax.h
++++ b/hopper/softmax.h
+@@ -15,6 +15,22 @@
+ namespace flash {
+ 
+ using namespace cute;
++
++#if defined(APAC_FA3_PREFILL_EXP_POLY) && APAC_FA3_PREFILL_EXP_POLY
++// Cubic Chebyshev interpolation of 2**r on [-0.5, 0.5]. Move a small,
++// fixed fraction of unmasked FP8 softmax exponents from MUFU to FMA.
++// FP32 range reduction and accumulation are retained. Masked tiles use exp2f.
++__forceinline__ __device__ float prefill_exp2_poly(float x) {
++    const float rounded = __fadd_rn(x, 12582912.0f);
++    const float residual = __fadd_rn(x, __fadd_rn(12582912.0f, -rounded));
++    float p = __fmaf_rn(0.055838282946220154f, residual, 0.24263947854625845f);
++    p = __fmaf_rn(p, residual, 0.6931367338836214f);
++    p = __fmaf_rn(p, residual, 0.9999245569508709f);
++    const float power = __uint_as_float((__float_as_uint(rounded) + 127u) << 23);
++    // The serving --use_fast_math exp2f also flushes subnormal outputs.
++    return x < -126.0f ? 0.0f : power * p;
++}
++#endif
+ 
+ ////////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+@@ -82,7 +98,13 @@
+             // Instead of computing exp(x - max), we compute exp2(x * log_2(e) -
+             // max * log_2(e)). This allows the compiler to use the ffma
+             // instruction instead of fadd and fmul separately.
+-            tensor(mi, ni) = exp2f(tensor(mi, ni) * scale - max_scaled);
++            const float argument = tensor(mi, ni) * scale - max_scaled;
++#if defined(APAC_FA3_PREFILL_EXP_POLY) && APAC_FA3_PREFILL_EXP_POLY
++            if constexpr (Max_offset == 8 && !Check_inf) {
++                tensor(mi, ni) = ni % 4 == 0 ? prefill_exp2_poly(argument) : exp2f(argument);
++            } else
++#endif
++            { tensor(mi, ni) = exp2f(argument); }
+         }
+     }
+ }

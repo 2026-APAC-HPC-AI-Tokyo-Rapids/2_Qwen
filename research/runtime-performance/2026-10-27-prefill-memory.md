@@ -138,5 +138,81 @@ using the same exact-output/changed-input/alternating-timing gate and the same
 new image. The existing partition route reserves one node for at most five
 minutes; the probe exposes one GPU and has a 165-second trial timeout.
 The source generator, control header, output patch, hashes and raw samples
-are archived with the probe results. GPU correctness/performance remain
-unverified until this job completes.
+are archived with the probe results. The completed result is recorded below.
+
+## Run 40463471079: paired rounding rejected
+
+[Actions 40463471079](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40463471079),
+commit `d78916edbc29208f2d3c86002357a412ba673296`, completed the probe.
+Slurm 26609: COMPLETED, exit 0, elapsed 39 seconds. Provenance identifies
+the pinned image `40197369083`, CUDA 13.0, all configured SGLang overlays,
+eight allocated GPUs and one exposed probe GPU; this is not a serving run.
+
+All 24 shape/dtype cases passed finite/nonfinite five-buffer bit equality;
+the eight cases with changed-input CUDA graph checks also passed. With four
+rotating input sets, 12 alternating timing pairs and a final control, all
+three large shapes were slower:
+
+| QKV rows | Control us | Paired us | Paired/control | Change |
+| --- | ---: | ---: | ---: | ---: |
+| 3986 | 52.656 | 55.272 | 1.04968 | +4.97% |
+| 4032 | 52.968 | 55.720 | 1.05196 | +5.20% |
+| 4096 | 53.736 | 56.464 | 1.05077 | +5.08% |
+
+The saved result reports `candidate_eligible: false`. Fewer compiled
+instructions did not translate into a faster kernel. **Reject paired
+rounding; do not promote it to serving or repeat this candidate.** No full
+serving run was submitted for it.
+
+Evidence: `outputs/prefill-memory-20261027/run-40463471079/firmus-kernel-probe-40463471079-1/`:
+`logs/logs/slurm-accounting.txt`, `logs/logs/provenance.json`, and
+`results/results/prefill-memory/results.json` retain terminal status,
+commit/image/source hashes, all numerical cases and raw timing samples.
+
+## FA3: reject half2 exponent before GPU, test bounded FMA offload
+
+The user permits evaluating changed intermediate rounding, conditional on
+numerical error and output quality. The original F1 estimate assumed one
+`ex2.approx.f16x2` emitted one MUFU instruction. Native CUDA 13.0.88 / SM90a
+compilation of the actual fixed N224 specialization instead emits two
+`MUFU.EX2.F16` instructions, one per half. The source has 336 paired-path
+scalar exponents: they remain 336 MUFU instructions, plus 168 F2FP packs.
+Spill stores/loads increase 72/120 to 80/132 bytes. **Do not submit this
+half2 implementation.** Its predicted 3.5–7 ms reduction is invalid.
+
+The new `fa3-prefill-exp.patch` moves one in four exponents in **unmasked**
+FP8 softmax iterations onto a cubic FP32 polynomial. Masked iterations,
+row maxima, FP32 row sums, rescale arithmetic, E4M3 conversion, FP8 output,
+and the analytic fixed Prefill scheduler remain unchanged. Range reduction
+uses round-to-nearest FP32; coefficients interpolate `2**r` at the four
+Chebyshev nodes on `[-0.5, 0.5]`. Host FP32/FMA evaluation at 327,685 points
+has maximum relative error `9.973655784789592e-5`. This is an expression
+check, not a GPU or model-quality result.
+
+The compiled unmasked loop changes 114→86 MUFU.EX2, FFMA 116→200, FADD
+112→196, FMUL 66→94. Registers remain 168; stack/spill stores/loads remain
+40/72/120 bytes, with no local-memory instructions in that hot loop. The
+masked loop is unchanged. Static instruction counts justify one bounded
+comparison; they do not establish a speedup.
+
+`prepare-fa3-exp.sh` reconstructs source from the pinned image's exact
+FA3/CUTLASS pins and seven patches, checks the image manifest and binary,
+and builds only control/poly on the login CPU. The one-GPU trial must
+first reproduce the pinned native control's FP8 bytes and FP32 scales.
+The candidate then checks 3584/3986/4027/4096 rows, normal/flat/sharp/zero-V
+inputs, independent FP32 causal attention on boundary and stratified query
+rows, changed-input CUDA graphs, output/tail/LSE canaries, and propagation
+through the actual FP8 O projection.
+
+Predeclared numeric admission: candidate/control relative L2 ≤1.5%, scaled
+max error ≤8%; independent-reference L2 ≤5% and scaled max ≤25% for both.
+Candidate reference error may grow at most `control*1.05 + 0.0005` in L2
+and `control*1.10 + 0.005` in scaled max. These are kernel admission gates;
+the official model-quality condition still requires separate evaluation.
+There are no old-variant sweeps or profiler runs.
+
+Performance admission requires all three large shapes to save ≥3% and
+≥5 us, with control drift ≤5% and paired-ratio p90 <1, using four rotating
+input sets and 24 alternating pairs. A failed gate must not be relaxed
+after looking at measurements. One exclusive node is reserved, eight GPUs
+allocated, one visible; the trial timeout is 165 seconds within five minutes.
