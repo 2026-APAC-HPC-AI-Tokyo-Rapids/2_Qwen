@@ -1,6 +1,6 @@
 {
   "date": "2026-10-27",
-  "status": "cpu_validated_preparing_normal_benchmark",
+  "status": "normal_benchmark_completed_not_adopted_for_goodput",
   "base_commit": "68c4f122a67659a786ce6540bfabfc962c278a04",
   "branch": "perf/router-first-response-20261027",
   "problem": "The HTTP PD router withheld Decode output until the entire Prefill response completed, coupling first-content delivery to delayed Prefill transfer-completion polling.",
@@ -68,6 +68,24 @@
       "full_python_suite": "Completed locally; 3 macOS tool/path failures passed after GNU tar and short temporary paths. Four existing tests require Linux /proc boot_id and are deferred to the mandatory Linux Actions validation before build/GPU.",
       "normal_benchmark": true,
       "profiler_capture": false
+    },
+    "normal_benchmark": {
+      "workflow_conclusion": "success",
+      "slurm_job_id": 26752,
+      "slurm_state": "COMPLETED",
+      "slurm_exit_code": "0:0",
+      "slurm_elapsed": "00:09:22",
+      "official_parser_reproduces_archived_score_exactly": true,
+      "all_four_worker_server_info_checks": "passed",
+      "archived_files_sha256_verified": 98,
+      "runtime_cleanup": "passed",
+      "artifact_archive": "passed",
+      "github_artifact_cleanup": "passed",
+      "production_router_tests": {
+        "pd_router": 16,
+        "manual_policy": 24,
+        "failed": 0
+      }
     }
   },
   "evidence": {
@@ -92,10 +110,10 @@
     ]
   },
   "performance": {
-    "gpu_measurement": false,
+    "gpu_measurement": true,
     "claimed_ttft_gain_ms": null,
     "claimed_goodput_gain": null,
-    "reason": "User authorized one normal benchmark on 2026-10-28 to measure TTFT, ITL, response completion and official score. No Nsight/profile capture or repeated kernel selection.",
+    "reason": "One authorized normal benchmark completed. Mean first output improved by 201.14 ms, while mean full response completion changed by only -0.923 ms and median completion worsened by 3.149 ms. Goodput fell 0.287%; no demonstrated whole-response or score benefit.",
     "sla_sensitivity": {
       "assumption": "Each first content arrives earlier by a uniform assumed amount, while response completion time, token count and request schedule stay fixed. Actual per-request router waiting is unknown. These are sensitivity cases, not measured gains/losses or official scores.",
       "formula": "new_TTFT=max(0,TTFT-shift); new_mean_ITL=mean_ITL+shift/(output_sequence_length-1)",
@@ -179,18 +197,267 @@
       "p50": 15.90359666834171,
       "p90": 17.32953875376884,
       "p99": 18.701606834170853
+    },
+    "normal_benchmark": {
+      "workflow_run_id": 40528222753,
+      "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40528222753",
+      "source_commit": "7980d10462ea61277ddf329b5060b688e3bdee80",
+      "baseline_run_id": 40480817670,
+      "profile": false,
+      "kernel_selection_rerun": false,
+      "results": {
+        "baseline": {
+          "results_path": "/Users/yuta/Dev/APAC/outputs/prefill-memory-20261027/run-40480817670/results/results",
+          "jsonl_sha256": "d6b15afd2047a2cc1d8d0d1f66c03c43ef37ca21e27c76d39d6214481163e5bf",
+          "score": {
+            "concurrency": 240,
+            "eligible": true,
+            "error_request_count": 0.0,
+            "good_output_tokens_per_second": 9161.668835640834,
+            "good_request_fraction": 0.9780182036750815,
+            "goodput_requests_per_second": 45.808344178204166,
+            "observed_input_sequence_length_avg": 3986.0044650523787,
+            "observed_input_sequence_length_count": 5823.0,
+            "observed_input_sequence_length_max": 3987.0,
+            "observed_input_sequence_length_min": 3986.0,
+            "observed_input_sequence_length_sum": 23210504.0,
+            "observed_output_sequence_length_avg": 199.99879787051347,
+            "observed_output_sequence_length_count": 5823.0,
+            "observed_output_sequence_length_max": 201.0,
+            "observed_output_sequence_length_min": 199.0,
+            "observed_output_sequence_length_sum": 1164593.0,
+            "official_validation": {
+              "aiperf_version": "0.12.0",
+              "client_input_token_adjustment": 13.995534947621309,
+              "configured_input_sequence_length": 4000,
+              "configured_output_sequence_length": 200,
+              "tokenizer_revision": "ac9c66cc9b46af7306746a9250f23d47083d689e",
+              "valid": true
+            },
+            "osl_mismatch_count": 0.0,
+            "request_count": 5823.0,
+            "schema_version": "qwen3-pd-score/v1",
+            "score_output_tokens_per_second": 9161.668835640834,
+            "sla": {
+              "inter_token_latency_ms": 20,
+              "time_to_first_token_ms": 3000
+            }
+          },
+          "profiling_requests": 5823,
+          "distributions": {
+            "time_to_first_token": {
+              "count": 5823,
+              "mean": 1873.7130449763008,
+              "p10": 1637.615339,
+              "p50": 1805.3133329999998,
+              "p90": 1994.250393,
+              "p95": 2212.071434299998,
+              "p99": 4410.684869199998
+            },
+            "inter_token_latency": {
+              "count": 5823,
+              "mean": 15.865018176937603,
+              "p10": 14.406362087437186,
+              "p50": 15.90359666834171,
+              "p90": 17.32917586532663,
+              "p95": 17.75432958894472,
+              "p99": 18.699883377386932
+            },
+            "request_latency": {
+              "count": 5823,
+              "mean": 5030.832089505581,
+              "p10": 4647.5010924,
+              "p50": 4991.497367999999,
+              "p90": 5374.0946312,
+              "p95": 5553.568062199999,
+              "p99": 7352.265519339999
+            },
+            "decode_duration": {
+              "count": 5823,
+              "mean": 3157.11904452928,
+              "p10": 2866.8660554,
+              "p50": 3164.815737,
+              "p90": 3448.5059972,
+              "p95": 3533.1115881999995,
+              "p99": 3721.2767920999995
+            },
+            "output_sequence_length": {
+              "count": 5823,
+              "mean": 199.99879787051347,
+              "p10": 200.0,
+              "p50": 200.0,
+              "p90": 200.0,
+              "p95": 200.0,
+              "p99": 200.0
+            }
+          },
+          "sla_counts": {
+            "good": 5695,
+            "ttft_bad": 122,
+            "itl_bad": 6,
+            "both_bad": 0,
+            "missing_metrics": 0
+          }
+        },
+        "candidate": {
+          "results_path": "/Users/yuta/Dev/APAC/outputs/router-first-response-20261027/run-40528222753/qwen-firmus-pd-40528222753-1/results/results",
+          "jsonl_sha256": "7532dcc7e7627b6aff949629890c5420cab2cf01a2da745394e6e1857d5b45b7",
+          "score": {
+            "concurrency": 240,
+            "eligible": true,
+            "error_request_count": 0.0,
+            "good_output_tokens_per_second": 9135.418363755438,
+            "good_request_fraction": 0.9747769389155799,
+            "goodput_requests_per_second": 45.677091818777185,
+            "observed_input_sequence_length_avg": 3986.0044612216884,
+            "observed_input_sequence_length_count": 5828.0,
+            "observed_input_sequence_length_max": 3987.0,
+            "observed_input_sequence_length_min": 3986.0,
+            "observed_input_sequence_length_sum": 23230434.0,
+            "observed_output_sequence_length_avg": 199.99879890185312,
+            "observed_output_sequence_length_count": 5828.0,
+            "observed_output_sequence_length_max": 201.0,
+            "observed_output_sequence_length_min": 199.0,
+            "observed_output_sequence_length_sum": 1165593.0,
+            "official_validation": {
+              "aiperf_version": "0.12.0",
+              "client_input_token_adjustment": 13.995538778311584,
+              "configured_input_sequence_length": 4000,
+              "configured_output_sequence_length": 200,
+              "tokenizer_revision": "ac9c66cc9b46af7306746a9250f23d47083d689e",
+              "valid": true
+            },
+            "osl_mismatch_count": 0.0,
+            "request_count": 5828.0,
+            "schema_version": "qwen3-pd-score/v1",
+            "score_output_tokens_per_second": 9135.418363755438,
+            "sla": {
+              "inter_token_latency_ms": 20,
+              "time_to_first_token_ms": 3000
+            }
+          },
+          "profiling_requests": 5828,
+          "distributions": {
+            "time_to_first_token": {
+              "count": 5828,
+              "mean": 1672.5728324509264,
+              "p10": 1427.655628,
+              "p50": 1606.4288394999999,
+              "p90": 1812.5520626000002,
+              "p95": 2001.5680350999987,
+              "p99": 4342.890622399999
+            },
+            "inter_token_latency": {
+              "count": 5828,
+              "mean": 16.87113972686958,
+              "p10": 15.423616859798996,
+              "p50": 16.92037834673367,
+              "p90": 18.355018743718592,
+              "p95": 18.773423354020096,
+              "p99": 19.71195902442211
+            },
+            "request_latency": {
+              "count": 5828,
+              "mean": 5029.908676622169,
+              "p10": 4639.4499132,
+              "p50": 4994.6459495,
+              "p90": 5377.905619599999,
+              "p95": 5536.42104185,
+              "p99": 7386.114714939986
+            },
+            "decode_duration": {
+              "count": 5828,
+              "mean": 3357.3358441712426,
+              "p10": 3069.2997551,
+              "p50": 3367.07887,
+              "p90": 3652.64873,
+              "p95": 3735.9112474499993,
+              "p99": 3922.6798458599997
+            },
+            "output_sequence_length": {
+              "count": 5828,
+              "mean": 199.99879890185312,
+              "p10": 200.0,
+              "p50": 200.0,
+              "p90": 200.0,
+              "p95": 200.0,
+              "p99": 200.0
+            }
+          },
+          "sla_counts": {
+            "good": 5681,
+            "ttft_bad": 110,
+            "itl_bad": 37,
+            "both_bad": 0,
+            "missing_metrics": 0
+          }
+        },
+        "candidate_minus_baseline": {
+          "time_to_first_token": {
+            "mean": -201.1402125253744,
+            "p50": -198.88449349999996,
+            "p90": -181.6983303999998,
+            "p99": -67.79424679999829
+          },
+          "inter_token_latency": {
+            "mean": 1.0061215499319758,
+            "p50": 1.0167816783919612,
+            "p90": 1.0258428783919626,
+            "p99": 1.0120756470351786
+          },
+          "request_latency": {
+            "mean": -0.9234128834123112,
+            "p50": 3.148581500000546,
+            "p90": 3.8109883999995873,
+            "p99": 33.84919559998707
+          },
+          "decode_duration": {
+            "mean": 200.21679964196255,
+            "p50": 202.26313299999993,
+            "p90": 204.14273279999998,
+            "p99": 201.40305376000015
+          },
+          "output_sequence_length": {
+            "mean": 1.0313396501260286e-06,
+            "p50": 0.0,
+            "p90": 0.0,
+            "p99": 0.0
+          }
+        },
+        "goodput_change_percent": -0.28652500277325244,
+        "interpretation_limit": "Single unpaired runs; differences do not establish repeatability. Compare runtime provenance and dependency versions before attributing all differences to the router."
+      },
+      "dependency_difference": {
+        "nixl": {
+          "baseline": "1.5.0",
+          "candidate": "1.5.1"
+        },
+        "nixl-cu13": {
+          "baseline": "1.5.0",
+          "candidate": "1.5.1"
+        },
+        "cause": "The unchanged accelerator installer did not pin these packages; a fresh image resolved a newer release. Other versions printed by buildah-test.log matched. This prevents attributing every observed difference solely to the router."
+      },
+      "interpretation": "The observed ~1.006 ms ITL increase is consistent with first content arriving ~201 ms earlier over ~199 intervals while completion time stays effectively unchanged. ITL threshold violations rose from 6/5823 to 37/5828, outweighing fewer TTFT violations (122 to 110). One unpaired run with a dependency difference does not establish an isolated causal effect."
     }
   },
   "rollout": {
-    "pushed": false,
-    "actions_or_scheduler_job_submitted": false,
-    "serving_changed": false,
+    "pushed": true,
+    "actions_or_scheduler_job_submitted": true,
+    "serving_changed": true,
     "new_image_build_required": true,
     "main_merged": false,
-    "adoption": "Candidate only. Faster first-content delivery does not establish a goodput gain; existing-log sensitivity shows that a longer measured decode interval can create additional ITL violations.",
+    "adoption": "Retain as a measured candidate; do not adopt for goodput. First-content latency improved, but full-response completion was effectively unchanged and score was lower. No additional jobs submitted.",
     "comparison_run": "40480817670",
     "profile": false,
-    "reuse_kernel_selection": "configs/firmus-kernel-selection-router-20261028.json"
+    "reuse_kernel_selection": "configs/firmus-kernel-selection-router-20261028.json",
+    "benchmark_environment_cleaned": true,
+    "production_adopted": false,
+    "image": {
+      "sha256": "e28362b59cdb065c429e62dd61db24d79c0c1ac0022117038d4def1b9f372bfc",
+      "size_bytes": 12273328128
+    },
+    "archive": "archive-host:/srv/qwen-artifacts/40528222753/1/"
   },
   "local_artifacts": "/Users/yuta/Dev/APAC/outputs/router-first-response-20261027"
 }
