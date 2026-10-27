@@ -1,0 +1,446 @@
+{
+  "schema": "firmus-kernel-selection/v1",
+  "source_run": 40313004834,
+  "source_commit": "e45acd554737ad0b75196c9064fe677ba53f5016",
+  "source_artifact": "archive-host:/srv/qwen-artifacts/40313004834/1/",
+  "normalized_config_sha256": "7d589bc7c1963dbbf0232306e2ea7576dd71710b28797871f6cc7d352aed8329",
+  "image_sha256": "1f247668933c7252d3dfbe8f6c23897d354f095d56842788d4415a85d7dc5e55",
+  "patches": [
+    {
+      "path": "patches/sglang/add-rmsnorm-group-quant.patch",
+      "sha256": "0ea92882f7ba4d1804eeb54fe81d8d610796fa890c61c3039922bd49d28bf40c"
+    },
+    {
+      "path": "patches/sglang/prefill-attention-contiguous-kv.patch",
+      "sha256": "d58039ee0149e433e39f3ab13f8be7775cfb4861dd770fd8211304feff027e1e"
+    },
+    {
+      "path": "patches/sglang/megamoe-prefill-replicas.patch",
+      "sha256": "6f2b64cdc4f05ea31af7be60c313d5365646885afef73a3d2ce3f3a8e9846ea4"
+    },
+    {
+      "path": "patches/sglang/verify-attention-candidates.patch",
+      "sha256": "bc4a3a2a6aa786e19dc57cb489c742f4e47e27d357dbe33b7cc6df83e89f829e"
+    },
+    {
+      "path": "patches/sglang/decode-verify-scheduler-metadata.patch",
+      "sha256": "5a86b227fea9225109999d48505efd510dae0f34b93d2bedb9fedbf8e6a8c652"
+    },
+    {
+      "path": "patches/sglang/decode-fusions.patch",
+      "sha256": "d779e4e864e65554ea527bfd0a2c200bcd154c83ae48aaf8427b1ff22f650574"
+    },
+    {
+      "path": "patches/sglang/decode-dense-gemm.patch",
+      "sha256": "a5049b688615a8e89c1790ce4b3d190a396db33e1182bb4dcde38ebc1235111e"
+    },
+    {
+      "path": "patches/sglang/decode-fa3-verify.patch",
+      "sha256": "e5623b0cd28cfa81e897a1847a602f418acd500112f4b24d858b95dceda4cfa8"
+    },
+    {
+      "path": "patches/sglang/decode-routing-capture.patch",
+      "sha256": "a9c26d49a24feb1b989759ce8d07949a6d3c874c999c83bb50d6006b8f98d8a9"
+    },
+    {
+      "path": "patches/sglang/prefill-fp8-integration.patch",
+      "sha256": "99e97664d83610c539eaa62e992a396f4d5bb1981760934ca3df3bb5c3de42ef"
+    },
+    {
+      "path": "patches/sglang/prefill-qkv-fast-fp8.patch",
+      "sha256": "11bb55ee3fc86db2c4b84254033105863d0db333919e4d771b26a04612d043a6"
+    },
+    {
+      "path": "patches/sglang/decode-qknorm-fast-fp8.patch",
+      "sha256": "e08c44f43ceded413c1652a02c9f65fcb41d9eaafc068c749cb1d5786dd0ad10"
+    },
+    {
+      "path": "patches/sglang/decode-add-rmsnorm-group-quant.patch",
+      "sha256": "71375901315fc74fe13551fc8de985e1617d56f438d5deb3b091c1be5817b03a"
+    },
+    {
+      "path": "patches/sglang/prefill-async-admission.patch",
+      "sha256": "3291c98dbb54cedc3b2e758c9e25caeea60c719ab4b9327d1caf9d83d484ee3b"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
+      "sha256": "d7738280f64f25feaa53f8cbb8d4b28f25a1b952c5f590974de87dd5073a5667"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-prefill-fc2-swizzle.patch",
+      "sha256": "822fa80af98deebbadaecef46ab8119abb9c87760d1fba227a9def2eaf27b1b4"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-prefill-2wg-host-epi.patch",
+      "sha256": "4a91639165075a01d824bbb398d291037de4483160e0c15f487365b9f1fc1906"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-swap-ab-geometry-guard.patch",
+      "sha256": "ab5efd41b3089e5a3527cce98312fd97ef2342721b1fe0855ed6b82080be33ae"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-decode-swapab-prefetch.patch",
+      "sha256": "0c337c9adeb6ce09bfe90c790d31686b187e59022b1ae754d83392d7ccbe177b"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch",
+      "sha256": "2167001084fe5c9c50fd35aaef0ac3d0648af20b064c1355b7fe52519dd36803"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch",
+      "sha256": "a27e42d3224305e4088b6c6cfbe17ff1457db8ef6866f4f32d12024cb8ffa230"
+    }
+  ],
+  "extra_files": [
+    {
+      "path": "configs/firmus-prefill-replica4-expert-location.json",
+      "sha256": "5d2ae7f6e3e262d0491a07ef71a846278fc0af995210be5dad52fb881b71f61d"
+    }
+  ],
+  "environment": {
+    "SGLANG_PREFILL_FA3_VERIFY": "n192",
+    "SGLANG_DECODE_FA3_VERIFY": "p128split2-s3-fp8",
+    "DG_SM90_1D2D_DECODE_CONFIG": "QKV:128,144,5,1,0",
+    "SGLANG_DECODE_DENSE_GEMM_QKV": "",
+    "SGLANG_DECODE_DENSE_GEMM_O": ""
+  },
+  "evidence_sha256": {
+    "decode-kernels.env": "2a00ae99a352b4dad27ea4a1b8bca44bdbb2c95cca598a179ef1efaf5df59c68",
+    "deep-gemm-overlay.json": "2b1f4784abc14d46c512487692b2f7121dc738c2ea8e7cd26e0e99ff97f07207",
+    "dense-selected.env": "84392544b1b51c3f740e8de45ae4a5999f44d0b7afc43a47cfb5af0e5e212e2f",
+    "dense.json": "c5473a9e32b60cf1a1f45e86719fbd4f83ee6d25ae474c2ed6cfef0d83dd728b",
+    "fa3-selected.env": "d69771805634b253f8cb88db614577562cec6cb8c96379d834c1317f3705e97f",
+    "fa3.json": "8df984917cc85f3ed87392d3c241723b38080b83bc0e8d08a52cff12c6b7c74a",
+    "firmus-framework.json": "53cc41c375bc902d8f4203bf19d18e9b381a5c71be05c53c68b0e6eb17a6c13e",
+    "image-manifest.json": "282ae0eb1a4c1184def93b1f7b50e3928a31878563a5f3f772b5003c38b3dd3b",
+    "prefill-expert-location.json": "5d2ae7f6e3e262d0491a07ef71a846278fc0af995210be5dad52fb881b71f61d",
+    "prefill-kernels.env": "81f05443bfd3de1e2c2d0e3b887f542c1d7801e9a4b94bae062890b52ce1fe72",
+    "prefill-selection.json": "1d03c02eeabb1d81117b935d78ee1059063b514ed82678693a71389603f4fdfb",
+    "provenance.json": "96bb61d5b5970f2b97e8c99fb75065f65f4e2a74addd4cd1ace0629510aa245c",
+    "selection-summary.json": "30eb95cce4acaeb4170bd0ae711b33d1f51b70abc0b0f225b3945d4facee3628",
+    "sglang-overlay.json": "610d3e27b3e12f3354b7ae038a49bdf3cf8b1f76389a7ec8c155207ee373b8e8"
+  },
+  "reason": "Reuse the five measured target kernel settings after the reviewed router-only source change. Require the actual rebuilt image manifest to match the baseline except its router patch and Qwen build commit, and verify all recorded kernel build inputs. Official streaming benchmark remains unchanged.",
+  "router_rebuild": {
+    "baseline_image_size_bytes": 12272513024,
+    "manifest_fingerprint_sha256": "657143503c23ab5e9064dd8066d3941ab4f0223331f4ca714b2983622e3019cf",
+    "build_inputs": [
+      {
+        "path": "containers/Dockerfile",
+        "sha256": "7f1a02210583c93c47111d3ab65b1c561c89f80cce8004331e2a4f648d5b9340"
+      },
+      {
+        "path": "containers/build-fa3-verify.sh",
+        "sha256": "1bb52c51eab035402e2260ae206d1fd6854957c10511bc767a6d43e49a566cc7"
+      },
+      {
+        "path": "containers/build-nccl-tests.sh",
+        "sha256": "2432f292b93ac30fe09506d090fde00f34c82317184924952f75edcc7d293810"
+      },
+      {
+        "path": "containers/build-prefill-moe-routing.py",
+        "sha256": "16f29db47aa6e16f86b3723c42e182d706a8d81deaaf9247bddd883a7e0ab508"
+      },
+      {
+        "path": "containers/build-prefill-moe-routing.sh",
+        "sha256": "a0ca9c58e654cbd6a9e9d40d9a540610fb63ea87478b20a3e42b3d80652d4144"
+      },
+      {
+        "path": "containers/build-sglang-router.sh",
+        "sha256": "17bf667f4d7bd1f9db9d2da7709b80e7e99b8eb1af3a65a3d5fa2c8b8b84cbc8"
+      },
+      {
+        "path": "containers/build-sm90-megamoe.py",
+        "sha256": "f193437d2d4f0435cdc09066a9822f30015e1d686053d23e535b821052c5d397"
+      },
+      {
+        "path": "containers/check-decode-kernel-build.py",
+        "sha256": "b6ca3af92ae20d52a0583b80e193b8065e5b6ec6aacd1213031a947395848b2d"
+      },
+      {
+        "path": "containers/check-dynamo-image.py",
+        "sha256": "b99b6495c81edb6b9f365154685ca2bde0a288da4b736357a7d9b08530061a6d"
+      },
+      {
+        "path": "containers/check-rope-kernel-build.py",
+        "sha256": "129393483a9539e40b9c9e3b728cc92a248ffde6368e146e1ac611ca55933f45"
+      },
+      {
+        "path": "containers/check-sm90-independent-wg.py",
+        "sha256": "d98dc0214d87e238af17acd62dd81f18ec93c1206028ba8e3e1cbe9212c32121"
+      },
+      {
+        "path": "containers/check-vllm-image.py",
+        "sha256": "81eec150d1eb534f09fcafe69b7394c61528f6f268e416604aeff94e0c002940"
+      },
+      {
+        "path": "containers/dynamo.Dockerfile",
+        "sha256": "8c54161a11269f73818f9a2b65417f1a23b85558e0025f1cd7507f72e7b140ed"
+      },
+      {
+        "path": "containers/install-accelerator-dependencies.sh",
+        "sha256": "03c465feacabff81f9f461b9c63b3085c5f792f4afc535390339a6da774a035c"
+      },
+      {
+        "path": "containers/install-python-dependencies.sh",
+        "sha256": "be0d18fa590aac2d5190f810dc25b338b6ffcfb3d30b5eb1ef779147187b20fb"
+      },
+      {
+        "path": "containers/install-sglang-source.sh",
+        "sha256": "482b9e0cadc87fc7fa8a6288f148e3f85be9b884e033cc602721ca0bc89d07ed"
+      },
+      {
+        "path": "containers/install-system-toolchain.sh",
+        "sha256": "b605abfd445de95750986c92eda8d41d8c3fcde49c89ef548ef8e6faacfb96d0"
+      },
+      {
+        "path": "containers/rebuild-deepgemm-host.py",
+        "sha256": "a6624ad40ba1864b6caa1322212f9fd1b3ce450e3c56bcf22a479003808ebce8"
+      },
+      {
+        "path": "containers/vllm.Dockerfile",
+        "sha256": "5d9836b8b7e6f3057f075b5444acd2de3dab9fe9705c954a98b3833c2b193fd4"
+      },
+      {
+        "path": "kernels/dense-dg1/build.sh",
+        "sha256": "b158ddff67f3c8aba745424e259edc50146906308bb7ad1986fa56e8d9b40675"
+      },
+      {
+        "path": "kernels/dense-dg1/dense.cu",
+        "sha256": "203075b57e33fe37c08350eb28f81860a44c1276c5847755df8f9d2297811eca"
+      },
+      {
+        "path": "kernels/dense-dg1/dense_dg1.py",
+        "sha256": "9f6fe6629effad6f4562f51427168f2086ddf95a212a55ce124b25f31a196331"
+      },
+      {
+        "path": "kernels/fa3-verify/build.py",
+        "sha256": "2d7c0ee2d5afbe40f6ce1f8d85fcdab7a4b1259d108ddedfcc9efb8fc68fc74c"
+      },
+      {
+        "path": "kernels/fa3-verify/candidates.json",
+        "sha256": "f3eb26f4b0ff1f5d34f4cb99baa341b063f39c8c2e284d0fed43c01df3653c0f"
+      },
+      {
+        "path": "kernels/fa3-verify/combine.cu",
+        "sha256": "36fb258e9d14926fc83fa53fe2a01d7457b286d0230bfc7206ef2456fc942e00"
+      },
+      {
+        "path": "kernels/fa3-verify/decode-merge.patch",
+        "sha256": "f34f423318d7e839d8eb264921d830c881a42c34357fc62b7f38f743c850a5bb"
+      },
+      {
+        "path": "kernels/fa3-verify/decode_merge.cuh",
+        "sha256": "515fafaa0bc2a146ec19e365c3a163ef123b531a31e6b1a019a502a292d388a8"
+      },
+      {
+        "path": "kernels/fa3-verify/decode_prepare.cu",
+        "sha256": "40bf76b2277ba4d199438d1bbb1d6d56f78d154707eb038108ab8b4c7e543790"
+      },
+      {
+        "path": "kernels/fa3-verify/fixed-prefill.patch",
+        "sha256": "7b2d8dac2fc834e5a3f7e28447ce44d15ec733b0c548e80b972d63e7c77c8771"
+      },
+      {
+        "path": "kernels/fa3-verify/fixed-specializations.patch",
+        "sha256": "06cd67b34de21fd0344c9df7d7601726e994c06dd65651a32b71176bf11eec28"
+      },
+      {
+        "path": "kernels/fa3-verify/merge_fp8.cuh",
+        "sha256": "3a897c132e55e992ce6a2d46e923254be875943779089988f83e449b1320aa78"
+      },
+      {
+        "path": "kernels/fa3-verify/p128split.cu",
+        "sha256": "1e6595ed78213732ffb363c342dd0b6b2a8e2ed00c434a1a23e7472510e0f5b7"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-candidates.json",
+        "sha256": "491facf4ce7343b74101312e2aca4aafe504ee494677f7e58d8680b5b0f992b0"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-overlap.patch",
+        "sha256": "802ebd46c2e9c001c2fba0086b157486968881131da6ddae228e78a9b8d24da5"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-pv.patch",
+        "sha256": "71072ffbfac538dc768c88b9bfbc1958a6cba5e29d727ddd8c39b28ec9239106"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-variants.patch",
+        "sha256": "0d00aaa1f63316cd88fb3b626a9f2060e9f018e3648ead05b550e632672ddf33"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill.cu",
+        "sha256": "dd133cfabc99f42cc64e8ea4e201e750c0ebeeed310bc528eaef647744026fe3"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill_fixed.cu",
+        "sha256": "5ce5e4278eeea65a40a407402d540e7317abd9a7df27ee5c2fd44e752d8e156f"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill_image.cu",
+        "sha256": "45388f8aaee9d04e7c31c5e76654ead970350ec69646cd10f597f9465da9f4e7"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill_layout.cuh",
+        "sha256": "39134662318fcb683b17c0128a259655a03b7841d6c25cd183603e6b0f23e1b7"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill_layout_host.cu",
+        "sha256": "46f1a0a7d3d404f30918b9a6504a36387cdd4a1e843bcf82cfbacbc821933d64"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill_v_layout.cuh",
+        "sha256": "fb25551098424acc34e35ae97a3c4f4f68c3787cc4c1686dcc0b05dc1c1512ee"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill_variant.cu",
+        "sha256": "9cc0936e1567bb047c64e74751501d773e5ac596bc9dbad838d5794a3edd39fd"
+      },
+      {
+        "path": "kernels/fa3-verify/verify.h",
+        "sha256": "1deca27adcac7d653d4b2b010849fd31ba39ff5039769627bc8f09d3c8fa36a4"
+      },
+      {
+        "path": "kernels/fa3-verify/wrapper.cpp",
+        "sha256": "617a25aa95d53ac764fccbfab8c001c7ff347b63001f9509da3787b1c233b6f0"
+      },
+      {
+        "path": "kernels/prefill/moe_routing.cu",
+        "sha256": "4b65dd5b482be3fa7c8471bafcaa361abe0f15e9caf46263a3d8d33c588028f0"
+      },
+      {
+        "path": "kernels/probes/fa3-fp8-output.patch",
+        "sha256": "4877ef00383957de6997352d6e04b6d3410abfffc511cb7c5cd2d503dd9ec32d"
+      },
+      {
+        "path": "patches/deep-gemm-host/series",
+        "sha256": "3bd0b57424ca676cfec6b3f42f46b46b93e535f2576ea90a835276ef0ffb5f32"
+      },
+      {
+        "path": "patches/deep-gemm-host/sm90-1d2d-decode-config.patch",
+        "sha256": "3ed1a5f562c2e10f9f8c438225eb63fcc36ef31378a2262267a062abcf090326"
+      },
+      {
+        "path": "patches/deep-gemm-host/sm90-decode-independent-wg.patch",
+        "sha256": "e68e8ad9b2205e17435ee373030d42c86d2cea582235eac6dbfe6ebd72fbe3c9"
+      },
+      {
+        "path": "patches/deep-gemm-host/sm90-prefill-2wg.patch",
+        "sha256": "6a2f587c0484d956b709d99d97c8349fd512b11c3c37c3f6837e870b1f08f4ee"
+      },
+      {
+        "path": "patches/deep-gemm-host/sm90-swap-ab-192.patch",
+        "sha256": "03faf6c7b5f135cb2775b0c38e98ae9fe67538f5e5c473c29502c942527fb440"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch",
+        "sha256": "2167001084fe5c9c50fd35aaef0ac3d0648af20b064c1355b7fe52519dd36803"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-decode-swapab-prefetch.patch",
+        "sha256": "0c337c9adeb6ce09bfe90c790d31686b187e59022b1ae754d83392d7ccbe177b"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-prefill-2wg-host-epi.patch",
+        "sha256": "4a91639165075a01d824bbb398d291037de4483160e0c15f487365b9f1fc1906"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
+        "sha256": "d7738280f64f25feaa53f8cbb8d4b28f25a1b952c5f590974de87dd5073a5667"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-prefill-fc2-swizzle.patch",
+        "sha256": "822fa80af98deebbadaecef46ab8119abb9c87760d1fba227a9def2eaf27b1b4"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch",
+        "sha256": "a27e42d3224305e4088b6c6cfbe17ff1457db8ef6866f4f32d12024cb8ffa230"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-swap-ab-geometry-guard.patch",
+        "sha256": "ab5efd41b3089e5a3527cce98312fd97ef2342721b1fe0855ed6b82080be33ae"
+      },
+      {
+        "path": "patches/deep-gemm/header.sha256",
+        "sha256": "f52913a6a22fa2adc9243d04cc15871c2123ea02839327faa42544a5456e9314"
+      },
+      {
+        "path": "patches/deep-gemm/series",
+        "sha256": "f5cdcdae41056ed8c8617dbf91c838fc9d493606e2157988a53c99efd354e82d"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-combine-parallel.patch",
+        "sha256": "93fb5cf033c51524a52320b491c91aa20a0b64d67f5af5b7e49171ae5540ca51"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-decode-dynamic-schedule.patch",
+        "sha256": "f1719c1ceefe93d1f1d79b4005b631f1f53a775df121e79e0e5d7e078fe28461"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-decode-exact-tiles.patch",
+        "sha256": "6cd0e9dd84c92d65902893e7808fe2f91a1e4f264e5ef4be9aeee854d47399f7"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-decode-l1-store-wait.patch",
+        "sha256": "a2a3eac9f34c4901b432c3f845b460205d2b3f0a4fc982886beb5e1b8d6229d0"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-decode-swap-ab-hoist.patch",
+        "sha256": "88351653b3190a723a0b6e34e974756fe7a51a6faa401325f278487cc5c6013a"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-decode-swap-ab-l1-quant.patch",
+        "sha256": "012220e3293d1eb05c5a448c342435eff2e6141e7ba95b47df7fccb51560230e"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-dispatch-drop-l1-weight.patch",
+        "sha256": "f4be778546eb144a337466f7bd41b43733b5c2364df659bbd4c17241ba64a092"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-dispatch-pull-overlap.patch",
+        "sha256": "450d274998b58b60c049f80d99a383a8b89cff26f67979c209dd5625cd58caf6"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-fc2-pipeline.patch",
+        "sha256": "08da0ad5661f1aad9e596242e50428141400ebc7530cb7cbbfd035cc503fd410"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-flat-nvlink-barriers.patch",
+        "sha256": "07a1124fd93fd41621f96147e8d99a99ef29a6e5de1d585a0c2975cb65e9f53b"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-late-topk-fp32.patch",
+        "sha256": "462d68230da3ab9a1e69ca85d9fa804b8edaf6a77bf0975726611a08fda6622b"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-prefill-mainloop-prefetch.patch",
+        "sha256": "c297df4a3543f908eb42582ed9eb35989728926b4d094a5eb73e24fd2f96b4c3"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-prefill-phase.patch",
+        "sha256": "e95d0faa42d1bb512be3a78a660e627d911fc822d6cde486079583e075bec12a"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-prefill-rescale.patch",
+        "sha256": "ea03dbd0a1c4cafe30afe61e9432bb67a35566dd92429cf22a9f9957a5d51bdc"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-prefill-tail.patch",
+        "sha256": "1c8b93e900b7b970cbf8e96503eab8bd22d376f75b1c66adad9dced7e45663c2"
+      },
+      {
+        "path": "patches/sglang-router/Cargo.lock",
+        "sha256": "3fdf006b3d825bccf021fb943dc6096135f740cdbda462c26c9c3da414b373fd"
+      },
+      {
+        "path": "scripts/build-sglang-container.sh",
+        "sha256": "c929e6bda40b5be2fefbc34ec799928ee89c46b3b83f7d27ed2d4d2a28b4799f"
+      },
+      {
+        "path": "scripts/check-firmus-latency-source.py",
+        "sha256": "160ab291d9753586b79bd2f791b170a38235d30067fe46e4337f39c1e61fb6ac"
+      }
+    ]
+  }
+}

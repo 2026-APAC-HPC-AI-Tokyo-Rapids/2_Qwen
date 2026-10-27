@@ -28,31 +28,35 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
 +        // Decode streaming load remains attached to the response body.
          let _decode_guard =
              (!context.is_stream).then(|| WorkerLoadGuard::new(decode.clone(), headers));
- 
-@@ -574,119 +569,88 @@
+
+@@ -574,120 +569,310 @@
          }
          .emit();
- 
+
 -        let (prefill_result, decode_result) =
 -            tokio::join!(prefill_request.send(), decode_request.send());
 -
 +        // Count waiting, computing and transferring Prefill requests immediately.
 +        // Consume its body before releasing the guard, independently of Decode
 +        // headers/body: streaming headers alone do not mean Prefill is complete.
-+        let prefill_response = async {
-+            let _prefill_guard = WorkerLoadGuard::new(prefill.clone(), headers);
-+            self.process_prefill_response(
++        let prefill_guard = WorkerLoadGuard::new(prefill.clone(), headers);
++        let return_logprob = context.return_logprob;
++        let mut prefill_response = Box::pin(async move {
++            let _prefill_guard = prefill_guard;
++            Self::process_prefill_response(
 +                prefill_request.send().await,
 +                prefill.url(),
-+                context.return_logprob,
++                return_logprob,
 +            )
 +            .await
-+        };
-+        let decode_response = async {
++        });
++        let decode_worker = decode.clone();
++        let decode_context = &context;
++        let decode_response = async move {
 +            match decode_request.send().await {
 +                Ok(res) if res.status().is_success() => Ok(res),
 +                Ok(res) => Err(self
-+                    .handle_decode_error_response(res, &context, decode.clone())
++                    .handle_decode_error_response(res, decode_context, decode_worker)
 +                    .await),
 +                Err(e) => Err(error::bad_gateway(
 +                    "decode_server_error",
@@ -60,6 +64,41 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
 +                )),
 +            }
 +        };
++        tokio::pin!(decode_response);
++        // Chat content already proves that Decode received the handoff. Do not
++        // wait for Prefill's next scheduler poll merely to start delivering it.
++        // Other endpoints and logprob merging retain the original barrier.
++        if context.is_stream && !context.return_logprob && context.route == "/v1/chat/completions" {
++            tokio::select! {
++                biased;
++                result = &mut prefill_response => {
++                    let prefill_result = match result {
++                        Ok(result) => result,
++                        Err(response) => return response,
++                    };
++                    let res = match decode_response.await {
++                        Ok(res) => res,
++                        Err(response) => return response,
++                    };
++                    let response = Self::stream_chat_while_prefill_finishes(
++                        res, std::future::ready(Ok(prefill_result)), decode,
++                    ).await;
++                    events::RequestReceivedEvent {}.emit();
++                    return response;
++                }
++                result = &mut decode_response => {
++                    let res = match result {
++                        Ok(res) => res,
++                        Err(response) => return response,
++                    };
++                    let response = Self::stream_chat_while_prefill_finishes(
++                        res, prefill_response, decode,
++                    ).await;
++                    events::RequestReceivedEvent {}.emit();
++                    return response;
++                }
++            }
++        }
 +        // An upstream failure must cancel the peer future: Decode can reject a
 +        // request before receiving KV, in which case Prefill cannot finish it.
 +        let ((_, prefill_body), res) = match tokio::try_join!(prefill_response, decode_response) {
@@ -85,20 +124,6 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
 -                    return self
 -                        .handle_decode_error_response(res, &context, prefill, decode)
 -                        .await;
--                }
--
--                // Process prefill response
--                let prefill_body = if context.return_logprob {
--                    match self
--                        .process_prefill_response(
--                            prefill_result,
--                            prefill.url(),
--                            context.return_logprob,
--                        )
--                        .await
--                    {
--                        Ok((_, body)) => body,
--                        Err(error_response) => return error_response,
 +        let status = StatusCode::from_u16(res.status().as_u16())
 +            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 +
@@ -144,6 +169,134 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
 +                        *response.status_mut() = status;
 +                        *response.headers_mut() = response_headers;
 +                        response
++                    }
++                    Err(e) => {
++                        error!("Failed to read decode response: {}", e);
++                        error::internal_error("read_response_failed", "Failed to read response")
++                    }
+                 }
+-
+-                // Process prefill response
+-                let prefill_body = if context.return_logprob {
+-                    match self
+-                        .process_prefill_response(
+-                            prefill_result,
+-                            prefill.url(),
+-                            context.return_logprob,
+-                        )
+-                        .await
+-                    {
+-                        Ok((_, body)) => body,
+-                        Err(error_response) => return error_response,
++            }
++        }
++    }
++
++    // Preserve byte framing (including split UTF-8 and CRLF) while looking for
++    // complete SSE events. A TCP chunk is not necessarily one event.
++    fn take_sse_frame(buffer: &mut bytes::BytesMut) -> Option<bytes::Bytes> {
++        let mut line_start = 0;
++        for (i, &byte) in buffer.iter().enumerate() {
++            if byte == b'\n' {
++                if i == line_start || (i == line_start + 1 && buffer[line_start] == b'\r') {
++                    return Some(buffer.split_to(i + 1).freeze());
++                }
++                line_start = i + 1;
++            }
++        }
++        None
++    }
++
++    // (has model output, is terminal). Role-only/keepalive events do not prove
++    // success. Empty but valid completions can establish it via finish_reason.
++    fn chat_sse_progress(frame: &[u8]) -> Result<(bool, bool), &'static str> {
++        let mut data = Vec::new();
++        for line in frame.split(|&b| b == b'\n') {
++            let line = line.strip_suffix(b"\r").unwrap_or(line);
++            if let Some(value) = line.strip_prefix(b"data:") {
++                if !data.is_empty() {
++                    data.push(b'\n');
++                }
++                data.extend_from_slice(value.strip_prefix(b" ").unwrap_or(value));
++            }
++        }
++        if data.is_empty() {
++            return Ok((false, false));
++        }
++        if data == b"[DONE]" {
++            return Ok((false, true));
++        }
++        let value: Value = serde_json::from_slice(&data).map_err(|_| "Invalid Decode SSE JSON")?;
++        if value.get("error").is_some_and(|error| !error.is_null()) {
++            return Err("Decode returned an error event");
++        }
++        let has_output = value
++            .get("choices")
++            .and_then(Value::as_array)
++            .is_some_and(|choices| {
++                choices.iter().any(|choice| {
++                    let delta = &choice["delta"];
++                    ["content", "reasoning_content", "reasoning"]
++                        .iter()
++                        .any(|key| delta[*key].as_str().is_some_and(|text| !text.is_empty()))
++                        || delta["tool_calls"]
++                            .as_array()
++                            .is_some_and(|calls| !calls.is_empty())
++                        || choice
++                            .get("finish_reason")
++                            .is_some_and(|reason| !reason.is_null())
++                })
++            });
++        Ok((has_output, false))
++    }
++
++    async fn stream_chat_while_prefill_finishes(
++        res: reqwest::Response,
++        prefill: impl std::future::Future<Output = Result<(StatusCode, Option<bytes::Bytes>), Response>>
++            + Send
++            + 'static,
++        decode: Arc<dyn Worker>,
++    ) -> Response {
++        use crate::core::AttachedBody;
++
++        let status = res.status();
++        let mut headers = header_utils::preserve_response_headers(res.headers());
++        headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
++        let decode_guard = WorkerLoadGuard::new(decode, Some(&headers));
++        let (tx, rx) =
++            tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
++        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<(), Response>>();
++        // Owning this body while waiting for readiness also cancels the pump if
++        // the HTTP request future is dropped before response headers are sent.
++        let mut response = Response::new(Body::from_stream(UnboundedReceiverStream::new(rx)));
++        *response.status_mut() = status;
++        *response.headers_mut() = headers;
++        let response = AttachedBody::wrap_response(response, decode_guard);
++
++        tokio::spawn(async move {
++            tokio::pin!(prefill);
++            let stream = res.bytes_stream();
++            futures_util::pin_mut!(stream);
++            let mut ready = Some(ready_tx);
++            let mut prefill_done = false;
++            let mut decode_done = false;
++            let mut buffer = bytes::BytesMut::new();
++            let mut held = Vec::new();
++
++            // A late Prefill error must not turn into a successful [DONE].
++            // Only the terminal event is held once content has been released.
++            loop {
++                let failure = tokio::select! {
++                    biased;
++                    _ = tx.closed() => return,
++                    result = &mut prefill, if !prefill_done => {
++                        match result {
++                            Ok(_) => {
++                                prefill_done = true;
++                                None
++                            }
++                            Err(response) => Some(response),
++                        }
                      }
 -                } else {
 -                    // Even if we don't need logprobs, we should check prefill status
@@ -153,8 +306,47 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
 -                    {
 -                        Ok((_, body)) => body,
 -                        Err(error_response) => return error_response,
--                    }
--                };
++                    chunk = stream.next(), if !decode_done => {
++                        match chunk {
++                            Some(Ok(chunk)) => {
++                                buffer.extend_from_slice(&chunk);
++                                let mut failure = None;
++                                while let Some(frame) = Self::take_sse_frame(&mut buffer) {
++                                    match Self::chat_sse_progress(&frame) {
++                                        Ok((has_output, is_done)) => {
++                                            held.push(frame);
++                                            if is_done {
++                                                decode_done = true;
++                                                break;
++                                            }
++                                            if has_output {
++                                                if let Some(sender) = ready.take() {
++                                                    if sender.send(Ok(())).is_err() {
++                                                        return;
++                                                    }
++                                                }
++                                            }
++                                            if ready.is_none() {
++                                                for frame in held.drain(..) {
++                                                    if tx.send(Ok(frame)).is_err() {
++                                                        return;
++                                                    }
++                                                }
++                                            }
++                                        }
++                                        Err(message) => {
++                                            failure = Some(error::bad_gateway("decode_stream_error", message));
++                                            break;
++                                        }
++                                    }
++                                }
++                                failure
++                            }
++                            Some(Err(err)) => Some(error::bad_gateway("decode_stream_error", format!("Decode stream failed: {err}"))),
++                            None => Some(error::bad_gateway("decode_stream_error", "Decode stream ended before [DONE]")),
++                        }
+                     }
+                 };
 -
 -                if context.is_stream {
 -                    // Streaming response
@@ -165,7 +357,10 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
 -                            .and_then(|json| {
 -                                json.pointer("/meta_info/input_token_logprobs").cloned()
 -                            })
--                    } else {
++                if let Some(failure) = failure {
++                    if let Some(sender) = ready.take() {
++                        let _ = sender.send(Err(failure));
+                     } else {
 -                        None
 -                    };
 -
@@ -210,13 +405,29 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
 -                                    "Failed to read response",
 -                                )
 -                            }
--                        }
-+                    Err(e) => {
-+                        error!("Failed to read decode response: {}", e);
-+                        error::internal_error("read_response_failed", "Failed to read response")
++                        error!(status = %failure.status(), "PD upstream failed after streaming began");
++                        let _ = tx.send(Err(std::io::Error::other(
++                            "PD upstream failed after streaming began",
++                        )));
++                    }
++                    return;
++                }
++                if prefill_done {
++                    if let Some(sender) = ready.take() {
++                        if sender.send(Ok(())).is_err() {
++                            return;
+                         }
                      }
++                    for frame in held.drain(..) {
++                        if tx.send(Ok(frame)).is_err() {
++                            return;
++                        }
++                    }
++                    if decode_done {
++                        return;
++                    }
                  }
--            }
+             }
 -            Err(e) => {
 -                error!(
 -                    decode_url = %decode.url(),
@@ -224,10 +435,16 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
 -                    "Decode request failed"
 -                );
 -                error::bad_gateway("decode_server_error", format!("Decode server error: {}", e))
-             }
+-            }
++        });
++        match ready_rx.await {
++            Ok(Ok(())) => response,
++            Ok(Err(error)) => error,
++            Err(_) => error::bad_gateway("decode_stream_error", "PD stream closed before output"),
          }
      }
-@@ -834,7 +798,6 @@
+
+@@ -834,7 +1019,6 @@
          return_logprob: bool,
          decode_url: Option<String>,
          headers: Option<HeaderMap>,
@@ -235,22 +452,30 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
          decode: Arc<dyn Worker>,
      ) -> Response {
          use crate::core::AttachedBody;
-@@ -877,10 +840,7 @@
+@@ -877,10 +1061,7 @@
          let stream = UnboundedReceiverStream::new(rx);
          let body = Body::from_stream(stream);
- 
+
 -        let guards = vec![
 -            WorkerLoadGuard::new(prefill, headers.as_ref()),
 -            WorkerLoadGuard::new(decode, headers.as_ref()),
 -        ];
 +        let guards = vec![WorkerLoadGuard::new(decode, headers.as_ref())];
- 
+
          let mut response = Response::new(body);
          *response.status_mut() = status;
-@@ -1012,24 +972,14 @@
+@@ -940,7 +1121,6 @@
+
+     // Helper to process prefill response and extract body if needed for logprobs
+     async fn process_prefill_response(
+-        &self,
+         prefill_result: Result<reqwest::Response, reqwest::Error>,
+         prefill_url: &str,
+         return_logprob: bool,
+@@ -1012,24 +1192,14 @@
              return Err(error_response);
          }
- 
+
 -        // Read prefill body if needed for logprob merging
 -        let prefill_body = if return_logprob {
 -            match prefill_response.bytes().await {
@@ -277,13 +502,13 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
 +            )
 +        })?;
 +        let prefill_body = return_logprob.then_some(body);
- 
+
          Ok((prefill_status, prefill_body))
      }
-@@ -1405,6 +1355,287 @@
+@@ -1405,6 +1575,287 @@
          Box::new(worker)
      }
- 
+
 +    #[test]
 +    fn test_prefill_min_load_checks_all_groups_and_tracks_release() {
 +        use crate::config::ManualAssignmentMode;
@@ -568,27 +793,643 @@ diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
      #[tokio::test]
      async fn test_select_healthy_prefill_worker() {
          let router = create_test_pd_router();
-@@ -1517,12 +1748,11 @@
+@@ -1517,12 +1968,11 @@
                  false,
                  None,
                  None,
 -                prefill_ref.clone(),
                  decode_ref.clone(),
              );
- 
+
 -            // Guards are now attached to response body, so load should be 1
 -            assert_eq!(prefill_ref.load(), 1);
 +            // Prefill is already complete; only Decode follows the stream.
 +            assert_eq!(prefill_ref.load(), 0);
              assert_eq!(decode_ref.load(), 1);
- 
+
              tx.send(bytes::Bytes::from("test data")).unwrap();
-@@ -1530,7 +1760,7 @@
+@@ -1530,7 +1980,7 @@
              sleep(Duration::from_millis(10)).await;
- 
+
              // Load still 1 while response body exists
 -            assert_eq!(prefill_ref.load(), 1);
 +            assert_eq!(prefill_ref.load(), 0);
              assert_eq!(decode_ref.load(), 1);
- 
+
              drop(tx);
+@@ -1543,4 +1993,615 @@
+         assert_eq!(prefill_ref.load(), 0);
+         assert_eq!(decode_ref.load(), 0);
+     }
++    // Append inside pd_router.rs's existing `mod tests`. CPU/local HTTP only.
++    // Every regression enters the existing dual-dispatch API; no new parser or pump
++    // helper is called, so the fragment also compiles against the stock baseline.
++    const EARLY_STREAM_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
++    const EARLY_STREAM_PENDING: std::time::Duration = std::time::Duration::from_millis(35);
++    const EARLY_STREAM_CONTENT: &[u8] =
++        b"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n";
++    const EARLY_STREAM_ROLE: &[u8] =
++    b": keepalive\r\n\r\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\r\n\r\n";
++    const EARLY_STREAM_DONE: &[u8] = b"data: [DONE]\n\n";
++
++    type EarlyStreamSender =
++        tokio::sync::mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>;
++
++    struct EarlyStreamHarness {
++        prefill: Arc<dyn Worker>,
++        decode: Arc<dyn Worker>,
++        p_response: Option<tokio::sync::oneshot::Sender<Response>>,
++        d_response: Option<tokio::sync::oneshot::Sender<Response>>,
++        dispatch: tokio::task::JoinHandle<Response>,
++        p_server: tokio::task::JoinHandle<()>,
++        d_server: tokio::task::JoinHandle<()>,
++    }
++
++    impl Drop for EarlyStreamHarness {
++        fn drop(&mut self) {
++            self.dispatch.abort();
++            // Complete any intentionally withheld fake response before stopping
++            // its listener; the handler should not panic on a cancelled fixture.
++            for sender in [self.p_response.take(), self.d_response.take()]
++                .into_iter()
++                .flatten()
++            {
++                let _ = sender.send(Response::new(Body::empty()));
++            }
++            self.p_server.abort();
++            self.d_server.abort();
++        }
++    }
++
++    #[tokio::test]
++    async fn test_early_chat_decode_errors_cancel_prefill() {
++        use futures_util::StreamExt;
++        for failure in ["status", "event", "eof", "late_event", "late_eof"] {
++            let mut h = early_stream_start(true, false).await;
++            let p_tx = early_stream_body(h.p_response.take().unwrap());
++            p_tx.send(Ok(bytes::Bytes::from_static(b"pending Prefill")))
++                .unwrap();
++            if failure == "status" {
++                h.d_response
++                    .take()
++                    .unwrap()
++                    .send(
++                        (StatusCode::SERVICE_UNAVAILABLE, "Decode rejected request")
++                            .into_response(),
++                    )
++                    .unwrap();
++                let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++                    .await
++                    .unwrap()
++                    .unwrap();
++                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
++                drop(response);
++            } else {
++                let d_tx = early_stream_body(h.d_response.take().unwrap());
++                let late = failure.starts_with("late_");
++                let mut stream = if late {
++                    d_tx.send(Ok(bytes::Bytes::from_static(EARLY_STREAM_CONTENT)))
++                        .unwrap();
++                    let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++                        .await
++                        .unwrap()
++                        .unwrap();
++                    let mut stream = response.into_body().into_data_stream();
++                    early_stream_prefix(&mut stream, EARLY_STREAM_CONTENT).await;
++                    Some(stream)
++                } else {
++                    None
++                };
++                if failure.ends_with("event") {
++                    d_tx.send(Ok(bytes::Bytes::from_static(
++                        b"data: {\"error\":{\"message\":\"Decode aborted\"}}\n\n",
++                    )))
++                    .unwrap();
++                }
++                drop(d_tx);
++                if let Some(ref mut stream) = stream {
++                    assert!(matches!(
++                        tokio::time::timeout(EARLY_STREAM_WAIT, stream.next())
++                            .await
++                            .unwrap(),
++                        Some(Err(_))
++                    ));
++                } else {
++                    let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++                        .await
++                        .unwrap()
++                        .unwrap();
++                    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
++                    drop(response);
++                }
++                drop(stream);
++            }
++            tokio::time::timeout(EARLY_STREAM_WAIT, p_tx.closed())
++                .await
++                .expect("Decode failure must cancel the pending Prefill HTTP body");
++            early_stream_wait_load(&h.prefill, 0).await;
++            early_stream_wait_load(&h.decode, 0).await;
++        }
++    }
++
++    async fn early_stream_start(is_stream: bool, return_logprob: bool) -> EarlyStreamHarness {
++        let (p_url, p_seen, p_response, p_server) = controlled_server().await;
++        let (d_url, d_seen, d_response, d_server) = controlled_server().await;
++        let prefill: Arc<dyn Worker> = Arc::from(create_test_worker(
++            p_url,
++            WorkerType::Prefill {
++                bootstrap_port: None,
++            },
++            true,
++        ));
++        let decode: Arc<dyn Worker> =
++            Arc::from(create_test_worker(d_url, WorkerType::Decode, true));
++        let (p, d) = (prefill.clone(), decode.clone());
++        let router = create_test_pd_router();
++        let dispatch = tokio::spawn(async move {
++            router
++                .execute_dual_dispatch_internal(
++                    None,
++                    json!({"stream": is_stream, "logprobs": return_logprob}),
++                    PDRequestContext {
++                        route: "/v1/chat/completions",
++                        batch_size: None,
++                        is_stream,
++                        return_logprob,
++                        request_text: None,
++                        model_id: None,
++                        headers: None,
++                    },
++                    p,
++                    d,
++                    Instant::now(),
++                )
++                .await
++        });
++        let harness = EarlyStreamHarness {
++            prefill,
++            decode,
++            p_response: Some(p_response),
++            d_response: Some(d_response),
++            dispatch,
++            p_server,
++            d_server,
++        };
++        tokio::time::timeout(EARLY_STREAM_WAIT, async {
++            p_seen.await.unwrap();
++            d_seen.await.unwrap();
++        })
++        .await
++        .expect("both local upstream requests must start");
++        assert_eq!(harness.prefill.load(), 1);
++        harness
++    }
++
++    fn early_stream_body(response: tokio::sync::oneshot::Sender<Response>) -> EarlyStreamSender {
++        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
++        response
++            .send(Response::new(Body::from_stream(
++                UnboundedReceiverStream::new(rx),
++            )))
++            .unwrap();
++        tx
++    }
++
++    async fn early_stream_wait_load(worker: &Arc<dyn Worker>, expected: usize) {
++        tokio::time::timeout(EARLY_STREAM_WAIT, async {
++            while worker.load() != expected {
++                tokio::task::yield_now().await;
++            }
++        })
++        .await
++        .expect("worker reservation did not reach the expected load");
++    }
++
++    async fn early_stream_prefix<S, E>(stream: &mut S, expected: &[u8]) -> Vec<u8>
++    where
++        S: futures_util::Stream<Item = Result<bytes::Bytes, E>> + Unpin,
++        E: std::fmt::Debug,
++    {
++        use futures_util::StreamExt;
++        let mut actual = Vec::new();
++        tokio::time::timeout(EARLY_STREAM_WAIT, async {
++            while actual.len() < expected.len() {
++                actual.extend_from_slice(&stream.next().await.expect("body ended early").unwrap());
++            }
++        })
++        .await
++        .expect("model output was not readable while Prefill was pending");
++        assert_eq!(
++            actual, expected,
++            "forwarding must preserve every original byte"
++        );
++        actual
++    }
++
++    #[tokio::test]
++    async fn test_early_chat_content_before_prefill_headers_and_full_body_load() {
++        use futures_util::StreamExt;
++        let mut h = early_stream_start(true, false).await;
++        let d_tx = early_stream_body(h.d_response.take().unwrap());
++        d_tx.send(Ok(bytes::Bytes::from_static(EARLY_STREAM_CONTENT)))
++            .unwrap();
++
++        // Prefill's HTTP response sender is still held: even its headers are gated.
++        // This is the principal red/green regression against the stock barrier.
++        let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++            .await
++            .expect("valid Decode content must release the response before Prefill headers")
++            .unwrap();
++        assert_eq!(response.status(), StatusCode::OK);
++        assert_eq!(h.prefill.load(), 1);
++        assert_eq!(h.decode.load(), 1);
++        let mut stream = response.into_body().into_data_stream();
++        let mut actual = early_stream_prefix(&mut stream, EARLY_STREAM_CONTENT).await;
++
++        let p_tx = early_stream_body(h.p_response.take().unwrap());
++        p_tx.send(Ok(bytes::Bytes::from_static(b"partial Prefill body")))
++            .unwrap();
++        let second = b"data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n";
++        d_tx.send(Ok(bytes::Bytes::from_static(second))).unwrap();
++        actual.extend(early_stream_prefix(&mut stream, second).await);
++        assert_eq!(
++            h.prefill.load(),
++            1,
++            "partial Prefill body cannot release its load"
++        );
++        drop(p_tx);
++        early_stream_wait_load(&h.prefill, 0).await;
++        assert_eq!(h.decode.load(), 1, "Decode body is still open");
++
++        d_tx.send(Ok(bytes::Bytes::from_static(EARLY_STREAM_DONE)))
++            .unwrap();
++        actual.extend(early_stream_prefix(&mut stream, EARLY_STREAM_DONE).await);
++        assert!(tokio::time::timeout(EARLY_STREAM_WAIT, stream.next())
++            .await
++            .unwrap()
++            .is_none());
++        assert_eq!(
++            actual,
++            [EARLY_STREAM_CONTENT, second, EARLY_STREAM_DONE].concat()
++        );
++        drop(stream);
++        early_stream_wait_load(&h.decode, 0).await;
++    }
++
++    #[tokio::test]
++    async fn test_early_chat_prefill_failures_before_content_are_http_errors() {
++        for truncated_body in [false, true] {
++            let mut h = early_stream_start(true, false).await;
++            let d_tx = early_stream_body(h.d_response.take().unwrap());
++            d_tx.send(Ok(bytes::Bytes::from_static(EARLY_STREAM_ROLE)))
++                .unwrap();
++            assert!(
++                tokio::time::timeout(EARLY_STREAM_PENDING, &mut h.dispatch)
++                    .await
++                    .is_err(),
++                "role/comment frames must not commit HTTP success"
++            );
++            if truncated_body {
++                let p_tx = early_stream_body(h.p_response.take().unwrap());
++                p_tx.send(Ok(bytes::Bytes::from_static(b"partial")))
++                    .unwrap();
++                // Let real HTTP framing, reqwest, and dispatch observe a body failure.
++                p_tx.send(Err(std::io::Error::other(
++                    "injected truncated Prefill body",
++                )))
++                .unwrap();
++            } else {
++                h.p_response
++                    .take()
++                    .unwrap()
++                    .send((StatusCode::SERVICE_UNAVAILABLE, "Prefill unavailable").into_response())
++                    .unwrap();
++            }
++            let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++                .await
++                .unwrap()
++                .unwrap();
++            assert_eq!(
++                response.status(),
++                if truncated_body {
++                    StatusCode::BAD_GATEWAY
++                } else {
++                    StatusCode::SERVICE_UNAVAILABLE
++                }
++            );
++            drop(response);
++            early_stream_wait_load(&h.prefill, 0).await;
++            early_stream_wait_load(&h.decode, 0).await;
++            tokio::time::timeout(EARLY_STREAM_WAIT, d_tx.closed())
++                .await
++                .expect("Prefill failure must cancel the pending Decode HTTP body");
++        }
++    }
++
++    #[tokio::test]
++    async fn test_early_chat_late_prefill_failure_errors_body_and_withholds_done() {
++        use futures_util::StreamExt;
++        for truncated_body in [false, true] {
++            let mut h = early_stream_start(true, false).await;
++            let d_tx = early_stream_body(h.d_response.take().unwrap());
++            d_tx.send(Ok(bytes::Bytes::from_static(EARLY_STREAM_CONTENT)))
++                .unwrap();
++            let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++                .await
++                .unwrap()
++                .unwrap();
++            assert_eq!(response.status(), StatusCode::OK);
++            let mut stream = response.into_body().into_data_stream();
++            let actual = early_stream_prefix(&mut stream, EARLY_STREAM_CONTENT).await;
++            d_tx.send(Ok(bytes::Bytes::from_static(EARLY_STREAM_DONE)))
++                .unwrap();
++            assert!(
++                tokio::time::timeout(EARLY_STREAM_PENDING, stream.next())
++                    .await
++                    .is_err(),
++                "[DONE] must stay withheld while Prefill is pending"
++            );
++            if truncated_body {
++                let p_tx = early_stream_body(h.p_response.take().unwrap());
++                p_tx.send(Ok(bytes::Bytes::from_static(b"partial")))
++                    .unwrap();
++                p_tx.send(Err(std::io::Error::other(
++                    "injected late Prefill truncation",
++                )))
++                .unwrap();
++            } else {
++                h.p_response
++                    .take()
++                    .unwrap()
++                    .send((StatusCode::SERVICE_UNAVAILABLE, "late Prefill failure").into_response())
++                    .unwrap();
++            }
++            let result = tokio::time::timeout(EARLY_STREAM_WAIT, stream.next())
++                .await
++                .unwrap();
++            assert!(
++                matches!(result, Some(Err(_))),
++                "an already committed HTTP response must end with a body error"
++            );
++            assert_eq!(actual, EARLY_STREAM_CONTENT);
++            assert!(!actual.windows(b"[DONE]".len()).any(|w| w == b"[DONE]"));
++            assert!(tokio::time::timeout(EARLY_STREAM_WAIT, stream.next())
++                .await
++                .unwrap()
++                .is_none());
++            drop(stream);
++            early_stream_wait_load(&h.prefill, 0).await;
++            early_stream_wait_load(&h.decode, 0).await;
++        }
++    }
++
++    #[tokio::test]
++    async fn test_early_chat_client_cancellation_closes_both_pending_upstreams() {
++        for after_content in [false, true] {
++            let mut h = early_stream_start(true, false).await;
++            let p_tx = early_stream_body(h.p_response.take().unwrap());
++            let d_tx = early_stream_body(h.d_response.take().unwrap());
++            p_tx.send(Ok(bytes::Bytes::from_static(b"partial Prefill")))
++                .unwrap();
++            d_tx.send(Ok(bytes::Bytes::from_static(if after_content {
++                EARLY_STREAM_CONTENT
++            } else {
++                EARLY_STREAM_ROLE
++            })))
++            .unwrap();
++            if after_content {
++                let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++                    .await
++                    .unwrap()
++                    .unwrap();
++                let mut stream = response.into_body().into_data_stream();
++                early_stream_prefix(&mut stream, EARLY_STREAM_CONTENT).await;
++                assert_eq!(h.prefill.load(), 1);
++                assert_eq!(h.decode.load(), 1);
++                drop(stream);
++            } else {
++                assert!(tokio::time::timeout(EARLY_STREAM_PENDING, &mut h.dispatch)
++                    .await
++                    .is_err());
++                h.dispatch.abort();
++                assert!(tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++                    .await
++                    .unwrap()
++                    .unwrap_err()
++                    .is_cancelled());
++            }
++            tokio::time::timeout(EARLY_STREAM_WAIT, async {
++                p_tx.closed().await;
++                d_tx.closed().await;
++            })
++            .await
++            .expect("client cancellation must close both pending HTTP bodies");
++            early_stream_wait_load(&h.prefill, 0).await;
++            early_stream_wait_load(&h.decode, 0).await;
++        }
++    }
++
++    #[tokio::test]
++    async fn test_early_chat_prefill_first_still_cancels_idle_decode_body() {
++        let mut h = early_stream_start(true, false).await;
++        h.p_response
++            .take()
++            .unwrap()
++            .send(Response::new(Body::from("{}")))
++            .unwrap();
++        early_stream_wait_load(&h.prefill, 0).await;
++        let d_tx = early_stream_body(h.d_response.take().unwrap());
++        d_tx.send(Ok(bytes::Bytes::from_static(EARLY_STREAM_CONTENT)))
++            .unwrap();
++        let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++            .await
++            .unwrap()
++            .unwrap();
++        let mut stream = response.into_body().into_data_stream();
++        early_stream_prefix(&mut stream, EARLY_STREAM_CONTENT).await;
++        drop(stream);
++        tokio::time::timeout(EARLY_STREAM_WAIT, d_tx.closed())
++            .await
++            .expect("Prefill finishing first must not leave an idle Decode pump behind");
++        early_stream_wait_load(&h.decode, 0).await;
++    }
++
++    #[tokio::test]
++    async fn test_early_chat_split_utf8_crlf_and_done_preserve_exact_bytes() {
++        use futures_util::StreamExt;
++        let mut h = early_stream_start(true, false).await;
++        let d_tx = early_stream_body(h.d_response.take().unwrap());
++        d_tx.send(Ok(bytes::Bytes::from_static(EARLY_STREAM_ROLE)))
++            .unwrap();
++        assert!(tokio::time::timeout(EARLY_STREAM_PENDING, &mut h.dispatch)
++            .await
++            .is_err());
++        let content =
++            "data: {\"choices\":[{\"delta\":{\"content\":\"日本語\"}}]}\r\n\r\n".as_bytes();
++        let unicode_start = content.iter().position(|b| *b >= 128).unwrap();
++        // End this HTTP body chunk inside the first multibyte code point.
++        d_tx.send(Ok(bytes::Bytes::copy_from_slice(
++            &content[..unicode_start + 1],
++        )))
++        .unwrap();
++        assert!(tokio::time::timeout(EARLY_STREAM_PENDING, &mut h.dispatch)
++            .await
++            .is_err());
++        // Supply the rest of UTF-8, but leave the final CRLF delimiter split.
++        d_tx.send(Ok(bytes::Bytes::copy_from_slice(
++            &content[unicode_start + 1..content.len() - 1],
++        )))
++        .unwrap();
++        assert!(tokio::time::timeout(EARLY_STREAM_PENDING, &mut h.dispatch)
++            .await
++            .is_err());
++        d_tx.send(Ok(bytes::Bytes::from_static(b"\n"))).unwrap();
++        let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++            .await
++            .unwrap()
++            .unwrap();
++        let mut stream = response.into_body().into_data_stream();
++        let mut actual =
++            early_stream_prefix(&mut stream, &[EARLY_STREAM_ROLE, content].concat()).await;
++        assert_eq!(h.prefill.load(), 1);
++        for fragment in [
++            b"data: [DO".as_slice(),
++            b"NE]\r\n\r".as_slice(),
++            b"\n".as_slice(),
++        ] {
++            d_tx.send(Ok(bytes::Bytes::copy_from_slice(fragment)))
++                .unwrap();
++            assert!(
++                tokio::time::timeout(EARLY_STREAM_PENDING, stream.next())
++                    .await
++                    .is_err(),
++                "neither a partial terminal frame nor a complete terminal before Prefill may leak"
++            );
++        }
++        h.p_response
++            .take()
++            .unwrap()
++            .send(Response::new(Body::from("{}")))
++            .unwrap();
++        let done = b"data: [DONE]\r\n\r\n";
++        actual.extend(early_stream_prefix(&mut stream, done).await);
++        assert!(tokio::time::timeout(EARLY_STREAM_WAIT, stream.next())
++            .await
++            .unwrap()
++            .is_none());
++        assert_eq!(actual, [EARLY_STREAM_ROLE, content, done].concat());
++        drop(stream);
++        early_stream_wait_load(&h.prefill, 0).await;
++        early_stream_wait_load(&h.decode, 0).await;
++    }
++
++    #[tokio::test]
++    async fn test_early_chat_recognizes_reasoning_tool_calls_and_empty_finish() {
++        for choice in [
++            json!({"delta":{"reasoning_content":"thinking"}}),
++            json!({"delta":{"reasoning":"thinking"}}),
++            json!({"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":""}}]}}),
++            json!({"delta":{},"finish_reason":"stop"}),
++        ] {
++            let mut h = early_stream_start(true, false).await;
++            let d_tx = early_stream_body(h.d_response.take().unwrap());
++            let output = format!("data: {}\n\n", json!({"choices":[choice]})).into_bytes();
++            d_tx.send(Ok(bytes::Bytes::copy_from_slice(&output)))
++                .unwrap();
++            let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++                .await
++                .expect("valid chat progress must release the response")
++                .unwrap();
++            let mut stream = response.into_body().into_data_stream();
++            early_stream_prefix(&mut stream, &output).await;
++            assert_eq!(h.prefill.load(), 1, "Prefill headers remain gated");
++            drop(stream);
++            early_stream_wait_load(&h.prefill, 0).await;
++            early_stream_wait_load(&h.decode, 0).await;
++            tokio::time::timeout(EARLY_STREAM_WAIT, d_tx.closed())
++                .await
++                .unwrap();
++        }
++    }
++
++    #[tokio::test]
++    async fn test_early_chat_nonstream_and_logprobs_keep_prefill_body_barrier() {
++        use futures_util::StreamExt;
++        for streaming_logprobs in [false, true] {
++            let mut h = early_stream_start(streaming_logprobs, streaming_logprobs).await;
++            let p_tx = early_stream_body(h.p_response.take().unwrap());
++            let d_tx = early_stream_body(h.d_response.take().unwrap());
++            p_tx.send(Ok(bytes::Bytes::from_static(
++                b"{\"meta_info\":{\"input_token_logprobs\":[[-0.5,7,\"prefix\"]]}}",
++            )))
++            .unwrap();
++            let decode_json = json!({
++                "choices":[{"delta":{"content":"hello"}}],
++                "meta_info":{"input_token_logprobs":[[-0.25,8,"decode"]]},
++            });
++            let expected_json = serde_json::to_vec(&decode_json).unwrap();
++            let decode_bytes = if streaming_logprobs {
++                format!("data: {decode_json}\n\n").into_bytes()
++            } else {
++                expected_json.clone()
++            };
++            d_tx.send(Ok(bytes::Bytes::from(decode_bytes))).unwrap();
++            assert!(
++                tokio::time::timeout(EARLY_STREAM_PENDING, &mut h.dispatch)
++                    .await
++                    .is_err(),
++                "nonstream and logprob requests must still wait for all Prefill body bytes"
++            );
++            assert_eq!(h.prefill.load(), 1);
++            drop(p_tx);
++            if !streaming_logprobs {
++                // Nonstream also needs Decode EOF before its response can finish.
++                drop(d_tx);
++                let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++                    .await
++                    .unwrap()
++                    .unwrap();
++                assert_eq!(response.status(), StatusCode::OK);
++                let actual = tokio::time::timeout(
++                    EARLY_STREAM_WAIT,
++                    axum::body::to_bytes(response.into_body(), usize::MAX),
++                )
++                .await
++                .unwrap()
++                .unwrap();
++                assert_eq!(actual.as_ref(), expected_json);
++            } else {
++                let response = tokio::time::timeout(EARLY_STREAM_WAIT, &mut h.dispatch)
++                    .await
++                    .unwrap()
++                    .unwrap();
++                let mut stream = response.into_body().into_data_stream();
++                let first = tokio::time::timeout(EARLY_STREAM_WAIT, stream.next())
++                    .await
++                    .unwrap()
++                    .unwrap()
++                    .unwrap();
++                let frame = std::str::from_utf8(&first).unwrap();
++                let actual: Value =
++                    serde_json::from_str(frame.strip_prefix("data: ").unwrap().trim()).unwrap();
++                let mut expected = decode_json;
++                expected["meta_info"]["input_token_logprobs"] =
++                    json!([[-0.5, 7, "prefix"], [-0.25, 8, "decode"]]);
++                assert_eq!(
++                    actual, expected,
++                    "the existing Prefill/Decode logprob merge must survive"
++                );
++                d_tx.send(Ok(bytes::Bytes::from_static(EARLY_STREAM_DONE)))
++                    .unwrap();
++                early_stream_prefix(&mut stream, EARLY_STREAM_DONE).await;
++                assert!(tokio::time::timeout(EARLY_STREAM_WAIT, stream.next())
++                    .await
++                    .unwrap()
++                    .is_none());
++                drop(stream);
++            }
++            early_stream_wait_load(&h.prefill, 0).await;
++            early_stream_wait_load(&h.decode, 0).await;
++        }
++    }
+ }

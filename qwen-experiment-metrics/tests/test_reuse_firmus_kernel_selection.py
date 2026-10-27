@@ -113,6 +113,61 @@ class SelectionReuse(unittest.TestCase):
         self.record['evidence_sha256'] = {}
         self.reject()
 
+    def router_candidate(self):
+        router = 'patches/sglang-router/prefill-load-lifetime.patch'
+        target = self.repo / router
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('reviewed router')
+        self.manifest = {'source_commits': [{'repository_id': 'apac2026-qwen', 'oid': 'old'}],
+                         'applied_patches': [{'path': router, 'blob_oid': 'old', 'sha256': 'old', 'targets': []}],
+                         'recipe': {'blob_oid': 'unchanged'}, 'base_oci': {'reference': 'pinned'}}
+        build_input = self.record['patches'][0]
+        self.record['router_rebuild'] = {'manifest_fingerprint_sha256': module.manifest_fingerprint(self.manifest),
+                                        'baseline_image_size_bytes': self.config['images']['sglang']['size_bytes'],
+                                        'build_inputs': [copy.deepcopy(build_input)]}
+        self.manifest['source_commits'][0]['oid'] = 'new'
+        self.manifest['applied_patches'][0].update(blob_oid='new', sha256=hashlib.sha256(target.read_bytes()).hexdigest())
+        self.config['images']['sglang'].update(sha256='b' * 64, size_bytes=123)
+
+    def test_router_only_manifest_accepts_and_records_actual_image(self):
+        self.router_candidate()
+        payload = module.reuse(self.record, self.config, self.repo, self.runtime, self.manifest)
+        self.assertEqual(payload['image_sha256'], 'b' * 64)
+        self.assertEqual(payload['baseline_image_sha256'], self.record['image_sha256'])
+        self.assertTrue(payload['router_rebuild_verified'])
+
+    def test_router_rebuild_missing_manifest_rejects(self):
+        self.router_candidate()
+        self.reject()
+
+    def test_router_rebuild_invalid_image_identity_rejects(self):
+        self.router_candidate()
+        self.config['images']['sglang']['sha256'] = 'not-a-hash'
+        with self.assertRaises(ValueError):
+            module.reuse(self.record, self.config, self.repo, self.runtime, self.manifest)
+        self.assertFalse(self.runtime.exists())
+
+    def test_router_rebuild_kernel_manifest_change_rejects(self):
+        self.router_candidate()
+        self.manifest['recipe']['blob_oid'] = 'different kernel recipe'
+        with self.assertRaises(ValueError):
+            module.reuse(self.record, self.config, self.repo, self.runtime, self.manifest)
+        self.assertFalse(self.runtime.exists())
+
+    def test_router_rebuild_build_input_change_rejects(self):
+        self.router_candidate()
+        self.record['router_rebuild']['build_inputs'][0]['sha256'] = '0' * 64
+        with self.assertRaises(ValueError):
+            module.reuse(self.record, self.config, self.repo, self.runtime, self.manifest)
+        self.assertFalse(self.runtime.exists())
+
+    def test_router_rebuild_other_config_change_rejects(self):
+        self.router_candidate()
+        self.config['concurrency'] += 1
+        with self.assertRaises(ValueError):
+            module.reuse(self.record, self.config, self.repo, self.runtime, self.manifest)
+        self.assertFalse(self.runtime.exists())
+
     def test_cli(self):
         record, config = self.base / 'record.json', self.base / 'config.json'
         record.write_text(json.dumps(self.record))

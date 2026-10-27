@@ -32,12 +32,6 @@ if [[ "${framework}" == sglang && -n "${CONTAINER_SHA256:-}" ]]; then
   mv "${config}.tmp" "${config}"
   jq -e --arg commit "${GITHUB_SHA}" --arg sha "${CONTAINER_SHA256}" --argjson require_build "${REQUIRE_BUILD}" '.container_artifact.sha256 == $sha and ($require_build == false or .source_commits.qwen == $commit)' "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" >/dev/null
 fi
-selection_record=$(jq -r '.reuse_kernel_selection // empty' "${config}")
-if [[ -n "${selection_record}" ]]; then
-  [[ "${framework}" == sglang && "${REQUIRE_BUILD}" == false ]]
-  python3 "${GITHUB_WORKSPACE}/scripts/reuse-firmus-kernel-selection.py" --record "${GITHUB_WORKSPACE}/${selection_record}" --config "${config}" --repo "${GITHUB_WORKSPACE}" --runtime "${runtime_dir}"
-  install -m 0644 "${GITHUB_WORKSPACE}/scripts/reuse-firmus-kernel-selection.py" "${runtime_dir}/source/"
-fi
 for image_framework in sglang "${framework}"; do
   image="$(jq -er --arg framework "${image_framework}" '.images[$framework].path' "${config}")"
   expected_sha="$(jq -er --arg framework "${image_framework}" '.images[$framework].sha256' "${config}")"
@@ -61,6 +55,12 @@ for image_framework in sglang "${framework}"; do
 done
 if [[ "${framework}" == sglang ]]; then
   bash "${GITHUB_WORKSPACE}/scripts/check-firmus-image.sh" "${runtime_dir}/sglang.sqsh" "${runtime_dir}/source" "${GITHUB_WORKSPACE}"
+fi
+selection_record=$(jq -r '.reuse_kernel_selection // empty' "${config}")
+if [[ -n "${selection_record}" ]]; then
+  [[ "${framework}" == sglang ]]
+  python3 "${GITHUB_WORKSPACE}/scripts/reuse-firmus-kernel-selection.py" --record "${GITHUB_WORKSPACE}/${selection_record}" --config "${config}" --repo "${GITHUB_WORKSPACE}" --runtime "${runtime_dir}" --image-manifest "${runtime_dir}/source/image-manifest.json"
+  install -m 0644 "${GITHUB_WORKSPACE}/scripts/reuse-firmus-kernel-selection.py" "${runtime_dir}/source/"
 fi
 if [[ "${framework}" == sglang ]]; then bash "${GITHUB_WORKSPACE}/scripts/stage-qwen-overlays.sh" "${runtime_dir}" "${config}" "${GITHUB_WORKSPACE}"; fi
 model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8

@@ -49,13 +49,46 @@ def file_sha(repo, entry):
     require(hashlib.sha256(path.read_bytes()).hexdigest() == entry['sha256'], f'File SHA256 mismatch: {name}')
 
 
-def validate_record(record, config, repo):
+def manifest_fingerprint(manifest):
+    normalized = copy.deepcopy(manifest)
+    for source in normalized['source_commits']:
+        if source['repository_id'] == 'apac2026-qwen':
+            source['oid'] = '<router-rebuild>'
+    for patch in normalized['applied_patches']:
+        if patch['path'] == 'patches/sglang-router/prefill-load-lifetime.patch':
+            patch['blob_oid'] = '<router-rebuild>'
+            patch['sha256'] = '<router-rebuild>'
+    return hashlib.sha256(json.dumps(normalized, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def router_rebuild_config(record, config, repo, manifest):
+    reviewed = record.get('router_rebuild')
+    require(isinstance(reviewed, dict) and manifest is not None, 'New image requires reviewed router rebuild and actual image manifest')
+    image = config['images']['sglang']
+    require(valid_sha(image.get('sha256')) and type(image.get('size_bytes')) is int and image['size_bytes'] > 0, 'Invalid rebuilt image identity')
+    require(manifest_fingerprint(manifest) == reviewed['manifest_fingerprint_sha256'], 'Router rebuild changed non-router image inputs')
+    inputs = reviewed['build_inputs']
+    require(isinstance(inputs, list) and inputs and len({entry['path'] for entry in inputs}) == len(inputs), 'Missing or repeated build inputs')
+    for entry in inputs:
+        file_sha(repo, entry)
+    router = [entry for entry in manifest['applied_patches'] if entry['path'] == 'patches/sglang-router/prefill-load-lifetime.patch']
+    require(len(router) == 1, 'Expected exactly one router patch')
+    file_sha(repo, {'path': router[0]['path'], 'sha256': router[0]['sha256']})
+    baseline = copy.deepcopy(config)
+    baseline['images']['sglang'].update(sha256=record['image_sha256'], size_bytes=reviewed['baseline_image_size_bytes'])
+    return baseline
+
+
+def validate_record(record, config, repo, image_manifest=None):
     require(isinstance(record, dict) and isinstance(config, dict), 'Record and config must be JSON objects')
     require(record.get('schema') == 'firmus-kernel-selection/v1', 'Unsupported selection schema')
     require(str(record.get('source_run', '')).isdigit() and int(record['source_run']) > 0, 'Missing source run')
     require(isinstance(record.get('source_commit'), str) and re.fullmatch(r'[0-9a-f]{40}', record['source_commit']) is not None, 'Invalid source commit')
-    require(record.get('normalized_config_sha256') == normalized_config_sha256(config), 'Normalized runtime config differs from the recorded selection')
-    require(valid_sha(record.get('image_sha256')) and record['image_sha256'] == config['images']['sglang']['sha256'], 'SGLang image SHA256 mismatch')
+    checked_config = config
+    if record.get('image_sha256') != config['images']['sglang']['sha256']:
+        checked_config = router_rebuild_config(record, config, repo, image_manifest)
+    require(record.get('normalized_config_sha256') == normalized_config_sha256(checked_config), 'Normalized runtime config differs from the recorded selection')
+    require(valid_sha(record.get('image_sha256')) and record['image_sha256'] == checked_config['images']['sglang']['sha256'], 'SGLang image SHA256 mismatch')
     patches = record.get('patches')
     expected = config.get('sglang_overlay_patches', []) + config.get('deep_gemm_overlay_patches', [])
     require(isinstance(patches, list) and [entry.get('path') if isinstance(entry, dict) else None for entry in patches] == expected, 'Configured patch order differs from the recorded selection')
@@ -72,15 +105,17 @@ def validate_record(record, config, repo):
     require(isinstance(evidence, dict) and evidence and all(isinstance(name, str) and name and valid_sha(digest) for name, digest in evidence.items()), 'Missing or invalid evidence SHA256 records')
 
 
-def reuse(record, config, repo, runtime):
+def reuse(record, config, repo, runtime, image_manifest=None):
     """Validate completely before creating any environment or success marker."""
-    validate_record(record, config, Path(repo))
+    validate_record(record, config, Path(repo), image_manifest)
     runtime = Path(runtime)
     source, results = runtime / 'source', runtime / 'results'
     prefill = ['SGLANG_PREFILL_FA3_VERIFY']
     decode = [name for name in ENVIRONMENT if name not in prefill]
     environments = {source / 'prefill-kernels.env': prefill, source / 'decode-kernels.env': decode}
     payload = {**record, 'reused': True, 'no_gpu_selection_rerun': True}
+    if record['image_sha256'] != config['images']['sglang']['sha256']:
+        payload.update(baseline_image_sha256=record['image_sha256'], image_sha256=config['images']['sglang']['sha256'], image_size_bytes=config['images']['sglang']['size_bytes'], router_rebuild_verified=True, actual_manifest_fingerprint_sha256=manifest_fingerprint(image_manifest))
     serialized = json.dumps(payload, indent=2) + '\n'
     source.mkdir(parents=True, exist_ok=True)
     results.mkdir(parents=True, exist_ok=True)
@@ -97,9 +132,10 @@ def main():
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--repo', type=Path, required=True)
     parser.add_argument('--runtime', type=Path, required=True)
+    parser.add_argument('--image-manifest', type=Path)
     args = parser.parse_args()
     try:
-        reused = reuse(json.loads(args.record.read_text()), json.loads(args.config.read_text()), args.repo, args.runtime)
+        reused = reuse(json.loads(args.record.read_text()), json.loads(args.config.read_text()), args.repo, args.runtime, json.loads(args.image_manifest.read_text()) if args.image_manifest else None)
     except (ValueError, KeyError, TypeError, OSError) as exc:
         parser.exit(1, f'Kernel selection reuse rejected: {exc}\n')
     print(f'PASS reused kernel selection from run {reused["source_run"]}; no GPU selection rerun')
