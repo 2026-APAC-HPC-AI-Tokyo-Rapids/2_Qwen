@@ -5,11 +5,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "scripts/collect-eagle-acceptance.py"
 
 
-def test_collects_dp_state_and_log_statistics(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("requested_quantization", "reported_quantization"), [(None, None), ("fp8", "fp8"), ("fp8", None)])
+def test_collects_dp_state_and_log_statistics(tmp_path: Path, requested_quantization, reported_quantization) -> None:
     config = tmp_path / "genkai-serving.json"
     config.write_text(
         json.dumps(
@@ -18,6 +21,7 @@ def test_collects_dp_state_and_log_statistics(tmp_path: Path) -> None:
                     "algorithm": "EAGLE3",
                     "steps": 3,
                     "draft_tokens": 4,
+                    "draft_quantization": requested_quantization,
                     "draft_repository": "fixture/draft",
                     "draft_revision": "fixture-revision",
                 }
@@ -33,6 +37,7 @@ def test_collects_dp_state_and_log_statistics(tmp_path: Path) -> None:
         json.dumps(
             {
                 "speculative_algorithm": "EAGLE3",
+                "speculative_draft_model_quantization": reported_quantization,
                 "internal_states": [
                     {"avg_spec_accept_length": 2.2},
                     {"avg_spec_accept_length": 2.4},
@@ -47,7 +52,7 @@ def test_collects_dp_state_and_log_statistics(tmp_path: Path) -> None:
         "[fixture] Decode batch, accept len: 2.40, accept rate: 0.50\n"
     )
     output = tmp_path / "eagle-acceptance.json"
-    subprocess.run(
+    completed = subprocess.run(
         [
             sys.executable,
             str(SCRIPT),
@@ -64,9 +69,17 @@ def test_collects_dp_state_and_log_statistics(tmp_path: Path) -> None:
             "--cluster",
             "genkai",
         ],
-        check=True,
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    if requested_quantization != reported_quantization:
+        assert completed.returncode == 1 and "requested draft quantization was not applied" in completed.stderr
+        assert not output.exists()
+        return
+    assert completed.returncode == 0, completed.stderr
     result = json.loads(output.read_text())
+    assert result["speculation"]["draft_quantization"] == requested_quantization
     assert result["route"]["stages"][-1] == "EAGLE3 verification"
     assert result["speculation"]["tokenizer_backend"] == "huggingface"
     assert result["statistics"]["server_info_state_count"] == 2

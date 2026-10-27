@@ -224,3 +224,98 @@ reservation, numerical test or timing ran. The image SHA check passed;
 source-manifest checks were not reached. Logs were recovered and runtime
 cleanup succeeded. Replace `-cat` with the existing selective directory
 extraction protocol, keeping the candidate and all gates unchanged.
+
+## Run 40472152140: FA3 polynomial offload rejected
+
+[Actions 40472152140](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40472152140),
+commit `9deda82`, completed successfully. Slurm 26628: COMPLETED, exit 0,
+elapsed 34 seconds. The source provenance reports `image_source_sha_verified:
+true`; the saved image FA3 manifest SHA256 matches `manifest_sha256` in
+provenance. The reconstructed control reproduced the pinned native FP8
+bytes and scales in all 16 numerical cases. This run tested the cubic FP32
+offload, **not** the half2 exponent implementation rejected on CPU above.
+
+All 16 numerical cases passed, including changed-input graphs and canaries.
+The largest candidate/control relative L2 was 0.0026858121 (4027 normal),
+and the largest scaled max error was 0.0558035858 (4096 sharp). Independent
+FP32 attention references covered 43 query rows per case; passing these
+kernel gates does not establish official model output quality.
+
+All three O-projection gates also passed. Each pair below is relative L2 /
+scaled max error; reference columns use the independent FP32 reference.
+
+| Rows | Candidate/control delta | Control/reference | Candidate/reference |
+| --- | --- | --- | --- |
+| 3986 | 0.00295644 / 0.00155492 | 0.02866838 / 0.02691524 | 0.02866817 / 0.02691524 |
+| 4027 | 0.00297186 / 0.00135281 | 0.02761902 / 0.02085072 | 0.02761876 / 0.02085072 |
+| 4096 | 0.00291543 / 0.00123355 | 0.02898429 / 0.02563107 | 0.02898381 / 0.02563107 |
+
+| FA3 rows | Control us | Polynomial us | Paired-ratio median | Change |
+| --- | ---: | ---: | ---: | ---: |
+| 3986 | 358.396 | 378.090 | 1.052855 | +5.29% |
+| 4027 | 369.220 | 388.320 | 1.051378 | +5.14% |
+| 4096 | 378.568 | 398.476 | 1.052797 | +5.28% |
+
+Control drift was 2.25%, 2.90% and 4.91%, within the predeclared 5% limit;
+all three shapes were slower in the paired comparison. The saved result
+reports `numerical_passed: true` and `candidate_eligible: false`.
+**Reject this polynomial candidate; no remeasurement or serving promotion.**
+No model-quality evaluation was performed because the performance gate
+failed. Reduced MUFU count alone did not produce a faster kernel.
+
+Evidence: `outputs/prefill-memory-20261027/run-40472152140/firmus-kernel-probe-40472152140-1/`,
+especially `results/results/fa3-exp/results.json`, `logs/logs/provenance.json`,
+`logs/logs/slurm-accounting.txt` and `results/results/source/image-fa3-manifest.json`.
+
+The comparison above used the companion's N224 control, not the selection
+active in the 9129 serving run. The recovered run 40313004834 selection
+records show **Prefill N192**, which beat N224 on all twelve GPUs and all
+three tested lengths (minimum saving 6.195 us). Do not interpret the N224
+probe as a measurement of that serving configuration. Its rejected candidate
+is not being retested or promoted.
+
+## Next serving candidate: FP8 draft, prior target selections fixed
+
+The separate current Firmus opportunity is the draft extend's BF16 GEMMs,
+about 3.9 ms per Prefill iteration. Online FP8 is already implemented by
+the pinned SGLang source; select it through
+`--speculative-draft-model-quantization fp8` on all four workers. The
+`ModelConfig` branch uses this field only for `is_draft_model`; target
+quantization, checkpoint, KV dtype and verification remain unchanged.
+The original BF16 draft checkpoint SHA/size check remains mandatory.
+Server-info must confirm the requested draft precision before the client
+starts, and the acceptance report records configured and observed precision.
+
+The old ASPIRE test 36538766257 was neutral (2468.02 vs 2473.60) and lacked
+acceptance evidence. It used another topology and does not resolve the
+current Firmus case. No current Firmus draft-FP8 measurement was found in
+the inspected evidence. The new run keeps the official 60/120/30 protocol,
+240 concurrency, P3×TP4/DP4/EP4+D1×TP4/DP4/EP4, cap176 and pinned image.
+It does not run a separate stock-TP4 acceptance-only server first.
+
+Reuse run 40313004834's actual selections:
+
+```
+SGLANG_PREFILL_FA3_VERIFY=n192
+SGLANG_DECODE_FA3_VERIFY=p128split2-s3-fp8
+DG_SM90_1D2D_DECODE_CONFIG=QKV:128,144,5,1,0
+SGLANG_DECODE_DENSE_GEMM_QKV=
+SGLANG_DECODE_DENSE_GEMM_O=
+```
+
+`firmus-kernel-selection-40313004834.json` binds the original source commit,
+image SHA, all 21 ordered overlay hashes, expert-map hash, normalized
+serving config and evidence hashes. Only draft precision, the reuse-record
+path and paths to identical images may differ. CPU validation must pass
+before the runtime receives selection env files. Then the unchanged target
+kernel sweeps and numerical gate are omitted, avoiding repeated tests of
+known candidates and changes to the comparison's target kernels.
+
+Reference scores are 9118.01 (40310899466) and 9129.28 (40313004834), with
+BF16-draft acceptance about 2.211 including the bonus token. The latter
+enabled request-time-stat logging; this candidate keeps the current normal
+launcher without that logging or a profiler. A single small score difference
+is not sufficient for adoption: require error-free official results, inspect
+acceptance and telemetry, and confirm a promising improvement before merging.
+This opportunity alone is not expected to supply the roughly 10 ms needed
+for 9500 at otherwise unchanged conditions.
