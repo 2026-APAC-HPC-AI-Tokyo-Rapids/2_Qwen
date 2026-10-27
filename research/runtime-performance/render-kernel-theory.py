@@ -189,6 +189,12 @@ def megamoe_phase_lines(config):
               f"このfixtureのremote率は{d['remote_fraction_all_ranks']:.2%}。FC2 partialは平均268.44MB/rank、remote平均は{268435456*d['remote_fraction_all_ranks']/1e6:.2f}MB/rank。combineの論理read+writeは301.99MB/rankで、4.8TB/s換算62.9µs。combineのFP32 FMAは0.268GFLOP/rankで、memory以外の変換・同期も残る。実転送量のcounterではない。source別expert countsがない旧runのrank別remote量とpadding量は未確定として残す。", "",
               "今回の候補：6f0164dの5つのFC2出力改善が別branchのまま未統合だった。アドレスを行単位で先に計算し、行の有効性分岐・shared address計算を減らし、metadata loadをBF16 packingに先行させる。BF16 payload、combine加算順、同期は保持。転送量削減とは呼ばない。", "",
               "旧run40116925551はscore8854.80→8922.77だったが、単回・別run比較で因果効果は未確立。現行D5aとの組合せをcontrol/candidate/control-repeatで一度検証する。無関係なQKV候補は再実行しない。現行controlの代表routingとlocalだけに別passのtimelineを付け、同時にsource-rank×expert countsを保存する。このcountsは集約済みlayer分布から生成したfixtureの値であり、本番source別routingではないため本番配置改善の根拠に流用しない。候補timelineはCPU compileでspill増加（store32B/load80–84B）が出たため実行しない。通常版は双方168 registers、stack/spill 0、Prefill命令slotは7512→7200 / 8072→7768、Decode3形状のencodingは完全一致。", ""]
+    communication = config.get("megamoe_communication_evidence")
+    if communication:
+        lines += ["### 通信は律速ではないのか", "",
+                  "既存run40071892077/40313004834のSQLiteには、NVLink request/response別のUser/Protocol Data Throughput %が残っていた。403130の全4 CUDA GPUがMegaMoE実行中の共通区間で、TX Requests User Data平均18.11–18.35%、p95 31%、最大37%。同窓のTensor Active平均50.96–52.99%、DRAM read15.08–15.31%、write6.77–6.82%。詳細とraw hashは`megamoe-communication-metrics.json`。", "",
+                  "これは約1msごとのサンプルで、約200µsのFC2出力区間や約80µsのcombineを分解できない。sampleの集計期間はkernel外を跨ぎ得る。typeIdとCUDA deviceIdの直接対応も未取得なので、下位bitから推測せず全GPU共通区間で比較した。", "",
+                  "[NVIDIA定義](https://docs.nvidia.com/nsight-systems/UserGuide/index.html#available-metrics)のNVLink bytesはsample期間の最大byteに対する割合だが、このrequest/response細分metricを足して総利用率やGB/sへ換算しない。低い全体平均は短い転送区間の飽和を否定しない。raw link bytes、L2 traffic、PC stallは未取得。今回のaddress変更は減らせる仕事が具体的な候補であり、『通信ではなく命令が主因』という結論ではない。", ""]
     return lines
 
 
@@ -204,6 +210,11 @@ def render(config, data):
              "GEMMはFMAを2 FLOPとし、`2MNK`。MoEはFC1とFC2を分け、有効行数とtile丸め後の行数も分ける。Tensor Coreのdense FP8は8192 FLOP/SM/cycle、BF16は4096。132 SMとの積から計算し、旧 `1979×clock/1.98` は使わない。公称FP8 1979 TFLOPSとHBM4.8 TB/sは[NVIDIA仕様](https://www.nvidia.com/en-us/data-center/h200/)、SM単位の算出は[Hopper解説](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/)と[NVIDIA技術回答](https://forums.developer.nvidia.com/t/how-to-calculate-the-tensor-core-fp16-performance-of-h100/244727)に基づく。", "",
              "同窓GPC rawのworker内平均をHzと解釈した場合、Prefill約1.35〜1.38GHz、Decode約1.65〜1.73GHz。表の演算欄はP1.35〜1.40GHz/D1.65〜1.74GHzの明示的な条件計算。NsightのMHzラベルとraw値の桁が不一致で、kernel別clockとdevice対応は未確定。公称値の床も機械計算に保持する。", "",
              "独立資源の必要時間は `max(F/P, B_HBM/W_HBM, B_NVLink/W_NVLink, 命令/発行率)`。因果関係のある直列区間だけを足す。表の『論理I/O換算』は各bufferの論理byteを4.8TB/sで割った参考値であり、L2 hit・再読出し・同期を含むHBM実測値でも、厳密なkernel下限でもない。理論との差をそのまま削れる時間としない。", ""]
+    current = config.get("current_megamoe_candidate", {})
+    if current.get("status") == "firmus_cancelled_by_user_before_gpu_execution":
+        lines += ["## 現在の実行状態", "",
+                  "2026-10-28、ユーザー指示でFirmus実行を停止。Actions40563900060を取消し、停止専用workflow40567082710でSlurm26800のCANCELLED・経過0秒・割当0台・残存runtime削除を確認した。今回のGPU測定は0回。復元候補はCPU検証のみで、速度改善・serving採用は未確認。", "",
+                  "kernel benchはASPIREを優先する。現在のASPIRE経路は1GPU FA3 probeで、MegaMoE EP4通信benchには4GPU経路が必要。Firmusには再投入しない。以下の候補の測定計画は、実行先を整えるまで未実行。", ""]
     for role in ("prefill", "decode"):
         p = data[role]["profile"]
         busy = p["kernel_union_busy_ms"]/p["selected_cycles"]

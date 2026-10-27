@@ -267,7 +267,7 @@
     "shape": "EP4, H4096, I1536, top8, FP8 weights/activation, BF16 partial, FP32 combine; five Prefill4096 cases, three actual-routing distributions with hot4",
     "removed_work": "Repeated row-validity branches, BF16 shared-address math, destination rank table loads/address math. Metadata loads issued ahead of packing; next row loaded before remote store. No changed useful FLOPs, payload bytes or reduction order.",
     "measurement_question": "Does the recovered FC2 bundle reduce the current D5a kernel on stable same-job controls, and which phase changes?",
-    "status": "cpu_validation_passed_ready_for_single_kernel_gate",
+    "status": "firmus_cancelled_by_user_before_gpu_execution",
     "serving_change_enabled": false,
     "cpu_validation": "megamoe-fc2-cpu-validation-20261028.json",
     "timeline_policy": "Control only: candidate instrumentation introduces 32B spill stores and 80/84B spill loads. Do not run or compare its perturbed phases. Ordinary control/candidate/repeat use zero-spill kernels.",
@@ -289,8 +289,29 @@
         "gpu_jobs": 0,
         "finding": "The retired directory was not truly empty; its exact residual contents were not recovered. Directory discovery was the wrong source of campaign membership.",
         "fix": "Tracked candidates inventory names only fc2-address. CPU fixtures cover empty, timeline-only, hidden-file and stale-patch directories, and prove none is reactivated."
+      },
+      {
+        "run": "40563900060",
+        "commit": "55a7a30c25c4f9dd7f54d2c447700d90e6e322cb",
+        "status": "cancelled_by_user_while_slurm_pending",
+        "slurm_job": "26800",
+        "gpu_measurements": 0,
+        "stop_workflow": "40567082710",
+        "stop_workflow_result": "success",
+        "runtime_removed": true
       }
     ],
-    "serving_validation_note": "Restored existing FP8-draft post-run validator fix and its tests from7980d10; no launch settings changed."
+    "serving_validation_note": "Restored existing FP8-draft post-run validator fix and its tests from7980d10; no launch settings changed.",
+    "execution_preference": "User requests ASPIRE for kernel bench when possible and explicitly stopped Firmus. No Firmus resubmission authorized. Existing ASPIRE probe is 1GPU FA3; EP4 MegaMoE needs a four-GPU execution path before use.",
+    "performance_conclusion": "Not measured on the recovered current candidate; static instruction reduction and CPU correctness only. Do not claim a speedup or adopt in serving."
+  },
+  "megamoe_communication_evidence": {
+    "file": "megamoe-communication-metrics.json",
+    "runs": [
+      "40071892077",
+      "40313004834"
+    ],
+    "scope": "Existing 1ms sampled throughput percentages, all-CUDA-device MegaMoE interval intersection. Not the current40310899466 profile and not FC2 phase-specific.",
+    "conclusion": "Cannot conclude instruction-issue bound or rule out short FC2 communication saturation from low whole-kernel samples."
   }
 }
