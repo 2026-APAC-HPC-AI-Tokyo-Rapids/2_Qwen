@@ -88,6 +88,7 @@ def speculation_config(path: Path) -> dict[str, object]:
         "algorithm": speculation["algorithm"],
         "steps": speculation.get("steps"),
         "draft_tokens": speculation.get("draft_tokens"),
+        "draft_quantization": speculation.get("draft_quantization"),
         "draft_repository": speculation.get("draft_repository"),
         "draft_revision": speculation.get("draft_revision"),
         "eagle_topk": 1,
@@ -169,6 +170,8 @@ def collect(arguments: argparse.Namespace) -> dict[str, object]:
             continue
         info_path = server_info_path(arguments.server_info_dir, endpoint)
         info = read_json(info_path)
+        if configured["draft_quantization"] is not None and info.get("speculative_draft_model_quantization") != configured["draft_quantization"]:
+            raise ValueError(f"{info_path}: requested draft quantization was not applied")
         states = acceptance_states(info, info_path, str(configured["tokenizer_backend"]))
         state_lengths.extend(
             float(state["accept_length_including_bonus"]) for state in states
@@ -180,6 +183,7 @@ def collect(arguments: argparse.Namespace) -> dict[str, object]:
                 "port": endpoint["port"],
                 "server_info": info_path.name,
                 "tokenizer_backend": info.get("tokenizer_backend"),
+                "draft_quantization": info.get("speculative_draft_model_quantization"),
                 "states": states,
             }
         )

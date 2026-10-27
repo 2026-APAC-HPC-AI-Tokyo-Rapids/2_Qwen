@@ -85,6 +85,8 @@ CASES = [("decode", "balanced", n) for n in (4, 16, 32, 64, 96, 128)] + [("decod
 CASES += [("decode", routing, n) for routing in ("balanced",) for n in (160, 176, 192)]
 CASES += [("prefill", "balanced", n) for n in (1024, 2048, 4096)] + [("prefill", "local", 4096)]
 CASES += [("prefill", f"real{layer}{suffix}", 4096) for layer in REAL_ROUTING_LAYERS for suffix in ("", "-replica4")]
+PREFILL_MEMORY_CASES = [("prefill", "balanced", 4096), ("prefill", "local", 4096)]
+PREFILL_MEMORY_CASES += [("prefill", f"real{layer}-replica4", 4096) for layer in REAL_ROUTING_LAYERS]
 TIMELINE_CASES = [("decode", "balanced", n) for n in (128, 160, 176)] + [("decode", "local", 128), ("prefill", "balanced", 4096), ("prefill", "local", 4096)]
 TIMELINE_CASES += [("prefill", f"real{layer}{suffix}", 4096) for layer in REAL_ROUTING_LAYERS for suffix in ("", "-replica4")]
 
@@ -244,6 +246,7 @@ def main():
     parser.add_argument("--scratch", type=Path, required=True)
     parser.add_argument("--timeline-dir", type=Path)
     parser.add_argument("--reference", type=Path)
+    parser.add_argument("--prefill-memory", action="store_true", help="Only current Prefill geometry: balanced, local and three replicated routing distributions")
     args = parser.parse_args()
     timeline = args.timeline_dir is not None
     torch.cuda.set_device(RANK)
@@ -269,7 +272,8 @@ def main():
     if args.reference is not None:
         reference = {row["case"]: row for row in map(json.loads, args.reference.read_text().splitlines())}
     output = args.output.open("w") if RANK == 0 else None
-    for case in TIMELINE_CASES if timeline else CASES:
+    cases = PREFILL_MEMORY_CASES if args.prefill_memory else (TIMELINE_CASES if timeline else CASES)
+    for case in cases:
         name = case_name(case)
         stage, kind, count = case
         real = kind.startswith("real")

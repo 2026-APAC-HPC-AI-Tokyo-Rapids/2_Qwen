@@ -74,9 +74,9 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert config["deep_gemm_overlay_patches"][-2:] == ["patches/deep-gemm-overlay/sm90-decode-independent-wg.patch", "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch"]
     bench = ROOT / "patches/deep-gemm-bench"
-    assert sorted(p.name for p in bench.iterdir()) == ["decode-m1-b-first", "timeline", "z-control-repeat"]
+    assert sorted(p.name for p in bench.iterdir()) == ["prefill-combine-direct-store"]
     assert not list(bench.glob("*/env"))
-    assert (bench / "timeline").stat().st_size == 0
+    assert not (bench / "timeline").exists()
     for name in ("containers/Dockerfile", "scripts/build-sglang-container.sh", "containers/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg-host.py"):
         assert "deep-gemm-bench" not in (ROOT / name).read_text()
     checker = (ROOT / "containers/check-sm90-independent-wg.py").read_text()
@@ -241,7 +241,7 @@ def test_bulk_timeline_v4_separates_issue_reuse_drain_and_barrier(tmp_path, summ
 
 
 def test_decode_m1_uses_stock_iwg_math_timeline():
-    marker = ROOT / "patches/deep-gemm-bench/decode-m1-b-first/timeline"
+    marker = ROOT / "patches/deep-gemm-archive/decode-m1/decode-m1-b-first/timeline"
     assert marker.exists() and marker.stat().st_size == 0
     stock = (ROOT / "patches/deep-gemm-timeline/sm90-mega-moe-timeline.patch").read_text()
     assert "base[1] = 2;" in stock

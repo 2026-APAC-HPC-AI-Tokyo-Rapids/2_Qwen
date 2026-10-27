@@ -37,7 +37,9 @@ def test_client_and_draft_copies(copy, source):
 
 
 def test_serving_configuration_matches_canonical_fields():
-    expected = {key: value for key, value in CONFIG.items() if key not in ("images", "sglang_overlay_patches", "deep_gemm_overlay_patches")}
+    # The package already pins these same kernels in its role env files; the
+    # research runner's prior-run reuse record is not a serving parameter.
+    expected = {key: value for key, value in CONFIG.items() if key not in ("images", "sglang_overlay_patches", "deep_gemm_overlay_patches", "reuse_kernel_selection")}
     expected["images"] = {"sglang": {key: CONFIG["images"]["sglang"][key] for key in ("sha256", "size_bytes")}}
     assert json.loads((PACKAGE / "config/serving.json").read_text()) == expected
     assert (PACKAGE / "config/prefill-expert-location.json").read_bytes() == (ROOT / CONFIG["prefill"]["expert_location"]).read_bytes()
@@ -80,6 +82,20 @@ def test_serving_launches_and_warmup_are_preserved_in_order():
     official = text.index('bash "${ROOT}/scripts/official-aiperf.sh"')
     assert text.index('>"${ROOT}/results/server-info-${worker}.json"') < sanity < official
     assert text.count('>"${ROOT}/results/sanity-chat.json"') == 1
+
+
+def test_draft_precision_launch_and_runtime_check_match_canonical():
+    package = BATCH.read_text()
+    canonical = ORIGINAL.read_text()
+    # The shared speculation arguments reach all four workers. The runtime
+    # precision check must also precede the official client in both launchers.
+    def arguments(text):
+        return text.split("speculation=(", 1)[1].split("decode_graph=(", 1)[0]
+
+    assert arguments(package) == arguments(canonical)
+    precision_check = next(line for line in canonical.splitlines() if ".speculative_draft_model_quantization ==" in line)
+    assert precision_check in package
+    assert package.index(precision_check) < package.index('bash "${ROOT}/scripts/official-aiperf.sh"')
 
 
 def test_pinned_role_env_files(tmp_path):

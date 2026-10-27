@@ -199,7 +199,8 @@ def test_server_info_validation_runs_after_gpu_collection(tmp_path: Path, invali
         assert "decode state 4: speculative_moe_runner_backend" in result.stderr
 
 
-def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> None:
+@pytest.mark.parametrize("draft_quantization", ["fp8", None, "unset"])
+def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path, draft_quantization) -> None:
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert "#SBATCH -t 00:17:00" in source
     # Tier 2 switches are all on for the bundled image; the startup line prints each value.
@@ -221,6 +222,10 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
     assert config["decode_max_total_tokens"] >= slots_per_rank * (4096 + 128)
     (tmp_path / "logs").mkdir()
     (tmp_path / "source").mkdir()
+    if draft_quantization == "unset":
+        config["speculation"].pop("draft_quantization", None)
+    else:
+        config["speculation"]["draft_quantization"] = draft_quantization
     (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
     record = tmp_path / "commands.jsonl"
     stub = tmp_path / "srun"
@@ -288,7 +293,10 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path) -> No
         assert flags[flags.index("--speculative-num-steps") + 1] == "3"
         assert flags[flags.index("--speculative-eagle-topk") + 1] == "1"
         assert flags[flags.index("--speculative-num-draft-tokens") + 1] == "4"
-        assert "--speculative-draft-model-quantization" not in flags
+        assert ("--speculative-draft-model-quantization" in flags) == (draft_quantization == "fp8")
+        if draft_quantization == "fp8":
+            assert flags.count("--speculative-draft-model-quantization") == 1
+            assert flags[flags.index("--speculative-draft-model-quantization") + 1] == "fp8"
         assert "--container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER" in argv
         if name.startswith("prefill"):
             assert config["prefill"]["moe_a2a_backend"] == "megamoe"
@@ -406,3 +414,47 @@ def test_firmus_provisioning_guards_accept_the_configured_speculation_and_count_
     index.write_text(json.dumps({"metadata": {}, "weight_map": {"a": "m2", "b": "m1", "c": "m2"}}))
     result = subprocess.run(["jq", "-r", shards, str(index)], capture_output=True, text=True, check=True)
     assert result.stdout.split() == ["m1", "m2"]
+
+
+@pytest.mark.parametrize("quantization", ["fp8", None, "unset", "bf16", "int8", False, 8, ["fp8"], {}])
+def test_firmus_draft_quantization_guard(tmp_path: Path, quantization) -> None:
+    script = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
+    guard = re.search(r"jq -e '(\.speculation\.algorithm[^']*)' \"\$\{config\}\"", script).group(1)
+    config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    if quantization == "unset":
+        config["speculation"].pop("draft_quantization", None)
+    else:
+        config["speculation"]["draft_quantization"] = quantization
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config))
+    result = subprocess.run(["jq", "-e", guard, str(path)], capture_output=True, text=True, check=False)
+    assert (result.returncode == 0) == (quantization in ("fp8", None, "unset"))
+
+
+def test_verified_kernel_reuse_skips_gpu_selection_and_target_gate(tmp_path: Path) -> None:
+    script = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
+    begin = script.index('if [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]')
+    fragment = script[begin:script.index('\nsrun --exact', begin)]
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "reused-kernel-selection.json").write_text(json.dumps({"source_run": 40313004834}))
+    for name in ("prefill", "decode"):
+        (source / f"{name}-kernels.env").write_text("VERIFIED=1\n")
+    # Any unexpected GPU launch or numeric/selector call must fail this fixture.
+    harness = 'set -euo pipefail\nsrun() { echo unexpected-GPU >&2; return 97; }\n' + fragment
+    result = subprocess.run(["bash", "-c", harness], env={**os.environ, "ROOT": str(tmp_path)}, capture_output=True, text=True, check=True)
+    assert "Reusing verified target kernel selections from run 40313004834" in result.stdout
+    assert "unexpected-GPU" not in result.stderr
+
+
+@pytest.mark.parametrize("reported", ["fp8", None])
+def test_draft_precision_is_verified_before_official_benchmark(tmp_path: Path, reported) -> None:
+    script = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
+    check = next(line.strip() for line in script.splitlines() if '.speculative_draft_model_quantization == "fp8"' in line)
+    assert script.index(check) < script.index('benchmark_status=0')
+    (tmp_path / "source").mkdir()
+    (tmp_path / "results").mkdir()
+    (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"speculation": {"draft_quantization": "fp8"}}))
+    (tmp_path / "results/server-info-prefill-0.json").write_text(json.dumps({"speculative_draft_model_quantization": reported}))
+    result = subprocess.run(["bash", "-c", 'set -euo pipefail\n'+check], env={**os.environ, "ROOT": str(tmp_path), "worker": "prefill-0"}, capture_output=True, text=True, check=False)
+    assert (result.returncode == 0) == (reported == "fp8")

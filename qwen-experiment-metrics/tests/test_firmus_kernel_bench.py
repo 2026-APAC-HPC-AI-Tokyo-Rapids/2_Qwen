@@ -310,7 +310,7 @@ def test_summary_passes_clean_run_and_reports_differing_hashes_without_failing(t
     assert "| rope | 5.00 | 5.00 | +0.0% | 5.00 / 5.00 | False |" in text
 
 
-@pytest.mark.parametrize("patch_name", ["prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch"])
+@pytest.mark.parametrize("patch_name", ["prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "prefill-combine-direct-store.patch"])
 @pytest.mark.parametrize("same", [False, True])
 def test_arithmetic_preserving_candidates_require_equal_outputs(tmp_path, monkeypatch, patch_name, same):
     summarize = load_summary(monkeypatch)
@@ -485,7 +485,7 @@ def test_control_only_timeline_stages_exactly_two_steps(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
     variants = json.loads((runtime / "results/variants.json").read_text())
-    assert variants == {"deep_gemm": [{"name": "image", "patches": [], "env": [], "timeline": "ready"}], "sglang": None}
+    assert variants == {"deep_gemm": [{"name": "image", "patches": [], "env": [], "timeline": "ready"}], "sglang": None, "prefill_memory": None}
     assert not list((runtime / "overlay/candidates").iterdir())
     srun = tmp_path / "bin/srun"
     srun.write_text('#!/bin/bash\nprintf \'%s\\n\' "$*" >>"${SRUN_LOG}"\n')
@@ -510,7 +510,7 @@ def test_control_rejects_old_host_even_without_candidates(tmp_path: Path) -> Non
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
 def test_decode_m1_campaign_keeps_final_control(tmp_path):
     ws, patches = workspace(tmp_path)
-    campaign = ROOT / "patches/deep-gemm-bench"
+    campaign = ROOT / "patches/deep-gemm-archive/decode-m1"
     names = sorted(path.name for path in campaign.iterdir() if path.is_dir())
     assert names == ["decode-m1-b-first", "z-control-repeat"]
     for name in names:
@@ -550,3 +550,26 @@ def test_bulk_campaign_local_and_real_cases_reach_timeline():
             assert ("prefill", f"real{layer}-replica4", 4096) in ns[key]
     # real7 is already the remote p90 tail (86/94), so no fourth layer is needed.
     assert list(data) == [43, 62, 7]
+
+
+@pytest.mark.parametrize("missing", [None, "probe", "repeat", "graph"])
+def test_prefill_memory_requires_exact_graph_and_terminal_control(tmp_path, monkeypatch, missing):
+    summarize = load_summary(monkeypatch)
+    variants = [{"name": "image", "patches": [], "timeline": "not-requested"}, {"name": "direct-store", "patches": [{"path": "prefill-combine-direct-store.patch"}], "timeline": "not-requested"}]
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": variants, "sglang": None, "prefill_memory": {"enabled": True}}))
+    steps = "image\tbench\t0\t1\ndirect-store\tgate\t0\t1\ndirect-store\tbench\t0\t1\nprefill-memory\tprobe\t0\t1\ncontrol-repeat\tbench\t0\t1\n"
+    (tmp_path / "steps.tsv").write_text(steps)
+    cases = [f"prefill-real{layer}-replica4-4096" for layer in (43, 62, 7)]
+    write_rows(tmp_path / "image/bench.jsonl", [bench_row(case, 1.5, case) for case in cases])
+    write_rows(tmp_path / "direct-store/bench.jsonl", [bench_row(case, 1.45, case) for case in cases])
+    if missing != "repeat":
+        write_rows(tmp_path / "control-repeat/bench.jsonl", [bench_row(case, 1.5, case) for case in cases])
+    probe = {"cases": [{"rows": rows, "dtype": dtype, "finite_and_nonfinite_five_buffers_bitwise": True, "changed_input_graph_bitwise": missing != "graph"} for rows in (0, 1, 7, 8, 9, 31, 32, 33, 129, 3986, 4032, 4096) for dtype in ("torch.int32", "torch.int64")], "timing": [{"rows": rows, "median_us": {"control": 66, "heads4": 60}} for rows in (3986, 4032, 4096)], "candidate_eligible": True}
+    if missing != "probe":
+        (tmp_path / "prefill-memory").mkdir()
+        (tmp_path / "prefill-memory/results.json").write_text(json.dumps(probe))
+    text, failed = summarize(tmp_path)
+    assert bool(failed) == (missing is not None)
+    selection = json.loads((tmp_path / "prefill-memory-selection.json").read_text())
+    assert selection["direct-store"]["candidate_eligible"] == (missing != "repeat")
+    assert "heads4" in text if missing != "probe" else "missing or failed" in text

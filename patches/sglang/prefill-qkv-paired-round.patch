@@ -1,0 +1,46 @@
+--- a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
++++ b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
+@@ -477,6 +477,13 @@
+     return out;
+ }
+ 
++__device__ __forceinline__ float2 qkv_prefill_paired_rn(float a, float b) {
++    uint32_t bits;
++    // Same operand order as CUDA13 cuda_bf16.hpp: low16=a, high16=b.
++    asm("cvt.rn.bf16x2.f32 %0, %2, %1;" : "=r"(bits) : "f"(a), "f"(b));
++    return make_float2(__uint_as_float(bits << 16), __uint_as_float(bits & 0xffff0000u));
++}
++
+ template<bool kUsePDL, typename IdType, bool kVImage=false>
+ __global__ __launch_bounds__(256) void qknorm_rope_prefill_fast_kernel(
+     const __grid_constant__ QKNormRopeFP8Params p, void* contiguous_k, void* contiguous_v, void* v_image, int image_rows) {
+@@ -537,18 +544,23 @@
+             const float4 sin4[2] = {*reinterpret_cast<const float4*>(static_cast<const float*>(p.cos_sin_cache)+pos*128+64+col), *reinterpret_cast<const float4*>(static_cast<const float*>(p.cos_sin_cache)+pos*128+64+col+4)};
+             #pragma unroll
+             for(int j=0;j<4;++j) {
++                // Pair adjacent BF16 RN-even conversions at the same two
++                // rounding points; preserve each scalar expression and FMA.
++                const float2 u=qkv_prefill_paired_rn(x[j*2]*scale*wx[j*2],x[j*2+1]*scale*wx[j*2+1]);
++                const float2 v=qkv_prefill_paired_rn(y[j*2]*scale*wy[j*2],y[j*2+1]*scale*wy[j*2+1]);
+                 float a[2], b[2];
+                 #pragma unroll
+                 for(int h=0;h<2;++h) {
+                     const int d=j*2+h;
+-                    const float u=__bfloat162float(__float2bfloat16_rn(x[d]*scale*wx[d]));
+-                    const float v=__bfloat162float(__float2bfloat16_rn(y[d]*scale*wy[d]));
++                    const float uh=h==0?u.x:u.y, vh=h==0?v.x:v.y;
+                     const float c=reinterpret_cast<const float*>(cos4)[d], s=reinterpret_cast<const float*>(sin4)[d];
+-                    a[h]=__bfloat162float(__float2bfloat16_rn(u*c-v*s));
+-                    b[h]=__bfloat162float(__float2bfloat16_rn(u*s+v*c));
++                    a[h]=uh*c-vh*s;
++                    b[h]=uh*s+vh*c;
+                 }
+-                ox[j]=qkv_prefill_fp8(make_float2(a[0],a[1]));
+-                oy[j]=qkv_prefill_fp8(make_float2(b[0],b[1]));
++                const float2 ar=qkv_prefill_paired_rn(a[0],a[1]);
++                const float2 br=qkv_prefill_paired_rn(b[0],b[1]);
++                ox[j]=qkv_prefill_fp8(ar);
++                oy[j]=qkv_prefill_fp8(br);
+             }
+         } else {
+             #pragma unroll
