@@ -2,7 +2,7 @@
 """Extract saved MegaMoE phases and work accounting without running a GPU job.
 
 Usage: uv run --with numpy python research/runtime-performance/extract-megamoe-phases.py
-       VARIANT_RESULTS --run RUN --image IMAGE --case CASE > OUTPUT.json
+       VARIANT_RESULTS --run RUN --image IMAGE --case CASE --hardware h100-sxm > OUTPUT.json
 The results directory holds bench.jsonl, timeline.jsonl, and timeline/CASE.npy.
 """
 import argparse
@@ -18,6 +18,14 @@ PARSER = ROOT / "scripts/summarize-megamoe-kernel-bench.py"
 spec = importlib.util.spec_from_file_location("megamoe_timeline", PARSER)
 timeline = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(timeline)
+HARDWARE = {
+    "h100-sxm": {"sm_count": 132, "hbm_bytes_per_second": 3.35e12,
+                 "nvlink_one_way_bytes_per_second": 450e9,
+                 "source": "https://www.nvidia.com/en-eu/data-center/h100/"},
+    "h200-sxm": {"sm_count": 132, "hbm_bytes_per_second": 4.8e12,
+                 "nvlink_one_way_bytes_per_second": 450e9,
+                 "source": "https://www.nvidia.com/en-us/data-center/h200/"},
+}
 
 
 def digest(path):
@@ -28,7 +36,8 @@ def row(path, case):
     return next(r for r in map(json.loads, path.read_text().splitlines()) if r["case"] == case)
 
 
-def extract(directory, case, run, image):
+def extract(directory, case, run, image, hardware):
+    hw = HARDWARE[hardware]
     npy = directory / "timeline" / (case + ".npy")
     bench = row(directory / "bench.jsonl", case)
     instrumented = row(directory / "timeline.jsonl", case)
@@ -59,19 +68,19 @@ def extract(directory, case, run, image):
         padded_rows = [sum(((v + 63)//64)*64 for v in loads[d*epr:(d+1)*epr]) for d in range(4)]
         transfer = {"source_to_expert_rank_pairs": destinations, "fc2_remote_payload_bytes_per_producer_rank": remote,
                     "fc2_remote_receive_bytes_per_source_rank": receive,
-                    "fc2_remote_payload_at_450GBs_us": [b / 450e9 * 1e6 for b in remote],
-                    "fc2_send_receive_peak_reference_us_per_rank": [max(tx, rx) / 450e9 * 1e6 for tx, rx in zip(remote, receive)],
+                    "fc2_remote_payload_at_450GBs_us": [b / hw["nvlink_one_way_bytes_per_second"] * 1e6 for b in remote],
+                    "fc2_send_receive_peak_reference_us_per_rank": [max(tx, rx) / hw["nvlink_one_way_bytes_per_second"] * 1e6 for tx, rx in zip(remote, receive)],
                     "scope": "logical BF16 payload; excludes protocol/transactions and is not measured link utilization"}
     for i, rank in enumerate(chosen):
         ghz = float(np.nanmedian(rank["ghz"]))
         pairs = bench["recv_pairs_per_rank"][i]
         work = {"recv_pairs": pairs, "fc1_useful_flops": pairs*4*4096*1536,
-                "fc2_useful_flops": pairs*2*4096*1536, "peak_fp8_flops_per_second": 8192*132*ghz*1e9,
+                "fc2_useful_flops": pairs*2*4096*1536, "peak_fp8_flops_per_second": 8192*hw["sm_count"]*ghz*1e9,
                 "fc2_partial_bytes": pairs*4096*2,
                 "combine_logical_read_write_bytes": bench["tokens_per_rank"]*4096*2*9,
                 "combine_fp32_fma_flops": bench["tokens_per_rank"]*4096*8*2,
                 "padded_rows_64": None if padded_rows is None else padded_rows[i]}
-        work["combine_logical_hbm_peak_us"] = work["combine_logical_read_write_bytes"]/4.8e12*1e6
+        work["combine_logical_hbm_peak_us"] = work["combine_logical_read_write_bytes"]/hw["hbm_bytes_per_second"]*1e6
         for fc in ("fc1", "fc2"):
             work[fc + "_compute_only_us"] = work[fc + "_useful_flops"]/work["peak_fp8_flops_per_second"]*1e6
             if padded_rows is not None:
@@ -96,6 +105,7 @@ def extract(directory, case, run, image):
                         "useful_to_peak_over_median_cta_loop": {fc: work[fc + "_compute_only_us"]/float(np.nanmedian(phases[fc + "_loop"])) for fc in ("fc1", "fc2")}})
         ranks.append({"rank": i, "sm_clock_ghz_cta_median": ghz, "work": work, "warpgroups": wgs})
     return {"schema_version": "megamoe-phases/1", "run": run, "image_run": image, "case": case,
+            "hardware_reference": {"name": hardware, **hw},
             "source_files": {str(p.relative_to(directory)): digest(p) for p in (npy, directory/"bench.jsonl", directory/"timeline.jsonl")},
             "parser_sha256": digest(PARSER), "extractor_sha256": digest(Path(__file__)),
             "geometry": chosen[0]["header"], "bench_median_us": bench["median_ms"]*1000,
@@ -119,8 +129,10 @@ def main():
     p.add_argument("--case", default="prefill-real43-replica4-4096")
     p.add_argument("--run", required=True)
     p.add_argument("--image", required=True)
+    p.add_argument("--hardware", choices=HARDWARE, required=True,
+                   help="Explicit resource reference; never apply H200 HBM bandwidth to H100")
     a = p.parse_args()
-    print(json.dumps(extract(a.directory, a.case, a.run, a.image), ensure_ascii=False, indent=2))
+    print(json.dumps(extract(a.directory, a.case, a.run, a.image, a.hardware), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

@@ -264,14 +264,14 @@
     "control_header_sha256": "220f409fd723d931cdad4e70b8e149646ececb5d1ee8554048683043ae413aa2",
     "candidate_header_sha256": "7aa48a3e10eb5a16e2d1e9b48efc126194aff3df1c74989eb60ccde1da44f8e8",
     "patch": "patches/deep-gemm-bench/fc2-address/fc2-output-address.patch",
-    "shape": "EP4, H4096, I1536, top8, FP8 weights/activation, BF16 partial, FP32 combine; five Prefill4096 cases, three actual-routing distributions with hot4",
+    "shape": "EP4, H4096, I1536, top8, FP8 weights/activation, BF16 partial, FP32 combine; five Prefill4096 cases, three sampled routing distributions from archived pooled layer frequencies with hot4",
     "removed_work": "Repeated row-validity branches, BF16 shared-address math, destination rank table loads/address math. Metadata loads issued ahead of packing; next row loaded before remote store. No changed useful FLOPs, payload bytes or reduction order.",
-    "measurement_question": "Does the recovered FC2 bundle reduce the current D5a kernel on stable same-job controls, and which phase changes?",
-    "status": "aspire_ep4_preparing",
+    "measurement_question": "Does the recovered FC2 bundle reduce current D5a kernel time on stable same-job controls? The separate control timeline locates the remaining gap against H100 resource references; it cannot measure candidate phase deltas.",
+    "status": "aspire_connection_blocked_before_pbs",
     "serving_change_enabled": false,
     "cpu_validation": "megamoe-fc2-cpu-validation-20261028.json",
     "timeline_policy": "Control only: candidate instrumentation introduces 32B spill stores and 80/84B spill loads. Do not run or compare its perturbed phases. Ordinary control/candidate/repeat use zero-spill kernels.",
-    "new_gpu_work": "One node, four H200; five ordinary cases each for control/candidate/control-repeat, candidate numeric gate, two control timeline cases. No QKV, unrelated Decode timing, or candidate timeline.",
+    "new_gpu_work": "Planned: one ASPIRE H100 node, four allocated GPUs, at most 15 minutes; five ordinary cases each for control/candidate/control-repeat, candidate numeric gate, two control timeline cases. No QKV, unrelated Decode timing, or candidate timeline.",
     "attempts": [
       {
         "run": "40561028271",
@@ -299,6 +299,19 @@
         "stop_workflow": "40567082710",
         "stop_workflow_result": "success",
         "runtime_removed": true
+      },
+      {
+        "run": "40569440787",
+        "commit": "396f1fb1eb858f9e4d37b6a223d42954e17e2259",
+        "cluster": "aspire2ap",
+        "status": "ssh_failed_before_preparation_and_pbs",
+        "validation": "Linux validate and gigatoken compatibility succeeded",
+        "error": "ssh: connect to host win-5im4vj0sfos port 22: Connection timed out",
+        "pbs_submitted": false,
+        "gpu_measurements": 0,
+        "runtime_created": false,
+        "artifacts": "No runtime artifacts; GitHub Actions logs retained",
+        "diagnosis": "Tailscale reports WIN-5IM4VJ0SFOS offline, LastSeen2026-10-27T14:36:11.1Z (23:36 JST); direct ssh aspire2p.nscc.sg also timed out. No rerun until connectivity is restored."
       }
     ],
     "serving_validation_note": "Restored existing FP8-draft post-run validator fix and its tests from7980d10; no launch settings changed.",
@@ -315,7 +328,8 @@
       "prefill_fa3_selection": "control",
       "current_checkout_concurrency": 104,
       "comparison_caveat": "Previous c104 run40251123706 selected n192, while c112 selected control; the 2.64% cross-run gain cannot be attributed solely to concurrency. No current H100 profile."
-    }
+    },
+    "resume": "After relay connectivity is restored, rerun only failed Actions jobs for40569440787 (same experiment/source, run attempt2); Linux gates already passed. No blind rerun while offline."
   },
   "megamoe_communication_evidence": {
     "file": "megamoe-communication-metrics.json",
@@ -325,5 +339,11 @@
     ],
     "scope": "Existing 1ms sampled throughput percentages, all-CUDA-device MegaMoE interval intersection. Not the current40310899466 profile and not FC2 phase-specific.",
     "conclusion": "Cannot conclude instruction-issue bound or rule out short FC2 communication saturation from low whole-kernel samples."
+  },
+  "megamoe_fc1_cpu_candidate": {
+    "evidence": "megamoe-fc1-cpu-validation-20261028.json",
+    "status": "CPU_admitted_not_GPU_measured_or_activated",
+    "removed_work": "Common gate/up scale pointer and constant up offset; 4-byte K induction. Integer addressing only; same FP32 operations, scale loads, synchronization and payload bytes.",
+    "past_rejections_distinct": "Does not cache 32 K scales, add SHFL, share RCP, change stages, or retry Prefill independent warpgroups."
   }
 }

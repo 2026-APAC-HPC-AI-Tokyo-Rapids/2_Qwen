@@ -211,10 +211,14 @@ def render(config, data):
              "同窓GPC rawのworker内平均をHzと解釈した場合、Prefill約1.35〜1.38GHz、Decode約1.65〜1.73GHz。表の演算欄はP1.35〜1.40GHz/D1.65〜1.74GHzの明示的な条件計算。NsightのMHzラベルとraw値の桁が不一致で、kernel別clockとdevice対応は未確定。公称値の床も機械計算に保持する。", "",
              "独立資源の必要時間は `max(F/P, B_HBM/W_HBM, B_NVLink/W_NVLink, 命令/発行率)`。因果関係のある直列区間だけを足す。表の『論理I/O換算』は各bufferの論理byteを4.8TB/sで割った参考値であり、L2 hit・再読出し・同期を含むHBM実測値でも、厳密なkernel下限でもない。理論との差をそのまま削れる時間としない。", ""]
     current = config.get("current_megamoe_candidate", {})
-    if current.get("status") in ("firmus_cancelled_by_user_before_gpu_execution", "aspire_ep4_preparing", "aspire_ep4_submitted"):
+    if current.get("status") in ("firmus_cancelled_by_user_before_gpu_execution", "aspire_ep4_preparing", "aspire_ep4_submitted", "aspire_connection_blocked_before_pbs"):
         lines += ["## 現在の実行状態", "",
                   "2026-10-28、ユーザー指示でFirmus実行を停止。Actions40563900060を取消し、停止専用workflow40567082710でSlurm26800のCANCELLED・経過0秒・割当0台・残存runtime削除を確認した。今回のGPU測定は0回。復元候補はCPU検証のみで、速度改善・serving採用は未確認。", "",
                   "kernel benchはASPIRE H100 EP4を優先する。最新の指示ではASPIREで十分速くなったらFirmusへ進む。目安は通常serving公式6500 output tok/sで、kernel単体の改善率では代替しない。最新ASPIREはc112の6081.54（run40274854588、BF16 draft、FA3 control）。6500には約6.88%必要。c104の5925.07はFA3 n192だったため、差をconcurrencyだけの効果としない。以下のFC2候補にはまだGPU測定結果がない。", ""]
+    if current.get("status") == "aspire_connection_blocked_before_pbs":
+        lines += ["ASPIRE EP4経路はcommit396f1fbで実装済み。run40569440787のLinux全検証は成功したが、接続中継WIN-5IM4VJ0SFOSへのSSH timeoutで準備前に停止した。PBS投入・GPU測定・runtime作成は0。中継は10/27 23:36 JST以降offlineで、直接ASPIRE接続もtimeout。接続復帰前の再投入やFirmusへの切替はしない。", ""]
+    if config.get("megamoe_fc1_cpu_candidate"):
+        lines += ["FC1にもscale読取アドレスの共通化候補を作成した。約509万組のpointer一致、6 geometryのfresh CPU compileを確認。Prefill128/140のFC1静的spanは290→277/280→267命令（整数address-family各−10）、168 registers・spill0を維持。その他4 geometryは命令encoding一致。動的命令数や速度改善率ではなく、GPUでの数値一致・速度は未確認。候補patchはactive bench inventoryに含めない。詳細は `megamoe-fc1-cpu-validation-20261028.json`。", ""]
     for role in ("prefill", "decode"):
         p = data[role]["profile"]
         busy = p["kernel_union_busy_ms"]/p["selected_cycles"]

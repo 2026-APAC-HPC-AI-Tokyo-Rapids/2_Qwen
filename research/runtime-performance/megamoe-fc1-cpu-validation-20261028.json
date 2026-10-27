@@ -1,0 +1,194 @@
+{
+  "status": "CPU_admitted_not_GPU_measured_or_activated",
+  "scope": "Single FC1 scale pointer / constant up-offset / 4-byte induction only; excludes FC2 candidate.",
+  "base_header_sha256": "220f409fd723d931cdad4e70b8e149646ececb5d1ee8554048683043ae413aa2",
+  "candidate_header_sha256": "057a205880812c1b627a7d8ea5bf8b7aedd386ec8a9850a7c488884ef12248ee",
+  "patch": "research/runtime-performance/candidates/fc1-scale-address.patch",
+  "patch_sha256": "8a7c99f65d72edd81f71d9c0c42bda5db55b36d544575bebda840da890e47dce",
+  "toolchain": "CUDA13.0.88 GCC13.3 sm_90a; fresh full-kernel builds on archive-host CPU",
+  "address_pairs_checked": 5094144,
+  "source_inverse_byte_identical": true,
+  "prefill_static_fc1_spans": {
+    "prefill128": {
+      "control": {
+        "static_instruction_sites": 290,
+        "integer_address_family_sites": 60,
+        "ldg_sites": 4,
+        "fmul_sites": 140,
+        "rcp_sites": 4,
+        "qgmma_sites": 4
+      },
+      "candidate": {
+        "static_instruction_sites": 277,
+        "integer_address_family_sites": 50,
+        "ldg_sites": 4,
+        "fmul_sites": 140,
+        "rcp_sites": 4,
+        "qgmma_sites": 4
+      }
+    },
+    "prefill140": {
+      "control": {
+        "static_instruction_sites": 280,
+        "integer_address_family_sites": 54,
+        "ldg_sites": 4,
+        "fmul_sites": 140,
+        "rcp_sites": 4,
+        "qgmma_sites": 4
+      },
+      "candidate": {
+        "static_instruction_sites": 267,
+        "integer_address_family_sites": 44,
+        "ldg_sites": 4,
+        "fmul_sites": 140,
+        "rcp_sites": 4,
+        "qgmma_sites": 4
+      }
+    }
+  },
+  "resources": {
+    "control": {
+      "prefill140": {
+        "registers": 168,
+        "stack_bytes": 0,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "barriers": 3
+      },
+      "prefill128": {
+        "registers": 168,
+        "stack_bytes": 0,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "barriers": 3
+      },
+      "partial_wave": {
+        "registers": 168,
+        "stack_bytes": 8,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "barriers": 16
+      },
+      "masked_nonswap": {
+        "registers": 168,
+        "stack_bytes": 8,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "barriers": 3
+      },
+      "decode_shared": {
+        "registers": 168,
+        "stack_bytes": 8,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "barriers": 16
+      },
+      "decode_independent": {
+        "registers": 168,
+        "stack_bytes": 16,
+        "spill_store_bytes": 8,
+        "spill_load_bytes": 8,
+        "barriers": 16
+      }
+    },
+    "candidate": {
+      "prefill140": {
+        "registers": 168,
+        "stack_bytes": 0,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "barriers": 3
+      },
+      "prefill128": {
+        "registers": 168,
+        "stack_bytes": 0,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "barriers": 3
+      },
+      "partial_wave": {
+        "registers": 168,
+        "stack_bytes": 8,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "barriers": 16
+      },
+      "masked_nonswap": {
+        "registers": 168,
+        "stack_bytes": 8,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "barriers": 3
+      },
+      "decode_shared": {
+        "registers": 168,
+        "stack_bytes": 8,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "barriers": 16
+      },
+      "decode_independent": {
+        "registers": 168,
+        "stack_bytes": 16,
+        "spill_store_bytes": 8,
+        "spill_load_bytes": 8,
+        "barriers": 16
+      }
+    }
+  },
+  "other_geometries": {
+    "decode_independent": {
+      "instruction_encoding_identical": true,
+      "encoding_sha256": "c94ea0f4d6c2012ec58990e2cc2bf89d17b5a9090e3c63c4fb224aafdfb82291"
+    },
+    "decode_shared": {
+      "instruction_encoding_identical": true,
+      "encoding_sha256": "6041ad87567d5bca3cab6010a4f9fe0a7f9cb782d6be864a08a6c280ef87e0f4"
+    },
+    "masked_nonswap": {
+      "instruction_encoding_identical": true,
+      "encoding_sha256": "fe91be4581d11a9a32ec90ab256b75bf89ea5ba7c8cc18e2e85d7087ee2872ed"
+    },
+    "partial_wave": {
+      "instruction_encoding_identical": true,
+      "encoding_sha256": "889b332f051dd2302a642f751fb560aab793c8c91fe48640d07454ac535bbb79"
+    }
+  },
+  "full_kernel_static_instruction_sites": {
+    "prefill140": {
+      "control": 8072,
+      "candidate": 8064
+    },
+    "prefill128": {
+      "control": 7512,
+      "candidate": 7496
+    },
+    "partial_wave": {
+      "control": 6840,
+      "candidate": 6840
+    },
+    "masked_nonswap": {
+      "control": 4520,
+      "candidate": 4520
+    },
+    "decode_shared": {
+      "control": 6832,
+      "candidate": 6832
+    },
+    "decode_independent": {
+      "control": 10200,
+      "candidate": 10200
+    }
+  },
+  "gpu_used": false,
+  "limits": [
+    "The FC1 static span includes both first-K and later-K branches; its site count is not an executed per-iteration count.",
+    "Address proof and preserved source arithmetic do not establish GPU output equality, memory ordering, or performance.",
+    "No H100/H200 timing projection is made; old scale-cache experiments are not the same transformation."
+  ],
+  "raw_artifacts": "/Users/yuta/Dev/APAC/outputs/moe-fc2-recovery-20261028/fc1-address-cpu/",
+  "recovered_archive_sha256": "4024a591c3ad5bc3b8dac7ea1d860363e3d78df862bfd8be6de89eac105506ed",
+  "remote_private_scratch_removed": true,
+  "shared_toolchain_retained": true,
+  "active_bench_inventory": "fc2-address only; this FC1 patch is deliberately outside the active campaign"
+}
