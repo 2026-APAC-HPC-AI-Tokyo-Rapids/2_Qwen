@@ -18,3 +18,10 @@ test -e "${RUNTIME_DIR}/run-success"
 test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
 test -s "${RUNTIME_DIR}/results/score.json"
 if [[ -s "${RUNTIME_DIR}/source/firmus-framework.json" && "$(jq -r '.framework' "${RUNTIME_DIR}/source/firmus-framework.json")" == sglang && "$(jq -r '.speculation.algorithm' "${RUNTIME_DIR}/source/firmus-framework.json")" == EAGLE3 ]]; then test -s "${RUNTIME_DIR}/results/eagle-acceptance.json"; fi
+
+if [[ -s "${RUNTIME_DIR}/source/firmus-framework.json" ]]; then
+  routing_capture_samples=$(jq -r '.prefill.routing_capture_samples // 0' "${RUNTIME_DIR}/source/firmus-framework.json")
+  if (( routing_capture_samples > 0 )); then
+    jq -e --argjson samples "${routing_capture_samples}" '.schema == "prefill-routing-summary/v1" and .valid == true and .expected_workers == 3 and .expected_ranks == 4 and .samples_per_rank == $samples' "${RUNTIME_DIR}/results/prefill-routing-summary.json" >/dev/null
+  fi
+fi
