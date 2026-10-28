@@ -230,5 +230,113 @@
     "nominal_decode_duration_ms_at_same_itl": 3171.813116826967,
     "remaining_mean_ttft_budget_ms": 951.5160272133749,
     "formula": "Little law: C >= request_rate * mean_end_to_end_latency; nominal decode=199*mean_ITL. Assumes all215 request slots active, same delivery fraction, fixed200-token output; finite-window and variable output effects are not inferred away."
+  },
+  "memory_comparison_and_profiler_evidence": {
+    "expert_weight_model": {
+      "description": "Unique FP8 expert weights read once per microbatch, amortized per request. Logical cold-weight model, NOT measured HBM bytes or all issued TMA/L2 loads. Cache reuse, per-M-tile repeated accesses, scale loads and activation/output traffic are excluded.",
+      "current_bytes_per_request": 62096670720,
+      "pp4_mb2_bytes_per_request": 113548197888.0,
+      "ratio": 1.8285714285714285,
+      "current_peak_HBM_time_ms": 12.9368064,
+      "pp4_mb2_peak_HBM_time_ms": 23.65587456,
+      "extra_peak_HBM_time_ms": 10.719068159999999,
+      "current_useful_moe_FLOP_per_weight_byte": 1828.5714285714287,
+      "pp4_mb2_useful_moe_FLOP_per_weight_byte": 1000.0,
+      "compute_HBM_ridge_FLOP_per_byte_at_1_4GHz": 315.392,
+      "interpretation": "Both unique-weight-only arithmetic intensities exceed the nominal ridge. That does not establish whole-kernel compute limitation: L2/shared delivery, instruction issue and synchronization may stall tensor work. Neither a1.83x kernel slowdown nor unchanged runtime follows. Do not sum compute and HBM time floors."
+    },
+    "nsys": {
+      "run": "40313004834",
+      "relation_to_current": "Historical same target-kernel selection baseline, BF16 draft; NOT the9235/9234 normal serving run.",
+      "scope": "Same-run same-capture timestamp membership. The counter sampling interval may extend outside the kernel; all selected windows require every CUDA device to be executing MegaMoE at the sample timestamp.",
+      "sampling_interval_ms_approx": 1,
+      "metric_streams": 12,
+      "source": "/Users/yuta/Dev/APAC/outputs/moe-fc2-recovery-20261028/communication-audit/summary.json",
+      "source_sha256": "96abcb6169ce7982a4db59126dc5d16dd3d18c4d1a340ccda903024b92cedd55",
+      "selected_metrics": {
+        "4": {
+          "name": "SM Issue [Throughput %]",
+          "mean_range_across_metric_devices": [
+            35.49755938821998,
+            36.78962962962963
+          ],
+          "p95_range": [
+            41.0,
+            42.0
+          ],
+          "maximum_stored_percent": 44.0
+        },
+        "5": {
+          "name": "Tensor Active [Throughput %]",
+          "mean_range_across_metric_devices": [
+            50.961926456231694,
+            52.992592592592594
+          ],
+          "p95_range": [
+            68.0,
+            70.0
+          ],
+          "maximum_stored_percent": 74.0
+        },
+        "18": {
+          "name": "DRAM Read Bandwidth [Throughput %]",
+          "mean_range_across_metric_devices": [
+            15.082465019350998,
+            15.308005003126954
+          ],
+          "p95_range": [
+            20.0,
+            20.0
+          ],
+          "maximum_stored_percent": 27.0
+        },
+        "19": {
+          "name": "DRAM Write Bandwidth [Throughput %]",
+          "mean_range_across_metric_devices": [
+            6.773146769871985,
+            6.819574734208881
+          ],
+          "p95_range": [
+            9.0,
+            9.0
+          ],
+          "maximum_stored_percent": 11.0
+        }
+      },
+      "limitations": [
+        "No raw DRAM byte counts, L2 traffic or per-PC stalls.",
+        "No FC1/FC2 phase resolution; sample interval may overlap other kernels.",
+        "Low average bandwidth is not proof of absent memory latency or short burst saturation."
+      ]
+    },
+    "ncu": {
+      "available_report": "40172396762 FA3 N224 single-kernel probe",
+      "source": "/Users/yuta/Dev/APAC/outputs/prefill-memory-20261027/fa3-f2-audit/raw/results/results/fa3-prefill-m2-raw.csv",
+      "source_sha256": "1139996ababa0741e3fb23208ab4c3a1eb869e829692a54ea2b4963e6851f17e",
+      "selected_metrics": {
+        "dram__bytes_read.sum": {
+          "value": "36.471296",
+          "unit": "Mbyte"
+        },
+        "dram__bytes_write.sum": {
+          "value": "36.943616",
+          "unit": "Mbyte"
+        },
+        "gpu__time_duration.sum": {
+          "value": "370.848000",
+          "unit": "us"
+        },
+        "lts__throughput.avg.pct_of_peak_sustained_elapsed": {
+          "value": "25.734969",
+          "unit": "%"
+        },
+        "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed": {
+          "value": "42.336791",
+          "unit": "%"
+        }
+      },
+      "limitations": "This is FA3 N224, not current N192 and not MegaMoE. No current MegaMoE NCU report was found in the inspected saved artifacts. Do not transfer FA3 cache/stall conclusions to expert GEMMs."
+    },
+    "decision": "PP4/EP1 mb2 remains deprioritized. Its larger unique weight working set and lower inter-request reuse have not been offset by demonstrated critical-path savings. No additional GPU run authorized or launched by this analysis."
   }
 }
