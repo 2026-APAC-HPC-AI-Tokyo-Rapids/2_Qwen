@@ -37,6 +37,9 @@ export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
 export SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1
 PROFILE=${PROFILE:-false}
 [[ "${PROFILE}" == true || "${PROFILE}" == false ]]
+routing_capture_samples=$(jq -er '.prefill.routing_capture_samples // 0' "${ROOT}/source/firmus-framework.json")
+[[ "${routing_capture_samples}" =~ ^[0-8]$ ]]
+if (( routing_capture_samples > 0 )); then [[ "${PROFILE}" == true ]]; fi
 jq -e '.framework == "sglang" and .workload == "official"' "${ROOT}/source/firmus-framework.json" >/dev/null
 
 NODES=($(scontrol show hostnames "${SLURM_JOB_NODELIST}"))
@@ -84,6 +87,7 @@ telemetry_pids=()
 cleanup_all() {
   status=$?
   trap - EXIT INT TERM
+  for worker in prefill-0 prefill-1 prefill-2; do rm -f "${ROOT}/results/prefill-routing/${worker}/active"; done
   if [[ -n "${profile_capture_pid}" ]]; then kill "${profile_capture_pid}" 2>/dev/null || true; wait "${profile_capture_pid}" 2>/dev/null || true; fi
   for pid in "${telemetry_pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
   for pid in "${telemetry_pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
@@ -97,6 +101,7 @@ trap 'exit 143' TERM
 if [[ "${PROFILE}" == true ]]; then
   "${ROOT}/nsys/bin/nsys" --version >"${ROOT}/profile/nsys-version.txt"
   printf 'Separate normal benchmark (60/120/30), then the same serving configuration with a profile-only client (20/30/90). Capture starts five seconds into the profiling phase and lasts five seconds after all start acknowledgements. CUDA graph nodes and Torch CPU stage spans cover every TP rank. Exclude start/stop/export tails; profile/client is not an adoption score. The normal pass has tracing disabled, but uses the Nsight launcher.\n' >"${ROOT}/profile/interpretation.txt"
+  if (( routing_capture_samples > 0 )); then printf 'Prefill routing capture copies physical top-8 to the host during the separate profile pass. These Nsight timings contain routing copy overhead and must not be used for performance adoption.\n' >>"${ROOT}/profile/interpretation.txt"; fi
 fi
 for worker in 0 1; do printf 'prefill-%s\t%s\t%s\t4\n' "${worker}" "${HEAD_IP}" "$((30100 + worker))"; done >"${ROOT}/source/worker-endpoints.tsv"
 for worker in 2; do printf 'prefill-%s\t%s\t%s\t4\n' "${worker}" "${TAIL_IP}" "$((30100 + worker))"; done >>"${ROOT}/source/worker-endpoints.tsv"
@@ -111,6 +116,14 @@ tp=$4
 export SGLANG_HOST_IP=$5
 shift 5
 role=${name%%-*}
+runtime_dir=$(dirname "$(dirname "$0")")
+# Keep inherited diagnostic variables out of Decode and ordinary benchmark workers.
+unset SGLANG_PREFILL_ROUTING_DIR SGLANG_PREFILL_ROUTING_SAMPLES
+routing_capture_samples=$(/opt/sglang/venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1])).get("prefill", {}).get("routing_capture_samples", 0))' "${runtime_dir}/source/firmus-framework.json")
+if [[ "$role" == prefill ]] && (( routing_capture_samples > 0 )); then
+  export SGLANG_PREFILL_ROUTING_DIR="${runtime_dir}/results/prefill-routing/${name}" SGLANG_PREFILL_ROUTING_SAMPLES="${routing_capture_samples}"
+  mkdir -p "${SGLANG_PREFILL_ROUTING_DIR}"
+fi
 # Prefill: a 3994-token prompt must not straddle two 4096-token batches (prefill-request-aligned-chunks.patch; images without it ignore this).
 # Tier 2 switches: equal-load DP ties rotate (dp-total-requests-rotate-ties.patch);
 # Decode admission without host waits on the WAR-fenced stream (decode-async-admission.patch, with decode_polling_interval 1).
@@ -248,6 +261,10 @@ if (( benchmark_status == 0 )); then
   /usr/bin/python3 "${ROOT}/scripts/collect-eagle-acceptance.py" --cluster firmus --config "${ROOT}/source/firmus-framework.json" --endpoints "${ROOT}/source/worker-endpoints.tsv" --server-info-dir "${ROOT}/results" --log-dir "${ROOT}/logs" --output "${ROOT}/results/eagle-acceptance.json"
 fi
 if [[ "${PROFILE}" == true ]]; then
+  (( benchmark_status == 0 )) || exit "${benchmark_status}"
+  if (( routing_capture_samples > 0 )); then
+    for worker in prefill-0 prefill-1 prefill-2; do touch "${ROOT}/results/prefill-routing/${worker}/active"; done
+  fi
   "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" >"${ART}/profile-capture.log" 2>&1 &
   profile_capture_pid=$!
   # A failed profile client must not cancel capture or report flushing; keep both statuses.
@@ -256,6 +273,10 @@ if [[ "${PROFILE}" == true ]]; then
   profile_capture_status=0
   wait "${profile_capture_pid}" || profile_capture_status=$?
   profile_capture_pid=
+  if (( routing_capture_samples > 0 )); then
+    for worker in prefill-0 prefill-1 prefill-2; do rm -f "${ROOT}/results/prefill-routing/${worker}/active"; done
+    srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-image="${SGLANG}" --container-mounts="$(mounts routing-summary)" /opt/sglang/venv/bin/python "${ROOT}/scripts/summarize-prefill-routing.py" --directory "${ROOT}/results/prefill-routing" --placement "${ROOT}/source/prefill-expert-location.json" --output "${ROOT}/results/prefill-routing-summary.json" --expected-workers 3 --expected-ranks 4 --samples-per-rank "${routing_capture_samples}" >"${ART}/prefill-routing-summary.log" 2>&1
+  fi
   printf 'profile_client_status=%s\nprofile_capture_status=%s\n' "${profile_client_status}" "${profile_capture_status}" >"${ART}/profile-status.txt"
   (( profile_capture_status == 0 )) || exit "${profile_capture_status}"
   expected_reports=$(wc -l <"${ROOT}/source/worker-endpoints.tsv")

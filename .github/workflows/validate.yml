@@ -43,7 +43,7 @@ jobs:
         run: uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers
 
       - name: 単体テストを実行
-        run: uv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests
+        run: uv run --project qwen-experiment-metrics --with 'numpy>=1.26,<3' pytest -q qwen-experiment-metrics/tests
 
   gigatoken:
     name: gigatoken CPU互換性
