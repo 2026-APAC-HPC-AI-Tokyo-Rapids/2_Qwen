@@ -21,6 +21,7 @@ def summarize(root: Path, job_id: str, status: str, cluster: str = "firmus") -> 
     score = read_artifact(root, "score.json")
     export = read_artifact(root, "profile_export_aiperf.json")
     capture = read_artifact(root, "validation.json")
+    routing = read_artifact(root, "prefill-routing-summary.json")
     profile = identity.get("profile", False)
     reports = list(root.rglob("*.nsys-rep")) if root.exists() else []
     run_id = os.environ.get("GITHUB_RUN_ID", "unknown")
@@ -66,6 +67,8 @@ def summarize(root: Path, job_id: str, status: str, cluster: str = "firmus") -> 
         lines += ["", f"Nsight: **{len(reports)} / {expected_reports} reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **{score_note}**"]
     else:
         lines += ["", "Nsight: disabled."]
+    if config.get("prefill", {}).get("routing_capture_samples", 0):
+        lines += ["", f"Prefill source-rank routing diagnostic: **{'valid' if routing.get('valid') else 'missing or invalid'}**; {routing.get('expected_workers', 'unavailable')} workers × {routing.get('expected_ranks', 'unavailable')} ranks × {routing.get('samples_per_rank', 'unavailable')} samples. Raw captures: `results/prefill-routing/`; aggregate: `results/prefill-routing-summary.json`. Routing copies affect the separate profile pass and its Nsight timings; do not use those timings for performance adoption. The score above remains from the normal benchmark pass."]
     lines += ["", f"Archive after the archive job succeeds: `archive-host:/srv/qwen-artifacts/{run_id}/{attempt}/`.", "Reports: `profile/`; conditions and image hashes: `source/`; raw requests and score: `results/`.", ""]
     return "\n".join(lines)
 
