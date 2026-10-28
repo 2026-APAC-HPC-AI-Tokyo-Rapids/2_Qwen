@@ -1,7 +1,9 @@
 """WG-separated timeline decoding and control-only staging, without GPU imports."""
 import importlib.util
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -70,7 +72,7 @@ def test_unknown_timeline_schema_is_rejected(summary):
         summary.parse(words)
 
 
-def test_adopted_header_is_only_in_serving_overlay_and_build_context():
+def test_adopted_header_is_only_in_serving_overlay_and_build_context(tmp_path):
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert len(config["deep_gemm_overlay_patches"]) == 8
     assert config["deep_gemm_overlay_patches"][-3:] == ["patches/deep-gemm-overlay/sm90-decode-independent-wg.patch", "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch", "patches/deep-gemm-bench/fc2-address/fc2-output-address.patch"]
@@ -81,10 +83,28 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     assert (bench / "timeline").is_file()
     assert (bench / "prefill-only").is_file()
     assert not (bench / "prefill-memory").exists()
-    for name in ("containers/Dockerfile", "scripts/build-sglang-container.sh", "containers/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg-host.py"):
+    for name in ("containers/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg.py", "scripts/check-sm90-independent-wg-host.py"):
         assert "deep-gemm-bench" not in (ROOT / name).read_text()
     checker = (ROOT / "containers/check-sm90-independent-wg.py").read_text()
     assert 'if patch.name == CANDIDATE:' in checker
+    # Execute the production staging block. Run 40727415289 reached the image
+    # compile gate with its adopted FC2 patch missing; a path-string ban did not
+    # test that the configured compile inputs were actually present.
+    build = (ROOT / "scripts/build-sglang-container.sh").read_text()
+    start = build.index('cp -r "${GITHUB_WORKSPACE}/patches/deep-gemm-overlay"')
+    stop = build.index("git clone ", start)
+    context = tmp_path / "context"
+    (context / "containers").mkdir(parents=True)
+    subprocess.run(["bash", "-euc", build[start:stop]], env={**os.environ, "GITHUB_WORKSPACE": str(ROOT), "context": str(context)}, check=True)
+    expected = {Path(p).relative_to("patches") for p in config["deep_gemm_overlay_patches"]}
+    staged = {p.relative_to(context) for p in context.rglob("*.patch")}
+    assert staged == expected
+    assert json.loads((context / "firmus-framework.json").read_text()) == config
+    for path in expected:
+        assert (context / path).read_bytes() == (ROOT / "patches" / path).read_bytes()
+    dockerfile = (ROOT / "containers/Dockerfile").read_text()
+    for directory in {p.parts[0] for p in expected}:
+        assert f"COPY {directory} /opt/apac/{directory}\n" in dockerfile
 
 
 def test_patch_layout_matches_reader_and_only_wraps_existing_stage_waits():
