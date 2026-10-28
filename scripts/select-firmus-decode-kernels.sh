@@ -18,6 +18,10 @@ if [[ "${part}" == dense ]]; then
   dense=$?
   if (( dense == 0 )); then cat "${out}/dense-selected.env" >>"${out}/dense.env"; fi
   printf 'dense=%s\n' "${dense}" >"${out}/dense-status.txt"
+  timeout --kill-after=5 260 "${torchrun}" --standalone --nproc-per-node=4 "${root}/scripts/select-firmus-decode-prologue.py" --output "${out}/prologue.json" --env-output "${out}/prologue-selected.env" >"${out}/prologue.log" 2>&1
+  prologue=$?
+  if (( prologue == 0 )); then cat "${out}/prologue-selected.env" >>"${out}/dense.env"; fi
+  printf 'prologue=%s\n' "${prologue}" >"${out}/prologue-status.txt"
 elif [[ "${part}" == fa3 ]]; then
   timeout --kill-after=5 175 "${torchrun}" --standalone --nproc-per-node=4 "${root}/scripts/select-firmus-decode-fa3.py" --output "${out}/fa3.json" --env-output "${out}/fa3-selected.env" >"${out}/fa3.log" 2>&1
   fa3=$?

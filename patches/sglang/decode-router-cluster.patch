@@ -1,0 +1,129 @@
+--- /dev/null
++++ b/python/sglang/kernels/jit/csrc/gemm/decode_router_kernel.cuh
+@@ -0,0 +1,55 @@
++#pragma once
++#include <cooperative_groups.h>
++#include <cuda_bf16.h>
++#include <mma.h>
++
++namespace decode_router {
++
++__global__ __launch_bounds__(128) void gate(const __nv_bfloat16* x, const __nv_bfloat16* w, __nv_bfloat16* y, int rows) {
++    using namespace nvcuda;
++    auto cluster = cooperative_groups::this_cluster();
++    const int rank = cluster.block_rank();
++    const int tile = blockIdx.x / 4;
++    const int row = (tile / 4) * 32;
++    const int expert = (tile % 4) * 32;
++    const int tid = threadIdx.x;
++    const int warp = tid / 32;
++    __shared__ __align__(32) __nv_bfloat16 a[32 * 64];
++    __shared__ __align__(32) __nv_bfloat16 b[32 * 64];
++    __shared__ __align__(32) float partial[32 * 32];
++    wmma::fragment<wmma::accumulator, 16, 16, 16, float> acc;
++    wmma::fill_fragment(acc, 0.0f);
++    for (int k = rank * 1024; k < (rank + 1) * 1024; k += 64) {
++        for (int i = tid; i < 32 * 8; i += 128) {
++            const int r = i / 8;
++            const int c = (i % 8) * 8;
++            reinterpret_cast<uint4*>(a)[i] = row + r < rows ? *reinterpret_cast<const uint4*>(x + (row + r) * 4096 + k + c) : uint4{};
++            reinterpret_cast<uint4*>(b)[i] = *reinterpret_cast<const uint4*>(w + (expert + r) * 4096 + k + c);
++        }
++        __syncthreads();
++#pragma unroll
++        for (int kk = 0; kk < 64; kk += 16) {
++            wmma::fragment<wmma::matrix_a, 16, 16, 16, __nv_bfloat16, wmma::row_major> av;
++            wmma::fragment<wmma::matrix_b, 16, 16, 16, __nv_bfloat16, wmma::col_major> bv;
++            wmma::load_matrix_sync(av, a + (warp / 2) * 16 * 64 + kk, 64);
++            wmma::load_matrix_sync(bv, b + (warp % 2) * 16 * 64 + kk, 64);
++            wmma::mma_sync(acc, av, bv, acc);
++        }
++        __syncthreads();
++    }
++    wmma::store_matrix_sync(partial + (warp / 2) * 16 * 32 + (warp % 2) * 16, acc, 32, wmma::mem_row_major);
++    cluster.sync();
++    if (rank == 0) {
++        for (int i = tid; i < 32 * 32; i += 128) {
++            float value = partial[i];
++#pragma unroll
++            for (int peer = 1; peer < 4; ++peer)
++                value += cluster.map_shared_rank(partial, peer)[i];
++            if (row + i / 32 < rows)
++                y[(row + i / 32) * 128 + expert + i % 32] = __float2bfloat16_rn(value);
++        }
++    }
++    cluster.sync();
++}
++
++}  // namespace decode_router
+--- /dev/null
++++ b/python/sglang/kernels/jit/csrc/gemm/decode_router.cuh
+@@ -0,0 +1,18 @@
++#pragma once
++#include "decode_router_kernel.cuh"
++#include <sgl_kernel/tensor.h>
++#include <sgl_kernel/utils.cuh>
++
++struct DecodeRouterGate {
++    static void run(tvm::ffi::TensorView input, tvm::ffi::TensorView weight, tvm::ffi::TensorView output) {
++        using namespace host;
++        auto rows = SymbolicSize{"rows"};
++        auto device = SymbolicDevice{};
++        device.set_options<kDLCUDA>();
++        TensorMatcher({rows, 4096}).with_dtype<__nv_bfloat16>().with_device(device).verify(input);
++        TensorMatcher({128, 4096}).with_dtype<__nv_bfloat16>().with_device(device).verify(weight);
++        TensorMatcher({rows, 128}).with_dtype<__nv_bfloat16>().with_device(device).verify(output);
++        RuntimeCheck(rows.unwrap() >= 144 && rows.unwrap() <= 176, "Decode router requires 144..176 rows");
++        LaunchKernel(dim3(((rows.unwrap() + 31) / 32) * 16), 128, device.unwrap()).enable_cluster(dim3(4, 1, 1))(decode_router::gate, static_cast<const __nv_bfloat16*>(input.data_ptr()), static_cast<const __nv_bfloat16*>(weight.data_ptr()), static_cast<__nv_bfloat16*>(output.data_ptr()), static_cast<int>(rows.unwrap()));
++    }
++};
+--- /dev/null
++++ b/python/sglang/kernels/ops/moe/decode_router.py
+@@ -0,0 +1,35 @@
++"""Opt-in Qwen Decode router with cluster-local FP32 split-K reduction."""
++import os
++
++import torch
++
++from sglang.kernels.jit.utils import cache_once, load_jit
++from sglang.srt.utils.custom_op import register_custom_op
++
++
++@cache_once
++def decode_router_module():
++    return load_jit("decode_router", cuda_files=["gemm/decode_router.cuh"], cuda_wrappers=[("run", "DecodeRouterGate::run")])
++
++
++def can_use_decode_router(hidden_states, weight, forward_mode):
++    return (
++        os.environ.get("SGLANG_DECODE_ROUTER") == "cluster"
++        and (forward_mode.is_decode() or forward_mode.is_target_verify())
++        and hidden_states.ndim == 2 and 144 <= hidden_states.shape[0] <= 176
++        and hidden_states.shape[1] == 4096 and weight.shape == (128, 4096)
++        and hidden_states.dtype == weight.dtype == torch.bfloat16
++        and hidden_states.is_cuda and weight.device == hidden_states.device
++        and hidden_states.is_contiguous() and weight.is_contiguous()
++    )
++
++
++@register_custom_op(mutates_args=["output"])
++def _decode_router(input: torch.Tensor, weight: torch.Tensor, output: torch.Tensor) -> None:
++    decode_router_module().run(input, weight, output)
++
++
++def decode_router(hidden_states, weight):
++    output = torch.empty((hidden_states.shape[0], 128), dtype=torch.bfloat16, device=hidden_states.device)
++    _decode_router(hidden_states, weight, output)
++    return output
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -397,3 +397,8 @@
+         if num_tokens:
+-            router_logits, _ = self.gate(hidden_states)
++            from sglang.kernels.ops.moe.decode_router import can_use_decode_router, decode_router
++
++            if can_use_decode_router(hidden_states, self.gate.weight, forward_batch.forward_mode):
++                router_logits = decode_router(hidden_states, self.gate.weight)
++            else:
++                router_logits, _ = self.gate(hidden_states)
+             # A static --init-expert-location loads FusedMoE weights in physical

@@ -343,8 +343,8 @@ def test_aspire_megamoe_uses_two_prefill_and_two_decode_workers(tmp_path: Path, 
     firmus = json.loads((REPOSITORY / "configs/firmus-framework.json").read_text())
     assert config["container_sha256"] == firmus["images"]["sglang"]["sha256"] == "1f247668933c7252d3dfbe8f6c23897d354f095d56842788d4415a85d7dc5e55"
     assert config["prefill_expert_location"] == "configs/firmus-prefill-replica4-expert-location.json"
-    assert firmus["sglang_overlay_patches"] == config["sglang_overlay_patches"] + ["patches/sglang/prefill-start-align.patch"]
-    assert config["deep_gemm_overlay_patches"] == firmus["deep_gemm_overlay_patches"]
+    assert firmus["sglang_overlay_patches"] == config["sglang_overlay_patches"] + ["patches/sglang/prefill-start-align.patch", "patches/sglang/decode-router-cluster.patch"]
+    assert firmus["deep_gemm_overlay_patches"] == config["deep_gemm_overlay_patches"] + ["patches/deep-gemm-overlay/sm90-decode-prepare.patch"]
     workflow = (REPOSITORY / ".github/workflows/aspire2ap.yml").read_text()
     assert workflow.index("jq -er .container_sha256 configs/aspire-serving.json") < workflow.index('PROVISION_OUTPUT="${GITHUB_OUTPUT}" scripts/provision-qwen-pd.sh')
 

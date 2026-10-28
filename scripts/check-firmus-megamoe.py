@@ -67,6 +67,8 @@ def main():
     cases += [("swapab-boundary-mixed", [160, 161, 192, 193]), ("decode-graph-swapab-144", [144, 140, 136, 132]), ("swapab-hot-experts-144", [144] * 4)]
     # The early-publish assignment ring must leave no state after an empty call.
     cases += [("decode-all-idle", [0] * 4), ("decode-live-after-idle", [144] * 4)]
+    if os.environ.get("DG_SM90_DECODE_PREPARE") == "1":
+        cases += [("decode-graph-prepare-176", [144, 152, 168, 176]), ("decode-graph-prepare-tail", [145, 159, 175, 176])]
     for case, counts in cases:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         if case == "decode-quant-zero":
