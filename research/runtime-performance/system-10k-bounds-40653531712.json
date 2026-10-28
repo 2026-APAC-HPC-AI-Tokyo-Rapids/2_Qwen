@@ -130,7 +130,37 @@
       "combined_pipeline_bytes_per_prompt": 1277952000,
       "single_cross_node_boundary_bytes_per_second_at_target": 6834399829.742112,
       "whole_fp8_target_weight_mean_GB_per_stage_estimate": 19.583333333333332,
-      "classification": "Structural candidate, not implemented or measured. Complete token/model operations retained. Need stage-balanced microbatches, correct EAGLE auxiliary states/draft extend, PP KV lifetime and NIXL transfer, and local MegaMoE specialization. Additional fill/drain/SLA loss can change the required stage period."
+      "classification": "Structural candidate, not implemented or measured. Complete token/model operations retained. Need stage-balanced microbatches, correct EAGLE auxiliary states/draft extend, PP KV lifetime and NIXL transfer, and local MegaMoE specialization. Additional fill/drain/SLA loss can change the required stage period.",
+      "closed_loop_budget_assessment": "At current nominal ITL and c215, only about951.5ms is available for meanTTFT. A901-921ms ideal pipeline traversal leaves little time for queueing, draft extend and transfer; do not prioritize this layout from payload reduction alone.",
+      "layer_proportional_traversal_ms": 901.3789291623071
+    },
+    "pp4_ep1_three_prefill_replicas": {
+      "gpu_partition": "P:3 independent4-stage pipelines, EP1; D:4 unchanged. Place each pipeline inside one8-GPU NVLink node.",
+      "microbatch_requests": 2,
+      "layers_per_stage": [
+        24,
+        24,
+        23,
+        23
+      ],
+      "required_stage_period_ms": 115.06965053135838,
+      "equal_period_traversal_ms": 460.2786021254335,
+      "layer_proportional_traversal_ms": 450.6894645811537,
+      "mean_ttft_budget_ms_at_c215_and_current_nominal_itl": 951.5160272133749,
+      "remaining_ttft_budget_after_equal_period_traversal_ms": 491.23742508794135,
+      "bf16_hidden_and_residual_bytes_per_prompt": 196608000,
+      "eagle_aux_forwarding_bytes_per_prompt": 163840000,
+      "combined_pipeline_boundary_bytes_per_prompt": 360448000,
+      "aux_assumption": "Capture immediately before layers2/47/91, matching pinned Qwen default. With stages[24,24,23,23], earlystate crosses3 boundaries, middlestate2, lateststate0. Correct capture on non-last stages and auxiliary forwarding must be implemented; current Qwen enables capture only on the last PP rank.",
+      "remote_fc2_partial_bytes_per_prompt": 0,
+      "current_remote_fc2_partial_bytes_per_prompt": 12231985493.333334,
+      "moe_padded_flops_ratio_vs_current_ep4": 1.0592472504647596,
+      "extra_moe_tensor_floor_ms_at_1_4GHz_per_request": 4.768985415983662,
+      "nominal_fp8_expert_weight_bytes_per_request_if_read_once_per_microbatch": 113548197888.0,
+      "weight_HBM_floor_ms_at_4_8TB_s": 23.65587456,
+      "max_stage_core_tensor_floor_ms_at_1_4GHz_including_moe_padding": 69.93800480523693,
+      "classification": "Quantitatively less constrained than PP12/mb4 by latency, not implemented or a speed prediction. Remote FC2 bytes become local writes; local BF16 partial/combine work is not eliminated. Smaller microbatch increases weight reads and padding; measured grouping may change routing/rounding. Stage balancing, EAGLE auxiliary/draft handling, NIXL/KV lifetime and localMegaMoE specialization remain required.",
+      "removed_remote_fc2_payload_to_introduced_boundary_payload_ratio": 33.93550662878788
     }
   },
   "component_budget_if_old_profile_costs_remain_applicable": {
@@ -159,5 +189,46 @@
       "note": "Shorter speculative chain step improvement was cancelled by lower acceptance."
     }
   ],
-  "reference_article": "https://superhotdogcat.github.io/ja/blog/2026/10/25/modelingestimation/"
+  "reference_article": "https://superhotdogcat.github.io/ja/blog/2026/10/25/modelingestimation/",
+  "moe_tile_padding_screen": {
+    "held_out_requests": 48,
+    "source_capture_tokens": 4001,
+    "tile_M": 128,
+    "current_ep4_useful_rows": 144420096,
+    "current_ep4_padded_rows": 154987648,
+    "current_ep4_tile_overhead_ratio": 1.0731723097594397,
+    "ep1_microbatch_1": {
+      "padded_rows": 184383104,
+      "tile_overhead_ratio": 1.2767136230126865,
+      "padded_work_vs_current_ep4_ratio": 1.1896632175487947
+    },
+    "ep1_microbatch_2": {
+      "padded_rows": 164170240,
+      "tile_overhead_ratio": 1.1367548183876017,
+      "padded_work_vs_current_ep4_ratio": 1.0592472504647596
+    },
+    "ep1_microbatch_4": {
+      "padded_rows": 154120192,
+      "tile_overhead_ratio": 1.0671658326553113,
+      "padded_work_vs_current_ep4_ratio": 0.9944030636557566
+    },
+    "provenance": "Existing held-out logical routing counts from40621030371;48 prompts,4001tokens each. EP1 groups contiguous source-rank requests in groups of1,2,4; a hypothetical grouping, not a measured PP workload. N/K tile factors assumed unchanged. No GPU run."
+  },
+  "tensor_floor_with_observed_moe_padding": {
+    "clock_GHz_assumption": 1.4,
+    "core_flops_per_nominal_prompt": 200124460516486.88,
+    "floor_ms": 132.19294066093863,
+    "required_useful_plus_moe_padding_tensor_fraction": 0.574404024217115,
+    "exclusions": "Still excludes attention/dense tile rounding, non-tensor instructions, scale/activation movement, draft and synchronization. This is not an attainable latency forecast."
+  },
+  "closed_loop_concurrency_budget": {
+    "concurrency": 215,
+    "target_steady_requests_per_second": 52.1423326854104,
+    "maximum_mean_request_latency_ms": 4123.329144040342,
+    "measured_mean_itl_ms": 15.938759381040036,
+    "nominal_after_first_tokens": 199,
+    "nominal_decode_duration_ms_at_same_itl": 3171.813116826967,
+    "remaining_mean_ttft_budget_ms": 951.5160272133749,
+    "formula": "Little law: C >= request_rate * mean_end_to_end_latency; nominal decode=199*mean_ITL. Assumes all215 request slots active, same delivery fraction, fixed200-token output; finite-window and variable output effects are not inferred away."
+  }
 }
