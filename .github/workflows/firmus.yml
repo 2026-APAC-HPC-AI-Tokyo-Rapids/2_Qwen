@@ -83,7 +83,7 @@ jobs:
           done
 
       - name: 配備失敗時の実行環境を削除
-        if: failure() && steps.provision.outputs.runtime_dir != ''
+        if: (failure() || cancelled()) && steps.provision.outputs.runtime_dir != ''
         env:
           RUNTIME_DIR: ${{ steps.provision.outputs.runtime_dir }}
         run: rm -rf -- "${RUNTIME_DIR:?}"
@@ -104,8 +104,17 @@ jobs:
           persist-credentials: false
       - name: Slurmジョブを投入
         id: submit
+        env:
+          DYNAMO: ${{ inputs.dynamo }}
         run: |
           cd "${RUNTIME_DIR}"
+          if [[ "${DYNAMO}" != true ]]; then
+            pp_size="$(jq -er '.prefill.pp // 1' source/firmus-framework.json)"
+            if [[ "${pp_size}" == 4 ]]; then
+              image_sha="$(jq -er .images.sglang.sha256 source/firmus-framework.json)"
+              jq -e --arg sha "${image_sha}" '.schema == "pp4-cpu-gate/v1" and .result == "pass" and .image_sha256 == $sha' source/pp4-cpu-gate.json >/dev/null
+            fi
+          fi
           job_id="$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/submit.sbatch")"
           [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
@@ -115,9 +124,26 @@ jobs:
         shell: bash
         run: scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-qwen-job.sh
 
+      - name: 中断時は自分のSlurmジョブだけ停止して終了を待つ
+        id: terminal
+        if: always() && steps.submit.outputs.job_id != ''
+        env:
+          OWN_JOB_ID: ${{ steps.submit.outputs.job_id }}
+          CANCEL_JOB: ${{ job.status != 'success' }}
+        run: |
+          [[ "${OWN_JOB_ID}" =~ ^[0-9]+$ ]]
+          if [[ "${CANCEL_JOB}" == true ]]; then scancel "${OWN_JOB_ID}" || printf 'scancel failed for job %s; checking terminal state.\n' "${OWN_JOB_ID}" >&2; fi
+          for attempt in {1..24}; do
+            state="$(sacct --allocations --jobs="${OWN_JOB_ID}" --noheader --parsable2 --format=JobID,State | awk -F'|' -v id="${OWN_JOB_ID}" '$1 == id {print $2}')"
+            case "${state}" in COMPLETED|FAILED|TIMEOUT|CANCELLED*|OUT_OF_MEMORY|NODE_FAIL|PREEMPTED|BOOT_FAIL|DEADLINE) exit 0;; esac
+            sleep 5
+          done
+          printf 'Slurm job %s has not reached terminal state (%s); preserving runtime.\n' "${OWN_JOB_ID}" "${state}" >&2
+          exit 1
+
       - name: ログ・AIPerf・profile・来歴をrunnerへ回収
         id: collect
-        if: always() && steps.submit.outputs.job_id != ''
+        if: always() && steps.terminal.outcome == 'success'
         shell: home-lab-shell {0}
         run: |
           destination="${RUNNER_TEMP}/qwen-firmus-pd"
@@ -144,7 +170,7 @@ jobs:
 
       - name: 実行成果物を保存
         id: upload
-        if: always() && steps.submit.outputs.job_id != ''
+        if: always() && steps.terminal.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: qwen-firmus-pd-${{ github.run_id }}-${{ github.run_attempt }}

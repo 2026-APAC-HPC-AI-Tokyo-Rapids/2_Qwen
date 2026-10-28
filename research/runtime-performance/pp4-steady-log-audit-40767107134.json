@@ -1,0 +1,75 @@
+{
+  "schema": "pp4-steady-log-audit/v1",
+  "run": 40767107134,
+  "window": "server-local 2026-10-29 05:16:30 <= timestamp < 05:18:10",
+  "seconds": 100,
+  "selection": "PP0 only from each independent pipeline; PP1/2/3 are the same requests and are not summed. All selected batches contain two sequences and 8064 logged tokens.",
+  "workers": {
+    "prefill-0": {
+      "raw_path": "/srv/qwen-artifacts/40767107134/1/logs/logs/prefill-0.log",
+      "sha256": "bef176e107741c81bef4b6e3f4323caafb6c8778d805fabef8fb3645db884b95",
+      "batches": 610,
+      "sequence_admissions": 1220,
+      "new_tokens": [
+        8064
+      ],
+      "microbatch_sizes": [
+        2
+      ],
+      "mean_issue_interval_ms": 163.9344262295082,
+      "mean_queue_requests": 14.937704918032788,
+      "mean_bootstrap_requests": 6.218032786885246,
+      "mean_inflight_requests": 11.439344262295082
+    },
+    "prefill-1": {
+      "raw_path": "/srv/qwen-artifacts/40767107134/1/logs/logs/prefill-1.log",
+      "sha256": "db8164817b355ffdfe96c5cf1539d40131c2e50051c1f7856945517320dc81ba",
+      "batches": 613,
+      "sequence_admissions": 1226,
+      "new_tokens": [
+        8064
+      ],
+      "microbatch_sizes": [
+        2
+      ],
+      "mean_issue_interval_ms": 163.1321370309951,
+      "mean_queue_requests": 14.796084828711257,
+      "mean_bootstrap_requests": 6.2920065252854815,
+      "mean_inflight_requests": 11.484502446982056
+    },
+    "prefill-2": {
+      "raw_path": "/srv/qwen-artifacts/40767107134/1/logs/logs/prefill-2.log",
+      "sha256": "0f199bbcc788307f8721297e69b5c185109003a00c2918ae73d39affb5e1b132",
+      "batches": 610,
+      "sequence_admissions": 1220,
+      "new_tokens": [
+        8064
+      ],
+      "microbatch_sizes": [
+        2
+      ],
+      "mean_issue_interval_ms": 163.9344262295082,
+      "mean_queue_requests": 14.780327868852458,
+      "mean_bootstrap_requests": 6.2918032786885245,
+      "mean_inflight_requests": 11.540983606557377
+    }
+  },
+  "sequence_admission_rate_per_s": 36.66,
+  "equalized_pipeline_issue_interval_ms": 163.66612111292963,
+  "ten_k_conditional": {
+    "nominal_output_tokens": 200,
+    "request_rate_at_100_percent_delivery_per_s": 50,
+    "required_pipeline_issue_interval_ms_at_100_percent_delivery": 120.0,
+    "required_period_reduction_fraction_at_100_percent_delivery": 0.26680000000000004,
+    "prior_ep4_delivery_ratio": 0.9589137544279864,
+    "required_pipeline_issue_interval_ms_at_prior_delivery": 115.06965053135838,
+    "required_period_reduction_fraction_at_prior_delivery": 0.2969244352534004
+  },
+  "limitations": [
+    "Issue interval is throughput-equivalent wall time, not CUDA kernel time or one-stage compute latency.",
+    "Server logs do not separate compute, communication, PP bubbles, CPU scheduling or KV lifetime waits.",
+    "Prior delivery ratio is a conditional target, not assumed current PP eligibility.",
+    "Windowed admissions differ from completed requests including drain; do not equate directly to official score.",
+    "Three replicas and PP stage logs are distinct dimensions; summing all four stage logs would quadruple counted throughput."
+  ]
+}

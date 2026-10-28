@@ -32,6 +32,26 @@ if (( routing_capture_samples > 0 )); then
 fi
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+# This process owns only the mktemp directory above. A failed or interrupted
+# preparation must not leak it, including interruption during image hashing.
+provision_complete=false
+progress_pid=
+cleanup_provision() {
+  local status=$?
+  trap - EXIT
+  if [[ -n "${progress_pid}" ]]; then
+    kill "${progress_pid}" 2>/dev/null || true
+    wait "${progress_pid}" 2>/dev/null || true
+  fi
+  if [[ "${provision_complete}" != true ]]; then
+    chmod -R u+w "${runtime_dir}" 2>/dev/null || true
+    rm -rf -- "${runtime_dir}"
+  fi
+  exit "${status}"
+}
+trap cleanup_provision EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/profile" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source" "${runtime_dir}/home"
 install -m 0644 "${config}" "${runtime_dir}/source/firmus-framework.json"
@@ -77,12 +97,11 @@ for image_framework in sglang "${framework}"; do
   echo "Checking ${image_framework} image SHA-256"
   while sleep 15; do echo "container_sha256_check_in_progress=${image_framework}"; done &
   progress_pid=$!
-  trap 'kill "${progress_pid}" 2>/dev/null || true' EXIT
   sha256sum "${image}" >"${runtime_dir}/source/${image_framework}-image.sha256"
   # A login fork failure may already have stopped the advisory progress loop.
   kill "${progress_pid}" 2>/dev/null || true
   wait "${progress_pid}" 2>/dev/null || true
-  trap - EXIT
+  progress_pid=
   [[ "$(awk '{print $1}' "${runtime_dir}/source/${image_framework}-image.sha256")" == "${expected_sha}" ]]
   ln -s "${image}" "${runtime_dir}/${image_framework}.sqsh"
   cp "${provenance}" "${runtime_dir}/source/${image_framework}-container.json"
@@ -92,6 +111,9 @@ if [[ "${framework}" == sglang ]]; then
   bash "${GITHUB_WORKSPACE}/scripts/check-firmus-image.sh" "${runtime_dir}/sglang.sqsh" "${runtime_dir}/source" "${GITHUB_WORKSPACE}"
 fi
 if [[ "${framework}" == sglang ]]; then bash "${GITHUB_WORKSPACE}/scripts/stage-qwen-overlays.sh" "${runtime_dir}" "${config}" "${GITHUB_WORKSPACE}"; fi
+if [[ "$(jq -r '.prefill.pp // 1' "${config}")" == 4 ]]; then
+  uv run --no-project --python 3.12 --with torch==2.11.0+cpu --with numpy==2.2.6 --extra-index-url https://download.pytorch.org/whl/cpu python "${GITHUB_WORKSPACE}/scripts/check-firmus-pp4-cpu.py" "${runtime_dir}" "${config}" "${GITHUB_WORKSPACE}"
+fi
 if (( routing_capture_samples > 0 )); then
   test -s "${runtime_dir}/overlay/sglang/python/sglang/srt/layers/moe/prefill_routing_capture.py"
   install -m 0644 "${GITHUB_WORKSPACE}/scripts/summarize-prefill-routing.py" "${runtime_dir}/scripts/"
@@ -160,3 +182,4 @@ if [[ "${framework}" == vllm ]]; then
 fi
 jq -n --arg model_path "${model}" '{schema_version:"qwen3-pd-model/v1",model:{repository:"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",revision:"e156cb4efae43fbee1a1ab073f946a1377e6b969",path:$model_path,precision:"fp8",shards:24},tokenizer:{repository:"Qwen/Qwen3-235B-A22B-Instruct-2507",revision:"ac9c66cc9b46af7306746a9250f23d47083d689e"}}' >"${runtime_dir}/source/model.json"
 jq -n --arg commit "${GITHUB_SHA}" --arg framework "${framework}" --arg workload "$(jq -r .workload "${config}")" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson profile "${PROFILE}" --argjson profile_only "$(jq -r '.profile_only // false' "${config}")" --argjson images "$(jq .images "${config}")" '{schema_version:"qwen3-pd-provenance/v1",cluster:"firmus",commit:$commit,framework:$framework,workflow_run_id:$run_id,workflow_run_attempt:$attempt,profile:$profile,profile_only:$profile_only,normal_benchmark_before_profile:($profile and ($profile_only | not) and $framework == "sglang" and $workload == "official"),workload:$workload,official_submission:false,container:($images[$framework] | {sha256,size_bytes}),client_container:($images.sglang | {sha256,size_bytes}),aiperf:{version:"0.12.0",commit:"be53bf2953d30e46c500e6a80fc1f8b6f84bc718"},cache_source:(if $framework == "vllm" then "matched-settings-comparison/home" else null end)}' >"${runtime_dir}/source/provenance.json"
+provision_complete=true

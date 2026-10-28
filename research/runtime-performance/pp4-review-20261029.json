@@ -1,0 +1,154 @@
+{
+  "schema": "pp4-experiment-review/v1",
+  "date": "2026-10-29",
+  "reviewed_head": "e155382a868704f2aa1dd453784fe6916cf5f83f",
+  "user_direction": "失敗しすぎ。GPUノード確保後の失敗を繰り返さず、一旦止めて全部見直す。",
+  "decision": "The prior PP4 implementation/configuration is not adopted; PP itself is not rejected. Latest user explicitly authorizes repairing reviewed integration and visible PP inefficiencies, then exactly one profile-only 2-node Firmus run by push. No normal score rerun, kernel bench, sweep or automatic resubmission.",
+  "current_resources": {
+    "cancelled_run": 40774295760,
+    "conclusion": "cancelled",
+    "stage": "provision; serving job cancelled with no steps",
+    "slurm_submitted": false,
+    "gpu_allocated": false,
+    "luna_monitor": "stopped",
+    "provision_cleanup": "Not verified: cancellation skipped the failure-only cleanup step; no runtime path was exposed in available logs. No GPU job was submitted. Do not claim all provision artifacts were removed."
+  },
+  "baseline": {
+    "run": 40630160781,
+    "commit": "840b40f",
+    "official_good_output_tokens_per_second": 9235.282194390255,
+    "note": "This historical run is the control. The branch default config also contains the already neutral FC2 bundle; do not silently call that exact 840b40f source."
+  },
+  "allocated_gpu_attempts": [
+    {
+      "run": 40756429833,
+      "slurm": 27154,
+      "elapsed_s": 105,
+      "allocated_gpus": 16,
+      "classification": "avoidable integration failure",
+      "cause": "one-rank tensor aliasing; reproduced on CPU after the GPU failure"
+    },
+    {
+      "run": 40762501053,
+      "slurm": 27157,
+      "elapsed_s": 268,
+      "allocated_gpus": 16,
+      "classification": "avoidable integration failure",
+      "cause": "token-only relay into EAGLE FutureMap; reproduced on CPU after the GPU failure"
+    },
+    {
+      "run": 40767107134,
+      "slurm": 27159,
+      "elapsed_s": 586,
+      "allocated_gpus": 16,
+      "classification": "completed ordinary measurement, SLA-ineligible",
+      "cause": "TTFT exceeds 3000 ms; not a server crash"
+    }
+  ],
+  "avoidable_integration_gpu_hours": 1.6577777777777778,
+  "accounting_note": "Allocated GPUs times Slurm elapsed; not measured active GPU time or monetary charge. The completed performance experiment is kept separate from the avoidable initialization failures.",
+  "performance_evidence": "pp4-steady-log-audit-40767107134.json",
+  "findings": [
+    {
+      "id": "R1",
+      "priority": "high",
+      "finding": "PP4 was treated as a communication optimization despite changing scheduler, EAGLE auxiliary/draft execution, PP result relay and NIXL KV region identity. Local checks did not exercise this chain.",
+      "evidence": [
+        "patches/sglang/prefill-pp4-ep1.patch: 10 source files",
+        "scripts/check-firmus-pp4-source.py:20 extracts isolated methods and substitutes model/worker fixtures"
+      ],
+      "required_before_reconsideration": "Execute the actual patched source contracts together with real CPU tensors and a deterministic request lifecycle: initialization, prefill/idle, interleaving, output relay, KV metadata and release. Explicitly label GPU-only unknowns."
+    },
+    {
+      "id": "R2",
+      "priority": "high",
+      "finding": "The new PP source and real-tensor regression checks are manual scripts, not required CI gates. Green general CI therefore did not cover the new runtime path.",
+      "evidence": [
+        ".github/workflows/validate.yml:45 runs qwen-experiment-metrics/tests",
+        "No workflow/test references call check-firmus-pp4-source.py, check-pp4-scheduler-sync.py or check-pp4-output-relay.py"
+      ],
+      "required_before_reconsideration": "Build the exact ordered-overlay source snapshot and run those regression checks as a mandatory CPU stage, tied to the candidate source/image hashes."
+    },
+    {
+      "id": "R3",
+      "priority": "high",
+      "finding": "Previous kernel setting hashes and successful native compilation were useful but were not EP1 numerical or serving validation.",
+      "evidence": [
+        "scripts/prepare-firmus-pp4-settings.py:34 only verifies prior sources",
+        "EP1 native CPU host/template checks covered 46 cases and compilation; no GPU numerical parity",
+        "One correct Paris sanity answer and 4481 transport-successful requests do not prove numerical parity or output quality"
+      ],
+      "required_before_reconsideration": "Keep source/ABI verification, numerical validation, protocol correctness and performance eligibility separate. Do not infer a new EP1 guarantee from the old EP4 selection."
+    },
+    {
+      "id": "R4",
+      "priority": "high",
+      "finding": "The 115 ms stage period was a requirement for 10k, not a prediction. NVLink saturation had not been established, while expert logical weight reads increase 1.8286x and MoE padded work increases about 5.92 percent in the conditional routing model.",
+      "evidence": [
+        "system-10k-bounds-40653531712.json",
+        "prefill-nvlink-evidence-40071892077.json"
+      ],
+      "required_before_reconsideration": "Identify a removable critical-path cost with an estimate that includes added work, stage imbalance, barriers, bubbles, draft and KV lifetime. Do not add overlapped resource floors or present the required target as expected performance."
+    },
+    {
+      "id": "R5",
+      "priority": "high",
+      "finding": "Completed ordinary serving already rejects adoption of the previously measured PP4 implementation/configuration. Existing logs show 36.66 sequence admissions/s, two-request pipeline issue interval 163.67 ms and persistent Prefill queues.",
+      "evidence": [
+        "40767107134: official score 0; total output throughput 7151.764; TTFT p50 3425.065 ms; ITL p50 12.125 ms",
+        "pp4-steady-log-audit-40767107134.json: PP0 counted once per replica, 100-second steady window"
+      ],
+      "required_before_reconsideration": "10k requires at least 26.68 percent shorter issue interval at perfect SLA delivery, or 29.69 percent using the prior EP4 delivery fraction as a conditional target. No automatic microbatch/concurrency sweep. Existing logs cannot assign this gap to GPU kernels versus communication/CPU waits."
+    },
+    {
+      "id": "R6",
+      "priority": "medium",
+      "finding": "SLA failure prematurely ended the requested profile, coupling measurement validity with diagnostic collection. That control-flow error triggered another planned allocation instead of an immediate global reassessment.",
+      "evidence": [
+        "40767107134 has AIPerf exports but no Nsight reports",
+        "4ac5aaf preserves normal failure after capture and adds explicit profile-only diagnostics"
+      ],
+      "state": "Control flow is CPU-tested. Latest user explicitly requests one profile after repairing visible PP inefficiencies; profile-only collection remains separate from official scoring."
+    },
+    {
+      "id": "R7",
+      "priority": "medium",
+      "finding": "Several CI-only failures were stale source-string expectations after changing execution contracts. Targeted test selection missed a dependent routing test.",
+      "evidence": [
+        "40752372565: launcher fixtures",
+        "40772588282: early-exit routing assertion",
+        "40774295760: latest full CPU CI passed before user cancellation"
+      ],
+      "required_before_reconsideration": "Use one consistent Linux CPU gate before requesting allocation. Test behavior across all changed lifecycle paths; string checks alone do not validate runtime semantics."
+    },
+    {
+      "id": "R8",
+      "priority": "medium",
+      "finding": "Cancellation during provision skips cleanup because the condition is failure() only. Also the ordinary serving workflow lacks an explicit scheduler cancellation step after an already submitted job.",
+      "evidence": [
+        ".github/workflows/firmus.yml:85-89",
+        "40774295760 provision cleanup was skipped; serving had no steps"
+      ],
+      "required_before_reconsideration": "Review cancellation separately from failure. Scope cleanup to the known current runtime/job and preserve raw logs. This is a lifecycle defect, not a reason to launch another experiment."
+    }
+  ],
+  "coverage_review": {
+    "image_and_overlay_provenance": "Successful image build and actual SHA pinned; runtime patch application was reached by all three GPU runs.",
+    "host_selector_and_kernel_template": "CPU extraction/descriptor/compile checks passed, not full EP1 GPU numeric parity.",
+    "one_rank_sync": "Exact PyTorch error reproduced and repaired; 16 real CPU tensor cases passed manually.",
+    "model_aux_forwarding": "Toy split/unsplit CPU functions and global capture order passed; whole-model output/logit parity remains unverified.",
+    "eagle_output_relay": "Exact prior error reproduced; actual serializer/receiver/FutureMap passed 72 real CPU tensor cases manually.",
+    "kv_transfer": "190 target/draft region mappings checked by helper; full transfer/release/cancellation lifecycle is not in a CPU integration gate.",
+    "normal_serving": "All workers ready and 4481 requests with zero request errors, but SLA ineligible and slower overall.",
+    "profiling": "No PP4 Nsys trace exists. Do not claim a GPU instruction, HBM or NVLink bottleneck from this result.",
+    "resource_lifecycle": "Prior three Slurm jobs ended and archives/cleanup verified. Latest recovery cancelled before sbatch; cancelled provision directory cleanup unknown."
+  },
+  "next_work_without_gpu": [
+    "Require exact actual-image ordered-overlay CPU gate before allocation.",
+    "Perform one authorized profile-only run after CPU validation; attribute stage compute, communication and result/KV waits without inventing a speedup.",
+    "Retain numeric/full-model parity as unverified; no claim that ordinary transport success validates EP1 accuracy."
+  ],
+  "historical_stop_decision": "PP4 candidate is not adopted. No new GPU jobs, pushes that trigger execution, or monitoring agents. Review existing source/logs on CPU only. A trace-recovery run is not justified merely to complete an artifact checklist.",
+  "latest_user_direction": "pp4がだめと決まったわけじゃない、全部修正して、かつまだppがepなみに洗練されていないのもあるはずで、そこも見えるとこだけ直して1回だけprofileしてみてほしい",
+  "candidate_revision": "pp4-revision-profile-20261029.json"
+}

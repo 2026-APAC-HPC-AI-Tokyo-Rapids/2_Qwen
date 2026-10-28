@@ -1,6 +1,6 @@
 {
   "schema": "megamoe-local-ep1-poc/v1",
-  "status": "PP4 serving now completes without request errors, but run 40767107134 is SLA-ineligible and not adopted. Missing separate profile is being recovered without repeating the ordinary benchmark.",
+  "status": "CPU repairs and visible PP scheduler/copy improvements validated; preparing exactly one authorized profile-only push. Prior PP4 implementation remains unadopted, PP approach still under evaluation.",
   "purpose": "User replaced the kernel PoC with ordinary two-node Firmus serving plus a separate profile pass. Evaluate official good output tok/s, TTFT, ITL and SLA eligibility; no kernel selection sweep.",
   "control": "Run 40630160781 official score 9235.282194, c215, P3 EP4 with 12 replicas. FC2-address bundle run 40653531712 gave 9234.339455 and is not included in this PP candidate.",
   "candidate": "Three PP4/TP1/EP1 Prefill replicas (12 H200), each with contiguous target layer partition [24,24,23,23], max microbatch 2 and async depth 1. Existing TP4/DP4/EP4 Decode (4 H200), FP8 EAGLE3 and concurrency 215.",
@@ -109,9 +109,9 @@
     "evidence": "../pp4-local-cpu/result.json"
   },
   "remaining": [
-    "Recover the requested 16-GPU CPU/Nsys profile using profile_only=true, without repeating the completed ordinary benchmark.",
-    "Inspect kernel processing versus PP stage waits and record why this candidate is slower; preserve the 9235.28 baseline.",
-    "Verify trace coverage, terminal state, archive and cleanup."
+    "No GPU submission. Address the CPU integration and evidence gaps recorded in pp4-review-20261029.json.",
+    "Current PP4 result is rejected; retain the 9235.28 historical control.",
+    "Profile is uncollected and not automatically scheduled for recovery."
   ],
   "reason_for_measurement": "Existing EP4 profiles and theory cannot establish whether removal of per-layer remote dispatch/scatter and cross-rank barriers outweighs increased unique expert weight reads, padding, PP boundaries and pipeline bubbles. The ordinary run tests the full net effect.",
   "builds": [
@@ -264,6 +264,16 @@
       "gpu_submitted": false,
       "cause": "Legacy routing marker test required immediate SLA-failure exit before profile. All other CI tests passed.",
       "repair": "Check that benchmark failure is returned after diagnostic aggregation; executed recovery tests cover SLA failure continuation and profile-only behavior."
+    },
+    {
+      "run": 40774295760,
+      "commit": "e155382a868704f2aa1dd453784fe6916cf5f83f",
+      "status": "cancelled-at-user-direction-before-slurm",
+      "gpu_submitted": false,
+      "cpu_ci": "passed",
+      "provision_cleanup": "failure-only cleanup skipped on cancellation; runtime artifacts not verified removed"
     }
-  ]
+  ],
+  "review": "pp4-review-20261029.json",
+  "current_revision": "pp4-revision-profile-20261029.json"
 }

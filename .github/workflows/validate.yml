@@ -71,3 +71,20 @@ jobs:
 
       - name: 検証範囲を記録
         run: printf '### gigatoken CPU compatibility\n\nThe adapter parity check is CPU-only; GPU throughput and EAGLE acceptance are measured by the Genkai job.\n' >>"${GITHUB_STEP_SUMMARY}"
+
+  pp4-gate:
+    name: PP4 pre-allocation CPU gate regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 検証対象を取得
+        uses: actions/checkout@v7
+
+      - name: uvを導入
+        uses: astral-sh/setup-uv@v7
+
+      - name: SquashFS fixture用ツールを導入
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools
+
+      - name: 実CPU Torchでgateの失敗伝播を検証
+        run: uv run --project qwen-experiment-metrics --python 3.12 --with torch==2.11.0+cpu --with numpy==2.2.6 --extra-index-url https://download.pytorch.org/whl/cpu pytest -q qwen-experiment-metrics/tests/test_pp4_cpu_gate.py

@@ -168,7 +168,9 @@ def test_provision_uses_selected_image_for_reuse_and_keeps_fresh_build_commit_ch
     (archive / "123.container-sidecar.json").write_text(json.dumps({"source_commits": {"qwen": source_commit}, "container_artifact": {"sha256": digest}}))
     # Execute the actual image-selection/hash/metadata phase; no model staging
     # or scheduler operation is part of this regression test.
-    script = (ROOT / "scripts/provision-firmus-framework.sh").read_text().split("model=/scratch/models/", 1)[0]
+    # This fixture deliberately ends after source staging; preserve that successful
+    # phase while leaving real failure/interrupt cleanup active.
+    script = (ROOT / "scripts/provision-firmus-framework.sh").read_text().split("model=/scratch/models/", 1)[0] + "\nprovision_complete=true\n"
     script = script.replace("archive=/scratch/home/ACCOUNT/qwen/containers", f'archive="{archive}"')
     result = subprocess.run(["bash", "-c", script], env={**os.environ, "GITHUB_WORKSPACE": str(workspace), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "new-run", "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(tmp_path / "runs"), "PROFILE": "true", "REQUIRE_BUILD": str(require_build).lower(), "CONTAINER_SHA256": digest, "CONTAINER_SIZE": str(image.stat().st_size)}, capture_output=True, text=True, check=False)
     assert (result.returncode == 0) is success, result.stderr
@@ -206,7 +208,9 @@ def test_provision_stages_sglang_overlay_patches_on_the_selected_image(tmp_path,
     unpack.parent.mkdir()
     unpack.write_text('#!/bin/bash\nset -eu\nfor last; do :; done\nwhile [[ "$1" != -d ]]; do shift; done\n[[ -d "$(dirname "$2")" && ! -e "$2" ]]\nmkdir -p "$2/$last"\nprintf "x = 1\\n" >"$2/$last/kernel.py"\nchmod -R a-w "$2/opt"\n')
     unpack.chmod(0o755)
-    script = (ROOT / "scripts/provision-firmus-framework.sh").read_text().split("model=/scratch/models/", 1)[0]
+    # This fixture deliberately ends after source staging; preserve that successful
+    # phase while leaving real failure/interrupt cleanup active.
+    script = (ROOT / "scripts/provision-firmus-framework.sh").read_text().split("model=/scratch/models/", 1)[0] + "\nprovision_complete=true\n"
     if platform == "aspire2ap":
         runtime = tmp_path / "runs/aspire"
         (runtime / "source").mkdir(parents=True)
@@ -219,6 +223,9 @@ def test_provision_stages_sglang_overlay_patches_on_the_selected_image(tmp_path,
         script = f"runtime_dir={runtime}\nGITHUB_WORKSPACE={workspace}\ncd {workspace}\n" + command
     result = subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{unpack.parent}:{os.environ['PATH']}", "GITHUB_WORKSPACE": str(workspace), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "new-run", "GITHUB_OUTPUT": str(tmp_path / "outputs"), "RUNTIME_ROOT": str(tmp_path / "runs"), "PROFILE": "false", "REQUIRE_BUILD": "false"}, capture_output=True, text=True, check=False)
     assert (result.returncode == 0) is applies, result.stderr
+    if not applies and platform == "firmus":
+        assert not list((tmp_path / "runs").iterdir())
+        return
     runtime = next((tmp_path / "runs").iterdir())
     if applies:
         assert (runtime / "overlay/sglang/python/sglang/kernel.py").read_text() == "x = 3\n"

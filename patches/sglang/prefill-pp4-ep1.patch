@@ -195,7 +195,84 @@ diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/manager
 diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
 --- a/python/sglang/srt/managers/scheduler_pp_mixin.py
 +++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
-@@ -1017,6 +1017,13 @@
+@@ -238,27 +238,32 @@
+                 d2h_event = None
+                 next_batch_result = None
+
+-                recv_reqs = self.request_receiver.recv_requests()
+-                self.process_input_requests(recv_reqs)
++                with torch.profiler.record_function("pp.recv_requests"):
++                    recv_reqs = self.request_receiver.recv_requests()
++                    self.process_input_requests(recv_reqs)
+
+                 if not self.pp_group.is_last_rank:
+                     self._pp_commit_comm_work(self.send_req_work)
+
+-                bootstrapped_rids = self._pp_pd_get_bootstrapped_ids()
++                with torch.profiler.record_function("pp.bootstrap_poll"):
++                    bootstrapped_rids = self._pp_pd_get_bootstrapped_ids()
+                 bmbs[mb_id] = bootstrapped_rids
+                 self._pp_commit_comm_work(send_bootstrapped_work)
+
+-                transferred_rids = self._pp_pd_get_prefill_transferred_ids()
++                with torch.profiler.record_function("pp.transfer_poll"):
++                    transferred_rids = self._pp_pd_get_prefill_transferred_ids()
+                 self._pp_commit_comm_work(send_transfer_work)
+                 tmbs[mb_id] = transferred_rids
+
+-                self.process_prefill_chunk(
+-                    last_batch=self.last_batch, running_batch=self.running_batch
+-                )
+-                prefill_plan = self.get_new_batch_prefill(self.running_batch)
++                with torch.profiler.record_function("pp.prepare_batch"):
++                    self.process_prefill_chunk(
++                        last_batch=self.last_batch, running_batch=self.running_batch
++                    )
++                    prefill_plan = self.get_new_batch_prefill(self.running_batch)
+                 batch = prefill_plan.batch_to_run
+                 self.running_batch = prefill_plan.running_batch
+-                batch = self.dp_attn_adapter.maybe_prepare_mlp_sync_batch(batch)
++                with torch.profiler.record_function("pp.mlp_sync"):
++                    batch = self.dp_attn_adapter.maybe_prepare_mlp_sync_batch(batch)
+                 self.mbs[mb_id] = batch
+                 self.running_mbs[mb_id] = self.running_batch
+
+@@ -266,7 +271,8 @@
+                 self.cur_batch_for_debug = cur_batch
+                 if cur_batch:
+                     server_is_idle = False
+-                    pp_proxy_tensors = self._pp_recv_proxy_tensors()
++                    with torch.profiler.record_function("pp.recv_proxy"):
++                        pp_proxy_tensors = self._pp_recv_proxy_tensors()
+
+                 if self.server_args.pp_async_batch_depth > 0:
+                     next_pp_outputs, next_batch_result, d2h_event = (
+@@ -318,15 +324,18 @@
+                 self._pp_commit_comm_work(send_release_work)
+                 # post-process the coming microbatch
+                 if self.mbs[next_mb_id] is not None:
+-                    d2h_event.synchronize()
+-                    self._pp_process_batch_result(
+-                        self.mbs[next_mb_id],
+-                        next_batch_result,
+-                    )
++                    with torch.profiler.record_function("pp.wait_result"):
++                        d2h_event.synchronize()
++                    with torch.profiler.record_function("pp.process_result"):
++                        self._pp_process_batch_result(
++                            self.mbs[next_mb_id],
++                            next_batch_result,
++                        )
+                     self.last_mbs[next_mb_id] = self.mbs[next_mb_id]
+
+                 if tmbs[next_mb_id] is not None:
+-                    self.process_disagg_prefill_inflight_queue(next_release_rids)
++                    with torch.profiler.record_function("pp.release_kv"):
++                        self.process_disagg_prefill_inflight_queue(next_release_rids)
+                 if not self.pp_group.is_last_rank:
+                     self.send_req_work = self._pp_send_pyobj_to_next_stage(
+                         recv_reqs, async_send=True
+@@ -1017,6 +1026,13 @@
              "next_token_ids": result.next_token_ids,
          }
 
@@ -209,7 +286,7 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
          if batch.return_logprob:
              logprob_dict = get_logprob_dict_from_result(result)
              tensor_dict = {
-@@ -1148,12 +1155,6 @@
+@@ -1148,12 +1164,6 @@
                  extend_logprob_start_len_per_req,
              ) = get_logprob_from_pp_outputs(pp_outputs)
          next_token_ids = pp_outputs["next_token_ids"].to(torch.int64)
@@ -222,7 +299,7 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
          batch.input_ids = None
          output_result = GenerationBatchResult(
              logits_output=logits_output,
-@@ -1163,6 +1164,27 @@
+@@ -1163,6 +1173,27 @@
              extend_logprob_start_len_per_req=extend_logprob_start_len_per_req,
              can_run_cuda_graph=mb_metadata.can_run_cuda_graph,
          )
@@ -234,19 +311,19 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +                                    topk_index=pp_outputs["eagle_topk_index"],
 +                                    bonus_tokens=next_token_ids)
 +            batch.spec_info = output_result.next_draft_input = draft
-+            # The PP copy stream's completion event fences all three copies.
-+            output_result.draft_output_cpu = tuple(
-+                value.to("cpu", non_blocking=True)
-+                for value in (draft.hidden_states, draft.topk_p, draft.topk_index)
++            # This path runs on the PP copy stream before d2h_event is recorded.
++            # Reuse EP's pinned host mirrors for EAGLE and page-table rows so
++            # result processing does not synchronously read the schedule stream.
++            from sglang.srt.managers.utils import _async_d2h
++
++            self.prefetch_disagg_prefill_outputs(batch, output_result)
++            output_result.next_token_ids = _async_d2h(next_token_ids)
++            # Non-overlap EAGLE consumes batch.spec_info directly, never the
++            # FutureMap buffers. Do not allocate/scatter a duplicate payload.
++        else:
++            self.future_map.stash(
++                batch.req_pool_indices, RelayPayload(bonus_tokens=next_token_ids)
 +            )
-+        # Speculative relays require the complete draft payload. Reconstruct it
-+        # before stash so FutureMap can allocate and populate every buffer.
-+        payload = (
-+            RelayPayload.from_draft_input(output_result.next_draft_input)
-+            if output_result.next_draft_input is not None
-+            else RelayPayload(bonus_tokens=next_token_ids)
-+        )
-+        self.future_map.stash(batch.req_pool_indices, payload)
          return output_result
 
      def _pp_process_batch_result(

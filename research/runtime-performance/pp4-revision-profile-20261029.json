@@ -1,0 +1,105 @@
+{
+  "schema": "pp4-revision-profile/v1",
+  "date": "2026-10-29",
+  "base_commit": "e155382a868704f2aa1dd453784fe6916cf5f83f",
+  "authorization": "Exactly one 2-node Firmus profile-only run by push after repairs. No normal score run, kernel bench, sweep or automatic resubmission.",
+  "source": {
+    "sglang": "fc275674a97d78553b22597ee72c8fd48f5420f4",
+    "image_build_run": 40742736653,
+    "image_sha256": "5bcbfc667435ef8baa3e7aaf56311d92c13ec89f50f17c504c45d6054d389565",
+    "config": "configs/firmus-prefill-pp4.json"
+  },
+  "fixed_conditions": {
+    "prefill": "3 replicas x PP4/TP1/EP1, layers 24/24/23/23, 2 requests per microbatch, async depth 1, chunk 8192, overlap disabled",
+    "decode": "existing TP4/DP4/EP4, FP8 EAGLE3 steps3 draft4",
+    "concurrency": 215,
+    "profile_client_seconds": [
+      20,
+      30,
+      90
+    ],
+    "nsys_and_cpu_capture_seconds": 5,
+    "ordinary_score_measurement": false
+  },
+  "visible_work_removed": [
+    {
+      "change": "Singleton MLP synchronization remains on CPU when logical and actual group size both equal 1.",
+      "work": "Seven int64 metadata scalars per scheduling pass; eliminate GPU allocation/copy, collective and result D2H/item synchronization on that path. Preserve active-rank fallback and TBO metadata.",
+      "verified": "32 real CPU tensor cases; CUDA device request does not initialize CUDA; larger actual process group retains collective.",
+      "speedup_ms": null
+    },
+    {
+      "change": "Use existing EP pinned D2H helper in PP receive/result path under its existing copy-stream completion event.",
+      "work": "Copy token IDs, EAGLE hidden/topk and KV page-index rows before the existing event, avoiding synchronous host reads during later result processing. At page64 and two 4032-token rows, the page mirror contains 126 int32 indices = 504 bytes. Existing kv_to_page_indices also subsamples on GPU before copying: page byte volume is unchanged; the change is pinned destination and stream/fence scheduling, not a 64x traffic reduction.",
+      "verified": "72 real CPU cases execute actual serializer/receiver, prefetch, result processing, send_kv_chunk and release consensus methods; GPU stream ordering not tested on CPU.",
+      "speedup_ms": null
+    },
+    {
+      "change": "Do not stash EAGLE results in FutureMap for supported non-overlap PP prefill.",
+      "work": "Remove output-token, hidden-state, topk-probability and topk-index buffer writes; non-overlap spec consumers use batch.spec_info directly. Token-only non-speculative relay preserved.",
+      "verified": "72 CPU cases include 4 stages, zero/one/two requests, three reorder/reuse iterations; speculative buffers remain uninitialized.",
+      "speedup_ms": null
+    }
+  ],
+  "unchanged_costs": {
+    "target_flops": "No reduction from these scheduler/copy changes. Prior conditional PP model: MoE padded work +5.9247%, total core work +3.61% relative to EP4.",
+    "expert_logical_weight_read_bytes_per_request": {
+      "ep4": 62096670720,
+      "pp4": 113548197888,
+      "ratio": 1.8285714285714285,
+      "interpretation": "Conditional logical read accounting from system-10k-bounds-40653531712.json; not measured HBM transactions."
+    },
+    "actual_hbm_nvlink_utilization": "Unknown for PP; historical EP trace does not establish NVLink saturation.",
+    "pp_boundary_bytes_per_request": {
+      "historical_4000_token_model": 360448000,
+      "scaled_4032_token_model": 363331584,
+      "interpretation": "BF16 hidden/residual plus captured auxiliary payload over three boundaries; conditional logical accounting, not measured NVLink transactions."
+    }
+  },
+  "performance_reference": {
+    "run": 40767107134,
+    "source": "pp4-steady-log-audit-40767107134.json",
+    "steady_sequence_admissions_per_second": 36.66,
+    "issue_interval_ms": 163.66612111292963,
+    "target_10k_issue_interval_ms": 120,
+    "conditional_10k_issue_interval_ms_at_prior_ep_delivery": 115.069650528,
+    "interpretation": "Issue interval is wall-throughput accounting, not stage GPU duration. Targets are requirements, not predictions. Profiler output is not a new official score."
+  },
+  "instrumentation": [
+    "pp.recv_requests",
+    "pp.bootstrap_poll",
+    "pp.transfer_poll",
+    "pp.prepare_batch",
+    "pp.mlp_sync",
+    "pp.recv_proxy",
+    "pp.wait_result",
+    "pp.process_result",
+    "pp.release_kv",
+    "existing PP forward/send/receive spans"
+  ],
+  "measurement_question": "Which PP stage spans are on the critical path during the same active capture window: target/draft compute, activation/output communication, host scheduling, result fences, or transfer/release consensus? Report kernel union and stage timeline without adding overlapping durations.",
+  "preallocation_gate": "Actual immutable image hash and embedded source/build overlays, exact ordered runtime overlays reconstructed and compared byte-for-byte, then all three actual-source CPU regressions with Torch2.11+cpu. Fail before sbatch.",
+  "lifecycle_repair": "Own provision runtime removed on failure/cancellation; no progress-trap override. Submitted job cancelled by exact own ID if interrupted, terminal state required before artifacts and cleanup.",
+  "validation": {
+    "actual_source_cpu": "PASS on archive-host with Torch2.11+cpu: source contracts, 32 synchronization cases, 72 relay/result/KV/consensus-release cases.",
+    "gate_fixture": "11 passed on Linux with real tiny SquashFS and real CPU Torch.",
+    "lifecycle": "13 behavioral CPU cases passed.",
+    "full_linux_suite": {
+      "collected": 1079,
+      "original_passed": 1015,
+      "original_skipped": 56,
+      "original_failed": 8,
+      "failures": "2 macOS transfer AppleDouble sidecars; 4 deliberately truncated provision fixtures incompatible with new cleanup; stale routing case count 19 versus existing20; one SIGINT fixture 10s timeout not reproduced.",
+      "resolution": "Removed transfer-created sidecars; fixed successful truncated-phase fixture completion while retaining failure cleanup; corrected legacy routing inventory assertion. All failed tests passed in targeted repeats: 23 lifecycle/image and 8 routing cases. No broad rerun.",
+      "static_checks": "Ruff, Bash syntax and Actionlint pass. Actionlint supplied explicit workflow paths because remote source snapshot has no .git.",
+      "raw_evidence": "../pp4-serving-cpu/validation-20261029/summary.json"
+    }
+  },
+  "remaining_gpu_only_unknowns": [
+    "NCCL and actual NIXL transfer/stream lifetime",
+    "Full-model EP1 output/logit parity; one coherent sanity response and error-free requests are insufficient",
+    "Actual critical-path savings and whether PP can reach 10k"
+  ],
+  "run": null,
+  "outcome": "CPU preparation complete; one profile-only push authorized, runtime exact-image gate still required before sbatch."
+}
