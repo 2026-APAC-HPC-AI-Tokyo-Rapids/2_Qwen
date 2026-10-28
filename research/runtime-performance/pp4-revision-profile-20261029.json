@@ -2,7 +2,7 @@
   "schema": "pp4-revision-profile/v1",
   "date": "2026-10-29",
   "base_commit": "e155382a868704f2aa1dd453784fe6916cf5f83f",
-  "authorization": "Exactly one 2-node Firmus profile-only run by push after repairs. No normal score run, kernel bench, sweep or automatic resubmission.",
+  "authorization": "Exactly one GPU allocation for a 2-node Firmus profile-only run by push after repairs. CPU gate failures may be repaired before any allocation; no normal score run, kernel bench, sweep or automatic resubmission after GPU execution.",
   "source": {
     "sglang": "fc275674a97d78553b22597ee72c8fd48f5420f4",
     "image_build_run": 40742736653,
@@ -79,7 +79,7 @@
   ],
   "measurement_question": "Which PP stage spans are on the critical path during the same active capture window: target/draft compute, activation/output communication, host scheduling, result fences, or transfer/release consensus? Report kernel union and stage timeline without adding overlapping durations.",
   "preallocation_gate": "Actual immutable image hash and embedded source/build overlays, exact ordered runtime overlays reconstructed and compared byte-for-byte, then all three actual-source CPU regressions with Torch2.11+cpu. Fail before sbatch.",
-  "lifecycle_repair": "Own provision runtime removed on failure/cancellation; no progress-trap override. Submitted job cancelled by exact own ID if interrupted, terminal state required before artifacts and cleanup.",
+  "lifecycle_repair": "Own provision runtime removed on failure/cancellation. Hashing runs foreground with no advisory timer/kill/wait race. Submitted job cancelled by exact own ID if interrupted; terminal state required before artifacts and cleanup.",
   "validation": {
     "actual_source_cpu": "PASS on archive-host with Torch2.11+cpu: source contracts, 32 synchronization cases, 72 relay/result/KV/consensus-release cases.",
     "gate_fixture": "11 passed on Linux with real tiny SquashFS and real CPU Torch.",
@@ -93,6 +93,12 @@
       "resolution": "Removed transfer-created sidecars; fixed successful truncated-phase fixture completion while retaining failure cleanup; corrected legacy routing inventory assertion. All failed tests passed in targeted repeats: 23 lifecycle/image and 8 routing cases. No broad rerun.",
       "static_checks": "Ruff, Bash syntax and Actionlint pass. Actionlint supplied explicit workflow paths because remote source snapshot has no .git.",
       "raw_evidence": "../pp4-serving-cpu/validation-20261029/summary.json"
+    },
+    "lifecycle_timer_removal": {
+      "linux_tests": "100 passed: 13 lifecycle + 87 image tests",
+      "actual_cleanup_stress": "150 passed: five actual-source cleanup endings x30; own child list empty after every trial and at completion",
+      "raw_evidence": "../pp4-serving-cpu/validation-20261029/signal-race/diagnosis.json",
+      "static_checks": "Ruff, Bash syntax and diff checks passed"
     }
   },
   "remaining_gpu_only_unknowns": [
@@ -101,5 +107,19 @@
     "Actual critical-path savings and whether PP can reach 10k"
   ],
   "run": null,
-  "outcome": "CPU preparation complete; one profile-only push authorized, runtime exact-image gate still required before sbatch."
+  "outcome": "Timer race removed and verified before allocation. Resume the single authorized GPU profile; zero GPU allocations so far in this revision.",
+  "cpu_actions_attempts": [
+    {
+      "run": 40782868396,
+      "commit": "1a04d93ee718c358665634c438a9837aae2d7eb5",
+      "status": "failed-before-provision",
+      "slurm_submitted": false,
+      "gpu_allocated": false,
+      "profile_collected": false,
+      "cause": "Four new cleanup fixtures timed out on kill/wait of an immediately started background sleep. Earlier single repeats missed a reproducible Bash child-launch signal race.",
+      "reproduction": "Bash5.2/Python3.12 isolated repeated trials reproduced live sleep60 with parent blocked in wait after successful kill. Production-shaped while sleep15 advisory loop also left orphaned sleep15 holding capture pipes.",
+      "fix": "Remove nonessential advisory hash-progress background loop; retain foreground SHA-256 validation and runtime-only cleanup trap. Test actual runtime/error/interrupt cleanup without artificial child.",
+      "pp4_gate_fixture_job": "passed; actual image provision skipped"
+    }
+  ]
 }

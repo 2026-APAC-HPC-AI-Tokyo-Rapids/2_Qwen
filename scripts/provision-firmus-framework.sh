@@ -35,14 +35,9 @@ runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEM
 # This process owns only the mktemp directory above. A failed or interrupted
 # preparation must not leak it, including interruption during image hashing.
 provision_complete=false
-progress_pid=
 cleanup_provision() {
   local status=$?
   trap - EXIT
-  if [[ -n "${progress_pid}" ]]; then
-    kill "${progress_pid}" 2>/dev/null || true
-    wait "${progress_pid}" 2>/dev/null || true
-  fi
   if [[ "${provision_complete}" != true ]]; then
     chmod -R u+w "${runtime_dir}" 2>/dev/null || true
     rm -rf -- "${runtime_dir}"
@@ -95,13 +90,8 @@ for image_framework in sglang "${framework}"; do
   [[ -L "${runtime_dir}/${image_framework}.sqsh" ]] && continue
   [[ "${expected_sha}" =~ ^[0-9a-f]{64}$ && "$(stat -c '%s' "${image}")" == "${expected_size}" ]]
   echo "Checking ${image_framework} image SHA-256"
-  while sleep 15; do echo "container_sha256_check_in_progress=${image_framework}"; done &
-  progress_pid=$!
+  # Keep hashing foreground: an advisory timer adds a kill/wait race to cleanup.
   sha256sum "${image}" >"${runtime_dir}/source/${image_framework}-image.sha256"
-  # A login fork failure may already have stopped the advisory progress loop.
-  kill "${progress_pid}" 2>/dev/null || true
-  wait "${progress_pid}" 2>/dev/null || true
-  progress_pid=
   [[ "$(awk '{print $1}' "${runtime_dir}/source/${image_framework}-image.sha256")" == "${expected_sha}" ]]
   ln -s "${image}" "${runtime_dir}/${image_framework}.sqsh"
   cp "${provenance}" "${runtime_dir}/source/${image_framework}-container.json"

@@ -17,7 +17,7 @@ def executable(path, text):
 
 
 @pytest.mark.parametrize("ending,status,preserved", [("exit 7", 7, False), ("kill -TERM $$", 143, False), ("kill -INT $$", 130, False), ("exit 0", 0, False), ("provision_complete=true", 0, True)])
-def test_provision_owns_cleanup_and_progress(tmp_path, ending, status, preserved):
+def test_provision_owns_cleanup(tmp_path, ending, status, preserved):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "config.json").write_text(json.dumps({"framework": "sglang", "workload": "official", "concurrency": 1}))
@@ -27,14 +27,12 @@ def test_provision_owns_cleanup_and_progress(tmp_path, ending, status, preserved
     output = tmp_path / "output"
     env = dict(os.environ, GITHUB_WORKSPACE=str(workspace), GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="1", GITHUB_SHA="fixture", GITHUB_OUTPUT=str(output), RUNTIME_ROOT=str(root), PROFILE="false", REQUIRE_BUILD="false")
     script = (REPO / "scripts/provision-firmus-framework.sh").read_text().split('install -m 0644 "${config}"')[0]
-    script += '\nsleep 60 &\nprogress_pid=$!\nprintf "%s\\n" "${progress_pid}" >"${RUNTIME_ROOT}/progress-pid"\n' + ending + "\n"
+    script += "\n" + ending + "\n"
     result = subprocess.run(["bash", "-c", script, "provision", "config.json"], env=env, capture_output=True, check=False, text=True, timeout=10)
     assert result.returncode == status, result.stderr
     runtime = Path(output.read_text().strip().split("=", 1)[1])
     assert runtime.exists() == preserved
     assert sibling.exists()
-    with pytest.raises(ProcessLookupError):
-        os.kill(int((root / "progress-pid").read_text()), 0)
 
 
 def workflow_step(step_id):
