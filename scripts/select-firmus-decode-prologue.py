@@ -4,7 +4,6 @@ import json
 import math
 import os
 import statistics
-import sys
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -61,15 +60,11 @@ def main():
     host = json.loads(Path("/opt/apac/deep-gemm-host-build.json").read_text())
     assert "sm90-decode-prepare.patch" in host["patches"], "Decode prepare requires the new host image"
     checks = run_path(str(Path(__file__).with_name("check-firmus-decode-kernels.py")))
+    # select-firmus-decode-kernels.sh runs the MegaMoE serving gate with the bundle
+    # enabled as its own torchrun first: re-initializing NCCL on the same rendezvous
+    # after that gate's destroy_process_group read a stale bootstrap id (40660502072).
     with bundle_mode(True):
         checks["check_decode_router_cluster"]()
-        # Use the actual serving gate, including mixed/idle ranks and replay.
-        previous = sys.argv
-        try:
-            sys.argv = ["check-firmus-megamoe.py", "--megamoe-only"]
-            run_path(str(Path(__file__).with_name("check-firmus-megamoe.py")), run_name="__main__")
-        finally:
-            sys.argv = previous
 
     dist.init_process_group("nccl", timeout=timedelta(seconds=240), device_id=torch.device("cuda", rank))
     assert dist.get_world_size() == 4

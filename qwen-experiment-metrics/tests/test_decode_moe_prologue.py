@@ -64,8 +64,8 @@ def test_capture_mode_restores_inherited_values_on_failure(monkeypatch):
 @pytest.mark.parametrize("case,status,selected", [("router-gate", 1, False), ("prepare-gate", 1, False), ("timeout", 124, False), ("not-faster", 0, False), ("selected", 0, True), ("stale-failure", 1, False)])
 def test_shell_rejection_preserves_control_and_continues(tmp_path, case, status, selected):
     shell = (ROOT / "scripts/select-firmus-decode-kernels.sh").read_text()
-    block = shell.split('  timeout --kill-after=5 260 ', 1)[1].split('\nelif ', 1)[0]
-    block = 'timeout --kill-after=5 260 ' + block
+    start = '  DG_SM90_DECODE_PREPARE=1 SGLANG_DECODE_ROUTER=cluster timeout '
+    block = start.lstrip() + shell.split(start, 1)[1].split('\nelif ', 1)[0]
     control = "SGLANG_DECODE_DENSE=control\n"
     candidate = "DG_SM90_DECODE_PREPARE=1\nSGLANG_DECODE_ROUTER=cluster\n"
     (tmp_path / "dense.env").write_text(control)

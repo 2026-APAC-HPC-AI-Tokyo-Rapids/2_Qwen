@@ -18,7 +18,7 @@ if [[ "${part}" == dense ]]; then
   dense=$?
   if (( dense == 0 )); then cat "${out}/dense-selected.env" >>"${out}/dense.env"; fi
   printf 'dense=%s\n' "${dense}" >"${out}/dense-status.txt"
-  timeout --kill-after=5 260 "${torchrun}" --standalone --nproc-per-node=4 "${root}/scripts/select-firmus-decode-prologue.py" --output "${out}/prologue.json" --env-output "${out}/prologue-selected.env" >"${out}/prologue.log" 2>&1
+  DG_SM90_DECODE_PREPARE=1 SGLANG_DECODE_ROUTER=cluster timeout --kill-after=5 150 "${torchrun}" --standalone --nproc-per-node=4 "${root}/scripts/check-firmus-megamoe.py" --megamoe-only >"${out}/prologue-gate.log" 2>&1 && timeout --kill-after=5 200 "${torchrun}" --standalone --nproc-per-node=4 "${root}/scripts/select-firmus-decode-prologue.py" --output "${out}/prologue.json" --env-output "${out}/prologue-selected.env" >"${out}/prologue.log" 2>&1
   prologue=$?
   if (( prologue == 0 )); then cat "${out}/prologue-selected.env" >>"${out}/dense.env"; fi
   printf 'prologue=%s\n' "${prologue}" >"${out}/prologue-status.txt"
