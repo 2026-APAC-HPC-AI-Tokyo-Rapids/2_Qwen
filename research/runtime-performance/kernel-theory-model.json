@@ -64,16 +64,18 @@
   "approach": {
     "p_moe": {
       "priority": 1,
-      "next": "5本のFC2出力/アドレス改善6f0164dが現行へ未統合だった。現行D5a付きheaderへ復元し、CPUの数値配置・full codegenを先に検証。同一job内control/candidate/control-repeatと代表2ケースの別timelineで採否を決める。source-rank×expert countsを既存集計から保存し、remote payloadと64行paddingをCPU算出する。",
+      "next": "通常FC2 run40653531712は9234.34、9235.28比−0.0102%で改善なし。既存本番routing40621030371の配置探索もtrain2.316msに対しheld-out0.103msで採用条件未達、追加GPU投入なし。10000超には+8.29%必要。小さいaddress変更とこの配置案は再投入せず、FC1/FC2のmainloop・stage待ちやFA3で複数msを削る具体的な仕事量を特定する。",
       "gap_to_explain": "GEMM外のBF16出力・combine・通信、tile padding、rank待ち。完全均衡のFLOP下限との差全量を削減可能としない。",
-      "gate": "出力BF16と加算順序、通信量・同期を保持。stable controls、exact hash、replica4の3ケース各>0.5%短縮・中央値>1%短縮、全ケース>1%悪化なしを満たしてから通常servingへ進む。",
+      "gate": "今回の通常Firmus試験はユーザーが明示許可。既存EP4数値gateと公式servingの品質・SLA eligibility・goodput・完了時間/ITL/受理長で評価する。先行kernel benchやASPIRE6500条件を達成済みとは記録しない。9235.28との単回比較を因果的speedupと断定しない。",
       "evidence": [
         "megamoe-phases-40057117293.json",
         "2026-10-24-prefill-megamoe-timeline.md",
-        "2026-10-27-prefill-memory.md"
+        "2026-10-27-prefill-memory.md",
+        "megamoe-fc2-serving-40653531712.json",
+        "prefill-placement-screen-40621030371.json"
       ],
       "blocked_by": [
-        "current combined candidate timing with D5a",
+        "current-shape reduction large enough to justify the >10000 serving target",
         "actual HBM/NVLink transactions and per-PC stalls"
       ]
     },
@@ -179,8 +181,8 @@
     {
       "candidate": "FC2 address/guards/metadata/pair bundle",
       "run": "40116925551",
-      "status": "previously_unmerged_recovered_for_validation",
-      "result": "6f0164d separate branch, absent from current image40197369083 and its seven overlays. Historical serving8854.80->8922.77 is one cross-run comparison, not causal proof. Current D5a combination requires one paired kernel gate."
+      "status": "no_incremental_serving_improvement_on_current_base",
+      "result": "Old unpaired8922.77 versus8854.80 did not transfer: current normal run40653531712 is9234.34 versus9235.28 (-0.0102%). No serving improvement observed. Do not repeat without new evidence."
     },
     {
       "candidate": "Prefill independent WG",
@@ -264,14 +266,14 @@
     "control_header_sha256": "220f409fd723d931cdad4e70b8e149646ececb5d1ee8554048683043ae413aa2",
     "candidate_header_sha256": "7aa48a3e10eb5a16e2d1e9b48efc126194aff3df1c74989eb60ccde1da44f8e8",
     "patch": "patches/deep-gemm-bench/fc2-address/fc2-output-address.patch",
-    "shape": "EP4, H4096, I1536, top8, FP8 weights/activation, BF16 partial, FP32 combine; five Prefill4096 cases, three sampled routing distributions from archived pooled layer frequencies with hot4",
+    "shape": "Normal Firmus H200 serving on the 9235.28 reference: EP4, H4096, I1536, top8, FP8 weights/activation, BF16 partial, FP32 combine; c215, FP8 draft and Prefill start alignment retained. This is the ordinary serving workload, not the five-case kernel bench.",
     "removed_work": "Repeated row-validity branches, BF16 shared-address math, destination rank table loads/address math. Metadata loads issued ahead of packing; next row loaded before remote store. No changed useful FLOPs, payload bytes or reduction order.",
-    "measurement_question": "Does the recovered FC2 bundle reduce current D5a kernel time on stable same-job controls? The separate control timeline locates the remaining gap against H100 resource references; it cannot measure candidate phase deltas.",
-    "status": "aspire_connection_blocked_before_pbs",
-    "serving_change_enabled": false,
+    "measurement_question": "Does enabling only the recovered FC2 bundle on the 9235.28 ordinary Firmus serving configuration improve official eligible goodput without numerical/SLA regressions? One new serving run is a provisional comparison, not a controlled causal effect.",
+    "status": "completed_no_serving_improvement",
+    "serving_change_enabled": true,
     "cpu_validation": "megamoe-fc2-cpu-validation-20261028.json",
     "timeline_policy": "Control only: candidate instrumentation introduces 32B spill stores and 80/84B spill loads. Do not run or compare its perturbed phases. Ordinary control/candidate/repeat use zero-spill kernels.",
-    "new_gpu_work": "Planned: one ASPIRE H100 node, four allocated GPUs, at most 15 minutes; five ordinary cases each for control/candidate/control-repeat, candidate numeric gate, two control timeline cases. No QKV, unrelated Decode timing, or candidate timeline.",
+    "new_gpu_work": "Completed one normal Firmus run40653531712; initial40652220352 failed before allocation. No additional launch.",
     "attempts": [
       {
         "run": "40561028271",
@@ -312,11 +314,65 @@
         "runtime_created": false,
         "artifacts": "No runtime artifacts; GitHub Actions logs retained",
         "diagnosis": "Tailscale reports WIN-5IM4VJ0SFOS offline, LastSeen2026-10-27T14:36:11.1Z (23:36 JST); direct ssh aspire2p.nscc.sg also timed out. No rerun until connectivity is restored."
+      },
+      {
+        "run": "40652220352",
+        "commit": "d172d2fccc8595eb138e336b5bd2a45ab4fa81f4",
+        "cluster": "firmus",
+        "mode": "normal_serving",
+        "status": "failure",
+        "dispatched": true,
+        "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40652220352",
+        "user_instruction": "いやfirmusで、benchじゃなくて、普通に投入して欲しいなって",
+        "authorization_scope": "This ordinary Firmus FC2 trial overrides the ASPIRE6500 prerequisite; ASPIRE6500 remains unachieved. No FC1 activation or kernel-bench rerun.",
+        "serving_reference_run": "40630160781",
+        "only_config_change": "Append patches/deep-gemm-bench/fc2-address/fc2-output-address.patch to the reference seven overlays; retain c215, FP8 draft and Prefill start alignment.",
+        "official_result": null,
+        "stage": "Linux unit tests before Firmus preparation",
+        "slurm_job_id": null,
+        "gpu_measurements": 0,
+        "runtime_created": false,
+        "first_failure": "test_aspire_megamoe_uses_two_prefill_and_two_decode_workers[False]: ASPIRE baseline overlays incorrectly required to equal Firmus plus the FC2 trial",
+        "failed_tests": 4,
+        "diagnosis": "Three test files still assumed the Firmus overlay list equalled ASPIRE/frozen submission or ended at D5a. Keep runtime configuration unchanged; fix explicit experiment-vs-frozen expectations.",
+        "fix_commit": "be5c45347255e9e18129a164554a357f0db98dfa",
+        "fix": "Update only three test expectations: ASPIRE fixed7 plus explicit FC2 patch equals Firmus8; exact decode-IWG/D5a/FC2 suffix; exclude only start-align and experimental FC2 from frozen submission comparison. Runtime configurations, candidate patch and frozen package unchanged.",
+        "fix_validation": {
+          "passed": 80,
+          "skipped": 1,
+          "skip_reason": "Existing fixed source mirror unavailable",
+          "environment": "Local GNU coreutils PATH with numpy",
+          "ruff": "PASS for the three changed test files",
+          "diff_check": "PASS"
+        }
+      },
+      {
+        "run": "40653531712",
+        "commit": "be5c45347255e9e18129a164554a357f0db98dfa",
+        "cluster": "firmus",
+        "mode": "normal_serving",
+        "status": "success",
+        "dispatched": true,
+        "url": "https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40653531712",
+        "same_authorized_trial_as": "40652220352",
+        "serving_reference_run": "40630160781",
+        "only_change_from_previous_attempt": "Correct three configuration expectation test files; candidate patch and serving configuration unchanged.",
+        "authorization_scope": "Explicitly requested ordinary Firmus FC2 trial; ASPIRE6500 remains unachieved. No FC1 activation or kernel-bench rerun.",
+        "official_result": {
+          "score": 9234.33945514151,
+          "eligible": true,
+          "validation_valid": true,
+          "errors": 0,
+          "comparison": "megamoe-fc2-serving-40653531712.json"
+        },
+        "slurm_job_id": "26960",
+        "runtime_cleanup": true,
+        "artifact_archive": "archive-host:/srv/qwen-artifacts/40653531712/1/"
       }
     ],
     "serving_validation_note": "Restored existing FP8-draft post-run validator fix and its tests from7980d10; no launch settings changed.",
-    "execution_preference": "Use ASPIRE H100 EP4 kernel bench first. User conditionally authorizes Firmus once sufficient ASPIRE improvement is demonstrated, with ordinary serving official score ~6500 output tok/s as the target; kernel timing alone does not satisfy this condition.",
-    "performance_conclusion": "This is the exact old five-transform FC2 bundle, not a new technique. Old serving8922.77 vs8854.80 was one unpaired observation. Latest9235.28 serving retains the same current control header and does not activate this bundle. Composition verified byte-for-byte without recompilation or new measurement; incremental GPU/serving speed remains unknown.",
+    "execution_preference": "Kernel benches prefer ASPIRE; the latest ordinary ASPIRE score remains 6081.54, below the 6500 target. The user explicitly requested normal Firmus submission for this FC2 trial, overriding that prerequisite for this run only. This is authorization, not achievement of the ASPIRE target.",
+    "performance_conclusion": "No observed ordinary-serving improvement: -0.0102 percent. Do not promote FC2 as a demonstrated gain or repeat this candidate without new evidence. One cross-run comparison does not establish a causal regression.",
     "aspire_serving_baseline": {
       "run_id": 40274854588,
       "commit": "e2124d8124314f0440fc45336fee7c2a8076113e",
@@ -329,7 +385,7 @@
       "current_checkout_concurrency": 104,
       "comparison_caveat": "Previous c104 run40251123706 selected n192, while c112 selected control; the 2.64% cross-run gain cannot be attributed solely to concurrency. No current H100 profile."
     },
-    "resume": "After relay connectivity is restored, rerun only failed Actions jobs for40569440787 (same experiment/source, run attempt2); Linux gates already passed. No blind rerun while offline.",
+    "resume": "FC2 and the screened placement show no useful improvement. No automatic GPU rerun; subagents stopped. User target >10000 official good output tok/s needs a larger work reduction before the next experiment.",
     "initial_serving_base_commit": "68c4f122a67659a786ce6540bfabfc962c278a04",
     "latest_serving_reference": {
       "run": "40630160781",
@@ -340,7 +396,8 @@
       "FC2_five_patch_bundle_active": false,
       "deep_gemm_source_identical_to_existing_control": true,
       "evidence": "megamoe-fc2-history-and-9235-compatibility.json"
-    }
+    },
+    "serving_result": "megamoe-fc2-serving-40653531712.json"
   },
   "megamoe_communication_evidence": {
     "file": "megamoe-communication-metrics.json",

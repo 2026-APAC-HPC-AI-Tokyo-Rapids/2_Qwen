@@ -22,13 +22,21 @@ GEMMはFMAを2 FLOPとし、`2MNK`。MoEはFC1とFC2を分け、有効行数とt
 
 ## 現在の実行状態
 
-2026-10-28、ユーザー指示でFirmus実行を停止。Actions40563900060を取消し、停止専用workflow40567082710でSlurm26800のCANCELLED・経過0秒・割当0台・残存runtime削除を確認した。今回のGPU測定は0回。復元候補はCPU検証のみで、速度改善・serving採用は未確認。
+2026-10-28、ユーザー指示で旧Firmus kernel benchを停止。Actions40563900060を取消し、停止専用workflow40567082710でSlurm26800のCANCELLED・経過0秒・割当0台・残存runtime削除を確認した。この停止済みbenchのGPU測定は0回。旧benchとは別に通常serving試験を完了し、今回FC2候補の改善は認められなかった。
 
-kernel benchはASPIRE H100 EP4を優先する。最新の指示ではASPIREで十分速くなったらFirmusへ進む。目安は通常serving公式6500 output tok/sで、kernel単体の改善率では代替しない。最新ASPIREはc112の6081.54（run40274854588、BF16 draft、FA3 control）。6500には約6.88%必要。c104の5925.07はFA3 n192だったため、差をconcurrencyだけの効果としない。以下のFC2候補にはまだGPU測定結果がない。
+kernel benchはASPIRE H100 EP4を優先する。従来のFirmus移行条件の目安はASPIRE通常serving公式6500 output tok/sで、kernel単体の改善率では代替しない。最新ASPIREはc112の6081.54（run40274854588、BF16 draft、FA3 control）。6500には約6.88%必要。c104の5925.07はFA3 n192だったため、差をconcurrencyだけの効果としない。今回の通常Firmus結果は以下に記録する。
 
-ASPIRE EP4経路はcommit396f1fbで実装済み。run40569440787のLinux全検証は成功したが、接続中継WIN-5IM4VJ0SFOSへのSSH timeoutで準備前に停止した。PBS投入・GPU測定・runtime作成は0。中継は10/27 23:36 JST以降offlineで、直接ASPIRE接続もtimeout。接続復帰前の再投入やFirmusへの切替はしない。
+ASPIRE EP4経路はcommit396f1fbで実装済み。run40569440787のLinux全検証は成功したが、接続中継WIN-5IM4VJ0SFOSへのSSH timeoutで準備前に停止した。PBS投入・GPU測定・runtime作成は0。中継は10/27 23:36 JST以降offlineで、直接ASPIRE接続もtimeout。このASPIRE benchは再投入していない。
 
-最新Firmus run40630160781（840b40f、c215、FP8 draft、Prefill開始整列）は公式9235.28 good output tok/s。imageと7本のDeepGEMM overlayのSHAは本候補の既存controlと全一致した。作業baseをこのcommitへ進め、c215等を保持したFC2追加設定を準備。FC2 bundleはGitに存在するが9235のserving設定では未有効。旧6f0164dの5本を再適用したheaderともbyte一致するため、新しいFC2手法とは呼ばない。同bundleの旧servingは8922.77（旧8854.80比+0.77%の単回比較）、個別/結合kernel benchの記録は見つからない。bulk/fragment/transpose等の過去の棄却案とは異なり、それらの再測定は不要。9235への上積みは未実測。詳細は `megamoe-fc2-history-and-9235-compatibility.json`。
+旧通常run40652220352はGPU前CIで4件の設定期待値testに失敗。GPU測定0・runtime作成なし。ASPIRE固定7本とFirmusのFC2追加、D5a後のFC2順序、凍結submissionとの差分を3test fileで明示した。修正commitbe5c453のローカル検証は80 passed・1 skipped（既存source mirror未配置）、Ruffとdiff検査はPASS。実行設定・FC2候補・submission実体は変更していない。
+
+ユーザーの追加指示『いやfirmusで、benchじゃなくて、普通に投入して欲しいなって』により、今回の通常Firmus FC2試験はASPIRE6500条件より優先して明示許可された。ASPIRE6500は未達のまま。通常serving run40653531712（commitbe5c453）は投入済み、記録時点の状態はsuccess。kernel benchは実行せず、9235.28のc215・FP8 draft・Prefill開始整列を保持しFC2 patchだけを追加した。FC1候補は非active。
+
+通常run40653531712は公式9234.34、reference9235.28比−0.0102%で実質横ばい。平均TTFT1345.50→1329.99ms、ITL15.890→15.939ms、全応答4507.64→4501.79ms。公式validation/eligibility合格・error0、Slurm26960 COMPLETED0:0・14分15秒、artifact回収とruntime削除を確認。設定はFC2追加だけで、実際のPrefill/Decode選択envも一致した。単回の別run比較なので微小差の因果は断定しない。採用済み改善として数えず、同候補の自動再投入を止める。詳細は `megamoe-fc2-serving-40653531712.json`。
+
+ユーザー目標は公式good output 10000超。9234.34から約8.29%必要。raw outputも9403.98なので、SLA違反の解消だけでは10000に届かない。追加GPU計測・subagent再開は行わず既存routingを解析する。
+
+直近の完了Firmus reference run40630160781（840b40f、c215、FP8 draft、Prefill開始整列）は公式9235.28 good output tok/s。imageと7本のDeepGEMM overlayのSHAは本候補の既存controlと全一致した。作業baseをこのcommitへ進め、c215等を保持するFC2追加設定の比較基準とする。FC2 bundleはGitに存在するが9235のserving設定では未有効。旧6f0164dの5本を再適用したheaderともbyte一致するため、新しいFC2手法とは呼ばない。同bundleの旧servingは8922.77（旧8854.80比+0.77%の単回比較）、個別/結合kernel benchの記録は見つからない。bulk/fragment/transpose等の過去の棄却案とは異なり、それらの再測定は不要。今回の9235への追加試験は9234.34（−0.0102%）で上積みなし。詳細は `megamoe-fc2-history-and-9235-compatibility.json`。
 
 FC1にもscale読取アドレスの共通化候補を作成した。約509万組のpointer一致、6 geometryのfresh CPU compileを確認。Prefill128/140のFC1静的spanは290→277/280→267命令（整数address-family各−10）、168 registers・spill0を維持。その他4 geometryは命令encoding一致。動的命令数や速度改善率ではなく、GPUでの数値一致・速度は未確認。候補patchはactive bench inventoryに含めない。詳細は `megamoe-fc1-cpu-validation-20261028.json`。
 
@@ -129,9 +137,9 @@ FC1=4*T*topk*H*I, FC2=2*T*topk*H*I。
 
 追う差：GEMM外のBF16出力・combine・通信、tile padding、rank待ち。完全均衡のFLOP下限との差全量を削減可能としない。
 
-次の作業：5本のFC2出力/アドレス改善6f0164dが現行へ未統合だった。現行D5a付きheaderへ復元し、CPUの数値配置・full codegenを先に検証。同一job内control/candidate/control-repeatと代表2ケースの別timelineで採否を決める。source-rank×expert countsを既存集計から保存し、remote payloadと64行paddingをCPU算出する。
+次の作業：通常FC2 run40653531712は9234.34、9235.28比−0.0102%で改善なし。既存本番routing40621030371の配置探索もtrain2.316msに対しheld-out0.103msで採用条件未達、追加GPU投入なし。10000超には+8.29%必要。小さいaddress変更とこの配置案は再投入せず、FC1/FC2のmainloop・stage待ちやFA3で複数msを削る具体的な仕事量を特定する。
 
-測定へ進む条件：出力BF16と加算順序、通信量・同期を保持。stable controls、exact hash、replica4の3ケース各>0.5%短縮・中央値>1%短縮、全ケース>1%悪化なしを満たしてから通常servingへ進む。
+測定へ進む条件：今回の通常Firmus試験はユーザーが明示許可。既存EP4数値gateと公式servingの品質・SLA eligibility・goodput・完了時間/ITL/受理長で評価する。先行kernel benchやASPIRE6500条件を達成済みとは記録しない。9235.28との単回比較を因果的speedupと断定しない。
 
 内部の仕事量（時間の分解とは別）：
 
@@ -347,7 +355,7 @@ split2 FP32 partial O/LSE read + FP8 O/scale write。
 
 | 候補 | run | 状態と結果 |
 |---|---|---|
-| FC2 address/guards/metadata/pair bundle | 40116925551 | previously_unmerged_recovered_for_validation: 6f0164d separate branch, absent from current image40197369083 and its seven overlays. Historical serving8854.80->8922.77 is one cross-run comparison, not causal proof. Current D5a combination requires one paired kernel gate. |
+| FC2 address/guards/metadata/pair bundle | 40116925551 | no_incremental_serving_improvement_on_current_base: Old unpaired8922.77 versus8854.80 did not transfer: current normal run40653531712 is9234.34 versus9235.28 (-0.0102%). No serving improvement observed. Do not repeat without new evidence. |
 | Prefill independent WG | 40069880580 | rejected: +22-36% kernel latency; extra TMA/stage pressure |
 | Prefill bulk scatter | 40095847738 | rejected: +1.3-4.9%; see broad-ceiling-review before any repeat |
 | FP32 precombine | 39355994503 | rejected: serving -5.8%; added scratch traffic |

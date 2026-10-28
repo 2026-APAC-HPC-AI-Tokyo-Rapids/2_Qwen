@@ -1,0 +1,81 @@
+{
+  "schema": "prefill-placement-screen/v1",
+  "run": "40621030371",
+  "capture_count": 96,
+  "captured_archive_sha256_verified": true,
+  "raw_archive": "archive-host:/srv/qwen-artifacts/40621030371/1/results/results/prefill-routing/",
+  "optimizer_sha256": "6457e4fe43e0f80fb3238e1f2a885dfe0f34f7dcc932c967b5bf57028d2883a3",
+  "report_sha256": "84c1ffa2919b9224ac653bf502bc5a6ef686d9f04b850284f1ba1e20aec3cdc6",
+  "placement_sha256": "5d2ae7f6e3e262d0491a07ef71a846278fc0af995210be5dad52fb881b71f61d",
+  "accepted": false,
+  "refusal_reasons": [
+    "alpha=0.5 held-out saving 103.122 us is below half of training saving 2315.695 us"
+  ],
+  "training_forwards": 12,
+  "held_out_forwards": 12,
+  "aligned_forward_split": [
+    {
+      "worker": "prefill-0",
+      "training": [
+        717,
+        718,
+        719,
+        720
+      ],
+      "held_out": [
+        721,
+        722,
+        723,
+        724
+      ]
+    },
+    {
+      "worker": "prefill-1",
+      "training": [
+        720,
+        721,
+        722,
+        723
+      ],
+      "held_out": [
+        724,
+        725,
+        726,
+        727
+      ]
+    },
+    {
+      "worker": "prefill-2",
+      "training": [
+        714,
+        715,
+        716,
+        717
+      ],
+      "held_out": [
+        718,
+        719,
+        720,
+        721
+      ]
+    }
+  ],
+  "predicted_saving_us": {
+    "training": {
+      "0": 1985.96979103973,
+      "0.5": 2315.6953661153093,
+      "1": 2490.4102816585946
+    },
+    "held_out": {
+      "0": 48.69684058096027,
+      "0.5": 103.12242725431861,
+      "1": 152.32504642684944
+    }
+  },
+  "notes": [
+    "CPU-only analysis of existing captures; no GPU job, no subagent resumed.",
+    "Conditional model, not measured latency; M128 padding model and historical phase coefficients do not capture the full current kernel or D5a partial-WG skip.",
+    "The archive summary step failed when the scheduler allocation ended, but all 96 captured arrays passed file hashes, static routing and rank/forward alignment checks.",
+    "No candidate output written; the held-out gate refused this search result. This does not rule out every possible placement."
+  ]
+}
