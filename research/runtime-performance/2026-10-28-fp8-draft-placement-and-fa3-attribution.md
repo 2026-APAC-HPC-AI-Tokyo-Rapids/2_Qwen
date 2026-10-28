@@ -61,3 +61,35 @@ profile pass で komoriyuta の capture が 3 worker × 4 rank × 8 forward の�
 ## 6. 次の方向
 
 理論分析（kernel と系全体）の結論では、今の Decode 容量（SLA 内 約 49 req/s）が score を 9,500〜9,600 で止める。10,000 には Prefill −22 ms/反復と Decode step −3.6% の両方、またはこの釣り合いを動かす系全体の変更が要る。系全体の手（投機デコードの受理率、Decode の ITL 分布の平準化、開始時の一斉投入、資源配分）の検討を進めている。
+
+## 7. 系全体の施策：立ち上がり整列と concurrency 215（serving [40630160781](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40630160781)）
+
+系全体の分析（離散事象模型で実測の score・good 件数・ITL を ±0.3% で再現）で、次の 2 点が分かった。
+
+- AIPerf の計測時間は「最初の送信から最後の応答終了まで」で、120 s ではない（40480817670 で 124.32 s）。定常の完了率 48.04 req/s が窓全体で続けば約 9,607 になる。差の 4.6% は開始時の TTFT 不合格（2.1%）と立ち上がり・末尾の drain（2.5%）である。
+- c240 では定常で約 43 要求が Prefill の待ち行列に並ぶだけで、throughput に寄与しない。模型は c210〜220 で +0.3〜0.5%、全 rank の立ち上がりを揃えると +0.2〜0.7% とした。
+
+実装（1d9ffa4 ほか）：
+
+- `prefill-start-align.patch`：Prefill worker の全 TP rank が完全に空いた状態から要求が来たときだけ、全 DP rank に ready な要求が揃うまで最初の forward を最大 100 ms 待つ（開始時の 240 要求の送信幅は実測 97 ms）。rank の合意は CPU の Gloo all_reduce（32 B）で、CUDA の同期は増やさない。定常では待ち行列があるので発動しない。
+- concurrency 215。提出パッケージは c240 のまま。
+- Prefill の処理順は変えない。40313004834 の最初の 10 秒の 519 要求は、どの rank でも到着順に forward を始めていた（rank 内 FCFS）。
+
+| run | 構成 | score | good | TTFT 不合格（すべて開始 10 s 以内） | ITL 不合格 | 計測時間 | 定常 TTFT p50 / p99 | ITL 平均 / p99 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 40480817670 | c240、FP8 draft | 9161.67 | 0.9780 | 122 | 6 | 124.32 s | 1.81 / 4.41 s | 15.87 / 18.70 ms |
+| 40621030371 | 同上（routing 記録付き） | 9171.48 | 0.9777 | 121 | 9 | 124.27 s | 1.79 / 4.37 s | 15.89 / 18.87 ms |
+| 40630160781 | c215 ＋ 立ち上がり整列 | **9235.28** | **0.9830** | **95** | 4 | 123.70 s | 1.26 / 3.73 s | 15.89 / 18.79 ms |
+
++0.7%（模型の見込み +0.5〜1.2% の範囲）。TTFT 不合格が 121 → 95、定常 TTFT p50 が 1.79 → 1.26 s（模型の c215 の予測 1.27 s）に下がった。ITL は変わらず、Decode 側への影響はない。単回の比較だが、改善は TTFT 不合格と待ち行列の短縮という機構どおりに現れている。
+
+## 8. EAGLE3 draft の受理長（Firmus 診断 [40628856183](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40628856183)）
+
+1 node、TP4 server 2 本を並列（PD なし、FP8 target・KV・draft、EAGLE3 3/1/4、CUDA graph なし）、公式の合成入力 128 要求（並列 32）。
+
+| draft | revision | 受理長（bonus 込み） | 比 |
+|---|---|---:|---:|
+| nebius（現行） | ff0f0c09 | 2.251 | 1.00 |
+| lmsys SpecForge-Meituan | 7f8040f1 | 1.860 | 0.83 |
+
+Meituan 版は受理長が低く、draft の計算量も約 2 倍なので採らない。RedHat の speculators 版（87cd7aa9）は `norm_before_residual: true`（正規化後の hidden を residual に使う）で、固定版 SGLang の EAGLE3 の forward と異なるため、この診断では除外した。forward を合わせる overlay を作って別途測る。
