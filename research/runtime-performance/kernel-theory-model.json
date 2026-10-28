@@ -345,5 +345,18 @@
     "status": "CPU_admitted_not_GPU_measured_or_activated",
     "removed_work": "Common gate/up scale pointer and constant up offset; 4-byte K induction. Integer addressing only; same FP32 operations, scale loads, synchronization and payload bytes.",
     "past_rejections_distinct": "Does not cache 32 K scales, add SHFL, share RCP, change stages, or retry Prefill independent warpgroups."
+  },
+  "megamoe_prefill_stage4_cpu_candidate": {
+    "evidence": "megamoe-stage4-cpu-validation-20261028.json",
+    "status": "CPU_validated_default_off_GPU_unmeasured",
+    "patch": "patches/deep-gemm-bench/prefill-stage4/stage4.patch",
+    "host_patch": "patches/deep-gemm-host/sm90-prefill-stage4.patch",
+    "selection": "DG_SM90_PREFILL_2WG=1 and DG_SM90_PREFILL_STAGE4=1, 128/140 physical experts only; matching header overlay required",
+    "removed_work": "No FLOP, payload-byte or launch removal. FC2 CD is reused in four 64-column strips to permit four joint TMA stages. K-loop static sites decrease; dynamic count and latency unknown.",
+    "measurement_question": "Does the fourth shared stage reduce full-barrier waits enough to beat the extra strip epilogue synchronization in paired uninstrumented EP4 bench?",
+    "past_rejections_distinct": "Keeps two cooperating WGs and all B TMA sharing; does not repeat independent-WG, reduced stage count, duplicate TMA, bulk scatter or precombine.",
+    "serving_change_enabled": false,
+    "image_build_required": true,
+    "gpu_execution": false
   }
 }

@@ -67,12 +67,14 @@ def main():
     cases += [("swapab-boundary-mixed", [160, 161, 192, 193]), ("decode-graph-swapab-144", [144, 140, 136, 132]), ("swapab-hot-experts-144", [144] * 4)]
     # The early-publish assignment ring must leave no state after an empty call.
     cases += [("decode-all-idle", [0] * 4), ("decode-live-after-idle", [144] * 4)]
+    if os.environ.get("DG_SM90_PREFILL_STAGE4", "0") == "1":
+        cases += [("stage4-prefill-tail", [257, 263, 271, 279]), ("stage4-prefill-full", [256] * 4)]
     for case, counts in cases:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         if case == "decode-quant-zero":
             patterns.zero_()
         ids = torch.stack([torch.randperm(128, device=device)[:8] for _ in range(4)]).to(torch.int32)
-        if case in ("capacity-hot-experts", "decode-quant-zero", "swapab-hot-experts-144", "swapab-hot-experts-192") or case.startswith("decode-tile-"):
+        if case in ("capacity-hot-experts", "decode-quant-zero", "swapab-hot-experts-144", "swapab-hot-experts-192") or case.startswith(("decode-tile-", "stage4-prefill-")):
             ids[:] = torch.arange(8, dtype=torch.int32, device=device)
         weights = torch.rand(4, 8, device=device)
         ids[0, -1] = -1  # Masked/padded top-k slot must not read an expert.
