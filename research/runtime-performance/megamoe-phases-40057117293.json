@@ -1,0 +1,543 @@
+{
+  "schema_version": "megamoe-phases/1",
+  "run": "40057117293",
+  "image_run": "39932105942",
+  "case": "prefill-real43-replica4-4096",
+  "source_files": {
+    "timeline/prefill-real43-replica4-4096.npy": "0df99509f955b73ef90a61e0034199d0489c0149f70bbf9da02bf4a8c85869a3",
+    "bench.jsonl": "6d7aabafc9f83b01ece00ff762293d8120f8df539b86db51726e722921b149a7",
+    "timeline.jsonl": "680ee763bf6151c41c101cb2dcb8183bc244c95fdcdb2e167b4a7622135df4ab"
+  },
+  "parser_sha256": "51f1416a62857a53a98f5b3069e9df147c6be4ca1df019d30b76f473b2e37fab",
+  "extractor_sha256": "458c3a75c037531236af04e9b6521a56034c5c0ae1dbd528ac9d6cd5eeef4ab3",
+  "geometry": {
+    "num_sms": 132,
+    "num_tokens": 4096,
+    "rank": 0,
+    "block_m": 128,
+    "block_n": 256,
+    "epilogue_threads": 256,
+    "stages": 3,
+    "version": 2,
+    "math_warpgroups": 2
+  },
+  "bench_median_us": 1407.0719480514526,
+  "instrumented_bench_median_us": 1450.8479833602905,
+  "timeline_calls_2_end_median_us": 1423.872,
+  "representative_call_zero_based": 7,
+  "transfer": null,
+  "remote_fraction_all_ranks": 0.5339736938476562,
+  "ranks": [
+    {
+      "rank": 0,
+      "sm_clock_ghz_cta_median": 1.6531443164096369,
+      "work": {
+        "recv_pairs": 32176,
+        "fc1_useful_flops": 809735553024,
+        "fc2_useful_flops": 404867776512,
+        "peak_fp8_flops_per_second": 1787617687683662.5,
+        "fc2_partial_bytes": 263585792,
+        "combine_logical_read_write_bytes": 301989888,
+        "combine_fp32_fma_flops": 268435456,
+        "padded_rows_64": null,
+        "combine_logical_hbm_peak_us": 62.91456,
+        "fc1_compute_only_us": 452.9690876314998,
+        "fc2_compute_only_us": 226.4845438157499
+      },
+      "warpgroups": [
+        {
+          "wg": 0,
+          "phases_us": {
+            "first_stage_wait": {
+              "cta_median": 22.832083011706874,
+              "cta_max": 33.428869162882215
+            },
+            "fc1_loop": {
+              "cta_median": 653.9496844528787,
+              "cta_max": 672.331557733279
+            },
+            "fc1_stage_wait_subset": {
+              "cta_median": 61.19091433413612,
+              "cta_max": 79.2898191122487
+            },
+            "fc1_epilogue": {
+              "cta_median": 47.428527630103424,
+              "cta_max": 49.99906472844809
+            },
+            "fc2_loop": {
+              "cta_median": 342.15636521906515,
+              "cta_max": 386.9646284842876
+            },
+            "fc2_stage_wait_subset": {
+              "cta_median": 39.96095953739176,
+              "cta_max": 49.036322535878995
+            },
+            "fc2_epilogue_scatter": {
+              "cta_median": 186.69506258574836,
+              "cta_max": 213.81293413846942
+            },
+            "scheduler_tail": {
+              "cta_median": 0.21353247668628228,
+              "cta_max": 0.215022555916903
+            },
+            "pre_combine_grid_nvlink_wait": {
+              "cta_median": 75.1100963135159,
+              "cta_max": 84.37018923754817
+            },
+            "combine_cleanup": {
+              "cta_median": 80.56437814719379,
+              "cta_max": 85.3121127339009
+            }
+          },
+          "blocks_cta_median": {
+            "FC1Blocks": 25.0,
+            "FC2Blocks": 32.0
+          },
+          "useful_to_peak_over_median_cta_loop": {
+            "fc1": 0.6926665742035986,
+            "fc2": 0.6619328670701288
+          }
+        },
+        {
+          "wg": 1,
+          "phases_us": {
+            "first_stage_wait": {
+              "cta_median": 22.831722449520385,
+              "cta_max": 33.37843277072983
+            },
+            "fc1_loop": {
+              "cta_median": 655.7473789935597,
+              "cta_max": 671.7281698889093
+            },
+            "fc1_stage_wait_subset": {
+              "cta_median": 65.23134726649666,
+              "cta_max": 91.34418233464893
+            },
+            "fc1_epilogue": {
+              "cta_median": 45.678860608802836,
+              "cta_max": 48.404256819761045
+            },
+            "fc2_loop": {
+              "cta_median": 346.7886720992153,
+              "cta_max": 394.3093466729812
+            },
+            "fc2_stage_wait_subset": {
+              "cta_median": 45.98308349424943,
+              "cta_max": 57.860168417976034
+            },
+            "fc2_epilogue_scatter": {
+              "cta_median": 181.5432772203467,
+              "cta_max": 207.0336649451473
+            },
+            "scheduler_tail": {
+              "cta_median": 0.23279845887464035,
+              "cta_max": 0.33306356521302405
+            },
+            "pre_combine_grid_nvlink_wait": {
+              "cta_median": 76.68728943474764,
+              "cta_max": 86.8110017918491
+            },
+            "combine_cleanup": {
+              "cta_median": 80.43730916763866,
+              "cta_max": 86.1793778159049
+            }
+          },
+          "blocks_cta_median": {
+            "FC1Blocks": 25.0,
+            "FC2Blocks": 32.0
+          },
+          "useful_to_peak_over_median_cta_loop": {
+            "fc1": 0.6907676677666882,
+            "fc2": 0.6530909514568956
+          }
+        }
+      ]
+    },
+    {
+      "rank": 1,
+      "sm_clock_ghz_cta_median": 1.6498471165586284,
+      "work": {
+        "recv_pairs": 32697,
+        "fc1_useful_flops": 822846947328,
+        "fc2_useful_flops": 411423473664,
+        "peak_fp8_flops_per_second": 1784052280407973.2,
+        "fc2_partial_bytes": 267853824,
+        "combine_logical_read_write_bytes": 301989888,
+        "combine_fp32_fma_flops": 268435456,
+        "padded_rows_64": null,
+        "combine_logical_hbm_peak_us": 62.91456,
+        "fc1_compute_only_us": 461.2235618677235,
+        "fc2_compute_only_us": 230.61178093386175
+      },
+      "warpgroups": [
+        {
+          "wg": 0,
+          "phases_us": {
+            "first_stage_wait": {
+              "cta_median": 24.226121599196908,
+              "cta_max": 35.14652877291028
+            },
+            "fc1_loop": {
+              "cta_median": 668.4268192217528,
+              "cta_max": 684.3096800164247
+            },
+            "fc1_stage_wait_subset": {
+              "cta_median": 61.66467492801033,
+              "cta_max": 82.82553799775579
+            },
+            "fc1_epilogue": {
+              "cta_median": 48.60770188940772,
+              "cta_max": 50.00253254443975
+            },
+            "fc2_loop": {
+              "cta_median": 339.1853101242482,
+              "cta_max": 401.84384437548067
+            },
+            "fc2_stage_wait_subset": {
+              "cta_median": 36.94038169987232,
+              "cta_max": 45.592199248332136
+            },
+            "fc2_epilogue_scatter": {
+              "cta_median": 198.32990562116544,
+              "cta_max": 216.3726283373949
+            },
+            "scheduler_tail": {
+              "cta_median": 0.2145981232106351,
+              "cta_max": 0.22339244300451355
+            },
+            "pre_combine_grid_nvlink_wait": {
+              "cta_median": 49.78942995264515,
+              "cta_max": 57.92914002730572
+            },
+            "combine_cleanup": {
+              "cta_median": 80.34199813000566,
+              "cta_max": 84.76175661324942
+            }
+          },
+          "blocks_cta_median": {
+            "FC1Blocks": 25.0,
+            "FC2Blocks": 32.0
+          },
+          "useful_to_peak_over_median_cta_loop": {
+            "fc1": 0.6900135491342562,
+            "fc2": 0.6798990818599588
+          }
+        },
+        {
+          "wg": 1,
+          "phases_us": {
+            "first_stage_wait": {
+              "cta_median": 24.204217637821102,
+              "cta_max": 35.15567040515571
+            },
+            "fc1_loop": {
+              "cta_median": 671.1096978973283,
+              "cta_max": 687.334341405361
+            },
+            "fc1_stage_wait_subset": {
+              "cta_median": 66.43705566725387,
+              "cta_max": 90.74101825577385
+            },
+            "fc1_epilogue": {
+              "cta_median": 45.78666758684483,
+              "cta_max": 50.1002627206513
+            },
+            "fc2_loop": {
+              "cta_median": 344.33435399911343,
+              "cta_max": 406.99090940565196
+            },
+            "fc2_stage_wait_subset": {
+              "cta_median": 43.12304880590579,
+              "cta_max": 60.32778068649511
+            },
+            "fc2_epilogue_scatter": {
+              "cta_median": 191.02122588115824,
+              "cta_max": 207.3587224225781
+            },
+            "scheduler_tail": {
+              "cta_median": 0.2365656200944386,
+              "cta_max": 0.34114830504972815
+            },
+            "pre_combine_grid_nvlink_wait": {
+              "cta_median": 51.898982756607325,
+              "cta_max": 60.67441756110293
+            },
+            "combine_cleanup": {
+              "cta_median": 80.2461400393745,
+              "cta_max": 84.81125751854347
+            }
+          },
+          "blocks_cta_median": {
+            "FC1Blocks": 25.0,
+            "FC2Blocks": 32.0
+          },
+          "useful_to_peak_over_median_cta_loop": {
+            "fc1": 0.6872550989991583,
+            "fc2": 0.6697321317362819
+          }
+        }
+      ]
+    },
+    {
+      "rank": 2,
+      "sm_clock_ghz_cta_median": 1.6027456094917882,
+      "work": {
+        "recv_pairs": 32922,
+        "fc1_useful_flops": 828509257728,
+        "fc2_useful_flops": 414254628864,
+        "peak_fp8_flops_per_second": 1733119348350288.2,
+        "fc2_partial_bytes": 269697024,
+        "combine_logical_read_write_bytes": 301989888,
+        "combine_fp32_fma_flops": 268435456,
+        "padded_rows_64": null,
+        "combine_logical_hbm_peak_us": 62.91456,
+        "fc1_compute_only_us": 478.04512627283094,
+        "fc2_compute_only_us": 239.02256313641547
+      },
+      "warpgroups": [
+        {
+          "wg": 0,
+          "phases_us": {
+            "first_stage_wait": {
+              "cta_median": 27.191901830693126,
+              "cta_max": 38.91806996456256
+            },
+            "fc1_loop": {
+              "cta_median": 689.0218453509465,
+              "cta_max": 713.9110649420479
+            },
+            "fc1_stage_wait_subset": {
+              "cta_median": 63.00434842782285,
+              "cta_max": 83.5065616069763
+            },
+            "fc1_epilogue": {
+              "cta_median": 50.11173819859124,
+              "cta_max": 52.78239652363993
+            },
+            "fc2_loop": {
+              "cta_median": 349.9268778218841,
+              "cta_max": 417.5774316938595
+            },
+            "fc2_stage_wait_subset": {
+              "cta_median": 36.091330791989385,
+              "cta_max": 45.23840768240856
+            },
+            "fc2_epilogue_scatter": {
+              "cta_median": 200.77236516756656,
+              "cta_max": 216.9539046067716
+            },
+            "scheduler_tail": {
+              "cta_median": 0.2203013903348392,
+              "cta_max": 0.231587931162494
+            },
+            "pre_combine_grid_nvlink_wait": {
+              "cta_median": 11.837044838542056,
+              "cta_max": 20.935109107922926
+            },
+            "combine_cleanup": {
+              "cta_median": 78.07834364802943,
+              "cta_max": 80.43274103614385
+            }
+          },
+          "blocks_cta_median": {
+            "FC1Blocks": 25.0,
+            "FC2Blocks": 33.0
+          },
+          "useful_to_peak_over_median_cta_loop": {
+            "fc1": 0.6938025688131025,
+            "fc2": 0.6830643151055121
+          }
+        },
+        {
+          "wg": 1,
+          "phases_us": {
+            "first_stage_wait": {
+              "cta_median": 27.2169018338394,
+              "cta_max": 38.92101235141155
+            },
+            "fc1_loop": {
+              "cta_median": 690.0463875094119,
+              "cta_max": 716.7472841429054
+            },
+            "fc1_stage_wait_subset": {
+              "cta_median": 67.39018971791398,
+              "cta_max": 87.86467035003643
+            },
+            "fc1_epilogue": {
+              "cta_median": 48.49748790489657,
+              "cta_max": 51.55027317264802
+            },
+            "fc2_loop": {
+              "cta_median": 354.75073353719665,
+              "cta_max": 421.0501489264456
+            },
+            "fc2_stage_wait_subset": {
+              "cta_median": 42.42709574494219,
+              "cta_max": 54.4412430958141
+            },
+            "fc2_epilogue_scatter": {
+              "cta_median": 193.37022181819307,
+              "cta_max": 217.77694975278445
+            },
+            "scheduler_tail": {
+              "cta_median": 0.2415689790639135,
+              "cta_max": 0.34607288535062253
+            },
+            "pre_combine_grid_nvlink_wait": {
+              "cta_median": 14.22514075405661,
+              "cta_max": 23.59683285165852
+            },
+            "combine_cleanup": {
+              "cta_median": 78.19067944893015,
+              "cta_max": 81.11737736876626
+            }
+          },
+          "blocks_cta_median": {
+            "FC1Blocks": 25.0,
+            "FC2Blocks": 33.0
+          },
+          "useful_to_peak_over_median_cta_loop": {
+            "fc1": 0.6927724496873924,
+            "fc2": 0.6737760927317527
+          }
+        }
+      ]
+    },
+    {
+      "rank": 3,
+      "sm_clock_ghz_cta_median": 1.618640406310006,
+      "work": {
+        "recv_pairs": 33277,
+        "fc1_useful_flops": 837443125248,
+        "fc2_useful_flops": 418721562624,
+        "peak_fp8_flops_per_second": 1750307091520887.0,
+        "fc2_partial_bytes": 272605184,
+        "combine_logical_read_write_bytes": 301989888,
+        "combine_fp32_fma_flops": 268435456,
+        "padded_rows_64": null,
+        "combine_logical_hbm_peak_us": 62.91456,
+        "fc1_compute_only_us": 478.4549690193645,
+        "fc2_compute_only_us": 239.22748450968226
+      },
+      "warpgroups": [
+        {
+          "wg": 0,
+          "phases_us": {
+            "first_stage_wait": {
+              "cta_median": 28.483329730445547,
+              "cta_max": 38.703213671017
+            },
+            "fc1_loop": {
+              "cta_median": 682.8316592044007,
+              "cta_max": 710.054941877096
+            },
+            "fc1_stage_wait_subset": {
+              "cta_median": 63.505787180536174,
+              "cta_max": 84.5431907231773
+            },
+            "fc1_epilogue": {
+              "cta_median": 49.57088355198723,
+              "cta_max": 53.78921185256826
+            },
+            "fc2_loop": {
+              "cta_median": 345.15978594356034,
+              "cta_max": 409.24912200914315
+            },
+            "fc2_stage_wait_subset": {
+              "cta_median": 35.58316426867658,
+              "cta_max": 44.10359235684272
+            },
+            "fc2_epilogue_scatter": {
+              "cta_median": 208.65045908119384,
+              "cta_max": 222.06916976577725
+            },
+            "scheduler_tail": {
+              "cta_median": 0.21830246647061813,
+              "cta_max": 0.23209438937124105
+            },
+            "pre_combine_grid_nvlink_wait": {
+              "cta_median": 16.197722445476984,
+              "cta_max": 25.89211079288043
+            },
+            "combine_cleanup": {
+              "cta_median": 79.32490814749929,
+              "cta_max": 82.28066055334443
+            }
+          },
+          "blocks_cta_median": {
+            "FC1Blocks": 25.0,
+            "FC2Blocks": 33.0
+          },
+          "useful_to_peak_over_median_cta_loop": {
+            "fc1": 0.7006924218728156,
+            "fc2": 0.6930919946415778
+          }
+        },
+        {
+          "wg": 1,
+          "phases_us": {
+            "first_stage_wait": {
+              "cta_median": 28.51535076680604,
+              "cta_max": 38.80105223168089
+            },
+            "fc1_loop": {
+              "cta_median": 684.2168346913807,
+              "cta_max": 710.7578662694125
+            },
+            "fc1_stage_wait_subset": {
+              "cta_median": 68.7851943701188,
+              "cta_max": 90.5014435077702
+            },
+            "fc1_epilogue": {
+              "cta_median": 47.773255124704264,
+              "cta_max": 51.29722676746678
+            },
+            "fc2_loop": {
+              "cta_median": 348.8404893845095,
+              "cta_max": 417.80843237386273
+            },
+            "fc2_stage_wait_subset": {
+              "cta_median": 40.08124780944492,
+              "cta_max": 59.95601439723176
+            },
+            "fc2_epilogue_scatter": {
+              "cta_median": 202.21033419613127,
+              "cta_max": 221.94138995387993
+            },
+            "scheduler_tail": {
+              "cta_median": 0.23978126318218074,
+              "cta_max": 0.34233969224328575
+            },
+            "pre_combine_grid_nvlink_wait": {
+              "cta_median": 18.040446526334904,
+              "cta_max": 28.312401267538917
+            },
+            "combine_cleanup": {
+              "cta_median": 79.40281964986184,
+              "cta_max": 82.61400981377415
+            }
+          },
+          "blocks_cta_median": {
+            "FC1Blocks": 25.0,
+            "FC2Blocks": 33.0
+          },
+          "useful_to_peak_over_median_cta_loop": {
+            "fc1": 0.6992738920771716,
+            "fc2": 0.6857790072814446
+          }
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Uninstrumented bench times pre_dispatch plus MegaMoE; the raw timeline describes the fused MegaMoE only.",
+    "CTA medians are not additive critical-path intervals or device utilization counters.",
+    "Stage waits are subsets of mainloop. FC1 deferred publication remains in later loop/scheduler work.",
+    "FC2 epilogue includes BF16 packing, address issue, stores and barriers; standalone transfer completion is unknown.",
+    "Grid/NVLink pre-combine waiting includes other ranks finishing computation, not only wire transfer.",
+    "Useful/peak over median CTA loop is a diagnostic proxy including padding, setup, stage waits and FP32 promotion.",
+    "64-row padded work applies to the current adopted full-padding-WG skip only; older runs leave padded_rows_64 null.",
+    "Logical bytes/peak bandwidth are resource references, not measured HBM/NVLink bandwidth.",
+    "Real-layer cases are sampled fixtures from archived pooled expert totals, not production source-conditioned token routing. Their matrix cannot justify a production placement change."
+  ]
+}

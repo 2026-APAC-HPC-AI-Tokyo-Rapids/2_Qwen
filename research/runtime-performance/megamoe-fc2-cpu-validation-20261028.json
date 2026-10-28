@@ -1,0 +1,83 @@
+{
+  "status": "PASS_WITH_TIMELINE_PERTURBATION_WARNING",
+  "gpu_execution": false,
+  "headers_sha256": {
+    "control": "220f409fd723d931cdad4e70b8e149646ececb5d1ee8554048683043ae413aa2",
+    "candidate": "7aa48a3e10eb5a16e2d1e9b48efc126194aff3df1c74989eb60ccde1da44f8e8",
+    "control-timeline": "14a284ceb88bd782dee0f2f2fbbd642a0b5fd74a9431190dd266a00ad78cf7ae",
+    "candidate-timeline": "46a29198c8be5c492f946a65116c659d0055dabc834659fe266ad49aa386826c"
+  },
+  "toolchain": "CUDA nvcc 13.0.88; archive-host /tmp/qwen-preflight-20261023/local-cuda",
+  "full_kernel_geometries": 6,
+  "compiled_variants": [
+    "control",
+    "candidate",
+    "control-timeline",
+    "candidate-timeline"
+  ],
+  "packing": {
+    "passed_cells": 7409760,
+    "valid_m": "0..128",
+    "widths": [
+      64,
+      128,
+      256
+    ],
+    "independent_expected": true,
+    "checks": "Source BF16 pair ownership/destination/padding only; symbolic values, no FP arithmetic/race model"
+  },
+  "scatter": {
+    "passed_vector_addresses_payloads_per_variant": 16908288,
+    "variants": [
+      "control",
+      "candidate"
+    ],
+    "valid_m": "0..128",
+    "hidden_tiles": 16,
+    "rank_patterns": 4,
+    "no_invalid_metadata_or_shared_reads": true,
+    "exact_once_live_row_lane_ownership": true
+  },
+  "normal_prefill": {
+    "control_candidate_regs": 168,
+    "control_candidate_spill_store_load_bytes": [
+      0,
+      0
+    ],
+    "control_candidate_stack_bytes": 0,
+    "instruction_slots": {
+      "prefill128": [
+        7512,
+        7200
+      ],
+      "prefill140": [
+        8072,
+        7768
+      ]
+    },
+    "bsync_delta": -30,
+    "imad_wide_u32_delta": -31,
+    "shfl_idx": [
+      69,
+      53
+    ]
+  },
+  "decode_swapab_encoding_identical": {
+    "normal": true,
+    "timeline": true,
+    "geometries": [
+      "decode_independent",
+      "decode_shared",
+      "partial_wave"
+    ]
+  },
+  "timeline_warning": "Stock timeline causes candidate-only Prefill spills: P128 32-byte stores/80-byte loads; P140 32-byte stores/84-byte loads; both stack8 versus control stack0/spill0. Instrumented phase deltas have asymmetric codegen perturbation; use uninstrumented bench for adoption.",
+  "scope_note": "BF16 row guards also change masked_nonswap SASS, retaining its resource counts; three SwapAB shapes are encoding-identical.",
+  "artifact_verification": {
+    "archive_sha256": "0cad185fa302504a433d78e8bbec322082f8797d3e6ebc77da6bf92683a92db9",
+    "manifest_entries_verified": 1079,
+    "status": "PASS"
+  },
+  "remote_scratch": "/tmp/apac-moe-fc2-recovery-20261028",
+  "remote_scratch_cleanup": "confirmed removed after full archive and 1079 manifest-entry checks"
+}

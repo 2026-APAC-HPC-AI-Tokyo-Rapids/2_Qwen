@@ -1,0 +1,32 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1560,7 +1560,8 @@
+                         // interleave), one 128-channel weight-SF block each, whether one
+                         // warpgroup owns all 256 columns (kPrefill2WG) or two own 128 each.
+                         const uint32_t gate_row = local_expert_idx * kL1SFPerExpert + (kPrefill2WG ? n_block_idx : sf_n_block_idx / 2u) * kL1SFKBlocks;
+-                        const uint32_t up_row = gate_row + kL1SFGateBlks * kL1SFKBlocks;
++                        const float* gate_sf_ptr = l1_weights_sf + gate_row;
++                        constexpr uint32_t kUpSFOffset = kL1SFGateBlks * kL1SFKBlocks;
+                         float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f, prev_gate_sf = 1.0f, prev_up_sf = 1.0f;
+                         float r0_gate = 1.0f, r1_gate = 1.0f, r0_up = 1.0f, r1_up = 1.0f;
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+@@ -1586,14 +1587,15 @@
+                             if (k_block_idx == 0) {
+                                 prev_scale_a_0 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r0);
+                                 prev_scale_a_1 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r1);
+-                                prev_gate_sf = __ldg(l1_weights_sf + gate_row);
+-                                prev_up_sf = __ldg(l1_weights_sf + up_row);
++                                prev_gate_sf = __ldg(gate_sf_ptr);
++                                prev_up_sf = __ldg(gate_sf_ptr + kUpSFOffset);
+                             }
+                             if (k_block_idx + 1 < num_k_blocks) {
+                                 uint32_t next_stage, next_phase;
+                                 next_stage_and_phase(next_stage, next_phase);
+-                                const float gate_sf = __ldg(l1_weights_sf + gate_row + k_block_idx + 1);
+-                                const float up_sf = __ldg(l1_weights_sf + up_row + k_block_idx + 1);
++                                ++ gate_sf_ptr;
++                                const float gate_sf = __ldg(gate_sf_ptr);
++                                const float up_sf = __ldg(gate_sf_ptr + kUpSFOffset);
+                                 full_barriers[next_stage]->wait(next_phase);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);

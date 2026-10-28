@@ -64,7 +64,7 @@ def workspace(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     shutil.copy(host_patch, ws / "patches/deep-gemm-host" / host_patch.name)
     (ws / "patches/deep-gemm-host/series").write_text(host_patch.name + "\n")
     (ws / "scripts").mkdir()
-    for script in ("provision-firmus-kernel-bench.sh", "bench-firmus-megamoe.py", "check-firmus-megamoe.py", "check-firmus-decode-kernels.py", "firmus_megamoe_replicas.py"):
+    for script in ("run-megamoe-kernel-bench.sh", "provision-firmus-kernel-bench.sh", "bench-firmus-megamoe.py", "check-firmus-megamoe.py", "check-firmus-decode-kernels.py", "firmus_megamoe_replicas.py"):
         shutil.copy(ROOT / "scripts" / script, ws / "scripts" / script)
     (ws / "platforms/firmus/kernel-bench").mkdir(parents=True)
     shutil.copy(ROOT / "platforms/firmus/kernel-bench/run.sbatch", ws / "platforms/firmus/kernel-bench/run.sbatch")
@@ -99,6 +99,34 @@ def add_candidate(ws: Path, name: str, patch: str, timeline: bool | str = False,
         (directory / "timeline").touch()
     if env is not None:
         (directory / "env").write_text(env)
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq")
+@pytest.mark.parametrize("stale_content", [None, "timeline", ".hidden", "old.patch"])
+def test_retired_candidate_directory_is_not_reactivated(tmp_path: Path, stale_content: str | None) -> None:
+    ws, patches = workspace(tmp_path)
+    add_candidate(ws, "fc2-address", patches["comment"])
+    stale = ws / "patches/deep-gemm-bench/prefill-combine-direct-store"
+    stale.mkdir()
+    if stale_content is not None:
+        (stale / stale_content).write_text(patches["comment"] if stale_content.endswith(".patch") else "")
+    (ws / "patches/deep-gemm-bench/candidates").write_text("fc2-address\n")
+    result = provision(tmp_path, ws)
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    variants = json.loads((runtime / "results/variants.json").read_text())
+    assert [v["name"] for v in variants["deep_gemm"]] == ["image", "fc2-address"]
+
+
+@pytest.mark.parametrize("marker", ["timeline", "env", ".hidden"])
+def test_nonempty_candidate_missing_patch_still_fails(tmp_path: Path, marker: str) -> None:
+    ws, _ = workspace(tmp_path)
+    broken = ws / "patches/deep-gemm-bench/broken"
+    broken.mkdir(parents=True)
+    (broken / marker).touch()
+    result = provision(tmp_path, ws)
+    assert result.returncode != 0
+    assert "Candidate directory broken has no .patch file" in result.stderr
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
@@ -310,7 +338,7 @@ def test_summary_passes_clean_run_and_reports_differing_hashes_without_failing(t
     assert "| rope | 5.00 | 5.00 | +0.0% | 5.00 / 5.00 | False |" in text
 
 
-@pytest.mark.parametrize("patch_name", ["prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch"])
+@pytest.mark.parametrize("patch_name", ["fc2-output-address.patch", "prefill-fc2-bulk-scatter.patch", "prefill-wg1-skip.patch", "prefill-fc2-bulk-scatter-wg1-skip.patch", "control-repeat.patch", "sm90-decode-sparse-dispatch.patch", "sm90-decode-fc1-register.patch", "sm90-decode-independent-wg.patch", "stream-combine.patch", "prefill-combine-direct-store.patch"])
 @pytest.mark.parametrize("same", [False, True])
 def test_arithmetic_preserving_candidates_require_equal_outputs(tmp_path, monkeypatch, patch_name, same):
     summarize = load_summary(monkeypatch)
@@ -468,7 +496,7 @@ def test_provision_counts_sglang_and_image_timeline_before_staging(tmp_path: Pat
 def test_kernel_bench_gate_is_megamoe_only_and_serving_gate_keeps_decode_checks():
     # 39942794259: the kernel-bench SGLang tree has no serving overlays, so the Decode-kernel
     # checks (decode_fa3_verify) cannot import there; serving still runs them before startup.
-    bench = (ROOT / "platforms/firmus/kernel-bench/run.sbatch").read_text()
+    bench = (ROOT / "scripts/run-megamoe-kernel-bench.sh").read_text()
     serving = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     gate = (ROOT / "scripts/check-firmus-megamoe.py").read_text()
     assert '"${ROOT}/scripts/check-firmus-megamoe.py" --megamoe-only' in bench
@@ -485,7 +513,7 @@ def test_control_only_timeline_stages_exactly_two_steps(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
     variants = json.loads((runtime / "results/variants.json").read_text())
-    assert variants == {"deep_gemm": [{"name": "image", "patches": [], "env": [], "timeline": "ready"}], "sglang": None}
+    assert variants == {"deep_gemm": [{"name": "image", "patches": [], "env": [], "timeline": "ready"}], "sglang": None, "prefill_memory": None, "prefill_only": False}
     assert not list((runtime / "overlay/candidates").iterdir())
     srun = tmp_path / "bin/srun"
     srun.write_text('#!/bin/bash\nprintf \'%s\\n\' "$*" >>"${SRUN_LOG}"\n')
@@ -510,7 +538,7 @@ def test_control_rejects_old_host_even_without_candidates(tmp_path: Path) -> Non
 @pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
 def test_decode_m1_campaign_keeps_final_control(tmp_path):
     ws, patches = workspace(tmp_path)
-    campaign = ROOT / "patches/deep-gemm-bench"
+    campaign = ROOT / "patches/deep-gemm-archive/decode-m1"
     names = sorted(path.name for path in campaign.iterdir() if path.is_dir())
     assert names == ["decode-m1-b-first", "z-control-repeat"]
     for name in names:
@@ -550,3 +578,127 @@ def test_bulk_campaign_local_and_real_cases_reach_timeline():
             assert ("prefill", f"real{layer}-replica4", 4096) in ns[key]
     # real7 is already the remote p90 tail (86/94), so no fourth layer is needed.
     assert list(data) == [43, 62, 7]
+
+
+@pytest.mark.parametrize("missing", [None, "probe", "repeat", "graph"])
+def test_prefill_memory_requires_exact_graph_and_terminal_control(tmp_path, monkeypatch, missing):
+    summarize = load_summary(monkeypatch)
+    variants = [{"name": "image", "patches": [], "timeline": "not-requested"}, {"name": "direct-store", "patches": [{"path": "prefill-combine-direct-store.patch"}], "timeline": "not-requested"}]
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": variants, "sglang": None, "prefill_memory": {"enabled": True}}))
+    steps = "image\tbench\t0\t1\ndirect-store\tgate\t0\t1\ndirect-store\tbench\t0\t1\nprefill-memory\tprobe\t0\t1\ncontrol-repeat\tbench\t0\t1\n"
+    (tmp_path / "steps.tsv").write_text(steps)
+    cases = [f"prefill-real{layer}-replica4-4096" for layer in (43, 62, 7)]
+    write_rows(tmp_path / "image/bench.jsonl", [bench_row(case, 1.5, case) for case in cases])
+    write_rows(tmp_path / "direct-store/bench.jsonl", [bench_row(case, 1.45, case) for case in cases])
+    if missing != "repeat":
+        write_rows(tmp_path / "control-repeat/bench.jsonl", [bench_row(case, 1.5, case) for case in cases])
+    probe = {"cases": [{"rows": rows, "dtype": dtype, "finite_and_nonfinite_five_buffers_bitwise": True, "changed_input_graph_bitwise": missing != "graph"} for rows in (0, 1, 7, 8, 9, 31, 32, 33, 129, 3986, 4032, 4096) for dtype in ("torch.int32", "torch.int64")], "timing": [{"rows": rows, "median_us": {"control": 66, "heads4": 60}} for rows in (3986, 4032, 4096)], "candidate_eligible": True}
+    if missing != "probe":
+        (tmp_path / "prefill-memory").mkdir()
+        (tmp_path / "prefill-memory/results.json").write_text(json.dumps(probe))
+    text, failed = summarize(tmp_path)
+    assert bool(failed) == (missing is not None)
+    selection = json.loads((tmp_path / "prefill-memory-selection.json").read_text())
+    assert selection["direct-store"]["candidate_eligible"] == (missing != "repeat")
+    assert "heads4" in text if missing != "probe" else "missing or failed" in text
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+@pytest.mark.parametrize("focused", [False, True])
+def test_prefill_campaign_requires_explicit_marker_and_defers_timeline(tmp_path, focused):
+    ws, patches = workspace(tmp_path)
+    add_candidate(ws, "fc2-bundle", patches["comment"], timeline=True)
+    campaign = ws / "patches/deep-gemm-bench"
+    (campaign / "timeline").touch()
+    if focused:
+        (campaign / "prefill-only").touch()
+    # A retained rejected probe must cause neither preparation nor execution.
+    probe = ws / "kernels/probes/prefill-memory.py"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("raise AssertionError('QKV campaign was not requested')\n")
+    result = provision(tmp_path, ws)
+    assert result.returncode == 0, result.stderr
+    runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+    config = json.loads((runtime / "results/variants.json").read_text())
+    assert config["prefill_memory"] is None
+    assert config["prefill_only"] is focused
+    assert not (runtime / "scripts/prefill-memory.py").exists()
+    stub = tmp_path / "bin/srun"
+    stub.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >>\"${SRUN_LOG}\"\n")
+    stub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "SLURM_SUBMIT_DIR": str(runtime), "SLURM_JOB_ID": "fixture", "SRUN_LOG": str(tmp_path / "srun.log")}
+    run = subprocess.run(["bash", str(runtime / "scripts/run.sbatch")], cwd=runtime, env=env, text=True, capture_output=True, check=False)
+    assert run.returncode == 0, run.stdout + run.stderr
+    steps = [tuple(line.split("\t")[:2]) for line in (runtime / "results/steps.tsv").read_text().splitlines()]
+    if focused:
+        assert steps == [("image", "bench"), ("fc2-bundle", "gate"), ("fc2-bundle", "bench"), ("control-repeat", "bench"), ("image", "timeline"), ("fc2-bundle", "timeline")]
+    else:
+        assert steps == [("image", "bench"), ("image", "timeline"), ("fc2-bundle", "gate"), ("fc2-bundle", "bench"), ("fc2-bundle", "timeline")]
+    commands = (tmp_path / "srun.log").read_text().splitlines()
+    assert all(("--prefill-only" in command) is focused for command in commands if "bench-firmus-megamoe.py" in command)
+    assert not any("prefill-memory.py" in command for command in commands)
+
+
+@pytest.mark.parametrize("timeline", [False, True])
+@pytest.mark.parametrize("focused,memory", [(False, False), (False, True), (True, False)])
+def test_prefill_scope_selects_five_bench_and_two_diagnostic_cases(focused, memory, timeline):
+    tree = ast.parse((ROOT / "scripts/bench-firmus-megamoe.py").read_text())
+    names = {"CASES", "PREFILL_MEMORY_CASES", "TIMELINE_CASES", "PREFILL_ONLY_TIMELINE_CASES"}
+    constants = [node for node in tree.body if isinstance(node, (ast.Assign, ast.AugAssign)) and isinstance(node.targets[0] if isinstance(node, ast.Assign) else node.target, ast.Name) and (node.targets[0] if isinstance(node, ast.Assign) else node.target).id in names]
+    main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+    selection = next(node for node in main.body if isinstance(node, ast.If) and ast.unparse(node.test) == "args.prefill_only and timeline")
+    ns = {"REAL_ROUTING_LAYERS": {43: {}, 62: {}, 7: {}}, "args": types.SimpleNamespace(prefill_only=focused, prefill_memory=memory), "timeline": timeline}
+    exec(compile(ast.Module(body=constants + [selection], type_ignores=[]), "scope", "exec"), ns)  # noqa: S102 - source case-selection AST only, no GPU imports
+    if focused and timeline:
+        assert ns["cases"] == [("prefill", "local", 4096), ("prefill", "real43-replica4", 4096)]
+    elif focused or memory:
+        assert len(ns["cases"]) == 5 and all(stage == "prefill" and count == 4096 for stage, _, count in ns["cases"])
+    else:
+        assert ns["cases"] == ns["TIMELINE_CASES" if timeline else "CASES"]
+
+
+@pytest.mark.parametrize("failure", [None, "repeat-missing", "repeat-hash", "initial-replay", "drift", "candidate-hash", "one-replica-slow", "median-too-small", "local-regression", "scope-missing", "candidate-counts", "repeat-counts", "faster-repeat"])
+def test_prefill_only_selection_independent_of_qkv_and_keeps_benefit_gate(tmp_path, monkeypatch, failure):
+    summarize = load_summary(monkeypatch)
+    variants = [{"name": "image", "patches": [], "timeline": "not-requested"}, {"name": "fc2-bundle", "patches": [], "timeline": "not-requested"}]
+    (tmp_path / "variants.json").write_text(json.dumps({"deep_gemm": variants, "sglang": None, "prefill_memory": None, "prefill_only": True}))
+    (tmp_path / "steps.tsv").write_text("image\tbench\t0\t1\nfc2-bundle\tgate\t0\t1\nfc2-bundle\tbench\t0\t1\ncontrol-repeat\tbench\t0\t1\n")
+    kinds = ["balanced", "local", "real43-replica4", "real62-replica4", "real7-replica4"]
+    cases = [f"prefill-{kind}-4096" for kind in kinds if failure != "scope-missing" or kind != "local"]
+    initial = [bench_row(case, 1, case) for case in cases]
+    repeat = [bench_row(case, 1, case) for case in cases]
+    candidate = [bench_row(case, .98, case) for case in cases]
+    for row in initial + repeat + candidate:
+        row["source_rank_expert_counts"] = [[1, 0], [0, 1], [0, 0], [0, 0]]
+    if failure in {"candidate-counts", "repeat-counts"}:
+        rows = candidate if failure == "candidate-counts" else repeat
+        # Swapping sources keeps expert/rank totals equal but changes locality.
+        rows[0]["source_rank_expert_counts"] = [[0, 1], [1, 0], [0, 0], [0, 0]]
+    if failure == "faster-repeat":
+        for row in repeat:
+            row["median_ms"] = .984
+    if failure == "repeat-hash":
+        repeat[0]["output_sha256"] = "wrong"
+    if failure == "initial-replay":
+        initial[0]["deterministic"] = False
+    if failure == "drift":
+        repeat[0]["median_ms"] = 1.021
+    if failure == "candidate-hash":
+        candidate[0]["output_sha256"] = "wrong"
+    if failure == "one-replica-slow":
+        candidate[2]["median_ms"] = .996
+    if failure == "median-too-small":
+        for row in candidate[2:]:
+            row["median_ms"] = .991
+    if failure == "local-regression":
+        candidate[1]["median_ms"] = 1.011
+    write_rows(tmp_path / "image/bench.jsonl", initial)
+    write_rows(tmp_path / "fc2-bundle/bench.jsonl", candidate)
+    if failure != "repeat-missing":
+        write_rows(tmp_path / "control-repeat/bench.jsonl", repeat)
+    text, failed = summarize(tmp_path)
+    selection = json.loads((tmp_path / "prefill-memory-selection.json").read_text())["fc2-bundle"]
+    assert selection["candidate_eligible"] is (failure is None)
+    assert "QKV" not in text
+    assert "Exact hash / replay" in text
+    assert bool(failed) is (failure in {"repeat-missing", "repeat-hash", "initial-replay", "scope-missing", "candidate-counts", "repeat-counts"})

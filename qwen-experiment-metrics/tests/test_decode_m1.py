@@ -26,7 +26,7 @@ def test_first_stage_barrier_cannot_complete_from_weights_alone():
 
 
 def test_candidate_changes_only_iwg_loader_and_preserves_scale_loads():
-    patch = (ROOT / "patches/deep-gemm-bench/decode-m1-b-first/decode-m1-b-first.patch").read_text()
+    patch = (ROOT / "patches/deep-gemm-archive/decode-m1/decode-m1-b-first/decode-m1-b-first.patch").read_text()
     added = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
     removed = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("-") and not line.startswith("---"))
     assert "empty_barriers[stage_idx]->wait(phase ^ 1)" in added

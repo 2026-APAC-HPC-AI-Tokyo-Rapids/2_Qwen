@@ -32,6 +32,12 @@ if [[ "${framework}" == sglang && -n "${CONTAINER_SHA256:-}" ]]; then
   mv "${config}.tmp" "${config}"
   jq -e --arg commit "${GITHUB_SHA}" --arg sha "${CONTAINER_SHA256}" --argjson require_build "${REQUIRE_BUILD}" '.container_artifact.sha256 == $sha and ($require_build == false or .source_commits.qwen == $commit)' "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" >/dev/null
 fi
+selection_record=$(jq -r '.reuse_kernel_selection // empty' "${config}")
+if [[ -n "${selection_record}" ]]; then
+  [[ "${framework}" == sglang && "${REQUIRE_BUILD}" == false ]]
+  python3 "${GITHUB_WORKSPACE}/scripts/reuse-firmus-kernel-selection.py" --record "${GITHUB_WORKSPACE}/${selection_record}" --config "${config}" --repo "${GITHUB_WORKSPACE}" --runtime "${runtime_dir}"
+  install -m 0644 "${GITHUB_WORKSPACE}/scripts/reuse-firmus-kernel-selection.py" "${runtime_dir}/source/"
+fi
 for image_framework in sglang "${framework}"; do
   image="$(jq -er --arg framework "${image_framework}" '.images[$framework].path' "${config}")"
   expected_sha="$(jq -er --arg framework "${image_framework}" '.images[$framework].sha256' "${config}")"
@@ -73,7 +79,7 @@ if [[ "$(jq -r .workload "${config}")" == official ]]; then
   printf '%s' ac9c66cc9b46af7306746a9250f23d47083d689e >"${tokenizer_cache}/refs/main"
 fi
 if [[ "${framework}" == sglang ]]; then
-  jq -e '.speculation.algorithm == "EAGLE3" and (.speculation.steps | type) == "number" and .speculation.steps >= 1 and .speculation.draft_tokens == .speculation.steps + 1' "${config}" >/dev/null
+  jq -e '.speculation.algorithm == "EAGLE3" and (.speculation.steps | type) == "number" and .speculation.steps >= 1 and .speculation.draft_tokens == .speculation.steps + 1 and (.speculation.draft_quantization == null or .speculation.draft_quantization == "fp8")' "${config}" >/dev/null
   export HF_HUB_DISABLE_XET=1 UV_CONCURRENT_BUILDS=1 UV_CONCURRENT_DOWNLOADS=1 UV_CONCURRENT_INSTALLS=1
   uvx --from 'huggingface_hub==0.36.0' hf download "$(jq -er '.speculation.draft_repository' "${config}")" config.json README.md model.safetensors --revision "$(jq -er '.speculation.draft_revision' "${config}")" --local-dir "${runtime_dir}/draft" --max-workers 1
   python3 "${GITHUB_WORKSPACE}/research/simulation/prepare_eagle.py" "${runtime_dir}/draft" "${runtime_dir}/source"

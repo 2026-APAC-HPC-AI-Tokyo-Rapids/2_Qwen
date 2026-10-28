@@ -1,0 +1,124 @@
+{
+  "schema": "firmus-kernel-selection/v1",
+  "source_run": 40313004834,
+  "source_commit": "e45acd554737ad0b75196c9064fe677ba53f5016",
+  "source_artifact": "archive-host:/srv/qwen-artifacts/40313004834/1/",
+  "normalized_config_sha256": "7d589bc7c1963dbbf0232306e2ea7576dd71710b28797871f6cc7d352aed8329",
+  "image_sha256": "1f247668933c7252d3dfbe8f6c23897d354f095d56842788d4415a85d7dc5e55",
+  "patches": [
+    {
+      "path": "patches/sglang/add-rmsnorm-group-quant.patch",
+      "sha256": "0ea92882f7ba4d1804eeb54fe81d8d610796fa890c61c3039922bd49d28bf40c"
+    },
+    {
+      "path": "patches/sglang/prefill-attention-contiguous-kv.patch",
+      "sha256": "d58039ee0149e433e39f3ab13f8be7775cfb4861dd770fd8211304feff027e1e"
+    },
+    {
+      "path": "patches/sglang/megamoe-prefill-replicas.patch",
+      "sha256": "6f2b64cdc4f05ea31af7be60c313d5365646885afef73a3d2ce3f3a8e9846ea4"
+    },
+    {
+      "path": "patches/sglang/verify-attention-candidates.patch",
+      "sha256": "bc4a3a2a6aa786e19dc57cb489c742f4e47e27d357dbe33b7cc6df83e89f829e"
+    },
+    {
+      "path": "patches/sglang/decode-verify-scheduler-metadata.patch",
+      "sha256": "5a86b227fea9225109999d48505efd510dae0f34b93d2bedb9fedbf8e6a8c652"
+    },
+    {
+      "path": "patches/sglang/decode-fusions.patch",
+      "sha256": "d779e4e864e65554ea527bfd0a2c200bcd154c83ae48aaf8427b1ff22f650574"
+    },
+    {
+      "path": "patches/sglang/decode-dense-gemm.patch",
+      "sha256": "a5049b688615a8e89c1790ce4b3d190a396db33e1182bb4dcde38ebc1235111e"
+    },
+    {
+      "path": "patches/sglang/decode-fa3-verify.patch",
+      "sha256": "e5623b0cd28cfa81e897a1847a602f418acd500112f4b24d858b95dceda4cfa8"
+    },
+    {
+      "path": "patches/sglang/decode-routing-capture.patch",
+      "sha256": "a9c26d49a24feb1b989759ce8d07949a6d3c874c999c83bb50d6006b8f98d8a9"
+    },
+    {
+      "path": "patches/sglang/prefill-fp8-integration.patch",
+      "sha256": "99e97664d83610c539eaa62e992a396f4d5bb1981760934ca3df3bb5c3de42ef"
+    },
+    {
+      "path": "patches/sglang/prefill-qkv-fast-fp8.patch",
+      "sha256": "11bb55ee3fc86db2c4b84254033105863d0db333919e4d771b26a04612d043a6"
+    },
+    {
+      "path": "patches/sglang/decode-qknorm-fast-fp8.patch",
+      "sha256": "e08c44f43ceded413c1652a02c9f65fcb41d9eaafc068c749cb1d5786dd0ad10"
+    },
+    {
+      "path": "patches/sglang/decode-add-rmsnorm-group-quant.patch",
+      "sha256": "71375901315fc74fe13551fc8de985e1617d56f438d5deb3b091c1be5817b03a"
+    },
+    {
+      "path": "patches/sglang/prefill-async-admission.patch",
+      "sha256": "3291c98dbb54cedc3b2e758c9e25caeea60c719ab4b9327d1caf9d83d484ee3b"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
+      "sha256": "d7738280f64f25feaa53f8cbb8d4b28f25a1b952c5f590974de87dd5073a5667"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-prefill-fc2-swizzle.patch",
+      "sha256": "822fa80af98deebbadaecef46ab8119abb9c87760d1fba227a9def2eaf27b1b4"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-prefill-2wg-host-epi.patch",
+      "sha256": "4a91639165075a01d824bbb398d291037de4483160e0c15f487365b9f1fc1906"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-swap-ab-geometry-guard.patch",
+      "sha256": "ab5efd41b3089e5a3527cce98312fd97ef2342721b1fe0855ed6b82080be33ae"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-decode-swapab-prefetch.patch",
+      "sha256": "0c337c9adeb6ce09bfe90c790d31686b187e59022b1ae754d83392d7ccbe177b"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch",
+      "sha256": "2167001084fe5c9c50fd35aaef0ac3d0648af20b064c1355b7fe52519dd36803"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch",
+      "sha256": "a27e42d3224305e4088b6c6cfbe17ff1457db8ef6866f4f32d12024cb8ffa230"
+    }
+  ],
+  "extra_files": [
+    {
+      "path": "configs/firmus-prefill-replica4-expert-location.json",
+      "sha256": "5d2ae7f6e3e262d0491a07ef71a846278fc0af995210be5dad52fb881b71f61d"
+    }
+  ],
+  "environment": {
+    "SGLANG_PREFILL_FA3_VERIFY": "n192",
+    "SGLANG_DECODE_FA3_VERIFY": "p128split2-s3-fp8",
+    "DG_SM90_1D2D_DECODE_CONFIG": "QKV:128,144,5,1,0",
+    "SGLANG_DECODE_DENSE_GEMM_QKV": "",
+    "SGLANG_DECODE_DENSE_GEMM_O": ""
+  },
+  "evidence_sha256": {
+    "decode-kernels.env": "2a00ae99a352b4dad27ea4a1b8bca44bdbb2c95cca598a179ef1efaf5df59c68",
+    "deep-gemm-overlay.json": "2b1f4784abc14d46c512487692b2f7121dc738c2ea8e7cd26e0e99ff97f07207",
+    "dense-selected.env": "84392544b1b51c3f740e8de45ae4a5999f44d0b7afc43a47cfb5af0e5e212e2f",
+    "dense.json": "c5473a9e32b60cf1a1f45e86719fbd4f83ee6d25ae474c2ed6cfef0d83dd728b",
+    "fa3-selected.env": "d69771805634b253f8cb88db614577562cec6cb8c96379d834c1317f3705e97f",
+    "fa3.json": "8df984917cc85f3ed87392d3c241723b38080b83bc0e8d08a52cff12c6b7c74a",
+    "firmus-framework.json": "53cc41c375bc902d8f4203bf19d18e9b381a5c71be05c53c68b0e6eb17a6c13e",
+    "image-manifest.json": "282ae0eb1a4c1184def93b1f7b50e3928a31878563a5f3f772b5003c38b3dd3b",
+    "prefill-expert-location.json": "5d2ae7f6e3e262d0491a07ef71a846278fc0af995210be5dad52fb881b71f61d",
+    "prefill-kernels.env": "81f05443bfd3de1e2c2d0e3b887f542c1d7801e9a4b94bae062890b52ce1fe72",
+    "prefill-selection.json": "1d03c02eeabb1d81117b935d78ee1059063b514ed82678693a71389603f4fdfb",
+    "provenance.json": "96bb61d5b5970f2b97e8c99fb75065f65f4e2a74addd4cd1ace0629510aa245c",
+    "selection-summary.json": "30eb95cce4acaeb4170bd0ae711b33d1f51b70abc0b0f225b3945d4facee3628",
+    "sglang-overlay.json": "610d3e27b3e12f3354b7ae038a49bdf3cf8b1f76389a7ec8c155207ee373b8e8"
+  },
+  "reason": "Isolate draft FP8 on the previously selected target kernels; omit unchanged kernel candidate sweeps and target numeric checks. Full image/source/config identities are revalidated on CPU."
+}
