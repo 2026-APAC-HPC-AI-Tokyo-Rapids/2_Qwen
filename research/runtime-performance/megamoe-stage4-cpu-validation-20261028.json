@@ -568,7 +568,7 @@
       0.36,
       0.6
     ],
-    "assumptions": "Hide about half of the archived 97–104us stage waits; strip epilogue costs <=10–15us/layer. This is a hypothesis, not timing evidence. No clock mixing."
+    "assumptions": "Hide about half of the archived 97\u2013104us stage waits; strip epilogue costs <=10\u201315us/layer. This is a hypothesis, not timing evidence. No clock mixing."
   },
   "limits": [
     "CPU symbolic ownership and compiled host metadata do not prove GPU memory ordering or numerical equality.",
@@ -707,5 +707,35 @@
     "patch_application": "git apply --check and applied header/host bytes match compiled inputs",
     "shell_syntax": "bash -n scripts/provision-firmus-kernel-bench.sh passed",
     "git_diff_check": "passed"
+  },
+  "gpu_kernel_bench": {
+    "run": 40658033568,
+    "image": "40648657907",
+    "median_ms": {
+      "prefill-balanced-4096": [
+        1.4757,
+        1.5134
+      ],
+      "prefill-local-4096": [
+        1.2977,
+        1.274
+      ],
+      "prefill-real43-replica4-4096": [
+        1.4296,
+        1.4039
+      ],
+      "prefill-real62-replica4-4096": [
+        1.4186,
+        1.4017
+      ],
+      "prefill-real7-replica4-4096": [
+        1.4332,
+        1.423
+      ]
+    },
+    "order": "[control, stage4]",
+    "output_hash_equal": true,
+    "eligible": false,
+    "decision": "Not adopted: replica4 cases -0.7..-1.8% (about 10-26 us per layer, below the 20 us admission threshold in two of three) and balanced +2.6%; the switch stays default off."
   }
 }
