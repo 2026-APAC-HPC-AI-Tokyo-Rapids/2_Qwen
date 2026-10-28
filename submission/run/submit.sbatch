@@ -21,6 +21,7 @@ READY_SECS=600  # ASPIRE full stack took 7m09s; leave time for the 60/120/30 cli
 N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")
 # Parse configuration on the host; the pinned serving image does not include jq.
 speculation=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -er '.speculation.steps' "${ROOT}/source/firmus-framework.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -er '.speculation.draft_tokens' "${ROOT}/source/firmus-framework.json")")
+if [[ "$(jq -r '.speculation.draft_quantization // empty' "${ROOT}/source/firmus-framework.json")" == fp8 ]]; then speculation+=(--speculative-draft-model-quantization fp8); fi
 decode_graph=(--cuda-graph-bs-decode)
 while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${ROOT}/source/firmus-framework.json")
 # Prefill maps 128 logical experts to physical slots, including hot replicas; Decode keeps trivial placement.
@@ -175,6 +176,7 @@ echo "READY after ${SECONDS}s"
 
 while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"
+  if [[ "$(jq -r '.speculation.draft_quantization // empty' "${ROOT}/source/firmus-framework.json")" == fp8 ]]; then jq -e '.speculative_draft_model_quantization == "fp8"' "${ROOT}/results/server-info-${worker}.json" >/dev/null; fi
 done <"${ROOT}/source/worker-endpoints.tsv"
 # Placement must not change outputs; keep one greedy answer through a Prefill worker for inspection.
 curl --fail --silent --show-error --max-time 120 -H 'Content-Type: application/json' -d '{"model":"qwen","messages":[{"role":"user","content":"Name the capital of France and explain in two sentences why it is historically important."}],"max_tokens":64,"temperature":0}' "http://${HEAD_IP}:${R_PORT}/v1/chat/completions" >"${ROOT}/results/sanity-chat.json"

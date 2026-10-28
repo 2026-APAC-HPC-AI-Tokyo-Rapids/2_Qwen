@@ -18,12 +18,26 @@ fi
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
 framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${config}")"
 jq -e --argjson profile "${PROFILE}" '((.workload == "reference-07" and .framework == "vllm") or (.workload == "official" and (.framework == "sglang" or $profile == false))) and (.concurrency | type == "number" and . >= 1 and floor == .)' "${config}" >/dev/null
+# Routing capture is a profile-only diagnostic; reject mistakes before image hashing or staging.
+jq -e '(.prefill.routing_capture_samples // 0) | type == "number" and floor == . and . >= 0 and . <= 8' "${config}" >/dev/null
+routing_capture_samples=$(jq -r '.prefill.routing_capture_samples // 0' "${config}")
+if (( routing_capture_samples > 0 )); then
+  [[ "${PROFILE}" == true && "${framework}" == sglang ]]
+  jq -e '.workload == "official" and .prefill.workers == 3 and .prefill.tp == 4 and .prefill.dp == 4 and .prefill.ep == 4 and .prefill.ep_num_redundant_experts == 12 and .prefill.moe_a2a_backend == "megamoe" and .prefill.moe_runner_backend == "deep_gemm" and .prefill.expert_location != "trivial"' "${config}" >/dev/null
+  test -s "${GITHUB_WORKSPACE}/$(jq -er .prefill.expert_location "${config}")"
+  test -s "${GITHUB_WORKSPACE}/patches/sglang/prefill-routing-capture.patch"
+  test -s "${GITHUB_WORKSPACE}/scripts/summarize-prefill-routing.py"
+fi
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/profile" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source" "${runtime_dir}/home"
 install -m 0644 "${config}" "${runtime_dir}/source/firmus-framework.json"
 config="${runtime_dir}/source/firmus-framework.json"
+if (( routing_capture_samples > 0 )); then
+  jq --arg patch "patches/sglang/prefill-routing-capture.patch" '.sglang_overlay_patches |= (map(select(. != $patch)) + [$patch])' "${config}" >"${config}.tmp"
+  mv "${config}.tmp" "${config}"
+fi
 if [[ "${framework}" == sglang && -n "${CONTAINER_SHA256:-}" ]]; then
   [[ "${CONTAINER_SHA256}" =~ ^[0-9a-f]{64}$ && "${CONTAINER_SIZE:-}" =~ ^[1-9][0-9]*$ ]]
   if [[ "${REQUIRE_BUILD}" == false ]]; then [[ "${CONTAINER_SHA256}" == "$(jq -er .images.sglang.sha256 "${config}")" ]]; fi
@@ -31,6 +45,12 @@ if [[ "${framework}" == sglang && -n "${CONTAINER_SHA256:-}" ]]; then
   jq --arg path "${archive}/${GITHUB_RUN_ID}.sqsh" --arg sha "${CONTAINER_SHA256}" --argjson size "${CONTAINER_SIZE}" --arg provenance "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" '.images.sglang = {path:$path,sha256:$sha,size_bytes:$size,provenance:$provenance}' "${config}" >"${config}.tmp"
   mv "${config}.tmp" "${config}"
   jq -e --arg commit "${GITHUB_SHA}" --arg sha "${CONTAINER_SHA256}" --argjson require_build "${REQUIRE_BUILD}" '.container_artifact.sha256 == $sha and ($require_build == false or .source_commits.qwen == $commit)' "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" >/dev/null
+fi
+selection_record=$(jq -r '.reuse_kernel_selection // empty' "${config}")
+if [[ -n "${selection_record}" ]]; then
+  [[ "${framework}" == sglang && "${REQUIRE_BUILD}" == false ]]
+  python3 "${GITHUB_WORKSPACE}/scripts/reuse-firmus-kernel-selection.py" --record "${GITHUB_WORKSPACE}/${selection_record}" --config "${config}" --repo "${GITHUB_WORKSPACE}" --runtime "${runtime_dir}"
+  install -m 0644 "${GITHUB_WORKSPACE}/scripts/reuse-firmus-kernel-selection.py" "${runtime_dir}/source/"
 fi
 for image_framework in sglang "${framework}"; do
   image="$(jq -er --arg framework "${image_framework}" '.images[$framework].path' "${config}")"
@@ -57,6 +77,11 @@ if [[ "${framework}" == sglang ]]; then
   bash "${GITHUB_WORKSPACE}/scripts/check-firmus-image.sh" "${runtime_dir}/sglang.sqsh" "${runtime_dir}/source" "${GITHUB_WORKSPACE}"
 fi
 if [[ "${framework}" == sglang ]]; then bash "${GITHUB_WORKSPACE}/scripts/stage-qwen-overlays.sh" "${runtime_dir}" "${config}" "${GITHUB_WORKSPACE}"; fi
+if (( routing_capture_samples > 0 )); then
+  test -s "${runtime_dir}/overlay/sglang/python/sglang/srt/layers/moe/prefill_routing_capture.py"
+  install -m 0644 "${GITHUB_WORKSPACE}/scripts/summarize-prefill-routing.py" "${runtime_dir}/scripts/"
+  cp "${runtime_dir}/scripts/summarize-prefill-routing.py" "${runtime_dir}/source/"
+fi
 model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8
 [[ -s "${model}/config.json" && -s "${model}/model.safetensors.index.json" ]]
 [[ "$(head -n 1 "${model}/.cache/huggingface/download/config.json.metadata")" == e156cb4efae43fbee1a1ab073f946a1377e6b969 ]]
@@ -73,7 +98,7 @@ if [[ "$(jq -r .workload "${config}")" == official ]]; then
   printf '%s' ac9c66cc9b46af7306746a9250f23d47083d689e >"${tokenizer_cache}/refs/main"
 fi
 if [[ "${framework}" == sglang ]]; then
-  jq -e '.speculation.algorithm == "EAGLE3" and (.speculation.steps | type) == "number" and .speculation.steps >= 1 and .speculation.draft_tokens == .speculation.steps + 1' "${config}" >/dev/null
+  jq -e '.speculation.algorithm == "EAGLE3" and (.speculation.steps | type) == "number" and .speculation.steps >= 1 and .speculation.draft_tokens == .speculation.steps + 1 and (.speculation.draft_quantization == null or .speculation.draft_quantization == "fp8")' "${config}" >/dev/null
   export HF_HUB_DISABLE_XET=1 UV_CONCURRENT_BUILDS=1 UV_CONCURRENT_DOWNLOADS=1 UV_CONCURRENT_INSTALLS=1
   uvx --from 'huggingface_hub==0.36.0' hf download "$(jq -er '.speculation.draft_repository' "${config}")" config.json README.md model.safetensors --revision "$(jq -er '.speculation.draft_revision' "${config}")" --local-dir "${runtime_dir}/draft" --max-workers 1
   python3 "${GITHUB_WORKSPACE}/research/simulation/prepare_eagle.py" "${runtime_dir}/draft" "${runtime_dir}/source"

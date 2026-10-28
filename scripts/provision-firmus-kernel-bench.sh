@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage a 1-node SM90 MegaMoE kernel bench on the Firmus login node: the pinned
+# Stage a 1-node SM90 MegaMoE kernel bench on the selected login node: the pinned
 # serving image as toolchain, its configured DeepGEMM overlays and SGLang tree, one
 # header overlay per DeepGEMM candidate (patches/deep-gemm-bench/<name>/*.patch),
 # timeline overlays where a candidate directory holds a `timeline` marker (an
@@ -10,7 +10,9 @@
 # _C.so) that run.sbatch passes to that candidate's gate, bench and timeline
 # steps only. A candidate patch that does not apply or a malformed env file stops
 # here, before any Slurm submission; a timeline patch that does not apply on top
-# of a candidate is recorded and that timeline is skipped.
+# of a candidate is recorded and that timeline is skipped. The top-level
+# prefill-only marker selects the focused MoE campaign; prefill-memory explicitly
+# enables the separate QKV probe. Merely keeping the probe script does not run it.
 set -euo pipefail
 shopt -s inherit_errexit
 
@@ -26,15 +28,39 @@ shopt -s inherit_errexit
 # most 12 steps: the image bench, the image timeline if requested, 2 SGLang
 # checks (+2 benches with bench-firmus-sglang-kernels.py), and per DeepGEMM
 # candidate a gate, a bench and the timeline if requested.
+platform=${1:-firmus}
+[[ $# -le 1 ]] || { echo 'Usage: provision-firmus-kernel-bench.sh [firmus|aspire2ap]' >&2; exit 64; }
 max_steps=12
+scheduler=Slurm
+budget_minutes=17
+case "${platform}" in
+  firmus) ;;
+  aspire2ap) source "${HOME}/.local/.setenv"; max_steps=10; scheduler=PBS; budget_minutes=15 ;;
+  *) printf 'Unsupported kernel-bench platform: %s\n' "${platform}" >&2; exit 64 ;;
+esac
 bench_dir="${GITHUB_WORKSPACE}/patches/deep-gemm-bench"
 shopt -s nullglob
 flat_patches=("${bench_dir}"/*.patch)
-candidate_dirs=("${bench_dir}"/*/)
+candidate_dirs=()
+# Remote workspace transfers retained a retired directory even after its patch
+# was deleted (40561028271/40562465381). A tracked inventory owns the campaign;
+# stale files on the remote host must never add or resurrect a GPU candidate.
+if [[ -e "${bench_dir}/candidates" ]]; then
+  [[ -s "${bench_dir}/candidates" ]] || { echo 'Candidate inventory is empty.' >&2; exit 1; }
+  while IFS= read -r name || [[ -n "${name}" ]]; do
+    [[ "${name}" =~ ^[a-z0-9][a-z0-9._-]*$ && "${name}" != image ]] || { echo "Invalid candidate inventory entry: ${name}" >&2; exit 1; }
+    candidate_dirs+=("${bench_dir}/${name}/")
+  done <"${bench_dir}/candidates"
+  [[ $(printf '%s\n' "${candidate_dirs[@]}" | sort -u | wc -l) -eq ${#candidate_dirs[@]} ]] || { echo 'Duplicate candidate inventory entry.' >&2; exit 1; }
+else
+  candidate_dirs=("${bench_dir}"/*/)
+fi
 sglang_patches=("${GITHUB_WORKSPACE}"/patches/sglang-bench/*.patch)
 shopt -u nullglob
 if (( ${#flat_patches[@]} )); then printf 'Move %s into patches/deep-gemm-bench/<candidate>/ (one directory per candidate).\n' "${flat_patches[@]#"${GITHUB_WORKSPACE}/"}" >&2; exit 1; fi
 steps=1
+if [[ -e "${bench_dir}/prefill-only" || -e "${bench_dir}/prefill-memory" ]]; then steps=$((steps + 1)); fi
+if [[ -e "${bench_dir}/prefill-memory" ]]; then steps=$((steps + 1)); fi
 if [[ -e "${bench_dir}/timeline" ]]; then steps=$((steps + 1)); fi
 if (( ${#sglang_patches[@]} )); then steps=$((steps + 2)); fi
 if (( ${#sglang_patches[@]} )) && [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then steps=$((steps + 2)); fi
@@ -52,7 +78,7 @@ for dir in "${candidate_dirs[@]}"; do
   steps=$((steps + 2))
   if [[ -e "${dir}timeline" ]]; then steps=$((steps + 1)); fi
 done
-if (( steps > max_steps )); then printf '%s Slurm steps (about 75 s each) exceed the %s that fit in one 17-minute job; drop candidates or timeline markers.\n' "${steps}" "${max_steps}" >&2; exit 1; fi
+if (( steps > max_steps )); then printf '%s %s steps (about 75 s each) exceed the %s that fit in one %s-minute job; drop candidates or timeline markers.\n' "${steps}" "${scheduler}" "${max_steps}" "${budget_minutes}" >&2; exit 1; fi
 
 check_candidate_host() {
   local dir=$1 record=$2 extension=$3 enabled=${4:-0}
@@ -69,13 +95,22 @@ check_candidate_host() {
 }
 
 config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
+if [[ "${platform}" == aspire2ap ]]; then
+  # This A/B uses the ASPIRE serving baseline, even though staging is shared.
+  if ! jq -e --slurpfile aspire "${GITHUB_WORKSPACE}/configs/aspire-serving.json" '.images.sglang as $image | $aspire[0] as $serving | $serving.container_sha256 == $image.sha256 and $serving.container_size_bytes == $image.size_bytes and ($image.path | split("/") | last) == (($serving.container_build_run_id | tostring) + ".sqsh") and (.deep_gemm_overlay_patches | type) == "array" and .deep_gemm_overlay_patches == $serving.deep_gemm_overlay_patches' "${config}" >/dev/null; then
+    echo 'ASPIRE serving baseline differs from the shared bench image or DeepGEMM overlays.' >&2
+    exit 1
+  fi
+fi
 image="$(jq -er .images.sglang.path "${config}")"
+if [[ "${platform}" == aspire2ap ]]; then image="/scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers/$(basename "${image}")"; fi
 expected_sha="$(jq -er .images.sglang.sha256 "${config}")"
 [[ "$(stat -c '%s' "${image}")" == "$(jq -er .images.sglang.size_bytes "${config}")" ]]
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/kernel-bench-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
 printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
 install -d -m 0755 "${runtime_dir}/logs" "${runtime_dir}/results" "${runtime_dir}/scripts" "${runtime_dir}/source/patches" "${runtime_dir}/scratch" "${runtime_dir}/overlay/candidates" "${runtime_dir}/overlay/timeline" "${runtime_dir}/overlay/env" "${runtime_dir}/home"
+if [[ "${platform}" == aspire2ap ]]; then cp "${GITHUB_WORKSPACE}/configs/aspire-serving.json" "${runtime_dir}/source/aspire-serving.json"; fi
 echo "Checking sglang image SHA-256"
 while sleep 15; do echo "container_sha256_check_in_progress=sglang"; done &
 progress_pid=$!
@@ -92,7 +127,7 @@ ln -s "${image}" "${runtime_dir}/sglang.sqsh"
 package=opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
 sglang_package=opt/sglang/source/python/sglang
 extract=("${package}" opt/apac/sm90-megamoe-build.json opt/apac/deep-gemm-host-build.json)
-if (( ${#sglang_patches[@]} )); then extract+=("${sglang_package}"); fi
+if (( ${#sglang_patches[@]} )) || [[ -e "${bench_dir}/prefill-memory" ]]; then extract+=("${sglang_package}"); fi
 unsquashfs -no-progress -no-xattrs -processors 1 -d "${runtime_dir}/image" "${image}" "${extract[@]}"
 chmod -R u+w "${runtime_dir}/image"
 cp "${runtime_dir}/image/opt/apac/sm90-megamoe-build.json" "${runtime_dir}/source/"
@@ -119,6 +154,19 @@ mapfile -t baseline_patches < <(jq -r '.deep_gemm_overlay_patches // [] | .[]' "
 for i in "${!baseline_patches[@]}"; do baseline_patches[i]="${GITHUB_WORKSPACE}/${baseline_patches[i]}"; done
 apply_patches "${runtime_dir}/image/opt/sglang/venv/lib/python3.12/site-packages" "${baseline_patches[@]}"
 baseline_records="$(patch_records "${baseline_patches[@]}")"
+# Keep the QKV control identical to configured serving, including overlays
+# newer than the pinned image. Preparation imports only the Python stdlib.
+prefill_memory=null
+if [[ -e "${bench_dir}/prefill-memory" ]]; then
+  mapfile -t qkv_baseline_patches < <(jq -r '.sglang_overlay_patches // [] | .[]' "${config}")
+  for i in "${!qkv_baseline_patches[@]}"; do qkv_baseline_patches[i]="${GITHUB_WORKSPACE}/${qkv_baseline_patches[i]}"; done
+  apply_patches "${runtime_dir}/image/opt/sglang/source" "${qkv_baseline_patches[@]}"
+  for patch in "${qkv_baseline_patches[@]}"; do install -D -m 0644 "${patch}" "${runtime_dir}/source/${patch#"${GITHUB_WORKSPACE}/"}"; done
+  install -m 0644 "${GITHUB_WORKSPACE}/kernels/probes/prefill-memory.py" "${runtime_dir}/scripts/prefill-memory.py"
+  cp "${runtime_dir}/scripts/prefill-memory.py" "${runtime_dir}/source/"
+  python3 "${runtime_dir}/scripts/prefill-memory.py" --header "${runtime_dir}/image/${sglang_package}/kernels/jit/csrc/elementwise/rope.cuh" --output "${runtime_dir}/source/prefill-memory"
+  prefill_memory="$(jq --arg script_sha "$(sha256sum "${runtime_dir}/scripts/prefill-memory.py" | awk '{print $1}')" --argjson overlays "$(patch_records "${qkv_baseline_patches[@]}")" --arg patch_sha "$(sha256sum "${runtime_dir}/source/prefill-memory/prefill-qkv-heads4.patch" | awk '{print $1}')" '. + {script_sha256:$script_sha,overlay_patches:$overlays,candidate_patch_sha256:$patch_sha,preparation:"source/prefill-memory/preparation.json"}' "${runtime_dir}/source/prefill-memory/preparation.json")"
+fi
 for patch in "${baseline_patches[@]}"; do install -D -m 0644 "${patch}" "${runtime_dir}/source/${patch#"${GITHUB_WORKSPACE}/"}"; done
 # Timeline overlay roots mirror site-packages like the candidate overlays; the
 # timeline patch's context lines can collide with a candidate's edits.
@@ -158,15 +206,30 @@ if (( ${#sglang_patches[@]} )); then
   apply_patches "${runtime_dir}/overlay/sglang" "${sglang_patches[@]}"
   sglang="$(jq -n --argjson patches "$(patch_records "${sglang_patches[@]}")" --argjson bench "$(if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then echo true; else echo false; fi)" '{patches:$patches,bench_script:$bench}')"
 fi
-jq -n --argjson deep_gemm "${variants}" --argjson sglang "${sglang}" '{deep_gemm:$deep_gemm,sglang:$sglang}' >"${runtime_dir}/results/variants.json"
+prefill_only=false
+if [[ -e "${bench_dir}/prefill-only" ]]; then prefill_only=true; fi
+jq -n --argjson prefill_only "${prefill_only}" --argjson deep_gemm "${variants}" --argjson sglang "${sglang}" --argjson prefill_memory "${prefill_memory}" '{deep_gemm:$deep_gemm,sglang:$sglang,prefill_memory:$prefill_memory,prefill_only:$prefill_only}' >"${runtime_dir}/results/variants.json"
 for part in deep-gemm-bench sglang-bench; do
   if [[ -d "${GITHUB_WORKSPACE}/patches/${part}" ]]; then cp -a "${GITHUB_WORKSPACE}/patches/${part}" "${runtime_dir}/source/patches/"; fi
 done
 cp "${timeline_patch}" "${runtime_dir}/source/patches/"
 
 install -m 0755 "${GITHUB_WORKSPACE}/platforms/firmus/kernel-bench/run.sbatch" "${runtime_dir}/scripts/run.sbatch"
-scripts=(bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-kernels.py firmus_megamoe_replicas.py)
+scripts=(run-megamoe-kernel-bench.sh bench-firmus-megamoe.py check-firmus-megamoe.py check-firmus-decode-kernels.py firmus_megamoe_replicas.py)
 if [[ -e "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" ]]; then scripts+=(bench-firmus-sglang-kernels.py); fi
 for script in "${scripts[@]}"; do install -m 0644 "${GITHUB_WORKSPACE}/scripts/${script}" "${runtime_dir}/scripts/"; cp "${runtime_dir}/scripts/${script}" "${runtime_dir}/source/"; done
 cp "${runtime_dir}/scripts/run.sbatch" "${runtime_dir}/source/"
-jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --argjson image "$(jq .images.sglang "${config}")" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" '{schema_version:"qwen3-megamoe-kernel-bench/v2",cluster:"firmus",commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes}),timeline_patch_sha256:$timeline_sha,variants:"results/variants.json"}' >"${runtime_dir}/source/provenance.json"
+jq -n --arg commit "${GITHUB_SHA}" --arg run_id "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --arg cluster "${platform}" --arg image_path "${image}" --argjson image "$(jq .images.sglang "${config}")" --arg timeline_sha "$(sha256sum "${timeline_patch}" | awk '{print $1}')" --argjson prefill_memory "${prefill_memory}" --argjson prefill_only "${prefill_only}" '{prefill_only:$prefill_only,prefill_memory:$prefill_memory,schema_version:"qwen3-megamoe-kernel-bench/v2",cluster:$cluster,commit:$commit,workflow_run_id:$run_id,workflow_run_attempt:$attempt,image:($image | {path,sha256,size_bytes} | .path=$image_path),timeline_patch_sha256:$timeline_sha,variants:"results/variants.json"}' >"${runtime_dir}/source/provenance.json"
+
+if [[ "${platform}" == aspire2ap ]]; then
+  # Reuse ASPIRE's observed Enroot runtime and NVIDIA hook fixes.
+  install -d "${runtime_dir}/enroot-library" "${runtime_dir}/enroot-system"
+  cp -a --no-preserve=ownership,xattr "${ENROOT_LIBRARY_PATH}/." "${runtime_dir}/enroot-library/"
+  cp -a --no-preserve=ownership,xattr "${ENROOT_SYSCONF_PATH}/." "${runtime_dir}/enroot-system/"
+  sed -i 's/local timeout=100 pid=-1 id=0/local timeout=5000 pid=-1 id=0/' "${runtime_dir}/enroot-library/runtime.sh"
+  sed -i 's%--ldconfig=@$(command -v ldconfig.real || command -v ldconfig)%--ldconfig=/sbin/ldconfig%' "${runtime_dir}/enroot-system/hooks.d/98-nvidia.sh"
+  install -m 0755 "${GITHUB_WORKSPACE}/platforms/aspire2ap/kernel-bench/run.pbs" "${runtime_dir}/scripts/run.pbs"
+  install -m 0755 "${GITHUB_WORKSPACE}/platforms/aspire2ap/kernel-bench/preflight.sh" "${runtime_dir}/scripts/preflight.sh"
+  cp "${runtime_dir}/scripts/"{run.pbs,preflight.sh} "${runtime_dir}/source/"
+  bash "${runtime_dir}/scripts/preflight.sh" "${runtime_dir}" >"${runtime_dir}/logs/cpu-preflight.log" 2>&1
+fi

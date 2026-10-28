@@ -85,6 +85,9 @@ CASES = [("decode", "balanced", n) for n in (4, 16, 32, 64, 96, 128)] + [("decod
 CASES += [("decode", routing, n) for routing in ("balanced",) for n in (160, 176, 192)]
 CASES += [("prefill", "balanced", n) for n in (1024, 2048, 4096)] + [("prefill", "local", 4096)]
 CASES += [("prefill", f"real{layer}{suffix}", 4096) for layer in REAL_ROUTING_LAYERS for suffix in ("", "-replica4")]
+PREFILL_MEMORY_CASES = [("prefill", "balanced", 4096), ("prefill", "local", 4096)]
+PREFILL_MEMORY_CASES += [("prefill", f"real{layer}-replica4", 4096) for layer in REAL_ROUTING_LAYERS]
+PREFILL_ONLY_TIMELINE_CASES = [("prefill", "local", 4096), ("prefill", "real43-replica4", 4096)]
 TIMELINE_CASES = [("decode", "balanced", n) for n in (128, 160, 176)] + [("decode", "local", 128), ("prefill", "balanced", 4096), ("prefill", "local", 4096)]
 TIMELINE_CASES += [("prefill", f"real{layer}{suffix}", 4096) for layer in REAL_ROUTING_LAYERS for suffix in ("", "-replica4")]
 
@@ -244,6 +247,8 @@ def main():
     parser.add_argument("--scratch", type=Path, required=True)
     parser.add_argument("--timeline-dir", type=Path)
     parser.add_argument("--reference", type=Path)
+    parser.add_argument("--prefill-memory", action="store_true", help="Only current Prefill geometry: balanced, local and three replicated routing distributions")
+    parser.add_argument("--prefill-only", action="store_true", help="Focused MoE: five Prefill bench cases, local and real43-replica4 timelines")
     args = parser.parse_args()
     timeline = args.timeline_dir is not None
     torch.cuda.set_device(RANK)
@@ -269,7 +274,13 @@ def main():
     if args.reference is not None:
         reference = {row["case"]: row for row in map(json.loads, args.reference.read_text().splitlines())}
     output = args.output.open("w") if RANK == 0 else None
-    for case in TIMELINE_CASES if timeline else CASES:
+    if args.prefill_only and timeline:
+        cases = PREFILL_ONLY_TIMELINE_CASES
+    elif args.prefill_only or args.prefill_memory:
+        cases = PREFILL_MEMORY_CASES
+    else:
+        cases = TIMELINE_CASES if timeline else CASES
+    for case in cases:
         name = case_name(case)
         stage, kind, count = case
         real = kind.startswith("real")
@@ -333,13 +344,20 @@ def main():
         dist.all_reduce(deterministic, op=dist.ReduceOp.MIN)
         loads = torch.zeros(buf.num_experts, dtype=torch.int64, device=device)
         local_pairs = 0
+        source_expert_counts = []
         for source, ids in enumerate(gather(top_ids)):
-            loads += torch.bincount(ids.flatten().long(), minlength=buf.num_experts)
+            local_counts = torch.bincount(ids.flatten().long(), minlength=buf.num_experts)
+            loads += local_counts
+            source_expert_counts.append(local_counts.tolist())
             local_pairs += (ids // (buf.num_experts // NUM_RANKS) == source).sum().item()
         rank_loads = loads.view(NUM_RANKS, -1).sum(1).tolist()
+        expert_totals = [sum(source[expert] for source in source_expert_counts) for expert in range(buf.num_experts)]
+        assert expert_totals == loads.tolist(), (name, "source/expert counts")
+        experts_per_rank = buf.num_experts // NUM_RANKS
+        assert [sum(expert_totals[rank * experts_per_rank:(rank + 1) * experts_per_rank]) for rank in range(NUM_RANKS)] == rank_loads, (name, "source/rank counts")
         row = {"case": name, "variant": args.variant, "stage": stage, "routing": kind, "tokens_per_rank": count, "cuda_graph": stage == "decode", "warmup": WARMUP, "iterations": ITERATIONS, "median_ms": ordered[len(ordered) // 2], "p10_ms": ordered[int(0.1 * (len(ordered) - 1))], "p90_ms": ordered[round(0.9 * (len(ordered) - 1))], "min_ms": ordered[0], "max_ms": ordered[-1], "max_rank_ms": durations.tolist(), "recv_pairs_per_rank": rank_loads, "rank_load_max_over_mean": max(rank_loads) / (sum(rank_loads) / NUM_RANKS), "expert_load_max_over_mean": loads.max().item() / loads.float().mean().item(), "deterministic": bool(deterministic.item()), "output_sha256": output_digest(actual, count)}
         row.update({key: [part[index].item() for part in gpu_state] for index, key in enumerate(("sm_clock_mhz_before", "power_w_before", "sm_clock_mhz_after", "power_w_after"))})
-        row.update({"physical_experts": buf.num_experts, "local_slot_fraction": local_pairs / (count * NUM_RANKS * TOPK)})
+        row.update({"source_rank_expert_counts": source_expert_counts, "physical_experts": buf.num_experts, "local_slot_fraction": local_pairs / (count * NUM_RANKS * TOPK)})
         if real:
             hot_mask = torch.tensor([expert in data["hot8"] for expert in mapping], device=device)
             row.update({"logical_layer": layer, "layer_selection": data["selection"], "routing_seed_per_rank": [case_seed(case, rank) for rank in range(NUM_RANKS)], "source_hot8_slot_fraction": data["hot8_share"], "sampled_hot8_slot_fraction": loads[hot_mask].sum().item() / (count * NUM_RANKS * TOPK), "logical_routing_sha256": output_digest(logical_ids, count)})
@@ -351,8 +369,10 @@ def main():
             row["reference_median_ms"] = reference[name]["median_ms"]
             row["delta_median_vs_reference"] = row["median_ms"] / reference[name]["median_ms"] - 1
             row["output_sha256_matches_reference"] = row["output_sha256"] == reference[name]["output_sha256"]
+            if "source_rank_expert_counts" in reference[name]:
+                row["source_rank_expert_counts_matches_reference"] = source_expert_counts == reference[name]["source_rank_expert_counts"]
         saved = args.scratch / f"{name}-rank{RANK}.pt"
-        if case in TIMELINE_CASES and not timeline:
+        if case in (PREFILL_ONLY_TIMELINE_CASES if args.prefill_only else TIMELINE_CASES) and not timeline:
             torch.save(actual.cpu(), saved)
         if timeline:
             # Routing can switch between the 128- and 140-expert allocations.

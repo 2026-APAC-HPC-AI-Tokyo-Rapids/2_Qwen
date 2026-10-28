@@ -1,0 +1,114 @@
+name: ASPIREでSM90 MegaMoE kernel benchを実行
+
+on:
+  workflow_call:
+    inputs:
+      node_count:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
+
+defaults:
+  run:
+    shell: aspire2p-shell --github-shell {0}
+
+jobs:
+  bench:
+    name: H100 EP4でcontrol・数値検証・候補・control再測定を実行
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 7200
+    steps:
+      - name: 1ノードを検証
+        shell: bash
+        run: "test '${{ inputs.node_count }}' = 1"
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: 固定image・overlay・CPU preflightをlogin nodeで準備
+        id: prepare
+        run: scripts/provision-firmus-kernel-bench.sh aspire2ap
+
+      - name: 4 GPUを15分に限定して投入
+        id: submit
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        run: |
+          cd "${RUNTIME_DIR}"
+          bash -lc 'myprojects -p 59010014' >logs/su-before.txt
+          job_id=$(/opt/pbs/bin/qsub -P 59010014 -q normal -l select=1:ngpus=4:ncpus=56:mem=720gb -l walltime=00:15:00 -v "RUNTIME_DIR=${RUNTIME_DIR}" -o "${RUNTIME_DIR}/logs/pbs.log" -N megamoe_kernel_bench scripts/run.pbs)
+          printf '%s\n' "${job_id}"
+          [[ "${job_id}" =~ ^[0-9]+([.][A-Za-z0-9.-]+)?$ ]]
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+
+      - name: PBS終了と結果を確認
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+          PBS_JOB_ID: ${{ steps.submit.outputs.job_id }}
+        shell: bash
+        run: scripts/monitor-qwen-job.sh aspire2p-shell platforms/aspire2ap/kernel-bench/check-job.sh
+
+      - name: Actions取消時はこのPBSジョブだけを停止
+        if: cancelled() && steps.submit.outputs.job_id != ''
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+          PBS_JOB_ID: ${{ steps.submit.outputs.job_id }}
+        run: |
+          /opt/pbs/bin/qstat -x -f "${PBS_JOB_ID}" >"${RUNTIME_DIR}/logs/cancel-accounting.txt"
+          state=$(awk '/^[[:space:]]*job_state =/ {print $3}' "${RUNTIME_DIR}/logs/cancel-accounting.txt")
+          if [[ "${state}" != F ]]; then /opt/pbs/bin/qdel "${PBS_JOB_ID}"; fi
+          /opt/pbs/bin/qstat -x -f "${PBS_JOB_ID}" >"${RUNTIME_DIR}/logs/cancel-accounting.txt"
+          cat "${RUNTIME_DIR}/logs/cancel-accounting.txt"
+
+      - name: ログ・結果・来歴を回収
+        id: collect
+        if: always() && steps.prepare.outputs.runtime_dir != ''
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        shell: bash
+        run: |
+          destination="${RUNNER_TEMP}/qwen-aspire-kernel-bench"
+          install -d -m 0755 "${destination}"
+          for part in logs results source; do aspire2p-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"; done
+          marker=$(aspire2p-shell "if test -e '${RUNTIME_DIR}/run-success'; then echo present; else echo absent; fi")
+          if [[ "${marker}" == present ]]; then aspire2p-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; else [[ "${marker}" == absent ]]; fi
+
+      - name: 実行成果物を保存
+        id: upload
+        if: always() && steps.collect.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen-aspire-kernel-bench-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qwen-aspire-kernel-bench
+          if-no-files-found: error
+
+      - name: Summary用のuvを導入
+        if: always() && steps.collect.outcome == 'success' && steps.submit.outputs.job_id != ''
+        uses: astral-sh/setup-uv@v7
+
+      - name: 同一H100比較と数値gateを判定
+        if: always() && steps.collect.outcome == 'success' && steps.submit.outputs.job_id != ''
+        shell: bash
+        run: uv run --no-project --python 3.13 --with numpy python scripts/summarize-megamoe-kernel-bench.py "${RUNNER_TEMP}/qwen-aspire-kernel-bench/results/results" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 終了・成果物保存を確認して実行環境を削除
+        if: always() && steps.upload.outcome == 'success'
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+          PBS_JOB_ID: ${{ steps.submit.outputs.job_id }}
+        run: |
+          if [[ -n "${PBS_JOB_ID}" ]]; then
+            /opt/pbs/bin/qstat -x -f "${PBS_JOB_ID}" >"${RUNTIME_DIR}/logs/cleanup-accounting.txt"
+            state=$(awk '/^[[:space:]]*job_state =/ {print $3}' "${RUNTIME_DIR}/logs/cleanup-accounting.txt")
+            [[ "${state}" == F ]] || { printf 'Preserving runtime: job %s state=%s\n' "${PBS_JOB_ID}" "${state}"; exit 1; }
+            printf 'No active bench job: %s state=%s\n' "${PBS_JOB_ID}" "${state}"
+          fi
+          chmod -R u+w "${RUNTIME_DIR:?}"
+          rm -rf -- "${RUNTIME_DIR:?}"
+          test ! -e "${RUNTIME_DIR}"

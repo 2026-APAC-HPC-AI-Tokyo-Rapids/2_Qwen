@@ -21,15 +21,15 @@ def test_ambiguous_or_unbounded_stages_are_rejected(message):
 
 
 @pytest.mark.parametrize("cluster", ["aspire2ap", "firmus"])
-@pytest.mark.parametrize("build_only", [False, True])
-def test_actual_push_workflow_routes(cluster, build_only):
+@pytest.mark.parametrize("stage", ["normal", "build-only", "kernel-bench"])
+def test_actual_push_workflow_routes(cluster, stage):
     import re
-    message = f"[require-build] [cluster:{cluster}]" + (" [build-only]" if build_only else "")
+    message = (f"[cluster:{cluster}] [nodes:1] [kernel-bench]" if stage == "kernel-bench" else f"[require-build] [cluster:{cluster}]" + (" [build-only]" if stage == "build-only" else ""))
     module.validate(message)
     workflow = (ROOT/".github/workflows/qwen.yml").read_text()
-    for name in ["container", "genkai", "aspire2ap", "firmus", "firmus-dynamo", "firmus-kernel-bench"]:
-        expected = name == "container" or (name == cluster and not build_only)
-        job_block = re.split(r"\n  [a-zA-Z-]+:\n", workflow.split(f"\n  {name}:\n", 1)[1], maxsplit=1)[0]
+    for name in ["container", "genkai", "aspire2ap", "firmus", "firmus-dynamo", "firmus-kernel-bench", "aspire2ap-kernel-bench"]:
+        expected = name == f"{cluster}-kernel-bench" if stage == "kernel-bench" else name == "container" or (name == cluster and stage == "normal")
+        job_block = re.split(r"\n  [a-zA-Z0-9-]+:\n", workflow.split(f"\n  {name}:\n", 1)[1], maxsplit=1)[0]
         expression = re.search(r"^    if: (.+)$", job_block, re.MULTILINE).group(1).removeprefix("${{ ").removesuffix(" }}")
         expression = re.sub(r"contains\(github.event.head_commit.message, '([^']+)'\)", lambda match: str(match[1] in message), expression)
         expression = expression.replace("github.event_name", repr("push"))
@@ -38,3 +38,14 @@ def test_actual_push_workflow_routes(cluster, build_only):
         expression = expression.replace("&&", " and ").replace("||", " or ")
         expression = re.sub(r"!(?!=)", " not ", expression)
         assert eval(expression.strip(), {"__builtins__": {}}, {}) is expected
+
+
+@pytest.mark.parametrize('cluster', ['aspire2ap', 'firmus'])
+def test_kernel_bench_supported_cluster(cluster):
+    module.validate(f'[cluster:{cluster}] [nodes:1] [kernel-bench]')
+
+
+@pytest.mark.parametrize('suffix', ['[nodes:2]', '[nodes:4]', '[profile]', '[cluster:genkai]', '[require-build]'])
+def test_aspire_kernel_bench_rejects_unexecuted_options(suffix):
+    with pytest.raises(ValueError):
+        module.validate(f'[cluster:aspire2ap] [nodes:1] [kernel-bench] {suffix}')

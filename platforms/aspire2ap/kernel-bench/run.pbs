@@ -1,0 +1,68 @@
+#!/bin/bash
+#PBS -N megamoe-kernel-bench
+#PBS -q normal
+#PBS -l select=1:ngpus=4:ncpus=56:mem=720gb
+#PBS -l walltime=00:15:00
+#PBS -j oe
+# EP4 H100 comparison; results are independent of the Firmus H200 timings.
+set -euo pipefail
+: "${RUNTIME_DIR:?}" "${PBS_JOBID:?}"
+ROOT=${RUNTIME_DIR}
+job_id=${PBS_JOBID}
+cd "${ROOT}"
+exec >"${ROOT}/logs/driver.log" 2>&1
+scratch=
+cleanup() {
+  status=$?
+  printf '%s\n' "${status}" >"${ROOT}/results/exit-code"
+  if [[ -n "${scratch}" ]]; then rm -rf -- "${scratch:?}"; fi
+  exit "${status}"
+}
+trap cleanup EXIT
+source "${HOME}/.local/.setenv"
+export ENROOT_LIBRARY_PATH="${ROOT}/enroot-library" ENROOT_SYSCONF_PATH="${ROOT}/enroot-system" ENROOT_MOUNT_HOME=no
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/megamoe-ep4-${job_id}.XXXXXXXX")
+export ENROOT_CACHE_PATH="${scratch}/cache" ENROOT_DATA_PATH="${scratch}/data" ENROOT_RUNTIME_PATH="${scratch}/runtime" ENROOT_TEMP_PATH="${scratch}/temp"
+install -d -m 0700 "${ENROOT_CACHE_PATH}" "${ENROOT_DATA_PATH}" "${ENROOT_RUNTIME_PATH}" "${ENROOT_TEMP_PATH}"
+printf 'job=%s node=%s\n' "${job_id}" "$(hostname)"
+date -u
+# These GPU queries run only inside the four-GPU PBS allocation.
+nvidia-smi --query-gpu=index,uuid,name,memory.total,clocks.current.sm,clocks.max.sm,power.draw,power.limit --format=csv,noheader >"${ROOT}/logs/gpu-inventory.csv"
+nvidia-smi topo -m >"${ROOT}/logs/gpu-topology.txt"
+cat "${ROOT}/logs/gpu-inventory.csv" "${ROOT}/logs/gpu-topology.txt"
+allocated_gpus=$(python3 - "${ROOT}/logs/gpu-inventory.csv" <<'PY'
+import csv
+import os
+import re
+import sys
+from pathlib import Path
+
+inventory = list(csv.reader(Path(sys.argv[1]).read_text().splitlines()))
+uuids = {row[0].strip(): row[1].strip() for row in inventory}
+mask = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+if mask:
+    devices = mask.split(",")
+elif os.environ.get("PBS_GPUFILE"):
+    devices = [re.sub(r"^.*-gpu", "", line.strip()) for line in Path(os.environ["PBS_GPUFILE"]).read_text().splitlines() if line.strip()]
+else:
+    # A four-GPU host can only supply this job from those four devices.
+    # ASPIRE DGX hosts have eight GPUs: require their scheduler mask.
+    assert len(inventory) == 4, ("missing scheduler GPU mask on a larger host", inventory)
+    devices = list(uuids)
+selected = [uuids.get(device.strip(), device.strip()) for device in devices]
+assert len(selected) == 4 and len(set(selected)) == 4, ("EP4 requires four allocated GPUs", selected)
+assert set(selected) <= set(uuids.values()), ("allocated GPU is absent from inventory", selected)
+print(",".join(selected))
+PY
+)
+export NVIDIA_VISIBLE_DEVICES="${allocated_gpus}" CUDA_VISIBLE_DEVICES="${allocated_gpus}" NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
+printf 'allocated_gpu_uuids=%s\n' "${allocated_gpus}"
+run_container() {
+  local gpus=$1
+  shift
+  [[ "${gpus}" == 4 || "${gpus}" == 1 ]]
+  enroot start -e "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES}" -e "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}" -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e NVIDIA_DISABLE_REQUIRE=1 -e HOME=/runtime-home -m "${ROOT}/home:/runtime-home" -m "${ROOT}:${ROOT}:none:bind,rw,x-create=dir" "${ROOT}/sglang.sqsh" "$@"
+}
+run_container 4 /opt/sglang/venv/bin/python -c 'import torch; assert torch.cuda.device_count() == 4, torch.cuda.device_count(); assert all(torch.cuda.get_device_capability(i) == (9, 0) for i in range(4)); print("ep4_device_preflight=pass", [torch.cuda.get_device_name(i) for i in range(4)], flush=True)' >"${ROOT}/logs/gpu-preflight.log" 2>&1
+source "${ROOT}/scripts/run-megamoe-kernel-bench.sh"
+date -u

@@ -21,6 +21,7 @@ READY_SECS=600  # ASPIRE full stack took 7m09s; leave time for the 60/120/30 cli
 N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")
 # Parse configuration on the host; the pinned serving image does not include jq.
 speculation=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -er '.speculation.steps' "${ROOT}/source/firmus-framework.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -er '.speculation.draft_tokens' "${ROOT}/source/firmus-framework.json")")
+if [[ "$(jq -r '.speculation.draft_quantization // empty' "${ROOT}/source/firmus-framework.json")" == fp8 ]]; then speculation+=(--speculative-draft-model-quantization fp8); fi
 decode_graph=(--cuda-graph-bs-decode)
 while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${ROOT}/source/firmus-framework.json")
 # Prefill maps 128 logical experts to physical slots, including hot replicas; Decode keeps trivial placement.
@@ -36,6 +37,9 @@ export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
 export SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1
 PROFILE=${PROFILE:-false}
 [[ "${PROFILE}" == true || "${PROFILE}" == false ]]
+routing_capture_samples=$(jq -er '.prefill.routing_capture_samples // 0' "${ROOT}/source/firmus-framework.json")
+[[ "${routing_capture_samples}" =~ ^[0-8]$ ]]
+if (( routing_capture_samples > 0 )); then [[ "${PROFILE}" == true ]]; fi
 jq -e '.framework == "sglang" and .workload == "official"' "${ROOT}/source/firmus-framework.json" >/dev/null
 
 NODES=($(scontrol show hostnames "${SLURM_JOB_NODELIST}"))
@@ -83,6 +87,7 @@ telemetry_pids=()
 cleanup_all() {
   status=$?
   trap - EXIT INT TERM
+  for worker in prefill-0 prefill-1 prefill-2; do rm -f "${ROOT}/results/prefill-routing/${worker}/active"; done
   if [[ -n "${profile_capture_pid}" ]]; then kill "${profile_capture_pid}" 2>/dev/null || true; wait "${profile_capture_pid}" 2>/dev/null || true; fi
   for pid in "${telemetry_pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
   for pid in "${telemetry_pids[@]}"; do wait "${pid}" 2>/dev/null || true; done
@@ -96,6 +101,7 @@ trap 'exit 143' TERM
 if [[ "${PROFILE}" == true ]]; then
   "${ROOT}/nsys/bin/nsys" --version >"${ROOT}/profile/nsys-version.txt"
   printf 'Separate normal benchmark (60/120/30), then the same serving configuration with a profile-only client (20/30/90). Capture starts five seconds into the profiling phase and lasts five seconds after all start acknowledgements. CUDA graph nodes and Torch CPU stage spans cover every TP rank. Exclude start/stop/export tails; profile/client is not an adoption score. The normal pass has tracing disabled, but uses the Nsight launcher.\n' >"${ROOT}/profile/interpretation.txt"
+  if (( routing_capture_samples > 0 )); then printf 'Prefill routing capture copies physical top-8 to the host during the separate profile pass. These Nsight timings contain routing copy overhead and must not be used for performance adoption.\n' >>"${ROOT}/profile/interpretation.txt"; fi
 fi
 for worker in 0 1; do printf 'prefill-%s\t%s\t%s\t4\n' "${worker}" "${HEAD_IP}" "$((30100 + worker))"; done >"${ROOT}/source/worker-endpoints.tsv"
 for worker in 2; do printf 'prefill-%s\t%s\t%s\t4\n' "${worker}" "${TAIL_IP}" "$((30100 + worker))"; done >>"${ROOT}/source/worker-endpoints.tsv"
@@ -110,6 +116,14 @@ tp=$4
 export SGLANG_HOST_IP=$5
 shift 5
 role=${name%%-*}
+runtime_dir=$(dirname "$(dirname "$0")")
+# Keep inherited diagnostic variables out of Decode and ordinary benchmark workers.
+unset SGLANG_PREFILL_ROUTING_DIR SGLANG_PREFILL_ROUTING_SAMPLES
+routing_capture_samples=$(/opt/sglang/venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1])).get("prefill", {}).get("routing_capture_samples", 0))' "${runtime_dir}/source/firmus-framework.json")
+if [[ "$role" == prefill ]] && (( routing_capture_samples > 0 )); then
+  export SGLANG_PREFILL_ROUTING_DIR="${runtime_dir}/results/prefill-routing/${name}" SGLANG_PREFILL_ROUTING_SAMPLES="${routing_capture_samples}"
+  mkdir -p "${SGLANG_PREFILL_ROUTING_DIR}"
+fi
 # Prefill: a 3994-token prompt must not straddle two 4096-token batches (prefill-request-aligned-chunks.patch; images without it ignore this).
 # Tier 2 switches: equal-load DP ties rotate (dp-total-requests-rotate-ties.patch);
 # Decode admission without host waits on the WAR-fenced stream (decode-async-admission.patch, with decode_polling_interval 1).
@@ -181,6 +195,12 @@ done
 # Decode kernel selection (select-firmus-decode-kernels.sh, results/decode-selection/). The 17-minute site
 # limit leaves no serial time: "fa3" runs on the head node's other four GPUs during the numeric gate, and
 # "dense" on the Decode GPUs while the Prefill workers start. Only the Decode worker sources the result.
+if [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
+  # Provision has verified the prior image, ordered overlays, expert map and
+  # normalized serving config. Draft precision is the sole changed model setting.
+  test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
+  printf 'Reusing verified target kernel selections from run %s; no repeated target kernel sweep or numeric gate.\n' "$(jq -r .source_run "${ROOT}/source/reused-kernel-selection.json")"
+else
 srun -N1 -n1 --exact -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts decode-selection-fa3)" bash "${ROOT}/scripts/select-firmus-decode-kernels.sh" "${ROOT}" fa3 >"${ART}/decode-selection-fa3.log" 2>&1 &
 fa3_selection=$!
 srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts decode-selection-dense)" bash "${ROOT}/scripts/select-firmus-decode-kernels.sh" "${ROOT}" dense >"${ART}/decode-selection-dense.log" 2>&1 &
@@ -200,6 +220,7 @@ for worker in 0 1 2; do
 done
 for pid in "${prefill_selections[@]}"; do wait "${pid}" || true; done
 python3 "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+fi
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
@@ -207,8 +228,10 @@ srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-en
 worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-2)" bash "${ROOT}/source/worker.sh" prefill-2 30102 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9002 >"${ART}/prefill-2.log" 2>&1 &
 worker_pids+=("$!")
-wait "${dense_selection}"
-cat "${ROOT}/results/decode-selection/fa3.env" "${ROOT}/results/decode-selection/dense.env" >"${ROOT}/source/decode-kernels.env"
+if [[ -n "${dense_selection:-}" ]]; then
+  wait "${dense_selection}"
+  cat "${ROOT}/results/decode-selection/fa3.env" "${ROOT}/results/decode-selection/dense.env" >"${ROOT}/source/decode-kernels.env"
+fi
 srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --ep-size 4 --dp-size "$(jq -er .decode_dp_size "${ROOT}/source/firmus-framework.json")" --enable-dp-attention --enable-dp-lm-head --moe-dense-tp-size 1 --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --chunked-prefill-size 8192 --max-running-requests "$(jq -er .decode_max_running_requests "${ROOT}/source/firmus-framework.json")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${ROOT}/source/firmus-framework.json")" --disaggregation-decode-polling-interval "$(jq -er .decode_polling_interval "${ROOT}/source/firmus-framework.json")" --max-total-tokens "$(jq -er .decode_max_total_tokens "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-0.log" 2>&1 &
 worker_pids+=("$!")
 
@@ -226,6 +249,7 @@ echo "READY after ${SECONDS}s"
 
 while IFS=$'\t' read -r worker host port _tp; do
   curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"
+  if [[ "$(jq -r '.speculation.draft_quantization // empty' "${ROOT}/source/firmus-framework.json")" == fp8 ]]; then jq -e '.speculative_draft_model_quantization == "fp8"' "${ROOT}/results/server-info-${worker}.json" >/dev/null; fi
 done <"${ROOT}/source/worker-endpoints.tsv"
 # Placement must not change outputs; keep one greedy answer through a Prefill worker for inspection.
 curl --fail --silent --show-error --max-time 120 -H 'Content-Type: application/json' -d '{"model":"qwen","messages":[{"role":"user","content":"Name the capital of France and explain in two sentences why it is historically important."}],"max_tokens":64,"temperature":0}' "http://${HEAD_IP}:${R_PORT}/v1/chat/completions" >"${ROOT}/results/sanity-chat.json"
@@ -237,6 +261,10 @@ if (( benchmark_status == 0 )); then
   /usr/bin/python3 "${ROOT}/scripts/collect-eagle-acceptance.py" --cluster firmus --config "${ROOT}/source/firmus-framework.json" --endpoints "${ROOT}/source/worker-endpoints.tsv" --server-info-dir "${ROOT}/results" --log-dir "${ROOT}/logs" --output "${ROOT}/results/eagle-acceptance.json"
 fi
 if [[ "${PROFILE}" == true ]]; then
+  (( benchmark_status == 0 )) || exit "${benchmark_status}"
+  if (( routing_capture_samples > 0 )); then
+    for worker in prefill-0 prefill-1 prefill-2; do touch "${ROOT}/results/prefill-routing/${worker}/active"; done
+  fi
   "${ROOT}/scripts/capture-firmus-profile.sh" "${ROOT}" >"${ART}/profile-capture.log" 2>&1 &
   profile_capture_pid=$!
   # A failed profile client must not cancel capture or report flushing; keep both statuses.
@@ -245,6 +273,10 @@ if [[ "${PROFILE}" == true ]]; then
   profile_capture_status=0
   wait "${profile_capture_pid}" || profile_capture_status=$?
   profile_capture_pid=
+  if (( routing_capture_samples > 0 )); then
+    for worker in prefill-0 prefill-1 prefill-2; do rm -f "${ROOT}/results/prefill-routing/${worker}/active"; done
+    srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-image="${SGLANG}" --container-mounts="$(mounts routing-summary)" /opt/sglang/venv/bin/python "${ROOT}/scripts/summarize-prefill-routing.py" --directory "${ROOT}/results/prefill-routing" --placement "${ROOT}/source/prefill-expert-location.json" --output "${ROOT}/results/prefill-routing-summary.json" --expected-workers 3 --expected-ranks 4 --samples-per-rank "${routing_capture_samples}" >"${ART}/prefill-routing-summary.log" 2>&1
+  fi
   printf 'profile_client_status=%s\nprofile_capture_status=%s\n' "${profile_client_status}" "${profile_capture_status}" >"${ART}/profile-status.txt"
   (( profile_capture_status == 0 )) || exit "${profile_capture_status}"
   expected_reports=$(wc -l <"${ROOT}/source/worker-endpoints.tsv")
