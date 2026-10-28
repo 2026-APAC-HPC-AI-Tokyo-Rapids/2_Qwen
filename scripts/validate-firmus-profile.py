@@ -21,19 +21,26 @@ def validate_capture(database: Path, tp: int) -> dict:
     return {"gpu_count": len(rows), "kernel_count": sum(count for _, count in rows)}
 
 
-def validate_cpu_traces(directory: Path, tp: int) -> dict:
+def validate_cpu_traces(directory: Path, tp: int, pp: int = 1) -> dict:
     stages = set()
-    for rank in range(tp):
-        traces = [p for p in directory.glob("*.trace.json.gz") if re.search(rf"-TP-{rank}(?:-(?:DP|PP|EP)-\d+)*\.trace\.json\.gz$", p.name)]
+    by_rank = {}
+    for path in directory.glob("*.trace.json.gz"):
+        match = re.search(r"-TP-(\d+)((?:-(?:DP|PP|EP)-\d+)*)\.trace\.json\.gz$", path.name)
+        if match:
+            pipeline = re.search(r"-PP-(\d+)", match[2])
+            key = int(match[1]), int(pipeline[1]) if pipeline else 0
+            by_rank.setdefault(key, []).append(path)
+    for rank, pipeline_rank in ((t, p) for p in range(pp) for t in range(tp)):
+        traces = by_rank.get((rank, pipeline_rank), [])
         if len(traces) != 1:
-            raise ValueError(f"expected one CPU trace for {directory.name} TP{rank}, got {len(traces)}")
+            raise ValueError(f"expected one CPU trace for {directory.name} TP{rank}/PP{pipeline_rank}, got {len(traces)}")
         with gzip.open(traces[0], "rt") as handle:
             events = json.load(handle)["traceEvents"]
         annotations = {event.get("name", "") for event in events if event.get("cat") == "user_annotation"}
         if not annotations:
             raise ValueError(f"no CPU stage spans in {traces[0].name}")
-        stages.update(name for name in annotations if name.startswith("step[") or "draft" in name.lower() or "verify" in name.lower())
-    return {"cpu_trace_count": tp, "cpu_stage_names": sorted(stages)}
+        stages.update(name for name in annotations if name.startswith("step[") or "draft" in name.lower() or "verify" in name.lower() or "recv" in name or "send" in name or name == "run_batch")
+    return {"cpu_trace_count": tp * pp, "cpu_stage_names": sorted(stages)}
 
 
 def summarize_kernels(database: Path) -> dict:
@@ -67,7 +74,8 @@ def main() -> None:
             # Keep native reports only, including after a failed export or check.
             database.unlink(missing_ok=True)
         if separate:
-            results[name].update(validate_cpu_traces(args.runtime / "profile/torch" / name, int(tp)))
+            pp = config.get("prefill", {}).get("pp", 1) if name.startswith("prefill-") else 1
+            results[name].update(validate_cpu_traces(args.runtime / "profile/torch" / name, int(tp) // pp, pp))
     if not endpoints or len(results) != len(endpoints):
         raise ValueError("expected a capture for every distinct worker endpoint")
     (args.runtime / "profile/validation.json").write_text(json.dumps({"valid": True, "workers": results}, indent=2) + "\n")

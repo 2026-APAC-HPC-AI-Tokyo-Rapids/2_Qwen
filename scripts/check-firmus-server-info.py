@@ -11,6 +11,11 @@ def check(config, info, role):
     prefill = role == "prefill"
     p = config["prefill"]
     expected = {"tp_size": 4, "dp_size": p["dp"] if prefill else config["decode_dp_size"], "ep_size": p["ep"] if prefill else 4, "enable_dp_attention": True, "kv_cache_dtype": "fp8_e4m3", "context_length": 8192, "page_size": 64, "attention_backend": "fa3", "max_total_tokens": config.get("prefill_max_total_tokens", 131072) if prefill else config["decode_max_total_tokens"], "chunked_prefill_size": p["chunked_prefill_size"] // p["dp"] if prefill else 8192 // config["decode_dp_size"], "max_running_requests": config["concurrency"] if prefill else config["decode_max_running_requests"], "speculative_algorithm": "EAGLE3", "speculative_draft_model_path": "/draft", "speculative_num_steps": config["speculation"]["steps"], "speculative_num_draft_tokens": config["speculation"]["draft_tokens"], "speculative_eagle_topk": 1, "speculative_draft_model_quantization": config["speculation"].get("draft_quantization"), "enable_two_batch_overlap": False, "enable_symm_mem": False}
+    if prefill and p.get("pp", 1) > 1:
+        expected.update(tp_size=p["tp"], pp_size=p["pp"], enable_dp_attention=False,
+                        pp_max_micro_batch_size=p["pp_max_micro_batch_size"],
+                        pp_async_batch_depth=1, disable_overlap_schedule=True,
+                        disable_cuda_graph=True)
     if prefill:
         expected.update(moe_a2a_backend=p["moe_a2a_backend"], moe_runner_backend=p["moe_runner_backend"])
         # Configs before optimistic Prefill omit the key and ran with SGLang's default of 0.
@@ -48,7 +53,7 @@ def check(config, info, role):
         raise ValueError("Decode effective scheduler limit differs from requested batch cap")
     if aspire and any(state.get("memory_usage", {}).get("token_capacity") != expected["max_total_tokens"] for state in states):
         raise ValueError(f"{role}: actual KV capacity differs from requested pool; inspect memory profiling logs")
-    print(f"PASS: {role} TP4, DP{expected['dp_size']}, EP{expected['ep_size']}; all DP schedulers checked")
+    print(f"PASS: {role} TP{expected['tp_size']}, PP{expected.get('pp_size', 1)}, DP{expected['dp_size']}, EP{expected['ep_size']}; all DP schedulers checked")
 
 
 if __name__ == "__main__":

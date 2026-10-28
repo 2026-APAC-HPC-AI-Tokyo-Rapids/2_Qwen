@@ -15,7 +15,7 @@ if [[ "${REQUIRE_BUILD}" == true ]]; then
   [[ "${CONTAINER_SHA256:-}" =~ ^[0-9a-f]{64}$ && "${CONTAINER_SIZE:-}" =~ ^[1-9][0-9]*$ ]] || { echo 'A source experiment requires the successful CPU build SHA-256 and size.' >&2; exit 64; }
 fi
 
-config="${GITHUB_WORKSPACE}/configs/firmus-framework.json"
+config="${GITHUB_WORKSPACE}/${1:-configs/firmus-framework.json}"
 framework="$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${config}")"
 jq -e --argjson profile "${PROFILE}" '((.workload == "reference-07" and .framework == "vllm") or (.workload == "official" and (.framework == "sglang" or $profile == false))) and (.concurrency | type == "number" and . >= 1 and floor == .)' "${config}" >/dev/null
 # Routing capture is a profile-only diagnostic; reject mistakes before image hashing or staging.
@@ -40,11 +40,24 @@ if (( routing_capture_samples > 0 )); then
 fi
 if [[ "${framework}" == sglang && -n "${CONTAINER_SHA256:-}" ]]; then
   [[ "${CONTAINER_SHA256}" =~ ^[0-9a-f]{64}$ && "${CONTAINER_SIZE:-}" =~ ^[1-9][0-9]*$ ]]
-  if [[ "${REQUIRE_BUILD}" == false ]]; then [[ "${CONTAINER_SHA256}" == "$(jq -er .images.sglang.sha256 "${config}")" ]]; fi
   archive=/scratch/home/ACCOUNT/qwen/containers
+  if [[ "${REQUIRE_BUILD}" == false ]]; then
+    if [[ "$(jq -r '.prefill.pp // 1' "${config}")" == 4 ]]; then
+      source_run=$(jq -er .container_build_run_id "${config}")
+      source_commit=$(jq -er .container_source_commit "${config}")
+      [[ "${CONTAINER_SIZE}" == "$(jq -er .container_size_bytes "${config}")" ]]
+      jq -e --arg commit "${source_commit}" --arg sha "${CONTAINER_SHA256}" '.source_commits.qwen == $commit and .container_artifact.sha256 == $sha' "${archive}/${source_run}.container-sidecar.json" "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" >/dev/null
+    else
+      [[ "${CONTAINER_SHA256}" == "$(jq -er .images.sglang.sha256 "${config}")" ]]
+    fi
+  fi
   jq --arg path "${archive}/${GITHUB_RUN_ID}.sqsh" --arg sha "${CONTAINER_SHA256}" --argjson size "${CONTAINER_SIZE}" --arg provenance "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" '.images.sglang = {path:$path,sha256:$sha,size_bytes:$size,provenance:$provenance}' "${config}" >"${config}.tmp"
   mv "${config}.tmp" "${config}"
+  jq '.images.sglang' "${config}"
   jq -e --arg commit "${GITHUB_SHA}" --arg sha "${CONTAINER_SHA256}" --argjson require_build "${REQUIRE_BUILD}" '.container_artifact.sha256 == $sha and ($require_build == false or .source_commits.qwen == $commit)' "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" >/dev/null
+fi
+if [[ "$(jq -r '.prefill.pp // 1' "${config}")" == 4 ]]; then
+  python3 "${GITHUB_WORKSPACE}/scripts/prepare-firmus-pp4-settings.py" "${config}" "${GITHUB_WORKSPACE}" "${runtime_dir}"
 fi
 selection_record=$(jq -r '.reuse_kernel_selection // empty' "${config}")
 if [[ -n "${selection_record}" ]]; then

@@ -60,7 +60,8 @@ jobs:
     uses: ./.github/workflows/aws-container.yml
     with:
       require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
-      firmus_only_build: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[build-only]') && contains(github.event.head_commit.message, '[cluster:firmus]') }}
+      firmus_only_build: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[cluster:genkai]') && !contains(github.event.head_commit.message, '[cluster:aspire2ap]') }}
+      firmus_config: ${{ contains(github.event.head_commit.message, '[prefill-pp4]') && 'configs/firmus-prefill-pp4.json' || '' }}
     secrets: inherit
 
   genkai:
@@ -93,6 +94,7 @@ jobs:
     if: ${{ !contains(github.event.head_commit.message, '[build-only]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]') && !contains(github.event.head_commit.message, '[kernel-bench]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus)) && needs.container.outputs.firmus_container_sha256 != '' && needs.container.outputs.firmus_container_size != '' }}
     uses: ./.github/workflows/firmus.yml
     with:
+      config_path: ${{ contains(github.event.head_commit.message, '[prefill-pp4]') && 'configs/firmus-prefill-pp4.json' || 'configs/firmus-framework.json' }}
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
       profile: ${{ (github.event_name == 'workflow_dispatch' && inputs.profile) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[profile]')) }}
       require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}

@@ -36,9 +36,15 @@ if [[ -n "${1:-}" ]]; then
   config=$1
   run_id="$(jq -er .container_build_run_id "${config}")"
   expected_size="$(jq -er .container_size_bytes "${config}")"
-  expected_sha256="$(jq -er .container_sha256 "${config}")"
   archive="${CONTAINER_ARCHIVE_DIR}/${run_id}.sqsh"
   sidecar="${CONTAINER_ARCHIVE_DIR}/${run_id}.container-sidecar.json"
+  expected_sha256="$(jq -r '.container_sha256 // empty' "${config}")"
+  if [[ -z "${expected_sha256}" ]]; then
+    # A newly built image can be pinned by build run + source commit before its
+    # hash is available locally. Verify the actual image against that sidecar.
+    source_commit="$(jq -er '.container_source_commit | select(test("^[0-9a-f]{40}$"))' "${config}")"
+    expected_sha256="$(jq -er --arg commit "${source_commit}" 'select(.source_commits.qwen == $commit) | .container_artifact.sha256 | select(test("^[0-9a-f]{64}$"))' "${sidecar}")"
+  fi
   [[ "$(stat -c '%s' "${archive}")" == "${expected_size}" ]]
   jq -e --arg sha "${expected_sha256}" --argjson size "${expected_size}" '.schema_version == "container-sidecar/v1" and .container_artifact.artifact_relative_path == "sglang.sqsh" and .container_artifact.sha256 == $sha and .container_artifact.size_bytes == $size' "${sidecar}" >/dev/null
   verify_sha256 "${archive}" "${expected_sha256}"

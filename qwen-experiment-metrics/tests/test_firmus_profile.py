@@ -83,6 +83,18 @@ def test_profile_validation_rejects_missing_tp_rank(tmp_path: Path) -> None:
         VALIDATE(database, 4)
 
 
+def test_pp4_profile_requires_each_pipeline_stage(tmp_path: Path) -> None:
+    validate = runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"))["validate_cpu_traces"]
+    for pp in range(4):
+        with gzip.open(tmp_path / f"123-TP-0-PP-{pp}.trace.json.gz", "wt") as handle:
+            json.dump({"traceEvents": [{"cat": "user_annotation", "name": "pp_send"}]}, handle)
+    result = validate(tmp_path, 1, 4)
+    assert result == {"cpu_trace_count": 4, "cpu_stage_names": ["pp_send"]}
+    (tmp_path / "123-TP-0-PP-2.trace.json.gz").unlink()
+    with pytest.raises(ValueError, match="TP0/PP2"):
+        validate(tmp_path, 1, 4)
+
+
 def test_profile_validation_explains_idle_worker_capture(tmp_path: Path) -> None:
     database = tmp_path / "nsys-prefill-1.sqlite"
     with sqlite3.connect(database) as connection:

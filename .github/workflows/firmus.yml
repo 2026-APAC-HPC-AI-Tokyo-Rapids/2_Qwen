@@ -3,6 +3,10 @@ name: FirmusでQwen3 PDを実行
 on:
   workflow_call:
     inputs:
+      config_path:
+        required: false
+        default: configs/firmus-framework.json
+        type: string
       node_count:
         required: true
         type: string
@@ -61,13 +65,16 @@ jobs:
           REQUIRE_BUILD: ${{ inputs.require_build }}
           CONTAINER_SHA256: ${{ inputs.container_sha256 }}
           CONTAINER_SIZE: ${{ inputs.container_size }}
+          FIRMUS_CONFIG_PATH: ${{ inputs.config_path }}
         run: |
           if [[ '${{ inputs.dynamo }}' == true ]]; then provision=scripts/provision-firmus-dynamo.sh; else provision=scripts/provision-firmus-framework.sh; fi
           stderr=$(mktemp)
-          trap 'rm -f -- "${stderr}"' EXIT
+          provision_wrapper=$(mktemp)
+          printf '#!/usr/bin/env bash\nexec bash %q %q\n' "${provision}" "${FIRMUS_CONFIG_PATH}" >"${provision_wrapper}"
+          trap 'rm -f -- "${stderr}" "${provision_wrapper}"' EXIT
           deadline=$((SECONDS + 900))
           while true; do
-            if timeout --foreground 600 firmus-shell --github-shell "${provision}" 2>"${stderr}"; then cat "${stderr}" >&2; break; else status=$?; fi
+            if timeout --foreground 600 firmus-shell --github-shell "${provision_wrapper}" 2>"${stderr}"; then cat "${stderr}" >&2; break; else status=$?; fi
             cat "${stderr}" >&2
             if [[ "${status}" -eq 2 || "${status}" -eq 254 ]] && grep -Eq '^(Connection closed by .* port [0-9]+|exec request failed on channel [0-9]+|.*: fork: (retry: )?Resource temporarily unavailable)[[:space:]]*$' "${stderr}"; then status=255; fi
             if [[ "${status}" -ne 255 && "${status}" -ne 124 ]] || (( SECONDS >= deadline )); then exit "${status}"; fi

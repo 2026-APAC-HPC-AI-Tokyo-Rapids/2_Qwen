@@ -39,6 +39,8 @@ def summarize(root: Path, job_id: str, status: str, cluster: str = "firmus") -> 
     if config.get("prefill"):
         p = config["prefill"]
         topology = f"P{p['workers']} × (Attention TP{p['tp'] // p['dp']} DP{p['dp']} / MoE EP{p['ep']}) / D1 × TP4 EP1"
+        if p.get("pp", 1) > 1:
+            topology = f"P{p['workers']} × PP{p['pp']} TP{p['tp']} EP{p['ep']} / D1 × TP4 DP{config['decode_dp_size']} EP4"
     if aspire:
         workers = config.get("workers", [])
         expected_reports = len(workers)

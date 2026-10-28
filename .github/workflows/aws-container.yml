@@ -6,6 +6,10 @@ on:
       require_build:
         required: true
         type: boolean
+      firmus_config:
+        required: false
+        default: ''
+        type: string
       firmus_only_build:
         description: Build-only campaign while other cluster endpoints are unavailable
         required: false
@@ -119,7 +123,7 @@ jobs:
           CONTAINER_ARCHIVE_DIR: /scratch/home/ACCOUNT/qwen/containers
           GH_TOKEN: ${{ github.token }}
           REQUIRE_BUILD: ${{ inputs.require_build }}
-        run: scripts/select-qwen-container.sh
+        run: scripts/select-qwen-container.sh "${{ inputs.firmus_config }}"
 
   stage:
     name: 管理済みSGLang mirrorから入力を準備

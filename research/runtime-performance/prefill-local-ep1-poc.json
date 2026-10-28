@@ -1,11 +1,11 @@
 {
   "schema": "megamoe-local-ep1-poc/v1",
-  "status": "CPU native selector and complete kernel compiled; GPU trial not yet submitted",
-  "purpose": "Screen local-expert kernels before implementing PP4/EAGLE/NIXL integration. This is not an end-to-end serving result.",
-  "control": "Current optimized EP4,4x4001 tokens,140 physical experts",
-  "candidate": "Four independent EP1 groups,8002 tokens each,128 logical experts; divide per-GPU kernel time by2 for equal per-request work budget.",
-  "platform": "Firmus H200, one node, four active GPUs; replaces ASPIRE by explicit user instruction",
-  "weights": "Deterministic synthetic FP8 weights and original FP32 block scales, same per logical expert in both configurations. Captured production routing only; not actual model weights or an output-quality evaluation.",
+  "status": "Fresh host image build 40742736653 succeeded; PP4/EAGLE/NIXL CPU checks passed; two-node ordinary serving trial prepared, not yet GPU validated",
+  "purpose": "User replaced the kernel PoC with ordinary two-node Firmus serving plus a separate profile pass. Evaluate official good output tok/s, TTFT, ITL and SLA eligibility; no kernel selection sweep.",
+  "control": "Run 40630160781 official score 9235.282194, c215, P3 EP4 with 12 replicas. FC2-address bundle run 40653531712 gave 9234.339455 and is not included in this PP candidate.",
+  "candidate": "Three PP4/TP1/EP1 Prefill replicas (12 H200), each with contiguous target layer partition [24,24,23,23], max microbatch 2 and async depth 1. Existing TP4/DP4/EP4 Decode (4 H200), FP8 EAGLE3 and concurrency 215.",
+  "platform": "Firmus, 2 nodes / 16 H200. User explicitly authorized ordinary serving by push, with profile.",
+  "weights": "Actual unchanged target and EAGLE3 checkpoints; no synthetic weight or routing fixture is used by the ordinary serving run.",
   "fixture": {
     "file": "kernels/probes/megamoe-local-ep1-routing.npz",
     "sha256": "1907184191e49a6dcc1431cdadafe9bfef2eb90bf4ad3f58407f6ed32a136b52",
@@ -85,11 +85,12 @@
         "rank": 3,
         "sample": 6
       }
-    ]
+    ],
+    "status": "Retained CPU/theory input only; no kernel PoC was executed."
   },
-  "numeric_gate": "Compare all live outputs against unchanged EP4 math with matching weights, inputs and topk weights; sampled independent FP32 reference; changed-input repeats and masked tails.",
-  "timing_protocol": "Same four GPUs; interleaved EP4/local order, cache eviction before timed interval, rank maximum, normalized local time/2; retain raw samples and clocks.",
-  "performance_gate": "At least15% lower normalized time in every selected layer and both source captures, with paired p90<1 and control drift<=5%. This justifies integration work, not a predicted serving score or ASPIRE6500 result.",
+  "numeric_gate": "CPU tests check source routing/aux-state preservation, exact layer IDs and guard boundaries. GPU numerical and end-to-end behavior remain unverified before the first serving execution; do not claim output quality from the CPU fixtures or score parser.",
+  "timing_protocol": "One ordinary official 60/120/30s run with tracing disabled, then separate CPU/Nsys profile pass across all 16 GPUs. Prior kernel settings retained with unchanged-source hashes; no sweep.",
+  "performance_gate": "Official SLA eligible score versus 9235.28 baseline. One run is a screening result; confirm a meaningful gain before adopting it. >10000 remains an objective, not a prediction.",
   "cpu_validation": {
     "cases": 46,
     "host_ep4_unchanged": true,
@@ -108,9 +109,54 @@
     "evidence": "../pp4-local-cpu/result.json"
   },
   "remaining": [
-    "Build a fresh image with opt-in local EP1 host selection.",
-    "Run numerical and normalized latency PoC on the authorized single H200 node.",
-    "Only if promising: implement PP auxiliary state forwarding, draft handling, scheduling and KV lifetime/transfer; validate ordinary serving. Kernel PoC is not a serving score."
+    "Push the two-node ordinary serving trial and separate profile.",
+    "Inspect terminal status, actual topology, official result, full profile coverage and cleanup.",
+    "If initialization fails, fix the first deterministic cause before another run; no blind repetition."
   ],
-  "reason_for_measurement": "Existing data cannot determine whether eliminating remote dispatch/scatter and inter-rank barriers outweighs larger expert weight footprint, changed padding and local combine costs. The PoC tests the net local-kernel cost, not isolated NVLink bandwidth."
+  "reason_for_measurement": "Existing EP4 profiles and theory cannot establish whether removal of per-layer remote dispatch/scatter and cross-rank barriers outweighs increased unique expert weight reads, padding, PP boundaries and pipeline bubbles. The ordinary run tests the full net effect.",
+  "builds": [
+    {
+      "run": 40727415289,
+      "status": "failed",
+      "cause": "Image compile checker could not find the configured FC2-address patch."
+    },
+    {
+      "run": 40735426358,
+      "status": "failed",
+      "cause": "CPU test still prohibited staging the adopted FC2-address patch."
+    },
+    {
+      "run": 40739933764,
+      "status": "failed",
+      "cause": "Ubuntu EC2 mirror Packages.xz size mismatch before container build."
+    },
+    {
+      "run": 40742736653,
+      "status": "success",
+      "commit": "23abeea29190fa7c7c2d0382ac131770796c3a0d",
+      "image_size_bytes": 12273377280,
+      "image_sha256": null,
+      "sha_note": "Verified by Actions; commit-pinned sidecar and actual archive SHA will be resolved and logged by serving provision."
+    }
+  ],
+  "integration_cpu_checks": {
+    "source_commit": "fc275674a97d78553b22597ee72c8fd48f5420f4",
+    "base_overlay_count": 38,
+    "patch_sha256": "4414ba31d91cdfd6260790e20bfc9766f438c5b4429a1050c7a7e652cd85d1cb",
+    "script": "scripts/check-firmus-pp4-source.py",
+    "coverage": [
+      "opt-in guard and unsupported configurations",
+      "all 94 target plus 1 draft K/V regions exactly once across PP shards",
+      "patched Qwen model forward matches unsplit toy output and three auxiliary capture states",
+      "only final target stage executes EAGLE draft prefill",
+      "original kernel-setting source hashes and role environments"
+    ],
+    "limitations": "CPU fixtures exercise patched functions; not GPU numerical accuracy or distributed deadlock/performance proof."
+  },
+  "theory_tradeoffs": {
+    "logical_unique_expert_weight_bytes_ratio": 1.8285714285714285,
+    "padded_moe_work_ratio": 1.059247,
+    "boundary_hidden_residual_aux_bytes_per_request": 360448000,
+    "note": "Logical bytes and conditional routing work; not measured HBM traffic or additive runtime estimates. Existing NVLink traces do not prove saturation."
+  }
 }
