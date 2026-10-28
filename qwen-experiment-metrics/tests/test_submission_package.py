@@ -38,8 +38,10 @@ def test_client_and_draft_copies(copy, source):
 
 def test_serving_configuration_matches_canonical_fields():
     # The package already pins these same kernels in its role env files; the
-    # research runner's prior-run reuse record is not a serving parameter.
+    # research runner's prior-run reuse record and profile-only routing capture
+    # are not serving parameters.
     expected = {key: value for key, value in CONFIG.items() if key not in ("images", "sglang_overlay_patches", "deep_gemm_overlay_patches", "reuse_kernel_selection")}
+    expected["prefill"] = {key: value for key, value in CONFIG["prefill"].items() if key != "routing_capture_samples"}
     expected["images"] = {"sglang": {key: CONFIG["images"]["sglang"][key] for key in ("sha256", "size_bytes")}}
     assert json.loads((PACKAGE / "config/serving.json").read_text()) == expected
     assert (PACKAGE / "config/prefill-expert-location.json").read_bytes() == (ROOT / CONFIG["prefill"]["expert_location"]).read_bytes()
@@ -53,6 +55,10 @@ def test_worker_is_unchanged_except_dormant_nsight_block():
     expected = worker(ORIGINAL.read_text())
     dormant = re.compile(r"if \[\[ -x /opt/nsys/bin/nsys \]\]; then\n.*?\nfi\n", re.DOTALL)
     expected, count = dormant.subn("", expected)
+    assert count == 1
+    # Profile-only Prefill routing capture; the package never captures routing.
+    capture = re.compile(r"runtime_dir=\$\(dirname \"\$\(dirname \"\$0\"\)\"\)\n# Keep inherited diagnostic variables.*?\nfi\n", re.DOTALL)
+    expected, count = capture.subn("", expected)
     assert count == 1
     assert worker(BATCH.read_text()) == expected
 
