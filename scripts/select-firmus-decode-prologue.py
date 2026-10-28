@@ -83,9 +83,7 @@ def main():
     for rows in ROWS:
         hidden = torch.randn(rows, 4096, device=device, dtype=torch.bfloat16) * 0.25
         generator = torch.Generator(device=device).manual_seed(713 + rank)
-        ids = bench["routing"]("balanced", rows, generator, device)
-        top_weights = torch.rand(rows, 8, device=device)
-        top_weights /= top_weights.sum(-1, keepdim=True)
+        ids, top_weights = bench["routing"]("balanced", rows, generator, device)
         logits = torch.empty(rows, 128, device=device, dtype=torch.bfloat16)
         output = torch.empty_like(hidden)
         graphs = {}
