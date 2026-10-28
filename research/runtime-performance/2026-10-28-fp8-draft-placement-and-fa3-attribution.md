@@ -102,3 +102,33 @@ RedHat の speculators 版（87cd7aa9）は `norm_before_residual: true`（最�
 | redhat-train | [2,47,91] | 2.015 | 0.90 |
 
 学習側の流儀の方が高いが、どちらも nebius（2.251）を下回る。モデルカードの要約（CNN/DM、k=3）2.15 と近く、実装が大きく外れている兆候はない。**公開 draft 3 種はいずれも現行の nebius に及ばない**ので、draft は変えない。受理長を上げる残りの手段は自前の fine-tune だけで、締切までには現実的でない。
+
+## 9. kernel 束（Prefill 4 段 pipeline、Decode 前処理・router gate）：すべて不採用
+
+branch `perf/firmus-kernel-bundle-20261028`、image [40648657907](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40648657907)。どの候補も既定は無効で、kernel bench か job 内の選択に通ったものだけを有効にする作り。
+
+**Prefill MegaMoE の 4 段 pipeline（`DG_SM90_PREFILL_STAGE4`）と komoriyuta の FC2 アドレス案**：kernel bench [40658033568](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40658033568)（MegaMoE 1 回の中央値、出力は 5 ケースとも control と一致）。
+
+| ケース | control | 4 段 | FC2 アドレス |
+|---|---:|---:|---:|
+| balanced | 1.4757 ms | +2.6% | −0.1% |
+| local | 1.2977 ms | −1.8% | −0.8% |
+| real43 | 1.4296 ms | −1.8% | −0.8% |
+| real62 | 1.4186 ms | −1.2% | −0.5% |
+| real7 | 1.4332 ms | −0.7% | 0.0% |
+
+4 段は実 routing 3 ケースのうち 2 つが採用下限 20 µs/層に届かず（10〜26 µs/層）、balanced では遅くなる。bench は 1.5〜2.0 GHz で、電力上限で約 1.5 GHz の serving ではさらに縮む見込み。どちらも採らない。
+
+**Decode の MegaMoE 前処理の warp 集計（`DG_SM90_DECODE_PREPARE`）と router gate の 1 kernel 化（`SGLANG_DECODE_ROUTER=cluster`）**：serving job 内の選択（`select-firmus-decode-prologue.py`、94 層の router＋pre-dispatch＋MegaMoE を CUDA graph で交互に 15 回ずつ 2 block、4 rank の最大）。数値 gate は router（fp32 参照 相対 L2 ≤ 0.0017）・MegaMoE serving gate とも通った。
+
+| rows | control（µs/層） | 候補 | 差 |
+|---:|---:|---:|---:|
+| 144 | 207.0 / 209.4 | 241.5 / 244.8 | +34〜35 |
+| 152 | 209.8 / 210.6 | 245.5 / 247.2 | +36〜37 |
+| 160 | 214.9 / 213.8 | 253.1 / 251.3 | +38 |
+| 168 | 217.2 / 217.1 | 255.0 / 255.1 | +38 |
+| 176 | 218.9 / 218.2 | 258.0 / 257.4 | +39 |
+
+候補は 17% 遅く、選択は正しく棄却した（[40689226339](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40689226339)）。router と前処理を束で測ったので、どちらが遅いかはこの計測では分けられない。選択スクリプトは最初の 2 回の run で動かなかった：同じ torchrun rendezvous で NCCL を再初期化して古い bootstrap id を読んだ（40660502072、gate を別 torchrun に分離）、bench の `routing()` の戻り値（ids, weights）をそのまま ids に渡した（40680955755、修正済み）。
+
+**新 image での control の繰り返し**（3 回とも serving は現行 kernel、c215・立ち上がり整列・FP8 draft）：9204.30（40660502072）、9211.35（40680955755 attempt 2）、9229.18（40689226339）。旧 image 40197369083 の 9235.28 と差はなく、受理長も 2.208 で同じ。採用する変更がないので、この branch と image は main へ統合せず、main は image 40197369083 のままとする。
