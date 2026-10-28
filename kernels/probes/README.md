@@ -295,23 +295,52 @@ Nebius needs only the native architecture selector and explicit BF16 source dtyp
 as in the existing prepare_eagle.py. Meituan's config is native and stays byte-identical;
 the pinned loader maps midlayer to layers.0, ignores t2d, and interprets d2t as offsets.
 Its auxiliary layers [1,46,90] are preserved (target capture indices [2,47,91]).
-Both use the deployment FP8 draft quantization CLI, FP8 target and FP8 KV.
+Both enabled RedHat variants use the deployment FP8 draft quantization CLI, FP8 target and FP8 KV.
 This is the requested deployment setting; source checkpoint tensors stay BF16.
 
-RedHat is explicitly excluded, not silently treated as a failed measurement.
-Pinned SGLang public source 0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb has no
-Eagle3DraftModel/speculators support. More importantly, the pinned RedHat config
-sets norm_before_residual=true: its attention residual is RMSNorm(hidden), whereas
-the SGLang implementation uses hidden. This input-dependent normalization cannot
-be absorbed by tensor renaming or a constant weight conversion. Flattening the
-nested transformer_layer_config and changing the architecture would silently change
-the draft's function. A faithful forward implementation is outside this diagnostic.
-Its revision and exclusion reason are retained in the comparison JSON.
+RedHat uses a flattened Llama config, BF16 loading, draft vocabulary64000 and
+norm_before_residual=true. Its own checkpoint embedding is preserved with
+share_target_embedding=false. Each draft whose prepared config has
+norm_before_residual=true imports its own private source copy with
+eagle3-norm-before-residual.patch, including the unchanged CPU counter
+instrumentation from run40628856183. This overlay is not added to
+the serving config. Weight names already match the existing loader mappings.
+The checkpoint's actual floating tensors are BF16 despite its float32 config dtype.
+
+Two entries pin the same RedHat repository, revision and config/weight/header hashes;
+only their per-entry eagle_aux_hidden_state_layer_ids differ. Preparation copies
+this field into eagle_config instead of hard-coding a convention:
+
+- redhat-vllm: [1,46,90], capturing inputs of blocks[2,47,91], hence outputs of
+  blocks[1,46,90], matching the published vLLM0.11.2 inference default.
+- redhat-train: [2,47,91], capturing inputs of blocks[3,48,92], hence outputs of
+  blocks[2,47,91], matching speculators0.3.0.dev13's training-generation default.
+
+All block indices are zero-based. SGLang's explicit ids get +1 in
+[qwen3_moe.py:1078–1093](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/models/qwen3_moe.py#L1078).
+[Qwen2MoeModel](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/models/qwen2_moe.py#L891)
+marks these blocks for capture; its layer communicator captures the residual at
+attention preparation, before that block's attention/MLP. The nested config is read by
+[spec_aux_hidden_state.py:91](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/model_executor/model_runner_components/spec_aux_hidden_state.py#L91).
+vLLM's [default selection](https://github.com/vllm-project/vllm/blob/v0.11.2/vllm/model_executor/models/qwen3_moe.py#L713)
+and [pre-block capture](https://github.com/vllm-project/vllm/blob/v0.11.2/vllm/model_executor/models/qwen3_moe.py#L451)
+explain the inference convention. Speculators' [generator default](https://github.com/vllm-project/speculators/blob/bc8516c8b52a730ff95dd6088514a59dde8002a4/src/speculators/data_generation/vllm_hidden_states_generator.py#L95)
+selects [2,47,91,93]; [capture after each block](https://github.com/vllm-project/speculators/blob/bc8516c8b52a730ff95dd6088514a59dde8002a4/src/speculators/data_generation/custom_worker.py#L44)
+and [training concatenation](https://github.com/vllm-project/speculators/blob/bc8516c8b52a730ff95dd6088514a59dde8002a4/src/speculators/train/data.py#L114)
+use the first three outputs, with block93 reserved for the teacher head.
+The null public config does not identify the actual training selection; redhat-train
+names the generator-default hypothesis, not recovered checkpoint training metadata.
+
+Nebius is disabled for this run: measured 2.251 in run 40628856183 under identical
+conditions; used as the reference. Its manifest reference stores the bonus-inclusive
+acceptance and run ID. Both relative_to_nebius values divide by that recorded value,
+not a live control or either RedHat result. Meituan remains supported but disabled:
+the same run measured acceptance1.860 versus Nebius2.251 on128 requests with FP8 drafts.
 
 The exclusive eight-H200 node runs one eight-GPU/32-CPU Pyxis step for 17 minutes.
-Within it, Nebius uses GPUs 0–3/HTTP8000 and Meituan uses GPUs 4–7/HTTP8100, with
+Within it, redhat-vllm uses GPUs 0–3/HTTP8000 and redhat-train uses GPUs 4–7/HTTP8100, with
 separate distributed-init/NCCL ports. Each runs stock TP4, no DP attention, no PD,
-seed2026, EAGLE3 steps3/topk1/draft4, context8192, max-running32, no serving overlays
+seed2026, EAGLE3 steps3/topk1/draft4, context8192, max-running32, the config-selected overlay described above
 and no NCU. CUDA graphs and exhaustive DeepGEMM precompilation are disabled.
 The existing one-GPU probes retain their allocation, NCU preflight and timeout.
 
@@ -332,7 +361,7 @@ Its AIPerf startup/dataset setup took49.4s and final processing/shutdown16.1s.
 Budget180–300s for parallel cold server startup, 50–80s client setup, 60–180s sending,
 up to30s drain and20s collection/cleanup: approximately340–610s overall because
 the two draft paths run concurrently. Including the 60s step/finalization reserve gives
-roughly400–670s within the1020s allocation. Cold stock-MoE JIT, Meituan and simultaneous
+roughly400–670s within the1020s allocation. Cold stock-MoE JIT, RedHat and simultaneous
 loads/CPU clients remain unmeasured. This estimate is not a performance claim.
 Startup fails at600s; worker cleanup starts at900s, parent cleanup at915s,
 outer timeout960s, Slurm1020s. No retry or precision fallback is added.
@@ -346,15 +375,22 @@ batch count, and completed-request counters/acceptance distribution. Request ver
 is a sum over requests, distinct from scheduler batches; counts are before final output
 truncation. The overlay reads existing CPU counters only and logs on the statistics rank.
 No prompt or generated token text is added to the diagnostic logs.
-results/eagle-acceptance.json compares both drafts and records RedHat's exclusion;
-results/redhat/eagle-acceptance.json records its exclusion with null measurement fields.
+results/eagle-acceptance.json compares both variants, includes each aux selection and
+the recorded Nebius reference/run ID, and records Nebius/Meituan exclusions. Each
+excluded draft's results/<draft>/eagle-acceptance.json has null measurement fields.
+The workflow summary labels relative_to_nebius as a comparison to a recorded reference.
 Partial per-draft results survive the other draft failing. PASS requires both workers
 and their process-group cleanup to complete. Existing terminal-state checks, artifact
 upload and runtime cleanup gates are retained. Acceptance is not an official score;
-Meituan's larger MLP may offset an acceptance gain and requires serving validation.
+Any acceptance gain requires separate serving throughput validation.
 
 CPU checks: python3 kernels/probes/test-eagle-accept.py; python3 kernels/probes/test-eagle-drafts.py;
 pytest -q kernels/probes/test-firmus-kernel-probe.py. The preparation validator is exercised
 with small safetensors fixtures and integrity failures; the overlay can be applied/compiled
 against the pinned upstream source without importing GPU libraries. Full checkpoint
 download, Enroot, model loading/FP8 quantization, GPU execution and scheduler E2E are unverified.
+
+The decoder CPU test extracts the actual class methods from supplied source files,
+using shared CPU attention and RMSNorm/MLP modules to isolate residual/norm wiring:
+`uv run --no-project --with torch python kernels/probes/test-eagle3-norm-before-residual.py --sglang-source <patched-llama_eagle3.py> --baseline-source <original-llama_eagle3.py> --redhat-source <pinned-eagle3.py>`.
+It verifies normalized residuals and exact legacy outputs for missing/false flags.

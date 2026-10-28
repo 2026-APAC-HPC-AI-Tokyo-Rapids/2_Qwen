@@ -224,7 +224,10 @@ def execute(root: Path, started_at: float, firmus: bool = False, draft: str | No
         (results / "server-command.txt").write_text(shlex.join(command) + "\n")
         print(f"server_start elapsed_s={elapsed():.1f} command={shlex.join(command)}", flush=True)
         with server_path.open("w") as output:
-            server = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            if draft and json.loads((root / "drafts" / draft / "config.json").read_text()).get("norm_before_residual") is True:
+                server = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, env=dict(os.environ, PYTHONPATH=f"{root}/{draft}/opt/sglang/source/python:{root}/source"), start_new_session=True)
+            else:
+                server = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         while True:
             if server.poll() is not None:
                 raise RuntimeError(f"server exited before health: {server.returncode}")
@@ -312,8 +315,9 @@ def execute(root: Path, started_at: float, firmus: bool = False, draft: str | No
 def compare_drafts(root: Path, started_at: float) -> dict:
     drafts = json.loads((root / "source/eagle-drafts.json").read_text())
     enabled = [item for item in drafts if item["enabled"]]
-    if [item["name"] for item in enabled] != ["nebius", "meituan"]:
-        raise ValueError("expected the two reviewed native drafts")
+    if len(enabled) != 2 or len({item["name"] for item in enabled}) != 2:
+        raise ValueError("expected two distinct enabled drafts for the eight-GPU allocation")
+    reference = next(item["reference"] for item in drafts if item["name"] == "nebius")
     children = []
     outputs = []
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGALRM):
@@ -334,8 +338,8 @@ def compare_drafts(root: Path, started_at: float) -> dict:
         if any(child.returncode != 0 for child in children):
             raise RuntimeError("draft diagnostic failed; see per-draft logs")
         results = [json.loads((root / "results" / item["name"] / "eagle-acceptance.json").read_text()) for item in enabled]
-        control = results[0]["accept_length"]
-        comparison = {"schema": "firmus-eagle-drafts/v1", "scope": "128 official synthetic requests each, concurrency32; single TP4 per draft; acceptance only, not serving throughput", "drafts": [{"name": item["draft"]["name"], "revision": item["revision"], "draft_precision": item["draft_precision"], "accept_length_including_bonus": item["accept_length"], "accepted_draft_length": item["accepted_draft"], "relative_to_nebius": item["accept_length"] / control, "requests": item["requests"], "verify_steps": item["verify_steps"]} for item in results], "excluded": [item for item in drafts if not item["enabled"]]}
+        control = reference["accept_length_including_bonus"]
+        comparison = {"schema": "firmus-eagle-drafts/v1", "scope": "128 official synthetic requests each, concurrency32; single TP4 per draft; acceptance only, not serving throughput", "nebius_reference": reference, "drafts": [{"name": item["draft"]["name"], "eagle_aux_hidden_state_layer_ids": item["draft"]["eagle_aux_hidden_state_layer_ids"], "revision": item["revision"], "draft_precision": item["draft_precision"], "accept_length_including_bonus": item["accept_length"], "accepted_draft_length": item["accepted_draft"], "relative_to_nebius": item["accept_length"] / control, "requests": item["requests"], "verify_steps": item["verify_steps"]} for item in results], "excluded": [item for item in drafts if not item["enabled"]]}
         (root / "results/eagle-acceptance.json").write_text(json.dumps(comparison, indent=2) + "\n")
         print("EAGLE_DRAFT_COMPARISON " + json.dumps(comparison), flush=True)
         return comparison
@@ -354,7 +358,7 @@ if __name__ == "__main__":
     parser.add_argument("started_at", type=float)
     parser.add_argument("--firmus", action="store_true")
     parser.add_argument("--compare-drafts", action="store_true")
-    parser.add_argument("--draft", choices=("nebius", "meituan"))
+    parser.add_argument("--draft")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
     if args.compare_drafts:

@@ -1,0 +1,30 @@
+--- a/python/sglang/srt/models/llama_eagle3.py
++++ b/python/sglang/srt/models/llama_eagle3.py
+@@ -53,6 +53,7 @@
+ 
+         # Input layer concats embeds + target_hidden before qkv (input dim 2x).
+         self.is_input_layer = layer_id == 0
++        self.norm_before_residual = getattr(config, "norm_before_residual", False)
+         hidden_size = 2 * self.hidden_size if self.is_input_layer else self.hidden_size
+ 
+         # override qkv
+@@ -90,6 +91,8 @@
+             # Input layer consumes target hidden states; no carried residual to fuse.
+             residual = hidden_states
+             hidden_states = self.hidden_norm(hidden_states)
++            if self.norm_before_residual:
++                residual = hidden_states
+             embeds = self.input_layernorm(embeds)
+             hidden_states = torch.cat([embeds, hidden_states], dim=-1)
+         else:
+@@ -293,6 +296,10 @@
+ 
+         self.capture_aux_hidden_states = True
+         self.hot_token_id = None
++
++    def set_embed(self, embed):
++        if getattr(self.config, "share_target_embedding", True):
++            super().set_embed(embed)
+ 
+     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]) -> None:
+         params_dict = dict(self.named_parameters())

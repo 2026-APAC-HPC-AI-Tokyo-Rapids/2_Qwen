@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify pinned public draft files and adapt only the Nebius config selector."""
+"""Verify pinned public draft files and adapt their serving configs only."""
 import hashlib
 import json
 import struct
@@ -33,6 +33,10 @@ def prepare(root, evidence, draft):
         config['torch_dtype'] = 'bfloat16'
         config_path.write_text(json.dumps(config, indent=2) + '\n')
         adaptation = 'architecture LlamaForCausalLM -> LlamaForCausalLMEagle3; explicit torch_dtype=bfloat16; weights unchanged'
+    elif 'transformer_layer_config' in config:
+        config = dict(config['transformer_layer_config'], architectures=['LlamaForCausalLMEagle3'], draft_vocab_size=config['draft_vocab_size'], norm_before_residual=config['norm_before_residual'], torch_dtype='bfloat16', dtype='bfloat16', tie_word_embeddings=False, share_target_embedding=False, eagle_config={'use_aux_hidden_state': True, 'eagle_aux_hidden_state_layer_ids': draft['eagle_aux_hidden_state_layer_ids']})
+        config_path.write_text(json.dumps(config, indent=2) + '\n')
+        adaptation = f"flatten speculators transformer_layer_config; explicit BF16; preserve draft embedding and normalized residual; SGLang eagle_config aux layer ids {draft['eagle_aux_hidden_state_layer_ids']}; weights unchanged"
     else:
         adaptation = 'none; native SGLang config and legacy midlayer loader; weights unchanged'
     evidence.mkdir(parents=True, exist_ok=True)

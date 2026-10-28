@@ -8,7 +8,12 @@
     "original_config_sha256": "1ec83be9e2876dcf7fd85f5a19528ddb49095b15cc7d83970e3d66b0746e4ab4",
     "header_sha256": "dede9fdaebea5239feb528e707bf3a2f7955843fd1dfccdd60b3b78166d30c6e",
     "draft_precision": "fp8",
-    "enabled": true
+    "enabled": false,
+    "reason": "measured 2.251 in run 40628856183 under identical conditions; used as the reference",
+    "reference": {
+      "accept_length_including_bonus": 2.251,
+      "run_id": 40628856183
+    }
   },
   {
     "name": "meituan",
@@ -19,18 +24,39 @@
     "original_config_sha256": "ac2f3dcc008df4669b79ffc7bf522087777bd5d848dc46d89a5de46164948cf2",
     "header_sha256": "79176249abb7ac42d1b89ef064473d611f041d35291b456f4f242ab3814f9a5b",
     "draft_precision": "fp8",
-    "enabled": true
+    "enabled": false,
+    "reason": "Rejected after Firmus run 40628856183: bonus-inclusive acceptance 1.860 versus Nebius 2.251 on 128 official synthetic requests each with FP8 draft; keep native loader path for historical reproduction."
   },
   {
-    "name": "redhat",
+    "name": "redhat-vllm",
     "repository": "RedHatAI/Qwen3-235B-A22B-Instruct-2507-speculator.eagle3",
     "revision": "87cd7aa934131942f5d7277617d7d6020f2df7f1",
     "weight_sha256": "d591c7a357a66ad97225aec0e350ef79ccf10f97a41aefdf0f43d0228bcc984a",
     "weight_bytes": 2390403048,
     "original_config_sha256": "b3b2b110f782f2de2149a8fa98987c4ed96bbebad284ec51a997531755850985",
     "header_sha256": "01e99bc579f1e61a27fe5157af7cb94152a1cd20210a3a890124d7d6c9f953d4",
-    "draft_precision": null,
-    "enabled": false,
-    "reason": "Excluded: Eagle3DraftModel/speculators config is not native in pinned SGLang. norm_before_residual=true uses normalized hidden states as the attention residual; LlamaForCausalLMEagle3 uses unnormalized hidden states. This input-dependent RMSNorm cannot be converted by tensor renaming or constant weight conversion. A faithful forward implementation is outside this diagnostic; no weights or computation changed."
+    "draft_precision": "fp8",
+    "enabled": true,
+    "eagle_aux_hidden_state_layer_ids": [
+      1,
+      46,
+      90
+    ]
+  },
+  {
+    "name": "redhat-train",
+    "repository": "RedHatAI/Qwen3-235B-A22B-Instruct-2507-speculator.eagle3",
+    "revision": "87cd7aa934131942f5d7277617d7d6020f2df7f1",
+    "weight_sha256": "d591c7a357a66ad97225aec0e350ef79ccf10f97a41aefdf0f43d0228bcc984a",
+    "weight_bytes": 2390403048,
+    "original_config_sha256": "b3b2b110f782f2de2149a8fa98987c4ed96bbebad284ec51a997531755850985",
+    "header_sha256": "01e99bc579f1e61a27fe5157af7cb94152a1cd20210a3a890124d7d6c9f953d4",
+    "draft_precision": "fp8",
+    "enabled": true,
+    "eagle_aux_hidden_state_layer_ids": [
+      2,
+      47,
+      91
+    ]
   }
 ]

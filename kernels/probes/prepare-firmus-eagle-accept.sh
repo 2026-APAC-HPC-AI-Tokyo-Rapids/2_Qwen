@@ -18,8 +18,10 @@ while IFS=$'\t' read -r name repository revision; do
     uvx --from 'huggingface_hub==0.36.0' hf download "${repository}" config.json README.md model.safetensors --revision "${revision}" --local-dir "${RUNTIME_DIR}/drafts/${name}" --max-workers 1
     uv run --no-project --python 3.12 "${GITHUB_WORKSPACE}/kernels/probes/prepare-eagle-drafts.py" "${RUNTIME_DIR}/drafts/${name}" "${RUNTIME_DIR}/results/${name}" "${RUNTIME_DIR}/source/eagle-drafts.json" "${name}"
 done < <(jq -r '.[] | select(.enabled) | [.name,.repository,.revision] | @tsv' "${RUNTIME_DIR}/source/eagle-drafts.json")
-install -d "${RUNTIME_DIR}/results/redhat"
-jq '.[] | select(.name == "redhat") | {status:"excluded",repository,revision,reason,accept_length_including_bonus:null,accepted_draft_length:null,draft_precision:null,verify_steps:null}' "${RUNTIME_DIR}/source/eagle-drafts.json" >"${RUNTIME_DIR}/results/redhat/eagle-acceptance.json"
+while read -r name; do
+    install -d "${RUNTIME_DIR}/results/${name}"
+    jq --arg name "${name}" '.[] | select(.name == $name) | {status:"excluded",repository,revision,reason,reference,accept_length_including_bonus:null,accepted_draft_length:null,draft_precision:null,verify_steps:null}' "${RUNTIME_DIR}/source/eagle-drafts.json" >"${RUNTIME_DIR}/results/${name}/eagle-acceptance.json"
+done < <(jq -r '.[] | select(.enabled == false) | .name' "${RUNTIME_DIR}/source/eagle-drafts.json")
 tokenizer_revision=ac9c66cc9b46af7306746a9250f23d47083d689e
 uvx --from 'huggingface_hub==0.36.0' hf download Qwen/Qwen3-235B-A22B-Instruct-2507 config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --max-workers 1 --revision "${tokenizer_revision}"
 tokenizer_cache="${HF_HOME}/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507"
@@ -29,6 +31,15 @@ printf '%s' "${tokenizer_revision}" >"${tokenizer_cache}/refs/main"
 image=$(jq -er .images.sglang.path "${config}")
 unsquashfs -no-progress -no-xattrs -processors 1 -d "${RUNTIME_DIR}/diagnostic" "${image}" opt/sglang/source/python/sglang/srt/managers/scheduler_components/batch_result_processor.py >"${RUNTIME_DIR}/logs/extract-diagnostic.log" 2>&1
 python3 "${GITHUB_WORKSPACE}/kernels/probes/instrument-eagle-accept.py" "${RUNTIME_DIR}/diagnostic/opt/sglang/source/python/sglang/srt/managers/scheduler_components/batch_result_processor.py"
+while read -r name; do
+    if ! jq -e '.norm_before_residual == true' "${RUNTIME_DIR}/drafts/${name}/config.json" >/dev/null; then continue; fi
+    unsquashfs -no-progress -no-xattrs -processors 1 -d "${RUNTIME_DIR}/${name}" "${image}" opt/sglang/source/python/sglang >"${RUNTIME_DIR}/logs/extract-${name}.log" 2>&1
+    chmod -R u+w "${RUNTIME_DIR}/${name}"
+    install -m 0644 "${RUNTIME_DIR}/diagnostic/opt/sglang/source/python/sglang/srt/managers/scheduler_components/batch_result_processor.py" "${RUNTIME_DIR}/${name}/opt/sglang/source/python/sglang/srt/managers/scheduler_components/batch_result_processor.py"
+    install -m 0644 "${GITHUB_WORKSPACE}/patches/sglang/eagle3-norm-before-residual.patch" "${RUNTIME_DIR}/results/${name}/"
+    git -C "${RUNTIME_DIR}/${name}/opt/sglang/source" apply --check "${RUNTIME_DIR}/results/${name}/eagle3-norm-before-residual.patch"
+    git -C "${RUNTIME_DIR}/${name}/opt/sglang/source" apply "${RUNTIME_DIR}/results/${name}/eagle3-norm-before-residual.patch"
+done < <(jq -r '.[] | select(.enabled) | .name' "${RUNTIME_DIR}/source/eagle-drafts.json")
 install -m 0644 "${GITHUB_WORKSPACE}/kernels/probes/eagle-accept.py" "${RUNTIME_DIR}/source/"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/collect-eagle-acceptance.py" "${RUNTIME_DIR}/source/eagle_metrics.py"
 install -m 0755 "${GITHUB_WORKSPACE}/kernels/probes/run-firmus-eagle-accept.sh" "${RUNTIME_DIR}/source/probe"
