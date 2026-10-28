@@ -217,6 +217,8 @@ def render(config, data):
                   "kernel benchはASPIRE H100 EP4を優先する。最新の指示ではASPIREで十分速くなったらFirmusへ進む。目安は通常serving公式6500 output tok/sで、kernel単体の改善率では代替しない。最新ASPIREはc112の6081.54（run40274854588、BF16 draft、FA3 control）。6500には約6.88%必要。c104の5925.07はFA3 n192だったため、差をconcurrencyだけの効果としない。以下のFC2候補にはまだGPU測定結果がない。", ""]
     if current.get("status") == "aspire_connection_blocked_before_pbs":
         lines += ["ASPIRE EP4経路はcommit396f1fbで実装済み。run40569440787のLinux全検証は成功したが、接続中継WIN-5IM4VJ0SFOSへのSSH timeoutで準備前に停止した。PBS投入・GPU測定・runtime作成は0。中継は10/27 23:36 JST以降offlineで、直接ASPIRE接続もtimeout。接続復帰前の再投入やFirmusへの切替はしない。", ""]
+    if current.get("latest_serving_reference"):
+        lines += ["最新Firmus run40630160781（840b40f、c215、FP8 draft、Prefill開始整列）は公式9235.28 good output tok/s。imageと7本のDeepGEMM overlayのSHAは本候補の既存controlと全一致した。作業baseをこのcommitへ進め、c215等を保持したFC2追加設定を準備。FC2 bundleはGitに存在するが9235のserving設定では未有効。旧6f0164dの5本を再適用したheaderともbyte一致するため、新しいFC2手法とは呼ばない。同bundleの旧servingは8922.77（旧8854.80比+0.77%の単回比較）、個別/結合kernel benchの記録は見つからない。bulk/fragment/transpose等の過去の棄却案とは異なり、それらの再測定は不要。9235への上積みは未実測。詳細は `megamoe-fc2-history-and-9235-compatibility.json`。", ""]
     if config.get("megamoe_fc1_cpu_candidate"):
         lines += ["FC1にもscale読取アドレスの共通化候補を作成した。約509万組のpointer一致、6 geometryのfresh CPU compileを確認。Prefill128/140のFC1静的spanは290→277/280→267命令（整数address-family各−10）、168 registers・spill0を維持。その他4 geometryは命令encoding一致。動的命令数や速度改善率ではなく、GPUでの数値一致・速度は未確認。候補patchはactive bench inventoryに含めない。詳細は `megamoe-fc1-cpu-validation-20261028.json`。", ""]
     for role in ("prefill", "decode"):

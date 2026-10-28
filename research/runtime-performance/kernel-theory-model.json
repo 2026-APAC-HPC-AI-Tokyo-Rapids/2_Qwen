@@ -258,7 +258,7 @@
   },
   "current_megamoe_candidate": {
     "branch": "perf/moe-fc2-recovery-20261028",
-    "serving_base_commit": "68c4f122a67659a786ce6540bfabfc962c278a04",
+    "serving_base_commit": "840b40f7ea24c83a474c1578a29af86d6bfb0d43",
     "previous_candidate_commit": "6f0164d7486036ba387550bd8bbc993b7ff52c97",
     "base_image_run": "40197369083",
     "control_header_sha256": "220f409fd723d931cdad4e70b8e149646ececb5d1ee8554048683043ae413aa2",
@@ -316,7 +316,7 @@
     ],
     "serving_validation_note": "Restored existing FP8-draft post-run validator fix and its tests from7980d10; no launch settings changed.",
     "execution_preference": "Use ASPIRE H100 EP4 kernel bench first. User conditionally authorizes Firmus once sufficient ASPIRE improvement is demonstrated, with ordinary serving official score ~6500 output tok/s as the target; kernel timing alone does not satisfy this condition.",
-    "performance_conclusion": "Not measured on the recovered current candidate; static instruction reduction and CPU correctness only. Do not claim a speedup or adopt in serving.",
+    "performance_conclusion": "This is the exact old five-transform FC2 bundle, not a new technique. Old serving8922.77 vs8854.80 was one unpaired observation. Latest9235.28 serving retains the same current control header and does not activate this bundle. Composition verified byte-for-byte without recompilation or new measurement; incremental GPU/serving speed remains unknown.",
     "aspire_serving_baseline": {
       "run_id": 40274854588,
       "commit": "e2124d8124314f0440fc45336fee7c2a8076113e",
@@ -329,7 +329,18 @@
       "current_checkout_concurrency": 104,
       "comparison_caveat": "Previous c104 run40251123706 selected n192, while c112 selected control; the 2.64% cross-run gain cannot be attributed solely to concurrency. No current H100 profile."
     },
-    "resume": "After relay connectivity is restored, rerun only failed Actions jobs for40569440787 (same experiment/source, run attempt2); Linux gates already passed. No blind rerun while offline."
+    "resume": "After relay connectivity is restored, rerun only failed Actions jobs for40569440787 (same experiment/source, run attempt2); Linux gates already passed. No blind rerun while offline.",
+    "initial_serving_base_commit": "68c4f122a67659a786ce6540bfabfc962c278a04",
+    "latest_serving_reference": {
+      "run": "40630160781",
+      "score_output_tokens_per_second": 9235.282194390255,
+      "concurrency": 215,
+      "FP8_draft": true,
+      "prefill_start_alignment": true,
+      "FC2_five_patch_bundle_active": false,
+      "deep_gemm_source_identical_to_existing_control": true,
+      "evidence": "megamoe-fc2-history-and-9235-compatibility.json"
+    }
   },
   "megamoe_communication_evidence": {
     "file": "megamoe-communication-metrics.json",

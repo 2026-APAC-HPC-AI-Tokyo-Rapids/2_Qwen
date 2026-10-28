@@ -1,0 +1,180 @@
+{
+  "latest_compatibility": {
+    "run": "40630160781",
+    "commit": "840b40f7ea24c83a474c1578a29af86d6bfb0d43",
+    "official_good_output_tok_s": 9235.282194390255,
+    "eligible": true,
+    "official_validation_valid": true,
+    "profile": false,
+    "concurrency": 215,
+    "draft_quantization": "fp8",
+    "latest_changes": [
+      "Prefill idle-start alignment",
+      "concurrency215",
+      "in-job kernel selection instead of reused selection record"
+    ],
+    "image_alias_same_sha_size": {
+      "path": {
+        "git": "/scratch/home/ACCOUNT/qwen/containers/40197369083.sqsh",
+        "runtime": "/scratch/home/ACCOUNT/qwen/containers/40630160781.sqsh"
+      },
+      "provenance": {
+        "git": "/scratch/home/ACCOUNT/qwen/containers/40197369083.container-sidecar.json",
+        "runtime": "/scratch/home/ACCOUNT/qwen/containers/40630160781.container-sidecar.json"
+      }
+    },
+    "archived_files_verified": 8,
+    "ordered_deep_gemm_patches_identical_to_existing_control": true,
+    "sglang_overlay_sha_verified": 15,
+    "fc2_bundle_active_in_9235_serving": false,
+    "fc2_candidate_already_present_in_9235_git_but_not_serving_config": true,
+    "combined_header_sha256": "7aa48a3e10eb5a16e2d1e9b48efc126194aff3df1c74989eb60ccde1da44f8e8",
+    "control_header_sha256": "220f409fd723d931cdad4e70b8e149646ececb5d1ee8554048683043ae413aa2",
+    "existing_CPU_compile_evidence_reusable": true,
+    "new_compiles_or_GPU_measurements": 0,
+    "candidate_config_only_change": "append fc2-output-address.patch to deep_gemm_overlay_patches",
+    "conclusion": "Code composition verified. No matched kernel timing or 9235+FC2 serving result; superiority is unproven.",
+    "baseline_fast_forwarded_to_9235": true,
+    "fc2_candidate_enabled_in_tracked_serving_config": false
+  },
+  "old_five_serving": {
+    "run": "40116925551",
+    "commit": "6f0164d7486036ba387550bd8bbc993b7ff52c97",
+    "image": "40064516380",
+    "image_sha256": "112ff6f0831d21e703b686df96bf950501d51a75c67950ea6a707b80197638bf",
+    "score": 8922.771174862968,
+    "eligible": true,
+    "concurrency": 240,
+    "historical_reference_run": "40071892077",
+    "historical_reference_score": 8854.797983503948,
+    "cross_run_relative_difference": 0.007676424858664266,
+    "causal_speedup_established": false,
+    "same_allocation_paired_control": false,
+    "individual_patch_GPU_effects_known": false,
+    "commit_primary_evidence": "6f0164d-commit-message.txt: explicitly one official serving run; no kernel-bench, profile, extra allocation, or retry campaign requested."
+  },
+  "source_identity": {
+    "base_path": "/Users/yuta/Dev/APAC/outputs/moe-fc2-recovery-20261028/cpu/remote/control/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh",
+    "base_sha256": "220f409fd723d931cdad4e70b8e149646ececb5d1ee8554048683043ae413aa2",
+    "old_five_equal_current_bundle_on_current_control": true,
+    "reconstructed_candidate_sha256": "7aa48a3e10eb5a16e2d1e9b48efc126194aff3df1c74989eb60ccde1da44f8e8",
+    "current_bundle_sha256": "e27a434498753b369ad17c7cc3b7c499edc2d5e5156f62fcd21b18cc2c8074cb",
+    "old_patch_records": [
+      {
+        "path": "patches/deep-gemm-overlay/fc2-scatter-address.patch",
+        "sha256": "90bc3c948ca41044544cd09190cb3c1f09de84d0b11d8d909ee52b5f3e4bdfce",
+        "matches_old_serving_archive": true
+      },
+      {
+        "path": "patches/deep-gemm-overlay/fc2-bf16-row-guards.patch",
+        "sha256": "0be6e8a4f1ab26fe9f4e7407624e4193cfe107f6119fba95f2e89cc2d8c0f5a2",
+        "matches_old_serving_archive": true
+      },
+      {
+        "path": "patches/deep-gemm-overlay/fc2-bf16-row-address.patch",
+        "sha256": "1bd3324bc85c0ed8d432425e9bd56bd82740ac95cb33c9f0cb80afb1535bf16b",
+        "matches_old_serving_archive": true
+      },
+      {
+        "path": "patches/deep-gemm-overlay/fc2-early-metadata.patch",
+        "sha256": "6901a251af5bc84569bed96c6cd7992d8cb870eceaad433a2ddb0b9d390ba34a",
+        "matches_old_serving_archive": true
+      },
+      {
+        "path": "patches/deep-gemm-overlay/fc2-scatter-pair-load.patch",
+        "sha256": "966c8db5d796def53fcc09e3516b6fce3979893786a43152da219ecdbcd79fb0",
+        "matches_old_serving_archive": true
+      }
+    ]
+  },
+  "adopted_earlier_FC2_changes": [
+    {
+      "name": "FC2 activation SF128",
+      "runs": [
+        "39217809231",
+        "39225913979"
+      ],
+      "mechanism": "One full128-K WGMMA group instead of two64-K groups; carried-scale rescale replaces the middle drain/promotion. Already in control.",
+      "reported_historical_timeline": "FC2 K loop485->342 us/CTA; balanced whole-kernel -0.6% to -1.0%, local -4% to -5%.",
+      "evidence": "/Users/yuta/Dev/APAC/outputs/moe-fc2-recovery-20261028/worktree/research/runtime-performance/2026-10-20-firmus-prefill-overlay-results.md"
+    },
+    {
+      "name": "FC2 shared BF16 swizzle",
+      "runs": [
+        "39225913979"
+      ],
+      "mechanism": "Swizzled shared-memory staging; already in control.",
+      "reported_historical_serving": "SGLang overlay8164.84 -> +SF128/swizzle8258.34, separate runs, not an isolated swizzle speedup.",
+      "evidence": "/Users/yuta/Dev/APAC/outputs/moe-fc2-recovery-20261028/worktree/research/runtime-performance/2026-10-20-firmus-prefill-overlay-results.md"
+    },
+    {
+      "name": "Native2WG64x256 plus per-warp FC1 epilogue",
+      "runs": [
+        "39382077358",
+        "39439372069",
+        "39447708936"
+      ],
+      "mechanism": "Native2WG WGMMA geometry plus existing FC1 quant/store path and existing FC2 metadata-prefetch scatter baseline. Already in control.",
+      "reported_historical_2WG_timeline": "FC2 K loop380-385 ->331-344 us, offset by epilogue/scatter costs; final epi-only serving8356.18 was adopted.",
+      "evidence": "/Users/yuta/Dev/APAC/outputs/moe-fc2-recovery-20261028/worktree/research/runtime-performance/2026-10-20-firmus-prefill-overlay-results.md"
+    }
+  ],
+  "different_rejected_candidates": [
+    {
+      "name": "D1 bulk scatter",
+      "runs": [
+        "39352299232",
+        "40095847738"
+      ],
+      "difference": "Uses asynchronous bulk/TMA stores and changed staging scheduling; current five retain ordinary BF16 vector stores and synchronization.",
+      "status": "Rejected; replica4+1.3% to+1.4% and local+4.9% in40095847738."
+    },
+    {
+      "name": "Fragment-combine",
+      "runs": [
+        "40107915306",
+        "40110180897"
+      ],
+      "difference": "Changes intermediate BF16 fragment layout and transposes at combine; current five preserve original layout and combine order.",
+      "status": "Rejected; replica4+3.5% to+3.6% in repeat40110180897."
+    },
+    {
+      "name": "Producer transpose",
+      "runs": [
+        "40107915306",
+        "40110180897"
+      ],
+      "difference": "Removes shared transpose through producer register shuffles; current five retain shared layout and payload movement.",
+      "status": "Rejected; replica4+39% to+41% in repeat."
+    },
+    {
+      "name": "Direct combine output stores",
+      "runs": [
+        "40459750245"
+      ],
+      "difference": "Changes final combine output staging/TMA to direct global stores; current five change FC2 partial output before combine.",
+      "status": "Rejected by predeclared benefit gate; final control explains local apparent gain."
+    }
+  ],
+  "conclusions": {
+    "new_bundle_is_old_five_transformations": true,
+    "old_five_apply_on_current_control_equal_current_bundle_byte_for_byte": true,
+    "kernel_bench_of_old_five_individual_or_combined_found": false,
+    "old_bundle_has_one_official_serving_result": true,
+    "same_bundle_current_image_plus_D5a_paired_result_found": false,
+    "claim_faster_than_9235_supported": false,
+    "no_remeasurement_needed_for": [
+      "Old fragment-combine/producer-transpose regressions",
+      "Old bulk-scatter D1 and D1+D5a regressions",
+      "Old direct-combine-store rejection",
+      "The already-measured old 6f0164d serving configuration"
+    ],
+    "unknown": "Incremental speed and numerical replay of the old five transformations on current D5a control; no claim of benefit is made."
+  },
+  "limits": [
+    "Reviewed repository/Git, available local archives and raw archived40116925551/40095847738 evidence; no claim of exhaustive search of unrelated external experiment storage.",
+    "Historical H200 kernel and serving timings are not portable H100 speed estimates.",
+    "9235 and8922 differ in image/runtime/client setup and cannot rank the incremental effect of this patch."
+  ],
+  "prepared_candidate_config": "/Users/yuta/Dev/APAC/outputs/moe-fc2-recovery-20261028/latest9235-audit/firmus-9235-fc2-candidate.json"
+}
