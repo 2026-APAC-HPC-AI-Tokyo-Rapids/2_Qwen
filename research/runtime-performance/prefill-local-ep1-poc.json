@@ -1,6 +1,6 @@
 {
   "schema": "megamoe-local-ep1-poc/v1",
-  "status": "Serving run 40762501053 passed the prior single-rank sync failure and completed PP forward, then failed in speculative output relay during warmup. CPU-reproduced relay repair prepared; official result/profile remain unmeasured.",
+  "status": "PP4 serving now completes without request errors, but run 40767107134 is SLA-ineligible and not adopted. Missing separate profile is being recovered without repeating the ordinary benchmark.",
   "purpose": "User replaced the kernel PoC with ordinary two-node Firmus serving plus a separate profile pass. Evaluate official good output tok/s, TTFT, ITL and SLA eligibility; no kernel selection sweep.",
   "control": "Run 40630160781 official score 9235.282194, c215, P3 EP4 with 12 replicas. FC2-address bundle run 40653531712 gave 9234.339455 and is not included in this PP candidate.",
   "candidate": "Three PP4/TP1/EP1 Prefill replicas (12 H200), each with contiguous target layer partition [24,24,23,23], max microbatch 2 and async depth 1. Existing TP4/DP4/EP4 Decode (4 H200), FP8 EAGLE3 and concurrency 215.",
@@ -89,7 +89,7 @@
     "status": "Retained CPU/theory input only; no kernel PoC was executed."
   },
   "numeric_gate": "CPU tests check source routing/aux-state preservation, exact layer IDs and guard boundaries. GPU numerical and end-to-end behavior remain unverified before the first serving execution; do not claim output quality from the CPU fixtures or score parser.",
-  "timing_protocol": "One ordinary official 60/120/30s run with tracing disabled, then separate CPU/Nsys profile pass across all 16 GPUs. Prior kernel settings retained with unchanged-source hashes; no sweep.",
+  "timing_protocol": "Ordinary 60/120/30s measurement completed in run 40767107134. Profile-only recovery retains the exact serving configuration and uses the existing instrumented 20/30/90 client with five-second CPU/Nsys capture. No repeat ordinary score or kernel sweep.",
   "performance_gate": "Official SLA eligible score versus 9235.28 baseline. One run is a screening result; confirm a meaningful gain before adopting it. >10000 remains an objective, not a prediction.",
   "cpu_validation": {
     "cases": 46,
@@ -109,9 +109,9 @@
     "evidence": "../pp4-local-cpu/result.json"
   },
   "remaining": [
-    "Push the CPU-validated complete EAGLE output relay, then evaluate ordinary serving and separate profile.",
-    "Inspect terminal status, actual topology, official result, full profile coverage and cleanup.",
-    "If initialization fails, fix the first deterministic cause before another run; no blind repetition."
+    "Recover the requested 16-GPU CPU/Nsys profile using profile_only=true, without repeating the completed ordinary benchmark.",
+    "Inspect kernel processing versus PP stage waits and record why this candidate is slower; preserve the 9235.28 baseline.",
+    "Verify trace coverage, terminal state, archive and cleanup."
   ],
   "reason_for_measurement": "Existing EP4 profiles and theory cannot establish whether removal of per-layer remote dispatch/scatter and cross-rank barriers outweighs increased unique expert weight reads, padding, PP boundaries and pipeline bubbles. The ordinary run tests the full net effect.",
   "builds": [
@@ -220,6 +220,40 @@
         "repaired": "72 actual CPU tensor receive/stash cases passed: four stages, EAGLE/non-speculative, zero/one/two requests, three buffer reuse and request reorder iterations.",
         "limitations": "NCCL, GPU stream ordering and end-to-end performance are not tested by the CPU fixtures."
       }
+    },
+    {
+      "run": 40767107134,
+      "commit": "0867a89c06f5b00aaf13a46ca62f8914e1c0fe7a",
+      "status": "completed-serving-but-sla-ineligible",
+      "gpu_submitted": true,
+      "slurm_job": 27159,
+      "slurm_terminal": "FAILED|1:0|00:09:46|2",
+      "ready_seconds": 287,
+      "request_count": 4481,
+      "error_request_count": 0,
+      "eligible": false,
+      "official_score": 0,
+      "total_output_tokens_per_second": 7151.7641726666125,
+      "good_output_tokens_per_second_before_eligibility_gate": 132.47140696624567,
+      "good_request_fraction": 0.018522651193929925,
+      "ttft_ms": {
+        "p50": 3425.0653519999996,
+        "p95": 3623.394535,
+        "p99": 5907.171101399999
+      },
+      "itl_ms": {
+        "p50": 12.125053678391959,
+        "p95": 13.733783241206028,
+        "p99": 14.436491138693464
+      },
+      "cause": "Official TTFT 3000 ms SLA missed; only 83/4481 requests meet SLA. This is not a server exception.",
+      "sanity_chat": "One greedy short response correctly identified Paris and produced coherent explanation; not a comprehensive numerical/quality validation.",
+      "profile": null,
+      "profile_cause": "Launcher exited on benchmark_status != 0 before starting separate capture.",
+      "decision": "Do not adopt this PP4 configuration. Its ordinary score is 0 versus the eligible 9235.282194 control; raw total throughput is not directly equivalent to control good-output score.",
+      "raw_archive": "archive-host:/srv/qwen-artifacts/40767107134/1/",
+      "archive_sha256sums": "110 entries passed",
+      "runtime_cleanup": "completed"
     }
   ]
 }

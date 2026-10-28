@@ -43,6 +43,8 @@ export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
 export SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1
 PROFILE=${PROFILE:-false}
 [[ "${PROFILE}" == true || "${PROFILE}" == false ]]
+profile_only=$(jq -r '.profile_only // false' "${ROOT}/source/firmus-framework.json")
+if [[ "${profile_only}" == true ]]; then [[ "${PROFILE}" == true ]]; fi
 routing_capture_samples=$(jq -er '.prefill.routing_capture_samples // 0' "${ROOT}/source/firmus-framework.json")
 [[ "${routing_capture_samples}" =~ ^[0-8]$ ]]
 if (( routing_capture_samples > 0 )); then [[ "${PROFILE}" == true ]]; fi
@@ -107,6 +109,7 @@ trap 'exit 143' TERM
 if [[ "${PROFILE}" == true ]]; then
   "${ROOT}/nsys/bin/nsys" --version >"${ROOT}/profile/nsys-version.txt"
   printf 'Separate normal benchmark (60/120/30), then the same serving configuration with a profile-only client (20/30/90). Capture starts five seconds into the profiling phase and lasts five seconds after all start acknowledgements. CUDA graph nodes and Torch CPU stage spans cover every TP rank. Exclude start/stop/export tails; profile/client is not an adoption score. The normal pass has tracing disabled, but uses the Nsight launcher.\n' >"${ROOT}/profile/interpretation.txt"
+  if [[ "${profile_only}" == true ]]; then printf 'Profile-only recovery: ordinary benchmark is omitted. No new official score. Client uses 20/30/90 seconds; capture is instrumented.\n' >"${ROOT}/profile/interpretation.txt"; fi
   if (( routing_capture_samples > 0 )); then printf 'Prefill routing capture copies physical top-8 to the host during the separate profile pass. These Nsight timings contain routing copy overhead and must not be used for performance adoption.\n' >>"${ROOT}/profile/interpretation.txt"; fi
 fi
 for worker in 0 1; do printf 'prefill-%s\t%s\t%s\t4\n' "${worker}" "${HEAD_IP}" "$((30100 + worker))"; done >"${ROOT}/source/worker-endpoints.tsv"
@@ -270,14 +273,17 @@ done <"${ROOT}/source/worker-endpoints.tsv"
 # Placement must not change outputs; keep one greedy answer through a Prefill worker for inspection.
 curl --fail --silent --show-error --max-time 120 -H 'Content-Type: application/json' -d '{"model":"qwen","messages":[{"role":"user","content":"Name the capital of France and explain in two sentences why it is historically important."}],"max_tokens":64,"temperature":0}' "http://${HEAD_IP}:${R_PORT}/v1/chat/completions" >"${ROOT}/results/sanity-chat.json"
 benchmark_status=0
+if [[ "${profile_only}" != true ]]; then
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || benchmark_status=$?
 test -s "${ROOT}/results/score.json"
 if (( benchmark_status == 0 )); then
   while IFS=$'\t' read -r worker host port _; do curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"; done <"${ROOT}/source/worker-endpoints.tsv"
   /usr/bin/python3 "${ROOT}/scripts/collect-eagle-acceptance.py" --cluster firmus --config "${ROOT}/source/firmus-framework.json" --endpoints "${ROOT}/source/worker-endpoints.tsv" --server-info-dir "${ROOT}/results" --log-dir "${ROOT}/logs" --output "${ROOT}/results/eagle-acceptance.json"
 fi
+fi
 if [[ "${PROFILE}" == true ]]; then
-  (( benchmark_status == 0 )) || exit "${benchmark_status}"
+  # A completed but SLA-ineligible ordinary run still needs the requested trace.
+  # The original benchmark status is retained and returned after collection.
   if (( routing_capture_samples > 0 )); then
     for worker in prefill-0 prefill-1 prefill-2; do touch "${ROOT}/results/prefill-routing/${worker}/active"; done
   fi

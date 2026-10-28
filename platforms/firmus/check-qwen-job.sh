@@ -15,6 +15,12 @@ exit_code="$(awk -F'|' -v job_id="${SLURM_JOB_ID}" '$1 == job_id {print $3}' "${
 test "${state}" = COMPLETED
 test "${exit_code}" = 0:0
 test -e "${RUNTIME_DIR}/run-success"
+if [[ -s "${RUNTIME_DIR}/source/firmus-framework.json" && "$(jq -r '.profile_only // false' "${RUNTIME_DIR}/source/firmus-framework.json")" == true ]]; then
+  test ! -e "${RUNTIME_DIR}/results/score.json"
+  test -s "${RUNTIME_DIR}/profile/client/profile_export_aiperf.json"
+  jq -e '.valid == true and ([.workers[].gpu_count] | add) == 16' "${RUNTIME_DIR}/profile/validation.json" >/dev/null
+  exit 0
+fi
 test -s "${RUNTIME_DIR}/results/profile_export_aiperf.json"
 test -s "${RUNTIME_DIR}/results/score.json"
 if [[ -s "${RUNTIME_DIR}/source/firmus-framework.json" && "$(jq -r '.framework' "${RUNTIME_DIR}/source/firmus-framework.json")" == sglang && "$(jq -r '.speculation.algorithm' "${RUNTIME_DIR}/source/firmus-framework.json")" == EAGLE3 ]]; then test -s "${RUNTIME_DIR}/results/eagle-acceptance.json"; fi

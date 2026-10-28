@@ -27,7 +27,7 @@ def summarize(root: Path, job_id: str, status: str, cluster: str = "firmus") -> 
     run_id = os.environ.get("GITHUB_RUN_ID", "unknown")
     attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "unknown")
     workload = identity.get("workload", "official" if aspire else "reference-07")
-    phases = "60 / 120 / 30" if workload == "official" else "20 / 60 / 15"
+    phases = "20 / 30 / 90 (profile only)" if identity.get("profile_only") else "60 / 120 / 30" if workload == "official" else "20 / 60 / 15"
     topology = "P2 × TP4 / D2 × TP4 EP1" if identity.get("framework") == "sglang" and workload == "official" else "P4 × TP2 / D2 × TP4 EP4"
     endpoint_files = list(root.rglob("worker-endpoints.tsv")) if root.exists() else []
     expected_reports = 6
@@ -58,6 +58,8 @@ def summarize(root: Path, job_id: str, status: str, cluster: str = "firmus") -> 
             latency = export.get(name, {})
             if "avg" in latency and "p99" in latency:
                 lines.append(f"| {label} mean / p99 | {latency['avg']:.3f} / {latency['p99']:.3f} ms |")
+    elif identity.get("profile_only"):
+        lines += ["", "Profile-only diagnostic: ordinary benchmark omitted; no official score was produced."]
     else:
         lines += ["", "Validated AIPerf result unavailable; inspect the logs."]
     if profile:
@@ -66,6 +68,8 @@ def summarize(root: Path, job_id: str, status: str, cluster: str = "firmus") -> 
         notes = sorted(root.rglob("interpretation.txt"))
         capture_note = notes[0].read_text().strip() if notes else "Capture timing unavailable; inspect profile-capture.log."
         score_note = "Normal score is from the earlier tracing-disabled pass; the separate profile/client pass is instrumented and must not be used for performance comparison." if identity.get("normal_benchmark_before_profile") else "Instrumented score; do not use for performance comparison."
+        if identity.get("profile_only"):
+            score_note = "Profile-only diagnostic; no official score. Do not use instrumented client timings for adoption."
         lines += ["", f"Nsight: **{len(reports)} / {expected_reports} reports**; CUDA validation **{capture.get('valid', False)}**; **{gpu_coverage}**. {capture_note} **{score_note}**"]
     else:
         lines += ["", "Nsight: disabled."]
