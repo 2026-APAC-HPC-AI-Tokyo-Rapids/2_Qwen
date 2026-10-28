@@ -335,8 +335,19 @@
           "unit": "%"
         }
       },
-      "limitations": "This is FA3 N224, not current N192 and not MegaMoE. No current MegaMoE NCU report was found in the inspected saved artifacts. Do not transfer FA3 cache/stall conclusions to expert GEMMs."
+      "limitations": "FA3 N224 is not current N192 or MegaMoE. Recovered H100 FC1/FC2 math NCU is separate from H200 serving; synthetic FP32 stores differ from SwiGLU/FP8 and BF16 scatter. No current production fused MegaMoE per-phase NCU found.",
+      "recovered_megamoe_math": {
+        "run": "40064486833",
+        "hardware": "H100, one GPU",
+        "evidence": "megamoe-ncu-recovered-40064486833.json",
+        "scope": "FP32 materialized math-probe outputs; no NVLink, not production H200",
+        "instruction_profiles": [
+          "40066358109",
+          "40067220551"
+        ]
+      }
     },
-    "decision": "PP4/EP1 mb2 remains deprioritized. Its larger unique weight working set and lower inter-request reuse have not been offset by demonstrated critical-path savings. No additional GPU run authorized or launched by this analysis."
+    "decision": "PP4/EP1 mb2 is an unproven candidate. User subsequently authorized H200 one-node PoC because ASPIRE is unavailable. No GPU job has been submitted yet; this update only reuses existing profile data. Current NVLink saturation is not established.",
+    "time_series_40071892077": "prefill-nvlink-evidence-40071892077.json"
   }
 }
