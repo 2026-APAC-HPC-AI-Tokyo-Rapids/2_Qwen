@@ -55,7 +55,8 @@ def test_marker_lifetime_and_summary_use_separate_profile_pass():
     profile = source.index('"${ROOT}/scripts/capture-firmus-profile.sh"')
     aggregate = source.index('"${ROOT}/scripts/summarize-prefill-routing.py"')
     assert benchmark < activate < profile < aggregate
-    assert '(( benchmark_status == 0 )) || exit "${benchmark_status}"' in source[benchmark:activate]
+    # SLA failure remains visible after diagnostic collection has completed.
+    assert aggregate < source.index('if (( benchmark_status != 0 )); then exit "${benchmark_status}"; fi')
     assert 'do rm -f "${ROOT}/results/prefill-routing/${worker}/active"' in source[source.index('cleanup_all()'):benchmark]
     assert '--samples-per-rank "${routing_capture_samples}"' in source
 
