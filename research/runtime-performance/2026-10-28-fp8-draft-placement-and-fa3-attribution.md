@@ -92,4 +92,13 @@ profile pass で komoriyuta の capture が 3 worker × 4 rank × 8 forward の�
 | nebius（現行） | ff0f0c09 | 2.251 | 1.00 |
 | lmsys SpecForge-Meituan | 7f8040f1 | 1.860 | 0.83 |
 
-Meituan 版は受理長が低く、draft の計算量も約 2 倍なので採らない。RedHat の speculators 版（87cd7aa9）は `norm_before_residual: true`（正規化後の hidden を residual に使う）で、固定版 SGLang の EAGLE3 の forward と異なるため、この診断では除外した。forward を合わせる overlay を作って別途測る。
+Meituan 版は受理長が低く、draft の計算量も約 2 倍なので採らない。
+
+RedHat の speculators 版（87cd7aa9）は `norm_before_residual: true`（最初の decoder layer で正規化後の target hidden を residual に使う）と独自の embed_tokens が固定版 SGLang と異なる。probe 専用の `eagle3-norm-before-residual.patch`（branch `perf/firmus-eagle-drafts-20261028`）で forward を合わせた（CPU で RedHat の layer 順序と一致、flag なしでは元と bit 一致）。aux 層は config が null で、speculators の学習データ生成（層 2・47・91 の出力）と vLLM 0.11.2 の推論（同じ層の入力）で 1 層ずれるため、両方を同じ条件で並べた（[40636912520](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40636912520)）。
+
+| draft | SGLang aux ids | 受理長（bonus 込み） | nebius 比 |
+|---|---|---:|---:|
+| redhat-vllm | [1,46,90] | 1.945 | 0.86 |
+| redhat-train | [2,47,91] | 2.015 | 0.90 |
+
+学習側の流儀の方が高いが、どちらも nebius（2.251）を下回る。モデルカードの要約（CNN/DM、k=3）2.15 と近く、実装が大きく外れている兆候はない。**公開 draft 3 種はいずれも現行の nebius に及ばない**ので、draft は変えない。受理長を上げる残りの手段は自前の fine-tune だけで、締切までには現実的でない。
