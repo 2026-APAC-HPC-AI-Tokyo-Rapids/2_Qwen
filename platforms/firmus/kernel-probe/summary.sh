@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 : "${RUNTIME_DIR:?}"
-if [[ -f "${RUNTIME_DIR}/logs/provenance.json" ]] && [[ "$(jq -r .probe_gpus "${RUNTIME_DIR}/logs/provenance.json")" == 4 ]]; then
-    printf '### Firmus EAGLE TP4 acceptance diagnostic (17 minute allocation)\n'
+if [[ -f "${RUNTIME_DIR}/logs/provenance.json" ]] && [[ "$(jq -r .probe_gpus "${RUNTIME_DIR}/logs/provenance.json")" == 8 ]]; then
+    printf '### Firmus EAGLE parallel TP4 draft acceptance diagnostic (17 minute allocation)\n'
     if [[ -f "${RUNTIME_DIR}/results/eagle-acceptance.json" ]]; then cat "${RUNTIME_DIR}/results/eagle-acceptance.json"; fi
 elif [[ -f "${RUNTIME_DIR}/logs/provenance.json" ]] && [[ "$(jq -r .benchmark "${RUNTIME_DIR}/logs/provenance.json")" == kernels/probes/prepare-prefill-memory.sh ]]; then
     printf '### Firmus Prefill memory probe\n\nOne H200 visible; 5 minute allocation, one trial capped at 165 seconds. No counter profiler.\n\n'

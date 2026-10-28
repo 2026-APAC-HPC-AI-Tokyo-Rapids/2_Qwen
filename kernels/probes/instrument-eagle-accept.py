@@ -22,6 +22,13 @@ def instrument(path):
 
 '''
     source = source.replace(anchor, addition + anchor)
+    anchor = '        if req.finished():\n            # isinstance narrowing: create_worker may also return plain'
+    assert source.count(anchor) == 1, 'pinned completed-request anchor changed'
+    addition = '''        if req.finished() and req.spec_verify_ct and self.metrics_reporter.is_stats_logging_rank:
+            logger.info("EAGLE_REQUEST rid=%s verify_steps=%d accepted_draft_tokens=%d", req.rid, req.spec_verify_ct, req.spec_num_correct_drafts)
+
+'''
+    source = source.replace(anchor, addition + anchor)
     ast.parse(source)
     path.write_text(source)
 

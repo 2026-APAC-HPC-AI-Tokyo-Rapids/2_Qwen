@@ -270,7 +270,7 @@ file mount. Firmus supplies an in-container launcher because the entire trial
 already runs inside its one Pyxis step; it mounts the snapshot table directory
 read-only at `/opt/apac/fa3-verify` and the image-pinned NCU directory at
 `/opt/fa3-ncu`. No cluster selection is embedded in the preparation scripts.
-Firmus uses node-local temporary compiler/JIT caches and removes them on exit.
+Firmus uses temporary compiler/JIT caches under TMPDIR (default /tmp on the node) and removes them on exit.
 
 The driver and trial retain stderr and preserve failures. The artifact
 `firmus-kernel-probe-<run_id>-<attempt>` retains logs, image identity, provenance,
@@ -281,12 +281,80 @@ absence. No cancellation or automatic GPU retry is performed. Compare each
 cluster/toolchain independently; successful login compilation is not a GPU
 correctness or performance result.
 
-### Firmus EAGLE acceptance (single node / TP4 / no PD)
+### Firmus EAGLE draft comparison (single node / two TP4 servers / no PD)
 
-Use `firmus-kernel-probe.yml`, benchmark `kernels/probes/prepare-firmus-eagle-accept.sh`, candidate_patch empty. GPU count is selected by benchmark, not a workflow input: EAGLE gets four visible GPUs, existing FA3 probes retain one GPU, NCU preflight and 165-second trial / five-minute allocation. EAGLE reserves one exclusive hpcai node (8 GPUs allocated), requests a four-GPU step and 17 minutes, and runs no NCU. Reuses the pinned image without the serving overlays; target FP8, draft BF16, target and draft FP8 KV, stock MoE, CUDA graphs disabled.
+Dispatch the existing workflow with both inputs (no push-trigger cluster tag is required):
 
-The same server measures official synthetic generation arguments at concurrency 32 for 20 seconds (30-second grace), then flushes cache and acceptance counters and runs 32 repository-authored English questions concurrently with the same 200-token greedy generation settings. English inputs are shorter; differences cannot be attributed to language alone. Each phase saves server-info and positional prefix acceptance from CPU-settled draft counts in server logs; no GPU copy or acceptance logic is added. Decode log interval 1 ensures server-info counters include the tail. This diagnostic is not an official throughput score. Output truncation can make request completion counts differ from verification histograms.
+    gh workflow run firmus-kernel-probe.yml --ref perf/firmus-eagle-drafts-20261028 -f benchmark=kernels/probes/prepare-firmus-eagle-accept.sh -f candidate_patch=
 
-Startup limit 600 seconds; process limit 960 seconds (internal cleanup starts at 945); Slurm 1020 seconds, leaving 60 seconds for step startup/finalization. Firmus run 38030890137 decode-0 logged target load 27.41–28.49 seconds, draft 0.35 seconds, server start 14:31:55 to post-graph settings 14:34:47 (172 seconds). Cold stock MoE JIT and filesystem variance are unmeasured. Required phases fail rather than claim PASS if insufficient time remains. `results/synthetic-eagle-acceptance.json` survives a later English failure. Full JSON, English responses, AIPerf artifacts and logs use existing terminal-state artifact recovery. PASS is emitted after process cleanup only when both phases succeed.
+Login provisioning checks the existing image/FP8 target, downloads only inference files
+for the enabled drafts in [eagle-drafts.json](eagle-drafts.json), and verifies each original
+config SHA256, full safetensors size/SHA256 and tensor-header SHA256. The tokenizer
+retains the official pinned Instruct-2507 revision. No weights are rewritten.
+Nebius needs only the native architecture selector and explicit BF16 source dtype,
+as in the existing prepare_eagle.py. Meituan's config is native and stays byte-identical;
+the pinned loader maps midlayer to layers.0, ignores t2d, and interprets d2t as offsets.
+Its auxiliary layers [1,46,90] are preserved (target capture indices [2,47,91]).
+Both use the deployment FP8 draft quantization CLI, FP8 target and FP8 KV.
+This is the requested deployment setting; source checkpoint tensors stay BF16.
 
-Independent BF16 draft KV is deferred: the pinned image deep-copies server args in `speculative/draft_worker_common.py`, exposes no independent draft KV dtype CLI, and routes KV dtype configuration through `mem_cache/kv_cache_dtype.py`. The compute-dtype KV override for the FA4 draft backend is DFLASH-only, so it does not provide an EAGLE switch. A source adaptation would need a separate server run. This probe does not change target KV or claim to measure that condition.
+RedHat is explicitly excluded, not silently treated as a failed measurement.
+Pinned SGLang public source 0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb has no
+Eagle3DraftModel/speculators support. More importantly, the pinned RedHat config
+sets norm_before_residual=true: its attention residual is RMSNorm(hidden), whereas
+the SGLang implementation uses hidden. This input-dependent normalization cannot
+be absorbed by tensor renaming or a constant weight conversion. Flattening the
+nested transformer_layer_config and changing the architecture would silently change
+the draft's function. A faithful forward implementation is outside this diagnostic.
+Its revision and exclusion reason are retained in the comparison JSON.
+
+The exclusive eight-H200 node runs one eight-GPU/32-CPU Pyxis step for 17 minutes.
+Within it, Nebius uses GPUs 0–3/HTTP8000 and Meituan uses GPUs 4–7/HTTP8100, with
+separate distributed-init/NCCL ports. Each runs stock TP4, no DP attention, no PD,
+seed2026, EAGLE3 steps3/topk1/draft4, context8192, max-running32, no serving overlays
+and no NCU. CUDA graphs and exhaustive DeepGEMM precompilation are disabled.
+The existing one-GPU probes retain their allocation, NCU preflight and timeout.
+
+After each server finishes startup warmup, the worker flushes cache/counters and
+runs the image's AIPerf0.12.0 directly through chat completions. Each measures exactly
+128 requests at concurrency32, retaining the official 12800-entry default synthetic
+corpus, 4000 input tokens, seed2026, first_turn_prefix cache bust, 200 output tokens,
+ignore_eos, temperature0 and repetition_penalty1. The 180-second sending cap plus
+30-second grace is a failure bound; fewer than 128 completions fails validation.
+The former short-English phase is not run. Prompts/responses are for measurement only.
+
+Archived run40621030371 decode-0 recorded target loads19.38–21.15s, draft0.95–0.96s,
+graph begin60s after first timestamp, target graph99.7s, draft graph24.9s, ready194s.
+Subtracting graph intervals gives69.4s, an estimate, not measured graph-free TP4 startup.
+The same run's graph-disabled prefill-0 went from10:47:28 to ready10:50:13 (165s),
+including a78s PD warmup; it is not this stock TP4 configuration.
+Its AIPerf startup/dataset setup took49.4s and final processing/shutdown16.1s.
+Budget180–300s for parallel cold server startup, 50–80s client setup, 60–180s sending,
+up to30s drain and20s collection/cleanup: approximately340–610s overall because
+the two draft paths run concurrently. Including the 60s step/finalization reserve gives
+roughly400–670s within the1020s allocation. Cold stock-MoE JIT, Meituan and simultaneous
+loads/CPU clients remain unmeasured. This estimate is not a performance claim.
+Startup fails at600s; worker cleanup starts at900s, parent cleanup at915s,
+outer timeout960s, Slurm1020s. No retry or precision fallback is added.
+
+The existing artifact recovery retains logs/<draft>/{probe,server,aiperf,synthetic-server}.log
+and results/<draft>/ with original/runtime config, tensor provenance, commands,
+server-info, raw AIPerf exports and eagle-acceptance.json. The latter includes revision,
+actual requested FP8 precision validated against server-info, bonus-inclusive acceptance,
+accepted draft length, all DP states (DP1 here), positional histograms, scheduler verify
+batch count, and completed-request counters/acceptance distribution. Request verify_steps
+is a sum over requests, distinct from scheduler batches; counts are before final output
+truncation. The overlay reads existing CPU counters only and logs on the statistics rank.
+No prompt or generated token text is added to the diagnostic logs.
+results/eagle-acceptance.json compares both drafts and records RedHat's exclusion;
+results/redhat/eagle-acceptance.json records its exclusion with null measurement fields.
+Partial per-draft results survive the other draft failing. PASS requires both workers
+and their process-group cleanup to complete. Existing terminal-state checks, artifact
+upload and runtime cleanup gates are retained. Acceptance is not an official score;
+Meituan's larger MLP may offset an acceptance gain and requires serving validation.
+
+CPU checks: python3 kernels/probes/test-eagle-accept.py; python3 kernels/probes/test-eagle-drafts.py;
+pytest -q kernels/probes/test-firmus-kernel-probe.py. The preparation validator is exercised
+with small safetensors fixtures and integrity failures; the overlay can be applied/compiled
+against the pinned upstream source without importing GPU libraries. Full checkpoint
+download, Enroot, model loading/FP8 quantization, GPU execution and scheduler E2E are unverified.

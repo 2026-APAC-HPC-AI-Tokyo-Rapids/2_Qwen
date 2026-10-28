@@ -49,7 +49,7 @@ else
 fi
 test -x "${RUNTIME_DIR}/source/probe"
 probe_gpus=1
-if [[ "${benchmark}" == kernels/probes/prepare-firmus-eagle-accept.sh ]]; then probe_gpus=4; fi
+if [[ "${benchmark}" == kernels/probes/prepare-firmus-eagle-accept.sh ]]; then probe_gpus=8; fi
 jq --argjson probe_gpus "${probe_gpus}" --arg benchmark "${benchmark}" --arg image "${image}" '. + {cluster:"firmus",benchmark:$benchmark,image:$image,cuda:"13.0",cxx:"/usr/bin/g++",allocated_gpus:8,probe_gpus:$probe_gpus}' "${RUNTIME_DIR}/source/provenance.json" >"${RUNTIME_DIR}/source/provenance.tmp"
 mv "${RUNTIME_DIR}/source/provenance.tmp" "${RUNTIME_DIR}/source/provenance.json"
 cp "${RUNTIME_DIR}/source/provenance.json" "${RUNTIME_DIR}/logs/provenance.json"

@@ -20,7 +20,7 @@ def executable(path, source):
 def runtime(tmp_path):
     for name in ("source", "results", "logs", "scripts", "bin"):
         (tmp_path / name).mkdir(parents=True)
-    (tmp_path / "source/provenance.json").write_text('{"calibration":true}')
+    (tmp_path / "source/provenance.json").write_text('{"calibration":true,"probe_gpus":1,"benchmark":"kernels/probes/prepare-fa3-prefill.sh"}')
     shutil.copyfile(PLATFORM / "run-trials.sh", tmp_path / "scripts/run-trials.sh")
     return {**os.environ, "RUNTIME_DIR": str(tmp_path), "SLURM_JOB_ID": "123", "PATH": f"{tmp_path}/bin:{os.environ['PATH']}"}
 
@@ -55,7 +55,7 @@ esac
 ''')
     executable(tmp_path / "source/probe", f'''#!/bin/bash
 test "$CUDA_VISIBLE_DEVICES" = 0
-test "${{TRITON_CACHE_DIR#/tmp/firmus-probe.}}" != "$TRITON_CACHE_DIR"
+test "${{TRITON_CACHE_DIR#${{TMPDIR:-/tmp}}/firmus-probe.}}" != "$TRITON_CACHE_DIR"
 printf '%s\n' "$TRITON_CACHE_DIR" >"$RUNTIME_DIR/cache-location"
 printf 'probe stderr diagnostic\n' >&2
 printf 'PASS fixture\n'
@@ -138,3 +138,37 @@ exit 9
     assert "PASS " not in trial
     assert not (tmp_path / "import-called").exists()
     assert not (tmp_path / "run-success").exists()
+
+
+def test_eagle_uses_all_eight_gpus_without_counter_preflight(tmp_path):
+    env = runtime(tmp_path)
+    (tmp_path / "source/provenance.json").write_text('{"calibration":true,"probe_gpus":8,"benchmark":"kernels/probes/prepare-firmus-eagle-accept.sh"}')
+    executable(tmp_path / "bin/srun", '''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+(Path(os.environ['RUNTIME_DIR'])/'srun-args.json').write_text(json.dumps(args))
+command = args[args.index('env'):]
+os.execvp(command[0], command)
+''')
+    executable(tmp_path / "bin/timeout", '''#!/bin/bash
+printf '%s\\n' "$1" >>"$RUNTIME_DIR/timeouts"
+shift
+exec "$@"
+''')
+    executable(tmp_path / "source/probe", '''#!/bin/bash
+test "$CUDA_VISIBLE_DEVICES" = 0,1,2,3,4,5,6,7
+echo 'PASS two TP4 workers'
+''')
+    result = subprocess.run(["bash", str(PLATFORM / "run.sbatch")], env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    args = json.loads((tmp_path / "srun-args.json").read_text())
+    assert "--gres=gpu:8" in args
+    assert "--cpus-per-task=32" in args
+    mounts = next(arg for arg in args if arg.startswith("--container-mounts="))
+    assert "batch_result_processor.py:ro" in mounts
+    assert ":/model:ro" in mounts
+    assert ":/opt/fa3-ncu:ro" not in mounts
+    assert (tmp_path / "timeouts").read_text().splitlines() == ["960"]
+    assert not (tmp_path / "results/ncu-permission.csv").exists()
+    assert (tmp_path / "run-success").exists()

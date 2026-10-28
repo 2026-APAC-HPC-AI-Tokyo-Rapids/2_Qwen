@@ -142,7 +142,7 @@ class ProbeTests(unittest.TestCase):
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "processor.py"
-            path.write_text("def settle(self, result):\n        predict_tokens = []\n        # In adaptive spec-v2\n        return result.num_correct_drafts_per_req_cpu\n")
+            path.write_text("def settle(self, result):\n        predict_tokens = []\n        # In adaptive spec-v2\n        return result.num_correct_drafts_per_req_cpu\n\ndef finish(self, req):\n        if req.finished():\n            # isinstance narrowing: create_worker may also return plain\n            pass\n")
             instrument.instrument(path)
             calls = []
             processor = load("diagnostic_fixture", path)
@@ -212,12 +212,12 @@ class ProbeTests(unittest.TestCase):
             self.assertTrue(all(c["temperature"] == 0 and c["max_tokens"] == 200 and c["min_tokens"] == 200 and c["ignore_eos"] for c in calls))
 
     def test_firmus_trial_protocol_preserves_one_gpu(self):
-        for gpus, limit in ((1, 165), (4, 960)):
+        for gpus, limit in ((1, 165), (8, 960)):
             with self.subTest(gpus=gpus), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 for folder in ("source", "results", "bin"):
                     (root / folder).mkdir()
-                (root / "source/provenance.json").write_text(json.dumps({"probe_gpus": gpus, "calibration": True}))
+                (root / "source/provenance.json").write_text(json.dumps({"probe_gpus": gpus, "calibration": True, "benchmark": "kernels/probes/prepare-firmus-eagle-accept.sh" if gpus == 8 else "kernels/probes/prepare-fa3-prefill.sh"}))
                 scripts = {
                     "bin/timeout": '#!/bin/bash\nprintf "%s\\n" "$1" >> "$RUNTIME_DIR/results/timeouts"\nshift\nexec "$@"\n',
                     "bin/ncu": '#!/bin/bash\necho sm__cycles_elapsed.avg\n',
@@ -229,7 +229,7 @@ class ProbeTests(unittest.TestCase):
                     path.chmod(0o755)
                 result = subprocess.run(["bash", str(ROOT / "platforms/firmus/kernel-probe/run-trials.sh")], env=dict(os.environ, RUNTIME_DIR=str(root)), capture_output=True, text=True, check=False)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                visible = "0" if gpus == 1 else "0,1,2,3"
+                visible = "0" if gpus == 1 else "0,1,2,3,4,5,6,7"
                 self.assertIn(f"PASS visible={visible}", result.stdout)
                 self.assertEqual((root / "results/timeouts").read_text().splitlines(), (["30"] if gpus == 1 else []) + [str(limit)])
                 self.assertTrue((root / "run-success").exists())

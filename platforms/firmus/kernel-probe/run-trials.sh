@@ -4,19 +4,19 @@ set -euo pipefail
 : "${RUNTIME_DIR:?}"
 cd "${RUNTIME_DIR}"
 probe_gpus=$(python3 -c 'import json; print(json.load(open("source/provenance.json"))["probe_gpus"])')
-if [[ "${probe_gpus}" == 4 ]]; then
-    export CUDA_VISIBLE_DEVICES=0,1,2,3
+if [[ "${probe_gpus}" == 8 ]]; then
+    export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 else
     [[ "${probe_gpus}" == 1 ]]
     export CUDA_VISIBLE_DEVICES=0
 fi
 export PATH="${RUNTIME_DIR}/bin:${PATH}"
 export PYTHONPATH="${RUNTIME_DIR}/source/python"
-node_tmp=$(mktemp -d /tmp/firmus-probe.XXXXXXXX)
+node_tmp=$(mktemp -d "${TMPDIR:-/tmp}/firmus-probe.XXXXXXXX")
 trap 'rm -rf -- "${node_tmp:?}"' EXIT
 export TVM_FFI_CACHE_DIR="${node_tmp}/tvm" TRITON_CACHE_DIR="${node_tmp}/triton" DG_JIT_CACHE_DIR="${node_tmp}/deep-gemm" DG_PRINT_CONFIGS=1
-if [[ "${probe_gpus}" == 4 ]]; then
-    printf 'trial=1 EAGLE TP4 acceptance; no NCU instrumentation\n'
+if [[ "${probe_gpus}" == 8 ]]; then
+    printf 'trial=1 EAGLE parallel TP4 draft acceptance; no NCU instrumentation\n'
     timeout 960 ./source/probe 2>&1 | tee results/trial-1.log
     grep -q '^PASS ' results/trial-1.log
     touch run-success
