@@ -371,6 +371,44 @@ def check_rope_fp8_kv():
     print("PASS: exact FP8 KV fusion; packed/contiguous inputs; int32/int64 slots; reserved padding; all BF16 V patterns; graph replay changes inputs, positions and slots", flush=True)
 
 
+def check_decode_router_cluster():
+    if os.environ.get("SGLANG_DECODE_ROUTER") != "cluster":
+        return
+    from sglang.kernels.ops.moe.decode_router import decode_router
+
+    torch.manual_seed(381108)
+    for rows in (144, 145, 152, 160, 168, 175, 176):
+        hidden = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16) * 0.25
+        weight = torch.randn(128, 4096, device="cuda", dtype=torch.bfloat16) * 0.02
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            decode_router(hidden, weight)
+        torch.cuda.current_stream().wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            actual = decode_router(hidden, weight)
+        for replay in range(4):
+            if replay == 1:
+                hidden.zero_()
+            else:
+                hidden.copy_(torch.randn_like(hidden) * (0.25 + replay))
+                weight.copy_(torch.randn_like(weight) * 0.02)
+            graph.replay()
+            with dense_fp32_reference():
+                reference = hidden.float() @ weight.float().T
+            stock = hidden @ weight.T
+            for name, expected in (("fp32", reference), ("stock", stock.float())):
+                error = actual.float() - expected
+                relative_l2 = (error.norm() / expected.norm().clamp_min(1e-12)).item()
+                max_scaled = (error.abs().amax() / expected.abs().amax().clamp_min(1e-12)).item()
+                assert actual.isfinite().all() and relative_l2 <= 0.008 and max_scaled <= 0.02, (rows, replay, name, relative_l2, max_scaled)
+                print(json.dumps({"check": "decode_router_cluster", "rows": rows, "replay": replay, "reference": name, "relative_l2": relative_l2, "max_scaled": max_scaled}), flush=True)
+        first = actual.clone()
+        graph.replay()
+        assert torch.equal(actual, first), (rows, "router FP32 reduction must be deterministic")
+
+
 def check_decode_router_padding():
     """Exact existing Triton router arithmetic, including ties and graph padding."""
     import inspect
@@ -1389,6 +1427,7 @@ if __name__ == "__main__":
     check_rope_fp8_kv()
     check_topk_mask()
     check_decode_router_padding()
+    check_decode_router_cluster()
     check_add_rmsnorm_group_quant()
     check_decode_add_rmsnorm_group_quant()
     check_prefill_fp8_integration()

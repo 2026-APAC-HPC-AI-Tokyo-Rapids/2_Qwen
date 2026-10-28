@@ -69,6 +69,8 @@ def main():
     cases += [("decode-all-idle", [0] * 4), ("decode-live-after-idle", [144] * 4)]
     if os.environ.get("DG_SM90_PREFILL_STAGE4", "0") == "1":
         cases += [("stage4-prefill-tail", [257, 263, 271, 279]), ("stage4-prefill-full", [256] * 4)]
+    if os.environ.get("DG_SM90_DECODE_PREPARE") == "1":
+        cases += [("decode-graph-prepare-176", [144, 152, 168, 176]), ("decode-graph-prepare-tail", [145, 159, 175, 176])]
     for case, counts in cases:
         patterns = torch.randn(4, 4096, dtype=torch.bfloat16, device=device) * 0.25
         if case == "decode-quant-zero":

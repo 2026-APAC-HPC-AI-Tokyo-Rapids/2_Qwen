@@ -1,0 +1,27 @@
+--- a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+@@ -45,6 +45,7 @@
+         bool l2_epilogue_requires_full_sync;
+         bool split_phase_hot_path;
+         bool use_swap_ab;
++        bool decode_prepare;
+         MegaMoESM90Config config;
+ 
+         // Runtime arguments
+@@ -116,7 +117,7 @@
+     args.l2_arrival_counter ? "true" : "false",
+     args.l2_epilogue_requires_full_sync ? "true" : "false",
+     args.split_phase_hot_path ? "true" : "false",
+-    args.use_swap_ab ? "true" : "false");
++    args.use_swap_ab ? (args.decode_prepare ? "true, true" : "true") : "false");
+     }
+ 
+     static void launch_impl(const KernelHandle& kernel, const LaunchConfigHandle& config, Args args) {
+@@ -287,6 +288,7 @@
+         .l2_epilogue_requires_full_sync = l2_epilogue_requires_full_sync,
+         .split_phase_hot_path = split_phase_hot_path,
+         .use_swap_ab = use_swap_ab,
++        .decode_prepare = use_swap_ab and hidden == 4096 and intermediate_hidden == 1536 and num_experts == 128 and num_topk == 8 and num_ranks == 4 and num_tokens <= 192 and get_env<int>("DG_SM90_DECODE_PREPARE", 0) != 0,
+         .config = config,
+         .y = y.data_ptr(),
+         .cumulative_local_expert_recv_stats = cumulative_local_expert_recv_stats_ptr,
