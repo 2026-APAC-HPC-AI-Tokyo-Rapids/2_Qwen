@@ -55,3 +55,40 @@ CPU checks cover disabled capture, sample limits, idle ranks, corrupted and
 incomplete evidence, rank alignment, traffic direction, byte counts, launch
 gating and terminal validation. GPU execution is still required to validate the
 capture in the serving environment.
+
+## Locality-aware placement predictions after capture
+
+From the repository root on the login node, run the CPU-only generator with
+NumPy installed, using the raw capture directory and the placement archived
+with that run:
+
+```bash
+python3 scripts/optimize-prefill-expert-placement.py --directory /path/to/run/results/prefill-routing --placement /path/to/run/source/prefill-expert-location.json --redundant-experts 12 --output /path/to/new-placement.json --report /path/to/placement-report.json
+```
+
+The output placement path must be new. Summary JSON is not accepted: it loses
+forward boundaries needed for M128 padding and held-out evaluation. All three
+workers need 2..8 aligned target forwards on all four ranks. Within each worker,
+forward IDs are sorted; the first half trains the search and the remaining half
+evaluates it. Sample indices are not used to align ranks.
+
+The deterministic search starts from the archived placement, swaps cold experts
+across ranks and exchanges hot/cold replica sets. It preserves the deployed
+checker's four experts with four copies each, 124 single-copy experts and 35
+unique experts per rank. Hot replicas select the source rank's local slot;
+cold experts select their sole global slot. Only moves that reduce the training
+mean of per-forward maximum rank time at alpha=0.5 are accepted. This local
+search can stop on a plateau; it does not establish a global optimum.
+
+The report compares rank loads, per-forward expert padding and remote FC2 bytes,
+with conditional time predictions for non-overlap alpha=0, 0.5 and 1. Compute
+coefficients come from the existing phase diagnostic's FC1/FC2 loops and are
+extrapolated to padded rows; the 450 GB/s link coefficient is a theoretical
+one-direction capacity. Neither effective bandwidth nor alpha is measured.
+These are model predictions, not measured serving gains.
+
+At alpha=0.5, predicted training saving across 94 layers must reach 2 ms per
+Prefill iteration, and held-out saving must reach half the training saving.
+Failure exits nonzero and writes the report without a new placement. Passing
+only produces a candidate for later GPU correctness and ordinary serving
+validation; this generator does not change launch configuration.
