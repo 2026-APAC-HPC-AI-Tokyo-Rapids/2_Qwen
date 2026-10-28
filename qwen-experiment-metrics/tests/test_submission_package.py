@@ -13,6 +13,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "submission"
 CONFIG = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+# The frozen submission retains c240 and the measured overlay chain.
+SUBMISSION_OVERLAYS = {key: [patch for patch in CONFIG[key] if patch != "patches/sglang/prefill-start-align.patch"] for key in ("sglang_overlay_patches", "deep_gemm_overlay_patches")}
 BATCH = PACKAGE / "run/submit.sbatch"
 ORIGINAL = ROOT / "platforms/firmus/framework-comparison/sglang.sbatch"
 
@@ -20,8 +22,8 @@ ORIGINAL = ROOT / "platforms/firmus/framework-comparison/sglang.sbatch"
 @pytest.mark.parametrize("family,key,count", [("sglang", "sglang_overlay_patches", 14), ("deep-gemm", "deep_gemm_overlay_patches", 7)])
 def test_numbered_overlay_order_and_bytes(family, key, count):
     copies = sorted((PACKAGE / "patches/overlay" / family).glob("*.patch"))
-    assert len(copies) == len(CONFIG[key]) == count
-    for index, (copy, original) in enumerate(zip(copies, CONFIG[key], strict=True), 1):
+    assert len(copies) == len(SUBMISSION_OVERLAYS[key]) == count
+    for index, (copy, original) in enumerate(zip(copies, SUBMISSION_OVERLAYS[key], strict=True), 1):
         assert copy.name == f"{index:02d}-{Path(original).name}"
         assert copy.read_bytes() == (ROOT / original).read_bytes()
 
@@ -41,6 +43,7 @@ def test_serving_configuration_matches_canonical_fields():
     # research runner's prior-run reuse record and profile-only routing capture
     # are not serving parameters.
     expected = {key: value for key, value in CONFIG.items() if key not in ("images", "sglang_overlay_patches", "deep_gemm_overlay_patches", "reuse_kernel_selection")}
+    expected["concurrency"] = 240
     expected["prefill"] = {key: value for key, value in CONFIG["prefill"].items() if key != "routing_capture_samples"}
     expected["images"] = {"sglang": {key: CONFIG["images"]["sglang"][key] for key in ("sha256", "size_bytes")}}
     assert json.loads((PACKAGE / "config/serving.json").read_text()) == expected

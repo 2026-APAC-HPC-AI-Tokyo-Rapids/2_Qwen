@@ -231,7 +231,7 @@ def test_sglang_launch_uses_dp4_ep4_for_prefill_and_decode(tmp_path: Path, draft
     for switch in ("SGLANG_PREFILL_FUSED_FP8_SHUFFLE", "SGLANG_PREFILL_TILED_ROUTING", "SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS", "SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES", "SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY", "SGLANG_DECODE_ASYNC_ADMISSION"):
         assert "${" + switch + ":-0}" in startup
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 240, "official")
+    assert (config["framework"], config["concurrency"], config["workload"]) == ("sglang", 215, "official")
     assert config["decode_max_total_tokens"] * config["decode_dp_size"] == 1572864
     assert config["decode_max_running_requests"] == 176  # 44 requests/rank, four verification rows/request
     assert config["decode_polling_interval"] == 1  # Async admission replaces the polling interval of 2
