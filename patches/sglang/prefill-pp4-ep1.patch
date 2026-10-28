@@ -209,7 +209,20 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
          if batch.return_logprob:
              logprob_dict = get_logprob_dict_from_result(result)
              tensor_dict = {
-@@ -1163,6 +1170,19 @@
+@@ -1148,12 +1155,6 @@
+                 extend_logprob_start_len_per_req,
+             ) = get_logprob_from_pp_outputs(pp_outputs)
+         next_token_ids = pp_outputs["next_token_ids"].to(torch.int64)
+-        # PP rank 0 also relays into output_tokens_buf so the next iter's
+-        # resolve_forward_inputs finds these tokens for the decode portion
+-        # of mixed-chunk batches (which gather via mix_running_indices).
+-        self.future_map.stash(
+-            batch.req_pool_indices, RelayPayload(bonus_tokens=next_token_ids)
+-        )
+         batch.input_ids = None
+         output_result = GenerationBatchResult(
+             logits_output=logits_output,
+@@ -1163,6 +1164,27 @@
              extend_logprob_start_len_per_req=extend_logprob_start_len_per_req,
              can_run_cuda_graph=mb_metadata.can_run_cuda_graph,
          )
@@ -226,6 +239,14 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +                value.to("cpu", non_blocking=True)
 +                for value in (draft.hidden_states, draft.topk_p, draft.topk_index)
 +            )
++        # Speculative relays require the complete draft payload. Reconstruct it
++        # before stash so FutureMap can allocate and populate every buffer.
++        payload = (
++            RelayPayload.from_draft_input(output_result.next_draft_input)
++            if output_result.next_draft_input is not None
++            else RelayPayload(bonus_tokens=next_token_ids)
++        )
++        self.future_map.stash(batch.req_pool_indices, payload)
          return output_result
 
      def _pp_process_batch_result(

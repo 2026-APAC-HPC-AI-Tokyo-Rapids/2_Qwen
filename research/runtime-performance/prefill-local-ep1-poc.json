@@ -1,6 +1,6 @@
 {
   "schema": "megamoe-local-ep1-poc/v1",
-  "status": "Serving run 40756429833 reached GPU model loading but failed during PP scheduler initialization. CPU-reproduced tensor aliasing repaired; ordinary result and profile remain unmeasured.",
+  "status": "Serving run 40762501053 passed the prior single-rank sync failure and completed PP forward, then failed in speculative output relay during warmup. CPU-reproduced relay repair prepared; official result/profile remain unmeasured.",
   "purpose": "User replaced the kernel PoC with ordinary two-node Firmus serving plus a separate profile pass. Evaluate official good output tok/s, TTFT, ITL and SLA eligibility; no kernel selection sweep.",
   "control": "Run 40630160781 official score 9235.282194, c215, P3 EP4 with 12 replicas. FC2-address bundle run 40653531712 gave 9234.339455 and is not included in this PP candidate.",
   "candidate": "Three PP4/TP1/EP1 Prefill replicas (12 H200), each with contiguous target layer partition [24,24,23,23], max microbatch 2 and async depth 1. Existing TP4/DP4/EP4 Decode (4 H200), FP8 EAGLE3 and concurrency 215.",
@@ -109,7 +109,7 @@
     "evidence": "../pp4-local-cpu/result.json"
   },
   "remaining": [
-    "Push the CPU-validated one-rank sync repair, then evaluate ordinary serving and separate profile.",
+    "Push the CPU-validated complete EAGLE output relay, then evaluate ordinary serving and separate profile.",
     "Inspect terminal status, actual topology, official result, full profile coverage and cleanup.",
     "If initialization fails, fix the first deterministic cause before another run; no blind repetition."
   ],
@@ -142,7 +142,7 @@
   "integration_cpu_checks": {
     "source_commit": "fc275674a97d78553b22597ee72c8fd48f5420f4",
     "base_overlay_count": 38,
-    "patch_sha256": "4414ba31d91cdfd6260790e20bfc9766f438c5b4429a1050c7a7e652cd85d1cb",
+    "patch_sha256": "073143895063f2e3cb7751ac23a6fff9225ff94ff3b45574db4f63e4ba37ad0d",
     "script": "scripts/check-firmus-pp4-source.py",
     "coverage": [
       "opt-in guard and unsupported configurations",
@@ -196,6 +196,29 @@
         "host": "archive-host",
         "baseline": "Reproduced the same overlapping-memory RuntimeError on CPU.",
         "repaired": "16 tensor cases passed: ranks 1/4, active/idle, gather/reduce, empty/live; actual pinned MLPSyncBatchInfo with only collectives stubbed."
+      }
+    },
+    {
+      "run": 40762501053,
+      "commit": "4ef18c9b2deb53c354686b7ca5bd3fff96ed8d7a",
+      "status": "failed-in-prefill-output-relay",
+      "gpu_submitted": true,
+      "slurm_job": 27157,
+      "slurm_terminal": "FAILED|137:0|00:04:28|2",
+      "cause": "PP result receiver stashed bonus tokens before reconstructing EagleDraftInput; speculative FutureMap initialization attempted to index absent topk_p.",
+      "repair": "Reconstruct draft payload first, then stash full RelayPayload.from_draft_input. Preserve token-only relay for non-speculative PP.",
+      "warning": "CUDA symmetric-memory multicast initialization logged invalid argument then explicitly skipped multicast gracefully; execution reached PP output relay. It was not the fatal exception.",
+      "official_score": null,
+      "profile": null,
+      "raw_archive": "archive-host:/srv/qwen-artifacts/40762501053/1/",
+      "archive_sha256sums": "passed",
+      "runtime_cleanup": "completed",
+      "cpu_regression": {
+        "script": "scripts/check-pp4-output-relay.py",
+        "host": "archive-host",
+        "baseline": "Same NoneType topk_p error reproduced through actual PP serializer/receiver and FutureMap methods from commit 4ef18c9.",
+        "repaired": "72 actual CPU tensor receive/stash cases passed: four stages, EAGLE/non-speculative, zero/one/two requests, three buffer reuse and request reorder iterations.",
+        "limitations": "NCCL, GPU stream ordering and end-to-end performance are not tested by the CPU fixtures."
       }
     }
   ]
