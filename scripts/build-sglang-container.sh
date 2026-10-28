@@ -117,6 +117,8 @@ cp -r "${GITHUB_WORKSPACE}/patches/deep-gemm" "${context}/deep-gemm"
 # The host extension is rebuilt from the v0.1.5 sources plus the host-only patches listed in the series (the JIT headers stay with the series above).
 cp -r "${GITHUB_WORKSPACE}/patches/deep-gemm-host" "${context}/deep-gemm-host"
 cp -r "${GITHUB_WORKSPACE}/patches/deep-gemm-overlay" "${context}/deep-gemm-overlay"
+install -d "${context}/deep-gemm-bench/fc2-address"
+cp "${GITHUB_WORKSPACE}/patches/deep-gemm-bench/fc2-address/fc2-output-address.patch" "${context}/deep-gemm-bench/fc2-address/"
 cp "${GITHUB_WORKSPACE}/configs/firmus-framework.json" "${context}/firmus-framework.json"
 cp "${GITHUB_WORKSPACE}/containers/check-sm90-independent-wg.py" "${context}/containers/"
 git clone --depth=1 --branch v0.1.5 --recurse-submodules --shallow-submodules https://github.com/sgl-project/DeepGEMM.git "${context}/deep-gemm-source"
