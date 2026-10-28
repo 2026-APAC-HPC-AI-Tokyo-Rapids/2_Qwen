@@ -6,6 +6,11 @@ on:
       require_build:
         required: true
         type: boolean
+      firmus_only_build:
+        description: Build-only campaign while other cluster endpoints are unavailable
+        required: false
+        default: false
+        type: boolean
     outputs:
       genkai_container_sha256:
         value: ${{ (jobs.select-genkai.outputs.action == 'build' || jobs.select-aspire2ap.outputs.action == 'build' || jobs.select-firmus.outputs.action == 'build') && jobs.resolve.outputs.container_sha256 || jobs.select-genkai.outputs.container_sha256 }}
@@ -32,6 +37,7 @@ env:
 jobs:
   select-genkai:
     name: 玄界のローカル成果物を選択
+    if: ${{ !inputs.firmus_only_build }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     continue-on-error: true
@@ -60,6 +66,7 @@ jobs:
 
   select-aspire2ap:
     name: ASPIRE 2A+のローカル成果物を選択
+    if: ${{ !inputs.firmus_only_build }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     continue-on-error: true
@@ -117,7 +124,7 @@ jobs:
   stage:
     name: 管理済みSGLang mirrorから入力を準備
     needs: [select-genkai, select-aspire2ap, select-firmus]
-    if: needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build'
+    if: ${{ !cancelled() && (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 60
     defaults:
@@ -151,14 +158,14 @@ jobs:
   build:
     name: 一時EC2でSquashFSをビルド
     needs: [select-genkai, select-aspire2ap, select-firmus, stage]
-    if: needs.stage.result == 'success'
+    if: ${{ !cancelled() && needs.stage.result == 'success' }}
     uses: ./.github/workflows/aws-image-build.yml
     secrets: inherit
 
   resolve:
     name: S3成果物を確定
     needs: build
-    if: needs.build.result == 'success'
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       container_key: ${{ steps.resolve.outputs.container_key }}
@@ -199,7 +206,7 @@ jobs:
           - cluster: 玄界
             remote_shell: genkai-shell
             archive_dir: /home/ACCOUNT/share/sglang-containers
-            action: ${{ (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') && 'build' || needs.select-genkai.outputs.action }}
+            action: ${{ !inputs.firmus_only_build && (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') && 'build' || needs.select-genkai.outputs.action }}
             source_run_id: ${{ needs.select-genkai.outputs.source_run_id }}
           - cluster: ASPIRE 2A+
             remote_shell: aspire2p-shell

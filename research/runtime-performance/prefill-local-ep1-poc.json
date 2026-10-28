@@ -1,0 +1,116 @@
+{
+  "schema": "megamoe-local-ep1-poc/v1",
+  "status": "CPU native selector and complete kernel compiled; GPU trial not yet submitted",
+  "purpose": "Screen local-expert kernels before implementing PP4/EAGLE/NIXL integration. This is not an end-to-end serving result.",
+  "control": "Current optimized EP4,4x4001 tokens,140 physical experts",
+  "candidate": "Four independent EP1 groups,8002 tokens each,128 logical experts; divide per-GPU kernel time by2 for equal per-request work budget.",
+  "platform": "Firmus H200, one node, four active GPUs; replaces ASPIRE by explicit user instruction",
+  "weights": "Deterministic synthetic FP8 weights and original FP32 block scales, same per logical expert in both configurations. Captured production routing only; not actual model weights or an output-quality evaluation.",
+  "fixture": {
+    "file": "kernels/probes/megamoe-local-ep1-routing.npz",
+    "sha256": "1907184191e49a6dcc1431cdadafe9bfef2eb90bf4ad3f58407f6ed32a136b52",
+    "bytes": 609753,
+    "layers": [
+      11,
+      22,
+      3
+    ],
+    "selection": "p10,p50,p90 held-out remote FC2 fraction across94 layers; no candidate timings used.",
+    "remote_fraction_all_held_out": [
+      0.4347884383070899,
+      0.4870012965508623,
+      0.5678066160543197
+    ],
+    "logical_ids_shape": [
+      2,
+      3,
+      4,
+      4001,
+      8
+    ],
+    "sources": [
+      {
+        "file": "../routing-40621030371/raw/results/results/prefill-routing/prefill-0/rank-0-sample-4.npz",
+        "sha256": "60a175fadd22c0e0ff3f439cc6e1d5ed623a699db1ee61790b99214b8f38afaf",
+        "target_forward_step": 721,
+        "rank": 0,
+        "sample": 4
+      },
+      {
+        "file": "../routing-40621030371/raw/results/results/prefill-routing/prefill-0/rank-1-sample-4.npz",
+        "sha256": "bbf5f13abab470b63dd771ccdf58aac6d90cb5dfa92ccb7328df961644d2c566",
+        "target_forward_step": 721,
+        "rank": 1,
+        "sample": 4
+      },
+      {
+        "file": "../routing-40621030371/raw/results/results/prefill-routing/prefill-0/rank-2-sample-4.npz",
+        "sha256": "60afde39bc307bad91e116a7767257d43247db729e916e95bdfe6767f111c211",
+        "target_forward_step": 721,
+        "rank": 2,
+        "sample": 4
+      },
+      {
+        "file": "../routing-40621030371/raw/results/results/prefill-routing/prefill-0/rank-3-sample-4.npz",
+        "sha256": "904357ec0f292dcaec9dd42f9d783c5faee85ce3e7e63076ad4f7b73bd00b89e",
+        "target_forward_step": 721,
+        "rank": 3,
+        "sample": 4
+      },
+      {
+        "file": "../routing-40621030371/raw/results/results/prefill-routing/prefill-0/rank-0-sample-6.npz",
+        "sha256": "b87ac06a970b9156caedb63f5f3d79a1bd1cd99cad3ef50f83c13e755a522858",
+        "target_forward_step": 723,
+        "rank": 0,
+        "sample": 6
+      },
+      {
+        "file": "../routing-40621030371/raw/results/results/prefill-routing/prefill-0/rank-1-sample-6.npz",
+        "sha256": "fd2b41b086076cdd29ba094918a0229689e11d31935e969cb7c3addd55aac821",
+        "target_forward_step": 723,
+        "rank": 1,
+        "sample": 6
+      },
+      {
+        "file": "../routing-40621030371/raw/results/results/prefill-routing/prefill-0/rank-2-sample-6.npz",
+        "sha256": "c0f572fd8f87d2264ea6a556119b7422700f72e8a3c39f338dceaad75dfbb8e1",
+        "target_forward_step": 723,
+        "rank": 2,
+        "sample": 6
+      },
+      {
+        "file": "../routing-40621030371/raw/results/results/prefill-routing/prefill-0/rank-3-sample-6.npz",
+        "sha256": "18df929f78f0092f9445ea34d956fe19d517512b73af6df87af37af928c8b399",
+        "target_forward_step": 723,
+        "rank": 3,
+        "sample": 6
+      }
+    ]
+  },
+  "numeric_gate": "Compare all live outputs against unchanged EP4 math with matching weights, inputs and topk weights; sampled independent FP32 reference; changed-input repeats and masked tails.",
+  "timing_protocol": "Same four GPUs; interleaved EP4/local order, cache eviction before timed interval, rank maximum, normalized local time/2; retain raw samples and clocks.",
+  "performance_gate": "At least15% lower normalized time in every selected layer and both source captures, with paired p90<1 and control drift<=5%. This justifies integration work, not a predicted serving score or ASPIRE6500 result.",
+  "cpu_validation": {
+    "cases": 46,
+    "host_ep4_unchanged": true,
+    "local_experts_per_wave": 128,
+    "cta_threads": 384,
+    "tile": [
+      128,
+      256,
+      128
+    ],
+    "stages": 3,
+    "shared_bytes": 225472,
+    "registers_per_thread": 168,
+    "spill_bytes": 0,
+    "toolchain": "CUDA13.0.88, complete SM90a native kernel; no GPU execution",
+    "evidence": "../pp4-local-cpu/result.json"
+  },
+  "remaining": [
+    "Build a fresh image with opt-in local EP1 host selection.",
+    "Run numerical and normalized latency PoC on the authorized single H200 node.",
+    "Only if promising: implement PP auxiliary state forwarding, draft handling, scheduling and KV lifetime/transfer; validate ordinary serving. Kernel PoC is not a serving score."
+  ],
+  "reason_for_measurement": "Existing data cannot determine whether eliminating remote dispatch/scatter and inter-rank barriers outweighs larger expert weight footprint, changed padding and local combine costs. The PoC tests the net local-kernel cost, not isolated NVLink bandwidth."
+}

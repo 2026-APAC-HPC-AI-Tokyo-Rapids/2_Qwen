@@ -60,6 +60,7 @@ jobs:
     uses: ./.github/workflows/aws-container.yml
     with:
       require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
+      firmus_only_build: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[build-only]') && contains(github.event.head_commit.message, '[cluster:firmus]') }}
     secrets: inherit
 
   genkai:
