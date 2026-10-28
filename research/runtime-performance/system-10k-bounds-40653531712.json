@@ -1,0 +1,163 @@
+{
+  "schema": "qwen-10k-system-bounds/v1",
+  "reference_run": "40653531712",
+  "target_good_output_tok_s": 10000,
+  "nominal_prompt_tokens": 4000,
+  "nominal_output_tokens": 200,
+  "flops_per_prompt": {
+    "fc1": 75698798592000,
+    "fc2": 37849399296000,
+    "qkv": 28387049472000,
+    "o": 25232932864000,
+    "attention": 24647696384000,
+    "router_bf16": 394264576000
+  },
+  "fp8_core_flops_per_prompt": 191815876608000,
+  "flop_exclusions": [
+    "FP32 scale promotion, softmax, norms, quantization, padding and draft omitted from the tensor-only bound; their cost is not zero.",
+    "Router is BF16 and is kept separate."
+  ],
+  "steady_prefill_log_window": "server-local 17:05:00 <= timestamp <17:06:20 (80 seconds within official measurement)",
+  "steady_prefill_full_batches": 3852,
+  "steady_prefill_requests_per_second": 48.15,
+  "good_output_over_steady_output": 0.9589137544279864,
+  "target_steady_requests_per_second_at_same_delivery_fraction": 52.1423326854104,
+  "current_equivalent_cycle_ms": 249.22118380062307,
+  "target_equivalent_cycle_ms": 230.13930106271673,
+  "required_cycle_saving_ms": 19.081882737906312,
+  "prefill_gpu_count": 12,
+  "tensor_conditions": [
+    {
+      "clock_GHz_assumption": 1.35,
+      "dense_fp8_peak_flops_per_second_per_gpu": 1459814400000000.2,
+      "tensor_only_prompt_floor_ms_per_gpu": 131.39744107744104,
+      "required_useful_tensor_fraction_at_target": 0.5709474238892951
+    },
+    {
+      "clock_GHz_assumption": 1.4,
+      "dense_fp8_peak_flops_per_second_per_gpu": 1513881599999999.8,
+      "tensor_only_prompt_floor_ms_per_gpu": 126.70467532467536,
+      "required_useful_tensor_fraction_at_target": 0.5505564444646777
+    },
+    {
+      "clock_GHz_assumption": 1.5,
+      "dense_fp8_peak_flops_per_second_per_gpu": 1622016000000000.0,
+      "tensor_only_prompt_floor_ms_per_gpu": 118.25769696969697,
+      "required_useful_tensor_fraction_at_target": 0.5138526815003657
+    }
+  ],
+  "fc2_payload": {
+    "reference_capture_run": "40621030371",
+    "tokens_per_capture_prompt": 4001,
+    "partial_bytes_per_prompt_all_layers": 24647696384,
+    "remote_bytes_per_prompt_all_layers": 12231985493.333334,
+    "remote_fraction": 0.4962729702104616,
+    "at_target_average_remote_bytes_per_second_per_prefill_gpu": 53150354749.70838,
+    "nvlink_one_direction_bytes_per_second": 450000000000.0,
+    "interpretation": "Counts predict logical outgoing payload. Whole-iteration average does not measure burst bandwidth, transfer latency, or non-overlap; do not add the communication bound to the compute bound."
+  },
+  "decode_conditional_budget": {
+    "running_per_gpu": 44,
+    "accepted_tokens_per_verify_assumption": 2.21,
+    "context_tokens": 4100,
+    "output_tokens_after_first_per_request": 199,
+    "required_step_ms": 37.48533607259393,
+    "target_expert_weight_bytes_per_step_per_gpu": 56774098944,
+    "target_attention_projection_weight_bytes_per_step_per_gpu": 6702497792,
+    "lm_head_weight_bytes_per_step_per_gpu": 622329856,
+    "minimum_unique_fp8_kv_bytes_per_step_per_gpu": 17364582400,
+    "logical_weight_and_kv_floor_ms_at_4_8TB_s": 16.971564373333333,
+    "caveats": [
+      "All experts assumed touched; logical unique weight/KV bytes are not DRAM-counter measurements.",
+      "No draft time, scale/activation traffic, repeated reads, graph padding or synchronization in this memory-only bound.",
+      "Meeting average step budget alone does not establish per-request ITL SLA."
+    ]
+  },
+  "geometry": {
+    "layers": 94,
+    "hidden": 4096,
+    "moe_intermediate": 1536,
+    "topk": 8,
+    "query_heads": 64,
+    "kv_heads": 4,
+    "head_dim": 128,
+    "logical_experts": 128,
+    "fp8_weight_bytes": 1,
+    "bf16_activation_bytes": 2
+  },
+  "formulas": {
+    "fc1": "4*L*T*topk*H*I",
+    "fc2": "2*L*T*topk*H*I",
+    "qkv": "2*L*T*H*(query_heads+2*kv_heads)*head_dim",
+    "o": "2*L*T*H*query_heads*head_dim",
+    "attention": "2*L*T*(T+1)*query_heads*head_dim",
+    "tensor_peak_per_gpu": "132*8192*clock_GHz*1e9",
+    "required_steady_rps": "10000/(200*delivery_fraction)",
+    "required_prefill_cycle": "12/required_steady_rps",
+    "decode_step_budget": "44*2.21/(required_steady_rps*199/4)"
+  },
+  "candidate_work_budgets": {
+    "ep8_plus_ep4_prefill": {
+      "gpu_partition": "P:8+4; D:4 (all16 GPUs retained)",
+      "changed_share_of_prefill_gpus": 0.6666666666666666,
+      "ep8_required_throughput_gain_percent_if_ep4_unchanged": 12.437173474798767,
+      "classification": "Required gain, not a speed prediction. Current 2WG, SF128, dynamic scheduling and replication guards specialize rank4; porting only the launch flags would not test the current optimized kernel. Prior EP8 failures used Triton/DeepEP and do not establish current MegaMoE EP8 performance."
+    },
+    "pp12_ep1_prefill": {
+      "gpu_partition": "P:12 pipeline stages,1 GPU/expert group each; D:4 unchanged",
+      "microbatch_requests": 4,
+      "required_stage_period_ms": 76.7131003542389,
+      "ideal_12_stage_traversal_ms": 920.5572042508669,
+      "stage_layer_partition": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        7,
+        7
+      ],
+      "remote_expert_partial_bytes_per_prompt": 0,
+      "baseline_fc2_remote_bytes_per_prompt": 12231985493.333334,
+      "bf16_hidden_and_residual_pipeline_bytes_per_prompt": 720896000,
+      "eagle_aux_forwarding_assumption": "Capture outputs near layers2/47/91 and carry early/middle auxiliary states to the last stage:17 total extra boundary traversals for this partition. Confirm actual indexing before implementation.",
+      "eagle_aux_forwarding_bytes_per_prompt": 557056000,
+      "combined_pipeline_bytes_per_prompt": 1277952000,
+      "single_cross_node_boundary_bytes_per_second_at_target": 6834399829.742112,
+      "whole_fp8_target_weight_mean_GB_per_stage_estimate": 19.583333333333332,
+      "classification": "Structural candidate, not implemented or measured. Complete token/model operations retained. Need stage-balanced microbatches, correct EAGLE auxiliary states/draft extend, PP KV lifetime and NIXL transfer, and local MegaMoE specialization. Additional fill/drain/SLA loss can change the required stage period."
+    }
+  },
+  "component_budget_if_old_profile_costs_remain_applicable": {
+    "profile_run": "40310899466",
+    "caveat": "Historical BF16-draft profile; not a fresh attribution of40653531712. These are required reductions, not predicted gains.",
+    "megamoe_required_reduction_percent_if_only_component_changed": 13.415932123984105,
+    "fa3_required_reduction_percent_if_only_component_changed": 46.515083582152236,
+    "qknorm_addnorm_normquant_total_ms": 12.266
+  },
+  "prior_trials_rechecked": [
+    {
+      "run": "40689226339",
+      "official_good_output_tokens_per_second": 9229.175298819242,
+      "note": "Later kernel-bundle image. No new10k result; do not mix its different image into the matched FC2 comparison."
+    },
+    {
+      "run": "40636912520",
+      "note": "RedHat draft acceptance1.945/2.015 vs Nebius2.251. Model replacement alone is already tested."
+    },
+    {
+      "run": "39379601121",
+      "note": "8192 tokens/rank did not increase measured Prefill token throughput."
+    },
+    {
+      "run": "39336644243",
+      "note": "Shorter speculative chain step improvement was cancelled by lower acceptance."
+    }
+  ],
+  "reference_article": "https://superhotdogcat.github.io/ja/blog/2026/10/25/modelingestimation/"
+}

@@ -77,5 +77,28 @@
     "Conditional model, not measured latency; M128 padding model and historical phase coefficients do not capture the full current kernel or D5a partial-WG skip.",
     "The archive summary step failed when the scheduler allocation ended, but all 96 captured arrays passed file hashes, static routing and rank/forward alignment checks.",
     "No candidate output written; the held-out gate refused this search result. This does not rule out every possible placement."
-  ]
+  ],
+  "steady_state_sensitivity": {
+    "training_filter": {
+      "minimum_tokens_every_rank": 3900,
+      "original_forwards": 12,
+      "retained_forwards": 6,
+      "reason": "Original training included single-token and partially occupied startup forwards; isolate steady-state workload without changing held-out data."
+    },
+    "accepted": false,
+    "refusal_reasons": [
+      "alpha=0.5 held-out saving 209.520 us is below half of training saving 3439.824 us"
+    ],
+    "training_saving_us": {
+      "0": 2708.4718951694667,
+      "0.5": 3439.8242462016206,
+      "1": 3841.2892328302405
+    },
+    "held_out_saving_us": {
+      "0": 136.15239101207408,
+      "0.5": 209.5200097575289,
+      "1": 278.90102508611744
+    },
+    "interpretation": "Removing startup-only forwards still does not generalize; no GPU or new placement emitted."
+  }
 }
