@@ -42,7 +42,7 @@ class Group:
 @pytest.fixture
 def worker():
     text = PATCH.read_text()
-    methods = re.search(r"\+    def disagg_prefill_start_idle.*?(?=\n     def maybe_prefetch)", text, re.S)[0]
+    methods = re.search(r"\+    def disagg_prefill_start_idle.*?(?=\n     def maybe_prefetch)", text, re.DOTALL)[0]
     methods = "\n".join(line[1:] for line in methods.splitlines())
     clock = SimpleNamespace(now=0.0)
     group = Group()
@@ -56,7 +56,7 @@ def worker():
         "torch": SimpleNamespace(tensor=tensor, int64="int64", distributed=group),
         "is_aborted": lambda req: req.aborted,
     }
-    exec("from __future__ import annotations\nclass Gate:\n" + methods, ns)
+    exec("from __future__ import annotations\nclass Gate:\n" + methods, ns)  # noqa: S102 - methods extracted from the tracked overlay
     ranks = []
     for _ in range(4):
         rank = ns["Gate"]()
@@ -169,7 +169,7 @@ def test_all_ranks_ready_at_once_never_wait(worker):
 
 
 def test_cancelled_requests_do_not_release_early(worker):
-    ranks, clock, _ = worker
+    ranks, _clock, _ = worker
     for rank in ranks:
         rank.waiting_queue.append(SimpleNamespace(aborted=True))
     assert step(worker, [True] * 4) == [True] * 4
