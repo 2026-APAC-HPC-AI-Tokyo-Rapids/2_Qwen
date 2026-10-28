@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "decode_probe.cuh"
 // Private companion ABI; carried only to Decode's independent epilogue hook.
 struct DecodeMergeArgs {
     int* counters = nullptr;
@@ -11,6 +12,9 @@ struct DecodeMergeArgs {
     float* scales = nullptr;
     int64_t scale_stride = 0;
     int total_q = 0;
+#ifdef FA3_DECODE_MERGE_PROBE
+    DecodeProbe probe{};
+#endif
 };
 #ifdef __CUDACC__
 #include <cuda/atomic>
@@ -30,7 +34,11 @@ __device__ __forceinline__ float4 merge_load_l2x4(const float* ptr) {
 }
 // Only the 128 consumer threads enter this function. Producers may already
 // be loading the next unit, so a CTA-wide __syncthreads would deadlock.
-__device__ __forceinline__ void decode_merge_finish(const DecodeMergeArgs& p, int tid, int batch, int kv_head, int splits) {
+__device__ __forceinline__ void decode_merge_finish(const DecodeMergeArgs& p, int tid, int batch, int kv_head, int splits
+#ifdef FA3_DECODE_MERGE_PROBE
+    , int raw_split
+#endif
+) {
     // Reuse reserved EpilogueBarrier (1) after its split stores have finished.
     // Split varlen uses direct global stores; no producer participates here.
     __shared__ int last;
@@ -38,7 +46,16 @@ __device__ __forceinline__ void decode_merge_finish(const DecodeMergeArgs& p, in
     __threadfence();
     asm volatile("bar.sync 1, 128;" ::: "memory");
     cuda::atomic_ref<int, cuda::thread_scope_device> arrived(p.counters[batch * 4 + kv_head]);
+#ifdef FA3_DECODE_MERGE_PROBE
+    if (tid == 0) {
+        int old = arrived.fetch_add(1, cuda::memory_order_acq_rel);
+        last = old == splits - 1;
+        int* record = p.probe.records + ((batch * 4 + kv_head) * 3 + (raw_split & 0xffff)) * 12;
+        record[9] = old; record[10] = last;
+    }
+#else
     if (tid == 0) { last = arrived.fetch_add(1, cuda::memory_order_acq_rel) == splits - 1; }
+#endif
     asm volatile("bar.sync 1, 128;" ::: "memory");
     if (last) {
         // The elected thread acquired the arrival chain; every reader must
@@ -52,9 +69,21 @@ __device__ __forceinline__ void decode_merge_finish(const DecodeMergeArgs& p, in
             int row = head * p.total_q + token;
             float w[4] = {}, maximum = -INFINITY;
             if (lane == 0) {
-                for (int s = 0; s < splits; ++s) { maximum = fmaxf(maximum, merge_load_l2(p.partial_lse + s * rows + row)); }
+                for (int s = 0; s < splits; ++s) {
+                    float x = merge_load_l2(p.partial_lse + s * rows + row);
+#ifdef FA3_DECODE_MERGE_PROBE
+                    p.probe.loaded_lse[s * rows + row] = x;
+#endif
+                    maximum = fmaxf(maximum, x);
+                }
                 float m = maximum == -INFINITY ? 0.f : maximum, sum = 0.f;
-                for (int s = 0; s < splits; ++s) { w[s] = expf(merge_load_l2(p.partial_lse + s * rows + row) - m); sum += w[s]; }
+                for (int s = 0; s < splits; ++s) {
+                    float x = merge_load_l2(p.partial_lse + s * rows + row);
+#ifdef FA3_DECODE_MERGE_PROBE
+                    p.probe.loaded_lse[(splits + s) * rows + row] = x;
+#endif
+                    w[s] = expf(x - m); sum += w[s];
+                }
                 float inv = sum == 0.f || isnan(sum) ? 0.f : 1.f / sum;
                 for (int s = 0; s < splits; ++s) { w[s] *= inv; }
                 p.lse[row] = logf(sum) + maximum;
@@ -69,6 +98,9 @@ __device__ __forceinline__ void decode_merge_finish(const DecodeMergeArgs& p, in
                 for (int s = 0; s < splits; ++s) {
                     if (w[s] == 0.f) { continue; } // Never read poisoned empty partials.
                     float4 x = merge_load_l2x4(p.partial + (s * rows + row) * 128 + d);
+#ifdef FA3_DECODE_MERGE_PROBE
+                    *reinterpret_cast<float4*>(p.probe.loaded + (s * rows + row) * 128 + d) = x;
+#endif
                     sum.x += w[s] * x.x; sum.y += w[s] * x.y; sum.z += w[s] * x.z; sum.w += w[s] * x.w;
                 }
                 values[chunk] = sum;
@@ -78,7 +110,11 @@ __device__ __forceinline__ void decode_merge_finish(const DecodeMergeArgs& p, in
                     *reinterpret_cast<__nv_bfloat162*>(out + 2) = __floats2bfloat162_rn(sum.z, sum.w);
                 }
             }
-            if (p.fp8) { merge_row_to_fp8(values, p.fp8 + (token * 64 + head) * 128, p.scales + int64_t(head) * p.scale_stride + token); }
+            if (p.fp8) { merge_row_to_fp8(values, p.fp8 + (token * 64 + head) * 128, p.scales + int64_t(head) * p.scale_stride + token
+#ifdef FA3_DECODE_MERGE_PROBE
+                , p.probe, token * 64 + head, row
+#endif
+            ); }
         }
         // No future unit in this invocation uses this request/head. The next
         // invocation is ordered on the same stream, including graph replay.

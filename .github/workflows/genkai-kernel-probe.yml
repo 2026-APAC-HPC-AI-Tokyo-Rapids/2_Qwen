@@ -75,10 +75,40 @@ jobs:
           printf '### Genkai kernel benchmark\n\n' >>"${GITHUB_STEP_SUMMARY}"
           genkai-shell --github-shell platforms/genkai/kernel-probe/summary.sh >>"${GITHUB_STEP_SUMMARY}"
 
+      - name: Decode merge診断の終了を確認
+        id: terminal
+        if: always() && inputs.benchmark == 'kernels/probes/prepare-fa3-decode-merge.sh' && steps.prepare.outputs.runtime_dir != ''
+        env:
+          PJM_JOB_ID: ${{ steps.submit.outputs.job_id }}
+        run: |
+          if [[ -n "${PJM_JOB_ID}" ]]; then timeout 20 pjwait -z "${PJM_JOB_ID}"; fi
+
+      - name: Decode merge診断のraw dumpとログを回収
+        id: collect
+        if: always() && steps.terminal.outcome == 'success'
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        shell: bash
+        run: |
+          destination="${RUNNER_TEMP}/genkai-decode-merge-probe"
+          install -d "${destination}"
+          genkai-shell --pull "${RUNTIME_DIR}/logs" "${destination}/logs"
+          genkai-shell --pull "${RUNTIME_DIR}/results" "${destination}/results"
+          genkai-shell --pull "${RUNTIME_DIR}/source/provenance.json" "${destination}/provenance.json"
+
+      - uses: actions/upload-artifact@v7
+        id: archive
+        if: always() && steps.collect.outcome == 'success'
+        with:
+          name: genkai-decode-merge-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/genkai-decode-merge-probe
+          if-no-files-found: error
+
       - name: 終了済みの一時ファイルを削除
         if: always() && steps.prepare.outputs.runtime_dir != ''
         env:
           RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
           PJM_JOB_ID: ${{ steps.submit.outputs.job_id }}
         run: |
+          if [[ '${{ inputs.benchmark }}' == kernels/probes/prepare-fa3-decode-merge.sh && '${{ steps.archive.outcome }}' != success ]]; then printf 'Preserving Decode diagnostic runtime because artifact recovery failed\n'; exit 1; fi
           if [[ -z "${PJM_JOB_ID}" ]] || timeout 20 pjwait -z "${PJM_JOB_ID}"; then chmod -R u+w "${RUNTIME_DIR:?}"; rm -rf -- "${RUNTIME_DIR:?}"; else printf 'Preserving runtime for pending job %s\n' "${PJM_JOB_ID}"; fi

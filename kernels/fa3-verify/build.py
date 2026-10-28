@@ -60,7 +60,33 @@ def generate_prefill_dispatch(root, work):
 
 
 def sha(path):
-    return hashlib.file_digest(path.open("rb"), "sha256").hexdigest()
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def prepare_sources(root, work):
+    """Fetch SHA256-pinned sources and apply the companion patch series."""
+    sources = {}
+    for name, (repository, commit, digest) in PINS.items():
+        archive = work / (name + ".tar.gz")
+        subprocess.run(["curl", "-fLsS", f"https://github.com/{repository}/archive/{commit}.tar.gz", "-o", str(archive)], check=True)
+        assert sha(archive) == digest, (name, "source archive SHA mismatch")
+        target = work / name
+        target.mkdir()
+        with tarfile.open(archive) as tar:
+            tar.extractall(target)  # Archives are SHA256-pinned above; login Python is 3.6.
+        sources[name] = next(target.iterdir())
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fixed-specializations.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fp8-output.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fixed-prefill.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-variants.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-overlap.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-pv.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "decode-merge.patch")], cwd=sources["fa3"], check=True)
+    return sources
+
+
+def cuda_flags(abi):
+    return ["-O3", "-std=c++17", "--use_fast_math", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-lineinfo", "-gencode=arch=compute_90a,code=sm_90a", "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED", "-DCUTLASS_DEBUG_TRACE_LEVEL=0", "-DNDEBUG", "-Xptxas=-v,--warn-on-spills", "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique", f"-D_GLIBCXX_USE_CXX11_ABI={abi}", "-Dflash=apac_fa3_private", "-DFlash_fwd_params=ApacFA3VerifyParams"]
 
 
 def build(root):
@@ -72,28 +98,12 @@ def build(root):
     work.mkdir()
     logs = root / "logs"
     logs.mkdir(exist_ok=True)
-    sources = {}
-    for name, (repository, commit, digest) in PINS.items():
-        archive = work / (name + ".tar.gz")
-        subprocess.run(["curl", "-fLsS", f"https://github.com/{repository}/archive/{commit}.tar.gz", "-o", str(archive)], check=True)
-        assert sha(archive) == digest, (name, "source archive SHA mismatch")
-        target = work / name
-        target.mkdir()
-        with tarfile.open(archive) as tar:
-            tar.extractall(target, filter="data")
-        sources[name] = next(target.iterdir())
-    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fixed-specializations.patch")], cwd=sources["fa3"], check=True)
-    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fp8-output.patch")], cwd=sources["fa3"], check=True)
-    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "fixed-prefill.patch")], cwd=sources["fa3"], check=True)
-    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-variants.patch")], cwd=sources["fa3"], check=True)
-    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-overlap.patch")], cwd=sources["fa3"], check=True)
-    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-pv.patch")], cwd=sources["fa3"], check=True)
-    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "decode-merge.patch")], cwd=sources["fa3"], check=True)
+    sources = prepare_sources(root, work)
     cuda = Path("/usr/local/cuda")
     includes = [str(root), str(work), str(sources["fa3"] / "hopper"), str(sources["cutlass"] / "include"), str(sources["cutlass"] / "tools/util/include"), str(cuda / "include"), str(cuda / "include/cccl"), *include_paths()]
     common = ["-O3", "-std=c++17", "-fPIC", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fno-gnu-unique", f"-D_GLIBCXX_USE_CXX11_ABI={int(torch._C._GLIBCXX_USE_CXX11_ABI)}"]
     common += ["-Dflash=apac_fa3_private", "-DFlash_fwd_params=ApacFA3VerifyParams"]
-    flags = ["-O3", "-std=c++17", "--use_fast_math", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-lineinfo", "-gencode=arch=compute_90a,code=sm_90a", "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED", "-DCUTLASS_DEBUG_TRACE_LEVEL=0", "-DNDEBUG", "-Xptxas=-v,--warn-on-spills", "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique", *common[6:]]
+    flags = cuda_flags(int(torch._C._GLIBCXX_USE_CXX11_ABI))
     layout_cmd = [str(cuda / "bin/nvcc"), *flags, *["-I" + p for p in includes], str(root / "prefill_layout_host.cu"), "-o", str(work / "prefill-layout-host")]
     subprocess.run(layout_cmd, check=True)
     generated = subprocess.check_output([str(work / "prefill-layout-host")], text=True)

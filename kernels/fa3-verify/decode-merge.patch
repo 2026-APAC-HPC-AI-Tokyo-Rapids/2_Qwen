@@ -34,17 +34,33 @@
      }
  
      /// Issue Tma Descriptor Prefetch -- ideally from a single thread for best performance
-@@ -492,6 +494,16 @@
+@@ -492,6 +494,32 @@
          }
      }
  
 +    template<typename Coord>
 +    CUTLASS_DEVICE void finish_verify_split(Params const& params, int tid, Coord const& coord) {
++#ifdef FA3_DECODE_MERGE_PROBE
++        auto [probe_m, probe_head, probe_batch, probe_split] = coord;
++        int slot = (probe_batch * 4 + probe_head) * 3 + (uint32_t(probe_split) & 0xffff);
++        if (tid == 0) {
++            int* r = params.verify_merge.probe.records + slot * 12;
++            int v[] = {int(blockIdx.x), int(blockIdx.y), int(blockIdx.z), probe_m, probe_head, probe_batch, probe_split, int(uint32_t(probe_split) >> 16), int(uint32_t(probe_split) & 0xffff), -1, -1, 1};
++            for (int i = 0; i < 12; ++i) { r[i] = v[i]; }
++            auto const& p = params.verify_merge;
++            int64_t a[] = {int64_t(p.counters), int64_t(p.partial), int64_t(p.partial_lse), int64_t(p.output), int64_t(p.lse), int64_t(p.fp8), int64_t(p.scales), p.scale_stride, p.total_q, int64_t(params.ptr_O_partial), int64_t(params.ptr_LSE_partial), int64_t(params.ptr_O), int64_t(params.ptr_LSE), int64_t(params.ptr_O_scale), params.scale_group_stride, get<0>(params.stride_O_partial), get<1>(params.stride_O_partial), get<2>(params.stride_O_partial), get<3>(params.stride_O_partial), get<4>(params.stride_O_partial), get<0>(params.stride_LSE_partial), get<1>(params.stride_LSE_partial), get<2>(params.stride_LSE_partial), get<3>(params.stride_LSE_partial), size<0>(params.shape_O), get<0>(params.stride_O), get<2>(params.stride_O), int64_t(params.cu_seqlens)};
++            for (int i = 0; i < 28; ++i) { p.probe.abi[slot * 28 + i] = a[i]; }
++        }
++#endif
 +        if constexpr (VerifyMerge) {
 +            static_assert(Split && Varlen && PackGQA && kBlockM == 64 && NumEpilogueThreads == 128);
 +            auto [m, head, batch, split] = coord;
 +            int count = uint32_t(split) >> 16;
-+            decode_merge_finish(params.verify_merge, tid, batch, head, count);
++            decode_merge_finish(params.verify_merge, tid, batch, head, count
++#ifdef FA3_DECODE_MERGE_PROBE
++                , split
++#endif
++            );
 +        }
 +    }
 +
