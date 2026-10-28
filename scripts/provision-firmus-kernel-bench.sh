@@ -81,15 +81,18 @@ done
 if (( steps > max_steps )); then printf '%s %s steps (about 75 s each) exceed the %s that fit in one %s-minute job; drop candidates or timeline markers.\n' "${steps}" "${scheduler}" "${max_steps}" "${budget_minutes}" >&2; exit 1; fi
 
 check_candidate_host() {
-  local dir=$1 record=$2 extension=$3 enabled=${4:-0}
-  if [[ -e "${dir}env" ]]; then enabled=$(sed -n 's/^DG_SM90_DECODE_INDEPENDENT_WG=//p' "${dir}env"); fi
+  local dir=$1 record=$2 extension=$3 enabled=${4:-0} patch_name=sm90-decode-independent-wg.patch
+  if [[ -e "${dir}env" ]]; then
+    enabled=$(sed -n 's/^DG_SM90_DECODE_INDEPENDENT_WG=//p' "${dir}env")
+    if grep -Fxq 'DG_SM90_PREFILL_STAGE4=1' "${dir}env"; then enabled=1; patch_name=sm90-prefill-stage4.patch; fi
+  fi
   if [[ -z "${enabled}" || "${enabled}" == 0 ]]; then return 0; fi
-  local patch_name=sm90-decode-independent-wg.patch patch_sha extension_sha
-  grep -Fxq "${patch_name}" "${GITHUB_WORKSPACE}/patches/deep-gemm-host/series" || { echo 'Independent WG host patch is missing from the host build series.' >&2; return 1; }
+  local patch_sha extension_sha
+  grep -Fxq "${patch_name}" "${GITHUB_WORKSPACE}/patches/deep-gemm-host/series" || { echo "Required host patch ${patch_name} is missing from the host build series." >&2; return 1; }
   patch_sha=$(sha256sum "${GITHUB_WORKSPACE}/patches/deep-gemm-host/${patch_name}" | awk '{print $1}')
   extension_sha=$(sha256sum "${extension}" | awk '{print $1}')
   if [[ ! -s "${record}" ]] || ! jq -e --arg patch "${patch_name}" --arg sha "${patch_sha}" --arg extension "${extension_sha}" '.abi == "tvm-ffi" and .patches[$patch] == $sha and .extension_sha256 == $extension' "${record}" >/dev/null; then
-    printf 'Candidate %s requires a rebuilt DeepGEMM host with %s SHA256 %s and its matching _C.so. Build a fresh image and update configs/firmus-framework.json before kernel-bench; the old host ignores the requested independent WG switch.\n' "$(basename "${dir}")" "${patch_name}" "${patch_sha}" >&2
+    printf 'Candidate %s requires a rebuilt DeepGEMM host with %s SHA256 %s and its matching _C.so. Build a fresh image and update configs/firmus-framework.json before kernel-bench; the old host ignores the requested kernel switch.\n' "$(basename "${dir}")" "${patch_name}" "${patch_sha}" >&2
     return 1
   fi
 }

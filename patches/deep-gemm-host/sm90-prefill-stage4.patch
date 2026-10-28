@@ -1,0 +1,47 @@
+--- a/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
++++ b/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
+@@ -107,7 +107,7 @@
+     const int& num_experts, const int& hidden,
+     const int& block_m, const int& block_n, const int& block_k,
+     const int& num_dispatch_warps, const int& num_epilogue_warps,
+-    const bool& use_swap_ab = false, const bool independent_wg = false) {
++    const bool& use_swap_ab = false, const bool independent_wg = false, const bool prefill_stage4 = false) {
+     constexpr int kSmemAlignment = 1024;
+ 
+     const int smem_expert_count_size = align(
+@@ -117,8 +117,8 @@
+         kSmemAlignment);
+     const int smem_dispatch_size = smem_expert_count_size + smem_send_buffers_size;
+ 
+-    const int smem_cd_l1 = block_m * (block_n / 2);
+-    const int smem_cd_l2 = block_m * block_n * static_cast<int>(sizeof(nv_bfloat16));
++    const int smem_cd_l1 = prefill_stage4 ? num_epilogue_warps * 16 * 144 : block_m * (block_n / 2);
++    const int smem_cd_l2 = block_m * (prefill_stage4 ? 64 : block_n) * static_cast<int>(sizeof(nv_bfloat16));
+     const int smem_cd_swap_l1 = use_swap_ab
+         ? block_m * (block_n / 2) *
+               (static_cast<int>(sizeof(float)) + static_cast<int>(sizeof(uint8_t)))
+@@ -136,7 +136,7 @@
+     const int smem_barriers_per_stage = 2 * 8;
+     const int smem_fixed = smem_dispatch_size + smem_cd + smem_barriers_fixed;
+ 
+-    const int num_stages = independent_wg ? 6 : (smem_capacity - smem_fixed) / (smem_per_stage + smem_barriers_per_stage);
++    const int num_stages = prefill_stage4 ? 4 : (independent_wg ? 6 : (smem_capacity - smem_fixed) / (smem_per_stage + smem_barriers_per_stage));
+     DG_HOST_ASSERT(num_stages >= 2);
+     const int smem_size = smem_fixed + num_stages * (smem_per_stage + smem_barriers_per_stage);
+     DG_HOST_ASSERT(smem_size <= smem_capacity);
+@@ -201,12 +201,14 @@
+             ((num_epilogue_threads == 512 or shrink_non_epilogue) ? 64 : 128);
+     DG_HOST_ASSERT((num_dispatch_threads + num_non_epilogue_threads) % 128 == 0);
+ 
++    // Stage4 needs the matching JIT overlay: four FC2 strips share FC1's 18 KiB CD.
+     const auto [num_stages, smem_size] = get_pipeline_config_for_mega_moe_sm90(
+         SM90ArchSpec::smem_capacity,
+         num_experts, hidden,
+         block_m, block_n, block_k,
+         num_dispatch_threads / 32, num_math_threads / 32,
+-        use_swap_ab, use_swap_ab and hidden == 4096 and intermediate_hidden == 1536 and num_ranks == 4 and num_experts == 128 and num_topk == 8 and get_env<int>("DG_SM90_DECODE_INDEPENDENT_WG", 0) != 0);
++        use_swap_ab, use_swap_ab and hidden == 4096 and intermediate_hidden == 1536 and num_ranks == 4 and num_experts == 128 and num_topk == 8 and get_env<int>("DG_SM90_DECODE_INDEPENDENT_WG", 0) != 0,
++        prefill_2wg and num_topk == 8 and (num_experts == 128 or num_experts == 140) and get_env<int>("DG_SM90_PREFILL_STAGE4", 0) != 0);
+ 
+     const auto config = MegaMoESM90Config {
+         block_m, block_n, block_k,

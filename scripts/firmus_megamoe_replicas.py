@@ -10,6 +10,7 @@ the paired real-frequency benchmarks; the numerical gate keeps its synthetic map
 """
 import hashlib
 import json
+import os
 
 import torch
 import torch.distributed as dist
@@ -146,6 +147,8 @@ def check_replicas(quantized, dequantized):
     cases = [(f"tiny-{n}", [n] * 4, "hot", False) for n in (1, 8, 9, 17, 25, 33, 41, 49, 57, 65, 127, 128)]
     cases += [("mixed-tiny", [7, 0, 65, 129], "cold", False), ("boundary-279", [279] * 4, "mixed", False), ("boundary-280", [280] * 4, "mixed", False), ("boundary-281", [281] * 4, "mixed", False)]
     cases += [("full-hot", [4096] * 4, "hot", True), ("full-cold", [4096] * 4, "cold", True), ("idle-prefill-geometry", [4096, 4096, 4096, 0], "mixed", True), ("mixed-prefill-geometry", [4096, 1, 0, 303], "mixed", True), ("all-idle", [0] * 4, "hot", True), ("live-after-idle", [4096] * 4, "mixed", True)]
+    if os.environ.get("DG_SM90_PREFILL_STAGE4", "0") == "1":
+        cases += [("stage4-strip-tail", [281, 287, 295, 303], "hot", True)]
     for case, counts, kind, padded in cases:
         count = counts[rank]
         indices = torch.arange(count, device=device) % 4

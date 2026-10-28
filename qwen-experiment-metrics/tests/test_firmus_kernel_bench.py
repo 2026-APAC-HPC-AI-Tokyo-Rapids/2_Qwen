@@ -702,3 +702,28 @@ def test_prefill_only_selection_independent_of_qkv_and_keeps_benefit_gate(tmp_pa
     assert "QKV" not in text
     assert "Exact hash / replay" in text
     assert bool(failed) is (failure in {"repeat-missing", "repeat-hash", "initial-replay", "scope-missing", "candidate-counts", "repeat-counts"})
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="provisioning uses jq like the Firmus login node")
+@pytest.mark.parametrize("host_state", ["old", "changed", "matching"])
+def test_prefill_stage4_requires_matching_host_before_staging(tmp_path, host_state):
+    ws, patches = workspace(tmp_path)
+    add_candidate(ws, "prefill-stage4", patches["comment"], timeline=True, env="DG_SM90_PREFILL_STAGE4=1\n")
+    host_patch = ROOT / "patches/deep-gemm-host/sm90-prefill-stage4.patch"
+    shutil.copy(host_patch, ws / "patches/deep-gemm-host" / host_patch.name)
+    with (ws / "patches/deep-gemm-host/series").open("a") as stream:
+        stream.write(host_patch.name + "\n")
+    record = tmp_path / "containers/rootfs/opt/apac/deep-gemm-host-build.json"
+    data = json.loads(record.read_text())
+    if host_state != "old":
+        data["patches"][host_patch.name] = hashlib.sha256(host_patch.read_bytes()).hexdigest() if host_state == "matching" else "0" * 64
+        record.write_text(json.dumps(data))
+    result = provision(tmp_path, ws)
+    if host_state == "matching":
+        assert result.returncode == 0, result.stderr
+        runtime = Path((tmp_path / "output").read_text().strip().split("=", 1)[1])
+        assert (runtime / "overlay/env/prefill-stage4").read_text() == "DG_SM90_PREFILL_STAGE4=1\n"
+        assert (runtime / "overlay/timeline/prefill-stage4").is_dir()
+    else:
+        assert result.returncode != 0
+        assert "requires a rebuilt DeepGEMM host with sm90-prefill-stage4.patch" in result.stderr

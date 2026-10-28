@@ -219,6 +219,8 @@ def render(config, data):
         lines += ["ASPIRE EP4経路はcommit396f1fbで実装済み。run40569440787のLinux全検証は成功したが、接続中継WIN-5IM4VJ0SFOSへのSSH timeoutで準備前に停止した。PBS投入・GPU測定・runtime作成は0。中継は10/27 23:36 JST以降offlineで、直接ASPIRE接続もtimeout。接続復帰前の再投入やFirmusへの切替はしない。", ""]
     if config.get("megamoe_fc1_cpu_candidate"):
         lines += ["FC1にもscale読取アドレスの共通化候補を作成した。約509万組のpointer一致、6 geometryのfresh CPU compileを確認。Prefill128/140のFC1静的spanは290→277/280→267命令（整数address-family各−10）、168 registers・spill0を維持。その他4 geometryは命令encoding一致。動的命令数や速度改善率ではなく、GPUでの数値一致・速度は未確認。候補patchはactive bench inventoryに含めない。詳細は `megamoe-fc1-cpu-validation-20261028.json`。", ""]
+    if config.get("megamoe_prefill_stage4_cpu_candidate"):
+        lines += ["Prefill 2WGのstage4候補をCPU検証した。FC2 CDを64列ずつ4分割し、FC1用18KiBと領域を共有して4段目を確保する。host switchは既定off、対応image buildが必要。通常版は168 registers・spill0、対象外11組のSASS encodingは一致。速度と数値gateはGPU未検証。計装版にはspillがあるため、速度判定は通常benchを使用する。詳細・条件付き見積もりは `megamoe-stage4-cpu-validation-20261028.json`。", ""]
     for role in ("prefill", "decode"):
         p = data[role]["profile"]
         busy = p["kernel_union_busy_ms"]/p["selected_cycles"]
