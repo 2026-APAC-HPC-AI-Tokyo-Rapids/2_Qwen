@@ -46,7 +46,8 @@ def test_serving_configuration_matches_canonical_fields():
     expected = {key: value for key, value in CONFIG.items() if key not in ("images", "sglang_overlay_patches", "deep_gemm_overlay_patches", "reuse_kernel_selection")}
     expected["concurrency"] = 240
     expected["prefill"] = {key: value for key, value in CONFIG["prefill"].items() if key != "routing_capture_samples"}
-    expected["images"] = {"sglang": {key: CONFIG["images"]["sglang"][key] for key in ("sha256", "size_bytes")}}
+    # The package stays on the image of its verified 9120.51 run (40197369083).
+    expected["images"] = {"sglang": {"sha256": "1f247668933c7252d3dfbe8f6c23897d354f095d56842788d4415a85d7dc5e55", "size_bytes": 12272513024}}
     assert json.loads((PACKAGE / "config/serving.json").read_text()) == expected
     assert (PACKAGE / "config/prefill-expert-location.json").read_bytes() == (ROOT / CONFIG["prefill"]["expert_location"]).read_bytes()
 
