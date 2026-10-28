@@ -72,7 +72,8 @@ def test_unknown_timeline_schema_is_rejected(summary):
 
 def test_adopted_header_is_only_in_serving_overlay_and_build_context():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert config["deep_gemm_overlay_patches"][-2:] == ["patches/deep-gemm-overlay/sm90-decode-independent-wg.patch", "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch"]
+    assert len(config["deep_gemm_overlay_patches"]) == 8
+    assert config["deep_gemm_overlay_patches"][-3:] == ["patches/deep-gemm-overlay/sm90-decode-independent-wg.patch", "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch", "patches/deep-gemm-bench/fc2-address/fc2-output-address.patch"]
     bench = ROOT / "patches/deep-gemm-bench"
     assert [p.parent.name for p in bench.glob("*/*.patch")] == ["fc2-address"]
     assert not list(bench.glob("*/env"))
