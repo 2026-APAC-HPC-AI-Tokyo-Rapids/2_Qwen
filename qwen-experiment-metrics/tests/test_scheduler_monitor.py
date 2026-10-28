@@ -47,7 +47,7 @@ class MonitorTest(unittest.TestCase):
                     tool = root / name
                     tool.write_text(f"#!/bin/bash\n{body}\n")
                     tool.chmod(0o755)
-                result = subprocess.run(["bash", "-euc", script], env={**os.environ, "PATH": f"{root}:{os.environ['PATH']}"}, capture_output=True, text=True, timeout=5, check=False)
+                result = subprocess.run(["bash", "-euc", script], env={**os.environ, "PATH": f"{root}:{os.environ['PATH']}", "FIRMUS_CONFIG_PATH": "configs/firmus-prefill-pp4.json"}, capture_output=True, text=True, timeout=5, check=False)
                 self.assertEqual(result.returncode, 0 if retry else status)
                 self.assertEqual("provision_complete" in result.stdout, retry)
 

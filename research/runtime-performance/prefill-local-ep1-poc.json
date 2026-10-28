@@ -151,12 +151,30 @@
       "only final target stage executes EAGLE draft prefill",
       "original kernel-setting source hashes and role environments"
     ],
-    "limitations": "CPU fixtures exercise patched functions; not GPU numerical accuracy or distributed deadlock/performance proof."
+    "limitations": "CPU fixtures exercise patched functions; not GPU numerical accuracy or distributed deadlock/performance proof.",
+    "linux_full_suite": {
+      "status": "passed",
+      "host": "archive-host",
+      "exit_code": 0,
+      "log": "archive-host:/tmp/apac-pp4-ci-20261029/tests.log",
+      "source_commit": "4520098f79e14d88fe3f630e3a352628a357092a",
+      "changes": "Only the two repaired regression fixtures over this source snapshot."
+    }
   },
   "theory_tradeoffs": {
     "logical_unique_expert_weight_bytes_ratio": 1.8285714285714285,
     "padded_moe_work_ratio": 1.059247,
     "boundary_hidden_residual_aux_bytes_per_request": 360448000,
     "note": "Logical bytes and conditional routing work; not measured HBM traffic or additive runtime estimates. Existing NVLink traces do not prove saturation."
-  }
+  },
+  "serving_attempts": [
+    {
+      "run": 40752372565,
+      "commit": "4520098f79e14d88fe3f630e3a352628a357092a",
+      "status": "failed-before-provision",
+      "gpu_submitted": false,
+      "cause": "CPU regression fixtures omitted the new config environment and assumed frozen submission text matched opt-in PP launch text.",
+      "repair": "Pass the actual workflow config in retry fixture; compare the unchanged default EP4 launch after resolving its TP variable and omitting the opt-in PP block."
+    }
+  ]
 }

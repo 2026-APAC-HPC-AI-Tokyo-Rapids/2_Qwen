@@ -60,6 +60,10 @@ def test_worker_is_unchanged_except_dormant_nsight_block():
     dormant = re.compile(r"if \[\[ -x /opt/nsys/bin/nsys \]\]; then\n.*?\nfi\n", re.DOTALL)
     expected, count = dormant.subn("", expected)
     assert count == 1
+    # The opt-in PP4 runtime block is absent from the frozen EP4 submission.
+    pp4_start = expected.index("# The Decode peer also needs explicit global target/draft KV region IDs.\n")
+    pp4_end = expected.index("# Keep inherited diagnostic variables", pp4_start)
+    expected = expected[:pp4_start] + expected[pp4_end:]
     # Profile-only Prefill routing capture; the package never captures routing.
     capture = re.compile(r"runtime_dir=\$\(dirname \"\$\(dirname \"\$0\"\)\"\)\n# Keep inherited diagnostic variables.*?\nfi\n", re.DOTALL)
     expected, count = capture.subn("", expected)
@@ -85,6 +89,8 @@ def test_submission_has_no_selection_gate_telemetry_or_profile_execution():
 def test_serving_launches_and_warmup_are_preserved_in_order():
     def critical(text):
         text = text.split('test -s "${ROOT}/results/score.json"', 1)[0]
+        # Normal EP4 still resolves to TP4; PP4 deliberately resolves to TP1.
+        text = text.replace('"${MODEL}" "${prefill_tp}"', f'"${{MODEL}}" {CONFIG["prefill"]["tp"]}')
         return [line for line in text.splitlines() if line.startswith(("srun --exact", "srun --overlap -N1", "wait_http ", 'echo "READY', "  curl --fail", "curl --fail")) and " profile " not in line]
     assert critical(BATCH.read_text()) == critical(ORIGINAL.read_text())
     text = BATCH.read_text()
