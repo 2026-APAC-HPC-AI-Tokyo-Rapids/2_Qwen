@@ -255,7 +255,7 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
     megamoe_selections+=("$!")
   done
   for pid in "${megamoe_selections[@]}"; do wait "${pid}" || true; done
-  python3 "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --aggregate "${ROOT}/results/prefill-megamoe" --output "${ROOT}/results/prefill-megamoe/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+  uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --aggregate "${ROOT}/results/prefill-megamoe" --output "${ROOT}/results/prefill-megamoe/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
 elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
   # Provision has verified the prior image, ordered overlays, expert map and
   # normalized serving config. Draft precision is the sole changed model setting.
@@ -282,7 +282,7 @@ for worker in 0 1 2; do
   prefill_selections+=("$!")
 done
 for pid in "${prefill_selections[@]}"; do wait "${pid}" || true; done
-python3 "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
 fi
 
 # PP4: the Decode-GPU selections started above (the attention-block and copy-engine winners are appended to
@@ -290,8 +290,8 @@ fi
 # overriding the pinned SGLANG_DECODE_FA3_VERIFY when the worker sources the file).
 if [[ -n "${decode_gpu_selections:-}" ]]; then
   wait "${decode_gpu_selections}" || true
-  python3 "${ROOT}/scripts/select-firmus-prefill-attention.py" --aggregate "${ROOT}/results/prefill-attention" --output "${ROOT}/results/prefill-attention/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
-  python3 "${ROOT}/scripts/check-firmus-pp4-copy-engine.py" --aggregate "${ROOT}/results/pp4-copy-engine" --output "${ROOT}/results/pp4-copy-engine/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+  uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-attention.py" --aggregate "${ROOT}/results/prefill-attention" --output "${ROOT}/results/prefill-attention/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+  uv run --no-project --python 3.12 python "${ROOT}/scripts/check-firmus-pp4-copy-engine.py" --aggregate "${ROOT}/results/pp4-copy-engine" --output "${ROOT}/results/pp4-copy-engine/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
   if [[ -s "${ROOT}/results/decode-selection/fa3.env" ]]; then cat "${ROOT}/results/decode-selection/fa3.env" >>"${ROOT}/source/decode-kernels.env"; fi
 fi
 
@@ -332,7 +332,7 @@ srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-e
 test -s "${ROOT}/results/score.json"
 if (( benchmark_status == 0 )); then
   while IFS=$'\t' read -r worker host port _; do curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"; done <"${ROOT}/source/worker-endpoints.tsv"
-  /usr/bin/python3 "${ROOT}/scripts/collect-eagle-acceptance.py" --cluster firmus --config "${ROOT}/source/firmus-framework.json" --endpoints "${ROOT}/source/worker-endpoints.tsv" --server-info-dir "${ROOT}/results" --log-dir "${ROOT}/logs" --output "${ROOT}/results/eagle-acceptance.json"
+  uv run --no-project --python 3.12 python "${ROOT}/scripts/collect-eagle-acceptance.py" --cluster firmus --config "${ROOT}/source/firmus-framework.json" --endpoints "${ROOT}/source/worker-endpoints.tsv" --server-info-dir "${ROOT}/results" --log-dir "${ROOT}/logs" --output "${ROOT}/results/eagle-acceptance.json"
 fi
 fi
 if [[ "${PROFILE}" == true ]]; then
