@@ -408,6 +408,12 @@
     "scope": "Existing 1ms sampled throughput percentages, all-CUDA-device MegaMoE interval intersection. Not the current40310899466 profile and not FC2 phase-specific.",
     "conclusion": "Cannot conclude instruction-issue bound or rule out short FC2 communication saturation from low whole-kernel samples."
   },
+  "prefill_moe_input_cpu_candidate": {
+    "evidence": "prefill-moe-input-cpu-validation-20261029.json",
+    "status": "CPU_validated_not_GPU_measured; in-job gate and selection on the PP4 path",
+    "removed_work": "PP4 7988-row microbatch: pre-dispatch kernel and its 65.4 MB BF16 re-read (66.5 MB/layer in all) by writing FP8 x, scales and pad slots from the post-attention add-RMSNorm and letting the router store the buffer's top-k; optionally the separate gate GEMM, zero-bias and router launches and the 4.1 MB logits round trip.",
+    "past_rejections_distinct": "The 2026-10-20 0.7 us estimate charged the then 47 us CUDA input norm+quant; the Triton row kernel quantizes at no measurable cost (60.9 us vs flashinfer 63.9 us). Not the Decode split-K cluster router (e195cd9), not the QKV epilogue fusion, not a qknorm layout variant."
+  },
   "megamoe_fc1_cpu_candidate": {
     "evidence": "megamoe-fc1-cpu-validation-20261028.json",
     "status": "CPU_admitted_not_GPU_measured_or_activated",

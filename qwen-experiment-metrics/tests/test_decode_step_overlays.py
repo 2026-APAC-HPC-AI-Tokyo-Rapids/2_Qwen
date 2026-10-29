@@ -279,12 +279,16 @@ def test_pp4_job_runs_the_decode_selection_beside_the_prefill_selections_and_kee
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
     line = next(line for line in pp4.splitlines() if "select-firmus-decode-kernels.sh" in line)
-    assert '-w "${TAIL}" --gres=gpu:4' in line and '"${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env"' in line and line.endswith("&")
-    # Started before the Prefill GPU selections, merged only after the Prefill workers are launched.
-    assert pp4.index("select-firmus-decode-kernels.sh") < pp4.index("select-firmus-prefill-megamoe.py")
-    merge = shell[shell.index('if [[ -n "${pinned_decode_selection:-}" ]]; then'):]
-    merge = merge[:merge.index("\nfi\n") + 4]
-    assert shell.index('bash "${ROOT}/source/worker.sh" prefill-2') < shell.index(merge) < shell.index('bash "${ROOT}/source/worker.sh" decode-0')
+    assert '-w "${TAIL}" --gres=gpu:4' in line and '"${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env"' in line and line.endswith("|| true")
+    # The Decode GPUs run the Prefill MoE input selection, then this one, in one background group started
+    # before the Prefill-GPU selections; both are taken before the Prefill workers are launched.
+    group = pp4[pp4.rindex("  {\n", 0, pp4.index(line)):pp4.index("  } &\n") + 6]
+    assert group.index("select-firmus-prefill-moe-input.py") < group.index(line)
+    assert pp4.index("decode_gpu_selections=$!") < pp4.index("select-firmus-prefill-megamoe.py")
+    take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]
+    take = take[:take.index("\nfi\n") + 4]
+    assert shell.index(take) < shell.index('bash "${ROOT}/source/worker.sh" prefill-0') < shell.index('bash "${ROOT}/source/worker.sh" decode-0')
+    copy = next(row for row in take.splitlines() if "dense.env" in row) + "\n"
     script = (ROOT / "scripts/select-firmus-decode-kernels.sh").read_text()
     assert "shift 2" in script and '--env-output "${out}/dense-selected.env" "$@"' in script
     for selected, expected in (("", "pinned\n"), ("selected\n", "selected\n")):
@@ -292,5 +296,5 @@ def test_pp4_job_runs_the_decode_selection_beside_the_prefill_selections_and_kee
         (tmp_path / "source").mkdir(exist_ok=True)
         (tmp_path / "source/decode-kernels.env").write_text("pinned\n")
         (tmp_path / "results/decode-selection/dense.env").write_text(selected)
-        subprocess.run(["bash", "-c", "set -euo pipefail\nfalse &\npinned_decode_selection=$!\n" + merge], env={"ROOT": str(tmp_path), "PATH": "/usr/bin:/bin"}, check=True)
+        subprocess.run(["bash", "-c", "set -euo pipefail\n" + copy.strip()], env={"ROOT": str(tmp_path), "PATH": "/usr/bin:/bin"}, check=True)
         assert (tmp_path / "source/decode-kernels.env").read_text() == expected
