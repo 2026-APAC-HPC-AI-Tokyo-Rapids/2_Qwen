@@ -25,6 +25,14 @@ elif [[ "${part}" == fa3 ]]; then
   fa3=$?
   if (( fa3 == 0 )); then cat "${out}/fa3-selected.env" >>"${out}/fa3.env"; fi
   printf 'fa3=%s\n' "${fa3}" >"${out}/fa3-status.txt"
+elif [[ "${part}" == moe-input ]]; then
+  scratch="/tmp/qwen-decode-select-${SLURM_JOB_ID}-${part}"
+  mkdir -p "${scratch}"
+  export TRITON_CACHE_DIR="${scratch}/triton" DG_JIT_CACHE_DIR="${scratch}/deep-gemm"
+  timeout --kill-after=5 150 "${torchrun}" --standalone --nproc-per-node=4 "${root}/scripts/select-firmus-decode-moe-input.py" --output "${out}/moe-input" >"${out}/moe-input.log" 2>&1
+  moe_input=$?
+  if (( moe_input == 0 )); then /opt/sglang/venv/bin/python "${root}/scripts/select-firmus-decode-moe-input.py" --aggregate "${out}/moe-input" --output "${out}/moe-input.json" --env-output "${out}/moe-input.env" >>"${out}/moe-input.log" 2>&1; fi
+  printf 'moe-input=%s\n' "${moe_input}" >"${out}/moe-input-status.txt"
 else
   printf 'unknown selection part: %s\n' "${part}" >&2
   exit 2

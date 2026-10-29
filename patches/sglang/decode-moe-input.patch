@@ -1,0 +1,178 @@
+diff --git a/python/sglang/kernels/ops/moe/prefill_moe_input.py b/python/sglang/kernels/ops/moe/prefill_moe_input.py
+index e7b3af2..663e66e 100644
+--- a/python/sglang/kernels/ops/moe/prefill_moe_input.py
++++ b/python/sglang/kernels/ops/moe/prefill_moe_input.py
+@@ -5,6 +5,9 @@ fused:      post_norm_moe_input (residual, BF16 y, FP8 x, FP32 scales, pad slots
+             -> gate GEMM -> router writing the MegaMoE buffer's top-k directly
+ fused-gate: post_norm_moe_input -> gate_route_into_buffer (gate GEMM + router in one kernel)
+ 
++Decode TARGET_VERIFY uses "fused" without the pad slots (the kernel reads only
++its own rows) and with the router's graph-padding mask, as select_experts does.
++
+ The FP8 values and scales are those mega_moe_pre_dispatch_sm90 computes from the
+ same BF16 y (IEEE division absmax / 448 and 1 / scale, product, cvt.rn.satfinite
+ to E4M3, row-major FP32 scales); the residual is rounded as in flashinfer's
+@@ -45,9 +48,11 @@ def _post_norm_moe_input(X, R, W, Q, S, IDS, TW, num_tokens, eps: tl.constexpr,
+         tl.store(TW + slot, tl.zeros((TOPK,), tl.float32))
+ 
+ 
+-def post_norm_moe_input(x, residual, weight, eps, buf_x, buf_x_sf, buf_topk_idx, buf_topk_weights):
++def post_norm_moe_input(x, residual, weight, eps, buf_x, buf_x_sf, buf_topk_idx, buf_topk_weights, pad_slots=True):
+     """residual += x; x = RMSNorm(residual) * weight (BF16, in place); FP8 x,
+-    scales and pad slots into the MegaMoE buffer, as pre-dispatch writes them."""
++    scales and pad slots into the MegaMoE buffer, as pre-dispatch writes them.
++    pad_slots=False (Decode) launches only the rows: MegaMoE reads the top-k of
++    the first x.shape[0] slots only, so the slots past them are never read."""
+     rows = x.shape[0]
+     assert x.shape[1] == 4096 and x.dtype == residual.dtype == weight.dtype == torch.bfloat16
+     assert x.is_contiguous() and residual.is_contiguous() and weight.is_contiguous()
+@@ -56,14 +61,23 @@ def post_norm_moe_input(x, residual, weight, eps, buf_x, buf_x_sf, buf_topk_idx,
+     assert buf_topk_idx.dtype == torch.int64 and buf_topk_weights.dtype == torch.float32
+     assert buf_topk_idx.shape == buf_topk_weights.shape == (buf_x.shape[0], buf_topk_idx.shape[1])
+     assert buf_topk_idx.is_contiguous() and buf_topk_weights.is_contiguous() and 0 < rows <= buf_x.shape[0]
+-    _post_norm_moe_input[(buf_x.shape[0],)](x, residual, weight, buf_x, buf_x_sf, buf_topk_idx, buf_topk_weights, rows, eps, buf_topk_idx.shape[1], num_warps=8, enable_fp_fusion=False)
++    _post_norm_moe_input[(buf_x.shape[0] if pad_slots else rows,)](x, residual, weight, buf_x, buf_x_sf, buf_topk_idx, buf_topk_weights, rows, eps, buf_topk_idx.shape[1], num_warps=8, enable_fp_fusion=False)
+ 
+ 
+-def route_into_buffer(router_logits, zero_bias, buf_topk_idx, buf_topk_weights):
++def route_into_buffer(router_logits, zero_bias, buf_topk_idx, buf_topk_weights, num_token_non_padded=None):
+     """moe_fused_gate(router_logits, zero_bias, 8, "softmax", renormalize=True)
+-    with its int32 ids widened and its weights stored into the buffer rows."""
++    with its int32 ids widened and its weights stored into the buffer rows.
++    With num_token_non_padded (Decode graphs) it is the same launch as
++    moe_fused_gate(router_logits, None, ..., num_token_non_padded=...): no bias,
++    ids of the padded rows stored as -1."""
+     rows, experts = router_logits.shape
+-    assert experts == 128 and buf_topk_idx.shape[1] == 8 and zero_bias.shape == (128,) and zero_bias.dtype == torch.float32
++    assert experts == 128 and buf_topk_idx.shape[1] == 8
++    if num_token_non_padded is None:
++        assert zero_bias.shape == (128,) and zero_bias.dtype == torch.float32
++    else:
++        assert zero_bias is None and 0 < rows <= 192
++        assert num_token_non_padded.dtype == torch.int32 and num_token_non_padded.numel() == 1
++        assert num_token_non_padded.device == router_logits.device
+     use_pdl = is_arch_support_pdl()
+     extra = {"launch_pdl": True} if use_pdl else {}
+     _router_triton_kernel[(triton.cdiv(rows, 2),)](
+@@ -95,8 +109,8 @@ def route_into_buffer(router_logits, zero_bias, buf_topk_idx, buf_topk_weights):
+         stride_wk=buf_topk_weights.stride(1),
+         stride_im=buf_topk_idx.stride(0),
+         stride_ik=buf_topk_idx.stride(1),
+-        num_token_non_padded=None,
+-        FUSE_DECODE_PADDING=False,
++        num_token_non_padded=num_token_non_padded,
++        FUSE_DECODE_PADDING=num_token_non_padded is not None,
+         num_warps=1,
+         **extra,
+     )
+diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
+index 24d9cce..9c522c2 100644
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -135,6 +135,11 @@ _INPUT_NORM_QUANT_MIN_ROWS = 2048
+ # runs the router gate GEMM and top-k as one kernel (kernels/ops/moe/prefill_moe_input.py).
+ _PREFILL_MOE_INPUT = os.environ.get("SGLANG_PREFILL_MOE_INPUT", "control")
+ assert _PREFILL_MOE_INPUT in ("control", "fused", "fused-gate"), _PREFILL_MOE_INPUT
++# Decode TARGET_VERIFY MegaMoE input, chosen per job on the Decode GPUs by
++# scripts/select-firmus-decode-moe-input.py: "fused" is the Prefill "fused" path
++# without pad slots and with the router's graph-padding mask (no pre-dispatch).
++_DECODE_MOE_INPUT = os.environ.get("SGLANG_DECODE_MOE_INPUT", "control")
++assert _DECODE_MOE_INPUT in ("control", "fused"), _DECODE_MOE_INPUT
+ 
+ # Prefill Q/K norm, RoPE and FP8 Q/KV writer, chosen per job by
+ # scripts/select-firmus-prefill-attention.py: "control" keeps the BF16 rounding points
+@@ -450,9 +455,10 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
+             topk.topk_weights.to(torch.float32), buf, num_tokens,
+         )
+ 
+-    def forward_megamoe_fused_input(self, hidden_states, residual, norm, fuse_gate):
++    def forward_megamoe_fused_input(self, hidden_states, residual, norm, fuse_gate, decode=False, num_token_non_padded=None):
+         """Prefill: add-RMSNorm writes BF16 y in place plus the MegaMoE FP8 input,
+-        scales and pad slots; the router writes the top-k rows; no pre-dispatch."""
++        scales and pad slots; the router writes the top-k rows; no pre-dispatch.
++        Decode: the same without pad slots; the router masks the graph padding."""
+         from sglang.kernels.ops.moe.prefill_moe_input import (
+             gate_route_into_buffer,
+             post_norm_moe_input,
+@@ -472,12 +478,13 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
+             hidden=self.config.hidden_size,
+             intermediate_hidden=self.config.moe_intermediate_size,
+         )
+-        post_norm_moe_input(hidden_states, residual, norm.weight, norm.variance_epsilon, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights)
++        post_norm_moe_input(hidden_states, residual, norm.weight, norm.variance_epsilon, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, pad_slots=not decode)
+         if fuse_gate:
+             gate_route_into_buffer(hidden_states, self.gate.weight, buf.topk_idx, buf.topk_weights)
+         else:
+             router_logits, _ = self.gate(hidden_states)
+-            route_into_buffer(router_logits, self._zero_router_bias, buf.topk_idx, buf.topk_weights)
++            bias = None if num_token_non_padded is not None else self._zero_router_bias
++            route_into_buffer(router_logits, bias, buf.topk_idx, buf.topk_weights, num_token_non_padded)
+         return run_sm90_mega_routed(self, hidden_states, None, None, buf, num_tokens)
+ 
+     def get_moe_weights(self):
+@@ -1098,7 +1105,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
+                 _is_cuda
+                 and isinstance(mlp, Qwen3MoeSparseMoeBlock)
+                 and get_moe_a2a_backend().is_megamoe()
+-                and args.disaggregation_mode == "prefill"
++                and args.disaggregation_mode in ("prefill", "decode")
+                 and self.attn_tp_size == 1
+                 and self.hidden_size == 4096
+                 and self.layer_communicator._communicate_with_all_reduce_and_layer_norm_fn
+@@ -1136,17 +1143,29 @@ class Qwen3MoeDecoderLayer(nn.Module):
+                 mlp._zero_router_bias = torch.zeros(128, dtype=torch.float32, device=mlp.gate.weight.device)
+             if not Qwen3MoeDecoderLayer._prefill_moe_input_logged:
+                 Qwen3MoeDecoderLayer._prefill_moe_input_logged = True
+-                logger.info("Prefill MoE input %s: %s", _PREFILL_MOE_INPUT, "active" if self._prefill_moe_input_ok else "unsupported, pre-dispatch kept")
++                mode = _PREFILL_MOE_INPUT if get_server_args().disaggregation_mode == "prefill" else _DECODE_MOE_INPUT
++                logger.info("MoE input %s: %s", mode, "active" if self._prefill_moe_input_ok else "unsupported, pre-dispatch kept")
+         return self._prefill_moe_input_ok
+ 
+     def _prefill_moe_input(self, hidden_states, residual, forward_batch):
+-        """The selected Prefill MoE input mode, or None for prepare_mlp + mlp."""
++        """The selected Prefill MoE input mode, "decode-fused", or None for prepare_mlp + mlp."""
++        if forward_batch.forward_mode.is_target_verify():
++            # Decode verify graphs (up to 48 requests x 4 tokens per rank): the
++            # router folds in num_token_non_padded as select_experts does.
++            mode = "control" if _DECODE_MOE_INPUT == "control" else "decode-fused"
++            if not 0 < hidden_states.shape[0] <= 192:
++                return None
++        elif (
++            forward_batch.forward_mode == ForwardMode.EXTEND
++            and hidden_states.shape[0] >= _INPUT_NORM_QUANT_MIN_ROWS
++            and forward_batch.num_token_non_padded is None
++        ):
++            mode = _PREFILL_MOE_INPUT
++        else:
++            return None
+         if (
+-            _PREFILL_MOE_INPUT == "control"
+-            or forward_batch.forward_mode != ForwardMode.EXTEND
+-            or hidden_states.shape[0] < _INPUT_NORM_QUANT_MIN_ROWS
++            mode == "control"
+             or residual is None
+-            or forward_batch.num_token_non_padded is not None
+             or hidden_states.dtype != torch.bfloat16
+             or residual.dtype != torch.bfloat16
+             or not hidden_states.is_contiguous()
+@@ -1155,7 +1174,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
+             or not self._prefill_moe_input_supported()
+         ):
+             return None
+-        return _PREFILL_MOE_INPUT
++        return mode
+ 
+     def _input_norm_quant_supported(self) -> bool:
+         """Whether input_layernorm (fused add) + the QKV GEMM's per-token-group
+@@ -1294,8 +1313,10 @@ class Qwen3MoeDecoderLayer(nn.Module):
+                 hidden_states = self.mlp(hidden_states, forward_batch)
+             else:
+                 # residual += attention output; post_attention_layernorm in place.
++                decode = moe_input == "decode-fused"
+                 hidden_states = self.mlp.forward_megamoe_fused_input(
+-                    hidden_states, residual, self.post_attention_layernorm, moe_input == "fused-gate"
++                    hidden_states, residual, self.post_attention_layernorm, moe_input == "fused-gate",
++                    decode, forward_batch.num_token_non_padded if decode else None,
+                 )
+ 
+         if fuse_mlp_allreduce:

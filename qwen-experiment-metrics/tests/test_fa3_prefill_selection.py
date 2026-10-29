@@ -149,7 +149,7 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     settings = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
     assert settings['pp4_selected_runs'] == [40849459077, 40883389891] and settings['environment']['SGLANG_PREFILL_MOE_INPUT'] == 'fused'
     # After every PP4 overlay; only prefill-moe-input (disjoint files) and the two attention-block overlays follow it.
-    assert config['sglang_overlay_patches'][-4:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-dense-schedule.patch']
+    assert config['sglang_overlay_patches'][-5:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-dense-schedule.patch', 'patches/sglang/decode-moe-input.patch']
     # The twelve-GPU FA3 screen runs only outside PP4 and without a reused selection.
     assert 'prefill_screen' not in shell
     assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" && ! -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then' in shell
