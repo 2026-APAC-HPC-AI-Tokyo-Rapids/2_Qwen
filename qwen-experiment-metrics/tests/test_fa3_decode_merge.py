@@ -68,8 +68,8 @@ def test_main_identity_distinguishes_merge_but_shares_output_and_split_capacity(
     ns = runpy.run_path(str(ROOT / 'kernels/fa3-verify/build.py'))
     tasks = ns['generate_dispatch'](ROOT / 'kernels/fa3-verify', tmp_path)
     rows = json.loads((ROOT / 'kernels/fa3-verify/candidates.json').read_text())
-    identities = {(r['block_n'], r['stages'], r['splits'] > 1, r.get('merge', False), r.get('ctas', 1)) for r in rows}
-    assert len(tasks) == len(identities) == 9
+    identities = {(r['block_n'], r['stages'], r['splits'] > 1, r.get('merge', False), r.get('ctas', 1), r.get('heads', 1)) for r in rows}
+    assert len(tasks) == len(identities) == 10
     assert sum(r.get('merge', False) for r in rows) == 6
     assert sum(r.get('uneven', False) for r in rows) == 7
     for path, _, _ in tasks:

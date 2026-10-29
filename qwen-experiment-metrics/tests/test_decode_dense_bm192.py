@@ -1,0 +1,48 @@
+import json
+import runpy
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_host_series_ends_with_the_bm192_override_and_keeps_the_pinned_config_patch():
+    series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
+    assert series[-1] == "sm90-1d2d-decode-bm192.patch" and series.index("sm90-1d2d-decode-config.patch") < len(series) - 1
+    patch = (ROOT / "patches/deep-gemm-host/sm90-1d2d-decode-bm192.patch").read_text()
+    # Only "QKV>128"/"O>128" entries may use BLOCK_M 192, only above 128 rows, with three math warpgroups.
+    for line in ('+        DG_HOST_ASSERT(name == "QKV" or name == "O" or name == "QKV>128" or name == "O>128");', "+        DG_HOST_ASSERT(bm == 64 or bm == 128 or (bm == 192 and large));", "+            launch.num_math_threads = 384, launch.num_threads = launch.num_tma_threads + 384;", "+        if (qkv == (desc.n == 9216) and large and desc.m > 128)"):
+        assert line in patch, line
+    # The dense selection pins the bytes of the original override patch, which stays unchanged.
+    checks = (ROOT / "scripts/check-firmus-decode-kernels.py").read_text()
+    assert 'record["patches"].get("sm90-1d2d-decode-config.patch", "")' in checks
+
+
+def test_header_overlay_changes_only_the_three_warpgroup_geometry():
+    pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
+    assert pp4["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
+    patch = (ROOT / "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch").read_text()
+    assert "kNumMathThreads == 128 ? 248 : (kNumMathThreads == 384 ? 152 : 232)" in patch
+    assert "WGMMA::M * (kNumMathThreads == 384 ? 3 : 2)" in patch
+    # 3 x 128 x 152 + 128 x 40 registers fit the 64K register file.
+    assert 3 * 128 * 152 + 128 * 40 <= 65536
+    assert sum(line.startswith("+") and not line.startswith("+++") for line in patch.splitlines()) == 5
+
+
+def test_bm192_candidates_cover_one_wave_of_qkv_tiles():
+    checks_text = (ROOT / "scripts/check-firmus-decode-kernels.py").read_text()
+    # N72: 128 tiles, one wave on 132 SMs (N80 would leave 16 SMs idle; one JIT compile fits the time budget).
+    assert 'DENSE_LARGE = {"qkv": ((192, 72, 5, 1, 0),), "o": ()}' in checks_text
+    assert -(-9216 // 72) == 128
+
+
+def test_fa3_selection_records_the_read_granularity_probe():
+    selector = (ROOT / "scripts/select-firmus-decode-fa3.py").read_text()
+    assert "decode_kv_read_probe.measure(torch, common_sets)" in selector
+    assert 'local.setdefault("read_probe", {})[str(batch)]' in selector
+    source = (ROOT / "scripts/decode_kv_read_probe.py").read_text()
+    assert "GRANULARITIES = (1, 2, 4)" in source and "chunks = 2 * heads" in source
+    # Same programs and bytes at every granularity: 4 / heads groups x 2 * heads chunks per request.
+    assert all((4 // heads) * (2 * heads) == 8 for heads in (1, 2, 4))
+    rows = json.loads((ROOT / "kernels/fa3-verify/candidates.json").read_text())
+    screen = runpy.run_path(str(ROOT / "scripts/select-firmus-decode-fa3.py"))["PINNED_SCREEN"]
+    assert screen == tuple(r["name"] for r in rows if r.get("heads", 1) == 2) == ("p128split2-h2-fp8", "p128split3-h2-fp8")

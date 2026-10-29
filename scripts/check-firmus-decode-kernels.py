@@ -986,6 +986,10 @@ DENSE_CONFIGS = {
     "qkv": ((64, 144, 5, 1, 0), (64, 144, 7, 1, 0), (128, 144, 5, 1, 0), (128, 80, 7, 1, 0)),
     "o": ((64, 64, 9, 1, 0), (64, 64, 13, 1, 0), (128, 64, 8, 1, 0), (128, 32, 10, 1, 0)),
 }
+# PP4 at 129..192 rows (host sm90-1d2d-decode-bm192.patch, "QKV>128" entries): one BLOCK_M 192 x N72
+# tile with three math warpgroups instead of a 128-row tile plus a 48..64-row one. Same WGMMA
+# shapes per row, so the output must equal the pinned config bit for bit.
+DENSE_LARGE = {"qkv": ((192, 72, 5, 1, 0),), "o": ()}
 # Overlay JIT kernels (decode_dense_gemm.SWAPAB_CONFIGS): token rows on the WGMMA N side.
 DENSE_SWAPAB = {"qkv": ("swapab-176-s5", "swapab-176-s5-mc2"), "o": ("swapab-176-s5-k4",)}
 DENSE_HOST_SHA256 = "3ed1a5f562c2e10f9f8c438225eb63fcc36ef31378a2262267a062abcf090326"
@@ -1009,7 +1013,7 @@ def dense_gemm_mode(op, candidate):
     if config is None:
         os.environ.pop(key, None)
     else:
-        os.environ[key] = op.upper() + ":" + ",".join(map(str, config))
+        os.environ[key] = candidate.get("spec") or op.upper() + ":" + ",".join(map(str, config))
     try:
         yield
     finally:

@@ -5,10 +5,13 @@ selects a worker setting; cap/4-4 and cap/4-2 are retained as diagnostics.
 
 With --pinned-env (PP4, which keeps the prior Decode settings), the pinned
 candidate is the timing reference ("stock" in the records) and only the
-two-CTA-per-SM rows compete, at all three batches: at cap 48 per rank the
-Decode runs 43-46 requests per rank on average and reaches the cap, and the
-round count of a row can change inside that range (split3-c2: 528 tiles at
-44, 576 at 48 on 264 slots). The written environment holds only a winner.
+two-KV-heads-per-CTA rows ("heads": 2, decode-wide-h2.patch: 256 contiguous
+bytes of each token row per CTA) compete, at all three batches: at cap 48 per
+rank the Decode runs 43-46 requests per rank on average and reaches the cap.
+The two-CTA-per-SM rows lost in 40925558339 and are no longer screened. Each
+batch also records decode_kv_read_probe.py (read-only, 128/256/512 B per token
+row) as a diagnostic of the ~2.7 TB/s limit. The written environment holds
+only a winner.
 """
 
 import argparse
@@ -32,7 +35,7 @@ FA3_VERIFY_CANDIDATES = json.loads(_candidate_table.read_text())
 NAMES = tuple(c["name"] for c in FA3_VERIFY_CANDIDATES)
 SPECS = {c["name"]: c for c in FA3_VERIFY_CANDIDATES}
 # PP4 screen: the rows that change only the CTAs per SM (and so the split layout) of the pinned kernel.
-PINNED_SCREEN = tuple(c["name"] for c in FA3_VERIFY_CANDIDATES if c.get("ctas", 1) == 2)
+PINNED_SCREEN = tuple(c["name"] for c in FA3_VERIFY_CANDIDATES if c.get("heads", 1) == 2)
 PINNED_MINIMUM_SAVING_US = 1.0
 
 
@@ -164,6 +167,14 @@ def run_selection(output, env_output, pinned_env=None):
         for c in common_sets[1:]:
             c["cache_seqlens"] = common_sets[0]["cache_seqlens"]
             c["cu_seqlens_q"] = common_sets[0]["cu_seqlens_q"]
+        if pinned_env:
+            import decode_kv_read_probe
+
+            try:
+                local.setdefault("read_probe", {})[str(batch)] = decode_kv_read_probe.measure(torch, common_sets)
+            except Exception as error:  # noqa: BLE001 - a diagnostic must not cost the selection
+                local.setdefault("read_probe", {})[str(batch)] = {"error": f"{type(error).__name__}: {error}"}
+            print(json.dumps({"rank": rank, "batch": batch, "read_probe": local["read_probe"][str(batch)]}), flush=True)
         # The timing reference: stock, or the pinned candidate in PP4 (kept under the "stock" key).
         stock_step = checks["verify_step"](common_sets, control)
         stock_graph = checks["verify_capture"](stock_step)

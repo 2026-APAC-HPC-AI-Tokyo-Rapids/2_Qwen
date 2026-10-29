@@ -249,20 +249,24 @@ def test_pp4_decode_selection_screens_only_the_overlay_candidates_against_the_pi
     pinned_file.write_text("SGLANG_DECODE_FA3_VERIFY=p128split2-s3-fp8\nDG_SM90_1D2D_DECODE_CONFIG=QKV:128,144,5,1,0\nSGLANG_DECODE_DENSE_GEMM_QKV=''\nSGLANG_DECODE_DENSE_GEMM_O=''\n")
     pinned = selector["read_env"](pinned_file)
     assert pinned["DG_SM90_1D2D_DECODE_CONFIG"] == "QKV:128,144,5,1,0" and pinned["SGLANG_DECODE_DENSE_GEMM_O"] == ""
+    checks["DENSE_LARGE"] = {"qkv": ((192, 80, 5, 1, 0), (192, 72, 5, 1, 0)), "o": ()}
     candidates = selector["pinned_candidates"](checks, pinned)
-    assert [c["name"] for c in candidates["qkv"]] == ["dg-128-144-5-1-0", "swapab-176-s5", "swapab-176-s5-mc2"]
-    assert [c["name"] for c in candidates["o"]] == ["stock", "swapab-176-s5-k4"]
-    assert [c["name"] for c in candidates["norm"]] == ["stock", "wide"]
-    # Control wins everywhere: exactly the pinned environment.
-    controls = {group: {"winner": rows[0]["name"]} for group, rows in candidates.items()}
-    assert selector["worker_environment"](controls, candidates, pinned) == pinned
-    # Winners are added; the QKV DeepGEMM config stays for rows outside the SwapAB range.
-    winners = {"qkv": {"winner": "swapab-176-s5-mc2"}, "o": {"winner": "swapab-176-s5-k4"}, "norm": {"winner": "wide"}}
-    env = selector["worker_environment"](winners, candidates, pinned)
-    assert env == {**pinned, "SGLANG_DECODE_DENSE_GEMM_QKV": "swapab-176-s5-mc2", "SGLANG_DECODE_DENSE_GEMM_O": "swapab-176-s5-k4", "SGLANG_DECODE_NORM_QUANT": "wide"}
-    # The control is the reference of the selection rule.
-    records = [{"rank": rank, "candidates": candidates["qkv"], "results": {"dg-128-144-5-1-0": {"numeric_passed": True, "blocks": [[20.0] * 5, [20.0] * 5]}, "swapab-176-s5": {"numeric_passed": True, "blocks": [[15.0] * 5, [15.0] * 5]}, "swapab-176-s5-mc2": {"numeric_passed": False, "blocks": [[], []]}}} for rank in range(4)]
-    assert selector["choose_candidate"](records)["winner"] == "swapab-176-s5"
+    # The pinned QKV config is the control; only the BLOCK_M 192 tiles for 129..192 rows compete.
+    assert [c["name"] for c in candidates["qkv"]] == ["dg-128-144-5-1-0", "dg-qkv-m129-192-80-5-1-0", "dg-qkv-m129-192-72-5-1-0"] and set(candidates) == {"qkv"}
+    assert candidates["qkv"][0]["spec"] == "QKV:128,144,5,1,0"
+    assert candidates["qkv"][1]["spec"] == "QKV:128,144,5,1,0;QKV>128:192,80,5,1,0"
+    # Control wins: exactly the pinned environment.
+    assert selector["worker_environment"]({"large": {"winner": "dg-128-144-5-1-0"}}, candidates, pinned) == pinned
+    # A winner keeps the pinned config for <=128 rows and adds its >128 entry.
+    env = selector["worker_environment"]({"large": {"winner": "dg-qkv-m129-192-72-5-1-0"}}, candidates, pinned)
+    assert env == {**pinned, "DG_SM90_1D2D_DECODE_CONFIG": "QKV:128,144,5,1,0;QKV>128:192,72,5,1,0"}
+    # Every row count must pass the pooled rule.
+    def rows(saving_by_row):
+        return [{"summary": {"dg-128-144-5-1-0": {"median_us": 23.0}, "dg-qkv-m129-192-80-5-1-0": {"median_us": 23.0 - saving, "eligible": saving >= 0.5}, "dg-qkv-m129-192-72-5-1-0": {"median_us": 22.9, "eligible": False}}, "rule": {"minimum_saving_us": 0.5}} for saving in saving_by_row]
+    assert selector["choose_all_rows"](rows((3.0, 3.0, 3.0)), "dg-128-144-5-1-0")["winner"] == "dg-qkv-m129-192-80-5-1-0"
+    assert selector["choose_all_rows"](rows((3.0, 0.2, 3.0)), "dg-128-144-5-1-0")["winner"] == "dg-128-144-5-1-0"
+    records = [{"rank": rank, "candidates": candidates["qkv"], "results": {"dg-128-144-5-1-0": {"numeric_passed": True, "blocks": [[20.0] * 5, [20.0] * 5]}, "dg-qkv-m129-192-80-5-1-0": {"numeric_passed": True, "blocks": [[15.0] * 5, [15.0] * 5]}, "dg-qkv-m129-192-72-5-1-0": {"numeric_passed": False, "blocks": [[], []]}}} for rank in range(4)]
+    assert selector["choose_candidate"](records)["winner"] == "dg-qkv-m129-192-80-5-1-0"
     assert selector["round_robin"](["dg-128-144-5-1-0", "a"], 0) == ["dg-128-144-5-1-0", "a"]
     # The written file sources back to the same values.
     out = tmp_path / "selected.env"
@@ -271,15 +275,12 @@ def test_pp4_decode_selection_screens_only_the_overlay_candidates_against_the_pi
     assert {line.split("=", 1)[0]: line.split("=", 1)[1] for line in sourced if "=" in line and line.split("=", 1)[0] in env} == env
 
 
-def test_pp4_job_pins_wide_norm_quant_without_the_swapab_rows():
+def test_pp4_job_pins_wide_norm_quant_and_screens_only_the_bm192_qkv_tile():
     # wide won and every SwapAB row lost in 40849459077 and 40883389891; prepare-firmus-pp4-settings.py
-    # pins wide and keeps the pinned QKV config and empty SwapAB names, so the dense selection is not run.
+    # pins wide and the QKV config; the dense selection runs only in pinned mode (BLOCK_M 192 QKV).
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    assert '"${ROOT}" dense' not in pp4
-    take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]
-    take = take[:take.index("\nfi\n") + 4]
-    assert "dense.env" not in take
+    assert '"${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env" >"${ART}/decode-selection-dense.log" 2>&1 || true' in pp4
     selected = runpy.run_path(str(ROOT / "scripts/prepare-firmus-pp4-settings.py"))["PP4_SELECTED"]
     assert selected["SGLANG_DECODE_NORM_QUANT"] == "wide"
     assert not {"SGLANG_DECODE_DENSE_GEMM_QKV", "SGLANG_DECODE_DENSE_GEMM_O", "DG_SM90_1D2D_DECODE_CONFIG"} & set(selected)

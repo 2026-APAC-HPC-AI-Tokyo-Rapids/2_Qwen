@@ -63,7 +63,10 @@ def test_exact_reference_requires_equal_splits():
     assert not ns["exact_reference"]("p128split2-s3-fp8", "p128split3-c2-fp8")
     assert not ns["exact_reference"]("p128split2-s3-fp8", "p128-uneven-c2-fp8")
     assert not ns["exact_reference"]("stock", "p128split2-c2-fp8")
-    assert ns["PINNED_SCREEN"] == ("p128split2-c2-fp8", "p128split3-c2-fp8", "p128-uneven-c2-fp8")
+    assert ns["exact_reference"]("p128split2-s3-fp8", "p128split2-h2-fp8")
+    assert not ns["exact_reference"]("p128split2-s3-fp8", "p128split3-h2-fp8")
+    # The two-CTA rows lost in 40925558339; the PP4 job screens the two-heads-per-CTA rows instead.
+    assert ns["PINNED_SCREEN"] == ("p128split2-h2-fp8", "p128split3-h2-fp8")
 
 
 def test_pinned_rule_picks_the_fastest_row_saving_a_microsecond_on_every_gpu():
@@ -71,9 +74,9 @@ def test_pinned_rule_picks_the_fastest_row_saving_a_microsecond_on_every_gpu():
     names = ns["PINNED_SCREEN"]
     ranks = pinned_records(names)
     for rank in ranks:
-        rank["batches"]["44"]["p128split3-c2-fp8"]["blocks"] = [{"stock": [71.0], "candidate": [58.0]}] * 2
+        rank["batches"]["44"]["p128split3-h2-fp8"]["blocks"] = [{"stock": [71.0], "candidate": [58.0]}] * 2
     result = ns["choose_pinned"](ranks, (44,), "p128split2-s3-fp8", names)
-    assert result["winner"] == "p128split3-c2-fp8" and result["env"] == {"SGLANG_DECODE_FA3_VERIFY": "p128split3-c2-fp8"}
+    assert result["winner"] == "p128split3-h2-fp8" and result["env"] == {"SGLANG_DECODE_FA3_VERIFY": "p128split3-h2-fp8"}
     assert result["control"] == "p128split2-s3-fp8" and result["rule"]["minimum_saving_us_per_layer"] == 1.0
 
 
@@ -83,9 +86,9 @@ def test_pinned_rule_excludes_a_failing_row_and_keeps_the_others(failure):
     names = ns["PINNED_SCREEN"]
     ranks = pinned_records(names)
     for rank in ranks:
-        rank["batches"]["44"]["p128split2-c2-fp8"]["blocks"] = [{"stock": [71.0], "candidate": [55.0]} for _ in range(2)]
-        rank["batches"]["44"]["p128split3-c2-fp8"]["blocks"] = [{"stock": [71.0], "candidate": [58.0]} for _ in range(2)]
-    entry = ranks[3]["batches"]["44"]["p128split2-c2-fp8"]
+        rank["batches"]["44"]["p128split2-h2-fp8"]["blocks"] = [{"stock": [71.0], "candidate": [55.0]} for _ in range(2)]
+        rank["batches"]["44"]["p128split3-h2-fp8"]["blocks"] = [{"stock": [71.0], "candidate": [58.0]} for _ in range(2)]
+    entry = ranks[3]["batches"]["44"]["p128split2-h2-fp8"]
     if failure == "not-bit-exact":
         entry["bytes_equal_to_control"] = False
     elif failure == "numeric":
@@ -95,8 +98,8 @@ def test_pinned_rule_excludes_a_failing_row_and_keeps_the_others(failure):
     else:
         entry["blocks"].pop()
     result = ns["choose_pinned"](ranks, (44,), "p128split2-s3-fp8", names)
-    assert result["winner"] == "p128split3-c2-fp8"
-    assert not result["choices"]["p128split2-c2-fp8"]["eligible"]
+    assert result["winner"] == "p128split3-h2-fp8"
+    assert not result["choices"]["p128split2-h2-fp8"]["eligible"]
 
 
 def test_pinned_rule_without_a_winner_writes_no_override():
@@ -112,13 +115,13 @@ def test_pinned_rule_needs_the_saving_at_every_measured_batch():
     names = ns["PINNED_SCREEN"]
     ranks = pinned_records(names, 71.0, 70.5, batches=("44", "46", "48"))
     for rank in ranks:
-        rank["batches"]["48"]["p128split3-c2-fp8"]["blocks"] = [{"stock": [76.0], "candidate": [60.0]}] * 2
+        rank["batches"]["48"]["p128split3-h2-fp8"]["blocks"] = [{"stock": [76.0], "candidate": [60.0]}] * 2
         for batch in ("44", "46", "48"):
-            rank["batches"][batch]["p128split2-c2-fp8"]["blocks"] = [{"stock": [71.0], "candidate": [58.0]}] * 2
+            rank["batches"][batch]["p128split2-h2-fp8"]["blocks"] = [{"stock": [71.0], "candidate": [58.0]}] * 2
     result = ns["choose_pinned"](ranks, (44, 46, 48), "p128split2-s3-fp8", names)
-    assert result["winner"] == "p128split2-c2-fp8" and result["rule"]["selection_batches"] == [44, 46, 48]
-    assert not result["choices"]["p128split3-c2-fp8"]["eligible"]
-    del ranks[1]["batches"]["46"]["p128split2-c2-fp8"]["blocks"][1]
+    assert result["winner"] == "p128split2-h2-fp8" and result["rule"]["selection_batches"] == [44, 46, 48]
+    assert not result["choices"]["p128split3-h2-fp8"]["eligible"]
+    del ranks[1]["batches"]["46"]["p128split2-h2-fp8"]["blocks"][1]
     assert ns["choose_pinned"](ranks, (44, 46, 48), "p128split2-s3-fp8", names)["winner"] is None
 
 
@@ -126,8 +129,8 @@ def test_pp4_job_screens_fa3_after_the_attention_block_and_appends_only_a_winner
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
     group = pp4[pp4.index("  {\n"):pp4.index("  } &\n")]
-    # The dense/norm selection is pinned (prepare-firmus-pp4-settings.py) and no longer runs in the PP4 job.
-    assert "select-firmus-decode-kernels.sh\" \"${ROOT}\" dense" not in pp4
+    # Only the pinned-mode dense selection (BLOCK_M 192 QKV) runs in the PP4 job, after FA3.
+    assert '"${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env"' in group
     attention = group.index("select-firmus-prefill-attention.py")
     fa3 = group.index('"${ROOT}" fa3 --pinned-env "${ROOT}/source/decode-kernels.env" >"${ART}/decode-selection-fa3.log" 2>&1 || true')
     assert attention < fa3 < group.index("check-firmus-pp4-copy-engine.py")
@@ -135,7 +138,7 @@ def test_pp4_job_screens_fa3_after_the_attention_block_and_appends_only_a_winner
     assert '--env-output "${out}/fa3-selected.env" "$@"' in script
     take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]
     take = take[:take.index("\nfi\n") + 4]
-    assert "dense.env" not in take
+    assert [row.strip() for row in take.splitlines() if "dense.env" in row] == ['if [[ -s "${ROOT}/results/decode-selection/dense.env" ]]; then cat "${ROOT}/results/decode-selection/dense.env" >>"${ROOT}/source/decode-kernels.env"; fi']
     rows = [row.strip() for row in take.splitlines() if "decode-selection/fa3.env" in row]
     assert len(rows) == 1
     for fa3_env, expected in (("", "A=pinned\n"), ("A=fa3\n", "A=pinned\nA=fa3\n")):

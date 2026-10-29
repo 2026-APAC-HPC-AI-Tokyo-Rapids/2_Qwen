@@ -1,0 +1,58 @@
+diff --git a/csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp b/csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp
+index c7cd46c..9ba62a2 100644
+--- a/csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp
+@@ -32,8 +32,12 @@ static GemmConfig get_sm90_1d2d_decode_config(const GemmDesc& desc, const GemmCo
+ 
+     // QKV:bm,bn,stages,multicast,on_a;O:bm,bn,stages,multicast,on_a
+     // A missing projection keeps stock; malformed or duplicate entries fail.
++    // "QKV>128" / "O>128" entries apply only to 129..192 rows and take precedence
++    // there; only they may use BLOCK_M 192 (three math warpgroups, one M tile for
++    // the whole verify batch instead of a 128-row tile plus a 48..64-row one).
+     auto config = stock;
+-    bool seen_qkv = false, seen_o = false;
++    bool seen_qkv = false, seen_o = false, seen_qkv_big = false, seen_o_big = false, big = false;
++    GemmConfig big_config = stock;
+     std::stringstream entries(value);
+     std::string entry;
+     DG_HOST_ASSERT(value.back() != ';');
+@@ -41,15 +45,17 @@ static GemmConfig get_sm90_1d2d_decode_config(const GemmDesc& desc, const GemmCo
+         const auto colon = entry.find(':');
+         DG_HOST_ASSERT(colon != std::string::npos);
+         const auto name = entry.substr(0, colon);
+-        DG_HOST_ASSERT(name == "QKV" or name == "O");
+-        auto& seen = name == "QKV" ? seen_qkv : seen_o;
++        DG_HOST_ASSERT(name == "QKV" or name == "O" or name == "QKV>128" or name == "O>128");
++        const bool large = name.back() == '8';
++        const bool qkv = name.rfind("QKV", 0) == 0;
++        auto& seen = large ? (qkv ? seen_qkv_big : seen_o_big) : (qkv ? seen_qkv : seen_o);
+         DG_HOST_ASSERT(not seen);
+         seen = true;
+         int bm = 0, bn = 0, stages = 0, mc = 0, on_a = 0, end = 0;
+         const auto fields = entry.substr(colon + 1);
+         DG_HOST_ASSERT(std::sscanf(fields.c_str(), "%d,%d,%d,%d,%d%n", &bm, &bn, &stages, &mc, &on_a, &end) == 5);
+         DG_HOST_ASSERT(end == static_cast<int>(fields.size()));
+-        DG_HOST_ASSERT(bm == 64 or bm == 128);
++        DG_HOST_ASSERT(bm == 64 or bm == 128 or (bm == 192 and large));
+         DG_HOST_ASSERT(bn >= 16 and bn <= 192 and bn % 16 == 0);
+         DG_HOST_ASSERT(bn <= 128 or std::gcd(bn, 128) == bn - 128);
+         DG_HOST_ASSERT(mc == 1 or mc == 2);
+@@ -64,9 +70,16 @@ static GemmConfig get_sm90_1d2d_decode_config(const GemmDesc& desc, const GemmCo
+         pipeline.smem_size -= (pipeline.num_stages - stages) * bytes_per_stage;
+         pipeline.num_stages = stages;
+         DG_HOST_ASSERT(pipeline.smem_size <= SM90ArchSpec::smem_capacity);
+-        if ((name == "QKV") == (desc.n == 9216))
+-            config = GemmConfig{layout, storage, pipeline, SM90ArchSpec::get_launch_config(desc, layout)};
++        auto launch = SM90ArchSpec::get_launch_config(desc, layout);
++        if (bm == 192)
++            launch.num_math_threads = 384, launch.num_threads = launch.num_tma_threads + 384;
++        if (qkv == (desc.n == 9216) and not large)
++            config = GemmConfig{layout, storage, pipeline, launch};
++        if (qkv == (desc.n == 9216) and large and desc.m > 128)
++            big_config = GemmConfig{layout, storage, pipeline, launch}, big = true;
+     }
++    if (big)
++        config = big_config;
+     if (get_env<int>("DG_PRINT_CONFIGS") or get_env<int>("DG_JIT_DEBUG")) {
+         static std::unordered_set<std::string> printed;
+         const auto key = value + "/" + std::to_string(desc.m) + "/" + std::to_string(desc.n);

@@ -29,16 +29,16 @@ def generate_dispatch(root, work):
     kernels = {}
     entries = []
     for row in rows:
-        key = (row["block_n"], row["stages"], row["splits"] > 1, row.get("merge", False), row.get("ctas", 1))
-        symbol = f"verify_n{key[0]}_s{key[1]}_split{int(key[2])}_merge{int(key[3])}" + (f"_c{key[4]}" if key[4] != 1 else "")
+        key = (row["block_n"], row["stages"], row["splits"] > 1, row.get("merge", False), row.get("ctas", 1), row.get("heads", 1))
+        symbol = f"verify_n{key[0]}_s{key[1]}_split{int(key[2])}_merge{int(key[3])}" + (f"_c{key[4]}" if key[4] != 1 else "") + (f"_h{key[5]}" if key[5] != 1 else "")
         kernels[key] = symbol
         entries.append(f'    {{"{row["name"]}", {row["block_n"]}, {row["stages"]}, {row["splits"]}, {str(row["output"] == "fp8").lower()}, {str(row.get("merge", False)).lower()}, {str(row.get("uneven", False)).lower()}, {key[4]}, {symbol}}},')
     declarations = [f"void {symbol}(Flash_fwd_params&, cudaStream_t, int*);" for symbol in kernels.values()]
     (work / "candidates.h").write_text("\n".join([*declarations, "static const Candidate candidates[] = {", *entries, "};", ""]))
     tasks = []
-    for (block_n, stages, split, merge, ctas), symbol in kernels.items():
+    for (block_n, stages, split, merge, ctas, heads), symbol in kernels.items():
         source = work / (symbol + ".cu")
-        source.write_text(f'#define VERIFY_NAME {symbol}\n#define VERIFY_BLOCK_N {block_n}\n#define VERIFY_STAGES {stages}\n#define VERIFY_SPLIT {str(split).lower()}\n#define VERIFY_MERGE {str(merge).lower()}\n#define VERIFY_CTAS {ctas}\n#include "p128split.cu"\n')
+        source.write_text(f'#define VERIFY_NAME {symbol}\n#define VERIFY_BLOCK_N {block_n}\n#define VERIFY_STAGES {stages}\n#define VERIFY_SPLIT {str(split).lower()}\n#define VERIFY_MERGE {str(merge).lower()}\n#define VERIFY_CTAS {ctas}\n#define VERIFY_HEADS {heads}\n#include "p128split.cu"\n')
         tasks.append((source, symbol, True))
     return tasks
 
@@ -94,6 +94,7 @@ def build(root):
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-direct-o.patch")], cwd=sources["fa3"], check=True)
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-varlen.patch")], cwd=sources["fa3"], check=True)
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "decode-two-cta.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "decode-wide-h2.patch")], cwd=sources["fa3"], check=True)
     cuda = Path("/usr/local/cuda")
     includes = [str(root), str(work), str(sources["fa3"] / "hopper"), str(sources["cutlass"] / "include"), str(sources["cutlass"] / "tools/util/include"), str(cuda / "include"), str(cuda / "include/cccl"), *include_paths()]
     common = ["-O3", "-std=c++17", "-fPIC", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fno-gnu-unique", f"-D_GLIBCXX_USE_CXX11_ABI={int(torch._C._GLIBCXX_USE_CXX11_ABI)}"]
