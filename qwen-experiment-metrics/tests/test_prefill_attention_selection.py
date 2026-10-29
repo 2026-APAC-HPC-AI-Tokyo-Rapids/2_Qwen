@@ -12,12 +12,13 @@ def selector():
     return runpy.run_path(str(ROOT / "scripts/select-firmus-prefill-attention.py"))
 
 
-def write_gpus(selector, directory, qknorm=(130.0, 75.0), dense=(930.0, 880.0)):
+def write_gpus(selector, directory, qknorm=(130.0, 75.0), dense=(930.0, 880.0), moe_input=(104.0, 104.0)):
     directory.mkdir(parents=True)
     for rank in range(4):
         cases = {selection: {case: {"passed": True} for case in names} for selection, names in selector["cases"]().items()}
         us = {"qknorm": {"control": [qknorm[0]] * selector["ROUNDS"], "fp32": [qknorm[1]] * selector["ROUNDS"]},
-              "dense": {"control": [dense[0]] * selector["ROUNDS"], "schedule": [dense[1]] * selector["ROUNDS"]}}
+              "dense": {"control": [dense[0]] * selector["ROUNDS"], "schedule": [dense[1]] * selector["ROUNDS"]},
+              "moe_input": {"fused": [moe_input[0]] * selector["ROUNDS"], "onepass": [moe_input[1]] * selector["ROUNDS"]}}
         (directory / f"rank-{rank}.json").write_text(json.dumps({"rank": rank, "cases": cases, "us": us}))
 
 
@@ -83,7 +84,7 @@ def test_missing_or_untimed_gpu_keeps_control(selector, tmp_path):
     write_gpus(selector, tmp_path / "results")
     (tmp_path / "results/rank-2.json").unlink()
     result, _ = aggregate(selector, tmp_path)
-    assert result["qknorm"]["reason"] == result["dense"]["reason"] == "missing-results" and result["env"] == {}
+    assert result["qknorm"]["reason"] == result["dense"]["reason"] == result["moe_input"]["reason"] == "missing-results" and result["env"] == {}
     write_gpus(selector, tmp_path / "short")
     edit(tmp_path / "short", 0, lambda e: e["us"]["qknorm"].update(control=[130.0] * (selector["ROUNDS"] - 1)))
     assert aggregate(selector, tmp_path, tmp_path / "short")[0]["qknorm"]["winner"] == "control"
@@ -122,9 +123,9 @@ def test_pp4_job_selects_on_decode_gpus_before_model_load():
 def test_overlays_are_pp4_only_and_default_to_control():
     pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert pp4["sglang_overlay_patches"][-2:] == ["patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-dense-schedule.patch"]
+    assert pp4["sglang_overlay_patches"][-3:] == ["patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-dense-schedule.patch", "patches/sglang/prefill-moe-input-onepass.patch"]
     assert pp4["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch"
-    for key, patch in (("sglang_overlay_patches", "patches/sglang/prefill-qknorm-fp32.patch"), ("sglang_overlay_patches", "patches/sglang/prefill-dense-schedule.patch"), ("deep_gemm_overlay_patches", "patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch")):
+    for key, patch in (("sglang_overlay_patches", "patches/sglang/prefill-qknorm-fp32.patch"), ("sglang_overlay_patches", "patches/sglang/prefill-dense-schedule.patch"), ("sglang_overlay_patches", "patches/sglang/prefill-moe-input-onepass.patch"), ("deep_gemm_overlay_patches", "patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch")):
         assert patch not in main[key]
     qknorm = (ROOT / "patches/sglang/prefill-qknorm-fp32.patch").read_text()
     assert '+_PREFILL_QKNORM = os.environ.get("SGLANG_PREFILL_QKNORM", "control")' in qknorm
@@ -138,3 +139,40 @@ def test_overlays_are_pp4_only_and_default_to_control():
     header = (ROOT / "patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch").read_text()
     assert "kGemmType == GemmType::Normal and SHAPE_N != 0 and SHAPE_K == 0 and" in header
     assert "BLOCK_M == 2 * WAVE_BLOCK_M and WAVE_BLOCK_M == 2 * WGMMA::M and" in header
+
+
+def test_onepass_moe_input_overrides_the_pinned_fused_path(selector, tmp_path):
+    # 2% of 104 us is 2.08 us, so 3 us applies; the switch is appended after the pinned fused line.
+    write_gpus(selector, tmp_path / "a", moe_input=(104.0, 101.1))
+    assert aggregate(selector, tmp_path, tmp_path / "a")[0]["moe_input"]["reason"] == "below-margin"
+    write_gpus(selector, tmp_path / "b", moe_input=(104.0, 64.0))
+    result, env = aggregate(selector, tmp_path, tmp_path / "b")
+    assert result["moe_input"]["winner"] == "onepass" and result["env"]["SGLANG_PREFILL_MOE_INPUT"] == "onepass"
+    assert env.startswith("SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen\nSGLANG_PREFILL_MOE_INPUT=fused\n") and env.endswith("SGLANG_PREFILL_MOE_INPUT=onepass\n")
+    # A failed row count on one GPU keeps fused; the other selections are unaffected.
+    write_gpus(selector, tmp_path / "c", moe_input=(104.0, 64.0))
+    edit(tmp_path / "c", 2, lambda e: e["cases"]["moe_input"]["2049"].update(passed=False))
+    result, env = aggregate(selector, tmp_path, tmp_path / "c")
+    assert result["moe_input"]["winner"] == "fused" and result["qknorm"]["winner"] == "fp32" and "onepass" not in env
+
+
+def test_onepass_overlay_keeps_the_other_modes_and_the_buffer_contract():
+    patch = (ROOT / "patches/sglang/prefill-moe-input-onepass.patch").read_text()
+    assert '+assert _PREFILL_MOE_INPUT in ("control", "fused", "fused-gate", "onepass"), _PREFILL_MOE_INPUT' in patch
+    # Same entry point and guards as the fused modes (_prefill_moe_input); no y, so no gate GEMM call.
+    assert '+        if mode == "onepass":' in patch and '+        if mode == "fused-gate":' in patch
+    assert "+            return run_sm90_mega_routed(self, hidden_states, None, None, buf, num_tokens)" in patch
+    # Pad slots of the whole buffer, 64-row programs, scales finished only after a CTA barrier.
+    assert "+    _onepass_moe_input[(buf_x.shape[0] // 64,)](" in patch and "+    tl.debug_barrier()" in patch
+    assert 'tl.store(IDS + out, tl.where(live[:, None], selected_idx, -1).to(tl.int64))' in patch
+
+
+def test_moe_input_gate_sign_test_tolerates_ties_but_not_a_biased_router(selector):
+    torch = pytest.importorskip("torch")
+    if not hasattr(torch, "float8_e4m3fn"):
+        pytest.skip("torch without float8")
+    sigmas = selector["SET_SIGMAS"]
+    # 300 rows where exactly one path hits the FP64 set: 140 / 160 is noise, 120 / 180 is a biased router.
+    assert 160 - 140 <= sigmas * 300 ** 0.5 + 2 and not 180 - 120 <= sigmas * 300 ** 0.5 + 2
+    step = selector["bf16_logit_step"](torch, torch.tensor([[3.0, -1.0], [-0.75, 0.5]], dtype=torch.float64))
+    assert step.flatten().tolist() == [2.0 ** -6, 2.0 ** -8]
