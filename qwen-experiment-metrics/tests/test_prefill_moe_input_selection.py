@@ -90,28 +90,15 @@ def test_missing_or_untimed_gpu_keeps_pre_dispatch(selector, tmp_path):
     assert aggregate(selector, tmp_path, tmp_path / "absent")[0]["winner"] == "control"
 
 
-def test_pp4_job_selects_on_decode_gpus_before_model_load():
+def test_pp4_job_pins_the_fused_path_and_no_longer_selects_it():
+    # fused won on all four GPUs in 40849459077 and 40883389891; prepare-firmus-pp4-settings.py pins it.
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
-    pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    launch = next(line for line in pp4.splitlines() if "select-firmus-prefill-moe-input.py\" --output" in line)
-    assert '-w "${TAIL}" --gres=gpu:4' in launch and launch.rstrip().endswith("|| true") and "timeout --kill-after=5 150" in launch
-    # On the PP4 bundle the four Decode GPUs run this first, then the Decode selection, in one background
-    # group beside the Prefill-GPU selections; the result is taken before the Prefill workers start.
-    group = pp4[pp4.rindex("  {\n", 0, pp4.index(launch)):pp4.index("  } &\n") + 6]
-    assert group.index(launch) < group.index("--pinned-env") and "decode_gpu_selections=$!" in pp4
-    assert pp4.index("decode_gpu_selections=$!") < pp4.index("select-firmus-prefill-megamoe.py")
-    take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]
-    take = take[:take.index("\nfi\n")]
-    assert take.index('wait "${decode_gpu_selections}" || true') < take.index('--aggregate "${ROOT}/results/prefill-moe-input"')
-    assert '--env-output "${ROOT}/source/prefill-kernels.env"' in take
-    assert shell.index("select-firmus-prefill-fa3.py\" --aggregate") < shell.index(take) < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
-    assert shell.index("select-firmus-prefill-moe-input.py") < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
+    assert "select-firmus-prefill-moe-input.py" not in shell
+    assert runpy.run_path(str(ROOT / "scripts/prepare-firmus-pp4-settings.py"))["PP4_SELECTED"]["SGLANG_PREFILL_MOE_INPUT"] == "fused"
     worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
     assert 'if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi' in worker
-    for line in pp4.splitlines():
-        assert not line.rstrip().endswith("\\")
     provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
-    assert '"${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-moe-input.py" "${runtime_dir}/scripts/"' in provision
+    assert "select-firmus-prefill-moe-input.py" not in provision
 
 
 def test_overlay_is_pp4_only_and_defaults_to_pre_dispatch():

@@ -131,16 +131,29 @@ def test_pp4_aggregate_keeps_the_megamoe_switch_and_the_pinned_row(selector, tmp
     assert env.read_text() == 'DG_SM90_PREFILL_4STAGE=1\nSGLANG_PREFILL_FA3_VERIFY=n192\n'
 
 
-def test_pp4_sbatch_screens_the_configured_rows(tmp_path):
+def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     shell = (ROOT / 'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
     config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
     rows = {r['name']: r for r in json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text())}
-    assert config['prefill_fa3_screen'] and all(rows[n].get('varlen') and not rows[n]['byte_image'] for n in config['prefill_fa3_screen'])
+    prepare = runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))
+    # n192-direct-o-varlen won the screen in 40849459077 and 40883389891; it has no V byte image, which the
+    # FP32 Q/K writer of select-firmus-prefill-attention.py requires.
+    row = rows[prepare['PP4_SELECTED']['SGLANG_PREFILL_FA3_VERIFY']]
+    assert row['name'] == 'n192-direct-o-varlen' and row.get('varlen') and not row['byte_image']
+    assert 'prefill_fa3_screen' not in config
+    for sub in ('source', 'results'):
+        (tmp_path / sub).mkdir()
+    prepare['prepare'](config, ROOT, tmp_path)
+    assert (tmp_path / 'source/prefill-kernels.env').read_text() == 'SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen\nSGLANG_PREFILL_MOE_INPUT=fused\n'
+    assert (tmp_path / 'source/decode-kernels.env').read_text() == "SGLANG_DECODE_FA3_VERIFY=p128split2-s3-fp8\nDG_SM90_1D2D_DECODE_CONFIG=QKV:128,144,5,1,0\nSGLANG_DECODE_DENSE_GEMM_QKV=''\nSGLANG_DECODE_DENSE_GEMM_O=''\nSGLANG_DECODE_NORM_QUANT=wide\n"
+    settings = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
+    assert settings['pp4_selected_runs'] == [40849459077, 40883389891] and settings['environment']['SGLANG_PREFILL_MOE_INPUT'] == 'fused'
     # After every PP4 overlay; only prefill-moe-input (disjoint files) and the two attention-block overlays follow it.
     assert config['sglang_overlay_patches'][-4:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-dense-schedule.patch']
-    pp4 = shell.index('pp4-kernel-settings.json')
-    assert shell.index('prefill_screen=(--names "$(jq -er \'.prefill_fa3_screen | join(",")\'', pp4) < shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]', pp4)
-    assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" ]]; then' in shell
-    assert '"prefill-${worker}" "${prefill_screen[@]}"' in shell
+    # The twelve-GPU FA3 screen runs only outside PP4 and without a reused selection.
+    assert 'prefill_screen' not in shell
+    assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" && ! -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then' in shell
+    pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
+    assert 'select-firmus-prefill-kernels.sh' not in pp4
     script = (ROOT / 'scripts/select-firmus-prefill-kernels.sh').read_text()
     assert 'shift 2' in script and '--output "${out}/fa3.json" "$@"' in script

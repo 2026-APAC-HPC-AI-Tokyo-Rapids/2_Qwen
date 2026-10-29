@@ -106,24 +106,26 @@ def test_pinned_rule_without_a_winner_writes_no_override():
     assert result["winner"] is None and result["env"] == {}
 
 
-def test_pp4_job_screens_fa3_after_dense_and_appends_only_a_winner(tmp_path):
+def test_pp4_job_screens_fa3_after_the_attention_block_and_appends_only_a_winner(tmp_path):
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
     group = pp4[pp4.index("  {\n"):pp4.index("  } &\n")]
-    dense = group.index('"${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env"')
+    # The dense/norm selection is pinned (prepare-firmus-pp4-settings.py) and no longer runs in the PP4 job.
+    assert "select-firmus-decode-kernels.sh\" \"${ROOT}\" dense" not in pp4
+    attention = group.index("select-firmus-prefill-attention.py")
     fa3 = group.index('"${ROOT}" fa3 --pinned-env "${ROOT}/source/decode-kernels.env" >"${ART}/decode-selection-fa3.log" 2>&1 || true')
-    assert dense < fa3 < group.index("check-firmus-pp4-copy-engine.py")
+    assert attention < fa3 < group.index("check-firmus-pp4-copy-engine.py")
     script = (ROOT / "scripts/select-firmus-decode-kernels.sh").read_text()
     assert '--env-output "${out}/fa3-selected.env" "$@"' in script
     take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]
     take = take[:take.index("\nfi\n") + 4]
-    rows = [row.strip() for row in take.splitlines() if "decode-selection/dense.env" in row or "decode-selection/fa3.env" in row]
-    assert len(rows) == 2 and "dense.env" in rows[0]
-    for dense_env, fa3_env, expected in (("", "", "A=pinned\n"), ("A=dense\n", "", "A=dense\n"), ("", "A=fa3\n", "A=pinned\nA=fa3\n"), ("A=dense\n", "A=fa3\n", "A=dense\nA=fa3\n")):
+    assert "dense.env" not in take
+    rows = [row.strip() for row in take.splitlines() if "decode-selection/fa3.env" in row]
+    assert len(rows) == 1
+    for fa3_env, expected in (("", "A=pinned\n"), ("A=fa3\n", "A=pinned\nA=fa3\n")):
         (tmp_path / "results/decode-selection").mkdir(parents=True, exist_ok=True)
         (tmp_path / "source").mkdir(exist_ok=True)
         (tmp_path / "source/decode-kernels.env").write_text("A=pinned\n")
-        (tmp_path / "results/decode-selection/dense.env").write_text(dense_env)
         (tmp_path / "results/decode-selection/fa3.env").write_text(fa3_env)
         subprocess.run(["bash", "-c", "set -euo pipefail\n" + "\n".join(rows)], env={"ROOT": str(tmp_path), "PATH": "/usr/bin:/bin"}, check=True)
         assert (tmp_path / "source/decode-kernels.env").read_text() == expected

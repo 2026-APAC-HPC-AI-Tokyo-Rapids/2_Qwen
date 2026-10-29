@@ -2,6 +2,7 @@
 the 512-lane input norm/quant order change, and the verify penalty broadcast."""
 import json
 import re
+import runpy
 from pathlib import Path
 
 import pytest
@@ -197,8 +198,6 @@ def test_wide_norm_kernel_keeps_the_stock_element_arithmetic_and_selection_wirin
 
 
 def test_selection_writes_the_norm_choice_only_when_it_wins():
-    import runpy
-
     selector = runpy.run_path(str(ROOT / "scripts/select-firmus-decode-dense.py"))
     stock = {"name": "stock", "backend": "deepgemm", "config": None}
     candidates = {"qkv": [stock], "o": [stock], "norm": [{"name": "stock"}, {"name": "wide"}]}
@@ -236,7 +235,6 @@ def test_decode_step_overlays_follow_the_patches_they_build_on(config):
 
 def test_pp4_decode_selection_screens_only_the_overlay_candidates_against_the_pinned_kernels(tmp_path):
     import importlib.util
-    import runpy
     import subprocess
     import sys
 
@@ -273,28 +271,15 @@ def test_pp4_decode_selection_screens_only_the_overlay_candidates_against_the_pi
     assert {line.split("=", 1)[0]: line.split("=", 1)[1] for line in sourced if "=" in line and line.split("=", 1)[0] in env} == env
 
 
-def test_pp4_job_runs_the_decode_selection_beside_the_prefill_selections_and_keeps_the_pin_on_failure(tmp_path):
-    import subprocess
-
+def test_pp4_job_pins_wide_norm_quant_without_the_swapab_rows():
+    # wide won and every SwapAB row lost in 40849459077 and 40883389891; prepare-firmus-pp4-settings.py
+    # pins wide and keeps the pinned QKV config and empty SwapAB names, so the dense selection is not run.
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    line = next(line for line in pp4.splitlines() if "select-firmus-decode-kernels.sh" in line)
-    assert '-w "${TAIL}" --gres=gpu:4' in line and '"${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env"' in line and line.endswith("|| true")
-    # The Decode GPUs run the Prefill MoE input selection, then this one, in one background group started
-    # before the Prefill-GPU selections; both are taken before the Prefill workers are launched.
-    group = pp4[pp4.rindex("  {\n", 0, pp4.index(line)):pp4.index("  } &\n") + 6]
-    assert group.index("select-firmus-prefill-moe-input.py") < group.index(line)
-    assert pp4.index("decode_gpu_selections=$!") < pp4.index("select-firmus-prefill-megamoe.py")
+    assert '"${ROOT}" dense' not in pp4
     take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]
     take = take[:take.index("\nfi\n") + 4]
-    assert shell.index(take) < shell.index('bash "${ROOT}/source/worker.sh" prefill-0') < shell.index('bash "${ROOT}/source/worker.sh" decode-0')
-    copy = next(row for row in take.splitlines() if "dense.env" in row) + "\n"
-    script = (ROOT / "scripts/select-firmus-decode-kernels.sh").read_text()
-    assert "shift 2" in script and '--env-output "${out}/dense-selected.env" "$@"' in script
-    for selected, expected in (("", "pinned\n"), ("selected\n", "selected\n")):
-        (tmp_path / "results/decode-selection").mkdir(parents=True, exist_ok=True)
-        (tmp_path / "source").mkdir(exist_ok=True)
-        (tmp_path / "source/decode-kernels.env").write_text("pinned\n")
-        (tmp_path / "results/decode-selection/dense.env").write_text(selected)
-        subprocess.run(["bash", "-c", "set -euo pipefail\n" + copy.strip()], env={"ROOT": str(tmp_path), "PATH": "/usr/bin:/bin"}, check=True)
-        assert (tmp_path / "source/decode-kernels.env").read_text() == expected
+    assert "dense.env" not in take
+    selected = runpy.run_path(str(ROOT / "scripts/prepare-firmus-pp4-settings.py"))["PP4_SELECTED"]
+    assert selected["SGLANG_DECODE_NORM_QUANT"] == "wide"
+    assert not {"SGLANG_DECODE_DENSE_GEMM_QKV", "SGLANG_DECODE_DENSE_GEMM_O", "DG_SM90_1D2D_DECODE_CONFIG"} & set(selected)

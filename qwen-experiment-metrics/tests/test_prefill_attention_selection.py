@@ -106,13 +106,12 @@ def test_pp4_job_selects_on_decode_gpus_before_model_load():
     assert '-w "${TAIL}" --gres=gpu:4' in launch and launch.rstrip().endswith("|| true") and "timeout --kill-after=5 240" in launch
     for cache in ("TRITON_CACHE_DIR", "TVM_FFI_CACHE_DIR", "DG_JIT_CACHE_DIR", "SGLANG_DG_CACHE_DIR"):
         assert f'{cache}="/tmp/qwen-prefill-attention-${{SLURM_JOB_ID}}/' in launch
-    # In the Decode-GPU group after the MoE input selection and before the Decode selection.
+    # First in the Decode-GPU group (the MoE input path is pinned), before the Decode FA3 selection.
     group = pp4[pp4.rindex("  {\n", 0, pp4.index(launch)):pp4.index("  } &\n") + 6]
-    assert group.index("select-firmus-prefill-moe-input.py") < group.index(launch) < group.index("--pinned-env")
+    assert group.index("    srun ") == group.index(launch) < group.index("--pinned-env")
     take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]
     take = take[:take.index("\nfi\n")]
     assert take.index('wait "${decode_gpu_selections}" || true') < take.index('--aggregate "${ROOT}/results/prefill-attention"')
-    assert take.index('--aggregate "${ROOT}/results/prefill-moe-input"') < take.index('--aggregate "${ROOT}/results/prefill-attention"')
     aggregate_line = next(line for line in take.splitlines() if '--aggregate "${ROOT}/results/prefill-attention"' in line)
     assert '--env-output "${ROOT}/source/prefill-kernels.env"' in aggregate_line
     assert shell.index(take) < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
