@@ -112,8 +112,8 @@
     "Full-model EP1 output/logit parity; one coherent sanity response and error-free requests are insufficient",
     "Actual critical-path savings and whether PP can reach 10k"
   ],
-  "run": null,
-  "outcome": "Actual-image symlink comparator fixed and all 17 gate regressions passed. Resume the single authorized profile; GPU allocations in this revision remain zero.",
+  "run": 40796263174,
+  "outcome": "Completed the single authorized GPU profile. Slurm27186 COMPLETED0:0, 546 seconds, 2nodes16H200; four Nsys reports and16CPUtraces validated. All152 archiveSHA256SUMS verified. Runtime cleanup step succeeded; no additional GPU execution.",
   "cpu_actions_attempts": [
     {
       "run": 40782868396,
@@ -139,5 +139,59 @@
       "fix": "Compare every symlink target verbatim without following it; retain regular-file type and SHA comparison and reject mismatched/missing links.",
       "cleanup": "Confirmed runtime /scratch/home/ACCOUNT/qwen/runs/pd-40784895266-1.No46icua6P absent after cleanup."
     }
-  ]
+  ],
+  "completed_profile": {
+    "commit": "2177817e455c23d1678ca2c2158259a8556842fb",
+    "slurm_job": 27186,
+    "state": "COMPLETED",
+    "exit": "0:0",
+    "elapsed_s": 546,
+    "nodes": 2,
+    "gpus": 16,
+    "nsys_reports": 4,
+    "cpu_traces": 16,
+    "archive": "archive-host:/srv/qwen-artifacts/40796263174/1",
+    "archive_hashes_verified": 152,
+    "actions_completed_jst": "2026-10-29T11:10:51+09:00",
+    "ordinary_score_measured": false,
+    "queue_wait_approx_minutes": 55,
+    "profile_client_requests": 489,
+    "profile_client_errors": 0,
+    "profile_client_raw_tokens_per_second": 2239.9668998084862,
+    "profile_stop_api_elapsed_s": 24.423164169,
+    "warning": "The whole client pass includes profile start/export disturbances; raw2239.97 is not an estimate of normal serving throughput."
+  },
+  "normal_speed_estimate": {
+    "kind": "conditional estimate from short pre-profiler windows, not an official normal run",
+    "central_output_tokens_per_second": 7300,
+    "range_output_tokens_per_second": [
+      7000,
+      7500
+    ],
+    "server_windows_evidence": "../pp4-profile-40796263174/server-rate-estimate.json",
+    "observed_sequence_admissions_per_second": [
+      36.2,
+      36.333333333333336,
+      36.5
+    ],
+    "derivation": "Count PP0 only for all3 replicas; 362requests/10s,218/6s,146/4s; multiply by200 outputtokens/request. Queue remains nonempty. Timestampresolution1s and warmup/fill/drain limit precision.",
+    "client_clean_evidence": "../pp4-profile-40796263174/client-clean-analysis.json",
+    "clean_start_cohort": {
+      "utc_start": "2026-10-29T02:03:08Z",
+      "utc_end_exclusive": "2026-10-29T02:03:14Z",
+      "requests": 210,
+      "ttft_p50_ms": 3125.93,
+      "ttft_p95_ms": 3361.88,
+      "itl_mean_ms": 12.4804,
+      "sla_good_requests": 58,
+      "sla_good_fraction": 0.2761904761904762
+    },
+    "later_start_cohort": {
+      "requests": 160,
+      "sla_good_requests": 32,
+      "sla_good_fraction": 0.2
+    },
+    "eligibility_estimate": "Likely ineligible at c215: observed clean cohorts20-27.6% jointly meet TTFT<=3000ms andITL<=20ms, far below current parser90% threshold. Its gated score field would be0 if normal results retain this SLA distribution.",
+    "comparison": "No demonstrated throughput gain over previous PP4 ordinary total7151.76; separate short windows are not a matched A/B. Current PP4 estimate remains below9235.28 control and10k goal."
+  }
 }
