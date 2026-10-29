@@ -1,0 +1,230 @@
+{
+  "date": "2026-10-30",
+  "task": "Prefill PP4/EP1 MegaMoE paired tails (DG_SM90_PREFILL_TAIL_PAIR) on the lean path; tail split removed",
+  "gpu_executed": false,
+  "toolchain": "CUDA 13.4 nvcc, sm_90a",
+  "headers": {
+    "control_round2_chain_sha256": "ea2829a674ef61fd3595a5adea8847c68872d3507ff68f928ba65b01a3feff1b",
+    "after_4stage_sha256": "810538006416f6b4941af16c795f7460d69ceaacfffcaf3b37d60d1e6538b3db",
+    "after_lean_sha256": "8ac66bc084becdb3eaec29263fa2b6a15d7f97e94ee94af2cb755731d8ddc20a",
+    "candidate_final_sha256": "43dea56ed46a9b036449a9b5d8eefd898bb17ff0f838f540061dff8091fdeb02",
+    "chain": "image header + 7 deep-gemm-overlay patches + local-ep1 + 4stage + lean + tail-pair (tail split, direct FC2 and A gather removed)"
+  },
+  "sass": {
+    "ep1-s3-512": {
+      "sass_identical_to_control": true,
+      "registers": 96,
+      "spill_store_load": [
+        304,
+        432
+      ],
+      "instructions": 5648
+    },
+    "ep1-s3": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 8064
+    },
+    "ep1-s4": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 7152
+    },
+    "ep4-128-s3-512": {
+      "sass_identical_to_control": true,
+      "registers": 96,
+      "spill_store_load": [
+        20,
+        20
+      ],
+      "instructions": 6600
+    },
+    "ep4-128-s3": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 7680
+    },
+    "ep4-128-s4": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 6704
+    },
+    "ep4-140-s3-512": {
+      "sass_identical_to_control": true,
+      "registers": 96,
+      "spill_store_load": [
+        24,
+        28
+      ],
+      "instructions": 6792
+    },
+    "ep4-140-s3": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 8240
+    },
+    "ep4-140-s4": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 7272
+    },
+    "ep1-dec-m64-s8": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 4400
+    },
+    "ep1-dec-m64-s8-swap": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 5200
+    },
+    "ep4-dec-32-s8": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 4280
+    },
+    "ep4-dec-32-s8-swap": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 6840
+    },
+    "ep4-dec-16-s8-swap": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 6848
+    },
+    "ep4-dec-16-s6-iwg": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        8,
+        8
+      ],
+      "instructions": 10216
+    },
+    "ep4-dec-32-s6-iwg": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        8,
+        8
+      ],
+      "instructions": 10208
+    },
+    "ep4-140-dec-35-s8": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 4520
+    },
+    "ep4-140-dec-18-s8-swap": {
+      "sass_identical_to_control": true,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 7040
+    },
+    "ep1-s4-pair": {
+      "sass_identical_to_control": null,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 9272
+    },
+    "ep1-s4-lean": {
+      "sass_identical_to_control": null,
+      "registers": 168,
+      "spill_store_load": [
+        0,
+        0
+      ],
+      "instructions": 6856
+    }
+  },
+  "sass_note": "The 18 instantiations without lean/pair flags are SASS byte-identical to the round-2 header. ep1-s4-lean compiled from the final header is byte-identical (whole SASS file) to the lean build of the previous commit (which still had the tail split).",
+  "ep1_s4_pair": {
+    "registers": 168,
+    "spill": [
+      0,
+      0
+    ],
+    "instructions_static": 9272,
+    "k_loop_instructions": {
+      "fc1_unpaired": [
+        274,
+        284
+      ],
+      "fc2_unpaired": [
+        243,
+        225
+      ],
+      "fc1_paired_per_k_block": 311,
+      "fc2_paired_per_k_block": 284
+    },
+    "k_loop_note": "lean -> pair for the unpaired loops: same FMUL/QGMMA/LDS/LDG; the differences are allocation (vector address arithmetic moved to the uniform datapath). One paired K block issues one m64n256 group per warpgroup and consumes two stages."
+  },
+  "deadlock_model": "qwen-experiment-metrics/tests/test_prefill_megamoe_tail_pair.py: per-role (A loader, B loader, math) item streams and ring positions for 36 archived 128-expert distributions (kernels/probes/megamoe-local-ep1-routing.npz, one- and two-request batches), the three selection routings and six edge distributions (all 1-row experts, all 64, all 65, mixed 0/1/63/64/65/127/128/129, empty + 129-row experts, one 64512-row expert); asserts equal ring positions and uses per K block across roles, 2 producer and 8 consumer arrivals per stage use, every (phase, pool block, N block, row half) computed exactly once, and FC1 arrivals per pool block = 12 x ceil(valid / 64) x 4.",
+  "host_check": "check-sm90-prefill-local-host.py: 184 native host configurations PASS; ',true' (lean) and ',true,true' (pair) only on the EP1 2WG four-stage tile; 8 selected kernels 168 registers, 0 spill",
+  "chains": {
+    "deep_gemm_pp4_overlays": "12/12 on the image deep_gemm tree; final header = candidate",
+    "sglang_pp4_overlays": "28/28"
+  },
+  "expected": {
+    "tails_per_layer": "real routing 69-86 pool blocks with <= 64 rows; in-job balanced ~43, hot ~70",
+    "per_tail_tile": "D5a 0.64-0.70 of a full tile -> paired 0.5 (tensor + convoy model) to 0.625 (SMEM bytes: 160 KiB per two tail tiles)",
+    "per_layer_us": "17-55 before the power-cap factor, kappa 0.6-1 (idle WG time and 16 KiB of TMA per two tail K blocks removed) -> 10-55 us, 0.4-2 %",
+    "risk": "two-stage lookahead on paired items (4 stages = 2 paired K blocks)"
+  },
+  "in_job": "variants control, four-stage, four-stage-lean, four-stage-lean-pair (as many as before); the untimed edge routing adds 4 forward calls and one sampled reference per GPU (about 1 s)"
+}

@@ -434,9 +434,21 @@
   },
   "megamoe_prefill_direct_fc2_cpu_candidate": {
     "evidence": "megamoe-prefill-direct-fc2-cpu-validation-20261030.json",
-    "status": "CPU_validated_not_GPU_measured; four-stage-direct, four-stage-gather and four-stage-direct-gather selected in job",
+    "status": "GPU_rejected in 40911121619/40925558339 (direct +1.6 %, A gather +44 %); variants and patches removed in round 3",
     "removed_work": "FC2 epilogue shared-memory staging: 64 KiB STS + 64 KiB LDS per FC2 tile (9 MB per SM per PP4 layer) and its serial step chain; partial rows stored straight from the accumulators in a permuted column order that the combine restores. Same BF16 values, combine order and y bytes. EP1 A gather: no token-row copy into the L1 pool (8 KiB shared-memory traffic per row, 264 MB HBM write) and no A writes for padding rows; the FC1 A loader cp.async-gathers valid rows from the input buffer.",
     "past_rejections_distinct": "Not the bulk scatter (TMA store from the same staging), FC2 interleave, pre-reduce or combine direct store; no stage, tile or issue-order change."
+  },
+  "megamoe_prefill_lean_cpu_candidate": {
+    "evidence": "megamoe-prefill-lean-cpu-validation-20261030.json; 2026-10-30-prefill-megamoe-ep1-accounting.md",
+    "status": "CPU_validated_not_GPU_measured; four-stage-lean selected in job",
+    "removed_work": "EP1: SM 0's count republication with system-scope atomics, its self-signal and one dispatch grid sync; the per-row rank round robin; the grid sync after the self-signal before the combine; FC2 staging 64 STS.32 -> 16 stmatrix.x4 per thread per tile (span 223 -> 178). Same bytes everywhere.",
+    "past_rejections_distinct": "Not the direct FC2 stores or the A gather (both removed); staging bytes, store pattern, tile and K loop unchanged."
+  },
+  "megamoe_prefill_tail_pair_cpu_candidate": {
+    "evidence": "megamoe-prefill-tail-pair-cpu-validation-20261030.json; 2026-10-30-prefill-megamoe-ep1-accounting.md",
+    "status": "CPU_validated_not_GPU_measured; four-stage-lean-pair selected in job (bit-exact on balanced, hot and an untimed edge routing); tail split removed",
+    "removed_work": "<= 64-row pool blocks: N blocks in pairs on both warpgroups (two stages per K block) instead of one warpgroup per N block beside an idle one; 80 instead of 96 KiB of TMA per two tail tiles. Same bytes.",
+    "past_rejections_distinct": "Not the tail split (m64n128 halves, same TMA bytes, below margin twice) or the independent WG (separate tiles, duplicated B); both warpgroups keep m64n256 on the same rows."
   },
   "fa3_prefill_direct_o_cpu_candidate": {
     "evidence": "fa3-prefill-direct-o-cpu-validation-20261029.json",
