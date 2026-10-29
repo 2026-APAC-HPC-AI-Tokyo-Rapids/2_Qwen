@@ -135,8 +135,8 @@ def test_pp4_sbatch_screens_the_configured_rows(tmp_path):
     config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
     rows = {r['name']: r for r in json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text())}
     assert config['prefill_fa3_screen'] and all(rows[n].get('varlen') and not rows[n]['byte_image'] for n in config['prefill_fa3_screen'])
-    # After every PP4 overlay; only prefill-moe-input (disjoint files) follows it.
-    assert config['sglang_overlay_patches'][-2:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch']
+    # After every PP4 overlay; only prefill-moe-input (disjoint files) and the two attention-block overlays follow it.
+    assert config['sglang_overlay_patches'][-4:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-dense-schedule.patch']
     pp4 = shell.index('pp4-kernel-settings.json')
     assert shell.index('prefill_screen=(--names "$(jq -er \'.prefill_fa3_screen | join(",")\'', pp4) < shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]', pp4)
     assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" ]]; then' in shell

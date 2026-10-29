@@ -1,0 +1,417 @@
+{
+ "schema": "prefill-attention-cpu-validation/v1",
+ "gpu_executed": false,
+ "scope": "PP4 Prefill stage (TP1/EP1), one microbatch of two requests (7988 rows), everything but the MegaMoE kernel. CPU compile (CUDA 13.4, sm_90a), SASS and CPU emulation only; exactness and speed on H200 are decided by the in-job selection scripts/select-firmus-prefill-attention.py.",
+ "inventory": {
+  "source": "run 40825417205 prefill-0 nsys (exported sqlite), main compute stream, 43 two-request microbatches per stage, windows between the first MegaMoE of consecutive microbatches; medians",
+  "stages": {
+   "stage0": {
+    "layers": 24,
+    "period_ms": 124.26,
+    "kernel_busy_ms": 123.78,
+    "same_stream_gaps_ms": 0.486,
+    "per_layer_us": {
+     "megamoe": 2781.2,
+     "fa3": 893.2,
+     "qkv_gemm": 495.3,
+     "o_gemm": 432.1,
+     "qknorm_rope": 129.4,
+     "fused_add_rmsnorm": 66.5,
+     "norm_quant": 55.6,
+     "pre_dispatch": 32.6,
+     "gate_gemm": 24.8,
+     "router": 10.3,
+     "fa3_prepare": 4.0,
+     "group_quant": 2.4,
+     "rmsnorm": 1.4,
+     "fill_f32": 1.0,
+     "gather": 1.0,
+     "other:void at::native::index_elementwise_kernel<(int)128, (int)4, ": 0.3,
+     "other:void at::native::vectorized_elementwise_kernel<(int)4, at::n": 0.2,
+     "other:void at::native::<unnamed>::multi_tensor_apply_kernel<at::na": 0.2,
+     "other:compute_position_kernel": 0.1
+    },
+    "per_microbatch_ms_once": {
+     "nccl": 3.307,
+     "cat": 0.01
+    },
+    "gap_before_us_per_microbatch": {
+     "fa3": 60.6,
+     "nccl": 10.8,
+     "qknorm_rope": 6.7,
+     "fused_add_rmsnorm": 6.9,
+     "norm_quant": 64.9,
+     "gate_gemm": 64.2,
+     "router": 12.3,
+     "fa3_prepare": 63.6,
+     "group_quant": 36.0,
+     "fill_f32": 78.2,
+     "cat": 14.4,
+     "other:void at::native::index_elementwise_kernel<(int)128, (int)4, ": 10.0,
+     "other:void at::native::vectorized_elementwise_kernel<(int)4, at::n": 10.2,
+     "other:void at::native::<unnamed>::multi_tensor_apply_kernel<at::na": 5.3,
+     "other:compute_position_kernel": 14.5
+    }
+   },
+   "stage1": {
+    "layers": 24,
+    "period_ms": 124.26,
+    "kernel_busy_ms": 123.82,
+    "same_stream_gaps_ms": 0.454,
+    "per_layer_us": {
+     "megamoe": 2793.3,
+     "fa3": 900.6,
+     "qkv_gemm": 498.9,
+     "o_gemm": 433.2,
+     "qknorm_rope": 129.8,
+     "fused_add_rmsnorm": 66.7,
+     "norm_quant": 58.3,
+     "pre_dispatch": 32.4,
+     "gate_gemm": 24.8,
+     "router": 9.8,
+     "fa3_prepare": 4.2,
+     "group_quant": 1.2,
+     "fill_f32": 1.0,
+     "other:void at::native::index_elementwise_kernel<(int)128, (int)4, ": 0.3,
+     "other:void at::native::vectorized_elementwise_kernel<(int)4, at::n": 0.2,
+     "other:void at::native::<unnamed>::multi_tensor_apply_kernel<at::na": 0.2,
+     "other:compute_position_kernel": 0.1
+    },
+    "per_microbatch_ms_once": {
+     "nccl": 4.083,
+     "cat": 0.01
+    },
+    "gap_before_us_per_microbatch": {
+     "fa3": 52.6,
+     "nccl": 24.0,
+     "qknorm_rope": 5.6,
+     "fused_add_rmsnorm": 5.7,
+     "norm_quant": 63.0,
+     "gate_gemm": 57.9,
+     "router": 8.4,
+     "fa3_prepare": 59.5,
+     "group_quant": 35.8,
+     "fill_f32": 73.2,
+     "cat": 14.1,
+     "other:void at::native::index_elementwise_kernel<(int)128, (int)4, ": 8.4,
+     "other:void at::native::vectorized_elementwise_kernel<(int)4, at::n": 9.9,
+     "other:void at::native::<unnamed>::multi_tensor_apply_kernel<at::na": 5.2,
+     "other:compute_position_kernel": 14.0
+    }
+   },
+   "stage2": {
+    "layers": 24,
+    "period_ms": 124.64,
+    "kernel_busy_ms": 124.23,
+    "same_stream_gaps_ms": 0.439,
+    "per_layer_us": {
+     "megamoe": 2820.0,
+     "fa3": 909.8,
+     "qkv_gemm": 504.5,
+     "o_gemm": 438.1,
+     "qknorm_rope": 131.7,
+     "fused_add_rmsnorm": 64.2,
+     "norm_quant": 61.4,
+     "pre_dispatch": 32.9,
+     "gate_gemm": 24.9,
+     "router": 10.0,
+     "fa3_prepare": 4.2,
+     "fill_f32": 1.0,
+     "other:void at::native::index_elementwise_kernel<(int)128, (int)4, ": 0.3,
+     "other:void at::native::vectorized_elementwise_kernel<(int)4, at::n": 0.2,
+     "other:void at::native::<unnamed>::multi_tensor_apply_kernel<at::na": 0.2,
+     "copy": 0.1,
+     "other:compute_position_kernel": 0.1
+    },
+    "per_microbatch_ms_once": {
+     "nccl": 2.642,
+     "cat": 0.01
+    },
+    "gap_before_us_per_microbatch": {
+     "fa3": 53.3,
+     "qknorm_rope": 5.8,
+     "nccl": 27.6,
+     "fused_add_rmsnorm": 5.8,
+     "norm_quant": 65.9,
+     "gate_gemm": 58.8,
+     "router": 8.7,
+     "fa3_prepare": 63.1,
+     "fill_f32": 80.1,
+     "cat": 14.0,
+     "other:void at::native::index_elementwise_kernel<(int)128, (int)4, ": 8.6,
+     "other:void at::native::vectorized_elementwise_kernel<(int)4, at::n": 10.1,
+     "other:void at::native::<unnamed>::multi_tensor_apply_kernel<at::na": 5.8,
+     "copy": 5.1,
+     "other:compute_position_kernel": 14.2
+    }
+   },
+   "stage3": {
+    "layers": 22,
+    "period_ms": 124.21,
+    "kernel_busy_ms": 123.59,
+    "same_stream_gaps_ms": 0.648,
+    "per_layer_us": {
+     "megamoe": 2767.1,
+     "fa3": 887.6,
+     "qkv_gemm": 492.1,
+     "o_gemm": 429.0,
+     "qknorm_rope": 128.3,
+     "fused_add_rmsnorm": 75.8,
+     "norm_quant": 58.0,
+     "pre_dispatch": 32.5,
+     "gate_gemm": 24.8,
+     "router": 9.6,
+     "fa3_prepare": 4.3,
+     "rmsnorm": 3.1,
+     "other:void at::native::elementwise_kernel<(int)128, (int)4, void a": 2.4,
+     "gather": 1.7,
+     "other:void at::native::reduce_kernel<(int)512, (int)1, at::native:": 1.4,
+     "group_quant": 1.2,
+     "fill_f32": 1.0,
+     "other:void at::native::<unnamed>::cunn_SoftMaxForward<(int)4, floa": 1.0,
+     "copy": 0.8,
+     "other:void at::native::index_elementwise_kernel<(int)128, (int)4, ": 0.6,
+     "other:void at::native::vectorized_elementwise_kernel<(int)4, at::n": 0.5,
+     "other:void at::native::<unnamed>::multi_tensor_apply_kernel<at::na": 0.4,
+     "other:void at_cuda_detail::cub::detail::scan::DeviceScanKernel<at_": 0.4,
+     "other:void at::native::vectorized_elementwise_kernel<(int)2, at::n": 0.2,
+     "other:compute_position_kernel": 0.2,
+     "other:void at_cuda_detail::cub::detail::scan::DeviceScanInitKernel": 0.2,
+     "other:void <unnamed>::elementwise_kernel_with_index<int, at::nativ": 0.1
+    },
+    "per_microbatch_ms_once": {
+     "nccl": 8.486,
+     "lmhead_or_draft_fp8gemm": 3.18,
+     "nvjet_other": 1.643,
+     "fa3_draft": 1.052,
+     "per_token_quant": 0.341,
+     "cat": 0.289,
+     "fp8_copy": 0.242,
+     "act_and_mul": 0.133,
+     "draft_rope": 0.068
+    },
+    "gap_before_us_per_microbatch": {
+     "fa3": 55.4,
+     "o_gemm": 5.2,
+     "nccl": 15.3,
+     "lmhead_or_draft_fp8gemm": 11.1,
+     "nvjet_other": 17.4,
+     "norm_quant": 61.4,
+     "gate_gemm": 58.6,
+     "per_token_quant": 11.0,
+     "cat": 45.6,
+     "fp8_copy": 7.8,
+     "fa3_prepare": 63.3,
+     "other:void at::native::elementwise_kernel<(int)128, (int)4, void a": 5.2,
+     "gather": 16.0,
+     "other:void at::native::reduce_kernel<(int)512, (int)1, at::native:": 7.7,
+     "group_quant": 36.2,
+     "fill_f32": 78.1,
+     "copy": 21.4,
+     "other:void at::native::index_elementwise_kernel<(int)128, (int)4, ": 19.8,
+     "other:void at::native::vectorized_elementwise_kernel<(int)4, at::n": 19.5,
+     "other:void at::native::<unnamed>::multi_tensor_apply_kernel<at::na": 11.5,
+     "other:void at_cuda_detail::cub::detail::scan::DeviceScanKernel<at_": 11.7,
+     "other:void at::native::vectorized_elementwise_kernel<(int)2, at::n": 7.0,
+     "other:compute_position_kernel": 32.3,
+     "other:void at_cuda_detail::cub::detail::scan::DeviceScanInitKernel": 9.9,
+     "other:void <unnamed>::elementwise_kernel_with_index<int, at::nativ": 5.8
+    }
+   }
+  },
+  "changed_since": {
+   "fa3": "varlen N192 + direct-O row (n192-direct-o-varlen) selected in 40883389891: one launch for both requests; expected about 2 x 439 us instead of 893 us (no profile of the new row yet)",
+   "moe_input": "SGLANG_PREFILL_MOE_INPUT=fused selected in 40883389891: post_norm_moe_input replaces fused_add_rmsnorm + zeros + pre_dispatch; in-job isolated per-layer path 123.7 -> 104.1 us on the Decode GPUs",
+   "nccl": "copy-engine proxy transport selected in 40883389891; the NCCL SendRecv time above is gone"
+  },
+  "floors_at_1_5_GHz_us": {
+   "qkv_gemm": {
+    "useful_flop": 372,
+    "tile_padded_18_waves": 393
+   },
+   "o_gemm": {
+    "useful_flop": 331,
+    "tile_padded_8_waves": 349
+   },
+   "fa3": {
+    "tensor_or_mufu": 340,
+    "practical": 800
+   },
+   "qknorm_rope_bytes_229MB_at_3_8TBps": 60,
+   "post_norm_moe_input_bytes": 72,
+   "norm_quant_bytes": 57,
+   "gate_gemm_bytes": 16
+  }
+ },
+ "ranking_us_per_layer_above_floor": [
+  {
+   "item": "qknorm_rope_prefill_fast",
+   "measured": 129.4,
+   "floor": 60,
+   "removable_work": "instructions: issue-bound (69 M warp instructions per call = 87 us at 4 IPC x 132 SM x 1.5 GHz; 1.8 TB/s)",
+   "status": "implemented (fp32)"
+  },
+  {
+   "item": "QKV+O GEMM mainloop",
+   "measured": 927,
+   "floor": 742,
+   "removable": "tensor idle while both math warpgroups promote at once (DeepGEMM 81-83% of peak); M tail block (2.55% of tile FLOPs) and QKV wave tail (17.45 of 18)",
+   "status": "implemented as a selection candidate (schedule)"
+  },
+  {
+   "item": "FA3",
+   "measured": 893,
+   "floor": 800,
+   "removable": "other owner for the kernel; prepare_varlen per layer (4.0 us + 2.6 us gap) could run once per microbatch",
+   "status": "not implemented"
+  },
+  {
+   "item": "gate GEMM nvjet 64x128 (126 CTA)",
+   "measured": 24.7,
+   "floor": 16,
+   "status": "fused-gate lost in 40883389891 (106.3 vs 104.1 us); not repeated"
+  },
+  {
+   "item": "same-stream launch gaps",
+   "measured_per_microbatch_ms": 0.45,
+   "factor": "0.36-0.6",
+   "status": "not implemented"
+  },
+  {
+   "item": "norm_quant, post-attention norm",
+   "status": "at byte floor (3.8-4.1 TB/s)"
+  },
+  {
+   "item": "stage 3 LM head + EAGLE draft (about 8 ms per microbatch)",
+   "status": "not binding: stage 3 compute 115.3 ms vs 118.3-120.2 ms on the 24-layer stages"
+  }
+ ],
+ "qknorm_fp32": {
+  "change": "qknorm_rope_prefill_fp32_kernel: the fast kernel's CTA (32 tokens x 1 head, 256 threads, 8 lanes per head row), loads and stores; FP32 RMSNorm with one in-lane sum (two chains) and three shuffles, NeoX RoPE in FP32 with the RMS scale applied once, no BF16 rounding after RMSNorm or after RoPE, hardware cvt.rn.satfinite.e4m3x2 unless a lane holds |x| > 464 or NaN (then the existing exact NOSAT repair); launch_bounds(256, 5)",
+  "sass_cuda_13_4_sm90a": {
+   "control_fast_kernel": {
+    "registers": 57,
+    "spills": 0,
+    "static_instructions": [
+     763,
+     762
+    ],
+    "ctas_per_sm": 4
+   },
+   "candidate_fp32_kernel": {
+    "registers": 48,
+    "spills": 0,
+    "static_instructions": [
+     463,
+     461
+    ],
+    "ctas_per_sm": 5
+   },
+   "executed_per_lane_estimate": {
+    "control": {
+     "q": 486,
+     "k": 542,
+     "v": 345,
+     "weighted_72_heads": 481
+    },
+    "candidate": {
+     "q": 258,
+     "k": 316,
+     "v": 175,
+     "weighted_72_heads": 257
+    }
+   },
+   "control_q_k_path_breakdown": {
+    "bf16_round_points_F2F_plus_unpack": 64,
+    "nosat_repair_per_pair": 17,
+    "shuffle_tree": 12
+   },
+   "untouched_kernels": "every other function of the rope JIT module (fast prefill x4, decode x2, generic x2) compiles to identical instructions; only assert __LINE__ immediates and c[0x4] string offsets move"
+  },
+  "expected": {
+   "issue_bound_at_measured_67pct_issue": 69.6,
+   "byte_floor": 60,
+   "candidate_us": [
+    65,
+    80
+   ],
+   "saving_us_per_call": [
+    50,
+    65
+   ],
+   "factor": "instruction removal, ~1.0",
+   "per_24_layer_stage_ms": [
+    1.2,
+    1.56
+   ]
+  },
+  "precision": "Not coarser: removes the two intermediate BF16 roundings (an unfused-reference artifact). CPU emulation, 200k rows x 128, weights 0.3-3, random angles: FP8 codes equal to the FP64 result rounded once on 99.99994% (control 95.70%), max 1 step (control 10 steps near zero), relative L2 to FP64 7.2e-5 (control 1.6e-2). V and every NaN/overflow keep control's NOSAT semantics bit for bit.",
+  "why_not_the_rejected_layouts": "head4, wide and paired rounding kept the instruction count (paired: 763 -> 755 static, 1%); this removes 47% of executed instructions with the same CTA mapping. The QKV-epilogue fusion lost because the same exact arithmetic ran serialized in a 1-CTA/SM GEMM."
+ },
+ "dense_schedule": {
+  "change": "deep-gemm overlay patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch (PP4 config only; not staged into the image build context, not a kernel-bench candidate), active only for Normal GEMMs with N compiled and K at run time (compiled_dims \"n\") at BLOCK_M 256 with two math warpgroups; SGLANG_PREFILL_DENSE_GEMM=schedule makes prefill_fp8.linear pass \"n\" for QKV/O. (1) WG1 waits on named barrier 2 before its first WGMMA batch of a tile until WG0 has committed its own, so the two warpgroups' batches run one after the other and each promotes while the other's batch runs; (2) 64-row waves wholly past shape_m issue no WGMMA and no promotion.",
+  "hypothesis": "DeepGEMM's 1D2D promotes after warpgroup_wait<0>; leaving the shared full barrier together, the two warpgroups' batches interleave, finish together and both promote (64 FFMA + scales per lane) while the tensor pipes idle: ~100 of every ~512 cycles, consistent with the 81-83% of peak measured for QKV/O. Not verified on GPU.",
+  "sass_cuda_13_4_sm90a": {
+   "serving_control_nk_bm256_qkv_o": "identical to stock (2353/2309 instructions, 168 registers, 0 spill)",
+   "default_empty_compiled_dims": "identical (3215)",
+   "decode_tiles_bm128_nk_and_n": "identical",
+   "masked_bm64": "identical",
+   "candidate_n_qkv": {
+    "stock_n": {
+     "instructions": 2970,
+     "spill_bytes": 112
+    },
+    "candidate": {
+     "instructions": 3112,
+     "spill_bytes": 8,
+     "spill_location": "tile prologue/epilogue, none between the first and last GMMA"
+    },
+    "named_barriers": "bar 0xa (id 2): one BAR.SYNC (WG1) and one BAR.ARV (WG0) per tile"
+   },
+   "candidate_n_o": {
+    "stock_n": {
+     "instructions": 2927,
+     "spill_bytes": 112
+    },
+    "candidate": {
+     "instructions": 3055,
+     "spill_bytes": 24
+    }
+   }
+  },
+  "expected": {
+   "stagger_if_bubble_exists_raw_us_per_layer": [
+    45,
+    93
+   ],
+   "factor_idle_removal": "0.36-0.6",
+   "tail_skip_energy_us_per_layer": [
+    12,
+    23
+   ],
+   "per_24_layer_stage_ms": [
+    0.0,
+    1.9
+   ],
+   "note": "0 if the hypothesis is wrong; the selection margin max(3 us, 2%) of ~930 us = 18.6 us/layer then keeps control"
+  },
+  "exactness": "Every stored element runs the same WGMMA and promotion sequence; the gate requires bit equality with compiled_dims \"nk\" at 7988/7989/3994/2049 rows."
+ },
+ "in_job": {
+  "script": "scripts/select-firmus-prefill-attention.py",
+  "where": "Decode-GPU background group of the PP4 branch, after the MoE input selection",
+  "timeout_s": 240,
+  "expected_s": [
+   60,
+   90
+  ],
+  "serial_cost": "0 while the Decode-GPU group (MoE input ~25 s + this + Decode dense ~1-1.5 min + copy engine ~20 s) stays shorter than the Prefill-GPU MegaMoE + FA3 selections; otherwise at most ~1 min",
+  "expected_breakdown": "torchrun and imports ~15 s, rope JIT module ~25 s (CPU nvcc 13.4: 25.7 s), four DeepGEMM 1D2D JIT kernels ~20 s (4.9 s each here), checks and 2 x 12 rounds of 24-layer graphs < 10 s"
+ },
+ "cpu_checks": {
+  "overlay_chain": "git apply --check of all 28 SGLang and 11 DeepGEMM overlays in firmus-prefill-pp4.json order on the image tree (DeepGEMM header reproduced from patches/deep-gemm/series: ff7a58cc...)",
+  "pp4_source_check": "scripts/check-firmus-pp4-source.py passes on the patched tree",
+  "full_rope_module": "rope.cuh with tvm-ffi headers and the JIT flags (-std=c++20 -O3 --expt-relaxed-constexpr -DSGL_CUDA_ARCH=900) compiles host and device code",
+  "qknorm_gate_with_torch_stand_ins": "check_qknorm with CPU torch stand-ins (BF16-rounding control, FP32 candidate, NOSAT E4M3) at 2049/int64 and 3994/int32: the FP32 stand-in passes (Q/K exact 99.9999%, max 1 step, relative L2 8e-5 vs control 1.6e-2); a writer that saturates instead of NOSAT fails (V bitwise and NaN pattern)."
+ }
+}
