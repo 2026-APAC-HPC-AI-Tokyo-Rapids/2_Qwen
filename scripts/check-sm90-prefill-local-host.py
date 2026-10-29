@@ -3,7 +3,9 @@
 Also covers the opt-in four-stage Prefill switch (DG_SM90_PREFILL_4STAGE) on
 EP1 and EP4: only the stage count and shared memory size may change, and only
 for the two-warpgroup Prefill geometry. Its tail split (DG_SM90_PREFILL_TAIL_SPLIT)
-may only append the trailing kPrefillTailSplit template argument to that kernel.
+may only append the trailing kPrefillTailSplit template argument to that kernel,
+and its direct FC2 stores (DG_SM90_PREFILL_DIRECT_FC2) only the trailing
+kPrefillTailSplit=false, kPrefillDirectFC2=true pair.
 
 Reuse the native-source extractor from the EP4 contract audit. No GPU API is
 executed. The original source checkout is read-only; all patches use --check.
@@ -48,12 +50,13 @@ int main() {
         if(ranks==1 && experts!=128) continue;
         for(int tokens : {0,16,256,1023,1024,4001,4096,8002,8192}) {
             if(ranks==4 && tokens>4096) continue;
-            for(int local : {0,1}) for(int stage4 : {0,1,2}) {
+            for(int local : {0,1}) for(int stage4 : {0,1,2,3}) {
                 prefill_env=1; independent_env=local+2*stage4;
                 setenv("DG_SM90_PREFILL_2WG","1",1);
                 setenv("DG_SM90_PREFILL_LOCAL_EP1",local?"1":"0",1);
                 setenv("DG_SM90_PREFILL_4STAGE",stage4?"1":"0",1);
                 setenv("DG_SM90_PREFILL_TAIL_SPLIT",stage4==2?"1":"0",1);
+                setenv("DG_SM90_PREFILL_DIRECT_FC2",stage4==3?"1":"0",1);
                 int cap=ranks==1?8448:4224;
                 int pool=layout::get_num_max_pool_tokens(ranks,cap,8,experts/ranks);
                 int sf=layout::get_num_sf_ring_tokens(pool,layout::kMinCandidateBlockM);
@@ -95,11 +98,13 @@ int main() {
     # The four-stage switch changes only the stage count and shared memory of
     # the two-warpgroup Prefill geometry (18 KiB per-warp CD, four 50,192-byte
     # stages); every other configuration, field and descriptor is unchanged.
-    for before, after, split in zip(rows[::3], rows[1::3], rows[2::3], strict=True):
-        assert (before["stage4"], after["stage4"], split["stage4"]) == (0, 1, 2)
+    for before, after, split, direct in zip(rows[::4], rows[1::4], rows[2::4], rows[3::4], strict=True):
+        assert (before["stage4"], after["stage4"], split["stage4"], direct["stage4"]) == (0, 1, 2, 3)
         assert split["host"] == after["host"] and split["descriptor_fields"] == after["descriptor_fields"]
+        assert direct["host"] == after["host"] and direct["descriptor_fields"] == after["descriptor_fields"]
         two_wg = before["host"]["math_threads"] == 256 and before["host"]["block_m"] == 128
         assert split["jit_template_args"] == after["jit_template_args"] + (",true" if two_wg else "")
+        assert direct["jit_template_args"] == after["jit_template_args"] + (",false,true" if two_wg else "")
         assert before["descriptor_fields"] == after["descriptor_fields"]
         if before["host"]["math_threads"] == 256 and before["host"]["block_m"] == 128:
             assert before["host"]["stages"] == 3 and after["host"]["stages"] == 4
@@ -115,7 +120,7 @@ int main() {
     target = overlay / m.KERNEL
     target.parent.mkdir(parents=True)
     shutil.copy2(args.control_header, target)
-    for patch in ("patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch"):
+    for patch in ("patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch", "patches/deep-gemm-bench/prefill-direct-fc2/sm90-prefill-direct-fc2.patch"):
         run(["git", "apply", "--check", str(ROOT / patch)], cwd=overlay)
         run(["git", "apply", str(ROOT / patch)], cwd=overlay)
     names = list(m.KERNEL_NAMES)
@@ -132,11 +137,12 @@ int main() {
         values = list(map(int, contract.split()))
         assert values[0] == row["host"]["smem"], (row, values)
         assert values[8] == (18432 if row["stage4"] else 65536), (row, values)
-        assert row["jit_template_args"].endswith(",true") == (row["stage4"] == 2), row
+        # 25 host arguments, plus kPrefillTailSplit (split) or kPrefillTailSplit=false, kPrefillDirectFC2 (direct).
+        assert row["jit_template_args"].split(",")[25:] == {0: [], 1: [], 2: ["true"], 3: ["false", "true"]}[row["stage4"]], row
         row["kernel_layout"] = values
     if args.nvcc:
         for row in selected:
-            name = f"ep{row['ranks']}-stages{row['host']['stages']}" + ("-split" if row["stage4"] == 2 else "")
+            name = f"ep{row['ranks']}-stages{row['host']['stages']}" + {2: "-split", 3: "-direct"}.get(row["stage4"], "")
             cu = out / f"{name}.cu"
             cu.write_text('#include <deep_gemm/impls/sm90_fp8_mega_moe.cuh>\nextern "C" void* instantiate() { return reinterpret_cast<void*>(&deep_gemm::sm90_fp8_mega_moe_impl<' + row["jit_template_args"] + '>); }\n')
             includes = [overlay / "deep_gemm/include", args.source_repo / "deep_gemm/include", args.source_repo / "third-party/cutlass/include"]
@@ -144,7 +150,7 @@ int main() {
                 run([str(args.nvcc), "--cubin", "--std=c++20", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-O3", "--ptxas-options=-v,-warn-spills", "-gencode", "arch=compute_90a,code=sm_90a", *["-I" + str(p) for p in includes], str(cu), "-o", str(out / f"{name}.cubin")], stdout=log, stderr=subprocess.STDOUT)
     result = {"source_commit": m.REVISION, "control_header_sha256": hashlib.sha256(args.control_header.read_bytes()).hexdigest(), "candidate_header_sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "gpu_executed": False, "native_cuda_compiled": bool(args.nvcc), "cases": rows, "selected_kernels": selected}
     (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
-    print(f"PASS: {len(rows)} native host configurations; EP4 unchanged; EP1 descriptor/layout agreement; four-stage switch changes only the 2WG Prefill stages and the tail split only its template flag; CUDA compilation={bool(args.nvcc)}")
+    print(f"PASS: {len(rows)} native host configurations; EP4 unchanged; EP1 descriptor/layout agreement; four-stage switch changes only the 2WG Prefill stages and the tail split and direct FC2 stores only their template flags; CUDA compilation={bool(args.nvcc)}")
 
 
 if __name__ == "__main__":

@@ -426,6 +426,12 @@
     "removed_work": "Fourth 48 KiB A/B stage in the space of the 64 KiB BF16 FC2 tile; FC2 BF16 staging through the existing per-warp 16 x 144-byte slices removes the per-element swizzle XOR, per-pair branches and per-row shuffles. Same BF16 values, destinations, combine order and synchronisation. Tail split: D5a half tiles (<= 64 rows, 13.4 % of EP1 tiles) run on both warpgroups as m64n128 halves instead of one warpgroup beside an idle one.",
     "past_rejections_distinct": "Not the independent WG (stages 3->2 and duplicated B, 40069880580), ping-pong, FC2 interleave, bulk scatter (40095847738), scatter offload, L2 prefetch, FP32 precombine (39355994503) or combine direct store; Decode stage sweeps are untouched (Decode SASS identical)."
   },
+  "megamoe_prefill_direct_fc2_cpu_candidate": {
+    "evidence": "megamoe-prefill-direct-fc2-cpu-validation-20261030.json",
+    "status": "CPU_validated_not_GPU_measured; four-stage-direct selected in job",
+    "removed_work": "FC2 epilogue shared-memory staging: 64 KiB STS + 64 KiB LDS per FC2 tile (9 MB per SM per PP4 layer) and its serial step chain; partial rows stored straight from the accumulators in a permuted column order that the combine restores. Same BF16 values, combine order and y bytes.",
+    "past_rejections_distinct": "Not the bulk scatter (TMA store from the same staging), FC2 interleave, pre-reduce or combine direct store; no stage, tile or issue-order change."
+  },
   "fa3_prefill_direct_o_cpu_candidate": {
     "evidence": "fa3-prefill-direct-o-cpu-validation-20261029.json",
     "status": "CPU_admitted_not_GPU_measured_or_activated",

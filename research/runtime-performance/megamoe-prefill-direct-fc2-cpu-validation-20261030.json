@@ -1,0 +1,60 @@
+{
+  "schema": "megamoe-prefill-epilogue-cpu-validation/v1",
+  "date": "2026-10-30",
+  "status": "CPU_validated_not_GPU_measured; selected in job against control, four-stage and four-stage-split",
+  "target": {
+    "kernel": "deep_gemm::sm90_fp8_mega_moe_impl, Prefill 2WG four-stage tile (BLOCK 128x256x128, two m64n256 math WG, 168 registers)",
+    "call": "PP4/EP1 microbatch: 8064 tokens x top-8 = 64,512 rows, hidden 4096, intermediate 1536, 128 experts on one GPU",
+    "measured": "nsys 40825417205 prefill-0: one persistent kernel per layer (dispatch, FC1, SwiGLU/FP8, FC2, combine), median 2789 us (3 stages); selection 40883389891: four-stage -2.1..2.3 % in total"
+  },
+  "time_model": {
+    "evidence_for_shared_memory_bound_k_loop": [
+      "2WG K block 1215 clk vs 4WG 1330 clk (EP4 timelines): 128 vs 144 KiB of shared-memory traffic per K block (TMA A 16 + B 32 KiB; WGMMA operand reads A 16 KiB + B 32 KiB per warpgroup), 9.5 and 9.2 clk/KiB",
+      "4WG -> 2WG shortened the K loop 8 % with identical TMA bytes (only operand reads changed)",
+      "alternating WGMMA issue (da53188, 39429313746) cut the MMA wait 68 -> 16 us/CTA but lengthened the K loop 5 %",
+      "<=64-row tails: D5a skip (88 KiB per K block) and tail split (96 KiB) measured within 5 us over 24 hot-routing cases (40883389891); a Tensor-bound model predicts the split 10 % faster per tail"
+    ],
+    "conclusion": "The mainloop moves ~108-111 B/clk of shared-memory traffic (85 % of 128 B/clk); no feasible tile with 168 registers moves fewer bytes per MAC, and TMA multicast does not reduce shared-memory writes. Epilogues cost what the four-stage prefetch window (192 KiB ~ 1750 clk) does not cover plus their own shared-memory traffic.",
+    "budget_us_per_layer_at_cap": {
+      "mainloop_useful_rows": "1900-2000",
+      "padding_and_half_tiles": "~190 (pad64 6.5-7.4 % of rows; half tiles cost 0.69 of a tile)",
+      "combine_bf16_partials": "140-160 (528 MB read + 66 MB write, HBM-bound)",
+      "fc2_epilogue_staging": "~55 (64 KiB STS + 64 KiB LDS per FC2 tile, 70 tiles per SM)",
+      "fc1_epilogue_exposed": "25-40 (128 MUFU per thread = 2048 clk per tile vs 1750 clk prefetch)",
+      "dispatch_pool_copy": "25-50 (8 KiB shared-memory traffic per row, 264 MB HBM write)",
+      "start_transitions_syncs": "~40"
+    }
+  },
+  "routing": {
+    "source": "kernels/probes/megamoe-local-ep1-routing.npz (6 layer samples x 2 microbatches)",
+    "pool_blocks": [567, 580],
+    "hot_expert_rows": [7922, 7975],
+    "tails_le_64": [69, 86],
+    "pad128": [0.134, 0.160],
+    "pad64": [0.065, 0.074],
+    "pad32": [0.030, 0.035],
+    "pad16": [0.013, 0.015]
+  },
+  "direct_fc2": {
+    "switch": "DG_SM90_PREFILL_DIRECT_FC2=1 (host; with DG_SM90_PREFILL_4STAGE=1, not with the tail split) -> trailing template arguments kPrefillTailSplit=false, kPrefillDirectFC2=true",
+    "host_patch": {"path": "patches/deep-gemm-host/sm90-prefill-direct-fc2.patch", "sha256": "24a102d74766f547140478606ae4de213a5e903ecc5c96d78d285290e063a909"},
+    "header_overlay": {"path": "patches/deep-gemm-bench/prefill-direct-fc2/sm90-prefill-direct-fc2.patch", "sha256": "a236b8387351e9893c4802118ccd9f6b38df7b0fde425ec472092db13946ae0e"},
+    "image_header_sha256": "ff7a58cca00aa42a90386d12b0437b5d8caf35eb0ad082a8a1a0b4b74001a2a1",
+    "pp4_chain_header_sha256": {"control": "0c2bcc4420f22f7014f0b3e5ea6d2cc9d2f99c8d1c9c5a4ebccdee2df3943881", "candidate": "82fc051c7a58686b184fa52b13e3a169534df54c76a9379cee3d2edee86c1a81"},
+    "design": "Every 256-column FC2 block of a partial row is stored permuted: bytes 64 j + 16 c hold n8 chunks 4j..4j+3 of lane-quad position c (natural columns 32 j + 8 q + 2 c + {0,1}). Each thread writes its rows r_0 and r_1 with 8 STG.128 each straight from the accumulators. The paired combine reads the same uint4s, sums the top-k partials element by element in slot order as before and writes the y staging chunk in natural order (4 x STS.32 per uint4).",
+    "exactness": "bit-identical by construction (same BF16 values, same per-element FMA order, same y bytes); the selection requires bitwise equality with the control",
+    "removed_work_per_fc2_tile": "64 KiB STS + 64 KiB LDS of shared-memory traffic, 8 warp syncs and the 4-step STS->LDS->STG dependency chain; straight-line span per thread 223 -> 126 instructions (STS 64 -> 0, LDS 16 -> 0, STG.128 16 = 16, F2FP 64 = 64)",
+    "sass_cuda_13_4_sm_90a": {
+      "ep1_four_stage_direct": {"registers": 168, "spill_bytes": [0, 0], "instructions": [7152, 7088], "fc2_span": [223, 126], "mainloop_issue_blocks": "FC1 42 = 42, FC2 47 = 47"},
+      "ep4_128_four_stage_direct": {"registers": 168, "spill_bytes": [0, 0], "instructions": [6704, 6720], "fc2_span": [241, 126], "mainloop_issue_blocks": "FC1 42 -> 44, FC2 48 -> 52 (EP4 not used by PP4)"},
+      "ep4_140_four_stage_direct": {"registers": 168, "spill_bytes": [0, 0], "instructions": [7272, 7248]},
+      "unchanged_instantiations": "SASS byte-identical to the control header for all 21 other instantiations: EP1/EP4-128/EP4-140 three-stage 256 and 512 threads, four-stage, four-stage split, and all Decode geometries (EP1 m64 s8 with/without SwapAB, EP4 32/16-expert waves s8, independent-WG s6, EP4-140 s8)",
+      "tail_split_combination": "not offered: split + direct compiled with 16/44 B (EP1) and 248/312 B (EP4) of spills, so the header asserts it away and the host never emits it"
+    },
+    "host_check": "scripts/check-sm90-prefill-local-host.py: 184 native host configurations; the switch only appends ',false,true' to the four-stage 2WG Prefill template (stages, smem, descriptors unchanged); selected EP1/EP4 kernels compile at 168 registers, 0 spill. scripts/check-sm90-independent-wg-host.py: 480 configurations, 17 instantiations PASS with the extended host series.",
+    "expected": "Work removal at kappa ~1: 9 MB of shared-memory traffic per SM per layer (~81 k clk) and ~1000 clk of serial epilogue latency per FC2 tile -> 40-55 us per layer (1.5-2.0 % of 2.73 ms), 1.0-1.3 ms per 24-layer PP4 stage period. Combine: +12 k shared-memory wavefronts per SM (4-way conflicted STS.32), hidden behind its HBM reads.",
+    "past_rejections_distinct": "Not D1 bulk scatter (TMA store from the same staging, 40095847738), FC2 interleave, pre-reduce (39355994503) or combine direct store: none of them removed the staging traffic. Does not change stages, tiles, issue order or the combine payload."
+  },
+  "in_job_time": "One more JIT instantiation and 24 more timed calls per GPU in select-firmus-prefill-megamoe.py (about +3-5 s of a ~30 s step, inside the existing 240 s timeout, in parallel with the other PP4 selections).",
+  "image_rebuild": "Required: the host patch is in patches/deep-gemm-host/series; scripts/check-firmus-image.sh rejects images whose host build record lacks it."
+}

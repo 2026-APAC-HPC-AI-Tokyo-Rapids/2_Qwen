@@ -14,7 +14,7 @@ def selector():
     return runpy.run_path(str(ROOT / "scripts/select-firmus-prefill-megamoe.py"))
 
 
-def write_ranks(selector, directory, workers=3, control=2800.0, four=2740.0, split=2700.0):
+def write_ranks(selector, directory, workers=3, control=2800.0, four=2740.0, split=2700.0, direct=2720.0):
     for worker in range(workers):
         path = directory / f"prefill-{worker}"
         path.mkdir(parents=True)
@@ -23,7 +23,7 @@ def write_ranks(selector, directory, workers=3, control=2800.0, four=2740.0, spl
             for kind in selector["ROUTINGS"]:
                 base = {"finite": True, "relative_l2": 0.012, "max_scaled_error": 0.02, "reference_passed": True}
                 exact = {"bitwise_equal": True, "relative_l2_vs_control": 0.0, "max_scaled_error_vs_control": 0.0}
-                routings[kind] = {"control": {**base, "us": [control] * selector["ROUNDS"]}, "four-stage": {**base, **exact, "us": [four] * selector["ROUNDS"]}, "four-stage-split": {**base, **exact, "us": [split] * selector["ROUNDS"]}}
+                routings[kind] = {"control": {**base, "us": [control] * selector["ROUNDS"]}, "four-stage": {**base, **exact, "us": [four] * selector["ROUNDS"]}, "four-stage-split": {**base, **exact, "us": [split] * selector["ROUNDS"]}, "four-stage-direct": {**base, **exact, "us": [direct] * selector["ROUNDS"]}}
             (path / f"rank-{rank}.json").write_text(json.dumps({"rank": rank, "ranks_per_group": 1, "tokens": 8064, "routings": routings}))
 
 
@@ -50,10 +50,17 @@ def test_adopts_the_fastest_variant_that_passed_everywhere(selector, tmp_path):
 
 
 def test_slower_split_leaves_four_stages(selector, tmp_path):
-    write_ranks(selector, tmp_path / "results", split=2760.0)
+    write_ranks(selector, tmp_path / "results", split=2760.0, direct=2750.0)
     result, env = aggregate(selector, tmp_path)
     assert result["winner"] == "four-stage" and result["choices"]["four-stage-split"]["eligible"]
     assert env.endswith("DG_SM90_PREFILL_4STAGE=1\n")
+
+
+def test_fastest_direct_fc2_writes_its_switch(selector, tmp_path):
+    write_ranks(selector, tmp_path / "results", direct=2690.0)
+    result, env = aggregate(selector, tmp_path)
+    assert result["winner"] == "four-stage-direct"
+    assert env == "SGLANG_PREFILL_FA3_VERIFY=n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_DIRECT_FC2=1\n"
 
 
 @pytest.mark.parametrize("variant,change,winner", [
@@ -61,10 +68,12 @@ def test_slower_split_leaves_four_stages(selector, tmp_path):
     ("four-stage-split", {"us": [2950.0] * 12}, "four-stage-split"),
     ("four-stage-split", {"us": [2790.0] * 12}, "four-stage-split"),
     ("four-stage-split", {"bitwise_equal": False, "relative_l2_vs_control": 0.0004, "max_scaled_error_vs_control": 0.004}, "four-stage-split"),
-    ("four-stage-split", {"bitwise_equal": False, "relative_l2_vs_control": 0.05, "max_scaled_error_vs_control": 0.3}, "four-stage"),
-    ("four-stage-split", {"reference_passed": False}, "four-stage"),
+    ("four-stage-split", {"bitwise_equal": False, "relative_l2_vs_control": 0.05, "max_scaled_error_vs_control": 0.3}, "four-stage-direct"),
+    ("four-stage-split", {"reference_passed": False}, "four-stage-direct"),
     ("four-stage", {"bitwise_equal": False, "relative_l2_vs_control": 0.0004, "max_scaled_error_vs_control": 0.004}, "four-stage-split"),
     ("four-stage", {"us": [2700.0] * 11}, "four-stage-split"),
+    # Direct FC2 stores must be bit-exact: any difference is a layout defect, not FP order.
+    ("four-stage-direct", {"bitwise_equal": False, "relative_l2_vs_control": 0.0004, "max_scaled_error_vs_control": 0.004}, "four-stage-split"),
 ])
 def test_one_failing_gpu_rejects_only_that_variant(selector, tmp_path, variant, change, winner):
     write_ranks(selector, tmp_path / "results")
@@ -75,7 +84,7 @@ def test_one_failing_gpu_rejects_only_that_variant(selector, tmp_path, variant, 
 
 
 def test_no_eligible_variant_keeps_three_stages(selector, tmp_path):
-    write_ranks(selector, tmp_path / "results", four=2790.0, split=2795.0)
+    write_ranks(selector, tmp_path / "results", four=2790.0, split=2795.0, direct=2792.0)
     result, env = aggregate(selector, tmp_path)
     assert result["winner"] == "control" and result["env"] == {}
     assert env == "SGLANG_PREFILL_FA3_VERIFY=n192\n"
@@ -97,11 +106,11 @@ def test_control_reference_failure_stops_the_job(selector, tmp_path):
 
 def test_margin_is_the_larger_of_absolute_and_relative(selector, tmp_path):
     # 0.5% of 2800 us is 14 us: a 10 us gain is noise, a 15 us gain is adopted.
-    write_ranks(selector, tmp_path / "a", four=2790.0, split=2790.0)
+    write_ranks(selector, tmp_path / "a", four=2790.0, split=2790.0, direct=2790.0)
     out = tmp_path / "a.json"
     selector["aggregate"](tmp_path / "a", out, tmp_path / "a.env", 3)
     assert json.loads(out.read_text())["winner"] == "control"
-    write_ranks(selector, tmp_path / "b", four=2785.0, split=2790.0)
+    write_ranks(selector, tmp_path / "b", four=2785.0, split=2790.0, direct=2790.0)
     selector["aggregate"](tmp_path / "b", out, tmp_path / "b.env", 3)
     assert json.loads(out.read_text())["winner"] == "four-stage"
 
@@ -136,9 +145,9 @@ def test_host_and_header_agree_on_the_four_stage_layout():
     # 1024 expert counters + 8192 dispatch buffers + 18 KiB CD + 144 barrier bytes + four 50,192-byte stages.
     assert 1024 + 8192 + 18432 + 144 + 4 * 50192 <= 232448 < 1024 + 8192 + 65536 + 144 + 4 * 50192
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())["deep_gemm_overlay_patches"]
-    assert config[-3:] == ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch"]
+    assert config[-4:] == ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch", "patches/deep-gemm-bench/prefill-direct-fc2/sm90-prefill-direct-fc2.patch"]
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
-    assert not {"patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch"} & set(main)
+    assert not {"patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch", "patches/deep-gemm-bench/prefill-direct-fc2/sm90-prefill-direct-fc2.patch"} & set(main)
 
 
 def test_tail_split_is_only_a_trailing_template_flag_of_the_four_stage_tile():
@@ -153,3 +162,25 @@ def test_tail_split_is_only_a_trailing_template_flag_of_the_four_stage_tile():
     assert "DG_STATIC_ASSERT(not kPrefillTailSplit or kPrefillWarpCD" in header
     # Both warpgroups publish a split tail's FC1 rows: 12 N blocks x 2 warpgroups x 4 warps.
     assert "expected = kNumL1BlockNs * kNumEpilogueWarpgroups * kL1OutputArrivalParts;" in header
+
+
+def test_direct_fc2_is_a_trailing_template_flag_and_its_permutation_round_trips():
+    host = (ROOT / "patches/deep-gemm-host/sm90-prefill-direct-fc2.patch").read_text()
+    header = (ROOT / "patches/deep-gemm-bench/prefill-direct-fc2/sm90-prefill-direct-fc2.patch").read_text()
+    series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
+    assert series[-1] == "sm90-prefill-direct-fc2.patch" and series.index("sm90-prefill-tail-split.patch") == len(series) - 2
+    # ",false,true" (kPrefillTailSplit, kPrefillDirectFC2) only when set and never with the split.
+    assert 'args.prefill_direct_fc2 ? ",\\n        false,\\n        true" : (args.prefill_tail_split ? ",\\n        true" : "")' in host
+    assert 'config.num_stages == 4 and not prefill_tail_split and get_env<int>("DG_SM90_PREFILL_DIRECT_FC2", 0) != 0' in host
+    assert "+    bool kPrefillDirectFC2 = false,\n" in header
+    assert "DG_STATIC_ASSERT(not kPrefillDirectFC2 or (kPrefillWarpCD and not kPrefillTailSplit)" in header
+    assert "DG_STATIC_ASSERT(not kPrefillDirectFC2 or kPairedCombine" in header
+    # Writer: lane quad position c stores n8 chunks 4j..4j+3 (columns 8i + 2c, +1) at byte 64 j + 16 c + 4 q.
+    assert "n_idx * sizeof(nv_bfloat16) + col_idx * sizeof(uint4)), dst_rank_idx);" in header and "dst[j * 4] = packed;" in header
+    written = {64 * j + 16 * c + 4 * q: 8 * (4 * j + q) + 2 * c for c in range(4) for j in range(8) for q in range(4)}
+    assert sorted(written) == list(range(0, 512, 4))
+    # Combine: uint4 lane L of a 512-byte block, word q, goes to natural byte 64 (L / 4) + 16 q + 4 (L % 4).
+    assert "(lane_idx / 4) * 16 + lane_idx % 4;" in header and "ptx::st_shared(natural + 12, casted.w);" in header
+    for lane in range(32):
+        for q in range(4):
+            assert 2 * written[16 * lane + 4 * q] == 64 * (lane // 4) + 16 * q + 4 * (lane % 4)

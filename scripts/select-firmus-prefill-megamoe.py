@@ -4,13 +4,15 @@ Run under torchrun on one Prefill worker's four GPUs, with the serving image,
 host extension and DeepGEMM header overlays. --ranks 1 makes every GPU its own
 one-rank EP group (PP4/EP1 Prefill, DG_SM90_PREFILL_LOCAL_EP1); --ranks 4 runs
 the four GPUs as one EP4 group. Variants: control (three stages), four-stage
-(DG_SM90_PREFILL_4STAGE=1: fourth A/B stage, per-warp FC2 staging) and
+(DG_SM90_PREFILL_4STAGE=1: fourth A/B stage, per-warp FC2 staging),
 four-stage-split (also DG_SM90_PREFILL_TAIL_SPLIT=1: pool blocks with at most
-64 rows on both warpgroups as m64n128 halves). For two routings the control
-must match an FP32 reference on sampled tokens; four-stage must reproduce the
-control bit for bit; four-stage-split must do so or stay within FP-order
-tolerance of the control on every token and pass the reference. All three are
-timed in rotating order. --aggregate adopts the fastest variant that passed on
+64 rows on both warpgroups as m64n128 halves) and four-stage-direct (instead
+DG_SM90_PREFILL_DIRECT_FC2=1: FC2 partials stored straight from the
+accumulators in a permuted column order that the combine restores). For two
+routings the control must match an FP32 reference on sampled tokens;
+four-stage and four-stage-direct must reproduce the control bit for bit;
+four-stage-split must do so or stay within FP-order tolerance of the control
+on every token and pass the reference. All four are timed in rotating order. --aggregate adopts the fastest variant that passed on
 every GPU of every worker and saved at least the summed per-case margin over
 all GPUs and routings; anything missing keeps the control. A control reference
 failure stops the job. Neither per-case nor per-GPU margins are used: in runs
@@ -28,13 +30,15 @@ from pathlib import Path
 
 HIDDEN, INTERMEDIATE, EXPERTS, TOPK = 4096, 1536, 128, 8
 VARIANTS = {
-    "control": {"DG_SM90_PREFILL_4STAGE": "0", "DG_SM90_PREFILL_TAIL_SPLIT": "0"},
-    "four-stage": {"DG_SM90_PREFILL_4STAGE": "1", "DG_SM90_PREFILL_TAIL_SPLIT": "0"},
-    "four-stage-split": {"DG_SM90_PREFILL_4STAGE": "1", "DG_SM90_PREFILL_TAIL_SPLIT": "1"},
+    "control": {"DG_SM90_PREFILL_4STAGE": "0", "DG_SM90_PREFILL_TAIL_SPLIT": "0", "DG_SM90_PREFILL_DIRECT_FC2": "0"},
+    "four-stage": {"DG_SM90_PREFILL_4STAGE": "1", "DG_SM90_PREFILL_TAIL_SPLIT": "0", "DG_SM90_PREFILL_DIRECT_FC2": "0"},
+    "four-stage-split": {"DG_SM90_PREFILL_4STAGE": "1", "DG_SM90_PREFILL_TAIL_SPLIT": "1", "DG_SM90_PREFILL_DIRECT_FC2": "0"},
+    "four-stage-direct": {"DG_SM90_PREFILL_4STAGE": "1", "DG_SM90_PREFILL_TAIL_SPLIT": "0", "DG_SM90_PREFILL_DIRECT_FC2": "1"},
 }
-CANDIDATES = ("four-stage", "four-stage-split")
+CANDIDATES = ("four-stage", "four-stage-split", "four-stage-direct")
 # The split changes the WGMMA width only; anything beyond FP-order noise is a defect.
-INEXACT_ALLOWED = {"four-stage": False, "four-stage-split": True}
+# Direct FC2 stores move the same BF16 partials and keep the combine's order: bit-exact.
+INEXACT_ALLOWED = {"four-stage": False, "four-stage-split": True, "four-stage-direct": False}
 ROUTINGS = ("balanced", "hot")
 ROUNDS = 12
 SAMPLED_TOKENS = 32
