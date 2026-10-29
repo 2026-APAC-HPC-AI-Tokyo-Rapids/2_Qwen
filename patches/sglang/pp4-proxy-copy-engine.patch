@@ -1,0 +1,284 @@
+diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
+index 2360d80..835b838 100644
+--- a/python/sglang/srt/managers/scheduler_pp_mixin.py
++++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
+@@ -76,6 +76,56 @@ class PPBatchMetadata:
+ _QWEN_PP_CONSENSUS_LAG = 2
+ 
+ 
++# Proxy transfers that run on both paths (copy engine and in-stream PyNccl)
++# and are compared before every stage switches to the copy engine.
++_QWEN_PP_CE_VALIDATE = 16
++
++
++@dataclass
++class _QwenPPCopyEngine:
++    """Proxy hidden states over copy-engine peer copies between neighbouring
++    stages (all four stages of a pipeline are GPUs of one NVLink node).
++
++    The receiver owns `slots` buffers of [width, rows, hidden]; the sender
++    copies a microbatch's proxy tensors into the receiver's buffer with
++    cudaMemcpyAsync on a side stream and records an interprocess event there,
++    then sends the metadata over the CPU group as before; the receiver's
++    forward stream waits on that event. No SM runs the transfer, and the
++    sender never waits for the receiver. Slot n % slots is safe to overwrite:
++    a stage launches microbatch n + pp_loop_size only after it applied the
++    result of microbatch n, so the receiver (and every later stage) has
++    finished with that slot and has issued its wait on the slot's event.
++    """
++
++    slots: int
++    width: int
++    rows: int
++    hidden: int
++    dtype: torch.dtype
++    # "validate" (both paths, compared), "copy" or "nccl" (in-stream PyNccl).
++    mode: str = "validate"
++    ok: bool = True
++    launches: int = 0
++    sent: int = 0
++    received: int = 0
++    validated: int = 0
++    # Sender: the next stage's buffers mapped here, a side stream, own events.
++    peer_buffers: Optional[torch.Tensor] = None
++    stream: Optional[torch.cuda.Stream] = None
++    events: Optional[list] = None
++    # Receiver: own buffers, the previous stage's events, mismatch count.
++    buffers: Optional[torch.Tensor] = None
++    peer_events: Optional[list] = None
++    mismatches: Optional[torch.Tensor] = None
++    checked: Optional[torch.Event] = None
++
++    def fits(self, shapes) -> bool:
++        return len(shapes) <= self.width and all(
++            dtype == self.dtype and len(size) == 2 and size[0] <= self.rows and size[1] == self.hidden
++            for dtype, size in shapes
++        )
++
++
+ @dataclass
+ class _QwenPPLaunch:
+     """What a stage keeps from one launched microbatch until its result step."""
+@@ -106,6 +156,7 @@ class _QwenPPLoop:
+     result_group: torch.distributed.ProcessGroup
+     # Last stage only.
+     publisher: Optional["_QwenPPResultPublisher"]
++    ce: Optional[_QwenPPCopyEngine] = None
+ 
+ 
+ class _QwenPPResultPublisher:
+@@ -530,6 +581,7 @@ class SchedulerPPMixin:
+                 else None
+             ),
+         )
++        loop.ce = self._qpp_ce_setup()
+         while True:
+             server_is_idle = True
+             for mb_id in range(size):
+@@ -732,12 +784,12 @@ class SchedulerPPMixin:
+                 pp_proxy_tensors = None
+                 if proxy_metadata is not None:
+                     pp_proxy_tensors = PPProxyTensors(
+-                        self._qpp_recv_proxy(proxy_metadata)
++                        self._qpp_recv_proxy(loop.ce, proxy_metadata)
+                     )
+                 result = self.run_batch(batch, pp_proxy_tensors)
+                 if not self.pp_group.is_last_rank:
+                     loop.works += self._qpp_send_proxy(
+-                        result.pp_hidden_states_proxy_tensors.tensors
++                        loop.ce, result.pp_hidden_states_proxy_tensors.tensors
+                     )
+         # Host copies for the result step, ordered after this forward on the
+         # copy stream: page-table rows for send_kv_chunk on every stage, and on
+@@ -753,6 +805,9 @@ class SchedulerPPMixin:
+                 next_token_ids = _async_d2h(result.next_token_ids)
+             copy_done = self.device_module.Event()
+             copy_done.record()
++        loop.ce.launches += 1
++        if loop.ce.launches == _QWEN_PP_CE_VALIDATE:
++            self._qpp_ce_decide(loop.ce)
+         return _QwenPPLaunch(
+             rids=[req.rid for req in batch.reqs],
+             copy_done=copy_done,
+@@ -772,24 +827,61 @@ class SchedulerPPMixin:
+     # on its GPU; it can only wait for a slower neighbour, when the GPU would
+     # idle anyway. Metadata goes first over the CPU group so the receiver can
+     # post the matching receive.
+-    def _qpp_send_proxy(self: Scheduler, tensors: Dict[str, torch.Tensor]):
++    def _qpp_send_proxy(
++        self: Scheduler, ce: _QwenPPCopyEngine, tensors: Dict[str, torch.Tensor]
++    ):
+         from sglang.srt.distributed.parallel_state import _split_tensor_dict
+ 
+         dst = self.pp_group.rank_in_group + 1
+         metadata_list, tensor_list = _split_tensor_dict(tensors)
++        slot = ce.sent % ce.slots
++        ce.sent += 1
++        # Sender and receiver take the same decision from the same metadata.
++        use_ce = ce.mode != "nccl" and ce.fits(
++            [(tensor.dtype, tuple(tensor.shape)) for tensor in tensor_list]
++        )
++        if use_ce and ce.ok:
++            try:
++                self._qpp_ce_copy(ce, slot, tensor_list)
++            except Exception:
++                if ce.mode != "validate":
++                    raise
++                logger.exception("PP4 copy-engine proxy send failed; validation fails")
++                ce.ok = False
++        # The event record above precedes this metadata, so the receiver's
++        # wait on the slot event always refers to this copy.
+         works = self.pp_group.send_object(metadata_list, dst=dst, async_send=True)
+-        comm = self.pp_group.pynccl_comm
+-        with comm.change_state(enable=True):
+-            for tensor in tensor_list:
+-                assert tensor.is_contiguous()
+-                if tensor.numel() > 0:
+-                    comm.send(tensor, dst)
++        if not use_ce or ce.mode == "validate":
++            comm = self.pp_group.pynccl_comm
++            with comm.change_state(enable=True):
++                for tensor in tensor_list:
++                    assert tensor.is_contiguous()
++                    if tensor.numel() > 0:
++                        comm.send(tensor, dst)
+         return works
+ 
+-    def _qpp_recv_proxy(self: Scheduler, metadata_list) -> Dict[str, torch.Tensor]:
++    def _qpp_recv_proxy(
++        self: Scheduler, ce: _QwenPPCopyEngine, metadata_list
++    ) -> Dict[str, torch.Tensor]:
+         from sglang.srt.distributed.parallel_state import TensorMetadata
+ 
+         src = self.pp_group.rank_in_group - 1
++        slot = ce.received % ce.slots
++        ce.received += 1
++        metas = [value for _, value in metadata_list if isinstance(value, TensorMetadata)]
++        use_ce = ce.mode != "nccl" and ce.fits(
++            [(meta.dtype, tuple(meta.size)) for meta in metas]
++        )
++        if use_ce and ce.mode == "copy":
++            self.forward_stream.wait_event(ce.peer_events[slot])
++            tensors = {}
++            index = 0
++            for key, value in metadata_list:
++                if isinstance(value, TensorMetadata):
++                    value = ce.buffers[slot, index, : value.size[0]]
++                    index += 1
++                tensors[key] = value
++            return tensors
+         comm = self.pp_group.pynccl_comm
+         tensors = {}
+         with comm.change_state(enable=True):
+@@ -799,8 +891,111 @@ class SchedulerPPMixin:
+                     if value.numel() > 0:
+                         comm.recv(value, src)
+                 tensors[key] = value
++        if use_ce and ce.ok:
++            # Validation: the forward uses the PyNccl copy; the slot is only compared.
++            try:
++                self.forward_stream.wait_event(ce.peer_events[slot])
++                received = [value for value in tensors.values() if isinstance(value, torch.Tensor)]
++                for index, value in enumerate(received):
++                    ce.mismatches += (ce.buffers[slot, index, : value.shape[0]] != value).sum()
++                ce.checked.record(self.forward_stream)
++                ce.validated += 1
++            except Exception:
++                logger.exception("PP4 copy-engine proxy receive failed; validation fails")
++                ce.ok = False
+         return tensors
+ 
++    # Copy-engine setup and the device operations of the transport.
++    def _qpp_ce_setup(self: Scheduler) -> _QwenPPCopyEngine:
++        """Allocate receive buffers, create send events and exchange their IPC
++        handles with the neighbours. Any failure only marks this stage not ok;
++        the exchange still completes, and validation then keeps PyNccl."""
++        from torch.multiprocessing.reductions import reduce_tensor
++
++        cfg = self.model_config
++        ce = _QwenPPCopyEngine(
++            slots=self.pp_loop_size,
++            width=4,
++            rows=self.server_args.chunked_prefill_size,
++            hidden=cfg.hidden_size,
++            dtype=cfg.dtype,
++        )
++        group = self.world_group.cpu_group
++        ranks = self.pp_group.ranks
++        stage = self.pp_group.rank_in_group
++        rank = ranks[stage]
++        device = self.pp_group.device
++        first, last = self.pp_group.is_first_rank, self.pp_group.is_last_rank
++        buffers_handle = events_handle = None
++        try:
++            if not first:
++                ce.buffers = torch.empty(
++                    (ce.slots, ce.width, ce.rows, ce.hidden), dtype=ce.dtype, device=device
++                )
++                ce.mismatches = torch.zeros((), dtype=torch.int64, device=device)
++                ce.checked = torch.cuda.Event()
++                buffers_handle = reduce_tensor(ce.buffers)
++            if not last:
++                ce.stream = torch.cuda.Stream(device=device)
++                ce.events = [torch.cuda.Event(interprocess=True) for _ in range(ce.slots)]
++                events_handle = (device.index, [event.ipc_handle() for event in ce.events])
++        except Exception:
++            logger.exception("PP4 copy-engine setup failed on this stage")
++            ce.ok = False
++        works = []
++        if not first:
++            works += point_to_point_pyobj([buffers_handle], rank, group, rank, ranks[stage - 1], async_send=True)
++        if not last:
++            works += point_to_point_pyobj([events_handle], rank, group, rank, ranks[stage + 1], async_send=True)
++        if not last:
++            (handle,) = point_to_point_pyobj([], rank, group, ranks[stage + 1], rank)
++            try:
++                rebuild, args = handle
++                ce.peer_buffers = rebuild(*args)
++            except Exception:
++                logger.exception("PP4 copy-engine peer buffers unavailable")
++                ce.ok = False
++        if not first:
++            (handle,) = point_to_point_pyobj([], rank, group, ranks[stage - 1], rank)
++            try:
++                peer_device, handles = handle
++                ce.peer_events = [
++                    torch.cuda.Event.from_ipc_handle(peer_device, h) for h in handles
++                ]
++            except Exception:
++                logger.exception("PP4 copy-engine peer events unavailable")
++                ce.ok = False
++        for work in works:
++            work.work.wait()
++        return ce
++
++    def _qpp_ce_copy(self: Scheduler, ce: _QwenPPCopyEngine, slot: int, tensors):
++        ce.stream.wait_stream(self.forward_stream)
++        with torch.cuda.stream(ce.stream):
++            for index, tensor in enumerate(tensors):
++                assert tensor.is_contiguous()
++                ce.peer_buffers[slot, index, : tensor.shape[0]].copy_(tensor, non_blocking=True)
++                tensor.record_stream(ce.stream)
++            ce.events[slot].record(ce.stream)
++
++    def _qpp_ce_decide(self: Scheduler, ce: _QwenPPCopyEngine):
++        """After _QWEN_PP_CE_VALIDATE launches every stage votes once; the copy
++        engine is used only if every stage set up and every receiver saw
++        bit-identical slots for all validated transfers."""
++        ok = ce.ok
++        if ok and ce.buffers is not None:
++            ce.checked.synchronize()
++            ok = ce.validated > 0 and int(ce.mismatches.cpu()) == 0
++        vote = torch.tensor([int(ok)], dtype=torch.int64)
++        torch.distributed.all_reduce(
++            vote, op=torch.distributed.ReduceOp.MIN, group=self.world_group.cpu_group
++        )
++        ce.mode = "copy" if int(vote) else "nccl"
++        logger.info(
++            f"PP4 proxy transport: {ce.mode} (this stage {'ok' if ok else 'failed'} "
++            f"after {_QWEN_PP_CE_VALIDATE} validated launches)"
++        )
++
+     def _qpp_batch_result(
+         self: Scheduler,
+         loop: _QwenPPLoop,
