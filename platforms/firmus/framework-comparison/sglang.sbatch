@@ -235,8 +235,8 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   decode_gpu_selections=$!
   # EP1 MegaMoE on all twelve Prefill GPUs before model load (select-firmus-prefill-megamoe.py, about 1.5-2 min):
   # the control must match an FP32 reference (a failure stops the job); the four-stage and four-stage tail-split
-  # variants are adopted only if they pass the exactness checks, are not slower on any GPU and save the summed
-  # margin over all GPUs and routings (the faster one wins).
+  # variants are adopted only if they pass the exactness checks and save the summed margin over all GPUs and
+  # routings (the faster one wins).
   # A missing or late result keeps three stages.
   megamoe_selections=()
   for worker in 0 1 2; do

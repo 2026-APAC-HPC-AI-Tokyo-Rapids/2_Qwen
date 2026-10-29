@@ -11,12 +11,12 @@ must match an FP32 reference on sampled tokens; four-stage must reproduce the
 control bit for bit; four-stage-split must do so or stay within FP-order
 tolerance of the control on every token and pass the reference. All three are
 timed in rotating order. --aggregate adopts the fastest variant that passed on
-every GPU of every worker, was not slower than the control on any GPU (its two
-routings summed) and saved at least the summed per-case margin over all GPUs
-and routings; anything missing keeps the control. A control reference failure
-stops the job. Run 40849459077 showed why the margin is not applied per case:
-four-stage was bit-exact and saved 1.6 ms over the 24 cases (2.5%), yet two
-balanced cases measured +3.6 and -12.9 us, inside the timing noise of one GPU.
+every GPU of every worker and saved at least the summed per-case margin over
+all GPUs and routings; anything missing keeps the control. A control reference
+failure stops the job. Neither per-case nor per-GPU margins are used: in runs
+40849459077 and 40883389891 four-stage was bit-exact and saved 2.3% and 2.1%
+in total, while single cases (+3.6, -12.9 us) and single GPUs (GPU 3: +108 us,
+then -33 us) moved within the timing noise of one GPU.
 """
 import argparse
 import json
@@ -191,7 +191,7 @@ def candidate_passed(name, entry):
 
 
 def choose(entries, expected):
-    """Adopt the fastest variant that passed everywhere, was not slower on any GPU and beat the summed margin."""
+    """Adopt the fastest variant that passed everywhere and beat the summed margin."""
     if any(e is None for e in entries) or len(entries) != expected:
         return {"winner": "control", "reason": "missing-results"}
     for entry in entries:
@@ -210,11 +210,6 @@ def choose(entries, expected):
                     continue
                 control, candidate = statistics.median(result["control"]["us"]), statistics.median(result[name]["us"])
                 savings.append({"rank": entry["global_rank"], "routing": kind, "control_median_us": control, "candidate_median_us": candidate, "saving_us": control - candidate, "required_us": max(MARGIN_US, MARGIN_FRACTION * control), "bitwise_equal": result[name]["bitwise_equal"]})
-        per_gpu = {}
-        for s in savings:
-            per_gpu[s["rank"]] = per_gpu.get(s["rank"], 0.0) + s["saving_us"]
-        if reason is None and min(per_gpu.values()) < 0:
-            reason = "slower-gpu"
         if reason is None and sum(s["saving_us"] for s in savings) < sum(s["required_us"] for s in savings):
             reason = "below-margin"
         choices[name] = {"eligible": reason is None, "reason": reason or "faster-in-total", "total_median_us": sum(s["candidate_median_us"] for s in savings), "savings": savings}
