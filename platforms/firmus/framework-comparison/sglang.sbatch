@@ -130,7 +130,9 @@ runtime_dir=$(dirname "$(dirname "$0")")
 if /opt/sglang/venv/bin/python -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("prefill", {}).get("pp", 1) != 4)' "${runtime_dir}/source/firmus-framework.json"; then
   export SGLANG_QWEN_PP4_EP1=1
   if [[ "$role" == prefill ]]; then
-    export DG_SM90_PREFILL_LOCAL_EP1=1 SGLANG_PP_LAYER_PARTITION=24,24,23,23 SGLANG_PP_SKIP_PURE_CHUNKED_OUTPUT_COMM=0
+    # The last stage also runs lm_head and the EAGLE draft extend (about two layers of time).
+    partition=$(/opt/sglang/venv/bin/python -c 'import json,sys; print(",".join(map(str, json.load(open(sys.argv[1]))["prefill"]["pp_layer_partition"])))' "${runtime_dir}/source/firmus-framework.json")
+    export DG_SM90_PREFILL_LOCAL_EP1=1 SGLANG_PP_LAYER_PARTITION="${partition}" SGLANG_PP_SKIP_PURE_CHUNKED_OUTPUT_COMM=0
   fi
 fi
 # Keep inherited diagnostic variables out of Decode and ordinary benchmark workers.

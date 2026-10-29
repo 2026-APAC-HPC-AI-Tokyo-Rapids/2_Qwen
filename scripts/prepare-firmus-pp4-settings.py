@@ -18,6 +18,7 @@ def prepare(config, repo, runtime):
         "ep": 1,
         "pp_max_micro_batch_size": 2,
         "pp_async_batch_depth": 2,
+        "pp_layer_partition": [24, 24, 24, 22],
         "chunked_prefill_size": 8192,
         "expert_location": "trivial",
         "ep_num_redundant_experts": 0,
