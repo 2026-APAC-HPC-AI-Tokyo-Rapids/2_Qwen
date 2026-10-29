@@ -408,6 +408,12 @@
     "scope": "Existing 1ms sampled throughput percentages, all-CUDA-device MegaMoE interval intersection. Not the current40310899466 profile and not FC2 phase-specific.",
     "conclusion": "Cannot conclude instruction-issue bound or rule out short FC2 communication saturation from low whole-kernel samples."
   },
+  "prefill_attention_cpu_candidate": {
+    "evidence": "prefill-attention-cpu-validation-20261030.json",
+    "status": "CPU_validated_not_GPU_measured; in-job gate and selection on the PP4 path",
+    "removed_work": "PP4 7988-row microbatch: 47% of the executed instructions of the Q/K norm + RoPE + FP8 Q/KV writer (two BF16 rounding points, per-pair NOSAT repair, the 4x3 shuffle tree); for QKV/O, the tensor idle of simultaneous promotion (hypothesis) and WGMMA waves past the last row.",
+    "past_rejections_distinct": "head4, wide and paired rounding kept the instruction count; the QKV-epilogue fusion serialized the same exact arithmetic in a 1-CTA/SM GEMM. No DeepGEMM tile override (host rebuild) and no masked/BM128 route (BM128/BN192 spills 2.4 KB)."
+  },
   "prefill_moe_input_cpu_candidate": {
     "evidence": "prefill-moe-input-cpu-validation-20261029.json",
     "status": "CPU_validated_not_GPU_measured; in-job gate and selection on the PP4 path",

@@ -117,9 +117,10 @@ def test_pp4_job_selects_on_decode_gpus_before_model_load():
 def test_overlay_is_pp4_only_and_defaults_to_pre_dispatch():
     pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert pp4["sglang_overlay_patches"][-1] == "patches/sglang/prefill-moe-input.patch"
+    # Only the attention-block overlays (select-firmus-prefill-attention.py) follow it.
+    assert pp4["sglang_overlay_patches"][-3] == "patches/sglang/prefill-moe-input.patch"
     # The FA3 varlen overlay touches other files; it stays right before this one.
-    assert pp4["sglang_overlay_patches"][-2] == "patches/sglang/prefill-fa3-varlen.patch"
+    assert pp4["sglang_overlay_patches"][-4] == "patches/sglang/prefill-fa3-varlen.patch"
     assert "patches/sglang/prefill-moe-input.patch" not in main["sglang_overlay_patches"]
     patch = (ROOT / "patches/sglang/prefill-moe-input.patch").read_text()
     assert '+_PREFILL_MOE_INPUT = os.environ.get("SGLANG_PREFILL_MOE_INPUT", "control")' in patch

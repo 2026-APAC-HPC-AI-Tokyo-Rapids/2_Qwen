@@ -1,0 +1,68 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_gemm_1d2d.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_gemm_1d2d.cuh
+index 5a61743..0e7079a 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_gemm_1d2d.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_gemm_1d2d.cuh
+@@ -270,6 +270,19 @@ sm90_fp8_gemm_1d2d_impl(float* sfb, int* grouped_layout,
+                 }
+             };
+ 
++            // Qwen Prefill dense projections (compiled_dims "n": N compiled, K at run time; the serving
++            // control compiles both and keeps this path off; the default "" compiles neither):
++            //  - WG1 issues its first WGMMA batch of a tile only after WG0 has committed its own. Leaving
++            //    the shared full barrier together, both batches interleave on the tensor pipes, finish
++            //    together, and both warpgroups promote at once while the pipes idle. One batch apart,
++            //    each promotes while the other's batch runs.
++            //  - 64-row waves wholly past shape_m (the M tail block) issue no WGMMA and no promotion;
++            //    their rows are never stored (TMA clips them).
++            // Arithmetic and accumulation order of every stored element are unchanged.
++            constexpr bool kPrefillSchedule = kGemmType == GemmType::Normal and SHAPE_N != 0 and SHAPE_K == 0 and
++                                              BLOCK_M == 2 * WAVE_BLOCK_M and WAVE_BLOCK_M == 2 * WGMMA::M and
++                                              kNumMathThreads == 256;
++
+             // Skip useless computations
+             if (scheduler.is_computation_valid(m_block_idx, math_wg_idx * WGMMA::M)) {
+                 // The compiler must know the dynamic variable `num_former_iters`'s real value
+@@ -304,17 +317,29 @@ sm90_fp8_gemm_1d2d_impl(float* sfb, int* grouped_layout,
+                             auto scale_a_1 = do_wgmma_store ? ptx::ld_shared(smem_sfa[stage_idx] + r_1 + m_offset) : 0;
+ 
+                             // Commit WGMMA instructions
++                            if constexpr (kPrefillSchedule) {
++                                if (math_wg_idx == 1 and k_block_idx == 0 and local_idx == 0)
++                                    cutlass::arch::NamedBarrier::sync(kNumMathThreads, 2);
++                            }
++                            const bool wave_in_bounds = not kPrefillSchedule or
++                                m_block_idx * BLOCK_M + m_offset + math_wg_idx * WGMMA::M < shape_m;
+                             #pragma unroll
+                             for (uint32_t i = 0; i < WGMMA::kNumAccum; ++ i)
+                                 ptx::warpgroup_fence_operand(accum[i]);
+                             ptx::warpgroup_arrive();
+-                            #pragma unroll
+-                            for (uint32_t k = 0; k < BLOCK_K / WGMMA::K; ++ k) {
+-                                a_desc.reg32_[0] = a_desc_base_lo + (m_offset * BLOCK_K + k * WGMMA::K) / 16;
+-                                b_desc.reg32_[0] = b_desc_base_lo + k * WGMMA::K / 16;
+-                                WGMMA::wgmma(a_desc, b_desc, accum, k);
++                            if (wave_in_bounds) {
++                                #pragma unroll
++                                for (uint32_t k = 0; k < BLOCK_K / WGMMA::K; ++ k) {
++                                    a_desc.reg32_[0] = a_desc_base_lo + (m_offset * BLOCK_K + k * WGMMA::K) / 16;
++                                    b_desc.reg32_[0] = b_desc_base_lo + k * WGMMA::K / 16;
++                                    WGMMA::wgmma(a_desc, b_desc, accum, k);
++                                }
+                             }
+                             ptx::warpgroup_commit_batch();
++                            if constexpr (kPrefillSchedule) {
++                                if (math_wg_idx == 0 and k_block_idx == 0 and local_idx == 0)
++                                    cutlass::arch::NamedBarrier::arrive(kNumMathThreads, 2);
++                            }
+                             #pragma unroll
+                             for (uint32_t i = 0; i < WGMMA::kNumAccum; ++ i)
+                                 ptx::warpgroup_fence_operand(accum[i]);
+@@ -325,7 +350,7 @@ sm90_fp8_gemm_1d2d_impl(float* sfb, int* grouped_layout,
+                                 empty_barrier_arrive();
+ 
+                             // Skip promotion for the unfilled parts
+-                            if (not do_wgmma_store)
++                            if (not do_wgmma_store or not wave_in_bounds)
+                                 continue;
+ 
+                             // Promote with scales
