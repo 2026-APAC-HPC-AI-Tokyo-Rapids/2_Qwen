@@ -33,6 +33,7 @@ import dataclasses
 import itertools
 import pickle
 import queue
+import signal
 import sys
 import threading
 import traceback
@@ -54,6 +55,7 @@ CAPACITY = 120
 POOL_ROWS = 32
 HIDDEN = 4
 TIMEOUT = 20
+GPU_LAG = 1
 # Tokenizer arrivals at stage 0 by iteration: a burst, a trickle, a gap, a burst.
 ARRIVALS = {
     0: [(f"r{i}", 5 + i % 4) for i in range(14)],
@@ -116,18 +118,25 @@ class Transport:
 
 
 class Event:
+    """A device event completes GPU_LAG scheduler iterations after its record."""
+
     def __init__(self, stage):
         self.stage = stage
         self.stream = None
 
     def record(self, stream=None):
         self.stream = self.stage.current_stream
+        self.step = self.stage.step
 
     def synchronize(self):
         assert self.stream is not None
-
-    def query(self):
-        return True
+        stage = self.stage
+        if threading.current_thread() is stage.thread:
+            # The scheduler thread may only wait where the forward is done.
+            assert stage.step >= self.step + GPU_LAG, "scheduler thread waits on a running forward"
+            return
+        with stage.progress:
+            assert stage.progress.wait_for(lambda: stage.step >= self.step + GPU_LAG, TIMEOUT), "event never completed"
 
 
 class Comm:
@@ -273,6 +282,7 @@ def make_stage(rank, transport, classes, env):
     stage.rank = rank
     stage.transport = transport
     stage.step = -1
+    stage.progress = threading.Condition()
     stage.current_stream = "schedule"
     stage.stream_log = []
     stage.published = []
@@ -430,7 +440,9 @@ def make_stage(rank, transport, classes, env):
     real_step = stage._qpp_step
 
     def step(loop, mb_id):
-        stage.step += 1
+        with stage.progress:
+            stage.step += 1
+            stage.progress.notify_all()
         if stage.step == STEPS:
             raise Stop
         stage.states.append((
@@ -460,6 +472,7 @@ def run(source):
     env = {
         "__name__": "__main__",
         "torch": torch, "dataclass": dataclasses.dataclass, "deque": deque, "defaultdict": defaultdict,
+        "queue": queue, "threading": threading, "signal": signal,
         "DynamicGradMode": lambda: (lambda fn: fn),
         "ScheduleBatch": lambda reqs, batch_is_full: NS(reqs=reqs, batch_is_full=batch_is_full),
         "scheduler_nvtx_method": lambda name: (lambda fn: fn),
@@ -472,7 +485,7 @@ def run(source):
         "is_aborted": lambda req: False,
         "StateType": NS(**{n: n for n in ("MAMBA", "SWA", "DSA", "MINIMAX_INDEX_K", "SWA_RING", "C128_STATE")}),
         "_is_npu": False,
-        "logger": NS(warning_once=lambda *a: None, debug=lambda *a: None, info=lambda *a: None),
+        "logger": NS(warning_once=lambda *a: None, debug=lambda *a: None, info=lambda *a: None, error=print),
         "kv_to_page_indices": lambda indices, page_size: (indices[::page_size] // page_size).numpy(),
         "point_to_point_pyobj": make_point_to_point(transport),
         "broadcast_pyobj": None,
@@ -486,7 +499,7 @@ def run(source):
     env["PPProxyTensors"] = proxy_cls
     async_d2h, result_cls = extract(source, "managers/utils.py", ["_async_d2h", "GenerationBatchResult"], {**env, "dataclasses": dataclasses})
     env["GenerationBatchResult"] = result_cls
-    extract(source, "managers/scheduler_pp_mixin.py", ["PPBatchMetadata", "_QWEN_PP_RESULT_TAG", "_QwenPPLaunch", "_QwenPPLoop"], env)
+    extract(source, "managers/scheduler_pp_mixin.py", ["PPBatchMetadata", "_QWEN_PP_RESULT_TAG", "_QwenPPLaunch", "_QwenPPLoop", "_QwenPPResultPublisher"], env)
     (mixin,) = extract(source, "managers/scheduler_pp_mixin.py", ["SchedulerPPMixin"], env)
     (prefill,) = extract(source, "disaggregation/prefill.py", ["SchedulerDisaggregationPrefillMixin"], env)
     instream = hasattr(mixin, "_qpp_send_proxy")
@@ -514,6 +527,7 @@ def run(source):
 
     def worker(stage):
         local.stage = stage
+        stage.thread = threading.current_thread()
         try:
             stage.event_loop_pp_disagg_prefill_direct()
         except Stop:
@@ -550,11 +564,12 @@ def check(stages, transport, instream):
     # Results are applied pp_loop_size - 1 iterations after launch.
     for rids, step in launched.items():
         assert first.result_steps[rids] == step + LOOP - 1, (rids, step)
-    # The last stage publishes at the launch iteration + 1 at the latest.
+    # The last stage publishes from its thread once the forward is done,
+    # while its scheduler iterations keep going (it never waits on a forward).
     published = {tuple(rids): step for step, rids in last.published[:: PP - 1]}
     assert published.keys() == launched.keys()
     for rids, step in launched.items():
-        assert step < published[rids] <= step + 1, (rids, step, published[rids])
+        assert step + GPU_LAG <= published[rids] <= step + LOOP, (rids, step, published[rids])
     # Pipeline reaches the full in-flight depth on stage 0.
     assert first.max_in_flight == LOOP, first.max_in_flight
     # Every admitted request got the last stage's token and EAGLE outputs on every stage.
@@ -605,7 +620,7 @@ def main():
     stages, transport, instream = run(source)
     requests, batches = check(stages, transport, instream)
     path = "in-stream PyNccl proxy" if instream else "torch.distributed proxy"
-    print(f"PASS: four-stage direct-result PP loop ({path}), {STEPS} iterations, {batches} microbatches, {requests} requests: identical batches/state per iteration, results at +{LOOP - 1}, publish <= +1, release after all transfers, {LOOP} in flight, drained")
+    print(f"PASS: four-stage direct-result PP loop ({path}), {STEPS} iterations, {batches} microbatches, {requests} requests: identical batches/state per iteration, results at +{LOOP - 1}, threaded publish after completion, release after all transfers, {LOOP} in flight, drained")
 
 
 if __name__ == "__main__":

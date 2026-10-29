@@ -17,7 +17,17 @@ diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/manager
 diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
 --- a/python/sglang/srt/managers/scheduler_pp_mixin.py
 +++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
-@@ -63,6 +63,35 @@ class PPBatchMetadata:
+@@ -2,6 +2,9 @@ from __future__ import annotations
+ 
+ import logging
+ import math
++import queue
++import signal
++import threading
+ import time
+ from array import array
+ from collections import defaultdict, deque
+@@ -63,6 +66,89 @@ class PPBatchMetadata:
      can_run_cuda_graph: bool
  
  
@@ -44,16 +54,70 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +    bmbs: list
 +    tmbs: list
 +    launches: list
-+    # Last stage: launched microbatches whose results are not yet published.
-+    unpublished: deque
 +    # Asynchronous CPU sends, kept alive until gloo completes them.
 +    works: list
++    # Last stage only.
++    publisher: Optional["_QwenPPResultPublisher"]
++
++
++class _QwenPPResultPublisher:
++    """Last stage: send each microbatch's result to the other stages when ready.
++
++    A daemon thread takes launched microbatches in launch order, waits for the
++    copy-stream event that follows the forward (Event.synchronize releases the
++    GIL) and sends the host copies to stages 0..pp_size-2 with
++    send_object(tag=_QWEN_PP_RESULT_TAG). The scheduler thread never waits for
++    a forward here: if it did, its own result step (and with it the last
++    stage's KV and aux send) would trail its newer forwards by several stage
++    periods, and stage 0, which waits for the last stage's consensus, would
++    lose its launch lead.
++    """
++
++    def __init__(self, pp_group, num_receivers: int):
++        self.pp_group = pp_group
++        self.num_receivers = num_receivers
++        self.launches = queue.SimpleQueue()
++        threading.Thread(
++            target=self._run, name="qwen-pp-result-publisher", daemon=True
++        ).start()
++
++    def put(self, launch: _QwenPPLaunch) -> None:
++        self.launches.put(launch)
++
++    def _run(self) -> None:
++        try:
++            device = self.pp_group.device
++            torch.get_device_module(device).set_device(device)
++            works = []
++            while True:
++                launch = self.launches.get()
++                launch.copy_done.synchronize()
++                payload = (
++                    launch.rids,
++                    launch.next_token_ids.tolist(),
++                    *launch.draft_output_cpu,
++                )
++                for rank in range(self.num_receivers):
++                    works += self.pp_group.send_object(
++                        payload, dst=rank, async_send=True, tag=_QWEN_PP_RESULT_TAG
++                    )
++                works = [w for w in works if not w.work.is_completed()]
++        except BaseException:
++            # Same crash path as run_scheduler_process: never leave the other
++            # stages waiting for a result that will not come.
++            import psutil
++
++            from sglang.utils import get_exception_traceback
++
++            logger.error(f"PP result publisher failed: {get_exception_traceback()}")
++            psutil.Process().parent().send_signal(signal.SIGQUIT)
++            raise
 +
 +
  class SchedulerPPMixin:
      @DynamicGradMode()
      def event_loop_pp(self: Scheduler):
-@@ -366,6 +395,215 @@ class SchedulerPPMixin:
+@@ -366,6 +452,201 @@ class SchedulerPPMixin:
              if server_is_idle and len(self.disagg_prefill_inflight_queue) == 0:
                  self.on_idle()
  
@@ -78,8 +142,9 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +        microbatches and apply identical radix/allocator updates. Only the
 +        result data path changes: the last stage sends next tokens and the
 +        EAGLE draft outputs (host copies made on the copy stream) directly to
-+        every other stage over the PP CPU group as soon as its forward is
-+        done, and the other stages receive them at the result step.
++        every other stage over the PP CPU group from a publisher thread as
++        soon as its forward is done, and the other stages receive them at the
++        result step.
 +        """
 +        assert self.ps.tp_size == 1 and self.ps.attn_cp_size == 1
 +        self.init_pp_loop_state()
@@ -88,8 +153,12 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +            bmbs=[None] * size,
 +            tmbs=[None] * size,
 +            launches=[None] * size,
-+            unpublished=deque(),
 +            works=[],
++            publisher=(
++                _QwenPPResultPublisher(self.pp_group, self.ps.pp_size - 1)
++                if self.pp_group.is_last_rank
++                else None
++            ),
 +        )
 +        while True:
 +            server_is_idle = True
@@ -138,12 +207,7 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +        if batch:
 +            loop.launches[mb_id] = self._qpp_launch(loop, batch)
 +            if is_last:
-+                loop.unpublished.append(loop.launches[mb_id])
-+        if is_last:
-+            # Publish every older microbatch; this blocks on the previous
-+            # forward while the one just launched is already queued behind it.
-+            with torch.profiler.record_function("pp.publish_result"):
-+                self._qpp_publish_results(loop, keep=1 if batch else 0)
++                loop.publisher.put(loop.launches[mb_id])
 +
 +        # Bootstrap consensus: the last stage originates it towards stage 0;
 +        # every stage applies it at this same iteration and forwards it.
@@ -226,20 +290,6 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +            next_token_ids=next_token_ids,
 +            draft_output_cpu=result.draft_output_cpu,
 +        )
-+
-+    def _qpp_publish_results(self: Scheduler, loop: _QwenPPLoop, keep: int) -> None:
-+        while len(loop.unpublished) > keep:
-+            launch = loop.unpublished.popleft()
-+            launch.copy_done.synchronize()
-+            payload = (
-+                launch.rids,
-+                launch.next_token_ids.tolist(),
-+                *launch.draft_output_cpu,
-+            )
-+            for rank in range(self.ps.pp_size - 1):
-+                loop.works += self.pp_group.send_object(
-+                    payload, dst=rank, async_send=True, tag=_QWEN_PP_RESULT_TAG
-+                )
 +
 +    def _qpp_batch_result(
 +        self: Scheduler, batch: ScheduleBatch, launch: _QwenPPLaunch
