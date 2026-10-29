@@ -99,6 +99,8 @@ class Transport:
         self.lock = threading.Lock()
         self.queues = defaultdict(queue.Queue)
         self.connections = defaultdict(threading.Event)
+        self.published = []
+        self.stages = []
 
     def put(self, key, value):
         with self.lock:
@@ -169,7 +171,8 @@ class Comm:
 class Group:
     def __init__(self, stage):
         self.stage = stage
-        self.rank_in_group = stage.rank
+        self.rank_in_group = self.rank = stage.rank
+        self.ranks = list(range(PP))
         self.is_first_rank = stage.rank == 0
         self.is_last_rank = stage.rank == PP - 1
         self.device = torch.device("cpu")
@@ -177,8 +180,6 @@ class Group:
 
     def send_object(self, obj, dst, async_send=False, tag=0):
         stage = self.stage
-        if tag:
-            stage.published.append((stage.step, obj[0]))
         stage.transport.put(("pp", stage.rank, dst, tag), pickle.dumps(obj))
         return [NS(work=Work(), payload=None)]
 
@@ -201,11 +202,14 @@ class Group:
 
 def make_point_to_point(transport):
     def point_to_point_pyobj(data, rank, group=None, src=0, dst=1, async_send=False):
+        channel = "world" if group is None else group
         if rank == src:
-            transport.put(("world", src, dst, 0), pickle.dumps(data))
+            if channel == "result":
+                transport.published.append((transport.stages[src].step, data[0]))
+            transport.put((channel, src, dst, 0), pickle.dumps(data))
             return [NS(work=Work(), payload=None)]
         assert rank == dst
-        return pickle.loads(transport.get(("world", src, dst, 0)))
+        return pickle.loads(transport.get((channel, src, dst, 0)))
 
     return point_to_point_pyobj
 
@@ -285,7 +289,6 @@ def make_stage(rank, transport, classes, env):
     stage.progress = threading.Condition()
     stage.current_stream = "schedule"
     stage.stream_log = []
-    stage.published = []
     stage.launch_steps = {}
     stage.result_steps = {}
     stage.release_steps = {}
@@ -451,17 +454,16 @@ def make_stage(rank, transport, classes, env):
             [r.rid for r in stage.disagg_prefill_inflight_queue],
             stage.available, list(stage.free_rows),
         ))
-        stage.loop = loop
         return real_step(loop, mb_id)
 
     stage._qpp_step = step
     real_result = stage._qpp_batch_result
 
-    def batch_result(batch, launch):
+    def batch_result(loop, batch, launch):
         # Launched microbatches whose results are not yet applied, this one included.
-        outstanding = sum(item is not None for item in stage.loop.launches)
+        outstanding = sum(item is not None for item in loop.launches)
         stage.max_in_flight = max(stage.max_in_flight, outstanding)
-        return real_result(batch, launch)
+        return real_result(loop, batch, launch)
 
     stage._qpp_batch_result = batch_result
     return stage
@@ -499,7 +501,7 @@ def run(source):
     env["PPProxyTensors"] = proxy_cls
     async_d2h, result_cls = extract(source, "managers/utils.py", ["_async_d2h", "GenerationBatchResult"], {**env, "dataclasses": dataclasses})
     env["GenerationBatchResult"] = result_cls
-    extract(source, "managers/scheduler_pp_mixin.py", ["PPBatchMetadata", "_QWEN_PP_RESULT_TAG", "_QWEN_PP_CONSENSUS_LAG", "_QwenPPLaunch", "_QwenPPLoop", "_QwenPPResultPublisher"], env)
+    extract(source, "managers/scheduler_pp_mixin.py", ["PPBatchMetadata", "_QWEN_PP_CONSENSUS_LAG", "_QwenPPLaunch", "_QwenPPLoop", "_QwenPPResultPublisher"], env)
     (mixin,) = extract(source, "managers/scheduler_pp_mixin.py", ["SchedulerPPMixin"], env)
     (prefill,) = extract(source, "disaggregation/prefill.py", ["SchedulerDisaggregationPrefillMixin"], env)
     instream = hasattr(mixin, "_qpp_send_proxy")
@@ -512,6 +514,7 @@ def run(source):
         module.__dict__.update(fields)
         modules[name] = module
     stages = [make_stage(rank, transport, (mixin, prefill, result_cls), env) for rank in range(PP)]
+    transport.stages = stages
     errors = {}
     local = threading.local()
 
@@ -536,7 +539,8 @@ def run(source):
             errors[stage.rank] = traceback.format_exc()
             raise
 
-    with patch.dict(sys.modules, modules):
+    distributed = {"new_group": lambda ranks, backend: "result", "get_world_size": lambda: PP}
+    with patch.dict(sys.modules, modules), patch.multiple(torch.distributed, **distributed):
         threads = [threading.Thread(target=worker, args=(stage,), daemon=True) for stage in stages]
         for thread in threads:
             thread.start()
@@ -566,7 +570,7 @@ def check(stages, transport, instream, lag):
         assert first.result_steps[rids] == step + LOOP - 1, (rids, step)
     # The last stage publishes from its thread once the forward is done,
     # while its scheduler iterations keep going (it never waits on a forward).
-    published = {tuple(rids): step for step, rids in last.published[:: PP - 1]}
+    published = {tuple(rids): step for step, rids in transport.published[:: PP - 1]}
     assert published.keys() == launched.keys()
     for rids, step in launched.items():
         assert step + GPU_LAG <= published[rids] <= step + LOOP, (rids, step, published[rids])

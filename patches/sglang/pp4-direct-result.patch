@@ -27,13 +27,10 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
  import time
  from array import array
  from collections import defaultdict, deque
-@@ -63,6 +66,96 @@ class PPBatchMetadata:
+@@ -63,6 +66,97 @@ class PPBatchMetadata:
      can_run_cuda_graph: bool
  
  
-+# Tag of the direct last-stage -> stage result messages on the PP CPU group.
-+# Proxy metadata uses tag 0 on that group, so the two message streams never mix.
-+_QWEN_PP_RESULT_TAG = 4
 +# Iterations between the last stage originating a bootstrap or release
 +# consensus and every stage applying it. Upstream uses pp_size - 1 (3); each
 +# iteration is one stage period (~115 ms) of admission latency and of router
@@ -63,6 +60,8 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +    launches: list
 +    # Asynchronous CPU sends, kept alive until gloo completes them.
 +    works: list
++    # Gloo group of the PP ranks that carries only last-stage results.
++    result_group: torch.distributed.ProcessGroup
 +    # Last stage only.
 +    publisher: Optional["_QwenPPResultPublisher"]
 +
@@ -72,17 +71,20 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +
 +    A daemon thread takes launched microbatches in launch order, waits for the
 +    copy-stream event that follows the forward (Event.synchronize releases the
-+    GIL) and sends the host copies to stages 0..pp_size-2 with
-+    send_object(tag=_QWEN_PP_RESULT_TAG). The scheduler thread never waits for
-+    a forward here: if it did, its own result step (and with it the last
-+    stage's KV and aux send) would trail its newer forwards by several stage
-+    periods, and stage 0, which waits for the last stage's consensus, would
-+    lose its launch lead.
++    GIL) and sends the host copies to stages 0..pp_size-2 over a gloo group on
++    which it is the only sender, so it never shares a gloo context with the
++    scheduler thread's own traffic. The scheduler thread never waits for a
++    forward here: if it did, its own result step (and with it the last stage's
++    KV and aux send) would trail its newer forwards by several stage periods,
++    and stage 0, which waits for the last stage's consensus, would lose its
++    launch lead.
 +    """
 +
-+    def __init__(self, pp_group, num_receivers: int):
-+        self.pp_group = pp_group
-+        self.num_receivers = num_receivers
++    def __init__(self, group, rank: int, receivers: List[int], device):
++        self.group = group
++        self.rank = rank
++        self.receivers = receivers
++        self.device = device
 +        self.launches = queue.SimpleQueue()
 +        threading.Thread(
 +            target=self._run, name="qwen-pp-result-publisher", daemon=True
@@ -93,8 +95,7 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +
 +    def _run(self) -> None:
 +        try:
-+            device = self.pp_group.device
-+            torch.get_device_module(device).set_device(device)
++            torch.get_device_module(self.device).set_device(self.device)
 +            works = []
 +            while True:
 +                launch = self.launches.get()
@@ -104,9 +105,9 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +                    launch.next_token_ids.tolist(),
 +                    *launch.draft_output_cpu,
 +                )
-+                for rank in range(self.num_receivers):
-+                    works += self.pp_group.send_object(
-+                        payload, dst=rank, async_send=True, tag=_QWEN_PP_RESULT_TAG
++                for dst in self.receivers:
++                    works += point_to_point_pyobj(
++                        payload, self.rank, self.group, self.rank, dst, async_send=True
 +                    )
 +                works = [w for w in works if not w.work.is_completed()]
 +        except BaseException:
@@ -124,7 +125,7 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
  class SchedulerPPMixin:
      @DynamicGradMode()
      def event_loop_pp(self: Scheduler):
-@@ -366,6 +459,204 @@ class SchedulerPPMixin:
+@@ -366,6 +460,222 @@ class SchedulerPPMixin:
              if server_is_idle and len(self.disagg_prefill_inflight_queue) == 0:
                  self.on_idle()
  
@@ -149,20 +150,32 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +        microbatches and apply identical radix/allocator updates. Only the
 +        result data path changes: the last stage sends next tokens and the
 +        EAGLE draft outputs (host copies made on the copy stream) directly to
-+        every other stage over the PP CPU group from a publisher thread as
-+        soon as its forward is done, and the other stages receive them at the
-+        result step.
++        every other stage over a dedicated gloo group from a publisher thread
++        as soon as its forward is done, and the other stages receive them at
++        the result step.
 +        """
 +        assert self.ps.tp_size == 1 and self.ps.attn_cp_size == 1
 +        self.init_pp_loop_state()
 +        size = self.pp_loop_size
++        # Every rank of this server is one PP stage (TP1, DP1), so all of them
++        # reach this collective group creation, in the same order.
++        assert torch.distributed.get_world_size() == len(self.pp_group.ranks)
++        result_group = torch.distributed.new_group(
++            ranks=self.pp_group.ranks, backend="gloo"
++        )
 +        loop = _QwenPPLoop(
 +            bmbs=[None] * size,
 +            tmbs=[None] * size,
 +            launches=[None] * size,
 +            works=[],
++            result_group=result_group,
 +            publisher=(
-+                _QwenPPResultPublisher(self.pp_group, self.ps.pp_size - 1)
++                _QwenPPResultPublisher(
++                    result_group,
++                    self.pp_group.rank,
++                    self.pp_group.ranks[:-1],
++                    self.pp_group.device,
++                )
 +                if self.pp_group.is_last_rank
 +                else None
 +            ),
@@ -248,7 +261,9 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +
 +        done_batch = self.mbs[next_mb_id]
 +        if done_batch is not None:
-+            result = self._qpp_batch_result(done_batch, loop.launches[next_mb_id])
++            result = self._qpp_batch_result(
++                loop, done_batch, loop.launches[next_mb_id]
++            )
 +            loop.launches[next_mb_id] = None
 +            with torch.profiler.record_function("pp.process_result"):
 +                self._pp_process_batch_result(done_batch, result)
@@ -302,7 +317,10 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +        )
 +
 +    def _qpp_batch_result(
-+        self: Scheduler, batch: ScheduleBatch, launch: _QwenPPLaunch
++        self: Scheduler,
++        loop: _QwenPPLoop,
++        batch: ScheduleBatch,
++        launch: _QwenPPLaunch,
 +    ) -> GenerationBatchResult:
 +        assert [req.rid for req in batch.reqs] == launch.rids
 +        if self.pp_group.is_last_rank:
@@ -310,8 +328,9 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +            draft_output_cpu = launch.draft_output_cpu
 +        else:
 +            with torch.profiler.record_function("pp.wait_result"):
-+                rids, tokens, *draft_output_cpu = self.pp_group.recv_object(
-+                    src=self.ps.pp_size - 1, tag=_QWEN_PP_RESULT_TAG
++                rank = self.pp_group.rank
++                rids, tokens, *draft_output_cpu = point_to_point_pyobj(
++                    [], rank, loop.result_group, self.pp_group.ranks[-1], rank
 +                )
 +            assert rids == launch.rids, "PP stages formed different microbatches"
 +            next_token_ids = torch.tensor(tokens, dtype=torch.int64)
