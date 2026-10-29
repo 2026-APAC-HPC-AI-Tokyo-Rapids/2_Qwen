@@ -117,10 +117,10 @@ def test_pp4_prefill_settings_and_unchanged_decode() -> None:
     prefill = raw["prefill"]
     prefill["internal_states"] = prefill["internal_states"][:1]
     for state in [prefill, *prefill["internal_states"]]:
-        state.update(max_running_requests=config["concurrency"], tp_size=1, pp_size=4, dp_size=1, ep_size=1, enable_dp_attention=False, pp_max_micro_batch_size=2, pp_async_batch_depth=2, disable_overlap_schedule=True, disable_cuda_graph=True, chunked_prefill_size=8192, init_expert_location="trivial", ep_dispatch_algorithm=None, ep_num_redundant_experts=0, optimistic_prefill_attempts=0)
+        state.update(max_running_requests=config["concurrency"], tp_size=1, pp_size=4, dp_size=1, ep_size=1, enable_dp_attention=False, pp_max_micro_batch_size=2, pp_async_batch_depth=1, disable_overlap_schedule=True, disable_cuda_graph=True, chunked_prefill_size=8192, init_expert_location="trivial", ep_dispatch_algorithm=None, ep_num_redundant_experts=0, optimistic_prefill_attempts=0)
     check(config, prefill, "prefill")
     check(config, raw["decode"], "decode")
-    for key, invalid in (("pp_size", 1), ("ep_size", 4), ("disable_overlap_schedule", False), ("pp_max_micro_batch_size", 4), ("pp_async_batch_depth", 1)):
+    for key, invalid in (("pp_size", 1), ("ep_size", 4), ("disable_overlap_schedule", False), ("pp_max_micro_batch_size", 4), ("pp_async_batch_depth", 2)):
         changed = copy.deepcopy(prefill)
         changed["internal_states"][0][key] = invalid
         with pytest.raises(ValueError, match=key):
