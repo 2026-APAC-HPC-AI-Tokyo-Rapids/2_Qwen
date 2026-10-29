@@ -15,8 +15,10 @@ def selector():
     return runpy.run_path(str(ROOT / 'scripts/select-firmus-prefill-fa3.py'))
 
 
-def records(selector):
-    return [{'rank': rank, 'lengths': {str(length): {name: {'numeric_passed': True, 'control': [350.0]*20, 'candidate': [344.0]*20} for name in selector['NAMES'][1:]} for length in selector['LENGTHS']}} for rank in range(4)]
+def records(selector, names=None):
+    names = names or selector['NAMES'][1:]
+    keys = dict.fromkeys(key for name in names for key in selector['shapes'](name))
+    return [{'rank': rank, 'lengths': {key: {name: {'numeric_passed': True, 'control': [350.0]*20, 'candidate': [344.0]*20} for name in names if key in selector['shapes'](name)} for key in keys}} for rank in range(4)]
 
 
 def test_no_winner_when_one_rank_or_tail_misses_threshold(selector):
@@ -36,8 +38,8 @@ def test_exact_boundary_and_numeric_failure(selector):
     assert selector['choose_candidate'](ranks)['winner'] == 'regs'
     for name in selector['NAMES'][1:-1]:
         ranks[1]['lengths']['3986'][name]['numeric_passed'] = False
-    assert selector['choose_candidate'](ranks)['winner'] == 'n192-direct-o'
-    ranks[0]['lengths']['4096']['n192-direct-o']['candidate'].pop()
+    assert selector['choose_candidate'](ranks)['winner'] == 'n192-direct-o-varlen'
+    ranks[0]['lengths']['4096']['n192-direct-o-varlen']['candidate'].pop()
     assert selector['choose_candidate'](ranks)['winner'] == 'control'
 
 
@@ -91,3 +93,33 @@ def test_aggregation_requires_every_worker_and_every_rank(selector, tmp_path, wo
     selector['aggregate_selection'](tmp_path, out, env, workers)
     assert json.loads(out.read_text())['failed_workers'] == [workers - 1]
     assert env.read_text() == 'SGLANG_PREFILL_FA3_VERIFY=control\n'
+
+
+def test_pp4_screen_times_varlen_rows_on_the_request_pair(selector):
+    names = ['n192-varlen', 'n192-direct-o-varlen']
+    assert selector['shapes']('n192') == ['3986', '4027', '4096']
+    assert selector['shapes']('n192-varlen') == ['3986', '4027', '4096', '3986+4027']
+    ranks = records(selector, names)
+    assert set(ranks[0]['lengths']['4096']) == set(names)
+    result = selector['choose_candidate'](ranks)
+    assert result['rule']['screened'] == names and result['winner'] == 'n192-varlen'
+    for rank in ranks:
+        rank['lengths']['3986+4027']['n192-direct-o-varlen']['candidate'] = [345.5]*20
+        rank['lengths']['3986']['n192-direct-o-varlen']['candidate'] = [300.0]*20
+    assert selector['choose_candidate'](ranks)['winner'] == 'n192-varlen'  # a slow pair alone disqualifies
+    del ranks[2]['lengths']['3986+4027']['n192-varlen']
+    assert selector['choose_candidate'](ranks)['winner'] == 'control'
+
+
+def test_pp4_sbatch_screens_the_configured_rows(tmp_path):
+    shell = (ROOT / 'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
+    config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
+    rows = {r['name']: r for r in json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text())}
+    assert config['prefill_fa3_screen'] and all(rows[n].get('varlen') and not rows[n]['byte_image'] for n in config['prefill_fa3_screen'])
+    assert config['sglang_overlay_patches'][-1] == 'patches/sglang/prefill-fa3-varlen.patch'
+    pp4 = shell.index('pp4-kernel-settings.json')
+    assert shell.index('prefill_screen=(--names "$(jq -er \'.prefill_fa3_screen | join(",")\'', pp4) < shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]', pp4)
+    assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" ]]; then' in shell
+    assert '"prefill-${worker}" "${prefill_screen[@]}"' in shell
+    script = (ROOT / 'scripts/select-firmus-prefill-kernels.sh').read_text()
+    assert 'shift 2' in script and '--output "${out}/fa3.json" "$@"' in script

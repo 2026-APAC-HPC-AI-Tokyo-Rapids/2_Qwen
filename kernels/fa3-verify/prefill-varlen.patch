@@ -1,0 +1,45 @@
+--- a/hopper/flash_fwd_launch_template.h
++++ b/hopper/flash_fwd_launch_template.h
+@@ -62,7 +62,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream, int* resource
+     static constexpr bool LPT = Is_causal || Is_local;
+     static constexpr bool Sort = !Is_local;
+     using SchedulerPersistent = std::conditional_t<Varlen,
+-        flash::VarlenDynamicPersistentTileScheduler<kBlockM, kBlockN, CollectiveMainloop::NumMmaThreads, NumProducerThreads, Split, PackGQA, Arch >= 90 /*WarpSpecialized*/, LPT, Sort, true /*Prepared*/, FixedPrefill>,
++        flash::VarlenDynamicPersistentTileScheduler<kBlockM, kBlockN, CollectiveMainloop::NumMmaThreads, NumProducerThreads, Split, PackGQA, Arch >= 90 /*WarpSpecialized*/, LPT, Sort, true /*Prepared*/, FixedPrefill, FixedPrefill && (PrefillVariant & 64) != 0 /*FixedVarlen*/>,
+         std::conditional_t<!Is_causal && !Is_local,
+             flash::StaticPersistentTileScheduler<Split>,
+             flash::DynamicPersistentTileScheduler<CollectiveMainloop::NumMmaThreads, NumProducerThreads, Split, PackGQA, Arch >= 90 /*WarpSpecialized*/>
+--- a/hopper/tile_scheduler.hpp
++++ b/hopper/tile_scheduler.hpp
+@@ -489,7 +489,7 @@ public:
+ ///////////////////////////////////////////////////////////////////////////////
+ 
+ template<int kBlockM, int kBlockN, int NumMmaThreads=2 * cutlass::NumThreadsPerWarpGroup, int NumProducerThreads=cutlass::NumThreadsPerWarp,
+-         bool Split=false, bool PackGQA=false, bool WarpSpecialized=true, bool LPT = false, bool Sort = false, bool Prepared = true, bool FixedPrefill = false>
++         bool Split=false, bool PackGQA=false, bool WarpSpecialized=true, bool LPT = false, bool Sort = false, bool Prepared = true, bool FixedPrefill = false, bool FixedVarlen = false>
+ class VarlenDynamicPersistentTileScheduler {
+ 
+     static_assert(WarpSpecialized || NumProducerThreads == NumMmaThreads);
+@@ -599,6 +599,22 @@ public:
+             static_assert(!Split && PackGQA && LPT && kBlockM == 128 && (kBlockN == 224 || kBlockN == 192));
+             // Single sequence, all four KV heads fit in L2. This is exactly
+             // the prepared scheduler's longest-first interleaved tile order.
++            if constexpr (FixedVarlen) {
++                // Up to four packed sequences, one after another, each in the same
++                // longest-first order with the KV heads interleaved. One sequence
++                // gives exactly the single-sequence order below.
++                int start = 0;
++                #pragma unroll
++                for (int b = 0; b < 4; ++b) {
++                    if (b < params.num_batch) {
++                        int blocks = cute::ceil_div((params.cu_seqlens[b + 1] - params.cu_seqlens[b]) * params.qhead_per_khead, kBlockM);
++                        int tile = next_tile_idx - start;
++                        if (tile < blocks * params.num_head) { return {0, blocks - 1 - tile / params.num_head, tile % params.num_head, b}; }
++                        start += blocks * params.num_head;
++                    }
++                }
++                return {next_tile_idx, 0, 0, params.num_batch};
++            }
+             int blocks = cute::ceil_div(params.seqlen * params.qhead_per_khead, kBlockM);
+             if (next_tile_idx >= blocks * params.num_head) { return {next_tile_idx, 0, 0, params.num_batch}; }
+             return {0, blocks - 1 - next_tile_idx / params.num_head, next_tile_idx % params.num_head, 0};

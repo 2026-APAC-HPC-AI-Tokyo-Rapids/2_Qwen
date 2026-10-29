@@ -1242,22 +1242,25 @@ def prefill_specs():
     return json.loads(path.read_text())
 
 
-def prefill_selection_inputs(rows, padding=4):
+def prefill_selection_inputs(lengths, padding=4):
+    """One request, or packed requests (tuple) for varlen candidates."""
+    lengths = (lengths,) if isinstance(lengths, int) else tuple(lengths)
+    rows = sum(lengths)
     torch.manual_seed(93517 + rows)
     packed = (torch.randn(rows+padding, 72, 128, device="cuda", dtype=torch.bfloat16) * .5)
     q, k, v = packed[:, :64], packed[:, 64:68], packed[:, 68:]
     qw, kw = [torch.ones(128, device="cuda", dtype=torch.bfloat16) for _ in range(2)]
     angles = torch.arange(8192, device="cuda").float()[:, None] * (1000000.0 ** (-torch.arange(0, 128, 2, device="cuda").float() / 128))
     trig = torch.cat((angles.cos(), angles.sin()), dim=-1).contiguous()
-    pos = torch.arange(rows+padding, device="cuda", dtype=torch.int64)
-    loc = pos + 1
+    pos = torch.cat([torch.arange(n, device="cuda", dtype=torch.int64) for n in lengths] + [torch.arange(padding, device="cuda", dtype=torch.int64)])
+    loc = torch.arange(rows+padding, device="cuda", dtype=torch.int64) + 1
     q_fp8 = torch.empty((rows+padding, 64, 128), device="cuda", dtype=torch.float8_e4m3fn)
     ck, cv = [torch.empty((rows+padding, 4, 128), device="cuda", dtype=q_fp8.dtype) for _ in range(2)]
     kc, vc = [torch.empty((rows+padding+1, 4, 128), device="cuda", dtype=q_fp8.dtype) for _ in range(2)]
-    cu = torch.tensor([0, rows], device="cuda", dtype=torch.int32)
+    cu = torch.tensor([0, *torch.tensor(lengths).cumsum(0).tolist()], device="cuda", dtype=torch.int32)
     image = torch.full((4, (rows+223)//224, 224*128), 0x7f, device="cuda", dtype=torch.uint8)
     args = (q, k, qw, kw, trig, pos, 1e-6, q_fp8, v, kc, vc, loc, ck, cv)
-    return {"packed": packed, "q": q_fp8[:rows], "k": ck[:rows], "v": cv[:rows], "kc": kc, "vc": vc, "cu": cu, "image": image, "rope_args": args, "rows": rows}
+    return {"packed": packed, "q": q_fp8[:rows], "k": ck[:rows], "v": cv[:rows], "kc": kc, "vc": vc, "cu": cu, "image": image, "rope_args": args, "rows": rows, "lengths": lengths}
 
 
 def prefill_selection_step(common, name, layers=94):
@@ -1272,11 +1275,18 @@ def prefill_selection_step(common, name, layers=94):
     empty = torch.empty(0, device="cuda", dtype=torch.uint8)
     image = common["image"] if spec["byte_image"] else empty
 
+    maxlen = max(common["lengths"])
+    # Packed requests are served by the prepared N224 path unless a varlen row is selected.
+    packed_control = name == "control" and len(common["lengths"]) > 1
+
     def step():
         for _ in range(layers):
             # Includes the real extra producer work for c2, in every timed layer.
             rope_ops.apply_qknorm_rope_fp8_prefill(*common["rope_args"], image if spec["byte_image"] else None, rows if spec["byte_image"] else 0)
-            torch.ops.apac_fa3_verify.prefill_variant_fwd_out(common["q"], common["k"], common["v"], image, common["cu"], out, scales, lse, metadata, rows, 128**-.5, candidate)
+            if packed_control:
+                torch.ops.apac_fa3_verify.prefill_fwd_out(common["q"], common["k"], common["v"], common["cu"], out, scales, lse, metadata, maxlen, 128**-.5)
+            else:
+                torch.ops.apac_fa3_verify.prefill_variant_fwd_out(common["q"], common["k"], common["v"], image, common["cu"], out, scales, lse, metadata, maxlen, 128**-.5, candidate)
         return out, scales
 
     step.output = out, scales
@@ -1299,18 +1309,24 @@ def prefill_selection_capture(step):
 
 
 def prefill_fp32_reference(common):
-    rows = common["rows"]
-    indices = sorted({0, 1, 7, 31, 127, 223, rows//2, rows-2, rows-1})
-    q = common["q"].float()[indices].transpose(0, 1)
-    k = common["k"].float().repeat_interleave(16, dim=1).transpose(0, 1)
-    v = common["v"].float().repeat_interleave(16, dim=1).transpose(0, 1)
+    """Causal attention of sampled rows within each packed request."""
+    all_indices, outputs = [], []
+    start = 0
     tf32 = torch.backends.cuda.matmul.allow_tf32
     try:
         torch.backends.cuda.matmul.allow_tf32 = False
-        scores = (q @ k.transpose(1, 2)) * (128**-.5)
-        allowed = torch.arange(rows, device="cuda")[None, :] <= torch.tensor(indices, device="cuda")[:, None]
-        scores.masked_fill_(~allowed[None, :, :], -float("inf"))
-        return indices, (scores.softmax(-1) @ v).transpose(0, 1)
+        for rows in common["lengths"]:
+            indices = sorted({0, 1, 7, 31, 127, 223, rows//2, rows-2, rows-1})
+            q = common["q"].float()[[start + i for i in indices]].transpose(0, 1)
+            k = common["k"].float()[start:start+rows].repeat_interleave(16, dim=1).transpose(0, 1)
+            v = common["v"].float()[start:start+rows].repeat_interleave(16, dim=1).transpose(0, 1)
+            scores = (q @ k.transpose(1, 2)) * (128**-.5)
+            allowed = torch.arange(rows, device="cuda")[None, :] <= torch.tensor(indices, device="cuda")[:, None]
+            scores.masked_fill_(~allowed[None, :, :], -float("inf"))
+            all_indices += [start + i for i in indices]
+            outputs.append((scores.softmax(-1) @ v).transpose(0, 1))
+            start += rows
+        return all_indices, torch.cat(outputs)
     finally:
         torch.backends.cuda.matmul.allow_tf32 = tf32
 
@@ -1332,9 +1348,16 @@ def prefill_validate_candidate(common, name):
     spec = next(c for c in prefill_specs() if c["name"] == name)
     step = prefill_selection_step(common, name, 1)
     graph = prefill_selection_capture(step)
-    # A candidate that only changes the output path must equal its base kernel byte for byte.
+    # A candidate that only changes the output path or the request packing must
+    # equal its base kernel byte for byte; packed inputs run the base per request.
     base = spec.get("bitwise_reference")
-    base_step = prefill_selection_step(common, base, 1) if base else None
+    base_steps = []
+    if base:
+        start = 0
+        for length in common["lengths"]:
+            part = {**common, "q": common["q"][start:start+length], "k": common["k"][start:start+length], "v": common["v"][start:start+length], "cu": torch.tensor([0, length], device="cuda", dtype=torch.int32), "rows": length, "lengths": (length,)}
+            base_steps.append((start, length, prefill_selection_step(part, base, 1)))
+            start += length
     rows = common["rows"]
     control = torch.empty_like(step.output[0])
     control_scales = torch.empty((64, (rows+3)//4*4), device="cuda", dtype=torch.float32).T[:rows]
@@ -1348,7 +1371,7 @@ def prefill_validate_candidate(common, name):
             common["image"].fill_(0x7f)
         graph.replay()
         out, scales = step.output
-        torch.ops.apac_fa3_verify.prefill_fwd_out(common["q"], common["k"], common["v"], common["cu"], control, control_scales, lse, metadata, rows, 128**-.5)
+        torch.ops.apac_fa3_verify.prefill_fwd_out(common["q"], common["k"], common["v"], common["cu"], control, control_scales, lse, metadata, max(common["lengths"]), 128**-.5)
         if spec["byte_image"]:
             dump = torch.empty_like(common["image"])
             torch.ops.apac_fa3_verify.prefill_dump_v(common["v"], dump)
@@ -1360,10 +1383,10 @@ def prefill_validate_candidate(common, name):
         else:
             prefill_assert_errors(out.float(), control.float(), name+"_codes")
             prefill_assert_errors(scales, control_scales, name+"_scales")
-        if base_step:
+        for start, length, base_step in base_steps:
             base_step()
-            assert torch.equal(out.view(torch.uint8), base_step.output[0].view(torch.uint8)), (name, rows, replay, base, "FP8 bytes")
-            assert torch.equal(scales, base_step.output[1]), (name, rows, replay, base, "FP32 scales")
+            assert torch.equal(out[start:start+length].view(torch.uint8), base_step.output[0].view(torch.uint8)), (name, common["lengths"], replay, base, "FP8 bytes")
+            assert torch.equal(scales[start:start+length], base_step.output[1]), (name, common["lengths"], replay, base, "FP32 scales")
         # Verify paged transfer payload and fallback row-major V are still exact.
         assert torch.equal(common["v"].view(torch.uint8), common["packed"][:rows, 68:].to(out.dtype).contiguous().view(torch.uint8)), name
         assert torch.equal(common["v"].view(torch.uint8), common["vc"][1:rows+1].view(torch.uint8)), name

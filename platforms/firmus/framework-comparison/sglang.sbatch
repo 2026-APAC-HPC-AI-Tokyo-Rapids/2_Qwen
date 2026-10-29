@@ -213,9 +213,11 @@ done
 # Decode kernel selection (select-firmus-decode-kernels.sh, results/decode-selection/). The 17-minute site
 # limit leaves no serial time: "fa3" runs on the head node's other four GPUs during the numeric gate, and
 # "dense" on the Decode GPUs while the Prefill workers start. Only the Decode worker sources the result.
+prefill_screen=()
 if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving trial: retain prior kernel settings; no selection sweep. PP4 performance and correctness are unmeasured.\n'
+  printf 'PP4 serving trial: retain prior Decode kernel settings; screen only the configured varlen Prefill FA3 rows.\n'
+  prefill_screen=(--names "$(jq -er '.prefill_fa3_screen | join(",")' "${ROOT}/source/firmus-framework.json")")
 elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
   # Provision has verified the prior image, ordered overlays, expert map and
   # normalized serving config. Draft precision is the sole changed model setting.
@@ -229,14 +231,16 @@ dense_selection=$!
 # --dense-selected: the dense candidates were checked by the selection; the gate keeps the configured path.
 srun -N1 -n1 --exact -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts numeric-gate)" env TRITON_CACHE_DIR="/tmp/qwen-numeric-gate-${SLURM_JOB_ID}" DG_SM90_DECODE_INDEPENDENT_WG=1 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/check-firmus-megamoe.py" --dense-selected --fa3-selected >"${ART}/sm90-megamoe-gate.log" 2>&1
 wait "${fa3_selection}"
+fi
 
+if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
 # Measure all twelve physical Prefill GPUs before model load. The two head
 # groups and one tail group run concurrently; serving then reuses these GPUs.
 prefill_selections=()
 for worker in 0 1 2; do
   node=${HEAD}
   if (( worker == 2 )); then node=${TAIL}; fi
-  srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-selection-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-select-${SLURM_JOB_ID}-${worker}" bash "${ROOT}/scripts/select-firmus-prefill-kernels.sh" "${ROOT}" "prefill-${worker}" >"${ART}/prefill-selection-${worker}.log" 2>&1 &
+  srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-selection-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-select-${SLURM_JOB_ID}-${worker}" bash "${ROOT}/scripts/select-firmus-prefill-kernels.sh" "${ROOT}" "prefill-${worker}" "${prefill_screen[@]}" >"${ART}/prefill-selection-${worker}.log" 2>&1 &
   prefill_selections+=("$!")
 done
 for pid in "${prefill_selections[@]}"; do wait "${pid}" || true; done
