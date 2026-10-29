@@ -329,6 +329,11 @@ while IFS=$'\t' read -r worker host port _tp; do
 done <"${ROOT}/source/worker-endpoints.tsv"
 # Placement must not change outputs; keep one greedy answer through a Prefill worker for inspection.
 curl --fail --silent --show-error --max-time 120 -H 'Content-Type: application/json' -d '{"model":"qwen","messages":[{"role":"user","content":"Name the capital of France and explain in two sentences why it is historically important."}],"max_tokens":64,"temperature":0}' "http://${HEAD_IP}:${R_PORT}/v1/chat/completions" >"${ROOT}/results/sanity-chat.json"
+# Every archived run shows the Decode output stream stopping for ~0.33 s every 14-19 s while the Decode
+# scheduler keeps stepping, which starves the Prefill queue (2026-10-30-pp4-system-r3.md). Freeze the startup
+# heap of every server process after the warm-up request (SGLang /freeze_gc: tokenizer, schedulers,
+# detokenizer) so that Python's full collections scan only request state. A failed call keeps GC as it was.
+while IFS=$'\t' read -r worker host port _; do curl --fail --silent --show-error --max-time 30 -X POST "http://${host}:${port}/freeze_gc" >>"${ART}/freeze-gc.log" 2>&1 || printf 'freeze_gc failed on %s\n' "${worker}" >>"${ART}/freeze-gc.log"; done <"${ROOT}/source/worker-endpoints.tsv"
 benchmark_status=0
 if [[ "${profile_only}" != true ]]; then
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || benchmark_status=$?
