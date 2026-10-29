@@ -77,6 +77,11 @@ if [[ "${framework}" == sglang && -n "${CONTAINER_SHA256:-}" ]]; then
 fi
 if [[ "$(jq -r '.prefill.pp // 1' "${config}")" == 4 ]]; then
   python3 "${GITHUB_WORKSPACE}/scripts/prepare-firmus-pp4-settings.py" "${config}" "${GITHUB_WORKSPACE}" "${runtime_dir}"
+  gpu_clock=$(jq -r '.prefill.gpu_sm_clock // empty' "${config}")
+  if [[ -n "${gpu_clock}" ]]; then
+    install -m 0644 "${GITHUB_WORKSPACE}/${gpu_clock}" "${runtime_dir}/source/firmus-gpu-sm-clock.json"
+    install -m 0644 "${GITHUB_WORKSPACE}/scripts/order-firmus-pp4-gpus.py" "${runtime_dir}/scripts/"
+  fi
 fi
 selection_record=$(jq -r '.reuse_kernel_selection // empty' "${config}")
 if [[ -n "${selection_record}" ]]; then
