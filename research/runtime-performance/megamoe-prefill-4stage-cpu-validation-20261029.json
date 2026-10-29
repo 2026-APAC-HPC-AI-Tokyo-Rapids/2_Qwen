@@ -1,0 +1,368 @@
+{
+  "schema": "megamoe-prefill-4stage-cpu-validation/v1",
+  "date": "2026-10-29",
+  "status": "CPU_validated_not_GPU_measured; in-job gate and selection on the PP4 path",
+  "target": {
+    "kernel": "deep_gemm::sm90_fp8_mega_moe_impl",
+    "geometry": "Prefill 2WG: BLOCK 128x256x128, two math WG m64n256, 64 dispatch + 64 loader threads, 168 registers",
+    "dtype": "FP8 E4M3 weights/activations, FP32 accumulation, BF16 FC2 partials",
+    "shapes": {
+      "hidden": 4096,
+      "intermediate": 1536,
+      "experts": 128,
+      "topk": 8
+    },
+    "pp4_tokens_per_call": 8064,
+    "ep4_tokens_per_rank": 4096
+  },
+  "source": {
+    "deepgemm": "sgl-project/DeepGEMM v0.1.5 1c8138a59b3df5dac50b76b730834ed57982fdfb",
+    "image_header_sha256": "ff7a58cca00aa42a90386d12b0437b5d8caf35eb0ad082a8a1a0b4b74001a2a1",
+    "host_patch": {
+      "path": "patches/deep-gemm-host/sm90-prefill-4stage.patch",
+      "sha256": "8c3169237f6a9dab21d231b4eb76ede2ede78432bace4c94657085f14ee8dc0d"
+    },
+    "header_overlay": {
+      "path": "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch",
+      "sha256": "eaf177b91c868c7f95d9e885c870f6b309bd4fbe349d08aed30cc1724f61cd99"
+    },
+    "switch": "DG_SM90_PREFILL_4STAGE=1 (host); header path is constexpr kPrefill2WG and kNumStages == 4"
+  },
+  "shared_memory_bytes": {
+    "capacity": 232448,
+    "expert_counters": 1024,
+    "dispatch_buffers": 8192,
+    "barriers_fixed": 144,
+    "stage_with_barriers": 50192,
+    "control": {
+      "cd": 65536,
+      "stages": 3,
+      "total": 225472
+    },
+    "candidate": {
+      "cd": 18432,
+      "stages": 4,
+      "total": 228560
+    }
+  },
+  "removed_work": "Fourth 48 KiB A/B stage in the space of the 64 KiB BF16 FC2 tile; FC2 BF16 staging through the existing per-warp 16 x 144-byte slices removes the per-element swizzle XOR, per-pair branches and per-row shuffles. Same BF16 values, destinations, combine order and synchronisation.",
+  "fc2_epilogue_straight_line_instructions_per_thread_per_full_tile": {
+    "pp4_chain_ep1": [
+      765,
+      223
+    ],
+    "pp4_chain_ep4_128": [
+      823,
+      241
+    ],
+    "pp4_chain_ep4_140": [
+      818,
+      241
+    ],
+    "ep4_main_chain_with_fc2_address_128": [
+      625,
+      241
+    ],
+    "ep4_main_chain_with_fc2_address_140": [
+      625,
+      241
+    ],
+    "unchanged_per_thread": {
+      "STS": 64,
+      "LDS.128": 16,
+      "STG.128": 16,
+      "F2FP.BF16": 64
+    },
+    "method": "CUDA 13.4 cuobjdump, span from the FC2 postscale to the last 128-bit store before the combine barrier"
+  },
+  "compile": {
+    "cuda": "13.4 (image 13.0.88 not used)",
+    "target": "sm_90a",
+    "pp4_chain": {
+      "ep1-e128-m64-t256-s8-swap0-w128": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 4400,
+        "sass_identical_to_control": true
+      },
+      "ep1-e128-m64-t256-s8-swap1-w16": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 5200,
+        "sass_identical_to_control": true
+      },
+      "ep1-e128-m128-t512-s3-swap0-w128": {
+        "registers": 96,
+        "spill_store_bytes": 304,
+        "spill_load_bytes": 432,
+        "static_instructions": 5648,
+        "sass_identical_to_control": true
+      },
+      "ep1-e128-m128-t256-s3-swap0-w128": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 8064,
+        "sass_identical_to_control": true
+      },
+      "ep1-e128-m128-t256-s4-swap0-w128": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 7152
+      },
+      "ep4-e128-m64-t256-s8-swap0-w32": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 4280,
+        "sass_identical_to_control": true
+      },
+      "ep4-e128-m64-t256-s8-swap1-w16": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 6848,
+        "sass_identical_to_control": true
+      },
+      "ep4-e128-m128-t256-s3-swap0-w32": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 7680,
+        "sass_identical_to_control": true
+      },
+      "ep4-e128-m128-t256-s4-swap0-w32": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 6704
+      },
+      "ep4-e140-m64-t256-s8-swap0-w35": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 4520,
+        "sass_identical_to_control": true
+      },
+      "ep4-e140-m64-t256-s8-swap1-w18": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 7040,
+        "sass_identical_to_control": true
+      },
+      "ep4-e140-m128-t256-s3-swap0-w35": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 8240,
+        "sass_identical_to_control": true
+      },
+      "ep4-e140-m128-t256-s4-swap0-w35": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 7272
+      }
+    },
+    "ep4_main_chain": {
+      "ep4-e128-m64-t256-s8-swap0-w32": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 4264,
+        "sass_identical_to_control": true
+      },
+      "ep4-e128-m64-t256-s8-swap1-w16": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 6848,
+        "sass_identical_to_control": true
+      },
+      "ep4-e128-m128-t256-s3-swap0-w32": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 7480,
+        "sass_identical_to_control": true
+      },
+      "ep4-e128-m128-t256-s4-swap0-w32": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 6704
+      },
+      "ep4-e140-m64-t256-s8-swap0-w35": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 4504,
+        "sass_identical_to_control": true
+      },
+      "ep4-e140-m64-t256-s8-swap1-w18": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 7040,
+        "sass_identical_to_control": true
+      },
+      "ep4-e140-m128-t256-s3-swap0-w35": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 8048,
+        "sass_identical_to_control": true
+      },
+      "ep4-e140-m128-t256-s4-swap0-w35": {
+        "registers": 168,
+        "spill_store_bytes": 0,
+        "spill_load_bytes": 0,
+        "static_instructions": 7272
+      }
+    },
+    "untouched_geometries": "every three-stage and Decode instantiation selected by the host is SASS-identical (instruction and control words) between the control and candidate headers"
+  },
+  "host_contract": {
+    "script": "scripts/check-sm90-prefill-local-host.py",
+    "configurations": 92,
+    "result": "only the 2WG Prefill geometry changes, and only stages 3->4 and shared memory; host shared memory equals the kernel layout end for EP1 and EP4",
+    "ep4_selector_check": "scripts/check-sm90-independent-wg-host.py with the new host series: 480 configurations, 17 instantiations PASS"
+  },
+  "routing_tiles": {
+    "source": "kernels/probes/megamoe-local-ep1-routing.npz",
+    "ep1_pool_blocks": [
+      567,
+      578
+    ],
+    "ep1_fc2_tiles_per_sm": [
+      68.7,
+      70.1
+    ],
+    "ep4_fc2_tiles_per_sm": 32.4
+  },
+  "expected_saving_us_per_layer": {
+    "pp4": {
+      "epilogue_instructions": [
+        2,
+        51
+      ],
+      "fourth_stage": [
+        21,
+        78
+      ],
+      "total": [
+        23,
+        129
+      ],
+      "kappa": "epilogue: work removal ~1 on its critical-path share; stages: stall removal 0.35-0.6"
+    },
+    "ep4_if_enabled": {
+      "epilogue_instructions": [
+        0,
+        16
+      ],
+      "fourth_stage": [
+        11,
+        36
+      ]
+    },
+    "pp4_combined_with_tail_split": {
+      "total": [
+        34,
+        165
+      ],
+      "central": [
+        55,
+        115
+      ]
+    }
+  },
+  "gpu_only": [
+    "stage waits actually reduced (latency- vs L2-bandwidth-bound)",
+    "epilogue time under HBM write bandwidth",
+    "bitwise equality to the three-stage control on hardware"
+  ],
+  "in_job": {
+    "script": "scripts/select-firmus-prefill-megamoe.py --ranks 1 (variants control, four-stage, four-stage-split)",
+    "where": "sglang.sbatch PP4 branch, all twelve Prefill GPUs in parallel before model load",
+    "rule": "control vs FP32 reference (stop on failure); four-stage bit-identical, four-stage-split bit-identical or within FP-order tolerance of the control; a variant is eligible only if faster by max(5 us, 0.5 %) on every GPU and on balanced and hot routing; the fastest eligible wins, else three stages",
+    "expected_seconds": [
+      80,
+      120
+    ]
+  },
+  "past_rejections_distinct": "Not the independent WG (stages 3->2 and duplicated B, 40069880580), ping-pong, FC2 interleave, bulk scatter (40095847738), scatter offload, L2 prefetch, FP32 precombine (39355994503) or combine direct store; Decode stage sweeps are untouched (Decode SASS identical).",
+  "tail_split": {
+    "status": "CPU_validated_not_GPU_measured; third in-job variant four-stage-split",
+    "switch": "DG_SM90_PREFILL_TAIL_SPLIT=1 with DG_SM90_PREFILL_4STAGE=1; host appends the trailing template argument kPrefillTailSplit=true only then",
+    "host_patch": {
+      "path": "patches/deep-gemm-host/sm90-prefill-tail-split.patch",
+      "sha256": "c10f944ab609df326b4401faba5e39e258c00f963a25bbfc1f847e2a495695ed"
+    },
+    "header_overlay": {
+      "path": "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch",
+      "sha256": "d135560f13749d741f83fc5c51e3e528eee93e606409e66427820fe26afe566a"
+    },
+    "design": "Pool blocks with <= 64 valid rows (D5a half tiles) run rows 0..63 on both math warpgroups, warpgroup g taking columns 128g..128g+127 with one m64n128 accumulator from B rows 128g of the same stage. FC1: SwiGLU of 64 gate/up pairs per warpgroup, per-row amax over the 128 output columns exchanged between the partner warps through the staging-slice pads and a 64-thread named barrier (12 + warp), one FP8 scale written by warpgroup 0; FC2: weight-SF block g, BF16 rows written through the per-warp slices in two 64-column steps. Both warpgroups publish the FC1 rows, so the FC2 loader expects 12 x 2 x 4 arrivals for such blocks.",
+    "why_option_A": "Option B (SwapAB tails, tokens on N) would also remove the sub-64-row padding (6.5-7.4 % of rows at EP1) but needs transposed FC1 SwiGLU/SF128 and FC2 scatter epilogues for N = 8..64 and is SMEM-bound for small N; option A reuses the m64n128 split-N descriptors of the four-warpgroup path and the existing epilogue arithmetic.",
+    "routing": {
+      "ep1_pool_blocks_with_tail_le_64": [
+        69,
+        85
+      ],
+      "ep1_pool_blocks": [
+        567,
+        578
+      ],
+      "share": 0.134
+    },
+    "d5a_half_tile_cost_from_40095847738": {
+      "balanced_4096": 0.7,
+      "local_4096": 0.64,
+      "method": "control-minus-D5a saving divided by 0.5 x half-tile share x GEMM time; GEMM ~85 % of the kernel"
+    },
+    "compile": {
+      "ep1_split_registers": 168,
+      "ep1_split_spill_bytes": 0,
+      "ep4_split_registers": 168,
+      "ep4_split_spill_bytes": 0,
+      "static_instructions_ep1": [
+        7152,
+        7448
+      ],
+      "mainloop_issue_blocks_normal_fc1_fc2": {
+        "four_stage": [
+          42,
+          47
+        ],
+        "split_kernel": [
+          42,
+          49
+        ]
+      },
+      "split_issue_blocks_fc1_fc2": [
+        37,
+        41
+      ],
+      "untouched": "every three-stage, Decode and four-stage (no split) instantiation is SASS-identical to 5176716"
+    },
+    "host_contract": "scripts/check-sm90-prefill-local-host.py: 138 configurations; the switch only appends ',true' to the 2WG Prefill template and changes nothing else",
+    "expected_saving_us_per_layer_pp4": {
+      "raw": [
+        30,
+        60
+      ],
+      "kappa": "TC idle removal 0.35-0.6",
+      "effective": [
+        11,
+        36
+      ],
+      "assumption": "half tile h 0.64-0.70 -> split 0.52-0.55 of a full tile on 13.4 % of tiles"
+    },
+    "exactness": "Same K order, scales and rounding per element; bit-identical unless the m64n128 and m64n256 WGMMA sums differ, which the in-job gate bounds on every token (relative L2 < 0.002, max scaled error < 0.02 against the control) plus the FP32 reference."
+  }
+}
