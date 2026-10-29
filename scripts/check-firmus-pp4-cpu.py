@@ -30,9 +30,12 @@ def tree_hashes(root):
         if "__pycache__" in path.parts or path.suffix == ".pyc":
             continue
         if path.is_symlink():
-            raise ValueError(f"Unexpected source symlink: {path}")
-        if path.is_file():
-            result[str(path.relative_to(root))] = sha256(path)
+            # The pinned image contains relative .clang-format links whose
+            # targets lie outside the extracted Python package. Compare link
+            # payloads verbatim without following them, including dangling links.
+            result[str(path.relative_to(root))] = {"type": "symlink", "target": os.readlink(path)}
+        elif path.is_file():
+            result[str(path.relative_to(root))] = {"type": "file", "sha256": sha256(path)}
     if not result:
         raise ValueError(f"Empty source tree: {root}")
     return result

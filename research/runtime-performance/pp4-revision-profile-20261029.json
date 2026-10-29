@@ -99,6 +99,12 @@
       "actual_cleanup_stress": "150 passed: five actual-source cleanup endings x30; own child list empty after every trial and at completion",
       "raw_evidence": "../pp4-serving-cpu/validation-20261029/signal-race/diagnosis.json",
       "static_checks": "Ruff, Bash syntax and diff checks passed"
+    },
+    "symlink_gate": {
+      "result": "17 passed, zero skipped on Linux with real SquashFS4.6.1, Torch2.11.0+cpu and NumPy2.2.6; CUDA uninitialized",
+      "coverage": "Exact relative/dangling link payload, changed/missing/link-versus-file rejection, directory links not traversed; all eight end-to-end gate fixtures include dangling .clang-format links, including four real SquashFS cases.",
+      "static_checks": "Ruff and diff checks passed",
+      "raw_evidence": "../pp4-serving-cpu/validation-20261029/symlink-gate-pytest.log"
     }
   },
   "remaining_gpu_only_unknowns": [
@@ -107,7 +113,7 @@
     "Actual critical-path savings and whether PP can reach 10k"
   ],
   "run": null,
-  "outcome": "Timer race removed and verified before allocation. Resume the single authorized GPU profile; zero GPU allocations so far in this revision.",
+  "outcome": "Actual-image symlink comparator fixed and all 17 gate regressions passed. Resume the single authorized profile; GPU allocations in this revision remain zero.",
   "cpu_actions_attempts": [
     {
       "run": 40782868396,
@@ -120,6 +126,18 @@
       "reproduction": "Bash5.2/Python3.12 isolated repeated trials reproduced live sleep60 with parent blocked in wait after successful kill. Production-shaped while sleep15 advisory loop also left orphaned sleep15 holding capture pipes.",
       "fix": "Remove nonessential advisory hash-progress background loop; retain foreground SHA-256 validation and runtime-only cleanup trap. Test actual runtime/error/interrupt cleanup without artificial child.",
       "pp4_gate_fixture_job": "passed; actual image provision skipped"
+    },
+    {
+      "run": 40784895266,
+      "commit": "01fdb579c57c98a566f79c96a2940bd920deddc5",
+      "status": "failed-in-actual-image-cpu-gate",
+      "slurm_submitted": false,
+      "gpu_allocated": false,
+      "profile_collected": false,
+      "cause": "Exact-tree comparator rejected a legitimate image symlink srt/mem_cache/cpp_radix_tree/.clang-format. Prior local source copy had dereferenced symlinks.",
+      "passed_before_failure": "All CI jobs, actual pinned image SHA/size, source/build manifest, ordered runtime patches.",
+      "fix": "Compare every symlink target verbatim without following it; retain regular-file type and SHA comparison and reject mismatched/missing links.",
+      "cleanup": "Confirmed runtime /scratch/home/ACCOUNT/qwen/runs/pd-40784895266-1.No46icua6P absent after cleanup."
     }
   ]
 }

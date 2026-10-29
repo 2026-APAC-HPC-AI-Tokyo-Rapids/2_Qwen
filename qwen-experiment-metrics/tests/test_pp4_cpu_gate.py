@@ -31,6 +31,47 @@ def test_exact_tree_and_stale_missing_extra(tmp_path):
         gate.compare_sources(expected, staged)
 
 
+@pytest.mark.parametrize("target", ["source.py", "../../.clang-format"])
+def test_exact_tree_accepts_matching_relative_symlinks(tmp_path, target):
+    expected, staged = tmp_path / "expected", tmp_path / "staged"
+    for root in (expected, staged):
+        root.mkdir()
+        (root / "source.py").write_text("source")
+        (root / ".clang-format").symlink_to(target)
+    assert gate.tree_hashes(expected)[".clang-format"] == {"type": "symlink", "target": target}
+    assert len(gate.compare_sources(expected, staged)) == 64
+
+
+@pytest.mark.parametrize("failure", ["target", "missing", "file"])
+def test_exact_tree_rejects_symlink_mismatches(tmp_path, failure):
+    expected, staged = tmp_path / "expected", tmp_path / "staged"
+    for root in (expected, staged):
+        root.mkdir()
+        (root / "source.py").write_text("source")
+    (expected / ".clang-format").symlink_to("source.py")
+    if failure == "target":
+        # Both links resolve to the same file, but the payload must match exactly.
+        (staged / ".clang-format").symlink_to("./source.py")
+    elif failure == "file":
+        (staged / ".clang-format").write_text("source")
+    with pytest.raises(ValueError, match=r"differs.*\.clang-format"):
+        gate.compare_sources(expected, staged)
+
+
+def test_exact_tree_does_not_traverse_directory_symlinks(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "not-source.py").write_text("original")
+    expected, staged = tmp_path / "expected", tmp_path / "staged"
+    for root in (expected, staged):
+        root.mkdir()
+        (root / "linked-directory").symlink_to("../outside", target_is_directory=True)
+    assert gate.tree_hashes(expected) == {"linked-directory": {"type": "symlink", "target": "../outside"}}
+    source_hash = gate.compare_sources(expected, staged)
+    (outside / "not-source.py").write_text("changed")
+    assert gate.compare_sources(expected, staged) == source_hash
+
+
 def test_manifest_rejects_wrong_source_and_stale_build_patch(tmp_path):
     manifest = {"schema_version": "oci-embedded-manifest/v1", "source_commits": [{"repository_id": "apac2026-sglang", "oid": "wrong"}], "applied_patches": []}
     with pytest.raises(ValueError, match="revision"):
@@ -68,6 +109,7 @@ def test_provision_gate_before_allocation(tmp_path, monkeypatch, failure, real_s
     (runtime / "source/pp4-cpu-gate.json").write_text('{"result":"pass","stale":true}')
     staged = runtime / "overlay/sglang/python/sglang"
     staged.mkdir(parents=True)
+    (staged / ".clang-format").symlink_to("../../../.clang-format")
     if failure != "missing":
         (staged / "contract.py").write_text("stale" if failure == "stale" else "patched")
     image = runtime / "sglang.sqsh"
@@ -89,6 +131,7 @@ def test_provision_gate_before_allocation(tmp_path, monkeypatch, failure, real_s
             package = extracted / "opt/sglang/source/python/sglang"
             package.mkdir(parents=True)
             (package / "contract.py").write_text("patched")
+            (package / ".clang-format").symlink_to("../../../.clang-format")
             (extracted / "opt/apac").mkdir(parents=True)
             (extracted / "opt/apac/manifest.json").write_text(json.dumps(manifest))
         return subprocess.CompletedProcess(argv, 0)
@@ -98,6 +141,7 @@ def test_provision_gate_before_allocation(tmp_path, monkeypatch, failure, real_s
         package = image_root / "opt/sglang/source/python/sglang"
         package.mkdir(parents=True)
         (package / "contract.py").write_text("base\n")
+        (package / ".clang-format").symlink_to("../../../.clang-format")
         (image_root / "opt/apac").mkdir(parents=True)
         (image_root / "opt/apac/manifest.json").write_text(json.dumps(manifest))
         image.unlink()
