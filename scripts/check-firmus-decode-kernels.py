@@ -1332,6 +1332,9 @@ def prefill_validate_candidate(common, name):
     spec = next(c for c in prefill_specs() if c["name"] == name)
     step = prefill_selection_step(common, name, 1)
     graph = prefill_selection_capture(step)
+    # A candidate that only changes the output path must equal its base kernel byte for byte.
+    base = spec.get("bitwise_reference")
+    base_step = prefill_selection_step(common, base, 1) if base else None
     rows = common["rows"]
     control = torch.empty_like(step.output[0])
     control_scales = torch.empty((64, (rows+3)//4*4), device="cuda", dtype=torch.float32).T[:rows]
@@ -1357,13 +1360,17 @@ def prefill_validate_candidate(common, name):
         else:
             prefill_assert_errors(out.float(), control.float(), name+"_codes")
             prefill_assert_errors(scales, control_scales, name+"_scales")
+        if base_step:
+            base_step()
+            assert torch.equal(out.view(torch.uint8), base_step.output[0].view(torch.uint8)), (name, rows, replay, base, "FP8 bytes")
+            assert torch.equal(scales, base_step.output[1]), (name, rows, replay, base, "FP32 scales")
         # Verify paged transfer payload and fallback row-major V are still exact.
         assert torch.equal(common["v"].view(torch.uint8), common["packed"][:rows, 68:].to(out.dtype).contiguous().view(torch.uint8)), name
         assert torch.equal(common["v"].view(torch.uint8), common["vc"][1:rows+1].view(torch.uint8)), name
         indices, reference = prefill_fp32_reference(common)
         actual = out.float()[indices]*scales[indices, :, None]
         metrics.append(prefill_assert_errors(actual, reference, name+"_fp32"))
-    return {"numeric_passed": True, "bitwise": spec["bitwise"], "metrics": metrics, "changed_input_replays": 2, "byte_image_dump_passed": spec["byte_image"]}
+    return {"numeric_passed": True, "bitwise": spec["bitwise"], "bitwise_reference": base, "metrics": metrics, "changed_input_replays": 2, "byte_image_dump_passed": spec["byte_image"]}
 
 
 def check_prefill_fixed_variants():

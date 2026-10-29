@@ -36,8 +36,8 @@ def test_exact_boundary_and_numeric_failure(selector):
     assert selector['choose_candidate'](ranks)['winner'] == 'regs'
     for name in selector['NAMES'][1:-1]:
         ranks[1]['lengths']['3986'][name]['numeric_passed'] = False
-    assert selector['choose_candidate'](ranks)['winner'] == 'n192'
-    ranks[0]['lengths']['4096']['n192']['candidate'].pop()
+    assert selector['choose_candidate'](ranks)['winner'] == 'n192-direct-o'
+    ranks[0]['lengths']['4096']['n192-direct-o']['candidate'].pop()
     assert selector['choose_candidate'](ranks)['winner'] == 'control'
 
 
