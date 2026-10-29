@@ -123,7 +123,7 @@ def test_overlays_are_pp4_only_and_default_to_control():
     pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert pp4["sglang_overlay_patches"][-3:] == ["patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-dense-schedule.patch", "patches/sglang/decode-moe-input.patch"]
-    assert pp4["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch"
+    assert pp4["deep_gemm_overlay_patches"][-2:] == ["patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch", "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"]
     for key, patch in (("sglang_overlay_patches", "patches/sglang/prefill-qknorm-fp32.patch"), ("sglang_overlay_patches", "patches/sglang/prefill-dense-schedule.patch"), ("deep_gemm_overlay_patches", "patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch")):
         assert patch not in main[key]
     qknorm = (ROOT / "patches/sglang/prefill-qknorm-fp32.patch").read_text()

@@ -49,3 +49,38 @@ TARGET_VERIFY の層では現在、post-attention の flashinfer `fused_add_rmsn
 - 融合 norm の Decode 行数での時間（1 行 1 program、8 warp）。job 内選択の 3 batch × 2 block で決まり、遅ければ採用されない。
 - GPU の丸めでの bit 一致（residual、FP8 x、scale、top-k）。選択の数値 gate で確認する。
 - serving で step と ITL に反映されるか。通常の serving 1 回で確認する。Decode worker log の `MoE input fused: active` と source/decode-kernels.env で経路を確かめる。
+
+## 6. 追加：image 再 build に載せる 2 候補（同じ branch、job 内選択）
+
+coordinator の指示で 4 節の 1 位（FA3 の読み粒度）と 3 位（dense QKV の 176〜192 行 tile）を、次の bundle build に載せる候補として実装した。どちらも選択で負ければ pin のまま動く。
+
+### 6.1 FA3 verify：1 CTA で 2 KV head（`decode-wide-h2.patch`、行 `p128split2-h2-fp8`・`p128split3-h2-fp8`）
+
+- 1 CTA が同じ（要求、split）の KV head 2j と 2j+1 を受け持つ。producer は token 行の連続 256 B を cp.async で読み、16 B ごとに head 別の swizzle 済み tile へ置く。consumer は 2 warpgroup で、各 WG が pin と同じ 1 WG・M64 の計算を自分の head に行う。scheduler には head 対を 2 head として見せるので、metadata、partial の配置、combine は pin と同じ。
+- 4 head（512 B）にしなかったのは、consumer 4 WG では register が足りないため。2 head で 384 thread、producer 56・consumer 224 register（launch 168、spill 0）、shared memory 216,064 B なので stage は 2。
+- CUDA 13.4・sm_90a：QGMMA 24、MUFU 213、FFMA 208、FMUL 206、FADD 196、FMNMX 202、F2FP 128 は pin（s3）と同数。LDGSTS は 36 → 72、LDSM/STSM は 16/24 → 32/40。split が同じ `p128split2-h2-fp8` は pin と byte 一致するはずで、選択はそれを要求する（`exact_reference`）。
+- 既存の s2/s3 split、s3 merge、s2 非 split、two-CTA、Prefill fixed の 6 kernel は、patch 前後で SASS が関数名を除いて一致した。companion の patch chain は pristine の sgl-attn に `--fuzz=0` で全部当たる。
+- 選択：`select-firmus-decode-fa3.py --pinned-env` の対象を two-CTA 行（40925558339 で負け）から h2 行に替えた。採用条件は従来どおり、数値 gate、split が同じ行の byte 一致、44/46/48 の全 GPU・両 block で 1 µs/層以上の短縮。
+
+### 6.2 読み粒度の probe（`decode_kv_read_probe.py`、診断のみ）
+
+FA3 選択の各 batch で、同じ KV（64 token page、[token][4 head][128] FP8）を同じ page table で、1 program あたり 1・2・4 head（token 行の 128・256・512 B）ずつ読む Triton kernel を測る。program 数（要求 × 8）と読む byte 数はどの粒度でも同じ。結果は `fa3.json` の各 rank の `read_probe` に TB/s で残る。h2 行が負けても、2.7 TB/s が読み粒度によるものかどうかがこの run で分かる。kernel は Triton 3.5 で sm_90 向けに offline compile できる（interpreter はデータ依存の loop 上限を扱えないので、そこでは動かしていない）。
+
+### 6.3 dense QKV：BLOCK_M 192（host `sm90-1d2d-decode-bm192.patch`、header `deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch`）
+
+- `DG_SM90_1D2D_DECODE_CONFIG` に `QKV>128:`／`O>128:` を足した。129〜192 行だけに効き、そこでは先頭の項目より優先される。BLOCK_M 192 はこの項目でしか使えない。BLOCK_M 192 では math warpgroup が 3 個（384 thread、register 152）、1d2d の wave は 192 行になる。それ以外の geometry は header の式が変わらない。
+- 候補は `QKV>128:192,72,5,1,0`（9216/72 = 128 tile、132 SM で 1 wave）。M=176〜192 の行が 1 本の M tile に入り、BLOCK_M 128 の 2 本目（48〜64 行で 1 本分の時間）がなくなる。tensor の仕事は 256 行 → 192 行（−25%）。CTA あたりの A＋B の読み込みは 192×4096 + 72×4096 = 1.08 MB で、今の 128×144 と同じ。
+- 1 行の計算は WGMMA の N と K の分け方が同じなので、出力は pin（`QKV:128,144,5,1,0`）と bit 一致するはず。選択はそれを条件にする。
+- CUDA 13.4：192×72 と 192×80 は 128 register（launch 512 thread の上限）、spill 0。既存の 128×144、128×80、64×144、64×96 と Prefill schedule の 256×128 は、patch 前後で SASS が一致した。host は v0.1.5 に series 全体を当てた tree で `tvm_ffi_api.cpp` の g++ syntax check を通した。
+- O（K=8192）は BLOCK_M 192 にすると CTA あたりの A が 1.5 MB になり、今より読み込みが増えるので候補にしない。
+- 選択：`select-firmus-decode-dense.py --pinned-env` を、pin を control に 176/184/192 行で BLOCK_M 192 だけを測る形にした（SwapAB 行は 3 run で負けたので外す）。条件は 3 行すべてで pin と bit 一致、かつ全 GPU を合わせた median で 0.5 µs 以上速く、両 block でも速いこと。採用時は変わった `DG_SM90_1D2D_DECODE_CONFIG` の 1 行だけを decode-kernels.env に追記する。
+
+### 6.4 見込みと job 内時間
+
+| 候補 | 見込み〔係数〕 | job 内時間 |
+|---|---|---|
+| FA3 h2 | 読み粒度が原因なら 185 MB を 3.2〜3.5 TB/s、−10〜−18 µs/層 = −0.9〜−1.7 ms〔約 1.0〕。原因でなければ 0、producer が 2 倍の copy と transpose を担うので負けることもある | FA3 選択 約 35 s（two-CTA 3 行が h2 2 行と probe に替わり、従来の約 30 s とほぼ同じ） |
+| dense BLOCK_M 192 | QKV 23.3 µs の 2 本目の tile 分の一部、−3〜−6 µs/層 = −0.3〜−0.55 ms〔約 1.0〕 | 約 45〜55 s（DeepGEMM JIT 2 個） |
+| MoE 入力融合（3 節） | −0.19〜−0.30 ms〔約 1.0〕 | 30〜45 s |
+
+Decode GPU の連鎖（Prefill attention 選択 → FA3 → copy engine → MoE 入力 → dense）は約 220 s で、40925558339 の連鎖（約 145 s、MegaMoE 選択とほぼ同時に終了）より約 75 s 長い。目標の「MegaMoE 選択 + 60 s」を約 15 s 超える。Prefill の FP32 Q/K norm は 40911121619 と 40925558339 の両方で全 GPU で勝っている。これを `prepare-firmus-pp4-settings.py` で固定して Prefill attention 選択（約 60〜70 s）を外せば予算に収まる。ただし他の worker がこの選択に候補を足していないかを親が確かめる必要がある。

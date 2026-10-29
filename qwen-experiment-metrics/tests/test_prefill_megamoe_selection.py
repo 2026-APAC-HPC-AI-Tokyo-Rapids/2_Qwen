@@ -156,9 +156,9 @@ def test_host_and_header_agree_on_the_four_stage_layout():
     assert 1024 + 8192 + 18432 + 144 + 4 * 50192 <= 232448 < 1024 + 8192 + 65536 + 144 + 4 * 50192
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())["deep_gemm_overlay_patches"]
     pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch", "patches/deep-gemm-bench/prefill-direct-fc2/sm90-prefill-direct-fc2.patch", "patches/deep-gemm-bench/prefill-gather-a/sm90-prefill-gather-a.patch"]
-    # Only the dense 1D2D schedule overlay (select-firmus-prefill-attention.py, a different header) follows the MegaMoE tiles.
-    assert config[-1] == "patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch"
-    assert config[-6:-1] == pp4_only
+    # Only the 1D2D overlays (Prefill schedule, Decode BLOCK_M 192; a different header) follow the MegaMoE tiles.
+    assert config[-2:] == ["patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch", "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"]
+    assert config[-7:-2] == pp4_only
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
     assert not set(pp4_only[1:]) & set(main)
 
@@ -181,7 +181,7 @@ def test_direct_fc2_is_a_trailing_template_flag_and_its_permutation_round_trips(
     host = (ROOT / "patches/deep-gemm-host/sm90-prefill-direct-fc2.patch").read_text()
     header = (ROOT / "patches/deep-gemm-bench/prefill-direct-fc2/sm90-prefill-direct-fc2.patch").read_text()
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
-    assert series[-3:] == ["sm90-prefill-tail-split.patch", "sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch"]
+    assert series[-4:-1] == ["sm90-prefill-tail-split.patch", "sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch"]
     # ",false,true" (kPrefillTailSplit, kPrefillDirectFC2) only when set and never with the split.
     assert 'args.prefill_direct_fc2 ? ",\\n        false,\\n        true" : (args.prefill_tail_split ? ",\\n        true" : "")' in host
     assert 'config.num_stages == 4 and not prefill_tail_split and get_env<int>("DG_SM90_PREFILL_DIRECT_FC2", 0) != 0' in host

@@ -4,10 +4,13 @@ Run with torch.distributed.run --standalone --nproc-per-node=4. Rank 0 warms
 JITs first; all four ranks validate, then measure synchronized round-robin
 blocks. Only Python stdlib is imported for CPU selection-rule tests.
 
-With --pinned-env (PP4, which keeps the prior Decode settings), each group's
-control is the pinned kernel and only the overlay candidates (SwapAB dense,
-wide norm/quant) compete; the written environment is the pinned one with the
-winners added.
+With --pinned-env (PP4, which keeps the prior Decode settings), the control is
+the pinned QKV config and only the BLOCK_M 192 QKV tiles for 129..192 rows
+compete (check-firmus-decode-kernels.py DENSE_LARGE; the SwapAB rows lost in
+40201493911, 40225743220 and 40883389891, O and norm stay pinned). They are
+timed at 4 x (cap/4 - 4, cap/4 - 2, cap/4) rows, must equal the pinned output
+bit for bit, and must win under the pooled rule at every row count; the
+written environment is the pinned one with a winner's "QKV>128" entry added.
 """
 
 import argparse
@@ -71,15 +74,22 @@ def choose_candidate(records):
     return {"winner": winner, "summary": summary, "rule": {"minimum_saving_us": 0.5, "blocks": BLOCKS, "both_blocks_faster": True}}
 
 
+def choose_all_rows(by_rows, control):
+    """PP4: a candidate must be eligible at every row count; the lowest summed median wins."""
+    names = [n for n in by_rows[0]["summary"] if n != control and all(sel["summary"][n].get("eligible") for sel in by_rows)]
+    winner = min(names, key=lambda n: (sum(sel["summary"][n]["median_us"] for sel in by_rows), n)) if names else control
+    return {"winner": winner, "rows": by_rows, "rule": {"every_row_count": True, **by_rows[0]["rule"]}}
+
+
 def worker_environment(selections, candidates, pinned=None):
     """Empty values clear inherited settings; stock is represented by no override."""
     if pinned is not None:
-        # PP4: keep every pinned setting (including the QKV DeepGEMM config that serves rows
-        # outside the SwapAB range) and add only the winning overlay candidates.
+        # PP4: keep every pinned setting; a BLOCK_M 192 winner replaces the DeepGEMM config
+        # string with the pinned one plus its "QKV>128" entry.
         env = dict(pinned)
-        for group, key in (("qkv", "SGLANG_DECODE_DENSE_GEMM_QKV"), ("o", "SGLANG_DECODE_DENSE_GEMM_O"), ("norm", "SGLANG_DECODE_NORM_QUANT")):
-            if selections[group]["winner"] != candidates[group][0]["name"]:
-                env[key] = selections[group]["winner"]
+        winner = next(c for c in candidates["qkv"] if c["name"] == selections["large"]["winner"])
+        if winner is not candidates["qkv"][0]:
+            env["DG_SM90_1D2D_DECODE_CONFIG"] = winner["spec"]
         return env
     env = dict.fromkeys(ENV_KEYS, "")
     direct = []
@@ -106,16 +116,13 @@ def round_robin(names, block):
 
 
 def pinned_candidates(checks, pinned):
-    """PP4: the pinned kernel of each group is the control; only overlay candidates compete."""
-    candidates = {}
-    for op, _, _ in checks["DENSE_PROJECTIONS"]:
-        rows = checks["dense_candidates"](op)
-        direct = [part.split(":", 1)[1] for part in pinned.get("DG_SM90_1D2D_DECODE_CONFIG", "").split(";") if part.startswith(op.upper() + ":")]
-        name = pinned.get("SGLANG_DECODE_DENSE_GEMM_" + op.upper()) or ("dg-" + direct[0].replace(",", "-") if direct else "stock")
-        candidates[op] = [next(c for c in rows if c["name"] == name)] + [c for c in rows if c["backend"] == "swapab" and c["name"] != name]
-    control = pinned.get("SGLANG_DECODE_NORM_QUANT") or "stock"
-    candidates["norm"] = [{"name": name, "backend": "norm", "config": None} for name in [control] + [n for n in checks["NORM_QUANT_CANDIDATES"] if n != control]]
-    return candidates
+    """PP4: the pinned QKV config is the control; the BLOCK_M 192 tiles for 129..192 rows compete."""
+    spec = pinned.get("DG_SM90_1D2D_DECODE_CONFIG", "")
+    direct = [part.split(":", 1)[1] for part in spec.split(";") if part.startswith("QKV:")]
+    control = next(c for c in checks["dense_candidates"]("qkv") if c["name"] == ("dg-" + direct[0].replace(",", "-") if direct else "stock"))
+    control = {**control, "spec": spec} if spec else control
+    large = [{"name": "dg-qkv-m129-" + "-".join(map(str, config)), "backend": "deepgemm", "config": config, "spec": ";".join(filter(None, (spec, "QKV>128:" + ",".join(map(str, config)))))} for config in checks["DENSE_LARGE"]["qkv"]]
+    return {"qkv": [control] + large}
 
 
 def read_env(path):
@@ -173,7 +180,7 @@ def measure_graph(torch, graph):
     return samples
 
 
-def prepare_projection(torch, checks, op, n, k, candidates, cap_rows, boundary_rows=()):
+def prepare_projection(torch, checks, op, n, k, candidates, cap_rows, boundary_rows=(), bitwise=False):
     """Compile and screen outside measurement. All candidates share four weights."""
     started = time.monotonic()
     sets = [checks["dense_inputs"](cap_rows, n, k, 71200 + n + i) for i in range(4)]
@@ -202,6 +209,9 @@ def prepare_projection(torch, checks, op, n, k, candidates, cap_rows, boundary_r
                     call()
                     checks["dense_errors"](s[2], reference)
                     checks["dense_errors"](s[2], baseline.float())
+                    # PP4 (--pinned-env): the candidate must reproduce the pinned output bit for bit.
+                    assert not bitwise or torch.equal(s[2].view(torch.int16), baseline.view(torch.int16)), "output differs from the pinned config"
+                assert not bitwise or all(m["relative_l2_vs_stock"] == 0.0 for m in [metrics, *boundary_metrics]), "boundary output differs from the pinned config"
                 graphs[candidate["name"]] = capture_graph(torch, calls)
             results[candidate["name"]] = {"numeric_passed": True, "numeric": metrics, "boundary_numeric": boundary_metrics, "blocks": [[] for _ in range(BLOCKS)], "prepare_seconds": time.monotonic() - begin}
         except Exception as error:
@@ -269,23 +279,27 @@ def run_selection(output, env_output, pinned_env=None):
     if pinned is None:
         candidates = {op: checks["dense_candidates"](op) for op, _, _ in checks["DENSE_PROJECTIONS"]}
         candidates["norm"] = [{"name": name, "backend": "norm", "config": None} for name in checks["NORM_QUANT_CANDIDATES"]]
+        groups = [(op, op, n, k, rows) for op, n, k in checks["DENSE_PROJECTIONS"]] + [("norm", "norm", 0, 0, rows)]
     else:
-        candidates = pinned_candidates(checks, pinned)
-    norm_names = [c["name"] for c in candidates["norm"]]
+        # decode_cap_tokens is the Decode cap (192 = 4 ranks x 48), which equals the verify rows
+        # of one rank at cap/4 (48 x 4 tokens); time cap/4 - 4, cap/4 - 2 and cap/4 requests.
+        pinned_rows = (rows - 16, rows - 8, rows)
+        qkv = pinned_candidates(checks, pinned)["qkv"]
+        candidates = {f"qkv-{m}": qkv for m in pinned_rows}
+        groups = [(f"qkv-{m}", "qkv", 9216, 4096, m) for m in pinned_rows]
     prepared = {}
     with checks["dense_fp32_reference"]():
         # One cold compiler warms the shared container HOME caches first;
         # subsequent ranks import/load those kernels, avoiding four cold builds.
-        if rank == 0:
-            for op, n, k in checks["DENSE_PROJECTIONS"]:
-                prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], rows, boundary_rows=tuple(sorted({4, 64, 65, 128, 129, 160, 176, rows})))
-            prepared["norm"] = prepare_norm(torch, checks, rows, norm_names)
-        dist.barrier()
-        if rank != 0:
-            for op, n, k in checks["DENSE_PROJECTIONS"]:
-                prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], rows)
-            prepared["norm"] = prepare_norm(torch, checks, rows, norm_names)
-        dist.barrier()
+        for turn in (0, 1):
+            if (rank == 0) == (turn == 0):
+                for key, op, n, k, m in groups:
+                    if op == "norm":
+                        prepared[key] = prepare_norm(torch, checks, m, [c["name"] for c in candidates[key]])
+                    else:
+                        boundary = tuple(sorted({4, 64, 65, 128, 129, 160, 176, m})) if rank == 0 and (pinned is None or m == rows) else ()
+                        prepared[key] = prepare_projection(torch, checks, op, n, k, candidates[key], m, boundary_rows=boundary, bitwise=pinned is not None)
+            dist.barrier()
     local = {"rank": rank, "device": torch.cuda.get_device_name(rank), "projections": {op: {"rank": rank, "candidates": choices, "results": prepared[op]["results"], "prepare_seconds": prepared[op]["prepare_seconds"]} for op, choices in candidates.items()}}
     all_records = [None] * 4
     dist.all_gather_object(all_records, local)
@@ -311,12 +325,17 @@ def run_selection(output, env_output, pinned_env=None):
     dist.all_gather_object(all_records, local)
     if rank == 0:
         selections = {op: choose_candidate([r["projections"][op] for r in all_records]) for op in candidates}
+        if pinned is not None:
+            selections = {"large": choose_all_rows([selections[key] for key, *_ in groups], candidates[groups[0][0]][0]["name"])}
+            candidates = {"qkv": candidates[groups[0][0]]}
         env = worker_environment(selections, candidates, pinned)
-        result = {"schema": "firmus-decode-dense-selection/v1", "hostname": socket.gethostname(), "host_patch_sha256": host_sha, "shapes": {op: {"m": rows, "n": n, "k": k, "weight_bytes": 4 * n * k} for op, n, k in checks["DENSE_PROJECTIONS"]}, "blocks": BLOCKS, "replays": REPLAYS, "calls_per_replay": REPS, "weight_sets": 4, "timing": "CUDA graph replay; prequantized inputs; rotating weights", "elapsed_seconds": max(r["elapsed_seconds"] for r in all_records), "selections": selections, "worker_environment": env, "ranks": all_records}
+        result = {"schema": "firmus-decode-dense-selection/v1", "hostname": socket.gethostname(), "host_patch_sha256": host_sha, "shapes": {key: {"m": m, "n": n, "k": k, "weight_bytes": 4 * n * k} for key, op, n, k, m in groups if op != "norm"}, "blocks": BLOCKS, "replays": REPLAYS, "calls_per_replay": REPS, "weight_sets": 4, "timing": "CUDA graph replay; prequantized inputs; rotating weights", "elapsed_seconds": max(r["elapsed_seconds"] for r in all_records), "selections": selections, "worker_environment": env, "ranks": all_records}
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
         env_output.parent.mkdir(parents=True, exist_ok=True)
-        env_output.write_text("".join(f"{key}={shlex.quote(value)}\n" for key, value in env.items()))
+        # PP4 appends this file to the pinned decode-kernels.env: write only what changed.
+        written = env if pinned is None else {key: value for key, value in env.items() if pinned.get(key) != value}
+        env_output.write_text("".join(f"{key}={shlex.quote(value)}\n" for key, value in written.items()))
         print(json.dumps({"phase": "selected", "env": env, "elapsed_seconds": result["elapsed_seconds"]}), flush=True)
     dist.barrier()
     dist.destroy_process_group()
