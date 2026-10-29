@@ -1,3 +1,4 @@
+import ast
 import json
 import runpy
 from pathlib import Path
@@ -30,9 +31,14 @@ def test_header_overlay_changes_only_the_three_warpgroup_geometry():
 
 def test_bm192_candidates_cover_one_wave_of_qkv_tiles():
     checks_text = (ROOT / "scripts/check-firmus-decode-kernels.py").read_text()
-    # N72: 128 tiles, one wave on 132 SMs (N80 would leave 16 SMs idle; one JIT compile fits the time budget).
-    assert 'DENSE_LARGE = {"qkv": ((192, 72, 5, 1, 0),), "o": ()}' in checks_text
-    assert -(-9216 // 72) == 128
+    # N80: 116 tiles, one wave on 132 SMs. N72 (128 tiles) failed the host's bn % 16 == 0 assertion in
+    # 40964714831 before any timing; every candidate must satisfy the host checks of sm90-1d2d-decode-config.
+    assert 'DENSE_LARGE = {"qkv": ((192, 80, 5, 1, 0),), "o": ()}' in checks_text
+    host = (ROOT / "patches/deep-gemm-host/sm90-1d2d-decode-config.patch").read_text()
+    assert "DG_HOST_ASSERT(bn >= 16 and bn <= 192 and bn % 16 == 0);" in host
+    for bm, bn, *_ in ast.literal_eval(checks_text.split("DENSE_LARGE = ", 1)[1].split("\n", 1)[0])["qkv"]:
+        assert 16 <= bn <= 192 and bn % 16 == 0 and bm == 192
+        assert -(-9216 // bn) <= 132
 
 
 def test_fa3_selection_records_the_read_granularity_probe():
