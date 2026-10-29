@@ -40,6 +40,8 @@ ASPIRE EP4経路はcommit396f1fbで実装済み。run40569440787のLinux全検�
 
 FC1にもscale読取アドレスの共通化候補を作成した。約509万組のpointer一致、6 geometryのfresh CPU compileを確認。Prefill128/140のFC1静的spanは290→277/280→267命令（整数address-family各−10）、168 registers・spill0を維持。その他4 geometryは命令encoding一致。動的命令数や速度改善率ではなく、GPUでの数値一致・速度は未確認。候補patchはactive bench inventoryに含めない。詳細は `megamoe-fc1-cpu-validation-20261028.json`。
 
+Prefill 2WGの4 stage候補（host `DG_SM90_PREFILL_4STAGE` + header overlay）。64KiBのFC2 BF16 CDを、FC1 epilogueが既に使うwarp別16行×144byte（計18KiB）へ置き換え、FC2を64列ずつ4回で書き出す。共有メモリは225,472→228,560B（3→4 stage）。FC2 epilogueの直線spanはPP4 chainのEP1で765→223命令/thread/tile（swizzle XOR・行分岐・行毎SHFLが消え、STS/LDS/STG/F2FPは同数）、EP4 main chainで625→241。168 registers・spill0、3 stageとDecodeの全instantiationはSASS一致。見込みはPP4で23〜129µs/層（epilogueは仕事削減、stageは待ち削減でκ0.35〜0.6）。GPUでは未測定で、PP4の通常job内で全12 Prefill GPUのbit一致・FP32 reference・速度を測り、全GPUで速い場合だけ採用する。詳細は `megamoe-prefill-4stage-cpu-validation-20261029.json`。
+
 ## Prefill の収支
 
 17周期、周期平均 **250.991 ms**、kernel union **248.908 ms**、kernelのない区間 **2.083 ms**。92個のkernel名とgeometryの組を全て保持。重なったkernelの時間和を周期時間へ足し直さない。

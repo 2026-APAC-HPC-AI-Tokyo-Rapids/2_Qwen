@@ -413,5 +413,11 @@
     "status": "CPU_admitted_not_GPU_measured_or_activated",
     "removed_work": "Common gate/up scale pointer and constant up offset; 4-byte K induction. Integer addressing only; same FP32 operations, scale loads, synchronization and payload bytes.",
     "past_rejections_distinct": "Does not cache 32 K scales, add SHFL, share RCP, change stages, or retry Prefill independent warpgroups."
+  },
+  "megamoe_prefill_4stage_cpu_candidate": {
+    "evidence": "megamoe-prefill-4stage-cpu-validation-20261029.json",
+    "status": "CPU_validated_not_GPU_measured; in-job gate and selection on the PP4 path",
+    "removed_work": "Fourth 48 KiB A/B stage in the space of the 64 KiB BF16 FC2 tile; FC2 BF16 staging through the existing per-warp 16 x 144-byte slices removes the per-element swizzle XOR, per-pair branches and per-row shuffles. Same BF16 values, destinations, combine order and synchronisation.",
+    "past_rejections_distinct": "Not the independent WG (stages 3->2 and duplicated B, 40069880580), ping-pong, FC2 interleave, bulk scatter (40095847738), scatter offload, L2 prefetch, FP32 precombine (39355994503) or combine direct store; Decode stage sweeps are untouched (Decode SASS identical)."
   }
 }

@@ -215,7 +215,19 @@ done
 # "dense" on the Decode GPUs while the Prefill workers start. Only the Decode worker sources the result.
 if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving trial: retain prior kernel settings; no selection sweep. PP4 performance and correctness are unmeasured.\n'
+  printf 'PP4 serving trial: retain prior kernel settings; only the EP1 MegaMoE gate and pipeline-depth selection run.\n'
+  # EP1 MegaMoE on all twelve Prefill GPUs before model load (select-firmus-prefill-megamoe.py, about 1-1.5 min):
+  # the control must match an FP32 reference (a failure stops the job), and the four-stage candidate is adopted
+  # only if it is bit-identical and faster on every GPU. A missing or late result keeps three stages.
+  megamoe_selections=()
+  for worker in 0 1 2; do
+    node=${HEAD}
+    if (( worker == 2 )); then node=${TAIL}; fi
+    srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-megamoe-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-megamoe-${SLURM_JOB_ID}-${worker}/triton" DG_JIT_CACHE_DIR="/tmp/qwen-prefill-megamoe-${SLURM_JOB_ID}-${worker}/deep-gemm" timeout --kill-after=5 240 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --ranks 1 --output "${ROOT}/results/prefill-megamoe/prefill-${worker}" >"${ART}/prefill-megamoe-${worker}.log" 2>&1 &
+    megamoe_selections+=("$!")
+  done
+  for pid in "${megamoe_selections[@]}"; do wait "${pid}" || true; done
+  python3 "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --aggregate "${ROOT}/results/prefill-megamoe" --output "${ROOT}/results/prefill-megamoe/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
 elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
   # Provision has verified the prior image, ordered overlays, expert map and
   # normalized serving config. Draft precision is the sole changed model setting.
