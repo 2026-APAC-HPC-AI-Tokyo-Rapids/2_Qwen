@@ -19,7 +19,7 @@ from runpy import run_path
 BLOCKS = 2
 REPLAYS = 25
 REPS = 20
-ENV_KEYS = ("DG_SM90_1D2D_DECODE_CONFIG", "SGLANG_DECODE_DENSE_GEMM_QKV", "SGLANG_DECODE_DENSE_GEMM_O")
+ENV_KEYS = ("DG_SM90_1D2D_DECODE_CONFIG", "SGLANG_DECODE_DENSE_GEMM_QKV", "SGLANG_DECODE_DENSE_GEMM_O", "SGLANG_DECODE_NORM_QUANT")
 
 
 def distribution(samples):
@@ -76,6 +76,9 @@ def worker_environment(selections, candidates):
         else:
             env["SGLANG_DECODE_DENSE_GEMM_" + op.upper()] = name
     env[ENV_KEYS[0]] = ";".join(direct)
+    # The TARGET_VERIFY input norm/quant kernel (check-firmus-decode-kernels.py NORM_QUANT_CANDIDATES).
+    if "norm" in selections and selections["norm"]["winner"] != "stock":
+        env["SGLANG_DECODE_NORM_QUANT"] = selections["norm"]["winner"]
     return env
 
 
@@ -173,6 +176,29 @@ def prepare_projection(torch, checks, op, n, k, candidates, cap_rows, boundary_r
     return {"graphs": graphs, "sets": sets, "results": results, "prepare_seconds": time.monotonic() - started}
 
 
+def prepare_norm(torch, checks, rows):
+    """Screen each input norm/quant kernel, then capture REPS calls over four input sets."""
+    import sglang.kernels.ops.layernorm.add_rmsnorm_group_quant as nq
+
+    started = time.monotonic()
+    weight = (torch.randn(4096, device="cuda") * 0.1 + 1).bfloat16()
+    sets = [(torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16), torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16), *checks["norm_quant_outputs"](rows)) for _ in range(4)]
+    graphs, results = {}, {}
+    for name in checks["NORM_QUANT_CANDIDATES"]:
+        begin = time.monotonic()
+        try:
+            checks["norm_validate_candidate"](nq, name, (1, 144, 160, rows), 53090)
+            kernel = checks["norm_quant_kernel"](nq, name)
+            graphs[name] = capture_graph(torch, [lambda s=s, kernel=kernel: kernel(s[0], s[1], weight, 1e-6, s[2], s[3]) for s in sets])
+            results[name] = {"numeric_passed": True, "blocks": [[] for _ in range(BLOCKS)], "prepare_seconds": time.monotonic() - begin}
+        except Exception as error:
+            if name == "stock":
+                raise
+            results[name] = {"numeric_passed": False, "error": str(error), "blocks": [[] for _ in range(BLOCKS)], "prepare_seconds": time.monotonic() - begin}
+        print(json.dumps({"phase": "prepare", "rank": int(os.environ.get("LOCAL_RANK", "0")), "op": "norm", "candidate": name, **results[name]}), flush=True)
+    return {"graphs": graphs, "sets": sets, "weight": weight, "results": results, "prepare_seconds": time.monotonic() - started}
+
+
 def run_selection(output, env_output):
     begin = time.monotonic()
     import torch
@@ -202,6 +228,7 @@ def run_selection(output, env_output):
     checks["dense_validate_candidate"].__globals__["dense_call"] = serving_call
     rows = checks["decode_cap_tokens"]()
     candidates = {op: checks["dense_candidates"](op) for op, _, _ in checks["DENSE_PROJECTIONS"]}
+    candidates["norm"] = [{"name": name, "backend": "norm", "config": None} for name in checks["NORM_QUANT_CANDIDATES"]]
     prepared = {}
     with checks["dense_fp32_reference"]():
         # One cold compiler warms the shared container HOME caches first;
@@ -209,10 +236,12 @@ def run_selection(output, env_output):
         if rank == 0:
             for op, n, k in checks["DENSE_PROJECTIONS"]:
                 prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], rows, boundary_rows=tuple(sorted({4, 64, 65, 128, 129, 160, 176, rows})))
+            prepared["norm"] = prepare_norm(torch, checks, rows)
         dist.barrier()
         if rank != 0:
             for op, n, k in checks["DENSE_PROJECTIONS"]:
                 prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], rows)
+            prepared["norm"] = prepare_norm(torch, checks, rows)
         dist.barrier()
     local = {"rank": rank, "device": torch.cuda.get_device_name(rank), "projections": {op: {"rank": rank, "candidates": choices, "results": prepared[op]["results"], "prepare_seconds": prepared[op]["prepare_seconds"]} for op, choices in candidates.items()}}
     all_records = [None] * 4

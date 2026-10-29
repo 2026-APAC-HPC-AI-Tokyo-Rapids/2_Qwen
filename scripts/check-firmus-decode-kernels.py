@@ -518,15 +518,78 @@ def check_add_rmsnorm_group_quant():
 
 
 
-def check_decode_add_rmsnorm_group_quant():
-    """One-row Decode layout under the same rounding-level bounds as the Prefill screen.
+# TARGET_VERIFY input-norm/quant kernels: "stock" is the 64-lane one-row
+# kernel; "wide" spreads the row over 512 lanes. Serving reads the choice from
+# SGLANG_DECODE_NORM_QUANT (empty = stock), written by the dense selection.
+NORM_QUANT_CANDIDATES = ("stock", "wide")
+
+
+def norm_quant_kernel(nq, name):
+    return {"stock": nq.decode_add_rmsnorm_group_quant_fp8_out, "wide": nq.decode_add_rmsnorm_group_quant_wide_fp8_out}[name]
+
+
+def norm_quant_outputs(rows, device="cuda"):
+    q = torch.empty((rows, 4096), dtype=torch.float8_e4m3fn, device=device)
+    scale = torch.empty((32, (rows + 3) // 4 * 4), dtype=torch.float32, device=device).T[:rows]
+    return q, scale
+
+
+def norm_quant_reference(x, residual, weight):
+    from sgl_kernel import fused_add_rmsnorm
+
+    y, r = x.clone(), residual.clone()
+    if y.shape[0]:
+        fused_add_rmsnorm(y, r, weight, 1e-6)
+    q, s = sglang_per_token_group_quant_fp8(y, 128, column_major_scales=True, scale_tma_aligned=True)
+    return q, s, r
+
+
+def norm_validate_candidate(nq, name, rows_list, seed):
+    """Eager rows (zero row, tails) and changed-input CUDA graph replay against
+    flashinfer fused_add_rmsnorm + group-128 quant, within rounding level."""
+    kernel = norm_quant_kernel(nq, name)
+    torch.manual_seed(seed)
+    weight = (torch.randn(4096, device="cuda") * .1 + 1).bfloat16()
+    for rows in rows_list:
+        x = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16)
+        residual = torch.randn_like(x)
+        if rows:
+            x[0].zero_()
+            residual[0].zero_()
+        expected = norm_quant_reference(x, residual, weight)
+        work = residual.clone()
+        q, scale = norm_quant_outputs(rows)
+        kernel(x, work, weight, 1e-6, q, scale)
+        compare_norm_quant((q, scale, work), expected, f"decode_{name}_{rows}")
+        if rows not in (160, 176, 192):
+            continue
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            kernel(x, work, weight, 1e-6, q, scale)
+        torch.cuda.current_stream().wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            kernel(x, work, weight, 1e-6, q, scale)
+        for replay in range(3):
+            x.copy_(torch.randn_like(x) * (replay + 1))
+            residual.copy_(torch.randn_like(residual) * 8)
+            work.copy_(residual)
+            expected = norm_quant_reference(x, residual, weight)
+            graph.replay()
+            compare_norm_quant((q, scale, work), expected, f"decode_{name}_graph_{rows}_{replay}")
+
+
+def check_decode_add_rmsnorm_group_quant(selected_only=False):
+    """One-row Decode layouts under the same rounding-level bounds as the Prefill screen.
 
     The two-row kernel already differs from flashinfer in a few FP8 codes per
     row (run 40197369083: 512 of 127x4096 codes, identical scales), so a
-    bitwise gate rejects the unchanged arithmetic as well.
+    bitwise gate rejects the unchanged arithmetic as well. Like the dense
+    GEMMs, the serving gate checks only the configured kernel: the job-local
+    selection screens every candidate and drops failures instead of failing
+    the job.
     """
-    from sgl_kernel import fused_add_rmsnorm
-
     try:
         import sglang.kernels.ops.layernorm.add_rmsnorm_group_quant as nq
     except ImportError:
@@ -536,47 +599,11 @@ def check_decode_add_rmsnorm_group_quant():
     if not hasattr(nq, "decode_add_rmsnorm_group_quant_fp8"):
         print("SKIP: one-row Decode norm/quant is not in this SGLang tree", flush=True)
         return
-    decode_add_rmsnorm_group_quant_fp8 = nq.decode_add_rmsnorm_group_quant_fp8
-
-    torch.manual_seed(1764096)
-    weight = (torch.randn(4096, device="cuda") * .1 + 1).bfloat16()
-    for rows in (0, 1, 127, 128, 144, 160, 164, 168, 172, 176, 177, 192):
-        x = torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16)
-        residual = torch.randn_like(x)
-        work = residual.clone()
-
-        def reference():
-            y, r = x.clone(), residual.clone()
-            if rows:
-                fused_add_rmsnorm(y, r, weight, 1e-6)
-            q, s = sglang_per_token_group_quant_fp8(y, 128, column_major_scales=True, scale_tma_aligned=True)
-            return q, s, r
-
-        def compare(actual, label):
-            compare_norm_quant(actual, reference(), label)
-
-        if rows:
-            x[0].zero_()
-            residual[0].zero_()
-            work.copy_(residual)
-        out = decode_add_rmsnorm_group_quant_fp8(x, work, weight, 1e-6)
-        compare((*out, work), f"decode_{rows}")
-        if rows not in (160, 176, 192):
+    for name in [os.environ.get("SGLANG_DECODE_NORM_QUANT") or "stock"] if selected_only else NORM_QUANT_CANDIDATES:
+        if name == "wide" and not hasattr(nq, "decode_add_rmsnorm_group_quant_wide_fp8_out"):
+            print("SKIP: wide Decode norm/quant is not in this SGLang tree", flush=True)
             continue
-        stream = torch.cuda.Stream()
-        stream.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(stream):
-            decode_add_rmsnorm_group_quant_fp8(x, work, weight, 1e-6)
-        torch.cuda.current_stream().wait_stream(stream)
-        graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph):
-            out = decode_add_rmsnorm_group_quant_fp8(x, work, weight, 1e-6)
-        for replay in range(3):
-            x.copy_(torch.randn_like(x) * (replay + 1))
-            residual.copy_(torch.randn_like(residual) * 8)
-            work.copy_(residual)
-            graph.replay()
-            compare((*out, work), f"decode_graph_{rows}_{replay}")
+        norm_validate_candidate(nq, name, (0, 1, 127, 128, 144, 160, 164, 168, 172, 176, 177, 192), 1764096)
 
 
 def check_prefill_attention():
@@ -959,6 +986,8 @@ DENSE_CONFIGS = {
     "qkv": ((64, 144, 5, 1, 0), (64, 144, 7, 1, 0), (128, 144, 5, 1, 0), (128, 80, 7, 1, 0)),
     "o": ((64, 64, 9, 1, 0), (64, 64, 13, 1, 0), (128, 64, 8, 1, 0), (128, 32, 10, 1, 0)),
 }
+# Overlay JIT kernels (decode_dense_gemm.SWAPAB_CONFIGS): token rows on the WGMMA N side.
+DENSE_SWAPAB = {"qkv": ("swapab-176-s5", "swapab-176-s5-mc2"), "o": ("swapab-176-s5-k4",)}
 DENSE_HOST_SHA256 = "3ed1a5f562c2e10f9f8c438225eb63fcc36ef31378a2262267a062abcf090326"
 
 
@@ -967,6 +996,7 @@ def dense_candidates(op):
     for config in DENSE_CONFIGS[op]:
         candidates.append({"name": "dg-" + "-".join(map(str, config)), "backend": "deepgemm", "config": config})
     candidates.append({"name": "dg1-swapab-streamk", "backend": "companion", "config": None})
+    candidates += [{"name": name, "backend": "swapab", "config": None} for name in DENSE_SWAPAB[op]]
     return candidates
 
 
@@ -1006,6 +1036,13 @@ def dense_call(candidate, inputs):
         import deep_gemm
 
         return lambda: deep_gemm.fp8_gemm_nt(lhs, rhs, out)
+    if candidate["backend"] == "swapab":
+        from sglang.srt.layers.quantization.decode_dense_gemm import (
+            run_decode_dense_gemm,
+        )
+
+        projection = "QKV" if b.shape == (9216, 4096) else "O"
+        return lambda: run_decode_dense_gemm(projection, candidate["name"], lhs, rhs, out)
     if candidate["backend"] == "companion":
         import sys
 
@@ -1078,10 +1115,10 @@ def dense_validate_candidate(op, candidate, inputs, reference, stock):
     out.fill_(float("nan"))
     call()
     metrics = dense_errors(out, reference)
-    if candidate["backend"] == "companion":
+    if candidate["backend"] in ("companion", "swapab"):
         first = out.clone()
         call()
-        assert torch.equal(out, first), "dense DG1 output must be deterministic"
+        assert torch.equal(out, first), f"dense {candidate['name']} output must be deterministic"
     stock_metrics = dense_errors(out, stock.float())
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
@@ -1420,7 +1457,7 @@ if __name__ == "__main__":
     check_topk_mask()
     check_decode_router_padding()
     check_add_rmsnorm_group_quant()
-    check_decode_add_rmsnorm_group_quant()
+    check_decode_add_rmsnorm_group_quant(selected_only="--dense-selected" in sys.argv[1:])
     check_prefill_fp8_integration()
     check_prefill_fixed_variants()
     check_prefill_attention()

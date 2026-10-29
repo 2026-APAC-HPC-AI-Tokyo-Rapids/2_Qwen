@@ -1,0 +1,446 @@
+diff --git a/python/sglang/kernels/jit/csrc/gemm/decode_swapab_fp8.cuh b/python/sglang/kernels/jit/csrc/gemm/decode_swapab_fp8.cuh
+new file mode 100644
+index 0000000..9045b2a
+--- /dev/null
++++ b/python/sglang/kernels/jit/csrc/gemm/decode_swapab_fp8.cuh
+@@ -0,0 +1,363 @@
++// Decode (TARGET_VERIFY) dense FP8 projections with the token rows on the WGMMA
++// N side ("SwapAB"): D[t, o] = sum_k X[t, k] W[o, k] sx[t, k / 128] sw[o / 128, k / 128].
++//
++// The stock DeepGEMM 1d2d kernel puts the 144..176 token rows on M, so it pads
++// to two 128-row M tiles (1.455x Tensor work for QKV) and every weight tile is
++// read by both M tiles (128x144 QKV: ~142 MB of L2->SM traffic for 37.7 MB of
++// weights). Here one CTA owns 128 weight rows and all tokens (N = BN), so each
++// weight byte is read once and only the BN real-or-zero-filled token columns are
++// computed. The arithmetic per output element is unchanged from 1d2d: FP8 WGMMA
++// partial sums over one 128-wide K block in FP32, promoted into an FP32
++// accumulator with the product of the two FP32 block scales, one BF16 rounding
++// at the end. With kSplitK > 1 the K blocks are split over a CTA cluster and the
++// FP32 partials are summed in a fixed cluster-rank order through distributed
++// shared memory before the single BF16 rounding (FP summation order only).
++//
++// Device code reuses DeepGEMM's SM90 building blocks (TMA copies, transaction
++// barriers, WGMMA selector and descriptors) so the pipeline mirrors
++// sm90_fp8_gemm_1d2d.cuh; the host side builds the tensor maps itself.
++
++#include <sgl_kernel/tensor.h>
++#include <sgl_kernel/utils.h>
++#include <sgl_kernel/utils.cuh>
++
++#include <cutlass/arch/barrier.h>
++#include <cutlass/arch/reg_reconfig.h>
++
++#include <cute/arch/cluster_sm90.hpp>
++#include <cute/arch/copy_sm90_desc.hpp>
++#include <cute/arch/copy_sm90_tma.hpp>
++
++#include <deep_gemm/comm/barrier.cuh>
++#include <deep_gemm/common/tma_copy.cuh>
++#include <deep_gemm/mma/sm90.cuh>
++#include <deep_gemm/ptx/ld_st.cuh>
++#include <deep_gemm/ptx/utils.cuh>
++#include <deep_gemm/ptx/wgmma.cuh>
++
++#include <cuda.h>
++#include <cudaTypedefs.h>
++
++#include <cstdint>
++
++namespace {
++
++constexpr uint32_t kSwapBlockOut = 128;  // weight rows per CTA: two 64-row math warpgroups
++constexpr uint32_t kSwapBlockK = 128;
++constexpr uint32_t kSwapMathThreads = 256;
++constexpr uint32_t kSwapTMAThreads = 128;
++constexpr uint32_t kSwapStoreRows = 8;  // token rows per TMA store box
++
++template <uint32_t BN, uint32_t kNumStages, uint32_t kNumKBlocks>
++struct SwapABSmem {
++  static constexpr uint32_t W = kSwapBlockOut * kSwapBlockK;               // FP8 bytes
++  static constexpr uint32_t X = BN * kSwapBlockK;                          // FP8 bytes
++  static constexpr uint32_t SX = (BN * sizeof(float) + 127) / 128 * 128;   // FP32 token scales
++  static constexpr uint32_t kOffsetX = kNumStages * W;
++  static constexpr uint32_t kOffsetSX = kOffsetX + kNumStages * X;
++  static constexpr uint32_t kOffsetSW = kOffsetSX + kNumStages * SX;
++  static constexpr uint32_t kOffsetBarrier = kOffsetSW + (kNumKBlocks * sizeof(float) + 7) / 8 * 8;
++  static constexpr uint32_t kBytes = kOffsetBarrier + 2 * kNumStages * 8;
++  // Epilogue reuse of the (fully consumed) W/X stage region.
++  static constexpr uint32_t D = 2 * BN * 64 * sizeof(__nv_bfloat16);    // two 64-column BF16 halves
++  static constexpr uint32_t kOffsetPartial = D;
++  static constexpr uint32_t Partial = BN / 2 * kSwapMathThreads * sizeof(float);
++  static_assert(W % 1024 == 0 && X % 1024 == 0, "128B-swizzled tiles need 1024-byte stage alignment");
++  static_assert(D % 1024 == 0, "TMA store boxes need 1024-byte alignment");
++};
++
++CUTLASS_DEVICE uint32_t swapab_map_cluster(const void* smem, const uint32_t rank) {
++  uint32_t remote;
++  asm volatile("mapa.shared::cluster.u32 %0, %1, %2;\n" : "=r"(remote) : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(smem))), "r"(rank));
++  return remote;
++}
++
++CUTLASS_DEVICE float swapab_ld_cluster(const uint32_t addr) {
++  float value;
++  asm volatile("ld.shared::cluster.f32 %0, [%1];\n" : "=f"(value) : "r"(addr) : "memory");
++  return value;
++}
++
++template <uint32_t SHAPE_N, uint32_t SHAPE_K, uint32_t BN, uint32_t kNumStages, uint32_t kSplitK, uint32_t kMulticast>
++__global__ void __launch_bounds__(kSwapMathThreads + kSwapTMAThreads, 1) decode_swapab_fp8_gemm_kernel(
++    const __grid_constant__ cute::TmaDescriptor tensor_map_w,
++    const __grid_constant__ cute::TmaDescriptor tensor_map_x,
++    const __grid_constant__ cute::TmaDescriptor tensor_map_sx,
++    const __grid_constant__ cute::TmaDescriptor tensor_map_d,
++    const float* __restrict__ sw,
++    const uint32_t num_tokens) {
++#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
++  using namespace deep_gemm;
++  using WGMMA = typename mma::sm90::FP8MMASelector<BN>::type;
++  using Barrier = cutlass::arch::ClusterTransactionBarrier;
++  constexpr uint32_t kNumKBlocks = SHAPE_K / kSwapBlockK / kSplitK;
++  constexpr uint32_t kNumGroups = BN / 8;  // 8-token accumulator column groups
++  using Smem = SwapABSmem<BN, kNumStages, kNumKBlocks>;
++  static_assert(SHAPE_N % kSwapBlockOut == 0 && SHAPE_K % (kSwapBlockK * kSplitK) == 0, "Invalid shape");
++  static_assert(BN % 16 == 0 && BN <= 256 && WGMMA::kNumAccum == BN / 2, "Invalid token tile");
++  static_assert(kSplitK == 1 || kMulticast == 1, "Split-K and token multicast use different clusters");
++  static_assert(kMulticast == 1 || kMulticast == 2, "Token multicast is over CTA pairs");
++  static_assert(Smem::kOffsetPartial + (kSplitK > 1 ? Smem::Partial : 0) <= Smem::kOffsetSX, "Epilogue reuse must stay in the W/X stages");
++  constexpr uint32_t kTxBytes = Smem::W + Smem::X + BN * sizeof(float);
++
++  extern __shared__ __align__(1024) uint8_t smem[];
++  const auto smem_w = [&](uint32_t s) { return reinterpret_cast<__nv_fp8_e4m3*>(smem + s * Smem::W); };
++  const auto smem_x = [&](uint32_t s) { return reinterpret_cast<__nv_fp8_e4m3*>(smem + Smem::kOffsetX + s * Smem::X); };
++  const auto smem_sx = [&](uint32_t s) { return reinterpret_cast<float*>(smem + Smem::kOffsetSX + s * Smem::SX); };
++  auto smem_sw = reinterpret_cast<float*>(smem + Smem::kOffsetSW);
++  auto full_barriers = reinterpret_cast<Barrier*>(smem + Smem::kOffsetBarrier);
++  auto empty_barriers = full_barriers + kNumStages;
++
++  const uint32_t warp_idx = __shfl_sync(0xffffffff, threadIdx.x / 32, 0);
++  const uint32_t lane_idx = ptx::get_lane_idx();
++  const uint32_t tile = blockIdx.x / kSplitK;
++  const uint32_t split = blockIdx.x % kSplitK;  // the cluster rank when kSplitK > 1
++  const uint32_t k_block_begin = split * kNumKBlocks;
++
++  if (warp_idx == kSwapMathThreads / 32 && cute::elect_one_sync()) {
++    cute::prefetch_tma_descriptor(&tensor_map_w);
++    cute::prefetch_tma_descriptor(&tensor_map_x);
++    cute::prefetch_tma_descriptor(&tensor_map_sx);
++    cute::prefetch_tma_descriptor(&tensor_map_d);
++  }
++  if (warp_idx == kSwapMathThreads / 32 + 1 && cute::elect_one_sync()) {
++#pragma unroll
++    for (uint32_t i = 0; i < kNumStages; ++i) {
++      full_barriers[i].init(1);
++      empty_barriers[i].init(kMulticast * kSwapMathThreads / 32);
++    }
++    cutlass::arch::fence_barrier_init();
++  }
++  // Weight scales are model parameters, never written by the preceding kernel.
++  if (threadIdx.x < kNumKBlocks) smem_sw[threadIdx.x] = __ldg(sw + tile * (SHAPE_K / kSwapBlockK) + k_block_begin + threadIdx.x);
++  (kSplitK * kMulticast > 1) ? cute::cluster_sync() : __syncthreads();
++
++  // The activations and their scales come from the preceding kernel.
++  cudaGridDependencySynchronize();
++
++  uint32_t stage = 0, phase = 0;
++  const auto advance = [&]() {
++    stage = stage == kNumStages - 1 ? 0 : stage + 1;
++    phase ^= stage == 0;
++  };
++
++  const uint32_t wg = __shfl_sync(0xffffffff, threadIdx.x / 128, 0);
++  if (warp_idx >= kSwapMathThreads / 32) {
++    cutlass::arch::warpgroup_reg_dealloc<40>();
++    if (warp_idx == kSwapMathThreads / 32 + 2 && cute::elect_one_sync()) {
++      for (uint32_t kb = 0; kb < kNumKBlocks; ++kb, advance()) {
++        empty_barriers[stage].wait(phase ^ 1);
++        Barrier& full = full_barriers[stage];
++        const uint32_t k_block = k_block_begin + kb;
++        tma::copy<kSwapBlockK, kSwapBlockOut, 128>(&tensor_map_w, &full, smem_w(stage), k_block * kSwapBlockK, tile * kSwapBlockOut);
++        tma::copy<kSwapBlockK, BN, 128>(&tensor_map_x, &full, smem_x(stage), k_block * kSwapBlockK, 0, kMulticast);
++        tma::copy<BN, 1, 0>(&tensor_map_sx, &full, smem_sx(stage), 0, k_block);
++        full.arrive_and_expect_tx(kTxBytes);
++      }
++      // A peer's multicast and remote empty arrivals target this CTA until it drains.
++      if constexpr (kMulticast > 1) {
++        for (uint32_t i = 0; i < kNumStages; ++i, advance()) empty_barriers[stage].wait(phase ^ 1);
++      }
++    }
++    __syncwarp();
++    cudaTriggerProgrammaticLaunchCompletion();
++    // Match the math warpgroups' two cluster barriers of the split-K epilogue.
++    if constexpr (kSplitK > 1) {
++      cute::cluster_arrive();
++      cute::cluster_wait();
++      cute::cluster_arrive();
++      cute::cluster_wait();
++    }
++    return;
++  }
++
++  cutlass::arch::warpgroup_reg_alloc<232>();
++  float accum[WGMMA::kNumAccum], final_accum[WGMMA::kNumAccum] = {0};
++  auto a_desc = mma::sm90::make_smem_desc(smem_w(0) + wg * WGMMA::M * kSwapBlockK, 1);
++  auto b_desc = mma::sm90::make_smem_desc(smem_x(0), 1);
++  const uint32_t a_desc_lo = __shfl_sync(0xffffffff, a_desc.reg32_[0], 0);
++  const uint32_t b_desc_lo = __shfl_sync(0xffffffff, b_desc.reg32_[0], 0);
++  const uint32_t col = 2 * (lane_idx % 4);
++
++  for (uint32_t kb = 0; kb < kNumKBlocks; ++kb, advance()) {
++    const float scale_w = ptx::ld_shared(smem_sw + kb);
++    full_barriers[stage].wait(phase);
++    // Issue order: warpgroup 1 queues its first K block behind warpgroup 0's,
++    // so one promotes while the other's WGMMAs run instead of both idling the
++    // Tensor Cores together; the offset persists while the stages stay full.
++    if (kb == 0 && wg == 1) cutlass::arch::NamedBarrier::sync(kSwapMathThreads, 3);
++#pragma unroll
++    for (uint32_t i = 0; i < WGMMA::kNumAccum; ++i) ptx::warpgroup_fence_operand(accum[i]);
++    ptx::warpgroup_arrive();
++#pragma unroll
++    for (uint32_t k = 0; k < kSwapBlockK / WGMMA::K; ++k) {
++      a_desc.reg32_[0] = a_desc_lo + (stage * Smem::W + k * WGMMA::K) / 16;
++      b_desc.reg32_[0] = b_desc_lo + (stage * Smem::X + k * WGMMA::K) / 16;
++      WGMMA::wgmma(a_desc, b_desc, accum, k);
++    }
++    ptx::warpgroup_commit_batch();
++    if (kb == 0 && wg == 0) cutlass::arch::NamedBarrier::arrive(kSwapMathThreads, 3);
++#pragma unroll
++    for (uint32_t i = 0; i < WGMMA::kNumAccum; ++i) ptx::warpgroup_fence_operand(accum[i]);
++    ptx::warpgroup_wait<0>();
++
++    // Token scales live in this stage: read them before releasing it.
++    const float* sx = smem_sx(stage);
++#pragma unroll
++    for (uint32_t i = 0; i < kNumGroups; ++i) {
++      const float2 s = *reinterpret_cast<const float2*>(sx + 8 * i + col);
++      const float s0 = scale_w * s.x, s1 = scale_w * s.y;
++      final_accum[4 * i + 0] += s0 * accum[4 * i + 0];
++      final_accum[4 * i + 1] += s1 * accum[4 * i + 1];
++      final_accum[4 * i + 2] += s0 * accum[4 * i + 2];
++      final_accum[4 * i + 3] += s1 * accum[4 * i + 3];
++    }
++    if constexpr (kMulticast == 1) {
++      if (lane_idx == 0) empty_barriers[stage].arrive();
++    } else {
++      if (lane_idx < kMulticast) empty_barriers[stage].arrive(lane_idx);
++    }
++  }
++  // Every CTA has consumed all of its K blocks; the next kernel may launch.
++  cudaTriggerProgrammaticLaunchCompletion();
++  // Both warpgroups must be done reading the stages that the epilogue overwrites.
++  cutlass::arch::NamedBarrier::sync(kSwapMathThreads, 0);
++
++  // Column groups [group_begin, group_end) of the tile are reduced and stored here.
++  uint32_t group_begin = 0, group_end = kNumGroups;
++  if constexpr (kSplitK > 1) {
++    // Pairs of groups (16 tokens) per rank keep the x4 matrix stores whole.
++    constexpr uint32_t kPairs = kNumGroups / 2;
++    group_begin = 2 * (split * kPairs / kSplitK);
++    group_end = 2 * ((split + 1) * kPairs / kSplitK);
++    float* partial = reinterpret_cast<float*>(smem + Smem::kOffsetPartial);
++#pragma unroll
++    for (uint32_t j = 0; j < WGMMA::kNumAccum; ++j) partial[j * kSwapMathThreads + threadIdx.x] = final_accum[j];
++    cute::cluster_arrive();
++    cute::cluster_wait();
++    uint32_t peer[kSplitK];
++#pragma unroll
++    for (uint32_t r = 0; r < kSplitK; ++r) peer[r] = swapab_map_cluster(partial, r);
++#pragma unroll
++    for (uint32_t i = 0; i < kNumGroups; ++i) {
++      if (i < group_begin || i >= group_end) continue;
++#pragma unroll
++      for (uint32_t q = 0; q < 4; ++q) {
++        const uint32_t offset = ((4 * i + q) * kSwapMathThreads + threadIdx.x) * sizeof(float);
++        float sum = swapab_ld_cluster(peer[0] + offset);
++#pragma unroll
++        for (uint32_t r = 1; r < kSplitK; ++r) sum += swapab_ld_cluster(peer[r] + offset);
++        final_accum[4 * i + q] = sum;
++      }
++    }
++  }
++
++  // D tile in shared memory: per warpgroup a [BN tokens][64 outputs] BF16 half
++  // with the 128B swizzle of its TMA store. Transposed 8x8 matrix stores turn
++  // the (output, token) accumulator fragments into token-major rows.
++  auto smem_d = smem + wg * BN * 128;
++  const uint32_t m = lane_idx / 8, j = lane_idx % 8;
++  const uint32_t chunk = 2 * (warp_idx % 4) + m % 2;
++#pragma unroll
++  for (uint32_t i = 0; i < kNumGroups; i += 2) {
++    if (i < group_begin || i >= group_end) continue;
++    const uint32_t token = 8 * (i + m / 2) + j;
++    ptx::SM90_U32x4_STSM_T<__nv_bfloat162>::copy(
++        __float22bfloat162_rn({final_accum[4 * i + 0], final_accum[4 * i + 1]}),
++        __float22bfloat162_rn({final_accum[4 * i + 2], final_accum[4 * i + 3]}),
++        __float22bfloat162_rn({final_accum[4 * i + 4], final_accum[4 * i + 5]}),
++        __float22bfloat162_rn({final_accum[4 * i + 6], final_accum[4 * i + 7]}),
++        smem_d + token * 128 + ((chunk ^ j) * 16));
++  }
++  cute::tma_store_fence();
++  cutlass::arch::NamedBarrier::sync(128, 1 + wg);
++  if (threadIdx.x % 128 == 0) {
++    for (uint32_t i = group_begin; i < group_end && i * kSwapStoreRows < num_tokens; ++i)
++      cute::SM90_TMA_STORE_2D::copy(&tensor_map_d, smem_d + i * kSwapStoreRows * 128, tile * kSwapBlockOut + wg * 64, i * kSwapStoreRows);
++    cute::tma_store_arrive();
++    cute::tma_store_wait<0>();
++  }
++  if constexpr (kSplitK > 1) {
++    // Peers read this CTA's partials through distributed shared memory.
++    cute::cluster_arrive();
++    cute::cluster_wait();
++  }
++#endif
++}
++
++inline PFN_cuTensorMapEncodeTiled_v12000 swapab_encode_fn() {
++  static const auto fn = [] {
++    void* ptr = nullptr;
++    cudaDriverEntryPointQueryResult status;
++    host::RuntimeDeviceCheck(cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled", &ptr, 12000, cudaEnableDefault, &status));
++    host::RuntimeCheck(status == cudaDriverEntryPointSuccess && ptr != nullptr, "cuTensorMapEncodeTiled is unavailable");
++    return reinterpret_cast<PFN_cuTensorMapEncodeTiled_v12000>(ptr);
++  }();
++  return fn;
++}
++
++inline CUtensorMap swapab_tensor_map(
++    CUtensorMapDataType dtype, uint32_t elem_bytes, const void* ptr, uint64_t inner, uint64_t outer, uint64_t outer_stride_bytes, uint32_t box_inner, uint32_t box_outer, CUtensorMapSwizzle swizzle) {
++  CUtensorMap map;
++  const uint64_t dims[2] = {inner, outer};
++  const uint64_t strides[1] = {outer_stride_bytes};
++  const uint32_t box[2] = {box_inner, box_outer};
++  const uint32_t elem_strides[2] = {1, 1};
++  (void)elem_bytes;
++  const auto result = swapab_encode_fn()(&map, dtype, 2, const_cast<void*>(ptr), dims, strides, box, elem_strides, CU_TENSOR_MAP_INTERLEAVE_NONE, swizzle, CU_TENSOR_MAP_L2_PROMOTION_L2_256B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
++  host::RuntimeCheck(result == CUDA_SUCCESS, "cuTensorMapEncodeTiled failed");
++  return map;
++}
++
++template <uint32_t SHAPE_N, uint32_t SHAPE_K, uint32_t BN, uint32_t kNumStages, uint32_t kSplitK, uint32_t kMulticast>
++struct DecodeSwapABGemm {
++  static void run(
++      const tvm::ffi::TensorView a,
++      const tvm::ffi::TensorView sa,
++      const tvm::ffi::TensorView w,
++      const tvm::ffi::TensorView sw,
++      const tvm::ffi::TensorView out) {
++    using namespace host;
++    auto M = SymbolicSize{"num_tokens"};
++    auto N = SymbolicSize{"out_features"};
++    auto K = SymbolicSize{"in_features"};
++    auto KS = SymbolicSize{"k_scales"};
++    auto NS = SymbolicSize{"n_scales"};
++    auto Sm = SymbolicSize{"token_scale_stride"};
++    auto device = SymbolicDevice{};
++    N.set_value(SHAPE_N);
++    K.set_value(SHAPE_K);
++    KS.set_value(SHAPE_K / kSwapBlockK);
++    NS.set_value(SHAPE_N / kSwapBlockOut);
++    device.set_options<kDLCUDA>();
++    TensorMatcher({M, K}).with_dtype<fp8_e4m3_t>().with_device(device).verify(a);
++    TensorMatcher({M, KS}).with_strides({1, Sm}).with_dtype<float>().with_device(device).verify(sa);
++    TensorMatcher({N, K}).with_dtype<fp8_e4m3_t>().with_device(device).verify(w);
++    TensorMatcher({NS, KS}).with_dtype<float>().with_device(device).verify(sw);
++    TensorMatcher({M, N}).with_dtype<bf16_t>().with_device(device).verify(out);
++    const auto num_tokens = static_cast<uint32_t>(M.unwrap());
++    RuntimeCheck(0 < num_tokens && num_tokens <= BN, "SwapAB Decode GEMM covers 1..BN token rows");
++    RuntimeCheck(Sm.unwrap() >= M.unwrap() && Sm.unwrap() % 4 == 0, "token scales must be column-major and TMA aligned");
++
++    const auto map_w = swapab_tensor_map(CU_TENSOR_MAP_DATA_TYPE_UINT8, 1, w.data_ptr(), SHAPE_K, SHAPE_N, SHAPE_K, kSwapBlockK, kSwapBlockOut, CU_TENSOR_MAP_SWIZZLE_128B);
++    const auto map_x = swapab_tensor_map(CU_TENSOR_MAP_DATA_TYPE_UINT8, 1, a.data_ptr(), SHAPE_K, num_tokens, SHAPE_K, kSwapBlockK, BN, CU_TENSOR_MAP_SWIZZLE_128B);
++    const auto map_sx = swapab_tensor_map(CU_TENSOR_MAP_DATA_TYPE_FLOAT32, 4, sa.data_ptr(), num_tokens, SHAPE_K / kSwapBlockK, Sm.unwrap() * sizeof(float), BN, 1, CU_TENSOR_MAP_SWIZZLE_NONE);
++    const auto map_d = swapab_tensor_map(CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, out.data_ptr(), SHAPE_N, num_tokens, SHAPE_N * sizeof(bf16_t), 64, kSwapStoreRows, CU_TENSOR_MAP_SWIZZLE_128B);
++
++    constexpr uint32_t kNumKBlocks = SHAPE_K / kSwapBlockK / kSplitK;
++    constexpr uint32_t kSmem = SwapABSmem<BN, kNumStages, kNumKBlocks>::kBytes;
++    const auto kernel = decode_swapab_fp8_gemm_kernel<SHAPE_N, SHAPE_K, BN, kNumStages, kSplitK, kMulticast>;
++    static const bool configured = [&] {
++      RuntimeDeviceCheck(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kSmem));
++      return true;
++    }();
++    (void)configured;
++    const auto params = static_cast<const float*>(sw.data_ptr());
++    LaunchKernel launch((SHAPE_N / kSwapBlockOut) * kSplitK, kSwapMathThreads + kSwapTMAThreads, device.unwrap(), kSmem);
++    launch.enable_pdl(true);
++    if constexpr (kSplitK * kMulticast > 1) launch.enable_cluster(dim3(kSplitK * kMulticast, 1, 1));
++    launch(kernel, map_w, map_x, map_sx, map_d, params, num_tokens);
++  }
++};
++
++}  // namespace
+diff --git a/python/sglang/srt/layers/quantization/decode_dense_gemm.py b/python/sglang/srt/layers/quantization/decode_dense_gemm.py
+index 2f406fd..cd26562 100644
+--- a/python/sglang/srt/layers/quantization/decode_dense_gemm.py
++++ b/python/sglang/srt/layers/quantization/decode_dense_gemm.py
+@@ -1,6 +1,8 @@
+ """Opt-in Decode QKV/O backend selection; unchanged block128 FP8 numerics."""
+ 
++import functools
+ import os
++import pathlib
+ 
+ import torch
+ 
+@@ -8,6 +10,27 @@ TRITON_CONFIGS = {
+     "QKV": {"triton-64-128-128-s3-w4": (64, 128), "triton-128-64-128-s3-w4": (128, 64)},
+     "O": {"triton-64-128-128-s3-w4": (64, 128), "triton-128-32-128-s3-w4": (128, 32)},
+ }
++# Token rows on the WGMMA N side (jit/csrc/gemm/decode_swapab_fp8.cuh), one
++# CTA per 128 weight rows: (token tile, stages, split-K cluster, token multicast).
++# Serving uses them for 129..176 rows only; smaller batches keep the stock path.
++SWAPAB_CONFIGS = {
++    "QKV": {"swapab-176-s5": (176, 5, 1, 1), "swapab-176-s5-mc2": (176, 5, 1, 2)},
++    "O": {"swapab-176-s5-k4": (176, 5, 4, 1)},
++}
++SWAPAB_SHAPES = {"QKV": (9216, 4096), "O": (4096, 8192)}
++SWAPAB_MIN_ROWS = 129
++
++
++@functools.cache
++def _swapab_module(projection, backend):
++    import deep_gemm
++
++    from sglang.kernels.jit.utils import load_jit, make_cpp_args, override_jit_cuda_arch
++
++    args = make_cpp_args(*SWAPAB_SHAPES[projection], *SWAPAB_CONFIGS[projection][backend])
++    include = str(pathlib.Path(deep_gemm.__file__).parent / "include")
++    with override_jit_cuda_arch(9, 0, "a"):
++        return load_jit("decode_swapab_fp8", *args, cuda_files=["gemm/decode_swapab_fp8.cuh"], cuda_wrappers=[("run", f"DecodeSwapABGemm<{args}>::run")], extra_include_paths=[include])
+ 
+ 
+ def run_decode_dense_gemm(projection, backend, lhs, rhs, out):
+@@ -20,6 +43,9 @@ def run_decode_dense_gemm(projection, backend, lhs, rhs, out):
+     assert sa.dtype == sb.dtype == torch.float32 and out.dtype == torch.bfloat16
+     assert a.is_contiguous() and b.is_contiguous()
+     assert tuple(sa.shape) == (m, k // 128) and tuple(sb.shape) == (n // 128, k // 128)
++    if backend in SWAPAB_CONFIGS[projection]:
++        assert (n, k) == SWAPAB_SHAPES[projection] and m <= SWAPAB_CONFIGS[projection][backend][0]
++        return _swapab_module(projection, backend).run(a, sa, b, sb, out)
+     if backend == "dg1-swapab-streamk":
+         import sys
+ 
+@@ -50,12 +76,13 @@ def decode_dense_linear(attention, projection, layer, x, forward_batch, *, decod
+     mode = forward_batch.forward_mode
+     if not (mode.is_decode() or mode.is_target_verify()):
+         return layer(x)
+-    assert backend in TRITON_CONFIGS[projection] or backend == "dg1-swapab-streamk", backend
++    assert backend in TRITON_CONFIGS[projection] or backend in SWAPAB_CONFIGS[projection] or backend == "dg1-swapab-streamk", backend
+     tensor = x[0] if isinstance(x, tuple) else x
+     shape = (9216, 4096) if projection == "QKV" else (4096, 8192)
+     method = layer.quant_method
++    swapab = backend in SWAPAB_CONFIGS[projection]
+     if not (
+-        tensor.ndim == 2 and 0 < tensor.shape[0] <= (176 if backend == "dg1-swapab-streamk" else 192)
++        tensor.ndim == 2 and (SWAPAB_MIN_ROWS if swapab else 1) <= tensor.shape[0] <= (176 if swapab or backend == "dg1-swapab-streamk" else 192)
+         and tensor.shape[1] == shape[1]
+         and tuple(layer.weight.shape) == shape
+         and layer.weight.dtype == torch.float8_e4m3fn
+@@ -68,6 +95,9 @@ def decode_dense_linear(attention, projection, layer, x, forward_batch, *, decod
+         and method.weight_block_size == [128, 128]
+         and layer.weight_scale_inv.dtype == torch.float32
+         and layer.bias is None
++        # The SwapAB tensor maps need K-major weights, row-major block scales
++        # and column-major TMA-aligned token scales; anything else stays stock.
++        and (not swapab or (layer.weight.is_contiguous() and layer.weight_scale_inv.is_contiguous() and (not isinstance(x, tuple) or (x[1].stride(0) == 1 and x[1].stride(1) >= tensor.shape[0] and x[1].stride(1) % 4 == 0 and tensor.is_contiguous()))))
+     ):
+         return layer(x)
+     assert torch.cuda.get_device_capability(tensor.device) == (9, 0)
