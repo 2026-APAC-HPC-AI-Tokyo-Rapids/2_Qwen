@@ -79,6 +79,7 @@ def run_checks(source, workspace):
         ("check-firmus-pp4-source.py", source),
         ("check-pp4-scheduler-sync.py", source / "python/sglang/srt/managers/scheduler_components/dp_attn.py"),
         ("check-pp4-output-relay.py", source),
+        ("check-pp4-direct-loop.py", source),
     ):
         subprocess.run([sys.executable, str(workspace / "scripts" / script), str(argument)], check=True, env=env)
     return {"torch": torch.__version__, "numpy": numpy.__version__}
