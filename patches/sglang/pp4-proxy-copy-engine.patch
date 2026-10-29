@@ -1,14 +1,25 @@
 diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
-index 2360d80..835b838 100644
+index 2360d80..2f61c95 100644
 --- a/python/sglang/srt/managers/scheduler_pp_mixin.py
 +++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
-@@ -76,6 +76,56 @@ class PPBatchMetadata:
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ import logging
+ import math
++import os
+ import queue
+ import signal
+ import threading
+@@ -76,6 +77,59 @@ class PPBatchMetadata:
  _QWEN_PP_CONSENSUS_LAG = 2
  
  
 +# Proxy transfers that run on both paths (copy engine and in-stream PyNccl)
 +# and are compared before every stage switches to the copy engine.
 +_QWEN_PP_CE_VALIDATE = 16
++# "copy" only after the in-job probe (check-firmus-pp4-copy-engine.py) ran the
++# same IPC buffer/event calls on this node; anything else keeps PyNccl.
++_QWEN_PP_PROXY_TRANSPORT = os.environ.get("SGLANG_PP4_PROXY_TRANSPORT", "nccl")
 +
 +
 +@dataclass
@@ -59,7 +70,7 @@ index 2360d80..835b838 100644
  @dataclass
  class _QwenPPLaunch:
      """What a stage keeps from one launched microbatch until its result step."""
-@@ -106,6 +156,7 @@ class _QwenPPLoop:
+@@ -106,6 +160,7 @@ class _QwenPPLoop:
      result_group: torch.distributed.ProcessGroup
      # Last stage only.
      publisher: Optional["_QwenPPResultPublisher"]
@@ -67,7 +78,7 @@ index 2360d80..835b838 100644
  
  
  class _QwenPPResultPublisher:
-@@ -530,6 +581,7 @@ class SchedulerPPMixin:
+@@ -530,6 +585,7 @@ class SchedulerPPMixin:
                  else None
              ),
          )
@@ -75,7 +86,7 @@ index 2360d80..835b838 100644
          while True:
              server_is_idle = True
              for mb_id in range(size):
-@@ -732,12 +784,12 @@ class SchedulerPPMixin:
+@@ -732,12 +788,12 @@ class SchedulerPPMixin:
                  pp_proxy_tensors = None
                  if proxy_metadata is not None:
                      pp_proxy_tensors = PPProxyTensors(
@@ -90,17 +101,17 @@ index 2360d80..835b838 100644
                      )
          # Host copies for the result step, ordered after this forward on the
          # copy stream: page-table rows for send_kv_chunk on every stage, and on
-@@ -753,6 +805,9 @@ class SchedulerPPMixin:
+@@ -753,6 +809,9 @@ class SchedulerPPMixin:
                  next_token_ids = _async_d2h(result.next_token_ids)
              copy_done = self.device_module.Event()
              copy_done.record()
 +        loop.ce.launches += 1
-+        if loop.ce.launches == _QWEN_PP_CE_VALIDATE:
++        if loop.ce.launches == _QWEN_PP_CE_VALIDATE and loop.ce.mode == "validate":
 +            self._qpp_ce_decide(loop.ce)
          return _QwenPPLaunch(
              rids=[req.rid for req in batch.reqs],
              copy_done=copy_done,
-@@ -772,24 +827,61 @@ class SchedulerPPMixin:
+@@ -772,24 +831,61 @@ class SchedulerPPMixin:
      # on its GPU; it can only wait for a slower neighbour, when the GPU would
      # idle anyway. Metadata goes first over the CPU group so the receiver can
      # post the matching receive.
@@ -170,7 +181,7 @@ index 2360d80..835b838 100644
          comm = self.pp_group.pynccl_comm
          tensors = {}
          with comm.change_state(enable=True):
-@@ -799,8 +891,111 @@ class SchedulerPPMixin:
+@@ -799,8 +895,118 @@ class SchedulerPPMixin:
                      if value.numel() > 0:
                          comm.recv(value, src)
                  tensors[key] = value
@@ -192,7 +203,9 @@ index 2360d80..835b838 100644
 +    def _qpp_ce_setup(self: Scheduler) -> _QwenPPCopyEngine:
 +        """Allocate receive buffers, create send events and exchange their IPC
 +        handles with the neighbours. Any failure only marks this stage not ok;
-+        the exchange still completes, and validation then keeps PyNccl."""
++        the exchange still completes, and validation then keeps PyNccl.
++        Every stage reads the same SGLANG_PP4_PROXY_TRANSPORT, so either all
++        stages exchange handles or none does."""
 +        from torch.multiprocessing.reductions import reduce_tensor
 +
 +        cfg = self.model_config
@@ -203,6 +216,10 @@ index 2360d80..835b838 100644
 +            hidden=cfg.hidden_size,
 +            dtype=cfg.dtype,
 +        )
++        if _QWEN_PP_PROXY_TRANSPORT != "copy":
++            ce.mode = "nccl"
++            logger.info("PP4 proxy transport: nccl (copy engine not enabled)")
++            return ce
 +        group = self.world_group.cpu_group
 +        ranks = self.pp_group.ranks
 +        stage = self.pp_group.rank_in_group
@@ -221,7 +238,7 @@ index 2360d80..835b838 100644
 +            if not last:
 +                ce.stream = torch.cuda.Stream(device=device)
 +                ce.events = [torch.cuda.Event(interprocess=True) for _ in range(ce.slots)]
-+                events_handle = (device.index, [event.ipc_handle() for event in ce.events])
++                events_handle = [event.ipc_handle() for event in ce.events]
 +        except Exception:
 +            logger.exception("PP4 copy-engine setup failed on this stage")
 +            ce.ok = False
@@ -241,10 +258,11 @@ index 2360d80..835b838 100644
 +        if not first:
 +            (handle,) = point_to_point_pyobj([], rank, group, ranks[stage - 1], rank)
 +            try:
-+                peer_device, handles = handle
-+                ce.peer_events = [
-+                    torch.cuda.Event.from_ipc_handle(peer_device, h) for h in handles
-+                ]
++                # Opened on this stage's own device, as CUDA's simpleIPC does:
++                # the forward stream waits on it. Opening it on the sender's
++                # device made the first cross-device wait segfault in
++                # cuStreamWaitEvent (run 40849459077).
++                ce.peer_events = [torch.cuda.Event.from_ipc_handle(device, h) for h in handle]
 +            except Exception:
 +                logger.exception("PP4 copy-engine peer events unavailable")
 +                ce.ok = False

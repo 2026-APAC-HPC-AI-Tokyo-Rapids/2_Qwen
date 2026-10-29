@@ -57,7 +57,9 @@ def test_slower_split_leaves_four_stages(selector, tmp_path):
 
 
 @pytest.mark.parametrize("variant,change,winner", [
-    ("four-stage-split", {"us": [2790.0] * 12}, "four-stage"),
+    # Slower on one GPU (its two routings summed) rejects the variant; a smaller gain on one case does not.
+    ("four-stage-split", {"us": [2950.0] * 12}, "four-stage"),
+    ("four-stage-split", {"us": [2790.0] * 12}, "four-stage-split"),
     ("four-stage-split", {"bitwise_equal": False, "relative_l2_vs_control": 0.0004, "max_scaled_error_vs_control": 0.004}, "four-stage-split"),
     ("four-stage-split", {"bitwise_equal": False, "relative_l2_vs_control": 0.05, "max_scaled_error_vs_control": 0.3}, "four-stage"),
     ("four-stage-split", {"reference_passed": False}, "four-stage"),

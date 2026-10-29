@@ -223,16 +223,20 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # (select-firmus-prefill-moe-input.py, ~1 min, 150 s timeout): a fused path is adopted only if its FP8 input,
   # scales and top-k equal what pre-dispatch and the router write from the same y and it is faster on all four
   # GPUs; (2) the Decode overlay candidates (SwapAB dense GEMMs, wide norm/quant) against the pinned Decode
-  # kernels (~1-1.5 min). Both results are taken before the Prefill workers start; a failed, missing or late
-  # result keeps pre-dispatch and the pinned decode-kernels.env.
+  # kernels (~1-1.5 min); (3) the PP4 copy-engine proxy transport (check-firmus-pp4-copy-engine.py, ~20 s,
+  # 60 s timeout): the patch's IPC buffer/event calls on four GPUs, adopted only if every transfer was exact.
+  # All results are taken before the Prefill workers start; a failed, missing or late result keeps
+  # pre-dispatch, the pinned decode-kernels.env and in-stream PyNccl.
   {
     srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-moe-input)" env TRITON_CACHE_DIR="/tmp/qwen-prefill-moe-input-${SLURM_JOB_ID}/triton" DG_JIT_CACHE_DIR="/tmp/qwen-prefill-moe-input-${SLURM_JOB_ID}/deep-gemm" timeout --kill-after=5 150 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-moe-input.py" --output "${ROOT}/results/prefill-moe-input" >"${ART}/prefill-moe-input.log" 2>&1 || true
     srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts decode-selection-dense)" bash "${ROOT}/scripts/select-firmus-decode-kernels.sh" "${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env" >"${ART}/decode-selection-dense.log" 2>&1 || true
+    srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts pp4-copy-engine)" timeout --kill-after=5 60 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/check-firmus-pp4-copy-engine.py" --output "${ROOT}/results/pp4-copy-engine" >"${ART}/pp4-copy-engine.log" 2>&1 || true
   } &
   decode_gpu_selections=$!
   # EP1 MegaMoE on all twelve Prefill GPUs before model load (select-firmus-prefill-megamoe.py, about 1.5-2 min):
   # the control must match an FP32 reference (a failure stops the job); the four-stage and four-stage tail-split
-  # variants are adopted only if they pass the exactness checks and are faster on every GPU (the faster one wins).
+  # variants are adopted only if they pass the exactness checks, are not slower on any GPU and save the summed
+  # margin over all GPUs and routings (the faster one wins).
   # A missing or late result keeps three stages.
   megamoe_selections=()
   for worker in 0 1 2; do
@@ -278,6 +282,7 @@ fi
 if [[ -n "${decode_gpu_selections:-}" ]]; then
   wait "${decode_gpu_selections}" || true
   python3 "${ROOT}/scripts/select-firmus-prefill-moe-input.py" --aggregate "${ROOT}/results/prefill-moe-input" --output "${ROOT}/results/prefill-moe-input/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+  python3 "${ROOT}/scripts/check-firmus-pp4-copy-engine.py" --aggregate "${ROOT}/results/pp4-copy-engine" --output "${ROOT}/results/pp4-copy-engine/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
   if [[ -s "${ROOT}/results/decode-selection/dense.env" ]]; then cp "${ROOT}/results/decode-selection/dense.env" "${ROOT}/source/decode-kernels.env"; fi
 fi
 
