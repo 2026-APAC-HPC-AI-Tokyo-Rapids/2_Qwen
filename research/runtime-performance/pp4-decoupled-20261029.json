@@ -1,0 +1,121 @@
+{
+  "schema": "pp4-decoupled-candidate/v1",
+  "date": "2026-10-29",
+  "branch": "perf/prefill-pp4-decoupled-20261029",
+  "base_commit": "b01adb3",
+  "evidence_of_problem": {
+    "profile_run": 40796263174,
+    "serving_run": 40767107134,
+    "analysis": "research/runtime-performance/2026-10-29-pp4-profile-critical-path.md (on main)",
+    "facts": [
+      "stage period 164 ms; stage 0-2 compute 109-113 ms then 52-56 ms inside ncclDevKernel_SendRecv",
+      "stage 3: one MegaMoE per microbatch stalls 37-66 ms beside an NCCL receive posted 5-8 ms into the microbatch",
+      "scheduler thread pp.wait_result (d2h_event.synchronize) 126-128 ms on PP0/PP3",
+      "last stage lm_head + draft extend 9.2 ms per microbatch"
+    ]
+  },
+  "source_reconstruction": {
+    "sglang": "fc275674a97d78553b22597ee72c8fd48f5420f4, rebuilt with submission/build/sglang-mirror.sh (public 0d6bef6 tree 9ea4c730 + bundle)",
+    "build_overlays": "23 patches/sglang build patches from the image manifest of 40796263174, SHA-256 matched, applied in manifest order",
+    "runtime_overlays": "17 archived runtime overlays of 40796263174 byte-identical to the workspace, then the two new patches",
+    "image": "unchanged: 40742736653.sqsh sha256 5bcbfc66...6389565; no rebuild"
+  },
+  "changes": {
+    "item1_direct_result": {
+      "patch": "patches/sglang/pp4-direct-result.patch",
+      "sha256": "c0bf6da9e783ebf6dc5711591dd709e4d5bc81f29ec6c1ba5777351d7f460fba",
+      "activation": "Prefill with sglang.srt.speculative.qwen_pp4.supported() (SGLANG_QWEN_PP4_EP1=1, PP4/TP1/EP1 EAGLE3); all other layouts keep the upstream loop",
+      "mechanism": [
+        "event_loop_pp_disagg_prefill_direct: a stage launches microbatch i once it is formed and its proxy arrived, then sends its proxy; no output ring and no d2h synchronize before a launch",
+        "every scheduling transition keeps an iteration index common to all stages: requests and bootstrap/transfer polls are forwarded at the start of an iteration, consensus is applied and forwarded at the same iteration on every stage, the result of the microbatch launched pp_loop_size - 1 iterations earlier is applied at the same iteration on every stage; radix inserts (EAGLE bigram keys include the first output token), allocator state and KV release therefore match",
+        "last stage: a daemon publisher thread waits on each forward's copy-stream event and sends rids, next tokens and EAGLE hidden/topk_p/topk_index (pinned host copies) to stages 0..2 on a dedicated gloo group; stages 0..2 read it at their result step and write the same aux metadata to Decode as the last stage",
+        "_QWEN_PP_CONSENSUS_LAG = 2: bootstrap and release consensus are applied two iterations after the last stage originates them (upstream pp_size - 1 = 3)",
+        "a rid assertion stops the server if stages ever formed different microbatches; a publisher failure logs and signals the parent like run_scheduler_process"
+      ],
+      "not_routed": "EAGLE hidden/topk never travel through NCCL; the CPU payload is ~8 KB per request"
+    },
+    "item2_proxy_transfer": {
+      "patch": "patches/sglang/pp4-proxy-instream.patch",
+      "sha256": "5d1a14e321aa708064e377274bbabea28248f96b4fb18edfd3f66c682a997258",
+      "path_taken": "NCCL kept, moved in-stream: PyNccl ncclRecv immediately before run_batch and ncclSend immediately after it, both on the forward stream; metadata first over the PP gloo group",
+      "why_not_copy_engine": "cudaIpc mapping, peer stream memops or IPC events and slot back-pressure are GPU-only and cannot be exercised on CPU; Firmus policy is one serving run. In-stream NCCL reuses the P2P transfer already used by 40767107134/40796263174 and removes co-residency structurally.",
+      "expected_cost": "about 240 MB per microbatch per boundary is exposed on both neighbours (~1-3 ms of ~115 ms) plus waits when a neighbour is slower; a copy-engine path remains the follow-up if the profile shows this cost"
+    },
+    "item3_depth": {
+      "config": "prefill.pp_async_batch_depth = 2 (sbatch reads it; server-info check, layout guard, test updated)",
+      "kv_budget_tokens": {"pool": 131072, "six_microbatches": 48384, "inflight_transfer_mean_40767107134": 46126, "margin": 36562}
+    },
+    "item4_layers": {
+      "config": "prefill.pp_layer_partition = [24, 24, 24, 22]; worker.sh exports SGLANG_PP_LAYER_PARTITION from it; check-firmus-pp4-source.py checks KV region coverage and EAGLE captures on this split",
+      "estimated_stage_ms": {"stage0": 113.5, "stage1": 112.5, "stage2": 113.4, "stage3": 110.4},
+      "basis": "4.6-4.7 ms per layer from 40796263174 prefill-0; stage 3 adds 9.2 ms after its last layer"
+    },
+    "item5_ep1_moe": {
+      "status": "not done",
+      "reason": "combine fused into the FC2 epilogue and a block_m 64 tail change the MegaMoE kernel and its host launcher (csrc heuristics compiled into the image) and need GPU numeric validation; no rebuild was allowed and no GPU was available"
+    },
+    "item6_decode": {
+      "status": "unchanged",
+      "candidates_model": "depth 2, lag 2, period 116.5 ms, 3% jitter, 5% launches +exp(50 ms), 8 seeds",
+      "results": {
+        "cap44_c235_reference": 9360.0,
+        "cap43_c235": 9325.9,
+        "cap42_c235": 9257.4,
+        "cap40_c235": 9108.2,
+        "cap45_c240": 9405.1,
+        "cap46_c240": 9411.2,
+        "cap48_c245": 9449.5,
+        "K4_step+7%_c235": 9267.8,
+        "K2_step-7%_c235": 9069.2
+      },
+      "reading": "Only caps above 44 read higher (+0.5-1.0% at c240-245, ITL p99 +0.3-0.6 ms), but they need CUDA graphs above 44 rows/rank and run into unmodelled kernel step cliffs; within model error, so not applied. Note: the c235 commit message quotes cap<44 losses of 0.1-1.7% from an earlier model run with one-iteration-optimistic timing; the corrected figures are 0.4-2.7% as above."
+    },
+    "item7_system_model": {
+      "model": "scratchpad codex-scratch/pp4/des/pp_des.py (Decode, client and router hold copied from scratchpad/sys/des.py; Prefill replaced by 3 pipelines x 4 stages, 2 requests per microbatch, launch lead from depth, results at stage-3 completion, bootstrap and release consensus lags)",
+      "calibration": "des.py reads 9286.3 for the 9235.28 EP4 c215 aligned configuration (8 seeds): scale 0.9945",
+      "lag_c215_period116.5": {"lag3": 9024.6, "lag2": 9146.0, "lag1": 9259.1, "burst_pass_of_215": [95.2, 104.0, 113.4]},
+      "depth_c230_period116.5": {"depth1": 9378.7, "depth2": 9318.2, "note": "depth 1 shortens latency by one period; kept depth 2 for launch slack (with depth 1 the slack is ~80 ms)"},
+      "concurrency_lag2_depth2": {
+        "period113.5": {"c225": 9323.2, "c230": 9377.4, "c235": 9403.2, "c240": 9379.6, "c245": 9316.9, "itl_fail": [0.6, 1.1, 4.6, 16.8, 46.9]},
+        "period116.5": {"c225": 9259.7, "c230": 9317.5, "c235": 9360.0, "c240": 9366.9, "c245": 9322.8, "itl_fail": [0.1, 0.5, 2.0, 4.1, 19.6]},
+        "period120.5": {"c225": 9172.9, "c230": 9224.2, "c235": 9267.9, "c240": 9292.5, "c245": 9287.2, "itl_fail": [0.0, 0.2, 0.4, 1.5, 4.9]},
+        "period125": {"c230": 9053.4, "c235": 9039.1, "note": "Prefill-bound again (48 req/s); below EP4"}
+      },
+      "chosen": {
+        "concurrency": 235,
+        "predicted_model": {"period113.5": 9403.2, "period116.5": 9360.0, "period120.5": 9267.9},
+        "predicted_scaled": [9217, 9351],
+        "ttft_s_period116.5": {"p50": 1.67, "p90": 1.80, "p99": 4.38, "steady_mean": 1.65, "steady_p99": 1.84},
+        "start_of_run_ttft_failures_of_235": {"period113.5": 145.4, "period116.5": 154.5, "period120.5": 174.5},
+        "itl_ms_period116.5": {"mean": 15.48, "p99": 18.50},
+        "old_c215_scaled": [9008, 9158]
+      },
+      "limits": "Decode step is the linear EP4 fit; KV limits, Decode admission slots, gloo latency and NCCL waits are not modelled; read differences, absolute error about +-0.5%"
+    }
+  },
+  "validation_cpu": {
+    "overlay_chain": "19 configured runtime overlays apply with git apply --check in order on the reconstructed image source; py_compile of the 26 patched Python files",
+    "pp4_cpu_gate_checks": "check-firmus-pp4-cpu.run_checks on the chain with Torch 2.11.0+cpu: source contracts (split [24, 24, 24, 22]), 32 sync cases, 72 relay cases, direct loop PASS",
+    "direct_loop": "check-pp4-direct-loop.py: 4 threads, 96 iterations, 22 microbatches, 39 requests, failed bootstrap on one stage, per-stage latencies, GPU completion lag; identical batches and scheduler state, results at +5, threaded publish after completion, release after all four transfers, consensus lag 2, 6 in flight, in-stream receive -> forward -> send on the forward stream, drained; also passes with only pp4-direct-result.patch; mutations (requests sent after the proxy, publish at the result step, skewed consensus slot) fail",
+    "suite": "uv run --project qwen-experiment-metrics --with numpy pytest -q qwen-experiment-metrics/tests: 976 passed, 77 skipped, 0 failed; test_pp4_cpu_gate.py with Torch 2.11.0+cpu: 12 passed, 5 skipped (real SquashFS fixtures need unsquashfs, not installed locally); ruff check qwen-experiment-metrics scripts containers: pass; bash -n on sglang.sbatch, scripts/*.sh and the generated worker.sh: pass; workflows unchanged",
+    "not_verified": [
+      "GPU behaviour of in-stream PyNccl (kernel durations, exposure, imbalance waits)",
+      "publisher thread latency under the GIL during eager launches; gloo latency",
+      "achieved stage period with 24/24/24/22",
+      "NIXL transfers and Decode-side completion with the new timing",
+      "numerics beyond the existing EP1 path"
+    ]
+  },
+  "what_to_check_in_the_serving_run": {
+    "score_and_sla": "results/score.json; TTFT failures should be concentrated in the first seconds (start burst), ITL p99 below 20 ms",
+    "prefill_rate": "prefill-*.log batch lines of PP0: issue interval of 2-request microbatches about 115-120 ms (was 164); #queue-req stays >= 1 in steady state",
+    "decode": "decode-0.log #running-req near 176 and ITL",
+    "profile_if_captured": [
+      "no pp.wait_result on stage 0 except a short wait at the result step; pp.recv_proxy and run_batch dominate",
+      "ncclDevKernel only between forwards on the same stream: no NCCL kernel overlapping a compute kernel on any Prefill GPU; long NCCL kernels mean a slower neighbour, not co-residency",
+      "stage 3 MegaMoE all about 2.5-2.8 ms (no 37-66 ms stalls)",
+      "per-stage compute union 110-115 ms with 24/24/24/22; period <= 120 ms",
+      "Prefill GPUs near the power cap (590-629 W in 40767107134)"
+    ]
+  }
+}
