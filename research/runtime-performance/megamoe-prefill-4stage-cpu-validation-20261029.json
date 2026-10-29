@@ -269,6 +269,16 @@
         11,
         36
       ]
+    },
+    "pp4_combined_with_tail_split": {
+      "total": [
+        34,
+        165
+      ],
+      "central": [
+        55,
+        115
+      ]
     }
   },
   "gpu_only": [
@@ -277,13 +287,82 @@
     "bitwise equality to the three-stage control on hardware"
   ],
   "in_job": {
-    "script": "scripts/select-firmus-prefill-megamoe.py --ranks 1",
+    "script": "scripts/select-firmus-prefill-megamoe.py --ranks 1 (variants control, four-stage, four-stage-split)",
     "where": "sglang.sbatch PP4 branch, all twelve Prefill GPUs in parallel before model load",
-    "rule": "control vs FP32 reference (stop on failure); candidate bit-identical and faster by max(5 us, 0.5 %) on every GPU and on balanced and hot routing; otherwise three stages",
+    "rule": "control vs FP32 reference (stop on failure); four-stage bit-identical, four-stage-split bit-identical or within FP-order tolerance of the control; a variant is eligible only if faster by max(5 us, 0.5 %) on every GPU and on balanced and hot routing; the fastest eligible wins, else three stages",
     "expected_seconds": [
-      60,
-      90
+      80,
+      120
     ]
   },
-  "past_rejections_distinct": "Not the independent WG (stages 3->2 and duplicated B, 40069880580), ping-pong, FC2 interleave, bulk scatter (40095847738), scatter offload, L2 prefetch, FP32 precombine (39355994503) or combine direct store; Decode stage sweeps are untouched (Decode SASS identical)."
+  "past_rejections_distinct": "Not the independent WG (stages 3->2 and duplicated B, 40069880580), ping-pong, FC2 interleave, bulk scatter (40095847738), scatter offload, L2 prefetch, FP32 precombine (39355994503) or combine direct store; Decode stage sweeps are untouched (Decode SASS identical).",
+  "tail_split": {
+    "status": "CPU_validated_not_GPU_measured; third in-job variant four-stage-split",
+    "switch": "DG_SM90_PREFILL_TAIL_SPLIT=1 with DG_SM90_PREFILL_4STAGE=1; host appends the trailing template argument kPrefillTailSplit=true only then",
+    "host_patch": {
+      "path": "patches/deep-gemm-host/sm90-prefill-tail-split.patch",
+      "sha256": "c10f944ab609df326b4401faba5e39e258c00f963a25bbfc1f847e2a495695ed"
+    },
+    "header_overlay": {
+      "path": "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch",
+      "sha256": "d135560f13749d741f83fc5c51e3e528eee93e606409e66427820fe26afe566a"
+    },
+    "design": "Pool blocks with <= 64 valid rows (D5a half tiles) run rows 0..63 on both math warpgroups, warpgroup g taking columns 128g..128g+127 with one m64n128 accumulator from B rows 128g of the same stage. FC1: SwiGLU of 64 gate/up pairs per warpgroup, per-row amax over the 128 output columns exchanged between the partner warps through the staging-slice pads and a 64-thread named barrier (12 + warp), one FP8 scale written by warpgroup 0; FC2: weight-SF block g, BF16 rows written through the per-warp slices in two 64-column steps. Both warpgroups publish the FC1 rows, so the FC2 loader expects 12 x 2 x 4 arrivals for such blocks.",
+    "why_option_A": "Option B (SwapAB tails, tokens on N) would also remove the sub-64-row padding (6.5-7.4 % of rows at EP1) but needs transposed FC1 SwiGLU/SF128 and FC2 scatter epilogues for N = 8..64 and is SMEM-bound for small N; option A reuses the m64n128 split-N descriptors of the four-warpgroup path and the existing epilogue arithmetic.",
+    "routing": {
+      "ep1_pool_blocks_with_tail_le_64": [
+        69,
+        85
+      ],
+      "ep1_pool_blocks": [
+        567,
+        578
+      ],
+      "share": 0.134
+    },
+    "d5a_half_tile_cost_from_40095847738": {
+      "balanced_4096": 0.7,
+      "local_4096": 0.64,
+      "method": "control-minus-D5a saving divided by 0.5 x half-tile share x GEMM time; GEMM ~85 % of the kernel"
+    },
+    "compile": {
+      "ep1_split_registers": 168,
+      "ep1_split_spill_bytes": 0,
+      "ep4_split_registers": 168,
+      "ep4_split_spill_bytes": 0,
+      "static_instructions_ep1": [
+        7152,
+        7448
+      ],
+      "mainloop_issue_blocks_normal_fc1_fc2": {
+        "four_stage": [
+          42,
+          47
+        ],
+        "split_kernel": [
+          42,
+          49
+        ]
+      },
+      "split_issue_blocks_fc1_fc2": [
+        37,
+        41
+      ],
+      "untouched": "every three-stage, Decode and four-stage (no split) instantiation is SASS-identical to 5176716"
+    },
+    "host_contract": "scripts/check-sm90-prefill-local-host.py: 138 configurations; the switch only appends ',true' to the 2WG Prefill template and changes nothing else",
+    "expected_saving_us_per_layer_pp4": {
+      "raw": [
+        30,
+        60
+      ],
+      "kappa": "TC idle removal 0.35-0.6",
+      "effective": [
+        11,
+        36
+      ],
+      "assumption": "half tile h 0.64-0.70 -> split 0.52-0.55 of a full tile on 13.4 % of tiles"
+    },
+    "exactness": "Same K order, scales and rounding per element; bit-identical unless the m64n128 and m64n256 WGMMA sums differ, which the in-job gate bounds on every token (relative L2 < 0.002, max scaled error < 0.02 against the control) plus the FP32 reference."
+  }
 }

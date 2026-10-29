@@ -1,15 +1,19 @@
-"""Gate and select the four-stage Prefill MegaMoE on every Prefill GPU before model load.
+"""Gate and select the Prefill MegaMoE pipeline variant on every Prefill GPU before model load.
 
 Run under torchrun on one Prefill worker's four GPUs, with the serving image,
 host extension and DeepGEMM header overlays. --ranks 1 makes every GPU its own
 one-rank EP group (PP4/EP1 Prefill, DG_SM90_PREFILL_LOCAL_EP1); --ranks 4 runs
-the four GPUs as one EP4 group. For two routings the control (three stages)
-must match an FP32 reference on sampled tokens, the candidate
-(DG_SM90_PREFILL_4STAGE=1: fourth A/B stage, per-warp FC2 staging) must
-reproduce the control output bit for bit, and both are timed in alternating
-pairs. --aggregate adopts the candidate only if every GPU of every worker
-passed and was faster by the margin on both routings; anything missing keeps
-the control. A control reference failure stops the job.
+the four GPUs as one EP4 group. Variants: control (three stages), four-stage
+(DG_SM90_PREFILL_4STAGE=1: fourth A/B stage, per-warp FC2 staging) and
+four-stage-split (also DG_SM90_PREFILL_TAIL_SPLIT=1: pool blocks with at most
+64 rows on both warpgroups as m64n128 halves). For two routings the control
+must match an FP32 reference on sampled tokens; four-stage must reproduce the
+control bit for bit; four-stage-split must do so or stay within FP-order
+tolerance of the control on every token and pass the reference. All three are
+timed in rotating order. --aggregate adopts the fastest variant that passed on
+every GPU of every worker and was faster than the control by the margin on
+both routings; anything missing keeps the control. A control reference failure
+stops the job.
 """
 import argparse
 import json
@@ -20,13 +24,22 @@ from datetime import timedelta
 from pathlib import Path
 
 HIDDEN, INTERMEDIATE, EXPERTS, TOPK = 4096, 1536, 128, 8
-SWITCH = "DG_SM90_PREFILL_4STAGE"
+VARIANTS = {
+    "control": {"DG_SM90_PREFILL_4STAGE": "0", "DG_SM90_PREFILL_TAIL_SPLIT": "0"},
+    "four-stage": {"DG_SM90_PREFILL_4STAGE": "1", "DG_SM90_PREFILL_TAIL_SPLIT": "0"},
+    "four-stage-split": {"DG_SM90_PREFILL_4STAGE": "1", "DG_SM90_PREFILL_TAIL_SPLIT": "1"},
+}
+CANDIDATES = ("four-stage", "four-stage-split")
+# The split changes the WGMMA width only; anything beyond FP-order noise is a defect.
+INEXACT_ALLOWED = {"four-stage": False, "four-stage-split": True}
 ROUTINGS = ("balanced", "hot")
-PAIRS = 12
+ROUNDS = 12
 SAMPLED_TOKENS = 32
 MARGIN_US, MARGIN_FRACTION = 5.0, 0.005
 # Same tolerances as the serving gate (check-firmus-megamoe.py).
 MAX_RELATIVE_L2, MAX_SCALED_ERROR = 0.025, 0.08
+# Candidate against the control on every token, when not bit-identical.
+MAX_RELATIVE_L2_VS_CONTROL, MAX_SCALED_ERROR_VS_CONTROL = 0.002, 0.02
 
 
 def quantized(torch, x, group):
@@ -63,6 +76,11 @@ def routing(torch, kind, count, generator, device):
     return ids.to(torch.int32), weights / weights.sum(-1, keepdim=True)
 
 
+def errors(torch, observed, expected):
+    observed, expected = observed.float(), expected.float()
+    return ((observed - expected).norm() / expected.norm().clamp_min(1e-10)).item(), ((observed - expected).abs().max() / expected.abs().max().clamp_min(1e-10)).item()
+
+
 def run_selection(output, ranks):
     begin = time.monotonic()
     import deep_gemm
@@ -94,7 +112,7 @@ def run_selection(output, ranks):
     buf = deep_gemm.get_symm_buffer_for_mega_moe(group, EXPERTS, 8192 if ranks == 1 else 4096, TOPK, HIDDEN, INTERMEDIATE, use_fp8_dispatch=True, activation="swiglu")
 
     def forward(variant, hidden, ids, weights, out, start=None):
-        os.environ[SWITCH] = "1" if variant == "candidate" else "0"
+        os.environ.update(VARIANTS[variant])
         deep_gemm.mega_moe_pre_dispatch_sm90(hidden, ids, weights, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, num_tokens=tokens, group_size=128, routed_scaling_factor=1.0)
         if start is not None:
             start.record()
@@ -119,9 +137,9 @@ def run_selection(output, ranks):
     for kind in ROUTINGS:
         hidden = torch.randn(tokens, HIDDEN, dtype=torch.bfloat16, device=device, generator=generator) * 0.25
         ids, weights = routing(torch, kind, tokens, generator, device)
-        control, candidate = (torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for _ in range(2))
-        forward("control", hidden, ids, weights, control)
-        forward("candidate", hidden, ids, weights, candidate)
+        outputs = {variant: torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for variant in VARIANTS}
+        for variant, out in outputs.items():
+            forward(variant, hidden, ids, weights, out)
         torch.cuda.synchronize()
         # Reference on sampled tokens: every rank adds its experts' terms for every rank's samples.
         sample = torch.randperm(tokens, device=device, generator=generator)[:SAMPLED_TOKENS]
@@ -135,25 +153,25 @@ def run_selection(output, ranks):
         if ranks == 4:
             dist.all_reduce(reference)
             reference = reference[rank * SAMPLED_TOKENS:(rank + 1) * SAMPLED_TOKENS]
-        observed = control[sample].float()
-        expected = reference.to(torch.bfloat16).float()
-        result = {
-            "finite": bool(torch.isfinite(control).all().item()),
-            "relative_l2": ((observed - expected).norm() / expected.norm().clamp_min(1e-10)).item(),
-            "max_scaled_error": ((observed - expected).abs().max() / expected.abs().max().clamp_min(1e-10)).item(),
-            "bitwise_equal": bool(torch.equal(control, candidate)),
-            "control_us": [],
-            "candidate_us": [],
-        }
-        result["control_reference_passed"] = result["finite"] and result["relative_l2"] < MAX_RELATIVE_L2 and result["max_scaled_error"] < MAX_SCALED_ERROR
-        for variant in ("control", "candidate", "control", "candidate"):
-            forward(variant, hidden, ids, weights, control if variant == "control" else candidate)
-        for pair in range(PAIRS):
-            order = ("control", "candidate") if pair % 2 == 0 else ("candidate", "control")
-            for variant in order:
-                result[f"{variant}_us"].append(timed(variant, hidden, ids, weights, control if variant == "control" else candidate))
+        expected = reference.to(torch.bfloat16)
+        result = {}
+        for variant, out in outputs.items():
+            relative_l2, max_scaled_error = errors(torch, out[sample], expected)
+            entry = {"finite": bool(torch.isfinite(out).all().item()), "relative_l2": relative_l2, "max_scaled_error": max_scaled_error, "us": []}
+            entry["reference_passed"] = entry["finite"] and relative_l2 < MAX_RELATIVE_L2 and max_scaled_error < MAX_SCALED_ERROR
+            if variant != "control":
+                entry["bitwise_equal"] = bool(torch.equal(out, outputs["control"]))
+                entry["relative_l2_vs_control"], entry["max_scaled_error_vs_control"] = errors(torch, out, outputs["control"])
+            result[variant] = entry
+        names = list(VARIANTS)
+        for variant in names:
+            forward(variant, hidden, ids, weights, outputs[variant])
+        for round_index in range(ROUNDS):
+            for offset in range(len(names)):
+                variant = names[(round_index + offset) % len(names)]
+                result[variant]["us"].append(timed(variant, hidden, ids, weights, outputs[variant]))
         local["routings"][kind] = result
-        print(json.dumps({"rank": rank, "routing": kind, **{k: v for k, v in result.items() if not k.endswith("_us")}, "control_median_us": statistics.median(result["control_us"]), "candidate_median_us": statistics.median(result["candidate_us"])}), flush=True)
+        print(json.dumps({"rank": rank, "routing": kind, **{v: {**{k: x for k, x in e.items() if k != "us"}, "median_us": statistics.median(e["us"])} for v, e in result.items()}}), flush=True)
     local["elapsed_seconds"] = time.monotonic() - begin
     output.mkdir(parents=True, exist_ok=True)
     (output / f"rank-{rank}.json").write_text(json.dumps(local, indent=2, allow_nan=False) + "\n")
@@ -161,25 +179,40 @@ def run_selection(output, ranks):
     dist.destroy_process_group()
 
 
+def candidate_passed(name, entry):
+    if not entry["reference_passed"] or len(entry["us"]) != ROUNDS:
+        return False
+    if entry["bitwise_equal"]:
+        return True
+    return INEXACT_ALLOWED[name] and entry["relative_l2_vs_control"] < MAX_RELATIVE_L2_VS_CONTROL and entry["max_scaled_error_vs_control"] < MAX_SCALED_ERROR_VS_CONTROL
+
+
 def choose(entries, expected):
-    """Adopt only with every expected GPU present, exact, and faster on every routing."""
+    """Adopt the fastest variant that passed and beat the control by the margin on every GPU and routing."""
     if any(e is None for e in entries) or len(entries) != expected:
         return {"winner": "control", "reason": "missing-results"}
     for entry in entries:
         for kind in ROUTINGS:
-            result = entry["routings"][kind]
-            if not result["control_reference_passed"]:
-                raise SystemExit(f"Prefill MegaMoE control failed the FP32 reference: rank {entry['global_rank']} routing {kind}: {result}")
-    savings = []
-    for entry in entries:
-        for kind in ROUTINGS:
-            result = entry["routings"][kind]
-            if not result["bitwise_equal"] or len(result["control_us"]) != PAIRS or len(result["candidate_us"]) != PAIRS:
-                return {"winner": "control", "reason": f"candidate-not-exact-or-untimed rank {entry['global_rank']} {kind}"}
-            control, candidate = statistics.median(result["control_us"]), statistics.median(result["candidate_us"])
-            savings.append({"rank": entry["global_rank"], "routing": kind, "control_median_us": control, "candidate_median_us": candidate, "saving_us": control - candidate, "required_us": max(MARGIN_US, MARGIN_FRACTION * control)})
-    adopted = all(s["saving_us"] >= s["required_us"] for s in savings)
-    return {"winner": "four-stage" if adopted else "control", "reason": "all-gpus-faster" if adopted else "below-margin", "savings": savings}
+            control = entry["routings"][kind]["control"]
+            if not control["reference_passed"]:
+                raise SystemExit(f"Prefill MegaMoE control failed the FP32 reference: rank {entry['global_rank']} routing {kind}: {control}")
+    choices = {}
+    for name in CANDIDATES:
+        savings, reason = [], None
+        for entry in entries:
+            for kind in ROUTINGS:
+                result = entry["routings"][kind]
+                if len(result["control"]["us"]) != ROUNDS or not candidate_passed(name, result[name]):
+                    reason = f"failed-or-untimed rank {entry['global_rank']} {kind}"
+                    continue
+                control, candidate = statistics.median(result["control"]["us"]), statistics.median(result[name]["us"])
+                savings.append({"rank": entry["global_rank"], "routing": kind, "control_median_us": control, "candidate_median_us": candidate, "saving_us": control - candidate, "required_us": max(MARGIN_US, MARGIN_FRACTION * control), "bitwise_equal": result[name]["bitwise_equal"]})
+        if reason is None and not all(s["saving_us"] >= s["required_us"] for s in savings):
+            reason = "below-margin"
+        choices[name] = {"eligible": reason is None, "reason": reason or "all-gpus-faster", "total_median_us": sum(s["candidate_median_us"] for s in savings), "savings": savings}
+    eligible = [name for name in CANDIDATES if choices[name]["eligible"]]
+    winner = min(eligible, key=lambda name: (choices[name]["total_median_us"], CANDIDATES.index(name))) if eligible else "control"
+    return {"winner": winner, "reason": "fastest-eligible" if eligible else "no-eligible-candidate", "choices": choices}
 
 
 def aggregate(directory, output, env_output, workers):
@@ -190,13 +223,13 @@ def aggregate(directory, output, env_output, workers):
             entry = json.loads(path.read_text()) if path.is_file() else None
             entries.append(entry and {**entry, "global_rank": worker * 4 + rank})
     selection = choose(entries, workers * 4)
-    selection["env"] = {SWITCH: "1"} if selection["winner"] == "four-stage" else {}
-    result = {"schema": "firmus-prefill-megamoe-selection/v1", "rule": {"pairs": PAIRS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "routings": ROUTINGS, "bitwise_equal_to_control": True}, **selection}
+    selection["env"] = {k: v for k, v in VARIANTS[selection["winner"]].items() if v != "0"}
+    result = {"schema": "firmus-prefill-megamoe-selection/v2", "rule": {"rounds": ROUNDS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "routings": ROUTINGS, "inexact_allowed": INEXACT_ALLOWED, "max_relative_l2_vs_control": MAX_RELATIVE_L2_VS_CONTROL, "max_scaled_error_vs_control": MAX_SCALED_ERROR_VS_CONTROL}, **selection}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     with env_output.open("a") as env:
         env.write("".join(f"{k}={v}\n" for k, v in selection["env"].items()))
-    print(json.dumps({k: v for k, v in result.items() if k != "savings"}), flush=True)
+    print(json.dumps({"winner": result["winner"], "reason": result["reason"], "env": result["env"], **{name: {k: v for k, v in choice.items() if k != "savings"} for name, choice in result.get("choices", {}).items()}}), flush=True)
 
 
 if __name__ == "__main__":

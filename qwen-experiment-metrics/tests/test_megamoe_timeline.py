@@ -77,9 +77,10 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context(tmp_path):
     assert len(config["deep_gemm_overlay_patches"]) == 8
     assert config["deep_gemm_overlay_patches"][-3:] == ["patches/deep-gemm-overlay/sm90-decode-independent-wg.patch", "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch", "patches/deep-gemm-bench/fc2-address/fc2-output-address.patch"]
     bench = ROOT / "patches/deep-gemm-bench"
-    assert sorted(p.parent.name for p in bench.glob("*/*.patch")) == ["fc2-address", "prefill-4stage", "prefill-local-ep1"]
+    assert sorted(p.parent.name for p in bench.glob("*/*.patch")) == ["fc2-address", "prefill-4stage", "prefill-local-ep1", "prefill-tail-split"]
     assert "patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch" not in config["deep_gemm_overlay_patches"]
     assert "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch" not in config["deep_gemm_overlay_patches"]
+    assert "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch" not in config["deep_gemm_overlay_patches"]
     assert not list(bench.glob("*/env"))
     assert (bench / "timeline").is_file()
     assert (bench / "prefill-only").is_file()

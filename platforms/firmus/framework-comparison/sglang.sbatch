@@ -216,9 +216,10 @@ done
 if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
   printf 'PP4 serving trial: retain prior kernel settings; only the EP1 MegaMoE gate and pipeline-depth selection run.\n'
-  # EP1 MegaMoE on all twelve Prefill GPUs before model load (select-firmus-prefill-megamoe.py, about 1-1.5 min):
-  # the control must match an FP32 reference (a failure stops the job), and the four-stage candidate is adopted
-  # only if it is bit-identical and faster on every GPU. A missing or late result keeps three stages.
+  # EP1 MegaMoE on all twelve Prefill GPUs before model load (select-firmus-prefill-megamoe.py, about 1.5-2 min):
+  # the control must match an FP32 reference (a failure stops the job); the four-stage and four-stage tail-split
+  # variants are adopted only if they pass the exactness checks and are faster on every GPU (the faster one wins).
+  # A missing or late result keeps three stages.
   megamoe_selections=()
   for worker in 0 1 2; do
     node=${HEAD}
