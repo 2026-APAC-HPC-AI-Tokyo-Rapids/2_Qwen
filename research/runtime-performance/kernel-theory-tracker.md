@@ -42,6 +42,10 @@ FC1にもscale読取アドレスの共通化候補を作成した。約509万組
 
 Prefill 2WGの4 stage候補（host `DG_SM90_PREFILL_4STAGE` + header overlay）。64KiBのFC2 BF16 CDを、FC1 epilogueが既に使うwarp別16行×144byte（計18KiB）へ置き換え、FC2を64列ずつ4回で書き出す。共有メモリは225,472→228,560B（3→4 stage）。FC2 epilogueの直線spanはPP4 chainのEP1で765→223命令/thread/tile（swizzle XOR・行分岐・行毎SHFLが消え、STS/LDS/STG/F2FPは同数）、EP4 main chainで625→241。168 registers・spill0、3 stageとDecodeの全instantiationはSASS一致。見込みはPP4で23〜129µs/層（epilogueは仕事削減、stageは待ち削減でκ0.35〜0.6）。GPUでは未測定で、PP4の通常job内で全12 Prefill GPUのbit一致・FP32 reference・速度を測り、全GPUで速い場合だけ採用する。同じ選択に3つ目の候補として、64行以下の末尾tile（EP1 tileの13.4%、D5aでWG1が遊ぶ半tile）を両WGのm64n128半分で処理するtail splitを追加した（`DG_SM90_PREFILL_TAIL_SPLIT`、末尾template引数のみ追加、FC1 amaxは相方warpとpadで交換）。D5a半tileの実測費用0.64〜0.70 tileを0.52〜0.55へ下げる見込みで、待ち削減なのでκ0.35〜0.6を掛け11〜36µs/層、4 stageと合わせ34〜165µs/層。split版も168 registers・spill0、split無しの全instantiationはSASS一致。詳細は `megamoe-prefill-4stage-cpu-validation-20261029.json`。
 
+Prefill FA3 N192のepilogueを、accumulatorから直接group-128 FP8へ量子化する候補 `n192-direct-o`（variant 32）を作成した。BF16 smem staging、quad SHFLの列並べ替え、named barrier2回、staged layoutのBF16展開とgroup-8 shuffleを除き、consumer warpあたりM-tileごとの実行命令は808→343（CUDA 13.4、3994行で1回7.44M warp命令・smem131MB減）。定常KV loopは597命令/tileのまま、registers・spillは不変、他のgeometryのSASSは一致。出力codeとscaleはn192とbyte一致する設計で、in-job選択のGPU gateがn192とのbyte一致と速度を判定する。見込みは単体−4〜−6%、電力上限下−2〜−5%でFA3目標10%に届かない。GPU未測定・未有効化。詳細は `fa3-prefill-direct-o-cpu-validation-20261029.json`。
+
+PP4（run40825417205）では2要求のmicrobatchが固定経路に入らず、prepared N224（899.7µs/回＋prepare 4.1µs）で動いていた。固定schedulerを1〜4要求の連結順へ広げたvariant 64の `n192-varlen` と `n192-direct-o-varlen` を追加し、PP4ではこの2行だけを3長と3986+4027の組でin-job選択する（controlは組ではprepared N224）。数値gateは要求ごとのn192とのbyte一致を要求する。定常KV loopは不変、spillはproducer側で72/132→96/124B、他kernelのSASS本体は一致。見込みは124ms周期あたり電力上限下で−0.7〜−1.6ms（direct-o併用）。draft extend（stock paged N160、BF16出力）は同じ64/4/128だが出力・KV形式が異なり、stage3は律速でないため未配線。GPU未測定。詳細は `fa3-prefill-varlen-cpu-validation-20261029.json`。
+
 ## Prefill の収支
 
 17周期、周期平均 **250.991 ms**、kernel union **248.908 ms**、kernelのない区間 **2.083 ms**。92個のkernel名とgeometryの組を全て保持。重なったkernelの時間和を周期時間へ足し直さない。

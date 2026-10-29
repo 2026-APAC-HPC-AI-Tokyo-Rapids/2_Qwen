@@ -54,7 +54,7 @@ def generate_prefill_dispatch(root, work):
             source.write_text(f'#define PREFILL_NAME {symbol}\n#define PREFILL_N {row["block_n"]}\n#define PREFILL_VARIANT {row["variant"]}\n#include "prefill_variant.cu"\n')
             tasks.append((source, symbol, True))
         declarations.append(f"void {symbol}(Flash_fwd_params&, cudaStream_t, int*);")
-        entries.append(f'    {{"{row["name"]}", {str(row["byte_image"]).lower()}, {symbol}}},')
+        entries.append(f'    {{"{row["name"]}", {str(row["byte_image"]).lower()}, {str(row.get("varlen", False)).lower()}, {symbol}}},')
     (work / "prefill-candidates.h").write_text("\n".join([*declarations, "static const PrefillCandidate prefill_candidates[] = {", *entries, "};", ""]))
     return tasks
 
@@ -89,6 +89,8 @@ def build(root):
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-overlap.patch")], cwd=sources["fa3"], check=True)
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-pv.patch")], cwd=sources["fa3"], check=True)
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "decode-merge.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-direct-o.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-varlen.patch")], cwd=sources["fa3"], check=True)
     cuda = Path("/usr/local/cuda")
     includes = [str(root), str(work), str(sources["fa3"] / "hopper"), str(sources["cutlass"] / "include"), str(sources["cutlass"] / "tools/util/include"), str(cuda / "include"), str(cuda / "include/cccl"), *include_paths()]
     common = ["-O3", "-std=c++17", "-fPIC", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fno-gnu-unique", f"-D_GLIBCXX_USE_CXX11_ABI={int(torch._C._GLIBCXX_USE_CXX11_ABI)}"]

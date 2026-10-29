@@ -104,7 +104,7 @@ int64_t prefill_resources() {
     Flash_fwd_params p{}; int bytes=0; prefill(p, nullptr, &bytes); return bytes;
 }
 // Prefill candidates are independent of the Decode table above.
-struct PrefillCandidate { const char* name; bool byte_image; Launch launch; };
+struct PrefillCandidate { const char* name; bool byte_image; bool varlen; Launch launch; };
 #include "prefill-candidates.h"
 static const PrefillCandidate& prefill_candidate(int64_t id) {
     TORCH_CHECK(id >= 0 && id < int64_t(sizeof(prefill_candidates)/sizeof(prefill_candidates[0])), "FA3 Prefill candidate index");
@@ -149,7 +149,9 @@ void prefill_fwd_impl(bool fixed, const at::Tensor& q, const at::Tensor& k, cons
     p.num_nheads_in_l2_ptr=p.num_splits_dynamic_ptr+12; p.tile_count_semaphore=p.num_splits_dynamic_ptr+16;
     auto stream=at::cuda::getCurrentCUDAStream();
     if (fixed) {
-        TORCH_CHECK(batch==1 && rows==maxlen && rows>=3584 && rows<=4096 && props->multiProcessorCount==132, "FA3 fixed Prefill requires a single 3584..4096 sequence and 132 SMs");
+        // Varlen candidates take 1..4 packed sequences; the host caller bounds each to 3584..4096.
+        bool varlen = variant >= 0 && prefill_candidate(variant).varlen;
+        TORCH_CHECK(props->multiProcessorCount==132 && (varlen ? maxlen>=3584 && maxlen<=4096 && rows>=batch*3584 && rows<=batch*maxlen : batch==1 && rows==maxlen && rows>=3584 && rows<=4096), "FA3 fixed Prefill requires 3584..4096-row sequences (one unless varlen) and 132 SMs");
         p.skip_scheduler_metadata_computation=true;
         p.softmax_lse_ptr=nullptr;
         // No preparation kernel: only the dynamic tile counter remains.
