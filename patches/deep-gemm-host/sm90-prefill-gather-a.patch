@@ -1,0 +1,44 @@
+diff --git a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+--- a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+@@ -51,6 +51,8 @@ public:
+         // Optional trailing template argument after it (DG_SM90_PREFILL_DIRECT_FC2),
+         // likewise emitted only when set.
+         bool prefill_direct_fc2;
++        // And after that one (DG_SM90_PREFILL_GATHER_A), likewise emitted only when set.
++        bool prefill_gather_a;
+         MegaMoESM90Config config;
+ 
+         // Runtime arguments
+@@ -123,7 +125,8 @@ static void __instantiate_kernel() {{
+     args.l2_epilogue_requires_full_sync ? "true" : "false",
+     args.split_phase_hot_path ? "true" : "false",
+     args.use_swap_ab ? "true" : "false",
+-    args.prefill_direct_fc2 ? ",\n        false,\n        true" : (args.prefill_tail_split ? ",\n        true" : ""));
++    args.prefill_gather_a ? (args.prefill_direct_fc2 ? ",\n        false,\n        true,\n        true" : ",\n        false,\n        false,\n        true") :
++        (args.prefill_direct_fc2 ? ",\n        false,\n        true" : (args.prefill_tail_split ? ",\n        true" : "")));
+     }
+ 
+     static void launch_impl(const KernelHandle& kernel, const LaunchConfigHandle& config, Args args) {
+@@ -218,6 +221,13 @@ static void sm90_fp8_mega_moe(
+     const bool prefill_direct_fc2 =
+         config.block_m == 128 and config.block_n == 256 and config.num_epilogue_threads == 256 and
+         config.num_stages == 4 and not prefill_tail_split and get_env<int>("DG_SM90_PREFILL_DIRECT_FC2", 0) != 0;
++    // DG_SM90_PREFILL_GATHER_A=1, only for one rank (PP4/EP1) with the four-stage
++    // 2WG tile and without the tail split: the dispatch skips the token-row copy
++    // into the L1 pool and the FC1 A loader gathers the rows from the input buffer
++    // (sm90-prefill-gather-a.patch carries the header path).
++    const bool prefill_gather_a =
++        num_ranks == 1 and config.block_m == 128 and config.block_n == 256 and config.num_epilogue_threads == 256 and
++        config.num_stages == 4 and not prefill_tail_split and get_env<int>("DG_SM90_PREFILL_GATHER_A", 0) != 0;
+ 
+     // Tensormap construction
+     // Acts/weights: standard 2D TMA descriptors (FP8 K-major).
+@@ -314,6 +324,7 @@ static void sm90_fp8_mega_moe(
+         .use_swap_ab = use_swap_ab,
+         .prefill_tail_split = prefill_tail_split,
+         .prefill_direct_fc2 = prefill_direct_fc2,
++        .prefill_gather_a = prefill_gather_a,
+         .config = config,
+         .y = y.data_ptr(),
+         .cumulative_local_expert_recv_stats = cumulative_local_expert_recv_stats_ptr,
