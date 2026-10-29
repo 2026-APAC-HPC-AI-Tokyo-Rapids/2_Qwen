@@ -499,7 +499,7 @@ def run(source):
     env["PPProxyTensors"] = proxy_cls
     async_d2h, result_cls = extract(source, "managers/utils.py", ["_async_d2h", "GenerationBatchResult"], {**env, "dataclasses": dataclasses})
     env["GenerationBatchResult"] = result_cls
-    extract(source, "managers/scheduler_pp_mixin.py", ["PPBatchMetadata", "_QWEN_PP_RESULT_TAG", "_QwenPPLaunch", "_QwenPPLoop", "_QwenPPResultPublisher"], env)
+    extract(source, "managers/scheduler_pp_mixin.py", ["PPBatchMetadata", "_QWEN_PP_RESULT_TAG", "_QWEN_PP_CONSENSUS_LAG", "_QwenPPLaunch", "_QwenPPLoop", "_QwenPPResultPublisher"], env)
     (mixin,) = extract(source, "managers/scheduler_pp_mixin.py", ["SchedulerPPMixin"], env)
     (prefill,) = extract(source, "disaggregation/prefill.py", ["SchedulerDisaggregationPrefillMixin"], env)
     instream = hasattr(mixin, "_qpp_send_proxy")
@@ -545,10 +545,10 @@ def run(source):
             assert not thread.is_alive(), "stage did not finish: deadlock"
     if errors:
         raise AssertionError(errors[min(errors)])
-    return stages, transport, instream
+    return stages, transport, instream, env["_QWEN_PP_CONSENSUS_LAG"]
 
 
-def check(stages, transport, instream):
+def check(stages, transport, instream, lag):
     first, last = stages[0], stages[-1]
     # Identical microbatches and scheduler state at every iteration.
     for stage in stages[1:]:
@@ -609,18 +609,19 @@ def check(stages, transport, instream):
         assert compact == expected, (stage.rank, compact[:12])
         if instream:
             assert {stream for _, stream in stage.stream_log} == {"forward"}, stage.rank
-    # Only the last stage's final consensus round is left unconsumed.
+    # Only the last stage's final consensus rounds (bootstrap and release for
+    # each of the last `lag` iterations) are left unconsumed.
     left = transport.leftovers()
-    assert left == {("world", PP - 1, 0, 0): 2 * (PP - 1)}, left
+    assert left == {("world", PP - 1, 0, 0): 2 * lag}, left
     return len(admitted), len(launched)
 
 
 def main():
     source = Path(sys.argv[1]).resolve() / "python/sglang/srt"
-    stages, transport, instream = run(source)
-    requests, batches = check(stages, transport, instream)
+    stages, transport, instream, lag = run(source)
+    requests, batches = check(stages, transport, instream, lag)
     path = "in-stream PyNccl proxy" if instream else "torch.distributed proxy"
-    print(f"PASS: four-stage direct-result PP loop ({path}), {STEPS} iterations, {batches} microbatches, {requests} requests: identical batches/state per iteration, results at +{LOOP - 1}, threaded publish after completion, release after all transfers, {LOOP} in flight, drained")
+    print(f"PASS: four-stage direct-result PP loop ({path}), {STEPS} iterations, {batches} microbatches, {requests} requests: identical batches/state per iteration, results at +{LOOP - 1}, threaded publish after completion, release after all transfers, consensus lag {lag}, {LOOP} in flight, drained")
 
 
 if __name__ == "__main__":

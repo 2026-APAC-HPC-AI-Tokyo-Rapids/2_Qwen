@@ -27,13 +27,20 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
  import time
  from array import array
  from collections import defaultdict, deque
-@@ -63,6 +66,89 @@ class PPBatchMetadata:
+@@ -63,6 +66,96 @@ class PPBatchMetadata:
      can_run_cuda_graph: bool
  
  
 +# Tag of the direct last-stage -> stage result messages on the PP CPU group.
 +# Proxy metadata uses tag 0 on that group, so the two message streams never mix.
 +_QWEN_PP_RESULT_TAG = 4
++# Iterations between the last stage originating a bootstrap or release
++# consensus and every stage applying it. Upstream uses pp_size - 1 (3); each
++# iteration is one stage period (~115 ms) of admission latency and of router
++# hold. Stage 0 waits for the last stage's consensus step of iteration i - 2,
++# which follows that stage's launch by about three eager launches (~85 ms), so
++# two iterations keep more than one period of slack while one would leave ~30 ms.
++_QWEN_PP_CONSENSUS_LAG = 2
 +
 +
 +@dataclass
@@ -117,7 +124,7 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
  class SchedulerPPMixin:
      @DynamicGradMode()
      def event_loop_pp(self: Scheduler):
-@@ -366,6 +452,201 @@ class SchedulerPPMixin:
+@@ -366,6 +459,204 @@ class SchedulerPPMixin:
              if server_is_idle and len(self.disagg_prefill_inflight_queue) == 0:
                  self.on_idle()
  
@@ -175,7 +182,10 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +        self.last_batch = self.last_mbs[mb_id]
 +        # Slot of the microbatch launched pp_loop_size - 1 iterations ago.
 +        next_mb_id = (mb_id + 1) % self.pp_loop_size
-+        next_first_rank_mb_id = (mb_id + self.ps.pp_size) % self.pp_loop_size
++        # The last stage sends a consensus here iff stage 0 reads one
++        # _QWEN_PP_CONSENSUS_LAG iterations later (it reads from iteration
++        # pp_loop_size - 1 on); upstream's next_first_rank_mb_id is lag pp_size - 1.
++        consensus_mb_id = (mb_id + _QWEN_PP_CONSENSUS_LAG + 1) % self.pp_loop_size
 +
 +        with torch.profiler.record_function("pp.recv_requests"):
 +            recv_reqs = self.request_receiver.recv_requests()
@@ -211,7 +221,7 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +
 +        # Bootstrap consensus: the last stage originates it towards stage 0;
 +        # every stage applies it at this same iteration and forwards it.
-+        if is_last and loop.bmbs[next_first_rank_mb_id] is not None:
++        if is_last and loop.bmbs[consensus_mb_id] is not None:
 +            loop.works += self._pp_send_pyobj_to_next_stage(
 +                bootstrapped_rids, async_send=True
 +            )
@@ -225,7 +235,7 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
 +                )
 +        # Release consensus, the same way.
 +        release_rids = None
-+        if is_last and loop.tmbs[next_first_rank_mb_id] is not None:
++        if is_last and loop.tmbs[consensus_mb_id] is not None:
 +            loop.works += self._pp_send_pyobj_to_next_stage(
 +                transferred_rids, async_send=True
 +            )

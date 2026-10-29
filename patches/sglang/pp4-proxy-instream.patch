@@ -1,7 +1,7 @@
 diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
 --- a/python/sglang/srt/managers/scheduler_pp_mixin.py
 +++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
-@@ -478,6 +478,8 @@ class SchedulerPPMixin:
+@@ -485,6 +485,8 @@ class SchedulerPPMixin:
          result step.
          """
          assert self.ps.tp_size == 1 and self.ps.attn_cp_size == 1
@@ -10,7 +10,7 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
          self.init_pp_loop_state()
          size = self.pp_loop_size
          loop = _QwenPPLoop(
-@@ -585,19 +587,24 @@ class SchedulerPPMixin:
+@@ -595,19 +597,24 @@ class SchedulerPPMixin:
      def _qpp_launch(
          self: Scheduler, loop: _QwenPPLoop, batch: ScheduleBatch
      ) -> _QwenPPLaunch:
@@ -41,7 +41,7 @@ diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/sr
                      )
          # Host copies for the result step, ordered after this forward on the
          # copy stream: page-table rows for send_kv_chunk on every stage, and on
-@@ -622,6 +629,45 @@ class SchedulerPPMixin:
+@@ -632,6 +639,45 @@ class SchedulerPPMixin:
              draft_output_cpu=result.draft_output_cpu,
          )
  
