@@ -428,8 +428,8 @@
   },
   "megamoe_prefill_direct_fc2_cpu_candidate": {
     "evidence": "megamoe-prefill-direct-fc2-cpu-validation-20261030.json",
-    "status": "CPU_validated_not_GPU_measured; four-stage-direct selected in job",
-    "removed_work": "FC2 epilogue shared-memory staging: 64 KiB STS + 64 KiB LDS per FC2 tile (9 MB per SM per PP4 layer) and its serial step chain; partial rows stored straight from the accumulators in a permuted column order that the combine restores. Same BF16 values, combine order and y bytes.",
+    "status": "CPU_validated_not_GPU_measured; four-stage-direct, four-stage-gather and four-stage-direct-gather selected in job",
+    "removed_work": "FC2 epilogue shared-memory staging: 64 KiB STS + 64 KiB LDS per FC2 tile (9 MB per SM per PP4 layer) and its serial step chain; partial rows stored straight from the accumulators in a permuted column order that the combine restores. Same BF16 values, combine order and y bytes. EP1 A gather: no token-row copy into the L1 pool (8 KiB shared-memory traffic per row, 264 MB HBM write) and no A writes for padding rows; the FC1 A loader cp.async-gathers valid rows from the input buffer.",
     "past_rejections_distinct": "Not the bulk scatter (TMA store from the same staging), FC2 interleave, pre-reduce or combine direct store; no stage, tile or issue-order change."
   },
   "fa3_prefill_direct_o_cpu_candidate": {

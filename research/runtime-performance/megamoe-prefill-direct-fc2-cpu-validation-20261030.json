@@ -1,7 +1,7 @@
 {
   "schema": "megamoe-prefill-epilogue-cpu-validation/v1",
   "date": "2026-10-30",
-  "status": "CPU_validated_not_GPU_measured; selected in job against control, four-stage and four-stage-split",
+  "status": "CPU_validated_not_GPU_measured; four-stage-direct, four-stage-gather and four-stage-direct-gather selected in job against control, four-stage and four-stage-split",
   "target": {
     "kernel": "deep_gemm::sm90_fp8_mega_moe_impl, Prefill 2WG four-stage tile (BLOCK 128x256x128, two m64n256 math WG, 168 registers)",
     "call": "PP4/EP1 microbatch: 8064 tokens x top-8 = 64,512 rows, hidden 4096, intermediate 1536, 128 experts on one GPU",
@@ -27,27 +27,97 @@
   },
   "routing": {
     "source": "kernels/probes/megamoe-local-ep1-routing.npz (6 layer samples x 2 microbatches)",
-    "pool_blocks": [567, 580],
-    "hot_expert_rows": [7922, 7975],
-    "tails_le_64": [69, 86],
-    "pad128": [0.134, 0.160],
-    "pad64": [0.065, 0.074],
-    "pad32": [0.030, 0.035],
-    "pad16": [0.013, 0.015]
+    "pool_blocks": [
+      567,
+      580
+    ],
+    "hot_expert_rows": [
+      7922,
+      7975
+    ],
+    "tails_le_64": [
+      69,
+      86
+    ],
+    "pad128": [
+      0.134,
+      0.16
+    ],
+    "pad64": [
+      0.065,
+      0.074
+    ],
+    "pad32": [
+      0.03,
+      0.035
+    ],
+    "pad16": [
+      0.013,
+      0.015
+    ]
   },
   "direct_fc2": {
     "switch": "DG_SM90_PREFILL_DIRECT_FC2=1 (host; with DG_SM90_PREFILL_4STAGE=1, not with the tail split) -> trailing template arguments kPrefillTailSplit=false, kPrefillDirectFC2=true",
-    "host_patch": {"path": "patches/deep-gemm-host/sm90-prefill-direct-fc2.patch", "sha256": "24a102d74766f547140478606ae4de213a5e903ecc5c96d78d285290e063a909"},
-    "header_overlay": {"path": "patches/deep-gemm-bench/prefill-direct-fc2/sm90-prefill-direct-fc2.patch", "sha256": "a236b8387351e9893c4802118ccd9f6b38df7b0fde425ec472092db13946ae0e"},
+    "host_patch": {
+      "path": "patches/deep-gemm-host/sm90-prefill-direct-fc2.patch",
+      "sha256": "24a102d74766f547140478606ae4de213a5e903ecc5c96d78d285290e063a909"
+    },
+    "header_overlay": {
+      "path": "patches/deep-gemm-bench/prefill-direct-fc2/sm90-prefill-direct-fc2.patch",
+      "sha256": "a236b8387351e9893c4802118ccd9f6b38df7b0fde425ec472092db13946ae0e"
+    },
     "image_header_sha256": "ff7a58cca00aa42a90386d12b0437b5d8caf35eb0ad082a8a1a0b4b74001a2a1",
-    "pp4_chain_header_sha256": {"control": "0c2bcc4420f22f7014f0b3e5ea6d2cc9d2f99c8d1c9c5a4ebccdee2df3943881", "candidate": "82fc051c7a58686b184fa52b13e3a169534df54c76a9379cee3d2edee86c1a81"},
+    "pp4_chain_header_sha256": {
+      "control": "0c2bcc4420f22f7014f0b3e5ea6d2cc9d2f99c8d1c9c5a4ebccdee2df3943881",
+      "candidate": "82fc051c7a58686b184fa52b13e3a169534df54c76a9379cee3d2edee86c1a81"
+    },
     "design": "Every 256-column FC2 block of a partial row is stored permuted: bytes 64 j + 16 c hold n8 chunks 4j..4j+3 of lane-quad position c (natural columns 32 j + 8 q + 2 c + {0,1}). Each thread writes its rows r_0 and r_1 with 8 STG.128 each straight from the accumulators. The paired combine reads the same uint4s, sums the top-k partials element by element in slot order as before and writes the y staging chunk in natural order (4 x STS.32 per uint4).",
     "exactness": "bit-identical by construction (same BF16 values, same per-element FMA order, same y bytes); the selection requires bitwise equality with the control",
     "removed_work_per_fc2_tile": "64 KiB STS + 64 KiB LDS of shared-memory traffic, 8 warp syncs and the 4-step STS->LDS->STG dependency chain; straight-line span per thread 223 -> 126 instructions (STS 64 -> 0, LDS 16 -> 0, STG.128 16 = 16, F2FP 64 = 64)",
     "sass_cuda_13_4_sm_90a": {
-      "ep1_four_stage_direct": {"registers": 168, "spill_bytes": [0, 0], "instructions": [7152, 7088], "fc2_span": [223, 126], "mainloop_issue_blocks": "FC1 42 = 42, FC2 47 = 47"},
-      "ep4_128_four_stage_direct": {"registers": 168, "spill_bytes": [0, 0], "instructions": [6704, 6720], "fc2_span": [241, 126], "mainloop_issue_blocks": "FC1 42 -> 44, FC2 48 -> 52 (EP4 not used by PP4)"},
-      "ep4_140_four_stage_direct": {"registers": 168, "spill_bytes": [0, 0], "instructions": [7272, 7248]},
+      "ep1_four_stage_direct": {
+        "registers": 168,
+        "spill_bytes": [
+          0,
+          0
+        ],
+        "instructions": [
+          7152,
+          7088
+        ],
+        "fc2_span": [
+          223,
+          126
+        ],
+        "mainloop_issue_blocks": "FC1 42 = 42, FC2 47 = 47"
+      },
+      "ep4_128_four_stage_direct": {
+        "registers": 168,
+        "spill_bytes": [
+          0,
+          0
+        ],
+        "instructions": [
+          6704,
+          6720
+        ],
+        "fc2_span": [
+          241,
+          126
+        ],
+        "mainloop_issue_blocks": "FC1 42 -> 44, FC2 48 -> 52 (EP4 not used by PP4)"
+      },
+      "ep4_140_four_stage_direct": {
+        "registers": 168,
+        "spill_bytes": [
+          0,
+          0
+        ],
+        "instructions": [
+          7272,
+          7248
+        ]
+      },
       "unchanged_instantiations": "SASS byte-identical to the control header for all 21 other instantiations: EP1/EP4-128/EP4-140 three-stage 256 and 512 threads, four-stage, four-stage split, and all Decode geometries (EP1 m64 s8 with/without SwapAB, EP4 32/16-expert waves s8, independent-WG s6, EP4-140 s8)",
       "tail_split_combination": "not offered: split + direct compiled with 16/44 B (EP1) and 248/312 B (EP4) of spills, so the header asserts it away and the host never emits it"
     },
@@ -55,6 +125,48 @@
     "expected": "Work removal at kappa ~1: 9 MB of shared-memory traffic per SM per layer (~81 k clk) and ~1000 clk of serial epilogue latency per FC2 tile -> 40-55 us per layer (1.5-2.0 % of 2.73 ms), 1.0-1.3 ms per 24-layer PP4 stage period. Combine: +12 k shared-memory wavefronts per SM (4-way conflicted STS.32), hidden behind its HBM reads.",
     "past_rejections_distinct": "Not D1 bulk scatter (TMA store from the same staging, 40095847738), FC2 interleave, pre-reduce (39355994503) or combine direct store: none of them removed the staging traffic. Does not change stages, tiles, issue order or the combine payload."
   },
-  "in_job_time": "One more JIT instantiation and 24 more timed calls per GPU in select-firmus-prefill-megamoe.py (about +3-5 s of a ~30 s step, inside the existing 240 s timeout, in parallel with the other PP4 selections).",
-  "image_rebuild": "Required: the host patch is in patches/deep-gemm-host/series; scripts/check-firmus-image.sh rejects images whose host build record lacks it."
+  "in_job_time": "Three more JIT instantiations and 72 more timed calls per GPU in select-firmus-prefill-megamoe.py (about +10-15 s of a ~30 s step, inside the existing 240 s timeout, in parallel with the other PP4 selections).",
+  "image_rebuild": "Required: the host patch is in patches/deep-gemm-host/series; scripts/check-firmus-image.sh rejects images whose host build record lacks it.",
+  "gather_a": {
+    "switch": "DG_SM90_PREFILL_GATHER_A=1 (host; one rank, four-stage 2WG tile, not with the tail split) -> trailing kPrefillGatherA=true after kPrefillTailSplit=false and kPrefillDirectFC2",
+    "host_patch": {
+      "path": "patches/deep-gemm-host/sm90-prefill-gather-a.patch",
+      "sha256": "01f7579ba9fba506022126701c148bccbe641dd7f0cf9b96d86cec386c62a818"
+    },
+    "header_overlay": {
+      "path": "patches/deep-gemm-bench/prefill-gather-a/sm90-prefill-gather-a.patch",
+      "sha256": "0fc0586b0d0f998cb0114488349e1db4988cadf8a9fb802cae8f5c906b3d7d9c"
+    },
+    "pp4_chain_header_sha256": "ea2829a674ef61fd3595a5adea8847c68872d3507ff68f928ba65b01a3feff1b",
+    "design": "The EP1 dispatch keeps the SF copy, the source metadata and the per-row arrival release but no longer pulls each 4 KiB token row through its shared-memory buffer into the L1 pool (TMA load + TMA store + two waits per row). The FC1 A loader, after acquiring a tile's arrival count, writes the tile's 128 token indices into the then unused pull buffers and per K block issues 16-byte cp.async.cg copies of the valid rows from the input token buffer: lane l copies chunk l % 8 of rows 32 (l / 8) + i, four whole 128-byte rows per instruction, at the TMA SWIZZLE_128B position (chunk ^ row % 8). Padding rows are not copied. Each lane's cp.async.mbarrier.arrive (counted form, net zero) keeps the stage's full barrier open until its copies land; the elected lane then issues the SFA TMA and the loader's single arrival with the SFA bytes. Consumers issue fence.proxy.async.shared::cta after each FC1 full-barrier wait (generic-proxy cp.async writes before async-proxy WGMMA reads). FC2 is unchanged (TMA from the FC1-output pool).",
+    "exactness": "bit-identical by construction for every valid row (same A bytes, scales, K order); padding rows hold stale bytes as before and are never stored; the selection requires bitwise equality",
+    "removed_work": "Per layer 64.5k row copies: 8 KiB of shared-memory traffic per row (3.9 MB per SM), 264 MB of HBM writes into the pool and the pool's re-read by FC1 (the 33 MB input buffer is read instead, from L2 when resident), and the A shared-memory writes of padding rows (pad128 13.4-16.0 % of FC1 A rows).",
+    "sass_cuda_13_4_sm_90a": {
+      "ep1_four_stage_gather": {
+        "registers": 168,
+        "spill_bytes": [
+          8,
+          80
+        ],
+        "instructions": 7280,
+        "loader_pass": "57 instructions per four 16-byte copies (8 passes per K block)",
+        "mainloop_issue_blocks": "FC1 42 -> 48 (proxy fence), FC2 47"
+      },
+      "ep1_four_stage_direct_gather": {
+        "registers": 168,
+        "spill_bytes": [
+          8,
+          80
+        ],
+        "instructions": 7240
+      },
+      "spill_note": "one 64-bit pointer (the FC2 claim counter) stored at entry and reloaded once per FC2 claim and per tile boundary, not inside a K loop; the gather loop itself has no local memory traffic",
+      "ep4": "not instantiated: the host emits the flag for one rank only (EP4 gather/direct-gather templates equal four-stage/direct)",
+      "unchanged_instantiations": "All 21 instantiations without the new flags are SASS byte-identical to the control header after the full 12-patch PP4 chain"
+    },
+    "host_check": "scripts/check-sm90-prefill-local-host.py: 276 native host configurations (switches 0-5); check-sm90-independent-wg-host.py 480 configurations PASS",
+    "expected": "20-70 us per layer (central ~45 us, 1.6 %): dispatch shared-memory traffic ~24 us and padding-row A writes ~25 us if the K loop is shared-memory bound (kappa ~1, 0 under a Tensor-bound model), pool HBM write ~8 mJ ~ 12 us, pool re-read 0-12 us, earlier FC1 start 5-10 us x kappa 0.5. With direct FC2: 60-125 us per layer (2.2-4.6 %), 1.5-3.0 ms per 24-layer stage period.",
+    "risks": "The A loader now issues ~460 instructions per K block (one warp, 40 registers) instead of one TMA; input rows are re-read by up to 8 experts' tiles and may miss L2; cp.async L1 bypass traffic. Any defect shows as a bitwise mismatch (variant rejected); the barrier accounting follows the counted cp.async.mbarrier.arrive semantics, as in CUTLASS's SM90 cp.async GMMA mainloop.",
+    "past_rejections_distinct": "The dispatch copy removal was deferred in the 2026-10-29 round as not CPU-provable; no earlier variant gathered A rows. Not the independent WG, ping-pong, FC1 early release or L2 prefetch."
+  }
 }
