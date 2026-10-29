@@ -2,12 +2,17 @@
 
 No model, compiler, profiler or scheduler submission. The configured cap/4
 selects a worker setting; cap/4-4 and cap/4-2 are retained as diagnostics.
+
+With --pinned-env (PP4, which keeps the prior Decode settings), the pinned
+candidate is the timing reference ("stock" in the records) and only the
+two-CTA-per-SM rows compete; the written environment holds only a winner.
 """
 
 import argparse
 import json
 import math
 import os
+import shlex
 import statistics
 import time
 from datetime import timedelta
@@ -22,6 +27,10 @@ if not _candidate_table.is_file():
     _candidate_table = Path("/opt/apac/fa3-verify/candidates.json")
 FA3_VERIFY_CANDIDATES = json.loads(_candidate_table.read_text())
 NAMES = tuple(c["name"] for c in FA3_VERIFY_CANDIDATES)
+SPECS = {c["name"]: c for c in FA3_VERIFY_CANDIDATES}
+# PP4 screen: the rows that change only the CTAs per SM (and so the split layout) of the pinned kernel.
+PINNED_SCREEN = tuple(c["name"] for c in FA3_VERIFY_CANDIDATES if c.get("ctas", 1) == 2)
+PINNED_MINIMUM_SAVING_US = 1.0
 
 
 def summary(values):
@@ -51,6 +60,55 @@ def choose_candidate(ranks, selection_batch):
     return {"winner": winner, "choices": choices, "rule": {"selection_batch": selection_batch, "minimum_saving_us_per_layer": 3.2, "blocks": BLOCKS, "gpus": 4, "all_rank_blocks_faster": True}, "env": {"SGLANG_DECODE_FA3_VERIFY": winner or ""}}
 
 
+def choose_pinned(ranks, selection_batch, control, names):
+    """PP4: replace the pinned candidate only with a row that passed the numeric gate, wrote the
+    pinned kernel's exact bytes where its arithmetic is the same (equal splits), and saved
+    >=1us/layer in both blocks on every GPU at cap/4."""
+    assert len(ranks) == 4 and {r["rank"] for r in ranks} == set(range(4))
+    choices = {}
+    for name in names:
+        entries = [r["batches"][str(selection_batch)][name] for r in ranks]
+        if any(not entry.get("numeric_passed") or entry.get("error") or len(entry.get("blocks", [])) != BLOCKS for entry in entries):
+            choices[name] = {"eligible": False, "reason": "candidate-failed", "ranks": entries}
+            continue
+        if any(entry.get("bytes_equal_to_control") is False for entry in entries):
+            choices[name] = {"eligible": False, "reason": "not-bit-exact"}
+            continue
+        blocks = [block for entry in entries for block in entry["blocks"]]
+        if any(not b.get("stock") or not b.get("candidate") for b in blocks):
+            choices[name] = {"eligible": False, "reason": "missing-timing"}
+            continue
+        savings = [statistics.median(b["stock"]) - statistics.median(b["candidate"]) for b in blocks]
+        choices[name] = {**summary([x for b in blocks for x in b["candidate"]]), "control": summary([x for b in blocks for x in b["stock"]]), "savings_us_by_rank_block": savings, "eligible": min(savings) >= PINNED_MINIMUM_SAVING_US, "minimum_saving_us": min(savings)}
+    eligible = [name for name, result in choices.items() if result["eligible"]]
+    winner = min(eligible, key=lambda name: (choices[name]["median_us"], NAMES.index(name))) if eligible else None
+    return {"winner": winner, "control": control, "choices": choices, "rule": {"selection_batch": selection_batch, "minimum_saving_us_per_layer": PINNED_MINIMUM_SAVING_US, "blocks": BLOCKS, "gpus": 4, "all_rank_blocks_faster": True, "equal_split_bytes_exact": True}, "env": {"SGLANG_DECODE_FA3_VERIFY": winner} if winner else {}}
+
+
+def read_env(path):
+    """KEY=VALUE lines as written by prepare-firmus-pp4-settings.py (shell-quoted values)."""
+    env = {}
+    for line in path.read_text().splitlines():
+        key, value = line.split("=", 1)
+        env[key] = "".join(shlex.split(value))
+    return env
+
+
+def exact_reference(control, name):
+    """Equal splits and no uneven metadata: the same per-tile arithmetic, so the bytes must match."""
+    if control == "stock":
+        return False
+    a, b = SPECS[control], SPECS[name]
+    return a["splits"] == b["splits"] and not a.get("uneven") and not b.get("uneven") and a["output"] == b["output"]
+
+
+def bytes_equal(torch, actual, expected):
+    actual = actual if isinstance(actual, tuple) else (actual,)
+    expected = expected if isinstance(expected, tuple) else (expected,)
+    as_bits = {1: torch.uint8, 2: torch.int16, 4: torch.int32}
+    return len(actual) == len(expected) and all(torch.equal(x.view(as_bits[x.element_size()]), y.view(as_bits[y.element_size()])) for x, y in zip(actual, expected))
+
+
 def measure(torch, graph):
     start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
     start.record()
@@ -74,7 +132,7 @@ def prepare_candidate(torch, checks, batch, name, common_sets):
         return result, None, None
 
 
-def run_selection(output, env_output):
+def run_selection(output, env_output, pinned_env=None):
     begin = time.monotonic()
     import torch
     import torch.distributed as dist
@@ -95,18 +153,25 @@ def run_selection(output, env_output):
     cap = config["decode_max_running_requests"]
     selection_batch = cap // config["decode_dp_size"]
     batches = (selection_batch - 4, selection_batch - 2, selection_batch)
+    control = (read_env(pinned_env).get("SGLANG_DECODE_FA3_VERIFY") or "stock") if pinned_env else "stock"
+    screened = PINNED_SCREEN if pinned_env else NAMES
     for batch in batches:
         common_sets = [checks["verify_inputs"](batch, 93101 + batch + i)[0] for i in range(4)]
         # Same live metadata tensors for every layer, as in the B4 serving path.
         for c in common_sets[1:]:
             c["cache_seqlens"] = common_sets[0]["cache_seqlens"]
             c["cu_seqlens_q"] = common_sets[0]["cu_seqlens_q"]
-        stock_step = checks["verify_step"](common_sets, "stock")
+        # The timing reference: stock, or the pinned candidate in PP4 (kept under the "stock" key).
+        stock_step = checks["verify_step"](common_sets, control)
         stock_graph = checks["verify_capture"](stock_step)
         local["batches"][str(batch)] = {}
-        names = NAMES if batch % 2 == 0 else tuple(reversed(NAMES))
+        names = screened if batch % 2 == 0 else tuple(reversed(screened))
         for name in names:
             result, step, graph = prepare_candidate(torch, checks, batch, name, common_sets)
+            if graph is not None and exact_reference(control, name):
+                stock_graph.replay()
+                torch.cuda.synchronize()
+                result["bytes_equal_to_control"] = bytes_equal(torch, step.output, stock_step.output)
             local["batches"][str(batch)][name] = result
             dist.all_gather_object(gathered, {"passed": result["numeric_passed"] and "error" not in result})
             if all(r["passed"] for r in gathered):
@@ -138,7 +203,8 @@ def run_selection(output, env_output):
     local["elapsed_seconds"] = time.monotonic() - begin
     dist.all_gather_object(gathered, local)
     if rank == 0:
-        result = {"schema": "firmus-decode-fa3-selection/v1", **choose_candidate(gathered, selection_batch), "ranks": gathered, "elapsed_seconds": max(r["elapsed_seconds"] for r in gathered), "layers": LAYERS, "kv_sets": 4, "pairs_per_block": PAIRS, "cap": cap, "selection_batches": [selection_batch], "diagnostic_batches": list(batches[:-1])}
+        chosen = choose_pinned(gathered, selection_batch, control, PINNED_SCREEN) if pinned_env else choose_candidate(gathered, selection_batch)
+        result = {"schema": "firmus-decode-fa3-selection/v1", **chosen, "ranks": gathered, "elapsed_seconds": max(r["elapsed_seconds"] for r in gathered), "layers": LAYERS, "kv_sets": 4, "pairs_per_block": PAIRS, "cap": cap, "selection_batches": [selection_batch], "diagnostic_batches": list(batches[:-1])}
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
         env_output.write_text("".join(f"{key}={value}\n" for key, value in result["env"].items()))
@@ -150,5 +216,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--env-output", type=Path, required=True)
+    parser.add_argument("--pinned-env", type=Path, help="PP4: pinned decode-kernels.env; screen only the two-CTA rows against its FA3 candidate")
     args = parser.parse_args()
-    run_selection(args.output, args.env_output)
+    run_selection(args.output, args.env_output, args.pinned_env)

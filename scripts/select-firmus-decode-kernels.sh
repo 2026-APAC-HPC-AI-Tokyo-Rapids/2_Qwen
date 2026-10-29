@@ -6,7 +6,7 @@
 set -uo pipefail
 root=$1
 part=$2
-# Optional for dense: --pinned-env <decode-kernels.env> (PP4), passed to the selector.
+# Optional: --pinned-env <decode-kernels.env> (PP4), passed to the selector.
 shift 2
 out="${root}/results/decode-selection"
 mkdir -p "${out}"
@@ -21,7 +21,7 @@ if [[ "${part}" == dense ]]; then
   if (( dense == 0 )); then cat "${out}/dense-selected.env" >>"${out}/dense.env"; fi
   printf 'dense=%s\n' "${dense}" >"${out}/dense-status.txt"
 elif [[ "${part}" == fa3 ]]; then
-  timeout --kill-after=5 175 "${torchrun}" --standalone --nproc-per-node=4 "${root}/scripts/select-firmus-decode-fa3.py" --output "${out}/fa3.json" --env-output "${out}/fa3-selected.env" >"${out}/fa3.log" 2>&1
+  timeout --kill-after=5 175 "${torchrun}" --standalone --nproc-per-node=4 "${root}/scripts/select-firmus-decode-fa3.py" --output "${out}/fa3.json" --env-output "${out}/fa3-selected.env" "$@" >"${out}/fa3.log" 2>&1
   fa3=$?
   if (( fa3 == 0 )); then cat "${out}/fa3-selected.env" >>"${out}/fa3.env"; fi
   printf 'fa3=%s\n' "${fa3}" >"${out}/fa3-status.txt"

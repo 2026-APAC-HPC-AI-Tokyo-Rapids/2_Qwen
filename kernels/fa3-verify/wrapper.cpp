@@ -7,7 +7,8 @@
 #include "verify.h"
 
 namespace apac_fa3_verify {
-struct Candidate { const char* name; int block_n, stages, splits; bool fp8, merge, uneven; Launch launch; };
+// ctas: co-resident CTAs per SM; the persistent grid is that many per SM.
+struct Candidate { const char* name; int block_n, stages, splits; bool fp8, merge, uneven; int ctas; Launch launch; };
 #include "candidates.h"
 static const Candidate& candidate(int64_t id) {
     TORCH_CHECK(id >= 0 && id < int64_t(sizeof(candidates) / sizeof(candidates[0])), "invalid FA3 verify candidate");
@@ -32,7 +33,7 @@ static Flash_fwd_params base(const at::Tensor& lengths, const at::Tensor& cu, co
     p.num_splits_dynamic_ptr = metadata.data_ptr<int>(); p.num_m_blocks_ptr = p.num_splits_dynamic_ptr + rounded;
     p.varlen_batch_idx_ptr = p.num_splits_dynamic_ptr + rounded * 2; p.num_nheads_in_l2_ptr = p.num_splits_dynamic_ptr + rounded * 3;
     p.tile_count_semaphore = p.num_splits_dynamic_ptr + rounded * 4;
-    p.skip_scheduler_metadata_computation = true; p.num_sm = at::cuda::getCurrentDeviceProperties()->multiProcessorCount;
+    p.skip_scheduler_metadata_computation = true; p.num_sm = at::cuda::getCurrentDeviceProperties()->multiProcessorCount * candidate(id).ctas;
     TORCH_CHECK(at::cuda::getCurrentDeviceProperties()->major == 9, "FA3 verify requires SM90");
     return p;
 }
