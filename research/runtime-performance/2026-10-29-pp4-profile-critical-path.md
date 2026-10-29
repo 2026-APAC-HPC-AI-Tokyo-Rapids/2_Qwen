@@ -58,3 +58,45 @@ MegaMoE の −13% は、FC2 出力の NVLink 転送と rank 待ちが無いぶ�
 ## 4. 代替
 
 PP2 × EP2（各段を TP1/DP2 attention/EP2）は、段数が半分で 1〜3 の実装が楽になり、FC2 の remote 比率も 3/4 → 1/2 に下がる。ただし MegaMoE の −13% のうち通信ぶんは半分しか取れない。PP4 の 1〜4 が難航した場合の退路とする。
+
+## 5. 結果：結合を外した PP4 は 8,952.69（不採用）
+
+§3 の 1〜4（出力 ring を起動経路から外す、hidden の転送を forward stream 上の PyNccl へ、`pp-async-batch-depth 2`、層 24/24/24/22）と concurrency 235 を branch `perf/prefill-pp4-decoupled-20261029`（overlay `pp4-direct-result.patch`、`pp4-proxy-instream.patch`、image は 40742736653 のまま）に実装し、serving [40825417205](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40825417205)（Slurm 27268、`[profile]` 付き）で 1 回測った。score は **8,952.69**（eligible、good 97.39%）で、main の 9,235.28（[40630160781](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40630160781)、EP4 c215）を 3.1% 下回る。assert（stage 間の microbatch 不一致、publisher の失敗）は出ていない。
+
+| | EP4 c215（40630160781） | PP4 c235（40825417205） |
+|---|---|---|
+| 完了要求（124 s） | 5,811 | 5,708（−1.8%） |
+| TTFT 不合格（全て開始 10 s 以内） | 95 | 139 |
+| ITL 不合格 | 4 | 10 |
+| TTFT p50 / p90 / p99（ms） | 1,257 / 1,483 / 3,726 | 1,730 / 1,901 / 4,688 |
+| ITL 平均 / p99（ms） | 15.89 / 18.79 | 16.14 / 18.99 |
+| Decode #running-req（定常、4 DP 合計） | 162.5 | 160 |
+| Decode #transfer-req / #prealloc-req | 38.9 / 10.7 | 73 / 0 |
+| Decode gen throughput（tok/s） | 9,707 | 9,544 |
+| Prefill #queue-req / #bootstrap-req / #inflight-req（3 worker 合計） | 17.2 / 0 / 24.0 | 11 / 15 / 25 |
+| EAGLE 受理長（bonus 込み） | 2.209 | 2.208 |
+| Prefill GPU 電力・SM clock | 692〜694 W、1.47〜1.53 GHz | 687〜691 W、1.45〜1.51 GHz |
+
+profile pass（prefill-0、44 microbatch、stage ごとに MegaMoE を層数で区切る）：
+
+| stage（層） | 周期 中央値（p10〜p90） | 計算 | NCCL のみ | 空き |
+|---|---|---|---|---|
+| 0（24） | 124.3（120.7〜128.0） | 118.3 | 3.5 | 0.5 |
+| 1（24） | 124.3（120.8〜128.0） | 118.9 | 4.1 | 0.4 |
+| 2（24） | 124.6（121.4〜127.6） | 120.2 | 2.6 | 0.4 |
+| 3（22 + lm_head + draft） | 124.1（120.6〜129.4） | 115.3 | 8.5 | 0.6 |
+
+- **結合は外れた。** 周期は 164 → 124 ms、NCCL kernel と MegaMoE の重なりは 0、MegaMoE は全層 2.77〜2.82 ms（最大 3.5 ms）で停止は消えた。Prefill の 12 GPU は全て電力上限に張り付き、空きは 1 microbatch あたり 0.5 ms。PP0 の 2 要求 batch はログ上も毎秒 8 回（約 123 ms）。
+- **ただし電力上限で計算が伸びた。** 24 層の計算は 113.5 → 118〜120 ms。§2 の 109〜113 ms は電力 590〜629 W（上限未満）での値で、上限に張り付くと約 5% 遅くなる。Prefill 供給は 3 × 2 / 0.124 ≈ **48.4 req/s で EP4（47.8）の +1%** にとどまった。§1 の「+10%」は電力上限を織り込んでいなかった。
+- **遅延が concurrency を食う。** Decode の 1 要求あたりの生成速度は同じ（59.7 tok/s/要求）で、受理長も同じ。差は Decode にいる要求数だけで、PP4 は c を 20 上げても 160 にとどまった。残りは Prefill の pipeline 内（4 段 × 約 124 ms）と bootstrap 待ち（3 worker 合計 15 要求、Little の法則で約 0.33 s）にいる。bootstrap 待ちは PP の合意（stage 0 → 3 の積集合と、最終 stage から lag 2 で戻る合意）で、1 回あたり数周期かかる。EP4 では 0。TTFT p50 は 0.47 s 長い。
+- **開始時の TTFT 不合格が 44 件多い。** pipeline を埋める遅延と bootstrap 合意の遅れが、開始直後の 235 要求に上乗せされた。
+- DES の予測（9,217〜9,351）が外れたのは、周期を 113〜115 ms と置いたこと（実測 124）と、bootstrap 合意の遅延を模型に入れていなかったため。
+
+### 5.1 PP4 を続ける場合の残り
+
+1. **bootstrap 合意の短縮。** stage 0 が自分の bootstrap 完了だけで batch を決め、後段はその rid 列に従う（後段の bootstrap は KV 送信の前に済めばよい）。TTFT −0.3 s 程度、Decode の要求数 +14 程度。
+2. **hidden の転送を copy engine へ。** in-stream の PyNccl が stage 0〜2 で 2.6〜4.1 ms、stage 3 で 8.5 ms 露出している。周期 −3〜8 ms（−3〜6%）。
+3. **EP1 専用 MoE**（§3 の 5、image の再 build が要る）。stage −3〜5%。
+4. concurrency 240。
+
+1〜4 が全部効いても、Prefill 供給は EP4 の +5〜10%、遅延は EP4 より長いままなので、score は Decode 容量の上限（約 9,500）で頭打ちになる。10k には Decode 側の短縮が別に要る。
