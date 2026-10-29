@@ -161,9 +161,7 @@ def test_host_and_header_agree_on_the_four_stage_layout():
     assert 1024 + 8192 + 18432 + 144 + 4 * 50192 <= 232448 < 1024 + 8192 + 65536 + 144 + 4 * 50192
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())["deep_gemm_overlay_patches"]
     pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch"]
-    # Only the dense 1D2D schedule overlay (select-firmus-prefill-attention.py, a different header) follows the MegaMoE tiles.
-    assert config[-1] == "patches/deep-gemm-bench/prefill-dense-schedule/sm90-1d2d-prefill-schedule.patch"
-    assert config[-5:-1] == pp4_only
+    assert config[-4:] == pp4_only
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
     assert not set(pp4_only[1:]) & set(main)
 

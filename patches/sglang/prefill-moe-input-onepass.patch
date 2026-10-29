@@ -118,8 +118,8 @@ index 24d9cce..09d2df7 100644
 -assert _PREFILL_MOE_INPUT in ("control", "fused", "fused-gate"), _PREFILL_MOE_INPUT
 +assert _PREFILL_MOE_INPUT in ("control", "fused", "fused-gate", "onepass"), _PREFILL_MOE_INPUT
  
- # Prefill Q/K norm, RoPE and FP8 Q/KV writer, chosen per job by
- # scripts/select-firmus-prefill-attention.py: "control" keeps the BF16 rounding points
+ # Prefill Q/K norm, RoPE and FP8 Q/KV writer, pinned to "fp32" for PP4 by
+ # scripts/prepare-firmus-pp4-settings.py: "control" keeps the BF16 rounding points
 @@ -450,11 +453,13 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
              topk.topk_weights.to(torch.float32), buf, num_tokens,
          )

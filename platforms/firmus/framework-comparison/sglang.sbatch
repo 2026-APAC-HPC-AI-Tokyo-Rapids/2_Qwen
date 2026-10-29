@@ -220,27 +220,24 @@ done
 # "dense" on the Decode GPUs while the Prefill workers start. Only the Decode worker sources the result.
 if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving trial: retain prior kernel settings and the pinned PP4 selections; gate the EP1 MegaMoE variants, the Prefill attention-block and MoE input paths and the two-CTA Decode FA3 rows against the pinned kernels.\n'
-  # prepare-firmus-pp4-settings.py pins the Prefill FA3 row, the Prefill MoE input path and the Decode
-  # norm/quant kernel (same winner in 40849459077 and 40883389891); their selections no longer run here.
+  printf 'PP4 serving trial: retain prior kernel settings and the pinned PP4 selections; gate the EP1 MegaMoE variants, the one-pass Prefill MoE input and the two-CTA Decode FA3 rows against the pinned kernels.\n'
+  # prepare-firmus-pp4-settings.py pins the Prefill FA3 row, the fused Prefill MoE input path and the Decode
+  # norm/quant kernel (same winner in 40849459077 and 40883389891) and the FP32 Prefill Q/K norm writer (same
+  # winner in 40911121619 and 40925558339); their selections no longer run here.
   # The four Decode GPUs are idle before model load. One after the other, while the Prefill GPUs run the
-  # MegaMoE selection below (~1.5-2 min): (1) the Prefill attention-block and MoE input paths
-  # (select-firmus-prefill-attention.py, ~1-1.5 min with the rope-module, four DeepGEMM and three Triton JIT
-  # compiles, 240 s timeout): the FP32 Q/K norm + RoPE + FP8 writer is adopted only if V and NaNs equal control
-  # bit for bit and Q/K match the FP64 reference rounded once, the QKV/O DeepGEMM schedule only if both outputs
-  # equal control bit for bit, the one-pass MoE input kernel (over the pinned fused path) only if the residual
-  # equals fused bit for bit and the FP8 input, scales and top-k pass the FP64 reference gate, each only if
-  # faster on all four GPUs; (2) the two-CTA-per-SM FA3 verify rows
+  # MegaMoE selection below (~1.5-2 min): (1) the one-pass Prefill MoE input kernel
+  # (select-firmus-prefill-attention.py, ~35-45 s with three Triton JIT compiles, 240 s timeout): adopted over
+  # the pinned fused path only if the residual equals fused bit for bit, the FP8 input, scales and top-k pass
+  # the FP64 reference gate and it is faster on all four GPUs; (2) the two-CTA-per-SM FA3 verify rows
   # against the pinned FA3 candidate (~20-40 s, 175 s timeout): adopted only if bit-exact where the split
   # layout is the pinned one and >=1 us/layer faster on every GPU at cap/4-4, cap/4-2 and cap/4 (44, 46 and
   # 48 requests per rank, the Decode operating range at cap 48); (3) the PP4 copy-engine proxy transport
   # (check-firmus-pp4-copy-engine.py, ~20 s, 60 s timeout): the patch's IPC buffer/event calls on four GPUs,
   # adopted only if every transfer was exact.
-  # All results are taken before the workers start; a failed, missing or late result keeps the
-  # BF16-rounding Q/K writer, the compiled-K GEMMs, the fused MoE input, the pinned decode-kernels.env and
-  # in-stream PyNccl.
+  # All results are taken before the workers start; a failed, missing or late result keeps the fused MoE
+  # input, the pinned decode-kernels.env and in-stream PyNccl.
   {
-    srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-attention)" env TRITON_CACHE_DIR="/tmp/qwen-prefill-attention-${SLURM_JOB_ID}/triton" TVM_FFI_CACHE_DIR="/tmp/qwen-prefill-attention-${SLURM_JOB_ID}/tvm-ffi" DG_JIT_CACHE_DIR="/tmp/qwen-prefill-attention-${SLURM_JOB_ID}/deep-gemm" SGLANG_DG_CACHE_DIR="/tmp/qwen-prefill-attention-${SLURM_JOB_ID}/deep-gemm" timeout --kill-after=5 240 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-attention.py" --output "${ROOT}/results/prefill-attention" >"${ART}/prefill-attention.log" 2>&1 || true
+    srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-attention)" env TRITON_CACHE_DIR="/tmp/qwen-prefill-attention-${SLURM_JOB_ID}/triton" timeout --kill-after=5 240 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-attention.py" --output "${ROOT}/results/prefill-attention" >"${ART}/prefill-attention.log" 2>&1 || true
     srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts decode-selection-fa3)" bash "${ROOT}/scripts/select-firmus-decode-kernels.sh" "${ROOT}" fa3 --pinned-env "${ROOT}/source/decode-kernels.env" >"${ART}/decode-selection-fa3.log" 2>&1 || true
     srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts pp4-copy-engine)" timeout --kill-after=5 60 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/check-firmus-pp4-copy-engine.py" --output "${ROOT}/results/pp4-copy-engine" >"${ART}/pp4-copy-engine.log" 2>&1 || true
   } &
@@ -288,7 +285,7 @@ for pid in "${prefill_selections[@]}"; do wait "${pid}" || true; done
 uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
 fi
 
-# PP4: the Decode-GPU selections started above (the attention-block and copy-engine winners are appended to
+# PP4: the Decode-GPU selections started above (the MoE input and copy-engine winners are appended to
 # prefill-kernels.env after the MegaMoE line; a Decode FA3 winner is appended to the pinned decode-kernels.env,
 # overriding the pinned SGLANG_DECODE_FA3_VERIFY when the worker sources the file).
 if [[ -n "${decode_gpu_selections:-}" ]]; then

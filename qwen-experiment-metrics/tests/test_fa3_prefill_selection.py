@@ -137,19 +137,21 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     rows = {r['name']: r for r in json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text())}
     prepare = runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))
     # n192-direct-o-varlen won the screen in 40849459077 and 40883389891; it has no V byte image, which the
-    # FP32 Q/K writer of select-firmus-prefill-attention.py requires.
+    # pinned FP32 Q/K writer requires.
     row = rows[prepare['PP4_SELECTED']['SGLANG_PREFILL_FA3_VERIFY']]
     assert row['name'] == 'n192-direct-o-varlen' and row.get('varlen') and not row['byte_image']
     assert 'prefill_fa3_screen' not in config
     for sub in ('source', 'results'):
         (tmp_path / sub).mkdir()
     prepare['prepare'](config, ROOT, tmp_path)
-    assert (tmp_path / 'source/prefill-kernels.env').read_text() == 'SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen\nSGLANG_PREFILL_MOE_INPUT=fused\n'
+    assert (tmp_path / 'source/prefill-kernels.env').read_text() == 'SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen\nSGLANG_PREFILL_MOE_INPUT=fused\nSGLANG_PREFILL_QKNORM=fp32\n'
     assert (tmp_path / 'source/decode-kernels.env').read_text() == "SGLANG_DECODE_FA3_VERIFY=p128split2-s3-fp8\nDG_SM90_1D2D_DECODE_CONFIG=QKV:128,144,5,1,0\nSGLANG_DECODE_DENSE_GEMM_QKV=''\nSGLANG_DECODE_DENSE_GEMM_O=''\nSGLANG_DECODE_NORM_QUANT=wide\n"
     settings = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
-    assert settings['pp4_selected_runs'] == [40849459077, 40883389891] and settings['environment']['SGLANG_PREFILL_MOE_INPUT'] == 'fused'
-    # After every PP4 overlay; only prefill-moe-input (disjoint files), the two attention-block overlays and the one-pass MoE input follow it.
-    assert config['sglang_overlay_patches'][-5:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-dense-schedule.patch', 'patches/sglang/prefill-moe-input-onepass.patch']
+    assert settings['pp4_selected_runs']['SGLANG_PREFILL_FA3_VERIFY'] == [40849459077, 40883389891] and settings['environment']['SGLANG_PREFILL_MOE_INPUT'] == 'fused'
+    # The FP32 Q/K norm writer won in 40911121619 and 40925558339.
+    assert settings['pp4_selected_runs']['SGLANG_PREFILL_QKNORM'] == [40911121619, 40925558339] and set(settings['pp4_selected_runs']) == set(settings['pp4_selected'])
+    # After every PP4 overlay; only prefill-moe-input (disjoint files), the FP32 Q/K norm writer and the one-pass MoE input follow it.
+    assert config['sglang_overlay_patches'][-4:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-moe-input-onepass.patch']
     # The twelve-GPU FA3 screen runs only outside PP4 and without a reused selection.
     assert 'prefill_screen' not in shell
     assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" && ! -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then' in shell

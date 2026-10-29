@@ -18,12 +18,25 @@ from pathlib import Path
 # - select-firmus-decode-dense.py --pinned-env: wide norm/quant (2.51 against 6.05-6.08 us); the
 #   SwapAB rows lost in both runs (QKV 25.2-25.6 against 23.0-23.1 us, O 34.6-35.0 against
 #   17.4-17.6 us), so the pinned QKV config and the empty SwapAB names stay.
+# select-firmus-prefill-attention.py chose the same Prefill Q/K norm writer in both runs that ran it,
+# 40911121619 and 40925558339 (image 40911121619), and no longer selects it:
+# - qknorm: fp32, 71.37-71.40 / 71.29-71.36 us against control 100.38-100.54 / 100.39-100.46 us per
+#   layer on all four GPUs, every gate case passed (V and NaNs bit-equal to control, Q/K one E4M3 step
+#   at most from the FP64 reference). Valid only without the FA3 V byte image, which the pinned
+#   n192-direct-o-varlen row does not use.
 PP4_SELECTED = {
     "SGLANG_PREFILL_FA3_VERIFY": "n192-direct-o-varlen",
     "SGLANG_PREFILL_MOE_INPUT": "fused",
+    "SGLANG_PREFILL_QKNORM": "fp32",
     "SGLANG_DECODE_NORM_QUANT": "wide",
 }
-PP4_SELECTED_RUNS = [40849459077, 40883389891]
+# The two runs in which each pinned value won.
+PP4_SELECTED_RUNS = {
+    "SGLANG_PREFILL_FA3_VERIFY": [40849459077, 40883389891],
+    "SGLANG_PREFILL_MOE_INPUT": [40849459077, 40883389891],
+    "SGLANG_PREFILL_QKNORM": [40911121619, 40925558339],
+    "SGLANG_DECODE_NORM_QUANT": [40849459077, 40883389891],
+}
 
 
 def prepare(config, repo, runtime):
@@ -72,7 +85,7 @@ def prepare(config, repo, runtime):
         "pp4_selected": PP4_SELECTED,
         "pp4_selected_runs": PP4_SELECTED_RUNS,
         "no_gpu_selection_rerun": True,
-        "scope": "Prior settings plus the PP4 selections that won in both PP4 runs. New image, EP1, PP scheduling, batching and transfers require the ordinary serving trial.",
+        "scope": "Prior settings plus the PP4 selections that won in both PP4 runs that ran them. New image, EP1, PP scheduling, batching and transfers require the ordinary serving trial.",
     }
     for directory in ("source", "results"):
         (runtime / directory / "pp4-kernel-settings.json").write_text(

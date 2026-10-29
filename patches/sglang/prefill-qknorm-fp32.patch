@@ -199,8 +199,8 @@ index 99d04cd..24d9cce 100644
  _PREFILL_MOE_INPUT = os.environ.get("SGLANG_PREFILL_MOE_INPUT", "control")
  assert _PREFILL_MOE_INPUT in ("control", "fused", "fused-gate"), _PREFILL_MOE_INPUT
  
-+# Prefill Q/K norm, RoPE and FP8 Q/KV writer, chosen per job by
-+# scripts/select-firmus-prefill-attention.py: "control" keeps the BF16 rounding points
++# Prefill Q/K norm, RoPE and FP8 Q/KV writer, pinned to "fp32" for PP4 by
++# scripts/prepare-firmus-pp4-settings.py: "control" keeps the BF16 rounding points
 +# of the unfused reference; "fp32" keeps FP32 from the BF16 QKV to the FP8 outputs
 +# (used only without the FA3 V byte image).
 +_PREFILL_QKNORM = os.environ.get("SGLANG_PREFILL_QKNORM", "control")
