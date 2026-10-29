@@ -2,6 +2,8 @@
 
 import ast
 import copy
+import itertools
+import json
 import os
 import runpy
 import sys
@@ -102,9 +104,14 @@ def pool(start, end):
 
 
 ids = helper["kv_region_ids"]
+# Stage boundaries of the configured split (SGLANG_PP_LAYER_PARTITION in worker.sh).
+partition = json.loads((repo / "configs/firmus-prefill-pp4.json").read_text())["prefill"]["pp_layer_partition"]
+assert len(partition) == 4 and sum(partition) == 94
+bounds = [0, *itertools.accumulate(partition)]
+shards = list(itertools.pairwise(bounds))
 dest = ids(pool(0, 94), 94, pool(0, 1))
 written = []
-for start, end in [(0, 24), (24, 48), (48, 71), (71, 94)]:
+for start, end in shards:
     src = ids(pool(start, end), 94, pool(0, 1) if end == 94 else None)
     result = pairs(src, dest, len(src), len(dest))
     for i, j in result:
@@ -121,7 +128,7 @@ for dst in ([], dest[:-1]):
         pass
     else:
         raise AssertionError("Missing layer metadata accepted")
-print("PASS: four PP shards cover all 94 target K/V and one draft K/V exactly once")
+print(f"PASS: four PP shards {partition} cover all 94 target K/V and one draft K/V exactly once")
 
 
 class Proxy:
@@ -173,7 +180,7 @@ batch = NS(can_run_tbo=False)
 x = np.arange(12, dtype=np.float32).reshape(3, 4)
 reference, aux = forward(model(0, 94), x, None, batch)
 proxy = None
-for start, end in [(0, 24), (24, 48), (48, 71), (71, 94)]:
+for start, end in shards:
     result = forward(model(start, end), x, None, batch, pp_proxy_tensors=proxy)
     if end < 94:
         proxy = result
