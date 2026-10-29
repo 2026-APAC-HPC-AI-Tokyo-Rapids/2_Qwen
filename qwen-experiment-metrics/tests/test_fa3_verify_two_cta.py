@@ -15,8 +15,8 @@ def selector():
     return runpy.run_path(str(ROOT / "scripts/select-firmus-decode-fa3.py"))
 
 
-def pinned_records(names, control_us=71.0, candidate_us=60.0):
-    return [{"rank": rank, "batches": {"44": {name: {"numeric_passed": True, "blocks": [{"stock": [control_us, control_us + .1], "candidate": [candidate_us, candidate_us + .1]} for _ in range(2)]} for name in names}}} for rank in range(4)]
+def pinned_records(names, control_us=71.0, candidate_us=60.0, batches=("44",)):
+    return [{"rank": rank, "batches": {batch: {name: {"numeric_passed": True, "blocks": [{"stock": [control_us, control_us + .1], "candidate": [candidate_us, candidate_us + .1]} for _ in range(2)]} for name in names} for batch in batches}} for rank in range(4)]
 
 
 def test_two_cta_rows_change_only_occupancy_and_split_layout():
@@ -72,7 +72,7 @@ def test_pinned_rule_picks_the_fastest_row_saving_a_microsecond_on_every_gpu():
     ranks = pinned_records(names)
     for rank in ranks:
         rank["batches"]["44"]["p128split3-c2-fp8"]["blocks"] = [{"stock": [71.0], "candidate": [58.0]}] * 2
-    result = ns["choose_pinned"](ranks, 44, "p128split2-s3-fp8", names)
+    result = ns["choose_pinned"](ranks, (44,), "p128split2-s3-fp8", names)
     assert result["winner"] == "p128split3-c2-fp8" and result["env"] == {"SGLANG_DECODE_FA3_VERIFY": "p128split3-c2-fp8"}
     assert result["control"] == "p128split2-s3-fp8" and result["rule"]["minimum_saving_us_per_layer"] == 1.0
 
@@ -94,7 +94,7 @@ def test_pinned_rule_excludes_a_failing_row_and_keeps_the_others(failure):
         entry["blocks"][1] = {"stock": [71.0], "candidate": [70.5]}
     else:
         entry["blocks"].pop()
-    result = ns["choose_pinned"](ranks, 44, "p128split2-s3-fp8", names)
+    result = ns["choose_pinned"](ranks, (44,), "p128split2-s3-fp8", names)
     assert result["winner"] == "p128split3-c2-fp8"
     assert not result["choices"]["p128split2-c2-fp8"]["eligible"]
 
@@ -102,8 +102,24 @@ def test_pinned_rule_excludes_a_failing_row_and_keeps_the_others(failure):
 def test_pinned_rule_without_a_winner_writes_no_override():
     ns = selector()
     names = ns["PINNED_SCREEN"]
-    result = ns["choose_pinned"](pinned_records(names, 71.0, 70.5), 44, "p128split2-s3-fp8", names)
+    result = ns["choose_pinned"](pinned_records(names, 71.0, 70.5), (44,), "p128split2-s3-fp8", names)
     assert result["winner"] is None and result["env"] == {}
+
+
+def test_pinned_rule_needs_the_saving_at_every_measured_batch():
+    # Cap 48 per rank: the Decode runs at 44-48, so a row faster only at cap/4 keeps the pin.
+    ns = selector()
+    names = ns["PINNED_SCREEN"]
+    ranks = pinned_records(names, 71.0, 70.5, batches=("44", "46", "48"))
+    for rank in ranks:
+        rank["batches"]["48"]["p128split3-c2-fp8"]["blocks"] = [{"stock": [76.0], "candidate": [60.0]}] * 2
+        for batch in ("44", "46", "48"):
+            rank["batches"][batch]["p128split2-c2-fp8"]["blocks"] = [{"stock": [71.0], "candidate": [58.0]}] * 2
+    result = ns["choose_pinned"](ranks, (44, 46, 48), "p128split2-s3-fp8", names)
+    assert result["winner"] == "p128split2-c2-fp8" and result["rule"]["selection_batches"] == [44, 46, 48]
+    assert not result["choices"]["p128split3-c2-fp8"]["eligible"]
+    del ranks[1]["batches"]["46"]["p128split2-c2-fp8"]["blocks"][1]
+    assert ns["choose_pinned"](ranks, (44, 46, 48), "p128split2-s3-fp8", names)["winner"] is None
 
 
 def test_pp4_job_screens_fa3_after_the_attention_block_and_appends_only_a_winner(tmp_path):

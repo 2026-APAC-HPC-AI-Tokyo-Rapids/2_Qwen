@@ -110,7 +110,7 @@ def test_optimistic_prefill_attempts_are_checked_on_every_prefill_state() -> Non
     check(legacy, info, "prefill")
 
 
-def test_pp4_prefill_settings_and_unchanged_decode() -> None:
+def test_pp4_prefill_settings_and_decode_cap() -> None:
     raw = archived_server_info()
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
@@ -119,7 +119,23 @@ def test_pp4_prefill_settings_and_unchanged_decode() -> None:
     for state in [prefill, *prefill["internal_states"]]:
         state.update(max_running_requests=config["concurrency"], tp_size=1, pp_size=4, dp_size=1, ep_size=1, enable_dp_attention=False, pp_max_micro_batch_size=2, pp_async_batch_depth=1, disable_overlap_schedule=True, disable_cuda_graph=True, chunked_prefill_size=8192, init_expert_location="trivial", ep_dispatch_algorithm=None, ep_num_redundant_experts=0, optimistic_prefill_attempts=0)
     check(config, prefill, "prefill")
-    check(config, raw["decode"], "decode")
+    # PP4 raises the Decode cap to 48 requests per DP rank (192, graph sizes up to 48); the rest of the Decode
+    # worker is the EP4 bundle's.
+    main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    assert (config["decode_max_running_requests"], config["decode_cuda_graph_bs"][-3:]) == (192, [44, 46, 48])
+    assert config["decode_cuda_graph_bs"][:-2] == main["decode_cuda_graph_bs"]
+    assert {k: v for k, v in config.items() if k.startswith("decode_") and k not in ("decode_max_running_requests", "decode_cuda_graph_bs")} == {k: v for k, v in main.items() if k.startswith("decode_") and k not in ("decode_max_running_requests", "decode_cuda_graph_bs")}
+    slots_per_rank = config["decode_max_running_requests"] // config["decode_dp_size"] + config["decode_extra_slots"]
+    assert config["decode_max_total_tokens"] >= slots_per_rank * (4096 + 128)
+    with pytest.raises(ValueError, match="max_running_requests"):
+        check(config, raw["decode"], "decode")
+    decode = raw["decode"]
+    decode["cuda_graph_bs_decode"] = config["decode_cuda_graph_bs"]
+    for state in [decode, *decode["internal_states"]]:
+        state["max_running_requests"] = config["decode_max_running_requests"]
+    for state in decode["internal_states"]:
+        state["effective_max_running_requests_per_dp"] = 48
+    check(config, decode, "decode")
     for key, invalid in (("pp_size", 1), ("ep_size", 4), ("disable_overlap_schedule", False), ("pp_max_micro_batch_size", 4), ("pp_async_batch_depth", 2)):
         changed = copy.deepcopy(prefill)
         changed["internal_states"][0][key] = invalid

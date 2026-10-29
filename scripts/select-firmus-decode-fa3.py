@@ -5,7 +5,10 @@ selects a worker setting; cap/4-4 and cap/4-2 are retained as diagnostics.
 
 With --pinned-env (PP4, which keeps the prior Decode settings), the pinned
 candidate is the timing reference ("stock" in the records) and only the
-two-CTA-per-SM rows compete; the written environment holds only a winner.
+two-CTA-per-SM rows compete, at all three batches: at cap 48 per rank the
+Decode runs 43-46 requests per rank on average and reaches the cap, and the
+round count of a row can change inside that range (split3-c2: 528 tiles at
+44, 576 at 48 on 264 slots). The written environment holds only a winner.
 """
 
 import argparse
@@ -60,14 +63,14 @@ def choose_candidate(ranks, selection_batch):
     return {"winner": winner, "choices": choices, "rule": {"selection_batch": selection_batch, "minimum_saving_us_per_layer": 3.2, "blocks": BLOCKS, "gpus": 4, "all_rank_blocks_faster": True}, "env": {"SGLANG_DECODE_FA3_VERIFY": winner or ""}}
 
 
-def choose_pinned(ranks, selection_batch, control, names):
+def choose_pinned(ranks, batches, control, names):
     """PP4: replace the pinned candidate only with a row that passed the numeric gate, wrote the
     pinned kernel's exact bytes where its arithmetic is the same (equal splits), and saved
-    >=1us/layer in both blocks on every GPU at cap/4."""
+    >=1us/layer in both blocks on every GPU at every measured batch (cap/4-4, cap/4-2, cap/4)."""
     assert len(ranks) == 4 and {r["rank"] for r in ranks} == set(range(4))
     choices = {}
     for name in names:
-        entries = [r["batches"][str(selection_batch)][name] for r in ranks]
+        entries = [r["batches"][str(batch)][name] for r in ranks for batch in batches]
         if any(not entry.get("numeric_passed") or entry.get("error") or len(entry.get("blocks", [])) != BLOCKS for entry in entries):
             choices[name] = {"eligible": False, "reason": "candidate-failed", "ranks": entries}
             continue
@@ -82,7 +85,7 @@ def choose_pinned(ranks, selection_batch, control, names):
         choices[name] = {**summary([x for b in blocks for x in b["candidate"]]), "control": summary([x for b in blocks for x in b["stock"]]), "savings_us_by_rank_block": savings, "eligible": min(savings) >= PINNED_MINIMUM_SAVING_US, "minimum_saving_us": min(savings)}
     eligible = [name for name, result in choices.items() if result["eligible"]]
     winner = min(eligible, key=lambda name: (choices[name]["median_us"], NAMES.index(name))) if eligible else None
-    return {"winner": winner, "control": control, "choices": choices, "rule": {"selection_batch": selection_batch, "minimum_saving_us_per_layer": PINNED_MINIMUM_SAVING_US, "blocks": BLOCKS, "gpus": 4, "all_rank_blocks_faster": True, "equal_split_bytes_exact": True}, "env": {"SGLANG_DECODE_FA3_VERIFY": winner} if winner else {}}
+    return {"winner": winner, "control": control, "choices": choices, "rule": {"selection_batches": list(batches), "minimum_saving_us_per_layer": PINNED_MINIMUM_SAVING_US, "blocks": BLOCKS, "gpus": 4, "all_rank_blocks_faster": True, "equal_split_bytes_exact": True}, "env": {"SGLANG_DECODE_FA3_VERIFY": winner} if winner else {}}
 
 
 def read_env(path):
@@ -203,8 +206,9 @@ def run_selection(output, env_output, pinned_env=None):
     local["elapsed_seconds"] = time.monotonic() - begin
     dist.all_gather_object(gathered, local)
     if rank == 0:
-        chosen = choose_pinned(gathered, selection_batch, control, PINNED_SCREEN) if pinned_env else choose_candidate(gathered, selection_batch)
-        result = {"schema": "firmus-decode-fa3-selection/v1", **chosen, "ranks": gathered, "elapsed_seconds": max(r["elapsed_seconds"] for r in gathered), "layers": LAYERS, "kv_sets": 4, "pairs_per_block": PAIRS, "cap": cap, "selection_batches": [selection_batch], "diagnostic_batches": list(batches[:-1])}
+        chosen = choose_pinned(gathered, batches, control, PINNED_SCREEN) if pinned_env else choose_candidate(gathered, selection_batch)
+        selected = list(batches) if pinned_env else [selection_batch]
+        result = {"schema": "firmus-decode-fa3-selection/v1", **chosen, "ranks": gathered, "elapsed_seconds": max(r["elapsed_seconds"] for r in gathered), "layers": LAYERS, "kv_sets": 4, "pairs_per_block": PAIRS, "cap": cap, "selection_batches": selected, "diagnostic_batches": [b for b in batches if b not in selected]}
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
         env_output.write_text("".join(f"{key}={value}\n" for key, value in result["env"].items()))

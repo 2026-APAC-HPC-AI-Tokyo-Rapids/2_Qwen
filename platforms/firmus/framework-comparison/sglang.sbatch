@@ -230,7 +230,8 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # and Q/K match the FP64 reference rounded once, the QKV/O DeepGEMM schedule only if both outputs equal
   # control bit for bit, each only if faster on all four GPUs; (2) the two-CTA-per-SM FA3 verify rows
   # against the pinned FA3 candidate (~20-40 s, 175 s timeout): adopted only if bit-exact where the split
-  # layout is the pinned one and >=1 us/layer faster on every GPU; (3) the PP4 copy-engine proxy transport
+  # layout is the pinned one and >=1 us/layer faster on every GPU at cap/4-4, cap/4-2 and cap/4 (44, 46 and
+  # 48 requests per rank, the Decode operating range at cap 48); (3) the PP4 copy-engine proxy transport
   # (check-firmus-pp4-copy-engine.py, ~20 s, 60 s timeout): the patch's IPC buffer/event calls on four GPUs,
   # adopted only if every transfer was exact.
   # All results are taken before the workers start; a failed, missing or late result keeps the
