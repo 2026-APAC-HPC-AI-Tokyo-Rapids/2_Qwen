@@ -303,6 +303,8 @@ QK+PV=4*M*KVlen*Qheads*D; KV bytes=B*KVlen*KVheads*D*2。
 
 測定へ進む条件：過去に数値不一致だったmerge統合は、誤りの特定とCPU/source証拠を先に必要とする。
 
+2026-10-30の候補：2 CTA/SM（`kernels/fa3-verify/decode-two-cta.patch`、`p128split2-c2-fp8`・`p128split3-c2-fp8`・`p128-uneven-c2-fp8`）。run40825417205ではsplit2の3 round目が8〜88 tileで19〜22µs、単独tileでも全SM稼働時の77%かかり、全SM稼働時の読出しは2.7TB/s。CTAあたりtile latency律速で、1 SMに独立tileを2つ置いて隠す。FLOP・byteは不変。launch 128 register、consumer 200、R186、spill0。FP・QGMMA命令数はs2 1 CTA版と一致し、split2は選択内でpin（split2-s3）とbyte一致を要求。見込み−12〜−22µs/層（κ≈1、HBM上限3.7TB/s）。2.7TB/s止まりなら−5µs/層。PP4のDecode GPU上で`--pinned-env`選択（全GPU×2 blockで1µs/層以上）。kernel内mergeは診断で到着counterがresetされず（480＝40×4×3）、効果も0.2〜0.3ms/stepなので保留。詳細は `2026-10-30-decode-step-two-cta-fa3.md`。
+
 ### Decode QKV GEMM
 
 2*M*N*K; M=176, N=9216, K=4096; tile=128x144。

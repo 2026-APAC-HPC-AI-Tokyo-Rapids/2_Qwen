@@ -16,12 +16,13 @@ TABLE = json.loads((ROOT / 'kernels/fa3-verify/candidates.json').read_text())
 def test_dispatch_compiles_unique_main_kernels_and_keeps_split_counts(tmp_path):
     ns = runpy.run_path(str(ROOT / 'kernels/fa3-verify/build.py'))
     tasks = ns['generate_dispatch'](ROOT / 'kernels/fa3-verify', tmp_path)
-    assert len(tasks) == 8  # output and split-count variants share their main kernel
+    assert len(tasks) == 9  # output and split-count variants share their main kernel; two CTAs/SM is its own
     header = (tmp_path / 'candidates.h').read_text()
-    assert len(TABLE) == 16 and len({c['name'] for c in TABLE}) == 16
+    assert len(TABLE) == 19 and len({c['name'] for c in TABLE}) == 19
     for row in TABLE:
         assert row['name'] in header
         assert 11264 + 384 * row['block_n'] * row['stages'] <= ns['SM90_OPTIN_BYTES']
+        assert row.get('ctas', 1) * (11264 + 384 * row['block_n'] * row['stages'] + 1024) <= ns['SM90_SM_BYTES']
     for name, splits in [('p128split3-s3-fp8', 3), ('p128split3-s4-fp8', 3), ('p128split2-s3-fp8', 2)]:
         assert next(c for c in TABLE if c['name'] == name)['splits'] == splits
         assert next(c for c in TABLE if c['name'] == name)['output'] == 'fp8'

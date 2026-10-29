@@ -1,0 +1,55 @@
+diff --git a/hopper/flash_fwd_kernel_sm90.h b/hopper/flash_fwd_kernel_sm90.h
+index 7cfc59c..a52dab9 100644
+--- a/hopper/flash_fwd_kernel_sm90.h
++++ b/hopper/flash_fwd_kernel_sm90.h
+@@ -25,7 +25,7 @@ namespace flash {
+ 
+ using namespace cute;
+ 
+-template <class CollectiveMainloop_, class CollectiveEpilogue_, class TileScheduler_>
++template <class CollectiveMainloop_, class CollectiveEpilogue_, class TileScheduler_, int MinBlocks_=1>
+ class FlashAttnFwdSm90 {
+ 
+ public:
+@@ -80,13 +80,16 @@ public:
+     static constexpr uint32_t NumLoadWarpGroups = 1;
+     static constexpr uint32_t NumMmaWarpGroups = CUTE_STATIC_V(size(TiledMmaPV{})) / cutlass::NumThreadsPerWarpGroup;
+     static constexpr uint32_t MaxThreadsPerBlock = CUTE_STATIC_V(size(TiledMmaPV{})) + (NumLoadWarpGroups * cutlass::NumThreadsPerWarpGroup);
+-    static constexpr uint32_t MinBlocksPerMultiprocessor = 1;
++    // Decode verify (one MMA warpgroup, cp.async KV): two co-resident CTAs per SM. The
++    // register file holds 2 CTAs x 128 threads x (56 producer + 200 consumer) = 65536.
++    static constexpr uint32_t MinBlocksPerMultiprocessor = MinBlocks_;
++    static_assert(MinBlocks_ == 1 || (MinBlocks_ == 2 && NumMmaWarpGroups == 1 && !Use_TMA_KV));
+     static_assert(NumMmaWarpGroups == 1 || NumMmaWarpGroups == 2 || NumMmaWarpGroups == 3);
+ 
+     /// Register requirement for Load and Math WGs
+     // If we use cp.async to load K and V, we need more registers for the producer WG.
+-    static constexpr uint32_t LoadRegisterRequirement = CollectiveMainloop::PrefillRegs ? 40 : (NumMmaWarpGroups == 1 ? 56 : (NumMmaWarpGroups == 2 ? ((Use_TMA_KV) ? 24 : 40) : 32));
+-    static constexpr uint32_t MmaRegisterRequirement = CollectiveMainloop::PrefillRegs ? 232 : (NumMmaWarpGroups == 1 ? 256 : (NumMmaWarpGroups == 2 ? ((Use_TMA_KV) ? 240 : 232) : 160));
++    static constexpr uint32_t LoadRegisterRequirement = MinBlocks_ == 2 ? 56 : CollectiveMainloop::PrefillRegs ? 40 : (NumMmaWarpGroups == 1 ? 56 : (NumMmaWarpGroups == 2 ? ((Use_TMA_KV) ? 24 : 40) : 32));
++    static constexpr uint32_t MmaRegisterRequirement = MinBlocks_ == 2 ? 200 : CollectiveMainloop::PrefillRegs ? 232 : (NumMmaWarpGroups == 1 ? 256 : (NumMmaWarpGroups == 2 ? ((Use_TMA_KV) ? 240 : 232) : 160));
+     // If you want to print from the producer warp, you'd need to increase the number of registers
+     // Otherwise you'll get CUDA error.
+     // static constexpr uint32_t LoadRegisterRequirement = 40;
+diff --git a/hopper/flash_fwd_launch_template.h b/hopper/flash_fwd_launch_template.h
+index 3ac2a8e..7de4123 100644
+--- a/hopper/flash_fwd_launch_template.h
++++ b/hopper/flash_fwd_launch_template.h
+@@ -27,7 +27,7 @@ using namespace cute;
+ 
+ template <int Arch, int kHeadDim, int kHeadDimV, int ClusterM, typename Element, typename ElementOut,
+           bool Is_causal, bool Is_local, bool Has_softcap, bool Varlen, bool PagedKVNonTMA, bool AppendKV, bool HasQv, bool OnlyQv,
+-          bool PackGQA, bool Split, bool V_colmajor, bool Use_one_mma_wg, bool Has_sparse_mask=false, int VerifyBlockN=0, int VerifyStages=2, bool FixedPrefill=false, int PrefillVariant=0, bool VerifyMerge=false>
++          bool PackGQA, bool Split, bool V_colmajor, bool Use_one_mma_wg, bool Has_sparse_mask=false, int VerifyBlockN=0, int VerifyStages=2, bool FixedPrefill=false, int PrefillVariant=0, bool VerifyMerge=false, int VerifyCtas=1>
+ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream, int* resource = nullptr) {
+     static_assert(!(Is_causal && Is_local), "Causal and Local cannot be enabled at the same time");
+     static_assert(!(AppendKV && V_colmajor), "AppendKV and V_colmajor cannot be enabled at the same time");
+@@ -77,7 +77,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream, int* resource
+     using Scheduler = std::conditional_t<!UsePersistentScheduler, SchedulerSingleTile, SchedulerPersistent>;
+     using AttnKernel = std::conditional_t<
+         Arch >= 90,
+-        flash::enable_sm90_or_later<flash::FlashAttnFwdSm90<CollectiveMainloop, CollectiveEpilogue, Scheduler>>,
++        flash::enable_sm90_or_later<flash::FlashAttnFwdSm90<CollectiveMainloop, CollectiveEpilogue, Scheduler, VerifyCtas>>,
+         flash::enable_sm80_to_sm89<flash::FlashAttnFwdSm80<CollectiveMainloop, CollectiveEpilogue, Scheduler>>
+     >;
+ 
