@@ -157,7 +157,7 @@ def test_provision_uses_selected_image_for_reuse_and_keeps_fresh_build_commit_ch
     (workspace / "scripts").mkdir()
     (workspace / "scripts/check-firmus-image.sh").write_text("#!/bin/bash\nexit 0\n")
     (workspace / "scripts/stage-qwen-overlays.sh").write_bytes((ROOT / "scripts/stage-qwen-overlays.sh").read_bytes())
-    config = {"framework": "sglang", "workload": "official", "concurrency": 256, "prefill": {"moe_a2a_backend": "none"}, "images": {"sglang": {"path": "/stale-image.sqsh"}}}
+    config = {"framework": "sglang", "workload": "official", "concurrency": 256, "prefill": {"moe_a2a_backend": "none"}, "images": {"sglang": {"path": "/stale-image.sqsh"}}, "container_build_run_id": 1, "container_sha256": "1" * 64, "container_size_bytes": 1, "container_source_commit": "old-build"}
     archive = tmp_path / "archive"
     archive.mkdir()
     image = archive / "123.sqsh"
@@ -177,7 +177,11 @@ def test_provision_uses_selected_image_for_reuse_and_keeps_fresh_build_commit_ch
     if success:
         runtime = next((tmp_path / "runs").iterdir())
         assert (runtime / "sglang.sqsh").resolve() == image
-        assert json.loads((runtime / "source/firmus-framework.json").read_text())["images"]["sglang"]["sha256"] == digest
+        staged = json.loads((runtime / "source/firmus-framework.json").read_text())
+        assert staged["images"]["sglang"]["sha256"] == digest
+        # A fresh build replaces the config's pinned image; reuse keeps the pin.
+        pin = (123, digest, image.stat().st_size, "new-run") if require_build else (1, "1" * 64, 1, "old-build")
+        assert (staged["container_build_run_id"], staged["container_sha256"], staged["container_size_bytes"], staged["container_source_commit"]) == pin
 
 
 @pytest.mark.skipif(os.uname().sysname != "Linux", reason="provision uses Linux stat")

@@ -95,9 +95,15 @@ def main():
     report_path = runtime / "source/pp4-cpu-gate.json"
     report_path.unlink(missing_ok=True)
     config = json.loads(args.config.read_text())
-    image_sha = config.get("container_sha256", config["images"]["sglang"]["sha256"])
-    if image_sha != PINNED_IMAGE or config["images"]["sglang"]["sha256"] != image_sha:
-        raise ValueError("PP4 CPU gate requires the pinned successful native image")
+    image_sha = config["images"]["sglang"]["sha256"]
+    if config.get("container_sha256", image_sha) != image_sha:
+        raise ValueError("PP4 config pin differs from the provisioned image")
+    if image_sha != PINNED_IMAGE:
+        # A [require-build] run serves the image built from the commit being provisioned;
+        # provision copied its sidecar and rewrote the config pin to it.
+        sidecar = json.loads((runtime / "source/container-sidecar.json").read_text())
+        if sidecar["container_artifact"]["sha256"] != image_sha or sidecar["source_commits"]["qwen"] != os.environ["GITHUB_SHA"]:
+            raise ValueError("PP4 CPU gate requires the pinned successful native image or the image built from this commit")
     image = runtime / "sglang.sqsh"
     if sha256(image) != image_sha:
         raise ValueError("Actual image SHA-256 differs from PP4 config")

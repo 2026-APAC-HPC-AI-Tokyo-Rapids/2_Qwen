@@ -169,3 +169,28 @@ def test_provision_gate_before_allocation(tmp_path, monkeypatch, failure, real_s
     else:
         gate.main()
         assert json.loads((runtime / "source/pp4-cpu-gate.json").read_text())["result"] == "pass"
+
+
+@pytest.mark.parametrize("case", ["fresh", "other-commit", "other-image", "stale-pin"])
+def test_fresh_build_from_this_commit_replaces_the_pinned_image(tmp_path, monkeypatch, case):
+    # [require-build] PP4: provision points images.sglang and the container_* pin at the new
+    # image; the gate accepts it only if its sidecar names this image and the provisioned commit.
+    import json
+    import sys
+
+    runtime, workspace = tmp_path / "runtime", tmp_path / "workspace"
+    (runtime / "source").mkdir(parents=True)
+    image = runtime / "sglang.sqsh"
+    image.write_bytes(b"fresh image")
+    digest = gate.sha256(image)
+    assert digest != gate.PINNED_IMAGE
+    sidecar = {"container_artifact": {"sha256": "0" * 64 if case == "other-image" else digest}, "source_commits": {"qwen": "old" if case == "other-commit" else "head"}}
+    (runtime / "source/container-sidecar.json").write_text(json.dumps(sidecar))
+    config = runtime / "config.json"
+    config.write_text(json.dumps({"container_sha256": gate.PINNED_IMAGE if case == "stale-pin" else digest, "images": {"sglang": {"sha256": digest}}, "sglang_overlay_patches": []}))
+    monkeypatch.setenv("GITHUB_SHA", "head")
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), str(runtime), str(config), str(workspace)])
+    # Past the image acceptance the gate checks the overlay list; an empty list stops it there.
+    with pytest.raises(ValueError) as error:
+        gate.main()
+    assert ("Missing PP4 overlay" in str(error.value)) is (case == "fresh")

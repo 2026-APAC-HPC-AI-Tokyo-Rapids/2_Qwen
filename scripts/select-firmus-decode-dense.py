@@ -3,12 +3,18 @@
 Run with torch.distributed.run --standalone --nproc-per-node=4. Rank 0 warms
 JITs first; all four ranks validate, then measure synchronized round-robin
 blocks. Only Python stdlib is imported for CPU selection-rule tests.
+
+With --pinned-env (PP4, which keeps the prior Decode settings), each group's
+control is the pinned kernel and only the overlay candidates (SwapAB dense,
+wide norm/quant) compete; the written environment is the pinned one with the
+winners added.
 """
 
 import argparse
 import json
 import math
 import os
+import shlex
 import socket
 import statistics
 import time
@@ -29,10 +35,13 @@ def distribution(samples):
 
 
 def choose_candidate(records):
-    """Pool all four GPUs, require >=0.5us overall and a win in BOTH blocks."""
+    """Pool all four GPUs, require >=0.5us overall and a win in BOTH blocks.
+
+    The first candidate is the control ("stock", or the pinned kernel in PP4)."""
     assert len(records) == 4 and {r["rank"] for r in records} == set(range(4))
     names = [c["name"] for c in records[0]["candidates"]]
-    assert names[0] == "stock" and len(names) == len(set(names))
+    control = names[0]
+    assert len(names) == len(set(names))
     assert all([c["name"] for c in r["candidates"]] == names for r in records)
     summary = {}
     for name in names:
@@ -45,8 +54,8 @@ def choose_candidate(records):
         pooled = distribution([x for values in samples for x in values])
         medians = [b["median_us"] for b in blocks]
         summary[name] = {**pooled, "blocks": blocks, "block_median_range_us": max(medians) - min(medians), "block_median_range_fraction": (max(medians) - min(medians)) / pooled["median_us"], "per_rank": [{"rank": r["rank"], "blocks": [distribution(values) for values in e["blocks"]]} for r, e in zip(records, entries)]}
-    assert "median_us" in summary["stock"], "stock numerical check must pass on every GPU"
-    stock = summary["stock"]
+    assert "median_us" in summary[control], f"{control} numerical check must pass on every GPU"
+    stock = summary[control]
     eligible = []
     for name, result in summary.items():
         if "median_us" not in result:
@@ -55,15 +64,23 @@ def choose_candidate(records):
         wins = [b["median_us"] < ref["median_us"] for b, ref in zip(result["blocks"], stock["blocks"])]
         # Record rank-local regressions separately; eligibility follows the pooled rule.
         all_ranks_win = all(all(b["median_us"] < ref["median_us"] for b, ref in zip(rank["blocks"], stock_rank["blocks"])) for rank, stock_rank in zip(result["per_rank"], stock["per_rank"]))
-        result.update(saving_us=saving, wins_by_block=wins, all_ranks_win=all_ranks_win, eligible=name != "stock" and saving >= 0.5 and all(wins))
+        result.update(saving_us=saving, wins_by_block=wins, all_ranks_win=all_ranks_win, eligible=name != control and saving >= 0.5 and all(wins))
         if result["eligible"]:
             eligible.append(name)
-    winner = min(eligible, key=lambda name: (summary[name]["median_us"], name)) if eligible else "stock"
+    winner = min(eligible, key=lambda name: (summary[name]["median_us"], name)) if eligible else control
     return {"winner": winner, "summary": summary, "rule": {"minimum_saving_us": 0.5, "blocks": BLOCKS, "both_blocks_faster": True}}
 
 
-def worker_environment(selections, candidates):
+def worker_environment(selections, candidates, pinned=None):
     """Empty values clear inherited settings; stock is represented by no override."""
+    if pinned is not None:
+        # PP4: keep every pinned setting (including the QKV DeepGEMM config that serves rows
+        # outside the SwapAB range) and add only the winning overlay candidates.
+        env = dict(pinned)
+        for group, key in (("qkv", "SGLANG_DECODE_DENSE_GEMM_QKV"), ("o", "SGLANG_DECODE_DENSE_GEMM_O"), ("norm", "SGLANG_DECODE_NORM_QUANT")):
+            if selections[group]["winner"] != candidates[group][0]["name"]:
+                env[key] = selections[group]["winner"]
+        return env
     env = dict.fromkeys(ENV_KEYS, "")
     direct = []
     for op in ("qkv", "o"):
@@ -83,10 +100,31 @@ def worker_environment(selections, candidates):
 
 
 def round_robin(names, block):
-    """Alternate stock/candidate; reverse candidates in block two to vary order."""
-    assert names[0] == "stock"
+    """Alternate control/candidate; reverse candidates in block two to vary order."""
     others = names[1:] if block % 2 == 0 else list(reversed(names[1:]))
-    return [item for name in others for item in ("stock", name)] if others else ["stock"]
+    return [item for name in others for item in (names[0], name)] if others else [names[0]]
+
+
+def pinned_candidates(checks, pinned):
+    """PP4: the pinned kernel of each group is the control; only overlay candidates compete."""
+    candidates = {}
+    for op, _, _ in checks["DENSE_PROJECTIONS"]:
+        rows = checks["dense_candidates"](op)
+        direct = [part.split(":", 1)[1] for part in pinned.get("DG_SM90_1D2D_DECODE_CONFIG", "").split(";") if part.startswith(op.upper() + ":")]
+        name = pinned.get("SGLANG_DECODE_DENSE_GEMM_" + op.upper()) or ("dg-" + direct[0].replace(",", "-") if direct else "stock")
+        candidates[op] = [next(c for c in rows if c["name"] == name)] + [c for c in rows if c["backend"] == "swapab" and c["name"] != name]
+    control = pinned.get("SGLANG_DECODE_NORM_QUANT") or "stock"
+    candidates["norm"] = [{"name": name, "backend": "norm", "config": None} for name in [control] + [n for n in checks["NORM_QUANT_CANDIDATES"] if n != control]]
+    return candidates
+
+
+def read_env(path):
+    """KEY=VALUE lines as written by prepare-firmus-pp4-settings.py (shell-quoted values)."""
+    env = {}
+    for line in path.read_text().splitlines():
+        key, value = line.split("=", 1)
+        env[key] = "".join(shlex.split(value))
+    return env
 
 
 @contextmanager
@@ -167,8 +205,8 @@ def prepare_projection(torch, checks, op, n, k, candidates, cap_rows, boundary_r
                 graphs[candidate["name"]] = capture_graph(torch, calls)
             results[candidate["name"]] = {"numeric_passed": True, "numeric": metrics, "boundary_numeric": boundary_metrics, "blocks": [[] for _ in range(BLOCKS)], "prepare_seconds": time.monotonic() - begin}
         except Exception as error:
-            # Reject this candidate only; stock failures still abort the probe.
-            if candidate["name"] == "stock":
+            # Reject this candidate only; control failures still abort the probe.
+            if candidate is candidates[0]:
                 raise
             results[candidate["name"]] = {"numeric_passed": False, "error": str(error), "blocks": [[] for _ in range(BLOCKS)], "prepare_seconds": time.monotonic() - begin}
         print(json.dumps({"phase": "prepare", "rank": int(os.environ.get("LOCAL_RANK", "0")), "op": op, "candidate": candidate["name"], **results[candidate["name"]]}), flush=True)
@@ -176,7 +214,7 @@ def prepare_projection(torch, checks, op, n, k, candidates, cap_rows, boundary_r
     return {"graphs": graphs, "sets": sets, "results": results, "prepare_seconds": time.monotonic() - started}
 
 
-def prepare_norm(torch, checks, rows):
+def prepare_norm(torch, checks, rows, names):
     """Screen each input norm/quant kernel, then capture REPS calls over four input sets."""
     import sglang.kernels.ops.layernorm.add_rmsnorm_group_quant as nq
 
@@ -184,7 +222,7 @@ def prepare_norm(torch, checks, rows):
     weight = (torch.randn(4096, device="cuda") * 0.1 + 1).bfloat16()
     sets = [(torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16), torch.randn(rows, 4096, device="cuda", dtype=torch.bfloat16), *checks["norm_quant_outputs"](rows)) for _ in range(4)]
     graphs, results = {}, {}
-    for name in checks["NORM_QUANT_CANDIDATES"]:
+    for name in names:
         begin = time.monotonic()
         try:
             checks["norm_validate_candidate"](nq, name, (1, 144, 160, rows), 53090)
@@ -192,14 +230,14 @@ def prepare_norm(torch, checks, rows):
             graphs[name] = capture_graph(torch, [lambda s=s, kernel=kernel: kernel(s[0], s[1], weight, 1e-6, s[2], s[3]) for s in sets])
             results[name] = {"numeric_passed": True, "blocks": [[] for _ in range(BLOCKS)], "prepare_seconds": time.monotonic() - begin}
         except Exception as error:
-            if name == "stock":
+            if name == names[0]:
                 raise
             results[name] = {"numeric_passed": False, "error": str(error), "blocks": [[] for _ in range(BLOCKS)], "prepare_seconds": time.monotonic() - begin}
         print(json.dumps({"phase": "prepare", "rank": int(os.environ.get("LOCAL_RANK", "0")), "op": "norm", "candidate": name, **results[name]}), flush=True)
     return {"graphs": graphs, "sets": sets, "weight": weight, "results": results, "prepare_seconds": time.monotonic() - started}
 
 
-def run_selection(output, env_output):
+def run_selection(output, env_output, pinned_env=None):
     begin = time.monotonic()
     import torch
     import torch.distributed as dist
@@ -227,8 +265,13 @@ def run_selection(output, env_output):
     checks["dense_call"] = serving_call
     checks["dense_validate_candidate"].__globals__["dense_call"] = serving_call
     rows = checks["decode_cap_tokens"]()
-    candidates = {op: checks["dense_candidates"](op) for op, _, _ in checks["DENSE_PROJECTIONS"]}
-    candidates["norm"] = [{"name": name, "backend": "norm", "config": None} for name in checks["NORM_QUANT_CANDIDATES"]]
+    pinned = read_env(pinned_env) if pinned_env else None
+    if pinned is None:
+        candidates = {op: checks["dense_candidates"](op) for op, _, _ in checks["DENSE_PROJECTIONS"]}
+        candidates["norm"] = [{"name": name, "backend": "norm", "config": None} for name in checks["NORM_QUANT_CANDIDATES"]]
+    else:
+        candidates = pinned_candidates(checks, pinned)
+    norm_names = [c["name"] for c in candidates["norm"]]
     prepared = {}
     with checks["dense_fp32_reference"]():
         # One cold compiler warms the shared container HOME caches first;
@@ -236,19 +279,19 @@ def run_selection(output, env_output):
         if rank == 0:
             for op, n, k in checks["DENSE_PROJECTIONS"]:
                 prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], rows, boundary_rows=tuple(sorted({4, 64, 65, 128, 129, 160, 176, rows})))
-            prepared["norm"] = prepare_norm(torch, checks, rows)
+            prepared["norm"] = prepare_norm(torch, checks, rows, norm_names)
         dist.barrier()
         if rank != 0:
             for op, n, k in checks["DENSE_PROJECTIONS"]:
                 prepared[op] = prepare_projection(torch, checks, op, n, k, candidates[op], rows)
-            prepared["norm"] = prepare_norm(torch, checks, rows)
+            prepared["norm"] = prepare_norm(torch, checks, rows, norm_names)
         dist.barrier()
     local = {"rank": rank, "device": torch.cuda.get_device_name(rank), "projections": {op: {"rank": rank, "candidates": choices, "results": prepared[op]["results"], "prepare_seconds": prepared[op]["prepare_seconds"]} for op, choices in candidates.items()}}
     all_records = [None] * 4
     dist.all_gather_object(all_records, local)
     for op, choices in candidates.items():
         active = [c["name"] for c in choices if all(record["projections"][op]["results"][c["name"]]["numeric_passed"] for record in all_records)]
-        assert active and active[0] == "stock"
+        assert active and active[0] == choices[0]["name"]
         for block in range(BLOCKS):
             for name in round_robin(active, block):
                 dist.barrier()
@@ -268,12 +311,12 @@ def run_selection(output, env_output):
     dist.all_gather_object(all_records, local)
     if rank == 0:
         selections = {op: choose_candidate([r["projections"][op] for r in all_records]) for op in candidates}
-        env = worker_environment(selections, candidates)
+        env = worker_environment(selections, candidates, pinned)
         result = {"schema": "firmus-decode-dense-selection/v1", "hostname": socket.gethostname(), "host_patch_sha256": host_sha, "shapes": {op: {"m": rows, "n": n, "k": k, "weight_bytes": 4 * n * k} for op, n, k in checks["DENSE_PROJECTIONS"]}, "blocks": BLOCKS, "replays": REPLAYS, "calls_per_replay": REPS, "weight_sets": 4, "timing": "CUDA graph replay; prequantized inputs; rotating weights", "elapsed_seconds": max(r["elapsed_seconds"] for r in all_records), "selections": selections, "worker_environment": env, "ranks": all_records}
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
         env_output.parent.mkdir(parents=True, exist_ok=True)
-        env_output.write_text("".join(f"{key}={value}\n" for key, value in env.items()))
+        env_output.write_text("".join(f"{key}={shlex.quote(value)}\n" for key, value in env.items()))
         print(json.dumps({"phase": "selected", "env": env, "elapsed_seconds": result["elapsed_seconds"]}), flush=True)
     dist.barrier()
     dist.destroy_process_group()
@@ -283,8 +326,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--env-output", type=Path, required=True)
+    parser.add_argument("--pinned-env", type=Path, help="PP4: pinned decode-kernels.env; screen only the overlay candidates against it")
     args = parser.parse_args()
-    run_selection(args.output, args.env_output)
+    run_selection(args.output, args.env_output, args.pinned_env)
 
 
 if __name__ == "__main__":

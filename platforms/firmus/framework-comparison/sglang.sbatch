@@ -216,8 +216,13 @@ done
 prefill_screen=()
 if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving trial: retain prior Decode kernel settings; gate the EP1 MegaMoE variants and screen only the configured varlen Prefill FA3 rows.\n'
+  printf 'PP4 serving trial: retain prior kernel settings; gate the EP1 MegaMoE variants, screen the configured varlen Prefill FA3 rows and the Decode overlay candidates against the pinned kernels.\n'
   prefill_screen=(--names "$(jq -er '.prefill_fa3_screen | join(",")' "${ROOT}/source/firmus-framework.json")")
+  # Decode: only the overlay candidates (SwapAB dense GEMMs, wide norm/quant) against the pinned Decode kernels,
+  # on the tail node's other four GPUs while the Prefill selections below run. Any failure keeps the pinned
+  # decode-kernels.env; a result is copied over it after the Prefill workers start.
+  srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts decode-selection-dense)" bash "${ROOT}/scripts/select-firmus-decode-kernels.sh" "${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env" >"${ART}/decode-selection-dense.log" 2>&1 &
+  pinned_decode_selection=$!
   # EP1 MegaMoE on all twelve Prefill GPUs before model load (select-firmus-prefill-megamoe.py, about 1.5-2 min):
   # the control must match an FP32 reference (a failure stops the job); the four-stage and four-stage tail-split
   # variants are adopted only if they pass the exactness checks and are faster on every GPU (the faster one wins).
@@ -270,6 +275,10 @@ worker_pids+=("$!")
 if [[ -n "${dense_selection:-}" ]]; then
   wait "${dense_selection}"
   cat "${ROOT}/results/decode-selection/fa3.env" "${ROOT}/results/decode-selection/dense.env" >"${ROOT}/source/decode-kernels.env"
+fi
+if [[ -n "${pinned_decode_selection:-}" ]]; then
+  wait "${pinned_decode_selection}" || true
+  if [[ -s "${ROOT}/results/decode-selection/dense.env" ]]; then cp "${ROOT}/results/decode-selection/dense.env" "${ROOT}/source/decode-kernels.env"; fi
 fi
 srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --ep-size 4 --dp-size "$(jq -er .decode_dp_size "${ROOT}/source/firmus-framework.json")" --enable-dp-attention --enable-dp-lm-head --moe-dense-tp-size 1 --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --chunked-prefill-size 8192 --max-running-requests "$(jq -er .decode_max_running_requests "${ROOT}/source/firmus-framework.json")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${ROOT}/source/firmus-framework.json")" --disaggregation-decode-polling-interval "$(jq -er .decode_polling_interval "${ROOT}/source/firmus-framework.json")" --max-total-tokens "$(jq -er .decode_max_total_tokens "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-0.log" 2>&1 &
 worker_pids+=("$!")

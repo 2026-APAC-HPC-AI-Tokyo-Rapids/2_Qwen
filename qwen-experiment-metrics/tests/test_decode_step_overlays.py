@@ -232,3 +232,65 @@ def test_decode_step_overlays_follow_the_patches_they_build_on(config):
         assert overlays.count(path) == 1
         if base:
             assert overlays.index(path) > overlays.index(f"patches/sglang/{base}.patch")
+
+
+def test_pp4_decode_selection_screens_only_the_overlay_candidates_against_the_pinned_kernels(tmp_path):
+    import importlib.util
+    import runpy
+    import subprocess
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    spec = importlib.util.spec_from_file_location("dense_gemm_tests", Path(__file__).with_name("test_firmus_dense_gemm.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    checks = {**module.load_dense(), "DENSE_PROJECTIONS": (("qkv", 9216, 4096), ("o", 4096, 8192)), "NORM_QUANT_CANDIDATES": ("stock", "wide")}
+    selector = runpy.run_path(str(ROOT / "scripts/select-firmus-decode-dense.py"))
+    # The file prepare-firmus-pp4-settings.py writes (shell-quoted, empty values as '').
+    pinned_file = tmp_path / "decode-kernels.env"
+    pinned_file.write_text("SGLANG_DECODE_FA3_VERIFY=p128split2-s3-fp8\nDG_SM90_1D2D_DECODE_CONFIG=QKV:128,144,5,1,0\nSGLANG_DECODE_DENSE_GEMM_QKV=''\nSGLANG_DECODE_DENSE_GEMM_O=''\n")
+    pinned = selector["read_env"](pinned_file)
+    assert pinned["DG_SM90_1D2D_DECODE_CONFIG"] == "QKV:128,144,5,1,0" and pinned["SGLANG_DECODE_DENSE_GEMM_O"] == ""
+    candidates = selector["pinned_candidates"](checks, pinned)
+    assert [c["name"] for c in candidates["qkv"]] == ["dg-128-144-5-1-0", "swapab-176-s5", "swapab-176-s5-mc2"]
+    assert [c["name"] for c in candidates["o"]] == ["stock", "swapab-176-s5-k4"]
+    assert [c["name"] for c in candidates["norm"]] == ["stock", "wide"]
+    # Control wins everywhere: exactly the pinned environment.
+    controls = {group: {"winner": rows[0]["name"]} for group, rows in candidates.items()}
+    assert selector["worker_environment"](controls, candidates, pinned) == pinned
+    # Winners are added; the QKV DeepGEMM config stays for rows outside the SwapAB range.
+    winners = {"qkv": {"winner": "swapab-176-s5-mc2"}, "o": {"winner": "swapab-176-s5-k4"}, "norm": {"winner": "wide"}}
+    env = selector["worker_environment"](winners, candidates, pinned)
+    assert env == {**pinned, "SGLANG_DECODE_DENSE_GEMM_QKV": "swapab-176-s5-mc2", "SGLANG_DECODE_DENSE_GEMM_O": "swapab-176-s5-k4", "SGLANG_DECODE_NORM_QUANT": "wide"}
+    # The control is the reference of the selection rule.
+    records = [{"rank": rank, "candidates": candidates["qkv"], "results": {"dg-128-144-5-1-0": {"numeric_passed": True, "blocks": [[20.0] * 5, [20.0] * 5]}, "swapab-176-s5": {"numeric_passed": True, "blocks": [[15.0] * 5, [15.0] * 5]}, "swapab-176-s5-mc2": {"numeric_passed": False, "blocks": [[], []]}}} for rank in range(4)]
+    assert selector["choose_candidate"](records)["winner"] == "swapab-176-s5"
+    assert selector["round_robin"](["dg-128-144-5-1-0", "a"], 0) == ["dg-128-144-5-1-0", "a"]
+    # The written file sources back to the same values.
+    out = tmp_path / "selected.env"
+    out.write_text("".join(f"{k}={selector['shlex'].quote(v)}\n" for k, v in env.items()))
+    sourced = subprocess.run(["bash", "-c", f"set -a; source {out}; env -0"], capture_output=True, text=True, check=True).stdout.split("\0")
+    assert {line.split("=", 1)[0]: line.split("=", 1)[1] for line in sourced if "=" in line and line.split("=", 1)[0] in env} == env
+
+
+def test_pp4_job_runs_the_decode_selection_beside_the_prefill_selections_and_keeps_the_pin_on_failure(tmp_path):
+    import subprocess
+
+    shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
+    pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
+    line = next(line for line in pp4.splitlines() if "select-firmus-decode-kernels.sh" in line)
+    assert '-w "${TAIL}" --gres=gpu:4' in line and '"${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env"' in line and line.endswith("&")
+    # Started before the Prefill GPU selections, merged only after the Prefill workers are launched.
+    assert pp4.index("select-firmus-decode-kernels.sh") < pp4.index("select-firmus-prefill-megamoe.py")
+    merge = shell[shell.index('if [[ -n "${pinned_decode_selection:-}" ]]; then'):]
+    merge = merge[:merge.index("\nfi\n") + 4]
+    assert shell.index('bash "${ROOT}/source/worker.sh" prefill-2') < shell.index(merge) < shell.index('bash "${ROOT}/source/worker.sh" decode-0')
+    script = (ROOT / "scripts/select-firmus-decode-kernels.sh").read_text()
+    assert "shift 2" in script and '--env-output "${out}/dense-selected.env" "$@"' in script
+    for selected, expected in (("", "pinned\n"), ("selected\n", "selected\n")):
+        (tmp_path / "results/decode-selection").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "source").mkdir(exist_ok=True)
+        (tmp_path / "source/decode-kernels.env").write_text("pinned\n")
+        (tmp_path / "results/decode-selection/dense.env").write_text(selected)
+        subprocess.run(["bash", "-c", "set -euo pipefail\nfalse &\npinned_decode_selection=$!\n" + merge], env={"ROOT": str(tmp_path), "PATH": "/usr/bin:/bin"}, check=True)
+        assert (tmp_path / "source/decode-kernels.env").read_text() == expected

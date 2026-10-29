@@ -68,7 +68,9 @@ if [[ "${framework}" == sglang && -n "${CONTAINER_SHA256:-}" ]]; then
       [[ "${CONTAINER_SHA256}" == "$(jq -er .images.sglang.sha256 "${config}")" ]]
     fi
   fi
-  jq --arg path "${archive}/${GITHUB_RUN_ID}.sqsh" --arg sha "${CONTAINER_SHA256}" --argjson size "${CONTAINER_SIZE}" --arg provenance "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" '.images.sglang = {path:$path,sha256:$sha,size_bytes:$size,provenance:$provenance}' "${config}" >"${config}.tmp"
+  # A fresh build replaces a pinned image (PP4 container_* fields) in the runtime config, so the overlay
+  # records and the PP4 CPU gate describe the image actually served.
+  jq --arg path "${archive}/${GITHUB_RUN_ID}.sqsh" --arg sha "${CONTAINER_SHA256}" --argjson size "${CONTAINER_SIZE}" --arg provenance "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" --argjson require_build "${REQUIRE_BUILD}" --argjson run "${GITHUB_RUN_ID}" --arg commit "${GITHUB_SHA}" '.images.sglang = {path:$path,sha256:$sha,size_bytes:$size,provenance:$provenance} | if $require_build and has("container_sha256") then .container_build_run_id = $run | .container_sha256 = $sha | .container_size_bytes = $size | .container_source_commit = $commit else . end' "${config}" >"${config}.tmp"
   mv "${config}.tmp" "${config}"
   jq '.images.sglang' "${config}"
   jq -e --arg commit "${GITHUB_SHA}" --arg sha "${CONTAINER_SHA256}" --argjson require_build "${REQUIRE_BUILD}" '.container_artifact.sha256 == $sha and ($require_build == false or .source_commits.qwen == $commit)' "${archive}/${GITHUB_RUN_ID}.container-sidecar.json" >/dev/null

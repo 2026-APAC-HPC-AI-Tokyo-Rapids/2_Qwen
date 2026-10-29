@@ -6,6 +6,8 @@
 set -uo pipefail
 root=$1
 part=$2
+# Optional for dense: --pinned-env <decode-kernels.env> (PP4), passed to the selector.
+shift 2
 out="${root}/results/decode-selection"
 mkdir -p "${out}"
 torchrun=/opt/sglang/venv/bin/torchrun
@@ -14,7 +16,7 @@ if [[ "${part}" == dense ]]; then
   scratch="/tmp/qwen-decode-select-${SLURM_JOB_ID}-${part}"
   mkdir -p "${scratch}"
   export TRITON_CACHE_DIR="${scratch}/triton" DG_JIT_CACHE_DIR="${scratch}/deep-gemm" SGLANG_DG_CACHE_DIR="${scratch}/deep-gemm"
-  timeout 420 "${torchrun}" --standalone --nproc-per-node=4 "${root}/scripts/select-firmus-decode-dense.py" --output "${out}/dense.json" --env-output "${out}/dense-selected.env" >"${out}/dense.log" 2>&1
+  timeout 420 "${torchrun}" --standalone --nproc-per-node=4 "${root}/scripts/select-firmus-decode-dense.py" --output "${out}/dense.json" --env-output "${out}/dense-selected.env" "$@" >"${out}/dense.log" 2>&1
   dense=$?
   if (( dense == 0 )); then cat "${out}/dense-selected.env" >>"${out}/dense.env"; fi
   printf 'dense=%s\n' "${dense}" >"${out}/dense-status.txt"
