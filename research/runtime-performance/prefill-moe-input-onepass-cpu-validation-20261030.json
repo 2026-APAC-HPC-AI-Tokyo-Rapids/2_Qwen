@@ -1,0 +1,114 @@
+{
+  "schema": "prefill-moe-input-onepass-cpu-validation/v1",
+  "gpu_executed": false,
+  "scope": "PP4 Prefill (TP1/EP1), one 7988-8064-row microbatch per layer: the post-attention MegaMoE input (residual add, RMSNorm, FP8 group-128 input, router gate GEMM, softmax top-8). Triton sm_90a compile, SASS and Triton-interpreter numerics on CPU only; exactness and speed on H200 are decided in job by scripts/select-firmus-prefill-attention.py (selection moe_input, control = the pinned fused path).",
+  "budget_before": {
+    "source": "in-job selection 40883389891 (Decode GPUs, idle clock) and run 40825417205 prefill-0 nsys",
+    "fused_us_per_layer": [
+      103.99,
+      105.18
+    ],
+    "parts_us": {
+      "post_norm_moe_input": "about 69",
+      "gate_gemm_nvjet": 24.6,
+      "router": 10.3
+    },
+    "launch_gaps_us_per_layer": {
+      "after_post_norm": 2.7,
+      "after_gate_gemm": 2.5
+    },
+    "hbm_mb_per_layer": {
+      "post_norm": "read o 66 + residual 66, write residual 66 + BF16 y 66 + FP8 x 33",
+      "gate": "read y 66",
+      "total": 363
+    }
+  },
+  "design": {
+    "kernel": "_onepass_moe_input in python/sglang/kernels/ops/moe/prefill_moe_input.py (patches/sglang/prefill-moe-input-onepass.patch), SGLANG_PREFILL_MOE_INPUT=onepass",
+    "idea": "y = h * rstd * w with rstd > 0 known only at the end of the row. The FP8 group code of y equals that of h * w under the scale 448 / amax(|h * w|), and the gate logits are rstd * sum_k (h w)_k G_ek. One pass over 64-row tiles of 128 columns writes the residual and the FP8 codes and accumulates the gate GEMM with a BF16 operand BF16(h * w); after the row, the scales and the FP32 logits are multiplied by rstd. The BF16 y is never written or re-read.",
+    "hbm_mb_per_layer": {
+      "read": "o 66 + residual 66",
+      "write": "residual 66 + FP8 x 33 + scales/top-k 2",
+      "total": 233,
+      "removed": 130,
+      "gate_weight_l2_mb": 125
+    },
+    "kernels_removed_per_layer": 2,
+    "numerics": {
+      "residual": "bit-identical (FP32 o + r rounded once to BF16, as the input norm_quant and post_norm_moe_input)",
+      "fp8_input": "codes of the unrounded FP32 y (fused rounds y to BF16 first): one rounding fewer",
+      "scales": "rstd * amax(|h w|) / 448 in FP32 (fused: amax(|BF16 y|) / 448)",
+      "gate_logits": "BF16 operand BF16(h * w) instead of BF16(y), FP32 accumulation, times rstd, rounded to BF16 as the gate GEMM returns them; same operand precision, rounding point moved by the factor rstd",
+      "router": "softmax top-8 of the BF16 logits, lowest id on ties, renormalized (the fused-gate router code)",
+      "legality": "no coarser format, approximation or skipped work: BF16 operand and FP8 input stay, one BF16 rounding of y is removed"
+    }
+  },
+  "compile": {
+    "toolchain": "Triton 3.6.0 (the version torch 2.11.0 pins) and 3.7.0, sm_90a, cuobjdump from CUDA 13.4; Triton's bundled ptxas 12.8 and TRITON_PTXAS_PATH=/usr/local/cuda-13.4/bin/ptxas",
+    "config": "BLOCK_M 64, 8 warps, 3 stages, grid 8192 / 64 = 128 programs (125 live at 7988 rows, 1 per SM)",
+    "registers": {
+      "triton_3_6_ptxas_12_8": 147,
+      "triton_3_6_ptxas_13_4": 147,
+      "triton_3_7_ptxas_12_8": 130,
+      "triton_3_7_ptxas_13_4": 132
+    },
+    "spill_bytes": 0,
+    "shared_bytes": 172544,
+    "mainloop": "HGMMA (wgmma) gate GEMM with the gate weight tile staged by LDGSTS; o/r tiles staged by LDGSTS (cp.async, 3 stages)",
+    "sass_per_thread_per_128_column_group": {
+      "triton_3_6_opaque_bf16_conversion": 686,
+      "triton_3_6_plain_to_bf16": 1042,
+      "triton_3_7_opaque_bf16_conversion": 656,
+      "triton_3_7_plain_to_bf16": 1057
+    },
+    "why_opaque": "With .to(tl.bfloat16) the compiler rematerializes h * w in the MMA operand layout from the staged o/r tiles (duplicate unpack/add/multiply). A non-pure cvt.rn.bf16x2.f32 asm (the same RN rounding) makes it move the finished operand through shared memory instead.",
+    "scale_ordering": "The rstd-free scales are stored inside the loop by the threads that own each row and re-read after the loop in another layout; tl.debug_barrier (BAR.SYNC) separates them. Keeping the 64 x 32 scales in registers instead costs 89 SASS more per group and 203 registers.",
+    "issue_estimate": "686 x 8 warps / 4 schedulers = 1372 issue cycles per group per SM against about 2500 cycles of HBM time per group per SM (56 KB at 4.0 TB/s / 126 SMs, 1.42 GHz): memory-bound if the schedulers reach about 0.55 IPC",
+    "untouched_kernels": "post_norm_moe_input and _gate_route compile to byte-identical SASS before and after the patch (sha256 of the instruction listing, CUDA 13.4 cuobjdump)"
+  },
+  "cpu_numerics": {
+    "method": "TRITON_INTERPRET=1 with the interpreter's BF16/FP8 conversions and BF16 tl.dot replaced by torch RNE conversions (Triton 3.7 truncates f32->bf16, drops the FP8 mantissa carry and multiplies BF16 bit patterns in tl.dot); the opaque asm is replaced by the identical hw.to(tl.bfloat16). Inputs as the in-job selection draws them (o 0.6, residual 3.0, an all-zero row, a 64x residual row, gate weights 0.02). Run under Triton 3.7.0 and 3.6.0 (numpy 2.2 for the 3.6 interpreter's scalar indexing) with the same results.",
+    "rows_512": {
+      "residual_bitwise": true,
+      "fp8_exact_vs_fp64_rounded_once": 0.9999948,
+      "max_e4m3_steps": 1,
+      "rel_l2_onepass": 0.025649,
+      "rel_l2_fused": 0.025707,
+      "codes_equal_to_fused": 0.9783,
+      "scale_max_rel": 2.8e-07,
+      "valid_top8_within_2_bf16_steps": true,
+      "exact_top8_set_onepass": 0.9629,
+      "exact_top8_set_fused": 0.9629,
+      "pad_slots": true
+    },
+    "gate_rows_300": {
+      "passed": true,
+      "exact_set_wins": 4,
+      "exact_set_losses": 5
+    },
+    "gate_rows_129": {
+      "passed": true,
+      "exact_set_wins": 1,
+      "exact_set_losses": 3
+    },
+    "negative_controls": {
+      "scales_times_1.01": "failed",
+      "logits_without_rstd": "failed (weights)",
+      "residual_not_stored": "failed (residual)",
+      "fp8_scale_440": "failed (codes)",
+      "pad_ids_0": "failed (pad slots)"
+    }
+  },
+  "expected": {
+    "onepass_us_per_layer": "58-70 (233 MB at the 4.2-4.3 TB/s the fused post_norm reaches, plus about 3 us of router epilogue)",
+    "saving_us_per_layer": "34-46, central 40",
+    "per_stage_period_ms": "0.82-1.10, central 0.96 for 24 layers (work removal, power-cap factor 1.0); about 0.9 ms after the 5% idle-clock optimism of the in-job timing",
+    "launch_gaps": "two kernel boundaries (about 5 us per layer) also go; as idle time they return 0.36-0.6x, 0.04-0.07 ms per period",
+    "risk": "the fused-gate Triton GEMM of 40883389891 read its 66 MB at only about 1.9 TB/s; at that rate onepass would take about 120 us and the selection keeps fused"
+  },
+  "in_job": {
+    "where": "select-firmus-prefill-attention.py on the four idle Decode GPUs before model load (existing srun, 240 s timeout)",
+    "added_seconds": "about 10 (three Triton compiles of about 3 s for onepass and 1-2 s each for post_norm and the router, four gated row counts, two 24-layer graphs x 12 rounds)",
+    "critical_path": "In 40925558339 the Decode-GPU group (attention 02:07:46, copy engine 02:09:41) ended about 10-15 s after the twelve-GPU MegaMoE selection, so the addition lengthens the 11:46 job by about 10 s."
+  }
+}

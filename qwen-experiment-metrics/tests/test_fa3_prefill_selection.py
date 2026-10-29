@@ -148,8 +148,8 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     assert (tmp_path / 'source/decode-kernels.env').read_text() == "SGLANG_DECODE_FA3_VERIFY=p128split2-s3-fp8\nDG_SM90_1D2D_DECODE_CONFIG=QKV:128,144,5,1,0\nSGLANG_DECODE_DENSE_GEMM_QKV=''\nSGLANG_DECODE_DENSE_GEMM_O=''\nSGLANG_DECODE_NORM_QUANT=wide\n"
     settings = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
     assert settings['pp4_selected_runs'] == [40849459077, 40883389891] and settings['environment']['SGLANG_PREFILL_MOE_INPUT'] == 'fused'
-    # After every PP4 overlay; only prefill-moe-input (disjoint files) and the two attention-block overlays follow it.
-    assert config['sglang_overlay_patches'][-4:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-dense-schedule.patch']
+    # After every PP4 overlay; only prefill-moe-input (disjoint files), the two attention-block overlays and the one-pass MoE input follow it.
+    assert config['sglang_overlay_patches'][-5:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-dense-schedule.patch', 'patches/sglang/prefill-moe-input-onepass.patch']
     # The twelve-GPU FA3 screen runs only outside PP4 and without a reused selection.
     assert 'prefill_screen' not in shell
     assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" && ! -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then' in shell
