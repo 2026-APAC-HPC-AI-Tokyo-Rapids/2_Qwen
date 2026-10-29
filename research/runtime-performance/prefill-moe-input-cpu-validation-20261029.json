@@ -1,0 +1,43 @@
+{
+  "schema": "prefill-moe-input-cpu-validation/v1",
+  "gpu_executed": false,
+  "scope": "PP4 Prefill stage (TP1/EP1, 24 layers), one microbatch of two requests. CPU compile, Triton interpreter and torch stand-in checks only; speed and exactness on H200 are decided by the in-job selection scripts/select-firmus-prefill-moe-input.py.",
+  "profile": {
+    "run": 40825417205,
+    "file": "prefill-0 nsys, stage 0 (device 0), kernels between consecutive MegaMoE calls of one microbatch",
+    "rows_per_microbatch": {"7988": 924, "7989": 22, "3994": 44},
+    "median_us_per_layer": {"norm_quant": 60.9, "qknorm_rope_prefill_fast": 130.0, "prepare_varlen_num_blocks": 4.0, "flashinfer_fused_add_rmsnorm": 63.9, "router_gate_nvjet_64x128_126cta": 24.6, "zeros_bias": 0.9, "router_triton_3994x1warp": 10.3, "sm90_mega_moe_pre_dispatch": 32.6, "megamoe": 2790.9, "fa3": 896.5},
+    "gaps_us_before": {"router_gate": 3.3, "zeros_bias": 2.5, "router": 1.0, "pre_dispatch": 0.1}
+  },
+  "fused": {
+    "change": "post-attention add-RMSNorm (Triton, one row per program, 8 warps) writes the BF16 residual, BF16 y in place, FP8 x, FP32 row-major scales and the pad top-k slots of the MegaMoE buffer; the unchanged Triton router writes int64 ids and FP32 weights into the buffer; pre-dispatch is skipped",
+    "bytes_MB_per_layer_7988_rows": {"control_norm": 261.75, "control_pre_dispatch": 100.48, "candidate_norm": 295.51, "candidate_router_extra_int64_ids": 0.26, "removed": 66.46},
+    "kernels_removed_per_layer": 1,
+    "expected_us_per_layer": {"candidate_norm_at_norm_quant_3_78_TBps": 78.2, "candidate_norm_at_flashinfer_4_10_TBps": 72.1, "raw_saving": [18.3, 24.4], "kappa_work_removal": [0.7, 1.0], "at_cap": [13, 24]},
+    "exactness": "Residual as flashinfer (FP32 add, RN to BF16). y uses the deployed input norm_quant arithmetic (FP32 sum order may move y by one BF16 rounding). FP8 x and scales from y: IEEE div.rn absmax/448 and 1/scale, product, cvt.rn.satfinite.e4m3x2.f32 (pre-dispatch: FCHK/MUFU.RCP IEEE division and F2FP.SATFINITE.E4M3; DeepGEMM JIT flags have no fast-math). Top-k: same router kernel, only the id store widens to int64; routed scaling factor 1.0.",
+    "ptx_ops_candidate_norm": {"cvt.rn.bf16x2.f32": 8, "cvt.rn.bf16.f32": 16, "div.rn.f32": 2, "div.full.f32": 1, "rsqrt.approx.ftz.f32": 1, "cvt.rn.satfinite.e4m3x2.f32": 8},
+    "sass_sm90a": {
+      "candidate_post_norm_moe_input": {"registers": 40, "local_bytes": 0, "static_instructions_ptxas_12_8": 520, "static_instructions_ptxas_13_4": 520},
+      "reference_input_norm_quant_triton": {"registers": 40, "local_bytes": 0, "static_instructions": 480},
+      "control_pre_dispatch_cuda_13_4": {"registers": 29, "spill_bytes": 0, "static_instructions": 312, "threads_per_layer": 4093952},
+      "control_router_int32_vs_candidate_int64": {"registers": [96, 96], "static_instructions": [1184, 1184], "id_store": ["STG.E", "STG.E.64"]}
+    }
+  },
+  "fused_gate": {
+    "change": "fused plus one Triton kernel per 64 rows: BF16 tl.dot over K 4096 (8 HGMMA 64x128x16 per 128-wide K step, cp.async 4 stages, 192 KiB shared), logits rounded to BF16, then the router's softmax, lowest-id top-8 and renormalization; ids and weights go to the buffer",
+    "removed_per_layer": {"kernels": "nvjet gate 24.6 + zeros 0.9 + router 10.3 = 35.8 us, 2 launches (gaps 3.5 us)", "bytes_MB": 4.1},
+    "expected_us_per_layer": {"candidate_kernel": [20, 28], "raw_saving": [8, 16], "kappa": [0.4, 0.6], "at_cap": [4, 9], "note": "instruction count is about the same as the removed router; most of the gain is launch and latency, hence the extra 5 us/layer selection margin over fused"},
+    "exactness": "Not bit-identical: GEMM accumulation order can move a BF16 logit by one step. Gate: valid top-8 of the FP32 logits within two BF16 steps, ids equal to the router on >= 99% of rows, weights within the BF16-logit rounding bound, sum 1 +- 1e-5.",
+    "sass_sm90a": {"registers": 255, "local_bytes": 0, "shared_bytes": 196608, "static_instructions_ptxas_12_8": 5968, "static_instructions_ptxas_13_4": 6104}
+  },
+  "cpu_checks": {
+    "triton_interpreter": "TRITON_INTERPRET=1, 37 rows in a 40-row buffer: pad slots -1/0, scales bit-identical to the torch IEEE reference, FP8 codes equal to the interpreter conversion of g*(1/scale), router ids and weights (1.2e-7) equal to the torch router, gate-route ids equal on all rows against BF16 logits. The interpreter truncates FP32->BF16 and mis-rounds FP32->E4M3 at binade edges and reads BF16 tl.dot operands wrongly, so those were matched with the interpreter's own conversions and an FP32 dot copy; compiled code uses the cvt instructions listed above.",
+    "selection_gate_with_torch_stand_ins": "check_rows passes correct stand-ins; rejects a 2^-20 scale change, a missing pad fill and unnormalized weights (both candidates) and one wrong expert id (fused-gate only).",
+    "pp4_source_check": "scripts/check-firmus-pp4-source.py passes on the reconstructed PP4 tree with the overlay"
+  },
+  "not_candidates": {
+    "c_input_norm_pair": "norm_quant (60.9 us) is the next layer's input add+RMSNorm+FP8, already one kernel; fused_add_rmsnorm (63.9 us) is the post-attention norm, separated from it by MegaMoE: that one is the fused candidate.",
+    "d_qknorm_rope": "231-235 MB per 7988-row call (BF16 QKV read 18,432 B/token; FP8 Q 8,192; contiguous and paged K/V 2,048; V image 512) = 57-63 us at 3.7-4.0 TB/s against 130.0 us; per-token time equals EP4 (66 us at 3994). No removable bytes or kernels; layout variants (head4, wide, paired rounding) and the QKV-epilogue fusion were rejected; a latency fix would count at kappa 0.35-0.6.",
+    "e_dense_tail": "DeepGEMM 0.1.5 heuristic (shared memory 216448/216576 B matches the profile) uses BM256/BN128, cluster 1x2, 3 stages at M=7988: 32 M blocks = 8192 rows, 204 padded rows (2.55%). QKV 2304 tiles = 17.45 waves, O 1024 = 7.76. A tile override needs a DeepGEMM host rebuild; the overlay-only split (7936 + 52 rows) saves one QKV wave (~27 us) but re-reads the 37.7 MB QKV weight in the tail GEMM and leaves O at 8 waves: ~5-12 us/layer at the cap with an unmeasured tail. Not implemented."
+  }
+}

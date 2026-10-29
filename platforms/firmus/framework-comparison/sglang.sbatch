@@ -215,7 +215,15 @@ done
 # "dense" on the Decode GPUs while the Prefill workers start. Only the Decode worker sources the result.
 if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving trial: retain prior kernel settings; no selection sweep. PP4 performance and correctness are unmeasured.\n'
+  printf 'PP4 serving trial: retain prior kernel settings; only the Prefill MoE input selection runs.\n'
+  # Prefill MoE input path (select-firmus-prefill-moe-input.py, about 1 min) on the four Decode GPUs, which
+  # the PP4 trial leaves idle before model load, so it overlaps the gates on the Prefill GPUs. A fused path
+  # is adopted only if its FP8 input, scales and top-k equal what pre-dispatch and the router write from the
+  # same y and it is faster on all four GPUs; a failed, missing or late result keeps pre-dispatch.
+  srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-moe-input)" env TRITON_CACHE_DIR="/tmp/qwen-prefill-moe-input-${SLURM_JOB_ID}/triton" DG_JIT_CACHE_DIR="/tmp/qwen-prefill-moe-input-${SLURM_JOB_ID}/deep-gemm" timeout --kill-after=5 150 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-moe-input.py" --output "${ROOT}/results/prefill-moe-input" >"${ART}/prefill-moe-input.log" 2>&1 &
+  moe_input_selection=$!
+  wait "${moe_input_selection}" || true
+  python3 "${ROOT}/scripts/select-firmus-prefill-moe-input.py" --aggregate "${ROOT}/results/prefill-moe-input" --output "${ROOT}/results/prefill-moe-input/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
 elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
   # Provision has verified the prior image, ordered overlays, expert map and
   # normalized serving config. Draft precision is the sole changed model setting.
