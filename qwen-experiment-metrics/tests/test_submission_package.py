@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "submission"
 CONFIG = json.loads((ROOT / "configs/firmus-framework.json").read_text())
 # The frozen submission retains c240 and the measured overlay chain.
-EXPERIMENT_ONLY_PATCHES = {"patches/sglang/prefill-start-align.patch", "patches/deep-gemm-bench/fc2-address/fc2-output-address.patch"}
+EXPERIMENT_ONLY_PATCHES = {"patches/sglang/prefill-start-align.patch", "patches/deep-gemm-bench/fc2-address/fc2-output-address.patch", "patches/sglang/decode-norm-quant-wide.patch", "patches/sglang/decode-dense-swapab.patch", "patches/sglang/verify-penalty-broadcast.patch"}
 SUBMISSION_OVERLAYS = {key: [patch for patch in CONFIG[key] if patch not in EXPERIMENT_ONLY_PATCHES] for key in ("sglang_overlay_patches", "deep_gemm_overlay_patches")}
 BATCH = PACKAGE / "run/submit.sbatch"
 ORIGINAL = ROOT / "platforms/firmus/framework-comparison/sglang.sbatch"

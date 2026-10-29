@@ -133,6 +133,9 @@ def test_build_and_serving_are_wired_without_rejected_probes():
     config = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert config["decode_max_running_requests"] == 176
     assert "patches/sglang/decode-fa3-verify.patch" in config["sglang_overlay_patches"]
+    # The in-job selected Decode-step candidates come last.
+    assert config["sglang_overlay_patches"][-3:] == ["patches/sglang/decode-norm-quant-wide.patch", "patches/sglang/decode-dense-swapab.patch", "patches/sglang/verify-penalty-broadcast.patch"]
+    del config["sglang_overlay_patches"][-3:]
     assert config["sglang_overlay_patches"][-6:-2] == [
         "patches/sglang/prefill-fp8-integration.patch",
         "patches/sglang/prefill-qkv-fast-fp8.patch",

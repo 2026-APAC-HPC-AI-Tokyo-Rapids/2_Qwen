@@ -1,0 +1,22 @@
+diff --git a/python/sglang/srt/speculative/eagle_utils.py b/python/sglang/srt/speculative/eagle_utils.py
+index 078d0d1..3d041ec 100644
+--- a/python/sglang/srt/speculative/eagle_utils.py
++++ b/python/sglang/srt/speculative/eagle_utils.py
+@@ -686,12 +686,11 @@ def eagle_sample(
+     # Apply penalty
+     # This is a relaxed version of penalties for speculative decoding.
+     if sampling_info.acc_additive_penalties is not None:
+-        next_token_logits.add_(
+-            torch.repeat_interleave(
+-                sampling_info.acc_additive_penalties,
+-                verify_input.draft_token_num,
+-                dim=0,
+-            )
++        # Broadcast each request's row over its draft tokens in place: the same
++        # element-wise FP32 additions as adding the repeat_interleave'd copy,
++        # without materializing (bs * draft_token_num, vocab) of penalties.
++        next_token_logits.unflatten(0, (bs, verify_input.draft_token_num)).add_(
++            sampling_info.acc_additive_penalties.unsqueeze(1)
+         )
+     if sampling_info.acc_scaling_penalties is not None:
+         apply_scaling_penalties(

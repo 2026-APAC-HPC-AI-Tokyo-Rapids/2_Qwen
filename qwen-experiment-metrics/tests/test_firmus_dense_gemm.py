@@ -73,7 +73,8 @@ def test_bounded_candidate_table_fits_smem_and_keeps_design_geometries(op, n, k)
 
     ns = load_dense()
     candidates = ns["dense_candidates"](op)
-    assert len(candidates) == len({c["name"] for c in candidates}) == 6
+    swapab = [{"name": name, "backend": "swapab", "config": None} for name in ns["DENSE_SWAPAB"][op]]
+    assert len(candidates) == len({c["name"] for c in candidates}) == 6 + len(swapab)
     assert candidates[0]["name"] == "stock"
     for bm, bn, stages, mc, on_a in ns["DENSE_CONFIGS"][op]:
         assert bm in (64, 128) and bn % 16 == 0
@@ -82,8 +83,9 @@ def test_bounded_candidate_table_fits_smem_and_keeps_design_geometries(op, n, k)
         align = lambda x, a: ((x + a - 1) // a) * a
         smem = align(bm * bn * 2, 1024) + 16 * 8 * 2 + align((k // 128) * 4 * (1 if 128 % bn == 0 else 2), 8) + stages * ((bm + bn) * 128 + align(bm * 4, 128))
         assert smem <= 232448
-    assert all(c["backend"] == "deepgemm" for c in candidates[:-1])
-    assert candidates[-1] == {"name": "dg1-swapab-streamk", "backend": "companion", "config": None}
+    assert all(c["backend"] == "deepgemm" for c in candidates[:5])
+    assert candidates[5] == {"name": "dg1-swapab-streamk", "backend": "companion", "config": None}
+    assert candidates[6:] == swapab
     expected = {"qkv": ((64, 144, 5), (64, 144, 7), (128, 144, 5), (128, 80, 7)), "o": ((64, 64, 9), (64, 64, 13), (128, 64, 8), (128, 32, 10))}
     assert tuple(c[:3] for c in ns["DENSE_CONFIGS"][op]) == expected[op]
 
@@ -189,7 +191,8 @@ def test_selection_writes_mixed_worker_environment_and_clears_stock(op1, op2):
     choices = {op: [ns["dense_candidates"](op)[i] for i in (0, 1, 2)] for op in ("qkv", "o")}
     selected = {op: {"winner": choices[op][i]["name"]} for op, i in (("qkv", op1), ("o", op2))}
     env = selector()["worker_environment"](selected, choices)
-    assert set(env) == {ENV, "SGLANG_DECODE_DENSE_GEMM_QKV", "SGLANG_DECODE_DENSE_GEMM_O"}
+    assert set(env) == {ENV, "SGLANG_DECODE_DENSE_GEMM_QKV", "SGLANG_DECODE_DENSE_GEMM_O", "SGLANG_DECODE_NORM_QUANT"}
+    assert env["SGLANG_DECODE_NORM_QUANT"] == ""
     direct = []
     for op, i in (("qkv", op1), ("o", op2)):
         c = choices[op][i]
