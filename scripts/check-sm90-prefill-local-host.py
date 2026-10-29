@@ -2,10 +2,10 @@
 
 Also covers the opt-in four-stage Prefill switch (DG_SM90_PREFILL_4STAGE) on
 EP1 and EP4: only the stage count and shared memory size may change, and only
-for the two-warpgroup Prefill geometry. Its tail split (DG_SM90_PREFILL_TAIL_SPLIT)
-may only append the trailing kPrefillTailSplit template argument to that kernel,
-and its lean EP1 path (DG_SM90_PREFILL_LEAN, one rank only) only the trailing
-kPrefillTailSplit=false, kPrefillLean=true pair.
+for the two-warpgroup Prefill geometry. Its lean EP1 path (DG_SM90_PREFILL_LEAN,
+one rank only) may only append the trailing kPrefillLean template argument to
+that kernel, and the paired tails (DG_SM90_PREFILL_TAIL_PAIR, on the lean path)
+only a further kPrefillTailPair=true.
 
 Reuse the native-source extractor from the EP4 contract audit. No GPU API is
 executed. The original source checkout is read-only; all patches use --check.
@@ -55,8 +55,8 @@ int main() {
                 setenv("DG_SM90_PREFILL_2WG","1",1);
                 setenv("DG_SM90_PREFILL_LOCAL_EP1",local?"1":"0",1);
                 setenv("DG_SM90_PREFILL_4STAGE",stage4?"1":"0",1);
-                setenv("DG_SM90_PREFILL_TAIL_SPLIT",stage4==2?"1":"0",1);
-                setenv("DG_SM90_PREFILL_LEAN",stage4==3?"1":"0",1);
+                setenv("DG_SM90_PREFILL_LEAN",stage4>=2?"1":"0",1);
+                setenv("DG_SM90_PREFILL_TAIL_PAIR",stage4==3?"1":"0",1);
                 int cap=ranks==1?8448:4224;
                 int pool=layout::get_num_max_pool_tokens(ranks,cap,8,experts/ranks);
                 int sf=layout::get_num_sf_ring_tokens(pool,layout::kMinCandidateBlockM);
@@ -98,14 +98,13 @@ int main() {
     # The four-stage switch changes only the stage count and shared memory of
     # the two-warpgroup Prefill geometry (18 KiB per-warp CD, four 50,192-byte
     # stages); every other configuration, field and descriptor is unchanged.
-    for before, after, split, lean in zip(*(rows[i::4] for i in range(4)), strict=True):
-        assert [r["stage4"] for r in (before, after, split, lean)] == [0, 1, 2, 3]
-        for other in (split, lean):
+    for before, after, lean, pair in zip(*(rows[i::4] for i in range(4)), strict=True):
+        assert [r["stage4"] for r in (before, after, lean, pair)] == [0, 1, 2, 3]
+        for other in (lean, pair):
             assert other["host"] == after["host"] and other["descriptor_fields"] == after["descriptor_fields"]
-        two_wg = before["host"]["math_threads"] == 256 and before["host"]["block_m"] == 128
-        assert split["jit_template_args"] == after["jit_template_args"] + (",true" if two_wg else "")
-        local = two_wg and before["ranks"] == 1
-        assert lean["jit_template_args"] == after["jit_template_args"] + (",false,true" if local else "")
+        local = before["host"]["math_threads"] == 256 and before["host"]["block_m"] == 128 and before["ranks"] == 1
+        assert lean["jit_template_args"] == after["jit_template_args"] + (",true" if local else "")
+        assert pair["jit_template_args"] == after["jit_template_args"] + (",true,true" if local else "")
         assert before["descriptor_fields"] == after["descriptor_fields"]
         if before["host"]["math_threads"] == 256 and before["host"]["block_m"] == 128:
             assert before["host"]["stages"] == 3 and after["host"]["stages"] == 4
@@ -121,7 +120,7 @@ int main() {
     target = overlay / m.KERNEL
     target.parent.mkdir(parents=True)
     shutil.copy2(args.control_header, target)
-    for patch in ("patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-tail-split/sm90-prefill-tail-split.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch"):
+    for patch in ("patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch"):
         run(["git", "apply", "--check", str(ROOT / patch)], cwd=overlay)
         run(["git", "apply", str(ROOT / patch)], cwd=overlay)
     names = list(m.KERNEL_NAMES)
@@ -138,13 +137,14 @@ int main() {
         values = list(map(int, contract.split()))
         assert values[0] == row["host"]["smem"], (row, values)
         assert values[8] == (18432 if row["stage4"] else 65536), (row, values)
-        # 25 host arguments, plus kPrefillTailSplit and (EP1 only) kPrefillLean when set.
-        lean = ["false", "true"] if row["ranks"] == 1 else []
-        assert row["jit_template_args"].split(",")[25:] == {0: [], 1: [], 2: ["true"], 3: lean}[row["stage4"]], row
+        # 25 host arguments, plus (EP1 only) kPrefillLean and kPrefillTailPair when set.
+        lean = ["true"] if row["ranks"] == 1 else []
+        pair = ["true", "true"] if row["ranks"] == 1 else []
+        assert row["jit_template_args"].split(",")[25:] == {0: [], 1: [], 2: lean, 3: pair}[row["stage4"]], row
         row["kernel_layout"] = values
     if args.nvcc:
         for row in selected:
-            name = f"ep{row['ranks']}-stages{row['host']['stages']}" + {2: "-split", 3: "-lean"}.get(row["stage4"], "")
+            name = f"ep{row['ranks']}-stages{row['host']['stages']}" + {2: "-lean", 3: "-pair"}.get(row["stage4"], "")
             cu = out / f"{name}.cu"
             cu.write_text('#include <deep_gemm/impls/sm90_fp8_mega_moe.cuh>\nextern "C" void* instantiate() { return reinterpret_cast<void*>(&deep_gemm::sm90_fp8_mega_moe_impl<' + row["jit_template_args"] + '>); }\n')
             includes = [overlay / "deep_gemm/include", args.source_repo / "deep_gemm/include", args.source_repo / "third-party/cutlass/include"]
@@ -152,7 +152,7 @@ int main() {
                 run([str(args.nvcc), "--cubin", "--std=c++20", "--expt-relaxed-constexpr", "--expt-extended-lambda", "-O3", "--ptxas-options=-v,-warn-spills", "-gencode", "arch=compute_90a,code=sm_90a", *["-I" + str(p) for p in includes], str(cu), "-o", str(out / f"{name}.cubin")], stdout=log, stderr=subprocess.STDOUT)
     result = {"source_commit": m.REVISION, "control_header_sha256": hashlib.sha256(args.control_header.read_bytes()).hexdigest(), "candidate_header_sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "gpu_executed": False, "native_cuda_compiled": bool(args.nvcc), "cases": rows, "selected_kernels": selected}
     (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
-    print(f"PASS: {len(rows)} native host configurations; EP4 unchanged; EP1 descriptor/layout agreement; four-stage switch changes only the 2WG Prefill stages and the tail split and EP1 lean path only their template flags; CUDA compilation={bool(args.nvcc)}")
+    print(f"PASS: {len(rows)} native host configurations; EP4 unchanged; EP1 descriptor/layout agreement; four-stage switch changes only the 2WG Prefill stages and the EP1 lean and paired-tail paths only their template flags; CUDA compilation={bool(args.nvcc)}")
 
 
 if __name__ == "__main__":

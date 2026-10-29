@@ -80,8 +80,8 @@ what those bytes overlapped with.
 
 ## 4. Lean EP1 variant (`DG_SM90_PREFILL_LEAN=1`, bit-exact)
 
-Host `patches/deep-gemm-host/sm90-prefill-lean.patch` (EP1, four-stage, no split) appends
-`,false,true` (kPrefillTailSplit, kPrefillLean). Header
+Host `patches/deep-gemm-host/sm90-prefill-lean.patch` (EP1, four-stage) appends `,true`
+(kPrefillLean). Header
 `patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch`:
 
 - Every CTA adds its per-expert counts straight into the receive sums that the scheduler
@@ -105,19 +105,57 @@ Expected 7-13 us per layer effective (sync removal at kappa 0.36-0.6, instructio
 at kappa ~1), 0.17-0.31 ms per 24-layer stage period. This is at or below the selection's
 0.5 % summed margin; the selection keeps four-stage unless the measured saving clears it.
 
-## 5. Larger levers not implemented here
+## 5. Paired tails (`DG_SM90_PREFILL_TAIL_PAIR=1`, on the lean path, bit-exact)
 
-1. **Tail pairing (bit-exact, 1-2 %).** For a pool block with at most 64 rows, give the
-   two warpgroups two n blocks of the same rows (each m64n256 on its own B) in one work
-   item that consumes two stages per K block; odd n items of tail blocks become no-ops in
-   every role. FC2 arrival counts stay 48 per tail block. Per tail n tile: 0.5-0.63 of a
-   tile against 0.64-0.70 now; 78 tails per layer: 17-55 us. Costs two-stage lookahead on
-   those items; needs scheduler skips in the A/B loaders, math and FC2 claim decoding.
-2. **FC1 epilogue MUFU (inexact, about 0.5-0.7 %).** One `rcp` for two sigmoids
+A pool block with at most 64 valid rows used to run each N block on one warpgroup
+(the other consumed the stages idle), 0.64-0.70 of a full tile. Now its N blocks run in
+pairs: the item of N block 2j computes 2j and 2j+1 on the two warpgroups (rows 0..63,
+warpgroup g on N block 2j+g) and uses two stages per K block (A, SFA and warpgroup 0's B
+in the first, warpgroup 1's B in the second); the item of N block 2j+1 is skipped. Per
+two tail tiles: TMA 80 instead of 96 KiB, both warpgroups' WGMMA busy. Each warpgroup
+computes its N block with the same rows, B bytes, K order, scales and epilogue as before:
+same output bytes. The tail split (m64n128 halves, below margin twice) is removed.
+
+Deadlock argument. All roles (A loader, B loader, math warps) walk one item stream per CTA
+through `sm90_fp8_mega_moe_for_each_block_dynamic_l2`, with their own scheduler copies:
+FC1 is the static round robin over the expert counts every role polls until final, FC2 the
+claimed words the A loader publishes through the ring that the B loader and the math warps
+consume (skipped words are consumed and released like any other). The skip (`n` odd and
+valid rows <= 64) and the pairing (valid rows <= 64) are one predicate,
+`sm90_fp8_mega_moe_tail_pair`, of values each role holds identically, evaluated in the
+driver (skip) and at the top of each role's item (pair). Per processed item every role
+advances the ring by K blocks (unpaired) or 2 x K blocks (paired); skipped items advance
+nothing. So all roles reach every item at the same (stage, phase), whatever the item
+count parity, and an expert with 0 rows has no items for any role; an expert whose rows
+fit one half tile has exactly one pool block, which is paired. Per stage use the full
+barrier (count 2) gets the A loader's arrival (with A + SFA bytes, or byte-less on the
+second stage of a pair) and the B loader's (with B bytes); the empty barrier (count 8)
+gets one arrival from each math warp, which also waits on both full barriers of the pair.
+Producers wait on the empty barrier of every stage they use, as before. The FC2 A loader's
+FC1 arrival count is unchanged (12 N blocks x ceil(valid / 64) x 4: a tail block gets 4
+per warpgroup per N block either way). `test_prefill_megamoe_tail_pair.py` replays the
+per-role streams for the 36 archived 128-expert distributions, the selection routings and
+edge distributions and asserts all of this; the in-job selection adds an untimed "edges"
+routing (experts with 0, 1-64, 65, 127-129, 191-193, 255-256 rows) that every candidate
+must reproduce bit for bit.
+
+CPU evidence (`megamoe-prefill-tail-pair-cpu-validation-20261030.json`): 168 registers, 0
+spill; unpaired K loops 284 / 225 instructions (lean 274 / 243, allocation only), paired
+K loops 311 / 284 per K block; the 18 instantiations without the new flags and the lean
+instantiation are SASS byte-identical; 184 host configurations PASS.
+
+Expected: 78 tails per layer at 3.7 us per tail-tile unit: 0.06-0.19 of a tile saved per
+tail tile, 17-55 us before the power-cap factor, 10-55 us after (kappa 0.6-1), 0.4-2 %.
+Risk: a paired K block uses two of the four stages, so only one paired K block is
+prefetched ahead.
+
+## 6. Larger levers not implemented here
+
+1. **FC1 epilogue MUFU (inexact, about 0.5-0.7 %).** One `rcp` for two sigmoids
    (1/a = b/(ab), clamped exponent) and the per-row scale folded out of the SwiGLU product
    cut MUFU 128 -> 96 per thread per tile; FP-order class change, needs a tolerance gate.
-3. **Tail A box of 64 rows (bit-exact, 0-1.3 %).** Halve the A TMA of tail tiles with a
-   second descriptor; helps only if tails are bound by TMA supply or SMEM bytes.
-4. **Combine (6 %).** Bytes are fixed (BF16 partials); only overlap with the FC2 tail
+2. **Tail A box of 64 rows (bit-exact, 0-1 %).** A paired tail still loads the 128-row A
+   box; a second descriptor would halve it (8 KiB per paired K block).
+3. **Combine (6 %).** Bytes are fixed (BF16 partials); only overlap with the FC2 tail
    (kappa 0.36-0.6) or a downstream fusion with the next add-RMSNorm (saves the y write and
    read, about 25 us) remain.

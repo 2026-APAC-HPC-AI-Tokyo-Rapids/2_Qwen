@@ -1,43 +1,52 @@
 diff --git a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
 --- a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
 +++ b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
-@@ -48,6 +48,9 @@ public:
-         // Optional trailing template argument (DG_SM90_PREFILL_TAIL_SPLIT): emitted
-         // only when set, so every other kernel's generated text is unchanged.
-         bool prefill_tail_split;
-+        // Optional trailing template argument after it (DG_SM90_PREFILL_LEAN),
-+        // likewise emitted only when set.
+@@ -45,6 +45,9 @@ public:
+         bool l2_epilogue_requires_full_sync;
+         bool split_phase_hot_path;
+         bool use_swap_ab;
++        // Optional trailing template argument (DG_SM90_PREFILL_LEAN): emitted only
++        // when set, so every other kernel's generated text is unchanged.
 +        bool prefill_lean;
          MegaMoESM90Config config;
  
          // Runtime arguments
-@@ -120,7 +123,7 @@ static void __instantiate_kernel() {{
+@@ -95,7 +98,7 @@ static void __instantiate_kernel() {{
+         {},
+         {},
+         {},
+-        {}
++        {}{}
+     >);
+ }};
+ )",
+@@ -116,7 +119,8 @@ static void __instantiate_kernel() {{
+     args.l2_arrival_counter ? "true" : "false",
      args.l2_epilogue_requires_full_sync ? "true" : "false",
      args.split_phase_hot_path ? "true" : "false",
-     args.use_swap_ab ? "true" : "false",
--    args.prefill_tail_split ? ",\n        true" : "");
-+    args.prefill_lean ? ",\n        false,\n        true" : (args.prefill_tail_split ? ",\n        true" : ""));
+-    args.use_swap_ab ? "true" : "false");
++    args.use_swap_ab ? "true" : "false",
++    args.prefill_lean ? ",\n        true" : "");
      }
  
      static void launch_impl(const KernelHandle& kernel, const LaunchConfigHandle& config, Args args) {
-@@ -208,6 +211,13 @@ static void sm90_fp8_mega_moe(
-     const bool prefill_tail_split =
-         config.block_m == 128 and config.block_n == 256 and config.num_epilogue_threads == 256 and
-         config.num_stages == 4 and get_env<int>("DG_SM90_PREFILL_TAIL_SPLIT", 0) != 0;
+@@ -197,6 +201,12 @@ static void sm90_fp8_mega_moe(
+     const bool use_swap_ab = should_use_swap_ab_for_mega_moe_sm90(
+         num_experts_per_rank, num_tokens, num_topk,
+         config.block_m, config.num_epilogue_threads);
 +    // DG_SM90_PREFILL_LEAN=1, only for one rank (PP4/EP1) with the four-stage 2WG
-+    // tile and without the tail split: no cross-rank count publication or
-+    // self-signalled barriers and an stmatrix FC2 staging (sm90-prefill-lean.patch
-+    // carries the header path).
++    // tile: no cross-rank count publication or post-signal grid syncs and an
++    // stmatrix FC2 staging (sm90-prefill-lean.patch carries the header path).
 +    const bool prefill_lean =
 +        num_ranks == 1 and config.block_m == 128 and config.block_n == 256 and config.num_epilogue_threads == 256 and
-+        config.num_stages == 4 and not prefill_tail_split and get_env<int>("DG_SM90_PREFILL_LEAN", 0) != 0;
++        config.num_stages == 4 and get_env<int>("DG_SM90_PREFILL_LEAN", 0) != 0;
  
      // Tensormap construction
      // Acts/weights: standard 2D TMA descriptors (FP8 K-major).
-@@ -303,6 +313,7 @@ static void sm90_fp8_mega_moe(
+@@ -291,6 +301,7 @@ static void sm90_fp8_mega_moe(
+         .l2_epilogue_requires_full_sync = l2_epilogue_requires_full_sync,
          .split_phase_hot_path = split_phase_hot_path,
          .use_swap_ab = use_swap_ab,
-         .prefill_tail_split = prefill_tail_split,
 +        .prefill_lean = prefill_lean,
          .config = config,
          .y = y.data_ptr(),

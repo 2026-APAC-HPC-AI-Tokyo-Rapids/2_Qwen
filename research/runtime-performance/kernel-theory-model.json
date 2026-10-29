@@ -444,6 +444,12 @@
     "removed_work": "EP1: SM 0's count republication with system-scope atomics, its self-signal and one dispatch grid sync; the per-row rank round robin; the grid sync after the self-signal before the combine; FC2 staging 64 STS.32 -> 16 stmatrix.x4 per thread per tile (span 223 -> 178). Same bytes everywhere.",
     "past_rejections_distinct": "Not the direct FC2 stores or the A gather (both removed); staging bytes, store pattern, tile and K loop unchanged."
   },
+  "megamoe_prefill_tail_pair_cpu_candidate": {
+    "evidence": "megamoe-prefill-tail-pair-cpu-validation-20261030.json; 2026-10-30-prefill-megamoe-ep1-accounting.md",
+    "status": "CPU_validated_not_GPU_measured; four-stage-lean-pair selected in job (bit-exact on balanced, hot and an untimed edge routing); tail split removed",
+    "removed_work": "<= 64-row pool blocks: N blocks in pairs on both warpgroups (two stages per K block) instead of one warpgroup per N block beside an idle one; 80 instead of 96 KiB of TMA per two tail tiles. Same bytes.",
+    "past_rejections_distinct": "Not the tail split (m64n128 halves, same TMA bytes, below margin twice) or the independent WG (separate tiles, duplicated B); both warpgroups keep m64n256 on the same rows."
+  },
   "fa3_prefill_direct_o_cpu_candidate": {
     "evidence": "fa3-prefill-direct-o-cpu-validation-20261029.json",
     "status": "CPU_admitted_not_GPU_measured_or_activated",

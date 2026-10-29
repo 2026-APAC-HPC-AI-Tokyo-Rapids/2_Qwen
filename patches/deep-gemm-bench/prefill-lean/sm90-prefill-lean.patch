@@ -1,19 +1,19 @@
 diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 --- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
 +++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
-@@ -205,6 +205,7 @@ template <
+@@ -204,6 +204,7 @@ template <
+     bool kL2EpilogueRequiresFullSync,
      bool kSplitPhaseHotPath,
      bool kFP8SwapAB = false,
-     bool kPrefillTailSplit = false,
 +    bool kPrefillLean = false,
      uint32_t L1_SHAPE_N = kIntermediateHidden * 2,
      uint32_t L1_SHAPE_K = kHidden,
      uint32_t L2_SHAPE_N = kHidden,
-@@ -479,6 +480,18 @@ sm90_fp8_mega_moe_impl(void* y,
-     // most 64 valid rows runs on both math warpgroups, each an m64n128 half of the
-     // 256 columns, instead of one m64n256 warpgroup beside an idle one.
-     DG_STATIC_ASSERT(not kPrefillTailSplit or kPrefillWarpCD, "The tail split needs the four-stage Prefill tile");
-+    // Host DG_SM90_PREFILL_LEAN=1 (four-stage EP1 tile without the tail split): drop the
+@@ -474,6 +475,18 @@ sm90_fp8_mega_moe_impl(void* y,
+     // BF16 tile buys the fourth 48 KiB A/B stage. Three stages are unchanged.
+     constexpr bool kPrefillWarpCD = kPrefill2WG and kNumStages == 4;
+     constexpr uint32_t kPrefillWarpCDRowBytes = 128 + 16;
++    // Host DG_SM90_PREFILL_LEAN=1 (four-stage EP1 tile): drop the
 +    // cross-rank machinery a single rank does not need, with the same bytes everywhere.
 +    //  * Every CTA adds its per-expert counts straight into the receive sums that the
 +    //    scheduler polls (ready at kNumSMs arrivals, as with SM 0's single sum before),
@@ -23,12 +23,12 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
 +    //  * Before the combine, the grid sync after SM 0's self-signal goes away.
 +    //  * The FC2 staging writes each four n8 chunks with one stmatrix.x4 (16 per tile
 +    //    instead of 64 STS.32), same bytes at the same slice offsets.
-+    DG_STATIC_ASSERT(not kPrefillLean or (kPrefillWarpCD and not kPrefillTailSplit and kNumRanks == 1),
-+                     "The lean path is the four-stage EP1 tile without the tail split");
++    DG_STATIC_ASSERT(not kPrefillLean or (kPrefillWarpCD and kNumRanks == 1),
++                     "The lean path is the four-stage EP1 tile");
      constexpr uint32_t SMEM_CD_PER_QUEUE = kPrefillWarpCD ?
          math::constexpr_align(kNumEpilogueWarps * 16 * kPrefillWarpCDRowBytes, kSharedMemoryAlignment) :
          math::constexpr_align(
-@@ -801,7 +814,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -796,7 +809,7 @@ sm90_fp8_mega_moe_impl(void* y,
          for (uint32_t i = thread_idx; i < kNumExperts; i += kNumDispatchThreads) {
              const uint64_t send_value = (1ull << 32) | static_cast<uint64_t>(smem_expert_count[i]);
              smem_expert_count[i] = static_cast<uint32_t>(
@@ -37,7 +37,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
          }
          ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
  
-@@ -819,6 +832,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -814,6 +827,7 @@ sm90_fp8_mega_moe_impl(void* y,
              [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); }
          );
  
@@ -45,7 +45,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
          if (sm_idx == 0) {
              #pragma unroll
              for (uint32_t i = thread_idx; i < kNumExperts; i += kNumDispatchThreads) {
-@@ -840,6 +854,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -835,6 +849,7 @@ sm90_fp8_mega_moe_impl(void* y,
              workspace, sym_buffer, sm_idx, thread_idx,
              [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); },
              false, true);
@@ -53,7 +53,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
  
          // Sync with epilogue warps before pulling tokens.
          ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
-@@ -870,6 +885,14 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -865,6 +880,14 @@ sm90_fp8_mega_moe_impl(void* y,
                  if (current_expert_idx >= kNumExpertsPerRank)
                      break;
  
@@ -68,7 +68,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                  if (old_expert_idx != current_expert_idx) {
                      old_expert_idx = current_expert_idx;
                      #pragma unroll
-@@ -881,15 +904,12 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -876,15 +899,12 @@ sm90_fp8_mega_moe_impl(void* y,
                  }
  
                  // Round-robin rank selection (identical to SM100)
@@ -84,7 +84,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                  while (true) {
                      uint32_t num_actives_in_lane = 0;
                      uint32_t min_in_lane = 0xffffffff;
-@@ -924,6 +944,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -919,6 +939,7 @@ sm90_fp8_mega_moe_impl(void* y,
                      for (uint32_t i = 0; i < kNumRanksPerLane; ++ i)
                          remaining[i] -= cute::min(remaining[i], length);
                  }
@@ -92,7 +92,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
  
                  const uint32_t src_token_topk_idx = *workspace.get_src_token_topk_idx_ptr(
                      current_expert_idx, current_rank_in_expert_idx, token_idx_in_rank);
-@@ -3106,8 +3127,25 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2825,8 +2846,25 @@ sm90_fp8_mega_moe_impl(void* y,
                      }
                      auto* stage_r0 = stage + row_idx * kPrefillWarpCDRowBytes + col_idx * 4;
                      auto* stage_r1 = stage_r0 + 8 * kPrefillWarpCDRowBytes;
@@ -118,7 +118,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                          #pragma unroll
                          for (uint32_t j = 0; j < 8; ++ j) {
                              const uint32_t chunk = step * 8 + j;
-@@ -3116,6 +3154,7 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -2835,6 +2873,7 @@ sm90_fp8_mega_moe_impl(void* y,
                              *reinterpret_cast<uint32_t*>(stage_r1 + j * 16) = math::cast_into_bf16_and_pack(
                                  final_accum[chunk * 4 + 2], final_accum[chunk * 4 + 3]);
                          }
@@ -126,7 +126,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                          __syncwarp();
                          #pragma unroll
                          for (uint32_t i = 0; i < 4; ++ i) {
-@@ -3350,11 +3389,21 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -3069,11 +3108,21 @@ sm90_fp8_mega_moe_impl(void* y,
          // ---------------- COMBINE ----------------
          // NVLink barrier first: signals remote ranks that this rank's GEMM
          // outputs (NVLink scatter targets) are fully written.

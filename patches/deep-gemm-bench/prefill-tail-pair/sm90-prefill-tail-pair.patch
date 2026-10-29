@@ -1,0 +1,304 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -118,7 +118,20 @@ CUTLASS_DEVICE void sm90_fp8_mega_moe_for_each_block_split(
+ // One role claims and decodes (`sm90_fp8_mega_moe_decode_l2_block`), the
+ // others receive the same words, so the consumers keep no scheduler state live
+ // across FC2 blocks.
++// Paired tails (host DG_SM90_PREFILL_TAIL_PAIR, kPrefillTailPair): a pool block with at
++// most kPairRows valid rows is one warpgroup's rows. Its N blocks run in pairs: the item of
++// N block 2 j computes N blocks 2 j and 2 j + 1 on the two warpgroups and consumes two
++// pipeline stages per K block; the item of N block 2 j + 1 is skipped. Every role (A loader,
++// B loader, math warps) walks the same item stream through this driver with its own
++// scheduler copy, and the skip and the pairing are this one predicate of (valid rows, N
++// block), so all roles skip the same items and advance the stage ring by the same count.
++template <uint32_t kPairRows>
++CUTLASS_DEVICE bool sm90_fp8_mega_moe_tail_pair(const uint32_t& valid_m) {
++    return valid_m <= kPairRows;
++}
++
+ template <uint32_t kNumSMs, uint32_t kNumL1BlockNs, uint32_t kNumL1BlockKs, uint32_t kNumL2BlockKs,
++          bool kTailPair = false, uint32_t kPairRows = 0,
+           typename Scheduler, typename GetL2Block, typename L1Func, typename L2Func>
+ CUTLASS_DEVICE void sm90_fp8_mega_moe_for_each_block_dynamic_l2(
+     Scheduler& scheduler, GetL2Block&& get_l2_block, L1Func&& l1_func, L2Func&& l2_func) {
+@@ -128,6 +141,10 @@ CUTLASS_DEVICE void sm90_fp8_mega_moe_for_each_block_dynamic_l2(
+     while (scheduler.fetch_next_l1_block()) {
+         const uint32_t n_block_idx = scheduler.block_idx - scheduler.m_block_idx * kNumL1BlockNs;
+         scheduler.block_idx += kNumSMs;
++        if constexpr (kTailPair) {
++            if ((n_block_idx & 1u) and sm90_fp8_mega_moe_tail_pair<kPairRows>(scheduler.template get_valid_m<false>()))
++                continue;
++        }
+         l1_func(scheduler.current_local_expert_idx, kNumL1BlockKs, scheduler.m_block_idx, n_block_idx);
+     }
+ 
+@@ -141,6 +158,10 @@ CUTLASS_DEVICE void sm90_fp8_mega_moe_for_each_block_dynamic_l2(
+         scheduler.m_block_idx = info.x & 0xffffu;
+         scheduler.current_pool_block_offset = info.y >> 16;
+         scheduler.current_num_tokens = info.y & 0xffffu;
++        if constexpr (kTailPair) {
++            if (((info.x >> 16) & 1u) and sm90_fp8_mega_moe_tail_pair<kPairRows>(scheduler.template get_valid_m<false>()))
++                continue;
++        }
+         l2_func(info.x >> 24, kNumL2BlockKs, info.x & 0xffffu, (info.x >> 16) & 0xffu);
+     }
+ }
+@@ -205,6 +226,7 @@ template <
+     bool kSplitPhaseHotPath,
+     bool kFP8SwapAB = false,
+     bool kPrefillLean = false,
++    bool kPrefillTailPair = false,
+     uint32_t L1_SHAPE_N = kIntermediateHidden * 2,
+     uint32_t L1_SHAPE_K = kHidden,
+     uint32_t L2_SHAPE_N = kHidden,
+@@ -487,6 +509,13 @@ sm90_fp8_mega_moe_impl(void* y,
+     //    instead of 64 STS.32), same bytes at the same slice offsets.
+     DG_STATIC_ASSERT(not kPrefillLean or (kPrefillWarpCD and kNumRanks == 1),
+                      "The lean path is the four-stage EP1 tile");
++    // Host DG_SM90_PREFILL_TAIL_PAIR=1 (on top of the lean path): pool blocks with at most
++    // 64 valid rows run N blocks in pairs on both warpgroups (see
++    // sm90_fp8_mega_moe_tail_pair). Each warpgroup computes its N block exactly as the one
++    // working warpgroup of such a tile did (same rows, B bytes, K order, scales, epilogue),
++    // so the outputs are the same bytes. The FC2 A loader's arrival count is unchanged: a
++    // tail block gets 4 arrivals per warpgroup per N block either way (12 x 4).
++    DG_STATIC_ASSERT(not kPrefillTailPair or kPrefillLean, "Tail pairing is layered on the lean path");
+     constexpr uint32_t SMEM_CD_PER_QUEUE = kPrefillWarpCD ?
+         math::constexpr_align(kNumEpilogueWarps * 16 * kPrefillWarpCDRowBytes, kSharedMemoryAlignment) :
+         math::constexpr_align(
+@@ -1149,6 +1178,31 @@ sm90_fp8_mega_moe_impl(void* y,
+                     while (ptx::ld_acq_gpu(ptr) != expected);
+                 }
+             }
++            if constexpr (kPrefillTailPair) {
++                if (sm90_fp8_mega_moe_tail_pair<WG_BLOCK_M>(scheduler.template get_valid_m<false>())) {
++                    uint32_t slot = 0;
++                    for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; ++ k_block_idx) {
++                        empty_barriers[stage_idx]->wait(phase ^ 1);
++                        if (cute::elect_one_sync()) {
++                            tma::copy<BLOCK_K, LOAD_BLOCK_M, kSwizzleAMode, a_dtype_t>(
++                                tensor_map_a_ptr, full_barriers[stage_idx], smem_a[stage_idx],
++                                k_block_idx * BLOCK_K, pool_block_idx * BLOCK_M, 1);
++                            tma::copy<BLOCK_M, 1, 0, float>(
++                                tensor_map_sfa_ptr, full_barriers[stage_idx], smem_sfa[stage_idx],
++                                pool_block_idx * SF_BLOCK_M, k_block_idx, 1);
++                            full_barriers[stage_idx]->arrive_and_expect_tx(SMEM_A_SIZE_PER_STAGE + BLOCK_M * sizeof(float));
++                        }
++                        __syncwarp();
++                        advance_pipeline(slot);
++                        empty_barriers[stage_idx]->wait(phase ^ 1);
++                        if (cute::elect_one_sync())
++                            full_barriers[stage_idx]->arrive();
++                        __syncwarp();
++                        advance_pipeline(slot);
++                    }
++                    return;
++                }
++            }
+             for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                 empty_barriers[stage_idx]->wait(phase ^ 1);
+ 
+@@ -1205,7 +1259,7 @@ sm90_fp8_mega_moe_impl(void* y,
+                              "Dynamic FC2 block info does not fit the packed ring words");
+             const auto claim_counter = workspace.template get_grid_sync_count_ptr<kL2ClaimCounterIndex>();
+             uint32_t ring_count = 0, claimed = 0, num_l2_blocks = 0, prev_l2_block_idx = 0;
+-            sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs>(
++            sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs, kPrefillTailPair, WG_BLOCK_M>(
+                 scheduler,
+                 [&]() {
+                     if (ring_count == 0) {
+@@ -1283,6 +1337,28 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+             const uint32_t shape_n = block_phase == sched::BlockPhase::Linear2 ? L2_SHAPE_N : L1_SHAPE_N;
+ 
++            if constexpr (kPrefillTailPair) {
++                if (sm90_fp8_mega_moe_tail_pair<WG_BLOCK_M>(scheduler.template get_valid_m<false>())) {
++                    DG_STATIC_ASSERT(LOAD_BLOCK_N == BLOCK_N and LOAD_BLOCK_N <= 256, "Paired tails load one B block per stage");
++                    uint32_t slot = 0;
++                    for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; ++ k_block_idx) {
++                        #pragma unroll
++                        for (uint32_t half = 0; half < 2; ++ half) {
++                            empty_barriers[stage_idx]->wait(phase ^ 1);
++                            if (cute::elect_one_sync()) {
++                                tma::copy<BLOCK_K, LOAD_BLOCK_N, kSwizzleBMode, b_dtype_t>(
++                                    tensor_map_b_ptr, full_barriers[stage_idx], smem_b[stage_idx],
++                                    k_block_idx * BLOCK_K, local_expert_idx * shape_n + (n_block_idx + half) * BLOCK_N, 1);
++                                full_barriers[stage_idx]->arrive_and_expect_tx(SMEM_B_SIZE_PER_STAGE);
++                            }
++                            __syncwarp();
++                            advance_pipeline(slot);
++                        }
++                    }
++                    return;
++                }
++            }
++
+             for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                 empty_barriers[stage_idx]->wait(phase ^ 1);
+ 
+@@ -1315,7 +1391,7 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+         if constexpr (kDynamicL2) {
+             uint32_t ring_count = 0;
+-            sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs>(
++            sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs, kPrefillTailPair, WG_BLOCK_M>(
+                 scheduler,
+                 [&]() { return take_l2_block(ring_count); },
+                 [&](const uint32_t& local_expert_idx,
+@@ -1391,12 +1467,15 @@ sm90_fp8_mega_moe_impl(void* y,
+         auto process_math_block = [&](const auto& block_phase,
+                                       const uint32_t& local_expert_idx,
+                                       const uint32_t& num_k_blocks,
+-                                      const uint32_t& m_block_idx, const uint32_t& n_block_idx) CUTLASS_LAMBDA_FUNC_INLINE {
++                                      const uint32_t& m_block_idx, const uint32_t& item_n_block_idx) CUTLASS_LAMBDA_FUNC_INLINE {
+             const uint32_t valid_m = scheduler.template get_valid_m<false>();
++            // A paired tail: both warpgroups take rows 0..63, warpgroup g the N block n + g.
++            const bool pair_tile = kPrefillTailPair and sm90_fp8_mega_moe_tail_pair<WG_BLOCK_M>(valid_m);
++            const uint32_t n_block_idx = item_n_block_idx + (pair_tile ? epilogue_wg_idx : 0u);
+             const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
+             const uint32_t m_idx = pool_block_idx * BLOCK_M;
+             const uint32_t n_idx = n_block_idx * BLOCK_N;
+-            const uint32_t epilogue_wg_m_idx = kIndependentWG ? 0 : epilogue_wg_idx / kWarpgroupSplitN;
++            const uint32_t epilogue_wg_m_idx = (kIndependentWG or pair_tile) ? 0 : epilogue_wg_idx / kWarpgroupSplitN;
+             const uint32_t epilogue_wg_n_idx = kIndependentWG ? 0 : epilogue_wg_idx - epilogue_wg_m_idx * kWarpgroupSplitN;
+             const uint32_t wg_n_offset = epilogue_wg_n_idx * WG_BLOCK_N;
+             const uint32_t wg_l1_out_n_offset = epilogue_wg_n_idx * WG_L1_OUT_BLOCK_N;
+@@ -1541,7 +1620,118 @@ sm90_fp8_mega_moe_impl(void* y,
+                     kHidden == 4096 && kIntermediateHidden == 1536 && BLOCK_M == 128 &&
+                     BLOCK_N == 256 && (kNumEpilogueThreads == 512 || kPrefill2WG) && kSpecializePhase;
+                 if constexpr (kQwenPrefillMainloop) {
+-                    if (kPrefill2WG and row_base >= valid_m) {
++                    if (pair_tile) {
++                        if constexpr (kPrefillTailPair) {
++                        // Paired tail mainloop: K block k waits on its stage pair (A, SFA and
++                        // warpgroup 0's B in the first stage, warpgroup 1's B in the second),
++                        // issues the m64n256 group of the warpgroup's N block on rows 0..63 and
++                        // releases both stages. The carried-scale arithmetic per accumulator is
++                        // the unpaired loop's: ratio (prev s_a * prev s_w) * rcp(s_a * s_w) for
++                        // the next K block computed while the group runs, the same rescale before
++                        // the next issue and the same final scale.
++                        DG_STATIC_ASSERT(kPrefill2WG and kL2ActsSF128 and kNumEpilogueWarpgroups == 2 and
++                                         kNumL1BlockNs % 2 == 0 and kNumL2BlockNs % 2 == 0, "Paired tail shape");
++                        constexpr uint32_t kL1SFKBlocks = kHidden / 128, kL2SFKBlocks = kIntermediateHidden / 128;
++                        constexpr uint32_t kL1SFPerExpert = (kIntermediateHidden * 2 / 128) * kL1SFKBlocks;
++                        constexpr uint32_t kL2SFPerExpert = (kHidden / 128) * kL2SFKBlocks;
++                        const bool l1 = block_phase == sched::BlockPhase::Linear1;
++                        // Weight-SF rows: FC1 gate / up blocks (accumulator chunks alternate),
++                        // FC2 the two 128-row blocks of the 256 columns (chunks 0..15, 16..31).
++                        const float* w_sf = l1 ? l1_weights_sf : l2_weights_sf;
++                        const uint32_t w_row_0 = l1 ? local_expert_idx * kL1SFPerExpert + n_block_idx * kL1SFKBlocks
++                                                    : local_expert_idx * kL2SFPerExpert + n_block_idx * 2 * kL2SFKBlocks;
++                        const uint32_t w_row_1 = w_row_0 + (l1 ? (kIntermediateHidden / 128) * kL1SFKBlocks : kL2SFKBlocks);
++                        const auto pair_desc_a = mma::sm90::make_smem_desc(smem_a[0], 1);
++                        const auto pair_desc_b = mma::sm90::make_smem_desc(smem_b[0], 1);
++                        const uint32_t pair_a_lo = pair_desc_a.reg32_[0], pair_b_lo = pair_desc_b.reg32_[0];
++                        const uint64_t pair_a_hi = static_cast<uint64_t>(pair_desc_a.reg32_[1]) << 32;
++                        const uint64_t pair_b_hi = static_cast<uint64_t>(pair_desc_b.reg32_[1]) << 32;
++                        auto next_of = [](const uint32_t& s) { return s == kNumStages - 1 ? 0u : s + 1; };
++                        auto rcp = [](const float& x) { return kFastMath ? math::fast_rcp(x) : 1.0f / x; };
++                        float prev_sa_0 = 1.0f, prev_sa_1 = 1.0f, prev_w_0 = 1.0f, prev_w_1 = 1.0f;
++                        float r00 = 1.0f, r01 = 1.0f, r10 = 1.0f, r11 = 1.0f;
++                        uint32_t slot = 0;
++                        for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; ++ k_block_idx) {
++                            const uint32_t a_stage = stage_idx, b_stage = epilogue_wg_idx == 0 ? stage_idx : next_of(stage_idx);
++                            if (k_block_idx == 0) {
++                                full_barriers[stage_idx]->wait(phase);
++                                full_barriers[next_of(stage_idx)]->wait(phase ^ (next_of(stage_idx) == 0 ? 1u : 0u));
++                            } else {
++                                #pragma unroll
++                                for (uint32_t i = 0; i < kAccumPerThread / 4; ++ i) {
++                                    const bool second = l1 ? (i & 1u) != 0 : i >= kAccumPerThread / 8;
++                                    final_accum[i*4+0] *= second ? r01 : r00;
++                                    final_accum[i*4+1] *= second ? r01 : r00;
++                                    final_accum[i*4+2] *= second ? r11 : r10;
++                                    final_accum[i*4+3] *= second ? r11 : r10;
++                                }
++                            }
++                            {
++                                const uint32_t a_lo = pair_a_lo + a_stage * (SMEM_A_SIZE_PER_STAGE / 16);
++                                const uint32_t b_lo = pair_b_lo + b_stage * (SMEM_B_SIZE_PER_STAGE / 16);
++                                #pragma unroll
++                                for (uint32_t i = 0; i < kAccumPerThread; ++ i) ptx::warpgroup_fence_operand(final_accum[i]);
++                                ptx::warpgroup_arrive();
++                                #pragma unroll
++                                for (uint32_t k = 0; k < BLOCK_K / WGMMA::K; ++ k) {
++                                    const uint32_t k_desc = k * WGMMA::K * static_cast<uint32_t>(sizeof(a_dtype_t)) / 16;
++                                    WGMMA::wgmma(pair_a_hi | (a_lo + k_desc), pair_b_hi | (b_lo + k_desc), final_accum, true);
++                                }
++                                ptx::warpgroup_commit_batch();
++                                #pragma unroll
++                                for (uint32_t i = 0; i < kAccumPerThread; ++ i) ptx::warpgroup_fence_operand(final_accum[i]);
++                            }
++                            if (l1 and k_block_idx == 2)
++                                publish_l1_rows();
++                            if (k_block_idx == 0) {
++                                prev_sa_0 = ptx::ld_shared(smem_sfa[a_stage] + r_0);
++                                prev_sa_1 = ptx::ld_shared(smem_sfa[a_stage] + r_1);
++                                prev_w_0 = __ldg(w_sf + w_row_0);
++                                prev_w_1 = __ldg(w_sf + w_row_1);
++                            }
++                            if (k_block_idx + 1 < num_k_blocks) {
++                                // The next pair starts two stages on.
++                                const uint32_t next_0 = next_of(next_of(stage_idx));
++                                const uint32_t next_1 = next_of(next_0);
++                                const uint32_t phase_0 = phase ^ ((next_of(stage_idx) == 0 or next_0 == 0) ? 1u : 0u);
++                                const uint32_t phase_1 = phase_0 ^ (next_1 == 0 ? 1u : 0u);
++                                const float w_0 = __ldg(w_sf + w_row_0 + k_block_idx + 1);
++                                const float w_1 = __ldg(w_sf + w_row_1 + k_block_idx + 1);
++                                full_barriers[next_0]->wait(phase_0);
++                                full_barriers[next_1]->wait(phase_1);
++                                const float sa_0 = ptx::ld_shared(smem_sfa[next_0] + r_0);
++                                const float sa_1 = ptx::ld_shared(smem_sfa[next_0] + r_1);
++                                r00 = (prev_sa_0 * prev_w_0) * rcp(sa_0 * w_0);
++                                r10 = (prev_sa_1 * prev_w_0) * rcp(sa_1 * w_0);
++                                r01 = (prev_sa_0 * prev_w_1) * rcp(sa_0 * w_1);
++                                r11 = (prev_sa_1 * prev_w_1) * rcp(sa_1 * w_1);
++                                prev_sa_0 = sa_0;
++                                prev_sa_1 = sa_1;
++                                prev_w_0 = w_0;
++                                prev_w_1 = w_1;
++                            }
++                            ptx::warpgroup_wait<0>();
++                            if (lane_idx == 0)
++                                empty_barriers[stage_idx]->arrive();
++                            advance_pipeline(slot);
++                            if (lane_idx == 0)
++                                empty_barriers[stage_idx]->arrive();
++                            advance_pipeline(slot);
++                        }
++                        if (num_k_blocks != 0) {
++                            #pragma unroll
++                            for (uint32_t i = 0; i < kAccumPerThread / 4; ++ i) {
++                                const bool second = l1 ? (i & 1u) != 0 : i >= kAccumPerThread / 8;
++                                const float s0 = prev_sa_0 * (second ? prev_w_1 : prev_w_0);
++                                const float s1 = prev_sa_1 * (second ? prev_w_1 : prev_w_0);
++                                final_accum[i*4+0] *= s0;
++                                final_accum[i*4+1] *= s0;
++                                final_accum[i*4+2] *= s1;
++                                final_accum[i*4+3] *= s1;
++                            }
++                        }
++                        }
++                    } else if (kPrefill2WG and row_base >= valid_m) {
+                         // Padding-only WG: consume the shared stage stream, with
+                         // identical phase advancement and four empty arrivals.
+                         // Deferred FC1 publication belongs to the PREVIOUS tile
+@@ -1554,6 +1744,9 @@ sm90_fp8_mega_moe_impl(void* y,
+                                 empty_barriers[stage_idx]->arrive();
+                         }
+                     } else {
++                    // Not a paired tail: the warpgroup's N block is the item's (same expression
++                    // as without kPrefillTailPair, so the unpaired K loops compile alike).
++                    const uint32_t& n_block_idx = item_n_block_idx;
+                     constexpr uint32_t kL1SFKBlocks   = kHidden / 128;
+                     constexpr uint32_t kL2SFKBlocks   = kIntermediateHidden / 128;
+                     constexpr uint32_t kL1SFGateBlks  = kIntermediateHidden / 128;
+@@ -3053,7 +3246,7 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+         if constexpr (kDynamicL2) {
+             uint32_t ring_count = 0;
+-            sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs>(
++            sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs, kPrefillTailPair, WG_BLOCK_M>(
+                 scheduler,
+                 [&]() {
+                     if constexpr (kPrefill2WG) {

@@ -5,15 +5,16 @@ host extension and DeepGEMM header overlays. --ranks 1 makes every GPU its own
 one-rank EP group (PP4/EP1 Prefill, DG_SM90_PREFILL_LOCAL_EP1); --ranks 4 runs
 the four GPUs as one EP4 group. Variants: control (three stages), four-stage
 (DG_SM90_PREFILL_4STAGE=1: fourth A/B stage, per-warp FC2 staging),
-four-stage-split (also DG_SM90_PREFILL_TAIL_SPLIT=1: pool blocks with at most
-64 rows on both warpgroups as m64n128 halves) and four-stage-lean (instead
-DG_SM90_PREFILL_LEAN=1, EP1 only: no cross-rank count publication, rank round
-robin or post-signal grid sync, FC2 staging with stmatrix). The round-2
-direct-FC2 and A-gather variants lost (+1.6% and +44% in 40911121619) and are
-gone. For two routings the control must match an FP32 reference on sampled
-tokens; four-stage and four-stage-lean must reproduce the control bit for bit;
-four-stage-split must do so or stay within FP-order tolerance of the control
-on every token and pass the reference. All four are timed in rotating order. --aggregate adopts the fastest variant that passed on
+four-stage-lean (also DG_SM90_PREFILL_LEAN=1, EP1 only: no cross-rank count
+publication, rank round robin or post-signal grid sync, FC2 staging with
+stmatrix) and four-stage-lean-pair (also DG_SM90_PREFILL_TAIL_PAIR=1: pool
+blocks with at most 64 rows run their N blocks in pairs on both warpgroups).
+The round-2 direct-FC2 and A-gather variants lost (+1.6% and +44% in
+40911121619) and the tail split stayed below the margin twice; they are gone.
+For the two timed routings and the untimed edge routing (experts with 0, 1-64,
+65, 127-129 and 255-256 rows) the control must match an FP32 reference on
+sampled tokens and every candidate must reproduce the control bit for bit.
+All four are timed in rotating order. --aggregate adopts the fastest variant that passed on
 every GPU of every worker and saved at least the summed per-case margin over
 all GPUs and routings; anything missing keeps the control. A control reference
 failure stops the job. Neither per-case nor per-GPU margins are used: in runs
@@ -30,25 +31,25 @@ from datetime import timedelta
 from pathlib import Path
 
 HIDDEN, INTERMEDIATE, EXPERTS, TOPK = 4096, 1536, 128, 8
-SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_TAIL_SPLIT", "DG_SM90_PREFILL_LEAN")
+SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR")
 VARIANTS = {name: dict(zip(SWITCHES, values, strict=True)) for name, values in {
     "control": ("0", "0", "0"),
     "four-stage": ("1", "0", "0"),
-    "four-stage-split": ("1", "1", "0"),
-    "four-stage-lean": ("1", "0", "1"),
+    "four-stage-lean": ("1", "1", "0"),
+    "four-stage-lean-pair": ("1", "1", "1"),
 }.items()}
-CANDIDATES = ("four-stage", "four-stage-split", "four-stage-lean")
-# The split changes the WGMMA width only; anything beyond FP-order noise is a defect.
-# The lean path changes synchronisation and staging instructions only: bit-exact.
-INEXACT_ALLOWED = {"four-stage": False, "four-stage-split": True, "four-stage-lean": False}
+# Every candidate changes staging, synchronisation or the work assignment only: bit-exact.
+CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair")
 ROUTINGS = ("balanced", "hot")
+# Checked for exactness only (not timed): the pool-block shapes the timed routings rarely hit.
+EXACT_ROUTINGS = ("edges",)
+# Rows of experts 16..47 in the edge routing; experts 0..15 get none.
+EDGE_EXPERT_ROWS = (1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 66, 127, 128, 129, 191, 192, 193, 255, 256, 1, 63, 64, 65, 1, 2, 3, 4)
 ROUNDS = 12
 SAMPLED_TOKENS = 32
 MARGIN_US, MARGIN_FRACTION = 5.0, 0.005
 # Same tolerances as the serving gate (check-firmus-megamoe.py).
 MAX_RELATIVE_L2, MAX_SCALED_ERROR = 0.025, 0.08
-# Candidate against the control on every token, when not bit-identical.
-MAX_RELATIVE_L2_VS_CONTROL, MAX_SCALED_ERROR_VS_CONTROL = 0.002, 0.02
 
 
 def quantized(torch, x, group):
@@ -81,7 +82,17 @@ def routing(torch, kind, count, generator, device):
         # Serving captures route almost every token of a batch to one expert
         # (kernels/probes/megamoe-local-ep1-routing.npz: up to 7975 of 8002).
         scores[:, 0] += 1.0
+    if kind == "edges":
+        # Experts 0..47 are never in the top-k; experts 16..47 then replace the last slot
+        # of disjoint token ranges (distinct from the other seven) with EDGE_EXPERT_ROWS rows.
+        scores[:, :48] = -1.0
     weights, ids = scores.topk(TOPK, dim=1)
+    if kind == "edges":
+        row = 0
+        for expert, rows in enumerate(EDGE_EXPERT_ROWS, start=16):
+            ids[row:row + rows, TOPK - 1] = expert
+            row += rows
+        assert row <= count
     return ids.to(torch.int32), weights / weights.sum(-1, keepdim=True)
 
 
@@ -143,7 +154,7 @@ def run_selection(output, ranks):
         return value.item()
 
     local = {"rank": rank, "ranks_per_group": ranks, "tokens": tokens, "device": torch.cuda.get_device_name(rank), "uuid": str(torch.cuda.get_device_properties(rank).uuid), "routings": {}}
-    for kind in ROUTINGS:
+    for kind in ROUTINGS + EXACT_ROUTINGS:
         hidden = torch.randn(tokens, HIDDEN, dtype=torch.bfloat16, device=device, generator=generator) * 0.25
         ids, weights = routing(torch, kind, tokens, generator, device)
         outputs = {variant: torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for variant in VARIANTS}
@@ -170,8 +181,11 @@ def run_selection(output, ranks):
             entry["reference_passed"] = entry["finite"] and relative_l2 < MAX_RELATIVE_L2 and max_scaled_error < MAX_SCALED_ERROR
             if variant != "control":
                 entry["bitwise_equal"] = bool(torch.equal(out, outputs["control"]))
-                entry["relative_l2_vs_control"], entry["max_scaled_error_vs_control"] = errors(torch, out, outputs["control"])
             result[variant] = entry
+        if kind in EXACT_ROUTINGS:
+            local["routings"][kind] = result
+            print(json.dumps({"rank": rank, "routing": kind, **{v: {k: x for k, x in e.items() if k != "us"} for v, e in result.items()}}), flush=True)
+            continue
         names = list(VARIANTS)
         for variant in names:
             forward(variant, hidden, ids, weights, outputs[variant])
@@ -188,12 +202,8 @@ def run_selection(output, ranks):
     dist.destroy_process_group()
 
 
-def candidate_passed(name, entry):
-    if not entry["reference_passed"] or len(entry["us"]) != ROUNDS:
-        return False
-    if entry["bitwise_equal"]:
-        return True
-    return INEXACT_ALLOWED[name] and entry["relative_l2_vs_control"] < MAX_RELATIVE_L2_VS_CONTROL and entry["max_scaled_error_vs_control"] < MAX_SCALED_ERROR_VS_CONTROL
+def candidate_passed(entry, timed):
+    return entry["reference_passed"] and entry["bitwise_equal"] and (len(entry["us"]) == ROUNDS or not timed)
 
 
 def choose(entries, expected):
@@ -201,7 +211,7 @@ def choose(entries, expected):
     if any(e is None for e in entries) or len(entries) != expected:
         return {"winner": "control", "reason": "missing-results"}
     for entry in entries:
-        for kind in ROUTINGS:
+        for kind in ROUTINGS + EXACT_ROUTINGS:
             control = entry["routings"][kind]["control"]
             if not control["reference_passed"]:
                 raise SystemExit(f"Prefill MegaMoE control failed the FP32 reference: rank {entry['global_rank']} routing {kind}: {control}")
@@ -209,13 +219,16 @@ def choose(entries, expected):
     for name in CANDIDATES:
         savings, reason = [], None
         for entry in entries:
+            for kind in EXACT_ROUTINGS:
+                if not candidate_passed(entry["routings"][kind][name], False):
+                    reason = f"failed rank {entry['global_rank']} {kind}"
             for kind in ROUTINGS:
                 result = entry["routings"][kind]
-                if len(result["control"]["us"]) != ROUNDS or not candidate_passed(name, result[name]):
+                if len(result["control"]["us"]) != ROUNDS or not candidate_passed(result[name], True):
                     reason = f"failed-or-untimed rank {entry['global_rank']} {kind}"
                     continue
                 control, candidate = statistics.median(result["control"]["us"]), statistics.median(result[name]["us"])
-                savings.append({"rank": entry["global_rank"], "routing": kind, "control_median_us": control, "candidate_median_us": candidate, "saving_us": control - candidate, "required_us": max(MARGIN_US, MARGIN_FRACTION * control), "bitwise_equal": result[name]["bitwise_equal"]})
+                savings.append({"rank": entry["global_rank"], "routing": kind, "control_median_us": control, "candidate_median_us": candidate, "saving_us": control - candidate, "required_us": max(MARGIN_US, MARGIN_FRACTION * control)})
         if reason is None and sum(s["saving_us"] for s in savings) < sum(s["required_us"] for s in savings):
             reason = "below-margin"
         choices[name] = {"eligible": reason is None, "reason": reason or "faster-in-total", "total_median_us": sum(s["candidate_median_us"] for s in savings), "savings": savings}
@@ -233,7 +246,7 @@ def aggregate(directory, output, env_output, workers):
             entries.append(entry and {**entry, "global_rank": worker * 4 + rank})
     selection = choose(entries, workers * 4)
     selection["env"] = {k: v for k, v in VARIANTS[selection["winner"]].items() if v != "0"}
-    result = {"schema": "firmus-prefill-megamoe-selection/v2", "rule": {"rounds": ROUNDS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "routings": ROUTINGS, "inexact_allowed": INEXACT_ALLOWED, "max_relative_l2_vs_control": MAX_RELATIVE_L2_VS_CONTROL, "max_scaled_error_vs_control": MAX_SCALED_ERROR_VS_CONTROL}, **selection}
+    result = {"schema": "firmus-prefill-megamoe-selection/v3", "rule": {"rounds": ROUNDS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "routings": ROUTINGS, "exact_routings": EXACT_ROUTINGS, "bit_exact": True}, **selection}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     with env_output.open("a") as env:

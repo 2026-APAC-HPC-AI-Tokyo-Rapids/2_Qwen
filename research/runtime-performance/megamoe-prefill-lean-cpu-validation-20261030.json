@@ -261,7 +261,7 @@
     ],
     "fc2_k_loop_note": "two extra uniform/ALU address ops per K block from register allocation; same FMUL/QGMMA/LDS/LDG; the FC1 loop is the same length. A single grid sync before the combine (instead of keeping SM 0's self-signal) lengthened the FC1 K loop 274 -> 283 by allocation and was not used."
   },
-  "host_check": "scripts/check-sm90-prefill-local-host.py: 184 native host configurations PASS; DG_SM90_PREFILL_LEAN appends ',false,true' only for the EP1 2WG four-stage tile; EP4 and every other configuration unchanged; 8 selected kernels compile with 168 registers and 0 spill",
+  "host_check": "scripts/check-sm90-prefill-local-host.py: 184 native host configurations PASS; DG_SM90_PREFILL_LEAN appends ',true' (',false,true' while the tail split existed) only for the EP1 2WG four-stage tile; EP4 and every other configuration unchanged; 8 selected kernels compile with 168 registers and 0 spill",
   "chains": {
     "deep_gemm_pp4_overlays": "12/12 apply on the image deep_gemm tree; final mega_moe header equals the candidate",
     "sglang_pp4_overlays": "28/28 apply on the image SGLang tree",
@@ -277,5 +277,6 @@
     },
     "per_stage_period_ms": "0.17-0.31 of ~117 ms (24 layers)",
     "selection_margin_note": "below or near the summed 0.5 % margin; the selection keeps four-stage unless the measured total saving clears it"
-  }
+  },
+  "superseded_chain_note": "The tail split was removed afterwards (megamoe-prefill-tail-pair-cpu-validation-20261030.json); the lean instantiation from the final header is SASS byte-identical to the one validated here."
 }
