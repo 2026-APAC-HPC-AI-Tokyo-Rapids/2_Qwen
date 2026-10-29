@@ -69,7 +69,8 @@ def test_generated_worker_checks_only_prefill_and_uses_assigned_gpus(tmp_path):
     path.write_text(worker)
     subprocess.run(['bash', '-n', str(path)], check=True)
     assert 'if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi' in worker
-    assert 'CUDA_VISIBLE_DEVICES=' not in worker
+    # Only the PP4 Prefill stage order permutes the GPUs Slurm assigned (test_pp4_gpu_order.py).
+    assert [line.strip() for line in worker.splitlines() if 'CUDA_VISIBLE_DEVICES=' in line] == ['export CUDA_VISIBLE_DEVICES="${gpu_order}"']
     assert shell.index('select-firmus-prefill-kernels.sh') < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
     assert 'for worker in 0 1 2; do' in shell and '--aggregate' in shell
 

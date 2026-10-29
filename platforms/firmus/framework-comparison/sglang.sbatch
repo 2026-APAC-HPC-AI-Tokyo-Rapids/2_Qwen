@@ -133,6 +133,11 @@ if /opt/sglang/venv/bin/python -c 'import json,sys; sys.exit(json.load(open(sys.
     # The last stage also runs lm_head and the EAGLE draft extend (about two layers of time).
     partition=$(/opt/sglang/venv/bin/python -c 'import json,sys; print(",".join(map(str, json.load(open(sys.argv[1]))["prefill"]["pp_layer_partition"])))' "${runtime_dir}/source/firmus-framework.json")
     export DG_SM90_PREFILL_LOCAL_EP1=1 SGLANG_PP_LAYER_PARTITION="${partition}" SGLANG_PP_SKIP_PURE_CHUNKED_OUTPUT_COMM=0
+    # Stage s runs on visible device s. The lightest (last) stage moves to this worker's slowest GPU at the power cap (order-firmus-pp4-gpus.py).
+    if [[ -s "${runtime_dir}/source/firmus-gpu-sm-clock.json" ]]; then
+      gpu_order=$(nvidia-smi --query-gpu=index,uuid --format=csv,noheader | /opt/sglang/venv/bin/python "${runtime_dir}/scripts/order-firmus-pp4-gpus.py" "${runtime_dir}/source/firmus-gpu-sm-clock.json" "${CUDA_VISIBLE_DEVICES}")
+      export CUDA_VISIBLE_DEVICES="${gpu_order}"
+    fi
   fi
 fi
 # Keep inherited diagnostic variables out of Decode and ordinary benchmark workers.
