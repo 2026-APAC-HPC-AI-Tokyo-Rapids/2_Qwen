@@ -14,7 +14,7 @@ def check(config, info, role):
     if prefill and p.get("pp", 1) > 1:
         expected.update(tp_size=p["tp"], pp_size=p["pp"], enable_dp_attention=False,
                         pp_max_micro_batch_size=p["pp_max_micro_batch_size"],
-                        pp_async_batch_depth=1, disable_overlap_schedule=True,
+                        pp_async_batch_depth=p["pp_async_batch_depth"], disable_overlap_schedule=True,
                         disable_cuda_graph=True)
     if prefill:
         expected.update(moe_a2a_backend=p["moe_a2a_backend"], moe_runner_backend=p["moe_runner_backend"])

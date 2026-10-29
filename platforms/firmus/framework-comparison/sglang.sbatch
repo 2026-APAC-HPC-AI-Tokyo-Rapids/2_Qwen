@@ -32,7 +32,7 @@ prefill_tp=$(jq -er '.prefill.tp' "${ROOT}/source/firmus-framework.json")
 prefill_pp=$(jq -er '.prefill.pp // 1' "${ROOT}/source/firmus-framework.json")
 if [[ "${prefill_pp}" == 4 ]]; then
   [[ "${prefill_tp}" == 1 ]]
-  prefill_args=(--pp-size 4 --pp-max-micro-batch-size 2 --pp-async-batch-depth 1 --ep-size 1 --dp-size 1 --chunked-prefill-size 8192 --max-total-tokens 131072 --max-running-requests "${N}" --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --disable-cuda-graph --disable-overlap-schedule --init-expert-location trivial --ep-num-redundant-experts 0 --optimistic-prefill-attempts 0)
+  prefill_args=(--pp-size 4 --pp-max-micro-batch-size 2 --pp-async-batch-depth "$(jq -er .prefill.pp_async_batch_depth "${ROOT}/source/firmus-framework.json")" --ep-size 1 --dp-size 1 --chunked-prefill-size 8192 --max-total-tokens 131072 --max-running-requests "${N}" --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --disable-cuda-graph --disable-overlap-schedule --init-expert-location trivial --ep-num-redundant-experts 0 --optimistic-prefill-attempts 0)
 fi
 ART=${ROOT}/logs
 export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
