@@ -3,6 +3,8 @@ import hashlib
 import importlib.util
 import json
 import os
+import signal
+import time
 import subprocess
 from pathlib import Path
 
@@ -81,7 +83,8 @@ def test_preparation_rejects_bonus_image_before_creating_runtime(tmp_path):
     assert not runtime.exists()
 
 
-def test_preparation_reaches_draft_without_new_unsquashfs_options(tmp_path, config):
+@pytest.mark.parametrize("disconnect", [False, True])
+def test_preparation_reaches_draft_without_new_unsquashfs_options(tmp_path, config, disconnect):
     image = tmp_path / "1.sqsh"
     image.write_bytes(b"pinned fixture image")
     config.update(container_sha256=hashlib.sha256(image.read_bytes()).hexdigest(), container_size_bytes=image.stat().st_size, container_source_commit="a" * 40)
@@ -104,12 +107,24 @@ def test_preparation_reaches_draft_without_new_unsquashfs_options(tmp_path, conf
     binary = tmp_path / "bin"
     binary.mkdir()
     marker = tmp_path / "draft-stage"
-    for name, content in {"unsquashfs": "exit 99", "uvx": f"touch '{marker}'; exit 78"}.items():
+    child = tmp_path / "download-child"
+    download = f"touch '{marker}'; sleep 600 & echo $! >'{child}'; wait" if disconnect else f"touch '{marker}'; exit 78"
+    for name, content in {"unsquashfs": "exit 99", "uvx": download}.items():
         path = binary / name
         path.write_text("#!/bin/bash\n" + content + "\n")
         path.chmod(0o755)
     runtime = tmp_path / "run"
-    result = subprocess.run(["bash", str(ROOT / "submission/basic/prepare.sh"), str(runtime), str(image), str(model), str(tokenizer), str(settings)], env={**os.environ, "PATH": f"{binary}:{os.environ['PATH']}"}, capture_output=True, text=True, check=False)
-    assert result.returncode == 78, result.stderr
+    process = subprocess.Popen(["bash", str(ROOT / "submission/basic/prepare.sh"), str(runtime), str(image), str(model), str(tokenizer), str(settings)], env={**os.environ, "PATH": f"{binary}:{os.environ['PATH']}"}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if disconnect:
+        deadline = time.monotonic() + 10
+        while not child.exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        os.kill(process.pid, signal.SIGHUP)
+    _, stderr = process.communicate(timeout=10)
+    assert process.returncode == (129 if disconnect else 78), stderr
+    if disconnect:
+        state = Path(f"/proc/{child.read_text().strip()}/stat")
+        assert not state.exists() or state.read_text().rsplit(")", 1)[1].split()[0] == "Z"
     assert marker.exists()
     assert not runtime.exists()

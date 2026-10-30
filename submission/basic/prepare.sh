@@ -16,7 +16,18 @@ jq -e '.model_type == "qwen3_moe" and .quantization_config.quant_method == "fp8"
 [[ "$(jq -r '[.weight_map[]] | unique | length' "${model}/model.safetensors.index.json")" == 24 ]]
 while read -r shard; do test -s "${model}/${shard}"; done < <(jq -r '[.weight_map[]] | unique[]' "${model}/model.safetensors.index.json")
 mkdir "${root}"
-trap 'status=$?; if (( status != 0 )); then rm -rf -- "${root}"; fi' EXIT
+draft_pid=
+cleanup() {
+  status=$?
+  trap - EXIT
+  if [[ -n "${draft_pid}" ]]; then kill -TERM -- "-${draft_pid}" 2>/dev/null || true; wait "${draft_pid}" 2>/dev/null || true; fi
+  if (( status != 0 )); then rm -rf -- "${root}"; fi
+  exit "${status}"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 install -d -m 0755 "${root}/source" "${root}/scripts" "${root}/logs" "${root}/results" "${root}/profile" "${root}/home"
 ln -s "${image}" "${root}/sglang.sqsh"
 cp "${sidecar}" "${root}/source/container-sidecar.json"
@@ -27,7 +38,10 @@ install -d -m 0755 "${cache}/refs" "${cache}/snapshots/ac9c66cc9b46af7306746a925
 for file in config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json; do cp -L "${tokenizer}/${file}" "${cache}/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e/${file}"; done
 printf '%s' ac9c66cc9b46af7306746a9250f23d47083d689e >"${cache}/refs/main"
 export HF_HUB_DISABLE_XET=1
-uvx --from huggingface_hub==0.36.0 hf download nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507 config.json README.md model.safetensors --revision ff0f0c0999f6c86b21dfd2f5803eebc4ac712224 --local-dir "${root}/draft" --max-workers 1
+setsid uvx --from huggingface_hub==0.36.0 hf download nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507 config.json README.md model.safetensors --revision ff0f0c0999f6c86b21dfd2f5803eebc4ac712224 --local-dir "${root}/draft" --max-workers 1 &
+draft_pid=$!
+wait "${draft_pid}"
+draft_pid=
 python3 "${repo}/submission/run/prepare_eagle.py" "${root}/draft" "${root}/source"
 jq -e '.weight_sha256 == "bf226a966868fe413a22e62e471aa1130bd94f17fd2c40d322b1c8b4def1ae86" and .precision == "BF16"' "${root}/source/draft-provenance.json" >/dev/null
 cp "${repo}/submission/basic/submit.sbatch" "${repo}/scripts/basic-worker.py" "${repo}/scripts/check-basic-server-info.py" "${repo}/scripts/collect-eagle-acceptance.py" "${repo}/submission/run/run-aiperf.py" "${repo}/submission/run/parse-aiperf-result.py" "${root}/scripts/"
