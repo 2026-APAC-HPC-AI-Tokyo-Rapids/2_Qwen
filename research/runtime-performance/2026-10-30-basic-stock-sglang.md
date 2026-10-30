@@ -29,6 +29,10 @@ BonusのPP4はそのまま候補にしない。公開Qwen3MoEの `set_eagle3_lay
 
 全条件共通: P3/D1、各worker 4 GPU（attention TP1/DP4、MoE EP4）、FA3、FP8 KV/page64、native MegaMoE + DeepGEMM、memory fraction0.90、Nebius EAGLE3 steps3/draft4/BF16。P0/P1を第1node、P2/D0を第2nodeに置く。Prefill graph無効、Decode graph有効。KV poolはP32768・D393216/rank、最大runningはP256・D128（32/rank）。Decode graph bucketsは1,2,3,4,6,8,12,16,20,24,28,32で固定し、client concurrencyと一緒に変更しない。
 
+この初期候補は、[旧Prefill profileと配置比較](2026-10-09-prefill-supply-rebalance.md)でTP all-reduceとMoE grouped GEMM・補助処理が大きかったことを受けたもの。attention TP1/DP4はattentionのTP通信を避け、MoE EP4は公開MegaMoEの経路を使える。16 GPU中12をPrefill、4をDecodeへ配分する。旧P3/D1の低い値にはDecode KV admission不足のrunもあり、配置自体の棄却根拠にはしない。旧profileの時間比率やprivate実装の改善幅が最新版にも当てはまる、という主張ではない。
+
+同記録のsteps4/draft5は、受理長の増加がverify/draft費用でほぼ相殺されたため、今回はsteps3/draft4から始める。page64も旧TP4 Decodeでは不採用の履歴があるが、今回のattention DP4/MegaMoEは別経路なので、旧結果をそのまま採否に転用しない。現在の公式測定ではITLよりTTFTのmissが多く、まずpublic routingとPrefill batch geometryを比較する。この判断は、TTFTの内訳をkernel・queue・handoffに分離できたことを意味しない。
+
 | Commit / Actions | client N | local Prefill chunk / request limit | 状態 |
 | --- | ---: | --- | --- |
 | `2f22722` / 41051125031 | 160 | 4096 / unlimited | 配備失敗。Firmusのunsquashfs4.4が`-cat`未対応。GPU未使用 |
