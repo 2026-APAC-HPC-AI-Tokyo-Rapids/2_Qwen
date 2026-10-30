@@ -29,7 +29,7 @@ index 75529a8..fa879ce 100644
              int work_idx = 0;
              CUTLASS_PRAGMA_NO_UNROLL
 diff --git a/hopper/flash_fwd_launch_template.h b/hopper/flash_fwd_launch_template.h
-index abd33d6..d2e8bfd 100644
+index abd33d6..1e484b3 100644
 --- a/hopper/flash_fwd_launch_template.h
 +++ b/hopper/flash_fwd_launch_template.h
 @@ -62,7 +62,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream, int* resource
@@ -41,8 +41,20 @@ index abd33d6..d2e8bfd 100644
          std::conditional_t<!Is_causal && !Is_local,
              flash::StaticPersistentTileScheduler<Split>,
              flash::DynamicPersistentTileScheduler<CollectiveMainloop::NumMmaThreads, NumProducerThreads, Split, PackGQA, Arch >= 90 /*WarpSpecialized*/>
+@@ -205,8 +205,10 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream, int* resource
+             CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size));
+         }
+         // kernel<<<grid_dims, block_dims, smem_size, stream>>>(kernel_params);
++        // Pipelined Prefill tiles launch without PDL: the tile counter memset before the launch and
++        // every earlier write are then ordered by the stream alone, for every warp of the kernel.
+         cutlass::kernel_launch<AttnKernel>(grid_dims, block_dims, smem_size, stream, kernel_params,
+-                                           Arch >= 90 && Varlen && (FixedPrefill || (!params.skip_scheduler_metadata_computation && params.prepare_varlen_pdl)) /*launch_with_pdl*/);
++                                           Arch >= 90 && Varlen && ((FixedPrefill && !CollectiveMainloop::PrefillPipe) || (!params.skip_scheduler_metadata_computation && params.prepare_varlen_pdl)) /*launch_with_pdl*/);
+     }
+     CHECK_CUDA_KERNEL_LAUNCH();
+ }
 diff --git a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
-index 597f47a..baab269 100644
+index 597f47a..43528a5 100644
 --- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 +++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 @@ -57,6 +57,10 @@ struct CollectiveMainloopFwdSm90 {
@@ -61,7 +73,7 @@ index 597f47a..baab269 100644
              }
              auto &barrier_Q = shared_storage.pipelines.barrier_Q;
 +            if constexpr (PrefillPipe) {
-+                if (thread_idx == 0) { *pipe_tile(shared_storage) = make_int4(m_block, bidh, bidb, 0); }
++                if (thread_idx == 0) { *pipe_tile(shared_storage) = make_int4(m_block, bidh, bidb, n_block_max); }
 +            }
              cutlass::arch::cpasync_barrier_arrive(reinterpret_cast<uint64_t*>(&barrier_Q));
              barrier_Q.arrive();
@@ -75,17 +87,21 @@ index 597f47a..baab269 100644
          // if (thread_idx == 0) { printf("Producer: main load, after barrier_O\n");}
  
          if constexpr (!Transpose_V && !IntraWGOverlap) {
-@@ -1118,6 +1125,24 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1118,13 +1125,37 @@ struct CollectiveMainloopFwdSm90 {
          ++work_idx;
      }
  
-+    // Pipelined tiles hand each tile to the consumers with its Q: the unused AppendKV pipeline
-+    // storage holds (m_block, bidh, bidb); bidb < 0 ends the consumers' loop.
++    // Pipelined tiles hand each tile to the consumers with its Q: (m_block, bidh, bidb, n_block_max)
++    // of the tile the producer loads; bidb < 0 ends the consumers' loop. The consumers take the KV
++    // block count from here, so both sides walk the same number of K/V stages by construction.
++    // The slot is the 16-byte barrier_Qv field, which is never an mbarrier without HasQv; the
++    // AppendKV pipeline storage held it before, but its mbarriers are initialized at kernel start
++    // and PTX requires mbarrier.inval before such memory is used for anything else.
 +    template <typename SharedStorage>
 +    CUTLASS_DEVICE static int4*
 +    pipe_tile(SharedStorage& shared_storage) {
-+        static_assert(!AppendKV && sizeof(shared_storage.pipelines.pipeline_k_new) >= sizeof(int4));
-+        return reinterpret_cast<int4*>(&shared_storage.pipelines.pipeline_k_new);
++        static_assert(!HasQv && sizeof(shared_storage.pipelines.barrier_Qv) <= sizeof(int4));
++        return reinterpret_cast<int4*>(&shared_storage.pipelines.barrier_Qv);
 +    }
 +
 +    template <typename SharedStorage>
@@ -100,7 +116,17 @@ index 597f47a..baab269 100644
      template <typename SharedStorage>
      CUTLASS_DEVICE void
      load_tail(MainloopPipelineK pipeline_k, MainloopPipelineV pipeline_v, MainloopPipelineVt pipeline_vt, MainloopPipelineMask pipeline_mask,
-@@ -1698,6 +1723,206 @@ struct CollectiveMainloopFwdSm90 {
+               PipelineState& smem_pipe_write, SharedStorage &shared_storage, int const work_idx) {
+         // If we don't wait for barrier_O here, when using Cluster, CTA0 might exit early and CTA1 will
+         // try to arrive on barrier_O of CTA0, causing "unspecified launch failure".
+-        shared_storage.pipelines.barrier_O.wait((work_idx + 1) % 2);
++        // Pipelined tiles never wait on barrier_O per tile (one CTA per cluster), so work_idx says
++        // nothing about its phase; the producer tails below wait for every consumer release.
++        if constexpr (!PrefillPipe) { shared_storage.pipelines.barrier_O.wait((work_idx + 1) % 2); }
+         int warp_idx_in_warpgroup = __shfl_sync(0xffffffff, (threadIdx.x / 32) % 4, 0);
+         // Issue the epilogue waits
+         // TODO: check if this should be called by 1 thread or more
+@@ -1698,6 +1729,205 @@ struct CollectiveMainloopFwdSm90 {
          return true;
      }
  
@@ -144,7 +170,7 @@ index 597f47a..baab269 100644
 +        auto query_empty = [&] {
 +            cutlass::arch::NamedBarrier::arrive(NumMmaThreadsQK + NumProducerThreads, static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
 +        };
-+        // Tile hand-off: Q of the tile has landed and its coordinates are published.
++        // Tile hand-off: Q of the tile has landed and its coordinates and KV block count are published.
 +        int work_idx = 0;
 +        auto next_tile = [&] {
 +            shared_storage.pipelines.barrier_Q.wait(work_idx % 2);
@@ -153,12 +179,15 @@ index 597f47a..baab269 100644
 +            int const m_block = reinterpret_cast<int const volatile&>(tile->x);
 +            int const bidh = reinterpret_cast<int const volatile&>(tile->y);
 +            int const bidb = reinterpret_cast<int const volatile&>(tile->z);
-+            return cute::make_tuple(m_block, bidh, bidb);
++            int const n_block_max = reinterpret_cast<int const volatile&>(tile->w);
++            return cute::make_tuple(m_block, bidh, bidb, n_block_max);
 +        };
 +        struct TileState {
 +            int m_block, bidh, bidb, n_block_min, n_block_max, m_idx_min, seqlen_q, seqlen_k;
 +        };
-+        auto tile_state = [&](int m_block, int bidh, int bidb) {
++        // The block range is the producer's (causal, not local, no split: n_block_min = 0 and
++        // n_offset = 0 in get_n_block_min_max); the sequence lengths only shape the masks.
++        auto tile_state = [&](int m_block, int bidh, int bidb, int n_block_max) {
 +            SeqlenInfo_t seqlen_info{
 +                bidb, get<0>(params.shape_Q),
 +                !params.ptr_pagetable ? size<0>(params.shape_K) : size<0>(params.shape_K) * size<1>(params.shape_pagetable),
@@ -167,12 +196,8 @@ index 597f47a..baab269 100644
 +                params.seqused_q, params.seqused_k, params.leftpad_k,
 +                params.seqlens_rotary
 +            };
-+            auto [n_block_min, n_block_max, n_offset] = BlockMN_t::get_n_block_min_max(
-+                seqlen_info, m_block, bidb, 0, params.num_splits,
-+                params.window_size_left, params.window_size_right, params.attention_chunk_divmod,
-+                params.qhead_per_khead_divmod);
 +            int const m_idx_min = params.qhead_per_khead_divmod.divide(m_block * kBlockM);
-+            return TileState{m_block, bidh, bidb, n_block_min, n_block_max, m_idx_min, seqlen_info.seqlen_q, seqlen_info.seqlen_k - n_offset};
++            return TileState{m_block, bidh, bidb, 0, n_block_max, m_idx_min, seqlen_info.seqlen_q, seqlen_info.seqlen_k};
 +        };
 +        auto make_mask = [&](TileState const& t) {
 +            return flash::Mask<kBlockM, kBlockN, PackGQA, TiledMmaQK>(
@@ -188,9 +213,9 @@ index 597f47a..baab269 100644
 +            return params.ptr_v_descale == nullptr ? 1.0f : params.ptr_v_descale[t.bidb * get<0>(params.stride_v_descale) + t.bidh * get<1>(params.stride_v_descale)];
 +        };
 +
-+        auto [m_block0, bidh0, bidb0] = next_tile();
++        auto [m_block0, bidh0, bidb0, n_block_max0] = next_tile();
 +        if (bidb0 < 0) { return; }
-+        TileState cur = tile_state(m_block0, bidh0, bidb0);
++        TileState cur = tile_state(m_block0, bidh0, bidb0, n_block_max0);
 +        Softmax softmax(scale_log2(cur));
 +
 +        // First tile of this CTA: the first iteration of mma().
@@ -253,9 +278,9 @@ index 597f47a..baab269 100644
 +                fwd_step(n_block, no_mask_fn, cute::false_type{} /*check_inf*/);
 +            }
 +
-+            auto [m_block1, bidh1, bidb1] = next_tile();
++            auto [m_block1, bidh1, bidb1, n_block_max1] = next_tile();
 +            if (bidb1 < 0) { break; }
-+            TileState nxt = tile_state(m_block1, bidh1, bidb1);
++            TileState nxt = tile_state(m_block1, bidh1, bidb1, n_block_max1);
 +            // Boundary step: QK of the next tile's first (diagonal) block with the PV of this tile's
 +            // last block, in the ping-pong order of fwd_step.
 +            {

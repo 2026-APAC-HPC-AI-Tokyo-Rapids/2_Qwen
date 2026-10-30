@@ -31,12 +31,20 @@ def test_pipe_patch_changes_other_rows_only_behind_the_flag():
     assert 'static constexpr bool PrefillPipe = (PrefillVariant & 128) != 0;' in text
     # The producer hands tiles over with Q, so only this row runs the scheduler among producer warps only.
     assert 'CollectiveMainloop::PrefillPipe ? 0 : CollectiveMainloop::NumMmaThreads * VerifyHeads, NumProducerThreads,' in text
-    assert 'if constexpr (!PrefillPipe) { shared_storage.pipelines.barrier_O.wait((work_idx + 1) % 2); }' in text
+    # Neither the per-tile Q load nor the producer tail waits on barrier_O, whose phase work_idx no longer tracks.
+    assert text.count('if constexpr (!PrefillPipe) { shared_storage.pipelines.barrier_O.wait((work_idx + 1) % 2); }') == 2
     assert 'if constexpr (CollectiveMainloop::PrefillPipe) { mainloop.pipe_end(shared_storage); }' in text
-    # The tile hand-off uses the unused AppendKV storage; SharedStorage keeps its layout.
-    assert 'reinterpret_cast<int4*>(&shared_storage.pipelines.pipeline_k_new)' in text and 'static_assert(!AppendKV' in text
+    # The tile hand-off lives in barrier_Qv, never an mbarrier without HasQv; SharedStorage keeps its layout.
+    # The AppendKV pipeline storage that held it before has mbarriers initialized at kernel start.
+    assert 'reinterpret_cast<int4*>(&shared_storage.pipelines.barrier_Qv)' in text and 'static_assert(!HasQv' in text
+    assert 'pipeline_k_new' not in text
+    # The consumers walk the producer's KV block count instead of recomputing it from cu_seqlens.
+    assert 'make_int4(m_block, bidh, bidb, n_block_max)' in text and 'int const n_block_max = reinterpret_cast<int const volatile&>(tile->w);' in text
+    assert 'BlockMN_t::get_n_block_min_max' not in text
     # Consumers end on bidb < 0, and every tile releases its Q exactly once after its last QK.
     assert text.count('query_empty();') == 3 and 'if (bidb1 < 0) { break; }' in text and 'make_int4(0, 0, -1, 0)' in text
+    # Only this row launches without PDL, so the tile counter memset is ordered by the stream alone.
+    assert '((FixedPrefill && !CollectiveMainloop::PrefillPipe) || (!params.skip_scheduler_metadata_computation && params.prepare_varlen_pdl)) /*launch_with_pdl*/' in text
 
 
 def test_pp4_no_longer_screens_the_pipe_row_and_keeps_the_pin():
