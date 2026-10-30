@@ -11,12 +11,14 @@ ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "scripts/collect-eagle-acceptance.py"
 
 
+@pytest.mark.parametrize("basic", [False, True])
 @pytest.mark.parametrize(("requested_quantization", "reported_quantization"), [(None, None), ("fp8", "fp8"), ("fp8", None)])
-def test_collects_dp_state_and_log_statistics(tmp_path: Path, requested_quantization, reported_quantization) -> None:
+def test_collects_dp_state_and_log_statistics(tmp_path: Path, requested_quantization, reported_quantization, basic) -> None:
     config = tmp_path / "genkai-serving.json"
     config.write_text(
         json.dumps(
             {
+                "tier": "basic" if basic else "bonus",
                 "speculation": {
                     "algorithm": "EAGLE3",
                     "steps": 3,
@@ -67,7 +69,7 @@ def test_collects_dp_state_and_log_statistics(tmp_path: Path, requested_quantiza
             "--output",
             str(output),
             "--cluster",
-            "genkai",
+            "firmus" if basic else "genkai",
         ],
         capture_output=True,
         text=True,
@@ -80,6 +82,7 @@ def test_collects_dp_state_and_log_statistics(tmp_path: Path, requested_quantiza
     assert completed.returncode == 0, completed.stderr
     result = json.loads(output.read_text())
     assert result["speculation"]["draft_quantization"] == requested_quantization
+    assert result["route"]["submission"]["batch_entrypoint"] == ("submission/basic/submit.sbatch" if basic else "platforms/genkai/run-qwen-pd.pjm")
     assert result["route"]["stages"][-1] == "EAGLE3 verification"
     assert result["speculation"]["tokenizer_backend"] == "huggingface"
     assert result["statistics"]["server_info_state_count"] == 2

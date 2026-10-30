@@ -208,6 +208,8 @@ def collect(arguments: argparse.Namespace) -> dict[str, object]:
         "aspire2ap": "platforms/aspire2ap/run-qwen-pd.pbs",
         "firmus": "platforms/firmus/framework-comparison/sglang.sbatch",
     }.get(arguments.cluster, "unknown")
+    if arguments.cluster == "firmus" and read_json(arguments.config).get("tier") == "basic":
+        batch_entrypoint = "submission/basic/submit.sbatch"
     return {
         "schema_version": "qwen3-eagle-acceptance/v1",
         "captured_at_utc": datetime.now(timezone.utc).isoformat(),
