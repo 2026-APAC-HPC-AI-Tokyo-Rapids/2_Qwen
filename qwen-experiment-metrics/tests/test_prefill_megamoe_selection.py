@@ -250,10 +250,10 @@ def test_host_and_header_agree_on_the_four_stage_layout():
     # 1024 expert counters + 8192 dispatch buffers + 18 KiB CD + 144 barrier bytes + four 50,192-byte stages.
     assert 1024 + 8192 + 18432 + 144 + 4 * 50192 <= 232448 < 1024 + 8192 + 65536 + 144 + 4 * 50192
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())["deep_gemm_overlay_patches"]
-    pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch", "patches/deep-gemm-bench/prefill-split-ldsm/sm90-prefill-split-ldsm.patch", "patches/deep-gemm-bench/prefill-combine-norm/sm90-prefill-combine-norm.patch"]
+    pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch", "patches/deep-gemm-bench/prefill-split-ldsm/sm90-prefill-split-ldsm.patch"]
     # Only the Decode 1D2D BLOCK_M 192 overlay (a different header) follows the MegaMoE tiles.
     assert config[-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
-    assert config[-8:-1] == pp4_only
+    assert config[-7:-1] == pp4_only
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
     assert not set(pp4_only[1:]) & set(main)
 
@@ -262,7 +262,7 @@ def test_lean_is_an_ep1_trailing_flag_after_four_stages_with_the_same_bytes():
     host = (ROOT / "patches/deep-gemm-host/sm90-prefill-lean.patch").read_text()
     header = (ROOT / "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch").read_text()
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
-    assert series[-7:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-prefill-split-ldsm.patch", "sm90-prefill-combine-norm.patch", "sm90-1d2d-decode-bm192.patch"]
+    assert series[-6:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-prefill-split-ldsm.patch", "sm90-1d2d-decode-bm192.patch"]
     for gone in ("sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch", "sm90-prefill-tail-split.patch"):
         assert not (ROOT / "patches/deep-gemm-host" / gone).exists()
     # ",true" (kPrefillLean) only when set and one rank only.

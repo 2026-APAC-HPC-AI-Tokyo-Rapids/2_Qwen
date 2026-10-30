@@ -22,7 +22,7 @@ KERNEL = Path("deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh")
 SOURCE_FILES = [
     "csrc/jit_kernels/heuristics/sm90_mega_moe.hpp", "csrc/jit_kernels/heuristics/mega_moe.hpp", "csrc/jit_kernels/heuristics/sm90.hpp",
     "csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp", "csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp", "csrc/jit_kernels/impls/runtime_utils.hpp",
-    "csrc/utils/math.hpp", "csrc/utils/system.hpp", "csrc/apis/sm90_mega.hpp", "csrc/tvm_ffi_api.cpp", "deep_gemm/include/deep_gemm/common/math.cuh", "deep_gemm/include/deep_gemm/layout/mega_moe.cuh", "deep_gemm/include/deep_gemm/layout/sym_buffer.cuh",
+    "csrc/utils/math.hpp", "csrc/utils/system.hpp", "deep_gemm/include/deep_gemm/common/math.cuh", "deep_gemm/include/deep_gemm/layout/mega_moe.cuh", "deep_gemm/include/deep_gemm/layout/sym_buffer.cuh",
 ]
 
 
