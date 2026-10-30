@@ -1,0 +1,342 @@
+diff --git a/hopper/epilogue_fwd.hpp b/hopper/epilogue_fwd.hpp
+index 45b70e1..ba9fded 100644
+--- a/hopper/epilogue_fwd.hpp
++++ b/hopper/epilogue_fwd.hpp
+@@ -305,6 +305,24 @@ struct CollectiveEpilogueFwd {
+     CUTLASS_DEVICE void
+     store_fp8_direct(Params const& params, FrgTensorO const& tOrO, SharedStorage& shared_storage,
+                      TiledMma tiled_mma, int thread_idx, cute::tuple<int32_t, int32_t, int32_t, int32_t> const& block_coord) {
++        store_fp8_direct_impl<false>(params, tOrO, shared_storage, tiled_mma, thread_idx, block_coord, 0, 0);
++    }
++
++    // The caller holds the sequence offset and length: no cu_seqlens loads, and only the stores
++    // are predicated. Same values and stores.
++    template <typename SharedStorage, typename FrgTensorO, typename TiledMma>
++    CUTLASS_DEVICE void
++    store_fp8_direct(Params const& params, FrgTensorO const& tOrO, SharedStorage& shared_storage,
++                     TiledMma tiled_mma, int thread_idx, cute::tuple<int32_t, int32_t, int32_t, int32_t> const& block_coord,
++                     int const offset, int const seqlen) {
++        store_fp8_direct_impl<true>(params, tOrO, shared_storage, tiled_mma, thread_idx, block_coord, offset, seqlen);
++    }
++
++    template <bool Rows, typename SharedStorage, typename FrgTensorO, typename TiledMma>
++    CUTLASS_DEVICE void
++    store_fp8_direct_impl(Params const& params, FrgTensorO const& tOrO, SharedStorage& shared_storage,
++                          TiledMma tiled_mma, int thread_idx, cute::tuple<int32_t, int32_t, int32_t, int32_t> const& block_coord,
++                          int const rows_offset, int const rows_seqlen) {
+         static_assert(SupportsFP8Output && FP8PermuteCol && SkipLSE && !Use_TMA_O);
+         auto [m_block, bidh, bidb, split_idx] = block_coord;
+         // The last PV wait retired every V read, and smem_o is not used.
+@@ -323,7 +341,9 @@ struct CollectiveEpilogueFwd {
+         }
+         Tensor coords = group_modes<1, 3>(tiled_mma.get_thread_slice(thread_idx).partition_C(cute::make_identity_tensor(select<0, 1>(TileShape_MNK_PV{}))));
+         static_assert(decltype(size<0, 0>(values))::value == 2 && decltype(size<0, 1>(values))::value == 2 && decltype(size<0, 2>(values))::value == 16 && decltype(size<1>(values))::value == 1);
+-        flash::SeqlenInfo<Varlen, kBlockM> seqlen_info{bidb, size<0>(params.shape_O), params.cu_seqlens, params.seqused};
++        auto const seqlen_info = [&] {
++            if constexpr (Rows) { return 0; } else { return flash::SeqlenInfo<Varlen, kBlockM>{bidb, size<0>(params.shape_O), params.cu_seqlens, params.seqused}; }
++        }();
+         int const col = 2 * get<1>(coords(_0{}, _0{}));
+         cutlass::NumericArrayConverter<cutlass::float_e4m3_t, float, 4> convert;
+         #pragma unroll
+@@ -340,6 +360,27 @@ struct CollectiveEpilogueFwd {
+             // The deployed quantizer also compiles this division with --use_fast_math.
+             float const quant_scale = 448.f / amax;
+             int const row = m_block * kBlockM + get<0>(coords(make_coord(_0{}, r, _0{}), _0{}));
++            if constexpr (Rows) {
++                int const token = rows_offset + row / 16;
++                int const head = bidh * 16 + row % 16;
++                uint32_t packed[8];
++                #pragma unroll
++                for (int i = 0; i < 8; ++i) {
++                    cutlass::Array<float, 4> x;
++                    x[0] = values(make_coord(0, r, 2 * i), _0{}) * quant_scale;
++                    x[1] = values(make_coord(1, r, 2 * i), _0{}) * quant_scale;
++                    x[2] = values(make_coord(0, r, 2 * i + 1), _0{}) * quant_scale;
++                    x[3] = values(make_coord(1, r, 2 * i + 1), _0{}) * quant_scale;
++                    cutlass::Array<cutlass::float_e4m3_t, 4> q = convert(x);
++                    packed[i] = reinterpret_cast<uint32_t const&>(q);
++                }
++                if (row < rows_seqlen * 16) {
++                    uint8_t* dst = params.ptr_O_fp8 + (int64_t(token) * 64 + head) * 128 + col;
++                    #pragma unroll
++                    for (int i = 0; i < 8; ++i) { *reinterpret_cast<uint32_t*>(dst + 16 * i) = packed[i]; }
++                    if (col == 0) { params.ptr_O_scale[int64_t(head) * params.scale_group_stride + token] = amax * (1.f / 448.f); }
++                }
++            } else {
+             if (row < seqlen_info.seqlen * 16) {
+                 int const token = seqlen_info.offset + row / 16;
+                 int const head = bidh * 16 + row % 16;
+@@ -358,6 +399,7 @@ struct CollectiveEpilogueFwd {
+                     params.ptr_O_scale[int64_t(head) * params.scale_group_stride + token] = amax * (1.f / 448.f);
+                 }
+             }
++            }
+         }
+     }
+ 
+diff --git a/hopper/flash_fwd_kernel_sm90.h b/hopper/flash_fwd_kernel_sm90.h
+index fa879ce..e3c034f 100644
+--- a/hopper/flash_fwd_kernel_sm90.h
++++ b/hopper/flash_fwd_kernel_sm90.h
+@@ -224,7 +224,7 @@ public:
+         int warp_group_idx = cutlass::canonical_warp_group_idx();
+ 
+         if (warp_idx == 0 && lane_predicate) {
+-            shared_storage.pipelines.barrier_Q.init(Use_TMA_Q ? 1 : NumProducerThreads /*numThreads*/);
++            shared_storage.pipelines.barrier_Q.init(Use_TMA_Q || CollectiveMainloop::PrefillPipeQA ? 1 : NumProducerThreads /*numThreads*/);
+             if constexpr (HasQv) {
+                 shared_storage.pipelines.barrier_Qv.init(Use_TMA_Q ? 1 : NumProducerThreads /*numThreads*/);
+             }
+@@ -374,6 +374,32 @@ public:
+ 
+             cutlass::arch::wait_on_dependent_grids();
+ 
++            if constexpr (CollectiveMainloop::PrefillPipeQA) {
++                // Staged Q: the producers claim tiles themselves (see CollectiveMainloop::load).
++                auto tile_of = [&](int tile_idx) {
++                    auto work = scheduler.tile_idx_to_work_tile(params.scheduler, tile_idx, {0, 0, 0, 0});
++                    auto coord = work.get_block_coord(params.scheduler);
++                    return make_int4(get<0>(coord), get<1>(coord), work.is_valid(params.scheduler) ? get<2>(coord) : -1, 0);
++                };
++                struct { int* semaphore; decltype(tile_of)& tile_of; } tiles{params.scheduler.tile_count_semaphore, tile_of};
++                if (threadIdx.x % NumProducerThreads == 0) { *mainloop.pipe_next(shared_storage) = tile_of(int(blockIdx.x)); }
++                cutlass::arch::NamedBarrier::sync(NumProducerThreads, cutlass::arch::ReservedNamedBarriers::TransposeBarrier /*id*/);
++                mainloop.pipe_stage_q(params.mainloop, shared_storage, threadIdx.x % NumProducerThreads, -1);
++                for (int4 tile = mainloop.pipe_next_tile(shared_storage); tile.z >= 0; tile = mainloop.pipe_next_tile(shared_storage)) {
++                    cute::tuple<int32_t, int32_t, int32_t, int32_t> block_coord{tile.x, tile.y, tile.z, 0};
++                    SeqlenInfo_t seqlen_info{
++                        tile.z,
++                        get<0>(params.mainloop.shape_Q),
++                        !params.mainloop.ptr_pagetable ? size<0>(params.mainloop.shape_K) : size<0>(params.mainloop.shape_K) * size<1>(params.mainloop.shape_pagetable),
++                        get<0>(params.mainloop.shape_K_new),
++                        params.mainloop.cu_seqlens_q, params.mainloop.cu_seqlens_k, params.mainloop.cu_seqlens_k_new,
++                        params.mainloop.seqused_q, params.mainloop.seqused_k, params.mainloop.leftpad_k,
++                        params.mainloop.seqlens_rotary
++                    };
++                    mainloop.load(params.mainloop, pipeline_k, pipeline_v, pipeline_vt, pipeline_mask, smem_pipe_write,
++                                  shared_storage, tiles, seqlen_info, block_coord, work_idx);
++                }
++            } else {
+             // Load Q, K, V
+             for (auto work_tile_info = SingleProducerWarp || warp_idx_in_warpgroup == 0 ? scheduler.template get_initial_work</*IsProducerWarp=*/true>(params.scheduler) : scheduler.template get_initial_work</*IsProducerWarp=*/false>(params.scheduler);
+                  work_tile_info.is_valid(params.scheduler);
+@@ -406,6 +432,7 @@ public:
+                 mainloop.load(params.mainloop, pipeline_k, pipeline_v, pipeline_vt, pipeline_mask, smem_pipe_write,
+                                          shared_storage, scheduler_prefetch, seqlen_info, block_coord, work_idx);
+             }
++            }
+             if constexpr (CollectiveMainloop::PrefillPipe) { mainloop.pipe_end(shared_storage); }
+             mainloop.load_tail(pipeline_k, pipeline_v, pipeline_vt, pipeline_mask, smem_pipe_write, shared_storage, work_idx);
+         } else {  // Consumer
+@@ -426,8 +453,8 @@ public:
+                 Tensor tOrO = partition_fragment_C(tiled_mma_pv, select<0, 1>(TileShape_MNK_PV{}));
+                 mainloop.template mma_pipe<flash::Softmax<2 * (2 * kBlockM / NumMmaThreads), /*Max_offset=*/8>>(
+                     params.mainloop, pipeline_k, pipeline_v, smem_pipe_read, tOrO, threadIdx.x - MmaThreadOffset, shared_storage,
+-                    [&](auto const& acc, auto const& block_coord) {
+-                        epilogue.store_fp8_direct(params.epilogue, acc, shared_storage, tiled_mma_pv, threadIdx.x - MmaThreadOffset, block_coord);
++                    [&](auto const& acc, auto const& block_coord, auto... rows) {
++                        epilogue.store_fp8_direct(params.epilogue, acc, shared_storage, tiled_mma_pv, threadIdx.x - MmaThreadOffset, block_coord, rows...);
+                     });
+                 epilogue.store_tail();
+                 return;
+diff --git a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
+index baab269..dfb30c3 100644
+--- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
++++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
+@@ -61,6 +61,16 @@ struct CollectiveMainloopFwdSm90 {
+     // ping-pong step, so the next tile's first softmax and this tile's epilogue overlap the other
+     // warpgroup's GEMMs. Arithmetic per tile is unchanged.
+     static constexpr bool PrefillPipe = (PrefillVariant & 128) != 0;
++    // Staged Q (bit 256, on top of bit 128): the producers claim the next tile one or two KV steps
++    // before the current tile's last K/V and cp.async its Q into a staging buffer; when the consumers
++    // release Q after the tile's last QK, one bulk shared-to-shared copy moves it into smem_q. The
++    // consumer code is that of bit 128. Bit 512 claims one KV step earlier.
++    static constexpr bool PrefillPipeQA = (PrefillVariant & 256) != 0;
++    static constexpr int PrefillPipeLead = (PrefillVariant & 512) != 0 ? 1 : 0;
++    static_assert(!PrefillPipeQA || PrefillPipe);
++    static_assert(PrefillPipeLead == 0 || PrefillPipeQA);
++    static constexpr bool PrefillPipeRows = (PrefillVariant & 1024) != 0;
++    static_assert(!PrefillPipeRows || PrefillPipe);
+     static constexpr bool PrefillTreeMax = (PrefillVariant & 8) != 0;
+     static constexpr bool PrefillRegs = (PrefillVariant & 1) != 0;
+     static constexpr bool PrefillLazy = (PrefillVariant & 2) != 0;
+@@ -394,7 +404,7 @@ struct CollectiveMainloopFwdSm90 {
+     struct TensorStorageTransposeV : cute::aligned_struct<cute::max(SmemAlignmentQ, SmemAlignmentK, SmemAlignmentV), _0> {
+         cute::array_aligned<Element, cute::cosize_v<SmemLayoutVtMma> * kHeads, SmemAlignmentV> smem_v;
+         cute::array_aligned<Element, cute::cosize_v<SmemLayoutVt> * kHeads, SmemAlignmentVt> smem_vt;
+-        cute::array_aligned<Element, cute::cosize_v<SmemLayoutQ> * kHeads, SmemAlignmentQ> smem_q;
++        cute::array_aligned<Element, cute::cosize_v<SmemLayoutQ> * kHeads * (PrefillPipeQA ? 2 : 1), SmemAlignmentQ> smem_q;
+         cute::array_aligned<Element, cute::cosize_v<SmemLayoutK> * kHeads, SmemAlignmentK> smem_k;
+         SmemQv_t smem_qv;
+         SmemScale_t smem_scale;
+@@ -742,7 +752,7 @@ struct CollectiveMainloopFwdSm90 {
+         // It's possible to have n_block_max <= n_block_min. Loading K can cause illegal memory access.
+         if constexpr (Is_causal || Is_local || Varlen || Split) {
+             if (n_block_max <= n_block_min) {
+-                scheduler_prefetch();
++                if constexpr (!PrefillPipeQA) { scheduler_prefetch(); }
+                 return;
+             }
+         }
+@@ -1030,7 +1040,23 @@ struct CollectiveMainloopFwdSm90 {
+             }
+         }
+ 
+-        if constexpr (Use_TMA_Q) {
++        if constexpr (PrefillPipeQA) {
++            // The staged Q of this tile has landed (every producer thread waits for its own cp.async).
++            flash::cp_async_wait<0>();
++            cutlass::arch::fence_view_async_shared();
++            if (work_idx == 0) {
++                cutlass::arch::NamedBarrier::sync(NumProducerThreads, cutlass::arch::ReservedNamedBarriers::TransposeBarrier /*id*/);
++            } else {
++                cutlass::arch::NamedBarrier::sync(NumMmaThreadsQK + NumProducerThreads, static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
++            }
++            if (thread_idx == 0) {
++                *pipe_tile(shared_storage) = make_int4(m_block, bidh, bidb, 0);
++                uint32_t const barrier = cute::cast_smem_ptr_to_uint(&shared_storage.pipelines.barrier_Q);
++                uint32_t const dst = cute::cast_smem_ptr_to_uint(shared_storage.tensors.mainloop.smem_q.data());
++                cutlass::arch::ClusterTransactionBarrier::arrive_and_expect_tx(reinterpret_cast<uint64_t*>(&shared_storage.pipelines.barrier_Q), TmaTransactionBytesQ);
++                asm volatile("cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];\n" :: "r"(dst), "r"(dst + TmaTransactionBytesQ), "r"(TmaTransactionBytesQ), "r"(barrier) : "memory");
++            }
++        } else if constexpr (Use_TMA_Q) {
+             // Wait for the MMA warpgroups to signal that smem_q is ready
+             if (SingleProducerWarp || warp_idx_in_warpgroup == 0) {
+                 cutlass::arch::NamedBarrier::sync(NumMmaThreadsQK + cutlass::NumThreadsPerWarp, static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
+@@ -1084,6 +1110,13 @@ struct CollectiveMainloopFwdSm90 {
+         }
+         int n_block_prev = n_block;
+         --n_block;
++        // Staged Q: thread 0 claims the next tile one KV step before pipe_dec, publishes its coordinates
++        // at pipe_dec, and after that step's transpose barrier every producer thread stages its Q.
++        int pipe_dec = 0, pipe_idx = 0;
++        if constexpr (PrefillPipeQA) {
++            pipe_dec = std::min(n_block_min + PrefillPipeLead, n_block);
++            if (pipe_dec == n_block && thread_idx == 0) { pipe_idx = atomicAdd(scheduler_prefetch.semaphore, 1) + int(gridDim.x); }
++        }
+         #pragma unroll (!Transpose_V && Use_TMA_KV && !Has_sparse_mask ? 2 : 1)
+         for (; n_block >= n_block_min; --n_block) {
+             PipelineState smem_pipe_write_v = smem_pipe_write; // copy the state, write_v is always 1 step behind
+@@ -1113,9 +1146,26 @@ struct CollectiveMainloopFwdSm90 {
+                 }
+             }
+             n_block_prev = n_block;
++            if constexpr (PrefillPipeQA) {
++                if (thread_idx == 0) {
++                    if (n_block == pipe_dec + 1) { pipe_idx = atomicAdd(scheduler_prefetch.semaphore, 1) + int(gridDim.x); }
++                    if (n_block == pipe_dec) { *pipe_next(shared_storage) = scheduler_prefetch.tile_of(pipe_idx); }
++                }
++            }
+             if constexpr (Transpose_V) { copy_Vt_to_V(smem_pipe_write_v); }
++            if constexpr (PrefillPipeQA) {
++                if (n_block == pipe_dec) { pipe_stage_q(params, shared_storage, thread_idx, work_idx); }
++            }
++        }
++        if constexpr (PrefillPipeQA) {
++            if (pipe_dec < n_block_min) {  // Single-block tile: the loop did not run.
++                if (thread_idx == 0) { *pipe_next(shared_storage) = scheduler_prefetch.tile_of(pipe_idx); }
++                cutlass::arch::NamedBarrier::sync(NumProducerThreads, cutlass::arch::ReservedNamedBarriers::TransposeBarrier /*id*/);
++                pipe_stage_q(params, shared_storage, thread_idx, work_idx);
++            }
++        } else {
++            scheduler_prefetch();
+         }
+-        scheduler_prefetch();
+         if constexpr (!Transpose_V && IntraWGOverlap) {
+             if (should_load_KV) { load_V(n_block_prev, smem_pipe_write, cute::true_type{} /*Seqlenk_mask*/); }
+         }
+@@ -1140,7 +1190,50 @@ struct CollectiveMainloopFwdSm90 {
+         static_assert(PrefillPipe && !Use_TMA_Q);
+         cutlass::arch::NamedBarrier::sync(NumMmaThreadsQK + NumProducerThreads, static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
+         if (threadIdx.x % NumProducerThreads == 0) { *pipe_tile(shared_storage) = make_int4(0, 0, -1, 0); }
+-        shared_storage.pipelines.barrier_Q.arrive();
++        if constexpr (PrefillPipeQA) {
++            if (threadIdx.x % NumProducerThreads == 0) { shared_storage.pipelines.barrier_Q.arrive(); }
++        } else {
++            shared_storage.pipelines.barrier_Q.arrive();
++        }
++    }
++
++    // Staged Q: the next tile's coordinates, published by producer thread 0 (bidb < 0: none).
++    template <typename SharedStorage>
++    CUTLASS_DEVICE static int4*
++    pipe_next(SharedStorage& shared_storage) {
++        static_assert(!AppendKV && sizeof(shared_storage.pipelines.pipeline_v_new) >= sizeof(int4));
++        return reinterpret_cast<int4*>(&shared_storage.pipelines.pipeline_v_new);
++    }
++
++    template <typename SharedStorage>
++    CUTLASS_DEVICE static int4
++    pipe_next_tile(SharedStorage& shared_storage) {
++        int4 const* tile = pipe_next(shared_storage);
++        return make_int4(reinterpret_cast<int const volatile&>(tile->x), reinterpret_cast<int const volatile&>(tile->y), reinterpret_cast<int const volatile&>(tile->z), 0);
++    }
++
++    // All producer threads cp.async the Q of pipe_next into the staging half of smem_q. With
++    // work_idx >= 0, the bulk copy of tile work_idx out of the staging half must have completed.
++    template <typename SharedStorage>
++    CUTLASS_DEVICE void
++    pipe_stage_q(Params const& params, SharedStorage& shared_storage, int const thread_idx, int const work_idx) {
++        static_assert(PrefillPipeQA && kHeads == 1 && Varlen && PackGQA && !Use_TMA_Q);
++        int4 const tile = pipe_next_tile(shared_storage);
++        if (tile.z < 0) { return; }
++        if (work_idx >= 0) { shared_storage.pipelines.barrier_Q.wait(work_idx % 2); }
++        SeqlenInfo_t seqlen_info{
++            tile.z, get<0>(params.shape_Q),
++            !params.ptr_pagetable ? size<0>(params.shape_K) : size<0>(params.shape_K) * size<1>(params.shape_pagetable),
++            get<0>(params.shape_K_new),
++            params.cu_seqlens_q, params.cu_seqlens_k, params.cu_seqlens_k_new,
++            params.seqused_q, params.seqused_k, params.leftpad_k,
++            params.seqlens_rotary
++        };
++        Tensor mQ = make_tensor(make_gmem_ptr(params.ptr_Q + seqlen_info.offset_q * get<0>(params.stride_Q)), params.shape_Q_packed, params.stride_Q_packed)(_, _, tile.y, 0);
++        Tensor sQ_pi = cute::as_position_independent_swizzle_tensor(make_tensor(make_smem_ptr(shared_storage.tensors.mainloop.smem_q.data() + cosize_v<SmemLayoutQ>), SmemLayoutQ{}));
++        using PackGQAt = flash::PackGQAManager<get<0>(TileShape_MNK{}), get<2>(TileShape_MNK{}), NumProducerThreads, Element>;
++        PackGQAt::load_Q(mQ, sQ_pi, params.qhead_per_khead_divmod, thread_idx, seqlen_info.seqlen_q, tile.x);
++        cute::cp_async_fence();
+     }
+ 
+     template <typename SharedStorage>
+@@ -1872,6 +1965,8 @@ struct CollectiveMainloopFwdSm90 {
+                 fwd_step(n_block, no_mask_fn, cute::false_type{} /*check_inf*/);
+             }
+ 
++            // Issued before the hand-off wait so the store does not wait for it.
++            int const offset_cur = PrefillPipeRows ? params.cu_seqlens_q[cur.bidb] : 0;
+             auto [m_block1, bidh1, bidb1] = next_tile();
+             if (bidb1 < 0) { break; }
+             TileState nxt = tile_state(m_block1, bidh1, bidb1);
+@@ -1901,7 +1996,11 @@ struct CollectiveMainloopFwdSm90 {
+                 convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
+                 softmax.rescale_o(tOrO, scores_scale);
+                 flash::permute_output_fp8(tOrO);
+-                store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
++                if constexpr (PrefillPipeRows) {
++                    store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0), offset_cur, cur.seqlen_q);
++                } else {
++                    store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
++                }
+                 clear(tOrO);
+                 // Softmax keeps its scale const: rebuild it for the next tile, then take its state.
+                 ::new (&softmax) Softmax(scale_log2(nxt));
+@@ -1911,6 +2010,7 @@ struct CollectiveMainloopFwdSm90 {
+             }
+         }
+         // Last tile of this CTA: the final PV of mma().
++        int const offset_last = PrefillPipeRows ? params.cu_seqlens_q[cur.bidb] : 0;
+         Tensor scores_scale = make_fragment_like(softmax.row_max);
+         consumer_wait(pipeline_v, smem_pipe_read);
+         flash::gemm</*zero_init=*/false, /*wg_wait=*/-1>(tiled_mma_pv, tOrP, tOrV(_, _, _, smem_pipe_read.index()), tOrO);
+@@ -1920,7 +2020,11 @@ struct CollectiveMainloopFwdSm90 {
+         softmax.rescale_o(tOrO, scores_scale);
+         flash::permute_output_fp8(tOrO);
+         ++smem_pipe_read;
+-        store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
++        if constexpr (PrefillPipeRows) {
++            store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0), offset_last, cur.seqlen_q);
++        } else {
++            store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
++        }
+     }
+ 
+     template <typename SharedStorage, typename FrgTensorO, typename Softmax>
