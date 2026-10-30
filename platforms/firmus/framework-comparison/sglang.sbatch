@@ -223,7 +223,7 @@ done
 # "dense" on the Decode GPUs while the Prefill workers start. Only the Decode worker sources the result.
 if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving trial: retain prior kernel settings and the pinned PP4 selections; gate the EP1 MegaMoE variants, the pipelined-tile Prefill FA3 row, the fused Decode MoE input and the Decode QKV BLOCK_M 192 tile against the pinned kernels.\n'
+  printf 'PP4 serving trial: retain prior kernel settings and the pinned PP4 selections; gate the EP1 MegaMoE variants, the pipelined-tile Prefill FA3 row, the split one-pass Prefill MoE input, the multi-head Prefill Q/K norm writer, the fused Decode MoE input and the Decode QKV BLOCK_M 192 tile against the pinned kernels.\n'
   # prepare-firmus-pp4-settings.py pins the Prefill FA3 row and the Decode norm/quant kernel (same winner in
   # 40849459077 and 40883389891), the FP32 Prefill Q/K norm writer (same winner in 40911121619 and 40925558339)
   # and the one-pass Prefill MoE input (13.6% faster on every GPU in 40964714831); their selections no longer
@@ -264,7 +264,9 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # >=5 us per 94-layer graph layer at 3986, 4027, 4096 and 3986+4027 on all twelve GPUs; a failed, missing or
   # late screen keeps the pin.
   # Prefill-GPU chain (40991744289 and 41005872470): MegaMoE selection ~1.5-2 min, FA3 screen ~0.75-1 min, then
-  # both endurance gates ~0.4-0.5 min each, about 3.1-3.5 min against ~4 min for the Decode-GPU chain above.
+  # both endurance gates ~0.4-0.5 min each, then the memory-bound kernel step below ~1-1.25 min: about 4.1-4.8 min.
+  # The Decode-GPU chain above no longer screens the Decode FA3 verify (~3.5 min), so the Prefill chain now sets
+  # worker start, about 0.5-1.3 min later than in 41005872470 (Slurm 12:39 there).
   pinned_fa3=$(sed -n 's/^SGLANG_PREFILL_FA3_VERIFY=//p' "${ROOT}/source/prefill-kernels.env")
   prefill_gpu_selections=()
   for worker in 0 1 2; do
@@ -304,6 +306,23 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   for pid in "${prefill_gpu_gates[@]}"; do wait "${pid}" || true; done
   uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --aggregate "${ROOT}/results/prefill-megamoe" --endurance "${ROOT}/results/prefill-megamoe-endurance" --output "${ROOT}/results/prefill-megamoe/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
   uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --endurance "${ROOT}/results/prefill-fa3-endurance" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+  # Memory-bound Prefill kernels (select-firmus-prefill-elementwise.py, ~55-75 s with the rope JIT and the Triton
+  # compiles, 150 s timeout per worker, the three workers in parallel): onepass-split against the pinned one-pass MoE
+  # input (residual, FP8 codes and pad slots bit-equal, scales and routing within the FP32 partial-sum order bounds)
+  # and fp32-heads4/8 against the pinned FP32 Q/K norm writer (every output byte equal), timed at 8064 and 4032 rows;
+  # each candidate also runs 600 back-to-back calls and must reproduce its first outputs. A candidate is appended to
+  # prefill-kernels.env only if all twelve GPUs passed, it saved the margin at 8064 rows and was not slower at 4032
+  # rows on every GPU; a failed, hung or late result keeps the pins. The step runs with the worker's own home, so
+  # the rope JIT module it builds (~30-40 s, content-addressed under ~/.cache/tvm-ffi) is the one the worker loads.
+  prefill_gpu_elementwise=()
+  for worker in 0 1 2; do
+    node=${HEAD}
+    if (( worker == 2 )); then node=${TAIL}; fi
+    srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-megamoe-${SLURM_JOB_ID}-${worker}/triton" timeout --kill-after=5 150 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-elementwise.py" --output "${ROOT}/results/prefill-elementwise/prefill-${worker}" >"${ART}/prefill-elementwise-${worker}.log" 2>&1 &
+    prefill_gpu_elementwise+=("$!")
+  done
+  for pid in "${prefill_gpu_elementwise[@]}"; do wait "${pid}" || true; done
+  uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-elementwise.py" --aggregate "${ROOT}/results/prefill-elementwise" --output "${ROOT}/results/prefill-elementwise/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
 elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
   # Provision has verified the prior image, ordered overlays, expert map and
   # normalized serving config. Draft precision is the sole changed model setting.
