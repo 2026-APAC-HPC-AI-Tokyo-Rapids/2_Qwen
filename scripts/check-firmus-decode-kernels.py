@@ -907,6 +907,20 @@ def verify_quant_gate(output, stock):
     return {"quantized_values": verify_errors(a.float(), q.float(), "verify_fp8_codes"), "scales": verify_errors(scale, expected_scale, "verify_fp8_scales"), "stock_quant_dequant": verify_errors(verify_dequant(output), verify_dequant((q, expected_scale)), "verify_stock_quant_dequant"), "differing_codes": (a.view(torch.uint8) != q.view(torch.uint8)).sum().item()}
 
 
+def stream_slot_counts(lengths, block_n, slots=6, sms=132):
+    """Partial slots per request of the four-heads-per-CTA stream split (VerifyStreamScheduler):
+    the requests' block sequence is cut into G <= sms equal intervals of at least
+    ceil(max blocks / (slots - 1)) blocks, one per CTA."""
+    blocks = [(x + block_n - 1) // block_n for x in lengths]
+    total = sum(blocks)
+    groups = min(sms, total // -(-max(blocks) // (slots - 1)))
+    counts, start = [], 0
+    for n in blocks:
+        counts.append(0 if n == 0 else ((start + n) * groups - 1) // total - ((start + 1) * groups - 1) // total + 1)
+        start += n
+    return counts
+
+
 def verify_validate_candidate(batch, name):
     from sgl_kernel.flash_attn import flash_attn_with_kvcache
 
@@ -937,7 +951,10 @@ def verify_validate_candidate(batch, name):
             stock = flash_attn_with_kvcache(**common, num_splits=1, pack_gqa=True)
             metrics.append({"boundary": boundary, "replay": replay, "o_gemm_input": verify_quant_gate(step.output, stock), "stock": verify_errors(verify_dequant(step.output), stock, name + "_changed94"), "fp32": verify_errors(verify_dequant(step.output), verify_fp32_reference(common, lengths), name + "_changed_fp32")})
             state = step.state
-            if state is not None and state["spec"]["splits"] > 1:
+            if state is not None and state["spec"].get("heads") == 4:
+                # The main kernel stores each request's slot count; it must match the CPU partition.
+                assert state["metadata"][:batch].cpu().tolist() == stream_slot_counts(lengths, state["spec"]["block_n"]), "stream split slot counts"
+            elif state is not None and state["spec"]["splits"] > 1:
                 splits = state["spec"]["splits"]
                 counts = [splits] * batch
                 if state["spec"].get("uneven"):

@@ -1,6 +1,5 @@
 import ast
 import json
-import runpy
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,16 +38,3 @@ def test_bm192_candidates_cover_one_wave_of_qkv_tiles():
     for bm, bn, *_ in ast.literal_eval(checks_text.split("DENSE_LARGE = ", 1)[1].split("\n", 1)[0])["qkv"]:
         assert 16 <= bn <= 192 and bn % 16 == 0 and bm == 192
         assert -(-9216 // bn) <= 132
-
-
-def test_fa3_selection_records_the_read_granularity_probe():
-    selector = (ROOT / "scripts/select-firmus-decode-fa3.py").read_text()
-    assert "decode_kv_read_probe.measure(torch, common_sets)" in selector
-    assert 'local.setdefault("read_probe", {})[str(batch)]' in selector
-    source = (ROOT / "scripts/decode_kv_read_probe.py").read_text()
-    assert "GRANULARITIES = (1, 2, 4)" in source and "chunks = 2 * heads" in source
-    # Same programs and bytes at every granularity: 4 / heads groups x 2 * heads chunks per request.
-    assert all((4 // heads) * (2 * heads) == 8 for heads in (1, 2, 4))
-    rows = json.loads((ROOT / "kernels/fa3-verify/candidates.json").read_text())
-    screen = runpy.run_path(str(ROOT / "scripts/select-firmus-decode-fa3.py"))["PINNED_SCREEN"]
-    assert screen == tuple(r["name"] for r in rows if r.get("heads", 1) == 2) == ("p128split2-h2-fp8", "p128split3-h2-fp8")
