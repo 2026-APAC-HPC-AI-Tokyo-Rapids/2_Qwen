@@ -102,7 +102,7 @@ def test_patches_are_in_the_pp4_chain_after_the_ldmatrix_split():
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     dg = config["deep_gemm_overlay_patches"]
     assert dg[-3:] == ["patches/deep-gemm-bench/prefill-split-ldsm/sm90-prefill-split-ldsm.patch", "patches/deep-gemm-bench/prefill-combine-norm/sm90-prefill-combine-norm.patch", "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"]
-    assert config["sglang_overlay_patches"][-2:] == ["patches/sglang/decode-moe-input.patch", "patches/sglang/prefill-combine-norm.patch"]
+    assert config["sglang_overlay_patches"][-4:-2] == ["patches/sglang/decode-moe-input.patch", "patches/sglang/prefill-combine-norm.patch"]
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
     assert series[-3:] == ["sm90-prefill-split-ldsm.patch", "sm90-prefill-combine-norm.patch", "sm90-1d2d-decode-bm192.patch"]
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())

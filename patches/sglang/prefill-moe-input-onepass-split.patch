@@ -1,0 +1,170 @@
+diff --git a/python/sglang/kernels/ops/moe/prefill_moe_input.py b/python/sglang/kernels/ops/moe/prefill_moe_input.py
+index 95bb05f..c3c8ba3 100644
+--- a/python/sglang/kernels/ops/moe/prefill_moe_input.py
++++ b/python/sglang/kernels/ops/moe/prefill_moe_input.py
+@@ -6,6 +6,8 @@ fused:      post_norm_moe_input (residual, BF16 y, FP8 x, FP32 scales, pad slots
+ fused-gate: post_norm_moe_input -> gate_route_into_buffer (gate GEMM + router in one kernel)
+ onepass:    onepass_moe_input (residual, FP8 x, FP32 scales, gate GEMM, router, pad slots
+             in one pass over the rows; no BF16 y is written or re-read)
++onepass-split: onepass_split_moe_input (the onepass loop with each row block's column
++            groups split over 2-4 programs, then _onepass_finalize for rstd, scales and router)
+ 
+ Decode TARGET_VERIFY uses "fused" without the pad slots (the kernel reads only
+ its own rows) and with the router's graph-padding mask, as select_experts does.
+@@ -252,3 +254,103 @@ def onepass_moe_input(x, residual, weight, eps, gate_weight, buf_x, buf_x_sf, bu
+     assert buf_topk_idx.is_contiguous() and buf_topk_weights.is_contiguous() and 0 < rows <= buf_x.shape[0]
+     # 64 rows x 8 warps x 3 stages: 130 registers, no spill, 172.5 KB shared (CUDA 13.4 / Triton 3.7, sm_90a).
+     _onepass_moe_input[(buf_x.shape[0] // 64,)](x, residual, weight, gate_weight, buf_x, buf_x_sf, buf_topk_idx, buf_topk_weights, rows, eps, BLOCK_M=64, num_warps=8, num_stages=3)
++
++
++# One compiled kernel for every row count and split (no integer specialization).
++@triton.jit(do_not_specialize=["num_tokens", "groups"])
++def _onepass_split_moe_input(O, R, W, G, Q, S, P, SS, num_tokens, cap, groups, BLOCK_M: tl.constexpr):
++    """_onepass_moe_input's loop over `groups` of the 32 column groups (program_id(1)
++    picks which), with the same per-group arithmetic and layouts; the partial sum
++    of h^2 and the FP32 gate accumulator go to SS and P for _onepass_finalize."""
++    rows = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
++    split = tl.program_id(1)
++    live = rows < num_tokens
++    cols = tl.arange(0, 128)
++    experts = tl.arange(0, 128)
++    sumsq = tl.zeros((BLOCK_M,), tl.float32)
++    acc = tl.zeros((BLOCK_M, 128), tl.float32)
++    for g in range(split * groups, split * groups + groups):
++        offs = rows[:, None] * 4096 + (g * 128 + cols)[None, :]
++        h = tl.load(O + offs, mask=live[:, None], other=0.0).to(tl.float32) + tl.load(R + offs, mask=live[:, None], other=0.0).to(tl.float32)
++        tl.store(R + offs, h.to(tl.bfloat16), mask=live[:, None])
++        sumsq += tl.sum(h * h, 1)
++        hw = h * tl.load(W + g * 128 + cols).to(tl.float32)[None, :]
++        absmax = tl.maximum(tl.max(tl.abs(hw), 1), 1.0e-10)
++        q = hw * tl.div_rn(tl.full((BLOCK_M,), 448.0, tl.float32), absmax)[:, None]
++        tl.store(Q + offs, q.to(tl.float8e4nv), mask=live[:, None])
++        tl.store(S + rows * 32 + g, tl.div_rn(absmax, 448.0), mask=live)
++        z = tl.inline_asm_elementwise("cvt.rn.bf16x2.f32 $0, $2, $1;", "=r,r,r", [hw], dtype=tl.bfloat16, is_pure=False, pack=2)
++        acc = tl.dot(z, tl.load(G + experts[None, :] * 4096 + (g * 128 + cols)[:, None]), acc)
++    part = split * cap + rows
++    tl.store(SS + part, sumsq, mask=live)
++    tl.store(P + part[:, None] * 128 + experts[None, :], acc, mask=live[:, None])
++
++
++@triton.jit(do_not_specialize=["num_tokens", "splits"])
++def _onepass_finalize(S, P, SS, IDS, TW, num_tokens, cap, splits, eps, BLOCK_M: tl.constexpr):
++    """Sum the split partials in split order, then _onepass_moe_input's epilogue:
++    rstd onto the 32 group scales and the logits, BF16 logits, softmax top-8 into
++    the MegaMoE buffer; pad slots for rows past num_tokens."""
++    rows = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
++    live = rows < num_tokens
++    experts = tl.arange(0, 128)
++    sumsq = tl.load(SS + rows, mask=live, other=0.0)
++    acc = tl.load(P + rows[:, None] * 128 + experts[None, :], mask=live[:, None], other=0.0)
++    # Two or four splits; the loads of absent ones are masked off (a runtime loop costs ~90 registers on Triton 3.6).
++    for s in tl.static_range(1, 4):
++        if s < splits:
++            sumsq += tl.load(SS + s * cap + rows, mask=live, other=0.0)
++            acc += tl.load(P + (s * cap + rows)[:, None] * 128 + experts[None, :], mask=live[:, None], other=0.0)
++    rstd = tl.rsqrt(sumsq / 4096.0 + eps)
++    groups = tl.arange(0, 32)
++    scale_offs = rows[:, None] * 32 + groups[None, :]
++    tl.store(S + scale_offs, tl.load(S + scale_offs, mask=live[:, None], other=0.0) * rstd[:, None], mask=live[:, None])
++    biased = (acc * rstd[:, None]).to(tl.bfloat16).to(tl.float32) + 0.0
++    row_max = tl.max(biased, axis=1)[:, None]
++    exp_row = tl.exp(biased - row_max)
++    activated = exp_row / tl.sum(exp_row, axis=1)[:, None]
++    biased = tl.where(biased == biased, biased, -1e30)
++    slots = tl.arange(0, 8)
++    selected_vals = tl.zeros((BLOCK_M, 8), dtype=tl.float32)
++    selected_idx = tl.zeros((BLOCK_M, 8), dtype=tl.int32)
++    cur = biased
++    for k in tl.static_range(8):
++        max_val = tl.max(cur, axis=1)[:, None]
++        lane_id = tl.where(cur == max_val, experts[None, :], 129)
++        win_lane = tl.min(lane_id, axis=1)[:, None]
++        win_activated = tl.sum(tl.where(experts[None, :] == win_lane, activated, 0.0), axis=1)[:, None]
++        slot = slots[None, :] == k
++        selected_vals = tl.where(slot, win_activated, selected_vals)
++        selected_idx = tl.where(slot, win_lane, selected_idx)
++        cur = tl.where(experts[None, :] == win_lane, -float("inf"), cur)
++    routed_sum = tl.sum(selected_vals, axis=1)[:, None]
++    selected_vals = selected_vals / tl.where(routed_sum > 0.0, routed_sum, 1.0)
++    out = rows[:, None] * 8 + slots[None, :]
++    tl.store(TW + out, tl.where(live[:, None], selected_vals, 0.0))
++    tl.store(IDS + out, tl.where(live[:, None], selected_idx, -1).to(tl.int64))
++
++
++def onepass_split_moe_input(x, residual, weight, eps, gate_weight, buf_x, buf_x_sf, buf_topk_idx, buf_topk_weights):
++    """onepass_moe_input in two kernels. _onepass_moe_input runs one program of 64
++    rows per SM (126 at 8064 rows, 172.5 KB shared each), latency-bound at about
++    half the HBM bandwidth. Here each 64-row block's 32 column groups are split over
++    2 programs (4 at <= 4096 rows) with two pipeline stages (106.75 KB shared, <= 128
++    registers: two programs per SM); _onepass_finalize then sums the partial h^2 and
++    FP32 logits in split order and runs the same epilogue. Residual, FP8 codes and
++    the rstd-free group scales are computed exactly as in onepass; the scales and
++    logits differ from it only by the FP32 order of the two or four partial sums."""
++    rows = x.shape[0]
++    assert x.shape[1] == 4096 and x.dtype == residual.dtype == weight.dtype == gate_weight.dtype == torch.bfloat16
++    assert x.is_contiguous() and residual.is_contiguous() and weight.is_contiguous() and gate_weight.is_contiguous() and gate_weight.shape == (128, 4096)
++    assert buf_x.dtype == torch.float8_e4m3fn and buf_x.shape[1] == 4096 and buf_x.is_contiguous() and buf_x.shape[0] % 16 == 0
++    assert buf_x_sf.dtype == torch.float32 and buf_x_sf.shape == (buf_x.shape[0], 32) and buf_x_sf.is_contiguous()
++    assert buf_topk_idx.dtype == torch.int64 and buf_topk_weights.dtype == torch.float32
++    assert buf_topk_idx.shape == buf_topk_weights.shape == (buf_x.shape[0], 8)
++    assert buf_topk_idx.is_contiguous() and buf_topk_weights.is_contiguous() and 0 < rows <= buf_x.shape[0]
++    cap = buf_x.shape[0]
++    splits = 2 if rows > 4096 else 4
++    partial = torch.empty(splits * cap * 129, dtype=torch.float32, device=x.device)
++    logits, sumsq = partial[: splits * cap * 128], partial[splits * cap * 128 :]
++    # 64 rows x 8 warps x 2 stages: 126-127 registers, no spill, 106.75 KB shared (Triton 3.6 / 3.7, sm_90a).
++    _onepass_split_moe_input[(triton.cdiv(rows, 64), splits)](x, residual, weight, gate_weight, buf_x, buf_x_sf, logits, sumsq, rows, cap, 32 // splits, BLOCK_M=64, num_warps=8, num_stages=2, maxnreg=128)
++    _onepass_finalize[(cap // 16,)](buf_x_sf, logits, sumsq, buf_topk_idx, buf_topk_weights, rows, cap, splits, eps, BLOCK_M=16, num_warps=4)
+diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
+index 0516fe4..97c7ae7 100644
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -137,9 +137,11 @@ _INPUT_NORM_QUANT_MIN_ROWS = 2048
+ # runs the router gate GEMM and top-k as one kernel (kernels/ops/moe/prefill_moe_input.py).
+ # "onepass" (pinned for PP4 over "fused" by scripts/prepare-firmus-pp4-settings.py)
+ # runs the residual add, norm, FP8 input, gate GEMM and router in one kernel that
+-# never writes the BF16 normalized activation.
++# never writes the BF16 normalized activation. "onepass-split" (selected against
++# onepass by scripts/select-firmus-prefill-elementwise.py) splits its column groups
++# over two programs per row block and finishes the norm and router in a second kernel.
+ _PREFILL_MOE_INPUT = os.environ.get("SGLANG_PREFILL_MOE_INPUT", "control")
+-assert _PREFILL_MOE_INPUT in ("control", "fused", "fused-gate", "onepass"), _PREFILL_MOE_INPUT
++assert _PREFILL_MOE_INPUT in ("control", "fused", "fused-gate", "onepass", "onepass-split"), _PREFILL_MOE_INPUT
+ # Decode TARGET_VERIFY MegaMoE input, chosen per job on the Decode GPUs by
+ # scripts/select-firmus-decode-moe-input.py: "fused" is the Prefill "fused" path
+ # without pad slots and with the router's graph-padding mask (no pre-dispatch).
+@@ -472,11 +474,13 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
+     def forward_megamoe_fused_input(self, hidden_states, residual, norm, mode, num_token_non_padded=None, next_norm=None):
+         """Prefill: add-RMSNorm writes BF16 y in place plus the MegaMoE FP8 input,
+         scales and pad slots; the router writes the top-k rows; no pre-dispatch.
+-        "onepass" does all of it in one kernel without y (hidden_states unchanged).
++        "onepass" does all of it in one kernel without y (hidden_states unchanged);
++        "onepass-split" does the same in two kernels.
+         "decode-fused": the same as "fused" without pad slots; the router masks the graph padding."""
+         from sglang.kernels.ops.moe.prefill_moe_input import (
+             gate_route_into_buffer,
+             onepass_moe_input,
++            onepass_split_moe_input,
+             post_norm_moe_input,
+             route_into_buffer,
+         )
+@@ -494,8 +498,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
+             hidden=self.config.hidden_size,
+             intermediate_hidden=self.config.moe_intermediate_size,
+         )
+-        if mode == "onepass":
+-            onepass_moe_input(hidden_states, residual, norm.weight, norm.variance_epsilon, self.gate.weight, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights)
++        if mode in ("onepass", "onepass-split"):
++            (onepass_split_moe_input if mode == "onepass-split" else onepass_moe_input)(hidden_states, residual, norm.weight, norm.variance_epsilon, self.gate.weight, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights)
+             if next_norm is not None:
+                 # residual += MoE output; returns the next layer's QKV input (q, scale).
+                 from sglang.srt.layers.moe.mega_moe_sm90 import run_sm90_mega_combine_norm
+@@ -1283,7 +1287,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
+         nxt = self._next_layer
+         if (
+             not _PREFILL_COMBINE_NORM
+-            or moe_input != "onepass"
++            or moe_input not in ("onepass", "onepass-split")
+             or nxt is None
+             or getattr(nxt, "_is_layer_to_capture", False)
+             or self.layer_communicator._communicate_summable_tensor_pair_fn
