@@ -244,7 +244,8 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # Measurements on each Prefill GPU stay sequential.
   # Like telemetry, this overlapping step sees all eight tail GPUs; explicitly use 4..7.
   # It must not reserve the first four before the Prefill screen, which serves on 0..3.
-  srun --overlap -N1 -n1 --exact -w "${TAIL}" --gres=gpu:8 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts sparse-penalty-gate)" env CUDA_VISIBLE_DEVICES=4,5,6,7 OMP_NUM_THREADS=1 timeout --kill-after=5 175 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/check-decode-sparse-penalty.py" /opt/sglang/source --gpu >"${ART}/sparse-penalty-gate.log" 2>&1 &
+  # 41088950539 failed reading Triton metadata in the shared HOME cache; keep this gate node-local too.
+  srun --overlap -N1 -n1 --exact -w "${TAIL}" --gres=gpu:8 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts sparse-penalty-gate)" env TRITON_CACHE_DIR="/tmp/qwen-sparse-penalty-${SLURM_JOB_ID}" CUDA_VISIBLE_DEVICES=4,5,6,7 OMP_NUM_THREADS=1 timeout --kill-after=5 175 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/check-decode-sparse-penalty.py" /opt/sglang/source --gpu >"${ART}/sparse-penalty-gate.log" 2>&1 &
   sparse_penalty_gate=$!
   pinned_fa3=$(sed -n 's/^SGLANG_PREFILL_FA3_VERIFY=//p' "${ROOT}/source/prefill-kernels.env")
   prefill_gpu_selections=()

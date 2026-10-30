@@ -147,3 +147,36 @@ The source clone is outside the serving worktree; the shipped candidate table
 and image are unchanged. Kernel time, numerical parity and serving gain remain
 unknown. The compile commands, logs, SASS and resource result are retained in
 `outputs/pp4-throughput-bundle-20261031/fa3-geometry/` outside the repository.
+
+## Terminal result and user-requested retry
+
+Run 41088950539 ended in failure. Slurm 27712 ran for 3:18 and returned 1:0
+before model startup or the official benchmark. The first fatal error is in
+`logs/logs/sparse-penalty-gate.log`: rank 3 could not read
+`~/.triton/cache/.../_apply_min_new_tokens_penalty.json` during Triton JIT
+compilation. The archive SHA-256 for that log is
+`07fa8aa248bf855ae2de6c95e5c064797b8d5013909368d8da686af9ae1d27f6`, verified
+against the archive's SHA256SUMS. The four CPU checks passed; the GPU gate did
+not finish. The parent shell propagated its exit code through `wait` with
+`set -e`. Missing server-info files are a downstream symptom, not the first
+failure. No official score was produced.
+
+Both Prefill selectors retained their served controls: diagonal-trim FA3 lost
+its timing gate, and split-unroll16 was below the 0.5% aggregate margin. These
+are normal fallback decisions and did not fail the job.
+
+The sparse gate omitted the node-local `TRITON_CACHE_DIR` already used by the
+other selectors. Its HOME is bind-mounted from the run directory on shared
+storage. The missing metadata is consistent with the prior shared-cache
+replacement failure documented in `2026-10-22-claude-takeover-status.md`; the
+exact filesystem race for this run has not been reproduced separately.
+
+The user requested a fix and resubmission on 2026-10-31. Set this gate's cache
+to `/tmp/qwen-sparse-penalty-${SLURM_JOB_ID}` inside its existing container.
+Pin `configs/firmus-prefill-pp4.json` to the already built 41088950539 image,
+using the hash, size and source commit verified in its archived sidecar and
+runtime config. The previous tracked pin still referenced the round-4 image
+because the original fresh-build job updated only its staged runtime config.
+Reuse the bundle image without rebuilding. Workload, model, topology, kernels,
+correctness gates and their failure propagation are unchanged. Successful
+GPU checks and an official serving result remain required for this retry.

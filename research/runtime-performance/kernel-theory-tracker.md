@@ -24,7 +24,7 @@ GEMMはFMAを2 FLOPとし、`2MNK`。MoEはFC1とFC2を分け、有効行数とt
 
 ユーザー指示により有効な改善をまとめ、公式good output 10k・10.5k・11kを目指す。基準はPP4 run41005872470の9832.74（反復41020974704は9828.95）。最新R8の修正版FA3・diagonal trim候補・gigatoken・選別削減へ、疎なmin-new-token penalty、FA3 draft-extend graph、FC1 split-unroll16候補を追加する。
 
-状態：`ci_build_provision_passed_slurm_submitted_score_pending`。追加run：41088950539、公式score：None（未測定はNone）。shape・dtype・削る仕事・byte・未知の計測値は入力JSONの`pp4_throughput_bundle_20261031`、検証と結果は `2026-10-31-pp4-throughput-bundle.md`。kernel選択、capture入力の一致、通常servingの成績を区別する。以下の旧EP4 profileの費用を新しいPP4計測値として流用しない。
+状態：`failed_sparse_gpu_gate_cache_metadata_missing_retry_prepared`。追加run：41088950539、公式score：None（未測定はNone）。shape・dtype・削る仕事・byte・未知の計測値は入力JSONの`pp4_throughput_bundle_20261031`、検証と結果は `2026-10-31-pp4-throughput-bundle.md`。kernel選択、capture入力の一致、通常servingの成績を区別する。以下の旧EP4 profileの費用を新しいPP4計測値として流用しない。
 
 ## 現在の実行状態
 
