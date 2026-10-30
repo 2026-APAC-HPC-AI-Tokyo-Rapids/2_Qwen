@@ -13,12 +13,16 @@
 //   ss-norescale  the serving loop without the 128 FMUL rescale (wrong numbers, timing only)
 //   ss-ares     A written once per stage at start; TMA moves B and SFA only (timing only)
 //   rs-const    RS form with constant A registers, no A traffic at all (timing only)
+//   splitP-uU   the serving loop with each warpgroup's m64n256 accumulator issued as P parts
+//               (m64n128 or m64n64) on the same stage: the rescale of part p of a K block runs while
+//               its later parts and the previous K block's are still queued (same products, K order
+//               and multipliers per element); U K blocks per straight-line chunk, drained at its end
 //   rs-nat      RS form with A in its natural row-major layout (as the pool and the FC1 output are):
 //               per K block each thread loads bytes 16c..16c+15 and 64+16c..64+16c+15 (c = lane % 4)
 //               of its two rows with coherent ld.global.cg (the pool is written inside the kernel),
 //               and B's K is permuted within each 128-K block to the same order (weights are
 //               transformed once at load); only the summation order inside the tensor core differs
-// ss, rs-ldg and ss-mcb compute the same values: their per-thread output hashes must match bit
+// ss, rs-ldg, ss-mcb and the split variants compute the same values: their per-thread output hashes must match bit
 // for bit, and tile 0 must match an FP64 host reference.
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -43,8 +47,8 @@
 #define CHECK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { printf("FAIL cuda %s at %s:%d\n", cudaGetErrorString(e_), __FILE__, __LINE__); exit(1); } } while (0)
 #define CHECK_CU(x) do { CUresult r_ = (x); if (r_ != CUDA_SUCCESS) { printf("FAIL driver %d at %s:%d\n", int(r_), __FILE__, __LINE__); exit(1); } } while (0)
 
-enum Variant : int { SS = 0, RS_LDG = 1, SS_MCB = 2, SS_NORESCALE = 3, SS_ARES = 4, RS_CONST = 5, RS_NAT = 6, NUM_VARIANTS = 7 };
-static const char* kVariantNames[NUM_VARIANTS] = {"ss", "rs-ldg", "ss-mcb", "ss-norescale", "ss-ares", "rs-const", "rs-nat"};
+enum Variant : int { SS = 0, RS_LDG = 1, SS_MCB = 2, SS_NORESCALE = 3, SS_ARES = 4, RS_CONST = 5, RS_NAT = 6, SPLIT2_U1 = 7, SPLIT2_U4 = 8, SPLIT2_U8 = 9, SPLIT4_U1 = 10, SPLIT4_U4 = 11, NUM_VARIANTS = 12 };
+static const char* kVariantNames[NUM_VARIANTS] = {"ss", "rs-ldg", "ss-mcb", "ss-norescale", "ss-ares", "rs-const", "rs-nat", "split2-u1", "split2-u4", "split2-u8", "split4-u1", "split4-u4"};
 
 constexpr uint32_t K = 4096, KB = K / 128, NUM_N_BLOCKS = 12, M_BLOCKS_PER_EXPERT = 4, EXPERTS = 44;
 constexpr uint32_t BM = 128, BN = 256, STAGES = 4;
@@ -56,11 +60,16 @@ constexpr uint32_t THREADS = 384;
 
 using Barrier = cutlass::arch::ClusterTransactionBarrier;
 using SS_MMA = cute::SM90::GMMA::MMA_64x256x32_F32E4M3E4M3_SS_TN<>;
+using SS_HALF_MMA = cute::SM90::GMMA::MMA_64x128x32_F32E4M3E4M3_SS_TN<>;
 using RS_MMA = cute::SM90::GMMA::MMA_64x256x32_F32E4M3E4M3_RS_TN<>;
 
 template <size_t... I>
 __device__ __forceinline__ void wgmma_ss(uint64_t da, uint64_t db, float* d, std::index_sequence<I...>) {
     SS_MMA::fma(da, db, d[I]..., cute::SM90::GMMA::ScaleOut::One);
+}
+template <size_t... I>
+__device__ __forceinline__ void wgmma_ss_half(uint64_t da, uint64_t db, float* d, bool accumulate, std::index_sequence<I...>) {
+    SS_HALF_MMA::fma(da, db, d[I]..., accumulate ? cute::SM90::GMMA::ScaleOut::One : cute::SM90::GMMA::ScaleOut::Zero);
 }
 template <size_t... I>
 __device__ __forceinline__ void wgmma_rs(const uint32_t* a, uint64_t db, float* d, std::index_sequence<I...>) {
@@ -88,7 +97,9 @@ mainloop(const __grid_constant__ CUtensorMap tma_a, const __grid_constant__ CUte
          const uint4* __restrict__ a_frag, const uint8_t* __restrict__ a_nat, uint32_t* __restrict__ hashes, float* __restrict__ tile0, Stats* __restrict__ stats) {
     constexpr bool kRS = V == RS_LDG or V == RS_CONST or V == RS_NAT;
     constexpr bool kMC = V == SS_MCB;
-    constexpr bool kLoadA = V == SS or V == SS_MCB or V == SS_NORESCALE;
+    constexpr uint32_t kSplit = (V == SPLIT2_U1 or V == SPLIT2_U4 or V == SPLIT2_U8) ? 2 : ((V == SPLIT4_U1 or V == SPLIT4_U4) ? 4 : 1);
+    constexpr uint32_t kUnroll = (V == SPLIT2_U4 or V == SPLIT4_U4) ? 4 : (V == SPLIT2_U8 ? 8 : 1);
+    constexpr bool kLoadA = not kRS and V != SS_ARES;
     extern __shared__ __align__(1024) uint8_t smem_raw[];
     uint8_t* smem = reinterpret_cast<uint8_t*>((reinterpret_cast<uintptr_t>(smem_raw) + 1023) & ~uintptr_t(1023));
     auto smem_a = [&](uint32_t s) { return smem + s * A_STAGE; };
@@ -170,7 +181,7 @@ mainloop(const __grid_constant__ CUtensorMap tma_a, const __grid_constant__ CUte
         }
         __syncwarp();
     } else {
-        cutlass::arch::warpgroup_reg_alloc<kRS ? 232 : 168>();
+        cutlass::arch::warpgroup_reg_alloc<(kRS or kUnroll > 4) ? 232 : 168>();
         const uint32_t wg = (warp - 4) / 4, warp_in_wg = (warp - 4) % 4, t = threadIdx.x - 128 - wg * 128;
         const uint32_t r0 = wg * 64 + warp_in_wg * 16 + lane / 4, r1 = r0 + 8;
         float accum[128];
@@ -228,8 +239,10 @@ mainloop(const __grid_constant__ CUtensorMap tma_a, const __grid_constant__ CUte
             const uint32_t expert = m_glob / M_BLOCKS_PER_EXPERT, n = n_glob % NUM_N_BLOCKS;
             const float* gate_sf = w_sf + (expert * 2 * NUM_N_BLOCKS + n) * KB;
             const float* up_sf = gate_sf + NUM_N_BLOCKS * KB;
-            #pragma unroll
-            for (uint32_t j = 0; j < 128; ++j) accum[j] = 0.0f;
+            if constexpr (kSplit == 1) {
+                #pragma unroll
+                for (uint32_t j = 0; j < 128; ++j) accum[j] = 0.0f;
+            }
             float prev_sa0 = 1.0f, prev_sa1 = 1.0f, prev_g = 1.0f, prev_u = 1.0f;
             float r0g = 1.0f, r1g = 1.0f, r0u = 1.0f, r1u = 1.0f;
             const unsigned long long tile_start = clock64();
@@ -296,9 +309,85 @@ mainloop(const __grid_constant__ CUtensorMap tma_a, const __grid_constant__ CUte
                     load_a_nat(a, i + (kb + 2) / KB, (kb + 2) % KB);
                 if (++stage == STAGES) stage = 0, phase ^= 1;
             };
-            for (uint32_t kb = 0; kb < KB; kb += 2) {
-                k_block(kb, a_buf[0]);
-                k_block(kb + 1, a_buf[1]);
+            if constexpr (kSplit > 1) {
+                // Part p: accumulator values p * 128 / P .. (columns p * 256 / P ..), B rows p * 256 / P ..
+                // K blocks run in straight-line chunks of kUnroll (ptxas tracks the WGMMA groups only
+                // without a loop edge in between; with one it serializes every WGMMA): inside a chunk,
+                // the rescale of part p waits only for part p of the previous K block, while the later
+                // parts are still queued; at a chunk end every group is drained.
+                using PartMMA = typename deep_gemm::mma::sm90::FP8MMASelector<BN / kSplit>::type;
+                constexpr uint32_t kPartAccum = 128 / kSplit, kPartChunks = 32 / kSplit;
+                auto issue_part = [&](const uint32_t p, const uint32_t s, const bool accumulate) __attribute__((always_inline)) {
+                    #pragma unroll
+                    for (uint32_t j = 0; j < kPartAccum; ++j) deep_gemm::ptx::warpgroup_fence_operand(accum[p * kPartAccum + j]);
+                    deep_gemm::ptx::warpgroup_arrive();
+                    #pragma unroll
+                    for (uint32_t k = 0; k < 4; ++k)
+                        PartMMA::wgmma(a_hi | (a_lo + s * (A_STAGE / 16) + k * 2), b_hi | (b_lo + s * (B_STAGE / 16) + p * (BN / kSplit) * 8 + k * 2), accum + p * kPartAccum, accumulate or k > 0);
+                    deep_gemm::ptx::warpgroup_commit_batch();
+                    #pragma unroll
+                    for (uint32_t j = 0; j < kPartAccum; ++j) deep_gemm::ptx::warpgroup_fence_operand(accum[p * kPartAccum + j]);
+                };
+                auto rescale_part = [&](const uint32_t p) __attribute__((always_inline)) {
+                    #pragma unroll
+                    for (uint32_t j = p * kPartChunks; j < (p + 1) * kPartChunks; ++j) {
+                        const float x0 = (j & 1) ? r0u : r0g, x1 = (j & 1) ? r1u : r1g;
+                        accum[j * 4 + 0] *= x0, accum[j * 4 + 1] *= x0, accum[j * 4 + 2] *= x1, accum[j * 4 + 3] *= x1;
+                    }
+                };
+                auto release = [&](const uint32_t s) __attribute__((always_inline)) {
+                    if (lane == 0) empty[s].arrive();
+                };
+                uint32_t prev_stage = 0;
+                for (uint32_t kc = 0; kc < KB; kc += kUnroll) {
+                    #pragma unroll
+                    for (uint32_t u = 0; u < kUnroll; ++u) {
+                        const uint32_t kb = kc + u;
+                        // Only the chunk start can be the tile's first K block (compile-time false
+                        // otherwise: no branch between pending WGMMA groups and the rescale).
+                        const bool first = u == 0 and kc == 0;
+                        full[stage].wait(phase);
+                        if (first) {
+                            prev_sa0 = smem_sfa(stage)[r0], prev_sa1 = smem_sfa(stage)[r1];
+                            prev_g = __ldg(gate_sf), prev_u = __ldg(up_sf);
+                        } else {
+                            const float g = __ldg(gate_sf + kb), uu = __ldg(up_sf + kb);
+                            const float sa0 = smem_sfa(stage)[r0], sa1 = smem_sfa(stage)[r1];
+                            r0g = (prev_sa0 * prev_g) * __frcp_rn(sa0 * g);
+                            r1g = (prev_sa1 * prev_g) * __frcp_rn(sa1 * g);
+                            r0u = (prev_sa0 * prev_u) * __frcp_rn(sa0 * uu);
+                            r1u = (prev_sa1 * prev_u) * __frcp_rn(sa1 * uu);
+                            prev_sa0 = sa0, prev_sa1 = sa1, prev_g = g, prev_u = uu;
+                        }
+                        #pragma unroll
+                        for (uint32_t p = 0; p < kSplit; ++p) {
+                            if (u > 0) {
+                                // Part p of the previous K block is the oldest pending group.
+                                deep_gemm::ptx::warpgroup_wait<kSplit - 1>();
+                                if (p == kSplit - 1) release(prev_stage);
+                            } else if (p > 0) {
+                                // Chunk start: exactly parts 0..p-1 are pending, so this waits for
+                                // nothing; it tells ptxas that part p is not in flight (without it
+                                // ptxas injects a full wait here).
+                                if (p == 1) deep_gemm::ptx::warpgroup_wait<1>();
+                                if (p == 2) deep_gemm::ptx::warpgroup_wait<2>();
+                                if (p == 3) deep_gemm::ptx::warpgroup_wait<3>();
+                            }
+                            // On the first K block the ratios are 1 and the WGMMA overwrites the part.
+                            rescale_part(p);
+                            issue_part(p, stage, not first);
+                        }
+                        prev_stage = stage;
+                        if (++stage == STAGES) stage = 0, phase ^= 1;
+                    }
+                    deep_gemm::ptx::warpgroup_wait<0>();
+                    release(prev_stage);
+                }
+            } else {
+                for (uint32_t kb = 0; kb < KB; kb += 2) {
+                    k_block(kb, a_buf[0]);
+                    k_block(kb + 1, a_buf[1]);
+                }
             }
             loop_cycles += clock64() - tile_start;
             // Final scale (the serving loop's postscale) and an order-sensitive hash per thread.
@@ -427,7 +516,8 @@ int main() {
     const CUtensorMap tma_sfa = make_map(d_sfa, CU_TENSOR_MAP_DATA_TYPE_FLOAT32, 4, M_TOTAL, KB, BM, 1, CU_TENSOR_MAP_SWIZZLE_NONE);
 
     void (*kernels[NUM_VARIANTS])(CUtensorMap, CUtensorMap, CUtensorMap, const float*, const uint4*, const uint8_t*, uint32_t*, float*, Stats*) = {
-        mainloop<SS>, mainloop<RS_LDG>, mainloop<SS_MCB>, mainloop<SS_NORESCALE>, mainloop<SS_ARES>, mainloop<RS_CONST>, mainloop<RS_NAT>};
+        mainloop<SS>, mainloop<RS_LDG>, mainloop<SS_MCB>, mainloop<SS_NORESCALE>, mainloop<SS_ARES>, mainloop<RS_CONST>, mainloop<RS_NAT>,
+        mainloop<SPLIT2_U1>, mainloop<SPLIT2_U4>, mainloop<SPLIT2_U8>, mainloop<SPLIT4_U1>, mainloop<SPLIT4_U4>};
     for (int v = 0; v < NUM_VARIANTS; ++v) {
         CHECK(cudaFuncSetAttribute(kernels[v], cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES));
         cudaFuncAttributes attr;
@@ -456,11 +546,11 @@ int main() {
 
     // Correctness: ss and rs-nat against an FP64 reference on tile 0 (the carried-scale FP8
     // accumulation over 4096 K is within about 2e-3; the serving gate allows 0.025); rs-ldg and
-    // ss-mcb bit for bit against ss.
+    // ss-mcb and every split variant bit for bit against ss.
     std::vector<uint32_t> hash_ss(size_t(NUM_TILES) * 256), hash_v(hash_ss.size());
     std::vector<float> tile_ss(BM * BN), tile_v(BM * BN);
     bool ok = true;
-    for (int v : {SS, RS_LDG, SS_MCB, RS_NAT}) {
+    for (int v : {SS, RS_LDG, SS_MCB, RS_NAT, SPLIT2_U1, SPLIT2_U4, SPLIT2_U8, SPLIT4_U1, SPLIT4_U4}) {
         CHECK(cudaMemset(d_hash, 0, hash_ss.size() * 4));
         launch(v, 0);
         CHECK(cudaDeviceSynchronize());
