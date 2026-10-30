@@ -13,16 +13,15 @@ wait() blocks until the receiver took the message, as in ProcessGroupGloo);
 batch formation, KV allocation, KV senders and the model forward are
 deterministic fixtures. Requests arrive in bursts with gaps under a small KV
 budget, every stage has its own bootstrap and transfer latency, one bootstrap
-fails on a later stage only, and one request bootstraps on the last stage only
-after its prefill finished.
+fails on stage 0 after admission, another fails on a later stage only, and
+requests bootstrap on stage 0 and the last stage after their prefill finished.
 
 Checked: identical microbatches and scheduler state (waiting, bootstrap,
 inflight queues, KV allocator) on every stage at every iteration; every stage
-admits a request at the first iteration at which stage 0's own bootstrap is
-done, whatever its own bootstrap state; a stage sends a request's KV only
-after its own bootstrap (at the result step, or later from the inflight queue
-when the bootstrap completes after the prefill); a bootstrap that fails on a
-later stage only is aborted there at the release every stage applies at the
+admits a request at its arrival iteration, whatever its own bootstrap state;
+a stage sends a request's KV only after its own bootstrap (at the result step,
+or later from the inflight queue when bootstrap completes after prefill);
+a bootstrap that fails on one stage is aborted there at the release every stage applies at the
 same iteration; each result is applied pp_loop_size - 1 iterations after its
 launch on every stage with the last stage's tokens and EAGLE draft outputs,
 before the launch on the last stage and after it elsewhere; the last stage
@@ -261,10 +260,11 @@ def make_point_to_point(transport):
     return point_to_point_pyobj
 
 
-# Bootstrap of r5 fails on stage 2 only; r7 bootstraps on the last stage only
-# after its prefill result (its KV is sent later, from the inflight queue).
-FAILED_BOOTSTRAP = (2, "r5")
-LATE_BOOTSTRAP = (PP - 1, "r7", 12)
+# r0 fails on stage 0 after admission; r5 fails on stage 2 only. Both
+# stay pending_bootstrap until the common release aborts the failing stage.
+FAILED_BOOTSTRAPS = {(0, "r0"), (2, "r5")}
+# Both edge stages send parked KV when bootstrap completes after the result.
+LATE_BOOTSTRAPS = {(0, "r1"): 12, (PP - 1, "r7"): 12}
 
 
 class Sender:
@@ -277,12 +277,12 @@ class Sender:
         self.sent = []
         self.cleared = 0
         self.inited = False
-        self.fail = (stage.rank, rid) == FAILED_BOOTSTRAP
-        self.latency = LATE_BOOTSTRAP[2] if (stage.rank, rid) == LATE_BOOTSTRAP[:2] else 1 + stage.rank
+        self.fail = (stage.rank, rid) in FAILED_BOOTSTRAPS
+        self.latency = 12 if self.fail else LATE_BOOTSTRAPS.get((stage.rank, rid), 1 + stage.rank)
 
     def poll(self):
         stage = self.stage
-        if self.fail:
+        if self.fail and stage.step - self.created >= (2 if stage.rank == 0 else 0):
             return "failed"
         if not self.sent:
             if stage.step - self.created >= self.latency:
@@ -572,6 +572,11 @@ def make_stage(rank, transport, classes, env):
         admitted = real_admit(loop)
         for rid in admitted[0]:
             stage.admit_steps[rid] = stage.step
+            req = next(req for req in stage.seen_reqs if req.rid == rid)
+            assert req.metadata_buffer_index >= 0
+            if rank == 0:
+                assert req.pending_bootstrap and req in loop.pending
+                assert not req.disagg_kv_sender.inited
         return admitted
 
     stage._qpp_admit_bootstrapped = admit
@@ -750,37 +755,39 @@ def check(stages, transport, lag, corrupt):
         assert step + GPU_LAG <= published[rids] <= step + LOOP, (rids, step, published[rids])
     # Pipeline reaches the full in-flight depth on stage 0.
     assert first.max_in_flight == LOOP, first.max_in_flight
-    # Every stage admits every request at the first iteration at which stage 0's
-    # own bootstrap is done (one iteration after its arrival), whatever its own
-    # bootstrap state, so a failing later-stage bootstrap is admitted too.
+    # Every stage admits in the arrival iteration, before stage 0 bootstraps.
     admitted = [rid for rids in launched for rid in rids]
     arrived = {rid: step for step, reqs in ARRIVALS.items() for rid, _ in reqs}
     assert sorted(admitted) == sorted(arrived)
     for stage in stages:
-        assert stage.admit_steps == {rid: step + 1 for rid, step in arrived.items()}, stage.rank
-    # A later stage sends KV only after its own bootstrap: r7 bootstraps on the
-    # last stage after its result step and is sent from the inflight queue.
-    late_rank, late_rid, _ = LATE_BOOTSTRAP
-    late = next(req for req in stages[late_rank].seen_reqs if req.rid == late_rid)
-    late_result = next(step for rids, step in stages[late_rank].result_steps.items() if late_rid in rids)
-    assert stages[late_rank].finalized[late_rid] > late_result
-    assert late.disagg_kv_sender.sent_step == stages[late_rank].finalized[late_rid]
+        assert stage.admit_steps == arrived, stage.rank
+    # Stage 0 and the last stage both finalize late and send from inflight.
+    for (late_rank, late_rid), latency in LATE_BOOTSTRAPS.items():
+        stage = stages[late_rank]
+        late = next(req for req in stage.seen_reqs if req.rid == late_rid)
+        late_result = next(step for rids, step in stage.result_steps.items() if late_rid in rids)
+        assert stage.finalized[late_rid] > late_result
+        assert stage.finalized[late_rid] == late.disagg_kv_sender.created + latency
+        assert late.disagg_kv_sender.sent_step == stage.finalized[late_rid]
     for stage in stages:
         for req in stage.seen_reqs:
             if req.disagg_kv_sender.sent:
                 assert stage.finalized[req.rid] <= req.disagg_kv_sender.sent_step
-    # The failed later-stage bootstrap never sends and is aborted on that stage
-    # only, at the release iteration every stage applies.
-    fail_rank, fail_rid = FAILED_BOOTSTRAP
-    for stage in stages:
-        req = next(req for req in stage.seen_reqs if req.rid == fail_rid)
-        assert (stage.rank == fail_rank) == (not req.disagg_kv_sender.sent)
-        assert (stage.rank == fail_rank) == (type(req.finished_reason).__name__ == "FINISH_ABORT"), stage.rank
+    # Failed bootstrap on either stage never finalizes or sends; its KV is
+    # released only at the same consensus iteration as every other stage.
+    for fail_rank, fail_rid in FAILED_BOOTSTRAPS:
+        for stage in stages:
+            req = next(req for req in stage.seen_reqs if req.rid == fail_rid)
+            assert (stage.rank == fail_rank) == (not req.disagg_kv_sender.sent)
+            assert (stage.rank == fail_rank) == (type(req.finished_reason).__name__ == "FINISH_ABORT"), stage.rank
+            if stage.rank == fail_rank:
+                assert fail_rid not in stage.finalized
+                assert stage.release_steps[fail_rid] > req.disagg_kv_sender.created + 2
     # Every admitted request got the last stage's token and EAGLE outputs on every stage.
     for rid in admitted:
         reference = last.set_bufs[rid]
         for stage in stages:
-            if (stage.rank, rid) == FAILED_BOOTSTRAP:
+            if (stage.rank, rid) in FAILED_BOOTSTRAPS:
                 assert rid not in stage.set_bufs
                 continue
             token, hidden, probs, index = stage.set_bufs[rid]
@@ -797,7 +804,7 @@ def check(stages, transport, lag, corrupt):
         latest = max(
             next(req for req in stage.seen_reqs if req.rid == rid).disagg_kv_sender.sent_step + 2 + (3 * stage.rank) % 4
             for stage in stages
-            if (stage.rank, rid) != FAILED_BOOTSTRAP
+            if (stage.rank, rid) not in FAILED_BOOTSTRAPS
         )
         assert first.release_steps[rid] >= latest, (rid, first.release_steps[rid], latest)
     # The last stage takes a result before its launch of the same iteration, the
@@ -847,7 +854,7 @@ def main():
     for corrupt in (False, True):
         stages, transport, lag = run(source, corrupt)
         requests, batches = check(stages, transport, lag, corrupt)
-    print(f"PASS: four-stage direct-result PP loop, {STEPS} iterations, {batches} microbatches, {requests} requests: identical batches/state per iteration, stage-0 admission followed by every stage, KV only after each stage's own bootstrap (late bootstrap sent from the inflight queue, later-stage failure aborted at the common release), results at +{LOOP - 1} (last stage before its launch), threaded publish after completion, release after all transfers, release lag {lag}, bounded gloo sends, {LOOP} in flight, drained; proxies validated on both paths for {VALIDATE} launches, then copy engine (PyNccl after a corrupted slot)")
+    print(f"PASS: four-stage direct-result PP loop, {STEPS} iterations, {batches} microbatches, {requests} requests: identical batches/state per iteration, stage-0 admission followed by every stage, KV only after each stage's own bootstrap (late stage-0 and last-stage bootstrap sent from the inflight queue, stage-0 and later-stage failure aborted at the common release), results at +{LOOP - 1} (last stage before its launch), threaded publish after completion, release after all transfers, release lag {lag}, bounded gloo sends, {LOOP} in flight, drained; proxies validated on both paths for {VALIDATE} launches, then copy engine (PyNccl after a corrupted slot)")
 
 
 if __name__ == "__main__":
