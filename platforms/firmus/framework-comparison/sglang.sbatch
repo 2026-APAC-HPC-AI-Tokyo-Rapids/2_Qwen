@@ -254,7 +254,8 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   decode_gpu_selections=$!
   # EP1 MegaMoE on all twelve Prefill GPUs before model load (select-firmus-prefill-megamoe.py, about 1.5-2 min):
   # the control must match an FP32 reference (a failure stops the job); the four-stage, lean, lean + paired-tail and
-  # lean + split-accumulator (with SS or ldmatrix A) variants are adopted only if they are bit-exact on the two timed routings and the untimed edge routing and
+  # lean + split-accumulator (alone or with the shared FC1 reciprocal) variants are adopted only if they are bit-exact (the shared reciprocal: within its
+  # predeclared tolerance of the control) on the two timed routings and the untimed edge and wide routings and
   # save the summed margin over all GPUs and timed routings (the fastest one wins).
   # A missing or late result keeps three stages.
   # Then, on the same four GPUs of each worker, the pipelined-tile Prefill FA3 row against the pinned row

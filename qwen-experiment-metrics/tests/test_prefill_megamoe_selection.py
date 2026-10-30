@@ -15,18 +15,21 @@ def selector():
 
 
 # The split defaults (2790, 2795 us) are below the 0.5% margin, so they never win unless a test lowers them.
-def write_ranks(selector, directory, workers=3, control=2800.0, four=2740.0, lean=2720.0, pair=2700.0, split=2790.0, ldsm=2795.0):
+# The shared reciprocal is not bit-equal; its distance to the control is the CPU model's (within the bounds).
+def write_ranks(selector, directory, workers=3, control=2800.0, four=2740.0, lean=2720.0, pair=2700.0, split=2790.0, rcp=2795.0):
+    times = {"four-stage": four, "four-stage-lean": lean, "four-stage-lean-pair": pair, "four-stage-lean-split": split, "four-stage-lean-split-rcp": rcp}
+    base = {"finite": True, "relative_l2": 0.012, "max_scaled_error": 0.02, "reference_passed": True}
+    close = {"bitwise_equal": False, "control_relative_l2": 9.8e-5, "control_max_scaled_error": 4.7e-3}
+    match = {name: close if name in selector["TOLERANCE_GATED"] else {"bitwise_equal": True} for name in times}
     for worker in range(workers):
         path = directory / f"prefill-{worker}"
         path.mkdir(parents=True)
         for rank in range(4):
             routings = {}
-            times = {"four-stage": four, "four-stage-lean": lean, "four-stage-lean-pair": pair, "four-stage-lean-split": split, "four-stage-lean-split-ldsm": ldsm}
-            base = {"finite": True, "relative_l2": 0.012, "max_scaled_error": 0.02, "reference_passed": True}
             for kind in selector["ROUTINGS"]:
-                routings[kind] = {"control": {**base, "us": [control] * selector["ROUNDS"]}, **{name: {**base, "bitwise_equal": True, "us": [us] * selector["ROUNDS"]} for name, us in times.items()}}
+                routings[kind] = {"control": {**base, "us": [control] * selector["ROUNDS"]}, **{name: {**base, **match[name], "us": [us] * selector["ROUNDS"]} for name, us in times.items()}}
             for kind in selector["EXACT_ROUTINGS"]:
-                routings[kind] = {"control": {**base, "us": []}, **{name: {**base, "bitwise_equal": True, "us": []} for name in times}}
+                routings[kind] = {"control": {**base, "us": []}, **{name: {**base, **match[name], "us": []} for name in times}}
             (path / f"rank-{rank}.json").write_text(json.dumps({"rank": rank, "ranks_per_group": 1, "tokens": 8064, "routings": routings}))
 
 
@@ -42,7 +45,7 @@ def write_gate(selector, directory, variant, workers=3, **changes):
         path = directory / f"prefill-{worker}"
         path.mkdir(parents=True, exist_ok=True)
         for rank in range(4):
-            entry = {"rank": rank, "variant": variant, "calls": selector["ENDURANCE_CALLS"], "needed": True, "bitwise_equal": {k: True for k in ("balanced", "hot", "edges")}, "passed": True, **changes}
+            entry = {"rank": rank, "variant": variant, "calls": selector["ENDURANCE_CALLS"], "needed": True, "reference": variant, "bitwise_equal": {k: True for k in ("balanced", "hot", "edges", "wide")}, "passed": True, **changes}
             (path / f"rank-{rank}.json").write_text(json.dumps(entry))
 
 
@@ -60,7 +63,9 @@ def test_adopts_the_fastest_variant_that_passed_everywhere(selector, tmp_path):
     assert result["winner"] == "four-stage-lean-pair" and all(len(c["savings"]) == 12 * len(selector["ROUTINGS"]) for c in result["choices"].values())
     # The FA3 choice stays; the MegaMoE switches are appended for the Prefill workers.
     assert env == "SGLANG_PREFILL_FA3_VERIFY=n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_TAIL_PAIR=1\n"
-    assert set(selector["VARIANTS"]) == {"control", "four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split", "four-stage-lean-split-ldsm"}
+    assert set(selector["VARIANTS"]) == {"control", "four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split", "four-stage-lean-split-rcp"}
+    assert set(selector["CANDIDATES"]) == set(selector["VARIANTS"]) - {"control"}
+    assert selector["TOLERANCE_GATED"] == ("four-stage-lean-split-rcp",)
 
 
 def test_faster_split_wins_with_lean_and_without_pairing(selector, tmp_path):
@@ -79,27 +84,27 @@ def test_faster_split_wins_with_lean_and_without_pairing(selector, tmp_path):
 @pytest.mark.parametrize("gate,why", [
     (None, "no endurance result from rank 0 (late, hung or failed)"),
     ({"calls": 0, "passed": False}, "rank 0 failed the endurance gate"),
-    ({"bitwise_equal": {"balanced": True, "hot": False, "edges": True}, "passed": False}, "rank 0 failed the endurance gate"),
-    ({"variant": "four-stage-lean-split"}, "rank 0 gated four-stage-lean-split, not four-stage-lean-split-ldsm"),
+    ({"bitwise_equal": {"balanced": True, "hot": False, "edges": True, "wide": True}, "passed": False}, "rank 0 failed the endurance gate"),
+    ({"variant": "four-stage-lean-split"}, "rank 0 gated four-stage-lean-split, not four-stage-lean-split-rcp"),
 ])
 def test_an_unserved_winner_needs_the_endurance_gate_on_every_gpu(selector, tmp_path, gate, why):
-    write_ranks(selector, tmp_path / "results", split=2650.0, ldsm=2600.0)
+    write_ranks(selector, tmp_path / "results", split=2650.0, rcp=2600.0)
     if gate is not None:
-        write_gate(selector, tmp_path / "endurance", "four-stage-lean-split-ldsm")
+        write_gate(selector, tmp_path / "endurance", "four-stage-lean-split-rcp")
         path = tmp_path / "endurance/prefill-0/rank-0.json"
         path.write_text(json.dumps({**json.loads(path.read_text()), **gate}))
     result, env = aggregate(selector, tmp_path)
     # The fastest eligible variant that has served (the split, 41005872470) takes over.
-    assert result["winner"] == "four-stage-lean-split" and result["reason"].startswith(f"four-stage-lean-split-ldsm not adopted: {why}")
-    assert result["choices"]["four-stage-lean-split-ldsm"]["endurance"].startswith(why)
+    assert result["winner"] == "four-stage-lean-split" and result["reason"].startswith(f"four-stage-lean-split-rcp not adopted: {why}")
+    assert result["choices"]["four-stage-lean-split-rcp"]["endurance"].startswith(why)
     assert env.endswith("n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_SPLIT_ACCUM=1\n")
 
 
 def test_unserved_winner_falls_back_to_lean_when_the_split_is_not_eligible(selector, tmp_path):
-    write_ranks(selector, tmp_path / "results", split=2650.0, ldsm=2600.0)
+    write_ranks(selector, tmp_path / "results", split=2650.0, rcp=2600.0)
     edit(tmp_path / "results", 1, 1, "edges", "four-stage-lean-split", bitwise_equal=False)
     result, _ = aggregate(selector, tmp_path)
-    assert result["winner"] == "four-stage-lean" and result["reason"].startswith("four-stage-lean-split-ldsm not adopted: no endurance result")
+    assert result["winner"] == "four-stage-lean" and result["reason"].startswith("four-stage-lean-split-rcp not adopted: no endurance result")
 
 
 def test_served_winners_need_no_endurance_gate(selector, tmp_path):
@@ -111,7 +116,7 @@ def test_served_winners_need_no_endurance_gate(selector, tmp_path):
     result = json.loads((tmp_path / "split.json").read_text())
     assert result["winner"] == "four-stage-lean-split" and result["reason"] == "fastest-eligible"
     assert set(selector["UNGATED"]) == {"control", "four-stage", "four-stage-lean", "four-stage-lean-split"}
-    assert not set(selector["UNGATED"]) & {"four-stage-lean-pair", "four-stage-lean-split-ldsm"}
+    assert not set(selector["UNGATED"]) & {"four-stage-lean-pair", "four-stage-lean-split-rcp"}
 
 
 def test_endurance_run_skips_the_gpu_for_a_served_winner(selector, tmp_path, monkeypatch):
@@ -124,16 +129,52 @@ def test_endurance_run_skips_the_gpu_for_a_served_winner(selector, tmp_path, mon
     assert selector["ENDURANCE_CALLS"] >= 600
 
 
-def test_faster_ldmatrix_split_wins_on_top_of_the_split_switch(selector, tmp_path):
-    write_ranks(selector, tmp_path / "results", split=2650.0, ldsm=2600.0)
-    write_gate(selector, tmp_path / "endurance", "four-stage-lean-split-ldsm")
+def test_faster_shared_rcp_wins_within_the_tolerance_on_top_of_the_split_switch(selector, tmp_path):
+    write_ranks(selector, tmp_path / "results", split=2650.0, rcp=2600.0)
+    write_gate(selector, tmp_path / "endurance", "four-stage-lean-split-rcp")
     result, env = aggregate(selector, tmp_path)
-    assert result["winner"] == "four-stage-lean-split-ldsm" and result["reason"] == "fastest-eligible, passed the endurance gate"
-    # The host honours the ldmatrix switch only on the split path.
-    assert env.endswith("n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_SPLIT_ACCUM=1\nDG_SM90_PREFILL_SPLIT_LDSM=1\n")
-    edit(tmp_path / "results", 2, 1, "hot", "four-stage-lean-split-ldsm", bitwise_equal=False)
+    assert result["winner"] == "four-stage-lean-split-rcp" and result["reason"] == "fastest-eligible, passed the endurance gate"
+    # The host honours the shared-reciprocal switch only on the split path.
+    assert env.endswith("n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_SPLIT_ACCUM=1\nDG_SM90_PREFILL_SHARED_RCP=1\n")
+    rule = result["rule"]
+    assert rule["tolerance"] == {"variants": ["four-stage-lean-split-rcp"], "relative_l2": 1e-3, "max_scaled_error": 2e-2}
+    assert "four-stage-lean-split-rcp" not in rule["bit_exact"] and "four-stage-lean-split" in rule["bit_exact"]
+    assert rule["exact_routings"] == ["edges", "wide"]
+
+
+@pytest.mark.parametrize("kind,change,reason", [
+    # Past either bound, non-finite, or off the FP32 reference on any GPU and routing.
+    ("hot", {"control_relative_l2": 1.1e-3}, "failed-or-untimed rank 9 hot"),
+    ("balanced", {"control_max_scaled_error": 0.021}, "failed-or-untimed rank 9 balanced"),
+    ("wide", {"finite": False}, "failed rank 9 wide"),
+    ("edges", {"reference_passed": False}, "failed rank 9 edges"),
+])
+def test_shared_rcp_outside_the_tolerance_leaves_the_split(selector, tmp_path, kind, change, reason):
+    write_ranks(selector, tmp_path / "results", split=2650.0, rcp=2600.0)
+    write_gate(selector, tmp_path / "endurance", "four-stage-lean-split-rcp")
+    edit(tmp_path / "results", 2, 1, kind, "four-stage-lean-split-rcp", **change)
     result, _ = aggregate(selector, tmp_path)
-    assert result["winner"] == "four-stage-lean-split" and result["choices"]["four-stage-lean-split-ldsm"]["reason"] == "failed-or-untimed rank 9 hot"
+    assert result["winner"] == "four-stage-lean-split" and result["choices"]["four-stage-lean-split-rcp"]["reason"] == reason
+
+
+def test_bit_exact_variants_get_no_tolerance(selector, tmp_path):
+    # Within the shared reciprocal's bounds but not bit-equal: a defect for a bit-exact variant.
+    write_ranks(selector, tmp_path / "results", split=2650.0)
+    edit(tmp_path / "results", 0, 0, "wide", "four-stage-lean-split", bitwise_equal=False, control_relative_l2=0.0, control_max_scaled_error=0.0)
+    result, _ = aggregate(selector, tmp_path)
+    # The pair (no endurance result here) is not adopted, so the served lean variant is.
+    assert result["winner"] == "four-stage-lean" and result["choices"]["four-stage-lean-split"]["reason"] == "failed rank 0 wide"
+
+
+def test_wide_case_is_the_balanced_routing_on_larger_hidden_states(selector):
+    torch = pytest.importorskip("torch")
+    generator = torch.Generator()
+    generator.manual_seed(7)
+    hidden, ids, weights = selector["inputs"](torch, "wide", 64, generator, "cpu")
+    generator.manual_seed(7)
+    base_hidden, base_ids, base_weights = selector["inputs"](torch, "balanced", 64, generator, "cpu")
+    assert torch.equal(ids, base_ids) and torch.equal(weights, base_weights)
+    assert 35 < hidden.float().std() / base_hidden.float().std() < 45 and selector["WIDE_HIDDEN_SCALE"] == 40.0
 
 
 def test_slower_pair_leaves_lean(selector, tmp_path):
@@ -250,10 +291,10 @@ def test_host_and_header_agree_on_the_four_stage_layout():
     # 1024 expert counters + 8192 dispatch buffers + 18 KiB CD + 144 barrier bytes + four 50,192-byte stages.
     assert 1024 + 8192 + 18432 + 144 + 4 * 50192 <= 232448 < 1024 + 8192 + 65536 + 144 + 4 * 50192
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())["deep_gemm_overlay_patches"]
-    pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch", "patches/deep-gemm-bench/prefill-split-ldsm/sm90-prefill-split-ldsm.patch", "patches/deep-gemm-bench/prefill-combine-norm/sm90-prefill-combine-norm.patch"]
+    pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch", "patches/deep-gemm-bench/prefill-shared-rcp/sm90-prefill-shared-rcp.patch"]
     # Only the Decode 1D2D BLOCK_M 192 overlay (a different header) follows the MegaMoE tiles.
     assert config[-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
-    assert config[-8:-1] == pp4_only
+    assert config[-7:-1] == pp4_only
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
     assert not set(pp4_only[1:]) & set(main)
 
@@ -262,8 +303,8 @@ def test_lean_is_an_ep1_trailing_flag_after_four_stages_with_the_same_bytes():
     host = (ROOT / "patches/deep-gemm-host/sm90-prefill-lean.patch").read_text()
     header = (ROOT / "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch").read_text()
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
-    assert series[-7:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-prefill-split-ldsm.patch", "sm90-prefill-combine-norm.patch", "sm90-1d2d-decode-bm192.patch"]
-    for gone in ("sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch", "sm90-prefill-tail-split.patch"):
+    assert series[-6:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-prefill-shared-rcp.patch", "sm90-1d2d-decode-bm192.patch"]
+    for gone in ("sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch", "sm90-prefill-tail-split.patch", "sm90-prefill-split-ldsm.patch", "sm90-prefill-combine-norm.patch"):
         assert not (ROOT / "patches/deep-gemm-host" / gone).exists()
     # ",true" (kPrefillLean) only when set and one rank only.
     assert 'args.prefill_lean ? ",\\n        true" : ""' in host
@@ -320,44 +361,43 @@ def test_split_accumulator_is_a_lean_only_trailing_flag_without_traps_in_the_mat
     assert added.count("ptx::warpgroup_wait<1>();") == 2 and added.count("HalfWGMMA::wgmma(") == 1
 
 
-def test_ldmatrix_split_is_a_split_only_trailing_flag_whose_addresses_give_the_wgmma_a_fragment():
-    host = (ROOT / "patches/deep-gemm-host/sm90-prefill-split-ldsm.patch").read_text()
-    header = (ROOT / "patches/deep-gemm-bench/prefill-split-ldsm/sm90-prefill-split-ldsm.patch").read_text()
+def test_shared_rcp_is_a_split_only_trailing_flag_with_a_per_element_fallback():
+    host = (ROOT / "patches/deep-gemm-host/sm90-prefill-shared-rcp.patch").read_text()
+    header = (ROOT / "patches/deep-gemm-bench/prefill-shared-rcp/sm90-prefill-shared-rcp.patch").read_text()
     added = "\n".join(line[1:] for line in header.splitlines() if line.startswith("+") and not line.startswith("+++"))
-    # ",true,false,true,true" (kPrefillLean, kPrefillTailPair=false, kPrefillSplitAccum, kPrefillSplitLdsm) on the split path only.
-    assert 'args.prefill_split_ldsm ? ",\\n        true,\\n        false,\\n        true,\\n        true"' in host
-    assert 'prefill_split_accum and get_env<int>("DG_SM90_PREFILL_SPLIT_LDSM", 0) != 0' in host
-    assert "    bool kPrefillSplitLdsm = false,\n" in added
-    assert "DG_STATIC_ASSERT(not kPrefillSplitLdsm or kPrefillSplitAccum" in added
-    # Two K blocks of A registers alternate inside a chunk, so the chunks have even length.
-    assert "kUnroll % 2 == 0 and kSwizzleAMode == 128 and BLOCK_K == 128" in added
-    assert "issue_half(h, a_regs[u % 2]);" in added and "load_a(a_regs[(u + 1) % 2], next_stage);" in added
-    assert "MMA_64x128x32_F32E4M3E4M3_RS_TN" in added
-    # FC1 (several chunks) rescales the next chunk's first half 0 before the drain; at the tile end the
-    # ratios are 1, so that rescale is exact. FC2 (one chunk) keeps the plain chunk start.
-    assert "constexpr bool kPreRescale = kPrefillSplitLdsm and kNumKBlocks > kUnroll;" in added
-    assert "if (not (kPreRescale and u == 0 and h == 0))" in added and "r0_gate = r1_gate = r0_up = r1_up = 1.0f;" in added
-    # The ldmatrix addresses (row and swizzled 16-byte chunk per lane) as written in the patch.
-    assert "(warp_idx_in_wg * 16 + ((lane_idx >> 3) & 1u) * 8 + (lane_idx & 7u)) * BLOCK_K" in added
-    assert "(((2 * j + (lane_idx >> 4)) ^ (lane_idx & 7u)) << 4)" in added
-    # Replay them against the TMA 128B swizzle (chunk c of row r at c ^ (r % 8) within a
-    # 128-byte row, 1024-byte aligned) and the m64k32 FP8 A fragment of thread t: register
-    # 4j + i holds row 16 w + t / 4 + 8 (i & 1), bytes 32 j + 16 (i >> 1) + 4 (t % 4) .. +3.
-    physical = {}
-    for row in range(64):
-        for byte in range(128):
-            physical[row * 128 + (((byte // 16) ^ (row % 8)) << 4) + byte % 16] = (row, byte)
-    for warp in range(4):
-        for j in range(4):
-            lane_address = {}
-            for lane in range(32):
-                row = warp * 16 + ((lane >> 3) & 1) * 8 + (lane & 7)
-                lane_address[lane] = row * 128 + (((2 * j + (lane >> 4)) ^ (lane & 7)) << 4)
-            for t in range(32):
-                for i in range(4):
-                    # ldmatrix: thread t gets bytes 4 (t % 4) .. +3 of row t / 4 of matrix i,
-                    # whose row r address comes from lane 8 i + r.
-                    base = lane_address[8 * i + t // 4] + 4 * (t % 4)
-                    got = [physical[base + b] for b in range(4)]
-                    want = [(16 * warp + t // 4 + 8 * (i & 1), 32 * j + 16 * (i >> 1) + 4 * (t % 4) + b) for b in range(4)]
-                    assert got == want
+    # ",true,false,true,true" (kPrefillLean, kPrefillTailPair=false, kPrefillSplitAccum, kPrefillSharedRcp) on the split path only.
+    assert 'args.prefill_shared_rcp ? ",\\n        true,\\n        false,\\n        true,\\n        true"' in host
+    assert 'prefill_split_accum and fast_math and std::isinf(activation_clamp) and get_env<int>("DG_SM90_PREFILL_SHARED_RCP", 0) != 0' in host
+    assert "    bool kPrefillSharedRcp = false,\n" in added
+    assert "DG_STATIC_ASSERT(not kPrefillSharedRcp or (kPrefillSplitAccum and kFastMath and" in added
+    # The same EX2 and RCP instructions; one RCP per column pair, one per element on the fallback.
+    assert added.count('asm("ex2.approx.ftz.f32 %0, %1;"') == 1 and added.count('asm("rcp.approx.ftz.f32 %0, %1;"') == 1
+    assert "const float d = fmaf(d_0, e_1, d_0);" in added and "const float r = rcp(d) * s_gate;" in added
+    assert "v_0 = (g_0 * fmaf(e_1, r, r)) * u_0;" in added and "v_1 = (g_1 * (d_0 * r)) * u_1;" in added
+    assert "return (g * (rcp(1.0f + ex2(g * t)) * s_gate)) * u;" in added
+    # The fallback bound keeps rcp(d) * s_gate normal, and the vote makes the fallback branch warp-uniform.
+    assert "fminf(fminf(l1_final_scale[0], l1_final_scale[1]), 1.0f) * 0x1p126f" in added
+    assert "if (__any_sync(0xffffffffu, not (max_d < max_d_bound))) {" in added
+    # The split loop leaves the final scales to the epilogue; amax and the quantizer take s_up.
+    assert "l1_final_scale[2] = prev_scale_a_0 * prev_up_sf;" in added and "amax_r0 *= l1_final_scale[2];" in added and "sf_inv_pair.x *= l1_final_scale[2];" in added
+
+
+def test_shared_rcp_formula_matches_the_per_element_sigmoid():
+    np = pytest.importorskip("numpy")
+    # s_gate / d_0 = (1 + e_1) (R s_gate) and s_gate / d_1 = d_0 (R s_gate) with R = 1 / (d_0 (1 + e_1)), in FP32.
+    rng = np.random.default_rng(0)
+    g = rng.standard_normal((2, 4096)).astype(np.float32) * 20
+    s_gate = np.float32(2e-5)
+    with np.errstate(over="ignore"):
+        # Gates below about -88 give e = inf in FP32, as EX2 does; their pairs take the fallback.
+        e = np.exp2(g.astype(np.float64) * -1.4426950408889634).astype(np.float32)
+        d_0 = np.float32(1) + e[0]
+        d = (d_0.astype(np.float64) * e[1] + d_0).astype(np.float32)
+    bound = min(s_gate, np.float32(1)) * np.float32(2.0 ** 126)
+    ok = d < bound
+    r = (np.float32(1) / d * s_gate).astype(np.float32)
+    sig_0 = ((e[1].astype(np.float64) * r + r).astype(np.float32))
+    sig_1 = (d_0 * r).astype(np.float32)
+    want_0, want_1 = s_gate / (np.float32(1) + e[0]), s_gate / (np.float32(1) + e[1])
+    assert ok.mean() > 0.99 and np.all(r[ok] >= np.float32(2.0 ** -126))
+    assert np.max(np.abs(sig_0[ok] / want_0[ok] - 1)) < 4e-7 and np.max(np.abs(sig_1[ok] / want_1[ok] - 1)) < 4e-7

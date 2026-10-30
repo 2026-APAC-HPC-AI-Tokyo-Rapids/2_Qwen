@@ -11,14 +11,20 @@ stmatrix), four-stage-lean-pair (also DG_SM90_PREFILL_TAIL_PAIR=1: pool
 blocks with at most 64 rows run their N blocks in pairs on both warpgroups),
 four-stage-lean-split (lean plus DG_SM90_PREFILL_SPLIT_ACCUM=1: each warpgroup's
 FC1/FC2 accumulator is issued as two m64n128 halves so that the carried-scale
-rescale of one half overlaps the other half's WGMMA) and four-stage-lean-split-ldsm
-(also DG_SM90_PREFILL_SPLIT_LDSM=1: the split halves take A from registers loaded
-once per K block by ldmatrix, so the WGMMAs read A once instead of twice).
-The round-2 direct-FC2 and A-gather variants lost (+1.6% and +44% in
-40911121619) and the tail split stayed below the margin twice; they are gone.
-For the two timed routings and the untimed edge routing (experts with 0, 1-64,
-65, 127-129 and 255-256 rows) the control must match an FP32 reference on
-sampled tokens and every candidate must reproduce the control bit for bit.
+rescale of one half overlaps the other half's WGMMA) and four-stage-lean-split-rcp
+(also DG_SM90_PREFILL_SHARED_RCP=1: the FC1 epilogue takes the two column sigmoids
+of a row from one reciprocal and leaves the up scale to the quantizer, 96 instead
+of 128 MUFU per thread and tile). The round-2 direct-FC2 and A-gather variants lost
+(+1.6% and +44% in 40911121619), the tail split stayed below the margin twice and
+the ldmatrix split lost (+1.6% in 41020974704); they are gone.
+For the two timed routings and the untimed edge and wide routings (experts with 0,
+1-64, 65, 127-129 and 255-256 rows; hidden states 40 times larger, so that FC1
+gates reach the shared reciprocal's per-element path) the control must match an
+FP32 reference on sampled tokens. Every candidate must reproduce the control bit
+for bit, except the shared reciprocal, whose FP order differs: its output must be
+finite and within TOLERANCE_RELATIVE_L2 and TOLERANCE_MAX_SCALED_ERROR of the
+control's on every routing (a CPU model of the epilogue and FC2 gives at most
+9.8e-5 and 4.7e-3: research/runtime-performance/2026-10-30-prefill-megamoe-shared-rcp.md).
 All six are timed in rotating order. --aggregate adopts the fastest variant that passed on
 every GPU of every worker and saved at least the summed per-case margin over
 all GPUs and routings; anything missing keeps the control. A control reference
@@ -33,24 +39,12 @@ three Prefill workers stopped after about 13 microbatches (about 300 MegaMoE
 calls per GPU) with no CUDA error; the selection makes only about 30 calls per
 GPU. Each GPU recomputes the winner the aggregate will pick from the same rank
 files and, if it is a variant that has not served yet, runs it for
-ENDURANCE_CALLS consecutive calls rotating over the balanced, hot and edge
+ENDURANCE_CALLS consecutive calls rotating over the balanced, hot, edge and wide
 routings, then checks that the last output of every routing equals the
-control's bit for bit. --aggregate keeps such a winner only if all twelve GPUs
-ran it to the end and matched; otherwise it takes the fastest eligible variant
-that has served (UNGATED) and records why.
-
-Combine norm (--combine-norm, one torchrun per Prefill worker after the
-aggregate): if the adopted variant is on the lean path, each GPU runs it as the
-serving layer does, with the MoE output y going through the next layer's input
-add_rmsnorm_group_quant_fp8 (the control), against DeepGEMM fp8_mega_moe_norm,
-whose combine updates the residual and writes the QKV input (q, scale) itself
-(sglang prefill-combine-norm.patch; one 59.8 us kernel and the 66 MB y write and
-read per layer go away). The residual must be bit-equal, (q, scale) may differ
-only through the order of the row's sum of squares (COMBINE_NORM_* bounds), both
-are timed in rotating order, and the fused call then runs COMBINE_NORM_CALLS
-back to back and must reproduce its first outputs bit for bit. --aggregate-combine-norm
-appends SGLANG_PREFILL_COMBINE_NORM=1 only if all twelve GPUs passed and the
-fused call saved the summed margin.
+control's bit for bit (the shared reciprocal's: its own first output's).
+--aggregate keeps such a winner only if all twelve GPUs ran it to the end and
+matched; otherwise it takes the fastest eligible variant that has served
+(UNGATED) and records why.
 """
 import argparse
 import json
@@ -61,34 +55,36 @@ from datetime import timedelta
 from pathlib import Path
 
 HIDDEN, INTERMEDIATE, EXPERTS, TOPK = 4096, 1536, 128, 8
-SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR", "DG_SM90_PREFILL_SPLIT_ACCUM", "DG_SM90_PREFILL_SPLIT_LDSM")
+SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR", "DG_SM90_PREFILL_SPLIT_ACCUM", "DG_SM90_PREFILL_SHARED_RCP")
 VARIANTS = {name: dict(zip(SWITCHES, values, strict=True)) for name, values in {
     "control": ("0", "0", "0", "0", "0"),
     "four-stage": ("1", "0", "0", "0", "0"),
     "four-stage-lean": ("1", "1", "0", "0", "0"),
     "four-stage-lean-pair": ("1", "1", "1", "0", "0"),
     "four-stage-lean-split": ("1", "1", "0", "1", "0"),
-    "four-stage-lean-split-ldsm": ("1", "1", "0", "1", "1"),
+    "four-stage-lean-split-rcp": ("1", "1", "0", "1", "1"),
 }.items()}
-# Every candidate changes staging, synchronisation, the work assignment or the WGMMA
-# issue order only (same products, K order and multipliers per element): bit-exact.
-CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split", "four-stage-lean-split-ldsm")
+# The candidates change staging, synchronisation, the work assignment or the WGMMA issue
+# order only (same products, K order and multipliers per element): bit-exact. The shared
+# reciprocal changes the FP order of the FC1 epilogue (FP8 bytes may move by one step).
+CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split", "four-stage-lean-split-rcp")
+TOLERANCE_GATED = ("four-stage-lean-split-rcp",)
+# Bounds on the MegaMoE output against the control's: relative L2 10x above the CPU model's worst
+# case (9.8e-5), and max |diff| / max |control| 4x above it (4.7e-3 at 8192 x 4096). One BF16 step
+# of an element in the top binade alone can reach 2^-7 = 7.8e-3 of the maximum.
+TOLERANCE_RELATIVE_L2, TOLERANCE_MAX_SCALED_ERROR = 1e-3, 2e-2
 # Variants that have served whole runs need no endurance gate: four-stage-lean-split passed the
 # gate and served 6212 requests in 41005872470 (9832.74), four-stage-lean served 12k+ Prefill
 # batches in 40964714831 (9668.27), four-stage and the control before them.
 UNGATED = ("control", "four-stage", "four-stage-lean", "four-stage-lean-split")
 # Over 300 calls per GPU stopped serving in 40991744289; 600 at about 2.5 ms is about 1.5 s.
 ENDURANCE_CALLS = 600
-# The variants whose host path accepts fp8_mega_moe_norm (the lean EP1 tile and its K loops).
-COMBINE_NORM_VARIANTS = ("four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split", "four-stage-lean-split-ldsm")
-COMBINE_NORM_CALLS = ENDURANCE_CALLS
-# Only the row's sum of squares is summed in another order (rstd may move by an ulp), so a few
-# BF16 normalized values and through them FP8 bytes or a group scale may change by one step.
-COMBINE_NORM_MAX_Q_MISMATCH, COMBINE_NORM_MAX_SCALE_RELATIVE, COMBINE_NORM_MAX_RELATIVE_L2 = 1e-3, 1e-2, 1e-3
-NORM_EPS = 1e-6
 ROUTINGS = ("balanced", "hot")
-# Checked for exactness only (not timed): the pool-block shapes the timed routings rarely hit.
-EXACT_ROUTINGS = ("edges",)
+# Checked against the control only (not timed): the pool-block shapes the timed routings
+# rarely hit, and hidden states WIDE_HIDDEN_SCALE times larger (balanced routing), whose FC1
+# gates below about -40 send part of the shared reciprocal's chunks to its per-element path.
+EXACT_ROUTINGS = ("edges", "wide")
+HIDDEN_SCALE, WIDE_HIDDEN_SCALE = 0.25, 40.0
 # Rows of experts 16..47 in the edge routing; experts 0..15 get none.
 EDGE_EXPERT_ROWS = (1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 66, 127, 128, 129, 191, 192, 193, 255, 256, 1, 63, 64, 65, 1, 2, 3, 4)
 ROUNDS = 12
@@ -140,6 +136,13 @@ def routing(torch, kind, count, generator, device):
             row += rows
         assert row <= count
     return ids.to(torch.int32), weights / weights.sum(-1, keepdim=True)
+
+
+def inputs(torch, kind, count, generator, device):
+    """Hidden states and routing of one case; the wide case is the balanced routing on larger hidden states."""
+    scale = WIDE_HIDDEN_SCALE * HIDDEN_SCALE if kind == "wide" else HIDDEN_SCALE
+    hidden = torch.randn(count, HIDDEN, dtype=torch.bfloat16, device=device, generator=generator) * scale
+    return (hidden, *routing(torch, "balanced" if kind == "wide" else kind, count, generator, device))
 
 
 def errors(torch, observed, expected):
@@ -208,8 +211,7 @@ def run_selection(output, ranks):
 
     local = {"rank": rank, "ranks_per_group": ranks, "tokens": tokens, "device": torch.cuda.get_device_name(rank), "uuid": str(torch.cuda.get_device_properties(rank).uuid), "routings": {}}
     for kind in ROUTINGS + EXACT_ROUTINGS:
-        hidden = torch.randn(tokens, HIDDEN, dtype=torch.bfloat16, device=device, generator=generator) * 0.25
-        ids, weights = routing(torch, kind, tokens, generator, device)
+        hidden, ids, weights = inputs(torch, kind, tokens, generator, device)
         outputs = {variant: torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for variant in VARIANTS}
         for variant, out in outputs.items():
             forward(variant, hidden, ids, weights, out)
@@ -234,6 +236,8 @@ def run_selection(output, ranks):
             entry["reference_passed"] = entry["finite"] and relative_l2 < MAX_RELATIVE_L2 and max_scaled_error < MAX_SCALED_ERROR
             if variant != "control":
                 entry["bitwise_equal"] = bool(torch.equal(out, outputs["control"]))
+                if variant in TOLERANCE_GATED:
+                    entry["control_relative_l2"], entry["control_max_scaled_error"] = errors(torch, out, outputs["control"])
             result[variant] = entry
         if kind in EXACT_ROUTINGS:
             local["routings"][kind] = result
@@ -274,17 +278,19 @@ def run_endurance(selection, output, workers):
     if local["needed"]:
         torch, dist, rank, device, tokens, _, generator, _, _, buf, forward = prepare(1)
         kinds = ROUTINGS + EXACT_ROUTINGS
-        inputs = {kind: (torch.randn(tokens, HIDDEN, dtype=torch.bfloat16, device=device, generator=generator) * 0.25, *routing(torch, kind, tokens, generator, device)) for kind in kinds}
+        cases = {kind: inputs(torch, kind, tokens, generator, device) for kind in kinds}
         reference = {kind: torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for kind in kinds}
         outputs = {kind: torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for kind in kinds}
+        # A tolerance-gated winner (checked against the control by the selection) must reproduce its own first call.
+        local["reference"] = winner if winner in TOLERANCE_GATED else "control"
         for kind in kinds:
-            forward("control", *inputs[kind], reference[kind])
+            forward(local["reference"], *cases[kind], reference[kind])
         torch.cuda.synchronize()
         start = time.monotonic()
         # Back to back as in serving, rotating the routings; each output buffer keeps its routing's last call.
         for call in range(ENDURANCE_CALLS):
             kind = kinds[call % len(kinds)]
-            forward(winner, *inputs[kind], outputs[kind])
+            forward(winner, *cases[kind], outputs[kind])
         torch.cuda.synchronize()
         local["calls"] = ENDURANCE_CALLS
         local["calls_seconds"] = time.monotonic() - start
@@ -308,12 +314,19 @@ def endurance_failure(gate, winner, expected):
         if entry["variant"] != winner:
             return f"rank {global_rank} gated {entry['variant']}, not {winner}"
         if entry["calls"] != ENDURANCE_CALLS or not entry["passed"]:
-            return f"rank {global_rank} failed the endurance gate: {entry.get('calls')} calls, bitwise_equal {entry.get('bitwise_equal')}"
+            return f"rank {global_rank} failed the endurance gate: {entry.get('calls')} calls, bitwise_equal {entry.get('bitwise_equal')} to {entry.get('reference')}"
     return None
 
 
-def candidate_passed(entry, timed):
-    return entry["reference_passed"] and entry["bitwise_equal"] and (len(entry["us"]) == ROUNDS or not timed)
+def matches_control(name, entry):
+    """Bit for bit, or for a tolerance-gated variant finite and within the predeclared bounds."""
+    if name in TOLERANCE_GATED:
+        return entry["finite"] and entry["control_relative_l2"] <= TOLERANCE_RELATIVE_L2 and entry["control_max_scaled_error"] <= TOLERANCE_MAX_SCALED_ERROR
+    return entry["bitwise_equal"]
+
+
+def candidate_passed(name, entry, timed):
+    return entry["reference_passed"] and matches_control(name, entry) and (len(entry["us"]) == ROUNDS or not timed)
 
 
 def choose(entries, expected, gate=None):
@@ -333,11 +346,11 @@ def choose(entries, expected, gate=None):
         savings, reason = [], None
         for entry in entries:
             for kind in EXACT_ROUTINGS:
-                if not candidate_passed(entry["routings"][kind][name], False):
+                if not candidate_passed(name, entry["routings"][kind][name], False):
                     reason = f"failed rank {entry['global_rank']} {kind}"
             for kind in ROUTINGS:
                 result = entry["routings"][kind]
-                if len(result["control"]["us"]) != ROUNDS or not candidate_passed(result[name], True):
+                if len(result["control"]["us"]) != ROUNDS or not candidate_passed(name, result[name], True):
                     reason = f"failed-or-untimed rank {entry['global_rank']} {kind}"
                     continue
                 control, candidate = statistics.median(result["control"]["us"]), statistics.median(result[name]["us"])
@@ -358,139 +371,12 @@ def choose(entries, expected, gate=None):
     return {"winner": served[0] if served else "control", "reason": f"{eligible[0]} not adopted: {failure}", "choices": choices}
 
 
-def run_combine_norm(selection, output):
-    """Time and gate fp8_mega_moe_norm against MegaMoE + add_rmsnorm_group_quant_fp8 on this GPU."""
-    begin = time.monotonic()
-    rank = int(os.environ["LOCAL_RANK"])
-    winner = json.loads(selection.read_text())["winner"]
-    local = {"rank": rank, "variant": winner, "needed": winner in COMBINE_NORM_VARIANTS, "calls": 0}
-    if local["needed"]:
-        from types import SimpleNamespace
-
-        import deep_gemm
-        from sglang.kernels.ops.layernorm.add_rmsnorm_group_quant import (
-            add_rmsnorm_group_quant_fp8,
-        )
-        from sglang.srt.layers.moe.mega_moe_sm90 import run_sm90_mega_combine_norm
-
-        torch, dist, rank, device, tokens, _, generator, _, (w13, s13, w2, s2), buf, forward = prepare(1)
-        l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
-        moe = SimpleNamespace(experts=SimpleNamespace(mega_l1_weights=l1, mega_l2_weights=l2), config=SimpleNamespace())
-        weight = (1.0 + 0.1 * torch.randn(HIDDEN, device=device, generator=generator)).to(torch.bfloat16)
-        kinds = ROUTINGS + EXACT_ROUTINGS
-        inputs = {kind: (torch.randn(tokens, HIDDEN, dtype=torch.bfloat16, device=device, generator=generator) * 0.25, *routing(torch, kind, tokens, generator, device)) for kind in kinds}
-        residuals = {kind: torch.randn(tokens, HIDDEN, dtype=torch.bfloat16, device=device, generator=generator) for kind in kinds}
-        y = torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device)
-        residual = torch.empty_like(y)
-
-        def control(kind, start=None):
-            residual.copy_(residuals[kind])
-            forward(winner, *inputs[kind], y, start)
-            return add_rmsnorm_group_quant_fp8(y, residual, weight, NORM_EPS)
-
-        def fused(kind, start=None):
-            residual.copy_(residuals[kind])
-            hidden, ids, weights = inputs[kind]
-            os.environ.update(VARIANTS[winner])
-            deep_gemm.mega_moe_pre_dispatch_sm90(hidden, ids, weights, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, num_tokens=tokens, group_size=128, routed_scaling_factor=1.0)
-            if start is not None:
-                start.record()
-            return run_sm90_mega_combine_norm(moe, residual, buf, weight, NORM_EPS)
-
-        def snapshot(q, scale):
-            return residual.clone(), q.clone(), scale.clone()
-
-        local["routings"], first = {}, {}
-        for kind in kinds:
-            expected = snapshot(*control(kind))
-            first[kind] = snapshot(*fused(kind))
-            torch.cuda.synchronize()
-            (res_c, q_c, s_c), (res_f, q_f, s_f) = expected, first[kind]
-            dequant_c = q_c.float() * s_c.repeat_interleave(128, 1)
-            dequant_f = q_f.float() * s_f.repeat_interleave(128, 1)
-            entry = {
-                "residual_bitwise_equal": bool(torch.equal(res_c, res_f)),
-                "finite": bool(torch.isfinite(dequant_f).all().item()),
-                "q_mismatch_fraction": (q_c.view(torch.uint8) != q_f.view(torch.uint8)).float().mean().item(),
-                "scale_max_relative": ((s_f - s_c).abs() / s_c.abs().clamp_min(1e-30)).max().item(),
-                "relative_l2": ((dequant_f - dequant_c).norm() / dequant_c.norm().clamp_min(1e-30)).item(),
-                "us": {"control": [], "fused": []},
-            }
-            entry["passed"] = entry["residual_bitwise_equal"] and entry["finite"] and entry["q_mismatch_fraction"] <= COMBINE_NORM_MAX_Q_MISMATCH and entry["scale_max_relative"] <= COMBINE_NORM_MAX_SCALE_RELATIVE and entry["relative_l2"] <= COMBINE_NORM_MAX_RELATIVE_L2
-            local["routings"][kind] = entry
-        for kind in ROUTINGS:
-            for round_index in range(ROUNDS):
-                for name in (("control", "fused") if round_index % 2 == 0 else ("fused", "control")):
-                    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-                    # About 0.7 ms at the capped clock: keeps host launch work off the timed span.
-                    torch.cuda._sleep(1_000_000)
-                    (control if name == "control" else fused)(kind, start)
-                    end.record()
-                    end.synchronize()
-                    local["routings"][kind]["us"][name].append(start.elapsed_time(end) * 1000.0)
-        start = time.monotonic()
-        # Back to back as in serving, rotating the routings; each must reproduce its first fused outputs.
-        stable = {kind: True for kind in kinds}
-        for call in range(COMBINE_NORM_CALLS):
-            kind = kinds[call % len(kinds)]
-            q, scale = fused(kind)
-            if call >= COMBINE_NORM_CALLS - len(kinds):
-                stable[kind] = all(torch.equal(a, b) for a, b in zip(snapshot(q, scale), first[kind]))
-        torch.cuda.synchronize()
-        local["calls"] = COMBINE_NORM_CALLS
-        local["calls_seconds"] = time.monotonic() - start
-        local["stable"] = stable
-        buf.destroy()
-        dist.destroy_process_group()
-    local["passed"] = local["needed"] and all(e["passed"] for e in local["routings"].values()) and all(local["stable"].values())
-    local["elapsed_seconds"] = time.monotonic() - begin
-    output.mkdir(parents=True, exist_ok=True)
-    (output / f"rank-{rank}.json").write_text(json.dumps(local, indent=2, allow_nan=False) + "\n")
-    print(json.dumps({k: v for k, v in local.items() if k != "routings"} | {"routings": {k: {x: y for x, y in e.items() if x != "us"} for k, e in local.get("routings", {}).items()}}), flush=True)
-
-
-def choose_combine_norm(entries, expected, winner):
-    """Adopt the combine norm only if every GPU gated this winner, passed and the summed time saved the margin."""
-    if winner not in COMBINE_NORM_VARIANTS:
-        return False, f"{winner} is not on the lean path"
-    if len(entries) != expected or any(e is None for e in entries):
-        return False, "missing combine-norm results (late, hung or failed)"
-    savings = []
-    for global_rank, entry in enumerate(entries):
-        if entry["variant"] != winner:
-            return False, f"rank {global_rank} gated {entry['variant']}, not {winner}"
-        if not entry["passed"] or entry["calls"] != COMBINE_NORM_CALLS:
-            return False, f"rank {global_rank} failed: {json.dumps({k: {x: y for x, y in e.items() if x != 'us'} for k, e in entry['routings'].items()})} stable {entry.get('stable')}"
-        for kind in ROUTINGS:
-            times = entry["routings"][kind]["us"]
-            if len(times["control"]) != ROUNDS or len(times["fused"]) != ROUNDS:
-                return False, f"rank {global_rank} {kind} untimed"
-            control, fused = statistics.median(times["control"]), statistics.median(times["fused"])
-            savings.append((control - fused, max(MARGIN_US, MARGIN_FRACTION * control)))
-    saved, required = sum(s for s, _ in savings), sum(r for _, r in savings)
-    if saved < required:
-        return False, f"below-margin: saved {saved:.1f} us of {required:.1f} us required over {len(savings)} cases"
-    return True, f"saved {saved:.1f} us over {len(savings)} cases (required {required:.1f})"
-
-
-def aggregate_combine_norm(directory, selection, output, env_output, workers):
-    winner = json.loads(selection.read_text())["winner"]
-    entries = load_entries(directory, workers)
-    adopted, reason = choose_combine_norm([e and {k: v for k, v in e.items() if k != "global_rank"} for e in entries], workers * 4, winner)
-    result = {"schema": "firmus-prefill-combine-norm-selection/v1", "rule": {"rounds": ROUNDS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "calls": COMBINE_NORM_CALLS, "max_q_mismatch": COMBINE_NORM_MAX_Q_MISMATCH, "max_scale_relative": COMBINE_NORM_MAX_SCALE_RELATIVE, "max_relative_l2": COMBINE_NORM_MAX_RELATIVE_L2, "residual_bit_exact": True}, "variant": winner, "adopted": adopted, "reason": reason, "results": entries}
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
-    if adopted:
-        with env_output.open("a") as env:
-            env.write("SGLANG_PREFILL_COMBINE_NORM=1\n")
-    print(json.dumps({"variant": winner, "adopted": adopted, "reason": reason}), flush=True)
-
-
 def aggregate(directory, output, env_output, workers, endurance):
     gate = [entry and {k: v for k, v in entry.items() if k != "global_rank"} for entry in load_entries(endurance, workers)]
     selection = choose(load_entries(directory, workers), workers * 4, gate)
     selection["env"] = {k: v for k, v in VARIANTS[selection["winner"]].items() if v != "0"}
-    result = {"schema": "firmus-prefill-megamoe-selection/v4", "rule": {"rounds": ROUNDS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "routings": ROUTINGS, "exact_routings": EXACT_ROUTINGS, "bit_exact": True, "endurance_calls": ENDURANCE_CALLS, "ungated": UNGATED}, **selection, "endurance": gate}
+    tolerance = {"variants": TOLERANCE_GATED, "relative_l2": TOLERANCE_RELATIVE_L2, "max_scaled_error": TOLERANCE_MAX_SCALED_ERROR}
+    result = {"schema": "firmus-prefill-megamoe-selection/v5", "rule": {"rounds": ROUNDS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "routings": ROUTINGS, "exact_routings": EXACT_ROUTINGS, "wide_hidden_scale": WIDE_HIDDEN_SCALE, "bit_exact": [name for name in CANDIDATES if name not in TOLERANCE_GATED], "tolerance": tolerance, "endurance_calls": ENDURANCE_CALLS, "ungated": UNGATED}, **selection, "endurance": gate}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     with env_output.open("a") as env:
@@ -506,15 +392,8 @@ if __name__ == "__main__":
     parser.add_argument("--env-output", type=Path)
     parser.add_argument("--endurance", type=Path, help="per-worker endurance results (aggregate), or the selection results to gate (endurance run)")
     parser.add_argument("--workers", type=int, choices=(2, 3), default=3)
-    parser.add_argument("--combine-norm", type=Path, help="the MegaMoE selection JSON whose winner the combine norm is gated on")
-    parser.add_argument("--aggregate-combine-norm", type=Path, help="per-worker combine-norm results (with --combine-norm, --output, --env-output)")
     args = parser.parse_args()
-    if args.aggregate_combine_norm:
-        assert args.combine_norm is not None and args.env_output is not None
-        aggregate_combine_norm(args.aggregate_combine_norm, args.combine_norm, args.output, args.env_output, args.workers)
-    elif args.combine_norm:
-        run_combine_norm(args.combine_norm, args.output)
-    elif args.aggregate:
+    if args.aggregate:
         assert args.env_output is not None and args.endurance is not None
         aggregate(args.aggregate, args.output, args.env_output, args.workers, args.endurance)
     elif args.endurance:
