@@ -228,7 +228,7 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # Every selection gate has settled: 41005872470, 41020974704 and 41040348302; the fixed FA3 pipe
   # passed its 1200-call gate and served in 41040348302. That run spent 7.3 min selecting, then hit TIMEOUT.
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving: prior kernel settings plus the pinned PP4 selections (prepare-firmus-pp4-settings.py); only the diagonal-trim Prefill FA3 row is screened and gated against the pinned FA3 row.\n'
+  printf 'PP4 serving: prior kernel settings plus the pinned PP4 selections (prepare-firmus-pp4-settings.py); the diagonal-trim FA3 and split-unroll16 rows are screened and endurance-gated against the served controls.\n'
   # The diagonal-trim Prefill FA3 row (n192-direct-o-varlen-pipe-diag, prefill-diag.patch) has never
   # served. On the four GPUs of each Prefill worker, before model load, the three workers in parallel:
   # (1) screen against the pinned row (select-firmus-prefill-kernels.sh --control, 175 s timeout; 41040348302
@@ -239,13 +239,19 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # 1200 serving-path calls over six shapes, each shape's last output equal to the pinned bytes.
   # The aggregate adopts the row only if all twelve GPUs passed both; a loss, failure, hang or late result
   # keeps the pinned row. Serial time before worker start: about 1.2-1.5 min (screen ~45-60 s, gate
-  # ~20-30 s, aggregate a few seconds); nothing else runs on the Prefill GPUs then.
+  # ~20-30 s, aggregate a few seconds). The bundle wrapper then screens only split-unroll16
+  # against the served split loop, and gates its winner for 600 calls (about one extra minute).
+  # Measurements on each Prefill GPU stay sequential.
+  # Like telemetry, this overlapping step sees all eight tail GPUs; explicitly use 4..7.
+  # It must not reserve the first four before the Prefill screen, which serves on 0..3.
+  srun --overlap -N1 -n1 --exact -w "${TAIL}" --gres=gpu:8 --cpus-per-task=16 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts sparse-penalty-gate)" env CUDA_VISIBLE_DEVICES=4,5,6,7 OMP_NUM_THREADS=1 timeout --kill-after=5 175 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/check-decode-sparse-penalty.py" /opt/sglang/source --gpu >"${ART}/sparse-penalty-gate.log" 2>&1 &
+  sparse_penalty_gate=$!
   pinned_fa3=$(sed -n 's/^SGLANG_PREFILL_FA3_VERIFY=//p' "${ROOT}/source/prefill-kernels.env")
   prefill_gpu_selections=()
   for worker in 0 1 2; do
     node=${HEAD}
     if (( worker == 2 )); then node=${TAIL}; fi
-    srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-selection-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-select-${SLURM_JOB_ID}-${worker}" bash "${ROOT}/scripts/select-firmus-prefill-kernels.sh" "${ROOT}" "prefill-${worker}" --names n192-direct-o-varlen-pipe-diag --control "${pinned_fa3}" >"${ART}/prefill-selection-${worker}.log" 2>&1 &
+    srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-selection-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-select-${SLURM_JOB_ID}-${worker}" bash "${ROOT}/scripts/select-firmus-pp4-bundle.sh" "${ROOT}" "prefill-${worker}" screen "${pinned_fa3}" >"${ART}/prefill-selection-${worker}.log" 2>&1 &
     prefill_gpu_selections+=("$!")
   done
   for pid in "${prefill_gpu_selections[@]}"; do wait "${pid}" || true; done
@@ -253,11 +259,13 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   for worker in 0 1 2; do
     node=${HEAD}
     if (( worker == 2 )); then node=${TAIL}; fi
-    srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-fa3-endurance-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-select-${SLURM_JOB_ID}-${worker}" timeout --kill-after=5 60 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-fa3.py" --endurance "${ROOT}/results/prefill-selection" --output "${ROOT}/results/prefill-fa3-endurance/prefill-${worker}" >"${ART}/prefill-fa3-endurance-${worker}.log" 2>&1 &
+    srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-fa3-endurance-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-select-${SLURM_JOB_ID}-${worker}" bash "${ROOT}/scripts/select-firmus-pp4-bundle.sh" "${ROOT}" "prefill-${worker}" endurance >"${ART}/prefill-fa3-endurance-${worker}.log" 2>&1 &
     prefill_gpu_gates+=("$!")
   done
   for pid in "${prefill_gpu_gates[@]}"; do wait "${pid}" || true; done
   uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --endurance "${ROOT}/results/prefill-fa3-endurance" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+  uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --unroll16 --aggregate "${ROOT}/results/prefill-unroll16" --endurance "${ROOT}/results/prefill-unroll16-endurance" --output "${ROOT}/results/prefill-unroll16/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+  wait "${sparse_penalty_gate}"
 elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
   # Provision has verified the prior image, ordered overlays, expert map and
   # normalized serving config. Draft precision is the sole changed model setting.

@@ -1,0 +1,23 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -228,6 +228,7 @@
+     bool kPrefillLean = false,
+     bool kPrefillTailPair = false,
+     bool kPrefillSplitAccum = false,
++    bool kPrefillSplitUnroll16 = false,
+     uint32_t L1_SHAPE_N = kIntermediateHidden * 2,
+     uint32_t L1_SHAPE_K = kHidden,
+     uint32_t L2_SHAPE_N = kHidden,
+@@ -530,7 +531,10 @@
+     // chunks, drained at the chunk end. The math warpgroups take 224 registers.
+     DG_STATIC_ASSERT(not kPrefillSplitAccum or (kPrefillLean and not kPrefillTailPair),
+                      "The split accumulator is layered on the lean path without tail pairing");
+-    constexpr uint32_t kL1SplitUnroll = 8, kL2SplitUnroll = 12;
++    DG_STATIC_ASSERT(not kPrefillSplitUnroll16 or kPrefillSplitAccum, "Unroll16 requires the split accumulator");
++    // FC1 has 32 K blocks: halve chunk drains, without changing K order or scaling.
++    // FC2 keeps its existing single 12-block chunk.
++    constexpr uint32_t kL1SplitUnroll = kPrefillSplitUnroll16 ? 16 : 8, kL2SplitUnroll = 12;
+     constexpr uint32_t SMEM_CD_PER_QUEUE = kPrefillWarpCD ?
+         math::constexpr_align(kNumEpilogueWarps * 16 * kPrefillWarpCDRowBytes, kSharedMemoryAlignment) :
+         math::constexpr_align(

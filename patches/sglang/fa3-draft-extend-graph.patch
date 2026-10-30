@@ -1,0 +1,72 @@
+diff --git a/python/sglang/srt/speculative/eagle_worker_v2.py b/python/sglang/srt/speculative/eagle_worker_v2.py
+--- a/python/sglang/srt/speculative/eagle_worker_v2.py
++++ b/python/sglang/srt/speculative/eagle_worker_v2.py
+@@ -427,6 +427,13 @@
+             from sglang.srt.layers.attention.flashmla_backend import FlashMLABackend
+
+             graph_supported_backend_types.append(FlashMLABackend)
++            from sglang.srt.layers.attention.flashattention_backend import (
++                FlashAttentionBackend,
++            )
++
++            # FA3 implements DRAFT_EXTEND_V2 capture, dynamic in-graph metadata
++            # and replay. Keep the existing width and DP-padding runner guards.
++            graph_supported_backend_types.append(FlashAttentionBackend)
+
+         graph_supported_backend = isinstance(
+             self.draft_extend_attn_backend,
+diff --git a/python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py b/python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py
+--- a/python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py
++++ b/python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+
+ import contextlib
++import logging
+ from dataclasses import dataclass
+ from typing import TYPE_CHECKING, Callable, Optional
+
+@@ -487,6 +488,43 @@
+                     capture_inputs=None,
+                     post_warmup_hook=post_warmup_hook,
+                 )
++                from sglang.srt.layers.attention.flashattention_backend import (
++                    FlashAttentionBackend,
++                )
++
++                if isinstance(self.draft_extend_attn_backend, FlashAttentionBackend):
++                    # Check every captured width on the actual model before it
++                    # serves. This checks replay equivalence at capture inputs;
++                    # live padding and changing lengths still need serving QA.
++                    eager = run_once()
++                    reference_logits = eager.next_token_logits.clone()
++                    reference_hidden = (
++                        eager.hidden_states.clone()
++                        if eager.hidden_states is not None
++                        else None
++                    )
++                    for _ in range(2):
++                        replay = self.backend.replay(shape_key, forward_batch)
++                        torch.testing.assert_close(
++                            replay.next_token_logits,
++                            reference_logits,
++                            rtol=0,
++                            atol=0,
++                            equal_nan=False,
++                        )
++                        if reference_hidden is not None:
++                            torch.testing.assert_close(
++                                replay.hidden_states,
++                                reference_hidden,
++                                rtol=0,
++                                atol=0,
++                                equal_nan=False,
++                            )
++                    logging.getLogger(__name__).info(
++                        "FA3 draft extend graph parity PASS bs=%s width=%s",
++                        bs,
++                        self.captured_req_width,
++                    )
+
+     def execute(self, forward_batch: ForwardBatch):
+         assert forward_batch.out_cache_loc is not None

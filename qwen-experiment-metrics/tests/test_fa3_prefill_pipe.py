@@ -55,7 +55,8 @@ def pp4_branch():
 def test_pp4_pins_the_served_pipe_row_and_keeps_the_gate_scripts_staged():
     # The PP4 job screens only the diagonal-trim row against this pin (test_fa3_prefill_diag.py).
     pp4 = pp4_branch()
-    assert "--names n192-direct-o-varlen-pipe-diag" in pp4
+    assert '"prefill-${worker}" screen "${pinned_fa3}"' in pp4
+    assert "--names n192-direct-o-varlen-pipe-diag" in (ROOT / 'scripts/select-firmus-pp4-bundle.sh').read_text()
     prepare = runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))
     assert prepare['PP4_SELECTED']['SGLANG_PREFILL_FA3_VERIFY'] == 'n192-direct-o-varlen-pipe'
     assert prepare['PP4_SELECTED_RUNS']['SGLANG_PREFILL_FA3_VERIFY'] == [41040348302]

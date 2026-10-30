@@ -82,6 +82,8 @@ def run_checks(source, workspace):
         ("check-pp4-direct-loop.py", source),
     ):
         subprocess.run([sys.executable, str(workspace / "scripts" / script), str(argument)], check=True, env=env)
+    if (source / "python/sglang/srt/sampling/penaltylib/sparse_min_new_tokens.py").exists():
+        subprocess.run([sys.executable, str(workspace / "scripts/check-decode-sparse-penalty.py"), str(source)], check=True, env=env)
     return {"torch": torch.__version__, "numpy": numpy.__version__}
 
 

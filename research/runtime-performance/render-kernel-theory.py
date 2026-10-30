@@ -210,6 +210,11 @@ def render(config, data):
              "GEMMはFMAを2 FLOPとし、`2MNK`。MoEはFC1とFC2を分け、有効行数とtile丸め後の行数も分ける。Tensor Coreのdense FP8は8192 FLOP/SM/cycle、BF16は4096。132 SMとの積から計算し、旧 `1979×clock/1.98` は使わない。公称FP8 1979 TFLOPSとHBM4.8 TB/sは[NVIDIA仕様](https://www.nvidia.com/en-us/data-center/h200/)、SM単位の算出は[Hopper解説](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/)と[NVIDIA技術回答](https://forums.developer.nvidia.com/t/how-to-calculate-the-tensor-core-fp16-performance-of-h100/244727)に基づく。", "",
              "同窓GPC rawのworker内平均をHzと解釈した場合、Prefill約1.35〜1.38GHz、Decode約1.65〜1.73GHz。表の演算欄はP1.35〜1.40GHz/D1.65〜1.74GHzの明示的な条件計算。NsightのMHzラベルとraw値の桁が不一致で、kernel別clockとdevice対応は未確定。公称値の床も機械計算に保持する。", "",
              "独立資源の必要時間は `max(F/P, B_HBM/W_HBM, B_NVLink/W_NVLink, 命令/発行率)`。因果関係のある直列区間だけを足す。表の『論理I/O換算』は各bufferの論理byteを4.8TB/sで割った参考値であり、L2 hit・再読出し・同期を含むHBM実測値でも、厳密なkernel下限でもない。理論との差をそのまま削れる時間としない。", ""]
+    bundle = config.get("pp4_throughput_bundle_20261031")
+    if bundle:
+        lines += ["## PP4 throughput bundle（2026-10-31）", "",
+                  "ユーザー指示により有効な改善をまとめ、公式good output 10k・10.5k・11kを目指す。基準はPP4 run41005872470の9832.74（反復41020974704は9828.95）。最新R8の修正版FA3・diagonal trim候補・gigatoken・選別削減へ、疎なmin-new-token penalty、FA3 draft-extend graph、FC1 split-unroll16候補を追加する。", "",
+                  f"状態：`{bundle['status']}`。追加run：{bundle['new_run']}、公式score：{bundle['official_score']}（未測定はNone）。shape・dtype・削る仕事・byte・未知の計測値は入力JSONの`pp4_throughput_bundle_20261031`、検証と結果は `2026-10-31-pp4-throughput-bundle.md`。kernel選択、capture入力の一致、通常servingの成績を区別する。以下の旧EP4 profileの費用を新しいPP4計測値として流用しない。", ""]
     current = config.get("current_megamoe_candidate", {})
     if current:
         lines += ["## 現在の実行状態", "",

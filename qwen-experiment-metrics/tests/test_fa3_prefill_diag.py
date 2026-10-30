@@ -77,11 +77,13 @@ def pp4_branch():
 
 def test_pp4_screens_and_gates_only_the_diag_row_against_the_pin():
     pp4 = pp4_branch()
-    assert pp4.count('bash "${ROOT}/scripts/select-firmus-prefill-kernels.sh"') == 1 and f'--names {NAME} --control "${{pinned_fa3}}"' in pp4
-    assert pp4.count('select-firmus-prefill-fa3.py" --endurance "${ROOT}/results/prefill-selection"') == 1 and 'timeout --kill-after=5 60' in pp4
+    bundle = (ROOT / 'scripts/select-firmus-pp4-bundle.sh').read_text()
+    assert '"prefill-${worker}" screen "${pinned_fa3}"' in pp4
+    assert bundle.count('bash "${root}/scripts/select-firmus-prefill-kernels.sh"') == 1 and f'--names {NAME} --control "${{control}}"' in bundle
+    assert bundle.count('select-firmus-prefill-fa3.py" --endurance "${root}/results/prefill-selection"') == 1 and 'timeout --kill-after=5 60' in bundle
     assert '--aggregate "${ROOT}/results/prefill-selection" --endurance "${ROOT}/results/prefill-fa3-endurance"' in pp4
     # The gate runs after all three screens, and the aggregate after all three gates.
-    assert pp4.index('for pid in "${prefill_gpu_selections[@]}"') < pp4.index('--endurance "${ROOT}/results/prefill-selection"') < pp4.index('for pid in "${prefill_gpu_gates[@]}"') < pp4.index('--aggregate')
+    assert pp4.index('for pid in "${prefill_gpu_selections[@]}"') < pp4.index('"prefill-${worker}" endurance') < pp4.index('for pid in "${prefill_gpu_gates[@]}"') < pp4.index('--aggregate')
     for script in ('select-firmus-megamoe', 'select-firmus-prefill-elementwise', 'select-firmus-decode', 'check-firmus-pp4-copy-engine'):
         assert script not in pp4
     prepare = runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))

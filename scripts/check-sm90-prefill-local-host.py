@@ -52,7 +52,7 @@ int main() {
         if(ranks==1 && experts!=128) continue;
         for(int tokens : {0,16,256,1023,1024,4001,4096,8002,8192}) {
             if(ranks==4 && tokens>4096) continue;
-            for(int local : {0,1}) for(int stage4 : {0,1,2,3,4}) {
+            for(int local : {0,1}) for(int stage4 : {0,1,2,3,4,5}) {
                 prefill_env=1; independent_env=local+2*stage4;
                 setenv("DG_SM90_PREFILL_2WG","1",1);
                 setenv("DG_SM90_PREFILL_LOCAL_EP1",local?"1":"0",1);
@@ -60,6 +60,7 @@ int main() {
                 setenv("DG_SM90_PREFILL_LEAN",stage4>=2?"1":"0",1);
                 setenv("DG_SM90_PREFILL_TAIL_PAIR",stage4==3?"1":"0",1);
                 setenv("DG_SM90_PREFILL_SPLIT_ACCUM",stage4>=4?"1":"0",1);
+                setenv("DG_SM90_PREFILL_SPLIT_UNROLL16",stage4>=5?"1":"0",1);
                 int cap=ranks==1?8448:4224;
                 int pool=layout::get_num_max_pool_tokens(ranks,cap,8,experts/ranks);
                 int sf=layout::get_num_sf_ring_tokens(pool,layout::kMinCandidateBlockM);
@@ -101,14 +102,15 @@ int main() {
     # The four-stage switch changes only the stage count and shared memory of
     # the two-warpgroup Prefill geometry (18 KiB per-warp CD, four 50,192-byte
     # stages); every other configuration, field and descriptor is unchanged.
-    for before, after, lean, pair, split in zip(*(rows[i::5] for i in range(5)), strict=True):
-        assert [r["stage4"] for r in (before, after, lean, pair, split)] == [0, 1, 2, 3, 4]
-        for other in (lean, pair, split):
+    for before, after, lean, pair, split, unroll16 in zip(*(rows[i::6] for i in range(6)), strict=True):
+        assert [r["stage4"] for r in (before, after, lean, pair, split, unroll16)] == [0, 1, 2, 3, 4, 5]
+        for other in (lean, pair, split, unroll16):
             assert other["host"] == after["host"] and other["descriptor_fields"] == after["descriptor_fields"]
         local = before["host"]["math_threads"] == 256 and before["host"]["block_m"] == 128 and before["ranks"] == 1
         assert lean["jit_template_args"] == after["jit_template_args"] + (",true" if local else "")
         assert pair["jit_template_args"] == after["jit_template_args"] + (",true,true" if local else "")
         assert split["jit_template_args"] == after["jit_template_args"] + (",true,false,true" if local else "")
+        assert unroll16["jit_template_args"] == after["jit_template_args"] + (",true,false,true,true" if local else "")
         assert before["descriptor_fields"] == after["descriptor_fields"]
         if before["host"]["math_threads"] == 256 and before["host"]["block_m"] == 128:
             assert before["host"]["stages"] == 3 and after["host"]["stages"] == 4
@@ -124,7 +126,7 @@ int main() {
     target = overlay / m.KERNEL
     target.parent.mkdir(parents=True)
     shutil.copy2(args.control_header, target)
-    for patch in ("patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch"):
+    for patch in ("patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch", "patches/deep-gemm-bench/prefill-split-unroll16/sm90-prefill-split-unroll16.patch"):
         run(["git", "apply", "--check", str(ROOT / patch)], cwd=overlay)
         run(["git", "apply", str(ROOT / patch)], cwd=overlay)
     names = list(m.KERNEL_NAMES)
@@ -145,11 +147,11 @@ int main() {
         lean = ["true"] if row["ranks"] == 1 else []
         pair = ["true", "true"] if row["ranks"] == 1 else []
         split = ["true", "false", "true"] if row["ranks"] == 1 else []
-        assert row["jit_template_args"].split(",")[25:] == {0: [], 1: [], 2: lean, 3: pair, 4: split}[row["stage4"]], row
+        assert row["jit_template_args"].split(",")[25:] == {0: [], 1: [], 2: lean, 3: pair, 4: split, 5: (split + ["true"] if row["ranks"] == 1 else [])}[row["stage4"]], row
         row["kernel_layout"] = values
     if args.nvcc:
         for row in selected:
-            name = f"ep{row['ranks']}-stages{row['host']['stages']}" + {2: "-lean", 3: "-pair", 4: "-split"}.get(row["stage4"], "")
+            name = f"ep{row['ranks']}-stages{row['host']['stages']}" + {2: "-lean", 3: "-pair", 4: "-split", 5: "-split-u16"}.get(row["stage4"], "")
             cu = out / f"{name}.cu"
             cu.write_text('#include <deep_gemm/impls/sm90_fp8_mega_moe.cuh>\nextern "C" void* instantiate() { return reinterpret_cast<void*>(&deep_gemm::sm90_fp8_mega_moe_impl<' + row["jit_template_args"] + '>); }\n')
             includes = [overlay / "deep_gemm/include", args.source_repo / "deep_gemm/include", args.source_repo / "third-party/cutlass/include"]

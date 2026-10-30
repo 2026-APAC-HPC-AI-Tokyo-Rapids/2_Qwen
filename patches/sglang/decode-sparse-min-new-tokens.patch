@@ -1,0 +1,197 @@
+diff --git a/python/sglang/srt/sampling/penaltylib/min_new_tokens.py b/python/sglang/srt/sampling/penaltylib/min_new_tokens.py
+--- a/python/sglang/srt/sampling/penaltylib/min_new_tokens.py
++++ b/python/sglang/srt/sampling/penaltylib/min_new_tokens.py
+@@ -49,6 +49,7 @@
+             batch_first=True,
+             padding_value=self.orchestrator.vocab_size,
+         )
++        self.stop_token_ids = padded_stop_token_ids
+         self.stop_token_penalties = torch.zeros(
+             size=(len(self.orchestrator.reqs()), self.orchestrator.vocab_size + 1),
+             dtype=torch.float32,
+@@ -62,9 +63,7 @@
+                 fill_value=float("-inf"),
+                 device=self.orchestrator.device,
+             ),
+-        )[
+-            :, : self.orchestrator.vocab_size
+-        ]
++        )[:, : self.orchestrator.vocab_size]
+
+         self.len_output_tokens = torch.zeros(
+             size=(len(self.orchestrator.reqs()), 1),
+@@ -84,10 +83,21 @@
+
+     def _filter(self, keep_indices: torch.Tensor):
+         self.min_new_tokens = self.min_new_tokens[keep_indices]
++        self.stop_token_ids = self.stop_token_ids[keep_indices]
+         self.stop_token_penalties = self.stop_token_penalties[keep_indices]
+         self.len_output_tokens = self.len_output_tokens[keep_indices]
+
+     def _merge(self, their: "BatchedMinNewTokensPenalizer"):
++        width = max(self.stop_token_ids.shape[1], their.stop_token_ids.shape[1])
++        self.stop_token_ids = torch.cat(
++            [
++                torch.nn.functional.pad(
++                    ids, (0, width - ids.shape[1]), value=self.orchestrator.vocab_size
++                )
++                for ids in (self.stop_token_ids, their.stop_token_ids)
++            ],
++            dim=0,
++        )
+         self.min_new_tokens = torch.cat(
+             [self.min_new_tokens, their.min_new_tokens], dim=0
+         )
+@@ -100,6 +110,11 @@
+
+     # Explicit resource cleanup to aid GC and free CUDA memory promptly
+     def _teardown(self) -> None:
+-        for name in ("min_new_tokens", "stop_token_penalties", "len_output_tokens"):
++        for name in (
++            "min_new_tokens",
++            "stop_token_ids",
++            "stop_token_penalties",
++            "len_output_tokens",
++        ):
+             if hasattr(self, name):
+                 delattr(self, name)
+diff --git a/python/sglang/srt/sampling/penaltylib/sparse_min_new_tokens.py b/python/sglang/srt/sampling/penaltylib/sparse_min_new_tokens.py
+new file mode 100644
+--- /dev/null
++++ b/python/sglang/srt/sampling/penaltylib/sparse_min_new_tokens.py
+@@ -0,0 +1,60 @@
++"""Apply a min-new-token-only overlap snapshot without a vocabulary-wide tensor."""
++
++import triton
++import triton.language as tl
++
++
++@triton.jit
++def _apply_min_new_tokens_penalty(
++    logits,
++    stop_ids,
++    active,
++    logit_row_stride: tl.constexpr,
++    logit_col_stride: tl.constexpr,
++    stop_row_stride: tl.constexpr,
++    stop_col_stride: tl.constexpr,
++    active_row_stride: tl.constexpr,
++    vocab: tl.constexpr,
++    stop_count: tl.constexpr,
++    repeat: tl.constexpr,
++    BLOCK: tl.constexpr,
++):
++    row = tl.program_id(0)
++    req = row // repeat
++    columns = tl.arange(0, BLOCK)
++    enabled = tl.load(active + req * active_row_stride)
++    token = tl.load(
++        stop_ids + req * stop_row_stride + columns * stop_col_stride,
++        mask=columns < stop_count,
++        other=vocab,
++    )
++    valid = enabled & (columns < stop_count) & (token >= 0) & (token < vocab)
++    ptr = logits + row * logit_row_stride + token * logit_col_stride
++    value = tl.load(ptr, mask=valid, other=0.0)
++    # Preserve dense addition semantics, including +inf + -inf -> NaN.
++    tl.store(ptr, value + float("-inf"), mask=valid)
++
++
++def apply_min_new_tokens_penalty(logits, stop_ids, active):
++    assert logits.ndim == 2 and stop_ids.ndim == 2
++    rows, vocab = logits.shape
++    batch, stop_count = stop_ids.shape
++    if rows == 0 or stop_count == 0:
++        return
++    assert batch > 0 and rows % batch == 0
++    assert active.shape == (batch, 1)
++    _apply_min_new_tokens_penalty[(rows,)](
++        logits,
++        stop_ids,
++        active,
++        logits.stride(0),
++        logits.stride(1),
++        stop_ids.stride(0),
++        stop_ids.stride(1),
++        active.stride(0),
++        vocab,
++        stop_count,
++        rows // batch,
++        triton.next_power_of_2(stop_count),
++        num_warps=4,
++    )
+diff --git a/python/sglang/srt/sampling/sampling_batch_info.py b/python/sglang/srt/sampling/sampling_batch_info.py
+--- a/python/sglang/srt/sampling/sampling_batch_info.py
++++ b/python/sglang/srt/sampling/sampling_batch_info.py
+@@ -57,6 +57,7 @@
+     # Penalizer
+     penalizer_orchestrator: Optional[penaltylib.BatchedPenalizerOrchestrator] = None
+     acc_additive_penalties: Optional[torch.Tensor] = None  # Used in the overlap mode
++    min_new_tokens_penalty: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+     acc_scaling_penalties: Optional[torch.Tensor] = (
+         None  # Used in the overlap mode for repetition penalty
+     )
+@@ -265,7 +266,29 @@
+         self.grammar_mask = GrammarMask(first_grammar, vocab_mask)
+
+     def update_penalties(self):
++        self.min_new_tokens_penalty = None
+         if self.penalizer_orchestrator.is_required:
++            active = [
++                p
++                for p in self.penalizer_orchestrator.penalizers.values()
++                if p._is_prepared
++            ]
++            if (
++                self.temperatures.is_cuda
++                and len(active) == 1
++                and isinstance(active[0], penaltylib.BatchedMinNewTokensPenalizer)
++                and active[0].stop_token_ids.shape[1] <= 256
++            ):
++                penalty = active[0]
++                # The mask is a new tensor: advancing the scheduler must not
++                # change the decision in an in-flight overlap worker snapshot.
++                self.min_new_tokens_penalty = (
++                    penalty.stop_token_ids,
++                    penalty.len_output_tokens < penalty.min_new_tokens,
++                )
++                self.acc_additive_penalties = None
++                self.acc_scaling_penalties = None
++                return
+             self.acc_additive_penalties = torch.zeros(
+                 (len(self.temperatures), self.vocab_size),
+                 dtype=torch.float32,
+@@ -282,6 +305,7 @@
+             self.acc_scaling_penalties = None
+
+     def apply_logits_bias(self, logits: torch.Tensor):
++        self.apply_min_new_tokens_penalty(logits)
+         if self.acc_additive_penalties is not None:
+             # Used in the overlap mode
+             logits.add_(self.acc_additive_penalties)
+@@ -299,6 +323,14 @@
+
+         if self.logit_bias is not None:
+             logits.add_(self.logit_bias)
++
++    def apply_min_new_tokens_penalty(self, logits: torch.Tensor):
++        if self.min_new_tokens_penalty is not None:
++            from sglang.srt.sampling.penaltylib.sparse_min_new_tokens import (
++                apply_min_new_tokens_penalty,
++            )
++
++            apply_min_new_tokens_penalty(logits, *self.min_new_tokens_penalty)
+
+     def filter_batch(self, keep_indices: List[int], keep_indices_device: torch.Tensor):
+         self.penalizer_orchestrator.filter(keep_indices_device)
+diff --git a/python/sglang/srt/speculative/eagle_utils.py b/python/sglang/srt/speculative/eagle_utils.py
+--- a/python/sglang/srt/speculative/eagle_utils.py
++++ b/python/sglang/srt/speculative/eagle_utils.py
+@@ -685,6 +685,7 @@
+
+     # Apply penalty
+     # This is a relaxed version of penalties for speculative decoding.
++    sampling_info.apply_min_new_tokens_penalty(next_token_logits)
+     if sampling_info.acc_additive_penalties is not None:
+         # Broadcast each request's row over its draft tokens in place: the same
+         # element-wise FP32 additions as adding the repeat_interleave'd copy,

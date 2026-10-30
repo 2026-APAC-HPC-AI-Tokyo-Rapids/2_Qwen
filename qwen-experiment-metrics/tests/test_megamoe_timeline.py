@@ -77,13 +77,14 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context(tmp_path):
     assert len(config["deep_gemm_overlay_patches"]) == 8
     assert config["deep_gemm_overlay_patches"][-3:] == ["patches/deep-gemm-overlay/sm90-decode-independent-wg.patch", "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch", "patches/deep-gemm-bench/fc2-address/fc2-output-address.patch"]
     bench = ROOT / "patches/deep-gemm-bench"
-    assert sorted(p.parent.name for p in bench.glob("*/*.patch")) == ["decode-dense-bm192", "fc2-address", "prefill-4stage", "prefill-lean", "prefill-local-ep1", "prefill-split-accum", "prefill-tail-pair"]
+    assert sorted(p.parent.name for p in bench.glob("*/*.patch")) == ["decode-dense-bm192", "fc2-address", "prefill-4stage", "prefill-lean", "prefill-local-ep1", "prefill-split-accum", "prefill-split-unroll16", "prefill-tail-pair"]
     assert "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch" not in config["deep_gemm_overlay_patches"]
     assert "patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch" not in config["deep_gemm_overlay_patches"]
     assert "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch" not in config["deep_gemm_overlay_patches"]
     assert "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch" not in config["deep_gemm_overlay_patches"]
     assert "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch" not in config["deep_gemm_overlay_patches"]
     assert "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch" not in config["deep_gemm_overlay_patches"]
+    assert "patches/deep-gemm-bench/prefill-split-unroll16/sm90-prefill-split-unroll16.patch" not in config["deep_gemm_overlay_patches"]
     assert not list(bench.glob("*/env"))
     assert (bench / "timeline").is_file()
     assert (bench / "prefill-only").is_file()

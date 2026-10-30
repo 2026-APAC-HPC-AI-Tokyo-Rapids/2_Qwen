@@ -81,6 +81,15 @@ MARGIN_US, MARGIN_FRACTION = 5.0, 0.005
 MAX_RELATIVE_L2, MAX_SCALED_ERROR = 0.025, 0.08
 
 
+def select_unroll16_only():
+    """One new candidate against the served split loop; no old selections rerun."""
+    global VARIANTS, CANDIDATES, UNGATED
+    control = {**VARIANTS["four-stage-lean-split"], "DG_SM90_PREFILL_SPLIT_UNROLL16": "0"}
+    VARIANTS = {"control": control, "split-unroll16": {**control, "DG_SM90_PREFILL_SPLIT_UNROLL16": "1"}}
+    CANDIDATES = ("split-unroll16",)
+    UNGATED = ("control",)
+
+
 def quantized(torch, x, group):
     blocks = x.float().reshape(x.shape[0], -1, group)
     scale = blocks.abs().amax(-1, keepdim=True).clamp_min(1e-10) / 448.0
@@ -368,7 +377,10 @@ if __name__ == "__main__":
     parser.add_argument("--env-output", type=Path)
     parser.add_argument("--endurance", type=Path, help="per-worker endurance results (aggregate), or the selection results to gate (endurance run)")
     parser.add_argument("--workers", type=int, choices=(2, 3), default=3)
+    parser.add_argument("--unroll16", action="store_true", help="compare only split-unroll16 against the served four-stage lean split loop")
     args = parser.parse_args()
+    if args.unroll16:
+        select_unroll16_only()
     if args.aggregate:
         assert args.env_output is not None and args.endurance is not None
         aggregate(args.aggregate, args.output, args.env_output, args.workers, args.endurance)

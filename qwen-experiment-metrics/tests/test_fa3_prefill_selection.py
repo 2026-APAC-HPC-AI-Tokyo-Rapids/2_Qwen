@@ -181,6 +181,7 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" && ! -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then' in shell
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
     # PP4 screens only the diagonal-trim FA3 row against the pin, then gates it (test_fa3_prefill_diag.py).
-    assert pp4.count('srun ') == 2 and '--names n192-direct-o-varlen-pipe-diag --control "${pinned_fa3}"' in pp4
+    assert pp4.count('srun ') == 3 and '"prefill-${worker}" screen "${pinned_fa3}"' in pp4
+    assert '--names n192-direct-o-varlen-pipe-diag --control "${control}"' in (ROOT / 'scripts/select-firmus-pp4-bundle.sh').read_text()
     script = (ROOT / 'scripts/select-firmus-prefill-kernels.sh').read_text()
     assert 'shift 2' in script and '--output "${out}/fa3.json" "$@"' in script

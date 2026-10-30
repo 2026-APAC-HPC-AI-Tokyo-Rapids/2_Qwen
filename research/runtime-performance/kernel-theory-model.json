@@ -1,6 +1,6 @@
 {
   "schema_version": "kernel-theory/1",
-  "updated_at": "2026-10-28",
+  "updated_at": "2026-10-31",
   "profile_run": "40310899466",
   "scope": "Firmus H200, prefill-0/decode-0 GPU0. Historical BF16-draft image 40197369083; not a kernel profile of the newer FP8-draft normal run 40480817670 or router run 40528222753.",
   "hardware": {
@@ -485,5 +485,122 @@
     "removed_work": "per thread and tile about -185 of 7,160 instructions (-2.6%) and -40 of 1,070 MUFU.EX2 (-3.7%); mean 3.49 of 6 sub-blocks kept at 3986-4096; steady step 587 -> 588",
     "past_rejections_distinct": "No exp approximation, half precision, polynomial, N224 or staged Q; the arithmetic of the kept columns and the bytes are the pin's.",
     "expected": "about 9-12 us per sequence-call with power-cap factor 1 for removed MUFU/ALU work; about 0.4-0.6 ms per 24-layer PP0 period"
+  },
+  "pp4_throughput_bundle_20261031": {
+    "status": "cpu_gates_passed_pending_serving",
+    "user_objective_good_output_tokens_per_second": [
+      10000,
+      10500,
+      11000
+    ],
+    "reference": {
+      "run": 41005872470,
+      "official_score": 9832.74,
+      "repeat_run": 41020974704,
+      "repeat_score": 9828.95,
+      "source": "fc275674a97d78553b22597ee72c8fd48f5420f4",
+      "image_sha256": "db6eeb49303429ae4b3c0dc08f74fbea5101784d231c5e66dc8d7e6fabd59fe5"
+    },
+    "parent": {
+      "commit": "01e68a68d1b4ddf5fa5cf064c9edefc3276b6a3c",
+      "run": 41073991312,
+      "image_sha256": "cbf8d1c4d6673799bb0f624ed6780d69c095b54b897e79b9c618595dc34a7416",
+      "official_score": null,
+      "changes": "fixed FA3 pipe pinned, diagonal trim gated, gigatoken, settled gates removed"
+    },
+    "candidates": [
+      {
+        "name": "sparse min-new-token penalty",
+        "role": "decode",
+        "shape": {
+          "requests": 48,
+          "verify_width": 4,
+          "vocab": 151936,
+          "typical_stop_ids": 2
+        },
+        "dtype": "FP32 logits; int64 stop IDs; bool frozen mask",
+        "work_removed": "No per-step B x V accumulated penalty allocation/where/add and no vocabulary-wide addition to B x 4 x V logits. Only active stop IDs receive -inf. Other penalties retain the existing path.",
+        "dense_penalty_bytes": 29171712,
+        "logits_bytes": 116686848,
+        "flops_removed": null,
+        "hbm_bytes_saved": null,
+        "nvlink_bytes_saved": 0,
+        "decision_gate": "CPU lifecycle/snapshot/mixed-penalty parity, actual GPU dense parity/strides/changed-input graph replay and measured speedup on four Decode GPUs",
+        "measured_saving_us": null,
+        "previous_rejection": null
+      },
+      {
+        "name": "FA3 draft-extend CUDA graph",
+        "role": "decode",
+        "shape": {
+          "requests": "captured batches 1..48",
+          "draft_width": 4
+        },
+        "dtype": "unchanged FP8 draft with BF16 head and existing KV precision",
+        "work_removed": "Use existing FA3 DRAFT_EXTEND_V2 in-graph metadata and graph runner instead of per-step eager model launches. Preserve width and DP-padding guards.",
+        "flops_removed": 0,
+        "hbm_bytes_saved": 0,
+        "nvlink_bytes_saved": 0,
+        "decision_gate": "Exact eager-versus-two-replays logits/hidden parity at every captured shape; ordinary model load, sanity generation and official serving remain required for changing live lengths and padding.",
+        "measured_saving_us": null,
+        "previous_rejection": null
+      },
+      {
+        "name": "FC1 split-unroll16",
+        "role": "prefill",
+        "shape": {
+          "tokens": 8064,
+          "hidden": 4096,
+          "intermediate": 1536,
+          "experts": 128,
+          "topk": 8,
+          "ranks": 1,
+          "tile_mn": [
+            128,
+            256
+          ],
+          "stages": 4,
+          "fc1_k_blocks": 32
+        },
+        "dtype": "FP8 E4M3 operands; FP32 scales/accumulators; BF16 output",
+        "useful_fc1_flops": 1623497637888,
+        "work_removed": "FC1 chunk drains 4 to 2 per tile. Same products, K order, ratios, final scaling; FC2 remains one 12-block chunk.",
+        "flops_removed": 0,
+        "hbm_bytes_saved": 0,
+        "nvlink_bytes_saved": 0,
+        "decision_gate": "Native host/layout parity, zero-spill CUDA build, balanced/hot/edge/wide exactness and >0.5% total kernel saving over served split across 12 GPUs, 600-call endurance; otherwise retain split-u8.",
+        "model_evidence": "Genkai 40993048750 split-u16 vs split-u8 about 1% faster in mainloop model; not a serving result.",
+        "measured_saving_us": null,
+        "previous_rejection": "Full U32 instruction-cache cliff; ldsm was slower in serving gate, shared reciprocal failed endurance. None are reactivated."
+      }
+    ],
+    "note": "research/runtime-performance/2026-10-31-pp4-throughput-bundle.md",
+    "new_image_sha256": null,
+    "new_run": null,
+    "official_score": null,
+    "cpu_validation": {
+      "torch": "2.11.0",
+      "numpy": "2.2.6",
+      "native_cuda_compiler": "13.0.88 (matches the image toolchain)",
+      "native_host_cases": 276,
+      "compiled_kernels": 12,
+      "all_spill_bytes": 0,
+      "candidate_header_sha256": "495b4af7b913e6cb547ccd261ad60ef33f107fbedba04d3589c220e786d953c7",
+      "control_header_sha256": "220f409fd723d931cdad4e70b8e149646ececb5d1ee8554048683043ae413aa2",
+      "checks": [
+        "four-stage PP output and EAGLE capture parity",
+        "32 gather/reduce tensor cases",
+        "72 relay/result/KV/release cases",
+        "96 scheduler iterations with 40 requests",
+        "18 sparse-vs-dense penalty cases, merge/filter, snapshot, fallback and teardown"
+      ],
+      "linux_suite": "Broad suite completed with two failures: missing uv PATH and stale retired-candidate inventory. Both fixed; affected/changed tests rerun: 79 passed, 1 skipped. Full CI required before allocation."
+    },
+    "patches": {
+      "patches/sglang/decode-sparse-min-new-tokens.patch": "f0c8b975d8eec1753409c3c27dc8bdb9cd718ee3cf68221320f683a31c33bc3c",
+      "patches/sglang/fa3-draft-extend-graph.patch": "09b6c5ce726171ae0539dca6e260dbb8c3b99a3c396c70595bb05bdb6cb55415",
+      "patches/deep-gemm-host/sm90-prefill-split-unroll16.patch": "2a49f96935d115a88d093cb7670efb97a5f543fd2a8b48a0fdeadddec4a8fd27",
+      "patches/deep-gemm-bench/prefill-split-unroll16/sm90-prefill-split-unroll16.patch": "a0608f94bddd1f9d43b6c6191708845c532a168e20f15399e6430398d448c038"
+    }
   }
 }

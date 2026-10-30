@@ -215,6 +215,30 @@ def test_control_reference_failure_stops_the_job(selector, tmp_path):
         aggregate(selector, tmp_path)
 
 
+@pytest.mark.parametrize("failure", [None, "slower", "numeric", "endurance", "missing"])
+def test_unroll16_uses_the_served_split_control_and_requires_all_gates(selector, failure):
+    selector["select_unroll16_only"]()
+    scope = selector["choose"].__globals__
+    control = scope["VARIANTS"]["control"]
+    assert control["DG_SM90_PREFILL_SPLIT_ACCUM"] == "1" and control["DG_SM90_PREFILL_SPLIT_UNROLL16"] == "0"
+    assert set(scope["VARIANTS"]) == {"control", "split-unroll16"}
+    entries, gate = [], []
+    for rank in range(12):
+        routings = {}
+        for kind in scope["ROUTINGS"] + scope["EXACT_ROUTINGS"]:
+            timed = kind in scope["ROUTINGS"]
+            routings[kind] = {
+                "control": {"reference_passed": True, "us": [2500.0] * scope["ROUNDS"] if timed else []},
+                "split-unroll16": {"reference_passed": True, "bitwise_equal": not (failure == "numeric" and rank == 11), "us": [2510.0 if failure == "slower" else 2460.0] * scope["ROUNDS"] if timed else []},
+            }
+        entries.append({"global_rank": rank, "routings": routings})
+        gate.append({"variant": "split-unroll16", "calls": scope["ENDURANCE_CALLS"], "passed": not (failure == "endurance" and rank == 11)})
+    if failure == "missing":
+        entries[-1] = None
+    result = scope["choose"](entries, 12, gate)
+    assert result["winner"] == ("split-unroll16" if failure is None else "control")
+
+
 def test_margin_is_the_larger_of_absolute_and_relative(selector, tmp_path):
     # 0.5% of 2800 us is 14 us: a 10 us gain is noise, a 15 us gain is adopted.
     write_ranks(selector, tmp_path / "a", four=2790.0, lean=2790.0, pair=2790.0)
@@ -230,9 +254,10 @@ def test_pp4_job_uses_pins_and_workers_source_the_switch(tmp_path):
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
     assert 'test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"' in pp4
-    # No MegaMoE or Decode selection; only the diagonal-trim FA3 row is screened (test_fa3_prefill_diag.py).
-    assert "select-firmus-prefill-megamoe" not in pp4 and "prefill-megamoe" not in pp4 and "decode_gpu_selections" not in shell
-    assert pp4.count("srun ") == 2 and pp4.count("--aggregate") == 1 and "select-firmus-prefill-fa3.py\" --aggregate" in pp4
+    # The bundle only compares unroll16 against the pinned split, plus FA3 diagonal trim.
+    assert "select-firmus-prefill-megamoe.py\" --unroll16 --aggregate" in pp4 and "decode_gpu_selections" not in shell
+    assert pp4.count("srun ") == 3 and pp4.count("--aggregate") == 2 and "select-firmus-prefill-fa3.py\" --aggregate" in pp4
+    assert 'wait "${sparse_penalty_gate}"' in pp4
     worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
     assert 'if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi' in worker
     for line in pp4.splitlines():
@@ -258,7 +283,8 @@ def test_host_and_header_agree_on_the_four_stage_layout():
     pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch"]
     # Only the Decode 1D2D BLOCK_M 192 overlay (a different header) follows the MegaMoE tiles.
     assert config[-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
-    assert config[-6:-1] == pp4_only
+    assert config[-7:-2] == pp4_only
+    assert config[-2] == "patches/deep-gemm-bench/prefill-split-unroll16/sm90-prefill-split-unroll16.patch"
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
     assert not set(pp4_only[1:]) & set(main)
 
@@ -267,7 +293,7 @@ def test_lean_is_an_ep1_trailing_flag_after_four_stages_with_the_same_bytes():
     host = (ROOT / "patches/deep-gemm-host/sm90-prefill-lean.patch").read_text()
     header = (ROOT / "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch").read_text()
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
-    assert series[-5:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-1d2d-decode-bm192.patch"]
+    assert series[-6:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-prefill-split-unroll16.patch", "sm90-1d2d-decode-bm192.patch"]
     for gone in ("sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch", "sm90-prefill-tail-split.patch", "sm90-prefill-split-ldsm.patch", "sm90-prefill-combine-norm.patch"):
         assert not (ROOT / "patches/deep-gemm-host" / gone).exists()
     # ",true" (kPrefillLean) only when set and one rank only.
