@@ -11,14 +11,20 @@ stmatrix), four-stage-lean-pair (also DG_SM90_PREFILL_TAIL_PAIR=1: pool
 blocks with at most 64 rows run their N blocks in pairs on both warpgroups),
 four-stage-lean-split (lean plus DG_SM90_PREFILL_SPLIT_ACCUM=1: each warpgroup's
 FC1/FC2 accumulator is issued as two m64n128 halves so that the carried-scale
-rescale of one half overlaps the other half's WGMMA) and four-stage-lean-split-ldsm
-(also DG_SM90_PREFILL_SPLIT_LDSM=1: the split halves take A from registers loaded
-once per K block by ldmatrix, so the WGMMAs read A once instead of twice).
-The round-2 direct-FC2 and A-gather variants lost (+1.6% and +44% in
-40911121619) and the tail split stayed below the margin twice; they are gone.
-For the two timed routings and the untimed edge routing (experts with 0, 1-64,
-65, 127-129 and 255-256 rows) the control must match an FP32 reference on
-sampled tokens and every candidate must reproduce the control bit for bit.
+rescale of one half overlaps the other half's WGMMA) and four-stage-lean-split-rcp
+(also DG_SM90_PREFILL_SHARED_RCP=1: the FC1 epilogue takes the two column sigmoids
+of a row from one reciprocal and leaves the up scale to the quantizer, 96 instead
+of 128 MUFU per thread and tile). The round-2 direct-FC2 and A-gather variants lost
+(+1.6% and +44% in 40911121619), the tail split stayed below the margin twice and
+the ldmatrix split lost (+1.6% in 41020974704); they are gone.
+For the two timed routings and the untimed edge and wide routings (experts with 0,
+1-64, 65, 127-129 and 255-256 rows; hidden states 40 times larger, so that FC1
+gates reach the shared reciprocal's per-element path) the control must match an
+FP32 reference on sampled tokens. Every candidate must reproduce the control bit
+for bit, except the shared reciprocal, whose FP order differs: its output must be
+finite and within TOLERANCE_RELATIVE_L2 and TOLERANCE_MAX_SCALED_ERROR of the
+control's on every routing (a CPU model of the epilogue and FC2 gives at most
+9.8e-5 and 4.7e-3: research/runtime-performance/2026-10-30-prefill-megamoe-shared-rcp.md).
 All six are timed in rotating order. --aggregate adopts the fastest variant that passed on
 every GPU of every worker and saved at least the summed per-case margin over
 all GPUs and routings; anything missing keeps the control. A control reference
@@ -33,11 +39,12 @@ three Prefill workers stopped after about 13 microbatches (about 300 MegaMoE
 calls per GPU) with no CUDA error; the selection makes only about 30 calls per
 GPU. Each GPU recomputes the winner the aggregate will pick from the same rank
 files and, if it is a variant that has not served yet, runs it for
-ENDURANCE_CALLS consecutive calls rotating over the balanced, hot and edge
+ENDURANCE_CALLS consecutive calls rotating over the balanced, hot, edge and wide
 routings, then checks that the last output of every routing equals the
-control's bit for bit. --aggregate keeps such a winner only if all twelve GPUs
-ran it to the end and matched; otherwise it takes the fastest eligible variant
-that has served (UNGATED) and records why.
+control's bit for bit (the shared reciprocal's: its own first output's).
+--aggregate keeps such a winner only if all twelve GPUs ran it to the end and
+matched; otherwise it takes the fastest eligible variant that has served
+(UNGATED) and records why.
 """
 import argparse
 import json
@@ -48,18 +55,24 @@ from datetime import timedelta
 from pathlib import Path
 
 HIDDEN, INTERMEDIATE, EXPERTS, TOPK = 4096, 1536, 128, 8
-SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR", "DG_SM90_PREFILL_SPLIT_ACCUM", "DG_SM90_PREFILL_SPLIT_LDSM")
+SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR", "DG_SM90_PREFILL_SPLIT_ACCUM", "DG_SM90_PREFILL_SHARED_RCP")
 VARIANTS = {name: dict(zip(SWITCHES, values, strict=True)) for name, values in {
     "control": ("0", "0", "0", "0", "0"),
     "four-stage": ("1", "0", "0", "0", "0"),
     "four-stage-lean": ("1", "1", "0", "0", "0"),
     "four-stage-lean-pair": ("1", "1", "1", "0", "0"),
     "four-stage-lean-split": ("1", "1", "0", "1", "0"),
-    "four-stage-lean-split-ldsm": ("1", "1", "0", "1", "1"),
+    "four-stage-lean-split-rcp": ("1", "1", "0", "1", "1"),
 }.items()}
-# Every candidate changes staging, synchronisation, the work assignment or the WGMMA
-# issue order only (same products, K order and multipliers per element): bit-exact.
-CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split", "four-stage-lean-split-ldsm")
+# The candidates change staging, synchronisation, the work assignment or the WGMMA issue
+# order only (same products, K order and multipliers per element): bit-exact. The shared
+# reciprocal changes the FP order of the FC1 epilogue (FP8 bytes may move by one step).
+CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split", "four-stage-lean-split-rcp")
+TOLERANCE_GATED = ("four-stage-lean-split-rcp",)
+# Bounds on the MegaMoE output against the control's: relative L2 10x above the CPU model's worst
+# case (9.8e-5), and max |diff| / max |control| 4x above it (4.7e-3 at 8192 x 4096). One BF16 step
+# of an element in the top binade alone can reach 2^-7 = 7.8e-3 of the maximum.
+TOLERANCE_RELATIVE_L2, TOLERANCE_MAX_SCALED_ERROR = 1e-3, 2e-2
 # Variants that have served whole runs need no endurance gate: four-stage-lean-split passed the
 # gate and served 6212 requests in 41005872470 (9832.74), four-stage-lean served 12k+ Prefill
 # batches in 40964714831 (9668.27), four-stage and the control before them.
@@ -67,8 +80,11 @@ UNGATED = ("control", "four-stage", "four-stage-lean", "four-stage-lean-split")
 # Over 300 calls per GPU stopped serving in 40991744289; 600 at about 2.5 ms is about 1.5 s.
 ENDURANCE_CALLS = 600
 ROUTINGS = ("balanced", "hot")
-# Checked for exactness only (not timed): the pool-block shapes the timed routings rarely hit.
-EXACT_ROUTINGS = ("edges",)
+# Checked against the control only (not timed): the pool-block shapes the timed routings
+# rarely hit, and hidden states WIDE_HIDDEN_SCALE times larger (balanced routing), whose FC1
+# gates below about -40 send part of the shared reciprocal's chunks to its per-element path.
+EXACT_ROUTINGS = ("edges", "wide")
+HIDDEN_SCALE, WIDE_HIDDEN_SCALE = 0.25, 40.0
 # Rows of experts 16..47 in the edge routing; experts 0..15 get none.
 EDGE_EXPERT_ROWS = (1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 66, 127, 128, 129, 191, 192, 193, 255, 256, 1, 63, 64, 65, 1, 2, 3, 4)
 ROUNDS = 12
@@ -120,6 +136,13 @@ def routing(torch, kind, count, generator, device):
             row += rows
         assert row <= count
     return ids.to(torch.int32), weights / weights.sum(-1, keepdim=True)
+
+
+def inputs(torch, kind, count, generator, device):
+    """Hidden states and routing of one case; the wide case is the balanced routing on larger hidden states."""
+    scale = WIDE_HIDDEN_SCALE * HIDDEN_SCALE if kind == "wide" else HIDDEN_SCALE
+    hidden = torch.randn(count, HIDDEN, dtype=torch.bfloat16, device=device, generator=generator) * scale
+    return (hidden, *routing(torch, "balanced" if kind == "wide" else kind, count, generator, device))
 
 
 def errors(torch, observed, expected):
@@ -188,8 +211,7 @@ def run_selection(output, ranks):
 
     local = {"rank": rank, "ranks_per_group": ranks, "tokens": tokens, "device": torch.cuda.get_device_name(rank), "uuid": str(torch.cuda.get_device_properties(rank).uuid), "routings": {}}
     for kind in ROUTINGS + EXACT_ROUTINGS:
-        hidden = torch.randn(tokens, HIDDEN, dtype=torch.bfloat16, device=device, generator=generator) * 0.25
-        ids, weights = routing(torch, kind, tokens, generator, device)
+        hidden, ids, weights = inputs(torch, kind, tokens, generator, device)
         outputs = {variant: torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for variant in VARIANTS}
         for variant, out in outputs.items():
             forward(variant, hidden, ids, weights, out)
@@ -214,6 +236,8 @@ def run_selection(output, ranks):
             entry["reference_passed"] = entry["finite"] and relative_l2 < MAX_RELATIVE_L2 and max_scaled_error < MAX_SCALED_ERROR
             if variant != "control":
                 entry["bitwise_equal"] = bool(torch.equal(out, outputs["control"]))
+                if variant in TOLERANCE_GATED:
+                    entry["control_relative_l2"], entry["control_max_scaled_error"] = errors(torch, out, outputs["control"])
             result[variant] = entry
         if kind in EXACT_ROUTINGS:
             local["routings"][kind] = result
@@ -254,17 +278,19 @@ def run_endurance(selection, output, workers):
     if local["needed"]:
         torch, dist, rank, device, tokens, _, generator, _, _, buf, forward = prepare(1)
         kinds = ROUTINGS + EXACT_ROUTINGS
-        inputs = {kind: (torch.randn(tokens, HIDDEN, dtype=torch.bfloat16, device=device, generator=generator) * 0.25, *routing(torch, kind, tokens, generator, device)) for kind in kinds}
+        cases = {kind: inputs(torch, kind, tokens, generator, device) for kind in kinds}
         reference = {kind: torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for kind in kinds}
         outputs = {kind: torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for kind in kinds}
+        # A tolerance-gated winner (checked against the control by the selection) must reproduce its own first call.
+        local["reference"] = winner if winner in TOLERANCE_GATED else "control"
         for kind in kinds:
-            forward("control", *inputs[kind], reference[kind])
+            forward(local["reference"], *cases[kind], reference[kind])
         torch.cuda.synchronize()
         start = time.monotonic()
         # Back to back as in serving, rotating the routings; each output buffer keeps its routing's last call.
         for call in range(ENDURANCE_CALLS):
             kind = kinds[call % len(kinds)]
-            forward(winner, *inputs[kind], outputs[kind])
+            forward(winner, *cases[kind], outputs[kind])
         torch.cuda.synchronize()
         local["calls"] = ENDURANCE_CALLS
         local["calls_seconds"] = time.monotonic() - start
@@ -288,12 +314,19 @@ def endurance_failure(gate, winner, expected):
         if entry["variant"] != winner:
             return f"rank {global_rank} gated {entry['variant']}, not {winner}"
         if entry["calls"] != ENDURANCE_CALLS or not entry["passed"]:
-            return f"rank {global_rank} failed the endurance gate: {entry.get('calls')} calls, bitwise_equal {entry.get('bitwise_equal')}"
+            return f"rank {global_rank} failed the endurance gate: {entry.get('calls')} calls, bitwise_equal {entry.get('bitwise_equal')} to {entry.get('reference')}"
     return None
 
 
-def candidate_passed(entry, timed):
-    return entry["reference_passed"] and entry["bitwise_equal"] and (len(entry["us"]) == ROUNDS or not timed)
+def matches_control(name, entry):
+    """Bit for bit, or for a tolerance-gated variant finite and within the predeclared bounds."""
+    if name in TOLERANCE_GATED:
+        return entry["finite"] and entry["control_relative_l2"] <= TOLERANCE_RELATIVE_L2 and entry["control_max_scaled_error"] <= TOLERANCE_MAX_SCALED_ERROR
+    return entry["bitwise_equal"]
+
+
+def candidate_passed(name, entry, timed):
+    return entry["reference_passed"] and matches_control(name, entry) and (len(entry["us"]) == ROUNDS or not timed)
 
 
 def choose(entries, expected, gate=None):
@@ -313,11 +346,11 @@ def choose(entries, expected, gate=None):
         savings, reason = [], None
         for entry in entries:
             for kind in EXACT_ROUTINGS:
-                if not candidate_passed(entry["routings"][kind][name], False):
+                if not candidate_passed(name, entry["routings"][kind][name], False):
                     reason = f"failed rank {entry['global_rank']} {kind}"
             for kind in ROUTINGS:
                 result = entry["routings"][kind]
-                if len(result["control"]["us"]) != ROUNDS or not candidate_passed(result[name], True):
+                if len(result["control"]["us"]) != ROUNDS or not candidate_passed(name, result[name], True):
                     reason = f"failed-or-untimed rank {entry['global_rank']} {kind}"
                     continue
                 control, candidate = statistics.median(result["control"]["us"]), statistics.median(result[name]["us"])
@@ -342,7 +375,8 @@ def aggregate(directory, output, env_output, workers, endurance):
     gate = [entry and {k: v for k, v in entry.items() if k != "global_rank"} for entry in load_entries(endurance, workers)]
     selection = choose(load_entries(directory, workers), workers * 4, gate)
     selection["env"] = {k: v for k, v in VARIANTS[selection["winner"]].items() if v != "0"}
-    result = {"schema": "firmus-prefill-megamoe-selection/v4", "rule": {"rounds": ROUNDS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "routings": ROUTINGS, "exact_routings": EXACT_ROUTINGS, "bit_exact": True, "endurance_calls": ENDURANCE_CALLS, "ungated": UNGATED}, **selection, "endurance": gate}
+    tolerance = {"variants": TOLERANCE_GATED, "relative_l2": TOLERANCE_RELATIVE_L2, "max_scaled_error": TOLERANCE_MAX_SCALED_ERROR}
+    result = {"schema": "firmus-prefill-megamoe-selection/v5", "rule": {"rounds": ROUNDS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "routings": ROUTINGS, "exact_routings": EXACT_ROUTINGS, "wide_hidden_scale": WIDE_HIDDEN_SCALE, "bit_exact": [name for name in CANDIDATES if name not in TOLERANCE_GATED], "tolerance": tolerance, "endurance_calls": ENDURANCE_CALLS, "ungated": UNGATED}, **selection, "endurance": gate}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     with env_output.open("a") as env:

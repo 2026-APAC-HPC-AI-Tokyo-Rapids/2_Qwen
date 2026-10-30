@@ -1,0 +1,149 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -228,6 +228,7 @@ template <
+     bool kPrefillLean = false,
+     bool kPrefillTailPair = false,
+     bool kPrefillSplitAccum = false,
++    bool kPrefillSharedRcp = false,
+     uint32_t L1_SHAPE_N = kIntermediateHidden * 2,
+     uint32_t L1_SHAPE_K = kHidden,
+     uint32_t L2_SHAPE_N = kHidden,
+@@ -531,6 +532,15 @@ sm90_fp8_mega_moe_impl(void* y,
+     DG_STATIC_ASSERT(not kPrefillSplitAccum or (kPrefillLean and not kPrefillTailPair),
+                      "The split accumulator is layered on the lean path without tail pairing");
+     constexpr uint32_t kL1SplitUnroll = 8, kL2SplitUnroll = 12;
++    // kPrefillSharedRcp (split path only): the FC1 epilogue takes the two sigmoids of a row's
++    // column pair from one reciprocal, 1 / d_a = d_b / (d_a d_b) with d = 1 + 2^(-g log2 e), and
++    // leaves the up channels' final scale for the quantizer, so MUFU drops from 128 to 96 per
++    // thread and tile. EX2 and RCP stay the same approximate instructions; only the FP order of
++    // a few multiplies changes (FP8 bytes may differ by one step, hence the in-job tolerance
++    // gate). Where d_a d_b could leave the normal range the warp recomputes that chunk per element.
++    DG_STATIC_ASSERT(not kPrefillSharedRcp or (kPrefillSplitAccum and kFastMath and
++                                               kActivationClamp == cute::numeric_limits<float>::infinity()),
++                     "The shared reciprocal is layered on the fast-math split path without activation clamp");
+     constexpr uint32_t SMEM_CD_PER_QUEUE = kPrefillWarpCD ?
+         math::constexpr_align(kNumEpilogueWarps * 16 * kPrefillWarpCDRowBytes, kSharedMemoryAlignment) :
+         math::constexpr_align(
+@@ -1514,6 +1524,9 @@ sm90_fp8_mega_moe_impl(void* y,
+             using WGMMA = L1WGMMA;
+             constexpr uint32_t kAccumPerThread = WGMMA::kNumAccum;
+             float final_accum[kAccumPerThread] = {};
++            // kPrefillSharedRcp: the FC1 final scales (row 0 gate, row 1 gate, row 0 up, row 1 up),
++            // applied by the epilogue instead of postscale_l1_final.
++            [[maybe_unused]] float l1_final_scale[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+ 
+             if constexpr (kReuseAccumAsFinal) {
+                 auto prescale_l1_final = [&](const float& scale_a_0, const float& scale_a_1,
+@@ -1955,8 +1968,16 @@ sm90_fp8_mega_moe_impl(void* y,
+                                 empty_barriers[stage_idx]->arrive();
+                         }
+                         }
++                        if constexpr (kPrefillSharedRcp) {
++                            // Every unpaired FC1 item of the split path has kNumL1BlockKs K blocks.
++                            l1_final_scale[0] = prev_scale_a_0 * prev_gate_sf;
++                            l1_final_scale[1] = prev_scale_a_1 * prev_gate_sf;
++                            l1_final_scale[2] = prev_scale_a_0 * prev_up_sf;
++                            l1_final_scale[3] = prev_scale_a_1 * prev_up_sf;
++                        } else {
+                         if (num_k_blocks != 0)
+                             postscale_l1_final(prev_scale_a_0, prev_scale_a_1, prev_gate_sf, prev_up_sf);
++                        }
+                     } else {
+                         // Per-128 activation scales: one WGMMA group per K block and one
+                         // carried-scale rescale, the same structure as FC1.
+@@ -2842,6 +2863,69 @@ sm90_fp8_mega_moe_impl(void* y,
+                     // p*8 + col_idx*2 + {0, 1}.
+                     float swiglu_r0[kNumPairs][2], swiglu_r1[kNumPairs][2];
+                     float amax_r0 = 0.0f, amax_r1 = 0.0f;
++                    if constexpr (kPrefillSharedRcp) {
++                        // final_accum holds the unscaled sums; s_gate and s_up are the row's final scales.
++                        // Per element: d = 1 + 2^(acc_g (s_gate * -log2 e)) and the value
++                        // (acc_g (s_gate / d)) acc_u, which is the control's value in units of s_up, so
++                        // amax and the quantizer multiplier take s_up (|value| stays below value / s_up).
++                        // Columns c0 and c1 of a row share R = rcp(d_0 d_1):
++                        //   s_gate / d_0 = (1 + e_1) (R s_gate),  s_gate / d_1 = d_0 (R s_gate).
++                        // d_0 d_1 < 2^126 min(1, s_gate) keeps R normal and R s_gate normal. A NaN gate
++                        // only spreads to the other column of its row, whose FC2 output row is NaN either
++                        // way (fmaxf drops a NaN product, so it does not take the per-element path).
++                        constexpr float kNegLog2E = -1.44269502162933349609375f;
++                        auto ex2 = [](const float& x) { float y; asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x)); return y; };
++                        auto rcp = [](const float& x) { float y; asm("rcp.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x)); return y; };
++                        const float t_r0 = l1_final_scale[0] * kNegLog2E, t_r1 = l1_final_scale[1] * kNegLog2E;
++                        // Below this bound on d_0 d_1, rcp(d_0 d_1) * s_gate is a normal number (not a denormal).
++                        const float max_d_bound = fminf(fminf(l1_final_scale[0], l1_final_scale[1]), 1.0f) * 0x1p126f;
++                        auto silu_pair = [&](const float& g_0, const float& u_0, const float& g_1, const float& u_1,
++                                             const float& t, const float& s_gate, float& v_0, float& v_1, float& max_d) {
++                            const float e_0 = ex2(g_0 * t), e_1 = ex2(g_1 * t);
++                            const float d_0 = 1.0f + e_0;
++                            const float d = fmaf(d_0, e_1, d_0);
++                            max_d = fmaxf(max_d, d);
++                            const float r = rcp(d) * s_gate;
++                            v_0 = (g_0 * fmaf(e_1, r, r)) * u_0;
++                            v_1 = (g_1 * (d_0 * r)) * u_1;
++                        };
++                        auto silu_one = [&](const float& g, const float& u, const float& t, const float& s_gate) {
++                            return (g * (rcp(1.0f + ex2(g * t)) * s_gate)) * u;
++                        };
++                        // Chunks of kSharedRcpChunk pairs per row: a warp in which any lane reached the bound
++                        // (a gate below about -40, or two below about -20, at s_gate near 1e-5) recomputes
++                        // the chunk with one reciprocal per element, as without the flag. The vote keeps the
++                        // branch warp-uniform, so ptxas branches around the per-element RCPs instead of
++                        // predicating them (the EX2 results are reused), and only the chunk's accumulators
++                        // stay live for it: the whole-tile form spilled 72 bytes.
++                        constexpr uint32_t kSharedRcpChunk = 4;
++                        DG_STATIC_ASSERT(kNumPairs % kSharedRcpChunk == 0, "Shared reciprocal chunks");
++                        #pragma unroll
++                        for (uint32_t c = 0; c < kNumPairs; c += kSharedRcpChunk) {
++                            float max_d = 0.0f;
++                            #pragma unroll
++                            for (uint32_t p = c; p < c + kSharedRcpChunk; ++ p) {
++                                silu_pair(final_accum[p * 8 + 0], final_accum[p * 8 + 4], final_accum[p * 8 + 1], final_accum[p * 8 + 5],
++                                          t_r0, l1_final_scale[0], swiglu_r0[p][0], swiglu_r0[p][1], max_d);
++                                silu_pair(final_accum[p * 8 + 2], final_accum[p * 8 + 6], final_accum[p * 8 + 3], final_accum[p * 8 + 7],
++                                          t_r1, l1_final_scale[1], swiglu_r1[p][0], swiglu_r1[p][1], max_d);
++                            }
++                            if (__any_sync(0xffffffffu, not (max_d < max_d_bound))) {
++                                #pragma unroll
++                                for (uint32_t p = c; p < c + kSharedRcpChunk; ++ p) {
++                                    swiglu_r0[p][0] = silu_one(final_accum[p * 8 + 0], final_accum[p * 8 + 4], t_r0, l1_final_scale[0]);
++                                    swiglu_r0[p][1] = silu_one(final_accum[p * 8 + 1], final_accum[p * 8 + 5], t_r0, l1_final_scale[0]);
++                                    swiglu_r1[p][0] = silu_one(final_accum[p * 8 + 2], final_accum[p * 8 + 6], t_r1, l1_final_scale[1]);
++                                    swiglu_r1[p][1] = silu_one(final_accum[p * 8 + 3], final_accum[p * 8 + 7], t_r1, l1_final_scale[1]);
++                                }
++                            }
++                        }
++                        #pragma unroll
++                        for (uint32_t p = 0; p < kNumPairs; ++ p) {
++                            amax_r0 = fmaxf(amax_r0, fmaxf(fabsf(swiglu_r0[p][0]), fabsf(swiglu_r0[p][1])));
++                            amax_r1 = fmaxf(amax_r1, fmaxf(fabsf(swiglu_r1[p][0]), fabsf(swiglu_r1[p][1])));
++                        }
++                    } else {
+                     #pragma unroll
+                     for (uint32_t p = 0; p < kNumPairs; ++ p) {
+                         swiglu_r0[p][0] = silu_mul(final_accum[p * 8 + 0], final_accum[p * 8 + 4]);
+@@ -2851,14 +2935,24 @@ sm90_fp8_mega_moe_impl(void* y,
+                         amax_r0 = fmaxf(amax_r0, fmaxf(fabsf(swiglu_r0[p][0]), fabsf(swiglu_r0[p][1])));
+                         amax_r1 = fmaxf(amax_r1, fmaxf(fabsf(swiglu_r1[p][0]), fabsf(swiglu_r1[p][1])));
+                     }
++                    }
+                     // Rows past valid_m (a partial tile) keep amax 0 as before; their values
+                     // are never stored.
+                     amax_r0 = valid_r0 ? amax_r0 : 0.0f;
+                     amax_r1 = valid_r1 ? amax_r1 : 0.0f;
+                     amax_r0 = math::warp_reduce<4, false>(amax_r0, math::ReduceMax<float>());
+                     amax_r1 = math::warp_reduce<4, false>(amax_r1, math::ReduceMax<float>());
++                    if constexpr (kPrefillSharedRcp) {
++                        // Values in units of s_up: the scale's monotonic product gives the true amax.
++                        amax_r0 *= l1_final_scale[2];
++                        amax_r1 *= l1_final_scale[3];
++                    }
+                     float2 sf_pair, sf_inv_pair;
+                     sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(make_float2(amax_r0, amax_r1), sf_pair, sf_inv_pair);
++                    if constexpr (kPrefillSharedRcp) {
++                        sf_inv_pair.x *= l1_final_scale[2];
++                        sf_inv_pair.y *= l1_final_scale[3];
++                    }
+ 
+                     // Quantize into the warp's staging slice (local rows row_idx and row_idx + 8).
+                     auto* stage = reinterpret_cast<uint8_t*>(smem_cd_l1) + epilogue_warp_idx * (16 * kStageRowBytes);
