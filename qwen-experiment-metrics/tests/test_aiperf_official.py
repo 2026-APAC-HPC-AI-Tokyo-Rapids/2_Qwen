@@ -178,6 +178,15 @@ def test_parser_emits_measured_throughput_and_local_gate(tmp_path: Path, parser_
     assert result["official_validation"]["client_input_token_adjustment"] == 14
 
 
+@pytest.mark.parametrize("executable,valid", [("/opt/aiperf/bin/aiperf", True), ("/tmp/aiperf", False)])
+def test_parser_checks_isolated_client_path(tmp_path: Path, parser_path: Path, official_artifacts: list[str], executable: str, valid: bool) -> None:
+    command = Path(official_artifacts[1])
+    command.write_text(command.read_text().replace("/opt/sglang/venv/bin/aiperf", executable))
+    process, result = parse(tmp_path, parser_path, official_artifacts, metrics())
+    assert (process.returncode == 0) is valid
+    assert result["official_validation"]["valid"] is valid
+
+
 def test_parser_rejects_input_length_without_distribution(tmp_path: Path, parser_path: Path, official_artifacts: list[str]) -> None:
     values = metrics(input_length=3986)
     for statistic in ("min", "max", "count", "sum"):

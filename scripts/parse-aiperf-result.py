@@ -100,8 +100,12 @@ def validate_official_workload(command: Path, provenance: Path, concurrency: int
     required = {"aiperf_version": "0.12.0", "mode": "official", "concurrency": str(concurrency), "tokenizer_revision": TOKENIZER_REVISION}
     if any(identity.get(key) != value for key, value in required.items()):
         raise ValueError("AIPerf provenance does not match the pinned official workload")
+    actual = shlex.split(command.read_text())
+    if not actual or actual[0] not in ("/opt/sglang/venv/bin/aiperf", "/opt/aiperf/bin/aiperf"):
+        raise ValueError("AIPerf executable is not a pinned benchmark environment")
     expected = expected_official_command(gateway, concurrency)
-    if shlex.split(command.read_text()) != expected:
+    expected[0] = actual[0]
+    if actual != expected:
         raise ValueError("AIPerf command does not match the fixed official workload")
     return expected
 
