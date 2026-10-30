@@ -5,7 +5,6 @@ export BUILDAH_ISOLATION=chroot
 export STORAGE_DRIVER=overlay
 
 : "${BUILD_DIR:?build directory is required}"
-: "${BUILD_CACHE_REPOSITORY:?Buildah cache repository is required}"
 : "${CONTAINER_ARCHIVE_DIR:?container archive directory is required}"
 : "${GITHUB_RUN_ATTEMPT:?workflow run attempt is required}"
 : "${GITHUB_RUN_ID:?workflow run ID is required}"
@@ -51,7 +50,9 @@ dockerfile_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/basic
 check_blob_oid="$(git -C "${GITHUB_WORKSPACE}" hash-object containers/check-basic-image.py)"
 jq -n --arg qwen_object_format "${qwen_object_format}" --arg qwen_commit "${GITHUB_SHA}" --arg dockerfile_blob_oid "${dockerfile_blob_oid}" --arg check_blob_oid "${check_blob_oid}" --arg base_reference "${base_reference}" --arg base_manifest_sha256 "${base_manifest_sha256}" '{schema_version:"oci-embedded-manifest/v1",source_commits:[{repository_id:"apac2026-qwen",commit_role:"container_build_definition",object_hash_algorithm:$qwen_object_format,oid:$qwen_commit}],recipe:{path:"containers/basic.Dockerfile",blob_oid:$dockerfile_blob_oid,build_steps:[{path:"containers/check-basic-image.py",blob_oid:$check_blob_oid}]},tier:"basic",applied_patches:[],base_oci:{reference:$base_reference,manifest_sha256:$base_manifest_sha256}}' >"${context}/apac-manifest.json"
 
-buildah --root "${storage_root}" --runroot "${run_root}" bud --isolation chroot --network host --layers --cache-from "${BUILD_CACHE_REPOSITORY}" --cache-to "${BUILD_CACHE_REPOSITORY}" --cache-ttl 336h --file "${context}/containers/basic.Dockerfile" --tag "${image}" "${context}" 2>&1 | tee "${BUILD_DIR}/logs/buildah.log"
+cache_args=()
+if [[ -n "${BUILD_CACHE_REPOSITORY:-}" ]]; then cache_args=(--cache-from "${BUILD_CACHE_REPOSITORY}" --cache-to "${BUILD_CACHE_REPOSITORY}"); fi
+buildah --root "${storage_root}" --runroot "${run_root}" bud --isolation chroot --network host --layers "${cache_args[@]}" --cache-ttl 336h --file "${context}/containers/basic.Dockerfile" --tag "${image}" "${context}" 2>&1 | tee "${BUILD_DIR}/logs/buildah.log"
 test_container="$(buildah --root "${storage_root}" --runroot "${run_root}" from "${image}")"
 buildah --root "${storage_root}" --runroot "${run_root}" run --isolation chroot "${test_container}" /opt/sglang/bin/python -B /opt/apac/check-basic-image.py 2>&1 | tee "${BUILD_DIR}/logs/buildah-test.log"
 buildah --root "${storage_root}" --runroot "${run_root}" run --isolation chroot "${test_container}" /opt/aiperf/bin/python -c 'from importlib.metadata import version; assert version("aiperf") == "0.12.0"; assert version("sglang-router") == "0.3.2"'
