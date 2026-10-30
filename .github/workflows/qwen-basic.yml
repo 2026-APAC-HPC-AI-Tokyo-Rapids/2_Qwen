@@ -1,4 +1,4 @@
-name: AWSでBasic SGLangイメージをビルド
+name: Qwen Basic (Firmus)
 
 on:
   push:
@@ -17,7 +17,16 @@ env:
 jobs:
   validate:
     if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[basic]') && contains(github.event.head_commit.message, '[cluster:firmus]') }}
-    uses: ./.github/workflows/validate.yml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Basic and shared control-plane CPU checks
+        run: |
+          find scripts platforms containers aws submission -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' -o -name '*.slurm' -o -name '*.sbatch' \) -print0 | xargs -0 -r -n1 bash -n
+          uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers
+          uvx --from 'actionlint-py==1.7.12.24' actionlint
+          uv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests/test_basic_serving.py qwen-experiment-metrics/tests/test_aiperf_official.py qwen-experiment-metrics/tests/test_firmus_reference.py qwen-experiment-metrics/tests/test_firmus_cpu_lifecycle.py qwen-experiment-metrics/tests/test_scheduler_monitor.py qwen-experiment-metrics/tests/test_build_bootstrap.py qwen-experiment-metrics/tests/test_repository_contract.py qwen-experiment-metrics/tests/test_vllm_container.py
 
   stage:
     name: Basic SGLangのビルド入力をS3へ保存
@@ -87,7 +96,7 @@ jobs:
   serve:
     name: Firmus Basic official workload
     needs: [validate, materialize]
-    if: ${{ always() && needs.validate.result == 'success' && (needs.materialize.result == 'success' || needs.materialize.result == 'skipped') && !contains(github.event.head_commit.message, '[build-only]') }}
+    if: ${{ always() && needs.validate.result == 'success' && (needs.materialize.result == 'success' || needs.materialize.result == 'skipped') && !contains(github.event.head_commit.message, '[build-only]') && !startsWith(github.event.head_commit.message, '[require-build]') }}
     uses: ./.github/workflows/firmus.yml
     with:
       basic: true

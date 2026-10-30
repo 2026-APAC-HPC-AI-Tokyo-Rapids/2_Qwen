@@ -1,6 +1,8 @@
 """Basic launch/readback boundaries: isolate the public stack from Bonus."""
+import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -74,4 +76,38 @@ def test_preparation_rejects_bonus_image_before_creating_runtime(tmp_path):
     runtime = tmp_path / "run"
     result = subprocess.run(["bash", str(ROOT / "submission/basic/prepare.sh"), str(runtime), str(image), str(tmp_path), str(tmp_path), str(ROOT / "configs/firmus-basic.json")], text=True, capture_output=True, check=False)
     assert result.returncode != 0
+    assert not runtime.exists()
+
+
+def test_preparation_reaches_draft_without_new_unsquashfs_options(tmp_path, config):
+    image = tmp_path / "1.sqsh"
+    image.write_bytes(b"pinned fixture image")
+    config.update(container_sha256=hashlib.sha256(image.read_bytes()).hexdigest(), container_size_bytes=image.stat().st_size, container_source_commit="a" * 40)
+    image.with_suffix(".container-sidecar.json").write_text(json.dumps({"tier": "basic", "applied_patches": [], "source_commits": {"sglang": config["sglang_commit"], "qwen": config["container_source_commit"]}, "container_artifact": {"size_bytes": config["container_size_bytes"], "sha256": config["container_sha256"]}}))
+    settings = tmp_path / "config.json"
+    settings.write_text(json.dumps(config))
+    model = tmp_path / "model"
+    metadata = model / ".cache/huggingface/download"
+    metadata.mkdir(parents=True)
+    (metadata / "config.json.metadata").write_text("e156cb4efae43fbee1a1ab073f946a1377e6b969\n")
+    (model / "config.json").write_text(json.dumps({"model_type": "qwen3_moe", "quantization_config": {"quant_method": "fp8"}}))
+    shards = {f"weight-{i}": f"shard-{i}.safetensors" for i in range(24)}
+    for name in shards.values():
+        (model / name).write_bytes(b"fixture")
+    (model / "model.safetensors.index.json").write_text(json.dumps({"weight_map": shards}))
+    tokenizer = tmp_path / "tokenizer"
+    tokenizer.mkdir()
+    for name in ("config.json", "generation_config.json", "merges.txt", "tokenizer.json", "tokenizer_config.json", "vocab.json"):
+        (tokenizer / name).write_text("{}")
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    marker = tmp_path / "draft-stage"
+    for name, content in {"unsquashfs": "exit 99", "uvx": f"touch '{marker}'; exit 78"}.items():
+        path = binary / name
+        path.write_text("#!/bin/bash\n" + content + "\n")
+        path.chmod(0o755)
+    runtime = tmp_path / "run"
+    result = subprocess.run(["bash", str(ROOT / "submission/basic/prepare.sh"), str(runtime), str(image), str(model), str(tokenizer), str(settings)], env={**os.environ, "PATH": f"{binary}:{os.environ['PATH']}"}, capture_output=True, text=True, check=False)
+    assert result.returncode == 78, result.stderr
+    assert marker.exists()
     assert not runtime.exists()

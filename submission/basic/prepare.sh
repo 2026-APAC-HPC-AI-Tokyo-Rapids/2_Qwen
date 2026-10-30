@@ -8,10 +8,9 @@ model=$(realpath "$3")
 tokenizer=$(realpath "$4")
 config=$(realpath "$5")
 sidecar=${image%.sqsh}.container-sidecar.json
-jq -e '.tier == "basic" and .applied_patches == [] and .source_commits.sglang == "297e54fd105e974cdf401e5b4d20253a22c16f90"' "${sidecar}" >/dev/null
+jq -e --slurpfile config "${config}" '.tier == "basic" and .applied_patches == [] and .source_commits.sglang == "297e54fd105e974cdf401e5b4d20253a22c16f90" and .source_commits.qwen == $config[0].container_source_commit and .container_artifact.sha256 == $config[0].container_sha256 and .container_artifact.size_bytes == $config[0].container_size_bytes' "${sidecar}" >/dev/null
 [[ "$(stat -c '%s' "${image}")" == "$(jq -er .container_artifact.size_bytes "${sidecar}")" ]]
 [[ "$(sha256sum "${image}" | cut -d' ' -f1)" == "$(jq -er .container_artifact.sha256 "${sidecar}")" ]]
-unsquashfs -cat "${image}" opt/apac/manifest.json | jq -e ' .tier == "basic" and .applied_patches == [] and .base_oci.reference == "docker.io/lmsysorg/sglang@sha256:f7876bef696ccf9cf75a2bf7ccb82970f5fac577f082fb8ca95c9a59d2160eb5"' >/dev/null
 [[ "$(head -n1 "${model}/.cache/huggingface/download/config.json.metadata")" == e156cb4efae43fbee1a1ab073f946a1377e6b969 ]]
 jq -e '.model_type == "qwen3_moe" and .quantization_config.quant_method == "fp8"' "${model}/config.json" >/dev/null
 [[ "$(jq -r '[.weight_map[]] | unique | length' "${model}/model.safetensors.index.json")" == 24 ]]
