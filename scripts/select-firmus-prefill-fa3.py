@@ -55,7 +55,7 @@ def measure(torch, graph):
     return start.elapsed_time(end) * 1000 / LAYERS
 
 
-def run_selection(output, names):
+def run_selection(output, names, control_row="control"):
     begin = time.monotonic()
     import torch
     import torch.distributed as dist
@@ -71,12 +71,12 @@ def run_selection(output, names):
     checks = run_path(str(Path(__file__).with_name("check-firmus-decode-kernels.py")))
     manifest = json.loads(Path("/opt/apac/fa3-verify/manifest.json").read_text())
     assert [{k: v for k, v in c.items() if k != "shared_bytes"} for c in manifest["prefill_candidates"]] == CANDIDATES
-    local = {"rank": rank, "lengths": {}, "device": torch.cuda.get_device_name(rank), "uuid": str(torch.cuda.get_device_properties(rank).uuid), "binary_sha256": manifest["binary_sha256"]}
+    local = {"rank": rank, "control_row": control_row, "lengths": {}, "device": torch.cuda.get_device_name(rank), "uuid": str(torch.cuda.get_device_properties(rank).uuid), "binary_sha256": manifest["binary_sha256"]}
     gathered = [None] * 4
     for key in dict.fromkeys(key for name in names for key in shapes(name)):
         common = checks["prefill_selection_inputs"](tuple(map(int, key.split("+"))))
         original_inputs = common["packed"].clone()
-        control = checks["prefill_selection_step"](common, "control", LAYERS)
+        control = checks["prefill_selection_step"](common, control_row, LAYERS)
         control_graph = checks["prefill_selection_capture"](control)
         local["lengths"][key] = {}
         for name in [n for n in names if key in shapes(n)]:
@@ -154,11 +154,12 @@ if __name__ == "__main__":
     parser.add_argument("--aggregate", type=Path)
     parser.add_argument("--workers", type=int, choices=(2, 3), default=3)
     parser.add_argument("--names", default=",".join(NAMES[1:]), help="comma-separated rows to screen against control")
+    parser.add_argument("--control", default="control", choices=NAMES, help="row the screened rows are timed against (PP4: the pinned row)")
     args = parser.parse_args()
     if args.aggregate:
         assert args.env_output is not None
         aggregate_selection(args.aggregate, args.output, args.env_output, args.workers)
     else:
         names = args.names.split(",")
-        assert names and set(names) <= set(NAMES[1:]), names
-        run_selection(args.output, names)
+        assert names and set(names) <= set(NAMES[1:]) and args.control not in names, names
+        run_selection(args.output, names, args.control)
