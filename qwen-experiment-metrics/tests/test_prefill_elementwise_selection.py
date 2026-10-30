@@ -105,7 +105,7 @@ def test_gate_cases_cover_the_microbatch_shapes_and_both_position_types(selector
 def test_overlays_follow_the_pp4_chain_and_stay_out_of_the_main_config():
     pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert pp4["sglang_overlay_patches"][-3:] == ["patches/sglang/prefill-combine-norm.patch", "patches/sglang/prefill-qknorm-fp32-heads.patch", "patches/sglang/prefill-moe-input-onepass-split.patch"]
+    assert pp4["sglang_overlay_patches"][-3:] == ["patches/sglang/decode-moe-input.patch", "patches/sglang/prefill-qknorm-fp32-heads.patch", "patches/sglang/prefill-moe-input-onepass-split.patch"]
     for patch in pp4["sglang_overlay_patches"][-2:]:
         assert patch not in main["sglang_overlay_patches"]
 
@@ -121,7 +121,7 @@ def test_new_modes_are_opt_in_and_keep_the_pinned_kernels():
     split = SPLIT_PATCH.read_text()
     assert '+assert _PREFILL_MOE_INPUT in ("control", "fused", "fused-gate", "onepass", "onepass-split"), _PREFILL_MOE_INPUT' in split
     # The combine norm accepts either one-pass mode; the onepass kernel itself is untouched.
-    assert '+            or moe_input not in ("onepass", "onepass-split")' in split
+    assert '+        if mode in ("onepass", "onepass-split"):' in split
     assert "def _onepass_moe_input" not in split and "-    _onepass_moe_input[" not in split
     assert "num_warps=8, num_stages=2, maxnreg=128" in split
 
@@ -130,7 +130,7 @@ def test_the_selection_runs_on_the_prefill_gpus_before_the_workers_start(tmp_pat
     shell = SBATCH.read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
     run = pp4.index('"${ROOT}/scripts/select-firmus-prefill-elementwise.py" --output')
-    assert pp4.index("--aggregate-combine-norm") < run < pp4.index('"${ROOT}/scripts/select-firmus-prefill-elementwise.py" --aggregate')
+    assert pp4.index('"${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate') < run < pp4.index('"${ROOT}/scripts/select-firmus-prefill-elementwise.py" --aggregate')
     assert "timeout --kill-after=5 150 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4" in pp4[run - 600:run]
     assert shell.index("select-firmus-prefill-elementwise.py\" --aggregate") < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
     script = tmp_path / "pp4.sh"
