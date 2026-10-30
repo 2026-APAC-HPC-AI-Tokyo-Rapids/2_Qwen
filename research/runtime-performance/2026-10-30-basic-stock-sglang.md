@@ -36,12 +36,9 @@ BonusのPP4はそのまま候補にしない。公開Qwen3MoEの `set_eagle3_lay
 | `4b10c27` / [41057394591](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41057394591) | 128 | 4096 / unlimited | attempt1は配備中にSSH接続reset。attempt2はSlurm27641 COMPLETED（9:55）、5180.43、94.5572%、error0。保管まで成功 |
 | `e8d963a` / [41057547575](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41057547575) | 128 | 4096 / 1 | attempt1/2とも配備中断、GPU未使用。attempt2の再試行は部分directoryと衝突。下記の同条件再投入へ |
 | `00b0552` / [41058071649](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41058071649) | 128 | 8192 / 2 | Slurm27640 COMPLETED（10:14）。**4867.53 good tok/s、93.5564%、error0、eligible**。Actions・checksum archiveまで成功 |
-
 | `5c55438` / 41060099701 | 128 | 4096 / 1 | 切断時cleanup修正を含む同条件再投入。fixture import順のRuffエラーでCPU段階失敗、GPU未使用 |
 | `9d4d990` / [41060170465](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41060170465) | 128 | 4096 / 1 | Slurm27643 COMPLETED（9:50）、4955.23、91.2567%、error0。保管まで成功 |
-
 | `da25356` / [41061750438](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41061750438) | 128 | 4096 / 1、native total_requests | attempt1のSSH切断後、未投入をqueue/sacctで確認。attempt2 Slurm27652 COMPLETED（9:58）、5649.78、98.5045%、error0。保管まで成功 |
-
 | `b738103` / [41078513032](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41078513032) | 128 | 4096 / unlimited、total_requests | Slurm27681 COMPLETED（10:48）。5526.21、98.5036%、error0。保管まで成功 |
 | `40001ba` / [41078642203](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41078642203) | 160 | 4096 / unlimited、total_requests | Slurm27682 COMPLETED（10:04）。6321.12、97.6860%、error0。保管まで成功 |
 | `c9cb549` / [41089017770](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41089017770) | 144 | 4096 / unlimited、total_requests | Slurm27698、scheduler待ち |
@@ -57,7 +54,7 @@ BonusのPP4はそのまま候補にしない。公開Qwen3MoEの `set_eagle3_lay
 
 `536a337`のreadback checkerは4 worker×4 DP stateそれぞれの実token容量・実request cap・graph/batch geometryを検査する。回収済みc160の全16 stateをread-only再検証して通過済み。collectorが旧launcher名を付けていたpost-benchmark metadataも`15fdd74`で修正した。これらはserving条件を変えない。
 
-## c160 observation
+## Initial c160 observation (native routing defaults)
 
 Slurm27625、g1/g4、11:00、READYまで403秒。全workerのversion/topology/request capとrequested/effective KV capacityが一致。接続sanity応答は正常。AIPerfのrequest errorは0。計測中のprofilerは使用していない（AIPerfのphase名profilingは通常の測定phase）。
 
