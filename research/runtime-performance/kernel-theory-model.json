@@ -487,7 +487,7 @@
     "expected": "about 9-12 us per sequence-call with power-cap factor 1 for removed MUFU/ALU work; about 0.4-0.6 ms per 24-layer PP0 period"
   },
   "pp4_throughput_bundle_20261031": {
-    "status": "cpu_gates_passed_pending_serving",
+    "status": "ci_build_provision_passed_slurm_submitted_score_pending",
     "user_objective_good_output_tokens_per_second": [
       10000,
       10500,
@@ -506,7 +506,8 @@
       "run": 41073991312,
       "image_sha256": "cbf8d1c4d6673799bb0f624ed6780d69c095b54b897e79b9c618595dc34a7416",
       "official_score": null,
-      "changes": "fixed FA3 pipe pinned, diagonal trim gated, gigatoken, settled gates removed"
+      "changes": "fixed FA3 pipe pinned, diagonal trim gated, gigatoken, settled gates removed",
+      "slurm_job_id": 27695
     },
     "candidates": [
       {
@@ -575,8 +576,8 @@
       }
     ],
     "note": "research/runtime-performance/2026-10-31-pp4-throughput-bundle.md",
-    "new_image_sha256": null,
-    "new_run": null,
+    "new_image_sha256": "44d16aaa4266ad187ce20590615a3def1eb75232815132bac4f825ff7f8ac781",
+    "new_run": 41088950539,
     "official_score": null,
     "cpu_validation": {
       "torch": "2.11.0",
@@ -601,6 +602,118 @@
       "patches/sglang/fa3-draft-extend-graph.patch": "09b6c5ce726171ae0539dca6e260dbb8c3b99a3c396c70595bb05bdb6cb55415",
       "patches/deep-gemm-host/sm90-prefill-split-unroll16.patch": "2a49f96935d115a88d093cb7670efb97a5f543fd2a8b48a0fdeadddec4a8fd27",
       "patches/deep-gemm-bench/prefill-split-unroll16/sm90-prefill-split-unroll16.patch": "a0608f94bddd1f9d43b6c6191708845c532a168e20f15399e6430398d448c038"
+    },
+    "new_commit": "03e01f50d609c4d93e88f66bb1e2d5a060ef1966",
+    "conditional_forecast": {
+      "method": "existing PP4 closed-loop model deltas on measured R4; not GPU measurements",
+      "model_sha256": "19b3ee74f6556ffdd565558018d0be4809ada8b3d6e68eac132ffb8d7e36b844",
+      "central_score_range": [
+        9929,
+        9932
+      ],
+      "current_bundle_model_envelope": [
+        9875,
+        9978
+      ],
+      "not_confidence_interval": true,
+      "required_reductions_for_10k_10_5k_11k_ms": {
+        "prefill": [
+          2.3,
+          8.5,
+          13.5
+        ],
+        "decode": [
+          0.5,
+          2.0,
+          3.5
+        ]
+      },
+      "limitations": [
+        "Not GPU measurements. Candidate reductions are conditional assumptions.",
+        "Original model calibrated on 40925558339; absolute R4 baseline remains about 0.3% low.",
+        "Only model deltas are placed on measured R4, not fitted absolute predictions.",
+        "Decode slope from n*accept/throughput is a log-derived proxy, not a synchronized kernel timing.",
+        "Twelve simulation seeds quantify only model sampling, not run-to-run or design uncertainty.",
+        "Current-bundle upper case is not evidence for 10.5k or 11k.",
+        "No workload, SLA, official parser, checkpoint, request admission rule or resource count changes."
+      ]
+    },
+    "new_image_size_bytes": 12298129408,
+    "execution_note": "Archive job SSH/tar return failed; provisioning subsequently verified image size/SHA, patch hashes and CPU gate. No rebuild or rerun. Slurm 27712 PENDING at 2026-10-30 17:24 UTC; GPU gates and score pending.",
+    "inactive_fa3_geometry": {
+      "status": "CPU compile and resource feasibility only; no GPU execution; not shipped",
+      "source": "sgl-attn f89bc2306632d1ec5f97b014dded4254f5b4a907 plus exact bundle patch chain and three shape-guard edits",
+      "cutlass": "57e3cfb47a2d9e0d46eb6335c3dc411498efa198",
+      "cuda": "13.0.88",
+      "shape": {
+        "length": 4001,
+        "q_heads": 64,
+        "kv_heads": 4,
+        "head_dim": 128,
+        "tile_m": 192,
+        "tile_n": 96,
+        "consumer_warpgroups": 3
+      },
+      "dtype": "FP8 E4M3 Q/K/V; FP32 accumulation; unchanged group128 FP8 output",
+      "useful_flops": 262340640768,
+      "tile_flops": 269525975040,
+      "kv_tile_load_bytes": 701890560,
+      "control_kv_tile_load_bytes": 1077608448,
+      "hbm_bytes_saved": null,
+      "nvlink_bytes_saved": 0,
+      "work_removed": "One third fewer M tiles, about 35% fewer logical K/V tile-load bytes; not measured HBM traffic. Twice as many online-softmax/output-rescale steps per query tile; changed reduction order.",
+      "compile": {
+        "control": {
+          "spill_store_bytes": 84,
+          "spill_load_bytes": 116,
+          "shared_bytes": 166912
+        },
+        "m192n96": {
+          "spill_store_bytes": 40,
+          "spill_load_bytes": 28,
+          "shared_bytes": 124928,
+          "wgmma_serialization_warning": false
+        },
+        "m192n128": {
+          "spill_store_bytes": 384,
+          "spill_load_bytes": 376,
+          "wgmma_serialization_warning": true,
+          "decision": "rejected: C7512 register-pressure serialization"
+        }
+      },
+      "decision_gate": "Numerical reference on fixed and ragged shapes, paired GPU timing/endurance and official serving; all still pending.",
+      "kernel_time_us": null,
+      "serving_score": null
+    },
+    "adoption_constraint": "User: include only working changes. Require GPU numeric checks, continuous execution and ordinary serving; preserve validated ~9.8k configuration. Inactive prototypes are not dispatched.",
+    "slurm_job_id": 27712,
+    "inactive_moe_promotion": {
+      "status": "Rejected in current CPU-compile form; not integrated or dispatched; no GPU execution",
+      "shape": {
+        "tile_m": 64,
+        "tile_n": 256,
+        "tile_k": 128,
+        "math_warpgroups": 2,
+        "stages": 4,
+        "fc1_k_blocks": 32
+      },
+      "dtype": "Same FP8 operands with FP32 independent K-block promotion; changed FP32 reduction order",
+      "source": "standalone study using pinned DeepGEMM and its CUTLASS headers",
+      "cuda": "13.0.88",
+      "work_removed": "Carried-scale accumulator dependency; replaced by two partial buffers and one final accumulator per WG. Smaller M adds operand traffic and requires new cross-WG FC1 group128 quantization.",
+      "flops_removed": 0,
+      "hbm_bytes_saved": null,
+      "nvlink_bytes_saved": 0,
+      "compile": {
+        "initial_registers": 168,
+        "stack_bytes": 640,
+        "spill_store_bytes": 932,
+        "spill_load_bytes": 1060,
+        "wgmma_serialization_warning": "C7512"
+      },
+      "kernel_time_us": null,
+      "serving_score": null,
+      "decision": "Reject current form before GPU; compilation does not establish numerical or performance validity."
     }
   }
 }
