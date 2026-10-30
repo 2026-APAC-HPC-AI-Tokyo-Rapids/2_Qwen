@@ -19,7 +19,7 @@ def check(config, info, role):
         "max_total_tokens": config["prefill"]["max_total_tokens"] if role == "prefill" else config["decode_max_total_tokens"],
         "max_total_num_tokens": config["prefill"]["max_total_tokens"] if role == "prefill" else config["decode_max_total_tokens"],
         "ep_num_redundant_experts": 0,
-        "load_balance_method": config.get("load_balance_method", "follow_bootstrap_room"),
+        "load_balance_method": config.get("load_balance_method", "follow_bootstrap_room" if role == "prefill" else "round_robin"),
         "load_snapshot_publish_interval": config.get("load_snapshot_publish_interval", 15),
     }
     for key, value in expected.items():

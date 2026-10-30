@@ -47,6 +47,15 @@ def test_public_launch_has_capacity_and_isolated_port_ranges(config, role, index
     assert "PYTHONPATH" not in env
 
 
+@pytest.mark.parametrize("role,policy", [("prefill", "follow_bootstrap_room"), ("decode", "round_robin")])
+def test_unconfigured_policy_matches_native_pd_defaults(config, role, policy):
+    config.pop("load_balance_method")
+    config.pop("load_snapshot_publish_interval")
+    argv, _ = load("basic-worker").launch(config, role, 0, "127.0.0.1")
+    assert argv[argv.index("--load-balance-method") + 1] == policy
+    assert argv[argv.index("--load-snapshot-publish-interval") + 1] == "15"
+
+
 def test_request_cap_and_client_concurrency_are_independent(config):
     module = load("basic-worker")
     before, _ = module.launch(config, "decode", 0, "127.0.0.1")
