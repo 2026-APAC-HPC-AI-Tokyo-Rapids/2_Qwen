@@ -1,0 +1,170 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+index 193a32c..60743be 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -211,6 +211,18 @@ CUTLASS_DEVICE uint2 sm90_fp8_mega_moe_decode_l2_block(
+ //     reduction in BF16) — ported verbatim from the SM100 kernel.
+ // ============================================================================
+ 
++// Host DG fp8_mega_moe_norm (EP1 lean Prefill only, kPrefillCombineNorm): the combine also does the
++// next layer's input add-RMSNorm and per-token-group FP8 quant (see the COMBINE section). y is the
++// BF16 residual stream then, read and written back as residual + combine output. Every other
++// instantiation ignores this argument (appended last, so their parameter offsets and SASS are unchanged).
++struct SM90PrefillCombineNorm {
++    const void* weight;          // BF16 [kHidden], the next layer's input_layernorm weight
++    void* q;                     // FP8 e4m3 [num_tokens, kHidden], the QKV GEMM input
++    float* scale;                // FP32, scale[group * scale_group_stride + token], 128-column groups
++    int64_t scale_group_stride;
++    float eps;
++};
++
+ template <
+     uint32_t kNumMaxTokensPerRank,
+     uint32_t kHidden, uint32_t kIntermediateHidden,
+@@ -235,6 +247,7 @@ template <
+     bool kPrefillTailPair = false,
+     bool kPrefillSplitAccum = false,
+     bool kPrefillSplitLdsm = false,
++    bool kPrefillCombineNorm = false,
+     uint32_t L1_SHAPE_N = kIntermediateHidden * 2,
+     uint32_t L1_SHAPE_K = kHidden,
+     uint32_t L2_SHAPE_N = kHidden,
+@@ -260,7 +273,8 @@ sm90_fp8_mega_moe_impl(void* y,
+                        const __grid_constant__ cute::TmaDescriptor tensor_map_l2_acts,
+                        const __grid_constant__ cute::TmaDescriptor tensor_map_l2_acts_sf,
+                        const __grid_constant__ cute::TmaDescriptor tensor_map_l2_weights,
+-                       const float* __restrict__ l2_weights_sf) {
++                       const float* __restrict__ l2_weights_sf,
++                       const SM90PrefillCombineNorm prefill_norm) {
+ #if (defined(__CUDA_ARCH__) and (__CUDA_ARCH__ >= 900) and (__CUDA_ARCH__ < 1000)) or defined(__CLION_IDE__)
+     using Barrier = cutlass::arch::ClusterTransactionBarrier;
+ 
+@@ -544,6 +558,11 @@ sm90_fp8_mega_moe_impl(void* y,
+     // memory per K block 144 -> 128 KiB). Two K blocks of A are in flight (half 1 of K block k
+     // still reads its registers when half 0 of k + 1 is issued). Same products and order.
+     DG_STATIC_ASSERT(not kPrefillSplitLdsm or kPrefillSplitAccum, "ldmatrix A is layered on the split accumulator");
++    // Host fp8_mega_moe_norm (on the lean path, any K loop): the combine of each token also
++    // computes the next layer's input add-RMSNorm and FP8 quant, so y (BF16) is neither written
++    // here nor read back by a separate norm kernel. See the COMBINE section.
++    DG_STATIC_ASSERT(not kPrefillCombineNorm or (kPrefillLean and kHidden == 4096 and kNumTopk == 8),
++                     "The combine norm is layered on the lean EP1 Prefill path");
+     constexpr uint32_t SMEM_CD_PER_QUEUE = kPrefillWarpCD ?
+         math::constexpr_align(kNumEpilogueWarps * 16 * kPrefillWarpCDRowBytes, kSharedMemoryAlignment) :
+         math::constexpr_align(
+@@ -3616,6 +3635,15 @@ sm90_fp8_mega_moe_impl(void* y,
+         };
+         const auto paired_store_buffer = math::advance_ptr<uint4>(
+             smem_buffer, kCombineSmemOffset + (epilogue_warp_idx + kNumCombineWarps * 4) * kNumChunkBytes);
++        // Combine norm: each lane keeps the FP32 sums h = y + residual of its own elements of the
++        // token row (kNumChunks x kNumUint4PerLane x 8) for the second pass, as float4 pairs indexed by
++        // lane so that every store and load is one conflict-free 512-byte wavefront per warp.
++        constexpr uint32_t kNormRowFloat4 = kHidden / 4;
++        DG_STATIC_ASSERT(not kPrefillCombineNorm or
++                         kCombineSmemOffset + 5 * kNumCombineWarps * kNumChunkBytes + kNumCombineWarps * kNormRowFloat4 * sizeof(float4) <= SMEM_BEFORE_BARRIER_SIZE,
++                         "No room for the combine-norm rows");
++        const auto norm_row = math::advance_ptr<float4>(
++            smem_buffer, kCombineSmemOffset + 5 * kNumCombineWarps * kNumChunkBytes + epilogue_warp_idx * kNormRowFloat4 * sizeof(float4));
+         const auto read_token_mask = [&](const uint32_t& token_idx) {
+             const int slot_expert_idx = lane_idx < kNumTopk ?
+                 static_cast<int>(__ldg(input_topk_idx_buffer.get_base_ptr<int64_t>() + token_idx * kNumTopk + lane_idx)) : -1;
+@@ -3692,8 +3720,16 @@ sm90_fp8_mega_moe_impl(void* y,
+             const float lane_weight = (lane_idx < kNumTopk and ((total_mask >> lane_idx) & 1u)) ?
+                 __ldg(input_topk_weights_buffer.get_base_ptr<float>() + token_idx * kNumTopk + lane_idx) : 0.0f;
+ 
++            float sum_squares = 0.0f;
+             for (uint32_t chunk = 0; chunk < kNumChunks; ++ chunk) {
+                 const uint32_t chunk_byte_offset = chunk * kNumChunkBytes;
++                // Combine norm: this lane's residual elements of the chunk, loaded before the pair waits.
++                uint4 residual[kPrefillCombineNorm ? kNumUint4PerLane : 1];
++                if constexpr (kPrefillCombineNorm) {
++                    #pragma unroll
++                    for (uint32_t j = 0; j < kNumUint4PerLane; ++ j)
++                        residual[j] = *math::advance_ptr<uint4>(y, static_cast<uint64_t>(token_idx) * kNumHiddenBytes + chunk_byte_offset + (j * 32 + lane_idx) * sizeof(uint4));
++                }
+                 float2 reduced[kNumUint4PerLane * kNumElemsPerUint4] = {};
+                 uint32_t remaining = total_mask;
+                 while (remaining != 0) {
+@@ -3721,6 +3757,26 @@ sm90_fp8_mega_moe_impl(void* y,
+                     #pragma unroll
+                     for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l)
+                         casted_bf16[l] = __float22bfloat162_rn(reduced[j * kNumElemsPerUint4 + l]);
++                    if constexpr (kPrefillCombineNorm) {
++                        // The separate norm's arithmetic: h = float(BF16 y) + float(residual) in FP32,
++                        // the residual stores BF16 h, the norm takes the unrounded h. Only the order
++                        // of the row's sum of squares differs (lane order here, then a warp tree).
++                        const auto residual_bf16 = reinterpret_cast<const nv_bfloat162*>(&residual[j]);
++                        float h[2 * kNumElemsPerUint4];
++                        #pragma unroll
++                        for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l) {
++                            const auto y_values = __bfloat1622float2(casted_bf16[l]);
++                            const auto r_values = __bfloat1622float2(residual_bf16[l]);
++                            h[2 * l] = __fadd_rn(y_values.x, r_values.x);
++                            h[2 * l + 1] = __fadd_rn(y_values.y, r_values.y);
++                            sum_squares = __fmaf_rn(h[2 * l], h[2 * l], sum_squares);
++                            sum_squares = __fmaf_rn(h[2 * l + 1], h[2 * l + 1], sum_squares);
++                            casted_bf16[l] = __float22bfloat162_rn(make_float2(h[2 * l], h[2 * l + 1]));
++                        }
++                        const uint32_t row_idx = ((chunk * kNumUint4PerLane + j) * 2) * 32 + lane_idx;
++                        norm_row[row_idx] = make_float4(h[0], h[1], h[2], h[3]);
++                        norm_row[row_idx + 32] = make_float4(h[4], h[5], h[6], h[7]);
++                    }
+ 
+                     if (j == 0) {
+                         ptx::tma_store_wait<0>();
+@@ -3740,6 +3796,56 @@ sm90_fp8_mega_moe_impl(void* y,
+                 }
+                 __syncwarp();
+             }
++
++            if constexpr (kPrefillCombineNorm) {
++                // rstd as the separate norm: sum / 4096 + eps (FP32), rsqrt.approx.
++                #pragma unroll
++                for (uint32_t offset = 16; offset >= 1; offset >>= 1)
++                    sum_squares = __fadd_rn(sum_squares, __shfl_xor_sync(0xffffffff, sum_squares, offset));
++                float rstd;
++                asm("rsqrt.approx.f32 %0, %1;" : "=f"(rstd) : "f"(__fadd_rn(__fmul_rn(sum_squares, 1.0f / kHidden), prefill_norm.eps)));
++                // A 128-column group is 16 consecutive lanes of one uint4 index j (8 groups per chunk).
++                const auto q_row = math::advance_ptr<uint8_t>(prefill_norm.q, static_cast<uint64_t>(token_idx) * kHidden);
++                #pragma unroll 1
++                for (uint32_t chunk = 0; chunk < kNumChunks; ++ chunk) {
++                    #pragma unroll
++                    for (uint32_t j = 0; j < kNumUint4PerLane; ++ j) {
++                        const uint32_t column = chunk * (kNumChunkBytes / sizeof(nv_bfloat16)) + (j * 32 + lane_idx) * 8;
++                        const uint32_t row_idx = ((chunk * kNumUint4PerLane + j) * 2) * 32 + lane_idx;
++                        const float4 h_lo = norm_row[row_idx], h_hi = norm_row[row_idx + 32];
++                        const float h[8] = {h_lo.x, h_lo.y, h_lo.z, h_lo.w, h_hi.x, h_hi.y, h_hi.z, h_hi.w};
++                        const auto weight_values = __ldg(reinterpret_cast<const uint4*>(static_cast<const nv_bfloat16*>(prefill_norm.weight) + column));
++                        const auto weight_bf16 = reinterpret_cast<const nv_bfloat162*>(&weight_values);
++                        float normed[8];
++                        float amax = 0.0f;
++                        #pragma unroll
++                        for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l) {
++                            const auto w = __bfloat1622float2(weight_bf16[l]);
++                            const auto rounded = __float22bfloat162_rn(make_float2(__fmul_rn(__fmul_rn(h[2 * l], rstd), w.x), __fmul_rn(__fmul_rn(h[2 * l + 1], rstd), w.y)));
++                            const auto values = __bfloat1622float2(rounded);
++                            normed[2 * l] = values.x;
++                            normed[2 * l + 1] = values.y;
++                            amax = fmaxf(amax, fmaxf(fabsf(values.x), fabsf(values.y)));
++                        }
++                        #pragma unroll
++                        for (uint32_t offset = 8; offset >= 1; offset >>= 1)
++                            amax = fmaxf(amax, __shfl_xor_sync(0xffffffff, amax, offset));
++                        amax = fmaxf(amax, 1e-10f);
++                        const float gain = __fdiv_rn(448.0f, amax);
++                        uint32_t packed[2];
++                        #pragma unroll
++                        for (uint32_t l = 0; l < kNumElemsPerUint4; ++ l) {
++                            // Saturating RN conversion, as the separate norm's FP8 cast.
++                            const __nv_fp8x2_e4m3 pair(make_float2(fminf(normed[2 * l] * gain, 448.0f), fminf(normed[2 * l + 1] * gain, 448.0f)));
++                            const uint32_t bits = static_cast<uint32_t>(pair.__x);
++                            packed[l / 2] = (l % 2 == 0) ? bits : (packed[l / 2] | (bits << 16));
++                        }
++                        *reinterpret_cast<uint2*>(q_row + column) = make_uint2(packed[0], packed[1]);
++                        if (lane_idx % 16 == 0)
++                            prefill_norm.scale[(column / 128) * prefill_norm.scale_group_stride + token_idx] = amax * (1.0f / 448.0f);
++                    }
++                }
++            }
+         }
+         } else {
+         uint32_t combine_phase = 0;

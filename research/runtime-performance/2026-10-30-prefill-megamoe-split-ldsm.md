@@ -107,7 +107,10 @@ loop (the clock response is included); the control is the same in every row.
   in parallel across the workers.
 - Image rebuild required (host series).
 
-## 4. Combine fused with the next layer's add-RMSNorm (not implemented)
+## 4. Combine fused with the next layer's add-RMSNorm
+
+Implemented in round 6: [2026-10-30-prefill-combine-norm.md](2026-10-30-prefill-combine-norm.md)
+(measured norm 60.8 us, net 25-35 us per fused layer after the added combine bytes).
 
 After the MegaMoE of layer L (onepass input path) the next Prefill op is layer L+1's
 `add_rmsnorm_group_quant_fp8(y, residual)`: residual += y in place and the FP8 (q, scale) for

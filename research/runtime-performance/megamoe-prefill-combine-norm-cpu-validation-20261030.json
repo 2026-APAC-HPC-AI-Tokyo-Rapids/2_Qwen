@@ -1,0 +1,269 @@
+{
+ "schema": "megamoe-prefill-combine-norm-cpu-validation/v1",
+ "date": "2026-10-30",
+ "gpu_executed": false,
+ "toolchain": "CUDA 13.4 nvcc/ptxas, sm_90a",
+ "header_patch": "patches/deep-gemm-bench/prefill-combine-norm/sm90-prefill-combine-norm.patch",
+ "host_patch": "patches/deep-gemm-host/sm90-prefill-combine-norm.patch",
+ "sglang_patch": "patches/sglang/prefill-combine-norm.patch",
+ "patch_sha256": {
+  "patches/deep-gemm-bench/prefill-combine-norm/sm90-prefill-combine-norm.patch": "e01d3e86097323714ca41559257ab7fba4a39627213c6d4bc6909daeecac457a",
+  "patches/deep-gemm-host/sm90-prefill-combine-norm.patch": "45bd64169145afee9ac686209af801c8c11f9dffae6ff5d597d1ca715fd91639",
+  "patches/sglang/prefill-combine-norm.patch": "89f1162889eb9f1958ed3c410b7943e19e37091621e8eda93905fce5c39a7103"
+ },
+ "jit_template_suffix": ",true,{tail_pair},{split_accum},{split_ldsm},true",
+ "combine_norm_kernels": {
+  "ep1-s4-lean-norm": {
+   "registers": 168,
+   "spill_store_load": [
+    0,
+    0
+   ],
+   "instructions": 8008,
+   "opcodes": {
+    "BAR.SYNC.DEFER_BLOCKING": 16,
+    "F2FP.BF16.F32.PACK_AB": 136,
+    "F2FP.SATFINITE.E4M3.F32.PACK_AB_MERGE_C": 48,
+    "FADD": 130,
+    "FADD.FTZ": 6,
+    "FFMA": 158,
+    "FFMA.RM": 2,
+    "FFMA.RP": 2,
+    "FFMA.RZ": 1,
+    "FMUL": 905,
+    "LDG.E": 7,
+    "LDG.E.128": 4,
+    "LDG.E.128.CONSTANT": 4,
+    "LDG.E.64.STRONG.SYS": 16,
+    "LDG.E.CONSTANT": 14,
+    "LDG.E.STRONG.GPU": 5,
+    "LDG.E.STRONG.SYS": 4,
+    "LDS": 11,
+    "LDS.128": 36,
+    "LDS.64": 1,
+    "MUFU.EX2": 64,
+    "MUFU.RCP": 83,
+    "MUFU.RSQ": 2,
+    "QGMMA.64x256x32.F32.E4M3.E4M3": 8,
+    "SHFL.BFLY": 46,
+    "SHFL.IDX": 31,
+    "STG.E": 19,
+    "STG.E.128": 20,
+    "STG.E.64": 15,
+    "STS": 6,
+    "STS.128": 22,
+    "STS.64": 1,
+    "STS.U16": 32,
+    "STSM.16.M88.4": 16,
+    "SYNCS.ARRIVE.TRANS64": 40,
+    "SYNCS.ARRIVE.TRANS64.A1T0": 50,
+    "SYNCS.EXCH.64": 29,
+    "SYNCS.PHASECHK.TRANS64": 89,
+    "SYNCS.PHASECHK.TRANS64.TRYWAIT": 178,
+    "UBLKCP.G.S": 2,
+    "UBLKCP.S.G": 6,
+    "UTMACCTL.PF": 7,
+    "UTMACMDFLUSH": 2,
+    "UTMALDG.2D": 53
+   }
+  },
+  "ep1-s4-split-norm": {
+   "registers": 168,
+   "spill_store_load": [
+    0,
+    0
+   ],
+   "instructions": 11000,
+   "opcodes": {
+    "BAR.SYNC.DEFER_BLOCKING": 16,
+    "F2FP.BF16.F32.PACK_AB": 136,
+    "F2FP.SATFINITE.E4M3.F32.PACK_AB_MERGE_C": 48,
+    "FADD": 130,
+    "FADD.FTZ": 6,
+    "FFMA": 158,
+    "FFMA.RM": 2,
+    "FFMA.RP": 2,
+    "FFMA.RZ": 1,
+    "FMUL": 3213,
+    "LDG.E": 7,
+    "LDG.E.128": 4,
+    "LDG.E.128.CONSTANT": 4,
+    "LDG.E.64.STRONG.SYS": 16,
+    "LDG.E.CONSTANT": 48,
+    "LDG.E.STRONG.GPU": 5,
+    "LDG.E.STRONG.SYS": 3,
+    "LDS": 45,
+    "LDS.128": 36,
+    "LDS.64": 1,
+    "MUFU.EX2": 64,
+    "MUFU.RCP": 151,
+    "MUFU.RSQ": 2,
+    "QGMMA.64x128x32.F32.E4M3.E4M3": 160,
+    "SHFL.BFLY": 46,
+    "SHFL.IDX": 31,
+    "STG.E": 19,
+    "STG.E.128": 20,
+    "STG.E.64": 15,
+    "STS": 6,
+    "STS.128": 22,
+    "STS.64": 1,
+    "STS.U16": 32,
+    "STSM.16.M88.4": 16,
+    "SYNCS.ARRIVE.TRANS64": 40,
+    "SYNCS.ARRIVE.TRANS64.A1T0": 68,
+    "SYNCS.EXCH.64": 29,
+    "SYNCS.PHASECHK.TRANS64": 106,
+    "SYNCS.PHASECHK.TRANS64.TRYWAIT": 212,
+    "UBLKCP.G.S": 2,
+    "UBLKCP.S.G": 6,
+    "UTMACCTL.PF": 7,
+    "UTMACMDFLUSH": 2,
+    "UTMALDG.2D": 53
+   }
+  },
+  "ep1-s4-ldsm-norm": {
+   "registers": 168,
+   "spill_store_load": [
+    0,
+    0
+   ],
+   "instructions": 10944,
+   "opcodes": {
+    "BAR.SYNC.DEFER_BLOCKING": 16,
+    "F2FP.BF16.F32.PACK_AB": 136,
+    "F2FP.SATFINITE.E4M3.F32.PACK_AB_MERGE_C": 48,
+    "FADD": 130,
+    "FADD.FTZ": 6,
+    "FFMA": 158,
+    "FFMA.RM": 2,
+    "FFMA.RP": 2,
+    "FFMA.RZ": 1,
+    "FMUL": 3213,
+    "LDG.E": 7,
+    "LDG.E.128": 4,
+    "LDG.E.128.CONSTANT": 4,
+    "LDG.E.64.STRONG.SYS": 16,
+    "LDG.E.CONSTANT": 48,
+    "LDG.E.STRONG.GPU": 5,
+    "LDG.E.STRONG.SYS": 3,
+    "LDS": 45,
+    "LDS.128": 36,
+    "LDS.64": 1,
+    "LDSM.16.M88.4": 84,
+    "MUFU.EX2": 64,
+    "MUFU.RCP": 151,
+    "MUFU.RSQ": 2,
+    "QGMMA.64x128x32.F32.E4M3.E4M3": 160,
+    "SHFL.BFLY": 46,
+    "SHFL.IDX": 31,
+    "STG.E": 19,
+    "STG.E.128": 20,
+    "STG.E.64": 15,
+    "STS": 6,
+    "STS.128": 22,
+    "STS.64": 1,
+    "STS.U16": 32,
+    "STSM.16.M88.4": 16,
+    "SYNCS.ARRIVE.TRANS64": 40,
+    "SYNCS.ARRIVE.TRANS64.A1T0": 68,
+    "SYNCS.EXCH.64": 29,
+    "SYNCS.PHASECHK.TRANS64": 106,
+    "SYNCS.PHASECHK.TRANS64.TRYWAIT": 212,
+    "UBLKCP.G.S": 2,
+    "UBLKCP.S.G": 6,
+    "UTMACCTL.PF": 7,
+    "UTMACMDFLUSH": 2,
+    "UTMALDG.2D": 53
+   }
+  }
+ },
+ "same_kernels_without_norm": {
+  "ep1-s4-lean": {
+   "instructions": 6856,
+   "registers": 168,
+   "spill_store_load": [
+    0,
+    0
+   ]
+  },
+  "ep1-s4-split": {
+   "instructions": 9856,
+   "registers": 168,
+   "spill_store_load": [
+    0,
+    0
+   ]
+  },
+  "ep1-s4-ldsm": {
+   "instructions": 9784,
+   "registers": 168,
+   "spill_store_load": [
+    0,
+    0
+   ]
+  }
+ },
+ "ptxas_c75xx_diagnostics": 0,
+ "other_instantiations_sass_identical": {
+  "ep1-s3-512": true,
+  "ep1-s3": true,
+  "ep1-s4": true,
+  "ep4-128-s3-512": true,
+  "ep4-128-s3": true,
+  "ep4-128-s4": true,
+  "ep4-140-s3-512": true,
+  "ep4-140-s3": true,
+  "ep4-140-s4": true,
+  "ep1-dec-m64-s8": true,
+  "ep1-dec-m64-s8-swap": true,
+  "ep4-dec-32-s8": true,
+  "ep4-dec-32-s8-swap": true,
+  "ep4-dec-16-s8-swap": true,
+  "ep4-dec-16-s6-iwg": true,
+  "ep4-dec-32-s6-iwg": true,
+  "ep4-140-dec-35-s8": true,
+  "ep4-140-dec-18-s8-swap": true,
+  "ep1-s4-pair": true,
+  "ep1-s4-lean": true,
+  "ep1-s4-split": true,
+  "ep1-s4-ldsm": true
+ },
+ "sass_identity_reference": "overlay chain of configs/firmus-prefill-pp4.json up to prefill-split-ldsm (instruction text and both encoding words)",
+ "local_host_check": {
+  "configurations": 368,
+  "before": 276,
+  "selected_kernels_spill_bytes": 0,
+  "rejected_off_lean_path": [
+   "EP4 four-stage",
+   "EP1 three-stage"
+  ]
+ },
+ "host_extension_syntax_check": "g++ -std=c++17 -fsyntax-only csrc/tvm_ffi_api.cpp with the full host series: torch 2.11.0 headers, tvm-ffi 0.1.15, CUDA 13.4 + CCCL; clean (control series also clean)",
+ "cpu_arithmetic_model": {
+  "rows": 2048,
+  "rows_with_changed_sum_of_squares": 0.8896,
+  "q_byte_mismatch_fraction": 9.5367e-07,
+  "scale_max_relative": 0.0,
+  "dequant_relative_l2": 8.214e-05,
+  "gate_bounds": {
+   "q_mismatch": 0.001,
+   "scale_relative": 0.01,
+   "relative_l2": 0.001
+  }
+ },
+ "measured_separate_norm_us": {
+  "run": 40825417205,
+  "kernel": "norm_quant",
+  "median_us": 60.8,
+  "gap_before_us": 2.9,
+  "bytes_mb": 232
+ },
+ "expected_net_us_per_fused_layer": [
+  25,
+  35
+ ],
+ "expected_ms_per_period": [
+  0.57,
+  0.8
+ ]
+}

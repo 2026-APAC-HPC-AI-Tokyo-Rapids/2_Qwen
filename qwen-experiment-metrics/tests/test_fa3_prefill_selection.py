@@ -153,8 +153,8 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     assert settings['pp4_selected_runs']['SGLANG_PREFILL_MOE_INPUT'] == [40964714831]
     # The FP32 Q/K norm writer won in 40911121619 and 40925558339.
     assert settings['pp4_selected_runs']['SGLANG_PREFILL_QKNORM'] == [40911121619, 40925558339] and set(settings['pp4_selected_runs']) == set(settings['pp4_selected'])
-    # After every PP4 overlay; only prefill-moe-input (disjoint files), the FP32 Q/K norm writer, the one-pass Prefill MoE input and the Decode MoE input follow it.
-    assert config['sglang_overlay_patches'][-5:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-moe-input-onepass.patch', 'patches/sglang/decode-moe-input.patch']
+    # After every PP4 overlay; only prefill-moe-input (disjoint files), the FP32 Q/K norm writer, the one-pass Prefill MoE input, the Decode MoE input and the combine norm follow it.
+    assert config['sglang_overlay_patches'][-6:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-moe-input-onepass.patch', 'patches/sglang/decode-moe-input.patch', 'patches/sglang/prefill-combine-norm.patch']
     # The twelve-GPU screen of every row runs only outside PP4 and without a reused selection; PP4 keeps the
     # pinned row without a screen (test_fa3_prefill_pipe.py).
     assert 'prefill_screen' not in shell

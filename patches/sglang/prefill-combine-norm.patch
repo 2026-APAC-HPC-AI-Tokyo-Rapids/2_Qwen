@@ -1,0 +1,145 @@
+diff --git a/python/sglang/srt/layers/moe/mega_moe_sm90.py b/python/sglang/srt/layers/moe/mega_moe_sm90.py
+index c40945f..1936bac 100644
+--- a/python/sglang/srt/layers/moe/mega_moe_sm90.py
++++ b/python/sglang/srt/layers/moe/mega_moe_sm90.py
+@@ -130,6 +130,28 @@ def run_sm90_mega_routed(
+     return y
+ 
+ 
++def run_sm90_mega_combine_norm(moe, residual, buf, weight, eps):
++    """fp8_mega_moe whose combine also runs the next layer's input add-RMSNorm and
++    FP8 group quant (EP1 lean Prefill, after the MoE input path filled buf): residual
++    += the MoE output in place, and the (q, scale) that add_rmsnorm_group_quant_fp8
++    would return for the QKV GEMM. The BF16 MoE output is never written."""
++    import deep_gemm
++
++    rows = residual.shape[0]
++    q = torch.empty(residual.shape, dtype=torch.float8_e4m3fn, device=residual.device)
++    # The layout of add_rmsnorm_group_quant_fp8: column-major FP32 scales, TMA-aligned rows.
++    scale = torch.empty((residual.shape[1] // 128, (rows + 3) // 4 * 4), dtype=torch.float32, device=residual.device).transpose(0, 1)[:rows]
++    (l1, l1_sf), (l2, l2_sf) = moe.experts.mega_l1_weights, moe.experts.mega_l2_weights
++    deep_gemm._C.fp8_mega_moe_norm(
++        residual, l1, l1_sf, l2, l2_sf, None,
++        buf.buffer, buf.handle.buffer_ptrs, buf.group.rank(),
++        buf.num_max_tokens_per_rank, buf.num_experts, buf.num_topk,
++        (128, 128, 128), "swiglu", getattr(moe.config, "swiglu_limit", None), True,
++        weight, eps, q, scale,
++    )
++    return q, scale
++
++
+ def _interleave_l1_weight_only(weight: torch.Tensor, gran: int = 8) -> torch.Tensor:
+     num_groups, n, *rest = weight.shape
+     half = n // 2
+diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
+index 403fab6..e23192a 100644
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -40,6 +40,7 @@ from sglang.srt.eplb.expert_location_dispatch import ExpertLocationDispatchInfo
+ from sglang.srt.batch_invariant_ops import is_batch_invariant_mode_enabled
+ from sglang.srt.layers.communicator import (
+     CommunicateSimpleFn,
++    CommunicateSummableTensorPairFn,
+     CommunicateWithAllReduceAndLayerNormFn,
+     LayerCommunicator,
+     LayerScatterModes,
+@@ -143,6 +144,12 @@ assert _PREFILL_MOE_INPUT in ("control", "fused", "fused-gate", "onepass"), _PRE
+ # without pad slots and with the router's graph-padding mask (no pre-dispatch).
+ _DECODE_MOE_INPUT = os.environ.get("SGLANG_DECODE_MOE_INPUT", "control")
+ assert _DECODE_MOE_INPUT in ("control", "fused"), _DECODE_MOE_INPUT
++# PP4 Prefill MegaMoE combine fused with the next layer's input add-RMSNorm + FP8
++# quant (DeepGEMM fp8_mega_moe_norm, lean EP1 path), chosen per job by
++# scripts/select-firmus-prefill-megamoe.py --combine-norm: "1" lets a layer whose
++# next layer (same PP stage) takes the input norm/quant path hand it (q, scale)
++# instead of the BF16 MoE output; the residual is updated inside the MegaMoE.
++_PREFILL_COMBINE_NORM = os.environ.get("SGLANG_PREFILL_COMBINE_NORM", "0") == "1"
+ 
+ # Prefill Q/K norm, RoPE and FP8 Q/KV writer, pinned to "fp32" for PP4 by
+ # scripts/prepare-firmus-pp4-settings.py: "control" keeps the BF16 rounding points
+@@ -458,7 +465,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
+             topk.topk_weights.to(torch.float32), buf, num_tokens,
+         )
+ 
+-    def forward_megamoe_fused_input(self, hidden_states, residual, norm, mode, num_token_non_padded=None):
++    def forward_megamoe_fused_input(self, hidden_states, residual, norm, mode, num_token_non_padded=None, next_norm=None):
+         """Prefill: add-RMSNorm writes BF16 y in place plus the MegaMoE FP8 input,
+         scales and pad slots; the router writes the top-k rows; no pre-dispatch.
+         "onepass" does all of it in one kernel without y (hidden_states unchanged).
+@@ -485,6 +492,11 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
+         )
+         if mode == "onepass":
+             onepass_moe_input(hidden_states, residual, norm.weight, norm.variance_epsilon, self.gate.weight, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights)
++            if next_norm is not None:
++                # residual += MoE output; returns the next layer's QKV input (q, scale).
++                from sglang.srt.layers.moe.mega_moe_sm90 import run_sm90_mega_combine_norm
++
++                return run_sm90_mega_combine_norm(self, residual, buf, next_norm.weight, next_norm.variance_epsilon)
+             return run_sm90_mega_routed(self, hidden_states, None, None, buf, num_tokens)
+         post_norm_moe_input(hidden_states, residual, norm.weight, norm.variance_epsilon, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, pad_slots=mode != "decode-fused")
+         if mode == "fused-gate":
+@@ -1097,6 +1109,8 @@ class Qwen3MoeDecoderLayer(nn.Module):
+         )
+         self._input_norm_quant = None
+         self._prefill_moe_input_ok = None
++        # The next decoder layer of the same PP stage (set by Qwen3MoeModel), for the combine norm.
++        self._next_layer = None
+ 
+     def _prefill_moe_input_supported(self) -> bool:
+         """Whether the Prefill MoE input path computes what prepare_mlp + the
+@@ -1257,6 +1271,26 @@ class Qwen3MoeDecoderLayer(nn.Module):
+             and self._input_norm_quant_supported()
+         )
+ 
++    def _combine_norm_target(self, moe_input, residual, forward_batch, kwargs):
++        """The next layer whose input add-RMSNorm + quant this layer's MegaMoE combine
++        can run (it would take the input norm/quant path itself), or None."""
++        nxt = self._next_layer
++        if (
++            not _PREFILL_COMBINE_NORM
++            or moe_input != "onepass"
++            or nxt is None
++            or getattr(nxt, "_is_layer_to_capture", False)
++            or self.layer_communicator._communicate_summable_tensor_pair_fn
++            is not CommunicateSummableTensorPairFn._trivial
++            or self.layer_communicator.should_fuse_mlp_allreduce_with_next_layer(forward_batch)
++            or self.layer_communicator.should_use_reduce_scatter(forward_batch)
++        ):
++            return None
++        # The residual stands in for the BF16 MoE output (same shape, dtype and layout).
++        if not nxt._use_input_norm_quant(residual, residual, forward_batch, None, kwargs):
++            return None
++        return nxt.input_layernorm
++
+     def forward(
+         self,
+         positions: torch.Tensor,
+@@ -1267,7 +1301,10 @@ class Qwen3MoeDecoderLayer(nn.Module):
+         **kwargs,
+     ) -> Tuple[torch.Tensor, torch.Tensor]:
+ 
+-        if self._use_input_norm_quant(
++        if isinstance(hidden_states, tuple):
++            # (q, scale) from the previous layer's combine norm: the residual is already updated.
++            pass
++        elif self._use_input_norm_quant(
+             hidden_states, residual, forward_batch, captured_last_layer_outputs, kwargs
+         ):
+             # residual += hidden_states in place; the QKV GEMM gets (q, scale).
+@@ -1324,6 +1361,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
+                 hidden_states = self.mlp.forward_megamoe_fused_input(
+                     hidden_states, residual, self.post_attention_layernorm, moe_input,
+                     forward_batch.num_token_non_padded if moe_input == "decode-fused" else None,
++                    self._combine_norm_target(moe_input, residual, forward_batch, kwargs),
+                 )
+ 
+         if fuse_mlp_allreduce:
+@@ -1405,6 +1443,9 @@ class Qwen3MoeModel(Qwen2MoeModel):
+             decoder_layer_type=decoder_layer_type,
+             alt_stream=alt_stream,
+         )
++        # Plain attribute, not a submodule: the next layer's parameters keep their names.
++        for i in range(self.start_layer, self.end_layer - 1):
++            object.__setattr__(self.layers[i], "_next_layer", self.layers[i + 1])
+ 
+     def set_dflash_layers_to_capture(self, layers_to_capture: List[int]):
+         self.layers_to_capture = layers_to_capture
