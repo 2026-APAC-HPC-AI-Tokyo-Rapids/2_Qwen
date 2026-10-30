@@ -39,15 +39,12 @@ def test_pipe_patch_changes_other_rows_only_behind_the_flag():
     assert text.count('query_empty();') == 3 and 'if (bidb1 < 0) { break; }' in text and 'make_int4(0, 0, -1, 0)' in text
 
 
-def test_pp4_screens_the_pipe_row_against_the_pin_on_the_prefill_gpus():
+def test_pp4_no_longer_screens_the_pipe_row_and_keeps_the_pin():
+    # 40991744289 adopted the pipe row with the split MegaMoE and stopped serving; the row stays a candidate.
     shell = (ROOT / 'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    megamoe = pp4.index('select-firmus-prefill-megamoe.py" --ranks 1')
-    screen = pp4.index('select-firmus-prefill-kernels.sh" "${ROOT}" "prefill-${worker}" --names n192-direct-o-varlen-pipe --control "${pinned_fa3}"')
-    # Same worker, same four GPUs, after MegaMoE; both run while the Decode-GPU selections run.
-    assert megamoe < screen and pp4.index('prefill_gpu_selections+=("$!")') > screen
-    assert 'pinned_fa3=$(sed -n \'s/^SGLANG_PREFILL_FA3_VERIFY=//p\' "${ROOT}/source/prefill-kernels.env")' in pp4
-    assert pp4.index('select-firmus-prefill-megamoe.py" --aggregate') < pp4.index('select-firmus-prefill-fa3.py" --aggregate')
+    assert 'select-firmus-prefill-kernels.sh' not in pp4 and 'select-firmus-prefill-fa3.py' not in pp4 and 'pinned_fa3' not in pp4
+    assert 'n192-direct-o-varlen-pipe' in (ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text()
 
 
 def test_selector_times_the_screened_row_against_the_given_control(tmp_path):

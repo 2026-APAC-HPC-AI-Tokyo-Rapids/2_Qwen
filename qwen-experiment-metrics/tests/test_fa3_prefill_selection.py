@@ -155,11 +155,11 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     assert settings['pp4_selected_runs']['SGLANG_PREFILL_QKNORM'] == [40911121619, 40925558339] and set(settings['pp4_selected_runs']) == set(settings['pp4_selected'])
     # After every PP4 overlay; only prefill-moe-input (disjoint files), the FP32 Q/K norm writer, the one-pass Prefill MoE input and the Decode MoE input follow it.
     assert config['sglang_overlay_patches'][-5:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-moe-input-onepass.patch', 'patches/sglang/decode-moe-input.patch']
-    # The twelve-GPU screen of every row runs only outside PP4 and without a reused selection; PP4 screens
-    # only the pipelined-tile row against the pinned row (test_fa3_prefill_pipe.py).
+    # The twelve-GPU screen of every row runs only outside PP4 and without a reused selection; PP4 keeps the
+    # pinned row without a screen (test_fa3_prefill_pipe.py).
     assert 'prefill_screen' not in shell
     assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" && ! -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then' in shell
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    assert pp4.count('bash "${ROOT}/scripts/select-firmus-prefill-kernels.sh"') == 1 and '--names n192-direct-o-varlen-pipe --control "${pinned_fa3}"' in pp4
+    assert 'select-firmus-prefill-kernels.sh' not in pp4
     script = (ROOT / 'scripts/select-firmus-prefill-kernels.sh').read_text()
     assert 'shift 2' in script and '--output "${out}/fa3.json" "$@"' in script
