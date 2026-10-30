@@ -52,20 +52,15 @@ def pp4_branch():
     return shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
 
 
-def test_pp4_screens_the_pipe_row_against_the_pin_and_gates_it_before_the_workers():
+def test_pp4_pins_the_served_pipe_row_and_keeps_the_gate_scripts_staged():
     pp4 = pp4_branch()
-    megamoe = pp4.index('select-firmus-prefill-megamoe.py" --ranks 1')
-    screen = pp4.index('select-firmus-prefill-kernels.sh" "${ROOT}" "prefill-${worker}" --names n192-direct-o-varlen-pipe --control "${pinned_fa3}"')
-    # Same worker, same four GPUs, after the MegaMoE selection; both run while the Decode-GPU selections run.
-    assert megamoe < screen < pp4.index('prefill_gpu_selections+=("$!")') < pp4.index('for pid in "${prefill_gpu_selections[@]}"; do wait "${pid}" || true; done')
-    assert 'pinned_fa3=$(sed -n \'s/^SGLANG_PREFILL_FA3_VERIFY=//p\' "${ROOT}/source/prefill-kernels.env")' in pp4
-    # The FA3 gate follows the MegaMoE gate on the same GPUs, after every screen; then both aggregates.
-    megamoe_gate = pp4.index('select-firmus-prefill-megamoe.py" --endurance')
-    fa3_gate = pp4.index('timeout --kill-after=5 60 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-fa3.py" --endurance "${ROOT}/results/prefill-selection" --output "${ROOT}/results/prefill-fa3-endurance/prefill-${worker}"')
-    assert pp4.index('for pid in "${prefill_gpu_selections[@]}"') < megamoe_gate < fa3_gate < pp4.index('prefill_gpu_gates+=("$!")') < pp4.index('for pid in "${prefill_gpu_gates[@]}"')
-    megamoe_aggregate = pp4.index('select-firmus-prefill-megamoe.py" --aggregate')
-    fa3_aggregate = pp4.index('select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --endurance "${ROOT}/results/prefill-fa3-endurance"')
-    assert pp4.index('for pid in "${prefill_gpu_gates[@]}"') < megamoe_aggregate < fa3_aggregate
+    assert "select-firmus-prefill-" not in pp4 and "--endurance" not in pp4
+    prepare = runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))
+    assert prepare['PP4_SELECTED']['SGLANG_PREFILL_FA3_VERIFY'] == 'n192-direct-o-varlen-pipe'
+    assert prepare['PP4_SELECTED_RUNS']['SGLANG_PREFILL_FA3_VERIFY'] == [41040348302]
+    provision = (ROOT / 'scripts/provision-firmus-framework.sh').read_text()
+    for script in ('select-firmus-prefill-fa3.py', 'select-firmus-prefill-kernels.sh'):
+        assert f'"${{GITHUB_WORKSPACE}}/scripts/{script}"' in provision
 
 
 def test_selector_times_the_screened_row_against_the_given_control(tmp_path):

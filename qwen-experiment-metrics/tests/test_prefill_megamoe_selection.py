@@ -256,19 +256,13 @@ def test_margin_is_the_larger_of_absolute_and_relative(selector, tmp_path):
     assert json.loads(out.read_text())["winner"] == "four-stage"
 
 
-def test_pp4_job_gates_before_model_load_and_workers_source_the_switch(tmp_path):
+def test_pp4_job_uses_pins_and_workers_source_the_switch(tmp_path):
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    assert "select-firmus-prefill-megamoe.py\" --ranks 1 --output" in pp4
-    assert '--aggregate "${ROOT}/results/prefill-megamoe"' in pp4 and '--env-output "${ROOT}/source/prefill-kernels.env"' in pp4
-    assert pp4.index("--ranks 1") < pp4.index("--aggregate")
-    # The endurance gate runs per worker after all selections and before the aggregate, under its own timeout.
-    gate = next(line for line in pp4.splitlines() if "select-firmus-prefill-megamoe.py\" --endurance" in line)
-    assert "timeout --kill-after=5 90 " in gate and '--output "${ROOT}/results/prefill-megamoe-endurance/prefill-${worker}"' in gate
-    assert pp4.index("--ranks 1") < pp4.index(gate) < pp4.index("--aggregate")
-    assert '--endurance "${ROOT}/results/prefill-megamoe-endurance"' in pp4[pp4.index("--aggregate"):]
-    assert shell.index("select-firmus-prefill-megamoe.py") < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
-    # worker.sh is unchanged (frozen-submission test): it already exports every prefill-kernels.env line.
+    assert 'test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"' in pp4
+    assert "no in-job kernel selection" in pp4
+    assert "srun" not in pp4 and "--aggregate" not in pp4 and "wait " not in pp4
+    assert "decode_gpu_selections" not in shell and "prefill_gpu_" not in shell
     worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
     assert 'if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi' in worker
     for line in pp4.splitlines():

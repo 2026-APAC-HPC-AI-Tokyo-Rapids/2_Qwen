@@ -48,16 +48,12 @@ def test_anything_else_keeps_pynccl(probe, tmp_path, change):
     assert result["transport"] == "nccl" and env == "SGLANG_PREFILL_FA3_VERIFY=n192\n"
 
 
-def test_pp4_job_probes_on_decode_gpus_before_the_prefill_workers():
+def test_pp4_pins_copy_transport_and_keeps_the_probe_staged():
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
-    pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    launch = next(line for line in pp4.splitlines() if 'check-firmus-pp4-copy-engine.py" --output' in line)
-    group = pp4[pp4.rindex("  {\n", 0, pp4.index(launch)):pp4.index("  } &\n") + 6]
-    assert launch in group and '-w "${TAIL}" --gres=gpu:4' in launch and "timeout --kill-after=5 60" in launch and launch.rstrip().endswith("|| true")
-    take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]
-    take = take[:take.index("\nfi\n")]
-    assert take.index('wait "${decode_gpu_selections}" || true') < take.index('check-firmus-pp4-copy-engine.py" --aggregate')
-    assert shell.index(take) < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
+    assert "check-firmus-pp4-copy-engine.py" not in shell
+    prepare = runpy.run_path(str(ROOT / "scripts/prepare-firmus-pp4-settings.py"))
+    assert prepare["PP4_SELECTED"]["SGLANG_PP4_PROXY_TRANSPORT"] == "copy"
+    assert prepare["PP4_SELECTED_RUNS"]["SGLANG_PP4_PROXY_TRANSPORT"] == [41005872470, 41020974704, 41040348302]
     provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
     assert 'install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-pp4-copy-engine.py" "${runtime_dir}/scripts/"' in provision
 

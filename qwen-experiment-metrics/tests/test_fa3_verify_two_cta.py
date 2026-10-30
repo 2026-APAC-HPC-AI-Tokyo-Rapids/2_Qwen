@@ -132,24 +132,17 @@ def test_pinned_rule_needs_the_saving_at_every_measured_batch():
     assert ns["choose_pinned"](ranks, (44, 46, 48), "p128split2-s3-fp8", names)["winner"] is None
 
 
-def test_pp4_job_keeps_the_pinned_decode_fa3_and_runs_only_the_dense_screen_with_the_pin(tmp_path):
+def test_pp4_job_keeps_the_decode_fa3_pin_without_any_decode_screen(tmp_path):
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    group = pp4[pp4.index("  {\n"):pp4.index("  } &\n")]
-    # Only the pinned-mode dense selection (BLOCK_M 192 QKV) runs in the PP4 job.
-    assert '"${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env"' in group
-    # 41020974704: the four-heads row printed nothing within its 175 s timeout and the two-heads rows lost
-    # twice, so the PP4 job no longer screens the Decode FA3 verify; the pin stays.
-    assert "select-firmus-prefill-attention.py" not in group and '"${ROOT}" fa3' not in group
-    take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]
-    take = take[:take.index("\nfi\n") + 4]
-    assert "decode-selection/fa3.env" not in take
-    rows = [row.strip() for row in take.splitlines() if "dense.env" in row]
-    assert rows == ['if [[ -s "${ROOT}/results/decode-selection/dense.env" ]]; then cat "${ROOT}/results/decode-selection/dense.env" >>"${ROOT}/source/decode-kernels.env"; fi']
-    for dense_env, expected in (("", "A=pinned\n"), ("A=dense\n", "A=pinned\nA=dense\n")):
-        (tmp_path / "results/decode-selection").mkdir(parents=True, exist_ok=True)
-        (tmp_path / "source").mkdir(exist_ok=True)
-        (tmp_path / "source/decode-kernels.env").write_text("A=pinned\n")
-        (tmp_path / "results/decode-selection/dense.env").write_text(dense_env)
-        subprocess.run(["bash", "-c", "set -euo pipefail\n" + "\n".join(rows)], env={"ROOT": str(tmp_path), "PATH": "/usr/bin:/bin"}, check=True)
-        assert (tmp_path / "source/decode-kernels.env").read_text() == expected
+    assert "select-firmus-decode-kernels.sh" not in pp4
+    config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
+    for directory in ("source", "results"):
+        (tmp_path / directory).mkdir()
+    prepare = runpy.run_path(str(ROOT / "scripts/prepare-firmus-pp4-settings.py"))
+    prepare["prepare"](config, ROOT, tmp_path)
+    env = tmp_path / "source/decode-kernels.env"
+    result = subprocess.run(["bash", "-c", 'source "$1"; printf "%s" "$SGLANG_DECODE_FA3_VERIFY"', "bash", str(env)], capture_output=True, text=True, check=True)
+    assert result.stdout == "p128split2-s3-fp8"
+    worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
+    assert 'if [[ "$role" == decode ]]; then set -a; source "$(dirname "$0")/decode-kernels.env"; set +a; fi' in worker

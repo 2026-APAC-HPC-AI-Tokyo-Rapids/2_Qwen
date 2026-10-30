@@ -126,13 +126,10 @@ def test_new_modes_are_opt_in_and_keep_the_pinned_kernels():
     assert "num_warps=8, num_stages=2, maxnreg=128" in split
 
 
-def test_the_selection_runs_on_the_prefill_gpus_before_the_workers_start(tmp_path):
+def test_pp4_keeps_the_elementwise_pins_without_running_the_selection(tmp_path):
     shell = SBATCH.read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    run = pp4.index('"${ROOT}/scripts/select-firmus-prefill-elementwise.py" --output')
-    assert pp4.index('"${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate') < run < pp4.index('"${ROOT}/scripts/select-firmus-prefill-elementwise.py" --aggregate')
-    assert "timeout --kill-after=5 150 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4" in pp4[run - 600:run]
-    assert shell.index("select-firmus-prefill-elementwise.py\" --aggregate") < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
+    assert "select-firmus-prefill-elementwise.py" not in shell
     script = tmp_path / "pp4.sh"
     script.write_text(pp4 + "fi\n")
     subprocess.run(["bash", "-n", str(script)], check=True)
