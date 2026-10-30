@@ -13,8 +13,8 @@ from pathlib import Path
 # - select-firmus-prefill-fa3.py screen of n192-varlen and n192-direct-o-varlen on all twelve Prefill
 #   GPUs: n192-direct-o-varlen, the only eligible row in both (minimum saving 11.7 / 13.6 us, median
 #   417.1 / 416.7 us per call against n192-varlen 423.9 / 423.8 us, which missed the margin).
-#   The PP4 job screens only n192-direct-o-varlen-pipe (pipelined M-tiles) against this pin on the
-#   Prefill GPUs after the MegaMoE selection; a losing or failed screen keeps the pin.
+#   The PP4 job screened n192-direct-o-varlen-pipe (pipelined M-tiles) against this pin until
+#   40991744289, which adopted it and stopped serving; the row stays in the image and candidates file.
 # - select-firmus-prefill-moe-input.py: fused, 103.99-105.18 us against control 123.57-124.04 us per
 #   layer on all four GPUs in both runs; fused-gate stayed below its margin. Superseded by onepass below.
 # - select-firmus-decode-dense.py --pinned-env: wide norm/quant (2.51 against 6.05-6.08 us); the
