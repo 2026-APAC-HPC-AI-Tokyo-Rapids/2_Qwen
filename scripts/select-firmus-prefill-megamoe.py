@@ -7,14 +7,17 @@ the four GPUs as one EP4 group. Variants: control (three stages), four-stage
 (DG_SM90_PREFILL_4STAGE=1: fourth A/B stage, per-warp FC2 staging),
 four-stage-lean (also DG_SM90_PREFILL_LEAN=1, EP1 only: no cross-rank count
 publication, rank round robin or post-signal grid sync, FC2 staging with
-stmatrix) and four-stage-lean-pair (also DG_SM90_PREFILL_TAIL_PAIR=1: pool
-blocks with at most 64 rows run their N blocks in pairs on both warpgroups).
+stmatrix), four-stage-lean-pair (also DG_SM90_PREFILL_TAIL_PAIR=1: pool
+blocks with at most 64 rows run their N blocks in pairs on both warpgroups) and
+four-stage-lean-split (lean plus DG_SM90_PREFILL_SPLIT_ACCUM=1: each warpgroup's
+FC1/FC2 accumulator is issued as two m64n128 halves so that the carried-scale
+rescale of one half overlaps the other half's WGMMA).
 The round-2 direct-FC2 and A-gather variants lost (+1.6% and +44% in
 40911121619) and the tail split stayed below the margin twice; they are gone.
 For the two timed routings and the untimed edge routing (experts with 0, 1-64,
 65, 127-129 and 255-256 rows) the control must match an FP32 reference on
 sampled tokens and every candidate must reproduce the control bit for bit.
-All four are timed in rotating order. --aggregate adopts the fastest variant that passed on
+All five are timed in rotating order. --aggregate adopts the fastest variant that passed on
 every GPU of every worker and saved at least the summed per-case margin over
 all GPUs and routings; anything missing keeps the control. A control reference
 failure stops the job. Neither per-case nor per-GPU margins are used: in runs
@@ -31,15 +34,17 @@ from datetime import timedelta
 from pathlib import Path
 
 HIDDEN, INTERMEDIATE, EXPERTS, TOPK = 4096, 1536, 128, 8
-SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR")
+SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR", "DG_SM90_PREFILL_SPLIT_ACCUM")
 VARIANTS = {name: dict(zip(SWITCHES, values, strict=True)) for name, values in {
-    "control": ("0", "0", "0"),
-    "four-stage": ("1", "0", "0"),
-    "four-stage-lean": ("1", "1", "0"),
-    "four-stage-lean-pair": ("1", "1", "1"),
+    "control": ("0", "0", "0", "0"),
+    "four-stage": ("1", "0", "0", "0"),
+    "four-stage-lean": ("1", "1", "0", "0"),
+    "four-stage-lean-pair": ("1", "1", "1", "0"),
+    "four-stage-lean-split": ("1", "1", "0", "1"),
 }.items()}
-# Every candidate changes staging, synchronisation or the work assignment only: bit-exact.
-CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair")
+# Every candidate changes staging, synchronisation, the work assignment or the WGMMA
+# issue order only (same products, K order and multipliers per element): bit-exact.
+CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split")
 ROUTINGS = ("balanced", "hot")
 # Checked for exactness only (not timed): the pool-block shapes the timed routings rarely hit.
 EXACT_ROUTINGS = ("edges",)

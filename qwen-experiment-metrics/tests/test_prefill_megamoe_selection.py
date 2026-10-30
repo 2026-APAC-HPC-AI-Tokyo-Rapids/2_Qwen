@@ -14,13 +14,14 @@ def selector():
     return runpy.run_path(str(ROOT / "scripts/select-firmus-prefill-megamoe.py"))
 
 
-def write_ranks(selector, directory, workers=3, control=2800.0, four=2740.0, lean=2720.0, pair=2700.0):
+# The split default (2790 us) is below the 0.5% margin, so it never wins unless a test lowers it.
+def write_ranks(selector, directory, workers=3, control=2800.0, four=2740.0, lean=2720.0, pair=2700.0, split=2790.0):
     for worker in range(workers):
         path = directory / f"prefill-{worker}"
         path.mkdir(parents=True)
         for rank in range(4):
             routings = {}
-            times = {"four-stage": four, "four-stage-lean": lean, "four-stage-lean-pair": pair}
+            times = {"four-stage": four, "four-stage-lean": lean, "four-stage-lean-pair": pair, "four-stage-lean-split": split}
             base = {"finite": True, "relative_l2": 0.012, "max_scaled_error": 0.02, "reference_passed": True}
             for kind in selector["ROUTINGS"]:
                 routings[kind] = {"control": {**base, "us": [control] * selector["ROUNDS"]}, **{name: {**base, "bitwise_equal": True, "us": [us] * selector["ROUNDS"]} for name, us in times.items()}}
@@ -49,7 +50,18 @@ def test_adopts_the_fastest_variant_that_passed_everywhere(selector, tmp_path):
     assert result["winner"] == "four-stage-lean-pair" and all(len(c["savings"]) == 12 * len(selector["ROUTINGS"]) for c in result["choices"].values())
     # The FA3 choice stays; the MegaMoE switches are appended for the Prefill workers.
     assert env == "SGLANG_PREFILL_FA3_VERIFY=n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_TAIL_PAIR=1\n"
-    assert set(selector["VARIANTS"]) == {"control", "four-stage", "four-stage-lean", "four-stage-lean-pair"}
+    assert set(selector["VARIANTS"]) == {"control", "four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split"}
+
+
+def test_faster_split_wins_with_lean_and_without_pairing(selector, tmp_path):
+    write_ranks(selector, tmp_path / "results", split=2650.0)
+    result, env = aggregate(selector, tmp_path)
+    assert result["winner"] == "four-stage-lean-split"
+    # The host only honours the split switch on the lean path without tail pairing.
+    assert env.endswith("n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_SPLIT_ACCUM=1\n")
+    edit(tmp_path / "results", 0, 2, "edges", "four-stage-lean-split", bitwise_equal=False)
+    result, _ = aggregate(selector, tmp_path)
+    assert result["winner"] == "four-stage-lean-pair" and result["choices"]["four-stage-lean-split"]["reason"] == "failed rank 2 edges"
 
 
 def test_slower_pair_leaves_lean(selector, tmp_path):
@@ -160,10 +172,10 @@ def test_host_and_header_agree_on_the_four_stage_layout():
     # 1024 expert counters + 8192 dispatch buffers + 18 KiB CD + 144 barrier bytes + four 50,192-byte stages.
     assert 1024 + 8192 + 18432 + 144 + 4 * 50192 <= 232448 < 1024 + 8192 + 65536 + 144 + 4 * 50192
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())["deep_gemm_overlay_patches"]
-    pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch"]
+    pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch"]
     # Only the Decode 1D2D BLOCK_M 192 overlay (a different header) follows the MegaMoE tiles.
     assert config[-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
-    assert config[-5:-1] == pp4_only
+    assert config[-6:-1] == pp4_only
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
     assert not set(pp4_only[1:]) & set(main)
 
@@ -172,7 +184,7 @@ def test_lean_is_an_ep1_trailing_flag_after_four_stages_with_the_same_bytes():
     host = (ROOT / "patches/deep-gemm-host/sm90-prefill-lean.patch").read_text()
     header = (ROOT / "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch").read_text()
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
-    assert series[-4:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-1d2d-decode-bm192.patch"]
+    assert series[-5:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-1d2d-decode-bm192.patch"]
     for gone in ("sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch", "sm90-prefill-tail-split.patch"):
         assert not (ROOT / "patches/deep-gemm-host" / gone).exists()
     # ",true" (kPrefillLean) only when set and one rank only.
@@ -205,3 +217,26 @@ def test_lean_is_an_ep1_trailing_flag_after_four_stages_with_the_same_bytes():
                     if t // 4 == row:
                         stsm[address + 4 * (t % 4)] = (half, 2 * q + dchunk, t % 4)
     assert stsm == sts
+
+
+def test_split_accumulator_is_a_lean_only_trailing_flag_without_traps_in_the_math_role():
+    host = (ROOT / "patches/deep-gemm-host/sm90-prefill-split-accum.patch").read_text()
+    header = (ROOT / "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch").read_text()
+    added = "\n".join(line[1:] for line in header.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    # ",true,false,true" (kPrefillLean, kPrefillTailPair=false, kPrefillSplitAccum) on the lean path only.
+    assert 'args.prefill_split_accum ? ",\\n        true,\\n        false,\\n        true"' in host
+    assert 'prefill_lean and not prefill_tail_pair and get_env<int>("DG_SM90_PREFILL_SPLIT_ACCUM", 0) != 0' in host
+    assert "    bool kPrefillSplitAccum = false,\n" in added
+    assert "DG_STATIC_ASSERT(not kPrefillSplitAccum or (kPrefillLean and not kPrefillTailPair)" in added
+    # Whole straight-line chunks of the FC1 (32) and FC2 (12) K loops.
+    unroll = re.search(r"kL1SplitUnroll = (\d+), kL2SplitUnroll = (\d+);", added)
+    assert 32 % int(unroll.group(1)) == 0 and 12 % int(unroll.group(2)) == 0
+    # The math warpgroups take the setmaxnreg budget (64 x 48 + 64 x 40 + 256 x regs <= 64512).
+    regs = int(re.search(r"kNumEpilogueThreads == 256 \? \(kPrefillSplitAccum \? (\d+) : 168\)", added).group(1))
+    assert 168 < regs and regs % 8 == 0 and 64 * 48 + 64 * 40 + 256 * regs <= 64512
+    # No trap left in the math role of the split instantiation: the pre-combine barrier is
+    # inlined without the timeout trap and the runtime combine-buffer assert is compiled out.
+    assert "while (ptx::ld_acq_sys(signal_ptr) != target);" in added
+    assert "if constexpr (not kPrefillSplitAccum) {" in added
+    # One wait per half: the oldest pending group is the same half of the previous K block.
+    assert added.count("ptx::warpgroup_wait<1>();") == 2 and added.count("HalfWGMMA::wgmma(") == 1

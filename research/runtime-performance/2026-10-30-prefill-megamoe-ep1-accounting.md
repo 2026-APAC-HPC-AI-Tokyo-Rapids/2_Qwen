@@ -45,6 +45,12 @@ tile-equivalent K blocks.
 Against the peak: useful 1.575 ms + padding 0.155 ms + mainloop efficiency (1215 against
 1024 clk per K block, 84 %) about 0.32 ms + outside the mainloop about 0.58 ms.
 
+**Correction (round 4).** A standalone model of this K loop on Genkai
+([2026-10-30-prefill-megamoe-split-accumulator.md](2026-10-30-prefill-megamoe-split-accumulator.md))
+refutes the shared-memory-port explanation below: removing all A traffic saves 2%, B multicast
+nothing, and removing the carried-scale rescale saves 17% (1406 -> 1090 clk). The rescale
+between WGMMA groups binds the K block; the split-accumulator candidate hides it.
+
 The mainloop per K block moves 128 KiB through shared memory (TMA A 16 + B 32 KiB, WGMMA
 operand reads A 2 x 8 + B 2 x 32 KiB) in 1024 tensor clocks: exactly the 128 B/clk
 shared-memory port. The data (4WG 144 KiB = 1330 clk, 2WG 128 KiB = 1215 clk) fit both
