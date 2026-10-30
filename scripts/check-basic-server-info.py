@@ -24,6 +24,8 @@ def check(config, info, role):
         if info.get(key) != value:
             raise ValueError(f"{role}: {key} expected {value!r}, observed {info.get(key)!r}")
     if role == "prefill":
+        if info.get("prefill_max_requests") != config["prefill"].get("prefill_max_requests"):
+            raise ValueError("prefill_max_requests differs from the declared batch limit")
         assert info["chunked_prefill_size"] == config["prefill"]["chunked_prefill_size"] // 4
 
 

@@ -34,6 +34,8 @@ def test_public_launch_has_capacity_and_isolated_port_ranges(config, role, index
     assert value("--disaggregation-transfer-backend") == "nixl"
     assert value("--moe-a2a-backend") == "megamoe"
     assert value("--speculative-eagle-topk") == "1"
+    if role == "prefill":
+        assert value("--prefill-max-requests") == str(config["prefill"]["prefill_max_requests"])
     expected = config["prefill"]["chunked_prefill_size"] // 4 if role == "prefill" else max(config["decode_cuda_graph_bs"]) * config["speculation"]["draft_tokens"]
     assert int(env["SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK"]) >= expected
     assert int(value("--dist-init-addr").split(":")[1]) < 32768

@@ -37,6 +37,8 @@ def launch(config, role, index, host):
     if role == "prefill":
         p = config["prefill"]
         args += ["--disaggregation-bootstrap-port", str(9000 + index), "--chunked-prefill-size", str(p["chunked_prefill_size"]), "--max-total-tokens", str(p["max_total_tokens"]), "--max-running-requests", str(p["max_running_requests"]), "--optimistic-prefill-attempts", str(p["optimistic_prefill_attempts"]), "--disable-cuda-graph"]
+        if p.get("prefill_max_requests") is not None:
+            args += ["--prefill-max-requests", str(p["prefill_max_requests"])]
         capacity = p["chunked_prefill_size"] // p["dp"]
     else:
         args += ["--max-total-tokens", str(config["decode_max_total_tokens"]), "--max-running-requests", str(config["decode_max_running_requests"]), "--disaggregation-decode-extra-slots", str(config["decode_extra_slots"]), "--cuda-graph-bs-decode", *map(str, config["decode_cuda_graph_bs"])]
