@@ -33,11 +33,22 @@ BonusのPP4はそのまま候補にしない。公開Qwen3MoEの `set_eagle3_lay
 | --- | ---: | --- | --- |
 | `2f22722` / 41051125031 | 160 | 4096 / unlimited | 配備失敗。Firmusのunsquashfs4.4が`-cat`未対応。GPU未使用 |
 | `27d865d` / [41053120260](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41053120260) | 160 | 4096 / unlimited | 測定完走、SLA不適格、全raw回収・保管済み |
-| `4b10c27` / [41057394591](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41057394591) | 128 | 4096 / unlimited | 配備中にSSH接続reset。GPU未使用、同条件attempt2を再実行 |
-| `e8d963a` / [41057547575](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41057547575) | 128 | 4096 / 1 | 同じ接続reset、GPU未使用、同条件attempt2を再実行 |
-| `00b0552` / [41058071649](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41058071649) | 128 | 8192 / 2 | 比較条件を別commitから投入、結果待ち |
+| `4b10c27` / [41057394591](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41057394591) | 128 | 4096 / unlimited | attempt1は配備中にSSH接続reset。attempt2は配備完了、Slurm27641で資源待ち |
+| `e8d963a` / [41057547575](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41057547575) | 128 | 4096 / 1 | attempt1/2とも配備中断、GPU未使用。attempt2の再試行は部分directoryと衝突。下記の同条件再投入へ |
+| `00b0552` / [41058071649](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41058071649) | 128 | 8192 / 2 | 配備完了、Slurm27640で資源待ち |
+
+| `5c55438` / 41060099701 | 128 | 4096 / 1 | 切断時cleanup修正を含む同条件再投入。fixture import順のRuffエラーでCPU段階失敗、GPU未使用 |
+| `9d4d990` / [41060170465](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41060170465) | 128 | 4096 / 1 | import整形後の同条件。配備2m23sで完了、Slurm27643で資源待ち |
 
 1→2 request/batchの比較では、token枠も2 requestが収まる値にする。この2設定は物理バッチサイズという同じ主要因を表す。その他の条件を固定する。`--prefill-max-requests` は[公開schedulerの上限](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/managers/schedule_policy.py)を使用し、独自のrequest-alignment実装は移植しない。
+
+### Preparation and validation fixes
+
+接続中断はモデル準備段階で起こり、benchmarkの失敗とは分ける。cap1 attempt2に残ったuv/HFプロセス3個は、対象runのdraft pathをargvと親子関係で確認してから終了し、その部分directoryだけを削除した。他の実行には触れていない。prepareのdraft downloadを独立process groupで起動・background waitし、HUP/TERM/INT時にowned groupと未完了directoryを片付ける。切断のCPU fixtureで子process停止とdirectory削除を確認した。
+
+全体CIでは旧migration testのlauncher全体SHAが、意図したembedded parser更新に追従していなかった。`131c7e9`でserving shellの固定SHAとparser同期検証を分離。更新前後のshell本体はbyte一致を確認済み。Basicの限定CIにも提出物とEAGLE collectorの回帰検証を含めた。
+
+`536a337`のreadback checkerは4 worker×4 DP stateそれぞれの実token容量・実request cap・graph/batch geometryを検査する。回収済みc160の全16 stateをread-only再検証して通過済み。collectorが旧launcher名を付けていたpost-benchmark metadataも`15fdd74`で修正した。これらはserving条件を変えない。
 
 ## c160 observation
 
