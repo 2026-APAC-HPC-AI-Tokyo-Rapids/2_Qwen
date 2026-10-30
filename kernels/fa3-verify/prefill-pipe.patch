@@ -139,10 +139,10 @@ index abd33d6..d2e8bfd 100644
              flash::StaticPersistentTileScheduler<Split>,
              flash::DynamicPersistentTileScheduler<CollectiveMainloop::NumMmaThreads, NumProducerThreads, Split, PackGQA, Arch >= 90 /*WarpSpecialized*/>
 diff --git a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
-index 597f47a..6363f1f 100644
+index 597f47a..abf208b 100644
 --- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 +++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
-@@ -57,6 +57,17 @@ struct CollectiveMainloopFwdSm90 {
+@@ -57,6 +57,19 @@ struct CollectiveMainloopFwdSm90 {
      static constexpr bool V_colmajor = V_colmajor_;
      static constexpr bool PrefillPVLive = (PrefillVariant & 16) != 0;
      static constexpr bool PrefillDirectO = (PrefillVariant & 32) != 0;
@@ -157,10 +157,12 @@ index 597f47a..6363f1f 100644
 +    static constexpr bool PrefillPipeEarlyStore = (PrefillVariant & 1024) != 0;
 +    static_assert((!PrefillPipeQ2 && !PrefillPipeRows) || PrefillPipe);
 +    static_assert(!PrefillPipeEarlyStore || PrefillPipeRows);
++    static constexpr bool PrefillPipeEarly = (PrefillVariant & 2048) != 0;
++    static_assert(!PrefillPipeEarly || PrefillPipe);
      static constexpr bool PrefillTreeMax = (PrefillVariant & 8) != 0;
      static constexpr bool PrefillRegs = (PrefillVariant & 1) != 0;
      static constexpr bool PrefillLazy = (PrefillVariant & 2) != 0;
-@@ -390,7 +401,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -390,7 +403,7 @@ struct CollectiveMainloopFwdSm90 {
      struct TensorStorageTransposeV : cute::aligned_struct<cute::max(SmemAlignmentQ, SmemAlignmentK, SmemAlignmentV), _0> {
          cute::array_aligned<Element, cute::cosize_v<SmemLayoutVtMma> * kHeads, SmemAlignmentV> smem_v;
          cute::array_aligned<Element, cute::cosize_v<SmemLayoutVt> * kHeads, SmemAlignmentVt> smem_vt;
@@ -169,7 +171,47 @@ index 597f47a..6363f1f 100644
          cute::array_aligned<Element, cute::cosize_v<SmemLayoutK> * kHeads, SmemAlignmentK> smem_k;
          SmemQv_t smem_qv;
          SmemScale_t smem_scale;
-@@ -1043,15 +1054,22 @@ struct CollectiveMainloopFwdSm90 {
+@@ -742,6 +755,7 @@ struct CollectiveMainloopFwdSm90 {
+                 return;
+             }
+         }
++        if constexpr (PrefillPipeEarly) { scheduler_prefetch(); }
+ 
+         Tensor sQ = make_tensor(make_smem_ptr(shared_storage.tensors.mainloop.smem_q.data()), SmemLayoutQ{});
+         Tensor sK = make_tensor(make_smem_ptr(shared_storage.tensors.mainloop.smem_k.data()), SmemLayoutK{});
+@@ -1005,6 +1019,20 @@ struct CollectiveMainloopFwdSm90 {
+         static constexpr bool SingleProducerWarp = NumProducerThreads == cutlass::NumThreadsPerWarp;
+         bool should_load_KV = !Use_TMA_KV || ((SingleProducerWarp || warp_idx_in_warpgroup == 0) && cute::elect_one_sync());
+ 
++        // Double-buffered Q with the early claim: Q first, so it lands while the current tile runs.
++        if constexpr (PrefillPipeQ2 && PrefillPipeEarly) {
++            static_assert(!Use_TMA_Q && kHeads == 1 && !HasQv);
++            if (work_idx >= 2) { pipe_q_empty(shared_storage)[work_idx % 2].wait((work_idx / 2 - 1) % 2); }
++            Tensor mQ = make_tensor(make_gmem_ptr(params.ptr_Q + seqlen_info.offset_q * get<0>(params.stride_Q)), params.shape_Q_packed, params.stride_Q_packed)(_, _, bidh, !is_varlen_q ? bidb : 0);
++            Tensor sQ_pi = cute::as_position_independent_swizzle_tensor(make_tensor(make_smem_ptr(shared_storage.tensors.mainloop.smem_q.data() + (work_idx % 2) * cosize_v<SmemLayoutQ>), SmemLayoutQ{}));
++            using PackGQAt = flash::PackGQAManager<get<0>(TileShape_MNK{}), get<2>(TileShape_MNK{}), NumProducerThreads, Element>;
++            PackGQAt::load_Q(mQ, sQ_pi, params.qhead_per_khead_divmod, thread_idx, seqlen_info.seqlen_q, m_block);
++            auto &barrier_Q = work_idx % 2 ? shared_storage.pipelines.barrier_Qv : shared_storage.pipelines.barrier_Q;
++            if (thread_idx == 0) { pipe_tile(shared_storage)[work_idx % 2] = make_int4(m_block, bidh, bidb, 0); }
++            cutlass::arch::cpasync_barrier_arrive(reinterpret_cast<uint64_t*>(&barrier_Q));
++            barrier_Q.arrive();
++        }
++
+         if (should_load_KV) {
+             if constexpr (PagedKVNonTMA) {
+                 paged_kv_manager.template load_page_table<true /*Seqlenk_mask*/, true /*First_iter*/>(n_block);
+@@ -1026,7 +1054,9 @@ struct CollectiveMainloopFwdSm90 {
+             }
+         }
+ 
+-        if constexpr (Use_TMA_Q) {
++        if constexpr (PrefillPipeQ2 && PrefillPipeEarly) {
++            // Q was issued before the first K/V above.
++        } else if constexpr (Use_TMA_Q) {
+             // Wait for the MMA warpgroups to signal that smem_q is ready
+             if (SingleProducerWarp || warp_idx_in_warpgroup == 0) {
+                 cutlass::arch::NamedBarrier::sync(NumMmaThreadsQK + cutlass::NumThreadsPerWarp, static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
+@@ -1043,15 +1073,22 @@ struct CollectiveMainloopFwdSm90 {
                  }
              }
          } else {  // Load Q with cp.async
@@ -194,7 +236,7 @@ index 597f47a..6363f1f 100644
              cutlass::arch::cpasync_barrier_arrive(reinterpret_cast<uint64_t*>(&barrier_Q));
              barrier_Q.arrive();
              if constexpr (HasQv) {
-@@ -1069,7 +1087,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1069,7 +1106,7 @@ struct CollectiveMainloopFwdSm90 {
          // Need ClusterBarrier, not just NamedBarrier. Otherwise we might have CTA 0 finishing the
          // TMA store on O first, call TMA multicast load on V, before CTA 1 can finishing TMA store on O.
          // if (thread_idx == 0) { printf("Producer: main load, before barrier_O, work_idx = %d\n", work_idx);}
@@ -203,7 +245,16 @@ index 597f47a..6363f1f 100644
          // if (thread_idx == 0) { printf("Producer: main load, after barrier_O\n");}
  
          if constexpr (!Transpose_V && !IntraWGOverlap) {
-@@ -1118,6 +1136,37 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1108,7 +1145,7 @@ struct CollectiveMainloopFwdSm90 {
+             n_block_prev = n_block;
+             if constexpr (Transpose_V) { copy_Vt_to_V(smem_pipe_write_v); }
+         }
+-        scheduler_prefetch();
++        if constexpr (!PrefillPipeEarly) { scheduler_prefetch(); }
+         if constexpr (!Transpose_V && IntraWGOverlap) {
+             if (should_load_KV) { load_V(n_block_prev, smem_pipe_write, cute::true_type{} /*Seqlenk_mask*/); }
+         }
+@@ -1118,6 +1155,37 @@ struct CollectiveMainloopFwdSm90 {
          ++work_idx;
      }
  
@@ -241,7 +292,7 @@ index 597f47a..6363f1f 100644
      template <typename SharedStorage>
      CUTLASS_DEVICE void
      load_tail(MainloopPipelineK pipeline_k, MainloopPipelineV pipeline_v, MainloopPipelineVt pipeline_vt, MainloopPipelineMask pipeline_mask,
-@@ -1163,7 +1212,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1163,7 +1231,7 @@ struct CollectiveMainloopFwdSm90 {
      mma_init() {
          int warp_group_idx = flash::canonical_warp_group_idx_nosync();
          // Tell producers that smem_q is ready
@@ -250,7 +301,7 @@ index 597f47a..6363f1f 100644
              cutlass::arch::NamedBarrier::arrive(kHeads * NumMmaThreadsQK + (Use_TMA_Q ? cutlass::NumThreadsPerWarp : NumProducerThreads), static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
          }
          if (LargeHeadDimV && warp_group_idx > 1) {
-@@ -1698,6 +1747,231 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1698,6 +1766,231 @@ struct CollectiveMainloopFwdSm90 {
          return true;
      }
  

@@ -55,7 +55,7 @@ index a4a8976..c260aa2 100644
              }
              epilogue.store_tail();
 diff --git a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
-index 6363f1f..e53f2aa 100644
+index abf208b..a7d3428 100644
 --- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 +++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 @@ -16,6 +16,7 @@
@@ -66,7 +66,7 @@ index 6363f1f..e53f2aa 100644
  #include "block.h"
  #include "mask.h"
  #include "pack_gqa.h"
-@@ -1386,6 +1387,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1405,6 +1406,7 @@ struct CollectiveMainloopFwdSm90 {
          auto &barrier_Q = shared_storage.pipelines.barrier_Q;
          if constexpr (!AppendKV) {
              barrier_Q.wait(work_idx % 2);
@@ -74,7 +74,7 @@ index 6363f1f..e53f2aa 100644
          } else {
              if (get<1>(params.shape_rotary) > 0) {  // Apply rotary to Q
                  using Rotary_t = Rotary<kBlockM, kHeadDim, NumMmaThreadsQK, Element, !(Is_causal || Is_local) /*FixedPosition*/>;
-@@ -1434,6 +1436,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1453,6 +1455,7 @@ struct CollectiveMainloopFwdSm90 {
                  flash::gemm<true, -1>(tiled_mma_qk, tSrQ, tSrK(_, _, _, smem_pipe_read.index()), tSrS);
                  warpgroup_wait<0>();
              }
@@ -82,7 +82,7 @@ index 6363f1f..e53f2aa 100644
              pipeline_k.consumer_release(smem_pipe_read);
              if constexpr (HasQv) {
                  shared_storage.pipelines.barrier_Qv.wait(work_idx % 2);
-@@ -1466,6 +1469,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1485,6 +1488,7 @@ struct CollectiveMainloopFwdSm90 {
              if constexpr (!MmaPV_is_RS) { write_P_to_smem(tOrP); }
              if constexpr (!MmaPV_is_RS) { arrive_on_P_write_barrier(); }
              --n_block;
@@ -90,7 +90,7 @@ index 6363f1f..e53f2aa 100644
  
              // Need to initialize tOrO in the case of RescaleOBeforeGemm where we will scale tOrO even in the 1st iter
              clear(tOrO);
-@@ -1592,6 +1596,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1611,6 +1615,7 @@ struct CollectiveMainloopFwdSm90 {
                      }
                  }
              }
@@ -98,7 +98,7 @@ index 6363f1f..e53f2aa 100644
              // Tell producers that smem_q is ready
              cutlass::arch::NamedBarrier::arrive(kHeads * NumMmaThreadsQK + (Use_TMA_Q ? cutlass::NumThreadsPerWarp : NumProducerThreads), static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
              if constexpr (RescaleOBeforeGemm) { prefill_rescale(softmax, tOrO, scores_scale); }
-@@ -1907,7 +1912,9 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1926,7 +1931,9 @@ struct CollectiveMainloopFwdSm90 {
                  fwd_step(n_block, no_mask_fn, cute::false_type{} /*check_inf*/);
              }
  
@@ -108,7 +108,7 @@ index 6363f1f..e53f2aa 100644
              if (bidb1 < 0) { break; }
              TileState nxt = tile_state(m_block1, bidh1, bidb1, qbuf1);
              // Boundary step: QK of the next tile's first (diagonal) block with the PV of this tile's
-@@ -1918,11 +1925,13 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1937,11 +1944,13 @@ struct CollectiveMainloopFwdSm90 {
                  Tensor tSrS = partition_fragment_C(tiled_mma_qk, select<0, 1>(TileShape_MNK{}));
                  if (warp_group_idx == 0) { consumer_wait(pipeline_k, smem_pipe_read); }
                  warp_scheduler_barrier_sync();
@@ -122,7 +122,7 @@ index 6363f1f..e53f2aa 100644
                  pipeline_k.consumer_release(smem_pipe_read);
                  if (nxt.n_block_max - 1 == nxt.n_block_min) { query_empty(nxt); }
                  make_mask(nxt).template apply<true /*Seqlenk_mask*/, Is_causal, Is_local>(tSrS, nxt.m_block, nxt.n_block_max - 1);
-@@ -1942,8 +1951,10 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1961,8 +1970,10 @@ struct CollectiveMainloopFwdSm90 {
                  } else {
                      softmax_next.template max_get_scale</*Is_first=*/true, /*Check_inf=*/true>(tSrS);
                      softmax_next.template online_softmax</*Is_first=*/true, /*Check_inf=*/true>(tSrS);
@@ -133,7 +133,7 @@ index 6363f1f..e53f2aa 100644
                      pipeline_v.consumer_release(smem_pipe_read_v);
                      flash::permute_Cregs_fp8(tSrS);
                      convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
-@@ -1951,12 +1962,14 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1970,12 +1981,14 @@ struct CollectiveMainloopFwdSm90 {
                      flash::permute_output_fp8(tOrO);
                      store_tile(cur);
                  }

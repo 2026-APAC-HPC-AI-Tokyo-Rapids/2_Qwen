@@ -59,6 +59,10 @@ extern "C" int pf_run(int id, int rows, int batch, int maxlen, void* q, void* k,
 #ifdef PF_STAMP
 extern "C" int pf_stamp_reset() {
     unsigned int zero = 0;
+    void* buffer = nullptr;
+    cudaError_t e = cudaGetSymbolAddress(&buffer, apac_stamp_buf);
+    if (e == cudaSuccess) e = cudaMemset(buffer, 0, sizeof(apac_stamp_buf));
+    if (e != cudaSuccess) return int(e);
     return int(cudaMemcpyToSymbol(apac_stamp_count, &zero, sizeof(zero)));
 }
 extern "C" int pf_stamp_read(void* host, unsigned int* count) {

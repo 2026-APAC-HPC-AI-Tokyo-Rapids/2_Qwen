@@ -6,9 +6,13 @@ set -euo pipefail
 [[ -z "${CANDIDATE_PATCH:-}" ]]
 root="${GITHUB_WORKSPACE}"
 # PrefillVariant values in timing order (index 0 is the pinned n192-direct-o-varlen) and their names.
-# 128 pipelined tiles, 256 double-buffered Q, 512 straight-line O store, 1024 O store before the next softmax.
-variants=96,224,480,992,2016
-names=pin,pipe,pipe-q2,pipe-q2-rows,pipe-q2-early
+# 128 pipelined tiles, 256 double-buffered Q, 512 straight-line O store, 1024 O store before the next softmax,
+# 2048 next-tile claim at the start of a tile (and with 256 the next Q before its first K/V).
+variants=96,224,2272,2528
+names=pin,pipe,pipe-early,pipe-q2-early
+# Rows of the stamp build, timed separately for their phase clocks.
+stamp_variants=2272,2528
+stamp_names=pipe-early,pipe-q2-early
 source "${root}/platforms/genkai/kernel-probe/prepare-runtime.sh"
 install -m 0644 "${root}/kernels/fa3-verify/candidates.json" "${RUNTIME_DIR}/source/fa3-verify-candidates.json"
 install -m 0755 "${root}/kernels/probes/run-container.sh" "${RUNTIME_DIR}/scripts/run-container.sh"
@@ -41,7 +45,7 @@ flags=(-O3 -std=c++17 --use_fast_math --expt-relaxed-constexpr --expt-extended-l
 nvcc --version >"${RUNTIME_DIR}/results/compiler.txt"
 mkdir pipe-variants stamp-variants
 printf '#define PF_VARIANTS %s\n' "${variants}" >pipe-variants/pf-variants.h
-printf '#define PF_VARIANTS 96,992\n' >stamp-variants/pf-variants.h
+printf '#define PF_VARIANTS %s\n' "${stamp_variants}" >stamp-variants/pf-variants.h
 nvcc "${flags[@]}" -I"${fa3}/hopper" -c "${fa3}/hopper/flash_prepare_scheduler.cu" -o scheduler.o >"${RUNTIME_DIR}/logs/build-scheduler.log" 2>&1
 nvcc "${flags[@]}" -I"${fa3}/hopper" -I"${PWD}/pipe-variants" -c "${root}/kernels/probes/fa3-prefill-pipe.cu" -o pipe.o >"${RUNTIME_DIR}/logs/build-pipe.log" 2>&1 &
 pipe_build=$!
@@ -63,7 +67,7 @@ bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${
 # timeout there must not hide the timing.
 printf 'run\n' >>"\${RUNTIME_DIR}/results/probe-runs"
 if [[ "\$(wc -l <"\${RUNTIME_DIR}/results/probe-runs")" == 3 ]]; then
-    bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${RUNTIME_DIR}/source/bench.py" --stamp-library "\${RUNTIME_DIR}/source/fa3-prefill-stamp.so" --output "\${RUNTIME_DIR}/results/fa3-stamps.json" || true
+    bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${RUNTIME_DIR}/source/bench.py" --stamp-library "\${RUNTIME_DIR}/source/fa3-prefill-stamp.so" --stamp-names ${stamp_names} --output "\${RUNTIME_DIR}/results/fa3-stamps.json" || true
 fi
 PROBE
 chmod 0755 probe

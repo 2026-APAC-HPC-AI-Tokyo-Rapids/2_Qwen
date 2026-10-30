@@ -163,10 +163,8 @@ def summarize(phases, per_step, records, steady="steady_loop"):
     }
 
 
-def stamps(path, q, k, v, cu):
-    """Per-tile consumer phase clocks: index 0 is the pin (mma per tile), index 1 the pipelined row."""
-    library = Library(path)
-    records, lanes = read_stamps(library, 0, q, k, v, cu)
+def pin_stamps(library, index, q, k, v, cu):
+    records, lanes = read_stamps(library, index, q, k, v, cu)
     names = ("setup_q_wait", "first_qk", "first_softmax", "steady_loop", "drain", "scheduler", "epilogue")
     phases = {name: [] for name in (*names, "between_tiles")}
     per_step = []
@@ -179,34 +177,43 @@ def stamps(path, q, k, v, cu):
     for items in lanes.values():
         for a, b in itertools.pairwise(items):
             phases["between_tiles"].append(b["t"][0] - a["t"][7])
-    result = {"pin": summarize(phases, per_step, records)}
-    if library.count > 1:
-        # One record per tile boundary: t0 end of the tile's steady loop, then next-tile Q wait,
-        # ping-pong turn, boundary QK, next softmax, PV wait, finalize and store, hand-over.
-        records, lanes = read_stamps(library, 1, q, k, v, cu)
-        names = ("q_wait", "turn_wait", "boundary_qk", "next_softmax", "pv_wait", "finalize_store", "handover")
-        phases = {name: [] for name in (*names, "steady_loop")}
-        per_step = []
-        complete = [r for r in records if r["t"][7]]
-        for r in complete:
-            t = r["t"]
-            for i, name in enumerate(names):
-                phases[name].append(t[i + 1] - t[i])
-        for items in lanes.values():
-            for a, b in itertools.pairwise(items):
-                if a["t"][7]:
-                    phases["steady_loop"].append(b["t"][0] - a["t"][7])
-                    if b["blocks"] > 1:
-                        per_step.append((b["t"][0] - a["t"][7]) / (b["blocks"] - 1))
-        result["pipe"] = summarize(phases, per_step, complete)
-    return result
+    return summarize(phases, per_step, records)
+
+
+def pipe_stamps(library, index, q, k, v, cu):
+    """One record per tile boundary: t0 end of the tile's steady loop, then next-tile Q wait,
+    ping-pong turn, boundary QK, next softmax, PV wait, finalize and store, hand-over."""
+    records, lanes = read_stamps(library, index, q, k, v, cu)
+    names = ("q_wait", "turn_wait", "boundary_qk", "next_softmax", "pv_wait", "finalize_store", "handover")
+    phases = {name: [] for name in (*names, "steady_loop")}
+    per_step = []
+    complete = [r for r in records if r["t"][7]]
+    for r in complete:
+        t = r["t"]
+        for i, name in enumerate(names):
+            phases[name].append(t[i + 1] - t[i])
+    for items in lanes.values():
+        for a, b in itertools.pairwise(items):
+            if a["t"][7]:
+                phases["steady_loop"].append(b["t"][0] - a["t"][7])
+                if b["blocks"] > 1:
+                    per_step.append((b["t"][0] - a["t"][7]) / (b["blocks"] - 1))
+    return summarize(phases, per_step, complete)
+
+
+def stamps(path, names, q, k, v, cu):
+    """Per-tile consumer phase clocks of each row of the stamp build ("pin" uses the mma() layout)."""
+    library = Library(path)
+    assert library.count == len(names), (library.count, names)
+    return {name: (pin_stamps if name == "pin" else pipe_stamps)(library, index, q, k, v, cu) for index, name in enumerate(names)}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--library", type=Path, help="timed rows, in PF_VARIANTS order")
     parser.add_argument("--names", help="comma-separated names in PF_VARIANTS order")
-    parser.add_argument("--stamp-library", type=Path, help="instead of timing, record the pin's phase clocks")
+    parser.add_argument("--stamp-library", type=Path, help="instead of timing, record phase clocks of its rows")
+    parser.add_argument("--stamp-names", help="comma-separated names of the stamp library rows")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     begin = time.monotonic()
@@ -216,7 +223,7 @@ def main():
     q, k, v, cu = inputs("cuda")
     result = {"device": props.name, "lengths": LENGTHS, "work": dict(zip(("visits", "tiles"), work_counts(LENGTHS))), "rows": {}}
     if args.stamp_library:
-        result = {**result, "stamps": stamps(args.stamp_library, q, k, v, cu), "elapsed_seconds": time.monotonic() - begin}
+        result = {**result, "stamps": stamps(args.stamp_library, args.stamp_names.split(","), q, k, v, cu), "elapsed_seconds": time.monotonic() - begin}
         args.output.write_text(json.dumps(result, indent=2) + "\n")
         print("STAMPS " + json.dumps(result["stamps"]), flush=True)
         return
