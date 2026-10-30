@@ -1,5 +1,13 @@
 # Qwen3-235B PD inference on Firmus, Genkai, and ASPIRE 2A+
 
+## Basic and Bonus submissions (2026-10-30 policy)
+
+The source-modified, workload-tuned stack is **Bonus**. The existing [submission package](submission/README.md) reproduces a measured Bonus configuration; its results must not be labelled Basic.
+
+**Basic** uses the latest public SGLang release when this campaign starts: **0.5.23**, upstream commit `297e54fd105e974cdf401e5b4d20253a22c16f90`. Its official linux/amd64 image is pinned by digest in `containers/basic.Dockerfile`. SGLang, its kernels, DeepGEMM and the gateway remain unmodified: only built-in options, environment variables and deployment settings are tuned. The client and gateway use a separate Python environment so installing them does not resolve or replace the upstream inference dependencies.
+
+Firmus is the first Basic target. `configs/firmus-basic.json` records the initial P3/D1, attention-DP4/EP4, FP8 KV, EAGLE3 configuration. This is an **unmeasured candidate**, not a selected optimum. Build, serving and comparison results will be recorded through Actions and archived raw artifacts. Basic-to-Bonus speedup remains pending until Basic has valid repeated measurements on the same platform.
+
 vLLM用イメージは、GitHub Actionsの **AWSでvLLMイメージをビルド** から手動で生成できます。Docker用アーカイブとFirmus用SquashFSを生成し、後者をFirmusへ配布します。実行方法と成果物の場所は [vLLM image build on AWS](research/vllm-container-build.md) を参照してください。
 
 公式Qwen競技の `Qwen/Qwen3-235B-A22B-Instruct-2507` FP8 weightsをPrefill–Decode分離（PD分離）構成で評価するリポジトリです。実行エントリポイントは [Qwen workflow](.github/workflows/qwen.yml) です。Firmus、玄界、ASPIRE 2A+のそれぞれに同じ固定revisionの全24モデルシャードと検証済みSquashFSを配置し、各クラスタのSlurm、PJM、PBSジョブ内でモデル検証、SGLang workerとPD routerの起動、公式AIPerf、ローカル結果検証までを連続して実行します。

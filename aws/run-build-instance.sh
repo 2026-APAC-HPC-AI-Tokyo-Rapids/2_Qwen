@@ -16,7 +16,7 @@ logs_archive="${build_root}/build-logs.tar.zst"
 [[ "${bucket}" =~ ^[a-z0-9.-]+$ && "${input_key}" == inputs/* && "${output_prefix}" == containers/* ]]
 [[ "${github_run_id}" =~ ^[1-9][0-9]*$ && "${github_run_attempt}" =~ ^[1-9][0-9]*$ && "${github_sha}" =~ ^[0-9a-f]{40,64}$ ]]
 [[ "${cache_repository}" =~ ^[0-9]+[.]dkr[.]ecr[.][a-z0-9-]+[.]amazonaws[.]com/[a-z0-9._/-]+$ ]]
-[[ "${framework}" == sglang || "${framework}" == vllm || "${framework}" == dynamo ]]
+[[ "${framework}" == sglang || "${framework}" == vllm || "${framework}" == dynamo || "${framework}" == basic ]]
 
 cleanup() {
   status=$?

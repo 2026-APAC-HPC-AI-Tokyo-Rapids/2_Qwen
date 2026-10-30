@@ -8,7 +8,7 @@ set -euo pipefail
 
 [[ "${ACTION}" == build || "${ACTION}" == reuse ]]
 framework=${CONTAINER_FRAMEWORK:-sglang}
-[[ "${framework}" == sglang || "${framework}" == vllm || "${framework}" == dynamo ]]
+[[ "${framework}" == sglang || "${framework}" == vllm || "${framework}" == dynamo || "${framework}" == basic ]]
 
 install -d -m 2775 "${CONTAINER_ARCHIVE_DIR}"
 current_image="${CONTAINER_ARCHIVE_DIR}/${GITHUB_RUN_ID}.sqsh"

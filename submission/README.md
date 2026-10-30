@@ -1,4 +1,6 @@
-# Qwen3 PD submission — Firmus, Tokyo Rapids
+# Qwen3 PD Bonus submission — Firmus, Tokyo Rapids
+
+**Classification: Bonus.** This package contains team source and kernel changes. It is retained as a reproducible Bonus result. The separately tuned, unmodified SGLang Basic campaign is described in the [repository README](../README.md); Basic measurements and the speedup over Basic are still pending.
 
 The measured best run is **9120.51 good output tok/s**, Actions [40225743220](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40225743220), Slurm 26232: 5802 requests, zero errors, good request fraction 0.97708. This is one measured run, not a repeatability claim. Its text evidence and checksums are in `results/40225743220/`.
 
