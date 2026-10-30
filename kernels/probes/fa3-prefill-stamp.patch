@@ -1,20 +1,22 @@
 diff --git a/hopper/apac_stamp.cuh b/hopper/apac_stamp.cuh
 new file mode 100644
-index 0000000..cff9f78
+index 0000000..d26310d
 --- /dev/null
 +++ b/hopper/apac_stamp.cuh
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,11 @@
 +#pragma once
 +// Probe-only per-tile consumer timestamps, one thread per consumer warpgroup.
 +#include <cstdint>
 +__device__ unsigned long long apac_stamp_buf[1 << 18];
 +__device__ unsigned int apac_stamp_count;
 +__device__ __forceinline__ unsigned long long apac_clock() { unsigned long long t; asm volatile("mov.u64 %0, %%clock64;" : "=l"(t) :: "memory"); return t; }
-+__device__ __forceinline__ unsigned int& apac_slot() { __shared__ unsigned int slot[4]; return slot[(threadIdx.x / 128) & 3]; }
++// Static shared memory would shift the 1024-byte aligned dynamic shared memory, so the slot lives in global memory.
++__device__ unsigned int apac_stamp_slot[4096];
++__device__ __forceinline__ unsigned int& apac_slot() { return apac_stamp_slot[blockIdx.x * 4 + threadIdx.x / 128]; }
 +#define APAC_STAMP_BEGIN(coord) do { if (threadIdx.x % 128 == 0) { unsigned long long t0 = apac_clock(); unsigned int s = atomicAdd(&apac_stamp_count, 1u); apac_slot() = s; unsigned int sm; asm volatile("mov.u32 %0, %%smid;" : "=r"(sm)); if (s < (1u << 14)) { apac_stamp_buf[s * 16 + 0] = (uint64_t(sm) << 48) | (uint64_t(threadIdx.x / 128) << 44) | (uint64_t(cute::get<2>(coord)) << 40) | (uint64_t(cute::get<1>(coord)) << 32) | uint64_t(cute::get<0>(coord)); apac_stamp_buf[s * 16 + 1] = t0; } } } while (0)
 +#define APAC_STAMP(i) do { if (threadIdx.x % 128 == 0) { unsigned int s = apac_slot(); if (s < (1u << 14)) { apac_stamp_buf[s * 16 + 1 + (i)] = apac_clock(); } } } while (0)
 diff --git a/hopper/flash_fwd_kernel_sm90.h b/hopper/flash_fwd_kernel_sm90.h
-index 75529a8..a042a13 100644
+index fa879ce..88f53b3 100644
 --- a/hopper/flash_fwd_kernel_sm90.h
 +++ b/hopper/flash_fwd_kernel_sm90.h
 @@ -17,6 +17,7 @@
@@ -25,7 +27,7 @@ index 75529a8..a042a13 100644
  #include "utils.h"
  #include "softmax.h"
  #include "tile_scheduler.hpp"
-@@ -428,6 +429,7 @@ public:
+@@ -440,6 +441,7 @@ public:
                   // get_next_work will be called before the epilogue
                   ) {
                  auto block_coord = work_tile_info.get_block_coord(params.scheduler);
@@ -33,7 +35,7 @@ index 75529a8..a042a13 100644
                  // Head pair: the tile's bidh is the pair j; consumer WG h computes KV head 2j+h.
                  int const mma_thread_idx = kHeads == 1 ? threadIdx.x - MmaThreadOffset : warp_group_thread_idx;
                  if constexpr (kHeads == 2) { get<1>(block_coord) = get<1>(block_coord) * 2 + warp_group_idx - 1; }
-@@ -511,8 +513,10 @@ public:
+@@ -523,8 +525,10 @@ public:
                              tOrO, softmax, threadIdx.x - MmaThreadOffset, seqlen_info, block_coord, shared_storage);
                      }
                  }
@@ -44,7 +46,7 @@ index 75529a8..a042a13 100644
                  if constexpr (Split && Varlen) {
                      if (!work_tile_info.is_valid(params.scheduler)) {  // Last tile
                          cutlass::arch::launch_dependent_grids();
-@@ -530,6 +534,7 @@ public:
+@@ -542,6 +546,7 @@ public:
                      // Write 0 to gO and -inf to gLSE.
                      epilogue.store_zero(params.epilogue, mma_thread_idx, block_coord);
                  }
@@ -53,7 +55,7 @@ index 75529a8..a042a13 100644
              }
              epilogue.store_tail();
 diff --git a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
-index 597f47a..4fb22b1 100644
+index baab269..8bf10d0 100644
 --- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 +++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 @@ -16,6 +16,7 @@
@@ -64,7 +66,7 @@ index 597f47a..4fb22b1 100644
  #include "block.h"
  #include "mask.h"
  #include "pack_gqa.h"
-@@ -1337,6 +1338,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1362,6 +1363,7 @@ struct CollectiveMainloopFwdSm90 {
          auto &barrier_Q = shared_storage.pipelines.barrier_Q;
          if constexpr (!AppendKV) {
              barrier_Q.wait(work_idx % 2);
@@ -72,7 +74,7 @@ index 597f47a..4fb22b1 100644
          } else {
              if (get<1>(params.shape_rotary) > 0) {  // Apply rotary to Q
                  using Rotary_t = Rotary<kBlockM, kHeadDim, NumMmaThreadsQK, Element, !(Is_causal || Is_local) /*FixedPosition*/>;
-@@ -1385,6 +1387,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1410,6 +1412,7 @@ struct CollectiveMainloopFwdSm90 {
                  flash::gemm<true, -1>(tiled_mma_qk, tSrQ, tSrK(_, _, _, smem_pipe_read.index()), tSrS);
                  warpgroup_wait<0>();
              }
@@ -80,7 +82,7 @@ index 597f47a..4fb22b1 100644
              pipeline_k.consumer_release(smem_pipe_read);
              if constexpr (HasQv) {
                  shared_storage.pipelines.barrier_Qv.wait(work_idx % 2);
-@@ -1417,6 +1420,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1442,6 +1445,7 @@ struct CollectiveMainloopFwdSm90 {
              if constexpr (!MmaPV_is_RS) { write_P_to_smem(tOrP); }
              if constexpr (!MmaPV_is_RS) { arrive_on_P_write_barrier(); }
              --n_block;
@@ -88,7 +90,7 @@ index 597f47a..4fb22b1 100644
  
              // Need to initialize tOrO in the case of RescaleOBeforeGemm where we will scale tOrO even in the 1st iter
              clear(tOrO);
-@@ -1543,6 +1547,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1568,6 +1572,7 @@ struct CollectiveMainloopFwdSm90 {
                      }
                  }
              }

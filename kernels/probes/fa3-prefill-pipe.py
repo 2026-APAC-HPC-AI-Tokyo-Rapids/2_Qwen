@@ -3,7 +3,7 @@
 Rows come from fa3-prefill-pipe.so (PF_VARIANTS order, index 0 is the pinned
 n192-direct-o-varlen). Every candidate is checked against an FP64 reference and
 for byte equality with the pin, then timed in alternating CUDA-graph pairs.
-An optional stamp library records per-tile consumer phase clocks of the pin.
+A separate invocation with --stamp-library records per-tile consumer phase clocks of the pin.
 """
 import argparse
 import ctypes
@@ -181,24 +181,25 @@ def stamps(path, q, k, v, cu):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--library", type=Path, required=True)
-    parser.add_argument("--names", required=True, help="comma-separated names in PF_VARIANTS order")
-    parser.add_argument("--stamp-library", type=Path)
+    parser.add_argument("--library", type=Path, help="timed rows, in PF_VARIANTS order")
+    parser.add_argument("--names", help="comma-separated names in PF_VARIANTS order")
+    parser.add_argument("--stamp-library", type=Path, help="instead of timing, record the pin's phase clocks")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     begin = time.monotonic()
     torch.cuda.set_device(0)
     props = torch.cuda.get_device_properties(0)
     assert props.multi_processor_count == 132 and (props.major, props.minor) == (9, 0), props
+    q, k, v, cu = inputs("cuda")
+    result = {"device": props.name, "lengths": LENGTHS, "work": dict(zip(("visits", "tiles"), work_counts(LENGTHS))), "rows": {}}
+    if args.stamp_library:
+        result = {**result, "stamps": stamps(args.stamp_library, q, k, v, cu), "elapsed_seconds": time.monotonic() - begin}
+        args.output.write_text(json.dumps(result, indent=2) + "\n")
+        print("STAMPS " + json.dumps(result["stamps"]), flush=True)
+        return
     names = args.names.split(",")
     library = Library(args.library)
     assert library.count == len(names), (library.count, names)
-    q, k, v, cu = inputs("cuda")
-    result = {"device": props.name, "lengths": LENGTHS, "work": dict(zip(("visits", "tiles"), work_counts(LENGTHS))), "rows": {}}
-    # Stamps first: a candidate that hangs must not hide the pin's phase clocks.
-    if args.stamp_library:
-        result["stamps"] = stamps(args.stamp_library, q, k, v, cu)
-        print("STAMPS " + json.dumps(result["stamps"]), flush=True)
     ref = reference(q, k, v)
     outputs = {}
     graphs = []
@@ -230,8 +231,7 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     summary = ", ".join(f"{name} {result['rows'][name]['ratio']:.4f} eq={result['rows'][name]['bytes_equal_pin']} l2={result['rows'][name]['errors']['relative_l2']:.5f}" for name in names[1:])
-    stamp = result.get("stamps", {})
-    print(f"PASS fa3-pipe pin l2={pin_error:.5f} {summary} fixed/tile={stamp.get('fixed_cycles_per_tile_mean', 0):.0f} step={stamp.get('steady_cycles_per_step_median', 0):.0f}", flush=True)
+    print(f"PASS fa3-pipe pin l2={pin_error:.5f} {summary}", flush=True)
 
 
 if __name__ == "__main__":

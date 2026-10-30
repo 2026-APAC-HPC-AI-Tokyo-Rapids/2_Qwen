@@ -57,7 +57,12 @@ install -m 0644 "${root}/kernels/probes/fa3-prefill-pipe.py" bench.py
 cat >probe <<PROBE
 #!/usr/bin/env bash
 set -euo pipefail
-bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${RUNTIME_DIR}/source/bench.py" --library "\${RUNTIME_DIR}/source/fa3-prefill-pipe.so" --names ${names} --stamp-library "\${RUNTIME_DIR}/source/fa3-prefill-stamp.so" --output "\${RUNTIME_DIR}/results/fa3-pipe.json"
+# Phase clocks of the pin once per job, in their own process: a fault there must not hide the timing.
+if [[ ! -e "\${RUNTIME_DIR}/results/stamps-attempted" ]]; then
+    touch "\${RUNTIME_DIR}/results/stamps-attempted"
+    bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${RUNTIME_DIR}/source/bench.py" --stamp-library "\${RUNTIME_DIR}/source/fa3-prefill-stamp.so" --output "\${RUNTIME_DIR}/results/fa3-stamps.json" || true
+fi
+bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${RUNTIME_DIR}/source/bench.py" --library "\${RUNTIME_DIR}/source/fa3-prefill-pipe.so" --names ${names} --output "\${RUNTIME_DIR}/results/fa3-pipe.json"
 PROBE
 chmod 0755 probe
 jq -n --arg commit "${GITHUB_SHA:-local}" --arg variants "${variants}" --arg names "${names}" '{commit:$commit,kernel:"FA3 fixed Prefill N192 varlen rows",variants:$variants,names:$names,scope:"one GPU, two packed requests 3986+4027, no serving",calibration:false}' >provenance.json
