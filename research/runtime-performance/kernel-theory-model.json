@@ -450,6 +450,12 @@
     "removed_work": "<= 64-row pool blocks: N blocks in pairs on both warpgroups (two stages per K block) instead of one warpgroup per N block beside an idle one; 80 instead of 96 KiB of TMA per two tail tiles. Same bytes.",
     "past_rejections_distinct": "Not the tail split (m64n128 halves, same TMA bytes, below margin twice) or the independent WG (separate tiles, duplicated B); both warpgroups keep m64n256 on the same rows."
   },
+  "megamoe_prefill_split_accum_candidate": {
+    "evidence": "2026-10-30-prefill-megamoe-split-accumulator.md; megamoe-prefill-split-accum-cpu-validation-20261030.json; Genkai mainloop model runs 40978170082, 40979704662, 40980472965",
+    "status": "mainloop model measured on Genkai H100 (bit-exact, -5.2..-5.6% FC1-shaped, -7.4..-7.6% FC2-shaped); kernel CPU-validated, not GPU-measured; four-stage-lean-split selected in job",
+    "removed_work": "Tensor idle time: the 128-FMUL carried-scale rescale between two WGMMA groups of a warpgroup now overlaps the other m64n128 half. Same products, K order, ratios and bytes.",
+    "past_rejections_distinct": "Not the tail split (halves on two warpgroups for <= 64-row tiles) or ping-pong / independent warpgroups (cross-warpgroup ordering); the overlap is inside one warpgroup on the same rows and B stage."
+  },
   "fa3_prefill_direct_o_cpu_candidate": {
     "evidence": "fa3-prefill-direct-o-cpu-validation-20261029.json",
     "status": "CPU_admitted_not_GPU_measured_or_activated",

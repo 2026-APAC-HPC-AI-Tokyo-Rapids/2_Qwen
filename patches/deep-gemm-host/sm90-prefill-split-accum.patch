@@ -1,0 +1,40 @@
+diff --git a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+--- a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+@@ -50,6 +50,8 @@ public:
+         bool prefill_lean;
+         // And after it (DG_SM90_PREFILL_TAIL_PAIR, lean path only), likewise.
+         bool prefill_tail_pair;
++        // And after that (DG_SM90_PREFILL_SPLIT_ACCUM, lean path without tail pairing), likewise.
++        bool prefill_split_accum;
+         MegaMoESM90Config config;
+ 
+         // Runtime arguments
+@@ -122,7 +124,8 @@ static void __instantiate_kernel() {{
+     args.l2_epilogue_requires_full_sync ? "true" : "false",
+     args.split_phase_hot_path ? "true" : "false",
+     args.use_swap_ab ? "true" : "false",
+-    args.prefill_tail_pair ? ",\n        true,\n        true" : (args.prefill_lean ? ",\n        true" : ""));
++    args.prefill_split_accum ? ",\n        true,\n        false,\n        true" :
++        (args.prefill_tail_pair ? ",\n        true,\n        true" : (args.prefill_lean ? ",\n        true" : "")));
+     }
+ 
+     static void launch_impl(const KernelHandle& kernel, const LaunchConfigHandle& config, Args args) {
+@@ -212,6 +215,9 @@ static void sm90_fp8_mega_moe(
+     // DG_SM90_PREFILL_TAIL_PAIR=1, on top of the lean path: pool blocks with at most
+     // 64 rows run their N blocks in pairs on both warpgroups (sm90-prefill-tail-pair.patch).
+     const bool prefill_tail_pair = prefill_lean and get_env<int>("DG_SM90_PREFILL_TAIL_PAIR", 0) != 0;
++    // DG_SM90_PREFILL_SPLIT_ACCUM=1, on the lean path without tail pairing: the FC1/FC2 K loops
++    // issue each warpgroup's accumulator as two m64n128 halves (sm90-prefill-split-accum.patch).
++    const bool prefill_split_accum = prefill_lean and not prefill_tail_pair and get_env<int>("DG_SM90_PREFILL_SPLIT_ACCUM", 0) != 0;
+ 
+     // Tensormap construction
+     // Acts/weights: standard 2D TMA descriptors (FP8 K-major).
+@@ -308,6 +314,7 @@ static void sm90_fp8_mega_moe(
+         .use_swap_ab = use_swap_ab,
+         .prefill_lean = prefill_lean,
+         .prefill_tail_pair = prefill_tail_pair,
++        .prefill_split_accum = prefill_split_accum,
+         .config = config,
+         .y = y.data_ptr(),
+         .cumulative_local_expert_recv_stats = cumulative_local_expert_recv_stats_ptr,
