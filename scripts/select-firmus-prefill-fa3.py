@@ -30,10 +30,9 @@ PAIRS = 20
 LENGTHS = (3986, 4027, 4096)
 # Two packed requests, timed only for varlen rows; control is then the prepared N224 path.
 PAIR = (3986, 4027)
-# Rows that have served whole runs: n192 (40201493911 and later), n192-direct-o-varlen (40883389891 and
-# later), the PP4 pin n192-direct-o-varlen-pipe (41040348302, after its gate) and the prepared N224
-# control. Any other winner needs the endurance gate.
-UNGATED = ("control", "n192", "n192-direct-o-varlen", "n192-direct-o-varlen-pipe")
+# Rows that have served whole runs: n192 (40201493911 and later), the PP4 pin n192-direct-o-varlen
+# (40883389891 and later) and the prepared N224 control. Any other winner needs the endurance gate.
+UNGATED = ("control", "n192", "n192-direct-o-varlen")
 # 40991744289 stopped after about 170-620 calls per GPU; 1200 calls of 0.4-0.8 ms is about 2 s with the GEMMs.
 ENDURANCE_CALLS = 1200
 # The serving microbatch (two 4001-token requests in every batch of 40991744289), two other packed pairs,

@@ -172,3 +172,24 @@ The image needs a rebuild (one more FA3 translation unit).
   (five days). It also carried the quarter-tail bug. The job was deleted and the run ended
   cancelled with no GPU result; its runtime directory is gone. No second dispatch: the queue
   does not move, and the in-job screen and gate cover what the probe would measure.
+
+## 7. Result in run 41073991312 (2026-10-31): rejected
+
+The in-job screen ran on all twelve Prefill GPUs, about 28 s per worker.
+
+| check | result |
+|---|---|
+| numeric (byte equality with n192 per request, FP32 reference) | passed on all 48 GPU × shape cells |
+| saving against the pin per call | mean −3.69 µs, median −3.64, min −8.9, max +6.2; positive in 2 of 48 cells |
+| pin median per call | 412.7 µs |
+| decision | `control`: the pin `n192-direct-o-varlen-pipe` served; the endurance gate did not run |
+
+- The trimmed row is about 1% slower, although it removes about 2.6% of the instructions and
+  3.7% of the MUFU.EX2 per tile on paper.
+- Reading: at the 700 W cap the removed softmax work on one block per tile is not on the
+  critical path. The QK and PV wgmmas of the diagonal block still run in full. The per-tile
+  dispatch on the sub-block count (six instantiated arms) costs more than it saves.
+- The row, its patch, probe and in-job screen were removed again on `perf/pp4-r8-20261030`.
+- Not worth trying next: trimming only the softmax at a finer grain. A trim of the diagonal
+  QK/PV GEMMs would need a branch-free form, because a wgmma inside a branch serializes every
+  wgmma of the kernel (C7511/C7513/C7519). It would remove at most about 1.9% of each GEMM.

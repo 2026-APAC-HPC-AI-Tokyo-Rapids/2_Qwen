@@ -62,7 +62,7 @@ Prefill FA3 N192のepilogueを、accumulatorから直接group-128 FP8へ量子�
 
 PP4（run40825417205）では2要求のmicrobatchが固定経路に入らず、prepared N224（899.7µs/回＋prepare 4.1µs）で動いていた。固定schedulerを1〜4要求の連結順へ広げたvariant 64の `n192-varlen` と `n192-direct-o-varlen` を追加し、PP4ではこの2行だけを3長と3986+4027の組でin-job選択する（controlは組ではprepared N224）。数値gateは要求ごとのn192とのbyte一致を要求する。定常KV loopは不変、spillはproducer側で72/132→96/124B、他kernelのSASS本体は一致。見込みは124ms周期あたり電力上限下で−0.7〜−1.6ms（direct-o併用）。draft extend（stock paged N160、BF16出力）は同じ64/4/128だが出力・KV形式が異なり、stage3は律速でないため未配線。GPU未測定。詳細は `fa3-prefill-varlen-cpu-validation-20261029.json`。
 
-2026-10-30 round 8：現在のpin `n192-direct-o-varlen-pipe`（41040348302で1 sequenceあたり中央404µs）を数えた。M128 tileは8 token×16 headなので、seqlen_k = seqlen_qでは各tileの最後のKV block（対角）だけがmaskされ、paddingは全てそこにある（4001で275.9中13.5 GFLOP）。CUDA 13.4のSASS（consumer threadあたり）：定常KV step 587命令（MUFU.EX2 98、FFMA 100、FADD 96、FMUL 66、FMNMX 100、F2FP 48、QGMMA 10）、tile境界1316命令（対角mask FSEL 98＋ISETP 97、softmax、finalize、direct-O store）、tileあたり約7160命令・MUFU約1070。候補 `n192-direct-o-varlen-pipe-diag`（variant 224|4096、`prefill-diag.patch`）は、warpgroupの行が見うる最大の鍵列から32鍵block数k（1〜6、平均3.49）を求め、対角blockのmaskとsoftmaxを先頭32k列だけで行い、残りのPを0x00で書く。QK・PVは不変、pinとbyte一致の設計で、pinのSASSは一致。tileあたり約−185命令（−2.6%）、MUFU −40（−3.7%）、定常stepは587→588。見込みは電力係数1で1 sequenceあたり約9〜12µs、24層PP0周期で約0.4〜0.6ms。PP4のjob内でpinに対するscreen（n192とbyte一致、全12 GPU×4形で5µs以上）と1200回耐久gateを通れば採用、追加の直列時間は約1.2〜1.5分。QK・PVまでtrimする形はwgmmaの直列化（C7511/C7513/C7519）で採らなかった。GPU未測定。詳細は `2026-10-30-prefill-fa3-diag-trim.md`。
+2026-10-30 round 8：現在のpin `n192-direct-o-varlen-pipe`（41040348302で1 sequenceあたり中央404µs）を数えた。M128 tileは8 token×16 headなので、seqlen_k = seqlen_qでは各tileの最後のKV block（対角）だけがmaskされ、paddingは全てそこにある（4001で275.9中13.5 GFLOP）。CUDA 13.4のSASS（consumer threadあたり）：定常KV step 587命令（MUFU.EX2 98、FFMA 100、FADD 96、FMUL 66、FMNMX 100、F2FP 48、QGMMA 10）、tile境界1316命令（対角mask FSEL 98＋ISETP 97、softmax、finalize、direct-O store）、tileあたり約7160命令・MUFU約1070。候補 `n192-direct-o-varlen-pipe-diag`（variant 224|4096、`prefill-diag.patch`）は、warpgroupの行が見うる最大の鍵列から32鍵block数k（1〜6、平均3.49）を求め、対角blockのmaskとsoftmaxを先頭32k列だけで行い、残りのPを0x00で書く。QK・PVは不変、pinとbyte一致の設計で、pinのSASSは一致。tileあたり約−185命令（−2.6%）、MUFU −40（−3.7%）、定常stepは587→588。見込みは電力係数1で1 sequenceあたり約9〜12µs、24層PP0周期で約0.4〜0.6ms。PP4のjob内でpinに対するscreen（n192とbyte一致、全12 GPU×4形で5µs以上）と1200回耐久gateを通れば採用、追加の直列時間は約1.2〜1.5分。QK・PVまでtrimする形はwgmmaの直列化（C7511/C7513/C7519）で採らなかった。run 41073991312のin-job screenでは全12 GPU×4形でbyte一致、ただし平均−3.69µs（48セル中2セルだけ正）で不採用。対角blockのsoftmaxは電力上限下で律速経路になく、sub-block数による分岐の方が高くついた。詳細は `2026-10-30-prefill-fa3-diag-trim.md`。
 
 ## Prefill の収支
 
@@ -186,7 +186,7 @@ causal QK+PV=2*L*(L+1)*Qheads*D; M128/N192 PackGQA。
 
 追う差：Tensor Coreだけの床に加えてsoftmax・FP8変換・転置・同期がある。全I/OをHBMへ流す模型も、全てL2 hitとする模型も実測帯域ではない。
 
-次の作業：現在のN192 pipe行の数え上げは2026-10-30に完了（`2026-10-30-prefill-fa3-diag-trim.md`）：定常KV step 587命令（MUFU.EX2 98）、tile境界1316命令、tileあたり約7160命令・MUFU約1070。tile paddingは全て対角blockにあり、warpgroupの64行が見る鍵は192中平均111（32鍵単位）。対角blockのmask・softmaxだけを見える32鍵block数に縮める `n192-direct-o-varlen-pipe-diag` をPP4のin-job選択と1200回耐久gateで判定する。QK・PVの対角trimはwgmma直列化（C7511/C7513/C7519）で未実装。
+次の作業：現在のN192 pipe行の数え上げは2026-10-30に完了（`2026-10-30-prefill-fa3-diag-trim.md`）：定常KV step 587命令（MUFU.EX2 98）、tile境界1316命令、tileあたり約7160命令・MUFU約1070。tile paddingは全て対角blockにあり、warpgroupの64行が見る鍵は192中平均111（32鍵単位）。対角blockのmask・softmaxだけを見える32鍵block数に縮める `n192-direct-o-varlen-pipe-diag` はrun 41073991312のin-job screenで全48セルbyte一致だったが平均3.7µs遅く（pin中央412.7µs）不採用、撤去した。QK・PVの対角trimはwgmma直列化（C7511/C7513/C7519）で未実装。
 
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
