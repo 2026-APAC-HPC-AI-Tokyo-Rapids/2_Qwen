@@ -59,7 +59,12 @@ def test_readback_rejects_other_version_and_clipped_pool(config):
     checker = load("check-basic-server-info")
     fixture = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
     fixture.update(version=config["sglang_version"], tp_size=4, attn_dp_size=4, ep_size=4, disaggregation_mode="decode", context_length=8192, kv_cache_dtype="fp8_e4m3", page_size=64, attention_backend="fa3", moe_a2a_backend="megamoe", speculative_algorithm="EAGLE3", speculative_num_steps=3, speculative_num_draft_tokens=4, speculative_eagle_topk=1, max_running_requests=128, max_total_tokens=config["decode_max_total_tokens"], max_total_num_tokens=config["decode_max_total_tokens"], ep_num_redundant_experts=0)
+    fixture["internal_states"] = [{"memory_usage": {"token_capacity": config["decode_max_total_tokens"]}, "effective_max_running_requests_per_dp": 32, "decode_cuda_graph_bs": config["decode_cuda_graph_bs"]} for _ in range(4)]
     checker.check(config, fixture, "decode")
+    fixture["internal_states"][2]["memory_usage"]["token_capacity"] -= 64
+    with pytest.raises(ValueError, match="DP2.*token capacity"):
+        checker.check(config, fixture, "decode")
+    fixture["internal_states"][2]["memory_usage"]["token_capacity"] += 64
     fixture["version"] = "0.5.22"
     with pytest.raises(ValueError, match="version"):
         checker.check(config, fixture, "decode")

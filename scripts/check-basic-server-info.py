@@ -23,6 +23,18 @@ def check(config, info, role):
     for key, value in expected.items():
         if info.get(key) != value:
             raise ValueError(f"{role}: {key} expected {value!r}, observed {info.get(key)!r}")
+    states = info.get("internal_states", [])
+    if len(states) != 4:
+        raise ValueError(f"{role}: expected four DP scheduler states")
+    for rank, state in enumerate(states):
+        if state.get("memory_usage", {}).get("token_capacity") != expected["max_total_tokens"]:
+            raise ValueError(f"{role} DP{rank}: effective token capacity differs from the declared pool")
+        if state.get("effective_max_running_requests_per_dp") != expected["max_running_requests"] // 4:
+            raise ValueError(f"{role} DP{rank}: effective request cap differs from the declared limit")
+        if role == "decode" and state.get("decode_cuda_graph_bs") != config["decode_cuda_graph_bs"]:
+            raise ValueError(f"decode DP{rank}: graph buckets differ from the declared sizes")
+        if role == "prefill" and (state.get("chunked_prefill_size") != config["prefill"]["chunked_prefill_size"] // 4 or state.get("prefill_max_requests") != config["prefill"].get("prefill_max_requests")):
+            raise ValueError(f"prefill DP{rank}: batch limits differ from the declared sizes")
     if role == "prefill":
         if info.get("prefill_max_requests") != config["prefill"].get("prefill_max_requests"):
             raise ValueError("prefill_max_requests differs from the declared batch limit")
