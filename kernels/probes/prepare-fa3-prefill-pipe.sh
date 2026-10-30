@@ -6,8 +6,9 @@ set -euo pipefail
 [[ -z "${CANDIDATE_PATCH:-}" ]]
 root="${GITHUB_WORKSPACE}"
 # PrefillVariant values in timing order (index 0 is the pinned n192-direct-o-varlen) and their names.
-variants=96,96,224
-names=pin,pin-again,pipe
+# 128 pipelined tiles, 256 double-buffered Q, 512 straight-line O store, 1024 O store before the next softmax.
+variants=96,224,480,992,2016
+names=pin,pipe,pipe-q2,pipe-q2-rows,pipe-q2-early
 source "${root}/platforms/genkai/kernel-probe/prepare-runtime.sh"
 install -m 0644 "${root}/kernels/fa3-verify/candidates.json" "${RUNTIME_DIR}/source/fa3-verify-candidates.json"
 install -m 0755 "${root}/kernels/probes/run-container.sh" "${RUNTIME_DIR}/scripts/run-container.sh"
@@ -40,7 +41,7 @@ flags=(-O3 -std=c++17 --use_fast_math --expt-relaxed-constexpr --expt-extended-l
 nvcc --version >"${RUNTIME_DIR}/results/compiler.txt"
 mkdir pipe-variants stamp-variants
 printf '#define PF_VARIANTS %s\n' "${variants}" >pipe-variants/pf-variants.h
-printf '#define PF_VARIANTS 96\n' >stamp-variants/pf-variants.h
+printf '#define PF_VARIANTS 96,992\n' >stamp-variants/pf-variants.h
 nvcc "${flags[@]}" -I"${fa3}/hopper" -c "${fa3}/hopper/flash_prepare_scheduler.cu" -o scheduler.o >"${RUNTIME_DIR}/logs/build-scheduler.log" 2>&1
 nvcc "${flags[@]}" -I"${fa3}/hopper" -I"${PWD}/pipe-variants" -c "${root}/kernels/probes/fa3-prefill-pipe.cu" -o pipe.o >"${RUNTIME_DIR}/logs/build-pipe.log" 2>&1 &
 pipe_build=$!
@@ -57,12 +58,13 @@ install -m 0644 "${root}/kernels/probes/fa3-prefill-pipe.py" bench.py
 cat >probe <<PROBE
 #!/usr/bin/env bash
 set -euo pipefail
-# Phase clocks of the pin once per job, in their own process: a fault there must not hide the timing.
-if [[ ! -e "\${RUNTIME_DIR}/results/stamps-attempted" ]]; then
-    touch "\${RUNTIME_DIR}/results/stamps-attempted"
+bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${RUNTIME_DIR}/source/bench.py" --library "\${RUNTIME_DIR}/source/fa3-prefill-pipe.so" --names ${names} --output "\${RUNTIME_DIR}/results/fa3-pipe.json"
+# Phase clocks after the timing of the third trial, in their own process: a fault or the trial
+# timeout there must not hide the timing.
+printf 'run\n' >>"\${RUNTIME_DIR}/results/probe-runs"
+if [[ "\$(wc -l <"\${RUNTIME_DIR}/results/probe-runs")" == 3 ]]; then
     bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${RUNTIME_DIR}/source/bench.py" --stamp-library "\${RUNTIME_DIR}/source/fa3-prefill-stamp.so" --output "\${RUNTIME_DIR}/results/fa3-stamps.json" || true
 fi
-bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${RUNTIME_DIR}/source/bench.py" --library "\${RUNTIME_DIR}/source/fa3-prefill-pipe.so" --names ${names} --output "\${RUNTIME_DIR}/results/fa3-pipe.json"
 PROBE
 chmod 0755 probe
 jq -n --arg commit "${GITHUB_SHA:-local}" --arg variants "${variants}" --arg names "${names}" '{commit:$commit,kernel:"FA3 fixed Prefill N192 varlen rows",variants:$variants,names:$names,scope:"one GPU, two packed requests 3986+4027, no serving",calibration:false}' >provenance.json

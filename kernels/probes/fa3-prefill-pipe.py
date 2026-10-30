@@ -125,16 +125,14 @@ def sm_clock():
         return None
 
 
-def stamps(path, q, k, v, cu):
-    """Per-tile consumer phase clocks of the pin (index 0) from the stamp build."""
-    library = Library(path)
+def read_stamps(library, index, q, k, v, cu):
     lib = library.lib
     args = (q, k, v, cu, *buffers(q.device))
     for _ in range(3):
-        library.run(0, *args)
+        library.run(index, *args)
     torch.cuda.synchronize()
     assert lib.pf_stamp_reset() == 0
-    library.run(0, *args)
+    library.run(index, *args)
     torch.cuda.synchronize()
     raw = (ctypes.c_ulonglong * (1 << 18))()
     count = ctypes.c_uint()
@@ -142,41 +140,66 @@ def stamps(path, q, k, v, cu):
     records = []
     for slot in range(min(count.value, 1 << 14)):
         meta, *t = raw[slot * 16: slot * 16 + 9]
-        records.append({"sm": meta >> 48, "wg": (meta >> 44) & 15, "bidb": (meta >> 40) & 15, "bidh": (meta >> 32) & 255, "m_block": meta & 0xffffffff, "t": t})
-    names = ("setup_q_wait", "first_qk", "first_softmax", "steady_loop", "drain", "scheduler", "epilogue")
-    phases = {name: [] for name in (*names, "between_tiles")}
-    per_step = []
-    lane = {}
+        bidb, m_block = (meta >> 40) & 15, meta & 0xffffffff
+        blocks = (min(8 * (m_block + 1), LENGTHS[bidb]) + 191) // 192
+        records.append({"sm": meta >> 48, "wg": (meta >> 44) & 15, "bidb": bidb, "bidh": (meta >> 32) & 255, "m_block": m_block, "blocks": blocks, "t": t})
+    lanes = {}
     for r in records:
-        lane.setdefault((r["sm"], r["wg"]), []).append(r)
-        t = r["t"]
-        for i, name in enumerate(names):
-            phases[name].append(t[i + 1] - t[i])
-        length = LENGTHS[r["bidb"]]
-        blocks = (min(8 * (r["m_block"] + 1), length) + 191) // 192
-        r["blocks"] = blocks
-        if blocks > 1:
-            per_step.append((t[4] - t[3]) / (blocks - 1))
-    spans = []
-    for items in lane.values():
+        lanes.setdefault((r["sm"], r["wg"]), []).append(r)
+    for items in lanes.values():
         items.sort(key=lambda r: r["t"][0])
-        for a, b in itertools.pairwise(items):
-            phases["between_tiles"].append(b["t"][0] - a["t"][7])
-        spans.append(items[-1]["t"][7] - items[0]["t"][0])
+    return records, lanes
+
+
+def summarize(phases, per_step, records, steady="steady_loop"):
     totals = {name: sum(values) for name, values in phases.items()}
     whole = sum(totals.values())
-    steps = sum(r["blocks"] - 1 for r in records)
     return {
         "records": len(records),
-        "lanes": len(lane),
         "median_cycles": {name: statistics.median(values) for name, values in phases.items() if values},
         "share_of_consumer_cycles": {name: value / whole for name, value in totals.items()},
         "steady_cycles_per_step_median": statistics.median(per_step),
-        "steady_steps": steps,
-        "fixed_cycles_per_tile_mean": (whole - totals["steady_loop"]) / len(records),
-        "lane_span_cycles_median": statistics.median(spans),
-        "lane_span_cycles_max": max(spans),
+        "fixed_cycles_per_tile_mean": (whole - totals[steady]) / len(records),
     }
+
+
+def stamps(path, q, k, v, cu):
+    """Per-tile consumer phase clocks: index 0 is the pin (mma per tile), index 1 the pipelined row."""
+    library = Library(path)
+    records, lanes = read_stamps(library, 0, q, k, v, cu)
+    names = ("setup_q_wait", "first_qk", "first_softmax", "steady_loop", "drain", "scheduler", "epilogue")
+    phases = {name: [] for name in (*names, "between_tiles")}
+    per_step = []
+    for r in records:
+        t = r["t"]
+        for i, name in enumerate(names):
+            phases[name].append(t[i + 1] - t[i])
+        if r["blocks"] > 1:
+            per_step.append((t[4] - t[3]) / (r["blocks"] - 1))
+    for items in lanes.values():
+        for a, b in itertools.pairwise(items):
+            phases["between_tiles"].append(b["t"][0] - a["t"][7])
+    result = {"pin": summarize(phases, per_step, records)}
+    if library.count > 1:
+        # One record per tile boundary: t0 end of the tile's steady loop, then next-tile Q wait,
+        # ping-pong turn, boundary QK, next softmax, PV wait, finalize and store, hand-over.
+        records, lanes = read_stamps(library, 1, q, k, v, cu)
+        names = ("q_wait", "turn_wait", "boundary_qk", "next_softmax", "pv_wait", "finalize_store", "handover")
+        phases = {name: [] for name in (*names, "steady_loop")}
+        per_step = []
+        complete = [r for r in records if r["t"][7]]
+        for r in complete:
+            t = r["t"]
+            for i, name in enumerate(names):
+                phases[name].append(t[i + 1] - t[i])
+        for items in lanes.values():
+            for a, b in itertools.pairwise(items):
+                if a["t"][7]:
+                    phases["steady_loop"].append(b["t"][0] - a["t"][7])
+                    if b["blocks"] > 1:
+                        per_step.append((b["t"][0] - a["t"][7]) / (b["blocks"] - 1))
+        result["pipe"] = summarize(phases, per_step, complete)
+    return result
 
 
 def main():
