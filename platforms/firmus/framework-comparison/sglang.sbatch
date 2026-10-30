@@ -129,6 +129,9 @@ runtime_dir=$(dirname "$(dirname "$0")")
 # The Decode peer also needs explicit global target/draft KV region IDs.
 if /opt/sglang/venv/bin/python -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("prefill", {}).get("pp", 1) != 4)' "${runtime_dir}/source/firmus-framework.json"; then
   export SGLANG_QWEN_PP4_EP1=1
+  # Millisecond scheduler log times (PP4 only): the start-burst first tokens of 41020974704 stall from 0.8 to
+  # 1.5 s, and second-resolution batch lines cannot place the Prefill admissions and releases in that window.
+  export SGLANG_LOG_MS=1
   if [[ "$role" == prefill ]]; then
     # The last stage also runs lm_head and the EAGLE draft extend (about two layers of time).
     partition=$(/opt/sglang/venv/bin/python -c 'import json,sys; print(",".join(map(str, json.load(open(sys.argv[1]))["prefill"]["pp_layer_partition"])))' "${runtime_dir}/source/firmus-framework.json")
@@ -175,9 +178,6 @@ export UCX_POSIX_USE_PROC_LINK=n
 # page transfer; heterogeneous-TP staging would only allocate unused pools.
 export SGLANG_DISAGG_STAGING_BUFFER=0
 export SGLANG_DG_CACHE_DIR="${SLURM_SUBMIT_DIR}/home/deep-gemm"
-# Millisecond scheduler log times: the start-burst first tokens of 41020974704 stall from 0.8 to 1.5 s and
-# second-resolution batch lines cannot place the Prefill admissions and releases inside that window.
-export SGLANG_LOG_MS=1
 export TRITON_CACHE_DIR=/tmp/sglang-$name/triton
 export TORCHINDUCTOR_CACHE_DIR=/tmp/sglang-$name/inductor
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
