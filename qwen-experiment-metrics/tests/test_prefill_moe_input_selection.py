@@ -129,7 +129,7 @@ def test_qknorm_and_onepass_overlays_are_pp4_only_and_default_to_control():
     pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert pp4["sglang_overlay_patches"][-3:] == ["patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-moe-input-onepass.patch", "patches/sglang/decode-moe-input.patch"]
-    assert pp4["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
+    assert pp4["deep_gemm_overlay_patches"][-2:] == ["patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch", "patches/deep-gemm-overlay/sm90-1d2d-prefill-tail-skip.patch"]
     for patch in ("patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-moe-input-onepass.patch"):
         assert patch not in main["sglang_overlay_patches"]
     qknorm = (ROOT / "patches/sglang/prefill-qknorm-fp32.patch").read_text()

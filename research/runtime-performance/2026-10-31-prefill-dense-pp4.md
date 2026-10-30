@@ -181,3 +181,86 @@ Not done here:
    - A 2-CTA/SM or epilogue-warpgroup design is a kernel rewrite. As idle removal it is worth 0.36–0.6 of its 4–5%.
 4. **Ordering the tail tiles into the last QKV wave.** With the skip, 72 short tiles could shorten the 18-tile critical path by up to 0.75 tile (−4%) at the idle factor. It would break the L2 grouping of the swizzled order, so its L2 cost is unknown.
 5. **The steady-state k-block runs at 84–87% of the tensor floor.** The promotion stagger that should hide this lost 12% in round 2. No config changes it.
+
+## 7. Round 9: implemented, gated in round 9
+
+The tail-wave skip is implemented in two new patches, both named
+`sm90-1d2d-prefill-tail-skip.patch`: the host series entry follows the Decode
+BM192 host patch; the PP4 header overlay follows the BM192 overlay. This
+supersedes section 5's proposed header-only deployment: **the image must be
+rebuilt**, because the new host switch is required. No image was built here.
+
+The header adds a trailing default-false `kSkipTailWaves` template parameter.
+Only its true BM256 specialization skips WGMMA and promotion for wholly padded
+64-row waves. The host reads `DG_SM90_1D2D_PREFILL_TAIL_SKIP` per call and appends
+`, true` only for a nonzero switch, Normal GEMM, M > 192, BM256, partial M tile,
+and QKV N9216/K4096 or O N4096/K8192. Otherwise the rendered template-argument
+text stays identical, including Decode; `compiled_dims="nk"` stays unchanged.
+No barrier, stagger, tiling, approximation or quantization change was added.
+
+Each k-block still waits on its full stage, and each math warp still arrives
+once on the empty stage at the last local wave, including a skipped last wave.
+The skip's `continue` is inside the local-wave loop; the enclosing
+`advance_pipeline(k_block_idx)` still advances stage/phase identically. Any
+earlier real wave completes `warpgroup_wait<0>()` first. Multicast's existing
+peer/self arrival targets and arrival counts remain unchanged: both CTAs consume
+every stage even when they perform no MMA. Stores and epilogue synchronization
+remain stock, and TMA clips the padded rows. GPU endurance is still required.
+
+CUDA 13.4 sm_90a, compiled locally without executing a GPU, after applying the
+entire host series, image header series, then ordered PP4 overlays from pristine
+DeepGEMM 1c8138a. SASS normalization removes instruction addresses and encoded
+hex/comment tails, as in section 5. Full MD5 values:
+
+| specialization | registers | spill store/load B | instructions | QGMMA / FFMA | normalized MD5 |
+|---|---:|---:|---:|---:|---|
+| QKV stock, before / after | 168 | 0 / 0 | 2376 | 64 / 1024 | ed893f1546969c36d731df8dec81d661 |
+| QKV skip | 168 | 0 / 0 | 2520 | 64 / 1024 | ccfa417e20dba9313cbdb7c44954c49c |
+| O stock, before / after | 168 | 0 / 0 | 2336 | 64 / 1024 | 161f8c74fecf0f6b76e6c47ab3ce7cf1 |
+| O skip | 168 | 0 / 0 | 2480 | 64 / 1024 | 9e0485697047c31fda33a02619bf685d |
+| Decode QKV 128x144, before / after | 168 | 0 / 0 | 2160 | 32 / 576 | 41f7c27cc1bc0d5a9c6134c7ac395323 |
+| Decode QKV 192x80, before / after | 128 | 0 / 0 | 1496 | 32 / 320 | be0fade84c6e53029729ee911231e0ff |
+
+No WGMMA serialization warnings in any of these ten compilations. Both skip
+specializations add 144 static instructions. Stock and both pinned Decode
+specializations are byte-identical after normalization. Header hashing changes
+the JIT cache keys as expected. No prebuilt DeepGEMM JIT cache is shipped/staged:
+the container's GPU-free check cubins are temporary, and provisioning copies a
+serving JIT cache only for vLLM. Existing SGLang worker cache machinery is unchanged;
+workers can cold-compile the revised header, including Decode, at startup.
+
+The PP4 job runs `select-firmus-prefill-dense.py` on three parallel four-GPU
+workers before model load. It calls serving's `fp8_gemm_nt(...,
+compiled_dims="nk")` with column-major TMA-aligned FP32 group128 activation
+scales and FP32 block128x128 weight scales. Stock must pass the Decode selector's
+FP32 tolerances; skip must match BF16 bytes at M7988 and M3994. The rebuilt host's
+patch digest and a native enabled print line for each projection are mandatory.
+Stock and skip coexist in one process because the host reads the env per call.
+
+Each GPU measures 15 interleaved rounds of 20 calls per projection and variant
+with CUDA events, QKV then O, alternating variant order by round. It then runs
+200 alternating QKV/O skip calls at M7988 and checks both last outputs against
+stock. The aggregate adopts only when all twelve current-job results passed
+correctness and endurance, and every GPU's median QKV+O pair saves >=2 us.
+Any missing, malformed, stale, late or failed result, nonfinite/incomplete timing,
+host mismatch, process exception or timeout keeps the pinned env unchanged.
+Adoption appends exactly one Prefill env line; workers clear inherited values
+first and only Prefill sources the merged file. Decode never receives the switch.
+
+Estimated serial addition: **45–55 seconds**, at most a one-minute selection
+window: entire srun steps have a 53-second timeout plus 2-second kill grace, with
+the aggregate after them. Rank zero compiles four kernels (two per projection),
+then the other ranks reuse the node-local cache. Local compilations with four
+concurrent compilers took 4.2–7.5 seconds each; the four relevant stock/skip builds
+sum to about 24 seconds even using these contended timings. Imports, input/reference
+work, measurement, endurance and launcher/aggregate overhead fill the remaining
+estimate. Round 8's FA3 screen took 34 seconds inside torchrun; that is context,
+not proof of dense startup time. Cold compilation or scheduler/container latency
+may exceed the window and then adoption is refused. No cache machinery is changed.
+
+Expected serving saving remains section 5's conditional 0.21–0.48 ms per 24-layer
+period (about +0.2–0.4% score), from removing 2.34% of executed MMA/promotion/read
+work at M7988, 1.56% at M3994, with no L2/TMA traffic or tile-order change.
+**not yet measured on a GPU**. A random-input gate does not prove all serving
+inputs, and timing noise, cache/power conditions and the added branches can make
+the isolated gate differ from ordinary serving. No score improvement is claimed.

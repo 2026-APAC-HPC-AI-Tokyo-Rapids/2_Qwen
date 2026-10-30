@@ -230,8 +230,8 @@ def test_pp4_job_uses_pins_and_workers_source_the_switch(tmp_path):
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
     assert 'test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"' in pp4
-    assert "no in-job kernel selection" in pp4
-    assert "srun" not in pp4 and "--aggregate" not in pp4 and "wait " not in pp4
+    assert "Prefill QKV/O tail-wave skip only" in pp4
+    assert "select-firmus-prefill-megamoe.py" not in pp4 and "select-firmus-prefill-dense.py" in pp4
     assert "decode_gpu_selections" not in shell and "prefill_gpu_" not in shell
     worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
     assert 'if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi' in worker
@@ -256,9 +256,9 @@ def test_host_and_header_agree_on_the_four_stage_layout():
     assert 1024 + 8192 + 18432 + 144 + 4 * 50192 <= 232448 < 1024 + 8192 + 65536 + 144 + 4 * 50192
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())["deep_gemm_overlay_patches"]
     pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch"]
-    # Only the Decode 1D2D BLOCK_M 192 overlay (a different header) follows the MegaMoE tiles.
-    assert config[-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
-    assert config[-6:-1] == pp4_only
+    # The Decode BM192 and gated Prefill tail overlays change the separate 1D2D header.
+    assert config[-2:] == ["patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch", "patches/deep-gemm-overlay/sm90-1d2d-prefill-tail-skip.patch"]
+    assert config[-7:-2] == pp4_only
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
     assert not set(pp4_only[1:]) & set(main)
 
@@ -267,7 +267,7 @@ def test_lean_is_an_ep1_trailing_flag_after_four_stages_with_the_same_bytes():
     host = (ROOT / "patches/deep-gemm-host/sm90-prefill-lean.patch").read_text()
     header = (ROOT / "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch").read_text()
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
-    assert series[-5:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-1d2d-decode-bm192.patch"]
+    assert series[-6:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-1d2d-decode-bm192.patch", "sm90-1d2d-prefill-tail-skip.patch"]
     for gone in ("sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch", "sm90-prefill-tail-split.patch", "sm90-prefill-split-ldsm.patch", "sm90-prefill-combine-norm.patch"):
         assert not (ROOT / "patches/deep-gemm-host" / gone).exists()
     # ",true" (kPrefillLean) only when set and one rank only.

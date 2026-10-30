@@ -128,6 +128,7 @@ tp=$4
 export SGLANG_HOST_IP=$5
 shift 5
 role=${name%%-*}
+unset DG_SM90_1D2D_PREFILL_TAIL_SKIP
 runtime_dir=$(dirname "$(dirname "$0")")
 # The Decode peer also needs explicit global target/draft KV region IDs.
 if /opt/sglang/venv/bin/python -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("prefill", {}).get("pp", 1) != 4)' "${runtime_dir}/source/firmus-framework.json"; then
@@ -187,7 +188,7 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 mkdir -p "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 # Only Prefill sources the common result, screened on all twelve Prefill GPUs.
 if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi
-echo "$name host=$(hostname) ip=$SGLANG_HOST_IP hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp shuffle=${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0} routing=${SGLANG_PREFILL_TILED_ROUTING:-0} aligned_chunks=${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0} rotate_ties=${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0} idle_prefill_geometry=${SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY:-0} async_admission=${SGLANG_DECODE_ASYNC_ADMISSION:-0} megamoe_tokens=${SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK} prefill_2wg=${DG_SM90_PREFILL_2WG:-0} dense_config=${DG_SM90_1D2D_DECODE_CONFIG:-stock} dense_qkv=${SGLANG_DECODE_DENSE_GEMM_QKV:-deepgemm} dense_o=${SGLANG_DECODE_DENSE_GEMM_O:-deepgemm} fa3_verify=${SGLANG_DECODE_FA3_VERIFY:-stock} prefill_fa3=${SGLANG_PREFILL_FA3_VERIFY:-control} independent_wg=${DG_SM90_DECODE_INDEPENDENT_WG:-0}"
+echo "$name host=$(hostname) ip=$SGLANG_HOST_IP hca=$UCX_IB gpu=$CUDA_VISIBLE_DEVICES tp=$tp shuffle=${SGLANG_PREFILL_FUSED_FP8_SHUFFLE:-0} routing=${SGLANG_PREFILL_TILED_ROUTING:-0} aligned_chunks=${SGLANG_PREFILL_REQUEST_ALIGNED_CHUNKS:-0} rotate_ties=${SGLANG_DP_TOTAL_REQUESTS_ROTATE_TIES:-0} idle_prefill_geometry=${SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY:-0} async_admission=${SGLANG_DECODE_ASYNC_ADMISSION:-0} megamoe_tokens=${SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK} prefill_2wg=${DG_SM90_PREFILL_2WG:-0} tail_skip=${DG_SM90_1D2D_PREFILL_TAIL_SKIP:-0} dense_config=${DG_SM90_1D2D_DECODE_CONFIG:-stock} dense_qkv=${SGLANG_DECODE_DENSE_GEMM_QKV:-deepgemm} dense_o=${SGLANG_DECODE_DENSE_GEMM_O:-deepgemm} fa3_verify=${SGLANG_DECODE_FA3_VERIFY:-stock} prefill_fa3=${SGLANG_PREFILL_FA3_VERIFY:-control} independent_wg=${DG_SM90_DECODE_INDEPENDENT_WG:-0}"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version,power.limit --format=csv
 # Queue-aware DP routing replaces bootstrap-room hashing on P and round-robin
 # on D. Publish every iteration so completed requests release routing budget.
@@ -228,7 +229,28 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # Every selection gate has settled: 41005872470, 41020974704 and 41040348302; the fixed FA3 pipe
   # passed its 1200-call gate and served in 41040348302. That run spent 7.3 min selecting, then hit TIMEOUT.
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving: prior kernel settings plus the pinned PP4 selections (prepare-firmus-pp4-settings.py); no in-job kernel selection.\n'
+  printf 'PP4 serving: pinned selections plus the Prefill QKV/O tail-wave skip only if all twelve GPUs pass correctness, endurance and a 2 us pair saving.\n'
+  # Never-served BM256 tail skip: three four-GPU workers in parallel, before model load.
+  # M7988/3994 stock FP32 check + stock/skip byte equality, 15 interleaved rounds of
+  # 20 calls per projection/mode, then 200 alternating skip calls with final byte equality.
+  # Rank zero warms four JITs (two per projection); other ranks reuse its node-local cache.
+  # Estimated 45-55 s serial including cold JIT/imports (local CUDA builds 4-7.5 s each
+  # with four compilers; round-8 FA3 screen was 34 s inside torchrun). Entire srun steps
+  # time out at 53 s + 2 s kill grace; aggregate < 5 s, <= 1 min before worker start.
+  # Any exception, missing/late result, timeout or <2 us saving on any GPU keeps stock.
+  mkdir -p "${ROOT}/results/prefill-dense"
+  prefill_dense_started=$(date +%s)
+  prefill_dense_deadline=$((prefill_dense_started + 58))
+  prefill_dense_selections=()
+  for worker in 0 1 2; do
+    node=${HEAD}
+    if (( worker == 2 )); then node=${TAIL}; fi
+    timeout --kill-after=2 53 srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-dense-${worker})" env DG_JIT_CACHE_DIR="/tmp/qwen-prefill-dense-${SLURM_JOB_ID}-${worker}" SGLANG_DG_CACHE_DIR="/tmp/qwen-prefill-dense-${SLURM_JOB_ID}-${worker}" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-dense.py" --output "${ROOT}/results/prefill-dense/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_dense_started}" --deadline "${prefill_dense_deadline}" >"${ART}/prefill-dense-${worker}.log" 2>&1 &
+    prefill_dense_selections+=("$!")
+  done
+  prefill_dense_ok=1
+  for pid in "${prefill_dense_selections[@]}"; do wait "${pid}" || prefill_dense_ok=0; done
+  uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-dense.py" --aggregate "${ROOT}/results/prefill-dense" --output "${ROOT}/results/prefill-dense/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --run-id "${SLURM_JOB_ID}-${prefill_dense_started}" --deadline "${prefill_dense_deadline}" --workers-ok "${prefill_dense_ok}"
 elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
   # Provision has verified the prior image, ordered overlays, expert map and
   # normalized serving config. Draft precision is the sole changed model setting.

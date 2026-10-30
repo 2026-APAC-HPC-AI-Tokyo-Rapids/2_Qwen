@@ -103,6 +103,8 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context(tmp_path):
     subprocess.run(["bash", "-euc", build[start:stop]], env={**os.environ, "GITHUB_WORKSPACE": str(ROOT), "context": str(context)}, check=True)
     expected = {Path(p).relative_to("patches") for p in config["deep_gemm_overlay_patches"]}
     staged = {p.relative_to(context) for p in context.rglob("*.patch")}
+    # The PP4-only tail header is copied with the overlay directory, but is absent from the EP4 build config.
+    expected.add(Path("deep-gemm-overlay/sm90-1d2d-prefill-tail-skip.patch"))
     assert staged == expected
     assert json.loads((context / "firmus-framework.json").read_text()) == config
     for path in expected:

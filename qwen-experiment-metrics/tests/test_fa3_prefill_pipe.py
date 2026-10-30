@@ -54,7 +54,8 @@ def pp4_branch():
 
 def test_pp4_pins_the_served_pipe_row_and_keeps_the_gate_scripts_staged():
     pp4 = pp4_branch()
-    assert "select-firmus-prefill-" not in pp4 and "--endurance" not in pp4
+    assert "select-firmus-prefill-fa3.py" not in pp4 and "--endurance" not in pp4
+    assert "select-firmus-prefill-dense.py" in pp4
     prepare = runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))
     assert prepare['PP4_SELECTED']['SGLANG_PREFILL_FA3_VERIFY'] == 'n192-direct-o-varlen-pipe'
     assert prepare['PP4_SELECTED_RUNS']['SGLANG_PREFILL_FA3_VERIFY'] == [41040348302]
