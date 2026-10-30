@@ -132,12 +132,10 @@ tolerance gate is needed rather than the bit-exact MegaMoE gate).
   partly (epilogues, dispatch), so 0.6-1.0 of that: **31-52 us per layer, 1.2-2.0% of MegaMoE,
   0.75-1.25 ms per 24-layer Prefill period (0.6-1.1%)**. Short of the 3% goal; above the 1.5%
   bar on the mainloop shapes, at its edge for the whole kernel.
-- The variant is layered on the split accumulator, which is under suspicion for the
-  40991744289 hang. It stays out of the selection's candidate list until the split has passed
-  the endurance gate (c8921b4) in serving; its host and header patches are in the series and
-  overlay chain with the flag off (other instantiations SASS byte-identical). Enabling it is
-  one line in each of SWITCHES, VARIANTS and CANDIDATES of select-firmus-prefill-megamoe.py,
-  and it needs the same endurance gate (it is not in UNGATED).
+- Status (round 6): the split passed the 600-call endurance gate and served in 41005872470
+  (9832.74), where the FA3 pipe row was identified as the hang. The ldmatrix variant is now
+  the sixth selection candidate; it is not in UNGATED, so it serves only after the endurance
+  gate on all twelve GPUs, and a failure falls back to the split (now in UNGATED).
 - Ranked further levers: the combine fusion (§4, about 35-40 us per layer, needs a tolerance
   gate and host/SGLang changes); tail 64-row A box (0-1%); FC1 epilogue MUFU (inexact class).
   Rejected here: warpgroup-staggered chunks (+2.3..+4.3%), two-chunk FC2 (+2.9%), U = 16 on top

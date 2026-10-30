@@ -267,7 +267,7 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # MegaMoE endurance gate (select-firmus-prefill-megamoe.py --endurance, ~20-40 s, 90 s timeout per worker, the
   # three workers in parallel): 40991744289 adopted the split accumulator after ~30 selection calls per GPU and all
   # three workers stopped after ~300 serving calls per GPU. Each GPU recomputes the winner from all twelve selection
-  # results; if it has not served before (not control, four-stage or four-stage-lean), it runs it for 600 back-to-back
+  # results; if it has not served before (not control, four-stage, four-stage-lean or, since 41005872470, four-stage-lean-split), it runs it for 600 back-to-back
   # calls over the three routings and compares each routing's last output with the control bit for bit. The aggregate
   # keeps such a winner only if all twelve GPUs finished and matched; a hung, failed or late gate takes the fastest
   # eligible served variant instead and records why. The JIT cache of the selection step is reused.
