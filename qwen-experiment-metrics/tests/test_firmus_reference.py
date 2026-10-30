@@ -113,6 +113,7 @@ def test_optimistic_prefill_attempts_are_checked_on_every_prefill_state() -> Non
 def test_pp4_prefill_settings_and_decode_cap() -> None:
     raw = archived_server_info()
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
+    assert config["tokenizer_backend"] == "gigatoken"
     check = runpy.run_path(str(ROOT / "scripts/check-firmus-server-info.py"))["check"]
     prefill = raw["prefill"]
     prefill["internal_states"] = prefill["internal_states"][:1]
@@ -189,6 +190,46 @@ def test_server_info_checks_resolved_draft_backend_from_real_run() -> None:
             [info, *info["internal_states"]][index]["speculative_moe_runner_backend"] = backend
             with pytest.raises(ValueError, match="speculative_moe_runner_backend"):
                 check(raw["config"], info, "decode")
+
+
+@pytest.mark.parametrize("config_name,backend", [("firmus-prefill-pp4.json", "gigatoken"), ("firmus-framework.json", None), ("firmus-prefill-pp4.json", "huggingface")])
+def test_worker_commands_use_the_configured_tokenizer_backend(tmp_path: Path, config_name: str, backend: str | None) -> None:
+    source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
+    config = json.loads((ROOT / "configs" / config_name).read_text())
+    if backend == "huggingface":
+        config["tokenizer_backend"] = backend
+    else:
+        assert config.get("tokenizer_backend") == backend
+    (tmp_path / "source").mkdir()
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "source/firmus-framework.json").write_text(json.dumps(config))
+    record = tmp_path / "commands.jsonl"
+    stub = tmp_path / "srun"
+    stub.write_text(f"#!{sys.executable}\nimport json,os,sys\nfd=os.open(os.environ['RECORD'],os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)\nos.write(fd,(json.dumps(sys.argv[1:])+'\\n').encode())\nos.close(fd)\n")
+    stub.chmod(0o755)
+    configuration = "speculation=(" + source.split("speculation=(", 1)[1].split("\nART=", 1)[0]
+    launches = "srun --exact" + source.split("srun --exact", 1)[1].split("\nwait_http", 1)[0]
+    harness = 'set -euo pipefail\nmounts() { printf /fixture; }\nworker_pids=()\n' + configuration + "\n" + launches + '\nfor pid in "${worker_pids[@]}"; do wait "$pid"; done\n'
+    environment = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RECORD": str(record), "ROOT": str(tmp_path), "ART": str(tmp_path / "logs"), "HEAD": "node0", "TAIL": "node1", "HEAD_IP": "192.0.2.1", "TAIL_IP": "192.0.2.2", "SGLANG": "/image", "MODEL": "/model", "N": str(config["concurrency"])}
+    subprocess.run(["bash", "-c", harness], env=environment, check=True)
+    workers = [json.loads(line) for line in record.read_text().splitlines()]
+    # Render the actual final Python launch array, without executing a server or querying a GPU/HCA.
+    worker = source.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    command = "command=(" + worker.split("command=(", 1)[1].split("if [[ -x /opt/nsys", 1)[0]
+    render = 'set -euo pipefail\nname=$1\nport=$2\nmodel=$3\ntp=$4\nrole=${name%%-*}\nshift 5\n' + command + '\nprintf "%s\\0" "${command[@]}"\n'
+    observed = set()
+    for argv in workers:
+        args = argv[argv.index("bash") + 2:]
+        result = subprocess.run(["bash", "-c", render, "worker.sh", *args], check=True, capture_output=True)
+        flags = result.stdout.decode().rstrip("\0").split("\0")
+        observed.add(args[0])
+        if backend == "gigatoken":
+            assert flags.count("--tokenizer-backend") == 1
+            assert flags[flags.index("--tokenizer-backend") + 1] == backend
+        else:
+            assert "--tokenizer-backend" not in flags
+    assert len(workers) == 4
+    assert observed == {"prefill-0", "prefill-1", "prefill-2", "decode-0"}
 
 
 @pytest.mark.parametrize("draft_quantization", ["fp8", None, "unset"])
