@@ -81,7 +81,7 @@
     },
     "p_attention": {
       "priority": 2,
-      "next": "現在のN192についてM/N tile数、有効演算とpadding、softmaxのexp/変換命令、KV再読出し、fill/drain依存を数える。N224 NCUの命令数を流用しない。次の候補は削減命令または削減tileをnative compileで示してから測る。",
+      "next": "現在のN192 pipe行の数え上げは2026-10-30に完了（`2026-10-30-prefill-fa3-diag-trim.md`）：定常KV step 587命令（MUFU.EX2 98）、tile境界1316命令、tileあたり約7160命令・MUFU約1070。tile paddingは全て対角blockにあり、warpgroupの64行が見る鍵は192中平均111（32鍵単位）。対角blockのmask・softmaxだけを見える32鍵block数に縮める `n192-direct-o-varlen-pipe-diag` はrun 41073991312のin-job screenで全48セルbyte一致だったが平均3.7µs遅く（pin中央412.7µs）不採用、撤去した。QK・PVの対角trimはwgmma直列化（C7511/C7513/C7519）で未実装。",
       "gap_to_explain": "Tensor Coreだけの床に加えてsoftmax・FP8変換・転置・同期がある。全I/OをHBMへ流す模型も、全てL2 hitとする模型も実測帯域ではない。",
       "gate": "現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。",
       "evidence": [
@@ -456,6 +456,12 @@
     "removed_work": "Tensor idle time: the 128-FMUL carried-scale rescale between two WGMMA groups of a warpgroup now overlaps the other m64n128 half. Same products, K order, ratios and bytes.",
     "past_rejections_distinct": "Not the tail split (halves on two warpgroups for <= 64-row tiles) or ping-pong / independent warpgroups (cross-warpgroup ordering); the overlap is inside one warpgroup on the same rows and B stage."
   },
+  "megamoe_prefill_split_ldsm_candidate": {
+    "evidence": "2026-10-30-prefill-megamoe-split-ldsm.md; megamoe-prefill-split-ldsm-cpu-validation-20261030.json; Genkai mainloop model run 40993048750",
+    "status": "mainloop model measured on Genkai H100 (bit-exact; vs split: -2.7% FC1-shaped with the pre hand-off, -2.2% FC2-shaped); kernel CPU-validated, not GPU-measured; patches in the chain with the flag off, not in the in-job candidate list until the split passes the endurance gate",
+    "removed_work": "WGMMA A operand reads: each warpgroup reads its 64 A rows once per K block by ldmatrix (16 KiB instead of 32 KiB per K block) and issues both m64n128 halves in the RS form; FC1 also rescales the next chunk's half 0 before the drain. Same products, K order, ratios and bytes.",
+    "past_rejections_distinct": "Not the 2026-10-20 ldmatrix + RS experiment (it drained both halves before every rescale, the rescale-bound regime) and not RS with A from global (L2 latency per K block); A comes from the TMA stage in shared memory and the halves stay pending across K blocks."
+  },
   "fa3_prefill_direct_o_cpu_candidate": {
     "evidence": "fa3-prefill-direct-o-cpu-validation-20261029.json",
     "status": "CPU_admitted_not_GPU_measured_or_activated",
@@ -471,5 +477,13 @@
     "removed_work": "PP4 two-request microbatches leave the prepared N224 path (899.7 us/call and a 4.1 us prepare kernel in run 40825417205) for fixed N192; the scheduler change alone keeps the steady KV loop identical.",
     "past_rejections_distinct": "No kernel arithmetic change beyond the n192-direct-o epilogue; no byte image or tile sweep.",
     "expected": "Per 124 ms PP4 stage period: n192-varlen -0.3..-0.7 ms, n192-direct-o-varlen -0.7..-1.6 ms with the power-cap factor 0.5-0.8."
+  },
+  "fa3_prefill_diag_cpu_candidate": {
+    "evidence": "2026-10-30-prefill-fa3-diag-trim.md",
+    "status": "rejected_in_job_41073991312: byte-equal on all 48 GPU x shape cells, but mean -3.69 us (median -3.64, positive in 2 of 48) against the pin at 412.7 us; removed from the image",
+    "candidate": "n192-direct-o-varlen-pipe-diag (PrefillVariant 224 | 4096, prefill-diag.patch): the diagonal KV block's causal mask and Is_first softmax run only on the leading 32-key sub-blocks that hold a key some row of the warpgroup may see; the skipped P words are written as 0x00; QK and PV unchanged",
+    "removed_work": "per thread and tile about -185 of 7,160 instructions (-2.6%) and -40 of 1,070 MUFU.EX2 (-3.7%); mean 3.49 of 6 sub-blocks kept at 3986-4096; steady step 587 -> 588",
+    "past_rejections_distinct": "No exp approximation, half precision, polynomial, N224 or staged Q; the arithmetic of the kept columns and the bytes are the pin's.",
+    "expected": "about 9-12 us per sequence-call with power-cap factor 1 for removed MUFU/ALU work; about 0.4-0.6 ms per 24-layer PP0 period"
   }
 }

@@ -110,8 +110,8 @@ def test_pp4_job_pins_the_onepass_path_and_no_longer_selects_it():
 def test_overlay_is_pp4_only_and_defaults_to_pre_dispatch():
     pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    # Only the FP32 Q/K norm writer, the one-pass MoE input (pinned by prepare-firmus-pp4-settings.py) and
-    # the Decode MoE input overlay, which extends this one to TARGET_VERIFY, follow it.
+    # Only the FP32 Q/K norm writer, the one-pass MoE input (pinned by prepare-firmus-pp4-settings.py),
+    # and the Decode MoE input overlay, which extends this one to TARGET_VERIFY, follow it.
     assert pp4["sglang_overlay_patches"][-4] == "patches/sglang/prefill-moe-input.patch"
     assert pp4["sglang_overlay_patches"][-1] == "patches/sglang/decode-moe-input.patch"
     # The FA3 varlen overlay touches other files; it stays right before this one.

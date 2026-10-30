@@ -14,15 +14,15 @@ def selector():
     return runpy.run_path(str(ROOT / "scripts/select-firmus-prefill-megamoe.py"))
 
 
-# The split default (2790 us) is below the 0.5% margin, so it never wins unless a test lowers it.
+# The split default (2790 us) is below the 0.5% margin; it wins only when a test lowers it.
 def write_ranks(selector, directory, workers=3, control=2800.0, four=2740.0, lean=2720.0, pair=2700.0, split=2790.0):
+    times = {"four-stage": four, "four-stage-lean": lean, "four-stage-lean-pair": pair, "four-stage-lean-split": split}
+    base = {"finite": True, "relative_l2": 0.012, "max_scaled_error": 0.02, "reference_passed": True}
     for worker in range(workers):
         path = directory / f"prefill-{worker}"
         path.mkdir(parents=True)
         for rank in range(4):
             routings = {}
-            times = {"four-stage": four, "four-stage-lean": lean, "four-stage-lean-pair": pair, "four-stage-lean-split": split}
-            base = {"finite": True, "relative_l2": 0.012, "max_scaled_error": 0.02, "reference_passed": True}
             for kind in selector["ROUTINGS"]:
                 routings[kind] = {"control": {**base, "us": [control] * selector["ROUNDS"]}, **{name: {**base, "bitwise_equal": True, "us": [us] * selector["ROUNDS"]} for name, us in times.items()}}
             for kind in selector["EXACT_ROUTINGS"]:
@@ -42,7 +42,7 @@ def write_gate(selector, directory, variant, workers=3, **changes):
         path = directory / f"prefill-{worker}"
         path.mkdir(parents=True, exist_ok=True)
         for rank in range(4):
-            entry = {"rank": rank, "variant": variant, "calls": selector["ENDURANCE_CALLS"], "needed": True, "bitwise_equal": {k: True for k in ("balanced", "hot", "edges")}, "passed": True, **changes}
+            entry = {"rank": rank, "variant": variant, "calls": selector["ENDURANCE_CALLS"], "needed": True, "reference": variant, "bitwise_equal": {k: True for k in ("balanced", "hot", "edges", "wide")}, "passed": True, **changes}
             (path / f"rank-{rank}.json").write_text(json.dumps(entry))
 
 
@@ -61,6 +61,9 @@ def test_adopts_the_fastest_variant_that_passed_everywhere(selector, tmp_path):
     # The FA3 choice stays; the MegaMoE switches are appended for the Prefill workers.
     assert env == "SGLANG_PREFILL_FA3_VERIFY=n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_TAIL_PAIR=1\n"
     assert set(selector["VARIANTS"]) == {"control", "four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split"}
+    assert set(selector["CANDIDATES"]) == set(selector["VARIANTS"]) - {"control"}
+    assert result["rule"]["bit_exact"] == list(selector["CANDIDATES"])
+    assert "tolerance" not in result["rule"]
 
 
 def test_faster_split_wins_with_lean_and_without_pairing(selector, tmp_path):
@@ -79,38 +82,69 @@ def test_faster_split_wins_with_lean_and_without_pairing(selector, tmp_path):
 @pytest.mark.parametrize("gate,why", [
     (None, "no endurance result from rank 0 (late, hung or failed)"),
     ({"calls": 0, "passed": False}, "rank 0 failed the endurance gate"),
-    ({"bitwise_equal": {"balanced": True, "hot": False, "edges": True}, "passed": False}, "rank 0 failed the endurance gate"),
-    ({"variant": "four-stage-lean"}, "rank 0 gated four-stage-lean, not four-stage-lean-split"),
+    ({"bitwise_equal": {"balanced": True, "hot": False, "edges": True, "wide": True}, "passed": False}, "rank 0 failed the endurance gate"),
+    ({"variant": "four-stage-lean-split"}, "rank 0 gated four-stage-lean-split, not four-stage-lean-pair"),
 ])
 def test_an_unserved_winner_needs_the_endurance_gate_on_every_gpu(selector, tmp_path, gate, why):
-    write_ranks(selector, tmp_path / "results", split=2650.0)
+    write_ranks(selector, tmp_path / "results", split=2650.0, pair=2600.0)
     if gate is not None:
-        write_gate(selector, tmp_path / "endurance", "four-stage-lean-split")
+        write_gate(selector, tmp_path / "endurance", "four-stage-lean-pair")
         path = tmp_path / "endurance/prefill-0/rank-0.json"
         path.write_text(json.dumps({**json.loads(path.read_text()), **gate}))
     result, env = aggregate(selector, tmp_path)
-    # The fastest eligible variant that has served (lean, 12k+ batches in 40964714831) takes over; pair is unserved too.
-    assert result["winner"] == "four-stage-lean" and result["reason"].startswith(f"four-stage-lean-split not adopted: {why}")
-    assert result["choices"]["four-stage-lean-split"]["endurance"].startswith(why)
-    assert env.endswith("n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\n")
+    # The fastest eligible variant that has served (the split, 41005872470) takes over.
+    assert result["winner"] == "four-stage-lean-split" and result["reason"].startswith(f"four-stage-lean-pair not adopted: {why}")
+    assert result["choices"]["four-stage-lean-pair"]["endurance"].startswith(why)
+    assert env.endswith("n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_SPLIT_ACCUM=1\n")
+
+
+def test_unserved_winner_falls_back_to_lean_when_the_split_is_not_eligible(selector, tmp_path):
+    write_ranks(selector, tmp_path / "results", split=2650.0, pair=2600.0)
+    edit(tmp_path / "results", 1, 1, "edges", "four-stage-lean-split", bitwise_equal=False)
+    result, _ = aggregate(selector, tmp_path)
+    assert result["winner"] == "four-stage-lean" and result["reason"].startswith("four-stage-lean-pair not adopted: no endurance result")
 
 
 def test_served_winners_need_no_endurance_gate(selector, tmp_path):
     write_ranks(selector, tmp_path / "results", pair=2760.0)
     result, _ = aggregate(selector, tmp_path)
     assert result["winner"] == "four-stage-lean" and result["reason"] == "fastest-eligible"
-    assert set(selector["UNGATED"]) == {"control", "four-stage", "four-stage-lean"}
-    assert not set(selector["UNGATED"]) & {"four-stage-lean-pair", "four-stage-lean-split"}
+    write_ranks(selector, tmp_path / "split", pair=2760.0, split=2650.0)
+    selector["aggregate"](tmp_path / "split", tmp_path / "split.json", tmp_path / "split.env", 3, tmp_path / "no-gate")
+    result = json.loads((tmp_path / "split.json").read_text())
+    assert result["winner"] == "four-stage-lean-split" and result["reason"] == "fastest-eligible"
+    assert set(selector["UNGATED"]) == {"control", "four-stage", "four-stage-lean", "four-stage-lean-split"}
+    assert not set(selector["UNGATED"]) & {"four-stage-lean-pair"}
 
 
 def test_endurance_run_skips_the_gpu_for_a_served_winner(selector, tmp_path, monkeypatch):
     # The gate recomputes the aggregate's winner from the same rank files before touching a GPU.
-    write_ranks(selector, tmp_path / "results", pair=2760.0)
+    write_ranks(selector, tmp_path / "results", pair=2760.0, split=2650.0)
     monkeypatch.setenv("LOCAL_RANK", "2")
     selector["run_endurance"](tmp_path / "results", tmp_path / "endurance/prefill-1", 3)
     entry = json.loads((tmp_path / "endurance/prefill-1/rank-2.json").read_text())
-    assert entry["variant"] == "four-stage-lean" and not entry["needed"] and entry["passed"] and entry["calls"] == 0
+    assert entry["variant"] == "four-stage-lean-split" and not entry["needed"] and entry["passed"] and entry["calls"] == 0
     assert selector["ENDURANCE_CALLS"] >= 600
+
+
+def test_any_output_bit_difference_rejects_the_variant(selector, tmp_path):
+    # Any output mismatch is a defect, even when its reported error would be small.
+    write_ranks(selector, tmp_path / "results", split=2650.0)
+    edit(tmp_path / "results", 0, 0, "wide", "four-stage-lean-split", bitwise_equal=False)
+    result, _ = aggregate(selector, tmp_path)
+    # The pair (no endurance result here) is not adopted, so the served lean variant is.
+    assert result["winner"] == "four-stage-lean" and result["choices"]["four-stage-lean-split"]["reason"] == "failed rank 0 wide"
+
+
+def test_wide_case_is_the_balanced_routing_on_larger_hidden_states(selector):
+    torch = pytest.importorskip("torch")
+    generator = torch.Generator()
+    generator.manual_seed(7)
+    hidden, ids, weights = selector["inputs"](torch, "wide", 64, generator, "cpu")
+    generator.manual_seed(7)
+    base_hidden, base_ids, base_weights = selector["inputs"](torch, "balanced", 64, generator, "cpu")
+    assert torch.equal(ids, base_ids) and torch.equal(weights, base_weights)
+    assert 35 < hidden.float().std() / base_hidden.float().std() < 45 and selector["WIDE_HIDDEN_SCALE"] == 40.0
 
 
 def test_slower_pair_leaves_lean(selector, tmp_path):
@@ -192,19 +226,13 @@ def test_margin_is_the_larger_of_absolute_and_relative(selector, tmp_path):
     assert json.loads(out.read_text())["winner"] == "four-stage"
 
 
-def test_pp4_job_gates_before_model_load_and_workers_source_the_switch(tmp_path):
+def test_pp4_job_uses_pins_and_workers_source_the_switch(tmp_path):
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    assert "select-firmus-prefill-megamoe.py\" --ranks 1 --output" in pp4
-    assert '--aggregate "${ROOT}/results/prefill-megamoe"' in pp4 and '--env-output "${ROOT}/source/prefill-kernels.env"' in pp4
-    assert pp4.index("--ranks 1") < pp4.index("--aggregate")
-    # The endurance gate runs per worker after all selections and before the aggregate, under its own timeout.
-    gate = next(line for line in pp4.splitlines() if "select-firmus-prefill-megamoe.py\" --endurance" in line)
-    assert "timeout --kill-after=5 90 " in gate and '--output "${ROOT}/results/prefill-megamoe-endurance/prefill-${worker}"' in gate
-    assert pp4.index("--ranks 1") < pp4.index(gate) < pp4.index("--aggregate")
-    assert '--endurance "${ROOT}/results/prefill-megamoe-endurance"' in pp4[pp4.index("--aggregate"):]
-    assert shell.index("select-firmus-prefill-megamoe.py") < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
-    # worker.sh is unchanged (frozen-submission test): it already exports every prefill-kernels.env line.
+    assert 'test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"' in pp4
+    assert "no in-job kernel selection" in pp4
+    assert "srun" not in pp4 and "--aggregate" not in pp4 and "wait " not in pp4
+    assert "decode_gpu_selections" not in shell and "prefill_gpu_" not in shell
     worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
     assert 'if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi' in worker
     for line in pp4.splitlines():
@@ -240,7 +268,7 @@ def test_lean_is_an_ep1_trailing_flag_after_four_stages_with_the_same_bytes():
     header = (ROOT / "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch").read_text()
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
     assert series[-5:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-1d2d-decode-bm192.patch"]
-    for gone in ("sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch", "sm90-prefill-tail-split.patch"):
+    for gone in ("sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch", "sm90-prefill-tail-split.patch", "sm90-prefill-split-ldsm.patch", "sm90-prefill-combine-norm.patch"):
         assert not (ROOT / "patches/deep-gemm-host" / gone).exists()
     # ",true" (kPrefillLean) only when set and one rank only.
     assert 'args.prefill_lean ? ",\\n        true" : ""' in host

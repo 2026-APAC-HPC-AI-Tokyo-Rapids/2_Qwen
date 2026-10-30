@@ -54,9 +54,15 @@ round 2のdirect FC2（+1.6%）とA gather（+44%）はGPUで負けたので削�
 
 round 4でPrefill EP1 MegaMoEのK loopを単体模型（`kernels/probes/megamoe-mainloop.cu`、Genkai H100、1.40〜1.48 GHzで電力律速）で測り直した。共有メモリ律速の模型は誤り：Aの共有メモリ量（K blockあたり128KiB中32KiB）を全部消しても−2%、Bのmulticast（L2→SM −33%）は+0.1〜0.8%、Aをglobalからregisterへ読むWGMMA RS形は+34%（fragment順）／+61%（自然順）。律速はWGMMA group間のcarried-scale rescale（128 FMUL）で、除くとK blockは1406→1094 clk（tensor床1024）。候補 `DG_SM90_PREFILL_SPLIT_ACCUM`（lean上、tail pairなし、bit一致）は各WGのm64n256 accumulatorを同じstageのm64n128半分2つで発行し、半分hのrescaleを前K blockの半分hだけ待って行う（wgmma.wait_group 1）。ptxasはloop辺を跨ぐWGMMA groupを追跡できず全WGMMAを直列化するため、FC1は8、FC2は12 K blockの直線chunkで発行し、chunk末で排出する。math roleのtrap（NVLink barrierのtimeoutと実行時assert）があるとsetmaxnregの拡張が使われないため、split実体だけこの2つを外し224 registers（spill0、最大R206）。模型で FC1形 −5.2〜−5.6%、FC2形 −7.4〜−7.6%（全tile bit一致、電力律速下のclock低下込み）。他22 instantiationはSASS一致。見込みは層あたり75〜125µs（2.8〜4.7%）、24層stageで1.8〜3.0 ms/周期。in-job選択に5番目の変種として追加（JIT 1回 約8 s）。詳細は `2026-10-30-prefill-megamoe-split-accumulator.md`。
 
+round 5でsplit accumulatorのK block（模型1283 clk）に残る項を測った（`megamoe-mainloop.cu`、Genkai run40993048750、1.19〜1.33 GHzで電力律速、全exact変種はtile全部でbit一致）。rescale無しの床はAを2回読むsplit（1066 clk）と1回読むldmatrix版（1072 clk）で同じで、共有メモリportの単純な模型は成り立たない。それでもrescale有りでは、Aをldmatrixで1回registerへ読み両半分をRS形で発行すると、FC1形−1.5%、FC2形−2.2%になる。chunk境界で次chunkの半分0を排出前にrescaleしておく（tile末は比1で厳密）と、FC1形はさらに−1.2%（合計−2.7%、SS版では−0.6%）。U=16は上乗せ無し。WG間でchunk境界をずらす案は+2.3〜4.3%、FC2を2 chunkにする案は+2.9%で不採用。候補 `DG_SM90_PREFILL_SPLIT_LDSM`（split上、bit一致）はspill0・最大R201・QGMMA 160本すべてregister A・LDSM 84本で、他21 instantiationはSASS一致。見込みは層あたり31〜52µs（MegaMoEの1.2〜2.0%、κ0.6〜1）、24層で0.75〜1.25 ms/周期。splitが40991744289のハング容疑にあるため、耐久gate（c8921b4）を通るまでin-job選択の候補から外してある。詳細は `2026-10-30-prefill-megamoe-split-ldsm.md`。
+
+round 6でsplitが40991744289の容疑から外れ（41005872470で耐久gate通過・serving）、`four-stage-lean-split-ldsm` を6番目の選択候補にした（耐久gate必須、失敗時はsplitへ戻る）。また、MegaMoEのcombineに次層のinput add-RMSNorm＋FP8 group quantを融合する `fp8_mega_moe_norm`（lean EP1、`kPrefillCombineNorm`）を作った。現行の `norm_quant` は60.8µs/層（40825417205、232MB）。融合でy 66MBの書込み・読出しとkernel 1本が消え、combineにresidual 66MB読込とq/scale 34MB書込みが加わる（約+26µs、第2 passの命令0〜10µs）。純減25〜35µs/層、24層stageで融合23層、0.57〜0.80 ms/周期（κ≈1）。演算は二乗和の順序だけが違い（residualはbit一致）、CPU模型でq不一致9.5e-7。22 instantiationはSASS一致、spill0。job内で数値・時間・600回耐久gateを通った場合だけ `SGLANG_PREFILL_COMBINE_NORM=1`。詳細は `2026-10-30-prefill-combine-norm.md`。
+
 Prefill FA3 N192のepilogueを、accumulatorから直接group-128 FP8へ量子化する候補 `n192-direct-o`（variant 32）を作成した。BF16 smem staging、quad SHFLの列並べ替え、named barrier2回、staged layoutのBF16展開とgroup-8 shuffleを除き、consumer warpあたりM-tileごとの実行命令は808→343（CUDA 13.4、3994行で1回7.44M warp命令・smem131MB減）。定常KV loopは597命令/tileのまま、registers・spillは不変、他のgeometryのSASSは一致。出力codeとscaleはn192とbyte一致する設計で、in-job選択のGPU gateがn192とのbyte一致と速度を判定する。見込みは単体−4〜−6%、電力上限下−2〜−5%でFA3目標10%に届かない。GPU未測定・未有効化。詳細は `fa3-prefill-direct-o-cpu-validation-20261029.json`。
 
 PP4（run40825417205）では2要求のmicrobatchが固定経路に入らず、prepared N224（899.7µs/回＋prepare 4.1µs）で動いていた。固定schedulerを1〜4要求の連結順へ広げたvariant 64の `n192-varlen` と `n192-direct-o-varlen` を追加し、PP4ではこの2行だけを3長と3986+4027の組でin-job選択する（controlは組ではprepared N224）。数値gateは要求ごとのn192とのbyte一致を要求する。定常KV loopは不変、spillはproducer側で72/132→96/124B、他kernelのSASS本体は一致。見込みは124ms周期あたり電力上限下で−0.7〜−1.6ms（direct-o併用）。draft extend（stock paged N160、BF16出力）は同じ64/4/128だが出力・KV形式が異なり、stage3は律速でないため未配線。GPU未測定。詳細は `fa3-prefill-varlen-cpu-validation-20261029.json`。
+
+2026-10-30 round 8：現在のpin `n192-direct-o-varlen-pipe`（41040348302で1 sequenceあたり中央404µs）を数えた。M128 tileは8 token×16 headなので、seqlen_k = seqlen_qでは各tileの最後のKV block（対角）だけがmaskされ、paddingは全てそこにある（4001で275.9中13.5 GFLOP）。CUDA 13.4のSASS（consumer threadあたり）：定常KV step 587命令（MUFU.EX2 98、FFMA 100、FADD 96、FMUL 66、FMNMX 100、F2FP 48、QGMMA 10）、tile境界1316命令（対角mask FSEL 98＋ISETP 97、softmax、finalize、direct-O store）、tileあたり約7160命令・MUFU約1070。候補 `n192-direct-o-varlen-pipe-diag`（variant 224|4096、`prefill-diag.patch`）は、warpgroupの行が見うる最大の鍵列から32鍵block数k（1〜6、平均3.49）を求め、対角blockのmaskとsoftmaxを先頭32k列だけで行い、残りのPを0x00で書く。QK・PVは不変、pinとbyte一致の設計で、pinのSASSは一致。tileあたり約−185命令（−2.6%）、MUFU −40（−3.7%）、定常stepは587→588。見込みは電力係数1で1 sequenceあたり約9〜12µs、24層PP0周期で約0.4〜0.6ms。PP4のjob内でpinに対するscreen（n192とbyte一致、全12 GPU×4形で5µs以上）と1200回耐久gateを通れば採用、追加の直列時間は約1.2〜1.5分。QK・PVまでtrimする形はwgmmaの直列化（C7511/C7513/C7519）で採らなかった。run 41073991312のin-job screenでは全12 GPU×4形でbyte一致、ただし平均−3.69µs（48セル中2セルだけ正）で不採用。対角blockのsoftmaxは電力上限下で律速経路になく、sub-block数による分岐の方が高くついた。詳細は `2026-10-30-prefill-fa3-diag-trim.md`。
 
 ## Prefill の収支
 
@@ -180,7 +186,7 @@ causal QK+PV=2*L*(L+1)*Qheads*D; M128/N192 PackGQA。
 
 追う差：Tensor Coreだけの床に加えてsoftmax・FP8変換・転置・同期がある。全I/OをHBMへ流す模型も、全てL2 hitとする模型も実測帯域ではない。
 
-次の作業：現在のN192についてM/N tile数、有効演算とpadding、softmaxのexp/変換命令、KV再読出し、fill/drain依存を数える。N224 NCUの命令数を流用しない。次の候補は削減命令または削減tileをnative compileで示してから測る。
+次の作業：現在のN192 pipe行の数え上げは2026-10-30に完了（`2026-10-30-prefill-fa3-diag-trim.md`）：定常KV step 587命令（MUFU.EX2 98）、tile境界1316命令、tileあたり約7160命令・MUFU約1070。tile paddingは全て対角blockにあり、warpgroupの64行が見る鍵は192中平均111（32鍵単位）。対角blockのmask・softmaxだけを見える32鍵block数に縮める `n192-direct-o-varlen-pipe-diag` はrun 41073991312のin-job screenで全48セルbyte一致だったが平均3.7µs遅く（pin中央412.7µs）不採用、撤去した。QK・PVの対角trimはwgmma直列化（C7511/C7513/C7519）で未実装。
 
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
@@ -310,6 +316,8 @@ QK+PV=4*M*KVlen*Qheads*D; KV bytes=B*KVlen*KVheads*D*2。
 測定へ進む条件：過去に数値不一致だったmerge統合は、誤りの特定とCPU/source証拠を先に必要とする。
 
 2026-10-30の候補：2 CTA/SM（`kernels/fa3-verify/decode-two-cta.patch`、`p128split2-c2-fp8`・`p128split3-c2-fp8`・`p128-uneven-c2-fp8`）。run40825417205ではsplit2の3 round目が8〜88 tileで19〜22µs、単独tileでも全SM稼働時の77%かかり、全SM稼働時の読出しは2.7TB/s。CTAあたりtile latency律速で、1 SMに独立tileを2つ置いて隠す。FLOP・byteは不変。launch 128 register、consumer 200、R186、spill0。FP・QGMMA命令数はs2 1 CTA版と一致し、split2は選択内でpin（split2-s3）とbyte一致を要求。見込み−12〜−22µs/層（κ≈1、HBM上限3.7TB/s）。2.7TB/s止まりなら−5µs/層。PP4のDecode GPU上で`--pinned-env`選択（全GPU×2 blockで1µs/層以上）。kernel内mergeは診断で到着counterがresetされず（480＝40×4×3）、効果も0.2〜0.3ms/stepなので保留。詳細は `2026-10-30-decode-step-two-cta-fa3.md`。
+
+2026-10-30 round 6：h2 行（256 B）は 40991744289・41005872470 の両方で負けた。B44 の split3-h2（264 tile = 2 × 132）は −7.1µs/層（約2.92TB/s）だが、B46/48 は 12/24 tile の3 round目で +9〜10µs、split2-h2（4B tile、1.05MB）は2 round目の tail で pin と同じ。粒度の利得は全 SM が同時に終わる分け方でしか時間にならない。候補 `p32stream-h4-fp8`（`decode-stream-h4.patch`）：1 CTA で4 KV head（512B 行を1 warp 命令で cp.async）、consumer 4 WG（各 pin と同じ M64）、kBlockN 32、register 128×(64+4×112)、両 main loop に spill なし。全 request の block 列を132の等区間に切る stream split（segment ≤2/CTA、slot ≤6、CTA 間の差 ≤1 block）。見込み −4〜−10µs/層（中央 −6、512B probe の93〜97%）、悲観（2.92TB/s）で B48 0〜−2.3。PP4 の FA3 選択で数値 gate、slot 数一致、全 GPU×44/46/48 で1µs/層以上、301 replay×3 batch の endurance gate を通れば採用。詳細は `2026-10-30-decode-fa3-stream-h4.md`。
 
 ### Decode QKV GEMM
 

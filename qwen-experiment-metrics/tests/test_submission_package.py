@@ -87,10 +87,14 @@ def test_submission_has_no_selection_gate_telemetry_or_profile_execution():
 
 
 def test_serving_launches_and_warmup_are_preserved_in_order():
+    assert "tokenizer_backend" not in CONFIG
+    assert "tokenizer_backend" not in json.loads((PACKAGE / "config/serving.json").read_text())
     def critical(text):
         text = text.split('test -s "${ROOT}/results/score.json"', 1)[0]
         # Normal EP4 still resolves to TP4; PP4 deliberately resolves to TP1.
         text = text.replace('"${MODEL}" "${prefill_tp}"', f'"${{MODEL}}" {CONFIG["prefill"]["tp"]}')
+        # Both EP4 configs use HF, so the optional tokenizer array expands to no arguments.
+        text = text.replace(' "${tokenizer_args[@]}"', "")
         return [line for line in text.splitlines() if line.startswith(("srun --exact", "srun --overlap -N1", "wait_http ", 'echo "READY', "  curl --fail", "curl --fail")) and " profile " not in line]
     assert critical(BATCH.read_text()) == critical(ORIGINAL.read_text())
     text = BATCH.read_text()
@@ -106,7 +110,7 @@ def test_draft_precision_launch_and_runtime_check_match_canonical():
     # The shared speculation arguments reach all four workers. The runtime
     # precision check must also precede the official client in both launchers.
     def arguments(text):
-        return text.split("speculation=(", 1)[1].split("decode_graph=(", 1)[0]
+        return text.split("speculation=(", 1)[1].split("decode_graph=(", 1)[0].split("\ntokenizer_backend=", 1)[0].rstrip()
 
     assert arguments(package) == arguments(canonical)
     precision_check = next(line for line in canonical.splitlines() if ".speculative_draft_model_quantization ==" in line)

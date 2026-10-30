@@ -14,7 +14,7 @@ from pathlib import Path
 #   GPUs: n192-direct-o-varlen, the only eligible row in both (minimum saving 11.7 / 13.6 us, median
 #   417.1 / 416.7 us per call against n192-varlen 423.9 / 423.8 us, which missed the margin).
 #   The PP4 job screened n192-direct-o-varlen-pipe (pipelined M-tiles) against this pin until
-#   40991744289, which adopted it and stopped serving; the row stays in the image and candidates file.
+#   40991744289, which adopted it and stopped serving; the fixed row is pinned below.
 # - select-firmus-prefill-moe-input.py: fused, 103.99-105.18 us against control 123.57-124.04 us per
 #   layer on all four GPUs in both runs; fused-gate stayed below its margin. Superseded by onepass below.
 # - select-firmus-decode-dense.py --pinned-env: wide norm/quant (2.51 against 6.05-6.08 us); the
@@ -24,8 +24,8 @@ from pathlib import Path
 # 40911121619 and 40925558339 (image 40911121619), and no longer selects it:
 # - qknorm: fp32, 71.37-71.40 / 71.29-71.36 us against control 100.38-100.54 / 100.39-100.46 us per
 #   layer on all four GPUs, every gate case passed (V and NaNs bit-equal to control, Q/K one E4M3 step
-#   at most from the FP64 reference). Valid only without the FA3 V byte image, which the pinned
-#   n192-direct-o-varlen row does not use.
+#   at most from the FP64 reference). Valid only without the FA3 V byte image, which neither
+#   direct-o-varlen row uses.
 # select-firmus-prefill-attention.py then selected only the one-pass Prefill MoE input over the pinned
 # fused path, and was removed after the one run that ran it, 40964714831:
 # - moe_input: onepass, 88.89-89.00 us against fused 102.91-102.94 us per layer (24-layer graph at 7988
@@ -33,18 +33,44 @@ from pathlib import Path
 #   top-k within the FP64 reference gate at 7988, 7989, 3994 and 2049 rows). One run suffices here: the
 #   13.9-14.0 us (13.6%) saving on every GPU is about ten times the 1-2% noise of these per-layer
 #   timings (the twelve rounds of this run spread 88.6-89.4 and 102.4-103.2 us), against a 3 us margin.
+# Settled selections from 41005872470, 41020974704 and 41040348302; no in-job selection remains:
+# - MegaMoE: four-stage-lean-split won and served in the first two runs and was the adopted winner
+#   in the third. Set all three switches: 4STAGE, LEAN and SPLIT_ACCUM. The shared reciprocal was
+#   only 0.3% faster (61111 against 61295 us total) in 41040348302 and failed all twelve GPUs'
+#   600-call endurance gates on all four routings: identical input and variant, different output bits.
+# - Prefill FA3: n192-direct-o-varlen-pipe saved at least 8.1 us, mean 15.0 us per layer call on all
+#   twelve GPUs in 41040348302, against a 404.5 us median. Commits d8ba09f and 50ab866 fixed the
+#   row that hung in 40991744289 and added its gate. One run suffices: every GPU passed the
+#   1200-call endurance gate, then about 1480 PP0 microbatches per worker served without a stall.
+#   PP0 periods were 114.6 / 115.0 / 118.3 ms against 115.0 / 115.5 / 118.6 ms in 41020974704.
+# - Decode MoE input: fused; QKV >128 rows: 192,80,5,1,0 (keep 128,144,5,1,0 for smaller rows);
+#   PP4 proxy: copy. Each run's decode-selection env files and copy-engine selection.json agree.
+# - Keep onepass and fp32: onepass-split lost 88.9 -> 90.2 us, fp32-heads4 lost 72.0 -> 81.0 us
+#   at 8064 rows, and fp32-heads8 was slower at 4032 rows in 41040348302.
 PP4_SELECTED = {
-    "SGLANG_PREFILL_FA3_VERIFY": "n192-direct-o-varlen",
+    "SGLANG_PREFILL_FA3_VERIFY": "n192-direct-o-varlen-pipe",
     "SGLANG_PREFILL_MOE_INPUT": "onepass",
     "SGLANG_PREFILL_QKNORM": "fp32",
     "SGLANG_DECODE_NORM_QUANT": "wide",
+    "DG_SM90_PREFILL_4STAGE": "1",
+    "DG_SM90_PREFILL_LEAN": "1",
+    "DG_SM90_PREFILL_SPLIT_ACCUM": "1",
+    "SGLANG_PP4_PROXY_TRANSPORT": "copy",
+    "SGLANG_DECODE_MOE_INPUT": "fused",
+    "DG_SM90_1D2D_DECODE_CONFIG": "QKV:128,144,5,1,0;QKV>128:192,80,5,1,0",
 }
 # The runs in which each pinned value won.
 PP4_SELECTED_RUNS = {
-    "SGLANG_PREFILL_FA3_VERIFY": [40849459077, 40883389891],
+    "SGLANG_PREFILL_FA3_VERIFY": [41040348302],
     "SGLANG_PREFILL_MOE_INPUT": [40964714831],
     "SGLANG_PREFILL_QKNORM": [40911121619, 40925558339],
     "SGLANG_DECODE_NORM_QUANT": [40849459077, 40883389891],
+    "DG_SM90_PREFILL_4STAGE": [41005872470, 41020974704, 41040348302],
+    "DG_SM90_PREFILL_LEAN": [41005872470, 41020974704, 41040348302],
+    "DG_SM90_PREFILL_SPLIT_ACCUM": [41005872470, 41020974704, 41040348302],
+    "SGLANG_PP4_PROXY_TRANSPORT": [41005872470, 41020974704, 41040348302],
+    "SGLANG_DECODE_MOE_INPUT": [41005872470, 41020974704, 41040348302],
+    "DG_SM90_1D2D_DECODE_CONFIG": [41005872470, 41020974704, 41040348302],
 }
 
 
@@ -81,7 +107,7 @@ def prepare(config, repo, runtime):
         names = {
             k: v
             for k, v in environment.items()
-            if k.startswith("SGLANG_PREFILL_") == (role == "prefill")
+            if k.startswith(("SGLANG_PREFILL_", "DG_SM90_PREFILL_", "SGLANG_PP4_")) == (role == "prefill")
         }
         (runtime / "source" / f"{role}-kernels.env").write_text(
             "".join(f"{k}={shlex.quote(v)}\n" for k, v in names.items())
@@ -94,7 +120,7 @@ def prepare(config, repo, runtime):
         "pp4_selected": PP4_SELECTED,
         "pp4_selected_runs": PP4_SELECTED_RUNS,
         "no_gpu_selection_rerun": True,
-        "scope": "Prior settings plus the PP4 selections that won in the PP4 runs listed in pp4_selected_runs. New image, EP1, PP scheduling, batching and transfers require the ordinary serving trial.",
+        "scope": "Prior settings plus the settled PP4 selections evidenced by pp4_selected_runs, split explicitly between Prefill and Decode. No in-job kernel selection; ordinary serving validates the complete image, EP1, PP scheduling, batching and transfers.",
     }
     for directory in ("source", "results"):
         (runtime / directory / "pp4-kernel-settings.json").write_text(

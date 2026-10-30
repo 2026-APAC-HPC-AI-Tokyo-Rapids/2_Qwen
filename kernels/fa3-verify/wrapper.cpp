@@ -8,7 +8,9 @@
 
 namespace apac_fa3_verify {
 // ctas: co-resident CTAs per SM; the persistent grid is that many per SM.
-struct Candidate { const char* name; int block_n, stages, splits; bool fp8, merge, uneven; int ctas; Launch launch; };
+// heads 4: all four KV heads per CTA on the stream split (VerifyStreamScheduler), whose main kernel
+// writes each request's partial slot count (at most splits = 6) into the dynamic-split metadata.
+struct Candidate { const char* name; int block_n, stages, splits; bool fp8, merge, uneven; int ctas, heads; Launch launch; };
 #include "candidates.h"
 static const Candidate& candidate(int64_t id) {
     TORCH_CHECK(id >= 0 && id < int64_t(sizeof(candidates) / sizeof(candidates[0])), "invalid FA3 verify candidate");
@@ -42,7 +44,7 @@ void prepare(const at::Tensor& lengths, const at::Tensor& cu, const at::Tensor& 
     auto p = base(lengths, cu, metadata, id);
     auto stream = at::cuda::getCurrentCUDAStream();
     if (candidate(id).uneven) { decode_prepare(p, stream); }
-    else { prepare_varlen_num_blocks(p, stream, true, 64, block_n(id), false); }
+    else if (candidate(id).heads != 4) { prepare_varlen_num_blocks(p, stream, true, 64, block_n(id), false); }
     if (candidate(id).merge) { C10_CUDA_CHECK(cudaMemsetAsync(p.tile_count_semaphore + 1, 0, p.b * 4 * sizeof(int), stream)); }
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
@@ -61,6 +63,7 @@ void fwd_impl(const at::Tensor& scales, const at::Tensor& q, const at::Tensor& k
     TORCH_CHECK(pages.dim() == 2 && pages.size(0) == p.b && pages.size(1) > 0 && lse.sizes() == at::IntArrayRef({64, p.total_q}), "FA3 verify pages/LSE shape");
     TORCH_CHECK(partial.numel() == (p.num_splits > 1 ? int64_t(p.num_splits) * 64 * p.total_q * 128 : 0) && partial_lse.numel() == (p.num_splits > 1 ? int64_t(p.num_splits) * 64 * p.total_q : 0), "FA3 verify FP32 workspace size");
     TORCH_CHECK(std::isfinite(scale) && scale > 0, "FA3 verify scale");
+    TORCH_CHECK(candidate(id).heads != 4 || (p.num_splits == 6 && candidate(id).fp8 && !candidate(id).merge && !candidate(id).uneven && candidate(id).ctas == 1), "FA3 verify stream split: 6 slots (kVerifyStreamSlots)");
     p.q_ptr = q.data_ptr(); p.k_ptr = k.data_ptr(); p.v_ptr = v.data_ptr(); p.o_ptr = out.data_ptr();
     p.q_row_stride = q.stride(0); p.q_head_stride = q.stride(1);
     p.k_batch_stride = k.stride(0); p.k_row_stride = k.stride(1); p.k_head_stride = k.stride(2);

@@ -1,6 +1,5 @@
 import json
 import runpy
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -90,27 +89,17 @@ def test_missing_untimed_or_inconsistent_gpu_keeps_pre_dispatch(selector, tmp_pa
     assert aggregate(selector, tmp_path, tmp_path / "absent")[0]["winner"] == "control"
 
 
-def test_pp4_job_runs_the_selection_on_the_decode_gpus_and_appends_only_a_winner(tmp_path):
+def test_pp4_pins_decode_moe_input_and_keeps_the_selector_staged():
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    group = pp4[pp4.index("  {\n"):pp4.index("  } &\n")]
-    moe = group.index('--container-mounts="$(mounts decode-selection-moe-input)" bash "${ROOT}/scripts/select-firmus-decode-kernels.sh" "${ROOT}" moe-input >"${ART}/decode-selection-moe-input.log" 2>&1 || true')
-    assert group.index("check-firmus-pp4-copy-engine.py") < moe and '-w "${TAIL}"' in group[group.rindex("srun", 0, moe):moe]
-    script = (ROOT / "scripts/select-firmus-decode-kernels.sh").read_text()
-    part = script[script.index('elif [[ "${part}" == moe-input ]]; then'):script.index("else\n", script.index('elif [[ "${part}" == moe-input ]]; then'))]
-    assert '"${root}/scripts/select-firmus-decode-moe-input.py" --output "${out}/moe-input"' in part
-    assert '--aggregate "${out}/moe-input" --output "${out}/moe-input.json" --env-output "${out}/moe-input.env"' in part
-    take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]
-    take = take[:take.index("\nfi\n") + 4]
-    rows = [row.strip() for row in take.splitlines() if "decode-selection/moe-input.env" in row]
-    assert len(rows) == 1
-    for moe_env, expected in (("", "A=pinned\n"), ("SGLANG_DECODE_MOE_INPUT=fused\n", "A=pinned\nSGLANG_DECODE_MOE_INPUT=fused\n")):
-        (tmp_path / "results/decode-selection").mkdir(parents=True, exist_ok=True)
-        (tmp_path / "source").mkdir(exist_ok=True)
-        (tmp_path / "source/decode-kernels.env").write_text("A=pinned\n")
-        (tmp_path / "results/decode-selection/moe-input.env").write_text(moe_env)
-        subprocess.run(["bash", "-c", "set -euo pipefail\n" + "\n".join(rows)], env={"ROOT": str(tmp_path), "PATH": "/usr/bin:/bin"}, check=True)
-        assert (tmp_path / "source/decode-kernels.env").read_text() == expected
+    assert "select-firmus-decode-kernels.sh" not in pp4
+    assert "decode-selection/moe-input.env" not in shell
+    prepare = runpy.run_path(str(ROOT / "scripts/prepare-firmus-pp4-settings.py"))
+    assert prepare["PP4_SELECTED"]["SGLANG_DECODE_MOE_INPUT"] == "fused"
+    assert prepare["PP4_SELECTED_RUNS"]["SGLANG_DECODE_MOE_INPUT"] == [41005872470, 41020974704, 41040348302]
+    provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
+    for script in ("select-firmus-decode-kernels.sh", "select-firmus-decode-moe-input.py"):
+        assert f'"${{GITHUB_WORKSPACE}}/scripts/{script}"' in provision
 
 
 def test_overlay_extends_the_prefill_path_to_target_verify_only():

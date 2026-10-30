@@ -275,12 +275,11 @@ def test_pp4_decode_selection_screens_only_the_overlay_candidates_against_the_pi
     assert {line.split("=", 1)[0]: line.split("=", 1)[1] for line in sourced if "=" in line and line.split("=", 1)[0] in env} == env
 
 
-def test_pp4_job_pins_wide_norm_quant_and_screens_only_the_bm192_qkv_tile():
-    # wide won and every SwapAB row lost in 40849459077 and 40883389891; prepare-firmus-pp4-settings.py
-    # pins wide and the QKV config; the dense selection runs only in pinned mode (BLOCK_M 192 QKV).
+def test_pp4_job_pins_wide_norm_quant_and_the_settled_bm192_qkv_tile():
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    assert '"${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env" >"${ART}/decode-selection-dense.log" 2>&1 || true' in pp4
+    assert "--pinned-env" not in pp4 and "select-firmus-decode-kernels.sh" not in pp4
     selected = runpy.run_path(str(ROOT / "scripts/prepare-firmus-pp4-settings.py"))["PP4_SELECTED"]
     assert selected["SGLANG_DECODE_NORM_QUANT"] == "wide"
-    assert not {"SGLANG_DECODE_DENSE_GEMM_QKV", "SGLANG_DECODE_DENSE_GEMM_O", "DG_SM90_1D2D_DECODE_CONFIG"} & set(selected)
+    assert selected["DG_SM90_1D2D_DECODE_CONFIG"] == "QKV:128,144,5,1,0;QKV>128:192,80,5,1,0"
+    assert not {"SGLANG_DECODE_DENSE_GEMM_QKV", "SGLANG_DECODE_DENSE_GEMM_O"} & set(selected)

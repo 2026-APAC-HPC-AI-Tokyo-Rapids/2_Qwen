@@ -59,7 +59,7 @@ int main() {
                 setenv("DG_SM90_PREFILL_4STAGE",stage4?"1":"0",1);
                 setenv("DG_SM90_PREFILL_LEAN",stage4>=2?"1":"0",1);
                 setenv("DG_SM90_PREFILL_TAIL_PAIR",stage4==3?"1":"0",1);
-                setenv("DG_SM90_PREFILL_SPLIT_ACCUM",stage4==4?"1":"0",1);
+                setenv("DG_SM90_PREFILL_SPLIT_ACCUM",stage4>=4?"1":"0",1);
                 int cap=ranks==1?8448:4224;
                 int pool=layout::get_num_max_pool_tokens(ranks,cap,8,experts/ranks);
                 int sf=layout::get_num_sf_ring_tokens(pool,layout::kMinCandidateBlockM);
@@ -141,7 +141,7 @@ int main() {
         values = list(map(int, contract.split()))
         assert values[0] == row["host"]["smem"], (row, values)
         assert values[8] == (18432 if row["stage4"] else 65536), (row, values)
-        # 25 host arguments, plus (EP1 only) kPrefillLean, kPrefillTailPair and kPrefillSplitAccum when set.
+        # 25 host arguments, plus (EP1 only) kPrefillLean, kPrefillTailPair, kPrefillSplitAccum when set.
         lean = ["true"] if row["ranks"] == 1 else []
         pair = ["true", "true"] if row["ranks"] == 1 else []
         split = ["true", "false", "true"] if row["ranks"] == 1 else []
