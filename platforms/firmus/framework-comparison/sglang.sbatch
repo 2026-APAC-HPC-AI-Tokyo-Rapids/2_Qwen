@@ -132,6 +132,11 @@ runtime_dir=$(dirname "$(dirname "$0")")
 # The Decode peer also needs explicit global target/draft KV region IDs.
 if /opt/sglang/venv/bin/python -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("prefill", {}).get("pp", 1) != 4)' "${runtime_dir}/source/firmus-framework.json"; then
   export SGLANG_QWEN_PP4_EP1=1
+  # 41138356267 failed hidden-state parity during FA3 draft-extend capture; retain the served eager path.
+  if [[ "$role" == decode ]]; then
+    export SGLANG_DISABLE_DRAFT_EXTEND_CUDA_GRAPH=1
+    printf 'FA3 draft-extend CUDA graph disabled after parity failure in 41138356267; using eager execution.\n'
+  fi
   # Millisecond scheduler log times (PP4 only): the start-burst first tokens of 41020974704 stall from 0.8 to
   # 1.5 s, and second-resolution batch lines cannot place the Prefill admissions and releases in that window.
   export SGLANG_LOG_MS=1

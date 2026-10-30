@@ -202,3 +202,34 @@ an old source pin. Local real-Torch validation: 28 passed; eight real-SquashFS
 cases require the Linux CI job. The earlier retry commit's skipped-test note
 was imprecise: the one local skip was missing Torch in that pytest environment;
 the focused test subsequently passed with `python -m pytest` and real Torch.
+
+### Second retry
+
+Commit `1fa1d36f2fe8abb3d5c3620995454d52a74ceb0c` started
+[41138356267](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41138356267)
+at 2026-10-31 07:28:30 JST. All CI passed, including 36 Linux PP4 regression
+cases with real SquashFS extraction and real Torch, and gigatoken parity.
+Provision verified the pinned image hash and the actual PP4 CPU gate passed.
+
+Slurm 27733 was allocated two nodes and failed 1:0 after 6:49. All 149 archive
+checksums passed. The sparse penalty gate passed on all four H200s: 150 cases
+and four changed-input graph replays per rank; sparse medians 12.23–12.61 us,
+dense medians 150.69–151.69 us at batch48/vocab151936/verify-width4. These are
+gate timings, not an official serving score. The cache correction is verified
+on GPUs.
+
+The next blocker is the new FA3 draft-extend graph. All four Decode ranks
+failed its startup hidden-state parity assertion at
+`eagle_draft_extend_cuda_graph_runner.py:516`. One reported 122770/163840
+mismatches (74.9%), maximum absolute difference 12.3125. Larger capture sizes
+passed before the failure near batch10; logits passed the preceding assertion.
+This does not establish the internal graph defect, but it rejects this graph
+path for adoption. Prefill became ready; Decode did not, so no benchmark or
+score was produced. Both Prefill candidates again retained their controls.
+
+For the next retry, keep the unchanged image and sparse penalty implementation,
+and set the existing `SGLANG_DISABLE_DRAFT_EXTEND_CUDA_GRAPH=1` switch only on
+the PP4 Decode worker. This restores its previously served eager draft-extend
+path. Target verification and draft-decode graphs remain enabled; the graph
+parity assertions are not modified. The original combined forecast includes
+the rejected draft-extend graph and does not apply to this reduced bundle.

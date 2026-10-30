@@ -487,7 +487,7 @@
     "expected": "about 9-12 us per sequence-call with power-cap factor 1 for removed MUFU/ALU work; about 0.4-0.6 ms per 24-layer PP0 period"
   },
   "pp4_throughput_bundle_20261031": {
-    "status": "retry_failed_cpu_image_build_commit_check_fixed",
+    "status": "sparse_gpu_passed_fa3_graph_hidden_parity_failed_eager_retry_prepared",
     "user_objective_good_output_tokens_per_second": [
       10000,
       10500,
@@ -577,8 +577,34 @@
     ],
     "note": "research/runtime-performance/2026-10-31-pp4-throughput-bundle.md",
     "new_image_sha256": "44d16aaa4266ad187ce20590615a3def1eb75232815132bac4f825ff7f8ac781",
-    "new_run": 41125598232,
+    "new_run": 41138356267,
     "official_score": null,
+    "gpu_gate_41138356267": {
+      "archive": "/srv/qwen-artifacts/41138356267/1",
+      "verified_archive_files": 149,
+      "slurm_job": 27733,
+      "slurm_state": "FAILED 1:0",
+      "slurm_elapsed_seconds": 409,
+      "sparse_penalty": {
+        "passed_h200_gpus": 4,
+        "cases_per_gpu": 150,
+        "changed_input_graph_replays_per_gpu": 4,
+        "dense_median_us": [150.85951805114746, 151.68831825256348, 150.69408416748047, 150.73823928833008],
+        "sparse_median_us": [12.606079578399658, 12.229119539260864, 12.373759746551514, 12.385280132293701],
+        "scope": "pre-serving gate timings, not ordinary-serving gains"
+      },
+      "draft_extend_graph": {
+        "accepted": false,
+        "failure": "startup hidden-state parity assertion on all four Decode ranks",
+        "example_mismatched_elements": 122770,
+        "example_total_elements": 163840,
+        "example_max_absolute_difference": 12.3125,
+        "internal_graph_defect": null,
+        "next_retry": "SGLANG_DISABLE_DRAFT_EXTEND_CUDA_GRAPH=1 only on PP4 Decode; retain eager draft-extend"
+      },
+      "prefill_selection": "both candidates retained control",
+      "score_produced": false
+    },
     "cpu_validation": {
       "torch": "2.11.0",
       "numpy": "2.2.6",
@@ -603,7 +629,7 @@
       "patches/deep-gemm-host/sm90-prefill-split-unroll16.patch": "2a49f96935d115a88d093cb7670efb97a5f543fd2a8b48a0fdeadddec4a8fd27",
       "patches/deep-gemm-bench/prefill-split-unroll16/sm90-prefill-split-unroll16.patch": "a0608f94bddd1f9d43b6c6191708845c532a168e20f15399e6430398d448c038"
     },
-    "new_commit": "0d69174fde86dc19e2bd5845b55dbb549afdaf22",
+    "new_commit": "1fa1d36f2fe8abb3d5c3620995454d52a74ceb0c",
     "conditional_forecast": {
       "method": "existing PP4 closed-loop model deltas on measured R4; not GPU measurements",
       "model_sha256": "19b3ee74f6556ffdd565558018d0be4809ada8b3d6e68eac132ffb8d7e36b844",
