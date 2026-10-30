@@ -29,6 +29,8 @@ def launch(config, role, index, host):
         "--moe-a2a-backend", config["moe_a2a_backend"],
         "--moe-runner-backend", config["moe_runner_backend"],
         "--disaggregation-mode", role, "--disaggregation-transfer-backend", "nixl",
+        "--load-balance-method", config.get("load_balance_method", "follow_bootstrap_room"),
+        "--load-snapshot-publish-interval", str(config.get("load_snapshot_publish_interval", 15)),
         "--speculative-algorithm", "EAGLE3", "--speculative-draft-model-path", "/draft",
         "--speculative-num-steps", str(config["speculation"]["steps"]),
         "--speculative-eagle-topk", "1",

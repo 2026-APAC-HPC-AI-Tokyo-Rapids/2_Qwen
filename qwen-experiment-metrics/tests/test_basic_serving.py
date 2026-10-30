@@ -35,6 +35,8 @@ def test_public_launch_has_capacity_and_isolated_port_ranges(config, role, index
     assert value("--disaggregation-mode") == role
     assert value("--disaggregation-transfer-backend") == "nixl"
     assert value("--moe-a2a-backend") == "megamoe"
+    assert value("--load-balance-method") == config["load_balance_method"]
+    assert value("--load-snapshot-publish-interval") == str(config["load_snapshot_publish_interval"])
     assert value("--speculative-eagle-topk") == "1"
     if role == "prefill":
         assert value("--prefill-max-requests") == str(config["prefill"]["prefill_max_requests"])
@@ -59,6 +61,7 @@ def test_readback_rejects_other_version_and_clipped_pool(config):
     checker = load("check-basic-server-info")
     fixture = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/firmus-server-info-38369214512.json").read_text())
     fixture.update(version=config["sglang_version"], tp_size=4, attn_dp_size=4, ep_size=4, disaggregation_mode="decode", context_length=8192, kv_cache_dtype="fp8_e4m3", page_size=64, attention_backend="fa3", moe_a2a_backend="megamoe", speculative_algorithm="EAGLE3", speculative_num_steps=3, speculative_num_draft_tokens=4, speculative_eagle_topk=1, max_running_requests=128, max_total_tokens=config["decode_max_total_tokens"], max_total_num_tokens=config["decode_max_total_tokens"], ep_num_redundant_experts=0)
+    fixture.update(load_balance_method=config["load_balance_method"], load_snapshot_publish_interval=config["load_snapshot_publish_interval"])
     fixture["internal_states"] = [{"memory_usage": {"token_capacity": config["decode_max_total_tokens"]}, "effective_max_running_requests_per_dp": 32, "decode_cuda_graph_bs": config["decode_cuda_graph_bs"]} for _ in range(4)]
     checker.check(config, fixture, "decode")
     fixture["internal_states"][2]["memory_usage"]["token_capacity"] -= 64
