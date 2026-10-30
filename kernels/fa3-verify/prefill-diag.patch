@@ -1,5 +1,5 @@
 diff --git a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
-index 397028b..39e16f8 100644
+index 397028b..34c30f4 100644
 --- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 +++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 @@ -61,6 +61,15 @@ struct CollectiveMainloopFwdSm90 {
@@ -63,7 +63,7 @@ index 397028b..39e16f8 100644
          auto scale_log2 = [&](TileState const& t) {
              float const q_descale = params.ptr_q_descale == nullptr ? 1.0f : params.ptr_q_descale[t.bidb * get<0>(params.stride_q_descale) + t.bidh * get<1>(params.stride_q_descale)];
              float const k_descale = params.ptr_k_descale == nullptr ? 1.0f : params.ptr_k_descale[t.bidb * get<0>(params.stride_k_descale) + t.bidh * get<1>(params.stride_k_descale)];
-@@ -1899,15 +1946,40 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1899,15 +1946,41 @@ struct CollectiveMainloopFwdSm90 {
                  warpgroup_wait<1>();
                  pipeline_k.consumer_release(smem_pipe_read);
                  if (nxt.n_block_max - 1 == nxt.n_block_min) { query_empty(); }
@@ -100,8 +100,9 @@ index 397028b..39e16f8 100644
 +                    static_assert(decltype(stride<2>(tOrP.layout()))::value == cosize(decltype(get<0>(tOrP.layout())){}) && size<1>(decltype(tOrP.layout()){}) == 1);
 +                    diag_trim(subs, [&](auto sub) {
 +                        static constexpr int kHead = decltype(sub)::value * kDiagN / 32 * cosize(decltype(get<0>(tOrP.layout())){});
-+                        Tensor tOrP_tail = make_tensor(tOrP.data() + kHead, make_layout(Int<(cosize(decltype(tOrP.layout()){}) - kHead) / 4>{}));
-+                        cute::fill(recast<uint32_t>(tOrP_tail), 0u);
++                        Tensor tOrP_tail = recast<uint32_t>(make_tensor(tOrP.data() + kHead, make_layout(Int<cosize(decltype(tOrP.layout()){}) - kHead>{})));
++                        static_assert(size(decltype(tOrP_tail.layout()){}) * 4 == cosize(decltype(tOrP.layout()){}) - kHead);
++                        cute::fill(tOrP_tail, 0u);
 +                    });
 +                }
                  softmax.rescale_o(tOrO, scores_scale);

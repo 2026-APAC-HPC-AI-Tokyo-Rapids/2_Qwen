@@ -32,7 +32,8 @@ def test_diag_patch_is_last_in_the_build_chain_and_keeps_the_pinned_path():
     assert 'flash::gemm' not in text and 'warpgroup_wait' not in text
     # The sub-block count is warp-uniform for ptxas, and the skipped P bytes are written as zeros.
     assert 'return __shfl_sync(0xffffffff, std::min(std::max(cute::ceil_div(limit, int(kDiagN)), 1), int(kDiagSubs)), 0);' in text
-    assert 'cute::fill(recast<uint32_t>(tOrP_tail), 0u);' in text
+    # Every byte of the skipped k-blocks: the 32-bit view must cover the whole tail (a quarter of it did in 7f4a64e).
+    assert 'static_assert(size(decltype(tOrP_tail.layout()){}) * 4 == cosize(decltype(tOrP.layout()){}) - kHead);' in text and 'cute::fill(tOrP_tail, 0u);' in text
 
 
 def diag_subs(m_block, wg, seqlen_q, seqlen_k, group=16, block_m=128, block_n=192, diag_n=32):
