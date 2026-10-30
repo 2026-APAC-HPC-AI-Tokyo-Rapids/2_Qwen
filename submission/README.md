@@ -1,12 +1,12 @@
 # Qwen3 PD Bonus submission — Firmus, Tokyo Rapids
 
-**Classification: Bonus.** This package contains team source and kernel changes. It is retained as a reproducible Bonus result. The separately tuned, unmodified SGLang Basic entrypoint is [basic/README.md](basic/README.md). Basic has a first eligible measurement; selection, repetition and the Basic-to-Bonus comparison remain pending.
+**Classification: Bonus.** This package contains team source and kernel changes. It is retained as a reproducible Bonus result. The separately tuned, unmodified SGLang Basic entrypoint is [basic/README.md](basic/README.md), with two selected c160 measurements averaging 6330.21 good output tok/s. Basic's public image and serving path are separate from the patches in this package.
 
 The measured run frozen in this package is **9120.51 good output tok/s**, Actions [40225743220](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40225743220), Slurm 26232: 5802 requests, zero errors, good request fraction 0.97708. This is one measured run, not a repeatability claim. Its text evidence and checksums are in `results/40225743220/`.
 
 Standalone re-run of this package: **9132.03 good output tok/s**, Actions [40273247322](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40273247322), Slurm 26298, COMPLETED 0:0 in 9m13s: 5801 requests, zero errors, good request fraction 0.97776. It ran exactly `run/prepare.sh` followed by `sbatch scripts/submit.sbatch` on the recorded image; evidence is in `results/40273247322/`.
 
-Later source-modified Bonus experiments reached 9832.74 and 9828.95 good output tok/s with a different PP4 Prefill configuration ([round 4](../research/runtime-performance/2026-10-30-pp4-round4-9832.md), [round 6](../research/runtime-performance/2026-10-30-pp4-round6-9828.md)). Those experimental configurations are not the frozen package documented here.
+The newer source-modified PP4 path in `main` is also **Bonus**. Its [round 8](../research/runtime-performance/2026-10-31-pp4-round8-9883.md) measured 9883.36 good output tok/s; earlier [round 4](../research/runtime-performance/2026-10-30-pp4-round4-9832.md) and [round 6](../research/runtime-performance/2026-10-30-pp4-round6-9828.md) measured 9832.74 and 9828.95. These are different configurations, not repetitions of the frozen package documented here or a measurement of one isolated kernel change.
 
 Common baseline: **1,832 good output tok/s** on Firmus 2×8 H200 (official task `5. Common Baselines.md`, job 25013). The baseline uses different serving settings.
 

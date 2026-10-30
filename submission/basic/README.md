@@ -1,6 +1,17 @@
 # Basic — 公開版SGLang、source変更なし
 
-既存の[Bonus提出物](../README.md)と分けて、公式SGLang 0.5.23の起動オプション・環境変数・配置だけを調整する。Firmus 2 node / 16 H200 GPUを使用する。現時点のconfigは比較中の候補であり、適格な最適点の選定は未完了。初回c160の測定結果、進行中の比較と採否基準は[実験記録](../../research/runtime-performance/2026-10-30-basic-stock-sglang.md)を参照。
+既存の[Bonus提出物](../README.md)と分けて、公式SGLang 0.5.23の起動オプション・環境変数・配置だけを調整する。Firmus 2 node / 16 H200 GPUを使用する。探索範囲で選択した構成は **concurrency160**。公式測定2回のscoreは **6321.12 / 6339.31 good output tok/s**、平均 **6330.21**、SLA適合率 **97.69–97.91%**、request error0。c144の対照反復とc192の不適格結果を含む条件・来歴は[実験記録](../../research/runtime-performance/2026-10-30-basic-stock-sglang.md)を参照。
+
+## 選択したruntime
+
+- P3/D1、各worker 4 GPU。public flagsは `--tp-size 4 --attn-dp-size 4 --ep-size 4`（attentionはTP1/DP4、MoEはEP4）。
+- FA3、FP8 E4M3 KV、page64、native MegaMoE + DeepGEMM、memory fraction0.90。
+- 両roleで `--load-balance-method total_requests --load-snapshot-publish-interval 1`。
+- Prefill chunkはglobal16384、DP rankあたり4096。`--prefill-max-requests` は指定しない。KV pool32768/rank、global request cap256。
+- Decode KV pool393216/rank、global request cap128（32/rank）。Decode graph bucketsは1,2,3,4,6,8,12,16,20,24,28,32。Prefill graphは無効。
+- public Nebius BF16 EAGLE3、steps3 / draft tokens4 / topk1。重みは変更しない。
+
+完全なpublic argv/envは[scripts/basic-worker.py](../../scripts/basic-worker.py)と、回収した`source/*-launch.json`にある。[configs/firmus-basic.json](../../configs/firmus-basic.json)は測定済み設定を固定する。SGLang、DeepGEMM、kernel、gatewayにsource patchやruntime overlayを適用しない。draftのloader selectorとdtype宣言の整合だけを記録付きで行う。
 
 ## 再実行
 

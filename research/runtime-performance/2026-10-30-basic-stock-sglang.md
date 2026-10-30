@@ -11,7 +11,14 @@
 - [Prefill supply rebalance](2026-10-09-prefill-supply-rebalance.md)、[campaign summary](2026-10-13-campaign-summary.md): 4429.9のP6TP2/D1TP4は旧source/patchを含む。今回のstock Basicの性能値として流用しない。
 - [MegaMoE integration audit](2026-10-17-branch-integration-audit.md): 6344.96も当時の独自MegaMoE等を含む。旧版で「vanilla」と呼んだ設定も、最新公開版を十分に調整した対照にはならない。
 - [draft比較](2026-10-28-fp8-draft-placement-and-fa3-attribution.md) §8: Nebius受理長2.251、Meituan1.860、RedHat1.945/2.015。異なるdraftの再探索より公開Nebiusを固定する。旧独自実装の受理長を今回の測定値とは扱わない。
-- [PP4 round 4](2026-10-30-pp4-round4-9832.md)、[round 6](2026-10-30-pp4-round6-9828.md): Bonusの9832.74/9828.95。既存の提出パッケージ9120.51（再実行9132.03）とは別の構成。Basic対照の有効な反復測定が揃うまで、これらとの速度比を確定しない。
+- [PP4 round 4](2026-10-30-pp4-round4-9832.md)、[round 6](2026-10-30-pp4-round6-9828.md): Bonusの9832.74/9828.95。既存の提出パッケージ9120.51（再実行9132.03）とは別の構成。同一configの反復として混ぜず、提出構成全体の参照値とする。
+- 後続の[PP4 round 8](2026-10-31-pp4-round8-9883.md)は9883.36、source変更系としてmainへ統合された（`94ef7ed`）。これもBonusであり、固定済みstandaloneパッケージとは分ける。
+
+## Selected result
+
+選択構成は **concurrency160、native total_requests / snapshot interval1、Prefill local chunk4096 / request limit未指定**。公開image・worker設定を固定した2回は **6321.12 / 6339.31 good output tok/s**、平均 **6330.21**、SLA適合率 **97.69–97.91%**、error0。近傍c144の対照反復は5970.02 / 5961.67、平均5965.84。この2点の反復比較ではc160平均が6.11%高い。c192はSLA69.42%で不適格となり、上側への探索を止めた。
+
+これは今回探索した9条件・計11測定の中での選択であり、全public optionや全concurrencyの組み合わせに対する大域的な最適性の主張ではない。最終設定は[configs/firmus-basic.json](../../configs/firmus-basic.json)、再現手順は[submission/basic/README.md](../../submission/basic/README.md)。
 
 ## Public image and launch boundary
 
@@ -45,8 +52,10 @@ BonusのPP4はそのまま候補にしない。公開Qwen3MoEの `set_eagle3_lay
 | `da25356` / [41061750438](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41061750438) | 128 | 4096 / 1、native total_requests | attempt1のSSH切断後、未投入をqueue/sacctで確認。attempt2 Slurm27652 COMPLETED（9:58）、5649.78、98.5045%、error0。保管まで成功 |
 | `b738103` / [41078513032](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41078513032) | 128 | 4096 / unlimited、total_requests | Slurm27681 COMPLETED（10:48）。5526.21、98.5036%、error0。保管まで成功 |
 | `40001ba` / [41078642203](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41078642203) | 160 | 4096 / unlimited、total_requests | Slurm27682 COMPLETED（10:04）。6321.12、97.6860%、error0。保管まで成功 |
-| `c9cb549` / [41089017770](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41089017770) | 144 | 4096 / unlimited、total_requests | Slurm27698、scheduler待ち |
-| `96d8553` / [41091531546](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41091531546) | 192 | 4096 / unlimited、total_requests | Slurm27705、scheduler待ち |
+| `c9cb549` / [41089017770](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41089017770) | 144 | 4096 / unlimited、total_requests | Slurm27698 COMPLETED（10:53）。保管・指標送信まで成功 |
+| `96d8553` / [41091531546](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41091531546) | 192 | 4096 / unlimited、total_requests | Slurm27705 FAILED（10:20）、SLA gateのみ不適格。error0、公式score0。失敗を含め保管・指標送信済み |
+| `0cd50ae` / [41093781934](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41093781934) | 160 | 4096 / unlimited、total_requests | 候補の独立反復。Slurm27709 COMPLETED（10:35）。保管・自動BigQuery送信まで成功 |
+| `266e5e4` / [41112694161](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41112694161) | 144 | 4096 / unlimited、total_requests | 近傍対照の独立反復。Slurm27718 COMPLETED（10:19）。保管・自動BigQuery送信まで成功 |
 
 1→2 request/batchの比較では、token枠も2 requestが収まる値にする。この2設定は物理バッチサイズという同じ主要因を表す。その他の条件を固定する。`--prefill-max-requests` は[公開schedulerの上限](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/managers/schedule_policy.py)を使用し、独自のrequest-alignment実装は移植しない。
 
@@ -88,7 +97,7 @@ raw正本: `/srv/qwen-artifacts/41053120260/1/`（checksum付きhome-server arch
 | 2 / 8192 | [41058071649](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41058071649) / 1 | 4867.53 | 5202.74 | 93.5564% | 2835.90 | 16.03 |
 | 1 / 4096 + total_requests | [41061750438](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41061750438) / 2 | 5649.78 | 5735.52 | 98.5045% | 1956.90 | 16.18 |
 
-上3条件のDP policyはnative既定のP=follow_bootstrap_room、D=round_robin（snapshot interval15）。最下行だけ両role=total_requests・interval1。各1回の観測であり、差を確定した改善幅と扱わない。単発最良はrouting条件5649.78だが、request上限とNを追加比較し、選択候補・対照を反復してから固定する。
+上3条件のDP policyはnative既定のP=follow_bootstrap_room、D=round_robin（snapshot interval15）。最下行だけ両role=total_requests・interval1。各1回の観測であり、差を確定した改善幅と扱わない。この段階の単発最良はrouting条件5649.78。後続でrequest上限とNを比較し、候補・近傍対照を各2回測定して選択した。
 
 | run | requests / good | TTFT-only misses | avg-ITL-only misses | both | READY sec | Slurm elapsed |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
@@ -109,12 +118,31 @@ raw正本は `/srv/qwen-artifacts/<run>/<attempt>/`。Slurm終了・回収後の
 
 公開環境変数`SGLANG_OPT_MASK_DP_PAD_MOE`も確認したが、適用先はStandardDispatcherであり、Qwen MegaMoEのdirect経路はそこを通らない。このbackendの改善を期待して無関係なflag試験は追加しない。
 
-## Selection rule and remaining work
+## Native routing concurrency selection and repetitions
 
-total_requests・interval1を固定したunlimited比較では、N128が5526.21（98.5036%）、N160が6321.12（97.6860%）。いずれもg1/g4、公式parser valid / eligible、request error0で、現在のcheckerによる全16 DP stateのread-only検証も通過した。N128は52件がTTFTのみで不合格、N160はTTFTのみ92件・平均ITLのみ1件。N160のREADYは350秒、TTFT p90=2418.61ms、ITL p99=16.89msだった。
+全行でtotal_requests・interval1、Prefill unlimited/local chunk4096、同一image・pool・request cap・graph buckets・draftを固定した。全runがg1/g4上で、request error0。SGLangは無改変の0.5.23。c144/c160は各2回の独立測定で、artifactから設定の一致も確認した。
 
-単発最良は6321.12だが、Basic最良設定は未確定。N160でも適格goodputが増えたため、N144に加えN192を上側の比較点とする。serverのpool・request cap・graph bucketsは変更しない。SLA不適格または適格goodputが増えなくなったところでN探索を止め、選択候補と対照を反復する。node組が違う場合は同条件を再測定し、単一runの差を設定の効果と断定しない。現在の主なmissはTTFT側であり、kernel/backend/draftの追加探索は行わない。
+| N | run / attempt | official score (good output tok/s) | good fraction | raw output tok/s | TTFT p90 ms | ITL p99 ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 128 | 41078513032 / 1 | 5526.21 | 98.5036% | 5610.12 | 2162.14 | 15.94 |
+| 144 | 41089017770 / 1 | 5970.02 | 98.1698% | 6081.30 | 2296.50 | 16.34 |
+| 144 | 41112694161 / 1 | 5961.67 | 98.1688% | 6072.83 | 2305.00 | 16.35 |
+| 160 | 41078642203 / 1 | 6321.12 | 97.6860% | 6470.79 | 2418.61 | 16.89 |
+| 160 | 41093781934 / 1 | 6339.31 | 97.9125% | 6474.41 | 2435.57 | 16.72 |
+| 192 | 41091531546 / 1 | **0 (ineligible)** | 69.4197% | 6623.66 | 3669.31 | 17.20 |
+
+選択候補c160の2回の差は0.29%、対照c144は0.14%。c160平均6330.21を今回の測定済みBasic構成とする。c192のraw throughput増加はc160の約2.3%にとどまる一方、TTFT-only miss1269・平均ITL-only miss1で不適格。非gateのgood throughput4598.17は診断値であり、公式score0を置き換えない。`official_validation`のerrorは`good_request_fraction is below 0.90`のみで、command/provenance/export/ISL/OSL検査後のSLA gateで終了した。parserを緩めたり、rawを上書きしたりしない。
+
+profiling phaseのrequest開始時刻で最初の10秒を分けると、c160初回のTTFT missは91件が最初の10秒、1件がその後。反復の84件はすべて最初の10秒だった。c144初回の69件も最初の10秒。一方c192は223件が最初の10秒、1046件がその後であり、不適格を開始burstだけの問題とは扱えない。開始burstも公式scoreへ含める。このHTTP側の観測からkernel・queue・handoffの寄与を分離したとは主張しない。
+
+各runの4 worker×4 DP state、実KV容量、実request cap、graph/batch geometryをread-onlyで再検証した。workerごとに4基、合計16基の重複しないH200 UUIDも確認した。driver610.57.04・power limit700 Wは全測定で同じ。Slurmの待機時間はgeneration scoreへ含めず、起動は約333–403秒、通常runのSlurm実行は約10–11分だった。
+
+## Basic / Bonus references and completion
+
+固定済み[Bonusパッケージ](../../submission/README.md)は9120.51とstandalone再実行9132.03を持つ。mainの新しいPP4 round8は9883.36の単発観測で、同じ構成の反復ではない。いずれもFirmus 16 H200・公式workloadの結果だが、engine/source、配置、concurrency、kernel等が異なる。これは提出構成全体の参照値であり、個別source patchの効果として速度比を帰属しない。Basicにprivate kernelやPP4 aux-hidden patchを持ち込まない。
 
 比較用BigQuery指標は既存senderへ送る。terminal accountingとchecksum archiveを検証し、設定・来歴・公式score・AIPerf指標の9行を生成する。raw正本を変更せず、派生fragmentはその外側へ置く。資格情報はhome-server login側だけで使用し、失敗時も測定結果と高コストimageは保持する。`qwen-basic-metrics.yml`のdispatchは過去archiveの指標送信専用で、GPU条件の切り替えには使わない。
+
+候補・対照の反復はActions → Slurm → 公式parser → checksum archive → BigQueryの全経路を完走した。不適格runも保存・送信済み。remote run directoryはterminal・回収後に削除し、再利用するBasic imageは保持する。配備失敗を含む旧runの残留directory・準備processも棚卸し済み。別作業のActionsやscheduler jobは停止していない。
 
 公式accuracy全件検査は主催者が行う。gatewayのsanity応答やSLA検証は、その代替にはならない。
