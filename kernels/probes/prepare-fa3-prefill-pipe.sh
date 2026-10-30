@@ -8,12 +8,13 @@ root="${GITHUB_WORKSPACE}"
 # PrefillVariant values in timing order (index 0 is the pinned n192-direct-o-varlen) and their names;
 # 224 = 96 | 128 is n192-direct-o-varlen-pipe (pipelined M-tiles, prefill-pipe.patch). prefill-qa.patch:
 # 256 stages the next tile's Q (claimed at the last KV step), 512 claims one step earlier, 1024 stores
-# O with the sequence offset loaded before the hand-off wait.
-variants=96,224,480,992,1248,1504
-names=pin,pipe,qa,qa-lead1,pipe-rows,qa-rows
+# O with the sequence offset loaded before the hand-off wait, 2048 (with 256) reads Q from half w % 2
+# of smem_q with the consumer tile loop unrolled by two (no shared-to-shared copy).
+variants=96,224,480,1504,2528,3552
+names=pin,pipe,qa,qa-rows,qd,qd-rows
 # Rows of the stamp build, run separately for their per-tile phase clocks.
-stamp_variants=96,224,480,1504
-stamp_names=pin,pipe,qa,qa-rows
+stamp_variants=96,480,2528,3552
+stamp_names=pin,qa,qd,qd-rows
 source "${root}/platforms/genkai/kernel-probe/prepare-runtime.sh"
 install -m 0644 "${root}/kernels/fa3-verify/candidates.json" "${RUNTIME_DIR}/source/fa3-verify-candidates.json"
 install -m 0755 "${root}/kernels/probes/run-container.sh" "${RUNTIME_DIR}/scripts/run-container.sh"

@@ -16,7 +16,7 @@ index 0000000..d26310d
 +#define APAC_STAMP_BEGIN(coord) do { if (threadIdx.x % 128 == 0) { unsigned long long t0 = apac_clock(); unsigned int s = atomicAdd(&apac_stamp_count, 1u); apac_slot() = s; unsigned int sm; asm volatile("mov.u32 %0, %%smid;" : "=r"(sm)); if (s < (1u << 14)) { apac_stamp_buf[s * 16 + 0] = (uint64_t(sm) << 48) | (uint64_t(threadIdx.x / 128) << 44) | (uint64_t(cute::get<2>(coord)) << 40) | (uint64_t(cute::get<1>(coord)) << 32) | uint64_t(cute::get<0>(coord)); apac_stamp_buf[s * 16 + 1] = t0; } } } while (0)
 +#define APAC_STAMP(i) do { if (threadIdx.x % 128 == 0) { unsigned int s = apac_slot(); if (s < (1u << 14)) { apac_stamp_buf[s * 16 + 1 + (i)] = apac_clock(); } } } while (0)
 diff --git a/hopper/flash_fwd_kernel_sm90.h b/hopper/flash_fwd_kernel_sm90.h
-index e3c034f..d4d789c 100644
+index 77d6af2..863180c 100644
 --- a/hopper/flash_fwd_kernel_sm90.h
 +++ b/hopper/flash_fwd_kernel_sm90.h
 @@ -17,6 +17,7 @@
@@ -55,7 +55,7 @@ index e3c034f..d4d789c 100644
              }
              epilogue.store_tail();
 diff --git a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
-index dfb30c3..ebde8f3 100644
+index 5cabf4d..1141ef6 100644
 --- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 +++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 @@ -16,6 +16,7 @@
@@ -66,7 +66,7 @@ index dfb30c3..ebde8f3 100644
  #include "block.h"
  #include "mask.h"
  #include "pack_gqa.h"
-@@ -1455,6 +1456,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1476,6 +1477,7 @@ struct CollectiveMainloopFwdSm90 {
          auto &barrier_Q = shared_storage.pipelines.barrier_Q;
          if constexpr (!AppendKV) {
              barrier_Q.wait(work_idx % 2);
@@ -74,7 +74,7 @@ index dfb30c3..ebde8f3 100644
          } else {
              if (get<1>(params.shape_rotary) > 0) {  // Apply rotary to Q
                  using Rotary_t = Rotary<kBlockM, kHeadDim, NumMmaThreadsQK, Element, !(Is_causal || Is_local) /*FixedPosition*/>;
-@@ -1503,6 +1505,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1524,6 +1526,7 @@ struct CollectiveMainloopFwdSm90 {
                  flash::gemm<true, -1>(tiled_mma_qk, tSrQ, tSrK(_, _, _, smem_pipe_read.index()), tSrS);
                  warpgroup_wait<0>();
              }
@@ -82,7 +82,7 @@ index dfb30c3..ebde8f3 100644
              pipeline_k.consumer_release(smem_pipe_read);
              if constexpr (HasQv) {
                  shared_storage.pipelines.barrier_Qv.wait(work_idx % 2);
-@@ -1535,6 +1538,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1556,6 +1559,7 @@ struct CollectiveMainloopFwdSm90 {
              if constexpr (!MmaPV_is_RS) { write_P_to_smem(tOrP); }
              if constexpr (!MmaPV_is_RS) { arrive_on_P_write_barrier(); }
              --n_block;
@@ -90,7 +90,7 @@ index dfb30c3..ebde8f3 100644
  
              // Need to initialize tOrO in the case of RescaleOBeforeGemm where we will scale tOrO even in the 1st iter
              clear(tOrO);
-@@ -1661,6 +1665,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1682,6 +1686,7 @@ struct CollectiveMainloopFwdSm90 {
                      }
                  }
              }
@@ -98,7 +98,109 @@ index dfb30c3..ebde8f3 100644
              // Tell producers that smem_q is ready
              cutlass::arch::NamedBarrier::arrive(kHeads * NumMmaThreadsQK + (Use_TMA_Q ? cutlass::NumThreadsPerWarp : NumProducerThreads), static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
              if constexpr (RescaleOBeforeGemm) { prefill_rescale(softmax, tOrO, scores_scale); }
-@@ -1967,7 +1972,9 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1992,8 +1997,10 @@ struct CollectiveMainloopFwdSm90 {
+ 
+                 // Issued before the hand-off wait so the store does not wait for it.
+                 int const offset_cur = PrefillPipeRows ? params.cu_seqlens_q[cur.bidb] : 0;
++            APAC_STAMP_BEGIN(cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
+                 auto [m_block1, bidh1, bidb1] = next_tile(cute::Int<1>{});
+-                if (bidb1 < 0) { break; }
++                APAC_STAMP(1);
++            if (bidb1 < 0) { break; }
+                 TileState nxt = tile_state(m_block1, bidh1, bidb1);
+                 // Boundary step: QK of the next tile's first (diagonal) block with the PV of this tile's
+                 // last block, in the ping-pong order of fwd_step.
+@@ -2003,19 +2010,23 @@ struct CollectiveMainloopFwdSm90 {
+                     Tensor tSrS = partition_fragment_C(tiled_mma_qk, select<0, 1>(TileShape_MNK{}));
+                     if (warp_group_idx == 0) { consumer_wait(pipeline_k, smem_pipe_read); }
+                     warp_scheduler_barrier_sync();
++                    APAC_STAMP(2);
+                     flash::gemm<true, -1>(tiled_mma_qk, tSrQ1, tSrK(_, _, _, smem_pipe_read.index()), tSrS);
+                     if (warp_group_idx == 0) { consumer_wait(pipeline_v, smem_pipe_read_v); }
+                     flash::gemm</*zero_init=*/false, /*wg_wait=*/-1>(tiled_mma_pv, tOrP, tOrV(_, _, _, smem_pipe_read_v.index()), tOrO);
+                     warp_scheduler_barrier_arrive();
+                     warpgroup_wait<1>();
++                    APAC_STAMP(3);
+                     pipeline_k.consumer_release(smem_pipe_read);
+                     if (nxt.n_block_max - 1 == nxt.n_block_min) { query_empty(); }
+                     make_mask(nxt).template apply<true /*Seqlenk_mask*/, Is_causal, Is_local>(tSrS, nxt.m_block, nxt.n_block_max - 1);
+                     Softmax softmax_next(scale_log2(nxt));
+                     softmax_next.template max_get_scale</*Is_first=*/true, /*Check_inf=*/true>(tSrS);
+                     softmax_next.template online_softmax</*Is_first=*/true, /*Check_inf=*/true>(tSrS);
++                    APAC_STAMP(4);
+                     cute::copy(softmax.finalize(v_descale(cur)), scores_scale);
+                     warpgroup_wait<0>();
++                    APAC_STAMP(5);
+                     pipeline_v.consumer_release(smem_pipe_read_v);
+                     flash::permute_Cregs_fp8(tSrS);
+                     convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
+@@ -2026,12 +2037,14 @@ struct CollectiveMainloopFwdSm90 {
+                     } else {
+                         store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
+                     }
++                    APAC_STAMP(6);
+                     clear(tOrO);
+                     // Softmax keeps its scale const: rebuild it for the next tile, then take its state.
+                     ::new (&softmax) Softmax(scale_log2(nxt));
+                     cute::copy(softmax_next.row_max, softmax.row_max);
+                     cute::copy(softmax_next.row_sum, softmax.row_sum);
+                     cur = nxt;
++                    APAC_STAMP(7);
+                 }
+             }
+             {  // Tile with Q in half 1.
+@@ -2079,8 +2092,10 @@ struct CollectiveMainloopFwdSm90 {
+ 
+                 // Issued before the hand-off wait so the store does not wait for it.
+                 int const offset_cur = PrefillPipeRows ? params.cu_seqlens_q[cur.bidb] : 0;
++            APAC_STAMP_BEGIN(cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
+                 auto [m_block1, bidh1, bidb1] = next_tile(cute::Int<0>{});
+-                if (bidb1 < 0) { break; }
++                APAC_STAMP(1);
++            if (bidb1 < 0) { break; }
+                 TileState nxt = tile_state(m_block1, bidh1, bidb1);
+                 // Boundary step: QK of the next tile's first (diagonal) block with the PV of this tile's
+                 // last block, in the ping-pong order of fwd_step.
+@@ -2090,19 +2105,23 @@ struct CollectiveMainloopFwdSm90 {
+                     Tensor tSrS = partition_fragment_C(tiled_mma_qk, select<0, 1>(TileShape_MNK{}));
+                     if (warp_group_idx == 0) { consumer_wait(pipeline_k, smem_pipe_read); }
+                     warp_scheduler_barrier_sync();
++                    APAC_STAMP(2);
+                     flash::gemm<true, -1>(tiled_mma_qk, tSrQ, tSrK(_, _, _, smem_pipe_read.index()), tSrS);
+                     if (warp_group_idx == 0) { consumer_wait(pipeline_v, smem_pipe_read_v); }
+                     flash::gemm</*zero_init=*/false, /*wg_wait=*/-1>(tiled_mma_pv, tOrP, tOrV(_, _, _, smem_pipe_read_v.index()), tOrO);
+                     warp_scheduler_barrier_arrive();
+                     warpgroup_wait<1>();
++                    APAC_STAMP(3);
+                     pipeline_k.consumer_release(smem_pipe_read);
+                     if (nxt.n_block_max - 1 == nxt.n_block_min) { query_empty(); }
+                     make_mask(nxt).template apply<true /*Seqlenk_mask*/, Is_causal, Is_local>(tSrS, nxt.m_block, nxt.n_block_max - 1);
+                     Softmax softmax_next(scale_log2(nxt));
+                     softmax_next.template max_get_scale</*Is_first=*/true, /*Check_inf=*/true>(tSrS);
+                     softmax_next.template online_softmax</*Is_first=*/true, /*Check_inf=*/true>(tSrS);
++                    APAC_STAMP(4);
+                     cute::copy(softmax.finalize(v_descale(cur)), scores_scale);
+                     warpgroup_wait<0>();
++                    APAC_STAMP(5);
+                     pipeline_v.consumer_release(smem_pipe_read_v);
+                     flash::permute_Cregs_fp8(tSrS);
+                     convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
+@@ -2113,12 +2132,14 @@ struct CollectiveMainloopFwdSm90 {
+                     } else {
+                         store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
+                     }
++                    APAC_STAMP(6);
+                     clear(tOrO);
+                     // Softmax keeps its scale const: rebuild it for the next tile, then take its state.
+                     ::new (&softmax) Softmax(scale_log2(nxt));
+                     cute::copy(softmax_next.row_max, softmax.row_max);
+                     cute::copy(softmax_next.row_sum, softmax.row_sum);
+                     cur = nxt;
++                    APAC_STAMP(7);
+                 }
+             }
+         }
+@@ -2292,7 +2313,9 @@ struct CollectiveMainloopFwdSm90 {
  
              // Issued before the hand-off wait so the store does not wait for it.
              int const offset_cur = PrefillPipeRows ? params.cu_seqlens_q[cur.bidb] : 0;
@@ -108,7 +210,7 @@ index dfb30c3..ebde8f3 100644
              if (bidb1 < 0) { break; }
              TileState nxt = tile_state(m_block1, bidh1, bidb1);
              // Boundary step: QK of the next tile's first (diagonal) block with the PV of this tile's
-@@ -1978,19 +1985,23 @@ struct CollectiveMainloopFwdSm90 {
+@@ -2303,19 +2326,23 @@ struct CollectiveMainloopFwdSm90 {
                  Tensor tSrS = partition_fragment_C(tiled_mma_qk, select<0, 1>(TileShape_MNK{}));
                  if (warp_group_idx == 0) { consumer_wait(pipeline_k, smem_pipe_read); }
                  warp_scheduler_barrier_sync();
@@ -132,7 +234,7 @@ index dfb30c3..ebde8f3 100644
                  pipeline_v.consumer_release(smem_pipe_read_v);
                  flash::permute_Cregs_fp8(tSrS);
                  convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
-@@ -2001,12 +2012,14 @@ struct CollectiveMainloopFwdSm90 {
+@@ -2326,12 +2353,14 @@ struct CollectiveMainloopFwdSm90 {
                  } else {
                      store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
                  }
