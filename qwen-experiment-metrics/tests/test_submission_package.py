@@ -68,11 +68,6 @@ def test_worker_is_unchanged_except_dormant_nsight_block():
     capture = re.compile(r"runtime_dir=\$\(dirname \"\$\(dirname \"\$0\"\)\"\)\n# Keep inherited diagnostic variables.*?\nfi\n", re.DOTALL)
     expected, count = capture.subn("", expected)
     assert count == 1
-    # The research runner clears the experimental tail switch and reports it; the frozen submission has no tail overlay.
-    assert expected.count("unset DG_SM90_1D2D_PREFILL_TAIL_SKIP\n") == 1
-    expected = expected.replace("unset DG_SM90_1D2D_PREFILL_TAIL_SKIP\n", "")
-    assert expected.count("tail_skip=${DG_SM90_1D2D_PREFILL_TAIL_SKIP:-0} ") == 1
-    expected = expected.replace("tail_skip=${DG_SM90_1D2D_PREFILL_TAIL_SKIP:-0} ", "")
     assert worker(BATCH.read_text()) == expected
 
 

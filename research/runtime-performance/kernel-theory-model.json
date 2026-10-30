@@ -94,13 +94,13 @@
     },
     "p_qkv": {
       "priority": 4,
-      "next": "PP4（M=7988、2×3994行）の確認は2026-10-31に完了（`2026-10-31-prefill-dense-pp4.md`）。stockは256×128・A multicast・3 stage、18 wave（最終60/132）、M tail 204行（実行MMAの2.49%）。合法な他configは全てL2→SMEMを+16.8%以上増やし、padding削減は最大1.56%、BM192×BN128とBM128×BN192はMMA loop内でspillするため不採用。仕事を減らす残りの手段はconfigではなく、tail blockの空64行waveのWGMMA・promotion省略（−2.34%、0.21〜0.48 ms/period、JIT header）。 Round 9: implemented, gated in round 9。空64行tail waveのみを省略し、barrier・multicast・tile順・TMAは維持。12 Prefill GPU全てでM7988/3994のstock byte一致、stock FP32、200-call endurance、pair中央値2µs以上短縮を満たした時のみ有効。not yet measured on a GPU。",
+      "next": "PP4（M=7988、2×3994行）の確認は2026-10-31に完了（`2026-10-31-prefill-dense-pp4.md`）。stockは256×128・A multicast・3 stage、18 wave（最終60/132）、M tail 204行（実行MMAの2.49%）。合法な他configは全てL2→SMEMを+16.8%以上増やし、padding削減は最大1.56%、BM192×BN128とBM128×BN192はMMA loop内でspillするため不採用。仕事を減らす残りの手段はconfigではなく、tail blockの空64行waveのWGMMA・promotion省略（−2.34%、0.21〜0.48 ms/period、JIT header）。 Round 9（41135856718）で棄却：tail wave省略は12 GPU全てでbyte一致・endurance合格だが、QKV+O pairがstock 950〜981 µsに対し+58〜68 µs（+6.3%）遅い。k-block loop内のwave毎の分岐が省く2.34%を上回る。round 2（+12%）と同符号。1D2D mainloop内の実行時分岐によるpadding省略は再試行しない（`2026-10-31-pp4-round9.md`）。",
       "gap_to_explain": "tile padding、scale、epilogue。",
       "gate": "既存選択より速い同shapeの候補だけを他の検証に同乗。"
     },
     "p_o": {
       "priority": 4,
-      "next": "FA3出力FP8化は実装済み。PP4（M=7988）の確認は2026-10-31に完了（`2026-10-31-prefill-dense-pp4.md`）。stockは256×128・A multicast・3 stage、8 wave（最終100/132）、M tail 204行。他configはslot使用率が下がるかL2→SMEMが増えるため不採用。tail waveの省略はQKVと共通。 Round 9: implemented, gated in round 9。空64行tail waveのみを省略し、barrier・multicast・tile順・TMAは維持。12 Prefill GPU全てでM7988/3994のstock byte一致、stock FP32、200-call endurance、pair中央値2µs以上短縮を満たした時のみ有効。not yet measured on a GPU。",
+      "next": "FA3出力FP8化は実装済み。PP4（M=7988）の確認は2026-10-31に完了（`2026-10-31-prefill-dense-pp4.md`）。stockは256×128・A multicast・3 stage、8 wave（最終100/132）、M tail 204行。他configはslot使用率が下がるかL2→SMEMが増えるため不採用。tail waveの省略はQKVと共通。 Round 9（41135856718）で棄却：tail wave省略は12 GPU全てでbyte一致・endurance合格だが、QKV+O pairがstock 950〜981 µsに対し+58〜68 µs（+6.3%）遅い。k-block loop内のwave毎の分岐が省く2.34%を上回る。round 2（+12%）と同符号。1D2D mainloop内の実行時分岐によるpadding省略は再試行しない（`2026-10-31-pp4-round9.md`）。",
       "gap_to_explain": "tile padding、scale、epilogue。",
       "gate": "同shapeでの改善と全体の電力・clock変化を照合。"
     },

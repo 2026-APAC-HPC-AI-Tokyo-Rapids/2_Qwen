@@ -180,6 +180,6 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     assert 'prefill_screen' not in shell
     assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" && ! -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then' in shell
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
-    assert 'select-firmus-prefill-kernels.sh' not in pp4 and 'select-firmus-prefill-dense.py' in pp4
+    assert 'select-firmus-prefill-kernels.sh' not in pp4 and 'srun ' not in pp4
     script = (ROOT / 'scripts/select-firmus-prefill-kernels.sh').read_text()
     assert 'shift 2' in script and '--output "${out}/fa3.json" "$@"' in script

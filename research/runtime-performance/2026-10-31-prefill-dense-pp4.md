@@ -182,7 +182,7 @@ Not done here:
 4. **Ordering the tail tiles into the last QKV wave.** With the skip, 72 short tiles could shorten the 18-tile critical path by up to 0.75 tile (−4%) at the idle factor. It would break the L2 grouping of the swizzled order, so its L2 cost is unknown.
 5. **The steady-state k-block runs at 84–87% of the tensor floor.** The promotion stagger that should hide this lost 12% in round 2. No config changes it.
 
-## 7. Round 9: implemented, gated in round 9
+## 7. Round 9: implemented and gated in job (rejected; see section 8)
 
 The tail-wave skip is implemented in two new patches, both named
 `sm90-1d2d-prefill-tail-skip.patch`: the host series entry follows the Decode
@@ -265,3 +265,15 @@ work at M7988, 1.56% at M3994, with no L2/TMA traffic or tile-order change.
 **not yet measured on a GPU**. A random-input gate does not prove all serving
 inputs, and timing noise, cache/power conditions and the added branches can make
 the isolated gate differ from ordinary serving. No score improvement is claimed.
+
+## 8. Result: rejected in 41135856718
+
+- **Correctness held on all twelve Prefill GPUs.**
+  - byte equality with stock at M 7988 and 3994
+  - the FP32 reference check
+  - 200 endurance calls
+- **The skip was slower on every GPU.** The QKV + O pair took +58 to +68 µs (+6.3%) against stock's 950–981 µs. The aggregate kept stock, so the skip never served.
+- The skip removes 2.34% of the MMA work. The per-wave branch inside the k-block loop costs more than that.
+- Round 2 (7eb80b0) lost +12% with a stagger plus this skip, so the skip alone already accounts for half of that loss. Removing padding inside the 1D2D mainloop by a runtime branch is closed.
+- The header and host patches, the selector and its wiring are removed again. Per-GPU numbers are in `2026-10-31-pp4-round9.md`, section 3.
+
