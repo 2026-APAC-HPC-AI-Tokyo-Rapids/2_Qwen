@@ -5,14 +5,13 @@ set -euo pipefail
 : "${RUNTIME_DIR:?}" "${GITHUB_WORKSPACE:?}"
 [[ -z "${CANDIDATE_PATCH:-}" ]]
 root="${GITHUB_WORKSPACE}"
-# PrefillVariant values in timing order (index 0 is the pinned n192-direct-o-varlen) and their names.
-# 128 pipelined tiles, 256 double-buffered Q, 512 straight-line O store, 1024 O store before the next softmax,
-# 2048 next-tile claim at the start of a tile (and with 256 the next Q before its first K/V).
-variants=96,224,2272,2528
-names=pin,pipe,pipe-early,pipe-q2-early
-# Rows of the stamp build, timed separately for their phase clocks.
-stamp_variants=2272,2528
-stamp_names=pipe-early,pipe-q2-early
+# PrefillVariant values in timing order (index 0 is the pinned n192-direct-o-varlen) and their names;
+# 224 = 96 | 128 is n192-direct-o-varlen-pipe (pipelined M-tiles, prefill-pipe.patch).
+variants=96,224
+names=pin,pipe
+# Rows of the stamp build, run separately for their per-tile phase clocks.
+stamp_variants=96,224
+stamp_names=pin,pipe
 source "${root}/platforms/genkai/kernel-probe/prepare-runtime.sh"
 install -m 0644 "${root}/kernels/fa3-verify/candidates.json" "${RUNTIME_DIR}/source/fa3-verify-candidates.json"
 install -m 0755 "${root}/kernels/probes/run-container.sh" "${RUNTIME_DIR}/scripts/run-container.sh"
@@ -32,11 +31,6 @@ for patch in "${chain[@]}"; do
     if [[ "${patch}" == fp8-output.patch ]]; then source_patch="${root}/kernels/probes/fa3-fp8-output.patch"; fi
     patch --batch --fuzz=0 -p1 -d "${fa3}" -i "${source_patch}"
 done
-# The pipelined-tile candidate until build.py carries it.
-if [[ " ${chain[*]} " != *" prefill-pipe.patch "* ]]; then
-    patch --batch --fuzz=0 -p1 -d "${fa3}" -i "${root}/kernels/fa3-verify/prefill-pipe.patch"
-    chain+=(prefill-pipe.patch)
-fi
 printf '%s\n' "${chain[@]}" >"${RUNTIME_DIR}/results/patch-chain.txt"
 cp -a "${fa3}" stamp-tree
 patch --batch --fuzz=0 -p1 -d stamp-tree -i "${root}/kernels/probes/fa3-prefill-stamp.patch"
