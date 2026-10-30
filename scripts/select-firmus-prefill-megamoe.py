@@ -11,21 +11,15 @@ stmatrix), four-stage-lean-pair (also DG_SM90_PREFILL_TAIL_PAIR=1: pool
 blocks with at most 64 rows run their N blocks in pairs on both warpgroups),
 four-stage-lean-split (lean plus DG_SM90_PREFILL_SPLIT_ACCUM=1: each warpgroup's
 FC1/FC2 accumulator is issued as two m64n128 halves so that the carried-scale
-rescale of one half overlaps the other half's WGMMA) and four-stage-lean-split-rcp
-(also DG_SM90_PREFILL_SHARED_RCP=1: the FC1 epilogue takes the two column sigmoids
-of a row from one reciprocal and leaves the up scale to the quantizer, 96 instead
-of 128 MUFU per thread and tile). The round-2 direct-FC2 and A-gather variants lost
-(+1.6% and +44% in 40911121619), the tail split stayed below the margin twice and
-the ldmatrix split lost (+1.6% in 41020974704); they are gone.
+rescale of one half overlaps the other half's WGMMA). The round-2 direct-FC2
+and A-gather variants lost (+1.6% and +44% in 40911121619), the tail split stayed
+below the margin twice and the ldmatrix split lost (+1.6% in 41020974704).
+The shared reciprocal was nondeterministic in 41040348302 and is gone.
 For the two timed routings and the untimed edge and wide routings (experts with 0,
-1-64, 65, 127-129 and 255-256 rows; hidden states 40 times larger, so that FC1
-gates reach the shared reciprocal's per-element path) the control must match an
-FP32 reference on sampled tokens. Every candidate must reproduce the control bit
-for bit, except the shared reciprocal, whose FP order differs: its output must be
-finite and within TOLERANCE_RELATIVE_L2 and TOLERANCE_MAX_SCALED_ERROR of the
-control's on every routing (a CPU model of the epilogue and FC2 gives at most
-9.8e-5 and 4.7e-3: research/runtime-performance/2026-10-30-prefill-megamoe-shared-rcp.md).
-All six are timed in rotating order. --aggregate adopts the fastest variant that passed on
+1-64, 65, 127-129 and 255-256 rows; hidden states 40 times larger), the control
+must match an FP32 reference on sampled tokens. Every candidate must reproduce
+the control bit for bit. All five are timed in rotating order. --aggregate
+adopts the fastest variant that passed on
 every GPU of every worker and saved at least the summed per-case margin over
 all GPUs and routings; anything missing keeps the control. A control reference
 failure stops the job. Neither per-case nor per-GPU margins are used: in runs
@@ -41,7 +35,7 @@ GPU. Each GPU recomputes the winner the aggregate will pick from the same rank
 files and, if it is a variant that has not served yet, runs it for
 ENDURANCE_CALLS consecutive calls rotating over the balanced, hot, edge and wide
 routings, then checks that the last output of every routing equals the
-control's bit for bit (the shared reciprocal's: its own first output's).
+control's bit for bit.
 --aggregate keeps such a winner only if all twelve GPUs ran it to the end and
 matched; otherwise it takes the fastest eligible variant that has served
 (UNGATED) and records why.
@@ -55,24 +49,17 @@ from datetime import timedelta
 from pathlib import Path
 
 HIDDEN, INTERMEDIATE, EXPERTS, TOPK = 4096, 1536, 128, 8
-SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR", "DG_SM90_PREFILL_SPLIT_ACCUM", "DG_SM90_PREFILL_SHARED_RCP")
+SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR", "DG_SM90_PREFILL_SPLIT_ACCUM")
 VARIANTS = {name: dict(zip(SWITCHES, values, strict=True)) for name, values in {
-    "control": ("0", "0", "0", "0", "0"),
-    "four-stage": ("1", "0", "0", "0", "0"),
-    "four-stage-lean": ("1", "1", "0", "0", "0"),
-    "four-stage-lean-pair": ("1", "1", "1", "0", "0"),
-    "four-stage-lean-split": ("1", "1", "0", "1", "0"),
-    "four-stage-lean-split-rcp": ("1", "1", "0", "1", "1"),
+    "control": ("0", "0", "0", "0"),
+    "four-stage": ("1", "0", "0", "0"),
+    "four-stage-lean": ("1", "1", "0", "0"),
+    "four-stage-lean-pair": ("1", "1", "1", "0"),
+    "four-stage-lean-split": ("1", "1", "0", "1"),
 }.items()}
-# The candidates change staging, synchronisation, the work assignment or the WGMMA issue
-# order only (same products, K order and multipliers per element): bit-exact. The shared
-# reciprocal changes the FP order of the FC1 epilogue (FP8 bytes may move by one step).
-CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split", "four-stage-lean-split-rcp")
-TOLERANCE_GATED = ("four-stage-lean-split-rcp",)
-# Bounds on the MegaMoE output against the control's: relative L2 10x above the CPU model's worst
-# case (9.8e-5), and max |diff| / max |control| 4x above it (4.7e-3 at 8192 x 4096). One BF16 step
-# of an element in the top binade alone can reach 2^-7 = 7.8e-3 of the maximum.
-TOLERANCE_RELATIVE_L2, TOLERANCE_MAX_SCALED_ERROR = 1e-3, 2e-2
+# Candidates change staging, synchronisation, work assignment or WGMMA issue order only:
+# the same products, K order and multipliers per element must remain bit-exact.
+CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split")
 # Variants that have served whole runs need no endurance gate: four-stage-lean-split passed the
 # gate and served 6212 requests in 41005872470 (9832.74), four-stage-lean served 12k+ Prefill
 # batches in 40964714831 (9668.27), four-stage and the control before them.
@@ -82,7 +69,7 @@ ENDURANCE_CALLS = 600
 ROUTINGS = ("balanced", "hot")
 # Checked against the control only (not timed): the pool-block shapes the timed routings
 # rarely hit, and hidden states WIDE_HIDDEN_SCALE times larger (balanced routing), whose FC1
-# gates below about -40 send part of the shared reciprocal's chunks to its per-element path.
+# gates exercise large magnitudes as well as the ordinary serving input range.
 EXACT_ROUTINGS = ("edges", "wide")
 HIDDEN_SCALE, WIDE_HIDDEN_SCALE = 0.25, 40.0
 # Rows of experts 16..47 in the edge routing; experts 0..15 get none.
@@ -236,8 +223,6 @@ def run_selection(output, ranks):
             entry["reference_passed"] = entry["finite"] and relative_l2 < MAX_RELATIVE_L2 and max_scaled_error < MAX_SCALED_ERROR
             if variant != "control":
                 entry["bitwise_equal"] = bool(torch.equal(out, outputs["control"]))
-                if variant in TOLERANCE_GATED:
-                    entry["control_relative_l2"], entry["control_max_scaled_error"] = errors(torch, out, outputs["control"])
             result[variant] = entry
         if kind in EXACT_ROUTINGS:
             local["routings"][kind] = result
@@ -281,8 +266,7 @@ def run_endurance(selection, output, workers):
         cases = {kind: inputs(torch, kind, tokens, generator, device) for kind in kinds}
         reference = {kind: torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for kind in kinds}
         outputs = {kind: torch.empty(tokens, HIDDEN, dtype=torch.bfloat16, device=device) for kind in kinds}
-        # A tolerance-gated winner (checked against the control by the selection) must reproduce its own first call.
-        local["reference"] = winner if winner in TOLERANCE_GATED else "control"
+        local["reference"] = "control"
         for kind in kinds:
             forward(local["reference"], *cases[kind], reference[kind])
         torch.cuda.synchronize()
@@ -318,15 +302,8 @@ def endurance_failure(gate, winner, expected):
     return None
 
 
-def matches_control(name, entry):
-    """Bit for bit, or for a tolerance-gated variant finite and within the predeclared bounds."""
-    if name in TOLERANCE_GATED:
-        return entry["finite"] and entry["control_relative_l2"] <= TOLERANCE_RELATIVE_L2 and entry["control_max_scaled_error"] <= TOLERANCE_MAX_SCALED_ERROR
-    return entry["bitwise_equal"]
-
-
-def candidate_passed(name, entry, timed):
-    return entry["reference_passed"] and matches_control(name, entry) and (len(entry["us"]) == ROUNDS or not timed)
+def candidate_passed(entry, timed):
+    return entry["reference_passed"] and entry["bitwise_equal"] and (len(entry["us"]) == ROUNDS or not timed)
 
 
 def choose(entries, expected, gate=None):
@@ -346,11 +323,11 @@ def choose(entries, expected, gate=None):
         savings, reason = [], None
         for entry in entries:
             for kind in EXACT_ROUTINGS:
-                if not candidate_passed(name, entry["routings"][kind][name], False):
+                if not candidate_passed(entry["routings"][kind][name], False):
                     reason = f"failed rank {entry['global_rank']} {kind}"
             for kind in ROUTINGS:
                 result = entry["routings"][kind]
-                if len(result["control"]["us"]) != ROUNDS or not candidate_passed(name, result[name], True):
+                if len(result["control"]["us"]) != ROUNDS or not candidate_passed(result[name], True):
                     reason = f"failed-or-untimed rank {entry['global_rank']} {kind}"
                     continue
                 control, candidate = statistics.median(result["control"]["us"]), statistics.median(result[name]["us"])
@@ -375,8 +352,7 @@ def aggregate(directory, output, env_output, workers, endurance):
     gate = [entry and {k: v for k, v in entry.items() if k != "global_rank"} for entry in load_entries(endurance, workers)]
     selection = choose(load_entries(directory, workers), workers * 4, gate)
     selection["env"] = {k: v for k, v in VARIANTS[selection["winner"]].items() if v != "0"}
-    tolerance = {"variants": TOLERANCE_GATED, "relative_l2": TOLERANCE_RELATIVE_L2, "max_scaled_error": TOLERANCE_MAX_SCALED_ERROR}
-    result = {"schema": "firmus-prefill-megamoe-selection/v5", "rule": {"rounds": ROUNDS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "routings": ROUTINGS, "exact_routings": EXACT_ROUTINGS, "wide_hidden_scale": WIDE_HIDDEN_SCALE, "bit_exact": [name for name in CANDIDATES if name not in TOLERANCE_GATED], "tolerance": tolerance, "endurance_calls": ENDURANCE_CALLS, "ungated": UNGATED}, **selection, "endurance": gate}
+    result = {"schema": "firmus-prefill-megamoe-selection/v5", "rule": {"rounds": ROUNDS, "margin_us": MARGIN_US, "margin_fraction": MARGIN_FRACTION, "routings": ROUTINGS, "exact_routings": EXACT_ROUTINGS, "wide_hidden_scale": WIDE_HIDDEN_SCALE, "bit_exact": CANDIDATES, "endurance_calls": ENDURANCE_CALLS, "ungated": UNGATED}, **selection, "endurance": gate}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     with env_output.open("a") as env:
