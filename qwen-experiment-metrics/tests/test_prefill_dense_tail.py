@@ -143,7 +143,7 @@ def test_pp4_parallel_timeout_merge_and_prefill_only_environment():
     sbatch = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = sbatch.split('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then', 1)[1].split('elif [[ -s "${ROOT}/source/reused-kernel-selection.json"', 1)[0]
     assert "for worker in 0 1 2; do" in pp4
-    assert "timeout --kill-after=2 53 srun" in pp4 and "--nproc-per-node=4" in pp4
+    assert "timeout --kill-after=2 110 srun" in pp4 and "--nproc-per-node=4" in pp4
     assert "select-firmus-prefill-dense.py" in pp4 and "--aggregate" in pp4
     assert 'prefill_dense_selections+=("$!")' in pp4
     assert 'wait "${pid}" || prefill_dense_ok=0' in pp4

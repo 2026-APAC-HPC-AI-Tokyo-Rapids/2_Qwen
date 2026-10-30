@@ -247,9 +247,10 @@ host mismatch, process exception or timeout keeps the pinned env unchanged.
 Adoption appends exactly one Prefill env line; workers clear inherited values
 first and only Prefill sources the merged file. Decode never receives the switch.
 
-Estimated serial addition: **45–55 seconds**, at most a one-minute selection
-window: entire srun steps have a 53-second timeout plus 2-second kill grace, with
-the aggregate after them. Rank zero compiles four kernels (two per projection),
+Estimated serial addition: **45–55 seconds**. Entire srun steps have a 110-second
+timeout plus 2-second kill grace (115-second acceptance deadline), with the
+aggregate after them; the margin keeps container start and cold imports from
+turning a win into a timeout. Round 8 finished in 11:21 of the 17-minute limit. Rank zero compiles four kernels (two per projection),
 then the other ranks reuse the node-local cache. Local compilations with four
 concurrent compilers took 4.2–7.5 seconds each; the four relevant stock/skip builds
 sum to about 24 seconds even using these contended timings. Imports, input/reference

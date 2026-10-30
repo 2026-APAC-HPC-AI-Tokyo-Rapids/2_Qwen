@@ -236,16 +236,17 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # Rank zero warms four JITs (two per projection); other ranks reuse its node-local cache.
   # Estimated 45-55 s serial including cold JIT/imports (local CUDA builds 4-7.5 s each
   # with four compilers; round-8 FA3 screen was 34 s inside torchrun). Entire srun steps
-  # time out at 53 s + 2 s kill grace; aggregate < 5 s, <= 1 min before worker start.
+  # time out at 110 s + 2 s kill grace, so container start and cold imports cannot turn
+  # a win into a timeout; aggregate < 5 s. Round 8 finished in 11:21 of 17 min.
   # Any exception, missing/late result, timeout or <2 us saving on any GPU keeps stock.
   mkdir -p "${ROOT}/results/prefill-dense"
   prefill_dense_started=$(date +%s)
-  prefill_dense_deadline=$((prefill_dense_started + 58))
+  prefill_dense_deadline=$((prefill_dense_started + 115))
   prefill_dense_selections=()
   for worker in 0 1 2; do
     node=${HEAD}
     if (( worker == 2 )); then node=${TAIL}; fi
-    timeout --kill-after=2 53 srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-dense-${worker})" env DG_JIT_CACHE_DIR="/tmp/qwen-prefill-dense-${SLURM_JOB_ID}-${worker}" SGLANG_DG_CACHE_DIR="/tmp/qwen-prefill-dense-${SLURM_JOB_ID}-${worker}" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-dense.py" --output "${ROOT}/results/prefill-dense/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_dense_started}" --deadline "${prefill_dense_deadline}" >"${ART}/prefill-dense-${worker}.log" 2>&1 &
+    timeout --kill-after=2 110 srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-dense-${worker})" env DG_JIT_CACHE_DIR="/tmp/qwen-prefill-dense-${SLURM_JOB_ID}-${worker}" SGLANG_DG_CACHE_DIR="/tmp/qwen-prefill-dense-${SLURM_JOB_ID}-${worker}" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-dense.py" --output "${ROOT}/results/prefill-dense/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_dense_started}" --deadline "${prefill_dense_deadline}" >"${ART}/prefill-dense-${worker}.log" 2>&1 &
     prefill_dense_selections+=("$!")
   done
   prefill_dense_ok=1
