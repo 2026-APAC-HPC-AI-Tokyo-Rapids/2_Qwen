@@ -16,7 +16,7 @@ def test_pipe_row_is_the_pinned_row_plus_bit_128():
     row, pin = rows['n192-direct-o-varlen-pipe'], rows['n192-direct-o-varlen']
     assert row['variant'] == pin['variant'] | 128 and not pin['variant'] & 128
     assert {k: v for k, v in row.items() if k not in ('name', 'variant')} == {k: v for k, v in pin.items() if k not in ('name', 'variant')}
-    assert [name for name, r in rows.items() if r['variant'] & 128] == ['n192-direct-o-varlen-pipe']
+    assert [name for name, r in rows.items() if r['variant'] & 128] == ['n192-direct-o-varlen-pipe', 'n192-direct-o-varlen-pipe-diag']
 
 
 def test_pipe_patch_is_last_in_the_build_chain():
@@ -53,8 +53,9 @@ def pp4_branch():
 
 
 def test_pp4_pins_the_served_pipe_row_and_keeps_the_gate_scripts_staged():
+    # The PP4 job screens only the diagonal-trim row against this pin (test_fa3_prefill_diag.py).
     pp4 = pp4_branch()
-    assert "select-firmus-prefill-" not in pp4 and "--endurance" not in pp4
+    assert "--names n192-direct-o-varlen-pipe-diag" in pp4
     prepare = runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))
     assert prepare['PP4_SELECTED']['SGLANG_PREFILL_FA3_VERIFY'] == 'n192-direct-o-varlen-pipe'
     assert prepare['PP4_SELECTED_RUNS']['SGLANG_PREFILL_FA3_VERIFY'] == [41040348302]
@@ -95,19 +96,6 @@ def screen(tmp_path, saving, name='n192-direct-o-varlen-pipe'):
     return selector, directory
 
 
-def gate(tmp_path, row='n192-direct-o-varlen-pipe', calls=None, passed=True, skip=None):
-    selector = runpy.run_path(str(ROOT / 'scripts/select-firmus-prefill-fa3.py'))
-    directory = tmp_path / 'prefill-fa3-endurance'
-    for worker in range(3):
-        (directory / f'prefill-{worker}').mkdir(parents=True, exist_ok=True)
-        for rank in range(4):
-            if (worker, rank) == skip:
-                continue
-            entry = {'rank': rank, 'row': row, 'needed': True, 'calls': selector['ENDURANCE_CALLS'] if calls is None else calls, 'bytes_equal': {'4001+4001': passed}, 'passed': passed}
-            (directory / f'prefill-{worker}' / f'rank-{rank}.json').write_text(json.dumps(entry))
-    return directory
-
-
 def test_gate_runs_the_serving_shapes_through_the_serving_call_path():
     selector = runpy.run_path(str(ROOT / 'scripts/select-firmus-prefill-fa3.py'))
     source = (ROOT / 'scripts/select-firmus-prefill-fa3.py').read_text()
@@ -119,7 +107,7 @@ def test_gate_runs_the_serving_shapes_through_the_serving_call_path():
     assert 'last[key] = attention(x["q"], x["k"], x["v"], x["cu"], x["maxlen"], 128**-.5, x["rows"], fixed=True)' in source
     assert 'os.environ["SGLANG_PREFILL_FA3_VERIFY"] = row' in source and 'prefill_candidate()["name"] == row' in source
     # Served rows need no gate.
-    assert set(selector['UNGATED']) == {'control', 'n192', 'n192-direct-o-varlen'}
+    assert set(selector['UNGATED']) == {'control', 'n192', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe'}
 
 
 def test_gate_skips_the_gpu_when_the_screen_keeps_a_served_row(tmp_path, monkeypatch):
@@ -129,26 +117,3 @@ def test_gate_skips_the_gpu_when_the_screen_keeps_a_served_row(tmp_path, monkeyp
     selector['run_endurance'](directory, out, 3)
     entry = json.loads((out / 'rank-2.json').read_text())
     assert entry['row'] == 'control' and not entry['needed'] and entry['passed'] and entry['calls'] == 0
-
-
-def test_aggregate_adopts_the_pipe_row_only_after_every_gpu_passed_the_gate(tmp_path):
-    out, env = tmp_path / 'selection.json', tmp_path / 'prefill.env'
-    selector, directory = screen(tmp_path, 12.0)
-    cases = [
-        ({}, 'n192-direct-o-varlen-pipe', 'passed'),
-        ({'skip': (2, 3)}, 'n192-direct-o-varlen', 'no endurance result from prefill-2 rank 3'),
-        ({'calls': 250}, 'n192-direct-o-varlen', 'failed the endurance gate: 250 calls'),
-        ({'passed': False}, 'n192-direct-o-varlen', 'failed the endurance gate'),
-        ({'row': 'control'}, 'n192-direct-o-varlen', 'gated control, not n192-direct-o-varlen-pipe'),
-    ]
-    for index, (kwargs, expected, reason) in enumerate(cases):
-        endurance = gate(tmp_path / f'case-{index}', **kwargs)
-        env.write_text('SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen\nDG_SM90_PREFILL_4STAGE=1\n')
-        selector['aggregate_selection'](directory, out, env, 3, endurance)
-        assert env.read_text() == f'DG_SM90_PREFILL_4STAGE=1\nSGLANG_PREFILL_FA3_VERIFY={expected}\n', kwargs
-        assert reason in json.loads(out.read_text())['endurance']
-    # A screen the pin wins needs no gate results.
-    selector, directory = screen(tmp_path / 'lost', 4.0)
-    env.write_text('SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen\n')
-    selector['aggregate_selection'](directory, out, env, 3, tmp_path / 'missing')
-    assert env.read_text() == 'SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen\n' and 'endurance' not in json.loads(out.read_text())

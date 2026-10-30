@@ -1,0 +1,109 @@
+diff --git a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
+index 397028b..39e16f8 100644
+--- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
++++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
+@@ -61,6 +61,15 @@ struct CollectiveMainloopFwdSm90 {
+     // ping-pong step, so the next tile's first softmax and this tile's epilogue overlap the other
+     // warpgroup's GEMMs. Arithmetic per tile is unchanged.
+     static constexpr bool PrefillPipe = (PrefillVariant & 128) != 0;
++    // Diagonal trim (pipelined row only): the causal mask and the softmax (max, exp2, row sum) of each
++    // tile's diagonal KV block run only on its leading kDiagN-key sub-blocks that hold a key some row of
++    // the warpgroup may see. The rest is masked for every row of the warpgroup (S = -inf), where the
++    // full block's softmax adds nothing to the row max and sum and gives P = +0; its P bytes are written
++    // as 0x00. QK and PV still run over the whole block, so every output byte equals the pinned row's.
++    static constexpr bool PrefillDiag = (PrefillVariant & 4096) != 0;
++    // 32 keys: one k-block of the PV GEMM. 64 removes less (avg 128 vs 111 of 192 keys) and its build
++    // re-materialized loop invariants in every steady step (+5 instructions against +1).
++    static constexpr int kDiagN = 32;
+     static constexpr bool PrefillTreeMax = (PrefillVariant & 8) != 0;
+     static constexpr bool PrefillRegs = (PrefillVariant & 1) != 0;
+     static constexpr bool PrefillLazy = (PrefillVariant & 2) != 0;
+@@ -1807,6 +1816,44 @@ struct CollectiveMainloopFwdSm90 {
+                 thread_idx, t.seqlen_q, t.seqlen_k, params.window_size_left, params.window_size_right, 0 /*sink_token_length*/,
+                 params.attention_chunk_divmod, params.qhead_per_khead_divmod);
+         };
++        // Diagonal trim helpers (PrefillDiag). The tile's last KV block n = n_block_max - 1 is its
++        // diagonal; the largest key column any row of this warpgroup may see there is
++        // min(t + 1 + seqlen_k - seqlen_q, seqlen_k) - n * kBlockN for its last packed row's token t,
++        // exactly the largest col_limit_right that Mask computes for these rows. Sub-blocks of kDiagN
++        // keys at or beyond it are -inf for every row of the warpgroup.
++        static constexpr int kDiagSubs = kBlockN / kDiagN;
++        auto diag_subs = [&](TileState const& t) {
++            static_assert(kBlockN % kDiagN == 0 && kBlockM == 64 * MmaWarpGroups);
++            int const row_last = t.m_block * kBlockM + (warp_group_idx + 1) * 64 - 1;
++            int const token_last = params.qhead_per_khead_divmod.divide(row_last);
++            int const limit = std::min(token_last + 1 + t.seqlen_k - t.seqlen_q, t.seqlen_k) - (t.n_block_max - 1) * kBlockN;
++            // Warp-uniform for ptxas (lane 0's value), or every wgmma of the kernel is serialized.
++            return __shfl_sync(0xffffffff, std::min(std::max(cute::ceil_div(limit, int(kDiagN)), 1), int(kDiagSubs)), 0);
++        };
++        // Runs f(Int<k>) for the warpgroup-uniform sub-block count k = subs.
++        auto diag_trim = [&](int const subs, auto&& f) {
++            cute::for_each(cute::make_int_sequence<kDiagSubs>{}, [&](auto i) {
++                if (subs == decltype(i)::value + 1) { f(Int<decltype(i)::value + 1>{}); }
++            });
++        };
++        // The leading sub * kDiagN columns of the QK accumulators: the first sub * kDiagN / 2
++        // registers of each thread (C fragments of SM90 GMMA are ordered by 8-column groups).
++        auto diag_part = [&](auto& tSrS, auto sub) {
++            using TileShapeSub = Shape<Int<kBlockM>, Int<decltype(sub)::value * kDiagN>, Int<kHeadDim>>;
++            using TiledMmaSub = decltype(cute::make_tiled_mma(cute::GMMA::ss_op_selector<Element, Element, ElementAccum, TileShapeSub>(), AtomLayoutQK{}));
++            using LayoutSub = decltype(partition_fragment_C(TiledMmaSub{}, select<0, 1>(TileShapeSub{})).layout());
++            static_assert(cosize(LayoutSub{}) * kDiagSubs == decltype(sub)::value * cosize(decltype(tSrS.layout()){}));
++            return make_tensor(tSrS.data(), LayoutSub{});
++        };
++        // Mask of those columns, with the column origin at the diagonal block: seqlen_k - n * kBlockN
++        // at block 0 gives the full block's per-row limits at block n.
++        auto diag_mask = [&](TileState const& t, auto sub) {
++            using TileShapeSub = Shape<Int<kBlockM>, Int<decltype(sub)::value * kDiagN>, Int<kHeadDim>>;
++            using TiledMmaSub = decltype(cute::make_tiled_mma(cute::GMMA::ss_op_selector<Element, Element, ElementAccum, TileShapeSub>(), AtomLayoutQK{}));
++            return flash::Mask<kBlockM, decltype(sub)::value * kDiagN, PackGQA, TiledMmaSub>(
++                thread_idx, t.seqlen_q, t.seqlen_k - (t.n_block_max - 1) * kBlockN, params.window_size_left, params.window_size_right, 0 /*sink_token_length*/,
++                params.attention_chunk_divmod, params.qhead_per_khead_divmod);
++        };
+         auto scale_log2 = [&](TileState const& t) {
+             float const q_descale = params.ptr_q_descale == nullptr ? 1.0f : params.ptr_q_descale[t.bidb * get<0>(params.stride_q_descale) + t.bidh * get<1>(params.stride_q_descale)];
+             float const k_descale = params.ptr_k_descale == nullptr ? 1.0f : params.ptr_k_descale[t.bidb * get<0>(params.stride_k_descale) + t.bidh * get<1>(params.stride_k_descale)];
+@@ -1899,15 +1946,40 @@ struct CollectiveMainloopFwdSm90 {
+                 warpgroup_wait<1>();
+                 pipeline_k.consumer_release(smem_pipe_read);
+                 if (nxt.n_block_max - 1 == nxt.n_block_min) { query_empty(); }
+-                make_mask(nxt).template apply<true /*Seqlenk_mask*/, Is_causal, Is_local>(tSrS, nxt.m_block, nxt.n_block_max - 1);
++                int subs = kDiagSubs;
++                if constexpr (!PrefillDiag) {
++                    make_mask(nxt).template apply<true /*Seqlenk_mask*/, Is_causal, Is_local>(tSrS, nxt.m_block, nxt.n_block_max - 1);
++                }
+                 Softmax softmax_next(scale_log2(nxt));
+-                softmax_next.template max_get_scale</*Is_first=*/true, /*Check_inf=*/true>(tSrS);
+-                softmax_next.template online_softmax</*Is_first=*/true, /*Check_inf=*/true>(tSrS);
++                if constexpr (!PrefillDiag) {
++                    softmax_next.template max_get_scale</*Is_first=*/true, /*Check_inf=*/true>(tSrS);
++                    softmax_next.template online_softmax</*Is_first=*/true, /*Check_inf=*/true>(tSrS);
++                } else {
++                    // One arm per sub-block count: mask and softmax of the leading sub-blocks only. The
++                    // rest keeps raw scores; their P is overwritten below.
++                    subs = diag_subs(nxt);
++                    diag_trim(subs, [&](auto sub) {
++                        Tensor tSrS_s = diag_part(tSrS, sub);
++                        diag_mask(nxt, sub).template apply<true /*Seqlenk_mask*/, Is_causal, Is_local>(tSrS_s, nxt.m_block, 0);
++                        softmax_next.template max_get_scale</*Is_first=*/true, /*Check_inf=*/true>(tSrS_s);
++                        softmax_next.template online_softmax</*Is_first=*/true, /*Check_inf=*/true>(tSrS_s);
++                    });
++                }
+                 cute::copy(softmax.finalize(v_descale(cur)), scores_scale);
+                 warpgroup_wait<0>();
+                 pipeline_v.consumer_release(smem_pipe_read_v);
+                 flash::permute_Cregs_fp8(tSrS);
+                 convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
++                if constexpr (PrefillDiag) {
++                    // P of the skipped keys: the 0x00 bytes the full block converts exp2(-inf) = +0 to.
++                    // Mode 2 of tOrP is the 32-key k-block of the PV GEMM.
++                    static_assert(decltype(stride<2>(tOrP.layout()))::value == cosize(decltype(get<0>(tOrP.layout())){}) && size<1>(decltype(tOrP.layout()){}) == 1);
++                    diag_trim(subs, [&](auto sub) {
++                        static constexpr int kHead = decltype(sub)::value * kDiagN / 32 * cosize(decltype(get<0>(tOrP.layout())){});
++                        Tensor tOrP_tail = make_tensor(tOrP.data() + kHead, make_layout(Int<(cosize(decltype(tOrP.layout()){}) - kHead) / 4>{}));
++                        cute::fill(recast<uint32_t>(tOrP_tail), 0u);
++                    });
++                }
+                 softmax.rescale_o(tOrO, scores_scale);
+                 flash::permute_output_fp8(tOrO);
+                 store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
