@@ -98,7 +98,8 @@ def test_regression_failure_stops_remaining_checks(tmp_path):
 
 @pytest.mark.parametrize("failure", [None, "stale", "missing", "regression"])
 @pytest.mark.parametrize("real_squashfs", [False, True])
-def test_provision_gate_before_allocation(tmp_path, monkeypatch, failure, real_squashfs):
+@pytest.mark.parametrize("reuse", [False, True])
+def test_provision_gate_before_allocation(tmp_path, monkeypatch, failure, real_squashfs, reuse):
     import json
     import sys
 
@@ -152,6 +153,17 @@ def test_provision_gate_before_allocation(tmp_path, monkeypatch, failure, real_s
             (staged / "contract.py").write_text("stale" if failure == "stale" else "patched\n")
     else:
         monkeypatch.setattr(gate.subprocess, "run", command)
+    if reuse:
+        # Exercise reconstruction and behavior checks when the runtime-only
+        # retry's commit differs from the immutable image's build commit.
+        digest = gate.sha256(image)
+        monkeypatch.setattr(gate, "PINNED_IMAGE", "0" * 64)
+        monkeypatch.setenv("GITHUB_SHA", "retry-commit")
+        monkeypatch.setenv("REQUIRE_BUILD", "false")
+        data = json.loads(config.read_text())
+        data.update(container_sha256=digest, container_source_commit="build-commit")
+        config.write_text(json.dumps(data))
+        (runtime / "source/container-sidecar.json").write_text(json.dumps({"container_artifact": {"sha256": digest}, "source_commits": {"qwen": "build-commit"}}))
     calls = []
 
     def checks(*args):
@@ -194,3 +206,30 @@ def test_fresh_build_from_this_commit_replaces_the_pinned_image(tmp_path, monkey
     with pytest.raises(ValueError) as error:
         gate.main()
     assert ("Missing PP4 overlay" in str(error.value)) is (case == "fresh")
+
+
+@pytest.mark.parametrize("case", ["reused", "other-commit", "other-image", "stale-pin", "changed-bytes", "fresh-with-old-pin", "empty-commit"])
+def test_reused_image_keeps_provenance_and_content_checks(tmp_path, monkeypatch, case):
+    import json
+    import sys
+
+    runtime = tmp_path / "runtime"
+    (runtime / "source").mkdir(parents=True)
+    report = runtime / "source/pp4-cpu-gate.json"
+    report.write_text('{"result":"pass","stale":true}')
+    image = runtime / "sglang.sqsh"
+    image.write_bytes(b"verified reusable image")
+    digest = gate.sha256(image)
+    sidecar = {"container_artifact": {"sha256": "0" * 64 if case == "other-image" else digest}, "source_commits": {"qwen": "unrelated" if case == "other-commit" else "build-commit"}}
+    (runtime / "source/container-sidecar.json").write_text(json.dumps(sidecar))
+    config = runtime / "config.json"
+    config.write_text(json.dumps({"container_sha256": "0" * 64 if case == "stale-pin" else digest, "container_source_commit": "" if case == "empty-commit" else "build-commit", "images": {"sglang": {"sha256": digest}}, "sglang_overlay_patches": []}))
+    if case == "changed-bytes":
+        image.write_bytes(b"modified image")
+    monkeypatch.setenv("GITHUB_SHA", "retry-commit")
+    monkeypatch.setenv("REQUIRE_BUILD", "true" if case == "fresh-with-old-pin" else "false")
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), str(runtime), str(config), str(tmp_path)])
+    with pytest.raises(ValueError) as error:
+        gate.main()
+    assert ("Missing PP4 overlay" in str(error.value)) is (case == "reused")
+    assert not report.exists()

@@ -101,11 +101,14 @@ def main():
     if config.get("container_sha256", image_sha) != image_sha:
         raise ValueError("PP4 config pin differs from the provisioned image")
     if image_sha != PINNED_IMAGE:
-        # A [require-build] run serves the image built from the commit being provisioned;
-        # provision copied its sidecar and rewrote the config pin to it.
+        # Fresh builds must name this commit. Reused images must name their
+        # configured build commit, which differs after a launcher-only fix.
+        expected_commit = os.environ["GITHUB_SHA"]
+        if os.environ.get("REQUIRE_BUILD") != "true":
+            expected_commit = config.get("container_source_commit", expected_commit)
         sidecar = json.loads((runtime / "source/container-sidecar.json").read_text())
-        if sidecar["container_artifact"]["sha256"] != image_sha or sidecar["source_commits"]["qwen"] != os.environ["GITHUB_SHA"]:
-            raise ValueError("PP4 CPU gate requires the pinned successful native image or the image built from this commit")
+        if not expected_commit or sidecar["container_artifact"]["sha256"] != image_sha or sidecar["source_commits"]["qwen"] != expected_commit:
+            raise ValueError("PP4 image sidecar must match the configured image hash and expected build commit")
     image = runtime / "sglang.sqsh"
     if sha256(image) != image_sha:
         raise ValueError("Actual image SHA-256 differs from PP4 config")

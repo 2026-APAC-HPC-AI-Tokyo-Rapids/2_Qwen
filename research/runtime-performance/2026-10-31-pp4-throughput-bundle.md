@@ -180,3 +180,25 @@ because the original fresh-build job updated only its staged runtime config.
 Reuse the bundle image without rebuilding. Workload, model, topology, kernels,
 correctness gates and their failure propagation are unchanged. Successful
 GPU checks and an official serving result remain required for this retry.
+
+### First retry: CPU image provenance gate
+
+Commit `0d69174` started run
+[41125598232](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41125598232).
+All CI jobs and the existing-image selection/archive passed. Provision verified
+the exact bundle image and patch hashes, then the PP4 CPU gate rejected it:
+the gate allowed only the historical image or an image whose build commit was
+the current `GITHUB_SHA`. A launcher-only retry necessarily has a different
+commit from the reused image. This attempt never submitted a Slurm job and
+produced no GPU measurements or score; its temporary runtime was cleaned up.
+
+Correct that check to compare reuse with `container_source_commit` from the
+configuration. Fresh builds still require `GITHUB_SHA`; sidecar SHA, configured
+pin, actual image bytes, embedded source/patch hashes, exact staged overlays
+and all CPU behavior checks remain mandatory. Added coverage exercises reuse
+through source reconstruction and rejects wrong source commits, wrong hashes,
+modified bytes, empty pins, stale successful reports and a fresh build using
+an old source pin. Local real-Torch validation: 28 passed; eight real-SquashFS
+cases require the Linux CI job. The earlier retry commit's skipped-test note
+was imprecise: the one local skip was missing Torch in that pytest environment;
+the focused test subsequently passed with `python -m pytest` and real Torch.
