@@ -94,13 +94,13 @@
     },
     "p_qkv": {
       "priority": 4,
-      "next": "M256のpaddingとepilogueを確認。FP8入力化は実装済み。小さい残差を理由に独立した全体測定をしない。",
+      "next": "PP4（M=7988、2×3994行）の確認は2026-10-31に完了（`2026-10-31-prefill-dense-pp4.md`）。stockは256×128・A multicast・3 stage、18 wave（最終60/132）、M tail 204行（実行MMAの2.49%）。合法な他configは全てL2→SMEMを+16.8%以上増やし、padding削減は最大1.56%、BM192×BN128とBM128×BN192はMMA loop内でspillするため不採用。仕事を減らす残りの手段はconfigではなく、tail blockの空64行waveのWGMMA・promotion省略（−2.34%、0.21〜0.48 ms/period、JIT header）。",
       "gap_to_explain": "tile padding、scale、epilogue。",
       "gate": "既存選択より速い同shapeの候補だけを他の検証に同乗。"
     },
     "p_o": {
       "priority": 4,
-      "next": "FA3出力FP8化は実装済み。M256 paddingとepilogueを確認。",
+      "next": "FA3出力FP8化は実装済み。PP4（M=7988）の確認は2026-10-31に完了（`2026-10-31-prefill-dense-pp4.md`）。stockは256×128・A multicast・3 stage、8 wave（最終100/132）、M tail 204行。他configはslot使用率が下がるかL2→SMEMが増えるため不採用。tail waveの省略はQKVと共通。",
       "gap_to_explain": "tile padding、scale、epilogue。",
       "gate": "同shapeでの改善と全体の電力・clock変化を照合。"
     },
