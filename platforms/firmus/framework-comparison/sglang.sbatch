@@ -272,7 +272,22 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
     prefill_gpu_selections+=("$!")
   done
   for pid in "${prefill_gpu_selections[@]}"; do wait "${pid}" || true; done
-  uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --aggregate "${ROOT}/results/prefill-megamoe" --output "${ROOT}/results/prefill-megamoe/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+  # MegaMoE endurance gate (select-firmus-prefill-megamoe.py --endurance, ~20-40 s, 90 s timeout per worker, the
+  # three workers in parallel): 40991744289 adopted the split accumulator after ~30 selection calls per GPU and all
+  # three workers stopped after ~300 serving calls per GPU. Each GPU recomputes the winner from all twelve selection
+  # results; if it has not served before (not control, four-stage or four-stage-lean), it runs it for 600 back-to-back
+  # calls over the three routings and compares each routing's last output with the control bit for bit. The aggregate
+  # keeps such a winner only if all twelve GPUs finished and matched; a hung, failed or late gate takes the fastest
+  # eligible served variant instead and records why. The JIT cache of the selection step is reused.
+  prefill_gpu_gates=()
+  for worker in 0 1 2; do
+    node=${HEAD}
+    if (( worker == 2 )); then node=${TAIL}; fi
+    srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-megamoe-endurance-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-megamoe-${SLURM_JOB_ID}-${worker}/triton" DG_JIT_CACHE_DIR="/tmp/qwen-prefill-megamoe-${SLURM_JOB_ID}-${worker}/deep-gemm" timeout --kill-after=5 90 /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --endurance "${ROOT}/results/prefill-megamoe" --output "${ROOT}/results/prefill-megamoe-endurance/prefill-${worker}" >"${ART}/prefill-megamoe-endurance-${worker}.log" 2>&1 &
+    prefill_gpu_gates+=("$!")
+  done
+  for pid in "${prefill_gpu_gates[@]}"; do wait "${pid}" || true; done
+  uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --aggregate "${ROOT}/results/prefill-megamoe" --endurance "${ROOT}/results/prefill-megamoe-endurance" --output "${ROOT}/results/prefill-megamoe/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
   uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
 elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
   # Provision has verified the prior image, ordered overlays, expert map and

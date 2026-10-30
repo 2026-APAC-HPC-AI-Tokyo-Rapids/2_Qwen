@@ -37,15 +37,25 @@ def edit(directory, worker, rank, kind, variant, **changes):
     path.write_text(json.dumps(entry))
 
 
+def write_gate(selector, directory, variant, workers=3, **changes):
+    for worker in range(workers):
+        path = directory / f"prefill-{worker}"
+        path.mkdir(parents=True, exist_ok=True)
+        for rank in range(4):
+            entry = {"rank": rank, "variant": variant, "calls": selector["ENDURANCE_CALLS"], "needed": True, "bitwise_equal": {k: True for k in ("balanced", "hot", "edges")}, "passed": True, **changes}
+            (path / f"rank-{rank}.json").write_text(json.dumps(entry))
+
+
 def aggregate(selector, tmp_path):
     out, env = tmp_path / "selection.json", tmp_path / "prefill-kernels.env"
     env.write_text("SGLANG_PREFILL_FA3_VERIFY=n192\n")
-    selector["aggregate"](tmp_path / "results", out, env, 3)
+    selector["aggregate"](tmp_path / "results", out, env, 3, tmp_path / "endurance")
     return json.loads(out.read_text()), env.read_text()
 
 
 def test_adopts_the_fastest_variant_that_passed_everywhere(selector, tmp_path):
     write_ranks(selector, tmp_path / "results")
+    write_gate(selector, tmp_path / "endurance", "four-stage-lean-pair")
     result, env = aggregate(selector, tmp_path)
     assert result["winner"] == "four-stage-lean-pair" and all(len(c["savings"]) == 12 * len(selector["ROUTINGS"]) for c in result["choices"].values())
     # The FA3 choice stays; the MegaMoE switches are appended for the Prefill workers.
@@ -55,13 +65,52 @@ def test_adopts_the_fastest_variant_that_passed_everywhere(selector, tmp_path):
 
 def test_faster_split_wins_with_lean_and_without_pairing(selector, tmp_path):
     write_ranks(selector, tmp_path / "results", split=2650.0)
+    write_gate(selector, tmp_path / "endurance", "four-stage-lean-split")
     result, env = aggregate(selector, tmp_path)
     assert result["winner"] == "four-stage-lean-split"
     # The host only honours the split switch on the lean path without tail pairing.
     assert env.endswith("n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_SPLIT_ACCUM=1\n")
     edit(tmp_path / "results", 0, 2, "edges", "four-stage-lean-split", bitwise_equal=False)
+    write_gate(selector, tmp_path / "endurance", "four-stage-lean-pair")
     result, _ = aggregate(selector, tmp_path)
     assert result["winner"] == "four-stage-lean-pair" and result["choices"]["four-stage-lean-split"]["reason"] == "failed rank 2 edges"
+
+
+@pytest.mark.parametrize("gate,why", [
+    (None, "no endurance result from rank 0 (late, hung or failed)"),
+    ({"calls": 0, "passed": False}, "rank 0 failed the endurance gate"),
+    ({"bitwise_equal": {"balanced": True, "hot": False, "edges": True}, "passed": False}, "rank 0 failed the endurance gate"),
+    ({"variant": "four-stage-lean"}, "rank 0 gated four-stage-lean, not four-stage-lean-split"),
+])
+def test_an_unserved_winner_needs_the_endurance_gate_on_every_gpu(selector, tmp_path, gate, why):
+    write_ranks(selector, tmp_path / "results", split=2650.0)
+    if gate is not None:
+        write_gate(selector, tmp_path / "endurance", "four-stage-lean-split")
+        path = tmp_path / "endurance/prefill-0/rank-0.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), **gate}))
+    result, env = aggregate(selector, tmp_path)
+    # The fastest eligible variant that has served (lean, 12k+ batches in 40964714831) takes over; pair is unserved too.
+    assert result["winner"] == "four-stage-lean" and result["reason"].startswith(f"four-stage-lean-split not adopted: {why}")
+    assert result["choices"]["four-stage-lean-split"]["endurance"].startswith(why)
+    assert env.endswith("n192\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\n")
+
+
+def test_served_winners_need_no_endurance_gate(selector, tmp_path):
+    write_ranks(selector, tmp_path / "results", pair=2760.0)
+    result, _ = aggregate(selector, tmp_path)
+    assert result["winner"] == "four-stage-lean" and result["reason"] == "fastest-eligible"
+    assert set(selector["UNGATED"]) == {"control", "four-stage", "four-stage-lean"}
+    assert not set(selector["UNGATED"]) & {"four-stage-lean-pair", "four-stage-lean-split"}
+
+
+def test_endurance_run_skips_the_gpu_for_a_served_winner(selector, tmp_path, monkeypatch):
+    # The gate recomputes the aggregate's winner from the same rank files before touching a GPU.
+    write_ranks(selector, tmp_path / "results", pair=2760.0)
+    monkeypatch.setenv("LOCAL_RANK", "2")
+    selector["run_endurance"](tmp_path / "results", tmp_path / "endurance/prefill-1", 3)
+    entry = json.loads((tmp_path / "endurance/prefill-1/rank-2.json").read_text())
+    assert entry["variant"] == "four-stage-lean" and not entry["needed"] and entry["passed"] and entry["calls"] == 0
+    assert selector["ENDURANCE_CALLS"] >= 600
 
 
 def test_slower_pair_leaves_lean(selector, tmp_path):
@@ -104,6 +153,7 @@ def test_edge_routing_is_exactness_only(selector, tmp_path):
 ])
 def test_one_failing_gpu_rejects_only_that_variant(selector, tmp_path, variant, change, winner):
     write_ranks(selector, tmp_path / "results")
+    write_gate(selector, tmp_path / "endurance", "four-stage-lean-pair")
     edit(tmp_path / "results", 2, 3, "hot", variant, **change)
     result, _ = aggregate(selector, tmp_path)
     assert result["winner"] == winner
@@ -135,10 +185,10 @@ def test_margin_is_the_larger_of_absolute_and_relative(selector, tmp_path):
     # 0.5% of 2800 us is 14 us: a 10 us gain is noise, a 15 us gain is adopted.
     write_ranks(selector, tmp_path / "a", four=2790.0, lean=2790.0, pair=2790.0)
     out = tmp_path / "a.json"
-    selector["aggregate"](tmp_path / "a", out, tmp_path / "a.env", 3)
+    selector["aggregate"](tmp_path / "a", out, tmp_path / "a.env", 3, tmp_path / "no-gate")
     assert json.loads(out.read_text())["winner"] == "control"
     write_ranks(selector, tmp_path / "b", four=2785.0, lean=2790.0, pair=2790.0)
-    selector["aggregate"](tmp_path / "b", out, tmp_path / "b.env", 3)
+    selector["aggregate"](tmp_path / "b", out, tmp_path / "b.env", 3, tmp_path / "no-gate")
     assert json.loads(out.read_text())["winner"] == "four-stage"
 
 
@@ -148,6 +198,11 @@ def test_pp4_job_gates_before_model_load_and_workers_source_the_switch(tmp_path)
     assert "select-firmus-prefill-megamoe.py\" --ranks 1 --output" in pp4
     assert '--aggregate "${ROOT}/results/prefill-megamoe"' in pp4 and '--env-output "${ROOT}/source/prefill-kernels.env"' in pp4
     assert pp4.index("--ranks 1") < pp4.index("--aggregate")
+    # The endurance gate runs per worker after all selections and before the aggregate, under its own timeout.
+    gate = next(line for line in pp4.splitlines() if "select-firmus-prefill-megamoe.py\" --endurance" in line)
+    assert "timeout --kill-after=5 90 " in gate and '--output "${ROOT}/results/prefill-megamoe-endurance/prefill-${worker}"' in gate
+    assert pp4.index("--ranks 1") < pp4.index(gate) < pp4.index("--aggregate")
+    assert '--endurance "${ROOT}/results/prefill-megamoe-endurance"' in pp4[pp4.index("--aggregate"):]
     assert shell.index("select-firmus-prefill-megamoe.py") < shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
     # worker.sh is unchanged (frozen-submission test): it already exports every prefill-kernels.env line.
     worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
@@ -175,7 +230,7 @@ def test_host_and_header_agree_on_the_four_stage_layout():
     pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch"]
     # Only the Decode 1D2D BLOCK_M 192 overlay (a different header) follows the MegaMoE tiles.
     assert config[-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
-    assert config[-6:-1] == pp4_only
+    assert config[-7:-1] == pp4_only
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
     assert not set(pp4_only[1:]) & set(main)
 
