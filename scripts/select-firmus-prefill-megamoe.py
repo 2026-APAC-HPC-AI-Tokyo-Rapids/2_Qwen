@@ -11,13 +11,15 @@ stmatrix), four-stage-lean-pair (also DG_SM90_PREFILL_TAIL_PAIR=1: pool
 blocks with at most 64 rows run their N blocks in pairs on both warpgroups),
 four-stage-lean-split (lean plus DG_SM90_PREFILL_SPLIT_ACCUM=1: each warpgroup's
 FC1/FC2 accumulator is issued as two m64n128 halves so that the carried-scale
-rescale of one half overlaps the other half's WGMMA).
+rescale of one half overlaps the other half's WGMMA) and four-stage-lean-split-ldsm
+(also DG_SM90_PREFILL_SPLIT_LDSM=1: the split halves take A from registers loaded
+once per K block by ldmatrix, so the WGMMAs read A once instead of twice).
 The round-2 direct-FC2 and A-gather variants lost (+1.6% and +44% in
 40911121619) and the tail split stayed below the margin twice; they are gone.
 For the two timed routings and the untimed edge routing (experts with 0, 1-64,
 65, 127-129 and 255-256 rows) the control must match an FP32 reference on
 sampled tokens and every candidate must reproduce the control bit for bit.
-All five are timed in rotating order. --aggregate adopts the fastest variant that passed on
+All six are timed in rotating order. --aggregate adopts the fastest variant that passed on
 every GPU of every worker and saved at least the summed per-case margin over
 all GPUs and routings; anything missing keeps the control. A control reference
 failure stops the job. Neither per-case nor per-GPU margins are used: in runs
@@ -46,20 +48,22 @@ from datetime import timedelta
 from pathlib import Path
 
 HIDDEN, INTERMEDIATE, EXPERTS, TOPK = 4096, 1536, 128, 8
-SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR", "DG_SM90_PREFILL_SPLIT_ACCUM")
+SWITCHES = ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_TAIL_PAIR", "DG_SM90_PREFILL_SPLIT_ACCUM", "DG_SM90_PREFILL_SPLIT_LDSM")
 VARIANTS = {name: dict(zip(SWITCHES, values, strict=True)) for name, values in {
-    "control": ("0", "0", "0", "0"),
-    "four-stage": ("1", "0", "0", "0"),
-    "four-stage-lean": ("1", "1", "0", "0"),
-    "four-stage-lean-pair": ("1", "1", "1", "0"),
-    "four-stage-lean-split": ("1", "1", "0", "1"),
+    "control": ("0", "0", "0", "0", "0"),
+    "four-stage": ("1", "0", "0", "0", "0"),
+    "four-stage-lean": ("1", "1", "0", "0", "0"),
+    "four-stage-lean-pair": ("1", "1", "1", "0", "0"),
+    "four-stage-lean-split": ("1", "1", "0", "1", "0"),
+    "four-stage-lean-split-ldsm": ("1", "1", "0", "1", "1"),
 }.items()}
 # Every candidate changes staging, synchronisation, the work assignment or the WGMMA
 # issue order only (same products, K order and multipliers per element): bit-exact.
-CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split")
-# Variants that have served whole runs need no endurance gate: four-stage-lean served 12k+
-# Prefill batches in 40964714831 (9668.27), four-stage and the control before it.
-UNGATED = ("control", "four-stage", "four-stage-lean")
+CANDIDATES = ("four-stage", "four-stage-lean", "four-stage-lean-pair", "four-stage-lean-split", "four-stage-lean-split-ldsm")
+# Variants that have served whole runs need no endurance gate: four-stage-lean-split passed the
+# gate and served 6212 requests in 41005872470 (9832.74), four-stage-lean served 12k+ Prefill
+# batches in 40964714831 (9668.27), four-stage and the control before them.
+UNGATED = ("control", "four-stage", "four-stage-lean", "four-stage-lean-split")
 # Over 300 calls per GPU stopped serving in 40991744289; 600 at about 2.5 ms is about 1.5 s.
 ENDURANCE_CALLS = 600
 ROUTINGS = ("balanced", "hot")

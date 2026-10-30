@@ -1,0 +1,80 @@
+{
+ "schema": "megamoe-prefill-split-ldsm-cpu-validation/v1",
+ "date": "2026-10-30",
+ "gpu_executed": false,
+ "toolchain": "CUDA 13.4 nvcc/ptxas, sm_90a",
+ "header_patch": "patches/deep-gemm-bench/prefill-split-ldsm/sm90-prefill-split-ldsm.patch",
+ "host_patch": "patches/deep-gemm-host/sm90-prefill-split-ldsm.patch",
+ "jit_template_suffix": ",true,false,true,true",
+ "split_kernel": {
+  "instructions": 9856,
+  "max_register": 206,
+  "QGMMA": 160,
+  "QGMMA_register_A": 0,
+  "LDSM": 0,
+  "FMUL": 3110,
+  "local_memory_ops": 0
+ },
+ "ldsm_kernel": {
+  "instructions": 9776,
+  "max_register": 201,
+  "QGMMA": 160,
+  "QGMMA_register_A": 160,
+  "LDSM": 84,
+  "FMUL": 3110,
+  "local_memory_ops": 0
+ },
+ "spill_bytes": {
+  "split": [
+   0,
+   0
+  ],
+  "ldsm": [
+   0,
+   0
+  ]
+ },
+ "ptxas_wgmma_serialization_diagnostics": 0,
+ "instructions_per_k_block": {
+  "split": {
+   "fc1": 201.9,
+   "fc2": 190.8
+  },
+  "ldsm": {
+   "fc1": 193.9,
+   "fc2": 180.0
+  }
+ },
+ "nvcc_compile_seconds": {
+  "split": 8.37,
+  "ldsm": 8.69
+ },
+ "other_instantiations_sass_identical": {
+  "ep1-s3-512": true,
+  "ep1-s3": true,
+  "ep1-s4": true,
+  "ep4-128-s3-512": true,
+  "ep4-128-s3": true,
+  "ep4-128-s4": true,
+  "ep4-140-s3-512": true,
+  "ep4-140-s3": true,
+  "ep4-140-s4": true,
+  "ep1-dec-m64-s8": true,
+  "ep1-dec-m64-s8-swap": true,
+  "ep4-dec-32-s8": true,
+  "ep4-dec-32-s8-swap": true,
+  "ep4-dec-16-s8-swap": true,
+  "ep4-dec-16-s6-iwg": true,
+  "ep4-dec-32-s6-iwg": true,
+  "ep4-140-dec-35-s8": true,
+  "ep4-140-dec-18-s8-swap": true,
+  "ep1-s4-pair": true,
+  "ep1-s4-lean": true,
+  "ep1-s4-split": true
+ },
+ "local_host_check": {
+  "configurations": 276,
+  "result": "PASS",
+  "selected_kernels_zero_spill": true
+ }
+}
