@@ -35,7 +35,18 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
      constexpr uint32_t SMEM_CD_PER_QUEUE = kPrefillWarpCD ?
          math::constexpr_align(kNumEpilogueWarps * 16 * kPrefillWarpCDRowBytes, kSharedMemoryAlignment) :
          math::constexpr_align(
-@@ -1807,7 +1820,24 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1802,12 +1815,34 @@ sm90_fp8_mega_moe_impl(void* y,
+                     // the serving loop. The caller has waited for the first stage and read its scales;
+                     // its ratios start at 1 (the zero accumulators stay zero, as without the flag).
+                     [[maybe_unused]] auto split_k_loop = [&](auto num_k_blocks_c, auto unroll_c, const auto& rescale_half,
+-                                                             const auto& after_issue, const auto& prefetch) CUTLASS_LAMBDA_FUNC_INLINE {
++                                                             const auto& after_issue, const auto& prefetch, const auto& unit_ratios) CUTLASS_LAMBDA_FUNC_INLINE {
+                         constexpr uint32_t kNumKBlocks = decltype(num_k_blocks_c)::value, kUnroll = decltype(unroll_c)::value;
++                        // With ldmatrix A and more than one chunk (FC1), half 0 of a chunk's first K block is
++                        // rescaled at the end of the previous chunk, after half 0 of its last K block and while
++                        // half 1 still runs, so the next chunk issues half 0 at once. At the tile end the
++                        // ratios are set to 1 and that extra rescale is exact.
++                        constexpr bool kPreRescale = kPrefillSplitLdsm and kNumKBlocks > kUnroll;
                          using HalfWGMMA = typename mma::sm90::FP8MMASelector<WG_BLOCK_N / 2>::type;
                          constexpr uint32_t kHalfAccum = kAccumPerThread / 2;
                          DG_STATIC_ASSERT(kNumKBlocks % kUnroll == 0 and HalfWGMMA::kNumAccum == kHalfAccum, "Split accumulator chunks");
@@ -61,7 +72,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                              const uint32_t a_lo = desc_a_lo + stage_idx * (SMEM_A_SIZE_PER_STAGE / 16);
                              const uint32_t b_lo = desc_b_lo + stage_idx * (SMEM_B_SIZE_PER_STAGE / 16) +
                                  h * (WG_BLOCK_N / 2 * BLOCK_K * static_cast<uint32_t>(sizeof(b_dtype_t)) / 16);
-@@ -1817,7 +1847,10 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1817,7 +1852,10 @@ sm90_fp8_mega_moe_impl(void* y,
                              #pragma unroll
                              for (uint32_t k = 0; k < BLOCK_K / WGMMA::K; ++ k) {
                                  const uint32_t k_desc = k * WGMMA::K * static_cast<uint32_t>(sizeof(a_dtype_t)) / 16;
@@ -73,7 +84,7 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                              }
                              ptx::warpgroup_commit_batch();
                              #pragma unroll
-@@ -1826,6 +1859,8 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1826,6 +1864,8 @@ sm90_fp8_mega_moe_impl(void* y,
                          // The zero accumulators are pinned before the first WGMMA.
                          #pragma unroll
                          for (uint32_t i = 0; i < kAccumPerThread; ++ i) ptx::warpgroup_fence_operand(final_accum[i]);
@@ -82,11 +93,14 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                          uint32_t prev_stage = stage_idx, k_block_idx = 0;
                          for (uint32_t k_chunk = 0; k_chunk < kNumKBlocks; k_chunk += kUnroll) {
                              #pragma unroll
-@@ -1843,13 +1878,15 @@ sm90_fp8_mega_moe_impl(void* y,
+@@ -1842,18 +1882,27 @@ sm90_fp8_mega_moe_impl(void* y,
+                                         // it tells ptxas that half 1 is not in flight.
                                          ptx::warpgroup_wait<1>();
                                      }
-                                     rescale_half(h);
+-                                    rescale_half(h);
 -                                    issue_half(h);
++                                    if (not (kPreRescale and u == 0 and h == 0))
++                                        rescale_half(h);
 +                                    issue_half(h, a_regs[u % 2]);
                                  }
                                  after_issue(k_chunk + u);
@@ -96,6 +110,36 @@ diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm
                                      prefetch(k_chunk + u + 1, next_stage, next_phase);
 +                                    if constexpr (kPrefillSplitLdsm)
 +                                        load_a(a_regs[(u + 1) % 2], next_stage);
++                                } else if constexpr (kPreRescale) {
++                                    unit_ratios();
                                  }
                                  prev_stage = stage_idx;
                                  advance_pipeline(k_block_idx);
+                             }
++                            if constexpr (kPreRescale) {
++                                ptx::warpgroup_wait<1>();
++                                rescale_half(0);
++                            }
+                             ptx::warpgroup_wait<0>();
+                             if (lane_idx == 0)
+                                 empty_barriers[prev_stage]->arrive();
+@@ -1905,7 +1954,8 @@ sm90_fp8_mega_moe_impl(void* y,
+                                 prev_scale_a_1 = scale_a_1;
+                                 prev_gate_sf = gate_sf;
+                                 prev_up_sf = up_sf;
+-                            });
++                            },
++                            [&]() CUTLASS_LAMBDA_FUNC_INLINE { r0_gate = r1_gate = r0_up = r1_up = 1.0f; });
+                         } else {
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             if (k_block_idx == 0) {
+@@ -2011,7 +2061,8 @@ sm90_fp8_mega_moe_impl(void* y,
+                                 }
+                                 prev_scale_a_0 = scale_a_0;
+                                 prev_scale_a_1 = scale_a_1;
+-                            });
++                            },
++                            []() CUTLASS_LAMBDA_FUNC_INLINE {});
+                         } else {
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             if (k_block_idx == 0) {

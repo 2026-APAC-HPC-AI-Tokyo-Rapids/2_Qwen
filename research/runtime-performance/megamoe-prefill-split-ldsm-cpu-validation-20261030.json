@@ -16,12 +16,13 @@
   "local_memory_ops": 0
  },
  "ldsm_kernel": {
-  "instructions": 9776,
+  "instructions": 9784,
   "max_register": 201,
   "QGMMA": 160,
   "QGMMA_register_A": 160,
   "LDSM": 84,
   "FMUL": 3110,
+  "WARPGROUP_DEPBAR": 41,
   "local_memory_ops": 0
  },
  "spill_bytes": {
@@ -76,5 +77,108 @@
   "configurations": 276,
   "result": "PASS",
   "selected_kernels_zero_spill": true
+ },
+ "fc1_pre_rescale": "FC1 (4 chunks of 8 K blocks): half 0 of the next chunk is rescaled after half 0 of the chunk's last K block and before the drain; ratios 1 at the tile end. FC2 (one chunk) unchanged.",
+ "model_run": {
+  "run": 40993048750,
+  "commit": "d79c313",
+  "gpu": "Genkai H100, power-limited 1.19-1.33 GHz",
+  "ratios_to_ss_three_trials": {
+   "split-u8": [
+    0.9029,
+    0.9025,
+    0.9017
+   ],
+   "split-pre-u8": [
+    0.8981,
+    0.8958,
+    0.8962
+   ],
+   "split-u16": [
+    0.8926,
+    0.894,
+    0.8927
+   ],
+   "split-pre-u16": [
+    0.8915,
+    0.8929,
+    0.8912
+   ],
+   "split-stag-pre-u8": [
+    0.9411,
+    0.9403,
+    0.9413
+   ],
+   "ldsm-u8": [
+    0.8886,
+    0.8894,
+    0.8889
+   ],
+   "ldsm-pre-u8": [
+    0.8795,
+    0.8766,
+    0.8778
+   ],
+   "ldsm-pre-u16": [
+    0.8797,
+    0.8771,
+    0.8769
+   ],
+   "ldsm-stag-pre-u8": [
+    0.9095,
+    0.9104,
+    0.9097
+   ],
+   "split-norescale-u8": [
+    0.7821,
+    0.7822,
+    0.7826
+   ],
+   "ldsm-norescale-u8": [
+    0.7884,
+    0.7861,
+    0.7878
+   ],
+   "ss-norescale": [
+    0.8017,
+    0.7989,
+    0.8007
+   ]
+  },
+  "ratios_to_ss_k12_three_trials": {
+   "split-k12-u12": [
+    0.9228,
+    0.9238,
+    0.9228
+   ],
+   "ldsm-k12-u12": [
+    0.903,
+    0.9041,
+    0.9022
+   ],
+   "ldsm-pre-k12-u6": [
+    0.9505,
+    0.9532,
+    0.9445
+   ],
+   "split-norescale-k12-u12": [
+    0.8219,
+    0.8243,
+    0.8258
+   ]
+  },
+  "clk_per_k_block": {
+   "ss": 1459.5,
+   "split-u8": 1282.8,
+   "split-pre-u8": 1274.8,
+   "ldsm-u8": 1256.1,
+   "ldsm-pre-u8": 1250.7,
+   "split-norescale-u8": 1066.3,
+   "ldsm-norescale-u8": 1072.2,
+   "ss-k12": 1459.5,
+   "split-k12-u12": 1279.6,
+   "ldsm-k12-u12": 1243.8
+  },
+  "all_exact_variants_bitwise_equal": true
  }
 }
