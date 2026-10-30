@@ -55,7 +55,7 @@ index 77d6af2..863180c 100644
              }
              epilogue.store_tail();
 diff --git a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
-index 5cabf4d..1141ef6 100644
+index 7756708..94611e9 100644
 --- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 +++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 @@ -16,6 +16,7 @@
@@ -66,7 +66,7 @@ index 5cabf4d..1141ef6 100644
  #include "block.h"
  #include "mask.h"
  #include "pack_gqa.h"
-@@ -1476,6 +1477,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1480,6 +1481,7 @@ struct CollectiveMainloopFwdSm90 {
          auto &barrier_Q = shared_storage.pipelines.barrier_Q;
          if constexpr (!AppendKV) {
              barrier_Q.wait(work_idx % 2);
@@ -74,7 +74,7 @@ index 5cabf4d..1141ef6 100644
          } else {
              if (get<1>(params.shape_rotary) > 0) {  // Apply rotary to Q
                  using Rotary_t = Rotary<kBlockM, kHeadDim, NumMmaThreadsQK, Element, !(Is_causal || Is_local) /*FixedPosition*/>;
-@@ -1524,6 +1526,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1528,6 +1530,7 @@ struct CollectiveMainloopFwdSm90 {
                  flash::gemm<true, -1>(tiled_mma_qk, tSrQ, tSrK(_, _, _, smem_pipe_read.index()), tSrS);
                  warpgroup_wait<0>();
              }
@@ -82,7 +82,7 @@ index 5cabf4d..1141ef6 100644
              pipeline_k.consumer_release(smem_pipe_read);
              if constexpr (HasQv) {
                  shared_storage.pipelines.barrier_Qv.wait(work_idx % 2);
-@@ -1556,6 +1559,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1560,6 +1563,7 @@ struct CollectiveMainloopFwdSm90 {
              if constexpr (!MmaPV_is_RS) { write_P_to_smem(tOrP); }
              if constexpr (!MmaPV_is_RS) { arrive_on_P_write_barrier(); }
              --n_block;
@@ -90,7 +90,7 @@ index 5cabf4d..1141ef6 100644
  
              // Need to initialize tOrO in the case of RescaleOBeforeGemm where we will scale tOrO even in the 1st iter
              clear(tOrO);
-@@ -1682,6 +1686,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1686,6 +1690,7 @@ struct CollectiveMainloopFwdSm90 {
                      }
                  }
              }
@@ -98,7 +98,7 @@ index 5cabf4d..1141ef6 100644
              // Tell producers that smem_q is ready
              cutlass::arch::NamedBarrier::arrive(kHeads * NumMmaThreadsQK + (Use_TMA_Q ? cutlass::NumThreadsPerWarp : NumProducerThreads), static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
              if constexpr (RescaleOBeforeGemm) { prefill_rescale(softmax, tOrO, scores_scale); }
-@@ -1992,8 +1997,10 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1996,8 +2001,10 @@ struct CollectiveMainloopFwdSm90 {
  
                  // Issued before the hand-off wait so the store does not wait for it.
                  int const offset_cur = PrefillPipeRows ? params.cu_seqlens_q[cur.bidb] : 0;
@@ -110,7 +110,7 @@ index 5cabf4d..1141ef6 100644
                  TileState nxt = tile_state(m_block1, bidh1, bidb1);
                  // Boundary step: QK of the next tile's first (diagonal) block with the PV of this tile's
                  // last block, in the ping-pong order of fwd_step.
-@@ -2003,19 +2010,23 @@ struct CollectiveMainloopFwdSm90 {
+@@ -2007,19 +2014,23 @@ struct CollectiveMainloopFwdSm90 {
                      Tensor tSrS = partition_fragment_C(tiled_mma_qk, select<0, 1>(TileShape_MNK{}));
                      if (warp_group_idx == 0) { consumer_wait(pipeline_k, smem_pipe_read); }
                      warp_scheduler_barrier_sync();
@@ -134,7 +134,7 @@ index 5cabf4d..1141ef6 100644
                      pipeline_v.consumer_release(smem_pipe_read_v);
                      flash::permute_Cregs_fp8(tSrS);
                      convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
-@@ -2026,12 +2037,14 @@ struct CollectiveMainloopFwdSm90 {
+@@ -2030,12 +2041,14 @@ struct CollectiveMainloopFwdSm90 {
                      } else {
                          store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
                      }
@@ -149,7 +149,7 @@ index 5cabf4d..1141ef6 100644
                  }
              }
              {  // Tile with Q in half 1.
-@@ -2079,8 +2092,10 @@ struct CollectiveMainloopFwdSm90 {
+@@ -2083,8 +2096,10 @@ struct CollectiveMainloopFwdSm90 {
  
                  // Issued before the hand-off wait so the store does not wait for it.
                  int const offset_cur = PrefillPipeRows ? params.cu_seqlens_q[cur.bidb] : 0;
@@ -161,7 +161,7 @@ index 5cabf4d..1141ef6 100644
                  TileState nxt = tile_state(m_block1, bidh1, bidb1);
                  // Boundary step: QK of the next tile's first (diagonal) block with the PV of this tile's
                  // last block, in the ping-pong order of fwd_step.
-@@ -2090,19 +2105,23 @@ struct CollectiveMainloopFwdSm90 {
+@@ -2094,19 +2109,23 @@ struct CollectiveMainloopFwdSm90 {
                      Tensor tSrS = partition_fragment_C(tiled_mma_qk, select<0, 1>(TileShape_MNK{}));
                      if (warp_group_idx == 0) { consumer_wait(pipeline_k, smem_pipe_read); }
                      warp_scheduler_barrier_sync();
@@ -185,7 +185,7 @@ index 5cabf4d..1141ef6 100644
                      pipeline_v.consumer_release(smem_pipe_read_v);
                      flash::permute_Cregs_fp8(tSrS);
                      convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
-@@ -2113,12 +2132,14 @@ struct CollectiveMainloopFwdSm90 {
+@@ -2117,12 +2136,14 @@ struct CollectiveMainloopFwdSm90 {
                      } else {
                          store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
                      }
@@ -200,7 +200,7 @@ index 5cabf4d..1141ef6 100644
                  }
              }
          }
-@@ -2292,7 +2313,9 @@ struct CollectiveMainloopFwdSm90 {
+@@ -2296,7 +2317,9 @@ struct CollectiveMainloopFwdSm90 {
  
              // Issued before the hand-off wait so the store does not wait for it.
              int const offset_cur = PrefillPipeRows ? params.cu_seqlens_q[cur.bidb] : 0;
@@ -210,7 +210,7 @@ index 5cabf4d..1141ef6 100644
              if (bidb1 < 0) { break; }
              TileState nxt = tile_state(m_block1, bidh1, bidb1);
              // Boundary step: QK of the next tile's first (diagonal) block with the PV of this tile's
-@@ -2303,19 +2326,23 @@ struct CollectiveMainloopFwdSm90 {
+@@ -2307,19 +2330,23 @@ struct CollectiveMainloopFwdSm90 {
                  Tensor tSrS = partition_fragment_C(tiled_mma_qk, select<0, 1>(TileShape_MNK{}));
                  if (warp_group_idx == 0) { consumer_wait(pipeline_k, smem_pipe_read); }
                  warp_scheduler_barrier_sync();
@@ -234,7 +234,7 @@ index 5cabf4d..1141ef6 100644
                  pipeline_v.consumer_release(smem_pipe_read_v);
                  flash::permute_Cregs_fp8(tSrS);
                  convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
-@@ -2326,12 +2353,14 @@ struct CollectiveMainloopFwdSm90 {
+@@ -2330,12 +2357,14 @@ struct CollectiveMainloopFwdSm90 {
                  } else {
                      store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));
                  }

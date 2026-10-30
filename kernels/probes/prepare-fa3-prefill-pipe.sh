@@ -56,9 +56,15 @@ for library in pipe stamp; do
     grep -E 'registers|spill' "${RUNTIME_DIR}/logs/build-${library}.log" | tee "${RUNTIME_DIR}/results/ptxas-${library}.txt"
 done
 install -m 0644 "${root}/kernels/probes/fa3-prefill-pipe.py" bench.py
+install -m 0644 "${root}/kernels/probes/fa3-prefill-endurance.py" endurance.py
 cat >probe <<PROBE
 #!/usr/bin/env bash
 set -euo pipefail
+# First trial only: thousands of eager calls of every row over the serving varlen shapes (hang check),
+# in its own process and time limit so that the timing below still runs if it hangs.
+if [[ ! -e "\${RUNTIME_DIR}/results/fa3-endurance.json" && ! -e "\${RUNTIME_DIR}/results/probe-runs" ]]; then
+    timeout 45 bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${RUNTIME_DIR}/source/endurance.py" --library "\${RUNTIME_DIR}/source/fa3-prefill-pipe.so" --names ${names} --output "\${RUNTIME_DIR}/results/fa3-endurance.json" || printf 'ENDURANCE-FAILED status=%s\n' "\$?"
+fi
 bash "\${RUNTIME_DIR}/scripts/run-container.sh" /opt/sglang/venv/bin/python "\${RUNTIME_DIR}/source/bench.py" --library "\${RUNTIME_DIR}/source/fa3-prefill-pipe.so" --names ${names} --output "\${RUNTIME_DIR}/results/fa3-pipe.json"
 # Phase clocks after the timing of the third trial, in their own process: a fault or the trial
 # timeout there must not hide the timing.

@@ -142,7 +142,7 @@ index fa879ce..77d6af2 100644
                  epilogue.store_tail();
                  return;
 diff --git a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
-index baab269..5cabf4d 100644
+index baab269..7756708 100644
 --- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 +++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
 @@ -61,6 +61,21 @@ struct CollectiveMainloopFwdSm90 {
@@ -185,7 +185,7 @@ index baab269..5cabf4d 100644
                  return;
              }
          }
-@@ -1030,7 +1045,32 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1030,7 +1045,36 @@ struct CollectiveMainloopFwdSm90 {
              }
          }
  
@@ -194,7 +194,13 @@ index baab269..5cabf4d 100644
 +            // Q of this tile is in half work_idx % 2 once every producer thread's cp.async has landed.
 +            flash::cp_async_wait<0>();
 +            cutlass::arch::fence_view_async_shared();
-+            cutlass::arch::NamedBarrier::sync(NumProducerThreads, cutlass::arch::ReservedNamedBarriers::TransposeBarrier /*id*/);
++            if (work_idx == 0) {
++                // Consumes the consumers' QueryEmpty arrival in mma_init, so that the producer's sync at
++                // tile w's decision step pairs with the release of tile w - 1.
++                cutlass::arch::NamedBarrier::sync(NumMmaThreadsQK + NumProducerThreads, static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
++            } else {
++                cutlass::arch::NamedBarrier::sync(NumProducerThreads, cutlass::arch::ReservedNamedBarriers::TransposeBarrier /*id*/);
++            }
 +            if (thread_idx == 0) {
 +                pipe_tile(shared_storage)[work_idx % 2] = make_int4(m_block, bidh, bidb, 0);
 +                shared_storage.pipelines.barrier_Q.arrive();
@@ -203,11 +209,9 @@ index baab269..5cabf4d 100644
 +            // The staged Q of this tile has landed (every producer thread waits for its own cp.async).
 +            flash::cp_async_wait<0>();
 +            cutlass::arch::fence_view_async_shared();
-+            if (work_idx == 0) {
-+                cutlass::arch::NamedBarrier::sync(NumProducerThreads, cutlass::arch::ReservedNamedBarriers::TransposeBarrier /*id*/);
-+            } else {
-+                cutlass::arch::NamedBarrier::sync(NumMmaThreadsQK + NumProducerThreads, static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
-+            }
++            // QueryEmpty generation w pairs with the consumers' release of tile w - 1 (generation 0 with
++            // the arrival in mma_init), exactly as the Q load of every other row.
++            cutlass::arch::NamedBarrier::sync(NumMmaThreadsQK + NumProducerThreads, static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
 +            if (thread_idx == 0) {
 +                *pipe_tile(shared_storage) = make_int4(m_block, bidh, bidb, 0);
 +                uint32_t const barrier = cute::cast_smem_ptr_to_uint(&shared_storage.pipelines.barrier_Q);
@@ -219,7 +223,7 @@ index baab269..5cabf4d 100644
              // Wait for the MMA warpgroups to signal that smem_q is ready
              if (SingleProducerWarp || warp_idx_in_warpgroup == 0) {
                  cutlass::arch::NamedBarrier::sync(NumMmaThreadsQK + cutlass::NumThreadsPerWarp, static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/);
-@@ -1084,6 +1124,13 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1084,6 +1128,13 @@ struct CollectiveMainloopFwdSm90 {
          }
          int n_block_prev = n_block;
          --n_block;
@@ -233,7 +237,7 @@ index baab269..5cabf4d 100644
          #pragma unroll (!Transpose_V && Use_TMA_KV && !Has_sparse_mask ? 2 : 1)
          for (; n_block >= n_block_min; --n_block) {
              PipelineState smem_pipe_write_v = smem_pipe_write; // copy the state, write_v is always 1 step behind
-@@ -1113,9 +1160,26 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1113,9 +1164,26 @@ struct CollectiveMainloopFwdSm90 {
                  }
              }
              n_block_prev = n_block;
@@ -261,7 +265,7 @@ index baab269..5cabf4d 100644
          if constexpr (!Transpose_V && IntraWGOverlap) {
              if (should_load_KV) { load_V(n_block_prev, smem_pipe_write, cute::true_type{} /*Seqlenk_mask*/); }
          }
-@@ -1136,11 +1200,61 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1136,11 +1204,61 @@ struct CollectiveMainloopFwdSm90 {
  
      template <typename SharedStorage>
      CUTLASS_DEVICE void
@@ -326,7 +330,7 @@ index baab269..5cabf4d 100644
      }
  
      template <typename SharedStorage>
-@@ -1726,6 +1840,306 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1726,6 +1844,306 @@ struct CollectiveMainloopFwdSm90 {
      // Consumer loop over every tile of this CTA for PrefillPipe. Per tile it performs the same
      // operations in the same order as mma() followed by the direct-O epilogue; only the issue
      // order across tile boundaries differs.
@@ -633,7 +637,7 @@ index baab269..5cabf4d 100644
      template <typename Softmax, typename SharedStorage, typename FrgTensorO, typename Store>
      CUTLASS_DEVICE void
      mma_pipe(Params const& params,
-@@ -1737,6 +2151,10 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1737,6 +2155,10 @@ struct CollectiveMainloopFwdSm90 {
               SharedStorage& shared_storage,
               Store&& store
               ) {
@@ -644,7 +648,7 @@ index baab269..5cabf4d 100644
          static_assert(PrefillPipe && PrefillDirectO && IntraWGOverlap && UseSchedulerBarrier && MmaPV_is_RS && Is_FP8 && !V_colmajor && Is_causal && !Is_local && PackGQA && !Use_TMA_Q && kHeads == 1);
          static_assert(!HasQv && !Has_softcap && !Has_sparse_mask && !LargeHeadDimV && !RescaleOBeforeGemm && !AppendKV && !Split && Varlen && !PrefillPVLive && !PrefillTreeMax && !PrefillLazy);
          static constexpr int kBlockM = get<0>(TileShape_MNK{});
-@@ -1872,6 +2290,8 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1872,6 +2294,8 @@ struct CollectiveMainloopFwdSm90 {
                  fwd_step(n_block, no_mask_fn, cute::false_type{} /*check_inf*/);
              }
  
@@ -653,7 +657,7 @@ index baab269..5cabf4d 100644
              auto [m_block1, bidh1, bidb1] = next_tile();
              if (bidb1 < 0) { break; }
              TileState nxt = tile_state(m_block1, bidh1, bidb1);
-@@ -1901,7 +2321,11 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1901,7 +2325,11 @@ struct CollectiveMainloopFwdSm90 {
                  convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
                  softmax.rescale_o(tOrO, scores_scale);
                  flash::permute_output_fp8(tOrO);
@@ -666,7 +670,7 @@ index baab269..5cabf4d 100644
                  clear(tOrO);
                  // Softmax keeps its scale const: rebuild it for the next tile, then take its state.
                  ::new (&softmax) Softmax(scale_log2(nxt));
-@@ -1911,6 +2335,7 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1911,6 +2339,7 @@ struct CollectiveMainloopFwdSm90 {
              }
          }
          // Last tile of this CTA: the final PV of mma().
@@ -674,7 +678,7 @@ index baab269..5cabf4d 100644
          Tensor scores_scale = make_fragment_like(softmax.row_max);
          consumer_wait(pipeline_v, smem_pipe_read);
          flash::gemm</*zero_init=*/false, /*wg_wait=*/-1>(tiled_mma_pv, tOrP, tOrV(_, _, _, smem_pipe_read.index()), tOrO);
-@@ -1920,7 +2345,11 @@ struct CollectiveMainloopFwdSm90 {
+@@ -1920,7 +2349,11 @@ struct CollectiveMainloopFwdSm90 {
          softmax.rescale_o(tOrO, scores_scale);
          flash::permute_output_fp8(tOrO);
          ++smem_pipe_read;

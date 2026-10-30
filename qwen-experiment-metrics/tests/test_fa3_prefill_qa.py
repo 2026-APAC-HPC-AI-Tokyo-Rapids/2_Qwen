@@ -63,3 +63,13 @@ def test_qd_reads_q_from_the_half_of_its_tile():
     assert 'int const half = PrefillPipeQD ? (work_idx + 1) % 2 : 1;' in text
     assert 'if (work_idx >= 1) { cutlass::arch::NamedBarrier::sync(NumMmaThreadsQK + NumProducerThreads, static_cast<uint32_t>(FwdNamedBarriers::QueryEmpty) /*id*/); }' in text
     assert 'pipe_tile(shared_storage)[PrefillPipeQD ? work_idx % 2 : 0] = make_int4(0, 0, -1, 0);' in text
+
+
+def test_producer_queryempty_generations_pair_with_the_previous_tile():
+    # Consumers arrive on QueryEmpty once in mma_init and once per tile; the producers must sync exactly
+    # as often (every tile plus pipe_end), so that generation w is the release of tile w - 1.
+    text = added('prefill-qa.patch')
+    handoff = text[text.index('if constexpr (PrefillPipeQA) {\n            // The staged Q'):text.index('} else if constexpr (Use_TMA_Q) {')]
+    assert 'TransposeBarrier' not in handoff and handoff.count('FwdNamedBarriers::QueryEmpty') == 1
+    qd = text[text.index('if constexpr (PrefillPipeQD) {\n            // Q of this tile'):text.index('} else if constexpr (PrefillPipeQA) {')]
+    assert qd.index('if (work_idx == 0) {') < qd.index('FwdNamedBarriers::QueryEmpty') < qd.index('TransposeBarrier')
