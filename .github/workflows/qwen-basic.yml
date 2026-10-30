@@ -26,7 +26,7 @@ jobs:
           find scripts platforms containers aws submission -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' -o -name '*.slurm' -o -name '*.sbatch' \) -print0 | xargs -0 -r -n1 bash -n
           uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers
           uvx --from 'actionlint-py==1.7.12.24' actionlint
-          uv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests/test_submission_package.py qwen-experiment-metrics/tests/test_eagle_acceptance.py qwen-experiment-metrics/tests/test_basic_serving.py qwen-experiment-metrics/tests/test_aiperf_official.py qwen-experiment-metrics/tests/test_firmus_reference.py qwen-experiment-metrics/tests/test_firmus_cpu_lifecycle.py qwen-experiment-metrics/tests/test_scheduler_monitor.py qwen-experiment-metrics/tests/test_build_bootstrap.py qwen-experiment-metrics/tests/test_repository_contract.py qwen-experiment-metrics/tests/test_vllm_container.py
+          uv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests/test_basic_metrics.py qwen-experiment-metrics/tests/test_submission_package.py qwen-experiment-metrics/tests/test_eagle_acceptance.py qwen-experiment-metrics/tests/test_basic_serving.py qwen-experiment-metrics/tests/test_aiperf_official.py qwen-experiment-metrics/tests/test_firmus_reference.py qwen-experiment-metrics/tests/test_firmus_cpu_lifecycle.py qwen-experiment-metrics/tests/test_scheduler_monitor.py qwen-experiment-metrics/tests/test_build_bootstrap.py qwen-experiment-metrics/tests/test_repository_contract.py qwen-experiment-metrics/tests/test_vllm_container.py
 
   stage:
     name: Basic SGLangのビルド入力をS3へ保存
@@ -160,3 +160,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '.artifacts[] | select(.name | startswith("qwen-") and endswith("-${{ github.run_id }}-${{ github.run_attempt }}")) | .id' | while read -r artifact_id; do gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"; done
+
+  publish-metrics:
+    name: ArchiveからBigQueryへ比較用指標を送信
+    needs: [serve, archive-artifacts]
+    if: ${{ always() && needs.serve.result != 'skipped' && needs.archive-artifacts.result == 'success' }}
+    uses: ./.github/workflows/qwen-basic-metrics.yml
+    with:
+      measurement: ${{ github.run_id }}/${{ github.run_attempt }}
+    secrets: inherit

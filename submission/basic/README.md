@@ -23,3 +23,5 @@ Slurm script内のpartition/resource指定はFirmus向け。prepareは空のrun 
 ジョブのterminal状態とexit codeを確認し、`results/score.json` の `official_validation.valid`、`eligible`、good fraction、request errorsを確認する。source/version/topologyと要求・実KV poolのreadback一致も必須。`run-success` はそれらが通った場合のみ生成される。sanity応答は主催者による全件accuracy検査の代替にはならない。
 
 run directoryの`source/`、`logs/`、`results/`を回収してchecksum付きで保管した後にrun directoryを削除する。SquashFSは後続実験で再利用する。Actions経由ではこの回収・保管・削除まで自動化し、資格情報は計算nodeへ渡さない。
+
+Actionsはarchiveのchecksumとterminal状態を検査してから、既存のBigQuery senderで設定・来歴・公式score・AIPerf指標を送信する。派生JSONLはraw archiveの外側に保存する。過去の結果は `gh workflow run qwen-basic-metrics.yml --ref main -f measurement=RUN_ID/ATTEMPT` で指標だけを送信できる。この操作ではGPUジョブを投入しない。送信失敗は測定結果を無効にせず、同workflowのログに残す。

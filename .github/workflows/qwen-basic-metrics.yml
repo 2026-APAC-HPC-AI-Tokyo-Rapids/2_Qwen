@@ -1,0 +1,46 @@
+name: Qwen Basic metrics (CPU only)
+
+on:
+  workflow_call:
+    inputs:
+      measurement:
+        required: true
+        type: string
+    secrets:
+      EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON:
+        required: true
+  workflow_dispatch:
+    inputs:
+      measurement:
+        description: 'Archived Actions run/attempt (metrics only; no GPU submission)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: [self-hosted, home-lab]
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      - name: Publish terminal archived metrics from the login side
+        shell: home-lab-shell {0}
+        env:
+          MEASUREMENT: ${{ inputs.measurement }}
+          EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          set -euo pipefail
+          credentials=$(mktemp)
+          trap 'rm -f -- "${credentials}"' EXIT
+          chmod 0600 "${credentials}"
+          printf '%s' "${EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON}" >"${credentials}"
+          unset EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON
+          export EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE="${credentials}"
+          export EXPERIMENT_METRICS_BIGQUERY_CONFIG="$(pwd)/qwen-experiment-metrics/pyproject.toml"
+          uv run --project qwen-experiment-metrics --extra publish python scripts/publish-basic-metrics.py /srv/qwen-artifacts "${MEASUREMENT}"
