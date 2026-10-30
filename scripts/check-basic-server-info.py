@@ -17,6 +17,7 @@ def check(config, info, role):
         "speculative_eagle_topk": 1,
         "max_running_requests": config["prefill"]["max_running_requests"] if role == "prefill" else config["decode_max_running_requests"],
         "max_total_tokens": config["prefill"]["max_total_tokens"] if role == "prefill" else config["decode_max_total_tokens"],
+        "max_total_num_tokens": config["prefill"]["max_total_tokens"] if role == "prefill" else config["decode_max_total_tokens"],
         "ep_num_redundant_experts": 0,
     }
     for key, value in expected.items():

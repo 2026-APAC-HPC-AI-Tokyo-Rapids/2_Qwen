@@ -119,7 +119,9 @@ jobs:
               jq -e --arg sha "${image_sha}" '.schema == "pp4-cpu-gate/v1" and .result == "pass" and .image_sha256 == $sha' source/pp4-cpu-gate.json >/dev/null
             fi
           fi
-          job_id="$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/submit.sbatch")"
+          export_mode=ALL
+          if [[ '${{ inputs.basic }}' == true ]]; then export_mode=PATH,HOME,USER,LOGNAME; fi
+          job_id="$(sbatch --parsable --export="${export_mode}" --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=qwen3_pd "${RUNTIME_DIR}/scripts/submit.sbatch")"
           [[ "${job_id}" =~ ^[0-9]+$ ]]
           printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
           printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"

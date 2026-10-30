@@ -9,6 +9,7 @@
 #SBATCH -o logs/slurm-%j.log
 #SBATCH -e logs/slurm-%j.stderr.log
 set -euo pipefail
+export SLURM_EXPORT_ENV=ALL
 ROOT=${SLURM_SUBMIT_DIR}
 MODEL=$(jq -er .model.path "${ROOT}/source/model.json")
 N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")

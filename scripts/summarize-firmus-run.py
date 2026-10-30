@@ -41,6 +41,8 @@ def summarize(root: Path, job_id: str, status: str, cluster: str = "firmus") -> 
         topology = f"P{p['workers']} × (Attention TP{p['tp'] // p['dp']} DP{p['dp']} / MoE EP{p['ep']}) / D1 × TP4 EP1"
         if p.get("pp", 1) > 1:
             topology = f"P{p['workers']} × PP{p['pp']} TP{p['tp']} EP{p['ep']} / D1 × TP4 DP{config['decode_dp_size']} EP4"
+    if config.get("tier") == "basic":
+        topology = f"P{config['prefill']['workers']} × (Attention TP1 DP4 / MoE EP4) / D1 × (Attention TP1 DP4 / MoE EP4)"
     if aspire:
         workers = config.get("workers", [])
         expected_reports = len(workers)
@@ -48,6 +50,8 @@ def summarize(root: Path, job_id: str, status: str, cluster: str = "firmus") -> 
         topology = " / ".join(f"{role}{count} × TP{tp} DP{config['dp_size']} EP{ep}" for (role, tp, ep), count in sorted(groups.items(), reverse=True)) or "topology unavailable"
     title, scheduler, hardware = ("ASPIRE 2A+", "PBS", "H100 × 16") if aspire else ("Firmus", "Slurm", "H200 × 16")
     lines = [f"### {title} Qwen", "", f"- Status: **{status}**; {scheduler} `{job_id}`; completion marker: **{'present' if list(root.rglob('run-success')) else 'missing'}**.", f"- Framework: **{identity.get('framework', 'sglang' if aspire else 'unavailable')}**; {hardware}; {topology}; concurrency **{config.get('concurrency', 'unavailable')}**.", f"- Workload: {workload}, ISL 4000 / OSL 200, warmup / benchmark / grace **{phases} s**; **not an official submission**."]
+    if config.get("tier") == "basic":
+        lines += [f"- Tier: **Basic**; unmodified public SGLang **{config['sglang_version']}**."]
     if identity.get("dynamo"):
         dynamo = identity["dynamo"]
         lines += [f"- Dynamo **{dynamo['version']}**; engine **{dynamo['engine_version']}**; frontend → TCP → PD workers; NIXL KV transfer. Engine version differs from the standalone baseline."]

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,6 +11,9 @@ from pathlib import Path
 def launch(config, role, index, host):
     assert config["tier"] == "basic" and role in ("prefill", "decode")
     assert config["prefill"]["workers"] == 3
+    assert all(config["prefill"][key] == 4 for key in ("tp", "dp", "ep"))
+    assert config["decode_dp_size"] == 4
+    assert config["speculation"]["algorithm"] == "EAGLE3"
     port = 30100 + index if role == "prefill" else 30200
     args = [
         "/opt/sglang/bin/python", "-m", "sglang.launch_server",
@@ -39,6 +43,7 @@ def launch(config, role, index, host):
         capacity = max(256, max(config["decode_cuda_graph_bs"]) * config["speculation"]["draft_tokens"])
     env = {
         "SGLANG_HOST_IP": host,
+        "SGLANG_RUST_BUILD_MODE": "never",
         "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK": str(capacity),
         "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1",
     }
@@ -59,6 +64,7 @@ def main():
     env["UCX_NET_DEVICES"] = ",".join(hcas)
     env["UCX_POSIX_USE_PROC_LINK"] = "n"
     (root / "source" / f"{name}-launch.json").write_text(json.dumps({"argv": args, "environment": env}, indent=2) + "\n")
+    subprocess.run(["nvidia-smi", "--query-gpu=index,uuid,name,memory.total,driver_version,power.limit,clocks.max.sm", "--format=csv"], check=True)
     print(json.dumps({"argv": args, "environment": env}), flush=True)
     os.execvpe(args[0], args, {**os.environ, **env})
 
