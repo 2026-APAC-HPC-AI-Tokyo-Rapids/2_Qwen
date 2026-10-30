@@ -5,6 +5,7 @@
 #SBATCH -t 00:17:00
 #SBATCH --gres=gpu:8
 #SBATCH --propagate=NONE
+#SBATCH --export=PATH,HOME,USER,LOGNAME
 #SBATCH --no-requeue
 #SBATCH -o logs/slurm-%j.log
 #SBATCH -e logs/slurm-%j.stderr.log

@@ -15,7 +15,7 @@ For independent reproduction, build `containers/basic.Dockerfile` with `scripts/
 ```bash
 bash submission/basic/prepare.sh /scratch/home/ACCOUNT/qwen-basic-run /shared/BUILD.sqsh /scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8 /shared/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e configs/firmus-basic.json
 cd /scratch/home/ACCOUNT/qwen-basic-run
-sbatch scripts/submit.sbatch
+sbatch --export=PATH,HOME,USER,LOGNAME scripts/submit.sbatch
 ```
 
 The image sidecar must accompany `BUILD.sqsh`. Preparation verifies the unmodified Basic provenance, image SHA/size, official target revision and shards, fixed tokenizer and public BF16 draft. It changes only the draft's loader selector/dtype declaration, as declared in the Bonus package; it does not modify target weights, serving packages or kernels. Retain the shared run directory's `source/`, `logs/` and `results/` as the raw reproduction evidence.

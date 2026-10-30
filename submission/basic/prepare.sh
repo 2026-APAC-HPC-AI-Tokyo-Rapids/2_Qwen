@@ -34,4 +34,4 @@ cp "${repo}/submission/basic/submit.sbatch" "${repo}/scripts/basic-worker.py" "$
 # Only the executable prefix changes; the official benchmark argv is retained.
 sed 's|/opt/sglang/venv/bin/|/opt/aiperf/bin/|g' "${repo}/submission/run/official-aiperf.sh" >"${root}/scripts/official-aiperf.sh"
 cp "${repo}/submission/basic/prepare.sh" "${repo}/submission/run/prepare_eagle.py" "${root}/source/"
-printf 'cd %q && sbatch scripts/submit.sbatch\n' "${root}"
+printf 'cd %q && sbatch --export=PATH,HOME,USER,LOGNAME scripts/submit.sbatch\n' "${root}"
