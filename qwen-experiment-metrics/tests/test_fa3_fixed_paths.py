@@ -16,9 +16,9 @@ TABLE = json.loads((ROOT / 'kernels/fa3-verify/candidates.json').read_text())
 def test_dispatch_compiles_unique_main_kernels_and_keeps_split_counts(tmp_path):
     ns = runpy.run_path(str(ROOT / 'kernels/fa3-verify/build.py'))
     tasks = ns['generate_dispatch'](ROOT / 'kernels/fa3-verify', tmp_path)
-    assert len(tasks) == 10  # output and split-count variants share their main kernel; two CTAs/SM and the head pair are their own
+    assert len(tasks) == 11  # output and split-count variants share their main kernel; two CTAs/SM, the head pair and the four-head stream split are their own
     header = (tmp_path / 'candidates.h').read_text()
-    assert len(TABLE) == 21 and len({c['name'] for c in TABLE}) == 21
+    assert len(TABLE) == 22 and len({c['name'] for c in TABLE}) == 22
     for row in TABLE:
         assert row['name'] in header
         # A head-pair CTA holds one copy of every per-head tile per KV head.

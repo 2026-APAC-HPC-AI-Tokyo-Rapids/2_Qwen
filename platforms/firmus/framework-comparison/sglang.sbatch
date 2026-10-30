@@ -220,17 +220,20 @@ done
 # "dense" on the Decode GPUs while the Prefill workers start. Only the Decode worker sources the result.
 if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving trial: retain prior kernel settings and the pinned PP4 selections; gate the EP1 MegaMoE variants and its combine norm, and the two-heads-per-CTA Decode FA3 rows, the fused Decode MoE input and the Decode QKV BLOCK_M 192 tile against the pinned kernels.\n'
+  printf 'PP4 serving trial: retain prior kernel settings and the pinned PP4 selections; gate the EP1 MegaMoE variants and its combine norm, and the four-heads-per-CTA stream-split Decode FA3 row, the fused Decode MoE input and the Decode QKV BLOCK_M 192 tile against the pinned kernels.
+'
   # prepare-firmus-pp4-settings.py pins the Prefill FA3 row and the Decode norm/quant kernel (same winner in
   # 40849459077 and 40883389891), the FP32 Prefill Q/K norm writer (same winner in 40911121619 and 40925558339)
   # and the one-pass Prefill MoE input (13.6% faster on every GPU in 40964714831); their selections no longer
   # run here. The pipelined-tile Prefill FA3 row (-3% on H100) is no longer screened after 40991744289 stopped
   # serving with it and the split MegaMoE both adopted (0.2-0.35 ms per period, one fewer suspect).
   # The four Decode GPUs are idle before model load. One after the other, while the Prefill GPUs run the
-  # MegaMoE selection and its endurance gate below: (1) the two-heads-per-CTA (256 B row read) FA3 verify rows
-  # against the pinned FA3 candidate (~20-40 s, 175 s timeout): adopted only if bit-exact where the split
-  # layout is the pinned one and >=1 us/layer faster on every GPU at cap/4-4, cap/4-2 and cap/4 (44, 46 and
-  # 48 requests per rank, the Decode operating range at cap 48); (2) the PP4 copy-engine proxy transport
+  # MegaMoE selection and its endurance gate below: (1) the four-heads-per-CTA stream-split FA3 verify row
+  # (whole 512 B token rows, one balanced KV interval per SM) against the pinned FA3 candidate (~25-40 s,
+  # 175 s timeout): adopted only if it passes the numeric gate, is >=1 us/layer faster on every GPU at cap/4-4,
+  # cap/4-2 and cap/4 (44, 46 and 48 requests per rank, the Decode operating range at cap 48), and survives
+  # 301 back-to-back replays of its 94-layer graph per GPU and batch with rotating KV lengths, reproducing its
+  # first output byte for byte (it has never served; a hang ends in the timeout and keeps the pin); (2) the PP4 copy-engine proxy transport
   # (check-firmus-pp4-copy-engine.py, ~20 s, 60 s timeout): the patch's IPC buffer/event calls on four GPUs,
   # adopted only if every transfer was exact; (3) the Decode TARGET_VERIFY MegaMoE input
   # (select-firmus-decode-moe-input.py, ~30-45 s with the Triton and pre-dispatch JIT, 150 s timeout): the

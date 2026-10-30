@@ -315,6 +315,8 @@ QK+PV=4*M*KVlen*Qheads*D; KV bytes=B*KVlen*KVheads*D*2。
 
 2026-10-30の候補：2 CTA/SM（`kernels/fa3-verify/decode-two-cta.patch`、`p128split2-c2-fp8`・`p128split3-c2-fp8`・`p128-uneven-c2-fp8`）。run40825417205ではsplit2の3 round目が8〜88 tileで19〜22µs、単独tileでも全SM稼働時の77%かかり、全SM稼働時の読出しは2.7TB/s。CTAあたりtile latency律速で、1 SMに独立tileを2つ置いて隠す。FLOP・byteは不変。launch 128 register、consumer 200、R186、spill0。FP・QGMMA命令数はs2 1 CTA版と一致し、split2は選択内でpin（split2-s3）とbyte一致を要求。見込み−12〜−22µs/層（κ≈1、HBM上限3.7TB/s）。2.7TB/s止まりなら−5µs/層。PP4のDecode GPU上で`--pinned-env`選択（全GPU×2 blockで1µs/層以上）。kernel内mergeは診断で到着counterがresetされず（480＝40×4×3）、効果も0.2〜0.3ms/stepなので保留。詳細は `2026-10-30-decode-step-two-cta-fa3.md`。
 
+2026-10-30 round 6：h2 行（256 B）は 40991744289・41005872470 の両方で負けた。B44 の split3-h2（264 tile = 2 × 132）は −7.1µs/層（約2.92TB/s）だが、B46/48 は 12/24 tile の3 round目で +9〜10µs、split2-h2（4B tile、1.05MB）は2 round目の tail で pin と同じ。粒度の利得は全 SM が同時に終わる分け方でしか時間にならない。候補 `p32stream-h4-fp8`（`decode-stream-h4.patch`）：1 CTA で4 KV head（512B 行を1 warp 命令で cp.async）、consumer 4 WG（各 pin と同じ M64）、kBlockN 32、register 128×(64+4×112)、両 main loop に spill なし。全 request の block 列を132の等区間に切る stream split（segment ≤2/CTA、slot ≤6、CTA 間の差 ≤1 block）。見込み −4〜−10µs/層（中央 −6、512B probe の93〜97%）、悲観（2.92TB/s）で B48 0〜−2.3。PP4 の FA3 選択で数値 gate、slot 数一致、全 GPU×44/46/48 で1µs/層以上、301 replay×3 batch の endurance gate を通れば採用。詳細は `2026-10-30-decode-fa3-stream-h4.md`。
+
 ### Decode QKV GEMM
 
 2*M*N*K; M=176, N=9216, K=4096; tile=128x144。

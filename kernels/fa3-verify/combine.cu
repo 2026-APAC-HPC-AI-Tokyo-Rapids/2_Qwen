@@ -18,6 +18,8 @@ __global__ void combine_fixed(const float* __restrict__ partial, const float* __
         // Dynamic split counts are indexed by virtual (sorted) batch id.
         for (int i = 0; i < batch; ++i) { if (order[i] == token / 4) { active = dynamic[i]; break; } }
     }
+    // Stream split (four KV heads per CTA): the main kernel stored each request's slot count.
+    if (S == 6) { active = dynamic[token / 4]; }
     float weight[S] = {};
     if (lane == 0) {
         float local[S], maximum = -INFINITY;
@@ -61,6 +63,7 @@ void combine(Flash_fwd_params& p, cudaStream_t stream) {
     if (p.o_fp8_ptr) {
         if (p.num_splits == 2) { launch_combine<2, true>(p, stream); }
         else if (p.num_splits == 4) { launch_combine<4, true>(p, stream); }
+        else if (p.num_splits == 6) { launch_combine<6, true>(p, stream); }
         else { launch_combine<3, true>(p, stream); }
     } else {
         if (p.num_splits == 2) { launch_combine<2, false>(p, stream); }

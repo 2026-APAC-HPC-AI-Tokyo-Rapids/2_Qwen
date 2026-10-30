@@ -1,0 +1,345 @@
+--- a/hopper/block.h
++++ b/hopper/block.h
+@@ -6,7 +6,7 @@
+ 
+ namespace flash {
+ 
+-template <class SeqlenInfo_t, int kBlockM, int kBlockN, bool Is_causal, bool Is_local, bool PackGQA=false, bool Split=false>
++template <class SeqlenInfo_t, int kBlockM, int kBlockN, bool Is_causal, bool Is_local, bool PackGQA=false, bool Split=false, bool StreamSplit=false>
+ struct BlockMN {
+ 
+     static
+@@ -49,7 +49,12 @@ struct BlockMN {
+         // Now, only adjust n_block_min if split
+         int n_block_min = 0;
+         // if (threadIdx.x == 128) { printf("Inside, bid.x = %d, bid.y = %d, bid.z = %d, split_idx = %d, n_block_min: %d, n_block_max: %d\n", blockIdx.x, blockIdx.y, blockIdx.z, split_idx, n_block_min, n_block_max); }
+-        if constexpr (Split) {
++        if constexpr (StreamSplit) {
++            // Decode verify stream split: the scheduler packs this segment's block range as
++            // slot | lo << 3 | hi << 17 (VerifyStreamScheduler); hi never exceeds the causal bound.
++            n_block_min = (split_idx >> 3) & 0x3FFF;
++            n_block_max = std::min(n_block_max, (split_idx >> 17) & 0x3FFF);
++        } else if constexpr (Split) {
+             uint32_t num_splits_dynamic_u = reinterpret_cast<uint32_t const&>(split_idx) >> 16; // first 16 bits are for num_splits
+             int num_splits_dynamic = reinterpret_cast<int&>(num_splits_dynamic_u);
+             int split_idx_actual = split_idx & 0x0000FFFF;
+--- a/hopper/epilogue_fwd.hpp
++++ b/hopper/epilogue_fwd.hpp
+@@ -112,7 +112,7 @@ struct CollectiveEpilogueFwd {
+         cute::array_aligned<Element, Use_smem ? cute::cosize_v<SmemLayoutO> * kHeads : 0> smem_o;
+     };
+     // Head pair: each consumer WG stages its own head's O; both WGs share the epilogue barrier.
+-    static_assert(kHeads == 1 || (kHeads == 2 && Use_smem && !Use_TMA_O && !SupportsFP8Output && !VerifyMerge && NumEpilogueThreads == cutlass::NumThreadsPerWarpGroup));
++    static_assert(kHeads == 1 || ((kHeads == 2 || (kHeads == 4 && Split && Varlen)) && Use_smem && !Use_TMA_O && !SupportsFP8Output && !VerifyMerge && NumEpilogueThreads == cutlass::NumThreadsPerWarpGroup));
+ 
+     using TMA_O = std::conditional_t<
+         Use_TMA_O,
+@@ -374,7 +374,11 @@ struct CollectiveEpilogueFwd {
+ 
+         auto [m_block, bidh, bidb, split_idx] = block_coord;
+         int num_splits = get<4>(params.shape_O_packed);
+-        if constexpr (Split && Varlen) {
++        if constexpr (kHeads == 4) {
++            // Stream split: the low 3 bits are this segment's partial slot; every segment writes a partial.
++            num_splits = 2;
++            split_idx &= 0x7;
++        } else if constexpr (Split && Varlen) {
+             uint32_t num_splits_dynamic_u = reinterpret_cast<uint32_t const&>(split_idx) >> 16; // first 16 bits are for num_splits
+             int num_splits_dynamic = reinterpret_cast<int&>(num_splits_dynamic_u);
+             num_splits = num_splits_dynamic > 0 ? num_splits_dynamic : num_splits;
+@@ -589,7 +593,11 @@ struct CollectiveEpilogueFwd {
+         static constexpr int kBlockM = get<0>(TileShape_MNK_PV{});
+         auto [m_block, bidh, bidb, split_idx] = block_coord;
+         int num_splits = get<4>(params.shape_O_packed);
+-        if constexpr (Split && Varlen) {
++        if constexpr (kHeads == 4) {
++            // Stream split: the low 3 bits are this segment's partial slot; every segment writes a partial.
++            num_splits = 2;
++            split_idx &= 0x7;
++        } else if constexpr (Split && Varlen) {
+             uint32_t num_splits_dynamic_u = reinterpret_cast<uint32_t const&>(split_idx) >> 16; // first 16 bits are for num_splits
+             int num_splits_dynamic = reinterpret_cast<int&>(num_splits_dynamic_u);
+             num_splits = num_splits_dynamic > 0 ? num_splits_dynamic : num_splits;
+--- a/hopper/flash_fwd_kernel_sm90.h
++++ b/hopper/flash_fwd_kernel_sm90.h
+@@ -86,14 +86,17 @@ public:
+     // register file holds 2 CTAs x 128 threads x (56 producer + 200 consumer) = 65536.
+     static constexpr uint32_t MinBlocksPerMultiprocessor = MinBlocks_;
+     static_assert(MinBlocks_ == 1 || (MinBlocks_ == 2 && NumMmaWarpGroups == 1 && !Use_TMA_KV));
+-    static_assert(NumMmaWarpGroups == 1 || NumMmaWarpGroups == 2 || NumMmaWarpGroups == 3);
++    static_assert(NumMmaWarpGroups == 1 || NumMmaWarpGroups == 2 || NumMmaWarpGroups == 3 || (kHeads == 4 && NumMmaWarpGroups == 4));
+ 
+     /// Register requirement for Load and Math WGs
+     // If we use cp.async to load K and V, we need more registers for the producer WG.
+     // Head pair: the cp.async producer of two heads keeps the one-WG budget of 56 (40 spills);
+     // 128 x (56 + 2 x 224) = 64512 registers.
+-    static constexpr uint32_t LoadRegisterRequirement = MinBlocks_ == 2 || kHeads == 2 ? 56 : CollectiveMainloop::PrefillRegs ? 40 : (NumMmaWarpGroups == 1 ? 56 : (NumMmaWarpGroups == 2 ? ((Use_TMA_KV) ? 24 : 40) : 32));
+-    static constexpr uint32_t MmaRegisterRequirement = MinBlocks_ == 2 ? 200 : kHeads == 2 ? 224 : CollectiveMainloop::PrefillRegs ? 232 : (NumMmaWarpGroups == 1 ? 256 : (NumMmaWarpGroups == 2 ? ((Use_TMA_KV) ? 240 : 232) : 160));
++    // Four heads (640 threads, launch 96): 128 x (64 + 4 x 112) = 65536. The cp.async producer of whole
++    // 512-byte rows spills in its load loop at 32 (with 120 per consumer); at 112 the consumer main loop
++    // has no local memory traffic (only the per-segment prologue and epilogue spill).
++    static constexpr uint32_t LoadRegisterRequirement = kHeads == 4 ? 64 : MinBlocks_ == 2 || kHeads == 2 ? 56 : CollectiveMainloop::PrefillRegs ? 40 : (NumMmaWarpGroups == 1 ? 56 : (NumMmaWarpGroups == 2 ? ((Use_TMA_KV) ? 24 : 40) : 32));
++    static constexpr uint32_t MmaRegisterRequirement = kHeads == 4 ? 112 : MinBlocks_ == 2 ? 200 : kHeads == 2 ? 224 : CollectiveMainloop::PrefillRegs ? 232 : (NumMmaWarpGroups == 1 ? 256 : (NumMmaWarpGroups == 2 ? ((Use_TMA_KV) ? 240 : 232) : 160));
+     // If you want to print from the producer warp, you'd need to increase the number of registers
+     // Otherwise you'll get CUDA error.
+     // static constexpr uint32_t LoadRegisterRequirement = 40;
+@@ -440,9 +443,9 @@ public:
+                  // get_next_work will be called before the epilogue
+                  ) {
+                 auto block_coord = work_tile_info.get_block_coord(params.scheduler);
+-                // Head pair: the tile's bidh is the pair j; consumer WG h computes KV head 2j+h.
++                // Head group: the tile's bidh is the group j; consumer WG h computes KV head kHeads*j+h.
+                 int const mma_thread_idx = kHeads == 1 ? threadIdx.x - MmaThreadOffset : warp_group_thread_idx;
+-                if constexpr (kHeads == 2) { get<1>(block_coord) = get<1>(block_coord) * 2 + warp_group_idx - 1; }
++                if constexpr (kHeads > 1) { get<1>(block_coord) = get<1>(block_coord) * kHeads + warp_group_idx - 1; }
+                 int const bidb = get<2>(block_coord);
+                 SeqlenInfo_t seqlen_info{
+                     bidb,
+--- a/hopper/flash_fwd_launch_template.h
++++ b/hopper/flash_fwd_launch_template.h
+@@ -25,6 +25,7 @@
+ 
+ using namespace cute;
+ 
++static constexpr int kVerifyStreamSlots = 6;  // partial slots of the decode verify stream split (wrapper.cpp, combine.cu)
+ template <int Arch, int kHeadDim, int kHeadDimV, int ClusterM, typename Element, typename ElementOut,
+           bool Is_causal, bool Is_local, bool Has_softcap, bool Varlen, bool PagedKVNonTMA, bool AppendKV, bool HasQv, bool OnlyQv,
+           bool PackGQA, bool Split, bool V_colmajor, bool Use_one_mma_wg, bool Has_sparse_mask=false, int VerifyBlockN=0, int VerifyStages=2, bool FixedPrefill=false, int PrefillVariant=0, bool VerifyMerge=false, int VerifyCtas=1, int VerifyHeads=1>
+@@ -74,7 +75,8 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream, int* resource
+     // since we'll avoid launching a bunch of thread blocks that immediately exit.
+     // On Sm80, noncausal persistent seems a bit slower.
+     static constexpr bool UsePersistentScheduler = Arch >= 90 ? !(Split && !Varlen) : ((Is_causal && !Varlen) || (Varlen && Split));
+-    using Scheduler = std::conditional_t<!UsePersistentScheduler, SchedulerSingleTile, SchedulerPersistent>;
++    // Four KV heads per CTA: the decode verify stream split with at most kVerifyStreamSlots partials per request.
++    using Scheduler = std::conditional_t<VerifyHeads == 4, flash::VerifyStreamScheduler<kBlockN, kVerifyStreamSlots>, std::conditional_t<!UsePersistentScheduler, SchedulerSingleTile, SchedulerPersistent>>;
+     using AttnKernel = std::conditional_t<
+         Arch >= 90,
+         flash::enable_sm90_or_later<flash::FlashAttnFwdSm90<CollectiveMainloop, CollectiveEpilogue, Scheduler, VerifyCtas>>,
+@@ -169,7 +171,8 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream, int* resource
+         params.num_splits_dynamic_ptr,
+         params.num_m_blocks_ptr,
+         params.varlen_batch_idx_ptr,
+-        params.num_nheads_in_l2_ptr
++        params.num_nheads_in_l2_ptr,
++        params.seqused_k
+     };
+ 
+     if (Varlen && !params.skip_scheduler_metadata_computation) {
+--- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
++++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
+@@ -88,7 +88,8 @@ struct CollectiveMainloopFwdSm90 {
+     static constexpr int kNumInt32PerBlock = (kBlockN + 31) / 32;
+ 
+     using SeqlenInfo_t = flash::SeqlenInfoQKNewK<Varlen, AppendKV>;
+-    using BlockMN_t = flash::BlockMN<SeqlenInfo_t, kBlockM, kBlockN, Is_causal, Is_local, PackGQA, Split>;
++    // Four KV heads per CTA (kHeads_ == 4) run on the decode verify stream split (VerifyStreamScheduler).
++    using BlockMN_t = flash::BlockMN<SeqlenInfo_t, kBlockM, kBlockN, Is_causal, Is_local, PackGQA, Split, kHeads_ == 4>;
+ 
+     static_assert(!LargeHeadDimV || kHeadDimV % 256 == 0);
+     static_assert(!LargeHeadDimV || kBlockM <= 64, "kBlockM must be 64 or less for large Headdim_V");
+@@ -145,8 +146,10 @@ struct CollectiveMainloopFwdSm90 {
+     // Consumer WG h runs the unchanged one-WG M64 math on head 2j+h from its own copy of the
+     // single-head smem tiles (h * cosize further on); the producer reads each paged token row
+     // of both heads as 256 contiguous bytes. NumMmaThreads stays per head.
++    // kHeads == 4: all four KV heads of one (request, KV segment); the producer reads whole
++    // 512-byte token rows and the four consumer WGs each run the one-WG math on one head.
+     static constexpr int kHeads = kHeads_;
+-    static_assert(kHeads == 1 || (kHeads == 2 && NumMmaWarpGroups == 1 && PagedKVNonTMA && PackGQA && !PackGQA_TMA && Transpose_V && IntraWGOverlap && MmaPV_is_RS && !AppendKV && !HasQv && !Has_sparse_mask && !LargeHeadDimV && SameHeadDim && PrefillVariant == 0));
++    static_assert(kHeads == 1 || ((kHeads == 2 || (kHeads == 4 && Split)) && NumMmaWarpGroups == 1 && PagedKVNonTMA && PackGQA && !PackGQA_TMA && Transpose_V && IntraWGOverlap && MmaPV_is_RS && !AppendKV && !HasQv && !Has_sparse_mask && !LargeHeadDimV && SameHeadDim && PrefillVariant == 0));
+ 
+     using SmemLayoutAtomQ = decltype(cutlass::gemm::collective::detail::ss_smem_selector<GMMA::Major::K, Element,
+         decltype(cute::get<0>(TileShape_MNK{})), decltype(cute::get<2>(TileShape_MNK{}))>());
+@@ -821,7 +824,8 @@ struct CollectiveMainloopFwdSm90 {
+         // This is used to index into the batch dimension of mK and mV
+         int const bidb_kv_idx = !is_varlen_k && !params.ptr_pagetable ? bidb_kv : 0;
+ 
+-        using PagedKVManager_t = PagedKVManager<get<1>(TileShape_MNK{}), get<2>(TileShape_MNK{}) * kHeads, get<1>(TileShape_MNK_PV{}) * kHeads, NumProducerThreads, Element, Transpose_V || !IntraWGOverlap /*KV_Same_Iter*/>;
++        // Four heads: each warp instruction copies whole 512-byte token rows (FullRow).
++        using PagedKVManager_t = PagedKVManager<get<1>(TileShape_MNK{}), get<2>(TileShape_MNK{}) * kHeads, get<1>(TileShape_MNK_PV{}) * kHeads, NumProducerThreads, Element, Transpose_V || !IntraWGOverlap /*KV_Same_Iter*/, 1, kHeads == 4>;
+         PagedKVManager_t paged_kv_manager(
+             params.ptr_pagetable, params.shape_pagetable, params.stride_pagetable,
+             params.ptr_K, make_shape(get<0>(params.shape_K), get<1>(params.shape_K) * kHeads, get<2>(params.shape_K), get<3>(params.shape_K)), params.stride_K,
+--- a/hopper/paged_kv.h
++++ b/hopper/paged_kv.h
+@@ -14,7 +14,7 @@ namespace flash {
+ 
+ using namespace cute;
+ 
+-template <int kBlockN, int kHeadDim, int kHeadDimV, int NumThreads, typename Element, bool KV_Same_Iter=false, int LoadsPerRow_LB=1>
++template <int kBlockN, int kHeadDim, int kHeadDimV, int NumThreads, typename Element, bool KV_Same_Iter=false, int LoadsPerRow_LB=1, bool FullRow=false>
+ struct PagedKVManager {
+     // If KV_Same_Iter=false, then we do load_page_table(0), load_K(0), load_page_table(1), load_K(1), load_V(0),
+     // load_page_table(2), load_K(2), load_V(1), etc.
+@@ -34,7 +34,8 @@ struct PagedKVManager {
+     // In the case of PackGQA, this reduces the number of times we need to call divmod.
+     static_assert(kHeadDimGCD % LoadsPerRow_LB == 0, "Headdim and HeaddimV must be a multiple of LoadsPerRow_LB");
+     static constexpr int kBytePerRow = kHeadDimGCD / LoadsPerRow_LB * sizeof(Element);
+-    static constexpr int kBlockKGmem = (kBytePerRow % 128 == 0 ? 128 : (kBytePerRow % 64 == 0 ? 64 : 32)) / sizeof(Element);
++    // FullRow (decode verify, four KV heads): one warp copies a whole kHeadDim-byte token row per instruction.
++    static constexpr int kBlockKGmem = FullRow ? kHeadDimGCD : (kBytePerRow % 128 == 0 ? 128 : (kBytePerRow % 64 == 0 ? 64 : 32)) / sizeof(Element);
+     static constexpr int kGmemThreadsPerRow = kBlockKGmem / kGmemElemsPerLoad;
+     static_assert(NumThreads % kGmemThreadsPerRow == 0, "NumThreads must be a multiple of kGmemThreadsPerRow");
+     // We assume threads loading the same row are in the same warp. This is for an optimization in PagedKV where
+--- a/hopper/tile_scheduler.hpp
++++ b/hopper/tile_scheduler.hpp
+@@ -29,6 +29,7 @@ struct TileSchedulerArguments {
+     int const* const varlen_batch_idx_ptr = nullptr;
+     // int const* const num_n_blocks_ptr = nullptr;
+     int const* const num_nheads_in_l2_ptr = nullptr;
++    int const* const seqused_k = nullptr;  // VerifyStreamScheduler only
+ };
+ 
+ ///////////////////////////////////////////////////////////////////////////////
+@@ -137,6 +138,152 @@ public:
+ 
+ ///////////////////////////////////////////////////////////////////////////////
+ 
++// Decode verify stream split (four KV heads per CTA, at most 64 requests). The kBlockN-token KV
++// blocks of all requests, in request order, are cut into G equal intervals, one per CTA: CTA c
++// covers blocks [c*N/G, (c+1)*N/G). Each (CTA, request) piece of an interval is a segment that
++// writes FP32 partial slot c - (first CTA of that request). G <= gridDim.x keeps every interval
++// at least ceil(max blocks / (kSlots - 1)) blocks long, so no request has more than kSlots
++// slots. Each warp derives the partition from seqused_k (two requests per lane) whenever it
++// needs a segment, so nothing but the current segment stays live across the main loop; the
++// first producer warp of CTA 0 stores each request's slot count for the combine kernel.
++template<int kBlockN, int kSlots>
++class VerifyStreamScheduler {
++
++public:
++
++    using SharedStorage = int;
++
++    struct Params {
++        int const* const seqused;
++        int* const slots;
++        int const num_batch;
++    };
++
++    static Params
++    to_underlying_arguments(TileSchedulerArguments const& args) {
++        assert(args.num_batch <= 64 && args.seqused_k != nullptr && args.num_splits_dynamic_ptr != nullptr);
++        return {args.seqused_k, const_cast<int*>(args.num_splits_dynamic_ptr), args.num_batch};
++    }
++
++    static dim3
++    get_grid_shape(Params const& params, int num_sm) {
++        return {uint32_t(num_sm)};
++    }
++
++    struct WorkTileInfo {
++        int bidb;  // request; -1 once this CTA's interval is done
++        int code;  // slot | lo << 3 | hi << 17 (BlockMN StreamSplit, CollectiveEpilogueFwd kHeads == 4)
++        int last;  // flattened index one past the request's last block
++
++        CUTLASS_DEVICE
++        bool
++        is_valid(Params const& params) const {
++            return bidb >= 0;
++        }
++
++        CUTLASS_DEVICE
++        cute::tuple<int32_t, int32_t, int32_t, int32_t>
++        get_block_coord(Params const& params) const {
++            return {0, 0, bidb, code};
++        }
++
++    };
++
++    CUTLASS_DEVICE
++    VerifyStreamScheduler(SharedStorage* const smem_scheduler) {};
++
++    // The partition seen by one warp: inclusive block prefixes of requests lane and lane + 32.
++    struct Partition {
++        int n0, n1, incl0, incl1, total, groups;
++
++        CUTLASS_DEVICE
++        int
++        prefix(int b) const {  // inclusive prefix of request b (warp-uniform, 0 <= b < 64)
++            int const low = __shfl_sync(0xffffffff, incl0, b & 31);
++            int const high = __shfl_sync(0xffffffff, incl1, b & 31);
++            return b < 32 ? low : high;
++        }
++
++        CUTLASS_DEVICE
++        int
++        cta_of(int block) const {  // the CTA whose interval holds this flattened block
++            return ((block + 1) * groups - 1) / total;
++        }
++    };
++
++    CUTLASS_DEVICE
++    static Partition
++    partition(Params const& params) {
++        int const lane = threadIdx.x % cutlass::NumThreadsPerWarp;
++        Partition p;
++        p.n0 = lane < params.num_batch ? cute::ceil_div(params.seqused[lane], kBlockN) : 0;
++        p.n1 = lane + 32 < params.num_batch ? cute::ceil_div(params.seqused[lane + 32], kBlockN) : 0;
++        p.incl0 = p.n0;
++        p.incl1 = p.n1;
++        int longest = max(p.n0, p.n1);
++        #pragma unroll
++        for (int offset = 1; offset < 32; offset *= 2) {
++            int const up0 = __shfl_up_sync(0xffffffff, p.incl0, offset);
++            int const up1 = __shfl_up_sync(0xffffffff, p.incl1, offset);
++            if (lane >= offset) { p.incl0 += up0; p.incl1 += up1; }
++            longest = max(longest, __shfl_xor_sync(0xffffffff, longest, offset));
++        }
++        p.incl1 += __shfl_sync(0xffffffff, p.incl0, 31);
++        p.total = __shfl_sync(0xffffffff, p.incl1, 31);
++        p.groups = p.total == 0 ? 1 : min(int(gridDim.x), p.total / cute::ceil_div(longest, kSlots - 1));
++        return p;
++    }
++
++    // The segment of this CTA's interval that holds flattened block `block`, or none.
++    CUTLASS_DEVICE
++    static WorkTileInfo
++    segment_at(Params const& params, Partition const& p, int block) {
++        int const lane = threadIdx.x % cutlass::NumThreadsPerWarp;
++        int const end = (int(blockIdx.x) + 1) * p.total / p.groups;
++        uint32_t const low = __ballot_sync(0xffffffff, lane < params.num_batch && p.incl0 > block);
++        uint32_t const high = __ballot_sync(0xffffffff, lane + 32 < params.num_batch && p.incl1 > block);
++        if (int(blockIdx.x) >= p.groups || block >= end || (low | high) == 0) { return {-1, 0, 0}; }
++        int const b = low ? __ffs(low) - 1 : 32 + __ffs(high) - 1;
++        int const start = b == 0 ? 0 : p.prefix(b - 1);
++        int const stop = p.prefix(b);
++        int const slot = int(blockIdx.x) - p.cta_of(start);
++        return {b, slot | ((block - start) << 3) | ((min(end, stop) - start) << 17), stop};
++    }
++
++    template<bool IsProducerWarp=false>
++    CUTLASS_DEVICE
++    WorkTileInfo
++    get_initial_work(Params const& params) const {
++        Partition const p = partition(params);
++        if constexpr (IsProducerWarp) {
++            if (blockIdx.x == 0 && p.total > 0) {
++                int const lane = threadIdx.x % cutlass::NumThreadsPerWarp;
++                if (lane < params.num_batch) { params.slots[lane] = p.n0 == 0 ? 0 : p.cta_of(p.incl0 - 1) - p.cta_of(p.incl0 - p.n0) + 1; }
++                if (lane + 32 < params.num_batch) { params.slots[lane + 32] = p.n1 == 0 ? 0 : p.cta_of(p.incl1 - 1) - p.cta_of(p.incl1 - p.n1) + 1; }
++            }
++        }
++        return segment_at(params, p, int(blockIdx.x) * p.total / p.groups);
++    }
++
++    CUTLASS_DEVICE
++    void
++    init_consumer() const {}
++
++    CUTLASS_DEVICE
++    void
++    prefetch_next_work(Params const& params, WorkTileInfo& current_work) const {}
++
++    template<bool IsProducerWarp=false>
++    CUTLASS_DEVICE
++    WorkTileInfo
++    get_next_work(Params const& params, WorkTileInfo const& current_work) const {
++        return segment_at(params, partition(params), current_work.last);
++    }
++
++};
++
++///////////////////////////////////////////////////////////////////////////////
++
+ template<bool Split=false>
+ class StaticPersistentTileScheduler {
+ 
