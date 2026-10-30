@@ -17,7 +17,7 @@
 
 キャンペーン開始時の最新公開release [v0.5.23](https://github.com/sgl-project/sglang/releases/tag/v0.5.23)、tag commit `297e54fd105e974cdf401e5b4d20253a22c16f90` を選択。公式linux/amd64 image `lmsysorg/sglang:v0.5.23` をmanifest digest `sha256:f7876bef696ccf9cf75a2bf7ccb82970f5fac577f082fb8ca95c9a59d2160eb5` で固定する。
 
-この版はQwenのSM90 block-FP8 MegaMoEを既に公開実装として備える（[Qwen3 model](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/models/qwen3_moe.py)）。旧版で独自patchだったという理由だけで最新Basicから除外しない。逆に旧Bonusのprivate DeepGEMM環境変数やkernel選択表を、そのまま公開版へ持ち込まない。
+公式image configの`SGLANG_BUILD_COMMIT`も同じ`297e54f…`で、[公開build run](https://github.com/sgl-project/sglang/actions/runs/40978390987)に対応することを確認済み。この版はQwenのSM90 block-FP8 MegaMoEを既に公開実装として備える（[Qwen3 model](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/models/qwen3_moe.py)）。旧版で独自patchだったという理由だけで最新Basicから除外しない。逆に旧Bonusのprivate DeepGEMM環境変数やkernel選択表を、そのまま公開版へ持ち込まない。
 
 `containers/basic.Dockerfile` は公開serving package・DeepGEMM・kernelを変更しない。AIPerfは別venv、gatewayは公式image同梱のbinary。workerはpublic argv/envを記録して `exec` するだけで、monkeypatch、PYTHONPATH overlay、独自wheelは使用しない。NebiusのBF16重みを保持し、draft configのarchitecture selectorとdtype宣言だけをnative loader向けに整える。変更前後configとweight SHAを保存する。
 
@@ -33,14 +33,17 @@ BonusのPP4はそのまま候補にしない。公開Qwen3MoEの `set_eagle3_lay
 | --- | ---: | --- | --- |
 | `2f22722` / 41051125031 | 160 | 4096 / unlimited | 配備失敗。Firmusのunsquashfs4.4が`-cat`未対応。GPU未使用 |
 | `27d865d` / [41053120260](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41053120260) | 160 | 4096 / unlimited | 測定完走、SLA不適格、全raw回収・保管済み |
-| `4b10c27` / [41057394591](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41057394591) | 128 | 4096 / unlimited | attempt1は配備中にSSH接続reset。attempt2は配備完了、Slurm27641で資源待ち |
+| `4b10c27` / [41057394591](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41057394591) | 128 | 4096 / unlimited | attempt1は配備中にSSH接続reset。attempt2はSlurm27641 COMPLETED（9:55）、5180.43、94.5572%、error0。保管まで成功 |
 | `e8d963a` / [41057547575](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41057547575) | 128 | 4096 / 1 | attempt1/2とも配備中断、GPU未使用。attempt2の再試行は部分directoryと衝突。下記の同条件再投入へ |
 | `00b0552` / [41058071649](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41058071649) | 128 | 8192 / 2 | Slurm27640 COMPLETED（10:14）。**4867.53 good tok/s、93.5564%、error0、eligible**。Actions・checksum archiveまで成功 |
 
 | `5c55438` / 41060099701 | 128 | 4096 / 1 | 切断時cleanup修正を含む同条件再投入。fixture import順のRuffエラーでCPU段階失敗、GPU未使用 |
-| `9d4d990` / [41060170465](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41060170465) | 128 | 4096 / 1 | import整形後の同条件。配備2m23sで完了、Slurm27643で資源待ち |
+| `9d4d990` / [41060170465](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41060170465) | 128 | 4096 / 1 | Slurm27643 COMPLETED（9:50）、4955.23、91.2567%、error0。保管まで成功 |
 
-| `da25356` / [41061750438](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41061750438) | 128 | 4096 / 1、native total_requests | attempt1はsbatch応答前にSSH切断。queue/sacctで未投入を確認後、attempt2を再実行。Slurm27652で待機 |
+| `da25356` / [41061750438](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41061750438) | 128 | 4096 / 1、native total_requests | attempt1のSSH切断後、未投入をqueue/sacctで確認。attempt2 Slurm27652 COMPLETED（9:58）、5649.78、98.5045%、error0。保管まで成功 |
+
+| `b738103` / [41078513032](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41078513032) | 128 | 4096 / unlimited、total_requests | routingを固定しrequest上限だけを戻す比較。投入済み |
+| `40001ba` / [41078642203](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41078642203) | 160 | 4096 / unlimited、total_requests | b738103からclient Nだけを上げる比較。投入済み |
 
 1→2 request/batchの比較では、token枠も2 requestが収まる値にする。この2設定は物理バッチサイズという同じ主要因を表す。その他の条件を固定する。`--prefill-max-requests` は[公開schedulerの上限](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/managers/schedule_policy.py)を使用し、独自のrequest-alignment実装は移植しない。
 
@@ -71,23 +74,29 @@ Slurm27625、g1/g4、11:00、READYまで403秒。全workerのversion/topology/re
 
 raw正本: `/srv/qwen-artifacts/41053120260/1/`（checksum付きhome-server archive）、`logs/logs/`・`source/source/`・`results/results/`。run directoryはterminal・回収後にworkflowが削除済み。高コストのBasic imageは保持。
 
-## c128 batch2: first eligible observation
+## Completed c128 comparisons (single observations)
 
-[41058071649](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41058071649) はSlurm27640、g1/g4、13:15:18–13:25:32 UTCでCOMPLETED。READY358秒、公式workload/parserとpost-run設定検証、artifact回収、checksum archiveまでActions成功。現在の強いcheckerで全16 DP stateもread-only再検証済み。
+全4条件ともSlurm正常終了、公式parser valid / eligible、error0、回収・設定検証・checksum archiveまでActions成功。現在のcheckerで全16 DP stateを各archiveからread-only再検証して通過済み。source/image/N128/P3-D1/FP8 KV/draft/pool/request cap/Decode graphsは共通。
 
-| metric | observed |
-| --- | ---: |
-| measured output token/s | 5202.74 |
-| good output token/s | 4867.53 |
-| good request fraction | 93.5564%（eligible） |
-| TTFT avg / p90 / p99 / max (ms) | 2342.93 / 2835.90 / 4409.63 / 6037.16 |
-| ITL avg / p99 / max (ms) | 12.5934 / 16.0276 / 19.8734 |
-| requests / good / error | 3228 / 3020 / 0 |
-| AIPerf measured duration (sec) | 124.0852 |
+| Prefill request limit / local chunk | run / attempt | good output tok/s | raw output tok/s | good fraction | TTFT p90 ms | ITL p99 ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| unlimited / 4096 | [41057394591](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41057394591) / 2 | 5180.43 | 5478.58 | 94.5572% | 2600.49 | 16.42 |
+| 1 / 4096 | [41060170465](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41060170465) / 1 | 4955.23 | 5429.95 | 91.2567% | 2890.54 | 16.29 |
+| 2 / 8192 | [41058071649](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41058071649) / 1 | 4867.53 | 5202.74 | 93.5564% | 2835.90 | 16.03 |
+| 1 / 4096 + total_requests | [41061750438](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41061750438) / 2 | 5649.78 | 5735.52 | 98.5045% | 1956.90 | 16.18 |
 
-profiling request recordsの208失敗は全てTTFT超過、ITL超過は0。TTFT側に制約は残るが、その内訳をPrefill compute・queue・KV handoff・Decode入場へ分解したprofileではない。c160とはclient Nとbatch geometryが違うため、この2点だけでbatch2の改善/悪化率を算出しない。同じc128の対照・batch1・routing条件と反復を待って選定する。
+上3条件のDP policyはnative既定のP=follow_bootstrap_room、D=round_robin（snapshot interval15）。最下行だけ両role=total_requests・interval1。各1回の観測であり、差を確定した改善幅と扱わない。単発最良はrouting条件5649.78だが、request上限とNを追加比較し、選択候補・対照を反復してから固定する。
 
-raw正本: `/srv/qwen-artifacts/41058071649/1/`。通常終了・回収後のremote run directory削除まで確認済み。
+| run | requests / good | TTFT-only misses | avg-ITL-only misses | both | READY sec | Slurm elapsed |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 41057394591 / 2 | 3399 / 3214 | 184 | 1 | 0 | 333 | 9:55 |
+| 41060170465 / 1 | 3374 / 3079 | 295 | 0 | 0 | 339 | 9:50 |
+| 41058071649 / 1 | 3228 / 3020 | 208 | 0 | 0 | 358 | 10:14 |
+| 41061750438 / 2 | 3544 / 3491 | 53 | 0 | 0 | 338 | 9:58 |
+
+いずれもg1/g4。miss分類はprofiling phaseのJSONLにあるrequest単位のTTFT・平均ITLから算出し、公式good countと一致。TTFT側の失敗が多いが、これだけでcompute・queue・KV handoff・Decode入場を分離できるprofileではない。batch2は冒頭10秒に81件、残り110秒に127件のTTFT missがあり、冒頭だけの現象でもない。
+
+raw正本は `/srv/qwen-artifacts/<run>/<attempt>/`。Slurm終了・回収後のremote run directory削除まで確認済み。比較表は同じN128のみを並べ、c160初回からbatchの増減率を推定しない。startup/provision/queue/SSH回収時間はgeneration goodputと分ける。
 
 ### Native DP routing comparison
 
@@ -99,6 +108,6 @@ raw正本: `/srv/qwen-artifacts/41058071649/1/`。通常終了・回収後のrem
 
 ## Selection rule and remaining work
 
-適格な単発点4867.53は得られたが、Basic最良設定は未確定。c128とrequest上限・batch geometryを比較し、選択候補と対照を反復する。node組が違う場合は同条件の再測定を行い、単一runの差を設定の効果と断定しない。Pが引き続き供給限界ならnative scheduling/routingやbatch geometryを優先し、DのITLが限界になった時点でEAGLEのsteps/draft数、graph bucket、P/D比率を検討する。既に劣ったdraftやprivate kernel envの再探索は後回し。
+適格な単発最良5649.78は得られたが、Basic最良設定は未確定。c128とrequest上限・batch geometryを比較し、選択候補と対照を反復する。node組が違う場合は同条件の再測定を行い、単一runの差を設定の効果と断定しない。Pが引き続き供給限界ならnative scheduling/routingやbatch geometryを優先し、DのITLが限界になった時点でEAGLEのsteps/draft数、graph bucket、P/D比率を検討する。既に劣ったdraftやprivate kernel envの再探索は後回し。
 
 公式accuracy全件検査は主催者が行う。gatewayのsanity応答やSLA検証は、その代替にはならない。
