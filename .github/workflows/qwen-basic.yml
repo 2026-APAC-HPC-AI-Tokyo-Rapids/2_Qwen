@@ -6,6 +6,7 @@ on:
     paths-ignore: ["research/**", "**/*.md"]
 
 permissions:
+  actions: write
   contents: read
   id-token: write
 
@@ -15,12 +16,13 @@ env:
 
 jobs:
   validate:
-    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[basic]') && contains(github.event.head_commit.message, '[cluster:firmus]') && startsWith(github.event.head_commit.message, '[require-build]') }}
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[basic]') && contains(github.event.head_commit.message, '[cluster:firmus]') }}
     uses: ./.github/workflows/validate.yml
 
   stage:
     name: Basic SGLangのビルド入力をS3へ保存
     needs: validate
+    if: startsWith(github.event.head_commit.message, '[require-build]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -81,3 +83,71 @@ jobs:
         run: |
           scripts/materialize-qwen-container.sh
           printf 'Firmus image: %s/%s.sqsh\n' "${CONTAINER_ARCHIVE_DIR}" "${GITHUB_RUN_ID}" >>"${GITHUB_STEP_SUMMARY}"
+
+  serve:
+    name: Firmus Basic official workload
+    needs: [validate, materialize]
+    if: ${{ always() && needs.validate.result == 'success' && (needs.materialize.result == 'success' || needs.materialize.result == 'skipped') && !contains(github.event.head_commit.message, '[build-only]') }}
+    uses: ./.github/workflows/firmus.yml
+    with:
+      basic: true
+      config_path: configs/firmus-basic.json
+      node_count: '2'
+      profile: false
+      require_build: false
+    secrets: inherit
+
+  archive-artifacts:
+    name: 成果物を自宅サーバーへ保管
+    needs: [serve]
+    if: >-
+      always() &&
+      needs.serve.result != 'skipped'
+    runs-on: [self-hosted, home-lab]
+    permissions:
+      actions: write
+      contents: read
+    env:
+      QWEN_ARTIFACT_ARCHIVE_ROOT: /srv/qwen-artifacts
+
+    steps:
+      - name: ワークフロー成果物を取得
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: qwen-*-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: 保管対象の有無を確認
+        id: artifacts
+        shell: bash
+        run: if [[ -n "$(find artifacts -type f -print -quit 2>/dev/null)" ]]; then printf 'present=true\n' >>"${GITHUB_OUTPUT}"; else printf 'present=false\n' >>"${GITHUB_OUTPUT}"; fi
+
+      - name: 成果物を自宅サーバーへ配置
+        id: archive
+        if: steps.artifacts.outputs.present == 'true'
+        shell: home-lab-shell {0}
+        run: |
+          destination_parent="${QWEN_ARTIFACT_ARCHIVE_ROOT}/${GITHUB_RUN_ID}"
+          destination="${destination_parent}/${GITHUB_RUN_ATTEMPT}"
+          test -d artifacts
+          test -n "$(find artifacts -type f -print -quit)"
+          install -d -m 0750 "${destination_parent}"
+          staging="$(mktemp -d "${destination_parent}/.${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          trap 'rm -rf -- "${staging}"' EXIT
+          cp -a artifacts/. "${staging}/"
+          (cd "${staging}" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS)
+          mv -T -- "${staging}" "${destination}"
+          trap - EXIT
+
+      - name: 保管先をsummaryに記録
+        if: always() && steps.archive.outcome == 'success'
+        shell: bash
+        run: printf '### Artifact archive\n\nArchived and checksummed at **archive-host:/srv/qwen-artifacts/%s/%s/**.\n' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 転送済みのGitHub成果物を削除
+        if: steps.artifacts.outputs.present == 'true'
+        shell: home-lab-shell {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '.artifacts[] | select(.name | startswith("qwen-") and endswith("-${{ github.run_id }}-${{ github.run_attempt }}")) | .id' | while read -r artifact_id; do gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"; done

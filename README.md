@@ -4,9 +4,22 @@
 
 The source-modified, workload-tuned stack is **Bonus**. The existing [submission package](submission/README.md) reproduces a measured Bonus configuration; its results must not be labelled Basic.
 
-**Basic** uses the latest public SGLang release when this campaign starts: **0.5.23**, upstream commit `297e54fd105e974cdf401e5b4d20253a22c16f90`. Its official linux/amd64 image is pinned by digest in `containers/basic.Dockerfile`. SGLang, its kernels, DeepGEMM and the gateway remain unmodified: only built-in options, environment variables and deployment settings are tuned. The client and gateway use a separate Python environment so installing them does not resolve or replace the upstream inference dependencies.
+**Basic** uses the latest public SGLang release when this campaign starts: **0.5.23**, upstream commit `297e54fd105e974cdf401e5b4d20253a22c16f90`. Its official linux/amd64 image is pinned by digest in `containers/basic.Dockerfile`. SGLang, its kernels, DeepGEMM and the gateway remain unmodified: only built-in options, environment variables and deployment settings are tuned. AIPerf uses a separate Python environment so installing it does not resolve or replace the upstream inference dependencies. Serving uses the gateway binary shipped in the same official image, rather than the older separately published gateway wheel.
 
 Firmus is the first Basic target. `configs/firmus-basic.json` records the initial P3/D1, attention-DP4/EP4, FP8 KV, EAGLE3 configuration. This is an **unmeasured candidate**, not a selected optimum. Build, serving and comparison results will be recorded through Actions and archived raw artifacts. Basic-to-Bonus speedup remains pending until Basic has valid repeated measurements on the same platform.
+
+The [Basic workflow](.github/workflows/qwen-basic.yml) builds on a commit starting with `[require-build] [basic] [cluster:firmus]`; `[build-only]` prepares the image without a GPU job. Runtime-only experiments use `[basic] [cluster:firmus] [nodes:2]` and reuse the build pinned in `configs/firmus-basic.json`. Each condition is a separate commit. The single [Basic Slurm script](submission/basic/submit.sbatch) starts all four workers, the unpatched gateway, connection warm-up and the unchanged official benchmark in one allocation. Worker readback must match the declared release/layout before measuring.
+
+For independent reproduction, build `containers/basic.Dockerfile` with `scripts/build-basic-container.sh` on a root Linux host using Buildah chroot, Skopeo, Umoci and SquashFS tools, with the same `BUILD_DIR`, `BUILD_CACHE_REPOSITORY`, `CONTAINER_ARCHIVE_DIR` and numeric build/provenance variables as the existing image builder. Then prepare shared storage on Firmus:
+
+```bash
+bash submission/basic/prepare.sh /scratch/home/ACCOUNT/qwen-basic-run /shared/BUILD.sqsh /scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8 /shared/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e configs/firmus-basic.json
+cd /scratch/home/ACCOUNT/qwen-basic-run
+sbatch scripts/submit.sbatch
+```
+
+The image sidecar must accompany `BUILD.sqsh`. Preparation verifies the unmodified Basic provenance, image SHA/size, official target revision and shards, fixed tokenizer and public BF16 draft. It changes only the draft's loader selector/dtype declaration, as declared in the Bonus package; it does not modify target weights, serving packages or kernels. Retain the shared run directory's `source/`, `logs/` and `results/` as the raw reproduction evidence.
+
 
 vLLM用イメージは、GitHub Actionsの **AWSでvLLMイメージをビルド** から手動で生成できます。Docker用アーカイブとFirmus用SquashFSを生成し、後者をFirmusへ配布します。実行方法と成果物の場所は [vLLM image build on AWS](research/vllm-container-build.md) を参照してください。
 
