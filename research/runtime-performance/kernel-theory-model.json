@@ -456,6 +456,12 @@
     "removed_work": "Tensor idle time: the 128-FMUL carried-scale rescale between two WGMMA groups of a warpgroup now overlaps the other m64n128 half. Same products, K order, ratios and bytes.",
     "past_rejections_distinct": "Not the tail split (halves on two warpgroups for <= 64-row tiles) or ping-pong / independent warpgroups (cross-warpgroup ordering); the overlap is inside one warpgroup on the same rows and B stage."
   },
+  "megamoe_prefill_split_ldsm_candidate": {
+    "evidence": "2026-10-30-prefill-megamoe-split-ldsm.md; megamoe-prefill-split-ldsm-cpu-validation-20261030.json; Genkai mainloop model run 40993048750",
+    "status": "mainloop model measured on Genkai H100 (bit-exact; vs split: -2.7% FC1-shaped with the pre hand-off, -2.2% FC2-shaped); kernel CPU-validated, not GPU-measured; patches in the chain with the flag off, not in the in-job candidate list until the split passes the endurance gate",
+    "removed_work": "WGMMA A operand reads: each warpgroup reads its 64 A rows once per K block by ldmatrix (16 KiB instead of 32 KiB per K block) and issues both m64n128 halves in the RS form; FC1 also rescales the next chunk's half 0 before the drain. Same products, K order, ratios and bytes.",
+    "past_rejections_distinct": "Not the 2026-10-20 ldmatrix + RS experiment (it drained both halves before every rescale, the rescale-bound regime) and not RS with A from global (L2 latency per K block); A comes from the TMA stage in shared memory and the halves stay pending across K blocks."
+  },
   "fa3_prefill_direct_o_cpu_candidate": {
     "evidence": "fa3-prefill-direct-o-cpu-validation-20261029.json",
     "status": "CPU_admitted_not_GPU_measured_or_activated",

@@ -333,6 +333,10 @@ def test_ldmatrix_split_is_a_split_only_trailing_flag_whose_addresses_give_the_w
     assert "kUnroll % 2 == 0 and kSwizzleAMode == 128 and BLOCK_K == 128" in added
     assert "issue_half(h, a_regs[u % 2]);" in added and "load_a(a_regs[(u + 1) % 2], next_stage);" in added
     assert "MMA_64x128x32_F32E4M3E4M3_RS_TN" in added
+    # FC1 (several chunks) rescales the next chunk's first half 0 before the drain; at the tile end the
+    # ratios are 1, so that rescale is exact. FC2 (one chunk) keeps the plain chunk start.
+    assert "constexpr bool kPreRescale = kPrefillSplitLdsm and kNumKBlocks > kUnroll;" in added
+    assert "if (not (kPreRescale and u == 0 and h == 0))" in added and "r0_gate = r1_gate = r0_up = r1_up = 1.0f;" in added
     # The ldmatrix addresses (row and swizzled 16-byte chunk per lane) as written in the patch.
     assert "(warp_idx_in_wg * 16 + ((lane_idx >> 3) & 1u) * 8 + (lane_idx & 7u)) * BLOCK_K" in added
     assert "(((2 * j + (lane_idx >> 4)) ^ (lane_idx & 7u)) << 4)" in added
