@@ -145,10 +145,12 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     for sub in ('source', 'results'):
         (tmp_path / sub).mkdir()
     prepare['prepare'](config, ROOT, tmp_path)
-    assert (tmp_path / 'source/prefill-kernels.env').read_text() == 'SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen\nSGLANG_PREFILL_MOE_INPUT=fused\nSGLANG_PREFILL_QKNORM=fp32\n'
+    assert (tmp_path / 'source/prefill-kernels.env').read_text() == 'SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen\nSGLANG_PREFILL_MOE_INPUT=onepass\nSGLANG_PREFILL_QKNORM=fp32\n'
     assert (tmp_path / 'source/decode-kernels.env').read_text() == "SGLANG_DECODE_FA3_VERIFY=p128split2-s3-fp8\nDG_SM90_1D2D_DECODE_CONFIG=QKV:128,144,5,1,0\nSGLANG_DECODE_DENSE_GEMM_QKV=''\nSGLANG_DECODE_DENSE_GEMM_O=''\nSGLANG_DECODE_NORM_QUANT=wide\n"
     settings = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
-    assert settings['pp4_selected_runs']['SGLANG_PREFILL_FA3_VERIFY'] == [40849459077, 40883389891] and settings['environment']['SGLANG_PREFILL_MOE_INPUT'] == 'fused'
+    assert settings['pp4_selected_runs']['SGLANG_PREFILL_FA3_VERIFY'] == [40849459077, 40883389891] and settings['environment']['SGLANG_PREFILL_MOE_INPUT'] == 'onepass'
+    # The one-pass MoE input won in 40964714831 alone (13.6% on every GPU, about ten times the noise).
+    assert settings['pp4_selected_runs']['SGLANG_PREFILL_MOE_INPUT'] == [40964714831]
     # The FP32 Q/K norm writer won in 40911121619 and 40925558339.
     assert settings['pp4_selected_runs']['SGLANG_PREFILL_QKNORM'] == [40911121619, 40925558339] and set(settings['pp4_selected_runs']) == set(settings['pp4_selected'])
     # After every PP4 overlay; only prefill-moe-input (disjoint files), the FP32 Q/K norm writer, the one-pass Prefill MoE input and the Decode MoE input follow it.

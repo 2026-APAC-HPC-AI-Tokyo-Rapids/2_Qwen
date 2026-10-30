@@ -125,15 +125,17 @@ def test_pinned_rule_needs_the_saving_at_every_measured_batch():
     assert ns["choose_pinned"](ranks, (44, 46, 48), "p128split2-s3-fp8", names)["winner"] is None
 
 
-def test_pp4_job_screens_fa3_after_the_attention_block_and_appends_only_a_winner(tmp_path):
+def test_pp4_job_screens_fa3_first_on_the_decode_gpus_and_appends_only_a_winner(tmp_path):
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
     group = pp4[pp4.index("  {\n"):pp4.index("  } &\n")]
     # Only the pinned-mode dense selection (BLOCK_M 192 QKV) runs in the PP4 job, after FA3.
     assert '"${ROOT}" dense --pinned-env "${ROOT}/source/decode-kernels.env"' in group
-    attention = group.index("select-firmus-prefill-attention.py")
+    # The Decode FA3 selection is first in the Decode-GPU group (the Prefill attention-block selection was
+    # pinned and removed), before the copy-engine probe.
+    assert "select-firmus-prefill-attention.py" not in group
     fa3 = group.index('"${ROOT}" fa3 --pinned-env "${ROOT}/source/decode-kernels.env" >"${ART}/decode-selection-fa3.log" 2>&1 || true')
-    assert attention < fa3 < group.index("check-firmus-pp4-copy-engine.py")
+    assert group.index("    srun ") == group.rindex("\n", 0, fa3) + 1 and fa3 < group.index("check-firmus-pp4-copy-engine.py")
     script = (ROOT / "scripts/select-firmus-decode-kernels.sh").read_text()
     assert '--env-output "${out}/fa3-selected.env" "$@"' in script
     take = shell[shell.index('if [[ -n "${decode_gpu_selections:-}" ]]; then'):]

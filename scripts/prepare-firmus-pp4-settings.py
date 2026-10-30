@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin prior kernel settings and the repeated PP4 selections for one PP4 serving trial."""
+"""Pin prior kernel settings and the settled PP4 selections for one PP4 serving trial."""
 
 import hashlib
 import json
@@ -16,7 +16,7 @@ from pathlib import Path
 #   The PP4 job screens only n192-direct-o-varlen-pipe (pipelined M-tiles) against this pin on the
 #   Prefill GPUs after the MegaMoE selection; a losing or failed screen keeps the pin.
 # - select-firmus-prefill-moe-input.py: fused, 103.99-105.18 us against control 123.57-124.04 us per
-#   layer on all four GPUs in both runs; fused-gate stayed below its margin.
+#   layer on all four GPUs in both runs; fused-gate stayed below its margin. Superseded by onepass below.
 # - select-firmus-decode-dense.py --pinned-env: wide norm/quant (2.51 against 6.05-6.08 us); the
 #   SwapAB rows lost in both runs (QKV 25.2-25.6 against 23.0-23.1 us, O 34.6-35.0 against
 #   17.4-17.6 us), so the pinned QKV config and the empty SwapAB names stay.
@@ -26,16 +26,23 @@ from pathlib import Path
 #   layer on all four GPUs, every gate case passed (V and NaNs bit-equal to control, Q/K one E4M3 step
 #   at most from the FP64 reference). Valid only without the FA3 V byte image, which the pinned
 #   n192-direct-o-varlen row does not use.
+# select-firmus-prefill-attention.py then selected only the one-pass Prefill MoE input over the pinned
+# fused path, and was removed after the one run that ran it, 40964714831:
+# - moe_input: onepass, 88.89-89.00 us against fused 102.91-102.94 us per layer (24-layer graph at 7988
+#   rows) on all four GPUs, every gate case passed (residual bit-equal to fused; FP8 input, scales and
+#   top-k within the FP64 reference gate at 7988, 7989, 3994 and 2049 rows). One run suffices here: the
+#   13.9-14.0 us (13.6%) saving on every GPU is about ten times the 1-2% noise of these per-layer
+#   timings (the twelve rounds of this run spread 88.6-89.4 and 102.4-103.2 us), against a 3 us margin.
 PP4_SELECTED = {
     "SGLANG_PREFILL_FA3_VERIFY": "n192-direct-o-varlen",
-    "SGLANG_PREFILL_MOE_INPUT": "fused",
+    "SGLANG_PREFILL_MOE_INPUT": "onepass",
     "SGLANG_PREFILL_QKNORM": "fp32",
     "SGLANG_DECODE_NORM_QUANT": "wide",
 }
-# The two runs in which each pinned value won.
+# The runs in which each pinned value won.
 PP4_SELECTED_RUNS = {
     "SGLANG_PREFILL_FA3_VERIFY": [40849459077, 40883389891],
-    "SGLANG_PREFILL_MOE_INPUT": [40849459077, 40883389891],
+    "SGLANG_PREFILL_MOE_INPUT": [40964714831],
     "SGLANG_PREFILL_QKNORM": [40911121619, 40925558339],
     "SGLANG_DECODE_NORM_QUANT": [40849459077, 40883389891],
 }
@@ -87,7 +94,7 @@ def prepare(config, repo, runtime):
         "pp4_selected": PP4_SELECTED,
         "pp4_selected_runs": PP4_SELECTED_RUNS,
         "no_gpu_selection_rerun": True,
-        "scope": "Prior settings plus the PP4 selections that won in both PP4 runs that ran them. New image, EP1, PP scheduling, batching and transfers require the ordinary serving trial.",
+        "scope": "Prior settings plus the PP4 selections that won in the PP4 runs listed in pp4_selected_runs. New image, EP1, PP scheduling, batching and transfers require the ordinary serving trial.",
     }
     for directory in ("source", "results"):
         (runtime / directory / "pp4-kernel-settings.json").write_text(

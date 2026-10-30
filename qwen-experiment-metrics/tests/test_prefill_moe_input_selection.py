@@ -90,22 +90,28 @@ def test_missing_or_untimed_gpu_keeps_pre_dispatch(selector, tmp_path):
     assert aggregate(selector, tmp_path, tmp_path / "absent")[0]["winner"] == "control"
 
 
-def test_pp4_job_pins_the_fused_path_and_no_longer_selects_it():
-    # fused won on all four GPUs in 40849459077 and 40883389891; prepare-firmus-pp4-settings.py pins it.
+def test_pp4_job_pins_the_onepass_path_and_no_longer_selects_it():
+    # fused won on all four GPUs in 40849459077 and 40883389891 and was pinned; onepass then won over the
+    # pinned fused path on all four GPUs in 40964714831 (88.9 against 102.9 us per layer, about ten times the
+    # noise), so prepare-firmus-pp4-settings.py pins onepass and neither selection runs in the job.
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
-    assert "select-firmus-prefill-moe-input.py" not in shell
-    assert runpy.run_path(str(ROOT / "scripts/prepare-firmus-pp4-settings.py"))["PP4_SELECTED"]["SGLANG_PREFILL_MOE_INPUT"] == "fused"
+    provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
+    for script in ("select-firmus-prefill-moe-input.py", "select-firmus-prefill-attention.py"):
+        assert script not in shell and script not in provision
+    assert not (ROOT / "scripts/select-firmus-prefill-attention.py").exists()
+    assert "prefill-attention)" not in shell and "results/prefill-attention" not in shell
+    prepare = runpy.run_path(str(ROOT / "scripts/prepare-firmus-pp4-settings.py"))
+    assert prepare["PP4_SELECTED"]["SGLANG_PREFILL_MOE_INPUT"] == "onepass"
+    assert prepare["PP4_SELECTED_RUNS"]["SGLANG_PREFILL_MOE_INPUT"] == [40964714831]
     worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
     assert 'if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi' in worker
-    provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
-    assert "select-firmus-prefill-moe-input.py" not in provision
 
 
 def test_overlay_is_pp4_only_and_defaults_to_pre_dispatch():
     pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    # Only the FP32 Q/K norm writer, the one-pass MoE input (select-firmus-prefill-attention.py) and the
-    # Decode MoE input overlay, which extends this one to TARGET_VERIFY, follow it.
+    # Only the FP32 Q/K norm writer, the one-pass MoE input (pinned by prepare-firmus-pp4-settings.py) and
+    # the Decode MoE input overlay, which extends this one to TARGET_VERIFY, follow it.
     assert pp4["sglang_overlay_patches"][-4] == "patches/sglang/prefill-moe-input.patch"
     assert pp4["sglang_overlay_patches"][-1] == "patches/sglang/decode-moe-input.patch"
     # The FA3 varlen overlay touches other files; it stays right before this one.
@@ -117,3 +123,27 @@ def test_overlay_is_pp4_only_and_defaults_to_pre_dispatch():
     for guard in ('_PREFILL_MOE_INPUT == "control"', "forward_batch.forward_mode != ForwardMode.EXTEND", "hidden_states.shape[0] < _INPUT_NORM_QUANT_MIN_ROWS", 'args.disaggregation_mode == "prefill"', "args.ep_dispatch_algorithm is None", "mlp._decode_routing_capture is None", "forward_batch.num_token_non_padded is not None"):
         assert guard in patch, guard
     assert "+    if topk_ids is not None:\n+        deep_gemm.mega_moe_pre_dispatch_sm90(" in patch
+
+
+def test_qknorm_and_onepass_overlays_are_pp4_only_and_default_to_control():
+    pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
+    main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
+    assert pp4["sglang_overlay_patches"][-3:] == ["patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-moe-input-onepass.patch", "patches/sglang/decode-moe-input.patch"]
+    assert pp4["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
+    for patch in ("patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-moe-input-onepass.patch"):
+        assert patch not in main["sglang_overlay_patches"]
+    qknorm = (ROOT / "patches/sglang/prefill-qknorm-fp32.patch").read_text()
+    assert '+_PREFILL_QKNORM = os.environ.get("SGLANG_PREFILL_QKNORM", "control")' in qknorm
+    # Only without the FA3 V byte image, whose writer stays the control kernel.
+    assert '+                if _PREFILL_QKNORM == "fp32" and self.attn.prefill_v_image is None:' in qknorm
+
+
+def test_onepass_overlay_keeps_the_other_modes_and_the_buffer_contract():
+    patch = (ROOT / "patches/sglang/prefill-moe-input-onepass.patch").read_text()
+    assert '+assert _PREFILL_MOE_INPUT in ("control", "fused", "fused-gate", "onepass"), _PREFILL_MOE_INPUT' in patch
+    # Same entry point and guards as the fused modes (_prefill_moe_input); no y, so no gate GEMM call.
+    assert '+        if mode == "onepass":' in patch and '+        if mode == "fused-gate":' in patch
+    assert "+            return run_sm90_mega_routed(self, hidden_states, None, None, buf, num_tokens)" in patch
+    # Pad slots of the whole buffer, 64-row programs, scales finished only after a CTA barrier.
+    assert "+    _onepass_moe_input[(buf_x.shape[0] // 64,)](" in patch and "+    tl.debug_barrier()" in patch
+    assert 'tl.store(IDS + out, tl.where(live[:, None], selected_idx, -1).to(tl.int64))' in patch

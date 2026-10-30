@@ -111,7 +111,7 @@ index 24d9cce..09d2df7 100644
  # "control" keeps fused_add_rmsnorm + pre-dispatch; "fused" lets the post-attention
  # norm write the FP8 input and the router write the buffer's top-k; "fused-gate" also
  # runs the router gate GEMM and top-k as one kernel (kernels/ops/moe/prefill_moe_input.py).
-+# "onepass" (selected by scripts/select-firmus-prefill-attention.py against "fused")
++# "onepass" (pinned for PP4 over "fused" by scripts/prepare-firmus-pp4-settings.py)
 +# runs the residual add, norm, FP8 input, gate GEMM and router in one kernel that
 +# never writes the BF16 normalized activation.
  _PREFILL_MOE_INPUT = os.environ.get("SGLANG_PREFILL_MOE_INPUT", "control")
