@@ -1,10 +1,12 @@
 # Qwen3 PD Bonus submission — Firmus, Tokyo Rapids
 
-**Classification: Bonus.** This package contains team source and kernel changes. It is retained as a reproducible Bonus result. The separately tuned, unmodified SGLang Basic campaign is described in the [repository README](../README.md); Basic measurements and the speedup over Basic are still pending.
+**Classification: Bonus.** This package contains team source and kernel changes. It is retained as a reproducible Bonus result. The separately tuned, unmodified SGLang Basic entrypoint is [basic/README.md](basic/README.md). Basic has a first eligible measurement; selection, repetition and the Basic-to-Bonus comparison remain pending.
 
-The measured best run is **9120.51 good output tok/s**, Actions [40225743220](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40225743220), Slurm 26232: 5802 requests, zero errors, good request fraction 0.97708. This is one measured run, not a repeatability claim. Its text evidence and checksums are in `results/40225743220/`.
+The measured run frozen in this package is **9120.51 good output tok/s**, Actions [40225743220](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40225743220), Slurm 26232: 5802 requests, zero errors, good request fraction 0.97708. This is one measured run, not a repeatability claim. Its text evidence and checksums are in `results/40225743220/`.
 
 Standalone re-run of this package: **9132.03 good output tok/s**, Actions [40273247322](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40273247322), Slurm 26298, COMPLETED 0:0 in 9m13s: 5801 requests, zero errors, good request fraction 0.97776. It ran exactly `run/prepare.sh` followed by `sbatch scripts/submit.sbatch` on the recorded image; evidence is in `results/40273247322/`.
+
+Later source-modified Bonus experiments reached 9832.74 and 9828.95 good output tok/s with a different PP4 Prefill configuration ([round 4](../research/runtime-performance/2026-10-30-pp4-round4-9832.md), [round 6](../research/runtime-performance/2026-10-30-pp4-round6-9828.md)). Those experimental configurations are not the frozen package documented here.
 
 Common baseline: **1,832 good output tok/s** on Firmus 2×8 H200 (official task `5. Common Baselines.md`, job 25013). The baseline uses different serving settings.
 
@@ -19,7 +21,7 @@ The submission uses all 16 H200 GPUs: **P3 TP4/DP4/EP4 Prefill + D1 TP4/DP4/EP4 
 - `results/40225743220/`: curated evidence of the measured tuning run.
 - `results/40273247322/`: curated evidence of the standalone re-run of this package.
 
-The whole accompanying repository is required for rebuilding: `containers/`, `scripts/build-sglang-container.sh`, repository patches and `kernels/` are build inputs. Once an image exists, `submission/` is sufficient for preparation and execution. No private SGLang mirror, team credentials, GitHub Actions, or team-specific runtime directory is needed by the organisers.
+The whole accompanying repository is required for rebuilding: `containers/`, `scripts/build-sglang-container.sh`, repository patches and `kernels/` are build inputs. Once an image exists, `submission/` is sufficient for preparation and execution of this Bonus package. Basic uses its separately documented whole-repository entrypoint. No private SGLang mirror, team credentials, GitHub Actions, or team-specific runtime directory is needed by the organisers.
 
 ## Build
 
