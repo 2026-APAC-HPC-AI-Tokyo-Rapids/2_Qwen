@@ -144,8 +144,15 @@ def test_package_shell_commands_stay_on_physical_lines():
         subprocess.run(["bash", "-n", str(path)], check=True)
 
 
-def test_generic_launcher_remains_byte_identical_to_parent():
-    assert hashlib.sha256((ROOT / "platforms/shared/qwen-pd.sbatch").read_bytes()).hexdigest() == "12a2fb09c70eb36f1afa8c7ec83934007be8629f47fb1c9de8d564f824ac32a6"
+def test_generic_launcher_shell_remains_byte_identical_to_parent():
+    # The local result parser now accepts the isolated Basic client path. Its
+    # own fixtures check exact workload matching; freeze the serving shell here.
+    launcher = (ROOT / "platforms/shared/qwen-pd.sbatch").read_text()
+    prefix, embedded = launcher.split("<<'PY'\n", 1)
+    parser, suffix = embedded.split("\nPY\n", 1)
+    assert parser + "\n" == (ROOT / "scripts/parse-aiperf-result.py").read_text()
+    shell = prefix + "<<'PY'\n<PARSER>\nPY\n" + suffix
+    assert hashlib.sha256(shell.encode()).hexdigest() == "9fe400956c7e641ee6f33b45bbf44849c6db6ef6234b15e6601020b7d9cc1fd3"
     provision = (ROOT / "scripts/provision-qwen-pd.sh").read_text()
     assert '"${GITHUB_WORKSPACE}/platforms/shared/qwen-pd.sbatch" "${runtime_dir}/scripts/submit.sbatch"' in provision
 
