@@ -42,8 +42,10 @@ BonusのPP4はそのまま候補にしない。公開Qwen3MoEの `set_eagle3_lay
 
 | `da25356` / [41061750438](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41061750438) | 128 | 4096 / 1、native total_requests | attempt1のSSH切断後、未投入をqueue/sacctで確認。attempt2 Slurm27652 COMPLETED（9:58）、5649.78、98.5045%、error0。保管まで成功 |
 
-| `b738103` / [41078513032](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41078513032) | 128 | 4096 / unlimited、total_requests | routingを固定しrequest上限だけを戻す比較。投入済み |
-| `40001ba` / [41078642203](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41078642203) | 160 | 4096 / unlimited、total_requests | b738103からclient Nだけを上げる比較。投入済み |
+| `b738103` / [41078513032](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41078513032) | 128 | 4096 / unlimited、total_requests | Slurm27681 COMPLETED（10:48）。5526.21、98.5036%、error0。保管まで成功 |
+| `40001ba` / [41078642203](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41078642203) | 160 | 4096 / unlimited、total_requests | Slurm27682 COMPLETED（10:04）。6321.12、97.6860%、error0。保管まで成功 |
+| `c9cb549` / [41089017770](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41089017770) | 144 | 4096 / unlimited、total_requests | Slurm27698、scheduler待ち |
+| `96d8553` / [41091531546](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41091531546) | 192 | 4096 / unlimited、total_requests | Slurm27705、scheduler待ち |
 
 1→2 request/batchの比較では、token枠も2 requestが収まる値にする。この2設定は物理バッチサイズという同じ主要因を表す。その他の条件を固定する。`--prefill-max-requests` は[公開schedulerの上限](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/managers/schedule_policy.py)を使用し、独自のrequest-alignment実装は移植しない。
 
@@ -108,6 +110,10 @@ raw正本は `/srv/qwen-artifacts/<run>/<attempt>/`。Slurm終了・回収後の
 
 ## Selection rule and remaining work
 
-適格な単発最良5649.78は得られたが、Basic最良設定は未確定。c128とrequest上限・batch geometryを比較し、選択候補と対照を反復する。node組が違う場合は同条件の再測定を行い、単一runの差を設定の効果と断定しない。Pが引き続き供給限界ならnative scheduling/routingやbatch geometryを優先し、DのITLが限界になった時点でEAGLEのsteps/draft数、graph bucket、P/D比率を検討する。既に劣ったdraftやprivate kernel envの再探索は後回し。
+total_requests・interval1を固定したunlimited比較では、N128が5526.21（98.5036%）、N160が6321.12（97.6860%）。いずれもg1/g4、公式parser valid / eligible、request error0で、現在のcheckerによる全16 DP stateのread-only検証も通過した。N128は52件がTTFTのみで不合格、N160はTTFTのみ92件・平均ITLのみ1件。N160のREADYは350秒、TTFT p90=2418.61ms、ITL p99=16.89msだった。
+
+単発最良は6321.12だが、Basic最良設定は未確定。N160でも適格goodputが増えたため、N144に加えN192を上側の比較点とする。serverのpool・request cap・graph bucketsは変更しない。SLA不適格または適格goodputが増えなくなったところでN探索を止め、選択候補と対照を反復する。node組が違う場合は同条件を再測定し、単一runの差を設定の効果と断定しない。現在の主なmissはTTFT側であり、kernel/backend/draftの追加探索は行わない。
+
+比較用BigQuery指標は既存senderへ送る。terminal accountingとchecksum archiveを検証し、設定・来歴・公式score・AIPerf指標の9行を生成する。raw正本を変更せず、派生fragmentはその外側へ置く。資格情報はhome-server login側だけで使用し、失敗時も測定結果と高コストimageは保持する。`qwen-basic-metrics.yml`のdispatchは過去archiveの指標送信専用で、GPU条件の切り替えには使わない。
 
 公式accuracy全件検査は主催者が行う。gatewayのsanity応答やSLA検証は、その代替にはならない。
