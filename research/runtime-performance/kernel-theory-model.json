@@ -524,19 +524,47 @@
     "tracker_text": "2026-11-01 round 13-M：現行PP4/EP1 splitのscale先読みをhalf間へ移す2案をCUDA13.4/sm_90aでCPU検証した。両案spill0・C75xxなし、default offのserving split SASSはbyte一致。FC1 K=1のhalf 0のpost-wait spanは107→65命令だが、half 1の発行spanは13→42/30命令へ拡大し、両halfのwait→64 FMUL→QGMMA依存は残る。chunk全体のinline命令数も減らず、依存周期の正のclk短縮を示せないため段階1の条件4で保留・棄却。GPU未実行、速度未算定、production変更・gate追加なし。詳細は2026-11-01-prefill-megamoe-dep-r13.mdとmegamoe-prefill-dep-r13-cpu-validation-20261101.json。"
   },
   "prefill_native_v_lane_20261101": {
-    "status": "CPU validated; GPU prepared after original r13 first-shape speed rejection",
+    "status": "GPU_rejected_all12_first_shape; fallback_r12_serving_completed",
     "baseline": "becabbf round13 native-V/four-chain-sum",
     "shape": "exactly 2 requests, lengths3900..4096, N96, KV4xD128 BF16 to E4M3",
     "change": "V-only lane ownership becomes32 tokens x16 contiguous dimensions per warp; coalesced native byte stores and one128-bit paged V store. Q/K and attention unchanged.",
     "removed_work": "3994pair native issued-sector bytes33,030,144 to4,128,768; input/paged requests increase, net counted V I/O sector requests45,299,712 to28,667,904 (-36.715%). No new SMEM/barrier/shuffle. Not measured HBM bytes. Useful FLOPs and logical payload unchanged.",
     "cpu": "CUDA13.0.88 full JIT load;48 registers/spill0;12 untouched kernels encoded equal,2 Decode kernels differ only in assert line number. Extracted actual V kernel bodies pass14 cases/all65536 BF16 patterns against independent native-map/NOSAT reference.139 local CPU regressions pass.",
     "gate": "Existing all12GPU native dump/reference/replay/endurance/full-path timing gate and normal serving official score; same >=5us gate, conditional10k target about20us/layer remains separate.",
-    "gpu_time_us": null,
-    "official_goodput": null,
+    "gpu_time_us": {
+      "full_median_saving": -37.36933072408033,
+      "producer_median_saving": -7.6313341657320635,
+      "fa3_plus_o_median_saving": -29.327988624572868
+    },
+    "official_goodput": 9951.183629051331,
     "evidence": [
-      "native-v-lane-cpu-20261101.json"
+      "native-v-lane-cpu-20261101.json",
+      "fa3-native-v-lane-gpu-41246674412.json"
     ],
-    "next_measurement_uncertainty": "Lane remapping reduces static native-store sector requests but total latency benefit is unmeasured. Add separate producer and FA3+O diagnostic timing in the next fixed-source run; neither diagnostic controls adoption.",
-    "cpu_regression_tests": 141
+    "next_measurement_uncertainty": null,
+    "cpu_regression_tests": 141,
+    "official_goodput_route": "round12 fallback; native-V lane/sum candidate was rejected",
+    "decision": "Reject this candidate; no additional GPU submissions. Do not attribute fallback score to candidate or compare cross-run deltas as a paired gain.",
+    "served_control_comparison": "Issued V sector requests16359424 ->28667904 B (+75.238%); the -36.715% comparison is against rejected r13 native writer, not serving control."
+  },
+  "megamoe_shared_rcp_row_local_cpu_20261101": {
+    "status": "CPU-only reconstruction and repair, inactive",
+    "evidence": [
+      "megamoe-shared-rcp-row-local-cpu-20261101.json",
+      "megamoe-shared-rcp-row-local-fallback-20261101.patch"
+    ],
+    "gpu_executed": false,
+    "production_modified": false,
+    "performance_prediction": null,
+    "historical_mean_gain_us": 7.666666666666667,
+    "decision": "Keep as a corrected CPU research prototype. Even restoring the old timing gain unchanged would project only9967.10 in the conditional latest capacity model; it is insufficient alone and no GPU job is authorized."
+  },
+  "fa3_native_v_only_cpu_20261101": {
+    "status": "Full32 TU CPU link/torch ABI load passed; GPU untested and inactive",
+    "evidence": [
+      "native-v-only-cpu-20261101.json",
+      "fa3-sfu-resource-model-20261101.json"
+    ],
+    "decision": "CPU proof complete, low priority: combined lane/sum path loses37.37us/call, while10k requires23.43us/call saved from control. Native-only has no measured speedup and leaves Tensor/EX2 work unchanged. No additional GPU submission authorized."
   }
 }

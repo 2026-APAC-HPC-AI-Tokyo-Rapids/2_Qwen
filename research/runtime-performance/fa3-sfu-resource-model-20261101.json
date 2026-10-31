@@ -1,0 +1,80 @@
+{
+  "schema": "qwen-fa3-resource-model/v1",
+  "scope": "Conditional ideal resource throughput at1.40GHz; not a measured clock, runtime prediction, or attribution of the measured slowdown",
+  "shape": {
+    "lengths": [
+      3994,
+      3994
+    ],
+    "q_heads": 64,
+    "kv_heads": 4,
+    "head_dim": 128,
+    "packed_gqa_ratio": 16,
+    "tile_m": 192,
+    "tile_n": 96,
+    "math_threads_per_cta": 384,
+    "cta_tiles": 2664,
+    "kv_block_visits": 56784
+  },
+  "hardware_assumptions": {
+    "sms": 132,
+    "clock_hz": 1400000000.0,
+    "dense_fp8_flops_per_sm_cycle": 8192,
+    "exp2_results_per_sm_cycle": 16
+  },
+  "core_work": {
+    "score_exponentials": 1046642688,
+    "online_rescale_exponentials_excluding_first_tile": 41564160,
+    "qk_pv_tiled_flops": 535881056256
+  },
+  "ideal_resource_time_ms": {
+    "tiled_tensor": 0.35397818181818186,
+    "score_exp2": 0.35397818181818186,
+    "score_and_online_rescale_exp2": 0.3680353246753247
+  },
+  "static_steady_loop": {
+    "r12": {
+      "instructions": 381,
+      "exp2": 50,
+      "fadd": 48,
+      "fadd_depth": 23,
+      "prmt": 1
+    },
+    "r13_sum_native": {
+      "instructions": 399,
+      "exp2": 50,
+      "fadd": 48,
+      "fadd_depth": 7,
+      "prmt": 15
+    },
+    "native_only": {
+      "instructions": 378,
+      "exp2": 50,
+      "fadd": 48,
+      "fadd_depth": 23,
+      "prmt": 2
+    }
+  },
+  "interpretation": "Native V and Sum4 leave the tensor/exp2 work counts unchanged. Tensor and score-exp2 throughput floors are equal for FP8 D128 under these peaks. Shortening a sum dependency does not lower either resource-work floor. Additional scalar issue and checksum/PRMT dependencies can offset improved overlap; component timings must decide. Do not add overlapping resource floors or multiply static branch-containing loop sizes into measured cycles.",
+  "excluded": [
+    "producer, masks/addressing/scheduling, row reductions, output normalization and epilogue",
+    "other MUFU functions and final logsumexp work",
+    "measured power/clock effects and instruction latencies",
+    "actual physical HBM/L2/shared transactions"
+  ],
+  "sources": [
+    {
+      "url": "https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#arithmetic-instructions",
+      "fact": "Table5 gives exp2 theoretical throughput of16 results per SM cycle; warp throughput is results/32."
+    },
+    {
+      "url": "https://docs.nvidia.com/cuda/archive/12.4.1/cuda-c-programming-guide/index.html#compute-capability-9-0",
+      "fact": "SM90 has16 SFUs and4 warp schedulers."
+    },
+    {
+      "url": "https://resources.nvidia.com/en-us-gpu-resources/hpc-datasheet-sc23?xs=443995",
+      "fact": "H200 hardware context; clock is a separate conditional scenario."
+    }
+  ],
+  "gpu_speed_prediction": null
+}

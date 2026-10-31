@@ -1,0 +1,228 @@
+{
+  "production_modified": false,
+  "gpu_executed": false,
+  "source_commit": "911a2e8",
+  "control_header_sha256": "fbfaa6be207b26dd7127aae406204b44668b4341ff5ce9e2928510c932e57852",
+  "old_header_sha256": "ffd8fddf1a7592a8ad0d142788e085206384599645e7ab2b95b583e6910ad6b6",
+  "fixed_header_sha256": "52cc4502c44c2e822933da7453c229cf62943f62a3e0f9a9a23bff4ab1bb34ee",
+  "repair_patch_sha256": "07af2a729b2b44f5ba98596b3a3bcc654f0be53538c07cf1ed9436a425b9ffd1",
+  "host_adaptations": [
+    "EX2 uses host exp2f",
+    "RCP uses host float division",
+    "warp any uses a synchronized32-thread host vote",
+    "epilogue values are observed before output quantization"
+  ],
+  "gpu_root_cause_confirmed": false,
+  "additional_gpu_submissions_authorized": false,
+  "schema": "qwen-shared-rcp-row-local-cpu/v1",
+  "historical_gpu_run": 41040348302,
+  "historical_gate": "All12 numerical checks passed; all12 rotating four-routing600-call determinism checks failed. No adoption.",
+  "historical_pooled_timing": {
+    "control_sum_us": 61295,
+    "old_candidate_sum_us": 61111,
+    "gpu_routing_cases": 24,
+    "mean_saving_us": 7.666666666666667,
+    "conditional_24_layer_period_saving_ms": 0.184,
+    "corrected_candidate_measured": false
+  },
+  "defect": "Warp-wide fallback overwrites valid rows with a numerically distinct formula when a different row or invalid padding crosses the bound. Atomic expert dispatch changes row neighbors.",
+  "repair": "Separate bounds and max values per row; valid per-row fallback masks. Warp-any only skips unused work, and cannot choose another row arithmetic.",
+  "host_model": [
+    {
+      "witness": "same row, changed neighboring row placement",
+      "case": 274,
+      "row": 22,
+      "column": 41,
+      "old_fp8_a": 75,
+      "old_fp8_b": 74,
+      "fixed_fp8_a": 74,
+      "fixed_fp8_b": 74,
+      "old_sf_a_bits": 982308336,
+      "old_sf_b_bits": 982308336
+    },
+    {
+      "cases": 1000,
+      "gpu_executed": false,
+      "old_permutation": {
+        "scalar_mismatches": 1592972,
+        "scale_mismatches": 10843,
+        "fp8_mismatches": 4
+      },
+      "fixed_permutation": {
+        "scalar_mismatches": 0,
+        "scale_mismatches": 0,
+        "fp8_mismatches": 0
+      },
+      "old_padding": {
+        "scalar_mismatches": 795825,
+        "scale_mismatches": 5542,
+        "fp8_mismatches": 1
+      },
+      "fixed_padding": {
+        "scalar_mismatches": 0,
+        "scale_mismatches": 0,
+        "fp8_mismatches": 0
+      }
+    }
+  ],
+  "actual_extracted_body": {
+    "source_body_cases": 48,
+    "host_lanes_per_warp": 32,
+    "all_valid_scalar_bits_match_independent_model": true,
+    "gpu_executed": false
+  },
+  "scope_limitations": [
+    "Host exp2f/division is not a Hopper approximate-MUFU emulator.",
+    "No GPU execution, endurance or timing for repaired source; GPU historical failure root cause is not confirmed.",
+    "Compile checks instantiate one relevant production shape, not a full updated application integration."
+  ],
+  "patch": "megamoe-shared-rcp-row-local-fallback-20261101.patch",
+  "raw_cpu_archive": {
+    "path": "vsum130/cpu-followups-evidence.tar.gz",
+    "bytes": 4540014,
+    "sha256": "f76298fef0a9f800f7ccdad679b84fe8cf6a9703206508f4948a99b7a89c60b7"
+  },
+  "native_compile": {
+    "gpu_executed": false,
+    "production_modified": false,
+    "toolchain": "CUDA13.0.88/sm90a",
+    "template_args": "8448,4096,1536,128,8,128,128,256,128,92160,1474560,4,64,64,256,132,1,cute::numeric_limits<float>::infinity(),true,0,true,true,false,false,false,true,false,true",
+    "flags": [
+      "-std=c++20",
+      "-O3",
+      "--expt-relaxed-constexpr",
+      "--expt-extended-lambda",
+      "--gpu-architecture=sm_90a",
+      "--diag-suppress=39,161,174,177,186,940",
+      "--ptxas-options=--register-usage-level=10,-v,--warn-on-spills",
+      "--compiler-options=-fPIC,-O3,-fconcepts,-Wno-deprecated-declarations,-Wno-abi"
+    ],
+    "rows": [
+      {
+        "exit_code": 0,
+        "seconds": 8.623444762080908,
+        "name": "control-off",
+        "header_sha256": "fbfaa6be207b26dd7127aae406204b44668b4341ff5ce9e2928510c932e57852",
+        "object_sha256": "177708fdf22287a0187d3e62fe2eb1d20ae27457871d82a635482f4fc7b21c28",
+        "encoded_sass_sha256": "d269531abde7c15044801902e1f5b639bc1cb07821430e11d4e9be4e9db3c572",
+        "stack_spill_records": [
+          [
+            "0",
+            "0",
+            "0"
+          ]
+        ],
+        "local_instructions": 0,
+        "c75xx": []
+      },
+      {
+        "exit_code": 0,
+        "seconds": 8.600333555135876,
+        "name": "old-off",
+        "header_sha256": "ffd8fddf1a7592a8ad0d142788e085206384599645e7ab2b95b583e6910ad6b6",
+        "object_sha256": "0f3658b500ac53badb6b76c6ece7b1f86a5111d1e9f43983410ee75abd99a3c2",
+        "encoded_sass_sha256": "d269531abde7c15044801902e1f5b639bc1cb07821430e11d4e9be4e9db3c572",
+        "stack_spill_records": [
+          [
+            "0",
+            "0",
+            "0"
+          ]
+        ],
+        "local_instructions": 0,
+        "c75xx": []
+      },
+      {
+        "exit_code": 0,
+        "seconds": 8.514720374019817,
+        "name": "fixed-off",
+        "header_sha256": "52cc4502c44c2e822933da7453c229cf62943f62a3e0f9a9a23bff4ab1bb34ee",
+        "object_sha256": "a74ada3e2eade6eba8338fe043d9422cda6a20ded482bab5faa515340e89d24a",
+        "encoded_sass_sha256": "d269531abde7c15044801902e1f5b639bc1cb07821430e11d4e9be4e9db3c572",
+        "stack_spill_records": [
+          [
+            "0",
+            "0",
+            "0"
+          ]
+        ],
+        "local_instructions": 0,
+        "c75xx": []
+      },
+      {
+        "exit_code": 0,
+        "seconds": 8.858612030977383,
+        "name": "old-on",
+        "header_sha256": "ffd8fddf1a7592a8ad0d142788e085206384599645e7ab2b95b583e6910ad6b6",
+        "object_sha256": "59355ea78c3f388d7a55def4049b18d32771c87b10c24956bc963f8c28248835",
+        "encoded_sass_sha256": "a21c5eff9149f2eb9299779f5db7cccb4a510053b6aab025e93ff4171ab18afb",
+        "stack_spill_records": [
+          [
+            "0",
+            "0",
+            "0"
+          ]
+        ],
+        "local_instructions": 0,
+        "c75xx": []
+      },
+      {
+        "exit_code": 0,
+        "seconds": 8.106013084063306,
+        "name": "fixed-on",
+        "header_sha256": "52cc4502c44c2e822933da7453c229cf62943f62a3e0f9a9a23bff4ab1bb34ee",
+        "object_sha256": "86c5c9ec21582dfb5cbe016c59c169c0ebc11c738196a29b0b8a39815efa46e5",
+        "encoded_sass_sha256": "b334f2484a0ec2f242b7b2d33007d633689eb3946d768ad856a6cdeb0d9a9871",
+        "stack_spill_records": [
+          [
+            "0",
+            "0",
+            "0"
+          ]
+        ],
+        "local_instructions": 0,
+        "c75xx": []
+      }
+    ],
+    "controls_encoded_equal": true,
+    "candidate_zero_stack_spill": true,
+    "candidate_local_instructions": 0,
+    "candidate_c75xx": [],
+    "host_include_snapshot": "/tmp/qwen-preflight-20261023/host-source",
+    "gpu_root_cause_confirmed": false,
+    "additional_gpu_submissions_authorized": false
+  },
+  "native_dependency_manifest": {
+    "path": "vsum130/cpu-followups-recovered/rcp-determinism/native/dependency-sha256.json",
+    "bytes": 97343,
+    "sha256": "e8f9f9de2b3598b559ba93bc8724e08faee86d6811e337258b507218ad768423"
+  },
+  "decision": "Keep as a corrected CPU research prototype. Even restoring the old timing gain unchanged would project only9967.10 in the conditional latest capacity model; it is insufficient alone and no GPU job is authorized.",
+  "host_reproduction_files": {
+    "prepare-source.py": {
+      "path": "rcp-determinism/prepare-source.py",
+      "sha256": "778a0fe14214c301189006eb9aff9eda2f5d9f4d7a8282517fd717ea0e6df425"
+    },
+    "host-model.cpp": {
+      "path": "rcp-determinism/host-model.cpp",
+      "sha256": "5bc64749a383fc62c37e4dda6ef2d04a3dcd72118f3a178c07c0ff424186e4bf"
+    },
+    "host-extracted.cpp": {
+      "path": "rcp-determinism/host-extracted.cpp",
+      "sha256": "a7a3205883f0c07ef2e1378636bb91eb4b8d1750151cdcfe4e5ff312bc867729"
+    },
+    "extracted-epilogues.hpp": {
+      "path": "rcp-determinism/extracted-epilogues.hpp",
+      "sha256": "8c58683b17a9fc9565f9efefe39aa61d7fa22fc4ed204ee8f7bb45bb7fa89461"
+    },
+    "host-model.jsonl": {
+      "path": "rcp-determinism/host-model.jsonl",
+      "sha256": "4b10fe5a46609ecd6fee34324c211917496f41457588be764c36fcfcfdeea947"
+    },
+    "host-extracted.json": {
+      "path": "rcp-determinism/host-extracted.json",
+      "sha256": "4d4d2c372324a7c700cfafb9b4b7f782bb0db4549de34a486d57446753a9458c"
+    }
+  },
+  "original_patch_git_path": "911a2e8:patches/deep-gemm-bench/prefill-shared-rcp/sm90-prefill-shared-rcp.patch"
+}

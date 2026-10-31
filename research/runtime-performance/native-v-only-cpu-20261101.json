@@ -1,0 +1,259 @@
+{
+  "gpu_executed": false,
+  "variant": 41184,
+  "baseline_variant": 8416,
+  "combined_variant": 57568,
+  "change": "Remove Sum4 flag and its checksum/identity PRMT; keep NativeV and all existing causal/FP8 behavior",
+  "shared_bytes": 100352,
+  "resource_only_dso_load": true,
+  "full_production_torch_abi_load": true,
+  "c75xx": [],
+  "stack_spill_records": [
+    [
+      "0",
+      "0",
+      "0"
+    ]
+  ],
+  "local_instructions": 0,
+  "encoded_sass_sha256": "7b6483b6e179aade6f5d78f0e01d1ac27f70dcfaf0ec75d09279e3355ffcdf11",
+  "source_sha256": "e976b21dfc26dfc978e70f1c39fd32f2dc9326288095fd601379115ec7fdbf0b",
+  "binary_sha256": "0d1430165635940c9c6fc59455722114e86521f001bd9f8b1803dd523b8ec294",
+  "performance_prediction": null,
+  "production_source_modified": false,
+  "decision": "CPU proof complete, low priority: combined lane/sum path loses37.37us/call, while10k requires23.43us/call saved from control. Native-only has no measured speedup and leaves Tensor/EX2 work unchanged. No additional GPU submission authorized.",
+  "schema": "qwen-native-v-only-cpu/v1",
+  "cuda": "13.0.88",
+  "registers": 128,
+  "static_loop_comparison": [
+    {
+      "loop_begin": "0x5150",
+      "loop_end": "0x6910",
+      "instructions": 381,
+      "max_fadd_depth": 23,
+      "pv_operand_words": [
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147
+      ],
+      "first_old_p_write": {
+        "pc": "0x6020",
+        "instruction": "F2FP.SATFINITE.E4M3.F32.PACK_AB_MERGE_C R146, R17, R12, R95",
+        "ex2_before": 26
+      },
+      "waits": [
+        {
+          "pc": "0x5590",
+          "instruction": "WARPGROUP.DEPBAR.LE gsb0, 0x1",
+          "ex2_before": 0
+        },
+        {
+          "pc": "0x5e30",
+          "instruction": "WARPGROUP.DEPBAR.LE gsb0, 0x0",
+          "ex2_before": 22
+        }
+      ],
+      "case": "r12",
+      "prmt_instructions": 1
+    },
+    {
+      "loop_begin": "0x5180",
+      "loop_end": "0x6a60",
+      "instructions": 399,
+      "max_fadd_depth": 7,
+      "pv_operand_words": [
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147
+      ],
+      "first_old_p_write": {
+        "pc": "0x6990",
+        "instruction": "PRMT R144, R13, R17.reuse, R144",
+        "ex2_before": 50
+      },
+      "waits": [
+        {
+          "pc": "0x5550",
+          "instruction": "WARPGROUP.DEPBAR.LE gsb0, 0x1",
+          "ex2_before": 0
+        },
+        {
+          "pc": "0x5f40",
+          "instruction": "WARPGROUP.DEPBAR.LE gsb0, 0x0",
+          "ex2_before": 24
+        }
+      ],
+      "case": "r13_sum_native",
+      "prmt_instructions": 15
+    },
+    {
+      "loop_begin": "0x5010",
+      "loop_end": "0x67a0",
+      "instructions": 378,
+      "max_fadd_depth": 23,
+      "pv_operand_words": [
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147
+      ],
+      "first_old_p_write": {
+        "pc": "0x6240",
+        "instruction": "F2FP.SATFINITE.E4M3.F32.PACK_AB_MERGE_C R144, R13, R8, R116",
+        "ex2_before": 29
+      },
+      "waits": [
+        {
+          "pc": "0x53e0",
+          "instruction": "WARPGROUP.DEPBAR.LE gsb0, 0x1",
+          "ex2_before": 0
+        },
+        {
+          "pc": "0x5a00",
+          "instruction": "WARPGROUP.DEPBAR.LE gsb0, 0x0",
+          "ex2_before": 13
+        }
+      ],
+      "case": "native_only",
+      "prmt_instructions": 2
+    }
+  ],
+  "raw_archive": {
+    "path": "native-only-evidence.tar.gz",
+    "bytes": 668833,
+    "sha256": "29a030a8caa377b937c9c373054644c7547fc7b1b81bca7717631ad3ea1c57dc"
+  },
+  "limitations": [
+    "No GPU numeric, ordering, endurance, or timing result",
+    "The earlier PV wait after13 EX2 versus22 in r12 can trade overlap against producer progress; fewer instructions do not imply faster execution",
+    "Full32 TU link and CPU torch.ops/resource queries passed; this does not initialize CUDA or prove GPU numerics/endurance/performance."
+  ],
+  "full_production_build": {
+    "gpu_executed": false,
+    "production_modified": false,
+    "prototype_variant": 41184,
+    "full_production_abi_load": true,
+    "source_diff": [
+      "prefill-candidates.json"
+    ],
+    "prefill_sizes": [
+      191488,
+      191488,
+      134144,
+      134144,
+      191488,
+      166912,
+      166912,
+      166912,
+      166912,
+      166912,
+      166912,
+      166912,
+      124928,
+      0,
+      100352
+    ],
+    "decode_sizes": [
+      84992,
+      109568,
+      109568,
+      109568,
+      158720,
+      207872,
+      158720,
+      109568,
+      109568,
+      109568,
+      158720,
+      158720,
+      158720,
+      207872,
+      207872,
+      207872,
+      109568,
+      109568,
+      109568,
+      216064,
+      216064,
+      198656
+    ],
+    "sass": {
+      "prefill_m192n96_direct_o_varlen_pipe_vsum": {
+        "encoded_sass_sha256": "7b6483b6e179aade6f5d78f0e01d1ac27f70dcfaf0ec75d09279e3355ffcdf11",
+        "c75xx": [],
+        "stack_spill_records": [
+          [
+            "0",
+            "0",
+            "0"
+          ]
+        ],
+        "local_instructions": 0
+      },
+      "prefill_m192n96_direct_o_varlen_pipe": {
+        "encoded_sass_sha256": "9230a515fe443ca8b9439d96f8fc527745209bcb4532cd3ec0f64586819cd4cf",
+        "c75xx": [],
+        "stack_spill_records": [
+          [
+            "16",
+            "40",
+            "28"
+          ]
+        ],
+        "local_instructions": 17
+      },
+      "prefill_n192_direct_o_varlen_pipe": {
+        "encoded_sass_sha256": "697514db49f75d9a3cdb14becb39cc5499da715cfa612d5f09efdbf7f58990bd",
+        "c75xx": [],
+        "stack_spill_records": [
+          [
+            "40",
+            "84",
+            "116"
+          ]
+        ],
+        "local_instructions": 50
+      }
+    },
+    "binary_sha256": "516f749c3ce98f87adce12f50afa96ac009cb260737fde1ada7c6638ca8648b2",
+    "binary_bytes": 14896448,
+    "seconds": 1724.4781058609951,
+    "translation_units_passed": 32,
+    "summary": {
+      "path": "vsum130/cpu-followups-recovered/native-only-full/summary.json",
+      "bytes": 63505,
+      "sha256": "e55acc07be9afbada96fa87c4d590ba2b03b24be9aaf4ee55188a50869f3a42d"
+    },
+    "raw_archive": {
+      "path": "vsum130/cpu-followups-evidence.tar.gz",
+      "bytes": 4540014,
+      "sha256": "f76298fef0a9f800f7ccdad679b84fe8cf6a9703206508f4948a99b7a89c60b7"
+    }
+  }
+}

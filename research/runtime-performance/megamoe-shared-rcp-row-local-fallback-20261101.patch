@@ -1,0 +1,51 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -2878,7 +2878,8 @@
+                         auto rcp = [](const float& x) { float y; asm("rcp.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x)); return y; };
+                         const float t_r0 = l1_final_scale[0] * kNegLog2E, t_r1 = l1_final_scale[1] * kNegLog2E;
+                         // Below this bound on d_0 d_1, rcp(d_0 d_1) * s_gate is a normal number (not a denormal).
+-                        const float max_d_bound = fminf(fminf(l1_final_scale[0], l1_final_scale[1]), 1.0f) * 0x1p126f;
++                        const float max_d_bound_r0 = fminf(l1_final_scale[0], 1.0f) * 0x1p126f;
++                        const float max_d_bound_r1 = fminf(l1_final_scale[1], 1.0f) * 0x1p126f;
+                         auto silu_pair = [&](const float& g_0, const float& u_0, const float& g_1, const float& u_1,
+                                              const float& t, const float& s_gate, float& v_0, float& v_1, float& max_d) {
+                             const float e_0 = ex2(g_0 * t), e_1 = ex2(g_1 * t);
+@@ -2902,21 +2903,30 @@
+                         DG_STATIC_ASSERT(kNumPairs % kSharedRcpChunk == 0, "Shared reciprocal chunks");
+                         #pragma unroll
+                         for (uint32_t c = 0; c < kNumPairs; c += kSharedRcpChunk) {
+-                            float max_d = 0.0f;
++                            float max_d_r0 = 0.0f, max_d_r1 = 0.0f;
+                             #pragma unroll
+                             for (uint32_t p = c; p < c + kSharedRcpChunk; ++ p) {
+                                 silu_pair(final_accum[p * 8 + 0], final_accum[p * 8 + 4], final_accum[p * 8 + 1], final_accum[p * 8 + 5],
+-                                          t_r0, l1_final_scale[0], swiglu_r0[p][0], swiglu_r0[p][1], max_d);
++                                          t_r0, l1_final_scale[0], swiglu_r0[p][0], swiglu_r0[p][1], max_d_r0);
+                                 silu_pair(final_accum[p * 8 + 2], final_accum[p * 8 + 6], final_accum[p * 8 + 3], final_accum[p * 8 + 7],
+-                                          t_r1, l1_final_scale[1], swiglu_r1[p][0], swiglu_r1[p][1], max_d);
++                                          t_r1, l1_final_scale[1], swiglu_r1[p][0], swiglu_r1[p][1], max_d_r1);
+                             }
+-                            if (__any_sync(0xffffffffu, not (max_d < max_d_bound))) {
++                            // Dispatch atomics can change neighboring token rows between calls.
++                            // The vote only skips unused work; each row selects its own arithmetic.
++                            // Padding must never choose a valid row's numerical path.
++                            const bool fallback_r0 = valid_r0 && !(max_d_r0 < max_d_bound_r0);
++                            const bool fallback_r1 = valid_r1 && !(max_d_r1 < max_d_bound_r1);
++                            if (__any_sync(0xffffffffu, fallback_r0 || fallback_r1)) {
+                                 #pragma unroll
+                                 for (uint32_t p = c; p < c + kSharedRcpChunk; ++ p) {
+-                                    swiglu_r0[p][0] = silu_one(final_accum[p * 8 + 0], final_accum[p * 8 + 4], t_r0, l1_final_scale[0]);
+-                                    swiglu_r0[p][1] = silu_one(final_accum[p * 8 + 1], final_accum[p * 8 + 5], t_r0, l1_final_scale[0]);
+-                                    swiglu_r1[p][0] = silu_one(final_accum[p * 8 + 2], final_accum[p * 8 + 6], t_r1, l1_final_scale[1]);
+-                                    swiglu_r1[p][1] = silu_one(final_accum[p * 8 + 3], final_accum[p * 8 + 7], t_r1, l1_final_scale[1]);
++                                    if (fallback_r0) {
++                                        swiglu_r0[p][0] = silu_one(final_accum[p * 8 + 0], final_accum[p * 8 + 4], t_r0, l1_final_scale[0]);
++                                        swiglu_r0[p][1] = silu_one(final_accum[p * 8 + 1], final_accum[p * 8 + 5], t_r0, l1_final_scale[0]);
++                                    }
++                                    if (fallback_r1) {
++                                        swiglu_r1[p][0] = silu_one(final_accum[p * 8 + 2], final_accum[p * 8 + 6], t_r1, l1_final_scale[1]);
++                                        swiglu_r1[p][1] = silu_one(final_accum[p * 8 + 3], final_accum[p * 8 + 7], t_r1, l1_final_scale[1]);
++                                    }
+                                 }
+                             }
+                         }
