@@ -1,6 +1,6 @@
 # PP4 10k structural audit and split-PV prototype (2026-11-01)
 
-This audit rereads the issues, chats, raw request records and newest available kernel trace. It does not treat an old EP4 profile as the current PP4 execution. The first split-PV GPU probe was numerically correct and stable, but **about 25% slower**; V1 is rejected. Three V2 CPU assembly attempts also failed the pre-allocation gate. V3 removes repeated V transpose and splits PV across two consumers; its complete CPU build, layout, queue model and validation CI passed. A single bounded [V3 probe](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41230406211) is submitted at `757eff9caa58a7f46326ce1470076fb8e22ecc46`, Slurm 27946, and remains **PENDING, Reason=Priority, as of 2026-10-31 19:36 UTC**. No V3 GPU result or new serving result exists yet. The read-only [queue diagnostic](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41235009917) confirmed both partition nodes allocated, no scheduled start time, the correct probe script and its five-minute limit; it allocated no GPU and its temporary workflow addition was removed. The independently running round 12 completed at **9958.4323 tok/s**; this audit does not claim credit for that improvement.
+This audit rereads the issues, chats, raw request records and newest available kernel trace. It does not treat an old EP4 profile as the current PP4 execution. V1 split-PV was numerically correct but about 25% slower; three V2 CPU assembly attempts failed the pre-allocation gate. V3 passed its full CPU proof, all seven GPU numerical cases and 1,200-call endurance on both real pairs, but was **10.9–11.7% slower than the served M192/N96 kernel**, with no positive timing pair. V3 is also rejected and serving remains unchanged. The independently completed round 12 reached **9958.4323 tok/s**; this audit does not claim credit for that result or claim 10k achieved.
 
 ## Required work reduction
 
@@ -168,3 +168,17 @@ The bounded V3 GPU protocol uses N192 as an exact output/scale oracle and sample
 The round-12 raw records have 113 TTFT-only failures. Holding the request set and the official 123.714251097 s denominator fixed, reaching 10k requires 26 additional good requests. Their sorted SLA excess shows that a uniform **20 ms TTFT reduction rescues only 2 requests**; rescuing 26 requires **463.439531 ms**. An 8 ms reduction rescues none (the smallest gap is 8.238854 ms). These are derived directly from the 3,000 ms threshold and each request's measured TTFT, with ITL failures excluded.
 
 This does not rule out communication as a throughput limiter. It only shows that saving a few milliseconds at request completion, while keeping admitted work unchanged, cannot close the score gap. Increasing sustained Prefill capacity is the separate model that requires a 0.478993 ms shorter pipeline period, or approximately 19.958 µs per layer across 24 layers. Do not confuse the 463 ms latency-only rescue with the 0.479 ms period reduction.
+
+
+## V3 GPU result: correct, stable, and rejected
+
+[Run 41230406211](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41230406211), pinned to `757eff9caa58a7f46326ce1470076fb8e22ecc46`, completed with Slurm 27946 exit `0:0` after 76 allocated seconds. Seven numerical cases, including the final changed-input random replay, had exact output and scale equality to the N192 oracle and identical sampled FP64 errors. Both real pairs passed 1,200 calls and post-timing graph replay equality. The actual compiled candidate also has zero stack/spills and initial 96 registers, matching the CPU proof.
+
+| Real sequence lengths | Served M192/N96 median | V3, including V packing, median | Median paired saving | Positive pairs |
+|---|---:|---:|---:|---:|
+| 3994 + 3994 | 663.922 µs | 741.470 µs | **−79.896 µs** | 0 / 20 |
+| 3986 + 4027 | 675.816 µs | 749.567 µs | **−74.389 µs** | 0 / 20 |
+
+Forward/reverse paired savings were −78.081/−81.172 µs and −76.539/−70.415 µs respectively. The worst-to-best pair ranges were −120.514 to −59.275 µs and −112.744 to −61.866 µs. The performance gate is false; the workflow success means numerical/endurance completion and artifact recovery, not a speedup. No normal serving run or adoption follows this result. The added 1.663 GB of counted shared traffic, additional tiled FLOPs and CTA work remain costs of this design; timing alone does not assign the regression to a specific hardware stall.
+
+Canonical evidence: `fa3-split-pv-gpu-41230406211.json`. Artifact 13055932903 ZIP SHA256 `bba8c47932ae701013999b13ee071549700c6e81af8ba2ea21e386ae2154935e` was recovered and verified. Actions confirmed terminal Slurm state and removed its runtime after upload. The preceding queue wait was `Priority` with both nodes allocated; [read-only diagnosis 41235009917](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41235009917) allocated no GPU, and its temporary workflow change was removed.
