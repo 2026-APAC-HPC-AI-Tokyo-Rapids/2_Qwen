@@ -264,3 +264,27 @@ layer; (4) investigate dense epilogue overlap, which needs a different register
 budget and uses the lower 0.36–0.6 wait-removal factor. No rejected mainloop
 stagger, empty-wave runtime branch, coarser quantization or new approximation
 was reintroduced.
+
+## Resume: Genkai-specific probe image
+
+The user clarified that the PP4 build is Firmus-only and authorized only
+`/home/ACCOUNT/share/sglang-containers/40689226339.sqsh` on Genkai. The
+prepare script now names it explicitly, verifies the actual squashfs hash
+and size against its sidecar, and extracts/logs `opt/apac/manifest.json`.
+Serving stays pinned to 41150387984; this probe produces H100 ratios only.
+One dispatch has already been consumed; at most three remain.
+
+Before dispatch, comparing build definition 6c6391f to this workspace shows
+all 23 baked SGLang patches unchanged. The old host series has the same first
+four patches, plus the retired MegaMoE stage4 and decode-prepare patches;
+the current series instead adds local-EP1, 4stage, lean, tail-pair,
+split-accum and dense decode-BM192 support. The latter's host branch requires
+M<=192 and a nonempty DG_SM90_1D2D_DECODE_CONFIG; this probe sets neither that
+variable nor any MegaMoE option. Therefore none changes stock dense QKV at
+M3994/7988, nor M129 with the option absent. The dense device-header BM192
+conditional still chooses 232 registers and 128-row waves for the stock
+256 math threads. The fused kernel has its own launcher. All FP32 writer
+and JIT files come from unchanged SGLang source plus the current overlays.
+The additional Dockerfile COPY is for FC2 build verification, not this path.
+The actual embedded manifest is checked during preparation before GPU use;
+its exact differences and applied overlay list will be recorded below.

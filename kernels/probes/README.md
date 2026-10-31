@@ -298,11 +298,16 @@ Independent BF16 draft KV is deferred: the pinned image deep-copies server args 
 ## PP4 direct-FP32 QKV epilogue, round 11
 
 Use `benchmark=kernels/probes/prepare-qkv-fused.sh`, empty `candidate_patch`,
-`gpu_count=1`, and the round-11 branch. Preparation requires the exact image
-pinned in `firmus-prefill-pp4.json` at the Genkai shared image path, validates
-size/sidecar identity, applies both complete PP4 overlay chains and requires
-`/usr/local/cuda-13.4/bin/nvcc`. No image substitution or toolchain fallback.
-Both control DeepGEMM/rope and fused JIT use that CUDA 13.4 mount.
+`gpu_count=1`, and the round-11 branch. Preparation explicitly uses the newest
+Genkai probe image `/home/ACCOUNT/share/sglang-containers/40689226339.sqsh`,
+not the PP4 configuration's image. The PP4 pinned build is Firmus-only and was
+never copied to Genkai. Verify the actual squashfs SHA-256 and size against its
+adjacent container sidecar, print its embedded `opt/apac/manifest.json` and
+compare the baked patch/recipe hashes with the workspace. Apply the complete
+SGLang and DeepGEMM PP4 overlay chains in config order, logging each patch.
+Both control DeepGEMM/rope and fused JIT require the same CUDA 13.4 mount at
+`/usr/local/cuda-13.4`; no toolchain fallback. These are H100 ratios only.
+Serving still uses the pinned Firmus image `41150387984` unchanged.
 
 One calibration process has the existing 165-second timeout in a five-minute
 one-H100 PJM allocation. It checks M129/3994/7988, all five FP8 outputs including
