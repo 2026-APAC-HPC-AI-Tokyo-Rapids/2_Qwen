@@ -1,0 +1,810 @@
+{
+  "schema": "megamoe-prefill-dep-r13-cpu-validation/v1",
+  "date": "2026-11-01",
+  "base_commit": "31d9b10",
+  "status": "rejected_at_stage_1_requirement_4; no_runtime_candidate_or_gate_added",
+  "gpu_executed": false,
+  "stage_2_executed": false,
+  "toolchain": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Tue_Sep_01_08:45:21_PDT_2026\nCuda compilation tools, release 13.4, V13.4.92\nBuild cuda_13.4.r13.4/compiler.38855100_0",
+  "image_toolchain": "CUDA 13.0.88; CUDA 13.4 CPU compilation is substitute validation only",
+  "source": {
+    "revision": "1c8138a59b3df5dac50b76b730834ed57982fdfb",
+    "header_sha256": "fbfaa6be207b26dd7127aae406204b44668b4341ff5ce9e2928510c932e57852",
+    "patches": [
+      {
+        "path": "patches/deep-gemm/sm90-late-topk-fp32.patch",
+        "sha256": "462d68230da3ab9a1e69ca85d9fa804b8edaf6a77bf0975726611a08fda6622b"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-fc2-pipeline.patch",
+        "sha256": "08da0ad5661f1aad9e596242e50428141400ebc7530cb7cbbfd035cc503fd410"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-prefill-rescale.patch",
+        "sha256": "ea03dbd0a1c4cafe30afe61e9432bb67a35566dd92429cf22a9f9957a5d51bdc"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-decode-exact-tiles.patch",
+        "sha256": "6cd0e9dd84c92d65902893e7808fe2f91a1e4f264e5ef4be9aeee854d47399f7"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-prefill-phase.patch",
+        "sha256": "e95d0faa42d1bb512be3a78a660e627d911fc822d6cde486079583e075bec12a"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-decode-swap-ab-hoist.patch",
+        "sha256": "88351653b3190a723a0b6e34e974756fe7a51a6faa401325f278487cc5c6013a"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-decode-swap-ab-l1-quant.patch",
+        "sha256": "012220e3293d1eb05c5a448c342435eff2e6141e7ba95b47df7fccb51560230e"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-dispatch-pull-overlap.patch",
+        "sha256": "450d274998b58b60c049f80d99a383a8b89cff26f67979c209dd5625cd58caf6"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-dispatch-drop-l1-weight.patch",
+        "sha256": "f4be778546eb144a337466f7bd41b43733b5c2364df659bbd4c17241ba64a092"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-prefill-tail.patch",
+        "sha256": "1c8b93e900b7b970cbf8e96503eab8bd22d376f75b1c66adad9dced7e45663c2"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-prefill-mainloop-prefetch.patch",
+        "sha256": "c297df4a3543f908eb42582ed9eb35989728926b4d094a5eb73e24fd2f96b4c3"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-combine-parallel.patch",
+        "sha256": "93fb5cf033c51524a52320b491c91aa20a0b64d67f5af5b7e49171ae5540ca51"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-decode-dynamic-schedule.patch",
+        "sha256": "f1719c1ceefe93d1f1d79b4005b631f1f53a775df121e79e0e5d7e078fe28461"
+      },
+      {
+        "path": "patches/deep-gemm/sm90-decode-l1-store-wait.patch",
+        "sha256": "a2a3eac9f34c4901b432c3f845b460205d2b3f0a4fc982886beb5e1b8d6229d0"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
+        "sha256": "d7738280f64f25feaa53f8cbb8d4b28f25a1b952c5f590974de87dd5073a5667"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-prefill-fc2-swizzle.patch",
+        "sha256": "822fa80af98deebbadaecef46ab8119abb9c87760d1fba227a9def2eaf27b1b4"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-prefill-2wg-host-epi.patch",
+        "sha256": "4a91639165075a01d824bbb398d291037de4483160e0c15f487365b9f1fc1906"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-swap-ab-geometry-guard.patch",
+        "sha256": "ab5efd41b3089e5a3527cce98312fd97ef2342721b1fe0855ed6b82080be33ae"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-decode-swapab-prefetch.patch",
+        "sha256": "0c337c9adeb6ce09bfe90c790d31686b187e59022b1ae754d83392d7ccbe177b"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch",
+        "sha256": "2167001084fe5c9c50fd35aaef0ac3d0648af20b064c1355b7fe52519dd36803"
+      },
+      {
+        "path": "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch",
+        "sha256": "a27e42d3224305e4088b6c6cfbe17ff1457db8ef6866f4f32d12024cb8ffa230"
+      },
+      {
+        "path": "patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch",
+        "sha256": "9b9543ec4f4d185980038a387e36217edafa42724976e5e86a335a24ab30a31d"
+      },
+      {
+        "path": "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch",
+        "sha256": "eaf177b91c868c7f95d9e885c870f6b309bd4fbe349d08aed30cc1724f61cd99"
+      },
+      {
+        "path": "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch",
+        "sha256": "075d70da25b38741ba8ba9d2fc1b2f69c7e3994ebfe1e329ed0e77f87bd1e871"
+      },
+      {
+        "path": "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch",
+        "sha256": "703f3d7ef44c2e5f4b4bf29de67a3878e5aa03ef3ad06a04ead484b1c1d0fba6"
+      },
+      {
+        "path": "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch",
+        "sha256": "225026eb287ae95aeb38294aed51f0b42f69e04e06dcfc61a045d0127d33cf91"
+      },
+      {
+        "path": "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch",
+        "sha256": "c08c6ba8b0805dca3e4e66b5be31c18c007a20267270b04ba82f479d8de627c5"
+      }
+    ]
+  },
+  "candidate_header_sha256": "246fcc1ff4ea32bad1c7edaf7dc32a787c49ca28b10813985d74faa81fca1683",
+  "target": {
+    "hidden": 4096,
+    "intermediate": 1536,
+    "experts": 128,
+    "topk": 8,
+    "tokens": 7988,
+    "token_capacity": 8448,
+    "ep": 1,
+    "pp": 4,
+    "tile": [
+      128,
+      256,
+      128
+    ],
+    "fc1_k_blocks": 32,
+    "fc2_k_blocks": 12,
+    "fc1_chunk": 8,
+    "fc2_chunk": 12,
+    "dtype": "E4M3 operands, FP32 accumulators/scales, BF16 expert partial and final output"
+  },
+  "logical_work_per_layer": {
+    "fc1_flops": 1608196816896,
+    "fc2_flops": 804098408448,
+    "all_expert_weight_bytes": 2415919104,
+    "weight_scale_bytes": 589824,
+    "unique_input_and_output_bytes": 98156544,
+    "dispatch_pool_write_read_bytes": 523501568,
+    "fc1_activation_write_read_bytes": 196313088,
+    "expert_partial_write_read_bytes": 1047003136,
+    "ep1_dispatch_combine_nvlink_payload_bytes": 0,
+    "actual_hbm_bytes": null,
+    "actual_l2_bytes": null,
+    "padding_flops": null,
+    "note": "Logical buffer contract, not measured HBM traffic. EP1 payload is structurally zero; PP and PD transfers remain."
+  },
+  "compiled_template_args": "8448,4096,1536,128,8,128,128,256,128,92160,1474560,4,64,64,256,132,1,cute::numeric_limits<float>::infinity(),true,0,true,true,false,false,false,true,false,true",
+  "builds": {
+    "original/ep1-s4-split": {
+      "returncode": 0,
+      "c75xx": [],
+      "registers": [
+        168
+      ],
+      "spill_store_load": [
+        [
+          0,
+          0
+        ]
+      ],
+      "instructions": 9856,
+      "encoded_bytes": 157696,
+      "sass_sha256": "d582cf2059b10cd17523ecf1bcb70135ca5ca7174defa29caf9ad8345f6015ad",
+      "opcodes": {
+        "LDC": 27,
+        "S2R": 14,
+        "S2UR": 8,
+        "MOV": 562,
+        "SHF": 170,
+        "SHFL": 35,
+        "ISETP": 180,
+        "BRA": 719,
+        "ELECT": 85,
+        "BSSY": 233,
+        "ULDC": 65,
+        "UIADD3": 255,
+        "UTMACCTL": 7,
+        "NOP": 179,
+        "BSYNC": 233,
+        "UMOV": 555,
+        "USHF": 24,
+        "ULEA": 15,
+        "FENCE": 4,
+        "SYNCS": 455,
+        "PLOP3": 24,
+        "VOTEU": 11,
+        "LEA": 82,
+        "R2UR": 397,
+        "IADD3": 319,
+        "STS": 47,
+        "BAR": 16,
+        "USETMAXREG": 4,
+        "IMAD": 87,
+        "LDG": 79,
+        "YIELD": 27,
+        "WARPSYNC": 115,
+        "REDUX": 8,
+        "ULOP3": 11,
+        "USEL": 2,
+        "UISETP": 7,
+        "UIMAD": 10,
+        "SEL": 39,
+        "LOP3": 86,
+        "MEMBAR": 19,
+        "ERRBAR": 9,
+        "CGAERRBAR": 9,
+        "REDG": 9,
+        "CS2R": 205,
+        "LDS": 74,
+        "FMUL": 3110,
+        "PRMT": 38,
+        "WARPGROUP": 80,
+        "QGMMA": 160,
+        "MUFU": 210,
+        "FADD": 68,
+        "FMNMX": 66,
+        "FSEL": 6,
+        "FSETP": 5,
+        "CALL": 2,
+        "FFMA": 75,
+        "F2FP": 124,
+        "STG": 46,
+        "VIADDMNMX": 2,
+        "STSM": 16,
+        "ATOMG": 7,
+        "CCTL": 10,
+        "VOTE": 10,
+        "BREV": 6,
+        "FLO": 7,
+        "UBLKCP": 8,
+        "DEPBAR": 2,
+        "UTMACMDFLUSH": 2,
+        "UTMALDG": 53,
+        "VIMNMX": 1,
+        "POPC": 2,
+        "ATOMS": 2,
+        "BPT": 1,
+        "EXIT": 1,
+        "NANOSLEEP": 106,
+        "ENDCOLLECTIVE": 108,
+        "RET": 1
+      }
+    },
+    "off/ep1-s4-split": {
+      "returncode": 0,
+      "c75xx": [],
+      "registers": [
+        168
+      ],
+      "spill_store_load": [
+        [
+          0,
+          0
+        ]
+      ],
+      "instructions": 9856,
+      "encoded_bytes": 157696,
+      "sass_sha256": "d582cf2059b10cd17523ecf1bcb70135ca5ca7174defa29caf9ad8345f6015ad",
+      "opcodes": {
+        "LDC": 27,
+        "S2R": 14,
+        "S2UR": 8,
+        "MOV": 562,
+        "SHF": 170,
+        "SHFL": 35,
+        "ISETP": 180,
+        "BRA": 719,
+        "ELECT": 85,
+        "BSSY": 233,
+        "ULDC": 65,
+        "UIADD3": 255,
+        "UTMACCTL": 7,
+        "NOP": 179,
+        "BSYNC": 233,
+        "UMOV": 555,
+        "USHF": 24,
+        "ULEA": 15,
+        "FENCE": 4,
+        "SYNCS": 455,
+        "PLOP3": 24,
+        "VOTEU": 11,
+        "LEA": 82,
+        "R2UR": 397,
+        "IADD3": 319,
+        "STS": 47,
+        "BAR": 16,
+        "USETMAXREG": 4,
+        "IMAD": 87,
+        "LDG": 79,
+        "YIELD": 27,
+        "WARPSYNC": 115,
+        "REDUX": 8,
+        "ULOP3": 11,
+        "USEL": 2,
+        "UISETP": 7,
+        "UIMAD": 10,
+        "SEL": 39,
+        "LOP3": 86,
+        "MEMBAR": 19,
+        "ERRBAR": 9,
+        "CGAERRBAR": 9,
+        "REDG": 9,
+        "CS2R": 205,
+        "LDS": 74,
+        "FMUL": 3110,
+        "PRMT": 38,
+        "WARPGROUP": 80,
+        "QGMMA": 160,
+        "MUFU": 210,
+        "FADD": 68,
+        "FMNMX": 66,
+        "FSEL": 6,
+        "FSETP": 5,
+        "CALL": 2,
+        "FFMA": 75,
+        "F2FP": 124,
+        "STG": 46,
+        "VIADDMNMX": 2,
+        "STSM": 16,
+        "ATOMG": 7,
+        "CCTL": 10,
+        "VOTE": 10,
+        "BREV": 6,
+        "FLO": 7,
+        "UBLKCP": 8,
+        "DEPBAR": 2,
+        "UTMACMDFLUSH": 2,
+        "UTMALDG": 53,
+        "VIMNMX": 1,
+        "POPC": 2,
+        "ATOMS": 2,
+        "BPT": 1,
+        "EXIT": 1,
+        "NANOSLEEP": 106,
+        "ENDCOLLECTIVE": 108,
+        "RET": 1
+      }
+    },
+    "late/ep1-s4-split": {
+      "returncode": 0,
+      "c75xx": [],
+      "registers": [
+        168
+      ],
+      "spill_store_load": [
+        [
+          0,
+          0
+        ]
+      ],
+      "instructions": 9864,
+      "encoded_bytes": 157824,
+      "sass_sha256": "be36ff07ecb25e92b2aaa3aa0f42cadf66691cc9a7c77568ca3210853bc9b41e",
+      "opcodes": {
+        "LDC": 27,
+        "S2R": 14,
+        "S2UR": 8,
+        "MOV": 564,
+        "SHF": 170,
+        "SHFL": 35,
+        "ISETP": 180,
+        "BRA": 719,
+        "ELECT": 85,
+        "BSSY": 233,
+        "ULDC": 65,
+        "UIADD3": 255,
+        "UTMACCTL": 7,
+        "NOP": 173,
+        "BSYNC": 233,
+        "UMOV": 520,
+        "USHF": 24,
+        "ULEA": 15,
+        "FENCE": 4,
+        "SYNCS": 455,
+        "PLOP3": 24,
+        "VOTEU": 11,
+        "LEA": 82,
+        "R2UR": 413,
+        "IADD3": 319,
+        "STS": 47,
+        "BAR": 16,
+        "USETMAXREG": 4,
+        "IMAD": 87,
+        "LDG": 79,
+        "YIELD": 27,
+        "WARPSYNC": 115,
+        "REDUX": 8,
+        "ULOP3": 11,
+        "USEL": 2,
+        "UISETP": 7,
+        "UIMAD": 10,
+        "SEL": 39,
+        "LOP3": 86,
+        "MEMBAR": 19,
+        "ERRBAR": 9,
+        "CGAERRBAR": 9,
+        "REDG": 9,
+        "CS2R": 236,
+        "LDS": 74,
+        "FMUL": 3110,
+        "PRMT": 38,
+        "WARPGROUP": 80,
+        "QGMMA": 160,
+        "MUFU": 210,
+        "FADD": 68,
+        "FMNMX": 66,
+        "FSEL": 6,
+        "FSETP": 5,
+        "CALL": 2,
+        "FFMA": 75,
+        "F2FP": 124,
+        "STG": 46,
+        "VIADDMNMX": 2,
+        "STSM": 16,
+        "ATOMG": 7,
+        "CCTL": 10,
+        "VOTE": 10,
+        "BREV": 6,
+        "FLO": 7,
+        "UBLKCP": 8,
+        "DEPBAR": 2,
+        "UTMACMDFLUSH": 2,
+        "UTMALDG": 53,
+        "VIMNMX": 1,
+        "POPC": 2,
+        "ATOMS": 2,
+        "BPT": 1,
+        "EXIT": 1,
+        "NANOSLEEP": 106,
+        "ENDCOLLECTIVE": 108,
+        "RET": 1
+      }
+    },
+    "early/ep1-s4-split": {
+      "returncode": 0,
+      "c75xx": [],
+      "registers": [
+        168
+      ],
+      "spill_store_load": [
+        [
+          0,
+          0
+        ]
+      ],
+      "instructions": 9904,
+      "encoded_bytes": 158464,
+      "sass_sha256": "9b8299191d425e4bd9eb9a25473bb6d0c5bf51dce10977d212611d31b84d6891",
+      "opcodes": {
+        "LDC": 27,
+        "S2R": 14,
+        "S2UR": 8,
+        "MOV": 578,
+        "SHF": 170,
+        "SHFL": 35,
+        "ISETP": 180,
+        "BRA": 719,
+        "ELECT": 85,
+        "BSSY": 233,
+        "ULDC": 65,
+        "UIADD3": 255,
+        "UTMACCTL": 7,
+        "NOP": 180,
+        "BSYNC": 233,
+        "UMOV": 505,
+        "USHF": 24,
+        "ULEA": 15,
+        "FENCE": 4,
+        "SYNCS": 455,
+        "PLOP3": 24,
+        "VOTEU": 11,
+        "LEA": 85,
+        "R2UR": 437,
+        "IADD3": 325,
+        "STS": 47,
+        "BAR": 16,
+        "USETMAXREG": 4,
+        "IMAD": 87,
+        "LDG": 79,
+        "YIELD": 27,
+        "WARPSYNC": 115,
+        "REDUX": 8,
+        "ULOP3": 11,
+        "USEL": 2,
+        "UISETP": 7,
+        "UIMAD": 10,
+        "SEL": 39,
+        "LOP3": 86,
+        "MEMBAR": 19,
+        "ERRBAR": 9,
+        "CGAERRBAR": 9,
+        "REDG": 9,
+        "CS2R": 237,
+        "LDS": 74,
+        "FMUL": 3110,
+        "PRMT": 38,
+        "WARPGROUP": 80,
+        "QGMMA": 160,
+        "MUFU": 210,
+        "FADD": 68,
+        "FMNMX": 66,
+        "FSEL": 6,
+        "FSETP": 5,
+        "CALL": 2,
+        "FFMA": 75,
+        "F2FP": 124,
+        "STG": 46,
+        "VIADDMNMX": 2,
+        "STSM": 16,
+        "ATOMG": 7,
+        "CCTL": 10,
+        "VOTE": 10,
+        "BREV": 6,
+        "FLO": 7,
+        "UBLKCP": 8,
+        "DEPBAR": 2,
+        "UTMACMDFLUSH": 2,
+        "UTMALDG": 53,
+        "VIMNMX": 1,
+        "POPC": 2,
+        "ATOMS": 2,
+        "BPT": 1,
+        "EXIT": 1,
+        "NANOSLEEP": 106,
+        "ENDCOLLECTIVE": 108,
+        "RET": 1
+      }
+    }
+  },
+  "default_off_serving_control_sass_bytes_identical": true,
+  "other_instantiations_recompiled": false,
+  "half_windows": {
+    "original": [
+      ["fc1", 1, 0, [88, 151], "0x2d80", "0x3440", "0x34a0", 107, 64, 4, 7, 0],
+      ["fc1", 1, 1, [24, 87], "0x34b0", "0x3940", "0x3a00", 72, 64, 0, 13, 0],
+      ["fc1", 2, 0, [88, 151], "0x3a90", "0x4150", "0x41a0", 107, 64, 4, 6, 0],
+      ["fc1", 2, 1, [24, 87], "0x41b0", "0x4610", "0x4710", 69, 64, 0, 17, 0],
+      ["fc1", 3, 0, [88, 151], "0x4850", "0x4e60", "0x4f00", 96, 64, 4, 11, 0],
+      ["fc1", 3, 1, [24, 87], "0x4f10", "0x53b0", "0x5470", 73, 64, 0, 13, 0],
+      ["fc1", 4, 0, [88, 151], "0x54f0", "0x5a30", "0x5ac0", 83, 64, 4, 10, 0],
+      ["fc1", 4, 1, [24, 87], "0x5ad0", "0x5f30", "0x6030", 69, 64, 0, 17, 0],
+      ["fc1", 5, 0, [88, 151], "0x60c0", "0x66c0", "0x6710", 95, 64, 4, 6, 0],
+      ["fc1", 5, 1, [24, 87], "0x6720", "0x6b50", "0x6bf0", 66, 64, 0, 11, 0],
+      ["fc1", 6, 0, [88, 151], "0x6c80", "0x7250", "0x72a0", 92, 64, 4, 6, 0],
+      ["fc1", 6, 1, [24, 87], "0x72b0", "0x7740", "0x77b0", 72, 64, 0, 8, 0],
+      ["fc1", 7, 0, [88, 151], "0x7830", "0x7e50", "0x7e80", 97, 64, 4, 4, 0],
+      ["fc1", 7, 1, [24, 87], "0x7e90", "0x82c0", "0x83d0", 66, 64, 0, 18, 0],
+      ["fc2", 1, 0, [88, 151], "0xcbd0", "0xd0d0", "0xd330", 79, 64, 2, 39, 2],
+      ["fc2", 1, 1, [24, 87], "0xd340", "0xd770", "0xd870", 66, 64, 0, 17, 0],
+      ["fc2", 2, 0, [88, 151], "0xd8f0", "0xdde0", "0xdfd0", 78, 64, 2, 32, 2],
+      ["fc2", 2, 1, [24, 87], "0xdff0", "0xe450", "0xe5b0", 69, 64, 0, 23, 0],
+      ["fc2", 3, 0, [88, 151], "0xe630", "0xeb10", "0xecf0", 77, 64, 2, 31, 2],
+      ["fc2", 3, 1, [24, 87], "0xed00", "0xf130", "0xf270", 66, 64, 0, 21, 0],
+      ["fc2", 4, 0, [88, 151], "0xf2c0", "0xf790", "0xf8c0", 76, 64, 2, 20, 2],
+      ["fc2", 4, 1, [24, 87], "0xf8d0", "0xfd00", "0xfe30", 66, 64, 0, 20, 0],
+      ["fc2", 5, 0, [88, 151], "0xfea0", "0x103b0", "0x104f0", 80, 64, 2, 21, 2],
+      ["fc2", 5, 1, [24, 87], "0x10510", "0x10950", "0x109f0", 67, 64, 0, 11, 0],
+      ["fc2", 6, 0, [88, 151], "0x10a50", "0x10f40", "0x110c0", 78, 64, 2, 25, 2],
+      ["fc2", 6, 1, [24, 87], "0x110e0", "0x11540", "0x11670", 69, 64, 0, 20, 0],
+      ["fc2", 7, 0, [88, 151], "0x116c0", "0x11bb0", "0x11cc0", 78, 64, 2, 18, 2],
+      ["fc2", 7, 1, [24, 87], "0x11cd0", "0x12100", "0x12230", 66, 64, 0, 20, 0],
+      ["fc2", 8, 0, [88, 151], "0x12290", "0x12780", "0x12910", 78, 64, 2, 26, 2],
+      ["fc2", 8, 1, [24, 87], "0x12920", "0x12d90", "0x12ec0", 70, 64, 0, 20, 0],
+      ["fc2", 9, 0, [88, 151], "0x12f40", "0x13400", "0x13570", 75, 64, 2, 24, 2],
+      ["fc2", 9, 1, [24, 87], "0x13580", "0x139b0", "0x13a80", 66, 64, 0, 14, 0],
+      ["fc2", 10, 0, [88, 151], "0x13ae0", "0x13fd0", "0x14160", 78, 64, 2, 26, 2],
+      ["fc2", 10, 1, [24, 87], "0x14170", "0x145e0", "0x14730", 70, 64, 0, 22, 0],
+      ["fc2", 11, 0, [88, 151], "0x14790", "0x14c50", "0x14df0", 75, 64, 2, 27, 2],
+      ["fc2", 11, 1, [24, 87], "0x14e00", "0x15230", "0x15350", 66, 64, 0, 19, 0]
+    ],
+    "late": [
+      ["fc1", 1, 0, [88, 151], "0x3070", "0x3490", "0x34e0", 65, 64, 0, 6, 0],
+      ["fc1", 1, 1, [24, 87], "0x34f0", "0x39f0", "0x3c80", 79, 64, 0, 42, 4],
+      ["fc1", 2, 0, [88, 151], "0x3cb0", "0x40d0", "0x41a0", 65, 64, 0, 14, 0],
+      ["fc1", 2, 1, [24, 87], "0x41b0", "0x46b0", "0x4890", 79, 64, 0, 31, 4],
+      ["fc1", 3, 0, [88, 151], "0x4960", "0x4e10", "0x4fb0", 74, 64, 0, 27, 0],
+      ["fc1", 3, 1, [24, 87], "0x4fc0", "0x54c0", "0x5650", 79, 64, 0, 26, 4],
+      ["fc1", 4, 0, [88, 151], "0x5660", "0x5a80", "0x5b20", 65, 64, 0, 11, 0],
+      ["fc1", 4, 1, [24, 87], "0x5b30", "0x6030", "0x6230", 79, 64, 0, 33, 4],
+      ["fc1", 5, 0, [88, 151], "0x6240", "0x6660", "0x6760", 65, 64, 0, 17, 0],
+      ["fc1", 5, 1, [24, 87], "0x6770", "0x6c60", "0x6df0", 78, 64, 0, 26, 4],
+      ["fc1", 6, 0, [88, 151], "0x6e00", "0x7220", "0x7320", 65, 64, 0, 17, 0],
+      ["fc1", 6, 1, [24, 87], "0x7330", "0x7830", "0x79a0", 79, 64, 0, 24, 4],
+      ["fc1", 7, 0, [88, 151], "0x79b0", "0x7dd0", "0x7ee0", 65, 64, 0, 18, 0],
+      ["fc1", 7, 1, [24, 87], "0x7ef0", "0x8540", "0x8580", 100, 64, 4, 5, 0],
+      ["fc2", 1, 0, [88, 151], "0xced0", "0xd2f0", "0xd540", 65, 64, 0, 38, 2],
+      ["fc2", 1, 1, [24, 87], "0xd550", "0xda60", "0xdb70", 80, 64, 0, 18, 2],
+      ["fc2", 2, 0, [88, 151], "0xdb90", "0xdfe0", "0xe1e0", 68, 64, 0, 33, 2],
+      ["fc2", 2, 1, [24, 87], "0xe1f0", "0xe6e0", "0xe8b0", 78, 64, 0, 30, 2],
+      ["fc2", 3, 0, [88, 151], "0xe8c0", "0xece0", "0xef20", 65, 64, 0, 37, 2],
+      ["fc2", 3, 1, [24, 87], "0xef30", "0xf420", "0xf560", 78, 64, 0, 21, 2],
+      ["fc2", 4, 0, [88, 151], "0xf570", "0xf990", "0xfa90", 65, 64, 0, 17, 2],
+      ["fc2", 4, 1, [24, 87], "0xfaa0", "0xff70", "0x10140", 76, 64, 0, 30, 2],
+      ["fc2", 5, 0, [88, 151], "0x10150", "0x10570", "0x106d0", 65, 64, 0, 23, 2],
+      ["fc2", 5, 1, [24, 87], "0x106e0", "0x10bd0", "0x10c90", 78, 64, 0, 13, 2],
+      ["fc2", 6, 0, [88, 151], "0x10cb0", "0x11100", "0x11290", 68, 64, 0, 26, 2],
+      ["fc2", 6, 1, [24, 87], "0x112a0", "0x11770", "0x11900", 76, 64, 0, 26, 2],
+      ["fc2", 7, 0, [88, 151], "0x11920", "0x11d70", "0x11e70", 68, 64, 0, 17, 2],
+      ["fc2", 7, 1, [24, 87], "0x11e80", "0x12330", "0x124a0", 74, 64, 0, 24, 2],
+      ["fc2", 8, 0, [88, 151], "0x124d0", "0x12910", "0x12aa0", 67, 64, 0, 26, 2],
+      ["fc2", 8, 1, [24, 87], "0x12ab0", "0x12fa0", "0x13110", 78, 64, 0, 24, 2],
+      ["fc2", 9, 0, [88, 151], "0x13120", "0x13560", "0x136a0", 67, 64, 0, 21, 0],
+      ["fc2", 9, 1, [24, 87], "0x136b0", "0x13be0", "0x13cc0", 82, 64, 2, 15, 2],
+      ["fc2", 10, 0, [88, 151], "0x13cf0", "0x14150", "0x14280", 69, 64, 0, 20, 0],
+      ["fc2", 10, 1, [24, 87], "0x14290", "0x147a0", "0x14910", 80, 64, 2, 24, 2],
+      ["fc2", 11, 0, [88, 151], "0x14920", "0x14d40", "0x14ee0", 65, 64, 0, 27, 2],
+      ["fc2", 11, 1, [24, 87], "0x14ef0", "0x15320", "0x15440", 66, 64, 0, 19, 0]
+    ],
+    "early": [
+      ["fc1", 1, 0, [88, 151], "0x3030", "0x3450", "0x3500", 65, 64, 0, 12, 0],
+      ["fc1", 1, 1, [24, 87], "0x3590", "0x3a60", "0x3c30", 76, 64, 0, 30, 4],
+      ["fc1", 2, 0, [88, 151], "0x3c40", "0x4060", "0x4190", 65, 64, 0, 20, 0],
+      ["fc1", 2, 1, [24, 87], "0x4220", "0x46f0", "0x4830", 76, 64, 0, 21, 4],
+      ["fc1", 3, 0, [88, 151], "0x4900", "0x4da0", "0x4f40", 73, 64, 0, 27, 0],
+      ["fc1", 3, 1, [24, 87], "0x4fd0", "0x5490", "0x5690", 75, 64, 0, 33, 4],
+      ["fc1", 4, 0, [88, 151], "0x56a0", "0x5ac0", "0x5bc0", 65, 64, 0, 17, 0],
+      ["fc1", 4, 1, [24, 87], "0x5c40", "0x6100", "0x6250", 75, 64, 1, 22, 3],
+      ["fc1", 5, 0, [88, 151], "0x6260", "0x6680", "0x6780", 65, 64, 0, 17, 0],
+      ["fc1", 5, 1, [24, 87], "0x6800", "0x6cc0", "0x6e50", 75, 64, 1, 26, 3],
+      ["fc1", 6, 0, [88, 151], "0x6e60", "0x7280", "0x7330", 65, 64, 0, 12, 0],
+      ["fc1", 6, 1, [24, 87], "0x73c0", "0x7880", "0x7b30", 75, 64, 1, 44, 3],
+      ["fc1", 7, 0, [88, 151], "0x7b60", "0x7fd0", "0x8020", 70, 64, 0, 6, 0],
+      ["fc1", 7, 1, [24, 87], "0x81c0", "0x8680", "0x86c0", 75, 64, 0, 5, 0],
+      ["fc2", 1, 0, [88, 151], "0xd000", "0xd420", "0xd650", 65, 64, 0, 36, 2],
+      ["fc2", 1, 1, [24, 87], "0xd710", "0xdbd0", "0xdc90", 75, 64, 1, 13, 1],
+      ["fc2", 2, 0, [88, 151], "0xdcc0", "0xe120", "0xe2d0", 69, 64, 0, 28, 0],
+      ["fc2", 2, 1, [24, 87], "0xe390", "0xe850", "0xea00", 75, 64, 1, 28, 1],
+      ["fc2", 3, 0, [88, 151], "0xea10", "0xee50", "0xf050", 67, 64, 0, 33, 1],
+      ["fc2", 3, 1, [24, 87], "0xf110", "0xf5d0", "0xf6d0", 75, 64, 1, 17, 1],
+      ["fc2", 4, 0, [88, 151], "0xf6e0", "0xfb00", "0xfc00", 65, 64, 0, 17, 2],
+      ["fc2", 4, 1, [24, 87], "0xfc80", "0x10130", "0x10280", 74, 64, 1, 22, 1],
+      ["fc2", 5, 0, [88, 151], "0x10290", "0x106b0", "0x10840", 65, 64, 0, 26, 2],
+      ["fc2", 5, 1, [24, 87], "0x108c0", "0x10d80", "0x10e00", 75, 64, 1, 9, 1],
+      ["fc2", 6, 0, [88, 151], "0x10e30", "0x11270", "0x11400", 67, 64, 0, 26, 2],
+      ["fc2", 6, 1, [24, 87], "0x11480", "0x11930", "0x11ab0", 74, 64, 1, 25, 1],
+      ["fc2", 7, 0, [88, 151], "0x11ac0", "0x11ee0", "0x12040", 65, 64, 0, 23, 2],
+      ["fc2", 7, 1, [24, 87], "0x120c0", "0x12570", "0x12620", 74, 64, 1, 12, 1],
+      ["fc2", 8, 0, [88, 151], "0x12650", "0x12a90", "0x12c10", 67, 64, 0, 25, 2],
+      ["fc2", 8, 1, [24, 87], "0x12ca0", "0x13110", "0x132c0", 70, 64, 0, 28, 2],
+      ["fc2", 9, 0, [88, 151], "0x132d0", "0x136f0", "0x13850", 65, 64, 0, 23, 2],
+      ["fc2", 9, 1, [24, 87], "0x138e0", "0x13d90", "0x13e40", 74, 64, 1, 12, 1],
+      ["fc2", 10, 0, [88, 151], "0x13e70", "0x142b0", "0x144c0", 67, 64, 0, 34, 2],
+      ["fc2", 10, 1, [24, 87], "0x14570", "0x14a00", "0x14b70", 72, 64, 0, 24, 2],
+      ["fc2", 11, 0, [88, 151], "0x14b80", "0x14fa0", "0x15170", 65, 64, 0, 30, 2],
+      ["fc2", 11, 1, [24, 87], "0x15180", "0x155b0", "0x15640", 66, 64, 0, 10, 0]
+    ]
+  },
+  "cpu_scalar_model": {
+    "scope": "CPU scalar schedule model only; arbitrary four FP32 partials per K block stand in for four WGMMA products, not a hardware numerical gate",
+    "checks": [
+      {
+        "k_blocks": 12,
+        "replay": 0,
+        "mode": "late",
+        "cpu_bits_equal": true,
+        "per_element_event_order_equal": true,
+        "elements": 128
+      },
+      {
+        "k_blocks": 12,
+        "replay": 0,
+        "mode": "early",
+        "cpu_bits_equal": true,
+        "per_element_event_order_equal": true,
+        "elements": 128
+      },
+      {
+        "k_blocks": 12,
+        "replay": 1,
+        "mode": "late",
+        "cpu_bits_equal": true,
+        "per_element_event_order_equal": true,
+        "elements": 128
+      },
+      {
+        "k_blocks": 12,
+        "replay": 1,
+        "mode": "early",
+        "cpu_bits_equal": true,
+        "per_element_event_order_equal": true,
+        "elements": 128
+      },
+      {
+        "k_blocks": 32,
+        "replay": 0,
+        "mode": "late",
+        "cpu_bits_equal": true,
+        "per_element_event_order_equal": true,
+        "elements": 128
+      },
+      {
+        "k_blocks": 32,
+        "replay": 0,
+        "mode": "early",
+        "cpu_bits_equal": true,
+        "per_element_event_order_equal": true,
+        "elements": 128
+      },
+      {
+        "k_blocks": 32,
+        "replay": 1,
+        "mode": "late",
+        "cpu_bits_equal": true,
+        "per_element_event_order_equal": true,
+        "elements": 128
+      },
+      {
+        "k_blocks": 32,
+        "replay": 1,
+        "mode": "early",
+        "cpu_bits_equal": true,
+        "per_element_event_order_equal": true,
+        "elements": 128
+      }
+    ]
+  },
+  "measured_candidate_clocks": null,
+  "proven_whole_dependency_cycle_clock_saving": null,
+  "estimated_serving_speedup": null,
+  "rejection": "Post-wait half-0 instruction span shrinks, but ratios move into the half-1 QGMMA issue span and next-stage full wait also moves before half-1 issue. Both halves retain wait -> 64 accumulator FMUL -> all-register QGMMA dependency; FC1 chunk static instructions do not shrink. Positive whole-cycle clock savings cannot be substantiated by instruction/dependency counts. This is not a measured performance regression.",
+  "prototype_patch_not_registered_in_runtime_or_build": "--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh\n+++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh\n@@ -1,4 +1,7 @@\n #pragma once\n+#ifndef DG_R13_DEP_ORDER\n+#define DG_R13_DEP_ORDER 0\n+#endif\n \n #pragma clang diagnostic push\n #pragma clang diagnostic ignored \"-Wunknown-attributes\"\n@@ -1830,6 +1833,7 @@\n                         for (uint32_t k_chunk = 0; k_chunk < kNumKBlocks; k_chunk += kUnroll) {\n                             #pragma unroll\n                             for (uint32_t u = 0; u < kUnroll; ++ u) {\n+                                if constexpr (DG_R13_DEP_ORDER == 0) {\n                                 #pragma unroll\n                                 for (uint32_t h = 0; h < 2; ++ h) {\n                                     if (u > 0) {\n@@ -1851,6 +1855,30 @@\n                                     next_stage_and_phase(next_stage, next_phase);\n                                     prefetch(k_chunk + u + 1, next_stage, next_phase);\n                                 }\n+                                } else {\n+                                    if (u > 0) ptx::warpgroup_wait<1>();\n+                                    rescale_half(0);\n+                                    issue_half(0);\n+                                    if constexpr (DG_R13_DEP_ORDER == 2) {\n+                                if (u + 1 < kUnroll or k_chunk + kUnroll < kNumKBlocks) {\n+                                    uint32_t next_stage, next_phase;\n+                                    next_stage_and_phase(next_stage, next_phase);\n+                                    prefetch(k_chunk + u + 1, next_stage, next_phase);\n+                                }\n+                                    }\n+                                    ptx::warpgroup_wait<1>();\n+                                    if (u > 0 and lane_idx == 0) empty_barriers[prev_stage]->arrive();\n+                                    rescale_half(1);\n+                                    if constexpr (DG_R13_DEP_ORDER == 1) {\n+                                if (u + 1 < kUnroll or k_chunk + kUnroll < kNumKBlocks) {\n+                                    uint32_t next_stage, next_phase;\n+                                    next_stage_and_phase(next_stage, next_phase);\n+                                    prefetch(k_chunk + u + 1, next_stage, next_phase);\n+                                }\n+                                    }\n+                                    issue_half(1);\n+                                    after_issue(k_chunk + u);\n+                                }\n                                 prev_stage = stage_idx;\n                                 advance_pipeline(k_block_idx);\n                             }\n@@ -1875,12 +1903,16 @@\n                         prev_scale_a_1 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r1);\n                         prev_gate_sf = __ldg(l1_weights_sf + gate_row);\n                         prev_up_sf = __ldg(l1_weights_sf + up_row);\n+                        float saved_r0_gate = 1, saved_r1_gate = 1, saved_r0_up = 1, saved_r1_up = 1;\n                         split_k_loop(std::integral_constant<uint32_t, kNumL1BlockKs>{}, std::integral_constant<uint32_t, kL1SplitUnroll>{},\n                             [&](const uint32_t& h) CUTLASS_LAMBDA_FUNC_INLINE {\n+                                if constexpr (DG_R13_DEP_ORDER == 2) {\n+                                    if (h == 0) { saved_r0_gate = r0_gate; saved_r1_gate = r1_gate; saved_r0_up = r0_up; saved_r1_up = r1_up; }\n+                                }\n                                 #pragma unroll\n                                 for (uint32_t i = h * kAccumPerThread / 8; i < (h + 1) * kAccumPerThread / 8; ++ i) {\n-                                    const float r0 = (i & 1u) ? r0_up : r0_gate;\n-                                    const float r1 = (i & 1u) ? r1_up : r1_gate;\n+                                    const float r0 = (DG_R13_DEP_ORDER == 2 and h == 1) ? ((i & 1u) ? saved_r0_up : saved_r0_gate) : ((i & 1u) ? r0_up : r0_gate);\n+                                    const float r1 = (DG_R13_DEP_ORDER == 2 and h == 1) ? ((i & 1u) ? saved_r1_up : saved_r1_gate) : ((i & 1u) ? r1_up : r1_gate);\n                                     final_accum[i*4+0] *= r0;\n                                     final_accum[i*4+1] *= r0;\n                                     final_accum[i*4+2] *= r1;\n@@ -1984,14 +2016,18 @@\n                         #pragma unroll\n                         for (uint32_t j = 0; j < kNumWSF; ++ j)\n                             prev_l2_sf[j] = __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks);\n+                        float saved_r0 = 1, saved_r1 = 1;\n                         split_k_loop(std::integral_constant<uint32_t, kNumL2BlockKs>{}, std::integral_constant<uint32_t, kL2SplitUnroll>{},\n                             [&](const uint32_t& h) CUTLASS_LAMBDA_FUNC_INLINE {\n+                                if constexpr (DG_R13_DEP_ORDER == 2) {\n+                                    if (h == 0) { saved_r0 = r0_start[1]; saved_r1 = r1_start[1]; }\n+                                }\n                                 #pragma unroll\n                                 for (uint32_t i = h * kChunksPerWSF; i < (h + 1) * kChunksPerWSF; ++ i) {\n-                                    final_accum[i*4+0] *= r0_start[h];\n-                                    final_accum[i*4+1] *= r0_start[h];\n-                                    final_accum[i*4+2] *= r1_start[h];\n-                                    final_accum[i*4+3] *= r1_start[h];\n+                                    final_accum[i*4+0] *= (DG_R13_DEP_ORDER == 2 and h == 1) ? saved_r0 : r0_start[h];\n+                                    final_accum[i*4+1] *= (DG_R13_DEP_ORDER == 2 and h == 1) ? saved_r0 : r0_start[h];\n+                                    final_accum[i*4+2] *= (DG_R13_DEP_ORDER == 2 and h == 1) ? saved_r1 : r1_start[h];\n+                                    final_accum[i*4+3] *= (DG_R13_DEP_ORDER == 2 and h == 1) ? saved_r1 : r1_start[h];\n                                 }\n                             },\n                             [&](const uint32_t&) CUTLASS_LAMBDA_FUNC_INLINE {},\n",
+  "reproduction": {
+    "prepare": "Pinned DeepGEMM git archive; git apply --check and git apply for the ordered 27 patches in source.patches. Use CUTLASS/cute includes from the existing db/control include snapshot. Never modify source checkouts.",
+    "compiler_flags": [
+      "--cubin",
+      "--std=c++20",
+      "--expt-relaxed-constexpr",
+      "--expt-extended-lambda",
+      "-O3",
+      "--ptxas-options=-v,-warn-spills",
+      "-gencode",
+      "arch=compute_90a,code=sm_90a"
+    ],
+    "mode_defines": {
+      "original": "unchanged serving header",
+      "off": "DG_R13_DEP_ORDER=0",
+      "late": "DG_R13_DEP_ORDER=1",
+      "early": "DG_R13_DEP_ORDER=2"
+    },
+    "sass_encoding": "cuobjdump -sass; concatenate both 64-bit encoding words of every instruction in display order, little-endian. Includes all displayed text sections, excludes ELF metadata. Addresses and instruction text are also retained in the raw .sass files."
+  },
+  "half_window_columns": [
+    "phase",
+    "k_in_chunk",
+    "half",
+    "accumulator_register_range",
+    "wait_address",
+    "first_qgmma",
+    "last_qgmma",
+    "instructions_between_wait_and_first_qgmma",
+    "accumulator_fmul_in_that_span",
+    "rcp_in_that_span",
+    "instructions_first_to_last_qgmma_inclusive",
+    "rcp_in_issue_span"
+  ],
+  "host_check": {
+    "cases": 230,
+    "passed": true,
+    "cuda_compiled": false,
+    "source_repo_used_read_only": "codex-scratch/moe/dg-src; extractor git show uses the pinned revision",
+    "control_header_sha256": "220f409fd723d931cdad4e70b8e149646ececb5d1ee8554048683043ae413aa2"
+  },
+  "validation": {
+    "full_suite_initial": {
+      "passed": 1266,
+      "skipped": 70,
+      "subtests_passed": 25,
+      "failed": 3,
+      "seconds": 565.14,
+      "cause": "AF_UNIX path too long under the explicitly requested physical scratch path"
+    },
+    "failed_tests_recheck": {
+      "passed": 3,
+      "failed": 0,
+      "method": "tmp_path fixture uses a short absolute /proc/<pytest-pid>/fd/<directory-fd> reference to the SAME physical scratch directory; no production or test source changed"
+    },
+    "ruff": {
+      "preexisting_findings": {
+        "EXE001": 1,
+        "C408": 3
+      },
+      "new_findings": 0
+    },
+    "ledger": {
+      "accounting_passed": true,
+      "new_entry_rendered": true,
+      "existing_handwritten_history_preserved": true,
+      "preexisting_tracker_renderer_drift": true,
+      "new_renderer_drift_added": false
+    },
+    "fc1_eight_k_block_backward_branch_span_instructions": {
+      "original": 1619,
+      "late": 1619,
+      "early": 1639
+    }
+  }
+}

@@ -485,5 +485,17 @@
     "removed_work": "per thread and tile about -185 of 7,160 instructions (-2.6%) and -40 of 1,070 MUFU.EX2 (-3.7%); mean 3.49 of 6 sub-blocks kept at 3986-4096; steady step 587 -> 588",
     "past_rejections_distinct": "No exp approximation, half precision, polynomial, N224 or staged Q; the arithmetic of the kept columns and the bytes are the pin's.",
     "expected": "about 9-12 us per sequence-call with power-cap factor 1 for removed MUFU/ALU work; about 0.4-0.6 ms per 24-layer PP0 period"
+  },
+  "megamoe_prefill_dep_r13_cpu_rejection": {
+    "date": "2026-11-01",
+    "status": "rejected_at_stage_1_requirement_4; GPU_unmeasured; no_runtime_changes",
+    "evidence": [
+      "2026-11-01-prefill-megamoe-dep-r13.md",
+      "megamoe-prefill-dep-r13-cpu-validation-20261101.json"
+    ],
+    "removed_work": "No FLOPs, scale operations, accumulator FMUL, tensor operand bytes or accumulator wait edges removed. Only next-stage scale prefetch order changed.",
+    "dependency_cycle_clock_saving": null,
+    "serving_speedup": null,
+    "tracker_text": "2026-11-01 round 13-M：現行PP4/EP1 splitのscale先読みをhalf間へ移す2案をCUDA13.4/sm_90aでCPU検証した。両案spill0・C75xxなし、default offのserving split SASSはbyte一致。FC1 K=1のhalf 0のpost-wait spanは107→65命令だが、half 1の発行spanは13→42/30命令へ拡大し、両halfのwait→64 FMUL→QGMMA依存は残る。chunk全体のinline命令数も減らず、依存周期の正のclk短縮を示せないため段階1の条件4で保留・棄却。GPU未実行、速度未算定、production変更・gate追加なし。詳細は2026-11-01-prefill-megamoe-dep-r13.mdとmegamoe-prefill-dep-r13-cpu-validation-20261101.json。"
   }
 }
