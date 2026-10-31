@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import pathlib
+import re
 import sqlite3
 import statistics
 
@@ -16,7 +17,33 @@ args = parser.parse_args()
 ROOT = args.artifacts
 
 
-def analyze_run(run, periods):
+def logged_periods(run):
+    """Recover logged PP0 periods, including the token-count convention used there.
+
+    The logger's 8064 page-padded tokens belong in this inverse of its throughput
+    field. They do not replace 7988 model rows in FLOP or payload accounting.
+    """
+    result = []
+    for worker in range(3):
+        path = next((ROOT / 'raw' / str(run)).rglob(f'prefill-{worker}.log'))
+        samples = []
+        # Concurrent worker progress bars can interleave non-UTF8 bytes. The
+        # selected ASCII Prefill records remain intact; hash the untouched log.
+        for line in path.read_text(errors='replace').splitlines():
+            if ' PP0] Prefill batch, #new-seq: 2,' not in line:
+                continue
+            tokens = int(re.search(r'#new-token: (\d+)', line)[1])
+            throughput = float(re.search(r'input throughput \(token/s\): ([0-9.]+)', line)[1])
+            if throughput > 0:
+                samples.append(1000 * tokens / throughput)
+        result.append({'worker': worker, 'samples': len(samples), 'median_ms': statistics.median(samples),
+                       'log_sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+    return result
+
+
+def analyze_run(run):
+    period_evidence = logged_periods(run)
+    periods = [r['median_ms'] for r in period_evidence]
     directory = next((ROOT / 'raw' / str(run)).rglob('score.json')).parent
     score = json.loads((directory / 'score.json').read_text())
     exported = json.loads((directory / 'profile_export_aiperf.json').read_text())
@@ -56,6 +83,7 @@ def analyze_run(run, periods):
         'bad_ttft_request_start_range_s': [min((r['metadata']['request_start_ns']-first)/1e9 for r in bad_ttft), max((r['metadata']['request_start_ns']-first)/1e9 for r in bad_ttft)],
         'additional_good_requests_at_fixed_duration': math.ceil(50*duration)-good,
         'measured_pp_periods_ms': periods, 'conditional_prefill_capacity_rps': rate,
+        'period_evidence': period_evidence,
         'uniform_period_reduction_for_10k_ms': hi,
         'assumptions': 'Fixed good fraction/drain/Decode response; all three saturated Prefill pipelines improve by the same number of milliseconds. A conditional capacity model, not a score prediction.'
     }
@@ -141,6 +169,6 @@ def bounds():
             'accounting':'Use max(F/P,B/W) per overlapping resource domain; do not sum four pipeline stage times for throughput, or add already-overlapped transfers to kernel durations.'}
 
 
-result = {'runs':[analyze_run(41150387984,[114.9,114.6,118.1]),analyze_run(41166990387,[114.6,115.0,118.3])], 'profile':trace(), 'bounds':bounds()}
+result = {'runs':[analyze_run(run) for run in (41150387984, 41166990387, 41201412459)], 'profile':trace(), 'bounds':bounds()}
 args.output.write_text(json.dumps(result, indent=2)+'\n')
 print(json.dumps({'runs':result['runs'],'profile':{k:v for k,v in result['profile'].items() if k!='selected_windows'},'bounds':result['bounds']},indent=2))

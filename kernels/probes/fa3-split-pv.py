@@ -44,7 +44,9 @@ def compare(control, candidate, lengths, seed, distribution):
         out.view(torch.uint8).fill_(0x7f)
         scales.fill_(float('nan'))
         args.append((q, k, v, cu, out, scales, metadata))
+    print("CASE " + json.dumps({"lengths": lengths, "distribution": distribution, "phase": "control"}), flush=True)
     call(control, args[0])
+    print("CASE " + json.dumps({"lengths": lengths, "distribution": distribution, "phase": "candidate"}), flush=True)
     call(candidate, args[1])
     outputs_equal = torch.equal(args[0][4].view(torch.uint8), args[1][4].view(torch.uint8))
     rows = sum(lengths)
@@ -108,7 +110,7 @@ def main():
         result['timing'].append(row)
         save(args.output, result)
         print('TIMING ' + json.dumps(row), flush=True)
-    result.update(passed=True, elapsed_seconds=time.monotonic()-started)
+    result.update(passed=True, numerical_endurance_passed=True, performance_gate_passed=all(row['median_saving_us'] >= 60 for row in result['timing']), minimum_target_saving_us=60, elapsed_seconds=time.monotonic()-started)
     save(args.output, result)
     print('PASS fa3-split-pv numerical/endurance gates and paired timing completed; this is not a serving result', flush=True)
 

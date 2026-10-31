@@ -69,6 +69,7 @@ def main():
     run('layout-check', [str(source / 'layout-host')])
     layout = json.loads((logs / 'layout-check.log').read_text())
     assert layout['shared_bytes'] == 217088 and not any(v for k, v in layout.items() if k.endswith('_errors') or k == 'noncontiguous_words'), layout
+    assert layout['max_p_store_bank_multiplicity'] == 1, 'P stores have a shared-memory bank conflict'
     (record / 'layout.json').write_text(json.dumps(layout, indent=2) + '\n')
     units = {'split-pv': source / 'fa3-split-pv.cu', 'control': source / 'fa3-prefill-pipe.cu', 'scheduler': trees['fa3'] / 'hopper/flash_prepare_scheduler.cu'}
     for name, path in units.items():
@@ -77,7 +78,7 @@ def main():
         run('link-' + name, ['nvcc', *[str(source / (obj + '.o')) for obj in objects], '--shared', '--cudart', 'static', '-Xlinker=-Bsymbolic', '-o', str(source / (name + '.so'))])
         run('sass-' + name, ['cuobjdump', '--dump-sass', str(source / (name + '.o'))])
         run('resources-' + name, ['cuobjdump', '--dump-resource-usage', str(source / (name + '.o'))])
-        assert not re.search(r'C751[139]', (logs / ('build-' + name + '.log')).read_text()), 'WGMMA serialization warning'
+        assert not re.search(r'C7507|C751\d', (logs / ('build-' + name + '.log')).read_text()), 'Register allocation or WGMMA serialization warning'
     abi = {}
     for name in ('control', 'split-pv'):
         library = ctypes.CDLL(str(source / (name + '.so')))

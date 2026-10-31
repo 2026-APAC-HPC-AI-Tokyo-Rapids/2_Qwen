@@ -1,0 +1,88 @@
+{
+  "schema": "fa3-split-pv-cpu-followup/v1",
+  "base_commit": "11b94938a82487dff2465e51d8fcfbb8b40dc1ee",
+  "gpu_executed": false,
+  "decision": "rejected_before_gpu",
+  "compiler": "CUDA 13.0.88, sm_90a",
+  "initial_registers_per_thread": 96,
+  "threads": 640,
+  "initial_cta_register_pool": 61440,
+  "attempts": [
+    {
+      "name": "v2",
+      "description": "two QK/PV pairs; original N192 QK and N128 PV instructions",
+      "compile_log": "ptxas fatal   : (C7602) Insufficient registers (96) to compile instruction at line 1285 in function _ZN13apac_split_pv6kernelENS_6ParamsE. Try to compile with register target of 122 or higher.\nptxas fatal   : Ptx assembly aborted due to errors\n",
+      "compile_log_sha256": "873c61ae6f1322d11b9267d018a5eda5e0b85fde6e81cc3326b72baad7a26df9",
+      "layout": {
+        "shared_bytes": 217088,
+        "matrix_elements": 24576,
+        "native_probability_permuted_elements": 18432,
+        "row_errors": 0,
+        "ownership_errors": 0,
+        "pv_key_pairing_errors": 0,
+        "v_column_errors": 0,
+        "stage_errors": 0,
+        "noncontiguous_words": 0,
+        "output_errors": 0,
+        "gpu_executed": false
+      }
+    },
+    {
+      "name": "v2-n96atoms",
+      "description": "split QK into two N96 instructions; N128 PV; invalid aggregate role budget 64512 > 61440",
+      "compile_log": "ptxas info    : (C7507) Potential Performance Loss: 'setmaxnreg' ignored to maintain minimum register requirements.\nptxas info    : (C7511) Potential Performance Loss: wgmma.mma_async instructions are serialized due to insufficient register resources for the wgmma pipeline in the function '_ZN13apac_split_pv6kernelENS_6ParamsE'\nptxas warning : Registers are spilled to local memory in function '_ZN13apac_split_pv6kernelENS_6ParamsE', 2164 bytes spill stores, 2240 bytes spill loads\nptxas info    : 11 bytes gmem\nptxas info    : Compiling entry function '_ZN13apac_split_pv6kernelENS_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN13apac_split_pv6kernelENS_6ParamsE\n    760 bytes stack frame, 2164 bytes spill stores, 2240 bytes spill loads\nptxas info    : Used 96 registers, used 9 barriers, 760 bytes cumulative stack size\nptxas info    : Compile time = 421.853 ms\n",
+      "compile_log_sha256": "1cbfa26a8e2998684512c98fb1ec685a10646f268556a227b43579d30f160ae6",
+      "source_sha256": {
+        "fa3-split-pv.cu": "bbd500f2057a81cfd7616f71960160d18c771e966de0b1c67c29c4e72ffbfb4f",
+        "fa3-split-pv-layout.cu": "68f0bc91fc15af527ee474e82f2e275d5e54895b68a8e5c51fbd80daac89bcaa",
+        "split-pv.o": "636f3f82d7d238e26d7a826362ea6221c44996d50330852ac164cb2d509fcd66"
+      },
+      "resources": "\nFatbin elf code:\n================\narch = sm_90a\ncode version = [1,8]\nhost = linux\ncompile_size = 64bit\nidentifier = /tmp/qwen-10k-audit-20261101/fullchain/source/fa3-split-pv.cu\n\nResource usage:\n Common:\n  GLOBAL:11 CONSTANT[4]:88\n Function _ZN13apac_split_pv6kernelENS_6ParamsE:\n  REG:96 STACK:760 SHARED:1024 LOCAL:0 CONSTANT[0]:2816 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "layout": {
+        "shared_bytes": 217088,
+        "matrix_elements": 24576,
+        "native_probability_permuted_elements": 18432,
+        "row_errors": 0,
+        "ownership_errors": 0,
+        "pv_key_pairing_errors": 0,
+        "v_column_errors": 0,
+        "stage_errors": 0,
+        "noncontiguous_words": 0,
+        "output_errors": 0,
+        "max_p_store_bank_multiplicity": 1,
+        "gpu_executed": false
+      }
+    },
+    {
+      "name": "v2-smallatoms",
+      "description": "QK N96 and PV N64 atoms; role budgets 24 + 2*136 + 2*88 = 472 per 128 threads",
+      "compile_log": "ptxas info    : (C7512) Potential Performance Loss: wgmma.mma_async instructions are serialized due to insufficient register resources for the function '_ZN13apac_split_pv6kernelENS_6ParamsE'\nptxas warning : Registers are spilled to local memory in function '_ZN13apac_split_pv6kernelENS_6ParamsE', 1236 bytes spill stores, 1136 bytes spill loads\nptxas info    : 11 bytes gmem\nptxas info    : Compiling entry function '_ZN13apac_split_pv6kernelENS_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN13apac_split_pv6kernelENS_6ParamsE\n    560 bytes stack frame, 1236 bytes spill stores, 1136 bytes spill loads\nptxas info    : Used 96 registers, used 9 barriers, 560 bytes cumulative stack size\nptxas info    : Compile time = 410.178 ms\n",
+      "compile_log_sha256": "91f7846006a28c13f060645dc2adc30a47f4205e01d1c020695eff0dbfd1508d",
+      "source_sha256": {
+        "fa3-split-pv.cu": "f8fb0e5a5b5da6a4315d791321816f02f837ba26db1b77390ba2583269571f1d",
+        "fa3-split-pv-layout.cu": "84e8fdbd13eebbd182925c16b112892e1635d07d45120623afff06ddf8141c4b"
+      },
+      "resources": "\nFatbin elf code:\n================\narch = sm_90a\ncode version = [1,8]\nhost = linux\ncompile_size = 64bit\nidentifier = /tmp/qwen-10k-audit-20261101/fullchain/source/fa3-split-pv.cu\n\nResource usage:\n Common:\n  GLOBAL:11 CONSTANT[4]:88\n Function _ZN13apac_split_pv6kernelENS_6ParamsE:\n  REG:96 STACK:560 SHARED:1024 LOCAL:0 CONSTANT[0]:2816 TEXTURE:0 SURFACE:0 SAMPLER:0\n",
+      "layout": {
+        "shared_bytes": 217088,
+        "matrix_elements": 24576,
+        "native_probability_permuted_elements": 18432,
+        "row_errors": 0,
+        "ownership_errors": 0,
+        "pv_key_pairing_errors": 0,
+        "v_column_errors": 0,
+        "stage_errors": 0,
+        "noncontiguous_words": 0,
+        "output_errors": 0,
+        "max_p_store_bank_multiplicity": 1,
+        "gpu_executed": false
+      }
+    }
+  ],
+  "final_patch": {
+    "path": "fa3-split-pv-v2-rejected.patch",
+    "sha256": "2072f13256c92e0d20adc2a895f2b58a9dfa3e3ff9fb644f81fe4392843a601c",
+    "applies_to": "11b94938a82487dff2465e51d8fcfbb8b40dc1ee"
+  },
+  "reason": "All three CPU attempts either fail assembly or serialize WGMMA and spill. No further GPU allocation is justified; active probe source restored to the GPU-tested four-warpgroup version."
+}

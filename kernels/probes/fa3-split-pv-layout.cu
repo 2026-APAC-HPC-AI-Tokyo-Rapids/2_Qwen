@@ -12,6 +12,7 @@ int main() {
     using namespace apac_split_pv;
     std::vector<int> owners(128 * 192, 0), image(128 * 192, -1);
     int mismatches = 0, row_mismatches = 0, noncontiguous_words = 0;
+    int banks[8][24][32] = {};
     for (int tid = 0; tid < 256; ++tid) {
         ML::TiledMmaQK qk;
         auto coords = qk.get_thread_slice(tid).partition_C(make_identity_tensor(select<0, 1>(ShapeQK{})));
@@ -45,6 +46,7 @@ int main() {
             bool contiguous = offsets(i) % 4 == 0;
             for (int j = 1; j < 4; ++j) { contiguous &= offsets(i+j) == offsets(i)+j; }
             noncontiguous_words += !contiguous;
+            ++banks[tid/32][i/4][(offsets(i)/4)%32];
         }
         static_assert(decltype(size(packed))::value == decltype(size(dest))::value);
         for (int i = 0; i < size(packed); ++i) {
@@ -131,6 +133,8 @@ int main() {
         }
     }
     for (int n: out_owners) { output_errors += n != 1; }
-    std::printf("{\"shared_bytes\":%zu,\"matrix_elements\":24576,\"native_probability_permuted_elements\":%d,\"row_errors\":%d,\"ownership_errors\":%d,\"pv_key_pairing_errors\":%d,\"v_column_errors\":%d,\"stage_errors\":%d,\"noncontiguous_words\":%d,\"output_errors\":%d,\"gpu_executed\":false}\n", sizeof(Shared), mismatches, row_mismatches, missing_or_duplicate, pairing_errors, v_column_errors, stage_errors, noncontiguous_words, output_errors);
+    int max_bank_multiplicity = 0;
+    for (auto& warp: banks) for (auto& word: warp) for (int count: word) { max_bank_multiplicity = std::max(max_bank_multiplicity, count); }
+    std::printf("{\"shared_bytes\":%zu,\"matrix_elements\":24576,\"native_probability_permuted_elements\":%d,\"row_errors\":%d,\"ownership_errors\":%d,\"pv_key_pairing_errors\":%d,\"v_column_errors\":%d,\"stage_errors\":%d,\"noncontiguous_words\":%d,\"output_errors\":%d,\"max_p_store_bank_multiplicity\":%d,\"gpu_executed\":false}\n", sizeof(Shared), mismatches, row_mismatches, missing_or_duplicate, pairing_errors, v_column_errors, stage_errors, noncontiguous_words, output_errors, max_bank_multiplicity);
     return row_mismatches || missing_or_duplicate || pairing_errors || v_column_errors || stage_errors || noncontiguous_words || output_errors;
 }

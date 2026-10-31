@@ -1,6 +1,6 @@
 # PP4 10k structural audit and split-PV prototype (2026-11-01)
 
-This audit rereads the issues, chats, raw request records and newest available kernel trace. It does not treat an old EP4 profile as the current PP4 execution. The user subsequently authorized a bounded GPU job after CPU debugging. No performance result for the new architecture is asserted before its numerical and timing gates finish.
+This audit rereads the issues, chats, raw request records and newest available kernel trace. It does not treat an old EP4 profile as the current PP4 execution. After CPU debugging, the user-authorized bounded GPU probe proved the new split-PV architecture numerically correct and stable, but **about 25% slower**. It is rejected. Three follow-up CPU assembly attempts also fail the pre-allocation gate; no further GPU job was submitted and no new kernel was enabled in serving. The independently running round 12 completed at **9958.4323 tok/s**; this audit does not claim credit for that improvement.
 
 ## Required work reduction
 
@@ -8,6 +8,7 @@ This audit rereads the issues, chats, raw request records and newest available k
 |---|---|---:|---:|---:|
 | [41150387984](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41150387984) | Round 10, earlier KV release | 9896.0941 | 6124 / 6243 | 115 / 4 |
 | [41166990387](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41166990387) | Round 11, fused QKV rejected; same served kernels | 9881.6659 | 6119 / 6239 | 117 / 3 |
+| [41201412459](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41201412459) | Round 12, M192/N96 pair path adopted | **9958.4323** | 6160 / 6276 | 113 / 3 |
 
 The 14.43 tok/s spread is an observed repeat difference, not a confidence interval. Recovered AIPerf goodput denominators are 123.76600222 and 123.84551467 s. The request-span `benchmark_duration` is shorter by about 3 ms and must not replace the official denominator. Fixed-duration 10k would require 65 and 74 additional good requests. All TTFT failures are in the initial arrival burst (request starts in the first 0.04–0.10 s); removing burst work can improve eligibility without increasing the steady serving rate.
 
@@ -16,6 +17,10 @@ For the three Prefill pipelines, measured periods are 114.9/114.6/118.1 ms and 1
 `G_new = G_old * sum(2000 / (T_i - delta)) / sum(2000 / T_i) = 10000`.
 
 With fixed good fraction, Decode behavior and drain, the required **uniform reduction is 1.203–1.372 ms per pipeline period**, or 50.1–57.2 µs per layer on a 24-layer critical stage. This is a conditional capacity model, not a forecast. A practical kernel target is at least 60 µs per actual two-request call across the whole FA3 path. Decode is already around 43.8 live requests per rank against a cap of 48; its ITL and acceptance must be rechecked in normal serving.
+
+**Update after round 12:** its official denominator is 123.714251097 s; at fixed duration 10k requires 26 more good requests. Recovering PP0 period from each two-request log record's token-count/throughput gives medians **114.4097 / 113.9316 / 117.4825 ms**. The same conditional equation now requires **0.478993 ms per pipeline**, or **19.958 µs per layer**. This is the latest target, superseding the earlier 1.2–1.4 ms requirement. A full-path candidate should clear that target with margin before serving; changing a selection threshold after a losing measurement is not evidence of a speedup. Decode ITL was 15.569 ms mean / 18.331 ms p99 with three failures. The logger's page-padded 8064 tokens are used only to invert its throughput field, not as GEMM rows.
+
+Round 12's artifact confirms all twelve GPUs passed numerical checks and 1200-call endurance and saved at least 5 µs in both timing orders on all seven request pairs before enabling M192/N96. This is an implemented, verified change from the prior chat, not an untried idea. A single serving run is not a confidence interval or a guarantee of 10k.
 
 ## What the profile actually says
 
@@ -65,7 +70,7 @@ The user-sent [modeling article](https://superhotdogcat.github.io/ja/blog/2026/1
 - PV-live register identity/PRMT preserved late operand liveness but lost 10–17 µs. Polynomial exp passed numerics and lost about 5.2%; half2 compilation retained two MUFU instructions. The new experiment retains ordinary FP32 softmax and FP8 rounding.
 - MegaMoE independent warpgroups lost 22–36%; FC2 bulk scatter lost 1.3–4.9%; direct scatter and precombine also lost. The large no-rescale diagnostic is numerically invalid. The split FC1 tile change is already adopted. Unroll16 and FC2 address hoisting have already failed to produce meaningful serving improvement.
 - Dense tail work skipping passed correctness but was 6.3% slower. QKV epilogue fusion passed 300-call gates on all 12 H200s but was 32–34% slower, so round 11 served the control.
-- M192/N96 is already under test in round 12 [41201412459](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41201412459). Its previous pair-only savings were 17.858–27.255 µs/call, corresponding to 0.429–0.654 ms/24-layer stage, not twice that amount. It is not this audit's new idea and alone does not satisfy the above 1.2–1.4 ms target. Round 12's serving result was still pending when this audit began.
+- M192/N96 was already under test when this audit began. Its previous pair-only savings were 17.858–27.255 µs/call, corresponding to 0.429–0.654 ms/24-layer stage, not twice that amount. Round 12 has now passed its stricter pair gate and served at 9958.4323, as recorded above. It is not this audit's new idea. Earlier single-sequence gate rejection did not establish that the actual two-request serving path was slower.
 
 Chats inspected: `01a18d65-545c-7e02-995b-405c88f180ff`, `01a186bf-9f7a-7ae2-915e-dcf6ab5cbf55`, `01a17bd5-993c-74f2-8418-44158a05e6d8`, `01a18e75-f048-78d0-86a3-334929f20e49`, `01a16e62-c295-77f0-abb2-9f940111d56c`, `01a16cfb-4b6f-7c42-b182-429fbde9c83d`, `01a14eb3-35d6-7d51-a5a3-98f1f322bba5`; repository issues and discussion comments #20–24 were also read.
 
@@ -104,3 +109,26 @@ The exact 14-patch chain compiled and linked both DSOs with CUDA 13.0.88 on the 
 CPU tests: 24 Firmus protocol tests pass, including failure propagation for this new probe; 18 existing ASPIRE protocol tests passed before selecting the Firmus fallback. Ruff, shell syntax and actionlint pass. The numerical audit reproduces byte-for-byte from the recovered inputs. GPU execution remains required for tensor instructions, mbarrier visibility, numerical/endurance and performance.
 
 The broad repository test suite was also attempted on macOS. Its first failure is the existing GNU `tar -I zstd --transform` invocation against the macOS tar executable; this does not exercise the changed kernel. The focused protocol tests pass. The broad Linux Actions validation remains the gate before GPU dispatch.
+
+## GPU result: first split-PV architecture is correct but rejected
+
+[Run 41222602275](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41222602275), commit `11b9493`, Slurm 27932, completed successfully; 38 seconds allocated on one node. Artifacts were recovered before runtime cleanup. The preceding Linux validation run 41221925722 passed all three CPU jobs. All six numerical cases had exact output/scale equality, the independent FP64 errors matched, and both 300-call endurance checks passed.
+
+| Pair | Control median | Split-PV median | Candidate/control | Median paired saving |
+|---|---:|---:|---:|---:|
+| 3994+3994 | 677.71 µs | 846.48 µs | 1.2490 | −163.44 µs |
+| 3986+4027 | 680.55 µs | 851.01 µs | 1.2505 | −164.70 µs |
+
+Every one of the 20 paired comparisons on each shape regressed (135–207 µs slower). The job's `PASS` means numerical/endurance gates and timing completed, **not** that the candidate is faster. This version is rejected and has never been enabled in serving. Clock/power endpoints reached 1725–1920 MHz / about 691–696 W; these are isolated-kernel timings, not the Prefill worker's 1.4 GHz serving profile. Raw result: `fa3-split-pv-gpu-41222602275.json`. ZIP digest: `3b71433435dacdcedf4c08c9098ff7c8a40d04a3401f62b5f32726adeaa865db`.
+
+## Follow-up CPU investigation: independent 64-row PV consumers
+
+The first version makes one PV warpgroup accumulate 128 rows and wait for both QK warpgroups' P. Restore two 64-row PV consumers, each with its own P mailbox, while retaining separate QK/softmax roles. This tests ownership and synchronization granularity; it is not an assumption that the measured loss was entirely caused by this choice.
+
+A direct 640-thread conversion with N192 QK instructions fails CPU assembly: C7602 requires an initial register target of at least 122, while 640 threads permit 96. Two N96 QK atoms compile, but C7507 ignores register reallocation and C7511 serializes WGMMA; spill stores/loads are 2164/2240 bytes. Both are rejected before any GPU use.
+
+There was also a resource-model defect: the initial proposal's `128*(24 + 2*152 + 2*88)=64512` fits the SM's 65536 registers but exceeds this CTA's initial `640*96=61440` pool. [PTX setmaxnreg](https://docs.nvidia.com/cuda/archive/12.8.0/parallel-thread-execution/index.html#miscellaneous-instructions-setmaxnreg) exchanges registers within a CTA pool, and allocation can block until registers are released; unused registers elsewhere in the SM cannot simply be counted. The final CPU attempt uses QK136/PV88/producer24, or 60416 registers, and splits PV into N64 instruction atoms. The N64 fragment needed a view in the original N128 output layout for full-row amax and output permutation; an initial host layout bounds failure identified that defect and it was fixed. All P/V/output entries then passed, including maximum P-store bank multiplicity **1**. Nevertheless native assembly reports **C7512, 1236 bytes spill stores / 1136 bytes spill loads, 560-byte stack**. This variant is also rejected, not sent to a GPU.
+
+Splitting QK's N atom adds approximately 715,653,120 logical shared operand bytes per actual pair; splitting PV's N atom adds approximately 1,073,479,680 more, on top of the original 2.147 GB P mailbox traffic. These are logical operand bytes, not measured HBM or physical shared transactions. The additional work and assembly failures do not support a speedup claim.
+
+Evidence is in `fa3-split-pv-v2-cpu-rejected-20261101.json` and the archived `fa3-split-pv-v2-rejected.patch` (against `11b9493`). Active probe code is restored to the GPU-tested four-warpgroup version. The pre-allocation compiler gate now also rejects C7507 and C7512, which the original narrower warning check did not catch. The P-store bank check remains in the CPU oracle. Any further split-PV design must satisfy the actual CTA pool, avoid serialized/spilled inner loops and account for additional operand traffic before another GPU allocation; repeating this implementation is not the next experiment.

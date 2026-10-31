@@ -123,5 +123,68 @@
     "qk_role_does_not_issue_pv": true,
     "serialization_warnings": false
   },
-  "logs_directory": "/Users/yuta/Dev/APAC/outputs/qwen-10k-audit-20261101/fullchain-logs"
+  "logs_directory": "/Users/yuta/Dev/APAC/outputs/qwen-10k-audit-20261101/fullchain-logs",
+  "final_host_verification": {
+    "gpu_executed": false,
+    "kernel_matches_gpu_tested_version": true,
+    "commands": [
+      {
+        "name": "layout-build",
+        "argv": [
+          "/tmp/qwen-preflight-20261023/local-cuda/bin/nvcc",
+          "-O3",
+          "-std=c++17",
+          "--use_fast_math",
+          "--expt-relaxed-constexpr",
+          "--expt-extended-lambda",
+          "-lineinfo",
+          "-gencode=arch=compute_90a,code=sm_90a",
+          "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+          "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+          "-DNDEBUG",
+          "-Xptxas=-v,--warn-on-spills",
+          "-Xcompiler=-fPIC",
+          "-Dflash=apac_fa3_private",
+          "-DFlash_fwd_params=ApacFA3VerifyParams",
+          "-I/tmp/qwen-10k-audit-20261101/fullchain/source",
+          "-I/tmp/qwen-10k-audit-20261101/checkout/kernels/fa3-verify",
+          "-I/tmp/qwen-10k-audit-20261101/fullchain/source/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+          "-I/tmp/qwen-10k-audit-20261101/fullchain/source/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+          "-I/tmp/qwen-10k-audit-20261101/fullchain/source/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+          "/tmp/qwen-10k-audit-20261101/fullchain/source/fa3-split-pv-layout.cu",
+          "-o",
+          "/tmp/qwen-10k-audit-20261101/fullchain/source/layout-host"
+        ],
+        "exit_code": 0,
+        "seconds": 94.02838650601916
+      },
+      {
+        "name": "layout-check",
+        "argv": [
+          "/tmp/qwen-10k-audit-20261101/fullchain/source/layout-host"
+        ],
+        "exit_code": 0,
+        "seconds": 0.006713896058499813
+      }
+    ],
+    "layout": {
+      "shared_bytes": 217088,
+      "matrix_elements": 24576,
+      "native_probability_permuted_elements": 18432,
+      "row_errors": 0,
+      "ownership_errors": 0,
+      "pv_key_pairing_errors": 0,
+      "v_column_errors": 0,
+      "stage_errors": 0,
+      "noncontiguous_words": 0,
+      "output_errors": 0,
+      "max_p_store_bank_multiplicity": 1,
+      "gpu_executed": false
+    },
+    "sources": {
+      "fa3-split-pv.cu": "5cfc5939f8a87cfe696ddfb0252d061cfc24d95722e4a13481129500dbaf759b",
+      "fa3-split-pv-layout.cu": "1f95c21819138aa84ff92a7777e32ef26b5e5904b1c4f70491e5fdd4f3a6643c"
+    },
+    "note": "Post-GPU bank audit only; kernel source is byte-identical to commit 11b9493. Rejected five-warpgroup follow-ups are recorded separately."
+  }
 }

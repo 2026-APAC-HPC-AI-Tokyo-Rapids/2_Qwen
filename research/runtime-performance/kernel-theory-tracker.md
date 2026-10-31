@@ -161,7 +161,7 @@ FC1=4*T*topk*H*I, FC2=2*T*topk*H*I。
 
 追う差：GEMM外のBF16出力・combine・通信、tile padding、rank待ち。完全均衡のFLOP下限との差全量を削減可能としない。
 
-次の作業：通常FC2 run40653531712は9234.34、9235.28比−0.0102%で改善なし。既存本番routing40621030371の配置探索もtrain2.316msに対しheld-out0.103msで採用条件未達、追加GPU投入なし。10000超には+8.29%必要。小さいaddress変更とこの配置案は再投入せず、FC1/FC2のmainloop・stage待ちやFA3で複数msを削る具体的な仕事量を特定する。
+次の作業：2026-10-28のEP4履歴：通常FC2 run40653531712は9234.34、9235.28比−0.0102%で改善なし。既存本番routing40621030371の配置探索もtrain2.316msに対しheld-out0.103msで採用条件未達、追加GPU投入なし。10000超には+8.29%必要。小さいaddress変更とこの配置案は再投入せず、FC1/FC2のmainloop・stage待ちやFA3で複数msを削る具体的な仕事量を特定する。 2026-11-01追記：最新PP4/EP1はround 12の9958.4323。EP4時点の+8.29%を現行の必要量に使わない。最新の残差は条件付きでP周期0.478993 ms（24層なら19.958 µs/層）。split-accumulatorは導入済み、LDSM/無効なno-rescale/独立WG/FC2直接scatter・precombineを未試行と扱わない。現行shapeの理論FLOP・bytesと旧traceの65.46 ms/24層は2026-11-01-10k-structural-audit.md参照。
 
 測定へ進む条件：今回の通常Firmus試験はユーザーが明示許可。既存EP4数値gateと公式servingの品質・SLA eligibility・goodput・完了時間/ITL/受理長で評価する。先行kernel benchやASPIRE6500条件を達成済みとは記録しない。9235.28との単回比較を因果的speedupと断定しない。
 
@@ -186,9 +186,9 @@ causal QK+PV=2*L*(L+1)*Qheads*D; M128/N192 PackGQA。
 
 追う差：Tensor Coreだけの床に加えてsoftmax・FP8変換・転置・同期がある。全I/OをHBMへ流す模型も、全てL2 hitとする模型も実測帯域ではない。
 
-次の作業：現在のN192 pipe行の数え上げは2026-10-30に完了（`2026-10-30-prefill-fa3-diag-trim.md`）：定常KV step 587命令（MUFU.EX2 98）、tile境界1316命令、tileあたり約7160命令・MUFU約1070。tile paddingは全て対角blockにあり、warpgroupの64行が見る鍵は192中平均111（32鍵単位）。対角blockのmask・softmaxだけを見える32鍵block数に縮める `n192-direct-o-varlen-pipe-diag` はrun 41073991312のin-job screenで全48セルbyte一致だったが平均3.7µs遅く（pin中央412.7µs）不採用、撤去した。QK・PVの対角trimはwgmma直列化（C7511/C7513/C7519）で未実装。 2026-11-01: 現在のPP4 9896.09/9881.67をraw requestから再計算し、全P周期1.203〜1.372 msの削減が10kの条件となる。M128/N192のままQK/softmax 2 WGとPV 1 WGを分離する新構造を実装。217088 B shared、P/V/output全要素のCPU配置検査、現行14 patchのnative buildを通過。追加P shared traffic 2.147 GB/pair/layerも計上済み。GPU数値・耐久・全経路計時は未測定で、serving改善を主張しない。
+次の作業：現在のN192 pipe行の数え上げは2026-10-30に完了（`2026-10-30-prefill-fa3-diag-trim.md`）：定常KV step 587命令（MUFU.EX2 98）、tile境界1316命令、tileあたり約7160命令・MUFU約1070。tile paddingは全て対角blockにあり、warpgroupの64行が見る鍵は192中平均111（32鍵単位）。対角blockのmask・softmaxだけを見える32鍵block数に縮める `n192-direct-o-varlen-pipe-diag` はrun 41073991312のin-job screenで全48セルbyte一致だったが平均3.7µs遅く（pin中央412.7µs）不採用、撤去した。QK・PVの対角trimはwgmma直列化（C7511/C7513/C7519）で未実装。 2026-11-01: 独立したround 12（41201412459）がM192/N96 pairを全12 GPUの数値・1200回耐久・速度gate後に採用し、公式9958.4323。残りは固定good率・Decode挙動の条件付き模型で全P周期0.478993 ms（24層なら19.958 µs/層）。この監査のsplit-PV 4 WGは41222602275で全6数値caseのoutput/scale bit一致・300回耐久を通ったが、actual pairで約25%遅く棄却。5 WG案もCPUでC7602/C7511/C7512と大量spillにより棄却、追加GPUなし。V byte-imageは既に修正・数値合格後に速度不足で棄却済み。未試行と扱わず、追加P転送2.147 GB/pair/layerとCTA register poolも含めて計算し直す。実行コードは検証済み4 WGへ戻し、servingへは導入しない。
 
-測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
+測定へ進む条件：現在の二要求pairはM192/N96、他shapeはN192 pipe。採用済み経路より全経路で速く、半精度exp・多項式・今回の追加P mailboxという失敗案と異なる仕事量/依存/資源の根拠を示す。数値・耐久を先に通し、その後で公式品質・SLA・goodputを検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。
 
@@ -202,7 +202,7 @@ N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。
 
 追う差：tile padding、scale、epilogue。
 
-次の作業：PP4（M=7988、2×3994行）の確認は2026-10-31に完了（`2026-10-31-prefill-dense-pp4.md`）。stockは256×128・A multicast・3 stage、18 wave（最終60/132）、M tail 204行（実行MMAの2.49%）。合法な他configは全てL2→SMEMを+16.8%以上増やし、padding削減は最大1.56%、BM192×BN128とBM128×BN192はMMA loop内でspillするため不採用。仕事を減らす残りの手段はconfigではなく、tail blockの空64行waveのWGMMA・promotion省略（−2.34%、0.21〜0.48 ms/period、JIT header）。 Round 9（41135856718）で棄却：tail wave省略は12 GPU全てでbyte一致・endurance合格だが、QKV+O pairがstock 950〜981 µsに対し+58〜68 µs（+6.3%）遅い。k-block loop内のwave毎の分岐が省く2.34%を上回る。round 2（+12%）と同符号。1D2D mainloop内の実行時分岐によるpadding省略は再試行しない（`2026-10-31-pp4-round9.md`）。
+次の作業：PP4（M=7988、2×3994行）の確認は2026-10-31に完了（`2026-10-31-prefill-dense-pp4.md`）。stockは256×128・A multicast・3 stage、18 wave（最終60/132）、M tail 204行（実行MMAの2.49%）。合法な他configは全てL2→SMEMを+16.8%以上増やし、padding削減は最大1.56%、BM192×BN128とBM128×BN192はMMA loop内でspillするため不採用。仕事を減らす残りの手段はconfigではなく、tail blockの空64行waveのWGMMA・promotion省略（−2.34%、0.21〜0.48 ms/period、JIT header）。 Round 9（41135856718）で棄却：tail wave省略は12 GPU全てでbyte一致・endurance合格だが、QKV+O pairがstock 950〜981 µsに対し+58〜68 µs（+6.3%）遅い。k-block loop内のwave毎の分岐が省く2.34%を上回る。round 2（+12%）と同符号。1D2D mainloop内の実行時分岐によるpadding省略は再試行しない（`2026-10-31-pp4-round9.md`）。 Round 11（41166990387）の直接QKV epilogue融合も、全12 GPUで数値・300回耐久合格だがM7988で32〜34%遅く棄却。過去のshared-memory経由の融合も棄却済み。再試行には次tile mainloopとの重なり等、既存の失敗から変わる実装根拠が必要。
 
 測定へ進む条件：既存選択より速い同shapeの候補だけを他の検証に同乗。
 
