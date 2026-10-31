@@ -288,3 +288,22 @@ and JIT files come from unchanged SGLang source plus the current overlays.
 The additional Dockerfile COPY is for FC2 build verification, not this path.
 The actual embedded manifest is checked during preparation before GPU use;
 its exact differences and applied overlay list will be recorded below.
+
+Resume dispatch 2/4, run 41160347886, commit 4de7325: actual image hash and
+size passed (87a9d3dd32ee00eef498d49d61d3dd4d7acf7bca596a2db5bf62c3a5f4814c2d,
+12273295360 bytes). Sidecar confirms Qwen 6c6391fd and SGLang fc275674.
+Preparation then failed at the CUDA 13.4 executable check, before extraction
+or PJM submission. Cleanup succeeded. The common brief's local compiler path
+is not a Genkai host installation. Do not switch to the image's CUDA 13.0.
+
+To retain the required toolchain, preparation now stages the fixed NVIDIA
+CUDA 13.4.3 redistributable subset (nvcc/CRT/cudart/culibos/CCCL/libnvvm),
+verifying each archive against the vendor SHA-256 from
+https://developer.download.nvidia.com/compute/cuda/redist/redistrib_13.4.3.json.
+It lives only in the temporary shared run directory and is mounted at the
+same CUDA_HOME for both JITs. This changes no image or system installation.
+The identical staging script passed locally; nvcc is 13.4.92, and the fused
+candidate's 5888 SASS instructions are identical to the existing local
+compiler's output, with 168 registers and zero stack/spill bytes. Manifest
+and overlay checks now run before toolchain staging. Full CPU suite passed
+again on Python 3.12 with eight workers; repository Ruff and bash syntax pass.

@@ -11,7 +11,6 @@ sidecar="${image%.sqsh}.container-sidecar.json"
 image_sha256=$(jq -er .container_artifact.sha256 "${sidecar}")
 printf '%s  %s\n' "${image_sha256}" "${image}" | sha256sum --check
 cat "${sidecar}"
-[[ -x /usr/local/cuda-13.4/bin/nvcc ]]
 install -d "${RUNTIME_DIR}/enroot-library" "${RUNTIME_DIR}/enroot-system"
 cp -a --no-preserve=ownership,xattr /home/ACCOUNT/ku60000563/.local/lib/enroot/. "${RUNTIME_DIR}/enroot-library/"
 cp -a --no-preserve=ownership,xattr /home/ACCOUNT/ku60000563/.local/etc/enroot/. "${RUNTIME_DIR}/enroot-system/"
@@ -33,6 +32,7 @@ mapfile -t overlays < <(jq -r '.sglang_overlay_patches[]' "${config}")
 for patch in "${overlays[@]}"; do git apply --check "${GITHUB_WORKSPACE}/${patch}"; git apply "${GITHUB_WORKSPACE}/${patch}"; printf 'applied_overlay=%s\n' "${patch}"; done
 mapfile -t overlays < <(jq -r '.deep_gemm_overlay_patches[]' "${config}")
 for patch in "${overlays[@]}"; do git apply --check "${GITHUB_WORKSPACE}/${patch}"; git apply "${GITHUB_WORKSPACE}/${patch}"; printf 'applied_overlay=%s\n' "${patch}"; done
+bash "${GITHUB_WORKSPACE}/kernels/probes/prepare-qkv-fused-cuda.sh"
 install -m 0644 "${GITHUB_WORKSPACE}/kernels/probes/qkv-fused.py" bench.py
 install -m 0644 "${GITHUB_WORKSPACE}/kernels/fa3-verify/candidates.json" fa3-verify-candidates.json
 cat >probe <<'PROBE'
@@ -44,7 +44,7 @@ node_tmp=$(mktemp -d "${TMPDIR:-/tmp}/qkv-fused.XXXXXXXX")
 trap 'rm -rf -- "${node_tmp:?}"' EXIT
 export ENROOT_CACHE_PATH="${node_tmp}/cache" ENROOT_DATA_PATH="${node_tmp}/data" ENROOT_RUNTIME_PATH="${node_tmp}/runtime" ENROOT_TEMP_PATH="${node_tmp}/temp"
 install -d "${ENROOT_CACHE_PATH}" "${ENROOT_DATA_PATH}" "${ENROOT_RUNTIME_PATH}" "${ENROOT_TEMP_PATH}" "${RUNTIME_DIR}/cache" "${RUNTIME_DIR}/home"
-enroot start -m /usr/local/cuda-13.4:/usr/local/cuda-13.4 -m "${RUNTIME_DIR}:${RUNTIME_DIR}" -m "${RUNTIME_DIR}/home:${HOME}" -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e NVIDIA_DISABLE_REQUIRE=1 -e "PYTHONPATH=${RUNTIME_DIR}/source/python:${RUNTIME_DIR}/source" -e "TVM_FFI_CACHE_DIR=${RUNTIME_DIR}/cache/tvm" -e "DG_JIT_CACHE_DIR=${RUNTIME_DIR}/cache/deepgemm" -e "TRITON_CACHE_DIR=${RUNTIME_DIR}/cache/triton" -e CUDA_HOME=/usr/local/cuda-13.4 -e CUDACXX=/usr/local/cuda-13.4/bin/nvcc -e "PATH=/usr/local/cuda-13.4/bin:/opt/sglang/venv/bin:/usr/bin:/bin" -e "LD_LIBRARY_PATH=/usr/local/cuda-13.4/lib64" -e DG_JIT_PTXAS_VERBOSE=1 -e DG_PRINT_CONFIGS=1 "${RUNTIME_DIR}/sglang.sqsh" /opt/sglang/venv/bin/python "${RUNTIME_DIR}/source/bench.py"
+enroot start -m "${RUNTIME_DIR}/cuda-13.4:/usr/local/cuda-13.4" -m "${RUNTIME_DIR}:${RUNTIME_DIR}" -m "${RUNTIME_DIR}/home:${HOME}" -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility -e NVIDIA_DISABLE_REQUIRE=1 -e "PYTHONPATH=${RUNTIME_DIR}/source/python:${RUNTIME_DIR}/source" -e "TVM_FFI_CACHE_DIR=${RUNTIME_DIR}/cache/tvm" -e "DG_JIT_CACHE_DIR=${RUNTIME_DIR}/cache/deepgemm" -e "TRITON_CACHE_DIR=${RUNTIME_DIR}/cache/triton" -e CUDA_HOME=/usr/local/cuda-13.4 -e CUDACXX=/usr/local/cuda-13.4/bin/nvcc -e "PATH=/usr/local/cuda-13.4/bin:/opt/sglang/venv/bin:/usr/bin:/bin" -e "LD_LIBRARY_PATH=/usr/local/cuda-13.4/lib64" -e DG_JIT_PTXAS_VERBOSE=1 -e DG_PRINT_CONFIGS=1 "${RUNTIME_DIR}/sglang.sqsh" /opt/sglang/venv/bin/python "${RUNTIME_DIR}/source/bench.py"
 PROBE
 chmod 0755 probe
 jq -n --arg commit "${GITHUB_SHA}" --arg image "${image}" --arg sha256 "${image_sha256}" '{schema_version:"qwen-kernel-probe/v1",calibration:true,commit:$commit,image:$image,image_sha256:$sha256,kernel:"PP4 QKV direct-FP32 epilogue",gpu_count:1,toolchain:"CUDA 13.4 sm_90a, control and fused",scope:"all outputs, FP64 reference, paired interleaved timing, 300-call endurance, no serving"}' >provenance.json

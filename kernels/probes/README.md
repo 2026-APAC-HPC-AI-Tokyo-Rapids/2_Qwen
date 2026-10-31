@@ -305,8 +305,11 @@ never copied to Genkai. Verify the actual squashfs SHA-256 and size against its
 adjacent container sidecar, print its embedded `opt/apac/manifest.json` and
 compare the baked patch/recipe hashes with the workspace. Apply the complete
 SGLang and DeepGEMM PP4 overlay chains in config order, logging each patch.
-Both control DeepGEMM/rope and fused JIT require the same CUDA 13.4 mount at
-`/usr/local/cuda-13.4`; no toolchain fallback. These are H100 ratios only.
+Both control DeepGEMM/rope and fused JIT use CUDA 13.4.3 (nvcc 13.4.92).
+The Genkai login host lacks `/usr/local/cuda-13.4`, so preparation downloads
+the fixed NVIDIA redistributable compiler/runtime subset listed with SHA-256
+hashes in `qkv-fused-cuda13.4.json` into the temporary run directory and mounts
+it at `/usr/local/cuda-13.4`. No image rebuild or toolchain fallback. These are H100 ratios only.
 Serving still uses the pinned Firmus image `41150387984` unchanged.
 
 One calibration process has the existing 165-second timeout in a five-minute
