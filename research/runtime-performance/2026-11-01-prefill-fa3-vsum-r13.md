@@ -1,5 +1,19 @@
 # Round 13-V: native V の一度書きと lifetime を保持した sum-chain
 
+## CUDA 13.0.88 での追検証
+
+既存 serving commit `becabbf4748b5037f59f690135b4b4867ee03932` の production code は変更せず、本番と同じ CUDA 13.0.88 / sm_90a で追検証した。初回 Actions `41225578193` は source staging の SSH 接続切断で終了しており、image build と GPU 実行には進んでいない。この commit は `fa3_vsum_gate=true`。以下の初版記録にある gate=false・CUDA13.4 の記述は当時の状態である。
+
+- N192・M192/N96 の既存 control は、合成 patch の適用前後で全 encoded SASS が一致。N96 合成版は128 registers、stack/spill/local命令0、C75xxなし。
+- CUDA13.0 の定常 loop は381→399命令、FADD依存23→7。旧 P の最初の上書きは EX2 の26個後→全50個後。PV wait は22個後→24個後で残るため、待ち時間を全部隠せるとは主張しない。
+- 実際の Python JIT wrapper一覧を用い、RoPEの本番条件どおり fast_mathなし・PDL有効で完全なheaderをcompileし、両DSOの全公開関数をCPUでloadした。native writerはint32/int64とも48 registers・spill0。旧writerの通常命令と全control wordは一致する。完全なencoded SASSの一致ではなく、device assert用文字列参照3命令と行番号1命令が各型で変わることを明記する。
+- pinned CuTeのLDSM/PRMT/STSMから独立計算した全12,288 byteの置換が、実writerのmapと両stageで一致。独立GPU dump TUとTorch wrapperもcompile成功。
+- 保存済みimageのsource commit、23本中22本の不変patch、33個のtarget hashを照合。変更済みTop-K patch1本を旧blobからreverseして現在の版へ置換し、実runtime overlay31本を順に適用した。実PP4の分割・同期・結果転送・direct loop検証が合格。契約回帰は134 passed＋PATHにSquashFS toolsを追加して再確認した4 passed、計138 passed。
+
+正本は `fa3-prefill-vsum-cuda130-20261101.json`。raw archive SHA256は `aaa4a89b513e0f47856ce5e61d3fabeea6a1c09a3a0d970a094ae1d19fa0556d`。完全imageのlink/CPU ABI loadは既存のfresh build gateに残す。その後も12 GPUのbyte/reference/replay/耐久/速度gateと通常serving公式結果が必要で、CPU検証から速度や10k達成を断定しない。
+
+## 初版と pair 専用化の記録
+
 2026-11-01。基点 `31d9b10`、作業 branch `perf/pp4-r13-fa3v-20261101`。この作業はローカル CPU 検証と実装だけで、SSH、Actions、scheduler、GPU 実行、image build は行っていない。`prefill.fa3_vsum_gate=false`。追加依頼で `origin/main`（ef545bc）を merge し、round 12 の結果9958.43と image pin `a8232b16…`（run41201412459、source31d9b10）を採用した。MegaMoE round13-Mの棄却記録も保持し、MegaMoE gate は追加しない。
 
 ## 段階1の判定

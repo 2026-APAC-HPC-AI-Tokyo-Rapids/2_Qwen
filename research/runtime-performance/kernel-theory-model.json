@@ -489,16 +489,17 @@
   "fa3_prefill_vsum_r13_candidate": {
     "evidence": [
       "2026-11-01-prefill-fa3-vsum-r13.md",
-      "fa3-prefill-vsum-cpu-validation-20261101.json"
+      "fa3-prefill-vsum-cpu-validation-20261101.json",
+      "fa3-prefill-vsum-cuda130-20261101.json"
     ],
-    "status": "CPU_admitted_pair_only; N192 composed retired before serving; GPU/serving/image unverified; fa3_vsum_gate=false",
+    "status": "CPU_admitted_on_CUDA13.0.88; serving source becabbf enables gate; run41225578193 attempt1 failed staging SSH before GPU; no new score",
     "shape": "Q64/KV4/D128 E4M3; M192/N96 pair each3900..4096 only; singles use round12 N192 and old writer",
     "useful_pair_flops": 522847416320,
     "actual_hbm_bytes": null,
     "actual_nvlink_bytes": null,
-    "removed_work": "At L3994 pair, remove 1,395,523,584 logical shared transpose bytes; sum FADD dependency 23 to7. Same max/EX2/QK/PV. Consumer steady instructions369 to388; writer byte stores16 instead of two64-bit stores, plus padding. Historical N192 47to13,587to624 retained as evidence but retired from build/serving. No supported positive speed point estimate.",
+    "removed_work": "At L3994 pair remove 1,395,523,584 logical shared transpose bytes. CUDA13.0 steady sum FADD dependency23 to7, static instructions381 to399. Old P first overwritten after all50 EX2 instructions (control26); PV wait remains after24 EX2 (control22), so no full latency-hiding claim. Writer replaces two64-bit stores with16 byte stores and adds request padding/addressing. No positive speed point estimate.",
     "precision": "Identical V FP8 bytes, unchanged paged KV, all causal terms; FP32 sum reassociation only. Simple sum-only prototype rejected for early PV overwrite; composed row holds all old P words until every EX2 completes.",
-    "admission": "CUDA13.4/sm90a: no C75xx, spills no greater than controls, both encoded FA3 controls and both old writer index types byte-identical. Image13.0.88 remains unverified.",
+    "admission": "CUDA13.0.88/sm90a: both FA3 controls encoded identical before/after; candidate 128 registers, stack/spills/local instructions0, no C75xx. Full production QK/RoPE module without fast_math compiled and loaded; native writer48 registers/spills0. Old writer normal instruction encoding equal; only four assert metadata instructions per index type differ. Independent 12288-byte CuTe map agrees in both stages.138 CPU tests pass; actual PP4 source checks pass. Complete fresh-image ABI gate and GPU execution still required.",
     "gate": "After round12 same twelve H200 UUIDs/allocation; independent GPU byte dump first; seven pairs FP32 relativeL2<=.05/max_scaled<=.25 and two changed inputs; QKpost+FA3+O both orders/pooled save>=5us for pairs only; singles3994/4096/3584 old writer Q/K/V/pagedKV and old N192 attention byte equal, FP32/replays, no timing; 1200 serving calls and own initial O/scale bytes; atomic env only on all pass;100s timeout plus2s grace,105s deadline;45..65s estimate from round12 max38.6s;652+105=757s job budget, no MegaMoE gate.",
     "performance_prediction": null,
     "official_score": null

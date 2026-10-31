@@ -202,6 +202,9 @@ N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。
 
 M192/N96 pair に native V writer＋4-chain sum の合成行を追加。N192 single合成版はCPU証拠のみ残し、定常命令+37とsingle marginでpairを失う危険からbuild/dispatch/gate対象を外した（table ID13は非実行予約枠、pair ID14維持）。singleはround12の旧writer/N192行。単純 sum は P の上書きが前進するため棄却し、全 P word を EX2 後まで保持する identity PRMT 付きだけを通した。CUDA13.4/sm90a で C75xx なし、spill は control 以下、既存 FA3 control と旧 FP32 writer の encoded SASS は一致。定常加算依存は N96 23→7、N192 47→13だが、consumer 命令は369→388、587→624へ増える。L3994 pair の V transpose SMEM 1.396 GBを除く一方、writer の scatter/padding を払う。FP8 V byte と paged KV は保持する設計。7 pairのGPU byte dump→FP32/reference/replay→writer＋FA3＋Oの両順/pooled 5µs margin→1200回耐久と、single3994/4096/3584の旧writer Q/K/V/pagedKV・旧N192出力byte一致（速度判定なし）を、round12 成功後の12 GPU全員に要求する。round12 gate実測最大38.6秒に基づく45–65秒見積もり、100秒＋kill猶予2秒・集約deadline105秒。round12 job652秒+105秒=757秒、保守配分873.4秒で17分枠、MegaMoE gateなし。失敗時は既存選択で serving 継続。`prefill.fa3_vsum_gate=false`、fresh image 必須、image13.0.88・GPU・通常scoreは未検証。仕事削減を時間へ加算換算しない。詳細・棄却記録・SASS証拠は `2026-11-01-prefill-fa3-vsum-r13.md` と `fa3-prefill-vsum-cpu-validation-20261101.json`。
 
+2026-11-01 CUDA13.0.88追検証：既存serving commit `becabbf` はgate=true。run41225578193 attempt1はsource stagingのSSH切断でGPU未実行。本番compilerで既存FA3 controlsの全encoded SASS一致、合成版128 registers・spill/local0、FADD依存23→7、定常381→399命令。旧Pは全50 EX2後まで保持するがPV waitは24 EX2後に残る。RoPE本番条件のfast_mathなしで完全JIT module compile/load、native writer48 registers・spill0。旧writerの差はassert metadata4命令/型のみ。CuTe全12288byte・両stage一致、実PP4 source検証・138 CPU回帰合格。fresh image ABI gate、GPU gate、通常servingは未完。正本 `fa3-prefill-vsum-cuda130-20261101.json`。
+
+
 ### Prefill QKV GEMM
 
 2*M*N*K; M=3994, N=9216, K=4096; tile=256x128。
