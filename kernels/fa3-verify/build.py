@@ -97,6 +97,7 @@ def build(root):
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "decode-wide-h2.patch")], cwd=sources["fa3"], check=True)
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-pipe.patch")], cwd=sources["fa3"], check=True)
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "decode-stream-h4.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-geometry.patch")], cwd=sources["fa3"], check=True)
     cuda = Path("/usr/local/cuda")
     includes = [str(root), str(work), str(sources["fa3"] / "hopper"), str(sources["cutlass"] / "include"), str(sources["cutlass"] / "tools/util/include"), str(cuda / "include"), str(cuda / "include/cccl"), *include_paths()]
     common = ["-O3", "-std=c++17", "-fPIC", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fno-gnu-unique", f"-D_GLIBCXX_USE_CXX11_ABI={int(torch._C._GLIBCXX_USE_CXX11_ABI)}"]

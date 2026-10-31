@@ -1,0 +1,52 @@
+--- a/python/sglang/srt/layers/attention/flashattention_backend.py
++++ b/python/sglang/srt/layers/attention/flashattention_backend.py
+@@ -1398,7 +1398,7 @@
+                 from sglang.srt.layers.attention.prefill_fp8 import attention
+
+                 fixed = getattr(layer, "fixed_prefill_output", False) and use_fixed_prefill(forward_batch, layer, self, q.view(-1,64,128), k.view(-1,4,128), v.view(-1,4,128), output_supported=prefill_fp8_output, out=_fa_out, descales=(q_descale,k_descale,v_descale), extras=(sinks,score_mod,aux_tensors,rel_bias,rel_bias_event), cp_mode=is_cp_mode, local=use_local_attn, swa=is_swa_layer, causal=causal, save_kv_cache=save_kv_cache)
+-                return attention(q.view(-1,64,128)[:rows], k.view(-1,4,128)[:rows], v.view(-1,4,128)[:rows], metadata.cu_seqlens_q, metadata.max_seq_len_q, layer.scaling, q.shape[0], fixed=fixed, v_image=getattr(layer, "prefill_v_image", None))
++                return attention(q.view(-1,64,128)[:rows], k.view(-1,4,128)[:rows], v.view(-1,4,128)[:rows], metadata.cu_seqlens_q, metadata.max_seq_len_q, layer.scaling, q.shape[0], fixed=fixed, v_image=getattr(layer, "prefill_v_image", None), lengths=forward_batch.extend_seq_lens_cpu)
+             contiguous_out = _fa_out
+             if rows != q.shape[0] and contiguous_out is None:
+                 contiguous_out = torch.empty((q.shape[0], layer.tp_q_head_num, layer.v_head_dim), device=q.device, dtype=torch.bfloat16)
+diff --git a/python/sglang/srt/layers/attention/prefill_fp8.py b/python/sglang/srt/layers/attention/prefill_fp8.py
+index 360c2cf..5fbe9c4 100644
+--- a/python/sglang/srt/layers/attention/prefill_fp8.py
++++ b/python/sglang/srt/layers/attention/prefill_fp8.py
+@@ -50,13 +50,23 @@ def linear(attention, projection, layer, x):
+
+
+-@lru_cache(maxsize=1)
++@lru_cache(maxsize=None)
+-def prefill_candidate():
++def prefill_candidate(name=None):
+     rows = json.loads(Path("/opt/apac/fa3-verify/prefill-candidates.json").read_text())
+-    name = os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "control")
++    name = name or os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "control")
++    if name == "n192-direct-o-varlen-pipe+m192n96-pair":
++        name = "n192-direct-o-varlen-pipe"
+     return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name)
+
+
+-def attention(q, k, v, cu, maxlen, softmax_scale, padded_rows, *, fixed=False, v_image=None):
++def pair_candidate(lengths):
++    # Host metadata only. Never read cu (a CUDA tensor) to make this decision.
++    enabled = os.environ.get("SGLANG_PREFILL_FA3_VERIFY") == "n192-direct-o-varlen-pipe+m192n96-pair"
++    if enabled and lengths is not None and len(lengths) == 2 and all(3900 <= n <= 4096 for n in lengths):
++        return prefill_candidate("m192n96-direct-o-varlen-pipe")
++    return prefill_candidate()
++
++
++def attention(q, k, v, cu, maxlen, softmax_scale, padded_rows, *, fixed=False, v_image=None, lengths=None):
+     from sglang.srt.layers.attention.decode_fa3_verify import load
+
+     load()
+@@ -66,7 +76,7 @@ def attention(q, k, v, cu, maxlen, softmax_scale, padded_rows, *, fixed=False, v
+     scales = torch.empty((64, (padded_rows + 3) // 4 * 4), device=q.device, dtype=torch.float32).T[:padded_rows]
+     lse = torch.empty((64, rows), device=q.device, dtype=torch.float32)
+     metadata = torch.empty(17, device=q.device, dtype=torch.int32)
+-    selected = prefill_candidate() if fixed else None
++    selected = pair_candidate(lengths) if fixed else None
+     if fixed and selected["name"] != "control":
+         image = v_image if selected["byte_image"] else torch.empty(0, dtype=torch.uint8, device=q.device)
+         assert not selected["byte_image"] or image is not None

@@ -115,7 +115,7 @@ def test_overlay_is_pp4_only_and_defaults_to_pre_dispatch():
     assert pp4["sglang_overlay_patches"][-4] == "patches/sglang/prefill-moe-input.patch"
     assert pp4["sglang_overlay_patches"][-1] == "patches/sglang/decode-moe-input.patch"
     # The FA3 varlen overlay touches other files; it stays right before this one.
-    assert pp4["sglang_overlay_patches"][-5] == "patches/sglang/prefill-fa3-varlen.patch"
+    assert pp4["sglang_overlay_patches"][-6:-4] == ["patches/sglang/prefill-fa3-varlen.patch", "patches/sglang/prefill-fa3-pair.patch"]
     assert "patches/sglang/prefill-moe-input.patch" not in main["sglang_overlay_patches"]
     patch = (ROOT / "patches/sglang/prefill-moe-input.patch").read_text()
     assert '+_PREFILL_MOE_INPUT = os.environ.get("SGLANG_PREFILL_MOE_INPUT", "control")' in patch

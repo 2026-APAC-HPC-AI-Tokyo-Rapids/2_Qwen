@@ -16,7 +16,7 @@ def test_pipe_row_is_the_pinned_row_plus_bit_128():
     row, pin = rows['n192-direct-o-varlen-pipe'], rows['n192-direct-o-varlen']
     assert row['variant'] == pin['variant'] | 128 and not pin['variant'] & 128
     assert {k: v for k, v in row.items() if k not in ('name', 'variant')} == {k: v for k, v in pin.items() if k not in ('name', 'variant')}
-    assert [name for name, r in rows.items() if r['variant'] & 128] == ['n192-direct-o-varlen-pipe']
+    assert [name for name, r in rows.items() if r['variant'] & 128] == ['n192-direct-o-varlen-pipe', 'm192n96-direct-o-varlen-pipe']
 
 
 def test_pipe_patch_is_last_in_the_build_chain():

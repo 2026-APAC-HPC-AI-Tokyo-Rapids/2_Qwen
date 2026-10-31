@@ -539,7 +539,7 @@ def test_verified_kernel_reuse_skips_gpu_selection_and_target_gate(tmp_path: Pat
     for name in ("prefill", "decode"):
         (source / f"{name}-kernels.env").write_text("VERIFIED=1\n")
     # Any unexpected GPU launch or numeric/selector call must fail this fixture.
-    harness = 'set -euo pipefail\nsrun() { echo unexpected-GPU >&2; return 97; }\n' + fragment
+    harness = 'set -euo pipefail\nprefill_pp=1\nsrun() { echo unexpected-GPU >&2; return 97; }\n' + fragment
     result = subprocess.run(["bash", "-c", harness], env={**os.environ, "ROOT": str(tmp_path)}, capture_output=True, text=True, check=True)
     assert "Reusing verified target kernel selections from run 40313004834" in result.stdout
     assert "unexpected-GPU" not in result.stderr
