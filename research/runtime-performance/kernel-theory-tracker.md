@@ -58,6 +58,8 @@ round 5でsplit accumulatorのK block（模型1283 clk）に残る項を測っ�
 
 round 6でsplitが40991744289の容疑から外れ（41005872470で耐久gate通過・serving）、`four-stage-lean-split-ldsm` を6番目の選択候補にした（耐久gate必須、失敗時はsplitへ戻る）。また、MegaMoEのcombineに次層のinput add-RMSNorm＋FP8 group quantを融合する `fp8_mega_moe_norm`（lean EP1、`kPrefillCombineNorm`）を作った。現行の `norm_quant` は60.8µs/層（40825417205、232MB）。融合でy 66MBの書込み・読出しとkernel 1本が消え、combineにresidual 66MB読込とq/scale 34MB書込みが加わる（約+26µs、第2 passの命令0〜10µs）。純減25〜35µs/層、24層stageで融合23層、0.57〜0.80 ms/周期（κ≈1）。演算は二乗和の順序だけが違い（residualはbit一致）、CPU模型でq不一致9.5e-7。22 instantiationはSASS一致、spill0。job内で数値・時間・600回耐久gateを通った場合だけ `SGLANG_PREFILL_COMBINE_NORM=1`。詳細は `2026-10-30-prefill-combine-norm.md`。
 
+2026-11-01 round 13-M：現行PP4/EP1 splitのscale先読みをhalf間へ移す2案をCUDA13.4/sm_90aでCPU検証した。両案spill0・C75xxなし、default offのserving split SASSはbyte一致。FC1 K=1のhalf 0のpost-wait spanは107→65命令だが、half 1の発行spanは13→42/30命令へ拡大し、両halfのwait→64 FMUL→QGMMA依存は残る。chunk全体のinline命令数も減らず、依存周期の正のclk短縮を示せないため段階1の条件4で保留・棄却。GPU未実行、速度未算定、production変更・gate追加なし。詳細は2026-11-01-prefill-megamoe-dep-r13.mdとmegamoe-prefill-dep-r13-cpu-validation-20261101.json。
+
 Prefill FA3 N192のepilogueを、accumulatorから直接group-128 FP8へ量子化する候補 `n192-direct-o`（variant 32）を作成した。BF16 smem staging、quad SHFLの列並べ替え、named barrier2回、staged layoutのBF16展開とgroup-8 shuffleを除き、consumer warpあたりM-tileごとの実行命令は808→343（CUDA 13.4、3994行で1回7.44M warp命令・smem131MB減）。定常KV loopは597命令/tileのまま、registers・spillは不変、他のgeometryのSASSは一致。出力codeとscaleはn192とbyte一致する設計で、in-job選択のGPU gateがn192とのbyte一致と速度を判定する。見込みは単体−4〜−6%、電力上限下−2〜−5%でFA3目標10%に届かない。GPU未測定・未有効化。詳細は `fa3-prefill-direct-o-cpu-validation-20261029.json`。
 
 PP4（run40825417205）では2要求のmicrobatchが固定経路に入らず、prepared N224（899.7µs/回＋prepare 4.1µs）で動いていた。固定schedulerを1〜4要求の連結順へ広げたvariant 64の `n192-varlen` と `n192-direct-o-varlen` を追加し、PP4ではこの2行だけを3長と3986+4027の組でin-job選択する（controlは組ではprepared N224）。数値gateは要求ごとのn192とのbyte一致を要求する。定常KV loopは不変、spillはproducer側で72/132→96/124B、他kernelのSASS本体は一致。見込みは124ms周期あたり電力上限下で−0.7〜−1.6ms（direct-o併用）。draft extend（stock paged N160、BF16出力）は同じ64/4/128だが出力・KV形式が異なり、stage3は律速でないため未配線。GPU未測定。詳細は `fa3-prefill-varlen-cpu-validation-20261029.json`。
@@ -187,6 +189,8 @@ causal QK+PV=2*L*(L+1)*Qheads*D; M128/N192 PackGQA。
 追う差：Tensor Coreだけの床に加えてsoftmax・FP8変換・転置・同期がある。全I/OをHBMへ流す模型も、全てL2 hitとする模型も実測帯域ではない。
 
 次の作業：現在のN192 pipe行の数え上げは2026-10-30に完了（`2026-10-30-prefill-fa3-diag-trim.md`）：定常KV step 587命令（MUFU.EX2 98）、tile境界1316命令、tileあたり約7160命令・MUFU約1070。tile paddingは全て対角blockにあり、warpgroupの64行が見る鍵は192中平均111（32鍵単位）。対角blockのmask・softmaxだけを見える32鍵block数に縮める `n192-direct-o-varlen-pipe-diag` はrun 41073991312のin-job screenで全48セルbyte一致だったが平均3.7µs遅く（pin中央412.7µs）不採用、撤去した。QK・PVの対角trimはwgmma直列化（C7511/C7513/C7519）で未実装。
+
+Round 12（41201412459）で採用：2要求・各3900〜4096 tokenのvarlen呼出しだけM192/N96（`m192n96-direct-o-varlen-pipe`）、それ以外はN192 pipe。12 GPU全てで7 pair形状の正順・逆順とも5 µs以上短縮（served形状3994+3994でproducer+FA3 743〜772 µsに対し16.1〜21.4 µs、24層で0.39〜0.51 ms）、FP32参照に対しrelative L2 0.026（N192は0.017、上限0.05）、1200回耐久でbyte一致。PP0周期は114.9/114.6/118.1→114.4/113.9/117.5 ms、公式9958.43（round 10比+0.63%）。imageはa8232b16（41201412459）に固定（`2026-11-01-pp4-round12.md`）。
 
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
