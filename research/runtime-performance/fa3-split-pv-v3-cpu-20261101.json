@@ -177,7 +177,7 @@
     "cta_pool": 61440
   },
   "work_model": {
-    "scope": "Static work and logical shared operand bytes, not physical traffic or measured bandwidth",
+    "scope": "Static tiled FLOPs, logical shared operand bytes, and requested global-to-shared Q/K/V payloads. Payload counts include masked/padded tiles and are not measured physical HBM or L2 traffic. Added shared-byte total excludes mailbox alpha/scale metadata, barriers and output epilogue traffic.",
     "pair": [
       3994,
       3994
@@ -190,10 +190,15 @@
         "visits": 43680,
         "tiles": 4000,
         "qk_pv_flops": 549621596160,
-        "native_v_transpose_logical_bytes": 2146959360,
+        "native_v_transpose_logical_bytes": 0,
         "q_operand_logical_bytes": 1431306240,
         "k_operand_logical_bytes": 2146959360,
-        "v_operand_logical_bytes": 2146959360
+        "v_operand_logical_bytes": 2146959360,
+        "native_v_transpose_without_prepack_logical_bytes": 2146959360,
+        "q_global_to_shared_payload_bytes": 65536000,
+        "k_global_to_shared_payload_bytes": 1073479680,
+        "v_global_to_shared_payload_bytes": 1073479680,
+        "qkv_global_to_shared_payload_bytes": 2212495360
       },
       {
         "name": "served_control",
@@ -205,7 +210,12 @@
         "native_v_transpose_logical_bytes": 1395523584,
         "q_operand_logical_bytes": 1395523584,
         "k_operand_logical_bytes": 2093285376,
-        "v_operand_logical_bytes": 2093285376
+        "v_operand_logical_bytes": 2093285376,
+        "native_v_transpose_without_prepack_logical_bytes": 1395523584,
+        "q_global_to_shared_payload_bytes": 65470464,
+        "k_global_to_shared_payload_bytes": 697761792,
+        "v_global_to_shared_payload_bytes": 697761792,
+        "qkv_global_to_shared_payload_bytes": 1460994048
       }
     ],
     "p_mailbox_write_read_bytes": 2146959360,
@@ -214,7 +224,11 @@
     "prepack_global_write_bytes": 4128768,
     "measured_speedup": null,
     "extra_tensor_flops_vs_current": 13740539904,
-    "extra_logical_shared_operand_bytes_vs_current": 894566400
+    "extra_logical_shared_operand_bytes_vs_current": 894566400,
+    "extra_qkv_global_to_shared_payload_bytes_vs_current": 751501312,
+    "prepack_global_read_valid_bytes": 4089856,
+    "prepack_shared_bytes": 16515072,
+    "extra_counted_shared_bytes_including_payload_and_prepack_vs_current": 1662582784
   },
   "cpu_rejections": [
     {
