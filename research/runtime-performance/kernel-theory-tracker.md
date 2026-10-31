@@ -194,6 +194,10 @@ N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。
 
 各tile要素にscalar exp2を1回実行する模型では、[CUDAの16結果/SM/cycle](https://docs.nvidia.com/cuda/archive/12.9.0/cuda-c-programming-guide/index.html#arithmetic-instructions)からexpだけで181.5〜188.3µs。同じ条件のTensor時間とほぼ等しい。これらは重なり得るので足し算しない。追加rescale exp、変換、ALU、転置、依存latencyを加えた現在の命令モデルは未完成であり、436µsとの差を単に『expが遅い』とは判定しない。
 
+#### 2026-11-01 round 13-V（CPU admission、既定 false）
+
+M192/N96 pair と N192 single に native V writer＋4-chain sum の合成行を追加。単純 sum は P の上書きが前進するため棄却し、全 P word を EX2 後まで保持する identity PRMT 付きだけを通した。CUDA13.4/sm90a で C75xx なし、spill は control 以下、既存 FA3 control と旧 FP32 writer の encoded SASS は一致。定常加算依存は N96 23→7、N192 47→13だが、consumer 命令は369→388、587→624へ増える。L3994 pair の V transpose SMEM 1.396 GBを除く一方、writer の scatter/padding を払う。FP8 V byte と paged KV は保持する設計。GPU byte dump→FP32/reference/replay→writer＋FA3＋Oの両順/pooled 5µs margin→1200回耐久を、round12 成功後の12 GPU全員に要求する。100秒＋kill猶予2秒、失敗時は既存選択で serving 継続。`prefill.fa3_vsum_gate=false`、fresh image 必須、image13.0.88・GPU・通常scoreは未検証。仕事削減を時間へ加算換算しない。詳細・棄却記録・SASS証拠は `2026-11-01-prefill-fa3-vsum-r13.md` と `fa3-prefill-vsum-cpu-validation-20261101.json`。
+
 ### Prefill QKV GEMM
 
 2*M*N*K; M=3994, N=9216, K=4096; tile=256x128。

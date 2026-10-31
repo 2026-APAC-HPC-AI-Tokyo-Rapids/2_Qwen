@@ -56,7 +56,7 @@ def generate_prefill_dispatch(root, work):
             source.write_text(f'#define PREFILL_NAME {symbol}\n#define PREFILL_N {row["block_n"]}\n#define PREFILL_VARIANT {row["variant"]}\n#include "prefill_variant.cu"\n')
             tasks.append((source, symbol, True))
         declarations.append(f"void {symbol}(Flash_fwd_params&, cudaStream_t, int*);")
-        entries.append(f'    {{"{row["name"]}", {str(row["byte_image"]).lower()}, {str(row.get("varlen", False)).lower()}, {symbol}}},')
+        entries.append(f'    {{"{row["name"]}", {str(row["byte_image"]).lower()}, {str(row.get("varlen", False)).lower()}, {symbol}, {row.get("native_v_n", 0)}}},')
     (work / "prefill-candidates.h").write_text("\n".join([*declarations, "static const PrefillCandidate prefill_candidates[] = {", *entries, "};", ""]))
     return tasks
 
@@ -98,6 +98,7 @@ def build(root):
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-pipe.patch")], cwd=sources["fa3"], check=True)
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "decode-stream-h4.patch")], cwd=sources["fa3"], check=True)
     subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-geometry.patch")], cwd=sources["fa3"], check=True)
+    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(root / "prefill-vsum.patch")], cwd=sources["fa3"], check=True)
     cuda = Path("/usr/local/cuda")
     includes = [str(root), str(work), str(sources["fa3"] / "hopper"), str(sources["cutlass"] / "include"), str(sources["cutlass"] / "tools/util/include"), str(cuda / "include"), str(cuda / "include/cccl"), *include_paths()]
     common = ["-O3", "-std=c++17", "-fPIC", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fno-gnu-unique", f"-D_GLIBCXX_USE_CXX11_ABI={int(torch._C._GLIBCXX_USE_CXX11_ABI)}"]
@@ -110,7 +111,7 @@ def build(root):
     tasks = [(root / "wrapper.cpp", "wrapper", False)]
     tasks += generate_dispatch(root, work)
     tasks += generate_prefill_dispatch(root, work)
-    tasks += [(root / (name + ".cu"), name, True) for name in ("combine", "prefill", "prefill_fixed", "prefill_image", "decode_prepare")]
+    tasks += [(root / (name + ".cu"), name, True) for name in ("combine", "prefill", "prefill_fixed", "prefill_image", "prefill_native_image", "decode_prepare")]
     tasks += [(sources["fa3"] / "hopper/flash_prepare_scheduler.cu", "prepare", True)]
 
     def compile_one(task):

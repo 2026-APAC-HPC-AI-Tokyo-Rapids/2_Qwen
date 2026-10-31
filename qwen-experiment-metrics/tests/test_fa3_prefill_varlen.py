@@ -71,7 +71,7 @@ def test_varlen_bit_reaches_only_the_fixed_scheduler():
     assert 'FixedPrefill, FixedPrefill && (PrefillVariant & 64) != 0 /*FixedVarlen*/>' in patch
     assert 'bool FixedPrefill = false, bool FixedVarlen = false>' in patch
     wrapper = (ROOT / 'kernels/fa3-verify/wrapper.cpp').read_text()
-    assert 'struct PrefillCandidate { const char* name; bool byte_image; bool varlen; Launch launch; };' in wrapper
+    assert 'struct PrefillCandidate { const char* name; bool byte_image; bool varlen; Launch launch; int native_v_n = 0; };' in wrapper
     assert re.search(r'varlen \? maxlen>=3584 && maxlen<=4096 && rows>=batch\*3584 && rows<=batch\*maxlen : batch==1 && rows==maxlen', wrapper)
 
 
@@ -117,7 +117,7 @@ def test_packed_requests_keep_the_row_count_and_cu_seqlens_contracts(guard):
 
 
 def test_varlen_rows_compare_against_n192_per_request():
-    rows = [r for r in json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text()) if r.get('varlen')]
+    rows = [r for r in json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text()) if r.get('varlen') and not r.get('native_v_n')]
     assert [r['name'] for r in rows] == ['n192-varlen', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe', 'm192n96-direct-o-varlen-pipe']
     gate = (ROOT / 'scripts/check-firmus-decode-kernels.py').read_text()
     assert 'packed_control = name == "control" and len(common["lengths"]) > 1' in gate

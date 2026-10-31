@@ -108,7 +108,7 @@ int64_t prefill_resources() {
     Flash_fwd_params p{}; int bytes=0; prefill(p, nullptr, &bytes); return bytes;
 }
 // Prefill candidates are independent of the Decode table above.
-struct PrefillCandidate { const char* name; bool byte_image; bool varlen; Launch launch; };
+struct PrefillCandidate { const char* name; bool byte_image; bool varlen; Launch launch; int native_v_n = 0; };
 #include "prefill-candidates.h"
 static const PrefillCandidate& prefill_candidate(int64_t id) {
     TORCH_CHECK(id >= 0 && id < int64_t(sizeof(prefill_candidates)/sizeof(prefill_candidates[0])), "FA3 Prefill candidate index");
@@ -164,7 +164,13 @@ void prefill_fwd_impl(bool fixed, const at::Tensor& q, const at::Tensor& k, cons
             auto c = prefill_candidate(variant);
             if (c.byte_image) {
                 tensor(image,q,at::kByte);
-                TORCH_CHECK(image.sizes()==at::IntArrayRef({4,(rows+223)/224,224*128}), "FA3 Prefill byte image shape");
+                if (c.native_v_n) {
+                    int n=c.native_v_n, blocks=(maxlen+n-1)/n;
+                    TORCH_CHECK(image.sizes()==at::IntArrayRef({batch,4,blocks,n*128}), "FA3 native V image shape");
+                    p.v_head_stride=blocks*n*128;
+                } else {
+                    TORCH_CHECK(image.sizes()==at::IntArrayRef({4,(rows+223)/224,224*128}), "FA3 Prefill byte image shape");
+                }
                 p.v_ptr=image.data_ptr();
             }
             int bytes=0; c.launch(p,nullptr,&bytes);
@@ -191,11 +197,21 @@ void prefill_dump_v(const at::Tensor& v, const at::Tensor& out) {
 int64_t prefill_fixed_resources() { Flash_fwd_params p{}; int bytes=0; prefill_fixed(p,nullptr,&bytes); return bytes; }
 
 }
+namespace apac_fa3_verify {
+void prefill_dump_native(const at::Tensor& v, const at::Tensor& out, const at::Tensor& cu, int64_t n) {
+    c10::cuda::CUDAGuard guard(v.device());
+    tensor(v,v,at::ScalarType::Float8_e4m3fn); tensor(out,v,at::kByte); tensor(cu,v,at::kInt);
+    TORCH_CHECK((n==96 || n==192) && v.dim()==3 && v.size(1)==4 && v.size(2)==128 && cu.dim()==1 && out.dim()==4 && out.size(0)==cu.numel()-1 && out.size(1)==4 && out.size(3)==n*128, "FA3 native dump shape");
+    prefill_dump_native_launch(v.data_ptr(),out.data_ptr(),cu.data_ptr<int>(),cu.numel()-1,out.size(2),n,at::cuda::getCurrentCUDAStream());
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+}
 TORCH_LIBRARY(apac_fa3_verify, m) {
     m.def("prepare(Tensor lengths, Tensor cu_q, Tensor(a!) metadata, int candidate) -> ()");
     m.def("fwd_out(Tensor q, Tensor k, Tensor v, Tensor pages, Tensor lengths, Tensor cu_q, Tensor(a!) out, Tensor(b!) lse, Tensor(c!) partial, Tensor(d!) partial_lse, Tensor(e!) metadata, int candidate, float scale) -> ()");
     m.def("fwd_fp8_out(Tensor q, Tensor k, Tensor v, Tensor pages, Tensor lengths, Tensor cu_q, Tensor(a!) out, Tensor(b!) lse, Tensor(c!) partial, Tensor(d!) partial_lse, Tensor(e!) metadata, int candidate, float scale, Tensor(f!) scales) -> ()");
     m.def("resources() -> int[]", &apac_fa3_verify::resources);
+    m.def("prefill_dump_native(Tensor v, Tensor(a!) out, Tensor cu, int n) -> ()");
     m.def("prefill_variant_resources() -> int[]", &apac_fa3_verify::prefill_variant_resources);
     m.def("prefill_dump_v(Tensor v, Tensor(a!) out) -> ()");
     m.def("prefill_variant_fwd_out(Tensor q, Tensor k, Tensor v, Tensor image, Tensor cu, Tensor(a!) out, Tensor(b!) scales, Tensor(c!) lse, Tensor(d!) metadata, int maxlen, float scale, int candidate) -> ()");
@@ -208,6 +224,7 @@ TORCH_LIBRARY_IMPL(apac_fa3_verify, CUDA, m) {
     m.impl("prepare", &apac_fa3_verify::prepare);
     m.impl("fwd_out", &apac_fa3_verify::fwd);
     m.impl("fwd_fp8_out", &apac_fa3_verify::fwd_fp8);
+    m.impl("prefill_dump_native", &apac_fa3_verify::prefill_dump_native);
     m.impl("prefill_variant_fwd_out", &apac_fa3_verify::prefill_variant_fwd);
     m.impl("prefill_dump_v", &apac_fa3_verify::prefill_dump_v);
     m.impl("prefill_fixed_fwd_out", &apac_fa3_verify::prefill_fixed_fwd);

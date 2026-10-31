@@ -59,7 +59,7 @@ def test_prefill_dispatch_is_independent_of_decode(tmp_path):
     rows = json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text())
     assert len(tasks) == len(rows) - 1
     assert {r["name"] for r in rows if r["variant"] & 8} == set()
-    assert {r['name'] for r in rows if r['byte_image']} == {'c2', 'regs-c2'}
+    assert {r['name'] for r in rows if r['byte_image'] and not r.get('native_v_n')} == {'c2', 'regs-c2'}
     assert (tmp_path / 'prefill-candidates.h').read_text().count('prefill_fixed') == 2
     assert all('prefill_variant.cu' in p.read_text() for p, _, _ in tasks)
 
@@ -175,7 +175,7 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     # The FP32 Q/K norm writer won in 40911121619 and 40925558339.
     assert settings['pp4_selected_runs']['SGLANG_PREFILL_QKNORM'] == [40911121619, 40925558339] and set(settings['pp4_selected_runs']) == set(settings['pp4_selected'])
     # After every PP4 overlay; only prefill-moe-input (disjoint files), fp32 Q/K norm, onepass MoE input and Decode MoE input follow it.
-    assert config['sglang_overlay_patches'][-6:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-fa3-pair.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-moe-input-onepass.patch', 'patches/sglang/decode-moe-input.patch']
+    assert config['sglang_overlay_patches'][-7:-1] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-fa3-pair.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-moe-input-onepass.patch', 'patches/sglang/decode-moe-input.patch']
     # The twelve-GPU screen runs only outside PP4 and without a reused selection.
     assert 'prefill_screen' not in shell
     assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" && ! -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then' in shell

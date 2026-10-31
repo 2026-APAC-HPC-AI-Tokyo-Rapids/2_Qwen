@@ -147,7 +147,7 @@ def test_publication_failure_is_atomic(screen, monkeypatch):
 
 def block():
     shell = (ROOT / 'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
-    return '# Default off. The pair-only FA3' + shell.split('# Default off. The pair-only FA3', 1)[1].split('\nsrun --exact', 1)[0]
+    return '# Default off. The pair-only FA3' + shell.split('# Default off. The pair-only FA3', 1)[1].split('\n# Default off. Native V', 1)[0].split('\nsrun --exact', 1)[0]
 
 
 def test_wiring_and_native_build_inputs():

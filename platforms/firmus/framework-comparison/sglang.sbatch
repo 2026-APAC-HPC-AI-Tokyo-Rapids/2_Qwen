@@ -279,6 +279,27 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_pair_gate // false' "${ROOT
   uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3-pair.py" --aggregate "${ROOT}/results/prefill-fa3-pair" --output "${ROOT}/results/prefill-fa3-pair/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --run-id "${SLURM_JOB_ID}-${prefill_fa3_pair_started}" --deadline "${prefill_fa3_pair_deadline}" --workers-ok "${prefill_fa3_pair_ok}"
 fi
 
+# Default off. Native V plus sum scheduling requires the pair gate's same-GPU success.
+if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_vsum_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
+  mkdir -p "${ROOT}/results/prefill-fa3-vsum"
+  prefill_fa3_vsum_started=$(date +%s)
+  prefill_fa3_vsum_deadline=$((prefill_fa3_vsum_started + 105))
+  prefill_fa3_vsum_selections=()
+  prefill_fa3_vsum_ok=0
+  if [[ -s "${ROOT}/results/prefill-fa3-pair/selection.json" ]] && jq -e '.adopted == true' "${ROOT}/results/prefill-fa3-pair/selection.json" >/dev/null; then
+    prefill_fa3_vsum_ok=1
+    # Estimate 45-65 seconds; bound 100 seconds includes launch, imports/JIT, numerics and endurance.
+    for worker in 0 1 2; do
+      node=${HEAD}
+      if (( worker == 2 )); then node=${TAIL}; fi
+      timeout --kill-after=2 100 srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-fa3-vsum-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-fa3-vsum.py" --output "${ROOT}/results/prefill-fa3-vsum/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_fa3_vsum_started}" --deadline "${prefill_fa3_vsum_deadline}" >"${ART}/prefill-fa3-vsum-${worker}.log" 2>&1 &
+      prefill_fa3_vsum_selections+=("$!")
+    done
+    for pid in "${prefill_fa3_vsum_selections[@]}"; do wait "${pid}" || prefill_fa3_vsum_ok=0; done
+  fi
+  uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3-vsum.py" --aggregate "${ROOT}/results/prefill-fa3-vsum" --output "${ROOT}/results/prefill-fa3-vsum/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_fa3_vsum_started}" --deadline "${prefill_fa3_vsum_deadline}" --workers-ok "${prefill_fa3_vsum_ok}"
+fi
+
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9001 >"${ART}/prefill-1.log" 2>&1 &

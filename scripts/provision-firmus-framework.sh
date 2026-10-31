@@ -148,6 +148,10 @@ install -m 0755 "${GITHUB_WORKSPACE}/scripts/collect-eagle-acceptance.py" "${run
 install -m 0644 "${GITHUB_WORKSPACE}/kernels/fa3-verify/prefill-candidates.json" "${runtime_dir}/source/"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-fa3.py" "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-kernels.sh" "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-megamoe.py" "${runtime_dir}/scripts/"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-pp4-copy-engine.py" "${runtime_dir}/scripts/"
+# Round-13 FA3 gate staging, independent of other optional gates.
+install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-fa3-vsum.py" "${runtime_dir}/scripts/"
+cp "${runtime_dir}/scripts/select-firmus-prefill-fa3-vsum.py" "${runtime_dir}/source/"
+
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-fa3-pair.py" "${runtime_dir}/scripts/"
 cp "${runtime_dir}/scripts/select-firmus-prefill-fa3-pair.py" "${runtime_dir}/source/"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-megamoe.py" "${GITHUB_WORKSPACE}/scripts/check-firmus-decode-kernels.py" "${GITHUB_WORKSPACE}/scripts/firmus_megamoe_replicas.py" "${GITHUB_WORKSPACE}/scripts/select-firmus-decode-kernels.sh" "${GITHUB_WORKSPACE}/scripts/select-firmus-decode-dense.py" "${GITHUB_WORKSPACE}/scripts/select-firmus-decode-fa3.py" "${GITHUB_WORKSPACE}/scripts/select-firmus-decode-moe-input.py" "${GITHUB_WORKSPACE}/scripts/bench-firmus-sglang-kernels.py" "${GITHUB_WORKSPACE}/scripts/bench-firmus-megamoe.py" "${runtime_dir}/scripts/"
