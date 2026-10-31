@@ -1,4 +1,4 @@
-"""Default-off composed native-V/sum gate, sequenced after the round-12 gate."""
+"""Default-off coalesced native-V/sum gate, sequenced after the round-12 gate."""
 import argparse
 import json
 import math
