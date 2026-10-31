@@ -20,7 +20,7 @@ DISPATCH = CONTROL + "+m192n96-pair"
 SCHEMA = "firmus-prefill-fa3-pair/v1"
 SHAPES = ((3994, 3994), (3986, 4027), (3986, 3986), (4027, 4027), (4096, 4096), (3900, 4096), (4096, 3901))
 ROUNDS, REPS, ENDURANCE = 10, 12, 1200
-SECONDS = 88
+SECONDS = 150
 
 
 def reject_nonfinite(value):

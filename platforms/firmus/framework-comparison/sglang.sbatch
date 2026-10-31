@@ -263,14 +263,15 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_pair_gate // false' "${ROOT
   test -s "${ROOT}/source/pp4-kernel-settings.json"
   mkdir -p "${ROOT}/results/prefill-fa3-pair"
   prefill_fa3_pair_started=$(date +%s)
-  prefill_fa3_pair_deadline=$((prefill_fa3_pair_started + 93))
+  prefill_fa3_pair_deadline=$((prefill_fa3_pair_started + 155))
   prefill_fa3_pair_selections=()
   # Three four-GPU workers in parallel. Estimate 60-85 s including cold imports/JIT and endurance.
-  # Bound each whole srun to 88 s plus 2 s kill grace; timeout retains the control without failing serving.
+  # Bound each whole srun to 150 s plus 2 s kill grace (88 s left no margin over the estimate, and a timeout
+  # would spend the build and the run without an answer); timeout retains the control without failing serving.
   for worker in 0 1 2; do
     node=${HEAD}
     if (( worker == 2 )); then node=${TAIL}; fi
-    timeout --kill-after=2 88 srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-fa3-pair-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-fa3-pair-${SLURM_JOB_ID}-${worker}/triton" TVM_FFI_CACHE_DIR="/tmp/qwen-prefill-fa3-pair-${SLURM_JOB_ID}-${worker}/tvm" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-fa3-pair.py" --output "${ROOT}/results/prefill-fa3-pair/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_fa3_pair_started}" --deadline "${prefill_fa3_pair_deadline}" >"${ART}/prefill-fa3-pair-${worker}.log" 2>&1 &
+    timeout --kill-after=2 150 srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-fa3-pair-${worker})" env TRITON_CACHE_DIR="/tmp/qwen-prefill-fa3-pair-${SLURM_JOB_ID}-${worker}/triton" TVM_FFI_CACHE_DIR="/tmp/qwen-prefill-fa3-pair-${SLURM_JOB_ID}-${worker}/tvm" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-fa3-pair.py" --output "${ROOT}/results/prefill-fa3-pair/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_fa3_pair_started}" --deadline "${prefill_fa3_pair_deadline}" >"${ART}/prefill-fa3-pair-${worker}.log" 2>&1 &
     prefill_fa3_pair_selections+=("$!")
   done
   prefill_fa3_pair_ok=1

@@ -41,7 +41,7 @@ Timing retains both pre-capture closures and their output/metadata storage for t
 
 CPU aggregation revalidates all twelve distinct fresh H200 records, both timing orders, all shapes/numerics, 1200 calls, direct-dispatch equality and final bytes. Missing, stale, malformed, nonfinite, late, failed, under-margin or timed-out evidence leaves the existing env file byte-for-byte unchanged. Only success atomically replaces its single control assignment, retaining all other env lines. A timeout is a refusal, not a job failure; a shell fixture verifies continuation to control serving.
 
-Estimated **60–85 s serial wall**, including container start, imports/JIT, numerics and endurance; unmeasured on H200. Each complete srun is bounded by **88 s + 2 s kill grace**, including launch, with a common **start+93 s** aggregate acceptance deadline and rank elapsed strictly below 88 s. Native FA3 is already AOT-compiled. No broad old sweep or second endurance phase is added. Round 10 used 9:25 of its 17-minute allocation; this estimate is not an allocation-duration guarantee.
+Estimated **60–85 s serial wall**, including container start, imports/JIT, numerics and endurance; unmeasured on H200. Each complete srun is bounded by **150 s + 2 s kill grace**, including launch, with a common **start+155 s** aggregate acceptance deadline and rank elapsed strictly below 150 s. The bound was first 88 s; it was widened before the first run because a timeout would spend the build and the run without an answer. Native FA3 is already AOT-compiled. No broad old sweep or second endurance phase is added. Round 10 used 9:25 of its 17-minute allocation; this estimate is not an allocation-duration guarantee.
 
 ## CPU evidence
 

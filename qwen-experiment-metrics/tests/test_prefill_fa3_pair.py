@@ -112,7 +112,7 @@ def test_one_bad_cell_keeps_exact_env(screen, case):
             elif case == 'rank': r['rank'] = 1
             elif case == 'uuid': r['uuid'] = '0-0'
             elif case == 'late': r['finished_at'] = screen[2] + 1
-            elif case == 'elapsed': r['elapsed_seconds'] = 88
+            elif case == 'elapsed': r['elapsed_seconds'] = 150
             elif case == 'failed': r['passed'] = False
             elif case == 'shape': r['shapes'].pop('3900+4096')
             elif case == 'numeric': shape['numeric']['metrics'][0]['relative_l2'] = .05001
@@ -156,7 +156,7 @@ def test_wiring_and_native_build_inputs():
     shell = block()
     assert '.prefill.fa3_pair_gate // false' in shell
     assert 'for worker in 0 1 2; do' in shell and '--nproc-per-node=4' in shell
-    assert 'timeout --kill-after=2 88 srun' in shell
+    assert 'timeout --kill-after=2 150 srun' in shell
     assert 'wait "${pid}" || prefill_fa3_pair_ok=0' in shell
     assert '--env-output "${ROOT}/source/prefill-kernels.env"' in shell
     provision = (ROOT / 'scripts/provision-firmus-framework.sh').read_text()
