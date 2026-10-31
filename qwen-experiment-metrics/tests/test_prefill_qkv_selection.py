@@ -63,7 +63,7 @@ def test_all_twelve_pass_publish_once_and_keep_other_pins(screen):
     assert summary["noise"]["fused"]["order_delta_fraction"] == 0
 
 
-@pytest.mark.parametrize("field,value", [("run_id", "old"), ("rank", 0), ("worker", "prefill-0"), ("device", "NVIDIA H100"), ("uuid", "GPU-0-0"), ("passed", False), ("elapsed_seconds", 60), ("finished_at", 1e20)])
+@pytest.mark.parametrize("field,value", [("run_id", "old"), ("rank", 0), ("worker", "prefill-0"), ("device", "NVIDIA H100"), ("uuid", "GPU-0-0"), ("passed", False), ("elapsed_seconds", 120), ("finished_at", 1e20)])
 def test_bad_identity_failure_or_late_result_keeps_fp32(screen, field, value):
     edit(screen, lambda record: record.update({field: value}))
     assert not aggregate(screen)["adopted"]
@@ -158,7 +158,7 @@ def test_pp4_default_off_parallel_timeout_and_archive_wiring():
     assert '.prefill.qkv_fused_gate // false' in block and '"${prefill_pp}" == 4' in block
     assert 'test -s "${ROOT}/source/pp4-kernel-settings.json"' in block
     assert 'for worker in 0 1 2; do' in block and '--nproc-per-node=4' in block
-    assert 'timeout --kill-after=2 53 srun' in block and 'prefill_qkv_started + 58' in block
+    assert 'timeout --kill-after=2 120 srun' in block and 'prefill_qkv_started + 125' in block
     assert 'prefill_qkv_selections+=("$!")' in block
     assert 'wait "${pid}" || prefill_qkv_ok=0' in block
     assert '--workers-ok "${prefill_qkv_ok}"' in block

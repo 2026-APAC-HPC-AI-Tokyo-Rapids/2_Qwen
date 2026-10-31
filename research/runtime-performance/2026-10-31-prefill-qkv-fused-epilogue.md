@@ -365,8 +365,8 @@ The sbatch runs three `srun` steps concurrently (two on head, one on tail),
 each with four torchrun ranks on four GPUs. Rank zero warms JITs for both row
 counts in existing node-local DeepGEMM/TVM caches, then releases a gloo barrier;
 the four GPUs' actual checks and timings run in parallel. The **whole srun**,
-including container startup/import/JIT, has a 53-second timeout and two-second
-kill grace. A shared deadline is start + 58 seconds. Failed waits are consumed
+including container startup/import/JIT, has a 120-second timeout and two-second
+kill grace. A shared deadline is start + 125 seconds. Failed waits are consumed
 and aggregation refuses adoption, so timeout does not fail serving.
 
 **Estimated additional serial time: 35–50 seconds**, not measured on H200.
@@ -374,8 +374,10 @@ Budget estimate: 3–6 s launcher/container/import, 12–25 s cold stock/post/fu
 JIT plus activation quantization, 8–15 s data/FP64/error checks, 1–3 s paired
 samples/endurance, and 1–2 s aggregation. Local fused ptxas device passes were
 about 1.45 s each, but that is only part of JIT and not a worker measurement.
-The timeout bounds each worker to at most 55 s; unusual startup/compile or
-FP64-check cost can simply refuse adoption. No 29–30 s prior selector result
+The timeout bounds each worker to at most 122 s. It was first 53 s, but a
+timeout would spend the whole Firmus run without a speed answer, while the
+job has more than 7 minutes of slack (round 10 finished in 9:25 of 17), so
+it was widened to 120 s before the first run. No 29–30 s prior selector result
 is reused as this gate's measured time. Round-10 READY 257 s plus this estimate
 is about 292–307 s, before the normal client and recovery within 17 minutes;
 this arithmetic is not an end-to-end runtime measurement.

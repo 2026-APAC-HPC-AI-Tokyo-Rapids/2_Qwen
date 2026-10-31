@@ -264,15 +264,16 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.qkv_fused_gate // false' "${ROO
   test -s "${ROOT}/source/pp4-kernel-settings.json"
   mkdir -p "${ROOT}/results/prefill-qkv"
   prefill_qkv_started=$(date +%s)
-  prefill_qkv_deadline=$((prefill_qkv_started + 58))
+  prefill_qkv_deadline=$((prefill_qkv_started + 125))
   prefill_qkv_selections=()
-  # Three parallel workers, four GPUs each. Estimate 35-50 s including JIT; unmeasured.
-  # Bound the whole srun (container start included): 53 s + 2 s kill grace.
+  # Three parallel workers, four GPUs each. Estimate 35-50 s including cold JIT; unmeasured on H200, so the bound is
+  # 120 s: the reverted tail-skip selector took 29-30 s for one DeepGEMM variant, and this one compiles three kernels.
+  # Bound the whole srun (container start included): 120 s + 2 s kill grace. Round 10 used 9:25 of the 17 min limit.
   # Any timeout/process failure refuses adoption and serving continues with fp32.
   for worker in 0 1 2; do
     node=${HEAD}
     if (( worker == 2 )); then node=${TAIL}; fi
-    timeout --kill-after=2 53 srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-qkv-${worker})" env DG_JIT_CACHE_DIR="/tmp/qwen-prefill-qkv-${SLURM_JOB_ID}-${worker}/dg" SGLANG_DG_CACHE_DIR="/tmp/qwen-prefill-qkv-${SLURM_JOB_ID}-${worker}/dg" TVM_FFI_CACHE_DIR="/tmp/qwen-prefill-qkv-${SLURM_JOB_ID}-${worker}/tvm" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-qkv.py" --output "${ROOT}/results/prefill-qkv/prefill-${worker}" --model "${MODEL}" --run-id "${SLURM_JOB_ID}-${prefill_qkv_started}" --deadline "${prefill_qkv_deadline}" >"${ART}/prefill-qkv-${worker}.log" 2>&1 &
+    timeout --kill-after=2 120 srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-qkv-${worker})" env DG_JIT_CACHE_DIR="/tmp/qwen-prefill-qkv-${SLURM_JOB_ID}-${worker}/dg" SGLANG_DG_CACHE_DIR="/tmp/qwen-prefill-qkv-${SLURM_JOB_ID}-${worker}/dg" TVM_FFI_CACHE_DIR="/tmp/qwen-prefill-qkv-${SLURM_JOB_ID}-${worker}/tvm" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-qkv.py" --output "${ROOT}/results/prefill-qkv/prefill-${worker}" --model "${MODEL}" --run-id "${SLURM_JOB_ID}-${prefill_qkv_started}" --deadline "${prefill_qkv_deadline}" >"${ART}/prefill-qkv-${worker}.log" 2>&1 &
     prefill_qkv_selections+=("$!")
   done
   prefill_qkv_ok=1

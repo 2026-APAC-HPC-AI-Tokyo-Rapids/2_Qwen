@@ -68,7 +68,7 @@ def aggregate(directory, env_output, run_id, deadline, workers_ok):
                 assert record["worker"] == f"prefill-{worker}" and record["rank"] == rank, "wrong GPU result"
                 assert "H200" in record["device"] and record["uuid"] and record["uuid"] not in uuids, "wrong or repeated GPU"
                 uuids.add(record["uuid"])
-                assert record["finished_at"] <= deadline and record["elapsed_seconds"] < 60, "late result"
+                assert record["finished_at"] <= deadline and record["elapsed_seconds"] < 120, "late result"
                 assert record["passed"] is True and set(record["rows"]) == {str(m) for m in ROWS}, "failed or incomplete result"
                 assert record["norm_weights"]["source"] == "staged-model", "missing model norm weights"
                 for m in ROWS:
