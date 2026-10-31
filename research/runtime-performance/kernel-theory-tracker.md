@@ -230,6 +230,8 @@ BF16 packed QKV read + FP8 Q write + contiguous KV write + paged KV write。
 
 測定へ進む条件：head4/paired-roundの再試行はしない。現在の演算順を守り、追加loadやregister圧を含めて比較。
 
+Round 11（41166990387）で棄却：QKV GEMM epilogueでFP32 accumulatorから直接norm/RoPE/FP8を書く融合は、12 GPU全てで数値・300回耐久に合格したが、M7988でGEMM+post 561〜583 µsに対し741〜775 µs（1.32〜1.34倍）。post（79 µs）を消してもepilogueが約270 µs増える。2026-10-24のshared memory版（H100で326.55 vs 293.41 µs）と同じ結論。次tileのmainloopと重なるepilogueを示せない限り、この形の融合は再試行しない（`2026-10-31-pp4-round11.md`）。
+
 ### Prefill add RMSNorm
 
 2 BF16 reads + 2 BF16 writes + weight once。
