@@ -288,7 +288,7 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_vsum_gate // false' "${ROOT
   prefill_fa3_vsum_ok=0
   if [[ -s "${ROOT}/results/prefill-fa3-pair/selection.json" ]] && jq -e '.adopted == true' "${ROOT}/results/prefill-fa3-pair/selection.json" >/dev/null; then
     prefill_fa3_vsum_ok=1
-    # Estimate 45-65 seconds; bound 100 seconds includes launch, imports/JIT, numerics and endurance.
+    # Round-12 pair gate max 38.6 s + up to 26.4 s for native writer/dump, O and single checks: estimate 45-65 s; 100 s >= 1.5*65.
     for worker in 0 1 2; do
       node=${HEAD}
       if (( worker == 2 )); then node=${TAIL}; fi

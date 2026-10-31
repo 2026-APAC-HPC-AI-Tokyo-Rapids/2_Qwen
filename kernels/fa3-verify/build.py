@@ -49,6 +49,10 @@ def generate_prefill_dispatch(root, work):
     tasks, declarations, entries = [], [], []
     for row in rows:
         symbol = "prefill_" + row["name"].replace("-", "_")
+        if row.get("retired"):
+            # Keep published IDs as uncallable slots; do not build retired TUs.
+            entries.append(f'    {{"{row["name"]}", false, false, nullptr, 0}},')
+            continue
         if row["name"] == "control":
             symbol = "prefill_fixed"
         else:
@@ -144,7 +148,7 @@ def build(root):
     prefill_rows = json.loads((root / "prefill-candidates.json").read_text())
     prefill_sizes = torch.ops.apac_fa3_verify.prefill_variant_resources()
     assert len(prefill_rows) == len(prefill_sizes)
-    assert all(0 < x <= SM90_OPTIN_BYTES for x in prefill_sizes)
+    assert all(x == 0 if row.get("retired") else 0 < x <= SM90_OPTIN_BYTES for row, x in zip(prefill_rows, prefill_sizes))
     rows = candidates(root)
     assert len(rows) == len(smem)
     for row, size in zip(rows, smem):

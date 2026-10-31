@@ -10,15 +10,16 @@ from pathlib import Path
 
 KEY = "SGLANG_PREFILL_FA3_VERIFY"
 CONTROL = "n192-direct-o-varlen-pipe+m192n96-pair"
-DISPATCH = "n192-vsum+m192n96-pair-vsum"
-SCHEMA = "firmus-prefill-fa3-vsum/v1"
-SHAPES = ((3994,3994),(3986,4027),(3986,3986),(4027,4027),(4096,4096),(3900,4096),(4096,3901),(3994,),(4096,),(3584,))
+DISPATCH = "n192-direct-o-varlen-pipe+m192n96-pair-vsum"
+SCHEMA = "firmus-prefill-fa3-vsum/v2"
+SHAPES = ((3994,3994),(3986,4027),(3986,3986),(4027,4027),(4096,4096),(3900,4096),(4096,3901))
+SINGLE_SHAPES = ((3994,),(4096,),(3584,))
 ROUNDS, REPS, ENDURANCE, SECONDS = 10, 12, 1200, 100
 
 
 def row_name(lengths, candidate):
     prefix = "m192n96" if len(lengths)==2 else "n192"
-    return prefix+"-direct-o-varlen-pipe"+("-vsum" if candidate else "")
+    return prefix+"-direct-o-varlen-pipe"+("-vsum" if candidate and len(lengths)==2 else "")
 
 
 def timing_summary(samples):
@@ -54,7 +55,7 @@ def finite_float(value):
 
 
 def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_ok):
-    result={"schema":SCHEMA,"adopted":False,"gpus":[],"run_id":run_id,"rule":{"shapes":SHAPES,"minimum_saving_us":5,"seconds":SECONDS,"endurance_calls":ENDURANCE,"timing":"QK post + FA3 + O"}}
+    result={"schema":SCHEMA,"adopted":False,"gpus":[],"run_id":run_id,"rule":{"shapes":SHAPES,"single_checks":SINGLE_SHAPES,"minimum_saving_us":5,"seconds":SECONDS,"endurance_calls":ENDURANCE,"timing":"QK post + FA3 + O"}}
     try:
         pair=json.loads(pair_selection.read_text(),parse_constant=reject_constant,parse_float=finite_float)
         assert pair["schema"]=="firmus-prefill-fa3-pair/v1" and pair["adopted"] is True, "round-12 gate did not adopt"
@@ -80,6 +81,13 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
                     valid_metrics(shape["candidate_fp32"])
                     valid_metrics(shape["control_fp32"])
                     assert all(v>=5 for v in timing_summary(shape["samples_us"])["savings_us"].values()), "below 5 us margin"
+                assert set(record["singles"])=={str(s[0]) for s in SINGLE_SHAPES}, "incomplete single checks"
+                for single in record["singles"].values():
+                    assert single["row"]==row_name((3994,),False) and single["writer"]=="fp32", "single route changed"
+                    assert single["producer_bytes_equal"] is True and single["attention_bytes_equal"] is True and single["replays"]==2, "single byte/replay failure"
+                    assert "samples_us" not in single, "single speed gate forbidden"
+                    valid_metrics(single["candidate_fp32"])
+                    valid_metrics(single["control_fp32"])
                 endurance=record["endurance"]
                 assert endurance["calls"]==ENDURANCE and endurance["bytes_equal"] is True and endurance["dispatch_equal"] is True, "failed endurance"
                 valid_metrics([endurance["initial_fp32"],endurance["final_fp32"],endurance["final_fp32"]])
@@ -92,7 +100,7 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
             temporary.replace(env_output)
         finally:
             temporary.unlink(missing_ok=True)
-        result.update(adopted=True,reason="all twelve H200s passed writer bytes, reference, both orders, pooled margin and endurance")
+        result.update(adopted=True,reason="all twelve H200s passed pair margins, single fallback bytes, reference and endurance")
     except Exception as error:  # noqa: BLE001 - gate refusal preserves serving
         result["reason"]=f"{type(error).__name__}: {error}"
         result["gpus"]=[]
@@ -107,7 +115,8 @@ def native_producer(common, image, n):
 def steps(torch, checks, common):
     import deep_gemm
     lengths=common["lengths"]
-    n=96 if len(lengths)==2 else 192
+    assert len(lengths)==2 and all(3900<=n<=4096 for n in lengths)
+    n=96
     image=torch.empty((len(lengths),4,(max(lengths)+n-1)//n,n*128),device="cuda",dtype=torch.uint8)
     control=checks["prefill_selection_step"](common,row_name(lengths,False),1)
     candidate=checks["prefill_specs"]().index(next(s for s in checks["prefill_specs"]() if s["name"]==row_name(lengths,True)))
@@ -157,6 +166,42 @@ def validate(torch, checks, common, state):
             out,scales=call()
             metrics[mode].append(checks["prefill_assert_errors"](out.float()[indices]*scales[indices,:,None],reference,mode+"_fp32"))
     return {"byte_image_first":True,"producer_bytes_equal":True,"replays":2,"candidate_fp32":metrics["candidate"],"control_fp32":metrics["control"]}
+
+
+def bytes_equal(torch, left, right):
+    return all(torch.equal(a.contiguous().view(torch.uint8),b.contiguous().view(torch.uint8)) for a,b in zip(left,right,strict=True))
+
+
+def single_check(torch, checks, common):
+    """No timing: the new env must preserve round-12 single producer/output bytes."""
+    from sglang.kernels.ops.attention.rope import apply_qknorm_rope_fp8_prefill_fp32
+    from sglang.srt.layers.attention.prefill_fp8 import (
+        attention,
+        pair_candidate,
+        prefill_candidate,
+    )
+    os.environ[KEY]=DISPATCH
+    prefill_candidate.cache_clear()
+    selected=pair_candidate(common["lengths"])
+    assert selected["name"]==row_name(common["lengths"],False) and not selected.get("native_v_n"), "single route changed"
+    control=checks["prefill_selection_step"](common,row_name(common["lengths"],False),1)
+    metrics={"candidate":[],"control":[]}
+    common["kc"].zero_(); common["vc"].zero_()
+    for replay in range(3):
+        if replay:
+            common["packed"].copy_(torch.randn_like(common["packed"])*(replay+.5))
+        # Same host-selected old-writer branch as the model; no native V buffer.
+        apply_qknorm_rope_fp8_prefill_fp32(*common["rope_args"])
+        produced=tuple(x.clone() for x in (common["q"],common["k"],common["v"],common["kc"],common["vc"]))
+        out,scales=attention(common["q"],common["k"],common["v"],common["cu"],max(common["lengths"]),128**-.5,common["rows"],fixed=True,v_image=None,lengths=common["lengths"])
+        candidate=(out.view(common["rows"],64,128).clone(),scales.clone())
+        baseline=control()
+        assert bytes_equal(torch,produced,(common["q"],common["k"],common["v"],common["kc"],common["vc"])), "single Q/K/V or paged KV changed"
+        assert bytes_equal(torch,candidate,baseline), "single attention differs from round-12 served row"
+        indices,reference=checks["prefill_fp32_reference"](common)
+        for mode,output in (("candidate",candidate),("control",baseline)):
+            metrics[mode].append(checks["prefill_assert_errors"](output[0].float()[indices]*output[1][indices,:,None],reference,"single_"+mode))
+    return {"row":selected["name"],"writer":"fp32","producer_bytes_equal":True,"attention_bytes_equal":True,"replays":2,"candidate_fp32":metrics["candidate"],"control_fp32":metrics["control"]}
 
 
 def measure(torch, checks, state):
@@ -215,7 +260,7 @@ def run(output, run_id, deadline):
     import torch
     from sglang.srt.layers.attention.decode_fa3_verify import load
     rank=int(os.environ["LOCAL_RANK"])
-    result={"schema":SCHEMA,"worker":output.name,"rank":rank,"run_id":run_id,"passed":False,"shapes":{}}
+    result={"schema":SCHEMA,"worker":output.name,"rank":rank,"run_id":run_id,"passed":False,"shapes":{},"singles":{}}
     output.mkdir(parents=True,exist_ok=True)
     try:
         assert int(os.environ["WORLD_SIZE"])==4
@@ -238,6 +283,12 @@ def run(output, run_id, deadline):
             result["shapes"]["+".join(map(str,lengths))]=record
             assert all(v>=5 for v in record["timing_summary"]["savings_us"].values()), "below 5 us margin"
             del common,state
+        for lengths in SINGLE_SHAPES:
+            assert time.time()<=deadline
+            common=checks["prefill_selection_inputs"](lengths,padding=0)
+            common["fp32_producer"]=True
+            result["singles"][str(lengths[0])]=single_check(torch,checks,common)
+            del common
         common=checks["prefill_selection_inputs"](SHAPES[0],padding=0)
         common["fp32_producer"]=True
         state=steps(torch,checks,common)

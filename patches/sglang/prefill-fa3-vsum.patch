@@ -8,7 +8,7 @@
  
  namespace {
  
-@@ -693,6 +694,162 @@
+@@ -693,6 +694,145 @@
      device::PDLTriggerSecondary<kUsePDL>();
  }
  
@@ -28,23 +28,6 @@
 +out ^= ((x>>11)&1)*16;
 +out ^= ((x>>12)&1)*4096;
 +out ^= ((x>>13)&1)*8192;
-+}
-+if constexpr (N==192) {
-+out ^= ((x>>0)&1)*512;
-+out ^= ((x>>1)&1)*64;
-+out ^= ((x>>2)&1)*144;
-+out ^= ((x>>3)&1)*288;
-+out ^= ((x>>4)&1)*1024;
-+out ^= ((x>>5)&1)*2048;
-+out ^= ((x>>6)&1)*4096;
-+out ^= ((x>>7)&1)*1;
-+out ^= ((x>>8)&1)*4;
-+out ^= ((x>>9)&1)*8;
-+out ^= ((x>>10)&1)*2;
-+out ^= ((x>>11)&1)*16;
-+out ^= ((x>>12)&1)*32;
-+out ^= ((x>>13)&1)*8192;
-+out ^= ((x>>14)&1)*16384;
 +}
 +return out; }
 +__device__ __forceinline__ void qkv_native_bf16x8(const uint4 v, float (&f)[8]) {
@@ -171,7 +154,7 @@
  // Decode: four independent H128 heads per warp, vectorized 16-byte halves.
  // Virtual old lanes (4*lane+j) retain the original XOR sum and both BF16
  // rounding points. No shared memory or CTA barrier on the latency path.
-@@ -873,6 +1030,24 @@
+@@ -873,6 +1013,24 @@
      _run<true>(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, &v, &k_cache, &v_cache, &cache_loc, &contiguous_k, &contiguous_v, nullptr, 0, true);
    }
  
@@ -196,7 +179,7 @@
    template <bool kStoreKV>
    static void _run(
        const tvm::ffi::TensorView q,
-@@ -889,7 +1064,7 @@
+@@ -889,7 +1047,7 @@
        const tvm::ffi::TensorView* cache_loc,
        const tvm::ffi::TensorView* contiguous_k = nullptr,
        const tvm::ffi::TensorView* contiguous_v = nullptr,
@@ -205,22 +188,22 @@
      using namespace host;
      auto N = SymbolicSize{"num_tokens"};
      auto Q = SymbolicSize{"num_qo_heads"};
-@@ -954,6 +1129,20 @@
+@@ -954,6 +1112,20 @@
          .head_groups = head_groups,
          .eps = static_cast<float>(eps),
      };
 +    if (native_v) {
-+      RuntimeCheck(contiguous_k && cu && (native_n==96 || native_n==192) && maxlen>=3584 && maxlen<=4096 && num_qo_heads==64 && num_kv_heads==4, "Native Prefill V contract");
++      RuntimeCheck(contiguous_k && cu && native_n==96 && maxlen>=3900 && maxlen<=4096 && num_qo_heads==64 && num_kv_heads==4, "Native Prefill V contract");
 +      TensorMatcher({-1}).with_dtype<int32_t>().with_device(device).verify(*cu);
 +      int64_t sequences=cu->size(0)-1, blocks=(maxlen+native_n-1)/native_n;
-+      RuntimeCheck(sequences>=1 && sequences<=2, "Native Prefill V request count");
++      RuntimeCheck(sequences==2, "Native Prefill V request count");
 +      TensorMatcher({sequences,4,blocks,native_n*128}).with_dtype<uint8_t>().with_device(device).verify(*native_v);
 +      auto launch = [&](auto native_n_type) {
 +        constexpr int nn=decltype(native_n_type)::value;
 +        const auto prefill = id_type.is_type<int32_t>() ? qknorm_rope_prefill_native_kernel<kUsePDL,int32_t,nn> : qknorm_rope_prefill_native_kernel<kUsePDL,int64_t,nn>;
 +        LaunchKernel(dim3(sequences*blocks*(nn/32),num_qo_heads+2*num_kv_heads),256,device.unwrap()).enable_pdl(kUsePDL)(prefill,params,contiguous_k->data_ptr(),contiguous_v->data_ptr(),native_v->data_ptr(),static_cast<const int32_t*>(cu->data_ptr()),sequences,blocks);
 +      };
-+      if (native_n==96) launch(std::integral_constant<int,96>{}); else launch(std::integral_constant<int,192>{});
++      launch(std::integral_constant<int,96>{});
 +      return;
 +    }
      if (fp32) {
@@ -248,26 +231,25 @@
 +    _jit_rope_fp8_q_module().run_prefill_native(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, v, k_cache, v_cache, cache_loc, contiguous_k, contiguous_v, native_v, cu, native_n, maxlen)
 --- a/python/sglang/srt/layers/attention/prefill_fp8.py
 +++ b/python/sglang/srt/layers/attention/prefill_fp8.py
-@@ -53,16 +53,19 @@
+@@ -53,16 +53,17 @@
  def prefill_candidate(name=None):
      rows = json.loads(Path("/opt/apac/fa3-verify/prefill-candidates.json").read_text())
      name = name or os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "control")
 -    if name == "n192-direct-o-varlen-pipe+m192n96-pair":
-+    if name in ("n192-direct-o-varlen-pipe+m192n96-pair", "n192-vsum+m192n96-pair-vsum"):
++    if name in ("n192-direct-o-varlen-pipe+m192n96-pair", "n192-direct-o-varlen-pipe+m192n96-pair-vsum"):
          name = "n192-direct-o-varlen-pipe"
-     return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name)
+-    return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name)
++    return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name and not row.get("retired"))
  
  
  def pair_candidate(lengths):
      # Host metadata only. Never read cu (a CUDA tensor) to make this decision.
 -    enabled = os.environ.get("SGLANG_PREFILL_FA3_VERIFY") == "n192-direct-o-varlen-pipe+m192n96-pair"
-+    vsum = os.environ.get("SGLANG_PREFILL_FA3_VERIFY") == "n192-vsum+m192n96-pair-vsum"
++    vsum = os.environ.get("SGLANG_PREFILL_FA3_VERIFY") == "n192-direct-o-varlen-pipe+m192n96-pair-vsum"
 +    enabled = vsum or os.environ.get("SGLANG_PREFILL_FA3_VERIFY") == "n192-direct-o-varlen-pipe+m192n96-pair"
      if enabled and lengths is not None and len(lengths) == 2 and all(3900 <= n <= 4096 for n in lengths):
 -        return prefill_candidate("m192n96-direct-o-varlen-pipe")
 +        return prefill_candidate("m192n96-direct-o-varlen-pipe-vsum" if vsum else "m192n96-direct-o-varlen-pipe")
-+    if vsum and lengths is not None and len(lengths)==1 and 3584 <= lengths[0] <= 4096:
-+        return prefill_candidate("n192-direct-o-varlen-pipe-vsum")
      return prefill_candidate()
  
  

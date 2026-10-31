@@ -112,11 +112,12 @@ struct PrefillCandidate { const char* name; bool byte_image; bool varlen; Launch
 #include "prefill-candidates.h"
 static const PrefillCandidate& prefill_candidate(int64_t id) {
     TORCH_CHECK(id >= 0 && id < int64_t(sizeof(prefill_candidates)/sizeof(prefill_candidates[0])), "FA3 Prefill candidate index");
+    TORCH_CHECK(prefill_candidates[id].launch, "FA3 Prefill candidate retired");
     return prefill_candidates[id];
 }
 std::vector<int64_t> prefill_variant_resources() {
     std::vector<int64_t> result;
-    for (auto c : prefill_candidates) { Flash_fwd_params p{}; int bytes=0; c.launch(p,nullptr,&bytes); result.push_back(bytes); }
+    for (auto c : prefill_candidates) { Flash_fwd_params p{}; int bytes=0; if (c.launch) c.launch(p,nullptr,&bytes); result.push_back(bytes); }
     return result;
 }
 void prefill_fwd_impl(bool fixed, const at::Tensor& q, const at::Tensor& k, const at::Tensor& v,
@@ -166,7 +167,7 @@ void prefill_fwd_impl(bool fixed, const at::Tensor& q, const at::Tensor& k, cons
                 tensor(image,q,at::kByte);
                 if (c.native_v_n) {
                     int n=c.native_v_n, blocks=(maxlen+n-1)/n;
-                    TORCH_CHECK(image.sizes()==at::IntArrayRef({batch,4,blocks,n*128}), "FA3 native V image shape");
+                    TORCH_CHECK(n==96 && batch==2 && rows>=7800 && image.sizes()==at::IntArrayRef({batch,4,blocks,n*128}), "FA3 native pair V image shape");
                     p.v_head_stride=blocks*n*128;
                 } else {
                     TORCH_CHECK(image.sizes()==at::IntArrayRef({4,(rows+223)/224,224*128}), "FA3 Prefill byte image shape");
@@ -201,7 +202,7 @@ namespace apac_fa3_verify {
 void prefill_dump_native(const at::Tensor& v, const at::Tensor& out, const at::Tensor& cu, int64_t n) {
     c10::cuda::CUDAGuard guard(v.device());
     tensor(v,v,at::ScalarType::Float8_e4m3fn); tensor(out,v,at::kByte); tensor(cu,v,at::kInt);
-    TORCH_CHECK((n==96 || n==192) && v.dim()==3 && v.size(1)==4 && v.size(2)==128 && cu.dim()==1 && out.dim()==4 && out.size(0)==cu.numel()-1 && out.size(1)==4 && out.size(3)==n*128, "FA3 native dump shape");
+    TORCH_CHECK(n==96 && cu.numel()==3 && v.dim()==3 && v.size(1)==4 && v.size(2)==128 && cu.dim()==1 && out.dim()==4 && out.size(0)==cu.numel()-1 && out.size(1)==4 && out.size(3)==n*128, "FA3 native dump shape");
     prefill_dump_native_launch(v.data_ptr(),out.data_ptr(),cu.data_ptr<int>(),cu.numel()-1,out.size(2),n,at::cuda::getCurrentCUDAStream());
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }

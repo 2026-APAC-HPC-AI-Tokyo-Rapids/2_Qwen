@@ -57,7 +57,7 @@ def test_prefill_dispatch_is_independent_of_decode(tmp_path):
     ns = runpy.run_path(str(ROOT / 'kernels/fa3-verify/build.py'))
     tasks = ns['generate_prefill_dispatch'](ROOT / 'kernels/fa3-verify', tmp_path)
     rows = json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text())
-    assert len(tasks) == len(rows) - 1
+    assert len(tasks) == sum(not r.get('retired') and r['name'] != 'control' for r in rows)
     assert {r["name"] for r in rows if r["variant"] & 8} == set()
     assert {r['name'] for r in rows if r['byte_image'] and not r.get('native_v_n')} == {'c2', 'regs-c2'}
     assert (tmp_path / 'prefill-candidates.h').read_text().count('prefill_fixed') == 2

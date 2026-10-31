@@ -41,7 +41,6 @@ template<int N> __global__ void prefill_dump_native_kernel(const uint8_t* v, uin
     for(int x=threadIdx.x;x<N*128;x+=128) dst[x]=vv[x];
 }
 void prefill_dump_native_launch(const void* v,void* out,const int* cu,int batch,int blocks,int n,cudaStream_t stream) {
-    if(n==96) prefill_dump_native_kernel<96><<<dim3(blocks,4,batch),128,0,stream>>>(static_cast<const uint8_t*>(v),static_cast<uint8_t*>(out),cu);
-    else prefill_dump_native_kernel<192><<<dim3(blocks,4,batch),128,0,stream>>>(static_cast<const uint8_t*>(v),static_cast<uint8_t*>(out),cu);
+    prefill_dump_native_kernel<96><<<dim3(blocks,4,batch),128,0,stream>>>(static_cast<const uint8_t*>(v),static_cast<uint8_t*>(out),cu);
 }
 }

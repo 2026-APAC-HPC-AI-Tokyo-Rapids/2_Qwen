@@ -33,7 +33,7 @@ def dispatch(tmp_path):
     return scope
 
 
-@pytest.mark.parametrize('lengths,n', [((3994,3994),96),((3900,4096),96),((3994,),192),((3584,),192),((4096,),192),((3583,),0),((3899,4096),0),((4097,),0),((3994,)*3,0),(None,0)])
+@pytest.mark.parametrize('lengths,n', [((3994,3994),96),((3900,4096),96),((3994,),0),((3584,),0),((4096,),0),((3583,),0),((3899,4096),0),((4097,),0),((3994,)*3,0),(None,0)])
 def test_composed_host_dispatch(dispatch,monkeypatch,lengths,n):
     monkeypatch.setenv(GATE['KEY'],GATE['DISPATCH'])
     assert dispatch['pair_candidate'](lengths).get('native_v_n',0)==n
@@ -53,6 +53,8 @@ def screen(tmp_path):
             metric={'relative_l2':.01,'max_scaled_error':.02}
             shape={'byte_image_first':True,'producer_bytes_equal':True,'replays':2,'candidate_fp32':[metric]*3,'control_fp32':[metric]*3,'samples_us':{order:{'control':[900.]*10,'candidate':[895.]*10} for order in ('forward','reverse')}}
             record={**identity,'run_id':'123-vsum','schema':GATE['SCHEMA'],'device':'NVIDIA H200','finished_at':now,'elapsed_seconds':60,'passed':True,'shapes':{'+'.join(map(str,s)):shape for s in GATE['SHAPES']},'endurance':{'calls':1200,'bytes_equal':True,'dispatch_equal':True,'initial_fp32':metric,'final_fp32':metric}}
+            single={'row':'n192-direct-o-varlen-pipe','writer':'fp32','producer_bytes_equal':True,'attention_bytes_equal':True,'replays':2,'candidate_fp32':[metric]*3,'control_fp32':[metric]*3}
+            record['singles']={str(lengths[0]):single for lengths in GATE['SINGLE_SHAPES']}
             (directory/f'rank-{rank}.json').write_text(json.dumps(record))
     pair_path=tmp_path/'pair.json'; pair_path.write_text(json.dumps({'schema':'firmus-prefill-fa3-pair/v1','adopted':True,'gpus':pair}))
     return tmp_path,env,pair_path,now+100
@@ -69,7 +71,7 @@ def test_all_twelve_adopt_atomic_composite(screen):
     assert not list(screen[0].glob('*.tmp'))
 
 
-@pytest.mark.parametrize('case',['missing','malformed','stale','uuid','allocation','late','elapsed','failed','shape','dump','producer','replay','numeric','reverse','incomplete','nan','overflow','endurance','bytes','dispatch','pair_failed','pair_uuid','timeout'])
+@pytest.mark.parametrize('case',['missing','malformed','stale','uuid','allocation','late','elapsed','failed','shape','single_missing','single_row','single_writer','single_producer','single_output','single_replay','single_numeric','single_timing','old_schema','dump','producer','replay','numeric','reverse','incomplete','nan','overflow','endurance','bytes','dispatch','pair_failed','pair_uuid','timeout'])
 def test_one_failed_cell_keeps_env(screen,case):
     path=screen[0]/'prefill-2/rank-3.json'; record=json.loads(path.read_text()); shape=record['shapes']['3994+3994']
     if case=='missing': path.unlink()
@@ -89,7 +91,16 @@ def test_one_failed_cell_keeps_env(screen,case):
         elif case=='late': record['finished_at']=screen[3]+1
         elif case=='elapsed': record['elapsed_seconds']=GATE['SECONDS']
         elif case=='failed': record['passed']=False
-        elif case=='shape': record['shapes'].pop('3584')
+        elif case=='shape': record['shapes'].pop('3994+3994')
+        elif case=='old_schema': record['schema']='firmus-prefill-fa3-vsum/v1'
+        elif case=='single_missing': record['singles'].pop('3584')
+        elif case=='single_row': record['singles']['3994']['row']='m192n96-direct-o-varlen-pipe-vsum'
+        elif case=='single_writer': record['singles']['3994']['writer']='native'
+        elif case=='single_producer': record['singles']['3994']['producer_bytes_equal']=False
+        elif case=='single_output': record['singles']['3994']['attention_bytes_equal']=False
+        elif case=='single_replay': record['singles']['3994']['replays']=1
+        elif case=='single_numeric': record['singles']['3994']['candidate_fp32'][0]['relative_l2']=.051
+        elif case=='single_timing': record['singles']['3994']['samples_us']={}
         elif case=='dump': shape['byte_image_first']=False
         elif case=='producer': shape['producer_bytes_equal']=False
         elif case=='replay': shape['replays']=1
@@ -146,7 +157,7 @@ def test_native_writer_and_gate_wiring():
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
     assert config['prefill']['fa3_vsum_gate'] is False
     assert config['sglang_overlay_patches'][-1]=='patches/sglang/prefill-fa3-vsum.patch'
-    assert config['images']['sglang']['sha256']==config['container_sha256'] and config['container_sha256'].startswith('e7b09add')
+    assert config['images']['sglang']['sha256']==config['container_sha256'] and config['container_sha256'].startswith('a8232b16')
     source=(ROOT/'patches/sglang/prefill-fa3-vsum.patch').read_text()
     for contract in ('qknorm_rope_prefill_native_kernel','native_offset<NativeN>','local<length','max_blocks*NativeN','self.attn.fixed_prefill_output','forward_metadata.cu_seqlens_q','apply_qknorm_rope_fp8_prefill_native'):
         assert contract in source
@@ -158,7 +169,7 @@ def test_native_writer_and_gate_wiring():
     assert 'timeout --kill-after=2 100 srun' in block()
     assert 'select-firmus-prefill-fa3-vsum.py' in (ROOT/'scripts/provision-firmus-framework.sh').read_text()
     table=json.loads((ROOT/'kernels/fa3-verify/prefill-candidates.json').read_text())
-    assert [(row['native_v_n'],row['variant']) for row in table if row.get('native_v_n')]==[(192,49376),(96,57568)]
+    assert [(row['native_v_n'],row['variant']) for row in table if row.get('native_v_n') and not row.get('retired')]==[(96,57568)]
 
 
 def test_deployed_offset_matches_exhaustive_cute_maps(tmp_path):
@@ -170,12 +181,12 @@ def test_deployed_offset_matches_exhaustive_cute_maps(tmp_path):
     function=start+added.split(start,1)[1].split('return out; }',1)[0]+'return out; }'
     function=function.replace('__device__ __forceinline__ ','')
     source=tmp_path/'map.cpp'
-    source.write_text('#include <cstdio>\n'+function+'\nint main(){for(int x=0;x<96*128;++x)std::printf("%d\\n",native_offset<96>(x/128,x%128)); for(int x=0;x<192*128;++x)std::printf("%d\\n",native_offset<192>(x/128,x%128));}\n')
+    source.write_text('#include <cstdio>\n'+function+'\nint main(){for(int x=0;x<96*128;++x)std::printf("%d\\n",native_offset<96>(x/128,x%128));}\n')
     binary=tmp_path/'map'
     subprocess.run(['g++','-O2','-std=c++17',str(source),'-o',str(binary)],check=True,capture_output=True)
     values=[int(x) for x in subprocess.check_output([str(binary)],text=True).splitlines()]
     proof=json.loads((ROOT/'research/runtime-performance/fa3-prefill-vsum-cpu-validation-20261101.json').read_text())
-    for n,offset in ((96,0),(192,96*128)):
+    for n,offset in ((96,0),):
         mapping=values[offset:offset+n*128]
         assert set(mapping)==set(range(n*128))
         assert hashlib.sha256(struct.pack('<'+'i'*len(mapping),*mapping)).hexdigest()==proof['layouts'][str(n)]['map_i32le_sha256']
@@ -214,3 +225,105 @@ assert(get<2>(control)==get<2>(a.stride_V) && get<2>(a.stride_V)==42*n*128);
     binary=tmp_path/'descriptor'
     subprocess.run(['g++','-O2','-std=c++17',str(source),'-o',str(binary)],check=True,capture_output=True)
     subprocess.run([str(binary)],check=True)
+
+
+@pytest.mark.parametrize('lengths,fixed,native', [((3994,3994),True,True),((3900,4096),True,True),((4096,3900),True,True),((4096,4096),True,True),((3994,),True,False),((4096,),True,False),((3584,),True,False),((3899,4096),True,False),((3900,4097),True,False),((3994,)*3,True,False),(None,True,False),((3994,3994),False,False)])
+def test_actual_model_writer_branch_uses_same_host_pair_condition(dispatch,monkeypatch,lengths,fixed,native):
+    import textwrap
+    from types import SimpleNamespace
+    monkeypatch.setenv(GATE['KEY'],GATE['DISPATCH'])
+    patch=(ROOT/'patches/sglang/prefill-fa3-vsum.patch').read_text().split('+++ b/python/sglang/srt/models/qwen3_moe.py',1)[1]
+    after='\n'.join(line[1:] for line in patch.splitlines() if line.startswith((' ','+')))
+    fragment='                selected = pair_candidate'+after.split('                selected = pair_candidate',1)[1]
+    calls=[]
+    scope={**dispatch,'self':SimpleNamespace(attn=SimpleNamespace(fixed_prefill_output=fixed)), 'forward_batch':SimpleNamespace(extend_seq_lens_cpu=lengths), 'torch':SimpleNamespace(empty=lambda *a,**k:'image',uint8='uint8'), 'k':SimpleNamespace(device='cuda'), '_PREFILL_QKNORM':'fp32', 'rope_args':(), 'kv_args':(), 'contiguous_k':None,'contiguous_v':None,'get_attn_backend':lambda:SimpleNamespace(forward_metadata=SimpleNamespace(cu_seqlens_q='cu'))}
+    for name in ('native','fp32',''):
+        scope['apply_qknorm_rope_fp8_prefill'+('_'+name if name else '')]=lambda *args,name=name:calls.append(name)
+    exec(compile(textwrap.dedent(fragment),'<actual model writer>','exec'),scope)  # noqa: S102 - actual patched branch with stubs
+    assert calls==['native' if native else 'fp32']
+    assert (scope['self'].attn.prefill_v_image is not None)==native
+
+
+def test_published_ids_retained_without_retired_native_build(tmp_path,dispatch,monkeypatch):
+    table=json.loads((ROOT/'kernels/fa3-verify/prefill-candidates.json').read_text())
+    assert len(table)==15
+    assert table[11]['name']=='n192-direct-o-varlen-pipe'
+    assert table[12]['name']=='m192n96-direct-o-varlen-pipe'
+    assert table[13]['name']=='n192-direct-o-varlen-pipe-vsum' and table[13]['retired'] is True
+    assert table[14]['name']=='m192n96-direct-o-varlen-pipe-vsum'
+    with pytest.raises(StopIteration):
+        dispatch['prefill_candidate'](table[13]['name'])
+    monkeypatch.setenv(GATE['KEY'],GATE['DISPATCH'])
+    assert dispatch['pair_candidate']((3994,3994))['id']==14
+    assert dispatch['pair_candidate']((3994,))['id']==11
+    build=runpy.run_path(str(ROOT/'kernels/fa3-verify/build.py'))
+    tasks=build['generate_prefill_dispatch'](ROOT/'kernels/fa3-verify',tmp_path)
+    assert not any(name=='prefill_n192_direct_o_varlen_pipe_vsum' for _,name,_ in tasks)
+    assert any(name=='prefill_m192n96_direct_o_varlen_pipe_vsum' for _,name,_ in tasks)
+    header=(tmp_path/'prefill-candidates.h').read_text()
+    assert '{"n192-direct-o-varlen-pipe-vsum", false, false, nullptr, 0}' in header
+    wrapper=(ROOT/'kernels/fa3-verify/wrapper.cpp').read_text()
+    assert 'TORCH_CHECK(prefill_candidates[id].launch, "FA3 Prefill candidate retired")' in wrapper
+    assert 'if (c.launch) c.launch' in wrapper
+    writer=(ROOT/'patches/sglang/prefill-fa3-vsum.patch').read_text()
+    dump=(ROOT/'kernels/fa3-verify/prefill_native_image.cu').read_text()
+    assert 'integral_constant<int,192>' not in writer and 'if constexpr (N==192)' not in writer
+    assert 'prefill_dump_native_kernel<192>' not in dump
+
+
+def test_single_checks_have_no_timing_and_require_served_bytes():
+    source=SCRIPT.read_text()
+    tree=ast.parse(source)
+    single=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='single_check')
+    names={n.id for n in ast.walk(single) if isinstance(n,ast.Name)}
+    assert 'measure' not in names and 'timing_summary' not in names and 'native_producer' not in names
+    assert {'attention','pair_candidate','apply_qknorm_rope_fp8_prefill_fp32'}<=names
+    assert len(GATE['SHAPES'])==7 and all(len(s)==2 for s in GATE['SHAPES'])
+    assert GATE['SINGLE_SHAPES']==((3994,),(4096,),(3584,))
+    assert GATE['row_name']((3994,),True)=='n192-direct-o-varlen-pipe'
+    assert 'single Q/K/V or paged KV changed' in source
+    assert 'single attention differs from round-12 served row' in source
+
+
+@pytest.mark.parametrize('failure',[None,'q','k','v','kc','vc','attention','scale'])
+def test_single_gate_replays_and_rejects_each_producer_or_attention_byte_change(dispatch,monkeypatch,failure):
+    torch=pytest.importorskip('torch')
+    from types import SimpleNamespace
+    rows=2
+    common={'lengths':(3994,),'rows':rows,'packed':torch.zeros(4),'cu':torch.tensor([0,rows]),'rope_args':()}
+    common.update({name:torch.zeros((rows if name not in ('kc','vc') else rows+1,64 if name=='q' else 4,128),dtype=torch.uint8) for name in ('q','k','v','kc','vc')})
+    calls=[]
+
+    def writer(*_):
+        calls.append(common['packed'].clone())
+        value=int(common['packed'].abs().sum())%100
+        for name in ('q','k','v','kc','vc'):
+            common[name].fill_(value)
+        if failure in ('q','k','v','kc','vc') and len(calls)%2==0:
+            common[failure].reshape(-1)[0]+=1
+
+    def output():
+        return common['q'].clone(),torch.ones((64,rows+2)).T[:rows]
+
+    def attention(*_,**kwargs):
+        assert kwargs['v_image'] is None and kwargs['fixed'] is True
+        assert dispatch['pair_candidate'](kwargs['lengths'])['name']=='n192-direct-o-varlen-pipe'
+        out,scale=output()
+        if failure=='attention': out[0,0,0]+=1
+        if failure=='scale': scale[0,0]=2
+        return out.view(rows,8192),scale
+
+    def control(*_):
+        writer()
+        return output()
+
+    monkeypatch.setitem(sys.modules,'sglang.kernels.ops.attention.rope',SimpleNamespace(apply_qknorm_rope_fp8_prefill_fp32=writer))
+    monkeypatch.setitem(sys.modules,'sglang.srt.layers.attention.prefill_fp8',SimpleNamespace(attention=attention,pair_candidate=dispatch['pair_candidate'],prefill_candidate=dispatch['prefill_candidate']))
+    checks={'prefill_selection_step':lambda common,name,layers:control,'prefill_fp32_reference':lambda common:(torch.tensor([0]),torch.zeros((1,64,128))),'prefill_assert_errors':lambda *args:{'relative_l2':.01,'max_scaled_error':.02}}
+    if failure:
+        with pytest.raises(AssertionError,match='single Q/K/V or paged KV changed|single attention differs'):
+            GATE['single_check'](torch,checks,common)
+    else:
+        record=GATE['single_check'](torch,checks,common)
+        assert record['producer_bytes_equal'] and record['attention_bytes_equal'] and record['replays']==2
+        assert len(calls)==6 and not torch.equal(calls[0],calls[2]) and not torch.equal(calls[2],calls[4])
