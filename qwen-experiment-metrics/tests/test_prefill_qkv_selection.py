@@ -149,9 +149,10 @@ def test_publication_failure_keeps_pin_and_cleans_temporary(screen, monkeypatch)
     assert not list(screen[1].parent.glob("*.tmp"))
 
 
-def test_pp4_default_off_parallel_timeout_and_archive_wiring():
+def test_pp4_gate_parallel_timeout_and_archive_wiring():
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
-    assert not config["prefill"].get("qkv_fused_gate", False)
+    # Round 11 serves with the gate on; the sbatch default stays off.
+    assert config["prefill"]["qkv_fused_gate"] is True
     assert config["images"]["sglang"]["sha256"].startswith("e7b09add")
     sbatch = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     block = sbatch.split('# Default off. All twelve H200 GPUs', 1)[1].split('\nsrun --exact', 1)[0]
