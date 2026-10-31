@@ -310,3 +310,26 @@ spills. Each emitted a real SM90a kernel and no C7512 warning. Attention and
 Firmus image/staging/reference/PP4 regression suites passed locally, as did
 Ruff, actionlint, shell syntax and diff checks. Real SquashFS checks still run
 in Linux CI before allocation. These are build/CPU checks, not GPU performance.
+
+The first M192 trial is commit `821f4094f51f922b637c1587ef635e2310991fba`,
+Actions [41149436183](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41149436183),
+started at 2026-10-31 09:18:21 JST with a fresh image requested. Its Linux
+real-Torch CPU job passed all 43 cases (36 image-gate and seven capture-fixture
+tests), without skips. The main CI suite then failed one stale launcher test:
+`test_pp4_job_uses_pins_and_workers_source_the_switch` still required the
+removed unroll16 aggregate. No build or GPU allocation occurred. Update that
+test to require the retained MegaMoE pin and FA3-only aggregate, and retry the
+same candidate with a fresh build still requested. GPU/serving results remain
+pending; source and execution settings are unchanged by this test repair.
+
+Before any later draft-extend graph enablement, address an additional live
+ordering issue found in review: `EagleDraftExtendCudaGraphRunner.execute`
+publishes `war_fastpath_read_done_event` before replay, but FA3's captured
+`draft_extend_set_metadata` reads the shared `req_to_token` table during
+replay. The event must cover those reads (or replay must use an already-built
+snapshot) before the scheduler can write the table again. Also require a GPU
+parity gate with seeded nonzero K/V near a 4K prefix, changed inputs/lengths,
+and real rows inside a padded bucket. The current zero-prefix capture check
+does not exercise these conditions. Host `max_seq_len_k=4` does not itself
+truncate the live MHA path: that call takes live cache lengths/page tables and
+only the query bound is static. The M192 trial keeps this graph disabled.

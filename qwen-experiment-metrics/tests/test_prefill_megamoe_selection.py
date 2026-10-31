@@ -254,9 +254,10 @@ def test_pp4_job_uses_pins_and_workers_source_the_switch(tmp_path):
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
     assert 'test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"' in pp4
-    # The bundle only compares unroll16 against the pinned split, plus FA3 diagonal trim.
-    assert "select-firmus-prefill-megamoe.py\" --unroll16 --aggregate" in pp4 and "decode_gpu_selections" not in shell
-    assert pp4.count("srun ") == 3 and pp4.count("--aggregate") == 2 and "select-firmus-prefill-fa3.py\" --aggregate" in pp4
+    # The M192 trial retains the settled MegaMoE pin and only screens the new FA3 row.
+    assert "select-firmus-prefill-megamoe.py" not in pp4 and "decode_gpu_selections" not in shell
+    assert "--unroll16" not in (ROOT / "scripts/select-firmus-pp4-bundle.sh").read_text()
+    assert pp4.count("srun ") == 3 and pp4.count("--aggregate") == 1 and "select-firmus-prefill-fa3.py\" --aggregate" in pp4
     assert 'wait "${sparse_penalty_gate}"' in pp4
     worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
     assert 'if [[ "$role" == prefill ]]; then set -a; source "$(dirname "$0")/prefill-kernels.env"; set +a; fi' in worker
