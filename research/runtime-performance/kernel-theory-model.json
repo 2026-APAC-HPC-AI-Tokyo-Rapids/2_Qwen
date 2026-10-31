@@ -492,17 +492,24 @@
       "fa3-prefill-vsum-cpu-validation-20261101.json",
       "fa3-prefill-vsum-cuda130-20261101.json"
     ],
-    "status": "CPU_admitted_on_CUDA13.0.88; serving source becabbf enables gate; run41225578193 attempt1 failed staging SSH before GPU; no new score",
+    "status": "GPU_rejected_all12_first_shape; fallback_r12_serving_completed",
     "shape": "Q64/KV4/D128 E4M3; M192/N96 pair each3900..4096 only; singles use round12 N192 and old writer",
     "useful_pair_flops": 522847416320,
     "actual_hbm_bytes": null,
     "actual_nvlink_bytes": null,
     "removed_work": "At L3994 pair remove 1,395,523,584 logical shared transpose bytes. CUDA13.0 steady sum FADD dependency23 to7, static instructions381 to399. Old P first overwritten after all50 EX2 instructions (control26); PV wait remains after24 EX2 (control22), so no full latency-hiding claim. Writer replaces two64-bit stores with16 byte stores and adds request padding/addressing. No positive speed point estimate.",
     "precision": "Identical V FP8 bytes, unchanged paged KV, all causal terms; FP32 sum reassociation only. Simple sum-only prototype rejected for early PV overwrite; composed row holds all old P words until every EX2 completes.",
-    "admission": "CUDA13.0.88/sm90a: both FA3 controls encoded identical before/after; candidate 128 registers, stack/spills/local instructions0, no C75xx. Full production QK/RoPE module without fast_math compiled and loaded; native writer48 registers/spills0. Old writer normal instruction encoding equal; only four assert metadata instructions per index type differ. Independent 12288-byte CuTe map agrees in both stages.138 CPU tests pass; actual PP4 source checks pass. Complete fresh-image ABI gate and GPU execution still required.",
+    "admission": "CUDA13.0.88/sm90a: both FA3 controls encoded identical before/after; candidate 128 registers, stack/spills/local instructions0, no C75xx. Full production QK/RoPE module without fast_math compiled and loaded; native writer48 registers/spills0. Old writer normal instruction encoding equal; only four assert metadata instructions per index type differ. Independent 12288-byte CuTe map agrees in both stages.138 CPU tests pass; actual PP4 source checks pass. Complete fresh-image ABI gate and GPU execution still required. Fresh image build, all32 native TUs/full link and CPU load, actual-image PP4 CPU gate passed in41240194309. GPU first shape all12 native-byte and FP32 replay checks passed but speed failed; later shapes/singles/endurance not executed.",
     "gate": "After round12 same twelve H200 UUIDs/allocation; independent GPU byte dump first; seven pairs FP32 relativeL2<=.05/max_scaled<=.25 and two changed inputs; QKpost+FA3+O both orders/pooled save>=5us for pairs only; singles3994/4096/3584 old writer Q/K/V/pagedKV and old N192 attention byte equal, FP32/replays, no timing; 1200 serving calls and own initial O/scale bytes; atomic env only on all pass;100s timeout plus2s grace,105s deadline;45..65s estimate from round12 max38.6s;652+105=757s job budget, no MegaMoE gate.",
     "performance_prediction": null,
-    "official_score": null
+    "official_score": 9948.463699092648,
+    "official_score_route": "r12 fallback, not r13",
+    "gpu_evidence": "fa3-prefill-vsum-gpu-41240194309.json",
+    "gpu_saving_us_both_orders": {
+      "min": -54.42269643147779,
+      "median": -48.82069428761804,
+      "max": -43.25735569000244
+    }
   },
   "megamoe_prefill_dep_r13_cpu_rejection": {
     "date": "2026-11-01",
@@ -517,7 +524,7 @@
     "tracker_text": "2026-11-01 round 13-M：現行PP4/EP1 splitのscale先読みをhalf間へ移す2案をCUDA13.4/sm_90aでCPU検証した。両案spill0・C75xxなし、default offのserving split SASSはbyte一致。FC1 K=1のhalf 0のpost-wait spanは107→65命令だが、half 1の発行spanは13→42/30命令へ拡大し、両halfのwait→64 FMUL→QGMMA依存は残る。chunk全体のinline命令数も減らず、依存周期の正のclk短縮を示せないため段階1の条件4で保留・棄却。GPU未実行、速度未算定、production変更・gate追加なし。詳細は2026-11-01-prefill-megamoe-dep-r13.mdとmegamoe-prefill-dep-r13-cpu-validation-20261101.json。"
   },
   "prefill_native_v_lane_20261101": {
-    "status": "CPU validated; GPU not submitted",
+    "status": "CPU validated; GPU prepared after original r13 first-shape speed rejection",
     "baseline": "becabbf round13 native-V/four-chain-sum",
     "shape": "exactly 2 requests, lengths3900..4096, N96, KV4xD128 BF16 to E4M3",
     "change": "V-only lane ownership becomes32 tokens x16 contiguous dimensions per warp; coalesced native byte stores and one128-bit paged V store. Q/K and attention unchanged.",
@@ -528,6 +535,8 @@
     "official_goodput": null,
     "evidence": [
       "native-v-lane-cpu-20261101.json"
-    ]
+    ],
+    "next_measurement_uncertainty": "Lane remapping reduces static native-store sector requests but total latency benefit is unmeasured. Add separate producer and FA3+O diagnostic timing in the next fixed-source run; neither diagnostic controls adoption.",
+    "cpu_regression_tests": 141
   }
 }

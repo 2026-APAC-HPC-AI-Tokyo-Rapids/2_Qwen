@@ -56,6 +56,10 @@ jobs:
 
   container:
     name: AWSでSquashFSを準備
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
     needs: validate
     if: ${{ !contains(github.event.head_commit.message, '[basic]') && ((github.event_name == 'push' && (contains(github.event.head_commit.message, '[cluster:genkai]') || (contains(github.event.head_commit.message, '[cluster:aspire2ap]') && !contains(github.event.head_commit.message, '[kernel-bench]')) || (contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]') && !contains(github.event.head_commit.message, '[kernel-bench]')))) || (github.event_name == 'workflow_dispatch' && (inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)) ) }}
     uses: ./.github/workflows/aws-container.yml

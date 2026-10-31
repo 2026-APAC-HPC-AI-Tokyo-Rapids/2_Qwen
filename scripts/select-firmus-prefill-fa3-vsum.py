@@ -61,7 +61,9 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
         assert pair["schema"]=="firmus-prefill-fa3-pair/v1" and pair["adopted"] is True, "round-12 gate did not adopt"
         pair_gpus=pair["gpus"]
         assert len(pair_gpus)==12 and len({g["uuid"] for g in pair_gpus})==12, "incomplete round-12 UUIDs"
-        pair_identity={(g["worker"],g["rank"]):g["uuid"] for g in pair_gpus}
+        # Independent srun steps may swap worker labels on the same node.
+        # Every physical GPU must still have passed the pair gate in this allocation.
+        pair_identity={g["uuid"]:g for g in pair_gpus}
         assert workers_ok and time.time()<=deadline, "workers failed, timed out or late"
         uuids=set()
         for worker in range(3):
@@ -70,9 +72,9 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
                 result["gpus"].append(record)
                 assert record["schema"]==SCHEMA and record["run_id"]==run_id, "stale result"
                 assert record["worker"]==f"prefill-{worker}" and record["rank"]==rank, "wrong worker"
-                assert record["uuid"]==pair_identity[(record["worker"],rank)] and isinstance(record["uuid"],str) and record["uuid"] and record["uuid"] not in uuids and "H200" in record["device"], "wrong GPU"
+                assert isinstance(record["uuid"],str) and record["uuid"] in pair_identity and record["uuid"] not in uuids and "H200" in record["device"], "wrong GPU"
                 # Same Slurm allocation; the pair gate's timestamp suffix is independent.
-                assert record["run_id"].split("-",1)[0]==next(g["run_id"] for g in pair_gpus if g["uuid"]==record["uuid"]).split("-",1)[0], "wrong round-12 allocation"
+                assert record["run_id"].split("-",1)[0]==pair_identity[record["uuid"]]["run_id"].split("-",1)[0], "wrong round-12 allocation"
                 uuids.add(record["uuid"])
                 assert record["passed"] is True and 0<record["elapsed_seconds"]<SECONDS and record["finished_at"]<=deadline, "failed or late GPU"
                 assert set(record["shapes"])=={"+".join(map(str,s)) for s in SHAPES}, "incomplete shapes"
@@ -216,6 +218,37 @@ def measure(torch, checks, state):
     return samples
 
 
+def component_timings(torch, checks, common, state):
+    """First-shape diagnostics only; isolated times are not additive or adoption gates."""
+    import deep_gemm
+    from sglang.kernels.ops.attention.rope import apply_qknorm_rope_fp8_prefill_fp32
+
+    def repeated(call):
+        def step():
+            for _ in range(REPS):
+                call()
+        return step
+
+    producers={"control":lambda:apply_qknorm_rope_fp8_prefill_fp32(*common["rope_args"]),"candidate":lambda:native_producer(common,state["image"],state["n"])}
+    producer_samples=measure(torch,checks,{"timed":{mode:repeated(call) for mode,call in producers.items()}})
+    specs=checks["prefill_specs"]()
+    metadata=torch.empty(17,device="cuda",dtype=torch.int32)
+    lse=torch.empty((64,common["rows"]),device="cuda",dtype=torch.float32)
+    empty=torch.empty(0,device="cuda",dtype=torch.uint8)
+    calls={}
+    for mode in ("control","candidate"):
+        candidate=mode=="candidate"
+        index=next(i for i,spec in enumerate(specs) if spec["name"]==row_name(common["lengths"],candidate))
+        image=state["image"] if candidate else empty
+        def attention_o(mode=mode,index=index,image=image):
+            out,scales=state["output"][mode]
+            torch.ops.apac_fa3_verify.prefill_variant_fwd_out(common["q"],common["k"],common["v"],image,common["cu"],out,scales,lse,metadata,max(common["lengths"]),128**-.5,index)
+            deep_gemm.fp8_gemm_nt((out.view(common["rows"],8192),scales),state["weight"],state["o_outputs"][mode],compiled_dims="nk")
+        calls[mode]=repeated(attention_o)
+    attention_samples=measure(torch,checks,{"timed":calls})
+    return {"scope":"isolated producer and FA3+O; not additive, not an adoption criterion","producer_samples_us":producer_samples,"producer_summary":timing_summary(producer_samples),"attention_o_samples_us":attention_samples,"attention_o_summary":timing_summary(attention_samples)}
+
+
 def endurance(torch, checks, common, state):
     import deep_gemm
     from sglang.srt.layers.attention.prefill_fp8 import (
@@ -281,6 +314,8 @@ def run(output, run_id, deadline):
             record["samples_us"]=measure(torch,checks,state)
             record["timing_summary"]=timing_summary(record["samples_us"])
             result["shapes"]["+".join(map(str,lengths))]=record
+            if lengths==SHAPES[0]:
+                record["components"]=component_timings(torch,checks,common,state)
             assert all(v>=5 for v in record["timing_summary"]["savings_us"].values()), "below 5 us margin"
             del common,state
         for lengths in SINGLE_SHAPES:

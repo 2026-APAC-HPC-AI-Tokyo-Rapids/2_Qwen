@@ -5,7 +5,7 @@
   "baseline_cpu_evidence_commit": "0af382a7a1ce592310e9569fc8996146f3ce4487",
   "sglang_commit": "fc275674a97d78553b22597ee72c8fd48f5420f4",
   "patch_sha256": "1747e051954caaeaeed813a6eec41f1f874c83646b18661244fbd5f78f079cfd",
-  "status": "Local CPU checks passed; full Actions validation and GPU execution pending",
+  "status": "CPU validation passed including observed UUID remapping and diagnostic call paths; next fixed-source GPU run prepared",
   "gpu_executed": false,
   "performance_prediction": null,
   "shape": {
@@ -282,7 +282,17 @@
     "skipped": 0,
     "includes_actual_cpu_torch_and_squashfs_fixtures": true,
     "ruff": "passed",
-    "full_linux_actions_validation": "pending"
+    "full_linux_actions_validation": {
+      "run_id": 41243172516,
+      "head_sha": "89d2ed6f412ec9ddcbe1f80ae9eda2d61a44e450",
+      "status": "success",
+      "jobs": [
+        "validate",
+        "gigatoken CPU compatibility",
+        "PP4 pre-allocation CPU gate regression"
+      ],
+      "cluster_and_build_jobs": "skipped"
+    }
   },
   "other_cpu_prototypes": {
     "shared_tile": {
@@ -323,5 +333,13 @@
     "initial_harness_failure": "scheduler-sync checker was given layers/dp_attention.py; corrected to the actual managers/scheduler_components/dp_attn.py. No production fix was needed.",
     "archive": "lane-integration-evidence.tar.gz",
     "sha256": "e48e4e752942d7052d7d49fbc8c922ec9904fd77da15e41ea2102aee38e6001b"
+  },
+  "followup_cpu_regression": {
+    "tests": 141,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 4.081,
+    "reason": "Observed independent-srun worker remap; first-shape separate producer and FA3+O diagnostics",
+    "full_path_gate_changed": false
   }
 }

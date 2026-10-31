@@ -71,6 +71,69 @@ def test_all_twelve_adopt_atomic_composite(screen):
     assert not list(screen[0].glob('*.tmp'))
 
 
+def test_independent_slurm_steps_may_permute_worker_gpu_assignment(screen):
+    pair=json.loads(screen[2].read_text())
+    # Actual run 41240194309 swapped the two four-GPU workers on the head node.
+    for entry in pair['gpus']:
+        if entry['worker'] in ('prefill-0','prefill-1'):
+            entry['worker']='prefill-1' if entry['worker']=='prefill-0' else 'prefill-0'
+    screen[2].write_text(json.dumps(pair))
+    assert aggregate(screen)['adopted']
+    assert screen[1].read_text()==PIN.replace(GATE['CONTROL'],GATE['DISPATCH'])
+
+
+def test_component_diagnostics_keep_producer_out_of_attention_timing(monkeypatch):
+    torch=pytest.importorskip('torch')
+    from types import SimpleNamespace
+    events=[]
+    rows=2
+    common={'lengths':(3994,3994),'rows':rows,'rope_args':('rope',),'q':'q','k':'k','v':'v','cu':'cu'}
+    outputs={mode:(torch.empty(rows,64,128),torch.empty(rows,64)) for mode in ('control','candidate')}
+    state={'image':object(),'n':96,'output':outputs,'weight':object(),'o_outputs':{mode:object() for mode in outputs}}
+
+    def native(common_arg,image,n):
+        assert common_arg is common and image is state['image'] and n==96
+        events.append('native')
+
+    def old(*args):
+        assert args==('rope',)
+        events.append('old')
+
+    def attention(*args):
+        index=args[-1]
+        mode=('control','candidate')[index]
+        assert args[:3]==('q','k','v') and args[4]=='cu'
+        assert args[5] is outputs[mode][0] and args[6] is outputs[mode][1]
+        assert args[9:11]==(3994,128**-.5)
+        assert (args[3] is state['image']) if index else args[3].numel()==0
+        events.append('attention-'+mode)
+
+    def gemm(data,weight,out,**kwargs):
+        assert data[0].shape==(rows,8192) and weight is state['weight'] and kwargs=={'compiled_dims':'nk'}
+        assert any(out is x for x in state['o_outputs'].values())
+        events.append('o')
+
+    snapshots=[]
+    def measure(_,checks,timed):
+        start=len(events)
+        for call in timed['timed'].values(): call()
+        snapshots.append(events[start:])
+        return {order:{'control':[900.]*10,'candidate':[895.]*10} for order in ('forward','reverse')}
+
+    scope=GATE['component_timings'].__globals__
+    monkeypatch.setitem(scope,'native_producer',native)
+    monkeypatch.setitem(scope,'measure',measure)
+    monkeypatch.setitem(sys.modules,'deep_gemm',SimpleNamespace(fp8_gemm_nt=gemm))
+    monkeypatch.setitem(sys.modules,'sglang.kernels.ops.attention.rope',SimpleNamespace(apply_qknorm_rope_fp8_prefill_fp32=old))
+    fake=SimpleNamespace(empty=lambda *args,device,**kwargs:torch.empty(*args,**kwargs),int32=torch.int32,float32=torch.float32,uint8=torch.uint8,ops=SimpleNamespace(apac_fa3_verify=SimpleNamespace(prefill_variant_fwd_out=attention)))
+    checks={'prefill_specs':lambda:[{'name':GATE['row_name'](common['lengths'],candidate)} for candidate in (False,True)]}
+    result=GATE['component_timings'](fake,checks,common,state)
+    assert snapshots[0]==['old']*12+['native']*12
+    assert snapshots[1]==['attention-control','o']*12+['attention-candidate','o']*12
+    assert result['producer_summary']['savings_us']['pooled']==5
+    assert result['attention_o_summary']['savings_us']['pooled']==5
+
+
 @pytest.mark.parametrize('case',['missing','malformed','stale','uuid','allocation','late','elapsed','failed','shape','single_missing','single_row','single_writer','single_producer','single_output','single_replay','single_numeric','single_timing','old_schema','dump','producer','replay','numeric','reverse','incomplete','nan','overflow','endurance','bytes','dispatch','pair_failed','pair_uuid','timeout'])
 def test_one_failed_cell_keeps_env(screen,case):
     path=screen[0]/'prefill-2/rank-3.json'; record=json.loads(path.read_text()); shape=record['shapes']['3994+3994']
