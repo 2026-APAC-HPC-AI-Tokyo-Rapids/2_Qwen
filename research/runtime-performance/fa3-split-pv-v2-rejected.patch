@@ -1,74 +1,9 @@
-diff --git a/kernels/probes/fa3-split-pv-layout.cu b/kernels/probes/fa3-split-pv-layout.cu
-index b83e2e2..74325b7 100644
---- a/kernels/probes/fa3-split-pv-layout.cu
-+++ b/kernels/probes/fa3-split-pv-layout.cu
-@@ -12,8 +12,9 @@ int main() {
-     using namespace apac_split_pv;
-     std::vector<int> owners(128 * 192, 0), image(128 * 192, -1);
-     int mismatches = 0, row_mismatches = 0, noncontiguous_words = 0;
-+    int banks[8][24][32] = {};
-     for (int tid = 0; tid < 256; ++tid) {
--        ML::TiledMmaQK qk;
-+        QK qk;
-         auto coords = qk.get_thread_slice(tid).partition_C(make_identity_tensor(select<0, 1>(ShapeQK{})));
-         auto scores = partition_fragment_C(qk, select<0, 1>(ShapeQK{}));
-         for (int i = 0; i < size(scores); ++i) { scores(i) = get<0>(coords(i)) * 192 + get<1>(coords(i)); }
-@@ -45,6 +46,7 @@ int main() {
-             bool contiguous = offsets(i) % 4 == 0;
-             for (int j = 1; j < 4; ++j) { contiguous &= offsets(i+j) == offsets(i)+j; }
-             noncontiguous_words += !contiguous;
-+            ++banks[tid/32][i/4][(offsets(i)/4)%32];
-         }
-         static_assert(decltype(size(packed))::value == decltype(size(dest))::value);
-         for (int i = 0; i < size(packed); ++i) {
-@@ -108,18 +110,19 @@ int main() {
-     }
-     std::vector<int> out_owners(128*128, 0);
-     int output_errors = 0;
--    for (int tid=0; tid<128; ++tid) {
-+    for (int tid=0; tid<256; ++tid) {
-         auto acc = partition_fragment_C(PV{}, select<0,1>(ShapePV{}));
-         auto coordinates = PV{}.get_thread_slice(tid).partition_C(make_identity_tensor(select<0,1>(ShapePV{})));
-         for (int i=0; i<size(acc); ++i) {
-             int d=get<1>(coordinates(i));
-             acc(i)=get<0>(coordinates(i))*128+v_inverse.at(vl(make_coord(d,0,0)))%128;
-         }
--        auto values=group_modes<1,3>(acc);
-+        auto output_view = make_tensor(acc.data(), partition_fragment_C(PVOutput{}, select<0,1>(ShapePV{})).layout());
-+        auto values=group_modes<1,3>(output_view);
-         for (int m=0; m<size<1>(values); ++m) for (int r=0; r<2; ++r) for (int n=0; n<8; ++n) {
-             std::swap(values(make_coord(1,r,2*n),m),values(make_coord(0,r,2*n+1),m));
-         }
--        auto coords=group_modes<1,3>(coordinates);
-+        auto coords=group_modes<1,3>(PVOutput{}.get_thread_slice(tid).partition_C(make_identity_tensor(select<0,1>(ShapePV{}))));
-         for (int wave=0; wave<size<1>(values); ++wave) for (int r=0; r<2; ++r) {
-             int row=get<0>(coords(make_coord(0,r,0),wave));
-             int col=2*get<1>(coords(_0{},wave));
-@@ -131,6 +134,8 @@ int main() {
-         }
-     }
-     for (int n: out_owners) { output_errors += n != 1; }
--    std::printf("{\"shared_bytes\":%zu,\"matrix_elements\":24576,\"native_probability_permuted_elements\":%d,\"row_errors\":%d,\"ownership_errors\":%d,\"pv_key_pairing_errors\":%d,\"v_column_errors\":%d,\"stage_errors\":%d,\"noncontiguous_words\":%d,\"output_errors\":%d,\"gpu_executed\":false}\n", sizeof(Shared), mismatches, row_mismatches, missing_or_duplicate, pairing_errors, v_column_errors, stage_errors, noncontiguous_words, output_errors);
-+    int max_bank_multiplicity = 0;
-+    for (auto& warp: banks) for (auto& word: warp) for (int count: word) { max_bank_multiplicity = std::max(max_bank_multiplicity, count); }
-+    std::printf("{\"shared_bytes\":%zu,\"matrix_elements\":24576,\"native_probability_permuted_elements\":%d,\"row_errors\":%d,\"ownership_errors\":%d,\"pv_key_pairing_errors\":%d,\"v_column_errors\":%d,\"stage_errors\":%d,\"noncontiguous_words\":%d,\"output_errors\":%d,\"max_p_store_bank_multiplicity\":%d,\"gpu_executed\":false}\n", sizeof(Shared), mismatches, row_mismatches, missing_or_duplicate, pairing_errors, v_column_errors, stage_errors, noncontiguous_words, output_errors, max_bank_multiplicity);
-     return row_mismatches || missing_or_duplicate || pairing_errors || v_column_errors || stage_errors || noncontiguous_words || output_errors;
- }
-diff --git a/kernels/probes/fa3-split-pv.cu b/kernels/probes/fa3-split-pv.cu
-index d8af34e..e1bf797 100644
 --- a/kernels/probes/fa3-split-pv.cu
 +++ b/kernels/probes/fa3-split-pv.cu
-@@ -1,5 +1,5 @@
- // Research-only SM90a Prefill kernel. Not selected by the serving dispatcher.
+@@ -2 +2 @@
 -// QK/softmax own two warpgroups; a third owns PV and its output accumulators.
 +// QK/softmax and PV each own two independent warpgroups.
- // A two-slot FP8 P mailbox replaces the cross-iteration RS operand dependency.
- // The Q/K/V representation, causal mask, FP32 softmax and FP8 rounding are kept.
- #include "verify.h"
-@@ -18,8 +18,17 @@ using ShapePV = Shape<_128, _128, _192>;
- using ML = flash::CollectiveMainloopFwdSm90<2, Shape<_1, _1, _1>, ShapeQK, 128,
-     E, float, cutlass::arch::Sm90, true, false, false, true, false, false,
-     false, false, true, true, true, false, false, cutlass::bfloat16_t>;
+@@ -21,2 +21,11 @@
 -using PV = decltype(make_tiled_mma(GMMA::ss_op_selector<E, E, float, ShapePV,
 -    GMMA::Major::K, GMMA::Major::K>(), Layout<Shape<_1, _1, _1>>{}));
 +// Two N96 atoms retain the N192 mathematical tile and the reduction order.
@@ -82,143 +17,89 @@ index d8af34e..e1bf797 100644
 +// Restore that view for the full-row amax and the native output permutation.
 +using PVOutput = decltype(make_tiled_mma(GMMA::ss_op_selector<E, E, float, ShapePV,
 +    GMMA::Major::K, GMMA::Major::K>(), Layout<Shape<_2, _1, _1>>{}));
- using PLayout = decltype(tile_to_shape(ML::SmemLayoutAtomP{}, Shape<_128, _192, _2>{}));
- using PPipe = cutlass::PipelineAsync<2>;
- 
-@@ -38,11 +47,13 @@ struct Shared : aligned_struct<1024, _1> {
-         alignas(16) ML::MainloopPipelineV::SharedStorage pipeline_v;
-         alignas(16) ML::MainloopPipelineVt::SharedStorage pipeline_vt;
-         alignas(16) ML::MainloopPipelineMask::SharedStorage pipeline_mask;
+@@ -41 +50 @@
 -        alignas(16) PPipe::SharedStorage p;
 +        alignas(16) PPipe::SharedStorage p[2];
-     } pipelines;
- };
- static_assert(sizeof(Shared) <= 227 * 1024, "P mailbox must fit beside the unchanged KV stages");
+@@ -45 +54,3 @@
 -static_assert(128 * (24 + 2 * 152 + 176) <= 65536, "role register budgets exceed one SM");
 +// setmaxnreg exchanges registers within the CTA's initial pool, not the SM's
 +// unused remainder. 640 threads at 96 initial registers supply 61440 registers.
 +static_assert(128 * (24 + 2 * 136 + 2 * 88) <= 640 * 96, "role register budgets exceed the CTA pool");
- 
- #ifndef APAC_SPLIT_PV_LAYOUT_ONLY
- struct Params {
-@@ -53,8 +64,8 @@ struct Params {
-     int max_m_blocks;
- };
- 
+@@ -56,2 +67,2 @@
 -// This is the deployed direct-O mapping with an extra M-wave loop: one PV WG
 -// owns 128 rows rather than 64. It does not stage another full O tensor.
 +// Each PV warpgroup owns the same 64 rows as its corresponding QK warpgroup.
 +// The native direct-O mapping does not stage another full O tensor.
- template<class Acc>
- CUTLASS_DEVICE void store_output(Params const& p, Acc const& acc, int tid,
-                                  int m_block, int kv_head, int len, int offset) {
-@@ -66,7 +77,7 @@ CUTLASS_DEVICE void store_output(Params const& p, Acc const& acc, int tid,
-             : "f"(group_modes<1, 3>(acc)(i)), "f"(0.f));
-         values(i) = __uint_as_float(bits);
-     }
+@@ -69 +80 @@
 -    auto coords = group_modes<1, 3>(PV{}.get_thread_slice(tid).partition_C(
 +    auto coords = group_modes<1, 3>(PVOutput{}.get_thread_slice(tid).partition_C(
-         make_identity_tensor(select<0, 1>(ShapePV{}))));
-     cutlass::NumericArrayConverter<E, float, 4> convert;
-     CUTE_UNROLL
-@@ -107,7 +118,7 @@ CUTLASS_DEVICE void store_output(Params const& p, Acc const& acc, int tid,
-     }
- }
- 
+@@ -110 +121 @@
 -__global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const p) {
 +__global__ __launch_bounds__(640, 1) void kernel(__grid_constant__ Params const p) {
-     extern __shared__ __align__(1024) char storage[];
-     auto& s = *reinterpret_cast<Shared*>(storage);
-     int const wg = __shfl_sync(0xffffffff, int(threadIdx.x) / 128, 0);
-@@ -128,7 +139,7 @@ __global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const
-     if (threadIdx.x == 0) {
-         ML::prefetch_tma_descriptors(p.mainloop);
-         s.pipelines.barrier_Q.init(128);
+@@ -131 +142 @@
 -        s.pipelines.barrier_O.init(128);
 +        s.pipelines.barrier_O.init(256);
-     }
-     ML::MainloopPipelineK::Params kp;
-     kp.role = wg == 0 ? ML::MainloopPipelineK::ThreadCategory::Producer : ML::MainloopPipelineK::ThreadCategory::Consumer;
-@@ -143,13 +154,16 @@ __global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const
-     ML::MainloopPipelineV::Params vp;
-     vp.role = wg == 0 ? ML::MainloopPipelineV::ThreadCategory::Producer : ML::MainloopPipelineV::ThreadCategory::Consumer;
-     vp.producer_arv_count = 128;
+@@ -146 +157 @@
 -    vp.consumer_arv_count = 128;
 +    vp.consumer_arv_count = 256;
-     ML::MainloopPipelineV pv(s.pipelines.pipeline_v, vp);
-     PPipe::Params pp;
-     pp.role = wg == 1 || wg == 2 ? PPipe::ThreadCategory::Producer : PPipe::ThreadCategory::Consumer;
+@@ -150 +161 @@
 -    pp.producer_arv_count = 256;
 +    pp.producer_arv_count = 128;
-     pp.consumer_arv_count = 128;
+@@ -152 +163,4 @@
 -    PPipe mailbox(s.pipelines.p, pp);
 +    // Initialize both mailboxes collectively; each QK/PV pair owns 64 rows.
 +    PPipe mailbox0(s.pipelines.p[0], pp);
 +    PPipe mailbox1(s.pipelines.p[1], pp);
 +    auto mailbox = wg == 2 || wg == 4 ? mailbox1 : mailbox0;
-     ML::MainloopPipelineMask::Params mp;
-     mp.role = ML::MainloopPipelineMask::ThreadCategory::Producer;
-     mp.producer_arv_count = 128;
-@@ -165,9 +179,9 @@ __global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const
-         ML{}.load(p.mainloop, pk, pv, pvt, mask_pipe, write, s, no_prefetch, info, coord, work);
-         ML{}.load_tail(pk, pv, pvt, mask_pipe, write, s, work);
-     } else if (wg < 3) {
+@@ -168 +182 @@
 -        cutlass::arch::warpgroup_reg_alloc<152>();
 +        cutlass::arch::warpgroup_reg_alloc<136>();
-         int const qtid = int(threadIdx.x) - 128;
+@@ -170 +184 @@
 -        ML::TiledMmaQK qk;
 +        QK qk;
-         auto qk_wg = qk.get_slice((wg - 1) * 128);
-         auto sq = make_tensor(make_smem_ptr(s.tensors.mainloop.smem_q.data()), ML::SmemLayoutQ{});
-         auto sk = make_tensor(make_smem_ptr(s.tensors.mainloop.smem_k.data()), ML::SmemLayoutK{});
-@@ -183,7 +197,7 @@ __global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const
-         float const kscale = p.mainloop.ptr_k_descale ? p.mainloop.ptr_k_descale[bidb * get<0>(p.mainloop.stride_k_descale) + head * get<1>(p.mainloop.stride_k_descale)] : 1.f;
-         float const vscale = p.mainloop.ptr_v_descale ? p.mainloop.ptr_v_descale[bidb * get<0>(p.mainloop.stride_v_descale) + head * get<1>(p.mainloop.stride_v_descale)] : 1.f;
-         flash::Softmax<2, 8> softmax(p.mainloop.softmax_scale_log2 * (qscale * kscale));
+@@ -186 +200 @@
 -        flash::Mask<128, 192, true, ML::TiledMmaQK> mask(qtid, info.seqlen_q, info.seqlen_k,
 +        flash::Mask<128, 192, true, QK> mask(qtid, info.seqlen_q, info.seqlen_k,
-             -1, -1, 0, p.mainloop.attention_chunk_divmod, p.mainloop.qhead_per_khead_divmod);
-         cutlass::arch::NamedBarrier::arrive(384, uint32_t(flash::FwdNamedBarriers::QueryEmpty));
-         s.pipelines.barrier_Q.wait(0);
-@@ -231,16 +245,17 @@ __global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const
-         for (int n = n_max - 2; n >= n_min; --n) { step(n, false_type{}); }
-         mailbox.producer_tail(write);
-     } else {
+@@ -234 +248 @@
 -        cutlass::arch::warpgroup_reg_alloc<176>();
 +        cutlass::arch::warpgroup_reg_dealloc<88>();
-         PV mma;
+@@ -236 +250,2 @@
 -        auto wg_mma = mma.get_slice(0);
 +        int const pv_tid = int(threadIdx.x) - 384;
 +        auto wg_mma = mma.get_slice((wg - 3) * 128);
-         auto sv = make_tensor(make_smem_ptr(s.tensors.mainloop.smem_v.data()), ML::SmemLayoutVtMma{});
-         auto sp = make_tensor(make_smem_ptr(s.tensors.p.data()), PLayout{});
-         auto v = wg_mma.partition_fragment_B(sv);
-         auto a = wg_mma.partition_fragment_A(sp);
-         auto out = partition_fragment_C(mma, select<0, 1>(ShapePV{}));
-         clear(out);
+@@ -243 +258 @@
 -        auto coords = mma.get_thread_slice(tid).partition_C(make_identity_tensor(select<0, 1>(ShapePV{})));
 +        auto coords = mma.get_thread_slice(pv_tid).partition_C(make_identity_tensor(select<0, 1>(ShapePV{})));
-         auto rows = make_tensor(coords.data(), flash::convert_layout_acc_rowcol(coords.layout()))(_, _0{});
-         auto o_rc = make_tensor(out.data(), flash::convert_layout_acc_rowcol(out.layout()));
-         ML::PipelineState read;
-@@ -265,8 +280,9 @@ __global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const
-             CUTE_UNROLL
-             for (int c = 0; c < size<1>(o_rc); ++c) { o_rc(r, c) *= f; }
-         }
+@@ -268,2 +283,3 @@
 -        flash::permute_output_fp8(out);
 -        store_output(p, out, tid, m_block, head, info.seqlen_q, info.offset_q);
 +        auto output_view = make_tensor(out.data(), partition_fragment_C(PVOutput{}, select<0, 1>(ShapePV{})).layout());
 +        flash::permute_output_fp8(output_view);
 +        store_output(p, output_view, pv_tid, m_block, head, info.seqlen_q, info.offset_q);
-         s.pipelines.barrier_O.arrive();
-     }
- }
-@@ -297,7 +313,7 @@ extern "C" int pf_run(int id, int rows, int batch, int maxlen,
-         nullptr, nullptr, nullptr, nullptr, nullptr};
-     Params params{ML::to_underlying_arguments(args), static_cast<uint8_t*>(out),
-         static_cast<float*>(scales), scale_stride, (maxlen * 16 + 127) / 128};
+@@ -300 +316 @@
 -    kernel<<<dim3(params.max_m_blocks, 4, batch), 512, sizeof(Shared), static_cast<cudaStream_t>(stream_ptr)>>>(params);
 +    kernel<<<dim3(params.max_m_blocks, 4, batch), 640, sizeof(Shared), static_cast<cudaStream_t>(stream_ptr)>>>(params);
-     return int(cudaGetLastError());
- }
- 
+--- a/kernels/probes/fa3-split-pv-layout.cu
++++ b/kernels/probes/fa3-split-pv-layout.cu
+@@ -14,0 +15 @@
++    int banks[8][24][32] = {};
+@@ -16 +17 @@
+-        ML::TiledMmaQK qk;
++        QK qk;
+@@ -47,0 +49 @@
++            ++banks[tid/32][i/4][(offsets(i)/4)%32];
+@@ -111 +113 @@
+-    for (int tid=0; tid<128; ++tid) {
++    for (int tid=0; tid<256; ++tid) {
+@@ -118 +120,2 @@
+-        auto values=group_modes<1,3>(acc);
++        auto output_view = make_tensor(acc.data(), partition_fragment_C(PVOutput{}, select<0,1>(ShapePV{})).layout());
++        auto values=group_modes<1,3>(output_view);
+@@ -122 +125 @@
+-        auto coords=group_modes<1,3>(coordinates);
++        auto coords=group_modes<1,3>(PVOutput{}.get_thread_slice(tid).partition_C(make_identity_tensor(select<0,1>(ShapePV{}))));
+@@ -134 +137,3 @@
+-    std::printf("{\"shared_bytes\":%zu,\"matrix_elements\":24576,\"native_probability_permuted_elements\":%d,\"row_errors\":%d,\"ownership_errors\":%d,\"pv_key_pairing_errors\":%d,\"v_column_errors\":%d,\"stage_errors\":%d,\"noncontiguous_words\":%d,\"output_errors\":%d,\"gpu_executed\":false}\n", sizeof(Shared), mismatches, row_mismatches, missing_or_duplicate, pairing_errors, v_column_errors, stage_errors, noncontiguous_words, output_errors);
++    int max_bank_multiplicity = 0;
++    for (auto& warp: banks) for (auto& word: warp) for (int count: word) { max_bank_multiplicity = std::max(max_bank_multiplicity, count); }
++    std::printf("{\"shared_bytes\":%zu,\"matrix_elements\":24576,\"native_probability_permuted_elements\":%d,\"row_errors\":%d,\"ownership_errors\":%d,\"pv_key_pairing_errors\":%d,\"v_column_errors\":%d,\"stage_errors\":%d,\"noncontiguous_words\":%d,\"output_errors\":%d,\"max_p_store_bank_multiplicity\":%d,\"gpu_executed\":false}\n", sizeof(Shared), mismatches, row_mismatches, missing_or_duplicate, pairing_errors, v_column_errors, stage_errors, noncontiguous_words, output_errors, max_bank_multiplicity);
