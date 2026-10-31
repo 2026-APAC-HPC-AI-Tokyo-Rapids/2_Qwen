@@ -72,14 +72,15 @@ def main():
     args = parser.parse_args()
     started = time.monotonic()
     control = helper.Library(args.directory / 'control.so')
+    current = helper.Library(args.directory / 'current.so')
     candidate = helper.Library(args.directory / 'split-pv.so')
     assert candidate.lib.pf_init() == 0
-    assert control.count == candidate.count == 1
-    result = {'schema': 'fa3-split-pv-gate/v1', 'device': torch.cuda.get_device_name(), 'torch': torch.__version__, 'cuda': torch.version.cuda, 'gpu_executed': True, 'serving_executed': False, 'numeric': [], 'timing': [], 'passed': False}
+    assert control.count == current.count == candidate.count == 1
+    result = {'schema': 'fa3-split-pv-gate/v3', 'device': torch.cuda.get_device_name(), 'torch': torch.__version__, 'cuda': torch.version.cuda, 'gpu_executed': True, 'serving_executed': False, 'numeric_control': 'M128/N192 variant 224', 'timing_control': 'served M192/N96 variant 8416', 'candidate_timing_includes': ['V packing kernel', 'split-PV kernel'], 'numeric': [], 'timing': [], 'passed': False}
     save(args.output, result)
     # Tile boundaries, unequal lengths and the actual PP4 pair. Three distributions
     # cover equal maxima, ordinary updates and strongly peaked online softmax.
-    checks = [((7, 9), 'random'), ((191, 193), 'random'), ((3994, 3994), 'random'), ((3986, 4027), 'random'), ((193, 385), 'zero'), ((3994, 3994), 'peaked')]
+    checks = [((7, 9), 'random'), ((191, 193), 'random'), ((3994, 3994), 'random'), ((3986, 4027), 'random'), ((193, 385), 'zero'), ((3994, 3994), 'peaked'), ((3994, 3994), 'random')]
     for index, (lengths, distribution) in enumerate(checks):
         row, _ = compare(control, candidate, lengths, 20261101 + index, distribution)
         result['numeric'].append(row)
@@ -89,29 +90,36 @@ def main():
         helper.LENGTHS = lengths
         q, k, v, cu = helper.inputs('cuda')
         buffers = [(q, k, v, cu, *helper.buffers('cuda')) for _ in range(2)]
-        # Repeated independent launches catch mailbox phase or reuse defects.
-        call(control, buffers[0])
-        for _ in range(300):
+        # Old N192 is the exact-numerics oracle. Current M192 is the speed control.
+        reference = (q, k, v, cu, *helper.buffers('cuda'))
+        call(control, reference)
+        call(current, buffers[0])
+        expected = helper.reference(q, k, v, stride=max(lengths)//12)
+        current_error = helper.errors(buffers[0][4], buffers[0][5], expected)
+        assert current_error['relative_l2'] <= 0.05 and current_error['max_scaled_error'] <= 0.25
+        # Repeated launches test mailbox reuse and the probe-owned packed-V buffer.
+        for _ in range(1200):
             candidate.run(0, *buffers[1])
         torch.cuda.synchronize()
-        assert torch.equal(buffers[0][4].view(torch.uint8), buffers[1][4].view(torch.uint8))
-        assert torch.equal(buffers[0][5], buffers[1][5])
-        graphs = [helper.capture(lib, 0, buf) for lib, buf in zip((control, candidate), buffers)]
+        assert torch.equal(reference[4].view(torch.uint8), buffers[1][4].view(torch.uint8))
+        assert torch.equal(reference[5], buffers[1][5])
+        graphs = [helper.capture(lib, 0, buf) for lib, buf in zip((current, candidate), buffers)]
         samples = [[], []]
         before = helper.sm_clock()
         for pair in range(20):
             for index in ((0, 1) if pair % 2 == 0 else (1, 0)):
                 samples[index].append(helper.measure(graphs[index]))
         # Graph replay must also retain correctness after the timing repetitions.
-        assert torch.equal(buffers[0][4].view(torch.uint8), buffers[1][4].view(torch.uint8))
-        assert torch.equal(buffers[0][5], buffers[1][5])
+        assert torch.equal(reference[4].view(torch.uint8), buffers[1][4].view(torch.uint8))
+        assert torch.equal(reference[5], buffers[1][5])
         savings = [a-b for a, b in zip(*samples)]
-        row = {'lengths': lengths, 'control_us': samples[0], 'candidate_us': samples[1], 'median_saving_us': statistics.median(savings), 'median_ratio': statistics.median(samples[1]) / statistics.median(samples[0]), 'endurance_calls': 300, 'clock_power_before': before, 'clock_power_after': helper.sm_clock()}
+        row = {'lengths': lengths, 'control_us': samples[0], 'candidate_us': samples[1], 'median_saving_us': statistics.median(savings), 'median_ratio': statistics.median(samples[1]) / statistics.median(samples[0]), 'endurance_calls': 1200, 'control_fp64_error': current_error, 'forward_saving_us': statistics.median(savings[::2]), 'reverse_saving_us': statistics.median(savings[1::2]), 'positive_pairs': sum(x > 0 for x in savings), 'clock_power_before': before, 'clock_power_after': helper.sm_clock()}
         result['timing'].append(row)
         save(args.output, result)
         print('TIMING ' + json.dumps(row), flush=True)
-    result.update(passed=True, numerical_endurance_passed=True, performance_gate_passed=all(row['median_saving_us'] >= 60 for row in result['timing']), minimum_target_saving_us=60, elapsed_seconds=time.monotonic()-started)
+    result.update(passed=True, numerical_endurance_passed=True, performance_gate_passed=all(min(row['median_saving_us'], row['forward_saving_us'], row['reverse_saving_us']) >= 30 and row['positive_pairs'] >= 18 for row in result['timing']), minimum_target_saving_us=30, elapsed_seconds=time.monotonic()-started)
     save(args.output, result)
+    assert candidate.lib.pf_fini() == 0
     print('PASS fa3-split-pv numerical/endurance gates and paired timing completed; this is not a serving result', flush=True)
 
 

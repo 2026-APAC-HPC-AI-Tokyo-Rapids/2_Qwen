@@ -10,13 +10,27 @@
 int main() {
     using namespace cute;
     using namespace apac_split_pv;
+    int tma_layout_errors = 0;
+    // CUtensorMap's 128-byte swizzle: bits [6:4] XOR bits [9:7].
+    for (int row=0; row<192; ++row) for (int col=0; col<128; ++col) {
+        int linear=row*128+col, swizzled=linear^((linear>>3)&0x70);
+        if (row<128) tma_layout_errors += int(ML::SmemLayoutQ{}(make_coord(row,col))) != swizzled;
+        for (int stage=0; stage<2; ++stage) tma_layout_errors += int(ML::SmemLayoutK{}(make_coord(row,col,stage))) != swizzled+stage*192*128;
+    }
     std::vector<int> owners(128 * 192, 0), image(128 * 192, -1);
     int mismatches = 0, row_mismatches = 0, noncontiguous_words = 0;
     int banks[8][24][32] = {};
     for (int tid = 0; tid < 256; ++tid) {
-        ML::TiledMmaQK qk;
+        QK qk;
         auto coords = qk.get_thread_slice(tid).partition_C(make_identity_tensor(select<0, 1>(ShapeQK{})));
         auto scores = partition_fragment_C(qk, select<0, 1>(ShapeQK{}));
+        auto cl = coords.layout();
+        auto rowcol = make_layout(make_layout(get<0,1>(cl),get<1>(cl)),make_layout(get<0,0>(cl),get<0,2>(cl),get<2>(cl)));
+        auto rc = make_tensor(coords.data(), rowcol)(_, _0{});
+        for (int row=0; row<2; ++row) {
+            int const manual_row=(tid/128)*64+((tid/32)%4)*16+(tid%32)/4+8*row;
+            if (get<0>(rc(row)) != manual_row || ((tid%4==0) != (get<1>(rc(_0{}))==0))) return 9;
+        }
         for (int i = 0; i < size(scores); ++i) { scores(i) = get<0>(coords(i)) * 192 + get<1>(coords(i)); }
         // Exact host counterpart of the deployed permute_Cregs_fp8: swap
         // pairs of FP32 slots; values remain exact integer coordinate IDs.
@@ -110,18 +124,19 @@ int main() {
     }
     std::vector<int> out_owners(128*128, 0);
     int output_errors = 0;
-    for (int tid=0; tid<128; ++tid) {
+    for (int tid=0; tid<256; ++tid) {
         auto acc = partition_fragment_C(PV{}, select<0,1>(ShapePV{}));
         auto coordinates = PV{}.get_thread_slice(tid).partition_C(make_identity_tensor(select<0,1>(ShapePV{})));
         for (int i=0; i<size(acc); ++i) {
             int d=get<1>(coordinates(i));
             acc(i)=get<0>(coordinates(i))*128+v_inverse.at(vl(make_coord(d,0,0)))%128;
         }
-        auto values=group_modes<1,3>(acc);
+        auto output_view = make_tensor(acc.data(), partition_fragment_C(PVOutput{}, select<0,1>(ShapePV{})).layout());
+        auto values=group_modes<1,3>(output_view);
         for (int m=0; m<size<1>(values); ++m) for (int r=0; r<2; ++r) for (int n=0; n<8; ++n) {
             std::swap(values(make_coord(1,r,2*n),m),values(make_coord(0,r,2*n+1),m));
         }
-        auto coords=group_modes<1,3>(coordinates);
+        auto coords=group_modes<1,3>(PVOutput{}.get_thread_slice(tid).partition_C(make_identity_tensor(select<0,1>(ShapePV{}))));
         for (int wave=0; wave<size<1>(values); ++wave) for (int r=0; r<2; ++r) {
             int row=get<0>(coords(make_coord(0,r,0),wave));
             int col=2*get<1>(coords(_0{},wave));
@@ -135,6 +150,6 @@ int main() {
     for (int n: out_owners) { output_errors += n != 1; }
     int max_bank_multiplicity = 0;
     for (auto& warp: banks) for (auto& word: warp) for (int count: word) { max_bank_multiplicity = std::max(max_bank_multiplicity, count); }
-    std::printf("{\"shared_bytes\":%zu,\"matrix_elements\":24576,\"native_probability_permuted_elements\":%d,\"row_errors\":%d,\"ownership_errors\":%d,\"pv_key_pairing_errors\":%d,\"v_column_errors\":%d,\"stage_errors\":%d,\"noncontiguous_words\":%d,\"output_errors\":%d,\"max_p_store_bank_multiplicity\":%d,\"gpu_executed\":false}\n", sizeof(Shared), mismatches, row_mismatches, missing_or_duplicate, pairing_errors, v_column_errors, stage_errors, noncontiguous_words, output_errors, max_bank_multiplicity);
-    return row_mismatches || missing_or_duplicate || pairing_errors || v_column_errors || stage_errors || noncontiguous_words || output_errors;
+    std::printf("{\"shared_bytes\":%zu,\"matrix_elements\":24576,\"native_probability_permuted_elements\":%d,\"row_errors\":%d,\"ownership_errors\":%d,\"pv_key_pairing_errors\":%d,\"v_column_errors\":%d,\"stage_errors\":%d,\"noncontiguous_words\":%d,\"output_errors\":%d,\"max_p_store_bank_multiplicity\":%d,\"tma_layout_errors\":%d,\"gpu_executed\":false}\n", sizeof(Shared), mismatches, row_mismatches, missing_or_duplicate, pairing_errors, v_column_errors, stage_errors, noncontiguous_words, output_errors, max_bank_multiplicity, tma_layout_errors);
+    return tma_layout_errors || row_mismatches || missing_or_duplicate || pairing_errors || v_column_errors || stage_errors || noncontiguous_words || output_errors;
 }

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BENCHMARK = 'kernels/probes/prepare-prefill-memory.sh'
 
 
-@pytest.mark.parametrize('benchmark', [BENCHMARK, 'kernels/probes/prepare-fa3-exp.sh'])
+@pytest.mark.parametrize('benchmark', [BENCHMARK, 'kernels/probes/prepare-fa3-exp.sh', 'kernels/probes/prepare-fa3-split-pv.sh'])
 @pytest.mark.parametrize('gate', ['pass', 'fail', 'missing-pass'])
 def test_memory_probe_skips_counter_preflight_and_requires_gate(tmp_path, gate, benchmark):
     for name in ('source', 'results', 'bin'):

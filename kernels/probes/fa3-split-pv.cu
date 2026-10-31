@@ -1,5 +1,5 @@
 // Research-only SM90a Prefill kernel. Not selected by the serving dispatcher.
-// QK/softmax own two warpgroups; a third owns PV and its output accumulators.
+// Two QK and two PV warpgroups; one 128-thread producer warpgroup. V is transposed once.
 // A two-slot FP8 P mailbox replaces the cross-iteration RS operand dependency.
 // The Q/K/V representation, causal mask, FP32 softmax and FP8 rounding are kept.
 #include "verify.h"
@@ -9,6 +9,7 @@
 #include "softmax.h"
 #include "cuda_check.h"
 #include <stdexcept>
+#include <cuda.h>
 
 namespace apac_split_pv {
 using namespace cute;
@@ -18,43 +19,92 @@ using ShapePV = Shape<_128, _128, _192>;
 using ML = flash::CollectiveMainloopFwdSm90<2, Shape<_1, _1, _1>, ShapeQK, 128,
     E, float, cutlass::arch::Sm90, true, false, false, true, false, false,
     false, false, true, true, true, false, false, cutlass::bfloat16_t>;
+// Two N96 atoms retain the N192 mathematical tile and the reduction order.
+// Keep the exact N192 mathematics with smaller contiguous accumulator fragments.
+using QK = decltype(make_tiled_mma(GMMA::ss_op_selector<E, E, float,
+    Shape<_128, _96, _128>>(), Layout<Shape<_2, _1, _1>>{}));
 using PV = decltype(make_tiled_mma(GMMA::ss_op_selector<E, E, float, ShapePV,
-    GMMA::Major::K, GMMA::Major::K>(), Layout<Shape<_1, _1, _1>>{}));
+    GMMA::Major::K, GMMA::Major::K>(), Layout<Shape<_2, _1, _1>>{}));
+// Native N128 C layout for the full-row amax and output permutation.
+using PVOutput = decltype(make_tiled_mma(GMMA::ss_op_selector<E, E, float, ShapePV,
+    GMMA::Major::K, GMMA::Major::K>(), Layout<Shape<_2, _1, _1>>{}));
 using PLayout = decltype(tile_to_shape(ML::SmemLayoutAtomP{}, Shape<_128, _192, _2>{}));
 using PPipe = cutlass::PipelineAsync<2>;
 
 struct Shared : aligned_struct<1024, _1> {
     struct {
-        ML::TensorStorage mainloop;
+        struct {
+            array_aligned<E, cosize_v<ML::SmemLayoutQ>, 1024> smem_q;
+            array_aligned<E, cosize_v<ML::SmemLayoutK>, 1024> smem_k;
+            array_aligned<E, cosize_v<ML::SmemLayoutVtMma>, 1024> smem_v;
+        } mainloop;
         array_aligned<E, cosize_v<PLayout>, 1024> p;
         float alpha[2][128];
         float final_scale[128];
     } tensors;
     struct {
-        alignas(16) cutlass::arch::ClusterBarrier barrier_Q;
-        alignas(16) cutlass::arch::ClusterBarrier barrier_Qv;
-        alignas(16) cutlass::arch::ClusterBarrier barrier_O;
+        alignas(16) cutlass::arch::ClusterTransactionBarrier barrier_Q;
         alignas(16) ML::MainloopPipelineK::SharedStorage pipeline_k;
-        alignas(16) ML::MainloopPipelineV::SharedStorage pipeline_v;
-        alignas(16) ML::MainloopPipelineVt::SharedStorage pipeline_vt;
-        alignas(16) ML::MainloopPipelineMask::SharedStorage pipeline_mask;
-        alignas(16) PPipe::SharedStorage p;
+        alignas(16) ML::MainloopPipelineK::SharedStorage pipeline_v;
+        alignas(16) PPipe::SharedStorage p[2];
     } pipelines;
 };
 static_assert(sizeof(Shared) <= 227 * 1024, "P mailbox must fit beside the unchanged KV stages");
-static_assert(128 * (24 + 2 * 152 + 176) <= 65536, "role register budgets exceed one SM");
+// Five complete warpgroups keep register redistribution valid on each SM partition.
+// Native assembly must report 96 initial registers (61,440 per CTA).
+static_assert(128 * (2 * 128 + 2 * 96 + 32) <= 640 * 96);
+static_assert(128 * (2 * 24 + 2 * 176 + 32) <= 640 * 96);
 
 #ifndef APAC_SPLIT_PV_LAYOUT_ONLY
 struct Params {
-    ML::Params mainloop;
+    CUtensorMap q_map, k_map;
     uint8_t* out;
     float* scale;
+    uint8_t const* packed_v;
+    int const* cu;
     int64_t scale_stride;
-    int max_m_blocks;
+    int max_m_blocks, max_n_blocks;
+    float qk_scale_log2;
+    decltype(ML::Params{}.qhead_per_khead_divmod) qdiv;
+    decltype(ML::Params{}.attention_chunk_divmod) chunkdiv;
 };
 
-// This is the deployed direct-O mapping with an extra M-wave loop: one PV WG
-// owns 128 rows rather than 64. It does not stage another full O tensor.
+// Same LDSM.T / PRMT / STSM.N transpose as the native producer, once per
+// unique V tile. Padded rows are zero; no new precision conversion occurs.
+__global__ void pack_v(uint8_t const* input, uint8_t* output, int const* cu) {
+    __shared__ __align__(1024) uint8_t vt[192*128], vv[192*128];
+    int const batch = blockIdx.z, head = blockIdx.y;
+    int const offset = cu[batch], len = cu[batch+1]-offset;
+    auto st = as_position_independent_swizzle_tensor(make_tensor(make_smem_ptr(vt), ML::SmemLayoutVt{}));
+    auto sv = as_position_independent_swizzle_tensor(make_tensor(make_smem_ptr(vv), ML::SmemLayoutVtMma{}));
+    for (int x=threadIdx.x; x<192*128; x+=128) {
+        int const token = int(blockIdx.x)*192+x/128;
+        st(x%128, x/128, 0) = token<len ? input[((int64_t(offset)+token)*4+head)*128+x%128] : 0;
+    }
+    __syncthreads();
+    auto ts = ML::S2RTiledCopyVt{}.get_thread_slice(threadIdx.x).partition_S(flat_divide(st,ML::LDSM_divide_shape{}));
+    auto td = ML::R2STiledCopyV{}.get_thread_slice(threadIdx.x).partition_D(flat_divide(sv,ML::STSM_divide_shape{}));
+    auto ss = logical_divide(group_modes<1,rank(ts)-1>(ts),Shape<Underscore,_2>{});
+    auto dd = logical_divide(group_modes<1,rank(td)-1>(td),Shape<Underscore,_2>{});
+    CUTE_UNROLL
+    for (int i=0;i<size<1,1>(ss);++i) {
+        auto reg=make_fragment_like(dd(_,make_coord(_,_0{}),_0{}));
+        copy(ML::S2RTiledCopyVt{},ss(_,make_coord(_,i),0),reg);
+        auto r64=recast<uint2>(reg);
+        CUTE_UNROLL
+        for (int j=0;j<size(r64);++j) {
+            uint32_t a=r64[j].x,b=r64[j].y;
+            r64[j].x=__byte_perm(a,b,0x6420);r64[j].y=__byte_perm(a,b,0x7531);
+        }
+        copy(ML::R2STiledCopyV{},reg,dd(_,make_coord(_,i),0));
+    }
+    __syncthreads();
+    auto dst=output+((batch*4+head)*gridDim.x+blockIdx.x)*192*128;
+    for (int x=threadIdx.x;x<192*128;x+=128) dst[x]=vv[x];
+}
+
+// Each PV warpgroup owns the same 64 rows as its corresponding QK warpgroup.
+// The native direct-O mapping does not stage another full O tensor.
 template<class Acc>
 CUTLASS_DEVICE void store_output(Params const& p, Acc const& acc, int tid,
                                  int m_block, int kv_head, int len, int offset) {
@@ -66,7 +116,7 @@ CUTLASS_DEVICE void store_output(Params const& p, Acc const& acc, int tid,
             : "f"(group_modes<1, 3>(acc)(i)), "f"(0.f));
         values(i) = __uint_as_float(bits);
     }
-    auto coords = group_modes<1, 3>(PV{}.get_thread_slice(tid).partition_C(
+    auto coords = group_modes<1, 3>(PVOutput{}.get_thread_slice(tid).partition_C(
         make_identity_tensor(select<0, 1>(ShapePV{}))));
     cutlass::NumericArrayConverter<E, float, 4> convert;
     CUTE_UNROLL
@@ -107,85 +157,68 @@ CUTLASS_DEVICE void store_output(Params const& p, Acc const& acc, int tid,
     }
 }
 
-__global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const p) {
+__global__ __launch_bounds__(640, 1) void kernel(__grid_constant__ Params const p) {
     extern __shared__ __align__(1024) char storage[];
     auto& s = *reinterpret_cast<Shared*>(storage);
     int const wg = __shfl_sync(0xffffffff, int(threadIdx.x) / 128, 0);
-    int const tid = int(threadIdx.x) % 128;
     int const bidb = blockIdx.z;
     int const head = blockIdx.y;
-    ML::SeqlenInfo_t info{bidb, get<0>(p.mainloop.shape_Q), get<0>(p.mainloop.shape_K),
-        0, p.mainloop.cu_seqlens_q, p.mainloop.cu_seqlens_k, nullptr,
-        nullptr, nullptr, nullptr, nullptr};
+    int const offset = p.cu[bidb], len = p.cu[bidb+1]-offset;
     int const m_block = p.max_m_blocks - 1 - int(blockIdx.x);
-    if (m_block * 8 >= info.seqlen_q) { return; }
-    auto coord = make_tuple(m_block, head, bidb, 0);
-    auto bounds = ML::BlockMN_t::get_n_block_min_max(
-        info, m_block, bidb, 0, 1, -1, -1, p.mainloop.attention_chunk_divmod,
-        p.mainloop.qhead_per_khead_divmod);
-    int const n_min = get<0>(bounds);
-    int const n_max = get<1>(bounds);
-    if (threadIdx.x == 0) {
-        ML::prefetch_tma_descriptors(p.mainloop);
-        s.pipelines.barrier_Q.init(128);
-        s.pipelines.barrier_O.init(128);
-    }
+    if (m_block * 8 >= len) { return; }
+    int const n_min = 0;
+    int const n_max = (min(len, (m_block+1)*8)+191)/192;
+    if (threadIdx.x == 0) { s.pipelines.barrier_Q.init(1); }
     ML::MainloopPipelineK::Params kp;
-    kp.role = wg == 0 ? ML::MainloopPipelineK::ThreadCategory::Producer : ML::MainloopPipelineK::ThreadCategory::Consumer;
-    kp.transaction_bytes = ML::TmaTransactionBytesK;
-    kp.is_leader = tid == 0;
+    kp.role = wg == 4 ? ML::MainloopPipelineK::ThreadCategory::Producer : ML::MainloopPipelineK::ThreadCategory::Consumer;
+    kp.transaction_bytes = 192*128;
+    kp.is_leader = threadIdx.x == 512;
     kp.num_consumers = 256;
     ML::MainloopPipelineK pk(s.pipelines.pipeline_k, kp, Shape<_1, _1, _1>{});
-    auto vtp = kp;
-    vtp.transaction_bytes = ML::TmaTransactionBytesV;
-    vtp.num_consumers = 128;
-    ML::MainloopPipelineVt pvt(s.pipelines.pipeline_vt, vtp, Shape<_1, _1, _1>{});
-    ML::MainloopPipelineV::Params vp;
-    vp.role = wg == 0 ? ML::MainloopPipelineV::ThreadCategory::Producer : ML::MainloopPipelineV::ThreadCategory::Consumer;
-    vp.producer_arv_count = 128;
-    vp.consumer_arv_count = 128;
-    ML::MainloopPipelineV pv(s.pipelines.pipeline_v, vp);
+    ML::MainloopPipelineK pv(s.pipelines.pipeline_v, kp, Shape<_1, _1, _1>{});
     PPipe::Params pp;
-    pp.role = wg == 1 || wg == 2 ? PPipe::ThreadCategory::Producer : PPipe::ThreadCategory::Consumer;
-    pp.producer_arv_count = 256;
+    pp.role = wg < 2 ? PPipe::ThreadCategory::Producer : PPipe::ThreadCategory::Consumer;
+    pp.producer_arv_count = 128;
     pp.consumer_arv_count = 128;
-    PPipe mailbox(s.pipelines.p, pp);
-    ML::MainloopPipelineMask::Params mp;
-    mp.role = ML::MainloopPipelineMask::ThreadCategory::Producer;
-    mp.producer_arv_count = 128;
-    mp.consumer_arv_count = 256;
-    ML::MainloopPipelineMask mask_pipe(s.pipelines.pipeline_mask, mp);
+    PPipe mailbox0(s.pipelines.p[0], pp);
+    PPipe mailbox1(s.pipelines.p[1], pp);
+    auto mailbox = wg == 1 || wg == 3 ? mailbox1 : mailbox0;
+    cutlass::arch::fence_barrier_init();
     __syncthreads();
 
-    if (wg == 0) {
-        cutlass::arch::warpgroup_reg_dealloc<24>();
-        auto write = cutlass::make_producer_start_state<ML::MainloopPipelineK>();
-        int work = 0;
-        auto no_prefetch = []() {};
-        ML{}.load(p.mainloop, pk, pv, pvt, mask_pipe, write, s, no_prefetch, info, coord, work);
-        ML{}.load_tail(pk, pv, pvt, mask_pipe, write, s, work);
-    } else if (wg < 3) {
-        cutlass::arch::warpgroup_reg_alloc<152>();
-        int const qtid = int(threadIdx.x) - 128;
-        ML::TiledMmaQK qk;
-        auto qk_wg = qk.get_slice((wg - 1) * 128);
+    if (wg == 4) {
+        cutlass::arch::warpgroup_reg_dealloc<32>();
+        if (threadIdx.x == 512) {
+            s.pipelines.barrier_Q.arrive_and_expect_tx(128*128);
+            SM90_TMA_LOAD_3D::copy(&p.q_map, reinterpret_cast<uint64_t*>(&s.pipelines.barrier_Q), uint64_t(TMA::CacheHintSm90::EVICT_NORMAL), s.tensors.mainloop.smem_q.data(), 0, head*16, offset+m_block*8);
+            auto write = cutlass::make_producer_start_state<ML::MainloopPipelineK>();
+            for (int n=n_max-1;n>=0;--n) {
+                pk.producer_acquire(write);
+                SM90_TMA_LOAD_3D::copy(&p.k_map, pk.producer_get_barrier(write), uint64_t(TMA::CacheHintSm90::EVICT_LAST), s.tensors.mainloop.smem_k.data()+write.index()*192*128, 0, head, offset+n*192);
+                pv.producer_acquire(write);
+                SM90_BULK_COPY_G2S::copy(p.packed_v+((bidb*4+head)*p.max_n_blocks+n)*192*128, pv.producer_get_barrier(write), s.tensors.mainloop.smem_v.data()+write.index()*192*128, 192*128);
+                ++write;
+            }
+            pk.producer_tail(write);
+            pv.producer_tail(write);
+        }
+    } else if (wg < 2) {
+        cutlass::arch::warpgroup_reg_alloc<128>();
+        int const qtid = int(threadIdx.x);
+        QK qk;
+        auto qk_wg = qk.get_slice(wg * 128);
         auto sq = make_tensor(make_smem_ptr(s.tensors.mainloop.smem_q.data()), ML::SmemLayoutQ{});
         auto sk = make_tensor(make_smem_ptr(s.tensors.mainloop.smem_k.data()), ML::SmemLayoutK{});
         auto q = qk_wg.partition_fragment_A(sq);
         auto k = qk_wg.partition_fragment_B(sk);
-        auto sp = make_tensor(make_smem_ptr(s.tensors.p.data()), PLayout{});
+        auto p_layout = make_composed_layout(PLayout{}.layout_a(), _0{}, PLayout{}.layout_b());
+        auto sp = make_tensor(counting_iterator<uint32_t>{}, p_layout);
+        uint32_t const p_base = cast_smem_ptr_to_uint(s.tensors.p.data());
         // Use the RS operand's own coordinate mapping, rather than guessing
         // the cross-lane FP8 layout from the QK accumulator's layout.
         auto rs_thread = ML::TiledMmaPV{}.get_thread_slice(qtid);
-        auto a_coords = qk.get_thread_slice(qtid).partition_C(make_identity_tensor(select<0, 1>(ShapeQK{})));
-        auto row_coords = make_tensor(a_coords.data(), flash::convert_layout_acc_rowcol(a_coords.layout()))(_, _0{});
-        float const qscale = p.mainloop.ptr_q_descale ? p.mainloop.ptr_q_descale[bidb * get<0>(p.mainloop.stride_q_descale) + head * get<1>(p.mainloop.stride_q_descale)] : 1.f;
-        float const kscale = p.mainloop.ptr_k_descale ? p.mainloop.ptr_k_descale[bidb * get<0>(p.mainloop.stride_k_descale) + head * get<1>(p.mainloop.stride_k_descale)] : 1.f;
-        float const vscale = p.mainloop.ptr_v_descale ? p.mainloop.ptr_v_descale[bidb * get<0>(p.mainloop.stride_v_descale) + head * get<1>(p.mainloop.stride_v_descale)] : 1.f;
-        flash::Softmax<2, 8> softmax(p.mainloop.softmax_scale_log2 * (qscale * kscale));
-        flash::Mask<128, 192, true, ML::TiledMmaQK> mask(qtid, info.seqlen_q, info.seqlen_k,
-            -1, -1, 0, p.mainloop.attention_chunk_divmod, p.mainloop.qhead_per_khead_divmod);
-        cutlass::arch::NamedBarrier::arrive(384, uint32_t(flash::FwdNamedBarriers::QueryEmpty));
+        flash::Softmax<2, 8> softmax(p.qk_scale_log2);
+        flash::Mask<128, 192, true, QK> mask(qtid, len, len, -1, -1, 0, p.chunkdiv, p.qdiv);
         s.pipelines.barrier_Q.wait(0);
         ML::PipelineState read;
         auto write = cutlass::make_producer_start_state<PPipe>();
@@ -208,18 +241,23 @@ __global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const 
             auto words = recast<uint32_t>(packed);
             CUTE_UNROLL
             for (int i = 0; i < size(words); ++i) {
-                uint32_t address = cast_smem_ptr_to_uint(&dest(4 * i));
+                uint32_t address = p_base + dest(4 * i);
                 asm volatile("st.shared.b32 [%0], %1;" :: "r"(address), "r"(words(i)) : "memory");
             }
+            // Reload the lane identity after the score fragment dies, rather
+            // than spilling a row coordinate across every EX2/P conversion.
+            uint32_t lane_thread;
+            asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane_thread));
+            int const row_base = (lane_thread / 128) * 64 + ((lane_thread / 32) % 4) * 16 + (lane_thread % 32) / 4;
             CUTE_UNROLL
             for (int r = 0; r < size(alpha); ++r) {
-                if (get<1>(row_coords(_0{})) == 0) { s.tensors.alpha[write.index()][get<0>(row_coords(r))] = alpha(r); }
+                if (lane_thread % 4 == 0) { s.tensors.alpha[write.index()][row_base + 8*r] = alpha(r); }
             }
             if (n == n_min) {
-                auto final = softmax.finalize(vscale);
+                auto final = softmax.finalize(1.f);
                 CUTE_UNROLL
                 for (int r = 0; r < size(final); ++r) {
-                    if (get<1>(row_coords(_0{})) == 0) { s.tensors.final_scale[get<0>(row_coords(r))] = final(r); }
+                    if (lane_thread % 4 == 0) { s.tensors.final_scale[row_base + 8*r] = final(r); }
                 }
             }
             cutlass::arch::fence_view_async_shared();
@@ -230,17 +268,20 @@ __global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const 
         step(n_max - 1, true_type{});
         for (int n = n_max - 2; n >= n_min; --n) { step(n, false_type{}); }
         mailbox.producer_tail(write);
+        cutlass::arch::NamedBarrier::sync(128, 13+wg);
+        cutlass::arch::warpgroup_reg_dealloc<24>();
     } else {
-        cutlass::arch::warpgroup_reg_alloc<176>();
+        cutlass::arch::warpgroup_reg_dealloc<96>();
         PV mma;
-        auto wg_mma = mma.get_slice(0);
+        int const pv_tid = int(threadIdx.x) - 256;
+        auto wg_mma = mma.get_slice((wg - 2) * 128);
         auto sv = make_tensor(make_smem_ptr(s.tensors.mainloop.smem_v.data()), ML::SmemLayoutVtMma{});
         auto sp = make_tensor(make_smem_ptr(s.tensors.p.data()), PLayout{});
         auto v = wg_mma.partition_fragment_B(sv);
         auto a = wg_mma.partition_fragment_A(sp);
         auto out = partition_fragment_C(mma, select<0, 1>(ShapePV{}));
         clear(out);
-        auto coords = mma.get_thread_slice(tid).partition_C(make_identity_tensor(select<0, 1>(ShapePV{})));
+        auto coords = mma.get_thread_slice(pv_tid).partition_C(make_identity_tensor(select<0, 1>(ShapePV{})));
         auto rows = make_tensor(coords.data(), flash::convert_layout_acc_rowcol(coords.layout()))(_, _0{});
         auto o_rc = make_tensor(out.data(), flash::convert_layout_acc_rowcol(out.layout()));
         ML::PipelineState read;
@@ -259,15 +300,17 @@ __global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const 
             mailbox.consumer_release(read);
             ++read;
         }
+        cutlass::arch::NamedBarrier::sync(128, 11+wg-2);
+        cutlass::arch::warpgroup_reg_alloc<176>();
         CUTE_UNROLL
         for (int r = 0; r < size<0>(o_rc); ++r) {
             float const f = s.tensors.final_scale[get<0>(rows(r))];
             CUTE_UNROLL
             for (int c = 0; c < size<1>(o_rc); ++c) { o_rc(r, c) *= f; }
         }
-        flash::permute_output_fp8(out);
-        store_output(p, out, tid, m_block, head, info.seqlen_q, info.offset_q);
-        s.pipelines.barrier_O.arrive();
+        auto output_view = make_tensor(out.data(), partition_fragment_C(PVOutput{}, select<0, 1>(ShapePV{})).layout());
+        flash::permute_output_fp8(output_view);
+        store_output(p, output_view, pv_tid, m_block, head, len, offset);
     }
 }
 
@@ -276,28 +319,41 @@ __global__ __launch_bounds__(512, 1) void kernel(__grid_constant__ Params const 
 // packed request buffer, while each CTA uses its own cu_seqlens offsets.
 extern "C" int pf_count() { return 1; }
 extern "C" int pf_resources(int) { return sizeof(Shared); }
+// Probe-owned scratch is allocated before graph capture and released explicitly.
+static uint8_t* packed_workspace = nullptr;
 extern "C" int pf_init() {
-    return int(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, sizeof(Shared)));
+    auto error = cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, sizeof(Shared));
+    if (error != cudaSuccess) return int(error);
+    if (packed_workspace) return 0;
+    return int(cudaMalloc(&packed_workspace, 4*4*22*192*128));
+}
+extern "C" int pf_fini() {
+    auto error = cudaFree(packed_workspace); packed_workspace = nullptr; return int(error);
+}
+static CUresult map_tensor(CUtensorMap* map, void* ptr, int rows, int heads, int box_heads, int box_tokens) {
+    uint64_t dims[3] = {128, uint64_t(heads), uint64_t(rows)};
+    uint64_t strides[2] = {128, uint64_t(heads)*128};
+    uint32_t box[3] = {128, uint32_t(box_heads), uint32_t(box_tokens)}, elem[3] = {1,1,1};
+    return CUTLASS_CUDA_DRIVER_WRAPPER_CALL(cuTensorMapEncodeTiled)(map, CU_TENSOR_MAP_DATA_TYPE_UINT8, 3, ptr, dims, strides, box, elem, CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B, CU_TENSOR_MAP_L2_PROMOTION_NONE, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
 }
 extern "C" int pf_run(int id, int rows, int batch, int maxlen,
                      void* q, void* k, void* v, void* cu, void* out, void* scales,
                      int scale_stride, void*, float scale, void* stream_ptr) {
-    if (id != 0 || rows < 1 || batch < 1 || batch > 4 || maxlen < 1 || scale_stride < rows) { return -1; }
-    ML::Arguments args{
-        static_cast<E const*>(q), {rows, 128, 64, 1}, {8192, _1{}, 128, 0},
-        static_cast<E*>(k), {rows, 128, 4, 1}, {512, _1{}, 128, 0},
-        static_cast<E*>(v), 128, {512, _1{}, 128, 0},
-        nullptr, {0, 128, 4, 1}, {512, _1{}, 128, 0},
-        nullptr, {512, _1{}, 128, 0}, nullptr, {8192, _1{}, 128, 0},
-        nullptr, {0, 0}, {0, _1{}}, nullptr, {0, _1{}}, false,
-        nullptr, {batch, 0}, {0, _1{}}, scale,
-        nullptr, nullptr, nullptr, {0, 0}, {0, 0}, {0, 0},
-        maxlen - 1, 0, 0, 0.f, 1, nullptr,
-        static_cast<int*>(cu), static_cast<int*>(cu), nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr};
-    Params params{ML::to_underlying_arguments(args), static_cast<uint8_t*>(out),
-        static_cast<float*>(scales), scale_stride, (maxlen * 16 + 127) / 128};
-    kernel<<<dim3(params.max_m_blocks, 4, batch), 512, sizeof(Shared), static_cast<cudaStream_t>(stream_ptr)>>>(params);
+    if (id != 0 || rows < 1 || batch < 1 || batch > 4 || maxlen < 1 || maxlen > 4096 || scale_stride < rows || !packed_workspace) { return -1; }
+    Params p{};
+    auto err = map_tensor(&p.q_map, q, rows, 64, 16, 8);
+    if (err != CUDA_SUCCESS) return 1000+int(err);
+    err = map_tensor(&p.k_map, k, rows, 4, 1, 192);
+    if (err != CUDA_SUCCESS) return 1000+int(err);
+    p.out=static_cast<uint8_t*>(out);p.scale=static_cast<float*>(scales);p.scale_stride=scale_stride;
+    p.packed_v=packed_workspace;p.cu=static_cast<int*>(cu);
+    p.max_m_blocks=(maxlen*16+127)/128;p.max_n_blocks=(maxlen+191)/192;
+    p.qk_scale_log2=scale*float(M_LOG2E);
+    p.qdiv=decltype(p.qdiv)(16);p.chunkdiv=decltype(p.chunkdiv)(1);
+    auto stream=static_cast<cudaStream_t>(stream_ptr);
+    pack_v<<<dim3(p.max_n_blocks,4,batch),128,0,stream>>>(static_cast<uint8_t const*>(v),packed_workspace,p.cu);
+    auto result=cudaGetLastError();if (result!=cudaSuccess)return int(result);
+    kernel<<<dim3(p.max_m_blocks,4,batch),640,sizeof(Shared),stream>>>(p);
     return int(cudaGetLastError());
 }
 

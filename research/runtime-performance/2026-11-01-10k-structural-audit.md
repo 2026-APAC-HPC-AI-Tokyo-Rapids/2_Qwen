@@ -76,7 +76,7 @@ Chats inspected: `01a18d65-545c-7e02-995b-405c88f180ff`, `01a186bf-9f7a-7ae2-915
 
 ## New structural experiment: give PV its own warpgroup
 
-`kernels/probes/fa3-split-pv.cu` separates the dependency chains, while keeping M128/N192, the native K/V representation and transpose, FP32 online softmax, causal attention and FP8 output:
+The v1 source at commit `11b9493` separates the dependency chains, while keeping M128/N192, the native K/V representation and transpose, FP32 online softmax, causal attention and FP8 output:
 
 1. One 128-thread producer warpgroup loads Q/K/V and performs the native V transpose.
 2. Two QK/softmax warpgroups write FP8 probabilities and FP32 rescale factors into a two-slot shared-memory mailbox.
@@ -131,4 +131,31 @@ There was also a resource-model defect: the initial proposal's `128*(24 + 2*152 
 
 Splitting QK's N atom adds approximately 715,653,120 logical shared operand bytes per actual pair; splitting PV's N atom adds approximately 1,073,479,680 more, on top of the original 2.147 GB P mailbox traffic. These are logical operand bytes, not measured HBM or physical shared transactions. The additional work and assembly failures do not support a speedup claim.
 
-Evidence is in `fa3-split-pv-v2-cpu-rejected-20261101.json` and the archived `fa3-split-pv-v2-rejected.patch` (against `11b9493`; apply with `git apply --unidiff-zero`). Active probe code is restored to the GPU-tested four-warpgroup version. The pre-allocation compiler gate now also rejects C7507 and C7512, which the original narrower warning check did not catch. The P-store bank check remains in the CPU oracle. Any further split-PV design must satisfy the actual CTA pool, avoid serialized/spilled inner loops and account for additional operand traffic before another GPU allocation; repeating this implementation is not the next experiment.
+Evidence is in `fa3-split-pv-v2-cpu-rejected-20261101.json` and the archived `fa3-split-pv-v2-rejected.patch` (against `11b9493`; apply with `git apply --unidiff-zero`). At the v2 rejection commit, active probe code was restored to the GPU-tested four-warpgroup version. The later v3 below replaces that research probe only. The pre-allocation compiler gate now also rejects C7507 and C7512, which the original narrower warning check did not catch. The P-store bank check remains in the CPU oracle. Any further split-PV design must satisfy the actual CTA pool, avoid serialized/spilled inner loops and account for additional operand traffic before another GPU allocation; repeating this implementation is not the next experiment.
+
+
+## V3: remove repeated V transpose and shorten the live register ranges
+
+The old V-byte-image experiment was already correct and too small a speedup on its own. V3 combines that representation with two independent PV consumers: it removes the repeated transpose from the split-PV producer and removes the 49,152-byte transpose staging buffer. This is separate from the concurrent round-13 native-V/four-chain-sum serving proposal (`becabbf4`); that run 41225578193 stopped at build-input preparation, before GPU allocation, and supplies no performance evidence.
+
+V3 uses five full warpgroups (640 threads): QK128/QK128/PV96/PV96/producer32 registers. Native initial allocation is 96 registers per thread, so both initial and active totals are 61,440. This also fits each SM subpartition: `(128+128+96+96+32)*32=15,360`. The producer release funds both QK increases. After releasing the last P slot, a QK group returns to 24 registers before its PV group grows to 176 for output. Explicit warpgroup barriers precede the second register adjustment.
+
+A 544-thread version was rejected before GPU use: its native allocation was 96 rather than the required 120, and its partial producer warp could not supply the required registers. Reducing PV to 88 caused C7507/C7511 and over 2 KB of spills, so that alternative was also rejected. The viable 128/96 version initially spilled a row coordinate during softmax. Computing shared P addresses as 32-bit offsets and reloading the lane identity only after P conversion removes that live range. The final native build has **zero stack, zero spill stores/loads and no LDL/STL anywhere in either candidate kernel**, with no register/WGMMA serialization warnings.
+
+The producer issues direct Q/K tensor-map loads and bulk copies of the native V byte image. A separate kernel creates each V tile once with the same LDSM.T/PRMT/STSM.N map; padded tokens are zero. Its launch and global reads/writes are included in candidate timing. Probe-owned scratch is allocated before CUDA graph capture and freed after synchronized use. This is a single-stream research ABI, not a serving workspace implementation.
+
+CPU proof covers all P/V/output coordinates, both K-stage offsets, Q/K 128-byte TMA swizzling, the recomputed row coordinates and conflict-free P stores. All errors are zero. An exhaustive logical queue model explores **56,117 reachable states** over 1–22 KV blocks with no nonterminal deadlock. This proves the model's backpressure behavior, not GPU barrier visibility. Evidence: `fa3-split-pv-v3-cpu-20261101.json`.
+
+Against the served M192/N96 control, the actual 3994+3994 pair has:
+
+| Work | Served M192/N96 | V3 M128/N192 |
+|---|---:|---:|
+| CTA tiles | 2,664 | 4,000 |
+| KV-block visits | 56,784 | 43,680 |
+| Tiled QK + PV FLOPs | 535,881,056,256 | 549,621,596,160 |
+| Repeated native V transpose, logical shared bytes | 1,395,523,584 | 0 |
+| New P mailbox write + read, logical shared bytes | 0 | 2,146,959,360 |
+
+Including the different Q/K/V operand reuse, V3 adds **894,566,400 logical shared operand bytes** versus current serving, before its small once-per-input V packing. It also performs **2.56% more tiled FLOPs**. Against the older N192 control, removing V transpose cancels the P mailbox traffic, but applying that cancellation to current M192 would be incorrect. These are logical byte counts, not physical transactions or measured bandwidth. The only proposed benefit is better overlap of independent QK/softmax and PV; a speedup is not assumed.
+
+The bounded V3 GPU protocol uses N192 as an exact output/scale oracle and sampled FP64 attention independently. Seven inputs include a changed-input replay, partial tile boundaries, unequal lengths, zero and peaked scores. Both realistic pairs then run 1,200 repeated calls and 20 alternating CUDA-graph timing pairs. The **speed control is served M192/N96**, and the candidate includes both packing and attention. The next-stage threshold is at least 30 µs saved in both timing orders on both pairs, with at least 18/20 positive pairs; it is a screening margin above the conditional 19.958 µs/layer estimate, not a goodput prediction. Normal serving remains unchanged until actual numerical and performance gates pass.

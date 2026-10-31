@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One new architecture and the served N192-pipe control. CPU gates precede PBS.
+# One architecture; exact N192 oracle and served M192/N96 control. CPU gates precede Slurm.
 set -euo pipefail
 : "${RUNTIME_DIR:?}" "${GITHUB_WORKSPACE:?}"
 [[ -z "${CANDIDATE_PATCH:-}" ]]
