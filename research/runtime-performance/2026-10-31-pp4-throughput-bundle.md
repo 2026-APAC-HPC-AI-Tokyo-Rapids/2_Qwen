@@ -233,3 +233,57 @@ the PP4 Decode worker. This restores its previously served eager draft-extend
 path. Target verification and draft-decode graphs remain enabled; the graph
 parity assertions are not modified. The original combined forecast includes
 the rejected draft-extend graph and does not apply to this reduced bundle.
+
+### Third retry: eager draft-extend
+
+Commit `f619057970614fc8a56d9e6ec1a349cdb0da67f2` started
+[41142009481](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41142009481)
+at 2026-10-31 08:02:45 JST. All CI passed, including the 36-case real-Torch,
+real-SquashFS PP4 regression suite. Provision verified the same bundle image
+and the actual image CPU gate passed. Slurm 27739 completed on two nodes in
+12:44; serving and archive jobs succeeded. The official result is
+9875.188662716093 good output tok/s, eligible and officially valid, with 6234
+requests, zero errors and 98.0269% good requests at concurrency 232. It is
+0.08% below the parent R8 result: no performance improvement is established,
+and the user's 10k objective remains unmet. The startup repairs are successful;
+the reduced bundle is not an adopted performance gain. All 176 extracted-file
+hashes in the archive's SHA256SUMS passed verification.
+
+The parent R8 score was independently read from its archived `score.json`:
+9883.358747435326 good output tok/s, eligible and officially valid, 6241 requests,
+zero errors, concurrency 232. Its SHA-256
+`288a163650a2aec65eb592bd5bebd518a053d9396b5b510cbe9d57a4613f62b0`
+matches that archive's manifest. This is a provisional comparison reference;
+a single new run cannot establish a causal performance improvement.
+
+### Follow-up toward the requested 10k result
+
+The user requested an actual result above 10k after the eager retry showed no
+gain. The gap from 9875.19 is about 1.264%; the previous bundle's forecast is not
+evidence that this gap has been closed. The sparse gate saves about 0.14 ms
+per Decode step versus a roughly 37 ms observed step proxy, and does not remove
+the Prefill supply limit.
+
+Promote the previously inactive M192/N96 FA3 prototype to a distinct candidate,
+`m192n96-direct-o-varlen-pipe`. Preserve the served M128/N192 pipe control,
+precision, model, workload, SLA, 16 H200s, concurrency 232 and Decode cap 48.
+Keep draft-extend eager for this attempt so the new Prefill candidate is the
+major performance factor. Remove the repeated diagonal-trim and split-unroll16
+screens, which already lost their timing gates; retain their existing source
+for reproducibility.
+
+The measurement question is whether M192/N96 can shorten actual attention and
+the Prefill period despite doubling the online softmax/rescale iterations.
+Its 34.9% reduction in logical KV tile loads is not a measured HBM reduction
+or a throughput prediction. A Prefill period reduction around 1.5 ms would
+require roughly 7.5% off the historical 19–20 ms attention share, assuming
+Decode does not become the limiter. This is a required saving, not an estimate.
+
+All twelve Prefill GPUs must pass the existing FP32/stock numerical bounds,
+changed-input replay checks, paired speed comparisons and 1200 serving-path
+calls over six geometries. Because the candidate changes reduction order,
+its stable bytes are checked against its own first numerically validated
+output; existing candidates keep their original bytewise references. Missing
+results, numerical errors, insufficient speed or an endurance failure retain
+the served control. An official serving score is still required, and 10k has
+not yet been achieved.

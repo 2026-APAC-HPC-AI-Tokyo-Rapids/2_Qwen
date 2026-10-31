@@ -213,7 +213,7 @@ def render(config, data):
     bundle = config.get("pp4_throughput_bundle_20261031")
     if bundle:
         lines += ["## PP4 throughput bundle（2026-10-31）", "",
-                  "ユーザー指示により有効な改善をまとめ、公式good output 10k・10.5k・11kを目指す。基準はPP4 run41005872470の9832.74（反復41020974704は9828.95）。最新R8の修正版FA3・diagonal trim候補・gigatoken・選別削減へ、疎なmin-new-token penalty、FA3 draft-extend graph、FC1 split-unroll16候補を追加する。", "",
+                  "ユーザー指示により有効な改善をまとめ、公式good output 10k・10.5k・11kを目指す。基準はPP4 run41005872470の9832.74（反復41020974704は9828.95）、親R8 run41073991312は9883.36。R8へ疎なmin-new-token penalty、FA3 draft-extend graph、FC1 split-unroll16候補を追加して検証した。疎なpenaltyはGPU gate合格。draft-extend graphはhidden-state一致検証で棄却し、再投入では既存switchで通常実行へ戻す。元の複合候補の条件付き予測は、この縮小構成には適用しない。", "",
                   f"状態：`{bundle['status']}`。追加run：{bundle['new_run']}、公式score：{bundle['official_score']}（未測定はNone）。shape・dtype・削る仕事・byte・未知の計測値は入力JSONの`pp4_throughput_bundle_20261031`、検証と結果は `2026-10-31-pp4-throughput-bundle.md`。kernel選択、capture入力の一致、通常servingの成績を区別する。以下の旧EP4 profileの費用を新しいPP4計測値として流用しない。", ""]
     current = config.get("current_megamoe_candidate", {})
     if current:
