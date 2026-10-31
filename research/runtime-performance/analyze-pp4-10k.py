@@ -66,6 +66,14 @@ def analyze_run(run):
     assert abs(duration-rounded_duration) < 2e-6
     recovered_score = exported['goodput']['avg'] * 200
     assert abs(recovered_score - score['good_output_tokens_per_second']) < 1e-8
+    needed = math.ceil(50 * duration) - good
+    ttft_only_gaps = sorted(value(r, 'time_to_first_token') - 3000 for r in bad_ttft if value(r, 'inter_token_latency') <= 20)
+    ttft_rescue = {
+        'scope': 'Fixed request set and official denominator; uniform TTFT-only reduction without increased admission/throughput. This does not exclude communication that limits throughput.',
+        'ttft_only_failures': len(ttft_only_gaps),
+        'required_uniform_ttft_reduction_for_10k_ms': ttft_only_gaps[needed - 1] if 0 < needed <= len(ttft_only_gaps) else None,
+        'recovered_requests_by_reduction_ms': {str(ms): sum(gap <= ms for gap in ttft_only_gaps) for ms in (8, 20, 50, 100, 200, 500)},
+    }
     rate = sum(2000 / t for t in periods)
     lo, hi = 0.0, min(periods) / 2
     for _ in range(60):
@@ -81,7 +89,8 @@ def analyze_run(run):
         'requests': len(records), 'good_requests': good, 'bad_ttft': len(bad_ttft),
         'bad_itl': len(bad_itl), 'bad_both': sum(r in bad_itl for r in bad_ttft),
         'bad_ttft_request_start_range_s': [min((r['metadata']['request_start_ns']-first)/1e9 for r in bad_ttft), max((r['metadata']['request_start_ns']-first)/1e9 for r in bad_ttft)],
-        'additional_good_requests_at_fixed_duration': math.ceil(50*duration)-good,
+        'additional_good_requests_at_fixed_duration': needed,
+        'fixed_request_ttft_rescue': ttft_rescue,
         'measured_pp_periods_ms': periods, 'conditional_prefill_capacity_rps': rate,
         'period_evidence': period_evidence,
         'uniform_period_reduction_for_10k_ms': hi,
