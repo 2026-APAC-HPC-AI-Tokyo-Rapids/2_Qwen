@@ -175,7 +175,7 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     # The FP32 Q/K norm writer won in 40911121619 and 40925558339.
     assert settings['pp4_selected_runs']['SGLANG_PREFILL_QKNORM'] == [40911121619, 40925558339] and set(settings['pp4_selected_runs']) == set(settings['pp4_selected'])
     # After every PP4 overlay; only prefill-moe-input (disjoint files), fp32 Q/K norm, onepass MoE input and Decode MoE input follow it.
-    assert config['sglang_overlay_patches'][-5:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-moe-input-onepass.patch', 'patches/sglang/decode-moe-input.patch']
+    assert config['sglang_overlay_patches'][-6:] == ['patches/sglang/prefill-fa3-varlen.patch', 'patches/sglang/prefill-fa3-pair.patch', 'patches/sglang/prefill-moe-input.patch', 'patches/sglang/prefill-qknorm-fp32.patch', 'patches/sglang/prefill-moe-input-onepass.patch', 'patches/sglang/decode-moe-input.patch']
     # The twelve-GPU screen runs only outside PP4 and without a reused selection.
     assert 'prefill_screen' not in shell
     assert 'if [[ ! -s "${ROOT}/source/reused-kernel-selection.json" && ! -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then' in shell

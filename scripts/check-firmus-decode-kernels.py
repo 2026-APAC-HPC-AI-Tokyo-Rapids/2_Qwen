@@ -1340,7 +1340,11 @@ def prefill_selection_step(common, name, layers=94):
     def step():
         for _ in range(layers):
             # Includes the real extra producer work for c2, in every timed layer.
-            rope_ops.apply_qknorm_rope_fp8_prefill(*common["rope_args"], image if spec["byte_image"] else None, rows if spec["byte_image"] else 0)
+            if common.get("fp32_producer"):
+                assert not spec["byte_image"]
+                rope_ops.apply_qknorm_rope_fp8_prefill_fp32(*common["rope_args"])
+            else:
+                rope_ops.apply_qknorm_rope_fp8_prefill(*common["rope_args"], image if spec["byte_image"] else None, rows if spec["byte_image"] else 0)
             if packed_control:
                 torch.ops.apac_fa3_verify.prefill_fwd_out(common["q"], common["k"], common["v"], common["cu"], out, scales, lse, metadata, maxlen, 128**-.5)
             else:
@@ -1409,6 +1413,7 @@ def prefill_validate_candidate(common, name):
     # A candidate that only changes the output path or the request packing must
     # equal its base kernel byte for byte; packed inputs run the base per request.
     base = spec.get("bitwise_reference")
+    precision_reference = spec.get("precision_reference")
     base_steps = []
     if base:
         start = 0
@@ -1417,11 +1422,13 @@ def prefill_validate_candidate(common, name):
             base_steps.append((start, length, prefill_selection_step(part, base, 1)))
             start += length
     rows = common["rows"]
+    precision_step = prefill_selection_step(common, precision_reference, 1) if precision_reference else None
     control = torch.empty_like(step.output[0])
     control_scales = torch.empty((64, (rows+3)//4*4), device="cuda", dtype=torch.float32).T[:rows]
     lse = torch.empty((64, rows), device="cuda", dtype=torch.float32)
     metadata = torch.empty(17, device="cuda", dtype=torch.int32)
     metrics = []
+    precision_metrics = []
     for replay in range(3):
         if replay:
             common["packed"].copy_(torch.randn_like(common["packed"]) * (replay+.5))
@@ -1445,13 +1452,19 @@ def prefill_validate_candidate(common, name):
             base_step()
             assert torch.equal(out[start:start+length].view(torch.uint8), base_step.output[0].view(torch.uint8)), (name, common["lengths"], replay, base, "FP8 bytes")
             assert torch.equal(scales[start:start+length], base_step.output[1]), (name, common["lengths"], replay, base, "FP32 scales")
+        if precision_step:
+            precision_step()
+            reference_out, reference_scales = precision_step.output
+            actual_dequantized = out.float() * scales[:, :, None]
+            reference_dequantized = reference_out.float() * reference_scales[:, :, None]
+            precision_metrics.append(prefill_assert_errors(actual_dequantized, reference_dequantized, name+"_"+precision_reference))
         # Verify paged transfer payload and fallback row-major V are still exact.
         assert torch.equal(common["v"].view(torch.uint8), common["packed"][:rows, 68:].to(out.dtype).contiguous().view(torch.uint8)), name
         assert torch.equal(common["v"].view(torch.uint8), common["vc"][1:rows+1].view(torch.uint8)), name
         indices, reference = prefill_fp32_reference(common)
         actual = out.float()[indices]*scales[indices, :, None]
         metrics.append(prefill_assert_errors(actual, reference, name+"_fp32"))
-    return {"numeric_passed": True, "bitwise": spec["bitwise"], "bitwise_reference": base, "metrics": metrics, "changed_input_replays": 2, "byte_image_dump_passed": spec["byte_image"]}
+    return {"numeric_passed": True, "bitwise": spec["bitwise"], "bitwise_reference": base, "precision_reference": precision_reference, "precision_reference_metrics": precision_metrics, "metrics": metrics, "changed_input_replays": 2, "byte_image_dump_passed": spec["byte_image"]}
 
 
 def check_prefill_fixed_variants():

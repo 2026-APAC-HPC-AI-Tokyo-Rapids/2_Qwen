@@ -1,0 +1,33 @@
+--- a/hopper/flash_fwd_launch_template.h
++++ b/hopper/flash_fwd_launch_template.h
+@@ -41,7 +41,7 @@
+     // Can't use structured binding since it's not compatible with constexpr
+     static constexpr std::tuple<int, int, bool, bool> kBlockMN_RS_IntraWGOverlap = tile_size_fwd_sm90(kHeadDim, kHeadDimV, Is_causal, Is_local, sizeof(Element) /*element_size*/, V_colmajor, PagedKVNonTMA, Has_softcap, Use_one_mma_wg);
+     static constexpr std::tuple<int, int, int, int, bool> kBlockMN_kNWarps_Stages_RS = tile_size_fwd_sm8x(Arch == 86 || Arch == 89, kHeadDim, kHeadDimV, Is_causal, Is_local, sizeof(Element) /*element_size*/, PagedKVNonTMA, Varlen && Split, Has_softcap, AppendKV);
+-    static constexpr int kBlockM = Arch >= 90 ? std::get<0>(kBlockMN_RS_IntraWGOverlap) : std::get<0>(kBlockMN_kNWarps_Stages_RS);
++    static constexpr int kBlockM = FixedPrefill && (PrefillVariant & 8192) ? 192 : Arch >= 90 ? std::get<0>(kBlockMN_RS_IntraWGOverlap) : std::get<0>(kBlockMN_kNWarps_Stages_RS);
+     static constexpr int kBlockN = VerifyBlockN ? VerifyBlockN : Arch >= 90 ? std::get<1>(kBlockMN_RS_IntraWGOverlap) : std::get<1>(kBlockMN_kNWarps_Stages_RS);
+     static constexpr bool MmaPV_is_RS = std::get<2>(kBlockMN_RS_IntraWGOverlap);
+     static constexpr bool IntraWGOverlap = std::get<3>(kBlockMN_RS_IntraWGOverlap);
+--- a/hopper/tile_scheduler.hpp
++++ b/hopper/tile_scheduler.hpp
+@@ -743,7 +743,7 @@
+     WorkTileInfo
+     tile_idx_to_work_tile(Params const& params, int next_tile_idx, WorkTileInfo const& current_work) const {
+         if constexpr (FixedPrefill) {
+-            static_assert(!Split && PackGQA && LPT && kBlockM == 128 && (kBlockN == 224 || kBlockN == 192));
++            static_assert(!Split && PackGQA && LPT && ((kBlockM == 128 && (kBlockN == 224 || kBlockN == 192)) || (kBlockM == 192 && kBlockN == 96 && FixedVarlen)));
+             // Single sequence, all four KV heads fit in L2. This is exactly
+             // the prepared scheduler's longest-first interleaved tile order.
+             if constexpr (FixedVarlen) {
+--- a/hopper/epilogue_fwd.hpp
++++ b/hopper/epilogue_fwd.hpp
+@@ -47,7 +47,7 @@
+
+     static constexpr bool LargeHeadDimV = kHeadDimV > 256;
+     static constexpr bool SupportsFP8Output = ArchTag::kMinComputeCapability == 90 &&
+-        Varlen && PackGQA && !Split && kBlockM == 128 && kHeadDimV == 128 &&
++        Varlen && PackGQA && !Split && (kBlockM == 128 || (kBlockM == 192 && get<2>(TileShape_MNK_PV{}) == 96)) && kHeadDimV == 128 &&
+         cute::is_same_v<Element, cutlass::bfloat16_t>;
+
+     using GmemTiledCopyOTMA = cute::SM90_TMA_STORE;

@@ -118,7 +118,7 @@ def test_packed_requests_keep_the_row_count_and_cu_seqlens_contracts(guard):
 
 def test_varlen_rows_compare_against_n192_per_request():
     rows = [r for r in json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text()) if r.get('varlen')]
-    assert [r['name'] for r in rows] == ['n192-varlen', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe']
+    assert [r['name'] for r in rows] == ['n192-varlen', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe', 'm192n96-direct-o-varlen-pipe']
     gate = (ROOT / 'scripts/check-firmus-decode-kernels.py').read_text()
     assert 'packed_control = name == "control" and len(common["lengths"]) > 1' in gate
     assert 'torch.ops.apac_fa3_verify.prefill_fwd_out(common["q"], common["k"], common["v"], common["cu"], out, scales, lse, metadata, maxlen, 128**-.5)' in gate
