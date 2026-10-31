@@ -75,7 +75,7 @@
     "STG.E.128": 16,
     "QGMMA.64x128x32.F32.E4M3.E4M3": 64
   },
-  "status": "CPU validated; GPU probe pending",
+  "status": "stopped before GPU execution: exact pinned image absent at Genkai shared-image path",
   "source_commit": "d6134fd",
   "image_run": 41150387984,
   "image_sha256": "e7b09add5c72e0758df2639cd3200bfa1e1ababbeea250ec8fda8caa23053f62",
@@ -95,9 +95,35 @@
   "mainloop_spills": 0,
   "wgmma_serialization_warning": false,
   "image_rebuild_required": false,
-  "dispatches": [],
+  "dispatches": [
+    {
+      "run_id": 41159506648,
+      "commit": "7fde4800ef55018d55c503fd7cd5446f27f9f762",
+      "conclusion": "failure",
+      "fatal_stage": "login preparation",
+      "first_error": "stat: cannot statx '/home/ACCOUNT/share/sglang-containers/41150387984.sqsh': No such file or directory",
+      "pjm_submitted": false,
+      "gpu_executions": 0,
+      "paired_ratio": null,
+      "numerics": null,
+      "endurance": null,
+      "cleanup_step": "success",
+      "elapsed_s": 90
+    }
+  ],
   "gpu_numerics": null,
   "gpu_ratios": null,
-  "in_job_gate": "not implemented; requires >=3% M7988 paired gain and numerics/endurance pass",
-  "candidate_header_sha256": "e9f1fe0a8708ce8a80d07cf6f8980f3acdebfd6c5f83b14b321f844a16baf7a0"
+  "in_job_gate": "not implemented: required Genkai numeric/endurance and >=3% paired gain not available",
+  "candidate_header_sha256": "e9f1fe0a8708ce8a80d07cf6f8980f3acdebfd6c5f83b14b321f844a16baf7a0",
+  "cpu_epilogue_reference": {
+    "rows": 4096,
+    "dtype": "FP32 random accumulators; BF16 weights; FP32 trig",
+    "scope": "CPU epilogue model only, not actual GEMM/current GPU writer",
+    "fp32_math_max_abs": 1.4973748267976816e-06,
+    "fp32_math_mean_abs": 7.921641812086483e-08,
+    "fused_fp64_code_mismatch": 1.9073486328125e-06,
+    "bf16_input_standin_fp64_code_mismatch": 0.02927398681640625,
+    "fused_bf16_input_standin_code_mismatch": 0.029272079467773438
+  },
+  "in_job_extra_seconds": 0
 }

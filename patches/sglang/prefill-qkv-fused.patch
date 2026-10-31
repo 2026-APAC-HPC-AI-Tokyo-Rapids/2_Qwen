@@ -639,13 +639,13 @@ diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qw
  _PREFILL_QKNORM = os.environ.get("SGLANG_PREFILL_QKNORM", "control")
 -assert _PREFILL_QKNORM in ("control", "fp32"), _PREFILL_QKNORM
 +assert _PREFILL_QKNORM in ("control", "fp32", "fused"), _PREFILL_QKNORM
- 
+
  logger = logging.getLogger(__name__)
  _is_cuda = is_cuda()
 @@ -794,6 +794,13 @@
      ):
          from sglang.srt.layers.quantization.decode_dense_gemm import decode_dense_linear
- 
+
 +        if _PREFILL_QKNORM == "fused":
 +            from sglang.srt.layers.attention.prefill_qkv_fused import prepare
 +
@@ -654,10 +654,10 @@ diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qw
 +                return None, forward_batch, (*result, forward_batch)
 +
          qkv, _ = decode_dense_linear(self, "QKV", self.qkv_proj, hidden_states, forward_batch, decode_worker=get_server_args().disaggregation_mode == "decode")
- 
+
          q, k, v = self.apply_qk_norm_rope(qkv, positions, forward_batch)
 @@ -883,7 +890,7 @@
- 
+
                  selected = prefill_candidate()
                  self.attn.prefill_v_image = torch.empty((4, (sum(forward_batch.extend_seq_lens_cpu)+223)//224, 224*128), dtype=torch.uint8, device=k.device) if self.attn.fixed_prefill_output and selected["byte_image"] else None
 -                if _PREFILL_QKNORM == "fp32" and self.attn.prefill_v_image is None:

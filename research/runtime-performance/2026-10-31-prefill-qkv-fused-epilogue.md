@@ -200,3 +200,67 @@ MUFU.RSQ, 260 epilogue FFMA and sixteen STG.E.128. All epilogue data stays in
 registers; no new shared-memory intermediate. This does not claim the mainloop
 has identical register allocation/scheduling to stock, only the same source
 body and arithmetic. Stock itself is instruction-for-instruction unchanged.
+
+## Probe attempt and stop condition
+
+Commit 7fde480 was pushed only to this branch; it starts with skip-ci and has
+no cluster tags. One Genkai workflow dispatch was made (one of at most four):
+[41159506648](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41159506648),
+2026-10-31 02:20:00–02:21:30 UTC, terminal **failure**.
+
+The first fatal command was preparation's image size check. At 02:20:29 UTC:
+
+```
+stat: cannot statx '/home/ACCOUNT/share/sglang-containers/41150387984.sqsh': No such file or directory
+```
+
+This is the normal Genkai shared-image directory used by existing prepare
+scripts, with the exact PP4 pin's basename. The image was not available there.
+No PJM job was submitted, no GPU kernel ran, and the workflow cleanup step
+succeeded. The later missing provenance message in summary is secondary to
+this error. CUDA 13.4 availability on Genkai was not reached or verified.
+Do not substitute an older image or infer kernel failure/success from this.
+Under the requested stop rule, no further dispatch or gate work was attempted.
+
+| rows | paired fused / stock+fp32 | Q/K/V and paged KV FP64 errors | 300-call endurance |
+|---:|---|---|---|
+| 129 | not measured | not measured | not run |
+| 3994 | not measured | not measured | not run |
+| 7988 | not measured | not measured | not run |
+
+Step 3 is incomplete. The >=3% criterion is **unknown**, not failed or passed.
+Step 4 is not implemented. The settings stay fp32; no selection env, sbatch,
+provisioning or native-host build change was made. Image rebuild is not
+required by this implementation. A copy of the exact existing image must be
+available to the allowed Genkai probe before GPU work can proceed; this task
+made no SSH connection or Firmus/ASPIRE job. Added serving-job time is **0 s**
+because the candidate is off and no gate is wired. Future selector JIT/time
+cost is unmeasured and must not be borrowed from the tail-skip's 29–30 s.
+
+## CPU verification and limits
+
+The final full Python 3.12 suite, eight workers: **1240 passed, 69 skipped,
+25 subtests passed**, 145.78 s. The prepared-image chain test ran explicitly,
+with all 30 SGLang overlays checked and applied in config order; all native
+DeepGEMM host/image and 13 PP4 header overlays also checked/applied separately.
+Ruff on qwen-experiment-metrics/scripts/containers and the new probe/reference,
+Python compilation, bash syntax for the preparation and unchanged sbatch,
+and check-firmus-pp4-source.py pass. Existing overlay-position tests were
+updated for the appended default-off patch. The final patch applies despite
+unprefixed blank context lines, which avoid trailing whitespace in the patch.
+
+CPU random-tile model (4096 heads, 128 values; BF16 random norm weights,
+FP32 cos/sin) versus FP64: unquantized max abs 1.4973748268e-6, mean abs
+7.9216418121e-8; FP8-code mismatch 1/524288 = 1.9073486328e-6. The BF16-input
+stand-in's mismatch is 0.0292739868. This stand-in is not the actual GPU writer
+and no GEMM was executed; these are CPU epilogue-model checks only. They do
+not establish any GPU tensor error bound, paired speed or serving improvement.
+
+Further work, ranked: (1) make the exact pinned software available to the
+allowed Genkai probe and resolve the numeric/speed uncertainty; (2) only after
+that evidence, inspect normal-path conversion/address overhead in the fused
+epilogue; (3) prepare FA3 varlen metadata once per microbatch rather than per
+layer; (4) investigate dense epilogue overlap, which needs a different register
+budget and uses the lower 0.36–0.6 wait-removal factor. No rejected mainloop
+stagger, empty-wave runtime branch, coarser quantization or new approximation
+was reintroduced.
