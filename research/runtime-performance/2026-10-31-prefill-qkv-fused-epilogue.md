@@ -307,3 +307,112 @@ candidate's 5888 SASS instructions are identical to the existing local
 compiler's output, with 168 registers and zero stack/spill bytes. Manifest
 and overlay checks now run before toolchain staging. Full CPU suite passed
 again on Python 3.12 with eight workers; repository Ruff and bash syntax pass.
+
+## Resume 3: H200 in-job gate before the queued H100 probe
+
+The user explicitly reordered Steps 3 and 4. Genkai dispatch 3/4, run
+41160677437, PJM 7220768 remains alive; this resume neither polls, cancels nor
+redispatches it. No GPU job or serving commit is created. The old sections
+above describe the earlier stop, not the current implementation status.
+
+`scripts/select-firmus-prefill-qkv.py` imports only stdlib during aggregation.
+Provision stages it and the **unmodified** `kernels/probes/qkv-fused.py` into
+runtime scripts; both are also saved under source. The latter supplies the
+same serving-format FP8 operands, stock `compiled_dims="nk"` GEMM, FP32 post,
+FP64 GEMM/epilogue reference, all five output checks and sentinel checks.
+There is no H100-to-H200 timing conversion and no kernel/source/image change.
+
+The gate uses actual q_norm and k_norm BF16 weights from the staged model's
+safetensors index. Local rank selects the first layer of its PP stage:
+0/24/48/72. Only these two 128-element tensors are mmap-read from their shards,
+as opposed to loading the model. Their keys, shards, min/max and dtype are
+recorded. Activation/FP8 projection weights remain real-scale random probe
+inputs; this is a kernel adoption screen, not full-model numeric validation.
+
+For M3994 and M7988 on **every one of twelve distinct H200 UUIDs**:
+
+- Compare Q, contiguous K/V and paged K/V against FP64 from identical FP8
+  operands. Max absolute error, mean absolute error and FP8 code mismatch rate
+  must each be no worse than stock GEMM + FP32 post, independently per tensor.
+  All output-tail, untouched-cache and slot-zero sentinels must survive.
+- Execute 300 consecutive ordinary fused calls at each shape, synchronize,
+  and repeat every numeric/sentinel check against the same reference/control.
+- Capture 12 calls per graph for stock GEMM + FP32 post, fused, GEMM alone and
+  post alone. Collect twelve forward and twelve reverse rounds, interleaved
+  within each round. Retain samples, per-order and pooled medians. Record
+  forward/reverse absolute differences and relative order deltas as measured
+  noise; no numeric noise value is invented before execution.
+- At M7988 require fused / stock <= 0.99 on each GPU, for pooled **and each
+  order's** medians. Stock is the graph of GEMM + post together; the individual
+  part times are diagnostic and are not added to the graph time. The extra
+  each-order condition is conservative against timing-order drift.
+
+All twelve fresh successful results, numerics, endurance, valid timing and
+completion before the deadline are mandatory. Missing, malformed, stale,
+duplicate-GPU, failed, late, below-margin or timed-out evidence keeps fp32.
+Aggregate publication atomically replaces exactly the single
+`SGLANG_PREFILL_QKNORM=fp32` assignment in Prefill's env with `fused`, preserving
+all other pins. Workers clear inherited QKNORM first; only Prefill sources the
+merged env, so Decode never receives fused. The existing eligible Prefill
+routing in `prefill-qkv-fused.patch` is unchanged.
+
+Default remains off: only **`prefill.qkv_fused_gate: true`** in the PP4 config
+opts in. The checked-in config and prepared FP32 pin remain unchanged; a
+parent serving commit needs only that boolean. Do not directly pin fused.
+The existing image pin e7b09add is retained; no rebuild is needed.
+
+The sbatch runs three `srun` steps concurrently (two on head, one on tail),
+each with four torchrun ranks on four GPUs. Rank zero warms JITs for both row
+counts in existing node-local DeepGEMM/TVM caches, then releases a gloo barrier;
+the four GPUs' actual checks and timings run in parallel. The **whole srun**,
+including container startup/import/JIT, has a 53-second timeout and two-second
+kill grace. A shared deadline is start + 58 seconds. Failed waits are consumed
+and aggregation refuses adoption, so timeout does not fail serving.
+
+**Estimated additional serial time: 35–50 seconds**, not measured on H200.
+Budget estimate: 3–6 s launcher/container/import, 12–25 s cold stock/post/fused
+JIT plus activation quantization, 8–15 s data/FP64/error checks, 1–3 s paired
+samples/endurance, and 1–2 s aggregation. Local fused ptxas device passes were
+about 1.45 s each, but that is only part of JIT and not a worker measurement.
+The timeout bounds each worker to at most 55 s; unusual startup/compile or
+FP64-check cost can simply refuse adoption. No 29–30 s prior selector result
+is reused as this gate's measured time. Round-10 READY 257 s plus this estimate
+is about 292–307 s, before the normal client and recovery within 17 minutes;
+this arithmetic is not an end-to-end runtime measurement.
+
+Raw per-GPU JSON is `results/prefill-qkv/prefill-{0,1,2}/rank-{0,1,2,3}.json`;
+aggregate with embedded records/noise/reasons is `results/prefill-qkv/selection.json`;
+stdout/stderr is `logs/prefill-qkv-{0,1,2}.log`. Existing firmus.yml recovery
+pulls results/logs/source and the archive job preserves them under the normal
+run/attempt artifact directory. No new credentials reach compute nodes and
+no new workflow or artifact cache is added.
+
+### Resume 3 CPU validation outcome
+
+Final full suite: Python 3.12, eight workers, NumPy available through the
+uv Python interpreter, **1305 passed, 69 skipped, 25 subtests passed in
+143.70 s**. The prepared-image source env was set, so the entire 30-overlay
+chain was checked/applied rather than skipped. The 65 new gate tests include
+real shell execution of the sbatch timeout branch. Existing frozen submission
+worker bytes remain covered; the QKNORM reset is restricted to PP4.
+Repository Ruff, bash syntax for sbatch/provision, touched Python compilation
+and git diff whitespace checks pass. Probe files are unchanged from 24a1c5d.
+
+A separate CPU exercise used real safetensors files and verified indexed
+q/k reads for all four PP stage first layers, BF16 conversion and requested
+CUDA placement, mapping only that transfer to CPU. No actual model weight or
+GPU operation was available locally.
+
+The requested complete check-firmus-pp4-cpu.py invocation with the e7b09add
+config stopped with exit 1 at FileNotFoundError for the local sglang.sqsh.
+No pinned image exists locally, AWS login has expired, and SSH/job dispatch is
+forbidden in this resume. The full image SHA/extraction/staged-source equality
+has therefore **not** been revalidated. Using the archived pinned image's
+manifest, verify_manifest confirms all 23 build patches; run_checks on a
+private prepared-image clone plus all 30 runtime overlays passes with Torch
+2.11.0+cpu / NumPy 2.2.6, including source contracts, 32 sync cases, 72 relay
+cases and the direct-loop check. This is explicitly source-only evidence;
+the next normal provision must still pass its unchanged mandatory full image
+gate. Evidence is in codex-scratch/r11q/pp4-cpu-source-checks.json and
+pp4-cpu-full-gate.log. New temporary clones and empty diagnostic runtime were
+removed. No cluster job was created, inspected or cancelled in this resume.

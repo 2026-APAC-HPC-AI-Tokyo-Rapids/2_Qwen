@@ -230,7 +230,7 @@ def test_pp4_job_uses_pins_and_workers_source_the_switch(tmp_path):
     shell = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     pp4 = shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
     assert 'test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"' in pp4
-    assert "no in-job kernel selection" in pp4
+    assert "optional QKV fused gate below" in pp4
     assert "srun" not in pp4 and "--aggregate" not in pp4 and "wait " not in pp4
     assert "decode_gpu_selections" not in shell and "prefill_gpu_" not in shell
     worker = shell.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]

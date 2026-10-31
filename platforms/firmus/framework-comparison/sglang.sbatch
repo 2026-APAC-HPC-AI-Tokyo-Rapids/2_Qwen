@@ -131,6 +131,7 @@ role=${name%%-*}
 runtime_dir=$(dirname "$(dirname "$0")")
 # The Decode peer also needs explicit global target/draft KV region IDs.
 if /opt/sglang/venv/bin/python -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("prefill", {}).get("pp", 1) != 4)' "${runtime_dir}/source/firmus-framework.json"; then
+  unset SGLANG_PREFILL_QKNORM
   export SGLANG_QWEN_PP4_EP1=1
   # Millisecond scheduler log times (PP4 only): the start-burst first tokens of 41020974704 stall from 0.8 to
   # 1.5 s, and second-resolution batch lines cannot place the Prefill admissions and releases in that window.
@@ -228,7 +229,7 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # Every selection gate has settled: 41005872470, 41020974704 and 41040348302; the fixed FA3 pipe
   # passed its 1200-call gate and served in 41040348302. That run spent 7.3 min selecting, then hit TIMEOUT.
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving: prior kernel settings plus the pinned PP4 selections (prepare-firmus-pp4-settings.py); no in-job kernel selection.\n'
+  printf 'PP4 serving: pinned settings; optional QKV fused gate below.\n'
 elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
   # Provision has verified the prior image, ordered overlays, expert map and
   # normalized serving config. Draft precision is the sole changed model setting.
@@ -256,6 +257,27 @@ for worker in 0 1 2; do
 done
 for pid in "${prefill_selections[@]}"; do wait "${pid}" || true; done
 uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
+fi
+
+# Default off. All twelve H200 GPUs must pass before the common Prefill env changes.
+if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.qkv_fused_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
+  test -s "${ROOT}/source/pp4-kernel-settings.json"
+  mkdir -p "${ROOT}/results/prefill-qkv"
+  prefill_qkv_started=$(date +%s)
+  prefill_qkv_deadline=$((prefill_qkv_started + 58))
+  prefill_qkv_selections=()
+  # Three parallel workers, four GPUs each. Estimate 35-50 s including JIT; unmeasured.
+  # Bound the whole srun (container start included): 53 s + 2 s kill grace.
+  # Any timeout/process failure refuses adoption and serving continues with fp32.
+  for worker in 0 1 2; do
+    node=${HEAD}
+    if (( worker == 2 )); then node=${TAIL}; fi
+    timeout --kill-after=2 53 srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-qkv-${worker})" env DG_JIT_CACHE_DIR="/tmp/qwen-prefill-qkv-${SLURM_JOB_ID}-${worker}/dg" SGLANG_DG_CACHE_DIR="/tmp/qwen-prefill-qkv-${SLURM_JOB_ID}-${worker}/dg" TVM_FFI_CACHE_DIR="/tmp/qwen-prefill-qkv-${SLURM_JOB_ID}-${worker}/tvm" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-qkv.py" --output "${ROOT}/results/prefill-qkv/prefill-${worker}" --model "${MODEL}" --run-id "${SLURM_JOB_ID}-${prefill_qkv_started}" --deadline "${prefill_qkv_deadline}" >"${ART}/prefill-qkv-${worker}.log" 2>&1 &
+    prefill_qkv_selections+=("$!")
+  done
+  prefill_qkv_ok=1
+  for pid in "${prefill_qkv_selections[@]}"; do wait "${pid}" || prefill_qkv_ok=0; done
+  uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-qkv.py" --aggregate "${ROOT}/results/prefill-qkv" --output "${ROOT}/results/prefill-qkv/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --run-id "${SLURM_JOB_ID}-${prefill_qkv_started}" --deadline "${prefill_qkv_deadline}" --workers-ok "${prefill_qkv_ok}"
 fi
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
