@@ -216,3 +216,20 @@ If (2) stays at 0.466 s, the transfers take longer than a launch. The change is 
 - stage 2's lag is caused by its launch blocking, as documented for the last stage; the release receive is the alternative. The change removes both, since the result step precedes them.
 - the lost fourth iteration is the send→poll race. It is reproduced by the harness model; the transfer latency itself was not measured.
 - the expected gains of §6 A
+
+## 9. Result in 41150387984 (round 10)
+
+Official score 9896.09, against 9883.36 in round 8. Details are in `2026-10-31-pp4-round10.md`.
+
+The four checks of §7:
+1. **Passed.** PP2 now prints its result 7–15 ms after PP0 in steady state.
+   - The first microbatch still shows 121 ms, while the pipeline fills.
+2. **Passed: one iteration earlier.**
+   - Request 0's first token moved from +0.868 s to +0.757 s (−0.111 s).
+   - From the first PP0 result line to that token, the time fell from 0.58 s to 0.47 s.
+   - The first PP0 result stayed at +0.287 s, so the whole shift is the release.
+   - So the KV transfers finish within one launch. The −0.115 s case of §6 A applies, not the +2 case.
+3. Not measured separately. Check 2 covers it.
+4. **Passed.** The period is 114.9 / 114.6 / 118.1 ms.
+
+The predicted gain was +6 burst passes; +6 were observed (TTFT failures fell from 121 to 115).
