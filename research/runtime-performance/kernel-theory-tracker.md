@@ -188,6 +188,8 @@ causal QK+PV=2*L*(L+1)*Qheads*D; M128/N192 PackGQA。
 
 次の作業：現在のN192 pipe行の数え上げは2026-10-30に完了（`2026-10-30-prefill-fa3-diag-trim.md`）：定常KV step 587命令（MUFU.EX2 98）、tile境界1316命令、tileあたり約7160命令・MUFU約1070。tile paddingは全て対角blockにあり、warpgroupの64行が見る鍵は192中平均111（32鍵単位）。対角blockのmask・softmaxだけを見える32鍵block数に縮める `n192-direct-o-varlen-pipe-diag` はrun 41073991312のin-job screenで全48セルbyte一致だったが平均3.7µs遅く（pin中央412.7µs）不採用、撤去した。QK・PVの対角trimはwgmma直列化（C7511/C7513/C7519）で未実装。
 
+Round 12（41201412459）で採用：2要求・各3900〜4096 tokenのvarlen呼出しだけM192/N96（`m192n96-direct-o-varlen-pipe`）、それ以外はN192 pipe。12 GPU全てで7 pair形状の正順・逆順とも5 µs以上短縮（served形状3994+3994でproducer+FA3 743〜772 µsに対し16.1〜21.4 µs、24層で0.39〜0.51 ms）、FP32参照に対しrelative L2 0.026（N192は0.017、上限0.05）、1200回耐久でbyte一致。PP0周期は114.9/114.6/118.1→114.4/113.9/117.5 ms、公式9958.43（round 10比+0.63%）。imageはa8232b16（41201412459）に固定（`2026-11-01-pp4-round12.md`）。
+
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。
