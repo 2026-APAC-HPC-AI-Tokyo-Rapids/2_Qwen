@@ -54,6 +54,9 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/perf/pp4-vsum-cuda130-20261101' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      # The unpublished draft asset rejected contents:read with HTTP 403.
+      contents: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -75,6 +78,10 @@ jobs:
 
   container:
     name: AWSでSquashFSを準備
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
     needs: validate
     if: ${{ !contains(github.event.head_commit.message, '[basic]') && ((github.event_name == 'push' && (contains(github.event.head_commit.message, '[cluster:genkai]') || (contains(github.event.head_commit.message, '[cluster:aspire2ap]') && !contains(github.event.head_commit.message, '[kernel-bench]')) || (contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]') && !contains(github.event.head_commit.message, '[kernel-bench]')))) || (github.event_name == 'workflow_dispatch' && (inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)) ) }}
     uses: ./.github/workflows/aws-container.yml
