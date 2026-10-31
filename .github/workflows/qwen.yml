@@ -49,6 +49,25 @@ permissions:
   id-token: write
 
 jobs:
+  source-transport-check:
+    name: Temporary pinned-source transport CPU check
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/perf/pp4-vsum-cuda130-20261101' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify private input and the actual builder clone path without GPUs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/stage-vsum-source.sh "${RUNNER_TEMP}/vsum-source"
+          git clone --reference-if-able "${RUNNER_TEMP}/vsum-source/git-mirror/5_SGLang_Src.git" --no-checkout "${RUNNER_TEMP}/vsum-source/git-mirror/5_SGLang_Src.git" "${RUNNER_TEMP}/vsum-clone"
+          git -C "${RUNNER_TEMP}/vsum-clone" checkout --detach fc275674a97d78553b22597ee72c8fd48f5420f4
+          git -C "${RUNNER_TEMP}/vsum-clone" fsck --no-dangling
+          git -C "${RUNNER_TEMP}/vsum-clone" diff --exit-code
+
   validate:
     if: ${{ !contains(github.event.head_commit.message, '[basic]') || !contains(github.event.head_commit.message, '[cluster:firmus]') }}
     name: 制御処理を検証
