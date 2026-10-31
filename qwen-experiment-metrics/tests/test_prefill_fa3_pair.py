@@ -152,7 +152,7 @@ def block():
 
 def test_wiring_and_native_build_inputs():
     config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
-    assert config['prefill']['fa3_pair_gate'] is False
+    assert config['prefill']['fa3_pair_gate'] is True  # round 12 serves with the gate on; the sbatch default stays off
     shell = block()
     assert '.prefill.fa3_pair_gate // false' in shell
     assert 'for worker in 0 1 2; do' in shell and '--nproc-per-node=4' in shell
