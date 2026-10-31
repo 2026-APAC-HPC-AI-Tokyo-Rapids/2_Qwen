@@ -1,5 +1,5 @@
 diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
-index 83de13e..2360d80 100644
+index 83de13e..81d6497 100644
 --- a/python/sglang/srt/managers/scheduler_pp_mixin.py
 +++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
 @@ -66,12 +66,13 @@ class PPBatchMetadata:
@@ -36,7 +36,7 @@ index 83de13e..2360d80 100644
 +    # reports completion only through wait(), so they are waited on once they
 +    # are pp_loop_size iterations old (consumed by then, the wait is free).
 +    sent: deque
-+    # Later stages only: admitted requests whose bootstrap with Decode has not
++    # Admitted requests whose bootstrap with Decode has not
 +    # completed on this stage yet.
 +    pending: list
      # Gloo group of the PP ranks that carries only last-stage results.
@@ -106,71 +106,98 @@ index 83de13e..2360d80 100644
                  )
                  if self.pp_group.is_last_rank
                  else None
-@@ -537,18 +554,21 @@ class SchedulerPPMixin:
+@@ -523,6 +540,7 @@ class SchedulerPPMixin:
+ 
+     def _qpp_step(self: Scheduler, loop: _QwenPPLoop, mb_id: int) -> bool:
+         """One iteration of event_loop_pp_disagg_prefill_direct."""
++        is_first = self.pp_group.is_first_rank
+         is_last = self.pp_group.is_last_rank
+         self.running_batch = self.running_mbs[mb_id]
+         self.last_batch = self.last_mbs[mb_id]
+@@ -537,18 +555,17 @@ class SchedulerPPMixin:
              recv_reqs = self.request_receiver.recv_requests()
              self.process_input_requests(recv_reqs)
          with torch.profiler.record_function("pp.bootstrap_poll"):
 -            bootstrapped_rids = self._pp_pd_get_bootstrapped_ids()
-+            admitted_rids = self._qpp_admit_bootstrapped(loop)
-         with torch.profiler.record_function("pp.transfer_poll"):
-             transferred_rids = self._pp_pd_get_prefill_transferred_ids()
+-        with torch.profiler.record_function("pp.transfer_poll"):
+-            transferred_rids = self._pp_pd_get_prefill_transferred_ids()
 -        loop.bmbs[mb_id] = bootstrapped_rids
-         loop.tmbs[mb_id] = transferred_rids
+-        loop.tmbs[mb_id] = transferred_rids
++            admitted_rids = self._qpp_admit_bootstrapped(loop)
          if not is_last:
-             # The next stage reads these three before it receives this
-             # iteration's proxy, so they must precede the proxy send.
+-            # The next stage reads these three before it receives this
+-            # iteration's proxy, so they must precede the proxy send.
 -            for data in (recv_reqs, bootstrapped_rids, transferred_rids):
-+            for data in (recv_reqs, admitted_rids, transferred_rids):
++            # The next stage reads these two before it forms its batch.
++            for data in (recv_reqs, admitted_rids):
                  loop.works += self._pp_send_pyobj_to_next_stage(data, async_send=True)
  
          with torch.profiler.record_function("pp.prepare_batch"):
-+            # Only later stages admit requests whose own bootstrap is pending;
++            # Every stage can admit requests whose own bootstrap is pending;
 +            # process_prefill_chunk would yield or abort such a chunked request
 +            # from this stage's local state, and the stages would diverge.
 +            assert self.chunked_req is None or not self.chunked_req.pending_bootstrap
              self.process_prefill_chunk(
                  last_batch=self.last_batch, running_batch=self.running_batch
              )
-@@ -560,26 +580,20 @@ class SchedulerPPMixin:
+@@ -560,26 +577,38 @@ class SchedulerPPMixin:
          self.mbs[mb_id] = batch
          self.running_mbs[mb_id] = self.running_batch
          self.cur_batch_for_debug = batch
-+        if is_last:
-+            # The last stage takes its result (and sends its KV) before it
-+            # launches: its eager launch blocks on a full CUDA launch queue for
-+            # most of a period, which would otherwise delay its KV, the last
-+            # one Decode needs, by that much. Batch formation above already ran,
-+            # so every stage still forms with the same state.
++        if not is_first:
++            # Every stage after the first takes its result (and sends its KV)
++            # before it launches. Its GPU starts the microbatch launched here
++            # one period or more later, so waiting for the result first costs
++            # it no GPU time, whereas a launch that blocks on a full CUDA launch
++            # queue delays a result taken after it by most of a period (stage 2
++            # sent its KV one period after stages 0, 1 and 3 in 41135856718,
++            # and Decode needs all four). Stage 0's GPU runs this microbatch
++            # next, so stage 0 launches before it waits for its result. Batch
++            # formation above already ran, so every stage forms with the same
++            # state.
 +            self._qpp_result_step(loop, next_mb_id)
          if batch:
              loop.launches[mb_id] = self._qpp_launch(loop, batch)
              if is_last:
                  loop.publisher.put(loop.launches[mb_id])
- 
+-
 -        # Bootstrap consensus: the last stage originates it towards stage 0;
-+        # Release consensus: the last stage originates it towards stage 0;
-         # every stage applies it at this same iteration and forwards it.
+-        # every stage applies it at this same iteration and forwards it.
 -        if is_last and loop.bmbs[consensus_mb_id] is not None:
--            loop.works += self._pp_send_pyobj_to_next_stage(
++        # Poll the KV transfers after the launch, so the eager launch separates
++        # a result step's KV send from the poll that should see it complete.
++        # Polled at the start of the iteration, right after stage 0's send at
++        # the end of the previous one, a transfer was seen one iteration later:
++        # in 41135856718 every release came four iterations after its result
++        # (two of them the consensus lag), not three.
++        with torch.profiler.record_function("pp.transfer_poll"):
++            transferred_rids = self._pp_pd_get_prefill_transferred_ids()
++        loop.tmbs[mb_id] = transferred_rids
++        if not is_last:
+             loop.works += self._pp_send_pyobj_to_next_stage(
 -                bootstrapped_rids, async_send=True
 -            )
 -        if loop.bmbs[next_mb_id] is not None:
 -            consensus_rids = self.process_bootstrapped_queue(
 -                self._pp_recv_pyobj_from_prev_stage()
--            )
++                transferred_rids, async_send=True
+             )
 -            if not is_last:
 -                loop.works += self._pp_send_pyobj_to_next_stage(
 -                    consensus_rids, async_send=True
 -                )
 -        # Release consensus, the same way.
++
++        # Release consensus: the last stage originates it towards stage 0;
++        # every stage applies it at this same iteration and forwards it.
          release_rids = None
          if is_last and loop.tmbs[consensus_mb_id] is not None:
              loop.works += self._pp_send_pyobj_to_next_stage(
-@@ -592,6 +606,25 @@ class SchedulerPPMixin:
+@@ -592,6 +621,25 @@ class SchedulerPPMixin:
                      release_rids, async_send=True
                  )
  
-+        if not is_last:
++        if is_first:
 +            self._qpp_result_step(loop, next_mb_id)
 +        if loop.tmbs[next_mb_id] is not None:
 +            with torch.profiler.record_function("pp.release_kv"):
@@ -185,14 +212,14 @@ index 83de13e..2360d80 100644
 +        return batch is not None
 +
 +    def _qpp_result_step(self: Scheduler, loop: _QwenPPLoop, next_mb_id: int):
-+        # Requests whose bootstrap completed since the last iteration can send
++        # On every stage, requests whose bootstrap completed can send
 +        # their KV now, before the result below parks or sends the rest.
 +        if loop.pending:
 +            self._qpp_finalize_pending(loop)
          done_batch = self.mbs[next_mb_id]
          if done_batch is not None:
              result = self._qpp_batch_result(
-@@ -601,13 +634,88 @@ class SchedulerPPMixin:
+@@ -601,13 +649,104 @@ class SchedulerPPMixin:
              with torch.profiler.record_function("pp.process_result"):
                  self._pp_process_batch_result(done_batch, result)
              self.last_mbs[next_mb_id] = done_batch
@@ -209,29 +236,45 @@ index 83de13e..2360d80 100644
 +    # and usable one iteration after that (~0.37 s at a 124 ms period; 15 of
 +    # the 51 requests inside Prefill waited there in 40825417205). A stage
 +    # needs its own bootstrap only to send its KV, which it does after its
-+    # forward. So stage 0 admits by its own bootstrap and every later stage
-+    # admits exactly stage 0's list in the same iteration, finalizes its sender
-+    # when its own bootstrap completes, and until then keeps the request
-+    # pending (pending_bootstrap) like an optimistic prefill. All stages still
++    # forward. So stage 0 admits on arrival (Bootstrapping or WaitingForInput)
++    # once it can reserve metadata, and every later stage admits exactly that
++    # list in the same iteration. Every stage finalizes its sender when its own
++    # bootstrap completes, keeping the request pending (pending_bootstrap)
++    # until then like an optimistic prefill. All stages still
 +    # add the same requests to the waiting queue in the same order at the same
 +    # iteration.
 +    def _qpp_admit_bootstrapped(self: Scheduler, loop: _QwenPPLoop):
 +        bootstrap_queue = self.disagg_prefill_bootstrap_queue
 +        if self.pp_group.is_first_rank:
-+            good_rids, bad_rids = self.get_rids(
-+                bootstrap_queue.queue, True, [KVPoll.WaitingForInput], [KVPoll.Failed]
++            polls = poll_and_all_reduce_attn_cp_tp_group(
++                [req.disagg_kv_sender for req in bootstrap_queue.queue],
++                self.attn_cp_cpu_group,
++                self.attn_tp_cpu_group,
 +            )
-+            aborted_rids = {
-+                req.rid
-+                for req in bootstrap_queue.queue
-+                if isinstance(req.finished_reason, FINISH_ABORT)
-+            }
-+            good_rids, bad_rids = self._route_aborts_to_bad(
-+                good_rids, bad_rids, aborted_rids
-+            )
-+            # Returns the requests actually admitted (a finalize can wait for a
-+            # metadata buffer) and failed, which the later stages follow.
-+            return self.process_bootstrapped_queue([good_rids, bad_rids])
++            admitted, failed, remaining = [], [], []
++            for req, poll in zip(bootstrap_queue.queue, polls):
++                if poll == KVPoll.Failed or isinstance(req.finished_reason, FINISH_ABORT):
++                    self.handle_bootstrap_failure(req)
++                    failed.append(req)
++                    continue
++                if poll == KVPoll.WaitingForInput:
++                    ready = bootstrap_queue.finalize_bootstrap(req)
++                elif poll == KVPoll.Bootstrapping:
++                    ready = bootstrap_queue.ensure_metadata_buffer(req)
++                    if ready:
++                        loop.pending.append(req)
++                else:
++                    remaining.append(req)
++                    continue
++                if not ready:
++                    # Metadata exhaustion delays admission on every stage.
++                    remaining.append(req)
++                    continue
++                admitted.append(req)
++                req.time_stats.set_wait_queue_entry_time()
++            bootstrap_queue.queue = remaining
++            self.waiting_queue.extend(admitted)
++            return [[req.rid for req in admitted], [req.rid for req in failed]]
 +        good_rids, bad_rids = self._pp_recv_pyobj_from_prev_stage()
 +        good_rids, bad_rids = set(good_rids), set(bad_rids)
 +        admitted, failed, remaining = [], [], []
@@ -266,7 +309,7 @@ index 83de13e..2360d80 100644
 +        return [[req.rid for req in admitted], [req.rid for req in failed]]
 +
 +    def _qpp_finalize_pending(self: Scheduler, loop: _QwenPPLoop):
-+        """Later stages: finalize senders whose own bootstrap completed and send
++        """Every stage: finalize senders whose own bootstrap completed and send
 +        the KV of requests that already finished their prefill (parked in the
 +        inflight queue). A failed bootstrap stays pending; its sender reports
 +        Failed to the release consensus, which aborts it on this stage."""
