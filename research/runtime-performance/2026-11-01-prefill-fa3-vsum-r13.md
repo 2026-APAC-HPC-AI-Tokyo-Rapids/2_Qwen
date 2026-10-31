@@ -1,3 +1,5 @@
+GPU追記（run41240194309、2026-11-01）：fresh CUDA13.0.88 image、native link/load、PP4 CPU gate、通常servingは完走。r13は全12 GPUの最初の3994 pairで43.257〜54.423 us遅く不採用。公式9948.463699はr12 fallback。初回shapeのnative byte/FP32 replayのみ通過し、残りshape・single・enduranceは未実行。正本は `fa3-prefill-vsum-gpu-41240194309.json`。以下のCPU許可は速度保証ではない。
+
 # Round 13-V: native V の一度書きと lifetime を保持した sum-chain
 
 ## CUDA 13.0.88 での追検証

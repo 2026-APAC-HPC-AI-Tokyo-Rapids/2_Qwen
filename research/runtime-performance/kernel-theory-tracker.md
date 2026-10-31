@@ -428,3 +428,5 @@ python3 research/runtime-performance/render-kernel-theory.py --write
 ```
 
 GPU計算なし。元nsys-repのhashはmodel JSON、export SQLiteと抽出scriptのhashはprofile JSONに保存。窓・呼出し数・重複・shape仮定を変更した場合は旧値へ上書きせず、差と理由をGitに残す。
+
+2026-11-01 r13 GPU結果（run41240194309）：fresh CUDA13.0 image/ABI/CPU gateと通常servingは完走したが、native-V+sum経路は全12 H200で最初の3994 pairが43.257〜54.423 us遅く不採用。独立srun間でworker0/1のGPU割当が交換され、集約理由wrong GPUは誤解を招くが、UUID集合は同じで各rankの実際の理由は速度不足。初回shapeのnative bytes・FP32変更入力replayは通過、残りshape/single/enduranceは未実行。公式9948.463699はr12 fallbackの値でr13改善ではない。正本 `fa3-prefill-vsum-gpu-41240194309.json`。lane候補ではUUID集合/同allocation判定を修正し、同一full-path gateを維持したままproducerとFA3+Oの分離診断を最初のshapeだけ追加する。
