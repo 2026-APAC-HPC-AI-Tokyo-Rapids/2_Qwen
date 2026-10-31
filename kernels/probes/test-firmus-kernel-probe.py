@@ -20,7 +20,7 @@ def executable(path, source):
 def runtime(tmp_path):
     for name in ("source", "results", "logs", "scripts", "bin"):
         (tmp_path / name).mkdir(parents=True)
-    (tmp_path / "source/provenance.json").write_text('{"calibration":true}')
+    (tmp_path / "source/provenance.json").write_text(json.dumps({"calibration": True, "probe_gpus": 1, "benchmark": "kernels/probes/prepare-fa3-prefill.sh"}))
     shutil.copyfile(PLATFORM / "run-trials.sh", tmp_path / "scripts/run-trials.sh")
     return {**os.environ, "RUNTIME_DIR": str(tmp_path), "SLURM_JOB_ID": "123", "PATH": f"{tmp_path}/bin:{os.environ['PATH']}"}
 
@@ -138,3 +138,17 @@ exit 9
     assert "PASS " not in trial
     assert not (tmp_path / "import-called").exists()
     assert not (tmp_path / "run-success").exists()
+
+
+@pytest.mark.parametrize("probe_exit", [0, 7])
+def test_split_pv_failure_stops_before_success_without_profiler(tmp_path, probe_exit):
+    env = runtime(tmp_path)
+    (tmp_path / "source/provenance.json").write_text(json.dumps({"calibration": True, "probe_gpus": 1, "benchmark": "kernels/probes/prepare-fa3-split-pv.sh"}))
+    executable(tmp_path / "bin/timeout", '#!/bin/bash\nprintf "%s\\n" "$1" >>"$RUNTIME_DIR/timeouts"\nshift\nexec "$@"\n')
+    executable(tmp_path / "bin/ncu", '#!/bin/bash\ntouch "$RUNTIME_DIR/profiler-called"\nexit 99\n')
+    executable(tmp_path / "source/probe", f'#!/bin/bash\necho "PASS fixture"\nexit {probe_exit}\n')
+    result = subprocess.run(["bash", str(PLATFORM / "run-trials.sh")], env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == probe_exit, result.stdout + result.stderr
+    assert (tmp_path / "timeouts").read_text().splitlines() == ["165"]
+    assert not (tmp_path / "profiler-called").exists()
+    assert (tmp_path / "run-success").exists() == (probe_exit == 0)

@@ -1,0 +1,127 @@
+{
+  "schema": "fa3-split-pv-cpu-proof/v1",
+  "gpu_executed": false,
+  "build": {
+    "schema": "fa3-split-pv-source/v1",
+    "commit": "local",
+    "pins": {
+      "fa3": [
+        "sgl-project/sgl-attn",
+        "f89bc2306632d1ec5f97b014dded4254f5b4a907",
+        "418b5681584dc3efff496a1cab5ffd58d2728d89dcfe0ea16e6985d6ef35c68c"
+      ],
+      "cutlass": [
+        "NVIDIA/cutlass",
+        "57e3cfb47a2d9e0d46eb6335c3dc411498efa198",
+        "09237099a70f80bff1dc8bb80c843a674bb4fdcb46e43cc6993e711c5ca89bb5"
+      ]
+    },
+    "patches": [
+      {
+        "path": "kernels/fa3-verify/fixed-specializations.patch",
+        "sha256": "06cd67b34de21fd0344c9df7d7601726e994c06dd65651a32b71176bf11eec28"
+      },
+      {
+        "path": "kernels/probes/fa3-fp8-output.patch",
+        "sha256": "4877ef00383957de6997352d6e04b6d3410abfffc511cb7c5cd2d503dd9ec32d"
+      },
+      {
+        "path": "kernels/fa3-verify/fixed-prefill.patch",
+        "sha256": "7b2d8dac2fc834e5a3f7e28447ce44d15ec733b0c548e80b972d63e7c77c8771"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-variants.patch",
+        "sha256": "0d00aaa1f63316cd88fb3b626a9f2060e9f018e3648ead05b550e632672ddf33"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-overlap.patch",
+        "sha256": "802ebd46c2e9c001c2fba0086b157486968881131da6ddae228e78a9b8d24da5"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-pv.patch",
+        "sha256": "71072ffbfac538dc768c88b9bfbc1958a6cba5e29d727ddd8c39b28ec9239106"
+      },
+      {
+        "path": "kernels/fa3-verify/decode-merge.patch",
+        "sha256": "f34f423318d7e839d8eb264921d830c881a42c34357fc62b7f38f743c850a5bb"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-direct-o.patch",
+        "sha256": "fb5491e5515281eff2f448f9bd406e304b0fb1517a42b1c5e274ca430df69f77"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-varlen.patch",
+        "sha256": "6b8ef989e0f3a0b0ad41a4de49591132ebd61206eaf34c7f7437371d6c21807f"
+      },
+      {
+        "path": "kernels/fa3-verify/decode-two-cta.patch",
+        "sha256": "ddd8130188276c4d44087832e46ce007b7782a544eb824fd41649dd69ba0e77b"
+      },
+      {
+        "path": "kernels/fa3-verify/decode-wide-h2.patch",
+        "sha256": "71144595085a7aa2513c59777b9751b8574b463a9a253350488b48bb98719099"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-pipe.patch",
+        "sha256": "ac50f3a107871742acebfa05b0a1b0dc9015948ac4c4a5aaf46f3878372bd776"
+      },
+      {
+        "path": "kernels/fa3-verify/decode-stream-h4.patch",
+        "sha256": "10b987c42799b55d16c8c8e6fe4ac3c8d1b02df651255a9e7bf75b639f19784d"
+      },
+      {
+        "path": "kernels/fa3-verify/prefill-geometry.patch",
+        "sha256": "c493325e70c3b3ec1ef2031a35371d34281c655eba574db2b3843f69409ed143"
+      }
+    ],
+    "gpu_executed": false,
+    "compiler": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Wed_Aug_20_01:58:59_PM_PDT_2025\nCuda compilation tools, release 13.0, V13.0.88\nBuild cuda_13.0.r13.0/compiler.36424714_0\n",
+    "sources": {
+      "fa3-split-pv.cu": "5cfc5939f8a87cfe696ddfb0252d061cfc24d95722e4a13481129500dbaf759b",
+      "fa3-split-pv-layout.cu": "a37d4dcbf87f417809ae487d1eb6c411c9ff7e00fd35ad96c16660eccf574d72",
+      "fa3-split-pv.py": "88a96014078e31c99127b4879ddc9ee988fcfd3eb34119005085c449ed29a954",
+      "fa3-prefill-pipe.cu": "099f9f3c41815e04811d3b0cdd55058589426465e69b5743e0eb537127e9e42e",
+      "fa3-prefill-pipe.py": "cd5f7d1aa74f03e4cf9002ec1afd8de8de8d56f895a99173dc5d02f8a632af38"
+    },
+    "binaries": {
+      "control": "8d6e6d301a840bbaeaf0177f9d3e111f17f27e6d6915703174c5c99d98c26d8f",
+      "split-pv": "7e8ab646522437ecd6d16e05e9b32a9409d48c15a8a57a887d546dd52b4ed2d5"
+    },
+    "patched_headers": {
+      "utils.h": "534f41e5b09b3c7be9ca8652b1d0939f8f19ffa9955047d0f2bdf4cb2dd8b899",
+      "softmax.h": "24edd56147c62c779b6dfea518d2abae99b2da8a53406259ee3d96b26b486095",
+      "mainloop_fwd_sm90_tma_gmma_ws.hpp": "972f3c5e0f3236dd1ccb73eb0d472edee7f3c3c24a31759d58cb7a5e8b8d4ad4",
+      "flash_fwd_launch_template.h": "e49948489a375f8659f0b70a92ef96d6980ab060a95d7d3b2b65fe97e6b545b9"
+    }
+  },
+  "layout": {
+    "shared_bytes": 217088,
+    "matrix_elements": 24576,
+    "native_probability_permuted_elements": 18432,
+    "row_errors": 0,
+    "ownership_errors": 0,
+    "pv_key_pairing_errors": 0,
+    "v_column_errors": 0,
+    "stage_errors": 0,
+    "noncontiguous_words": 0,
+    "output_errors": 0,
+    "gpu_executed": false
+  },
+  "abi": {
+    "control": {
+      "count": 1,
+      "shared_bytes": 166912
+    },
+    "split-pv": {
+      "count": 1,
+      "shared_bytes": 217088
+    }
+  },
+  "critical_sass": {
+    "qk_no_local_memory_operations": true,
+    "pv_steady_loop_no_local_memory_operations": true,
+    "qk_role_does_not_issue_pv": true,
+    "serialization_warnings": false
+  },
+  "logs_directory": "/Users/yuta/Dev/APAC/outputs/qwen-10k-audit-20261101/fullchain-logs"
+}

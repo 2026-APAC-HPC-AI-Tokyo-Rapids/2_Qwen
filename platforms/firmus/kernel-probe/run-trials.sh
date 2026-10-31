@@ -23,7 +23,7 @@ if [[ "${probe_gpus}" == 4 ]]; then
     exit 0
 fi
 benchmark=$(python3 -c 'import json; print(json.load(open("source/provenance.json"))["benchmark"])')
-if [[ "${benchmark}" == kernels/probes/prepare-prefill-memory.sh || "${benchmark}" == kernels/probes/prepare-fa3-exp.sh ]]; then
+if [[ "${benchmark}" == kernels/probes/prepare-prefill-memory.sh || "${benchmark}" == kernels/probes/prepare-fa3-exp.sh || "${benchmark}" == kernels/probes/prepare-fa3-split-pv.sh ]]; then
     printf 'trial=1 benchmark=%s; no NCU instrumentation\n' "${benchmark}"
     timeout 165 ./source/probe 2>&1 | tee results/trial-1.log
     grep -q '^PASS ' results/trial-1.log

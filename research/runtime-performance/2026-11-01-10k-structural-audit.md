@@ -1,0 +1,106 @@
+# PP4 10k structural audit and split-PV prototype (2026-11-01)
+
+This audit rereads the issues, chats, raw request records and newest available kernel trace. It does not treat an old EP4 profile as the current PP4 execution. The user subsequently authorized a bounded GPU job after CPU debugging. No performance result for the new architecture is asserted before its numerical and timing gates finish.
+
+## Required work reduction
+
+| Normal run | Served behavior | Official output goodput | Good / total requests | TTFT / ITL failures |
+|---|---|---:|---:|---:|
+| [41150387984](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41150387984) | Round 10, earlier KV release | 9896.0941 | 6124 / 6243 | 115 / 4 |
+| [41166990387](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41166990387) | Round 11, fused QKV rejected; same served kernels | 9881.6659 | 6119 / 6239 | 117 / 3 |
+
+The 14.43 tok/s spread is an observed repeat difference, not a confidence interval. Recovered AIPerf goodput denominators are 123.76600222 and 123.84551467 s. The request-span `benchmark_duration` is shorter by about 3 ms and must not replace the official denominator. Fixed-duration 10k would require 65 and 74 additional good requests. All TTFT failures are in the initial arrival burst (request starts in the first 0.04–0.10 s); removing burst work can improve eligibility without increasing the steady serving rate.
+
+For the three Prefill pipelines, measured periods are 114.9/114.6/118.1 ms and 114.6/115.0/118.3 ms, each completing two requests. Solve
+
+`G_new = G_old * sum(2000 / (T_i - delta)) / sum(2000 / T_i) = 10000`.
+
+With fixed good fraction, Decode behavior and drain, the required **uniform reduction is 1.203–1.372 ms per pipeline period**, or 50.1–57.2 µs per layer on a 24-layer critical stage. This is a conditional capacity model, not a forecast. A practical kernel target is at least 60 µs per actual two-request call across the whole FA3 path. Decode is already around 43.8 live requests per rank against a cap of 48; its ITL and acceptance must be rechecked in normal serving.
+
+## What the profile actually says
+
+Latest normal runs contain AIPerf request profiles, not a new Nsight kernel timeline. The newest available kernel trace is round 3 [40964714831](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40964714831), before split MegaMoE and the FA3 tile pipeline. Archive: `archive-host:/srv/qwen-artifacts/40964714831/1/`; original `nsys-prefill-2.nsys-rep` SHA256 `a9dcb4cb032687977f660a32046585e263e6ecf3afee062a4583a4c435478705`. The exported SQLite passes integrity checking. Device ordinal 2 maps to physical GPU 3.
+
+For 18 matched steady windows, median period is 117.9844 ms and median interval with no active kernel is 0.4202 ms. One actual 24-layer PP2 window (batch 37, trace-relative 4792062779–4910084868 ns):
+
+| Work | Time (ms) |
+|---|---:|
+| MegaMoE | 65.4627 |
+| FA3 | 21.5867 |
+| QKV / O GEMMs | 12.8809 / 11.1956 |
+| QK postprocessing | 2.0162 |
+| Norm / quantization | 1.4912 |
+| Fused MoE input | 2.9247 |
+| Other kernels | 0.1576 |
+| Subtract kernel overlap | −0.1130 |
+| Add no-kernel intervals | +0.4195 |
+| Actual complete period | **118.0221** |
+
+There are no NCCL kernels in these windows; PP copy-engine transport is already active. CPU and communication gaps share the 0.42 ms exposed interval and cannot each be claimed as separate savings. Occasional large gaps are not necessarily removable. Do not subtract later isolated screen improvements from this old trace to manufacture a current timeline.
+
+## Computation and communication accounting
+
+Actual shape is Qwen3-235B-A22B FP8, H=4096, I=1536, 128 experts, top-8, 94 layers, 64 Q heads / 4 KV heads / d=128. Prefill is three TP1/PP4/EP1 workers; Decode is TP4/DP4/EP4. A model request has 3994 rows; two packed requests give M=7988. The logged page capacity 8064 is not the GEMM row count.
+
+At a **conditional** 1.40 GHz, 132 SM × 8192 dense FP8 FLOP/cycle = 1.5138816 PFLOP/s. Do not use Decode's higher clock, nor the advertised sparse tensor rate. NVIDIA's H200 specification provides the 4.8 TB/s HBM and 900 GB/s bidirectional NVLink reference ([datasheet](https://resources.nvidia.com/en-us-gpu-resources/hpc-datasheet-sc23?xs=443995)).
+
+| Per layer, M=7988 | Useful FLOP | Tensor-only lower bound |
+|---|---:|---:|
+| MegaMoE: `6*M*8*4096*1536` | 2.41230 TF | 1.59345 ms |
+| Causal QK + PV, two L=3994 sequences | 0.52285 TF | 0.34537 ms |
+| QKV: `2*M*4096*9216` | 0.60307 TF | 0.39836 ms |
+| O: `2*M*8192*4096` | 0.53607 TF | 0.35410 ms |
+
+These are useful-work floors, not removable slack; padding, softmax, FP8 promotion, tensor/scalar dependencies, data movement and power all remain. Cold MoE expert weights alone are 2.4159 GB/layer (0.5033 ms at 4.8 TB/s). This overlaps arithmetic and is not added to 1.59345 ms.
+
+One PP BF16 hidden/residual/auxiliary tensor is `7988*4096*2 = 65,437,696 B`. EAGLE auxiliary taps [2,47,91] mean the three stage boundaries forward 3/4/4 tensors, or 719,814,656 B per pair in total. At 450 GB/s in one direction, boundary payload floors are **0.4363 / 0.5817 / 0.5817 ms**. Their sum is a path latency reference, not an addition to steady throughput; overlap and independent stage links matter. Trace memcpy records have inconsistent host/device labels and missing endpoints, so their 11–13 µs durations are not a measured NVLink bandwidth.
+
+FP8 KV payload is `94*3994*4*128*2 = 384,446,464 B/request`. At an assumed 50 GB/s, its serialization reference is 7.689 ms/request. NIC line rates and effective bandwidth were not established; 50 GB/s is explicitly a scenario. At 51.8 req/s, aggregate payload is about 19.9 GB/s, with roughly two-thirds crossing nodes in this topology. The full transfer can overlap computation; this calculation alone does not prove a network bottleneck.
+
+The user-sent [modeling article](https://superhotdogcat.github.io/ja/blog/2026/10/25/modelingestimation/) was read in full. Its applicable principles are per-resource `max(F/P, B/W)`, the critical dependency path, and Little's law `inflight bytes / latency`. Its Qwen3-30B BF16/GH200 example is a different model and platform. The article's host gather example does not justify treating all apparent bandwidth headroom here as removable communication time.
+
+## Previously rejected work, corrected against the underlying evidence
+
+- **V byte-image is not a new untested idea.** An earlier survey remembered only its incorrect layout. The corrected map (`e3e7744` / run [40201493911](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40201493911)) passed the numeric gate, but improved median by only 1.9 µs with a 3.1 µs worst regression, below its 5 µs gate. See `2026-10-24-broad-ceiling-review.md`, section 8. PP4 shapes differ, but this cannot be sold as an untried transformation.
+- PV-live register identity/PRMT preserved late operand liveness but lost 10–17 µs. Polynomial exp passed numerics and lost about 5.2%; half2 compilation retained two MUFU instructions. The new experiment retains ordinary FP32 softmax and FP8 rounding.
+- MegaMoE independent warpgroups lost 22–36%; FC2 bulk scatter lost 1.3–4.9%; direct scatter and precombine also lost. The large no-rescale diagnostic is numerically invalid. The split FC1 tile change is already adopted. Unroll16 and FC2 address hoisting have already failed to produce meaningful serving improvement.
+- Dense tail work skipping passed correctness but was 6.3% slower. QKV epilogue fusion passed 300-call gates on all 12 H200s but was 32–34% slower, so round 11 served the control.
+- M192/N96 is already under test in round 12 [41201412459](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41201412459). Its previous pair-only savings were 17.858–27.255 µs/call, corresponding to 0.429–0.654 ms/24-layer stage, not twice that amount. It is not this audit's new idea and alone does not satisfy the above 1.2–1.4 ms target. Round 12's serving result was still pending when this audit began.
+
+Chats inspected: `01a18d65-545c-7e02-995b-405c88f180ff`, `01a186bf-9f7a-7ae2-915e-dcf6ab5cbf55`, `01a17bd5-993c-74f2-8418-44158a05e6d8`, `01a18e75-f048-78d0-86a3-334929f20e49`, `01a16e62-c295-77f0-abb2-9f940111d56c`, `01a16cfb-4b6f-7c42-b182-429fbde9c83d`, `01a14eb3-35d6-7d51-a5a3-98f1f322bba5`; repository issues and discussion comments #20–24 were also read.
+
+## New structural experiment: give PV its own warpgroup
+
+`kernels/probes/fa3-split-pv.cu` separates the dependency chains, while keeping M128/N192, the native K/V representation and transpose, FP32 online softmax, causal attention and FP8 output:
+
+1. One 128-thread producer warpgroup loads Q/K/V and performs the native V transpose.
+2. Two QK/softmax warpgroups write FP8 probabilities and FP32 rescale factors into a two-slot shared-memory mailbox.
+3. A fourth warpgroup performs PV, accumulates both 64-row waves and writes output directly.
+
+In the existing two-math-warpgroup architecture, QK and PV share a warpgroup and the registers holding P; the compiled PV wait is placed within the exp sequence. There is already partial overlap. The new roles remove PV completion from the QK/softmax register lifetime; they do not merely move an identity operation or adjust a tile knob. This follows the asynchronous resource accounting used by [FlashAttention-3](https://tridao.me/publications/flash3/flash3.pdf), but is a new experiment for this pinned implementation, not a measured application of that paper's speedup.
+
+Resource budget: 512 threads, 217088 shared bytes, and `128*(24 + 2*152 + 176)=64512` role registers, below 65536. The P mailbox costs 49152 bytes of storage. For the 3994+3994 pair, 43680 KV-block visits add **2,146,959,360 logical shared-memory bytes** (P write + read) per layer. This is not HBM traffic; its bank/port pressure, barriers and the changed CTA scheduling can erase the overlap gain. The first prototype uses one CTA per M tile with reverse-M order rather than the serving persistent tile scheduler. Performance must cover that whole path.
+
+CPU checks exhaustively reconstruct the native V producer's LDSM.T/PRMT/STSM.N cross-lane byte map, verify all 24576 P entries against V's key indices, verify 4-byte shared stores, and verify all 16384 output coordinates after the native output permutation. All errors are zero. An initial host oracle used aliased uint2/float access and failed under optimization; replacing host swaps with memcpy fixed the oracle and O3 now passes. This was a test bug, not evidence that a wrong GPU permutation should be accepted.
+
+The first kernel parameter passing form created a 2416-byte stack copy. `__grid_constant__` removed it. Current CPU native compilation has 24-byte stack, 20-byte spill stores / 56-byte spill loads over the complete kernel; steady QK/softmax and PV loops require separate SASS inspection. No claim of a completely spill-free kernel is made. Full patch-chain build and numerical GPU results are recorded separately below.
+
+## Decision gate and reproduction
+
+The one-candidate probe checks ordinary, zero and strongly peaked distributions; partial M/N boundaries; unequal sequence lengths; the actual 3994+3994 pair; and the 3986+4027 screen pair. Every candidate output and scale must match the control exactly, with sampled FP64 attention as an independent check. Only then may 300-launch endurance and alternating paired CUDA-graph timing run. A faster kernel is still not a normal serving result. Adoption requires a material full-path saving and later official quality, SLA, ITL, acceptance and goodput checks.
+
+`pp4-10k-structural-20261101.json` is the numeric audit result. To recreate it from the recovered archives and SQLite:
+
+```sh
+python3 research/runtime-performance/analyze-pp4-10k.py --artifacts /Users/yuta/Dev/APAC/outputs/qwen-10k-audit-20261101 --output /tmp/pp4-10k-audit.json
+```
+
+The bounded probe builds both control and candidate from the exact SHA-pinned sources and ordered patches in `kernels/fa3-verify/build.py`. It records commands, compiler, patched-header hashes, source hashes, binary hashes, layout proof and SASS. ASPIRE connection attempts timed out from both the workstation and the intermediate server; the selected fallback is Firmus, one visible H200, node-exclusive allocation (8 GPUs), 5-minute scheduler limit / 165-second process limit. Jobs run through Actions only.
+
+## Pre-allocation CPU result
+
+The exact 14-patch chain compiled and linked both DSOs with CUDA 13.0.88 on the CPU. Host ABI loading reports control 166912 B / candidate 217088 B and one variant each; neither check initializes a GPU. Candidate SASS has no LDL/STL anywhere in its QK/softmax role (0x54b0–0xc510); the PV steady loop has no local-memory instructions either (its two scalar reloads are before/after the loop). No C7511/C7513/C7519 serialization warning occurred. The revised shared P stores use STS instructions. The whole-kernel spill counts include the producer and setup/epilogue; they are not described as zero.
+
+CPU tests: 24 Firmus protocol tests pass, including failure propagation for this new probe; 18 existing ASPIRE protocol tests passed before selecting the Firmus fallback. Ruff, shell syntax and actionlint pass. The numerical audit reproduces byte-for-byte from the recovered inputs. GPU execution remains required for tensor instructions, mbarrier visibility, numerical/endurance and performance.
+
+The broad repository test suite was also attempted on macOS. Its first failure is the existing GNU `tar -I zstd --transform` invocation against the macOS tar executable; this does not exercise the changed kernel. The focused protocol tests pass. The broad Linux Actions validation remains the gate before GPU dispatch.

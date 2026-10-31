@@ -81,15 +81,17 @@
     },
     "p_attention": {
       "priority": 2,
-      "next": "現在のN192 pipe行の数え上げは2026-10-30に完了（`2026-10-30-prefill-fa3-diag-trim.md`）：定常KV step 587命令（MUFU.EX2 98）、tile境界1316命令、tileあたり約7160命令・MUFU約1070。tile paddingは全て対角blockにあり、warpgroupの64行が見る鍵は192中平均111（32鍵単位）。対角blockのmask・softmaxだけを見える32鍵block数に縮める `n192-direct-o-varlen-pipe-diag` はrun 41073991312のin-job screenで全48セルbyte一致だったが平均3.7µs遅く（pin中央412.7µs）不採用、撤去した。QK・PVの対角trimはwgmma直列化（C7511/C7513/C7519）で未実装。",
+      "next": "現在のN192 pipe行の数え上げは2026-10-30に完了（`2026-10-30-prefill-fa3-diag-trim.md`）：定常KV step 587命令（MUFU.EX2 98）、tile境界1316命令、tileあたり約7160命令・MUFU約1070。tile paddingは全て対角blockにあり、warpgroupの64行が見る鍵は192中平均111（32鍵単位）。対角blockのmask・softmaxだけを見える32鍵block数に縮める `n192-direct-o-varlen-pipe-diag` はrun 41073991312のin-job screenで全48セルbyte一致だったが平均3.7µs遅く（pin中央412.7µs）不採用、撤去した。QK・PVの対角trimはwgmma直列化（C7511/C7513/C7519）で未実装。 2026-11-01: 現在のPP4 9896.09/9881.67をraw requestから再計算し、全P周期1.203〜1.372 msの削減が10kの条件となる。M128/N192のままQK/softmax 2 WGとPV 1 WGを分離する新構造を実装。217088 B shared、P/V/output全要素のCPU配置検査、現行14 patchのnative buildを通過。追加P shared traffic 2.147 GB/pair/layerも計上済み。GPU数値・耐久・全経路計時は未測定で、serving改善を主張しない。",
       "gap_to_explain": "Tensor Coreだけの床に加えてsoftmax・FP8変換・転置・同期がある。全I/OをHBMへ流す模型も、全てL2 hitとする模型も実測帯域ではない。",
       "gate": "現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。",
       "evidence": [
         "2026-10-25-fa3-prefill-measurement.md",
-        "2026-10-27-prefill-memory.md"
+        "2026-10-27-prefill-memory.md",
+        "2026-11-01-10k-structural-audit.md",
+        "pp4-10k-structural-20261101.json"
       ],
       "blocked_by": [
-        "current N192 opcode counts and critical dependency accounting"
+        "split-PV exact numerical/endurance and whole-path timing on GPU; then normal serving quality/ITL/goodput"
       ]
     },
     "p_qkv": {
