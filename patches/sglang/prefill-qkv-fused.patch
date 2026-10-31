@@ -1,0 +1,667 @@
+diff --git a/python/sglang/kernels/jit/csrc/gemm/qkv_fused_prefill.cuh b/python/sglang/kernels/jit/csrc/gemm/qkv_fused_prefill.cuh
+new file mode 100644
+--- /dev/null
++++ b/python/sglang/kernels/jit/csrc/gemm/qkv_fused_prefill.cuh
+@@ -0,0 +1,538 @@
++// Round 11 candidate. The 1D2D mainloop below is copied from pinned DeepGEMM.
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cuda_fp8.h>
++#include <cstdint>
++#include <cassert>
++
++namespace sgl_qkv_fused {
++struct Params {
++    const __nv_bfloat16 *qw, *kw;
++    const float* trig;
++    const void *pos, *loc;
++    uint8_t *q, *k, *v, *kc, *vc;
++    int64_t slots;
++    float eps;
++};
++
++__device__ __forceinline__ uint16_t fp8_pair(float a, float b) {
++    const uint16_t packed=__nv_cvt_float2_to_fp8x2(make_float2(a,b), __NV_SATFINITE, __NV_E4M3);
++    if (fabsf(a)<=464.f && fabsf(b)<=464.f) return packed;
++    const unsigned ua=__float_as_uint(a), ub=__float_as_uint(b);
++    const unsigned aa=ua&0x7fffffff, ab=ub&0x7fffffff;
++    const unsigned lo=aa>0x43e80000 ? (aa>0x7f800000 ? 0x7f : ((ua>>24)&0x80)|0x7f) : packed&0xff;
++    const unsigned hi=ab>0x43e80000 ? (ab>0x7f800000 ? 0x7f : ((ub>>24)&0x80)|0x7f) : packed>>8;
++    return lo|(hi<<8);
++}
++
++// Register transpose: lane L receives chunk L from all four source lanes.
++// Each source word holds two 2-byte pairs eight columns apart.
++__device__ __forceinline__ uint4 transpose(uint32_t v0, uint32_t v1, uint32_t v2, uint32_t v3) {
++    const int lane=threadIdx.x%4;
++    uint32_t a=__shfl_xor_sync(0xffffffff,(lane&1)?v0:v1,1,4);
++    uint32_t b=__shfl_xor_sync(0xffffffff,(lane&1)?v2:v3,1,4);
++    if(lane&1) { v0=a; v2=b; } else { v1=a; v3=b; }
++    a=__shfl_xor_sync(0xffffffff,(lane&2)?v0:v2,2,4);
++    b=__shfl_xor_sync(0xffffffff,(lane&2)?v1:v3,2,4);
++    if(lane&2) { v0=a; v1=b; } else { v2=a; v3=b; }
++    return make_uint4(__byte_perm(v0,v1,0x5410),__byte_perm(v2,v3,0x5410),__byte_perm(v0,v1,0x7632),__byte_perm(v2,v3,0x7632));
++}
++
++template<typename Id>
++__device__ __forceinline__ void epilogue(float* accum, uint32_t first, uint32_t head, uint32_t rows, const Params& p) {
++    const int lane=threadIdx.x%4;
++    const int base_row=first+(threadIdx.x/32)*16+(threadIdx.x%32)/4;
++    #pragma unroll
++    for(int wave=0;wave<2;++wave) {
++        #pragma unroll
++        for(int r=0;r<2;++r) {
++            const int row=base_row+wave*128+r*8;
++            const bool valid=row<rows;
++            const int base=wave*64+r*2;
++            float rho=1.f;
++            if(head<68) {
++                float sum_a=0.f,sum_b=0.f;
++                #pragma unroll
++                for(int j=0;j<8;++j) {
++                    sum_a=fmaf(accum[base+j*4],accum[base+j*4],sum_a);
++                    sum_a=fmaf(accum[base+j*4+1],accum[base+j*4+1],sum_a);
++                    sum_b=fmaf(accum[base+j*4+32],accum[base+j*4+32],sum_b);
++                    sum_b=fmaf(accum[base+j*4+33],accum[base+j*4+33],sum_b);
++                }
++                float sum=sum_a+sum_b;
++                sum+=__shfl_xor_sync(0xffffffff,sum,2,4);
++                sum+=__shfl_xor_sync(0xffffffff,sum,1,4);
++                rho=rsqrtf(sum*(1.f/128.f)+p.eps);
++            }
++            const int64_t pos=valid && head<68 ? static_cast<const Id*>(p.pos)[row]:0;
++            const auto w=head<64 ? p.qw:p.kw;
++            uint16_t lo[8],hi[8];
++            #pragma unroll
++            for(int j=0;j<8;++j) {
++                float a=accum[base+j*4],b=accum[base+j*4+1];
++                float c=accum[base+j*4+32],d=accum[base+j*4+33];
++                if(head<68) {
++                    const int col=j*8+lane*2;
++                    const float2 wx=__bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(w+col));
++                    const float2 wy=__bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(w+col+64));
++                    const float2 cs=*reinterpret_cast<const float2*>(p.trig+pos*128+col);
++                    const float2 sn=*reinterpret_cast<const float2*>(p.trig+pos*128+col+64);
++                    const float u0=a*wx.x,u1=b*wx.y,v0=c*wy.x,v1=d*wy.y;
++                    a=(u0*cs.x-v0*sn.x)*rho; b=(u1*cs.y-v1*sn.y)*rho;
++                    c=(u0*sn.x+v0*cs.x)*rho; d=(u1*sn.y+v1*cs.y)*rho;
++                }
++                lo[j]=fp8_pair(a,b); hi[j]=fp8_pair(c,d);
++            }
++            const uint4 x=transpose(lo[0]|uint32_t(lo[1])<<16,lo[2]|uint32_t(lo[3])<<16,lo[4]|uint32_t(lo[5])<<16,lo[6]|uint32_t(lo[7])<<16);
++            const uint4 y=transpose(hi[0]|uint32_t(hi[1])<<16,hi[2]|uint32_t(hi[3])<<16,hi[4]|uint32_t(hi[5])<<16,hi[6]|uint32_t(hi[7])<<16);
++            if(valid) {
++                uint8_t* dst=head<64 ? p.q+(int64_t(row)*64+head)*128 : (head<68?p.k:p.v)+(int64_t(row)*4+head%4)*128;
++                *reinterpret_cast<uint4*>(dst+lane*16)=x;
++                *reinterpret_cast<uint4*>(dst+64+lane*16)=y;
++                if(head>=64) {
++                    const int64_t slot=static_cast<const Id*>(p.loc)[row];
++                    if (!(slot>=0 && slot<p.slots)) asm volatile("trap;");
++                    if(slot!=0) {
++                        dst=(head<68?p.kc:p.vc)+(slot*4+head%4)*128;
++                        *reinterpret_cast<uint4*>(dst+lane*16)=x;
++                        *reinterpret_cast<uint4*>(dst+64+lane*16)=y;
++                    }
++                }
++            }
++        }
++    }
++}
++} // namespace sgl_qkv_fused
++
++#pragma once
++
++#pragma clang diagnostic push
++#pragma clang diagnostic ignored "-Wunknown-attributes"
++
++#include <cutlass/arch/barrier.h>
++#include <cutlass/arch/reg_reconfig.h>
++
++#include <cute/arch/cluster_sm90.hpp>
++#include <cute/arch/copy_sm90_desc.hpp>
++#include <cute/arch/copy_sm90_tma.hpp>
++
++#include <deep_gemm/comm/barrier.cuh>
++#include <deep_gemm/common/math.cuh>
++#include <deep_gemm/common/utils.cuh>
++#include <deep_gemm/common/tma_copy.cuh>
++#include <deep_gemm/common/types.cuh>
++#include <deep_gemm/mma/sm90.cuh>
++#include <deep_gemm/epilogue/transform.cuh>
++#include <deep_gemm/ptx/ld_st.cuh>
++#include <deep_gemm/ptx/utils.cuh>
++#include <deep_gemm/ptx/wgmma.cuh>
++#include <deep_gemm/scheduler/gemm.cuh>
++
++namespace deep_gemm {
++
++template <uint32_t kNumFormerIters, uint32_t kGap, uint32_t kEnd, typename func_t>
++CUTLASS_DEVICE void qkv_fused_dispatch_num_former_iters(uint32_t num_former_iters, const func_t& func) {
++    if (num_former_iters == kNumFormerIters) {
++        func(cute::Int<kNumFormerIters>{});
++        return;
++    }
++
++    if constexpr (kNumFormerIters + kGap <= kEnd)
++        qkv_fused_dispatch_num_former_iters<kNumFormerIters + kGap, kGap, kEnd>(num_former_iters, func);
++}
++
++template <cute::UMMA::Major kMajorSFB,
++          uint32_t SHAPE_M, uint32_t SHAPE_N, uint32_t SHAPE_K,
++          uint32_t kNumGroups,
++          uint32_t BLOCK_M, uint32_t BLOCK_N, uint32_t BLOCK_K,
++          uint32_t kSwizzleAMode, uint32_t kSwizzleBMode, uint32_t kSwizzleDMode,
++          uint32_t kNumStages,
++          uint32_t kNumTMAThreads, uint32_t kNumMathThreads,
++          uint32_t kNumTMAMulticast, bool kIsTMAMulticastOnA,
++          uint32_t kNumSMs, GemmType kGemmType,
++          typename cd_dtype_t,
++          typename epilogue_type_t, typename Id>
++CUTLASS_GLOBAL __launch_bounds__(kNumTMAThreads + kNumMathThreads, 1) void
++qkv_fused_prefill_impl(float* sfb, int* grouped_layout,
++                        uint32_t shape_m, uint32_t shape_n, uint32_t shape_k,
++                        const __grid_constant__ cute::TmaDescriptor tensor_map_a,
++                        const __grid_constant__ cute::TmaDescriptor tensor_map_b,
++                        const __grid_constant__ cute::TmaDescriptor tensor_map_sfa, const __grid_constant__ sgl_qkv_fused::Params p) {
++#if (defined(__CUDA_ARCH__) and (__CUDA_ARCH__ >= 900)) or defined(__CLION_IDE__)
++    // Scaling checks
++    DG_STATIC_ASSERT(BLOCK_K == 128, "Only support per-128-channel FP8 scaling");
++    DG_STATIC_ASSERT(
++        math::constexpr_ceil_div(BLOCK_N, BLOCK_K) == 1 or
++        (math::constexpr_gcd(BLOCK_N, BLOCK_K) == BLOCK_N - BLOCK_K), "Too much B scales in a single block");
++
++    // C/D type: only BF16 without accumulation
++    DG_STATIC_ASSERT(cute::is_same_v<cd_dtype_t, cutlass::bfloat16_t>, "Invalid C/D data dtype");
++
++    // Types
++    using WGMMA = typename mma::sm90::FP8MMASelector<BLOCK_N>::type;
++    using Barrier = cutlass::arch::ClusterTransactionBarrier;
++    DG_STATIC_ASSERT(BLOCK_M % WGMMA::M == 0 or BLOCK_M < WGMMA::M, "Invalid block size");
++
++    // Overwrite shape constants if the compiler gives
++    shape_m = SHAPE_M != 0 ? SHAPE_M : shape_m;
++    shape_n = SHAPE_N != 0 ? SHAPE_N : shape_n;
++    shape_k = SHAPE_K != 0 ? SHAPE_K : shape_k;
++
++    // Shared memory
++    static constexpr bool kMustUseUniformedScaleB = (BLOCK_K % BLOCK_N == 0);
++    static constexpr uint32_t SMEM_D_SIZE = math::constexpr_align(BLOCK_M * BLOCK_N * static_cast<uint32_t>(sizeof(__nv_bfloat16)), 1024u);
++    static constexpr uint32_t SMEM_A_SIZE_PER_STAGE = BLOCK_M * BLOCK_K * sizeof(__nv_fp8_e4m3);
++    static constexpr uint32_t SMEM_B_SIZE_PER_STAGE = BLOCK_N * BLOCK_K * sizeof(__nv_fp8_e4m3);
++    static constexpr uint32_t SMEM_SFA_SIZE_PER_STAGE = BLOCK_M * sizeof(float);
++    static constexpr uint32_t ALIGNED_SMEM_SFA_SIZE_PER_STAGE = math::constexpr_align(SMEM_SFA_SIZE_PER_STAGE, 128u);
++    const uint32_t shape_k_scales = math::ceil_div(shape_k, BLOCK_K);
++    const uint32_t shape_n_sfb = math::ceil_div(shape_n, BLOCK_K);
++    const uint32_t smem_sfb_size = math::align<uint32_t>(shape_k_scales * (kMustUseUniformedScaleB ? 1 : 2) * sizeof(float), sizeof(Barrier));
++
++    // NOTES: Make sure we have enough shared memory for WGMMA padding
++    static constexpr uint32_t WGMMA_A_SIZE_PER_STAGE = WGMMA::M * BLOCK_K * sizeof(__nv_fp8_e4m3);
++    DG_STATIC_ASSERT(WGMMA_A_SIZE_PER_STAGE <= SMEM_A_SIZE_PER_STAGE + SMEM_B_SIZE_PER_STAGE * kNumStages, "Memory Out of bound for WGMMA");
++
++    // Configs
++    const uint32_t num_total_k_blocks = math::ceil_div(shape_k, BLOCK_K);
++    const uint32_t warp_idx = __shfl_sync(0xffffffff, threadIdx.x / 32, 0);
++    const uint32_t lane_idx = ptx::get_lane_idx();
++
++    // Prefetch TMA descriptors at the very beginning
++    if (warp_idx == kNumMathThreads / 32 and cute::elect_one_sync()) {
++        cute::prefetch_tma_descriptor(&tensor_map_a);
++        cute::prefetch_tma_descriptor(&tensor_map_b);
++        cute::prefetch_tma_descriptor(&tensor_map_sfa);
++    }
++    __syncwarp();
++
++    // Align to 1024 bytes for swizzle-128B
++    extern __shared__ __align__(1024) uint8_t smem_buffer[];
++    DG_STATIC_ASSERT(SMEM_D_SIZE % 1024 == 0, "Shared memory of A/B must be aligned to 1024 bytes");
++
++    // Data on shared memory
++    auto smem_d = reinterpret_cast<__nv_bfloat16*>(smem_buffer);
++    auto smem_a = utils::PatternVisitor([&](const uint32_t& i) {
++        return reinterpret_cast<__nv_fp8_e4m3*>(smem_buffer + SMEM_D_SIZE + i * SMEM_A_SIZE_PER_STAGE);
++    });
++    auto smem_b = utils::PatternVisitor([&](const uint32_t& i) {
++        return reinterpret_cast<__nv_fp8_e4m3*>(smem_buffer + SMEM_D_SIZE + kNumStages * SMEM_A_SIZE_PER_STAGE + i * SMEM_B_SIZE_PER_STAGE);
++    });
++    constexpr uint32_t SMEM_SF_OFFSET = SMEM_D_SIZE + kNumStages * (SMEM_A_SIZE_PER_STAGE + SMEM_B_SIZE_PER_STAGE);
++    auto smem_sfa = utils::PatternVisitor([&](const uint32_t& i) {
++        return reinterpret_cast<float*>(smem_buffer + SMEM_SF_OFFSET + i * ALIGNED_SMEM_SFA_SIZE_PER_STAGE);
++    });
++    auto smem_sfb = reinterpret_cast<float*>(smem_buffer + SMEM_SF_OFFSET + kNumStages * ALIGNED_SMEM_SFA_SIZE_PER_STAGE);
++
++    // Fill barriers
++    auto barrier_start_ptr = reinterpret_cast<Barrier*>(reinterpret_cast<uint8_t*>(smem_sfb) + smem_sfb_size);
++    auto full_barriers     = utils::PatternVisitor([&](const uint32_t& i) { return barrier_start_ptr + i; });
++    auto empty_barriers    = utils::PatternVisitor([&](const uint32_t& i) { return barrier_start_ptr + kNumStages + i; });
++
++    // Initialize barriers
++    DG_STATIC_ASSERT(kNumTMAMulticast <= 32, "Too many TMA multicast");
++    if (warp_idx == kNumMathThreads / 32 + 1 and cute::elect_one_sync()) {
++        // NOTES: we always use `lane_idx` to arrive for the `lane_idx`-th CTA in the cluster,
++        // even with TMA multicast disabled, we want to make the behavior aligned
++        #pragma unroll
++        for (uint32_t i = 0; i < kNumStages; ++ i) {
++            full_barriers[i]->init(1);
++            empty_barriers[i]->init(kNumTMAMulticast * kNumMathThreads / 32);
++        }
++
++        // Make initialized barrier visible in async proxy
++        cutlass::arch::fence_barrier_init();
++    }
++
++    // Synchronize all threads to make barrier visible in normal memory model
++    (kNumTMAMulticast > 1) ? comm::cluster_sync_with_relaxed_arrive() : __syncthreads();
++
++    // Register reconfigurations
++    constexpr uint32_t kNumTMARegisters = 40;
++    // Qwen Decode BLOCK_M 192 (host DG_SM90_1D2D_DECODE_CONFIG "QKV>128"/"O>128"):
++    // three math warpgroups, 3 x 128 x 152 + 128 x 40 = 63488 registers.
++    constexpr uint32_t kNumMathRegisters = kNumMathThreads == 128 ? 248 : (kNumMathThreads == 384 ? 152 : 232);
++
++    // Wait for primary kernel completion
++    cudaGridDependencySynchronize();
++
++    // Block scheduler
++    uint32_t m_block_idx, n_block_idx;
++    auto scheduler = sched::Scheduler<kGemmType, BLOCK_M, BLOCK_N, kNumGroups, kNumTMAMulticast, kIsTMAMulticastOnA, kNumSMs>(shape_m, shape_n, shape_k, grouped_layout);
++
++    // Pipeline and TMA phases
++    uint32_t stage_idx = 0, phase = 0;
++    auto advance_pipeline = [&](uint32_t& k_block_idx) {
++        ++ k_block_idx;
++
++        // Flip phases only if reach the next first stage
++        stage_idx = stage_idx == kNumStages - 1 ? 0 : stage_idx + 1;
++        phase ^= stage_idx == 0;
++    };
++
++    if (warp_idx >= kNumMathThreads / 32) {
++        // TMA warp-group for loading data
++        cutlass::arch::warpgroup_reg_dealloc<kNumTMARegisters>();
++
++        // NOTES: only one thread (or warp) will be used
++        // We use the third warp, as warp 0/1 may be doing WGMMA with `BLOCK_M == 32`
++        if (warp_idx == kNumMathThreads / 32 + 2 and cute::elect_one_sync()) {
++            // Persistently schedule over blocks
++            while (scheduler.get_next_block(m_block_idx, n_block_idx)) {
++                // Assign TMA multicast number into A and B
++                // NOTES: there may be additional odd rows/columns or cases where multicast is not possible.
++                const bool is_tma_multicast_valid = scheduler.is_tma_multicast_valid(m_block_idx);
++                const uint32_t num_tma_multicast_a = (kIsTMAMulticastOnA and is_tma_multicast_valid) ? kNumTMAMulticast : 1;
++                const uint32_t num_tma_multicast_b = (not kIsTMAMulticastOnA and is_tma_multicast_valid) ? kNumTMAMulticast : 1;
++                DG_STATIC_ASSERT(kNumTMAMulticast <= 2, "Scheduler does not support > 2 TMA multicast");
++
++                for (uint32_t k_block_idx = 0; k_block_idx < num_total_k_blocks; advance_pipeline(k_block_idx)) {
++                    // Wait consumer release
++                    empty_barriers[stage_idx]->wait(phase ^ 1);
++
++                    // Issue TMA A
++                    constexpr bool kIsBatchedMM = (kGemmType == GemmType::Batched);
++                    const uint32_t batch_idx = (kIsBatchedMM ? scheduler.current_group_idx : 0);
++
++                    constexpr bool kWithGroupOffsetA = kGemmType == GemmType::MGroupedMasked;
++                    auto& full_barrier = *full_barriers[stage_idx];
++                    const uint32_t k_idx = k_block_idx * BLOCK_K;
++                    tma::copy<BLOCK_K, BLOCK_M, kSwizzleAMode, __nv_fp8_e4m3, kIsBatchedMM>(&tensor_map_a, &full_barrier,
++                             smem_a[stage_idx], k_idx, scheduler.get_global_idx<kWithGroupOffsetA>(shape_m, BLOCK_M, m_block_idx),
++                             num_tma_multicast_a, batch_idx);
++                    tma::copy<BLOCK_M, BLOCK_K, 0>(&tensor_map_sfa, &full_barrier,
++                             smem_sfa[stage_idx], m_block_idx * BLOCK_M, scheduler.template get_global_idx<kWithGroupOffsetA, sched::IndexType::SF_K>(shape_k_scales, 1, k_block_idx),
++                             num_tma_multicast_a);
++
++                    // Issue TMA B
++                    tma::copy<BLOCK_K, BLOCK_N, kSwizzleBMode, __nv_fp8_e4m3, kIsBatchedMM>(&tensor_map_b, &full_barrier,
++                             smem_b[stage_idx], k_idx, scheduler.get_global_idx<true>(shape_n, BLOCK_N, n_block_idx, m_block_idx),
++                             num_tma_multicast_b, batch_idx);
++                    full_barrier.arrive_and_expect_tx(SMEM_A_SIZE_PER_STAGE + SMEM_B_SIZE_PER_STAGE + SMEM_SFA_SIZE_PER_STAGE);
++                }
++            }
++
++            // To safely deconstruct distributed shared barriers, we need another round of empty waits
++            if constexpr (kNumTMAMulticast > 1) {
++                for (uint32_t i = 0; i < kNumStages; advance_pipeline(i))
++                    empty_barriers[stage_idx]->wait(phase ^ 1);
++            }
++        }
++    } else {
++        // Math warp-groups for WGMMA
++        cutlass::arch::warpgroup_reg_alloc<kNumMathRegisters>();
++
++        // NOTES: use `__shfl_sync` to encourage NVCC to use unified registers
++        const auto math_wg_idx = __shfl_sync(0xffffffff, threadIdx.x / 128, 0);
++        const auto r_0 = warp_idx * 16 + lane_idx / 4, r_1 = r_0 + 8;
++
++        auto a_desc = mma::sm90::make_smem_desc(smem_a[0] + math_wg_idx * WGMMA::M * BLOCK_K, 1);
++        auto b_desc = mma::sm90::make_smem_desc(smem_b[0], 1);
++        const uint32_t a_desc_lo = __shfl_sync(0xffffffff, a_desc.reg32_[0], 0);
++        const uint32_t b_desc_lo = __shfl_sync(0xffffffff, b_desc.reg32_[0], 0);
++
++        // Persistently schedule over blocks
++        while (scheduler.get_next_block(m_block_idx, n_block_idx)) {
++            // Decide the number of scales B to load
++            DG_TRAP_ONLY_DEVICE_ASSERT(shape_n % 8 == 0);
++            uint32_t num_former_iters = BLOCK_N / 8, num_full_iters = num_former_iters;
++            if constexpr (not kMustUseUniformedScaleB) {
++                num_former_iters = min(BLOCK_N, BLOCK_K - n_block_idx * BLOCK_N % BLOCK_K) / 8;
++                num_full_iters = min(shape_n - n_block_idx * BLOCK_N, BLOCK_N) / 8;
++            }
++            uint32_t num_sfb = shape_k_scales * (num_former_iters >= num_full_iters ? 1 : 2);
++
++            // Load B scales with math warp-groups
++            // NOTES: except the first warp, we want to overlap loading B scales with TMA stores between tasks
++            if (threadIdx.x >= 32) {
++                auto previous_group_offset = scheduler.template get_global_idx<true, sched::IndexType::SF_K>(shape_n_sfb * shape_k_scales, 0, 0, m_block_idx);
++                const uint32_t stride_n_sfb = kMajorSFB == cute::UMMA::Major::MN ? 1 : shape_k_scales;
++                const uint32_t stride_k_sfb = kMajorSFB == cute::UMMA::Major::MN ? shape_n_sfb : 1;
++                auto local_sfb = sfb + previous_group_offset + ((n_block_idx * BLOCK_N) / BLOCK_K) * stride_n_sfb;
++
++                #pragma unroll
++                for (uint32_t i = threadIdx.x - 32; i < num_sfb; i += kNumMathThreads - 32)
++                    ptx::st_shared(smem_sfb + i, i < shape_k_scales ? local_sfb[i * stride_k_sfb] : local_sfb[(i - shape_k_scales) * stride_k_sfb + stride_n_sfb]);
++            }
++            cutlass::arch::NamedBarrier::sync(kNumMathThreads, 0);
++
++            // Accumulation for WGMMA or CUDA promotion
++            // One wave per math warpgroup: 128 rows for two warpgroups, 192 for three.
++            constexpr uint32_t WAVE_BLOCK_M = BLOCK_M <= WGMMA::M ? BLOCK_M : WGMMA::M * (kNumMathThreads == 384 ? 3 : 2);
++            DG_STATIC_ASSERT(BLOCK_M % WAVE_BLOCK_M == 0, "Invalid block sizes");
++            float accum[WGMMA::kNumAccum], final_accum[WGMMA::kNumAccum * (BLOCK_M / WAVE_BLOCK_M)] = {0};
++
++            // Pick threads whose WGMMA results are to be stored in shared memory
++            DG_STATIC_ASSERT(BLOCK_M >= 64 or kNumMathThreads == 128, "Only one math warp group for `BLOCK_M < 64`");
++            constexpr uint32_t kNumWGMMAStoreThreads = WAVE_BLOCK_M * (128 / WGMMA::M);
++            const bool do_wgmma_store = BLOCK_M >= WGMMA::M or warp_idx < kNumWGMMAStoreThreads / 32;
++
++            // Empty barrier arrival
++            auto empty_barrier_arrive = [&]() {
++                if constexpr (kNumTMAMulticast == 1) {
++                    lane_idx == 0 ? empty_barriers[stage_idx]->arrive() : void();
++                } else {
++                    auto target_cta = scheduler.is_peer_cta_alive ? lane_idx : cute::block_rank_in_cluster();
++                    lane_idx < kNumTMAMulticast ? empty_barriers[stage_idx]->arrive(target_cta) : void();
++                }
++            };
++
++            // Skip useless computations
++            if (scheduler.is_computation_valid(m_block_idx, math_wg_idx * WGMMA::M)) {
++                // The compiler must know the dynamic variable `num_former_iters`'s real value
++                constexpr bool kShouldOptimize = BLOCK_K / math::constexpr_gcd(BLOCK_K, BLOCK_N) <= 4 and not kMustUseUniformedScaleB;
++                constexpr uint32_t kGap = math::constexpr_gcd(BLOCK_K, BLOCK_N) / 8;
++                constexpr uint32_t kEnd = kShouldOptimize ? BLOCK_K / 8 : 0;
++
++                // Dispatch `num_former_iters` and launch MMAs
++                qkv_fused_dispatch_num_former_iters<0, kGap, kEnd>(kShouldOptimize ? num_former_iters : 0, [&](auto _) {
++                    #pragma unroll 8
++                    for (uint32_t k_block_idx = 0; k_block_idx < num_total_k_blocks; advance_pipeline(k_block_idx)) {
++                        const auto a_desc_base_lo = a_desc_lo + stage_idx * (SMEM_A_SIZE_PER_STAGE / 16);
++                        const auto b_desc_base_lo = b_desc_lo + stage_idx * (SMEM_B_SIZE_PER_STAGE / 16);
++
++                        // Read B scales
++                        float scale_b_0 = ptx::ld_shared(smem_sfb + k_block_idx), scale_b_1;
++                        // NOTES: even some blocks do not need to read the second row, but we still load one to align with other blocks
++                        if constexpr (not kMustUseUniformedScaleB)
++                            scale_b_1 = ptx::ld_shared(smem_sfb + k_block_idx + shape_k_scales);
++
++                        // Wait TMA arrivals
++                        full_barriers[stage_idx]->wait(phase);
++
++                        // TODO: remove some useless computation for unaligned Ms
++                        #pragma unroll
++                        for (uint32_t local_idx = 0; local_idx < BLOCK_M / WAVE_BLOCK_M; ++ local_idx) {
++                            auto m_offset = local_idx * WAVE_BLOCK_M;
++
++                            // Read A scales
++                            // NOTES: all shared memory read must be prior to `warpgroup_arrive` to avoid next scheduled block polluting the results
++                            auto scale_a_0 = do_wgmma_store ? ptx::ld_shared(smem_sfa[stage_idx] + r_0 + m_offset) : 0;
++                            auto scale_a_1 = do_wgmma_store ? ptx::ld_shared(smem_sfa[stage_idx] + r_1 + m_offset) : 0;
++
++                            // Commit WGMMA instructions
++                            #pragma unroll
++                            for (uint32_t i = 0; i < WGMMA::kNumAccum; ++ i)
++                                ptx::warpgroup_fence_operand(accum[i]);
++                            ptx::warpgroup_arrive();
++                            #pragma unroll
++                            for (uint32_t k = 0; k < BLOCK_K / WGMMA::K; ++ k) {
++                                a_desc.reg32_[0] = a_desc_base_lo + (m_offset * BLOCK_K + k * WGMMA::K) / 16;
++                                b_desc.reg32_[0] = b_desc_base_lo + k * WGMMA::K / 16;
++                                WGMMA::wgmma(a_desc, b_desc, accum, k);
++                            }
++                            ptx::warpgroup_commit_batch();
++                            #pragma unroll
++                            for (uint32_t i = 0; i < WGMMA::kNumAccum; ++ i)
++                                ptx::warpgroup_fence_operand(accum[i]);
++                            ptx::warpgroup_wait<0>();
++
++                            // Notify barrier arrival at the last warpgroup wave
++                            if (local_idx == BLOCK_M / WAVE_BLOCK_M - 1)
++                                empty_barrier_arrive();
++
++                            // Skip promotion for the unfilled parts
++                            if (not do_wgmma_store)
++                                continue;
++
++                            // Promote with scales
++                            // NOTES: making it as predicates is very important for performance, comparing to two loops
++                            float scale_0_0 = scale_a_0 * scale_b_0, scale_1_0 = scale_a_1 * scale_b_0;
++                            float scale_0_1, scale_1_1;
++                            if constexpr (not kMustUseUniformedScaleB)
++                                scale_0_1 = scale_a_0 * scale_b_1, scale_1_1 = scale_a_1 * scale_b_1;
++
++                            auto shifted_accum = final_accum + WGMMA::kNumAccum * local_idx;
++                            #pragma unroll
++                            for (uint32_t i = 0; i < WGMMA::kNumAccum / 4; ++ i) {
++                                // NOTES: for unrolled `num_former_iters` cases, we expect the compiler to automatically make it a constant
++                                const bool predicate = kMustUseUniformedScaleB or i < num_former_iters;
++                                shifted_accum[i * 4 + 0] += (predicate ? scale_0_0 : scale_0_1) * accum[i * 4 + 0];
++                                shifted_accum[i * 4 + 1] += (predicate ? scale_0_0 : scale_0_1) * accum[i * 4 + 1];
++                                shifted_accum[i * 4 + 2] += (predicate ? scale_1_0 : scale_1_1) * accum[i * 4 + 2];
++                                shifted_accum[i * 4 + 3] += (predicate ? scale_1_0 : scale_1_1) * accum[i * 4 + 3];
++                            }
++                        }
++                    }
++                });
++            } else {
++                #pragma unroll
++                for (uint32_t k_block_idx = 0; k_block_idx < num_total_k_blocks; advance_pipeline(k_block_idx)) {
++                    full_barriers[stage_idx]->wait(phase);
++                    empty_barrier_arrive();
++                }
++            }
++
++            static_assert(BLOCK_M==256 && BLOCK_N==128 && BLOCK_K==128 && kNumMathThreads==256);
++            sgl_qkv_fused::epilogue<Id>(final_accum, m_block_idx*BLOCK_M, n_block_idx, shape_m, p);
++        }
++    }
++#else
++    if (blockIdx.x == 0 and threadIdx.x == 0)
++        DG_DEVICE_ASSERT(false and "This kernel only support sm_90a");
++#endif
++}
++
++};  // namespace deep_gemm
++
++#pragma clang diagnostic pop
++
++#include <sgl_kernel/tensor.h>
++#include <sgl_kernel/utils.h>
++#include <sgl_kernel/utils.cuh>
++#include <cuda.h>
++#include <cudaTypedefs.h>
++
++namespace sgl_qkv_fused {
++inline CUtensorMap tensor_map(CUtensorMapDataType dtype, const void* ptr, uint64_t x, uint64_t y, uint64_t stride, uint32_t bx, uint32_t by, CUtensorMapSwizzle swizzle) {
++    static const auto encode=[] {
++        void* ptr=nullptr;
++        cudaDriverEntryPointQueryResult status;
++        host::RuntimeDeviceCheck(cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled", &ptr, 12000, cudaEnableDefault, &status));
++        host::RuntimeCheck(status==cudaDriverEntryPointSuccess && ptr!=nullptr, "cuTensorMapEncodeTiled is unavailable");
++        return reinterpret_cast<PFN_cuTensorMapEncodeTiled_v12000>(ptr);
++    }();
++    CUtensorMap map;
++    const uint64_t dims[2]={x,y}, strides[1]={stride};
++    const uint32_t box[2]={bx,by}, elem[2]={1,1};
++    const auto result=encode(&map,dtype,2,const_cast<void*>(ptr),dims,strides,box,elem,CU_TENSOR_MAP_INTERLEAVE_NONE,swizzle,CU_TENSOR_MAP_L2_PROMOTION_L2_256B,CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
++    host::RuntimeCheck(result==CUDA_SUCCESS,"QKV fused cuTensorMapEncodeTiled failed");
++    return map;
++}
++
++struct QKVFusedPrefill {
++    template<typename Id>
++    static void launch(const tvm::ffi::TensorView a, const tvm::ffi::TensorView sa, const tvm::ffi::TensorView w, const tvm::ffi::TensorView sw, const tvm::ffi::TensorView qw, const tvm::ffi::TensorView kw, const tvm::ffi::TensorView trig, const tvm::ffi::TensorView pos, const tvm::ffi::TensorView loc, double eps, const tvm::ffi::TensorView q, const tvm::ffi::TensorView k, const tvm::ffi::TensorView v, const tvm::ffi::TensorView kc, const tvm::ffi::TensorView vc) {
++        using namespace deep_gemm;
++        const auto rows=static_cast<uint32_t>(a.size(0));
++        const auto ta=tensor_map(CU_TENSOR_MAP_DATA_TYPE_UINT8,a.data_ptr(),4096,rows,4096,128,256,CU_TENSOR_MAP_SWIZZLE_128B);
++        const auto tb=tensor_map(CU_TENSOR_MAP_DATA_TYPE_UINT8,w.data_ptr(),4096,9216,4096,128,128,CU_TENSOR_MAP_SWIZZLE_128B);
++        const auto ts=tensor_map(CU_TENSOR_MAP_DATA_TYPE_FLOAT32,sa.data_ptr(),sa.stride(1),32,sa.stride(1)*4,256,1,CU_TENSOR_MAP_SWIZZLE_NONE);
++        const auto kernel=qkv_fused_prefill_impl<cute::UMMA::Major::K,0,9216,4096,1,256,128,128,128,128,128,3,128,256,2,true,132,GemmType::Normal,cutlass::bfloat16_t,epilogue::transform::EpilogueIdentity,Id>;
++        constexpr uint32_t smem=216448;
++        static const bool configured=[&] { host::RuntimeDeviceCheck(cudaFuncSetAttribute(kernel,cudaFuncAttributeMaxDynamicSharedMemorySize,smem)); return true; }();
++        (void)configured;
++        const auto p=Params{static_cast<const __nv_bfloat16*>(qw.data_ptr()),static_cast<const __nv_bfloat16*>(kw.data_ptr()),static_cast<const float*>(trig.data_ptr()),pos.data_ptr(),loc.data_ptr(),static_cast<uint8_t*>(q.data_ptr()),static_cast<uint8_t*>(k.data_ptr()),static_cast<uint8_t*>(v.data_ptr()),static_cast<uint8_t*>(kc.data_ptr()),static_cast<uint8_t*>(vc.data_ptr()),kc.size(0),static_cast<float>(eps)};
++        host::LaunchKernel(132,384,a.device(),smem).enable_cluster(dim3(2,1,1)).enable_pdl(true)(kernel,static_cast<float*>(sw.data_ptr()),static_cast<int*>(nullptr),rows,9216u,4096u,*reinterpret_cast<const cute::TmaDescriptor*>(&ta),*reinterpret_cast<const cute::TmaDescriptor*>(&tb),*reinterpret_cast<const cute::TmaDescriptor*>(&ts),p);
++    }
++
++    static void run(const tvm::ffi::TensorView a, const tvm::ffi::TensorView sa, const tvm::ffi::TensorView w, const tvm::ffi::TensorView sw, const tvm::ffi::TensorView qw, const tvm::ffi::TensorView kw, const tvm::ffi::TensorView trig, const tvm::ffi::TensorView pos, const tvm::ffi::TensorView loc, double eps, const tvm::ffi::TensorView q, const tvm::ffi::TensorView k, const tvm::ffi::TensorView v, const tvm::ffi::TensorView kc, const tvm::ffi::TensorView vc) {
++        using namespace host;
++        auto M=SymbolicSize{"rows"}; auto S=SymbolicSize{"slots"}; auto Sm=SymbolicSize{"scale_stride"};
++        auto device=SymbolicDevice{}; device.set_options<kDLCUDA>(); auto id=SymbolicDType{};
++        TensorMatcher({M,4096}).with_dtype<fp8_e4m3_t>().with_device(device).verify(a);
++        TensorMatcher({M,32}).with_strides({1,Sm}).with_dtype<float>().with_device(device).verify(sa);
++        TensorMatcher({9216,4096}).with_dtype<fp8_e4m3_t>().with_device(device).verify(w);
++        TensorMatcher({72,32}).with_dtype<float>().with_device(device).verify(sw);
++        TensorMatcher({128}).with_dtype<bf16_t>().with_device(device).verify(qw).verify(kw);
++        TensorMatcher({-1,128}).with_dtype<float>().with_device(device).verify(trig);
++        TensorMatcher({M}).with_dtype<int32_t,int64_t>(id).with_device(device).verify(pos).verify(loc);
++        TensorMatcher({M,64,128}).with_dtype<fp8_e4m3_t>().with_device(device).verify(q);
++        TensorMatcher({M,4,128}).with_dtype<fp8_e4m3_t>().with_device(device).verify(k).verify(v);
++        TensorMatcher({S,4,128}).with_dtype<fp8_e4m3_t>().with_device(device).verify(kc).verify(vc);
++        RuntimeCheck(M.unwrap()>0 && Sm.unwrap()>=M.unwrap() && Sm.unwrap()%4==0,"QKV fused requires TMA-aligned column-major activation scales");
++        if(id.is_type<int32_t>()) launch<int32_t>(a,sa,w,sw,qw,kw,trig,pos,loc,eps,q,k,v,kc,vc);
++        else launch<int64_t>(a,sa,w,sw,qw,kw,trig,pos,loc,eps,q,k,v,kc,vc);
++    }
++};
++} // namespace sgl_qkv_fused
+diff --git a/python/sglang/kernels/ops/attention/qkv_fused_prefill.py b/python/sglang/kernels/ops/attention/qkv_fused_prefill.py
+new file mode 100644
+--- /dev/null
++++ b/python/sglang/kernels/ops/attention/qkv_fused_prefill.py
+@@ -0,0 +1,17 @@
++"""PP4 Prefill QKV: unchanged 1D2D mainloop, direct FP32 norm/RoPE/FP8."""
++
++import functools
++from pathlib import Path
++
++
++@functools.cache
++def _module():
++    import deep_gemm
++    from sglang.kernels.jit.utils import load_jit, override_jit_cuda_arch
++
++    with override_jit_cuda_arch(9, 0, "a"):
++        return load_jit("qkv_fused_prefill", cuda_files=["gemm/qkv_fused_prefill.cuh"], cuda_wrappers=[("run", "sgl_qkv_fused::QKVFusedPrefill::run")], extra_include_paths=[str(Path(deep_gemm.__file__).parent / "include")], extra_cuda_cflags=["--ptxas-options=-v,-warn-spills,--register-usage-level=10"])
++
++
++def qkv_fused_prefill(a, sa, w, sw, qw, kw, trig, positions, cache_loc, eps, q, k, v, k_cache, v_cache):
++    _module().run(a, sa, w, sw, qw, kw, trig, positions, cache_loc, eps, q, k, v, k_cache, v_cache)
+diff --git a/python/sglang/srt/layers/attention/prefill_qkv_fused.py b/python/sglang/srt/layers/attention/prefill_qkv_fused.py
+new file mode 100644
+--- /dev/null
++++ b/python/sglang/srt/layers/attention/prefill_qkv_fused.py
+@@ -0,0 +1,62 @@
++"""Eligible PP4 Prefill producer; called only for SGLANG_PREFILL_QKNORM=fused."""
++
++import torch
++
++
++def prepare(attention, positions, x, batch):
++    from sglang.srt.layers.attention.prefill_contiguous import use_contiguous_prefill, use_fixed_prefill
++    from sglang.srt.layers.attention.prefill_fp8 import linear_supported, prefill_candidate
++    from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
++    from sglang.srt.model_executor.forward_batch_info import ForwardMode
++    from sglang.srt.model_executor.forward_context import get_attn_backend, get_token_to_kv_pool
++    from sglang.srt.runtime_context import get_server_args
++    from sglang.srt.environ import envs
++
++    args = get_server_args()
++    tensor = x[0] if isinstance(x, tuple) else x
++    if not (
++        args.disaggregation_mode == "prefill" and not args.enable_lora
++        and batch.forward_mode == ForwardMode.EXTEND
++        and args.cuda_graph_config.prefill.backend == "disabled"
++        and args.cuda_graph_config.prefill.tc_compiler != "inductor"
++        and use_contiguous_prefill(batch)
++        and attention.use_fp8_q_rope and not attention.use_fused_qk_norm_rope
++        and not envs.SGLANG_ENABLE_DETERMINISTIC_INFERENCE.get()
++        and linear_supported(attention, "QKV", attention.qkv_proj)
++        and attention.q_norm.weight.dtype == attention.k_norm.weight.dtype == torch.bfloat16
++        and attention.q_norm.variance_epsilon == attention.k_norm.variance_epsilon
++        and attention.rotary_emb.is_neox_style
++        and tensor.ndim == 2 and tensor.shape[0] >= 2048
++        and args.speculative_eagle_topk in (None, 1) and not args.enable_prefill_cp
++        and attention.attn.k_scale is None and attention.attn.v_scale is None
++        and positions.dtype == batch.out_cache_loc.dtype
++        and not prefill_candidate()["byte_image"]
++    ):
++        return None
++    props = torch.cuda.get_device_properties(tensor.device)
++    if props.multi_processor_count != 132 or props.shared_memory_per_block_optin < 216448:
++        return None
++    pool = get_token_to_kv_pool()
++    if type(pool) is not MHATokenToKVPool:
++        return None
++    kc, vc = pool.get_kv_buffer(attention.attn.layer_id)
++    if not (kc.dtype == vc.dtype == torch.float8_e4m3fn and kc.ndim == vc.ndim == 3 and kc.shape[1:] == vc.shape[1:] == (4, 128) and kc.is_contiguous() and vc.is_contiguous()):
++        return None
++    if isinstance(x, tuple):
++        a, sa = x
++    else:
++        if x.dtype != torch.bfloat16 or not x.is_contiguous():
++            return None
++        from sglang.kernels.ops.quantization.fp8_kernel import sglang_per_token_group_quant_fp8
++        a, sa = sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
++    from sglang.kernels.ops.attention.qkv_fused_prefill import qkv_fused_prefill
++
++    q = torch.empty((a.shape[0], 64, 128), device=a.device, dtype=torch.float8_e4m3fn)
++    k = torch.empty((a.shape[0], 4, 128), device=a.device, dtype=torch.float8_e4m3fn)
++    v = torch.empty_like(k)
++    attention.attn.fixed_prefill_output = use_fixed_prefill(batch, attention.attn, get_attn_backend(), q, k, v, output_supported=linear_supported(attention, "O", attention.o_proj))
++    attention.attn.prefill_v_image = None
++    qkv_fused_prefill(a, sa, attention.qkv_proj.weight, attention.qkv_proj.weight_scale_inv, attention.q_norm.weight, attention.k_norm.weight, attention.rotary_emb.cos_sin_cache, positions, batch.out_cache_loc, attention.q_norm.variance_epsilon, q, k, v, kc, vc)
++    attention._stored_fp8_kv_last_call = True
++    attention._used_fused_qk_norm_rope_last_call = False
++    return q.view(-1, 8192), k, v
+diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -149,7 +149,7 @@
+ # of the unfused reference; "fp32" keeps FP32 from the BF16 QKV to the FP8 outputs
+ # (used only without the FA3 V byte image).
+ _PREFILL_QKNORM = os.environ.get("SGLANG_PREFILL_QKNORM", "control")
+-assert _PREFILL_QKNORM in ("control", "fp32"), _PREFILL_QKNORM
++assert _PREFILL_QKNORM in ("control", "fp32", "fused"), _PREFILL_QKNORM
+ 
+ logger = logging.getLogger(__name__)
+ _is_cuda = is_cuda()
+@@ -794,6 +794,13 @@
+     ):
+         from sglang.srt.layers.quantization.decode_dense_gemm import decode_dense_linear
+ 
++        if _PREFILL_QKNORM == "fused":
++            from sglang.srt.layers.attention.prefill_qkv_fused import prepare
++
++            result = prepare(self, positions, hidden_states, forward_batch)
++            if result is not None:
++                return None, forward_batch, (*result, forward_batch)
++
+         qkv, _ = decode_dense_linear(self, "QKV", self.qkv_proj, hidden_states, forward_batch, decode_worker=get_server_args().disaggregation_mode == "decode")
+ 
+         q, k, v = self.apply_qk_norm_rope(qkv, positions, forward_batch)
+@@ -883,7 +890,7 @@
+ 
+                 selected = prefill_candidate()
+                 self.attn.prefill_v_image = torch.empty((4, (sum(forward_batch.extend_seq_lens_cpu)+223)//224, 224*128), dtype=torch.uint8, device=k.device) if self.attn.fixed_prefill_output and selected["byte_image"] else None
+-                if _PREFILL_QKNORM == "fp32" and self.attn.prefill_v_image is None:
++                if _PREFILL_QKNORM in ("fp32", "fused") and self.attn.prefill_v_image is None:
+                     apply_qknorm_rope_fp8_prefill_fp32(*rope_args, *kv_args, contiguous_k, contiguous_v)
+                 else:
+                     apply_qknorm_rope_fp8_prefill(*rope_args, *kv_args, contiguous_k, contiguous_v, self.attn.prefill_v_image, sum(forward_batch.extend_seq_lens_cpu) if self.attn.prefill_v_image is not None else 0)

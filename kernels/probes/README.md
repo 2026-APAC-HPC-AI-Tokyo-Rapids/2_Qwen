@@ -294,3 +294,31 @@ The same server measures official synthetic generation arguments at concurrency 
 Startup limit 600 seconds; process limit 960 seconds (internal cleanup starts at 945); Slurm 1020 seconds, leaving 60 seconds for step startup/finalization. Firmus run 38030890137 decode-0 logged target load 27.41–28.49 seconds, draft 0.35 seconds, server start 14:31:55 to post-graph settings 14:34:47 (172 seconds). Cold stock MoE JIT and filesystem variance are unmeasured. Required phases fail rather than claim PASS if insufficient time remains. `results/synthetic-eagle-acceptance.json` survives a later English failure. Full JSON, English responses, AIPerf artifacts and logs use existing terminal-state artifact recovery. PASS is emitted after process cleanup only when both phases succeed.
 
 Independent BF16 draft KV is deferred: the pinned image deep-copies server args in `speculative/draft_worker_common.py`, exposes no independent draft KV dtype CLI, and routes KV dtype configuration through `mem_cache/kv_cache_dtype.py`. The compute-dtype KV override for the FA4 draft backend is DFLASH-only, so it does not provide an EAGLE switch. A source adaptation would need a separate server run. This probe does not change target KV or claim to measure that condition.
+
+## PP4 direct-FP32 QKV epilogue, round 11
+
+Use `benchmark=kernels/probes/prepare-qkv-fused.sh`, empty `candidate_patch`,
+`gpu_count=1`, and the round-11 branch. Preparation requires the exact image
+pinned in `firmus-prefill-pp4.json` at the Genkai shared image path, validates
+size/sidecar identity, applies both complete PP4 overlay chains and requires
+`/usr/local/cuda-13.4/bin/nvcc`. No image substitution or toolchain fallback.
+Both control DeepGEMM/rope and fused JIT use that CUDA 13.4 mount.
+
+One calibration process has the existing 165-second timeout in a five-minute
+one-H100 PJM allocation. It checks M129/3994/7988, all five FP8 outputs including
+contiguous and paged K/V, against an independent FP64 GEMM and epilogue from
+the same quantized inputs. BF16 norm weights are random 1 +/- 0.2; no model
+files are staged. The reference E4M3 codes use FP64 midpoint comparisons, with
+round-to-nearest-even and NOSAT overflow/NaN semantics. No Q/K/V output scale
+exists: all three have implicit scale 1. Every tensor must have no larger max
+or mean absolute error, or FP64-code mismatch rate, than stock GEMM plus the
+current FP32 writer. Logs also report fused/control code mismatch rates.
+Slot zero and untouched cache rows must keep their sentinels.
+
+Timing uses the same process, 12-call graphs, two blocks of 12 forward/reverse
+interleaved samples, reporting stock+post, fused, GEMM alone and post alone at
+M3994/7988. Three hundred back-to-back calls per shape precede the final numeric
+re-check. Candidate/stock <=0.97 at M7988 is required before gate work. No
+serving result is implied, and H100 absolute times do not predict H200 times.
+The raw Actions/PJM log is the timing/numerics record. At most four workflow
+dispatches are allowed in this round; commits and branch pushes use skip-ci.
