@@ -8,7 +8,7 @@
  
  namespace {
  
-@@ -693,6 +694,145 @@
+@@ -693,6 +694,152 @@
      device::PDLTriggerSecondary<kUsePDL>();
  }
  
@@ -42,8 +42,10 @@
 +    const __grid_constant__ QKNormRopeFP8Params p, void* contiguous_k, void* contiguous_v, void* native_v, const int32_t* cu, int num_seq, int max_blocks) {
 +    device::PDLWaitPrimary<kUsePDL>();
 +    const int head=blockIdx.y, q_heads=p.num_qo_heads, kv_heads=p.num_kv_heads;
-+    int token=blockIdx.x*32+threadIdx.x/8; const int col=(threadIdx.x%8)*8;
 +    const bool is_q=head<q_heads, is_v=head>=q_heads+kv_heads;
++    const bool native_v_lane=NativeN!=0 && is_v;
++    int token=blockIdx.x*32+(native_v_lane ? threadIdx.x%32 : threadIdx.x/8);
++    const int col=native_v_lane ? (threadIdx.x/32)*16 : (threadIdx.x%8)*8;
 +    const int h=is_v ? head-q_heads-kv_heads : head;
 +    const auto src=static_cast<const char*>(is_q ? p.q : (is_v ? p.v : p.k));
 +    const int64_t stride=is_q ? p.q_stride_bytes : (is_v ? p.v_stride_bytes : p.k_stride_bytes);
@@ -64,7 +66,7 @@
 +    if (valid) {
 +        const auto tile=reinterpret_cast<const __nv_bfloat16*>(src+int64_t(token)*stride+int64_t(h)*256);
 +        vx=*reinterpret_cast<const uint4*>(tile+col);
-+        vy=*reinterpret_cast<const uint4*>(tile+64+col);
++        vy=*reinterpret_cast<const uint4*>(tile+(native_v_lane ? 8 : 64)+col);
 +    }
 +    float a[8], b[8];
 +    qkv_native_bf16x8(vx, a);
@@ -131,8 +133,12 @@
 +            assert(slot>=0 && slot<p.cache_slots);
 +            if (slot!=0) {
 +                dst=static_cast<uint8_t*>(is_v ? p.v_cache : p.k_cache)+(slot*kv_heads+kv_head)*128;
-+                *reinterpret_cast<uint2*>(dst+col)=lo;
-+                *reinterpret_cast<uint2*>(dst+64+col)=hi;
++                if (native_v_lane) {
++                    *reinterpret_cast<uint4*>(dst+col)=make_uint4(lo.x,lo.y,hi.x,hi.y);
++                } else {
++                    *reinterpret_cast<uint2*>(dst+col)=lo;
++                    *reinterpret_cast<uint2*>(dst+64+col)=hi;
++                }
 +            }
 +        }
 +    }
@@ -140,10 +146,11 @@
 +        if (is_v && image_valid) {
 +            int64_t tile=((request*kv_heads+h)*max_blocks+local/NativeN)*NativeN*128;
 +            auto dst=static_cast<uint8_t*>(native_v)+tile;
++            const int native_base=native_offset<NativeN>(local%NativeN,col);
 +            #pragma unroll
 +            for(int i=0;i<8;++i) {
-+                dst[native_offset<NativeN>(local%NativeN,col+i)]=reinterpret_cast<uint8_t*>(ox)[i];
-+                dst[native_offset<NativeN>(local%NativeN,64+col+i)]=reinterpret_cast<uint8_t*>(oy)[i];
++                dst[native_base ^ native_offset<NativeN>(0,i)]=reinterpret_cast<uint8_t*>(ox)[i];
++                dst[native_base ^ native_offset<NativeN>(0,8+i)]=reinterpret_cast<uint8_t*>(oy)[i];
 +            }
 +        }
 +    }
@@ -154,7 +161,7 @@
  // Decode: four independent H128 heads per warp, vectorized 16-byte halves.
  // Virtual old lanes (4*lane+j) retain the original XOR sum and both BF16
  // rounding points. No shared memory or CTA barrier on the latency path.
-@@ -873,6 +1013,24 @@
+@@ -873,6 +1020,24 @@
      _run<true>(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, &v, &k_cache, &v_cache, &cache_loc, &contiguous_k, &contiguous_v, nullptr, 0, true);
    }
  
@@ -179,7 +186,7 @@
    template <bool kStoreKV>
    static void _run(
        const tvm::ffi::TensorView q,
-@@ -889,7 +1047,7 @@
+@@ -889,7 +1054,7 @@
        const tvm::ffi::TensorView* cache_loc,
        const tvm::ffi::TensorView* contiguous_k = nullptr,
        const tvm::ffi::TensorView* contiguous_v = nullptr,
@@ -188,7 +195,7 @@
      using namespace host;
      auto N = SymbolicSize{"num_tokens"};
      auto Q = SymbolicSize{"num_qo_heads"};
-@@ -954,6 +1112,20 @@
+@@ -954,6 +1119,20 @@
          .head_groups = head_groups,
          .eps = static_cast<float>(eps),
      };

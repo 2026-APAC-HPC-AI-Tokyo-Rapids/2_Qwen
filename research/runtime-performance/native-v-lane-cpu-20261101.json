@@ -1,0 +1,327 @@
+{
+  "schema": "qwen-native-v-lane-cpu/v1",
+  "date": "2026-11-01",
+  "baseline_qwen_commit": "becabbf4748b5037f59f690135b4b4867ee03932",
+  "baseline_cpu_evidence_commit": "0af382a7a1ce592310e9569fc8996146f3ce4487",
+  "sglang_commit": "fc275674a97d78553b22597ee72c8fd48f5420f4",
+  "patch_sha256": "1747e051954caaeaeed813a6eec41f1f874c83646b18661244fbd5f78f079cfd",
+  "status": "Local CPU checks passed; full Actions validation and GPU execution pending",
+  "gpu_executed": false,
+  "performance_prediction": null,
+  "shape": {
+    "q_heads": 64,
+    "kv_heads": 4,
+    "head_dim": 128,
+    "dtype": "BF16 input / E4M3 output",
+    "tile_n": 96,
+    "length_range": [
+      3900,
+      4096
+    ],
+    "requests": 2
+  },
+  "change": {
+    "v_thread_ownership": "One lane per token; each warp owns 16 adjacent dimensions over 32 tokens. Q/K retains eight lanes per head.",
+    "native_store": "Keep 16 U8 stores, each warp instruction now covers one complete 32-byte native-image sector instead of eight partial sectors.",
+    "paged_v_store": "One 16-byte store instead of two 8-byte stores; same final bytes and slot addresses.",
+    "native_address": "Use linear CuTe byte-map XOR with a common base; dimensions are aligned to 16.",
+    "attention_algorithm_changed": false,
+    "quantization_changed": false,
+    "new_smem_bytes": 0,
+    "new_barriers": 0,
+    "new_shuffles": 0
+  },
+  "compile": {
+    "cuda": "13.0.88",
+    "architecture": "sm_90a",
+    "fast_math": false,
+    "pdl": true,
+    "full_jit_wrapper_exports": 7,
+    "full_jit_ffi_load": true,
+    "native_i32_i64": [
+      {
+        "registers": 48,
+        "stack": 0,
+        "spill_stores": 0,
+        "spill_loads": 0
+      },
+      {
+        "registers": 48,
+        "stack": 0,
+        "spill_stores": 0,
+        "spill_loads": 0
+      }
+    ],
+    "header_sha256": "38564c83f102b904bfd59095ad48a92f6ad67c185a9ff708173282f35f996bac",
+    "binary_sha256": "d6204acafb4456ab2cc2606d4a2bf2e50e617b51f86f790e4aa5acbf1cfecad0",
+    "static_native_sass_instructions_before": [
+      896,
+      896
+    ],
+    "static_native_sass_instructions_after": [
+      704,
+      704
+    ],
+    "static_instruction_warning": "Whole binary instruction counts include padding, divergent paths and assertion code; not a runtime speed estimate.",
+    "unchanged_kernel_count": 14,
+    "fully_encoded_equal_count": 12,
+    "decode_assert_line_only_differences": 2,
+    "c75xx": []
+  },
+  "host_body_proof": {
+    "command": [
+      "g++",
+      "-std=c++20",
+      "-O2",
+      "-fno-strict-aliasing",
+      "-I/tmp/qwen-preflight-20261023/local-cuda/include",
+      "/tmp/qwen-vsum-cuda130-20261101/lane-writer-prototype/host-body-proof.cpp",
+      "-o",
+      "/tmp/qwen-vsum-cuda130-20261101/lane-writer-prototype/host-body-proof"
+    ],
+    "exit_code": 0,
+    "seconds": 4.160416505066678,
+    "gpu_executed": false,
+    "cases": 14,
+    "bf16_patterns_per_case": 65536,
+    "native_and_paged_byte_errors": 0,
+    "independent_map_sha256": "eaf0d7ce0b2faa5cea99ea257c8508cbf7a6a4836b1bdb222389a96cc222e6fb",
+    "source_sha256": "5b2ffd5578848c995281456db83454859d93598faf1631e4eaccb13a7f347bd3",
+    "scope": "Extracted complete production and candidate V kernel bodies with CPU CUDA host conversion; no GPU/P DL memory-order proof",
+    "host_adaptations": [
+      "CUDA execution attributes removed",
+      "threadIdx/blockIdx host index objects",
+      "PDL wait/trigger no-ops",
+      "Unreachable QK shuffles abort if called",
+      "bit casts use std::bit_cast",
+      "host local FP8 arrays aligned 16",
+      "host -fno-strict-aliasing to avoid C++ host alias UB"
+    ],
+    "reference": "CUDA CPU __NV_NOSAT E4M3 conversion with canonical NaN; independent CuTe native map; every BF16 encoding and altered repair grouping"
+  },
+  "repair_grouping_proof": "All 65536 BF16 encodings checked. Changing the sixteen-element repair group cannot change a safe element: repair returns its original SATFINITE byte for |x| <= 464. Every unsafe element forces repair in either group; overflow and canonical-NaN output agree with independent NOSAT conversion.",
+  "layout_proof": {
+    "independent_cute_map_bytes": 12288,
+    "native_and_paged_unique_ownership": true,
+    "uniform_request_ctas_checked": 756,
+    "zero_errors": true
+  },
+  "issued_sector_model": {
+    "scope": "Static per-memory-instruction 32-byte sector requests, not measured or predicted HBM/L2 transfers or timing",
+    "source_stride_bytes": 18432,
+    "cache_assumption": "All valid rows have distinct nonzero slots; arbitrary slot order leaves sector counts unchanged. Invalid padded rows issue no input/cache requests.",
+    "records": [
+      {
+        "lengths": [
+          3994,
+          3994
+        ],
+        "padded_rows": 8064,
+        "logical_native_bytes": 4128768,
+        "logical_input_bytes": 8179712,
+        "logical_paged_bytes": 4089856,
+        "original": {
+          "native_sector_request_bytes": 33030144,
+          "input_sector_request_bytes": 8179712,
+          "paged_sector_request_bytes": 4089856,
+          "total_sector_request_bytes": 45299712
+        },
+        "lane": {
+          "native_sector_request_bytes": 4128768,
+          "input_sector_request_bytes": 16359424,
+          "paged_sector_request_bytes": 8179712,
+          "total_sector_request_bytes": 28667904
+        },
+        "total_requested_sector_reduction_fraction": 0.36715041367150414
+      },
+      {
+        "lengths": [
+          3986,
+          4027
+        ],
+        "padded_rows": 8064,
+        "logical_native_bytes": 4128768,
+        "logical_input_bytes": 8205312,
+        "logical_paged_bytes": 4102656,
+        "original": {
+          "native_sector_request_bytes": 33030144,
+          "input_sector_request_bytes": 8205312,
+          "paged_sector_request_bytes": 4102656,
+          "total_sector_request_bytes": 45338112
+        },
+        "lane": {
+          "native_sector_request_bytes": 4128768,
+          "input_sector_request_bytes": 16410624,
+          "paged_sector_request_bytes": 8205312,
+          "total_sector_request_bytes": 28744704
+        },
+        "total_requested_sector_reduction_fraction": 0.3659924789104584
+      },
+      {
+        "lengths": [
+          3986,
+          3986
+        ],
+        "padded_rows": 8064,
+        "logical_native_bytes": 4128768,
+        "logical_input_bytes": 8163328,
+        "logical_paged_bytes": 4081664,
+        "original": {
+          "native_sector_request_bytes": 33030144,
+          "input_sector_request_bytes": 8163328,
+          "paged_sector_request_bytes": 4081664,
+          "total_sector_request_bytes": 45275136
+        },
+        "lane": {
+          "native_sector_request_bytes": 4128768,
+          "input_sector_request_bytes": 16326656,
+          "paged_sector_request_bytes": 8163328,
+          "total_sector_request_bytes": 28618752
+        },
+        "total_requested_sector_reduction_fraction": 0.3678925227303569
+      },
+      {
+        "lengths": [
+          4027,
+          4027
+        ],
+        "padded_rows": 8064,
+        "logical_native_bytes": 4128768,
+        "logical_input_bytes": 8247296,
+        "logical_paged_bytes": 4123648,
+        "original": {
+          "native_sector_request_bytes": 33030144,
+          "input_sector_request_bytes": 8247296,
+          "paged_sector_request_bytes": 4123648,
+          "total_sector_request_bytes": 45401088
+        },
+        "lane": {
+          "native_sector_request_bytes": 4128768,
+          "input_sector_request_bytes": 16494592,
+          "paged_sector_request_bytes": 8247296,
+          "total_sector_request_bytes": 28870656
+        },
+        "total_requested_sector_reduction_fraction": 0.36409770620475
+      },
+      {
+        "lengths": [
+          4096,
+          4096
+        ],
+        "padded_rows": 8256,
+        "logical_native_bytes": 4227072,
+        "logical_input_bytes": 8388608,
+        "logical_paged_bytes": 4194304,
+        "original": {
+          "native_sector_request_bytes": 33816576,
+          "input_sector_request_bytes": 8388608,
+          "paged_sector_request_bytes": 4194304,
+          "total_sector_request_bytes": 46399488
+        },
+        "lane": {
+          "native_sector_request_bytes": 4227072,
+          "input_sector_request_bytes": 16777216,
+          "paged_sector_request_bytes": 8388608,
+          "total_sector_request_bytes": 29392896
+        },
+        "total_requested_sector_reduction_fraction": 0.3665254237288136
+      },
+      {
+        "lengths": [
+          3900,
+          4096
+        ],
+        "padded_rows": 8256,
+        "logical_native_bytes": 4227072,
+        "logical_input_bytes": 8187904,
+        "logical_paged_bytes": 4093952,
+        "original": {
+          "native_sector_request_bytes": 33816576,
+          "input_sector_request_bytes": 8187904,
+          "paged_sector_request_bytes": 4093952,
+          "total_sector_request_bytes": 46098432
+        },
+        "lane": {
+          "native_sector_request_bytes": 4227072,
+          "input_sector_request_bytes": 16375808,
+          "paged_sector_request_bytes": 8187904,
+          "total_sector_request_bytes": 28790784
+        },
+        "total_requested_sector_reduction_fraction": 0.37544982007197125
+      },
+      {
+        "lengths": [
+          4096,
+          3901
+        ],
+        "padded_rows": 8256,
+        "logical_native_bytes": 4227072,
+        "logical_input_bytes": 8188928,
+        "logical_paged_bytes": 4094464,
+        "original": {
+          "native_sector_request_bytes": 33816576,
+          "input_sector_request_bytes": 8188928,
+          "paged_sector_request_bytes": 4094464,
+          "total_sector_request_bytes": 46099968
+        },
+        "lane": {
+          "native_sector_request_bytes": 4227072,
+          "input_sector_request_bytes": 16377856,
+          "paged_sector_request_bytes": 8188928,
+          "total_sector_request_bytes": 28793856
+        },
+        "total_requested_sector_reduction_fraction": 0.37540399160363846
+      }
+    ],
+    "qk_path_traffic_change": 0,
+    "physical_hbm_bytes": null,
+    "measured_time": null
+  },
+  "local_regression": {
+    "passed": 139,
+    "skipped": 0,
+    "includes_actual_cpu_torch_and_squashfs_fixtures": true,
+    "ruff": "passed",
+    "full_linux_actions_validation": "pending"
+  },
+  "other_cpu_prototypes": {
+    "shared_tile": {
+      "user_shared_bytes": 4096,
+      "cuobjdump_shared_bytes": 5120,
+      "barriers": 1,
+      "native_registers": 48,
+      "spills": 0,
+      "gpu_executed": false,
+      "decision": "Not selected: lane mapping achieves full native sectors without the new shared-memory traffic and CTA barrier; actual comparative timing unknown."
+    },
+    "warp_gather": {
+      "compiled_and_ffi_loaded": true,
+      "native_registers": 48,
+      "spills": 0,
+      "native_sector_request_reduction": 0,
+      "gpu_executed": false,
+      "decision": "Not selected: packing four bytes reduced dynamic store instructions but each store requested 32 sectors, preserving the original 4096 sector bytes/warp and adding shuffles. A static store-count assertion expected four and found seven compiler-expanded sites; no timing or GPU claim."
+    }
+  },
+  "required_gpu_checks": [
+    "Independent native V dump and Q/K/paged-KV byte equality on all seven pairs",
+    "FP32 reference and changed-input replays",
+    "All twelve GPUs pass forward/reverse/pooled producer+FA3+O savings >= 5 us",
+    "1200-call endurance and single-sequence fallback",
+    "Normal serving official quality/SLA/goodput, artifacts and terminal cleanup"
+  ],
+  "archive": {
+    "path": "lane-writer-evidence.tar.gz",
+    "sha256": "61150901197d070094e41b7f7860225192834252787058c623bc3fd72128ab6a",
+    "scope": "Initial native compile, extracted host-body proof, layout and rejected warp-gather prototype; integration/test supplement recorded separately"
+  },
+  "integration": {
+    "patched_header_matches_compiled_header": true,
+    "header_sha256": "38564c83f102b904bfd59095ad48a92f6ad67c185a9ff708173282f35f996bac",
+    "other_three_patched_files_unchanged": true,
+    "actual_pp4_source_checks": "passed: 94-layer partition, 32 CPU tensor synchronization cases, 72 relay/KV lifecycle cases, 96 direct-loop iterations / 40 requests",
+    "initial_harness_failure": "scheduler-sync checker was given layers/dp_attention.py; corrected to the actual managers/scheduler_components/dp_attn.py. No production fix was needed.",
+    "archive": "lane-integration-evidence.tar.gz",
+    "sha256": "e48e4e752942d7052d7d49fbc8c922ec9904fd77da15e41ea2102aee38e6001b"
+  }
+}

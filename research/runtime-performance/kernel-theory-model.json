@@ -515,5 +515,19 @@
     "dependency_cycle_clock_saving": null,
     "serving_speedup": null,
     "tracker_text": "2026-11-01 round 13-M：現行PP4/EP1 splitのscale先読みをhalf間へ移す2案をCUDA13.4/sm_90aでCPU検証した。両案spill0・C75xxなし、default offのserving split SASSはbyte一致。FC1 K=1のhalf 0のpost-wait spanは107→65命令だが、half 1の発行spanは13→42/30命令へ拡大し、両halfのwait→64 FMUL→QGMMA依存は残る。chunk全体のinline命令数も減らず、依存周期の正のclk短縮を示せないため段階1の条件4で保留・棄却。GPU未実行、速度未算定、production変更・gate追加なし。詳細は2026-11-01-prefill-megamoe-dep-r13.mdとmegamoe-prefill-dep-r13-cpu-validation-20261101.json。"
+  },
+  "prefill_native_v_lane_20261101": {
+    "status": "CPU validated; GPU not submitted",
+    "baseline": "becabbf round13 native-V/four-chain-sum",
+    "shape": "exactly 2 requests, lengths3900..4096, N96, KV4xD128 BF16 to E4M3",
+    "change": "V-only lane ownership becomes32 tokens x16 contiguous dimensions per warp; coalesced native byte stores and one128-bit paged V store. Q/K and attention unchanged.",
+    "removed_work": "3994pair native issued-sector bytes33,030,144 to4,128,768; input/paged requests increase, net counted V I/O sector requests45,299,712 to28,667,904 (-36.715%). No new SMEM/barrier/shuffle. Not measured HBM bytes. Useful FLOPs and logical payload unchanged.",
+    "cpu": "CUDA13.0.88 full JIT load;48 registers/spill0;12 untouched kernels encoded equal,2 Decode kernels differ only in assert line number. Extracted actual V kernel bodies pass14 cases/all65536 BF16 patterns against independent native-map/NOSAT reference.139 local CPU regressions pass.",
+    "gate": "Existing all12GPU native dump/reference/replay/endurance/full-path timing gate and normal serving official score; same >=5us gate, conditional10k target about20us/layer remains separate.",
+    "gpu_time_us": null,
+    "official_goodput": null,
+    "evidence": [
+      "native-v-lane-cpu-20261101.json"
+    ]
   }
 }

@@ -428,3 +428,5 @@ python3 research/runtime-performance/render-kernel-theory.py --write
 ```
 
 GPU計算なし。元nsys-repのhashはmodel JSON、export SQLiteと抽出scriptのhashはprofile JSONに保存。窓・呼出し数・重複・shape仮定を変更した場合は旧値へ上書きせず、差と理由をGitに残す。
+
+2026-11-01 native V lane候補（GPU未投入）：Vだけを1warp=32token×連続16dimへ割り当て、native byte storeを1命令1sectorにする。Q/K、FA3と量子化は不変。L3994 pairのV I/O要求sectorは入力/paged側の増加を含め45,299,712→28,667,904 B（−36.715%）。これは物理HBM byteや時間ではない。SMEM・barrier・shuffle追加なし。CUDA13.0.88で48 registers・spill0、完全JIT load。実V kernel本体のhost実行は7shape×2index型・全65536 BF16値で独立CuTe map/NOSAT参照と全byte一致、CPU回帰139件合格。既存14kernelのうち12本は全encoded SASS一致、Decode2本はassert行番号だけ変化。shared staging案とwarp gather案のCPU記録も残し、GPU測定はまだ行わない。正本 `native-v-lane-cpu-20261101.json`。

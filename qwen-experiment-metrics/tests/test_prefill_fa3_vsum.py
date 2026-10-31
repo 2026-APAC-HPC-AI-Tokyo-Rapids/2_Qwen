@@ -327,3 +327,67 @@ def test_single_gate_replays_and_rejects_each_producer_or_attention_byte_change(
         record=GATE['single_check'](torch,checks,common)
         assert record['producer_bytes_equal'] and record['attention_bytes_equal'] and record['replays']==2
         assert len(calls)==6 and not torch.equal(calls[0],calls[2]) and not torch.equal(calls[2],calls[4])
+
+
+def test_native_v_lanes_cover_exact_bytes_with_full_sector_stores(tmp_path):
+    """Run deployed integer expressions against the independently checked CuTe map."""
+    patch=(ROOT/'patches/sglang/prefill-fa3-vsum.patch').read_text()
+    added='\n'.join(line[1:] for line in patch.splitlines() if line.startswith('+') and not line.startswith('+++'))
+    start='template<int N> __device__ __forceinline__ int native_offset'
+    offset=start+added.split(start,1)[1].split('return out; }',1)[0]+'return out; }'
+    offset=offset.replace('__device__ __forceinline__ ','')
+    kernel=added.split('void qknorm_rope_prefill_native_kernel(',1)[1]
+    geometry='const int head='+kernel.split('const int head=',1)[1].split('const int h=',1)[0]
+    second=kernel.split('vy=*reinterpret_cast<const uint4*>(tile+',1)[1].split(');',1)[0]
+    write=kernel.split('const int native_base=',1)[1]
+    base='const int native_base='+write.split(';',1)[0]+';'
+    stores=[line.split('dst[',1)[1].split(']=',1)[0] for line in write.splitlines() if 'dst[' in line]
+    assert len(stores)==2
+    source=tmp_path/'lanes.cpp'
+    source.write_text('''#include <array>
+#include <cassert>
+#include <set>
+'''+offset+'''
+struct Index {int x,y;};
+struct Params {int num_qo_heads=64,num_kv_heads=4;};
+int main(){
+    constexpr int NativeN=96;
+    Params p;
+    std::array<int,12288> owners{};
+    for(int segment=0;segment<3;++segment){
+        for(int head_id=0;head_id<72;++head_id){
+            std::array<std::array<std::set<int>,16>,8> sectors;
+            for(int tid=0;tid<256;++tid){
+                Index threadIdx{tid,0},blockIdx{segment,head_id};
+'''+geometry+'''
+                const int second_col='''+second+''';
+                if(head_id<68){
+                    assert(token==segment*32+tid/8);
+                    assert(col==(tid%8)*8 && second_col==col+64);
+                    continue;
+                }
+                assert(token==segment*32+tid%32);
+                assert(col%16==0 && col>=0 && second_col+7<128);
+                assert(second_col==col+8);
+                const int local=token;
+'''+base+'''
+                for(int i=0;i<8;++i){
+                    const int a='''+stores[0]+''';
+                    const int b='''+stores[1]+''';
+                    assert(a==native_offset<96>(local,col+i));
+                    assert(b==native_offset<96>(local,second_col+i));
+                    assert(a>=0 && a<12288 && b>=0 && b<12288);
+                    if(head_id==68){++owners[a];++owners[b];}
+                    sectors[tid/32][i].insert(a/32);
+                    sectors[tid/32][8+i].insert(b/32);
+                }
+            }
+            if(head_id>=68)for(auto const& warp:sectors)for(auto const& instruction:warp)assert(instruction.size()==1);
+        }
+    }
+    for(int count:owners)assert(count==1);
+}
+''')
+    binary=tmp_path/'lanes'
+    subprocess.run(['g++','-O2','-std=c++17',str(source),'-o',str(binary)],check=True,capture_output=True)
+    subprocess.run([str(binary)],check=True,capture_output=True)
