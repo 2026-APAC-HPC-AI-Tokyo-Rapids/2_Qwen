@@ -24,10 +24,14 @@ or later from the inflight queue when bootstrap completes after prefill);
 a bootstrap that fails on one stage is aborted there at the release every stage applies at the
 same iteration; each result is applied pp_loop_size - 1 iterations after its
 launch on every stage with the last stage's tokens and EAGLE draft outputs,
-before the launch on the last stage and after it elsewhere; the last stage
-publishes a result no later than the iteration after its launch; release
-happens on every stage at the same iteration and only after all four stages
-finished their transfer; gloo sends are waited on and never accumulate, and
+after the launch on stage 0 and before it on every later stage; the last stage
+publishes a result no later than the iteration after its launch; every stage
+polls its KV transfers after its launch; release happens on every stage at the
+same iteration, exactly the consensus lag after the first iteration in which
+all four stages polled the transfer as finished, and a transfer that finishes
+during the launch after its KV send (stage 0 sends after its launch, later
+stages before it) is released lag + 1 iterations after the result step; gloo
+sends are waited on and never accumulate, and
 the publisher never waits for an unconsumed result; proxy hidden states and
 EAGLE aux tensors arrive bit-exact; proxies move on both paths for the
 first validation launches (in-stream PyNccl receive -> forward -> send, the
@@ -267,6 +271,12 @@ FAILED_BOOTSTRAPS = {(0, "r0"), (2, "r5")}
 LATE_BOOTSTRAPS = {(0, "r1"): 12, (PP - 1, "r7"): 12}
 
 
+def fast_transfer(rid):
+    """Requests whose KV transfer finishes during the next launch of the stage
+    after its send (a few milliseconds on a GPU); the others take 2-5 iterations."""
+    return int(rid[1:]) % 3 == 0
+
+
 class Sender:
     """KV sender of one request on one stage with stage-specific latencies."""
 
@@ -288,6 +298,10 @@ class Sender:
             if stage.step - self.created >= self.latency:
                 return "waiting"
             return "bootstrapping"
+        if fast_transfer(self.rid):
+            if stage.launch_count > self.sent_launches or stage.step - self.sent_step >= 2:
+                return "success"
+            return "transferring"
         if stage.step - self.sent_step >= 2 + (3 * stage.rank) % 4:
             return "success"
         return "transferring"
@@ -309,6 +323,7 @@ class Sender:
         assert self.inited and not self.sent
         self.sent.append((pages.copy(), states))
         self.sent_step = self.stage.step
+        self.sent_launches = self.stage.launch_count
 
     def clear(self):
         self.cleared += 1
@@ -354,7 +369,8 @@ def make_stage(rank, transport, classes, env):
     stage.progress = threading.Condition()
     stage.current_stream = "schedule"
     stage.stream_log = []
-    stage.launch_steps = {}
+    stage.launch_count = 0
+    stage.transfer_done = {}
     stage.result_steps = {}
     stage.release_steps = {}
     stage.forwards = []
@@ -503,6 +519,7 @@ def make_stage(rank, transport, classes, env):
     def run_batch(batch, pp_proxy_tensors=None):
         rids = [r.rid for r in batch.reqs]
         stage.order.append(("launch", stage.step))
+        stage.launch_count += 1
         stage.stream_log.append(("forward", stage.current_stream))
         stage.forwards.append((stage.step, rids))
         if rank == 0:
@@ -580,6 +597,16 @@ def make_stage(rank, transport, classes, env):
         return admitted
 
     stage._qpp_admit_bootstrapped = admit
+    real_transferred = stage._pp_pd_get_prefill_transferred_ids
+
+    def transferred():
+        stage.order.append(("poll", stage.step))
+        for req in stage.disagg_prefill_inflight_queue:
+            if req.disagg_kv_sender.poll() in ("success", "failed"):
+                stage.transfer_done.setdefault(req.rid, stage.step)
+        return real_transferred()
+
+    stage._pp_pd_get_prefill_transferred_ids = transferred
     stage.order = []
     stage.admit_steps = {}
     return stage
@@ -806,15 +833,38 @@ def check(stages, transport, lag, corrupt):
             for stage in stages
             if (stage.rank, rid) not in FAILED_BOOTSTRAPS
         )
-        assert first.release_steps[rid] >= latest, (rid, first.release_steps[rid], latest)
-    # The last stage takes a result before its launch of the same iteration, the
-    # other stages after it.
+        if not fast_transfer(rid):
+            assert first.release_steps[rid] >= latest, (rid, first.release_steps[rid], latest)
+        # Released exactly `lag` iterations after the first iteration in which
+        # every stage polled its transfer as finished (or failed).
+        done = max(stage.transfer_done[rid] for stage in stages)
+        assert first.release_steps[rid] == done + lag, (rid, first.release_steps[rid], done)
+    # A transfer that finishes during the launch after its KV send: every later
+    # stage sent before its launch of the result iteration and stage 0 after
+    # it, so stage 0's poll after its next launch completes the consensus and
+    # the release comes lag + 1 iterations after the result step.
+    launch_steps = {step for step, _ in first.forwards}
+    early = 0
+    for rids, result in first.result_steps.items():
+        for rid in rids:
+            if not fast_transfer(rid) or any((rank, rid) in FAILED_BOOTSTRAPS or (rank, rid) in LATE_BOOTSTRAPS for rank in range(PP)):
+                continue
+            if result in launch_steps and result + 1 in launch_steps:
+                assert first.release_steps[rid] == result + 1 + lag, (rid, result, first.release_steps[rid])
+                early += 1
+    assert early >= 4, early
+    # Stage 0 takes a result after its launch of the same iteration, every later
+    # stage before it; every stage polls its transfers after its launch.
     for stage in stages:
         position = {item: index for index, item in enumerate(stage.order)}
         both = [step for kind, step in stage.order if kind == "result" and ("launch", step) in position]
         assert both
         for step in both:
-            assert (position[("result", step)] < position[("launch", step)]) == (stage.rank == PP - 1), stage.rank
+            assert (position[("result", step)] < position[("launch", step)]) == (stage.rank > 0), stage.rank
+        polls = [step for kind, step in stage.order if kind == "poll"]
+        assert polls == list(range(len(polls))) and len(polls) >= STEPS - 1, stage.rank
+        for step, _ in stage.forwards:
+            assert position[("launch", step)] < position[("poll", step)], (stage.rank, step)
     # Gloo sends are waited on once old: the outstanding count stays bounded
     # (it would grow with every iteration otherwise), and the publisher never
     # waits for a result a stage has not taken yet.
@@ -854,7 +904,7 @@ def main():
     for corrupt in (False, True):
         stages, transport, lag = run(source, corrupt)
         requests, batches = check(stages, transport, lag, corrupt)
-    print(f"PASS: four-stage direct-result PP loop, {STEPS} iterations, {batches} microbatches, {requests} requests: identical batches/state per iteration, stage-0 admission followed by every stage, KV only after each stage's own bootstrap (late stage-0 and last-stage bootstrap sent from the inflight queue, stage-0 and later-stage failure aborted at the common release), results at +{LOOP - 1} (last stage before its launch), threaded publish after completion, release after all transfers, release lag {lag}, bounded gloo sends, {LOOP} in flight, drained; proxies validated on both paths for {VALIDATE} launches, then copy engine (PyNccl after a corrupted slot)")
+    print(f"PASS: four-stage direct-result PP loop, {STEPS} iterations, {batches} microbatches, {requests} requests: identical batches/state per iteration, stage-0 admission followed by every stage, KV only after each stage's own bootstrap (late stage-0 and last-stage bootstrap sent from the inflight queue, stage-0 and later-stage failure aborted at the common release), results at +{LOOP - 1} (stage 0 after its launch, later stages before it), threaded publish after completion, transfer poll after the launch, release {lag} after all four stages polled the transfer done (a transfer finished during the next launch released at result + {lag + 1}), bounded gloo sends, {LOOP} in flight, drained; proxies validated on both paths for {VALIDATE} launches, then copy engine (PyNccl after a corrupted slot)")
 
 
 if __name__ == "__main__":

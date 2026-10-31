@@ -166,5 +166,5 @@ def test_pending_chunk_and_common_result_step_guards_remain():
     text = PATCH.read_text()
     assert "+            assert self.chunked_req is None or not self.chunked_req.pending_bootstrap" in text
     assert "+        if loop.pending:\n+            self._qpp_finalize_pending(loop)" in text
-    assert "+        if not is_last:\n+            self._qpp_result_step(loop, next_mb_id)" in text
+    assert "+        if is_first:\n+            self._qpp_result_step(loop, next_mb_id)" in text
     assert "+                assert bootstrap_queue.ensure_metadata_buffer(req)" in text

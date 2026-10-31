@@ -1,5 +1,5 @@
 diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
-index 83de13e..d2aa41d 100644
+index 83de13e..81d6497 100644
 --- a/python/sglang/srt/managers/scheduler_pp_mixin.py
 +++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
 @@ -66,12 +66,13 @@ class PPBatchMetadata:
@@ -106,21 +106,30 @@ index 83de13e..d2aa41d 100644
                  )
                  if self.pp_group.is_last_rank
                  else None
-@@ -537,18 +554,21 @@ class SchedulerPPMixin:
+@@ -523,6 +540,7 @@ class SchedulerPPMixin:
+ 
+     def _qpp_step(self: Scheduler, loop: _QwenPPLoop, mb_id: int) -> bool:
+         """One iteration of event_loop_pp_disagg_prefill_direct."""
++        is_first = self.pp_group.is_first_rank
+         is_last = self.pp_group.is_last_rank
+         self.running_batch = self.running_mbs[mb_id]
+         self.last_batch = self.last_mbs[mb_id]
+@@ -537,18 +555,17 @@ class SchedulerPPMixin:
              recv_reqs = self.request_receiver.recv_requests()
              self.process_input_requests(recv_reqs)
          with torch.profiler.record_function("pp.bootstrap_poll"):
 -            bootstrapped_rids = self._pp_pd_get_bootstrapped_ids()
-+            admitted_rids = self._qpp_admit_bootstrapped(loop)
-         with torch.profiler.record_function("pp.transfer_poll"):
-             transferred_rids = self._pp_pd_get_prefill_transferred_ids()
+-        with torch.profiler.record_function("pp.transfer_poll"):
+-            transferred_rids = self._pp_pd_get_prefill_transferred_ids()
 -        loop.bmbs[mb_id] = bootstrapped_rids
-         loop.tmbs[mb_id] = transferred_rids
+-        loop.tmbs[mb_id] = transferred_rids
++            admitted_rids = self._qpp_admit_bootstrapped(loop)
          if not is_last:
-             # The next stage reads these three before it receives this
-             # iteration's proxy, so they must precede the proxy send.
+-            # The next stage reads these three before it receives this
+-            # iteration's proxy, so they must precede the proxy send.
 -            for data in (recv_reqs, bootstrapped_rids, transferred_rids):
-+            for data in (recv_reqs, admitted_rids, transferred_rids):
++            # The next stage reads these two before it forms its batch.
++            for data in (recv_reqs, admitted_rids):
                  loop.works += self._pp_send_pyobj_to_next_stage(data, async_send=True)
  
          with torch.profiler.record_function("pp.prepare_batch"):
@@ -131,46 +140,64 @@ index 83de13e..d2aa41d 100644
              self.process_prefill_chunk(
                  last_batch=self.last_batch, running_batch=self.running_batch
              )
-@@ -560,26 +580,20 @@ class SchedulerPPMixin:
+@@ -560,26 +577,38 @@ class SchedulerPPMixin:
          self.mbs[mb_id] = batch
          self.running_mbs[mb_id] = self.running_batch
          self.cur_batch_for_debug = batch
-+        if is_last:
-+            # The last stage takes its result (and sends its KV) before it
-+            # launches: its eager launch blocks on a full CUDA launch queue for
-+            # most of a period, which would otherwise delay its KV, the last
-+            # one Decode needs, by that much. Batch formation above already ran,
-+            # so every stage still forms with the same state.
++        if not is_first:
++            # Every stage after the first takes its result (and sends its KV)
++            # before it launches. Its GPU starts the microbatch launched here
++            # one period or more later, so waiting for the result first costs
++            # it no GPU time, whereas a launch that blocks on a full CUDA launch
++            # queue delays a result taken after it by most of a period (stage 2
++            # sent its KV one period after stages 0, 1 and 3 in 41135856718,
++            # and Decode needs all four). Stage 0's GPU runs this microbatch
++            # next, so stage 0 launches before it waits for its result. Batch
++            # formation above already ran, so every stage forms with the same
++            # state.
 +            self._qpp_result_step(loop, next_mb_id)
          if batch:
              loop.launches[mb_id] = self._qpp_launch(loop, batch)
              if is_last:
                  loop.publisher.put(loop.launches[mb_id])
- 
+-
 -        # Bootstrap consensus: the last stage originates it towards stage 0;
-+        # Release consensus: the last stage originates it towards stage 0;
-         # every stage applies it at this same iteration and forwards it.
+-        # every stage applies it at this same iteration and forwards it.
 -        if is_last and loop.bmbs[consensus_mb_id] is not None:
--            loop.works += self._pp_send_pyobj_to_next_stage(
++        # Poll the KV transfers after the launch, so the eager launch separates
++        # a result step's KV send from the poll that should see it complete.
++        # Polled at the start of the iteration, right after stage 0's send at
++        # the end of the previous one, a transfer was seen one iteration later:
++        # in 41135856718 every release came four iterations after its result
++        # (two of them the consensus lag), not three.
++        with torch.profiler.record_function("pp.transfer_poll"):
++            transferred_rids = self._pp_pd_get_prefill_transferred_ids()
++        loop.tmbs[mb_id] = transferred_rids
++        if not is_last:
+             loop.works += self._pp_send_pyobj_to_next_stage(
 -                bootstrapped_rids, async_send=True
 -            )
 -        if loop.bmbs[next_mb_id] is not None:
 -            consensus_rids = self.process_bootstrapped_queue(
 -                self._pp_recv_pyobj_from_prev_stage()
--            )
++                transferred_rids, async_send=True
+             )
 -            if not is_last:
 -                loop.works += self._pp_send_pyobj_to_next_stage(
 -                    consensus_rids, async_send=True
 -                )
 -        # Release consensus, the same way.
++
++        # Release consensus: the last stage originates it towards stage 0;
++        # every stage applies it at this same iteration and forwards it.
          release_rids = None
          if is_last and loop.tmbs[consensus_mb_id] is not None:
              loop.works += self._pp_send_pyobj_to_next_stage(
-@@ -592,6 +606,25 @@ class SchedulerPPMixin:
+@@ -592,6 +621,25 @@ class SchedulerPPMixin:
                      release_rids, async_send=True
                  )
  
-+        if not is_last:
++        if is_first:
 +            self._qpp_result_step(loop, next_mb_id)
 +        if loop.tmbs[next_mb_id] is not None:
 +            with torch.profiler.record_function("pp.release_kv"):
@@ -192,7 +219,7 @@ index 83de13e..d2aa41d 100644
          done_batch = self.mbs[next_mb_id]
          if done_batch is not None:
              result = self._qpp_batch_result(
-@@ -601,13 +634,104 @@ class SchedulerPPMixin:
+@@ -601,13 +649,104 @@ class SchedulerPPMixin:
              with torch.profiler.record_function("pp.process_result"):
                  self._pp_process_batch_result(done_batch, result)
              self.last_mbs[next_mb_id] = done_batch
