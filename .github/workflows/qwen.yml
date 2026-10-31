@@ -8,6 +8,11 @@ on:
       - "**/*.md"
   workflow_dispatch:
     inputs:
+      inspect_split_pv_queue:
+        description: Read-only queue diagnosis for the already submitted Slurm job 27946
+        required: false
+        default: false
+        type: boolean
       run_genkai:
         description: 玄界で実行する
         required: true
@@ -49,8 +54,26 @@ permissions:
   id-token: write
 
 jobs:
+  inspect-split-pv-queue:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.inspect_split_pv_queue && !inputs.run_genkai && !inputs.run_aspire2ap && !inputs.run_firmus }}
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Read pending reason and expected start without allocating a GPU
+        shell: firmus-shell --github-shell {0}
+        run: |
+          date -u
+          squeue --noheader --jobs=27946 --format='%i|%T|%R|%S'
+          scontrol show job 27946
+          sinfo --noheader --partition=hpcai --format='%P|%a|%l|%D|%t'
+
   validate:
-    if: ${{ !contains(github.event.head_commit.message, '[basic]') || !contains(github.event.head_commit.message, '[cluster:firmus]') }}
+    if: ${{ !inputs.inspect_split_pv_queue && (!contains(github.event.head_commit.message, '[basic]') || !contains(github.event.head_commit.message, '[cluster:firmus]')) }}
     name: 制御処理を検証
     uses: ./.github/workflows/validate.yml
 
