@@ -16,8 +16,9 @@ def added_lines(patch):
     return '\n'.join(line[1:] for line in patch.read_text().splitlines() if line.startswith('+') and not line.startswith('+++'))
 
 
-@pytest.mark.parametrize('lengths', [(3994,), (3986, 4027), (4096, 3584, 4000), (3584, 3584, 4096, 4096)])
-def test_varlen_tile_order_covers_every_tile_once(tmp_path, lengths):
+@pytest.mark.parametrize('block_m', [128, 192])
+@pytest.mark.parametrize('lengths', [(3994,), (3986, 4027), (4096, 3584, 4000), (3584, 3584, 4096, 4096), (4001, 4001), (3585,)])
+def test_varlen_tile_order_covers_every_tile_once_for_m128_and_m192(tmp_path, lengths, block_m):
     compiler = shutil.which('g++')
     if compiler is None:
         pytest.skip('g++ required')
@@ -27,7 +28,7 @@ def test_varlen_tile_order_covers_every_tile_once(tmp_path, lengths):
 #include <cassert>
 #include <set>
 #include <tuple>
-constexpr int kBlockM = 128;
+constexpr int kBlockM = BLOCK_M;
 namespace cute { int ceil_div(int a, int b) { return (a + b - 1) / b; } }
 struct Params { int num_head, num_batch, qhead_per_khead, seqlen; const int* cu_seqlens; };
 struct Work { int tile_idx, block, bidh, bidb; };
@@ -60,7 +61,7 @@ int main() {
 }
 '''
     path = tmp_path / 'order.cpp'
-    path.write_text(source.replace('LENGTHS', ','.join(map(str, lengths))))
+    path.write_text(source.replace('BLOCK_M', str(block_m)).replace('LENGTHS', ','.join(map(str, lengths))))
     binary = tmp_path / 'order'
     subprocess.run([compiler, '-O1', '-std=c++17', str(path), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
@@ -118,8 +119,14 @@ def test_packed_requests_keep_the_row_count_and_cu_seqlens_contracts(guard):
 
 def test_varlen_rows_compare_against_n192_per_request():
     rows = [r for r in json.loads((ROOT / 'kernels/fa3-verify/prefill-candidates.json').read_text()) if r.get('varlen')]
-    assert [r['name'] for r in rows] == ['n192-varlen', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe', 'n192-direct-o-varlen-pipe-diag']
+    assert [r['name'] for r in rows] == ['n192-varlen', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe', 'n192-direct-o-varlen-pipe-diag', 'm192n96-direct-o-varlen-pipe']
+    legacy = rows[:-1]
+    assert all(r.get('bitwise_reference') == 'n192' and 'precision_reference' not in r for r in legacy)
+    assert rows[-1].get('precision_reference') == 'n192-direct-o-varlen-pipe' and 'bitwise_reference' not in rows[-1]
+    assert rows[-1]['block_n'] == 96 and rows[-1]['variant'] == 8416
     gate = (ROOT / 'scripts/check-firmus-decode-kernels.py').read_text()
     assert 'packed_control = name == "control" and len(common["lengths"]) > 1' in gate
     assert 'torch.ops.apac_fa3_verify.prefill_fwd_out(common["q"], common["k"], common["v"], common["cu"], out, scales, lse, metadata, maxlen, 128**-.5)' in gate
     assert 'for start, length, base_step in base_steps:' in gate
+    assert 'precision_reference = spec.get("precision_reference")' in gate
+    assert 'prefill_assert_errors(actual_dequantized, reference_dequantized' in gate

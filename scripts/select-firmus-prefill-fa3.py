@@ -167,6 +167,15 @@ def endurance_inputs(torch, lengths, device):
     return {"q": q, "q_source": q.clone(), "k": k, "v": v, "cu": cu, "maxlen": max(lengths), "rows": rows}
 
 
+def endurance_reference_mode(spec):
+    """Changed-order rows repeat their own validated output; exact rows keep a bytewise base."""
+    if spec.get("precision_reference"):
+        return "candidate-first-output"
+    if spec.get("bitwise_reference"):
+        return "pinned-output"
+    raise AssertionError(f"unserved Prefill row has no numerical or bitwise reference: {spec.get('name')}")
+
+
 def run_endurance(selection, output, workers):
     """Run the row the aggregate would adopt, if it has not served, for ENDURANCE_CALLS serving-path calls."""
     begin = time.monotonic()
@@ -184,21 +193,58 @@ def run_endurance(selection, output, workers):
         load()
         device = torch.device("cuda", rank)
         assert torch.cuda.get_device_capability() == (9, 0) and prefill_candidate()["name"] == row
-        # The gated rows are varlen rows that must write n192's bytes per request, which the served pin
-        # n192-direct-o-varlen also writes; its output on the same packed input is the reference.
         spec = CANDIDATES[NAMES.index(row)]
-        assert spec.get("varlen") and spec.get("bitwise_reference") == "n192", spec
-        pin = NAMES.index("n192-direct-o-varlen")
-        shapes = {"+".join(map(str, lengths)): endurance_inputs(torch, lengths, device) for lengths in ENDURANCE_SHAPES}
+        assert spec.get("varlen"), spec
+        reference_mode = endurance_reference_mode(spec)
+        local["reference_mode"] = reference_mode
+        if reference_mode == "candidate-first-output":
+            # Re-run stock/FP32 quality checks on every endurance geometry, including the two-request
+            # serving shape and ragged/boundary sequences, before checking candidate stability.
+            checks = run_path(str(Path(__file__).with_name("check-firmus-decode-kernels.py")))
+            shapes = {}
+            numeric_validation = {}
+            validated_reference = {}
+            for lengths in ENDURANCE_SHAPES:
+                key = "+".join(map(str, lengths))
+                common = checks["prefill_selection_inputs"](lengths)
+                numeric_validation[key] = checks["prefill_validate_candidate"](common, row)
+                reference_step = checks["prefill_selection_step"](common, row, 1)
+                reference_step()
+                candidate_out, candidate_scales = reference_step.output
+                validated_reference[key] = (candidate_out.view(common["rows"], 8192).clone(), candidate_scales.clone())
+                shapes[key] = {
+                    "q": common["q"], "q_source": common["q"].clone(), "k": common["k"], "v": common["v"],
+                    "cu": common["cu"], "maxlen": max(lengths), "rows": common["rows"],
+                }
+                del common, reference_step
+            local["numeric_validation"] = numeric_validation
+            local["numeric_passed"] = True
+        else:
+            assert spec.get("bitwise_reference") == "n192", spec
+            shapes = {"+".join(map(str, lengths)): endurance_inputs(torch, lengths, device) for lengths in ENDURANCE_SHAPES}
         reference = {}
-        for key, x in shapes.items():
-            out = torch.empty((x["rows"], 64, 128), device=device, dtype=torch.float8_e4m3fn)
-            scales = torch.empty((64, (x["rows"] + 3) // 4 * 4), device=device, dtype=torch.float32).T[:x["rows"]]
-            lse = torch.empty((64, x["rows"]), device=device, dtype=torch.float32)
-            metadata = torch.empty(17, device=device, dtype=torch.int32)
-            empty = torch.empty(0, device=device, dtype=torch.uint8)
-            torch.ops.apac_fa3_verify.prefill_variant_fwd_out(x["q"], x["k"], x["v"], empty, x["cu"], out, scales, lse, metadata, x["maxlen"], 128**-.5, pin)
-            reference[key] = (out.view(x["rows"], 8192), scales)
+        if reference_mode == "pinned-output":
+            pin = NAMES.index("n192-direct-o-varlen")
+            for key, x in shapes.items():
+                out = torch.empty((x["rows"], 64, 128), device=device, dtype=torch.float8_e4m3fn)
+                scales = torch.empty((64, (x["rows"] + 3) // 4 * 4), device=device, dtype=torch.float32).T[:x["rows"]]
+                lse = torch.empty((64, x["rows"]), device=device, dtype=torch.float32)
+                metadata = torch.empty(17, device=device, dtype=torch.int32)
+                empty = torch.empty(0, device=device, dtype=torch.uint8)
+                torch.ops.apac_fa3_verify.prefill_variant_fwd_out(x["q"], x["k"], x["v"], empty, x["cu"], out, scales, lse, metadata, x["maxlen"], 128**-.5, pin)
+                reference[key] = (out.view(x["rows"], 8192), scales)
+        else:
+            # The row changes softmax block order. First compare the serving wrapper with its validated
+            # direct candidate output on the same Q/K/V, then use that serving output as the stability reference.
+            serving_path_equal = {}
+            for key, x in shapes.items():
+                x["q"].copy_(x["q_source"])
+                first = attention(x["q"], x["k"], x["v"], x["cu"], x["maxlen"], 128**-.5, x["rows"], fixed=True)
+                candidate_out, candidate_scales = validated_reference[key]
+                serving_path_equal[key] = bool(torch.equal(first[0].view(x["rows"], 8192).view(torch.uint8), candidate_out.view(torch.uint8)) and torch.equal(first[1], candidate_scales))
+                reference[key] = (first[0].view(x["rows"], 8192).clone(), first[1].clone())
+            local["serving_path_equal"] = serving_path_equal
+            torch.cuda.synchronize()
         # Serving context of a PP4 stage: the O projection and MoE GEMMs between attention calls, and
         # copy-engine traffic (proxy copies, KV transfer) beside them.
         a = torch.randn(8192, 4096, device=device, dtype=torch.bfloat16)
@@ -223,7 +269,7 @@ def run_endurance(selection, output, workers):
         local["calls"] = ENDURANCE_CALLS
         local["calls_seconds"] = time.monotonic() - start
         local["bytes_equal"] = {key: bool(torch.equal(last[key][0].view(torch.uint8), reference[key][0].view(torch.uint8)) and torch.equal(last[key][1], reference[key][1])) for key in keys}
-    local["passed"] = not local["needed"] or all(local["bytes_equal"].values())
+    local["passed"] = not local["needed"] or (local.get("numeric_passed", True) and all(local["bytes_equal"].values()))
     local["elapsed_seconds"] = time.monotonic() - begin
     output.mkdir(parents=True, exist_ok=True)
     (output / f"rank-{rank}.json").write_text(json.dumps(local, indent=2, allow_nan=False) + "\n")
@@ -231,7 +277,10 @@ def run_endurance(selection, output, workers):
 
 
 def endurance_failure(endurance, row, workers):
-    """None if every GPU ran row for ENDURANCE_CALLS calls and matched the pinned row's bytes, else why not."""
+    """None if every GPU passed numeric validation and stable/endurance output checks, else why not."""
+    spec = CANDIDATES[NAMES.index(row)]
+    expected_mode = endurance_reference_mode(spec)
+    expected_shapes = {"+".join(map(str, lengths)) for lengths in ENDURANCE_SHAPES}
     for worker in range(workers):
         for rank in range(4):
             path = endurance / f"prefill-{worker}" / f"rank-{rank}.json"
@@ -240,8 +289,28 @@ def endurance_failure(endurance, row, workers):
             entry = json.loads(path.read_text())
             if entry["row"] != row:
                 return f"prefill-{worker} rank {rank} gated {entry['row']}, not {row}"
+            if entry.get("reference_mode") != expected_mode:
+                return f"prefill-{worker} rank {rank} used reference mode {entry.get('reference_mode')}, expected {expected_mode}"
+            if expected_mode == "candidate-first-output":
+                numeric = entry.get("numeric_validation", {})
+                path_equal = entry.get("serving_path_equal", {})
+                precision_reference = spec["precision_reference"]
+                if entry.get("numeric_passed") is not True or set(numeric) != expected_shapes or any(
+                    value.get("numeric_passed") is not True
+                    or value.get("precision_reference") != precision_reference
+                    or value.get("changed_input_replays") != 2
+                    or len(value.get("metrics", [])) != 3
+                    or len(value.get("precision_reference_metrics", [])) != 3
+                    for value in numeric.values()
+                ):
+                    return f"prefill-{worker} rank {rank} failed the all-shape stock/FP32 gate: {sorted(numeric)}"
+                if set(path_equal) != expected_shapes or not all(path_equal.values()):
+                    return f"prefill-{worker} rank {rank} serving wrapper differs from its validated candidate output: {path_equal}"
+            stable = entry.get("bytes_equal", {})
+            if set(stable) != expected_shapes or not all(stable.values()):
+                return f"prefill-{worker} rank {rank} failed output stability for every endurance shape: {stable}"
             if entry["calls"] != ENDURANCE_CALLS or not entry["passed"]:
-                return f"prefill-{worker} rank {rank} failed the endurance gate: {entry['calls']} calls, bytes_equal {entry.get('bytes_equal')}"
+                return f"prefill-{worker} rank {rank} failed the endurance gate: {entry['calls']} calls, stable_bytes_equal {entry.get('bytes_equal')}"
     return None
 
 

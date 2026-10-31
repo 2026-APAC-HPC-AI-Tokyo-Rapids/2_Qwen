@@ -287,3 +287,26 @@ output; existing candidates keep their original bytewise references. Missing
 results, numerical errors, insufficient speed or an endurance failure retain
 the served control. An official serving score is still required, and 10k has
 not yet been achieved.
+
+The parallel review of draft-extend capture found an invalid parity fixture:
+FA3's padding fill is one token, but query/extend width was four. K metadata
+came from `seq_lens=1` and Q metadata from `extend_seq_lens=4`; bottom-right
+causal alignment masks the first three query rows. This explains why the
+roughly 75% full-hidden mismatch can coexist with passing selected-row logits,
+but actual GPU parity still needs confirmation. The new fixture uses
+width-sized GPU/CPU lengths, distinct free request rows, allocator-owned KV
+slots and coherent positions. It restores request tables and buffers and frees
+the temporary slots on exit. Full-hidden and logits exact assertions remain.
+Seven real-Torch CPU tests exercise the actual fixture's writes, restoration,
+page-size 1 and 64 allocation paths, and failure cleanup; the dedicated CI job
+now runs these alongside the PP4 CPU gate suite. Draft-extend graphs remain
+disabled for the first M192/N96 serving trial.
+
+The integrated candidate and served control both compiled with CUDA 13.0.88
+after all 15 declared patches were applied once to a fresh, hash-verified FA3
+archive. M192/N96: 94.87 s compile, 525776-byte object, 128 registers, 40/28 B
+spill stores/loads; control: 96.03 s, 650736-byte object, 168 registers, 84/116 B
+spills. Each emitted a real SM90a kernel and no C7512 warning. Attention and
+Firmus image/staging/reference/PP4 regression suites passed locally, as did
+Ruff, actionlint, shell syntax and diff checks. Real SquashFS checks still run
+in Linux CI before allocation. These are build/CPU checks, not GPU performance.

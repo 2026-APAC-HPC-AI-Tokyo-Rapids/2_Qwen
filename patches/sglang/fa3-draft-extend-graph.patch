@@ -26,7 +26,136 @@ diff --git a/python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.
  from dataclasses import dataclass
  from typing import TYPE_CHECKING, Callable, Optional
 
-@@ -487,6 +488,43 @@
+@@ -330,7 +331,128 @@
+
+         return is_bs_supported
+
++    @contextlib.contextmanager
++    def _fa3_capture_input_fixture(self, bs: int):
++        """Give the FA3 capture/parity forward a valid, collision-free batch.
++
++        FA3's CUDA-graph padding fill is one token. Using it for real capture
++        rows while the query width is four makes the K length one but the Q
++        length four; bottom-right causal attention then masks the first three
++        query rows. Capture inputs also used to alias every request to req row
++        0 and every token write to cache slot 1. Use distinct rows and fresh KV
++        locations with a zero-prefix, width-sized sequence instead.
++        """
++        buffers = self.buffers
++        req_pool = self.model_runner.req_to_token_pool
++        allocator = self.model_runner.token_to_kv_pool_allocator
++        width = self.captured_req_width
++        num_tokens = bs * width
++        req_rows = list(req_pool.free_slots[:bs])
++        if len(req_rows) != bs or len(set(req_rows)) != bs:
++            raise RuntimeError(
++                f"FA3 draft-extend capture needs {bs} distinct free request rows; "
++                f"found {len(req_rows)}"
++            )
++        if width > req_pool.req_to_token.shape[1]:
++            raise RuntimeError(
++                f"FA3 draft-extend width {width} exceeds request table width "
++                f"{req_pool.req_to_token.shape[1]}"
++            )
++
++        device = buffers.req_pool_indices.device
++        req_rows_gpu = torch.tensor(req_rows, dtype=torch.int64, device=device)
++        req_to_token = req_pool.req_to_token
++        req_rows_backup = req_to_token[req_rows_gpu, :width].clone()
++        buffers_backup = {
++            "req_pool_indices": buffers.req_pool_indices[:bs].clone(),
++            "out_cache_loc": buffers.out_cache_loc[:num_tokens].clone(),
++            "positions": buffers.positions[:num_tokens].clone(),
++            "mrope_positions": buffers.mrope_positions[:, :num_tokens].clone(),
++            "seq_lens": buffers.seq_lens[:bs].clone(),
++            "seq_lens_cpu": buffers.seq_lens_cpu[:bs].clone(),
++        }
++        cache_locs = None
++        try:
++            prefix_lens = torch.zeros((bs,), dtype=torch.int64, device=device)
++            prefix_lens_cpu = torch.zeros((bs,), dtype=torch.int64, device="cpu")
++            seq_lens = torch.full((bs,), width, dtype=torch.int64, device=device)
++            seq_lens_cpu = torch.full((bs,), width, dtype=torch.int64, device="cpu")
++            if allocator.page_size == 1:
++                cache_locs = allocator.alloc(num_tokens)
++            else:
++                last_loc = torch.full((bs,), -1, dtype=torch.int64, device=device)
++                cache_locs = allocator.alloc_extend(
++                    prefix_lens,
++                    prefix_lens_cpu,
++                    seq_lens,
++                    seq_lens_cpu,
++                    last_loc,
++                    num_tokens,
++                )
++            if cache_locs is None or cache_locs.numel() != num_tokens:
++                raise RuntimeError(
++                    "FA3 draft-extend capture could not allocate its temporary KV "
++                    f"fixture ({num_tokens} tokens)"
++                )
++            # The allocator may enqueue page-table remaps on its scheduling
++            # stream. Capture uses the current stream, so establish the same
++            # allocation-before-forward ordering that run_batch normally gives.
++            self.device_module.synchronize()
++            if torch.unique(cache_locs).numel() != num_tokens:
++                raise RuntimeError(
++                    "FA3 draft-extend capture allocator returned aliased KV slots"
++                )
++
++            req_to_token[req_rows_gpu, :width] = cache_locs.view(bs, width).to(
++                dtype=req_to_token.dtype
++            )
++            buffers.req_pool_indices[:bs].copy_(req_rows_gpu)
++            buffers.out_cache_loc[:num_tokens].copy_(cache_locs)
++            buffers.seq_lens[:bs].fill_(width)
++            buffers.seq_lens_cpu[:bs].fill_(width)
++            positions = torch.arange(
++                width, dtype=torch.int64, device=device
++            ).repeat(bs)
++            buffers.positions[:num_tokens].copy_(positions)
++            buffers.mrope_positions[:, :num_tokens].copy_(positions.unsqueeze(0))
++            yield
++        finally:
++            if cache_locs is not None:
++                self.device_module.synchronize()
++                req_to_token[req_rows_gpu, :width] = req_rows_backup
++                for name in (
++                    "req_pool_indices",
++                    "out_cache_loc",
++                    "positions",
++                    "seq_lens",
++                    "seq_lens_cpu",
++                ):
++                    backup = buffers_backup[name]
++                    getattr(buffers, name)[: backup.shape[0]].copy_(backup)
++                buffers.mrope_positions[:, :num_tokens].copy_(
++                    buffers_backup["mrope_positions"]
++                )
++                allocator.free(cache_locs)
++
+     def capture_one_shape(
++        self,
++        size: int,
++        forward: Callable,
++        stream_idx: Optional[int] = None,
++        variant_label: Optional[str] = None,
++    ):
++        from sglang.srt.layers.attention.flashattention_backend import (
++            FlashAttentionBackend,
++        )
++
++        if isinstance(self.draft_extend_attn_backend, FlashAttentionBackend):
++            with self._fa3_capture_input_fixture(size):
++                return self._capture_one_shape(
++                    size, forward, stream_idx, variant_label
++                )
++        return self._capture_one_shape(size, forward, stream_idx, variant_label)
++
++    def _capture_one_shape(
+         self,
+         size: int,
+         forward: Callable,
+@@ -487,6 +609,43 @@
                      capture_inputs=None,
                      post_warmup_hook=post_warmup_hook,
                  )

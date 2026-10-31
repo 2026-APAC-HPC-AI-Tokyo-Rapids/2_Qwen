@@ -52,6 +52,10 @@ def test_direct_output_candidate_differs_from_n192_only_by_the_output_bit():
     assert row['variant'] == base['variant'] | 32 and not base['variant'] & 32
     assert (row['block_n'], row['byte_image'], row['bitwise']) == (base['block_n'], base['byte_image'], base['bitwise'])
     assert {name for name, r in rows.items() if 'bitwise_reference' in r} == {'n192-direct-o', 'n192-varlen', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe', 'n192-direct-o-varlen-pipe-diag'}
+    # M192/N96 changes the reduction tile and is screened under numeric bounds, never as a bytewise twin.
+    m192 = rows['m192n96-direct-o-varlen-pipe']
+    assert m192['variant'] == rows['n192-direct-o-varlen-pipe']['variant'] | 8192
+    assert m192.get('precision_reference') == 'n192-direct-o-varlen-pipe' and 'bitwise_reference' not in m192
     for name, bit in (('n192-varlen', 64), ('n192-direct-o-varlen', 96)):
         assert rows[name]['varlen'] and rows[name]['variant'] == bit and rows[name]['bitwise_reference'] == 'n192'
         assert (rows[name]['block_n'], rows[name]['byte_image']) == (192, False)

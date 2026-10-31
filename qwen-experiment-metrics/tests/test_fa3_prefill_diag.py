@@ -75,12 +75,13 @@ def pp4_branch():
     return shell[shell.index('if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then'):shell.index('elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then')]
 
 
-def test_pp4_screens_and_gates_only_the_diag_row_against_the_pin():
+def test_pp4_screens_and_gates_only_the_m192_row_against_the_pin():
     pp4 = pp4_branch()
     bundle = (ROOT / 'scripts/select-firmus-pp4-bundle.sh').read_text()
     assert '"prefill-${worker}" screen "${pinned_fa3}"' in pp4
-    assert bundle.count('bash "${root}/scripts/select-firmus-prefill-kernels.sh"') == 1 and f'--names {NAME} --control "${{control}}"' in bundle
-    assert bundle.count('select-firmus-prefill-fa3.py" --endurance "${root}/results/prefill-selection"') == 1 and 'timeout --kill-after=5 60' in bundle
+    m192 = 'm192n96-direct-o-varlen-pipe'
+    assert bundle.count('bash "${root}/scripts/select-firmus-prefill-kernels.sh"') == 1 and f'--names {m192} --control "${{control}}"' in bundle
+    assert bundle.count('select-firmus-prefill-fa3.py" --endurance "${root}/results/prefill-selection"') == 1 and 'timeout --kill-after=5 90' in bundle
     assert '--aggregate "${ROOT}/results/prefill-selection" --endurance "${ROOT}/results/prefill-fa3-endurance"' in pp4
     # The gate runs after all three screens, and the aggregate after all three gates.
     assert pp4.index('for pid in "${prefill_gpu_selections[@]}"') < pp4.index('"prefill-${worker}" endurance') < pp4.index('for pid in "${prefill_gpu_gates[@]}"') < pp4.index('--aggregate')
@@ -105,12 +106,13 @@ def screen(tmp_path, saving):
 def gate(tmp_path, row=NAME, calls=None, passed=True, skip=None):
     selector = runpy.run_path(str(ROOT / 'scripts/select-firmus-prefill-fa3.py'))
     directory = tmp_path / 'prefill-fa3-endurance'
+    shapes = {'+'.join(map(str, shape)) for shape in selector['ENDURANCE_SHAPES']}
     for worker in range(3):
         (directory / f'prefill-{worker}').mkdir(parents=True, exist_ok=True)
         for rank in range(4):
             if (worker, rank) == skip:
                 continue
-            entry = {'rank': rank, 'row': row, 'needed': True, 'calls': selector['ENDURANCE_CALLS'] if calls is None else calls, 'bytes_equal': {'4001+4001': passed}, 'passed': passed}
+            entry = {'rank': rank, 'row': row, 'needed': True, 'calls': selector['ENDURANCE_CALLS'] if calls is None else calls, 'reference_mode': 'pinned-output', 'bytes_equal': {key: passed for key in shapes}, 'passed': passed}
             (directory / f'prefill-{worker}' / f'rank-{rank}.json').write_text(json.dumps(entry))
     return directory
 
@@ -123,7 +125,7 @@ def test_aggregate_adopts_the_diag_row_only_after_every_gpu_passed_the_gate(tmp_
         ({}, NAME, 'passed'),
         ({'skip': (1, 2)}, 'n192-direct-o-varlen-pipe', 'no endurance result from prefill-1 rank 2'),
         ({'calls': 600}, 'n192-direct-o-varlen-pipe', 'failed the endurance gate: 600 calls'),
-        ({'passed': False}, 'n192-direct-o-varlen-pipe', 'failed the endurance gate'),
+        ({'passed': False}, 'n192-direct-o-varlen-pipe', 'failed output stability for every endurance shape'),
     ]
     for index, (kwargs, expected, reason) in enumerate(cases):
         endurance = gate(tmp_path / f'case-{index}', **kwargs)

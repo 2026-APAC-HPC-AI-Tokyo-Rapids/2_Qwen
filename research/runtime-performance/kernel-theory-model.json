@@ -684,8 +684,19 @@
     "new_image_size_bytes": 12298129408,
     "execution_note": "Run 41088950539: CI, image build and provisioning passed; Slurm 27712 FAILED 1:0 after 3:18 before model startup. Sparse penalty GPU gate rank 3 failed reading ~/.triton/cache/.../_apply_min_new_tokens_penalty.json; parent wait propagated exit 1. Archive log SHA256 07fa8aa248bf855ae2de6c95e5c064797b8d5013909368d8da686af9ae1d27f6 verified. FA3 diagonal trim and split-unroll16 retained controls after timing rejection. No score. User requested retry with this gate on node-local /tmp and the same verified 41088950539 image; no source/image/workload changes.",
     "inactive_fa3_geometry": {
-      "status": "CPU compile and resource feasibility only; no GPU execution; not shipped",
-      "followup": "After serving 41142009481 showed no gain, M192/N96 is being integrated as a distinct, gated Prefill candidate. Existing prototype compile evidence below is not a GPU result. The next ordinary-serving attempt keeps draft-extend eager to isolate this Prefill change.",
+      "status": "M192/N96 integrated as a gated candidate; native CPU checks passed; GPU measurement pending",
+      "followup": "After serving 41142009481 showed no gain, integrate only M192/N96 as a distinct, gated Prefill candidate. Neither the original prototype nor the new native compile is a GPU result. The next ordinary-serving attempt keeps draft-extend eager to isolate this Prefill change.",
+      "native_preflight_20261031": {
+        "cuda": "13.0.88",
+        "gpu_executed": false,
+        "declared_patches_applied": 15,
+        "source_archive_sha256": "418b5681584dc3efff496a1cab5ffd58d2728d89dcfe0ea16e6985d6ef35c68c",
+        "launch_header_sha256": "e49948489a375f8659f0b70a92ef96d6980ab060a95d7d3b2b65fe97e6b545b9",
+        "scheduler_header_sha256": "de1b38265deed21edf8ac128da7fa2f39fe390c1a23216bf6ad2fd1d6b23106f",
+        "epilogue_header_sha256": "2c8f4985baed74e91990e0ed0383dd2f0d8b34ac33b7500c4ae079f5f9ef00f2",
+        "candidate": {"elapsed_seconds": 94.87, "object_bytes": 525776, "registers": 128, "spill_store_bytes": 40, "spill_load_bytes": 28, "c7512": false},
+        "control": {"elapsed_seconds": 96.03, "object_bytes": 650736, "registers": 168, "spill_store_bytes": 84, "spill_load_bytes": 116, "c7512": false}
+      },
       "source": "sgl-attn f89bc2306632d1ec5f97b014dded4254f5b4a907 plus exact bundle patch chain and three shape-guard edits",
       "cutlass": "57e3cfb47a2d9e0d46eb6335c3dc411498efa198",
       "cuda": "13.0.88",
@@ -730,7 +741,7 @@
       "serving_score": null
     },
     "adoption_constraint": "User: include only working changes. Require GPU numeric checks, continuous execution and ordinary serving; preserve validated ~9.8k configuration. Inactive prototypes are not dispatched.",
-    "slurm_job_id": 27712,
+    "initial_failed_slurm_job_id": 27712,
     "inactive_moe_promotion": {
       "status": "Rejected in current CPU-compile form; not integrated or dispatched; no GPU execution",
       "shape": {

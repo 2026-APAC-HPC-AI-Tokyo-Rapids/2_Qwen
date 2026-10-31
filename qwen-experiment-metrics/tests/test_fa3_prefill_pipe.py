@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 FA3 = ROOT / 'kernels/fa3-verify'
+M192_NAME = 'm192n96-direct-o-varlen-pipe'
 
 
 def added(name):
@@ -16,7 +17,31 @@ def test_pipe_row_is_the_pinned_row_plus_bit_128():
     row, pin = rows['n192-direct-o-varlen-pipe'], rows['n192-direct-o-varlen']
     assert row['variant'] == pin['variant'] | 128 and not pin['variant'] & 128
     assert {k: v for k, v in row.items() if k not in ('name', 'variant')} == {k: v for k, v in pin.items() if k not in ('name', 'variant')}
-    assert [name for name, r in rows.items() if r['variant'] & 128] == ['n192-direct-o-varlen-pipe', 'n192-direct-o-varlen-pipe-diag']
+    assert [name for name, r in rows.items() if r['variant'] & 128] == ['n192-direct-o-varlen-pipe', 'n192-direct-o-varlen-pipe-diag', M192_NAME]
+
+
+def test_m192n96_row_preserves_the_served_pipe_features_and_declares_precision_reference():
+    rows = {r['name']: r for r in json.loads((FA3 / 'prefill-candidates.json').read_text())}
+    row, pipe = rows[M192_NAME], rows['n192-direct-o-varlen-pipe']
+    assert row['variant'] == pipe['variant'] | 8192 == 8416
+    assert row['block_n'] == 96 and row['varlen'] and not row['bitwise'] and not row['byte_image']
+    assert row['precision_reference'] == pipe['name'] and 'bitwise_reference' not in row
+    assert row['variant'] & pipe['variant'] == pipe['variant']
+    assert [name for name, spec in rows.items() if spec['variant'] & 8192] == [M192_NAME]
+
+
+def test_m192_geometry_is_scoped_to_fixed_varlen_and_compiled_after_other_prefill_patches():
+    build = (FA3 / 'build.py').read_text()
+    geometry = (FA3 / 'prefill-geometry.patch').read_text()
+    assert build.index('"prefill-diag.patch"') < build.index('"prefill-geometry.patch"') < build.index('cuda = Path("/usr/local/cuda")')
+    assert 'FixedPrefill && (PrefillVariant & 8192) ? 192 :' in geometry
+    assert 'kBlockM == 192 && kBlockN == 96 && FixedVarlen' in geometry
+    assert '(kBlockM == 128 || (kBlockM == 192 && get<2>(TileShape_MNK_PV{}) == 96))' in geometry
+    # The fixed scheduler uses packed cu_seqlens and kBlockM; it does not depend on the wrapper's 128-rounded max length.
+    scheduler = (FA3 / 'prefill-varlen.patch').read_text()
+    assert 'params.cu_seqlens[b + 1] - params.cu_seqlens[b]' in scheduler and ', kBlockM);' in scheduler
+    assert 'seqlen_q_rounded' not in scheduler and 'seqlen_k_rounded' not in scheduler
+    assert 'p.seqlen_q_rounded=p.seqlen_k_rounded=(maxlen+127)/128*128;' in (FA3 / 'wrapper.cpp').read_text()
 
 
 def test_pipe_patch_is_last_in_the_build_chain():
@@ -53,10 +78,10 @@ def pp4_branch():
 
 
 def test_pp4_pins_the_served_pipe_row_and_keeps_the_gate_scripts_staged():
-    # The PP4 job screens only the diagonal-trim row against this pin (test_fa3_prefill_diag.py).
+    # The PP4 job screens only the new M192/N96 varlen row against this pin.
     pp4 = pp4_branch()
     assert '"prefill-${worker}" screen "${pinned_fa3}"' in pp4
-    assert "--names n192-direct-o-varlen-pipe-diag" in (ROOT / 'scripts/select-firmus-pp4-bundle.sh').read_text()
+    assert f'--names {M192_NAME}' in (ROOT / 'scripts/select-firmus-pp4-bundle.sh').read_text()
     prepare = runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))
     assert prepare['PP4_SELECTED']['SGLANG_PREFILL_FA3_VERIFY'] == 'n192-direct-o-varlen-pipe'
     assert prepare['PP4_SELECTED_RUNS']['SGLANG_PREFILL_FA3_VERIFY'] == [41040348302]
@@ -107,8 +132,57 @@ def test_gate_runs_the_serving_shapes_through_the_serving_call_path():
     assert 'from sglang.srt.layers.attention.prefill_fp8 import attention, prefill_candidate' in source
     assert 'last[key] = attention(x["q"], x["k"], x["v"], x["cu"], x["maxlen"], 128**-.5, x["rows"], fixed=True)' in source
     assert 'os.environ["SGLANG_PREFILL_FA3_VERIFY"] = row' in source and 'prefill_candidate()["name"] == row' in source
+    assert all(key in source for key in ('numeric_validation', 'precision_reference_metrics', 'serving_path_equal', 'candidate-first-output'))
+    assert 'torch.equal(first[0].view(x["rows"], 8192).view(torch.uint8), candidate_out.view(torch.uint8))' in source
+    assert 'torch.equal(first[1], candidate_scales)' in source
+    assert "checks[\"prefill_validate_candidate\"](common, row)" in source
     # Served rows need no gate.
     assert set(selector['UNGATED']) == {'control', 'n192', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe'}
+
+
+def test_precision_candidate_endurance_requires_all_shapes_and_both_numeric_and_serving_path_gates(tmp_path):
+    selector = runpy.run_path(str(ROOT / 'scripts/select-firmus-prefill-fa3.py'))
+    row = M192_NAME
+    shapes = {'+'.join(map(str, shape)) for shape in selector['ENDURANCE_SHAPES']}
+    assert selector['endurance_reference_mode'](next(spec for spec in selector['CANDIDATES'] if spec['name'] == row)) == 'candidate-first-output'
+    directory = tmp_path / 'endurance'
+    for worker in range(3):
+        path = directory / f'prefill-{worker}'
+        path.mkdir(parents=True)
+        for rank in range(4):
+            numeric = {
+                key: {
+                    'numeric_passed': True,
+                    'precision_reference': 'n192-direct-o-varlen-pipe',
+                    'changed_input_replays': 2,
+                    'metrics': [{}] * 3,
+                    'precision_reference_metrics': [{}] * 3,
+                }
+                for key in shapes
+            }
+            entry = {
+                'rank': rank, 'row': row, 'needed': True, 'calls': selector['ENDURANCE_CALLS'], 'passed': True,
+                'reference_mode': 'candidate-first-output', 'numeric_passed': True, 'numeric_validation': numeric,
+                'serving_path_equal': {key: True for key in shapes}, 'bytes_equal': {key: True for key in shapes},
+            }
+            (path / f'rank-{rank}.json').write_text(json.dumps(entry))
+    assert selector['endurance_failure'](directory, row, 3) is None
+    path = directory / 'prefill-1/rank-2.json'
+    entry = json.loads(path.read_text())
+    entry['numeric_validation'].pop('4001+4001')
+    path.write_text(json.dumps(entry))
+    assert 'all-shape stock/FP32 gate' in selector['endurance_failure'](directory, row, 3)
+    entry['numeric_validation']['4001+4001'] = {
+        'numeric_passed': True, 'precision_reference': 'n192-direct-o-varlen-pipe',
+        'changed_input_replays': 2, 'metrics': [{}] * 3, 'precision_reference_metrics': [{}] * 3,
+    }
+    entry['serving_path_equal']['3585'] = False
+    path.write_text(json.dumps(entry))
+    assert 'serving wrapper differs' in selector['endurance_failure'](directory, row, 3)
+    entry['serving_path_equal']['3585'] = True
+    entry['bytes_equal'].pop('4096')
+    path.write_text(json.dumps(entry))
+    assert 'output stability for every endurance shape' in selector['endurance_failure'](directory, row, 3)
 
 
 def test_gate_skips_the_gpu_when_the_screen_keeps_a_served_row(tmp_path, monkeypatch):

@@ -233,20 +233,13 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # Every selection gate has settled: 41005872470, 41020974704 and 41040348302; the fixed FA3 pipe
   # passed its 1200-call gate and served in 41040348302. That run spent 7.3 min selecting, then hit TIMEOUT.
   test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
-  printf 'PP4 serving: prior kernel settings plus the pinned PP4 selections (prepare-firmus-pp4-settings.py); the diagonal-trim FA3 and split-unroll16 rows are screened and endurance-gated against the served controls.\n'
-  # The diagonal-trim Prefill FA3 row (n192-direct-o-varlen-pipe-diag, prefill-diag.patch) has never
-  # served. On the four GPUs of each Prefill worker, before model load, the three workers in parallel:
-  # (1) screen against the pinned row (select-firmus-prefill-kernels.sh --control, 175 s timeout; 41040348302
-  # screened one row in 34 s inside the torchrun): its FP8 bytes and scales must equal n192 per request on
-  # three replays, the FP32 reference gate must pass, and it must save >=5 us per 94-layer graph layer at
-  # 3986, 4027, 4096 and 3986+4027 on all twelve GPUs; (2) after all three screens, the endurance gate
-  # (select-firmus-prefill-fa3.py --endurance, 60 s timeout; 7.2 s inside the torchrun in 41040348302):
-  # 1200 serving-path calls over six shapes, each shape's last output equal to the pinned bytes.
-  # The aggregate adopts the row only if all twelve GPUs passed both; a loss, failure, hang or late result
-  # keeps the pinned row. Serial time before worker start: about 1.2-1.5 min (screen ~45-60 s, gate
-  # ~20-30 s, aggregate a few seconds). The bundle wrapper then screens only split-unroll16
-  # against the served split loop, and gates its winner for 600 calls (about one extra minute).
-  # Measurements on each Prefill GPU stay sequential.
+  printf 'PP4 serving: pinned kernel settings with the M192/N96 Prefill FA3 candidate screened and endurance-gated against the served control.\n'
+  # M192/N96 reduces logical KV tile loads but changes softmax block order. Its existing FP32/stock
+  # numerical gates and repeated-output checks must pass before paired timing on all twelve GPUs.
+  # Each tested length and packed pair must save >=5 us per layer. The prospective winner then runs
+  # 1200 serving-path calls with numerical-reference and repeatability checks over six shapes.
+  # A loss, numerical failure, hang or missing result retains the pinned row. The previously rejected
+  # diagonal-trim and split-unroll16 rows are not screened again. Measurements on each GPU stay sequential.
   # Like telemetry, this overlapping step sees all eight tail GPUs; explicitly use 4..7.
   # It must not reserve the first four before the Prefill screen, which serves on 0..3.
   # 41088950539 failed reading Triton metadata in the shared HOME cache; keep this gate node-local too.
@@ -270,7 +263,6 @@ if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   done
   for pid in "${prefill_gpu_gates[@]}"; do wait "${pid}" || true; done
   uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3.py" --aggregate "${ROOT}/results/prefill-selection" --endurance "${ROOT}/results/prefill-fa3-endurance" --output "${ROOT}/results/prefill-selection/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
-  uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --unroll16 --aggregate "${ROOT}/results/prefill-unroll16" --endurance "${ROOT}/results/prefill-unroll16-endurance" --output "${ROOT}/results/prefill-unroll16/selection.json" --env-output "${ROOT}/source/prefill-kernels.env"
   wait "${sparse_penalty_gate}"
 elif [[ -s "${ROOT}/source/reused-kernel-selection.json" ]]; then
   # Provision has verified the prior image, ordered overlays, expert map and
