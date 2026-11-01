@@ -74,3 +74,20 @@ Claude は serving commit で `configs/firmus-prefill-pp4.json` の `images.sgla
 - 全体 suite は round 18 と同じ短い directory-fd alias を必要な3つの AF_UNIX fixture にだけ適用する scratch plugin で実行した。product/test source の動作を短縮していない。suite 中に行った補足記録と JIT 証拠収集の最終変更は、関連 suite でも再確認した。
 - round 18 の元 JSON を新集計で読み取り確認し、complete=false のまま、利用可能な4 rank の fragment が失敗の情報を持ったまま残ることを確認。旧 raw/時間の欠損を補ったとは扱わない。
 - 最終検証 log、counts、native layout JSON を指定 scratch に保持し、pytest fixture tree、native 中間 source/binary、scratch plugin と cache、commit message の一時ファイルを片付ける。round 18 の証拠は保持する。H200、実 image ABI、3 routing×12 GPU の trace/byte/time、45秒内完了、通常 serving の公式結果は今回の作業では未実行。CPU fixture を実機 E2E 成功とは扱わない。
+
+## serving 結果：律速 worker の 4 GPU で診断データを取得、P で 10002.75（run 41305946419、2026-11-01）
+
+- serving commit：70f622c（round 18 の image 450ba3cc を build なしで再利用）。Slurm job 28098。gate は P を 12 GPU で再採用、公式 **10002.75**、eligible、validation valid、6308 requests、PP0 周期 113.8 / 113.2 / 116.9 ms。P の構成は 5 run で 10002.75〜10020.58。
+- **trace の読み出し位置の修正は効いた**：trace の offset は 1,445,433,344 byte で、旧 parser の読み出し位置より 8,192 byte 先だった（round 18 の原因の確認）。
+- **取れたのは prefill-2（g4）の 4 GPU だけ**。3 routing（balanced、historical、edges）すべて完了（19.3 秒）。prefill-0/1（g1）は起動に時間がかかり、診断の時間枠が P の gate 群の 180 秒枠の残り（約 16 秒）で切られ、最初の case の途中で止まった（fragment の `byte_equal: false` は比較前の初期値）。集計 step も同じ理由で打ち切られたので、`megamoe-prefill-diag-r19-summary-41305946419.json` は回収後に手元で作った。
+- **計装の影響が大きすぎる**：診断版は通常版の約 4.4〜4.7 倍（paired impact 中央値 3.40〜3.67）。区間ごとの細分値は採否に使えない（集計の `fine_intervals_usable_for_adoption: false`）。定性的には、consumer の full 待ちは mainloop の中央値 0.9〜8.6%、producer warp 2/3 の empty 待ちが大きく、consumer 側（WGMMA と promotion）が律速という従来の見方と合う。
+- **計装なしの完全 MegaMoE 時間（control、6 組の交互計時、4 GPU）は使える**：
+
+| routing（T=7988） | control（µs/call） | balanced 比 |
+|---|---:|---:|
+| balanced | 2334〜2363 | — |
+| historical（旧 8002-token capture を 3994×2 に切ったもの） | 2464〜2500 | +5.5% |
+| edges（0/1/64/65/127/128/129 行の expert を含む） | 2509〜2546 | +7.5% |
+
+  routing の偏りだけで 1 層あたり約 130〜140 µs（24 層で約 3.1〜3.4 ms/周期）。10.2k に必要な 84〜90 µs/層と同じ規模で、padding（expert ごとの行数の tile 端数）と、132 CTA への仕事の偏りのどちらか、または両方による。数値を変えずに減らせる余地として、次の分析対象にする。historical は現在の serving routing そのものではない。
+- 単独で測った kernel（MegaMoE 2334〜2500、FA3 621、QKV 537、O 459、writer＋pack 76 µs）を 24 層分足しても約 100〜104 ms で、serving の周期 116.6〜116.9 ms に届かない。serving は 700 W 上限で clock が下がるためと考えられるが、現構成の serving timeline で確かめていない。
