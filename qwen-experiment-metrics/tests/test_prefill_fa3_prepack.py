@@ -157,7 +157,7 @@ uv() {{ shift 5; {shlex.quote(sys.executable)} "$@"; }}
 
 def test_native_writer_and_gate_wiring():
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
-    assert config['prefill']['fa3_prepack_gate'] is False
+    assert config['prefill']['fa3_prepack_gate'] is True
     assert config['sglang_overlay_patches'][-1]=='patches/sglang/prefill-fa3-vsum.patch'
     assert config['images']['sglang']['sha256']==config['container_sha256'] and config['container_sha256'].startswith('a8232b16')
     source=(ROOT/'patches/sglang/prefill-fa3-vsum.patch').read_text()
