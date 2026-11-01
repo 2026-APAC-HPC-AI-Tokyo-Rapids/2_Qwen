@@ -336,6 +336,8 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.megamoe_diag // false' "${ROOT}
       timeout --kill-after=2 "${megamoe_diag_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-megamoe-diag-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/run-prefill-megamoe-diag.py" --output "${ROOT}/results/prefill-megamoe-diag/prefill-${worker}" --fixture "${ROOT}/source/megamoe-local-ep1-routing.npz" --run-id "${SLURM_JOB_ID}-${megamoe_diag_started}" >"${ART}/prefill-megamoe-diag-${worker}.log" 2>&1 &
       megamoe_diag_pids+=("$!")
     done
+    # Keep all other workers running after a failed worker; only the shared
+    # deadline above may stop them. Each rank also saves parser failures locally.
     for pid in "${megamoe_diag_pids[@]}"; do wait "${pid}" || true; done
     megamoe_diag_remaining=$((prefill_fa3_prepack_deadline - $(date +%s)))
     if (( megamoe_diag_remaining > 3 )); then megamoe_diag_remaining=3; fi

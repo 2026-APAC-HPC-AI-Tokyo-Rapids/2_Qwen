@@ -227,6 +227,9 @@ def test_attention_calls_the_selected_native_row_without_reading_cu(dispatch, mo
 @pytest.mark.parametrize('diagnostic', [False, True])
 def test_prepare_keeps_control_and_records_optional_gate(tmp_path, pair, prepack, diagnostic):
     config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
+    # Override every selection boolean, including default-true gates, in all
+    # eight combinations. The diagnostic flag itself never selects a GPU pin.
+    assert {key for key in config['prefill'] if key.endswith('_gate')} == {'fa3_pair_gate', 'fa3_prepack_gate'}
     config['prefill']['fa3_pair_gate'] = pair
     config['prefill']['fa3_prepack_gate'] = prepack
     config['prefill']['megamoe_diag'] = diagnostic
@@ -236,7 +239,8 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, pair, prepack
     env = (tmp_path / 'source/prefill-kernels.env').read_text()
     assert GATE['KEY'] + '=' + GATE['CONTROL'] + '\n' in env
     record = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
-    assert record['no_gpu_selection_rerun'] is not (pair or prepack)
+    assert record['no_gpu_selection_rerun'] is (not pair and not prepack)
+    assert record['fa3_prepack_gate'] is prepack
     assert record['megamoe_diag'] is diagnostic
 
 

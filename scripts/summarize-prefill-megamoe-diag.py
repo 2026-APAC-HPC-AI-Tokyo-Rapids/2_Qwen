@@ -21,7 +21,7 @@ def distribution(values):
     return {'median':statistics.median(values), 'p95':values[math.ceil(.95*len(values))-1], 'max':max(values), 'n':len(values)}
 
 
-def summarize_case(case, build):
+def summarize_timing(case):
     samples = case['samples_us']
     assert len(samples) == 6 and case['byte_equal'] is True
     assert all(row['order'] == (['control','diagnostic'] if i%2 == 0 else ['diagnostic','control']) for i,row in enumerate(samples))
@@ -29,8 +29,15 @@ def summarize_case(case, build):
     control = statistics.median(row['control'] for row in samples)
     diag = statistics.median(row['diagnostic'] for row in samples)
     impact = diag/control-1
+    return {'control_us':control, 'diagnostic_us':diag, 'impact_fraction':impact, 'paired_impact_fraction':distribution([r['diagnostic']/r['control']-1 for r in samples]), 'forward_impact_fraction':statistics.median(r['diagnostic']/r['control']-1 for r in samples if r['order'][0]=='control'), 'reverse_impact_fraction':statistics.median(r['diagnostic']/r['control']-1 for r in samples if r['order'][0]=='diagnostic')}
+
+
+def summarize_case(case, build):
+    timing = summarize_timing(case)
+    assert case.get('finite', True) is True, 'nonfinite control'
+    assert 'trace_error' not in case, case.get('trace_error')
     spilled = any(int(a) or int(b) for a,b in build['diagnostic']['spill_store_load_bytes'])
-    usable = abs(impact) <= .02 and not spilled and not build['diagnostic']['c75xx']
+    usable = abs(timing['impact_fraction']) <= .02 and not spilled and not build['diagnostic']['c75xx']
     trace = case['trace']
     assert len(trace) == 132*12
     assert {(r['cta'],r['warp']) for r in trace} == {(c,w) for c in range(132) for w in range(12)}
@@ -117,7 +124,7 @@ def summarize_case(case, build):
     last_full = max((t['end_ns'] for t in full), default=None)
     tail_ctas = {t['cta'] for t in tail}
     tail_analysis = {'last_math_tiles':last_tiles, 'last_math_ctas_have_any_fc2_tail':bool(last_ctas & tail_ctas), 'fc2_tail_tiles':len(tail), 'fc2_true_m64_tiles':sum(t['rows']<=64 for t in tail), 'last_fc2_tail_minus_last_full_us':None if last_tail is None or last_full is None else (last_tail-last_full)/1000, 'last_fc2_tail_to_last_math_end_us':None if last_tail is None else (last-last_tail)/1000, 'last_fc2_tail_to_last_warp_exit_us':None if last_tail is None else (max(exits)-last_tail)/1000, 'fc2_tail_inactive_wg_visits':sum(t['active_wg_rows']==0 for t in tail), 'last_tail_ctas_also_last_exit_ctas':bool({t['cta'] for t in tail if t['end_ns']==last_tail} & {r['cta'] for r in trace if r['events'][-1][0]==max(exits)}), 'tail_mainloop_us':distribution([t['mainloop_us'] for t in tail]), 'full_mainloop_us':distribution([t['mainloop_us'] for t in full]), 'interpretation':'Completion association only; no counterfactual M64 speedup. Row/WG skip, expert, CTA work and clock can confound duration.'}
-    return {'timing':{'control_us':control, 'diagnostic_us':diag, 'impact_fraction':impact, 'paired_impact_fraction':distribution([r['diagnostic']/r['control']-1 for r in samples]), 'forward_impact_fraction':statistics.median(r['diagnostic']/r['control']-1 for r in samples if r['order'][0]=='control'), 'reverse_impact_fraction':statistics.median(r['diagnostic']/r['control']-1 for r in samples if r['order'][0]=='diagnostic')}, 'fine_intervals_usable_for_adoption':usable, 'qualification':'Diagnostic association only. Reject fine attribution if absolute event-time overhead exceeds 2 percent, CPU spill or C75xx; small total impact alone does not prove every interval undisturbed.', 'instrumented_warp_span_us':(max(exits)-min(entries))/1000, 'last_warp_exit':[{k:r[k] for k in ('cta','warp','sm')} for r in trace if r['events'][-1][0]==max(exits)], 'cta_wg_distributions':{k:distribution(v) for k,v in metrics.items()}, 'sampled_intervals_us':{k:distribution(v) for k,v in detail.items()}, 'cta_wg_totals':per_cta, 'tail':tail_analysis, 'expert_rows':case['expert_rows']}
+    return {'timing':timing, 'fine_intervals_usable_for_adoption':usable, 'qualification':'Diagnostic association only. Reject fine attribution if absolute event-time overhead exceeds 2 percent, CPU spill or C75xx; small total impact alone does not prove every interval undisturbed.', 'instrumented_warp_span_us':(max(exits)-min(entries))/1000, 'last_warp_exit':[{k:r[k] for k in ('cta','warp','sm')} for r in trace if r['events'][-1][0]==max(exits)], 'cta_wg_distributions':{k:distribution(v) for k,v in metrics.items()}, 'sampled_intervals_us':{k:distribution(v) for k,v in detail.items()}, 'cta_wg_totals':per_cta, 'tail':tail_analysis, 'expert_rows':case['expert_rows']}
 
 
 def summarize(directory, run_id):
@@ -128,14 +135,27 @@ def summarize(directory, run_id):
             path = directory/f'prefill-{worker}'/f'rank-{rank}.json'
             try:
                 data = json.loads(path.read_text())
-                assert data['schema'] == SCHEMA and data['passed'] is True
+                assert data['schema'] == SCHEMA
                 assert data['run_id'] == run_id and data['rank']==rank and data['tokens']==7988
                 assert data['routing_is_current_serving'] is False
                 assert data['uuid'] not in uuids, 'duplicate physical GPU'
                 uuids.add(data['uuid'])
                 assert data['build']['serving_sass_equal'] is True
-                assert set(data['cases']) == {'balanced','historical-routing','edges'}
-                cases = {k:summarize_case(v,data['build']) for k,v in data['cases'].items()}
+                if data['passed'] is not True or set(data['cases']) != {'balanced','historical-routing','edges'}:
+                    failures.append({'worker':worker, 'rank':rank, 'error':data.get('error','incomplete rank'), 'fragment':str(path)})
+                cases = {}
+                for name, case in data['cases'].items():
+                    try:
+                        cases[name] = summarize_case(case,data['build'])
+                    except (ValueError,KeyError,IndexError,AssertionError,TypeError) as exc:
+                        error = case.get('trace_error') or str(exc) or type(exc).__name__
+                        partial = {'trace_error':error, 'byte_equal':case.get('byte_equal'), 'finite':case.get('finite'), 'samples_us':case.get('samples_us',[]), 'fine_intervals_usable_for_adoption':False}
+                        try:
+                            partial['timing'] = summarize_timing(case)
+                        except (ValueError,KeyError,IndexError,AssertionError,TypeError):
+                            pass
+                        cases[name] = partial
+                        failures.append({'worker':worker, 'rank':rank, 'case':name, 'error':error, 'fragment':str(path)})
                 rows.append({'worker':worker, 'rank':rank, 'uuid':data['uuid'], 'cases':cases})
             except (OSError,ValueError,KeyError,IndexError,AssertionError,TypeError) as exc:
                 failures.append({'worker':worker,'rank':rank,'error':str(exc) or type(exc).__name__})

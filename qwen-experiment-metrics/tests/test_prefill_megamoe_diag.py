@@ -115,6 +115,120 @@ def test_private_trace_parser_never_accepts_overflow_or_missing_warps(monkeypatc
     with pytest.raises(AssertionError,match='missing'):function(np,large.ravel())
 
 
+@pytest.mark.parametrize('base_remainder', [0,256,2048,3840])
+@pytest.mark.parametrize('size_remainder', [0,8,2080,4088])
+def test_private_tail_uses_absolute_page_alignment(base_remainder, size_remainder):
+    size = 4096*4+size_remainder
+    base = 0x100000000+base_remainder
+    layout = RUNNER['trace_layout'](base,size,size+RUNNER['EXTRA_BYTES'])
+    assert layout['trace_address'] % 4096 == 0
+    assert base+size <= layout['trace_address'] < base+size+4096
+    assert base+layout['trace_offset_bytes'] == layout['trace_address']
+    assert layout['trace_offset_bytes']+layout['trace_bytes'] <= layout['buffer_bytes']
+
+
+def test_round18_header_is_exactly_one_word_beyond_the_old_search(monkeypatch):
+    layout = RUNNER['trace_layout'](0x100000000,1445431328,1445431328+RUNNER['EXTRA_BYTES'])
+    delta = layout['trace_offset_bytes']-layout['legacy_read_offset_bytes']
+    assert delta == 8192  # raw[:1024] ends immediately BEFORE the magic.
+    # A small synthetic trace at the same relative byte position reproduces it.
+    parse = RUNNER['parse_trace']
+    for key,value in {'CTAS':1,'WARPS':1,'WORDS':64,'CAPACITY':4}.items():
+        monkeypatch.setitem(parse.__globals__,key,value)
+    raw = np.zeros(1024+64,dtype=np.uint64)
+    raw[1024:1029] = [RUNNER['MAGIC'],2,0,7988,0]
+    raw[1056:1064] = [10,1,0,0,0,0,0,0]
+    raw[1064:1072] = [20,15,0,0,0,0,0,0]
+    assert np.flatnonzero(raw[:1024] == RUNNER['MAGIC']).size == 0
+    assert len(parse(np,raw[delta//8:])) == 1
+
+
+@pytest.mark.parametrize('problem', ['magic','overflow','missing_warp','truncated'])
+def test_parse_failure_keeps_hex_host_and_all_three_case_comparisons(tmp_path, monkeypatch, problem):
+    collect, capture = RUNNER['collect_cases'], RUNNER['record_trace']
+    parse = RUNNER['parse_trace']
+    for key,value in {'CTAS':1,'WARPS':2,'WORDS':64,'CAPACITY':4}.items():
+        monkeypatch.setitem(parse.__globals__,key,value)
+    raw = np.zeros((1,2,64),dtype=np.uint64)
+    raw[:,:,0] = RUNNER['MAGIC']; raw[:,:,1] = 2; raw[:,:,3] = 7988
+    raw[:,:,32:40] = [10,1,0,0,0,0,0,0]; raw[:,:,40:48] = [20,15,0,0,0,0,0,0]
+    if problem == 'magic': raw[:,:,0] = 0
+    if problem == 'overflow': raw[0,0,4] = 1
+    if problem == 'missing_warp': raw[0,1,0] = 0
+    raw = raw.ravel()[:-1] if problem == 'truncated' else raw.ravel()
+    host = {'buffer_address':0x100000000,'buffer_bytes':2048,'trace_address':0x100001000,'template_build':'template','arguments':{'num_tokens':7988},'kernel_name':'sm90_fp8_mega_moe_diag_impl'}
+    record = {'cases':{},'passed':False}
+    path = tmp_path/'rank-0.json'
+
+    def failure_evidence(template):
+        # Bytes, arguments and parse error are on disk before any extra symbol
+        # inspection, which can itself run out of the shared wall budget.
+        persisted=json.loads(path.read_text())
+        case=persisted['cases'][persisted['active_case']]
+        assert case['trace_error'] and case['trace_buffer']['host'] == host
+        assert case['trace_buffer']['head_hex'] == raw[:512].tobytes().hex()
+        return {'kernel_name':'compiled_diag','template':template}
+
+    monkeypatch.setitem(capture.__globals__, 'jit_evidence', failure_evidence)
+
+    def save():
+        path.write_text(json.dumps(record))
+
+    def measure(ids, case):
+        case.update({k:v for k,v in fixture_case().items() if k!='trace'},finite=True)
+
+    collect(record,dict.fromkeys(('balanced','historical-routing','edges')),measure,lambda case:capture(np,raw,case,host,save),save)
+    save()
+    saved = json.loads(path.read_text())
+    assert set(saved['cases']) == {'balanced','historical-routing','edges'}
+    assert saved['passed'] is False
+    for case in saved['cases'].values():
+        assert len(case['samples_us']) == 6 and case['byte_equal'] is True and case['finite'] is True
+        assert case['trace_error'] and 'trace' not in case
+        assert bytes.fromhex(case['trace_buffer']['head_hex']) == raw[:512].tobytes()
+        assert case['trace_buffer']['host'] == host
+        assert case['trace_buffer']['jit']['kernel_name'] == 'compiled_diag'
+
+
+def test_rank_exception_returns_normally_and_saves_early_fragment(tmp_path, monkeypatch):
+    run = RUNNER['run']
+    monkeypatch.setenv('LOCAL_RANK','2')
+
+    def fail(record, fixture, rank, save):
+        assert json.loads((tmp_path/'rank-2.json').read_text())['stage'] == 'imports'
+        raise RuntimeError('rank-local failure')
+
+    monkeypatch.setitem(run.__globals__,'run_rank',fail)
+    run(tmp_path,tmp_path/'unused','r19')
+    data = json.loads((tmp_path/'rank-2.json').read_text())
+    assert data['passed'] is False and 'rank-local failure' in data['error']
+
+
+def test_jit_failure_evidence_reads_compiled_diagnostic_name_and_template(tmp_path, monkeypatch):
+    monkeypatch.setenv('DG_JIT_CACHE_DIR',str(tmp_path))
+    path = tmp_path/'cache/kernel.sm90_fp8_mega_moe.abc'; path.mkdir(parents=True)
+    code = '#include <sm90_fp8_mega_moe_diag.cuh>\nauto p=&sm90_fp8_mega_moe_diag_impl<8448, 4096>;'
+    (path/'kernel.cu').write_text(code)
+    cuda = tmp_path/'cuda'; (cuda/'bin').mkdir(parents=True)
+    objdump = cuda/'bin/cuobjdump'; objdump.write_text('#!/bin/sh\necho "STT_FUNC STO_ENTRY diag_symbol"\n'); objdump.chmod(0o755)
+    monkeypatch.setenv('CUDA_HOME',str(cuda))
+    evidence = RUNNER['jit_evidence']('8448,4096')
+    assert len(evidence['kernels']) == 1
+    kernel = evidence['kernels'][0]
+    assert kernel['kernel_name'] == 'sm90_fp8_mega_moe_diag_impl'
+    assert kernel['source_text'] == code and kernel['matches_build_template'] is True
+    assert kernel['symbols_exit'] == 0 and 'diag_symbol' in kernel['symbols']
+    ordinary=path.with_name('kernel.sm90_fp8_mega_moe.control'); ordinary.mkdir()
+    (ordinary/'kernel.cu').write_text(code.replace('_diag',''))
+    mismatch=path.with_name('kernel.sm90_fp8_mega_moe.mismatch'); mismatch.mkdir()
+    (mismatch/'kernel.cu').write_text(code.replace('8448','4224'))
+    kernels=RUNNER['jit_evidence']('8448,4096')['kernels']
+    assert {entry['kernel_name'] for entry in kernels} == {'sm90_fp8_mega_moe_diag_impl','sm90_fp8_mega_moe_impl'}
+    assert len(kernels) == 3
+    other=next(entry for entry in kernels if not entry['matches_build_template'])
+    assert '4224' in other['source_text'] and 'symbols' not in other
+
+
 def test_aggregate_requires_all_twelve_same_run_unique_gpus(tmp_path):
     fn=SUMMARY['summarize']
     for worker in range(3):
@@ -129,8 +243,22 @@ def test_aggregate_requires_all_twelve_same_run_unique_gpus(tmp_path):
     assert result['complete'] is False and len(result['gpus'])==11
     assert result['adoption'] is None
 
+    # Retain complete-time and byte evidence from one failed case, plus all
+    # successful cases/ranks. A failed rank never hides another worker's data.
+    data['cases']['balanced'].pop('trace')
+    data['cases']['balanced']['trace_error'] = 'trace header missing'
+    data['passed'] = False
+    (tmp_path/'prefill-2/rank-3.json').write_text(json.dumps(data))
+    result=fn(tmp_path,'r18')
+    assert result['complete'] is False and len(result['gpus']) == 12
+    partial=result['gpus'][-1]['cases']['balanced']
+    assert partial['byte_equal'] is True and len(partial['samples_us']) == 6
+    assert partial['timing']['control_us'] == 10
+    assert partial['trace_error'] == 'trace header missing'
+    assert result['gpus'][-1]['cases']['edges']['instrumented_warp_span_us'] == 4
 
-@pytest.mark.parametrize('status',[0,1,124,137,'timeout'])
+
+@pytest.mark.parametrize('status',[0,1,124,137,'timeout','mixed'])
 def test_real_shell_failure_timeout_and_summary_failure_keep_p(tmp_path,status):
     shell=(ROOT/'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
     block=shell[shell.index('# Independent diagnostic-only step.'):shell.index('srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4')]
@@ -142,6 +270,8 @@ def test_real_shell_failure_timeout_and_summary_failure_keep_p(tmp_path,status):
     commands=tmp_path/'bin';commands.mkdir()
     # Mock at the srun boundary; the production timeout command and waits execute.
     code = 'sleep 5' if status=='timeout' else f'exit {status}'
+    if status=='mixed':
+        code = f'case "$*" in *prefill-2*) exit 1;; *prefill-0*) sleep .2; touch "{root}/worker-0-finished";; *prefill-1*) sleep .3; touch "{root}/worker-1-finished";; esac'
     (commands/'srun').write_text(f'#!/bin/bash\nprintf "%s\\n" "$*" >>"{tmp_path}/calls"\n{code}\n')
     (commands/'uv').write_text('#!/bin/bash\nexit 1\n')
     if status=='timeout':
@@ -155,8 +285,22 @@ def test_real_shell_failure_timeout_and_summary_failure_keep_p(tmp_path,status):
     assert len(calls)==3 and all('--nproc-per-node=4' in c for c in calls)
     assert sum('-w head' in c for c in calls)==2 and sum('-w tail' in c for c in calls)==1
     assert '--env-output' not in block and 'source/prefill-kernels.env' not in block
+    if status=='mixed':
+        assert (root/'worker-0-finished').exists() and (root/'worker-1-finished').exists()
     assert 'megamoe_diag_remaining > 3' in block and '+ 45 -' in block
     assert 'prefill_fa3_prepack_deadline - $(date +%s) - 5' in block
+
+
+def test_capture_wiring_uses_host_layout_and_waits_outside_timing():
+    source=(ROOT/'scripts/run-prefill-megamoe-diag.py').read_text()
+    capture=source[source.index('    def capture(case):'):source.index("        record['stage'] = 'cases'")]
+    assert "call('diagnostic'); torch.cuda.synchronize()" in capture
+    assert "buffer[layout['trace_offset_bytes']:layout['trace_offset_bytes']+layout['trace_bytes']]" in capture
+    assert 'record_trace(np, raw, case, host, save)' in capture
+    assert 'trace_layout(buffer.data_ptr(), size, buffer.numel())' in source
+    assert "deep_gemm._C.fp8_mega_moe_diag(outputs[mode], *l1, *l2, None, buffer, [buffer.data_ptr()], 0, cap" in source
+    assert "'arguments':{'y':tensor_info(outputs['diagnostic'])" in source
+    assert "'l1_weights':list(map(tensor_info,l1)), 'l2_weights':list(map(tensor_info,l2))" in source
 
 
 def test_build_and_dispatch_are_explicitly_isolated(tmp_path):
