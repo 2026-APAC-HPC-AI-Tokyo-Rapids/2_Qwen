@@ -31,7 +31,7 @@ def dispatch(tmp_path,monkeypatch):
     tree=ast.parse(module_source(tmp_path))
     tree.body=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('enabled','eligible')]
     scope={'os':os,'torch':NS(bfloat16='bf16'),'envs':NS(SGLANG_ENABLE_ASYNC_ASSERT=NS(get=lambda:False))}
-    exec(compile(tree,'<actual dispatch>','exec'),scope)
+    exec(compile(tree,'<actual dispatch>','exec'),scope)  # noqa: S102 - execute the actual patched dispatch helpers
     monkeypatch.setenv(GATE['KEY'],'1')
     return scope
 

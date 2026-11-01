@@ -7,7 +7,6 @@ import os
 import socket
 import statistics
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -77,7 +76,7 @@ def aggregate(directory, env_output, run_id, image_sha256, deadline, workers_ok)
         finally:
             tmp.unlink(missing_ok=True)
         result.update(adopted=True,reason='all four Decode GPUs passed')
-    except Exception as error:  # Refusal is a measured gate outcome; no retry.
+    except Exception as error:  # noqa: BLE001 - refusal is a measured gate outcome; control stays
         result['reason']=f'{type(error).__name__}: {error}'
     return result
 
@@ -101,13 +100,19 @@ class Case:
     """Exercise actual update_penalties, logits buffer and eagle_sample on both paths."""
     def __init__(self, torch, b, padding):
         from types import SimpleNamespace as NS
-        from sglang.srt.layers.logits_processor import LogitsProcessor, LogitsProcessorOutput
-        from sglang.srt.sampling.penaltylib.min_new_tokens import BatchedMinNewTokensPenalizer
-        from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
-        from sglang.srt.speculative.eagle_utils import eagle_sample
-        from sglang.srt.speculative import greedy_verify
-        from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
+
+        from sglang.srt.layers.logits_processor import (
+            LogitsProcessor,
+            LogitsProcessorOutput,
+        )
         from sglang.srt.model_executor.forward_batch_info import ForwardMode
+        from sglang.srt.sampling.penaltylib.min_new_tokens import (
+            BatchedMinNewTokensPenalizer,
+        )
+        from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
+        from sglang.srt.speculative import greedy_verify
+        from sglang.srt.speculative.eagle_utils import eagle_sample
+        from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
         self.torch=torch; self.b=b; self.padding=padding
         # Graph bucket has one padded request. Only live rows reach sampling,
         # exactly as DecodeCudaGraphRunner replay narrows the output.
@@ -182,7 +187,7 @@ class Case:
         os.environ['SGLANG_SANITIZE_NAN_LOGITS']='1' if sanitize else '0'
         for mode in ('control','candidate'):
             os.environ[KEY]='1' if mode=='candidate' else '0'
-            self.graphs[mode]=capture(self.torch,lambda:self.step(mode))
+            self.graphs[mode]=capture(self.torch,lambda mode=mode:self.step(mode))
 
     def equal(self):
         for graph in self.graphs.values(): graph.replay()
@@ -251,7 +256,7 @@ def run(output, run_id, image_sha256, deadline):
         result.update(replays=REPLAYS,endurance_equal=True)
         result.update(passed=True,elapsed_seconds=time.monotonic()-started,finished_at=time.time())
         check_record(result,run_id,set(identities['gpus'].values()),image_sha256,deadline)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - any rank failure is recorded and refuses the gate
         result.update(passed=False,error=f'{type(error).__name__}: {error}')
     result.update(elapsed_seconds=time.monotonic()-started,finished_at=time.time())
     tmp=output/f'rank-{rank}.tmp'; tmp.write_text(json.dumps(result,indent=2,allow_nan=False)+'\n'); tmp.replace(output/f'rank-{rank}.json')
