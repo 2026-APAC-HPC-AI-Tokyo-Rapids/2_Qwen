@@ -543,5 +543,99 @@
     "dependency_cycle_clock_saving": null,
     "serving_speedup": null,
     "tracker_text": "2026-11-01 round 13-M：現行PP4/EP1 splitのscale先読みをhalf間へ移す2案をCUDA13.4/sm_90aでCPU検証した。両案spill0・C75xxなし、default offのserving split SASSはbyte一致。FC1 K=1のhalf 0のpost-wait spanは107→65命令だが、half 1の発行spanは13→42/30命令へ拡大し、両halfのwait→64 FMUL→QGMMA依存は残る。chunk全体のinline命令数も減らず、依存周期の正のclk短縮を示せないため段階1の条件4で保留・棄却。GPU未実行、速度未算定、production変更・gate追加なし。詳細は2026-11-01-prefill-megamoe-dep-r13.mdとmegamoe-prefill-dep-r13-cpu-validation-20261101.json。"
+  },
+  "fa3_prefill_prepack_r14_candidates": {
+    "evidence": [
+      "2026-11-01-prefill-fa3-prepack-r14.md",
+      "fa3-prefill-prepack-cpu-validation-20261101.json"
+    ],
+    "status": "P adopted on all 12 H200s in run 41264009819; S rejected at the first shape; serving 10009.54; image 5a3df8c4 pinned",
+    "shape": "Q64/KV4/D128 FP8 E4M3, FP32 accumulation, causal M192/N96; exactly two requests each3900..4096; singles unchanged round12 N192",
+    "source_base": "c01b1f55872672825f2afe78bc39988fddec4230",
+    "image": "Built in run 41264009819 from 5f3164d (CUDA 13.0.88 in image); pinned for reuse: 5a3df8c485a5ac939761b07a9ca82d7c38d864200250591ec6d9485dba778bb2, 12298477568 bytes",
+    "useful_pair_flops": 522847416320,
+    "padded_pair_flops": 535881056256,
+    "actual_hbm_bytes": null,
+    "actual_nvlink_bytes": null,
+    "P": {
+      "variant": 41184,
+      "table_id": 15,
+      "writer": "old fp32, unchanged paged KV; one coalesced byte-preserving prepack",
+      "removed_transpose_kv_visits": 56784,
+      "removed_logical_smem_bytes": 1395523584,
+      "pack_unique_tiles": 336,
+      "pack_global_read_bytes": 4089856,
+      "pack_global_write_bytes": 4128768,
+      "pack_logical_smem_bytes": 16515072,
+      "added_launches": 1,
+      "sass_global_store_instructions": 6,
+      "sass_store_width_bytes_per_lane": 16,
+      "sass_sector_requests_per_warp_store": 16,
+      "sass_sector_requests_per_call": 129024,
+      "consumer_schedule": "Existing Transpose_V=false load order unchanged: V bulk after K acquire. No claim that shared-byte reduction is HBM savings or latency gain."
+    },
+    "S": {
+      "variant": 24800,
+      "table_id": 16,
+      "writer": "old fp32, old V",
+      "steady_instruction_delta": 22,
+      "fadd_count": 48,
+      "fadd_dependency_depth_before": 23,
+      "fadd_dependency_depth_after": 7,
+      "old_P_words": 12,
+      "first_overwrite_after_ex2": 50,
+      "removed_flops": 0,
+      "removed_bytes": 0
+    },
+    "diagnostics": "First shape only, twelve GPUs: writer old/native/old+pack/pack; fixed-input FA3 C/S/V/VS; composite C/S/V/VS/P; O only; I=VS-V-S+C, both orders and pooled, raw samples+UUID/binary/image/source hash. V and VS never eligible.",
+    "gate": "One group after successful round12 pair gate, same twelve H200 UUIDs and allocation. Diagnostic then full P then S if enough wall time. Seven pairs; first failing5us margin stops that candidate. All shapes forward/reverse/pooled medians>=5us. Independent native-writer/old contiguous host byte map/GPU transpose dump before numerics. FP32 causal sampled Q rows, all valid causal keys, relativeL2<=.05/maxScaled<=.25; two changed-input graph replays. Singles3994/4096/3584 old writer/output byte equal, no speed test.1200 eager serving calls writer/pack ifP/FA3/O own initial bytes. Candidate-local numeric/speed failure, whole-group fatal on CUDA/process/hang. P priority, no P+S. Atomic FA3 env replacement after all12; timeout retains round12.",
+    "wall_budget": {
+      "srun_seconds": 175,
+      "kill_grace_seconds": 2,
+      "aggregate_deadline_seconds_from_group_start": 180,
+      "full_candidate_reservation_seconds": 45,
+      "round13_conservative_job_seconds": 956.899,
+      "round13_margin_to1020_seconds": 63.101,
+      "round12_conservative_job_seconds": 906.537
+    },
+    "performance_prediction": null,
+    "conditional_sensitivity": "If native FA3 saves20..40us and pack costs5..15us, net5..35us/layer. This is a sensitivity example, not a prediction or measured interval. Need20..25us/layer across all workers for10k; gate5us alone is insufficient.",
+    "gpu_result": "see gpu_gate_result",
+    "official_score": 10009.54,
+    "prior_rejection": "Round13 VS slowed writer+FA3+O46..52us on all12H200s. Native writer warp sector requests8x and sum/lifetime+consumer interaction unseparated. No adoption retry for V/VS; no schedule modification or P+S composition.",
+    "gpu_gate_result": {
+      "run": 41264009819,
+      "slurm_job": 28005,
+      "selected": "P",
+      "metric": "writer (plus pack) + FA3 + O, us per call",
+      "P_saving_us_3994x2_pooled": [
+        30.7,
+        41.0
+      ],
+      "P_saving_us_all_pairs_forward": [
+        22.7,
+        49.6
+      ],
+      "P_control_forward_median_us_3994x2": [
+        1176,
+        1227
+      ],
+      "S": "below 5 us margin on first shape on all GPUs",
+      "diagnostics_median_us_3994x2": {
+        "writer_old": 70.6,
+        "writer_native": 88.0,
+        "writer_old_pack": 75.8,
+        "pack": 4.2,
+        "fa3_C": 654.7,
+        "fa3_S": 694.1,
+        "fa3_V": 620.7,
+        "fa3_VS": 679.7,
+        "composite_C": 1195.8,
+        "composite_P": 1161.1,
+        "composite_VS": 1244.7,
+        "o_only": 458.9
+      },
+      "numerics": "V image, Q/K, paged KV byte-equal; FP32 error identical to control; 1200-call endurance byte-equal"
+    }
   }
 }

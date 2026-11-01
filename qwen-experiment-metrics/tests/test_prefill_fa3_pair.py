@@ -147,7 +147,7 @@ def test_publication_failure_is_atomic(screen, monkeypatch):
 
 def block():
     shell = (ROOT / 'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
-    return '# Default off. The pair-only FA3' + shell.split('# Default off. The pair-only FA3', 1)[1].split('\nsrun --exact', 1)[0]
+    return '# Default off. The pair-only FA3' + shell.split('# Default off. The pair-only FA3', 1)[1].split('\n# Default off. Native V', 1)[0].split('\nsrun --exact', 1)[0]
 
 
 def test_wiring_and_native_build_inputs():
@@ -169,7 +169,7 @@ def test_wiring_and_native_build_inputs():
     assert 'COPY containers/fa3-verify /opt/apac/fa3-verify' in (ROOT / 'containers/Dockerfile').read_text()
     assert 'cp -a "${GITHUB_WORKSPACE}" "${input_root}/qwen"' in (ROOT / '.github/workflows/aws-container.yml').read_text()
     assert config['images']['sglang']['sha256'] == config['container_sha256']
-    assert config['container_sha256'].startswith('a8232b16')
+    assert config['container_sha256'].startswith('5a3df8c4')
 
 
 def test_timed_out_workers_continue_to_control_serving(tmp_path):
@@ -226,6 +226,7 @@ def test_attention_calls_the_selected_native_row_without_reading_cu(dispatch, mo
 def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
     config['prefill']['fa3_pair_gate'] = enabled
+    config['prefill']['fa3_prepack_gate'] = enabled
     for name in ('source', 'results'):
         (tmp_path / name).mkdir()
     runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))['prepare'](config, ROOT, tmp_path)

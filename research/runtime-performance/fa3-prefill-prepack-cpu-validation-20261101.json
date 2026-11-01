@@ -1,0 +1,986 @@
+{
+  "schema": "fa3-prefill-prepack-r14-cpu/v1",
+  "scope": "CPU compilation only: CUDA 13.4.92 sm_90a; image CUDA 13.0.88 and H200 behavior unverified",
+  "gpu_executed": false,
+  "image_built": false,
+  "official_score": null,
+  "rows": [
+    {
+      "name": "control-n96",
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/control-n96.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/control-n96.o"
+      ],
+      "ptxas_log": "ptxas warning : Registers are spilled to local memory in function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi8416ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE', 40 bytes spill stores, 28 bytes spill loads\nptxas info    : 12 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi8416ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi8416ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE\n    16 bytes stack frame, 40 bytes spill stores, 28 bytes spill loads\nptxas info    : Used 128 registers, used 16 barriers, 16 bytes cumulative stack size\nptxas info    : Compile time = 572.929 ms\n",
+      "source_sha256": "99a8eec54ba8a878488d2df3ba98149eb84d1cc41ac2f7918ac0f2a634f180de",
+      "object_sha256": "c95d3bf703e30ee6b9fece4db90d8ed74427d97c08a19aed82ea3b44da3c0083",
+      "sass_sha256": "7d157eff2094680dfdbe7491cfb1a08d6dfbb0279a625239c46f65768e9546b4",
+      "encoded_sass_sha256": "cd7d899e84278e57bffeba2593dbc114b510adf8324b0794131868a86ca5a555",
+      "c75xx": [],
+      "static_instruction_count": 4336
+    },
+    {
+      "name": "control-n192",
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/control-n192.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/control-n192.o"
+      ],
+      "ptxas_log": "ptxas warning : Registers are spilled to local memory in function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi192EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi224ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi192ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE', 84 bytes spill stores, 116 bytes spill loads\nptxas info    : 12 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi192EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi224ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi192ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi192EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi224ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi192ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE\n    40 bytes stack frame, 84 bytes spill stores, 116 bytes spill loads\nptxas info    : Used 168 registers, used 16 barriers, 40 bytes cumulative stack size\nptxas info    : Compile time = 1079.850 ms\n",
+      "source_sha256": "13a39451919f7f7620905b573cce676cf41d7842649b77b7ef2de5e0fe3490b9",
+      "object_sha256": "82923665ca638c8b2e0f07c027f8b0e6ea954bac12e6328e7d74c0fe04519c26",
+      "sass_sha256": "0811898943d919f24efb4e9ea90ff047cee86822b230a3fbddf979555397988d",
+      "encoded_sass_sha256": "55084cdb742e96b50168b582fce6205dc08a17202994161898438e92de46eba3",
+      "c75xx": [],
+      "static_instruction_count": 5504
+    },
+    {
+      "name": "S",
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/S.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/S.o"
+      ],
+      "ptxas_log": "ptxas warning : Registers are spilled to local memory in function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi24800ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE', 40 bytes spill stores, 28 bytes spill loads\nptxas info    : 12 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi24800ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi24800ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE\n    16 bytes stack frame, 40 bytes spill stores, 28 bytes spill loads\nptxas info    : Used 128 registers, used 16 barriers, 16 bytes cumulative stack size\nptxas info    : Compile time = 640.877 ms\n",
+      "source_sha256": "640c9e60bdadf399d0b3e12c08dd3b6b7a803e6e9ecc833fd77df2b8959976d4",
+      "object_sha256": "f9ac30955adea5bb9e630936ef948e26cd8c05b950fca8d7f454cdd3422753ba",
+      "sass_sha256": "e2633ed26bd78da8071c16585584d1be7b9c9e93f843bc93b08fea5096d1a127",
+      "encoded_sass_sha256": "8d5c1ce5a59df478ada5f5c8501d93e342ccd61cdf2247ccb03fc5333b166200",
+      "c75xx": [],
+      "static_instruction_count": 4384
+    },
+    {
+      "name": "V",
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/V.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/V.o"
+      ],
+      "ptxas_log": "ptxas info    : 12 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi41184ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi41184ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 128 registers, used 16 barriers\nptxas info    : Compile time = 601.595 ms\n",
+      "source_sha256": "711eebf81b0762bac18a1aba81f3333fd7e534111e982183d24e30da3d5ac424",
+      "object_sha256": "68d53eadc2cd9658f3c22de6b9b97482e8804d75f6f1d5430d4eac67ebaa2af7",
+      "sass_sha256": "ac084a7c84dee99eda9bf8061ad4bba03b0d334c9617e71e27c0a987d942dd70",
+      "encoded_sass_sha256": "29d22d8ce80e82a10e70299f1765f889f4e9c5c335e24c871de919db92cfb1a3",
+      "c75xx": [],
+      "static_instruction_count": 4424
+    },
+    {
+      "name": "VS",
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/VS.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/VS.o"
+      ],
+      "ptxas_log": "ptxas info    : 12 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi57568ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi57568ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 128 registers, used 16 barriers\nptxas info    : Compile time = 620.521 ms\n",
+      "source_sha256": "79ed20b21ac2dc499f0eaadd1dd04c22aee5bb540cca3ad12b8f45ad2db3b714",
+      "object_sha256": "63ea4803d2ed5aa119c81726b149de99d00dc4a457faf1bc535f6cae49cadea1",
+      "sass_sha256": "35f8a26d68e1d1afc33fc74030b55b6155a5357aaed1d149fe2f0e472477858a",
+      "encoded_sass_sha256": "5903f66e4d0583623f3148a15add47d9b4c3d6641ae559640387d810692ba682",
+      "c75xx": [],
+      "static_instruction_count": 4464
+    },
+    {
+      "name": "dump",
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify/prefill_native_image.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/dump.o"
+      ],
+      "ptxas_log": "ptxas info    : 12 bytes gmem\nptxas info    : Compiling entry function '_ZN15apac_fa3_verify26prefill_dump_native_kernelILi96EEEvPKhPhPKi' for 'sm_90a'\nptxas info    : Function properties for _ZN15apac_fa3_verify26prefill_dump_native_kernelILi96EEEvPKhPhPKi\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 32 registers, used 1 barriers, 24576 bytes smem\nptxas info    : Compile time = 26.237 ms\n",
+      "source_sha256": "b6b54e76e57c9f93aba0b4b0a2295636d7ddc9b57b7120a94bdd690a67222d7c",
+      "object_sha256": "39f472c753992a869fd9e84e81a3f9c690be3a97b9e7778832b70cfa6cea066f",
+      "sass_sha256": "d45a3af82df74dd5458232246cb87b12b159222e23d1b7d511fe6e77abb5b601",
+      "encoded_sass_sha256": "bcb1e3d9f3b1217a01f4192794a922ec4538b74ee01e6fbe073528b0c42a3696",
+      "c75xx": [],
+      "static_instruction_count": 384
+    }
+  ],
+  "controls": {
+    "96": {
+      "before": "cd7d899e84278e57bffeba2593dbc114b510adf8324b0794131868a86ca5a555",
+      "after": "cd7d899e84278e57bffeba2593dbc114b510adf8324b0794131868a86ca5a555",
+      "all_encoded_words_equal": true
+    },
+    "192": {
+      "before": "55084cdb742e96b50168b582fce6205dc08a17202994161898438e92de46eba3",
+      "after": "55084cdb742e96b50168b582fce6205dc08a17202994161898438e92de46eba3",
+      "all_encoded_words_equal": true
+    }
+  },
+  "sum_lifetime": {
+    "variant": 24800,
+    "exact_encoded_match_to_r13_sum_live_n96": true,
+    "steady": {
+      "outer_source_line": [
+        "mainloop_fwd_sm90_tma_gmma_ws.hpp",
+        1898
+      ],
+      "instructions": 391,
+      "opcodes": {
+        "ULDC": 1,
+        "ISETP.NE.AND": 2,
+        "UISETP.NE.AND": 3,
+        "USEL": 3,
+        "ULOP3.LUT": 2,
+        "BRA": 6,
+        "UIADD3": 10,
+        "IMAD.U32": 5,
+        "SHF.L.U32": 2,
+        "ULEA": 3,
+        "SYNCS.PHASECHK.TRANS64.TRYWAIT": 4,
+        "UMOV": 9,
+        "BAR.SYNC.DEFER_BLOCKING": 1,
+        "UIMAD": 2,
+        "WARPGROUP.ARRIVE": 2,
+        "QGMMA.64x96x32.F32.E4M3.E4M3": 4,
+        "ISETP.GE.U32.AND": 1,
+        "USHF.R.U32.HI": 1,
+        "LEA.HI": 1,
+        "QGMMA.64x128x32.F32.E4M3.E4M3": 3,
+        "UPRMT": 1,
+        "BAR.ARV": 2,
+        "WARPGROUP.DEPBAR.LE": 2,
+        "FMNMX.FTZ": 52,
+        "SHFL.BFLY": 4,
+        "FFMA.FTZ": 52,
+        "FADD.FTZ": 48,
+        "MUFU.EX2": 50,
+        "FMUL.FTZ": 66,
+        "F2FP.SATFINITE.E4M3.F32.PACK_AB_MERGE_C": 24,
+        "LEA": 1,
+        "VIADD": 1,
+        "PRMT": 14,
+        "SYNCS.ARRIVE.TRANS64.RED.A1T0": 2,
+        "LOP3.LUT": 6,
+        "IMAD.MOV.U32": 1
+      },
+      "max_fadd_depth": 7,
+      "fadd_depth_evidence": [
+        {
+          "instruction": "/*5890*/                   FADD.FTZ R9, -R6, R9 ;",
+          "depth": 1
+        },
+        {
+          "instruction": "/*5c00*/                   FADD.FTZ R116, R13, R16 ;",
+          "depth": 1
+        },
+        {
+          "instruction": "/*5c50*/                   FADD.FTZ R116, R21, R116 ;",
+          "depth": 2
+        },
+        {
+          "instruction": "/*5cc0*/                   FADD.FTZ R16, R11, R14 ;",
+          "depth": 1
+        },
+        {
+          "instruction": "/*5d50*/                   FADD.FTZ R116, R89, R116 ;",
+          "depth": 3
+        },
+        {
+          "instruction": "/*5d60*/                   FADD.FTZ R7, -R104, R7 ;",
+          "depth": 1
+        },
+        {
+          "instruction": "/*5fc0*/                   FADD.FTZ R115, R108, R117 ;",
+          "depth": 1
+        },
+        {
+          "instruction": "/*5ff0*/                   FADD.FTZ R108, R113, R112 ;",
+          "depth": 1
+        },
+        {
+          "instruction": "/*6000*/                   FADD.FTZ R113, R10, R15 ;",
+          "depth": 1
+        },
+        {
+          "instruction": "/*6030*/                   FADD.FTZ R113, R18, R113 ;",
+          "depth": 2
+        },
+        {
+          "instruction": "/*6070*/                   FADD.FTZ R113, R22, R113 ;",
+          "depth": 3
+        },
+        {
+          "instruction": "/*6090*/                   FADD.FTZ R113, R92, R113 ;",
+          "depth": 4
+        },
+        {
+          "instruction": "/*60e0*/                   FADD.FTZ R119, R12, R17 ;",
+          "depth": 1
+        },
+        {
+          "instruction": "/*6100*/                   FADD.FTZ R119, R20, R119 ;",
+          "depth": 2
+        },
+        {
+          "instruction": "/*6140*/                   FADD.FTZ R119, R88, R119 ;",
+          "depth": 3
+        },
+        {
+          "instruction": "/*6160*/                   FADD.FTZ R91, R91, R98 ;",
+          "depth": 1
+        },
+        {
+          "instruction": "/*6180*/                   FADD.FTZ R18, R19, R16 ;",
+          "depth": 2
+        },
+        {
+          "instruction": "/*61b0*/                   FADD.FTZ R20, R23, R18 ;",
+          "depth": 3
+        },
+        {
+          "instruction": "/*61f0*/                   FADD.FTZ R91, R94, R91 ;",
+          "depth": 2
+        },
+        {
+          "instruction": "/*6230*/                   FADD.FTZ R106, R106, R91 ;",
+          "depth": 3
+        },
+        {
+          "instruction": "/*6260*/                   FADD.FTZ R97, R97, R116 ;",
+          "depth": 4
+        },
+        {
+          "instruction": "/*6270*/                   FADD.FTZ R96, R96, R119 ;",
+          "depth": 4
+        },
+        {
+          "instruction": "/*62e0*/                   FADD.FTZ R106, R17, R106 ;",
+          "depth": 4
+        },
+        {
+          "instruction": "/*6300*/                   FADD.FTZ R96, R105, R96 ;",
+          "depth": 5
+        },
+        {
+          "instruction": "/*6330*/                   FADD.FTZ R97, R8, R97 ;",
+          "depth": 5
+        },
+        {
+          "instruction": "/*6350*/                   FADD.FTZ R97, R96, R97 ;",
+          "depth": 6
+        },
+        {
+          "instruction": "/*6370*/                   FADD.FTZ R90, R90, R95 ;",
+          "depth": 1
+        },
+        {
+          "instruction": "/*63b0*/                   FADD.FTZ R115, R102, R115 ;",
+          "depth": 2
+        },
+        {
+          "instruction": "/*63c0*/                   FADD.FTZ R115, R110, R115 ;",
+          "depth": 3
+        },
+        {
+          "instruction": "/*63f0*/                   FADD.FTZ R108, R107, R108 ;",
+          "depth": 2
+        },
+        {
+          "instruction": "/*6400*/                   FADD.FTZ R115, R12, R115 ;",
+          "depth": 4
+        },
+        {
+          "instruction": "/*6410*/                   FADD.FTZ R108, R111, R108 ;",
+          "depth": 3
+        },
+        {
+          "instruction": "/*6430*/                   FADD.FTZ R90, R99, R90 ;",
+          "depth": 2
+        },
+        {
+          "instruction": "/*6450*/                   FADD.FTZ R108, R15, R108 ;",
+          "depth": 4
+        },
+        {
+          "instruction": "/*6460*/                   FADD.FTZ R103, R103, R90 ;",
+          "depth": 3
+        },
+        {
+          "instruction": "/*64a0*/                   FADD.FTZ R20, R93, R20 ;",
+          "depth": 4
+        },
+        {
+          "instruction": "/*64b0*/                   FADD.FTZ R103, R114, R103 ;",
+          "depth": 4
+        },
+        {
+          "instruction": "/*64e0*/                   FADD.FTZ R115, R134, R115 ;",
+          "depth": 5
+        },
+        {
+          "instruction": "/*6500*/                   FADD.FTZ R113, R100, R113 ;",
+          "depth": 5
+        },
+        {
+          "instruction": "/*6530*/                   FADD.FTZ R20, R101, R20 ;",
+          "depth": 5
+        },
+        {
+          "instruction": "/*6550*/                   FADD.FTZ R20, R113, R20 ;",
+          "depth": 6
+        },
+        {
+          "instruction": "/*6590*/                   FADD.FTZ R108, R109, R108 ;",
+          "depth": 5
+        },
+        {
+          "instruction": "/*65a0*/                   FADD.FTZ R20, R20, R97 ;",
+          "depth": 7
+        },
+        {
+          "instruction": "/*65b0*/                   FADD.FTZ R108, R115, R108 ;",
+          "depth": 6
+        },
+        {
+          "instruction": "/*65d0*/                   FADD.FTZ R103, R130, R103 ;",
+          "depth": 5
+        },
+        {
+          "instruction": "/*65f0*/                   FADD.FTZ R106, R131, R106 ;",
+          "depth": 5
+        },
+        {
+          "instruction": "/*6610*/                   FADD.FTZ R103, R103, R106 ;",
+          "depth": 6
+        },
+        {
+          "instruction": "/*6630*/                   FADD.FTZ R108, R103, R108 ;",
+          "depth": 7
+        }
+      ],
+      "pv_operand_words": [
+        "R136",
+        "R137",
+        "R138",
+        "R139",
+        "R140",
+        "R141",
+        "R142",
+        "R143",
+        "R144",
+        "R145",
+        "R146",
+        "R147"
+      ],
+      "pv_first_overwrite": {
+        "R144": {
+          "after_ex2": 50,
+          "instruction": "/*6a70*/                   PRMT R144, R13, R15.reuse, R144 ;"
+        },
+        "R145": {
+          "after_ex2": 50,
+          "instruction": "/*6a90*/                   PRMT R145, R10, R15.reuse, R145 ;"
+        },
+        "R146": {
+          "after_ex2": 50,
+          "instruction": "/*6ab0*/                   PRMT R146, R14, R15, R146 ;"
+        },
+        "R147": {
+          "after_ex2": 50,
+          "instruction": "/*6ac0*/                   PRMT R147, R98, R15.reuse, R147 ;"
+        },
+        "R140": {
+          "after_ex2": 50,
+          "instruction": "/*6ad0*/                   PRMT R140, R11, R15.reuse, R140 ;"
+        },
+        "R141": {
+          "after_ex2": 50,
+          "instruction": "/*6ae0*/                   PRMT R141, R16, R15.reuse, R141 ;"
+        },
+        "R142": {
+          "after_ex2": 50,
+          "instruction": "/*6af0*/                   PRMT R142, R19, R15.reuse, R142 ;"
+        },
+        "R143": {
+          "after_ex2": 50,
+          "instruction": "/*6b00*/                   PRMT R143, R18, R15.reuse, R143 ;"
+        },
+        "R136": {
+          "after_ex2": 50,
+          "instruction": "/*6b10*/                   PRMT R136, R21, R15, R136 ;"
+        },
+        "R137": {
+          "after_ex2": 50,
+          "instruction": "/*6b20*/                   PRMT R137, R22, R15.reuse, R137 ;"
+        },
+        "R138": {
+          "after_ex2": 50,
+          "instruction": "/*6b30*/                   PRMT R138, R17, R15.reuse, R138 ;"
+        },
+        "R139": {
+          "after_ex2": 50,
+          "instruction": "/*6b40*/                   PRMT R139, R134, R15, R139 ;"
+        }
+      },
+      "waits": [
+        [
+          0,
+          "/*5670*/                   WARPGROUP.DEPBAR.LE gsb0, 0x1 ;"
+        ],
+        [
+          24,
+          "/*6020*/                   WARPGROUP.DEPBAR.LE gsb0, 0x0 ;"
+        ]
+      ]
+    },
+    "steady_instruction_delta": 22
+  },
+  "old_writer": {
+    "before": {
+      "i64": "f59e4e26a6e4b3849d74af596bf984c8e64f7aa6fd1b886afc01f49f1fc15184",
+      "i32": "b06ea4f03e0a83460f9c4b20ea01c85305d0b50b6acaa9ecf2193433283902f7"
+    },
+    "after": {
+      "i64": "f59e4e26a6e4b3849d74af596bf984c8e64f7aa6fd1b886afc01f49f1fc15184",
+      "i32": "b06ea4f03e0a83460f9c4b20ea01c85305d0b50b6acaa9ecf2193433283902f7"
+    },
+    "both_index_types_encoded_equal": true
+  },
+  "pack": {
+    "command": [
+      "/usr/local/cuda-13.4/bin/nvcc",
+      "-O3",
+      "-std=c++17",
+      "--use_fast_math",
+      "--expt-relaxed-constexpr",
+      "--expt-extended-lambda",
+      "-lineinfo",
+      "-gencode=arch=compute_90a,code=sm_90a",
+      "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+      "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+      "-DNDEBUG",
+      "-Xptxas=-v,--warn-on-spills",
+      "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+      "-D_GLIBCXX_USE_CXX11_ABI=1",
+      "-Dflash=apac_fa3_private",
+      "-DFlash_fwd_params=ApacFA3VerifyParams",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+      "-I/usr/local/cuda-13.4/include",
+      "-I/usr/local/cuda-13.4/include/cccl",
+      "-c",
+      "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify/prefill_prepack.cu",
+      "-o",
+      "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/pack-final.o"
+    ],
+    "log": "ptxas info    : 0 bytes gmem\nptxas info    : Compiling entry function '_ZN15apac_fa3_verify22prefill_prepack_kernelEPKhPhPKi' for 'sm_90a'\nptxas info    : Function properties for _ZN15apac_fa3_verify22prefill_prepack_kernelEPKhPhPKi\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 35 registers, used 1 barriers, 24576 bytes smem\nptxas info    : Compile time = 25.047 ms\n",
+    "exit_code": 0,
+    "source_sha256": "651d7082b1b62429a7a4aeb49071a462a553eb09a3bf18f92f7f074f0992cec7",
+    "encoded_sass_sha256": "191b280722bb9deb1a03665656b7c6f619c5352cd45522b407fb892f8c49cda8",
+    "static_instructions": 424,
+    "opcodes": {
+      "LDC": 2,
+      "S2R": 3,
+      "LDC.64": 7,
+      "ULDC.64": 2,
+      "IMAD.WIDE.U32": 1,
+      "LDG.E.CONSTANT": 2,
+      "S2UR": 2,
+      "CS2R": 12,
+      "UIMAD": 1,
+      "IMAD.SHL.U32": 18,
+      "SHF.R.S32.HI": 13,
+      "LEA.HI": 6,
+      "LEA.HI.SX32": 6,
+      "IMAD.IADD": 13,
+      "ISETP.GE.AND": 6,
+      "LOP3.LUT": 60,
+      "IMAD": 9,
+      "IADD3": 7,
+      "IADD3.X": 7,
+      "LDG.E.128.CONSTANT": 6,
+      "VIADD": 10,
+      "UMOV": 1,
+      "ULEA": 2,
+      "STS.128": 12,
+      "SHF.R.U32.HI": 18,
+      "UIADD3": 1,
+      "BAR.SYNC.DEFER_BLOCKING": 2,
+      "LDS.U8": 96,
+      "PRMT": 72,
+      "LDS.128": 6,
+      "STG.E.128": 6,
+      "EXIT": 1,
+      "BRA": 1,
+      "NOP": 13
+    },
+    "store_sass": [
+      [
+        "1930",
+        "STG.E.128 desc[UR8][R2.64], R4"
+      ],
+      [
+        "1940",
+        "STG.E.128 desc[UR8][R2.64+0x800], R8"
+      ],
+      [
+        "1950",
+        "STG.E.128 desc[UR8][R2.64+0x1000], R12"
+      ],
+      [
+        "1960",
+        "STG.E.128 desc[UR8][R2.64+0x1800], R16"
+      ],
+      [
+        "1970",
+        "STG.E.128 desc[UR8][R2.64+0x2000], R20"
+      ],
+      [
+        "1980",
+        "STG.E.128 desc[UR8][R2.64+0x2800], R24"
+      ]
+    ],
+    "global_store_instructions_per_thread": 6,
+    "bytes_per_store_lane": 16,
+    "sectors_per_warp_store": 16,
+    "cta_sector_requests": 384,
+    "pair_ctas": 336,
+    "pair_sector_requests": 129024,
+    "pair_native_write_bytes": 4128768,
+    "global_read_bytes": 4089856,
+    "total_global_bytes": 8218624,
+    "logical_smem_bytes": 16515072,
+    "sector_note": "32-byte sectors per issued warp STG.E.128 instruction; 32 lanes times16B covers contiguous512B. Source/SASS address count, not measured DRAM traffic.",
+    "c75xx": []
+  },
+  "layouts": {
+    "command": [
+      "/usr/local/cuda-13.4/bin/nvcc",
+      "-O3",
+      "-std=c++17",
+      "--use_fast_math",
+      "--expt-relaxed-constexpr",
+      "--expt-extended-lambda",
+      "-lineinfo",
+      "-gencode=arch=compute_90a,code=sm_90a",
+      "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+      "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+      "-DNDEBUG",
+      "-Xptxas=-v,--warn-on-spills",
+      "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+      "-D_GLIBCXX_USE_CXX11_ABI=1",
+      "-Dflash=apac_fa3_private",
+      "-DFlash_fwd_params=ApacFA3VerifyParams",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+      "-I/usr/local/cuda-13.4/include",
+      "-I/usr/local/cuda-13.4/include/cccl",
+      "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/host-map.cu",
+      "-o",
+      "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/host-map"
+    ],
+    "map_i32le_sha256": "eaf0d7ce0b2faa5cea99ea257c8508cbf7a6a4836b1bdb222389a96cc222e6fb",
+    "stages": [
+      0,
+      1
+    ]
+  },
+  "resources": {
+    "C": 124928,
+    "single": 166912,
+    "S": 124928,
+    "V": 100352,
+    "VS": 100352
+  },
+  "source_overlay": {
+    "upstream_commit": "fc275674a97d78553b22597ee72c8fd48f5420f4",
+    "archive_sha256": "ec077baa977c82d292405b9cbe95e28a4c6e5097a31b5c7f721dff3e8bf3ae9b",
+    "baked_patches": [
+      "patches/sglang/prefill-cutlass-silu-quant.patch",
+      "patches/sglang/draft-extend-selected-head-rows.patch",
+      "patches/sglang/prefill-fp8-scale-row-shuffle.patch",
+      "patches/sglang/prefill-tiled-routing.patch",
+      "patches/sglang/firmus-staged-eagle-kv.patch",
+      "patches/sglang/qwen3-sm90-megamoe.patch",
+      "patches/sglang/firmus-staging-completion.patch",
+      "patches/sglang/chunk-cache-page-release.patch",
+      "patches/sglang/decode-silu-quant.patch",
+      "patches/sglang/nixl-expired-chunks.patch",
+      "patches/sglang/firmus-dp-rank-query.patch",
+      "patches/sglang/prefill-ready-handoff.patch",
+      "patches/sglang/deepgemm-activation-layout.patch",
+      "patches/sglang/rope-fp8-q.patch",
+      "patches/sglang/qknorm-rope-fp8.patch",
+      "patches/sglang/prefill-request-aligned-chunks.patch",
+      "patches/sglang/qknorm-rope-fp8-kv.patch",
+      "patches/sglang/qwen-topk-padding.patch",
+      "patches/sglang/qknorm-rope-fp8-token-warps.patch",
+      "patches/sglang/decode-async-admission.patch",
+      "patches/sglang/dp-total-requests-rotate-ties.patch",
+      "patches/sglang/megamoe-idle-prefill-geometry.patch",
+      "patches/sglang/gigatoken-encode.patch"
+    ],
+    "patches": [
+      "patches/sglang/add-rmsnorm-group-quant.patch",
+      "patches/sglang/prefill-attention-contiguous-kv.patch",
+      "patches/sglang/megamoe-prefill-replicas.patch",
+      "patches/sglang/verify-attention-candidates.patch",
+      "patches/sglang/decode-verify-scheduler-metadata.patch",
+      "patches/sglang/decode-fusions.patch",
+      "patches/sglang/decode-dense-gemm.patch",
+      "patches/sglang/decode-fa3-verify.patch",
+      "patches/sglang/decode-routing-capture.patch",
+      "patches/sglang/prefill-fp8-integration.patch",
+      "patches/sglang/prefill-qkv-fast-fp8.patch",
+      "patches/sglang/decode-qknorm-fast-fp8.patch",
+      "patches/sglang/decode-add-rmsnorm-group-quant.patch",
+      "patches/sglang/prefill-async-admission.patch",
+      "patches/sglang/prefill-start-align.patch",
+      "patches/sglang/prefill-pp4-ep1.patch",
+      "patches/sglang/pp4-scheduler-local-sync.patch",
+      "patches/sglang/pp4-direct-result.patch",
+      "patches/sglang/pp4-proxy-instream.patch",
+      "patches/sglang/pp4-loop-latency.patch",
+      "patches/sglang/pp4-proxy-copy-engine.patch",
+      "patches/sglang/decode-norm-quant-wide.patch",
+      "patches/sglang/decode-dense-swapab.patch",
+      "patches/sglang/verify-penalty-broadcast.patch",
+      "patches/sglang/prefill-fa3-varlen.patch",
+      "patches/sglang/prefill-fa3-pair.patch",
+      "patches/sglang/prefill-moe-input.patch",
+      "patches/sglang/prefill-qknorm-fp32.patch",
+      "patches/sglang/prefill-moe-input-onepass.patch",
+      "patches/sglang/decode-moe-input.patch",
+      "patches/sglang/prefill-fa3-vsum.patch"
+    ],
+    "full_ordered_apply": true,
+    "python_compile": [
+      "python/sglang/srt/models/qwen3_moe.py",
+      "python/sglang/srt/layers/attention/prefill_fp8.py",
+      "python/sglang/kernels/ops/attention/rope.py"
+    ],
+    "source_hashes": {
+      "python/sglang/srt/models/qwen3_moe.py": "1f5aca054877abafe1e698d2d48adb61703974ba68002a941e18d347d6c17622",
+      "python/sglang/srt/layers/attention/prefill_fp8.py": "87fcf07f7582542ca88090c08a534ecb728420fadb9a523b5bd75b9e28b22b3b",
+      "python/sglang/kernels/ops/attention/rope.py": "f9ec8844c9bef94a0ee5c5e90cc956816325ace401ed3274f943cace7297ebab",
+      "python/sglang/kernels/jit/csrc/elementwise/rope.cuh": "e467744422bd45a6356ee794bf43caca8116684d8f914f23b8ea4794378cc6f1"
+    },
+    "pp4_source_checks": "passed",
+    "writer_compiled_source_matches": true
+  },
+  "wrapper": {
+    "command": [
+      "g++",
+      "-O3",
+      "-std=c++17",
+      "-D_GLIBCXX_USE_CXX11_ABI=1",
+      "-Dflash=apac_fa3_private",
+      "-DFlash_fwd_params=ApacFA3VerifyParams",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+      "-I/usr/local/cuda-13.4/include",
+      "-I/home/USER/.cache/uv/archive-v0/LIaotWZdFE6DkoGMe_bQX/lib/python3.12/site-packages/torch/include",
+      "-I/home/USER/.cache/uv/archive-v0/LIaotWZdFE6DkoGMe_bQX/lib/python3.12/site-packages/torch/include/torch/csrc/api/include",
+      "-c",
+      "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r14/kernels/fa3-verify/wrapper.cpp",
+      "-o",
+      "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/wrapper.o"
+    ],
+    "exit_code": 0,
+    "log": ""
+  },
+  "source_sha256": {
+    "kernels/fa3-verify/prefill_prepack.cu": "651d7082b1b62429a7a4aeb49071a462a553eb09a3bf18f92f7f074f0992cec7",
+    "kernels/fa3-verify/wrapper.cpp": "856a0cd36d02f725a1a467eafab8b064dfe29c6c32a5a313ca47e6937eac639e",
+    "kernels/fa3-verify/prefill-candidates.json": "d2cb3c6de56eb3cc73310d32fee957e8f7a9c7f07e6cb83ac1e19aec0fde4701",
+    "kernels/fa3-verify/build.py": "42b4709fae8eda1f8f165fea82118c9385c3de843a8ce9d32885b59358f9aac2",
+    "patches/sglang/prefill-fa3-vsum.patch": "f717b849b6a18a72383df3a22627252489d17799ed79450d27aaf838e50737fd",
+    "scripts/select-firmus-prefill-fa3-prepack.py": "023f86583994fcec3cdaf3251f8b2e9b1d695047bcbcee21b0e5a9a13799fc39"
+  },
+  "validation": {
+    "full_suite": {
+      "passed": 1374,
+      "skipped": 78,
+      "subtests_passed": 25,
+      "seconds": 543.14,
+      "command": "PYTHONPATH=qwen-experiment-metrics/src:../../codex-scratch/r14 uv run --no-project --python 3.12 --with pytest --with rfc8785 --with numpy python -m pytest -o addopts= -q -p socket_paths --basetemp=../../codex-scratch/r14/frozen-full-tmp qwen-experiment-metrics/tests"
+    },
+    "gpu_oracles": "wired, not executed; pack vs old contiguous writer/host full map and independent LDSM PRMT STSM dump including padding; Q/K and paged KV preserved",
+    "sass_archive": "scratchpad/codex-scratch/r14/cpu-sass-proof.tar.gz",
+    "shell_syntax": "passed",
+    "ruff": "passed",
+    "targeted_with_torch": {
+      "passed": 182,
+      "seconds": 6.51,
+      "command": "PYTHONPATH=qwen-experiment-metrics/src uv run --no-project --python 3.12 --with pytest --with rfc8785 --with numpy --with torch==2.11.0 python -m pytest -o addopts= -q --basetemp=../../codex-scratch/r14/completed-target-tmp qwen-experiment-metrics/tests/test_prefill_fa3_prepack.py qwen-experiment-metrics/tests/test_prefill_fa3_pair.py qwen-experiment-metrics/tests/test_fa3_prefill_pipe.py qwen-experiment-metrics/tests/test_fa3_prefill_varlen.py"
+    },
+    "final_prepack_contracts_with_torch": {
+      "passed": 113,
+      "seconds": 4.46,
+      "includes_absolute_wall_budget_and_pair_refusal_fixture": true
+    },
+    "temporary_fixture_alias": "AF_UNIX-only tmp_path alias /proc/self/cwd to same authorized scratch location; no production source changed for pathname limit.",
+    "sass_archive_sha256": "1c7100a8961a94ab579c9c8dcadacabfd03d6f3264cafed615ea5b3536c44cc9",
+    "sass_archive_bytes": 1745076,
+    "cleanup": "Temporary source copies, generated compilation files, objects, test directories and socket alias plugin removed after verification; raw CPU archive and final validation logs retained in authorized r14 scratch; no SSH, Actions or scheduler job started."
+  },
+  "toolchain": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Tue_Sep_01_08:45:21_PDT_2026\nCuda compilation tools, release 13.4, V13.4.92\nBuild cuda_13.4.r13.4/compiler.38855100_0\n",
+  "ptxas_version": "ptxas: NVIDIA (R) Ptx optimizing assembler\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Tue_Sep_01_08:45:21_PDT_2026\nCuda compilation tools, release 13.4, V13.4.92\nBuild cuda_13.4.r13.4/compiler.38855100_0\n",
+  "pins": {
+    "fa3": {
+      "repository": "sgl-project/sgl-attn",
+      "commit": "f89bc2306632d1ec5f97b014dded4254f5b4a907",
+      "archive_sha256": "418b5681584dc3efff496a1cab5ffd58d2728d89dcfe0ea16e6985d6ef35c68c",
+      "archive_sha256_verified": true
+    },
+    "cutlass": {
+      "repository": "NVIDIA/cutlass",
+      "commit": "57e3cfb47a2d9e0d46eb6335c3dc411498efa198",
+      "archive_sha256": "09237099a70f80bff1dc8bb80c843a674bb4fdcb46e43cc6993e711c5ca89bb5",
+      "archive_sha256_verified": true
+    }
+  },
+  "patch_order": [
+    "fixed-specializations.patch",
+    "fp8-output.patch",
+    "fixed-prefill.patch",
+    "prefill-variants.patch",
+    "prefill-overlap.patch",
+    "prefill-pv.patch",
+    "decode-merge.patch",
+    "prefill-direct-o.patch",
+    "prefill-varlen.patch",
+    "decode-two-cta.patch",
+    "decode-wide-h2.patch",
+    "prefill-pipe.patch",
+    "decode-stream-h4.patch",
+    "prefill-geometry.patch",
+    "prefill-vsum.patch"
+  ],
+  "encoded_hash_method": "SHA256 of all 16-digit hexadecimal encoded instruction and scheduling words, including 0x prefixes, in cuobjdump order; symbol names ignored.",
+  "resource_query": "Linked the five freshly compiled FA3 objects and real flash_prepare_scheduler object; called resource pointer path only, no CUDA device initialization or kernel launch.",
+  "native_only": {
+    "variant": 41184,
+    "table_id": 15,
+    "compiled_current_varlen_address": true,
+    "inherited_v_n96_binary": false,
+    "transpose_v_false_load_schedule": "unchanged"
+  },
+  "diagnostics": {
+    "adoption_candidates": [
+      "P",
+      "S"
+    ],
+    "diagnostic_only": [
+      "V",
+      "VS"
+    ],
+    "shape": [
+      3994,
+      3994
+    ],
+    "rounds_per_order": 10,
+    "calls_per_sample": 12,
+    "sections": [
+      "writer_only",
+      "fa3_only",
+      "composite",
+      "o_only"
+    ],
+    "interaction": "T_VS-T_V-T_S+T_C",
+    "clock": "null with explicit reason; no substituted clock"
+  },
+  "jit_compile": [
+    {
+      "name": "jit-control",
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++20",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-DNDEBUG",
+        "-DSGL_CUDA_ARCH=900",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-Xptxas=-v,--warn-on-spills",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/runtime-base/python/sglang/kernels/jit/csrc",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/runtime-base/python/sglang/kernels/jit/include",
+        "-I/home/USER/.cache/uv/archive-v0/eE14vxHHzCCrYPNMnPp5J/tvm_ffi/include",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/jit-control.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/jit-control.o"
+      ],
+      "exit_code": 0,
+      "log": "ptxas info    : 0 bytes gmem\nptxas info    : Compiling entry function '_ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004822qknorm_rope_fp8_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004822qknorm_rope_fp8_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 56 registers, used 0 barriers\nptxas info    : Compile time = 154.534 ms\nptxas info    : Compiling entry function '_ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004822qknorm_rope_fp8_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004822qknorm_rope_fp8_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 56 registers, used 0 barriers\nptxas info    : Compile time = 130.029 ms\nptxas info    : Compiling entry function '_ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004825qknorm_rope_decode_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004825qknorm_rope_decode_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 40 registers, used 0 barriers\nptxas info    : Compile time = 36.744 ms\nptxas info    : Compiling entry function '_ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004825qknorm_rope_decode_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004825qknorm_rope_decode_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 40 registers, used 0 barriers\nptxas info    : Compile time = 33.863 ms\nptxas info    : Compiling entry function '_ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fast_kernelILb1ElLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fast_kernelILb1ElLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 36.915 ms\nptxas info    : Compiling entry function '_ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fast_kernelILb1EiLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fast_kernelILb1EiLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 33.524 ms\nptxas info    : Compiling entry function '_ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fast_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fast_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 56.425 ms\nptxas info    : Compiling entry function '_ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fast_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fast_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 55.445 ms\nptxas info    : Compiling entry function '_ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fp32_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsEPvS2_' for 'sm_90a'\nptxas info    : Function properties for _ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fp32_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsEPvS2_\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 48 registers, used 0 barriers\nptxas info    : Compile time = 22.882 ms\nptxas info    : Compiling entry function '_ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fp32_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsEPvS2_' for 'sm_90a'\nptxas info    : Function properties for _ZN54_GLOBAL__N__9f990a3f_14_jit_control_cu_86bd8c68_97004831qknorm_rope_prefill_fp32_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsEPvS2_\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 48 registers, used 0 barriers\nptxas info    : Compile time = 23.150 ms\n"
+    },
+    {
+      "name": "jit-pair",
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++20",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-DNDEBUG",
+        "-DSGL_CUDA_ARCH=900",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-Xptxas=-v,--warn-on-spills",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/runtime-base/python/sglang/kernels/jit/csrc",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/runtime-base/python/sglang/kernels/jit/include",
+        "-I/home/USER/.cache/uv/archive-v0/eE14vxHHzCCrYPNMnPp5J/tvm_ffi/include",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/jit-pair.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r14/jit-pair.o"
+      ],
+      "exit_code": 0,
+      "log": "ptxas info    : 0 bytes gmem\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189922qknorm_rope_fp8_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189922qknorm_rope_fp8_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 56 registers, used 0 barriers\nptxas info    : Compile time = 146.366 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189922qknorm_rope_fp8_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189922qknorm_rope_fp8_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 56 registers, used 0 barriers\nptxas info    : Compile time = 128.302 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189925qknorm_rope_decode_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189925qknorm_rope_decode_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 40 registers, used 0 barriers\nptxas info    : Compile time = 37.112 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189925qknorm_rope_decode_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189925qknorm_rope_decode_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 40 registers, used 0 barriers\nptxas info    : Compile time = 36.673 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fast_kernelILb1ElLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fast_kernelILb1ElLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 35.489 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fast_kernelILb1EiLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fast_kernelILb1EiLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 34.726 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fast_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fast_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 57.862 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fast_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fast_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 57.825 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fp32_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsEPvS2_' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fp32_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsEPvS2_\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 48 registers, used 0 barriers\nptxas info    : Compile time = 23.837 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fp32_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsEPvS2_' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189931qknorm_rope_prefill_fp32_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsEPvS2_\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 48 registers, used 0 barriers\nptxas info    : Compile time = 22.680 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189933qknorm_rope_prefill_native_kernelILb1ElLi96EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_PKiii' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189933qknorm_rope_prefill_native_kernelILb1ElLi96EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_PKiii\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 48 registers, used 0 barriers\nptxas info    : Compile time = 48.020 ms\nptxas info    : Compiling entry function '_ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189933qknorm_rope_prefill_native_kernelILb1EiLi96EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_PKiii' for 'sm_90a'\nptxas info    : Function properties for _ZN51_GLOBAL__N__787a2e4c_11_jit_pair_cu_8da5df6d_97189933qknorm_rope_prefill_native_kernelILb1EiLi96EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_PKiii\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 48 registers, used 0 barriers\nptxas info    : Compile time = 45.647 ms\n"
+    }
+  ]
+}

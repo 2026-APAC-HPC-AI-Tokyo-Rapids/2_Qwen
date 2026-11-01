@@ -194,6 +194,8 @@ Round 12（41201412459）で採用：2要求・各3900〜4096 tokenのvarlen呼�
 
 Round 13-V（41253426202）で棄却：pair 呼出しに native V の一度書きと lifetime 保持の 4-chain sum を合成した `m192n96-direct-o-varlen-pipe-vsum`。CPU では FADD 依存深さ 23→7、spill 40/28→0/0 B だったが、H200 の in-job gate（QK post＋FA3＋O）では 12 GPU 全てで 3994+3994 が 46〜52 µs/call 遅く（control 1162〜1209 µs、約 +4%）、`below 5 us margin` で不採用。V byte image・Q/K・paged KV は byte 一致、FP32 誤差は control と同値。合成時間だけでは原因を分けられないため、同じ合成形を再提出しない。served は round 12 の選択のままで公式 9947.50（round 12 の 9958.43 比 −0.11%、公式窓 +0.14 s で説明できる再現）。image は pin しない（`2026-11-01-prefill-fa3-vsum-r13.md`）。
 
+Round 14（41264009819）で採用：pair 呼出しで旧 FP32 writer→V prepack（128-bit store、4.2 µs）→native-only FA3（variant 41184）。12 GPU 全てで 7 pair 全形状の writer＋FA3＋O が 22.7〜49.6 µs/call 短縮（3994+3994 で control 1176〜1227 µs に対し 29.4〜41.0 µs）、V image・Q/K・paged KV は byte 一致、FP32 誤差は control と同値、1200 回耐久で byte 一致。同じ gate の分解計測（12 GPU 中央値）：FA3 単体で native V −34.0 µs、sum＋lifetime PRMT +39.4 µs、両方 +25.0 µs、native writer +17.4 µs、旧 writer＋pack +5.2 µs。round 13 の悪化は sum と散在 writer が原因で、native V consumer 自体は勝っていた。sum 単独（S）は最初の形状で不合格。PP0 周期 114.4/113.9/117.5→113.2/113.8/116.6 ms、公式 10009.54（round 12 比 +0.51%）。image は 5a3df8c4（41264009819）に固定（`2026-11-01-pp4-round14.md`）。
+
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。
@@ -203,6 +205,14 @@ N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。
 #### 2026-11-01 round 13-V（CPU admission、既定 false）
 
 M192/N96 pair に native V writer＋4-chain sum の合成行を追加。N192 single合成版はCPU証拠のみ残し、定常命令+37とsingle marginでpairを失う危険からbuild/dispatch/gate対象を外した（table ID13は非実行予約枠、pair ID14維持）。singleはround12の旧writer/N192行。単純 sum は P の上書きが前進するため棄却し、全 P word を EX2 後まで保持する identity PRMT 付きだけを通した。CUDA13.4/sm90a で C75xx なし、spill は control 以下、既存 FA3 control と旧 FP32 writer の encoded SASS は一致。定常加算依存は N96 23→7、N192 47→13だが、consumer 命令は369→388、587→624へ増える。L3994 pair の V transpose SMEM 1.396 GBを除く一方、writer の scatter/padding を払う。FP8 V byte と paged KV は保持する設計。7 pairのGPU byte dump→FP32/reference/replay→writer＋FA3＋Oの両順/pooled 5µs margin→1200回耐久と、single3994/4096/3584の旧writer Q/K/V/pagedKV・旧N192出力byte一致（速度判定なし）を、round12 成功後の12 GPU全員に要求する。round12 gate実測最大38.6秒に基づく45–65秒見積もり、100秒＋kill猶予2秒・集約deadline105秒。round12 job652秒+105秒=757秒、保守配分873.4秒で17分枠、MegaMoE gateなし。失敗時は既存選択で serving 継続。`prefill.fa3_vsum_gate=false`、fresh image 必須、image13.0.88・GPU・通常scoreは未検証。仕事削減を時間へ加算換算しない。詳細・棄却記録・SASS証拠は `2026-11-01-prefill-fa3-vsum-r13.md` と `fa3-prefill-vsum-cpu-validation-20261101.json`。
+
+#### 2026-11-01 round 14（P prepack / S sum-only、GPU 未測定）
+
+Round 13 の合成悪化を分解する gate 群へ置換。採用候補 P は旧 FP32 writer＋coalesced V prepack＋native-only variant 41184（ID15）、S は旧 writer/V＋sum-only/lifetime variant 24800（ID16）。V/VS は最初の3994+3994だけ診断し採用しない。P＋S は作らない。Q64/KV4/D128 E4M3、M192/N96、各3900〜4096のpair限定。全causal項、522.847 GFLOP（padding込み535.881 GFLOP）は保持。P は56,784 KV visitの転置、logical SMEM 1,395,523,584 Bを除き、336 unique tileのpackにglobal 8,218,624 B、SMEM 16,515,072 B、1 launchを追加。HBM/NVLink実量は未測定。V loadがK acquireの後ろへ移るconsumer scheduleは変更せず測る。
+
+CUDA13.4/sm_90a CPU証拠：旧FA3 N96/N192および旧writer i32/i64のencoded SASS一致、C75xxなし、P native spill0、S spill40/28 Bはcontrolと同じ。packは35 registers、spill0、SMEM24,576 B、静的424命令、STG.E.128が6本。各warp命令16 sectors、336 CTAで129,024 sector要求（計数であり実DRAM counterではない）。Sは検証済みsum-liveとencoded一致、48 FADD・依存23→7、定常+22命令、旧P全12 wordを50 EX2後まで保持。image CUDA13.0.88の証拠は未取得。
+
+round12 pair gate成功後の同じ12 GPUで、診断→P全gate→残り時間が足りる場合S全gate。7pair、両順各10 sample×12call、forward/reverse/pooled全て5µs以上、独立GPU dump/host全byte map/旧writer image照合、FP32参照、変更入力2 replay、single3形状の旧出力bytes、実経路1200回耐久を全GPUに要求。数値・速度不足は候補だけ拒否、CUDA/process異常とhangは群全体拒否。P優先、envは全結果確認後atomic更新。srun175秒＋kill2秒、集約含む開始+180秒、候補一式45秒を予約できなければ拒否。round13基準741−62.017＋180＋155−57.084＝956.899秒、17分まで63.101秒。将来wallを保証しない。`prefill.fa3_prepack_gate=false`、image pin不変・新build必須。条件付き感度例：native FA3短縮20〜40µs、pack5〜15µsなら正味5〜35µs/層。期待値ではなく、10k達成も未確認。詳細は `2026-11-01-prefill-fa3-prepack-r14.md` と `fa3-prefill-prepack-cpu-validation-20261101.json`。
 
 ### Prefill QKV GEMM
 

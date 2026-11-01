@@ -45,7 +45,8 @@ if not _table.is_file():
 if not _table.is_file():
     _table = Path("/opt/apac/fa3-verify/prefill-candidates.json")
 CANDIDATES = json.loads(_table.read_text())
-NAMES = tuple(c["name"] for c in CANDIDATES)
+# Native V rows require their own producer, independent dump and composed gate.
+NAMES = tuple(c["name"] for c in CANDIDATES if not c.get("native_v_n") and not c["variant"] & 16384)
 VARLEN = {c["name"] for c in CANDIDATES if c.get("varlen")}
 
 
