@@ -802,5 +802,318 @@
       "aggregate_error": "wrong GPU: g1 prefill-0 and prefill-1 GPU sets swapped between the pair and prepack gates",
       "official_score": 9947.81
     }
+  },
+  "fa3_prefill_v3_r17": {
+    "date": "2026-11-01",
+    "note": "2026-11-01-prefill-fa3-v3-r17.md",
+    "cpu_evidence": "fa3-prefill-v3-cpu-validation-20261101.json",
+    "status": "P3 refused by the H200 gate in run 41287043170: byte-equal to P, 1.7-7.1 us per call pooled faster than P at 3994+3994 (median 5.4), below the 5 us margin on 5 of 12 GPUs; P served at 10020.58",
+    "source_base": "78fb58e",
+    "source_pins": {
+      "fa3": "f89bc2306632d1ec5f97b014dded4254f5b4a907",
+      "cutlass": "57e3cfb47a2d9e0d46eb6335c3dc411498efa198"
+    },
+    "image": "round14 5a3df8c485a5ac939761b07a9ca82d7c38d864200250591ec6d9485dba778bb2 unchanged; image CUDA13.0.88, CPU compiler13.4.92 substitute only",
+    "shape": "exactly two requests, each3900..4096 tokens; causal M192/N96 Q64/KV4/D128 GQA16",
+    "dtype": "FP8 E4M3 V byte-identical by design, FP32 accumulation; full causal work retained",
+    "experimental_variant": 172256,
+    "production_registered": true,
+    "table_id": 17,
+    "K_stages": 2,
+    "V_stages": 3,
+    "useful_flops": 522847416320,
+    "padded_flops": 535881056256,
+    "delta_flops_vs_P": 0,
+    "V_logical_global_tile_bytes": 697761792,
+    "delta_logical_global_bytes_vs_P": 0,
+    "delta_logical_shared_transfer_bytes_vs_P": 0,
+    "actual_hbm_bytes": null,
+    "actual_nvlink_bytes": null,
+    "removed_work": "Added P2 dependence of K(i) issue on PV(i-2) completion is removed with V3; P-relative exposed wait saving remains unknown, no extra FLOP/byte reduction",
+    "past_rejections": [
+      "P2 on all12 H200 in run41273087893: pooled182.607..189.937us slower than P at3994x2",
+      "S/lifetime sum and scattered native writer rejected in rounds13/14; unchanged here"
+    ],
+    "P2_dependency_proof": {
+      "acquire_waits": "V(i) empty slot i%2 requires PV(i-2) completion and 3 WG release, before K(i) is issued",
+      "visits_3994x2": 56784,
+      "persistent_CTAs": 132,
+      "mean_steps_per_CTA": 430.1818181818182,
+      "required_exposed_gap_us_per_mean_step": [
+        0.4230769230769231,
+        0.4463229078613694
+      ],
+      "actual_steps_per_CTA": null,
+      "clock_mhz": null,
+      "unique_causal_attribution": false,
+      "uncertainties": "cache hint contribution, runtime barrier stall and FA3-only latency in round15 are unmeasured"
+    },
+    "P3_barrier_contract": "V has3 full+3 empty,12288B transaction per slot; producer phase1 xor floor(i/3)%2, consumer phase floor(i/3)%2, slot i%3; no tile reset; same-slot reuse after PV(i-3) wait0 and all3 WG releases; tail waits all3 slots",
+    "cpu_admission": {
+      "compiler": "CUDA13.4.92 sm_90a",
+      "P_spill_store_load_bytes": [
+        0,
+        0
+      ],
+      "P3_initial_spill_store_load_bytes": [
+        4,
+        4
+      ],
+      "P3_shortened_state_spill_store_load_bytes": [
+        4,
+        4
+      ],
+      "P3_stack_bytes": 8,
+      "C75xx": false,
+      "round14_control_P_pack_old_writer_encoded_SASS_equal": true,
+      "P3_local_memory_PC": [
+        "df60 STL",
+        "e2e0 LDL.LU"
+      ],
+      "P3_shared_bytes": 100352,
+      "P_shared_bytes": 100352,
+      "V_storage_delta_bytes": 12288,
+      "epilogue_padding_delta_bytes": -12288,
+      "registers_per_CTA": 65536,
+      "CTA_per_SM": 1,
+      "warp_occupancy_percent": 25,
+      "source_arithmetic_equal": true,
+      "output_bytes_equal_P": null,
+      "rule": "Former spill<=P restriction replaced by per-M-tile spill control-flow check and full GPU gate; all other CPU evidence retained"
+    },
+    "gate_config_build_changes": true,
+    "new_boolean": "fa3_v3_gate=false",
+    "GPU_measurement": null,
+    "kernel_speedup": null,
+    "serving_speedup": null,
+    "official_score": null,
+    "conditional_estimate": "P-relative exposed V wait saving unmeasured; if GPU gate shows delta us/layer and it transfers equally to serving workers,24 layers imply0.024*delta ms/period. P2 regression recovery is not P-relative gain.",
+    "tracker_text": "Round 17（2026-11-01、追加依頼）：旧1af5e69のspill条件による棄却を、位置確認後に見直した。P3 variant172256/末尾ID17、fa3_v3_gate=falseでGPU判定待ち。保存CUDA13.4.92 SASSのdf60 STLとe2e0 LDL.LUはproducerのQ load準備にあり、KV loopのfef0→f240では反復しない。外側tile loopは10990→d290。3994+3994・M192/N96は333 tile×2要求×4 KV head＝2664 tile、各4 producer warp/128 threadなのでstore/load各10656 warp命令、各340992 lane実行・1363968 B、合計2727936 logical local B/call。実HBM量と時間は未測定。P3はK2/V3、PV(i−3)後releaseでP2の追加依存を外す。shared100352 B、1 CTA/SM、旧control/P/pack/writer SASS一致・C75xxなしは維持。consumer算術sourceはV index置換以外一致、選択数学1814命令のopcode個数も一致するがencoded列は異なりbyte出力の証明ではない。分解診断とS/VSを外してP対C、P3対Pの全7pair・12GPU・正逆/pooled5us、FP32・single・1200回、P3はPとのattention/scale/O全byte一致を要求。採用順P3→P→round12、UUID集合照合を保持。起動込み150秒/集約155秒、条件付き100秒見積もり、保守予算742−68.813＋155＋155＝983.187秒、17分まで36.813秒。image pinは維持しfresh build必須。GPU・実CUDA13.0.88・通常serving/公式scoreは未確認。詳細は2026-11-01-prefill-fa3-v3-r17.mdとfa3-prefill-v3-cpu-validation-20261101.json。",
+    "previous_rejection": "1af5e69: spill4/4 exceeded P0/0 under former admission rule; followup supersedes after proving spill outside KV loop",
+    "spill_followup": {
+      "schema": "fa3-r17-spill-followup/v1",
+      "basis": "saved CUDA13.4.92 sm_90a SASS; analytic dynamic count for fixed shape, not GPU instrumentation",
+      "spill_sites": [
+        {
+          "pc": "0xdf60",
+          "asm": "STL [R1], R0",
+          "bytes_per_lane": 4,
+          "predicate": null
+        },
+        {
+          "pc": "0xe2e0",
+          "asm": "LDL.LU R0, [R1]",
+          "bytes_per_lane": 4,
+          "predicate": null
+        }
+      ],
+      "location": "producer Q cp.async setup, once per valid M tile; outside the KV mainloop",
+      "producer_tile_loop": {
+        "header": "0xd290",
+        "back_edge": "0x10990 -> 0xd290"
+      },
+      "prologue": {
+        "V_bulk": "0xdd90",
+        "K_TMA": "0xdf00",
+        "Q_warpsync": "0xdf50",
+        "Q_copies_first_last": [
+          "0xe440",
+          "0xe960"
+        ],
+        "Q_completion_poll": "0xea00 -> 0xe9b0",
+        "Q_barrier_arrive": "0xea70"
+      },
+      "KV_loop": {
+        "entry": "0xeb30",
+        "first_unrolled_block": "0xeb60",
+        "two_step_loop_header": "0xf240",
+        "back_edge": "0xfef0 -> 0xf240",
+        "exit": "0xff20",
+        "all_local_back_edges_stay_after_spill": true,
+        "local_back_edges": [
+          {
+            "from": "0xefc0",
+            "to": "0xef40",
+            "asm": "@P1 BRA.U.ANY 0xef40"
+          },
+          {
+            "from": "0xf1a0",
+            "to": "0xf110",
+            "asm": "@P1 BRA.U.ANY 0xf110"
+          },
+          {
+            "from": "0xf660",
+            "to": "0xf5e0",
+            "asm": "@P1 BRA.U.ANY 0xf5e0"
+          },
+          {
+            "from": "0xf840",
+            "to": "0xf7b0",
+            "asm": "@P1 BRA.U.ANY 0xf7b0"
+          },
+          {
+            "from": "0xfca0",
+            "to": "0xfc20",
+            "asm": "@P1 BRA.U.ANY 0xfc20"
+          },
+          {
+            "from": "0xfe80",
+            "to": "0xfdf0",
+            "asm": "@P1 BRA.U.ANY 0xfdf0"
+          },
+          {
+            "from": "0xfef0",
+            "to": "0xf240",
+            "asm": "@P1 BRA 0xf240"
+          }
+        ]
+      },
+      "counts_3994x2_M192_N96": {
+        "M_tiles_per_request_head": 333,
+        "M_tiles": 2664,
+        "producer_warps_per_tile": 4,
+        "producer_threads_per_tile": 128,
+        "STL_warp_executions": 10656,
+        "LDL_warp_executions": 10656,
+        "STL_lane_executions": 340992,
+        "LDL_lane_executions": 340992,
+        "local_store_bytes": 1363968,
+        "local_load_bytes": 1363968,
+        "total_logical_local_bytes": 2727936,
+        "KV_visits": 56784,
+        "KV_step_multiplier_applied": false,
+        "actual_HBM_bytes": null
+      },
+      "consumer_static_evidence": {
+        "source_arithmetic_lines_equal_after_V_index_rename": true,
+        "selected_math_instructions_P": 1814,
+        "selected_math_instructions_P3": 1814,
+        "opcode_multisets_equal": true,
+        "encoded_sequences_equal": false,
+        "assembly_sequences_equal": false,
+        "limitation": "Compiler register allocation and scheduling change. Counts/source equality support expected output equivalence but do not prove GPU byte equality."
+      },
+      "decision": "Revise the prior spill<=P condition per the followup request: allow GPU gate evaluation; not a measured performance admission",
+      "GPU_output_bytes_equal_P": null
+    },
+    "gate": {
+      "schema": "firmus-prefill-fa3-prepack/v3",
+      "boolean": "prefill.fa3_v3_gate",
+      "enabled_in_committed_config": false,
+      "candidates": [
+        "P",
+        "P3"
+      ],
+      "removed": [
+        "decomposition diagnostics",
+        "S",
+        "VS"
+      ],
+      "baselines": {
+        "P": "C",
+        "P3": "P"
+      },
+      "minimum_saving_us_all_shapes_orders_GPUs": 5,
+      "shapes": [
+        [
+          3994,
+          3994
+        ],
+        [
+          3986,
+          4027
+        ],
+        [
+          3986,
+          3986
+        ],
+        [
+          4027,
+          4027
+        ],
+        [
+          4096,
+          4096
+        ],
+        [
+          3900,
+          4096
+        ],
+        [
+          4096,
+          3901
+        ]
+      ],
+      "GPUs": 12,
+      "timing_orders": [
+        "forward",
+        "reverse",
+        "pooled"
+      ],
+      "rounds_per_order": 10,
+      "calls_per_sample": 12,
+      "P3_extra_check": "P attention FP8, FP32 scale and BF16 O output bytes on original and two changed-input graph replays",
+      "reference": "existing FP32 causal reference: all valid causal keys for sampled Q; relativeL2<=.05, maxScaled<=.25",
+      "singles": [
+        3994,
+        4096,
+        3584
+      ],
+      "endurance_calls": 1200,
+      "priority": [
+        "P3 after all P gates pass",
+        "P",
+        "preceding round12 selection"
+      ],
+      "identity": "UUID set, same allocation,12 distinct H200; worker/rank checked within each step without cross-step rank mapping",
+      "timeout": "worker wall150s from group start including startup;2s kill grace;aggregate publication by155s;timeout retains preceding env and continues serving",
+      "full_candidate_reservation_seconds": 45
+    },
+    "time_budget": {
+      "scope": "conditional allocation budget, not P3 H200 measurement",
+      "measured_prior_rank_seconds": [
+        33.7,
+        36.32
+      ],
+      "startup_allowance_seconds": 32.6,
+      "P_budget_seconds": 36.32,
+      "P3_extra_budget_seconds": 25,
+      "finish_seconds": 5,
+      "estimated_group_seconds": 98.92,
+      "rounded_group_seconds": 100,
+      "worker_timeout_seconds": 150,
+      "publication_deadline_seconds": 155,
+      "prior_job_seconds": 742,
+      "prior_READY_seconds": 449,
+      "old_gate_wall_lower_bound_seconds": 68.813,
+      "pair_allowance_seconds": 155,
+      "replacement_job_budget_seconds": 828.187,
+      "conservative_job_budget_seconds": 983.187,
+      "allocation_limit_seconds": 1020,
+      "remaining_seconds": 36.813,
+      "equation": "742 - 68.813 + 155 + 155 = 983.187; no subtraction for prior pair wall; build outside allocation"
+    },
+    "validation": {
+      "full_suite_passed": 1403,
+      "full_suite_skipped": 90,
+      "torch_contracts_passed": 226,
+      "GPU_executed": false,
+      "production_patch_compiled_headers_byte_equal": true,
+      "timeout_shell_fixtures": "both worker and aggregate pass"
+    },
+    "gpu_gate_result": {
+      "run": 41287043170,
+      "attempt": 2,
+      "P3_vs_P_pooled_us_3994x2": [
+        1.7,
+        7.1
+      ],
+      "P3_vs_P_pooled_median_us": 5.4,
+      "P_vs_control_pooled_us_3994x2": [
+        32.4,
+        39.0
+      ],
+      "official_score": 10020.58
+    }
   }
 }
