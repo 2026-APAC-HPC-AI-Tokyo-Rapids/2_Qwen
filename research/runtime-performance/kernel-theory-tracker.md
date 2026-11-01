@@ -208,6 +208,8 @@ Round 19（41305946419、build なし）：診断の trace 読み出し位置を
 
 Round 20（41317543745）：FC1 tile の負荷均衡な静的割り当て（候補 L、expert 順の貪欲分配、byte 一致）は、計装なしの完全 MegaMoE で 12 GPU 全て・3 routing 全てで遅く（+38〜+166 µs/層）棄却。割り当ての再計算と B 再利用の崩れが負荷均衡の利得を上回った。FC1 の静的割り当て順の方向は閉じる。gate 群の時間予約の欠陥で P は未採用、round 12 の選択で 9959.45（`2026-11-01-prefill-megamoe-sched-r20.md`）。
 
+2026-11-02 consumer 側の見直し（CPU のみ）：現行 split の定常 1 K block は QGMMA 8・accumulator FMUL 128・scale FMUL 8・RCP 4、計 188 命令／math warp で、すでに 1 要素 1 FMUL。合成 scale の持ち越し（案 1）は命令・依存とも不変、WGMMA 4 本の inline PTX 化（案 2）は 188→204 命令と mainloop 内 spill 60/80 B で、ともに棄却。consumer 側は新しい CPU 証拠が出るまで打ち止め（`2026-11-02-prefill-megamoe-consumer-review.md`）。
+
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。
