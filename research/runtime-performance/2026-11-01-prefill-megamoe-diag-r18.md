@@ -83,3 +83,11 @@ round14のjob742秒・READY449秒、repeat732秒・READY444秒、round17 READY43
 初回suiteで見つけたhost seriesの末尾とprepack shell抽出境界のテストは、新しい診断追加に合わせて修正した。最終suiteの一時ファイルは指定scratch内に置いた。長いAF_UNIX名を避けるため3テストだけ同じ物理scratchを指す短いdirectory-fd pathを使い、product/test sourceの動作は変更していない。全fixtureへの短縮を試した中間実行は、provenanceの文字列比較と衝突したため打ち切り、この限定方式で全体を完走した。
 
 task所有の展開source、作業header、native checker中間binary、pytest runtime、不要なprototype生成scriptと初期の外部pytest temporary directoryは削除する。最終compiler/SASS/cubin、検証log、最小のscratch再実行補助だけを保持する。clusterジョブを作っていないので、この作業由来の残留Slurm/PJMジョブはない。
+
+## serving 結果：診断は trace の解析で失敗、P で 10005.35（run 41296967433、2026-11-01）
+
+- serving commit：393c776（`prefill.megamoe_diag=true`）。attempt 1 は「Firmusのローカル成果物を選択」で BeeGFS の `Remote I/O error`、attempt 2 は入力準備で Firmus ログインの ssh 切断（どちらも build・GPU 未使用）。attempt 3 で build と serving が通った。Slurm job 28086、READY 524 s。Actions 上は最後の後片付けの step が ssh 切断で exit 255 になり失敗表示だが、Slurm job は完了し `run-success` と成果物はそろっている。
+- **P：** 12 GPU で再採用（`all twelve H200s passed; P preferred to S`）。served `n192-direct-o-varlen-pipe+m192n96-pair-prepack`。
+- **診断：不完全で、データは得られなかった。** prefill-2 の 4 rank が `parse_trace` の `trace header missing or ambiguous` で失敗した（約 13 秒）。GPU の trace バッファの先頭 1024 word に magic が 1 つだけ見つかる前提が成り立たなかった。kernel が trace を書いていないのか、host と kernel で trace の位置の取り決めが食い違っているのかは、この run では区別できない（生のバッファを保存していない）。prefill-0 と prefill-1 は同時に打ち切られ fragment を残さなかった。要約は `complete: false`。build 記録では image の nvcc は 13.0.88、serving header の sha256 は fbfaa6be…。
+- 次に診断をやり直すなら、trace バッファの生 dump（先頭数 KB）を fragment に残す、magic が見つからない場合は host 側で書き込み先のアドレスと kernel 引数を記録する、の 2 点を足してから投入する。この run の image は診断 API を含むので、script の修正だけで済むなら build なしで再投入できる。
+- **serving：公式 10005.35**、eligible、validation valid、6305 requests、PP0 周期 113.3 / 113.8 / 116.9 ms、TTFT fail 111、ITL fail 4、ITL mean 15.80 ms。P の構成は 4 run で 10005.35〜10020.58。
