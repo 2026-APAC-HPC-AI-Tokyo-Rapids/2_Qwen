@@ -202,6 +202,8 @@ Round 14 の repeat（41280565072、build なし、prepack 集約を UUID 集合
 
 Round 17（41287043170）：P3（native V だけ 3 slot、V を K acquire より前に load、variant 172256）は P と出力 byte 一致、P 比 pooled 1.7〜7.1 µs/call（中央値 5.4）で 5 µs margin を 5 GPU が割り不採用。P2 の直列化は解消したが、残る利得は 1 層約 5 µs（score 約 +0.1%）。P は再合格し公式 10020.58（P の構成は 3 run で 10008.67〜10020.58）（`2026-11-01-prefill-fa3-v3-r17.md`）。
 
+Round 21（41327492259、build なし）：P3 に byte 一致前提の方向だけの margin（全 GPU で pooled が正、形状ごとの中央値 3 µs 以上、片方の順で 2 µs を超えて遅くない）を適用したが、3986+4027 と 3900+4096 で不合格。7 形状の中央値は 4.2〜5.8 µs 速いが一様でなく、効果は score で約 +0.1%。P3 は閉じる。P で 10005.65（P の構成は 6 run で 10002.75〜10020.58）。Firmus の /scratch 満杯で Actions の回収は失敗、結果は Firmus の run directory に残る（`2026-11-01-prefill-fa3-v3-r17.md`）。
+
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。
