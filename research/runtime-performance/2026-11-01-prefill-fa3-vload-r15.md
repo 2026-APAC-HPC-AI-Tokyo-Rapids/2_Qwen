@@ -119,3 +119,21 @@ CPU正本は `fa3-prefill-vload-cpu-validation-20261101.json`。raw command、pt
 CPU raw archiveは指定scratchの `r15/cpu-sass-proof.tar.gz`、1,702,261 bytes、SHA256 **ce2afd4f323b304d5ff91306f2287ba9bdb2a5c7c822b5eea03ade33ddb06b0c**。内部48 entryのmanifest/hashを検査した。不要なsourceコピー・source archive・object・生成TU・テストdirectory・socket alias plugin・repositoryのPython/pytest/Ruff cacheは削除した。archive、最終/初回suite log、Torch log、元のexec.log、提供されたround14 gate raw dataは残す。今回起動したSSH・Actions・scheduler/GPU jobはなく、今回作成した残留PJM/Slurm jobもない。他の作業のjobやbranchには触れていない。
 
 最後のstaged diff検査で新規patchの空context行の末尾空白を検出し、除去した。GNU patchのfuzz0適用後headerは保存済みCPU compile sourceとbyte一致し、SASS証拠は不変。最終のP/P2・pair・pipe・varlen・direct-O契約はTorch2.11.0環境で209 passed、6.99秒。関連一時物も再削除した。
+
+## serving 結果：P2 は gate で不採用、集約の不具合で P も未採用（run 41273087893、2026-11-01）
+
+- serving commit：a6487ff（`prefill.fa3_vload_gate=true`）。attempt 1 は Firmus ログインとの ssh が一時的に切れ、「Firmusのローカル成果物を選択」で exit 255 になった（build・GPU とも未使用）。失敗した job だけを再実行した attempt 2 で build と serving が通った。
+- image：run 41273087893 で build、sha256 `1166ee307946ce6b6f35b90f2ec42e3f61f4201e9f83b54a3c1ac8853f095871`。Slurm job 28027、COMPLETED 12:17、READY 448 s。gate 群は GPU あたり 33.7〜35.2 秒。
+- **P2：不採用。** 12 GPU すべてで 3994+3994 が **P より 182〜192 µs/call 遅かった**（P の forward 中央値 1124〜1173 µs、pooled −182.6〜−189.9 µs）。V の bulk load を K の acquire より前へ出すと、native の 2 slot では V slot の再利用が前の PV の完了待ちに直列化すると考えられる。stage を増やさずに順序だけを control に合わせる案は閉じる。
+- **P：12 GPU すべてで再び合格**。3994+3994 で control（round 12 の pair 行）比 33.0〜38.7 µs（pooled）、7 pair 全形状で 24.6 µs 以上（正順・逆順）。round 14 の 30.7〜41.0 µs と同じ範囲で、kernel の利得は再現した。
+- **それでも未採用：** 集約が `AssertionError: wrong GPU` で失敗した。集約は pair gate と (worker, rank) ごとに UUID の一致を求めるが、g1 で同時に起動する prefill-0 と prefill-1 の `srun --gres=gpu:4` は、どちらが GPU 0-3 と 4-7 を得るかが起動順で決まる。この run では pair gate と prepack gate とで 2 組が丸ごと入れ替わっていた（12 個の UUID の集合は同じ）。round 14 ではたまたま一致していた。修正は UUID 集合で照合する形にする（`perf/pp4-r16-gatefix-20261101`）。
+- **serving：** round 12 の選択（`n192-direct-o-varlen-pipe+m192n96-pair`）で公式 **9947.81**、eligible、validation valid。PP0 周期 114.4 / 113.9 / 117.4 ms、6274 requests、TTFT fail 114、ITL fail 2、ITL mean 15.60 ms。
+
+| run | served | score | PP0 period prefill-0/1/2（ms） |
+|---|---|---:|---|
+| 41201412459 | round 12 | 9958.43 | 114.4 / 113.9 / 117.5 |
+| 41253426202 | round 12（round 13 の候補不採用） | 9947.50 | 113.9 / 114.4 / 117.4 |
+| 41264009819 | round 14 の P | 10009.54 | 113.2 / 113.8 / 116.6 |
+| 41273087893 | round 12（集約の不具合） | 9947.81 | 114.4 / 113.9 / 117.4 |
+
+round 12 の構成は 3 回で 9947.50〜9958.43、周期も同じ値に戻った。round 14 の周期短縮が P によることの対照になる。image 41273087893 は pin しない（P2 は不採用で、P は round 14 の image 5a3df8c4 にある）。

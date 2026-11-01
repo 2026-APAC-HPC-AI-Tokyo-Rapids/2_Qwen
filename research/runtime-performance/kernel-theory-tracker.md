@@ -196,6 +196,8 @@ Round 13-V（41253426202）で棄却：pair 呼出しに native V の一度書�
 
 Round 14（41264009819）で採用：pair 呼出しで旧 FP32 writer→V prepack（128-bit store、4.2 µs）→native-only FA3（variant 41184）。12 GPU 全てで 7 pair 全形状の writer＋FA3＋O が 22.7〜49.6 µs/call 短縮（3994+3994 で control 1176〜1227 µs に対し 29.4〜41.0 µs）、V image・Q/K・paged KV は byte 一致、FP32 誤差は control と同値、1200 回耐久で byte 一致。同じ gate の分解計測（12 GPU 中央値）：FA3 単体で native V −34.0 µs、sum＋lifetime PRMT +39.4 µs、両方 +25.0 µs、native writer +17.4 µs、旧 writer＋pack +5.2 µs。round 13 の悪化は sum と散在 writer が原因で、native V consumer 自体は勝っていた。sum 単独（S）は最初の形状で不合格。PP0 周期 114.4/113.9/117.5→113.2/113.8/116.6 ms、公式 10009.54（round 12 比 +0.51%）。image は 5a3df8c4（41264009819）に固定（`2026-11-01-pp4-round14.md`）。
 
+Round 15（41273087893）：P2（native V の bulk load を K acquire より前へ、variant 106720）は 12 GPU 全てで P より 182〜192 µs/call 遅く不採用。native の 2 slot では V slot 再利用が PV 完了待ちに直列化すると考えられ、stage を増やさない順序変更は閉じる。P は 12 GPU 全てで再合格（3994+3994 で control 比 33.0〜38.7 µs）したが、集約が (worker, rank) ごとの UUID 一致を求めていたため、g1 の 2 worker の GPU 割り当てが pair gate と入れ替わった run で `wrong GPU` となり未採用。served は round 12 の選択で 9947.81、周期は round 12 と同じ 114.4/113.9/117.4 ms に戻った（`2026-11-01-prefill-fa3-vload-r15.md`）。
+
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。
