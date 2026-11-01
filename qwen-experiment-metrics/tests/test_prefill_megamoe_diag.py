@@ -161,7 +161,7 @@ def test_real_shell_failure_timeout_and_summary_failure_keep_p(tmp_path,status):
 
 def test_build_and_dispatch_are_explicitly_isolated(tmp_path):
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
-    assert config['prefill']['megamoe_diag'] is False
+    assert config['prefill']['megamoe_diag'] is True
     assert all('deep-gemm-diag' not in p for p in config['deep_gemm_overlay_patches'])
     host=(ROOT/'patches/deep-gemm-host/sm90-prefill-diagnostic.patch').read_text()
     assert 'template <bool Diagnostic = false>' in host
