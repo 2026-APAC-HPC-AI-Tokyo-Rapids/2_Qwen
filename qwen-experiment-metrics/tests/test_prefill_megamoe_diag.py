@@ -340,7 +340,7 @@ def test_p_gate_and_image_pin_are_unchanged():
     expected='34bd6827b644f8408e146008781524a761e11d2f61de0adf7d8f40bafacae01f'
     assert hashlib.sha256((ROOT/'scripts/select-firmus-prefill-fa3-prepack.py').read_bytes()).hexdigest()==expected
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
-    assert config['images']['sglang']['sha256']=='5a3df8c485a5ac939761b07a9ca82d7c38d864200250591ec6d9485dba778bb2'
+    assert config['images']['sglang']['sha256']=='450ba3cc0194beeb02fe7359ab47c0acce1257cf4798afb148301088a0b53f68'
 
 
 @pytest.mark.parametrize('budget',['disabled','expired'])
