@@ -654,7 +654,7 @@ def test_p3_requires_prepack_gate(tmp_path):
 def test_fresh_build_retains_pin_and_p3_switch():
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
     assert config['prefill']['fa3_v3_gate'] is True
-    assert config['decode_greedy_verify_gate'] is False
+    assert config['decode_greedy_verify_gate'] is True
     assert config['container_build_run_id']==41287043170  # provenance only; serving requires fresh build
 
 

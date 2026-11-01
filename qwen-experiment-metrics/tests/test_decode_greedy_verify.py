@@ -253,7 +253,7 @@ uv() {{ shift 5; {shlex.quote(sys.executable)} "$@"; }}
 
 def test_wiring_build_and_time_contract():
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
-    assert config['decode_greedy_verify_gate'] is False and config['prefill']['fa3_v3_gate'] is True
+    assert config['decode_greedy_verify_gate'] is True and config['prefill']['fa3_v3_gate'] is True
     assert 'patches/sglang/decode-greedy-verify.patch' in config['sglang_overlay_patches']
     shell=(ROOT/'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
     assert shell.index('# Decode greedy gate begin')>shell.index('prefill-fa3-prepack/selection.json')
