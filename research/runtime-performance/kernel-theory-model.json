@@ -1165,5 +1165,78 @@
       },
       "official_score": 10002.75
     }
+  },
+  "prefill_megamoe_sched_r20": {
+    "date": "2026-11-01",
+    "status": "L rejected in run 41317543745: slower on all 12 GPUs and all three routings (+38 to +166 us per layer), byte-equal; P not adopted because the round-20 gate reserved MegaMoE time ahead of P; served round-12 selection at 9959.45",
+    "note": "2026-11-01-prefill-megamoe-sched-r20.md",
+    "cpu_evidence": "megamoe-prefill-sched-r20-cpu-validation-20261101.json",
+    "shape": {
+      "ep": 1,
+      "tokens": 7988,
+      "hidden": 4096,
+      "intermediate": 1536,
+      "experts": 128,
+      "topk": 8,
+      "ctas": 132
+    },
+    "dtype": "FP8 products, original FP32 scale/accumulation, BF16 partial, original top-k combine",
+    "source": "isolated final PP4 header, expert-order 7/10 greedy FC1 M-block assignment",
+    "image_pin": "5a3df8c485a5ac939761b07a9ca82d7c38d864200250591ec6d9485dba778bb2; fresh build required",
+    "effective_flops_per_layer": 2412295225344,
+    "work_reduced": "no FLOP/byte reduction; balance FC1 per-CTA cost without full-first reorder; repeated warp-local GPU planning is timed",
+    "hbm_bytes": null,
+    "nvlink_bytes": null,
+    "gpu_bit_equal": null,
+    "kernel_us": null,
+    "official_score": null,
+    "prior_rejection": "half WG MMA savings already present; old split trace perturbs time by 4.5x; does not reopen tail-pair or scale dependency candidates",
+    "gate": "all12 UUIDs, all3 routings,8 rotated/reversed rounds,forward/reverse/pooled >=10us,control bit equality,600 calls with routing/input changes",
+    "time_seconds": {
+      "startup": 45,
+      "P": 36,
+      "MegaMoE_with_L": 40,
+      "endurance": 6,
+      "exit": 5,
+      "estimate": 132,
+      "run_deadline": 150,
+      "aggregate": 155,
+      "routing_pass": 15,
+      "allocation_bound": 998.187
+    },
+    "gpu_result": {
+      "run": 41317543745,
+      "slurm_job": 28126,
+      "L_minus_control_us": {
+        "balanced": [
+          102,
+          166
+        ],
+        "historical": [
+          78,
+          113
+        ],
+        "edges": [
+          38,
+          111
+        ]
+      },
+      "control_us": {
+        "balanced": [
+          2507,
+          2603
+        ],
+        "historical": [
+          2698,
+          2797
+        ],
+        "edges": [
+          2645,
+          2747
+        ]
+      },
+      "routing_capture": "incomplete, 15 s bound",
+      "official_score": 9959.45
+    }
   }
 }

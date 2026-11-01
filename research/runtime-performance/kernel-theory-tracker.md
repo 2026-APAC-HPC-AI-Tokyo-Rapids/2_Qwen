@@ -206,6 +206,8 @@ Round 18（41296967433）：split MegaMoE の in-job 診断（globaltimer の CT
 
 Round 19（41305946419、build なし）：診断の trace 読み出し位置を修正し、律速 worker prefill-2 の 4 GPU でデータを取得。計装は通常版の約 4.5 倍で細分値は使えないが、consumer 律速と合う。計装なしの完全 MegaMoE（T=7988）は balanced 2334〜2363、historical 2464〜2500（+5.5%）、edges 2509〜2546 µs（+7.5%）で、routing の偏りが 1 層約 130〜140 µs（24 層で約 3.1〜3.4 ms）を生む。10.2k に必要な量と同規模。P は 10002.75（P の構成は 5 run で 10002.75〜10020.58）（`2026-11-01-prefill-megamoe-diag-r19.md`）。
 
+Round 20（41317543745）：FC1 tile の負荷均衡な静的割り当て（候補 L、expert 順の貪欲分配、byte 一致）は、計装なしの完全 MegaMoE で 12 GPU 全て・3 routing 全てで遅く（+38〜+166 µs/層）棄却。割り当ての再計算と B 再利用の崩れが負荷均衡の利得を上回った。FC1 の静的割り当て順の方向は閉じる。gate 群の時間予約の欠陥で P は未採用、round 12 の選択で 9959.45（`2026-11-01-prefill-megamoe-sched-r20.md`）。
+
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。
@@ -459,3 +461,7 @@ Pを維持し、EP1/T7988/H4096/I1536/128 expert/top8、FP8積・FP32 scale/accu
 CUDA13.4/sm_90aで通常servingの157696-byte SASS encodingは前後一致。診断はR206→R221、spill 0/0→28/44 byte、QGMMA/DEPBAR本数は維持、C75xxなしだがschedule不変ではない。細分値の採否利用は保留し、同入力の完全kernel交互計時とbyte照合を12 GPUで行う。診断はP確定後、独立45秒と既存prepack 180秒envelopeの残りで制限し、採用envを変更しない。既存のLDSM、direct-FC2、scale移動の棄却を再開したものではない。
 
 GPU/image buildは未実施、configはfalse、image pin維持。[研究note](2026-11-01-prefill-megamoe-diag-r18.md)と[CPU証拠](megamoe-prefill-diag-r18-cpu-validation-20261101.json)を正本とする。未測定値を0にしない。
+
+## 2026-11-01 round 20：FC1割当L、routing別pass、計装なし12GPU計時
+
+LはCPU admission合格、GPU未検証・serving未採用。PP4/EP1 T7988/H4096/I1536/128 expert/top8、FP8積/元FP32 scale・accumulation/BF16 partial/top-k順を維持し、FC1の12 N tile組をexpert/M昇順、half/full=7/10の最小負荷群へGPU上で分配する。FC2 arrival待ちと遅延publishをsourceで確認し、full-first LPTを避ける。実行FLOP 2.412295225344 TFLOPは不変、HBM/NVLink byte・GPU時間は未確定。全計画費用を完全kernel内に含める。最大MMA担当量はhistorical/edges 50→49、balanced46–47で不変。CUDA13.4/sm_90aでcontrol157696-byte SASS一致、L spill0/0・C75xxなし。実CUDA13.0.88 builderでも検査必須。P全gate後の同一常駐processで3routingを8round回転/逆順、全12UUID・両順/pooled10us・bit一致・600回を要求し、不完全時はPを維持。公式後の15秒passでonepass top8をPP担当層2microbatch保存、通常窓にGPUcopy/histogram/sync/filesystem pollingなし。見積132秒、期限150/集約155秒、17分予算998.187秒。全新booleanと旧diagはfalse、image pinをmain5a3df8c4へ戻しfresh build必須。条件付き最大33–34us/層というMMA換算は予測ではなく、FC2吸収で0や悪化もあり得る。詳細と正本は2026-11-01-prefill-megamoe-sched-r20.mdおよびmegamoe-prefill-sched-r20-cpu-validation-20261101.json。
