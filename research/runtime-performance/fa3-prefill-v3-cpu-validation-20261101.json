@@ -1,10 +1,10 @@
 {
-  "schema": "fa3-prefill-v3-r17-cpu/v1",
+  "schema": "fa3-prefill-v3-r17-cpu/v2",
   "date": "2026-11-01",
   "base_commit": "78fb58e",
   "branch": "perf/pp4-r17-fa3v3-20261101",
-  "status": "rejected_CPU_admission",
-  "reason": "P3 spill stores/loads4/4 B exceed P0/0 B, including after shortening producer V-state liveness; no gate, config, dispatch, build or candidate-table changes retained",
+  "status": "CPU_structure_checked_GPU_gate_pending",
+  "reason": "Followup supersedes spill<=P admission: both 4-byte spill sites are on the per-M-tile producer Q path outside KV mainloop. Register P3 disabled and let the full P-relative GPU gate decide speed and output-byte equality.",
   "scope": "CUDA13.4.92 sm_90a CPU substitute evidence only; actual image CUDA13.0.88 unverified",
   "gpu_executed": false,
   "image_built": false,
@@ -14,8 +14,8 @@
     "base_P": 41184,
     "V3": 131072
   },
-  "table_id": null,
-  "registered": false,
+  "table_id": 17,
+  "registered": true,
   "source_pins": {
     "fa3": {
       "repository": "sgl-project/sgl-attn",
@@ -432,7 +432,7 @@
       "store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));"
     ],
     "P3_encoded_sha256": "81f2ab03423df4bb7c434df6faaefec657b1dd692e01cf0ea98ed8237fd03759",
-    "note": "Source arithmetic comparison is not a GPU output-byte test. Spills4/4 exceed P0/0: reject regardless of structural schedule."
+    "note": "Source arithmetic equality supports expected output equivalence; encoded consumer instructions differ in registers/scheduling, so GPU byte equality remains for gate validation. Spill4/4 is per-M-tile, not per-KV-step."
   },
   "rows": [
     {
@@ -867,9 +867,25 @@
       "static_instructions": 4480
     }
   ],
-  "production_changes": [],
+  "production_changes": [
+    "configs/firmus-prefill-pp4.json",
+    "kernels/fa3-verify/build.py",
+    "kernels/fa3-verify/prefill-candidates.json",
+    "patches/sglang/prefill-fa3-vsum.patch",
+    "platforms/firmus/framework-comparison/sglang.sbatch",
+    "qwen-experiment-metrics/tests/test_fa3_prefill_direct_o.py",
+    "qwen-experiment-metrics/tests/test_prefill_fa3_pair.py",
+    "qwen-experiment-metrics/tests/test_prefill_fa3_prepack.py",
+    "scripts/prepare-firmus-pp4-settings.py",
+    "scripts/provision-firmus-framework.sh",
+    "scripts/select-firmus-prefill-fa3-prepack.py",
+    "kernels/fa3-verify/prefill-v3.patch"
+  ],
   "validation": {
-    "full_suite": {
+    "temporary_fixture_alias": "AF_UNIX-only tmp_path alias /proc/self/cwd to same authorized r17 scratch; production and test sources unchanged",
+    "forbidden_operations_used": false,
+    "cleanup": "Removed followup extraction, loose source/object/helper files, patch application copy, full/Torch test directories, temporary AF_UNIX path plugin and task-owned worktree caches. Retained original CPU archive, followup proof archive and final test logs. No SSH, Actions, GPU or scheduler jobs were started; no task-owned scheduler job exists.",
+    "previous_full_suite": {
       "exit_code": 0,
       "passed": 1387,
       "skipped": 78,
@@ -880,9 +896,33 @@
       "log": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/full-tests.log",
       "log_sha256": "551d8f9e520a0b6b79ce62bd1a4ddc288e3a5f842c609b42549cad4b32790efb"
     },
-    "temporary_fixture_alias": "AF_UNIX-only tmp_path alias /proc/self/cwd to same authorized r17 scratch; production and test sources unchanged",
-    "forbidden_operations_used": false,
-    "cleanup": "Removed all task-owned source copies, original source archives, loose objects, generated TUs, diagnostic helpers, test directories, AF_UNIX alias plugin and worktree Python/pytest caches. Retained verified CPU proof archive, suite log, original exec.log and supplied round15 samples. No SSH, Actions, GPU, Slurm or PJM job was started; no task-owned scheduler job exists."
+    "full_suite": {
+      "exit_code": 0,
+      "passed": 1403,
+      "skipped": 90,
+      "collected_nodeids": 1493,
+      "count_basis": "all1493 collected node IDs equal1403 success and90 skip progress markers; double quiet suppresses summary and duration",
+      "seconds": null,
+      "command": "uv run --no-project --python 3.12 --with pytest --with pyyaml --with numpy --with rfc8785 --with-editable . python -m pytest -q -p socket_paths --basetemp=<authorized r17 scratch>/spill-followup/full-tmp tests",
+      "log": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/followup-full-tests.log",
+      "log_sha256": "1665d50d52f5f1833e09b90bfd9eb27e79ca95685084eb4ef7c84636d493fd0c"
+    },
+    "torch_contracts": {
+      "exit_code": 0,
+      "passed": 226,
+      "seconds": 9.03,
+      "torch": "2.11.0",
+      "gpu_executed": false,
+      "log": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/followup-torch-tests.log",
+      "log_sha256": "702aa4a14057b0588b879a6479dbe522ea9d6396674333b737e17b2b1791119d"
+    },
+    "production_patch_fuzz_zero_and_compiled_headers_equal": true,
+    "ruff": "all six changed Python files pass",
+    "shell_syntax": "sglang.sbatch and provision-firmus-framework.sh pass bash -n",
+    "diff_check": "pass",
+    "patch_proof": "zero-fuzz application produces the exact archived CPU-compiled P3 mainloop and kernel headers",
+    "timeout_fixtures": "worker and aggregate timeout retain previous env bytes and reach serving continuation",
+    "initial_related_test_failure": "P2 reference fixture retained bit65536 during initial wiring transplant; corrected to P3 bit131072, then all final Torch and full suites pass"
   },
   "raw_cpu_archive": {
     "path": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cpu-sass-proof.tar.gz",
@@ -891,42 +931,229 @@
     "entries": 59,
     "internal_manifest_verified": true
   },
-  "production_files_unchanged_from_base": {
-    "scripts/select-firmus-prefill-fa3-prepack.py": {
-      "base_byte_equal": true,
-      "sha256": "34bd6827b644f8408e146008781524a761e11d2f61de0adf7d8f40bafacae01f"
+  "previous_decision": {
+    "commit": "1af5e69",
+    "status": "rejected_CPU_admission",
+    "reason": "4/4 B spill vs P0/0 under the former rule; superseded after control-flow inspection per explicit followup"
+  },
+  "spill_followup": {
+    "schema": "fa3-r17-spill-followup/v1",
+    "basis": "saved CUDA13.4.92 sm_90a SASS; analytic dynamic count for fixed shape, not GPU instrumentation",
+    "spill_sites": [
+      {
+        "pc": "0xdf60",
+        "asm": "STL [R1], R0",
+        "bytes_per_lane": 4,
+        "predicate": null
+      },
+      {
+        "pc": "0xe2e0",
+        "asm": "LDL.LU R0, [R1]",
+        "bytes_per_lane": 4,
+        "predicate": null
+      }
+    ],
+    "location": "producer Q cp.async setup, once per valid M tile; outside the KV mainloop",
+    "producer_tile_loop": {
+      "header": "0xd290",
+      "back_edge": "0x10990 -> 0xd290"
     },
-    "configs/firmus-prefill-pp4.json": {
-      "base_byte_equal": true,
-      "sha256": "beda1f04b7a7103068560e8aa0e3804d2f2da62ed7f77a5c26a79a64535c6295"
+    "prologue": {
+      "V_bulk": "0xdd90",
+      "K_TMA": "0xdf00",
+      "Q_warpsync": "0xdf50",
+      "Q_copies_first_last": [
+        "0xe440",
+        "0xe960"
+      ],
+      "Q_completion_poll": "0xea00 -> 0xe9b0",
+      "Q_barrier_arrive": "0xea70"
     },
-    "kernels/fa3-verify/build.py": {
-      "base_byte_equal": true,
-      "sha256": "42b4709fae8eda1f8f165fea82118c9385c3de843a8ce9d32885b59358f9aac2"
+    "KV_loop": {
+      "entry": "0xeb30",
+      "first_unrolled_block": "0xeb60",
+      "two_step_loop_header": "0xf240",
+      "back_edge": "0xfef0 -> 0xf240",
+      "exit": "0xff20",
+      "all_local_back_edges_stay_after_spill": true,
+      "local_back_edges": [
+        {
+          "from": "0xefc0",
+          "to": "0xef40",
+          "asm": "@P1 BRA.U.ANY 0xef40"
+        },
+        {
+          "from": "0xf1a0",
+          "to": "0xf110",
+          "asm": "@P1 BRA.U.ANY 0xf110"
+        },
+        {
+          "from": "0xf660",
+          "to": "0xf5e0",
+          "asm": "@P1 BRA.U.ANY 0xf5e0"
+        },
+        {
+          "from": "0xf840",
+          "to": "0xf7b0",
+          "asm": "@P1 BRA.U.ANY 0xf7b0"
+        },
+        {
+          "from": "0xfca0",
+          "to": "0xfc20",
+          "asm": "@P1 BRA.U.ANY 0xfc20"
+        },
+        {
+          "from": "0xfe80",
+          "to": "0xfdf0",
+          "asm": "@P1 BRA.U.ANY 0xfdf0"
+        },
+        {
+          "from": "0xfef0",
+          "to": "0xf240",
+          "asm": "@P1 BRA 0xf240"
+        }
+      ]
     },
-    "kernels/fa3-verify/prefill-candidates.json": {
-      "base_byte_equal": true,
-      "sha256": "d2cb3c6de56eb3cc73310d32fee957e8f7a9c7f07e6cb83ac1e19aec0fde4701"
+    "counts_3994x2_M192_N96": {
+      "M_tiles_per_request_head": 333,
+      "M_tiles": 2664,
+      "producer_warps_per_tile": 4,
+      "producer_threads_per_tile": 128,
+      "STL_warp_executions": 10656,
+      "LDL_warp_executions": 10656,
+      "STL_lane_executions": 340992,
+      "LDL_lane_executions": 340992,
+      "local_store_bytes": 1363968,
+      "local_load_bytes": 1363968,
+      "total_logical_local_bytes": 2727936,
+      "KV_visits": 56784,
+      "KV_step_multiplier_applied": false,
+      "actual_HBM_bytes": null
     },
-    "patches/sglang/prefill-fa3-vsum.patch": {
-      "base_byte_equal": true,
-      "sha256": "f717b849b6a18a72383df3a22627252489d17799ed79450d27aaf838e50737fd"
+    "consumer_static_evidence": {
+      "source_arithmetic_lines_equal_after_V_index_rename": true,
+      "selected_math_instructions_P": 1814,
+      "selected_math_instructions_P3": 1814,
+      "opcode_multisets_equal": true,
+      "encoded_sequences_equal": false,
+      "assembly_sequences_equal": false,
+      "limitation": "Compiler register allocation and scheduling change. Counts/source equality support expected output equivalence but do not prove GPU byte equality."
     },
-    "platforms/firmus/framework-comparison/sglang.sbatch": {
-      "base_byte_equal": true,
-      "sha256": "dc2f2490f1862bfb996daf7cdf4505308b19f4c00ba1971e638d137a82212e36"
+    "decision": "Revise the prior spill<=P condition per the followup request: allow GPU gate evaluation; not a measured performance admission",
+    "GPU_output_bytes_equal_P": null
+  },
+  "production_patch_proof": {
+    "mainloop_fwd_sm90_tma_gmma_ws.hpp": {
+      "compiled_source_byte_equal": true,
+      "sha256": "f931303b3f6b2a9625d34ecd9119ec71c0707f0c2c0f9aa35c793eba7f84eb1f"
     },
-    "scripts/prepare-firmus-pp4-settings.py": {
-      "base_byte_equal": true,
-      "sha256": "848670e061304e73c66e6110835be7d05b0b3a0bcf7c4013b32672a243f0bcc6"
-    },
-    "qwen-experiment-metrics/tests/test_prefill_fa3_pair.py": {
-      "base_byte_equal": true,
-      "sha256": "c5686bf6e306eed0ad2ef6f2783e7ce635fceaf173a049b50aea9b726a4f3ed0"
-    },
-    "scripts/provision-firmus-framework.sh": {
-      "base_byte_equal": true,
-      "sha256": "d9ce985aa61624a2dd973fbb401dc1d542fea6a25fa64dcb0fd8fc570a1fd3dd"
+    "flash_fwd_kernel_sm90.h": {
+      "compiled_source_byte_equal": true,
+      "sha256": "1d80b2b474b65a4a2917c5e84f8b46a4aa0ee813c6a02b3dbd0650307fada496"
     }
+  },
+  "gate": {
+    "schema": "firmus-prefill-fa3-prepack/v3",
+    "boolean": "prefill.fa3_v3_gate",
+    "enabled_in_committed_config": false,
+    "candidates": [
+      "P",
+      "P3"
+    ],
+    "removed": [
+      "decomposition diagnostics",
+      "S",
+      "VS"
+    ],
+    "baselines": {
+      "P": "C",
+      "P3": "P"
+    },
+    "minimum_saving_us_all_shapes_orders_GPUs": 5,
+    "shapes": [
+      [
+        3994,
+        3994
+      ],
+      [
+        3986,
+        4027
+      ],
+      [
+        3986,
+        3986
+      ],
+      [
+        4027,
+        4027
+      ],
+      [
+        4096,
+        4096
+      ],
+      [
+        3900,
+        4096
+      ],
+      [
+        4096,
+        3901
+      ]
+    ],
+    "GPUs": 12,
+    "timing_orders": [
+      "forward",
+      "reverse",
+      "pooled"
+    ],
+    "rounds_per_order": 10,
+    "calls_per_sample": 12,
+    "P3_extra_check": "P attention FP8, FP32 scale and BF16 O output bytes on original and two changed-input graph replays",
+    "reference": "existing FP32 causal reference: all valid causal keys for sampled Q; relativeL2<=.05, maxScaled<=.25",
+    "singles": [
+      3994,
+      4096,
+      3584
+    ],
+    "endurance_calls": 1200,
+    "priority": [
+      "P3 after all P gates pass",
+      "P",
+      "preceding round12 selection"
+    ],
+    "identity": "UUID set, same allocation,12 distinct H200; worker/rank checked within each step without cross-step rank mapping",
+    "timeout": "worker wall150s from group start including startup;2s kill grace;aggregate publication by155s;timeout retains preceding env and continues serving",
+    "full_candidate_reservation_seconds": 45
+  },
+  "time_budget": {
+    "scope": "conditional allocation budget, not P3 H200 measurement",
+    "measured_prior_rank_seconds": [
+      33.7,
+      36.32
+    ],
+    "startup_allowance_seconds": 32.6,
+    "P_budget_seconds": 36.32,
+    "P3_extra_budget_seconds": 25,
+    "finish_seconds": 5,
+    "estimated_group_seconds": 98.92,
+    "rounded_group_seconds": 100,
+    "worker_timeout_seconds": 150,
+    "publication_deadline_seconds": 155,
+    "prior_job_seconds": 742,
+    "prior_READY_seconds": 449,
+    "old_gate_wall_lower_bound_seconds": 68.813,
+    "pair_allowance_seconds": 155,
+    "replacement_job_budget_seconds": 828.187,
+    "conservative_job_budget_seconds": 983.187,
+    "allocation_limit_seconds": 1020,
+    "remaining_seconds": 36.813,
+    "equation": "742 - 68.813 + 155 + 155 = 983.187; no subtraction for prior pair wall; build outside allocation"
+  },
+  "followup_proof_archive": {
+    "path": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/spill-followup-proof.tar.gz",
+    "bytes": 26196,
+    "entries": 11,
+    "sha256": "1fd581b5eaab5c70fcb436b4254f80b6fbd99c8f25449bd6317c73da88c7bf9a",
+    "internal_manifest_verified": true
   }
 }

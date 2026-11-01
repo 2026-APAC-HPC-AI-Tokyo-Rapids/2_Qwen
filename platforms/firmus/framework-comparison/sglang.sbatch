@@ -279,23 +279,23 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_pair_gate // false' "${ROOT
   uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3-pair.py" --aggregate "${ROOT}/results/prefill-fa3-pair" --output "${ROOT}/results/prefill-fa3-pair/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --run-id "${SLURM_JOB_ID}-${prefill_fa3_pair_started}" --deadline "${prefill_fa3_pair_deadline}" --workers-ok "${prefill_fa3_pair_ok}"
 fi
 
-# Default off. Prepack/sum group requires the pair gate's same-GPU success.
+# P is revalidated; optional P3 follows the full P gate on the same GPUs.
 if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_prepack_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
   mkdir -p "${ROOT}/results/prefill-fa3-prepack"
   prefill_fa3_prepack_started=$(date +%s)
-  prefill_fa3_prepack_deadline=$((prefill_fa3_prepack_started + 180))
+  prefill_fa3_prepack_deadline=$((prefill_fa3_prepack_started + 155))
   prefill_fa3_prepack_selections=()
   prefill_fa3_prepack_ok=0
   if [[ -s "${ROOT}/results/prefill-fa3-pair/selection.json" ]] && jq -e '.adopted == true' "${ROOT}/results/prefill-fa3-pair/selection.json" >/dev/null; then
     prefill_fa3_prepack_ok=1
-    # One shared wall budget: 175 s for srun including cold startup, 2 s kill grace, aggregate by start+180.
-    # Round 13 lower-bound gate walls: pair 57.084 s, vsum 62.017 s; not rank elapsed.
+    # Estimated group wall <=100 s: 150 s timeout, 2 s kill grace, aggregate by start+155.
+    # Round 14: rank gate about 36 s, job 742 s, READY 449 s. See round-17 note for replacement budget.
     for worker in 0 1 2; do
       node=${HEAD}
       if (( worker == 2 )); then node=${TAIL}; fi
-      prefill_fa3_prepack_remaining=$((prefill_fa3_prepack_started + 175 - $(date +%s)))
+      prefill_fa3_prepack_remaining=$((prefill_fa3_prepack_started + 150 - $(date +%s)))
       if (( prefill_fa3_prepack_remaining <= 0 )); then prefill_fa3_prepack_ok=0; break; fi
-      timeout --kill-after=2 "${prefill_fa3_prepack_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-fa3-prepack-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-fa3-prepack.py" --output "${ROOT}/results/prefill-fa3-prepack/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_fa3_prepack_started}" --deadline "$((prefill_fa3_prepack_started + 175))" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-fa3-prepack-${worker}.log" 2>&1 &
+      timeout --kill-after=2 "${prefill_fa3_prepack_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-fa3-prepack-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-fa3-prepack.py" --output "${ROOT}/results/prefill-fa3-prepack/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_fa3_prepack_started}" --deadline "$((prefill_fa3_prepack_started + 150))" --p3 "$(jq -r '.prefill.fa3_v3_gate // false' "${ROOT}/source/firmus-framework.json")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-fa3-prepack-${worker}.log" 2>&1 &
       prefill_fa3_prepack_selections+=("$!")
     done
     while (( ${#prefill_fa3_prepack_selections[@]} )); do
@@ -315,7 +315,7 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_prepack_gate // false' "${R
   # Bound aggregation too; an incomplete selection leaves the pair env untouched.
   prefill_fa3_prepack_remaining=$((prefill_fa3_prepack_deadline - $(date +%s)))
   if (( prefill_fa3_prepack_remaining > 0 )); then
-    timeout --signal=KILL "${prefill_fa3_prepack_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3-prepack.py" --aggregate "${ROOT}/results/prefill-fa3-prepack" --output "${ROOT}/results/prefill-fa3-prepack/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_fa3_prepack_started}" --deadline "${prefill_fa3_prepack_deadline}" --workers-ok "${prefill_fa3_prepack_ok}" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" || true
+    timeout --signal=KILL "${prefill_fa3_prepack_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3-prepack.py" --aggregate "${ROOT}/results/prefill-fa3-prepack" --output "${ROOT}/results/prefill-fa3-prepack/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_fa3_prepack_started}" --deadline "${prefill_fa3_prepack_deadline}" --workers-ok "${prefill_fa3_prepack_ok}" --p3 "$(jq -r '.prefill.fa3_v3_gate // false' "${ROOT}/source/firmus-framework.json")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" || true
   fi
 fi
 

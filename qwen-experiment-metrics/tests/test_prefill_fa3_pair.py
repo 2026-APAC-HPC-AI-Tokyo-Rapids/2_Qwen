@@ -227,6 +227,7 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
     config['prefill']['fa3_pair_gate'] = enabled
     config['prefill']['fa3_prepack_gate'] = enabled
+    config['prefill']['fa3_v3_gate'] = enabled
     for name in ('source', 'results'):
         (tmp_path / name).mkdir()
     runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))['prepare'](config, ROOT, tmp_path)
@@ -234,6 +235,7 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     assert GATE['KEY'] + '=' + GATE['CONTROL'] + '\n' in env
     record = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
     assert record['no_gpu_selection_rerun'] is not enabled
+    assert record['fa3_prepack_gate'] is enabled and record['fa3_v3_gate'] is enabled
 
 
 
