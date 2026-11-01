@@ -367,7 +367,7 @@ def require_time(deadline, seconds=0):
     assert time.time()+seconds<deadline, "insufficient time for complete candidate"
 
 
-def run(output, run_id, deadline, image_sha256):
+def run(output, run_id, deadline, image_sha256, p_only=False):
     begin=time.monotonic()
     rank=int(os.environ["LOCAL_RANK"])
     result={"schema":SCHEMA,"worker":output.name,"rank":rank,"run_id":run_id,"healthy":False,"candidates":{mode:{"passed":False} for mode in ("P","S")},"image_sha256":image_sha256}
@@ -397,11 +397,15 @@ def run(output, run_id, deadline, image_sha256):
                 cache[lengths]=(common,steps(torch,checks,common))
             return cache[lengths]
         common,state=inputs(SHAPES[0])
-        initial=validate(torch,checks,common,state,("S","V","VS","P"))
+        initial=validate(torch,checks,common,state,("P",) if p_only else ("S","V","VS","P"))
         result["diagnostic_numerics"]=initial
-        result["diagnostics"]=diagnostics(torch,checks,common,state)
-        first_samples=result["diagnostics"]["composite"]
-        for candidate in ("P","S"):
+        if p_only:
+            # Same complete P gate, without the retired factorial experiment.
+            first_samples=measure(torch,checks,{mode:state["composite"][mode] for mode in ("C","P")},state.setdefault("timing_graphs",{}))
+        else:
+            result["diagnostics"]=diagnostics(torch,checks,common,state)
+            first_samples=result["diagnostics"]["composite"]
+        for candidate in (("P",) if p_only else ("P","S")):
             record={"passed":False,"shapes":{},"singles":{}}
             result["candidates"][candidate]=record
             try:
@@ -409,7 +413,7 @@ def run(output, run_id, deadline, image_sha256):
                 record["shapes"]["3994+3994"]=first
                 assert "error" not in first, first.get("error")
                 assert all(v>=5 for v in timing_summary(first["samples_us"])["savings_us"].values()), "below 5 us margin on first shape"
-                require_time(deadline,CANDIDATE_SECONDS)
+                require_time(deadline,25 if p_only else CANDIDATE_SECONDS)
                 for lengths in SHAPES[1:]:
                     require_time(deadline)
                     common,state=inputs(lengths)

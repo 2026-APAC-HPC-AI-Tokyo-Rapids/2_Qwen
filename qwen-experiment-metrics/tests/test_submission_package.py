@@ -68,6 +68,12 @@ def test_worker_is_unchanged_except_dormant_nsight_block():
     capture = re.compile(r"runtime_dir=\$\(dirname \"\$\(dirname \"\$0\"\)\"\)\n# Keep inherited diagnostic variables.*?\nfi\n", re.DOTALL)
     expected, count = capture.subn("", expected)
     assert count == 1
+    # Round20's gated MegaMoE environment and separate PP4 routing pass are
+    # development-only; the frozen EP4 package retains its original worker.
+    expected = expected.replace("# L enters serving only through the selection env sourced below.\nunset DG_SM90_PREFILL_FC1_BALANCED\n", "")
+    pp4_capture = re.compile(r"# PP4 capture is activated by diagnostic request IDs only, after official drain.\nif .*?\nfi\n", re.DOTALL)
+    expected, count = pp4_capture.subn("", expected)
+    assert count == 1
     assert worker(BATCH.read_text()) == expected
 
 

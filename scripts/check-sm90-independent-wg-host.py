@@ -105,6 +105,9 @@ template<class... T> int launch_kernel(T...) { throw std::runtime_error("GPU lau
 std::string emitted_code;
 struct Compiler { int build(const char*, const std::string& code) { emitted_code=code; return 0; } };
 Compiler instance; Compiler* compiler=&instance;
+// CPU host selector stub; no compiler cache is created by this audit.
+struct IncludeParser { std::string get_hash_value(const std::string&) { return "mock-include-hash"; } };
+IncludeParser parser; IncludeParser* include_parser=&parser;
 template<class Args> void record(const Args& args);
 template<class Derived> struct LaunchRuntime {
     template<class Args> static std::string generate(const Args& args) { return Derived::generate_impl(args); }

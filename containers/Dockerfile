@@ -45,6 +45,10 @@ COPY firmus-prefill-pp4.json /opt/apac/firmus-prefill-pp4.json
 COPY containers/build-prefill-megamoe-diag.py /opt/apac/build-prefill-megamoe-diag.py
 RUN /opt/sglang/venv/bin/python /opt/apac/build-prefill-megamoe-diag.py --package /opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
 
+COPY deep-gemm-sched /opt/apac/deep-gemm-sched
+COPY containers/build-prefill-megamoe-sched.py /opt/apac/build-prefill-megamoe-sched.py
+RUN /opt/sglang/venv/bin/python /opt/apac/build-prefill-megamoe-sched.py --package /opt/sglang/venv/lib/python3.12/site-packages/deep_gemm
+
 COPY containers/dense-dg1 /opt/apac/dense-dg1
 RUN /opt/apac/dense-dg1/build.sh
 

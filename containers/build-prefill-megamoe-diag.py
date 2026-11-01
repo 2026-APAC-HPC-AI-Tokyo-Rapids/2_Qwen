@@ -17,9 +17,9 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def compile_one(nvcc, include, dependencies, directory, name, diagnostic):
+def compile_one(nvcc, include, dependencies, directory, name, diagnostic, suffix=None):
     source = directory / (name + '.cu')
-    suffix = '_diag' if diagnostic else ''
+    suffix = ('_diag' if diagnostic else '') if suffix is None else suffix
     source.write_text(f'#include <deep_gemm/impls/sm90_fp8_mega_moe{suffix}.cuh>\nextern "C" void* instantiate() {{ return reinterpret_cast<void*>(&deep_gemm::sm90_fp8_mega_moe{suffix}_impl<{TEMPLATE}>); }}\n')
     command = [str(nvcc), '--cubin', '--std=c++20', '--expt-relaxed-constexpr', '--expt-extended-lambda', '-O3', '--ptxas-options=-v,-warn-spills', '-gencode', 'arch=compute_90a,code=sm_90a', '-I'+str(include), '-I'+str(dependencies), str(source), '-o', str(source.with_suffix('.cubin'))]
     result = subprocess.run(command, text=True, capture_output=True, check=False)

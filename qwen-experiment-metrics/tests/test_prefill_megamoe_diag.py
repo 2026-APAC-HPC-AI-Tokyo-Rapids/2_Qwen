@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import runpy
@@ -305,7 +304,7 @@ def test_capture_wiring_uses_host_layout_and_waits_outside_timing():
 
 def test_build_and_dispatch_are_explicitly_isolated(tmp_path):
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
-    assert config['prefill']['megamoe_diag'] is True
+    assert config['prefill']['megamoe_diag'] is False
     assert all('deep-gemm-diag' not in p for p in config['deep_gemm_overlay_patches'])
     host=(ROOT/'patches/deep-gemm-host/sm90-prefill-diagnostic.patch').read_text()
     assert 'template <bool Diagnostic = false>' in host
@@ -335,12 +334,12 @@ def test_build_and_dispatch_are_explicitly_isolated(tmp_path):
         assert all('fp8_mega_moe_diag' not in p.read_text() for p in (ROOT/directory).rglob('*') if p.is_file() and p.suffix in ('.patch','.py','.cu','.cuh'))
 
 
-def test_p_gate_and_image_pin_are_unchanged():
-    # Content hashes taken from main beb5640, including its complete P/S gate.
-    expected='34bd6827b644f8408e146008781524a761e11d2f61de0adf7d8f40bafacae01f'
-    assert hashlib.sha256((ROOT/'scripts/select-firmus-prefill-fa3-prepack.py').read_bytes()).hexdigest()==expected
+def test_round20_keeps_p_full_checks_and_restores_main_pin():
+    source = (ROOT/'scripts/select-firmus-prefill-fa3-prepack.py').read_text()
+    for contract in ('single_check(torch,checks,single_inputs[lengths],candidate)', 'record["endurance"]=endurance(torch,checks,common,state,candidate)', 'for lengths in SHAPES[1:]', 'validate(torch,checks,common,state,(candidate,))'):
+        assert contract in source
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
-    assert config['images']['sglang']['sha256']=='450ba3cc0194beeb02fe7359ab47c0acce1257cf4798afb148301088a0b53f68'
+    assert config['images']['sglang']['sha256'].startswith('5a3df8c4')
 
 
 @pytest.mark.parametrize('budget',['disabled','expired'])

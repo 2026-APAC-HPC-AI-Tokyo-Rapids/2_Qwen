@@ -1,0 +1,147 @@
+--- a/python/sglang/srt/model_executor/model_runner.py
++++ b/python/sglang/srt/model_executor/model_runner.py
+@@ -1348,6 +1348,13 @@
+         forward_batch.apply_deprecated_skip_attn_backend_init(skip_attn_backend_init)
+
+         self.forward_pass_id += 1
++        from sglang.srt.layers.moe import prefill_routing_capture_pp4 as routing
++        capture_pp4_routing = (
++            routing.ENABLED and not self.is_draft_worker
++            and self.server_args.disaggregation_mode == "prefill"
++            and forward_batch.forward_mode.is_extend()
++            and routing.begin_forward(self, forward_batch, self.forward_pass_id)
++        )
+
+         capture_decode_routing = (
+             _DECODE_ROUTING_CAPTURE
+@@ -1439,6 +1446,8 @@
+         if self.server_args.elastic_ep_backend is not None:
+             self.maybe_join_ep_ranks()
+
++        if capture_pp4_routing:
++            routing.end_forward()
+         if capture_decode_routing:
+             _end_decode_routing()
+
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -485,6 +485,9 @@
+         )
+         if mode == "onepass":
+             onepass_moe_input(hidden_states, residual, norm.weight, norm.variance_epsilon, self.gate.weight, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights)
++            from sglang.srt.layers.moe import prefill_routing_capture_pp4 as routing
++            if routing.ACTIVE:
++                routing.record(self.layer_id, buf.topk_idx, num_tokens)
+             return run_sm90_mega_routed(self, hidden_states, None, None, buf, num_tokens)
+         post_norm_moe_input(hidden_states, residual, norm.weight, norm.variance_epsilon, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, pad_slots=mode != "decode-fused")
+         if mode == "fused-gate":
+--- /dev/null
++++ b/python/sglang/srt/layers/moe/prefill_routing_capture_pp4.py
+@@ -0,0 +1,107 @@
++"""Two separate-pass onepass top-8 samples per PP stage; no filesystem activation."""
++import json
++import logging
++import os
++from pathlib import Path
++
++import torch
++
++DIRECTORY = os.environ.get('SGLANG_PREFILL_ROUTING_DIR', '')
++ENABLED = bool(DIRECTORY)
++PREFIX = 'r20-routing-'
++_state = None
++ACTIVE = False
++
++
++class CaptureState:
++    def __init__(self, runner):
++        self.directory = Path(DIRECTORY)
++        self.worker = self.directory.name
++        self.rank = runner.ps.pp_rank
++        self.layers = list(range(runner.layer_info.start_layer, runner.layer_info.end_layer))
++        self.uuid = str(torch.cuda.get_device_properties(torch.cuda.current_device()).uuid)
++        self.samples = 0
++        self.failed = False
++        self.rows = {}
++        root = self.directory.parents[2]
++        config = json.loads((root/'source/firmus-framework.json').read_text())
++        provenance = json.loads((root/'source/provenance.json').read_text())
++        p = json.loads((root/'results/prefill-fa3-prepack/selection.json').read_text())
++        if not (p['adopted'] is True and p['selected'] == 'P'):
++            raise ValueError('routing capture requires P')
++        self.provenance = {'source_commit':provenance['commit'], 'image':config['images']['sglang'], 'P':p['selected'], 'serving_environment':(root/'source/prefill-kernels.env').read_text(), 'prefix_cache':'flushed after official requests drained; unique diagnostic input IDs', 'phase':'separate diagnostic pass after official measurement'}
++
++    def begin(self, batch, forward_id):
++        if self.failed or self.samples >= 2:
++            return False
++        lengths = batch.extend_seq_lens_cpu
++        prefixes = batch.extend_prefix_lens_cpu
++        if not lengths or len(lengths) != len(batch.rids) or len(prefixes) != len(lengths):
++            raise ValueError('missing request boundaries')
++        self.metadata = {**self.provenance, 'schema':'prefill-routing-pp4/v1', 'worker':self.worker, 'pp_rank':self.rank, 'gpu_uuid':self.uuid, 'global_layer_ids':self.layers, 'forward_id':forward_id, 'sample':self.samples, 'request_ids':list(batch.rids), 'request_lengths':list(lengths), 'request_prefix_lengths':list(prefixes), 'token_count':sum(lengths), 'experts':128, 'topk':8}
++        self.rows = {}
++        return True
++
++    def record(self, layer, ids, live_rows):
++        if layer not in self.layers or layer in self.rows or live_rows != self.metadata['token_count'] or ids.shape[1] != 8 or not 0 < live_rows <= 8192:
++            raise ValueError('layer/rows/shape mismatch')
++        # Same stream, before the symmetric buffer can be reused. No reductions,
++        # mutation of onepass data or changes to the routing/compute path.
++        self.rows[layer] = ids[:live_rows].detach().to(dtype=torch.int32, copy=True)
++
++    def end(self):
++        if sorted(self.rows) != self.layers:
++            raise ValueError('missing onepass layer')
++        import numpy as np
++        # All GPU computation in the forward has finished before D2H/file output.
++        ids = torch.stack([self.rows[layer] for layer in self.layers]).cpu().numpy()
++        if ids.min() < 0 or ids.max() >= 128:
++            raise ValueError('non-EP1 IDs')
++        self.directory.mkdir(parents=True, exist_ok=True)
++        with (self.directory/f'pp-{self.rank}-sample-{self.samples}.npz').open('xb') as stream:
++            np.savez_compressed(stream, ids=ids, metadata=json.dumps(self.metadata))
++        self.samples += 1
++        self.rows.clear()
++
++
++def failure():
++    global ACTIVE
++    ACTIVE = False
++    if _state is not None:
++        _state.failed = True
++        _state.rows.clear()
++    logging.getLogger(__name__).exception('Separate Prefill routing capture failed; official result is unchanged')
++
++
++def begin_forward(runner, batch, forward_id):
++    global _state, ACTIVE
++    ACTIVE = False
++    # Normal measurement reaches only these CPU predicates. No state allocation,
++    # CUDA work, synchronization, file access or polling occurs for ordinary IDs.
++    if not ENABLED or not batch.rids or not all(rid.startswith(PREFIX) for rid in batch.rids):
++        return False
++    try:
++        if _state is None:
++            _state = CaptureState(runner)
++        ACTIVE = _state.begin(batch, forward_id)
++    except Exception:  # noqa: BLE001 - diagnostics cannot invalidate the official pass
++        failure()
++    return ACTIVE
++
++
++def record(layer, ids, live_rows):
++    if ACTIVE:
++        try:
++            _state.record(layer, ids, live_rows)
++        except Exception:  # noqa: BLE001
++            failure()
++
++
++def end_forward():
++    global ACTIVE
++    if ACTIVE:
++        ACTIVE = False
++        try:
++            _state.end()
++        except Exception:  # noqa: BLE001
++            failure()

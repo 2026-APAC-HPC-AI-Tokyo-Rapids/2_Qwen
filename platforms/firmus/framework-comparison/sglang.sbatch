@@ -128,6 +128,8 @@ tp=$4
 export SGLANG_HOST_IP=$5
 shift 5
 role=${name%%-*}
+# L enters serving only through the selection env sourced below.
+unset DG_SM90_PREFILL_FC1_BALANCED
 runtime_dir=$(dirname "$(dirname "$0")")
 # The Decode peer also needs explicit global target/draft KV region IDs.
 if /opt/sglang/venv/bin/python -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("prefill", {}).get("pp", 1) != 4)' "${runtime_dir}/source/firmus-framework.json"; then
@@ -152,6 +154,10 @@ routing_capture_samples=$(/opt/sglang/venv/bin/python -c 'import json,sys; print
 if [[ "$role" == prefill ]] && (( routing_capture_samples > 0 )); then
   export SGLANG_PREFILL_ROUTING_DIR="${runtime_dir}/results/prefill-routing/${name}" SGLANG_PREFILL_ROUTING_SAMPLES="${routing_capture_samples}"
   mkdir -p "${SGLANG_PREFILL_ROUTING_DIR}"
+fi
+# PP4 capture is activated by diagnostic request IDs only, after official drain.
+if [[ "$role" == prefill ]] && /opt/sglang/venv/bin/python -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("prefill", {}).get("routing_capture", False) is not True)' "${runtime_dir}/source/firmus-framework.json"; then
+  export SGLANG_PREFILL_ROUTING_DIR="${runtime_dir}/results/prefill-routing-capture/${name}"
 fi
 # Prefill: a 3994-token prompt must not straddle two 4096-token batches (prefill-request-aligned-chunks.patch; images without it ignore this).
 # Tier 2 switches: equal-load DP ties rotate (dp-total-requests-rotate-ties.patch);
@@ -279,8 +285,38 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_pair_gate // false' "${ROOT
   uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3-pair.py" --aggregate "${ROOT}/results/prefill-fa3-pair" --output "${ROOT}/results/prefill-fa3-pair/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --run-id "${SLURM_JOB_ID}-${prefill_fa3_pair_started}" --deadline "${prefill_fa3_pair_deadline}" --workers-ok "${prefill_fa3_pair_ok}"
 fi
 
+# Reserve the complete P + uninstrumented MegaMoE pass before launching workers.
+prefill_combined=false
+if [[ "${prefill_pp}" == 4 ]] && jq -e '.prefill.megamoe_timing == true or .prefill.megamoe_fc1_balance_gate == true' "${ROOT}/source/firmus-framework.json" >/dev/null; then
+  prefill_combined=true
+  mkdir -p "${ROOT}/results/prefill-fa3-prepack" "${ROOT}/results/prefill-megamoe-timing"
+  prefill_fa3_prepack_started=$(date +%s)
+  prefill_fa3_prepack_deadline=$((prefill_fa3_prepack_started + 155))
+  prefill_fa3_prepack_selections=()
+  if [[ -s "${ROOT}/results/prefill-fa3-pair/selection.json" ]] && jq -e '.adopted == true' "${ROOT}/results/prefill-fa3-pair/selection.json" >/dev/null; then
+    for worker in 0 1 2; do
+      node=${HEAD}
+      if (( worker == 2 )); then node=${TAIL}; fi
+      prefill_fa3_prepack_remaining=$((prefill_fa3_prepack_started + 150 - $(date +%s)))
+      if (( prefill_fa3_prepack_remaining <= 0 )); then break; fi
+      timeout --kill-after=2 "${prefill_fa3_prepack_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-fa3-prepack-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/run-prefill-p-gates.py" --root "${ROOT}" --worker "prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_fa3_prepack_started}" --deadline "$((prefill_fa3_prepack_started + 150))" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-fa3-prepack-${worker}.log" 2>&1 &
+      prefill_fa3_prepack_selections+=("$!")
+    done
+    # A late MegaMoE failure never kills another worker or invalidates a saved P fragment.
+    for pid in "${prefill_fa3_prepack_selections[@]}"; do wait "${pid}" || true; done
+  fi
+  prefill_fa3_prepack_remaining=$((prefill_fa3_prepack_deadline - $(date +%s)))
+  if (( prefill_fa3_prepack_remaining > 0 )); then
+    timeout --signal=KILL "${prefill_fa3_prepack_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3-prepack.py" --aggregate "${ROOT}/results/prefill-fa3-prepack" --output "${ROOT}/results/prefill-fa3-prepack/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_fa3_prepack_started}" --deadline "${prefill_fa3_prepack_deadline}" --workers-ok 1 --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" || true
+  fi
+  prefill_fa3_prepack_remaining=$((prefill_fa3_prepack_deadline - $(date +%s)))
+  if (( prefill_fa3_prepack_remaining > 0 )); then
+    timeout --signal=KILL "${prefill_fa3_prepack_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/run-prefill-megamoe-timing.py" --directory "${ROOT}/results/prefill-megamoe-timing" --p-selection "${ROOT}/results/prefill-fa3-prepack/selection.json" --output "${ROOT}/results/prefill-megamoe-timing/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --run-id "${SLURM_JOB_ID}-${prefill_fa3_prepack_started}" --deadline "${prefill_fa3_prepack_deadline}" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" --candidate "$(jq -r 'if .prefill.megamoe_fc1_balance_gate then 1 else 0 end' "${ROOT}/source/firmus-framework.json")" || true
+  fi
+fi
+
 # Default off. Prepack/sum group requires the pair gate's same-GPU success.
-if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_prepack_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
+if [[ "${prefill_combined:-false}" != true && "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_prepack_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
   mkdir -p "${ROOT}/results/prefill-fa3-prepack"
   prefill_fa3_prepack_started=$(date +%s)
   prefill_fa3_prepack_deadline=$((prefill_fa3_prepack_started + 180))
@@ -395,6 +431,13 @@ if (( benchmark_status == 0 )); then
   while IFS=$'\t' read -r worker host port _; do curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"; done <"${ROOT}/source/worker-endpoints.tsv"
   uv run --no-project --python 3.12 python "${ROOT}/scripts/collect-eagle-acceptance.py" --cluster firmus --config "${ROOT}/source/firmus-framework.json" --endpoints "${ROOT}/source/worker-endpoints.tsv" --server-info-dir "${ROOT}/results" --log-dir "${ROOT}/logs" --output "${ROOT}/results/eagle-acceptance.json"
 fi
+fi
+# Separate routing pass: the complete controller, drain and copies fit in 15 s.
+# Failure/timeout never changes benchmark_status, score.json or the P selection.
+if [[ "${profile_only}" != true ]] && jq -e '.prefill.routing_capture == true' "${ROOT}/source/firmus-framework.json" >/dev/null; then
+  mkdir -p "${ROOT}/results/prefill-routing-capture"
+  printf '{"complete":false,"reason":"pass did not finish within 15 seconds"}\n' >"${ROOT}/results/prefill-routing-capture/status.json"
+  timeout --signal=KILL 15 srun --overlap --exact -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts routing-capture-pp4)" /opt/sglang/venv/bin/python "${ROOT}/scripts/capture-prefill-routing-pp4.py" "${ROOT}" --deadline "$(( $(date +%s) + 14 ))" >"${ART}/prefill-routing-capture.log" 2>&1 || true
 fi
 if [[ "${PROFILE}" == true ]]; then
   # A completed but SLA-ineligible ordinary run still needs the requested trace.

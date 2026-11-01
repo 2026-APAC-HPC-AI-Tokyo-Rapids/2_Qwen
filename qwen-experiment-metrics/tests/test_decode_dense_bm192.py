@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_host_series_keeps_bm192_override_before_diagnostic_and_pinned_config_patch():
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
-    assert series[-2:] == ["sm90-1d2d-decode-bm192.patch", "sm90-prefill-diagnostic.patch"]
+    assert series[-3:] == ["sm90-1d2d-decode-bm192.patch", "sm90-prefill-diagnostic.patch", "sm90-prefill-fc1-balanced.patch"]
     assert series.index("sm90-1d2d-decode-config.patch") < series.index("sm90-1d2d-decode-bm192.patch")
     patch = (ROOT / "patches/deep-gemm-host/sm90-1d2d-decode-bm192.patch").read_text()
     # Only "QKV>128"/"O>128" entries may use BLOCK_M 192, only above 128 rows, with three math warpgroups.

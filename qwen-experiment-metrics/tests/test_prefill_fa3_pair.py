@@ -169,7 +169,7 @@ def test_wiring_and_native_build_inputs():
     assert 'COPY containers/fa3-verify /opt/apac/fa3-verify' in (ROOT / 'containers/Dockerfile').read_text()
     assert 'cp -a "${GITHUB_WORKSPACE}" "${input_root}/qwen"' in (ROOT / '.github/workflows/aws-container.yml').read_text()
     assert config['images']['sglang']['sha256'] == config['container_sha256']
-    assert config['container_sha256'].startswith('450ba3cc')
+    assert config['container_sha256'].startswith('5a3df8c4')
 
 
 def test_timed_out_workers_continue_to_control_serving(tmp_path):
@@ -222,26 +222,29 @@ def test_attention_calls_the_selected_native_row_without_reading_cu(dispatch, mo
     assert calls == [wanted]
 
 
-@pytest.mark.parametrize('pair', [False, True])
-@pytest.mark.parametrize('prepack', [False, True])
-@pytest.mark.parametrize('diagnostic', [False, True])
-def test_prepare_keeps_control_and_records_optional_gate(tmp_path, pair, prepack, diagnostic):
+@pytest.mark.parametrize('mask', range(64))
+def test_prepare_keeps_control_and_records_optional_gate(tmp_path, mask):
     config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
-    # Override every selection boolean, including default-true gates, in all
-    # eight combinations. The diagnostic flag itself never selects a GPU pin.
-    assert {key for key in config['prefill'] if key.endswith('_gate')} == {'fa3_pair_gate', 'fa3_prepack_gate'}
-    config['prefill']['fa3_pair_gate'] = pair
-    config['prefill']['fa3_prepack_gate'] = prepack
-    config['prefill']['megamoe_diag'] = diagnostic
+    names = ('fa3_pair_gate', 'fa3_prepack_gate', 'megamoe_fc1_balance_gate', 'megamoe_timing', 'routing_capture', 'megamoe_diag')
+    # All configuration booleans that can reselect GPUs, plus independent
+    # diagnostic switches. No default-true gate is accidentally left enabled.
+    config['prefill'].update({name: bool(mask & (1 << i)) for i,name in enumerate(names)})
+    assert {key for key in config['prefill'] if key.endswith('_gate')} == {'fa3_pair_gate','fa3_prepack_gate','megamoe_fc1_balance_gate'}
     for name in ('source', 'results'):
         (tmp_path / name).mkdir()
-    runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))['prepare'](config, ROOT, tmp_path)
+    prepare = runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))['prepare']
+    if (config['prefill']['megamoe_fc1_balance_gate'] or config['prefill']['megamoe_timing']) and not (config['prefill']['fa3_pair_gate'] and config['prefill']['fa3_prepack_gate']):
+        with pytest.raises(ValueError, match='complete pair and P'):
+            prepare(config,ROOT,tmp_path)
+        return
+    prepare(config, ROOT, tmp_path)
     env = (tmp_path / 'source/prefill-kernels.env').read_text()
     assert GATE['KEY'] + '=' + GATE['CONTROL'] + '\n' in env
+    assert 'DG_SM90_PREFILL_FC1_BALANCED' not in env
     record = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
-    assert record['no_gpu_selection_rerun'] is (not pair and not prepack)
-    assert record['fa3_prepack_gate'] is prepack
-    assert record['megamoe_diag'] is diagnostic
+    assert record['no_gpu_selection_rerun'] is (not any(config['prefill'][key] for key in ('fa3_pair_gate','fa3_prepack_gate','megamoe_fc1_balance_gate','megamoe_timing')))
+    for key in names:
+        assert record[key] is config['prefill'][key]
 
 
 

@@ -1,0 +1,19 @@
+--- a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+@@ -340,6 +340,16 @@
+         code.replace(code.find(header), header.size(), "sm90_fp8_mega_moe_diag.cuh");
+         code.replace(code.find(symbol), symbol.size(), "sm90_fp8_mega_moe_diag_impl");
+     }
++    // The twelve-GPU gate alone publishes this switch. Other shapes keep control.
++    if constexpr (not Diagnostic) {
++        if (get_env<int>("DG_SM90_PREFILL_FC1_BALANCED", 0) and num_tokens == 7988 and prefill_split_accum and num_ranks == 1) {
++            const std::string header = "sm90_fp8_mega_moe.cuh", symbol = "sm90_fp8_mega_moe_impl";
++            code.replace(code.find(header), header.size(), "sm90_fp8_mega_moe_sched.cuh");
++            code.replace(code.find(symbol), symbol.size(), "sm90_fp8_mega_moe_sched_impl");
++            // generate() hashed the ordinary include. Hash L after substitution too.
++            code += "\n// FC1 schedule include: " + include_parser->get_hash_value(code);
++        }
++    }
+     const auto runtime = compiler->build("sm90_fp8_mega_moe", code);
+     SM90FP8MegaMoERuntime::launch(runtime, args);
+ }

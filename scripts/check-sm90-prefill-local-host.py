@@ -44,7 +44,17 @@ int main() {
     DG_HOST_ASSERT(emitted_code.find("sm90_fp8_mega_moe_diag.cuh") != std::string::npos);
     DG_HOST_ASSERT(emitted_code.find("sm90_fp8_mega_moe_diag_impl<") != std::string::npos);
     call.operator()<false>(); DG_HOST_ASSERT(emitted_code == control);
+    setenv("DG_SM90_PREFILL_FC1_BALANCED","1",1);
+    call.operator()<false>();
+    DG_HOST_ASSERT(emitted_code.find("sm90_fp8_mega_moe_sched_impl<") != std::string::npos);
+    call.operator()<true>();
+    DG_HOST_ASSERT(emitted_code.find("sm90_fp8_mega_moe_diag_impl<") != std::string::npos);
+    unsetenv("DG_SM90_PREFILL_FC1_BALANCED");
+    call.operator()<false>(); DG_HOST_ASSERT(emitted_code == control);
+    setenv("DG_SM90_PREFILL_FC1_BALANCED","1",1);
     y.rows=3994;
+    call.operator()<false>(); DG_HOST_ASSERT(emitted_code.find("_sched") == std::string::npos);
+    unsetenv("DG_SM90_PREFILL_FC1_BALANCED");
     bool rejected=false;
     try { call.operator()<true>(); } catch(const std::runtime_error&) { rejected=true; }
     DG_HOST_ASSERT(rejected);

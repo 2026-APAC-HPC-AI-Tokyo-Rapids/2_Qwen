@@ -1165,5 +1165,44 @@
       },
       "official_score": 10002.75
     }
+  },
+  "prefill_megamoe_sched_r20": {
+    "date": "2026-11-01",
+    "status": "CPU admission passed; default off; GPU validation pending",
+    "note": "2026-11-01-prefill-megamoe-sched-r20.md",
+    "cpu_evidence": "megamoe-prefill-sched-r20-cpu-validation-20261101.json",
+    "shape": {
+      "ep": 1,
+      "tokens": 7988,
+      "hidden": 4096,
+      "intermediate": 1536,
+      "experts": 128,
+      "topk": 8,
+      "ctas": 132
+    },
+    "dtype": "FP8 products, original FP32 scale/accumulation, BF16 partial, original top-k combine",
+    "source": "isolated final PP4 header, expert-order 7/10 greedy FC1 M-block assignment",
+    "image_pin": "5a3df8c485a5ac939761b07a9ca82d7c38d864200250591ec6d9485dba778bb2; fresh build required",
+    "effective_flops_per_layer": 2412295225344,
+    "work_reduced": "no FLOP/byte reduction; balance FC1 per-CTA cost without full-first reorder; repeated warp-local GPU planning is timed",
+    "hbm_bytes": null,
+    "nvlink_bytes": null,
+    "gpu_bit_equal": null,
+    "kernel_us": null,
+    "official_score": null,
+    "prior_rejection": "half WG MMA savings already present; old split trace perturbs time by 4.5x; does not reopen tail-pair or scale dependency candidates",
+    "gate": "all12 UUIDs, all3 routings,8 rotated/reversed rounds,forward/reverse/pooled >=10us,control bit equality,600 calls with routing/input changes",
+    "time_seconds": {
+      "startup": 45,
+      "P": 36,
+      "MegaMoE_with_L": 40,
+      "endurance": 6,
+      "exit": 5,
+      "estimate": 132,
+      "run_deadline": 150,
+      "aggregate": 155,
+      "routing_pass": 15,
+      "allocation_bound": 998.187
+    }
   }
 }

@@ -1,0 +1,41 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -138,14 +138,22 @@
+     scheduler.fetch_expert_recv_count();
+     scheduler.set_expert_idx(0);
+
+-    while (scheduler.fetch_next_l1_block()) {
+-        const uint32_t n_block_idx = scheduler.block_idx - scheduler.m_block_idx * kNumL1BlockNs;
+-        scheduler.block_idx += kNumSMs;
+-        if constexpr (kTailPair) {
+-            if ((n_block_idx & 1u) and sm90_fp8_mega_moe_tail_pair<kPairRows>(scheduler.template get_valid_m<false>()))
+-                continue;
++    static_assert(kNumSMs == 132 && kNumL1BlockNs == 12 && !kTailPair);
++    // Expert/M order is common to every role; 12 adjacent CTAs own the N tiles.
++    // Each warp keeps the eleven bin loads distributed across its lanes.
++    uint32_t load = 0;
++    const uint32_t lane = ptx::get_lane_idx();
++    for (uint32_t expert = 0; expert < 128; ++expert) {
++        const uint32_t blocks = scheduler.get_current_num_m_blocks();
++        for (uint32_t m = 0; m < blocks; ++m) {
++            const uint32_t winner = __reduce_min_sync(0xffffffffu, lane < 11 ? load * 16 + lane : 0xffffffffu) & 15u;
++            scheduler.m_block_idx = m;
++            const uint32_t cost = scheduler.template get_valid_m<false>() <= 64 ? 7 : 10;
++            if (lane == winner) load += cost;
++            if (winner == blockIdx.x / 12)
++                l1_func(expert, kNumL1BlockKs, m, blockIdx.x % 12);
+         }
+-        l1_func(scheduler.current_local_expert_idx, kNumL1BlockKs, scheduler.m_block_idx, n_block_idx);
++        if (expert + 1 < 128) scheduler.advance_expert_idx();
+     }
+
+     scheduler.set_expert_idx(0);
+@@ -241,7 +249,7 @@
+     uint32_t kNumExpertsPerRank = kNumExperts / kNumRanks
+ >
+ CUTLASS_GLOBAL __launch_bounds__(kNumThreads, 1) void
+-sm90_fp8_mega_moe_impl(void* y,
++sm90_fp8_mega_moe_sched_impl(void* y,
+                        int* cumulative_local_expert_recv_stats,
+                        const uint32_t num_tokens,
+                        const __grid_constant__ layout::SymBuffer<kNumRanks> sym_buffer,

@@ -30,6 +30,10 @@ if (( routing_capture_samples > 0 )); then
   test -s "${GITHUB_WORKSPACE}/patches/sglang/prefill-routing-capture.patch"
   test -s "${GITHUB_WORKSPACE}/scripts/summarize-prefill-routing.py"
 fi
+jq -e '(.prefill // {}) as $p | all(["megamoe_fc1_balance_gate", "megamoe_timing", "routing_capture"][]; . as $key | ($p[$key] // false) | type == "boolean")' "${config}" >/dev/null
+if jq -e '.prefill.megamoe_timing == true or .prefill.megamoe_fc1_balance_gate == true or .prefill.routing_capture == true' "${config}" >/dev/null; then
+  jq -e '.prefill.pp == 4 and .prefill.ep == 1 and .prefill.tp == 1 and .prefill.dp == 1 and .prefill.fa3_pair_gate == true and .prefill.fa3_prepack_gate == true and (.prefill.routing_capture_samples // 0) == 0' "${config}" >/dev/null
+fi
 install -d -m 2775 "${RUNTIME_ROOT}"
 runtime_dir="$(mktemp -d "${RUNTIME_ROOT}/pd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
 # This process owns only the mktemp directory above. A failed or interrupted
@@ -152,6 +156,8 @@ install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-pp4-copy-engine.py" "$
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/run-prefill-megamoe-diag.py" "${GITHUB_WORKSPACE}/scripts/summarize-prefill-megamoe-diag.py" "${runtime_dir}/scripts/"
 cp "${runtime_dir}/scripts/run-prefill-megamoe-diag.py" "${runtime_dir}/scripts/summarize-prefill-megamoe-diag.py" "${runtime_dir}/source/"
 install -m 0644 "${GITHUB_WORKSPACE}/kernels/probes/megamoe-local-ep1-routing.npz" "${runtime_dir}/source/"
+install -m 0644 "${GITHUB_WORKSPACE}/scripts/run-prefill-p-gates.py" "${GITHUB_WORKSPACE}/scripts/run-prefill-megamoe-timing.py" "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-megamoe.py" "${GITHUB_WORKSPACE}/scripts/capture-prefill-routing-pp4.py" "${runtime_dir}/scripts/"
+cp "${runtime_dir}/scripts/run-prefill-p-gates.py" "${runtime_dir}/scripts/run-prefill-megamoe-timing.py" "${runtime_dir}/scripts/select-firmus-prefill-megamoe.py" "${runtime_dir}/scripts/capture-prefill-routing-pp4.py" "${runtime_dir}/source/"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-fa3-prepack.py" "${runtime_dir}/scripts/"
 cp "${runtime_dir}/scripts/select-firmus-prefill-fa3-prepack.py" "${runtime_dir}/source/"
 

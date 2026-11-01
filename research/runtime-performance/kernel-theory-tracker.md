@@ -459,3 +459,7 @@ Pを維持し、EP1/T7988/H4096/I1536/128 expert/top8、FP8積・FP32 scale/accu
 CUDA13.4/sm_90aで通常servingの157696-byte SASS encodingは前後一致。診断はR206→R221、spill 0/0→28/44 byte、QGMMA/DEPBAR本数は維持、C75xxなしだがschedule不変ではない。細分値の採否利用は保留し、同入力の完全kernel交互計時とbyte照合を12 GPUで行う。診断はP確定後、独立45秒と既存prepack 180秒envelopeの残りで制限し、採用envを変更しない。既存のLDSM、direct-FC2、scale移動の棄却を再開したものではない。
 
 GPU/image buildは未実施、configはfalse、image pin維持。[研究note](2026-11-01-prefill-megamoe-diag-r18.md)と[CPU証拠](megamoe-prefill-diag-r18-cpu-validation-20261101.json)を正本とする。未測定値を0にしない。
+
+## 2026-11-01 round 20：FC1割当L、routing別pass、計装なし12GPU計時
+
+LはCPU admission合格、GPU未検証・serving未採用。PP4/EP1 T7988/H4096/I1536/128 expert/top8、FP8積/元FP32 scale・accumulation/BF16 partial/top-k順を維持し、FC1の12 N tile組をexpert/M昇順、half/full=7/10の最小負荷群へGPU上で分配する。FC2 arrival待ちと遅延publishをsourceで確認し、full-first LPTを避ける。実行FLOP 2.412295225344 TFLOPは不変、HBM/NVLink byte・GPU時間は未確定。全計画費用を完全kernel内に含める。最大MMA担当量はhistorical/edges 50→49、balanced46–47で不変。CUDA13.4/sm_90aでcontrol157696-byte SASS一致、L spill0/0・C75xxなし。実CUDA13.0.88 builderでも検査必須。P全gate後の同一常駐processで3routingを8round回転/逆順、全12UUID・両順/pooled10us・bit一致・600回を要求し、不完全時はPを維持。公式後の15秒passでonepass top8をPP担当層2microbatch保存、通常窓にGPUcopy/histogram/sync/filesystem pollingなし。見積132秒、期限150/集約155秒、17分予算998.187秒。全新booleanと旧diagはfalse、image pinをmain5a3df8c4へ戻しfresh build必須。条件付き最大33–34us/層というMMA換算は予測ではなく、FC2吸収で0や悪化もあり得る。詳細と正本は2026-11-01-prefill-megamoe-sched-r20.mdおよびmegamoe-prefill-sched-r20-cpu-validation-20261101.json。
