@@ -319,6 +319,36 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_prepack_gate // false' "${R
   fi
 fi
 
+# Independent diagnostic-only step. P's complete gates and env above stay untouched.
+# 45 s including srun startup, 2 s kill grace, 3 s summary. Also share the
+# existing prepack start+180 envelope, AFTER P has already published its env.
+if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.megamoe_diag // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
+  mkdir -p "${ROOT}/results/prefill-megamoe-diag"
+  megamoe_diag_started=$(date +%s)
+  if [[ -n "${prefill_fa3_prepack_deadline:-}" ]]; then
+    megamoe_diag_pids=()
+    for worker in 0 1 2; do
+      node=${HEAD}
+      if (( worker == 2 )); then node=${TAIL}; fi
+      megamoe_diag_remaining=$((megamoe_diag_started + 45 - $(date +%s)))
+      if (( prefill_fa3_prepack_deadline - $(date +%s) - 5 < megamoe_diag_remaining )); then megamoe_diag_remaining=$((prefill_fa3_prepack_deadline - $(date +%s) - 5)); fi
+      if (( megamoe_diag_remaining <= 0 )); then break; fi
+      timeout --kill-after=2 "${megamoe_diag_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-megamoe-diag-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/run-prefill-megamoe-diag.py" --output "${ROOT}/results/prefill-megamoe-diag/prefill-${worker}" --fixture "${ROOT}/source/megamoe-local-ep1-routing.npz" --run-id "${SLURM_JOB_ID}-${megamoe_diag_started}" >"${ART}/prefill-megamoe-diag-${worker}.log" 2>&1 &
+      megamoe_diag_pids+=("$!")
+    done
+    for pid in "${megamoe_diag_pids[@]}"; do wait "${pid}" || true; done
+    megamoe_diag_remaining=$((prefill_fa3_prepack_deadline - $(date +%s)))
+    if (( megamoe_diag_remaining > 3 )); then megamoe_diag_remaining=3; fi
+    if (( megamoe_diag_remaining > 0 )); then
+      timeout --signal=KILL "${megamoe_diag_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/summarize-prefill-megamoe-diag.py" --directory "${ROOT}/results/prefill-megamoe-diag" --output "${ROOT}/results/prefill-megamoe-diag/summary.json" --run-id "${SLURM_JOB_ID}-${megamoe_diag_started}" >"${ART}/prefill-megamoe-diag-summary.log" 2>&1 || true
+    else
+      printf '{"complete":false,"reason":"shared prepack wall exhausted","adoption":null}\n' >"${ROOT}/results/prefill-megamoe-diag/status.json"
+    fi
+  else
+    printf '{"complete":false,"reason":"prepack gate disabled","adoption":null}\n' >"${ROOT}/results/prefill-megamoe-diag/status.json"
+  fi
+fi
+
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9001 >"${ART}/prefill-1.log" 2>&1 &

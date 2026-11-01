@@ -126,6 +126,12 @@ git clone --depth=1 --branch v0.1.5 --recurse-submodules --shallow-submodules ht
 rm -rf -- "${context}/sglang-source/.git"
 printf '%s\n' "${sglang_commit}" >"${context}/sglang-commit.txt"
 
+# The private diagnostic header is built from the complete PP4 overlay chain.
+cp -r "${GITHUB_WORKSPACE}/patches/deep-gemm-diag" "${context}/deep-gemm-diag"
+cp "${GITHUB_WORKSPACE}/containers/build-prefill-megamoe-diag.py" "${context}/containers/"
+cp "${GITHUB_WORKSPACE}/configs/firmus-prefill-pp4.json" "${context}/firmus-prefill-pp4.json"
+while read -r patch; do install -D -m 0644 "${GITHUB_WORKSPACE}/${patch}" "${context}/${patch#patches/}"; done < <(jq -r '.deep_gemm_overlay_patches[]' "${GITHUB_WORKSPACE}/configs/firmus-prefill-pp4.json")
+
 base_reference="$(sed -n 's/^FROM //p' "${GITHUB_WORKSPACE}/containers/Dockerfile")"
 base_manifest_sha256="$(skopeo inspect --raw "docker://${base_reference}" | tee "${BUILD_DIR}/logs/base-oci-manifest.json" | sha256sum | awk '{print $1}')"
 qwen_object_format="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-object-format)"

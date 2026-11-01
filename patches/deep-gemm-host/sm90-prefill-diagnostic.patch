@@ -1,0 +1,124 @@
+--- a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+@@ -144,12 +144,13 @@
+             args.tensor_map_l2_weights,
+             args.l2_weights_sf
+         ));
+     }
+ };
+
++template <bool Diagnostic = false>
+ static void sm90_fp8_mega_moe(
+     const torch::Tensor& y,
+     const torch::Tensor& l1_acts, const torch::Tensor& l1_acts_sf,
+     const torch::Tensor& l2_acts, const torch::Tensor& l2_acts_sf,
+     const torch::Tensor& l1_weights, const torch::Tensor& l2_weights,
+     const torch::Tensor& l1_weights_sf, const torch::Tensor& l2_weights_sf,
+@@ -329,12 +330,18 @@
+         .tensor_map_l2_acts_sf = tensor_map_l2_acts_sf,
+         .tensor_map_l2_weights = tensor_map_l2_weights,
+         .l2_weights_sf = l2_weights_sf.data_ptr<float>(),
+         .launch_args = LaunchArgs(num_sms, config.num_dispatch_threads + config.num_non_epilogue_threads + config.num_epilogue_threads,
+                                   config.smem_size, config.cluster_size)
+     };
+-    const auto code = SM90FP8MegaMoERuntime::generate(args);
++    auto code = SM90FP8MegaMoERuntime::generate(args);
++    if constexpr (Diagnostic) {
++        DG_HOST_ASSERT(prefill_split_accum and num_ranks == 1 and num_tokens == 7988);
++        const std::string header = "sm90_fp8_mega_moe.cuh", symbol = "sm90_fp8_mega_moe_impl";
++        code.replace(code.find(header), header.size(), "sm90_fp8_mega_moe_diag.cuh");
++        code.replace(code.find(symbol), symbol.size(), "sm90_fp8_mega_moe_diag_impl");
++    }
+     const auto runtime = compiler->build("sm90_fp8_mega_moe", code);
+     SM90FP8MegaMoERuntime::launch(runtime, args);
+ }
+
+ } // namespace deep_gemm
+--- a/csrc/apis/sm90_mega.hpp
++++ b/csrc/apis/sm90_mega.hpp
+@@ -134,12 +134,13 @@
+             torch::TensorOptions().dtype(torch::kFloat32).device(buffer.device()));
+         return std::make_tuple(x, x_sf, topk_idx, topk_weights, l1_acts, l1_acts_sf, l2_acts, l2_acts_sf);
+     };
+     return {reinterpret_cast<int64_t>(combine_token_buffer.get_end_ptr()), slice_input_buffers};
+ }
+
++template <bool Diagnostic = false>
+ static void fp8_mega_moe(
+     const torch::Tensor& y,
+     const std::tuple<torch::Tensor, torch::Tensor>& l1_weights_tuple,
+     const std::tuple<torch::Tensor, torch::Tensor>& l2_weights_tuple,
+     const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
+     const torch::Tensor& sym_buffer,
+@@ -201,13 +202,17 @@
+         true, activation);
+     DG_HOST_ASSERT(sym_buffer.nbytes() >= static_cast<size_t>(num_required_bytes));
+     DG_HOST_ASSERT(num_experts == num_experts_);
+
+     const auto [x, x_sf, topk_idx, topk_weights, l1_acts, l1_acts_sf, l2_acts, l2_acts_sf] = slice(sym_buffer);
+
+-    sm90_fp8_mega_moe(y,
++    if constexpr (Diagnostic) {
++        // The diagnostic allocation alone reserves the private trace tail.
++        DG_HOST_ASSERT(sym_buffer.nbytes() >= static_cast<size_t>(num_required_bytes) + 4096 + 132ull * 12 * (32 + 2048 * 8) * 8);
++    }
++    sm90_fp8_mega_moe<Diagnostic>(y,
+                      l1_acts, l1_acts_sf,
+                      l2_acts, l2_acts_sf,
+                      l1_weights, l2_weights,
+                      l1_weights_sf, l2_weights_sf,
+                      cumulative_local_expert_recv_stats,
+                      sym_buffer_ptrs,
+--- a/csrc/tvm_ffi_api.cpp
++++ b/csrc/tvm_ffi_api.cpp
+@@ -791,12 +791,37 @@
+         c_val, convert_to_torch_tensor(sym_buffer), sym_buffer_ptrs_val, static_cast<int>(rank_idx),
+         static_cast<int>(num_max_tokens_per_rank), static_cast<int>(num_experts),
+         static_cast<int>(num_topk), recipe_val, activation, act_clamp_opt_val, fast_math
+     );
+ }
+
++void dg_fp8_mega_moe_diag(TensorView y, TensorView l1_weights, TensorView l1_weights_sf, TensorView l2_weights, TensorView l2_weights_sf,
++                    Optional<TensorView> cumulative_local_expert_recv_stats, TensorView sym_buffer, Array<int64_t> sym_buffer_ptrs,
++                    int64_t rank_idx, int64_t num_max_tokens_per_rank, int64_t num_experts, int64_t num_topk,
++                    Tuple<int64_t, int64_t, int64_t> recipe, std::string activation, Optional<double> activation_clamp_opt, bool fast_math) {
++    auto c_val = cumulative_local_expert_recv_stats.has_value()? std::optional<torch::Tensor>(convert_to_torch_tensor(cumulative_local_expert_recv_stats.value())) : std::nullopt;
++    auto act_clamp_opt_val = activation_clamp_opt.has_value()? std::optional<float>(static_cast<float>(activation_clamp_opt.value())) : std::nullopt;
++    std::vector<int64_t> sym_buffer_ptrs_val;
++    sym_buffer_ptrs_val.reserve(sym_buffer_ptrs.size());
++
++    for (Array<int64_t>::iterator it = sym_buffer_ptrs.begin(); it != sym_buffer_ptrs.end(); ++it) {
++        sym_buffer_ptrs_val.push_back(*it);
++    }
++    auto [recipe_a, recipe_b, recipe_c] = recipe;
++    auto recipe_val = std::make_tuple(static_cast<int>(recipe_a), static_cast<int>(recipe_b), static_cast<int>(recipe_c));
++
++    mega::fp8_mega_moe<true>(
++        convert_to_torch_tensor(y),
++        std::make_pair(convert_to_torch_tensor(l1_weights), convert_to_torch_tensor(l1_weights_sf)),
++        std::make_pair(convert_to_torch_tensor(l2_weights), convert_to_torch_tensor(l2_weights_sf)),
++        c_val, convert_to_torch_tensor(sym_buffer), sym_buffer_ptrs_val, static_cast<int>(rank_idx),
++        static_cast<int>(num_max_tokens_per_rank), static_cast<int>(num_experts),
++        static_cast<int>(num_topk), recipe_val, activation, act_clamp_opt_val, fast_math
++    );
++}
++
+ void dg_mega_moe_pre_dispatch(
+     TensorView x, TensorView topk_idx, TensorView topk_weights,
+     TensorView buf_x, TensorView buf_x_sf,
+     TensorView buf_topk_idx, TensorView buf_topk_weights,
+     int64_t num_tokens, int64_t group_size, bool use_fp4_acts) {
+     mega_moe_pre_dispatch(
+@@ -836,11 +861,12 @@
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(get_ring_limit_for_mega_moe, dg_get_ring_limit_for_mega_moe);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(get_symm_buffer_size_for_mega_moe, dg_get_symm_buffer_size_for_mega_moe);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(get_symm_buffer_size_for_sm90_mega_moe, dg_get_symm_buffer_size_for_sm90_mega_moe);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(fp8_fp4_mega_moe, dg_fp8_fp4_mega_moe);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(bf16_mega_moe, dg_bf16_mega_moe);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(fp8_mega_moe, dg_fp8_mega_moe);
++TVM_FFI_DLL_EXPORT_TYPED_FUNC(fp8_mega_moe_diag, dg_fp8_mega_moe_diag);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(mega_moe_pre_dispatch, dg_mega_moe_pre_dispatch);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(mega_moe_pre_dispatch_sm90, dg_mega_moe_pre_dispatch_sm90);
+
+
+ #endif  // DG_FP8_COMPATIBLE and DG_TENSORMAP_COMPATIBLE

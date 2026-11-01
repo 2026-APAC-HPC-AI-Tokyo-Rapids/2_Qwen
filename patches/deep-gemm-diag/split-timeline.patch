@@ -1,0 +1,596 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -20,12 +20,13 @@
+ #include <deep_gemm/mma/sm90.cuh>
+ #include <deep_gemm/scheduler/mega_moe.cuh>
+ #include <deep_gemm/ptx/ld_st.cuh>
+ #include <deep_gemm/ptx/tma.cuh>
+ #include <deep_gemm/ptx/utils.cuh>
+ #include <deep_gemm/ptx/wgmma.cuh>
++#include <deep_gemm/impls/r18_trace.cuh>
+ #define __CLION_IDE__
+
+ namespace deep_gemm {
+
+ template <float kActivationClamp>
+ __forceinline__ __device__ float sm90_fp8_mega_moe_clamp_gate(float x) {
+@@ -238,13 +239,13 @@
+     uint32_t kNumEpilogueWarpgroups = kNumEpilogueWarps / 4,
+     uint32_t kNumThreads = kNumDispatchThreads + kNumNonEpilogueThreads + kNumEpilogueThreads,
+     uint32_t kNumTokensPerWarp = 32 / kNumTopk,
+     uint32_t kNumExpertsPerRank = kNumExperts / kNumRanks
+ >
+ CUTLASS_GLOBAL __launch_bounds__(kNumThreads, 1) void
+-sm90_fp8_mega_moe_impl(void* y,
++sm90_fp8_mega_moe_diag_impl(void* y,
+                        int* cumulative_local_expert_recv_stats,
+                        const uint32_t num_tokens,
+                        const __grid_constant__ layout::SymBuffer<kNumRanks> sym_buffer,
+                        const __grid_constant__ cute::TmaDescriptor tensor_map_l1_acts,
+                        const __grid_constant__ cute::TmaDescriptor tensor_map_l1_acts_sf,
+                        const __grid_constant__ cute::TmaDescriptor tensor_map_l1_weights,
+@@ -376,12 +377,13 @@
+     // L2 input area
+     const auto l2_token_buffer = layout::Buffer(fp8_intermediate_token_layout, 1, kNumMaxPoolTokens, l1_topk_weights_buffer.get_end_ptr());
+     const auto l2_sf_buffer    = layout::Buffer(fp8_intermediate_sf_layout, 1, kNumPaddedSFPoolTokens, l2_token_buffer.get_end_ptr());
+
+     // Combine input area
+     const auto combine_token_buffer = layout::Buffer(bf16_token_layout, kNumTopk, kNumMaxTokensPerRank, l2_sf_buffer.get_end_ptr());
++    const r18::Trace trace(combine_token_buffer.get_end_ptr(), num_tokens);
+
+     // =====================================================================
+     // GEMM data types and shape constants
+     // =====================================================================
+     using a_dtype_t = cutlass::float_e4m3_t;
+     using b_dtype_t = cutlass::float_e4m3_t;
+@@ -1137,13 +1139,13 @@
+             }
+             const auto acts = l2 ? &tensor_map_l2_acts : &tensor_map_l1_acts;
+             const auto scales = l2 ? &tensor_map_l2_acts_sf : &tensor_map_l1_acts_sf;
+             const auto weights = l2 ? &tensor_map_l2_weights : &tensor_map_l1_weights;
+             const uint32_t weight_row = local_expert_idx * (l2 ? L2_SHAPE_N : L1_SHAPE_N) + n_block_idx * BLOCK_N;
+             for (uint32_t k = 0; k < num_k_blocks; advance_pipeline(k)) {
+-                empty_barriers[stage_idx]->wait(phase ^ 1);
++                trace.wait(empty_barriers[stage_idx], phase ^ 1, 1);
+                 if (cute::elect_one_sync()) {
+                     tma::copy<BLOCK_K, LOAD_BLOCK_M, kSwizzleAMode, a_dtype_t>(acts, full_barriers[stage_idx], smem_a[stage_idx], k * BLOCK_K, pool_block * BLOCK_M, 1);
+                     tma::copy<BLOCK_K, LOAD_BLOCK_N, kSwizzleBMode, b_dtype_t>(weights, full_barriers[stage_idx], smem_b[stage_idx], k * BLOCK_K, weight_row, 1);
+                     tma::copy<BLOCK_M, 1, 0, float>(scales, full_barriers[stage_idx], smem_sfa[stage_idx], pool_block * SF_BLOCK_M, k * (l2 ? 2 : 1), 1);
+                     if (l2)
+                         tma::copy<BLOCK_M, 1, 0, float>(scales, full_barriers[stage_idx], smem_sfa[stage_idx] + BLOCK_M, pool_block * SF_BLOCK_M, k * 2 + 1, 1);
+@@ -1157,12 +1159,13 @@
+         cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
+
+         auto process_a_sfa_block = [&](const auto& block_phase,
+                                        const uint32_t& local_expert_idx,
+                                        const uint32_t& num_k_blocks,
+                                        const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++            if (trace.lead) trace.p[5] = block_phase == sched::BlockPhase::Linear1 ? 1 : 2;
+             const auto tensor_map_a_ptr = block_phase == sched::BlockPhase::Linear2
+                 ? &tensor_map_l2_acts : &tensor_map_l1_acts;
+             const auto tensor_map_sfa_ptr = block_phase == sched::BlockPhase::Linear2
+                 ? &tensor_map_l2_acts_sf : &tensor_map_l1_acts_sf;
+
+             const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
+@@ -1194,35 +1197,35 @@
+                 }
+             }
+             if constexpr (kPrefillTailPair) {
+                 if (sm90_fp8_mega_moe_tail_pair<WG_BLOCK_M>(scheduler.template get_valid_m<false>())) {
+                     uint32_t slot = 0;
+                     for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; ++ k_block_idx) {
+-                        empty_barriers[stage_idx]->wait(phase ^ 1);
++                        trace.wait(empty_barriers[stage_idx], phase ^ 1, 1);
+                         if (cute::elect_one_sync()) {
+                             tma::copy<BLOCK_K, LOAD_BLOCK_M, kSwizzleAMode, a_dtype_t>(
+                                 tensor_map_a_ptr, full_barriers[stage_idx], smem_a[stage_idx],
+                                 k_block_idx * BLOCK_K, pool_block_idx * BLOCK_M, 1);
+                             tma::copy<BLOCK_M, 1, 0, float>(
+                                 tensor_map_sfa_ptr, full_barriers[stage_idx], smem_sfa[stage_idx],
+                                 pool_block_idx * SF_BLOCK_M, k_block_idx, 1);
+                             full_barriers[stage_idx]->arrive_and_expect_tx(SMEM_A_SIZE_PER_STAGE + BLOCK_M * sizeof(float));
+                         }
+                         __syncwarp();
+                         advance_pipeline(slot);
+-                        empty_barriers[stage_idx]->wait(phase ^ 1);
++                        trace.wait(empty_barriers[stage_idx], phase ^ 1, 1);
+                         if (cute::elect_one_sync())
+                             full_barriers[stage_idx]->arrive();
+                         __syncwarp();
+                         advance_pipeline(slot);
+                     }
+                     return;
+                 }
+             }
+             for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+-                empty_barriers[stage_idx]->wait(phase ^ 1);
++                trace.wait(empty_barriers[stage_idx], phase ^ 1, 1);
+
+                 if (cute::elect_one_sync()) {
+                     const uint32_t m_idx = pool_block_idx * BLOCK_M;
+                     const uint32_t sfa_m_idx = pool_block_idx * SF_BLOCK_M;
+                     const uint32_t k_idx = k_block_idx * BLOCK_K;
+
+@@ -1344,25 +1347,26 @@
+         cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
+
+         const auto process_b_block = [&](const sched::BlockPhase& block_phase,
+                                          const uint32_t& local_expert_idx,
+                                          const uint32_t& num_k_blocks,
+                                          const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++            if (trace.lead) trace.p[5] = block_phase == sched::BlockPhase::Linear1 ? 1 : 2;
+             const auto tensor_map_b_ptr =
+                 block_phase == sched::BlockPhase::Linear2 ? &tensor_map_l2_weights : &tensor_map_l1_weights;
+
+             const uint32_t shape_n = block_phase == sched::BlockPhase::Linear2 ? L2_SHAPE_N : L1_SHAPE_N;
+
+             if constexpr (kPrefillTailPair) {
+                 if (sm90_fp8_mega_moe_tail_pair<WG_BLOCK_M>(scheduler.template get_valid_m<false>())) {
+                     DG_STATIC_ASSERT(LOAD_BLOCK_N == BLOCK_N and LOAD_BLOCK_N <= 256, "Paired tails load one B block per stage");
+                     uint32_t slot = 0;
+                     for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; ++ k_block_idx) {
+                         #pragma unroll
+                         for (uint32_t half = 0; half < 2; ++ half) {
+-                            empty_barriers[stage_idx]->wait(phase ^ 1);
++                            trace.wait(empty_barriers[stage_idx], phase ^ 1, 1);
+                             if (cute::elect_one_sync()) {
+                                 tma::copy<BLOCK_K, LOAD_BLOCK_N, kSwizzleBMode, b_dtype_t>(
+                                     tensor_map_b_ptr, full_barriers[stage_idx], smem_b[stage_idx],
+                                     k_block_idx * BLOCK_K, local_expert_idx * shape_n + (n_block_idx + half) * BLOCK_N, 1);
+                                 full_barriers[stage_idx]->arrive_and_expect_tx(SMEM_B_SIZE_PER_STAGE);
+                             }
+@@ -1372,13 +1376,13 @@
+                     }
+                     return;
+                 }
+             }
+
+             for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+-                empty_barriers[stage_idx]->wait(phase ^ 1);
++                trace.wait(empty_barriers[stage_idx], phase ^ 1, 1);
+
+                 if (cute::elect_one_sync()) {
+                     const uint32_t n_idx = local_expert_idx * shape_n + n_block_idx * BLOCK_N;
+                     const uint32_t k_idx = k_block_idx * BLOCK_K;
+
+                     // TMA load B (weight SF is now loaded directly by math warps from global)
+@@ -1481,12 +1485,13 @@
+
+         auto process_math_block = [&](const auto& block_phase,
+                                       const uint32_t& local_expert_idx,
+                                       const uint32_t& num_k_blocks,
+                                       const uint32_t& m_block_idx, const uint32_t& item_n_block_idx) CUTLASS_LAMBDA_FUNC_INLINE {
+             const uint32_t valid_m = scheduler.template get_valid_m<false>();
++            trace.tile(block_phase == sched::BlockPhase::Linear1 ? 1 : 2, valid_m, local_expert_idx, scheduler.get_current_pool_block_offset() + m_block_idx, item_n_block_idx);
+             // A paired tail: both warpgroups take rows 0..63, warpgroup g the N block n + g.
+             const bool pair_tile = kPrefillTailPair and sm90_fp8_mega_moe_tail_pair<WG_BLOCK_M>(valid_m);
+             const uint32_t n_block_idx = item_n_block_idx + (pair_tile ? epilogue_wg_idx : 0u);
+             const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
+             const uint32_t m_idx = pool_block_idx * BLOCK_M;
+             const uint32_t n_idx = n_block_idx * BLOCK_N;
+@@ -1666,14 +1671,14 @@
+                         float prev_sa_0 = 1.0f, prev_sa_1 = 1.0f, prev_w_0 = 1.0f, prev_w_1 = 1.0f;
+                         float r00 = 1.0f, r01 = 1.0f, r10 = 1.0f, r11 = 1.0f;
+                         uint32_t slot = 0;
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; ++ k_block_idx) {
+                             const uint32_t a_stage = stage_idx, b_stage = epilogue_wg_idx == 0 ? stage_idx : next_of(stage_idx);
+                             if (k_block_idx == 0) {
+-                                full_barriers[stage_idx]->wait(phase);
+-                                full_barriers[next_of(stage_idx)]->wait(phase ^ (next_of(stage_idx) == 0 ? 1u : 0u));
++                                trace.wait(full_barriers[stage_idx], phase, 0);
++                                trace.wait(full_barriers[next_of(stage_idx)], phase ^ (next_of(stage_idx) == 0 ? 1u : 0u), 0);
+                             } else {
+                                 #pragma unroll
+                                 for (uint32_t i = 0; i < kAccumPerThread / 4; ++ i) {
+                                     const bool second = l1 ? (i & 1u) != 0 : i >= kAccumPerThread / 8;
+                                     final_accum[i*4+0] *= second ? r01 : r00;
+                                     final_accum[i*4+1] *= second ? r01 : r00;
+@@ -1709,14 +1714,14 @@
+                                 const uint32_t next_0 = next_of(next_of(stage_idx));
+                                 const uint32_t next_1 = next_of(next_0);
+                                 const uint32_t phase_0 = phase ^ ((next_of(stage_idx) == 0 or next_0 == 0) ? 1u : 0u);
+                                 const uint32_t phase_1 = phase_0 ^ (next_1 == 0 ? 1u : 0u);
+                                 const float w_0 = __ldg(w_sf + w_row_0 + k_block_idx + 1);
+                                 const float w_1 = __ldg(w_sf + w_row_1 + k_block_idx + 1);
+-                                full_barriers[next_0]->wait(phase_0);
+-                                full_barriers[next_1]->wait(phase_1);
++                                trace.wait(full_barriers[next_0], phase_0, 0);
++                                trace.wait(full_barriers[next_1], phase_1, 0);
+                                 const float sa_0 = ptx::ld_shared(smem_sfa[next_0] + r_0);
+                                 const float sa_1 = ptx::ld_shared(smem_sfa[next_0] + r_1);
+                                 r00 = (prev_sa_0 * prev_w_0) * rcp(sa_0 * w_0);
+                                 r10 = (prev_sa_1 * prev_w_0) * rcp(sa_1 * w_0);
+                                 r01 = (prev_sa_0 * prev_w_1) * rcp(sa_0 * w_1);
+                                 r11 = (prev_sa_1 * prev_w_1) * rcp(sa_1 * w_1);
+@@ -1749,13 +1754,13 @@
+                     } else if (kPrefill2WG and row_base >= valid_m) {
+                         // Padding-only WG: consume the shared stage stream, with
+                         // identical phase advancement and four empty arrivals.
+                         // Deferred FC1 publication belongs to the PREVIOUS tile
+                         // and must still happen even if this tile has no rows.
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+-                            full_barriers[stage_idx]->wait(phase);
++                            trace.wait(full_barriers[stage_idx], phase, 0);
+                             if (block_phase == sched::BlockPhase::Linear1 and k_block_idx == 2)
+                                 publish_l1_rows();
+                             if (lane_idx == 0)
+                                 empty_barriers[stage_idx]->arrive();
+                         }
+                     } else {
+@@ -1825,39 +1830,48 @@
+                         };
+                         // The zero accumulators are pinned before the first WGMMA.
+                         #pragma unroll
+                         for (uint32_t i = 0; i < kAccumPerThread; ++ i) ptx::warpgroup_fence_operand(final_accum[i]);
+                         uint32_t prev_stage = stage_idx, k_block_idx = 0;
+                         for (uint32_t k_chunk = 0; k_chunk < kNumKBlocks; k_chunk += kUnroll) {
++                            trace.sample(5, k_chunk);
+                             #pragma unroll
+                             for (uint32_t u = 0; u < kUnroll; ++ u) {
+                                 #pragma unroll
+                                 for (uint32_t h = 0; h < 2; ++ h) {
++                                    trace.sample(7, (k_chunk + u) * 2 + h);
+                                     if (u > 0) {
+                                         // Half h of the previous K block is the oldest pending group.
+                                         ptx::warpgroup_wait<1>();
+                                         if (h == 1 and lane_idx == 0)
+                                             empty_barriers[prev_stage]->arrive();
+                                     } else if (h == 1) {
+                                         // Chunk start: only half 0 is pending, so this waits for nothing;
+                                         // it tells ptxas that half 1 is not in flight.
+                                         ptx::warpgroup_wait<1>();
+                                     }
++                                    trace.sample(8, (k_chunk + u) * 2 + h);
+                                     rescale_half(h);
++                                    trace.sample(9, (k_chunk + u) * 2 + h);
+                                     issue_half(h);
++                                    trace.sample(10, (k_chunk + u) * 2 + h);
+                                 }
+                                 after_issue(k_chunk + u);
+                                 if (u + 1 < kUnroll or k_chunk + kUnroll < kNumKBlocks) {
+                                     uint32_t next_stage, next_phase;
+                                     next_stage_and_phase(next_stage, next_phase);
++                                    trace.sample(11, k_chunk + u + 1);
+                                     prefetch(k_chunk + u + 1, next_stage, next_phase);
++                                    trace.sample(12, k_chunk + u + 1);
+                                 }
+                                 prev_stage = stage_idx;
+                                 advance_pipeline(k_block_idx);
+                             }
++                            trace.sample(13, k_chunk);
+                             ptx::warpgroup_wait<0>();
++                            trace.sample(6, k_chunk);
+                             if (lane_idx == 0)
+                                 empty_barriers[prev_stage]->arrive();
+                         }
+                     };
+
+                     if (block_phase == sched::BlockPhase::Linear1) {
+@@ -1867,17 +1881,19 @@
+                         const uint32_t gate_row = local_expert_idx * kL1SFPerExpert + (kPrefill2WG ? n_block_idx : sf_n_block_idx / 2u) * kL1SFKBlocks;
+                         const uint32_t up_row = gate_row + kL1SFGateBlks * kL1SFKBlocks;
+                         float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f, prev_gate_sf = 1.0f, prev_up_sf = 1.0f;
+                         float r0_gate = 1.0f, r1_gate = 1.0f, r0_up = 1.0f, r1_up = 1.0f;
+                         if constexpr (kPrefillSplitAccum) {
+                         // num_k_blocks is kNumL1BlockKs for every unpaired FC1 item.
+-                        full_barriers[stage_idx]->wait(phase);
++                        trace.sample(11, 0);
++                        trace.wait(full_barriers[stage_idx], phase, 0);
+                         prev_scale_a_0 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r0);
+                         prev_scale_a_1 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r1);
+                         prev_gate_sf = __ldg(l1_weights_sf + gate_row);
+                         prev_up_sf = __ldg(l1_weights_sf + up_row);
++                        trace.sample(12, 0);
+                         split_k_loop(std::integral_constant<uint32_t, kNumL1BlockKs>{}, std::integral_constant<uint32_t, kL1SplitUnroll>{},
+                             [&](const uint32_t& h) CUTLASS_LAMBDA_FUNC_INLINE {
+                                 #pragma unroll
+                                 for (uint32_t i = h * kAccumPerThread / 8; i < (h + 1) * kAccumPerThread / 8; ++ i) {
+                                     const float r0 = (i & 1u) ? r0_up : r0_gate;
+                                     const float r1 = (i & 1u) ? r1_up : r1_gate;
+@@ -1891,13 +1907,13 @@
+                                 if (k_block_idx == 2)
+                                     publish_l1_rows();
+                             },
+                             [&](const uint32_t& next_k_block_idx, const uint32_t& next_stage, const uint32_t& next_phase) CUTLASS_LAMBDA_FUNC_INLINE {
+                                 const float gate_sf = __ldg(l1_weights_sf + gate_row + next_k_block_idx);
+                                 const float up_sf = __ldg(l1_weights_sf + up_row + next_k_block_idx);
+-                                full_barriers[next_stage]->wait(next_phase);
++                                trace.wait(full_barriers[next_stage], next_phase, 0);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+                                 r0_gate = (prev_scale_a_0 * prev_gate_sf) * rcp(scale_a_0 * gate_sf);
+                                 r1_gate = (prev_scale_a_1 * prev_gate_sf) * rcp(scale_a_1 * gate_sf);
+                                 r0_up = (prev_scale_a_0 * prev_up_sf) * rcp(scale_a_0 * up_sf);
+                                 r1_up = (prev_scale_a_1 * prev_up_sf) * rcp(scale_a_1 * up_sf);
+@@ -1906,13 +1922,13 @@
+                                 prev_gate_sf = gate_sf;
+                                 prev_up_sf = up_sf;
+                             });
+                         } else {
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             if (k_block_idx == 0) {
+-                                full_barriers[stage_idx]->wait(phase);
++                                trace.wait(full_barriers[stage_idx], phase, 0);
+                             } else {
+                                 #pragma unroll
+                                 for (uint32_t i = 0; i < kAccumPerThread / 4; ++ i) {
+                                     const float r0 = (i & 1u) ? r0_up : r0_gate;
+                                     const float r1 = (i & 1u) ? r1_up : r1_gate;
+                                     final_accum[i*4+0] *= r0;
+@@ -1935,13 +1951,13 @@
+                             }
+                             if (k_block_idx + 1 < num_k_blocks) {
+                                 uint32_t next_stage, next_phase;
+                                 next_stage_and_phase(next_stage, next_phase);
+                                 const float gate_sf = __ldg(l1_weights_sf + gate_row + k_block_idx + 1);
+                                 const float up_sf = __ldg(l1_weights_sf + up_row + k_block_idx + 1);
+-                                full_barriers[next_stage]->wait(next_phase);
++                                trace.wait(full_barriers[next_stage], next_phase, 0);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+                                 r0_gate = (prev_scale_a_0 * prev_gate_sf) * rcp(scale_a_0 * gate_sf);
+                                 r1_gate = (prev_scale_a_1 * prev_gate_sf) * rcp(scale_a_1 * gate_sf);
+                                 r0_up = (prev_scale_a_0 * prev_up_sf) * rcp(scale_a_0 * up_sf);
+                                 r1_up = (prev_scale_a_1 * prev_up_sf) * rcp(scale_a_1 * up_sf);
+@@ -1975,18 +1991,20 @@
+                         #pragma unroll
+                         for (uint32_t j = 0; j < kNumWSF; ++ j)
+                             prev_l2_sf[j] = 1.0f, r0_start[j] = 1.0f, r1_start[j] = 1.0f;
+                         if constexpr (kPrefillSplitAccum) {
+                         // num_k_blocks is kNumL2BlockKs for every unpaired FC2 item; half h is
+                         // weight-SF block h (accumulator chunks 16h..16h+15).
+-                        full_barriers[stage_idx]->wait(phase);
++                        trace.sample(11, 0);
++                        trace.wait(full_barriers[stage_idx], phase, 0);
+                         prev_scale_a_0 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r0);
+                         prev_scale_a_1 = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r1);
+                         #pragma unroll
+                         for (uint32_t j = 0; j < kNumWSF; ++ j)
+                             prev_l2_sf[j] = __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks);
++                        trace.sample(12, 0);
+                         split_k_loop(std::integral_constant<uint32_t, kNumL2BlockKs>{}, std::integral_constant<uint32_t, kL2SplitUnroll>{},
+                             [&](const uint32_t& h) CUTLASS_LAMBDA_FUNC_INLINE {
+                                 #pragma unroll
+                                 for (uint32_t i = h * kChunksPerWSF; i < (h + 1) * kChunksPerWSF; ++ i) {
+                                     final_accum[i*4+0] *= r0_start[h];
+                                     final_accum[i*4+1] *= r0_start[h];
+@@ -1997,13 +2015,13 @@
+                             [&](const uint32_t&) CUTLASS_LAMBDA_FUNC_INLINE {},
+                             [&](const uint32_t& next_k_block_idx, const uint32_t& next_stage, const uint32_t& next_phase) CUTLASS_LAMBDA_FUNC_INLINE {
+                                 float l2_sf[kNumWSF];
+                                 #pragma unroll
+                                 for (uint32_t j = 0; j < kNumWSF; ++ j)
+                                     l2_sf[j] = __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks + next_k_block_idx);
+-                                full_barriers[next_stage]->wait(next_phase);
++                                trace.wait(full_barriers[next_stage], next_phase, 0);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+                                 #pragma unroll
+                                 for (uint32_t j = 0; j < kNumWSF; ++ j) {
+                                     r0_start[j] = (prev_scale_a_0 * prev_l2_sf[j]) * rcp(scale_a_0 * l2_sf[j]);
+                                     r1_start[j] = (prev_scale_a_1 * prev_l2_sf[j]) * rcp(scale_a_1 * l2_sf[j]);
+@@ -2012,13 +2030,13 @@
+                                 prev_scale_a_0 = scale_a_0;
+                                 prev_scale_a_1 = scale_a_1;
+                             });
+                         } else {
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             if (k_block_idx == 0) {
+-                                full_barriers[stage_idx]->wait(phase);
++                                trace.wait(full_barriers[stage_idx], phase, 0);
+                             } else {
+                                 #pragma unroll
+                                 for (uint32_t i = 0; i < kAccumPerThread / 4; ++ i) {
+                                     final_accum[i*4+0] *= r0_start[i / kChunksPerWSF];
+                                     final_accum[i*4+1] *= r0_start[i / kChunksPerWSF];
+                                     final_accum[i*4+2] *= r1_start[i / kChunksPerWSF];
+@@ -2038,13 +2056,13 @@
+                                 uint32_t next_stage, next_phase;
+                                 next_stage_and_phase(next_stage, next_phase);
+                                 float l2_sf[kNumWSF];
+                                 #pragma unroll
+                                 for (uint32_t j = 0; j < kNumWSF; ++ j)
+                                     l2_sf[j] = __ldg(l2_weights_sf + l2_row + j * kL2SFKBlocks + k_block_idx + 1);
+-                                full_barriers[next_stage]->wait(next_phase);
++                                trace.wait(full_barriers[next_stage], next_phase, 0);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+                                 #pragma unroll
+                                 for (uint32_t j = 0; j < kNumWSF; ++ j) {
+                                     r0_start[j] = (prev_scale_a_0 * prev_l2_sf[j]) * rcp(scale_a_0 * l2_sf[j]);
+                                     r1_start[j] = (prev_scale_a_1 * prev_l2_sf[j]) * rcp(scale_a_1 * l2_sf[j]);
+@@ -2072,13 +2090,13 @@
+                         } else {
+                         const uint32_t l2_row = local_expert_idx * kL2SFPerExpert + sf_n_block_idx * kL2SFKBlocks;
+                         float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f, prev_l2_sf = 1.0f;
+                         float r0_start = 1.0f, r1_start = 1.0f;
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             if (k_block_idx == 0) {
+-                                full_barriers[stage_idx]->wait(phase);
++                                trace.wait(full_barriers[stage_idx], phase, 0);
+                             } else {
+                                 #pragma unroll
+                                 for (uint32_t i = 0; i < kAccumPerThread / 4; ++ i) {
+                                     final_accum[i*4+0] *= r0_start;
+                                     final_accum[i*4+1] *= r0_start;
+                                     final_accum[i*4+2] *= r1_start;
+@@ -2093,13 +2111,13 @@
+                                 prev_l2_sf = __ldg(l2_weights_sf + l2_row);
+                             }
+                             if (k_block_idx + 1 < num_k_blocks) {
+                                 uint32_t next_stage, next_phase;
+                                 next_stage_and_phase(next_stage, next_phase);
+                                 const float l2_sf = __ldg(l2_weights_sf + l2_row + k_block_idx + 1);
+-                                full_barriers[next_stage]->wait(next_phase);
++                                trace.wait(full_barriers[next_stage], next_phase, 0);
+                                 const float scale_a_0 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r0);
+                                 const float scale_a_1 = ptx::ld_shared(smem_sfa[next_stage] + row_offset_r1);
+                                 r0_start = (prev_scale_a_0 * prev_l2_sf) * rcp(scale_a_0 * l2_sf);
+                                 r1_start = (prev_scale_a_1 * prev_l2_sf) * rcp(scale_a_1 * l2_sf);
+                                 prev_scale_a_0 = scale_a_0;
+                                 prev_scale_a_1 = scale_a_1;
+@@ -2120,13 +2138,13 @@
+                 // reusing the large-hidden path with different FP32 rounding.
+                 if constexpr (kHidden >= 7168 ||
+                               (kHidden == 4096 && kIntermediateHidden == 1536 && BLOCK_M == 128 && BLOCK_N == 256)) {
+                     float prev_scale_a_0 = 1.0f, prev_scale_a_1 = 1.0f;
+                     float prev_gate_sf = 1.0f, prev_up_sf = 1.0f, prev_l2_sf = 1.0f;
+                     for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+-                        full_barriers[stage_idx]->wait(phase);
++                        trace.wait(full_barriers[stage_idx], phase, 0);
+
+                         float scale_a_0_lo, scale_a_1_lo;
+                         float scale_a_0_hi, scale_a_1_hi;
+                         if (block_phase == sched::BlockPhase::Linear1) {
+                             scale_a_0_lo = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r0);
+                             scale_a_1_lo = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r1);
+@@ -2241,13 +2259,13 @@
+                         } else {
+                             postscale_l2_final(prev_scale_a_0, prev_scale_a_1, prev_l2_sf);
+                         }
+                     }
+                 } else {
+                     for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+-                        full_barriers[stage_idx]->wait(phase);
++                        trace.wait(full_barriers[stage_idx], phase, 0);
+
+                         float scale_a_0_lo, scale_a_1_lo;
+                         float scale_a_0_hi, scale_a_1_hi;
+                         if (block_phase == sched::BlockPhase::Linear1) {
+                             scale_a_0_lo = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r0);
+                             scale_a_1_lo = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r1);
+@@ -2409,13 +2427,13 @@
+                     };
+
+                     if (block_phase == sched::BlockPhase::Linear1) {
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             const float gate_sf = __ldg(l1_gate_sf + k_block_idx);
+                             const float up_sf = __ldg(l1_up_sf + k_block_idx);
+-                            full_barriers[stage_idx]->wait(phase);
++                            trace.wait(full_barriers[stage_idx], phase, 0);
+                             #pragma unroll
+                             for (uint32_t fragment = 0; fragment < (kIndependentWG ? 2 : 1); ++ fragment) {
+                                 issue.template operator()<BLOCK_K / SwapWGMMA::K>(swap_accum, 0, fragment);
+                                 ptx::warpgroup_wait<0>();
+                                 promote(swap_accum, smem_sfa[stage_idx], gate_sf, up_sf, fragment);
+                             }
+@@ -2424,13 +2442,13 @@
+                         }
+                     } else {
+                         // Per-64 K halves in separate groups: the high half runs while the
+                         // low half is promoted. SFA layout is (K=2, M=BLOCK_M).
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             const float l2_sf = __ldg(l2_sf_row + k_block_idx);
+-                            full_barriers[stage_idx]->wait(phase);
++                            trace.wait(full_barriers[stage_idx], phase, 0);
+                             #pragma unroll
+                             for (uint32_t fragment = 0; fragment < (kIndependentWG ? 2 : 1); ++ fragment) {
+                                 issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum, 0, fragment);
+                                 issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum_hi, BLOCK_K / 2, fragment);
+                                 ptx::warpgroup_wait<1>();
+                                 promote(swap_accum, smem_sfa[stage_idx], l2_sf, l2_sf, fragment);
+@@ -2470,13 +2488,13 @@
+                     }
+                 }
+             } else {
+                 float accum[kAccumPerThread];
+
+                 for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+-                    full_barriers[stage_idx]->wait(phase);
++                    trace.wait(full_barriers[stage_idx], phase, 0);
+
+                     // Read SF (must precede warpgroup_arrive)
+                     float scale_a_0_lo, scale_a_1_lo;
+                     float scale_a_0_hi, scale_a_1_hi;  // Only used in L2 (per-64 K)
+                     if (block_phase == sched::BlockPhase::Linear1) {
+                         scale_a_0_lo = ptx::ld_shared(smem_sfa[stage_idx] + row_offset_r0);
+@@ -2612,21 +2630,23 @@
+                             final_accum[i*4+3] += scale_a_1_hi * l2_sf * accum_hi[i*4+3];
+                         }
+                     }
+                 }
+             }
+
++            if (trace.math_lead()) trace.event(3);
+             // Skip epilogue when block is past valid M (still must release via empty)
+             if (row_base >= valid_m) {
+                 if (block_phase == sched::BlockPhase::Linear1) {
+                     if constexpr (not kL2ArrivalCounter)
+                         ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+                 } else {
+                     if constexpr (kL2EpilogueRequiresFullSync)
+                         ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+                 }
++                if (trace.math_lead()) trace.event(4);
+                 return;
+             }
+
+             if (block_phase == sched::BlockPhase::Linear1) {
+                 if constexpr (kSwapABActive) {
+                     auto silu = [](float x) -> float {
+@@ -3234,13 +3254,14 @@
+                         }
+                         // The next step's writes reuse the slice after every lane has read it.
+                         __syncwarp();
+                     }
+                     if constexpr (kL2EpilogueRequiresFullSync)
+                         ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+-                    return;
++                    if (trace.math_lead()) trace.event(4);
++                return;
+                 }
+                 constexpr uint32_t kNumRowsPerWarp = WG_BLOCK_M / 8;
+
+                 const uint32_t row_in_warp_block = lane_idx / 16;  // 0 or 1
+                 const uint32_t lane_in_row = lane_idx % 16;
+                 const uint32_t cols_per_lane = WG_BLOCK_N / 16;
+@@ -3396,12 +3417,13 @@
+
+                 if constexpr (kIndependentWG)
+                     ptx::sync_aligned(128, kEpilogueWGBarrierStartIdx + epilogue_wg_idx);
+                 else if constexpr (kL2EpilogueRequiresFullSync)
+                     ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+             }
++            if (trace.math_lead()) trace.event(4);
+         };
+
+         if constexpr (kDynamicL2) {
+             uint32_t ring_count = 0;
+             sm90_fp8_mega_moe_for_each_block_dynamic_l2<kNumSMs, kNumL1BlockNs, kNumL1BlockKs, kNumL2BlockKs, kPrefillTailPair, WG_BLOCK_M>(
+                 scheduler,
+@@ -3455,12 +3477,13 @@
+             });
+         }
+
+         // ---------------- COMBINE ----------------
+         // NVLink barrier first: signals remote ranks that this rank's GEMM
+         // outputs (NVLink scatter targets) are fully written.
++        trace.event(16);
+         // Lean EP1: no remote rank waits on this rank's partials, so the CTAs leave after the
+         // first grid sync (which orders every CTA's partials); only SM 0 still passes its
+         // self-signal, keeping the barrier sequence of the workspace counters.
+         if constexpr (kPrefillSplitAccum) {
+             // The same sequence as the lean call below (grid sync, then SM 0's self-signal through
+             // the workspace counters) without the 300 s NVLink-barrier timeout trap: a trap in the
+@@ -3492,19 +3515,21 @@
+                              kEpilogueGridSyncIndex, kBeforeCombineReduceBarrierTag>(
+             workspace, sym_buffer, sm_idx, epilogue_thread_idx,
+             [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); }
+         );
+         }
+
++        trace.event(17);
+         // Sync with dispatch (paired with dispatch's pre-cleanup sync) so that
+         // dispatch may now safely clean workspace state.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
+
+         if (epilogue_warp_idx >= kNumCombineWarps)
+             return;
+
++        trace.event(18);
+         constexpr uint32_t kNumHiddenBytes = kHidden * sizeof(nv_bfloat16);
+         constexpr uint32_t kNumElemsPerUint4 = sizeof(uint4) / sizeof(nv_bfloat162);
+
+         constexpr uint32_t kNumChunkSlots = 3;
+         constexpr uint32_t kNumMaxRegistersForBuffer = 128;
+         constexpr uint32_t kDefaultNumChunks =

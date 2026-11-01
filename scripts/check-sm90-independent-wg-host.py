@@ -20,6 +20,7 @@ IMAGE_SHA256 = "ff7a58cca00aa42a90386d12b0437b5d8caf35eb0ad082a8a1a0b4b74001a2a1
 BASELINE_SHA256 = "77ee7caea6e5736803b6034f83575f9a846d30c54ce4970ced7c65450a9be497"
 KERNEL = Path("deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh")
 SOURCE_FILES = [
+    "csrc/apis/sm90_mega.hpp", "csrc/tvm_ffi_api.cpp",
     "csrc/jit_kernels/heuristics/sm90_mega_moe.hpp", "csrc/jit_kernels/heuristics/mega_moe.hpp", "csrc/jit_kernels/heuristics/sm90.hpp",
     "csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp", "csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp", "csrc/jit_kernels/impls/runtime_utils.hpp",
     "csrc/utils/math.hpp", "csrc/utils/system.hpp", "deep_gemm/include/deep_gemm/common/math.cuh", "deep_gemm/include/deep_gemm/layout/mega_moe.cuh", "deep_gemm/include/deep_gemm/layout/sym_buffer.cuh",
@@ -156,7 +157,12 @@ def host_translation_unit(source):
     common = text["csrc/jit_kernels/heuristics/mega_moe.hpp"]
     utilities += function(common, "static int get_num_wave_pool_tokens") + function(common, "static int get_num_experts_per_wave_for_mega_moe(")
     capacity = re.search(r"static constexpr int smem_capacity = \d+;", text["csrc/jit_kernels/heuristics/sm90.hpp"]).group()
-    return STUBS + math + strip_includes(text["deep_gemm/include/deep_gemm/layout/mega_moe.cuh"]) + strip_includes(text["deep_gemm/include/deep_gemm/layout/sym_buffer.cuh"]) + "namespace deep_gemm { constexpr auto kPackedFP4=torch::kInt8; struct SM90ArchSpec {" + capacity + "};\n" + utilities + "}\n" + strip_includes(text["csrc/jit_kernels/heuristics/sm90_mega_moe.hpp"]) + strip_includes(text["csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp"]) + HOST_MAIN.replace("HOST_TOKEN_CASES", ",".join(map(str, TOKENS)))
+    # Retain the kernel include inside generate_impl's raw CUDA source string.
+    # Ordinary C++ includes are stripped for the CPU metadata translation unit.
+    impl = text["csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp"]
+    include = '#include <deep_gemm/impls/sm90_fp8_mega_moe.cuh>'
+    impl = strip_includes(impl.replace(include, 'JIT_KERNEL_INCLUDE')).replace('JIT_KERNEL_INCLUDE', include)
+    return STUBS + math + strip_includes(text["deep_gemm/include/deep_gemm/layout/mega_moe.cuh"]) + strip_includes(text["deep_gemm/include/deep_gemm/layout/sym_buffer.cuh"]) + "namespace deep_gemm { constexpr auto kPackedFP4=torch::kInt8; struct SM90ArchSpec {" + capacity + "};\n" + utilities + "}\n" + strip_includes(text["csrc/jit_kernels/heuristics/sm90_mega_moe.hpp"]) + impl + HOST_MAIN.replace("HOST_TOKEN_CASES", ",".join(map(str, TOKENS)))
 
 
 def prepare_source(repo, destination):

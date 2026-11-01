@@ -27,6 +27,32 @@ def run(*args, **kwargs):
     return subprocess.run(*args, check=True, **kwargs)
 
 
+DIAGNOSTIC_HOST_MAIN = r'''
+namespace deep_gemm { template<class Args> void record(const Args&) {} }
+int main() {
+    using namespace deep_gemm;
+    setenv("DG_SM90_PREFILL_2WG","1",1); setenv("DG_SM90_PREFILL_LOCAL_EP1","1",1);
+    setenv("DG_SM90_PREFILL_4STAGE","1",1); setenv("DG_SM90_PREFILL_LEAN","1",1);
+    setenv("DG_SM90_PREFILL_SPLIT_ACCUM","1",1);
+    int pool=layout::get_num_max_pool_tokens(1,8448,8,128), sf=layout::get_num_sf_ring_tokens(pool,layout::kMinCandidateBlockM);
+    torch::Tensor y{7988,4096,torch::kBFloat16}, l1{pool,4096,torch::kFloat8_e4m3fn}, l1sf{sf,4096/128,torch::kFloat}, l2{pool,1536,torch::kFloat8_e4m3fn}, l2sf{sf,1536/64,torch::kFloat}, w1{128*3072,4096,torch::kFloat8_e4m3fn}, w2{128*4096,1536,torch::kFloat8_e4m3fn}, wsf{0,0,torch::kFloat};
+    auto call=[&]<bool Diagnostic>() { sm90_fp8_mega_moe<Diagnostic>(y,l1,l1sf,l2,l2sf,w1,w2,wsf,wsf,std::nullopt,std::vector<int64_t>(1,0),0,8448,128,y.rows,8,4096,1536,std::numeric_limits<float>::infinity(),true); };
+    call.operator()<false>();
+    const auto control=emitted_code;
+    DG_HOST_ASSERT(control.find("_diag") == std::string::npos);
+    call.operator()<true>();
+    DG_HOST_ASSERT(emitted_code.find("sm90_fp8_mega_moe_diag.cuh") != std::string::npos);
+    DG_HOST_ASSERT(emitted_code.find("sm90_fp8_mega_moe_diag_impl<") != std::string::npos);
+    call.operator()<false>(); DG_HOST_ASSERT(emitted_code == control);
+    y.rows=3994;
+    bool rejected=false;
+    try { call.operator()<true>(); } catch(const std::runtime_error&) { rejected=true; }
+    DG_HOST_ASSERT(rejected);
+    std::cout << "PASS explicit diagnostic dispatch, same control JIT source before/after, non7988 rejection\n";
+}
+'''
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-repo", type=Path, required=True)
@@ -147,6 +173,14 @@ int main() {
         split = ["true", "false", "true"] if row["ranks"] == 1 else []
         assert row["jit_template_args"].split(",")[25:] == {0: [], 1: [], 2: lean, 3: pair, 4: split}[row["stage4"]], row
         row["kernel_layout"] = values
+    # The new explicit API must not change ordinary JIT text before/after it.
+    ordinary_main = m.HOST_MAIN
+    m.HOST_MAIN = DIAGNOSTIC_HOST_MAIN
+    diagnostic_cpp = out / "diagnostic-host.cpp"
+    diagnostic_cpp.write_text(m.host_translation_unit(source))
+    m.HOST_MAIN = ordinary_main
+    run(["g++", "-std=c++20", "-O0", "-I" + str(fmt), str(diagnostic_cpp), "-o", str(out / "diagnostic-host")])
+    run([str(out / "diagnostic-host")])
     if args.nvcc:
         for row in selected:
             name = f"ep{row['ranks']}-stages{row['host']['stages']}" + {2: "-lean", 3: "-pair", 4: "-split"}.get(row["stage4"], "")

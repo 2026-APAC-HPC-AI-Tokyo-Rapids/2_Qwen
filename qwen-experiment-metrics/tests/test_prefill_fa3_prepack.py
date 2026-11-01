@@ -218,7 +218,7 @@ def test_atomic_rename_failure_keeps_env(screen,monkeypatch):
 
 def block():
     source=(ROOT/'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
-    return '# Default off. Prepack/sum'+source.split('# Default off. Prepack/sum',1)[1].split('\nsrun --exact',1)[0]
+    return '# Default off. Prepack/sum'+source.split('# Default off. Prepack/sum',1)[1].split('# Independent diagnostic-only step.',1)[0]
 
 
 def test_timeout_continues_with_round12_control(tmp_path):
