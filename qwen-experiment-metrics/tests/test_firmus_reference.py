@@ -125,7 +125,7 @@ def test_pp4_prefill_settings_and_decode_cap() -> None:
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     assert (config["decode_max_running_requests"], config["decode_cuda_graph_bs"][-3:]) == (192, [44, 46, 48])
     assert config["decode_cuda_graph_bs"][:-2] == main["decode_cuda_graph_bs"]
-    assert {k: v for k, v in config.items() if k.startswith("decode_") and k not in ("decode_max_running_requests", "decode_cuda_graph_bs")} == {k: v for k, v in main.items() if k.startswith("decode_") and k not in ("decode_max_running_requests", "decode_cuda_graph_bs")}
+    assert {k: v for k, v in config.items() if k.startswith("decode_") and k not in ("decode_max_running_requests", "decode_cuda_graph_bs", "decode_greedy_verify_gate")} == {k: v for k, v in main.items() if k.startswith("decode_") and k not in ("decode_max_running_requests", "decode_cuda_graph_bs", "decode_greedy_verify_gate")}
     slots_per_rank = config["decode_max_running_requests"] // config["decode_dp_size"] + config["decode_extra_slots"]
     assert config["decode_max_total_tokens"] >= slots_per_rank * (4096 + 128)
     with pytest.raises(ValueError, match="max_running_requests"):

@@ -147,7 +147,7 @@ def test_publication_failure_is_atomic(screen, monkeypatch):
 
 def block():
     shell = (ROOT / 'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
-    return '# Default off. The pair-only FA3' + shell.split('# Default off. The pair-only FA3', 1)[1].split('\n# Default off. Native V', 1)[0].split('\nsrun --exact', 1)[0]
+    return '# Default off. The pair-only FA3' + shell.split('# Default off. The pair-only FA3', 1)[1].split('\n# Default off. Native V', 1)[0].split('# P is revalidated; optional P3', 1)[0]
 
 
 def test_wiring_and_native_build_inputs():
@@ -228,6 +228,7 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     config['prefill']['fa3_pair_gate'] = enabled
     config['prefill']['fa3_prepack_gate'] = enabled
     config['prefill']['fa3_v3_gate'] = enabled
+    config['decode_greedy_verify_gate'] = enabled
     for name in ('source', 'results'):
         (tmp_path / name).mkdir()
     runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))['prepare'](config, ROOT, tmp_path)
@@ -236,6 +237,8 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     record = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
     assert record['no_gpu_selection_rerun'] is not enabled
     assert record['fa3_prepack_gate'] is enabled and record['fa3_v3_gate'] is enabled
+    assert record['decode_greedy_verify_gate'] is enabled
+    assert 'SGLANG_DECODE_GREEDY_VERIFY=0\n' in (tmp_path/'source/decode-kernels.env').read_text()
 
 
 

@@ -216,7 +216,21 @@ void prefill_prepack(const at::Tensor& v, const at::Tensor& out, const at::Tenso
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 }
+void greedy_verify_launch(const void*,int,int,int,const long*,int,const int*,const int*,bool,bool,void*,long*,cudaStream_t);
+namespace apac_fa3_verify {
+void greedy_argmax(const at::Tensor& logits,const at::Tensor& stops,const at::Tensor& minimum,const at::Tensor& lengths,const at::Tensor& partial,const at::Tensor& out,bool penalty,bool sanitize) {
+    c10::cuda::CUDAGuard guard(logits.device());
+    TORCH_CHECK(logits.is_cuda() && logits.scalar_type()==at::kBFloat16 && logits.dim()==2 && logits.stride(1)==1, "greedy BF16 logits");
+    const auto rows=logits.size(0), vocab=logits.size(1), b=rows/4, chunks=(vocab+4095)/4096;
+    TORCH_CHECK(rows>=4 && rows<=192 && rows%4==0 && vocab==152064, "greedy Qwen Q4 shape");
+    tensor(stops,logits,at::kLong); tensor(minimum,logits,at::kInt); tensor(lengths,logits,at::kInt); tensor(partial,logits,at::kByte); tensor(out,logits,at::kLong);
+    TORCH_CHECK(stops.dim()==2 && stops.size(0)==b && minimum.numel()==b && lengths.numel()==b && partial.numel()==rows*chunks*8 && out.numel()==rows, "greedy buffers");
+    greedy_verify_launch(logits.data_ptr(),rows,logits.stride(0),vocab,stops.data_ptr<long>(),stops.size(1),minimum.data_ptr<int>(),lengths.data_ptr<int>(),penalty,sanitize,partial.data_ptr(),out.data_ptr<long>(),at::cuda::getCurrentCUDAStream());
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+}
 TORCH_LIBRARY(apac_fa3_verify, m) {
+    m.def("greedy_argmax(Tensor logits, Tensor stops, Tensor minimum, Tensor lengths, Tensor(a!) partial, Tensor(b!) out, bool penalty, bool sanitize) -> ()");
     m.def("prefill_prepack(Tensor v, Tensor(a!) out, Tensor cu) -> ()");
     m.def("prepare(Tensor lengths, Tensor cu_q, Tensor(a!) metadata, int candidate) -> ()");
     m.def("fwd_out(Tensor q, Tensor k, Tensor v, Tensor pages, Tensor lengths, Tensor cu_q, Tensor(a!) out, Tensor(b!) lse, Tensor(c!) partial, Tensor(d!) partial_lse, Tensor(e!) metadata, int candidate, float scale) -> ()");
@@ -232,6 +246,7 @@ TORCH_LIBRARY(apac_fa3_verify, m) {
     m.def("prefill_fwd_out(Tensor q, Tensor k, Tensor v, Tensor cu, Tensor(a!) out, Tensor(b!) scales, Tensor(c!) lse, Tensor(d!) metadata, int maxlen, float scale) -> ()");
 }
 TORCH_LIBRARY_IMPL(apac_fa3_verify, CUDA, m) {
+    m.impl("greedy_argmax", &apac_fa3_verify::greedy_argmax);
     m.impl("prefill_prepack", &apac_fa3_verify::prefill_prepack);
     m.impl("prepare", &apac_fa3_verify::prepare);
     m.impl("fwd_out", &apac_fa3_verify::fwd);

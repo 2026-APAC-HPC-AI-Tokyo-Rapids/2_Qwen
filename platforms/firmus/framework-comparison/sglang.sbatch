@@ -319,6 +319,32 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_prepack_gate // false' "${R
   fi
 fi
 
+
+# Decode greedy gate begin: entirely after pair/prepack, before any model starts.
+# Estimated <=60 s, workers 85 + kill 2 + aggregate 3 <=90 s (>=1.5x).
+# Reserve 742 s historical entire P job +60 s fresh-image initialization, conservatively.
+if [[ "${prefill_pp}" == 4 && "$(jq -r '.decode_greedy_verify_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
+  mkdir -p "${ROOT}/results/decode-greedy"
+  if (( 1020 - SECONDS >= 90 + 802 )); then
+    decode_greedy_started=$(date +%s)
+    decode_greedy_ok=0
+    # Reserve g4's eight devices only during this step; execute solely on physical 4-7.
+    # The launcher resolves physical indices to UUIDs before torchrun, independently of CUDA order.
+    if timeout --kill-after=2 85 srun -N1 -n1 --exact -w "${TAIL}" --gres=gpu:8 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts decode-greedy)" /opt/sglang/venv/bin/python "${ROOT}/scripts/select-firmus-decode-greedy.py" --launch --output "${ROOT}/results/decode-greedy" --run-id "${SLURM_JOB_ID}-${decode_greedy_started}" --deadline "$((decode_greedy_started + 85))" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-greedy.log" 2>&1; then decode_greedy_ok=1; fi
+    decode_greedy_remaining=$((decode_greedy_started + 90 - $(date +%s)))
+    if (( decode_greedy_remaining > 0 )); then
+      cp "${ROOT}/source/decode-kernels.env" "${ROOT}/source/decode-kernels.greedy.env"
+      if timeout --signal=KILL "${decode_greedy_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-decode-greedy.py" --aggregate "${ROOT}/results/decode-greedy" --output "${ROOT}/results/decode-greedy/selection.json" --env-output "${ROOT}/source/decode-kernels.greedy.env" --run-id "${SLURM_JOB_ID}-${decode_greedy_started}" --deadline "$((decode_greedy_started + 90))" --workers-ok "${decode_greedy_ok}" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" && jq -e '.adopted == true' "${ROOT}/results/decode-greedy/selection.json" >/dev/null; then
+        mv "${ROOT}/source/decode-kernels.greedy.env" "${ROOT}/source/decode-kernels.env"
+      fi
+      rm -f "${ROOT}/source/decode-kernels.greedy.env" "${ROOT}/source/decode-kernels.greedy.greedy.tmp"
+    fi
+  else
+    printf '%s\n' '{"adopted":false,"reason":"insufficient remaining serving budget"}' >"${ROOT}/results/decode-greedy/selection.json"
+  fi
+fi
+# Decode greedy gate end.
+
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9001 >"${ART}/prefill-1.log" 2>&1 &

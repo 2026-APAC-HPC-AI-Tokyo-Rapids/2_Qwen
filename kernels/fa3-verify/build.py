@@ -4,6 +4,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import tarfile
@@ -116,13 +117,14 @@ def build(root):
     tasks = [(root / "wrapper.cpp", "wrapper", False)]
     tasks += generate_dispatch(root, work)
     tasks += generate_prefill_dispatch(root, work)
-    tasks += [(root / (name + ".cu"), name, True) for name in ("combine", "prefill", "prefill_fixed", "prefill_image", "prefill_native_image", "prefill_prepack", "decode_prepare")]
+    tasks += [(root / (name + ".cu"), name, True) for name in ("combine", "prefill", "prefill_fixed", "prefill_image", "prefill_native_image", "prefill_prepack", "decode_prepare", "greedy_verify")]
     tasks += [(sources["fa3"] / "hopper/flash_prepare_scheduler.cu", "prepare", True)]
 
     def compile_one(task):
         source, name, is_cuda = task
         obj = work / (name + ".o")
-        cmd = [str(cuda / "bin/nvcc") if is_cuda else "g++", *(flags if is_cuda else common), *["-I" + p for p in includes], "-c", str(source), "-o", str(obj)]
+        tu_flags = ([f for f in flags if f != "--use_fast_math"] + ["--ftz=false", "--fmad=false"]) if name == "greedy_verify" else flags
+        cmd = [str(cuda / "bin/nvcc") if is_cuda else "g++", *(tu_flags if is_cuda else common), *["-I" + p for p in includes], "-c", str(source), "-o", str(obj)]
         begin = time.monotonic()
         with (logs / (name + ".log")).open("w") as log:
             print(json.dumps({"tu": name, "command": cmd}), flush=True)
@@ -138,11 +140,19 @@ def build(root):
     # At most two heavy compilers on both the login node and image builder.
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         compiled = list(pool.map(compile_one, tasks))
+    # Greedy math is strict FP32 even though the attention TUs use fast math.
+    greedy_log=(logs / "greedy_verify.log").read_text()
+    spill=re.findall(r"(\d+) bytes stack frame, (\d+) bytes spill stores, (\d+) bytes spill loads",greedy_log)
+    assert len(spill)==2 and all(all(int(x)==0 for x in row) for row in spill), greedy_log
+    assert not re.search(r"C75\d\d",greedy_log), greedy_log
+    with (logs / "greedy_verify.sass").open("w") as log:
+        subprocess.run([str(cuda / "bin/cuobjdump"), "--dump-sass", str(work / "greedy_verify.o")], stdout=log, check=True)
     binary = root / "libapac_fa3_verify.so"
     libs = library_paths(device_type="cuda")
     cmd = ["g++", "-shared", "-Wl,-Bsymbolic", *[str(obj) for _, obj in compiled], *["-L" + p for p in libs], *["-Wl,-rpath," + p for p in libs], "-ltorch_cpu", "-ltorch_cuda", "-lc10", "-lc10_cuda", "-lcudart", "-o", str(binary)]
     subprocess.run(cmd, check=True)
     torch.ops.load_library(str(binary))
+    assert str(torch.ops.apac_fa3_verify.greedy_argmax.default._schema).endswith("-> ()")
     smem = torch.ops.apac_fa3_verify.resources()
     prefill_smem = torch.ops.apac_fa3_verify.prefill_resources()
     assert prefill_smem == 191488, prefill_smem
