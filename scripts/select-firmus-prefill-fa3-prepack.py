@@ -20,6 +20,7 @@ CANDIDATE_SECONDS = 45  # Full validation reservation, never shorten its shapes/
 VARIANTS = {"C":8416,"P":41184,"P3":172256}
 ROWS = {"C":"m192n96-direct-o-varlen-pipe", "P":"m192n96-direct-o-varlen-pipe-native", "P3":"m192n96-direct-o-varlen-pipe-native-v3"}
 BASELINES = {"P":"C", "P3":"P"}
+P3_MIN_MEDIAN_SAVING_US, P3_MAX_ORDER_REGRESSION_US = 3, 2
 
 
 def row_name(lengths, candidate):
@@ -37,6 +38,27 @@ def timing_summary(samples):
     savings = {order: medians[order]["control"]-medians[order]["candidate"] for order in medians}
     savings["pooled"] = statistics.median(samples["forward"]["control"]+samples["reverse"]["control"])-statistics.median(samples["forward"]["candidate"]+samples["reverse"]["candidate"])
     return {"medians_us":medians, "savings_us":savings}
+
+
+def check_timing(samples, candidate, label):
+    savings=timing_summary(samples)["savings_us"]
+    if candidate=="P3":
+        # Byte-equal attention/scale/O removes the numerical tradeoff: confirm
+        # the speed direction, with a bounded order regression, rather than 5 us.
+        assert savings["pooled"]>0, f"{label}: P3 pooled saving must be positive against P"
+        for order in ("forward","reverse"):
+            assert savings[order]>=-P3_MAX_ORDER_REGRESSION_US, f"{label}: P3 {order} regression exceeds 2 us against P"
+    else:
+        assert all(v>=5 for v in savings.values()), "below 5 us margin against "+BASELINES[candidate]
+    return savings
+
+
+def check_p3_group(records):
+    # Each of the seven shapes must clear the median across all twelve GPUs.
+    for lengths in SHAPES:
+        name="+".join(map(str,lengths))
+        savings=[timing_summary(r["candidates"]["P3"]["shapes"][name]["samples_us"])["savings_us"]["pooled"] for r in records]
+        assert statistics.median(savings)>=P3_MIN_MEDIAN_SAVING_US, f"{name}: P3 median pooled saving below 3 us against P"
 
 
 def valid_metrics(metrics):
@@ -62,7 +84,7 @@ def finite_float(value):
 def check_candidate(record, candidate):
     assert record["passed"] is True, record.get("error","candidate incomplete")
     assert set(record["shapes"])=={"+".join(map(str,s)) for s in SHAPES}, "incomplete shapes"
-    for shape in record["shapes"].values():
+    for name,shape in record["shapes"].items():
         assert shape["row"]==ROWS[candidate] and shape["variant"]==VARIANTS[candidate], "wrong candidate row/variant"
         assert shape["byte_image_first"] is True and shape["producer_bytes_equal"] is True and shape["replays"]==2, "byte/replay failure"
         valid_metrics(shape["candidate_fp32"])
@@ -71,7 +93,7 @@ def check_candidate(record, candidate):
         if candidate=="P3":
             assert shape["p_bytes_equal"] is True, "P3 output differs from P"
             valid_metrics(shape["baseline_fp32"])
-        assert all(v>=5 for v in timing_summary(shape["samples_us"])["savings_us"].values()), "below 5 us margin"
+        check_timing(shape["samples_us"],candidate,name)
     assert set(record["singles"])=={str(s[0]) for s in SINGLE_SHAPES}, "incomplete singles"
     for single in record["singles"].values():
         assert single["row"]=="n192-direct-o-varlen-pipe" and single["writer"]=="fp32", "single route changed"
@@ -84,7 +106,7 @@ def check_candidate(record, candidate):
 
 
 def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_ok, image_sha256, p3_enabled=False):
-    result={"schema":SCHEMA,"adopted":False,"selected":None,"gpus":[],"run_id":run_id,"candidate_rejections":{},"rule":{"shapes":SHAPES,"minimum_saving_us":5,"wall_seconds":155,"endurance_calls":ENDURANCE,"priority":["P3","P"],"baselines":BASELINES,"p3_enabled":p3_enabled}}
+    result={"schema":SCHEMA,"adopted":False,"selected":None,"gpus":[],"run_id":run_id,"candidate_rejections":{},"rule":{"shapes":SHAPES,"p_minimum_saving_us":5,"p3_pooled_saving_strictly_positive":True,"p3_minimum_median_pooled_saving_us":P3_MIN_MEDIAN_SAVING_US,"p3_maximum_order_regression_us":P3_MAX_ORDER_REGRESSION_US,"wall_seconds":155,"endurance_calls":ENDURANCE,"priority":["P3","P"],"baselines":BASELINES,"p3_enabled":p3_enabled}}
     try:
         def read(path):
             return json.loads(path.read_text(),parse_constant=reject_constant,parse_float=finite_float)
@@ -119,6 +141,7 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
             try:
                 for record in result["gpus"]:
                     check_candidate(record["candidates"]["P3"],"P3")
+                check_p3_group(result["gpus"])
                 result["selected"]="P3"
             except (AssertionError,KeyError,TypeError,ValueError) as error:
                 result["candidate_rejections"]["P3"]=str(error)
@@ -401,7 +424,7 @@ def run(output, run_id, deadline, image_sha256, p3_enabled=False):
                     record["shapes"]["+".join(map(str,lengths))]=cell
                     assert "error" not in cell, cell.get("error")
                     cell["samples_us"]=paired(measure(torch,checks,{mode:state["composite"][mode] for mode in (BASELINES[candidate],candidate)},state.setdefault("timing_graphs",{})),candidate)
-                    assert all(v>=5 for v in timing_summary(cell["samples_us"])["savings_us"].values()), "below 5 us margin against "+BASELINES[candidate]
+                    check_timing(cell["samples_us"],candidate,"+".join(map(str,lengths)))
                 for lengths in SINGLE_SHAPES:
                     require_time(deadline)
                     if lengths not in single_inputs:

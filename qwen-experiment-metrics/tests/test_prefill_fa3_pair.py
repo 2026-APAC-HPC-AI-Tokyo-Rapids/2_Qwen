@@ -169,7 +169,7 @@ def test_wiring_and_native_build_inputs():
     assert 'COPY containers/fa3-verify /opt/apac/fa3-verify' in (ROOT / 'containers/Dockerfile').read_text()
     assert 'cp -a "${GITHUB_WORKSPACE}" "${input_root}/qwen"' in (ROOT / '.github/workflows/aws-container.yml').read_text()
     assert config['images']['sglang']['sha256'] == config['container_sha256']
-    assert config['container_sha256'].startswith('5a3df8c4')
+    assert config['container_sha256'].startswith('149e0fc9')
 
 
 def test_timed_out_workers_continue_to_control_serving(tmp_path):

@@ -6,6 +6,7 @@ import json
 import os
 import runpy
 import shlex
+import statistics
 import subprocess
 import sys
 import time
@@ -166,7 +167,7 @@ def test_native_writer_and_gate_wiring():
     assert config['prefill']['fa3_prepack_gate'] is True
     assert config['prefill']['fa3_v3_gate'] is True
     assert config['sglang_overlay_patches'][-1]=='patches/sglang/prefill-fa3-vsum.patch'
-    assert config['images']['sglang']['sha256']==config['container_sha256'] and config['container_sha256'].startswith('5a3df8c4')
+    assert config['images']['sglang']['sha256']==config['container_sha256'] and config['container_sha256'].startswith('149e0fc9')
     source=(ROOT/'patches/sglang/prefill-fa3-vsum.patch').read_text()
     for contract in ('qknorm_rope_prefill_native_kernel','native_offset<NativeN>','local<length','max_blocks*NativeN','self.attn.fixed_prefill_output','forward_metadata.cu_seqlens_q','prefill_prepack'):
         assert contract in source
@@ -357,7 +358,7 @@ def test_priority_and_candidate_local_rejection(screen):
     assert aggregate(screen)['selected']=='P3'
     screen[1].write_text(PIN)
     path=screen[0]/'prefill-2/rank-3.json'; record=json.loads(path.read_text())
-    record['candidates']['P3']['shapes']['3994+3994']['samples_us']['reverse']['candidate']=[896.]*10
+    record['candidates']['P3']['shapes']['3994+3994']['samples_us']['reverse']['candidate']=[902.01]*10
     path.write_text(json.dumps(record))
     result=aggregate(screen)
     assert result['adopted'] and result['selected']=='P'
@@ -472,12 +473,12 @@ def test_p3_requires_every_cell_against_p(screen,case):
     candidate=record['candidates']['P3']; shape=candidate['shapes']['4096+3901']
     if case=='baseline': shape['baseline']='C'
     elif case in ('forward','reverse'):
-        shape['samples_us'][case]['candidate']=[895.01]*10
+        shape['samples_us'][case]['candidate']=[902.01]*10
     elif case=='pooled':
         # Each order saves 5, but pooling changes which middle samples are selected.
-        shape['samples_us']={'forward':{'control':[100.]*6+[200.]*4,'candidate':[95.]*6+[199.]*4},'reverse':{'control':[200.]*6+[100.]*4,'candidate':[195.]*6+[100.]*4}}
+        shape['samples_us']={'forward':{'control':[100.]*6+[200.]*4,'candidate':[95.]*6+[205.]*4},'reverse':{'control':[200.]*6+[100.]*4,'candidate':[195.]*6+[105.]*4}}
         summary=GATE['timing_summary'](shape['samples_us'])['savings_us']
-        assert summary['forward']==summary['reverse']==5 and summary['pooled']<5
+        assert summary['forward']==summary['reverse']==5 and summary['pooled']==0
     elif case=='bytes': shape['p_bytes_equal']=False
     elif case=='numeric': shape['baseline_fp32'][0]['max_scaled_error']=.251
     elif case=='shape': candidate['shapes'].pop('4096+3901')
@@ -648,3 +649,121 @@ def test_p3_requires_prepack_gate(tmp_path):
     for name in ('source','results'): (tmp_path/name).mkdir()
     with pytest.raises(AssertionError,match='V3 gate requires prepack gate'):
         runpy.run_path(str(ROOT/'scripts/prepare-firmus-pp4-settings.py'))['prepare'](config,ROOT,tmp_path)
+
+
+def test_round17_image_pin_is_consistent_for_reuse():
+    config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
+    sha='149e0fc9d1f71733a25ddba2939f3373db8e33740c29575e4bd33d0fcc82fa3f'
+    assert config['images']['sglang']=={'path':'/scratch/home/ACCOUNT/qwen/containers/41287043170.sqsh','sha256':sha,'size_bytes':12298383360,'provenance':'/scratch/home/ACCOUNT/qwen/containers/41287043170.container-sidecar.json'}
+    assert (config['container_build_run_id'],config['container_sha256'],config['container_size_bytes'],config['container_source_commit'])==(41287043170,sha,12298383360,'179c1219aff64c83e6dad6bf2ebf062669de5569')
+    assert runpy.run_path(str(ROOT/'scripts/check-firmus-pp4-cpu.py'))['PINNED_IMAGE']==sha
+    assert config['prefill']['fa3_v3_gate'] is True
+
+
+def test_p3_adopts_at_three_us_group_median_and_two_us_order_boundary(screen):
+    enable_p3(screen)
+    for path in screen[0].glob('prefill-*/rank-*.json'):
+        record=json.loads(path.read_text())
+        for cell in record['candidates']['P3']['shapes'].values():
+            # Each pooled saving is 3, despite a 2 us forward regression.
+            cell['samples_us']={'forward':{'control':[900.]*10,'candidate':[902.]*10},'reverse':{'control':[900.]*10,'candidate':[892.]*10}}
+        path.write_text(json.dumps(record))
+    result=aggregate(screen)
+    assert result['adopted'] and result['selected']=='P3'
+    assert result['rule']['p_minimum_saving_us']==5
+    assert result['rule']['p3_pooled_saving_strictly_positive'] is True
+    assert result['rule']['p3_minimum_median_pooled_saving_us']==3
+    assert result['rule']['p3_maximum_order_regression_us']==2
+    assert screen[1].read_text()==PIN.replace(GATE['CONTROL'],GATE['DISPATCH']['P3'])
+
+
+@pytest.mark.parametrize('saving',[0.001,0.,-0.001])
+@pytest.mark.parametrize('gpu',range(12))
+def test_p3_pooled_direction_on_every_gpu(screen,gpu,saving):
+    enable_p3(screen)
+    path=screen[0]/f'prefill-{gpu//4}/rank-{gpu%4}.json'
+    record=json.loads(path.read_text())
+    shape='+'.join(map(str,GATE['SHAPES'][gpu%len(GATE['SHAPES'])]))
+    for order in ('forward','reverse'):
+        record['candidates']['P3']['shapes'][shape]['samples_us'][order]['candidate']=[900.-saving]*10
+    path.write_text(json.dumps(record))
+    result=aggregate(screen)
+    assert result['adopted'] and result['selected']==('P3' if saving>0 else 'P')
+    if saving<=0: assert 'pooled saving must be positive' in result['candidate_rejections']['P3']
+
+
+@pytest.mark.parametrize('shape',GATE['SHAPES'])
+@pytest.mark.parametrize('low_saving,high_saving,selected',[(2.,4.,'P3'),(2.,3.998,'P'),(1.,3.,'P')])
+def test_p3_group_median_is_per_shape_across_twelve_gpus(screen,shape,low_saving,high_saving,selected):
+    enable_p3(screen)
+    name='+'.join(map(str,shape))
+    for path in screen[0].glob('prefill-*/rank-*.json'):
+        record=json.loads(path.read_text())
+        # The even-population median averages the two middle GPUs. Other
+        # shapes stay fast; pooling all 84 cells would hide this shape's loss.
+        saving=low_saving if int(record['worker'][-1])*4+record['rank']<6 else high_saving
+        for order in ('forward','reverse'):
+            record['candidates']['P3']['shapes'][name]['samples_us'][order]['candidate']=[900.-saving]*10
+        path.write_text(json.dumps(record))
+    result=aggregate(screen)
+    assert result['adopted'] and result['selected']==selected
+    if selected=='P': assert result['candidate_rejections']['P3']==f'{name}: P3 median pooled saving below 3 us against P'
+
+
+@pytest.mark.parametrize('order',['forward','reverse'])
+@pytest.mark.parametrize('saving,accepted',[(-2.,True),(-2.001,False)])
+def test_p3_order_regression_boundary(screen,order,saving,accepted):
+    enable_p3(screen)
+    path=screen[0]/'prefill-2/rank-3.json'
+    record=json.loads(path.read_text())
+    cell=record['candidates']['P3']['shapes']['4096+3901']
+    cell['samples_us'][order]['candidate']=[900.-saving]*10
+    result_savings=GATE['timing_summary'](cell['samples_us'])['savings_us']
+    assert result_savings['pooled']>0
+    path.write_text(json.dumps(record))
+    result=aggregate(screen)
+    assert result['adopted'] and result['selected']==('P3' if accepted else 'P')
+    if not accepted: assert f'{order} regression exceeds 2 us' in result['candidate_rejections']['P3']
+
+
+def test_worker_and_aggregator_use_the_same_timing_gate():
+    tree=ast.parse(SCRIPT.read_text())
+    for name in ('run','check_candidate'):
+        function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name)
+        calls={n.func.id for n in ast.walk(function) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name)}
+        assert 'check_timing' in calls and 'timing_summary' not in calls
+
+
+def test_round17_raw_fixture_refuses_p3_with_the_new_two_us_limit():
+    """No measurements or completion flags are filled in after the old gate stopped.
+
+    The gzip preserves all twelve rank JSONs and selection metadata from
+    prepack-41287043170. It contains only 14 P3 cells, not 84, and no P3
+    singles/endurance. Recheck the recorded samples with the new cell rule;
+    this is not a historical full-gate acceptance replay.
+    """
+    with gzip.open(ROOT/'qwen-experiment-metrics/tests/fixtures/prefill-fa3-prepack-41287043170.json.gz','rt') as stream:
+        data=json.load(stream)
+    assert data['selection']['selected']=='P'
+    assert data['selection']['run_id']=='28064-1793523397'
+    records=data['prepack']
+    assert len(records)==len({r['uuid'] for r in records})==12
+    pooled=[]; failures=[]; count=0
+    for record in records:
+        assert record['image_sha256']=='149e0fc9d1f71733a25ddba2939f3373db8e33740c29575e4bd33d0fcc82fa3f'
+        GATE['check_candidate'](record['candidates']['P'],'P')
+        candidate=record['candidates']['P3']
+        assert candidate['passed'] is False and candidate['error']=='below 5 us margin against P'
+        assert not candidate['singles'] and 'endurance' not in candidate
+        pooled.append(GATE['timing_summary'](candidate['shapes']['3994+3994']['samples_us'])['savings_us']['pooled'])
+        for name,cell in candidate['shapes'].items():
+            count+=1
+            assert cell['p_bytes_equal'] is True and cell['replays']==2
+            try:
+                GATE['check_timing'](cell['samples_us'],'P3',name)
+            except AssertionError as error:
+                failures.append((record['worker'],record['rank'],record['uuid'],name,str(error)))
+    assert count==14 and min(pooled)>0 and statistics.median(pooled)==pytest.approx(5.4013331731162)
+    assert failures==[('prefill-1',1,'51c4a066-a47b-13f0-dd20-f99835f53077','3994+3994','3994+3994: P3 forward regression exceeds 2 us against P')]
+    cell=records[5]['candidates']['P3']['shapes']['3994+3994']
+    assert GATE['timing_summary'](cell['samples_us'])['savings_us']['forward']==pytest.approx(-2.3360252380371094)
