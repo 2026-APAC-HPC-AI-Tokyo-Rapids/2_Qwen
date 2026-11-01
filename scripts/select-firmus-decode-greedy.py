@@ -7,6 +7,7 @@ import os
 import socket
 import statistics
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -276,7 +277,7 @@ def main():
     elif a.launch:
         inventory(a.output,a.run_id)
         os.environ['CUDA_VISIBLE_DEVICES']=','.join('GPU-'+read(a.output/'inventory.json')['gpus'][str(i)] for i in range(4,8))
-        subprocess.run(['torchrun','--standalone','--nproc-per-node=4',__file__,'--output',str(a.output),'--run-id',a.run_id,'--image-sha256',a.image_sha256,'--deadline',str(a.deadline)],check=True)
+        subprocess.run([str(Path(sys.executable).with_name('torchrun')),'--standalone','--nproc-per-node=4',__file__,'--output',str(a.output),'--run-id',a.run_id,'--image-sha256',a.image_sha256,'--deadline',str(a.deadline)],check=True)
     else:
         run(a.output,a.run_id,a.image_sha256,a.deadline)
 

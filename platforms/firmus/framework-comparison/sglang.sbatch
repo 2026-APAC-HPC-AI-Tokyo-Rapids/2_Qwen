@@ -223,11 +223,6 @@ done
 # reproduced without GPUs). All four ranks share a node-local cache instead.
 # Decode kernel selection (select-firmus-decode-kernels.sh, results/decode-selection/). The 17-minute site
 # limit leaves no serial time: "fa3" runs on the head node's other four GPUs during the numeric gate, and
-# A killed container step can leave its unpacked image under this account's node-local enroot data;
-# 41340843101 and 41349758991 then failed to unpack on g4 with no space left on /data. The two nodes are
-# exclusive to this job, so remove only this account's earlier pyxis directories and log /data before and after.
-srun -N2 -n2 --ntasks-per-node=1 --cpus-per-task=1 bash -c 'd="/data/enroot/data/user-$(id -u)"; printf "%s before: %s\n" "$(hostname -s)" "$(df -h /data | tail -1)"; if [[ -d "${d}" ]]; then find "${d}" -mindepth 1 -maxdepth 1 -name "pyxis_*" ! -name "pyxis_${SLURM_JOB_ID}.*" -exec rm -rf {} +; fi; printf "%s after: %s\n" "$(hostname -s)" "$(df -h /data | tail -1)"' >"${ART}/enroot-cleanup.log" 2>&1
-
 # "dense" on the Decode GPUs while the Prefill workers start. Only the Decode worker sources the result.
 if [[ -s "${ROOT}/source/pp4-kernel-settings.json" ]]; then
   # Every selection gate has settled: 41005872470, 41020974704 and 41040348302; the fixed FA3 pipe
