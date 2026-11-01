@@ -79,7 +79,17 @@ single3994/4096/3584は両候補envで旧dispatch・旧writer、Q/K/V/paged KV�
 
 数値・速度・byte不足はその候補だけ拒否。CUDA RuntimeError、process異常は非ゼロexitで群全体を拒否し、shellは自分が起動した残りのgate子プロセスだけ終了する。hangは群timeoutで拒否。異常contextで次候補を走らせず、servingは従来どおりfresh process。
 
-集約はsuccessful pair gateとの同一allocation、worker/rank/UUID、12 distinct H200 UUID、run ID、image/binary hash、候補row/variant、全shape/single/endurance、期限を検査。Pが12GPUすべてで合格ならP、そうでなくSだけが全合格ならS。混在合格やP＋Sは採らない。envの既存FA3行がround12 controlであることを確認し、全結果がそろった場合だけ同じfilesystem上のrenameでatomicに置換する。それ以外はround12選択のまま。
+集約はsuccessful pair gateとの同一allocationとUUID集合、fragment自身のworker/rank、12 distinct H200 UUID、run ID、image/binary hash、候補row/variant、全shape/single/endurance、期限を検査。Pが12GPUすべてで合格ならP、そうでなくSだけが全合格ならS。混在合格やP＋Sは採らない。envの既存FA3行がround12 controlであることを確認し、全結果がそろった場合だけ同じfilesystem上のrenameでatomicに置換する。それ以外はround12選択のまま。
+
+## Round 16：GPU割当の入れ替わりによる集約拒否の修正
+
+round 15（run `41273087893` attempt 2）はPが全12 H200で再合格し、3994+3994でcontrolより33〜39µs短かったが、集約が `AssertionError: wrong GPU` で拒否し、round 12の選択で公式9947.81となった。HEAD上で並行する2本の4GPU srunは、pair gateとprepack gateでprefill-0/1のGPU群を丸ごと交換していた。UUID集合は同一で、prefill-2は一致。servingも同じ割当方式のため、worker/rankと物理GPUの対応をgate間で固定する根拠はない。
+
+pair結果を重複なしの12 UUIDで索引し、各prepack fragmentのUUIDがその集合に含まれ未使用であること、H200であること、同じUUIDのpair結果とallocation（run ID先頭）が一致することを確認する。worker/rankはfragmentの位置と中身の整合だけを検査し、最後にUUID集合の完全一致を確認する。schema、run ID、image/binary hash、healthy、期限、候補判定とP優先規則は維持。mainにあるpair、generic FA3、MegaMoE、MoE input、Decode各集約も確認し、別gateの同じworker/rankにUUID一致を要求する同種の箇所はなかった。
+
+回帰fixture `qwen-experiment-metrics/tests/fixtures/prefill-fa3-prepack-41273087893.json.gz` はround 15のpair selectionと全12 prepack fragmentをJSON値のまま圧縮したもの。テスト内だけv2のschemaラベルを本branchのv1に合わせ、Pの実測値・UUID・run ID・hashを保持し、当時の155秒deadlineと時計で再生する。productionのschema受理条件は広げず、元のv2を拒否するテストも残す。修正前は実データの入れ替わりとrank入れ替わりで拒否され、修正後はPを採用する。未知・重複UUID、同一UUIDのallocation不一致、fragment欠落、pair側の欠落・重複・余分な記録、fragment自身のworker/rank不整合、H200以外は拒否する。config、kernel、image pin、sbatchは変更せず、round 14 image `5a3df8c4`（run `41264009819`）の再利用を維持する。serving commitとGPU実行は後続担当が行う。
+
+round 16検証：指定のPython 3.12 / uv no-project全体suiteは1387 passed、78 skipped、25 subtests passed、546.77秒。AF_UNIXの3件だけ、同じ許可scratchを短い `/proc/self/cwd` で参照する一時fixtureを使用した。関連pair/prepackテスト、fixtureと生データのJSON値一致、Python構文、Ruff、diff検査も合格。テスト用directory・一時fixture・生成cacheは削除し、round 15生データと検証logは保持する。
 
 ## wall上限と17分枠
 

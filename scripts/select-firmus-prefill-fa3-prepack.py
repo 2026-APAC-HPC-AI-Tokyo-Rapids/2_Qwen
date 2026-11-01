@@ -85,8 +85,8 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
             return json.loads(path.read_text(),parse_constant=reject_constant,parse_float=finite_float)
         pair=read(pair_selection)
         assert pair["schema"]=="firmus-prefill-fa3-pair/v1" and pair["adopted"] is True, "round-12 gate did not adopt"
-        identities={(g["worker"],g["rank"]):g for g in pair["gpus"]}
-        assert len(identities)==12 and len({g["uuid"] for g in identities.values()})==12, "incomplete pair GPUs"
+        identities={g["uuid"]:g for g in pair["gpus"]}
+        assert len(pair["gpus"])==12 and len(identities)==12, "incomplete pair GPUs"
         assert workers_ok and time.time()<=deadline, "workers failed, timed out or late"
         assert isinstance(image_sha256,str) and len(image_sha256)==64 and all(c in "0123456789abcdef" for c in image_sha256), "image hash required"
         uuids=set(); binaries=set()
@@ -94,14 +94,16 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
             for rank in range(4):
                 r=read(directory/f"prefill-{worker}"/f"rank-{rank}.json")
                 result["gpus"].append(r)
-                prior=identities[(f"prefill-{worker}",rank)]
                 assert r["schema"]==SCHEMA and r["run_id"]==run_id, "stale result"
                 assert r["worker"]==f"prefill-{worker}" and r["rank"]==rank, "wrong worker"
-                assert r["uuid"]==prior["uuid"] and r["uuid"] not in uuids and "H200" in r["device"], "wrong GPU"
+                # Slurm may assign each worker different GPUs between gate steps.
+                assert r["uuid"] in identities and r["uuid"] not in uuids and "H200" in r["device"], "wrong GPU"
+                prior=identities[r["uuid"]]
                 assert prior["run_id"].split("-",1)[0]==run_id.split("-",1)[0], "wrong allocation"
                 assert r["healthy"] is True and 0<r["elapsed_seconds"]<SECONDS and r["finished_at"]<=deadline, "fatal or late GPU"
                 assert r["image_sha256"]==image_sha256 and len(r["binary_sha256"])==64, "hash mismatch"
                 uuids.add(r["uuid"]); binaries.add(r["binary_sha256"])
+        assert uuids==set(identities), "incomplete prepack GPUs"
         assert len(binaries)==1, "different binaries"
         for candidate in ("P","S"):
             try:
