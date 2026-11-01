@@ -261,7 +261,7 @@ def test_wiring_build_and_time_contract():
     assert '--gres=gpu:8' in shell_block() and '-w "${TAIL}"' in shell_block()
     assert '85 srun' in shell_block() and '90 - $(date +%s)' in shell_block()
     assert GATE['WALL_SECONDS']>=1.5*60 and GATE['WALL_SECONDS']<=90
-    assert '90 + 802' in shell_block()
+    assert '90 + 660' in shell_block()
     assert 'select-firmus-decode-greedy.py' in (ROOT/'scripts/provision-firmus-framework.sh').read_text()
     build=(ROOT/'kernels/fa3-verify/build.py').read_text()
     assert '"greedy_verify")' in build and '"--ftz=false", "--fmad=false"' in build
@@ -330,7 +330,7 @@ def test_gate_skips_when_serving_budget_is_low(tmp_path):
     script=f'''set -euo pipefail
 ROOT={shlex.quote(str(tmp_path))}
 prefill_pp=4
-SECONDS=129
+SECONDS=271
 jq() {{ printf true; }}
 timeout() {{ exit 99; }}
 '''

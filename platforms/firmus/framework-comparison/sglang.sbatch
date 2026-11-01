@@ -322,10 +322,11 @@ fi
 
 # Decode greedy gate begin: entirely after pair/prepack, before any model starts.
 # Estimated <=60 s, workers 85 + kill 2 + aggregate 3 <=90 s (>=1.5x).
-# Reserve 742 s historical entire P job +60 s fresh-image initialization, conservatively.
+# After the gate, keep 660 s for model start, warmup, measurement and collection (634 s measured after
+# the prepack group in round 21, 41327492259, which already includes a fresh-image start).
 if [[ "${prefill_pp}" == 4 && "$(jq -r '.decode_greedy_verify_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
   mkdir -p "${ROOT}/results/decode-greedy"
-  if (( 1020 - SECONDS >= 90 + 802 )); then
+  if (( 1020 - SECONDS >= 90 + 660 )); then
     decode_greedy_started=$(date +%s)
     decode_greedy_ok=0
     # Reserve g4's eight devices only during this step; execute solely on physical 4-7.

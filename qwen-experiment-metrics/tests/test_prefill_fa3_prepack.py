@@ -167,7 +167,7 @@ def test_native_writer_and_gate_wiring():
     assert config['prefill']['fa3_prepack_gate'] is True
     assert config['prefill']['fa3_v3_gate'] is True
     assert 'patches/sglang/prefill-fa3-vsum.patch' in config['sglang_overlay_patches']
-    assert config['images']['sglang']['sha256']==config['container_sha256'] and config['container_sha256'].startswith('149e0fc9')
+    assert config['images']['sglang']['sha256']==config['container_sha256'] and config['container_sha256'].startswith('c7804efb')
     source=(ROOT/'patches/sglang/prefill-fa3-vsum.patch').read_text()
     for contract in ('qknorm_rope_prefill_native_kernel','native_offset<NativeN>','local<length','max_blocks*NativeN','self.attn.fixed_prefill_output','forward_metadata.cu_seqlens_q','prefill_prepack'):
         assert contract in source
@@ -655,7 +655,7 @@ def test_fresh_build_retains_pin_and_p3_switch():
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
     assert config['prefill']['fa3_v3_gate'] is True
     assert config['decode_greedy_verify_gate'] is True
-    assert config['container_build_run_id']==41287043170  # provenance only; serving requires fresh build
+    assert config['container_build_run_id']==41340843101  # round-22 image, reused without a build
 
 
 @pytest.mark.parametrize('negative,loss,selected',[(8,0.,'P3'),(9,0.,'P'),(1,-3.,'P3'),(1,-3.001,'P')])
