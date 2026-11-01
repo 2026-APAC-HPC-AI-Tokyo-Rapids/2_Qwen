@@ -192,6 +192,8 @@ causal QK+PV=2*L*(L+1)*Qheads*D; M128/N192 PackGQA。
 
 Round 12（41201412459）で採用：2要求・各3900〜4096 tokenのvarlen呼出しだけM192/N96（`m192n96-direct-o-varlen-pipe`）、それ以外はN192 pipe。12 GPU全てで7 pair形状の正順・逆順とも5 µs以上短縮（served形状3994+3994でproducer+FA3 743〜772 µsに対し16.1〜21.4 µs、24層で0.39〜0.51 ms）、FP32参照に対しrelative L2 0.026（N192は0.017、上限0.05）、1200回耐久でbyte一致。PP0周期は114.9/114.6/118.1→114.4/113.9/117.5 ms、公式9958.43（round 10比+0.63%）。imageはa8232b16（41201412459）に固定（`2026-11-01-pp4-round12.md`）。
 
+Round 13-V（41253426202）で棄却：pair 呼出しに native V の一度書きと lifetime 保持の 4-chain sum を合成した `m192n96-direct-o-varlen-pipe-vsum`。CPU では FADD 依存深さ 23→7、spill 40/28→0/0 B だったが、H200 の in-job gate（QK post＋FA3＋O）では 12 GPU 全てで 3994+3994 が 46〜52 µs/call 遅く（control 1162〜1209 µs、約 +4%）、`below 5 us margin` で不採用。V byte image・Q/K・paged KV は byte 一致、FP32 誤差は control と同値。合成時間だけでは原因を分けられないため、同じ合成形を再提出しない。served は round 12 の選択のままで公式 9947.50（round 12 の 9958.43 比 −0.11%、公式窓 +0.14 s で説明できる再現）。image は pin しない（`2026-11-01-prefill-fa3-vsum-r13.md`）。
+
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。

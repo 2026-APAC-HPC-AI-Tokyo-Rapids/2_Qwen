@@ -122,3 +122,27 @@ main merge の競合は model JSON の末尾のみ。V/sum と MegaMoE 棄却を
 - 現行pair writer・N96独立dump・native wrapperをCUDA13.4/sm_90aまたはg++で再compile。N192 native writer/dump symbolなし、N96 writerのint32/int64だけが生成され、48 registers・stack/spill0・C75xxなし。旧FP32 writer2種の全encoded wordsは一致。FA3合成patch自体はb102c40からbyte不変なので、既存のcontrolとN96合成SASS証拠を維持する。
 - round12 image manifestの23 baked patch hash、31 runtime overlay適用、実PP4 CPU source checks、実config prepareでgate falseを確認。全15個の公開ID/variantとgenerated table順序も照合した。Ruff、shell構文、diff検査は合格。
 - 追加compileのraw SASS・header・command/logは指定scratch内の `cpu-sass-pair-proof.tar.gz` に圧縮保存し、hashをCPU検証JSONに記録。task-owned clone、object、生成TU、診断scriptとtest runtimeは削除する。SSH・Actions操作・scheduler/GPU/image jobは起動しておらず、この作業が残すremote jobはない。
+
+## serving 結果：合成形は gate で不採用（run 41253426202、2026-11-01）
+
+- serving commit：becabbf（`prefill.fa3_vsum_gate=true`）。最初の run 41225578193 は、玄界ログインが鍵認証後にセッションを閉じたため入力準備で停止した（build・GPU とも未使用）。main 4a1e86e で入力準備を Firmus ログインノードと GitHub の `5_SGLang_Src` へ移し、それを merge した 33a5f48 から再投入した。round 13 の中身は becabbf と同一。
+- image：run 41253426202 で build。sha256 `101de99dbe8aa4b7220912ae39a9e4980eec974b1b269d4ec6343893803098f7`、12298215424 bytes、SGLang fc27567。Slurm job 27969、g[1,4]、COMPLETED 12:21、READY 439 s（round 12：10:52、367 s）。
+- **pair gate：** 12 GPU すべて合格（round 12 と同じ理由文）。
+- **vsum gate：不採用。** 12 GPU すべてで `passed: false`、`below 5 us margin`。最初の形状 3994+3994 で margin を割ったため、残り 6 pair、single の数値チェック、1200 回耐久は実行していない（`singles` は空）。集約の理由文は `failed or late GPU` だが、12 個の fragment はすべて揃っていて、全部が不合格だった。gate 自体は GPU あたり約 28 秒で終わった。
+
+| 3994+3994、QK post＋FA3＋O（µs/call） | 範囲（12 GPU） |
+|---|---|
+| control（round 12 の pair 行、旧 writer）forward 中央値 | 1162.2–1208.8 |
+| candidate（native V＋4-chain sum）forward 中央値 | 1209.7–1257.1 |
+| 短縮 forward / reverse / pooled | −47.4〜−52.0 / −45.8〜−52.0 / −46.1〜−51.5 |
+
+- **数値は合格水準：** V の byte image dump が最初に一致、Q/K と paged KV は旧 writer と byte 一致。FP32 causal 参照に対する relative L2 0.0257–0.0266、max scaled error 0.032–0.036 は、3 回とも control と同じ値だった。
+- **結論：** 合成形は control より約 4% 遅く、24 層では周期で約 1.1–1.2 ms の悪化に相当する。gate は合成時間だけを測るため、native V の読み出し・writer の費用・lifetime 保持の +19 命令のどれが原因かは、この run からは分けられない。CPU 上の FADD 依存深さ 23→7 と shared byte の削減は、H200 上の速度に変わらなかった。同じ合成形を margin の調整で再提出しない。V layout と sum を再び扱うなら、要素ごとの計時を gate に入れることが前提になる。
+- **serving：** `SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen-pipe+m192n96-pair`（round 12 の選択）で継続し、公式 **9947.50**、eligible、validation valid。
+
+| run | 内容 | score | PP0 period prefill-0/1/2（ms） | requests | TTFT fail | ITL fail | ITL mean / p99（ms） | 公式窓（s） |
+|---|---|---:|---|---:|---:|---:|---|---:|
+| 41201412459 | round 12 | 9958.43 | 114.4 / 113.9 / 117.5 | 6276 | 113 | 3 | 15.57 / 18.34 | 123.71 |
+| 41253426202 | round 13（vsum 不採用、served は round 12 と同じ） | 9947.50 | 113.9 / 114.4 / 117.4 | 6275 | 112 | 3 | 15.59 / 18.41 | 123.85 |
+
+この run は served 構成が round 12 と同じで、新しい image での再現として扱える。差 −0.11% は公式窓の長さ（+0.14 s）の差でほぼ説明でき、round 10 と 11 のばらつき 0.15% の範囲に入る。image 41253426202 は pin しない。reuse pin は a8232b16（41201412459）のまま。
