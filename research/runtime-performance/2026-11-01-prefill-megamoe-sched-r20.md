@@ -109,3 +109,22 @@ CUDA13.4の3コンパイルと230条件のnative host auditが成功した。指
 全体suiteにはround18/19と同様、AF_UNIX名が長くなる3 fixtureだけを同じscratchのdirectory-fd aliasへ向ける補助pluginを使用した。検査件数・待機・動作は削っていない。初回全体suiteで露呈したoverlay位置の既存assert、stagingの静的inventory、凍結EP4 workerとの比較例外を新しい明示的配線に合わせ、最終全体を再実行した。
 
 不要なscratch source、展開archive、pytest fixture、native中間binary、編集用scriptと補助pluginを削除し、最終compiler/SASS/header/CPU検証・test logと提供済みastra入力を保持した。最初の関連suiteで指定外に作られた自分のpytest一時directoryも削除した。クラスタjobは作成していないので、この作業由来の残留Slurm/PJMジョブはない。他者のjobには触れていない。
+
+## serving 結果：L は 12 GPU 全てで遅く棄却、P は gate の時間予約で未採用、9959.45（run 41317543745、2026-11-02）
+
+- 最初の serving commit c798d7b の run 41315801020 は validate で止まった（build・GPU 未使用）。CI は project の CPython 3.13 で test を回すため、偽 torch の `__spec__` 参照と、thread pool の送信順に依存した 2 test が落ちた。test だけを直した c6605ff で再投入した。
+- Slurm job 28126、READY 477 s、PP0 周期 113.9 / 114.3 / 117.5 ms。gate の結果：
+  - **候補 L：棄却。** 計装なしの完全 MegaMoE（T=7988、3 routing を 8 round 回転・逆順、control と交互）で、12 GPU 全て・3 routing 全てで L が遅かった。出力は byte 一致。
+
+| routing | control（µs、12 GPU の中央値の範囲） | L − control（µs） |
+|---|---:|---:|
+| balanced | 2507〜2603 | +102〜+166 |
+| historical | 2698〜2797 | +78〜+113 |
+| edges | 2645〜2747 | +38〜+111 |
+
+    各 warp が GPU の counter から割り当てを毎回計算し直す費用と、expert・M block 順の割り当てで B の再利用が崩れたことが、FC1 の最大負荷の低下（50 → 49 単位）を上回ったと考えられる。FC1 の静的な割り当て順を変える方向は閉じる。
+  - **12 GPU の計装なし計時は全て完了**（round 19 の時間切れを解消）。ただし control の値は round 19（balanced 2334〜2363 µs）より高い。この run では P の gate の直後に同じ process で続けて測っており、clock・電力の状態が違う。round 19 と直接比べない。
+  - **P：未採用**（`no candidate passed all twelve GPUs`）。prefill-2 では P は合格したが、起動の遅い prefill-0/1 で、MegaMoE 用に先に予約した時間を除くと残りが P の完全 gate に足りず、`insufficient time for complete candidate stage` で P を始めなかった。round 20 の gate 群の作りの欠陥で、main の gate（round 14 の形）にはない。
+  - **routing capture：未完了**（`pass did not finish within 15 seconds`）。
+- **serving：** round 12 の選択で公式 **9959.45**、eligible、validation valid、6273 requests。round 12 の構成の再現（9947.50〜9958.43）と同じ範囲。
+- **今後：** この branch の gate 群（P と MegaMoE 計時を同じ process で続ける形、時間の予約）は main に入れない。もし MegaMoE の計時を再び使うなら、P の完全 gate を先に必ず終え、その後の残り時間だけを MegaMoE に使う。
