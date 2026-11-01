@@ -202,6 +202,8 @@ Round 14 の repeat（41280565072、build なし、prepack 集約を UUID 集合
 
 Round 17（41287043170）：P3（native V だけ 3 slot、V を K acquire より前に load、variant 172256）は P と出力 byte 一致、P 比 pooled 1.7〜7.1 µs/call（中央値 5.4）で 5 µs margin を 5 GPU が割り不採用。P2 の直列化は解消したが、残る利得は 1 層約 5 µs（score 約 +0.1%）。P は再合格し公式 10020.58（P の構成は 3 run で 10008.67〜10020.58）（`2026-11-01-prefill-fa3-v3-r17.md`）。
 
+Round 18（41296967433）：split MegaMoE の in-job 診断（globaltimer の CTA/WG 記録、serving kernel の SASS は byte 一致）は、trace バッファの先頭に magic が見つからず全 GPU で不完全（データなし）。原因は kernel 側の書き込みか host 側の位置の取り決めかを区別できない。P は再採用され公式 10005.35（P の構成は 4 run で 10005.35〜10020.58）（`2026-11-01-prefill-megamoe-diag-r18.md`）。
+
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。
@@ -447,3 +449,11 @@ GPU計算なし。元nsys-repのhashはmodel JSON、export SQLiteと抽出script
 Round 15（2026-11-01）：P2 variant106720/ID17をCPU admission合格、GPU未測定・fa3_vload_gate=falseで追加。P41184のnative2slot/stage2を保ち、V acquire/bulkをprologueとloopでK acquireより前へ移し、controlと同じEVICT_LASTを指定する。P比FLOP/byte不変、削る対象は露出V待ち。CUDA13.4/sm_90aでP2 spill0/0・C75xxなし、旧N96/N192/Pと旧FP32 writer両index、packのencoded SASS一致。P→P2静的4424→4408命令、数学/変換1814命令はencodingと順序一致。sum/VSと分解診断は退役しID13/14/16はbuildしない。全12GPUの完全P gate後だけP2をP比全7pair・両順/pooled5us、byte一致・single・1200回で選別し、P2合格ならP2、PのみならP、P失敗/群timeoutならround12。群100秒見積もり、timeout150秒、集約155秒、round14実742秒/READY449秒とgate wall下限68.813秒から保守的最大983.187秒、17分まで36.813秒。P比5〜15usが全workerのservingへ転写した場合だけ0.12〜0.36ms/24層という感度例であり、速度予測や10k確実の証拠ではない。実image CUDA13.0.88・GPU・公式serving未確認。詳細は2026-11-01-prefill-fa3-vload-r15.mdとfa3-prefill-vload-cpu-validation-20261101.json。
 
 Round 17（2026-11-01、追加依頼）：旧1af5e69のspill条件による棄却を、位置確認後に見直した。P3 variant172256/末尾ID17、fa3_v3_gate=falseでGPU判定待ち。保存CUDA13.4.92 SASSのdf60 STLとe2e0 LDL.LUはproducerのQ load準備にあり、KV loopのfef0→f240では反復しない。外側tile loopは10990→d290。3994+3994・M192/N96は333 tile×2要求×4 KV head＝2664 tile、各4 producer warp/128 threadなのでstore/load各10656 warp命令、各340992 lane実行・1363968 B、合計2727936 logical local B/call。実HBM量と時間は未測定。P3はK2/V3、PV(i−3)後releaseでP2の追加依存を外す。shared100352 B、1 CTA/SM、旧control/P/pack/writer SASS一致・C75xxなしは維持。consumer算術sourceはV index置換以外一致、選択数学1814命令のopcode個数も一致するがencoded列は異なりbyte出力の証明ではない。分解診断とS/VSを外してP対C、P3対Pの全7pair・12GPU・正逆/pooled5us、FP32・single・1200回、P3はPとのattention/scale/O全byte一致を要求。採用順P3→P→round12、UUID集合照合を保持。起動込み150秒/集約155秒、条件付き100秒見積もり、保守予算742−68.813＋155＋155＝983.187秒、17分まで36.813秒。image pinは維持しfresh build必須。GPU・実CUDA13.0.88・通常serving/公式scoreは未確認。詳細は2026-11-01-prefill-fa3-v3-r17.mdとfa3-prefill-v3-cpu-validation-20261101.json。
+
+## 2026-11-01 round 18：split MegaMoE の診断準備（無効でcommit）
+
+Pを維持し、EP1/T7988/H4096/I1536/128 expert/top8、FP8積・FP32 scale/accumulate・BF16 partialのまま、half/chunk依存、FC2 epilogue/combine、tail CTAの終了との関係を測る専用variantを追加した。計算2.412295225344 TFLOP/層は維持、削減する仕事はなく、HBM/NVLink byte・露出待ち・speedupは未測定。current routingではない固定fixtureを使用し、true M64の最終上限は未確定。
+
+CUDA13.4/sm_90aで通常servingの157696-byte SASS encodingは前後一致。診断はR206→R221、spill 0/0→28/44 byte、QGMMA/DEPBAR本数は維持、C75xxなしだがschedule不変ではない。細分値の採否利用は保留し、同入力の完全kernel交互計時とbyte照合を12 GPUで行う。診断はP確定後、独立45秒と既存prepack 180秒envelopeの残りで制限し、採用envを変更しない。既存のLDSM、direct-FC2、scale移動の棄却を再開したものではない。
+
+GPU/image buildは未実施、configはfalse、image pin維持。[研究note](2026-11-01-prefill-megamoe-diag-r18.md)と[CPU証拠](megamoe-prefill-diag-r18-cpu-validation-20261101.json)を正本とする。未測定値を0にしない。
