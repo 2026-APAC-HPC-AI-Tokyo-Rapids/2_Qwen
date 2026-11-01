@@ -486,6 +486,52 @@
     "past_rejections_distinct": "No exp approximation, half precision, polynomial, N224 or staged Q; the arithmetic of the kept columns and the bytes are the pin's.",
     "expected": "about 9-12 us per sequence-call with power-cap factor 1 for removed MUFU/ALU work; about 0.4-0.6 ms per 24-layer PP0 period"
   },
+  "fa3_prefill_vsum_r13_candidate": {
+    "evidence": [
+      "2026-11-01-prefill-fa3-vsum-r13.md",
+      "fa3-prefill-vsum-cpu-validation-20261101.json"
+    ],
+    "status": "rejected_by_in_job_gate_on_H200; run 41253426202; all 12 GPUs slower on 3994+3994; served round-12 selection; image not pinned",
+    "shape": "Q64/KV4/D128 E4M3; M192/N96 pair each3900..4096 only; singles use round12 N192 and old writer",
+    "useful_pair_flops": 522847416320,
+    "actual_hbm_bytes": null,
+    "actual_nvlink_bytes": null,
+    "removed_work": "At L3994 pair, remove 1,395,523,584 logical shared transpose bytes; sum FADD dependency 23 to7. Same max/EX2/QK/PV. Consumer steady instructions369 to388; writer byte stores16 instead of two64-bit stores, plus padding. Historical N192 47to13,587to624 retained as evidence but retired from build/serving. No supported positive speed point estimate.",
+    "precision": "Identical V FP8 bytes, unchanged paged KV, all causal terms; FP32 sum reassociation only. Simple sum-only prototype rejected for early PV overwrite; composed row holds all old P words until every EX2 completes.",
+    "admission": "CUDA13.4/sm90a: no C75xx, spills no greater than controls, both encoded FA3 controls and both old writer index types byte-identical. Image13.0.88 remains unverified.",
+    "gate": "After round12 same twelve H200 UUIDs/allocation; independent GPU byte dump first; seven pairs FP32 relativeL2<=.05/max_scaled<=.25 and two changed inputs; QKpost+FA3+O both orders/pooled save>=5us for pairs only; singles3994/4096/3584 old writer Q/K/V/pagedKV and old N192 attention byte equal, FP32/replays, no timing; 1200 serving calls and own initial O/scale bytes; atomic env only on all pass;100s timeout plus2s grace,105s deadline;45..65s estimate from round12 max38.6s;652+105=757s job budget, no MegaMoE gate.",
+    "performance_prediction": null,
+    "official_score": null,
+    "gpu_gate_result": {
+      "run": 41253426202,
+      "slurm_job": 27969,
+      "shape": "3994+3994",
+      "metric": "QK post + FA3 + O, us per call",
+      "control_forward_median_us": [
+        1162.2,
+        1208.8
+      ],
+      "candidate_forward_median_us": [
+        1209.7,
+        1257.1
+      ],
+      "saving_us_forward": [
+        -52.0,
+        -47.4
+      ],
+      "saving_us_reverse": [
+        -52.0,
+        -45.8
+      ],
+      "saving_us_pooled": [
+        -51.5,
+        -46.1
+      ],
+      "numerics": "V byte image, Q/K and paged KV byte-equal; FP32 error equal to control",
+      "remaining_shapes_singles_endurance": "not run after the first shape failed"
+    },
+    "serving_speedup": 0
+  },
   "megamoe_prefill_dep_r13_cpu_rejection": {
     "date": "2026-11-01",
     "status": "rejected_at_stage_1_requirement_4; GPU_unmeasured; no_runtime_changes",
