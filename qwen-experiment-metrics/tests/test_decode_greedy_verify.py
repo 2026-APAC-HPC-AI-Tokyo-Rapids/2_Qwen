@@ -337,3 +337,161 @@ timeout() {{ exit 99; }}
     subprocess.run(['bash','-c',script+shell_block()],check=True)
     assert json.loads((tmp_path/'results/decode-greedy/selection.json').read_text())['reason']=='insufficient remaining serving budget'
     assert (tmp_path/'source/decode-kernels.env').read_text()==GATE['KEY']+'=0\n'
+
+
+class FakeCuda:
+    """Record capture/prepare/replay and defer device ops until graph replay."""
+    def __init__(self):
+        self.active=None
+        self.events=[]
+        self.graphs=[]
+
+    def enqueue(self, operation):
+        if self.active is None: operation()
+        else: self.active.operations.append(operation)
+
+    def CUDAGraph(self):
+        cuda=self
+        class Graph:
+            def __init__(self):
+                self.operations=[]
+                self.captures=0
+                self.replays=0
+
+            def replay(self):
+                cuda.events.append(('prepare',self,cuda.active))
+                if cuda.active is not None:
+                    raise RuntimeError('Cannot prepare for replay during capturing stage.')
+                self.replays+=1
+                cuda.events.append(('replay',self,None))
+                for operation in self.operations: operation()
+        graph=Graph()
+        self.graphs.append(graph)
+        return graph
+
+    def graph(self, graph):
+        cuda=self
+        class Capture:
+            def __enter__(self):
+                assert cuda.active is None, 'nested capture'
+                assert graph.captures==0, 'graph captured twice'
+                graph.captures+=1
+                cuda.events.append(('begin',graph,None))
+                cuda.active=graph
+
+            def __exit__(self, *args):
+                cuda.events.append(('end',graph,None))
+                cuda.active=None
+        return Capture()
+
+    def synchronize(self):
+        assert self.active is None, 'synchronize during capture'
+        self.events.append(('sync',None,None))
+
+    def Event(self, *, enable_timing):
+        assert enable_timing
+        cuda=self
+        class Event:
+            def record(self):
+                assert cuda.active is None
+
+            def synchronize(self):
+                cuda.synchronize()
+
+            def elapsed_time(self, other):
+                return 1.0
+        return Event()
+
+
+class FakeDeviceValue:
+    def __init__(self, cuda, value=0):
+        self.cuda=cuda
+        self.value=value
+
+    def __ne__(self, other):
+        return lambda:self.value!=other.value
+
+    def logical_or_(self, condition):
+        self.cuda.enqueue(lambda:setattr(self,'value',self.value or condition()))
+
+    def zero_(self):
+        self.cuda.enqueue(lambda:setattr(self,'value',0))
+
+    def item(self):
+        assert self.cuda.active is None
+        return self.value
+
+
+@pytest.fixture
+def graph_case(monkeypatch):
+    cuda=FakeCuda()
+    comparisons=[]
+    def equal(left,right):
+        assert cuda.active is None
+        comparisons.append((left,right))
+        return left.value==right.value
+    torch=NS(cuda=cuda,bool=bool,zeros=lambda *a,**kw:FakeDeviceValue(cuda),any=lambda x:x,equal=equal)
+    case=GATE['Case'].__new__(GATE['Case'])
+    case.torch=torch; case.graphs={}; case.outputs={}; case.state='initial'
+    case.corrupt_on=None
+    def step(mode):
+        # Capture binds mode/output storage; replay reads mutable device input.
+        assert os.environ[GATE['KEY']]==('1' if mode=='candidate' else '0')
+        outputs=tuple(FakeDeviceValue(cuda) for _ in range(4))
+        case.outputs[mode]=outputs
+        def device_step():
+            value=0 if case.state=='restored' else GATE['STATES'].index(case.state) if case.state in GATE['STATES'] else -1
+            if mode=='candidate' and cuda.active is None and case.graphs.get(mode) is not None and case.graphs[mode].replays==case.corrupt_on: value+=100
+            for out in outputs: out.value=value
+        cuda.events.append(('step',mode,cuda.active))
+        cuda.enqueue(device_step)
+    case.step=step
+    scope=GATE['Case'].endurance.__globals__
+    for key,value in (('BLOCKS',1),('ROUNDS',1),('REPS',2),('REPLAYS',5)): monkeypatch.setitem(scope,key,value)
+    monkeypatch.setenv(GATE['KEY'],'0')
+    monkeypatch.setenv('SGLANG_SANITIZE_NAN_LOGITS','0')
+    return case,cuda,comparisons
+
+
+def test_graph_capture_replay_order_and_distinct_control(graph_case):
+    case,cuda,comparisons=graph_case
+    for sanitize in (False,True):
+        case.state='initial'; case.build_graphs(sanitize)
+        control,candidate=case.graphs['control'],case.graphs['candidate']
+        assert control is not candidate
+        assert not set(map(id,case.outputs['control'])) & set(map(id,case.outputs['candidate']))
+        for state in GATE['STATES']:
+            case.state=state; case.equal()
+        if not sanitize: case.timing()
+        # Rebuild only after equal/timing has synchronized the previous replay.
+        case.state='no_penalty'; case.build_graphs(sanitize); case.equal()
+    case.state='initial'; case.build_graphs(True); case.equal()
+    candidate=case.graphs['candidate']; before=candidate.replays
+    case.endurance()
+    checker=cuda.graphs[-1]
+    assert checker is not candidate and checker is not case.graphs['control']
+    assert candidate.replays-before==checker.replays==5
+    assert all(graph.captures==1 for graph in cuda.graphs)
+    assert all(active is None for event,_,active in cuda.events if event in ('prepare','replay'))
+    assert [graph for event,graph,_ in cuda.events if event=='replay'][-10:]==[candidate,checker]*5
+    assert all(left is not right for left,right in comparisons)
+    # A wrong control graph must fail even though both graphs have been captured.
+    case.graphs['control'].operations.append(lambda:setattr(case.outputs['control'][0],'value',999))
+    with pytest.raises(AssertionError,match='argmax/index/length/bonus mismatch'): case.equal()
+
+
+def test_endurance_sticky_flag_detects_one_transient_mismatch(graph_case):
+    case,cuda,_=graph_case
+    case.build_graphs(True); case.equal()
+    case.corrupt_on=case.graphs['candidate'].replays+3
+    with pytest.raises(AssertionError,match='transient endurance mismatch'): case.endurance()
+    # Later replays restored all outputs; only the sticky flag proves the error.
+    assert all(left.value==right.value for left,right in zip(case.outputs['control'],case.outputs['candidate']))
+    assert cuda.graphs[-1].replays==5
+
+
+def test_fake_cuda_rejects_original_nested_endurance_replay(graph_case):
+    case,_,_=graph_case
+    case.build_graphs(True); case.equal()
+    with pytest.raises(RuntimeError,match='Cannot prepare for replay during capturing stage'):
+        GATE['capture'](case.torch,case.graphs['candidate'].replay)

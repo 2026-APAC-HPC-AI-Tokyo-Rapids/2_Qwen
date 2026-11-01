@@ -212,6 +212,22 @@ class Case:
             blocks.append(block)
         return blocks
 
+    def endurance(self):
+        t=self.torch
+        failed=t.zeros((),dtype=t.bool,device='cuda')
+        def check_outputs():
+            for left,right in zip(self.outputs['control'],self.outputs['candidate']): failed.logical_or_(t.any(left!=right))
+        # Capture only the checks: CUDAGraph.replay prepares generator state and
+        # cannot run inside another capture, even when the graph uses no RNG.
+        checker=capture(t,check_outputs)
+        failed.zero_()
+        for _ in range(REPLAYS):
+            self.graphs['candidate'].replay()
+            checker.replay()
+        t.cuda.synchronize()
+        assert not failed.item(), 'transient endurance mismatch'
+        assert all(t.equal(a,b) for a,b in zip(self.outputs['control'],self.outputs['candidate'])), 'endurance mismatch'
+
 
 def run(output, run_id, image_sha256, deadline):
     started=time.monotonic(); rank=int(os.environ['LOCAL_RANK'])
@@ -244,16 +260,7 @@ def run(output, run_id, image_sha256, deadline):
                     case.set_state('no_penalty'); case.build_graphs(sanitize); case.equal()
                 result['cases'][f'{b}:{int(pad)}']={'equal':True,'states':list(STATES),'no_penalty_equal':True}
         case.set_state('initial'); case.build_graphs(True); case.equal()
-        failed=torch.zeros((),dtype=torch.bool,device='cuda')
-        def endurance_step():
-            case.graphs['candidate'].replay()
-            for left,right in zip(case.outputs['control'],case.outputs['candidate']): failed.logical_or_(torch.any(left!=right))
-        endurance=capture(torch,endurance_step)
-        failed.zero_()
-        for _ in range(REPLAYS): endurance.replay()
-        torch.cuda.synchronize()
-        assert not failed.item(), 'transient endurance mismatch'
-        assert all(torch.equal(a,b) for a,b in zip(case.outputs['control'],case.outputs['candidate'])), 'endurance mismatch'
+        case.endurance()
         result.update(replays=REPLAYS,endurance_equal=True)
         result.update(passed=True,elapsed_seconds=time.monotonic()-started,finished_at=time.time())
         check_record(result,run_id,set(identities['gpus'].values()),image_sha256,deadline)
