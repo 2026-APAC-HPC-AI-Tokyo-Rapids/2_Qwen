@@ -637,5 +637,143 @@
       },
       "numerics": "V image, Q/K, paged KV byte-equal; FP32 error identical to control; 1200-call endurance byte-equal"
     }
+  },
+  "fa3_prefill_vload_r15_candidate": {
+    "evidence": [
+      "2026-11-01-prefill-fa3-vload-r15.md",
+      "fa3-prefill-vload-cpu-validation-20261101.json"
+    ],
+    "status": "CPU_admission_passed; GPU_adoption_unmeasured; default_off",
+    "source_base": "51b77d8",
+    "image": "5a3df8c485a5ac939761b07a9ca82d7c38d864200250591ec6d9485dba778bb2 pinned round14; fresh image build required; not built here",
+    "shape": "two requests, each3900..4096 tokens; causal M192/N96 Q64/KV4/D128 GQA16",
+    "dtype": "FP8 E4M3 with FP32 accumulation; all causal terms and V bytes unchanged",
+    "variant": 106720,
+    "table_id": 17,
+    "useful_flops": 522847416320,
+    "padded_flops": 535881056256,
+    "delta_flops_vs_P": 0,
+    "delta_logical_bytes_vs_P": 0,
+    "actual_hbm_bytes": null,
+    "actual_nvlink_bytes": null,
+    "removed_work": "Exposed V readiness wait only. No additional transpose, FLOP or byte savings over P.",
+    "past_rejections": "S FA3 +39.4us and VS FA3 +25us in round14; native scattered writer +17.4us. Do not retry those shapes; direct coalesced writer belongs to separate branch.",
+    "cpu_admission": "P2 spills0/0<=P0/0, no C75xx, controls/P/old writer/pack encoded SASS unchanged;1814 math+conversion instructions same encoding/order",
+    "gate": {
+      "schema": "firmus-prefill-fa3-prepack/v2",
+      "execution_order": [
+        "full_P",
+        "optional_full_P2_if_P_passed"
+      ],
+      "aggregate_priority": [
+        "P2",
+        "P",
+        "round12"
+      ],
+      "P_baseline": "round12 C",
+      "P2_baseline": "P freshly retimed alongside P2; never C or prior run",
+      "minimum_saving_us": 5,
+      "orders": [
+        "forward",
+        "reverse",
+        "pooled"
+      ],
+      "pairs": [
+        [
+          3994,
+          3994
+        ],
+        [
+          3986,
+          4027
+        ],
+        [
+          3986,
+          3986
+        ],
+        [
+          4027,
+          4027
+        ],
+        [
+          4096,
+          4096
+        ],
+        [
+          3900,
+          4096
+        ],
+        [
+          4096,
+          3901
+        ]
+      ],
+      "single_lengths": [
+        3994,
+        4096,
+        3584
+      ],
+      "sample_count_per_order": 10,
+      "calls_per_sample": 12,
+      "endurance_calls": 1200,
+      "relative_l2_max": 0.05,
+      "max_scaled_error_max": 0.25,
+      "P2_bytes": "attention FP8, FP32 scales, BF16 O vs P, original and two changed replays",
+      "retired_table_ids": [
+        13,
+        14,
+        16
+      ],
+      "removed_sections": [
+        "writer_only",
+        "fa3_only_C_S_V_VS",
+        "composite_diagnostics_C_S_V_VS_P",
+        "o_only",
+        "interaction"
+      ],
+      "native_writer": "byte oracle only, never timed or served",
+      "timeout": "whole-group timeout keeps previous round12 env; no partial P publication",
+      "clock_mhz": null,
+      "clock_reason": "No independent sampler; no borrowed clock"
+    },
+    "wall_budget": {
+      "estimate_seconds": 100,
+      "components_seconds": {
+        "startup": 32.6,
+        "P_including_removed_diagnostics_upper_allowance": 36.32,
+        "additional_P2_reusing_inputs_and_graphs_conditional": 25,
+        "completion_and_aggregation": 5
+      },
+      "full_candidate_reservation_seconds": 45,
+      "srun_timeout_seconds_from_group_start": 150,
+      "kill_grace_seconds": 2,
+      "aggregate_deadline_seconds_from_group_start": 155,
+      "timeout_to_estimate_ratio": 1.5,
+      "round14_job_seconds": 742,
+      "round14_READY_seconds": 449,
+      "replacement_job_seconds": 828.187,
+      "conservative_pair_allowance_job_seconds": 983.187,
+      "margin_to_1020_seconds": 36.813,
+      "limits": "P2 additional25s is a conditional design budget, not GPU measurement. Existing pair wall is not subtracted in conservative budget."
+    },
+    "conditional_sensitivity": {
+      "assumed_P2_saving_us_per_layer": [
+        5,
+        15
+      ],
+      "24_layer_stage_period_saving_ms": [
+        0.12,
+        0.36
+      ],
+      "score_scenario_approx": [
+        10020,
+        10041
+      ],
+      "condition": "Same saving on every worker in normal serving, supply bottleneck and fixed good fraction; not prediction, confidence interval or verified10k margin."
+    },
+    "gpu_measurement": null,
+    "serving_speedup": null,
+    "official_score": null,
+    "tracker_text": "Round 15（2026-11-01）：P2 variant106720/ID17をCPU admission合格、GPU未測定・fa3_vload_gate=falseで追加。P41184のnative2slot/stage2を保ち、V acquire/bulkをprologueとloopでK acquireより前へ移し、controlと同じEVICT_LASTを指定する。P比FLOP/byte不変、削る対象は露出V待ち。CUDA13.4/sm_90aでP2 spill0/0・C75xxなし、旧N96/N192/Pと旧FP32 writer両index、packのencoded SASS一致。P→P2静的4424→4408命令、数学/変換1814命令はencodingと順序一致。sum/VSと分解診断は退役しID13/14/16はbuildしない。全12GPUの完全P gate後だけP2をP比全7pair・両順/pooled5us、byte一致・single・1200回で選別し、P2合格ならP2、PのみならP、P失敗/群timeoutならround12。群100秒見積もり、timeout150秒、集約155秒、round14実742秒/READY449秒とgate wall下限68.813秒から保守的最大983.187秒、17分まで36.813秒。P比5〜15usが全workerのservingへ転写した場合だけ0.12〜0.36ms/24層という感度例であり、速度予測や10k確実の証拠ではない。実image CUDA13.0.88・GPU・公式serving未確認。詳細は2026-11-01-prefill-fa3-vload-r15.mdとfa3-prefill-vload-cpu-validation-20261101.json。"
   }
 }

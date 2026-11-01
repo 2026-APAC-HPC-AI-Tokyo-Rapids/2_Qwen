@@ -437,3 +437,5 @@ python3 research/runtime-performance/render-kernel-theory.py --write
 ```
 
 GPU計算なし。元nsys-repのhashはmodel JSON、export SQLiteと抽出scriptのhashはprofile JSONに保存。窓・呼出し数・重複・shape仮定を変更した場合は旧値へ上書きせず、差と理由をGitに残す。
+
+Round 15（2026-11-01）：P2 variant106720/ID17をCPU admission合格、GPU未測定・fa3_vload_gate=falseで追加。P41184のnative2slot/stage2を保ち、V acquire/bulkをprologueとloopでK acquireより前へ移し、controlと同じEVICT_LASTを指定する。P比FLOP/byte不変、削る対象は露出V待ち。CUDA13.4/sm_90aでP2 spill0/0・C75xxなし、旧N96/N192/Pと旧FP32 writer両index、packのencoded SASS一致。P→P2静的4424→4408命令、数学/変換1814命令はencodingと順序一致。sum/VSと分解診断は退役しID13/14/16はbuildしない。全12GPUの完全P gate後だけP2をP比全7pair・両順/pooled5us、byte一致・single・1200回で選別し、P2合格ならP2、PのみならP、P失敗/群timeoutならround12。群100秒見積もり、timeout150秒、集約155秒、round14実742秒/READY449秒とgate wall下限68.813秒から保守的最大983.187秒、17分まで36.813秒。P比5〜15usが全workerのservingへ転写した場合だけ0.12〜0.36ms/24層という感度例であり、速度予測や10k確実の証拠ではない。実image CUDA13.0.88・GPU・公式serving未確認。詳細は2026-11-01-prefill-fa3-vload-r15.mdとfa3-prefill-vload-cpu-validation-20261101.json。

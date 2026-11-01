@@ -236,7 +236,7 @@
      rows = json.loads(Path("/opt/apac/fa3-verify/prefill-candidates.json").read_text())
      name = name or os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "control")
 -    if name == "n192-direct-o-varlen-pipe+m192n96-pair":
-+    if name in ("n192-direct-o-varlen-pipe+m192n96-pair", "n192-direct-o-varlen-pipe+m192n96-pair-prepack", "n192-direct-o-varlen-pipe+m192n96-pair-sum"):
++    if name in ("n192-direct-o-varlen-pipe+m192n96-pair", "n192-direct-o-varlen-pipe+m192n96-pair-prepack", "n192-direct-o-varlen-pipe+m192n96-pair-prepack-vload"):
          name = "n192-direct-o-varlen-pipe"
 -    return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name)
 +    return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name and not row.get("retired"))
@@ -246,7 +246,7 @@
      # Host metadata only. Never read cu (a CUDA tensor) to make this decision.
 -    enabled = os.environ.get("SGLANG_PREFILL_FA3_VERIFY") == "n192-direct-o-varlen-pipe+m192n96-pair"
 +    mode = os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "")
-+    routes = {"n192-direct-o-varlen-pipe+m192n96-pair": "", "n192-direct-o-varlen-pipe+m192n96-pair-prepack": "-native", "n192-direct-o-varlen-pipe+m192n96-pair-sum": "-sum"}
++    routes = {"n192-direct-o-varlen-pipe+m192n96-pair": "", "n192-direct-o-varlen-pipe+m192n96-pair-prepack": "-native", "n192-direct-o-varlen-pipe+m192n96-pair-prepack-vload": "-native-vload"}
 +    enabled = mode in routes
      if enabled and lengths is not None and len(lengths) == 2 and all(3900 <= n <= 4096 for n in lengths):
 -        return prefill_candidate("m192n96-direct-o-varlen-pipe")

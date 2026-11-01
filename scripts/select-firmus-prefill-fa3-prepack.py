@@ -1,4 +1,4 @@
-"""Default-off round-14 P/S selection and factorial diagnostics in one process group."""
+"""Round-15 full P gate, then optional P2 against P, in one process group."""
 import argparse
 import hashlib
 import json
@@ -11,14 +11,15 @@ from pathlib import Path
 
 KEY = "SGLANG_PREFILL_FA3_VERIFY"
 CONTROL = "n192-direct-o-varlen-pipe+m192n96-pair"
-DISPATCH = {"P": CONTROL+"-prepack", "S": CONTROL+"-sum"}
-SCHEMA = "firmus-prefill-fa3-prepack/v1"
+DISPATCH = {"P": CONTROL+"-prepack", "P2": CONTROL+"-prepack-vload"}
+SCHEMA = "firmus-prefill-fa3-prepack/v2"
 SHAPES = ((3994,3994),(3986,4027),(3986,3986),(4027,4027),(4096,4096),(3900,4096),(4096,3901))
 SINGLE_SHAPES = ((3994,),(4096,),(3584,))
-ROUNDS, REPS, ENDURANCE, SECONDS = 10, 12, 1200, 175
+ROUNDS, REPS, ENDURANCE, SECONDS = 10, 12, 1200, 150
 CANDIDATE_SECONDS = 45  # Full validation reservation, never shorten its shapes/endurance.
-VARIANTS = {"C":8416,"S":24800,"V":41184,"VS":57568,"P":41184}
-ROWS = {"C":"m192n96-direct-o-varlen-pipe", "S":"m192n96-direct-o-varlen-pipe-sum", "V":"m192n96-direct-o-varlen-pipe-native", "VS":"m192n96-direct-o-varlen-pipe-vsum", "P":"m192n96-direct-o-varlen-pipe-native"}
+VARIANTS = {"C":8416,"P":41184,"P2":106720}
+ROWS = {"C":"m192n96-direct-o-varlen-pipe", "P":"m192n96-direct-o-varlen-pipe-native", "P2":"m192n96-direct-o-varlen-pipe-native-vload"}
+BASELINES = {"P":"C", "P2":"P"}
 
 
 def row_name(lengths, candidate):
@@ -66,6 +67,10 @@ def check_candidate(record, candidate):
         assert shape["byte_image_first"] is True and shape["producer_bytes_equal"] is True and shape["replays"]==2, "byte/replay failure"
         valid_metrics(shape["candidate_fp32"])
         valid_metrics(shape["control_fp32"])
+        assert shape["baseline"]==BASELINES[candidate], "wrong timing baseline"
+        if candidate=="P2":
+            assert shape["p_bytes_equal"] is True, "P2 output differs from P"
+            valid_metrics(shape["baseline_fp32"])
         assert all(v>=5 for v in timing_summary(shape["samples_us"])["savings_us"].values()), "below 5 us margin"
     assert set(record["singles"])=={str(s[0]) for s in SINGLE_SHAPES}, "incomplete singles"
     for single in record["singles"].values():
@@ -78,8 +83,8 @@ def check_candidate(record, candidate):
     valid_metrics([e["initial_fp32"],e["final_fp32"],e["final_fp32"]])
 
 
-def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_ok, image_sha256):
-    result={"schema":SCHEMA,"adopted":False,"selected":None,"gpus":[],"run_id":run_id,"candidate_rejections":{},"rule":{"shapes":SHAPES,"minimum_saving_us":5,"wall_seconds":180,"endurance_calls":ENDURANCE,"priority":["P","S"]}}
+def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_ok, image_sha256, p2_enabled=False):
+    result={"schema":SCHEMA,"adopted":False,"selected":None,"gpus":[],"run_id":run_id,"candidate_rejections":{},"rule":{"shapes":SHAPES,"minimum_saving_us":5,"wall_seconds":155,"endurance_calls":ENDURANCE,"priority":["P2","P"],"baselines":BASELINES,"p2_enabled":p2_enabled}}
     try:
         def read(path):
             return json.loads(path.read_text(),parse_constant=reject_constant,parse_float=finite_float)
@@ -99,19 +104,22 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
                 assert r["worker"]==f"prefill-{worker}" and r["rank"]==rank, "wrong worker"
                 assert r["uuid"]==prior["uuid"] and r["uuid"] not in uuids and "H200" in r["device"], "wrong GPU"
                 assert prior["run_id"].split("-",1)[0]==run_id.split("-",1)[0], "wrong allocation"
+                assert r["p2_enabled"] is p2_enabled, "different gate configuration"
                 assert r["healthy"] is True and 0<r["elapsed_seconds"]<SECONDS and r["finished_at"]<=deadline, "fatal or late GPU"
                 assert r["image_sha256"]==image_sha256 and len(r["binary_sha256"])==64, "hash mismatch"
                 uuids.add(r["uuid"]); binaries.add(r["binary_sha256"])
         assert len(binaries)==1, "different binaries"
-        for candidate in ("P","S"):
+        # P is a prerequisite: P2 never rescues a failed P gate.
+        for record in result["gpus"]:
+            check_candidate(record["candidates"]["P"],"P")
+        result["selected"]="P"
+        if p2_enabled:
             try:
                 for record in result["gpus"]:
-                    check_candidate(record["candidates"][candidate],candidate)
-                result["selected"]=candidate
-                break
+                    check_candidate(record["candidates"]["P2"],"P2")
+                result["selected"]="P2"
             except (AssertionError,KeyError,TypeError,ValueError) as error:
-                result["candidate_rejections"][candidate]=str(error)
-        assert result["selected"] is not None, "no candidate passed all twelve GPUs"
+                result["candidate_rejections"]["P2"]=str(error)
         lines=env_output.read_text().splitlines(keepends=True)
         assert [l.rstrip("\n") for l in lines if l.startswith(KEY+"=")]==[KEY+"="+CONTROL], "round-12 env required"
         assert time.time()<=deadline, "aggregate deadline expired"
@@ -122,7 +130,7 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
             temporary.replace(env_output)
         finally:
             temporary.unlink(missing_ok=True)
-        result.update(adopted=True,reason="all twelve H200s passed; P preferred to S")
+        result.update(adopted=True,reason="all twelve H200s passed; P2 preferred only after full P and P2 gates")
     except Exception as error:  # noqa: BLE001 - refusal preserves round-12 selection
         result.update(reason=f"{type(error).__name__}: {error}",selected=None,gpus=[])
     return result
@@ -133,7 +141,7 @@ def native_producer(common, image):
     apply_qknorm_rope_fp8_prefill_native(*common["rope_args"],image,common["cu"],96,max(common["lengths"]))
 
 
-def steps(torch, checks, common):
+def steps(torch, checks, common, p2_enabled=False):
     import deep_gemm
     from sglang.kernels.ops.attention.rope import apply_qknorm_rope_fp8_prefill_fp32
     lengths=common["lengths"]; rows=common["rows"]
@@ -142,7 +150,7 @@ def steps(torch, checks, common):
     empty=torch.empty(0,device="cuda",dtype=torch.uint8)
     data=checks["dense_inputs"](rows,4096,8192,49183)
     outputs={}; attention={}; storage=[]
-    for mode in ("C","S","V","VS"):
+    for mode in (("C","P","P2") if p2_enabled else ("C","P")):
         out=torch.empty((rows,64,128),device="cuda",dtype=common["q"].dtype)
         scale=torch.empty((64,(rows+3)//4*4),device="cuda",dtype=torch.float32).T[:rows]
         lse=torch.empty((64,rows),device="cuda",dtype=torch.float32)
@@ -154,14 +162,13 @@ def steps(torch, checks, common):
             torch.ops.apac_fa3_verify.prefill_variant_fwd_out(common["q"],common["k"],common["v"],image if native else empty,common["cu"],out,scale,lse,metadata,max(lengths),128**-.5,index)
             return out,scale
         attention[mode]=fa3; outputs[mode]=(out,scale); storage.extend((out,scale,lse,metadata))
-    attention["P"]=attention["V"]; outputs["P"]=outputs["V"]
     def old():
         apply_qknorm_rope_fp8_prefill_fp32(*common["rope_args"])
     def pack():
         torch.ops.apac_fa3_verify.prefill_prepack(common["v"],image,common["cu"])
     def packed():
         old(); pack()
-    writers={"C":old,"S":old,"V":lambda:native_producer(common,image),"VS":lambda:native_producer(common,image),"P":packed}
+    writers={mode:old if mode=="C" else packed for mode in attention}
     o_outputs={mode:torch.empty_like(data[2]) for mode in attention}
     composite={}
     for mode,fa3 in attention.items():
@@ -171,10 +178,7 @@ def steps(torch, checks, common):
             deep_gemm.fp8_gemm_nt((out.view(rows,8192),scale),data[1],o_outputs[mode],compiled_dims="nk")
             return out,scale
         composite[mode]=call
-    def only_o():
-        out,scale=outputs["C"]
-        deep_gemm.fp8_gemm_nt((out.view(rows,8192),scale),data[1],o_outputs["C"],compiled_dims="nk")
-    return {"image":image,"attention":attention,"output":outputs,"writers":writers,"pack":pack,"composite":composite,"weight":data[1],"o_outputs":o_outputs,"only_o":only_o,"storage":(storage,data,empty)}
+    return {"image":image,"attention":attention,"output":outputs,"writers":writers,"pack":pack,"composite":composite,"weight":data[1],"o_outputs":o_outputs,"storage":(storage,data,empty)}
 
 
 def host_image(torch, common, image):
@@ -195,7 +199,7 @@ def host_image(torch, common, image):
 
 
 def validate(torch, checks, common, state, modes):
-    metrics={mode:[] for mode in ("C",*modes)}; errors={}; graphs=state.setdefault("validation_graphs",{})
+    metrics={mode:[] for mode in dict.fromkeys(("C", "P", *modes))}; errors={}; graphs=state.setdefault("validation_graphs",{})
     for replay in range(3):
         if replay:
             common["packed"].copy_(torch.randn_like(common["packed"])*(replay+.5))
@@ -203,30 +207,30 @@ def validate(torch, checks, common, state, modes):
         old=tuple(x.clone() for x in (common["q"],common["k"],common["v"],common["kc"],common["vc"]))
         # Pack itself is never the oracle. Compare old contiguous V -> host map,
         # independently executed LDSM/PRMT/STSM dump, and the native writer image.
-        if any(mode in modes for mode in ("P","V","VS")):
+        if modes:
             expected=host_image(torch,common,state["image"])
             dump=torch.empty_like(state["image"])
             torch.ops.apac_fa3_verify.prefill_dump_native(common["v"],dump,common["cu"],96)
             try:
                 assert torch.equal(dump,expected), "old GPU transpose vs host byte map"
             except AssertionError as error:
-                errors.update({mode:str(error) for mode in modes if mode in ("P","V","VS")})
+                errors.update({mode:str(error) for mode in modes})
             state["pack"]()
             try:
                 assert torch.equal(state["image"],expected), "pack vs independent maps"
                 assert bytes_equal(torch,old,(common["q"],common["k"],common["v"],common["kc"],common["vc"])), "pack touched Q/K/V or paged KV"
             except AssertionError as error:
-                errors["P"]=str(error)
+                errors.update({mode:str(error) for mode in modes})
             native_producer(common,state["image"])
             try:
                 assert bytes_equal(torch,(old[i] for i in (0,1,3,4)),(common["q"],common["k"],common["kc"],common["vc"])), "native Q/K or paged KV byte mismatch"
                 assert torch.equal(state["image"],expected), "native writer vs independent maps"
             except AssertionError as error:
-                errors.update({mode:str(error) for mode in modes if mode in ("V","VS")})
+                errors.update({mode:str(error) for mode in modes})
         state["writers"]["C"]()
         indices,reference=checks["prefill_fp32_reference"](common)
         for mode,values in metrics.items():
-            if mode in errors:
+            if mode in errors or (mode=="P2" and "P" in errors):
                 continue
             try:
                 # Changed-input replay exercises the captured serving composition.
@@ -234,17 +238,23 @@ def validate(torch, checks, common, state, modes):
                     graphs[mode]=checks["prefill_selection_capture"](state["composite"][mode])
                 graphs[mode].replay(); torch.cuda.synchronize()
                 assert bytes_equal(torch,old,(common["q"],common["k"],common["v"],common["kc"],common["vc"])), mode+" Q/K/V or paged KV byte mismatch"
-                if mode in ("P","V","VS"):
+                if mode!="C":
                     assert torch.equal(state["image"],expected), mode+" changed-input V image mismatch"
                 out,scale=state["output"][mode]
+                if mode=="P" and "P2" in modes:
+                    p_output=tuple(x.clone() for x in (out,scale,state["o_outputs"][mode]))
+                if mode=="P2":
+                    assert bytes_equal(torch,p_output,(out,scale,state["o_outputs"][mode])), "P2 output differs from P"
                 values.append(checks["prefill_assert_errors"](out.float()[indices]*scale[indices,:,None],reference,mode+"_fp32"))
             except AssertionError as error:
                 errors[mode]=str(error)
     result={}
     for mode in modes:
-        record={"byte_image_first":True,"producer_bytes_equal":True,"replays":2,"candidate_fp32":metrics[mode],"control_fp32":metrics["C"],"row":ROWS[mode],"variant":VARIANTS[mode]}
-        if mode in errors or "C" in errors:
-            record["error"]=errors.get(mode,errors.get("C"))
+        record={"byte_image_first":True,"producer_bytes_equal":True,"replays":2,"candidate_fp32":metrics[mode],"control_fp32":metrics["C"],"row":ROWS[mode],"variant":VARIANTS[mode],"baseline":BASELINES[mode]}
+        if mode=="P2":
+            record.update(p_bytes_equal=mode not in errors and "P" not in errors,baseline_fp32=metrics["P"])
+        if mode in errors or "C" in errors or "P" in errors:
+            record["error"]=errors.get(mode,errors.get("C",errors.get("P")))
         else:
             record["error_delta"]=[{key:a[key]-b[key] for key in ("relative_l2","max_scaled_error")} for a,b in zip(metrics[mode],metrics["C"],strict=True)]
         result[mode]=record
@@ -309,26 +319,7 @@ def measure(torch, checks, calls, graphs=None):
 
 
 def paired(samples, candidate):
-    return {order:{"control":values["C"],"candidate":values[candidate]} for order,values in samples.items()}
-
-
-def diagnostics(torch, checks, common, state):
-    state["writers"]["P"]()
-    for call in state["attention"].values():
-        call()
-    sections={
-        "writer_only":measure(torch,checks,{"old":state["writers"]["C"],"native":state["writers"]["V"],"old_pack":state["writers"]["P"],"pack":state["pack"]}),
-        "fa3_only":measure(torch,checks,{mode:state["attention"][mode] for mode in ("C","S","V","VS")}),
-        "composite":measure(torch,checks,{mode:state["composite"][mode] for mode in ("C","S","V","VS","P")},state.setdefault("timing_graphs",{})),
-        "o_only":measure(torch,checks,{"O":state["only_o"]}),
-    }
-    sections["interaction_us"]={section:{order:statistics.median(samples["VS"])-statistics.median(samples["V"])-statistics.median(samples["S"])+statistics.median(samples["C"]) for order,samples in sections[section].items()} for section in ("fa3_only","composite")}
-    for section in ("fa3_only","composite"):
-        samples=sections[section]
-        medians={mode:statistics.median(samples["forward"][mode]+samples["reverse"][mode]) for mode in ("C","S","V","VS")}
-        sections["interaction_us"][section]["pooled"]=medians["VS"]-medians["V"]-medians["S"]+medians["C"]
-    sections.update(shape=SHAPES[0],variants={mode:{"row":ROWS[mode],"variant":VARIANTS[mode]} for mode in ROWS},clock_mhz=None,clock_reason="No independent clock sampler in the gate; no clock from another run is substituted")
-    return sections
+    return {order:{"control":values[BASELINES[candidate]],"candidate":values[candidate]} for order,values in samples.items()}
 
 
 def endurance(torch, checks, common, state, candidate):
@@ -344,7 +335,7 @@ def endurance(torch, checks, common, state, candidate):
     direct=tuple(x.clone() for x in state["output"][candidate])
     def call():
         state["writers"][candidate]()
-        out,scales=attention(common["q"],common["k"],common["v"],common["cu"],max(common["lengths"]),128**-.5,common["rows"],fixed=True,v_image=state["image"] if candidate=="P" else None,lengths=common["lengths"])
+        out,scales=attention(common["q"],common["k"],common["v"],common["cu"],max(common["lengths"]),128**-.5,common["rows"],fixed=True,v_image=state["image"],lengths=common["lengths"])
         deep_gemm.fp8_gemm_nt((out,scales),state["weight"],state["o_outputs"][candidate],compiled_dims="nk")
         return out,scales
     first=tuple(x.clone() for x in call()); first_o=state["o_outputs"][candidate].clone()
@@ -365,10 +356,10 @@ def require_time(deadline, seconds=0):
     assert time.time()+seconds<deadline, "insufficient time for complete candidate"
 
 
-def run(output, run_id, deadline, image_sha256):
+def run(output, run_id, deadline, image_sha256, p2_enabled=False):
     begin=time.monotonic()
     rank=int(os.environ["LOCAL_RANK"])
-    result={"schema":SCHEMA,"worker":output.name,"rank":rank,"run_id":run_id,"healthy":False,"candidates":{mode:{"passed":False} for mode in ("P","S")},"image_sha256":image_sha256}
+    result={"schema":SCHEMA,"worker":output.name,"rank":rank,"run_id":run_id,"healthy":False,"candidates":{mode:{"passed":False} for mode in ("P","P2")},"p2_enabled":p2_enabled,"image_sha256":image_sha256}
     output.mkdir(parents=True,exist_ok=True)
     fatal=None
     try:
@@ -392,30 +383,23 @@ def run(output, run_id, deadline, image_sha256):
         def inputs(lengths):
             if lengths not in cache:
                 common=checks["prefill_selection_inputs"](lengths,padding=0); common["fp32_producer"]=True
-                cache[lengths]=(common,steps(torch,checks,common))
+                cache[lengths]=(common,steps(torch,checks,common,p2_enabled))
             return cache[lengths]
-        common,state=inputs(SHAPES[0])
-        initial=validate(torch,checks,common,state,("S","V","VS","P"))
-        result["diagnostic_numerics"]=initial
-        result["diagnostics"]=diagnostics(torch,checks,common,state)
-        first_samples=result["diagnostics"]["composite"]
-        for candidate in ("P","S"):
+        for candidate in (("P","P2") if p2_enabled else ("P",)):
+            if candidate=="P2" and not result["candidates"]["P"]["passed"]:
+                break
             record={"passed":False,"shapes":{},"singles":{}}
             result["candidates"][candidate]=record
             try:
-                first={**initial[candidate],"samples_us":paired(first_samples,candidate)}
-                record["shapes"]["3994+3994"]=first
-                assert "error" not in first, first.get("error")
-                assert all(v>=5 for v in timing_summary(first["samples_us"])["savings_us"].values()), "below 5 us margin on first shape"
                 require_time(deadline,CANDIDATE_SECONDS)
-                for lengths in SHAPES[1:]:
+                for lengths in SHAPES:
                     require_time(deadline)
                     common,state=inputs(lengths)
                     cell=validate(torch,checks,common,state,(candidate,))[candidate]
                     record["shapes"]["+".join(map(str,lengths))]=cell
                     assert "error" not in cell, cell.get("error")
-                    cell["samples_us"]=paired(measure(torch,checks,{mode:state["composite"][mode] for mode in ("C",candidate)},state.setdefault("timing_graphs",{})),candidate)
-                    assert all(v>=5 for v in timing_summary(cell["samples_us"])["savings_us"].values()), "below 5 us margin"
+                    cell["samples_us"]=paired(measure(torch,checks,{mode:state["composite"][mode] for mode in (BASELINES[candidate],candidate)},state.setdefault("timing_graphs",{})),candidate)
+                    assert all(v>=5 for v in timing_summary(cell["samples_us"])["savings_us"].values()), "below 5 us margin against "+BASELINES[candidate]
                 for lengths in SINGLE_SHAPES:
                     require_time(deadline)
                     if lengths not in single_inputs:
@@ -452,14 +436,15 @@ def main():
     p.add_argument("--run-id",required=True)
     p.add_argument("--deadline",type=float,required=True)
     p.add_argument("--image-sha256",required=True)
+    p.add_argument("--p2",choices=("true","false"),default="false")
     p.add_argument("--workers-ok",type=int,choices=(0,1),default=0)
     a=p.parse_args()
     if a.aggregate:
-        result=aggregate(a.aggregate,a.env_output,a.pair_selection,a.run_id,a.deadline,bool(a.workers_ok),a.image_sha256)
+        result=aggregate(a.aggregate,a.env_output,a.pair_selection,a.run_id,a.deadline,bool(a.workers_ok),a.image_sha256,a.p2=="true")
         a.output.write_text(json.dumps(result,indent=2,allow_nan=False)+"\n")
         print(json.dumps({k:v for k,v in result.items() if k!="gpus"}),flush=True)
     else:
-        run(a.output,a.run_id,a.deadline,a.image_sha256)
+        run(a.output,a.run_id,a.deadline,a.image_sha256,a.p2=="true")
 
 
 if __name__=="__main__":

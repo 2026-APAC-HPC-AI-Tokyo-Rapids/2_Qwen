@@ -52,9 +52,9 @@ def screen(tmp_path):
             identity={'worker':f'prefill-{worker}','rank':rank,'uuid':f'gpu-{worker}-{rank}','run_id':'123-pair'}
             pair.append(identity)
             metric={'relative_l2':.01,'max_scaled_error':.02}
-            shape={'row':GATE['ROWS']['P'],'variant':GATE['VARIANTS']['P'],'byte_image_first':True,'producer_bytes_equal':True,'replays':2,'candidate_fp32':[metric]*3,'control_fp32':[metric]*3,'samples_us':{order:{'control':[900.]*10,'candidate':[895.]*10} for order in ('forward','reverse')}}
+            shape={'row':GATE['ROWS']['P'],'variant':GATE['VARIANTS']['P'],'baseline':'C','byte_image_first':True,'producer_bytes_equal':True,'replays':2,'candidate_fp32':[metric]*3,'control_fp32':[metric]*3,'samples_us':{order:{'control':[900.]*10,'candidate':[895.]*10} for order in ('forward','reverse')}}
             candidate={'passed':True,'shapes':{'+'.join(map(str,s)):copy.deepcopy(shape) for s in GATE['SHAPES']},'endurance':{'calls':1200,'bytes_equal':True,'dispatch_equal':True,'initial_fp32':metric,'final_fp32':metric}}
-            record={**identity,'run_id':'123-prepack','schema':GATE['SCHEMA'],'device':'NVIDIA H200','finished_at':now,'elapsed_seconds':60,'healthy':True,'binary_sha256':'b'*64,'image_sha256':'a'*64,'candidates':{'P':candidate,'S':{'passed':False}}}
+            record={**identity,'run_id':'123-prepack','schema':GATE['SCHEMA'],'device':'NVIDIA H200','finished_at':now,'elapsed_seconds':60,'healthy':True,'binary_sha256':'b'*64,'image_sha256':'a'*64,'p2_enabled':True,'candidates':{'P':candidate,'P2':{'passed':False}}}
             single={'row':'n192-direct-o-varlen-pipe','writer':'fp32','producer_bytes_equal':True,'attention_bytes_equal':True,'replays':2,'candidate_fp32':[metric]*3,'control_fp32':[metric]*3}
             candidate['singles']={str(lengths[0]):copy.deepcopy(single) for lengths in GATE['SINGLE_SHAPES']}
             (directory/f'rank-{rank}.json').write_text(json.dumps(record))
@@ -64,7 +64,7 @@ def screen(tmp_path):
 
 def aggregate(screen,**kwargs):
     directory,env,pair,deadline=screen
-    return GATE['aggregate'](directory,env,pair,kwargs.get('run_id','123-prepack'),kwargs.get('deadline',deadline),kwargs.get('workers_ok',True),'a'*64)
+    return GATE['aggregate'](directory,env,pair,kwargs.get('run_id','123-prepack'),kwargs.get('deadline',deadline),kwargs.get('workers_ok',True),'a'*64,kwargs.get('p2_enabled',True))
 
 
 def test_all_twelve_adopt_atomic_composite(screen):
@@ -128,10 +128,11 @@ def test_atomic_rename_failure_keeps_env(screen,monkeypatch):
 
 def block():
     source=(ROOT/'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
-    return '# Default off. Prepack/sum'+source.split('# Default off. Prepack/sum',1)[1].split('\nsrun --exact',1)[0]
+    return '# P is revalidated; optional P2'+source.split('# P is revalidated; optional P2',1)[1].split('\nsrun --exact',1)[0]
 
 
-def test_timeout_continues_with_round12_control(tmp_path):
+@pytest.mark.parametrize("stage",["workers","aggregate"])
+def test_timeout_continues_with_round12_control(tmp_path,stage):
     for directory in ('source','scripts','logs','results/prefill-fa3-pair'): (tmp_path/directory).mkdir(parents=True,exist_ok=True)
     (tmp_path/'source/prefill-kernels.env').write_text(PIN)
     (tmp_path/'results/prefill-fa3-pair/selection.json').write_text(json.dumps({'schema':'firmus-prefill-fa3-pair/v1','adopted':True,'gpus':[]}))
@@ -149,15 +150,20 @@ mounts() {{ printf 'unused\\n'; }}
 timeout() {{ if [[ "$1" == --kill-after=2 ]]; then return 124; fi; shift 2; "$@"; }}
 uv() {{ shift 5; {shlex.quote(sys.executable)} "$@"; }}
 '''
+    if stage=="aggregate":
+        preamble+='timeout() { if [[ "$1" == --kill-after=2 ]]; then return 0; fi; return 124; }\n'
     subprocess.run(['bash','-c',preamble+block()+'\nprintf continued >"$ROOT/continued"\n'],check=True,capture_output=True,text=True)
     assert (tmp_path/'continued').read_text()=='continued'
     assert (tmp_path/'source/prefill-kernels.env').read_text()==PIN
-    assert not json.loads((tmp_path/'results/prefill-fa3-prepack/selection.json').read_text())['adopted']
+    selection=tmp_path/'results/prefill-fa3-prepack/selection.json'
+    if stage=="workers": assert not json.loads(selection.read_text())['adopted']
+    else: assert not selection.exists()
 
 
 def test_native_writer_and_gate_wiring():
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
     assert config['prefill']['fa3_prepack_gate'] is True
+    assert config['prefill']['fa3_vload_gate'] is False
     assert config['sglang_overlay_patches'][-1]=='patches/sglang/prefill-fa3-vsum.patch'
     assert config['images']['sglang']['sha256']==config['container_sha256'] and config['container_sha256'].startswith('5a3df8c4')
     source=(ROOT/'patches/sglang/prefill-fa3-vsum.patch').read_text()
@@ -171,7 +177,7 @@ def test_native_writer_and_gate_wiring():
     assert 'timeout --kill-after=2 "${prefill_fa3_prepack_remaining}" srun' in block()
     assert 'select-firmus-prefill-fa3-prepack.py' in (ROOT/'scripts/provision-firmus-framework.sh').read_text()
     table=json.loads((ROOT/'kernels/fa3-verify/prefill-candidates.json').read_text())
-    assert [(row['native_v_n'],row['variant']) for row in table if row.get('native_v_n') and not row.get('retired')]==[(96,57568),(96,41184)]
+    assert [(row['native_v_n'],row['variant']) for row in table if row.get('native_v_n') and not row.get('retired')]==[(96,41184),(96,106720)]
 
 
 def test_deployed_offset_matches_exhaustive_cute_maps(tmp_path):
@@ -230,12 +236,12 @@ assert(get<2>(control)==get<2>(a.stride_V) && get<2>(a.stride_V)==42*n*128);
 
 
 @pytest.mark.parametrize('lengths,fixed,native', [((3994,3994),True,True),((3900,4096),True,True),((4096,3900),True,True),((4096,4096),True,True),((3994,),True,False),((4096,),True,False),((3584,),True,False),((3899,4096),True,False),((3900,4097),True,False),((3994,)*3,True,False),(None,True,False),((3994,3994),False,False)])
-@pytest.mark.parametrize('candidate',['P','S'])
+@pytest.mark.parametrize('candidate',['P','P2'])
 def test_actual_model_writer_branch_uses_same_host_pair_condition(dispatch,monkeypatch,lengths,fixed,native,candidate):
     import textwrap
     from types import SimpleNamespace
     monkeypatch.setenv(GATE['KEY'],GATE['DISPATCH'][candidate])
-    native=native and candidate=='P'
+    native=native and candidate in ('P','P2')
     patch=(ROOT/'patches/sglang/prefill-fa3-vsum.patch').read_text().split('+++ b/python/sglang/srt/models/qwen3_moe.py',1)[1]
     after='\n'.join(line[1:] for line in patch.splitlines() if line.startswith((' ','+')))
     fragment='                selected = pair_candidate'+after.split('                selected = pair_candidate',1)[1]
@@ -251,11 +257,12 @@ def test_actual_model_writer_branch_uses_same_host_pair_condition(dispatch,monke
 
 def test_published_ids_retained_without_retired_native_build(tmp_path,dispatch,monkeypatch):
     table=json.loads((ROOT/'kernels/fa3-verify/prefill-candidates.json').read_text())
-    assert len(table)==17
+    assert len(table)==18
     assert table[11]['name']=='n192-direct-o-varlen-pipe'
     assert table[12]['name']=='m192n96-direct-o-varlen-pipe'
     assert table[13]['name']=='n192-direct-o-varlen-pipe-vsum' and table[13]['retired'] is True
-    assert table[14]['name']=='m192n96-direct-o-varlen-pipe-vsum'
+    assert table[14]['name']=='m192n96-direct-o-varlen-pipe-vsum' and table[14]['retired'] is True
+    assert table[16]['retired'] is True and table[17]['variant']==106720
     with pytest.raises(StopIteration):
         dispatch['prefill_candidate'](table[13]['name'])
     monkeypatch.setenv(GATE['KEY'],GATE['DISPATCH']['P'])
@@ -264,7 +271,8 @@ def test_published_ids_retained_without_retired_native_build(tmp_path,dispatch,m
     build=runpy.run_path(str(ROOT/'kernels/fa3-verify/build.py'))
     tasks=build['generate_prefill_dispatch'](ROOT/'kernels/fa3-verify',tmp_path)
     assert not any(name=='prefill_n192_direct_o_varlen_pipe_vsum' for _,name,_ in tasks)
-    assert any(name=='prefill_m192n96_direct_o_varlen_pipe_vsum' for _,name,_ in tasks)
+    assert not any(name in ('prefill_m192n96_direct_o_varlen_pipe_vsum','prefill_m192n96_direct_o_varlen_pipe_sum') for _,name,_ in tasks)
+    assert any(name=='prefill_m192n96_direct_o_varlen_pipe_native_vload' for _,name,_ in tasks)
     header=(tmp_path/'prefill-candidates.h').read_text()
     assert '{"n192-direct-o-varlen-pipe-vsum", false, false, nullptr, 0}' in header
     wrapper=(ROOT/'kernels/fa3-verify/wrapper.cpp').read_text()
@@ -334,27 +342,37 @@ def test_single_gate_replays_and_rejects_each_producer_or_attention_byte_change(
         assert len(calls)==6 and not torch.equal(calls[0],calls[2]) and not torch.equal(calls[2],calls[4])
 
 
-def test_priority_and_candidate_local_rejection(screen):
+def enable_p2(screen):
     for path in screen[0].glob('prefill-*/rank-*.json'):
         record=json.loads(path.read_text())
-        record['candidates']['S']=copy.deepcopy(record['candidates']['P'])
-        for cell in record['candidates']['S']['shapes'].values(): cell.update(row=GATE['ROWS']['S'],variant=GATE['VARIANTS']['S'])
+        record['candidates']['P2']=copy.deepcopy(record['candidates']['P'])
+        for cell in record['candidates']['P2']['shapes'].values():
+            cell.update(row=GATE['ROWS']['P2'],variant=GATE['VARIANTS']['P2'],baseline='P',p_bytes_equal=True,baseline_fp32=cell['control_fp32'])
         path.write_text(json.dumps(record))
-    assert aggregate(screen)['selected']=='P'
+
+
+def test_priority_and_candidate_local_rejection(screen):
+    enable_p2(screen)
+    assert aggregate(screen)['selected']=='P2'
     screen[1].write_text(PIN)
     path=screen[0]/'prefill-2/rank-3.json'; record=json.loads(path.read_text())
-    record['candidates']['P']['shapes']['3994+3994']['samples_us']['reverse']['candidate']=[896.]*10
+    record['candidates']['P2']['shapes']['3994+3994']['samples_us']['reverse']['candidate']=[896.]*10
     path.write_text(json.dumps(record))
     result=aggregate(screen)
-    assert result['adopted'] and result['selected']=='S'
-    assert screen[1].read_text()==PIN.replace(GATE['CONTROL'],GATE['DISPATCH']['S'])
+    assert result['adopted'] and result['selected']=='P'
+    assert screen[1].read_text()==PIN.replace(GATE['CONTROL'],GATE['DISPATCH']['P'])
+    screen[1].write_text(PIN)
+    record['candidates']['P']['passed']=False
+    record['candidates']['P2']['passed']=True
+    path.write_text(json.dumps(record))
+    assert not aggregate(screen)['adopted'] and screen[1].read_text()==PIN
 
 
 @pytest.mark.parametrize('case',['fatal','binary','image','duplicate_uuid','late_aggregate'])
 def test_whole_group_failure_discards_even_complete_p_and_s(screen,case):
     path=screen[0]/'prefill-2/rank-3.json'; record=json.loads(path.read_text())
-    record['candidates']['S']=copy.deepcopy(record['candidates']['P'])
-    for cell in record['candidates']['S']['shapes'].values(): cell.update(row=GATE['ROWS']['S'],variant=GATE['VARIANTS']['S'])
+    record['candidates']['P2']=copy.deepcopy(record['candidates']['P'])
+    for cell in record['candidates']['P2']['shapes'].values(): cell.update(row=GATE['ROWS']['P2'],variant=GATE['VARIANTS']['P2'],baseline='P',p_bytes_equal=True,baseline_fp32=cell['control_fp32'])
     if case=='fatal': record['healthy']=False
     elif case=='binary': record['binary_sha256']='c'*64
     elif case=='image': record['image_sha256']='c'*64
@@ -364,7 +382,7 @@ def test_whole_group_failure_discards_even_complete_p_and_s(screen,case):
     assert not result['adopted'] and screen[1].read_text()==PIN
 
 
-@pytest.mark.parametrize('candidate,variant,n',[('P',41184,96),('S',24800,0)])
+@pytest.mark.parametrize('candidate,variant,n',[('P',41184,96),('P2',106720,96)])
 @pytest.mark.parametrize('lengths,pair',[((3994,3994),True),((3900,4096),True),((4096,3901),True),((3994,),False),((4096,),False),((3584,),False),((3899,4096),False),((4096,4097),False),((3994,)*3,False),(None,False)])
 def test_both_candidates_dispatch_boundaries(dispatch,monkeypatch,candidate,variant,n,lengths,pair):
     monkeypatch.setenv(GATE['KEY'],GATE['DISPATCH'][candidate])
@@ -417,7 +435,7 @@ def test_production_pack_inverse_exhaustive_against_old_writer_and_host_map(tmp_
 @pytest.mark.parametrize('case',['row','variant'])
 def test_candidate_identity_is_checked_at_aggregate(screen,case):
     path=screen[0]/'prefill-2/rank-3.json'; record=json.loads(path.read_text())
-    record['candidates']['P']['shapes']['3994+3994'][case]=GATE['ROWS']['S'] if case=='row' else 24800
+    record['candidates']['P']['shapes']['3994+3994'][case]=GATE['ROWS']['P2'] if case=='row' else 24800
     path.write_text(json.dumps(record))
     assert not aggregate(screen)['adopted'] and screen[1].read_text()==PIN
 
@@ -444,3 +462,77 @@ uv() {{ shift 5; {shlex.quote(sys.executable)} "$@"; }}
     assert not (tmp_path/'unexpected-launch').exists()
     assert (tmp_path/'source/prefill-kernels.env').read_text()==PIN
     assert (tmp_path/'continued').read_text()=='continued'
+
+
+@pytest.mark.parametrize('case',['baseline','forward','reverse','pooled','bytes','numeric','shape','single','endurance'])
+def test_p2_requires_every_cell_against_p(screen,case):
+    enable_p2(screen)
+    path=screen[0]/'prefill-2/rank-3.json'; record=json.loads(path.read_text())
+    candidate=record['candidates']['P2']; shape=candidate['shapes']['4096+3901']
+    if case=='baseline': shape['baseline']='C'
+    elif case in ('forward','reverse'):
+        shape['samples_us'][case]['candidate']=[895.01]*10
+    elif case=='pooled':
+        # Each order saves 5, but pooling changes which middle samples are selected.
+        shape['samples_us']={'forward':{'control':[100.]*6+[200.]*4,'candidate':[95.]*6+[199.]*4},'reverse':{'control':[200.]*6+[100.]*4,'candidate':[195.]*6+[100.]*4}}
+        summary=GATE['timing_summary'](shape['samples_us'])['savings_us']
+        assert summary['forward']==summary['reverse']==5 and summary['pooled']<5
+    elif case=='bytes': shape['p_bytes_equal']=False
+    elif case=='numeric': shape['baseline_fp32'][0]['max_scaled_error']=.251
+    elif case=='shape': candidate['shapes'].pop('4096+3901')
+    elif case=='single': candidate['singles']['3584']['attention_bytes_equal']=False
+    elif case=='endurance': candidate['endurance']['bytes_equal']=False
+    path.write_text(json.dumps(record))
+    result=aggregate(screen)
+    assert result['adopted'] and result['selected']=='P' and 'P2' in result['candidate_rejections']
+
+
+def test_p2_samples_really_use_p_and_disabled_gate_ignores_p2(screen):
+    samples={o:{'C':[1000.]*10,'P':[900.]*10,'P2':[896.]*10} for o in ('forward','reverse')}
+    paired=GATE['paired'](samples,'P2')
+    assert all(v==4 for v in GATE['timing_summary'](paired)['savings_us'].values())
+    enable_p2(screen)
+    for path in screen[0].glob('prefill-*/rank-*.json'):
+        record=json.loads(path.read_text()); record['p2_enabled']=False
+        path.write_text(json.dumps(record))
+    assert aggregate(screen,p2_enabled=False)['selected']=='P'
+
+
+@pytest.mark.parametrize('replay',[0,1,2])
+@pytest.mark.parametrize('failure',[None,'attention','scale','o'])
+def test_real_validation_compares_p2_bytes_on_original_and_changed_replays(monkeypatch,replay,failure):
+    torch=pytest.importorskip('torch')
+    from types import SimpleNamespace
+    validate=GATE['validate']
+    common={'packed':torch.zeros(4),'cu':None}
+    common.update({k:torch.zeros((2,64,128),dtype=torch.uint8) for k in ('q','k','v','kc','vc')})
+    modes=('C','P','P2'); counts={k:0 for k in modes}
+    state={'writers':{'C':lambda:None},'pack':lambda:None,'image':torch.zeros(4,dtype=torch.uint8),'output':{k:(torch.zeros((2,64,128),dtype=torch.uint8),torch.ones((2,64))) for k in modes},'o_outputs':{k:torch.zeros(4,dtype=torch.uint8) for k in modes}}
+    def call(mode):
+        n=counts[mode]; counts[mode]+=1
+        out,scale=state['output'][mode]; out.fill_(n+1); scale.fill_(1); state['o_outputs'][mode].fill_(n+2)
+        if mode=='P2' and n==replay and failure:
+            target={'attention':out,'scale':scale,'o':state['o_outputs'][mode]}[failure]
+            target.reshape(-1)[0]+=1
+    state['composite']={mode:lambda mode=mode:call(mode) for mode in modes}
+    monkeypatch.setitem(validate.__globals__,'host_image',lambda *args:torch.zeros(4,dtype=torch.uint8))
+    monkeypatch.setitem(validate.__globals__,'native_producer',lambda *args:None)
+    monkeypatch.setattr(torch.cuda,'synchronize',lambda:None)
+    monkeypatch.setattr(torch.ops.apac_fa3_verify,'prefill_dump_native',lambda v,dump,cu,n:dump.zero_(),raising=False)
+    checks={'prefill_selection_capture':lambda fn:SimpleNamespace(replay=fn),'prefill_fp32_reference':lambda common:(torch.tensor([0]),torch.zeros((1,64,128))),'prefill_assert_errors':lambda *args:{'relative_l2':.01,'max_scaled_error':.02}}
+    result=validate(torch,checks,common,state,('P2',))['P2']
+    assert result['p_bytes_equal'] is (failure is None)
+    assert ('error' in result) is (failure is not None)
+    if failure: assert result['error']=='P2 output differs from P'
+    else: assert counts=={'C':3,'P':3,'P2':3}
+
+
+def test_removed_diagnostics_and_new_build_input():
+    source=SCRIPT.read_text()
+    for name in ('def diagnostics(', 'writer_only','fa3_only','interaction_us','only_o','diagnostic_numerics'):
+        assert name not in source
+    assert set(GATE['VARIANTS'])=={'C','P','P2'}
+    build=(ROOT/'kernels/fa3-verify/build.py').read_text()
+    assert build.index('str(root / "prefill-vsum.patch")')<build.index('str(root / "prefill-vload.patch")')
+    assert ' + 150' in block() and ' + 155' in block() and '--p2 ' in block()
+    assert GATE['SECONDS']==150
