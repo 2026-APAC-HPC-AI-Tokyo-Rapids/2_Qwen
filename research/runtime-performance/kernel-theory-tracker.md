@@ -200,6 +200,8 @@ Round 15（41273087893）：P2（native V の bulk load を K acquire より前�
 
 Round 14 の repeat（41280565072、build なし、prepack 集約を UUID 集合で照合する修正 5838d63）：P を 12 GPU で再採用、公式 10008.67（round 14 は 10009.54、差 0.009%）、PP0 周期 113.7/113.3/116.7 ms。10k 超えを 2 run で確認（`2026-11-01-pp4-round14.md`）。
 
+Round 17（41287043170）：P3（native V だけ 3 slot、V を K acquire より前に load、variant 172256）は P と出力 byte 一致、P 比 pooled 1.7〜7.1 µs/call（中央値 5.4）で 5 µs margin を 5 GPU が割り不採用。P2 の直列化は解消したが、残る利得は 1 層約 5 µs（score 約 +0.1%）。P は再合格し公式 10020.58（P の構成は 3 run で 10008.67〜10020.58）（`2026-11-01-prefill-fa3-v3-r17.md`）。
+
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。
