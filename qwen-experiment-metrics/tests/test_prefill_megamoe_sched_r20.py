@@ -1,4 +1,5 @@
 """Round20 scheduling model, strict UUID gate, capture and timeout contracts."""
+import collections
 import copy
 import json
 import os
@@ -145,7 +146,10 @@ def capture_module(monkeypatch,torch):
 
 def test_capture_does_nothing_during_measurement_even_when_configured(monkeypatch):
     class Forbidden:
-        def __getattr__(self,name):raise AssertionError('CUDA during measurement: '+name)
+        def __getattr__(self,name):
+            # Import machinery may probe dunder attributes of a sys.modules entry; only real torch use is forbidden.
+            if name.startswith('__') and name.endswith('__'):raise AttributeError(name)
+            raise AssertionError('CUDA during measurement: '+name)
     c=capture_module(monkeypatch,Forbidden())
     c['ENABLED']=True;c['DIRECTORY']='must-not-be-accessed'
     c['CaptureState']=lambda *_:pytest.fail('state/IO during measurement')
@@ -301,5 +305,6 @@ def test_capture_controller_checks_all_dp_peers_before_paired_dispatch(tmp_path,
         assert generated==[]
     else:
         assert status['complete'] is True and len(generated)==6
-        for i in range(0,6,2):
-            assert generated[i][1]==generated[i+1][1]  # exactly matched P/D bootstrap rooms and inputs
+        # Requests go out through a thread pool, so only the multiset is fixed: three bodies, each sent to a P and a D worker.
+        bodies=collections.Counter(json.dumps(body,sort_keys=True) for _,body in generated)
+        assert sorted(bodies.values())==[2,2,2]
