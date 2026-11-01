@@ -549,10 +549,10 @@
       "2026-11-01-prefill-fa3-prepack-r14.md",
       "fa3-prefill-prepack-cpu-validation-20261101.json"
     ],
-    "status": "CPU verified; GPU/image/serving unmeasured; fa3_prepack_gate=false",
+    "status": "P adopted on all 12 H200s in run 41264009819; S rejected at the first shape; serving 10009.54; image 5a3df8c4 pinned",
     "shape": "Q64/KV4/D128 FP8 E4M3, FP32 accumulation, causal M192/N96; exactly two requests each3900..4096; singles unchanged round12 N192",
     "source_base": "c01b1f55872672825f2afe78bc39988fddec4230",
-    "image": "Fresh build required; pinned round12 image remains a8232b1620ec3932fea98608d63dfcd055f3548b101deb9ab51db510937faee3; image CUDA13.0.88 not built or tested here",
+    "image": "Built in run 41264009819 from 5f3164d (CUDA 13.0.88 in image); pinned for reuse: 5a3df8c485a5ac939761b07a9ca82d7c38d864200250591ec6d9485dba778bb2, 12298477568 bytes",
     "useful_pair_flops": 522847416320,
     "padded_pair_flops": 535881056256,
     "actual_hbm_bytes": null,
@@ -600,8 +600,42 @@
     },
     "performance_prediction": null,
     "conditional_sensitivity": "If native FA3 saves20..40us and pack costs5..15us, net5..35us/layer. This is a sensitivity example, not a prediction or measured interval. Need20..25us/layer across all workers for10k; gate5us alone is insufficient.",
-    "gpu_result": null,
-    "official_score": null,
-    "prior_rejection": "Round13 VS slowed writer+FA3+O46..52us on all12H200s. Native writer warp sector requests8x and sum/lifetime+consumer interaction unseparated. No adoption retry for V/VS; no schedule modification or P+S composition."
+    "gpu_result": "see gpu_gate_result",
+    "official_score": 10009.54,
+    "prior_rejection": "Round13 VS slowed writer+FA3+O46..52us on all12H200s. Native writer warp sector requests8x and sum/lifetime+consumer interaction unseparated. No adoption retry for V/VS; no schedule modification or P+S composition.",
+    "gpu_gate_result": {
+      "run": 41264009819,
+      "slurm_job": 28005,
+      "selected": "P",
+      "metric": "writer (plus pack) + FA3 + O, us per call",
+      "P_saving_us_3994x2_pooled": [
+        30.7,
+        41.0
+      ],
+      "P_saving_us_all_pairs_forward": [
+        22.7,
+        49.6
+      ],
+      "P_control_forward_median_us_3994x2": [
+        1176,
+        1227
+      ],
+      "S": "below 5 us margin on first shape on all GPUs",
+      "diagnostics_median_us_3994x2": {
+        "writer_old": 70.6,
+        "writer_native": 88.0,
+        "writer_old_pack": 75.8,
+        "pack": 4.2,
+        "fa3_C": 654.7,
+        "fa3_S": 694.1,
+        "fa3_V": 620.7,
+        "fa3_VS": 679.7,
+        "composite_C": 1195.8,
+        "composite_P": 1161.1,
+        "composite_VS": 1244.7,
+        "o_only": 458.9
+      },
+      "numerics": "V image, Q/K, paged KV byte-equal; FP32 error identical to control; 1200-call endurance byte-equal"
+    }
   }
 }

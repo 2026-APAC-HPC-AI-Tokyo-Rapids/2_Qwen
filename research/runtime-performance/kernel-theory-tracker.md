@@ -194,6 +194,8 @@ Round 12（41201412459）で採用：2要求・各3900〜4096 tokenのvarlen呼�
 
 Round 13-V（41253426202）で棄却：pair 呼出しに native V の一度書きと lifetime 保持の 4-chain sum を合成した `m192n96-direct-o-varlen-pipe-vsum`。CPU では FADD 依存深さ 23→7、spill 40/28→0/0 B だったが、H200 の in-job gate（QK post＋FA3＋O）では 12 GPU 全てで 3994+3994 が 46〜52 µs/call 遅く（control 1162〜1209 µs、約 +4%）、`below 5 us margin` で不採用。V byte image・Q/K・paged KV は byte 一致、FP32 誤差は control と同値。合成時間だけでは原因を分けられないため、同じ合成形を再提出しない。served は round 12 の選択のままで公式 9947.50（round 12 の 9958.43 比 −0.11%、公式窓 +0.14 s で説明できる再現）。image は pin しない（`2026-11-01-prefill-fa3-vsum-r13.md`）。
 
+Round 14（41264009819）で採用：pair 呼出しで旧 FP32 writer→V prepack（128-bit store、4.2 µs）→native-only FA3（variant 41184）。12 GPU 全てで 7 pair 全形状の writer＋FA3＋O が 22.7〜49.6 µs/call 短縮（3994+3994 で control 1176〜1227 µs に対し 29.4〜41.0 µs）、V image・Q/K・paged KV は byte 一致、FP32 誤差は control と同値、1200 回耐久で byte 一致。同じ gate の分解計測（12 GPU 中央値）：FA3 単体で native V −34.0 µs、sum＋lifetime PRMT +39.4 µs、両方 +25.0 µs、native writer +17.4 µs、旧 writer＋pack +5.2 µs。round 13 の悪化は sum と散在 writer が原因で、native V consumer 自体は勝っていた。sum 単独（S）は最初の形状で不合格。PP0 周期 114.4/113.9/117.5→113.2/113.8/116.6 ms、公式 10009.54（round 12 比 +0.51%）。image は 5a3df8c4（41264009819）に固定（`2026-11-01-pp4-round14.md`）。
+
 測定へ進む条件：現在のN192で命令/trafficの減少があり、半精度expや多項式という失敗案と異なる根拠を示す。数値誤差と公式出力品質を検証する。
 
 N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。tile単位のKV読出しは1.073GB相当で、unique I/Oの71.6MBとは別物。L2 hit率を無視してどちらかをHBM実測量と呼ばない。tile Tensorだけの床は181.5〜188.3µs。
