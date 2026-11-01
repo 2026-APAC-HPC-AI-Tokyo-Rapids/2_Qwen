@@ -1,0 +1,932 @@
+{
+  "schema": "fa3-prefill-v3-r17-cpu/v1",
+  "date": "2026-11-01",
+  "base_commit": "78fb58e",
+  "branch": "perf/pp4-r17-fa3v3-20261101",
+  "status": "rejected_CPU_admission",
+  "reason": "P3 spill stores/loads4/4 B exceed P0/0 B, including after shortening producer V-state liveness; no gate, config, dispatch, build or candidate-table changes retained",
+  "scope": "CUDA13.4.92 sm_90a CPU substitute evidence only; actual image CUDA13.0.88 unverified",
+  "gpu_executed": false,
+  "image_built": false,
+  "official_score": null,
+  "experimental_variant": 172256,
+  "experimental_variant_bits": {
+    "base_P": 41184,
+    "V3": 131072
+  },
+  "table_id": null,
+  "registered": false,
+  "source_pins": {
+    "fa3": {
+      "repository": "sgl-project/sgl-attn",
+      "commit": "f89bc2306632d1ec5f97b014dded4254f5b4a907",
+      "archive_sha256": "418b5681584dc3efff496a1cab5ffd58d2728d89dcfe0ea16e6985d6ef35c68c"
+    },
+    "cutlass": {
+      "repository": "NVIDIA/cutlass",
+      "commit": "57e3cfb47a2d9e0d46eb6335c3dc411498efa198",
+      "archive_sha256": "09237099a70f80bff1dc8bb80c843a674bb4fdcb46e43cc6993e711c5ca89bb5"
+    }
+  },
+  "applied_base_patches": [
+    {
+      "patch": "fixed-specializations.patch",
+      "sha256": "06cd67b34de21fd0344c9df7d7601726e994c06dd65651a32b71176bf11eec28",
+      "output": "patching file hopper/flash_fwd_launch_template.h\npatching file hopper/flash_prepare_scheduler.cu\npatching file hopper/cuda_check.h\n"
+    },
+    {
+      "patch": "fp8-output.patch",
+      "sha256": "4877ef00383957de6997352d6e04b6d3410abfffc511cb7c5cd2d503dd9ec32d",
+      "output": "patching file hopper/flash.h\npatching file hopper/flash_fwd_launch_template.h\npatching file hopper/epilogue_fwd.hpp\n"
+    },
+    {
+      "patch": "fixed-prefill.patch",
+      "sha256": "7b2d8dac2fc834e5a3f7e28447ce44d15ec733b0c548e80b972d63e7c77c8771",
+      "output": "patching file hopper/flash_fwd_launch_template.h\npatching file hopper/tile_scheduler.hpp\npatching file hopper/epilogue_fwd.hpp\n"
+    },
+    {
+      "patch": "prefill-variants.patch",
+      "sha256": "0d00aaa1f63316cd88fb3b626a9f2060e9f018e3648ead05b550e632672ddf33",
+      "output": "patching file hopper/flash_fwd_kernel_sm90.h\npatching file hopper/flash_fwd_launch_template.h\npatching file hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp\npatching file hopper/tile_scheduler.hpp\n"
+    },
+    {
+      "patch": "prefill-overlap.patch",
+      "sha256": "802ebd46c2e9c001c2fba0086b157486968881131da6ddae228e78a9b8d24da5",
+      "output": "patching file hopper/softmax.h\npatching file hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp\npatching file hopper/flash_fwd_kernel_sm90.h\n"
+    },
+    {
+      "patch": "prefill-pv.patch",
+      "sha256": "71072ffbfac538dc768c88b9bfbc1958a6cba5e29d727ddd8c39b28ec9239106",
+      "output": "patching file hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp\n"
+    },
+    {
+      "patch": "decode-merge.patch",
+      "sha256": "f34f423318d7e839d8eb264921d830c881a42c34357fc62b7f38f743c850a5bb",
+      "output": "patching file hopper/epilogue_fwd.hpp\npatching file hopper/flash.h\npatching file hopper/flash_fwd_kernel_sm90.h\npatching file hopper/flash_fwd_launch_template.h\n"
+    },
+    {
+      "patch": "prefill-direct-o.patch",
+      "sha256": "fb5491e5515281eff2f448f9bd406e304b0fb1517a42b1c5e274ca430df69f77",
+      "output": "patching file hopper/epilogue_fwd.hpp\npatching file hopper/flash_fwd_kernel_sm90.h\npatching file hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp\n"
+    },
+    {
+      "patch": "prefill-varlen.patch",
+      "sha256": "6b8ef989e0f3a0b0ad41a4de49591132ebd61206eaf34c7f7437371d6c21807f",
+      "output": "patching file hopper/flash_fwd_launch_template.h\npatching file hopper/tile_scheduler.hpp\n"
+    },
+    {
+      "patch": "decode-two-cta.patch",
+      "sha256": "ddd8130188276c4d44087832e46ce007b7782a544eb824fd41649dd69ba0e77b",
+      "output": "patching file hopper/flash_fwd_kernel_sm90.h\npatching file hopper/flash_fwd_launch_template.h\n"
+    },
+    {
+      "patch": "decode-wide-h2.patch",
+      "sha256": "71144595085a7aa2513c59777b9751b8574b463a9a253350488b48bb98719099",
+      "output": "patching file hopper/epilogue_fwd.hpp\npatching file hopper/flash_fwd_kernel_sm90.h\npatching file hopper/flash_fwd_launch_template.h\npatching file hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp\n"
+    },
+    {
+      "patch": "prefill-pipe.patch",
+      "sha256": "ac50f3a107871742acebfa05b0a1b0dc9015948ac4c4a5aaf46f3878372bd776",
+      "output": "patching file hopper/flash_fwd_kernel_sm90.h\npatching file hopper/flash_fwd_launch_template.h\npatching file hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp\n"
+    },
+    {
+      "patch": "decode-stream-h4.patch",
+      "sha256": "10b987c42799b55d16c8c8e6fe4ac3c8d1b02df651255a9e7bf75b639f19784d",
+      "output": "patching file hopper/block.h\npatching file hopper/epilogue_fwd.hpp\npatching file hopper/flash_fwd_kernel_sm90.h\npatching file hopper/flash_fwd_launch_template.h\npatching file hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp\npatching file hopper/paged_kv.h\npatching file hopper/tile_scheduler.hpp\n"
+    },
+    {
+      "patch": "prefill-geometry.patch",
+      "sha256": "c493325e70c3b3ec1ef2031a35371d34281c655eba574db2b3843f69409ed143",
+      "output": "patching file hopper/flash_fwd_launch_template.h\npatching file hopper/tile_scheduler.hpp\npatching file hopper/epilogue_fwd.hpp\n"
+    },
+    {
+      "patch": "prefill-vsum.patch",
+      "sha256": "3d0820a81abf12256922b9d5d592eec2fd77413a8d57f3d6527740d6d5f87516",
+      "output": "patching file hopper/softmax.h\npatching file hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp\npatching file hopper/flash_fwd_kernel_sm90.h\n"
+    }
+  ],
+  "P3_patch": {
+    "patch_sha256": "e81764456099982c545a419e6421e9bcba77d24cf2130ea4fee5f47949035097",
+    "log": "patching file hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp\npatching file hopper/flash_fwd_kernel_sm90.h\n",
+    "fuzz": 0,
+    "headers": [
+      {
+        "header": "mainloop_fwd_sm90_tma_gmma_ws.hpp",
+        "before_sha256": "156373b0ed75765060081cba20021e5b74ea55ca4bfb9df930620bc5afc2e10d",
+        "after_sha256": "f931303b3f6b2a9625d34ecd9119ec71c0707f0c2c0f9aa35c793eba7f84eb1f",
+        "matches_compiled_header": true
+      },
+      {
+        "header": "flash_fwd_kernel_sm90.h",
+        "before_sha256": "988688b50b4e7b20604c0222f9d161ff2144896c0d2ffe1c8719534473b523be",
+        "after_sha256": "1d80b2b474b65a4a2917c5e84f8b46a4aa0ee813c6a02b3dbd0650307fada496",
+        "matches_compiled_header": true
+      }
+    ]
+  },
+  "shape": "two requests, each3900..4096 tokens; causal M192/N96, Q64/KV4/D128, GQA16",
+  "dtype": "FP8 E4M3 V bytes unchanged; FP32 accumulation; no approximations or skipped causal terms",
+  "work": {
+    "useful_flops": 522847416320,
+    "padded_flops": 535881056256,
+    "delta_flops_vs_P": 0,
+    "V_logical_global_tile_bytes": 697761792,
+    "KV_logical_global_tile_bytes": 1395523584,
+    "delta_logical_global_bytes_vs_P": 0,
+    "delta_logical_shared_transfer_bytes_vs_P": 0,
+    "actual_HBM_bytes": null,
+    "actual_NVLink_bytes": null,
+    "removed_work": "P2 dependence of K(i) on PV(i-2), no FLOP/byte savings over P; exposed wait saving vs P is unmeasured"
+  },
+  "P2_analysis": {
+    "schema": "fa3-r17-p2-analysis/v1",
+    "source": "round15 archived mainloop-after.hpp and P/P2.sass, same CUDA13.4/sm90a; raw GPU sample run41273087893",
+    "P2_producer_order": [
+      {
+        "V_empty": "0xdaf0",
+        "V_bulk": "0xdca0",
+        "K_empty": "0xdcb0",
+        "K_TMA": "0xdde0"
+      },
+      {
+        "V_empty": "0xeb70",
+        "V_bulk": "0xedc0",
+        "K_empty": "0xede0",
+        "K_TMA": "0xef60"
+      },
+      {
+        "V_empty": "0xf1f0",
+        "V_bulk": "0xf400",
+        "K_empty": "0xf420",
+        "K_TMA": "0xf5b0"
+      },
+      {
+        "V_empty": "0xf800",
+        "V_bulk": "0xfa20",
+        "K_empty": "0xfa40",
+        "K_TMA": "0xfbc0"
+      }
+    ],
+    "P2_consumer_first_unmasked_step": {
+      "QK_then_PV_issue": [
+        "0x31a0",
+        "0x31b0",
+        "0x31c0",
+        "0x31d0",
+        "0x3340",
+        "0x33f0",
+        "0x34a0"
+      ],
+      "wait1": "0x34c0",
+      "K_release": "0x4410",
+      "wait0": "0x4470",
+      "V_release": "0x4500",
+      "note": "Releases are distinct; K release is scheduled after some scalar work, not immediately at wait1."
+    },
+    "math_encoded_equal": true,
+    "math_instruction_count": 1814,
+    "static_instructions": {
+      "P": 4424,
+      "P2": 4408
+    },
+    "producer_threads_both": 128,
+    "producer_warps_both": 4,
+    "TMA_issue_warps_both": 1,
+    "bulk_static_sites_both": 4,
+    "K_TMA_static_sites_both": 4,
+    "logical_dynamic_transfer_count_unchanged": true,
+    "cache_hint_changed_in_P2": true,
+    "cache_effect_measured": null,
+    "gpus": [
+      {
+        "uuid": "e6ed95f0-0e8f-f804-f205-aea9c25f1ac3",
+        "elapsed_seconds": 35.165049865841866,
+        "P2_minus_P_us": {
+          "forward": 189.93735313415527,
+          "reverse": 186.58129374186183,
+          "pooled": 189.93735313415527
+        }
+      },
+      {
+        "uuid": "2f69f949-296d-654f-c334-7014e8586a1e",
+        "elapsed_seconds": 35.07555434294045,
+        "P2_minus_P_us": {
+          "forward": 184.60802237192797,
+          "reverse": 183.11870098114014,
+          "pooled": 183.75734488169337
+        }
+      },
+      {
+        "uuid": "c295f81a-26b6-1f8d-7b94-ce31bcb59f84",
+        "elapsed_seconds": 35.06211783317849,
+        "P2_minus_P_us": {
+          "forward": 182.32134977976466,
+          "reverse": 182.77867635091116,
+          "pooled": 182.77867635091116
+        }
+      },
+      {
+        "uuid": "309eb8b2-836c-10cc-819c-f17aadf8f9f8",
+        "elapsed_seconds": 35.23619024315849,
+        "P2_minus_P_us": {
+          "forward": 190.9907261530559,
+          "reverse": 185.79332033793116,
+          "pooled": 188.09870878855395
+        }
+      },
+      {
+        "uuid": "c2400d2f-339f-7e31-8b2c-738ca1afe858",
+        "elapsed_seconds": 35.152060106862336,
+        "P2_minus_P_us": {
+          "forward": 185.4053338368733,
+          "reverse": 180.85467815399193,
+          "pooled": 182.60669708251976
+        }
+      },
+      {
+        "uuid": "51c4a066-a47b-13f0-dd20-f99835f53077",
+        "elapsed_seconds": 35.03407312184572,
+        "P2_minus_P_us": {
+          "forward": 184.23867225646973,
+          "reverse": 184.14668242136622,
+          "pooled": 184.1600338617959
+        }
+      },
+      {
+        "uuid": "e1bd4c6e-5dd8-6830-4144-c6aa15c1b308",
+        "elapsed_seconds": 35.13795304810628,
+        "P2_minus_P_us": {
+          "forward": 192.24933783213282,
+          "reverse": 179.7346671422324,
+          "pooled": 186.64268652598093
+        }
+      },
+      {
+        "uuid": "d9c437ee-d425-32bc-d1b2-41f6c77673b2",
+        "elapsed_seconds": 35.068159830756485,
+        "P2_minus_P_us": {
+          "forward": 181.66132767995168,
+          "reverse": 191.05867544809962,
+          "pooled": 187.36263116200757
+        }
+      },
+      {
+        "uuid": "60d94661-1b30-2134-30f5-3033e0e37a7e",
+        "elapsed_seconds": 33.706934206187725,
+        "P2_minus_P_us": {
+          "forward": 188.47338358561205,
+          "reverse": 186.49061520894384,
+          "pooled": 186.47329012552905
+        }
+      },
+      {
+        "uuid": "67695c27-0cd6-6242-11ba-6ae4d8cbc4ed",
+        "elapsed_seconds": 33.78928298410028,
+        "P2_minus_P_us": {
+          "forward": 189.24407164255786,
+          "reverse": 189.21200434366847,
+          "pooled": 189.17739391326904
+        }
+      },
+      {
+        "uuid": "ba78cf90-19bb-9f3b-6f66-84546ef62efc",
+        "elapsed_seconds": 33.84823908424005,
+        "P2_minus_P_us": {
+          "forward": 192.44535764058423,
+          "reverse": 184.71463521321584,
+          "pooled": 186.49069468180323
+        }
+      },
+      {
+        "uuid": "1b420577-b96a-0c5b-861a-0b9827f50edb",
+        "elapsed_seconds": 33.95484274579212,
+        "P2_minus_P_us": {
+          "forward": 191.25338395436597,
+          "reverse": 186.43200397491432,
+          "pooled": 189.43870067596413
+        }
+      }
+    ],
+    "work": {
+      "M_tiles_per_head_request": 333,
+      "M_tiles_total": 2664,
+      "visits": 56784,
+      "CTAs": 132,
+      "average_tiles_per_CTA": 20.181818181818183,
+      "average_KV_steps_per_CTA": 430.1818181818182,
+      "actual_steps_per_CTA": null,
+      "reason": "dynamic persistent scheduler atomically claims tiles; no per-CTA trace"
+    },
+    "scale_estimate": {
+      "observed_delta_range_us": [
+        179.7346671422324,
+        192.44535764058423
+      ],
+      "required_extra_us_per_average_step": [
+        0.4230769230769231,
+        0.4463229078613694
+      ],
+      "reference_only_round14_FA3_us_per_average_step": 1.4428782755705833,
+      "round14_comparison_scope": "scale check only, not a synthesized timeline for round15",
+      "clock": null,
+      "model": "P2 V(i) empty waits PV(i-2) completion and all 3 WG releases before K(i) acquire. PV(i-2) is paired with QK(i-1); K(i) is therefore deferred until that previous ping-pong step drains PV and softmax. P can issue K(i) after QK(i-2) release. A 0.42-0.45us exposed gap per mean CTA-step suffices for the observed loss; actual stall latency is unmeasured.",
+      "conclusion": "structurally confirmed loss of K lookahead, quantitatively plausible; cache policy may contribute, not a unique causal attribution. P3 keeps the P no-hint bulk instruction and gives V an extra slot to remove this added dependency on PV(i-2)."
+    }
+  },
+  "P3_barrier_model": {
+    "schema": "fa3-r17-barrier-model/v1",
+    "K_slots": 2,
+    "V_slots": 3,
+    "case_count": 2476,
+    "event_count": 513800,
+    "phase_period_blocks": 6,
+    "cross_tile_state": "absolute K count reconstructed once per producer tile; independent V read state spans all consumer tiles",
+    "barrier_pairs": {
+      "K_full_empty": 2,
+      "V_full_empty": 3
+    },
+    "release_arrivals_per_empty_phase": 3,
+    "transaction_bytes_per_V_full_phase": 12288,
+    "tail": "K tail waits 2 slots; V tail starts at total%3 and phase 1 xor floor(total/3)%2, waits all 3 slots",
+    "conclusion": "acyclic for tested sequences; previous same-slot PV release precedes overwrite, including 1-block and odd/even tile transitions",
+    "scope": "CPU dependency/phase model; not a GPU race, progress or byte correctness proof"
+  },
+  "P3_sass": {
+    "schema": "fa3-r17-p3-sass/v1",
+    "static_instructions_including_padding": 4480,
+    "static_delta_vs_P": 56,
+    "ordered_regions": [
+      {
+        "V_empty_pc": "0xdbb0",
+        "V_bulk_pc": "0xdd90",
+        "K_empty_pc": "0xdda0",
+        "K_TMA_pc": "0xdf00"
+      },
+      {
+        "V_empty_pc": "0xeda0",
+        "V_bulk_pc": "0xefb0",
+        "K_empty_pc": "0xf000",
+        "K_TMA_pc": "0xf190"
+      },
+      {
+        "V_empty_pc": "0xf460",
+        "V_bulk_pc": "0xf650",
+        "K_empty_pc": "0xf6a0",
+        "K_TMA_pc": "0xf830"
+      },
+      {
+        "V_empty_pc": "0xfaa0",
+        "V_bulk_pc": "0xfc90",
+        "K_empty_pc": "0xfce0",
+        "K_TMA_pc": "0xfe70"
+      }
+    ],
+    "bulk_policy": "same no-descriptor-hint UBLKCP as P; P2 EVICT_LAST is not carried over",
+    "local_memory_instructions": [
+      {
+        "pc": "0xdf60",
+        "asm": "STL [R1], R0"
+      },
+      {
+        "pc": "0xe2e0",
+        "asm": "LDL.LU R0, [R1]"
+      }
+    ],
+    "source_arithmetic_lines_equal_after_V_index_rename": true,
+    "source_arithmetic_lines": [
+      "flash::gemm<true, -1>(tiled_mma_qk, tSrQ, tSrK(_, _, _, smem_pipe_read.index()), tSrS0);",
+      "make_mask(cur).template apply<true /*Seqlenk_mask*/, Is_causal, Is_local>(tSrS0, cur.m_block, cur.n_block_max - 1);",
+      "softmax.template max_get_scale</*Is_first=*/true, /*Check_inf=*/true>(tSrS0);",
+      "softmax.template online_softmax</*Is_first=*/true, /*Check_inf=*/true>(tSrS0);",
+      "flash::permute_Cregs_fp8(tSrS0);",
+      "convert_type_out(tOrP_acc, tOrP);",
+      "auto mask = make_mask(cur);",
+      "Tensor scores_scale = make_fragment_like(softmax.row_max);",
+      "flash::gemm<true, -1>(tiled_mma_qk, tSrQ, tSrK(_, _, _, smem_pipe_read.index()), tSrS);",
+      "flash::gemm</*zero_init=*/false, /*wg_wait=*/-1>(tiled_mma_pv, tOrP, tOrV(_, _, _, smem_pipe_read_v.index()), tOrO);",
+      "mask_fn(tSrS, n_block);",
+      "cute::copy(softmax.template max_get_scale</*Is_first=*/false, Check_inf>(tSrS), scores_scale);",
+      "softmax.template online_softmax</*Is_first=*/false, Check_inf>(tSrS);",
+      "flash::permute_Cregs_fp8(tSrS);",
+      "convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), next_p);",
+      "convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);",
+      "softmax.rescale_o(tOrO, scores_scale);",
+      "flash::gemm<true, -1>(tiled_mma_qk, tSrQ, tSrK(_, _, _, smem_pipe_read.index()), tSrS);",
+      "flash::gemm</*zero_init=*/false, /*wg_wait=*/-1>(tiled_mma_pv, tOrP, tOrV(_, _, _, smem_pipe_read_v.index()), tOrO);",
+      "make_mask(nxt).template apply<true /*Seqlenk_mask*/, Is_causal, Is_local>(tSrS, nxt.m_block, nxt.n_block_max - 1);",
+      "softmax_next.template max_get_scale</*Is_first=*/true, /*Check_inf=*/true>(tSrS);",
+      "softmax_next.template online_softmax</*Is_first=*/true, /*Check_inf=*/true>(tSrS);",
+      "cute::copy(softmax.finalize(v_descale(cur)), scores_scale);",
+      "flash::permute_Cregs_fp8(tSrS);",
+      "convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);",
+      "softmax.rescale_o(tOrO, scores_scale);",
+      "flash::permute_output_fp8(tOrO);",
+      "store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));",
+      "cute::copy(softmax_next.row_max, softmax.row_max);",
+      "cute::copy(softmax_next.row_sum, softmax.row_sum);",
+      "Tensor scores_scale = make_fragment_like(softmax.row_max);",
+      "flash::gemm</*zero_init=*/false, /*wg_wait=*/-1>(tiled_mma_pv, tOrP, tOrV(_, _, _, smem_pipe_read.index()), tOrO);",
+      "cute::copy(softmax.finalize(v_descale(cur)), scores_scale);",
+      "softmax.rescale_o(tOrO, scores_scale);",
+      "flash::permute_output_fp8(tOrO);",
+      "store(tOrO, cute::make_tuple(cur.m_block, cur.bidh, cur.bidb, 0));"
+    ],
+    "P3_encoded_sha256": "81f2ab03423df4bb7c434df6faaefec657b1dd692e01cf0ea98ed8237fd03759",
+    "note": "Source arithmetic comparison is not a GPU output-byte test. Spills4/4 exceed P0/0: reject regardless of structural schedule."
+  },
+  "rows": [
+    {
+      "name": "P",
+      "variant": 41184,
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/P.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/P.o"
+      ],
+      "ptxas_log": "ptxas info    : 12 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi41184ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi41184ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 128 registers, used 16 barriers\nptxas info    : Compile time = 512.143 ms\n",
+      "encoded_sha256": "29d22d8ce80e82a10e70299f1765f889f4e9c5c335e24c871de919db92cfb1a3",
+      "encoded_word_count": 8848,
+      "source_sha256": "a2cfda98fac42aec55635ad275729f27f04553207d5e01d10a0ad4070bf425ad",
+      "object_sha256": "4e2856e829bf0ec35759cce0dcdd53e265f0a4fa74edc3f70103775e370e94e5",
+      "sass_sha256": "8b6656481ba5d28c291277f13a5a4091faaeed12d292d993717e1b1ad280bc2e",
+      "C75xx": false,
+      "round14_encoded_equal": true,
+      "stack_frame_bytes": 0,
+      "spill_store_bytes": 0,
+      "spill_load_bytes": 0,
+      "registers": 128
+    },
+    {
+      "name": "control-n96",
+      "variant": 8416,
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/control-n96.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/control-n96.o"
+      ],
+      "ptxas_log": "ptxas warning : Registers are spilled to local memory in function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi8416ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE', 40 bytes spill stores, 28 bytes spill loads\nptxas info    : 12 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi8416ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi8416ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE\n    16 bytes stack frame, 40 bytes spill stores, 28 bytes spill loads\nptxas info    : Used 128 registers, used 16 barriers, 16 bytes cumulative stack size\nptxas info    : Compile time = 514.363 ms\n",
+      "encoded_sha256": "cd7d899e84278e57bffeba2593dbc114b510adf8324b0794131868a86ca5a555",
+      "encoded_word_count": 8672,
+      "source_sha256": "6088281f407e2ec13b22fc0835c1525658d31be6b2f6c35623fa1cd45b8e49aa",
+      "object_sha256": "0e3058f8b9331957f9ffa76e647f21dcdaf2d286fe72bac8e9cf67918d89dd8c",
+      "sass_sha256": "6768213d3ac577e0de9e581321aa7029c0d20bdc51409b404f698a29144e1466",
+      "C75xx": false,
+      "round14_encoded_equal": true,
+      "stack_frame_bytes": 16,
+      "spill_store_bytes": 40,
+      "spill_load_bytes": 28,
+      "registers": 128
+    },
+    {
+      "name": "control-n192",
+      "variant": 224,
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/control-n192.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/control-n192.o"
+      ],
+      "ptxas_log": "ptxas warning : Registers are spilled to local memory in function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi192EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi224ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi192ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE', 84 bytes spill stores, 116 bytes spill loads\nptxas info    : 12 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi192EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi224ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi192ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi192EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi224ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi192ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE\n    40 bytes stack frame, 84 bytes spill stores, 116 bytes spill loads\nptxas info    : Used 168 registers, used 16 barriers, 40 bytes cumulative stack size\nptxas info    : Compile time = 926.000 ms\n",
+      "encoded_sha256": "55084cdb742e96b50168b582fce6205dc08a17202994161898438e92de46eba3",
+      "encoded_word_count": 11008,
+      "source_sha256": "b23bab440ef39caa478ea59a4d83bf86ef625888ba061532d2a360353ef23c1a",
+      "object_sha256": "ff0dd8e2b6142c95f198b829d6fa221b9aae59bc2671bef13cc758495abf68d5",
+      "sass_sha256": "fb56cf1890c5d14cfa0fd51c32ce281541ee9277ba080ea85d790ccfcb7c8c41",
+      "C75xx": false,
+      "round14_encoded_equal": true,
+      "stack_frame_bytes": 40,
+      "spill_store_bytes": 84,
+      "spill_load_bytes": 116,
+      "registers": 168
+    },
+    {
+      "name": "P3",
+      "variant": 172256,
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/P3.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/P3.o"
+      ],
+      "ptxas_log": "ptxas warning : Registers are spilled to local memory in function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi172256ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE', 4 bytes spill stores, 4 bytes spill loads\nptxas info    : 12 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi172256ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN16apac_fa3_private20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi192EEENS7_ILi96EEENS7_ILi128EEEEEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi172256ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SC_SB_EEES9_SH_SG_Li384ELb1ELb1ELb0ELb1ELb1ELb0ELi1EEENS1_36VarlenDynamicPersistentTileSchedulerILi192ELi96ELi0ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1ELb1EEELi1EEEEEEEvNT_6ParamsE\n    8 bytes stack frame, 4 bytes spill stores, 4 bytes spill loads\nptxas info    : Used 128 registers, used 16 barriers, 8 bytes cumulative stack size\nptxas info    : Compile time = 702.722 ms\n",
+      "encoded_sha256": "81f2ab03423df4bb7c434df6faaefec657b1dd692e01cf0ea98ed8237fd03759",
+      "encoded_word_count": 8960,
+      "source_sha256": "19f0b7b67a706d1ecd74e55f1b0c3b6d123f1b503b1b0f96f55cd2ac01afcad5",
+      "object_sha256": "66d55cc8783a05cb7dd4b5586e332c5d1f0a4c410d11ad18c18e4dd373ef47f6",
+      "sass_sha256": "8f5645856d1e8cb84eaf64d37ee69d4f2ee93a5cf2c9c124f4bd9f43a9036fe0",
+      "C75xx": false,
+      "stack_frame_bytes": 8,
+      "spill_store_bytes": 4,
+      "spill_load_bytes": 4,
+      "registers": 128
+    }
+  ],
+  "writer_and_pack": {
+    "writer": {
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++20",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-DNDEBUG",
+        "-DSGL_CUDA_ARCH=900",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-Xptxas=-v,--warn-on-spills",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/runtime/python/sglang/kernels/jit/csrc",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/runtime/python/sglang/kernels/jit/include",
+        "-I/home/USER/.cache/uv/archive-v0/eE14vxHHzCCrYPNMnPp5J/tvm_ffi/include",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/writer.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/writer.o"
+      ],
+      "ptxas_log": "ptxas info    : 0 bytes gmem\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456722qknorm_rope_fp8_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456722qknorm_rope_fp8_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 56 registers, used 0 barriers\nptxas info    : Compile time = 134.689 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456722qknorm_rope_fp8_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456722qknorm_rope_fp8_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 56 registers, used 0 barriers\nptxas info    : Compile time = 115.717 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456725qknorm_rope_decode_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456725qknorm_rope_decode_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 40 registers, used 0 barriers\nptxas info    : Compile time = 34.700 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456725qknorm_rope_decode_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456725qknorm_rope_decode_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsE\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 40 registers, used 0 barriers\nptxas info    : Compile time = 33.778 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fast_kernelILb1ElLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fast_kernelILb1ElLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 32.512 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fast_kernelILb1EiLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fast_kernelILb1EiLb0EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 31.262 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fast_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fast_kernelILb1ElLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 52.926 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fast_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fast_kernelILb1EiLb1EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_i\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 59 registers, used 0 barriers\nptxas info    : Compile time = 51.319 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fp32_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsEPvS2_' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fp32_kernelILb1ElEEvNS_19QKNormRopeFP8ParamsEPvS2_\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 48 registers, used 0 barriers\nptxas info    : Compile time = 23.436 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fp32_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsEPvS2_' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456731qknorm_rope_prefill_fp32_kernelILb1EiEEvNS_19QKNormRopeFP8ParamsEPvS2_\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 48 registers, used 0 barriers\nptxas info    : Compile time = 20.985 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456733qknorm_rope_prefill_native_kernelILb1ElLi96EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_PKiii' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456733qknorm_rope_prefill_native_kernelILb1ElLi96EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_PKiii\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 48 registers, used 0 barriers\nptxas info    : Compile time = 43.936 ms\nptxas info    : Compiling entry function '_ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456733qknorm_rope_prefill_native_kernelILb1EiLi96EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_PKiii' for 'sm_90a'\nptxas info    : Function properties for _ZN49_GLOBAL__N__7dbe7442_9_writer_cu_b78ab83c_414456733qknorm_rope_prefill_native_kernelILb1EiLi96EEEvNS_19QKNormRopeFP8ParamsEPvS2_S2_PKiii\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 48 registers, used 0 barriers\nptxas info    : Compile time = 42.355 ms\n",
+      "old_fp32_encoded_equal": {
+        "l": true,
+        "i": true
+      },
+      "encoded_sha256": {
+        "l": "f59e4e26a6e4b3849d74af596bf984c8e64f7aa6fd1b886afc01f49f1fc15184",
+        "i": "b06ea4f03e0a83460f9c4b20ea01c85305d0b50b6acaa9ecf2193433283902f7"
+      },
+      "header_sha256": "e467744422bd45a6356ee794bf43caca8116684d8f914f23b8ea4794378cc6f1",
+      "C75xx": false
+    },
+    "pack": {
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "--use_fast_math",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-lineinfo",
+        "-gencode=arch=compute_90a,code=sm_90a",
+        "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+        "-DNDEBUG",
+        "-Xptxas=-v,--warn-on-spills",
+        "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+        "-D_GLIBCXX_USE_CXX11_ABI=1",
+        "-Dflash=apac_fa3_private",
+        "-DFlash_fwd_params=ApacFA3VerifyParams",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/kernels/fa3-verify",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+        "-I/usr/local/cuda-13.4/include",
+        "-I/usr/local/cuda-13.4/include/cccl",
+        "-c",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/kernels/fa3-verify/prefill_prepack.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/pack.o"
+      ],
+      "ptxas_log": "ptxas info    : 0 bytes gmem\nptxas info    : Compiling entry function '_ZN15apac_fa3_verify22prefill_prepack_kernelEPKhPhPKi' for 'sm_90a'\nptxas info    : Function properties for _ZN15apac_fa3_verify22prefill_prepack_kernelEPKhPhPKi\n    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\nptxas info    : Used 35 registers, used 1 barriers, 24576 bytes smem\nptxas info    : Compile time = 24.379 ms\n",
+      "round14_encoded_equal": true,
+      "C75xx": false
+    }
+  },
+  "ordered_SGLang_overlay_proof": {
+    "upstream_commit": "fc275674a97d78553b22597ee72c8fd48f5420f4",
+    "baked_patches": [
+      "patches/sglang/prefill-cutlass-silu-quant.patch",
+      "patches/sglang/draft-extend-selected-head-rows.patch",
+      "patches/sglang/prefill-fp8-scale-row-shuffle.patch",
+      "patches/sglang/prefill-tiled-routing.patch",
+      "patches/sglang/firmus-staged-eagle-kv.patch",
+      "patches/sglang/qwen3-sm90-megamoe.patch",
+      "patches/sglang/firmus-staging-completion.patch",
+      "patches/sglang/chunk-cache-page-release.patch",
+      "patches/sglang/decode-silu-quant.patch",
+      "patches/sglang/nixl-expired-chunks.patch",
+      "patches/sglang/firmus-dp-rank-query.patch",
+      "patches/sglang/prefill-ready-handoff.patch",
+      "patches/sglang/deepgemm-activation-layout.patch",
+      "patches/sglang/rope-fp8-q.patch",
+      "patches/sglang/qknorm-rope-fp8.patch",
+      "patches/sglang/prefill-request-aligned-chunks.patch",
+      "patches/sglang/qknorm-rope-fp8-kv.patch",
+      "patches/sglang/qwen-topk-padding.patch",
+      "patches/sglang/qknorm-rope-fp8-token-warps.patch",
+      "patches/sglang/decode-async-admission.patch",
+      "patches/sglang/dp-total-requests-rotate-ties.patch",
+      "patches/sglang/megamoe-idle-prefill-geometry.patch",
+      "patches/sglang/gigatoken-encode.patch"
+    ],
+    "runtime_patches": [
+      "patches/sglang/add-rmsnorm-group-quant.patch",
+      "patches/sglang/prefill-attention-contiguous-kv.patch",
+      "patches/sglang/megamoe-prefill-replicas.patch",
+      "patches/sglang/verify-attention-candidates.patch",
+      "patches/sglang/decode-verify-scheduler-metadata.patch",
+      "patches/sglang/decode-fusions.patch",
+      "patches/sglang/decode-dense-gemm.patch",
+      "patches/sglang/decode-fa3-verify.patch",
+      "patches/sglang/decode-routing-capture.patch",
+      "patches/sglang/prefill-fp8-integration.patch",
+      "patches/sglang/prefill-qkv-fast-fp8.patch",
+      "patches/sglang/decode-qknorm-fast-fp8.patch",
+      "patches/sglang/decode-add-rmsnorm-group-quant.patch",
+      "patches/sglang/prefill-async-admission.patch",
+      "patches/sglang/prefill-start-align.patch",
+      "patches/sglang/prefill-pp4-ep1.patch",
+      "patches/sglang/pp4-scheduler-local-sync.patch",
+      "patches/sglang/pp4-direct-result.patch",
+      "patches/sglang/pp4-proxy-instream.patch",
+      "patches/sglang/pp4-loop-latency.patch",
+      "patches/sglang/pp4-proxy-copy-engine.patch",
+      "patches/sglang/decode-norm-quant-wide.patch",
+      "patches/sglang/decode-dense-swapab.patch",
+      "patches/sglang/verify-penalty-broadcast.patch",
+      "patches/sglang/prefill-fa3-varlen.patch",
+      "patches/sglang/prefill-fa3-pair.patch",
+      "patches/sglang/prefill-moe-input.patch",
+      "patches/sglang/prefill-qknorm-fp32.patch",
+      "patches/sglang/prefill-moe-input-onepass.patch",
+      "patches/sglang/decode-moe-input.patch",
+      "patches/sglang/prefill-fa3-vsum.patch"
+    ],
+    "hashes": {
+      "patches/sglang/prefill-cutlass-silu-quant.patch": "2f9d94ff71f7f0eedd2fe13b665a1d3e276b06457610b4d236519d33e35d2910",
+      "patches/sglang/draft-extend-selected-head-rows.patch": "92fef2c4361f0e515226bc22a465aedce502419be605fef08550bd964c5209fa",
+      "patches/sglang/prefill-fp8-scale-row-shuffle.patch": "b7b50f23df37891e16824c8a5aa40a2ec171398a91332b22ab0fb5a361026117",
+      "patches/sglang/prefill-tiled-routing.patch": "f8ad9a06257fa76a8384999df4652636c96df8501f608c24fd572eeb393ea4ca",
+      "patches/sglang/firmus-staged-eagle-kv.patch": "3eea10a67aee04b5fb69dd24dd5b9566bdf9fbab0930fdb74e0ac3a38f18dc63",
+      "patches/sglang/qwen3-sm90-megamoe.patch": "a5b4e320b9b64aef8a1110ffc8ca71cd3cf79edb5703e14a88457821e387c5a2",
+      "patches/sglang/firmus-staging-completion.patch": "0e9d31f03345a91304008912b237f96b9f9771a6414105909a85c08d9ff17efb",
+      "patches/sglang/chunk-cache-page-release.patch": "70652b1cfa959a9c05b0f15e13194b1027bcab09ff806658d4196c302eba366d",
+      "patches/sglang/decode-silu-quant.patch": "abf3b5887bf4343b3b5a534f5f26bea117557785ae82f1ed24fd38fb9c31a1a8",
+      "patches/sglang/nixl-expired-chunks.patch": "5b017833aca1d72ed83943b14b3dda63f566665cb168470bbb12cf76cdb56966",
+      "patches/sglang/firmus-dp-rank-query.patch": "0de073833a77c3424894f1a47123f9005204ee98a59d041ec085d95d60dae022",
+      "patches/sglang/prefill-ready-handoff.patch": "b50bcbe9b36f215b7ef0dc8a9f1142c926360ffa3090c3bcfdb83ce6e91507cc",
+      "patches/sglang/deepgemm-activation-layout.patch": "9f47d1a75039d219cd92d32f8b9cc727911ee9d90e37d27e446f5226c686b354",
+      "patches/sglang/rope-fp8-q.patch": "f4f6096b95bf7790d6335b7bc20fdf316651f19c4d568e843d7c37a386d028a1",
+      "patches/sglang/qknorm-rope-fp8.patch": "b1ecb10a408ad74e536a7fcb6039dcc4b9ac14b8781d1beb3a4a4c2b3c2ef2b6",
+      "patches/sglang/prefill-request-aligned-chunks.patch": "2d355e7942c47adf7d7babd16e4db4d59929ec0544bf65a2feffc445ccbb7228",
+      "patches/sglang/qknorm-rope-fp8-kv.patch": "6a82f68ba12f16808c33dd5e2dd09f580867d994610bd649b0f679dda5556ada",
+      "patches/sglang/qwen-topk-padding.patch": "4b7178615d9090b7e230d11b2884f44cdddebe12a830393dfc43186f6bc56f33",
+      "patches/sglang/qknorm-rope-fp8-token-warps.patch": "7dd3ab2971be13fff6f4737419c02512d31cc4632f0485c5f92e0fdacda021c4",
+      "patches/sglang/decode-async-admission.patch": "76b73681032470f1e7f2ac359e418f7bc49498c643eea524ce230d63dc04f36d",
+      "patches/sglang/dp-total-requests-rotate-ties.patch": "704cb92f1da175648c48a70cc2cdda63c49434a0107324393fdcbd362c6b9e8a",
+      "patches/sglang/megamoe-idle-prefill-geometry.patch": "7429837056c69087e63962aa44cb6baf97f2cea3fbd8323a3e2ca5969b857315",
+      "patches/sglang/gigatoken-encode.patch": "6f417420bd5a6d3950d7c732b1bd0acd57d7f427e82f2ef33e1bd6e08a5afee9",
+      "patches/sglang/add-rmsnorm-group-quant.patch": "0ea92882f7ba4d1804eeb54fe81d8d610796fa890c61c3039922bd49d28bf40c",
+      "patches/sglang/prefill-attention-contiguous-kv.patch": "d58039ee0149e433e39f3ab13f8be7775cfb4861dd770fd8211304feff027e1e",
+      "patches/sglang/megamoe-prefill-replicas.patch": "6f2b64cdc4f05ea31af7be60c313d5365646885afef73a3d2ce3f3a8e9846ea4",
+      "patches/sglang/verify-attention-candidates.patch": "bc4a3a2a6aa786e19dc57cb489c742f4e47e27d357dbe33b7cc6df83e89f829e",
+      "patches/sglang/decode-verify-scheduler-metadata.patch": "5a86b227fea9225109999d48505efd510dae0f34b93d2bedb9fedbf8e6a8c652",
+      "patches/sglang/decode-fusions.patch": "d779e4e864e65554ea527bfd0a2c200bcd154c83ae48aaf8427b1ff22f650574",
+      "patches/sglang/decode-dense-gemm.patch": "a5049b688615a8e89c1790ce4b3d190a396db33e1182bb4dcde38ebc1235111e",
+      "patches/sglang/decode-fa3-verify.patch": "e5623b0cd28cfa81e897a1847a602f418acd500112f4b24d858b95dceda4cfa8",
+      "patches/sglang/decode-routing-capture.patch": "a9c26d49a24feb1b989759ce8d07949a6d3c874c999c83bb50d6006b8f98d8a9",
+      "patches/sglang/prefill-fp8-integration.patch": "99e97664d83610c539eaa62e992a396f4d5bb1981760934ca3df3bb5c3de42ef",
+      "patches/sglang/prefill-qkv-fast-fp8.patch": "11bb55ee3fc86db2c4b84254033105863d0db333919e4d771b26a04612d043a6",
+      "patches/sglang/decode-qknorm-fast-fp8.patch": "e08c44f43ceded413c1652a02c9f65fcb41d9eaafc068c749cb1d5786dd0ad10",
+      "patches/sglang/decode-add-rmsnorm-group-quant.patch": "71375901315fc74fe13551fc8de985e1617d56f438d5deb3b091c1be5817b03a",
+      "patches/sglang/prefill-async-admission.patch": "3291c98dbb54cedc3b2e758c9e25caeea60c719ab4b9327d1caf9d83d484ee3b",
+      "patches/sglang/prefill-start-align.patch": "9e4044a9c295aadec36ff9b8ca22554afd010b942c66538726ebb201f1719cde",
+      "patches/sglang/prefill-pp4-ep1.patch": "773d876c62561b97be8d739d2f8b819c54b1afa2a76e26ee5e4f5e844682529f",
+      "patches/sglang/pp4-scheduler-local-sync.patch": "6ea1cb131b9e78e1ba54dd05ddf02a678c419a5b9946b26c620edde1159d5f61",
+      "patches/sglang/pp4-direct-result.patch": "c0bf6da9e783ebf6dc5711591dd709e4d5bc81f29ec6c1ba5777351d7f460fba",
+      "patches/sglang/pp4-proxy-instream.patch": "5d1a14e321aa708064e377274bbabea28248f96b4fb18edfd3f66c682a997258",
+      "patches/sglang/pp4-loop-latency.patch": "1279a16d1fb3692459159ea8232d3fa6ddee78ca583d4f29e9efc408b8f80d65",
+      "patches/sglang/pp4-proxy-copy-engine.patch": "f2fe604a83d48c49c05dd6df62f65915a920640244904d4107867f2f020f7404",
+      "patches/sglang/decode-norm-quant-wide.patch": "27127a371defbfc67136e4bfdcb501bb9186e3afdb2963a53673073b70f3c068",
+      "patches/sglang/decode-dense-swapab.patch": "b6938fcb022b7b06bd3f21de1950e51b6bf49cb657bd15a93f9818f730fe70bd",
+      "patches/sglang/verify-penalty-broadcast.patch": "6e3c149a422c54d3e633cdaa6d8a0ccbf75933fbd7e123adcfa071424b482dd5",
+      "patches/sglang/prefill-fa3-varlen.patch": "06461257621491a63254f5b7b216e3ad9ce0b3cb3da2998df0655b61243f5801",
+      "patches/sglang/prefill-fa3-pair.patch": "e63f8d546fab7b43364884902bf58edadcba7fc43e71e00a0bc6dce6456028c5",
+      "patches/sglang/prefill-moe-input.patch": "cfa174ba65f7fe996153007db12f52f4ef262e4d0f6af47fd4b270d6345a02e9",
+      "patches/sglang/prefill-qknorm-fp32.patch": "c28c43e36621d7d582c7209bfeac64e67d50a88917866a62f93ebd489af4e539",
+      "patches/sglang/prefill-moe-input-onepass.patch": "0b64f08a082df05a51f58bd188123ccf7ef45b0edfe4752b89f8cd2e5719d254",
+      "patches/sglang/decode-moe-input.patch": "2b7a7eef760fb862a438b2e666ecae1400b1b85938ba895d3f68858a224c4811",
+      "patches/sglang/prefill-fa3-vsum.patch": "f717b849b6a18a72383df3a22627252489d17799ed79450d27aaf838e50737fd"
+    },
+    "rope_equals_round15": true
+  },
+  "resource_query": {
+    "command": [
+      "g++",
+      "-std=c++17",
+      "-Dflash=apac_fa3_private",
+      "-DFlash_fwd_params=ApacFA3VerifyParams",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/kernels/fa3-verify",
+      "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+      "-I/usr/local/cuda-13.4/include",
+      "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/resources.cpp",
+      "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/P3.o",
+      "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/prior/prior/prepare.o",
+      "-L/usr/local/cuda-13.4/lib64",
+      "-Wl,-rpath,/usr/local/cuda-13.4/lib64",
+      "-lcudart",
+      "-o",
+      "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/wt/r17/../../codex-scratch/r17/resources"
+    ],
+    "stdout": "P3 100352\n",
+    "smem_bytes": 100352,
+    "scope": "Resource-pointer branch only; no CUDA initialization or launch; final shortened-state candidate"
+  },
+  "resource_explanation": {
+    "P_smem_bytes": 100352,
+    "P3_smem_bytes": 100352,
+    "P_V_storage_bytes": 24576,
+    "P3_V_storage_bytes": 36864,
+    "old_Vt_buffer_restored": false,
+    "epilogue_storage_bytes": 49152,
+    "P_mainloop_padding_bytes": 24576,
+    "P3_mainloop_padding_bytes": 12288,
+    "V_mbarriers": {
+      "before": 4,
+      "after": 6,
+      "added_bytes": 16
+    },
+    "total_allocation_reason": "extra V slot consumes existing mainloop/epilogue padding; extra mbarriers fit final SharedStorage alignment padding",
+    "producer_registers": 32,
+    "math_registers": 160,
+    "producer_threads": 128,
+    "math_threads": 384,
+    "register_allocation_per_CTA": 65536,
+    "CTA_per_SM": 1,
+    "persistent_grid_CTAs": 132,
+    "resident_warps": 16,
+    "theoretical_warp_occupancy_percent": 25
+  },
+  "P3_output_bytes_equal_P": null,
+  "arithmetic_source_unchanged": true,
+  "output_scope": "same arithmetic and within-slot byte layout predict identical output, but no GPU output test was run; candidate is already rejected for spills",
+  "attempts": [
+    {
+      "name": "independent V ring, state spans Q load",
+      "spill_store_bytes": 4,
+      "spill_load_bytes": 4,
+      "stack_frame_bytes": 8,
+      "static_instructions": 4488
+    },
+    {
+      "name": "independent V ring, state reconstructed after Q load",
+      "spill_store_bytes": 4,
+      "spill_load_bytes": 4,
+      "stack_frame_bytes": 8,
+      "static_instructions": 4480
+    }
+  ],
+  "production_changes": [],
+  "validation": {
+    "full_suite": {
+      "exit_code": 0,
+      "passed": 1387,
+      "skipped": 78,
+      "collected_nodeids": 1465,
+      "count_basis": "success/skip progress markers match all cached collected node IDs; project and CLI both use quiet, so pytest suppresses its final statistics line",
+      "seconds": null,
+      "command": "uv run --no-project --python 3.12 --with pytest --with pyyaml --with numpy --with rfc8785 --with-editable . python -m pytest -q -p socket_paths --basetemp=<authorized r17 scratch>/full-tmp tests",
+      "log": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/full-tests.log",
+      "log_sha256": "551d8f9e520a0b6b79ce62bd1a4ddc288e3a5f842c609b42549cad4b32790efb"
+    },
+    "temporary_fixture_alias": "AF_UNIX-only tmp_path alias /proc/self/cwd to same authorized r17 scratch; production and test sources unchanged",
+    "forbidden_operations_used": false,
+    "cleanup": "Removed all task-owned source copies, original source archives, loose objects, generated TUs, diagnostic helpers, test directories, AF_UNIX alias plugin and worktree Python/pytest caches. Retained verified CPU proof archive, suite log, original exec.log and supplied round15 samples. No SSH, Actions, GPU, Slurm or PJM job was started; no task-owned scheduler job exists."
+  },
+  "raw_cpu_archive": {
+    "path": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r17/cpu-sass-proof.tar.gz",
+    "sha256": "01e4087e89750f56bda255cffe57dcab0f1046408df035fd97384d12a0c26fbe",
+    "bytes": 1405382,
+    "entries": 59,
+    "internal_manifest_verified": true
+  },
+  "production_files_unchanged_from_base": {
+    "scripts/select-firmus-prefill-fa3-prepack.py": {
+      "base_byte_equal": true,
+      "sha256": "34bd6827b644f8408e146008781524a761e11d2f61de0adf7d8f40bafacae01f"
+    },
+    "configs/firmus-prefill-pp4.json": {
+      "base_byte_equal": true,
+      "sha256": "beda1f04b7a7103068560e8aa0e3804d2f2da62ed7f77a5c26a79a64535c6295"
+    },
+    "kernels/fa3-verify/build.py": {
+      "base_byte_equal": true,
+      "sha256": "42b4709fae8eda1f8f165fea82118c9385c3de843a8ce9d32885b59358f9aac2"
+    },
+    "kernels/fa3-verify/prefill-candidates.json": {
+      "base_byte_equal": true,
+      "sha256": "d2cb3c6de56eb3cc73310d32fee957e8f7a9c7f07e6cb83ac1e19aec0fde4701"
+    },
+    "patches/sglang/prefill-fa3-vsum.patch": {
+      "base_byte_equal": true,
+      "sha256": "f717b849b6a18a72383df3a22627252489d17799ed79450d27aaf838e50737fd"
+    },
+    "platforms/firmus/framework-comparison/sglang.sbatch": {
+      "base_byte_equal": true,
+      "sha256": "dc2f2490f1862bfb996daf7cdf4505308b19f4c00ba1971e638d137a82212e36"
+    },
+    "scripts/prepare-firmus-pp4-settings.py": {
+      "base_byte_equal": true,
+      "sha256": "848670e061304e73c66e6110835be7d05b0b3a0bcf7c4013b32672a243f0bcc6"
+    },
+    "qwen-experiment-metrics/tests/test_prefill_fa3_pair.py": {
+      "base_byte_equal": true,
+      "sha256": "c5686bf6e306eed0ad2ef6f2783e7ce635fceaf173a049b50aea9b726a4f3ed0"
+    },
+    "scripts/provision-firmus-framework.sh": {
+      "base_byte_equal": true,
+      "sha256": "d9ce985aa61624a2dd973fbb401dc1d542fea6a25fa64dcb0fd8fc570a1fd3dd"
+    }
+  }
+}

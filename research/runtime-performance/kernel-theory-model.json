@@ -802,5 +802,91 @@
       "aggregate_error": "wrong GPU: g1 prefill-0 and prefill-1 GPU sets swapped between the pair and prepack gates",
       "official_score": 9947.81
     }
+  },
+  "fa3_prefill_v3_r17_cpu_rejection": {
+    "date": "2026-11-01",
+    "note": "2026-11-01-prefill-fa3-v3-r17.md",
+    "cpu_evidence": "fa3-prefill-v3-cpu-validation-20261101.json",
+    "status": "rejected_CPU_admission",
+    "source_base": "78fb58e",
+    "source_pins": {
+      "fa3": "f89bc2306632d1ec5f97b014dded4254f5b4a907",
+      "cutlass": "57e3cfb47a2d9e0d46eb6335c3dc411498efa198"
+    },
+    "image": "round14 5a3df8c485a5ac939761b07a9ca82d7c38d864200250591ec6d9485dba778bb2 unchanged; image CUDA13.0.88, CPU compiler13.4.92 substitute only",
+    "shape": "exactly two requests, each3900..4096 tokens; causal M192/N96 Q64/KV4/D128 GQA16",
+    "dtype": "FP8 E4M3 V byte-identical by design, FP32 accumulation; full causal work retained",
+    "experimental_variant": 172256,
+    "production_registered": false,
+    "table_id": null,
+    "K_stages": 2,
+    "V_stages": 3,
+    "useful_flops": 522847416320,
+    "padded_flops": 535881056256,
+    "delta_flops_vs_P": 0,
+    "V_logical_global_tile_bytes": 697761792,
+    "delta_logical_global_bytes_vs_P": 0,
+    "delta_logical_shared_transfer_bytes_vs_P": 0,
+    "actual_hbm_bytes": null,
+    "actual_nvlink_bytes": null,
+    "removed_work": "Added P2 dependence of K(i) issue on PV(i-2) completion is removed with V3; P-relative exposed wait saving remains unknown, no extra FLOP/byte reduction",
+    "past_rejections": [
+      "P2 on all12 H200 in run41273087893: pooled182.607..189.937us slower than P at3994x2",
+      "S/lifetime sum and scattered native writer rejected in rounds13/14; unchanged here"
+    ],
+    "P2_dependency_proof": {
+      "acquire_waits": "V(i) empty slot i%2 requires PV(i-2) completion and 3 WG release, before K(i) is issued",
+      "visits_3994x2": 56784,
+      "persistent_CTAs": 132,
+      "mean_steps_per_CTA": 430.1818181818182,
+      "required_exposed_gap_us_per_mean_step": [
+        0.4230769230769231,
+        0.4463229078613694
+      ],
+      "actual_steps_per_CTA": null,
+      "clock_mhz": null,
+      "unique_causal_attribution": false,
+      "uncertainties": "cache hint contribution, runtime barrier stall and FA3-only latency in round15 are unmeasured"
+    },
+    "P3_barrier_contract": "V has3 full+3 empty,12288B transaction per slot; producer phase1 xor floor(i/3)%2, consumer phase floor(i/3)%2, slot i%3; no tile reset; same-slot reuse after PV(i-3) wait0 and all3 WG releases; tail waits all3 slots",
+    "cpu_admission": {
+      "compiler": "CUDA13.4.92 sm_90a",
+      "P_spill_store_load_bytes": [
+        0,
+        0
+      ],
+      "P3_initial_spill_store_load_bytes": [
+        4,
+        4
+      ],
+      "P3_shortened_state_spill_store_load_bytes": [
+        4,
+        4
+      ],
+      "P3_stack_bytes": 8,
+      "C75xx": false,
+      "round14_control_P_pack_old_writer_encoded_SASS_equal": true,
+      "P3_local_memory_PC": [
+        "df60 STL",
+        "e2e0 LDL.LU"
+      ],
+      "P3_shared_bytes": 100352,
+      "P_shared_bytes": 100352,
+      "V_storage_delta_bytes": 12288,
+      "epilogue_padding_delta_bytes": -12288,
+      "registers_per_CTA": 65536,
+      "CTA_per_SM": 1,
+      "warp_occupancy_percent": 25,
+      "source_arithmetic_equal": true,
+      "output_bytes_equal_P": null
+    },
+    "gate_config_build_changes": false,
+    "new_boolean": null,
+    "GPU_measurement": null,
+    "kernel_speedup": null,
+    "serving_speedup": null,
+    "official_score": null,
+    "conditional_estimate": "No positive speed estimate after CPU rejection; if a future admitted candidate saves delta us/layer and transfers equally to all workers, 24 layers imply0.024*delta ms per stage period. P2 regression recovery is not P-relative gain.",
+    "tracker_text": "Round 17（2026-11-01）：P3（scratchのみvariant172256、production未登録）をCPU admissionで棄却。P2はV(i)の2-slot empty acquireがPV(i−2)完了・3 WG releaseを待ってからK(i)を発行し、K先読みを1 ping-pong step遅らせることをsource/SASSで確認した。56,784 visit/132 CTA＝平均430.182 step、182〜192µsの悪化は追加0.423〜0.446µs/stepで説明し得る規模だが、cache hint寄与・stall・clockは未測定で因果を一意に帰属しない。P3はK2/V3の独立state・full/empty各3・absolute count/phase・PV(i−3)後の再利用でこの追加依存を外し、hintはPのまま。CUDA13.4.92/sm_90aでC75xxなし、旧control/P/pack/FP32 writer両indexのencoded SASSはround14と一致。ただし初版・Q load前後のV state短命化後ともspill4/4 BでP0/0 Bを超え棄却。V slot12,288 B増はepilogue paddingを使い、fresh objectのCPU resource照会は100,352 B、register再配分65,536/CTA・1 CTA/SMのまま。FLOP/論理byteはPと不変、実HBM/NVLink量とGPU出力byte一致・速度・通常scoreはnull。gate/config/dispatch/build/table IDには変更を残さず、mainのUUID集合照合とround14 image/Pを維持。詳細は2026-11-01-prefill-fa3-v3-r17.mdとfa3-prefill-v3-cpu-validation-20261101.json。"
   }
 }
