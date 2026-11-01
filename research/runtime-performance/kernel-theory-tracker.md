@@ -202,6 +202,8 @@ Round 14 の repeat（41280565072、build なし、prepack 集約を UUID 集合
 
 Round 17（41287043170）：P3（native V だけ 3 slot、V を K acquire より前に load、variant 172256）は P と出力 byte 一致、P 比 pooled 1.7〜7.1 µs/call（中央値 5.4）で 5 µs margin を 5 GPU が割り不採用。P2 の直列化は解消したが、残る利得は 1 層約 5 µs（score 約 +0.1%）。P は再合格し公式 10020.58（P の構成は 3 run で 10008.67〜10020.58）（`2026-11-01-prefill-fa3-v3-r17.md`）。
 
+Round 21（41327492259、build なし）：P3 に byte 一致前提の方向だけの margin（全 GPU で pooled が正、形状ごとの中央値 3 µs 以上、片方の順で 2 µs を超えて遅くない）を適用したが、3986+4027 と 3900+4096 で不合格。7 形状の中央値は 4.2〜5.8 µs 速いが一様でなく、効果は score で約 +0.1%。P3 は閉じる。P で 10005.65（P の構成は 6 run で 10002.75〜10020.58）。Firmus の /scratch 満杯で Actions の回収は失敗、結果は Firmus の run directory に残る（`2026-11-01-prefill-fa3-v3-r17.md`）。
+
 Round 18（41296967433）：split MegaMoE の in-job 診断（globaltimer の CTA/WG 記録、serving kernel の SASS は byte 一致）は、trace バッファの先頭に magic が見つからず全 GPU で不完全（データなし）。原因は kernel 側の書き込みか host 側の位置の取り決めかを区別できない。P は再採用され公式 10005.35（P の構成は 4 run で 10005.35〜10020.58）（`2026-11-01-prefill-megamoe-diag-r18.md`）。
 
 Round 19（41305946419、build なし）：診断の trace 読み出し位置を修正し、律速 worker prefill-2 の 4 GPU でデータを取得。計装は通常版の約 4.5 倍で細分値は使えないが、consumer 律速と合う。計装なしの完全 MegaMoE（T=7988）は balanced 2334〜2363、historical 2464〜2500（+5.5%）、edges 2509〜2546 µs（+7.5%）で、routing の偏りが 1 層約 130〜140 µs（24 層で約 3.1〜3.4 ms）を生む。10.2k に必要な量と同規模。P は 10002.75（P の構成は 5 run で 10002.75〜10020.58）（`2026-11-01-prefill-megamoe-diag-r19.md`）。
