@@ -1,6 +1,7 @@
 """Native V, composed dispatch, and all-GPU refusal contracts without CUDA."""
 import ast
 import copy
+import gzip
 import json
 import os
 import runpy
@@ -71,6 +72,95 @@ def test_all_twelve_adopt_atomic_composite(screen):
     assert aggregate(screen)['adopted']
     assert screen[1].read_text()==PIN.replace(GATE['CONTROL'],GATE['DISPATCH']['P'])
     assert not list(screen[0].glob('*.tmp'))
+
+
+@pytest.fixture
+def round15_screen(tmp_path,monkeypatch):
+    """Replay run 41273087893 attempt 2 without changing its P measurements.
+
+    The gzip contains the parsed pair selection and all twelve raw prepack
+    fragments from pair-41273087893/ and prepack-41273087893/. Round 15 wrote
+    v2 for P/P2; only the schema label is adapted to this branch's strict v1
+    P/S reader. UUIDs, timings, hashes, run IDs and numerical evidence stay raw.
+    """
+    with gzip.open(ROOT/'qwen-experiment-metrics/tests/fixtures/prefill-fa3-prepack-41273087893.json.gz','rt') as stream:
+        data=json.load(stream)
+    pair=tmp_path/'pair.json'; pair.write_text(json.dumps(data['pair']))
+    env=tmp_path/'prefill.env'; env.write_text(PIN)
+    for record in data['prepack']:
+        assert record['schema']=='firmus-prefill-fa3-prepack/v2'
+        record['schema']=GATE['SCHEMA']
+        directory=tmp_path/record['worker']; directory.mkdir(exist_ok=True)
+        (directory/f"rank-{record['rank']}.json").write_text(json.dumps(record))
+    # Historical group started at 1793511659, with a 155-second r15 budget.
+    deadline=1793511814
+    monkeypatch.setattr(time,'time',lambda:1793511731.)
+    return tmp_path,env,pair,deadline
+
+
+def aggregate_round15(screen):
+    directory,env,pair,deadline=screen
+    return GATE['aggregate'](directory,env,pair,'28027-1793511659',deadline,True,'1166ee307946ce6b6f35b90f2ec42e3f61f4201e9f83b54a3c1ac8853f095871')
+
+
+def test_round15_swapped_workers_adopt_p(round15_screen):
+    pair=json.loads(round15_screen[2].read_text())
+    by_uuid={r['uuid']:r for r in pair['gpus']}
+    for worker in range(3):
+        for rank in range(4):
+            record=json.loads((round15_screen[0]/f'prefill-{worker}/rank-{rank}.json').read_text())
+            assert by_uuid[record['uuid']]['worker']==f'prefill-{1-worker if worker<2 else 2}'
+    result=aggregate_round15(round15_screen)
+    assert result['adopted'] and result['selected']=='P', result['reason']
+    assert len(result['gpus'])==12 and {r['uuid'] for r in result['gpus']}==set(by_uuid)
+    assert round15_screen[1].read_text()==PIN.replace(GATE['CONTROL'],GATE['DISPATCH']['P'])
+    assert not list(round15_screen[0].glob('*.tmp'))
+
+
+@pytest.mark.parametrize('case,reason',[
+    ('foreign','wrong GPU'),('duplicate','wrong GPU'),('allocation','wrong allocation'),
+    ('missing','FileNotFoundError'),('pair_duplicate','incomplete pair GPUs'),
+    ('pair_missing','incomplete pair GPUs'),('pair_extra','incomplete pair GPUs'),
+    ('worker','wrong worker'),('rank','wrong worker'),('device','wrong GPU'),
+    ('raw_schema','stale result'),
+])
+def test_round15_invalid_gpu_evidence_keeps_env(round15_screen,case,reason):
+    directory,env,pair_path,_=round15_screen
+    path=directory/'prefill-0/rank-0.json'
+    record=json.loads(path.read_text())
+    pair=json.loads(pair_path.read_text())
+    if case=='missing': path.unlink()
+    elif case.startswith('pair_'):
+        if case=='pair_duplicate': pair['gpus'][-1]['uuid']=pair['gpus'][0]['uuid']
+        elif case=='pair_missing': pair['gpus'].pop()
+        else: pair['gpus'].append(copy.deepcopy(pair['gpus'][0]))
+        pair_path.write_text(json.dumps(pair))
+    elif case=='allocation':
+        # Mutate the matching UUID, which belonged to prefill-1 in the pair gate.
+        next(r for r in pair['gpus'] if r['uuid']==record['uuid'])['run_id']='999-pair'
+        pair_path.write_text(json.dumps(pair))
+    else:
+        if case=='foreign': record['uuid']='foreign'
+        elif case=='duplicate': record['uuid']=json.loads((directory/'prefill-0/rank-1.json').read_text())['uuid']
+        elif case=='worker': record['worker']='prefill-1'
+        elif case=='rank': record['rank']=1
+        elif case=='device': record['device']='NVIDIA H100'
+        elif case=='raw_schema': record['schema']='firmus-prefill-fa3-prepack/v2'
+        path.write_text(json.dumps(record))
+    result=aggregate_round15(round15_screen)
+    assert not result['adopted'] and result['selected'] is None
+    assert reason in result['reason'], result['reason']
+    assert env.read_text()==PIN and not list(directory.glob('*.tmp'))
+
+
+def test_gpu_rank_permutation_and_pair_order_do_not_affect_adoption(screen):
+    for worker in range(3):
+        records=[json.loads((screen[0]/f'prefill-{worker}/rank-{rank}.json').read_text()) for rank in range(4)]
+        for rank,record in enumerate(reversed(records)):
+            record['rank']=rank
+            (screen[0]/f'prefill-{worker}/rank-{rank}.json').write_text(json.dumps(record))
+    pair=json.loads(screen[2].read_text()); pair['gpus'].reverse(); screen[2].write_text(json.dumps(pair))
+    assert aggregate(screen)['adopted']
 
 
 @pytest.mark.parametrize('case',['missing','malformed','stale','uuid','allocation','late','elapsed','failed','shape','single_missing','single_row','single_writer','single_producer','single_output','single_replay','single_numeric','single_timing','old_schema','dump','producer','replay','numeric','reverse','incomplete','nan','overflow','endurance','bytes','dispatch','pair_failed','pair_uuid','timeout'])
