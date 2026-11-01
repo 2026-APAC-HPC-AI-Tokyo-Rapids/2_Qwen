@@ -193,7 +193,7 @@ def test_capture_keeps_pp_subset_boundaries_and_copy_before_reuse(tmp_path,monke
 
 def test_same_process_and_config_build_wiring(tmp_path):
     config=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
-    assert all(config['prefill'][key] is False for key in ('megamoe_fc1_balance_gate','megamoe_timing','routing_capture','megamoe_diag'))
+    assert all(config['prefill'][key] is True for key in ('megamoe_fc1_balance_gate','megamoe_timing','routing_capture')) and config['prefill']['megamoe_diag'] is False
     assert config['container_sha256'].startswith('5a3df8c4') and config['images']['sglang']['sha256']==config['container_sha256']
     shell=(ROOT/'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
     combined=shell.split('# Reserve the complete P',1)[1].split('# Default off. Prepack/sum',1)[0]
