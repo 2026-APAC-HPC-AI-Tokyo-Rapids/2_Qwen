@@ -227,6 +227,7 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
     config['prefill']['fa3_pair_gate'] = enabled
     config['prefill']['fa3_prepack_gate'] = enabled
+    config['prefill']['fa3_vload_gate'] = enabled
     for name in ('source', 'results'):
         (tmp_path / name).mkdir()
     runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))['prepare'](config, ROOT, tmp_path)
