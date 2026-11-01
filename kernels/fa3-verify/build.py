@@ -115,7 +115,7 @@ def build(root):
     tasks = [(root / "wrapper.cpp", "wrapper", False)]
     tasks += generate_dispatch(root, work)
     tasks += generate_prefill_dispatch(root, work)
-    tasks += [(root / (name + ".cu"), name, True) for name in ("combine", "prefill", "prefill_fixed", "prefill_image", "prefill_native_image", "decode_prepare")]
+    tasks += [(root / (name + ".cu"), name, True) for name in ("combine", "prefill", "prefill_fixed", "prefill_image", "prefill_native_image", "prefill_prepack", "decode_prepare")]
     tasks += [(sources["fa3"] / "hopper/flash_prepare_scheduler.cu", "prepare", True)]
 
     def compile_one(task):

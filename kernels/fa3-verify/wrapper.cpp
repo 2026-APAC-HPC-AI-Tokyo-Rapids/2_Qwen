@@ -207,7 +207,17 @@ void prefill_dump_native(const at::Tensor& v, const at::Tensor& out, const at::T
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 }
+namespace apac_fa3_verify {
+void prefill_prepack(const at::Tensor& v, const at::Tensor& out, const at::Tensor& cu) {
+    c10::cuda::CUDAGuard guard(v.device());
+    tensor(v,v,at::ScalarType::Float8_e4m3fn); tensor(out,v,at::kByte); tensor(cu,v,at::kInt);
+    TORCH_CHECK(v.dim()==3 && v.size(0)>=7800 && v.size(0)<=8192 && v.size(1)==4 && v.size(2)==128 && cu.dim()==1 && cu.numel()==3 && out.dim()==4 && out.size(0)==2 && out.size(1)==4 && out.size(2)>=41 && out.size(2)<=43 && out.size(3)==96*128, "FA3 pair prepack shape");
+    prefill_prepack_launch(v.data_ptr(),out.data_ptr(),cu.data_ptr<int>(),out.size(2),at::cuda::getCurrentCUDAStream());
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+}
 TORCH_LIBRARY(apac_fa3_verify, m) {
+    m.def("prefill_prepack(Tensor v, Tensor(a!) out, Tensor cu) -> ()");
     m.def("prepare(Tensor lengths, Tensor cu_q, Tensor(a!) metadata, int candidate) -> ()");
     m.def("fwd_out(Tensor q, Tensor k, Tensor v, Tensor pages, Tensor lengths, Tensor cu_q, Tensor(a!) out, Tensor(b!) lse, Tensor(c!) partial, Tensor(d!) partial_lse, Tensor(e!) metadata, int candidate, float scale) -> ()");
     m.def("fwd_fp8_out(Tensor q, Tensor k, Tensor v, Tensor pages, Tensor lengths, Tensor cu_q, Tensor(a!) out, Tensor(b!) lse, Tensor(c!) partial, Tensor(d!) partial_lse, Tensor(e!) metadata, int candidate, float scale, Tensor(f!) scales) -> ()");
@@ -222,6 +232,7 @@ TORCH_LIBRARY(apac_fa3_verify, m) {
     m.def("prefill_fwd_out(Tensor q, Tensor k, Tensor v, Tensor cu, Tensor(a!) out, Tensor(b!) scales, Tensor(c!) lse, Tensor(d!) metadata, int maxlen, float scale) -> ()");
 }
 TORCH_LIBRARY_IMPL(apac_fa3_verify, CUDA, m) {
+    m.impl("prefill_prepack", &apac_fa3_verify::prefill_prepack);
     m.impl("prepare", &apac_fa3_verify::prepare);
     m.impl("fwd_out", &apac_fa3_verify::fwd);
     m.impl("fwd_fp8_out", &apac_fa3_verify::fwd_fp8);

@@ -204,6 +204,14 @@ N192の条件模型ではKV tile訪問21,840回、softmax対象536.740M要素。
 
 M192/N96 pair に native V writer＋4-chain sum の合成行を追加。N192 single合成版はCPU証拠のみ残し、定常命令+37とsingle marginでpairを失う危険からbuild/dispatch/gate対象を外した（table ID13は非実行予約枠、pair ID14維持）。singleはround12の旧writer/N192行。単純 sum は P の上書きが前進するため棄却し、全 P word を EX2 後まで保持する identity PRMT 付きだけを通した。CUDA13.4/sm90a で C75xx なし、spill は control 以下、既存 FA3 control と旧 FP32 writer の encoded SASS は一致。定常加算依存は N96 23→7、N192 47→13だが、consumer 命令は369→388、587→624へ増える。L3994 pair の V transpose SMEM 1.396 GBを除く一方、writer の scatter/padding を払う。FP8 V byte と paged KV は保持する設計。7 pairのGPU byte dump→FP32/reference/replay→writer＋FA3＋Oの両順/pooled 5µs margin→1200回耐久と、single3994/4096/3584の旧writer Q/K/V/pagedKV・旧N192出力byte一致（速度判定なし）を、round12 成功後の12 GPU全員に要求する。round12 gate実測最大38.6秒に基づく45–65秒見積もり、100秒＋kill猶予2秒・集約deadline105秒。round12 job652秒+105秒=757秒、保守配分873.4秒で17分枠、MegaMoE gateなし。失敗時は既存選択で serving 継続。`prefill.fa3_vsum_gate=false`、fresh image 必須、image13.0.88・GPU・通常scoreは未検証。仕事削減を時間へ加算換算しない。詳細・棄却記録・SASS証拠は `2026-11-01-prefill-fa3-vsum-r13.md` と `fa3-prefill-vsum-cpu-validation-20261101.json`。
 
+#### 2026-11-01 round 14（P prepack / S sum-only、GPU 未測定）
+
+Round 13 の合成悪化を分解する gate 群へ置換。採用候補 P は旧 FP32 writer＋coalesced V prepack＋native-only variant 41184（ID15）、S は旧 writer/V＋sum-only/lifetime variant 24800（ID16）。V/VS は最初の3994+3994だけ診断し採用しない。P＋S は作らない。Q64/KV4/D128 E4M3、M192/N96、各3900〜4096のpair限定。全causal項、522.847 GFLOP（padding込み535.881 GFLOP）は保持。P は56,784 KV visitの転置、logical SMEM 1,395,523,584 Bを除き、336 unique tileのpackにglobal 8,218,624 B、SMEM 16,515,072 B、1 launchを追加。HBM/NVLink実量は未測定。V loadがK acquireの後ろへ移るconsumer scheduleは変更せず測る。
+
+CUDA13.4/sm_90a CPU証拠：旧FA3 N96/N192および旧writer i32/i64のencoded SASS一致、C75xxなし、P native spill0、S spill40/28 Bはcontrolと同じ。packは35 registers、spill0、SMEM24,576 B、静的424命令、STG.E.128が6本。各warp命令16 sectors、336 CTAで129,024 sector要求（計数であり実DRAM counterではない）。Sは検証済みsum-liveとencoded一致、48 FADD・依存23→7、定常+22命令、旧P全12 wordを50 EX2後まで保持。image CUDA13.0.88の証拠は未取得。
+
+round12 pair gate成功後の同じ12 GPUで、診断→P全gate→残り時間が足りる場合S全gate。7pair、両順各10 sample×12call、forward/reverse/pooled全て5µs以上、独立GPU dump/host全byte map/旧writer image照合、FP32参照、変更入力2 replay、single3形状の旧出力bytes、実経路1200回耐久を全GPUに要求。数値・速度不足は候補だけ拒否、CUDA/process異常とhangは群全体拒否。P優先、envは全結果確認後atomic更新。srun175秒＋kill2秒、集約含む開始+180秒、候補一式45秒を予約できなければ拒否。round13基準741−62.017＋180＋155−57.084＝956.899秒、17分まで63.101秒。将来wallを保証しない。`prefill.fa3_prepack_gate=false`、image pin不変・新build必須。条件付き感度例：native FA3短縮20〜40µs、pack5〜15µsなら正味5〜35µs/層。期待値ではなく、10k達成も未確認。詳細は `2026-11-01-prefill-fa3-prepack-r14.md` と `fa3-prefill-prepack-cpu-validation-20261101.json`。
+
 ### Prefill QKV GEMM
 
 2*M*N*K; M=3994, N=9216, K=4096; tile=256x128。

@@ -231,12 +231,12 @@
 +    _jit_rope_fp8_q_module().run_prefill_native(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, v, k_cache, v_cache, cache_loc, contiguous_k, contiguous_v, native_v, cu, native_n, maxlen)
 --- a/python/sglang/srt/layers/attention/prefill_fp8.py
 +++ b/python/sglang/srt/layers/attention/prefill_fp8.py
-@@ -53,16 +53,17 @@
+@@ -53,16 +53,18 @@
  def prefill_candidate(name=None):
      rows = json.loads(Path("/opt/apac/fa3-verify/prefill-candidates.json").read_text())
      name = name or os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "control")
 -    if name == "n192-direct-o-varlen-pipe+m192n96-pair":
-+    if name in ("n192-direct-o-varlen-pipe+m192n96-pair", "n192-direct-o-varlen-pipe+m192n96-pair-vsum"):
++    if name in ("n192-direct-o-varlen-pipe+m192n96-pair", "n192-direct-o-varlen-pipe+m192n96-pair-prepack", "n192-direct-o-varlen-pipe+m192n96-pair-sum"):
          name = "n192-direct-o-varlen-pipe"
 -    return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name)
 +    return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name and not row.get("retired"))
@@ -245,25 +245,18 @@
  def pair_candidate(lengths):
      # Host metadata only. Never read cu (a CUDA tensor) to make this decision.
 -    enabled = os.environ.get("SGLANG_PREFILL_FA3_VERIFY") == "n192-direct-o-varlen-pipe+m192n96-pair"
-+    vsum = os.environ.get("SGLANG_PREFILL_FA3_VERIFY") == "n192-direct-o-varlen-pipe+m192n96-pair-vsum"
-+    enabled = vsum or os.environ.get("SGLANG_PREFILL_FA3_VERIFY") == "n192-direct-o-varlen-pipe+m192n96-pair"
++    mode = os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "")
++    routes = {"n192-direct-o-varlen-pipe+m192n96-pair": "", "n192-direct-o-varlen-pipe+m192n96-pair-prepack": "-native", "n192-direct-o-varlen-pipe+m192n96-pair-sum": "-sum"}
++    enabled = mode in routes
      if enabled and lengths is not None and len(lengths) == 2 and all(3900 <= n <= 4096 for n in lengths):
 -        return prefill_candidate("m192n96-direct-o-varlen-pipe")
-+        return prefill_candidate("m192n96-direct-o-varlen-pipe-vsum" if vsum else "m192n96-direct-o-varlen-pipe")
++        return prefill_candidate("m192n96-direct-o-varlen-pipe" + routes[mode])
      return prefill_candidate()
  
  
 --- a/python/sglang/srt/models/qwen3_moe.py
 +++ b/python/sglang/srt/models/qwen3_moe.py
-@@ -116,6 +116,7 @@
-         apply_qknorm_rope_fp8_kv,
-         apply_qknorm_rope_fp8_prefill,
-         apply_qknorm_rope_fp8_prefill_fp32,
-+        apply_qknorm_rope_fp8_prefill_native,
-         apply_qknorm_rope_fp8_q,
-         apply_rope_fp8_q,
-     )
-@@ -879,11 +880,16 @@
+@@ -879,11 +879,20 @@
                  from sglang.srt.model_executor.forward_context import get_attn_backend
  
                  self.attn.fixed_prefill_output = use_fixed_prefill(forward_batch, self.attn, get_attn_backend(), q_fp8.view(-1,self.num_heads,self.head_dim), contiguous_k, contiguous_v, output_supported=linear_supported(self, "O", self.o_proj))
@@ -277,10 +270,14 @@
 +                selected = pair_candidate(forward_batch.extend_seq_lens_cpu) if self.attn.fixed_prefill_output else prefill_candidate()
 +                self.attn.prefill_v_image = torch.empty((4, (sum(forward_batch.extend_seq_lens_cpu)+223)//224, 224*128), dtype=torch.uint8, device=k.device) if self.attn.fixed_prefill_output and selected["byte_image"] and not selected.get("native_v_n") else None
 +                if selected.get("native_v_n") and self.attn.fixed_prefill_output:
++                    from sglang.srt.layers.attention.decode_fa3_verify import load
++
++                    load()
 +                    lengths=forward_batch.extend_seq_lens_cpu
 +                    n=selected["native_v_n"]
 +                    self.attn.prefill_v_image=torch.empty((len(lengths),4,(max(lengths)+n-1)//n,n*128),dtype=torch.uint8,device=k.device)
-+                    apply_qknorm_rope_fp8_prefill_native(*rope_args,*kv_args,contiguous_k,contiguous_v,self.attn.prefill_v_image,get_attn_backend().forward_metadata.cu_seqlens_q,n,max(lengths))
++                    apply_qknorm_rope_fp8_prefill_fp32(*rope_args,*kv_args,contiguous_k,contiguous_v)
++                    torch.ops.apac_fa3_verify.prefill_prepack(contiguous_v,self.attn.prefill_v_image,get_attn_backend().forward_metadata.cu_seqlens_q)
 +                elif _PREFILL_QKNORM == "fp32" and self.attn.prefill_v_image is None:
                      apply_qknorm_rope_fp8_prefill_fp32(*rope_args, *kv_args, contiguous_k, contiguous_v)
                  else:

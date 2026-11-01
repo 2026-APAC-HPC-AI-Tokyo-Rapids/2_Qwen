@@ -226,7 +226,7 @@ def test_attention_calls_the_selected_native_row_without_reading_cu(dispatch, mo
 def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
     config['prefill']['fa3_pair_gate'] = enabled
-    config['prefill']['fa3_vsum_gate'] = enabled
+    config['prefill']['fa3_prepack_gate'] = enabled
     for name in ('source', 'results'):
         (tmp_path / name).mkdir()
     runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))['prepare'](config, ROOT, tmp_path)

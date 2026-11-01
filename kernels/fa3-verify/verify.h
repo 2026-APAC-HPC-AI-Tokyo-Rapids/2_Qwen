@@ -7,6 +7,7 @@ using Launch = void (*)(Flash_fwd_params&, cudaStream_t, int*);
 void decode_prepare(Flash_fwd_params&, cudaStream_t);
 void combine(Flash_fwd_params&, cudaStream_t);
 void prefill_dump_v_launch(const void*, void*, int, cudaStream_t);
+void prefill_prepack_launch(const void*, void*, const int*, int, cudaStream_t);
 void prefill_dump_native_launch(const void*, void*, const int*, int, int, int, cudaStream_t);
 void prefill_fixed(Flash_fwd_params&, cudaStream_t, int*);
 void prefill(Flash_fwd_params&, cudaStream_t, int*);
