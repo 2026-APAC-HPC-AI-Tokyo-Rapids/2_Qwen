@@ -151,7 +151,7 @@ install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-pp4-copy-engine.py" "$
 # Independent Decode greedy gate; source changes require a fresh image build.
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-decode-greedy.py" "${runtime_dir}/scripts/"
 cp "${runtime_dir}/scripts/select-firmus-decode-greedy.py" "${runtime_dir}/source/"
-# Round-17 P and optional P3 gate staging, independent of other optional gates.
+# P/P3 and the separate default-off W gate share this staged harness.
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-fa3-prepack.py" "${runtime_dir}/scripts/"
 cp "${runtime_dir}/scripts/select-firmus-prefill-fa3-prepack.py" "${runtime_dir}/source/"
 

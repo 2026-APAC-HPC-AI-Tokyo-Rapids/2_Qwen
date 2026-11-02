@@ -126,8 +126,10 @@ def prepare(config, repo, runtime):
     payload["fa3_prepack_gate"] = p.get("fa3_prepack_gate", False)
     payload["fa3_v3_gate"] = p.get("fa3_v3_gate", False)
     assert not payload["fa3_v3_gate"] or payload["fa3_prepack_gate"], "V3 gate requires prepack gate"
+    payload["fa3_v_writer_gate"] = p.get("fa3_v_writer_gate", False)
+    assert not payload["fa3_v_writer_gate"] or payload["fa3_prepack_gate"], "W gate requires prepack gate"
     payload["decode_greedy_verify_gate"] = config.get("decode_greedy_verify_gate", False)
-    if payload["fa3_prepack_gate"] or payload["decode_greedy_verify_gate"]:
+    if payload["fa3_prepack_gate"] or payload["fa3_v_writer_gate"] or payload["decode_greedy_verify_gate"]:
         payload["no_gpu_selection_rerun"] = False
 
     for directory in ("source", "results"):

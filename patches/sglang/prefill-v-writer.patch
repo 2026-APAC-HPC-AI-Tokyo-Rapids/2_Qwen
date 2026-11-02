@@ -1,0 +1,244 @@
+--- a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
++++ b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
+@@ -611,10 +611,8 @@
+     for (int i=0;i<4;++i) { f[2*i]=__uint_as_float(w[i]<<16); f[2*i+1]=__uint_as_float(w[i]&0xffff0000u); }
+ }
+
+-template<bool kUsePDL, typename IdType>
+-__global__ __launch_bounds__(256, 5) void qknorm_rope_prefill_fp32_kernel(
+-    const __grid_constant__ QKNormRopeFP8Params p, void* contiguous_k, void* contiguous_v) {
+-    device::PDLWaitPrimary<kUsePDL>();
++template<typename IdType>
++__device__ __forceinline__ void qknorm_rope_prefill_fp32_body(const QKNormRopeFP8Params p, void* contiguous_k, void* contiguous_v) {
+     const int head=blockIdx.y, q_heads=p.num_qo_heads, kv_heads=p.num_kv_heads;
+     const int token=blockIdx.x*32+threadIdx.x/8, col=(threadIdx.x%8)*8;
+     const bool is_q=head<q_heads, is_v=head>=q_heads+kv_heads;
+@@ -691,8 +689,93 @@
+             }
+         }
+     }
++}
++
++template<bool kUsePDL, typename IdType>
++__global__ __launch_bounds__(256, 5) void qknorm_rope_prefill_fp32_kernel(
++    const __grid_constant__ QKNormRopeFP8Params p, void* contiguous_k, void* contiguous_v) {
++    device::PDLWaitPrimary<kUsePDL>();
++    qknorm_rope_prefill_fp32_body<IdType>(p, contiguous_k, contiguous_v);
+     device::PDLTriggerSecondary<kUsePDL>();
+ }
++
++__device__ __forceinline__ int qkv_w_logical_offset(int physical) {
++    int x=0;
++    x |= ((physical>>8)&1)<<0;
++    x |= ((physical>>5)&1)<<1;
++    x |= ((physical>>6)&1)<<2;
++    x |= ((physical>>7)&1)<<3;
++    x |= ((physical>>9)&1)<<4;
++    x |= ((physical>>10)&1)<<5;
++    x |= ((physical>>11)&1)<<6;
++    x |= ((physical>>0)&1)<<7;
++    x |= ((physical>>2)&1)<<8;
++    x |= ((physical>>3)&1)<<9;
++    x |= ((physical>>1)&1)<<10;
++    x |= (((physical>>4)^(physical>>7))&1)<<11;
++    x |= physical&12288;
++    return x;
++}
++template<bool kUsePDL, typename IdType>
++__global__ __launch_bounds__(256, 5) void qknorm_rope_prefill_w_kernel(const __grid_constant__ QKNormRopeFP8Params p, void* contiguous_k, void* native_v, const int32_t* cu, int blocks) {
++    device::PDLWaitPrimary<kUsePDL>();
++    if (blockIdx.y >= p.num_qo_heads + p.num_kv_heads) {
++        const int tile=(blockIdx.y-p.num_qo_heads-p.num_kv_heads)*gridDim.x+blockIdx.x;
++        if (tile < 8*blocks) {
++            __shared__ __align__(16) uint8_t contiguous[96*128], native[96*128];
++            const int block=tile%blocks, head=(tile/blocks)%4, request=tile/(4*blocks);
++            const int start=cu[request], length=cu[request+1]-start;
++            #pragma unroll
++            for (int i=0;i<3;++i) {
++                const int x=(i*256+threadIdx.x)*16, local=block*96+x/128, col=x%128;
++                uint4 vx{}, vy{};
++                if (local<length) {
++                    const auto src=static_cast<const char*>(p.v)+int64_t(start+local)*p.v_stride_bytes+head*256+col*2;
++                    vx=*reinterpret_cast<const uint4*>(src);
++                    vy=*reinterpret_cast<const uint4*>(src+16);
++                }
++                float a[8], b[8];
++                qkv_prefill_bf16x8(vx,a); qkv_prefill_bf16x8(vy,b);
++                uint16_t bytes[8];
++                #pragma unroll
++                for (int j=0;j<4;++j) {
++                    bytes[j]=qkv_prefill_fp8(make_float2(a[j*2],a[j*2+1]));
++                    bytes[j+4]=qkv_prefill_fp8(make_float2(b[j*2],b[j*2+1]));
++                }
++                const uint4 value=*reinterpret_cast<const uint4*>(bytes);
++                *reinterpret_cast<uint4*>(contiguous+x)=value;
++                if (local<length) {
++                    const int64_t slot=static_cast<const IdType*>(p.cache_loc)[start+local];
++                    assert(slot>=0 && slot<p.cache_slots);
++                    if (slot!=0) *reinterpret_cast<uint4*>(static_cast<uint8_t*>(p.v_cache)+(slot*4+head)*128+col)=value;
++                }
++            }
++            __syncthreads();
++            #pragma unroll
++            for (int i=0;i<3;++i) {
++                const int x=(i*256+threadIdx.x)*16;
++                const int logical=qkv_w_logical_offset(x);
++                uint4 value;
++                #pragma unroll
++                for (int b=0;b<16;++b) reinterpret_cast<uint8_t*>(&value)[b]=contiguous[logical+(b&1)*128+(b&2)*512+(b&4)*64+(b&8)*64];
++                *reinterpret_cast<uint4*>(native+x)=value;
++            }
++            __syncthreads();
++            auto dst=static_cast<uint8_t*>(native_v)+tile*96*128;
++            #pragma unroll
++            for (int i=0;i<3;++i) {
++                const int x=(i*256+threadIdx.x)*16;
++                *reinterpret_cast<uint4*>(dst+x)=*reinterpret_cast<const uint4*>(native+x);
++            }
++        }
++        device::PDLTriggerSecondary<kUsePDL>();
++        return;
++    }
++
++    qknorm_rope_prefill_fp32_body<IdType>(p, contiguous_k, nullptr);
++    device::PDLTriggerSecondary<kUsePDL>();
++}
++
+
+ template<int N> __device__ __forceinline__ int native_offset(int token,int dim) { int x=token*128+dim; int out=0;
+ if constexpr (N==96) {
+@@ -1030,6 +1113,23 @@
+       const tvm::ffi::TensorView contiguous_v, const tvm::ffi::TensorView native_v, const tvm::ffi::TensorView cu, int64_t native_n, int64_t maxlen) {
+     _run<true>(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, &v, &k_cache, &v_cache, &cache_loc, &contiguous_k, &contiguous_v, nullptr, 0, false, &native_v, &cu, native_n, maxlen);
+   }
++  static void run_prefill_w(
++      const tvm::ffi::TensorView q,
++      const tvm::ffi::TensorView k,
++      const tvm::ffi::TensorView q_weight,
++      const tvm::ffi::TensorView k_weight,
++      const tvm::ffi::TensorView cos_sin_cache,
++      const tvm::ffi::TensorView positions,
++      double eps,
++      const tvm::ffi::TensorView q_fp8,
++      const tvm::ffi::TensorView v,
++      const tvm::ffi::TensorView k_cache,
++      const tvm::ffi::TensorView v_cache,
++      const tvm::ffi::TensorView cache_loc,
++      const tvm::ffi::TensorView contiguous_k,
++      const tvm::ffi::TensorView contiguous_v, const tvm::ffi::TensorView native_v, const tvm::ffi::TensorView cu, int64_t native_n, int64_t maxlen) {
++    _run<true>(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, &v, &k_cache, &v_cache, &cache_loc, &contiguous_k, &contiguous_v, nullptr, 0, false, &native_v, &cu, native_n, maxlen, true);
++  }
+
+   template <bool kStoreKV>
+   static void _run(
+@@ -1047,7 +1147,7 @@
+       const tvm::ffi::TensorView* cache_loc,
+       const tvm::ffi::TensorView* contiguous_k = nullptr,
+       const tvm::ffi::TensorView* contiguous_v = nullptr,
+-      const tvm::ffi::TensorView* v_image = nullptr, int64_t image_rows = 0, bool fp32 = false, const tvm::ffi::TensorView* native_v = nullptr, const tvm::ffi::TensorView* cu = nullptr, int64_t native_n = 0, int64_t maxlen = 0) {
++      const tvm::ffi::TensorView* v_image = nullptr, int64_t image_rows = 0, bool fp32 = false, const tvm::ffi::TensorView* native_v = nullptr, const tvm::ffi::TensorView* cu = nullptr, int64_t native_n = 0, int64_t maxlen = 0, bool writer_w = false) {
+     using namespace host;
+     auto N = SymbolicSize{"num_tokens"};
+     auto Q = SymbolicSize{"num_qo_heads"};
+@@ -1073,7 +1173,8 @@
+       TensorMatcher({N}).with_dtype<int32_t, int64_t>(id_type).with_device(device).verify(*cache_loc);
+     }
+     if (contiguous_k) {
+-      TensorMatcher({N, K, D}).with_dtype<fp8_e4m3_t>().with_device(device).verify(*contiguous_k).verify(*contiguous_v);
++      TensorMatcher({N, K, D}).with_dtype<fp8_e4m3_t>().with_device(device).verify(*contiguous_k);
++      if (!writer_w) TensorMatcher({N, K, D}).with_dtype<fp8_e4m3_t>().with_device(device).verify(*contiguous_v);
+     }
+     if (v_image) {
+       RuntimeCheck(contiguous_k != nullptr, "Prefill image requires contiguous KV");
+@@ -1118,6 +1219,13 @@
+       int64_t sequences=cu->size(0)-1, blocks=(maxlen+native_n-1)/native_n;
+       RuntimeCheck(sequences==2, "Native Prefill V request count");
+       TensorMatcher({sequences,4,blocks,native_n*128}).with_dtype<uint8_t>().with_device(device).verify(*native_v);
++      if (writer_w) {
++        const int blocks=div_ceil(maxlen, int64_t(96));
++        const int columns=div_ceil(num_tokens, 32u);
++        const auto kernel=id_type.is_type<int32_t>() ? qknorm_rope_prefill_w_kernel<kUsePDL,int32_t> : qknorm_rope_prefill_w_kernel<kUsePDL,int64_t>;
++        LaunchKernel(dim3(columns, num_qo_heads+num_kv_heads+div_ceil(8*blocks,columns)), 256, device.unwrap()).enable_pdl(kUsePDL)(kernel, params, contiguous_k->data_ptr(), native_v->data_ptr(), static_cast<const int32_t*>(cu->data_ptr()), blocks);
++        return;
++      }
+       auto launch = [&](auto native_n_type) {
+         constexpr int nn=decltype(native_n_type)::value;
+         const auto prefill = id_type.is_type<int32_t>() ? qknorm_rope_prefill_native_kernel<kUsePDL,int32_t,nn> : qknorm_rope_prefill_native_kernel<kUsePDL,int64_t,nn>;
+--- a/python/sglang/kernels/ops/attention/rope.py
++++ b/python/sglang/kernels/ops/attention/rope.py
+@@ -58,6 +58,7 @@
+             ("run_prefill_image", f"QKNormRopeFP8Kernel<{make_cpp_args(is_arch_support_pdl())}>::run_prefill_image"),
+             ("run_prefill", f"QKNormRopeFP8Kernel<{make_cpp_args(is_arch_support_pdl())}>::run_prefill"),
+             ("run_prefill_fp32", f"QKNormRopeFP8Kernel<{make_cpp_args(is_arch_support_pdl())}>::run_prefill_fp32"),
++            ("run_prefill_w", f"QKNormRopeFP8Kernel<{make_cpp_args(is_arch_support_pdl())}>::run_prefill_w"),
+             ("run_prefill_native", f"QKNormRopeFP8Kernel<{make_cpp_args(is_arch_support_pdl())}>::run_prefill_native"),
+         ],
+     )
+@@ -328,3 +329,10 @@
+ def apply_qknorm_rope_fp8_prefill_native(q: torch.Tensor, k: torch.Tensor, q_weight: torch.Tensor, k_weight: torch.Tensor, cos_sin_cache: torch.Tensor, positions: torch.Tensor, eps: float, q_fp8: torch.Tensor, v: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, cache_loc: torch.Tensor, contiguous_k: torch.Tensor, contiguous_v: torch.Tensor, native_v: torch.Tensor, cu: torch.Tensor, native_n: int, maxlen: int) -> None:
+     """FP32 producer with unchanged paged KV and one native contiguous V image."""
+     _jit_rope_fp8_q_module().run_prefill_native(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, v, k_cache, v_cache, cache_loc, contiguous_k, contiguous_v, native_v, cu, native_n, maxlen)
++
++
++@register_custom_op(mutates_args=["q_fp8", "k_cache", "v_cache", "contiguous_k", "native_v"])
++def apply_qknorm_rope_fp8_prefill_w(q: torch.Tensor, k: torch.Tensor, q_weight: torch.Tensor, k_weight: torch.Tensor, cos_sin_cache: torch.Tensor, positions: torch.Tensor, eps: float, q_fp8: torch.Tensor, v: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, cache_loc: torch.Tensor, contiguous_k: torch.Tensor, native_v: torch.Tensor, cu: torch.Tensor, maxlen: int) -> None:
++    """Old FP32 Q/K plus tile V; no contiguous V allocation or pack launch."""
++    empty = torch.empty(0, dtype=q_fp8.dtype, device=q_fp8.device)
++    _jit_rope_fp8_q_module().run_prefill_w(q, k, q_weight, k_weight, cos_sin_cache, positions, eps, q_fp8, v, k_cache, v_cache, cache_loc, contiguous_k, empty, native_v, cu, 96, maxlen)
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -874,7 +874,7 @@
+                 full_graph=get_server_args().cuda_graph_config.prefill.backend == "full",
+             ):
+                 contiguous_k = torch.empty(kv_args[0].shape, dtype=torch.float8_e4m3fn, device=k.device)
+-                contiguous_v = torch.empty_like(contiguous_k)
++                contiguous_v = contiguous_k  # Shape/stride stand-in until the host route is known.
+                 from sglang.srt.layers.attention.prefill_fp8 import linear_supported
+                 from sglang.srt.model_executor.forward_context import get_attn_backend
+
+@@ -882,6 +882,9 @@
+                 from sglang.srt.layers.attention.prefill_fp8 import pair_candidate, prefill_candidate
+
+                 selected = pair_candidate(forward_batch.extend_seq_lens_cpu) if self.attn.fixed_prefill_output else prefill_candidate()
++                writer_w = self.attn.fixed_prefill_output and bool(selected.get("native_v_n")) and os.environ.get("SGLANG_PREFILL_FA3_VERIFY") == "n192-direct-o-varlen-pipe+m192n96-pair-v-writer"
++                if not writer_w:
++                    contiguous_v = torch.empty_like(contiguous_k)
+                 self.attn.prefill_v_image = torch.empty((4, (sum(forward_batch.extend_seq_lens_cpu)+223)//224, 224*128), dtype=torch.uint8, device=k.device) if self.attn.fixed_prefill_output and selected["byte_image"] and not selected.get("native_v_n") else None
+                 if selected.get("native_v_n") and self.attn.fixed_prefill_output:
+                     from sglang.srt.layers.attention.decode_fa3_verify import load
+@@ -890,8 +893,13 @@
+                     lengths=forward_batch.extend_seq_lens_cpu
+                     n=selected["native_v_n"]
+                     self.attn.prefill_v_image=torch.empty((len(lengths),4,(max(lengths)+n-1)//n,n*128),dtype=torch.uint8,device=k.device)
+-                    apply_qknorm_rope_fp8_prefill_fp32(*rope_args,*kv_args,contiguous_k,contiguous_v)
+-                    torch.ops.apac_fa3_verify.prefill_prepack(contiguous_v,self.attn.prefill_v_image,get_attn_backend().forward_metadata.cu_seqlens_q)
++                    if writer_w:
++                        from sglang.kernels.ops.attention.rope import apply_qknorm_rope_fp8_prefill_w
++
++                        apply_qknorm_rope_fp8_prefill_w(*rope_args,*kv_args,contiguous_k,self.attn.prefill_v_image,get_attn_backend().forward_metadata.cu_seqlens_q,max(lengths))
++                    else:
++                        apply_qknorm_rope_fp8_prefill_fp32(*rope_args,*kv_args,contiguous_k,contiguous_v)
++                        torch.ops.apac_fa3_verify.prefill_prepack(contiguous_v,self.attn.prefill_v_image,get_attn_backend().forward_metadata.cu_seqlens_q)
+                 elif _PREFILL_QKNORM == "fp32" and self.attn.prefill_v_image is None:
+                     apply_qknorm_rope_fp8_prefill_fp32(*rope_args, *kv_args, contiguous_k, contiguous_v)
+                 else:
+--- a/python/sglang/srt/layers/attention/prefill_fp8.py
++++ b/python/sglang/srt/layers/attention/prefill_fp8.py
+@@ -53,7 +53,7 @@
+ def prefill_candidate(name=None):
+     rows = json.loads(Path("/opt/apac/fa3-verify/prefill-candidates.json").read_text())
+     name = name or os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "control")
+-    if name in ("n192-direct-o-varlen-pipe+m192n96-pair", "n192-direct-o-varlen-pipe+m192n96-pair-prepack", "n192-direct-o-varlen-pipe+m192n96-pair-prepack-v3"):
++    if name in ("n192-direct-o-varlen-pipe+m192n96-pair", "n192-direct-o-varlen-pipe+m192n96-pair-prepack", "n192-direct-o-varlen-pipe+m192n96-pair-prepack-v3", "n192-direct-o-varlen-pipe+m192n96-pair-v-writer"):
+         name = "n192-direct-o-varlen-pipe"
+     return next({**row, "id": i} for i, row in enumerate(rows) if row["name"] == name and not row.get("retired"))
+
+@@ -61,7 +61,7 @@
+ def pair_candidate(lengths):
+     # Host metadata only. Never read cu (a CUDA tensor) to make this decision.
+     mode = os.environ.get("SGLANG_PREFILL_FA3_VERIFY", "")
+-    routes = {"n192-direct-o-varlen-pipe+m192n96-pair": "", "n192-direct-o-varlen-pipe+m192n96-pair-prepack": "-native", "n192-direct-o-varlen-pipe+m192n96-pair-prepack-v3": "-native-v3"}
++    routes = {"n192-direct-o-varlen-pipe+m192n96-pair": "", "n192-direct-o-varlen-pipe+m192n96-pair-prepack": "-native", "n192-direct-o-varlen-pipe+m192n96-pair-prepack-v3": "-native-v3", "n192-direct-o-varlen-pipe+m192n96-pair-v-writer": "-native"}
+     enabled = mode in routes
+     if enabled and lengths is not None and len(lengths) == 2 and all(3900 <= n <= 4096 for n in lengths):
+         return prefill_candidate("m192n96-direct-o-varlen-pipe" + routes[mode])

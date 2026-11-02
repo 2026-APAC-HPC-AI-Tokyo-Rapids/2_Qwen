@@ -1,4 +1,4 @@
-"""Round-17 full P gate, then optional P3 against P, in one process group."""
+"""Full P/P3 gate, or a separate W gate after P has been published."""
 import argparse
 import hashlib
 import json
@@ -11,7 +11,7 @@ from pathlib import Path
 
 KEY = "SGLANG_PREFILL_FA3_VERIFY"
 CONTROL = "n192-direct-o-varlen-pipe+m192n96-pair"
-DISPATCH = {"P": CONTROL+"-prepack", "P3": CONTROL+"-prepack-v3"}
+DISPATCH = {"P": CONTROL+"-prepack", "P3": CONTROL+"-prepack-v3", "W": CONTROL+"-v-writer"}
 SCHEMA = "firmus-prefill-fa3-prepack/v3"
 SHAPES = ((3994,3994),(3986,4027),(3986,3986),(4027,4027),(4096,4096),(3900,4096),(4096,3901))
 SINGLE_SHAPES = ((3994,),(4096,),(3584,))
@@ -19,7 +19,11 @@ ROUNDS, REPS, ENDURANCE, SECONDS = 10, 12, 1200, 150
 CANDIDATE_SECONDS = 45  # Full validation reservation, never shorten its shapes/endurance.
 VARIANTS = {"C":8416,"P":41184,"P3":172256}
 ROWS = {"C":"m192n96-direct-o-varlen-pipe", "P":"m192n96-direct-o-varlen-pipe-native", "P3":"m192n96-direct-o-varlen-pipe-native-v3"}
-BASELINES = {"P":"C", "P3":"P"}
+BASELINES = {"P":"C", "P3":"P", "W":"P"}
+# W uses exactly P FA3, never the unmeasured W+P3 combination.
+ROWS["W"], VARIANTS["W"] = ROWS["P"], VARIANTS["P"]
+W_SCHEMA, W_SECONDS, W_WALL = "firmus-prefill-v-writer/v1", 95, 100
+W_REPRESENTATIVE_SAVING_US, W_MAX_REGRESSION_US = 2, 1
 P3_MIN_MEDIAN_SAVING_US, P3_MIN_POSITIVE_FRACTION, P3_MAX_REGRESSION_US = 3, .90, 3
 
 
@@ -42,7 +46,11 @@ def timing_summary(samples):
 
 def check_timing(samples, candidate, label):
     savings=timing_summary(samples)["savings_us"]
-    if candidate=="P3":
+    if candidate=="W":
+        assert all(value>=-W_MAX_REGRESSION_US for value in savings.values()), f"{label}: W regression exceeds 1 us against P"
+        if label=="3994+3994":
+            assert all(value>=W_REPRESENTATIVE_SAVING_US for value in savings.values()), "W representative saving below 2 us against P"
+    elif candidate=="P3":
         # Outputs are byte-equal to P on original and changed inputs: there is
         # no numerical tradeoff. Decide speed by all 84 cells' median/direction
         # and exclude a large cell loss; do not stop on near-zero order noise.
@@ -168,7 +176,7 @@ def native_producer(common, image):
     apply_qknorm_rope_fp8_prefill_native(*common["rope_args"],image,common["cu"],96,max(common["lengths"]))
 
 
-def steps(torch, checks, common, p3_enabled=False):
+def steps(torch, checks, common, p3_enabled=False, w_enabled=False):
     import deep_gemm
     from sglang.kernels.ops.attention.rope import apply_qknorm_rope_fp8_prefill_fp32
     lengths=common["lengths"]; rows=common["rows"]
@@ -177,7 +185,7 @@ def steps(torch, checks, common, p3_enabled=False):
     empty=torch.empty(0,device="cuda",dtype=torch.uint8)
     data=checks["dense_inputs"](rows,4096,8192,49183)
     outputs={}; attention={}; storage=[]
-    for mode in (("C","P","P3") if p3_enabled else ("C","P")):
+    for mode in (("P","W") if w_enabled else (("C","P","P3") if p3_enabled else ("C","P"))):
         out=torch.empty((rows,64,128),device="cuda",dtype=common["q"].dtype)
         scale=torch.empty((64,(rows+3)//4*4),device="cuda",dtype=torch.float32).T[:rows]
         lse=torch.empty((64,rows),device="cuda",dtype=torch.float32)
@@ -196,6 +204,11 @@ def steps(torch, checks, common, p3_enabled=False):
     def packed():
         old(); pack()
     writers={mode:old if mode=="C" else packed for mode in attention}
+    if w_enabled:
+        from sglang.kernels.ops.attention.rope import apply_qknorm_rope_fp8_prefill_w
+        def writer_w():
+            apply_qknorm_rope_fp8_prefill_w(*common["rope_args"][:-1],image,common["cu"],max(lengths))
+        writers["W"]=writer_w
     o_outputs={mode:torch.empty_like(data[2]) for mode in attention}
     composite={}
     for mode,fa3 in attention.items():
@@ -454,6 +467,172 @@ def run(output, run_id, deadline, image_sha256, p3_enabled=False):
         raise fatal
 
 
+def check_w_group(records):
+    assert len(records)==12, "W requires twelve GPUs"
+    cells=[]
+    for record in records:
+        candidate=record["candidates"]["W"]
+        check_candidate(candidate,"W")
+        for name,shape in candidate["shapes"].items():
+            assert shape["validation_orders"]==["forward","reverse"], "missing W byte order"
+            assert shape["baseline_fp32"]==shape["control_fp32"], "wrong W reference"
+            for key in ("qk_bytes_equal","paged_kv_bytes_equal","native_v_bytes_equal","attention_bytes_equal","scale_bytes_equal","o_bytes_equal","contiguous_v_untouched"):
+                assert shape[key] is True, "W byte mismatch: "+key
+            cells.append(check_timing(shape["samples_us"],"W",name))
+        assert candidate["endurance"]["producer_bytes_equal"] is True, "W endurance producer mismatch"
+    summary={order:statistics.median(c[order] for c in cells) for order in ("pooled","forward","reverse")}
+    assert summary["forward"]>0 and summary["reverse"]>0, "W order median must be positive against P"
+    return {"median_savings_us":summary,"minimum_pooled_saving_us":min(c["pooled"] for c in cells),"cells":len(cells)}
+
+
+def aggregate_w(directory, env_output, prepack_selection, run_id, deadline, workers_ok, image_sha256):
+    result={"schema":W_SCHEMA,"adopted":False,"selected":None,"gpus":[],"run_id":run_id,"rule":{"baseline":"P","fa3_row":ROWS["P"],"W_P3_measured":False,"shapes":SHAPES,"representative_minimum_saving_us":W_REPRESENTATIVE_SAVING_US,"maximum_pooled_regression_us":W_MAX_REGRESSION_US,"order_medians_strictly_positive":True,"wall_seconds":W_WALL,"endurance_calls":ENDURANCE}}
+    try:
+        def read(path):
+            return json.loads(path.read_text(),parse_constant=reject_constant,parse_float=finite_float)
+        prior=read(prepack_selection)
+        assert prior["schema"]==SCHEMA and prior["adopted"] is True and prior["selected"] in ("P","P3"), "complete P selection required"
+        identities={r["uuid"] for r in prior["gpus"]}
+        assert len(prior["gpus"])==len(identities)==12, "incomplete prior GPU set"
+        for r in prior["gpus"]:
+            assert r["run_id"].split("-",1)[0]==run_id.split("-",1)[0] and r["image_sha256"]==image_sha256, "wrong prior allocation/image"
+            check_candidate(r["candidates"]["P"],"P")
+        assert workers_ok and time.time()<=deadline, "workers failed, timed out or late"
+        assert isinstance(image_sha256,str) and len(image_sha256)==64 and all(c in "0123456789abcdef" for c in image_sha256), "image hash required"
+        uuids=set(); binaries=set(); sources=set()
+        for worker in range(3):
+            for rank in range(4):
+                r=read(directory/f"prefill-{worker}"/f"rank-{rank}.json")
+                assert r["schema"]==W_SCHEMA and r["run_id"]==run_id, "stale W result"
+                assert r["worker"]==f"prefill-{worker}" and r["rank"]==rank, "wrong worker"
+                assert r["uuid"] in identities and r["uuid"] not in uuids and "H200" in r["device"], "wrong GPU"
+                assert r["healthy"] is True and 0<r["elapsed_seconds"]<W_SECONDS and r["finished_at"]<=deadline, "fatal or late GPU"
+                assert r["image_sha256"]==image_sha256 and len(r["binary_sha256"])==64, "hash mismatch"
+                uuids.add(r["uuid"]); binaries.add(r["binary_sha256"]); sources.add(json.dumps(r["source_sha256"],sort_keys=True))
+                result["gpus"].append(r)
+        assert uuids==identities and len(binaries)==len(sources)==1, "incomplete GPUs or different native inputs"
+        assert binaries=={r["binary_sha256"] for r in prior["gpus"]}, "W native binary differs from P"
+        result["summary"]=check_w_group(result["gpus"])
+        lines=env_output.read_text().splitlines(keepends=True)
+        assert [l.rstrip("\n") for l in lines if l.startswith(KEY+"=")]==[KEY+"="+DISPATCH[prior["selected"]]], "prior selection env mismatch"
+        assert time.time()<=deadline, "aggregate deadline expired"
+        temporary=env_output.with_name(env_output.name+".w.tmp")
+        try:
+            temporary.write_text("".join(KEY+"="+DISPATCH["W"]+"\n" if l.startswith(KEY+"=") else l for l in lines))
+            assert time.time()<=deadline, "aggregate deadline expired"
+            temporary.replace(env_output)
+        finally:
+            temporary.unlink(missing_ok=True)
+        result.update(adopted=True,selected="W",previous_selection=prior["selected"],reason="all twelve GPUs passed W against P; W uses P FA3 only")
+    except Exception as error:  # noqa: BLE001 - refusal retains already published P/P3
+        result.update(reason=f"{type(error).__name__}: {error}",gpus=[])
+    return result
+
+
+def w_snapshot(common, state):
+    return (common["q"],common["k"],common["kc"],common["vc"],state["image"],*state["output"]["W"],state["o_outputs"]["W"])
+
+
+def validate_w(torch, checks, common, state):
+    """P and W graphs in both orders; independent poison prevents stale-byte success."""
+    metrics={"P":[],"W":[]}; graphs=state.setdefault("validation_graphs",{})
+    for mode in ("P","W"):
+        graphs[mode]=checks["prefill_selection_capture"](state["composite"][mode])
+    for replay in range(3):
+        if replay:
+            common["packed"].copy_(torch.randn_like(common["packed"])*(replay+.5))
+        # Exercise page permutation, reserved slot and both sides of page/tile boundaries.
+        loc=common["rope_args"][11]
+        loc.copy_(torch.arange(common["rows"],0,-1,device=loc.device,dtype=loc.dtype).roll(64*replay))
+        loc[torch.tensor([0,31,32,63,64,95,96,127,128,common["lengths"][0]-1,common["lengths"][0]],device=loc.device)]=0
+        state["writers"]["P"]()
+        indices,reference=checks["prefill_fp32_reference"](common)
+        expected=host_image(torch,common,state["image"])
+        dump=torch.empty_like(expected)
+        torch.ops.apac_fa3_verify.prefill_dump_native(common["v"],dump,common["cu"],96)
+        assert torch.equal(expected,dump), "old GPU transpose vs independent map"
+        for order,modes in (("forward",("P","W")),("reverse",("W","P"))):
+            snapshots={}
+            for mode in modes:
+                for tensor in (common["q"],common["k"],common["kc"],common["vc"],common["v"],state["image"],*state["output"][mode],state["o_outputs"][mode]):
+                    tensor.fill_(1)
+                untouched=common["v"].clone() if mode=="W" else None
+                graphs[mode].replay(); torch.cuda.synchronize()
+                assert torch.equal(state["image"],expected), mode+" native V mismatch"
+                if mode=="W":
+                    assert bytes_equal(torch,(untouched,),(common["v"],)), "W wrote contiguous V"
+                snapshots[mode]=tuple(x.clone() for x in (common["q"],common["k"],common["kc"],common["vc"],state["image"],*state["output"][mode],state["o_outputs"][mode]))
+            assert bytes_equal(torch,snapshots["P"],snapshots["W"]), order+" W Q/K, paged KV, native V, attention, scale or O byte mismatch"
+            if order=="forward":
+                for mode in ("P","W"):
+                    out,scale=snapshots[mode][5:7]
+                    metrics[mode].append(checks["prefill_assert_errors"](out.float()[indices]*scale[indices,:,None],reference,mode+"_fp32"))
+    return {"byte_image_first":True,"producer_bytes_equal":True,"replays":2,"row":ROWS["W"],"variant":VARIANTS["W"],"baseline":"P","candidate_fp32":metrics["W"],"control_fp32":metrics["P"],"baseline_fp32":metrics["P"],"validation_orders":["forward","reverse"],**{key:True for key in ("qk_bytes_equal","paged_kv_bytes_equal","native_v_bytes_equal","attention_bytes_equal","scale_bytes_equal","o_bytes_equal","contiguous_v_untouched")}}
+
+
+def endurance_w(torch, checks, common, state):
+    record=endurance(torch,checks,common,state,"W")
+    actual=tuple(x.clone() for x in w_snapshot(common,state))
+    state["composite"]["P"]()
+    expected=(common["q"],common["k"],common["kc"],common["vc"],state["image"],*state["output"]["P"],state["o_outputs"]["P"])
+    assert bytes_equal(torch,actual,expected), "W endurance differs from P"
+    record["producer_bytes_equal"]=True
+    return record
+
+
+def run_w(output, run_id, deadline, image_sha256):
+    begin=time.monotonic(); rank=int(os.environ["LOCAL_RANK"])
+    result={"schema":W_SCHEMA,"worker":output.name,"rank":rank,"run_id":run_id,"healthy":False,"image_sha256":image_sha256,"candidates":{"W":{"passed":False,"shapes":{},"singles":{}}}}
+    output.mkdir(parents=True,exist_ok=True); fatal=None
+    try:
+        import torch
+        from sglang.srt.layers.attention.decode_fa3_verify import load
+        assert int(os.environ["WORLD_SIZE"])==4
+        torch.set_num_threads(1); torch.cuda.set_device(rank)
+        result.update(device=torch.cuda.get_device_name(rank),uuid=str(torch.cuda.get_device_properties(rank).uuid))
+        assert "H200" in result["device"] and torch.cuda.get_device_capability()==(9,0)
+        load()
+        checks=runpy.run_path(str(Path(__file__).with_name("check-firmus-decode-kernels.py")))
+        manifest=json.loads(Path("/opt/apac/fa3-verify/manifest.json").read_text())
+        assert [{k:v for k,v in row.items() if k!="shared_bytes"} for row in manifest["prefill_candidates"]]==checks["prefill_specs"](), "table mismatch"
+        with Path("/opt/apac/fa3-verify/libapac_fa3_verify.so").open("rb") as binary:
+            result["binary_sha256"]=hashlib.file_digest(binary,"sha256").hexdigest()
+        assert result["binary_sha256"]==manifest["binary_sha256"], "binary manifest mismatch"
+        result["source_sha256"]=manifest["source_sha256"]
+        record=result["candidates"]["W"]
+        require_time(deadline,CANDIDATE_SECONDS)
+        representative=None
+        for lengths in SHAPES:
+            require_time(deadline)
+            common=checks["prefill_selection_inputs"](lengths,padding=0)
+            common["fp32_producer"]=True
+            state=steps(torch,checks,common,w_enabled=True)
+            name="+".join(map(str,lengths))
+            cell=validate_w(torch,checks,common,state)
+            record["shapes"][name]=cell
+            cell["samples_us"]=paired(measure(torch,checks,{m:state["composite"][m] for m in ("P","W")}),"W")
+            check_timing(cell["samples_us"],"W",name)
+            if lengths==SHAPES[0]: representative=(common,state)
+        for lengths in SINGLE_SHAPES:
+            require_time(deadline)
+            common=checks["prefill_selection_inputs"](lengths,padding=0)
+            common["fp32_producer"]=True
+            record["singles"][str(lengths[0])]=single_check(torch,checks,common,"W")
+        require_time(deadline)
+        record["endurance"]=endurance_w(torch,checks,*representative)
+        require_time(deadline)
+        record["passed"]=True
+        result["healthy"]=True
+    except Exception as error:  # noqa: BLE001 - a CUDA/runtime failure refuses W
+        result["fatal"]=f"{type(error).__name__}: {error}"; fatal=error
+    result.update(elapsed_seconds=time.monotonic()-begin,finished_at=time.time())
+    temporary=output/f"rank-{rank}.tmp"
+    temporary.write_text(json.dumps(result,indent=2,allow_nan=False)+"\n")
+    temporary.replace(output/f"rank-{rank}.json")
+    print(json.dumps(result,allow_nan=False),flush=True)
+    if fatal is not None: raise fatal
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--aggregate",type=Path)
@@ -463,15 +642,23 @@ def main():
     p.add_argument("--run-id",required=True)
     p.add_argument("--deadline",type=float,required=True)
     p.add_argument("--image-sha256",required=True)
+    p.add_argument("--w",choices=("true","false"),default="false")
+    p.add_argument("--prepack-selection",type=Path)
     p.add_argument("--p3",choices=("true","false"),default="false")
     p.add_argument("--workers-ok",type=int,choices=(0,1),default=0)
     a=p.parse_args()
     if a.aggregate:
-        result=aggregate(a.aggregate,a.env_output,a.pair_selection,a.run_id,a.deadline,bool(a.workers_ok),a.image_sha256,a.p3=="true")
+        if a.w=="true":
+            result=aggregate_w(a.aggregate,a.env_output,a.prepack_selection,a.run_id,a.deadline,bool(a.workers_ok),a.image_sha256)
+        else:
+            result=aggregate(a.aggregate,a.env_output,a.pair_selection,a.run_id,a.deadline,bool(a.workers_ok),a.image_sha256,a.p3=="true")
         a.output.write_text(json.dumps(result,indent=2,allow_nan=False)+"\n")
         print(json.dumps({k:v for k,v in result.items() if k!="gpus"}),flush=True)
     else:
-        run(a.output,a.run_id,a.deadline,a.image_sha256,a.p3=="true")
+        if a.w=="true":
+            run_w(a.output,a.run_id,a.deadline,a.image_sha256)
+        else:
+            run(a.output,a.run_id,a.deadline,a.image_sha256,a.p3=="true")
 
 
 if __name__=="__main__":

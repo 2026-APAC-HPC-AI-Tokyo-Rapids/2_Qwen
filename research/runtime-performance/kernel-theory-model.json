@@ -1302,5 +1302,114 @@
     "gpu_byte_equal": null,
     "composite_kernel_us": null,
     "official_score": null
+  },
+  "prefill_v_writer_r23_revised": {
+    "date": "2026-11-02",
+    "status": "CPU admission passed under user-revised occupancy/precision criteria; GPU gate implemented, default off, not executed",
+    "historical_rejection": "prefill_v_writer_r23; original note and CPU JSON retained",
+    "note": "2026-11-02-prefill-v-writer-r23.md",
+    "cpu_evidence": "prefill-v-writer-r23-revised-cpu-validation-20261102.json",
+    "source_base": "7343357",
+    "image_base": "c7804efb, CUDA 13.0.88",
+    "shape": {
+      "tokens": 7988,
+      "requests": 2,
+      "q_heads": 64,
+      "kv_heads": 4,
+      "head_dim": 128,
+      "v_tile_tokens": 96,
+      "v_threads": 256
+    },
+    "dtype": "BF16 V input to byte-identical E4M3 native image and paged V; original FP32 Q/K norm and RoPE source order",
+    "attention_effective_flops_per_layer_unchanged": 522847416320,
+    "attention_tile_flops_per_layer_unchanged": 535881056256,
+    "writer_flops_per_layer": null,
+    "removed_contiguous_v_logical_global_bytes_per_layer": 8179712,
+    "retained_v_bf16_logical_global_read_bytes_per_layer": 8179712,
+    "retained_paged_v_logical_global_write_bytes_per_layer": 4089856,
+    "retained_native_image_logical_global_write_bytes_per_layer": 4128768,
+    "retained_v_logical_shared_read_write_bytes_per_layer": 16515072,
+    "removed_pack_launches_per_layer": 1,
+    "hbm_bytes": null,
+    "nvlink_bytes": null,
+    "nvlink_payload_change": "none by design; measured volume unknown",
+    "cpu_admission": {
+      "toolchain": "CUDA 13.4.92 / sm_90a, substitute for image 13.0.88",
+      "QK_precision_contract": "same forceinline source body and same translation unit/compile flags; GPU bytes required separately",
+      "registers_old_and_W": 48,
+      "W_stack_spill_bytes": 0,
+      "W_static_shared_bytes": 24576,
+      "occupancy_CTA_per_SM": 5,
+      "limiting_resource": "registers: 5; threads: 8; shared old/W: 228/9; architecture blocks:32",
+      "old_writer_JIT_pack_encoded_equal_entries_per_flag_set": 13,
+      "FA3_control_P_P3_recompiled_encoded_equal_to_round17": true,
+      "BF16_patterns_byte_equal": 65536,
+      "layout_bijection_coordinates": 12288,
+      "native_inputs_including_changed_replays": 21,
+      "paged_V_cases": 63
+    },
+    "gate": {
+      "config": "prefill.fa3_v_writer_gate=false",
+      "baseline": "P, FA3 row ID15 variant41184",
+      "P3": "W+P3 not measured or served; W passes -> W+P, refusal -> retain already published P3/P",
+      "prerequisite": "complete all-GPU P/P3 aggregation and publish before independent W process group",
+      "GPUs": 12,
+      "pairs": 7,
+      "representative_saving_us_each_order_and_pooled": 2,
+      "maximum_regression_us_each_cell_order_and_pooled": 1,
+      "forward_reverse_group_medians": "strictly positive across 84 cells",
+      "byte_comparisons": [
+        "Q",
+        "K",
+        "paged_K",
+        "paged_V",
+        "native_V_image",
+        "attention",
+        "scale",
+        "O"
+      ],
+      "inputs": "original plus two changed inputs; forward and reverse replay with separately poisoned outputs",
+      "endurance_calls": 1200,
+      "worker_seconds": 95,
+      "aggregate_wall_seconds": 100,
+      "uuid_identity": "set equality against prior P selection",
+      "timeout": "keep prior env byte-for-byte and continue serving"
+    },
+    "time": {
+      "conditional_estimated_added_seconds": [
+        60,
+        75
+      ],
+      "maximum_added_gate_seconds": 100,
+      "round22_observed_READY_seconds": 511,
+      "round22_observed_job_seconds": 793,
+      "conditional_READY_seconds": [
+        571,
+        586
+      ],
+      "conditional_job_seconds": [
+        853,
+        868
+      ],
+      "observed_job_plus_new_gate_cap_seconds": 893,
+      "allocation_seconds": 1020,
+      "observed_headroom_after_gate_cap_seconds": 127,
+      "start_condition": "1020 - SECONDS >= 100 + 90 + 660; otherwise skip W"
+    },
+    "conditional_only_estimate": {
+      "writer_plus_pack_minus_writer_budget_us": 5.261,
+      "saving_us_per_layer": [
+        2,
+        5
+      ],
+      "score_gain_toks": [
+        4,
+        11
+      ],
+      "interpretation": "planning scenario only, not a measured or adopted gain"
+    },
+    "gpu_byte_equal": null,
+    "composite_kernel_us": null,
+    "official_score": null
   }
 }

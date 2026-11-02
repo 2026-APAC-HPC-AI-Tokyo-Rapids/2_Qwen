@@ -483,3 +483,15 @@ CUDA13.4.92/sm90aの両index型は48 registers、stack/spill0、C75xxなし、CP
 独立astra23/layout_census.pyの未変更copyで12,288座標とproduction C++ inverse/gatherを照合。7pair×元/変更2入力のnative全byte・padding・address tag、64token page/offset/page permutation/逆疎slot/slot0のpaged V計63ケースが一致。BF16全65,536patternは旧helper・旧lane repair・CUDA host NOSAT・独立RNEとbyte一致、mixed pair上位byteも全pattern検査。GPU byte/attention/scale/O/耐久・速度は未実行。
 
 同じlaneのscatter約17.4µsとlane変更約7.6µsの既棄却を再試験した案ではないが、同一launchのshared予約をVだけへ限定できず今回も先行棄却。gate/config/ID/build/image pinは追加・変更しない。P完全gate・P3規則・UUID集合集約は現行維持、W+P3の実行経路なし。W追加時間0秒、round22実793秒に対し17分まで227秒という観測上の余裕。2〜5µs/層、約+4〜11tok/sはadmission前の条件付き計画値で、今回の利得ではない。詳細は `2026-11-02-prefill-v-writer-r23.md`、CPU正本は `prefill-v-writer-r23-cpu-validation-20261102.json`。生成済みtrackerの既存記述は書き換えず手で追記した。
+
+## 2026-11-02 round 23 追補：occupancy・精度契約を見直し、W gate を default off で実装
+
+上の初回棄却と JSON は当時の基準の記録として保存。依頼側の再判断で static shared 増加自体と W 内の Q/K encoded SASS 一致を必須条件から外し、occupancy 模型の維持・共通算術と同じ flags・GPU byte・composite で判定する。CPU admission は合格、GPU gate 待ち。source base7343357/image c7804efb・CUDA13.0.88は維持する。
+
+Q/K の旧 source body を同じ forceinline 関数へ文字列 byte 不変で移し、旧 writer と W の両方から同じ TU/flags で呼ぶ。値渡しによって旧 writer の encoded SASS を保持。CUDA13.4/sm90a の旧/W・i32/i64 は48 registers、stack/spill0、C75xxなし、static shared0/24,576 B、driver込み1,024/25,600 B。CPU occupancy の制約は register5、thread8、shared228/9、architecture32 CTA/SMで、最終5は双方ともregisterで決まる。default JIT相当と初回fast-math診断の両組で旧writer/JIT/pack13entryのencoded一致。control N192・P・P3も再compileしてround17 encodedと一致。P3の既存spill4/4 Bは変更しない。実image13.0.88の証拠へ昇格させない。
+
+WのV tileは96token/head/request・256thread、shared barrier2回とcoalesced128-bit store各thread3回。代表3994+3994の削除はcontiguous V write/read8,179,712 B/層とpack launch1回。BF16 V read8,179,712 B、pagedV4,089,856 B、native image4,128,768 B、shared read/write16,515,072 Bは残る。FA3有効522,847,416,320 FLOP、tile535,881,056,256 FLOP・O・NVLink payload不変。writer FLOP、実HBM/NVLink byteはnull。CPU再実行で全12,288座標、7pair×3inputのnative/padding/address tag、paged V63case、BF16全65,536pattern・mixed upper byte一致。scatter約17.4µs、lane変更約7.6µsの旧棄却は維持する。
+
+P/P3の完全gateと公開を先に完了し、そのUUID集合に対して別W groupを集約。全12GPU×7pairでwriter→P FA3→Oを正逆interleave測定、代表全GPU各順/pooled≥2µs、全cell各順/pooledの回帰≤1µs、84cellの正逆中央値>0。各shapeでQ/K・pagedKV・nativeV・attention/scale/O全byte、元/変更2入力・両順replay、FP32参照、single旧経路、1200回serving compositeとP再比較を要求する。W+P3は時間と単純さのため測らず/使わず、成功時はW+P、失敗時は公開済みP3/Pを保持。candidate IDは増やさない。
+
+W group条件付き見積もり60–75秒、worker起動込み95秒＋kill2秒、集約start+100秒。round22実793+100=893秒、17分1020秒まで127秒。起動時に100+90+660秒を残せなければWをskipしてserving継続。既存P/P3の150/155秒は不変。worker/aggregate timeout、残予算不足、P不成立でP3 env保持・serving到達をshell fixtureで検査。`prefill.fa3_v_writer_gate=false`、fresh image必須、pin不変。2–5µs/層・約+4–11tok/sは条件付き計画値のまま。GPU gate、通常scoreは未測定。詳細は同じnoteの追補、正本は `prefill-v-writer-r23-revised-cpu-validation-20261102.json`、modelは履歴を残して `prefill_v_writer_r23_revised` を追加した。

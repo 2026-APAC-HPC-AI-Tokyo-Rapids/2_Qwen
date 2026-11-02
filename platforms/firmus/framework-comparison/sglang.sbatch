@@ -320,6 +320,34 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_prepack_gate // false' "${R
 fi
 
 
+# W gate begin: P/P3 must already be fully aggregated and published.
+# Estimate 60-75 s; workers 95 + kill 2 + aggregate 3 <=100 s.
+# Preserve the Decode gate's 90 s and 660 s for model start through collection.
+if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.fa3_v_writer_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
+  mkdir -p "${ROOT}/results/prefill-fa3-v-writer"
+  if (( 1020 - SECONDS >= 100 + 90 + 660 )) && jq -e '.adopted == true' "${ROOT}/results/prefill-fa3-prepack/selection.json" >/dev/null 2>&1; then
+    prefill_v_writer_started=$(date +%s)
+    prefill_v_writer_selections=()
+    prefill_v_writer_ok=1
+    for worker in 0 1 2; do
+      node=${HEAD}; if (( worker == 2 )); then node=${TAIL}; fi
+      mkdir -p "${ROOT}/results/prefill-fa3-v-writer/prefill-${worker}"
+      prefill_v_writer_remaining=$((prefill_v_writer_started + 95 - $(date +%s)))
+      if (( prefill_v_writer_remaining <= 0 )); then prefill_v_writer_ok=0; break; fi
+      timeout --kill-after=2 "${prefill_v_writer_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-fa3-v-writer-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-fa3-prepack.py" --w true --output "${ROOT}/results/prefill-fa3-v-writer/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_v_writer_started}" --deadline "$((prefill_v_writer_started + 95))" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-fa3-v-writer-${worker}.log" 2>&1 &
+      prefill_v_writer_selections+=("$!")
+    done
+    for pid in "${prefill_v_writer_selections[@]}"; do wait "${pid}" || prefill_v_writer_ok=0; done
+    prefill_v_writer_remaining=$((prefill_v_writer_started + 100 - $(date +%s)))
+    if (( prefill_v_writer_remaining > 0 )); then
+      timeout --signal=KILL "${prefill_v_writer_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-fa3-prepack.py" --w true --aggregate "${ROOT}/results/prefill-fa3-v-writer" --output "${ROOT}/results/prefill-fa3-v-writer/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --prepack-selection "${ROOT}/results/prefill-fa3-prepack/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_v_writer_started}" --deadline "$((prefill_v_writer_started + 100))" --workers-ok "${prefill_v_writer_ok}" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" || true
+    fi
+  else
+    printf '%s\n' '{"adopted":false,"reason":"complete P selection or remaining serving budget unavailable"}' >"${ROOT}/results/prefill-fa3-v-writer/selection.json"
+  fi
+fi
+# W gate end.
+
 # Decode greedy gate begin: entirely after pair/prepack, before any model starts.
 # Estimated <=60 s, workers 85 + kill 2 + aggregate 3 <=90 s (>=1.5x).
 # After the gate, keep 660 s for model start, warmup, measurement and collection (634 s measured after

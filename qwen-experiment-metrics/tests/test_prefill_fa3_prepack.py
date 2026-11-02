@@ -533,7 +533,7 @@ def test_removed_diagnostics_and_new_build_input():
     source=SCRIPT.read_text()
     for name in ('def diagnostics(', 'writer_only','fa3_only','interaction_us','only_o','diagnostic_numerics'):
         assert name not in source
-    assert set(GATE['VARIANTS'])=={'C','P','P3'}
+    assert set(GATE['VARIANTS'])=={'C','P','P3','W'}
     build=(ROOT/'kernels/fa3-verify/build.py').read_text()
     assert build.index('str(root / "prefill-vsum.patch")')<build.index('str(root / "prefill-v3.patch")')
     assert ' + 150' in block() and ' + 155' in block() and '--p3 ' in block()
