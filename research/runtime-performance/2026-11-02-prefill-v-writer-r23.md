@@ -1,4 +1,4 @@
-# Round 23：V tile writer W、基準見直し後は CPU admission 合格・gate 待ち
+# Round 23：V tile writer W、CPU admission は基準見直し後に合格、GPU composite gate で P より約 3.9 µs 遅く棄却
 
 現在の実装・判定は「同日追補」と末尾の「W gate の時間配置修正」に記す。以下は commit 0570798 の初回棄却記録を保存したもの。
 
@@ -184,3 +184,41 @@ skip 時は既存と同じ adopted:false と理由の selection を残し、公�
 検証は CPython 3.13.12、TMPDIR 未設定・既定 /tmp、fixture の差し替えなし。対象の W/Decode 2ファイルは169 passed・10 skipped。追加の shell fixture 3件は218秒・境界260秒で W 実行、261秒で理由付き skip と P3 env 保持を確認し、100秒の W が終了しても先に採用された Decode env を保持する。wiring test は pair → prepack の公開 → Decode → W → model 起動の順序を確認する。既存の worker/aggregate timeout・P 不成立時の継続テストも合格。
 
 全体 suite は `uv run --project qwen-experiment-metrics --python 3.13 --with 'numpy>=1.26,<3' --with pytest python -m pytest -o addopts='' -q -p no:cacheprovider qwen-experiment-metrics/tests` で **1,581 passed、100 skipped、25 subtests passed、572.63秒、exit 0**。100 skip は前回と同じ追加依存の検査で、新しい境界3件はすべて実行した。log は指定 scratch の r23/suite313-w-timing.log。`uv run --project qwen-experiment-metrics --python 3.13 ruff check qwen-experiment-metrics scripts containers`、bash 構文、git whitespace も合格。Decode block の先頭 comment 以外が元commitと一致し、W の本体差分が予算式だけであることを確認した。SSH、Actions 操作、scheduler/GPU 投入、image build は行っていない。
+
+## GPU gate と通常 serving の結果（run 41397522107 attempt 3、Slurm 28275、image bfc842db）
+
+serving commit 55bdd8b（`prefill.fa3_v_writer_gate=true`）から image を build した（build run 41397522107、sha256 `bfc842dbce68ba1e0b19aafa010e2843de3954d93055251d245d27097d00562f`、12,298,432,512 B）。attempt 1 は Firmus gateway（150.230.206.3:2026）が ssh 接続を切って成果物選択で停止し、attempt 2 は image の転送まで成功したが、同じ切断で archive の確定と PD 投入に失敗した。attempt 3 は失敗 job だけを再実行し、PD まで完走した。archive 確定 job は 3 回とも同じ切断で失敗したが、PD job は Firmus 上の image の sha256 を照合して使っている。
+
+**W は棄却。** 全 12 Prefill GPU の 3994+3994 で、Q/K、paged K/V、native V image、attention、scale、O が正逆両順とも P と byte 一致し、contiguous V にも触れていなかった。しかし composite（writer→P FA3→O、約 1145〜1190 µs）は全 GPU・両順で W の方が遅かった。
+
+| 指標（P − W、正なら W が速い） | 値 |
+|---|---:|
+| GPU ごとの中央値（正順） | −3.37 〜 −5.34 µs |
+| GPU ごとの中央値（逆順） | −2.95 〜 −4.64 µs |
+| pooled 中央値（正順 / 逆順 / 全体） | −3.99 / −3.85 / −3.86 µs |
+
+各 rank は代表 shape の「1 µs を超える退行なし」の assert で停止した（`AssertionError: 3994+3994: W regression exceeds 1 us against P`、開始から約 30 秒）。他の 6 pair、single、1200 回の耐久は実行していない。事前の見込み（2〜5 µs/層の短縮）とは符号が逆で、閾値の問題ではない。
+
+GPU の時間を CPU の勘定と比べると、contiguous V の write/read 8,179,712 B/層と pack launch 1 回を削った効果より、Q/K の CTA にも予約される 24,576 B の static shared memory と、V tile の shared memory 往復（16,515,072 B/層）、barrier 2 回の費用が大きいと考えられる。ただし、原因の内訳は測っていない。初回の CPU 判定が挙げた shared memory の予約の懸念は、速度の面で当たっていた。「同じ launch の中に V 専用の CTA を置く」方向は、scatter（+17.4 µs）、lane の変更（+7.6 µs）に続いて 3 例目の負けになる。writer と prepack の統合は、新しい証拠が出るまで閉じる。
+
+同じ run の他の gate：pair は採用、prepack は P を選択（P3 は 4027+4027 で pooled の退行が 3 µs を超えて不採用）、Decode greedy 融合は 4 GPU で全 case 一致して採用。時間は job 開始からの秒数で、prepack 94〜169、Decode 189〜216、W 250〜316、READY 602（round 22 は 511）、Slurm 全体 885 秒（14 分 45 秒）で、1020 秒の枠に収まった。
+
+**通常 serving：公式 10024.51 tok/s、eligible**（6310 要求、good fraction 0.9819、ITL/TTFT SLA 内）。構成は P＋Decode greedy 融合で、W の score ではない。この構成は round 22 の 10009.52、10025.16 に続く 3 回目で、P 単独の 8 run（10002.75〜10020.58）と合わせて run 間の幅に収まる。main の構成と image の pin（c7804efb）は変えない。
+
+### round 23 の前提となった分析（gpt-6-astra、2026-11-02）
+
+round 22 の raw を使って、10479 tok/s の上限からの損失を分けた：
+
+| 損失の区分 | tok/s |
+|---|---:|
+| 開始時（最初の完了は 2.456 s） | 336.28 |
+| 初期 232 件の burst での TTFT 超過（113 件） | 182.78 |
+| ITL | 4.85 |
+| 定常 | −4.01 |
+| drain | −66.02 |
+
+- 定常のペア周期は、worker ごとに 113.83、113.21、116.38 ms だった。
+- 開始時の損失は、warmup が空になってから 7.8 ms 後に計測が始まり、pipeline が空のまま始まることによる。規約内では回収できない。
+- byte が一致する候補で +50 に届くものはない。+50 には、全 worker で約 23.7 µs/層の短縮が要る。
+- 順位は ① W（+4〜11、今回棄却）、② target forward の CUDA graph（現 P で 150〜250 µs/周期の capture されていない launch gap が見つかった場合だけ +13〜22）、③ dense tail の specialization（新しい SASS の証拠がなく保留）。
+- ② は、現 P の定常 5〜10 秒の 12 GPU kernel/copy trace で gap を確認してから判断する。分析の原文は scratch にあり、repo の正本ではない。

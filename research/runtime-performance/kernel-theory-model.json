@@ -1305,7 +1305,7 @@
   },
   "prefill_v_writer_r23_revised": {
     "date": "2026-11-02",
-    "status": "CPU admission passed under user-revised occupancy/precision criteria; GPU gate implemented, default off, not executed",
+    "status": "rejected at the GPU composite gate in round 23: byte-equal to P on all 12 Prefill GPUs at 3994+3994, but 2.95-5.34 us slower per composite call on every GPU and order (pooled median 3.86 us slower)",
     "historical_rejection": "prefill_v_writer_r23; original note and CPU JSON retained",
     "note": "2026-11-02-prefill-v-writer-r23.md",
     "cpu_evidence": "prefill-v-writer-r23-revised-cpu-validation-20261102.json",
@@ -1408,8 +1408,123 @@
       ],
       "interpretation": "planning scenario only, not a measured or adopted gain"
     },
-    "gpu_byte_equal": null,
-    "composite_kernel_us": null,
-    "official_score": null
+    "gpu_run": {
+      "actions_run": "41397522107 attempt 3",
+      "slurm_job": 28275,
+      "source_commit": "55bdd8b",
+      "image_sha256": "bfc842dbce68ba1e0b19aafa010e2843de3954d93055251d245d27097d00562f",
+      "gate_run_id": "28275-1793607445",
+      "fatal": "AssertionError: 3994+3994: W regression exceeds 1 us against P",
+      "shapes_not_reached": "the other six pairs, singles and the 1200-call endurance did not run because every rank stopped at the first shape",
+      "gate_seconds_from_job_start": [
+        250,
+        316
+      ],
+      "ready_seconds": 602,
+      "slurm_seconds": 885,
+      "raw": "/srv/qwen-artifacts/41397522107/3/results/results/prefill-fa3-v-writer/"
+    },
+    "gpu_byte_equal": {
+      "3994+3994": "Q/K, paged K/V, native V image, attention, scale and O byte-equal to P on all 12 GPUs in both orders; contiguous V untouched"
+    },
+    "composite_kernel_us": {
+      "shape": "3994+3994",
+      "definition": "P composite minus W composite; positive means W faster",
+      "per_gpu": [
+        {
+          "worker": "prefill-0",
+          "rank": 0,
+          "p_median_us": 1167.3,
+          "saving_median_forward_us": -4.32,
+          "saving_median_reverse_us": -4.64
+        },
+        {
+          "worker": "prefill-0",
+          "rank": 1,
+          "p_median_us": 1147.35,
+          "saving_median_forward_us": -4.79,
+          "saving_median_reverse_us": -3.77
+        },
+        {
+          "worker": "prefill-0",
+          "rank": 2,
+          "p_median_us": 1155.4,
+          "saving_median_forward_us": -4.12,
+          "saving_median_reverse_us": -2.95
+        },
+        {
+          "worker": "prefill-0",
+          "rank": 3,
+          "p_median_us": 1183.35,
+          "saving_median_forward_us": -4.41,
+          "saving_median_reverse_us": -4.22
+        },
+        {
+          "worker": "prefill-1",
+          "rank": 0,
+          "p_median_us": 1153.5,
+          "saving_median_forward_us": -3.49,
+          "saving_median_reverse_us": -3.11
+        },
+        {
+          "worker": "prefill-1",
+          "rank": 1,
+          "p_median_us": 1145.83,
+          "saving_median_forward_us": -4.16,
+          "saving_median_reverse_us": -3.64
+        },
+        {
+          "worker": "prefill-1",
+          "rank": 2,
+          "p_median_us": 1163.31,
+          "saving_median_forward_us": -3.42,
+          "saving_median_reverse_us": -3.91
+        },
+        {
+          "worker": "prefill-1",
+          "rank": 3,
+          "p_median_us": 1144.58,
+          "saving_median_forward_us": -3.4,
+          "saving_median_reverse_us": -3.02
+        },
+        {
+          "worker": "prefill-2",
+          "rank": 0,
+          "p_median_us": 1169.9,
+          "saving_median_forward_us": -3.37,
+          "saving_median_reverse_us": -4.41
+        },
+        {
+          "worker": "prefill-2",
+          "rank": 1,
+          "p_median_us": 1179.6,
+          "saving_median_forward_us": -5.34,
+          "saving_median_reverse_us": -3.79
+        },
+        {
+          "worker": "prefill-2",
+          "rank": 2,
+          "p_median_us": 1188.28,
+          "saving_median_forward_us": -3.7,
+          "saving_median_reverse_us": -4.45
+        },
+        {
+          "worker": "prefill-2",
+          "rank": 3,
+          "p_median_us": 1180.19,
+          "saving_median_forward_us": -4.63,
+          "saving_median_reverse_us": -4.15
+        }
+      ],
+      "pooled_median_forward_us": -3.99,
+      "pooled_median_reverse_us": -3.85,
+      "pooled_median_us": -3.86
+    },
+    "official_score": {
+      "value": 10024.51,
+      "eligible": true,
+      "configuration": "P plus Decode greedy fusion; W not adopted and P3 rejected in the same run",
+      "note": "not a W score"
+    }
   }
 }
