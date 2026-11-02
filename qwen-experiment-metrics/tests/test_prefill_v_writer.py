@@ -214,7 +214,7 @@ HEAD=head
 TAIL=tail
 SLURM_JOB_ID=123
 SGLANG=unused
-SECONDS={171 if stage=='budget' else 0}
+SECONDS={261 if stage=='budget' else 0}
 jq() {{ if [[ "$*" == *sha256* ]]; then printf '%064d\\n' 0; elif [[ "$*" == *adopted* ]]; then return {1 if stage=='prior' else 0}; else printf 'true\\n'; fi; }}
 mounts() {{ printf 'unused\\n'; }}
 timeout() {{ if [[ "$1" == --kill-after=2 ]]; then return {0 if stage=='aggregate' else 124}; fi; {'return 124;' if stage=='aggregate' else 'shift 2; "$@";'} }}
@@ -227,14 +227,88 @@ uv() {{ shift 5; {shlex.quote(sys.executable)} "$@"; }}
     if stage!='aggregate': assert not json.loads(selection.read_text())['adopted']
 
 
+@pytest.mark.parametrize('w_seconds,runs',[(218,True),(260,True),(261,False)])
+def test_w_budget_boundary_preserves_completed_decode(tmp_path,w_seconds,runs):
+    for name in ('source','logs','results/prefill-fa3-prepack'):
+        (tmp_path/name).mkdir(parents=True,exist_ok=True)
+    pin=G['KEY']+'='+G['DISPATCH']['P3']+'\n'
+    (tmp_path/'source/prefill-kernels.env').write_text(pin)
+    (tmp_path/'source/decode-kernels.env').write_text('DECODE=0\n')
+    (tmp_path/'results/prefill-fa3-prepack/selection.json').write_text('{"adopted":true}')
+    shell=(ROOT/'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
+    gates=shell[shell.index('# Decode greedy gate begin'):shell.index('# W gate end.')]
+    script=rf'''set -euo pipefail
+ROOT={shlex.quote(str(tmp_path))}
+ART="$ROOT/logs"
+prefill_pp=4
+HEAD=head
+TAIL=tail
+SLURM_JOB_ID=123
+SGLANG=unused
+# Freeze Bash's clock so both sides of the one-second boundary are deterministic.
+unset SECONDS
+SECONDS=191
+jq() {{ printf true; }}
+date() {{ printf 1000; }}
+mounts() {{ printf unused; }}
+timeout() {{
+  if [[ "$*" == *select-firmus-decode-greedy.py* ]]; then
+    if [[ "$1" == --kill-after=2 ]]; then
+      printf 'decode-worker\n' >>"$ROOT/order"
+      SECONDS={w_seconds}
+    else
+      printf 'decode-aggregate\n' >>"$ROOT/order"
+      printf 'DECODE=1\n' >"$ROOT/source/decode-kernels.greedy.env"
+      printf '%s\n' '{{"adopted":true}}' >"$ROOT/results/decode-greedy/selection.json"
+    fi
+  else
+    # Every W call sees Decode's already adopted serving env.
+    test "$(cat "$ROOT/source/decode-kernels.env")" == DECODE=1
+    if [[ "$1" == --kill-after=2 ]]; then
+      printf 'w-worker\n' >>"$ROOT/order"
+    else
+      printf 'w-aggregate\n' >>"$ROOT/order"
+      printf '%s\n' '{{"adopted":true}}' >"$ROOT/results/prefill-fa3-v-writer/selection.json"
+      printf 'W=1\n' >"$ROOT/source/prefill-kernels.env"
+      SECONDS=$((SECONDS + 100))
+    fi
+  fi
+}}
+'''
+    after='\nprintf "model\\n" >>"$ROOT/order"\nprintf "%s" "$SECONDS" >"$ROOT/seconds"\n'
+    subprocess.run(['bash','-c',script+gates+after],check=True,capture_output=True,text=True)
+    expected=['decode-worker','decode-aggregate']+(['w-worker']*3+['w-aggregate'] if runs else [])+['model']
+    assert (tmp_path/'order').read_text().splitlines()==expected
+    assert json.loads((tmp_path/'results/decode-greedy/selection.json').read_text())['adopted']
+    assert (tmp_path/'source/decode-kernels.env').read_text()=='DECODE=1\n'
+    selection=json.loads((tmp_path/'results/prefill-fa3-v-writer/selection.json').read_text())
+    assert selection['adopted'] is runs
+    if runs:
+        assert int((tmp_path/'seconds').read_text())==w_seconds+100
+        # W would exhaust the Decode admission budget if it ran first.
+        assert 1020-(w_seconds+100)<90+660
+    else:
+        assert selection['reason']=='complete P selection or remaining serving budget unavailable'
+        assert (tmp_path/'source/prefill-kernels.env').read_text()==pin
+
+
 def test_w_wiring_budget_and_default_off(tmp_path):
     c=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
     assert c['prefill']['fa3_v_writer_gate'] is False
     assert c['sglang_overlay_patches'][-1]=='patches/sglang/prefill-v-writer.patch'
     assert c['container_sha256'].startswith('c7804efb')
     shell=(ROOT/'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
-    assert shell.index('selection.json" --env-output',shell.index('# P is revalidated'))<shell.index('# W gate begin')<shell.index('# Decode greedy gate begin')
-    assert '100 + 90 + 660' in shell_block() and G['W_SECONDS']==95 and G['W_WALL']==100
+    pair=shell.index('# Default off. The pair-only FA3 gate')
+    prepack=shell.index('# P is revalidated')
+    prepack_publish=shell.index('selection.json" --env-output',prepack)
+    decode=shell.index('# Decode greedy gate begin')
+    decode_end=shell.index('# Decode greedy gate end.')
+    w=shell.index('# W gate begin')
+    w_end=shell.index('# W gate end.')
+    model=shell.index('bash "${ROOT}/source/worker.sh" prefill-0')
+    assert pair<prepack<prepack_publish<decode<decode_end<w<w_end<model
+    assert '1020 - SECONDS >= 90 + 660' in shell[decode:decode_end]
+    assert '1020 - SECONDS >= 100 + 660' in shell_block() and G['W_SECONDS']==95 and G['W_WALL']==100
     assert 793+G['W_WALL']<1020
     assert '--w true' in shell_block() and '--p3 ' not in shell_block()
     for name in ('source','results'): (tmp_path/name).mkdir()

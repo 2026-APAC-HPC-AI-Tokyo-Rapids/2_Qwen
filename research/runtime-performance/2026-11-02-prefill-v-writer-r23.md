@@ -1,6 +1,6 @@
 # Round 23：V tile writer W、基準見直し後は CPU admission 合格・gate 待ち
 
-現在の実装・判定は末尾の「同日追補」に記す。以下は commit 0570798 の初回棄却記録を保存したもの。
+現在の実装・判定は「同日追補」と末尾の「W gate の時間配置修正」に記す。以下は commit 0570798 の初回棄却記録を保存したもの。
 
 ## 初回判定の記録
 
@@ -147,7 +147,7 @@ W+P3 は測らず、serving でも組み合わせない。W は P と同じ cons
 
 前回 P/P3 group は起動込み 150 秒、集約 155 秒が上限。W は別枠で **60〜75 秒を条件付きで見積もり**、worker は全 srun 起動込み共通 start+95 秒、kill 猶予 2 秒、集約は start+100 秒まで。見積もりは P の過去 rank 約36秒に対し、W の両順 byte replay と import/JIT を余分に見込んだもの。実 H200 測定ではない。全形状・耐久を時間に合わせて削らない。
 
-round22 の READY511秒、Slurm793秒を基準にすれば、W 見積もり追加で READY571〜586秒、Slurm853〜868秒。**上限の単純加算は 793+100=893秒、1020−893=127秒の余裕**。既存 P/P3 群の上限そのものは増やさず、W group 100秒だけを追加する。さらに起動時点で `1020−SECONDS >= 100+90+660` を満たす場合だけ W を開始し、後続 Decode gate 最大90秒と serving/回収660秒を確保する。遅い startup では W を skip し、直前の選択で続行する。この条件は READY と終了時刻の保証ではなく、allocation 内の保守的な予算管理である。
+round22 の READY511秒、Slurm793秒を基準にすれば、W 見積もり追加で READY571〜586秒、Slurm853〜868秒。**上限の単純加算は 793+100=893秒、1020−893=127秒の余裕**。既存 P/P3 群の上限そのものは増やさず、W group 100秒だけを追加する。当初の commit 6092646 は Decode より前に W を置き、`1020−SECONDS >= 100+90+660` を条件としていた。この配置と条件は実測の開始時刻に合わないため、末尾の「W gate の時間配置修正」で置き換える。
 
 shell fixture は W worker timeout、aggregate timeout、残予算不足、P 不成立のすべてで、公開済み P3 env が byte 不変のまま serving に到達することを実行確認する。P/P3 の timeout fixture も維持する。
 
@@ -166,3 +166,21 @@ repo 直下で指定コマンドの全体 suite は **CPython 3.13.12、1,578 pa
 追補 raw は指定 scratch の `cpu-proof-revised.tar.gz`、**2,345,429 B**、SHA256 **`e0c522a8bc1dd324bd7b58c0e84db9f9bff8fa80bd4f393d5bd488c9db95c61d`**。最終overlay/source、旧source、default/diagnosticのobject・SASS・logとcommand、FA3 control/P/P3の旧/新SASS・object・log、host byte/occupancyと独立oracleを含む。全61 entryを照合し、manifestの60 entryすべてのSHA/sizeを検証した。初回archiveのSHA `bf1c3cb7…26c3` は不変。
 
 変更は13 file：新しい `patches/sglang/prefill-v-writer.patch`、selector、sbatch、prepare、provision、config、pair/prepackの既存2 test、新しい `test_prefill_v_writer.py`、本note、新CPU JSON、tracker、model。native FA3/table/build.pyとimage pinは不変。不要な展開source・object・診断script・worktree cache/venvは削除し、raw archiveと検証logを残す。SSH/Actions/Slurm/PJM/GPU/image buildは0件で、作成した残留jobも0件。他作業の資源には触れていない。
+
+
+## W gate の時間配置修正（round 23、2026-11-02）
+
+commit 6092646 の配置では W 開始が約185秒となり、残り835秒は要求850秒を満たさず毎回 skip される。仮に100秒の W が走ると終了は約285秒で、Decode の開始条件に必要な750秒に対し残り735秒となり、採用済み Decode greedy 融合の gate を skip してしまう。
+
+保存済み run 41364635219 / Slurm 28231 のログ・selection と依頼の job 開始 epoch 1793591448 を照合した。P/P3 は run_id 28231-1793591545（開始約97秒）、最後の finished_at 1793591624.1539438（約176秒）。Decode は run_id 28231-1793591639（約191秒）、最後の finished_at 1793591665.9348798（約218秒）。READY は511秒、Slurm は COMPLETED、13分13秒＝793秒で、Decode 終了後は約575秒。round21 の後続634秒に対して既存の予約660秒を維持する。
+
+実行順序を **pair → prepack の集約・公開 → Decode greedy gate → W → model 起動** に変更した。Decode gate の条件 `1020−SECONDS >= 90+660` と処理は変更せず、配置の comment のみ W より前であることを明記する。W は P selection の adopted=true を引き続き要求し、開始条件を **`1020−SECONDS >= 100+660`** に変更する。必要な残り時間は760秒なので、**SECONDS=260 では実行、261 では skip** する。
+
+条件付き見積もりは W 開始約218秒、最大100秒後の終了約318秒。その後の575〜634秒を加えると **218+100+575〜634＝893〜952秒**、1020秒まで68〜127秒となる。開始時の予約で計算しても218+100+660＝978秒。893〜952秒の計算は sbatch の comment にも記載した。過去runに基づく計画値で、今回の新しいGPU実測や将来のwall保証ではない。
+
+skip 時は既存と同じ adopted:false と理由の selection を残し、公開済み P/P3 env を保って serving を続行する。W の worker/集約 timeout と拒否処理は変更しない。config の fa3_v_writer_gate は false のまま。変更は sbatch、CPU shell/wiring test、本noteの3ファイルに限定する。
+
+
+検証は CPython 3.13.12、TMPDIR 未設定・既定 /tmp、fixture の差し替えなし。対象の W/Decode 2ファイルは169 passed・10 skipped。追加の shell fixture 3件は218秒・境界260秒で W 実行、261秒で理由付き skip と P3 env 保持を確認し、100秒の W が終了しても先に採用された Decode env を保持する。wiring test は pair → prepack の公開 → Decode → W → model 起動の順序を確認する。既存の worker/aggregate timeout・P 不成立時の継続テストも合格。
+
+全体 suite は `uv run --project qwen-experiment-metrics --python 3.13 --with 'numpy>=1.26,<3' --with pytest python -m pytest -o addopts='' -q -p no:cacheprovider qwen-experiment-metrics/tests` で **1,581 passed、100 skipped、25 subtests passed、572.63秒、exit 0**。100 skip は前回と同じ追加依存の検査で、新しい境界3件はすべて実行した。log は指定 scratch の r23/suite313-w-timing.log。`uv run --project qwen-experiment-metrics --python 3.13 ruff check qwen-experiment-metrics scripts containers`、bash 構文、git whitespace も合格。Decode block の先頭 comment 以外が元commitと一致し、W の本体差分が予算式だけであることを確認した。SSH、Actions 操作、scheduler/GPU 投入、image build は行っていない。
