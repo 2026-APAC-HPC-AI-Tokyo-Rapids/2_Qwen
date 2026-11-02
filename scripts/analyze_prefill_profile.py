@@ -328,8 +328,11 @@ def validate_runtime(runtime, name, database):
             raise ValueError(f'missing sustained kernels on device {device}')
         if not any(r['deviceId'] == device and r['name'] == 'memcpy' and window[0] <= r['start'] < window[1] for r in copies):
             raise ValueError(f'missing memcpy in steady capture on device {device}')
+        # Round 24 (41423181527) saw 4-7 one-request forwards (gridX 125) among about 70 pairs per worker.
         writers = [r for r in ks if 'qknorm_rope' in r['name']]
-        if not writers or any(not (250 <= r['gridX'] <= 256 and r['gridY'] == 72) for r in writers):
+        pairs = sum(250 <= r['gridX'] <= 256 for r in writers)
+        singles = sum(120 <= r['gridX'] <= 128 for r in writers)
+        if not writers or any(r['gridY'] != 72 for r in writers) or pairs+singles != len(writers) or pairs < .8*len(writers):
             raise ValueError('writer grid does not identify a steady two-request forward')
         matched = sum(r['api'] is not None for r in ks)
         if matched < len(ks)*.9:

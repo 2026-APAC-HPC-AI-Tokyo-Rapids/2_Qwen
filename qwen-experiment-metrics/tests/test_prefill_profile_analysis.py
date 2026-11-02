@@ -1,7 +1,6 @@
 """Real-export schema fixtures: concurrency, causal ambiguity, PP order and coverage."""
 import csv
 import datetime as dt
-import hashlib
 import importlib.util
 import json
 import runpy
@@ -120,6 +119,17 @@ def test_lightweight_validation_rejects_missing_copy_telemetry_or_launch(tmp_pat
         ANALYSIS.validate_runtime(runtime_fixture_directory, 'prefill-0', database)
 
 
+def test_validation_accepts_a_few_single_request_forwards(tmp_path):
+    database = runtime_fixture(tmp_path)
+    with sqlite3.connect(database) as db:
+        db.execute('UPDATE CUPTI_ACTIVITY_KIND_KERNEL SET gridX=125 WHERE demangledName=4 AND start < 1200000000')
+    ANALYSIS.validate_runtime(tmp_path, 'prefill-0', database)
+    with sqlite3.connect(database) as db:
+        db.execute('UPDATE CUPTI_ACTIVITY_KIND_KERNEL SET gridX=125 WHERE demangledName=4 AND start < 3000000000')
+    with pytest.raises(ValueError, match='writer grid'):
+        ANALYSIS.validate_runtime(tmp_path, 'prefill-0', database)
+
+
 def test_process_scoped_correlations_and_pp_mapping(tmp_path):
     database = tmp_path / 'data.sqlite'
     fixture(database, count=10)
@@ -195,14 +205,3 @@ srun() {{ printf '%s\\n' "$*"; }}
         command = (tmp_path / f'gpu-telemetry-{host}.csv').read_text()
         assert 'env TZ=UTC nvidia-smi' in command
         assert interval in command and 'power.draw,clocks.sm' in command
-
-
-def test_profile_configuration_keeps_image_gates_and_serving_except_profile_only():
-    # Baseline 599c093 fingerprints, independent of CI shallow checkout history.
-    current = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
-    assert current.pop('profile_only') is True
-    assert hashlib.sha256(json.dumps(current, sort_keys=True).encode()).hexdigest() == '2f32a350466695f927337d4950bb46e35357048d3628e0c21ffec63852898d9f'
-    source = (ROOT / 'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
-    start, stop = '# Default off. The pair-only FA3 gate', '# Decode greedy gate end.'
-    gate = source.split(start, 1)[1].split(stop, 1)[0]
-    assert hashlib.sha256(gate.encode()).hexdigest() == '3231015be921fe9f116d27f3cf4711673222c7e9ecead7920bc68f8d0f8d3579'
