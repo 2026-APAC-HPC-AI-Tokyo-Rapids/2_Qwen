@@ -28,6 +28,7 @@ def fixture(path, layers=(24, 24, 24, 22), count=75):
         db.executemany('INSERT INTO StringIds VALUES (?,?)', enumerate(names, 1))
         for stage, layer_count in enumerate(layers):
             db.execute('INSERT INTO TARGET_INFO_GPU VALUES (?,?,?)', (stage, f'0000:{stage+1:02x}:00.0', stage))
+            db.execute('INSERT INTO TARGET_INFO_CUDA_DEVICE VALUES (?,?,?)', (stage, stage, 1))
             process = (stage+1) << 24
             corr = 0
             for cycle in range(count):
@@ -140,6 +141,12 @@ def test_process_scoped_correlations_and_pp_mapping(tmp_path):
         mapping = tmp_path / 'gpu-map.csv'
         mapping.write_text(''.join(f'GPU-uuid{i}, 00000000:{i+1:02x}:00.0\n' for i in (2, 0, 3, 1)))
         assert ANALYSIS.mapped_devices(db, mapping) == [2, 0, 3, 1]
+        # Kernel deviceId is the CUDA ordinal; swap GPU ids 2 and 3 as worker 1 did in 41423181527.
+        db.execute('UPDATE TARGET_INFO_CUDA_DEVICE SET cudaId=5-gpuId WHERE gpuId IN (2, 3)')
+        assert ANALYSIS.mapped_devices(db, mapping) == [3, 0, 2, 1]
+        db.execute('INSERT INTO TARGET_INFO_CUDA_DEVICE VALUES (0, 1, 2)')
+        with pytest.raises(ValueError, match='CUDA ordinal'):
+            ANALYSIS.mapped_devices(db, mapping)
 
 
 def test_gap_classification_is_evidence_not_causal_assertion():

@@ -293,17 +293,26 @@ def markdown(result):
 
 
 def mapped_devices(db, gpu_map):
-    """Join physical PCI addresses; Nsight's UUID may be anonymized on export."""
+    """Join physical PCI addresses; Nsight's UUID may be anonymized on export.
+
+    Kernel deviceId is the process's CUDA ordinal, not TARGET_INFO_GPU.id: in
+    41423181527 workers 1 and 2 had GPU ids 2/3 on CUDA ordinals 3/2.
+    """
     def pci(value):
         return value.lower().lstrip('0')
     addresses = [pci(row[1].strip()) for row in csv.reader(gpu_map.open())]
     gpus = records(db, 'TARGET_INFO_GPU')
+    ordinals = {}
+    for row in records(db, 'TARGET_INFO_CUDA_DEVICE'):
+        ordinals.setdefault(row['gpuId'], set()).add(row['cudaId'])
     devices = []
     for address in addresses:
         matches = [r['id'] for r in gpus if pci(r['busLocation']) == address]
         if len(matches) != 1:
             raise ValueError(f'nonunique/missing Nsight GPU for PCI address {address}')
-        devices.append(matches[0])
+        if len(ordinals.get(matches[0], ())) != 1:
+            raise ValueError(f'nonunique/missing CUDA ordinal for Nsight GPU {matches[0]}')
+        devices.append(next(iter(ordinals[matches[0]])))
     if len(devices) != 4 or len(set(devices)) != 4:
         raise ValueError('expected four unique GPUs in logical PP order')
     return devices
