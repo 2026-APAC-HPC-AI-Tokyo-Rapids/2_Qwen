@@ -292,9 +292,9 @@ timeout() {{
         assert (tmp_path/'source/prefill-kernels.env').read_text()==pin
 
 
-def test_w_wiring_budget_and_default_off(tmp_path):
+def test_w_wiring_budget_and_serving_on(tmp_path):
     c=json.loads((ROOT/'configs/firmus-prefill-pp4.json').read_text())
-    assert c['prefill']['fa3_v_writer_gate'] is False
+    assert c['prefill']['fa3_v_writer_gate'] is True  # round-23 serving commit
     assert c['sglang_overlay_patches'][-1]=='patches/sglang/prefill-v-writer.patch'
     assert c['container_sha256'].startswith('c7804efb')
     shell=(ROOT/'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
