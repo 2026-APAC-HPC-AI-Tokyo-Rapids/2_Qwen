@@ -163,7 +163,7 @@ install -m 0644 "${GITHUB_WORKSPACE}/platforms/firmus/framework-comparison/vllm-
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/parse-aiperf-result.py" "${GITHUB_WORKSPACE}/scripts/parse-firmus-reference-result.py" "${GITHUB_WORKSPACE}/scripts/summarize-firmus-run.py" "${runtime_dir}/scripts/"
 if [[ "${PROFILE}" == true ]]; then
   install -m 0755 "${GITHUB_WORKSPACE}/scripts/exec-profiler.sh" "${GITHUB_WORKSPACE}/scripts/capture-firmus-profile.sh" "${runtime_dir}/scripts/"
-  install -m 0644 "${GITHUB_WORKSPACE}/scripts/validate-firmus-profile.py" "${runtime_dir}/scripts/"
+  install -m 0644 "${GITHUB_WORKSPACE}/scripts/analyze_prefill_profile.py" "${GITHUB_WORKSPACE}/scripts/validate-firmus-profile.py" "${runtime_dir}/scripts/"
   command -v ar >/dev/null
   package="${runtime_dir}/nsight.deb"
   curl --fail --location --show-error --max-time 600 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/nsight-systems-2025.3.2_2025.3.2.474-1_amd64.deb -o "${package}"
@@ -173,7 +173,7 @@ if [[ "${PROFILE}" == true ]]; then
   mv "${runtime_dir}/nsys-extract/opt/nvidia/nsight-systems/2025.3.2" "${runtime_dir}/nsys"
   rm -rf -- "${package}" "${runtime_dir}/nsys-extract"
   test -x "${runtime_dir}/nsys/bin/nsys"
-  cp "${runtime_dir}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/capture-firmus-profile.sh" "${runtime_dir}/scripts/validate-firmus-profile.py" "${runtime_dir}/source/"
+  cp "${runtime_dir}/scripts/exec-profiler.sh" "${runtime_dir}/scripts/capture-firmus-profile.sh" "${runtime_dir}/scripts/validate-firmus-profile.py" "${runtime_dir}/scripts/analyze_prefill_profile.py" "${runtime_dir}/source/"
 fi
 cp "${runtime_dir}/scripts/submit.sbatch" "${runtime_dir}/scripts/official-aiperf.sh" "${runtime_dir}/vllm-proxy.py" "${runtime_dir}/source/"
 cp "${runtime_dir}/scripts/run-aiperf.py" "${runtime_dir}/source/"

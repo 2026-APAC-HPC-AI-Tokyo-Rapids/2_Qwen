@@ -22,6 +22,9 @@ if [[ -n "${QWEN_PROFILER_NSYS_BIN:-}" ]]; then
   else
     printf 'skipped: unrestricted GPU performance counter access is not advertised by the driver; CUDA/NVTX trace remains enabled\n' >"${QWEN_PROFILER_INVOCATION_PATH%.argv}.gpu-metrics.txt"
   fi
-  exec "${QWEN_PROFILER_NSYS_BIN}" profile --force-overwrite=true --trace-fork-before-exec=true --capture-range=cudaProfilerApi --capture-range-end=stop --trace=cuda,nvtx,osrt --cuda-graph-trace=node --sample=none --cpuctxsw=none "${gpu_metrics[@]}" --output="${QWEN_PROFILER_INVOCATION_PATH%.argv}" "$@"
+  profiler_command=("${QWEN_PROFILER_NSYS_BIN}" profile --force-overwrite=true --trace-fork-before-exec=true --capture-range=cudaProfilerApi --capture-range-end=stop --trace=cuda,nvtx --cuda-trace-all-apis=false --cuda-graph-trace=node --sample=none --cpuctxsw=none "${gpu_metrics[@]}" --output="${QWEN_PROFILER_INVOCATION_PATH%.argv}" "$@")
+  printf '%q ' "${profiler_command[@]}" >"${QWEN_PROFILER_INVOCATION_PATH%.argv}.nsys-command.argv"
+  printf '\n' >>"${QWEN_PROFILER_INVOCATION_PATH%.argv}.nsys-command.argv"
+  exec "${profiler_command[@]}"
 fi
 exec "$@"

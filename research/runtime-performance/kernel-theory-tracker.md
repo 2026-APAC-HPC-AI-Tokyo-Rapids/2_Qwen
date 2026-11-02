@@ -497,3 +497,13 @@ P/P3の完全gateと公開を先に完了し、そのUUID集合に対して別W 
 W group条件付き見積もり60–75秒、worker起動込み95秒＋kill2秒、集約start+100秒。round22実793+100=893秒、17分1020秒まで127秒。起動時に100+90+660秒を残せなければWをskipしてserving継続。既存P/P3の150/155秒は不変。worker/aggregate timeout、残予算不足、P不成立でP3 env保持・serving到達をshell fixtureで検査。`prefill.fa3_v_writer_gate=false`、fresh image必須、pin不変。2–5µs/層・約+4–11tok/sは条件付き計画値のまま。GPU gate、通常scoreは未測定。詳細は同じnoteの追補、正本は `prefill-v-writer-r23-revised-cpu-validation-20261102.json`、modelは履歴を残して `prefill_v_writer_r23_revised` を追加した。
 
 Round 23 GPU（41397522107 attempt 3、Slurm 28275、image bfc842db、source 55bdd8b）：W は 12 GPU×両順の 3994+3994 で Q/K・paged K/V・native V・attention・scale・O が P と byte 一致したが、composite（約1145〜1190 µs）は全 GPU・両順で W が 2.95〜5.34 µs 遅く（pooled 中央値 −3.86 µs）、退行 1 µs の assert で棄却。他 6 pair・single・耐久は未実行。同一 launch 内の V 専用 CTA は scatter（+17.4）、lane 変更（+7.6）に続く 3 例目の負けで、writer＋prepack 統合は新しい証拠まで閉じる。同 run は P＋Decode greedy 融合で公式 10024.51（eligible、P3 は 4027+4027 の退行で不採用）。main の構成と pin c7804efb は不変。
+
+Round 24（2026-11-02、profile準備）：main599c093のP＋Decode greedy、image c7804efbをbuild無しで1回観測する準備。r19の単独kernel合計100–104msとserving周期113–117msの差を、未計上kernel、全streamのkernel/copyを除いた空白、同captureのSM clock/電力で調べる。profile_only=true、gate条件・順序・serving構成を維持し、20/30/90の別passで全ACK後8秒、内側7秒を解析する。通常＋profileはround22でも793+217.203=1010.203秒で余裕9.797秒のみ。profile専用の予約866.339秒はREADY511、起動前30、旧profile217.203、未消化grace75.136、capture延長3、新coverage30秒で、1020秒まで153.661秒。Torch CPU profilerとosrt/backtraceを外し、NVMLをUTC/目標10Hz、Nsight countersは権限があれば1000Hzとする。実SQLiteとfixtureで回転24/24/24/22層周期、重複を除くkernel/copy union、API対応・gap候補・clock/power欠測を検証。旧40825417205の約124ms周期とNCCL-only約2.6–8.6msを再現し、既存kernel-summaryは完全一致。重い集計は回収後に実行する。150–250µs/周期以上の露出launch gapを確認したときだけgraphへ進み、未計上kernelが大きければ融合対象を選ぶ。電力・routing等の交絡を残し、未説明差をclockへ強制配分しない。GPU測定・投入は未実施。詳細は2026-11-02-pp4-profile-r24.md。tracker生成は実行していない。
+
+Round 24 結果（41423181527、Slurm 28300、c7804efb、profile 専用、prepack は P3 を選択）：
+- Prefill の周期の 98〜99% は kernel で、空白は約 0.45〜5.4 ms。launch の遅れは周期を決めておらず、CUDA graph は閉じる。
+- serving は 685〜691 W、SM 1410〜1455 MHz の電力上限に張り付く。単独 gate との 13〜16 ms の差は、主に clock と、数えていなかった MoE 入力 2.9、norm 1.5 ms。
+- 律速は worker 0、1 では PP0〜PP2。worker 2 では PP2（1410 MHz、113.6 ms）。PP3 は 1〜5.4 ms 空いているが、1 層は約 4.7 ms で、配分の変更では改善しない。
+- Decode の 1 step は 38.5 ms。MegaMoE 22.9、attention 7.3、dense 4.5、空白 0.66 ms。
+- **訂正：** round 22 の Decode greedy 融合は、語彙幅 152064 の決め打ち（実モデルは 151936）のため serving で一度も動いていない。10025.16、10024.51 は融合なしの score。
+- 解析 script の GPU 対応付けを CUDA 番号に直した。詳細は `2026-11-02-pp4-profile-r24.md`、要約は `pp4-profile-r24-prefill-summary-20261102.json`。

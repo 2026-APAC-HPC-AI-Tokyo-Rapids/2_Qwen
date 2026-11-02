@@ -4,6 +4,7 @@ set -euo pipefail
 runtime_dir=${1:?runtime directory required}
 framework=$(jq -er '.framework | select(. == "sglang" or . == "vllm")' "${runtime_dir}/source/firmus-framework.json")
 separate=$(jq -r '.framework == "sglang" and .workload == "official"' "${runtime_dir}/source/firmus-framework.json")
+lightweight=$(jq -r '.profile_only == true and .prefill.pp == 4' "${runtime_dir}/source/firmus-framework.json")
 client_log=${runtime_dir}/logs/aiperf.log
 if [[ "${separate}" == true ]]; then client_log=${runtime_dir}/logs/profile-aiperf.log; fi
 start_body=
@@ -36,7 +37,7 @@ start_requested=true
 pids=()
 count=0
 while IFS=$'\t' read -r name host port tp; do
-  if [[ "${separate}" == true ]]; then
+  if [[ "${separate}" == true && "${lightweight}" != true ]]; then
     mkdir -p "${runtime_dir}/profile/torch/${name}"
     start_body=$(jq -cn --arg output_dir "${runtime_dir}/profile/torch/${name}" '{activities:["CPU","CUDA_PROFILER"],output_dir:$output_dir,with_stack:false,record_shapes:false}')
   fi
@@ -57,7 +58,7 @@ if [[ "${framework}" == sglang && "${separate}" != true ]]; then
     sleep 1
   done
 else
-  sleep 5
+  if [[ "${lightweight}" == true ]]; then sleep 8; else sleep 5; fi
 fi
 stop_requested=true
 printf 'stop_requested utc=%s\n' "$(date -u +%FT%T.%NZ)"

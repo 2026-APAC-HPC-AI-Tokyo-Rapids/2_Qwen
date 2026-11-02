@@ -57,6 +57,7 @@ def main() -> None:
     args = parser.parse_args()
     config = json.loads((args.runtime / "source/firmus-framework.json").read_text())
     separate = config["framework"] == "sglang" and config.get("workload") == "official"
+    lightweight = separate and config.get("profile_only", False) and config.get("prefill", {}).get("pp") == 4
     results = {}
     summaries = {}
     endpoints = (args.runtime / "source/worker-endpoints.tsv").read_text().splitlines()
@@ -70,10 +71,13 @@ def main() -> None:
             subprocess.run(["/opt/nsys/bin/nsys", "export", "--type=sqlite", f"--output={database}", str(report)], check=True)
             results[name] = {"report": report.name, **validate_capture(database, int(tp))}
             summaries[name] = summarize_kernels(database)
+            if lightweight and name.startswith("prefill-"):
+                from analyze_prefill_profile import validate_runtime
+                results[name]["steady_capture"] = validate_runtime(args.runtime, name, database)
         finally:
             # Keep native reports only, including after a failed export or check.
             database.unlink(missing_ok=True)
-        if separate:
+        if separate and not lightweight:
             pp = config.get("prefill", {}).get("pp", 1) if name.startswith("prefill-") else 1
             results[name].update(validate_cpu_traces(args.runtime / "profile/torch" / name, int(tp) // pp, pp))
     if not endpoints or len(results) != len(endpoints):
