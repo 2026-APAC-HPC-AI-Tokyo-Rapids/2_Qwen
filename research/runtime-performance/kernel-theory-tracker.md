@@ -473,3 +473,13 @@ LはCPU admission合格、GPU未検証・serving未採用。PP4/EP1 T7988/H4096/
 2026-11-02 round 22：候補 A は Qwen EAGLE3 target verify の B44/46/48、Q4×152064 BF16 logits の cast・min-token penalty・全 vocab argmax の融合。LM head の全 GEMM/FLOP・NVLink は維持する。FP32 中間107〜117 MBの往復と毎stepのdense min-token生成を減らす。CUDA13.4 CPU compileはtile31/finish32 registers、spill0、C75xxなし、bit比較は共有C++ math対NumPy。source変更のfresh imageが必要、runtime dispatchは既定off。Pのgateと重ねず、Decode g4:4–7の4 GPUでbit一致・graph状態変更復帰・各10000回・両順複数blockで50µs以上を要求する。GPU未測定、0.10〜0.18msとscore+0〜10は条件付き。P3新規則は全84 cell中央値3µs、90%正、最悪−3µs、各orderの全cell中央値正。round17は14/84、round21は78/84のみでsingle/耐久欠測もあり、どちらも完全gateとして採用不可。欠測を補わない。詳細は2026-11-02-pp4-round22.md、CPU正本はdecode-greedy-cpu-validation-20261102.json。
 
 Round 22 GPU（41364635219、Slurm 28231、image c7804efb）：A は Decode 4 GPU で全 10 case 一致、10000 回耐久一致、B44/46/48 の 1 step を 0.12〜0.16 ms 短縮（272→134 µs など）して採用。公式 10025.16（P 単独の 8 run は 10002.75〜10020.58）。P3 は 84 cell 規則で 5 回中 2 回採用、採用 run の score は未取得（41359713062 は保管先障害で消失）。
+
+## 2026-11-02 round 23：V 専用 tile CTA writer W、CPU admission 棄却
+
+main7343357、通常Firmus PP4 P/greedy採用の41364635219・10025.16、image c7804efbを対照とする案。Q64/KV4/D128、既存7pair、代表3994+3994のBF16 V→同一E4M3 native image/paged V。Q/Kのsource body・CTA/lane/storeを保存し、Vだけ96token/head/request・256thread、shared24,576 B、各thread native128-bit store3回、同一launch内に分離する診断を作成。sourceの算術を粗くせず、contiguous V write/read8,179,712 B/層とpack launch1回を削る設計。native image4,128,768 B、BF16 V read8,179,712 B、paged V4,089,856 B、shared read/write16,515,072 Bは残る。FA3有効522,847,416,320 FLOP（tile込み535,881,056,256）・O・NVLink payloadは不変。writer FLOPの新たな厳密計数、実HBM/NVLink byte、GPU時間は未測定。
+
+CUDA13.4.92/sm90aの両index型は48 registers、stack/spill0、C75xxなし、CPU occupancy modelは旧/Wとも5CTA/SM。しかしstatic sharedが旧0→24,576 BとなりQ/K CTAにも予約され、shared非退行の必須条件を満たさない。WのQ/Kはencoded SASSも不一致（最初のnorm FMAのregister割当てが異なる）。旧writerとpack等13entryのencoded instruction/control wordは追加前後で一致。FA3 control/P/P3は今回再compileせず、production入力43ファイルのmainとのbyte一致を確認。実imageのCUDA13.0.88・GPUの証拠へ昇格させない。
+
+独立astra23/layout_census.pyの未変更copyで12,288座標とproduction C++ inverse/gatherを照合。7pair×元/変更2入力のnative全byte・padding・address tag、64token page/offset/page permutation/逆疎slot/slot0のpaged V計63ケースが一致。BF16全65,536patternは旧helper・旧lane repair・CUDA host NOSAT・独立RNEとbyte一致、mixed pair上位byteも全pattern検査。GPU byte/attention/scale/O/耐久・速度は未実行。
+
+同じlaneのscatter約17.4µsとlane変更約7.6µsの既棄却を再試験した案ではないが、同一launchのshared予約をVだけへ限定できず今回も先行棄却。gate/config/ID/build/image pinは追加・変更しない。P完全gate・P3規則・UUID集合集約は現行維持、W+P3の実行経路なし。W追加時間0秒、round22実793秒に対し17分まで227秒という観測上の余裕。2〜5µs/層、約+4〜11tok/sはadmission前の条件付き計画値で、今回の利得ではない。詳細は `2026-11-02-prefill-v-writer-r23.md`、CPU正本は `prefill-v-writer-r23-cpu-validation-20261102.json`。生成済みtrackerの既存記述は書き換えず手で追記した。
