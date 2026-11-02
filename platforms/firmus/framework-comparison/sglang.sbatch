@@ -112,7 +112,7 @@ trap 'exit 143' TERM
 if [[ "${PROFILE}" == true ]]; then
   "${ROOT}/nsys/bin/nsys" --version >"${ROOT}/profile/nsys-version.txt"
   printf 'Separate normal benchmark (60/120/30), then the same serving configuration with a profile-only client (20/30/90). Capture starts five seconds into the profiling phase and lasts five seconds after all start acknowledgements. CUDA graph nodes and Torch CPU stage spans cover every TP rank. Exclude start/stop/export tails; profile/client is not an adoption score. The normal pass has tracing disabled, but uses the Nsight launcher.\n' >"${ROOT}/profile/interpretation.txt"
-  if [[ "${profile_only}" == true ]]; then printf 'Profile-only recovery: ordinary benchmark is omitted. No new official score. Client uses 20/30/90 seconds; capture is instrumented.\n' >"${ROOT}/profile/interpretation.txt"; fi
+  if [[ "${profile_only}" == true && "${prefill_pp}" == 4 ]]; then printf 'Profile-only PP4: ordinary benchmark is omitted; no new official score. Client 20/30/90; CUDA_PROFILER only. Start 5 s after profiling phase begins, capture 8 s after all ACKs; analyze the inner 7 s. NVML SM clock/power at target 10 Hz with UTC timestamps, Nsight GPU counters at 1000 Hz if permitted.\n' >"${ROOT}/profile/interpretation.txt"; elif [[ "${profile_only}" == true ]]; then printf 'Profile-only recovery: ordinary benchmark omitted; no new score. Client 20/30/90.\n' >"${ROOT}/profile/interpretation.txt"; fi
   if (( routing_capture_samples > 0 )); then printf 'Prefill routing capture copies physical top-8 to the host during the separate profile pass. These Nsight timings contain routing copy overhead and must not be used for performance adoption.\n' >>"${ROOT}/profile/interpretation.txt"; fi
 fi
 for worker in 0 1; do printf 'prefill-%s\t%s\t%s\t4\n' "${worker}" "${HEAD_IP}" "$((30100 + worker))"; done >"${ROOT}/source/worker-endpoints.tsv"
@@ -202,7 +202,8 @@ else
   command+=(--dist-init-addr "127.0.0.1:29000")
 fi
 if [[ -x /opt/nsys/bin/nsys ]]; then
-  runtime_dir=$(dirname "$(dirname "$0")")
+  # Record logical PP order after the power-cap GPU reorder; NVML UUIDs are not Nsight export UUIDs.
+  for device in ${CUDA_VISIBLE_DEVICES//,/ }; do nvidia-smi --id="${device}" --query-gpu=uuid,pci.bus_id --format=csv,noheader; done >"${runtime_dir}/profile/gpu-map-${name}.csv"
   export QWEN_PROFILER_NSYS_BIN=/opt/nsys/bin/nsys
   export QWEN_PROFILER_INVOCATION_PATH="${runtime_dir}/profile/nsys-${name}.argv"
   command=(bash "${runtime_dir}/scripts/exec-profiler.sh" "${command[@]}")
@@ -212,8 +213,10 @@ EOF
 
 # One low-frequency NVML query process per node, outside the serving workers.
 # Explicit GPU UUIDs identify all eight GPUs on each node without rank duplication.
+telemetry_interval=(--loop=1)
+if [[ "${PROFILE}" == true ]]; then telemetry_interval=(--loop-ms=100); fi
 for host in "${HEAD}" "${TAIL}"; do
-  srun --overlap --exact -N1 -n1 -w "${host}" --gres=gpu:8 --cpus-per-task=1 nvidia-smi --query-gpu=timestamp,index,uuid,power.draw,clocks.sm,clocks.mem,clocks_throttle_reasons.active,temperature.gpu --format=csv --loop=1 >"${ART}/gpu-telemetry-${host}.csv" 2>"${ART}/gpu-telemetry-${host}.stderr.log" &
+  srun --overlap --exact -N1 -n1 -w "${host}" --gres=gpu:8 --cpus-per-task=1 env TZ=UTC nvidia-smi --query-gpu=timestamp,index,uuid,power.draw,clocks.sm,clocks.mem,clocks_throttle_reasons.active,temperature.gpu --format=csv "${telemetry_interval[@]}" >"${ART}/gpu-telemetry-${host}.csv" 2>"${ART}/gpu-telemetry-${host}.stderr.log" &
   telemetry_pids+=("$!")
 done
 

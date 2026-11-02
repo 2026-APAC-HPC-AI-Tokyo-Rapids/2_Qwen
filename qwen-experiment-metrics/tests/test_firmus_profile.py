@@ -18,9 +18,9 @@ VALIDATE = runpy.run_path(str(ROOT / "scripts/validate-firmus-profile.py"))["val
 SUMMARY = runpy.run_path(str(ROOT / "scripts/summarize-firmus-run.py"))["summarize"]
 
 
-@pytest.mark.parametrize("framework,separate", [("sglang", False), ("vllm", False), ("sglang", True)])
+@pytest.mark.parametrize("framework,separate,lightweight", [("sglang", False, False), ("vllm", False, False), ("sglang", True, False), ("sglang", True, True)])
 @pytest.mark.parametrize("failure", [None, "start", "stop"])
-def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None, framework: str, separate: bool) -> None:
+def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, failure: str | None, framework: str, separate: bool, lightweight: bool) -> None:
     requests = []
     request_lock = threading.Lock()
 
@@ -42,7 +42,7 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     thread.start()
     for directory in ("logs", "source", "profile", "bin"):
         (tmp_path / directory).mkdir()
-    (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"framework": framework, "workload": "official" if separate else "reference-07"}))
+    (tmp_path / "source/firmus-framework.json").write_text(json.dumps({"framework": framework, "workload": "official" if separate else "reference-07", "profile_only": lightweight, "prefill": {"pp": 4 if lightweight else 1}}))
     workers = [(f"prefill-{n}", 2) for n in range(6 if separate else 4)] + [(f"decode-{n}", 4) for n in range(1 if separate else 2)]
     (tmp_path / "source/worker-endpoints.tsv").write_text("".join(f"{name}\t127.0.0.1\t{server.server_port}\t{tp}\n" for name, tp in workers))
     (tmp_path / "logs/aiperf.log").write_text("Phase profiling (profiling) started\n")
@@ -60,13 +60,13 @@ def test_capture_stops_every_worker_even_after_partial_start(tmp_path: Path, fai
     assert [path for path, _, _ in requests].count("/start_profile") == len(workers)
     assert [path for path, _, _ in requests].count("/stop_profile") == len(workers)
     expected_body = {"activities": ["CUDA_PROFILER"]} if framework == "sglang" else None
-    if separate:
+    if separate and not lightweight:
         bodies = [body for path, body, _ in requests if path == "/start_profile"]
         assert {body["output_dir"] for body in bodies} == {str(tmp_path / "profile/torch" / name) for name, _ in workers}
         assert all(body["activities"] == ["CPU", "CUDA_PROFILER"] and body["with_stack"] is False and body["record_shapes"] is False for body in bodies)
     else:
         assert all(body == expected_body for path, body, _ in requests if path == "/start_profile")
-    expected_sleeps = (["1"] if separate else []) + (["5"] if failure == "start" else ["5", "1" if framework == "sglang" and not separate else "5"])
+    expected_sleeps = (["1"] if separate else []) + (["5"] if failure == "start" else ["5", "1" if framework == "sglang" and not separate else "8" if lightweight else "5"])
     assert (tmp_path / "sleeps").read_text().splitlines() == expected_sleeps
     if framework == "sglang" and not separate and failure != "start":
         assert all(complete for path, _, complete in requests if path == "/stop_profile")
@@ -226,6 +226,10 @@ def test_full_profile_summary_keeps_normal_latency_and_actual_topology(tmp_path:
 
 
 def test_sglang_nsys_launch_preserves_uninstrumented_worker_arguments(tmp_path: Path) -> None:
+    (tmp_path / "profile").mkdir()
+    smi = tmp_path / "nvidia-smi"
+    smi.write_text("#!/bin/bash\nprintf 'GPU-fixture, 00000000:01:00.0\\n'\n")
+    smi.chmod(0o755)
     (tmp_path / "source").mkdir()
     (tmp_path / "source/decode-kernels.env").write_text("")
     (tmp_path / "scripts").mkdir()
@@ -242,13 +246,14 @@ def test_sglang_nsys_launch_preserves_uninstrumented_worker_arguments(tmp_path: 
     path = tmp_path / "source/worker.sh"
     path.write_text(launch)
     args = ["bash", str(path), "decode-0", "30200", "/model", "4", "192.0.2.1", "--speculative-algorithm", "EAGLE3"]
-    environment = {**os.environ, "ARGV_RECORD": str(tmp_path / "argv")}
+    environment = {**os.environ, "ARGV_RECORD": str(tmp_path / "argv"), "PATH": f"{tmp_path}:{os.environ['PATH']}", "CUDA_VISIBLE_DEVICES": "0,1,2,3"}
     subprocess.run(args, env=environment, check=True)
     baseline = (tmp_path / "argv").read_text().rstrip("\0").split("\0")
     nsys.write_text(stub)
     nsys.chmod(0o755)
     subprocess.run(args, env=environment, check=True)
     instrumented = (tmp_path / "argv").read_text().rstrip("\0").split("\0")
+    assert len((tmp_path / "profile/gpu-map-decode-0.csv").read_text().splitlines()) == 4
     assert "--trace-fork-before-exec=true" in instrumented and "--cuda-graph-trace=node" in instrumented
     assert instrumented[instrumented.index(str(python)) + 1:] == baseline
 
@@ -266,6 +271,9 @@ def test_nsys_wrapper_preserves_launch_arguments(tmp_path: Path, counter_access:
     argv = (tmp_path / "argv").read_text().rstrip("\0").split("\0")
     assert "--capture-range=cudaProfilerApi" in argv and "--capture-range-end=stop" in argv
     assert "--cuda-graph-trace=node" in argv and "--sample=none" in argv
+    assert "--trace=cuda,nvtx" in argv and "--cuda-trace-all-apis=false" in argv
+    assert "--trace=cuda,nvtx,osrt" not in argv
+    assert (tmp_path / "decode.nsys-command.argv").is_file()
     assert argv[-5:] == ["/opt/python", "-m", "sglang.launch_server", "--port", "30200"]
     assert ("--gpu-metrics-devices=cuda-visible" in argv) is counter_access
     assert ("--gpu-metrics-frequency=1000" in argv) is counter_access
