@@ -112,10 +112,12 @@ def test_overlay_is_pp4_only_and_defaults_to_pre_dispatch():
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
     # Only the FP32 Q/K norm writer, the one-pass MoE input (pinned by prepare-firmus-pp4-settings.py),
     # and the Decode MoE input overlay, which extends this one to TARGET_VERIFY, follow it.
-    assert pp4["sglang_overlay_patches"][-5] == "patches/sglang/prefill-moe-input.patch"
-    assert pp4["sglang_overlay_patches"][-2] == "patches/sglang/decode-moe-input.patch"
+    overlays=pp4["sglang_overlay_patches"]
+    start=overlays.index("patches/sglang/prefill-moe-input.patch")
+    assert overlays[start] == "patches/sglang/prefill-moe-input.patch"
+    assert overlays[start+3] == "patches/sglang/decode-moe-input.patch"
     # The FA3 varlen overlay touches other files; it stays right before this one.
-    assert pp4["sglang_overlay_patches"][-7:-5] == ["patches/sglang/prefill-fa3-varlen.patch", "patches/sglang/prefill-fa3-pair.patch"]
+    assert overlays[start-2:start] == ["patches/sglang/prefill-fa3-varlen.patch", "patches/sglang/prefill-fa3-pair.patch"]
     assert "patches/sglang/prefill-moe-input.patch" not in main["sglang_overlay_patches"]
     patch = (ROOT / "patches/sglang/prefill-moe-input.patch").read_text()
     assert '+_PREFILL_MOE_INPUT = os.environ.get("SGLANG_PREFILL_MOE_INPUT", "control")' in patch
@@ -128,7 +130,9 @@ def test_overlay_is_pp4_only_and_defaults_to_pre_dispatch():
 def test_qknorm_and_onepass_overlays_are_pp4_only_and_default_to_control():
     pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())
-    assert pp4["sglang_overlay_patches"][-4:-1] == ["patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-moe-input-onepass.patch", "patches/sglang/decode-moe-input.patch"]
+    overlays=pp4["sglang_overlay_patches"]
+    start=overlays.index("patches/sglang/prefill-qknorm-fp32.patch")
+    assert overlays[start:start+3] == ["patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-moe-input-onepass.patch", "patches/sglang/decode-moe-input.patch"]
     assert pp4["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
     for patch in ("patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-moe-input-onepass.patch"):
         assert patch not in main["sglang_overlay_patches"]

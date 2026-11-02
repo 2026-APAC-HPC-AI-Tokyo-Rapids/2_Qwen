@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 PINNED_SOURCE = "fc275674a97d78553b22597ee72c8fd48f5420f4"
-PINNED_IMAGE = "5a3df8c485a5ac939761b07a9ca82d7c38d864200250591ec6d9485dba778bb2"
+PINNED_IMAGE = "c7804efb3180440281a2ec1ebcff19a092786641abbcf6d70b76f9777f565bff"
 
 
 def sha256(path):

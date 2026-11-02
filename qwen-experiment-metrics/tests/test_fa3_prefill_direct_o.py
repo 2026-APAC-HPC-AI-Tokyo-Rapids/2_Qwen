@@ -51,7 +51,11 @@ def test_direct_output_candidate_differs_from_n192_only_by_the_output_bit():
     base = rows[row['bitwise_reference']]
     assert row['variant'] == base['variant'] | 32 and not base['variant'] & 32
     assert (row['block_n'], row['byte_image'], row['bitwise']) == (base['block_n'], base['byte_image'], base['bitwise'])
-    assert {name for name, r in rows.items() if 'bitwise_reference' in r} == {'n192-direct-o', 'n192-varlen', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe'}
+    assert {name for name, r in rows.items() if 'bitwise_reference' in r} == {'n192-direct-o', 'n192-varlen', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe', 'm192n96-direct-o-varlen-pipe-native-v3'}
+    p3 = rows['m192n96-direct-o-varlen-pipe-native-v3']
+    p = rows[p3['bitwise_reference']]
+    assert p3['variant'] == p['variant'] | 131072 and not p['variant'] & 131072
+    assert (p3['block_n'], p3['native_v_n'], p3['byte_image']) == (p['block_n'], p['native_v_n'], p['byte_image'])
     for name, bit in (('n192-varlen', 64), ('n192-direct-o-varlen', 96)):
         assert rows[name]['varlen'] and rows[name]['variant'] == bit and rows[name]['bitwise_reference'] == 'n192'
         assert (rows[name]['block_n'], rows[name]['byte_image']) == (192, False)
