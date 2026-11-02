@@ -1238,5 +1238,293 @@
       "routing_capture": "incomplete, 15 s bound",
       "official_score": 9959.45
     }
+  },
+  "prefill_v_writer_r23": {
+    "date": "2026-11-02",
+    "status": "rejected at CPU admission; no W gate, config, candidate ID, production source or build input added",
+    "note": "2026-11-02-prefill-v-writer-r23.md",
+    "cpu_evidence": "prefill-v-writer-r23-cpu-validation-20261102.json",
+    "source_base": "7343357",
+    "image_base": "c7804efb, CUDA 13.0.88",
+    "control_official_run": "41364635219",
+    "control_official_score": 10025.15858,
+    "shape": {
+      "tokens": 7988,
+      "requests": 2,
+      "q_heads": 64,
+      "kv_heads": 4,
+      "head_dim": 128,
+      "v_tile_tokens": 96,
+      "v_threads": 256
+    },
+    "dtype": "BF16 V input to byte-identical E4M3 native image and paged V; original FP32 Q/K norm and RoPE source order",
+    "attention_effective_flops_per_layer_unchanged": 522847416320,
+    "attention_tile_flops_per_layer_unchanged": 535881056256,
+    "writer_flops_per_layer": null,
+    "removed_contiguous_v_logical_global_bytes_per_layer": 8179712,
+    "retained_v_bf16_logical_global_read_bytes_per_layer": 8179712,
+    "retained_paged_v_logical_global_write_bytes_per_layer": 4089856,
+    "retained_native_image_logical_global_write_bytes_per_layer": 4128768,
+    "retained_v_logical_shared_read_write_bytes_per_layer": 16515072,
+    "removed_pack_launches_per_layer": 1,
+    "hbm_bytes": null,
+    "nvlink_bytes": null,
+    "nvlink_payload_change": "none by design; measured transfer volume unknown",
+    "cpu_admission": {
+      "toolchain": "CUDA 13.4.92, sm_90a; substitute evidence only",
+      "registers_old_and_W": 48,
+      "stack_and_spill_bytes": 0,
+      "C75xx": false,
+      "static_shared_old_bytes": 0,
+      "static_shared_W_bytes": 24576,
+      "occupancy_model_old_and_W_ctas_per_sm": 5,
+      "QK_encoded_sass_equal": false,
+      "unchanged_jit_and_pack_sass_entries": 13,
+      "fa3_control_P_P3_recompiled": false,
+      "production_inputs_equal_to_main": 43,
+      "BF16_bit_patterns_byte_equal": 65536,
+      "layout_bijection_coordinates": 12288,
+      "native_inputs_including_two_changed_replays": 21,
+      "paged_V_cases": 63,
+      "rejection": "Same-launch static shared is reserved by every Q/K CTA even though only V executes shared instructions. Shared non-regression fails; diagnostic W also changes Q/K encoded SASS."
+    },
+    "prior_rejections": "scatter writer about 17.4 us slower, lane-change writer about 7.6 us slower; W changes V tile/CTA and coalesces stores, but fails its own resource admission",
+    "pre_admission_conditional_estimate": {
+      "writer_plus_pack_minus_writer_budget_us": 5.261,
+      "saving_us_per_layer": [2, 5],
+      "score_gain_toks": [4, 11],
+      "interpretation": "planning scenario only, not a measured or adopted gain"
+    },
+    "W_added_gate_seconds": 0,
+    "round22_observed_job_seconds": 793,
+    "allocation_seconds": 1020,
+    "observed_headroom_seconds": 227,
+    "gpu_byte_equal": null,
+    "composite_kernel_us": null,
+    "official_score": null
+  },
+  "prefill_v_writer_r23_revised": {
+    "date": "2026-11-02",
+    "status": "rejected at the GPU composite gate in round 23: byte-equal to P on all 12 Prefill GPUs at 3994+3994, but 2.95-5.34 us slower per composite call on every GPU and order (pooled median 3.86 us slower)",
+    "historical_rejection": "prefill_v_writer_r23; original note and CPU JSON retained",
+    "note": "2026-11-02-prefill-v-writer-r23.md",
+    "cpu_evidence": "prefill-v-writer-r23-revised-cpu-validation-20261102.json",
+    "source_base": "7343357",
+    "image_base": "c7804efb, CUDA 13.0.88",
+    "shape": {
+      "tokens": 7988,
+      "requests": 2,
+      "q_heads": 64,
+      "kv_heads": 4,
+      "head_dim": 128,
+      "v_tile_tokens": 96,
+      "v_threads": 256
+    },
+    "dtype": "BF16 V input to byte-identical E4M3 native image and paged V; original FP32 Q/K norm and RoPE source order",
+    "attention_effective_flops_per_layer_unchanged": 522847416320,
+    "attention_tile_flops_per_layer_unchanged": 535881056256,
+    "writer_flops_per_layer": null,
+    "removed_contiguous_v_logical_global_bytes_per_layer": 8179712,
+    "retained_v_bf16_logical_global_read_bytes_per_layer": 8179712,
+    "retained_paged_v_logical_global_write_bytes_per_layer": 4089856,
+    "retained_native_image_logical_global_write_bytes_per_layer": 4128768,
+    "retained_v_logical_shared_read_write_bytes_per_layer": 16515072,
+    "removed_pack_launches_per_layer": 1,
+    "hbm_bytes": null,
+    "nvlink_bytes": null,
+    "nvlink_payload_change": "none by design; measured volume unknown",
+    "cpu_admission": {
+      "toolchain": "CUDA 13.4.92 / sm_90a, substitute for image 13.0.88",
+      "QK_precision_contract": "same forceinline source body and same translation unit/compile flags; GPU bytes required separately",
+      "registers_old_and_W": 48,
+      "W_stack_spill_bytes": 0,
+      "W_static_shared_bytes": 24576,
+      "occupancy_CTA_per_SM": 5,
+      "limiting_resource": "registers: 5; threads: 8; shared old/W: 228/9; architecture blocks:32",
+      "old_writer_JIT_pack_encoded_equal_entries_per_flag_set": 13,
+      "FA3_control_P_P3_recompiled_encoded_equal_to_round17": true,
+      "BF16_patterns_byte_equal": 65536,
+      "layout_bijection_coordinates": 12288,
+      "native_inputs_including_changed_replays": 21,
+      "paged_V_cases": 63
+    },
+    "gate": {
+      "config": "prefill.fa3_v_writer_gate=false",
+      "baseline": "P, FA3 row ID15 variant41184",
+      "P3": "W+P3 not measured or served; W passes -> W+P, refusal -> retain already published P3/P",
+      "prerequisite": "complete all-GPU P/P3 aggregation and publish before independent W process group",
+      "GPUs": 12,
+      "pairs": 7,
+      "representative_saving_us_each_order_and_pooled": 2,
+      "maximum_regression_us_each_cell_order_and_pooled": 1,
+      "forward_reverse_group_medians": "strictly positive across 84 cells",
+      "byte_comparisons": [
+        "Q",
+        "K",
+        "paged_K",
+        "paged_V",
+        "native_V_image",
+        "attention",
+        "scale",
+        "O"
+      ],
+      "inputs": "original plus two changed inputs; forward and reverse replay with separately poisoned outputs",
+      "endurance_calls": 1200,
+      "worker_seconds": 95,
+      "aggregate_wall_seconds": 100,
+      "uuid_identity": "set equality against prior P selection",
+      "timeout": "keep prior env byte-for-byte and continue serving"
+    },
+    "time": {
+      "conditional_estimated_added_seconds": [
+        60,
+        75
+      ],
+      "maximum_added_gate_seconds": 100,
+      "round22_observed_READY_seconds": 511,
+      "round22_observed_job_seconds": 793,
+      "conditional_READY_seconds": [
+        571,
+        586
+      ],
+      "conditional_job_seconds": [
+        853,
+        868
+      ],
+      "observed_job_plus_new_gate_cap_seconds": 893,
+      "allocation_seconds": 1020,
+      "observed_headroom_after_gate_cap_seconds": 127,
+      "start_condition": "1020 - SECONDS >= 100 + 90 + 660; otherwise skip W"
+    },
+    "conditional_only_estimate": {
+      "writer_plus_pack_minus_writer_budget_us": 5.261,
+      "saving_us_per_layer": [
+        2,
+        5
+      ],
+      "score_gain_toks": [
+        4,
+        11
+      ],
+      "interpretation": "planning scenario only, not a measured or adopted gain"
+    },
+    "gpu_run": {
+      "actions_run": "41397522107 attempt 3",
+      "slurm_job": 28275,
+      "source_commit": "55bdd8b",
+      "image_sha256": "bfc842dbce68ba1e0b19aafa010e2843de3954d93055251d245d27097d00562f",
+      "gate_run_id": "28275-1793607445",
+      "fatal": "AssertionError: 3994+3994: W regression exceeds 1 us against P",
+      "shapes_not_reached": "the other six pairs, singles and the 1200-call endurance did not run because every rank stopped at the first shape",
+      "gate_seconds_from_job_start": [
+        250,
+        316
+      ],
+      "ready_seconds": 602,
+      "slurm_seconds": 885,
+      "raw": "/srv/qwen-artifacts/41397522107/3/results/results/prefill-fa3-v-writer/"
+    },
+    "gpu_byte_equal": {
+      "3994+3994": "Q/K, paged K/V, native V image, attention, scale and O byte-equal to P on all 12 GPUs in both orders; contiguous V untouched"
+    },
+    "composite_kernel_us": {
+      "shape": "3994+3994",
+      "definition": "P composite minus W composite; positive means W faster",
+      "per_gpu": [
+        {
+          "worker": "prefill-0",
+          "rank": 0,
+          "p_median_us": 1167.3,
+          "saving_median_forward_us": -4.32,
+          "saving_median_reverse_us": -4.64
+        },
+        {
+          "worker": "prefill-0",
+          "rank": 1,
+          "p_median_us": 1147.35,
+          "saving_median_forward_us": -4.79,
+          "saving_median_reverse_us": -3.77
+        },
+        {
+          "worker": "prefill-0",
+          "rank": 2,
+          "p_median_us": 1155.4,
+          "saving_median_forward_us": -4.12,
+          "saving_median_reverse_us": -2.95
+        },
+        {
+          "worker": "prefill-0",
+          "rank": 3,
+          "p_median_us": 1183.35,
+          "saving_median_forward_us": -4.41,
+          "saving_median_reverse_us": -4.22
+        },
+        {
+          "worker": "prefill-1",
+          "rank": 0,
+          "p_median_us": 1153.5,
+          "saving_median_forward_us": -3.49,
+          "saving_median_reverse_us": -3.11
+        },
+        {
+          "worker": "prefill-1",
+          "rank": 1,
+          "p_median_us": 1145.83,
+          "saving_median_forward_us": -4.16,
+          "saving_median_reverse_us": -3.64
+        },
+        {
+          "worker": "prefill-1",
+          "rank": 2,
+          "p_median_us": 1163.31,
+          "saving_median_forward_us": -3.42,
+          "saving_median_reverse_us": -3.91
+        },
+        {
+          "worker": "prefill-1",
+          "rank": 3,
+          "p_median_us": 1144.58,
+          "saving_median_forward_us": -3.4,
+          "saving_median_reverse_us": -3.02
+        },
+        {
+          "worker": "prefill-2",
+          "rank": 0,
+          "p_median_us": 1169.9,
+          "saving_median_forward_us": -3.37,
+          "saving_median_reverse_us": -4.41
+        },
+        {
+          "worker": "prefill-2",
+          "rank": 1,
+          "p_median_us": 1179.6,
+          "saving_median_forward_us": -5.34,
+          "saving_median_reverse_us": -3.79
+        },
+        {
+          "worker": "prefill-2",
+          "rank": 2,
+          "p_median_us": 1188.28,
+          "saving_median_forward_us": -3.7,
+          "saving_median_reverse_us": -4.45
+        },
+        {
+          "worker": "prefill-2",
+          "rank": 3,
+          "p_median_us": 1180.19,
+          "saving_median_forward_us": -4.63,
+          "saving_median_reverse_us": -4.15
+        }
+      ],
+      "pooled_median_forward_us": -3.99,
+      "pooled_median_reverse_us": -3.85,
+      "pooled_median_us": -3.86
+    },
+    "official_score": {
+      "value": 10024.51,
+      "eligible": true,
+      "configuration": "P plus Decode greedy fusion; W not adopted and P3 rejected in the same run",
+      "note": "not a W score"
+    }
   }
 }
