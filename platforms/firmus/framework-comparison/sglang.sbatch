@@ -352,6 +352,7 @@ fi
 
 # Round 28 gate begin: after greedy, before serving model startup.
 # Three four-GPU workers run concurrently; one 100 s reservation for the bundle.
+# Candidates and evidence: research/runtime-performance/2026-11-03-prefill-small-bundle-r28.md.
 if [[ "${prefill_pp}" == 4 ]] && jq -e '.prefill | .gemm_tail_split_gate or .fa3_pair_global_order_gate or .norm_store_pair_gate' "${ROOT}/source/firmus-framework.json" >/dev/null; then
   mkdir -p "${ROOT}/results/prefill-r28"
   if (( SECONDS + 100 + 660 <= 1020 )); then
