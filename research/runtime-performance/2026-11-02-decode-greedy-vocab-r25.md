@@ -38,9 +38,17 @@ gateは --model-path のconfig.jsonから語彙を読み、torchrunへ同じpath
 
 CPUのchain helperでもaccept index/length/bonusと復帰を比較したが、公式GPU verifyの実行ではない。実patchのdispatch・各1回のfallback/使用log、model config読込、gate集約/拒否、shell timeout/予算、ordered overlayとLM head/verify不変も514件に含まれる。数値正本は `decode-greedy-vocab-r25-cpu-validation-20261103.json`、rawのXML/logは指定scratchに保存する。
 
-CUDA13.4/sm_90aのcompile/SASSと、CIと同形の全体pytest/ruffの完走結果は次の区切りで追記する。
+CUDA13.4/sm_90aの全TU compile/SASS比較は継続中。greedyの2kernelはcompile成功、stack/spill 0、C75xxなし。最終比較とraw保存の結果を次の区切りで追記する。
 
 imageのCUDAは13.0.88。CPUのCUDA13.4 compileは代わりの証拠にすぎず、image build・link/load・実GPUの精度/性能・通常servingの公式結果は未確認。
+
+## CI と同じ全体 suite と ruff
+
+repo直下、CPython 3.13.12、NumPy 2.5.4、pytest 9.1.1、TMPDIR未設定（既定 `/tmp`）、一時pluginなしで次を実行し、**1939 passed、90 skipped、exit 0**。quiet出力の2029個の結果markerと別の収集一覧2029件を照合した。514件のDecode greedy検査は全件実行され、skipしていない。
+
+`uv run --project qwen-experiment-metrics --with 'numpy>=1.26,<3' --with pytest python -m pytest -q -p no:cacheprovider qwen-experiment-metrics/tests`
+
+`uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers` は `All checks passed!`、exit 0。変更したsbatchのbash構文、Python AST、git whitespace検査も成功。rawは指定scratchの `pytest-ci-final.log`、`pytest-collection.log`、`ruff-final.log`。前回の未完走logを成功の証拠として再利用していない。
 
 ## 次の投入と見込み
 
