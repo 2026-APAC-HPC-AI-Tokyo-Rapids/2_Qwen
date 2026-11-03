@@ -98,3 +98,30 @@ r24 の norm 呼出は stage ごと21〜24回、約1.36〜1.50 ms/周期。既�
 対象testは候補ごとの独立採否、12GPU fixture、byte/component欠落、FP64誤差、両順全shape、greedy順/予算、config、off SASS、once log、実prepare/provisionを含む。最終のraw log/exitは指定scratchの `pytest-complete.log` / `pytest-complete.exit`、`ruff-final.log` / `ruff-final.exit`、集約は `test-results.json`。
 
 GPU測定・scoreは未実施。新しいPJM/Slurm/Actionsジョブは作っていない。他 branch/main/mirror や既存ジョブは変更・停止していない。CPU用 source/cubin/cache は指定 `codex-scratch/r27` 内で作成し、raw source/cubin/SASS/ptxas log/再現scriptを `round27-cpu-proof-20261103.tar.gz` に保存した。SHA256 は `d789af6ef07705552b6c28b6faa053d78ed0e0b5bb9c10c37a910a321a54604a`、tar生成・gzip検査とも終了コード0。作業用の展開 source/cubin/cache、診断/編集補助script、今回生成したworktreeのvenv/bytecode/cacheを削除し、archive・検証log・終了コードを残した。`kernel-theory-model.json` は変更していない。
+
+## GPU結果（run 41622902468、Slurm 28534、commit e5aa4f0）
+
+- **image：** fresh build `d3cd43073ae4d61d2b6eb000bc475e94e282b0c524268e4c282bb55449e0610d`（未pin）。
+- **予算：** Decode greedy gateが先に終わり（rank 0の終了はepoch 1793709028、r27 gateの開始は1793709061）、採用された。servingでも4 rankが融合kernelを使った。r27 gateはその後に始まり、jobは910秒、READYは614秒で収まった。
+- **A（polling backoff 64 ns）：** 12 GPUのすべてで、全case・中間のbyte一致と1200回の耐久は合格した。しかし全GPUで遅くなった：
+
+| case | 遅くなった幅（12 GPU） |
+|---|---|
+| historical | +1.10〜+2.26% |
+| hot | +1.01〜+2.17% |
+| balanced | +0.55〜+2.54% |
+
+  待ちの多くは短く、64 nsの睡眠が到着の検知を遅らせる。そのコストが、電力の節約による clock の上昇を上回った。不採用。
+- **B（norm二乗和のFMA）：** 11 GPUで精度は非退行だった。最大誤差は同じかそれ以下で、7988行のFP8 code数は現行に対して−1〜+9（許容の範囲内）。しかし全shapeで遅くなった：
+
+| 行数 | 遅くなった幅 |
+|---|---|
+| 7988 | +0.64〜+0.76% |
+| 7989 | +1.2〜+1.5% |
+| 3994 | +1.35〜+1.62% |
+| 2049 | +3.3〜+4.3% |
+
+  命令は減ったが、Tritonの`tl.fma`の累積でloopが直列の依存鎖になり、命令の並列度が落ちたとみる（SASSでの確認はしていない）。不採用。
+- **g1のtimeout：** prefill-0 rank 3のnorm gateで、home（BeeGFS）上のTriton cacheの`__triton_launcher...so`が `ImportError`（ENOENT）になった。そのworkerは90秒で打ち切られ、`workers_ok=false` になった。速度の結果が明確なので採否には影響しないが、gateでTritonを使うなら、`TRITON_CACHE_DIR` をnode-localにする必要がある（numeric gateで以前に起きた問題と同じ）。
+- **serving：** 現行の経路（greedy融合あり）で、公式score **10021.06**（eligible、good 98.20%）。round 25の10021.60と同じ構成で、ほぼ同じ値になった。
+- **結論：** 電力の観点から挙がった2候補は、どちらも実時間を悪化させた。電力上限下でも、待ちの電力の節約や命令数の削減は clock の上昇として現れず、latency と依存鎖の悪化が勝った。branchはremoteに残し、mainには文書だけを記録する。
