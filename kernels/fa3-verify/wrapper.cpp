@@ -1,5 +1,6 @@
 #include <ATen/ATen.h>
 #include <cmath>
+#include <climits>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -222,9 +223,9 @@ void greedy_argmax(const at::Tensor& logits,const at::Tensor& stops,const at::Te
     c10::cuda::CUDAGuard guard(logits.device());
     TORCH_CHECK(logits.is_cuda() && logits.scalar_type()==at::kBFloat16 && logits.dim()==2 && logits.stride(1)==1, "greedy BF16 logits");
     const auto rows=logits.size(0), vocab=logits.size(1), b=rows/4, chunks=(vocab+4095)/4096;
-    TORCH_CHECK(rows>=4 && rows<=192 && rows%4==0 && vocab==152064, "greedy Qwen Q4 shape");
+    TORCH_CHECK(rows>=4 && rows<=192 && rows%4==0 && vocab>0 && vocab<=INT_MAX-4095 && logits.stride(0)>=vocab && logits.stride(0)<=INT_MAX, "greedy B1..48 Q4 shape and int32 vocab/stride");
     tensor(stops,logits,at::kLong); tensor(minimum,logits,at::kInt); tensor(lengths,logits,at::kInt); tensor(partial,logits,at::kByte); tensor(out,logits,at::kLong);
-    TORCH_CHECK(stops.dim()==2 && stops.size(0)==b && minimum.numel()==b && lengths.numel()==b && partial.numel()==rows*chunks*8 && out.numel()==rows, "greedy buffers");
+    TORCH_CHECK(stops.dim()==2 && stops.size(0)==b && stops.numel()<=INT_MAX && minimum.numel()==b && lengths.numel()==b && partial.numel()==rows*chunks*8 && out.numel()==rows, "greedy buffers");
     greedy_verify_launch(logits.data_ptr(),rows,logits.stride(0),vocab,stops.data_ptr<long>(),stops.size(1),minimum.data_ptr<int>(),lengths.data_ptr<int>(),penalty,sanitize,partial.data_ptr(),out.data_ptr<long>(),at::cuda::getCurrentCUDAStream());
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }

@@ -1,14 +1,13 @@
 diff --git a/python/sglang/srt/layers/logits_processor.py b/python/sglang/srt/layers/logits_processor.py
 --- a/python/sglang/srt/layers/logits_processor.py
 +++ b/python/sglang/srt/layers/logits_processor.py
-@@ -863,6 +863,17 @@
+@@ -863,6 +863,16 @@
          logits_buffer = logits_metadata.next_token_logits_buffer if use_buffer else None
          if logits.shape[-1] > self.vocab_size:
              logits = logits[:, : self.vocab_size]
-+        from sglang.srt.speculative.greedy_verify import enabled
-+        native = (enabled() and logits_metadata.forward_mode.is_target_verify()
-+                  and logits.is_cuda and logits.dtype == torch.bfloat16
-+                  and self.vocab_size == 152064 and not self.final_logit_softcapping)
++        from sglang.srt.speculative.greedy_verify import logits_eligible
++        native = (logits_metadata.forward_mode.is_target_verify()
++                  and logits_eligible(logits, self.vocab_size, self.final_logit_softcapping))
 +        if native:
 +            if logits_buffer is not None and logits_buffer.dtype == torch.bfloat16 and tuple(logits_buffer.shape) == tuple(logits.shape):
 +                logits_buffer.copy_(logits)
@@ -29,7 +28,7 @@ diff --git a/python/sglang/srt/model_executor/runner/decode_cuda_graph_runner.py
 +        from sglang.srt.speculative.greedy_verify import enabled
 +        native_greedy_logits = (enabled() and self.model_runner.spec_algorithm.is_eagle3()
 +                               and self.capture_forward_mode.is_target_verify()
-+                               and self.model_runner.model_config.vocab_size == 152064)
++                               and self.model_runner.model_config.vocab_size > 0)
          self.buffers: DecodeInputBuffers = DecodeInputBuffers.create(
              device=self.device,
              max_bs=self.max_bs,
@@ -38,7 +37,7 @@ diff --git a/python/sglang/srt/model_executor/runner/decode_cuda_graph_runner.py
 -            next_token_logits_buffer=self.model_runner.graph_shared_output.get_logits_buffer(
 -                self.model_runner.model_config.vocab_size, rows=self.max_num_token
 -            ),
-+            next_token_logits_buffer=(torch.zeros((self.max_num_token,152064),dtype=torch.bfloat16,device=self.device) if native_greedy_logits else self.model_runner.graph_shared_output.get_logits_buffer(self.model_runner.model_config.vocab_size,rows=self.max_num_token)),
++            next_token_logits_buffer=(torch.zeros((self.max_num_token,self.model_runner.model_config.vocab_size),dtype=torch.bfloat16,device=self.device) if native_greedy_logits else self.model_runner.graph_shared_output.get_logits_buffer(self.model_runner.model_config.vocab_size,rows=self.max_num_token)),
              dtype=self.model_runner.model_config.dtype,
              dp_size=self.dp_size,
              pp_size=self.pp_size,
@@ -197,11 +196,16 @@ diff --git a/python/sglang/srt/speculative/greedy_verify.py b/python/sglang/srt/
 new file mode 100644
 --- /dev/null
 +++ b/python/sglang/srt/speculative/greedy_verify.py
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,111 @@
 +"""Opt-in Qwen EAGLE3 greedy postprocessing; only exact FP32 operations."""
++import logging
 +import os
 +import torch
 +from sglang.srt.environ import envs
++
++logger = logging.getLogger(__name__)
++_fallback_logged = False
++_used_logged = False
 +
 +
 +def enabled():
@@ -233,15 +237,48 @@ new file mode 100644
 +    info.greedy_minimum=None
 +
 +
++def fallback(reason):
++    global _fallback_logged
++    if not _fallback_logged:
++        logger.warning("Decode greedy verify fallback: %s", reason)
++        _fallback_logged = True
++    return False
++
++
++def logits_eligible(logits, vocab, softcap=None):
++    if not enabled():
++        return False
++    checks = (
++        (logits.is_cuda, "logits are not CUDA"),
++        (logits.dtype == torch.bfloat16, "logits dtype is not BF16"),
++        (logits.ndim == 2 and 0 < vocab <= 2147479552 and logits.shape[1] == vocab, f"logits shape {tuple(logits.shape)} does not match supported model vocab {vocab}"),
++        (logits.ndim == 2 and logits.stride(1) == 1 and vocab <= logits.stride(0) <= 2147483647, "unsupported logits stride"),
++        (not softcap, "final logit softcapping is enabled"),
++    )
++    for valid, reason in checks:
++        if not valid:
++            return fallback(reason)
++    return True
++
++
 +def eligible(logits, info, verify, batch, grammar_mask):
-+    return (enabled() and logits.is_cuda and logits.dtype==torch.bfloat16
-+            and logits.ndim==2 and logits.shape[1]==152064 and logits.stride(1)==1
-+            and 1<=len(batch.seq_lens)<=48 and logits.shape[0]==4*len(batch.seq_lens)
-+            and batch.spec_algorithm.is_eagle3() and batch.forward_mode.is_target_verify()
-+            and verify.draft_token_num==4 and info.is_all_greedy
-+            and info.acc_additive_penalties is None and info.acc_scaling_penalties is None
-+            and info.logit_bias is None and grammar_mask is None and not batch.return_logprob
-+            and not envs.SGLANG_ENABLE_ASYNC_ASSERT.get())
++    if not logits_eligible(logits, info.vocab_size):
++        return False
++    checks = (
++        (1 <= len(batch.seq_lens) <= 48 and logits.shape[0] == 4 * len(batch.seq_lens), "requires B1..48 and Q4 logits rows"),
++        (batch.spec_algorithm.is_eagle3() and batch.forward_mode.is_target_verify(), "requires EAGLE3 target verify"),
++        (verify.draft_token_num == 4, "requires four draft tokens"),
++        (info.is_all_greedy, "sampling is not all greedy"),
++        (info.acc_additive_penalties is None and info.acc_scaling_penalties is None, "unsupported dense penalties"),
++        (info.logit_bias is None, "logit bias is enabled"),
++        (grammar_mask is None, "grammar mask is enabled"),
++        (not batch.return_logprob, "logprobs are requested"),
++        (not envs.SGLANG_ENABLE_ASYNC_ASSERT.get(), "async assert is enabled"),
++    )
++    for valid, reason in checks:
++        if not valid:
++            return fallback(reason)
++    return True
 +
 +
 +class GreedyWorkspace:
@@ -260,7 +297,11 @@ new file mode 100644
 +        self.sanitize=envs.SGLANG_SANITIZE_NAN_LOGITS.get()
 +
 +    def run(self, logits):
++        global _used_logged
 +        torch.ops.apac_fa3_verify.greedy_argmax(logits,*self.state,self.partial,self.output,self.penalty,self.sanitize)
++        if not _used_logged:
++            logger.info("Decode greedy verify using fused kernels greedy_tiles/greedy_finish: rows=%d vocab=%d stride=%d", logits.shape[0], logits.shape[1], logits.stride(0))
++            _used_logged = True
 +        return self.output
 +
 +

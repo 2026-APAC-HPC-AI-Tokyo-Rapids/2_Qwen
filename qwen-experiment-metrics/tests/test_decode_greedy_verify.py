@@ -3,6 +3,7 @@ import ast
 import copy
 import ctypes
 import json
+import logging
 import os
 import runpy
 import shlex
@@ -29,8 +30,8 @@ def module_source(tmp_path):
 @pytest.fixture
 def dispatch(tmp_path,monkeypatch):
     tree=ast.parse(module_source(tmp_path))
-    tree.body=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('enabled','eligible')]
-    scope={'os':os,'torch':NS(bfloat16='bf16'),'envs':NS(SGLANG_ENABLE_ASYNC_ASSERT=NS(get=lambda:False))}
+    tree.body=[n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.ClassDef,ast.Assign))]
+    scope={'__name__':__name__,'logging':logging,'os':os,'torch':NS(bfloat16='bf16'),'envs':NS(SGLANG_ENABLE_ASYNC_ASSERT=NS(get=lambda:False))}
     exec(compile(tree,'<actual dispatch>','exec'),scope)  # noqa: S102 - execute the actual patched dispatch helpers
     monkeypatch.setenv(GATE['KEY'],'1')
     return scope
@@ -38,17 +39,17 @@ def dispatch(tmp_path,monkeypatch):
 
 @pytest.mark.parametrize('case',['valid','off','dtype','cpu','vocab','stride','rows','batch','eagle','mode','draft','random','additive','scaling','bias','grammar','logprob','assert'])
 def test_actual_dispatch(dispatch,monkeypatch,case):
-    logits=NS(is_cuda=True,dtype='bf16',ndim=2,shape=(176,152064),stride=lambda _:1)
-    info=NS(is_all_greedy=True,acc_additive_penalties=None,acc_scaling_penalties=None,logit_bias=None)
+    logits=NS(is_cuda=True,dtype='bf16',ndim=2,shape=(176,151936),stride=lambda i:1 if i==1 else 151936)
+    info=NS(vocab_size=151936,is_all_greedy=True,acc_additive_penalties=None,acc_scaling_penalties=None,logit_bias=None)
     verify=NS(draft_token_num=4)
     batch=NS(seq_lens=[1]*44,spec_algorithm=NS(is_eagle3=lambda:True),forward_mode=NS(is_target_verify=lambda:True),return_logprob=False)
     grammar=None
     if case=='off': monkeypatch.delenv(GATE['KEY'])
     elif case=='dtype': logits.dtype='float32'
     elif case=='cpu': logits.is_cuda=False
-    elif case=='vocab': logits.shape=(176,152063)
+    elif case=='vocab': logits.shape=(176,151935)
     elif case=='stride': logits.stride=lambda _:2
-    elif case=='rows': logits.shape=(172,152064)
+    elif case=='rows': logits.shape=(172,151936)
     elif case=='batch': batch.seq_lens=[1]*49
     elif case=='eagle': batch.spec_algorithm.is_eagle3=lambda:False
     elif case=='mode': batch.forward_mode.is_target_verify=lambda:False
@@ -61,6 +62,47 @@ def test_actual_dispatch(dispatch,monkeypatch,case):
     elif case=='logprob': batch.return_logprob=True
     elif case=='assert': dispatch['envs'].SGLANG_ENABLE_ASYNC_ASSERT.get=lambda:True
     assert dispatch['eligible'](logits,info,verify,batch,grammar) is (case=='valid')
+
+
+@pytest.mark.parametrize('vocab',[1,4096,4097,151936,152064])
+@pytest.mark.parametrize('padding',[0,64])
+def test_dispatch_model_vocab_and_padding_stride(dispatch,vocab,padding):
+    logits=NS(is_cuda=True,dtype='bf16',ndim=2,shape=(4,vocab),stride=lambda i:1 if i==1 else vocab+padding)
+    assert dispatch['logits_eligible'](logits,vocab)
+    assert not dispatch['logits_eligible'](logits,vocab+1)
+
+
+def test_fallback_and_used_logs_once_per_process(dispatch,caplog,monkeypatch):
+    logits=NS(is_cuda=True,dtype='bf16',ndim=2,shape=(4,151936),stride=lambda i:1 if i==1 else 152064)
+    with caplog.at_level(logging.INFO):
+        assert dispatch['logits_eligible'](logits,151936)
+        assert not dispatch['logits_eligible'](logits,152064)
+        assert not dispatch['logits_eligible'](logits,151936,1.0)
+        calls=[]
+        dispatch['torch'].ops=NS(apac_fa3_verify=NS(greedy_argmax=lambda *a:calls.append(a)))
+        workspace=dispatch['GreedyWorkspace'].__new__(dispatch['GreedyWorkspace'])
+        workspace.state=(None,None,None); workspace.partial=None; workspace.output='tokens'
+        workspace.penalty=False; workspace.sanitize=False
+        assert workspace.run(logits)=='tokens'
+        assert workspace.run(logits)=='tokens'
+    assert len(calls)==2
+    assert len([r for r in caplog.records if 'fallback:' in r.message])==1
+    assert '151936' in caplog.records[0].message and '152064' in caplog.records[0].message
+    assert len([r for r in caplog.records if 'using fused kernels' in r.message])==1
+    assert 'vocab=151936 stride=152064' in caplog.records[-1].message
+    caplog.clear(); dispatch['_fallback_logged']=False
+    monkeypatch.setenv(GATE['KEY'],'0')
+    assert not dispatch['logits_eligible'](logits,152064)
+    assert not caplog.records
+
+
+@pytest.mark.parametrize('reason',['dtype','stride','softcap'])
+def test_logits_fallback_reason(dispatch,caplog,reason):
+    logits=NS(is_cuda=True,dtype='bf16',ndim=2,shape=(4,151936),stride=lambda i:1 if i==1 else 151936)
+    if reason=='dtype': logits.dtype='fp32'
+    if reason=='stride': logits.stride=lambda _:2
+    assert not dispatch['logits_eligible'](logits,151936,1 if reason=='softcap' else None)
+    assert {'dtype':'dtype','stride':'stride','softcap':'softcapping'}[reason] in caplog.text
 
 
 @pytest.fixture(scope='module')
@@ -123,19 +165,20 @@ def verify_chain(tokens,candidates):
     return indices,length,bonus
 
 
-@pytest.mark.parametrize('b',[1,32,44,46,48])
+@pytest.mark.parametrize('vocab',[151936,152064])
+@pytest.mark.parametrize('b',range(1,49))
 @pytest.mark.parametrize('padding',[False,True])
 @pytest.mark.parametrize('sanitize',[False,True])
-def test_shared_cuda_math_full_vocab_bit_contract(cpp_math,b,padding,sanitize):
-    vocab=152064
+def test_shared_cuda_math_full_vocab_bit_contract(cpp_math,vocab,b,padding,sanitize):
     storage=np.zeros((4*b,vocab+64*padding),np.uint16); x=storage[:,:vocab]
+    storage[:,vocab:]=0x7f80  # Poison padding with +Inf; it must be excluded.
     # BF16 values, including subnormals and NaN payload/sign positions.
     x[::4,0]=0x7fc1; x[::4,-1]=0xffc3
-    x[1::4,151645]=0x7f80; x[1::4,4096]=0xff80
+    x[1::4,vocab-1]=0x7f80; x[1::4,4096]=0xff80
     x[2::4,0]=0x8000
     x[3::4,4095]=0x4100; x[3::4,4096]=0x4100; x[3::4,-1]=0x4100
     x[3::4,1]=0x0001
-    stops=np.tile(np.array([0,151643,151645,vocab],np.int64),(b,1))
+    stops=np.tile(np.array([0,vocab-2,vocab-1,vocab],np.int64),(b,1))
     minimum=np.full(b,2,np.int32); lengths=np.full(b,1,np.int32)
     initial=None
     for state in ('initial','boundary','changed','restored','no_penalty'):
@@ -157,14 +200,63 @@ def test_shared_cuda_math_full_vocab_bit_contract(cpp_math,b,padding,sanitize):
         if state=='restored': np.testing.assert_array_equal(actual,initial)
 
 
+@pytest.mark.parametrize('vocab',[1,384,4095,4096,4097,151936,152064])
 @pytest.mark.parametrize('sanitize',[False,True])
 @pytest.mark.parametrize('penalty',[False,True])
-def test_shared_math_subnormal_all_inf_all_nan(cpp_math,sanitize,penalty):
-    x=np.zeros((4,152064),np.uint16)
-    x[0].fill(0xff80); x[1,101]=0x0001
+def test_shared_math_subnormal_all_inf_all_nan(cpp_math,vocab,sanitize,penalty):
+    x=np.zeros((4,vocab),np.uint16)
+    x[0].fill(0xff80); x[1,min(101,vocab-1)]=0x0001
     x[2,0]=0x8000; x[3].fill(0x7fc3)
-    stops=np.array([[152064]],np.int64); minimum=np.array([2],np.int32); lengths=np.array([1],np.int32)
+    stops=np.array([[vocab]],np.int64); minimum=np.array([2],np.int32); lengths=np.array([1],np.int32)
     np.testing.assert_array_equal(cpp_math(x,stops,minimum,lengths,penalty,sanitize),numpy_control(x,stops,minimum,lengths,penalty,sanitize))
+
+
+@pytest.mark.parametrize('vocab',[151936,152064])
+@pytest.mark.parametrize('padding',[0,128])
+@pytest.mark.parametrize('sanitize',[False,True])
+@pytest.mark.parametrize('penalty',[False,True])
+def test_shared_math_winning_signed_subnormals_zeros_and_tile_ties(cpp_math,vocab,padding,sanitize,penalty):
+    storage=np.full((8,vocab+padding),0x7f80,np.uint16)
+    x=storage[:,:vocab]; x.fill(0xbf80)
+    # Every special value determines the winner, rather than hiding below a
+    # larger finite value. Tie positions cross both warp and tile boundaries.
+    x[0].fill(0); x[0,4096]=0x0001
+    x[1].fill(0x8002); x[1,4096]=0x8001
+    x[2].fill(0x8000); x[2,vocab-1]=0
+    x[3].fill(0); x[3,0]=0x8000
+    x[4,[4095,4096,vocab-1]]=0x4100
+    x[5,[255,256,vocab-1]]=0x4100
+    x[6].fill(0xff80)
+    x[7].fill(0x7fc3)
+    stops=np.full((2,1),vocab,np.int64)
+    minimum=np.full(2,2,np.int32); lengths=np.ones(2,np.int32)
+    expected=numpy_control(x,stops,minimum,lengths,penalty,sanitize)
+    np.testing.assert_array_equal(expected,[4096,4096,0,0,4095,255,0,0])
+    np.testing.assert_array_equal(cpp_math(x,stops,minimum,lengths,penalty,sanitize),expected)
+
+
+@pytest.mark.parametrize('vocab',[1,384,4095,4096,4097,151936,152064])
+@pytest.mark.parametrize('padding',[0,128])
+def test_last_vocab_stop_and_minimum_boundary(cpp_math,vocab,padding):
+    storage=np.full((4,vocab+padding),0x7fc1,np.uint16)
+    x=storage[:,:vocab]; x.fill(0xbf80)
+    x[:,-1]=0x4100
+    stops=np.array([[vocab-1,vocab]],np.int64)
+    minimum=np.array([2],np.int32)
+    for length in (1,2,3):
+        lengths=np.array([length],np.int32)
+        actual=cpp_math(x,stops,minimum,lengths,True,False)
+        np.testing.assert_array_equal(actual,numpy_control(x,stops,minimum,lengths,True,False))
+        np.testing.assert_array_equal(actual,np.full(4,0 if length<2 else vocab-1))
+
+
+@pytest.mark.parametrize('vocab',[151936,152064])
+def test_gate_reads_model_config_and_rejects_invalid_vocab(tmp_path,vocab):
+    config=tmp_path/'config.json'; config.write_text(json.dumps({'vocab_size':vocab}))
+    assert GATE['model_vocab'](tmp_path)==vocab
+    for bad in (0,-1,True,'151936',2147479553):
+        config.write_text(json.dumps({'vocab_size':bad}))
+        with pytest.raises(AssertionError,match='invalid model vocab_size'): GATE['model_vocab'](tmp_path)
 
 
 @pytest.fixture
@@ -173,14 +265,14 @@ def screen(tmp_path):
     (directory/'inventory.json').write_text(json.dumps({'run_id':'123-456','host':'g4','gpus':{str(i+4):f'uuid-{i}' for i in range(4)}}))
     block={o:{'control':[.3]*GATE['ROUNDS'],'candidate':[.2]*GATE['ROUNDS']} for o in ('forward','reverse')}
     for rank in range(4):
-        record={'schema':GATE['SCHEMA'],'run_id':'123-456','rank':rank,'uuid':f'uuid-{rank}','device':'NVIDIA H200','image_sha256':'a'*64,'binary_sha256':'b'*64,'passed':True,'elapsed_seconds':50,'finished_at':now,'replays':10000,'endurance_equal':True,'sanitize_modes':[False,True],'cases':{k:{'states':list(GATE['STATES']),'equal':True,'no_penalty_equal':True} for k in GATE['expected_cases']()},'timings_ms':{f'{b}:{p}':[copy.deepcopy(block) for _ in range(3)] for b in (44,46,48) for p in (0,1)}}
+        record={'schema':GATE['SCHEMA'],'run_id':'123-456','rank':rank,'vocab_size':151936,'uuid':f'uuid-{rank}','device':'NVIDIA H200','image_sha256':'a'*64,'binary_sha256':'b'*64,'passed':True,'elapsed_seconds':50,'finished_at':now,'replays':10000,'endurance_equal':True,'sanitize_modes':[False,True],'cases':{k:{'states':list(GATE['STATES']),'equal':True,'no_penalty_equal':True} for k in GATE['expected_cases']()},'timings_ms':{f'{b}:{p}':[copy.deepcopy(block) for _ in range(3)] for b in (44,46,48) for p in (0,1)}}
         (directory/f'rank-{rank}.json').write_text(json.dumps(record))
     env=tmp_path/'decode.env'; env.write_text('OTHER=keep\n'+GATE['KEY']+'=0\n')
     return directory,env,now+90
 
 
 def aggregate(screen,workers_ok=True,deadline=None):
-    return GATE['aggregate'](screen[0],screen[1],'123-456','a'*64,screen[2] if deadline is None else deadline,workers_ok)
+    return GATE['aggregate'](screen[0],screen[1],'123-456','a'*64,screen[2] if deadline is None else deadline,workers_ok,151936)
 
 
 def test_gate_atomic_all_four(screen):
@@ -189,11 +281,12 @@ def test_gate_atomic_all_four(screen):
     assert not list(screen[1].parent.glob('*.tmp'))
 
 
-@pytest.mark.parametrize('failure',['missing','stale','uuid','rank','duplicate','image','binary','late','elapsed','passed','case','bit','state','replays','endurance','sanitize','shape','block','order','margin','nan','timeout','workers','inventory','host'])
+@pytest.mark.parametrize('failure',['missing','stale','vocab','uuid','rank','duplicate','image','binary','late','elapsed','passed','case','bit','state','replays','endurance','sanitize','shape','block','order','margin','nan','timeout','workers','inventory','host'])
 def test_gate_refusal_keeps_control(screen,failure):
     path=screen[0]/'rank-3.json'; r=json.loads(path.read_text()); original=screen[1].read_bytes()
     if failure=='missing': path.unlink()
     elif failure=='stale': r['run_id']='old'
+    elif failure=='vocab': r['vocab_size']=152064
     elif failure in ('uuid','duplicate'): r['uuid']='foreign' if failure=='uuid' else 'uuid-0'
     elif failure=='rank': r['rank']=2
     elif failure in ('image','binary'): r[f'{failure}_sha256']='c'*64
@@ -232,11 +325,13 @@ def test_shell_worker_failure_timeout_serves_control(tmp_path,status):
     for d in ('source','results','logs','scripts'): (tmp_path/d).mkdir()
     (tmp_path/'source/decode-kernels.env').write_text(GATE['KEY']+'=0\n')
     (tmp_path/'scripts'/SCRIPT.name).write_text(SCRIPT.read_text())
+    (tmp_path/'model').mkdir(); (tmp_path/'model/config.json').write_text('{"vocab_size":151936}')
     preamble=f'''set -euo pipefail
 ROOT={shlex.quote(str(tmp_path))}
 ART="$ROOT/logs"
 prefill_pp=4
 TAIL=g4
+MODEL="$ROOT/model"
 SGLANG=unused
 SLURM_JOB_ID=123
 jq() {{ if [[ "$*" == *sha256* ]]; then printf '%064d\\n' 0; else printf true; fi; }}
@@ -307,6 +402,7 @@ ROOT={shlex.quote(str(tmp_path))}
 ART="$ROOT/logs"
 prefill_pp=4
 TAIL=g4
+MODEL="$ROOT/model"
 SGLANG=unused
 SLURM_JOB_ID=123
 jq() {{ if [[ "$*" == *sha256* ]]; then printf '%064d\\n' 0; else printf true; fi; }}
@@ -433,6 +529,9 @@ def graph_case(monkeypatch):
     torch=NS(cuda=cuda,bool=bool,zeros=lambda *a,**kw:FakeDeviceValue(cuda),any=lambda x:x,equal=equal)
     case=GATE['Case'].__new__(GATE['Case'])
     case.torch=torch; case.graphs={}; case.outputs={}; case.state='initial'
+    case.logits=np.zeros((4,4)); case.b=1; case.vocab=4
+    case.penalty=NS(_is_prepared=False)
+    case.greedy=NS(GreedyWorkspace=lambda *_:NS(run=lambda _:FakeDeviceValue(cuda,case.outputs['candidate'][0].value)))
     case.corrupt_on=None
     def step(mode):
         # Capture binds mode/output storage; replay reads mutable device input.
@@ -495,3 +594,12 @@ def test_fake_cuda_rejects_original_nested_endurance_replay(graph_case):
     case.build_graphs(True); case.equal()
     with pytest.raises(RuntimeError,match='Cannot prepare for replay during capturing stage'):
         GATE['capture'](case.torch,case.graphs['candidate'].replay)
+
+
+def test_sbatch_records_serving_greedy_dispatch_with_the_score():
+    source=(ROOT/'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
+    score=source.index('test -s "${ROOT}/results/score.json"')
+    record=source.index('results/decode-greedy-dispatch.txt')
+    assert score<record<source.index('collect-eagle-acceptance.py')
+    assert "'Decode greedy verify (using fused kernels|fallback).*'" in source  # backslash-r inside an ERE bracket matches a literal r; round 25 cut the line at 'g'
+
