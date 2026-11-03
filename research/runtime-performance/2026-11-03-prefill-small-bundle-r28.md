@@ -105,3 +105,21 @@ Claudeの投入commitでは3gate trueと既存image pinを維持し、round28の
 全体pytestはrepo直下、project既定のCPython3.13.12、TMPDIR上書きなし、指定どおりnumpyとpytestをuvに追加した。既存のsource/GPU条件付きskipは残る。初回は6つの固定候補表/設定/worker fixtureで終了1となり、明示的な期待値を新規候補/flagへ更新した。90秒期限の境界を締めた際、修正前に始めた自分の途中pytestだけを止めて終了143を保存し、最終コードに対して上記全体コマンドを再実行して終了0を得た。全runのterminal logとexitファイルはscratchへ保存した。
 
 再現archiveはSHA256とtar一覧を検証済み。自分が作った展開source、compiler cache、重複log、生成/移行用scriptなど59項目を削除し、再現用archive・説明・terminal log・exitだけを残した。提供された分析と自動会話logは保持した。CPU compile/最終pytestはterminal、今回のActions/Slurm/PJM投入・重複job・他branch/mainへのpushはない。GPUのbyte/耐久/速度、通常serving dispatch、公式parser/scoreは投入担当が確認する未実施項目である。
+
+## Firmus 実行結果（run 41656547563、commit 199e637、image 0e0deb09）
+
+Slurm job 28577 は COMPLETED、elapsed 15:04（904 s）。Decode greedy は従来どおり採用され、公式 parser の score は **10020.36**（good request 0.982、error 0）。round 25 の main 構成（10021.60）と同等で、3 候補はいずれも gate で不採用となり serving では dispatch されていない（prefill-r28-dispatch-{0,1,2}.txt はすべて no-dispatch）。
+
+| 候補 | 12 GPU の結果（両順中央値、control→candidate） | 判定 |
+|---|---|---|
+| C1 gemm-tail | QKV 509〜531→504〜526 µs（**−0.79〜−1.59%、全 12 GPU で短縮**）、O 437〜453→459〜480 µs（**+5.07〜+6.08%**） | O の悪化で不採用 |
+| C2 fa3-pair-order | 7 shape すべてで +0.18〜+1.08%（1 点のみ −0.02%） | 不採用 |
+| C3 norm-store | 12 GPU すべてで candidate の bytes が control と不一致（約 8 s で fail） | 不採用 |
+
+解釈：
+
+- C1 の QKV（K=4096）は 52 行 tail を cluster 1 で別 launch しても、padding 分の MMA 削減が launch と tail の直列化を上回り、1 層約 5.5 µs、1 周期 24 層で約 0.13 ms 短い。O（K=8192）は tail の K loop が 2 倍長く、52 行・cluster 1 の tail が body の後ろで約 25 µs 直列に残るため悪化した。
+- C2 の要求間降順割当は、既存の要求内順序より遅い。長い要求を先に置いても tail 時間は縮まず、要求間の L2 局所性が落ちたと考えられる（未計測）。
+- C3 の不一致は FP 演算順を保つ設計に反するので、store の対応付けの実装誤りと判断する。CPU 段階で SMEM 命令は減らず SHFL が 16 増えていたため、修正しても利得は見込めず打ち切る。
+
+次の候補：C1 を QKV だけに限定すれば、gate 上の差から約 0.13 ms/周期（score 換算で約 +11）が見込める。image a001f901 のまま runtime overlay で試せる。
