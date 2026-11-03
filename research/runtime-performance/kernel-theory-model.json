@@ -1526,5 +1526,31 @@
       "configuration": "P plus Decode greedy fusion; W not adopted and P3 rejected in the same run",
       "note": "not a W score"
     }
+  },
+  "prefill_megamoe_swap_tail_r26": {
+    "date": "2026-11-03",
+    "status": "cpu_admitted_gpu_unmeasured_default_off",
+    "base_commit": "e64cb6d",
+    "image": "a001f90142b571380894e9532e467c57b831397c9e2e9d613d9e04004c87def9",
+    "shape": "EP1 T7988 E128 top8 H4096 I1536; last M128 pool block valid1..16 N16, valid17..32 N32",
+    "dtype": "FP8 products, FP32 carried scale and accumulation, FC1 per-token per128 FP8 quantization, FC2 BF16 partial",
+    "effective_flop_per_layer": 2412295225344,
+    "historical_saved_mma_flop_per_layer": 97240743936,
+    "historical_eligible_experts": 58,
+    "work_removed": "2576 padded rows in historical; unchanged pool, TMA boxes, scheduler and combine; WGMMA issue count increases about 5.436 percent",
+    "cpu_evidence": "36 archived distributions plus all remainder boundaries, independent coordinates and 384 FP32 NumPy cases including full K4096/K1536; 24 off-path instantiations byte-identical; CUDA13.4 sm90a candidate spill0 C75xx0, 220800 code bytes, max R213",
+    "gate": "default-off post-P 12-UUID gate; output, FC1 FP8/scale and FC2 partial bytes; 1200 changed-state calls; each GPU and routing both orders at least max5us or0.5percent; worker120 and total125 seconds, retain660 seconds for serving",
+    "actual_hbm_bytes": null,
+    "actual_nvlink_bytes": null,
+    "gpu_speedup": null,
+    "clock_or_power_effect": null,
+    "official_serving_score": null,
+    "evidence": [
+      "2026-11-03-prefill-megamoe-swap-tail-r26.md",
+      "prefill-megamoe-swap-tail-r26-cpu-validation-20261103.json",
+      "prefill-megamoe-swap-tail-r26-cuda-validation-20261103.json",
+      "prefill-megamoe-swap-tail-r26-snapshot-validation-20261103.json",
+      "prefill-megamoe-swap-tail-r26-budget-20261103.json"
+    ]
   }
 }
