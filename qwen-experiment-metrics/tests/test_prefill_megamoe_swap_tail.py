@@ -125,9 +125,21 @@ def test_missing_p_prerequisite_refuses(screen):
     assert screen[1].read_text() == PIN
 
 
-def test_budget_and_default_off():
+def test_budget_and_order_before_the_greedy_gate():
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
-    assert config["prefill"]["megamoe_swap_tail_gate"] is False
+    assert config["prefill"]["megamoe_swap_tail_gate"] is True
     batch = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert "1020 - SECONDS >= 125 + 660" in batch
-    assert batch.index("# Decode greedy gate end.") < batch.index("# r26:") < batch.index('bash "${ROOT}/source/worker.sh" prefill-0')
+    # Round 25 reached the greedy gate's end at about 236 s, past this gate's 235 s limit, and the greedy
+    # gate holds all eight g4 devices, so this gate runs between prepack and the greedy gate.
+    assert batch.index("# r26:") < batch.index("# Decode greedy gate begin") < batch.index('bash "${ROOT}/source/worker.sh" prefill-0')
+
+
+def test_serving_swap_tail_dispatch_is_logged_and_recorded():
+    host = (ROOT / "patches/deep-gemm-host/sm90-prefill-swap-tail.patch").read_text()
+    assert 'fprintf(stderr, "DeepGEMM sm90 Prefill MegaMoE swap tail enabled:' in host
+    assert "prefill_swap_tail_logged = true;" in host
+    batch = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
+    record = batch.index("results/prefill-megamoe-swap-tail-dispatch.txt")
+    assert batch.index('test -s "${ROOT}/results/score.json"') < record < batch.index("collect-eagle-acceptance.py")
+    assert "'DeepGEMM sm90 Prefill MegaMoE swap tail enabled.*'" in batch
