@@ -97,3 +97,20 @@ uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scri
 Ruffは全件成功、変更shellの `bash -n` と `git diff --check` も成功。GPU実行、実CUDA13.0.88のbuild/load、公式parserによる新serving結果は未実施であり、採用済みとはしていない。
 
 証拠archiveは指定scratchの `r26/r26-cpu-proof-20261103.tar.gz`（12,882,910 B、SHA256 `eff5d9832a137ee0c2aafd4a80e3314ee726a27bd4dd13fea6394d5c228e5082`）。入力source、compiler command/helper、raw compile log、cubin/SASS、CPU snapshot proof、依存manifest、最終test logを収め、SHA256SUMSとともに保持した。展開source、loose compiler生成物、編集用script、今回分のpytest一時directory、worktreeのvenv/cacheは削除した。本作業由来のscheduler jobは存在せず、既存Actions・他者のjobには触れていない。
+
+## GPU結果（run 41598151128、Slurm 28515、commit 1537090）
+
+- **image：** fresh build `87f2c06956480a95bddcd16070668bf31f96b60dec11365885d328c50738ee8a`（未pin）。実CUDA 13.0.88でcompile・loadでき、12 GPUのUUIDはすべて別だった。
+- **正しさ：** 全12 GPU・44 caseで、最終出力・FC1 FP8・FC1 scale・FC2 BF16 partialがbyte一致した。1200回の耐久と状態の復帰も全GPUで合格し、各workerは約17.5秒で終わった。
+- **速度：** 不採用（`AssertionError: below selector margin`）。両順の中央値で見た候補/現行の差は次のとおり：
+
+| case | 12 GPUの範囲 |
+|---|---|
+| balanced | −1.1〜−3.9% |
+| hot | −1.2〜+2.8%（rank 0は+2.5〜+2.8%） |
+| historical | −0.6〜+0.6% |
+
+  historicalは実servingの分布に最も近いが、MMAを3.8%減らしても時間はほぼ変わらない。WGMMA発行の増加（約5.4%）と、tileごとのcommit/waitの増加が、padding分の削減と相殺した。hotでは遅くなる。
+- **serving：** 現行splitのままで、dispatchの行はない。公式score **10005.78**（eligible、good 98.13%）、job 844秒。
+- **予算の副作用：** r26 gateをDecode greedy gateの前に置いたので、greedy gateは予算不足でskipした（`insufficient remaining serving budget`）。このrunのDecodeは従来のgreedy経路で、10005.78はround 25の10021.60と同じ構成ではない。差はround 22〜25のscoreの幅の内側である。
+- **結論：** swap-AB tailのpadding削減は、限定版でも実時間の短縮にならない。branchはremoteに残し、mainには文書だけを記録する。再開するなら、WGMMA発行を増やさずにpaddingを削る構造（例：pool内で行を詰めて、expertの境界をまたいでM128を埋める）が条件になる。
