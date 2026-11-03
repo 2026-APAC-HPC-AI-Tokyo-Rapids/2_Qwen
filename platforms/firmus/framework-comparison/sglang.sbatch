@@ -458,3 +458,4 @@ fi
 if (( benchmark_status != 0 )); then exit "${benchmark_status}"; fi
 echo "AIPERF ok"
 touch "${ROOT}/run-success"
+# Round 32 submit: FC1 first-K128 specialization with its twelve-GPU gate.
