@@ -353,6 +353,7 @@ fi
 # Round 29 gate begin: after greedy, before serving model startup.
 # Three four-GPU workers run concurrently; one 100 s reservation for QKV only.
 # Candidates and evidence: research/runtime-performance/2026-11-04-prefill-qkv-tail-r29.md.
+# Round 29 serves on the pinned round 25 image a001f901 without a rebuild.
 if [[ "${prefill_pp}" == 4 ]] && jq -e '.prefill | .qkv_tail_split_gate' "${ROOT}/source/firmus-framework.json" >/dev/null; then
   mkdir -p "${ROOT}/results/prefill-r29"
   if (( SECONDS + 100 + 660 <= 1020 )); then
