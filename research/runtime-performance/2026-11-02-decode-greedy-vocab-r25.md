@@ -30,9 +30,15 @@ process内で最初のfallback理由をwarning、実際のtorch op呼び出し�
 
 gateは --model-path のconfig.jsonから語彙を読み、torchrunへ同じpathを渡す。workerと集約はvocab_sizeを照合するv2 recordを使い、旧152064合成recordは採用しない。合成stopは0・vocab-2・vocab-1・padding sentinel vocab。padding列を+Infにし、processorでのsliceとbufferへのcopy、直接sliceした行stride付き入力のargmaxを検査する。既存の全case一致、状態変更/復帰、sanitize両方、penaltyなし、10000回耐久、全GPU・両順各blockの50µs閾値は維持する。
 
-## CPU 検証と残件
+## CPU 数値検証（2026-11-03）
 
-初期のGPU非依存dispatch/log・patch適用・gate集約/拒否・shell/time budget検査は成功。全B1..48×151936/152064の共有math対独立NumPy、CUDA13.4/sm_90aのcompile/SASS、CIと同形の全体pytest/ruffの結果は追記する。
+引き継いだ未commit testは、正負のsubnormal・±0・warp/tile境界のtieを実際の勝者にする16ケース。これを含めた `test_decode_greedy_verify.py` は CPython 3.12.12 / NumPy 2.5.4 / pytest 9.2.0、g++ 13.3.0 の O2・fno-fast-math で **514 passed、skip/failure 0、307.159秒、exit 0**。
+
+共有 `greedy_verify_math.cuh` をそのままCPU compileし、4096列tileを逆順・laneを逆順にreduceした結果を、独立したNumPyのBF16 bit展開→FP32 sanitize→dense penalty→argmaxと比較した。151936/152064 × B1〜48 × Q4 × paddingなし/64列 × sanitize両方の384ケースで、initial・min-token境界・状態変更・復帰・penaltyなしを照合した。主matrixのargmax行は188160。端数tileの1/384/4095/4096/4097列、vocab末尾のstop、sentinel、lengthの境界前/等値/後、全NaN/全−Inf、勝者となる正負subnormal、±0、warp/tile間の最小index tieを補助ケースで検査し、合計2006回のC++対NumPy比較・188568行のindexが完全一致した。paddingは+InfまたはNaNで汚染し、sliceした非連続行strideをそのまま渡す。
+
+CPUのchain helperでもaccept index/length/bonusと復帰を比較したが、公式GPU verifyの実行ではない。実patchのdispatch・各1回のfallback/使用log、model config読込、gate集約/拒否、shell timeout/予算、ordered overlayとLM head/verify不変も514件に含まれる。数値正本は `decode-greedy-vocab-r25-cpu-validation-20261103.json`、rawのXML/logは指定scratchに保存する。
+
+CUDA13.4/sm_90aのcompile/SASSと、CIと同形の全体pytest/ruffの完走結果は次の区切りで追記する。
 
 imageのCUDAは13.0.88。CPUのCUDA13.4 compileは代わりの証拠にすぎず、image build・link/load・実GPUの精度/性能・通常servingの公式結果は未確認。
 

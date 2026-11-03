@@ -1,0 +1,132 @@
+{
+  "schema": "decode-greedy-vocab-r25-cpu/v1",
+  "source_commit": "4b40ae47aa2a0a5ec7e1d4d459d49b4709d66d9a",
+  "test_source_includes_inherited_uncommitted_winning_special_values": true,
+  "gpu_executed": false,
+  "image_build_executed": false,
+  "numerical": {
+    "command": "uv run --no-project --python 3.12 --with 'numpy>=1.26,<3' --with pytest --with-editable ./qwen-experiment-metrics python -m pytest -q -p no:cacheprovider qwen-experiment-metrics/tests/test_decode_greedy_verify.py --junitxml=SCRATCH/numeric-final.xml",
+    "python": "3.12.12",
+    "numpy": "2.5.4",
+    "pytest": "9.2.0",
+    "cpp_compiler": "g++ 13.3.0",
+    "cpp_flags": [
+      "-std=c++17",
+      "-shared",
+      "-fPIC",
+      "-O2",
+      "-fno-fast-math"
+    ],
+    "exit_code": 0,
+    "passed": 514,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 307.159,
+    "full_vocab_matrix_cases": 384,
+    "vocabularies": [
+      151936,
+      152064
+    ],
+    "batches": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48
+    ],
+    "draft_tokens": 4,
+    "padding_columns": [
+      0,
+      64
+    ],
+    "sanitize_modes": [
+      false,
+      true
+    ],
+    "states": [
+      "initial",
+      "boundary",
+      "changed",
+      "restored",
+      "no_penalty"
+    ],
+    "main_matrix_argmax_rows": 188160,
+    "auxiliary_argmax_rows": 408,
+    "total_argmax_rows": 188568,
+    "shared_cpp_vs_independent_numpy_calls": 2006,
+    "auxiliary_vocabularies": [
+      1,
+      384,
+      4095,
+      4096,
+      4097,
+      151936,
+      152064
+    ],
+    "auxiliary_padding_columns": [
+      0,
+      128
+    ],
+    "contracts": [
+      "minimum-index finite ties across warp and tile boundaries",
+      "first NaN including sign and payload differences",
+      "positive and negative infinity, all negative infinity, all NaN",
+      "positive and negative zero ties",
+      "winning positive and negative BF16 subnormals",
+      "sanitize before penalty; penalty-generated NaN remains NaN",
+      "minimum length minus one, equal and plus one; state restoration",
+      "stop at vocab minus one and sentinel at vocab",
+      "poisoned padding excluded while preserving row stride"
+    ],
+    "scope": "C++ uses the actual shared math and a host tile-order reduction; independent NumPy materializes FP32 sanitize/add/argmax. Accept/index/bonus comparisons use a CPU chain helper, not GPU official verify execution."
+  },
+  "sources_sha256": {
+    "qwen-experiment-metrics/tests/test_decode_greedy_verify.py": "1375aec6d568e1b53a5c128085cbe171abc9b9361a83c0485ff331bf08c2812c",
+    "kernels/fa3-verify/greedy_verify_math.cuh": "cdbf6dc2783dac6dc43d2e67b55f2f7a8bd150784092984931ed9c3699cd24b8",
+    "kernels/fa3-verify/greedy_verify.cu": "2aa8dd141b6015feacbc3c042bf224a02c650648ade365167172dbc42d87828c"
+  },
+  "limits": "CPU evidence only. Image CUDA 13.0.88 build, library link/load, GPU equality/endurance/timing, serving fused-op logs and official results remain unverified."
+}

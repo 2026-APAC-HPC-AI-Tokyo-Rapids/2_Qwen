@@ -211,6 +211,30 @@ def test_shared_math_subnormal_all_inf_all_nan(cpp_math,vocab,sanitize,penalty):
     np.testing.assert_array_equal(cpp_math(x,stops,minimum,lengths,penalty,sanitize),numpy_control(x,stops,minimum,lengths,penalty,sanitize))
 
 
+@pytest.mark.parametrize('vocab',[151936,152064])
+@pytest.mark.parametrize('padding',[0,128])
+@pytest.mark.parametrize('sanitize',[False,True])
+@pytest.mark.parametrize('penalty',[False,True])
+def test_shared_math_winning_signed_subnormals_zeros_and_tile_ties(cpp_math,vocab,padding,sanitize,penalty):
+    storage=np.full((8,vocab+padding),0x7f80,np.uint16)
+    x=storage[:,:vocab]; x.fill(0xbf80)
+    # Every special value determines the winner, rather than hiding below a
+    # larger finite value. Tie positions cross both warp and tile boundaries.
+    x[0].fill(0); x[0,4096]=0x0001
+    x[1].fill(0x8002); x[1,4096]=0x8001
+    x[2].fill(0x8000); x[2,vocab-1]=0
+    x[3].fill(0); x[3,0]=0x8000
+    x[4,[4095,4096,vocab-1]]=0x4100
+    x[5,[255,256,vocab-1]]=0x4100
+    x[6].fill(0xff80)
+    x[7].fill(0x7fc3)
+    stops=np.full((2,1),vocab,np.int64)
+    minimum=np.full(2,2,np.int32); lengths=np.ones(2,np.int32)
+    expected=numpy_control(x,stops,minimum,lengths,penalty,sanitize)
+    np.testing.assert_array_equal(expected,[4096,4096,0,0,4095,255,0,0])
+    np.testing.assert_array_equal(cpp_math(x,stops,minimum,lengths,penalty,sanitize),expected)
+
+
 @pytest.mark.parametrize('vocab',[1,384,4095,4096,4097,151936,152064])
 @pytest.mark.parametrize('padding',[0,128])
 def test_last_vocab_stop_and_minimum_boundary(cpp_math,vocab,padding):
