@@ -32,7 +32,9 @@ def test_independent_scale_swizzle_and_fp32_reference():
     pytest.importorskip("numpy")
     assert CPU["check_scales_and_swizzle"]() == 425984
     result = CPU["numerical"]()
-    assert result["cases"] == 192 and result["max_abs_error_to_independent_fp32_numpy"] < 3e-6
+    assert result["cases"] == 384 and result["max_abs_error_to_independent_fp32_numpy"] < 3e-6
+    assert result["k_numeric"] == [256, 1536, 4096]
+    assert result["exact_zero_input_included"] is True
     assert result["tensor_core_internal_order_proved"] is False
 
 

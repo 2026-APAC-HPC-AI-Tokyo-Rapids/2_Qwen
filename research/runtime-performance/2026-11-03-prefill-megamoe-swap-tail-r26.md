@@ -23,7 +23,7 @@ FC1 の FP8 staging は N32 でも4,608 B、amax exchange は512 B。FC2 は8 to
 - 保存 routing の全36分布は、24単要求＋12二要求の構成を維持した。409,808 item、8,430,336 stage use を再生。対象 pool block は2,090個、計算行削減の合計は92,144行。
 - `0,r,64+r,128+r` を含む全 r=1..64 の64分布も再生。229,376 item、4,718,592 stage use。通常／swap の全 valid=1..128 で出力座標の重複・欠落がない。token-major からの独立 inverse と fragment forward map を照合した。
 - gate/up、weight SF、activation SF、128B swizzle の425,984基底座標を独立の論理座標・sector modelと照合。各 role の stage/phase、全warpの release、各pool blockのarrival、遅延publishを照合した。再生は合法な item 列の数え上げであり、実 GPU の全 interleaving を形式証明したものではない。
-- FP8 で表現できる整数入力、独立 scale、zero/通常/wide、全 r=1..32、FC1 packed scale と FC2 scale の192ケース。K256をK128×2・各K32×4としてFP32で書き下し、weight-as-A の4 fragment計算と通常の carried-scale 計算がCPU上でbyte一致。別の NumPy 参照は入力を先に dequantize して matmul し、最大絶対差は `1.1920928955078125e-7`。全128列 amax、scale乗算→逆数→FP8 RNE、最終scale後BF16 RNEも照合した。
+- FP8 で表現できる整数入力、独立 scale、zero/通常/wide、全 r=1..32、FC1 packed scale と FC2 scale の384ケース。K256の境界probeに加え、FC1 K4096とFC2 K1536を全rで使い、K128ごとの各K32×4をFP32で書き下し、weight-as-A の4 fragment計算と通常の carried-scale 計算がCPU上でbyte一致。別の NumPy 参照は入力を先に dequantize して matmul し、最大絶対差は `3.5762786865234375e-7`。全128列 amax、scale乗算→逆数→FP8 RNE、最終scale後BF16 RNEも照合した。
 
 Tensor Core 内部の累積順、GPU の EX2/RCP の近似値、CUDA 13.0.88 での丸め、race の不在は CPU では証明できない。CPU の byte 一致を GPU の bit 一致へ昇格させない。
 
@@ -44,6 +44,8 @@ snapshot helper は通常 kernel が完了してから既存 buffer を読む。
 各Nのみのprobeは片方へのdispatchへ置換した計数用で、本番の別候補ではない。表のQGMMAはFC1/FC2両bodyを含む静的本数。動的にはswapの各active WG/K128が16本、controlは8本。candidate/controlとも C75xx、STL、LDLなし。math の setmaxnreg は224を維持する。ptxasのnamed barrier使用数は3→4。hostのdynamic sharedは228,560 B、cuobjdumpのSHARED欄は両者とも1,024 B、CD領域は18,432 Bで不変。
 
 実host selectorをCPUでコンパイルした112設定に加え、過去のnon-swap Decodeを含む24 instantiationを変更前／flagなしでコンパイルし、**instruction/control wordの全byteが一致**した。通常servingのencoding SHA256は従来と同じ `d582cf2059b10cd17523ecf1bcb70135ca5ca7174defa29caf9ad8345f6015ad`。候補は `4222d4c69124d5f89aaf8cf4540ccf945b4b956f3b1e6bab910af3a566da4201`。legacy instantiationに元からあるspillは増えていないが、legacy全体がspillゼロという意味ではない。
+
+compile includeのCUTE/CUTLASS全802fileは、使用したcached wheelとimage側の0.1.5 wheelで全byte一致を確認した。nvcc dependency scanでも、DeepGEMM本体のheaderがfallback includeから混ざっていない。比較manifestはproof archiveに保持する。
 
 image の CUDA は13.0.88である。今回の13.4コンパイルは代替証拠であり、実imageのfresh build・候補load・GPU byte/速度・公式servingは未確認。正本は CUDA validation JSON、compiler入力・ログ・cubin・SASSは作業scratchのproof archive。
 
@@ -81,4 +83,17 @@ CPUだけでは勝敗を断定できない。コード40%増、共有amaxと並�
 
 Claudeが投入用commitを作る際は、まずこのbranchのsource/hostをfresh imageへビルドし、実CUDA13.0.88で候補のcompile/loadを確認する。新imageの検証済みpath/hash/provenanceをpinして `prefill.megamoe_swap_tail_gate=true` にする。serving envへflagを直接pinせず、12GPU gateに決定させる。投入tag付きcommit、build、pushによる計算起動、SSH、Slurm投入、image pin変更は本作業では行っていない。
 
-実装checkpointは `cae926c`。CI全体の最終結果と片付けの記録は、検証完了後にこのnoteへ追記する。
+実装checkpointは `cae926c`、証拠・gate記録は `271e9e2`。すべて指定branch `perf/pp4-r26-megamoe-swap-tail-20261103` だけへ通常pushし、commitの先頭をskip ciとした。
+
+**検証結果と片付け**
+
+指定の全体検証をCPython 3.13.12、TMPDIR既定のまま実行し、**2,098 passed・90 skipped、exit 0**。初回の2失敗はhost seriesの末尾・順序の契約で、BM192を末尾に保ち、新patchを含む期待列へ更新して解消した。関連190件も成功。最後にCPU参照のzeroケースを完全ゼロ入力へ明確化し、実寸K4096/K1536も含む384ケースへ拡張して、独立数値検証1件を再実行した。
+
+```sh
+uv run --project qwen-experiment-metrics --with 'numpy>=1.26,<3' --with pytest python -m pytest -q -p no:cacheprovider qwen-experiment-metrics/tests
+uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers
+```
+
+Ruffは全件成功、変更shellの `bash -n` と `git diff --check` も成功。GPU実行、実CUDA13.0.88のbuild/load、公式parserによる新serving結果は未実施であり、採用済みとはしていない。
+
+証拠archiveは指定scratchの `r26/r26-cpu-proof-20261103.tar.gz`（12,882,910 B、SHA256 `eff5d9832a137ee0c2aafd4a80e3314ee726a27bd4dd13fea6394d5c228e5082`）。入力source、compiler command/helper、raw compile log、cubin/SASS、CPU snapshot proof、依存manifest、最終test logを収め、SHA256SUMSとともに保持した。展開source、loose compiler生成物、編集用script、今回分のpytest一時directory、worktreeのvenv/cacheは削除した。本作業由来のscheduler jobは存在せず、既存Actions・他者のjobには触れていない。

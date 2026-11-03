@@ -197,18 +197,21 @@ def numerical():
 
     worst = 0.0
     for valid in range(1, 33):
-        for magnitude, fc1 in ((m, f) for m in (0.0, 0.25, 10.0) for f in (False, True)):
-            k = 256
+        for magnitude, fc1, full in ((m, f, full) for m in (0.0, 0.25, 10.0) for f in (False, True) for full in (False, True)):
+            k = (4096 if fc1 else 1536) if full else 256
+            blocks = k // 128
             x = rng.integers(-4, 5, (valid, k)).astype(np.float32)
+            if magnitude == 0.0:
+                x.fill(0)
             w = rng.integers(-4, 5, (256, k)).astype(np.float32)
-            sx = rng.uniform(0.002, 0.01, (valid, 2)).astype(np.float32) * np.float32(magnitude)
+            sx = rng.uniform(0.002, 0.01, (valid, blocks)).astype(np.float32) * np.float32(magnitude)
             sx = np.maximum(sx, np.float32(1e-10))
-            sw = rng.uniform(0.002, 0.01, (2, 2)).astype(np.float32)
+            sw = rng.uniform(0.002, 0.01, (2, blocks)).astype(np.float32)
             weight_groups = (np.arange(256) // 8) % 2 if fc1 else np.arange(256) // 128
             # Explicit FP32 carried-scale algorithm, K128 then four K32 groups.
             acc = np.zeros((valid, 256), dtype=np.float32)
             prev = None
-            for kb in range(2):
+            for kb in range(blocks):
                 scales = sx[:, kb, None] * sw[weight_groups, kb][None, :]
                 if prev is not None:
                     acc = acc * (prev * np.divide(np.float32(1), scales, dtype=np.float32))
@@ -219,7 +222,7 @@ def numerical():
             acc *= prev
             # Independent NumPy reference: dequantize whole blocks before matmul.
             reference = np.zeros_like(acc)
-            for kb in range(2):
+            for kb in range(blocks):
                 reference += (x[:, kb * 128:(kb + 1) * 128] * sx[:, kb, None]) @ (w[:, kb * 128:(kb + 1) * 128] * sw[weight_groups, kb][:, None]).T
             error = float(np.max(np.abs(acc - reference)))
             worst = max(worst, error)
@@ -231,7 +234,7 @@ def numerical():
                 tile = np.zeros((64, valid), dtype=np.float32)
                 previous = None
                 rows = slice(f * 64, (f + 1) * 64)
-                for kb in range(2):
+                for kb in range(blocks):
                     scale = sx[:, kb][None, :] * sw[weight_groups[rows], kb][:, None]
                     if previous is not None:
                         tile *= previous * np.divide(np.float32(1), scale, dtype=np.float32)
@@ -261,7 +264,7 @@ def numerical():
             bf16 = ((bits + 0x7fff + ((bits >> 16) & 1)) >> 16).astype(np.uint16)
             rbits = restored.view(np.uint32)
             assert bf16.tobytes() == ((rbits + 0x7fff + ((rbits >> 16) & 1)) >> 16).astype(np.uint16).tobytes()
-    return {"cases": 192, "k_numeric": 256, "max_abs_error_to_independent_fp32_numpy": worst, "tensor_core_internal_order_proved": False, "gpu_approx_ex2_rcp_proved": False}
+    return {"cases": 384, "k_numeric": [256, 1536, 4096], "exact_zero_input_included": True, "max_abs_error_to_independent_fp32_numpy": worst, "tensor_core_internal_order_proved": False, "gpu_approx_ex2_rcp_proved": False}
 
 
 def main():
