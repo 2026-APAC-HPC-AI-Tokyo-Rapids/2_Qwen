@@ -68,3 +68,24 @@ Claude が投入する commit の先頭 tag は **`[cluster:firmus] [nodes:2] [p
 途中のfocused testでは回収testのshell抽出が `prewarm done` の単語中で切れる失敗があり、改行を含む `done` 境界へ修正した。runtime側の回収コマンドの不具合ではない。patchの空context行も余分な空白を除き、最終のclean適用・差分検査を通した。
 
 source再構成の展開物、build patchの一時コピー、実装・診断scriptは削除済み。既存Unix socketテストには指定scratchの長いパスを使えないため、pytest自動生成の標準一時領域を使用し、今回生成したディレクトリだけ終了後に削除した。検証log/終了コードと説明のみscratchへ残す。今回作成・投入したscheduler jobはなく、他のjobやmain・他branch・SGLang mirror・ユーザー設定には触れていない。
+
+## Firmus 実行結果（run 41706195478、commit f250614、image a001f901、build なし）
+
+Slurm job 28597 は COMPLETED、elapsed 14:57。Decode greedy と QKV gate はともに採用された。12 PP rank すべてで ready 前の準備が完了し（各 19.9〜21.4 ms）、serving でも全 rank で split が dispatch された。
+
+| 指標 | round 28（41656547563、split なし） | round 29（41689469266、準備なし） | round 30（41706195478、準備あり） |
+|---|---:|---:|---:|
+| score | 10020.36 | 9777.16 | **10022.77** |
+| good request fraction | 0.9820 | 0.9688 | 0.9817 |
+| 先頭バーストの TTFT 超過 | 111 | 193 | **112** |
+| client 初 token 回帰の切片 | 0.776 s | 2.25 s | **0.779 s** |
+| 同、排出速度 | 52.29 req/s | 52.12 req/s | 52.21 req/s |
+| 計測区間の要求数 | 6320 | — | 6324 |
+
+（回帰は計測先頭 232 件の client 初 token を到着順番号に当てたもの。r28 の切片は astra30 の 0.7565 s と集計方法がわずかに違う。）
+
+解釈：
+
+- r29 の悪化は初回実行の準備不足で説明できる。ready 前に一度実行するだけで、立ち上がり遅延は消えた。準備自体は約 20 ms で、DeepGEMM の JIT cache は既にあり、悪化は process 内での初回 load・初期化の側だったと考えられる（未確定）。
+- しかし QKV の約 −5.5 µs/層は周期の約 0.1% にすぎず、バーストの排出速度・要求数・score のいずれにも run 間の揺らぎを超える差は出なかった。score 10022.77 は main の範囲（10020〜10025）の中である。
+- 成功条件の「score が main を上回る」を満たさないため不採用とし、M tail 分離の系列を閉じる。教訓：serving で新しい shape や kernel を使う候補は、ready 前の準備を必須にする。gate の成功は serving process の準備完了を意味しない。
