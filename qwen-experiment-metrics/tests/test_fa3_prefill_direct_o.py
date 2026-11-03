@@ -51,7 +51,7 @@ def test_direct_output_candidate_differs_from_n192_only_by_the_output_bit():
     base = rows[row['bitwise_reference']]
     assert row['variant'] == base['variant'] | 32 and not base['variant'] & 32
     assert (row['block_n'], row['byte_image'], row['bitwise']) == (base['block_n'], base['byte_image'], base['bitwise'])
-    assert {name for name, r in rows.items() if 'bitwise_reference' in r} == {'n192-direct-o', 'n192-varlen', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe', 'm192n96-direct-o-varlen-pipe-native-v3'}
+    assert {name for name, r in rows.items() if 'bitwise_reference' in r} == {'n192-direct-o', 'n192-varlen', 'n192-direct-o-varlen', 'n192-direct-o-varlen-pipe', 'm192n96-direct-o-varlen-pipe-native-v3', 'm192n96-direct-o-varlen-pipe-global-order', 'm192n96-direct-o-varlen-pipe-native-global-order', 'm192n96-direct-o-varlen-pipe-native-v3-global-order'}
     p3 = rows['m192n96-direct-o-varlen-pipe-native-v3']
     p = rows[p3['bitwise_reference']]
     assert p3['variant'] == p['variant'] | 131072 and not p['variant'] & 131072

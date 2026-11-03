@@ -54,7 +54,7 @@ def test_twelve_exact_ranks_adopt_independently(screen, name):
 
 
 @pytest.mark.parametrize("name", G.SPECS)
-@pytest.mark.parametrize("bad", ("missing", "stale", "uuid", "allocation", "image", "source", "pin", "late", "elapsed", "shape", "bytes", "restore", "endurance", "timing", "reverse", "relative", "nan", "overflow"))
+@pytest.mark.parametrize("bad", ("missing", "stale", "uuid", "allocation", "image", "source", "pin", "late", "worker-late", "elapsed", "shape", "bytes", "restore", "endurance", "timing", "reverse", "relative", "nan", "overflow"))
 def test_one_failed_cell_leaves_flags_unchanged(screen, name, bad):
     before = screen.env_output.read_bytes()
     path = screen.aggregate / name / "prefill-2/rank-3.json"
@@ -71,6 +71,7 @@ def test_one_failed_cell_leaves_flags_unchanged(screen, name, bad):
         elif bad == "source": record["source_sha256"] = "c" * 64
         elif bad == "pin": record["fa3_pin"] = "P"
         elif bad == "late": record["finished_at"] = screen.deadline + 1
+        elif bad == "worker-late": record["finished_at"] = screen.deadline - 9
         elif bad == "elapsed": record["elapsed_seconds"] = 90
         elif bad == "shape": record["shapes"].pop(next(iter(record["shapes"])))
         elif bad == "bytes": shape["bytes_equal"] = False
@@ -144,14 +145,18 @@ def test_actual_split_launches_only_the_last_m_row(helper, monkeypatch, enabled,
 def test_overlay_norm_applies_to_real_base_and_keeps_math(tmp_path):
     rel = "python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py"
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    for patch in ("add-rmsnorm-group-quant.patch", "prefill-fp8-integration.patch", "prefill-norm-store-r28.patch"):
-        subprocess.run(["git", "apply", "--include=" + rel, str(ROOT / "patches/sglang" / patch)], cwd=tmp_path, check=True)
+    config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
+    for patch in config["sglang_overlay_patches"]:
+        if "+++ b/" + rel in (ROOT / patch).read_text():
+            subprocess.run(["git", "apply", "--include=" + rel, str(ROOT / patch)], cwd=tmp_path, check=True)
     source = (tmp_path / rel).read_text()
     ast.parse(source)
     assert "STORE_PAIR: tl.constexpr = False" in source and "enable_fp_fusion=False" in source
     assert "shfl.sync.bfly.b32" in source and "@even st.global.b32" in source
     assert "rstd = tl.rsqrt(tl.sum(h * h, 0) / 4096.0 + eps)" in source
     assert "SQUARE_FMA" not in source
+    assert source.count("import os\n") == 1
+    assert "def decode_add_rmsnorm_group_quant_wide_fp8_out" in source
 
 
 def test_gate_order_budget_node_local_and_dispatch():
@@ -161,6 +166,7 @@ def test_gate_order_budget_node_local_and_dispatch():
     assert "SECONDS + 100 + 660 <= 1020" in block
     assert "prefill_r28_started + 90" in block and "prefill_r28_started + 100" in block
     assert 'TRITON_CACHE_DIR="/tmp/qwen-prefill-r28-${SLURM_JOB_ID}-${worker}/triton"' in block
+    assert 'DG_JIT_CACHE_DIR="/tmp/qwen-prefill-r28-${SLURM_JOB_ID}-${worker}/deep-gemm"' in block
     assert 'for worker in 0 1 2' in block and 'prefill_r28_pids+=("$!")' in block
     assert source.index("test -s") < source.index("prefill-r28-dispatch-${worker}.txt")
     assert 'grep -a \'Prefill r28 .* using \'' in source

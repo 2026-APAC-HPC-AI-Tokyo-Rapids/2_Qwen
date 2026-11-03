@@ -26,7 +26,8 @@ def aggregate_candidate(args, name):
                 assert r["rank"] == rank and r["worker"] == f"prefill-{worker}"
                 assert "H200" in r["device"] and r["uuid"] in identities and r["uuid"] not in uuids
                 assert r["image_sha256"] == args.image_sha256 and r["fa3_pin"] == args.fa3_pin, "different serving baseline"
-                assert 0 < r["elapsed_seconds"] < gate.SECONDS and r["finished_at"] <= args.deadline
+                # The worker reservation ends ten seconds before aggregation.
+                assert 0 < r["elapsed_seconds"] < gate.SECONDS and r["finished_at"] <= args.deadline - 10
                 assert len(r["source_sha256"]) == 64
                 gate.validate(r, name)
                 sources.add(r["source_sha256"]); uuids.add(r["uuid"])

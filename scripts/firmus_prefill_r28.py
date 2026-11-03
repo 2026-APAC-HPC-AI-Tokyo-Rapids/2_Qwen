@@ -215,6 +215,7 @@ def run(name, output, run_id, deadline, image, pin):
         for label, steps, inputs, set_version in cases[name](torch, checks):
             assert time.time() < deadline, "r28 worker deadline"
             result["shapes"][label] = screen(torch, steps, inputs, set_version, SPECS[name]["reps"], deadline)
+        assert time.time() <= deadline, "r28 worker deadline after final shape"
         result["healthy"] = True
     except Exception as error:  # noqa: BLE001 - independent candidate refusal, keep evidence
         import traceback
