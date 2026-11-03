@@ -1,0 +1,110 @@
+--- a/python/sglang/srt/layers/attention/prefill_fp8.py
++++ b/python/sglang/srt/layers/attention/prefill_fp8.py
+@@ -30,6 +30,71 @@
+     )
+
+
++def _qkv_tail_gemm(a, sa, weight, weight_scale, out):
++    """Shared eager calls: preserve parent scale stride in body and tail views."""
++    import deep_gemm
++
++    deep_gemm.fp8_gemm_nt((a[:7936], sa[:7936]), (weight, weight_scale), out[:7936], compiled_dims="nk")
++    deep_gemm.fp8_gemm_nt((a[7936:], sa[7936:]), (weight, weight_scale), out[7936:], compiled_dims="nk")
++
++
++def dense_gemm(a, sa, weight, weight_scale, out, *, tail_split=False):
++    """Split only QKV's exact measured shape on the current stream."""
++    import deep_gemm
++
++    if tail_split and a.shape == (7988, 4096) and weight.shape == (9216, 4096):
++        _qkv_tail_gemm(a, sa, weight, weight_scale, out)
++        _log_qkv_tail_dispatch()
++    else:
++        deep_gemm.fp8_gemm_nt((a, sa), (weight, weight_scale), out, compiled_dims="nk")
++
++
++_qkv_tail_dispatch_logged = False
++_qkv_tail_prewarmed = False
++
++
++def _log_qkv_tail_dispatch():
++    global _qkv_tail_dispatch_logged
++    if not _qkv_tail_dispatch_logged:
++        import logging
++
++        logging.getLogger(__name__).warning("Prefill r30 qkv-tail using split 7936+52 rows projection=QKV M=7988 N=9216 K=4096 pid=%s", os.getpid())
++        _qkv_tail_dispatch_logged = True
++
++
++def prewarm_qkv_tail(model):
++    """Load both kernels once in this Prefill process, before pools/graphs/ready."""
++    from sglang.srt.runtime_context import get_server_args
++
++    global _qkv_tail_prewarmed
++    if _qkv_tail_prewarmed or os.environ.get("SGLANG_PREFILL_QKV_TAIL_SPLIT") != "1" or get_server_args().disaggregation_mode != "prefill":
++        return
++    import logging
++    import time
++
++    from sglang.srt.models.qwen3_moe import Qwen3MoeAttention
++
++    started = time.perf_counter()
++    for attention in model.modules():
++        if not isinstance(attention, Qwen3MoeAttention) or not linear_supported(attention, "QKV", attention.qkv_proj):
++            continue
++        layer = attention.qkv_proj
++        # Match both group-quant and fused input-norm allocations: E4M3 A,
++        # FP32 column-major scales (stride 1,7988), BF16 out. No RNG/forward.
++        with torch.inference_mode():
++            a = torch.zeros((7988, 4096), device=layer.weight.device, dtype=torch.float8_e4m3fn)
++            sa = torch.ones((32, 7988), device=a.device, dtype=torch.float32).T
++            out = torch.empty((7988, 9216), device=a.device, dtype=torch.bfloat16)
++            _qkv_tail_gemm(a, sa, layer.weight, layer.weight_scale_inv, out)
++            torch.cuda.synchronize(a.device)
++        # Same kernel geometry for every local layer: keep no scratch tensors
++        # or per-layer state, and leave the real serving dispatch log untouched.
++        _qkv_tail_prewarmed = True
++        logging.getLogger(__name__).warning("Prefill r30 qkv-tail prewarm done ms=%.3f pid=%s", (time.perf_counter() - started) * 1000, os.getpid())
++        return
++    raise RuntimeError("Prefill r30 qkv-tail prewarm found no supported QKV layer")
++
++
+ def linear(attention, projection, layer, x):
+     tensor = x[0] if isinstance(x, tuple) else x
+     if tensor.ndim != 2 or tensor.shape[0] < 2048 or not linear_supported(attention, projection, layer):
+@@ -42,10 +107,9 @@
+         from sglang.kernels.ops.quantization.fp8_kernel import sglang_per_token_group_quant_fp8
+
+         a, sa = sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
+-    import deep_gemm
+-
+     out = torch.empty((a.shape[0], layer.weight.shape[0]), device=a.device, dtype=torch.bfloat16)
+-    deep_gemm.fp8_gemm_nt((a, sa), (layer.weight, layer.weight_scale_inv), out, compiled_dims="nk")
++    tail_split = projection == "QKV" and os.environ.get("SGLANG_PREFILL_QKV_TAIL_SPLIT") == "1"
++    dense_gemm(a, sa, layer.weight, layer.weight_scale_inv, out, tail_split=tail_split)
+     return out, None
+
+
+--- a/python/sglang/srt/model_executor/model_runner.py
++++ b/python/sglang/srt/model_executor/model_runner.py
+@@ -18,6 +18,7 @@
+ import contextlib
+ import inspect
+ import logging
++import os
+ import time
+ from dataclasses import dataclass
+ from typing import Optional, Union
+@@ -611,6 +612,12 @@
+         self.maybe_enable_batch_invariant_mode()
+         self.configure_kv_cache_dtype()
+
++        # Eager JIT/load after all weight transforms, before KV pools and graphs.
++        if not self.is_draft_worker and self.server_args.disaggregation_mode == "prefill" and os.environ.get("SGLANG_PREFILL_QKV_TAIL_SPLIT") == "1":
++            from sglang.srt.layers.attention.prefill_fp8 import prewarm_qkv_tail
++
++            prewarm_qkv_tail(self.model)
++
+     def init_memory_saver_adapter(self):
+         self.memory_saver_adapter = TorchMemorySaverAdapter.create(
+             enable=self.server_args.enable_memory_saver

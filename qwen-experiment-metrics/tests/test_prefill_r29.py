@@ -95,9 +95,9 @@ def helper(tmp_path):
         if "+++ b/" + rel in (ROOT / patch).read_text():
             subprocess.run(["git", "apply", "--include=" + rel, str(ROOT / patch)], cwd=tmp_path, check=True)
     tree = ast.parse((tmp_path / rel).read_text())
-    tree.body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("dense_gemm", "_log_qkv_tail_dispatch", "linear")]
-    namespace = {"os": os, "_qkv_tail_dispatch_logged": False}
-    exec(compile(tree, "<actual r29 host overlay>", "exec"), namespace)  # noqa: S102
+    tree.body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("_qkv_tail_gemm", "dense_gemm", "_log_qkv_tail_dispatch", "prewarm_qkv_tail", "linear")]
+    namespace = {"os": os, "_qkv_tail_dispatch_logged": False, "_qkv_tail_prewarmed": False}
+    exec(compile(tree, "<actual r30 host overlay>", "exec"), namespace)  # noqa: S102
     return namespace
 
 
@@ -136,7 +136,7 @@ def test_serving_linear_dispatch_logs_only_actual_qkv_once(helper, monkeypatch, 
         out, bias = helper["linear"](object(), projection, layer, (a, sa))
         assert out.shape == (rows, n) and bias is None
     assert len(calls) == count * 2
-    logs = [r.getMessage() for r in caplog.records if "Prefill r29 qkv-tail using " in r.getMessage()]
+    logs = [r.getMessage() for r in caplog.records if "Prefill r30 qkv-tail using " in r.getMessage()]
     assert len(logs) == (1 if count == 2 else 0)
     if logs:
         assert "projection=QKV M=7988 N=9216 K=4096" in logs[0]
@@ -144,16 +144,17 @@ def test_serving_linear_dispatch_logs_only_actual_qkv_once(helper, monkeypatch, 
 
 def test_dispatch_collection_preserves_rank_lines_and_explicit_absence(tmp_path):
     source = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
-    block = source[source.index("for worker in 0 1 2; do", source.index("# Keep every process dispatch line")):].split("done", 1)[0] + "done\n"
+    block = source[source.index("for worker in 0 1 2; do", source.index("# Keep every process prewarm and serving dispatch line")):].split("\ndone", 1)[0] + "\ndone\n"
     (tmp_path / "results").mkdir()
     for worker in range(3):
         (tmp_path / f"prefill-{worker}.log").write_text("unrelated line\n")
-    lines = "".join(f"rank-{rank}: Prefill r29 qkv-tail using split 7936+52 rows projection=QKV M=7988 N=9216 K=4096 pid={rank}\n" for rank in range(4))
-    (tmp_path / "prefill-0.log").write_text(lines)
+    lines = "".join(f"rank-{rank}: Prefill r30 qkv-tail prewarm done ms=1500.000 pid={rank}\n" for rank in range(4))
+    lines += "".join(f"rank-{rank}: Prefill r30 qkv-tail using split 7936+52 rows projection=QKV M=7988 N=9216 K=4096 pid={rank}\n" for rank in range(4))
+    (tmp_path / "prefill-0.log").write_text("unrelated line\n" + lines)
     subprocess.run(["bash", "-c", 'set -euo pipefail\nROOT=$1\nART=$1\n' + block, "r29", str(tmp_path)], check=True)
-    assert (tmp_path / "results/prefill-r29-dispatch-0.txt").read_text() == lines
+    assert (tmp_path / "results/prefill-r30-dispatch-0.txt").read_text() == lines
     for worker in (1, 2):
-        assert (tmp_path / f"results/prefill-r29-dispatch-{worker}.txt").read_text() == f"no Prefill r29 dispatch line in prefill-{worker}.log\n"
+        assert (tmp_path / f"results/prefill-r30-dispatch-{worker}.txt").read_text() == f"no Prefill r30 prewarm/dispatch line in prefill-{worker}.log\n"
 
 
 def test_gate_order_budget_node_local_and_dispatch():
@@ -165,8 +166,8 @@ def test_gate_order_budget_node_local_and_dispatch():
     assert 'TRITON_CACHE_DIR="/tmp/qwen-prefill-r29-${SLURM_JOB_ID}-${worker}/triton"' in block
     assert 'DG_JIT_CACHE_DIR="/tmp/qwen-prefill-r29-${SLURM_JOB_ID}-${worker}/deep-gemm"' in block
     assert 'for worker in 0 1 2' in block and 'prefill_r29_pids+=("$!")' in block
-    assert source.index("test -s") < source.index("prefill-r29-dispatch-${worker}.txt")
-    assert 'grep -a \'Prefill r29 qkv-tail using \'' in source
+    assert source.index("test -s") < source.index("prefill-r30-dispatch-${worker}.txt")
+    assert "grep -a -E 'Prefill r30 qkv-tail (prewarm done |using split )'" in source
     assert "unset SGLANG_PREFILL_QKV_TAIL_SPLIT" in source
     subprocess.run(["bash", "-n", str(ROOT / "platforms/firmus/framework-comparison/sglang.sbatch")], check=True)
 
@@ -182,7 +183,7 @@ def test_config_staging_and_image_pin():
     assert config["container_source_commit"] == "14c3e861d52185f4a2753620213caf629c5d0400"
     assert set(G.SPECS) == {"qkv-tail"} and G.SPECS["qkv-tail"]["shapes"] == ("QKV",)
     assert config["prefill"]["qkv_tail_split_gate"] is True
-    assert config["sglang_overlay_patches"][-2:] == ["patches/sglang/decode-greedy-verify.patch", "patches/sglang/prefill-qkv-tail-r29.patch"]
+    assert config["sglang_overlay_patches"][-2:] == ["patches/sglang/decode-greedy-verify.patch", "patches/sglang/prefill-qkv-tail-r30.patch"]
     assert not any("r29" in p for p in config["deep_gemm_overlay_patches"])
     settings = (ROOT / "scripts/prepare-firmus-pp4-settings.py").read_text()
     for s in G.SPECS.values(): assert '"' + s["key"] + '": "0"' in settings

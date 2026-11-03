@@ -353,7 +353,7 @@ fi
 # Round 29 gate begin: after greedy, before serving model startup.
 # Three four-GPU workers run concurrently; one 100 s reservation for QKV only.
 # Candidates and evidence: research/runtime-performance/2026-11-04-prefill-qkv-tail-r29.md.
-# Round 29 serves on the pinned round 25 image a001f901 without a rebuild.
+# Round 30 reuses this gate and image a001f901; serving prewarms before ready.
 if [[ "${prefill_pp}" == 4 ]] && jq -e '.prefill | .qkv_tail_split_gate' "${ROOT}/source/firmus-framework.json" >/dev/null; then
   mkdir -p "${ROOT}/results/prefill-r29"
   if (( SECONDS + 100 + 660 <= 1020 )); then
@@ -420,9 +420,9 @@ benchmark_status=0
 if [[ "${profile_only}" != true ]]; then
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || benchmark_status=$?
 test -s "${ROOT}/results/score.json"
-# Keep every process dispatch line (including rank prefixes) with the score.
+# Keep every process prewarm and serving dispatch line (including rank prefixes) with the score.
 for worker in 0 1 2; do
-  grep -a 'Prefill r29 qkv-tail using ' "${ART}/prefill-${worker}.log" >"${ROOT}/results/prefill-r29-dispatch-${worker}.txt" || printf 'no Prefill r29 dispatch line in prefill-%s.log\n' "${worker}" >"${ROOT}/results/prefill-r29-dispatch-${worker}.txt"
+  grep -a -E 'Prefill r30 qkv-tail (prewarm done |using split )' "${ART}/prefill-${worker}.log" >"${ROOT}/results/prefill-r30-dispatch-${worker}.txt" || printf 'no Prefill r30 prewarm/dispatch line in prefill-%s.log\n' "${worker}" >"${ROOT}/results/prefill-r30-dispatch-${worker}.txt"
 done
 # Round 22 adopted a greedy fusion that serving never dispatched; keep each Decode rank's once-per-process decision with the score.
 grep -a -h -o -E 'Decode greedy verify (using fused kernels|fallback).*' "${ART}/decode-0.log" | sort -u >"${ROOT}/results/decode-greedy-dispatch.txt" || printf 'no Decode greedy verify dispatch line in decode-0.log\n' >"${ROOT}/results/decode-greedy-dispatch.txt"
