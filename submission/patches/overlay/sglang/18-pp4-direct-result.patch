@@ -1,0 +1,350 @@
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -4630,7 +4630,11 @@ def dispatch_event_loop(scheduler: Scheduler):
+         else:
+             scheduler.event_loop_normal()
+     elif disaggregation_mode == DisaggregationMode.PREFILL:
+-        if server_args.pp_size > 1:
++        from sglang.srt.speculative.qwen_pp4 import supported as qwen_pp4_supported
++
++        if server_args.pp_size > 1 and qwen_pp4_supported(server_args):
++            scheduler.event_loop_pp_disagg_prefill_direct()
++        elif server_args.pp_size > 1:
+             scheduler.event_loop_pp_disagg_prefill()
+         elif scheduler.enable_overlap:
+             scheduler.event_loop_overlap_disagg_prefill()
+diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
+--- a/python/sglang/srt/managers/scheduler_pp_mixin.py
++++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
+@@ -2,6 +2,9 @@ from __future__ import annotations
+ 
+ import logging
+ import math
++import queue
++import signal
++import threading
+ import time
+ from array import array
+ from collections import defaultdict, deque
+@@ -63,6 +66,97 @@ class PPBatchMetadata:
+     can_run_cuda_graph: bool
+ 
+ 
++# Iterations between the last stage originating a bootstrap or release
++# consensus and every stage applying it. Upstream uses pp_size - 1 (3); each
++# iteration is one stage period (~115 ms) of admission latency and of router
++# hold. Stage 0 waits for the last stage's consensus step of iteration i - 2,
++# which follows that stage's launch by about three eager launches (~85 ms), so
++# two iterations keep more than one period of slack while one would leave ~30 ms.
++_QWEN_PP_CONSENSUS_LAG = 2
++
++
++@dataclass
++class _QwenPPLaunch:
++    """What a stage keeps from one launched microbatch until its result step."""
++
++    rids: List[str]
++    copy_done: torch.Event
++    page_indices_cpu: list
++    can_run_cuda_graph: bool
++    # Last stage only: host copies of the next tokens and EAGLE draft outputs.
++    next_token_ids: Optional[torch.Tensor] = None
++    draft_output_cpu: Optional[tuple] = None
++
++
++@dataclass
++class _QwenPPLoop:
++    bmbs: list
++    tmbs: list
++    launches: list
++    # Asynchronous CPU sends, kept alive until gloo completes them.
++    works: list
++    # Gloo group of the PP ranks that carries only last-stage results.
++    result_group: torch.distributed.ProcessGroup
++    # Last stage only.
++    publisher: Optional["_QwenPPResultPublisher"]
++
++
++class _QwenPPResultPublisher:
++    """Last stage: send each microbatch's result to the other stages when ready.
++
++    A daemon thread takes launched microbatches in launch order, waits for the
++    copy-stream event that follows the forward (Event.synchronize releases the
++    GIL) and sends the host copies to stages 0..pp_size-2 over a gloo group on
++    which it is the only sender, so it never shares a gloo context with the
++    scheduler thread's own traffic. The scheduler thread never waits for a
++    forward here: if it did, its own result step (and with it the last stage's
++    KV and aux send) would trail its newer forwards by several stage periods,
++    and stage 0, which waits for the last stage's consensus, would lose its
++    launch lead.
++    """
++
++    def __init__(self, group, rank: int, receivers: List[int], device):
++        self.group = group
++        self.rank = rank
++        self.receivers = receivers
++        self.device = device
++        self.launches = queue.SimpleQueue()
++        threading.Thread(
++            target=self._run, name="qwen-pp-result-publisher", daemon=True
++        ).start()
++
++    def put(self, launch: _QwenPPLaunch) -> None:
++        self.launches.put(launch)
++
++    def _run(self) -> None:
++        try:
++            torch.get_device_module(self.device).set_device(self.device)
++            works = []
++            while True:
++                launch = self.launches.get()
++                launch.copy_done.synchronize()
++                payload = (
++                    launch.rids,
++                    launch.next_token_ids.tolist(),
++                    *launch.draft_output_cpu,
++                )
++                for dst in self.receivers:
++                    works += point_to_point_pyobj(
++                        payload, self.rank, self.group, self.rank, dst, async_send=True
++                    )
++                works = [w for w in works if not w.work.is_completed()]
++        except BaseException:
++            # Same crash path as run_scheduler_process: never leave the other
++            # stages waiting for a result that will not come.
++            import psutil
++
++            from sglang.utils import get_exception_traceback
++
++            logger.error(f"PP result publisher failed: {get_exception_traceback()}")
++            psutil.Process().parent().send_signal(signal.SIGQUIT)
++            raise
++
++
+ class SchedulerPPMixin:
+     @DynamicGradMode()
+     def event_loop_pp(self: Scheduler):
+@@ -366,6 +460,222 @@ class SchedulerPPMixin:
+             if server_is_idle and len(self.disagg_prefill_inflight_queue) == 0:
+                 self.on_idle()
+ 
++    @DynamicGradMode()
++    def event_loop_pp_disagg_prefill_direct(self: Scheduler):
++        """Qwen PP4 EAGLE3 prefill loop without the output ring on the launch path.
++
++        The upstream loop above receives an older microbatch's outputs over the
++        NCCL ring (last -> 0 -> 1 -> 2 -> last, one hop per iteration) and
++        synchronizes their D2H before it sends the current proxy and launches
++        the next forward. Every stage is therefore paced by the last stage's
++        forward and about one microbatch flows through the pipeline (run
++        40796263174: 164 ms period, 52-56 ms of SendRecv wait per stage,
++        pp.wait_result 77% of the scheduler thread).
++
++        Here a stage launches a microbatch as soon as it is formed and its
++        proxy hidden states are available, and sends its own proxy right after
++        the launch. Every scheduling state transition keeps the upstream
++        iteration index on every stage: requests, bootstrap and release
++        consensus, and the result of the microbatch launched pp_loop_size - 1
++        iterations earlier. All stages therefore still form identical
++        microbatches and apply identical radix/allocator updates. Only the
++        result data path changes: the last stage sends next tokens and the
++        EAGLE draft outputs (host copies made on the copy stream) directly to
++        every other stage over a dedicated gloo group from a publisher thread
++        as soon as its forward is done, and the other stages receive them at
++        the result step.
++        """
++        assert self.ps.tp_size == 1 and self.ps.attn_cp_size == 1
++        self.init_pp_loop_state()
++        size = self.pp_loop_size
++        # Every rank of this server is one PP stage (TP1, DP1), so all of them
++        # reach this collective group creation, in the same order.
++        assert torch.distributed.get_world_size() == len(self.pp_group.ranks)
++        result_group = torch.distributed.new_group(
++            ranks=self.pp_group.ranks, backend="gloo"
++        )
++        loop = _QwenPPLoop(
++            bmbs=[None] * size,
++            tmbs=[None] * size,
++            launches=[None] * size,
++            works=[],
++            result_group=result_group,
++            publisher=(
++                _QwenPPResultPublisher(
++                    result_group,
++                    self.pp_group.rank,
++                    self.pp_group.ranks[:-1],
++                    self.pp_group.device,
++                )
++                if self.pp_group.is_last_rank
++                else None
++            ),
++        )
++        while True:
++            server_is_idle = True
++            for mb_id in range(size):
++                if self._qpp_step(loop, mb_id):
++                    server_is_idle = False
++            if server_is_idle and len(self.disagg_prefill_inflight_queue) == 0:
++                self.on_idle()
++
++    def _qpp_step(self: Scheduler, loop: _QwenPPLoop, mb_id: int) -> bool:
++        """One iteration of event_loop_pp_disagg_prefill_direct."""
++        is_last = self.pp_group.is_last_rank
++        self.running_batch = self.running_mbs[mb_id]
++        self.last_batch = self.last_mbs[mb_id]
++        # Slot of the microbatch launched pp_loop_size - 1 iterations ago.
++        next_mb_id = (mb_id + 1) % self.pp_loop_size
++        # The last stage sends a consensus here iff stage 0 reads one
++        # _QWEN_PP_CONSENSUS_LAG iterations later (it reads from iteration
++        # pp_loop_size - 1 on); upstream's next_first_rank_mb_id is lag pp_size - 1.
++        consensus_mb_id = (mb_id + _QWEN_PP_CONSENSUS_LAG + 1) % self.pp_loop_size
++
++        with torch.profiler.record_function("pp.recv_requests"):
++            recv_reqs = self.request_receiver.recv_requests()
++            self.process_input_requests(recv_reqs)
++        with torch.profiler.record_function("pp.bootstrap_poll"):
++            bootstrapped_rids = self._pp_pd_get_bootstrapped_ids()
++        with torch.profiler.record_function("pp.transfer_poll"):
++            transferred_rids = self._pp_pd_get_prefill_transferred_ids()
++        loop.bmbs[mb_id] = bootstrapped_rids
++        loop.tmbs[mb_id] = transferred_rids
++        if not is_last:
++            # The next stage reads these three before it receives this
++            # iteration's proxy, so they must precede the proxy send.
++            for data in (recv_reqs, bootstrapped_rids, transferred_rids):
++                loop.works += self._pp_send_pyobj_to_next_stage(data, async_send=True)
++
++        with torch.profiler.record_function("pp.prepare_batch"):
++            self.process_prefill_chunk(
++                last_batch=self.last_batch, running_batch=self.running_batch
++            )
++            prefill_plan = self.get_new_batch_prefill(self.running_batch)
++        batch = prefill_plan.batch_to_run
++        self.running_batch = prefill_plan.running_batch
++        with torch.profiler.record_function("pp.mlp_sync"):
++            batch = self.dp_attn_adapter.maybe_prepare_mlp_sync_batch(batch)
++        self.mbs[mb_id] = batch
++        self.running_mbs[mb_id] = self.running_batch
++        self.cur_batch_for_debug = batch
++        if batch:
++            loop.launches[mb_id] = self._qpp_launch(loop, batch)
++            if is_last:
++                loop.publisher.put(loop.launches[mb_id])
++
++        # Bootstrap consensus: the last stage originates it towards stage 0;
++        # every stage applies it at this same iteration and forwards it.
++        if is_last and loop.bmbs[consensus_mb_id] is not None:
++            loop.works += self._pp_send_pyobj_to_next_stage(
++                bootstrapped_rids, async_send=True
++            )
++        if loop.bmbs[next_mb_id] is not None:
++            consensus_rids = self.process_bootstrapped_queue(
++                self._pp_recv_pyobj_from_prev_stage()
++            )
++            if not is_last:
++                loop.works += self._pp_send_pyobj_to_next_stage(
++                    consensus_rids, async_send=True
++                )
++        # Release consensus, the same way.
++        release_rids = None
++        if is_last and loop.tmbs[consensus_mb_id] is not None:
++            loop.works += self._pp_send_pyobj_to_next_stage(
++                transferred_rids, async_send=True
++            )
++        if loop.tmbs[next_mb_id] is not None:
++            release_rids = self._pp_recv_pyobj_from_prev_stage()
++            if not is_last:
++                loop.works += self._pp_send_pyobj_to_next_stage(
++                    release_rids, async_send=True
++                )
++
++        done_batch = self.mbs[next_mb_id]
++        if done_batch is not None:
++            result = self._qpp_batch_result(
++                loop, done_batch, loop.launches[next_mb_id]
++            )
++            loop.launches[next_mb_id] = None
++            with torch.profiler.record_function("pp.process_result"):
++                self._pp_process_batch_result(done_batch, result)
++            self.last_mbs[next_mb_id] = done_batch
++        if loop.tmbs[next_mb_id] is not None:
++            with torch.profiler.record_function("pp.release_kv"):
++                self.process_disagg_prefill_inflight_queue(release_rids)
++
++        loop.works = [w for w in loop.works if not w.work.is_completed()]
++        self.running_batch.batch_is_full = False
++        return batch is not None
++
++    def _qpp_launch(
++        self: Scheduler, loop: _QwenPPLoop, batch: ScheduleBatch
++    ) -> _QwenPPLaunch:
++        pp_proxy_tensors = None
++        if not self.pp_group.is_first_rank:
++            with torch.profiler.record_function("pp.recv_proxy"):
++                pp_proxy_tensors = self._pp_recv_proxy_tensors()
++        with torch.profiler.record_function("run_batch"):
++            with self.forward_stream_ctx:
++                self.forward_stream.wait_stream(self.schedule_stream)
++                result = self.run_batch(batch, pp_proxy_tensors)
++                if not self.pp_group.is_last_rank:
++                    loop.works += self._pp_send_dict_to_next_stage(
++                        result.pp_hidden_states_proxy_tensors.tensors,
++                        async_send=True,
++                        msg_type="proxy",
++                    )
++        # Host copies for the result step, ordered after this forward on the
++        # copy stream: page-table rows for send_kv_chunk on every stage, and on
++        # the last stage the next tokens and the EAGLE draft outputs.
++        self.copy_stream.wait_stream(self.forward_stream)
++        with self.copy_stream_ctx:
++            self.prefetch_disagg_prefill_outputs(batch, result)
++            next_token_ids = None
++            if self.pp_group.is_last_rank:
++                from sglang.srt.managers.utils import _async_d2h
++
++                assert result.draft_output_cpu is not None
++                next_token_ids = _async_d2h(result.next_token_ids)
++            copy_done = self.device_module.Event()
++            copy_done.record()
++        return _QwenPPLaunch(
++            rids=[req.rid for req in batch.reqs],
++            copy_done=copy_done,
++            page_indices_cpu=result.page_indices_cpu,
++            can_run_cuda_graph=result.can_run_cuda_graph,
++            next_token_ids=next_token_ids,
++            draft_output_cpu=result.draft_output_cpu,
++        )
++
++    def _qpp_batch_result(
++        self: Scheduler,
++        loop: _QwenPPLoop,
++        batch: ScheduleBatch,
++        launch: _QwenPPLaunch,
++    ) -> GenerationBatchResult:
++        assert [req.rid for req in batch.reqs] == launch.rids
++        if self.pp_group.is_last_rank:
++            next_token_ids = launch.next_token_ids
++            draft_output_cpu = launch.draft_output_cpu
++        else:
++            with torch.profiler.record_function("pp.wait_result"):
++                rank = self.pp_group.rank
++                rids, tokens, *draft_output_cpu = point_to_point_pyobj(
++                    [], rank, loop.result_group, self.pp_group.ranks[-1], rank
++                )
++            assert rids == launch.rids, "PP stages formed different microbatches"
++            next_token_ids = torch.tensor(tokens, dtype=torch.int64)
++            draft_output_cpu = tuple(draft_output_cpu)
++        batch.input_ids = None
++        result = GenerationBatchResult(
++            next_token_ids=next_token_ids,
++            can_run_cuda_graph=launch.can_run_cuda_graph,
++            copy_done=launch.copy_done,
++        )
++        result.page_indices_cpu = launch.page_indices_cpu
++        result.draft_output_cpu = draft_output_cpu
++        return result
++
+     @DynamicGradMode()
+     def event_loop_pp_disagg_decode(self: Scheduler):
+         self.init_pp_loop_state()

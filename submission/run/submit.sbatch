@@ -22,17 +22,27 @@ N=$(jq -er .concurrency "${ROOT}/source/firmus-framework.json")
 # Parse configuration on the host; the pinned serving image does not include jq.
 speculation=(--speculative-algorithm EAGLE3 --speculative-draft-model-path /draft --speculative-num-steps "$(jq -er '.speculation.steps' "${ROOT}/source/firmus-framework.json")" --speculative-eagle-topk 1 --speculative-num-draft-tokens "$(jq -er '.speculation.draft_tokens' "${ROOT}/source/firmus-framework.json")")
 if [[ "$(jq -r '.speculation.draft_quantization // empty' "${ROOT}/source/firmus-framework.json")" == fp8 ]]; then speculation+=(--speculative-draft-model-quantization fp8); fi
+tokenizer_backend="$(jq -r '.tokenizer_backend // "huggingface"' "${ROOT}/source/firmus-framework.json")"
+tokenizer_args=()
+if [[ "${tokenizer_backend}" != huggingface ]]; then tokenizer_args+=(--tokenizer-backend "${tokenizer_backend}"); fi
 decode_graph=(--cuda-graph-bs-decode)
 while read -r size; do decode_graph+=("${size}"); done < <(jq -er '.decode_cuda_graph_bs[]' "${ROOT}/source/firmus-framework.json")
 # Prefill maps 128 logical experts to physical slots, including hot replicas; Decode keeps trivial placement.
 prefill_location=$(jq -er .prefill.expert_location "${ROOT}/source/firmus-framework.json")
 if [[ "${prefill_location}" != trivial ]]; then prefill_location=${ROOT}/source/prefill-expert-location.json; fi
 prefill_args=(--ep-size 4 --dp-size 4 --enable-dp-attention --chunked-prefill-size "$(jq -er .prefill.chunked_prefill_size "${ROOT}/source/firmus-framework.json")" --max-total-tokens 131072 --max-running-requests "${N}" --moe-a2a-backend "$(jq -er .prefill.moe_a2a_backend "${ROOT}/source/firmus-framework.json")" --moe-runner-backend "$(jq -er .prefill.moe_runner_backend "${ROOT}/source/firmus-framework.json")" --deepep-mode normal --disable-cuda-graph --init-expert-location "${prefill_location}" --ep-num-redundant-experts "$(jq -er .prefill.ep_num_redundant_experts "${ROOT}/source/firmus-framework.json")" --optimistic-prefill-attempts "$(jq -er .prefill.optimistic_prefill_attempts "${ROOT}/source/firmus-framework.json")")
+prefill_tp=$(jq -er '.prefill.tp' "${ROOT}/source/firmus-framework.json")
+prefill_pp=$(jq -er '.prefill.pp // 1' "${ROOT}/source/firmus-framework.json")
+if [[ "${prefill_pp}" == 4 ]]; then
+  [[ "${prefill_tp}" == 1 ]]
+  prefill_args=(--pp-size 4 --pp-max-micro-batch-size 2 --pp-async-batch-depth "$(jq -er .prefill.pp_async_batch_depth "${ROOT}/source/firmus-framework.json")" --ep-size 1 --dp-size 1 --chunked-prefill-size 8192 --max-total-tokens 131072 --max-running-requests "${N}" --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --disable-cuda-graph --disable-overlap-schedule --init-expert-location trivial --ep-num-redundant-experts 0 --optimistic-prefill-attempts 0)
+fi
 ART=${ROOT}/logs
 export NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_DISABLE_REQUIRE=1
 export MELLANOX_VISIBLE_DEVICES=all MELLANOX_MOUNT_DRIVER=yes
 # Tier 2 switch: idle Prefill uses 256 rows, or 280 with physical-140 replicas.
 # The replica overlay also pads tiny live Prefill ranks to 280 rows.
+# The code acts only in Prefill mode; with 1 the MegaMoE GPU gate also checks and times that case.
 export SGLANG_MEGAMOE_IDLE_PREFILL_GEOMETRY=1
 jq -e '.framework == "sglang" and .workload == "official"' "${ROOT}/source/firmus-framework.json" >/dev/null
 
@@ -71,7 +81,7 @@ wait_http() {
 }
 
 echo "[$(date -Iseconds)] job=${SLURM_JOB_ID} user=$(whoami)"
-echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P3-TP4-DP4-EP4-D1-TP4-DP4-EP4 kv=fp8_e4m3 speculation=EAGLE3 prefill=megamoe decode=megamoe router=live-prefill-min-load"
+echo "head=${HEAD}(${HEAD_IP}) tail=${TAIL}(${TAIL_IP}) model=${MODEL} isl=4000 osl=200 N=${N} topology=P3-TP${prefill_tp}-PP${prefill_pp}-D1-TP4-DP4-EP4 kv=fp8_e4m3 speculation=EAGLE3 prefill=megamoe decode=megamoe router=live-prefill-min-load"
 test -r "${SGLANG}" && test -r "${AIPERF}" && test -f "${MODEL}/config.json" && test -s "${ROOT}/draft/model.safetensors"
 mkdir -p "${ART}"
 worker_pids=()
@@ -98,6 +108,24 @@ tp=$4
 export SGLANG_HOST_IP=$5
 shift 5
 role=${name%%-*}
+runtime_dir=$(dirname "$(dirname "$0")")
+# The Decode peer also needs explicit global target/draft KV region IDs.
+if /opt/sglang/venv/bin/python -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("prefill", {}).get("pp", 1) != 4)' "${runtime_dir}/source/firmus-framework.json"; then
+  export SGLANG_QWEN_PP4_EP1=1
+  # Millisecond scheduler log times (PP4 only): the start-burst first tokens of 41020974704 stall from 0.8 to
+  # 1.5 s, and second-resolution batch lines cannot place the Prefill admissions and releases in that window.
+  export SGLANG_LOG_MS=1
+  if [[ "$role" == prefill ]]; then
+    # The last stage also runs lm_head and the EAGLE draft extend (about two layers of time).
+    partition=$(/opt/sglang/venv/bin/python -c 'import json,sys; print(",".join(map(str, json.load(open(sys.argv[1]))["prefill"]["pp_layer_partition"])))' "${runtime_dir}/source/firmus-framework.json")
+    export DG_SM90_PREFILL_LOCAL_EP1=1 SGLANG_PP_LAYER_PARTITION="${partition}" SGLANG_PP_SKIP_PURE_CHUNKED_OUTPUT_COMM=0
+    # Stage s runs on visible device s. The lightest (last) stage moves to this worker's slowest GPU at the power cap (order-firmus-pp4-gpus.py).
+    if [[ -s "${runtime_dir}/source/firmus-gpu-sm-clock.json" ]]; then
+      gpu_order=$(nvidia-smi --query-gpu=index,uuid --format=csv,noheader | /opt/sglang/venv/bin/python "${runtime_dir}/scripts/order-firmus-pp4-gpus.py" "${runtime_dir}/source/firmus-gpu-sm-clock.json" "${CUDA_VISIBLE_DEVICES}")
+      export CUDA_VISIBLE_DEVICES="${gpu_order}"
+    fi
+  fi
+fi
 # Prefill: a 3994-token prompt must not straddle two 4096-token batches (prefill-request-aligned-chunks.patch; images without it ignore this).
 # Tier 2 switches: equal-load DP ties rotate (dp-total-requests-rotate-ties.patch);
 # Decode admission without host waits on the WAR-fenced stream (decode-async-admission.patch, with decode_polling_interval 1).
@@ -149,17 +177,17 @@ fi
 exec "${command[@]}"
 EOF
 
-# Kernel choices measured in Actions run 40225743220; workers source their role's file.
-printf '%s\n' 'SGLANG_PREFILL_FA3_VERIFY=n192' >"${ROOT}/source/prefill-kernels.env"
-printf '%s\n' 'SGLANG_DECODE_FA3_VERIFY=p128split2-s3-fp8' 'DG_SM90_1D2D_DECODE_CONFIG=QKV:128,144,5,1,0' 'SGLANG_DECODE_DENSE_GEMM_QKV=' 'SGLANG_DECODE_DENSE_GEMM_O=' >"${ROOT}/source/decode-kernels.env"
+# Kernel choices adopted by the in-job gates of Actions run 41573354672 (prefill-fa3-pair, prefill-fa3-prepack P3, decode-greedy);
+# submission/run/prepare.sh installed the final env files those workers sourced. Workers source their role's file.
+test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"
 
-srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
+srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" 4 "${HEAD_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9001 >"${ART}/prefill-1.log" 2>&1 &
+srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9001 >"${ART}/prefill-1.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-2)" bash "${ROOT}/source/worker.sh" prefill-2 30102 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9002 >"${ART}/prefill-2.log" 2>&1 &
+srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-2)" bash "${ROOT}/source/worker.sh" prefill-2 30102 "${MODEL}" "${prefill_tp}" "${TAIL_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9002 >"${ART}/prefill-2.log" 2>&1 &
 worker_pids+=("$!")
-srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${decode_graph[@]}" --ep-size 4 --dp-size "$(jq -er .decode_dp_size "${ROOT}/source/firmus-framework.json")" --enable-dp-attention --enable-dp-lm-head --moe-dense-tp-size 1 --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --chunked-prefill-size 8192 --max-running-requests "$(jq -er .decode_max_running_requests "${ROOT}/source/firmus-framework.json")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${ROOT}/source/firmus-framework.json")" --disaggregation-decode-polling-interval "$(jq -er .decode_polling_interval "${ROOT}/source/firmus-framework.json")" --max-total-tokens "$(jq -er .decode_max_total_tokens "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-0.log" 2>&1 &
+srun --exact -N1 -n1 -w "${TAIL}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts decode-0)" bash "${ROOT}/source/worker.sh" decode-0 30200 "${MODEL}" 4 "${TAIL_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${decode_graph[@]}" --ep-size 4 --dp-size "$(jq -er .decode_dp_size "${ROOT}/source/firmus-framework.json")" --enable-dp-attention --enable-dp-lm-head --moe-dense-tp-size 1 --moe-a2a-backend megamoe --moe-runner-backend deep_gemm --chunked-prefill-size 8192 --max-running-requests "$(jq -er .decode_max_running_requests "${ROOT}/source/firmus-framework.json")" --disaggregation-decode-extra-slots "$(jq -er .decode_extra_slots "${ROOT}/source/firmus-framework.json")" --disaggregation-decode-polling-interval "$(jq -er .decode_polling_interval "${ROOT}/source/firmus-framework.json")" --max-total-tokens "$(jq -er .decode_max_total_tokens "${ROOT}/source/firmus-framework.json")" >"${ART}/decode-0.log" 2>&1 &
 worker_pids+=("$!")
 
 wait_http "http://${HEAD_IP}:30100/health"; echo "prefill-0 ready"
@@ -180,11 +208,20 @@ while IFS=$'\t' read -r worker host port _tp; do
 done <"${ROOT}/source/worker-endpoints.tsv"
 # Placement must not change outputs; keep one greedy answer through a Prefill worker for inspection.
 curl --fail --silent --show-error --max-time 120 -H 'Content-Type: application/json' -d '{"model":"qwen","messages":[{"role":"user","content":"Name the capital of France and explain in two sentences why it is historically important."}],"max_tokens":64,"temperature":0}' "http://${HEAD_IP}:${R_PORT}/v1/chat/completions" >"${ROOT}/results/sanity-chat.json"
+# Every archived run shows the Decode output stream stopping for ~0.33 s every 14-19 s while the Decode
+# scheduler keeps stepping, which starves the Prefill queue (2026-10-30-pp4-system-r3.md). Freeze the startup
+# heap of every server process after the warm-up request (SGLang /freeze_gc: tokenizer, schedulers,
+# detokenizer) so that Python's full collections scan only request state. A failed call keeps GC as it was.
+while IFS=$'\t' read -r worker host port _; do curl --fail --silent --show-error --max-time 30 -X POST "http://${host}:${port}/freeze_gc" >>"${ART}/freeze-gc.log" 2>&1 || printf 'freeze_gc failed on %s\n' "${worker}" >>"${ART}/freeze-gc.log"; done <"${ROOT}/source/worker-endpoints.tsv"
 benchmark_status=0
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || benchmark_status=$?
 test -s "${ROOT}/results/score.json"
+# Round 22 adopted a greedy fusion that serving never dispatched; keep each Decode rank's once-per-process decision with the score.
+grep -a -h -o -E 'Decode greedy verify (using fused kernels|fallback).*' "${ART}/decode-0.log" | sort -u >"${ROOT}/results/decode-greedy-dispatch.txt" || printf 'no Decode greedy verify dispatch line in decode-0.log\n' >"${ROOT}/results/decode-greedy-dispatch.txt"
 if (( benchmark_status == 0 )); then
   while IFS=$'\t' read -r worker host port _; do curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"; done <"${ROOT}/source/worker-endpoints.tsv"
+  # Team-side output check after the official benchmark (same gateway as the warm-up chat): eight fixed greedy prompts, 64 tokens each, with token logprobs.
+  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts greedy-probe)" /opt/sglang/venv/bin/python "${ROOT}/scripts/greedy-probe.py" "${ROOT}/results" "http://${HEAD_IP}:${R_PORT}/v1/chat/completions" qwen >"${ART}/greedy-probe.log" 2>&1
 fi
 if (( benchmark_status != 0 )); then exit "${benchmark_status}"; fi
 echo "AIPERF ok"

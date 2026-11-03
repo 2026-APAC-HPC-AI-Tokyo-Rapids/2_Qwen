@@ -1,0 +1,149 @@
+name: Standalone Firmus submission check (temporary)
+
+on:
+  push:
+    branches: [submission/pp4-r25-20261104]
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+
+defaults:
+  run:
+    shell: firmus-shell --github-shell {0}
+
+jobs:
+  verify:
+    runs-on: [self-hosted, home-lab]
+    timeout-minutes: 7200
+    outputs:
+      uploaded: ${{ steps.upload.outcome == 'success' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Prepare the standalone package on the Firmus login node
+        id: prepare
+        run: |
+          runtime_dir="${RUNTIME_ROOT}/submission-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "${runtime_dir}"
+          printf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"
+          submission/run/prepare.sh "${runtime_dir}" /scratch/home/ACCOUNT/qwen/containers/41573354672.sqsh /scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8 /scratch/home/ACCOUNT/qwen/framework-comparison/sources/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e
+
+      - name: Submit the prepared single Slurm script
+        id: submit
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        run: |
+          cd "${RUNTIME_DIR}"
+          job_id="$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=qwen3_submission "${RUNTIME_DIR}/scripts/submit.sbatch")"
+          [[ "${job_id}" =~ ^[0-9]+$ ]]
+          printf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"
+          printf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"
+
+      - name: Wait for Slurm terminal state and verify the official result
+        shell: bash
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        run: |
+          # The package deliberately omits the diagnostic EAGLE collector.
+          sed '/eagle-acceptance.json/d' platforms/firmus/check-qwen-job.sh >platforms/firmus/check-submission-job.sh
+          chmod +x platforms/firmus/check-submission-job.sh
+          scripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-submission-job.sh
+
+      - name: Collect logs, results and prepared sources to the runner
+        id: collect
+        if: always() && steps.submit.outputs.job_id != ''
+        shell: home-lab-shell {0}
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        run: |
+          destination="${RUNNER_TEMP}/qwen-firmus-submission"
+          install -d -m 0755 "${destination}"
+          # Match firmus.yml's bounded retries for the previously observed disconnected artifact reads.
+          retry_read() {
+            local attempt status
+            for attempt in 1 2 3 4 5 6; do
+              if timeout --foreground 180 "$@"; then return 0; else status=$?; fi
+              if (( attempt == 6 )); then return "${status}"; fi
+              printf 'Artifact read failed (exit %s); retry in 30s (%s/6).\n' "${status}" "${attempt}" >&2
+              sleep 30
+            done
+          }
+          for part in logs results source; do retry_read firmus-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"; done
+          marker=$(retry_read firmus-shell "if test -e '${RUNTIME_DIR}/run-success'; then echo present; else echo absent; fi")
+          if [[ "${marker}" == present ]]; then retry_read firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; else [[ "${marker}" == absent ]]; fi
+
+      - name: Upload the standalone verification evidence
+        id: upload
+        if: always() && steps.submit.outputs.job_id != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen-firmus-submission-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qwen-firmus-submission
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Record the collected score for review
+        if: always() && steps.collect.outcome == 'success'
+        shell: bash
+        run: |
+          score="${RUNNER_TEMP}/qwen-firmus-submission/results/results/score.json"
+          if [[ -s "${score}" ]]; then jq '{good_output_tokens_per_second,good_request_fraction,request_count,error_request_count,official_validation}' "${score}" >>"${GITHUB_STEP_SUMMARY}"; fi
+
+      - name: Remove the collected terminal run directory
+        if: always() && steps.collect.outcome == 'success' && steps.upload.outcome == 'success'
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        run: |
+          state="$(sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State | awk -F'|' -v id="${SLURM_JOB_ID}" '$1 == id {print $2}')"
+          case "${state}" in COMPLETED|FAILED|TIMEOUT|CANCELLED*|OUT_OF_MEMORY|NODE_FAIL) rm -rf -- "${RUNTIME_DIR:?}";; *) printf 'Preserving runtime and Slurm job %s (state=%s)\n' "${SLURM_JOB_ID}" "${state}";; esac
+
+      - name: Remove a preparation that failed before submission
+        if: failure() && steps.prepare.outputs.runtime_dir != '' && steps.submit.outcome == 'skipped'
+        env:
+          RUNTIME_DIR: ${{ steps.prepare.outputs.runtime_dir }}
+        run: rm -rf -- "${RUNTIME_DIR:?}"
+
+  archive-artifacts:
+    needs: verify
+    if: always() && needs.verify.outputs.uploaded == 'true'
+    runs-on: [self-hosted, home-lab]
+    permissions:
+      actions: write
+      contents: read
+    env:
+      QWEN_ARTIFACT_ARCHIVE_ROOT: /srv/qwen-artifacts
+    steps:
+      - name: Download this run's verification artifact
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: qwen-firmus-submission-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Archive and checksum on the home server
+        shell: home-lab-shell {0}
+        run: |
+          destination_parent="${QWEN_ARTIFACT_ARCHIVE_ROOT}/${GITHUB_RUN_ID}"
+          destination="${destination_parent}/${GITHUB_RUN_ATTEMPT}"
+          test -d artifacts
+          test -n "$(find artifacts -type f -print -quit)"
+          install -d -m 0750 "${destination_parent}"
+          staging="$(mktemp -d "${destination_parent}/.${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"
+          trap 'rm -rf -- "${staging}"' EXIT
+          cp -a artifacts/. "${staging}/"
+          (cd "${staging}" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS)
+          mv -T -- "${staging}" "${destination}"
+          trap - EXIT
+          printf 'Archived at archive-host:/srv/qwen-artifacts/%s/%s/\n' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Remove the transferred GitHub artifact
+        shell: home-lab-shell {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '.artifacts[] | select(.name == "qwen-firmus-submission-${{ github.run_id }}-${{ github.run_attempt }}") | .id' | while read -r artifact_id; do gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"; done

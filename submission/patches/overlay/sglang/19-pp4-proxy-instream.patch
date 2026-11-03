@@ -1,0 +1,89 @@
+diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
+--- a/python/sglang/srt/managers/scheduler_pp_mixin.py
++++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
+@@ -486,6 +486,8 @@ class SchedulerPPMixin:
+         the result step.
+         """
+         assert self.ps.tp_size == 1 and self.ps.attn_cp_size == 1
++        assert self.pp_group.pynccl_comm is not None
++        assert self.pp_group.pynccl_comm.available
+         self.init_pp_loop_state()
+         size = self.pp_loop_size
+         # Every rank of this server is one PP stage (TP1, DP1), so all of them
+@@ -610,19 +612,24 @@ class SchedulerPPMixin:
+     def _qpp_launch(
+         self: Scheduler, loop: _QwenPPLoop, batch: ScheduleBatch
+     ) -> _QwenPPLaunch:
+-        pp_proxy_tensors = None
++        proxy_metadata = None
+         if not self.pp_group.is_first_rank:
+             with torch.profiler.record_function("pp.recv_proxy"):
+-                pp_proxy_tensors = self._pp_recv_proxy_tensors()
++                proxy_metadata = self.pp_group.recv_object(
++                    src=self.pp_group.rank_in_group - 1
++                )
+         with torch.profiler.record_function("run_batch"):
+             with self.forward_stream_ctx:
+                 self.forward_stream.wait_stream(self.schedule_stream)
++                pp_proxy_tensors = None
++                if proxy_metadata is not None:
++                    pp_proxy_tensors = PPProxyTensors(
++                        self._qpp_recv_proxy(proxy_metadata)
++                    )
+                 result = self.run_batch(batch, pp_proxy_tensors)
+                 if not self.pp_group.is_last_rank:
+-                    loop.works += self._pp_send_dict_to_next_stage(
+-                        result.pp_hidden_states_proxy_tensors.tensors,
+-                        async_send=True,
+-                        msg_type="proxy",
++                    loop.works += self._qpp_send_proxy(
++                        result.pp_hidden_states_proxy_tensors.tensors
+                     )
+         # Host copies for the result step, ordered after this forward on the
+         # copy stream: page-table rows for send_kv_chunk on every stage, and on
+@@ -647,6 +654,45 @@ class SchedulerPPMixin:
+             draft_output_cpu=result.draft_output_cpu,
+         )
+ 
++    # Proxy hidden states move with PyNccl on the forward stream, so a stage's
++    # stream is receive -> forward -> send. torch.distributed P2P runs NCCL on
++    # an internal stream: there the receive of the next microbatch sat on the
++    # SMs beside the current forward and stalled the grid-synchronized
++    # MegaMoE kernel (stage 3 of 40796263174: one 37-66 ms MegaMoE per
++    # microbatch), and with launches decoupled the waiting send would do the
++    # same on stages 0-2. In-stream, an NCCL kernel never runs beside compute
++    # on its GPU; it can only wait for a slower neighbour, when the GPU would
++    # idle anyway. Metadata goes first over the CPU group so the receiver can
++    # post the matching receive.
++    def _qpp_send_proxy(self: Scheduler, tensors: Dict[str, torch.Tensor]):
++        from sglang.srt.distributed.parallel_state import _split_tensor_dict
++
++        dst = self.pp_group.rank_in_group + 1
++        metadata_list, tensor_list = _split_tensor_dict(tensors)
++        works = self.pp_group.send_object(metadata_list, dst=dst, async_send=True)
++        comm = self.pp_group.pynccl_comm
++        with comm.change_state(enable=True):
++            for tensor in tensor_list:
++                assert tensor.is_contiguous()
++                if tensor.numel() > 0:
++                    comm.send(tensor, dst)
++        return works
++
++    def _qpp_recv_proxy(self: Scheduler, metadata_list) -> Dict[str, torch.Tensor]:
++        from sglang.srt.distributed.parallel_state import TensorMetadata
++
++        src = self.pp_group.rank_in_group - 1
++        comm = self.pp_group.pynccl_comm
++        tensors = {}
++        with comm.change_state(enable=True):
++            for key, value in metadata_list:
++                if isinstance(value, TensorMetadata):
++                    value = torch.empty(value.size, dtype=value.dtype, device=comm.device)
++                    if value.numel() > 0:
++                        comm.recv(value, src)
++                tensors[key] = value
++        return tensors
++
+     def _qpp_batch_result(
+         self: Scheduler,
+         loop: _QwenPPLoop,

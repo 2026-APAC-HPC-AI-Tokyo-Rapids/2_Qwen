@@ -1,0 +1,180 @@
+diff --git a/python/sglang/kernels/jit/csrc/elementwise/add_rmsnorm_group_quant.cuh b/python/sglang/kernels/jit/csrc/elementwise/add_rmsnorm_group_quant.cuh
+index 3e5762e..a7eab83 100644
+--- a/python/sglang/kernels/jit/csrc/elementwise/add_rmsnorm_group_quant.cuh
++++ b/python/sglang/kernels/jit/csrc/elementwise/add_rmsnorm_group_quant.cuh
+@@ -187,4 +187,127 @@ struct AddRMSNormGroupQuantKernel {
+   }
+ };
+ 
++
++// TARGET_VERIFY variant: one row per CTA spread over 512 threads (one 16-byte
++// vector each) instead of 64. The 64-lane kernel runs ~1800 dependent SASS
++// instructions per thread with two warps per SM, so 144..176 rows take ~9 us
++// of latency for ~1.5 MB of traffic. Per-element arithmetic is unchanged (FP32
++// x + residual rounded once to BF16 for the residual store, the FlashInfer
++// normalization ops, the QuantTrait<bf16, fp8, 128> group quant over 16 lanes);
++// only the sum-of-squares order differs (8 per thread, warp XOR tree, then the
++// 16 warp partials in index order), which the decode norm/quant gate bounds.
++// The weight is a parameter, so it is read before waiting on the primary grid.
++constexpr uint32_t kWideThreads = kNormHidden / 8;
++
++template <bool kUsePDL>
++__global__ void __launch_bounds__(kWideThreads)
++    decode_add_rmsnorm_group_quant_wide_kernel(const __grid_constant__ AddRMSNormGroupQuantParams params) {
++  using namespace device;
++  using Vec = AlignedVector<bf16x2_t, 4>;
++  using FP8Vec = AlignedVector<fp8x2_e4m3_t, 4>;
++  constexpr float kFP8Max = 448.0f;
++  constexpr float kFP8MaxInv = 1.f / kFP8Max;
++
++  __shared__ float partial[kWideThreads / kWarpThreads];
++  const uint32_t t = threadIdx.x;
++  const uint32_t row = blockIdx.x;
++  const int64_t offset = (static_cast<int64_t>(row) * kNormHidden) / 8 + t;
++  const auto wv = load_as<Vec>(params.weight, t);
++
++  PDLWaitPrimary<kUsePDL>();
++
++  const auto xv = load_as<Vec>(params.x, offset);
++  const auto rv = load_as<Vec>(params.residual, offset);
++  float h[8];
++  Vec out;
++#pragma unroll
++  for (uint32_t j = 0; j < 4; ++j) {
++    const auto xf = cast<fp32x2_t>(xv[j]);
++    const auto rf = cast<fp32x2_t>(rv[j]);
++    h[2 * j] = __fadd_rn(xf.x, rf.x);
++    h[2 * j + 1] = __fadd_rn(xf.y, rf.y);
++    out[j] = cast<bf16x2_t, fp32x2_t>({h[2 * j], h[2 * j + 1]});
++  }
++  store_as<Vec>(params.residual, out, offset);
++
++  float sum = 0.0f;
++#pragma unroll
++  for (uint32_t i = 0; i < 8; ++i) sum = __fmaf_rn(h[i], h[i], sum);
++#pragma unroll
++  for (uint32_t mask = 1; mask < kWarpThreads; mask <<= 1) sum = __fadd_rn(sum, __shfl_xor_sync(0xffffffffu, sum, mask));
++  if (t % kWarpThreads == 0) partial[t / kWarpThreads] = sum;
++  __syncthreads();
++  sum = partial[0];
++#pragma unroll
++  for (uint32_t w = 1; w < kWideThreads / kWarpThreads; ++w) sum = __fadd_rn(sum, partial[w]);
++  const float rstd = rsqrt_approx_ftz(__fmaf_rn(sum, 1.0f / kNormHidden, params.eps));
++
++  Vec y;
++#pragma unroll
++  for (uint32_t j = 0; j < 4; ++j) {
++    const auto wf = cast<fp32x2_t>(wv[j]);
++    y[j] = cast<bf16x2_t, fp32x2_t>({
++        __fmul_rn(__fmul_rn(h[2 * j], rstd), __fadd_rn(wf.x, 0.0f)),
++        __fmul_rn(__fmul_rn(h[2 * j + 1], rstd), __fadd_rn(wf.y, 0.0f)),
++    });
++  }
++  // A 128-column group is 16 consecutive lanes, as in the 64-lane kernel.
++  auto amax2 = math::abs(y[0]);
++#pragma unroll
++  for (uint32_t j = 1; j < 4; ++j) amax2 = math::max(amax2, math::abs(y[j]));
++  const auto amax_pair = cast<fp32x2_t>(warp::reduce_max<16>(amax2));
++  const float amax = math::max(math::max(amax_pair.x, amax_pair.y), 1e-10f);
++  const float quant_scale = kFP8Max / amax;
++  FP8Vec qv;
++#pragma unroll
++  for (uint32_t j = 0; j < 4; ++j) {
++    const auto yf = cast<fp32x2_t>(y[j]);
++    qv[j] = fp8x2_e4m3_t{float2{fminf(yf.x * quant_scale, kFP8Max), fminf(yf.y * quant_scale, kFP8Max)}};
++  }
++  store_as<FP8Vec>(params.q, qv, offset);
++  if (t % 16 == 0) params.scale[(t / 16) * params.scale_group_stride + row] = amax * kFP8MaxInv;
++
++  PDLTriggerSecondary<kUsePDL>();
++}
++
++template <bool kUsePDL>
++struct DecodeAddRMSNormGroupQuantWideKernel {
++  static void
++  run(const tvm::ffi::TensorView x,
++      const tvm::ffi::TensorView residual,
++      const tvm::ffi::TensorView weight,
++      double eps,
++      const tvm::ffi::TensorView q,
++      const tvm::ffi::TensorView scale) {
++    using namespace host;
++    auto N = SymbolicSize{"num_tokens"};
++    auto H = SymbolicSize{"hidden_size"};
++    auto G = SymbolicSize{"num_groups"};
++    auto Sg = SymbolicSize{"scale_group_stride"};
++    auto device = SymbolicDevice{};
++    H.set_value(kNormHidden);
++    G.set_value(kNormHidden / 128);
++    device.set_options<kDLCUDA>();
++    TensorMatcher({N, H}).with_dtype<bf16_t>().with_device(device).verify(x).verify(residual);
++    TensorMatcher({H}).with_dtype<bf16_t>().with_device(device).verify(weight);
++    TensorMatcher({N, H}).with_dtype<fp8_e4m3_t>().with_device(device).verify(q);
++    TensorMatcher({N, G}).with_strides({1, Sg}).with_dtype<float>().with_device(device).verify(scale);
++    const auto num_tokens = static_cast<uint32_t>(N.unwrap());
++    if (num_tokens == 0) return;
++    RuntimeCheck(Sg.unwrap() >= N.unwrap(), "scale group stride must cover every token");
++    const auto params = AddRMSNormGroupQuantParams{
++        .x = x.data_ptr(),
++        .residual = residual.data_ptr(),
++        .weight = weight.data_ptr(),
++        .q = q.data_ptr(),
++        .scale = static_cast<float*>(scale.data_ptr()),
++        .scale_group_stride = static_cast<int64_t>(Sg.unwrap()),
++        .num_tokens = num_tokens,
++        .eps = static_cast<float>(eps),
++    };
++    LaunchKernel(num_tokens, kWideThreads, device.unwrap())  //
++        .enable_pdl(kUsePDL)(decode_add_rmsnorm_group_quant_wide_kernel<kUsePDL>, params);
++  }
++};
++
+ }  // namespace
+diff --git a/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py b/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py
+index 44d33c0..3c9f9f7 100644
+--- a/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py
++++ b/python/sglang/kernels/ops/layernorm/add_rmsnorm_group_quant.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import os
+ from typing import TYPE_CHECKING, Tuple
+ 
+ import torch
+@@ -110,9 +111,35 @@ def decode_add_rmsnorm_group_quant_fp8_out(x: torch.Tensor, residual: torch.Tens
+     _jit_decode_add_rmsnorm_group_quant_module().run(x, residual, weight, eps, q, scale)
+ 
+ 
++@cache_once
++def _jit_decode_add_rmsnorm_group_quant_wide_module() -> Module:
++    args = make_cpp_args(is_arch_support_pdl())
++    return load_jit(
++        "decode_add_rmsnorm_group_quant_wide",
++        *args,
++        cuda_files=["elementwise/add_rmsnorm_group_quant.cuh"],
++        cuda_wrappers=[("run", f"DecodeAddRMSNormGroupQuantWideKernel<{args}>::run")],
++    )
++
++
++@register_custom_op(mutates_args=["residual", "q", "scale"])
++def decode_add_rmsnorm_group_quant_wide_fp8_out(x: torch.Tensor, residual: torch.Tensor, weight: torch.Tensor, eps: float, q: torch.Tensor, scale: torch.Tensor) -> None:
++    _jit_decode_add_rmsnorm_group_quant_wide_module().run(x, residual, weight, eps, q, scale)
++
++
++# Chosen before model launch by scripts/select-firmus-decode-dense.py; unset
++# keeps the 64-lane kernel. Read once: CUDA graphs capture the first choice.
++DECODE_NORM_QUANT_KERNELS = {"": decode_add_rmsnorm_group_quant_fp8_out, "wide": decode_add_rmsnorm_group_quant_wide_fp8_out}
++
++
++@cache_once
++def _decode_norm_quant_kernel():
++    return DECODE_NORM_QUANT_KERNELS[os.environ.get("SGLANG_DECODE_NORM_QUANT", "")]
++
++
+ def decode_add_rmsnorm_group_quant_fp8(x: torch.Tensor, residual: torch.Tensor, weight: torch.Tensor, eps: float) -> Tuple[torch.Tensor, torch.Tensor]:
+     rows = x.shape[0]
+     q = torch.empty(x.shape, dtype=torch.float8_e4m3fn, device=x.device)
+     scale = torch.empty((32, (rows + 3) // 4 * 4), dtype=torch.float32, device=x.device).T[:rows]
+-    decode_add_rmsnorm_group_quant_fp8_out(x, residual, weight, eps, q, scale)
++    _decode_norm_quant_kernel()(x, residual, weight, eps, q, scale)
+     return q, scale

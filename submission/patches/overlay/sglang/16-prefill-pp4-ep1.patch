@@ -1,0 +1,385 @@
+diff --git a/python/sglang/srt/speculative/qwen_pp4.py b/python/sglang/srt/speculative/qwen_pp4.py
+new file mode 100644
+--- /dev/null
++++ b/python/sglang/srt/speculative/qwen_pp4.py
+@@ -0,0 +1,37 @@
++"""Opt-in Qwen PP4/EP1 prefill with the existing EP4 EAGLE3 decode peer."""
++import os
++
++
++def enabled():
++    return os.environ.get("SGLANG_QWEN_PP4_EP1", "0") == "1"
++
++
++def prefill(args):
++    return enabled() and args.disaggregation_mode == "prefill" and args.pp_size == 4
++
++
++def supported(args):
++    return (
++        prefill(args) and args.tp_size == args.dp_size == args.ep_size == 1
++        and args.speculative_algorithm == "EAGLE3"
++        and args.speculative_eagle_topk == 1 and args.speculative_num_draft_tokens == 4
++        and args.speculative_num_steps == 3 and args.disable_overlap_schedule
++        and args.moe_a2a_backend == "megamoe" and args.ep_num_redundant_experts == 0
++        and not args.enable_eplb and not args.enable_two_batch_overlap
++        and not args.enable_lora and not args.speculative_use_rejection_sampling
++        and not args.speculative_adaptive
++        and args.disaggregation_transfer_backend == "nixl"
++    )
++
++
++def kv_region_ids(pool, total_layers, draft_pool=None):
++    # MHATokenToKVPool registers all K layers followed by all V layers.
++    # Draft layer numbers start after the complete target, not after a PP shard.
++    layers = list(range(pool.start_layer, pool.end_layer))
++    ids = layers + layers
++    assert len(pool.get_contiguous_buf_infos()[0]) == len(ids)
++    if draft_pool is not None:
++        draft_layers = list(range(total_layers, total_layers + draft_pool.layer_num))
++        assert len(draft_pool.get_contiguous_buf_infos()[0]) == 2 * len(draft_layers)
++        ids += draft_layers + draft_layers
++    return ids
+diff --git a/python/sglang/srt/server_args.py b/python/sglang/srt/server_args.py
+--- a/python/sglang/srt/server_args.py
++++ b/python/sglang/srt/server_args.py
+@@ -8436,9 +8436,12 @@
+         )
+
+         if self.pp_size > 1:
++            from sglang.srt.speculative.qwen_pp4 import supported as qwen_pp4_supported
++
+             assert (
+-                self.disable_overlap_schedule and self.speculative_algorithm is None
+-            ), "Pipeline parallelism is not compatible with overlap schedule, speculative decoding"
++                self.disable_overlap_schedule
++                and (self.speculative_algorithm is None or qwen_pp4_supported(self))
++            ), "Pipeline parallelism requires non-overlap and a supported speculative prefill layout"
+
+         assert not (
+             self.dp_size > 1 and self.nnodes != 1 and not self.enable_dp_attention
+diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -273,6 +273,9 @@
+             # Weight post-processing interleaves w13, so an unsupported setup
+             # must fail here instead of falling back to an ordinary MoE runner.
+             args = get_server_args()
++            from sglang.srt.speculative.qwen_pp4 import supported as qwen_pp4_supported
++
++            local_pp = qwen_pp4_supported(args) and self.ep_size == 1
+             supported = (
+                 torch.cuda.get_device_capability() == (9, 0)
+                 and config.hidden_size == 4096
+@@ -280,10 +283,8 @@
+                 and config.num_experts == 128
+                 and config.num_experts_per_tok == 8
+                 and self.tp_size == 1
+-                and self.ep_size == 4
+-                and args.enable_dp_attention
+-                and args.dp_size == 4
+-                and (
++                and (local_pp or (self.ep_size == 4 and args.enable_dp_attention and args.dp_size == 4))
++                and (local_pp or
+                     args.disaggregation_mode == "prefill"
+                     or (
+                         args.disaggregation_mode == "decode"
+@@ -1322,7 +1323,7 @@
+         )
+
+         aux_hidden_states = None
+-        if self.capture_aux_hidden_states:
++        if self.capture_aux_hidden_states and self.pp_group.is_last_rank:
+             hidden_states, aux_hidden_states = hidden_states
+
+         if self.pp_group.is_last_rank:
+@@ -1388,7 +1389,9 @@
+         return self.model.embed_tokens.weight, self.lm_head.weight
+
+     def set_eagle3_layers_to_capture(self, layer_ids: Optional[List[int]] = None):
+-        if not self.pp_group.is_last_rank:
++        from sglang.srt.speculative.qwen_pp4 import prefill as qwen_pp4_prefill
++
++        if not self.pp_group.is_last_rank and not qwen_pp4_prefill(get_server_args()):
+             return
+
+         self.capture_aux_hidden_states = True
+diff --git a/python/sglang/srt/models/qwen2_moe.py b/python/sglang/srt/models/qwen2_moe.py
+--- a/python/sglang/srt/models/qwen2_moe.py
++++ b/python/sglang/srt/models/qwen2_moe.py
+@@ -848,7 +848,9 @@
+         self.moe_dp_size = get_parallel().moe_dp_size
+         self.attn_cp_size = get_parallel().attn_cp_size
+
+-        if self.pp_group.is_first_rank:
++        from sglang.srt.speculative.qwen_pp4 import prefill as qwen_pp4_prefill
++
++        if self.pp_group.is_first_rank or qwen_pp4_prefill(get_server_args()):
+             self.embed_tokens = VocabParallelEmbedding(
+                 config.vocab_size,
+                 config.hidden_size,
+@@ -922,7 +924,13 @@
+                 hidden_states = cp_split_and_rebuild_data(forward_batch, hidden_states)
+             positions = cp_split_and_rebuild_position(forward_batch, positions)
+
++        # Carry previously captured layers in order across PP stage boundaries.
+         aux_hidden_states = []
++        if pp_proxy_tensors is not None:
++            index = 0
++            while f"eagle_aux_{index}" in pp_proxy_tensors.tensors:
++                aux_hidden_states.append(pp_proxy_tensors[f"eagle_aux_{index}"])
++                index += 1
+         if forward_batch.can_run_tbo:
+             hidden_states, residual = model_forward_maybe_tbo(
+                 layers=self.layers,
+@@ -969,6 +977,7 @@
+                 {
+                     "hidden_states": hidden_states,
+                     "residual": residual,
++                    **{f"eagle_aux_{i}": value for i, value in enumerate(aux_hidden_states)},
+                 }
+             )
+         else:
+diff --git a/python/sglang/srt/speculative/eagle_worker_v2.py b/python/sglang/srt/speculative/eagle_worker_v2.py
+--- a/python/sglang/srt/speculative/eagle_worker_v2.py
++++ b/python/sglang/srt/speculative/eagle_worker_v2.py
+@@ -167,7 +167,7 @@
+                 server_args=server_args,
+                 gpu_id=gpu_id,
+                 # spec workers don't support pipeline parallelism
+-                ps=replace(ps, pp_rank=0),
++                ps=replace(ps, pp_rank=0, pp_size=1),
+                 nccl_port=nccl_port,
+                 is_draft_worker=True,
+             )
+@@ -1096,7 +1096,7 @@
+                 )
+
+     def forward_batch_generation(
+-        self, batch: ScheduleBatch, on_publish=None, grammar_barrier=None
++        self, batch: ScheduleBatch, on_publish=None, grammar_barrier=None, pp_proxy_tensors=None
+     ):
+         if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
+             # Target prefill
+@@ -1106,8 +1106,11 @@
+                 else CaptureHiddenMode.FULL
+             )
+             batch_output = self.target_worker.forward_batch_generation(
+-                batch, capture_hidden_mode=target_capture_mode
+-            )
++                batch, capture_hidden_mode=target_capture_mode,
++                pp_proxy_tensors=pp_proxy_tensors,
++            )
++            if not self.target_worker.pp_group.is_last_rank:
++                return batch_output
+
+             # Spec_v2 convention: batch.seq_lens = length BEFORE this iter's tokens.
+             # Extend processed L prompt tokens; next verify iter expects same L.
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -3501,6 +3501,13 @@
+                 batch_result = self.tp_worker.forward_batch_split_prefill(batch)
+                 self._relay_forward_payload(batch.req_pool_indices, batch_result)
+                 batch.input_ids = None
++            elif self.ps.pp_size > 1 and self.spec_algorithm.is_eagle3():
++                resolve_forward_inputs(batch, self.future_map)
++                with self._forward_isolation(batch, overlap=False):
++                    batch_result = self.model_worker.forward_batch_generation(
++                        batch, pp_proxy_tensors=pp_proxy_tensors
++                    )
++                self.update_cache_from_scheduler(batch, batch_result)
+             elif not batch.spec_algorithm.is_none():
+                 # Non-overlap: drive the V2 worker synchronously (no
+                 # future_map relay / on_publish).
+diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
+--- a/python/sglang/srt/managers/scheduler_pp_mixin.py
++++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
+@@ -238,27 +238,32 @@
+                 d2h_event = None
+                 next_batch_result = None
+
+-                recv_reqs = self.request_receiver.recv_requests()
+-                self.process_input_requests(recv_reqs)
++                with torch.profiler.record_function("pp.recv_requests"):
++                    recv_reqs = self.request_receiver.recv_requests()
++                    self.process_input_requests(recv_reqs)
+
+                 if not self.pp_group.is_last_rank:
+                     self._pp_commit_comm_work(self.send_req_work)
+
+-                bootstrapped_rids = self._pp_pd_get_bootstrapped_ids()
++                with torch.profiler.record_function("pp.bootstrap_poll"):
++                    bootstrapped_rids = self._pp_pd_get_bootstrapped_ids()
+                 bmbs[mb_id] = bootstrapped_rids
+                 self._pp_commit_comm_work(send_bootstrapped_work)
+
+-                transferred_rids = self._pp_pd_get_prefill_transferred_ids()
++                with torch.profiler.record_function("pp.transfer_poll"):
++                    transferred_rids = self._pp_pd_get_prefill_transferred_ids()
+                 self._pp_commit_comm_work(send_transfer_work)
+                 tmbs[mb_id] = transferred_rids
+
+-                self.process_prefill_chunk(
+-                    last_batch=self.last_batch, running_batch=self.running_batch
+-                )
+-                prefill_plan = self.get_new_batch_prefill(self.running_batch)
++                with torch.profiler.record_function("pp.prepare_batch"):
++                    self.process_prefill_chunk(
++                        last_batch=self.last_batch, running_batch=self.running_batch
++                    )
++                    prefill_plan = self.get_new_batch_prefill(self.running_batch)
+                 batch = prefill_plan.batch_to_run
+                 self.running_batch = prefill_plan.running_batch
+-                batch = self.dp_attn_adapter.maybe_prepare_mlp_sync_batch(batch)
++                with torch.profiler.record_function("pp.mlp_sync"):
++                    batch = self.dp_attn_adapter.maybe_prepare_mlp_sync_batch(batch)
+                 self.mbs[mb_id] = batch
+                 self.running_mbs[mb_id] = self.running_batch
+
+@@ -266,7 +271,8 @@
+                 self.cur_batch_for_debug = cur_batch
+                 if cur_batch:
+                     server_is_idle = False
+-                    pp_proxy_tensors = self._pp_recv_proxy_tensors()
++                    with torch.profiler.record_function("pp.recv_proxy"):
++                        pp_proxy_tensors = self._pp_recv_proxy_tensors()
+
+                 if self.server_args.pp_async_batch_depth > 0:
+                     next_pp_outputs, next_batch_result, d2h_event = (
+@@ -318,15 +324,18 @@
+                 self._pp_commit_comm_work(send_release_work)
+                 # post-process the coming microbatch
+                 if self.mbs[next_mb_id] is not None:
+-                    d2h_event.synchronize()
+-                    self._pp_process_batch_result(
+-                        self.mbs[next_mb_id],
+-                        next_batch_result,
+-                    )
++                    with torch.profiler.record_function("pp.wait_result"):
++                        d2h_event.synchronize()
++                    with torch.profiler.record_function("pp.process_result"):
++                        self._pp_process_batch_result(
++                            self.mbs[next_mb_id],
++                            next_batch_result,
++                        )
+                     self.last_mbs[next_mb_id] = self.mbs[next_mb_id]
+
+                 if tmbs[next_mb_id] is not None:
+-                    self.process_disagg_prefill_inflight_queue(next_release_rids)
++                    with torch.profiler.record_function("pp.release_kv"):
++                        self.process_disagg_prefill_inflight_queue(next_release_rids)
+                 if not self.pp_group.is_last_rank:
+                     self.send_req_work = self._pp_send_pyobj_to_next_stage(
+                         recv_reqs, async_send=True
+@@ -1017,6 +1026,13 @@
+             "next_token_ids": result.next_token_ids,
+         }
+
++        if result.next_draft_input is not None:
++            draft = result.next_draft_input
++            assert draft.dsa_topk_indices is None and draft.draft_probs is None
++            tensor_dict.update(eagle_hidden=draft.hidden_states,
++                               eagle_topk_p=draft.topk_p,
++                               eagle_topk_index=draft.topk_index)
++
+         if batch.return_logprob:
+             logprob_dict = get_logprob_dict_from_result(result)
+             tensor_dict = {
+@@ -1148,12 +1164,6 @@
+                 extend_logprob_start_len_per_req,
+             ) = get_logprob_from_pp_outputs(pp_outputs)
+         next_token_ids = pp_outputs["next_token_ids"].to(torch.int64)
+-        # PP rank 0 also relays into output_tokens_buf so the next iter's
+-        # resolve_forward_inputs finds these tokens for the decode portion
+-        # of mixed-chunk batches (which gather via mix_running_indices).
+-        self.future_map.stash(
+-            batch.req_pool_indices, RelayPayload(bonus_tokens=next_token_ids)
+-        )
+         batch.input_ids = None
+         output_result = GenerationBatchResult(
+             logits_output=logits_output,
+@@ -1163,6 +1173,27 @@
+             extend_logprob_start_len_per_req=extend_logprob_start_len_per_req,
+             can_run_cuda_graph=mb_metadata.can_run_cuda_graph,
+         )
++        if "eagle_hidden" in pp_outputs.tensors:
++            from sglang.srt.speculative.eagle_info import EagleDraftInput
++
++            draft = EagleDraftInput(hidden_states=pp_outputs["eagle_hidden"],
++                                    topk_p=pp_outputs["eagle_topk_p"],
++                                    topk_index=pp_outputs["eagle_topk_index"],
++                                    bonus_tokens=next_token_ids)
++            batch.spec_info = output_result.next_draft_input = draft
++            # This path runs on the PP copy stream before d2h_event is recorded.
++            # Reuse EP's pinned host mirrors for EAGLE and page-table rows so
++            # result processing does not synchronously read the schedule stream.
++            from sglang.srt.managers.utils import _async_d2h
++
++            self.prefetch_disagg_prefill_outputs(batch, output_result)
++            output_result.next_token_ids = _async_d2h(next_token_ids)
++            # Non-overlap EAGLE consumes batch.spec_info directly, never the
++            # FutureMap buffers. Do not allocate/scatter a duplicate payload.
++        else:
++            self.future_map.stash(
++                batch.req_pool_indices, RelayPayload(bonus_tokens=next_token_ids)
++            )
+         return output_result
+
+     def _pp_process_batch_result(
+diff --git a/python/sglang/srt/managers/tp_worker.py b/python/sglang/srt/managers/tp_worker.py
+--- a/python/sglang/srt/managers/tp_worker.py
++++ b/python/sglang/srt/managers/tp_worker.py
+@@ -351,7 +351,7 @@
+         else:
+             self.random_seed = broadcast_pyobj(
+                 [server_args.random_seed],
+-                self.ps.tp_size * self.ps.pp_rank + self.ps.tp_rank,
++                self.world_group.rank,
+                 self.world_group.cpu_group,
+                 src=self.world_group.ranks[0],
+             )[0]
+diff --git a/python/sglang/srt/disaggregation/prefill.py b/python/sglang/srt/disaggregation/prefill.py
+--- a/python/sglang/srt/disaggregation/prefill.py
++++ b/python/sglang/srt/disaggregation/prefill.py
+@@ -192,6 +192,11 @@
+         transfer_draft_cache = (
+             not layer_shard_enabled or layer_shard_rank == layer_shard_size - 1
+         )
++        from sglang.srt.speculative.qwen_pp4 import prefill as qwen_pp4_prefill, kv_region_ids
++
++        local_pp = qwen_pp4_prefill(self.scheduler.server_args)
++        if local_pp:
++            transfer_draft_cache = self.pp_rank == self.pp_size - 1
+         kv_args.prefill_start_layer = (
+             getattr(
+                 self.token_to_kv_pool,
+@@ -230,6 +235,11 @@
+             and hasattr(self.token_to_kv_pool, "get_kv_layer_ids")
+             else []
+         )
++        if local_pp:
++            kv_args.kv_layer_ids = kv_region_ids(
++                self.token_to_kv_pool, self.scheduler.model_config.num_hidden_layers,
++                self.draft_token_to_kv_pool if transfer_draft_cache else None,
++            )
+         if not self.is_mla_backend:
+             kv_args.kv_head_num = self.token_to_kv_pool.head_num
+             kv_args.total_kv_head_num = (
+diff --git a/python/sglang/srt/disaggregation/decode.py b/python/sglang/srt/disaggregation/decode.py
+--- a/python/sglang/srt/disaggregation/decode.py
++++ b/python/sglang/srt/disaggregation/decode.py
+@@ -478,6 +478,13 @@
+             and hasattr(self.token_to_kv_pool, "get_kv_layer_ids")
+             else []
+         )
++        from sglang.srt.speculative.qwen_pp4 import enabled as qwen_pp4_enabled, kv_region_ids
++
++        if qwen_pp4_enabled():
++            kv_args.kv_layer_ids = kv_region_ids(
++                self.token_to_kv_pool, self.scheduler.model_config.num_hidden_layers,
++                self.draft_token_to_kv_pool,
++            )
+         if self.transfer_backend == TransferBackend.NIXL:
+             kv_args.kv_data_mem_kinds = kv_data_mem_kinds
+         kv_args.page_size = self.token_to_kv_pool.page_size

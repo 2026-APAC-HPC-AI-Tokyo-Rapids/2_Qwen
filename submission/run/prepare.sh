@@ -57,9 +57,12 @@ stage_overlay() {
 stage_overlay sglang opt/sglang/source/python/sglang python/sglang
 stage_overlay deep-gemm opt/sglang/venv/lib/python3.12/site-packages/deep_gemm deep_gemm
 
-install -m 0644 "${package}/config/prefill-expert-location.json" "${runtime_dir}/source/prefill-expert-location.json"
+# Final kernel env files the workers of Actions run 41573354672 sourced after its in-job gates adopted their candidates.
+install -m 0644 "${package}/config/prefill-kernels.env" "${package}/config/decode-kernels.env" "${runtime_dir}/source/"
+# PP4 Prefill stage-to-GPU order input, as scripts/provision-firmus-framework.sh stages it.
+install -m 0644 "${package}/config/firmus-gpu-sm-clock.json" "${runtime_dir}/source/firmus-gpu-sm-clock.json"
 install -m 0755 "${package}/run/submit.sbatch" "${package}/run/official-aiperf.sh" "${runtime_dir}/scripts/"
-install -m 0644 "${package}/run/run-aiperf.py" "${package}/run/parse-aiperf-result.py" "${runtime_dir}/scripts/"
-cp "${package}/run/prepare.sh" "${package}/run/prepare_eagle.py" "${runtime_dir}/scripts/submit.sbatch" "${runtime_dir}/scripts/official-aiperf.sh" "${runtime_dir}/scripts/run-aiperf.py" "${runtime_dir}/scripts/parse-aiperf-result.py" "${runtime_dir}/source/"
+install -m 0644 "${package}/run/run-aiperf.py" "${package}/run/parse-aiperf-result.py" "${package}/run/order-firmus-pp4-gpus.py" "${package}/run/greedy-probe.py" "${runtime_dir}/scripts/"
+cp "${package}/run/prepare.sh" "${package}/run/prepare_eagle.py" "${runtime_dir}/scripts/submit.sbatch" "${runtime_dir}/scripts/official-aiperf.sh" "${runtime_dir}/scripts/run-aiperf.py" "${runtime_dir}/scripts/parse-aiperf-result.py" "${runtime_dir}/scripts/order-firmus-pp4-gpus.py" "${runtime_dir}/scripts/greedy-probe.py" "${runtime_dir}/source/"
 printf 'Prepared %s\n' "${runtime_dir}"
 printf 'cd %q && sbatch scripts/submit.sbatch\n' "${runtime_dir}"
