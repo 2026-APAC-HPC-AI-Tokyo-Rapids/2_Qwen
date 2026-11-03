@@ -113,4 +113,4 @@ Ruffは全件成功、変更shellの `bash -n` と `git diff --check` も成功�
   historicalは実servingの分布に最も近いが、MMAを3.8%減らしても時間はほぼ変わらない。WGMMA発行の増加（約5.4%）と、tileごとのcommit/waitの増加が、padding分の削減と相殺した。hotでは遅くなる。
 - **serving：** 現行splitのままで、dispatchの行はない。公式score **10005.78**（eligible、good 98.13%）、job 844秒。
 - **予算の副作用：** r26 gateをDecode greedy gateの前に置いたので、greedy gateは予算不足でskipした（`insufficient remaining serving budget`）。このrunのDecodeは従来のgreedy経路で、10005.78はround 25の10021.60と同じ構成ではない。差はround 22〜25のscoreの幅の内側である。
-- **結論：** swap-AB tailのpadding削減は、限定版でも実時間の短縮にならない。branchはremoteに残し、mainには文書だけを記録する。再開するなら、WGMMA発行を増やさずにpaddingを削る構造（例：pool内で行を詰めて、expertの境界をまたいでM128を埋める）が条件になる。
+- **結論：** swap-AB tailのpadding削減は、限定版でも実時間の短縮にならない。branchはremoteに残し、mainには文書だけを記録する。expertごとにweightが異なるので、M tileはexpertの境界をまたげない。再開するなら、WGMMA発行とwaitを増やさずにpaddingを削る構造が必要だが、現時点では候補がない。
