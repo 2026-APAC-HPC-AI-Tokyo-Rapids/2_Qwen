@@ -38,7 +38,15 @@ gateは --model-path のconfig.jsonから語彙を読み、torchrunへ同じpath
 
 CPUのchain helperでもaccept index/length/bonusと復帰を比較したが、公式GPU verifyの実行ではない。実patchのdispatch・各1回のfallback/使用log、model config読込、gate集約/拒否、shell timeout/予算、ordered overlayとLM head/verify不変も514件に含まれる。数値正本は `decode-greedy-vocab-r25-cpu-validation-20261103.json`、rawのXML/logは指定scratchに保存する。
 
-CUDA13.4/sm_90aの全TU compile/SASS比較は継続中。greedyの2kernelはcompile成功、stack/spill 0、C75xxなし。最終比較とraw保存の結果を次の区切りで追記する。
+## CUDA 13.4 compile / SASS
+
+`/usr/local/cuda-13.4` の nvcc 13.4.92、sm_90aで、base 38b1e6a と実装4b40ae4のFA3 companionをそれぞれ **全34 CUDA translation unit** compileした。build.pyと同じ生成表・CUDA flags・固定FA3/CUTLASS archive（SHA照合済み）・patch順序を使い、container contextと同じようにprobeのfp8-output.patchを配置した。CUDA source/header・build条件など36入力はbaseとbyte一致、変更された入力はhost wrapperだけ。
+
+cuobjdumpの識別用source絶対パスheaderだけを正規化し、全34 TUのSASS本文・命令encoding・制御語が完全一致した。融合以外は **33 TU / 39 function**。省略したspecializationはない。全compile logにC75xx診断なし。greedyはtile31 / finish32 registers、両方stack・spill load/store 0、ptxas静的shared64 bytes。fast-mathを外しftz=false/fmad=falseを維持、SASSにFADD.FTZ・FFMAなし。spill 0の主張はgreedyの2kernelについてであり、既存attentionの資源状態と混同しない。
+
+wrapper.cpp全体も、Torch 2.11.0+cu130 headers・CUDA13.4 headers・生成candidate header・patch済み依存を使い、g++13.3.0のfsyntax-onlyで成功した。libraryのlink/loadは実施していない。ローカルCPU検証だけ最大4 compile並列にし、完了したTUの成果物を保持して継続した。image builderの最大2並列は変更していない。
+
+flags・各TUのsource/SASS/encoded-word hash・資源数の正本は同じ `decode-greedy-vocab-r25-cpu-validation-20261103.json`。再現用source、各compile command/log、object、SASSは指定scratchのraw archiveへまとめる。
 
 imageのCUDAは13.0.88。CPUのCUDA13.4 compileは代わりの証拠にすぎず、image build・link/load・実GPUの精度/性能・通常servingの公式結果は未確認。
 
