@@ -117,6 +117,13 @@ def test_norm_noninferiority_and_every_shape_order(tmp_path, monkeypatch, failur
     assert not decide(args, monkeypatch)["norm-square-fma"]["adopted"]
 
 
+@pytest.mark.parametrize(("extra", "adopted"), ((0, True), (1, False)))
+def test_norm_allows_fp8_tie_noise_but_not_a_larger_code_regression(tmp_path, monkeypatch, extra, adopted):
+    args = fixture(tmp_path)
+    mutate(args, "norm-square-fma", lambda r: r["accuracy"]["fp8-boundary"]["candidate"].update(fp8_code_mismatches=5 + norm.MISMATCH_SLACK + extra))
+    assert decide(args, monkeypatch)["norm-square-fma"]["adopted"] is adopted
+
+
 def test_expired_budget_leaves_flags_off(tmp_path, monkeypatch):
     args = fixture(tmp_path)
     args.deadline = 249
@@ -131,10 +138,10 @@ def test_greedy_precedes_r27_and_actual_budget_expressions():
     greedy = text[text.index("# Decode greedy gate begin:"):text.index("# Decode greedy gate end.")]
     r27 = text[text.index("# r27 begins"):text.index("# r27 gate end.")]
     assert "1020 - SECONDS >= 90 + 660" in greedy
-    assert "SECONDS + 70 + 660 <= 1020" in r27
-    assert "prefill_r27_started + 60" in r27 and "prefill_r27_started + 70" in r27
+    assert "SECONDS + 100 + 660 <= 1020" in r27
+    assert "prefill_r27_started + 90" in r27 and "prefill_r27_started + 100" in r27
     # Replay measured r25 times and exact boundaries using the real expressions.
-    for now, expected in ((208, True), (222, True), (236, True), (290, True), (291, False)):
+    for now, expected in ((208, True), (222, True), (236, True), (260, True), (261, False)):
         expr = r27.split("if (( ", 1)[1].split(" ));", 1)[0]
         result = subprocess.run(["bash", "-c", f"SECONDS={now}; (( {expr} ))"], check=False)
         assert (result.returncode == 0) is expected

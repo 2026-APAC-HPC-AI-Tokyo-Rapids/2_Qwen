@@ -350,26 +350,28 @@ fi
 # Decode greedy gate end.
 
 # r27 begins only after greedy has settled. r26 measured 52 s wall / 17.5 s per worker.
-# Keep 60 s for parallel workers (+2 kill grace), and 70 s including aggregation;
+# r27 runs two gates and a cold Triton norm compile in one container, so keep 90 s for
+# parallel workers (+2 kill grace) and 100 s including aggregation; greedy ends near
+# 222-236 s, so 236 + 100 + 660 = 996 s still fits the 1020 s window.
 # the short norm gate shares imports with MegaMoE. If cold JIT exceeds this, keep serving pins.
 if [[ "${prefill_pp}" == 4 ]] && jq -e '.prefill.poll_backoff_gate == true or .prefill.norm_square_fma_gate == true' "${ROOT}/source/firmus-framework.json" >/dev/null; then
   mkdir -p "${ROOT}/results/prefill-r27"
-  if (( SECONDS + 70 + 660 <= 1020 )); then
+  if (( SECONDS + 100 + 660 <= 1020 )); then
     prefill_r27_started=$(date +%s)
     prefill_r27_ok=1
     prefill_r27_selections=()
     for worker in 0 1 2; do
       node=${HEAD}
       if (( worker == 2 )); then node=${TAIL}; fi
-      prefill_r27_remaining=$((prefill_r27_started + 60 - $(date +%s)))
+      prefill_r27_remaining=$((prefill_r27_started + 90 - $(date +%s)))
       if (( prefill_r27_remaining <= 0 )); then prefill_r27_ok=0; break; fi
-      timeout --kill-after=2 "${prefill_r27_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-r27-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-r27.py" --output "${ROOT}/results/prefill-r27/prefill-${worker}" --routing "${ROOT}/source/megamoe-local-ep1-routing.npz" --run-id "${SLURM_JOB_ID}-${prefill_r27_started}" --deadline "$((prefill_r27_started + 60))" --poll-backoff "$(jq -r '.prefill.poll_backoff_gate // false' "${ROOT}/source/firmus-framework.json")" --norm-square-fma "$(jq -r '.prefill.norm_square_fma_gate // false' "${ROOT}/source/firmus-framework.json")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-r27-${worker}.log" 2>&1 &
+      timeout --kill-after=2 "${prefill_r27_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-r27-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-r27.py" --output "${ROOT}/results/prefill-r27/prefill-${worker}" --routing "${ROOT}/source/megamoe-local-ep1-routing.npz" --run-id "${SLURM_JOB_ID}-${prefill_r27_started}" --deadline "$((prefill_r27_started + 90))" --poll-backoff "$(jq -r '.prefill.poll_backoff_gate // false' "${ROOT}/source/firmus-framework.json")" --norm-square-fma "$(jq -r '.prefill.norm_square_fma_gate // false' "${ROOT}/source/firmus-framework.json")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-r27-${worker}.log" 2>&1 &
       prefill_r27_selections+=("$!")
     done
     for pid in "${prefill_r27_selections[@]}"; do wait "${pid}" || prefill_r27_ok=0; done
-    prefill_r27_remaining=$((prefill_r27_started + 70 - $(date +%s)))
+    prefill_r27_remaining=$((prefill_r27_started + 100 - $(date +%s)))
     if (( prefill_r27_remaining > 0 )); then
-      timeout --signal=KILL "${prefill_r27_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-r27.py" --aggregate "${ROOT}/results/prefill-r27" --output "${ROOT}/results/prefill-r27/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_r27_started}" --deadline "$((prefill_r27_started + 70))" --workers-ok "${prefill_r27_ok}" --poll-backoff "$(jq -r '.prefill.poll_backoff_gate // false' "${ROOT}/source/firmus-framework.json")" --norm-square-fma "$(jq -r '.prefill.norm_square_fma_gate // false' "${ROOT}/source/firmus-framework.json")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" || true
+      timeout --signal=KILL "${prefill_r27_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-r27.py" --aggregate "${ROOT}/results/prefill-r27" --output "${ROOT}/results/prefill-r27/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_r27_started}" --deadline "$((prefill_r27_started + 100))" --workers-ok "${prefill_r27_ok}" --poll-backoff "$(jq -r '.prefill.poll_backoff_gate // false' "${ROOT}/source/firmus-framework.json")" --norm-square-fma "$(jq -r '.prefill.norm_square_fma_gate // false' "${ROOT}/source/firmus-framework.json")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" || true
     fi
     rm -f "${ROOT}/source/prefill-kernels.env.r27.tmp" "${ROOT}/source/prefill-kernels.env.r27.tmp.poll-backoff.tmp"
   else
