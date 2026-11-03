@@ -57,3 +57,21 @@ config の `images` 全体と `container_*` 全項目、13本の DeepGEMM overla
 指定 scratch `scratchpad/codex-scratch/r29` に terminal log・exit code・検証説明を保存した。展開 source、途中・最終の自分の pytest temp、source の bytecode cache は削除済み。今回作成・投入した scheduler job はなく、他の job や main・他 branch・SGLang mirror・ユーザー設定は変更していない。
 
 途中で全体テストの TMPDIR も指定 scratch 配下へ移したが、既存 UNIX socket テストの socket 名が Linux のパス長上限を超えることを短い診断で確認した（診断先だけでも161 byte、`AF_UNIX path too long`）。自分の途中実行のみ停止して終了143とログを保存し、最終の指定コマンドは TMPDIR 上書きなしで実行して終了0を確認した。標準一時領域に生成した自分の pytest ディレクトリも終了後に削除し、他作業の一時ファイルには触れていない。これは runtime/gate のエラーではなく、ローカル検証時の一時パス指定の訂正である。
+
+## Firmus 実行結果（run 41689469266、commit d33b595、image a001f901、build なし）
+
+Slurm job 28586 は COMPLETED、elapsed 14:37。Decode greedy は採用。QKV gate は 12 GPU すべてで byte 一致・耐久合格、両順中央値で 514〜532 µs から **−1.08〜−1.45%** となり採用された。serving でも 3 worker の全 PP rank が `Prefill r29 qkv-tail using split 7936+52 rows` を出しており、実際に dispatch された。
+
+しかし公式 parser の score は **9777.16**（good request 0.969）で、round 28 の 10020.36（0.982）から −243 と大きく下がった。
+
+| 指標 | round 28（41656547563） | round 29（41689469266） |
+|---|---:|---:|
+| TTFT p50 | 1290.9 ms | 1271.8 ms |
+| TTFT p99 | 3878 ms | 5440 ms |
+| TTFT max | 5122 ms | 6726 ms |
+| ITL avg | 15.63 ms | 15.70 ms |
+| 30 s 区間ごとの TTFT>3 s 件数 | 0 s:232、60 s:111 | 0 s:232、60 s:193 |
+
+60 s 付近の SLA 超過の山は、過去の run（41280565072・41305946419・41317543745・41656547563）で 111〜113 件と安定しており、193 件は通常の揺らぎを大きく超える。TTFT p50 は改善しているので、定常の QKV は gate どおり速いが、負荷が溜まる区間で tail 分離が待ちを増やしたと見られる。原因（追加 launch と PP 段間の同期、負荷時の clock など）は未特定。単一 run だが、悪化幅が見込みの利得（約 +11）を桁違いに上回るので、再試行せずに不採用とする。
+
+結論：QKV/O の M tail 分離は、gate の単体速度が改善しても serving では採用しない。kernel 単体の 1% 前後の差は、serving の SLA 超過の変化で簡単に打ち消される。
