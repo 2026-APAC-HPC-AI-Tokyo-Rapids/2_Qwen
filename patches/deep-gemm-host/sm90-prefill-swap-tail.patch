@@ -1,0 +1,45 @@
+diff --git a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+--- a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+@@ -52,6 +52,7 @@
+         bool prefill_tail_pair;
+         // And after that (DG_SM90_PREFILL_SPLIT_ACCUM, lean path without tail pairing), likewise.
+         bool prefill_split_accum;
++        bool prefill_swap_tail;
+         MegaMoESM90Config config;
+ 
+         // Runtime arguments
+@@ -78,7 +79,7 @@
+     };
+ 
+     static std::string generate_impl(const Args& args) {
+-        return fmt::format(R"(
++        const auto source = fmt::format(R"(
+ #include <deep_gemm/impls/sm90_fp8_mega_moe.cuh>
+ 
+ using namespace deep_gemm;
+@@ -126,6 +127,7 @@
+     args.use_swap_ab ? "true" : "false",
+     args.prefill_split_accum ? ",\n        true,\n        false,\n        true" :
+         (args.prefill_tail_pair ? ",\n        true,\n        true" : (args.prefill_lean ? ",\n        true" : "")));
++        return args.prefill_swap_tail ? "#define DG_SM90_PREFILL_SWAP_TAIL 1\n" + source : source;
+     }
+ 
+     static void launch_impl(const KernelHandle& kernel, const LaunchConfigHandle& config, Args args) {
+@@ -218,6 +220,8 @@
+     // DG_SM90_PREFILL_SPLIT_ACCUM=1, on the lean path without tail pairing: the FC1/FC2 K loops
+     // issue each warpgroup's accumulator as two m64n128 halves (sm90-prefill-split-accum.patch).
+     const bool prefill_split_accum = prefill_lean and not prefill_tail_pair and get_env<int>("DG_SM90_PREFILL_SPLIT_ACCUM", 0) != 0;
++
++    const bool prefill_swap_tail = prefill_split_accum and num_experts_per_rank == 128 and hidden == 4096 and intermediate_hidden == 1536 and get_env<int>("DG_SM90_PREFILL_SWAP_TAIL", 0) != 0;
+ 
+     // Tensormap construction
+     // Acts/weights: standard 2D TMA descriptors (FP8 K-major).
+@@ -315,6 +319,7 @@
+         .prefill_lean = prefill_lean,
+         .prefill_tail_pair = prefill_tail_pair,
+         .prefill_split_accum = prefill_split_accum,
++        .prefill_swap_tail = prefill_swap_tail,
+         .config = config,
+         .y = y.data_ptr(),
+         .cumulative_local_expert_recv_stats = cumulative_local_expert_recv_stats_ptr,

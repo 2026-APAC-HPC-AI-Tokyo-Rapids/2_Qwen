@@ -349,6 +349,32 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.decode_greedy_verify_gate // false' "${
 fi
 # Decode greedy gate end.
 
+# r26: retain every existing gate and 660 s for serving/collection. Default off.
+# Round 25 completed in 802 s; this group adds at most 125 s, including aggregation.
+if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.megamoe_swap_tail_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
+  mkdir -p "${ROOT}/results/prefill-megamoe-swap-tail"
+  if (( 1020 - SECONDS >= 125 + 660 )) && [[ -s "${ROOT}/results/prefill-fa3-prepack/selection.json" ]] && jq -e '.adopted == true' "${ROOT}/results/prefill-fa3-prepack/selection.json" >/dev/null; then
+    prefill_swap_tail_started=$(date +%s)
+    prefill_swap_tail_ok=1
+    prefill_swap_tail_selections=()
+    for worker in 0 1 2; do
+      node=${HEAD}
+      if (( worker == 2 )); then node=${TAIL}; fi
+      prefill_swap_tail_remaining=$((prefill_swap_tail_started + 120 - $(date +%s)))
+      if (( prefill_swap_tail_remaining <= 0 )); then prefill_swap_tail_ok=0; break; fi
+      timeout --kill-after=2 "${prefill_swap_tail_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-megamoe-swap-tail-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --swap-tail --output "${ROOT}/results/prefill-megamoe-swap-tail/prefill-${worker}" --routing "${ROOT}/source/megamoe-local-ep1-routing.npz" --run-id "${SLURM_JOB_ID}-${prefill_swap_tail_started}" --deadline "$((prefill_swap_tail_started + 120))" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-megamoe-swap-tail-${worker}.log" 2>&1 &
+      prefill_swap_tail_selections+=("$!")
+    done
+    for pid in "${prefill_swap_tail_selections[@]}"; do wait "${pid}" || prefill_swap_tail_ok=0; done
+    prefill_swap_tail_remaining=$((prefill_swap_tail_started + 125 - $(date +%s)))
+    if (( prefill_swap_tail_remaining > 0 )); then
+      timeout --signal=KILL "${prefill_swap_tail_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --swap-tail --aggregate "${ROOT}/results/prefill-megamoe-swap-tail" --output "${ROOT}/results/prefill-megamoe-swap-tail/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_swap_tail_started}" --deadline "$((prefill_swap_tail_started + 125))" --workers-ok "${prefill_swap_tail_ok}" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" || true
+    fi
+  else
+    printf '{"adopted":false,"reason":"insufficient budget or incomplete P gate"}\n' >"${ROOT}/results/prefill-megamoe-swap-tail/selection.json"
+  fi
+fi
+
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9001 >"${ART}/prefill-1.log" 2>&1 &
