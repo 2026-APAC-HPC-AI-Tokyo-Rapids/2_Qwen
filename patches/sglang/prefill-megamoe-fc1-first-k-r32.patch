@@ -1,0 +1,103 @@
+diff --git a/python/sglang/srt/layers/moe/mega_moe_sm90.py b/python/sglang/srt/layers/moe/mega_moe_sm90.py
+--- a/python/sglang/srt/layers/moe/mega_moe_sm90.py
++++ b/python/sglang/srt/layers/moe/mega_moe_sm90.py
+@@ -66,6 +66,65 @@
+     )
+
+
++
++_r32_dispatch_logged = False
++_r32_prewarmed = False
++
++
++def _r32_dispatch(moe, rows):
++    global _r32_dispatch_logged
++    from sglang.srt.runtime_context import get_server_args
++
++    if _r32_dispatch_logged or get_server_args().disaggregation_mode != "prefill" or rows < 1024:
++        return
++    import logging
++
++    enabled = os.environ.get("DG_SM90_PREFILL_FC1_FIRST_K") == "1"
++    logging.getLogger(__name__).warning("Prefill r32 fc1-first-k using %s rows=%s H=%s I=%s pid=%s", "candidate" if enabled else "control", rows, moe.config.hidden_size, moe.config.moe_intermediate_size, os.getpid())
++    _r32_dispatch_logged = True
++
++
++def prewarm_fc1_first_k(model):
++    """Run the adopted MegaMoE in each real Prefill process before readiness."""
++    from sglang.srt.runtime_context import get_server_args
++
++    global _r32_prewarmed
++    if _r32_prewarmed or os.environ.get("DG_SM90_PREFILL_FC1_FIRST_K") != "1" or get_server_args().disaggregation_mode != "prefill":
++        return
++    import logging
++    import time
++    import deep_gemm
++
++    from sglang.srt.distributed import get_moe_ep_group
++    from sglang.srt.layers.moe.mega_moe import _get_mega_moe_symm_buffer
++    from sglang.srt.models.qwen3_moe import Qwen3MoeSparseMoeBlock
++
++    started = time.perf_counter()
++    cap = envs.SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK.get()
++    assert cap == 8192 and get_moe_ep_group().world_size == 1
++    assert all(os.environ.get(k) == "1" for k in ("DG_SM90_PREFILL_2WG", "DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_SPLIT_ACCUM"))
++    assert os.environ.get("DG_SM90_PREFILL_TAIL_PAIR", "0") == "0"
++    for moe in model.modules():
++        if not isinstance(moe, Qwen3MoeSparseMoeBlock) or not is_sm90_fp8_mega_moe_available(moe.experts):
++            continue
++        assert (moe.config.hidden_size, moe.config.moe_intermediate_size, moe.config.num_experts, moe.config.num_experts_per_tok) == (4096, 1536, 128, 8)
++        device = moe.experts.mega_l1_weights[0].device
++        with torch.inference_mode():
++            # Same shared buffer key and transformed weights as forward_megamoe.
++            buf = _get_mega_moe_symm_buffer(get_moe_ep_group().device_group, num_experts=128, num_max_tokens_per_rank=cap, num_topk=8, hidden=4096, intermediate_hidden=1536)
++            hidden = torch.zeros((7988, 4096), device=device, dtype=torch.bfloat16)
++            ids = ((torch.arange(7988, device=device)[:, None] + torch.arange(8, device=device)[None, :]) % 128).to(torch.int32)
++            weights = torch.full((7988, 8), 0.125, device=device, dtype=torch.float32)
++            out = torch.empty_like(hidden)
++            deep_gemm.mega_moe_pre_dispatch_sm90(hidden, ids, weights, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, num_tokens=7988, group_size=128, routed_scaling_factor=1.0)
++            deep_gemm.fp8_mega_moe(out, moe.experts.mega_l1_weights, moe.experts.mega_l2_weights, buf, recipe=(128, 128, 128), activation="swiglu", activation_clamp=getattr(moe.config, "swiglu_limit", None), fast_math=True)
++            torch.cuda.synchronize(device)
++        _r32_prewarmed = True
++        logging.getLogger(__name__).warning("Prefill r32 fc1-first-k prewarm done rows=7988 cap=8192 ms=%.3f pid=%s", (time.perf_counter() - started) * 1000, os.getpid())
++        return
++    raise RuntimeError("Prefill r32 fc1-first-k prewarm found no native Qwen MoE layer")
++
++
+ def run_sm90_mega_routed(
+     moe: DeepseekV2MoE,
+     hidden_states: torch.Tensor,
+@@ -125,6 +184,8 @@
+         activation_clamp=getattr(moe.config, "swiglu_limit", None),
+         fast_math=True,
+     )
++    if not _r32_dispatch_logged:
++        _r32_dispatch(moe, rows)
+     y = y[:num_tokens]
+
+     return y
+diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/srt/model_executor/model_runner.py
+--- a/python/sglang/srt/model_executor/model_runner.py
++++ b/python/sglang/srt/model_executor/model_runner.py
+@@ -18,6 +18,7 @@
+ import contextlib
+ import inspect
+ import logging
++import os
+ import time
+ from dataclasses import dataclass
+ from typing import Optional, Union
+@@ -611,6 +612,13 @@
+         self.maybe_enable_batch_invariant_mode()
+         self.configure_kv_cache_dtype()
+
++        # Native MegaMoE is absent from DeepGEMM's generic GEMM compile inventory.
++        # Load and execute the adopted shape here, before KV pools/graphs/ready.
++        if not self.is_draft_worker and self.server_args.disaggregation_mode == "prefill" and os.environ.get("DG_SM90_PREFILL_FC1_FIRST_K") == "1":
++            from sglang.srt.layers.moe.mega_moe_sm90 import prewarm_fc1_first_k
++
++            prewarm_fc1_first_k(self.model)
++
+     def init_memory_saver_adapter(self):
+         self.memory_saver_adapter = TorchMemorySaverAdapter.create(
+             enable=self.server_args.enable_memory_saver

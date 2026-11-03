@@ -137,7 +137,7 @@ def errors(torch, observed, expected):
     return ((observed - expected).norm() / expected.norm().clamp_min(1e-10)).item(), ((observed - expected).abs().max() / expected.abs().max().clamp_min(1e-10)).item()
 
 
-def prepare(ranks):
+def prepare(ranks, tokens=None):
     """Process group, the seeded FP8 weights, the symmetric buffer and one MegaMoE call per variant."""
     import deep_gemm
     import torch
@@ -156,7 +156,7 @@ def prepare(ranks):
     group_rank = 0 if ranks == 1 else rank
     os.environ["DG_SM90_PREFILL_2WG"] = "1"
     os.environ["DG_SM90_PREFILL_LOCAL_EP1"] = "1" if ranks == 1 else "0"
-    tokens = 8064 if ranks == 1 else 4096
+    tokens = tokens if tokens is not None else (8064 if ranks == 1 else 4096)
     local_experts = EXPERTS // ranks
     generator = torch.Generator(device=device)
     generator.manual_seed(1029 + rank)
@@ -167,12 +167,13 @@ def prepare(ranks):
     l1, l2 = deep_gemm.transform_weights_for_mega_moe_sm90((w13, s13), (w2, s2))
     buf = deep_gemm.get_symm_buffer_for_mega_moe(group, EXPERTS, 8192 if ranks == 1 else 4096, TOPK, HIDDEN, INTERMEDIATE, use_fp8_dispatch=True, activation="swiglu")
 
-    def forward(variant, hidden, ids, weights, out, start=None):
+    def forward(variant, hidden, ids, weights, out, start=None, buffer=None):
         os.environ.update(VARIANTS[variant])
-        deep_gemm.mega_moe_pre_dispatch_sm90(hidden, ids, weights, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, num_tokens=tokens, group_size=128, routed_scaling_factor=1.0)
+        active = buf if buffer is None else buffer
+        deep_gemm.mega_moe_pre_dispatch_sm90(hidden, ids, weights, active.x, active.x_sf, active.topk_idx, active.topk_weights, num_tokens=hidden.shape[0], group_size=128, routed_scaling_factor=1.0)
         if start is not None:
             start.record()
-        deep_gemm.fp8_mega_moe(out, l1, l2, buf, recipe=(128, 128, 128), activation="swiglu", fast_math=True)
+        deep_gemm.fp8_mega_moe(out, l1, l2, active, recipe=(128, 128, 128), activation="swiglu", fast_math=True)
 
     return torch, dist, rank, device, tokens, local_experts, generator, group_rank, (w13, s13, w2, s2), buf, forward
 
@@ -368,8 +369,27 @@ if __name__ == "__main__":
     parser.add_argument("--env-output", type=Path)
     parser.add_argument("--endurance", type=Path, help="per-worker endurance results (aggregate), or the selection results to gate (endurance run)")
     parser.add_argument("--workers", type=int, choices=(2, 3), default=3)
+    parser.add_argument("--fc1-first-k", action="store_true")
+    parser.add_argument("--run-id")
+    parser.add_argument("--deadline", type=float)
+    parser.add_argument("--pair-selection", type=Path)
+    parser.add_argument("--image-sha256")
+    parser.add_argument("--workers-ok", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--routing", type=Path)
     args = parser.parse_args()
-    if args.aggregate:
+    if args.fc1_first_k:
+        import firmus_prefill_fc1_first_k
+
+        assert args.run_id and args.deadline and args.image_sha256
+        if args.aggregate:
+            assert args.env_output and args.pair_selection
+            result = firmus_prefill_fc1_first_k.aggregate(args.aggregate, args.env_output, args.pair_selection, args.run_id, args.deadline, args.workers_ok, args.image_sha256)
+            args.output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
+            print(json.dumps({k: v for k, v in result.items() if k != "gpus"}), flush=True)
+        else:
+            assert args.routing
+            firmus_prefill_fc1_first_k.run(prepare, args.output, args.routing, args.run_id, args.deadline, args.image_sha256, reference_rows, errors)
+    elif args.aggregate:
         assert args.env_output is not None and args.endurance is not None
         aggregate(args.aggregate, args.output, args.env_output, args.workers, args.endurance)
     elif args.endurance:
