@@ -1,6 +1,6 @@
 # Round 25: Decode greedy verify の実モデル語彙幅への接続
 
-2026-11-03 作業。base は main 38b1e6a、作業 branch は perf/pp4-r25-greedy-vocab-20261102。SSH、Actions 操作、Slurm 投入、GPU 実行は行わない。以下は CPU 検証と投入前の実装であり、serving 実行の証拠ではない。
+2026-11-03 作業。base は main 38b1e6a、作業 branch は perf/pp4-r25-greedy-vocab-20261102。SSH、Actions 操作、Slurm 投入、GPU 実行は行っていない。以下は CPU 検証と投入前の実装であり、serving 実行の証拠ではない。
 
 ## 原因の全数調査
 
@@ -36,7 +36,7 @@ gateは --model-path のconfig.jsonから語彙を読み、torchrunへ同じpath
 
 共有 `greedy_verify_math.cuh` をそのままCPU compileし、4096列tileを逆順・laneを逆順にreduceした結果を、独立したNumPyのBF16 bit展開→FP32 sanitize→dense penalty→argmaxと比較した。151936/152064 × B1〜48 × Q4 × paddingなし/64列 × sanitize両方の384ケースで、initial・min-token境界・状態変更・復帰・penaltyなしを照合した。主matrixのargmax行は188160。端数tileの1/384/4095/4096/4097列、vocab末尾のstop、sentinel、lengthの境界前/等値/後、全NaN/全−Inf、勝者となる正負subnormal、±0、warp/tile間の最小index tieを補助ケースで検査し、合計2006回のC++対NumPy比較・188568行のindexが完全一致した。paddingは+InfまたはNaNで汚染し、sliceした非連続行strideをそのまま渡す。
 
-CPUのchain helperでもaccept index/length/bonusと復帰を比較したが、公式GPU verifyの実行ではない。実patchのdispatch・各1回のfallback/使用log、model config読込、gate集約/拒否、shell timeout/予算、ordered overlayとLM head/verify不変も514件に含まれる。数値正本は `decode-greedy-vocab-r25-cpu-validation-20261103.json`、rawのXML/logは指定scratchに保存する。
+CPUのchain helperでもaccept index/length/bonusと復帰を比較したが、公式GPU verifyの実行ではない。実patchのdispatch・各1回のfallback/使用log、model config読込、gate集約/拒否、shell timeout/予算、ordered overlayとLM head/verify不変も514件に含まれる。数値正本は `decode-greedy-vocab-r25-cpu-validation-20261103.json`、rawのXML/logは後掲のarchiveに保存した。
 
 ## CUDA 13.4 compile / SASS
 
@@ -46,7 +46,7 @@ cuobjdumpの識別用source絶対パスheaderだけを正規化し、全34 TUの
 
 wrapper.cpp全体も、Torch 2.11.0+cu130 headers・CUDA13.4 headers・生成candidate header・patch済み依存を使い、g++13.3.0のfsyntax-onlyで成功した。libraryのlink/loadは実施していない。ローカルCPU検証だけ最大4 compile並列にし、完了したTUの成果物を保持して継続した。image builderの最大2並列は変更していない。
 
-flags・各TUのsource/SASS/encoded-word hash・資源数の正本は同じ `decode-greedy-vocab-r25-cpu-validation-20261103.json`。再現用source、各compile command/log、object、SASSは指定scratchのraw archiveへまとめる。
+flags・各TUのsource/SASS/encoded-word hash・資源数の正本は同じ `decode-greedy-vocab-r25-cpu-validation-20261103.json`。再現用source、各compile command/log、object、SASSは後掲のraw archiveへ保存した。命令encoding・制御語は合計290224 wordを比較した。
 
 imageのCUDAは13.0.88。CPUのCUDA13.4 compileは代わりの証拠にすぎず、image build・link/load・実GPUの精度/性能・通常servingの公式結果は未確認。
 
@@ -56,10 +56,18 @@ repo直下、CPython 3.13.12、NumPy 2.5.4、pytest 9.1.1、TMPDIR未設定（�
 
 `uv run --project qwen-experiment-metrics --with 'numpy>=1.26,<3' --with pytest python -m pytest -q -p no:cacheprovider qwen-experiment-metrics/tests`
 
-`uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers` は `All checks passed!`、exit 0。変更したsbatchのbash構文、Python AST、git whitespace検査も成功。rawは指定scratchの `pytest-ci-final.log`、`pytest-collection.log`、`ruff-final.log`。前回の未完走logを成功の証拠として再利用していない。
+`uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers` は `All checks passed!`、exit 0。変更したsbatchのbash構文、Python AST、git whitespace検査も成功。rawは後掲archive内の `pytest-ci-final.log`、`pytest-collection.log`、`ruff-final.log`。前回の未完走logを成功の証拠として再利用していない。
 
 ## 次の投入と見込み
 
-Claudeの投入commitはこのbranchの修正からfresh buildを要求し、Firmus/2nodes/PP4の実行タグを付ける。decode_greedy_verify_gateは既にtrueなので変更不要。image pinは今回変更せず既存のfresh-build/provision経路に任せる。gate採用後にDecode processの使用logでvocab=151936を確認し、通常servingと公式parser・artifact回収まで確認する。fallbackがあれば理由を確認し、融合が動いたと扱わない。
+Claudeの投入commitはこのbranchの修正からfresh buildを要求し、先頭に `[require-build] [cluster:firmus] [nodes:2] [prefill-pp4]` を付ける。その投入commitには `[skip ci]` を付けない。decode_greedy_verify_gateは既にtrueなので変更不要。image pinは今回変更せず既存のfresh-build/provision経路に任せる。gate採用後にDecode processの使用logでvocab=151936を確認し、通常servingと公式parser・artifact回収まで確認する。fallbackがあれば理由を確認し、融合が動いたと扱わない。
 
 条件付きの見込みは「Decode の1 stepで0.12〜0.16 ms、Prefillが律速なのでscoreへの効果は小さい見込み」。これは旧152064合成gateからの条件付きの見込みであり、実語彙幅のkernel実測でもservingの利得でもない。
+
+## 証拠の保存と片付け
+
+指定scratchの `round25-cpu-proof-20261103.tar.gz` に、固定依存archive、両版のsource・生成TU・compile command/log・object/SASS、実際に数値検証で生成したC++ source/library、XML、全体suite/収集一覧/ruffのlog、環境、再現手順を保存した。**52570902 bytes、457 entry**を読み戻し、manifestの全entryのsize/SHA256を照合済み。
+
+SHA256: `5b9c51889e3be5ddb3082446e8e1f3cc894d958be5181bedc07e7e2c712fe9a1`
+
+展開した依存source、loose compiler生成物、検証用helper/overlay、今回のpytest一時directory、worktree内の検証venv/cacheを削除した。提供済みの過去logと参照rawには触れていない。新しいscheduler/Actions/GPU jobは作成せず、ローカルcompilerもterminal状態を確認した。未commitだった16ケースは0989d5aで引き継ぎ済み。trackerは手で1段落だけ追記し、kernel-theory-model.jsonは変更していない。
