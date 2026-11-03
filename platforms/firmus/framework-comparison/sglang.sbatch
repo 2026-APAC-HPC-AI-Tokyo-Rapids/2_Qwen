@@ -389,6 +389,8 @@ benchmark_status=0
 if [[ "${profile_only}" != true ]]; then
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || benchmark_status=$?
 test -s "${ROOT}/results/score.json"
+# Round 22 adopted a greedy fusion that serving never dispatched; keep each Decode rank's once-per-process decision with the score.
+grep -a -h -o -E 'Decode greedy verify (using fused kernels|fallback)[^\r]*' "${ART}/decode-0.log" | sort -u >"${ROOT}/results/decode-greedy-dispatch.txt" || printf 'no Decode greedy verify dispatch line in decode-0.log\n' >"${ROOT}/results/decode-greedy-dispatch.txt"
 if (( benchmark_status == 0 )); then
   while IFS=$'\t' read -r worker host port _; do curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"; done <"${ROOT}/source/worker-endpoints.tsv"
   uv run --no-project --python 3.12 python "${ROOT}/scripts/collect-eagle-acceptance.py" --cluster firmus --config "${ROOT}/source/firmus-framework.json" --endpoints "${ROOT}/source/worker-endpoints.tsv" --server-info-dir "${ROOT}/results" --log-dir "${ROOT}/logs" --output "${ROOT}/results/eagle-acceptance.json"

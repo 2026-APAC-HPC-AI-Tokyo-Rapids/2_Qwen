@@ -594,3 +594,12 @@ def test_fake_cuda_rejects_original_nested_endurance_replay(graph_case):
     case.build_graphs(True); case.equal()
     with pytest.raises(RuntimeError,match='Cannot prepare for replay during capturing stage'):
         GATE['capture'](case.torch,case.graphs['candidate'].replay)
+
+
+def test_sbatch_records_serving_greedy_dispatch_with_the_score():
+    source=(ROOT/'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
+    score=source.index('test -s "${ROOT}/results/score.json"')
+    record=source.index('results/decode-greedy-dispatch.txt')
+    assert score<record<source.index('collect-eagle-acceptance.py')
+    assert 'Decode greedy verify (using fused kernels|fallback)' in source
+
