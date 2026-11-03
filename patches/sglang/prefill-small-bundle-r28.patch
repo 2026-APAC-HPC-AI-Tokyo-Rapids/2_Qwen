@@ -1,0 +1,61 @@
+--- a/python/sglang/srt/layers/attention/prefill_fp8.py
++++ b/python/sglang/srt/layers/attention/prefill_fp8.py
+@@ -30,6 +30,30 @@
+     )
+ 
+ 
++def dense_gemm(a, sa, weight, weight_scale, out, *, tail_split=False):
++    """Two ordinary kernels on the current stream; no mainloop modification."""
++    import deep_gemm
++
++    if tail_split and a.shape[0] == 7988 and (weight.shape[0], a.shape[1]) in ((9216, 4096), (4096, 8192)):
++        # 7936 is aligned to BM256, group128 and TMA's 16-byte requirement.
++        # Keep the original column-major scale stride in both descriptors.
++        deep_gemm.fp8_gemm_nt((a[:7936], sa[:7936]), (weight, weight_scale), out[:7936], compiled_dims="nk")
++        deep_gemm.fp8_gemm_nt((a[7936:], sa[7936:]), (weight, weight_scale), out[7936:], compiled_dims="nk")
++    else:
++        deep_gemm.fp8_gemm_nt((a, sa), (weight, weight_scale), out, compiled_dims="nk")
++
++
++_dispatch_seen = set()
++
++
++def r28_log(candidate, detail):
++    if candidate not in _dispatch_seen:
++        import logging
++
++        logging.getLogger(__name__).warning("Prefill r28 %s using %s", candidate, detail)
++        _dispatch_seen.add(candidate)
++
++
+ def linear(attention, projection, layer, x):
+     tensor = x[0] if isinstance(x, tuple) else x
+     if tensor.ndim != 2 or tensor.shape[0] < 2048 or not linear_supported(attention, projection, layer):
+@@ -42,10 +66,11 @@
+         from sglang.kernels.ops.quantization.fp8_kernel import sglang_per_token_group_quant_fp8
+ 
+         a, sa = sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
+-    import deep_gemm
+-
+     out = torch.empty((a.shape[0], layer.weight.shape[0]), device=a.device, dtype=torch.bfloat16)
+-    deep_gemm.fp8_gemm_nt((a, sa), (layer.weight, layer.weight_scale_inv), out, compiled_dims="nk")
++    tail_split = os.environ.get("SGLANG_PREFILL_GEMM_TAIL_SPLIT") == "1" and a.shape[0] == 7988
++    if tail_split:
++        r28_log("gemm-tail", "split 7936+52 rows projection=" + projection)
++    dense_gemm(a, sa, layer.weight, layer.weight_scale_inv, out, tail_split=tail_split)
+     return out, None
+ 
+ 
+@@ -64,7 +89,11 @@
+     routes = {"n192-direct-o-varlen-pipe+m192n96-pair": "", "n192-direct-o-varlen-pipe+m192n96-pair-prepack": "-native", "n192-direct-o-varlen-pipe+m192n96-pair-prepack-v3": "-native-v3"}
+     enabled = mode in routes
+     if enabled and lengths is not None and len(lengths) == 2 and all(3900 <= n <= 4096 for n in lengths):
+-        return prefill_candidate("m192n96-direct-o-varlen-pipe" + routes[mode])
++        name = "m192n96-direct-o-varlen-pipe" + routes[mode]
++        if os.environ.get("SGLANG_PREFILL_FA3_PAIR_GLOBAL_ORDER") == "1":
++            name += "-global-order"
++            r28_log("fa3-pair-order", name)
++        return prefill_candidate(name)
+     return prefill_candidate()
+ 
+ 

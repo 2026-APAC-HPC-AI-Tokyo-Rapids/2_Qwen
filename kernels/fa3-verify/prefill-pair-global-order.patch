@@ -1,0 +1,44 @@
+--- a/hopper/tile_scheduler.hpp
++++ b/hopper/tile_scheduler.hpp
+@@ -636,7 +636,7 @@
+ ///////////////////////////////////////////////////////////////////////////////
+ 
+ template<int kBlockM, int kBlockN, int NumMmaThreads=2 * cutlass::NumThreadsPerWarpGroup, int NumProducerThreads=cutlass::NumThreadsPerWarp,
+-         bool Split=false, bool PackGQA=false, bool WarpSpecialized=true, bool LPT = false, bool Sort = false, bool Prepared = true, bool FixedPrefill = false, bool FixedVarlen = false>
++         bool Split=false, bool PackGQA=false, bool WarpSpecialized=true, bool LPT = false, bool Sort = false, bool Prepared = true, bool FixedPrefill = false, bool FixedVarlen = false, bool PairGlobalOrder = false>
+ class VarlenDynamicPersistentTileScheduler {
+ 
+     static_assert(WarpSpecialized || NumProducerThreads == NumMmaThreads);
+@@ -746,6 +746,21 @@
+             static_assert(!Split && PackGQA && LPT && ((kBlockM == 128 && (kBlockN == 224 || kBlockN == 192)) || (kBlockM == 192 && kBlockN == 96 && FixedVarlen)));
+             // Single sequence, all four KV heads fit in L2. This is exactly
+             // the prepared scheduler's longest-first interleaved tile order.
++            if constexpr (PairGlobalOrder) {
++                // Both requests share one descending M-block order. Only the
++                // assignment changes; the tile's QK/PV loop is untouched.
++                if (params.num_batch == 2) {
++                    int b0 = cute::ceil_div((params.cu_seqlens[1] - params.cu_seqlens[0]) * params.qhead_per_khead, kBlockM);
++                    int b1 = cute::ceil_div((params.cu_seqlens[2] - params.cu_seqlens[1]) * params.qhead_per_khead, kBlockM);
++                    int group = next_tile_idx / params.num_head;
++                    if (group >= b0 + b1) { return {next_tile_idx, 0, 0, params.num_batch}; }
++                    int longer = b1 > b0 ? 1 : 0;
++                    int extra = abs(b0 - b1);
++                    int block = group < extra ? max(b0, b1) - 1 - group : min(b0, b1) - 1 - (group - extra) / 2;
++                    int batch = group < extra ? longer : ((group - extra) % 2 == 0 ? longer : 1 - longer);
++                    return {0, block, next_tile_idx % params.num_head, batch};
++                }
++            }
+             if constexpr (FixedVarlen) {
+                 // Up to four packed sequences, one after another, each in the same
+                 // longest-first order with the KV heads interleaved. One sequence
+--- a/hopper/flash_fwd_launch_template.h
++++ b/hopper/flash_fwd_launch_template.h
+@@ -63,7 +63,7 @@
+     static constexpr bool LPT = Is_causal || Is_local;
+     static constexpr bool Sort = !Is_local;
+     using SchedulerPersistent = std::conditional_t<Varlen,
+-        flash::VarlenDynamicPersistentTileScheduler<kBlockM, kBlockN, CollectiveMainloop::PrefillPipe ? 0 : CollectiveMainloop::NumMmaThreads * VerifyHeads, NumProducerThreads, Split, PackGQA, Arch >= 90 /*WarpSpecialized*/, LPT, Sort, true /*Prepared*/, FixedPrefill, FixedPrefill && (PrefillVariant & 64) != 0 /*FixedVarlen*/>,
++        flash::VarlenDynamicPersistentTileScheduler<kBlockM, kBlockN, CollectiveMainloop::PrefillPipe ? 0 : CollectiveMainloop::NumMmaThreads * VerifyHeads, NumProducerThreads, Split, PackGQA, Arch >= 90 /*WarpSpecialized*/, LPT, Sort, true /*Prepared*/, FixedPrefill, FixedPrefill && (PrefillVariant & 64) != 0 /*FixedVarlen*/, FixedPrefill && (PrefillVariant & 1048576) != 0 /*PairGlobalOrder*/>,
+         std::conditional_t<!Is_causal && !Is_local,
+             flash::StaticPersistentTileScheduler<Split>,
+             flash::DynamicPersistentTileScheduler<CollectiveMainloop::NumMmaThreads, NumProducerThreads, Split, PackGQA, Arch >= 90 /*WarpSpecialized*/>

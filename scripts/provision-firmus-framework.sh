@@ -148,6 +148,9 @@ install -m 0755 "${GITHUB_WORKSPACE}/scripts/collect-eagle-acceptance.py" "${run
 install -m 0644 "${GITHUB_WORKSPACE}/kernels/fa3-verify/prefill-candidates.json" "${runtime_dir}/source/"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-fa3.py" "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-kernels.sh" "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-megamoe.py" "${runtime_dir}/scripts/"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-pp4-copy-engine.py" "${runtime_dir}/scripts/"
+# Round 28 gates are runtime scripts; candidate overlays/AOT rows need a fresh image.
+install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-r28.py" "${GITHUB_WORKSPACE}/scripts/firmus_prefill_r28.py" "${runtime_dir}/scripts/"
+cp "${runtime_dir}/scripts/select-firmus-prefill-r28.py" "${runtime_dir}/scripts/firmus_prefill_r28.py" "${runtime_dir}/source/"
 # Independent Decode greedy gate; source changes require a fresh image build.
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-decode-greedy.py" "${runtime_dir}/scripts/"
 cp "${runtime_dir}/scripts/select-firmus-decode-greedy.py" "${runtime_dir}/source/"
