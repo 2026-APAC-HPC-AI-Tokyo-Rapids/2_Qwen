@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-SCHEMA = 'firmus-decode-greedy/v1'
+SCHEMA = 'firmus-decode-greedy/v2'
 KEY = 'SGLANG_DECODE_GREEDY_VERIFY'
 BATCHES = (1,32,44,46,48)
 STATES = ('initial','boundary','changed','special','restored')
@@ -23,12 +23,19 @@ def read(path):
     return json.loads(path.read_text())
 
 
+def model_vocab(model_path):
+    vocab=read(model_path/'config.json')['vocab_size']
+    assert type(vocab) is int and 0<vocab<=2147479552, 'invalid model vocab_size'
+    return vocab
+
+
 def expected_cases():
     return {f'{b}:{int(pad)}' for b in BATCHES for pad in (False,True)}
 
 
-def check_record(record, run_id, expected, image_sha256, deadline):
+def check_record(record, run_id, expected, image_sha256, deadline, vocab):
     assert record['schema']==SCHEMA and record['run_id']==run_id, 'stale record'
+    assert record['vocab_size']==vocab, 'wrong model vocabulary'
     assert record['uuid'] in expected and 'H200' in record['device'], 'wrong Decode GPU'
     assert record['image_sha256']==image_sha256, 'wrong image'
     assert record['passed'] is True, record.get('error','worker failed')
@@ -49,8 +56,8 @@ def check_record(record, run_id, expected, image_sha256, deadline):
                 assert statistics.median(samples['control'])-statistics.median(samples['candidate'])>=.05, 'below 0.05 ms saving'
 
 
-def aggregate(directory, env_output, run_id, image_sha256, deadline, workers_ok):
-    result={'schema':SCHEMA,'run_id':run_id,'adopted':False,'gpus':[]}
+def aggregate(directory, env_output, run_id, image_sha256, deadline, workers_ok, vocab):
+    result={'schema':SCHEMA,'run_id':run_id,'adopted':False,'vocab_size':vocab,'gpus':[]}
     try:
         assert workers_ok and time.time()<=deadline, 'workers failed or timeout'
         inventory=read(directory/'inventory.json')
@@ -61,7 +68,7 @@ def aggregate(directory, env_output, run_id, image_sha256, deadline, workers_ok)
         seen=set(); binaries=set()
         for rank in range(4):
             record=read(directory/f'rank-{rank}.json')
-            check_record(record,run_id,expected,image_sha256,deadline)
+            check_record(record,run_id,expected,image_sha256,deadline,vocab)
             assert record['rank']==rank and record['uuid'] not in seen, 'duplicate/rank mismatch'
             assert record['uuid']==inventory['gpus'][str(rank+4)], 'wrong rank UUID'
             seen.add(record['uuid']); binaries.add(record['binary_sha256'])
@@ -99,7 +106,7 @@ def capture(torch, step):
 
 class Case:
     """Exercise actual update_penalties, logits buffer and eagle_sample on both paths."""
-    def __init__(self, torch, b, padding):
+    def __init__(self, torch, b, padding, vocab):
         from types import SimpleNamespace as NS
 
         from sglang.srt.layers.logits_processor import (
@@ -114,25 +121,27 @@ class Case:
         from sglang.srt.speculative import greedy_verify
         from sglang.srt.speculative.eagle_utils import eagle_sample
         from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
-        self.torch=torch; self.b=b; self.padding=padding
+        self.torch=torch; self.b=b; self.padding=padding; self.vocab=vocab
+        self.stop_ids=[0,max(0,vocab-2),vocab-1,vocab]
+        self.tile_left=min(4095,vocab-1); self.tile_right=min(4096,vocab-1)
         # Graph bucket has one padded request. Only live rows reach sampling,
         # exactly as DecodeCudaGraphRunner replay narrows the output.
         bucket=b+int(padding)
-        self.logits=torch.empty((bucket*4,152064+64*int(padding)),dtype=torch.bfloat16,device='cuda')[:,:152064]
+        self.logits=torch.empty((bucket*4,vocab+64*int(padding)),dtype=torch.bfloat16,device='cuda')
         self.minimum=torch.full((b,1),2,dtype=torch.int32,device='cuda')
         self.lengths=torch.empty_like(self.minimum)
-        self.stops=torch.tensor([[0,151643,151645,152064]]*b,dtype=torch.int64,device='cuda')
+        self.stops=torch.tensor([self.stop_ids]*b,dtype=torch.int64,device='cuda')
         self.penalty=BatchedMinNewTokensPenalizer.__new__(BatchedMinNewTokensPenalizer)
         self.penalty._is_prepared=True; self.penalty.greedy_stop_ids=self.stops
         self.penalty.min_new_tokens=self.minimum; self.penalty.len_output_tokens=self.lengths
-        self.stop_storage=torch.zeros((b,152065),device='cuda')
+        self.stop_storage=torch.zeros((b,vocab+1),device='cuda')
         self.orchestrator=NS(is_required=True,penalizers={BatchedMinNewTokensPenalizer:self.penalty},accumulate_additive_penalties=lambda x:self.penalty.apply(x),accumulate_scaling_penalties=lambda:None)
-        self.info=NS(temperatures=self.minimum,is_all_greedy=True,vocab_size=152064,penalizer_orchestrator=self.orchestrator,acc_additive_penalties=None,acc_scaling_penalties=None,logit_bias=None,greedy_minimum=None)
+        self.info=NS(temperatures=self.minimum,is_all_greedy=True,vocab_size=vocab,penalizer_orchestrator=self.orchestrator,acc_additive_penalties=None,acc_scaling_penalties=None,logit_bias=None,greedy_minimum=None)
         self.batch=NS(device='cuda',seq_lens=torch.ones(b,dtype=torch.int32,device='cuda'),sampling_info=self.info,spec_algorithm=SpeculativeAlgorithm.EAGLE3,forward_mode=ForwardMode.TARGET_VERIFY,return_logprob=False)
         indices=torch.arange(b*4,dtype=torch.int64,device='cuda').reshape(b,4)
         self.verify=NS(draft_token_num=4,max_tree_depth=4,tree_topk=1,draft_token=torch.zeros((b,4),dtype=torch.int64,device='cuda'),retrieve_index=indices,retrieve_next_token=torch.tensor([[1,2,3,-1]]*b,dtype=torch.int64,device='cuda'),retrieve_next_sibling=torch.full((b,4),-1,dtype=torch.int64,device='cuda'))
-        self.buffers={mode:torch.empty((bucket*4,152064),dtype=dtype,device='cuda') for mode,dtype in (('control',torch.float32),('candidate',torch.bfloat16))}
-        self.processor=NS(vocab_size=152064,final_logit_softcapping=None)
+        self.buffers={mode:torch.empty((bucket*4,vocab),dtype=dtype,device='cuda') for mode,dtype in (('control',torch.float32),('candidate',torch.bfloat16))}
+        self.processor=NS(vocab_size=vocab,final_logit_softcapping=None)
         self.outputs={}; self.tokens={}; self.graphs={}
         self.update=SamplingBatchInfo.update_penalties; self.copy=LogitsProcessor._copy_logits_to_buffer
         self.sample=eagle_sample; self.output_class=LogitsProcessorOutput; self.greedy=greedy_verify
@@ -144,28 +153,30 @@ class Case:
         self.penalty._is_prepared=state!='no_penalty'
         self.orchestrator.is_required=state!='no_penalty'
         self.logits.fill_(-2)
-        self.minimum.fill_(2); self.stops.copy_(t.tensor([[0,151643,151645,152064]]*b,device='cuda'))
+        self.minimum.fill_(2); self.stops.copy_(t.tensor([self.stop_ids]*b,device='cuda'))
         self.lengths.fill_(1 if state in ('initial','restored') else 2 if state=='boundary' else 3)
         # Cover NaNs at both ends, +/-Inf, all equal, signed zeros and ties
         # crossing both warp and 4096-column tile boundaries.
-        live=self.logits[:b*4]
+        live=self.logits[:b*4,:self.vocab]
+        # Poison padding: it must never participate in argmax.
+        self.logits[:,self.vocab:]=float('inf')
         live[::4,0]=float('nan'); live[::4,-1]=float('nan')
-        live[1::4,151645]=float('inf'); live[1::4,4096]=float('-inf')
+        live[1::4,self.vocab-1]=float('inf'); live[1::4,self.tile_right]=float('-inf')
         live[2::4].fill_(0)
-        live[3::4,4095]=8; live[3::4,4096]=8; live[3::4,-1]=8
+        live[3::4,self.tile_left]=8; live[3::4,self.tile_right]=8; live[3::4,-1]=8
         if state=='special':
             live[::4].fill_(float('-inf')); live[1::4].fill_(float('nan'))
-            live[2::4].fill_(0); live[2::4,17]=2.0**-133
+            live[2::4].fill_(0); live[2::4,min(17,self.vocab-1)]=2.0**-133
             live[3::4].fill_(0); live[3::4,0]=-0.0
         if state=='changed':
             live[::4,0]=10; live[::4,-1]=10
-            live.fill_(-2); live[:,4095]=10
-            self.stops[:,0]=4096; self.minimum[::2]=4
+            live.fill_(-2); live[:,self.tile_left]=10
+            self.stops[:,0]=self.tile_right; self.minimum[::2]=4
         self.stop_storage.zero_().scatter_add_(1,self.stops,t.full_like(self.stops,float('-inf'),dtype=t.float32))
-        self.penalty.stop_token_penalties=self.stop_storage[:,:152064]
+        self.penalty.stop_token_penalties=self.stop_storage[:,:self.vocab]
         # Vary accepted depth, from mismatch to a full chain and bonus.
         self.verify.draft_token.fill_(0)
-        self.verify.draft_token[:,1:]=4095 if state=='changed' else 0
+        self.verify.draft_token[:,1:]=self.tile_left if state=='changed' else 0
 
     def step(self, mode):
         from unittest.mock import patch
@@ -194,6 +205,11 @@ class Case:
         for graph in self.graphs.values(): graph.replay()
         self.torch.cuda.synchronize()
         assert all(self.torch.equal(a,b) for a,b in zip(self.outputs['control'],self.outputs['candidate'])), 'argmax/index/length/bonus mismatch'
+        # Also test the sliced noncontiguous input directly, outside timings.
+        logits=self.logits[:self.b*4,:self.vocab]
+        state=(self.stops,self.minimum,self.lengths) if self.penalty._is_prepared else None
+        actual=self.greedy.GreedyWorkspace(logits,state).run(logits)
+        assert self.torch.equal(actual,self.outputs['candidate'][0]), 'strided argmax mismatch'
 
     def timing(self):
         t=self.torch; blocks=[]
@@ -229,9 +245,9 @@ class Case:
         assert all(t.equal(a,b) for a,b in zip(self.outputs['control'],self.outputs['candidate'])), 'endurance mismatch'
 
 
-def run(output, run_id, image_sha256, deadline):
+def run(output, run_id, image_sha256, deadline, vocab):
     started=time.monotonic(); rank=int(os.environ['LOCAL_RANK'])
-    result={'schema':SCHEMA,'run_id':run_id,'rank':rank,'passed':False,'image_sha256':image_sha256,'cases':{},'timings_ms':{},'sanitize_modes':[False,True]}
+    result={'schema':SCHEMA,'run_id':run_id,'rank':rank,'vocab_size':vocab,'passed':False,'image_sha256':image_sha256,'cases':{},'timings_ms':{},'sanitize_modes':[False,True]}
     try:
         import torch
         assert int(os.environ['WORLD_SIZE'])==4
@@ -244,7 +260,7 @@ def run(output, run_id, image_sha256, deadline):
         assert result['binary_sha256']==read(binary.with_name('manifest.json'))['binary_sha256']
         for b in BATCHES:
             for pad in (False,True):
-                case=Case(torch,b,pad)
+                case=Case(torch,b,pad,vocab)
                 for sanitize in (False,True):
                     case.set_state('initial'); case.build_graphs(sanitize)
                     initial=None
@@ -263,7 +279,7 @@ def run(output, run_id, image_sha256, deadline):
         case.endurance()
         result.update(replays=REPLAYS,endurance_equal=True)
         result.update(passed=True,elapsed_seconds=time.monotonic()-started,finished_at=time.time())
-        check_record(result,run_id,set(identities['gpus'].values()),image_sha256,deadline)
+        check_record(result,run_id,set(identities['gpus'].values()),image_sha256,deadline,vocab)
     except Exception as error:  # noqa: BLE001 - any rank failure is recorded and refuses the gate
         result.update(passed=False,error=f'{type(error).__name__}: {error}')
     result.update(elapsed_seconds=time.monotonic()-started,finished_at=time.time())
@@ -278,15 +294,17 @@ def main():
     p.add_argument('--image-sha256',required=True); p.add_argument('--deadline',type=float,required=True)
     p.add_argument('--launch',action='store_true'); p.add_argument('--aggregate',type=Path)
     p.add_argument('--env-output',type=Path); p.add_argument('--workers-ok',type=int,default=0)
+    p.add_argument('--model-path',type=Path,required=True)
     a=p.parse_args()
+    vocab=model_vocab(a.model_path)
     if a.aggregate:
-        a.output.write_text(json.dumps(aggregate(a.aggregate,a.env_output,a.run_id,a.image_sha256,a.deadline,bool(a.workers_ok)),indent=2)+'\n')
+        a.output.write_text(json.dumps(aggregate(a.aggregate,a.env_output,a.run_id,a.image_sha256,a.deadline,bool(a.workers_ok),vocab),indent=2)+'\n')
     elif a.launch:
         inventory(a.output,a.run_id)
         os.environ['CUDA_VISIBLE_DEVICES']=','.join('GPU-'+read(a.output/'inventory.json')['gpus'][str(i)] for i in range(4,8))
-        subprocess.run([str(Path(sys.executable).with_name('torchrun')),'--standalone','--nproc-per-node=4',__file__,'--output',str(a.output),'--run-id',a.run_id,'--image-sha256',a.image_sha256,'--deadline',str(a.deadline)],check=True)
+        subprocess.run([str(Path(sys.executable).with_name('torchrun')),'--standalone','--nproc-per-node=4',__file__,'--output',str(a.output),'--run-id',a.run_id,'--image-sha256',a.image_sha256,'--deadline',str(a.deadline),'--model-path',str(a.model_path)],check=True)
     else:
-        run(a.output,a.run_id,a.image_sha256,a.deadline)
+        run(a.output,a.run_id,a.image_sha256,a.deadline,vocab)
 
 
 if __name__=='__main__': main()
