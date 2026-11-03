@@ -71,3 +71,15 @@ Claudeの投入commitはこのbranchの修正からfresh buildを要求し、先
 SHA256: `5b9c51889e3be5ddb3082446e8e1f3cc894d958be5181bedc07e7e2c712fe9a1`
 
 展開した依存source、loose compiler生成物、検証用helper/overlay、今回のpytest一時directory、worktree内の検証venv/cacheを削除した。提供済みの過去logと参照rawには触れていない。新しいscheduler/Actions/GPU jobは作成せず、ローカルcompilerもterminal状態を確認した。未commitだった16ケースは0989d5aで引き継ぎ済み。trackerは手で1段落だけ追記し、kernel-theory-model.jsonは変更していない。
+
+## GPU結果（run 41573354672、commit 14c3e86、Slurm 28478）
+
+fresh buildのimageは `a001f90142b571380894e9532e467c57b831397c9e2e9d613d9e04004c87def9`（12298305536 bytes、SGLang fc27567）。Slurm 28478はCOMPLETED、13:22。
+
+- **Decode greedy gate：** 実モデルconfigから読んだvocab 151936で4 GPUすべてpass、adopted（"all four Decode GPUs passed"）。全caseのindexが一致し、状態変更と復帰も確認した。B44/Q4のgate計時では、従来経路が約0.271 ms、融合が約0.134 ms（両順とも）。融合1回あたり約0.137 msの短縮で、見込みの0.12〜0.16 msの範囲に入る。これはgate内のkernel実測で、servingのstep時間を測ったものではない。
+- **servingでの適用：** `decode-0.log` に4 rank（DP0〜3）それぞれ1回の `Decode greedy verify using fused kernels greedy_tiles/greedy_finish: rows=4 vocab=151936 stride=151936`。fallbackのlogは0件。round 22と違い、融合はservingで実際に動いた。
+- **他のgate：** pair gateはadopted（12 H200、両順で5 µs以上）、prepack gateはP3（pooled中央値5.20 µs）。round 22〜24と同じ選択。
+- **公式score：** 10021.60 tok/s、eligible、good_request_fraction 0.9820、error 0、OSL mismatch 0、6320 request。同じ構成で融合なしの3回は10009.52・10025.16・10024.51。この差はrun間の揺れの範囲で、融合によるscoreの改善は見えない。Prefill律速という見込みどおり。EAGLE3の受理長（bonus込み）は約2.21。
+- **dispatchの記録の不具合：** sbatchが残した `results/decode-greedy-dispatch.txt` は `Decode greedy verify using fused kernels g` で切れていた。ERE bracketの `[^\r]` は「CRを除く」ではなく、「`\` と `r` を除く」を意味する。そのため `greedy` の `r` の手前で一致が止まった。ローカルのgrepでは全行が出たので、CPUテストでは検出できなかった。rawのlogは無傷なので判定には影響しない。次の投入からは `.*` に改め、testもその形を確かめる。
+
+採否：融合は正しく動き、scoreは同等。kernelの仕事を減らす変更で精度はbit一致なので採用し、image a001f901をmainのpinにする。score上の利得は主張しない。

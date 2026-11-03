@@ -601,5 +601,5 @@ def test_sbatch_records_serving_greedy_dispatch_with_the_score():
     score=source.index('test -s "${ROOT}/results/score.json"')
     record=source.index('results/decode-greedy-dispatch.txt')
     assert score<record<source.index('collect-eagle-acceptance.py')
-    assert 'Decode greedy verify (using fused kernels|fallback)' in source
+    assert "'Decode greedy verify (using fused kernels|fallback).*'" in source  # backslash-r inside an ERE bracket matches a literal r; round 25 cut the line at 'g'
 
