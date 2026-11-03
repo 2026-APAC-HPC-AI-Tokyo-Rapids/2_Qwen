@@ -155,9 +155,7 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
             'DG_SM90_PREFILL_SPLIT_ACCUM': '1',
             'SGLANG_PREFILL_FA3_VERIFY': 'n192-direct-o-varlen-pipe',
             'SGLANG_PP4_PROXY_TRANSPORT': 'copy',
-            'SGLANG_PREFILL_GEMM_TAIL_SPLIT': '0',
-            'SGLANG_PREFILL_FA3_PAIR_GLOBAL_ORDER': '0',
-            'SGLANG_PREFILL_NORM_STORE_PAIR': '0',
+            'SGLANG_PREFILL_QKV_TAIL_SPLIT': '0',
         },
         'decode': {
             'SGLANG_DECODE_FA3_VERIFY': 'p128split2-s3-fp8',

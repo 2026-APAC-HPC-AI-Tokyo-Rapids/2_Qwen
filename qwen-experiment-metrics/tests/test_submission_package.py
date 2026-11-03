@@ -68,11 +68,11 @@ def test_worker_is_unchanged_except_dormant_nsight_block():
     capture = re.compile(r"runtime_dir=\$\(dirname \"\$\(dirname \"\$0\"\)\"\)\n# Keep inherited diagnostic variables.*?\nfi\n", re.DOTALL)
     expected, count = capture.subn("", expected)
     assert count == 1
-    # Round 28 flags exist only in the experimental PP4 worker, never in the
+    # Round 29 flags exist only in the experimental PP4 worker, never in the
     # frozen EP4 package. Account for exactly this inherited-env cleanup line.
-    r28 = "unset SGLANG_PREFILL_GEMM_TAIL_SPLIT SGLANG_PREFILL_FA3_PAIR_GLOBAL_ORDER SGLANG_PREFILL_NORM_STORE_PAIR\n"
-    assert expected.count(r28) == 1
-    expected = expected.replace(r28, "")
+    r29 = "unset SGLANG_PREFILL_QKV_TAIL_SPLIT\n"
+    assert expected.count(r29) == 1
+    expected = expected.replace(r29, "")
     assert worker(BATCH.read_text()) == expected
 
 

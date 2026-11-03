@@ -180,7 +180,7 @@ export UCX_POSIX_USE_PROC_LINK=n
 # Both endpoints now own all KV heads (attention TP1). Use direct NIXL
 # page transfer; heterogeneous-TP staging would only allocate unused pools.
 export SGLANG_DISAGG_STAGING_BUFFER=0
-unset SGLANG_PREFILL_GEMM_TAIL_SPLIT SGLANG_PREFILL_FA3_PAIR_GLOBAL_ORDER SGLANG_PREFILL_NORM_STORE_PAIR
+unset SGLANG_PREFILL_QKV_TAIL_SPLIT
 export SGLANG_DG_CACHE_DIR="${SLURM_SUBMIT_DIR}/home/deep-gemm"
 export TRITON_CACHE_DIR=/tmp/sglang-$name/triton
 export TORCHINDUCTOR_CACHE_DIR=/tmp/sglang-$name/inductor
@@ -350,33 +350,33 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.decode_greedy_verify_gate // false' "${
 fi
 # Decode greedy gate end.
 
-# Round 28 gate begin: after greedy, before serving model startup.
-# Three four-GPU workers run concurrently; one 100 s reservation for the bundle.
-# Candidates and evidence: research/runtime-performance/2026-11-03-prefill-small-bundle-r28.md.
-if [[ "${prefill_pp}" == 4 ]] && jq -e '.prefill | .gemm_tail_split_gate or .fa3_pair_global_order_gate or .norm_store_pair_gate' "${ROOT}/source/firmus-framework.json" >/dev/null; then
-  mkdir -p "${ROOT}/results/prefill-r28"
+# Round 29 gate begin: after greedy, before serving model startup.
+# Three four-GPU workers run concurrently; one 100 s reservation for QKV only.
+# Candidates and evidence: research/runtime-performance/2026-11-04-prefill-qkv-tail-r29.md.
+if [[ "${prefill_pp}" == 4 ]] && jq -e '.prefill | .qkv_tail_split_gate' "${ROOT}/source/firmus-framework.json" >/dev/null; then
+  mkdir -p "${ROOT}/results/prefill-r29"
   if (( SECONDS + 100 + 660 <= 1020 )); then
-    prefill_r28_started=$(date +%s)
-    prefill_r28_ok=1
-    prefill_r28_pids=()
+    prefill_r29_started=$(date +%s)
+    prefill_r29_ok=1
+    prefill_r29_pids=()
     for worker in 0 1 2; do
       node=${HEAD}; if [[ "${worker}" == 2 ]]; then node=${TAIL}; fi
-      prefill_r28_remaining=$((prefill_r28_started + 90 - $(date +%s)))
-      if (( prefill_r28_remaining <= 0 )); then prefill_r28_ok=0; break; fi
-      timeout --kill-after=2 "${prefill_r28_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-r28-${worker})" env DG_JIT_CACHE_DIR="/tmp/qwen-prefill-r28-${SLURM_JOB_ID}-${worker}/deep-gemm" TRITON_CACHE_DIR="/tmp/qwen-prefill-r28-${SLURM_JOB_ID}-${worker}/triton" TVM_FFI_CACHE_DIR="/tmp/qwen-prefill-r28-${SLURM_JOB_ID}-${worker}/tvm" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-r28.py" --output "${ROOT}/results/prefill-r28/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_r28_started}" --deadline "$((prefill_r28_started + 90))" --gemm-tail "$(jq -r '.prefill.gemm_tail_split_gate // false' "${ROOT}/source/firmus-framework.json")" --fa3-pair-order "$(jq -r '.prefill.fa3_pair_global_order_gate // false' "${ROOT}/source/firmus-framework.json")" --norm-store "$(jq -r '.prefill.norm_store_pair_gate // false' "${ROOT}/source/firmus-framework.json")" --fa3-pin "$(sed -n 's/^SGLANG_PREFILL_FA3_VERIFY=//p' "${ROOT}/source/prefill-kernels.env")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-r28-${worker}.log" 2>&1 &
-      prefill_r28_pids+=("$!")
+      prefill_r29_remaining=$((prefill_r29_started + 90 - $(date +%s)))
+      if (( prefill_r29_remaining <= 0 )); then prefill_r29_ok=0; break; fi
+      timeout --kill-after=2 "${prefill_r29_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-r29-${worker})" env DG_JIT_CACHE_DIR="/tmp/qwen-prefill-r29-${SLURM_JOB_ID}-${worker}/deep-gemm" TRITON_CACHE_DIR="/tmp/qwen-prefill-r29-${SLURM_JOB_ID}-${worker}/triton" TVM_FFI_CACHE_DIR="/tmp/qwen-prefill-r29-${SLURM_JOB_ID}-${worker}/tvm" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-r29.py" --output "${ROOT}/results/prefill-r29/prefill-${worker}" --run-id "${SLURM_JOB_ID}-${prefill_r29_started}" --deadline "$((prefill_r29_started + 90))" --qkv-tail "$(jq -r '.prefill.qkv_tail_split_gate // false' "${ROOT}/source/firmus-framework.json")" --fa3-pin "$(sed -n 's/^SGLANG_PREFILL_FA3_VERIFY=//p' "${ROOT}/source/prefill-kernels.env")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-r29-${worker}.log" 2>&1 &
+      prefill_r29_pids+=("$!")
     done
-    for pid in "${prefill_r28_pids[@]}"; do wait "${pid}" || prefill_r28_ok=0; done
-    prefill_r28_remaining=$((prefill_r28_started + 100 - $(date +%s)))
-    if (( prefill_r28_remaining > 0 )); then
-      timeout --signal=KILL "${prefill_r28_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-r28.py" --aggregate "${ROOT}/results/prefill-r28" --output "${ROOT}/results/prefill-r28/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_r28_started}" --deadline "$((prefill_r28_started + 100))" --workers-ok "${prefill_r28_ok}" --gemm-tail "$(jq -r '.prefill.gemm_tail_split_gate // false' "${ROOT}/source/firmus-framework.json")" --fa3-pair-order "$(jq -r '.prefill.fa3_pair_global_order_gate // false' "${ROOT}/source/firmus-framework.json")" --norm-store "$(jq -r '.prefill.norm_store_pair_gate // false' "${ROOT}/source/firmus-framework.json")" --fa3-pin "$(sed -n 's/^SGLANG_PREFILL_FA3_VERIFY=//p' "${ROOT}/source/prefill-kernels.env")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" || true
+    for pid in "${prefill_r29_pids[@]}"; do wait "${pid}" || prefill_r29_ok=0; done
+    prefill_r29_remaining=$((prefill_r29_started + 100 - $(date +%s)))
+    if (( prefill_r29_remaining > 0 )); then
+      timeout --signal=KILL "${prefill_r29_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-r29.py" --aggregate "${ROOT}/results/prefill-r29" --output "${ROOT}/results/prefill-r29/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_r29_started}" --deadline "$((prefill_r29_started + 100))" --workers-ok "${prefill_r29_ok}" --qkv-tail "$(jq -r '.prefill.qkv_tail_split_gate // false' "${ROOT}/source/firmus-framework.json")" --fa3-pin "$(sed -n 's/^SGLANG_PREFILL_FA3_VERIFY=//p' "${ROOT}/source/prefill-kernels.env")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" || true
     fi
-    rm -f "${ROOT}/source/prefill-kernels.env.r28.tmp"
+    rm -f "${ROOT}/source/prefill-kernels.env.r29.tmp"
   else
-    printf '%s\n' '{"adopted":false,"reason":"insufficient remaining serving budget"}' >"${ROOT}/results/prefill-r28/selection.json"
+    printf '%s\n' '{"adopted":false,"reason":"insufficient remaining serving budget"}' >"${ROOT}/results/prefill-r29/selection.json"
   fi
 fi
-# Round 28 gate end.
+# Round 29 gate end.
 
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
@@ -421,7 +421,7 @@ srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-e
 test -s "${ROOT}/results/score.json"
 # Keep every process dispatch line (including rank prefixes) with the score.
 for worker in 0 1 2; do
-  grep -a 'Prefill r28 .* using ' "${ART}/prefill-${worker}.log" >"${ROOT}/results/prefill-r28-dispatch-${worker}.txt" || printf 'no Prefill r28 dispatch line in prefill-%s.log\n' "${worker}" >"${ROOT}/results/prefill-r28-dispatch-${worker}.txt"
+  grep -a 'Prefill r29 qkv-tail using ' "${ART}/prefill-${worker}.log" >"${ROOT}/results/prefill-r29-dispatch-${worker}.txt" || printf 'no Prefill r29 dispatch line in prefill-%s.log\n' "${worker}" >"${ROOT}/results/prefill-r29-dispatch-${worker}.txt"
 done
 # Round 22 adopted a greedy fusion that serving never dispatched; keep each Decode rank's once-per-process decision with the score.
 grep -a -h -o -E 'Decode greedy verify (using fused kernels|fallback).*' "${ART}/decode-0.log" | sort -u >"${ROOT}/results/decode-greedy-dispatch.txt" || printf 'no Decode greedy verify dispatch line in decode-0.log\n' >"${ROOT}/results/decode-greedy-dispatch.txt"

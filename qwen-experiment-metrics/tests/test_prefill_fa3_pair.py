@@ -229,7 +229,7 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     config['prefill']['fa3_prepack_gate'] = enabled
     config['prefill']['fa3_v3_gate'] = enabled
     config['decode_greedy_verify_gate'] = enabled
-    for key in ('gemm_tail_split_gate', 'fa3_pair_global_order_gate', 'norm_store_pair_gate'):
+    for key in ('qkv_tail_split_gate',):
         config['prefill'][key] = enabled
     for name in ('source', 'results'):
         (tmp_path / name).mkdir()
@@ -240,7 +240,7 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     assert record['no_gpu_selection_rerun'] is not enabled
     assert record['fa3_prepack_gate'] is enabled and record['fa3_v3_gate'] is enabled
     assert record['decode_greedy_verify_gate'] is enabled
-    assert all(record[key] is enabled for key in ('gemm_tail_split_gate', 'fa3_pair_global_order_gate', 'norm_store_pair_gate'))
+    assert all(record[key] is enabled for key in ('qkv_tail_split_gate',))
     assert 'SGLANG_DECODE_GREEDY_VERIFY=0\n' in (tmp_path/'source/decode-kernels.env').read_text()
 
 

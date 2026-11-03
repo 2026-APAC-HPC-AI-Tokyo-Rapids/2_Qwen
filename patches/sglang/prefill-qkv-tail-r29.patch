@@ -1,0 +1,40 @@
+--- a/python/sglang/srt/layers/attention/prefill_fp8.py
++++ b/python/sglang/srt/layers/attention/prefill_fp8.py
+@@ -32,2 +32,28 @@
+
++def dense_gemm(a, sa, weight, weight_scale, out, *, tail_split=False):
++    """Split only QKV's exact measured shape on the current stream."""
++    import deep_gemm
++
++    if tail_split and a.shape == (7988, 4096) and weight.shape == (9216, 4096):
++        # 7936 aligns to BM256, group128 and TMA's 16-byte requirement.
++        # Preserve the original column-major scale stride in both descriptors.
++        deep_gemm.fp8_gemm_nt((a[:7936], sa[:7936]), (weight, weight_scale), out[:7936], compiled_dims="nk")
++        deep_gemm.fp8_gemm_nt((a[7936:], sa[7936:]), (weight, weight_scale), out[7936:], compiled_dims="nk")
++        _log_qkv_tail_dispatch()
++    else:
++        deep_gemm.fp8_gemm_nt((a, sa), (weight, weight_scale), out, compiled_dims="nk")
++
++
++_qkv_tail_dispatch_logged = False
++
++
++def _log_qkv_tail_dispatch():
++    global _qkv_tail_dispatch_logged
++    if not _qkv_tail_dispatch_logged:
++        import logging
++
++        logging.getLogger(__name__).warning("Prefill r29 qkv-tail using split 7936+52 rows projection=QKV M=7988 N=9216 K=4096 pid=%s", os.getpid())
++        _qkv_tail_dispatch_logged = True
++
++
+ def linear(attention, projection, layer, x):
+@@ -44,6 +70,5 @@
+         a, sa = sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True)
+-    import deep_gemm
+-
+     out = torch.empty((a.shape[0], layer.weight.shape[0]), device=a.device, dtype=torch.bfloat16)
+-    deep_gemm.fp8_gemm_nt((a, sa), (layer.weight, layer.weight_scale_inv), out, compiled_dims="nk")
++    tail_split = projection == "QKV" and os.environ.get("SGLANG_PREFILL_QKV_TAIL_SPLIT") == "1"
++    dense_gemm(a, sa, layer.weight, layer.weight_scale_inv, out, tail_split=tail_split)
+     return out, None

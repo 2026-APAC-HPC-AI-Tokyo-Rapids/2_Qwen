@@ -1,11 +1,11 @@
-"""Post-greedy independent small-candidate gates; incomplete evidence keeps control."""
+"""Post-greedy QKV tail gate; incomplete evidence keeps control."""
 import argparse
 import json
 import os
 import time
 from pathlib import Path
 
-import firmus_prefill_r28 as gate
+import firmus_prefill_r29 as gate
 
 
 def aggregate_candidate(args, name):
@@ -35,9 +35,8 @@ def aggregate_candidate(args, name):
         key = gate.SPECS[name]["key"]
         lines = args.env_output.read_text().splitlines()
         assert [line for line in lines if line.startswith(key + "=")] == [key + "=0"], "exactly one default-off flag required"
-        # Persist each independent decision before the next candidate. A later
-        # timeout cannot roll back an already accepted, complete candidate.
-        temporary = args.env_output.with_name(args.env_output.name + ".r28.tmp")
+        # Publish only complete evidence, within the aggregate deadline.
+        temporary = args.env_output.with_name(args.env_output.name + ".r29.tmp")
         try:
             temporary.write_text("\n".join(key + "=1" if line.startswith(key + "=") else line for line in lines) + "\n")
             assert time.time() <= args.deadline, "expired aggregate budget"
@@ -65,9 +64,7 @@ def main():
         parser.add_argument("--" + name, choices=("true", "false"), default="false")
     args = parser.parse_args()
     decisions = {}
-    # Short gates first, then the two cold dense JITs. Each completed candidate
-    # writes its own rank evidence even when a subsequent candidate times out.
-    for name in ("norm-store", "fa3-pair-order", "gemm-tail"):
+    for name in gate.SPECS:
         if getattr(args, name.replace("-", "_")) != "true":
             result = {"adopted": False, "reason": "disabled"}
         elif args.aggregate:
@@ -75,7 +72,7 @@ def main():
         else:
             try:
                 gate.run(name, args.output.parent / name / args.output.name, args.run_id, args.deadline, args.image_sha256, args.fa3_pin)
-            except Exception as error:  # noqa: BLE001 - still attempt the other candidates
+            except Exception as error:  # noqa: BLE001 - preserve worker failure evidence
                 import traceback
                 traceback.print_exc()
                 directory = args.output.parent / name / args.output.name

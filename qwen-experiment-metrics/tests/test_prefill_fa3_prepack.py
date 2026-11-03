@@ -179,7 +179,7 @@ def test_native_writer_and_gate_wiring():
     assert 'timeout --kill-after=2 "${prefill_fa3_prepack_remaining}" srun' in block()
     assert 'select-firmus-prefill-fa3-prepack.py' in (ROOT/'scripts/provision-firmus-framework.sh').read_text()
     table=json.loads((ROOT/'kernels/fa3-verify/prefill-candidates.json').read_text())
-    assert [(row['native_v_n'],row['variant']) for row in table if row.get('native_v_n') and not row.get('retired')]==[(96,41184),(96,172256),(96,41184|1048576),(96,172256|1048576)]
+    assert [(row['native_v_n'],row['variant']) for row in table if row.get('native_v_n') and not row.get('retired')]==[(96,41184),(96,172256)]
 
 
 def test_deployed_offset_matches_exhaustive_cute_maps(tmp_path):
@@ -259,7 +259,7 @@ def test_actual_model_writer_branch_uses_same_host_pair_condition(dispatch,monke
 
 def test_published_ids_retained_without_retired_native_build(tmp_path,dispatch,monkeypatch):
     table=json.loads((ROOT/'kernels/fa3-verify/prefill-candidates.json').read_text())
-    assert len(table)==21
+    assert len(table)==18
     assert table[11]['name']=='n192-direct-o-varlen-pipe'
     assert table[12]['name']=='m192n96-direct-o-varlen-pipe'
     assert table[13]['name']=='n192-direct-o-varlen-pipe-vsum' and table[13]['retired'] is True
