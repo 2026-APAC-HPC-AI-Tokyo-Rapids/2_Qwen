@@ -354,6 +354,7 @@ fi
 # Three four-GPU workers run concurrently; one 100 s reservation for QKV only.
 # Candidates and evidence: research/runtime-performance/2026-11-04-prefill-qkv-tail-r29.md.
 # Round 30 reuses this gate and image a001f901; serving prewarms before ready.
+# Round 30 submission: prewarm the QKV body and tail before the official command.
 if [[ "${prefill_pp}" == 4 ]] && jq -e '.prefill | .qkv_tail_split_gate' "${ROOT}/source/firmus-framework.json" >/dev/null; then
   mkdir -p "${ROOT}/results/prefill-r29"
   if (( SECONDS + 100 + 660 <= 1020 )); then
