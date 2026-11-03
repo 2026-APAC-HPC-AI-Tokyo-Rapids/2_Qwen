@@ -77,7 +77,12 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
             assert [v for v in lines if v.startswith(key + "=")] == [key + "=1"], "wrong serving control"
         assert all(not line.startswith(KEY + "=") or line == KEY + "=0" for line in lines), "unexpected swap pin"
         assert time.time() <= deadline, "aggregate deadline expired"
-        env_output.write_text("\n".join([line for line in lines if not line.startswith(KEY + "=")] + [KEY + "=1"]) + "\n")
+        temporary = env_output.with_name(env_output.name + ".swap-tail.tmp")
+        try:
+            temporary.write_text("\n".join([line for line in lines if not line.startswith(KEY + "=")] + [KEY + "=1"]) + "\n")
+            temporary.replace(env_output)
+        finally:
+            temporary.unlink(missing_ok=True)
         result.update(adopted=True, reason="all twelve UUIDs: all bytes, 1200 calls, both order medians exceed prior selector margin")
     except (OSError, AssertionError, KeyError, ValueError, TypeError) as error:
         result["reason"] = f"{type(error).__name__}: {error}"
