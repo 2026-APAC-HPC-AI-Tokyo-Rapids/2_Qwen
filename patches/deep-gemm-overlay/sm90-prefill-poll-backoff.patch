@@ -1,0 +1,125 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1130,10 +1130,12 @@
+             const uint32_t pool_block = scheduler.get_current_pool_block_offset() + m_block_idx;
+             if (l2) {
+                 constexpr uint64_t expected = (1ull << kNumL1BlockNs) - 1ull;
+-                while (ptx::ld_acq_gpu(workspace.get_l2_arrival_mask_ptr(pool_block)) != expected);
++                DG_PREFILL_POLL_STATE
++                while (ptx::ld_acq_gpu(workspace.get_l2_arrival_mask_ptr(pool_block)) != expected) { DG_PREFILL_POLL_PAUSE; }
+             } else {
+                 const uint32_t expected = scheduler.template get_valid_m<false>();
+-                while (ptx::ld_acq(workspace.get_l1_arrival_count_ptr(pool_block)) != expected);
++                DG_PREFILL_POLL_STATE
++                while (ptx::ld_acq(workspace.get_l1_arrival_count_ptr(pool_block)) != expected) { DG_PREFILL_POLL_PAUSE; }
+             }
+             const auto acts = l2 ? &tensor_map_l2_acts : &tensor_map_l1_acts;
+             const auto scales = l2 ? &tensor_map_l2_acts_sf : &tensor_map_l1_acts_sf;
+@@ -1171,7 +1173,8 @@
+             if (block_phase == sched::BlockPhase::Linear1) {
+                 const auto ptr = workspace.get_l1_arrival_count_ptr(pool_block_idx);
+                 const auto expected = scheduler.template get_valid_m<false>();
+-                while (ptx::ld_acq(ptr) != expected);
++                DG_PREFILL_POLL_STATE
++                while (ptx::ld_acq(ptr) != expected) { DG_PREFILL_POLL_PAUSE; }
+             } else {
+                 constexpr uint32_t kNumL1BlockNs = L1_SHAPE_N / BLOCK_N;
+                 if constexpr (kL2ArrivalCounter) {
+@@ -1181,7 +1184,8 @@
+                         scheduler.template get_valid_m<false>(), WG_BLOCK_M);
+                     const uint32_t expected =
+                         kNumL1BlockNs * active_m_wgs * kWarpgroupSplitN * kL1OutputArrivalParts;
+-                    while (ptx::ld_acq(ptr) != expected);
++                    DG_PREFILL_POLL_STATE
++                    while (ptx::ld_acq(ptr) != expected) { DG_PREFILL_POLL_PAUSE; }
+                     // kPrefill2WG writes the FC1 output tile with generic stores: order
+                     // them (acquired above) before this warp's TMA loads of it.
+                     if constexpr (kPrefill2WG)
+@@ -1190,7 +1194,8 @@
+                     const auto ptr = workspace.get_l2_arrival_mask_ptr(pool_block_idx);
+                     const uint64_t expected = (kNumL1BlockNs >= 64)
+                         ? ~0ull : ((1ull << kNumL1BlockNs) - 1ull);
+-                    while (ptx::ld_acq_gpu(ptr) != expected);
++                    DG_PREFILL_POLL_STATE
++                    while (ptx::ld_acq_gpu(ptr) != expected) { DG_PREFILL_POLL_PAUSE; }
+                 }
+             }
+             if constexpr (kPrefillTailPair) {
+@@ -3479,7 +3484,8 @@
+                 if (epilogue_thread_idx == 0) {
+                     ptx::red_add(counter_ptr, 1);
+                     const int target = signal_sign ? 0 : static_cast<int>(kNumRanks);
+-                    while (ptx::ld_acq_sys(signal_ptr) != target);
++                    DG_PREFILL_POLL_STATE
++                    while (ptx::ld_acq_sys(signal_ptr) != target) { DG_PREFILL_POLL_PAUSE; }
+                 }
+             }
+         } else if constexpr (kPrefillLean) {
+--- a/deep_gemm/include/deep_gemm/comm/barrier.cuh
++++ b/deep_gemm/include/deep_gemm/comm/barrier.cuh
+@@ -5,6 +5,16 @@
+ #include <deep_gemm/ptx/ld_st.cuh>
+ #include <deep_gemm/layout/sym_buffer.cuh>
+ #include <deep_gemm/layout/mega_moe.cuh>
++
++
++// Only emitted by the SM90 Prefill host path after its in-job gate.
++#if defined(DG_SM90_PREFILL_POLL_BACKOFF) && DG_SM90_PREFILL_POLL_BACKOFF > 0
++#define DG_PREFILL_POLL_STATE uint32_t dg_poll_failures = 0;
++#define DG_PREFILL_POLL_PAUSE do { if (dg_poll_failures < 3) ++dg_poll_failures; else __nanosleep(DG_SM90_PREFILL_POLL_BACKOFF); } while (false)
++#else
++#define DG_PREFILL_POLL_STATE
++#define DG_PREFILL_POLL_PAUSE
++#endif
+ 
+ namespace deep_gemm::comm {
+ 
+@@ -30,15 +40,18 @@
+         const auto old_value = ptx::atomic_add_rel(
+             count_ptr, sm_idx == 0 ? (kFinishSumTag - (kNumSMs - 1)) : 1);
+         uint32_t new_value;
++        DG_PREFILL_POLL_STATE
+ #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900) && (__CUDA_ARCH__ < 1000) && \
+         !(defined(DG_NVLINK_BARRIER_VERBOSE_TIMEOUT) && DG_NVLINK_BARRIER_VERBOSE_TIMEOUT)
+         do {
+             new_value = ptx::ld_acq(count_ptr);
++            if (((new_value ^ old_value) & kFinishSumTag) == 0) { DG_PREFILL_POLL_PAUSE; }
+         } while (((new_value ^ old_value) & kFinishSumTag) == 0);
+ #else
+         const auto start_clock = clock64();
+         do {
+             new_value = ptx::ld_acq(count_ptr);
++            if (((new_value ^ old_value) & kFinishSumTag) == 0) { DG_PREFILL_POLL_PAUSE; }
+             if (clock64() - start_clock >= kNumTimeoutCycles) {
+                 printf("DeepGEMM grid sync timeout: sm=%u, thread=%u, grid_sync_idx=%u, old=%u, current=%u, expected_tag=%u\n",
+                        sm_idx, thread_idx, kGridSyncIndex, old_value, new_value, old_value ^ kFinishSumTag);
+@@ -80,7 +93,9 @@
+             ptx::red_add(counter_ptr, 1);
+             const int target = signal_sign ? 0 : static_cast<int>(kNumRanks);
+             const auto start_clock = clock64();
++            DG_PREFILL_POLL_STATE
+             while (ptx::ld_acq_sys(signal_ptr) != target) {
++                DG_PREFILL_POLL_PAUSE;
+                 if (clock64() - start_clock >= kNumTimeoutCycles) {
+ #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900) && (__CUDA_ARCH__ < 1000) && \
+         !(defined(DG_NVLINK_BARRIER_VERBOSE_TIMEOUT) && DG_NVLINK_BARRIER_VERBOSE_TIMEOUT)
+--- a/deep_gemm/include/deep_gemm/scheduler/mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/scheduler/mega_moe.cuh
+@@ -1,4 +1,6 @@
+ #pragma once
++
++#include <deep_gemm/comm/barrier.cuh>
+ 
+ #include <deep_gemm/common/cute_tie.cuh>
+ #include <deep_gemm/common/math.cuh>
+@@ -190,8 +192,10 @@
+             const auto expert_idx = i * 32 + ptx::get_lane_idx();
+             uint64_t value = 0;
+             if (expert_idx < kNumExpertsPerRank) {
++                DG_PREFILL_POLL_STATE
+                 do {
+                     value = ptx::ld_volatile(workspace.get_expert_recv_count_sum_ptr(expert_idx));
++                    if (static_cast<uint32_t>(value >> 32) != kNumSMs * kNumRanks) { DG_PREFILL_POLL_PAUSE; }
+                 } while (static_cast<uint32_t>(value >> 32) != kNumSMs * kNumRanks);
+             }
+             stored_num_tokens_per_expert[i] = static_cast<uint32_t>(value);

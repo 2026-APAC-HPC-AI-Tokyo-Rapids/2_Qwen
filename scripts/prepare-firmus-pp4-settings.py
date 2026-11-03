@@ -102,7 +102,7 @@ def prepare(config, repo, runtime):
     # changes host dispatch and topology and is explicitly NOT a prior result.
     for entry in record["patches"] + record["extra_files"]:
         previous["file_sha"](repo, entry)
-    environment = {**record["environment"], **PP4_SELECTED, "SGLANG_DECODE_GREEDY_VERIFY": "0"}
+    environment = {**record["environment"], **PP4_SELECTED, "SGLANG_DECODE_GREEDY_VERIFY": "0", "DG_SM90_PREFILL_POLL_BACKOFF": "0", "SGLANG_PREFILL_NORM_SQUARE_FMA": "0"}
     for role in ("prefill", "decode"):
         names = {
             k: v
@@ -129,6 +129,11 @@ def prepare(config, repo, runtime):
     payload["decode_greedy_verify_gate"] = config.get("decode_greedy_verify_gate", False)
     if payload["fa3_prepack_gate"] or payload["decode_greedy_verify_gate"]:
         payload["no_gpu_selection_rerun"] = False
+
+    for key in ("poll_backoff_gate", "norm_square_fma_gate"):
+        payload[key] = p.get(key, False)
+        if payload[key]:
+            payload["no_gpu_selection_rerun"] = False
 
     for directory in ("source", "results"):
         (runtime / directory / "pp4-kernel-settings.json").write_text(

@@ -349,6 +349,35 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.decode_greedy_verify_gate // false' "${
 fi
 # Decode greedy gate end.
 
+# r27 begins only after greedy has settled. r26 measured 52 s wall / 17.5 s per worker.
+# Keep 60 s for parallel workers (+2 kill grace), and 70 s including aggregation;
+# the short norm gate shares imports with MegaMoE. If cold JIT exceeds this, keep serving pins.
+if [[ "${prefill_pp}" == 4 ]] && jq -e '.prefill.poll_backoff_gate == true or .prefill.norm_square_fma_gate == true' "${ROOT}/source/firmus-framework.json" >/dev/null; then
+  mkdir -p "${ROOT}/results/prefill-r27"
+  if (( SECONDS + 70 + 660 <= 1020 )); then
+    prefill_r27_started=$(date +%s)
+    prefill_r27_ok=1
+    prefill_r27_selections=()
+    for worker in 0 1 2; do
+      node=${HEAD}
+      if (( worker == 2 )); then node=${TAIL}; fi
+      prefill_r27_remaining=$((prefill_r27_started + 60 - $(date +%s)))
+      if (( prefill_r27_remaining <= 0 )); then prefill_r27_ok=0; break; fi
+      timeout --kill-after=2 "${prefill_r27_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-r27-${worker})" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-r27.py" --output "${ROOT}/results/prefill-r27/prefill-${worker}" --routing "${ROOT}/source/megamoe-local-ep1-routing.npz" --run-id "${SLURM_JOB_ID}-${prefill_r27_started}" --deadline "$((prefill_r27_started + 60))" --poll-backoff "$(jq -r '.prefill.poll_backoff_gate // false' "${ROOT}/source/firmus-framework.json")" --norm-square-fma "$(jq -r '.prefill.norm_square_fma_gate // false' "${ROOT}/source/firmus-framework.json")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-r27-${worker}.log" 2>&1 &
+      prefill_r27_selections+=("$!")
+    done
+    for pid in "${prefill_r27_selections[@]}"; do wait "${pid}" || prefill_r27_ok=0; done
+    prefill_r27_remaining=$((prefill_r27_started + 70 - $(date +%s)))
+    if (( prefill_r27_remaining > 0 )); then
+      timeout --signal=KILL "${prefill_r27_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-r27.py" --aggregate "${ROOT}/results/prefill-r27" --output "${ROOT}/results/prefill-r27/selection.json" --env-output "${ROOT}/source/prefill-kernels.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_r27_started}" --deadline "$((prefill_r27_started + 70))" --workers-ok "${prefill_r27_ok}" --poll-backoff "$(jq -r '.prefill.poll_backoff_gate // false' "${ROOT}/source/firmus-framework.json")" --norm-square-fma "$(jq -r '.prefill.norm_square_fma_gate // false' "${ROOT}/source/firmus-framework.json")" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" || true
+    fi
+    rm -f "${ROOT}/source/prefill-kernels.env.r27.tmp" "${ROOT}/source/prefill-kernels.env.r27.tmp.poll-backoff.tmp"
+  else
+    printf '%s\n' '{"adopted":false,"reason":"insufficient remaining serving budget"}' >"${ROOT}/results/prefill-r27/selection.json"
+  fi
+fi
+# r27 gate end.
+
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9001 >"${ART}/prefill-1.log" 2>&1 &
@@ -391,6 +420,10 @@ srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-e
 test -s "${ROOT}/results/score.json"
 # Round 22 adopted a greedy fusion that serving never dispatched; keep each Decode rank's once-per-process decision with the score.
 grep -a -h -o -E 'Decode greedy verify (using fused kernels|fallback).*' "${ART}/decode-0.log" | sort -u >"${ROOT}/results/decode-greedy-dispatch.txt" || printf 'no Decode greedy verify dispatch line in decode-0.log\n' >"${ROOT}/results/decode-greedy-dispatch.txt"
+for worker in 0 1 2; do
+  grep -a -h -o -E 'DeepGEMM sm90 Prefill polling backoff enabled:.*|Prefill norm_quant square FMA enabled:.*' "${ART}/prefill-${worker}.log" | sort -u >"${ROOT}/results/prefill-r27-dispatch-${worker}.txt" || printf 'no r27 candidate dispatch line in prefill-%s.log\n' "${worker}" >"${ROOT}/results/prefill-r27-dispatch-${worker}.txt"
+done
+
 if (( benchmark_status == 0 )); then
   while IFS=$'\t' read -r worker host port _; do curl --fail --silent --show-error --max-time 15 "http://${host}:${port}/get_server_info" >"${ROOT}/results/server-info-${worker}.json"; done <"${ROOT}/source/worker-endpoints.tsv"
   uv run --no-project --python 3.12 python "${ROOT}/scripts/collect-eagle-acceptance.py" --cluster firmus --config "${ROOT}/source/firmus-framework.json" --endpoints "${ROOT}/source/worker-endpoints.tsv" --server-info-dir "${ROOT}/results" --log-dir "${ROOT}/logs" --output "${ROOT}/results/eagle-acceptance.json"

@@ -1,4 +1,5 @@
 """Use a full CTA per input row to shorten fused norm/quant dependency chains."""
+import os
 import runpy
 import statistics
 from pathlib import Path
@@ -10,13 +11,38 @@ import sglang.kernels.ops.layernorm.add_rmsnorm_group_quant as nq
 
 
 @triton.jit
-def norm_quant(X, R, W, Q, S, stride, eps: tl.constexpr):
+def norm_quant(X, R, W, Q, S, stride, eps: tl.constexpr, SQUARE_FMA: tl.constexpr = False):
     row = tl.program_id(0)
     col = tl.arange(0, 4096)
     # Keep the unrounded FP32 sum for normalization, BF16 for residual storage.
     h = tl.load(X + row * 4096 + col).to(tl.float32) + tl.load(R + row * 4096 + col).to(tl.float32)
     tl.store(R + row * 4096 + col, h)
-    rstd = tl.rsqrt(tl.sum(h * h, 0) / 4096.0 + eps)
+    if SQUARE_FMA:
+        # Static split/reshape selects this lane's registers without a gather.
+        h0_8, h8_8 = tl.split(tl.trans(tl.reshape(h, (2, 2048))))
+        h0_4, h4_4 = tl.split(tl.trans(tl.reshape(h0_8, (2, 1024))))
+        h0_2, h2_2 = tl.split(tl.trans(tl.reshape(h0_4, (2, 512))))
+        v0, v1 = tl.split(tl.trans(tl.reshape(h0_2, (2, 256))))
+        v2, v3 = tl.split(tl.trans(tl.reshape(h2_2, (2, 256))))
+        h4_2, h6_2 = tl.split(tl.trans(tl.reshape(h4_4, (2, 512))))
+        v4, v5 = tl.split(tl.trans(tl.reshape(h4_2, (2, 256))))
+        v6, v7 = tl.split(tl.trans(tl.reshape(h6_2, (2, 256))))
+        h8_4, h12_4 = tl.split(tl.trans(tl.reshape(h8_8, (2, 1024))))
+        h8_2, h10_2 = tl.split(tl.trans(tl.reshape(h8_4, (2, 512))))
+        v8, v9 = tl.split(tl.trans(tl.reshape(h8_2, (2, 256))))
+        v10, v11 = tl.split(tl.trans(tl.reshape(h10_2, (2, 256))))
+        h12_2, h14_2 = tl.split(tl.trans(tl.reshape(h12_4, (2, 512))))
+        v12, v13 = tl.split(tl.trans(tl.reshape(h12_2, (2, 256))))
+        v14, v15 = tl.split(tl.trans(tl.reshape(h14_2, (2, 256))))
+        parts = (v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15)
+        sums = v0 * v0
+        for i in tl.static_range(1, 16):
+            value = parts[i]
+            sums = tl.fma(value, value, sums)
+        square_sum = tl.sum(sums, 0)
+    else:
+        square_sum = tl.sum(h * h, 0)
+    rstd = tl.rsqrt(square_sum / 4096.0 + eps)
     y = ((h * rstd) * tl.load(W + col).to(tl.float32)).to(tl.bfloat16).to(tl.float32)
     groups = tl.reshape(y, (32, 128))
     amax = tl.maximum(tl.max(tl.abs(groups), 1), 1.0e-10)
@@ -28,7 +54,7 @@ def norm_quant(X, R, W, Q, S, stride, eps: tl.constexpr):
 
 def candidate_out(x, residual, weight, eps, q, scale):
     if x.shape[0]:
-        norm_quant[(x.shape[0],)](x, residual, weight, q, scale, scale.stride(1), eps, num_warps=8, enable_fp_fusion=False)
+        norm_quant[(x.shape[0],)](x, residual, weight, q, scale, scale.stride(1), eps, SQUARE_FMA=os.environ.get("SGLANG_PREFILL_NORM_SQUARE_FMA", "0") == "1", num_warps=8, enable_fp_fusion=False)
 
 
 def candidate(x, residual, weight, eps):

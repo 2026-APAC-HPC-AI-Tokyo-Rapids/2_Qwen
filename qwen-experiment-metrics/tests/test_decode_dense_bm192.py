@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_host_series_ends_with_the_bm192_override_and_keeps_the_pinned_config_patch():
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
-    assert series[-1] == "sm90-1d2d-decode-bm192.patch" and series.index("sm90-1d2d-decode-config.patch") < len(series) - 1
+    assert series[-2:] == ["sm90-1d2d-decode-bm192.patch", "sm90-prefill-poll-backoff.patch"] and series.index("sm90-1d2d-decode-config.patch") < len(series) - 1
     patch = (ROOT / "patches/deep-gemm-host/sm90-1d2d-decode-bm192.patch").read_text()
     # Only "QKV>128"/"O>128" entries may use BLOCK_M 192, only above 128 rows, with three math warpgroups.
     for line in ('+        DG_HOST_ASSERT(name == "QKV" or name == "O" or name == "QKV>128" or name == "O>128");', "+        DG_HOST_ASSERT(bm == 64 or bm == 128 or (bm == 192 and large));", "+            launch.num_math_threads = 384, launch.num_threads = launch.num_tma_threads + 384;", "+        if (qkv == (desc.n == 9216) and large and desc.m > 128)"):
@@ -19,7 +19,7 @@ def test_host_series_ends_with_the_bm192_override_and_keeps_the_pinned_config_pa
 
 def test_header_overlay_changes_only_the_three_warpgroup_geometry():
     pp4 = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
-    assert pp4["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
+    assert pp4["deep_gemm_overlay_patches"][-2:] == ["patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch", "patches/deep-gemm-overlay/sm90-prefill-poll-backoff.patch"]
     patch = (ROOT / "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch").read_text()
     assert "kNumMathThreads == 128 ? 248 : (kNumMathThreads == 384 ? 152 : 232)" in patch
     assert "WGMMA::M * (kNumMathThreads == 384 ? 3 : 2)" in patch
