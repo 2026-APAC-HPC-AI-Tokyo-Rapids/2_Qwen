@@ -232,6 +232,8 @@ round12 pair gate成功後の同じ12 GPUで、診断→P全gate→残り時間�
 
 ### Prefill QKV GEMM
 
+2026-11-05 round43：現r37 first-K有効のQKV/O定常promotion pipelineはphase 1で**NO-GO**。N64二重temporaryの依存・追加仕事・register/release/drainを検討したが正味25µs/層を支持できず、実装・GPU試験へ進まない。詳細とCPU証拠は末尾Round43および `2026-11-05-prefill-dense-promotion-r43.md`。
+
 2*M*N*K; M=3994, N=9216, K=4096; tile=256x128。
 
 有効演算 301.537 GFLOP/回、tile演算 309.238 GFLOP/回（1.026倍）、論理I/O 127.726 MB/回。FP8 A/B + BF16 Cの各1回I/O。scaleと再読出しは別。
@@ -243,6 +245,8 @@ round12 pair gate成功後の同じ12 GPUで、診断→P全gate→残り時間�
 測定へ進む条件：既存選択より速い同shapeの候補だけを他の検証に同乗。
 
 ### Prefill O GEMM
+
+2026-11-05 round43：QKVとの合計で定常promotion pipelineを判定し**NO-GO**。N64 splitはQGMMA倍増・operand SMEM read +33.33%、二つのM64に独立N128 temporaryを置く案は配列だけで256 registers/thread。正味短縮は未同定。詳細は `2026-11-05-prefill-dense-promotion-r43.md`。
 
 2*M*N*K; M=3994, N=4096, K=8192; tile=256x128。
 
@@ -556,3 +560,5 @@ Round 41（2026-11-04、親4052d13、CPU準備・未投入）：B/Cをrun4182297
 Round 41 結果（run 41875058470、Slurm 28739、image 2fb619c4 を build 後の sbatch SSH 切断から再 pin で再利用）：公式 10072.13、TTFT 超過 111 件は従来同様、12 Prefill process で A/B/C prewarm と dispatch を確認。probe complete、production minus diagnostic の 12GPU 中央値 77.16 µs/層（GPU 別 65.97–83.00、production 2.66–2.78 ms/層）で conditionally_open。scale 経路全体の上限で約2.9%/層、1 period 最大約1.8 ms。mainloop 再設計はこの上限内でのみ継続。
 
 Round 42（2026-11-05、親ede08bd、phase 1のみ）：**NO-GO、30µs/層以上を支持する精度保持scale pipeline設計を得られず停止。** r41 rawの全12rank production JIT sourceとELF kernel textを照合し、実CUDA13.0.88 SASS 92b487c8/178560Bを調査。r40再構成sourceの全patch hash/順序を照合してr41を実適用し、runtime header1821ba23を全rankと一致確認、fresh CUDA13.4.92/sm90a compileもf157a6dd/181120B、168 launch register/R206/math224、spill/stack/local0を再現した。全28静的K-block×2halfとchunk backedgeのscale load→denominator→RCP→ratio→FMUL64→fence→WGMMA4、full wait/empty arriveを記録。FC1 weight LDGは前K中に発行済み、4 ratioは両halfで共有・前denominator再利用済み。FC2 half1 RCPはhalf0 WGMMA発行中。interior FMULは同half旧WGMMA完了のwait後が必須で、他halfとのoverlapは既存。FC1 chunk入口のhalf1 FMULは既にhalf0発行途中へ移動し、backedgeのratioはdrain前に作成されるため、全blockを同じpost-wait露出へ数えない。SFA/RCPの追加lookaheadはregister数だけでは否定しないが、future full待ちをhalf1発行前へ移す費用が残り、r13のhalf0短縮/half1遅延を解決する根拠なし。row×col因数分解でもRCP4/scale FMUL8/acc FMUL128は不変、独立product/sumは容量・追加TMA等の正味費用未確定。224枠の次232は現source総枠64512を超え、168をmath上限と誤認しない。FFMA spill、shared-RCP600回不一致、split-LDSM+1.6%、tail/direct-FC2/A-gather/sched-r20/FC1順序/backoffの否定証拠を維持。77.160954µsは全scale経路の実測上限のまま、30µsは38.8798%、同probe clockで平均17.03–19.40露出clock/定常CTA-K128の正味削減が必要だが、per-PC露出分解も候補saving/誤差も未同定。仕事2.412295225344TFLOP/層、元K128 scale、主要論理I/Oはr40/r41不変、実HBM/L2/NVLink byte未確定。phase 2のoverlay/host flag/gate/adoption/診断退役は実装せず、production/config/submission不変、require-build不要。SSH/GPU/ジョブ/build/commit/pushなし。詳細は2026-11-05-megamoe-scale-pipeline-r42.md、全PC依存表と再現証拠はmegamoe-scale-pipeline-r42-cpu-proof-20261105.tar.gz、検証は隣接CPU-validation JSON。
+
+Round 43（2026-11-05、親045ca44、phase 1のみ）：**NO-GO、Prefill dense QKV＋Oの正味25µs/層、または約30clock/critical-wave K128を支持できず停止。** 現r37 first-K有効Normal、M7988/N9216/K4096およびM7988/N4096/K8192、BM256/BN128/BK128、2 math WG/3stage/cluster2 A multicast/132CTAを固定。r32 headerへ現patchを適用しr37/r40と同じ915bd4d3を再構成、保存run41875058470の全overlay hash/順序を照合。fresh CUDA13.4.92/sm90aはQKV9630609e/62208B、O11f685d4/61440Bを再現、168 launch/math232、最大R202、stack/spill/LDL/STL/C75xxなし。全16静的K×2M waveで同じtemporary64のQGMMA4→wait0→FFMA64→再利用を確認、steady8Kは1533slot/QGMMA64/FFMA1024。scale FMULは発行中、次full wait/sb loadは前promotion中へ既に配置。full count1/50176B、emptyは2CTA×8warpの16arrival、最後M wave完了後のpeer/self到着を記録。N64案はfinal128＋32×2=192配列を維持しwait1で他temporaryのWGMMA中にpromotionできるが、QGMMA/group/fence/wait倍増、operand SMEM96→128KiB/CTA-K、QKV+2.415919104GB/O+2.147483648GB、旧scaleとstageのlifetime・release遅延・drainが追加。追加descriptor参照とNhi用B baseも計上し、物理issue clockは未確定とした。1088 critical-wave K128/層、r24の1.410GHz scenarioで30clock=23.15µs、25/50µsには32.40/64.80clockが必要。実効operand帯域W112B/clockという感度ではサービス床が146.29clock増え、W128以上でも露出promotionと追加issue/drainの実測がなく正味必要量を支持しない。static slotやr24 fit残差約190clock、r41 MegaMoE上限をsavingへ転用しない。単一temporaryのM順変更はreuse依存を消せず、64×2案はfinal込み256で232budget/255thread上限を超える。stagger/tail/fusion/retiling/stage4の棄却を維持。有効FLOP合計1.139139411968TF/層、論理I/O218734080/166482944Bは不変、実HBM/L2/NVLink byte・候補saving/誤差は未同定。raw37cubinとread-only ssh firmusの共有run/cache確認ではdense実13.0 cubinを取得できず、13.4 PCと実runを区別。phase 2のhost/overlay/gate・r41診断退役は行わずproduction/config/submission不変、require-build不要。commit/push/GPU/job/image buildなし。詳細・検証は2026-11-05-prefill-dense-promotion-r43.mdとprefill-dense-promotion-r43-cpu-validation-20261105.json、全wave表/compile/感度は隣接CPU-proof。

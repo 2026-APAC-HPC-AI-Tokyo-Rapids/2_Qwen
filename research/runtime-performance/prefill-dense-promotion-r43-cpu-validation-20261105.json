@@ -1,0 +1,292 @@
+{
+  "schema_version": "prefill-dense-promotion-r43-cpu-validation/1",
+  "date": "2026-11-05",
+  "parent_commit": "045ca443d56ca79593cf4883abc4698907c20499",
+  "decision": "NO-GO",
+  "stopped_after_phase": 1,
+  "scope": "Prefill Normal QKV M7988 N9216 K4096 and O M7988 N4096 K8192, E4M3 with FP32 K128 activation and 128x128 weight scales, BF16 output, BM256 BN128 BK128, 2 math WG, 3 stages, cluster2 A multicast, 132 persistent CTAs, r37 first-K active.",
+  "target_saving_us": 25,
+  "desired_saving_us": 50,
+  "candidate_saving_us": null,
+  "candidate_prediction_error_us": null,
+  "reason": "The legal N64 double-temporary ordering doubles QGMMA and group/fence/wait work and adds 33.33 percent operand shared-memory reads plus scale/stage live ranges and release/drain costs. Available evidence does not identify exposed promotion or marginal issue/operand costs sufficiently to support 30 net clocks per critical-wave K128. A single shared N128 temporary retains the reuse edge; two N128 temporaries plus final need 256 registers before auxiliary state.",
+  "critical_wave_k128_per_layer": 1088,
+  "stop_rule_required_net_clocks_per_critical_wave_k128_approximate": 30,
+  "clock_conversion_scenario_mhz": 1410,
+  "clock_scenario_source": "Historical r24 same-run model, not a new measurement of current image clocks.",
+  "required_net_clocks_for_target_us": {
+    "25": 32.39889705882353,
+    "50": 64.79779411764706
+  },
+  "thirty_clock_equivalent_us": 23.148936170212767,
+  "runtime_dense_header_sha256": "915bd4d3ee23e0ce6da735cd6b273700caa0d94a15a6917fb6eed93a4ac72350",
+  "fresh_production_compiles": {
+    "qkv": {
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "--cubin",
+        "--std=c++20",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-O3",
+        "--diag-suppress=177",
+        "--ptxas-options=-v,-warn-spills",
+        "-gencode",
+        "arch=compute_90a,code=sm_90a",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/work/.r40-proof/production/deep_gemm/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/work/.r40-proof/fixture/r32/dependencies",
+        "-DDG_SM90_PREFILL_DENSE_FIRST_K=1",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/proof/qkv.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/proof/qkv.cubin"
+      ],
+      "exit_code": 0,
+      "seconds": 8.141779314988526,
+      "encoding_bytes": 62208,
+      "encoding_sha256": "9630609edf7b108d9ccdfd2fcaf5387a3a31f86ca79095394d043d1a2cdcfc35",
+      "cubin_sha256": "3fd2da30c2c9b966a394c673d2efb2dc6e7f278012acc08a6ed35e247986d40c",
+      "matches_r37_encoding": true,
+      "launch_registers": 168,
+      "math_register_budget": 232,
+      "max_register": 202,
+      "stack_bytes": 0,
+      "local_bytes": 0,
+      "spill_store_bytes": 0,
+      "spill_load_bytes": 0,
+      "ldl_stl_instructions": 0,
+      "c75xx_warnings": false
+    },
+    "o": {
+      "command": [
+        "/usr/local/cuda-13.4/bin/nvcc",
+        "--cubin",
+        "--std=c++20",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "-O3",
+        "--diag-suppress=177",
+        "--ptxas-options=-v,-warn-spills",
+        "-gencode",
+        "arch=compute_90a,code=sm_90a",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/work/.r40-proof/production/deep_gemm/include",
+        "-I/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/work/.r40-proof/fixture/r32/dependencies",
+        "-DDG_SM90_PREFILL_DENSE_FIRST_K=1",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/proof/o.cu",
+        "-o",
+        "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/proof/o.cubin"
+      ],
+      "exit_code": 0,
+      "seconds": 7.775365672976477,
+      "encoding_bytes": 61440,
+      "encoding_sha256": "11f685d47e665bb3c16cf1ebfa42cbd568e2fc963b5e10587c977ebe3f7a371b",
+      "cubin_sha256": "ffbd14c03b511c662eaff864fe857f74cdd30968c0f447fce3eeca0d01415ffc",
+      "matches_r37_encoding": true,
+      "launch_registers": 168,
+      "math_register_budget": 232,
+      "max_register": 202,
+      "stack_bytes": 0,
+      "local_bytes": 0,
+      "spill_store_bytes": 0,
+      "spill_load_bytes": 0,
+      "ldl_stl_instructions": 0,
+      "c75xx_warnings": false
+    }
+  },
+  "raw_run": {
+    "actions_run": "41875058470",
+    "image": "2fb619c4a293a01b98ecd178d92414ab5cf493e2584acd945a1a8910ba3b4467",
+    "slurm_accounting": "28739|COMPLETED|0:0|00:14:44|2",
+    "official_score": 10072.12600396729,
+    "official_valid": true,
+    "eligible": true,
+    "archived_cubins": 36,
+    "dense_cuda_13_0_cubin_found": false,
+    "primary_instruction_evidence": "Fresh local CUDA 13.4.92 sm_90a production instantiations; current image dense SASS unavailable."
+  },
+  "dependency_audit": {
+    "static_k_blocks_per_shape": 16,
+    "m64_waves_per_static_k_block": 2,
+    "audited_static_wave_dependencies_total": 64,
+    "steady_chunk_slots_per_shape": 1533,
+    "steady_chunk_qgmma_per_shape": 64,
+    "steady_chunk_ffma_per_shape": 1024,
+    "temporary_registers_per_thread": 64,
+    "final_registers_per_thread": 128,
+    "all_promotion_before_temporary_reuse": true,
+    "dynamic_per_pc_exposure_us": null
+  },
+  "design_accounting": {
+    "per_cta_k128": {
+      "production": {
+        "qgmma": 16,
+        "groups": 4,
+        "fence": 4,
+        "completion_waits": 4,
+        "ffma_per_thread": 128,
+        "operand_smem_bytes": 98304,
+        "tma_fill_bytes": 50176
+      },
+      "n64_design": {
+        "qgmma": 32,
+        "groups": 8,
+        "fence": 8,
+        "completion_waits_steady": 8,
+        "ffma_per_thread": 128,
+        "operand_smem_bytes": 131072,
+        "tma_fill_bytes": 50176
+      }
+    },
+    "shapes": {
+      "qkv": {
+        "m": 7988,
+        "n": 9216,
+        "k": 4096,
+        "tiles": 2304,
+        "cta_k128": 73728,
+        "effective_flops": 603073806336,
+        "production_operand_smem_bytes": 7247757312,
+        "n64_operand_smem_bytes": 9663676416,
+        "added_operand_smem_bytes": 2415919104,
+        "production_qgmma_collective_operations": 1179648,
+        "n64_qgmma_collective_operations": 2359296,
+        "logical_one_pass_io_bytes_including_fp32_scales": 218734080,
+        "actual_hbm_bytes": null,
+        "actual_nvlink_bytes": null,
+        "steady_chunk": {
+          "range": [
+            "0x6a30",
+            "0xc9f0"
+          ],
+          "slots": 1533,
+          "qgmma": 64,
+          "ffma": 1024,
+          "wait0": 16,
+          "empty_arrive": 8
+        }
+      },
+      "o": {
+        "m": 7988,
+        "n": 4096,
+        "k": 8192,
+        "tiles": 1024,
+        "cta_k128": 65536,
+        "effective_flops": 536065605632,
+        "production_operand_smem_bytes": 6442450944,
+        "n64_operand_smem_bytes": 8589934592,
+        "added_operand_smem_bytes": 2147483648,
+        "production_qgmma_collective_operations": 1048576,
+        "n64_qgmma_collective_operations": 2097152,
+        "logical_one_pass_io_bytes_including_fp32_scales": 166482944,
+        "actual_hbm_bytes": null,
+        "actual_nvlink_bytes": null,
+        "steady_chunk": {
+          "range": [
+            "0x68b0",
+            "0xc870"
+          ],
+          "slots": 1533,
+          "qgmma": 64,
+          "ffma": 1024,
+          "wait0": 16,
+          "empty_arrive": 8
+        }
+      }
+    },
+    "assumed_operand_service_sensitivity": [
+      {
+        "assumed_effective_operand_B_per_clock": 96,
+        "baseline_service_floor_clocks": 1024,
+        "n64_service_floor_clocks": 1365.3333333333333,
+        "added_floor_clocks": 341.33333333333326
+      },
+      {
+        "assumed_effective_operand_B_per_clock": 112,
+        "baseline_service_floor_clocks": 1024,
+        "n64_service_floor_clocks": 1170.2857142857142,
+        "added_floor_clocks": 146.28571428571422
+      },
+      {
+        "assumed_effective_operand_B_per_clock": 128,
+        "baseline_service_floor_clocks": 1024,
+        "n64_service_floor_clocks": 1024,
+        "added_floor_clocks": 0
+      },
+      {
+        "assumed_effective_operand_B_per_clock": 256,
+        "baseline_service_floor_clocks": 1024,
+        "n64_service_floor_clocks": 1024,
+        "added_floor_clocks": 0
+      }
+    ],
+    "sensitivity_is_measured_bandwidth": false,
+    "n64_array_registers_per_thread": 192,
+    "math_budget_per_thread": 232,
+    "n64_candidate_allocated_registers": null,
+    "n64_candidate_spill_bytes": null,
+    "two_m64_temporary_array_registers_per_thread": 256,
+    "spill_one_m_wave_final_shared_read_write_bytes_per_steady_cta_k128": 131072
+  },
+  "proof": {
+    "path": "research/runtime-performance/prefill-dense-promotion-r43-cpu-proof-20261105.tar.gz",
+    "size_bytes": 267146,
+    "sha256": "4b00dae17d21c3f3358f4db05f139683bf14681c62a9a30b243fd4c3cc30a2fb",
+    "verified_member_hashes": 25
+  },
+  "checks": {
+    "pytest": {
+      "command": "uv run --project qwen-experiment-metrics --with 'numpy>=1.26,<3' --with pytest python -m pytest -q -p no:cacheprovider qwen-experiment-metrics/tests",
+      "exit_code": 0,
+      "log": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/pytest.log",
+      "log_sha256": "1230c42572df4e51603e66e24bf4ae9df00b05248bd858ac97be8002d6e9ab3f",
+      "sighup_reset_to_default": true,
+      "launcher": "uv with the requested project and numpy/pytest dependencies runs Python to set SIGHUP to SIG_DFL and execvp python -m pytest with the exact requested arguments.",
+      "reached_100_percent": true
+    },
+    "ruff": {
+      "command": "uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers",
+      "exit_code": 0,
+      "log": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/ruff.log",
+      "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    "proof_manifest": {
+      "verified_member_hashes": 25,
+      "production_specializations": 2,
+      "static_wave_dependencies": 64,
+      "steady_chunks_verified": 2,
+      "gpu_execution": false,
+      "result": "PASS"
+    },
+    "source_input_hashes": {
+      "verified_members": 859,
+      "exit_code": 0
+    },
+    "git_diff_check": {
+      "exit_code": 0
+    },
+    "commit_message_format": {
+      "exit_code": 0,
+      "path": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/commit-msg.txt"
+    },
+    "standalone_archive_verification": {
+      "exit_code": 0,
+      "log": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/archive-verify.log",
+      "log_sha256": "bb54c3eedbad5789ec18d36c91ea888bbd6953cd444bd6f461f1340e9b3f4cfc"
+    }
+  },
+  "candidate_implemented": false,
+  "candidate_numerical_validation_performed": false,
+  "new_gpu_execution": false,
+  "ssh_used": true,
+  "ssh_scope": "Read-only shared run directory and expected serving cache inventory through ssh firmus; no compute-node access.",
+  "jobs_submitted_or_cancelled": false,
+  "image_built": false,
+  "commit_or_push": false,
+  "production_or_submission_modified": false,
+  "require_build": false,
+  "cleanup": {
+    "extracted_workspace_removed": true,
+    "created_remote_jobs": false,
+    "expanded_proof_removed_after_standalone_archive_verification": true,
+    "log": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r43/cleanup.json"
+  }
+}
