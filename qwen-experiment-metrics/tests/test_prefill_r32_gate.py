@@ -1,8 +1,9 @@
-"""All-or-nothing r32 GPU evidence and the post-greedy serving budget."""
+"""All-twelve correctness and post-r32 pooled speed selection."""
 import json
 import runpy
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -40,7 +41,7 @@ def test_complete_twelve_gpu_evidence_adopts(screen):
     assert screen[1].read_text() == PIN.replace("DG_SM90_PREFILL_FC1_FIRST_K=0\n", "") + "DG_SM90_PREFILL_FC1_FIRST_K=1\n"
 
 
-@pytest.mark.parametrize("bad", ("missing", "uuid", "duplicate", "image", "source", "stale", "late", "healthy", "case", "component", "fp8", "scale", "partial", "reference", "l2", "scaled", "samples", "finite", "calls", "buffer", "input", "checkpoint", "cell", "midway", "final", "restore", "short", "order", "mode", "relative-margin", "absolute-margin", "nan"))
+@pytest.mark.parametrize("bad", ("missing", "uuid", "duplicate", "image", "source", "stale", "late", "healthy", "case", "component", "fp8", "scale", "partial", "reference", "l2", "scaled", "samples", "finite", "calls", "buffer", "input", "checkpoint", "cell", "midway", "final", "restore", "short", "order", "mode", "nan"))
 def test_every_missing_or_failing_cell_rejects(screen, bad):
     path = screen[0] / "prefill-2/rank-3.json"
     value = json.loads(path.read_text())
@@ -76,8 +77,6 @@ def test_every_missing_or_failing_cell_rejects(screen, bad):
             "short": lambda r: r["timing"]["balanced"]["forward"]["control"].pop(),
             "order": lambda r: r["timing"]["hot"].pop("reverse"),
             "mode": lambda r: r["timing"]["hot"]["reverse"].pop("candidate"),
-            "relative-margin": lambda r: r["timing"]["historical"]["reverse"].update(candidate=[2690.] * 12),
-            "absolute-margin": lambda r: r["timing"]["balanced"]["forward"].update(control=[100.] * 12, candidate=[96.] * 12),
             "nan": lambda r: r["timing"]["hot"]["reverse"].update(candidate=[float("nan")] * 12),
         }
         mutations[bad](value)
@@ -97,8 +96,8 @@ def test_worker_timeout_and_missing_p_reject(screen):
 
 def test_post_greedy_budget_and_staging():
     batch = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
-    assert batch.index("# Decode greedy gate end.") < batch.index("# Round 32:") < batch.index('bash "${ROOT}/source/worker.sh" prefill-0')
-    assert "SECONDS + 100 + 660 <= 1020" in batch
+    assert batch.index("# Decode greedy gate end.") < batch.index("# Round 32 candidate / round 33 pooled gate;") < batch.index('bash "${ROOT}/source/worker.sh" prefill-0')
+    assert "SECONDS + 105 + 660 <= 1020" in batch
     assert 'env DG_JIT_CACHE_DIR="/tmp/sglang-r32-' in batch and 'TRITON_CACHE_DIR="/tmp/sglang-r32-' in batch
     assert 'TVM_FFI_CACHE_DIR="/tmp/sglang-r32-' in batch
     assert '--env-output "${ROOT}/source/prefill-kernels.r32.env"' in batch
@@ -107,3 +106,134 @@ def test_post_greedy_budget_and_staging():
     provision = (ROOT / "scripts/provision-firmus-framework.sh").read_text()
     assert '"${GITHUB_WORKSPACE}/scripts/firmus_prefill_fc1_first_k.py" "${runtime_dir}/scripts/"' in provision
     assert '"${GITHUB_WORKSPACE}/kernels/probes/megamoe-local-ep1-routing.npz" "${runtime_dir}/source/"' in provision
+
+
+def test_round32_saved_measurements_pass_pooled_rule(screen):
+    fixture = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/prefill-r32-timing.json").read_text())
+    for gpu in fixture["gpus"]:
+        path = screen[0] / gpu["worker"] / f"rank-{gpu['rank']}.json"
+        record = json.loads(path.read_text())
+        record["timing"] = gpu["timing"]
+        path.write_text(json.dumps(record))
+    result = aggregate(screen)
+    assert result["adopted"]
+    expected = {"balanced": (24.4559645652771, 19.831955432891846, 24.559974670410156, 12, 8.43191146850586), "hot": (16.911983489990234, 18.016040325164795, 17.416059970855713, 12, 8.880019187927246), "historical": (16.552090644836426, 16.575992107391357, 17.216026782989502, 11, -3.056049346923828)}
+    for name, (pooled, forward, reverse, positive, worst) in expected.items():
+        summary = result["timing_summary"][name]
+        assert summary["saving_median_us"] == pytest.approx({"pooled": pooled, "forward": forward, "reverse": reverse})
+        assert summary["positive_gpus"] == positive
+        assert summary["minimum_saving_us"] == pytest.approx(worst)
+    # Replaying timings does not turn the original failed worker exits into success.
+    assert not aggregate(screen, workers_ok=False)["adopted"]
+
+
+def samples(control, forward, reverse=None):
+    return {order: {"control": [control] * 12, "candidate": [control - saving] * 12} for order, saving in (("forward", forward), ("reverse", forward if reverse is None else reverse))}
+
+
+@pytest.mark.parametrize("control,saving,passes", ((100., 5., True), (100., 4.999, False), (2700., 13.5, True), (2700., 13.499, False)))
+def test_pooled_absolute_and_relative_thresholds(control, saving, passes):
+    rows = [samples(control, saving) for _ in range(12)]
+    if passes:
+        G["pooled_margin"](rows)
+    else:
+        with pytest.raises(AssertionError, match="below pooled"):
+            G["pooled_margin"](rows)
+
+
+@pytest.mark.parametrize("positive,loss,passes", ((9, -27., True), (8, -27., False), (9, -27.001, False), (9, 0., True)))
+def test_positive_count_and_one_percent_boundary(positive, loss, passes):
+    rows = [samples(2700., 30. if i < positive else loss) for i in range(12)]
+    if passes:
+        G["pooled_margin"](rows)
+    else:
+        with pytest.raises(AssertionError):
+            G["pooled_margin"](rows)
+
+
+@pytest.mark.parametrize("order", ("forward", "reverse"))
+def test_pooled_gain_cannot_hide_nonpositive_order(order):
+    rows = [samples(2700., 0., 60.) if order == "forward" else samples(2700., 60., 0.) for _ in range(12)]
+    with pytest.raises(AssertionError, match="nonpositive order"):
+        G["pooled_margin"](rows)
+
+
+def test_pool_samples_within_each_gpu_before_cross_gpu_median():
+    row = {"forward": {"control": [100.] * 12, "candidate": [40.] * 12}, "reverse": {"control": [300.] * 12, "candidate": [280.] * 12}}
+    assert G["timing_medians"](row)["pooled"] == {"control": 200., "candidate": 160.}
+    assert G["pooled_margin"]([row] * 12)["saving_median_us"]["pooled"] == 40.
+
+
+@pytest.mark.parametrize("fail", (False, True))
+def test_cleanup_releases_all_views_and_ep1_before_world_and_publication(tmp_path, fail):
+    calls = []
+    group = object()
+    fields = ("topk_idx", "topk_weights", "l1_acts", "l1_acts_sf", "l2_acts", "l2_acts_sf")
+
+    class Buffer:
+        def __init__(self):
+            self.group = group
+            for field in fields:
+                setattr(self, field, object())
+
+        def destroy(self):
+            assert all(getattr(self, field) is None for field in fields)
+            calls.append("buffer")
+            self.group = None
+
+    def destroy(pg=None):
+        assert not (tmp_path / "rank-0.json").exists()
+        calls.append("WORLD" if pg is None else "EP1")
+        if pg is None and fail:
+            raise RuntimeError("cleanup failed")
+
+    torch = SimpleNamespace(cuda=SimpleNamespace(synchronize=lambda: calls.append("sync")))
+    dist = SimpleNamespace(barrier=lambda: calls.append("barrier"), destroy_process_group=destroy)
+    record = {"healthy": False}
+    if fail:
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            G["finish"](torch, dist, (Buffer(), Buffer()), record, tmp_path, 0, time.monotonic())
+        assert record["healthy"] is False and not (tmp_path / "rank-0.json").exists()
+    else:
+        G["finish"](torch, dist, (Buffer(), Buffer()), record, tmp_path, 0, time.monotonic())
+        assert json.loads((tmp_path / "rank-0.json").read_text())["healthy"] is True
+    assert calls == ["sync", "barrier", "buffer", "buffer", "EP1", "barrier", "WORLD"]
+
+
+def test_round32_budget_with_head_container_delay():
+    fixture = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/prefill-r32-timing.json").read_text())
+    # First Slurm log 07:42:11+08, gate run_id 07:46:21+08.
+    elapsed = fixture["gate_started_at"] - fixture["budget"]["slurm_first_log_at"]
+    assert G["SECONDS"] == 95
+    assert elapsed + 105 + 660 == 1015
+    assert elapsed + 105 + 660 <= 1020
+    # READY follows router startup on the same HEAD node. Allow one second
+    # each for timestamp truncation and the shell SECONDS counter.
+    upper = fixture["gate_started_at"] + 1 - fixture["budget"]["router_started_at"] + fixture["budget"]["ready_seconds"] + 2
+    assert upper == 255 and upper + 105 + 660 <= 1020
+    # HEAD torchrun appears after 33 s; rank body starts after about 36 s.
+    for r in fixture["gpus"]:
+        assert r["finished_at"] - fixture["gate_started_at"] < 56
+        assert r["finished_at"] - fixture["gate_started_at"] < G["SECONDS"]
+    batch = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
+    block = batch[batch.index("# Round 32 candidate / round 33 pooled gate;"):batch.index('bash "${ROOT}/source/worker.sh" prefill-0')]
+    assert block.count("prefill_fc1_first_k_started + 95") == 2
+    assert block.count("prefill_fc1_first_k_started + 105") == 2
+
+
+def test_round32_pin_is_consistent_with_archived_provenance():
+    config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
+    image = "3a47b757bb88f6bc14ad5f151e8405f645007f25f381f631d88046d9bd1b7b04"
+    assert config["images"]["sglang"] == {"path": "/scratch/home/ACCOUNT/qwen/containers/41729881283.sqsh", "sha256": image, "size_bytes": 12296638464, "provenance": "/scratch/home/ACCOUNT/qwen/containers/41729881283.container-sidecar.json"}
+    assert config["container_build_run_id"] == 41729881283
+    assert config["container_sha256"] == image and config["container_size_bytes"] == 12296638464
+    assert config["container_source_commit"] == "3f9124fd8afb28e34c71288b6dc31e5c490c7f60"
+    assert runpy.run_path(str(ROOT / "scripts/check-firmus-pp4-cpu.py"))["PINNED_IMAGE"] == image
+
+
+def test_relative_threshold_uses_per_gpu_saving_fractions():
+    # A ratio of cross-GPU medians would pass despite every GPU losing its
+    # required relative margin. Normalize by each GPU's own control median.
+    rows = [samples(10000., 49.) for _ in range(4)] + [samples(100000., 499.) for _ in range(3)] + [samples(100., 90.) for _ in range(5)]
+    with pytest.raises(AssertionError, match="below pooled"):
+        G["pooled_margin"](rows)

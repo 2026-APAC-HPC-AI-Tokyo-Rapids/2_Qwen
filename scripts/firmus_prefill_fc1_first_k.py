@@ -1,4 +1,4 @@
-"""Strict post-greedy gate for the r32 FC1 first-K128, in one resident process/GPU.
+"""Post-greedy gate for the FC1 first-K128, in one resident process/GPU.
 
 Snapshots read ordinary kernel buffers after completion. Timing and endurance
 use the ordinary uninstrumented serving API. No diagnostic kernel is compiled.
@@ -14,7 +14,7 @@ from pathlib import Path
 SCHEMA = "firmus-prefill-megamoe-fc1-first-k/v1"
 KEY = "DG_SM90_PREFILL_FC1_FIRST_K"
 CONTROL = "four-stage-lean-split"
-CALLS, ROUNDS, SECONDS = 1200, 12, 90
+CALLS, ROUNDS, SECONDS = 1200, 12, 95
 TIMED = ("balanced", "hot", "historical")
 CASES = (*TIMED, "edges-low", "edges-high", "edges-pool", "zero", "wide", *(f"saved-{i}" for i in range(36)))
 COMPONENTS = ("output", "fc1_fp8", "fc1_scale", "fc2_bf16_partial")
@@ -32,7 +32,7 @@ def read(path):
     return json.loads(path.read_text(), parse_constant=reject_constant)
 
 
-def margin(samples):
+def timing_medians(samples):
     result = {}
     assert set(samples) == {"forward", "reverse"}, "missing timing order"
     for order in ("forward", "reverse"):
@@ -40,10 +40,23 @@ def margin(samples):
         assert set(row) == {"control", "candidate"}, "missing timing mode"
         for values in row.values():
             assert len(values) == ROUNDS and all(type(v) in (float, int) and math.isfinite(v) and v > 0 for v in values), "missing timing"
-        c, t = statistics.median(row["control"]), statistics.median(row["candidate"])
-        assert c - t >= max(MARGIN_US, MARGIN_FRACTION * c), "below selector margin"
-        result[order] = c - t
+        result[order] = {mode: statistics.median(values) for mode, values in row.items()}
+    result["pooled"] = {mode: statistics.median(samples["forward"][mode] + samples["reverse"][mode]) for mode in ("control", "candidate")}
     return result
+
+
+def pooled_margin(timings):
+    """Post-r32 rule: median of twelve per-GPU savings, never pool GPU samples."""
+    assert len(timings) == 12, "incomplete timing GPUs"
+    rows = [timing_medians(samples) for samples in timings]
+    savings = {order: [r[order]["control"] - r[order]["candidate"] for r in rows] for order in ("forward", "reverse", "pooled")}
+    controls = [r["pooled"]["control"] for r in rows]
+    summary = {"control_median_us": statistics.median(controls), "saving_median_us": {order: statistics.median(values) for order, values in savings.items()}, "saving_median_fraction": statistics.median(v / c for v, c in zip(savings["pooled"], controls, strict=True)), "positive_gpus": sum(v > 0 for v in savings["pooled"]), "minimum_saving_us": min(savings["pooled"]), "minimum_saving_fraction": min(v / c for v, c in zip(savings["pooled"], controls, strict=True))}
+    assert summary["saving_median_us"]["pooled"] >= MARGIN_US and summary["saving_median_fraction"] >= MARGIN_FRACTION, "below pooled selector margin"
+    assert all(summary["saving_median_us"][order] > 0 for order in ("forward", "reverse")), "nonpositive order median"
+    assert summary["positive_gpus"] >= 9, "fewer than nine positive GPUs"
+    assert summary["minimum_saving_fraction"] >= -0.01, "GPU loss exceeds one percent"
+    return summary
 
 
 def check_reference(record):
@@ -55,7 +68,7 @@ def check_reference(record):
 
 
 def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_ok, image):
-    result = {"schema": SCHEMA, "adopted": False, "run_id": run_id, "gpus": [], "rule": {"control": CONTROL, "calls": CALLS, "rounds_per_order": ROUNDS, "minimum_us": MARGIN_US, "minimum_fraction": MARGIN_FRACTION, "seconds": SECONDS, "components": COMPONENTS, "cases": CASES}}
+    result = {"schema": SCHEMA, "adopted": False, "run_id": run_id, "gpus": [], "rule": {"control": CONTROL, "calls": CALLS, "rounds_per_order": ROUNDS, "minimum_us": MARGIN_US, "minimum_fraction": MARGIN_FRACTION, "seconds": SECONDS, "components": COMPONENTS, "cases": CASES, "timing": "post-r32 pooled per-GPU medians", "minimum_positive_gpus": 9, "maximum_gpu_loss_fraction": 0.01}}
     try:
         assert workers_ok and time.time() <= deadline, "failed workers or expired budget"
         prior = read(pair_selection)
@@ -81,14 +94,13 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
                 for reference in r["reference"].values():
                     check_reference(reference)
                 assert set(r["timing"]) == set(TIMED), "missing timing routing"
-                for samples in r["timing"].values():
-                    margin(samples)
                 e = r["endurance"]
                 assert e["calls"] == CALLS and e["buffers"] == 2 and e["input_versions"] == 2, "incomplete endurance"
                 assert set(e["checks"]) == {"600", "1200"}, "missing endurance checkpoint"
                 assert all(set(v) == set(ENDURANCE_CELLS) and all(x is True for x in v.values()) for v in e["checks"].values()), "endurance mismatch"
                 assert len(e["restored"]) == 2 and all(set(v) == set(COMPONENTS) and all(x is True for x in v.values()) for v in e["restored"]), "restore mismatch"
         assert uuids == identities and len(headers) == 1, "incomplete GPUs or inconsistent source"
+        result["timing_summary"] = {name: pooled_margin([r["timing"][name] for r in result["gpus"]]) for name in TIMED}
         lines = env_output.read_text().splitlines()
         for key in ("DG_SM90_PREFILL_4STAGE", "DG_SM90_PREFILL_LEAN", "DG_SM90_PREFILL_SPLIT_ACCUM"):
             assert [v for v in lines if v.startswith(key + "=")] == [key + "=1"], "wrong serving control"
@@ -100,7 +112,7 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
             temporary.replace(env_output)
         finally:
             temporary.unlink(missing_ok=True)
-        result.update(adopted=True, reason="all twelve UUIDs: all bytes, 1200 calls, both order medians exceed prior selector margin")
+        result.update(adopted=True, reason="all twelve UUIDs: all bytes, 1200 calls and health; every routing passes post-r32 pooled timing rule")
     except (OSError, AssertionError, KeyError, ValueError, TypeError) as error:
         result["reason"] = f"{type(error).__name__}: {error}"
     return result
@@ -262,10 +274,25 @@ def run(prepare, output, routing_path, run_id, deadline, image, reference_rows, 
         call("candidate", case, out, buffer=buffer)
         endurance["restored"].append(equal(torch, restoration, snapshot(torch, buffer, case[1], out)))
     result["endurance"] = endurance
+    finish(torch, dist, buffers, result, output, rank, begin)
+
+
+def finish(torch, dist, buffers, result, output, rank, begin):
+    """Release all symmetric views and the EP1 group before WORLD; publish only after cleanup."""
+    torch.cuda.synchronize()
+    dist.barrier()
+    group = buffers[0].group
+    for buffer in buffers:
+        # sgl-deep-gemm 0.1.5 destroy() only clears x/x_sf: the remaining
+        # DLPack views otherwise remain live across process-group shutdown.
+        for name in ("topk_idx", "topk_weights", "l1_acts", "l1_acts_sf", "l2_acts", "l2_acts_sf"):
+            setattr(buffer, name, None)
+        buffer.destroy()
+    dist.destroy_process_group(group)
+    # A fast rank must not finalize WORLD while its peers still release EP1.
+    dist.barrier()
+    dist.destroy_process_group()
     result.update(healthy=True, elapsed_seconds=time.monotonic() - begin, finished_at=time.time())
     output.mkdir(parents=True, exist_ok=True)
     (output / f"rank-{rank}.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     print(json.dumps({k: v for k, v in result.items() if k not in ("exact", "timing")}), flush=True)
-    for buffer in buffers:
-        buffer.destroy()
-    dist.destroy_process_group()

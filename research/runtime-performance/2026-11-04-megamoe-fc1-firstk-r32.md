@@ -72,3 +72,65 @@ imageのSGLang sourceは `fc275674a97d78553b22597ee72c8fd48f5420f4`。実source�
 CPUのcubin/SASS/log/source・再現手順は指定scratch `codex-scratch/r32` で作成した。worktreeとscratchは同じローカルext4上、tomokazu所有・0700である。`r32-cpu-proof-20261104.tar.gz`（19162092 byte、SHA256 `e2faa2a495c306729bf41f711bd28e5cdceb1a206454ef4df04f7ceaf21f8015`）へ72本のSASSとcompile入力・依存header・再現scriptを保管し、gzip検査とhash照合を行った。patchの空行表記を正規化した後も、適用後のC++ sourceが同じbyteであることを再確認した。展開用の重複source/cubin・診断中間物は削除し、archiveと検証logを保持する。今回のGPU job・残留scheduler jobはなく、既存jobには触れない。
 
 このbranchのcommitはすべて先頭 `[skip ci]` で、push自体から計算を開始しない。**投入するならsourceとhost拡張が変わるためfresh buildが必要**で、将来の投入commit tagは `[require-build] [cluster:firmus] [nodes:2]`、`[skip ci]` は外す。既存image `a001f901` のpinは今回変更していない。将来のbuildがruntime configのimage情報を更新した上でgate→ready前準備→通常serving→公式parser→成果物回収を完走する必要がある。CPU通過をGPU採用や通常servingの改善へ読み替えず、公式scoreの優位性は同条件の複数runで判断する。
+
+## Round 32 の実測と round 33 の準備（2026-11-04）
+
+本節は上の投入前記録を更新する。round 32 submit は `3f9124fd8afb28e34c71288b6dc31e5c490c7f60`、Actions **41729881283**、Slurm **28626**。正本は `/srv/qwen-artifacts/41729881283/1/qwen-firmus-pd-41729881283-1/` の `logs/logs`、`results/results`、`source/source`。今回これらは読み取りのみで調査した。関連 commit 本文、r32 の Codex 会話、tracker/model と保存 profile も確認した。
+
+全12 UUIDで44 case×4成分の byte 一致、独立 FP32 閾値、1200 call、600/1200 の全24 cell、両bufferへの元入力復帰が通過した。しかし selector は `AssertionError: failed workers or expired budget` で不採用。通常 serving は first-K flag 0 の control、公式 parser は eligible/validation valid、6312 requests、request error 0、score **10015.98524540721 output tok/s**（従来表記10015.98）。READY 606秒、Slurm COMPLETED/0:0、全体14:49。main r25 の10020〜10025程度との差と flagなしSASS byte一致を踏まえ、候補の serving 効果や退行の証拠とは扱わない。候補を使った通常 serving の結果はまだない。
+
+### 終了不良の根拠と修正範囲
+
+rank JSON の `finished_at`、`elapsed_seconds`、worker log の先頭 torchrun 時刻と末尾を照合した。以下はすべて同じ allocation の UTC+08 時刻であり、telemetry の UTC と混ぜていない。
+
+| worker | torchrun 最初の log | rank 本体所要秒 | 最後の結果時刻 | 終了の観測 |
+|---|---|---:|---|---|
+| HEAD 0 | 07:46:54.056 | 18.954〜19.164 | 07:47:15.854 | 07:47:51、step 28626.9 killed |
+| HEAD 1 | 07:46:54.184 | 18.998〜19.043 | 07:47:16.004 | 07:47:51、step 28626.10 killed |
+| TAIL 2 | 07:46:34.272 | 18.053〜18.205 | 07:46:53.836 | srun failure の記録なし |
+
+全HEAD rankが `healthy: true` をprintした後に約35秒停止している。`--fc1-first-k` は `firmus_prefill_fc1_first_k.run` を直接呼び、print後の明示処理は2 buffer の `destroy()` と `dist.destroy_process_group()` だけで、計算、追加barrier、独自threadのjoinはない。したがって測定本体でなく**後始末〜process終了区間の停止**がログで特定できる。`Gracefully skipping multicast initialization` は計算前のwarningで、TAILにもあり、その後全byte/耐久が通るため最初の致命的エラーとはしない。
+
+source上の寿命管理の欠陥は、`prepare(1)` が eager NCCL WORLD と rank別singleton EP1 groupを作る一方、終了時はEP1を明示して揃って破棄せず一括WORLD破棄へ進み、さらに sgl-deep-gemm **0.1.5** の `SM90SymmBuffer.destroy()` が `handle/buffer/group/x/x_sf` だけをclearして `topk_idx/topk_weights/l1_acts/l1_acts_sf/l2_acts/l2_acts_sf` を残すこと。build記録のpackage versionと、ローカルcacheにある同版wheelのsourceを読み取りで照合した。[PyTorch 2.11 shutdown source](https://github.com/pytorch/pytorch/blob/v2.11.0/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1418) はNCCL finalize、watchdog join、communicator destroyを行い、[symmetric allocation解放](https://github.com/pytorch/pytorch/blob/v2.11.0/torch/csrc/distributed/c10d/symm_mem/CUDASymmetricMemory.cu#L41)にもdevice synchronizeが入る。停止したC++ threadのstack、NCCL DEBUG、各destroy前後のlogは保存されていない。従って、**特定のNCCL finalize、symmetric handle destructor、thread joinのどれが待っていたかは確定できない**。別issueやwarningだけを根拠にNCCLの既知bugと断定しない。
+
+round 33ではこの寿命管理を限定して直した。最終CUDA処理の完了と全rankの合流後、残る6 viewをclearして両bufferを破棄し、保持した当該EP1 groupを明示破棄、WORLD barrierで他rankのEP1解放完了を待ってからWORLDを破棄する。JSONの `healthy/elapsed_seconds/finished_at` 更新と公開はこの全後始末の後に移した。これにより、計算が終わっただけのJSONをprocess正常終了の証拠として扱わない。retry、fallback、強制正常exit、thread pollingは追加しない。CPUテストでは実finish関数を呼び、view解放・EP1/WORLD順序と、cleanup例外時にはhealthy JSONを公開しないことを確認する。これはGPUでの終了不良解消の実証ではなく、**修正後のGPU実行は今回禁止されており未確認**である。
+
+### データ観測後に変更する pooled 規則
+
+**この変更はround 32のデータを見た後の事後的な規則変更である。事前登録した規則の成功や独立再現とは扱わない。** 各routingにつき、GPUごとにforward/reverse各12回のcontrolを24個へ、candidateも24個へ結合し、それぞれのmedianの差 `d_i` と `d_i/control_i` を作る。12 GPUのmedian節約は5µs以上かつmedian節約率は0.5%以上とする。単位の異なるmax条件をこの2閾値として実装し、GPU間で全sampleを混ぜない。forwardとreverseもそれぞれGPU内medianの差を作り、その12 GPU medianが厳密に正であること、pooledの `d_i>0` が9 GPU以上、全GPUのpooled節約率が−1%以上を要求する。0は正のGPUへ数えない。byte/FP32/耐久/UUID/source/image/健全性/worker終了・deadlineは全12 GPU必須のまま。
+
+| routing | pooled median節約 µs | median節約率 | forward median µs | reverse median µs | 正のGPU | 最小pooled µs | 最小節約率 | 新速度規則 |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| balanced | 24.455965 | 0.966855% | 19.831955 | 24.559975 | 12/12 | 8.431911 | 0.335166% | 合格 |
+| hot | 16.911983 | 0.650233% | 18.016040 | 17.416060 | 12/12 | 8.880019 | 0.349064% | 合格 |
+| historical | 16.552091 | 0.640463% | 16.575992 | 17.216027 | 11/12 | −3.056049 | −0.122525% | 合格 |
+
+参考としてpooledで各GPUに旧marginを要求すると9/12、9/12、10/12だけが通る。実際の旧コードはさらにforward/reverseの両方を各GPUで要求するため、pooledだけのこの数を旧selector全体の合格数と取り違えない。
+
+必要な計時数値とrank出典hash、時刻だけを **37760 byte** の `qwen-experiment-metrics/tests/fixtures/prefill-r32-timing.json` へ抽出した。testはarchive、git履歴、mirror、GPUを参照せず、実sampleによる3 routingの集約採用と上表の数値を再現する。正しさ検査は既存fixtureで全12 GPUの欠測/不一致/健全性等を引き続き拒否する。実runの `workers_ok=false` をtrueに書き換えた記録は作らず、速度の再判定が合格してもround 32のselection失敗はそのまま残す。
+
+### 起動遅延を含めた予算
+
+Slurm最初のlogは **07:42:11+08**、gateの `run_id` に入る開始epochは **1793749581 = 07:46:21+08**、差は**250秒**である。最初のlog以前の短いshell初期化は記録されておらず、250秒はSECONDSの推定下限。元の `SECONDS+100+660<=1020` が実際にgateを許したことから、真のSECONDSは最大260秒だったことも確認できる。さらに同じHEAD上のrouter logで起動は23:52:15 UTC（07:52:15+08）、READY直後の最初のget_server_infoは07:52:17+08。sourceではrouter readiness後、get_server_info前に `READY after 606s` を出すため、READY時刻はこの間にある。606秒を引くとshell開始は07:42:09〜11付近で、gateのSECONDSは250〜252秒程度と推定できる。router起動の下限とgateのepochに各1秒の丸め、SECONDSにさらに1秒の余裕を取る保守上限は `1793749581+1-1793749935+606+2=255秒`。別runのclockやtimelineは使っていない。
+
+HEAD2 worker同時起動はgateから**33.056/33.184秒**でtorchrun log、rank本体開始推定は**35.690〜36.960秒**、結果完了は**54.645〜55.004秒**。TAILは13.272秒でtorchrun、rank本体開始14.630〜14.632秒、結果完了32.684〜32.836秒。これらの差はsrun配置・container起動・Python/torchrun起動等を含む合成遅延であり、Enroot単体の時間に分解できない。
+
+round 33はworker deadlineをgate開始から **95秒**、kill grace **2秒**、aggregateまでの予算を **105秒**とする。HEADの約37秒の本体起動待ち＋約20秒の本体を見込み、残り約38秒を後始末とworker終了に確保する。95+2秒後から105秒まで約8秒を集約に残す。serving予約**660秒**と**1020秒**窓を保ち、実行時は必ず **`SECONDS + 105 + 660 <= 1020`**、すなわちSECONDS≤255の場合だけ開始する。round32の記録時刻に基づく推定では **250+105+660=1015秒≤1020秒**、HEAD同時起動遅延も105秒の中に含まれる。上記の保守上限でも **255+105+660=1020秒** と成立することを、READY前後の同一run時刻とsource順序から確認した。fixtureへこの時刻も入れて境界を検査する。次回も実行時のSECONDS判定を正本にし、条件が満たされなければ既存の不採用経路を使う。READY606秒や全体889秒から逆算してserving予約を削らない。
+
+### Round 32 image の一式pin
+
+build artifact `qwen-aws-container-build-41729881283-1/build-logs.tar.zst` の `logs/oci-manifest.json` のSHA256は `70bf5f49c01a97f376223252c66499ae78efc20e2c92dae94d64223971a0772c`、serving artifactの `container-sidecar.json` と一致。`image-manifest.json`、`sglang-image.sha256`、`provenance.json`、sidecarのsourceとimage情報も照合した。
+
+- image path: `/scratch/home/ACCOUNT/qwen/containers/41729881283.sqsh`
+- image SHA256: **`3a47b757bb88f6bc14ad5f151e8405f645007f25f381f631d88046d9bd1b7b04`**
+- size: **12296638464 byte**
+- provenance: `/scratch/home/ACCOUNT/qwen/containers/41729881283.container-sidecar.json`
+- build run: **41729881283**、build source: **`3f9124fd8afb28e34c71288b6dc31e5c490c7f60`**
+- SGLang source: `fc275674a97d78553b22597ee72c8fd48f5420f4`、DeepGEMM host source: `1c8138a59b3df5dac50b76b730834ed57982fdfb`
+
+過去pin commit `f821771` の範囲を参考に、configのimages.sglang全4項目とcontainer全4項目、CPU checkerのPINNED_IMAGE、FA3 prepack/pairのimage prefixとbuild run期待値を同期更新した。圧縮されたprewarm source fixtureのimage SHAとimage-manifest SHAも更新した。保存24 sourceはすべてr32 manifestのtarget hash、または同manifestの変更なしSGLang commitのsourceと一致し、source本文の変更は不要だった。image-manifest SHA256は `271d61f36f062b3a73770bcf5c1d01b04d0465500d15216ff7ddb3c249c69032`。過去の研究noteのa001f901は当時の事実として保持する。変更はhost上へstageするselector/集約/実行予算と文書のみで、image内のsource/toolchain/host拡張/patchを変えない。**次回はrequire-buildを付けずこのimageを再利用する**。今回のcommitは先頭skip-ci、submit commitは作らず、指定round33 branchにだけpushする。SSH、Actions/Slurm操作・GPU実行・image build、mirrorや他worktreeの変更はしない。
+
+
+### Round 33 のローカル検証
+
+指定のPATH設定後、指定どおりの全体pytestコマンドは最終再実行で**終了コード0**。最終収集数は2088件。`uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers` も**終了コード0**。更新対象gate/prewarmの56件、shell構文、diff whitespace、全24保存source hashとimage/manifestの照合も通過した。初回全体pytestは圧縮prewarm fixtureに旧image SHAが残っていたため6 setup errorで終了コード1となった。この参照漏れを修正し、対象56件の成功後、指定の全体コマンドを再実行して0を確認した。実行中ジョブの取消・GPU再実行による確認は行っていない。新規の診断scriptや展開用一時sourceは残さず、意図した計時fixtureと更新した既存圧縮fixtureだけを追跡対象とする。
