@@ -239,7 +239,7 @@ def test_generic_launcher_shell_remains_byte_identical_to_parent():
 
 
 def test_curated_evidence_checksums_and_local_official_parser(tmp_path):
-    assert sorted(path.name for path in (PACKAGE / "results").iterdir()) == ["41573354672", "41694678252"]
+    assert sorted(path.name for path in (PACKAGE / "results").iterdir()) == ["41573354672", "41694678252", "41766980300"]
     checked = set()
     for line in (EVIDENCE / "SHA256SUMS").read_text().splitlines():
         digest, path = line.split("  ", 1)
@@ -340,3 +340,20 @@ def test_standalone_evidence_has_the_highest_score_and_the_probe_failure(tmp_pat
     assert round(score["good_output_tokens_per_second"], 2) == 10025.34 and score["request_count"] == 6316 and score["error_request_count"] == 0
     assert (evidence / "logs/slurm-accounting.txt").read_text() == "28589|FAILED|1:0|00:13:05|2\n"
     assert b"'NoneType' object has no attribute 'next_token_logprobs'" in (evidence / "logs/prefill-0.log").read_bytes()
+
+
+def test_final_standalone_run_served_logprob_requests(tmp_path):
+    evidence = PACKAGE / "results/41766980300"
+    for line in (evidence / "SHA256SUMS").read_text().splitlines():
+        digest, path = line.split("  ", 1)
+        assert hashlib.sha256((evidence / path).read_bytes()).hexdigest() == digest
+    output = tmp_path / "score.json"
+    subprocess.run(["python3", str(PACKAGE / "run/parse-aiperf-result.py"), str(evidence / "profile_export_aiperf.json"), str(output), "--concurrency", str(CONFIG["concurrency"]), "--require-eligible", "--command", str(evidence / "aiperf-command.txt"), "--provenance", str(evidence / "aiperf-provenance.txt")], check=True)
+    score = json.loads((evidence / "score.json").read_text())
+    assert json.loads(output.read_text()) == score
+    assert round(score["good_output_tokens_per_second"], 2) == 10016.33 and score["request_count"] == 6314 and score["error_request_count"] == 0
+    assert (evidence / "logs/slurm-accounting.txt").read_text() == "28658|COMPLETED|0:0|00:10:47|2\n"
+    probe = json.loads((evidence / "greedy-parity.json").read_text())
+    assert len(probe["responses"]) == 8 and all(len(r["response"]["choices"][0]["logprobs"]["content"]) == 64 for r in probe["responses"])
+    for name in ("prefill-0", "prefill-1", "prefill-2"):
+        assert b"next_token_logprobs" not in (evidence / f"logs/{name}.log").read_bytes()

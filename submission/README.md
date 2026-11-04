@@ -8,7 +8,7 @@ The package was frozen from the PP4 round 25 tuning run, **10021.60 good output 
 
 The package adds one runtime overlay to that run, `patches/overlay/sglang/33-pp4-direct-logprob.patch`. The team's direct PP4 Prefill loop did not relay the last stage's logprob outputs to the other stages, so a request with `logprobs: true` stopped the Prefill scheduler (found by the package's greedy probe in Actions [41694678252](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41694678252), which scored 10025.34 before the probe). The overlay relays them with each result, as the upstream PP loop does. Requests without logprobs, including the official AIPerf workload, take the unchanged path.
 
-Standalone re-run of this package: **pending** (to be filled from the standalone check: Actions run, Slurm job, state and elapsed time, good output tok/s, requests, errors, good request fraction, readiness time).
+Standalone re-run of this package with overlay 33: **10016.32 good output tok/s**, Actions [41766980300](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41766980300), Slurm 28658, COMPLETED 0:0 in 10:47, READY after 264 s: 6314 requests, zero errors, good request fraction 0.98163, eligible, `run-success` written. The greedy probe returned 64 token logprobs for each of its eight prompts with no Prefill error. Evidence is in `results/41766980300/`. The later happy-path rewrite of the scripts was checked by the harness test, not on Firmus.
 
 Common baseline: **1,832 good output tok/s** on Firmus 2×8 H200 (official task `5. Common Baselines.md`, job 25013). The baseline uses different serving settings.
 
@@ -29,7 +29,8 @@ The kernel choices are fixed in `config/prefill-kernels.env` and `config/decode-
 - `run/`: login-node preparation (`prepare.sh`), the single Slurm serving/benchmark job (`submit.sbatch`) and the worker launcher it runs in the container (`worker.sh`), the unchanged AIPerf wrapper and local scorer, the unchanged EAGLE preparation helper, the unchanged PP4 GPU-order helper, and the post-benchmark greedy probe.
 - `config/`: serving settings, the pinned role env files and the PP4 GPU clock table.
 - [patches/README.md](patches/README.md): every image patch, kernel source and runtime overlay, with hashes, application points and numerical classifications (unestablished classes are marked `to confirm`).
-- `results/41694678252/`: curated evidence of the package's standalone run (highest score).
+- `results/41766980300/`: curated evidence of the standalone run with overlay 33, including the greedy probe.
+- `results/41694678252/`: curated evidence of the package's earlier standalone run (highest score).
 - `results/41573354672/`: curated evidence of the tuning run the package was frozen from.
 - [analysis/README.md](analysis/README.md): the optional profiling data, the round 24 Nsight capture of the 10k configuration, with its relation to this configuration, its findings and the download and checksum steps for the reports kept outside Git.
 
