@@ -13,7 +13,7 @@ The capture is 8 s per worker with a short 20/30/90 s profile client, so it is n
 
 ## Findings
 
-The full analysis is [research/runtime-performance/2026-11-02-pp4-profile-r24.md](../../research/runtime-performance/2026-11-02-pp4-profile-r24.md). The per-stage Prefill summary is [research/runtime-performance/pp4-profile-r24-prefill-summary-20261102.json](../../research/runtime-performance/pp4-profile-r24-prefill-summary-20261102.json), produced by `scripts/analyze_prefill_profile.py`.
+The per-stage Prefill numbers below were derived from the reports with `scripts/analyze_prefill_profile.py` of the accompanying repository.
 
 - **Prefill** (12 GPUs, PP4 × 3 workers): kernels fill 98–99% of the 112–116 ms two-request pair cycle on every stage, so launch latency does not set the cycle. Per cycle on worker 0 PP0: MegaMoE 63.4 ms, QKV/O GEMM 23.4 ms, FA3 18.9 ms, MoE input 2.9 ms, writer/pack 2.1 ms, norm 1.5 ms. The GPUs sit at 685–691 W with SM clocks of 1410–1455 MHz, 12–15% below the same GPUs in the isolated gate, so the 700 W power cap sets the clock.
 - **Decode** (4 GPUs, TP4/DP4/EP4): the EAGLE3 step is 38.5 ms on average (MegaMoE 22.9, attention 7.3, dense GEMM 4.5, draft 1.3, sampling 0.2 ms), with 0.66 ms of GPU idle and no exposed launch gaps.
@@ -37,4 +37,4 @@ The full analysis is [research/runtime-performance/2026-11-02-pp4-profile-r24.md
 | `logs/logs/profile-capture.log`, `profile-validation.log` | Capture start/stop UTC timestamps and the in-allocation validator output |
 | `source/source/capture-firmus-profile.sh` | The capture script the job ran |
 
-To re-derive the Prefill cycle breakdown, export a report with `nsys export --type=sqlite` and pass it to `scripts/analyze_prefill_profile.py` together with the matching `gpu-map` CSV, `profile-capture.log` and the telemetry CSVs, as described in the research note.
+To re-derive the Prefill cycle breakdown, export a report with `nsys export --type=sqlite` and pass it to `scripts/analyze_prefill_profile.py` together with the matching `gpu-map` CSV, `profile-capture.log` and the telemetry CSVs.

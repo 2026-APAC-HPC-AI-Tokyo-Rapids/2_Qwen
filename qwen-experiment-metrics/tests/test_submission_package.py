@@ -232,7 +232,7 @@ def test_generic_launcher_shell_remains_byte_identical_to_parent():
 
 
 def test_curated_evidence_checksums_and_local_official_parser(tmp_path):
-    assert sorted(path.name for path in (PACKAGE / "results").iterdir()) == ["41767886175"]
+    assert sorted(path.name for path in (PACKAGE / "results").iterdir()) == ["41767886175", "41781374312"]
     checked = set()
     for line in (EVIDENCE / "SHA256SUMS").read_text().splitlines():
         digest, path = line.split("  ", 1)

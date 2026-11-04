@@ -6,6 +6,8 @@ The package is the PP4 round 34 configuration, measured at **10054.49 good outpu
 
 The package adds one runtime overlay to that run, `patches/overlay/sglang/34-pp4-direct-logprob.patch`. The team's direct PP4 Prefill loop did not relay the last stage's logprob outputs to the other stages, so a request with `logprobs: true` stopped the Prefill scheduler. The package's greedy probe found this on the round 25 configuration (Actions [41694678252](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41694678252), which scored 10025.34 before the probe). The overlay relays them with each result, as the upstream PP loop does. On round 25 it was then verified in Actions [41766980300](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41766980300) (10016.32, eligible, every probe response with 64 token logprobs, no Prefill error). Requests without logprobs, including the official AIPerf workload, take the unchanged path.
 
+The package as shipped, including overlay 34, was then run standalone: Actions [41781374312](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41781374312), Slurm 28673, COMPLETED 0:0 in 10:37, **10038.11 good output tok/s**, 6331 requests, zero errors, good request fraction 0.98184, eligible; every greedy probe response carried 64 token logprobs. Its evidence is in `results/41781374312/`.
+
 Common baseline: **1,832 good output tok/s** on Firmus 2×8 H200 (official task `5. Common Baselines.md`, job 25013). The baseline uses different serving settings.
 
 ## Topology and serving settings
@@ -26,6 +28,7 @@ The kernel choices are fixed in `config/prefill-kernels.env` and `config/decode-
 - `config/`: serving settings, the pinned role env files and the PP4 GPU clock table.
 - [patches/README.md](patches/README.md): every image patch, kernel source and runtime overlay, with hashes, application points and numerical classifications (unestablished classes are marked `to confirm`).
 - `results/41767886175/`: curated evidence of the round 34 run the package was frozen from.
+- `results/41781374312/`: curated evidence of the standalone run of this package.
 - [analysis/README.md](analysis/README.md): the optional profiling data, the round 24 Nsight capture of the 10k configuration, with its relation to this configuration, its findings and the file list with checksums.
 
 The whole accompanying repository is required for rebuilding: `containers/`, `scripts/build-sglang-container.sh`, repository patches and `kernels/` are build inputs. Once an image exists, `submission/` is sufficient for preparation and execution of this Bonus package. Basic uses its separately documented whole-repository entrypoint. No private SGLang mirror, team credentials, GitHub Actions, or team-specific runtime directory is needed by the organisers.
@@ -81,7 +84,7 @@ For a rebuild, substitute the new image's shared path and a tokenizer snapshot r
 
 The single job requests partition `hpcai`, two nodes, eight GPUs per node, and 17 minutes. It launches the workers and router, waits for readiness, records each worker's server info, sends one non-dataset connection warm-up chat through the gateway, freezes the startup heap of every server process (`/freeze_gc`), then runs the unchanged official AIPerf 0.12.0 command (60/120/30 seconds, seed 2026, closed-loop c232). After the score exists it records the Decode greedy verify and Prefill FC1 first-K dispatch lines, captures server info again, and runs the greedy probe. There is no profiling option.
 
-Allow **about 11–13 minutes** for the job, excluding preparation and queue time. The round 25 configuration's standalone runs of this package took 10:47 and 13:05 (READY after 264 s and 302 s, then the 60/120/30 s benchmark and the greedy probe). Round 34 adds only the FC1 first-K prewarm in each Prefill stage (about 85 ms in run 41767886175). Cold startup and compilation time can vary.
+Allow **about 11–13 minutes** for the job, excluding preparation and queue time. The standalone run of this package took 10:37 (READY after 265 s, then the 60/120/30 s benchmark and the greedy probe); earlier standalone runs of the previous configuration took 10:47 and 13:05. Cold startup and compilation time can vary.
 
 ## Outputs
 
