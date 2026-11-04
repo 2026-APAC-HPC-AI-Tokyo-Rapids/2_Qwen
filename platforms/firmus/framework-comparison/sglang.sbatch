@@ -461,3 +461,4 @@ touch "${ROOT}/run-success"
 # Round 39 submit: dense first-K pinned, repaired B/C gate on image 5018d322 without a build.
 # Round 41 submit: B/C pinned, MegaMoE scale-path upper-bound probe in the freed window, host rebuild.
 # Round 41 resubmit: built image 2fb619c4 reused after the sbatch SSH drop.
+# Round 44 submit: dense N64 candidate gate with promotion diagnostic bound, host rebuild.
