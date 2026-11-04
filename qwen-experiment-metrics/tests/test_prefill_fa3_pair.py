@@ -169,7 +169,7 @@ def test_wiring_and_native_build_inputs():
     assert 'COPY containers/fa3-verify /opt/apac/fa3-verify' in (ROOT / 'containers/Dockerfile').read_text()
     assert 'cp -a "${GITHUB_WORKSPACE}" "${input_root}/qwen"' in (ROOT / '.github/workflows/aws-container.yml').read_text()
     assert config['images']['sglang']['sha256'] == config['container_sha256']
-    assert config['container_sha256'].startswith('a001f901')
+    assert config['container_sha256'].startswith('3a47b757')
 
 
 def test_timed_out_workers_continue_to_control_serving(tmp_path):
@@ -229,6 +229,7 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     config['prefill']['fa3_prepack_gate'] = enabled
     config['prefill']['fa3_v3_gate'] = enabled
     config['decode_greedy_verify_gate'] = enabled
+    config['prefill']['megamoe_fc1_first_k_gate'] = enabled
     for name in ('source', 'results'):
         (tmp_path / name).mkdir()
     runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))['prepare'](config, ROOT, tmp_path)
@@ -238,6 +239,7 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     assert record['no_gpu_selection_rerun'] is not enabled
     assert record['fa3_prepack_gate'] is enabled and record['fa3_v3_gate'] is enabled
     assert record['decode_greedy_verify_gate'] is enabled
+    assert record['megamoe_fc1_first_k_gate'] is enabled
     assert 'SGLANG_DECODE_GREEDY_VERIFY=0\n' in (tmp_path/'source/decode-kernels.env').read_text()
 
 

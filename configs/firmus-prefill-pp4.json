@@ -5,10 +5,10 @@
   "tokenizer_backend": "gigatoken",
   "images": {
     "sglang": {
-      "path": "/scratch/home/ACCOUNT/qwen/containers/41573354672.sqsh",
-      "sha256": "a001f90142b571380894e9532e467c57b831397c9e2e9d613d9e04004c87def9",
-      "size_bytes": 12298305536,
-      "provenance": "/scratch/home/ACCOUNT/qwen/containers/41573354672.container-sidecar.json"
+      "path": "/scratch/home/ACCOUNT/qwen/containers/41729881283.sqsh",
+      "sha256": "3a47b757bb88f6bc14ad5f151e8405f645007f25f381f631d88046d9bd1b7b04",
+      "size_bytes": 12296638464,
+      "provenance": "/scratch/home/ACCOUNT/qwen/containers/41729881283.container-sidecar.json"
     },
     "vllm": {
       "path": "/scratch/home/ACCOUNT/qwen/framework-comparison/images/vllm.sqsh",
@@ -84,7 +84,8 @@
     "gpu_sm_clock": "configs/firmus-gpu-sm-clock.json",
     "fa3_pair_gate": true,
     "fa3_prepack_gate": true,
-    "fa3_v3_gate": true
+    "fa3_v3_gate": true,
+    "megamoe_fc1_first_k_gate": true
   },
   "decode_dp_size": 4,
   "sglang_overlay_patches": [
@@ -119,7 +120,8 @@
     "patches/sglang/prefill-moe-input-onepass.patch",
     "patches/sglang/decode-moe-input.patch",
     "patches/sglang/prefill-fa3-vsum.patch",
-    "patches/sglang/decode-greedy-verify.patch"
+    "patches/sglang/decode-greedy-verify.patch",
+    "patches/sglang/prefill-megamoe-fc1-first-k-r32.patch"
   ],
   "deep_gemm_overlay_patches": [
     "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
@@ -134,14 +136,15 @@
     "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch",
     "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch",
     "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch",
-    "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch"
+    "patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch",
+    "patches/deep-gemm-overlay/sm90-prefill-fc1-first-k.patch"
   ],
   "prefill_max_total_tokens": 131072,
   "kernel_settings_reference": "configs/firmus-kernel-selection-40313004834.json",
-  "container_build_run_id": 41573354672,
-  "container_sha256": "a001f90142b571380894e9532e467c57b831397c9e2e9d613d9e04004c87def9",
-  "container_size_bytes": 12298305536,
-  "container_source_commit": "14c3e861d52185f4a2753620213caf629c5d0400",
+  "container_build_run_id": 41729881283,
+  "container_sha256": "3a47b757bb88f6bc14ad5f151e8405f645007f25f381f631d88046d9bd1b7b04",
+  "container_size_bytes": 12296638464,
+  "container_source_commit": "3f9124fd8afb28e34c71288b6dc31e5c490c7f60",
   "profile_only": false,
   "decode_greedy_verify_gate": true
 }
