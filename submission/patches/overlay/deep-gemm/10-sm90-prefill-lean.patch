@@ -1,0 +1,150 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -204,6 +204,7 @@ template <
+     bool kL2EpilogueRequiresFullSync,
+     bool kSplitPhaseHotPath,
+     bool kFP8SwapAB = false,
++    bool kPrefillLean = false,
+     uint32_t L1_SHAPE_N = kIntermediateHidden * 2,
+     uint32_t L1_SHAPE_K = kHidden,
+     uint32_t L2_SHAPE_N = kHidden,
+@@ -474,6 +475,18 @@ sm90_fp8_mega_moe_impl(void* y,
+     // BF16 tile buys the fourth 48 KiB A/B stage. Three stages are unchanged.
+     constexpr bool kPrefillWarpCD = kPrefill2WG and kNumStages == 4;
+     constexpr uint32_t kPrefillWarpCDRowBytes = 128 + 16;
++    // Host DG_SM90_PREFILL_LEAN=1 (four-stage EP1 tile): drop the
++    // cross-rank machinery a single rank does not need, with the same bytes everywhere.
++    //  * Every CTA adds its per-expert counts straight into the receive sums that the
++    //    scheduler polls (ready at kNumSMs arrivals, as with SM 0's single sum before),
++    //    so SM 0's republication with system-scope atomics, its self-signal and the
++    //    second dispatch grid sync go away; the slot offsets are the same atomic returns.
++    //  * The pull loop takes rank 0 and the slot itself instead of the rank round robin.
++    //  * Before the combine, the grid sync after SM 0's self-signal goes away.
++    //  * The FC2 staging writes each four n8 chunks with one stmatrix.x4 (16 per tile
++    //    instead of 64 STS.32), same bytes at the same slice offsets.
++    DG_STATIC_ASSERT(not kPrefillLean or (kPrefillWarpCD and kNumRanks == 1),
++                     "The lean path is the four-stage EP1 tile");
+     constexpr uint32_t SMEM_CD_PER_QUEUE = kPrefillWarpCD ?
+         math::constexpr_align(kNumEpilogueWarps * 16 * kPrefillWarpCDRowBytes, kSharedMemoryAlignment) :
+         math::constexpr_align(
+@@ -796,7 +809,7 @@ sm90_fp8_mega_moe_impl(void* y,
+         for (uint32_t i = thread_idx; i < kNumExperts; i += kNumDispatchThreads) {
+             const uint64_t send_value = (1ull << 32) | static_cast<uint64_t>(smem_expert_count[i]);
+             smem_expert_count[i] = static_cast<uint32_t>(
+-                ptx::atomic_add(workspace.get_expert_send_count_ptr(i), send_value));
++                ptx::atomic_add(kPrefillLean ? workspace.get_expert_recv_count_sum_ptr(i) : workspace.get_expert_send_count_ptr(i), send_value));
+         }
+         ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx);
+ 
+@@ -814,6 +827,7 @@ sm90_fp8_mega_moe_impl(void* y,
+             [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); }
+         );
+ 
++        if constexpr (not kPrefillLean) {
+         if (sm_idx == 0) {
+             #pragma unroll
+             for (uint32_t i = thread_idx; i < kNumExperts; i += kNumDispatchThreads) {
+@@ -835,6 +849,7 @@ sm90_fp8_mega_moe_impl(void* y,
+             workspace, sym_buffer, sm_idx, thread_idx,
+             [=]() { ptx::sync_aligned(kNumDispatchThreads, kDispatchBarrierIdx); },
+             false, true);
++        }
+ 
+         // Sync with epilogue warps before pulling tokens.
+         ptx::sync_unaligned(kNumDispatchThreads + kNumEpilogueThreads, kDispatchWithEpilogueBarrierIdx);
+@@ -865,6 +880,14 @@ sm90_fp8_mega_moe_impl(void* y,
+                 if (current_expert_idx >= kNumExpertsPerRank)
+                     break;
+ 
++                uint32_t token_idx_in_expert = token_idx - expert_start_idx;
++                uint32_t current_rank_in_expert_idx;
++                uint32_t token_idx_in_rank;
++                if constexpr (kPrefillLean) {
++                    // One rank: the round robin below always picks rank 0 at the slot itself.
++                    current_rank_in_expert_idx = 0;
++                    token_idx_in_rank = token_idx_in_expert;
++                } else {
+                 if (old_expert_idx != current_expert_idx) {
+                     old_expert_idx = current_expert_idx;
+                     #pragma unroll
+@@ -876,15 +899,12 @@ sm90_fp8_mega_moe_impl(void* y,
+                 }
+ 
+                 // Round-robin rank selection (identical to SM100)
+-                uint32_t current_rank_in_expert_idx;
+                 uint32_t remaining[kNumRanksPerLane];
+                 #pragma unroll
+                 for (uint32_t i = 0; i < kNumRanksPerLane; ++ i)
+                     remaining[i] = stored_rank_count[i];
+                 uint32_t offset = 0;
+-                uint32_t token_idx_in_expert = token_idx - expert_start_idx;
+                 uint32_t slot_idx = token_idx_in_expert;
+-                uint32_t token_idx_in_rank;
+                 while (true) {
+                     uint32_t num_actives_in_lane = 0;
+                     uint32_t min_in_lane = 0xffffffff;
+@@ -919,6 +939,7 @@ sm90_fp8_mega_moe_impl(void* y,
+                     for (uint32_t i = 0; i < kNumRanksPerLane; ++ i)
+                         remaining[i] -= cute::min(remaining[i], length);
+                 }
++                }
+ 
+                 const uint32_t src_token_topk_idx = *workspace.get_src_token_topk_idx_ptr(
+                     current_expert_idx, current_rank_in_expert_idx, token_idx_in_rank);
+@@ -2825,8 +2846,25 @@ sm90_fp8_mega_moe_impl(void* y,
+                     }
+                     auto* stage_r0 = stage + row_idx * kPrefillWarpCDRowBytes + col_idx * 4;
+                     auto* stage_r1 = stage_r0 + 8 * kPrefillWarpCDRowBytes;
++                    // stmatrix.x4 rows: lane l addresses row l % 16 of n8 chunk 2 q + l / 16, i.e.
++                    // matrices (rows 0-7, 2 q), (8-15, 2 q), (0-7, 2 q + 1), (8-15, 2 q + 1), whose
++                    // fragments are the thread's r_0 / r_1 BF16 pairs of those chunks.
+                     #pragma unroll
+                     for (uint32_t step = 0; step < 4; ++ step) {
++                        if constexpr (kPrefillLean) {
++                            const uint32_t stage_stsm = cute::cast_smem_ptr_to_uint(stage) + (lane_idx % 16) * kPrefillWarpCDRowBytes + (lane_idx / 16) * 16;
++                            #pragma unroll
++                            for (uint32_t q = 0; q < 4; ++ q) {
++                                const uint32_t chunk = step * 8 + q * 2;
++                                asm volatile("stmatrix.sync.aligned.x4.m8n8.shared.b16 [%0], {%1, %2, %3, %4};\n"
++                                             :: "r"(stage_stsm + q * 32),
++                                                "r"(math::cast_into_bf16_and_pack(final_accum[chunk * 4 + 0], final_accum[chunk * 4 + 1])),
++                                                "r"(math::cast_into_bf16_and_pack(final_accum[chunk * 4 + 2], final_accum[chunk * 4 + 3])),
++                                                "r"(math::cast_into_bf16_and_pack(final_accum[chunk * 4 + 4], final_accum[chunk * 4 + 5])),
++                                                "r"(math::cast_into_bf16_and_pack(final_accum[chunk * 4 + 6], final_accum[chunk * 4 + 7]))
++                                             : "memory");
++                            }
++                        } else {
+                         #pragma unroll
+                         for (uint32_t j = 0; j < 8; ++ j) {
+                             const uint32_t chunk = step * 8 + j;
+@@ -2835,6 +2873,7 @@ sm90_fp8_mega_moe_impl(void* y,
+                             *reinterpret_cast<uint32_t*>(stage_r1 + j * 16) = math::cast_into_bf16_and_pack(
+                                 final_accum[chunk * 4 + 2], final_accum[chunk * 4 + 3]);
+                         }
++                        }
+                         __syncwarp();
+                         #pragma unroll
+                         for (uint32_t i = 0; i < 4; ++ i) {
+@@ -3069,11 +3108,21 @@ sm90_fp8_mega_moe_impl(void* y,
+         // ---------------- COMBINE ----------------
+         // NVLink barrier first: signals remote ranks that this rank's GEMM
+         // outputs (NVLink scatter targets) are fully written.
++        // Lean EP1: no remote rank waits on this rank's partials, so the CTAs leave after the
++        // first grid sync (which orders every CTA's partials); only SM 0 still passes its
++        // self-signal, keeping the barrier sequence of the workspace counters.
++        if constexpr (kPrefillLean) {
++            comm::nvlink_barrier<kNumRanks, kNumSMs, kNumEpilogueThreads,
++                                 kEpilogueGridSyncIndex, kBeforeCombineReduceBarrierTag>(
++                workspace, sym_buffer, sm_idx, epilogue_thread_idx,
++                [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); }, true, false);
++        } else {
+         comm::nvlink_barrier<kNumRanks, kNumSMs, kNumEpilogueThreads,
+                              kEpilogueGridSyncIndex, kBeforeCombineReduceBarrierTag>(
+             workspace, sym_buffer, sm_idx, epilogue_thread_idx,
+             [&]() { ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx); }
+         );
++        }
+ 
+         // Sync with dispatch (paired with dispatch's pre-cleanup sync) so that
+         // dispatch may now safely clean workspace state.

@@ -1,0 +1,310 @@
+diff --git a/python/sglang/srt/layers/logits_processor.py b/python/sglang/srt/layers/logits_processor.py
+--- a/python/sglang/srt/layers/logits_processor.py
++++ b/python/sglang/srt/layers/logits_processor.py
+@@ -863,6 +863,16 @@
+         logits_buffer = logits_metadata.next_token_logits_buffer if use_buffer else None
+         if logits.shape[-1] > self.vocab_size:
+             logits = logits[:, : self.vocab_size]
++        from sglang.srt.speculative.greedy_verify import logits_eligible
++        native = (logits_metadata.forward_mode.is_target_verify()
++                  and logits_eligible(logits, self.vocab_size, self.final_logit_softcapping))
++        if native:
++            if logits_buffer is not None and logits_buffer.dtype == torch.bfloat16 and tuple(logits_buffer.shape) == tuple(logits.shape):
++                logits_buffer.copy_(logits)
++                return logits_buffer
++            return logits
++        if logits_buffer is not None and logits_buffer.dtype == torch.bfloat16:
++            logits_buffer = None  # softcap/other control paths need FP32
+         logits_width = logits.shape[-1]
+         # The shared logits buffer is keyed by vocab width and rows; skip it
+         # when this batch has a different logits shape than the graph buffer.
+diff --git a/python/sglang/srt/model_executor/runner/decode_cuda_graph_runner.py b/python/sglang/srt/model_executor/runner/decode_cuda_graph_runner.py
+--- a/python/sglang/srt/model_executor/runner/decode_cuda_graph_runner.py
++++ b/python/sglang/srt/model_executor/runner/decode_cuda_graph_runner.py
+@@ -349,14 +349,16 @@
+             assert self.require_mlp_tp_gather or self.require_attn_tp_gather
+
+         # --- buffers ---------------------------------------------------
++        from sglang.srt.speculative.greedy_verify import enabled
++        native_greedy_logits = (enabled() and self.model_runner.spec_algorithm.is_eagle3()
++                               and self.capture_forward_mode.is_target_verify()
++                               and self.model_runner.model_config.vocab_size > 0)
+         self.buffers: DecodeInputBuffers = DecodeInputBuffers.create(
+             device=self.device,
+             max_bs=self.max_bs,
+             max_num_token=self.max_num_token,
+             hidden_size=self.model_runner.model_config.hidden_size,
+-            next_token_logits_buffer=self.model_runner.graph_shared_output.get_logits_buffer(
+-                self.model_runner.model_config.vocab_size, rows=self.max_num_token
+-            ),
++            next_token_logits_buffer=(torch.zeros((self.max_num_token,self.model_runner.model_config.vocab_size),dtype=torch.bfloat16,device=self.device) if native_greedy_logits else self.model_runner.graph_shared_output.get_logits_buffer(self.model_runner.model_config.vocab_size,rows=self.max_num_token)),
+             dtype=self.model_runner.model_config.dtype,
+             dp_size=self.dp_size,
+             pp_size=self.pp_size,
+diff --git a/python/sglang/srt/sampling/penaltylib/min_new_tokens.py b/python/sglang/srt/sampling/penaltylib/min_new_tokens.py
+--- a/python/sglang/srt/sampling/penaltylib/min_new_tokens.py
++++ b/python/sglang/srt/sampling/penaltylib/min_new_tokens.py
+@@ -49,6 +49,7 @@
+             batch_first=True,
+             padding_value=self.orchestrator.vocab_size,
+         )
++        self.greedy_stop_ids = padded_stop_token_ids
+         self.stop_token_penalties = torch.zeros(
+             size=(len(self.orchestrator.reqs()), self.orchestrator.vocab_size + 1),
+             dtype=torch.float32,
+@@ -83,11 +84,14 @@
+         logits.add_(torch.where(mask, self.stop_token_penalties, 0.0))
+
+     def _filter(self, keep_indices: torch.Tensor):
++        self.greedy_stop_ids = self.greedy_stop_ids[keep_indices]
+         self.min_new_tokens = self.min_new_tokens[keep_indices]
+         self.stop_token_penalties = self.stop_token_penalties[keep_indices]
+         self.len_output_tokens = self.len_output_tokens[keep_indices]
+
+     def _merge(self, their: "BatchedMinNewTokensPenalizer"):
++        width=max(self.greedy_stop_ids.shape[1],their.greedy_stop_ids.shape[1])
++        self.greedy_stop_ids=torch.cat([torch.nn.functional.pad(x,(0,width-x.shape[1]),value=self.orchestrator.vocab_size) for x in (self.greedy_stop_ids,their.greedy_stop_ids)])
+         self.min_new_tokens = torch.cat(
+             [self.min_new_tokens, their.min_new_tokens], dim=0
+         )
+@@ -100,6 +104,6 @@
+
+     # Explicit resource cleanup to aid GC and free CUDA memory promptly
+     def _teardown(self) -> None:
+-        for name in ("min_new_tokens", "stop_token_penalties", "len_output_tokens"):
++        for name in ("min_new_tokens", "stop_token_penalties", "len_output_tokens", "greedy_stop_ids"):
+             if hasattr(self, name):
+                 delattr(self, name)
+diff --git a/python/sglang/srt/sampling/sampling_batch_info.py b/python/sglang/srt/sampling/sampling_batch_info.py
+--- a/python/sglang/srt/sampling/sampling_batch_info.py
++++ b/python/sglang/srt/sampling/sampling_batch_info.py
+@@ -53,6 +53,8 @@
+     rids_int: Optional[torch.Tensor] = None
+     bootstrap_room_ids_int: Optional[torch.Tensor] = None
+     grammar_mask: Optional[GrammarMask] = None
++
++    greedy_minimum: Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = None
+
+     # Penalizer
+     penalizer_orchestrator: Optional[penaltylib.BatchedPenalizerOrchestrator] = None
+@@ -265,6 +267,12 @@
+         self.grammar_mask = GrammarMask(first_grammar, vocab_mask)
+
+     def update_penalties(self):
++        from sglang.srt.speculative.greedy_verify import sparse_minimum
++        self.greedy_minimum = sparse_minimum(self)
++        if self.greedy_minimum is not None:
++            self.acc_additive_penalties = None
++            self.acc_scaling_penalties = None
++            return
+         if self.penalizer_orchestrator.is_required:
+             self.acc_additive_penalties = torch.zeros(
+                 (len(self.temperatures), self.vocab_size),
+@@ -282,6 +290,8 @@
+             self.acc_scaling_penalties = None
+
+     def apply_logits_bias(self, logits: torch.Tensor):
++        from sglang.srt.speculative.greedy_verify import materialize_minimum
++        materialize_minimum(self)
+         if self.acc_additive_penalties is not None:
+             # Used in the overlap mode
+             logits.add_(self.acc_additive_penalties)
+diff --git a/python/sglang/srt/speculative/eagle_utils.py b/python/sglang/srt/speculative/eagle_utils.py
+--- a/python/sglang/srt/speculative/eagle_utils.py
++++ b/python/sglang/srt/speculative/eagle_utils.py
+@@ -681,34 +681,43 @@
+     sampling_info = batch.sampling_info
+     next_token_logits = logits_output.next_token_logits
+
+-    sanitize_nan_logits(next_token_logits, "verify: target model logits")
+-
+-    # Apply penalty
+-    # This is a relaxed version of penalties for speculative decoding.
+-    if sampling_info.acc_additive_penalties is not None:
+-        # Broadcast each request's row over its draft tokens in place: the same
+-        # element-wise FP32 additions as adding the repeat_interleave'd copy,
+-        # without materializing (bs * draft_token_num, vocab) of penalties.
+-        next_token_logits.unflatten(0, (bs, verify_input.draft_token_num)).add_(
+-            sampling_info.acc_additive_penalties.unsqueeze(1)
+-        )
+-    if sampling_info.acc_scaling_penalties is not None:
+-        apply_scaling_penalties(
+-            next_token_logits,
+-            torch.repeat_interleave(
+-                sampling_info.acc_scaling_penalties, verify_input.draft_token_num, dim=0
+-            ),
+-        )
+-    if sampling_info.logit_bias is not None:
+-        next_token_logits.add_(
+-            torch.repeat_interleave(
+-                sampling_info.logit_bias, verify_input.draft_token_num, dim=0
++    from sglang.srt.speculative.greedy_verify import eligible, materialize_minimum, target_argmax
++    fused_greedy = eligible(next_token_logits, sampling_info, verify_input, batch, grammar_mask)
++    fused_target = None
++    if fused_greedy:
++        fused_target = target_argmax(next_token_logits, sampling_info)
++    else:
++        next_token_logits = next_token_logits.float()
++        logits_output.next_token_logits = next_token_logits
++        materialize_minimum(sampling_info)
++        sanitize_nan_logits(next_token_logits, "verify: target model logits")
++
++        # Apply penalty
++        # This is a relaxed version of penalties for speculative decoding.
++        if sampling_info.acc_additive_penalties is not None:
++            # Broadcast each request's row over its draft tokens in place: the same
++            # element-wise FP32 additions as adding the repeat_interleave'd copy,
++            # without materializing (bs * draft_token_num, vocab) of penalties.
++            next_token_logits.unflatten(0, (bs, verify_input.draft_token_num)).add_(
++                sampling_info.acc_additive_penalties.unsqueeze(1)
+             )
+-        )
+-
+-    # Apply grammar mask if provided
+-    if grammar_mask is not None:
+-        grammar_mask.apply(next_token_logits)
++        if sampling_info.acc_scaling_penalties is not None:
++            apply_scaling_penalties(
++                next_token_logits,
++                torch.repeat_interleave(
++                    sampling_info.acc_scaling_penalties, verify_input.draft_token_num, dim=0
++                ),
++            )
++        if sampling_info.logit_bias is not None:
++            next_token_logits.add_(
++                torch.repeat_interleave(
++                    sampling_info.logit_bias, verify_input.draft_token_num, dim=0
++                )
++            )
++
++        # Apply grammar mask if provided
++        if grammar_mask is not None:
++            grammar_mask.apply(next_token_logits)
+
+     candidates = verify_input.draft_token.reshape(bs, verify_input.draft_token_num)
+     predict_shape = list(next_token_logits.shape)[:-1]
+@@ -721,7 +730,7 @@
+     # Sample tokens
+     target_predict = None
+     if sampling_info.is_all_greedy or _is_cpu or _is_npu or _is_hip or _is_xpu:
+-        target_predict = torch.argmax(next_token_logits, dim=-1)
++        target_predict = fused_target if fused_greedy else torch.argmax(next_token_logits, dim=-1)
+         target_predict = target_predict.reshape(bs, verify_input.draft_token_num)
+         predict, accept_index, num_correct_drafts = verify_tree_greedy_func(
+             predicts=predict,  # mutable
+diff --git a/python/sglang/srt/speculative/greedy_verify.py b/python/sglang/srt/speculative/greedy_verify.py
+new file mode 100644
+--- /dev/null
++++ b/python/sglang/srt/speculative/greedy_verify.py
+@@ -0,0 +1,111 @@
++"""Opt-in Qwen EAGLE3 greedy postprocessing; only exact FP32 operations."""
++import logging
++import os
++import torch
++from sglang.srt.environ import envs
++
++logger = logging.getLogger(__name__)
++_fallback_logged = False
++_used_logged = False
++
++
++def enabled():
++    return os.environ.get("SGLANG_DECODE_GREEDY_VERIFY", "0") == "1"
++
++
++def sparse_minimum(info):
++    """Snapshot length: overlap may advance the live penalizer before verify."""
++    if not enabled() or not info.is_all_greedy or info.penalizer_orchestrator is None:
++        return None
++    from sglang.srt.sampling.penaltylib.min_new_tokens import BatchedMinNewTokensPenalizer
++    prepared=[p for p in info.penalizer_orchestrator.penalizers.values() if p._is_prepared]
++    if len(prepared)!=1 or type(prepared[0]) is not BatchedMinNewTokensPenalizer:
++        return None
++    p=prepared[0]
++    return p.greedy_stop_ids, p.min_new_tokens, p.len_output_tokens.clone()
++
++
++def materialize_minimum(info):
++    state=info.greedy_minimum
++    if state is None:
++        return
++    stops, minimum, lengths=state
++    # Unsupported sampling retains the exact ordinary dense operation.
++    penalty=torch.zeros((stops.shape[0],info.vocab_size+1),dtype=torch.float32,device=stops.device)
++    penalty.scatter_add_(1,stops,torch.full_like(stops,float("-inf"),dtype=torch.float32))
++    info.acc_additive_penalties=torch.zeros_like(penalty[:,:info.vocab_size])
++    info.acc_additive_penalties.add_(torch.where(lengths<minimum,penalty[:,:info.vocab_size],0.0))
++    info.greedy_minimum=None
++
++
++def fallback(reason):
++    global _fallback_logged
++    if not _fallback_logged:
++        logger.warning("Decode greedy verify fallback: %s", reason)
++        _fallback_logged = True
++    return False
++
++
++def logits_eligible(logits, vocab, softcap=None):
++    if not enabled():
++        return False
++    checks = (
++        (logits.is_cuda, "logits are not CUDA"),
++        (logits.dtype == torch.bfloat16, "logits dtype is not BF16"),
++        (logits.ndim == 2 and 0 < vocab <= 2147479552 and logits.shape[1] == vocab, f"logits shape {tuple(logits.shape)} does not match supported model vocab {vocab}"),
++        (logits.ndim == 2 and logits.stride(1) == 1 and vocab <= logits.stride(0) <= 2147483647, "unsupported logits stride"),
++        (not softcap, "final logit softcapping is enabled"),
++    )
++    for valid, reason in checks:
++        if not valid:
++            return fallback(reason)
++    return True
++
++
++def eligible(logits, info, verify, batch, grammar_mask):
++    if not logits_eligible(logits, info.vocab_size):
++        return False
++    checks = (
++        (1 <= len(batch.seq_lens) <= 48 and logits.shape[0] == 4 * len(batch.seq_lens), "requires B1..48 and Q4 logits rows"),
++        (batch.spec_algorithm.is_eagle3() and batch.forward_mode.is_target_verify(), "requires EAGLE3 target verify"),
++        (verify.draft_token_num == 4, "requires four draft tokens"),
++        (info.is_all_greedy, "sampling is not all greedy"),
++        (info.acc_additive_penalties is None and info.acc_scaling_penalties is None, "unsupported dense penalties"),
++        (info.logit_bias is None, "logit bias is enabled"),
++        (grammar_mask is None, "grammar mask is enabled"),
++        (not batch.return_logprob, "logprobs are requested"),
++        (not envs.SGLANG_ENABLE_ASYNC_ASSERT.get(), "async assert is enabled"),
++    )
++    for valid, reason in checks:
++        if not valid:
++            return fallback(reason)
++    return True
++
++
++class GreedyWorkspace:
++    """Owned by caller/graph closure; no per-replay allocation or stale host state."""
++    def __init__(self, logits, state):
++        from sglang.srt.layers.attention.decode_fa3_verify import load
++        load()
++        rows,vocab=logits.shape
++        self.partial=torch.empty(rows*((vocab+4095)//4096)*8,dtype=torch.uint8,device=logits.device)
++        self.output=torch.empty(rows,dtype=torch.int64,device=logits.device)
++        self.penalty=state is not None
++        if state is None:
++            b=rows//4
++            state=(torch.empty((b,0),dtype=torch.int64,device=logits.device),torch.zeros((b,1),dtype=torch.int32,device=logits.device),torch.zeros((b,1),dtype=torch.int32,device=logits.device))
++        self.state=state
++        self.sanitize=envs.SGLANG_SANITIZE_NAN_LOGITS.get()
++
++    def run(self, logits):
++        global _used_logged
++        torch.ops.apac_fa3_verify.greedy_argmax(logits,*self.state,self.partial,self.output,self.penalty,self.sanitize)
++        if not _used_logged:
++            logger.info("Decode greedy verify using fused kernels greedy_tiles/greedy_finish: rows=%d vocab=%d stride=%d", logits.shape[0], logits.shape[1], logits.stride(0))
++            _used_logged = True
++        return self.output
++
++
++def target_argmax(logits, info):
++    workspace=GreedyWorkspace(logits,info.greedy_minimum)
++    return workspace.run(logits)

@@ -1,0 +1,23 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -264,13 +264,17 @@ sm90_fp8_mega_moe_impl(void* y,
+     // Every warp writes and publishes its own FC1 output rows (see the
+     // kPrefill2WG L1 epilogue).
++    // Same math/quantization path for a pipeline stage owning all experts.
++    // The host enables this geometry only with DG_SM90_PREFILL_LOCAL_EP1.
++    constexpr bool kQwenPrefillRanks = kNumRanks == 4 or
++        (kNumRanks == 1 and kNumExperts == 128 and kNumEpilogueThreads == 256);
+     constexpr bool kPrefill2WG =
+-        kHidden == 4096 && kIntermediateHidden == 1536 && kNumRanks == 4 &&
++        kHidden == 4096 && kIntermediateHidden == 1536 && kQwenPrefillRanks &&
+         BLOCK_M == 128 && BLOCK_N == 256 && kNumEpilogueThreads == 256 && kReuseAccumAsFinal;
+     // Specialize the same scheduler stream into FC1/FC2 loops for Qwen
+     // Prefill. This removes dynamic phase state from the register-heavy math
+     // loop while retaining the existing block order and pipeline barriers.
+     constexpr bool kSpecializePhase = kSplitPhaseHotPath ||
+-        (kHidden == 4096 && kIntermediateHidden == 1536 && kNumRanks == 4 &&
++        (kHidden == 4096 && kIntermediateHidden == 1536 && kQwenPrefillRanks &&
+          BLOCK_M == 128 && BLOCK_N == 256 && (kNumEpilogueThreads == 512 || kPrefill2WG) && kReuseAccumAsFinal);
+     // Qwen Prefill only: FC2 blocks are claimed from a per-rank counter instead
+     // of the static round-robin split (see sm90_fp8_mega_moe_for_each_block_dynamic_l2).

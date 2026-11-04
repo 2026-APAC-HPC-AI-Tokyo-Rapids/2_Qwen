@@ -1,7 +1,15 @@
 {
   "framework": "sglang",
-  "concurrency": 240,
+  "concurrency": 232,
   "workload": "official",
+  "tokenizer_backend": "gigatoken",
+  "images": {
+    "sglang": {
+      "path": "/scratch/home/ACCOUNT/qwen/containers/41729881283.sqsh",
+      "sha256": "3a47b757bb88f6bc14ad5f151e8405f645007f25f381f631d88046d9bd1b7b04",
+      "size_bytes": 12296638464
+    }
+  },
   "speculation": {
     "algorithm": "EAGLE3",
     "draft_quantization": "fp8",
@@ -11,7 +19,7 @@
     "draft_revision": "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224"
   },
   "decode_max_total_tokens": 393216,
-  "decode_max_running_requests": 176,
+  "decode_max_running_requests": 192,
   "decode_extra_slots": 20,
   "decode_polling_interval": 1,
   "decode_cuda_graph_bs": [
@@ -42,25 +50,31 @@
     38,
     40,
     42,
-    44
+    44,
+    46,
+    48
   ],
   "prefill": {
     "workers": 3,
-    "tp": 4,
-    "dp": 4,
-    "ep": 4,
-    "chunked_prefill_size": 16384,
-    "expert_location": "configs/firmus-prefill-replica4-expert-location.json",
-    "ep_num_redundant_experts": 12,
+    "tp": 1,
+    "dp": 1,
+    "ep": 1,
+    "chunked_prefill_size": 8192,
+    "expert_location": "trivial",
+    "ep_num_redundant_experts": 0,
     "moe_a2a_backend": "megamoe",
     "moe_runner_backend": "deep_gemm",
-    "optimistic_prefill_attempts": 2
+    "optimistic_prefill_attempts": 0,
+    "pp": 4,
+    "pp_max_micro_batch_size": 2,
+    "pp_async_batch_depth": 1,
+    "pp_layer_partition": [
+      24,
+      24,
+      24,
+      22
+    ]
   },
   "decode_dp_size": 4,
-  "images": {
-    "sglang": {
-      "sha256": "1f247668933c7252d3dfbe8f6c23897d354f095d56842788d4415a85d7dc5e55",
-      "size_bytes": 12272513024
-    }
-  }
+  "prefill_max_total_tokens": 131072
 }

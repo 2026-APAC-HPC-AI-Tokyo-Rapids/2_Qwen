@@ -222,7 +222,7 @@ def test_submission_contains_reproducible_official_entrypoint() -> None:
     setup = (ROOT / "submission" / "build" / "setup.sh").read_text()
     batch = (ROOT / "platforms" / "shared" / "qwen-pd.sbatch").read_text()
 
-    assert 'exec "${repository}/scripts/build-sglang-container.sh"' in setup
+    assert 'exec "${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"' in setup
     assert "#SBATCH --nodes=2" in batch
     assert "#SBATCH --gpus-per-node=8" in batch
     firmus_block = batch.split("firmus)", 1)[1].split(";;", 1)[0]

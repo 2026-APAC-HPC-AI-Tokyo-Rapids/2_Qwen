@@ -1,0 +1,85 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -467,7 +467,16 @@
+         kSwapABActive ? (SMEM_CD_SWAP_L1_FP32_SIZE + SMEM_CD_SWAP_L1_FP8_SIZE) : 0;
+     constexpr uint32_t SMEM_CD_BASE_SIZE =
+         SMEM_CD_L1_SIZE > SMEM_CD_L2_SIZE ? SMEM_CD_L1_SIZE : SMEM_CD_L2_SIZE;
+-    constexpr uint32_t SMEM_CD_PER_QUEUE = math::constexpr_align(
++    // kPrefill2WG with four stages (host DG_SM90_PREFILL_4STAGE=1): the CD area
++    // is only the per-warp 16-row x 144-byte slices (18 KiB) that the FC1
++    // epilogue stages through, and the FC2 epilogue passes its BF16 tile through
++    // the same slices in four 64-column steps. The 46 KiB freed from the 64 KiB
++    // BF16 tile buys the fourth 48 KiB A/B stage. Three stages are unchanged.
++    constexpr bool kPrefillWarpCD = kPrefill2WG and kNumStages == 4;
++    constexpr uint32_t kPrefillWarpCDRowBytes = 128 + 16;
++    constexpr uint32_t SMEM_CD_PER_QUEUE = kPrefillWarpCD ?
++        math::constexpr_align(kNumEpilogueWarps * 16 * kPrefillWarpCDRowBytes, kSharedMemoryAlignment) :
++        math::constexpr_align(
+         SMEM_CD_BASE_SIZE > SMEM_CD_SWAP_L1_SIZE ? SMEM_CD_BASE_SIZE : SMEM_CD_SWAP_L1_SIZE,
+         kSharedMemoryAlignment);
+ 
+@@ -2783,6 +2792,64 @@
+                 }
+             } else {
+                 // ---------------- L2 EPILOGUE: BF16 cast + NVLink scatter ----------------
++                if constexpr (kPrefillWarpCD) {
++                    // Four-stage Prefill: the same BF16 values of the same accumulators go
++                    // to the same combine-buffer bytes as the 64 KiB tile path; only the
++                    // staging differs. Each warp passes its 16 x 256 tile through its own
++                    // 16 x 144-byte slice in four 64-column steps (8 accumulator chunks
++                    // each); rows are 144 bytes apart so the 8 rows of a fragment and the
++                    // 8 lanes of a 128-byte row read hit distinct banks. Lane l stores
++                    // 16-byte piece l % 8 of local rows 4 i + l / 8, whose destinations
++                    // are resolved once per tile from the metadata of lanes l and l + 16.
++                    DG_STATIC_ASSERT(WG_BLOCK_N == 256 and kAccumPerThread == 128 and kWarpgroupSplitN == 1,
++                                     "Four-stage Prefill FC2 staging shape");
++                    DG_STATIC_ASSERT(kNumEpilogueWarps * 16 * kPrefillWarpCDRowBytes <= SMEM_CD_SIZE,
++                                     "Four-stage Prefill FC2 staging");
++                    auto* stage = reinterpret_cast<uint8_t*>(smem_cd_l2) + epilogue_warp_idx * (16 * kPrefillWarpCDRowBytes);
++                    const uint32_t warp_row = row_base + warp_idx_in_wg * 16;
++                    layout::TokenSrcMetadata meta = {0, 0, 0};
++                    if (warp_row + lane_idx % 16 < valid_m)
++                        meta = *workspace.get_token_src_metadata_ptr(m_idx + warp_row + lane_idx % 16);
++                    uint4* dst[4];
++                    bool dst_valid[4];
++                    #pragma unroll
++                    for (uint32_t i = 0; i < 4; ++ i) {
++                        const uint32_t row = i * 4 + lane_idx / 8;
++                        const uint32_t dst_rank_idx = __shfl_sync(0xffffffff, meta.rank_idx, row);
++                        const uint32_t dst_token_idx = __shfl_sync(0xffffffff, meta.token_idx, row);
++                        const uint32_t dst_topk_idx = __shfl_sync(0xffffffff, meta.topk_idx, row);
++                        dst_valid[i] = warp_row + row < valid_m;
++                        dst[i] = sym_buffer.map(math::advance_ptr<uint4>(
++                            combine_token_buffer.get_rank_buffer(dst_topk_idx).get_data_buffer(dst_token_idx).get_base_ptr(),
++                            n_idx * sizeof(nv_bfloat16) + (lane_idx % 8) * sizeof(uint4)), dst_rank_idx);
++                    }
++                    auto* stage_r0 = stage + row_idx * kPrefillWarpCDRowBytes + col_idx * 4;
++                    auto* stage_r1 = stage_r0 + 8 * kPrefillWarpCDRowBytes;
++                    #pragma unroll
++                    for (uint32_t step = 0; step < 4; ++ step) {
++                        #pragma unroll
++                        for (uint32_t j = 0; j < 8; ++ j) {
++                            const uint32_t chunk = step * 8 + j;
++                            *reinterpret_cast<uint32_t*>(stage_r0 + j * 16) = math::cast_into_bf16_and_pack(
++                                final_accum[chunk * 4 + 0], final_accum[chunk * 4 + 1]);
++                            *reinterpret_cast<uint32_t*>(stage_r1 + j * 16) = math::cast_into_bf16_and_pack(
++                                final_accum[chunk * 4 + 2], final_accum[chunk * 4 + 3]);
++                        }
++                        __syncwarp();
++                        #pragma unroll
++                        for (uint32_t i = 0; i < 4; ++ i) {
++                            const auto packed = *reinterpret_cast<const uint4*>(
++                                stage + (i * 4 + lane_idx / 8) * kPrefillWarpCDRowBytes + (lane_idx % 8) * sizeof(uint4));
++                            if (dst_valid[i])
++                                dst[i][step * 8] = packed;
++                        }
++                        // The next step's writes reuse the slice after every lane has read it.
++                        __syncwarp();
++                    }
++                    if constexpr (kL2EpilogueRequiresFullSync)
++                        ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++                    return;
++                }
+                 constexpr uint32_t kNumRowsPerWarp = WG_BLOCK_M / 8;
+ 
+                 const uint32_t row_in_warp_block = lane_idx / 16;  // 0 or 1

@@ -1,0 +1,32 @@
+diff --git a/python/sglang/srt/layers/attention/prefill_contiguous.py b/python/sglang/srt/layers/attention/prefill_contiguous.py
+index 1e509d3..e32d282 100644
+--- a/python/sglang/srt/layers/attention/prefill_contiguous.py
++++ b/python/sglang/srt/layers/attention/prefill_contiguous.py
+@@ -25,9 +25,15 @@ def use_fixed_prefill(forward_batch, layer, backend, q, k, v, *, output_supporte
+ 
+     lengths = forward_batch.extend_seq_lens_cpu
+     args = get_server_args()
++    if lengths is not None and len(lengths) > 1:
++        # Packed requests only through a selected varlen fixed candidate.
++        from sglang.srt.layers.attention.prefill_fp8 import prefill_candidate
++
++        if len(lengths) > 4 or not prefill_candidate().get("varlen", False):
++            return False
+     if not (
+         use_contiguous_prefill(forward_batch)
+-        and lengths is not None and len(lengths) == 1 and 3584 <= lengths[0] <= 4096
++        and lengths is not None and 1 <= len(lengths) <= 4 and all(3584 <= n <= 4096 for n in lengths)
+         and args.disaggregation_mode == "prefill" and not args.enable_lora
+         and args.cuda_graph_config.prefill.backend == "disabled"
+         and getattr(backend, "fa_impl_ver", None) == 3 and not backend.use_mla
+@@ -41,8 +47,8 @@ def use_fixed_prefill(forward_batch, layer, backend, q, k, v, *, output_supporte
+         and all(x is None for x in (*descales, *extras))
+         and k is not None and v is not None
+         and q.dtype == k.dtype == v.dtype == torch.float8_e4m3fn
+-        and q.shape[0] >= lengths[0]
+-        and backend.forward_metadata.cu_seqlens_q.numel() == 2
++        and q.shape[0] >= sum(lengths)
++        and backend.forward_metadata.cu_seqlens_q.numel() == len(lengths) + 1
+     ):
+         return False
+     props = torch.cuda.get_device_properties(q.device)

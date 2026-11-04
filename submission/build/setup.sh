@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
+# Build the Bonus serving image as SquashFS on a root Linux build host (Buildah chroot, Skopeo, Umoci, SquashFS tools).
+#
+# Run submission/build/sglang-mirror.sh first. Environment:
+#   BUILD_DIR              empty temporary build directory
+#   CONTAINER_ARCHIVE_DIR  output directory for BUILD_ID.sqsh and BUILD_ID.container-sidecar.json
+#   GITHUB_RUN_ID          numeric build ID (BUILD_ID), GITHUB_RUN_ATTEMPT its attempt number
+#   GITHUB_SHA             the checked-out commit of this repository
+#   GIT_MIRROR_DIR         the directory sglang-mirror.sh filled (holds 5_SGLang_Src.git)
+#   BUILD_CACHE_REPOSITORY optional writable OCI registry for Buildah layer caching
 set -euo pipefail
 
-repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-
-: "${BUILD_DIR:?temporary build directory is required}"
-: "${CONTAINER_ARCHIVE_DIR:?SquashFS output directory is required}"
-: "${GITHUB_RUN_ATTEMPT:?unique build attempt is required}"
-: "${GITHUB_RUN_ID:?unique build ID is required}"
-: "${GITHUB_SHA:?Qwen repository commit is required}"
-# Run submission/build/sglang-mirror.sh first to populate GIT_MIRROR_DIR from public sources.
-: "${GIT_MIRROR_DIR:?directory containing 5_SGLang_Src.git is required}"
-
-export GITHUB_WORKSPACE="${repository}"
-exec "${repository}/scripts/build-sglang-container.sh"
+GITHUB_WORKSPACE=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+export GITHUB_WORKSPACE
+exec "${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"

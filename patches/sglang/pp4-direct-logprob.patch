@@ -1,0 +1,90 @@
+diff --git a/python/sglang/srt/managers/scheduler_pp_mixin.py b/python/sglang/srt/managers/scheduler_pp_mixin.py
+--- a/python/sglang/srt/managers/scheduler_pp_mixin.py
++++ b/python/sglang/srt/managers/scheduler_pp_mixin.py
+@@ -141,6 +141,9 @@ class _QwenPPLaunch:
+     # Last stage only: host copies of the next tokens and EAGLE draft outputs.
+     next_token_ids: Optional[torch.Tensor] = None
+     draft_output_cpu: Optional[tuple] = None
++    # Last stage only, for a batch with return_logprob: host copies of
++    # get_logprob_dict_from_result, as the upstream loop relays them.
++    logprob: Optional[dict] = None
+ 
+ 
+ @dataclass
+@@ -201,6 +204,7 @@ class _QwenPPResultPublisher:
+                 payload = (
+                     launch.rids,
+                     launch.next_token_ids.tolist(),
++                    launch.logprob,
+                     *launch.draft_output_cpu,
+                 )
+                 works = []
+@@ -833,11 +837,26 @@ class SchedulerPPMixin:
+         with self.copy_stream_ctx:
+             self.prefetch_disagg_prefill_outputs(batch, result)
+             next_token_ids = None
++            logprob = None
+             if self.pp_group.is_last_rank:
+                 from sglang.srt.managers.utils import _async_d2h
+ 
+                 assert result.draft_output_cpu is not None
+                 next_token_ids = _async_d2h(result.next_token_ids)
++                if batch.return_logprob:
++                    # Tensors, or per-request lists of tensors; the other
++                    # stages receive them pickled, so never as device tensors.
++                    def to_host(value):
++                        if isinstance(value, torch.Tensor):
++                            return _async_d2h(value)
++                        if isinstance(value, (list, tuple)):
++                            return type(value)(map(to_host, value))
++                        return value
++
++                    logprob = {
++                        key: to_host(value)
++                        for key, value in get_logprob_dict_from_result(result).items()
++                    }
+             copy_done = self.device_module.Event()
+             copy_done.record()
+         loop.ce.launches += 1
+@@ -850,6 +869,7 @@ class SchedulerPPMixin:
+             can_run_cuda_graph=result.can_run_cuda_graph,
+             next_token_ids=next_token_ids,
+             draft_output_cpu=result.draft_output_cpu,
++            logprob=logprob,
+         )
+ 
+     # Proxy hidden states move with PyNccl on the forward stream, so a stage's
+@@ -1048,18 +1068,32 @@ class SchedulerPPMixin:
+         if self.pp_group.is_last_rank:
+             next_token_ids = launch.next_token_ids
+             draft_output_cpu = launch.draft_output_cpu
++            logprob = launch.logprob
+         else:
+             with torch.profiler.record_function("pp.wait_result"):
+                 rank = self.pp_group.rank
+-                rids, tokens, *draft_output_cpu = point_to_point_pyobj(
++                rids, tokens, logprob, *draft_output_cpu = point_to_point_pyobj(
+                     [], rank, loop.result_group, self.pp_group.ranks[-1], rank
+                 )
+             assert rids == launch.rids, "PP stages formed different microbatches"
+             next_token_ids = torch.tensor(tokens, dtype=torch.int64)
+             draft_output_cpu = tuple(draft_output_cpu)
++        assert (logprob is not None) == batch.return_logprob
++        logits_output = None
++        extend_input_len_per_req = None
++        extend_logprob_start_len_per_req = None
++        if logprob is not None:
++            (
++                logits_output,
++                extend_input_len_per_req,
++                extend_logprob_start_len_per_req,
++            ) = get_logprob_from_pp_outputs(logprob)
+         batch.input_ids = None
+         result = GenerationBatchResult(
++            logits_output=logits_output,
+             next_token_ids=next_token_ids,
++            extend_input_len_per_req=extend_input_len_per_req,
++            extend_logprob_start_len_per_req=extend_logprob_start_len_per_req,
+             can_run_cuda_graph=launch.can_run_cuda_graph,
+             copy_done=launch.copy_done,
+         )

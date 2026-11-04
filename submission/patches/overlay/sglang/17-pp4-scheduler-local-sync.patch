@@ -1,0 +1,36 @@
+diff --git a/python/sglang/srt/managers/scheduler_components/dp_attn.py b/python/sglang/srt/managers/scheduler_components/dp_attn.py
+--- a/python/sglang/srt/managers/scheduler_components/dp_attn.py
++++ b/python/sglang/srt/managers/scheduler_components/dp_attn.py
+@@ -132,15 +132,29 @@
+         group: torch.distributed.ProcessGroup,
+         use_all_reduce: bool = False,
+     ):
++        # A singleton group has no remote MLP state. Keep its seven metadata
++        # scalars on CPU; the NCCL path otherwise adds H2D, collective and D2H
++        # synchronization on every PP scheduling pass, including idle passes.
++        local_only = (
++            self.dp_size * self.tp_size * self.cp_size == 1
++            and torch.distributed.get_world_size(group) == 1
++        )
++        if local_only:
++            device = "cpu"
+         local_info_tensor = self._get_local_tensor(device=device)
+         fallback_tensor = self._get_fallback_tensor(device=device)
+         info_width = local_info_tensor.numel()
+         # Inactive max_world_size slots must decode as IDLE.
++        # A single rank is already contiguous after expand, so contiguous()
++        # aliases fallback_tensor. Collectives and masked writes need distinct
++        # storage, including when the active-rank mask selects no rows.
+         global_info_tensor = fallback_tensor.expand(
+             self.dp_size, self.tp_size * self.cp_size, info_width
+-        ).contiguous()
+-
+-        if use_all_reduce:
++        ).clone()
++
++        if local_only:
++            global_info_tensor.view(-1, info_width)[0] = local_info_tensor
++        elif use_all_reduce:
+             # Admission can expose different WORLD sizes; use fixed global slots.
+             global_info_tensor.zero_()
+             flat_info = global_info_tensor.view(-1, info_width)

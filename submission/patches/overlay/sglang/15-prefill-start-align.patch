@@ -1,0 +1,95 @@
+diff --git a/python/sglang/srt/disaggregation/prefill.py b/python/sglang/srt/disaggregation/prefill.py
+--- a/python/sglang/srt/disaggregation/prefill.py
++++ b/python/sglang/srt/disaggregation/prefill.py
+@@ -21,6 +21,7 @@
+ 
+ import hashlib
+ import logging
++import time
+ from array import array
+ from collections import deque
+ from http import HTTPStatus
+@@ -471,6 +472,47 @@
+     Mixin for Scheduler to handle disaggregation prefill
+     """
+ 
++    def disagg_prefill_start_idle(self: Scheduler) -> bool:
++        return (
++            self.running_batch.is_empty()
++            and (self.last_batch is None or self.last_batch.forward_mode.is_idle())
++            and not getattr(self, "result_queue", ())
++            and self.chunked_req is None
++            and not self.waiting_queue
++            and not self.disagg_prefill_bootstrap_queue.queue
++            and not self.disagg_prefill_inflight_queue
++            and not self.grammar_manager.has_waiting_grammars()
++        )
++
++    def delay_disagg_prefill_start(self: Scheduler, was_idle: bool) -> bool:
++        if not self.server_args.enable_dp_attention or self.ps.attn_dp_size == 1:
++            return False
++
++        now = time.monotonic()
++        deadline = getattr(self, "_prefill_start_deadline", None)
++        # Every TP rank participates, including ranks with no local requests.
++        # Gloo host metadata only: do not wait for any CUDA stream here.
++        state = torch.tensor(
++            [
++                int(was_idle),
++                int(not self.disagg_prefill_start_idle()),
++                int(any(not is_aborted(req) for req in self.waiting_queue)),
++                int(deadline is not None and now >= deadline),
++            ],
++            dtype=torch.int64,
++            device="cpu",
++        )
++        torch.distributed.all_reduce(state, group=self.tp_cpu_group)
++        idle, pending, ready, expired = state.tolist()
++        if deadline is None and idle == self.ps.tp_size and pending:
++            # The archived initial 240-request burst spans 97 ms. Bound the
++            # idle-to-busy collection window to 100 ms, releasing early if full.
++            deadline = now + 0.100
++        if ready == self.ps.tp_size or expired or not pending:
++            deadline = None
++        self._prefill_start_deadline = deadline
++        return deadline is not None
++
+     def maybe_prefetch_staging_for_batch(self: Scheduler, batch: ScheduleBatch) -> None:
+         """Pre-send STAGING_REQ so decode allocates staging during GPU forward."""
+         kv_mgr = self.disagg_prefill_bootstrap_queue.kv_manager
+@@ -553,6 +595,7 @@
+     def event_loop_normal_disagg_prefill(self: Scheduler) -> None:
+         """A normal scheduler loop for prefill worker in disaggregation mode."""
+         while True:
++            was_idle = self.disagg_prefill_start_idle()
+             # Receive requests
+             recv_reqs = self.request_receiver.recv_requests()
+             self.process_input_requests(recv_reqs)
+@@ -561,6 +604,9 @@
+             self.waiting_queue.extend(
+                 self.disagg_prefill_bootstrap_queue.pop_bootstrapped()
+             )
++
++            if self.delay_disagg_prefill_start(was_idle):
++                continue
+ 
+             # Get the next batch to run
+             plan = self.get_next_disagg_prefill_batch_to_run(
+@@ -592,6 +638,7 @@
+         self.result_queue = deque()
+ 
+         while True:
++            was_idle = self.disagg_prefill_start_idle()
+             # Receive requests
+             recv_reqs = self.request_receiver.recv_requests()
+             self.process_input_requests(recv_reqs)
+@@ -600,6 +647,9 @@
+             self.waiting_queue.extend(
+                 self.disagg_prefill_bootstrap_queue.pop_bootstrapped()
+             )
++
++            if self.delay_disagg_prefill_start(was_idle):
++                continue
+ 
+             # Get the next batch to run
+             plan = self.get_next_disagg_prefill_batch_to_run(
