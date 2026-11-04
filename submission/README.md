@@ -28,6 +28,7 @@ The kernel choices are fixed in `config/prefill-kernels.env` and `config/decode-
 - `config/`: serving settings, the pinned role env files and the PP4 GPU clock table.
 - [patches/README.md](patches/README.md): every image patch, kernel source and runtime overlay, with hashes, application points and numerical classifications (unestablished classes are marked `to confirm`).
 - `results/41573354672/`: curated evidence of the measured run.
+- [analysis/README.md](analysis/README.md): the optional profiling data, the round 24 Nsight capture of the 10k configuration, with its relation to this configuration, its findings and the download and checksum steps for the reports kept outside Git.
 
 The whole accompanying repository is required for rebuilding: `containers/`, `scripts/build-sglang-container.sh`, repository patches and `kernels/` are build inputs. Once an image exists, `submission/` is sufficient for preparation and execution of this Bonus package. Basic uses its separately documented whole-repository entrypoint. No private SGLang mirror, team credentials, GitHub Actions, or team-specific runtime directory is needed by the organisers.
 
