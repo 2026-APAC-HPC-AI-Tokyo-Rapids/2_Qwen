@@ -281,7 +281,7 @@ def test_generic_launcher_shell_remains_byte_identical_to_parent():
 
 
 def test_curated_evidence_checksums_and_local_official_parser(tmp_path):
-    assert sorted(path.name for path in (PACKAGE / "results").iterdir()) == ["41573354672"]
+    assert sorted(path.name for path in (PACKAGE / "results").iterdir()) == ["41573354672", "41694678252"]
     checked = set()
     for line in (EVIDENCE / "SHA256SUMS").read_text().splitlines():
         digest, path = line.split("  ", 1)
@@ -342,3 +342,43 @@ def test_boundary_commit_copy_matches_available_source_mirror():
         pytest.skip("fixed source mirror unavailable")
     original = subprocess.check_output(["git", "-C", str(mirror), "cat-file", "commit", "6b350686"])
     assert (PACKAGE / "build/sglang-6b350686.commit").read_bytes() == original
+
+
+@pytest.mark.parametrize("run,job,score,requests", [("41078642203", "27682", 6321.12, 4019), ("41093781934", "27709", 6339.31, 4024)])
+def test_basic_evidence_checksums_and_local_official_parser(tmp_path, run, job, score, requests):
+    evidence = PACKAGE / "basic/results" / run
+    basic = json.loads((ROOT / "configs/firmus-basic.json").read_text())
+    checked = set()
+    for line in (evidence / "SHA256SUMS").read_text().splitlines():
+        digest, path = line.split("  ", 1)
+        assert hashlib.sha256((evidence / path).read_bytes()).hexdigest() == digest
+        checked.add(evidence / path)
+    assert checked == {p for p in evidence.rglob("*") if p.is_file() and p.name != "SHA256SUMS"}
+    output = tmp_path / "score.json"
+    subprocess.run(["python3", str(PACKAGE / "run/parse-aiperf-result.py"), str(evidence / "profile_export_aiperf.json"), str(output), "--concurrency", str(basic["concurrency"]), "--require-eligible", "--command", str(evidence / "aiperf-command.txt"), "--provenance", str(evidence / "aiperf-provenance.txt")], check=True)
+    recorded = json.loads((evidence / "score.json").read_text())
+    assert json.loads(output.read_text()) == recorded
+    assert round(recorded["good_output_tokens_per_second"], 2) == score and recorded["request_count"] == requests and recorded["error_request_count"] == 0
+    assert (evidence / "logs/slurm-accounting.txt").read_text().startswith(f"{job}|COMPLETED|0:0|")
+
+
+def test_basic_build_record_matches_pinned_image():
+    sidecar = json.loads((PACKAGE / "basic/build/provenance.json").read_text())
+    basic = json.loads((ROOT / "configs/firmus-basic.json").read_text())
+    assert sidecar["container_artifact"]["sha256"] == basic["container_sha256"] and sidecar["container_artifact"]["size_bytes"] == basic["container_size_bytes"]
+    assert sidecar["source_commits"]["qwen"] == basic["container_source_commit"] and sidecar["applied_patches"] == []
+    assert f"Successfully tagged localhost/apac-qwen-basic:{basic['container_source_commit']}" in (PACKAGE / "basic/build/build.log").read_text()
+
+
+def test_standalone_evidence_has_the_highest_score_and_the_probe_failure(tmp_path):
+    evidence = PACKAGE / "results/41694678252"
+    for line in (evidence / "SHA256SUMS").read_text().splitlines():
+        digest, path = line.split("  ", 1)
+        assert hashlib.sha256((evidence / path).read_bytes()).hexdigest() == digest
+    output = tmp_path / "score.json"
+    subprocess.run(["python3", str(PACKAGE / "run/parse-aiperf-result.py"), str(evidence / "profile_export_aiperf.json"), str(output), "--concurrency", str(CONFIG["concurrency"]), "--require-eligible", "--command", str(evidence / "aiperf-command.txt"), "--provenance", str(evidence / "aiperf-provenance.txt")], check=True)
+    score = json.loads((evidence / "score.json").read_text())
+    assert json.loads(output.read_text()) == score
+    assert round(score["good_output_tokens_per_second"], 2) == 10025.34 and score["request_count"] == 6316 and score["error_request_count"] == 0
+    assert (evidence / "logs/slurm-accounting.txt").read_text() == "28589|FAILED|1:0|00:13:05|2\n"
+    assert b"'NoneType' object has no attribute 'next_token_logprobs'" in (evidence / "logs/prefill-0.log").read_bytes()
