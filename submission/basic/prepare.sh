@@ -6,7 +6,7 @@
 #   IMAGE               BUILD.sqsh from scripts/build-basic-container.sh, with BUILD.container-sidecar.json beside it
 #   MODEL               Qwen/Qwen3-235B-A22B-Instruct-2507-FP8 at revision e156cb4efae43fbee1a1ab073f946a1377e6b969
 #   TOKENIZER_SNAPSHOT  Qwen/Qwen3-235B-A22B-Instruct-2507 tokenizer files at TOKENIZER_REVISION
-#   CONFIG              submission/basic/config/firmus-basic.json (or a copy with a new build's image pins)
+#   CONFIG              basic/config/firmus-basic.json (or a copy with a new build's image pins)
 #
 # Then: cd RUN_DIR && sbatch --export=PATH,HOME,USER,LOGNAME scripts/submit.sbatch
 # Nothing in SGLang, its kernels or the gateway is patched; only the draft's config is rewritten (see below).
@@ -18,7 +18,7 @@ TOKENIZER_FILES=(config.json generation_config.json merges.txt tokenizer.json to
 DRAFT_REPOSITORY=nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507
 DRAFT_REVISION=ff0f0c0999f6c86b21dfd2f5803eebc4ac712224
 
-repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+package=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 root=$(realpath -m "$1")
 image=$(realpath "$2")
 model=$(realpath "$3")
@@ -48,14 +48,14 @@ printf '%s' "${TOKENIZER_REVISION}" >"${cache}/refs/main"
 export HF_HUB_DISABLE_XET=1
 uvx --from huggingface_hub==0.36.0 hf download "${DRAFT_REPOSITORY}" config.json README.md model.safetensors --revision "${DRAFT_REVISION}" --local-dir "${root}/draft" --max-workers 1
 # Only the architecture selector and the dtype declaration change; the weights do not.
-python3 "${repo}/submission/run/prepare_eagle.py" "${root}/draft" "${root}/source"
+python3 "${package}/run/prepare_eagle.py" "${root}/draft" "${root}/source"
 
 # ---- Job scripts ----
 
-cp "${repo}/submission/basic/submit.sbatch" "${repo}/submission/basic/worker.py" "${repo}/submission/run/parse-aiperf-result.py" "${root}/scripts/"
+cp "${package}/basic/submit.sbatch" "${package}/basic/worker.py" "${package}/run/parse-aiperf-result.py" "${root}/scripts/"
 # The official benchmark command is unchanged; AIPerf only runs from the image's separate /opt/aiperf environment.
-sed 's|/opt/sglang/venv/bin/|/opt/aiperf/bin/|g' "${repo}/submission/run/official-aiperf.sh" >"${root}/scripts/official-aiperf.sh"
+sed 's|/opt/sglang/venv/bin/|/opt/aiperf/bin/|g' "${package}/run/official-aiperf.sh" >"${root}/scripts/official-aiperf.sh"
 # Keep the exact preparation scripts with the run's records.
-cp "${repo}/submission/basic/prepare.sh" "${repo}/submission/run/prepare_eagle.py" "${root}/source/"
+cp "${package}/basic/prepare.sh" "${package}/run/prepare_eagle.py" "${root}/source/"
 
 printf 'cd %q && sbatch --export=PATH,HOME,USER,LOGNAME scripts/submit.sbatch\n' "${root}"

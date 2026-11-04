@@ -12,23 +12,23 @@ The Bonus configuration is **1.59×** the team's own Basic mean on the same mach
 
 ## Where each deliverable is
 
-Paths are relative to this folder. `submission/` is self-contained: both images are rebuilt from the build inputs copied into it (`submission/build/source/` for Bonus, `submission/basic/build/source/` for Basic).
+Paths are relative to this folder, which is self-contained: both images are rebuilt from the build inputs copied into it (`build/source/` for Bonus, `basic/build/source/` for Basic).
 
 | Deliverable | Basic | Bonus |
 | --- | --- | --- |
-| Overview and reproduction | [submission/basic/README.md](submission/basic/README.md) | [submission/README.md](submission/README.md) |
-| Software stack build method | `submission/basic/build/setup.sh` with `submission/basic/build/source/` | `submission/build/sglang-mirror.sh`, `submission/build/setup.sh` with `submission/build/source/` |
-| Build log and image record | `submission/basic/build/` | `submission/build/build.log`, `submission/build/provenance.json` |
-| Single Slurm job script | `submission/basic/submit.sbatch` (prepared by `submission/basic/prepare.sh`) | `submission/run/submit.sbatch` (prepared by `submission/run/prepare.sh`) |
-| AIPerf logs and `profile_export_aiperf.json` | `submission/basic/results/41078642203/`, `41093781934/` | `submission/results/41767886175/` (measured run), `41781374312/` (standalone run of the package) |
-| Patches as text | None (no source patch) | `submission/patches/` with [the inventory](submission/patches/README.md) |
+| Overview and reproduction | [basic/README.md](basic/README.md) | [README.md](README.md) |
+| Software stack build method | `basic/build/setup.sh` with `basic/build/source/` | `build/sglang-mirror.sh`, `build/setup.sh` with `build/source/` |
+| Build log and image record | `basic/build/` | `build/build.log`, `build/provenance.json` |
+| Single Slurm job script | `basic/submit.sbatch` (prepared by `basic/prepare.sh`) | `run/submit.sbatch` (prepared by `run/prepare.sh`) |
+| AIPerf logs and `profile_export_aiperf.json` | `basic/results/41078642203/`, `41093781934/` | `results/41767886175/` (measured run), `41781374312/` (standalone run of the package) |
+| Patches as text | None (no source patch) | `patches/` with [the inventory](patches/README.md) |
 | Draft declaration | Basic README, "Draft declaration" | Bonus README, "Draft declaration" |
-| Profiling data (optional) | — | `submission/analysis/` and `submission/analysis/profiling_data/` |
-| Presentation slides | `presentation/team_presentation.pptx` | (same deck) |
+| Profiling data (optional) | — | `analysis/` and `analysis/profiling_data/` |
+| Presentation slides | Team deck, submitted alongside this folder | (same deck) |
 
 ## Bonus proof (README Addendum R3)
 
-1. **What changed**: every image patch, kernel source and runtime overlay is listed with its SHA-256 and application point in `submission/patches/README.md`; the runtime overlays are copied verbatim under `submission/patches/overlay/`.
+1. **What changed**: every image patch, kernel source and runtime overlay is listed with its SHA-256 and application point in `patches/README.md`; the runtime overlays are copied verbatim under `patches/overlay/`.
 2. **Why it is the same math**: the same inventory gives each change's numerical class (bit-identical, FP-order, rounding-placement, no numeric effect) with its basis, read from the patch text and the recorded evidence. No change approximates a function, lowers a number format below the checkpoint's FP8 blocks, or skips a computation whose result is used.
-3. **Evidence**: the organisers run the full-set accuracy check. The Bonus job also runs a fixed greedy probe after the official benchmark, written to `results/greedy-parity.json` of its run directory (`submission/results/41781374312/greedy-parity.json` for the standalone run), so outputs can be compared before and after a change.
+3. **Evidence**: the organisers run the full-set accuracy check. The Bonus job also runs a fixed greedy probe after the official benchmark, written to `results/greedy-parity.json` of its run directory (`results/41781374312/greedy-parity.json` for the standalone run), so outputs can be compared before and after a change.
 4. **Speedup against our Basic**: 10054.49 against 6330.21 good output tok/s, both on Firmus 2 × 8 H200.
