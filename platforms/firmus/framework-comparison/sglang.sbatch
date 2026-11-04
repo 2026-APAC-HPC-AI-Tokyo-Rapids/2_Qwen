@@ -462,3 +462,4 @@ touch "${ROOT}/run-success"
 # Round 41 submit: B/C pinned, MegaMoE scale-path upper-bound probe in the freed window, host rebuild.
 # Round 41 resubmit: built image 2fb619c4 reused after the sbatch SSH drop.
 # Round 44 submit: dense N64 candidate gate with promotion diagnostic bound, host rebuild.
+# Round 44 resubmit: CPU harness contraction fixed, dense N64 gate unchanged.
