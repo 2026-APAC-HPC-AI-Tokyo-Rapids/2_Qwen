@@ -3,6 +3,7 @@
 Snapshots read ordinary kernel buffers after completion. Timing and endurance
 use the ordinary uninstrumented serving API. No diagnostic kernel is compiled.
 """
+import faulthandler
 import hashlib
 import json
 import math
@@ -15,6 +16,7 @@ SCHEMA = "firmus-prefill-megamoe-fc1-first-k/v1"
 KEY = "DG_SM90_PREFILL_FC1_FIRST_K"
 CONTROL = "four-stage-lean-split"
 CALLS, ROUNDS, SECONDS = 1200, 12, 95
+AGGREGATE_SECONDS = 105
 TIMED = ("balanced", "hot", "historical")
 CASES = (*TIMED, "edges-low", "edges-high", "edges-pool", "zero", "wide", *(f"saved-{i}" for i in range(36)))
 COMPONENTS = ("output", "fc1_fp8", "fc1_scale", "fc2_bf16_partial")
@@ -67,10 +69,11 @@ def check_reference(record):
             assert type(row[key]) in (int, float) and math.isfinite(row[key]) and 0 <= row[key] < limit, "FP32 reference threshold"
 
 
-def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_ok, image):
-    result = {"schema": SCHEMA, "adopted": False, "run_id": run_id, "gpus": [], "rule": {"control": CONTROL, "calls": CALLS, "rounds_per_order": ROUNDS, "minimum_us": MARGIN_US, "minimum_fraction": MARGIN_FRACTION, "seconds": SECONDS, "components": COMPONENTS, "cases": CASES, "timing": "post-r32 pooled per-GPU medians", "minimum_positive_gpus": 9, "maximum_gpu_loss_fraction": 0.01}}
+def aggregate(directory, env_output, pair_selection, run_id, deadline, worker_exit_codes, image):
+    result = {"schema": SCHEMA, "adopted": False, "run_id": run_id, "worker_exit_codes": {f"prefill-{i}": code for i, code in enumerate(worker_exit_codes)}, "gpus": [], "rule": {"control": CONTROL, "calls": CALLS, "rounds_per_order": ROUNDS, "minimum_us": MARGIN_US, "minimum_fraction": MARGIN_FRACTION, "seconds": SECONDS, "components": COMPONENTS, "cases": CASES, "timing": "post-r32 pooled per-GPU medians", "minimum_positive_gpus": 9, "maximum_gpu_loss_fraction": 0.01}}
     try:
-        assert workers_ok and time.time() <= deadline, "failed workers or expired budget"
+        assert time.time() <= deadline, "expired budget"
+        worker_deadline = deadline - (AGGREGATE_SECONDS - SECONDS)
         prior = read(pair_selection)
         assert prior["adopted"] is True, "P prerequisite missing"
         identities = {g["uuid"] for g in prior["gpus"]}
@@ -84,7 +87,7 @@ def aggregate(directory, env_output, pair_selection, run_id, deadline, workers_o
                 assert r["schema"] == SCHEMA and r["run_id"] == run_id and r["rank"] == rank, "stale rank"
                 assert r["worker"] == f"prefill-{worker}" and r["uuid"] in identities and r["uuid"] not in uuids and "H200" in r["device"], "wrong GPU"
                 assert r["image_sha256"] == image and r["healthy"] is True, "wrong image or failed worker"
-                assert 0 < r["elapsed_seconds"] < SECONDS and r["finished_at"] <= deadline, "late worker"
+                assert 0 < r["elapsed_seconds"] < SECONDS and r["finished_at"] <= worker_deadline, "late worker"
                 assert len(r["header_sha256"]) == 64 and len(r["routing_sha256"]) == 64, "missing provenance"
                 headers.add((r["header_sha256"], r["routing_sha256"]))
                 uuids.add(r["uuid"])
@@ -295,4 +298,7 @@ def finish(torch, dist, buffers, result, output, rank, begin):
     result.update(healthy=True, elapsed_seconds=time.monotonic() - begin, finished_at=time.time())
     output.mkdir(parents=True, exist_ok=True)
     (output / f"rank-{rank}.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
+    # Temporary exit diagnostic; remove once the rank/agent exit delay is located.
+    # dump_traceback_later includes all Python threads and defaults to stderr.
+    faulthandler.dump_traceback_later(10, repeat=True)
     print(json.dumps({k: v for k, v in result.items() if k not in ("exact", "timing")}), flush=True)

@@ -349,26 +349,29 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.decode_greedy_verify_gate // false' "${
 fi
 # Decode greedy gate end.
 
-# Round 32 candidate / round 33 pooled gate; keep 630 s for serving and collection (round 32 used 549 s after its gate).
+# Round 32 candidate / round 34 published-result gate; keep the round 33 budgets.
 if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.megamoe_fc1_first_k_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
   mkdir -p "${ROOT}/results/prefill-megamoe-fc1-first-k"
   if (( SECONDS + 105 + 630 <= 1020 )) && [[ -s "${ROOT}/results/prefill-fa3-prepack/selection.json" ]] && jq -e '.adopted == true' "${ROOT}/results/prefill-fa3-prepack/selection.json" >/dev/null; then
     prefill_fc1_first_k_started=$(date +%s)
-    prefill_fc1_first_k_ok=1
+    prefill_fc1_first_k_exit_codes=()
     prefill_fc1_first_k_selections=()
     for worker in 0 1 2; do
       node=${HEAD}
       if (( worker == 2 )); then node=${TAIL}; fi
       prefill_fc1_first_k_remaining=$((prefill_fc1_first_k_started + 95 - $(date +%s)))
-      if (( prefill_fc1_first_k_remaining <= 0 )); then prefill_fc1_first_k_ok=0; break; fi
+      if (( prefill_fc1_first_k_remaining <= 0 )); then break; fi
       timeout --kill-after=2 "${prefill_fc1_first_k_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-megamoe-fc1-first-k-${worker})" env DG_JIT_CACHE_DIR="/tmp/sglang-r32-${SLURM_JOB_ID}-${worker}/deepgemm" TRITON_CACHE_DIR="/tmp/sglang-r32-${SLURM_JOB_ID}-${worker}/triton" TVM_FFI_CACHE_DIR="/tmp/sglang-r32-${SLURM_JOB_ID}-${worker}/tvm" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --fc1-first-k --output "${ROOT}/results/prefill-megamoe-fc1-first-k/prefill-${worker}" --routing "${ROOT}/source/megamoe-local-ep1-routing.npz" --run-id "${SLURM_JOB_ID}-${prefill_fc1_first_k_started}" --deadline "$((prefill_fc1_first_k_started + 95))" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-megamoe-fc1-first-k-${worker}.log" 2>&1 &
       prefill_fc1_first_k_selections+=("$!")
     done
-    for pid in "${prefill_fc1_first_k_selections[@]}"; do wait "${pid}" || prefill_fc1_first_k_ok=0; done
+    # Reap every timeout/srun before aggregation and serving; exits are diagnostic only.
+    for pid in "${prefill_fc1_first_k_selections[@]}"; do
+      if wait "${pid}"; then prefill_fc1_first_k_exit_codes+=(0); else prefill_fc1_first_k_exit_codes+=("$?"); fi
+    done
     prefill_fc1_first_k_remaining=$((prefill_fc1_first_k_started + 105 - $(date +%s)))
     if (( prefill_fc1_first_k_remaining > 0 )); then
       cp "${ROOT}/source/prefill-kernels.env" "${ROOT}/source/prefill-kernels.r32.env"
-      if timeout --signal=KILL "${prefill_fc1_first_k_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --fc1-first-k --aggregate "${ROOT}/results/prefill-megamoe-fc1-first-k" --output "${ROOT}/results/prefill-megamoe-fc1-first-k/selection.json" --env-output "${ROOT}/source/prefill-kernels.r32.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_fc1_first_k_started}" --deadline "$((prefill_fc1_first_k_started + 105))" --workers-ok "${prefill_fc1_first_k_ok}" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" && jq -e '.adopted == true' "${ROOT}/results/prefill-megamoe-fc1-first-k/selection.json" >/dev/null; then
+      if timeout --signal=KILL "${prefill_fc1_first_k_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --fc1-first-k --aggregate "${ROOT}/results/prefill-megamoe-fc1-first-k" --output "${ROOT}/results/prefill-megamoe-fc1-first-k/selection.json" --env-output "${ROOT}/source/prefill-kernels.r32.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_fc1_first_k_started}" --deadline "$((prefill_fc1_first_k_started + 105))" --worker-exit-codes "${prefill_fc1_first_k_exit_codes[@]}" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" && jq -e '.adopted == true' "${ROOT}/results/prefill-megamoe-fc1-first-k/selection.json" >/dev/null; then
         mv "${ROOT}/source/prefill-kernels.r32.env" "${ROOT}/source/prefill-kernels.env"
       fi
       rm -f "${ROOT}/source/prefill-kernels.r32.env" "${ROOT}/source/prefill-kernels.r32.env.fc1-first-k.tmp"

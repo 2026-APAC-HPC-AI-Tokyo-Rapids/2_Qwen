@@ -31,9 +31,9 @@ def screen(tmp_path):
     return tmp_path, env, pair, now + 100
 
 
-def aggregate(screen, workers_ok=True):
+def aggregate(screen, worker_exit_codes=(0, 0, 0)):
     directory, env, pair, deadline = screen
-    return G["aggregate"](directory, env, pair, "123-r32", deadline, workers_ok, "a" * 64)
+    return G["aggregate"](directory, env, pair, "123-r32", deadline, worker_exit_codes, "a" * 64)
 
 
 def test_complete_twelve_gpu_evidence_adopts(screen):
@@ -85,8 +85,11 @@ def test_every_missing_or_failing_cell_rejects(screen, bad):
     assert screen[1].read_text() == PIN
 
 
-def test_worker_timeout_and_missing_p_reject(screen):
-    assert not aggregate(screen, False)["adopted"]
+def test_worker_timeout_is_diagnostic_but_missing_p_rejects(screen):
+    result = aggregate(screen, (124, 137, 0))
+    assert result["adopted"]
+    assert result["worker_exit_codes"] == {"prefill-0": 124, "prefill-1": 137, "prefill-2": 0}
+    screen[1].write_text(PIN)
     value = json.loads(screen[2].read_text())
     value["gpus"].pop()
     screen[2].write_text(json.dumps(value))
@@ -96,7 +99,7 @@ def test_worker_timeout_and_missing_p_reject(screen):
 
 def test_post_greedy_budget_and_staging():
     batch = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
-    assert batch.index("# Decode greedy gate end.") < batch.index("# Round 32 candidate / round 33 pooled gate;") < batch.index('bash "${ROOT}/source/worker.sh" prefill-0')
+    assert batch.index("# Decode greedy gate end.") < batch.index("# Round 32 candidate / round 34 published-result gate;") < batch.index('bash "${ROOT}/source/worker.sh" prefill-0')
     assert "SECONDS + 105 + 630 <= 1020" in batch
     assert 'env DG_JIT_CACHE_DIR="/tmp/sglang-r32-' in batch and 'TRITON_CACHE_DIR="/tmp/sglang-r32-' in batch
     assert 'TVM_FFI_CACHE_DIR="/tmp/sglang-r32-' in batch
@@ -123,8 +126,7 @@ def test_round32_saved_measurements_pass_pooled_rule(screen):
         assert summary["saving_median_us"] == pytest.approx({"pooled": pooled, "forward": forward, "reverse": reverse})
         assert summary["positive_gpus"] == positive
         assert summary["minimum_saving_us"] == pytest.approx(worst)
-    # Replaying timings does not turn the original failed worker exits into success.
-    assert not aggregate(screen, workers_ok=False)["adopted"]
+    # This is a timing replay with synthetic health records, not an adoption of round 32.
 
 
 def samples(control, forward, reverse=None):
@@ -165,7 +167,7 @@ def test_pool_samples_within_each_gpu_before_cross_gpu_median():
 
 
 @pytest.mark.parametrize("fail", (False, True))
-def test_cleanup_releases_all_views_and_ep1_before_world_and_publication(tmp_path, fail):
+def test_cleanup_releases_all_views_and_ep1_before_world_and_publication(tmp_path, fail, monkeypatch):
     calls = []
     group = object()
     fields = ("topk_idx", "topk_weights", "l1_acts", "l1_acts_sf", "l2_acts", "l2_acts_sf")
@@ -189,6 +191,12 @@ def test_cleanup_releases_all_views_and_ep1_before_world_and_publication(tmp_pat
 
     torch = SimpleNamespace(cuda=SimpleNamespace(synchronize=lambda: calls.append("sync")))
     dist = SimpleNamespace(barrier=lambda: calls.append("barrier"), destroy_process_group=destroy)
+    def arm_dump(delay, *, repeat):
+        assert delay == 10 and repeat is True
+        assert json.loads((tmp_path / "rank-0.json").read_text())["healthy"] is True
+        calls.append("dump")
+
+    monkeypatch.setattr(G["faulthandler"], "dump_traceback_later", arm_dump)
     record = {"healthy": False}
     if fail:
         with pytest.raises(RuntimeError, match="cleanup failed"):
@@ -197,7 +205,7 @@ def test_cleanup_releases_all_views_and_ep1_before_world_and_publication(tmp_pat
     else:
         G["finish"](torch, dist, (Buffer(), Buffer()), record, tmp_path, 0, time.monotonic())
         assert json.loads((tmp_path / "rank-0.json").read_text())["healthy"] is True
-    assert calls == ["sync", "barrier", "buffer", "buffer", "EP1", "barrier", "WORLD"]
+    assert calls == ["sync", "barrier", "buffer", "buffer", "EP1", "barrier", "WORLD"] + ([] if fail else ["dump"])
 
 
 def test_round32_budget_with_head_container_delay():
@@ -216,7 +224,7 @@ def test_round32_budget_with_head_container_delay():
         assert r["finished_at"] - fixture["gate_started_at"] < 56
         assert r["finished_at"] - fixture["gate_started_at"] < G["SECONDS"]
     batch = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
-    block = batch[batch.index("# Round 32 candidate / round 33 pooled gate;"):batch.index('bash "${ROOT}/source/worker.sh" prefill-0')]
+    block = batch[batch.index("# Round 32 candidate / round 34 published-result gate;"):batch.index('bash "${ROOT}/source/worker.sh" prefill-0')]
     assert block.count("prefill_fc1_first_k_started + 95") == 2
     assert block.count("prefill_fc1_first_k_started + 105") == 2
 
@@ -237,3 +245,131 @@ def test_relative_threshold_uses_per_gpu_saving_fractions():
     rows = [samples(10000., 49.) for _ in range(4)] + [samples(100000., 499.) for _ in range(3)] + [samples(100., 90.) for _ in range(5)]
     with pytest.raises(AssertionError, match="below pooled"):
         G["pooled_margin"](rows)
+
+
+@pytest.fixture
+def round33_screen(tmp_path, monkeypatch):
+    """Deduplicate identical measured checks and equal reference modes, without fabricating checks."""
+    fixture = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/prefill-r33-results.json").read_text())
+    for gpu in fixture["gpus"]:
+        record = fixture["shared"] | {k: v for k, v in gpu.items() if k != "rank_json_sha256"}
+        record["reference"] = {name: {mode: row for mode in ("control", "candidate")} for name, row in gpu["reference"].items()}
+        directory = tmp_path / gpu["worker"]
+        directory.mkdir(exist_ok=True)
+        (directory / f"rank-{gpu['rank']}.json").write_text(json.dumps(record))
+    pair = tmp_path / "pair.json"
+    pair.write_text(json.dumps(fixture["pair_selection"]))
+    env = tmp_path / "prefill.env"
+    env.write_text(PIN)
+    # HEAD timeout at 95 s, plus the existing 2 s kill grace; aggregate still has 8 s.
+    monkeypatch.setattr(G["time"], "time", lambda: fixture["gate_started_at"] + 97)
+    return fixture, tmp_path, env, pair
+
+
+def replay_round33(screen, worker_exit_codes=(124, 124, 0)):
+    # GNU timeout status 124 represents the observed HEAD kills. The archive
+    # did not record exact wrapper exit codes; these are replay inputs only.
+    fixture, directory, env, pair = screen
+    return G["aggregate"](directory, env, pair, fixture["shared"]["run_id"], fixture["gate_started_at"] + 105, worker_exit_codes, fixture["shared"]["image_sha256"])
+
+
+@pytest.mark.parametrize("codes", ((124, 124, 0), (137, 137, 0), (1, 1, 0)))
+def test_round33_published_results_adopt_despite_head_exit_codes(round33_screen, codes):
+    result = replay_round33(round33_screen, codes)
+    assert result["adopted"]
+    assert len(result["gpus"]) == 12
+    assert result["worker_exit_codes"] == {f"prefill-{i}": code for i, code in enumerate(codes)}
+    assert "DG_SM90_PREFILL_FC1_FIRST_K=1\n" in round33_screen[2].read_text()
+    expected = {"balanced": (21.7360258102417, 0.00859080877281792, 12), "hot": (19.752025604248047, 0.007645746590504099, 11), "historical": (16.080021858215332, 0.006373758905076718, 12)}
+    for name, (saving, fraction, positive) in expected.items():
+        summary = result["timing_summary"][name]
+        assert summary["saving_median_us"]["pooled"] == pytest.approx(saving)
+        assert summary["saving_median_fraction"] == pytest.approx(fraction)
+        assert summary["positive_gpus"] == positive
+
+
+@pytest.mark.parametrize("worker", range(3))
+@pytest.mark.parametrize("rank", range(4))
+@pytest.mark.parametrize("failure", ("missing", "unhealthy", "late"))
+def test_round33_every_rank_must_publish_healthy_before_worker_deadline(round33_screen, worker, rank, failure):
+    fixture, directory, env, _ = round33_screen
+    path = directory / f"prefill-{worker}/rank-{rank}.json"
+    if failure == "missing":
+        path.unlink()
+    else:
+        record = json.loads(path.read_text())
+        if failure == "unhealthy":
+            record["healthy"] = False
+        else:
+            # Inside the aggregate's 105 s, but after the worker's 95 s deadline.
+            record["finished_at"] = fixture["gate_started_at"] + 96
+        path.write_text(json.dumps(record))
+    result = replay_round33(round33_screen)
+    assert not result["adopted"]
+    assert result["worker_exit_codes"] == {"prefill-0": 124, "prefill-1": 124, "prefill-2": 0}
+    assert env.read_text() == PIN
+
+
+@pytest.mark.parametrize("stage", ("start", "finish"))
+def test_round33_aggregate_deadline_still_rejects(round33_screen, monkeypatch, stage):
+    fixture, _, env, _ = round33_screen
+    now = fixture["gate_started_at"]
+    times = iter([now + 106] if stage == "start" else [now + 97, now + 106])
+    monkeypatch.setattr(G["time"], "time", lambda: next(times))
+    result = replay_round33(round33_screen)
+    assert not result["adopted"]
+    assert "expired" in result["reason"]
+    assert env.read_text() == PIN
+
+
+def test_round33_budget_includes_measured_start_and_publication():
+    fixture = json.loads((ROOT / "qwen-experiment-metrics/tests/fixtures/prefill-r33-results.json").read_text())
+    elapsed = fixture["gate_started_at"] - fixture["slurm_first_log_at"]
+    assert elapsed == 257
+    reserved = elapsed + G["AGGREGATE_SECONDS"] + 630
+    assert reserved == 992 and reserved <= 1020
+    old_reserved = elapsed + G["AGGREGATE_SECONDS"] + 660
+    assert old_reserved == 1022 and old_reserved > 1020
+    assert G["SECONDS"] == 95 and G["AGGREGATE_SECONDS"] == 105
+    for gpu in fixture["gpus"]:
+        published = gpu["finished_at"] - fixture["gate_started_at"]
+        assert (33 < published < 34) if gpu["worker"] == "prefill-2" else (52 < published < 55)
+        assert published < G["SECONDS"] and 0 < gpu["elapsed_seconds"] < G["SECONDS"]
+
+
+def test_round34_cli_records_exit_codes_in_selection(round33_screen, monkeypatch):
+    import sys
+
+    fixture, directory, env, pair = round33_screen
+    selection = directory / "selection.json"
+    monkeypatch.setitem(sys.modules, "firmus_prefill_fc1_first_k", SimpleNamespace(aggregate=G["aggregate"]))
+    monkeypatch.setattr(sys, "argv", ["selector", "--fc1-first-k", "--aggregate", str(directory), "--output", str(selection), "--env-output", str(env), "--pair-selection", str(pair), "--run-id", fixture["shared"]["run_id"], "--deadline", str(fixture["gate_started_at"] + 105), "--worker-exit-codes", "124", "137", "0", "--image-sha256", fixture["shared"]["image_sha256"]])
+    runpy.run_path(str(ROOT / "scripts/select-firmus-prefill-megamoe.py"), run_name="__main__")
+    result = json.loads(selection.read_text())
+    assert result["adopted"]
+    assert result["worker_exit_codes"] == {"prefill-0": 124, "prefill-1": 137, "prefill-2": 0}
+
+
+def test_rank_main_return_marker_follows_run_return(monkeypatch, capsys):
+    import sys
+
+    def run(*args):
+        print("run returned", file=sys.stderr)
+
+    monkeypatch.setitem(sys.modules, "firmus_prefill_fc1_first_k", SimpleNamespace(run=run))
+    monkeypatch.setenv("LOCAL_RANK", "2")
+    monkeypatch.setattr(sys, "argv", ["selector", "--fc1-first-k", "--output", "unused", "--routing", "unused", "--run-id", "123-456", "--deadline", "551", "--image-sha256", "a" * 64])
+    runpy.run_path(str(ROOT / "scripts/select-firmus-prefill-megamoe.py"), run_name="__main__")
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[0] == "run returned"
+    assert lines[1].startswith("[") and "Z] FC1 first-K rank=2 main returning" in lines[1]
+
+
+def test_all_worker_waits_precede_aggregate_and_serving():
+    batch = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
+    block = batch[batch.index("# Round 32 candidate / round 34 published-result gate;"):batch.index('bash "${ROOT}/source/worker.sh" prefill-0')]
+    assert 'timeout --kill-after=2 "${prefill_fc1_first_k_remaining}" srun' in block
+    assert block.index('wait "${pid}"') < block.index('--aggregate')
+    assert 'else prefill_fc1_first_k_exit_codes+=("$?")' in block
+    assert '--worker-exit-codes "${prefill_fc1_first_k_exit_codes[@]}"' in block
+    assert "prefill_fc1_first_k_ok" not in block

@@ -136,3 +136,25 @@ build artifact `qwen-aws-container-build-41729881283-1/build-logs.tar.zst` の `
 ### Round 33 のローカル検証
 
 指定のPATH設定後、指定どおりの全体pytestコマンドは最終再実行で**終了コード0**。最終収集数は2088件。`uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers` も**終了コード0**。更新対象gate/prewarmの56件、shell構文、diff whitespace、全24保存source hashとimage/manifestの照合も通過した。初回全体pytestは圧縮prewarm fixtureに旧image SHAが残っていたため6 setup errorで終了コード1となった。この参照漏れを修正し、対象56件の成功後、指定の全体コマンドを再実行して0を確認した。実行中ジョブの取消・GPU再実行による確認は行っていない。新規の診断scriptや展開用一時sourceは残さず、意図した計時fixtureと更新した既存圧縮fixtureだけを追跡対象とする。
+
+### Round 33 結果と round 34 の公開結果による採否
+
+round 33 submit `f8a179d` の run **41750956297 / Slurm 28637** を、`/srv/qwen-artifacts/41750956297/1/` の `logs/logs` と `results/results` から読み取り確認した。job最初のlogは **10:36:20+08**、gate開始epochは **1793760037 = 10:40:37+08**、差は **257秒**。worker 2（TAIL）の4 rankは開始 **33.763〜33.807秒後**、worker 1（HEAD）は **52.695〜52.705秒後**、worker 0（HEAD）は **54.965〜54.970秒後**にhealthy JSONを公開した。全12 rankでCUDA同期・view解放・buffer破棄・EP1/WORLD破棄が戻った後の公開であり、44case×4成分byte、独立FP32閾値、全24cellの1200callと復帰検査をすべて満たした。
+
+それでもHEAD worker 0/1は95秒までsrunが終了せず、各logの **10:42:12** に `CANCELLED ... DUE to SIGNAL Killed` が残った。TAIL worker 2はdeadline内に終了した。公開後も約40〜42秒待ってkillされており、round 32と同種の終了遅延が残る。round 33では明示的後始末の完了までは証明できるが、その後のPythonローカル変数破棄・interpreter終了処理・torchrun agentのどこで待つかはstack未保存のため未特定である。元のselectionは **`AssertionError: failed workers or expired budget`** により不採用で、通常servingはcontrolのまま、公式parserのeligible/validはtrue、公式scoreは **9998.667038517062 output tok/s（9998.67）**。候補のserving性能を測った結果ではない。
+
+| routing | pooled median節約 µs | median節約率 | forward median µs | reverse median µs | 正のGPU | 最小pooled µs | 最小節約率 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| balanced | 21.736026 | 0.859081% | 18.608034 | 24.591982 | 12/12 | 12.368083 | 0.477736% |
+| hot | 19.752026 | 0.764575% | 20.559967 | 20.671904 | 11/12 | −0.976086 | −0.037646% |
+| historical | 16.080022 | 0.637376% | 15.871942 | 16.151965 | 12/12 | 7.440090 | 0.299665% |
+
+3 routingともround 33のpooled速度規則を満たす。round 34ではこの速度規則と全12 GPUの既存検査を維持し、**workerの成否を、その4 rankすべての後始末完了後のhealthy公開結果で決める**。srunの非ゼロ終了は採否へ使わず、timeout/srunをwaitした終了コードをworker別の `worker_exit_codes` としてselection.jsonへ記録する。未起動workerの終了コードは捏造せず、その結果欠損によって不採用となる。既存のtimeout 95秒・kill grace 2秒でGPUを解放し、全workerのwaitが終わってから集約・servingへ進む。結果欠損、unhealthy、UUID/source/image/byte/FP32/耐久/速度の各不一致は引き続き不採用。finished_atはworkerの共通deadline（開始+95秒）以下を要求し、集約deadline（開始+105秒）から固定の10秒差で求める。aggregateの開始時・env書換前の時刻検査と外側のtimeoutは105秒のまま維持する。これはround 33観測後の採否変更であり、元runのselectionを成功へ書き換えたり、候補の通常serving優位性を主張したりしない。
+
+終了遅延の原因を次回logで調べるため、各rankでhealthy JSONを書いた**直後**に `faulthandler.dump_traceback_later(10, repeat=True)` を仕掛ける。全Python threadのstackを10秒ごとにstderr（既存worker log）へ出し、run関数から戻った直後・main復帰直前にもUTC時刻とrankの1行をstderrへflushする。main復帰前に止まったのか、その後かをstackと照合する。main復帰logだけではOS processの終了やagent待機までは証明しない。**このstack dumpと復帰logは一時診断であり、原因特定後に削除する**。retry、fallback、os._exit等の強制終了は追加しない。計時・耐久・後始末より後にのみ診断を有効化する。
+
+予算はround 33と同じ **worker 95秒、aggregate 105秒、serving予約630秒、窓1020秒**。実行時の条件は **`SECONDS + 105 + 630 <= 1020`** のまま。round 33の同一run時刻差で **257+105+630=992秒≤1020秒**、旧660秒予約なら **257+105+660=1022秒>1020秒** となりgateが飛んでいた。HEADの公開が最大54.970秒、TAILが最大33.807秒という起動遅延込みの実測も95秒に収まり、95+2秒後には105秒まで8秒が残る。257秒は最初のlogとgate epochの差でありshell初期化や秒丸めを含む実SECONDSの完全な復元ではないため、実行時は引き続きshellのSECONDSを正本とする。
+
+履歴非依存fixture **`qwen-experiment-metrics/tests/fixtures/prefill-r33-results.json`（104163 byte）** は12個のrank JSONから実計時sample、UUID、source/image、healthy、elapsed_seconds/finished_at、44caseのFP32数値とbyte/耐久検査を抽出した。全rankで同一の検査情報をsharedへまとめ、control/candidateで同一のFP32参照行は1行だけ保存してtestで両modeへ復元する。各rank原本のSHA256と実pair prerequisiteのUUID/run_idも保持し、archiveやgit履歴をtest時に参照しない。HEADのkillはlogで観測できる一方、過去のtimeout wrapperの正確な終了コードは保存されていない。testの124/124/0、137/137/0、1/1/0は終了コードが採否へ影響しないことを示す**再生用入力**であり、実測コードとは主張しない。実測全検査と計時を新規則へ通すと採用になり、各workerの各rankについて欠損・unhealthy・開始+96秒の公開を一つずつ与えると、すべて不採用になる。集約の開始時/完了前の105秒超過でも不採用を確認する。
+
+round 32 image pin **`3a47b757bb88f6bc14ad5f151e8405f645007f25f381f631d88046d9bd1b7b04`**（build 41729881283）は変更しない。変更はhostへstageするselector・scheduler script・CPU fixture/test・研究記録だけで、kernel source、dtype、仕事量、FLOP/HBM/NVLinkの模型は不変。build不要。今回の範囲はローカル検証とskip-ci commitの指定branchへのpushまでとし、submit commit、SSH、Actions/Slurm投入・GPU実行・image buildは行わない。
