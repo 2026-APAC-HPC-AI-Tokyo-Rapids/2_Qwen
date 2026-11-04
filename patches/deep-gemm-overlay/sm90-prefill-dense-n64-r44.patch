@@ -1,0 +1,144 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_gemm_1d2d.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_gemm_1d2d.cuh
+@@ -282,6 +282,133 @@
+
+                 // Dispatch `num_former_iters` and launch MMAs
+                 dispatch_num_former_iters<0, kGap, kEnd>(kShouldOptimize ? num_former_iters : 0, [&](auto _) {
++#if (defined(DG_SM90_PREFILL_DENSE_N64) && DG_SM90_PREFILL_DENSE_N64) || (defined(DG_R44_DIAGNOSTIC_NO_PROMOTION) && DG_R44_DIAGNOSTIC_NO_PROMOTION)
++                    constexpr bool dense_r44 = kMajorSFB == cute::UMMA::Major::K && SHAPE_M == 0 && kNumGroups == 1 &&
++                        ((SHAPE_N == 9216 && SHAPE_K == 4096) || (SHAPE_N == 4096 && SHAPE_K == 8192)) &&
++                        BLOCK_M == 256 && BLOCK_N == 128 && BLOCK_K == 128 &&
++                        kSwizzleAMode == 128 && kSwizzleBMode == 128 && kSwizzleDMode == 128 &&
++                        kNumStages == 3 && kNumTMAThreads == 128 && kNumMathThreads == 256 &&
++                        kNumTMAMulticast == 2 && kIsTMAMulticastOnA && kNumSMs == 132 &&
++                        kGemmType == GemmType::Normal && cute::is_same_v<epilogue_type_t, epilogue::transform::EpilogueIdentity>;
++                    if constexpr (dense_r44) {
++                        // Release the OLD stage only after its last asynchronous reader.
++                        auto release = [&](uint32_t old_stage) CUTLASS_LAMBDA_FUNC_INLINE {
++                            auto target_cta = scheduler.is_peer_cta_alive ? lane_idx : cute::block_rank_in_cluster();
++                            lane_idx < kNumTMAMulticast ? empty_barriers[old_stage]->arrive(target_cta) : void();
++                        };
++#if defined(DG_R44_DIAGNOSTIC_NO_PROMOTION) && DG_R44_DIAGNOSTIC_NO_PROMOTION
++                        // TIMING ONLY, numerically wrong: no scales or CUDA promotion.
++                        // One group per K128 contains both M64 waves. Tensor-core sums
++                        // remain live across K; only the previous stage is released.
++                        #pragma unroll
++                        for (uint32_t i = 0; i < 128; ++i) ptx::warpgroup_fence_operand(final_accum[i]);
++                        ptx::warpgroup_arrive();
++                        uint32_t previous_stage = stage_idx;
++                        #pragma unroll 8
++                        for (uint32_t kb = 0; kb < num_total_k_blocks; advance_pipeline(kb)) {
++                            full_barriers[stage_idx]->wait(phase);
++                            #pragma unroll
++                            for (uint32_t wave = 0; wave < 2; ++wave) {
++                                #pragma unroll
++                                for (uint32_t kk = 0; kk < 4; ++kk) {
++                                    a_desc.reg32_[0] = a_desc_lo + stage_idx * (SMEM_A_SIZE_PER_STAGE / 16) + (wave * WAVE_BLOCK_M * BLOCK_K + kk * 32) / 16;
++                                    b_desc.reg32_[0] = b_desc_lo + stage_idx * (SMEM_B_SIZE_PER_STAGE / 16) + kk * 32 / 16;
++                                    WGMMA::wgmma(a_desc, b_desc, final_accum + wave * 64, kb != 0 || kk != 0);
++                                }
++                            }
++                            ptx::warpgroup_commit_batch();
++                            ptx::warpgroup_wait<1>();
++                            if (kb != 0) release(previous_stage);
++                            previous_stage = stage_idx;
++                        }
++                        // The sole wait0 is the tile drain, outside the hot K loop.
++                        ptx::warpgroup_wait<0>();
++                        #pragma unroll
++                        for (uint32_t i = 0; i < 128; ++i) ptx::warpgroup_fence_operand(final_accum[i]);
++                        release(previous_stage);
++#else
++                        using MMA64 = typename mma::sm90::FP8MMASelector<64>::type;
++                        float t0[32], t1[32];
++                        // N64 accumulator layout is the first/second 32-register
++                        // half of N128; each group of four is two columns x two rows.
++                        auto issue = [&](float* t, auto wave_c, auto half_c) CUTLASS_LAMBDA_FUNC_INLINE {
++                            constexpr uint32_t wave = decltype(wave_c)::value, half = decltype(half_c)::value;
++                            #pragma unroll
++                            for (uint32_t i = 0; i < 32; ++i) ptx::warpgroup_fence_operand(t[i]);
++                            ptx::warpgroup_arrive();
++                            #pragma unroll
++                            for (uint32_t kk = 0; kk < 4; ++kk) {
++                                a_desc.reg32_[0] = a_desc_lo + stage_idx * (SMEM_A_SIZE_PER_STAGE / 16) + (wave * WAVE_BLOCK_M * BLOCK_K + kk * 32) / 16;
++                                b_desc.reg32_[0] = b_desc_lo + stage_idx * (SMEM_B_SIZE_PER_STAGE / 16) + (half * 64 * BLOCK_K + kk * 32) / 16;
++                                MMA64::wgmma(a_desc, b_desc, t, kk != 0);
++                            }
++                            ptx::warpgroup_commit_batch();
++                        };
++                        auto promote = [&](float* t, auto wave_c, auto half_c, float s0, float s1, auto first_c) CUTLASS_LAMBDA_FUNC_INLINE {
++                            constexpr uint32_t wave = decltype(wave_c)::value, half = decltype(half_c)::value;
++                            constexpr bool first = decltype(first_c)::value;
++                            // Only the completed temporary is fenced/read. Never
++                            // put a compiler operand fence on the other pending group.
++                            #pragma unroll
++                            for (uint32_t i = 0; i < 32; ++i) ptx::warpgroup_fence_operand(t[i]);
++                            auto dst = final_accum + wave * 64 + half * 32;
++                            #pragma unroll
++                            for (uint32_t i = 0; i < 8; ++i) {
++                                dst[4*i+0] = __fmaf_rn(s0, t[4*i+0], first ? 0.0f : dst[4*i+0]);
++                                dst[4*i+1] = __fmaf_rn(s0, t[4*i+1], first ? 0.0f : dst[4*i+1]);
++                                dst[4*i+2] = __fmaf_rn(s1, t[4*i+2], first ? 0.0f : dst[4*i+2]);
++                                dst[4*i+3] = __fmaf_rn(s1, t[4*i+3], first ? 0.0f : dst[4*i+3]);
++                            }
++                        };
++                        auto chunk = [&](auto first_chunk, uint32_t begin) CUTLASS_LAMBDA_FUNC_INLINE {
++                        full_barriers[stage_idx]->wait(phase);
++                        float sb = ptx::ld_shared(smem_sfb + begin);
++                        float s0 = ptx::ld_shared(smem_sfa[stage_idx] + r_0) * sb;
++                        float s1 = ptx::ld_shared(smem_sfa[stage_idx] + r_1) * sb;
++                        issue(t0, cute::Int<0>{}, cute::Int<0>{});
++                        issue(t1, cute::Int<0>{}, cute::Int<1>{});
++                        auto step = [&](auto first_c, auto next_c, uint32_t kb) CUTLASS_LAMBDA_FUNC_INLINE {
++                            float m1s0 = ptx::ld_shared(smem_sfa[stage_idx] + r_0 + WAVE_BLOCK_M) * sb;
++                            float m1s1 = ptx::ld_shared(smem_sfa[stage_idx] + r_1 + WAVE_BLOCK_M) * sb;
++                            ptx::warpgroup_wait<1>();
++                            promote(t0, cute::Int<0>{}, cute::Int<0>{}, s0, s1, first_c);
++                            issue(t0, cute::Int<1>{}, cute::Int<0>{});
++                            ptx::warpgroup_wait<1>();
++                            promote(t1, cute::Int<0>{}, cute::Int<1>{}, s0, s1, first_c);
++                            issue(t1, cute::Int<1>{}, cute::Int<1>{});
++                            ptx::warpgroup_wait<1>();
++                            promote(t0, cute::Int<1>{}, cute::Int<0>{}, m1s0, m1s1, first_c);
++                            uint32_t old_stage = stage_idx;
++                            advance_pipeline(kb);
++                            if constexpr (decltype(next_c)::value) {
++                                full_barriers[stage_idx]->wait(phase);
++                                sb = ptx::ld_shared(smem_sfb + kb);
++                                s0 = ptx::ld_shared(smem_sfa[stage_idx] + r_0) * sb;
++                                s1 = ptx::ld_shared(smem_sfa[stage_idx] + r_1) * sb;
++                                issue(t0, cute::Int<0>{}, cute::Int<0>{});
++                                ptx::warpgroup_wait<1>();
++                                release(old_stage);
++                                promote(t1, cute::Int<1>{}, cute::Int<1>{}, m1s0, m1s1, first_c);
++                                issue(t1, cute::Int<0>{}, cute::Int<1>{});
++                            } else {
++                                ptx::warpgroup_wait<0>();
++                                release(old_stage);
++                                promote(t1, cute::Int<1>{}, cute::Int<1>{}, m1s0, m1s1, first_c);
++                            }
++                        };
++                        // No pending WGMMA register crosses a backedge. Drain
++                        // each eight-K chunk to avoid ptxas C7514 serialization.
++                        step(first_chunk, std::true_type{}, begin);
++                        #pragma unroll
++                        for (uint32_t u = 1; u < 7; ++u) step(std::false_type{}, std::true_type{}, begin + u);
++                        step(std::false_type{}, std::false_type{}, begin + 7);
++                        };
++                        chunk(std::true_type{}, 0);
++                        for (uint32_t begin = 8; begin < num_total_k_blocks; begin += 8) chunk(std::false_type{}, begin);
++#endif
++                    } else
++#endif
++                    {
+ #if defined(DG_SM90_PREFILL_DENSE_FIRST_K) && DG_SM90_PREFILL_DENSE_FIRST_K
+                     constexpr bool first_k = kMajorSFB == cute::UMMA::Major::K && SHAPE_M == 0 && kNumGroups == 1 &&
+                         ((SHAPE_N == 9216 && SHAPE_K == 4096) || (SHAPE_N == 4096 && SHAPE_K == 8192)) &&
+@@ -436,6 +563,7 @@
+                                 shifted_accum[i * 4 + 3] += (predicate ? scale_1_0 : scale_1_1) * accum[i * 4 + 3];
+                             }
+                         }
++                    }
+                     }
+                     }
+                 });

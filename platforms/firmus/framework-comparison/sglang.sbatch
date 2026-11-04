@@ -349,18 +349,23 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.decode_greedy_verify_gate // false' "${
 fi
 # Decode greedy gate end.
 
-# Diagnostic only: the freed r37 window never writes a serving env/selection.
+# Dense N64 gate: use the freed r41 window, keeping 630 seconds for serving.
 if [[ "${prefill_pp}" == 4 ]]; then
-  mkdir -p "${ROOT}/results/megamoe-rescale-probe"
-  if (( SECONDS + 105 + 630 <= 1020 )); then
-    rescale_probe_run_id="${SLURM_JOB_ID}-$(date +%s)"
-    rescale_probe_status=0
-    timeout --signal=KILL 105 bash "${ROOT}/scripts/launch-firmus-megamoe-rescale-probe.sh" "${ROOT}" "${HEAD}" "${TAIL}" "${SGLANG}" "${rescale_probe_run_id}" "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" "$(mounts megamoe-rescale-0)" "$(mounts megamoe-rescale-1)" "$(mounts megamoe-rescale-2)" || rescale_probe_status=$?
-    if (( rescale_probe_status != 0 )); then
-      jq -n --arg run_id "${rescale_probe_run_id}" --argjson exit_code "${rescale_probe_status}" '{schema_version:"megamoe-rescale-exposure/v1",status:"incomplete",run_id:$run_id,exit_code:$exit_code,reason:"aggregate failed or 105 s hard timeout"}' >"${ROOT}/results/megamoe-rescale-probe/summary.json"
+  mkdir -p "${ROOT}/results/prefill-dense-r44"
+  if (( SECONDS + 120 + 630 <= 1020 )); then
+    dense_started=$(date +%s)
+    dense_run_id="${SLURM_JOB_ID}-${dense_started}"
+    dense_status=0
+    timeout --signal=KILL 120 bash "${ROOT}/scripts/launch-firmus-prefill-dense-probe.sh" "${ROOT}" "${HEAD}" "${TAIL}" "${SGLANG}" "${dense_run_id}" "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" "${MODEL}" "${dense_started}" "$(mounts prefill-dense-r44-0)" "$(mounts prefill-dense-r44-1)" "$(mounts prefill-dense-r44-2)" || dense_status=$?
+    if (( dense_status != 0 )); then
+      jq -n --arg run_id "${dense_run_id}" --argjson exit_code "${dense_status}" '{schema_version:"prefill-dense-r44/v3",status:"incomplete",adopted:false,run_id:$run_id,exit_code:$exit_code,reason:"aggregate failed or 120 s hard timeout"}' >"${ROOT}/results/prefill-dense-r44/summary.json"
+    elif jq -e '.status == "complete" and .adopted == true' "${ROOT}/results/prefill-dense-r44/summary.json" >/dev/null; then
+      # Only publish after the bounded supervisor succeeds. The diagnostic has
+      # no environment switch; it cannot be routed into a Prefill process.
+      sed -i 's/^DG_SM90_PREFILL_DENSE_N64=0$/DG_SM90_PREFILL_DENSE_N64=1/' "${ROOT}/source/prefill-kernels.env"
     fi
   else
-    printf '%s\n' '{"schema_version":"megamoe-rescale-exposure/v1","status":"skipped","reason":"insufficient remaining serving budget"}' >"${ROOT}/results/megamoe-rescale-probe/summary.json"
+    printf '%s\n' '{"schema_version":"prefill-dense-r44/v3","status":"skipped","adopted":false,"reason":"insufficient remaining serving budget"}' >"${ROOT}/results/prefill-dense-r44/summary.json"
   fi
 fi
 
@@ -412,6 +417,7 @@ srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-e
 test -s "${ROOT}/results/score.json"
 for worker in 0 1 2; do
   grep -a -h -o -E 'Prefill r37 [ABC] (prewarm done|using candidate|using control).*' "${ART}/prefill-${worker}.log" >"${ROOT}/results/prefill-r37-dispatch-${worker}.txt" || printf 'no Prefill r37 dispatch line\n' >"${ROOT}/results/prefill-r37-dispatch-${worker}.txt"
+  grep -a -h -o -E 'Prefill r44 dense-n64 (prewarm done|using candidate).*' "${ART}/prefill-${worker}.log" >"${ROOT}/results/prefill-dense-r44/dispatch-${worker}.txt" || true
   grep -a -h -o -E 'Prefill r32 fc1-first-k (prewarm done|using candidate|using control).*' "${ART}/prefill-${worker}.log" >"${ROOT}/results/prefill-r32-dispatch-${worker}.txt" || printf 'no Prefill r32 fc1-first-k dispatch line\n' >"${ROOT}/results/prefill-r32-dispatch-${worker}.txt"
 done
 # Round 22 adopted a greedy fusion that serving never dispatched; keep each Decode rank's once-per-process decision with the score.

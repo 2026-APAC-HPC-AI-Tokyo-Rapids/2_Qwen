@@ -155,6 +155,7 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
             'DG_SM90_PREFILL_SPLIT_ACCUM': '1',
             'DG_SM90_PREFILL_FC1_FIRST_K': '1',
             'DG_SM90_PREFILL_DENSE_FIRST_K': '1',
+            'DG_SM90_PREFILL_DENSE_N64': '0',
             'SGLANG_PREFILL_QKNORM_FIXED': '1',
             'SGLANG_PREFILL_ONEPASS_DIV448': '1',
             'SGLANG_PREFILL_FA3_VERIFY': 'n192-direct-o-varlen-pipe',

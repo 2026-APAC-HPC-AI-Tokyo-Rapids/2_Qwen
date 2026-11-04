@@ -133,7 +133,7 @@ def test_qknorm_and_onepass_overlays_are_pp4_only_and_default_to_control():
     overlays=pp4["sglang_overlay_patches"]
     start=overlays.index("patches/sglang/prefill-qknorm-fp32.patch")
     assert overlays[start:start+3] == ["patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-moe-input-onepass.patch", "patches/sglang/decode-moe-input.patch"]
-    assert pp4["deep_gemm_overlay_patches"][-4:] == ["patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch", "patches/deep-gemm-overlay/sm90-prefill-fc1-first-k.patch", "patches/deep-gemm-overlay/sm90-prefill-dense-first-k-r37.patch", "patches/deep-gemm-overlay/sm90-rescale-exposure-probe-r41.patch"]
+    assert pp4["deep_gemm_overlay_patches"][-4:] == ["patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch", "patches/deep-gemm-overlay/sm90-prefill-fc1-first-k.patch", "patches/deep-gemm-overlay/sm90-prefill-dense-first-k-r37.patch", "patches/deep-gemm-overlay/sm90-prefill-dense-n64-r44.patch"]
     for patch in ("patches/sglang/prefill-qknorm-fp32.patch", "patches/sglang/prefill-moe-input-onepass.patch"):
         assert patch not in main["sglang_overlay_patches"]
     qknorm = (ROOT / "patches/sglang/prefill-qknorm-fp32.patch").read_text()

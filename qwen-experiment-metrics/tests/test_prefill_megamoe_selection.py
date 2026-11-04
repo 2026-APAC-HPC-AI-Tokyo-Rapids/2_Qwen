@@ -257,7 +257,7 @@ def test_host_and_header_agree_on_the_four_stage_layout():
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())["deep_gemm_overlay_patches"]
     pp4_only = ["patches/deep-gemm-bench/prefill-local-ep1/local-ep1.patch", "patches/deep-gemm-bench/prefill-4stage/sm90-prefill-4stage.patch", "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch", "patches/deep-gemm-bench/prefill-tail-pair/sm90-prefill-tail-pair.patch", "patches/deep-gemm-bench/prefill-split-accum/sm90-prefill-split-accum.patch"]
     # The production entries and default-off diagnostic overlay follow these tiles.
-    assert config[-4:] == ["patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch", "patches/deep-gemm-overlay/sm90-prefill-fc1-first-k.patch", "patches/deep-gemm-overlay/sm90-prefill-dense-first-k-r37.patch", "patches/deep-gemm-overlay/sm90-rescale-exposure-probe-r41.patch"]
+    assert config[-4:] == ["patches/deep-gemm-bench/decode-dense-bm192/sm90-1d2d-decode-bm192.patch", "patches/deep-gemm-overlay/sm90-prefill-fc1-first-k.patch", "patches/deep-gemm-overlay/sm90-prefill-dense-first-k-r37.patch", "patches/deep-gemm-overlay/sm90-prefill-dense-n64-r44.patch"]
     assert config[config.index(pp4_only[0]):config.index(pp4_only[0])+len(pp4_only)] == pp4_only
     main = json.loads((ROOT / "configs/firmus-framework.json").read_text())["deep_gemm_overlay_patches"]
     assert not set(pp4_only[1:]) & set(main)
@@ -267,7 +267,7 @@ def test_lean_is_an_ep1_trailing_flag_after_four_stages_with_the_same_bytes():
     host = (ROOT / "patches/deep-gemm-host/sm90-prefill-lean.patch").read_text()
     header = (ROOT / "patches/deep-gemm-bench/prefill-lean/sm90-prefill-lean.patch").read_text()
     series = (ROOT / "patches/deep-gemm-host/series").read_text().split()
-    assert series[-8:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-1d2d-decode-bm192.patch", "sm90-prefill-fc1-first-k.patch", "sm90-prefill-dense-first-k-r37.patch", "sm90-rescale-exposure-probe-r41.patch"]
+    assert series[-8:] == ["sm90-prefill-4stage.patch", "sm90-prefill-lean.patch", "sm90-prefill-tail-pair.patch", "sm90-prefill-split-accum.patch", "sm90-1d2d-decode-bm192.patch", "sm90-prefill-fc1-first-k.patch", "sm90-prefill-dense-first-k-r37.patch", "sm90-prefill-dense-n64-r44.patch"]
     for gone in ("sm90-prefill-direct-fc2.patch", "sm90-prefill-gather-a.patch", "sm90-prefill-tail-split.patch", "sm90-prefill-split-ldsm.patch", "sm90-prefill-combine-norm.patch"):
         assert not (ROOT / "patches/deep-gemm-host" / gone).exists()
     # ",true" (kPrefillLean) only when set and one rank only.

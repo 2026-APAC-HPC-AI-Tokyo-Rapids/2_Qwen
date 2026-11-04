@@ -117,7 +117,7 @@ def prepare(config, repo, runtime):
     # changes host dispatch and topology and is explicitly NOT a prior result.
     for entry in record["patches"] + record["extra_files"]:
         previous["file_sha"](repo, entry)
-    environment = {**record["environment"], **PP4_SELECTED, "SGLANG_DECODE_GREEDY_VERIFY": "0"}
+    environment = {**record["environment"], **PP4_SELECTED, "DG_SM90_PREFILL_DENSE_N64": "0", "SGLANG_DECODE_GREEDY_VERIFY": "0"}
     for role in ("prefill", "decode"):
         names = {
             k: v
@@ -134,8 +134,8 @@ def prepare(config, repo, runtime):
         "environment": environment,
         "pp4_selected": PP4_SELECTED,
         "pp4_selected_runs": PP4_SELECTED_RUNS,
-        "no_gpu_selection_rerun": not p.get("fa3_pair_gate", False),
-        "scope": "Prior settings plus the settled PP4 selections evidenced by pp4_selected_runs, split explicitly between Prefill and Decode. The optional fa3_pair_gate may replace the Prefill FA3 pin after all twelve GPUs pass; results/prefill-fa3-pair/selection.json records that decision. Ordinary serving validates the complete image, EP1, PP scheduling, batching and transfers.",
+        "no_gpu_selection_rerun": False,  # The bounded dense r44 gate runs before Prefill.
+        "scope": "Prior settings plus the settled PP4 selections evidenced by pp4_selected_runs, split explicitly between Prefill and Decode. The optional fa3_pair_gate may replace the Prefill FA3 pin after all twelve GPUs pass; results/prefill-fa3-pair/selection.json records that decision. The dense r44 gate starts from DG_SM90_PREFILL_DENSE_N64=0 and may update only the Prefill env after all twelve GPUs pass; results/prefill-dense-r44/summary.json records its decision. Ordinary serving validates the complete image, EP1, PP scheduling, batching and transfers.",
     }
     # Round-17 P followed by optional P3; P3 remains off until a serving commit.
     payload["fa3_prepack_gate"] = p.get("fa3_prepack_gate", False)

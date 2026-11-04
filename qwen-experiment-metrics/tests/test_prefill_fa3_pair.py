@@ -235,7 +235,7 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     env = (tmp_path / 'source/prefill-kernels.env').read_text()
     assert GATE['KEY'] + '=' + GATE['CONTROL'] + '\n' in env
     record = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
-    assert record['no_gpu_selection_rerun'] is not enabled
+    assert record['no_gpu_selection_rerun'] is False  # Dense r44 has its own bounded gate.
     assert record['fa3_prepack_gate'] is enabled and record['fa3_v3_gate'] is enabled
     assert record['decode_greedy_verify_gate'] is enabled
     assert 'megamoe_fc1_first_k_gate' not in record

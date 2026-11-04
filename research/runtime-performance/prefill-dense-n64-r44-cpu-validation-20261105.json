@@ -1,0 +1,714 @@
+{
+  "schema_version": "prefill-dense-r44-cpu-validation/v2",
+  "parent": "e2f8689",
+  "branch": "perf/pp4-r40-megamoe-mainloop-20261104",
+  "status": "cpu_submission_ready_gpu_unmeasured",
+  "require_build": true,
+  "reference_image_sha256": "2fb619c4a293a01b98ecd178d92414ab5cf493e2584acd945a1a8910ba3b4467",
+  "new_image_sha256": null,
+  "deep_gemm_commit": "1c8138a59b3df5dac50b76b730834ed57982fdfb",
+  "sglang_commit": "fc275674a97d78553b22597ee72c8fd48f5420f4",
+  "compiler": "/usr/local/cuda-13.4/bin/nvcc 13.4.92, sm_90a, O3, C++20",
+  "shape_mnk": {
+    "qkv": [
+      7988,
+      9216,
+      4096
+    ],
+    "o": [
+      7988,
+      4096,
+      8192
+    ]
+  },
+  "candidate_flag": "DG_SM90_PREFILL_DENSE_N64",
+  "candidate_default": "0",
+  "production_generator_off_byte_identical": true,
+  "diagnostic_isolated_ffi": "fp8_gemm_nt_promotion_diagnostic",
+  "diagnostic_environment_route": false,
+  "serving_internal_template": false,
+  "resources_and_static_instructions": {
+    "qkv-production": {
+      "launch_registers": 168,
+      "math_budget": 232,
+      "max_gpr": 202,
+      "stack": 0,
+      "spill_stores": 0,
+      "spill_loads": 0,
+      "ldl_stl": 0,
+      "C75xx": false,
+      "qgmma": 128,
+      "wait0": 32,
+      "wait1": 0,
+      "ffma": 2048,
+      "encoded_bytes": 62208,
+      "encoding_sha256": "9630609edf7b108d9ccdfd2fcaf5387a3a31f86ca79095394d043d1a2cdcfc35"
+    },
+    "qkv-candidate": {
+      "launch_registers": 168,
+      "math_budget": 232,
+      "max_gpr": 227,
+      "stack": 0,
+      "spill_stores": 0,
+      "spill_loads": 0,
+      "ldl_stl": 0,
+      "C75xx": false,
+      "qgmma": 256,
+      "wait0": 2,
+      "wait1": 62,
+      "ffma": 2048,
+      "encoded_bytes": 71040,
+      "encoding_sha256": "0a13568eab35ede7b04ef873d60f39f89270dff167d4f2c7f39d35ea6fd19797"
+    },
+    "qkv-diagnostic": {
+      "launch_registers": 168,
+      "math_budget": 232,
+      "max_gpr": 151,
+      "stack": 0,
+      "spill_stores": 0,
+      "spill_loads": 0,
+      "ldl_stl": 0,
+      "C75xx": false,
+      "qgmma": 64,
+      "wait0": 1,
+      "wait1": 8,
+      "ffma": 0,
+      "encoded_bytes": 19840,
+      "encoding_sha256": "741ceda1edf1f605ad248a08027b628063830cc7caa4e5b67ffc114984455973"
+    },
+    "o-production": {
+      "launch_registers": 168,
+      "math_budget": 232,
+      "max_gpr": 202,
+      "stack": 0,
+      "spill_stores": 0,
+      "spill_loads": 0,
+      "ldl_stl": 0,
+      "C75xx": false,
+      "qgmma": 128,
+      "wait0": 32,
+      "wait1": 0,
+      "ffma": 2048,
+      "encoded_bytes": 61440,
+      "encoding_sha256": "11f685d47e665bb3c16cf1ebfa42cbd568e2fc963b5e10587c977ebe3f7a371b"
+    },
+    "o-candidate": {
+      "launch_registers": 168,
+      "math_budget": 232,
+      "max_gpr": 225,
+      "stack": 0,
+      "spill_stores": 0,
+      "spill_loads": 0,
+      "ldl_stl": 0,
+      "C75xx": false,
+      "qgmma": 256,
+      "wait0": 2,
+      "wait1": 62,
+      "ffma": 2048,
+      "encoded_bytes": 70400,
+      "encoding_sha256": "63e985945d60562fa4211d652a3bccacb45d3f04ae220d2d2fd3c1dcf0d63d7e"
+    },
+    "o-diagnostic": {
+      "launch_registers": 168,
+      "math_budget": 232,
+      "max_gpr": 151,
+      "stack": 0,
+      "spill_stores": 0,
+      "spill_loads": 0,
+      "ldl_stl": 0,
+      "C75xx": false,
+      "qgmma": 64,
+      "wait0": 1,
+      "wait1": 8,
+      "ffma": 0,
+      "encoded_bytes": 19200,
+      "encoding_sha256": "7cb9e3c4cb60c57bc6d74da25e15dde75a26d9367b8f788439332c3a53b09a41"
+    }
+  },
+  "cpu_numerical_emulation": {
+    "4096": {
+      "scope": "M256/N128 CTA emulation, both math WGs, both M64 waves, full K, exactly representable E4M3 samples and FP32 K128 scales; not GPU arithmetic",
+      "bitwise_equal_production": true,
+      "elements": 32768,
+      "production_max_abs": 0.0,
+      "production_max_rel": 0.0,
+      "fp64_reference_max_abs": 2.257770859159791e-09,
+      "fp64_reference_max_rel": 0.0017120856987814948,
+      "seconds": 0.06509171600919217
+    },
+    "8192": {
+      "scope": "M256/N128 CTA emulation, both math WGs, both M64 waves, full K, exactly representable E4M3 samples and FP32 K128 scales; not GPU arithmetic",
+      "bitwise_equal_production": true,
+      "elements": 32768,
+      "production_max_abs": 0.0,
+      "production_max_rel": 0.0,
+      "fp64_reference_max_abs": 5.494804611316795e-09,
+      "fp64_reference_max_rel": 0.006137787544861294,
+      "seconds": 0.1078134199779015
+    }
+  },
+  "actual_loop_cpu_stub": {
+    "final-candidate": {
+      "compile_command": [
+        "g++",
+        "-std=c++20",
+        "-O2",
+        "-DDG_R44_DIAGNOSTIC_NO_PROMOTION=0",
+        "/tmp/r44-work/proof/final-candidate.cpp",
+        "-o",
+        "/tmp/r44-work/proof/final-candidate.cpu"
+      ],
+      "exit_code": 0,
+      "stdout": "K128 blocks=32 releases=32 mma64=512 mma128=0 all 128 fragment outputs bitwise equal\nK128 blocks=64 releases=64 mma64=1024 mma128=0 all 128 fragment outputs bitwise equal\n",
+      "stderr": "",
+      "scope": "CPU logical WGMMA/TMA stubs execute the actual device loop; not GPU arithmetic"
+    },
+    "final-diagnostic": {
+      "compile_command": [
+        "g++",
+        "-std=c++20",
+        "-O2",
+        "-DDG_R44_DIAGNOSTIC_NO_PROMOTION=1",
+        "/tmp/r44-work/proof/final-diagnostic.cpp",
+        "-o",
+        "/tmp/r44-work/proof/final-diagnostic.cpu"
+      ],
+      "exit_code": 0,
+      "stdout": "K128 blocks=32 releases=32 mma64=0 mma128=256 all 128 fragment outputs bitwise equal\nK128 blocks=64 releases=64 mma64=0 mma128=512 all 128 fragment outputs bitwise equal\n",
+      "stderr": "",
+      "scope": "CPU logical WGMMA/TMA stubs execute the actual device loop; not GPU arithmetic"
+    },
+    "rejected-k-index-candidate": {
+      "compile_command": [
+        "g++",
+        "-std=c++20",
+        "-O2",
+        "-DDG_R44_DIAGNOSTIC_NO_PROMOTION=0",
+        "/tmp/r44-work/proof/rejected-k-index-candidate.cpp",
+        "-o",
+        "/tmp/r44-work/proof/rejected-k-index-candidate.cpu"
+      ],
+      "exit_code": -6,
+      "stdout": "",
+      "stderr": "rejected-k-index-candidate.cpu: /tmp/r44-work/proof/rejected-k-index-candidate.cpp:209: int main(): Assertion `std::bit_cast<uint32_t>(final_accum[wave*64+half*32+i])==std::bit_cast<uint32_t>(expected)' failed.\n",
+      "scope": "CPU logical WGMMA/TMA stubs execute the actual device loop; not GPU arithmetic"
+    },
+    "rejected-k-index-diagnostic": {
+      "compile_command": [
+        "g++",
+        "-std=c++20",
+        "-O2",
+        "-DDG_R44_DIAGNOSTIC_NO_PROMOTION=1",
+        "/tmp/r44-work/proof/rejected-k-index-diagnostic.cpp",
+        "-o",
+        "/tmp/r44-work/proof/rejected-k-index-diagnostic.cpu"
+      ],
+      "exit_code": -6,
+      "stdout": "",
+      "stderr": "rejected-k-index-diagnostic.cpu: /tmp/r44-work/proof/rejected-k-index-diagnostic.cpp:196: int main(): Assertion `next_k==int(num_total_k_blocks) && releases==int(num_total_k_blocks)' failed.\n",
+      "scope": "CPU logical WGMMA/TMA stubs execute the actual device loop; not GPU arithmetic"
+    }
+  },
+  "gpu_numerics": null,
+  "gpu_endurance": null,
+  "gpu_diagnostic_bound_us": null,
+  "gpu_candidate_saving_us": null,
+  "official_serving_result": null,
+  "candidate_adopted": false,
+  "budget": {
+    "worker_seconds": 110,
+    "aggregate_sigkill_seconds": 120,
+    "kill_grace_seconds": 2,
+    "serving_reserve_seconds": 630,
+    "job_limit_seconds": 1020,
+    "latest_start_seconds": 270,
+    "estimated_torchrun_to_results_seconds": [
+      50,
+      60
+    ],
+    "observed_r41_head_startup_seconds": 35,
+    "estimated_launch_to_results_seconds": [
+      85,
+      95
+    ],
+    "estimate_is_conditional": true,
+    "local_six_compile_seconds_sum": 42.40917086301488,
+    "two_owner_phased_critical_seconds_from_prior_compiles": 22.18914925502031,
+    "import_and_checkpoint_seconds_estimate": [
+      8,
+      12
+    ],
+    "remaining_in_container_seconds_estimate": [
+      20,
+      23
+    ],
+    "rounds_per_order": 4,
+    "calls_per_graph": 4,
+    "prior_v2_total_timing_kernel_calls": 576,
+    "candidate_timing_kernel_calls": 128,
+    "diagnostic_timing_kernel_calls": 128,
+    "single_timing_kernel_calls": 0,
+    "independent_reference_rows_sum": 19985,
+    "prior_v2_independent_reference_rows_sum": 31988,
+    "observed_r41_serving_seconds": 544,
+    "serving_reserve_slack_against_r41_seconds": 86,
+    "jit_cache_scope": "Fresh /tmp per worker container, shared by four ranks; QKV owner rank0, O owner rank1; existing DeepGEMM atomic publish and Gloo barriers; two HEAD containers retain separate caches",
+    "cold_dense_compiles_per_worker": 6,
+    "prior_cold_dense_compiles_per_worker": 24,
+    "gpu_runtime_estimate_measured": false,
+    "srun_completion_overhead_measured": false
+  },
+  "tests": {
+    "pytest_command": "uv run --project qwen-experiment-metrics --with 'numpy>=1.26,<3' --with pytest python -m pytest -q -p no:cacheprovider qwen-experiment-metrics/tests",
+    "pytest_exit_code": 0,
+    "pytest_log_sha256": "75096a91cac4ad3e3501352cc2c3106f21270daee0e9b2b7b9f8de5464f5d2d1",
+    "ruff_command": "uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers",
+    "ruff_exit_code": 0,
+    "ruff_log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "sighup_reset_to_default": true,
+    "new_dense_cpu_cases": 107,
+    "shell_syntax_exit_code": 0,
+    "tracked_and_new_file_whitespace_check_exit_code": 0,
+    "fresh_path_reproduction_exit_code": 0,
+    "actual_sbatch_cpu_cases": {
+      "adopted": {
+        "seconds": 270,
+        "exit_code": 0,
+        "environment": "DG_SM90_PREFILL_DENSE_FIRST_K=1\nDG_SM90_PREFILL_DENSE_N64=1\n",
+        "summary": {
+          "schema_version": "prefill-dense-r44/v3",
+          "status": "complete",
+          "adopted": true
+        },
+        "mode": "CPU-only real sbatch block with stubbed timeout; no srun or scheduler invocation"
+      },
+      "rejected": {
+        "seconds": 249,
+        "exit_code": 0,
+        "environment": "DG_SM90_PREFILL_DENSE_FIRST_K=1\nDG_SM90_PREFILL_DENSE_N64=0\n",
+        "summary": {
+          "schema_version": "prefill-dense-r44/v3",
+          "status": "complete",
+          "adopted": false
+        },
+        "mode": "CPU-only real sbatch block with stubbed timeout; no srun or scheduler invocation"
+      },
+      "timeout": {
+        "seconds": 257,
+        "exit_code": 0,
+        "environment": "DG_SM90_PREFILL_DENSE_FIRST_K=1\nDG_SM90_PREFILL_DENSE_N64=0\n",
+        "summary": {
+          "schema_version": "prefill-dense-r44/v3",
+          "status": "incomplete",
+          "adopted": false,
+          "run_id": "cpu-fixture-1793824717",
+          "exit_code": 137,
+          "reason": "aggregate failed or 120 s hard timeout"
+        },
+        "mode": "CPU-only real sbatch block with stubbed timeout; no srun or scheduler invocation"
+      },
+      "skipped": {
+        "seconds": 271,
+        "exit_code": 0,
+        "environment": "DG_SM90_PREFILL_DENSE_FIRST_K=1\nDG_SM90_PREFILL_DENSE_N64=0\n",
+        "summary": {
+          "schema_version": "prefill-dense-r44/v3",
+          "status": "skipped",
+          "adopted": false,
+          "reason": "insufficient remaining serving budget"
+        },
+        "mode": "CPU-only real sbatch block with stubbed timeout; no srun or scheduler invocation"
+      }
+    },
+    "initial_full_run_exit_code": 1,
+    "initial_full_failure": "new default-zero flag omitted from explicit pin expectation; optional-gate assertion was already collected before editing",
+    "local_restarts": "local verification was restarted to load final numerical admission and actual K-index regression checks; no scheduler or Actions run was interrupted",
+    "review_targeted_exit_code": 0,
+    "review_targeted_log_sha256": "d8b8de5aa45f370d8fca3d3554fc6f6eb91df8892674da930f787edcc91f0d95",
+    "review_before_phase_correction_pytest_exit_code": 0,
+    "review_initial_ruff_failure": "F821 for a closure binding deleted after graph capture; keep case=None until cleanup instead",
+    "review_full_rerun_reason": "Final primary M retained at 7988 after identifying warmup versus profiling; prewarm, single timing and additional numerical cases updated before this run",
+    "head_budget_review_targeted_exit_code": 0,
+    "head_budget_review_dense_cpu_cases": 107,
+    "head_budget_review_initial_ruff_failure": "New fast-exit subprocess test needed explicit check=False; corrected and rerun successfully",
+    "pytest_passed": 2072,
+    "pytest_skipped": 90,
+    "head_budget_review_targeted_log_sha256": "0c36ecf51883775d1269091b6ef5e0a3196105764b988f5a30f8009a9179c9e3",
+    "head_budget_review_scope": "Exact full pytest and Ruff commands exit 0; 107 dense CPU cases; actual sbatch block exercised at 270/271 seconds with CPU-only timeout stub; no GPU/container/scheduler invocation"
+  },
+  "source_corrections": [
+    "drain eight-K chunks to avoid ptxas C7514 across backedges",
+    "use K after advance_pipeline for the next B scale",
+    "advance diagnostic K exactly once to retain every product",
+    "remove runtime M equality from candidate generator and diagnostic API",
+    "log first eligible N/K dispatch at its real M",
+    "distinguish warmup M4001 from profiling M3994, retain justified pair M7988",
+    "Drop single timing and M4001/M8002 references; strict bitwise gate at M7988/M8003/M3994 plus independent FP32 reference",
+    "Separate candidate timing from lower-priority paired diagnostic timing, with a fresh production sample in each window",
+    "Use existing DeepGEMM atomic disk cache with two shape owners per worker; barrier before reuse by the other ranks",
+    "Destroy CPU Gloo group after CUDA/graph cleanup and cache archive; publish and flush results then use os._exit(0) as the only normal success path",
+    "Require three zero worker exits and complete bounded normal-exit records from every one of twelve GPUs"
+  ],
+  "proof": {
+    "path": "research/runtime-performance/prefill-dense-n64-r44-cpu-proof-20261105.tar.gz",
+    "sha256": "f95d686ffdb1bc33e04ed127ee2f7e7382b77d4aaa34d26e7e6f0cb0d3e21889",
+    "bytes": 1315409,
+    "verified_member_count": 174
+  },
+  "files_changed": [
+    {
+      "path": "configs/firmus-prefill-pp4.json",
+      "status": "present",
+      "sha256": "ab41a1c32099d10cfd7ae421b9c372bd44654e2d5b0a60fb23562b5bd8f37f4b"
+    },
+    {
+      "path": "containers/rebuild-deepgemm-host.py",
+      "status": "present",
+      "sha256": "2d5ec92cda613604c02596c86bef2f5ac59e0fb63aec23c9bf6fd94ba01d9459"
+    },
+    {
+      "path": "patches/deep-gemm-host/series",
+      "status": "present",
+      "sha256": "98728d558f51b853588c593543cda35fbe279eac2d1dd65b6fb8e79745b634fd"
+    },
+    {
+      "path": "patches/deep-gemm-host/sm90-prefill-dense-n64-r44.patch",
+      "status": "present",
+      "sha256": "31a5a5a64d03825c08c480a83f450a6c24f04a7cae0f403760b6bc2ee006701a"
+    },
+    {
+      "path": "patches/deep-gemm-host/sm90-rescale-exposure-probe-r41.patch",
+      "status": "deleted",
+      "sha256": null
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-prefill-dense-n64-r44.patch",
+      "status": "present",
+      "sha256": "f31c55db258a67686406e70e8e8efd87598ad13ffe2d263553b94264fe3b6865"
+    },
+    {
+      "path": "patches/deep-gemm-overlay/sm90-rescale-exposure-probe-r41.patch",
+      "status": "deleted",
+      "sha256": null
+    },
+    {
+      "path": "patches/sglang/prefill-dense-n64-r44.patch",
+      "status": "present",
+      "sha256": "35fe7f1247d67e31537429efaea9d226cd515a992da7e21db9549b6e1f4c9930"
+    },
+    {
+      "path": "platforms/firmus/framework-comparison/sglang.sbatch",
+      "status": "present",
+      "sha256": "4e84c68732eaec085bfd62bd19eea1510e5ffc6ad6cabd19248fa4b553716818"
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/fixtures/megamoe-rescale-r41-host.json.gz",
+      "status": "deleted",
+      "sha256": null
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/fixtures/prefill-dense-r44-pipeline.cpp",
+      "status": "present",
+      "sha256": "898e15515f349a87b574793781f8cce071cb2befde61f4170774aae3a38c0678"
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/fixtures/prefill-dense-r44-source.json.gz",
+      "status": "present",
+      "sha256": "9678f1ccea037120acc1fab38da41c2159fa928481c3b59a05ea956c9b0c57f9"
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/test_fa3_prefill_selection.py",
+      "status": "present",
+      "sha256": "019544ec51154c4a8b6a9ca031543fa8280f9138ab3f0604f465f45b280f5fdf"
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/test_megamoe_rescale_probe.py",
+      "status": "deleted",
+      "sha256": null
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/test_megamoe_timeline.py",
+      "status": "present",
+      "sha256": "20fddb1fc167d139556fa1a6045c34b372e34efa85fb275ba5cc73241e36a4ee"
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/test_prefill_dense_r44.py",
+      "status": "present",
+      "sha256": "49f7374e1ca95356e2b6a7e526708a9a9c95186b3fbf8f47ce348fad310485c1"
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/test_prefill_fa3_pair.py",
+      "status": "present",
+      "sha256": "52fbb5e03b8c09e0e8beab21d856e512fded4991e1fc634e24693246abbc4c71"
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/test_prefill_megamoe_selection.py",
+      "status": "present",
+      "sha256": "7250a2400141ccc47cb63f3362f8d42c824599b51bbd20166432fe50974ba1ca"
+    },
+    {
+      "path": "qwen-experiment-metrics/tests/test_prefill_moe_input_selection.py",
+      "status": "present",
+      "sha256": "eb8cdf0bb385c9c917c21e17cfd78afeeb9a319711e1fb83277ecf3efc28690d"
+    },
+    {
+      "path": "research/runtime-performance/2026-11-05-prefill-dense-n64-r44.md",
+      "status": "present",
+      "sha256": "1faa0c371d21ed6bda69255af5448947141fa7cf6745dd6fa5cddd8ec70fb012"
+    },
+    {
+      "path": "research/runtime-performance/kernel-theory-tracker.md",
+      "status": "present",
+      "sha256": "da9f6a6f59d71afa89f9a4dcbdf1cd0aa6371ba2b87b0353c075b38f73e1542f"
+    },
+    {
+      "path": "scripts/launch-firmus-megamoe-rescale-probe.sh",
+      "status": "deleted",
+      "sha256": null
+    },
+    {
+      "path": "scripts/launch-firmus-prefill-dense-probe.sh",
+      "status": "present",
+      "sha256": "a8594333e6e85e5f56ea68a0cfa0a995f669b1cdb7ed55555f23e15b8a596899"
+    },
+    {
+      "path": "scripts/prepare-firmus-pp4-settings.py",
+      "status": "present",
+      "sha256": "47bd05ba871a15413a090e30b092935c13d600e0072deba36cc61db3aaa7cc33"
+    },
+    {
+      "path": "scripts/probe-firmus-megamoe-rescale.py",
+      "status": "deleted",
+      "sha256": null
+    },
+    {
+      "path": "scripts/probe-firmus-prefill-dense.py",
+      "status": "present",
+      "sha256": "8704d4871f3d2d23c52f2d71cc8db7497532b4b5fcb38ecafdf1774d16aaa965"
+    },
+    {
+      "path": "scripts/provision-firmus-framework.sh",
+      "status": "present",
+      "sha256": "ee1bc7cc109b59d3c38aafaaa3161a664624b62cedfded405691b8a140832d96"
+    },
+    {
+      "path": "scripts/run-firmus-megamoe-rescale-probe.sh",
+      "status": "deleted",
+      "sha256": null
+    },
+    {
+      "path": "scripts/run-firmus-prefill-dense-probe.sh",
+      "status": "present",
+      "sha256": "956edc85ec9ad8d433418f6bf63ab2ffdce16cde09870f12623648ca2f39b1c8"
+    }
+  ],
+  "operations": {
+    "commit": false,
+    "push": false,
+    "ssh": true,
+    "gpu_execution": false,
+    "scheduler_submission": false,
+    "job_cancellation": false,
+    "image_build": false,
+    "ssh_scope": "Read-only original model/tokenizer/image source audit plus this review sacct/workdir and Enroot configuration inspection; no container start or remote extraction",
+    "cuda_compilation_in_review": false
+  },
+  "cleanup": {
+    "owned_temporary_sources_removed": true,
+    "new_remote_jobs": false
+  },
+  "runtime_m_review": {
+    "schema_version": "prefill-dense-r44-serving-m-review/v1",
+    "image_sha256": "2fb619c4a293a01b98ecd178d92414ab5cf493e2584acd945a1a8910ba3b4467",
+    "input_payloads": 12800,
+    "profiling": {
+      "bare_client_isl_counts": {
+        "3986": 6313,
+        "3987": 29
+      },
+      "user_only_template_overhead": 8,
+      "single_ms": [
+        3994,
+        3995
+      ],
+      "pair_ms_possible": [
+        7988,
+        7989,
+        7990
+      ],
+      "dominant_single_m": 3994,
+      "dominant_pair_m": 7988
+    },
+    "warmup": {
+      "bare_client_isl_counts": {
+        "3989": 2759,
+        "3990": 14,
+        "3988": 341,
+        "3987": 11
+      },
+      "additional_system_content": "warmup",
+      "system_template_prefix_tokens": 7,
+      "single_ms": [
+        4001,
+        4002
+      ],
+      "pair_ms_possible": [
+        8002,
+        8003,
+        8004
+      ],
+      "first_observed_dense_m": 4001,
+      "sample_first_input": {
+        "profiling_bare_isl": 3986,
+        "profiling_templated_m": 3994,
+        "warmup_bare_joined_isl": 3989,
+        "warmup_templated_m": 4001
+      }
+    },
+    "pairing_limit": "pair sizes are sums of supported single lengths; exact rare-pair ordering is not recorded",
+    "scheduler_rounding": {
+      "page_size": 64,
+      "single_counter": 4032,
+      "pair_counter": 8064,
+      "dense_tensor_padding": false
+    },
+    "same_qkv_and_o_m": true,
+    "timing_m": 7988,
+    "additional_timing_m": null,
+    "numeric_ms": [
+      7988,
+      8003,
+      3994
+    ],
+    "prewarm_ms": [
+      7988,
+      3994
+    ],
+    "generator_runtime_m_equality": false,
+    "diagnostic_runtime_m_equality": false,
+    "candidate_device_change_in_review": false,
+    "builds_in_review": false,
+    "source_evidence": {
+      "sglang_commit": "fc275674a97d78553b22597ee72c8fd48f5420f4",
+      "client_image_file": "/scratch/home/ACCOUNT/qwen/containers/41853888382.sqsh",
+      "image_source_read": "read-only seek/read over ssh firmus; no extraction on server, container start, build or GPU",
+      "chat_render": "SGLang serving_chat uses HF template rendering followed by encode; Gigatoken adapter retains HF template and special token parity",
+      "isl_metric": "image AIPerf inference_result_parser computes token count from actual payload bytes, not template wrapping; do not add an assumed cache-bust marker length again"
+    },
+    "hashes": {
+      "tokenizer.json": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+      "tokenizer_config.json": "a62ff0a2472a0fa1b8eaabcb57c59b58afa42a22831dc141400b6e0cf2b65ce3",
+      "image-worker.py": "2ba5b30d552582211a4d2836dd876a4dfb0a2f0e708bbd7f173c789a4cdd98fd",
+      "image-constants.py": "f199d9a50e2ca46bfbb1536b4ee0899fbf1d91894d4a6890338cbdf37e438573",
+      "image-openai_chat.py": "70317c46856444d9300f0a5947a72fa3f3b27382ad913dd7792ab093d98868ef",
+      "image-inference_result_parser.py": "7e2c36065efd40fd4b85e78c922a12a77290b26465fb1455f7a9ef9d8308af3c"
+    },
+    "device_header_sha256": "caf72803dca9d904655610126dde30dd81947b0ba8d48ba6e717cb28806e7c9b"
+  },
+  "compiler_scope": "Prior initial-implementation CUDA compile; this review performed no CUDA/image build. SHAPE_M=0 device header hash is unchanged.",
+  "numeric_gate_ms": [
+    7988,
+    8003,
+    3994
+  ],
+  "prewarm_ms": [
+    7988,
+    3994
+  ],
+  "gpu_gate_schema": "prefill-dense-r44/v3",
+  "gpu_gate_primary_timing_m": 7988,
+  "gpu_gate_single_timing_m": null,
+  "cpu_tail_emulation": {
+    "ms": [
+      1,
+      255,
+      256,
+      257,
+      3994,
+      3995,
+      4001,
+      4002,
+      7988,
+      7989,
+      7990,
+      8001,
+      8002,
+      8003,
+      8004
+    ],
+    "k_values": [
+      4096,
+      8192
+    ],
+    "status": "passed",
+    "scope": "CPU final CTA row/fragment model and unchanged TMA/epilogue source; not hardware TMA proof"
+  },
+  "teardown_review": {
+    "scope": "Read-only existing r41 raw outputs and sacct; no remote job or GPU execution",
+    "archive": "/srv/qwen-artifacts/41875058470/1",
+    "accounting": "ssh firmus sacct -j 28739 --format=JobID,JobName,State,ExitCode,Elapsed,Start,End -P",
+    "launch_unix": 1793813577,
+    "job_start_utc": "2026-11-04T17:28:51",
+    "launch_seconds_from_job_start": 246,
+    "steps": {
+      ".9": {
+        "state": "COMPLETED",
+        "exit": "0:0",
+        "seconds": 95
+      },
+      ".10": {
+        "state": "COMPLETED",
+        "exit": "0:0",
+        "seconds": 94
+      },
+      ".11": {
+        "state": "COMPLETED",
+        "exit": "0:0",
+        "seconds": 56
+      }
+    },
+    "serving_steps_seconds": 544,
+    "serving_reserve_slack_seconds": 86,
+    "workers": {
+      "0": {
+        "rank0_started_seconds_from_launch": 35.67776298522949,
+        "clock_first_line": "2026/11/05 01:33:45.762, GPU-c2400d2f-339f-7e31-8b2c-738ca1afe858, 1980",
+        "clock_last_line": "2026/11/05 01:33:46.675, GPU-c2400d2f-339f-7e31-8b2c-738ca1afe858, 855"
+      },
+      "1": {
+        "rank0_started_seconds_from_launch": 31.632526874542236,
+        "clock_first_line": "2026/11/05 01:33:45.274, GPU-e6ed95f0-0e8f-f804-f205-aea9c25f1ac3, 1980",
+        "clock_last_line": "2026/11/05 01:33:46.277, GPU-e6ed95f0-0e8f-f804-f205-aea9c25f1ac3, 1140"
+      },
+      "2": {
+        "rank0_started_seconds_from_launch": 14.930205583572388,
+        "clock_first_line": "2026/11/05 01:33:24.774, GPU-60d94661-1b30-2134-30f5-3033e0e37a7e, 1980",
+        "clock_last_line": "2026/11/05 01:33:25.776, GPU-60d94661-1b30-2134-30f5-3033e0e37a7e, 1095"
+      }
+    },
+    "teardown_conclusion": "Successful exits; no timeout kill. Missing cleanup/main/agent timestamps prevent assigning the post-timing gap to group/symmetric-memory/Python or srun cleanup. Archive mtime is collection time.",
+    "consulted_files": {
+      "source/source/probe-firmus-megamoe-rescale.py": "cb1851699cb5be1c0ca2e6c9781880f99fc0ea039a75020fb1efdae5be9d54c3",
+      "source/source/launch-firmus-megamoe-rescale-probe.sh": "65fa7e5bb7914b7e56e286560379c81bc2ec8134138204a7522768bf2fd4533a",
+      "logs/logs/megamoe-rescale-probe-0.log": "799da22439b1b3926e5faaa1e8701ade8a43bebc5e02163c38870b63c342d381",
+      "logs/logs/megamoe-rescale-probe-1.log": "714436fa2fe574d9a16762974a64089b70224184f0575a2411bb51f0138288bb",
+      "logs/logs/megamoe-rescale-probe-2.log": "7eb733944b4ff50ed6addb6724b76589e738324d5c0fe7a6bf5199d24adcacc9"
+    },
+    "prior_cuda_compile_seconds": {
+      "qkv-production": 8.882484060013667,
+      "qkv-candidate": 8.400236863002647,
+      "qkv-diagnostic": 4.906428332003998,
+      "o-production": 8.899040017975494,
+      "o-candidate": 7.029749378009001,
+      "o-diagnostic": 4.2912322120100725
+    },
+    "two_owner_phased_critical_seconds": 22.18914925502031,
+    "original_runtime_directory": "/scratch/home/ACCOUNT/qwen/runs/pd-41875058470-1.f7I7XYsmxH",
+    "original_runtime_directory_present": false,
+    "compute_filesystem_inspection": {
+      "attempt": "Read-only second-hop ssh firmus to g1, findmnt for /tmp and /run/pyxis",
+      "result": "Host key verification failed; no host key changes, filesystem inspection or GPU execution performed",
+      "container_cache_filesystem_measured": false
+    }
+  }
+}

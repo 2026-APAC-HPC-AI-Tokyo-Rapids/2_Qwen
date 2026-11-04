@@ -1,0 +1,117 @@
+--- a/csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp
+@@ -104,6 +104,7 @@
+         CUtensorMap tensor_map_b;
+         CUtensorMap tensor_map_d;
+         CUtensorMap tensor_map_sfa;
++        bool diagnostic_no_promotion = false;
+     };
+
+     static std::string generate_impl(const Args& args) {
+@@ -142,7 +143,19 @@
+         to_string(args.gemm_desc.cd_dtype),
+         get_default_epilogue_type(args.epilogue_type));
+         // The device constexpr guard limits the macro to the two audited templates.
+-        return get_env<int>("DG_SM90_PREFILL_DENSE_FIRST_K", 0) != 0 ? "#define DG_SM90_PREFILL_DENSE_FIRST_K 1\n" + source : source;
++        const auto production = get_env<int>("DG_SM90_PREFILL_DENSE_FIRST_K", 0) != 0 ? "#define DG_SM90_PREFILL_DENSE_FIRST_K 1\n" + source : source;
++        if (args.diagnostic_no_promotion)
++            return "#define DG_R44_DIAGNOSTIC_NO_PROMOTION 1\n#define sm90_fp8_gemm_1d2d_impl sm90_fp8_gemm_promotion_diagnostic_impl\n" + production;
++        // Read at each launch/capture; off preserves the generated source bytes.
++        const auto& d = args.gemm_desc;
++        const auto& c = args.gemm_config;
++        const bool eligible = d.num_groups == 1 and d.gemm_type == GemmType::Normal and d.compiled_dims == "nk" and
++            ((d.n == 9216 and d.k == 4096) or (d.n == 4096 and d.k == 8192)) and args.major_sfb == cute::UMMA::Major::K and
++            c.layout.block_m == 256 and c.layout.block_n == 128 and c.layout.block_k == 128 and
++            c.storage_config.swizzle_a_mode == 128 and c.storage_config.swizzle_b_mode == 128 and c.storage_config.swizzle_cd_mode == 128 and
++            c.pipeline_config.num_stages == 3 and c.launch_config.num_tma_threads == 128 and c.launch_config.num_math_threads == 256 and
++            c.layout.get_cluster_size() == 2 and c.layout.cluster_n == 2 and c.launch_config.num_sms == 132 and not args.epilogue_type.has_value();
++        return eligible and get_env<int>("DG_SM90_PREFILL_DENSE_N64", 0) != 0 ? "#define DG_SM90_PREFILL_DENSE_N64 1\n" + production : production;
+     }
+
+     static void launch_impl(const KernelHandle& kernel, const LaunchConfigHandle& config, Args args) {
+@@ -155,6 +168,7 @@
+     }
+ };
+
++template <bool DiagnosticNoPromotion = false>
+ static void sm90_fp8_gemm_1d2d(const torch::Tensor& a, const torch::Tensor& sfa,
+                                const torch::Tensor& b, const torch::Tensor& sfb,
+                                const std::optional<torch::Tensor>& c,
+@@ -178,6 +192,15 @@
+         .tc_util = device_runtime->get_tc_util(), .compiled_dims = compiled_dims
+     };
+     const auto config = get_sm90_1d2d_decode_config(desc, get_best_config<SM90ArchSpec>(desc));
++
++    if constexpr (DiagnosticNoPromotion) {
++        DG_HOST_ASSERT(((n == 9216 and k == 4096) or (n == 4096 and k == 8192)) and compiled_dims == "nk");
++        DG_HOST_ASSERT(major_sfb == cute::UMMA::Major::K and not epilogue_type.has_value());
++        DG_HOST_ASSERT(config.layout.block_m == 256 and config.layout.block_n == 128 and config.layout.block_k == 128);
++        DG_HOST_ASSERT(config.pipeline_config.num_stages == 3 and config.launch_config.num_tma_threads == 128 and config.launch_config.num_math_threads == 256);
++        DG_HOST_ASSERT(config.layout.get_cluster_size() == 2 and config.layout.cluster_n == 2 and config.launch_config.num_sms == 132);
++        DG_HOST_ASSERT(config.storage_config.swizzle_a_mode == 128 and config.storage_config.swizzle_b_mode == 128 and config.storage_config.swizzle_cd_mode == 128);
++    }
+
+     // Requires no TMA splits
+     DG_HOST_ASSERT(config.storage_config.swizzle_a_mode == config.layout.block_k);
+@@ -215,6 +238,7 @@
+         .tensor_map_b = tensor_map_b,
+         .tensor_map_d = tensor_map_d,
+         .tensor_map_sfa = tensor_map_sfa,
++        .diagnostic_no_promotion = DiagnosticNoPromotion,
+     };
+     const auto code = SM90FP8Gemm1D2DRuntime::generate(args);
+     const auto runtime = compiler->build("sm90_fp8_gemm_1d2d", code);
+--- a/csrc/apis/gemm.hpp
++++ b/csrc/apis/gemm.hpp
+@@ -198,7 +198,7 @@
+                 sm90_fp8_gemm_1d1d(a.first, sfa, b.first, sfb, c, d, m, n, k, major_a, major_b, compiled_dims);
+             } else {
+                 const auto major_sfb = get_major_type_ab(sfb);
+-                sm90_fp8_gemm_1d2d(a.first, sfa, b.first, sfb, c, d, m, n, k, major_a, major_b, major_sfb, compiled_dims);
++                sm90_fp8_gemm_1d2d<false>(a.first, sfa, b.first, sfb, c, d, m, n, k, major_a, major_b, major_sfb, compiled_dims);
+             }
+         } else if (arch_major == 10 and sfa.scalar_type() == torch::kInt) {
+             sm100_fp8_fp4_gemm_1d1d(a.first, sfa, b.first, sfb, c, d, m, n, k, gran_k_a, gran_k_b,
+@@ -212,6 +212,25 @@
+     } else {
+         DG_HOST_UNREACHABLE("Unsupported architecture");
+     }
++}
++
++// Separate timing-only API. Never selected by the normal serving entry or an env.
++static void fp8_gemm_nt_promotion_diagnostic(const std::pair<torch::Tensor, torch::Tensor>& a,
++                                            const std::pair<torch::Tensor, torch::Tensor>& b,
++                                            const torch::Tensor& d) {
++    const auto major_a = get_major_type_ab(a.first), major_b = get_major_type_ab(b.first);
++    check_major_type_cd(d);
++    DG_HOST_ASSERT(device_runtime->get_arch_major() == 9);
++    const auto [m, k] = check_ab_fp8_fp4(a.first, major_a, 9);
++    const auto [n, k2] = check_ab_fp8_fp4(b.first, major_b, 9);
++    const auto [dm, dn] = get_shape<2>(d);
++    DG_HOST_ASSERT(m == dm and n == dn and k == k2 and d.scalar_type() == torch::kBFloat16);
++    DG_HOST_ASSERT(a.first.scalar_type() == torch::kFloat8_e4m3fn and b.first.scalar_type() == torch::kFloat8_e4m3fn);
++    DG_HOST_ASSERT(a.second.scalar_type() == torch::kFloat and b.second.scalar_type() == torch::kFloat);
++    std::optional<std::tuple<int, int, int>> recipe = std::make_tuple(1, 128, 128);
++    const auto [sfa, sfb, gran_k_a, gran_k_b] = layout::transform_sf_pair_into_required_layout(
++        a.second, b.second, m, n, k, recipe, std::nullopt, std::nullopt, std::nullopt, std::nullopt, false);
++    sm90_fp8_gemm_1d2d<true>(a.first, sfa, b.first, sfb, std::nullopt, d, m, n, k, major_a, major_b, get_major_type_ab(sfb), "nk");
+ }
+
+ static void fp8_fp4_gemm_nn(const std::pair<torch::Tensor, torch::Tensor>& a,
+--- a/csrc/tvm_ffi_api.cpp
++++ b/csrc/tvm_ffi_api.cpp
+@@ -216,6 +216,14 @@
+ // FP8/FP4 GEMMs and BF16 GEMMs
+ // ---------------------------------------------------------------------------
+ #if DG_FP8_COMPATIBLE and DG_TENSORMAP_COMPATIBLE
++
++// Diagnostic-only TVM-FFI symbol; no Python serving wrapper/alias.
++void dg_fp8_gemm_nt_promotion_diagnostic(TensorView a, TensorView a_sf, TensorView b, TensorView b_sf, TensorView d) {
++    gemm::fp8_gemm_nt_promotion_diagnostic(
++        std::make_pair(convert_to_torch_tensor(a), convert_to_torch_tensor(a_sf)),
++        std::make_pair(convert_to_torch_tensor(b), convert_to_torch_tensor(b_sf)), convert_to_torch_tensor(d));
++}
++TVM_FFI_DLL_EXPORT_TYPED_FUNC(fp8_gemm_nt_promotion_diagnostic, dg_fp8_gemm_nt_promotion_diagnostic);
+
+ void dg_fp8_fp4_gemm_nt(TensorView a, TensorView a_sf,
+                         TensorView b, TensorView b_sf,
