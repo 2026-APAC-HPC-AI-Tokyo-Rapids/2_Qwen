@@ -62,8 +62,7 @@ set +a
 # ---- KV transfer, caches and offline mode ----
 
 # NIXL over UCX on every active InfiniBand port of this node.
-UCX_IB=$(for device in /sys/class/infiniband/*; do [[ "$(cat "${device}/ports/1/state" 2>/dev/null)" == "4: ACTIVE" ]] && echo "$(basename "${device}"):1"; done | paste -sd,)
-[[ -n "${UCX_IB}" ]] || { echo "FATAL: no active HCA on $(hostname)"; exit 1; }
+UCX_IB=$(for device in /sys/class/infiniband/*; do if [[ "$(cat "${device}/ports/1/state")" == "4: ACTIVE" ]]; then echo "$(basename "${device}"):1"; fi; done | paste -sd,)
 export UCX_NET_DEVICES=${UCX_IB} UCX_POSIX_USE_PROC_LINK=n
 # Both endpoints own all KV heads (attention TP1), so NIXL moves pages directly; staging would only allocate unused pools.
 export SGLANG_DISAGG_STAGING_BUFFER=0

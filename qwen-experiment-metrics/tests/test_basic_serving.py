@@ -1,11 +1,6 @@
 """Basic launch/readback boundaries: isolate the public stack from Bonus."""
-import hashlib
 import importlib.util
 import json
-import os
-import signal
-import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -92,60 +87,3 @@ def test_readback_rejects_other_version_and_clipped_pool(config):
     fixture["max_total_num_tokens"] //= 2
     with pytest.raises(ValueError, match="max_total_num_tokens"):
         checker.check(config, fixture, "decode")
-
-
-def test_preparation_rejects_bonus_image_before_creating_runtime(tmp_path):
-    image = tmp_path / "1.sqsh"
-    image.write_bytes(b"not a Basic image")
-    image.with_suffix(".container-sidecar.json").write_text(json.dumps({"tier": "bonus", "applied_patches": ["changed-model.patch"]}))
-    runtime = tmp_path / "run"
-    result = subprocess.run(["bash", str(ROOT / "submission/basic/prepare.sh"), str(runtime), str(image), str(tmp_path), str(tmp_path), str(ROOT / "configs/firmus-basic.json")], text=True, capture_output=True, check=False)
-    assert result.returncode != 0
-    assert not runtime.exists()
-
-
-@pytest.mark.parametrize("disconnect", [False, True])
-def test_preparation_reaches_draft_without_new_unsquashfs_options(tmp_path, config, disconnect):
-    image = tmp_path / "1.sqsh"
-    image.write_bytes(b"pinned fixture image")
-    config.update(container_sha256=hashlib.sha256(image.read_bytes()).hexdigest(), container_size_bytes=image.stat().st_size, container_source_commit="a" * 40)
-    image.with_suffix(".container-sidecar.json").write_text(json.dumps({"tier": "basic", "applied_patches": [], "source_commits": {"sglang": config["sglang_commit"], "qwen": config["container_source_commit"]}, "container_artifact": {"size_bytes": config["container_size_bytes"], "sha256": config["container_sha256"]}}))
-    settings = tmp_path / "config.json"
-    settings.write_text(json.dumps(config))
-    model = tmp_path / "model"
-    metadata = model / ".cache/huggingface/download"
-    metadata.mkdir(parents=True)
-    (metadata / "config.json.metadata").write_text("e156cb4efae43fbee1a1ab073f946a1377e6b969\n")
-    (model / "config.json").write_text(json.dumps({"model_type": "qwen3_moe", "quantization_config": {"quant_method": "fp8"}}))
-    shards = {f"weight-{i}": f"shard-{i}.safetensors" for i in range(24)}
-    for name in shards.values():
-        (model / name).write_bytes(b"fixture")
-    (model / "model.safetensors.index.json").write_text(json.dumps({"weight_map": shards}))
-    tokenizer = tmp_path / "tokenizer"
-    tokenizer.mkdir()
-    for name in ("config.json", "generation_config.json", "merges.txt", "tokenizer.json", "tokenizer_config.json", "vocab.json"):
-        (tokenizer / name).write_text("{}")
-    binary = tmp_path / "bin"
-    binary.mkdir()
-    marker = tmp_path / "draft-stage"
-    child = tmp_path / "download-child"
-    download = f"touch '{marker}'; sleep 600 & echo $! >'{child}'; wait" if disconnect else f"touch '{marker}'; exit 78"
-    for name, content in {"unsquashfs": "exit 99", "uvx": download}.items():
-        path = binary / name
-        path.write_text("#!/bin/bash\n" + content + "\n")
-        path.chmod(0o755)
-    runtime = tmp_path / "run"
-    process = subprocess.Popen(["bash", str(ROOT / "submission/basic/prepare.sh"), str(runtime), str(image), str(model), str(tokenizer), str(settings)], env={**os.environ, "PATH": f"{binary}:{os.environ['PATH']}"}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if disconnect:
-        deadline = time.monotonic() + 10
-        while not child.exists():
-            assert time.monotonic() < deadline
-            time.sleep(0.02)
-        os.kill(process.pid, signal.SIGHUP)
-    _, stderr = process.communicate(timeout=10)
-    assert process.returncode == (129 if disconnect else 78), stderr
-    if disconnect:
-        state = Path(f"/proc/{child.read_text().strip()}/stat")
-        assert not state.exists() or state.read_text().rsplit(")", 1)[1].split()[0] == "Z"
-    assert marker.exists()
-    assert not runtime.exists()

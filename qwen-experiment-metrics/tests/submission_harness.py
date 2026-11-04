@@ -11,9 +11,12 @@ KIND is bonus-sbatch, bonus-prepare, basic-sbatch or basic-prepare; REPO a check
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -74,6 +77,8 @@ exit 0''')
     # The container Python: record the server launch, run anything else for real.
     stub(bin_dir, "vpython", f'''if [[ "$1" == -m && "$2" == sglang.launch_server ]]; then
   {PYTHON} -c 'import json,os,sys; skip={{"PWD","OLDPWD","SHLVL","_","PATH","HOME","LC_CTYPE"}}; json.dump({{"argv": sys.argv[2:], "env": {{k: v for k, v in os.environ.items() if k not in skip and not k.startswith("HARNESS")}}}}, open(sys.argv[1], "w"), indent=1, sort_keys=True)' "{harness}/launch/$HARNESS_KEY.json" "$@"
+  # Each Decode rank logs once which greedy verify path it uses.
+  if [[ "$HARNESS_KEY" == decode-0 ]]; then for rank in 0 1 2 3; do echo "Decode greedy verify using fused kernels greedy_tiles/greedy_finish: rows=4 vocab=151936 stride=151936"; done; fi
   exec sleep 600
 fi
 exec {PYTHON} "$@"''')
@@ -90,8 +95,10 @@ def run_sbatch(kind, repo, harness):
     (model / "config.json").write_text("{}")
     (root / "source/model.json").write_text(json.dumps({"model": {"path": str(model)}}))
     package = repo / "submission"
-    (harness / "ib/mlx5_0/ports/1").mkdir(parents=True)
-    (harness / "ib/mlx5_0/ports/1/state").write_text("4: ACTIVE\n")
+    # Two active ports and, last in glob order, one that is down (a worker must skip it).
+    for device, state in (("mlx5_0", "4: ACTIVE"), ("mlx5_1", "4: ACTIVE"), ("mlx5_bond_0", "1: DOWN")):
+        (harness / "ib" / device / "ports/1").mkdir(parents=True)
+        (harness / "ib" / device / "ports/1/state").write_text(state + "\n")
     if kind == "bonus-sbatch":
         # What prepare.sh stages: both patched packages, the config, the pinned env files and run/.
         (root / "overlay/sglang/python/sglang").mkdir(parents=True)
@@ -114,8 +121,14 @@ def run_sbatch(kind, repo, harness):
         # The host-side readback and EAGLE collector need real servers; record their calls instead.
         stub(harness / "bin", "python3", f'printf "python3 %s\\n" "$*" >>{harness}/events.log')
     env = {"PATH": f"{harness}/bin:/usr/bin:/bin", "HOME": str(harness / "home"), "USER": "tester", "LOGNAME": "tester", "SLURM_SUBMIT_DIR": str(root), "SLURM_JOB_NODELIST": "g[1,4]", "SLURM_JOB_ID": "1"}
+    # Servers still run when the job script ends; on a cluster Slurm then ends them with the job.
     with (harness / "sbatch.out").open("w") as output:
-        status = subprocess.run(["bash", str(root / "scripts/submit.sbatch")], cwd=root, env=env, timeout=90, stdout=output, stderr=subprocess.STDOUT, start_new_session=True, check=False).returncode
+        job = subprocess.Popen(["bash", str(root / "scripts/submit.sbatch")], cwd=root, env=env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            status = job.wait(timeout=90)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(job.pid, signal.SIGTERM)
     if status:
         raise RuntimeError(f"submit.sbatch exited {status}:\n{(harness / 'sbatch.out').read_text()[-3000:]}")
     return root

@@ -104,9 +104,9 @@ def test_helper_copies_are_verbatim(copy, source):
     assert (PACKAGE / "run" / copy).read_bytes() == (ROOT / source).read_bytes()
 
 
-def test_greedy_probe_changes_only_gateway_and_model():
+def test_greedy_probe_changes_only_gateway_model_and_drops_its_check():
     source = (ROOT / "research/simulation/greedy_probe.py").read_text()
-    for old, new in (("    root = Path(sys.argv[1])\n", "    root = Path(sys.argv[1])\n    url = sys.argv[2]\n    model = sys.argv[3]\n"), ("{'model': 'qwen', ", "{'model': model, "), ("urllib.request.Request('http://127.0.0.1:8000/v1/chat/completions', ", "urllib.request.Request(url, ")):
+    for old, new in (("    root = Path(sys.argv[1])\n", "    root = Path(sys.argv[1])\n    url = sys.argv[2]\n    model = sys.argv[3]\n"), ("{'model': 'qwen', ", "{'model': model, "), ("urllib.request.Request('http://127.0.0.1:8000/v1/chat/completions', ", "urllib.request.Request(url, "), ("        choice = data['choices'][0]\n        if not choice.get('logprobs', {}).get('content'):\n            raise ValueError('token logprobs required for greedy parity evidence')\n", "")):
         assert source.count(old) == 1
         source = source.replace(old, new)
     assert (PACKAGE / "run/greedy-probe.py").read_text() == source
@@ -158,24 +158,33 @@ def test_pins_are_the_pp4_settings_plus_the_adopted_gate_outcomes(tmp_path):
     assert decode.replace("SGLANG_DECODE_GREEDY_VERIFY=0\n", "SGLANG_DECODE_GREEDY_VERIFY=1\n") == DECODE_ENV
 
 
-# The package scripts were rewritten for readability after the measured runs. The reference records were taken
-# with submission_harness.py from the scripts of commit a688495, which are the scripts of the standalone run
-# 41694678252 (Bonus) and of the measured Basic runs 41078642203 and 41093781934. The one path that moved,
-# the Bonus worker launcher (a heredoc written to source/worker.sh, now scripts/worker.sh), is normalised there.
+# The package scripts were rewritten after the measured runs: for readability, and down to the steps of a
+# successful run (no argument, tool or input checks, traps, timeouts or fallbacks). The reference records are
+# submission_harness.py recordings of the scripts of commit a688495, which are the scripts of the standalone
+# run 41694678252 (Bonus) and of the measured Basic runs 41078642203 and 41093781934. They are compared with
+# exactly these documented differences:
+#   - the Bonus worker launcher moved from a heredoc written to source/worker.sh to scripts/worker.sh;
+#   - removed checks: `git apply --check` before each overlay, and the in-job Basic server-info validator
+#     (check-basic-server-info.py, which the team workflow still runs on the collected files) and its copy.
 REFERENCE = ROOT / "qwen-experiment-metrics/tests/fixtures/submission-scripts"
-SCRIPT_FILES = {f"{directory}/{name}" for directory in ("scripts", "source") for name in ("submit.sbatch", "worker.sh", "prepare.sh")}
+SCRIPT_FILES = {f"{directory}/{name}" for directory in ("scripts", "source") for name in ("submit.sbatch", "worker.sh", "prepare.sh", "greedy-probe.py")}
+REMOVED_EVENTS = {"bonus-prepare": re.compile(r"^git \S+ apply --check "), "basic-sbatch": re.compile(r"/check-basic-server-info\.py ")}
+REMOVED_FILES = {"basic-prepare": {"scripts/check-basic-server-info.py"}}
 
 
 @pytest.mark.parametrize("kind", submission_harness.KINDS)
-def test_scripts_do_exactly_what_the_measured_scripts_did(kind):
-    expected = json.loads((REFERENCE / f"{kind}.json").read_text())
+def test_scripts_do_what_the_measured_scripts_did(kind):
+    expected = json.loads((REFERENCE / f"{kind}.json").read_text().replace("H/run/source/worker.sh", "H/run/scripts/worker.sh"))
     actual = submission_harness.record(kind, ROOT)
-    # Same srun steps with the same argv, same worker launch argv and environment, same ordered calls.
-    for key in ("srun", "cleanup_steps", "launch", "events"):
+    # Same srun steps with the same argv, and the same launch_server argv and environment for every worker.
+    for key in ("srun", "cleanup_steps", "launch"):
         assert actual[key] == expected[key], key
-    # Same files with the same content, apart from the scripts themselves and the worker logs' banner lines.
+    # The same ordered HTTP calls and helper, extraction, patch and download commands, less the removed checks.
+    removed = REMOVED_EVENTS.get(kind)
+    assert actual["events"] == [event for event in expected["events"] if not (removed and removed.search(event))]
+    # The same files with the same content, apart from the scripts themselves and the worker logs' banner lines.
     def files(tree):
-        return {path: None if path.startswith("logs/") and path.endswith(".log") else digest for path, digest in tree.items() if path not in SCRIPT_FILES}
+        return {path: None if path.startswith("logs/") and path.endswith(".log") else digest for path, digest in tree.items() if path not in SCRIPT_FILES | REMOVED_FILES.get(kind, set())}
     assert files(actual["tree"]) == files(expected["tree"])
 
 

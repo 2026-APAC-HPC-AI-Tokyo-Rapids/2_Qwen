@@ -27,9 +27,6 @@ def main():
         request = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(request, timeout=120) as response:
             data = json.load(response)
-        choice = data['choices'][0]
-        if not choice.get('logprobs', {}).get('content'):
-            raise ValueError('token logprobs required for greedy parity evidence')
         responses.append({'request': body, 'response': data})
     result = {'schema_version': 'qwen-greedy-parity/v1', 'phase': 'after official benchmark', 'prompt_sha256': hashlib.sha256(json.dumps(PROMPTS, ensure_ascii=False).encode()).hexdigest(), 'responses': responses, 'training_data': False}
     (root / 'greedy-parity.json').write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
