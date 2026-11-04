@@ -228,6 +228,7 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     config['prefill']['fa3_pair_gate'] = enabled
     config['prefill']['fa3_prepack_gate'] = enabled
     config['prefill']['fa3_v3_gate'] = enabled
+    config['prefill']['small_bundle_r37_gate'] = enabled
     config['decode_greedy_verify_gate'] = enabled
     for name in ('source', 'results'):
         (tmp_path / name).mkdir()

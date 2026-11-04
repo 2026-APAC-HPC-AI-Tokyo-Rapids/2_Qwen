@@ -1,0 +1,90 @@
+--- a/python/sglang/kernels/ops/moe/prefill_moe_input.py
++++ b/python/sglang/kernels/ops/moe/prefill_moe_input.py
+@@ -1,3 +1,4 @@
++import os
+ """Prefill MegaMoE input without the pre-dispatch kernel (Qwen3, H4096, 128 experts, top-8).
+
+ control:    fused_add_rmsnorm -> gate GEMM -> zeros(bias) -> router -> mega_moe_pre_dispatch_sm90
+@@ -234,6 +235,75 @@
+     tl.store(IDS + out, tl.where(live[:, None], selected_idx, -1).to(tl.int64))
+
+
++@triton.jit
++def _onepass_moe_input_div448(O, R, W, G, Q, S, IDS, TW, num_tokens, eps, BLOCK_M: tl.constexpr):
++    """BLOCK_M rows: residual += o, then per 128-column group of h * w the FP8
++    code with the rstd-free scale 448 / amax(|h * w|) and the BF16 gate operand
++    h * w; rstd = rsqrt(mean(h^2) + eps) scales the group scales and the FP32
++    gate accumulator once the row is complete (rstd > 0 commutes with the
++    absmax). Then the router's softmax top-8 into the MegaMoE buffer; programs
++    past num_tokens skip the loop and write only the pad slots."""
++    rows = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
++    live = rows < num_tokens
++    cols = tl.arange(0, 128)
++    experts = tl.arange(0, 128)
++    sumsq = tl.zeros((BLOCK_M,), tl.float32)
++    acc = tl.zeros((BLOCK_M, 128), tl.float32)
++    for g in range(0, (tl.program_id(0) * BLOCK_M < num_tokens).to(tl.int32) * 32):
++        offs = rows[:, None] * 4096 + (g * 128 + cols)[None, :]
++        # Same residual as the input norm_quant: unrounded FP32 sum, BF16 store.
++        h = tl.load(O + offs, mask=live[:, None], other=0.0).to(tl.float32) + tl.load(R + offs, mask=live[:, None], other=0.0).to(tl.float32)
++        tl.store(R + offs, h.to(tl.bfloat16), mask=live[:, None])
++        sumsq += tl.sum(h * h, 1)
++        hw = h * tl.load(W + g * 128 + cols).to(tl.float32)[None, :]
++        absmax = tl.maximum(tl.max(tl.abs(hw), 1), 1.0e-10)
++        q = hw * tl.div_rn(tl.full((BLOCK_M,), 448.0, tl.float32), absmax)[:, None]
++        tl.store(Q + offs, q.to(tl.float8e4nv), mask=live[:, None])
++        # The rstd-free scale; multiplied by rstd below.
++        scale = tl.inline_asm_elementwise("{ .reg .f32 q,e,t; .reg .pred p; fma.rn.f32 q,$1,0f3b124925,0f00000000; fma.rn.f32 e,q,0fc3e00000,$1; fma.rn.f32 t,0f3b124925,e,q; setp.eq.f32 p,$1,0f7f800000; selp.f32 $0,$1,t,p; }", constraints="=f,f", args=[absmax], dtype=tl.float32, is_pure=True, pack=1)
++        tl.store(S + rows * 32 + g, scale, mask=live)
++        # BF16 gate operand. The conversion is opaque (non-pure asm, the same RN
++        # rounding as .to(tl.bfloat16)) so the compiler moves the finished operand
++        # into the MMA layout instead of recomputing h * w there from the staged
++        # O and R tiles (1057 -> 656 SASS instructions per thread per group).
++        z = tl.inline_asm_elementwise("cvt.rn.bf16x2.f32 $0, $2, $1;", "=r,r,r", [hw], dtype=tl.bfloat16, is_pure=False, pack=2)
++        acc = tl.dot(z, tl.load(G + experts[None, :] * 4096 + (g * 128 + cols)[:, None]), acc)
++    rstd = tl.rsqrt(sumsq / 4096.0 + eps)
++    # Other threads of this program stored the rstd-free scales; bar.sync orders
++    # those global stores before the loads below. (Keeping the 64 x 32 scales in
++    # registers instead costs 89 more SASS instructions per group.)
++    tl.debug_barrier()
++    groups = tl.arange(0, 32)
++    scale_offs = rows[:, None] * 32 + groups[None, :]
++    tl.store(S + scale_offs, tl.load(S + scale_offs, mask=live[:, None], other=0.0) * rstd[:, None], mask=live[:, None])
++    # BF16 logits, as the gate GEMM returns them; then the router's softmax path
++    # with a zero bias, top-8 by lowest expert id on ties, renormalized.
++    biased = (acc * rstd[:, None]).to(tl.bfloat16).to(tl.float32) + 0.0
++    row_max = tl.max(biased, axis=1)[:, None]
++    exp_row = tl.exp(biased - row_max)
++    activated = exp_row / tl.sum(exp_row, axis=1)[:, None]
++    biased = tl.where(biased == biased, biased, -1e30)
++    slots = tl.arange(0, 8)
++    selected_vals = tl.zeros((BLOCK_M, 8), dtype=tl.float32)
++    selected_idx = tl.zeros((BLOCK_M, 8), dtype=tl.int32)
++    cur = biased
++    for k in tl.static_range(8):
++        max_val = tl.max(cur, axis=1)[:, None]
++        lane_id = tl.where(cur == max_val, experts[None, :], 129)
++        win_lane = tl.min(lane_id, axis=1)[:, None]
++        win_activated = tl.sum(tl.where(experts[None, :] == win_lane, activated, 0.0), axis=1)[:, None]
++        slot = slots[None, :] == k
++        selected_vals = tl.where(slot, win_activated, selected_vals)
++        selected_idx = tl.where(slot, win_lane, selected_idx)
++        cur = tl.where(experts[None, :] == win_lane, -float("inf"), cur)
++    routed_sum = tl.sum(selected_vals, axis=1)[:, None]
++    selected_vals = selected_vals / tl.where(routed_sum > 0.0, routed_sum, 1.0)
++    # Slots past num_tokens: the masking pre-dispatch writes.
++    out = rows[:, None] * 8 + slots[None, :]
++    tl.store(TW + out, tl.where(live[:, None], selected_vals, 0.0))
++    tl.store(IDS + out, tl.where(live[:, None], selected_idx, -1).to(tl.int64))
++
++
+ def onepass_moe_input(x, residual, weight, eps, gate_weight, buf_x, buf_x_sf, buf_topk_idx, buf_topk_weights):
+     """post_norm_moe_input + the gate GEMM + route_into_buffer in one kernel that
+     does not write the BF16 y: residual += x (x is left unchanged); FP8 x and
+@@ -251,4 +321,5 @@
+     assert buf_topk_idx.shape == buf_topk_weights.shape == (buf_x.shape[0], 8)
+     assert buf_topk_idx.is_contiguous() and buf_topk_weights.is_contiguous() and 0 < rows <= buf_x.shape[0]
+     # 64 rows x 8 warps x 3 stages: 130 registers, no spill, 172.5 KB shared (CUDA 13.4 / Triton 3.7, sm_90a).
+-    _onepass_moe_input[(buf_x.shape[0] // 64,)](x, residual, weight, gate_weight, buf_x, buf_x_sf, buf_topk_idx, buf_topk_weights, rows, eps, BLOCK_M=64, num_warps=8, num_stages=3)
++    kernel = _onepass_moe_input_div448 if os.environ.get("SGLANG_PREFILL_ONEPASS_DIV448") == "1" else _onepass_moe_input
++    kernel[(buf_x.shape[0] // 64,)](x, residual, weight, gate_weight, buf_x, buf_x_sf, buf_topk_idx, buf_topk_weights, rows, eps, BLOCK_M=64, num_warps=8, num_stages=3)

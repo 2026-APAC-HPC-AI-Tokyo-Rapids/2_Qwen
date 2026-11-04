@@ -1,0 +1,253 @@
+--- /dev/null
++++ b/python/sglang/srt/layers/prefill_r37.py
+@@ -0,0 +1,184 @@
++"""Round 37 operation snapshots, shared by the bounded gate and ready preparation."""
++import logging
++import os
++
++import torch
++
++KEYS = {'A': 'DG_SM90_PREFILL_DENSE_FIRST_K', 'B': 'SGLANG_PREFILL_QKNORM_FIXED', 'C': 'SGLANG_PREFILL_ONEPASS_DIV448'}
++_logged = set()
++_prewarmed = False
++
++
++def dispatch(candidate, rows):
++    if candidate not in _logged:
++        logging.getLogger(__name__).warning('Prefill r37 %s using %s rows=%s pid=%s', candidate, 'candidate' if os.environ.get(KEYS[candidate]) == '1' else 'control', rows, os.getpid())
++        _logged.add(candidate)
++
++
++def random(shape, offset=0):
++    gen = torch.Generator(device='cuda').manual_seed(37004 + sum((i+1)*n for i,n in enumerate(shape)) + offset)
++    return torch.randn(shape, device='cuda', dtype=torch.bfloat16, generator=gen) * .25
++
++
++class Dense:
++    names = ('qkv', 'o')
++
++    def __init__(self, rows, weights):
++        self.rows = rows
++        self.weights = weights
++        self.x = [random((rows, k)) for k in (4096, 8192)]
++        self.saved = [x.clone() for x in self.x]
++        self.out = {m: [torch.empty((rows, n), device='cuda', dtype=torch.bfloat16) for n in (9216, 4096)] for m in ('control', 'candidate')}
++        self.quant = {}
++        self.state('initial')
++
++    def state(self, state):
++        from sglang.kernels.ops.quantization.fp8_kernel import (
++            sglang_per_token_group_quant_fp8,
++        )
++        for x, saved in zip(self.x, self.saved):
++            x.copy_(saved)
++            if state == 'changed':
++                x.neg_(); x[:, ::128] *= 8
++            if state == 'boundary':
++                x[:1].zero_(); x[1:2].fill_(-0.0); x[2:3].fill_(2**-120)
++                x[3:4].fill_(4); x[4:5, ::128] = -4
++        values = [sglang_per_token_group_quant_fp8(x, 128, column_major_scales=True, scale_tma_aligned=True) for x in self.x]
++        if hasattr(self, 'lhs'):
++            for old, new in zip(self.lhs, values):
++                for dst, src in zip(old, new):
++                    dst.copy_(src)
++        else:
++            self.lhs = values
++
++    def step(self, mode, projection=None):
++        import deep_gemm
++        for i in range(2) if projection is None else (projection,):
++            deep_gemm.fp8_gemm_nt(self.lhs[i], self.weights[i], self.out[mode][i], compiled_dims='nk')
++
++    def outputs(self, mode):
++        return self.out[mode]
++
++    def final(self, mode):
++        # Both BF16 projection outputs and their actual FP8 consumer operands/scales.
++        from sglang.kernels.ops.quantization.fp8_kernel import (
++            sglang_per_token_group_quant_fp8,
++        )
++        return [v for out in self.out[mode] for v in sglang_per_token_group_quant_fp8(out, 128, column_major_scales=True, scale_tma_aligned=True)]
++
++
++class Writer:
++    names = ('writer',)
++
++    def __init__(self, rows, weights, idtype=torch.int64):
++        self.rows = rows
++        self.packed = random((rows, 72, 128)); self.saved = self.packed.clone()
++        self.qw, self.kw, self.trig, self.eps = weights
++        self.pos = (torch.arange(rows, device='cuda') % 4096).to(idtype)
++        self.loc = (torch.arange(rows, device='cuda') + 1).to(idtype)
++        self.cu = torch.tensor([0, 3994, 7988] if rows == 7988 else [0, rows], device='cuda', dtype=torch.int32)
++        self.lengths = (3994, 3994) if rows == 7988 else (rows,)
++        self.out = {m: [torch.zeros(s, dtype=torch.float8_e4m3fn, device='cuda') for s in ((rows, 64, 128), (rows+1, 4, 128), (rows+1, 4, 128), (rows, 4, 128), (rows, 4, 128))] for m in ('control', 'candidate')}
++        self.native = {m: torch.zeros((2, 4, 42, 96*128), dtype=torch.uint8, device='cuda') for m in self.out} if rows == 7988 else {}
++
++    def state(self, state):
++        self.packed.copy_(self.saved)
++        if state == 'changed':
++            self.packed.neg_(); self.pos.add_(17).remainder_(4096)
++            self.loc.copy_(torch.arange(self.rows, 0, -1, device='cuda', dtype=self.loc.dtype))
++        else:
++            self.pos.copy_((torch.arange(self.rows, device='cuda') % 4096).to(self.pos.dtype))
++            self.loc.copy_(torch.arange(self.rows, device='cuda', dtype=self.loc.dtype) + 1)
++        if state == 'boundary':
++            self.packed[0].zero_(); self.packed[1].fill_(-0.0)
++            self.packed[2].fill_(2**-120); self.packed[3].fill_(464)
++            self.packed[4].fill_(float('inf')); self.packed[5].fill_(float('nan'))
++            self.pos[0] = 4095; self.loc[0] = 0
++        for outputs in self.out.values():
++            for x in outputs:
++                x.view(torch.uint8).zero_()
++
++    def args(self, mode):
++        q, kc, vc, ck, cv = self.out[mode]
++        return (self.packed[:, :64], self.packed[:, 64:68], self.qw, self.kw, self.trig, self.pos, self.eps, q, self.packed[:, 68:], kc, vc, self.loc, ck, cv)
++
++    def step(self, mode):
++        from sglang.kernels.ops.attention.rope import apply_qknorm_rope_fp8_prefill_fp32
++        apply_qknorm_rope_fp8_prefill_fp32(*self.args(mode))
++
++    def outputs(self, mode):
++        return self.out[mode]
++
++    def final(self, mode):
++        from sglang.srt.layers.attention.prefill_fp8 import attention
++        q, _, _, k, v = self.out[mode]
++        # The writer's ordinary contiguous consumer, without native V dispatch.
++        values = list(attention(q, k, v, self.cu, max(self.lengths), 128**-.5, self.rows, fixed=True, lengths=None))
++        if self.native:
++            # This is the served P/P3 route: ordinary writer, separate native V prepack.
++            torch.ops.apac_fa3_verify.prefill_prepack(v, self.native[mode], self.cu)
++            values += [self.native[mode]]
++            values += list(attention(q, k, v, self.cu, 3994, 128**-.5, self.rows, fixed=True, v_image=self.native[mode], lengths=self.lengths))
++        return values
++
++
++class Onepass:
++    names = ('onepass',)
++
++    def __init__(self, rows, weights):
++        self.rows = rows
++        self.w, self.g, self.eps = weights
++        self.x = random((rows, 4096)); self.saved = self.x.clone()
++        self.residual = random((rows, 4096), offset=1); self.saved_r = self.residual.clone()
++        cap = 8192
++        self.out = {m: [torch.empty_like(self.x), torch.zeros((cap,4096),device='cuda',dtype=torch.float8_e4m3fn), torch.zeros((cap,32),device='cuda'), torch.zeros((cap,8),device='cuda',dtype=torch.int64), torch.zeros((cap,8),device='cuda')] for m in ('control','candidate')}
++
++    def state(self, state):
++        self.x.copy_(self.saved); self.residual.copy_(self.saved_r)
++        if state == 'changed':
++            self.x.neg_(); self.residual.mul_(2)
++        if state == 'boundary':
++            self.x[:2].zero_(); self.residual[:2].zero_()
++            self.x[1].fill_(-0.0); self.x[2].fill_(2**-120)
++            self.x[3].fill_(2**60); self.x[4, ::128] = -2**60
++            self.x[5].fill_(float('inf')); self.x[6].fill_(float('nan'))
++        for outputs in self.out.values():
++            for x in outputs[1:3]:
++                x.view(torch.uint8).zero_()
++
++    def step(self, mode):
++        from sglang.kernels.ops.moe.prefill_moe_input import onepass_moe_input
++        r, q, s, ids, tw = self.out[mode]
++        r.copy_(self.residual)
++        onepass_moe_input(self.x, r, self.w, self.eps, self.g, q, s, ids, tw)
++
++    def outputs(self, mode):
++        # FP8/scale pad slots are deliberately not written by the production op.
++        r, q, s, ids, tw = self.out[mode]
++        return (r, q[:self.rows], s[:self.rows], ids, tw)
++
++    def final(self, mode):
++        return ()  # all public outputs, including final routing, are checked above
++
++
++def prewarm(model):
++    global _prewarmed
++    if _prewarmed or not any(os.environ.get(key) == '1' for key in KEYS.values()):
++        return
++    from sglang.srt.models.qwen3_moe import Qwen3MoeDecoderLayer
++    layer = next(m for m in model.modules() if isinstance(m, Qwen3MoeDecoderLayer))
++    a = layer.self_attn
++    with torch.inference_mode(), torch.random.fork_rng(devices=[torch.cuda.current_device()]):
++        for name, factory, weights in (
++            ('A', Dense, [(a.qkv_proj.weight, a.qkv_proj.weight_scale_inv), (a.o_proj.weight, a.o_proj.weight_scale_inv)]),
++            ('B', Writer, (a.q_norm.weight, a.k_norm.weight, a.rotary_emb.cos_sin_cache, a.q_norm.variance_epsilon)),
++            ('C', Onepass, (layer.post_attention_layernorm.weight, layer.mlp.gate.weight, layer.post_attention_layernorm.variance_epsilon)),
++        ):
++            if os.environ.get(KEYS[name]) != '1':
++                continue
++            case = factory(7988, weights)
++            case.step('candidate')
++            torch.cuda.synchronize()
++            logging.getLogger(__name__).warning('Prefill r37 %s prewarm done rows=7988 pid=%s', name, os.getpid())
++            del case
++    _prewarmed = True
+--- a/python/sglang/srt/model_executor/model_runner.py
++++ b/python/sglang/srt/model_executor/model_runner.py
+@@ -619,6 +619,11 @@
+
+             prewarm_fc1_first_k(self.model)
+
++        if not self.is_draft_worker and self.server_args.disaggregation_mode == "prefill":
++            from sglang.srt.layers.prefill_r37 import prewarm
++
++            prewarm(self.model)
++
+     def init_memory_saver_adapter(self):
+         self.memory_saver_adapter = TorchMemorySaverAdapter.create(
+             enable=self.server_args.enable_memory_saver
+--- a/python/sglang/srt/layers/attention/prefill_fp8.py
++++ b/python/sglang/srt/layers/attention/prefill_fp8.py
+@@ -1,6 +1,7 @@
+ """Qwen TP1 Prefill: FP8 attention output and specialized dense projections."""
+
+ import torch
++from sglang.srt.layers.prefill_r37 import _logged as _r37_logged, dispatch
+ import json
+ import os
+ from functools import lru_cache
+@@ -46,6 +47,8 @@
+
+     out = torch.empty((a.shape[0], layer.weight.shape[0]), device=a.device, dtype=torch.bfloat16)
+     deep_gemm.fp8_gemm_nt((a, sa), (layer.weight, layer.weight_scale_inv), out, compiled_dims="nk")
++    if "A" not in _r37_logged:
++        dispatch("A", a.shape[0])
+     return out, None
+
+
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -25,6 +25,7 @@
+ from sglang.srt.layers.attention.prefill_contiguous import use_contiguous_prefill, use_fixed_prefill
+
+ import torch
++from sglang.srt.layers.prefill_r37 import _logged as _r37_logged, dispatch
+ from torch import nn
+ from transformers import PretrainedConfig
+
+@@ -485,6 +486,8 @@
+         )
+         if mode == "onepass":
+             onepass_moe_input(hidden_states, residual, norm.weight, norm.variance_epsilon, self.gate.weight, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights)
++            if "C" not in _r37_logged:
++                dispatch("C", num_tokens)
+             return run_sm90_mega_routed(self, hidden_states, None, None, buf, num_tokens)
+         post_norm_moe_input(hidden_states, residual, norm.weight, norm.variance_epsilon, buf.x, buf.x_sf, buf.topk_idx, buf.topk_weights, pad_slots=mode != "decode-fused")
+         if mode == "fused-gate":
+@@ -891,9 +894,13 @@
+                     n=selected["native_v_n"]
+                     self.attn.prefill_v_image=torch.empty((len(lengths),4,(max(lengths)+n-1)//n,n*128),dtype=torch.uint8,device=k.device)
+                     apply_qknorm_rope_fp8_prefill_fp32(*rope_args,*kv_args,contiguous_k,contiguous_v)
++                    if "B" not in _r37_logged:
++                        dispatch("B", q.shape[0])
+                     torch.ops.apac_fa3_verify.prefill_prepack(contiguous_v,self.attn.prefill_v_image,get_attn_backend().forward_metadata.cu_seqlens_q)
+                 elif _PREFILL_QKNORM == "fp32" and self.attn.prefill_v_image is None:
+                     apply_qknorm_rope_fp8_prefill_fp32(*rope_args, *kv_args, contiguous_k, contiguous_v)
++                    if "B" not in _r37_logged:
++                        dispatch("B", q.shape[0])
+                 else:
+                     apply_qknorm_rope_fp8_prefill(*rope_args, *kv_args, contiguous_k, contiguous_v, self.attn.prefill_v_image, sum(forward_batch.extend_seq_lens_cpu) if self.attn.prefill_v_image is not None else 0)
+                 k, v = contiguous_k, contiguous_v
