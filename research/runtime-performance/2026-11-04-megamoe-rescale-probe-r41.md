@@ -73,3 +73,13 @@ start condition は厳密に `SECONDS + 105 + 630 <= 1020`、開始上限285秒�
 CPU tests は git履歴を使わず、既存 B/C pin/prewarm/dispatch、host patch適用、旧/新production generator一致、別APIのliteral false/true、flag拒否、cache source/geometry assertion、12GPU schema/閾値、欠損/clock不足/timeout等の不完全集約、sbatch予算/staging/成果物回収を検証する。指定 pytest/Ruff の最終終了コードと logs は隣接 CPU-validation JSON、および指定 `codex-scratch/r41b/` を正本とする。
 
 image rebuild、GPU/JIT実行、scheduler起動、SSH、commit/pushは今回行っていない。CPU compile/SASS はimage内 host extensionの実buildやGPU動作確認の代替ではなく、実測は将来の明示 submission に残る。`submission/` は変更していない。
+
+## 結果（run 41875058470、Slurm 28739）
+
+初回 run 41853888382 は image 2fb619c4（build source 00ae7f3）を build した後、sbatch 中に Firmus への SSH 接続が切れ Slurm job を作れなかった。build 済み image を config に再 pin し、build なしで再投入した。
+
+通常 serving の公式 score は **10072.13 output tok/s**（good request 98.22%、6342件、error 0）。main 10054.49、round 39 の 10058.37 と構成は B/C pin 以外同一で、差はノイズ幅として扱う。先頭バーストの TTFT 超過は従来と同じ 111 件で、すべて開始5秒以内。3 worker の Prefill 12 process すべてで A/B/C の prewarm と dispatch のログを確認した。
+
+probe は 3 worker とも exit 0、summary は complete。production 1 層は GPU 別中央値 2.66–2.78 ms、diagnostic との差の GPU 別中央値は 65.97–83.00 µs、**12 GPU 中央値 77.16 µs/層**で、判定は conditionally_open。平均 SM clock は 1257–1433 MHz、steady CTA-K128 あたり 41–52 clock に相当する。
+
+解釈：scale 経路全体（scale load、RCP、FMUL、依存待ち）の露出上限は production 層時間の約2.9%。PP4 の1 stage 約23.5層で1 period あたり最大約1.8 ms、定常 period 約113 ms の約1.6%で、定常上限の上積みは最大でも百数十 req/window 相当。scale 仕事を保持する再設計はこの上限を超えない。FMUL 単独の露出や達成可能な短縮量ではない。mainloop 再設計は、この上限内で依存待ちを隠す設計に限って続ける。
