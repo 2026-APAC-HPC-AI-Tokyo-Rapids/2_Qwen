@@ -454,3 +454,4 @@ touch "${ROOT}/run-success"
 # Round 38 submit: round 37 gate repaired, image 5018d322 reused without a build.
 # Round 39 submit: dense first-K pinned, repaired B/C gate on image 5018d322 without a build.
 # Round 41 submit: B/C pinned, MegaMoE scale-path upper-bound probe in the freed window, host rebuild.
+# Round 41 resubmit: built image 2fb619c4 reused after the sbatch SSH drop.
