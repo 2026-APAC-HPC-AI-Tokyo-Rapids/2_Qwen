@@ -32,21 +32,3 @@ Paths are relative to `repository/`, a snapshot of the team repository. The whol
 2. **Why it is the same math**: the same inventory gives each change's numerical class (bit-identical, FP-order, no numeric effect) with its basis. Rows whose class the records do not establish are marked `to confirm` rather than guessed.
 3. **Evidence**: the organisers run the full-set accuracy check. The Bonus job also runs a fixed greedy probe after the official benchmark (`results/greedy-parity.json`) so outputs can be compared before and after a change.
 4. **Speedup against our Basic**: 10054.49 against 6330.21 good output tok/s, both on Firmus 2 × 8 H200.
-
-## Assembling this folder
-
-From a checkout of the final `main` commit, in an empty directory `OUT` outside the checkout (each command is one line):
-
-```bash
-git -C /path/to/2_Qwen archive --format=tar --prefix=repository/ HEAD | tar -x -C OUT
-```
-
-```bash
-cp /path/to/2_Qwen/submission/SUBMISSION.md OUT/README.md
-```
-
-```bash
-cd OUT/repository/submission/analysis && while read -r sum path; do install -d "profiling_data/$(dirname "${path}")" && curl -fsS -o "profiling_data/${path}" "https://mizuha-dev.com/files/qwen-artifacts/41423181527/1/${path}" || exit 1; done <profiling_data.sha256 && (cd profiling_data && sha256sum -c ../profiling_data.sha256)
-```
-
-Then put the team deck at `OUT/presentation/team_presentation.pptx`. Links in this file point into `repository/`, so they work only in the assembled folder.

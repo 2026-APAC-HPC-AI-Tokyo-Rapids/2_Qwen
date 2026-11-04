@@ -6,8 +6,6 @@ The package is the PP4 round 34 configuration, measured at **10054.49 good outpu
 
 The package adds one runtime overlay to that run, `patches/overlay/sglang/34-pp4-direct-logprob.patch`. The team's direct PP4 Prefill loop did not relay the last stage's logprob outputs to the other stages, so a request with `logprobs: true` stopped the Prefill scheduler. The package's greedy probe found this on the round 25 configuration (Actions [41694678252](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41694678252), which scored 10025.34 before the probe). The overlay relays them with each result, as the upstream PP loop does. On round 25 it was then verified in Actions [41766980300](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41766980300) (10016.32, eligible, every probe response with 64 token logprobs, no Prefill error). Requests without logprobs, including the official AIPerf workload, take the unchanged path.
 
-Standalone re-run of this package (round 34 with overlay 34): **pending**.
-
 Common baseline: **1,832 good output tok/s** on Firmus 2×8 H200 (official task `5. Common Baselines.md`, job 25013). The baseline uses different serving settings.
 
 ## Topology and serving settings

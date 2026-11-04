@@ -19,17 +19,9 @@ The full analysis is [research/runtime-performance/2026-11-02-pp4-profile-r24.md
 - **Decode** (4 GPUs, TP4/DP4/EP4): the EAGLE3 step is 38.5 ms on average (MegaMoE 22.9, attention 7.3, dense GEMM 4.5, draft 1.3, sampling 0.2 ms), with 0.66 ms of GPU idle and no exposed launch gaps.
 - **Limit**: Prefill. In the scored round 22 run, completions were 52.41 req/s against 52.40 req/s of Prefill capacity derived from the pair cycle.
 
-## Getting the files
+## Files
 
-The Nsight reports (111 MB) and their companion files are not stored in Git. They are served read-only from the team's artifact archive, and `profiling_data.sha256` lists each file with its SHA-256 from that run's archive manifest. When assembling the submission, download them into `profiling_data/` (ignored by Git) and verify them. From the repository root:
-
-```bash
-cd submission/analysis
-```
-
-```bash
-while read -r sum path; do install -d "profiling_data/$(dirname "${path}")" && curl -fsS -o "profiling_data/${path}" "https://mizuha-dev.com/files/qwen-artifacts/41423181527/1/${path}" || exit 1; done <profiling_data.sha256
-```
+`profiling_data/` holds the Nsight reports (111 MB) and their companion files from that run, and `profiling_data.sha256` lists each with its SHA-256. To verify them, from this directory:
 
 ```bash
 (cd profiling_data && sha256sum -c ../profiling_data.sha256)
