@@ -115,3 +115,14 @@ A 対象 on は QKV 38016→62208 byte、O 37376→61440 byte。B は両 IdType 
 FLOP、論理I/O、dtype、全K積、NVLink payloadは前節の模型を維持する。実HBM/NVLink byte、新GPU時間、serving scoreは未測定。source/mirror/環境の所有境界は変えず、worktree内のtomokazu所有ext4にだけ一時展開して検証した。
 
 継続作業の最終検証：指定の完全pytestは終了コード0（2031 passed、90 skipped、約883秒）、Ruffも終了コード0。最初の全体実行は中断せず完走し、既存の末尾overlay/flag一覧/optional gateを固定した期待9件を更新してから完全再実行した。patch空行contextの空白を正規化し、source不変のfixture再適用も通した。CPU正本は `prefill-small-bundle-r37-production-cpu-validation-20261104.json`、raw生成物・source/command/resource・初回/最終ログは `prefill-small-bundle-r37-production-cpu-proof-20261104.tar.gz`（3,347,134 byte、SHA256 `be07a222a7e70875a2e84df6a7eccea53163f289d09279fee13a1325ca9568f2`）。syntax/diff検査は終了0、image pin不変。一時展開・compiler cache・診断ファイルを削除し、今回作成したGPU/scheduler/Actions jobはない。
+
+### Round 37 の結果（run 41792751530）
+
+build image `5018d322ff7b5884520300052af6f3cd1d5594e210bee85e62cd0495f417d94a`（source 6d2cb17）。公式 score は **10053.96**（main 10054.49 と同等）、TTFT 超過 111 件はすべて計測先頭5秒以内で従来どおり。FC1 first-K の常時有効化は serving で `using candidate` と ready 前の prewarm done を全 Prefill process で確認した。
+
+小候補 A/B/C は 12 GPU 全てで gate 起動後約6秒に失敗し、kernel の正しさ・速度について何も測れていない。原因はどちらも gate script 側である。
+
+- A：checkpoint の dense `weight_scale_inv` は BF16（例: q_proj [64,32]）で、snapshot がそれをそのまま DeepGEMM へ渡し `layout.hpp:68` の `sfa/sfb == kFloat` assert に当たった。production は FP32 parameter へ copy してから使う。
+- B/C：`prepare_compilers` の thread 内 import と main thread の import が交差し `_DeadlockError`（`sglang.kernels.ops.moe` / `.quantization`）。
+
+修正は gate script だけで image を変えないため、次回は build せずにこの image を pin して再投入する。95秒枠内に実際の cold compile が収まるかは引き続き未測定。

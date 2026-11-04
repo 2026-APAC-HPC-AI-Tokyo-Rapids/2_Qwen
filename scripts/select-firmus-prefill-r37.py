@@ -127,6 +127,27 @@ def aggregate(directory, env_output, prior_path, run_id, image, deadline, exit_c
     return result
 
 
+def dense_snapshot(tensors):
+    """Match SM90 TP1 Fp8LinearMethod's parameter allocation and loader copies.
+
+    Upstream fc275674: quantization/fp8.py:558-594 allocates row-major E4M3
+    weights and FP32 block scales; linear.py:1017-1033,1143-1161 packs Q/K/V
+    on dim 0 and parameter.py:247-274 copies into those parameters. There is
+    no standalone conversion helper: the cast happens in Tensor.copy_ during
+    loading. On SM90 model_loader/utils.py:267-272 disables UE8M0 requant.
+    """
+    import torch
+
+    def loaded(projection, suffix):
+        raw = tensors[f'self_attn.{projection}.{suffix}']
+        dtype = torch.float32 if suffix == 'weight_scale_inv' else torch.float8_e4m3fn
+        return torch.empty(raw.shape, dtype=dtype, device=raw.device).copy_(raw)
+
+    qkv = tuple(torch.cat([loaded(p, s) for p in ('q_proj','k_proj','v_proj')], dim=0) for s in ('weight','weight_scale_inv'))
+    o = tuple(loaded('o_proj', s) for s in ('weight','weight_scale_inv'))
+    return [qkv, o]
+
+
 def snapshot_weights(model):
     """Read only the first layer's small dense/norm/router tensors, never the MoE weights."""
     import torch
@@ -143,12 +164,11 @@ def snapshot_weights(model):
                 tensor = f.get_tensor(name)
                 digest.update(name.encode()); digest.update(tensor.view(torch.uint8).numpy().tobytes())
                 tensors[name.removeprefix(prefix)] = tensor.cuda()
-    qkv = tuple(torch.cat([tensors[f'self_attn.{p}.{s}'] for p in ('q_proj','k_proj','v_proj')]) for s in ('weight','weight_scale_inv'))
-    o = tuple(tensors['self_attn.o_proj.'+s] for s in ('weight','weight_scale_inv'))
+    dense = dense_snapshot(tensors)
     config = read(model/'config.json'); eps = config['rms_norm_eps']
     angles = torch.arange(8192,device='cuda').float()[:,None] * (config['rope_theta'] ** (-torch.arange(0,128,2,device='cuda').float()/128))
     trig = torch.cat((angles.cos(),angles.sin()),dim=-1).contiguous()
-    return {'A': [qkv,o], 'B': (tensors['self_attn.q_norm.weight'],tensors['self_attn.k_norm.weight'],trig,eps), 'C': (tensors['post_attention_layernorm.weight'],tensors['mlp.gate.weight'].to(torch.bfloat16),eps)}, digest.hexdigest()
+    return {'A': dense, 'B': (tensors['self_attn.q_norm.weight'],tensors['self_attn.k_norm.weight'],trig,eps), 'C': (tensors['post_attention_layernorm.weight'],tensors['mlp.gate.weight'].to(torch.bfloat16),eps)}, digest.hexdigest()
 
 
 def capture(torch, call):
@@ -251,18 +271,22 @@ def prepare_compilers(ops, weights, rank):
     """Overlap only cold CPU JIT work; join before endurance or any event timing."""
     from concurrent.futures import ThreadPoolExecutor
 
+    import deep_gemm  # noqa: F401 - finish A imports before starting B/C
+    import torch
+    import triton
+    import triton.language  # noqa: F401 - finish shared imports on main
+    from sglang.kernels.ops.attention.rope import _jit_rope_fp8_q_module
+    from sglang.kernels.ops.moe.prefill_moe_input import (
+        _onepass_moe_input,
+        _onepass_moe_input_div448,
+    )
+    from sglang.kernels.ops.quantization import fp8_kernel  # noqa: F401 - A state/final
+
     def writer():
-        import torch
-        from sglang.kernels.ops.attention.rope import _jit_rope_fp8_q_module
         torch.cuda.set_device(rank)
         return _jit_rope_fp8_q_module()
 
     def onepass():
-        import torch
-        from sglang.kernels.ops.moe.prefill_moe_input import (
-            _onepass_moe_input,
-            _onepass_moe_input_div448,
-        )
         torch.cuda.set_device(rank)
         case = ops.Onepass(7988, weights['C'])
         r,q,scale,ids,tw = case.out['candidate']
