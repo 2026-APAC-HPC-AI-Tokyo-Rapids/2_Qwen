@@ -103,9 +103,13 @@ def test_adopted_header_is_only_in_serving_overlay_and_build_context(tmp_path):
     subprocess.run(["bash", "-euc", build[start:stop]], env={**os.environ, "GITHUB_WORKSPACE": str(ROOT), "context": str(context)}, check=True)
     expected = {Path(p).relative_to("patches") for p in config["deep_gemm_overlay_patches"]}
     staged = {p.relative_to(context) for p in context.rglob("*.patch")}
-    assert staged == expected
+    # The directory also carries this PP4-only opt-in header patch. The common
+    # image checker applies its configured series, so this text is not applied there.
+    pp4_only = Path("deep-gemm-overlay/sm90-prefill-fc1-first-k.patch")
+    assert pp4_only not in expected
+    assert staged == expected | {pp4_only}
     assert json.loads((context / "firmus-framework.json").read_text()) == config
-    for path in expected:
+    for path in staged:
         assert (context / path).read_bytes() == (ROOT / "patches" / path).read_bytes()
     dockerfile = (ROOT / "containers/Dockerfile").read_text()
     for directory in {p.parts[0] for p in expected}:

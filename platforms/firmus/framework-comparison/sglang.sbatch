@@ -349,6 +349,39 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.decode_greedy_verify_gate // false' "${
 fi
 # Decode greedy gate end.
 
+# Round 32 candidate / round 34 published-result gate; keep the round 33 budgets.
+if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.megamoe_fc1_first_k_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
+  mkdir -p "${ROOT}/results/prefill-megamoe-fc1-first-k"
+  if (( SECONDS + 105 + 630 <= 1020 )) && [[ -s "${ROOT}/results/prefill-fa3-prepack/selection.json" ]] && jq -e '.adopted == true' "${ROOT}/results/prefill-fa3-prepack/selection.json" >/dev/null; then
+    prefill_fc1_first_k_started=$(date +%s)
+    prefill_fc1_first_k_exit_codes=()
+    prefill_fc1_first_k_selections=()
+    for worker in 0 1 2; do
+      node=${HEAD}
+      if (( worker == 2 )); then node=${TAIL}; fi
+      prefill_fc1_first_k_remaining=$((prefill_fc1_first_k_started + 95 - $(date +%s)))
+      if (( prefill_fc1_first_k_remaining <= 0 )); then break; fi
+      timeout --kill-after=2 "${prefill_fc1_first_k_remaining}" srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-megamoe-fc1-first-k-${worker})" env DG_JIT_CACHE_DIR="/tmp/sglang-r32-${SLURM_JOB_ID}-${worker}/deepgemm" TRITON_CACHE_DIR="/tmp/sglang-r32-${SLURM_JOB_ID}-${worker}/triton" TVM_FFI_CACHE_DIR="/tmp/sglang-r32-${SLURM_JOB_ID}-${worker}/tvm" /opt/sglang/venv/bin/torchrun --standalone --nproc-per-node=4 "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --fc1-first-k --output "${ROOT}/results/prefill-megamoe-fc1-first-k/prefill-${worker}" --routing "${ROOT}/source/megamoe-local-ep1-routing.npz" --run-id "${SLURM_JOB_ID}-${prefill_fc1_first_k_started}" --deadline "$((prefill_fc1_first_k_started + 95))" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-megamoe-fc1-first-k-${worker}.log" 2>&1 &
+      prefill_fc1_first_k_selections+=("$!")
+    done
+    # Reap every timeout/srun before aggregation and serving; exits are diagnostic only.
+    for pid in "${prefill_fc1_first_k_selections[@]}"; do
+      if wait "${pid}"; then prefill_fc1_first_k_exit_codes+=(0); else prefill_fc1_first_k_exit_codes+=("$?"); fi
+    done
+    prefill_fc1_first_k_remaining=$((prefill_fc1_first_k_started + 105 - $(date +%s)))
+    if (( prefill_fc1_first_k_remaining > 0 )); then
+      cp "${ROOT}/source/prefill-kernels.env" "${ROOT}/source/prefill-kernels.r32.env"
+      if timeout --signal=KILL "${prefill_fc1_first_k_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-megamoe.py" --fc1-first-k --aggregate "${ROOT}/results/prefill-megamoe-fc1-first-k" --output "${ROOT}/results/prefill-megamoe-fc1-first-k/selection.json" --env-output "${ROOT}/source/prefill-kernels.r32.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_fc1_first_k_started}" --deadline "$((prefill_fc1_first_k_started + 105))" --worker-exit-codes "${prefill_fc1_first_k_exit_codes[@]}" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" && jq -e '.adopted == true' "${ROOT}/results/prefill-megamoe-fc1-first-k/selection.json" >/dev/null; then
+        mv "${ROOT}/source/prefill-kernels.r32.env" "${ROOT}/source/prefill-kernels.env"
+      fi
+      rm -f "${ROOT}/source/prefill-kernels.r32.env" "${ROOT}/source/prefill-kernels.r32.env.fc1-first-k.tmp"
+    fi
+  else
+    printf '{"adopted":false,"reason":"insufficient budget or incomplete P gate"}\n' >"${ROOT}/results/prefill-megamoe-fc1-first-k/selection.json"
+  fi
+fi
+
+
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-1)" bash "${ROOT}/source/worker.sh" prefill-1 30101 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9001 >"${ART}/prefill-1.log" 2>&1 &
@@ -389,6 +422,9 @@ benchmark_status=0
 if [[ "${profile_only}" != true ]]; then
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${AIPERF}" --container-mounts="$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ART}/aiperf.log" 2>&1 || benchmark_status=$?
 test -s "${ROOT}/results/score.json"
+for worker in 0 1 2; do
+  grep -a -h -o -E 'Prefill r32 fc1-first-k (prewarm done|using candidate|using control).*' "${ART}/prefill-${worker}.log" >"${ROOT}/results/prefill-r32-dispatch-${worker}.txt" || printf 'no Prefill r32 fc1-first-k dispatch line\n' >"${ROOT}/results/prefill-r32-dispatch-${worker}.txt"
+done
 # Round 22 adopted a greedy fusion that serving never dispatched; keep each Decode rank's once-per-process decision with the score.
 grep -a -h -o -E 'Decode greedy verify (using fused kernels|fallback).*' "${ART}/decode-0.log" | sort -u >"${ROOT}/results/decode-greedy-dispatch.txt" || printf 'no Decode greedy verify dispatch line in decode-0.log\n' >"${ROOT}/results/decode-greedy-dispatch.txt"
 if (( benchmark_status == 0 )); then
@@ -425,3 +461,6 @@ fi
 if (( benchmark_status != 0 )); then exit "${benchmark_status}"; fi
 echo "AIPERF ok"
 touch "${ROOT}/run-success"
+# Round 32 submit: FC1 first-K128 specialization with its twelve-GPU gate.
+# Round 33 submit: pooled FC1 first-K gate on the round 32 image.
+# Round 34 submit: FC1 first-K gate decided by published rank results.

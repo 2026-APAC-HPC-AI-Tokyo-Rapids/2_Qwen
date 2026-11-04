@@ -102,7 +102,7 @@ def prepare(config, repo, runtime):
     # changes host dispatch and topology and is explicitly NOT a prior result.
     for entry in record["patches"] + record["extra_files"]:
         previous["file_sha"](repo, entry)
-    environment = {**record["environment"], **PP4_SELECTED, "SGLANG_DECODE_GREEDY_VERIFY": "0"}
+    environment = {**record["environment"], **PP4_SELECTED, "SGLANG_DECODE_GREEDY_VERIFY": "0", "DG_SM90_PREFILL_FC1_FIRST_K": "0"}
     for role in ("prefill", "decode"):
         names = {
             k: v
@@ -127,7 +127,8 @@ def prepare(config, repo, runtime):
     payload["fa3_v3_gate"] = p.get("fa3_v3_gate", False)
     assert not payload["fa3_v3_gate"] or payload["fa3_prepack_gate"], "V3 gate requires prepack gate"
     payload["decode_greedy_verify_gate"] = config.get("decode_greedy_verify_gate", False)
-    if payload["fa3_prepack_gate"] or payload["decode_greedy_verify_gate"]:
+    payload["megamoe_fc1_first_k_gate"] = p.get("megamoe_fc1_first_k_gate", False)
+    if payload["fa3_prepack_gate"] or payload["decode_greedy_verify_gate"] or payload["megamoe_fc1_first_k_gate"]:
         payload["no_gpu_selection_rerun"] = False
 
     for directory in ("source", "results"):
