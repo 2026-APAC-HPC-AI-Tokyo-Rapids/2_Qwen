@@ -158,3 +158,11 @@ round 33 submit `f8a179d` の run **41750956297 / Slurm 28637** を、`/srv/qwen
 履歴非依存fixture **`qwen-experiment-metrics/tests/fixtures/prefill-r33-results.json`（104163 byte）** は12個のrank JSONから実計時sample、UUID、source/image、healthy、elapsed_seconds/finished_at、44caseのFP32数値とbyte/耐久検査を抽出した。全rankで同一の検査情報をsharedへまとめ、control/candidateで同一のFP32参照行は1行だけ保存してtestで両modeへ復元する。各rank原本のSHA256と実pair prerequisiteのUUID/run_idも保持し、archiveやgit履歴をtest時に参照しない。HEADのkillはlogで観測できる一方、過去のtimeout wrapperの正確な終了コードは保存されていない。testの124/124/0、137/137/0、1/1/0は終了コードが採否へ影響しないことを示す**再生用入力**であり、実測コードとは主張しない。実測全検査と計時を新規則へ通すと採用になり、各workerの各rankについて欠損・unhealthy・開始+96秒の公開を一つずつ与えると、すべて不採用になる。集約の開始時/完了前の105秒超過でも不採用を確認する。
 
 round 32 image pin **`3a47b757bb88f6bc14ad5f151e8405f645007f25f381f631d88046d9bd1b7b04`**（build 41729881283）は変更しない。変更はhostへstageするselector・scheduler script・CPU fixture/test・研究記録だけで、kernel source、dtype、仕事量、FLOP/HBM/NVLinkの模型は不変。build不要。今回の範囲はローカル検証とskip-ci commitの指定branchへのpushまでとし、submit commit、SSH、Actions/Slurm投入・GPU実行・image buildは行わない。
+
+## Round 34 結果（採用）
+
+run 41767886175／Slurm 28660（commit 5077336、image 3a47b757、build なし）。gate は job 開始 12:41:48+08 の後 run_id 1793767557 で開始した。全12 GPU の UUID で 44 case×4 成分の byte 一致、1200 call の耐久、健全性、post-r32 pooled 速度規則を満たし **adopted=true**。worker の srun 終了コードは 3 本とも 0 で、TAIL は 36 秒後、HEAD は 53 秒後に `main returning` を出して直ちに終了した。faulthandler の dump は 0 件だった。round 32／33 の終了遅延は再現せず、原因は未特定のまま（診断は次の遅延発生まで残す）。
+
+serving では 12 Prefill process すべてが ready 前に `prewarm done rows=7988`（5〜9 ms）を出し、`using candidate rows=4001` で dispatch した。公式結果は **10054.49 output tok/s**（eligible、good request fraction 0.98216）。READY は 609 秒、job 全体は 14:52。計測区間の TTFT 超過は 111 件で、すべて計測開始後 5 秒以内の先頭バースト。最初の 232 件の最小 TTFT は 745 ms だった。
+
+同じ image の control（round 32 の 10015.98、round 33 の 9998.67）、main round 25 構成の過去 run（10002.7〜10025.16）のいずれも上回る。これまでの最良 10025.16 を +29 更新した。完了要求数は 6333 で、control の 6308〜6312 より多い。
