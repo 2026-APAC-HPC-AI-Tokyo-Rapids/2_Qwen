@@ -10,14 +10,79 @@ import math
 import os
 import statistics
 import time
+import traceback
 from pathlib import Path
 
 SCHEMA = 'firmus-prefill-r37/v1'
-KEYS = {'A': 'DG_SM90_PREFILL_DENSE_FIRST_K', 'B': 'SGLANG_PREFILL_QKNORM_FIXED', 'C': 'SGLANG_PREFILL_ONEPASS_DIV448'}
+KEYS = {'B': 'SGLANG_PREFILL_QKNORM_FIXED', 'C': 'SGLANG_PREFILL_ONEPASS_DIV448'}
 CALLS, ROUNDS, WORKER_SECONDS, WALL_SECONDS = 1200, 12, 95, 105
 STATES = ('initial', 'boundary', 'changed', 'restored')
-CASES = {'A': ('7936', '7988', '7989', '8192'), 'B': tuple(f'{n}/{bits}' for n in (31,32,33,7988,7989) for bits in (32,64)), 'C': tuple(map(str, (1,63,64,65,7988,7989,8192)))}
-COMPONENTS = {'A': ('qkv', 'o'), 'B': ('writer',), 'C': ('onepass',)}
+# The writer has no fixed-attention row restriction. These representatives retain
+# the 32-row tile edges and cover both sides of fixed/pair attention boundaries,
+# the served 7988/7989 rows, and the configured 8192-row chunk capacity.
+B_LENGTHS = ((1,), (31,), (32,), (33,), (3583,), (3584,), (4096,), (4097,), (7988,), (7989,), (8191,), (8192,), (3584,3584), (3583,3584), (3899,3900), (3900,3900), (3994,3994), (3994,3995), (4096,4096))
+CASES = {'B': tuple(f'{"+".join(map(str, lengths))}/{bits}' for lengths in B_LENGTHS for bits in (32,64)), 'C': tuple(map(str, (1,63,64,65,7988,7989,8192)))}
+COMPONENTS = {'B': ('writer',), 'C': ('onepass',)}
+
+
+def writer_fixed_attention(lengths, varlen):
+    # prefill_contiguous.py:28-36; the gate fixes all other host/device guards
+    # to the production PP4 H200 configuration. Small rows still use the writer.
+    return 1 <= len(lengths) <= 4 and all(3584 <= n <= 4096 for n in lengths) and (len(lengths) == 1 or varlen)
+
+
+def gate_cases(ops):
+    """Repair image-side snapshot cases locally; never replace production ops."""
+    class Writer(ops.Writer):
+        def __init__(self, lengths, weights, idtype=None):
+            import torch
+            super().__init__(sum(lengths), weights, torch.int64 if idtype is None else idtype)
+            self.lengths = lengths
+            self.cu = torch.tensor([0, *[sum(lengths[:i+1]) for i in range(len(lengths))]], device='cuda', dtype=torch.int32)
+            self.native = {}
+
+        def state(self, state):
+            super().state('initial' if state == 'boundary' else state)
+            if state == 'boundary':
+                self.packed[:1].zero_(); self.packed[1:2].fill_(-0.0)
+                self.packed[2:3].fill_(2**-120); self.packed[3:4].fill_(464)
+                self.packed[4:5].fill_(float('inf')); self.packed[5:6].fill_(float('nan'))
+                self.pos[0] = 4095; self.loc[0] = 0
+
+        def final(self, mode):
+            import torch
+            from sglang.srt.layers.attention.prefill_fp8 import (
+                attention,
+                pair_candidate,
+                prefill_candidate,
+            )
+            fixed = writer_fixed_attention(self.lengths, prefill_candidate().get('varlen', False))
+            selected = pair_candidate(self.lengths) if fixed else prefill_candidate()
+            # A byte-image writer without native prepack bypasses candidate B.
+            assert not fixed or not selected['byte_image'] or selected.get('native_v_n'), 'selected production route bypasses B'
+            q, _, _, k, v = self.out[mode]
+            image = None
+            if fixed and selected.get('native_v_n'):
+                from sglang.srt.layers.attention.decode_fa3_verify import load
+                load()
+                n = selected['native_v_n']
+                image = self.native[mode] = torch.zeros((len(self.lengths), 4, (max(self.lengths)+n-1)//n, n*128), dtype=torch.uint8, device=q.device)
+                torch.ops.apac_fa3_verify.prefill_prepack(v, image, self.cu)
+            values = list(attention(q, k, v, self.cu, max(self.lengths), 128**-.5, self.rows, fixed=fixed, v_image=image, lengths=self.lengths))
+            return ([image] if image is not None else []) + values
+
+    class Onepass(ops.Onepass):
+        def state(self, state):
+            # Image prefill_r37.py:142 directly indexes row 1 even for rows=1.
+            # Empty slices are safe; every existing boundary row keeps its value.
+            super().state('initial' if state == 'boundary' else state)
+            if state == 'boundary':
+                self.x[:2].zero_(); self.residual[:2].zero_()
+                self.x[1:2].fill_(-0.0); self.x[2:3].fill_(2**-120)
+                self.x[3:4].fill_(2**60); self.x[4:5, ::128] = -2**60
+                self.x[5:6].fill_(float('inf')); self.x[6:7].fill_(float('nan'))
+
+    return {'B': Writer, 'C': Onepass}
 
 
 def read(path):
@@ -48,11 +113,6 @@ def speed_rule(timings):
     assert summary['positive_gpus'] >= 9, 'fewer than nine positive GPUs'
     assert summary['worst_fraction'] >= -.01, 'GPU loss exceeds one percent'
     return summary
-
-
-def combined_projection_samples(timing):
-    # Sum paired samples within each GPU, then pool the two orders within that GPU.
-    return {o: {m: [sum(values) for values in zip(*(timing[p][o][m] for p in COMPONENTS['A']), strict=True)] for m in ('control','candidate')} for o in ('forward','reverse')}
 
 
 def check_record(r, candidate, worker, rank, run_id, image, identity, deadline):
@@ -98,20 +158,13 @@ def aggregate(directory, env_output, prior_path, run_id, image, deadline, exit_c
                     seen.add(r['uuid'])
                     sources.add((r['source_sha256'], r['snapshot_sha256']))
             assert seen == identities and len(sources) == 1, 'inconsistent source/snapshot or missing GPU'
-            if candidate == 'A':
-                # Individual projections may be flat, but neither may lose over 1% on any GPU.
-                for r in decision['gpus']:
-                    for samples in r['timing'].values():
-                        v = medians(samples)
-                        assert all(v[o]['candidate'] <= v[o]['control'] * 1.01 for o in v), 'projection loss exceeds one percent'
-                timing = [combined_projection_samples(r['timing']) for r in decision['gpus']]
-            else:
-                timing = [r['timing'][COMPONENTS[candidate][0]] for r in decision['gpus']]
+            timing = [r['timing'][COMPONENTS[candidate][0]] for r in decision['gpus']]
             decision['timing_summary'] = speed_rule(timing)
             assert time.time() <= deadline, 'aggregate budget expired'
             decision.update(adopted=True, reason='twelve published healthy results passed byte/endurance and pooled speed rules')
         except (OSError,AssertionError,KeyError,ValueError,TypeError) as error:
             decision['reason'] = f'{type(error).__name__}: {error}'
+            decision['traceback'] = traceback.format_exc()
     # Deadline also guards the atomic serving environment change.
     if time.time() > deadline:
         for decision in result['candidates'].values():
@@ -241,12 +294,11 @@ def endurance(torch, case, key):
     return {'calls': CALLS, 'buffers': 2, 'states': ['initial','changed'], 'calls_per_state': [600,600], 'every_call_equal': True, 'restored_equal': True}
 
 
-def timing(torch, case, key, projection=None):
+def timing(torch, case, key):
     graphs = {}
     for mode in ('control','candidate'):
         os.environ[key] = str(int(mode == 'candidate'))
-        step = (lambda mode=mode: case.step(mode,projection)) if projection is not None else (lambda mode=mode: case.step(mode))
-        graphs[mode] = capture(torch,step)
+        graphs[mode] = capture(torch,lambda mode=mode: case.step(mode))
     samples = {o: {m: [] for m in graphs} for o in ('forward','reverse')}
     # Alternate both orders every round; twelve samples for each order, on ordinary kernels.
     for _ in range(ROUNDS):
@@ -268,10 +320,10 @@ def publish(path, record):
 
 
 def prepare_compilers(ops, weights, rank):
-    """Overlap only cold CPU JIT work; join before endurance or any event timing."""
+    """Compile B/C concurrently; join before checks, endurance or event timing."""
     from concurrent.futures import ThreadPoolExecutor
 
-    import deep_gemm  # noqa: F401 - finish A imports before starting B/C
+    import deep_gemm  # noqa: F401 - finish shared imports before starting B/C
     import torch
     import triton
     import triton.language  # noqa: F401 - finish shared imports on main
@@ -280,7 +332,9 @@ def prepare_compilers(ops, weights, rank):
         _onepass_moe_input,
         _onepass_moe_input_div448,
     )
-    from sglang.kernels.ops.quantization import fp8_kernel  # noqa: F401 - A state/final
+    from sglang.kernels.ops.quantization import (
+        fp8_kernel,  # noqa: F401 - finish shared imports
+    )
 
     def writer():
         torch.cuda.set_device(rank)
@@ -317,10 +371,16 @@ def run(args):
     for path in (Path(ops.__file__), package/'kernels/jit/csrc/elementwise/rope.cuh', package/'kernels/ops/moe/prefill_moe_input.py', Path(deep_gemm.__file__).parent/'include/deep_gemm/impls/sm90_fp8_gemm_1d2d.cuh'):
         source.update(path.name.encode()); source.update(path.read_bytes())
     common.update(snapshot_sha256=digest,source_sha256=source.hexdigest())
-    # B/C CPU compilation overlaps A's cold compilation and byte checks.
+    # A is pinned; compile only the remaining candidates concurrently.
     pool, pending = prepare_compilers(ops, weights, rank)
     compiler_errors = {}
-    for candidate, factory in (('A',ops.Dense),('B',ops.Writer),('C',ops.Onepass)):
+    for name, future in zip(KEYS, pending, strict=True):
+        try:
+            future.result()
+        except Exception as error:  # noqa: BLE001 - preserve independent compile failure
+            compiler_errors[name] = error
+    pool.shutdown(wait=True)
+    for candidate, factory in gate_cases(ops).items():
         r = {**common,'candidate':candidate,'healthy':False,'exact':{},'timing':{}}
         key = KEYS[candidate]
         try:
@@ -328,37 +388,21 @@ def run(args):
                 raise compiler_errors[candidate]
             for case_name in CASES[candidate]:
                 assert time.time() < args.deadline, 'worker budget expired'
-                rows = int(case_name.split('/')[0])
-                case = factory(rows,weights[candidate],torch.int32 if case_name.endswith('/32') else torch.int64) if candidate == 'B' else factory(rows,weights[candidate])
+                lengths = tuple(map(int,case_name.split('/')[0].split('+')))
+                case = factory(lengths,weights[candidate],torch.int32 if case_name.endswith('/32') else torch.int64) if candidate == 'B' else factory(lengths[0],weights[candidate])
                 r['exact'][case_name] = exact(torch,case,key)
                 del case
-            if candidate == 'A' and pending:
-                for name, future in zip(('B','C'), pending, strict=True):
-                    try:
-                        future.result()
-                    except Exception as error:  # noqa: BLE001 - preserve independent compile failure
-                        compiler_errors[name] = error
-                pool.shutdown(wait=True)
-                pending = []
-            case = factory(7988,weights[candidate])
+            case = factory((3994,3994) if candidate == 'B' else 7988,weights[candidate])
             r['endurance'] = endurance(torch,case,key)
             case.state('initial')
-            for i,component in enumerate(COMPONENTS[candidate]):
-                r['timing'][component] = timing(torch,case,key,i if candidate == 'A' else None)
+            for component in COMPONENTS[candidate]:
+                r['timing'][component] = timing(torch,case,key)
             torch.cuda.synchronize()
             r['healthy'] = True
             del case
         except Exception as error:  # noqa: BLE001 - persist failure independently for each candidate
-            r.update(healthy=False,error=f'{type(error).__name__}: {error}')
+            r.update(healthy=False,error=f'{type(error).__name__}: {error}',traceback=traceback.format_exc())
         finally:
-            if candidate == 'A' and pending:
-                for name, future in zip(('B','C'), pending, strict=True):
-                    try:
-                        future.result()
-                    except Exception as error:  # noqa: BLE001 - preserve independent compile failure
-                        compiler_errors[name] = error
-                pool.shutdown(wait=True)
-                pending = []
             os.environ[key] = '0'
         r.update(elapsed_seconds=time.monotonic()-started,finished_at=time.time())
         publish(args.output/f'{candidate}-rank-{rank}.json',r)

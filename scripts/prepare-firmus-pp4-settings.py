@@ -50,6 +50,8 @@ from pathlib import Path
 # Round 34, run 41767886175: all twelve GPUs passed the published-result gate,
 # all twelve serving processes prewarmed/dispatched first-K, official score 10054.49.
 # Retire the repeated FC1 gate; retain the process-local preparation and dispatch log.
+# Round 38, run 41811427804: dense first-K passed all twelve gates and served at
+# 10059.13; retain production prewarm/dispatch and retire its repeated selection.
 PP4_SELECTED = {
     "SGLANG_PREFILL_FA3_VERIFY": "n192-direct-o-varlen-pipe",
     "SGLANG_PREFILL_MOE_INPUT": "onepass",
@@ -59,6 +61,7 @@ PP4_SELECTED = {
     "DG_SM90_PREFILL_LEAN": "1",
     "DG_SM90_PREFILL_SPLIT_ACCUM": "1",
     "DG_SM90_PREFILL_FC1_FIRST_K": "1",
+    "DG_SM90_PREFILL_DENSE_FIRST_K": "1",
     "SGLANG_PP4_PROXY_TRANSPORT": "copy",
     "SGLANG_DECODE_MOE_INPUT": "fused",
     "DG_SM90_1D2D_DECODE_CONFIG": "QKV:128,144,5,1,0;QKV>128:192,80,5,1,0",
@@ -73,6 +76,7 @@ PP4_SELECTED_RUNS = {
     "DG_SM90_PREFILL_LEAN": [41005872470, 41020974704, 41040348302],
     "DG_SM90_PREFILL_SPLIT_ACCUM": [41005872470, 41020974704, 41040348302],
     "DG_SM90_PREFILL_FC1_FIRST_K": [41767886175],
+    "DG_SM90_PREFILL_DENSE_FIRST_K": [41811427804],
     "SGLANG_PP4_PROXY_TRANSPORT": [41005872470, 41020974704, 41040348302],
     "SGLANG_DECODE_MOE_INPUT": [41005872470, 41020974704, 41040348302],
     "DG_SM90_1D2D_DECODE_CONFIG": [41005872470, 41020974704, 41040348302],
@@ -107,7 +111,7 @@ def prepare(config, repo, runtime):
     # changes host dispatch and topology and is explicitly NOT a prior result.
     for entry in record["patches"] + record["extra_files"]:
         previous["file_sha"](repo, entry)
-    environment = {**record["environment"], **PP4_SELECTED, "SGLANG_DECODE_GREEDY_VERIFY": "0", "DG_SM90_PREFILL_DENSE_FIRST_K": "0", "SGLANG_PREFILL_QKNORM_FIXED": "0", "SGLANG_PREFILL_ONEPASS_DIV448": "0"}
+    environment = {**record["environment"], **PP4_SELECTED, "SGLANG_DECODE_GREEDY_VERIFY": "0", "SGLANG_PREFILL_QKNORM_FIXED": "0", "SGLANG_PREFILL_ONEPASS_DIV448": "0"}
     for role in ("prefill", "decode"):
         names = {
             k: v

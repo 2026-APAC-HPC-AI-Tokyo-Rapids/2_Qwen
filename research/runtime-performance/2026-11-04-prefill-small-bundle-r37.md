@@ -126,3 +126,17 @@ build image `5018d322ff7b5884520300052af6f3cd1d5594e210bee85e62cd0495f417d94a`�
 - B/C：`prepare_compilers` の thread 内 import と main thread の import が交差し `_DeadlockError`（`sglang.kernels.ops.moe` / `.quantization`）。
 
 修正は gate script だけで image を変えないため、次回は build せずにこの image を pin して再投入する。95秒枠内に実際の cold compile が収まるかは引き続き未測定。
+
+### Round 38 の結果（run 41811427804）
+
+image `5018d322`（build run 41792751530）、Slurm 28703 の通常 serving は公式 **10059.13 output tok/s**（main 10054.49）。gate の各 GPU は95秒枠の約21〜22秒で終了した。A は12/12 GPUで healthy、全byte比較・1200 call耐久を通過し採用された。節約中央値は pooled 3.34 µs、forward 2.45 µs、reverse 3.92 µs、正の GPU は12、最悪の節約率も +3.8e-05。全12 Prefill processで `Prefill r37 A prewarm done rows=7988` と `Prefill r37 A using candidate rows=4001` を確認した。単一runの公式 score 差だけで性能優位は結論しない。FC1と同じ手順で `DG_SM90_PREFILL_DENSE_FIRST_K=1` を PP4_SELECTED と両manifestへ固定し、Aだけ反復gateから外す。ready前prewarmとaiperf後dispatch回収は維持する。
+
+B/C は全12 GPUで最初のcase完了前に失敗した。B の `FA3 fixed Prefill requires 3584..4096-row sequences (one unless varlen) and 132 SMs` は、writerの制約ではなく後段attentionの `kernels/fa3-verify/wrapper.cpp:160`。image の `prefill_r37.py:116` はM31でも無条件に `fixed=True, lengths=None` を渡していた（`patches/sglang/prefill-small-bundle-r37.patch:119`）。B writer自身はFP32経路、Q64/KV4/H128、BF16 packed QKVの全行stride18432 byte、同一dtypeのint32またはint64 positions/cache_locが条件で、正の行数に3584下限はない（`patches/sglang/prefill-qknorm-fixed-r37.patch:106`、image `rope.cuh:1149`・`:1171`・`:1216`）。prefixなしEXTENDのcontiguous経路が対象で、full graph、encoder、LSE要求、pagedのみの経路は対象外（`patches/sglang/prefill-attention-contiguous-kv.patch:275`、image `qwen3_moe.py:835`・`:855`・`:875`）。現在のPP4設定では総行数1〜8192、最大2 requestで、短いM31/32/33もproduction到達可能なため残した。
+
+固定attentionだけは各sequence3584〜4096、1〜4 sequence、複数時はselected varlenが条件（`patches/sglang/prefill-fa3-varlen.patch:9`・`:18`）。現在のPP4は最大2 request。P/P3の別native V prepackは、pair modeが選ばれ、2 sequenceとも3900〜4096の場合だけ（`patches/sglang/prefill-fa3-vsum.patch:249`・`:270`）。gate側Writer subclassで実lengths/cuを渡し、非適格shapeは通常contiguous attention、適格shapeは実selected固定attentionと必要なprepackだけ比較する。1、32行tile境界、3584/4096とその外側、pairの3900境界、7988/7989、8192までの代表caseをint32/int64双方で保持・追加した。全行数をGPU総当たりするという意味ではない。byte-image専用writerへ逸れる経路をBの検証と誤認しない。
+
+C の `IndexError: index 1 is out of bounds for dimension 0 with size 1` は、最初のM1 caseのboundary生成でimage `prefill_r37.py:142` の `self.x` の行1へ直接アクセスしたため（`patches/sglang/prefill-small-bundle-r37.patch:145`）。top-kの添字でも、onepass kernelや1200 call耐久・計時でもない。kernelはlive行をmaskし、ID/weightのpadを容量8192へ書く。gate側Onepass subclassだけで境界値の設定を空slice可能な行sliceへ変え、存在する行の値、元のstate復帰、実演算・公開出力は維持した。新たに試すBのM1も同型の境界生成を修正した。候補別の失敗JSONとaggregateの例外には `traceback.format_exc()` を追加した。
+
+GPUなしCPU fixtureでCの旧例外と修正版の境界・復帰、Bの実host predicateとの全1〜8192行照合およびpair境界・実consumer選択、Aのpin・gate除外・prewarm継続、case/compile例外のtraceback公開を検査する。image source、patch、build入力、image pinは変更しない。新しいGPU結果・B/C採否・修正後gate所要時間は未測定であり、この作業ではcommit・push・job投入を行わない。
+
+最終検証：指定の全pytestとRuffはともに終了0。既存のTorch任意テストはTorchなしのためskipするが、新しいCPU回帰検査はすべて実行した。SIGHUPは既定値に戻して検証し、ログとcommit本文案は指定の `codex-scratch/r39/` へ保存した。

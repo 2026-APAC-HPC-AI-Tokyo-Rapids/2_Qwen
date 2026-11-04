@@ -48,7 +48,7 @@ def published(tmp_path,monkeypatch):
                 r = {'schema':GATE['SCHEMA'],'run_id':'42-new','candidate':candidate,'worker':directory.name,'rank':rank,'uuid':uuid,'device':'NVIDIA H200','image_sha256':IMAGE,'healthy':True,'elapsed_seconds':55,'finished_at':995,'exact':{c:dict.fromkeys(GATE['STATES'],True) for c in GATE['CASES'][candidate]},'endurance':{'calls':1200,'buffers':2,'states':['initial','changed'],'calls_per_state':[600,600],'every_call_equal':True,'restored_equal':True},'timing':{p:samples() for p in GATE['COMPONENTS'][candidate]},'source_sha256':'a'*64,'snapshot_sha256':'b'*64}
                 (directory/f'{candidate}-rank-{rank}.json').write_text(json.dumps(r))
     prior.write_text(json.dumps({'gpus':records,'adopted':True}))
-    env = tmp_path/'prefill.env'; env.write_text('DG_SM90_PREFILL_FC1_FIRST_K=1\n'+''.join(k+'=0\n' for k in KEYS.values()))
+    env = tmp_path/'prefill.env'; env.write_text('DG_SM90_PREFILL_FC1_FIRST_K=1\nDG_SM90_PREFILL_DENSE_FIRST_K=1\n'+''.join(k+'=0\n' for k in KEYS.values()))
     def run():
         return gate(tmp_path,env,prior,'42-new',IMAGE,1010,[124,137,0])
     def alter(candidate, mutate, worker=0, rank=0):
@@ -64,6 +64,8 @@ def test_independent_adoption_uses_publication_even_after_wrapper_timeout(publis
     assert result['worker_exit_codes'] == [124,137,0]
     assert all(k+'=1' in env.read_text() for k in KEYS.values())
     assert 'DG_SM90_PREFILL_FC1_FIRST_K=1' in env.read_text()
+    assert 'DG_SM90_PREFILL_DENSE_FIRST_K=1' in env.read_text()
+    assert set(result['candidates']) == {'B','C'}
 
 
 @pytest.mark.parametrize('candidate',KEYS)
@@ -117,7 +119,7 @@ def test_zero_pooled_eight_positive_and_worst_gpu_branches():
     assert GATE['speed_rule']([samples(1)]*9+[samples(-1)]*3)['positive_gpus'] == 9
 
 
-def test_pool_within_gpu_before_median_and_projection_sum():
+def test_pool_within_gpu_before_median():
     values = [samples(2) for _ in range(12)]
     for v in values:
         v['forward']['control'] = [80]*12
@@ -125,22 +127,6 @@ def test_pool_within_gpu_before_median_and_projection_sum():
         v['reverse']['control'] = [120]*12
         v['reverse']['candidate'] = [117]*12
     assert GATE['speed_rule'](values)['saving_median_us']['pooled'] == 2
-    total = GATE['combined_projection_samples']({'qkv':samples(1),'o':samples(2)})
-    assert GATE['medians'](total)['pooled'] == {'control':200,'candidate':197}
-
-
-@pytest.mark.parametrize('projection',('qkv','o'))
-def test_a_projection_loss_rejects_even_with_positive_combined_savings(published,projection):
-    _,_,run,alter = published
-    for worker in range(3):
-        for rank in range(4):
-            def mutate(r):
-                r['timing']['qkv'] = samples(10)
-                r['timing']['o'] = samples(10)
-                r['timing'][projection] = samples(-1.001)
-            alter('A',mutate,worker,rank)
-    result = run()['candidates']
-    assert not result['A']['adopted'] and result['B']['adopted'] and result['C']['adopted']
 
 
 def test_expired_aggregate_and_slurm_gpu_reassignment(published,monkeypatch):
@@ -363,10 +349,11 @@ def test_preparation_executes_each_accepted_shape_once_before_marking_ready(over
         def __init__(self,rows,weights): calls.append(('allocate',rows))
         def step(self,mode): calls.append(('execute',mode))
     monkeypatch.setitem(sys.modules,'sglang.srt.models.qwen3_moe',NS(Qwen3MoeDecoderLayer=Layer))
-    for c,key in KEYS.items(): monkeypatch.setenv(key,str(int(c in selected)))
+    production_keys = {'A':'DG_SM90_PREFILL_DENSE_FIRST_K', **KEYS}
+    for c,key in production_keys.items(): monkeypatch.setenv(key,str(int(c in selected)))
     source = (overlaid/'python/sglang/srt/layers/prefill_r37.py').read_text()
     fn = next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=='prewarm')
-    namespace={'os':os,'torch':NS(inference_mode=nullcontext,random=NS(fork_rng=lambda **kw:nullcontext()),cuda=NS(current_device=lambda:0,synchronize=lambda:calls.append(('sync',)))),'Dense':Case,'Writer':Case,'Onepass':Case,'KEYS':KEYS,'_prewarmed':False,'logging':logging,'__name__':'r37-prewarm-test'}
+    namespace={'os':os,'torch':NS(inference_mode=nullcontext,random=NS(fork_rng=lambda **kw:nullcontext()),cuda=NS(current_device=lambda:0,synchronize=lambda:calls.append(('sync',)))),'Dense':Case,'Writer':Case,'Onepass':Case,'KEYS':production_keys,'_prewarmed':False,'logging':logging,'__name__':'r37-prewarm-test'}
     exec(compile(ast.Module(body=[fn],type_ignores=[]),'r37-prewarm','exec'),namespace)  # noqa: S102 - actual overlaid preparation with CPU doubles
     model=NS(modules=lambda:[Layer()])
     namespace['prewarm'](model); namespace['prewarm'](model)

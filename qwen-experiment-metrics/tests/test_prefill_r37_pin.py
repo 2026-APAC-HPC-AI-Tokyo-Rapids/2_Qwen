@@ -5,21 +5,24 @@ import json
 import runpy
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
-KEY = 'DG_SM90_PREFILL_FC1_FIRST_K'
+PINS = {'DG_SM90_PREFILL_FC1_FIRST_K': [41767886175], 'DG_SM90_PREFILL_DENSE_FIRST_K': [41811427804]}
 
 
-def test_pin_is_recorded_in_both_manifests_and_only_prefill_environment(tmp_path):
+@pytest.mark.parametrize('key', PINS)
+def test_pin_is_recorded_in_both_manifests_and_only_prefill_environment(tmp_path, key):
     config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
     for role in ('source', 'results'):
         (tmp_path / role).mkdir()
     runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))['prepare'](config, ROOT, tmp_path)
     manifest = json.loads((tmp_path / 'source/pp4-kernel-settings.json').read_text())
     assert manifest == json.loads((tmp_path / 'results/pp4-kernel-settings.json').read_text())
-    assert manifest['environment'][KEY] == manifest['pp4_selected'][KEY] == '1'
-    assert manifest['pp4_selected_runs'][KEY] == [41767886175]
-    assert (tmp_path / 'source/prefill-kernels.env').read_text().splitlines().count(KEY + '=1') == 1
-    assert KEY not in (tmp_path / 'source/decode-kernels.env').read_text()
+    assert manifest['environment'][key] == manifest['pp4_selected'][key] == '1'
+    assert manifest['pp4_selected_runs'][key] == PINS[key]
+    assert (tmp_path / 'source/prefill-kernels.env').read_text().splitlines().count(key + '=1') == 1
+    assert key not in (tmp_path / 'source/decode-kernels.env').read_text()
     assert 'megamoe_fc1_first_k_gate' not in manifest
     assert 'megamoe_fc1_first_k_gate' not in config['prefill']
 

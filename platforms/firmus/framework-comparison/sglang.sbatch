@@ -353,6 +353,8 @@ fi
 # Its native kernel still runs once per real Prefill process before readiness.
 
 # Round 37 reuses the retired FC1 budget. Three parallel worker groups, one torchrun each.
+# Dense first-K (A) is pinned after round 38; only B/C are evaluated here.
+# A still prewarms before readiness and is collected with the r37 dispatch logs.
 if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.small_bundle_r37_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
   mkdir -p "${ROOT}/results/prefill-r37"
   if (( SECONDS + 105 + 630 <= 1020 )); then
@@ -377,10 +379,10 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.small_bundle_r37_gate // false'
       fi
       rm -f "${ROOT}/source/prefill-kernels.r37.env" "${ROOT}/source/prefill-kernels.r37.env.r37.tmp"
     else
-      printf '%s\n' '{"candidates":{"A":{"adopted":false},"B":{"adopted":false},"C":{"adopted":false}},"reason":"aggregate budget expired"}' >"${ROOT}/results/prefill-r37/selection.json"
+      printf '%s\n' '{"candidates":{"B":{"adopted":false},"C":{"adopted":false}},"reason":"aggregate budget expired"}' >"${ROOT}/results/prefill-r37/selection.json"
     fi
   else
-    printf '%s\n' '{"candidates":{"A":{"adopted":false},"B":{"adopted":false},"C":{"adopted":false}},"reason":"insufficient remaining serving budget"}' >"${ROOT}/results/prefill-r37/selection.json"
+    printf '%s\n' '{"candidates":{"B":{"adopted":false},"C":{"adopted":false}},"reason":"insufficient remaining serving budget"}' >"${ROOT}/results/prefill-r37/selection.json"
   fi
 fi
 
