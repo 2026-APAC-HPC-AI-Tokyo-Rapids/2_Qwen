@@ -96,7 +96,7 @@ int main() {
 '''
     cpp = directory / "generator.cpp"
     cpp.write_text(code)
-    subprocess.run(["g++", "-std=c++17", "-O2", str(cpp), "-o", str(directory / "generator")], check=True, capture_output=True)
+    subprocess.run(["g++", "-std=c++17", "-O2", "-ffp-contract=off", str(cpp), "-o", str(directory / "generator")], check=True, capture_output=True)
     subprocess.run([str(directory / "generator")], check=True)
 
 
@@ -463,7 +463,7 @@ int main() {
 '''
     cpp = directory / "diagnostic-api.cpp"
     cpp.write_text(code)
-    subprocess.run(["g++", "-std=c++17", "-O2", str(cpp), "-o", str(directory / "diagnostic-api")], check=True, capture_output=True)
+    subprocess.run(["g++", "-std=c++17", "-O2", "-ffp-contract=off", str(cpp), "-o", str(directory / "diagnostic-api")], check=True, capture_output=True)
     subprocess.run([str(directory / "diagnostic-api")], check=True)
 
 
@@ -531,7 +531,7 @@ def test_actual_device_loop_full_k_scales_and_stage_lifecycle(source, diagnostic
     cpp = directory / "pipeline.cpp"
     cpp.write_text(harness)
     executable = directory / "pipeline"
-    subprocess.run(["g++", "-std=c++20", "-O2", "-DDG_R44_DIAGNOSTIC_NO_PROMOTION=" + str(int(diagnostic)), str(cpp), "-o", str(executable)], check=True, capture_output=True)
+    subprocess.run(["g++", "-std=c++20", "-O2", "-ffp-contract=off", "-DDG_R44_DIAGNOSTIC_NO_PROMOTION=" + str(int(diagnostic)), str(cpp), "-o", str(executable)], check=True, capture_output=True)
     result = subprocess.run([str(executable)], check=True, capture_output=True, text=True)
     assert "blocks=32 releases=32" in result.stdout and "blocks=64 releases=64" in result.stdout
 
