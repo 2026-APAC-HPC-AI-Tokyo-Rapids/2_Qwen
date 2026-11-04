@@ -1,0 +1,289 @@
+diff --git a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
+index 785acd8..5c92a94 100644
+--- a/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
++++ b/python/sglang/kernels/jit/csrc/elementwise/rope.cuh
+@@ -24,6 +24,7 @@ struct FusedRopeParams {
+   uint32_t num_qo_heads;
+   uint32_t num_kv_heads;
+   uint32_t num_tokens;
++  void* __restrict__ q_fp8 = nullptr;
+ };
+ 
+ struct FusedRopeStoreParams {
+@@ -51,9 +52,9 @@ constexpr auto next_pow2(uint32_t target, uint32_t factor = 1) {
+ // by a fused QK-norm while k stays bf16. When cache_out is non-null the rotated
+ // row is additionally stored there (the fused KV-store k path); predicated so
+ // the q and k branches keep one instruction stream per instantiation.
+-template <typename T, bool kIsNeox, int64_t kRopeDim, int64_t kVecSize>
++template <typename T, bool kIsNeox, int64_t kRopeDim, int64_t kVecSize, bool kFP8Output = false>
+ __device__ __forceinline__ void
+-rope_rotate_head(void* input, const void* cos_ptr, const void* sin_ptr, uint32_t lane_id, void* cache_out = nullptr) {
++rope_rotate_head(void* input, const void* cos_ptr, const void* sin_ptr, uint32_t lane_id, void* cache_out = nullptr, void* fp8_out = nullptr) {
+   using namespace device;
+   using T2 = packed_t<T>;
+   using Storage = AlignedVector<T2, kVecSize>;
+@@ -78,14 +79,33 @@ rope_rotate_head(void* input, const void* cos_ptr, const void* sin_ptr, uint32_t
+       input_vec_x[j] = cast<T2, fp32x2_t>({out_x0, out_x1});
+       input_vec_y[j] = cast<T2, fp32x2_t>({out_y0, out_y1});
+     }
+-    store_as<Storage>(input_x, input_vec_x, lane_id);
+-    store_as<Storage>(input_y, input_vec_y, lane_id);
++    if constexpr (kFP8Output) {
++      // Match BF16 RoPE followed by torch.to(float8_e4m3fn): retain
++      // the BF16 rounding above and use non-saturating FP8 conversion.
++      using FP8Storage = AlignedVector<uint16_t, kVecSize>;
++      FP8Storage fp8_x, fp8_y;
++#ifdef USE_ROCM
++      static_assert(!kFP8Output, "FP8 Q fusion requires CUDA");
++#else
++#pragma unroll
++      for (int64_t j = 0; j < kVecSize; ++j) {
++        fp8_x[j] = __nv_cvt_float2_to_fp8x2(cast<fp32x2_t>(input_vec_x[j]), __NV_NOSAT, __NV_E4M3);
++        fp8_y[j] = __nv_cvt_float2_to_fp8x2(cast<fp32x2_t>(input_vec_y[j]), __NV_NOSAT, __NV_E4M3);
++      }
++#endif
++      store_as<FP8Storage>(fp8_out, fp8_x, lane_id);
++      store_as<FP8Storage>(pointer::offset(fp8_out, kRopeDim / 2), fp8_y, lane_id);
++    } else {
++      store_as<Storage>(input_x, input_vec_x, lane_id);
++      store_as<Storage>(input_y, input_vec_y, lane_id);
++    }
+     if (cache_out != nullptr) {
+       store_as<Storage>(cache_out, input_vec_x, lane_id);
+       const auto cache_out_y = pointer::offset(cache_out, (kRopeDim / 2) * sizeof(T));
+       store_as<Storage>(cache_out_y, input_vec_y, lane_id);
+     }
+   } else {
++    static_assert(!kFP8Output, "FP8 Q fusion currently supports NeoX RoPE only");
+     using CacheStorage = AlignedVector<float, kVecSize>;
+     auto input_vec = load_as<Storage>(input, lane_id);
+     const auto cos_vec = load_as<CacheStorage>(cos_ptr, lane_id);
+@@ -113,7 +133,8 @@ template <
+     typename DType,
+     typename QDType,
+     typename IdType,
+-    uint32_t kWorkThreads>
++    uint32_t kWorkThreads,
++    bool kFP8Output = false>
+ __global__ void fused_rope_kernel(const __grid_constant__ FusedRopeParams params) {
+   using namespace device;
+ 
+@@ -127,7 +148,8 @@ __global__ void fused_rope_kernel(const __grid_constant__ FusedRopeParams params
+   const auto &[
+     q, k, cos_sin_cache_ptr, positions, // pointers
+     q_stride_bytes, k_stride_bytes, head_stride_bytes,  // strides
+-    num_qo_heads, num_kv_heads, num_tokens // dimensions
++    num_qo_heads, num_kv_heads, num_tokens, // dimensions
++    q_fp8 // optional contiguous FP8 Q output
+   ] = params;
+ 
+   const auto num_blks = gridDim.x;
+@@ -157,7 +179,11 @@ __global__ void fused_rope_kernel(const __grid_constant__ FusedRopeParams params
+     const auto cos_ptr = pointer::offset(cos_cache_ptr, pos * kCosSinStrideBytes);
+     const auto sin_ptr = pointer::offset(sin_cache_ptr, pos * kCosSinStrideBytes);
+     if (load_q) {
+-      rope_rotate_head<QDType, kIsNeox, kRopeDim, kVecSize>(input, cos_ptr, sin_ptr, lane_id);
++      void* output = nullptr;
++      if constexpr (kFP8Output)
++        output = pointer::offset(q_fp8, (token_id * num_qo_heads + head_id) * kRopeDim);
++      rope_rotate_head<QDType, kIsNeox, kRopeDim, kVecSize, kFP8Output>(
++          input, cos_ptr, sin_ptr, lane_id, nullptr, output);
+     } else {
+       rope_rotate_head<DType, kIsNeox, kRopeDim, kVecSize>(input, cos_ptr, sin_ptr, lane_id);
+     }
+@@ -187,7 +213,8 @@ __global__ void fused_rope_store_kernel(const __grid_constant__ FusedRopeStorePa
+   const auto &[
+     q, k, cos_sin_cache_ptr, positions, // pointers
+     q_stride_bytes, k_stride_bytes, head_stride_bytes,  // strides
+-    num_qo_heads, num_kv_heads, num_tokens // dimensions
++    num_qo_heads, num_kv_heads, num_tokens, // dimensions
++    q_fp8 // optional contiguous FP8 Q output
+   ] = base_params;
+ 
+   const auto num_blks = gridDim.x;
+@@ -253,8 +280,8 @@ struct FusedRopeKernel {
+   static_assert(kBlockSize % kWorkThreads == 0);
+   static_assert(sizeof(QDType) == sizeof(DType), "q/k must be same-size dtypes");
+ 
+-  template <typename IdType>
+-  static constexpr auto _kernel_0 = fused_rope_kernel<kIsNeox, kRopeDim, kUsePDL, DType, QDType, IdType, kWorkThreads>;
++  template <typename IdType, bool kFP8Output = false>
++  static constexpr auto _kernel_0 = fused_rope_kernel<kIsNeox, kRopeDim, kUsePDL, DType, QDType, IdType, kWorkThreads, kFP8Output>;
+   template <typename IdType>
+   static constexpr auto _kernel_1 =
+       fused_rope_store_kernel<kIsNeox, kRopeDim, kUsePDL, DType, QDType, IdType, kWorkThreads>;
+@@ -269,6 +296,26 @@ struct FusedRopeKernel {
+       const tvm::ffi::TensorView k,
+       const tvm::ffi::TensorView cos_sin_cache,
+       const tvm::ffi::TensorView positions) {
++    _run<false>(q, k, cos_sin_cache, positions, q);
++  }
++
++  static void run_fp8(
++      const tvm::ffi::TensorView q,
++      const tvm::ffi::TensorView k,
++      const tvm::ffi::TensorView cos_sin_cache,
++      const tvm::ffi::TensorView positions,
++      const tvm::ffi::TensorView q_fp8) {
++    static_assert(kIsNeox && kRopeDim == 128 && std::is_same_v<QDType, bf16_t>);
++    _run<true>(q, k, cos_sin_cache, positions, q_fp8);
++  }
++
++  template <bool kFP8Output>
++  static void _run(
++      const tvm::ffi::TensorView q,
++      const tvm::ffi::TensorView k,
++      const tvm::ffi::TensorView cos_sin_cache,
++      const tvm::ffi::TensorView positions,
++      const tvm::ffi::TensorView q_fp8) {
+     using namespace host;
+     auto N = SymbolicSize{"num_tokens"};
+     auto Q = SymbolicSize{"num_qo_heads"};
+@@ -300,7 +347,13 @@ struct FusedRopeKernel {
+         .with_device(device)
+         .verify(positions);
+ 
++    if constexpr (kFP8Output) {
++      TensorMatcher({N, Q, D}).with_dtype<fp8_e4m3_t>().with_device(device).verify(q_fp8);
++      if (N.unwrap() != 0)
++        RuntimeCheck(q_fp8.data_ptr() != q.data_ptr() && q_fp8.data_ptr() != k.data_ptr(), "FP8 Q output must not alias inputs");
++    }
+     const auto num_tokens = static_cast<uint32_t>(N.unwrap());
++    if (num_tokens == 0) return;
+     const auto num_qo_heads = static_cast<uint32_t>(Q.unwrap());
+     const auto num_kv_heads = static_cast<uint32_t>(K.unwrap());
+     const auto q_stride_bytes = static_cast<int64_t>(Dq.unwrap() * sizeof(DType));
+@@ -320,14 +373,15 @@ struct FusedRopeKernel {
+         .num_qo_heads = num_qo_heads,
+         .num_kv_heads = num_kv_heads,
+         .num_tokens = num_tokens,
++        .q_fp8 = kFP8Output ? q_fp8.data_ptr() : nullptr,
+     };
+ 
+     const auto is_int32 = id_type.is_type<int32_t>();
+-    const auto kernel = is_int32 ? _kernel_0<int32_t> : _kernel_0<int64_t>;
++    const auto kernel = is_int32 ? _kernel_0<int32_t, kFP8Output> : _kernel_0<int64_t, kFP8Output>;
+     const uint32_t kNumSM = get_num_sm(device.unwrap());
+     static const uint32_t kOccupancyTable[2] = {
+-        runtime::get_blocks_per_sm(_kernel_0<int32_t>, kBlockSize),
+-        runtime::get_blocks_per_sm(_kernel_0<int64_t>, kBlockSize),
++        runtime::get_blocks_per_sm(_kernel_0<int32_t, kFP8Output>, kBlockSize),
++        runtime::get_blocks_per_sm(_kernel_0<int64_t, kFP8Output>, kBlockSize),
+     };
+     const auto max_blocks = kOccupancyTable[is_int32 ? 0 : 1] * kNumSM;
+     const auto num_works = (num_qo_heads + num_kv_heads) * num_tokens;
+diff --git a/python/sglang/kernels/ops/attention/rope.py b/python/sglang/kernels/ops/attention/rope.py
+index a5f6be6..dbecc0a 100644
+--- a/python/sglang/kernels/ops/attention/rope.py
++++ b/python/sglang/kernels/ops/attention/rope.py
+@@ -44,6 +44,29 @@ def _jit_fused_rope_module(
+     )
+ 
+ 
++@cache_once
++def _jit_rope_fp8_q_module() -> Module:
++    args = make_cpp_args(True, 128, is_arch_support_pdl(), torch.bfloat16)
++    return load_jit(
++        "rope_fp8_q",
++        *args,
++        cuda_files=["elementwise/rope.cuh"],
++        cuda_wrappers=[("run", f"FusedRopeKernel<{args}>::run_fp8")],
++    )
++
++
++@register_custom_op(mutates_args=["k", "q_fp8"])
++def apply_rope_fp8_q(
++    q: torch.Tensor,
++    k: torch.Tensor,
++    cos_sin_cache: torch.Tensor,
++    positions: torch.Tensor,
++    q_fp8: torch.Tensor,
++) -> None:
++    """NeoX H128 BF16 RoPE, with Q cast to FP8 and K rotated in place."""
++    _jit_rope_fp8_q_module().run(q, k, cos_sin_cache, positions, q_fp8)
++
++
+ @register_custom_op(
+     op_name="rotary_embedding_with_key",
+     mutates_args=["query", "key"],
+diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
+index 8d23308..f5f2b52 100644
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -95,6 +95,7 @@ if _is_cuda:
+         can_use_fused_qk_norm_rope,
+         fused_qk_norm_rope,
+     )
++    from sglang.kernels.ops.attention.rope import apply_rope_fp8_q
+ 
+ TConfig = TypeVar("TConfig", bound=PretrainedConfig)
+ 
+@@ -615,6 +616,20 @@ class Qwen3MoeAttention(nn.Module):
+             )
+         )
+         self._used_fused_qk_norm_rope_last_call = False
++        self.use_fp8_q_rope = (
++            _is_cuda
++            and get_moe_a2a_backend().is_megamoe()
++            and get_server_args().attention_backend == "fa3"
++            and get_server_args().kv_cache_dtype == "fp8_e4m3"
++            and not self.use_fused_qk_norm_rope
++            and not isinstance(self.rotary_emb, MRotaryEmbedding)
++            and not self.rotary_emb.use_fallback_kernel
++            and self.rotary_emb.is_neox_style
++            and self.head_dim == self.rotary_emb.rotary_dim == 128
++        )
++        if self.use_fp8_q_rope:
++            # This kernel rotates K but leaves cache writes to the attention backend.
++            self.compatible_with_fused_kv_buffer = False
+ 
+         self.attn = RadixAttention(
+             self.num_heads,
+@@ -718,21 +733,32 @@ class Qwen3MoeAttention(nn.Module):
+                 head_dim=self.head_dim,
+                 alt_stream=self.alt_stream,
+             )
+-            q, k = self.rotary_emb(
+-                positions,
+-                q,
+-                k,
+-                fused_set_kv_buffer_arg=(
+-                    create_fused_set_kv_buffer_arg(
+-                        value=v,
+-                        layer=self.attn,
+-                        forward_batch=forward_batch,
+-                    )
+-                    if enable_fused_set_kv_buffer(forward_batch)
+-                    and self.compatible_with_fused_kv_buffer
+-                    else None
+-                ),
+-            )
++            if self.use_fp8_q_rope and q.dtype == k.dtype == torch.bfloat16:
++                q_fp8 = torch.empty(q.shape, dtype=torch.float8_e4m3fn, device=q.device)
++                apply_rope_fp8_q(
++                    q.view(-1, self.num_heads, self.head_dim),
++                    k.view(-1, self.num_kv_heads, self.head_dim),
++                    self.rotary_emb.cos_sin_cache,
++                    positions,
++                    q_fp8.view(-1, self.num_heads, self.head_dim),
++                )
++                q = q_fp8
++            else:
++                q, k = self.rotary_emb(
++                    positions,
++                    q,
++                    k,
++                    fused_set_kv_buffer_arg=(
++                        create_fused_set_kv_buffer_arg(
++                            value=v,
++                            layer=self.attn,
++                            forward_batch=forward_batch,
++                        )
++                        if enable_fused_set_kv_buffer(forward_batch)
++                        and self.compatible_with_fused_kv_buffer
++                        else None
++                    ),
++                )
+             self._used_fused_qk_norm_rope_last_call = False
+         return q, k, v
+ 

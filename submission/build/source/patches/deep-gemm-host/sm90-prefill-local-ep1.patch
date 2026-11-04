@@ -1,0 +1,16 @@
+diff --git a/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp b/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
+--- a/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
++++ b/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
+@@ -173,7 +173,11 @@ static MegaMoESM90Config get_mega_moe_config_sm90(
+     // stay as in the 512-thread geometry. The JIT header must carry the matching
+     // path (sm90-prefill-2wg-host-m64n256.patch); unset, nothing changes.
++    // Local-expert Prefill is opt-in and needs the matching EP1 JIT overlay.
++    // Existing EP4 selection and every Decode configuration are unchanged.
++    const bool local_prefill = num_ranks == 1 and num_experts == 128 and
++        get_env<int>("DG_SM90_PREFILL_LOCAL_EP1", 0) != 0;
+     const bool prefill_2wg =
+-        auto_split_mn and hidden == 4096 and intermediate_hidden == 1536 and num_ranks == 4 and
++        auto_split_mn and hidden == 4096 and intermediate_hidden == 1536 and (num_ranks == 4 or local_prefill) and
+         get_env<int>("DG_SM90_PREFILL_2WG", 0) != 0;
+     const int num_math_threads = prefill_2wg ? 256 : num_epilogue_threads;
+     const bool decode_split_n_path =

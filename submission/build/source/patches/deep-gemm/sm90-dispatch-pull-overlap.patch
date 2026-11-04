@@ -1,0 +1,48 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+index df0a728..2e7732a 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -684,6 +684,35 @@ sm90_fp8_mega_moe_impl(void* y,
+                 const uint32_t pool_block_idx = expert_pool_block_offset + token_idx_in_expert / BLOCK_M;
+                 const uint32_t token_idx_in_block = token_idx_in_expert % BLOCK_M;
+                 const uint32_t sf_pool_token_idx = pool_block_idx * SF_BLOCK_M + token_idx_in_block;
++                if constexpr (kSwapABActive) {
++                    // Decode: issue the remote SF loads and the remote top-k weight load back
++                    // to back so that both NVLink round trips overlap each other and the token
++                    // TMA load, instead of loading the weight after the SF copy completes.
++                    // (Prefill keeps the original sequence below; its SASS is unchanged.)
++                    constexpr uint32_t kNumSFFloatsPerLane = math::constexpr_ceil_div(kNumSFFloats, 32u);
++                    float sf_values[kNumSFFloatsPerLane];
++                    #pragma unroll
++                    for (uint32_t i = 0; i < kNumSFFloatsPerLane; ++ i) {
++                        const uint32_t j = i * 32 + lane_idx;
++                        if (j < kNumSFFloats)
++                            sf_values[i] = remote_sf_ptr[j];
++                    }
++                    float weight = 0.0f;
++                    if (lane_idx == 0) {
++                        weight = *sym_buffer.map(
++                            input_topk_weights_buffer.get_base_ptr<float>() + src_token_topk_idx,
++                            current_rank_in_expert_idx);
++                    }
++                    #pragma unroll
++                    for (uint32_t i = 0; i < kNumSFFloatsPerLane; ++ i) {
++                        const uint32_t j = i * 32 + lane_idx;
++                        if (j < kNumSFFloats)
++                            local_sf_ptr[j * kNumPaddedSFPoolTokens + sf_pool_token_idx] = sf_values[i];
++                    }
++                    if (lane_idx == 0)
++                        *l1_topk_weights_buffer.get_data_buffer(pool_token_idx).get_base_ptr<float>() = weight;
++                    __syncwarp();
++                } else {
+                 #pragma unroll
+                 for (uint32_t i = 0; i < math::constexpr_ceil_div(kNumSFFloats, 32u); ++ i) {
+                     const uint32_t j = i * 32 + lane_idx;
+@@ -699,6 +728,7 @@ sm90_fp8_mega_moe_impl(void* y,
+                     *l1_topk_weights_buffer.get_data_buffer(pool_token_idx).get_base_ptr<float>() = weight;
+                 }
+                 __syncwarp();
++                }
+ 
+                 if (cute::elect_one_sync()) {
+                     ptx::mbarrier_arrive_and_set_tx(pull_mbarrier, kHidden);

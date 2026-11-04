@@ -1,0 +1,35 @@
+diff --git a/python/sglang/srt/layers/moe/moe_runner/deep_gemm.py b/python/sglang/srt/layers/moe/moe_runner/deep_gemm.py
+--- a/python/sglang/srt/layers/moe/moe_runner/deep_gemm.py
++++ b/python/sglang/srt/layers/moe/moe_runner/deep_gemm.py
+@@ -28,7 +28,7 @@
+     register_post_permute,
+     register_pre_permute,
+ )
+-from sglang.srt.layers.moe.utils import MoeRunnerBackend
++from sglang.srt.layers.moe.utils import MoeRunnerBackend, get_moe_a2a_backend
+ from sglang.srt.runtime_context import get_exec
+ from sglang.srt.utils import (
+     ceil_div,
+@@ -154,7 +154,9 @@
+         if envs.SGLANG_OPT_FIX_MEGA_MOE_MEMORY.get():
+             assert envs.SGLANG_OPT_SWIGLU_CLAMP_FUSION.get()
+             assert envs.SGLANG_OPT_USE_JIT_EP_ACTIVATION.get()
+-            self.use_swizzle = True
++            # Only MegaMoE weight loading interleaves gate/up in groups of 8.
++            # DeepEP retains natural gate/up halves even with activation fusion.
++            self.use_swizzle = get_moe_a2a_backend().is_megamoe()
+ 
+     def run(
+         self,
+diff --git a/python/sglang/kernels/ops/attention/dsv4/moe.py b/python/sglang/kernels/ops/attention/dsv4/moe.py
+--- a/python/sglang/kernels/ops/attention/dsv4/moe.py
++++ b/python/sglang/kernels/ops/attention/dsv4/moe.py
+@@ -224,6 +224,8 @@
+     swiglu_limit: Optional[float] = None,
+     swizzle: bool = False,
+ ) -> None:
++    if input.shape[0] == 0:
++        return
+     apply_swiglu_limit = swiglu_limit is not None
+     module = _jit_silu_mul_quant_contig_module(
+         quant_group_size, scale_ue8m0, swizzle, apply_swiglu_limit

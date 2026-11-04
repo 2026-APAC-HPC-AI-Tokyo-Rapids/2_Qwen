@@ -6,7 +6,7 @@
 #   IMAGE               BUILD.sqsh from scripts/build-basic-container.sh, with BUILD.container-sidecar.json beside it
 #   MODEL               Qwen/Qwen3-235B-A22B-Instruct-2507-FP8 at revision e156cb4efae43fbee1a1ab073f946a1377e6b969
 #   TOKENIZER_SNAPSHOT  Qwen/Qwen3-235B-A22B-Instruct-2507 tokenizer files at TOKENIZER_REVISION
-#   CONFIG              configs/firmus-basic.json (or a copy with a new build's image pins)
+#   CONFIG              submission/basic/config/firmus-basic.json (or a copy with a new build's image pins)
 #
 # Then: cd RUN_DIR && sbatch --export=PATH,HOME,USER,LOGNAME scripts/submit.sbatch
 # Nothing in SGLang, its kernels or the gateway is patched; only the draft's config is rewritten (see below).

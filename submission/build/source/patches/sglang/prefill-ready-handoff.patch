@@ -1,0 +1,40 @@
+diff --git a/python/sglang/srt/disaggregation/prefill.py b/python/sglang/srt/disaggregation/prefill.py
+--- a/python/sglang/srt/disaggregation/prefill.py
++++ b/python/sglang/srt/disaggregation/prefill.py
+@@ -612,6 +612,23 @@
+             )
+             self.cur_batch_for_debug = batch
+ 
++            # Keep chunk preparation ahead of result processing: it snapshots
++            # tmp_end_idx and updates inflight_middle_chunks for the next chunk.
++            # A ready result must not wait behind another long prefill forward.
++            # TP/CP collectives require rank-consistent ordering; this local
++            # readiness fast path is only for single-rank attention groups.
++            last_result_pending = bool(self.last_batch)
++            if (
++                last_result_pending
++                and self.ps.attn_tp_size == 1
++                and self.ps.attn_cp_size == 1
++                and self.result_queue[0][1].copy_done is not None
++                and self.result_queue[0][1].copy_done.query()
++            ):
++                tmp_batch, tmp_result = self.result_queue.popleft()
++                self.process_batch_result(tmp_batch, tmp_result)
++                last_result_pending = False
++
+             # Launch the current batch
+             if batch:
+                 if self.enable_staging:
+@@ -623,10 +640,10 @@
+                 batch_result = None
+ 
+             # Process the last batch
+-            if self.last_batch:
++            if last_result_pending:
+                 tmp_batch, tmp_result = self.result_queue.popleft()
+                 self.process_batch_result(tmp_batch, tmp_result)
+-            elif batch is None:
++            elif not self.last_batch and batch is None:
+                 # When the server is idle, do self-check and re-init some states
+                 self.on_idle()
+ 

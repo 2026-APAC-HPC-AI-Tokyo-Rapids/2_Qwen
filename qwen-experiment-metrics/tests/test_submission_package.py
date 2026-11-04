@@ -261,7 +261,7 @@ def test_patch_inventory_lists_every_applied_patch_once_with_its_hash():
     listed = {}
     for row in rows:
         cells = row.strip("|").split(" | ")
-        match = re.search(r"\(source: \[([^\]]+)\]", cells[0]) or re.match(r" ?\[([^\]]+)\]", cells[0])
+        match = re.search(r"\(source: `([^`]+)`\)", cells[0]) or re.match(r" ?\[([^\]]+)\]", cells[0])
         path = match.group(1)
         assert path not in listed, path
         listed[path] = (cells[1].strip("` "), cells[4].strip())
@@ -324,3 +324,25 @@ def test_basic_build_record_matches_pinned_image():
     assert sidecar["container_artifact"]["sha256"] == basic["container_sha256"] and sidecar["container_artifact"]["size_bytes"] == basic["container_size_bytes"]
     assert sidecar["source_commits"]["qwen"] == basic["container_source_commit"] and sidecar["applied_patches"] == []
     assert f"Successfully tagged localhost/apac-qwen-basic:{basic['container_source_commit']}" in (PACKAGE / "basic/build/build.log").read_text()
+
+def test_build_inputs_preserve_code_except_public_source_pin():
+    # The submission folder is self-contained: every build input the image scripts read is copied verbatim.
+    for package_root in (PACKAGE / "build/source", PACKAGE / "basic/build/source"):
+        copies = [path for path in package_root.rglob("*") if path.is_file() and ".git" not in path.parts]
+        assert copies
+        for copy in copies:
+            relative = copy.relative_to(package_root)
+            published = copy.read_bytes()
+            recorded = (ROOT / relative).read_bytes()
+            # Public export removes mirror-maintenance CI; every other build input stays identical.
+            if package_root == PACKAGE / "build/source" and relative == Path("scripts/build-sglang-container.sh"):
+                public_pin = re.search(rb"^sglang_revision=([0-9a-f]{40})$", published, re.MULTILINE)[1]
+                recorded_pin = re.search(rb"^sglang_revision=([0-9a-f]{40})$", recorded, re.MULTILINE)[1]
+                exported = subprocess.check_output(["git", "bundle", "list-heads", str(PACKAGE / "build/sglang-fc275674.bundle")]).split()[0]
+                assert public_pin == exported
+                published = published.replace(b"sglang_revision=" + public_pin, b"sglang_revision=" + recorded_pin, 1)
+            assert published == recorded, copy
+    build = (ROOT / "scripts/build-sglang-container.sh").read_text()
+    for path in re.findall(r'\$\{GITHUB_WORKSPACE\}/([A-Za-z0-9_./-]+)', build) + re.findall(r'^[a-z0-9_]+_patch="(patches/sglang/[^"]+)"$', build, re.MULTILINE):
+        assert (PACKAGE / "build/source" / path).exists(), path
+    assert (PACKAGE / "basic/config/firmus-basic.json").read_bytes() == (ROOT / "configs/firmus-basic.json").read_bytes()

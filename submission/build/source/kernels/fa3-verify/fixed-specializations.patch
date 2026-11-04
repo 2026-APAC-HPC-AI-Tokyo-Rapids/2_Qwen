@@ -1,0 +1,96 @@
+--- a/hopper/flash_fwd_launch_template.h
++++ b/hopper/flash_fwd_launch_template.h
+@@ -27,8 +27,8 @@
+ 
+ template <int Arch, int kHeadDim, int kHeadDimV, int ClusterM, typename Element, typename ElementOut,
+           bool Is_causal, bool Is_local, bool Has_softcap, bool Varlen, bool PagedKVNonTMA, bool AppendKV, bool HasQv, bool OnlyQv,
+-          bool PackGQA, bool Split, bool V_colmajor, bool Use_one_mma_wg, bool Has_sparse_mask=false>
+-void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
++          bool PackGQA, bool Split, bool V_colmajor, bool Use_one_mma_wg, bool Has_sparse_mask=false, int VerifyBlockN=0, int VerifyStages=2>
++void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream, int* resource = nullptr) {
+     static_assert(!(Is_causal && Is_local), "Causal and Local cannot be enabled at the same time");
+     static_assert(!(AppendKV && V_colmajor), "AppendKV and V_colmajor cannot be enabled at the same time");
+     static_assert(!(AppendKV && !Varlen), "AppendKV requires Varlen");
+@@ -41,11 +41,11 @@
+     static constexpr std::tuple<int, int, bool, bool> kBlockMN_RS_IntraWGOverlap = tile_size_fwd_sm90(kHeadDim, kHeadDimV, Is_causal, Is_local, sizeof(Element) /*element_size*/, V_colmajor, PagedKVNonTMA, Has_softcap, Use_one_mma_wg);
+     static constexpr std::tuple<int, int, int, int, bool> kBlockMN_kNWarps_Stages_RS = tile_size_fwd_sm8x(Arch == 86 || Arch == 89, kHeadDim, kHeadDimV, Is_causal, Is_local, sizeof(Element) /*element_size*/, PagedKVNonTMA, Varlen && Split, Has_softcap, AppendKV);
+     static constexpr int kBlockM = Arch >= 90 ? std::get<0>(kBlockMN_RS_IntraWGOverlap) : std::get<0>(kBlockMN_kNWarps_Stages_RS);
+-    static constexpr int kBlockN = Arch >= 90 ? std::get<1>(kBlockMN_RS_IntraWGOverlap) : std::get<1>(kBlockMN_kNWarps_Stages_RS);
++    static constexpr int kBlockN = VerifyBlockN ? VerifyBlockN : Arch >= 90 ? std::get<1>(kBlockMN_RS_IntraWGOverlap) : std::get<1>(kBlockMN_kNWarps_Stages_RS);
+     static constexpr bool MmaPV_is_RS = std::get<2>(kBlockMN_RS_IntraWGOverlap);
+     static constexpr bool IntraWGOverlap = std::get<3>(kBlockMN_RS_IntraWGOverlap);
+     static constexpr int kNWarps = std::get<2>(kBlockMN_kNWarps_Stages_RS);
+-    static constexpr int kStages = Arch >= 90 ? 2 : std::get<3>(kBlockMN_kNWarps_Stages_RS);
++    static constexpr int kStages = Arch >= 90 ? VerifyStages : std::get<3>(kBlockMN_kNWarps_Stages_RS);
+     static constexpr bool Q_in_regs = Arch >= 90 ? false : std::get<4>(kBlockMN_kNWarps_Stages_RS);
+ 
+     using TileShape_MNK = cute::Shape<Int<kBlockM>, Int<kBlockN>, Int<kHeadDim>>;
+@@ -81,6 +81,7 @@
+         flash::enable_sm80_to_sm89<flash::FlashAttnFwdSm80<CollectiveMainloop, CollectiveEpilogue, Scheduler>>
+     >;
+ 
++    if (resource) { *resource = AttnKernel::SharedStorageSize; return; }
+     bool const is_varlen_q = params.cu_seqlens_q;
+     bool const is_varlen_k = params.cu_seqlens_k;
+     bool const is_varlen_k_new = params.cu_seqlens_knew;
+--- a/hopper/flash_prepare_scheduler.cu
++++ b/hopper/flash_prepare_scheduler.cu
+@@ -160,6 +160,9 @@
+         num_n_blocks = cutlass::ceil_div(num_n_blocks, num_splits_dynamic); 
+     }
+ 
++    // Companion is restricted to fixed split capacity; preserve the sorted map.
++    num_splits_dynamic = num_splits_static;
++    num_n_blocks = cute::ceil_div(get_num_n_blocks(batch_idx), num_splits_static);
+     if constexpr (Sort) {
+         if(lane == kNumBatchPerWarp || batch_idx >= num_batch) {
+             num_n_blocks = INT_MIN; // sort last
+@@ -219,7 +222,7 @@
+ void prepare_varlen_num_blocks(Flash_fwd_params &params, cudaStream_t stream, bool packgqa,
+                                int blockM, int blockN, bool enable_pdl) {
+     int qhead_per_khead = cutlass::ceil_div(params.h, params.h_k);
+-    int num_warps = cutlass::ceil_div(params.b, 31); // warp switch will cap this at 32
++    assert((params.b >= 1 && params.b <= 4) || (params.b >= 32 && params.b <= 48));
+     int num_ctas = cutlass::ceil_div(params.b, 31 * 32);
+     // int const size_l2 = 50 * 1024 * 1024; // 50 MB
+     int const size_l2 = 8 * 1024 * 1024; // underestimate seems better in practice
+@@ -227,8 +230,10 @@
+     int const size_one_kvblock = blockN * (params.d + params.dv) * element_size;
+     // printf("block size = %d, element size = %d, headdim = %d, headdim_v = %d, size 1 kblock = %d.\n", blockN, element_size, params.d, params.dv, size_one_kvblock);
+     int const max_kvblocks_in_l2 = size_l2 / size_one_kvblock;
+-    BOOL_SWITCH(params.varlen_sort_batches, Sort, [&] {
+-        NUM_WARP_SWITCH(num_warps, NumWarps, [&] {
++    {
++        constexpr int NumWarps = 2;
++        constexpr bool Sort = true;
++        {
+             flash::prepare_varlen_num_blocks_kernel<NumWarps, Sort><<<num_ctas /*grid*/, 32 * NumWarps /*block*/, 0, stream>>>(
+                 params.seqlen_q, params.seqlen_k, params.seqlen_knew,
+                 params.cu_seqlens_q, params.cu_seqlens_k, params.cu_seqlens_knew,
+@@ -245,6 +250,6 @@
+                 params.is_causal,
+                 packgqa,
+                 max_kvblocks_in_l2);
+-        });
+-    });
++        }
++    }
+ }
+--- a/hopper/cuda_check.h
++++ b/hopper/cuda_check.h
+@@ -6,13 +6,14 @@
+ 
+ #include <assert.h>
+ #include <stdlib.h>
++#include <stdexcept>
+ 
+ #define CHECK_CUDA(call)                        \
+     do {                                                                                                  \
+         cudaError_t status_ = call;                                                                       \
+         if (status_ != cudaSuccess) {                                                                     \
+             fprintf(stderr, "CUDA error (%s:%d): %s\n", __FILE__, __LINE__, cudaGetErrorString(status_)); \
+-            exit(1);                                                                                      \
++            throw std::runtime_error(cudaGetErrorString(status_));                                                                                      \
+         }                                                                                                 \
+     } while(0)
+ 

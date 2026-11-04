@@ -12,16 +12,16 @@ The Bonus configuration is **1.59×** the team's own Basic mean on the same mach
 
 ## Where each deliverable is
 
-Paths are relative to `repository/`, a snapshot of the team repository. The whole repository is included because both stacks are rebuilt from files in it (`containers/`, `scripts/`, `patches/`, `kernels/`, `configs/`).
+Paths are relative to this folder. `submission/` is self-contained: both images are rebuilt from the build inputs copied into it (`submission/build/source/` for Bonus, `submission/basic/build/source/` for Basic).
 
 | Deliverable | Basic | Bonus |
 | --- | --- | --- |
-| Overview and reproduction | [submission/basic/README.md](repository/submission/basic/README.md) | [submission/README.md](repository/submission/README.md) |
-| Software stack build method | `containers/basic.Dockerfile`, `scripts/build-basic-container.sh` | `submission/build/setup.sh`, `submission/build/sglang-mirror.sh` |
+| Overview and reproduction | [submission/basic/README.md](submission/basic/README.md) | [submission/README.md](submission/README.md) |
+| Software stack build method | `submission/basic/build/setup.sh` with `submission/basic/build/source/` | `submission/build/sglang-mirror.sh`, `submission/build/setup.sh` with `submission/build/source/` |
 | Build log and image record | `submission/basic/build/` | `submission/build/build.log`, `submission/build/provenance.json` |
 | Single Slurm job script | `submission/basic/submit.sbatch` (prepared by `submission/basic/prepare.sh`) | `submission/run/submit.sbatch` (prepared by `submission/run/prepare.sh`) |
 | AIPerf logs and `profile_export_aiperf.json` | `submission/basic/results/41078642203/`, `41093781934/` | `submission/results/41767886175/` (measured run), `41781374312/` (standalone run of the package) |
-| Patches as text | None (no source patch) | `submission/patches/` with [the inventory](repository/submission/patches/README.md) |
+| Patches as text | None (no source patch) | `submission/patches/` with [the inventory](submission/patches/README.md) |
 | Draft declaration | Basic README, "Draft declaration" | Bonus README, "Draft declaration" |
 | Profiling data (optional) | — | `submission/analysis/` and `submission/analysis/profiling_data/` |
 | Presentation slides | `presentation/team_presentation.pptx` | (same deck) |

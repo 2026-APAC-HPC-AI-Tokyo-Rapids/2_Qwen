@@ -1,0 +1,39 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+index 13749f7..20d5699 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1821,6 +1821,26 @@ sm90_fp8_mega_moe_impl(void* y,
+ 
+                     ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+ 
++                    if constexpr (not kL2ArrivalCounter) {
++                        // Decode: the thread that issues the store waits for it and publishes
++                        // the arrival itself, so only its warp waits for the store; the other
++                        // warps go on to the next block. The FP8 staging tile is next written
++                        // after a CTA barrier that this warp reaches only after the wait.
++                        if (epilogue_warp_idx == 0 and cute::elect_one_sync()) {
++                            cute::tma_store_fence();
++                            cute::SM90_TMA_STORE_2D::copy(
++                                &tensor_map_l1_output,
++                                smem_cd_swap_l1_fp8,
++                                n_block_idx * L1_OUT_BLOCK_N,
++                                m_idx);
++                            cute::tma_store_arrive();
++                            ptx::tma_store_wait<0>();
++                            ptx::red_or_rel_gpu(
++                                workspace.get_l2_arrival_mask_ptr(pool_block_idx),
++                                1ull << n_block_idx);
++                        }
++                        __syncwarp();
++                    } else {
+                     if (epilogue_wg_n_idx == 0 and warp_idx_in_wg == 0 and cute::elect_one_sync()) {
+                         cute::tma_store_fence();
+                         cute::SM90_TMA_STORE_2D::copy(
+@@ -1850,6 +1870,7 @@ sm90_fp8_mega_moe_impl(void* y,
+                     __syncwarp();
+                     if constexpr (kL2ArrivalCounter)
+                         ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++                    }
+                 } else {
+ 
+                 // ---------------- L1 EPILOGUE: activation + FP8 quantize + TMA store ----------------

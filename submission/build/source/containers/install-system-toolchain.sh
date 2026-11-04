@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euxo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+export CUDA_HOME=/usr/local/cuda
+export PATH=/usr/local/cuda/bin:/usr/local/bin:${PATH}
+
+for metadata_tool in chown chgrp; do dpkg-divert --local --rename --add "/usr/bin/${metadata_tool}"; printf '#!/bin/sh\nexit 0\n' >"/usr/bin/${metadata_tool}"; chmod 0755 "/usr/bin/${metadata_tool}"; done
+apt-get -o APT::Sandbox::User=root update
+apt-get -o APT::Sandbox::User=root install -y --no-install-recommends --allow-change-held-packages build-essential ca-certificates cmake curl ffmpeg git git-lfs ibverbs-providers libc6-dbg libboost-all-dev libcurl4-openssl-dev libczmq-dev libfabric-dev libgoogle-glog-dev libgrpc++-dev libhiredis-dev libhwloc-dev libibumad3 libibverbs-dev libnccl-dev libnccl2 libnl-3-dev libnl-route-3-dev libnuma-dev libopenmpi-dev libpmix-dev libprotobuf-dev librdmacm-dev libssl-dev libucx-dev libunwind-dev linux-libc-dev ninja-build numactl openmpi-bin patch patchelf perl pkg-config protobuf-compiler protobuf-compiler-grpc pybind11-dev python3.12-dev python3.12-full rdma-core ucx-utils unzip wget
+for metadata_tool in chown chgrp; do rm "/usr/bin/${metadata_tool}"; dpkg-divert --rename --remove "/usr/bin/${metadata_tool}"; done
+update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 2
+update-alternatives --set python3 /usr/bin/python3.12
+ln -sf /usr/bin/python3.12 /usr/bin/python
+curl -LsSf https://astral.sh/uv/install.sh | sh
+install -m 0755 /root/.local/bin/uv /root/.local/bin/uvx /usr/local/bin/
+
+rm -rf /var/lib/apt/lists/* /root/.cache
+install -d -m 0755 /root/.cache /var/tmp/sglang-build /opt/sglang

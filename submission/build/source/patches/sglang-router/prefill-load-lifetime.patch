@@ -1,0 +1,594 @@
+diff --git a/src/routers/http/pd_router.rs b/src/routers/http/pd_router.rs
+--- a/src/routers/http/pd_router.rs
++++ b/src/routers/http/pd_router.rs
+@@ -417,7 +417,6 @@
+         &self,
+         res: reqwest::Response,
+         context: &PDRequestContext<'_>,
+-        prefill: Arc<dyn Worker>,
+         decode: Arc<dyn Worker>,
+     ) -> Response {
+         let status = res.status();
+@@ -452,7 +451,6 @@
+                 context.return_logprob,
+                 Some(decode_url),
+                 Some(response_headers),
+-                prefill,
+                 decode,
+             )
+         } else {
+@@ -537,10 +535,7 @@
+         decode: Arc<dyn Worker>,
+         _start_time: Instant,
+     ) -> Response {
+-        // For non-streaming: use guard for automatic load management
+-        // For streaming: load will be managed in create_streaming_response
+-        let _prefill_guard =
+-            (!context.is_stream).then(|| WorkerLoadGuard::new(prefill.clone(), headers));
++        // Decode streaming load remains attached to the response body.
+         let _decode_guard =
+             (!context.is_stream).then(|| WorkerLoadGuard::new(decode.clone(), headers));
+ 
+@@ -574,119 +569,88 @@
+         }
+         .emit();
+ 
+-        let (prefill_result, decode_result) =
+-            tokio::join!(prefill_request.send(), decode_request.send());
+-
++        // Count waiting, computing and transferring Prefill requests immediately.
++        // Consume its body before releasing the guard, independently of Decode
++        // headers/body: streaming headers alone do not mean Prefill is complete.
++        let prefill_response = async {
++            let _prefill_guard = WorkerLoadGuard::new(prefill.clone(), headers);
++            self.process_prefill_response(
++                prefill_request.send().await,
++                prefill.url(),
++                context.return_logprob,
++            )
++            .await
++        };
++        let decode_response = async {
++            match decode_request.send().await {
++                Ok(res) if res.status().is_success() => Ok(res),
++                Ok(res) => Err(self
++                    .handle_decode_error_response(res, &context, decode.clone())
++                    .await),
++                Err(e) => Err(error::bad_gateway(
++                    "decode_server_error",
++                    format!("Decode server error: {}", e),
++                )),
++            }
++        };
++        // An upstream failure must cancel the peer future: Decode can reject a
++        // request before receiving KV, in which case Prefill cannot finish it.
++        let ((_, prefill_body), res) = match tokio::try_join!(prefill_response, decode_response) {
++            Ok(responses) => responses,
++            Err(response) => return response,
++        };
+         events::RequestReceivedEvent {}.emit();
+-
+-        // Process decode response
+-        match decode_result {
+-            Ok(res) => {
+-                let status = StatusCode::from_u16(res.status().as_u16())
+-                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+-                debug!("Decode response status: {}", status);
+-
+-                if !status.is_success() {
+-                    error!(
+-                        "Decode server returned error status decode_url={} status={}",
+-                        decode.url(),
+-                        status
+-                    );
+-
+-                    return self
+-                        .handle_decode_error_response(res, &context, prefill, decode)
+-                        .await;
+-                }
+-
+-                // Process prefill response
+-                let prefill_body = if context.return_logprob {
+-                    match self
+-                        .process_prefill_response(
+-                            prefill_result,
+-                            prefill.url(),
+-                            context.return_logprob,
+-                        )
+-                        .await
+-                    {
+-                        Ok((_, body)) => body,
+-                        Err(error_response) => return error_response,
++        let status = StatusCode::from_u16(res.status().as_u16())
++            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
++
++        if context.is_stream {
++            // Streaming response
++            let prefill_logprobs = if context.return_logprob {
++                prefill_body
++                    .as_ref()
++                    .and_then(|body| serde_json::from_slice::<Value>(body).ok())
++                    .and_then(|json| json.pointer("/meta_info/input_token_logprobs").cloned())
++            } else {
++                None
++            };
++
++            let response_headers = header_utils::preserve_response_headers(res.headers());
++
++            self.create_streaming_response(
++                res.bytes_stream(),
++                status,
++                prefill_logprobs,
++                context.return_logprob,
++                None,
++                Some(response_headers),
++                decode,
++            )
++        } else {
++            // Non-streaming response
++            if context.return_logprob {
++                self.process_non_streaming_response(
++                    res,
++                    status,
++                    context.return_logprob,
++                    prefill_body,
++                )
++                .await
++            } else {
++                // Direct passthrough when no logprobs needed
++                let response_headers = header_utils::preserve_response_headers(res.headers());
++
++                match res.bytes().await {
++                    Ok(decode_body) => {
++                        let mut response = Response::new(Body::from(decode_body));
++                        *response.status_mut() = status;
++                        *response.headers_mut() = response_headers;
++                        response
+                     }
+-                } else {
+-                    // Even if we don't need logprobs, we should check prefill status
+-                    match self
+-                        .process_prefill_response(prefill_result, prefill.url(), false)
+-                        .await
+-                    {
+-                        Ok((_, body)) => body,
+-                        Err(error_response) => return error_response,
+-                    }
+-                };
+-
+-                if context.is_stream {
+-                    // Streaming response
+-                    let prefill_logprobs = if context.return_logprob {
+-                        prefill_body
+-                            .as_ref()
+-                            .and_then(|body| serde_json::from_slice::<Value>(body).ok())
+-                            .and_then(|json| {
+-                                json.pointer("/meta_info/input_token_logprobs").cloned()
+-                            })
+-                    } else {
+-                        None
+-                    };
+-
+-                    let response_headers = header_utils::preserve_response_headers(res.headers());
+-
+-                    self.create_streaming_response(
+-                        res.bytes_stream(),
+-                        status,
+-                        prefill_logprobs,
+-                        context.return_logprob,
+-                        None,
+-                        Some(response_headers),
+-                        prefill,
+-                        decode,
+-                    )
+-                } else {
+-                    // Non-streaming response
+-                    if context.return_logprob {
+-                        self.process_non_streaming_response(
+-                            res,
+-                            status,
+-                            context.return_logprob,
+-                            prefill_body,
+-                        )
+-                        .await
+-                    } else {
+-                        // Direct passthrough when no logprobs needed
+-                        let response_headers =
+-                            header_utils::preserve_response_headers(res.headers());
+-
+-                        match res.bytes().await {
+-                            Ok(decode_body) => {
+-                                let mut response = Response::new(Body::from(decode_body));
+-                                *response.status_mut() = status;
+-                                *response.headers_mut() = response_headers;
+-                                response
+-                            }
+-                            Err(e) => {
+-                                error!("Failed to read decode response: {}", e);
+-                                error::internal_error(
+-                                    "read_response_failed",
+-                                    "Failed to read response",
+-                                )
+-                            }
+-                        }
++                    Err(e) => {
++                        error!("Failed to read decode response: {}", e);
++                        error::internal_error("read_response_failed", "Failed to read response")
+                     }
+                 }
+-            }
+-            Err(e) => {
+-                error!(
+-                    decode_url = %decode.url(),
+-                    error = %e,
+-                    "Decode request failed"
+-                );
+-                error::bad_gateway("decode_server_error", format!("Decode server error: {}", e))
+             }
+         }
+     }
+@@ -834,7 +798,6 @@
+         return_logprob: bool,
+         decode_url: Option<String>,
+         headers: Option<HeaderMap>,
+-        prefill: Arc<dyn Worker>,
+         decode: Arc<dyn Worker>,
+     ) -> Response {
+         use crate::core::AttachedBody;
+@@ -877,10 +840,7 @@
+         let stream = UnboundedReceiverStream::new(rx);
+         let body = Body::from_stream(stream);
+ 
+-        let guards = vec![
+-            WorkerLoadGuard::new(prefill, headers.as_ref()),
+-            WorkerLoadGuard::new(decode, headers.as_ref()),
+-        ];
++        let guards = vec![WorkerLoadGuard::new(decode, headers.as_ref())];
+ 
+         let mut response = Response::new(body);
+         *response.status_mut() = status;
+@@ -1012,24 +972,14 @@
+             return Err(error_response);
+         }
+ 
+-        // Read prefill body if needed for logprob merging
+-        let prefill_body = if return_logprob {
+-            match prefill_response.bytes().await {
+-                Ok(body) => Some(body),
+-                Err(e) => {
+-                    warn!("Failed to read prefill response body for logprobs: {}", e);
+-                    None
+-                }
+-            }
+-        } else {
+-            // For non-logprob requests, just consume the response without storing
+-            debug!("Consuming prefill response body (non-logprob request)");
+-            match prefill_response.bytes().await {
+-                Ok(_) => debug!("Prefill response consumed successfully"),
+-                Err(e) => warn!("Error consuming prefill response: {}", e),
+-            }
+-            None
+-        };
++        // A truncated body cannot mark Prefill complete successfully.
++        let body = prefill_response.bytes().await.map_err(|e| {
++            error::bad_gateway(
++                "prefill_body_error",
++                format!("Failed to read Prefill body: {}", e),
++            )
++        })?;
++        let prefill_body = return_logprob.then_some(body);
+ 
+         Ok((prefill_status, prefill_body))
+     }
+@@ -1405,6 +1355,287 @@
+         Box::new(worker)
+     }
+ 
++    #[test]
++    fn test_prefill_min_load_checks_all_groups_and_tracks_release() {
++        use crate::config::ManualAssignmentMode;
++        use crate::policies::{ManualConfig, ManualPolicy};
++
++        let policy = ManualPolicy::with_config(ManualConfig {
++            assignment_mode: ManualAssignmentMode::MinLoad,
++            eviction_interval_secs: 0,
++            ..Default::default()
++        });
++        let workers: Vec<Arc<dyn Worker>> = (0..3)
++            .map(|i| {
++                Arc::from(create_test_worker(
++                    format!("http://p{i}"),
++                    WorkerType::Prefill {
++                        bootstrap_port: None,
++                    },
++                    true,
++                ))
++            })
++            .collect();
++        let pick = || {
++            PDRouter::pick_worker_by_policy_arc(&workers, &policy, None, None, None, "prefill")
++                .unwrap()
++        };
++        let mut guards: Vec<Vec<WorkerLoadGuard>> = [12, 3, 5]
++            .iter()
++            .enumerate()
++            .map(|(i, count)| {
++                (0..*count)
++                    .map(|_| WorkerLoadGuard::new(workers[i].clone(), None))
++                    .collect()
++            })
++            .collect();
++        // The official client sends no sticky-routing header. Inspect all three
++        // groups, including when a two-choice policy could miss the minimum.
++        for _ in 0..128 {
++            assert_eq!(pick().url(), workers[1].url());
++        }
++        guards[0].clear();
++        assert_eq!(pick().url(), workers[0].url());
++        workers[0].set_healthy(false);
++        assert_eq!(pick().url(), workers[1].url());
++        workers[0].set_healthy(true);
++        guards.clear();
++        let mut burst = Vec::new();
++        for _ in 0..192 {
++            burst.push(WorkerLoadGuard::new(pick(), None));
++            let loads: Vec<usize> = workers.iter().map(|w| w.load()).collect();
++            assert!(loads.iter().max().unwrap() - loads.iter().min().unwrap() <= 1);
++        }
++        drop(burst);
++        assert!(workers.iter().all(|w| w.load() == 0));
++    }
++
++    // Controlled HTTP responses exercise the real dispatch/body lifetime without GPUs.
++    async fn controlled_server() -> (
++        String,
++        tokio::sync::oneshot::Receiver<()>,
++        tokio::sync::oneshot::Sender<Response>,
++        tokio::task::JoinHandle<()>,
++    ) {
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let url = format!("http://{}", listener.local_addr().unwrap());
++        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
++        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
++        let state = Arc::new(tokio::sync::Mutex::new(Some((seen_tx, response_rx))));
++        let app = axum::Router::new().fallback(move || {
++            let state = state.clone();
++            async move {
++                let (seen, response) = state.lock().await.take().unwrap();
++                let _ = seen.send(());
++                response.await.unwrap()
++            }
++        });
++        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
++        (url, seen_rx, response_tx, task)
++    }
++
++    #[tokio::test]
++    async fn test_prefill_load_follows_full_body_not_decode_or_headers() {
++        use tokio::time::{sleep, timeout, Duration};
++
++        // Success, Prefill failure and cancellation must all release the reservation.
++        for (is_stream, cancel, status) in [
++            (true, false, StatusCode::OK),
++            (false, false, StatusCode::OK),
++            (true, false, StatusCode::SERVICE_UNAVAILABLE),
++            (true, true, StatusCode::OK),
++        ] {
++            let (p_url, p_seen, p_response, p_server) = controlled_server().await;
++            let (d_url, d_seen, d_response, d_server) = controlled_server().await;
++            let p: Arc<dyn Worker> = Arc::from(create_test_worker(
++                p_url,
++                WorkerType::Prefill {
++                    bootstrap_port: None,
++                },
++                true,
++            ));
++            let d: Arc<dyn Worker> = Arc::from(create_test_worker(d_url, WorkerType::Decode, true));
++            let router = create_test_pd_router();
++            let (p_task, d_task) = (p.clone(), d.clone());
++            let task = tokio::spawn(async move {
++                router
++                    .execute_dual_dispatch_internal(
++                        None,
++                        json!({"stream": is_stream}),
++                        PDRequestContext {
++                            route: "/generate",
++                            batch_size: None,
++                            is_stream,
++                            return_logprob: false,
++                            request_text: None,
++                            model_id: None,
++                            headers: None,
++                        },
++                        p_task,
++                        d_task,
++                        Instant::now(),
++                    )
++                    .await
++            });
++            timeout(Duration::from_secs(2), p_seen)
++                .await
++                .unwrap()
++                .unwrap();
++            timeout(Duration::from_secs(2), d_seen)
++                .await
++                .unwrap()
++                .unwrap();
++            assert_eq!(p.load(), 1); // Both upstream requests have been sent.
++            let (body_tx, body_rx) =
++                tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
++            p_response
++                .send(
++                    (
++                        status,
++                        Body::from_stream(UnboundedReceiverStream::new(body_rx)),
++                    )
++                        .into_response(),
++                )
++                .unwrap();
++            body_tx.send(Ok(bytes::Bytes::from_static(b"{}"))).unwrap();
++            sleep(Duration::from_millis(10)).await;
++            assert_eq!(p.load(), 1); // Headers and a partial body cannot release it.
++            if cancel {
++                task.abort();
++                assert!(task.await.unwrap_err().is_cancelled());
++                assert_eq!(p.load(), 0);
++            } else {
++                drop(body_tx);
++                timeout(Duration::from_secs(2), async {
++                    while p.load() != 0 {
++                        sleep(Duration::from_millis(1)).await;
++                    }
++                })
++                .await
++                .unwrap();
++                if !status.is_success() {
++                    let response = timeout(Duration::from_secs(2), task)
++                        .await
++                        .unwrap()
++                        .unwrap();
++                    assert_eq!(response.status(), status);
++                    assert_eq!(d.load(), 0);
++                    p_server.abort();
++                    d_server.abort();
++                    continue;
++                }
++                assert!(!task.is_finished()); // Decode headers are still withheld.
++                let (decode_tx, decode_rx) =
++                    tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
++                let body = if is_stream {
++                    Body::from_stream(UnboundedReceiverStream::new(decode_rx))
++                } else {
++                    Body::from("{}")
++                };
++                d_response.send(Response::new(body)).unwrap();
++                let response = timeout(Duration::from_secs(2), task)
++                    .await
++                    .unwrap()
++                    .unwrap();
++                assert_eq!(response.status(), status);
++                assert_eq!(p.load(), 0);
++                assert_eq!(d.load(), usize::from(is_stream && status.is_success()));
++                drop(response);
++                drop(decode_tx);
++                assert_eq!(d.load(), 0);
++            }
++            p_server.abort();
++            d_server.abort();
++        }
++    }
++
++    #[tokio::test]
++    async fn test_upstream_failure_cancels_peer_and_releases_prefill() {
++        use tokio::time::{sleep, timeout, Duration};
++        for decode_error in [true, false] {
++            let (p_url, p_seen, p_response, p_server) = controlled_server().await;
++            let (d_url, d_seen, d_response, d_server) = controlled_server().await;
++            let p: Arc<dyn Worker> = Arc::from(create_test_worker(
++                p_url,
++                WorkerType::Prefill {
++                    bootstrap_port: None,
++                },
++                true,
++            ));
++            let d: Arc<dyn Worker> = Arc::from(create_test_worker(d_url, WorkerType::Decode, true));
++            let router = create_test_pd_router();
++            let (p_task, d_task) = (p.clone(), d.clone());
++            let task = tokio::spawn(async move {
++                router
++                    .execute_dual_dispatch_internal(
++                        None,
++                        json!({"stream": true}),
++                        PDRequestContext {
++                            route: "/generate",
++                            batch_size: None,
++                            is_stream: true,
++                            return_logprob: false,
++                            request_text: None,
++                            model_id: None,
++                            headers: None,
++                        },
++                        p_task,
++                        d_task,
++                        Instant::now(),
++                    )
++                    .await
++            });
++            timeout(Duration::from_secs(2), p_seen)
++                .await
++                .unwrap()
++                .unwrap();
++            timeout(Duration::from_secs(2), d_seen)
++                .await
++                .unwrap()
++                .unwrap();
++            let (body_tx, body_rx) =
++                tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
++            p_response
++                .send(Response::new(Body::from_stream(
++                    UnboundedReceiverStream::new(body_rx),
++                )))
++                .unwrap();
++            body_tx
++                .send(Ok(bytes::Bytes::from_static(b"data: partial\n\n")))
++                .unwrap();
++            sleep(Duration::from_millis(10)).await;
++            assert_eq!(p.load(), 1);
++            if decode_error {
++                // Prefill cannot finish KV transfer after Decode rejects the request.
++                d_response
++                    .send((StatusCode::SERVICE_UNAVAILABLE, "unavailable").into_response())
++                    .unwrap();
++            } else {
++                // Decode headers have not arrived; a truncated Prefill body is fatal.
++                body_tx
++                    .send(Err(std::io::Error::other("truncated Prefill")))
++                    .unwrap();
++            }
++            let response = timeout(Duration::from_secs(2), task)
++                .await
++                .unwrap()
++                .unwrap();
++            assert_eq!(
++                response.status(),
++                if decode_error {
++                    StatusCode::SERVICE_UNAVAILABLE
++                } else {
++                    StatusCode::BAD_GATEWAY
++                }
++            );
++            assert_eq!(p.load(), 0);
++            drop(response);
++            assert_eq!(d.load(), 0);
++            p_server.abort();
++            d_server.abort();
++        }
++    }
++
+     #[tokio::test]
+     async fn test_select_healthy_prefill_worker() {
+         let router = create_test_pd_router();
+@@ -1517,12 +1748,11 @@
+                 false,
+                 None,
+                 None,
+-                prefill_ref.clone(),
+                 decode_ref.clone(),
+             );
+ 
+-            // Guards are now attached to response body, so load should be 1
+-            assert_eq!(prefill_ref.load(), 1);
++            // Prefill is already complete; only Decode follows the stream.
++            assert_eq!(prefill_ref.load(), 0);
+             assert_eq!(decode_ref.load(), 1);
+ 
+             tx.send(bytes::Bytes::from("test data")).unwrap();
+@@ -1530,7 +1760,7 @@
+             sleep(Duration::from_millis(10)).await;
+ 
+             // Load still 1 while response body exists
+-            assert_eq!(prefill_ref.load(), 1);
++            assert_eq!(prefill_ref.load(), 0);
+             assert_eq!(decode_ref.load(), 1);
+ 
+             drop(tx);

@@ -1,0 +1,119 @@
+--- a/hopper/softmax.h
++++ b/hopper/softmax.h
+@@ -89,7 +89,7 @@
+ 
+ ////////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+-template <int kNRows, int Max_offset=0, bool TreeMax=false>
++template <int kNRows, int Max_offset=0, bool TreeMax=false, bool Sum4=false>
+ struct Softmax {
+ 
+     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
+@@ -173,7 +173,18 @@
+         flash::template scale_apply_exp2</*Scale_max=*/true, Check_inf, Max_offset>(scores, row_max, softmax_scale_log2);
+         // We don't do the reduce across threads here since we don't need to use the row_sum.
+         // We do that reduce at the end when we need to normalize the softmax.
+-        flash::reduce_sum</*zero_init=*/Is_first, /*warp_reduce=*/false>(scores, row_sum);
++        if constexpr (!Sum4) {
++            flash::reduce_sum</*zero_init=*/Is_first, /*warp_reduce=*/false>(scores, row_sum);
++        } else {
++            #pragma unroll
++            for (int mi=0; mi<kNRows; ++mi) {
++                float sum[4]={scores(mi,0),scores(mi,1),scores(mi,2),scores(mi,3)};
++                #pragma unroll
++                for (int ni=4; ni<size<1>(scores); ++ni) { sum[ni%4]+=scores(mi,ni); }
++                float value=(sum[0]+sum[1])+(sum[2]+sum[3]);
++                row_sum(mi)=Is_first ? value : row_sum(mi)+value;
++            }
++        }
+     };
+ 
+     __forceinline__ __device__ TensorT finalize(float const final_scale=1.f) {
+--- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
++++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
+@@ -55,6 +55,7 @@
+     static constexpr bool PackGQA_TMA = PackGQA && kBlockH_ > 1;
+     static constexpr bool Split = Split_;
+     static constexpr bool V_colmajor = V_colmajor_;
++    static constexpr bool PrefillVariantSum4 = (PrefillVariant & 16384) != 0;
+     static constexpr bool PrefillPVLive = (PrefillVariant & 16) != 0;
+     static constexpr bool PrefillDirectO = (PrefillVariant & 32) != 0;
+     // Pipelined tiles: the first QK of the next M-tile and the last PV of the current one form one
+@@ -64,8 +65,9 @@
+     static constexpr bool PrefillTreeMax = (PrefillVariant & 8) != 0;
+     static constexpr bool PrefillRegs = (PrefillVariant & 1) != 0;
+     static constexpr bool PrefillLazy = (PrefillVariant & 2) != 0;
+-    static constexpr bool VByteImage = (PrefillVariant & 4) != 0;
+-    static_assert(!VByteImage || (Is_FP8 && !V_colmajor && get<1>(TileShape_MNK{}) == 224 && kHeadDimV == 128 && !AppendKV && !PagedKVNonTMA));
++    static constexpr bool NativeV = (PrefillVariant & 32768) != 0;
++    static constexpr bool VByteImage = (PrefillVariant & (4 | 32768)) != 0;
++    static_assert(!VByteImage || (Is_FP8 && !V_colmajor && (NativeV ? (get<1>(TileShape_MNK{}) == 96 || get<1>(TileShape_MNK{}) == 192) : get<1>(TileShape_MNK{}) == 224) && kHeadDimV == 128 && !AppendKV && !PagedKVNonTMA));
+     static constexpr bool Has_sparse_mask = Has_sparse_mask_;
+     static constexpr bool Transpose_V = Is_FP8 && !V_colmajor && !VByteImage;
+     static constexpr bool Use_TMA_Q = !PackGQA || PackGQA_TMA;
+@@ -572,9 +574,16 @@
+             take<0, 2>(SmemLayoutK{}),
+             TileShape_MNK{},
+             ClusterShape{}); // mcast along M mode for this N load, if any
++        // Native V uses a linear bulk copy. Its head stride is not a tensor-map
++        // stride; keep the unused V/V_new descriptors valid without changing
++        // params.stride_V, which supplies the bulk-copy image stride.
++        auto descriptor_stride_V = [&] {
++            if constexpr (NativeV) { return make_stride(int64_t(get<2>(args.shape_K)) * args.headdim_v, _1{}, int64_t(args.headdim_v), int64_t(0)); }
++            else { return args.stride_V; }
++        }();
+         Tensor mV = make_tensor(make_gmem_ptr(args.ptr_V),
+                                 make_shape(args.headdim_v, get<0>(args.shape_K), get<2>(args.shape_K), get<3>(args.shape_K)),
+-                                select<1, 0, 2, 3>(args.stride_V));
++                                select<1, 0, 2, 3>(descriptor_stride_V));
+         TMA_V tma_load_V = make_tma_copy(
+             GmemTiledCopyKV{},
+             mV,
+@@ -975,7 +984,10 @@
+             pipeline_v_load.producer_acquire(smem_pipe_write);
+             if constexpr (VByteImage) {
+                 constexpr int bytes = kBlockN * kHeadDimV;
+-                auto src = params.ptr_V + (bidh_kv * ((seqlen_info.seqlen_k + kBlockN - 1) / kBlockN) + n_block) * bytes;
++                auto src = [&] {
++                    if constexpr (NativeV) { return params.ptr_V + (bidb * get<2>(params.shape_K) + bidh_kv) * get<2>(params.stride_V) + n_block * bytes; }
++                    else { return params.ptr_V + (bidh_kv * ((seqlen_info.seqlen_k + kBlockN - 1) / kBlockN) + n_block) * bytes; }
++                }();
+                 auto dst = shared_storage.tensors.mainloop.smem_v.data() + smem_pipe_write.index() * bytes;
+                 cute::SM90_BULK_COPY_G2S::copy(src, pipeline_v_load.producer_get_barrier(smem_pipe_write), dst, bytes);
+             } else if constexpr (!PagedKVNonTMA) {
+@@ -1863,7 +1875,23 @@
+                 warpgroup_wait<0>();
+                 pipeline_v.consumer_release(smem_pipe_read_v);  // release V
+                 flash::permute_Cregs_fp8(tSrS);
+-                convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
++                if constexpr (PrefillVariantSum4) {
++                    auto next_p = make_tensor_like<Element>(tOrP);
++                    convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), next_p);
++                    auto current = recast<uint32_t>(next_p);
++                    auto previous = recast<uint32_t>(tOrP);
++                    uint32_t selector = params.headdim_v + 0x3190;
++                    uint32_t checksum = 0;
++                    #pragma unroll
++                    for (int i=0; i<size(current); ++i) { checksum ^= current(i); }
++                    asm volatile("prmt.b32 %0, %1, %2, %3;" : "=r"(selector) : "r"(0x3210), "r"(checksum), "r"(selector));
++                    #pragma unroll
++                    for (int i=0; i<size(previous); ++i) {
++                        asm volatile("prmt.b32 %0, %1, %2, %3;" : "=r"(previous(i)) : "r"(current(i)), "r"(previous(i)), "r"(selector));
++                    }
++                } else {
++                    convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
++                }
+                 softmax.rescale_o(tOrO, scores_scale);
+             };
+             int n_block = cur.n_block_max - 2;
+--- a/hopper/flash_fwd_kernel_sm90.h
++++ b/hopper/flash_fwd_kernel_sm90.h
+@@ -427,7 +427,7 @@
+             if constexpr (CollectiveMainloop::PrefillPipe) {
+                 // The producer hands every tile over with its Q; no scheduler barrier joins the two warpgroups.
+                 Tensor tOrO = partition_fragment_C(tiled_mma_pv, select<0, 1>(TileShape_MNK_PV{}));
+-                mainloop.template mma_pipe<flash::Softmax<2 * (2 * kBlockM / NumMmaThreads), /*Max_offset=*/8>>(
++                mainloop.template mma_pipe<flash::Softmax<2 * (2 * kBlockM / NumMmaThreads), /*Max_offset=*/8, false, (CollectiveMainloop::PrefillVariantSum4)>>(
+                     params.mainloop, pipeline_k, pipeline_v, smem_pipe_read, tOrO, threadIdx.x - MmaThreadOffset, shared_storage,
+                     [&](auto const& acc, auto const& block_coord) {
+                         epilogue.store_fp8_direct(params.epilogue, acc, shared_storage, tiled_mma_pv, threadIdx.x - MmaThreadOffset, block_coord);

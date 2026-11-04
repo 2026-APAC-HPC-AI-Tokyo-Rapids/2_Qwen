@@ -1,0 +1,11 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -396,6 +396,8 @@
+     constexpr bool kSwapABEligible =
+         kFP8SwapAB and kSplitNWarpgroups and (BLOCK_M == 64) and (BLOCK_N == 128) and
+         (kWarpgroupSplitN == 2);
++    DG_STATIC_ASSERT(not kFP8SwapAB or kSwapABEligible,
++                     "SwapAB requires M64/N128 with two split-N warpgroups");
+     constexpr bool kSwapABActive = kSwapABEligible;
+ 
+     // Decode-only changes (SwapAB geometry; Prefill code is untouched).

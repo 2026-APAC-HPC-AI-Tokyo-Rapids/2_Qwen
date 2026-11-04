@@ -1,0 +1,80 @@
+--- a/csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp
+@@ -13,6 +13,68 @@
+ #include "runtime_utils.hpp"
+ 
+ namespace deep_gemm {
++
++// Exact Decode shapes only. Read at launch/capture time, never cache the env:
++// a benchmark can compile/capture several configurations in one process.
++static GemmConfig get_sm90_1d2d_decode_config(const GemmDesc& desc, const GemmConfig& stock) {
++    const bool decode =
++        desc.gemm_type == GemmType::Normal and desc.kernel_type == KernelType::Kernel1D2D and
++        desc.m > 0 and desc.m <= 192 and desc.num_groups == 1 and desc.num_sms == 132 and
++        desc.a_dtype == torch::kFloat8_e4m3fn and desc.b_dtype == torch::kFloat8_e4m3fn and
++        desc.cd_dtype == torch::kBFloat16 and not desc.with_accumulation and
++        desc.major_a == cute::UMMA::Major::K and desc.major_b == cute::UMMA::Major::K and
++        ((desc.n == 9216 and desc.k == 4096) or (desc.n == 4096 and desc.k == 8192));
++    if (not decode)
++        return stock;
++    const auto value = get_env<std::string>("DG_SM90_1D2D_DECODE_CONFIG", "");
++    if (value.empty())
++        return stock;
++
++    // QKV:bm,bn,stages,multicast,on_a;O:bm,bn,stages,multicast,on_a
++    // A missing projection keeps stock; malformed or duplicate entries fail.
++    auto config = stock;
++    bool seen_qkv = false, seen_o = false;
++    std::stringstream entries(value);
++    std::string entry;
++    DG_HOST_ASSERT(value.back() != ';');
++    while (std::getline(entries, entry, ';')) {
++        const auto colon = entry.find(':');
++        DG_HOST_ASSERT(colon != std::string::npos);
++        const auto name = entry.substr(0, colon);
++        DG_HOST_ASSERT(name == "QKV" or name == "O");
++        auto& seen = name == "QKV" ? seen_qkv : seen_o;
++        DG_HOST_ASSERT(not seen);
++        seen = true;
++        int bm = 0, bn = 0, stages = 0, mc = 0, on_a = 0, end = 0;
++        const auto fields = entry.substr(colon + 1);
++        DG_HOST_ASSERT(std::sscanf(fields.c_str(), "%d,%d,%d,%d,%d%n", &bm, &bn, &stages, &mc, &on_a, &end) == 5);
++        DG_HOST_ASSERT(end == static_cast<int>(fields.size()));
++        DG_HOST_ASSERT(bm == 64 or bm == 128);
++        DG_HOST_ASSERT(bn >= 16 and bn <= 192 and bn % 16 == 0);
++        DG_HOST_ASSERT(bn <= 128 or std::gcd(bn, 128) == bn - 128);
++        DG_HOST_ASSERT(mc == 1 or mc == 2);
++        DG_HOST_ASSERT(on_a == 0 or (on_a == 1 and mc == 2));
++        DG_HOST_ASSERT(stages >= 4 and stages <= 16);
++        const auto layout = Layout{0, bm, bn, 128, on_a ? 1 : mc, on_a ? mc : 1};
++        const auto storage = SM90ArchSpec::get_storage_config(desc, layout);
++        auto pipeline = SM90ArchSpec::get_pipeline_config(desc, layout, storage);
++        DG_HOST_ASSERT(stages <= pipeline.num_stages);
++        // Retain the stock conservative reservation for all 16 barrier slots.
++        const int bytes_per_stage = (bm + bn) * 128 + align(bm * static_cast<int>(sizeof(float)), 128);
++        pipeline.smem_size -= (pipeline.num_stages - stages) * bytes_per_stage;
++        pipeline.num_stages = stages;
++        DG_HOST_ASSERT(pipeline.smem_size <= SM90ArchSpec::smem_capacity);
++        if ((name == "QKV") == (desc.n == 9216))
++            config = GemmConfig{layout, storage, pipeline, SM90ArchSpec::get_launch_config(desc, layout)};
++    }
++    if (get_env<int>("DG_PRINT_CONFIGS") or get_env<int>("DG_JIT_DEBUG")) {
++        static std::unordered_set<std::string> printed;
++        const auto key = value + "/" + std::to_string(desc.m) + "/" + std::to_string(desc.n);
++        if (printed.insert(key).second)
++            std::cout << "DG_SM90_1D2D_DECODE_CONFIG=" << value << ": " << desc << ": " << config << std::endl;
++    }
++    return config;
++}
+ 
+ class SM90FP8Gemm1D2DRuntime final: public LaunchRuntime<SM90FP8Gemm1D2DRuntime> {
+ public:
+@@ -100,7 +162,7 @@
+         .num_sms = device_runtime->get_num_sms(),
+         .tc_util = device_runtime->get_tc_util(), .compiled_dims = compiled_dims
+     };
+-    const auto config = get_best_config<SM90ArchSpec>(desc);
++    const auto config = get_sm90_1d2d_decode_config(desc, get_best_config<SM90ArchSpec>(desc));
+ 
+     // Requires no TMA splits
+     DG_HOST_ASSERT(config.storage_config.swizzle_a_mode == config.layout.block_k);

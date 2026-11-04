@@ -1,0 +1,58 @@
+diff --git a/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp b/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
+index c449fc5..5e352ad 100644
+--- a/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
++++ b/csrc/jit_kernels/heuristics/sm90_mega_moe.hpp
+@@ -151,6 +151,16 @@ static MegaMoESM90Config get_mega_moe_config_sm90(
+         static_cast<float>(num_tokens) * num_ranks * num_topk / num_experts;
+     const bool auto_split_mn =
+         block_m == 128 and num_epilogue_threads == 512;
++    // DG_SM90_PREFILL_2WG=1 (Qwen3 Prefill shapes only): the same 128x256 tile
++    // with two math warpgroups of 64x256 (one m64n256 WGMMA accumulator each)
++    // instead of four of 64x128. Launch 64 + 64 + 256 = 384 threads, so the
++    // kernel-wide register cap is 168 instead of 96. Dispatch and loader threads
++    // stay as in the 512-thread geometry. The JIT header must carry the matching
++    // path (sm90-prefill-2wg-host-m64n256.patch); unset, nothing changes.
++    const bool prefill_2wg =
++        auto_split_mn and hidden == 4096 and intermediate_hidden == 1536 and num_ranks == 4 and
++        get_env<int>("DG_SM90_PREFILL_2WG", 0) != 0;
++    const int num_math_threads = prefill_2wg ? 256 : num_epilogue_threads;
+     const bool decode_split_n_path =
+         block_m == 64 and num_epilogue_threads == 256;
+     const bool decode_use_block_n_256 =
+@@ -192,7 +202,7 @@ static MegaMoESM90Config get_mega_moe_config_sm90(
+         SM90ArchSpec::smem_capacity,
+         num_experts, hidden,
+         block_m, block_n, block_k,
+-        num_dispatch_threads / 32, num_epilogue_threads / 32,
++        num_dispatch_threads / 32, num_math_threads / 32,
+         use_swap_ab);
+ 
+     const auto config = MegaMoESM90Config {
+@@ -202,7 +212,7 @@ static MegaMoESM90Config get_mega_moe_config_sm90(
+         swizzle_acts_mode, swizzle_weights_mode,
+         num_experts_per_wave,
+         num_stages, smem_size,
+-        num_dispatch_threads, num_non_epilogue_threads, num_epilogue_threads
++        num_dispatch_threads, num_non_epilogue_threads, num_math_threads
+     };
+ 
+     if (get_env<int>("DG_JIT_DEBUG") or get_env<int>("DG_PRINT_CONFIGS")) {
+diff --git a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+index 06e33d0..379dd53 100644
+--- a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+@@ -175,9 +175,13 @@ static void sm90_fp8_mega_moe(
+                        epilogue_registers * config.num_epilogue_threads <= 64512);
+     }
+     const bool reuse_accum_as_final = config.block_m == 128;
++    // 256 math threads with BLOCK_M 128 is only the Prefill 2-math-warpgroup
++    // geometry (DG_SM90_PREFILL_2WG, see the heuristic); it keeps the Prefill L2
++    // arrival counter. Its registers stay the header default for 256 math
++    // threads: dispatch 48, loaders 40, math 168 (the launch cap at 384 threads).
+     const bool default_split_mn_barrier_opt =
+         config.block_m == 128 and config.block_n == 256 and
+-        config.num_epilogue_threads == 512;
++        (config.num_epilogue_threads == 512 or config.num_epilogue_threads == 256);
+     const bool split_phase_hot_path =
+         config.block_m == 128 and config.block_n == 256 and hidden >= 7168;
+     const bool decode_split_n_path =

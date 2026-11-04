@@ -1,0 +1,26 @@
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -1408,7 +1408,10 @@
+                             };
+ 
+                             const uint32_t n_swap = ((valid_m + 7u) / 8u) * 8u;
+-                            if constexpr (kIntermediateHidden <= 2048) {
++                            // Qwen EP4 Decode benefits from the existing 8-token
++                            // specializations instead of rounding 33..56 rows to 64.
++                            if constexpr (kIntermediateHidden <= 2048 &&
++                                          !(kHidden == 4096 && kIntermediateHidden == 1536 && kNumRanks == 4)) {
+                                 if (n_swap <= 8) {
+                                     run_swap_ab_l1.template operator()<8>();
+                                 } else if (n_swap <= 16) {
+@@ -1535,7 +1538,10 @@
+                             };
+ 
+                             const uint32_t n_swap = ((valid_m + 7u) / 8u) * 8u;
+-                            if constexpr (kIntermediateHidden <= 2048) {
++                            // Qwen EP4 Decode benefits from the existing 8-token
++                            // specializations instead of rounding 33..56 rows to 64.
++                            if constexpr (kIntermediateHidden <= 2048 &&
++                                          !(kHidden == 4096 && kIntermediateHidden == 1536 && kNumRanks == 4)) {
+                                 if (n_swap <= 8) {
+                                     run_swap_ab_l2.template operator()<8>();
+                                 } else if (n_swap <= 16) {

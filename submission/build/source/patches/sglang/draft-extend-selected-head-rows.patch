@@ -1,0 +1,172 @@
+--- a/python/sglang/srt/speculative/eagle_worker_v2.py
++++ b/python/sglang/srt/speculative/eagle_worker_v2.py
+@@ -86,6 +86,7 @@
+     select_top_k_tokens,
+     spec_stage_span,
+ )
++from sglang.srt.utils import require_gathered_buffer
+ from sglang.srt.utils.async_probe import (
+     maybe_detect_inf,
+     maybe_detect_nan,
+@@ -136,6 +137,14 @@
+         # Args for easy access
+         self.device = server_args.device
+         self.topk = server_args.speculative_eagle_topk
++        # Ordinary EAGLE: prune only logits, retaining the full hidden window.
++        self.prune_draft_extend_logits = (
++            _is_cuda
++            and server_args.speculative_algorithm == "EAGLE3"
++            and self.topk == 1
++            and not server_args.speculative_use_rejection_sampling
++            and not require_gathered_buffer(server_args)
++        )
+         if self.server_args.speculative_use_rejection_sampling:
+             assert self.topk == 1, "Chain speculative sampling supports only topk=1"
+         self.speculative_num_steps = server_args.speculative_num_steps
+@@ -854,6 +863,9 @@
+             - 1
+         )
+ 
++        if self.prune_draft_extend_logits:
++            draft_extend_input.select_index = select_index
++
+         # Cast to int64 before entering plan stream to avoid cross-stream
+         # synchronization issues with .to() inside the plan stream context.
+         next_token_ids = batch_result.next_token_ids.to(torch.int64)
+@@ -932,15 +944,16 @@
+             dsa_seed_topk_indices = dsa_extend_topk_capture[select_index]
+ 
+         # Reorganize the spec info for the next batch
+-        draft_logits_output.next_token_logits = draft_logits_output.next_token_logits[
+-            select_index
+-        ]
++        if not self.prune_draft_extend_logits:
++            draft_logits_output.next_token_logits = draft_logits_output.next_token_logits[
++                select_index
++            ]
+         if draft_logits_output.hidden_states is not None:
+             draft_logits_output.hidden_states = draft_logits_output.hidden_states[
+                 select_index
+             ]
+-        # The draft-extend graph only anchors full logits; selected-row topk is
+-        # owned by the worker for both graph and eager paths.
++        # Logits are already selected on the pruned path; hidden states stay
++        # full until the worker selects the recurrent state above.
+         if self.server_args.speculative_use_rejection_sampling:
+             ret_draft_probs, ret_topk_p, ret_topk_index = sample_draft_proposal(
+                 draft_logits_output.next_token_logits,
+--- a/python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py
++++ b/python/sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py
+@@ -65,6 +65,7 @@
+     num_correct_drafts: torch.Tensor
+     num_accept_tokens: torch.Tensor
+     next_token_logits_buffer: torch.Tensor
++    select_index: Optional[torch.Tensor]
+     global_num_tokens_gpu: Optional[torch.Tensor]
+     global_num_tokens_for_logprob_gpu: Optional[torch.Tensor]
+     dsa_seed_topk_capture: Optional[torch.Tensor] = None
+@@ -99,6 +100,9 @@
+         self.enable_torch_compile = get_flags().capture.enable_torch_compile
+         self.disable_padding = model_runner.server_args.disable_cuda_graph_padding
+         self.require_gathered_buffer = require_gathered_buffer(model_runner.server_args)
++        self.prune_draft_extend_logits = getattr(
++            eagle_worker, "prune_draft_extend_logits", False
++        )
+         self.require_mlp_tp_gather = require_mlp_tp_gather(model_runner.server_args)
+         self.require_mlp_sync = require_mlp_sync(model_runner.server_args)
+         self.require_attn_tp_gather = require_attn_tp_gather(model_runner.server_args)
+@@ -124,7 +128,11 @@
+         self.deepep_adapter = DeepEPCudaGraphRunnerAdapter()
+ 
+         self.capture_forward_mode = self.forward_mode
+-        self.capture_hidden_mode = CaptureHiddenMode.LAST
++        self.capture_hidden_mode = (
++            CaptureHiddenMode.FULL
++            if self.prune_draft_extend_logits
++            else CaptureHiddenMode.LAST
++        )
+ 
+         self.capture_bs, _ = get_batch_sizes_to_capture(model_runner)
+ 
+@@ -223,9 +231,19 @@
+             else:
+                 vocab_size = self.model_runner.model_config.vocab_size
+ 
++            select_index = (
++                torch.zeros((self.max_bs,), dtype=torch.int64)
++                if self.prune_draft_extend_logits
++                else None
++            )
+             next_token_logits_buffer = (
+                 self.model_runner.graph_shared_output.get_logits_buffer(
+-                    vocab_size, rows=self.max_bs * self.captured_req_width
++                    vocab_size,
++                    rows=(
++                        self.max_bs
++                        if self.prune_draft_extend_logits
++                        else self.max_bs * self.captured_req_width
++                    ),
+                 )
+             )
+ 
+@@ -257,6 +275,7 @@
+             num_correct_drafts=num_correct_drafts,
+             num_accept_tokens=num_accept_tokens,
+             next_token_logits_buffer=next_token_logits_buffer,
++            select_index=select_index,
+             global_num_tokens_gpu=global_num_tokens_gpu,
+             global_num_tokens_for_logprob_gpu=global_num_tokens_for_logprob_gpu,
+             dsa_seed_topk_capture=dsa_seed_topk_capture,
+@@ -339,7 +358,8 @@
+         )
+         num_correct_drafts = buffers.num_correct_drafts[:bs]
+         num_accept_tokens = buffers.num_accept_tokens[:bs]
+-        next_token_logits_buffer = buffers.next_token_logits_buffer[:num_tokens]
++        num_logit_rows = bs if self.prune_draft_extend_logits else num_tokens
++        next_token_logits_buffer = buffers.next_token_logits_buffer[:num_logit_rows]
+ 
+         # pruned_states = num_tokens (all tokens)
+         num_tokens_for_logprob = num_tokens
+@@ -376,6 +396,9 @@
+             num_accept_tokens=num_accept_tokens,
+             # Padded tree width per req; drives the constant qo layout.
+             num_tokens_per_req=self.captured_req_width,
++            select_index=(
++                buffers.select_index[:bs] if self.prune_draft_extend_logits else None
++            ),
+         )
+ 
+         forward_batch = ForwardBatch(
+@@ -399,7 +422,7 @@
+             global_dp_buffer_len=global_dp_buffer_len,
+             spec_algorithm=self.model_runner.spec_algorithm,
+             spec_info=spec_info,
+-            capture_hidden_mode=CaptureHiddenMode.LAST,
++            capture_hidden_mode=self.capture_hidden_mode,
+         )
+ 
+         if self.buffers.dsa_seed_topk_capture is not None:
+@@ -522,6 +545,12 @@
+             copy_srcs.append(forward_batch.spec_info.num_correct_drafts)
+             copy_dsts.append(buffers.num_accept_tokens[:raw_bs])
+             copy_srcs.append(forward_batch.spec_info.num_accept_tokens)
++        if self.prune_draft_extend_logits:
++            # Padded request rows use a valid synthetic row, never stale indices.
++            if bs != raw_bs:
++                buffers.select_index.zero_()
++            copy_dsts.append(buffers.select_index[:raw_bs])
++            copy_srcs.append(forward_batch.spec_info.select_index)
+         _grouped_foreach_copy_(copy_dsts, copy_srcs)
+ 
+         # hidden_states is large + contiguous: copy_() uses the cudaMemcpyAsync
+@@ -602,7 +631,9 @@
+             out = self._replay_graph(shape_key, forward_batch)
+ 
+         out = LogitsProcessorOutput(
+-            next_token_logits=out.next_token_logits[:num_tokens],
++            next_token_logits=out.next_token_logits[
++                :raw_bs if self.prune_draft_extend_logits else num_tokens
++            ],
+             hidden_states=out.hidden_states[:num_tokens],
+         )
+         return out

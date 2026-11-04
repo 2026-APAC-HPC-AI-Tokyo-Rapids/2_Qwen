@@ -1,0 +1,473 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+--- a/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
++++ b/deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+@@ -357,6 +357,14 @@
+     // =====================================================================
+     using a_dtype_t = cutlass::float_e4m3_t;
+     using b_dtype_t = cutlass::float_e4m3_t;
++    // Each Decode math WG owns a complete M64/N128 task and SF64 group.
++    // Its paired load warp owns all A/B/SF traffic on a private three-stage queue.
++    constexpr bool kIndependentWG = kNumStages == 6 and kHidden == 4096 and kIntermediateHidden == 1536 and kNumRanks == 4 and kNumExperts == 128 and kNumTopk == 8 and kFP8SwapAB and BLOCK_M == 64 and BLOCK_N == 128 and kNumEpilogueWarpgroups == 2;
++    constexpr uint32_t kTaskQueues = kIndependentWG ? 2 : 1;
++    constexpr uint32_t kQueueStages = kIndependentWG ? 3 : kNumStages;
++    DG_STATIC_ASSERT(not kIndependentWG or (kNumDispatchThreads == 64 and kNumNonEpilogueThreads == 64), "Independent WG requires two dispatch and two load warps");
++    DG_STATIC_ASSERT(not kIndependentWG or (not kSplitPhaseHotPath and not kL2ArrivalCounter and not kReuseAccumAsFinal), "Independent WG requires dynamic Decode scheduling, mask arrivals and explicit accumulators");
++    const uint32_t task_queue = kIndependentWG ? (warp_idx < 4 ? warp_idx % 2 : (warp_idx - 4) / 4) : 0;
+     constexpr bool kSplitNWarpgroups =
+         BLOCK_M == 64 and kNumEpilogueWarpgroups > 1 and
+         BLOCK_N % kNumEpilogueWarpgroups == 0 and
+@@ -368,7 +376,7 @@
+     constexpr uint32_t kWarpgroupSplitN = kSplitNWarpgroups ? kNumEpilogueWarpgroups :
+         (kSplitMNWarpgroups ? 2 : 1);
+     constexpr uint32_t WG_BLOCK_M = BLOCK_M / kWarpgroupSplitM;
+-    constexpr uint32_t WG_BLOCK_N = BLOCK_N / kWarpgroupSplitN;
++    constexpr uint32_t WG_BLOCK_N = kIndependentWG ? BLOCK_N : BLOCK_N / kWarpgroupSplitN;
+     constexpr uint32_t kNumCombineWarps = kNumEpilogueWarps;
+     using L1WGMMA   = typename mma::sm90::FP8MMASelector<WG_BLOCK_N>::type;  // M=64, N=WG_BLOCK_N, K=32
+     using L2WGMMA   = typename mma::sm90::FP8MMASelector<WG_BLOCK_N>::type;
+@@ -455,9 +463,11 @@
+         kSwapABActive ? (SMEM_CD_SWAP_L1_FP32_SIZE + SMEM_CD_SWAP_L1_FP8_SIZE) : 0;
+     constexpr uint32_t SMEM_CD_BASE_SIZE =
+         SMEM_CD_L1_SIZE > SMEM_CD_L2_SIZE ? SMEM_CD_L1_SIZE : SMEM_CD_L2_SIZE;
+-    constexpr uint32_t SMEM_CD_SIZE    = math::constexpr_align(
++    constexpr uint32_t SMEM_CD_PER_QUEUE = math::constexpr_align(
+         SMEM_CD_BASE_SIZE > SMEM_CD_SWAP_L1_SIZE ? SMEM_CD_BASE_SIZE : SMEM_CD_SWAP_L1_SIZE,
+         kSharedMemoryAlignment);
++
++    constexpr uint32_t SMEM_CD_SIZE = kTaskQueues * SMEM_CD_PER_QUEUE;
+
+     constexpr uint32_t SMEM_BEFORE_BARRIER_SIZE =
+         SMEM_EXPERT_COUNT_SIZE + SMEM_SEND_BUFFER_SIZE + SMEM_CD_SIZE +
+@@ -495,11 +505,11 @@
+     constexpr uint32_t kDecodeRingDepth = 4;
+     constexpr uint32_t kDecodeRingOffset = 768;
+     DG_STATIC_ASSERT(not kDecodeTail or (kNumExperts * sizeof(uint32_t) + 128 <= kDecodeRingOffset and
+-                     kDecodeRingOffset + 32 + kDecodeRingDepth * 2 * sizeof(Barrier) <= SMEM_EXPERT_COUNT_SIZE),
++                     kDecodeRingOffset + 32 + kTaskQueues * kDecodeRingDepth * 2 * sizeof(Barrier) <= SMEM_EXPERT_COUNT_SIZE),
+                      "No spare shared memory for the Decode block ring");
+     auto decode_ring_slots = reinterpret_cast<uint32_t*>(smem_buffer + kDecodeRingOffset);
+     auto decode_ring_full = reinterpret_cast<Barrier*>(smem_buffer + kDecodeRingOffset + 32);
+-    auto decode_ring_empty = decode_ring_full + kDecodeRingDepth;
++    auto decode_ring_empty = decode_ring_full + kTaskQueues * kDecodeRingDepth;
+     const auto smem_send_buffers = layout::Buffer(
+         fp8_token_layout, kNumDispatchWarps, 1,
+         math::advance_ptr(smem_buffer, SMEM_EXPERT_COUNT_SIZE));
+@@ -508,11 +518,12 @@
+         smem_buffer, SMEM_EXPERT_COUNT_SIZE + SMEM_SEND_BUFFER_SIZE);
+
+     // CD output is shared by L1 (FP8) and L2 (BF16); reinterpret-cast as needed.
+-    auto smem_cd_l1 = reinterpret_cast<cutlass::float_e4m3_t*>(smem_gemm_base);
+-    auto smem_cd_l2 = reinterpret_cast<nv_bfloat16*>(smem_gemm_base);
+-    auto smem_cd_swap_l1_fp32 = reinterpret_cast<float*>(smem_gemm_base);
++    auto smem_cd_base = math::advance_ptr(smem_gemm_base, task_queue * SMEM_CD_PER_QUEUE);
++    auto smem_cd_l1 = reinterpret_cast<cutlass::float_e4m3_t*>(smem_cd_base);
++    auto smem_cd_l2 = reinterpret_cast<nv_bfloat16*>(smem_cd_base);
++    auto smem_cd_swap_l1_fp32 = reinterpret_cast<float*>(smem_cd_base);
+     auto smem_cd_swap_l1_fp8 = reinterpret_cast<cutlass::float_e4m3_t*>(
+-        math::advance_ptr(smem_gemm_base, SMEM_CD_SWAP_L1_FP32_SIZE));
++        math::advance_ptr(smem_cd_base, SMEM_CD_SWAP_L1_FP32_SIZE));
+
+     auto smem_a = utils::PatternVisitor([=](const uint32_t& i) {
+         return math::advance_ptr<a_dtype_t>(smem_gemm_base, SMEM_CD_SIZE + i * SMEM_A_SIZE_PER_STAGE);
+@@ -548,11 +559,11 @@
+         for (uint32_t i = lane_idx; i < kNumDispatchWarps; i += 32)
+             dispatch_barriers[i]->init(1);
+         if constexpr (kDecodeTail) {
+-            // Full: the A loader publishes a block. Empty: every thread of the B loader warp
+-            // and of the math warpgroups has read it.
+-            if (lane_idx < kDecodeRingDepth) {
++            // Full: the loader publishes a block. Independent queues have only their
++            // own 128 math-thread readers; the shared queue also has the B warp.
++            if (lane_idx < kTaskQueues * kDecodeRingDepth) {
+                 (decode_ring_full + lane_idx)->init(1);
+-                (decode_ring_empty + lane_idx)->init(32 + kNumEpilogueThreads);
++                (decode_ring_empty + lane_idx)->init(kIndependentWG ? 128 : 32 + kNumEpilogueThreads);
+             }
+         }
+         cutlass::arch::fence_barrier_init();
+@@ -561,11 +572,11 @@
+         if (cute::elect_one_sync()) {
+             #pragma unroll
+             for (uint32_t i = 0; i < kNumStages; ++ i) {
+-                // Two producer warps (A+SFA loader, B+SFB loader) each call
+-                // `arrive_and_expect_tx` per stage, so init count must be 2.
+-                full_barriers[i]->init(2);
++                // Shared queue: A and B producers each arrive. Independent queue:
++                // one producer issues A+B+SF and accounts for all bytes.
++                full_barriers[i]->init(kIndependentWG ? 1 : 2);
+                 // Each math warp arrives once per stage release.
+-                empty_barriers[i]->init(kNumEpilogueWarps);
++                empty_barriers[i]->init(kIndependentWG ? 4 : kNumEpilogueWarps);
+             }
+             #pragma unroll
+             for (uint32_t i = 0; i < kNumCombineWarps * 2; ++ i)
+@@ -602,11 +613,11 @@
+         layout::SM90Workspace>(workspace);
+
+     // Pipeline state shared by TMA loaders and math warpgroups
+-    uint32_t stage_idx = 0, phase = 0;
++    uint32_t stage_idx = task_queue * kQueueStages, phase = 0;
+     auto advance_pipeline = [&](uint32_t& k_block_idx) {
+         ++ k_block_idx;
+-        stage_idx = stage_idx == kNumStages - 1 ? 0 : stage_idx + 1;
+-        phase ^= stage_idx == 0;
++        stage_idx = stage_idx == (task_queue + 1) * kQueueStages - 1 ? task_queue * kQueueStages : stage_idx + 1;
++        phase ^= stage_idx == task_queue * kQueueStages;
+     };
+
+     // Decode: dynamic block assignment. The static scheduler hands CTA i the blocks i,
+@@ -620,7 +631,9 @@
+     // scheduler's own (FC1 blocks of a wave, then its FC2 blocks), a CTA's claims only grow,
+     // and every block waits only on blocks with smaller indices, so the order is
+     // deadlock-free. A block's arithmetic does not depend on which CTA runs it.
+-    auto decode_for_each_block = [&]<bool kClaimAhead = false>(const auto& func, const auto& next_block_delta) {
++    auto decode_for_each_block = [&]<bool kClaimAhead = false>(const auto& func, const auto& next_block_delta) CUTLASS_LAMBDA_FUNC_INLINE {
++        if constexpr (kIndependentWG)
++            scheduler.block_idx = sm_idx * 2 + task_queue;
+         scheduler.fetch_expert_recv_count();
+         scheduler.set_expert_idx(0);
+         while (true) {
+@@ -637,7 +650,9 @@
+                 next_delta = next_block_delta();
+             func(block_phase, local_expert_idx, num_k_blocks, m_block_idx, n_block_idx);
+             // `get_next_block` already advanced by kNumSMs; the ring carries the remaining
+-            // distance to the claimed block (claimed - current - kNumSMs, never negative).
++            // unsigned correction (claimed - current - kNumSMs). Independent queues
++            // can claim current+1, so this wraps; adding it to the scheduler's
++            // already-advanced index gives the claimed task modulo uint32_t.
+             if constexpr (not kClaimAhead)
+                 next_delta = next_block_delta();
+             scheduler.block_idx += next_delta;
+@@ -645,13 +660,13 @@
+     };
+     // Ring position: slot = iteration % depth, phase parity = (iteration / depth) % 2.
+     uint32_t decode_ring_iter = 0;
+-    uint32_t decode_global_block_idx = sm_idx;  // A loader only
++    uint32_t decode_global_block_idx = sm_idx * kTaskQueues + task_queue;  // A loader only
+     auto decode_claim_block = [&]() {
+-        const uint32_t slot = decode_ring_iter % kDecodeRingDepth;
++        const uint32_t slot = task_queue * kDecodeRingDepth + decode_ring_iter % kDecodeRingDepth;
+         uint32_t next_global_block_idx = 0;
+         if (lane_idx == 0) {
+             (decode_ring_empty + slot)->wait(((decode_ring_iter / kDecodeRingDepth) & 1) ^ 1);
+-            next_global_block_idx = atomicAdd(decode_block_counter(), 1u) + kNumSMs;
++            next_global_block_idx = atomicAdd(decode_block_counter(), 1u) + kNumSMs * kTaskQueues;
+             ptx::st_shared(decode_ring_slots + slot, next_global_block_idx - decode_global_block_idx - kNumSMs);
+             (decode_ring_full + slot)->arrive();
+         }
+@@ -662,7 +677,7 @@
+         return delta;
+     };
+     auto decode_receive_block = [&]() {
+-        const uint32_t slot = decode_ring_iter % kDecodeRingDepth;
++        const uint32_t slot = task_queue * kDecodeRingDepth + decode_ring_iter % kDecodeRingDepth;
+         (decode_ring_full + slot)->wait((decode_ring_iter / kDecodeRingDepth) & 1);
+         const uint32_t delta = ptx::ld_shared(decode_ring_slots + slot);
+         // Every reading thread releases the slot itself (no lane predicate to keep live).
+@@ -1030,6 +1045,36 @@
+     //   Warps inside `kNumNonEpilogueThreads`: warp 0 loads A + SFA,
+     //   warp 1 loads B.
+     // =====================================================================
++    } else if (kIndependentWG and warp_idx >= kNumDispatchWarps and warp_idx < kNumDispatchWarps + 2) {
++        cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
++        auto process_task_load = [&](const auto& block_phase, const uint32_t& local_expert_idx, const uint32_t& num_k_blocks, const uint32_t& m_block_idx, const uint32_t& n_block_idx) CUTLASS_LAMBDA_FUNC_INLINE {
++            const bool l2 = block_phase == sched::BlockPhase::Linear2;
++            const uint32_t pool_block = scheduler.get_current_pool_block_offset() + m_block_idx;
++            if (l2) {
++                constexpr uint64_t expected = (1ull << kNumL1BlockNs) - 1ull;
++                while (ptx::ld_acq_gpu(workspace.get_l2_arrival_mask_ptr(pool_block)) != expected);
++            } else {
++                const uint32_t expected = scheduler.template get_valid_m<false>();
++                while (ptx::ld_acq(workspace.get_l1_arrival_count_ptr(pool_block)) != expected);
++            }
++            const auto acts = l2 ? &tensor_map_l2_acts : &tensor_map_l1_acts;
++            const auto scales = l2 ? &tensor_map_l2_acts_sf : &tensor_map_l1_acts_sf;
++            const auto weights = l2 ? &tensor_map_l2_weights : &tensor_map_l1_weights;
++            const uint32_t weight_row = local_expert_idx * (l2 ? L2_SHAPE_N : L1_SHAPE_N) + n_block_idx * BLOCK_N;
++            for (uint32_t k = 0; k < num_k_blocks; advance_pipeline(k)) {
++                empty_barriers[stage_idx]->wait(phase ^ 1);
++                if (cute::elect_one_sync()) {
++                    tma::copy<BLOCK_K, LOAD_BLOCK_M, kSwizzleAMode, a_dtype_t>(acts, full_barriers[stage_idx], smem_a[stage_idx], k * BLOCK_K, pool_block * BLOCK_M, 1);
++                    tma::copy<BLOCK_K, LOAD_BLOCK_N, kSwizzleBMode, b_dtype_t>(weights, full_barriers[stage_idx], smem_b[stage_idx], k * BLOCK_K, weight_row, 1);
++                    tma::copy<BLOCK_M, 1, 0, float>(scales, full_barriers[stage_idx], smem_sfa[stage_idx], pool_block * SF_BLOCK_M, k * (l2 ? 2 : 1), 1);
++                    if (l2)
++                        tma::copy<BLOCK_M, 1, 0, float>(scales, full_barriers[stage_idx], smem_sfa[stage_idx] + BLOCK_M, pool_block * SF_BLOCK_M, k * 2 + 1, 1);
++                    full_barriers[stage_idx]->arrive_and_expect_tx(SMEM_A_SIZE_PER_STAGE + SMEM_B_SIZE_PER_STAGE + BLOCK_M * sizeof(float) * (l2 ? 2 : 1));
++                }
++                __syncwarp();
++            }
++        };
++        decode_for_each_block.template operator()<true>(process_task_load, decode_claim_block);
+     } else if (warp_idx == kNumDispatchWarps) {
+         cutlass::arch::warpgroup_reg_dealloc<kNumNonEpilogueRegisters>();
+
+@@ -1312,19 +1357,19 @@
+         auto process_math_block = [&](const auto& block_phase,
+                                       const uint32_t& local_expert_idx,
+                                       const uint32_t& num_k_blocks,
+-                                      const uint32_t& m_block_idx, const uint32_t& n_block_idx) {
++                                      const uint32_t& m_block_idx, const uint32_t& n_block_idx) CUTLASS_LAMBDA_FUNC_INLINE {
+             const uint32_t valid_m = scheduler.template get_valid_m<false>();
+             const uint32_t pool_block_idx = scheduler.get_current_pool_block_offset() + m_block_idx;
+             const uint32_t m_idx = pool_block_idx * BLOCK_M;
+             const uint32_t n_idx = n_block_idx * BLOCK_N;
+-            const uint32_t epilogue_wg_m_idx = epilogue_wg_idx / kWarpgroupSplitN;
+-            const uint32_t epilogue_wg_n_idx = epilogue_wg_idx - epilogue_wg_m_idx * kWarpgroupSplitN;
++            const uint32_t epilogue_wg_m_idx = kIndependentWG ? 0 : epilogue_wg_idx / kWarpgroupSplitN;
++            const uint32_t epilogue_wg_n_idx = kIndependentWG ? 0 : epilogue_wg_idx - epilogue_wg_m_idx * kWarpgroupSplitN;
+             const uint32_t wg_n_offset = epilogue_wg_n_idx * WG_BLOCK_N;
+             const uint32_t wg_l1_out_n_offset = epilogue_wg_n_idx * WG_L1_OUT_BLOCK_N;
+             const uint32_t row_base = epilogue_wg_m_idx * WG_BLOCK_M;
+             const uint32_t row_offset_r0 = row_base + r_0;
+             const uint32_t row_offset_r1 = row_base + r_1;
+-            const uint32_t sf_n_block_idx = kSplitNSharesSF ? n_block_idx
++            const uint32_t sf_n_block_idx = (kIndependentWG or kSplitNSharesSF) ? n_block_idx
+                 : (n_block_idx * kWarpgroupSplitN + epilogue_wg_n_idx);
+             const uint32_t smem_a_wg_offset = epilogue_wg_m_idx * WG_BLOCK_M * BLOCK_K;
+             const uint32_t smem_b_wg_offset = epilogue_wg_n_idx * WG_BLOCK_N * BLOCK_K;
+@@ -1333,7 +1378,7 @@
+             // WG owns a disjoint contiguous WG_BLOCK_M x WG_L1_OUT_BLOCK_N slice.
+             const uint32_t smem_cd_l1_wg_offset = kSplitNSharesSF ? wg_l1_out_n_offset
+                 : (epilogue_wg_idx * WG_BLOCK_M * WG_L1_OUT_BLOCK_N);
+-            const uint32_t smem_cd_l2_wg_offset = epilogue_wg_idx * WG_BLOCK_M * WG_BLOCK_N;
++            const uint32_t smem_cd_l2_wg_offset = kIndependentWG ? 0 : epilogue_wg_idx * WG_BLOCK_M * WG_BLOCK_N;
+             const bool valid_r0 = row_offset_r0 < valid_m;
+             const bool valid_r1 = row_offset_r1 < valid_m;
+
+@@ -1922,7 +1967,7 @@
+                 const float* l1_up_sf = l1_gate_sf + kL1SFGateBlks * kL1SFKBlocks;
+                 const float* l2_sf_row = l2_weights_sf + local_expert_idx * kL2SFPerExpert + sf_n_block_idx * kL2SFKBlocks;
+
+-                auto run_swap_ab = [&]<uint32_t N_SWAP>() {
++                auto run_swap_ab = [&]<uint32_t N_SWAP>() CUTLASS_LAMBDA_FUNC_INLINE {
+                     using SwapWGMMA = typename mma::sm90::FP8MMASelector<N_SWAP>::type;
+                     constexpr uint32_t kSwapAccum = SwapWGMMA::kNumAccum;
+                     float swap_accum[kSwapAccum], swap_accum_hi[kSwapAccum];
+@@ -1933,13 +1978,13 @@
+                             ptx::warpgroup_fence_operand(acc[i]);
+                     };
+                     // One WGMMA group over K [k_offset, k_offset + kNumK * 32) of the stage.
+-                    auto issue = [&]<uint32_t kNumK>(float* acc, const uint32_t& k_offset) {
++                    auto issue = [&]<uint32_t kNumK>(float* acc, const uint32_t& k_offset, const uint32_t& fragment) {
+                         fence(acc);
+                         ptx::warpgroup_arrive();
+                         #pragma unroll
+                         for (uint32_t k = 0; k < kNumK; ++ k) {
+                             auto desc_a = mma::sm90::make_smem_desc(
+-                                smem_b[stage_idx] + smem_b_wg_offset + k_offset + k * SwapWGMMA::K, 1);
++                                smem_b[stage_idx] + smem_b_wg_offset + fragment * 64 * BLOCK_K + k_offset + k * SwapWGMMA::K, 1);
+                             auto desc_b = mma::sm90::make_smem_desc(
+                                 smem_a[stage_idx] + k_offset + k * SwapWGMMA::K, 1);
+                             SwapWGMMA::wgmma(desc_a, desc_b, acc, k);
+@@ -1950,18 +1995,18 @@
+                     // Accumulator rows r0 (.x/.y) and r0 + 8 (.z/.w) take weight scales
+                     // sf_0 and sf_1 (L1: gate and up); columns are tokens with per-token
+                     // activation scales from `sfa`.
+-                    auto promote = [&](float* acc, const float* sfa, const float& sf_0, const float& sf_1) {
++                    auto promote = [&](float* acc, const float* sfa, const float& sf_0, const float& sf_1, const uint32_t& fragment) {
+                         fence(acc);
+                         #pragma unroll
+                         for (uint32_t i = 0; i < kSwapAccum / 4; ++ i) {
+                             const uint32_t token_0 = i * 8 + col_idx * 2;
+                             const uint32_t token_1 = token_0 + 1;
+-                            const float scale_0 = token_0 < valid_m ? ptx::ld_shared(sfa + token_0) : 0.0f;
+-                            const float scale_1 = token_1 < valid_m ? ptx::ld_shared(sfa + token_1) : 0.0f;
+-                            final_accum[i * 4 + 0] += scale_0 * sf_0 * acc[i * 4 + 0];
+-                            final_accum[i * 4 + 2] += scale_0 * sf_1 * acc[i * 4 + 2];
+-                            final_accum[i * 4 + 1] += scale_1 * sf_0 * acc[i * 4 + 1];
+-                            final_accum[i * 4 + 3] += scale_1 * sf_1 * acc[i * 4 + 3];
++                            const float scale_0 = (token_0 < valid_m) ? ptx::ld_shared(sfa + token_0) : 0.0f;
++                            const float scale_1 = (token_1 < valid_m) ? ptx::ld_shared(sfa + token_1) : 0.0f;
++                            final_accum[fragment * 32 + i * 4 + 0] += scale_0 * sf_0 * acc[i * 4 + 0];
++                            final_accum[fragment * 32 + i * 4 + 2] += scale_0 * sf_1 * acc[i * 4 + 2];
++                            final_accum[fragment * 32 + i * 4 + 1] += scale_1 * sf_0 * acc[i * 4 + 1];
++                            final_accum[fragment * 32 + i * 4 + 3] += scale_1 * sf_1 * acc[i * 4 + 3];
+                         }
+                     };
+
+@@ -1970,9 +2015,12 @@
+                             const float gate_sf = __ldg(l1_gate_sf + k_block_idx);
+                             const float up_sf = __ldg(l1_up_sf + k_block_idx);
+                             full_barriers[stage_idx]->wait(phase);
+-                            issue.template operator()<BLOCK_K / SwapWGMMA::K>(swap_accum, 0);
+-                            ptx::warpgroup_wait<0>();
+-                            promote(swap_accum, smem_sfa[stage_idx], gate_sf, up_sf);
++                            #pragma unroll
++                            for (uint32_t fragment = 0; fragment < (kIndependentWG ? 2 : 1); ++ fragment) {
++                                issue.template operator()<BLOCK_K / SwapWGMMA::K>(swap_accum, 0, fragment);
++                                ptx::warpgroup_wait<0>();
++                                promote(swap_accum, smem_sfa[stage_idx], gate_sf, up_sf, fragment);
++                            }
+                             if (lane_idx == 0)
+                                 empty_barriers[stage_idx]->arrive();
+                         }
+@@ -1982,12 +2030,15 @@
+                         for (uint32_t k_block_idx = 0; k_block_idx < num_k_blocks; advance_pipeline(k_block_idx)) {
+                             const float l2_sf = __ldg(l2_sf_row + k_block_idx);
+                             full_barriers[stage_idx]->wait(phase);
+-                            issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum, 0);
+-                            issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum_hi, BLOCK_K / 2);
+-                            ptx::warpgroup_wait<1>();
+-                            promote(swap_accum, smem_sfa[stage_idx], l2_sf, l2_sf);
+-                            ptx::warpgroup_wait<0>();
+-                            promote(swap_accum_hi, smem_sfa[stage_idx] + BLOCK_M, l2_sf, l2_sf);
++                            #pragma unroll
++                            for (uint32_t fragment = 0; fragment < (kIndependentWG ? 2 : 1); ++ fragment) {
++                                issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum, 0, fragment);
++                                issue.template operator()<(BLOCK_K / 2) / SwapWGMMA::K>(swap_accum_hi, BLOCK_K / 2, fragment);
++                                ptx::warpgroup_wait<1>();
++                                promote(swap_accum, smem_sfa[stage_idx], l2_sf, l2_sf, fragment);
++                                ptx::warpgroup_wait<0>();
++                                promote(swap_accum_hi, smem_sfa[stage_idx] + BLOCK_M, l2_sf, l2_sf, fragment);
++                            }
+                             if (lane_idx == 0)
+                                 empty_barriers[stage_idx]->arrive();
+                         }
+@@ -2203,21 +2254,21 @@
+                     auto swap_l1_swizzle = [](const uint32_t& token) { return ((token >> 1) & 3u) << 3; };
+                     const uint32_t out_col_base =
+                         wg_l1_out_n_offset + warp_idx_in_wg * 8 + row_idx;
+-                    auto store_l1_swap_chunk = [&](const uint32_t& i) {
++                    auto store_l1_swap_chunk = [&](const uint32_t& i, const uint32_t& fragment) {
+                         const uint32_t token_0 = i * 8 + col_idx * 2;
+                         const uint32_t token_1 = token_0 + 1;
+-                        const uint32_t smem_col = out_col_base ^ swap_l1_swizzle(token_0);
++                        const uint32_t smem_col = (out_col_base + fragment * 32) ^ swap_l1_swizzle(token_0);
+                         if (token_0 < valid_m) {
+-                            float g0 = final_accum[i * 4 + 0];
+-                            float u0 = final_accum[i * 4 + 2];
++                            float g0 = final_accum[fragment * 32 + i * 4 + 0];
++                            float u0 = final_accum[fragment * 32 + i * 4 + 2];
+                             clamp_gate(g0);
+                             clamp_up(u0);
+                             smem_cd_swap_l1_fp32[token_0 * L1_OUT_BLOCK_N + smem_col] =
+                                 silu(g0) * u0;
+                         }
+                         if (token_1 < valid_m) {
+-                            float g1 = final_accum[i * 4 + 1];
+-                            float u1 = final_accum[i * 4 + 3];
++                            float g1 = final_accum[fragment * 32 + i * 4 + 1];
++                            float u1 = final_accum[fragment * 32 + i * 4 + 3];
+                             clamp_gate(g1);
+                             clamp_up(u1);
+                             smem_cd_swap_l1_fp32[token_1 * L1_OUT_BLOCK_N + smem_col] =
+@@ -2226,16 +2277,19 @@
+                     };
+
+                     const uint32_t num_swap_token_chunks = (valid_m + 7u) / 8u;
+-                    store_l1_swap_chunk(0);
+-                    if (valid_m > 8) {
+-                        #pragma unroll
+-                        for (uint32_t i = 1; i < kSwapABTokenChunks; ++ i) {
+-                            if (i < num_swap_token_chunks)
+-                                store_l1_swap_chunk(i);
+-                        }
+-                    }
+-
+-                    ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++                    #pragma unroll
++                    for (uint32_t fragment = 0; fragment < (kIndependentWG ? 2 : 1); ++ fragment) {
++                        store_l1_swap_chunk(0, fragment);
++                        if (valid_m > 8) {
++                            #pragma unroll
++                            for (uint32_t i = 1; i < kSwapABTokenChunks; ++ i) {
++                                if (i < num_swap_token_chunks)
++                                    store_l1_swap_chunk(i, fragment);
++                            }
++                        }
++                    }
++
++                    ptx::sync_aligned(kIndependentWG ? 128 : kNumEpilogueThreads, kIndependentWG ? kEpilogueWGBarrierStartIdx + epilogue_wg_idx : kEpilogueFullBarrierIdx);
+
+                     // Per-token amax over the 64-wide SF group and FP8 quantization, with four
+                     // threads per token so that all 256 threads take part: each thread loads 16
+@@ -2244,8 +2298,9 @@
+                     // maxima with two XOR shuffles (max is exact, so the amax is the same), and
+                     // every value is scaled and converted exactly as before.
+                     DG_STATIC_ASSERT(BLOCK_M * 4 == kNumEpilogueThreads, "swapAB L1 quantizer uses four threads per token");
+-                    {
+-                        const uint32_t token = epilogue_thread_idx / 4;
++                    #pragma unroll
++                    for (uint32_t token_half = 0; token_half < (kIndependentWG ? 2 : 1); ++ token_half) {
++                        const uint32_t token = (kIndependentWG ? epilogue_thread_idx % 128 : epilogue_thread_idx) / 4 + token_half * 32;
+                         const uint32_t quad_idx = epilogue_thread_idx % 4;
+                         const uint32_t slot_rotation = (token + 1) / 2;
+                         const bool valid_token = token < valid_m;
+@@ -2290,14 +2345,14 @@
+                         }
+                     }
+
+-                    ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
++                    ptx::sync_aligned(kIndependentWG ? 128 : kNumEpilogueThreads, kIndependentWG ? kEpilogueWGBarrierStartIdx + epilogue_wg_idx : kEpilogueFullBarrierIdx);
+
+                     if constexpr (not kL2ArrivalCounter) {
+                         // Decode: the thread that issues the store waits for it and publishes
+                         // the arrival itself, so only its warp waits for the store; the other
+                         // warps go on to the next block. The FP8 staging tile is next written
+                         // after a CTA barrier that this warp reaches only after the wait.
+-                        if (epilogue_warp_idx == 0 and cute::elect_one_sync()) {
++                        if ((kIndependentWG ? warp_idx_in_wg == 0 : epilogue_warp_idx == 0) and cute::elect_one_sync()) {
+                             cute::tma_store_fence();
+                             cute::SM90_TMA_STORE_2D::copy(
+                                 &tensor_map_l1_output,
+@@ -2332,7 +2387,7 @@
+                         }
+                     } else {
+                         ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+-                        if (epilogue_warp_idx == 0 and cute::elect_one_sync()) {
++                        if ((kIndependentWG ? warp_idx_in_wg == 0 : epilogue_warp_idx == 0) and cute::elect_one_sync()) {
+                             ptx::red_or_rel_gpu(
+                                 workspace.get_l2_arrival_mask_ptr(pool_block_idx),
+                                 1ull << n_block_idx);
+@@ -2730,26 +2785,29 @@
+                             __float2bfloat16_rn(value);
+                     };
+
+-                    auto store_l2_swap_chunk = [&](const uint32_t& i) {
++                    auto store_l2_swap_chunk = [&](const uint32_t& i, const uint32_t& fragment) {
+                         const uint32_t token_0 = i * 8 + col_idx * 2;
+                         const uint32_t token_1 = token_0 + 1;
+                         if (token_0 < valid_m) {
+-                            store_bf16(token_0, r_0, final_accum[i * 4 + 0]);
+-                            store_bf16(token_0, r_1, final_accum[i * 4 + 2]);
++                            store_bf16(token_0, fragment * 64 + r_0, final_accum[fragment * 32 + i * 4 + 0]);
++                            store_bf16(token_0, fragment * 64 + r_1, final_accum[fragment * 32 + i * 4 + 2]);
+                         }
+                         if (token_1 < valid_m) {
+-                            store_bf16(token_1, r_0, final_accum[i * 4 + 1]);
+-                            store_bf16(token_1, r_1, final_accum[i * 4 + 3]);
++                            store_bf16(token_1, fragment * 64 + r_0, final_accum[fragment * 32 + i * 4 + 1]);
++                            store_bf16(token_1, fragment * 64 + r_1, final_accum[fragment * 32 + i * 4 + 3]);
+                         }
+                     };
+
+                     const uint32_t num_swap_token_chunks = (valid_m + 7u) / 8u;
+-                    store_l2_swap_chunk(0);
+-                    if (valid_m > 8) {
+-                        #pragma unroll
+-                        for (uint32_t i = 1; i < kSwapABTokenChunks; ++ i) {
+-                            if (i < num_swap_token_chunks)
+-                                store_l2_swap_chunk(i);
++                    #pragma unroll
++                    for (uint32_t fragment = 0; fragment < (kIndependentWG ? 2 : 1); ++ fragment) {
++                        store_l2_swap_chunk(0, fragment);
++                        if (valid_m > 8) {
++                            #pragma unroll
++                            for (uint32_t i = 1; i < kSwapABTokenChunks; ++ i) {
++                                if (i < num_swap_token_chunks)
++                                    store_l2_swap_chunk(i, fragment);
++                            }
+                         }
+                     }
+                 } else {
+@@ -2862,7 +2920,9 @@
+                 }
+                 }
+
+-                if constexpr (kL2EpilogueRequiresFullSync)
++                if constexpr (kIndependentWG)
++                    ptx::sync_aligned(128, kEpilogueWGBarrierStartIdx + epilogue_wg_idx);
++                else if constexpr (kL2EpilogueRequiresFullSync)
+                     ptx::sync_aligned(kNumEpilogueThreads, kEpilogueFullBarrierIdx);
+             }
+         };

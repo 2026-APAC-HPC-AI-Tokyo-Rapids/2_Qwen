@@ -1,0 +1,87 @@
+--- a/python/sglang/srt/layers/moe/cutlass_moe.py
++++ b/python/sglang/srt/layers/moe/cutlass_moe.py
+@@ -1,10 +1,14 @@
+ """CUTLASS based Fused MoE kernels."""
+ 
++import os
+ from typing import Optional, Tuple
+ 
+ import torch
+ 
++from sglang.srt.runtime_context import get_parallel, get_server_args
+ from sglang.srt.utils import is_cuda, is_sm90_supported, is_sm100_supported
++
++_prefill_fused_shuffle = os.environ.get("SGLANG_PREFILL_FUSED_FP8_SHUFFLE", "0") == "1"
+ 
+ _is_cuda = is_cuda()
+ if _is_cuda:
+@@ -207,8 +211,27 @@
+         )
+     else:
+         a_q, a1_scale = sglang_per_token_group_quant_fp8(a, 128)
+-        rep_a_q = shuffle_rows(a_q, a_map, (m * topk, k))
+-        rep_a1_scales = shuffle_rows(a1_scale, a_map, (m * topk, int(k / 128)))
++        if (
++            _prefill_fused_shuffle
++            and is_sm90_supported()
++            and get_server_args().disaggregation_mode == "prefill"
++            and get_parallel().moe_ep_size == 1
++            and k == 4096
++            and a_q.dtype == torch.float8_e4m3fn
++            and a1_scale.dtype == torch.float32
++            and a_map.dtype == torch.int32
++            and a_q.is_contiguous()
++            and a1_scale.is_contiguous()
++            and a_map.is_contiguous()
++            and a1_scale.shape == (m, 32)
++            and a_map.shape == (m * topk,)
++        ):
++            from sglang.kernels.ops.moe.prefill_fp8_row_shuffle import shuffle_fp8_rows_with_scales
++
++            rep_a_q, rep_a1_scales = shuffle_fp8_rows_with_scales(a_q, a1_scale, a_map)
++        else:
++            rep_a_q = shuffle_rows(a_q, a_map, (m * topk, k))
++            rep_a1_scales = shuffle_rows(a1_scale, a_map, (m * topk, int(k / 128)))
+ 
+     c1 = torch.empty((m * topk, n * 2), device=device, dtype=out_dtype)
+     c2 = torch.empty((m * topk, k), device=device, dtype=out_dtype)
+--- /dev/null
++++ b/python/sglang/kernels/ops/moe/prefill_fp8_row_shuffle.py
+@@ -0,0 +1,37 @@
++"""Gather existing FP8 bytes and FP32 scale bits without requantization.
++
++Caller guarantees EP1 prepare_moe_input map entries are valid source rows.
++This is not a padded-map API: negative or unwritten entries are invalid, as in
++native shuffle_rows. One program per destination row matches the native copy.
++"""
++import torch
++import triton
++import triton.language as tl
++
++
++@triton.jit
++def _shuffle_fp8_scale_bits(Q, S, Map, OQ, OS, K: tl.constexpr, G: tl.constexpr):
++    dst = tl.program_id(0).to(tl.int64)
++    src = tl.load(Map + dst).to(tl.int64)
++    columns = tl.arange(0, K)
++    values = tl.load(Q + src * K + columns)
++    tl.store(OQ + dst * K + columns, values)
++    groups = tl.arange(0, G)
++    scales = tl.load(S + src * G + groups)
++    tl.store(OS + dst * G + groups, scales)
++
++
++def shuffle_fp8_rows_with_scales(q, scales, dst2src):
++    """Fixed K4096/G32 bit-copy API; buffers keep native row-major layout."""
++    assert q.ndim == 2 and q.shape[1] == 4096 and q.dtype == torch.float8_e4m3fn
++    assert scales.shape == (q.shape[0], 32) and scales.dtype == torch.float32
++    assert dst2src.ndim == 1 and dst2src.dtype == torch.int32
++    assert q.is_contiguous() and scales.is_contiguous() and dst2src.is_contiguous()
++    assert q.device == scales.device == dst2src.device and q.is_cuda
++    rows = dst2src.numel()
++    out_q = torch.empty((rows, 4096), dtype=q.dtype, device=q.device)
++    out_scales = torch.empty((rows, 32), dtype=scales.dtype, device=scales.device)
++    if rows:
++        # Integer views avoid FP8 casts and preserve all NaN payload/signed-zero bits.
++        _shuffle_fp8_scale_bits[(rows,)](q.view(torch.uint8), scales.view(torch.int32), dst2src, out_q.view(torch.uint8), out_scales.view(torch.int32), K=4096, G=32, num_warps=8)
++    return out_q, out_scales
