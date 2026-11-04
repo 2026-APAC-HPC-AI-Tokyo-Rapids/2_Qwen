@@ -280,8 +280,8 @@ def test_patch_inventory_lists_every_applied_patch_once_with_its_hash():
         assert listed[path][0] == hashlib.sha256((PACKAGE / path).read_bytes()).hexdigest()
     assert set(listed) == set(expected) | {"build/sglang-fc275674.bundle", "build/sglang-6b350686.commit"}
     classes = [klass for _, klass in listed.values()]
-    assert set(classes) <= {"bit-identical", "FP-order", "rounding-placement", "no numeric effect", "to confirm"}
-    assert f"**{len(rows)} rows; {classes.count('to confirm')} are marked `to confirm`**" in readme
+    assert set(classes) <= {"bit-identical", "FP-order", "rounding-placement", "no numeric effect"}
+    assert f"**{len(rows)} rows**: {classes.count('bit-identical')} `bit-identical`, {classes.count('FP-order')} `FP-order`, {classes.count('rounding-placement')} `rounding-placement`, {classes.count('no numeric effect')} `no numeric effect`." in readme
 
 
 def test_recreated_boundary_commit_has_pinned_object_id():
