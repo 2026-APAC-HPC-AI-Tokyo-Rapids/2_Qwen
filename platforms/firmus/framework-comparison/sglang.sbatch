@@ -463,3 +463,4 @@ echo "AIPERF ok"
 touch "${ROOT}/run-success"
 # Round 32 submit: FC1 first-K128 specialization with its twelve-GPU gate.
 # Round 33 submit: pooled FC1 first-K gate on the round 32 image.
+# Round 34 submit: FC1 first-K gate decided by published rank results.
