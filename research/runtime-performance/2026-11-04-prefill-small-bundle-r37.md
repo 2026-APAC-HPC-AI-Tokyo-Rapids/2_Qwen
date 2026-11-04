@@ -140,3 +140,13 @@ C の `IndexError: index 1 is out of bounds for dimension 0 with size 1` は、�
 GPUなしCPU fixtureでCの旧例外と修正版の境界・復帰、Bの実host predicateとの全1〜8192行照合およびpair境界・実consumer選択、Aのpin・gate除外・prewarm継続、case/compile例外のtraceback公開を検査する。image source、patch、build入力、image pinは変更しない。新しいGPU結果・B/C採否・修正後gate所要時間は未測定であり、この作業ではcommit・push・job投入を行わない。
 
 最終検証：指定の全pytestとRuffはともに終了0。既存のTorch任意テストはTorchなしのためskipするが、新しいCPU回帰検査はすべて実行した。SIGHUPは既定値に戻して検証し、ログとcommit本文案は指定の `codex-scratch/r39/` へ保存した。
+
+### Round 39 の結果（run 41822975123）
+
+image 5018d322 を再 build なしで再利用し、A（dense first-K）を常時有効にした。公式 score は **10058.37**（main 10054.49、round 38 10059.13）、TTFT 超過 111 件はすべて先頭5秒以内。
+
+- B（fixed-shape QK norm writer）：12 GPU 全て健全、byte・1200 call 耐久を通過、節約中央値 pooled 0.205 µs（forward 0.177、reverse 0.215）、正の GPU 11、最悪 −0.038%。採用。
+- C（onepass amax/448）：12 GPU 全て健全、節約中央値 pooled 0.751 µs（forward 0.722、reverse 0.891）、正の GPU 12、最悪 +0.52%。採用。
+- serving では全 12 Prefill process で A/B/C の prewarm done と using candidate を確認した。
+
+まとめ：r36 監査の見積もり（1 周期あたり最大約 0.19 ms、score +12 以下）どおり、3 run（10053.96、10059.13、10058.37）は main と run 間変動の範囲で区別できない。kernel 単体ではすべて byte 一致かつ速いが、serving 上の優位は単一 run では示せない。main と submission/ の pin を変えるほどの利益ではないため、main へは統合せず branch に保持する。
