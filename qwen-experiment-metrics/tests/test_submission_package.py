@@ -280,7 +280,7 @@ def test_patch_inventory_lists_every_applied_patch_once_with_its_hash():
         assert listed[path][0] == hashlib.sha256((PACKAGE / path).read_bytes()).hexdigest()
     assert set(listed) == set(expected) | {"build/sglang-fc275674.bundle", "build/sglang-6b350686.commit"}
     classes = [klass for _, klass in listed.values()]
-    assert set(classes) <= {"bit-identical", "FP-order", "no numeric effect", "to confirm"}
+    assert set(classes) <= {"bit-identical", "FP-order", "rounding-placement", "no numeric effect", "to confirm"}
     assert f"**{len(rows)} rows; {classes.count('to confirm')} are marked `to confirm`**" in readme
 
 

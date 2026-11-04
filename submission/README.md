@@ -26,7 +26,7 @@ The kernel choices are fixed in `config/prefill-kernels.env` and `config/decode-
 - `build/`: build entrypoint, public-source mirror reconstruction, three-commit Git bundle, and build 41729881283's original Buildah log and image sidecar.
 - `run/`: login-node preparation (`prepare.sh`), the single Slurm serving/benchmark job (`submit.sbatch`) and the worker launcher it runs in the container (`worker.sh`), the official AIPerf command and the local scorer (`official-aiperf.sh`, `parse-aiperf-result.py`), the draft config adapter (`prepare_eagle.py`), the PP4 GPU-order helper (`order-firmus-pp4-gpus.py`) and the post-benchmark greedy probe (`greedy-probe.py`).
 - `config/`: serving settings, the pinned role env files and the PP4 GPU clock table.
-- [patches/README.md](patches/README.md): every image patch, kernel source and runtime overlay, with hashes, application points and numerical classifications (unestablished classes are marked `to confirm`).
+- [patches/README.md](patches/README.md): every image patch, kernel source and runtime overlay, with hashes, application points and numerical classifications (bit-identical, FP-order, rounding-placement or no numeric effect, with the basis for each).
 - `results/41767886175/`: curated evidence of the round 34 run the package was frozen from.
 - `results/41781374312/`: curated evidence of the standalone run of this package.
 - [analysis/README.md](analysis/README.md): the optional profiling data, the round 24 Nsight capture of the 10k configuration, with its relation to this configuration, its findings and the file list with checksums.
