@@ -71,11 +71,11 @@ stage_overlay deep-gemm opt/sglang/venv/lib/python3.12/site-packages/deep_gemm d
 
 # ---- Job inputs and scripts ----
 
-# Kernel choices adopted by the in-job gates of Actions run 41573354672, and the GPU clock table worker.sh
+# Kernel choices adopted by the in-job gates of Actions run 41767886175, and the GPU clock table worker.sh
 # uses to place each Prefill worker's last pipeline stage.
 install -m 0644 "${package}/config/prefill-kernels.env" "${package}/config/decode-kernels.env" "${package}/config/firmus-gpu-sm-clock.json" "${run_dir}/source/"
 install -m 0755 "${package}/run/submit.sbatch" "${package}/run/worker.sh" "${package}/run/official-aiperf.sh" "${run_dir}/scripts/"
-install -m 0644 "${package}/run/run-aiperf.py" "${package}/run/parse-aiperf-result.py" "${package}/run/order-firmus-pp4-gpus.py" "${package}/run/greedy-probe.py" "${run_dir}/scripts/"
+install -m 0644 "${package}/run/parse-aiperf-result.py" "${package}/run/order-firmus-pp4-gpus.py" "${package}/run/greedy-probe.py" "${run_dir}/scripts/"
 # Keep the exact scripts this run used with its records.
 cp "${package}/run/prepare.sh" "${package}/run/prepare_eagle.py" "${run_dir}/scripts/"* "${run_dir}/source/"
 

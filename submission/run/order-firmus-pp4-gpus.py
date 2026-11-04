@@ -1,18 +1,12 @@
-"""Print the CUDA_VISIBLE_DEVICES order of one PP4 Prefill worker: the slowest GPU hosts the last stage.
+"""Print the CUDA_VISIBLE_DEVICES order of one PP4 Prefill worker, with its slowest GPU running the last stage.
 
-SGLang puts PP stage s on visible device s. Every GPU of a PP4 pipeline sits at
-the 700 W cap, so its period is set by the slowest GPU that runs a full 24-layer
-stage. The last stage (22 layers + LM head + EAGLE draft extend) is the
-lightest: in run 40883389891 its GPU ran 1-2% above the clock the same GPU
-reaches under symmetric EP4 load, the others 2-5% below. Moving the last stage
-onto the worker's slowest GPU (configs/firmus-gpu-sm-clock.json, EP4 means)
-leaves the 24-layer stages on the faster three.
+SGLang runs pipeline stage s on visible device s. Every GPU of a PP4 pipeline runs at the 700 W cap, so the pipeline
+runs at the pace of its slowest GPU that holds a full 24-layer stage. The last stage (22 layers, the LM head and the
+EAGLE draft extend) is the lightest, so it goes on the worker's slowest GPU, using the measured SM clocks in
+config/firmus-gpu-sm-clock.json. The order changes only when that GPU is at least MARGIN_MHZ slower than the
+current last GPU, and only for GPUs the table measured.
 
-stdin: `nvidia-smi --query-gpu=index,uuid --format=csv,noheader`.
-argv: the clock table and the current CUDA_VISIBLE_DEVICES (integer indices).
-Output: the same entries, with the slowest moved to the end if it is at least
-MARGIN_MHZ slower than the current last GPU; otherwise, or if any GPU is not
-in the table, the list unchanged.
+usage: nvidia-smi --query-gpu=index,uuid --format=csv,noheader | order-firmus-pp4-gpus.py CLOCK_TABLE CUDA_VISIBLE_DEVICES
 """
 import json
 import sys
@@ -22,18 +16,15 @@ MARGIN_MHZ = 5.0
 
 
 def order(table, smi, visible):
-    uuid = {}
-    for line in smi.strip().splitlines():
-        index, value = (x.strip() for x in line.split(","))
-        uuid[index] = value
+    uuid = dict((field.strip() for field in line.split(",")) for line in smi.strip().splitlines())
     devices = visible.split(",")
-    clock = {d: table["gpus"].get(uuid.get(d), {}).get("sm_mhz") for d in devices}
-    if len(devices) != 4 or None in clock.values():
+    if not all(uuid[device] in table["gpus"] for device in devices):
         return visible
-    slowest = min(devices, key=lambda d: clock[d])
+    clock = {device: table["gpus"][uuid[device]]["sm_mhz"] for device in devices}
+    slowest = min(devices, key=clock.get)
     if clock[slowest] + MARGIN_MHZ > clock[devices[-1]]:
         return visible
-    return ",".join([d for d in devices if d != slowest] + [slowest])
+    return ",".join([device for device in devices if device != slowest] + [slowest])
 
 
 if __name__ == "__main__":

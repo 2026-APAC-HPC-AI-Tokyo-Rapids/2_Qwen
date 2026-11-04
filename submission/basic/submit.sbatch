@@ -15,7 +15,7 @@
 #
 # Submit from a run directory prepared by submission/basic/prepare.sh:
 #   sbatch --export=PATH,HOME,USER,LOGNAME scripts/submit.sbatch
-# scripts/basic-worker.py builds each worker's public launch_server command from source/firmus-framework.json.
+# scripts/worker.py builds each worker's public launch_server command from source/firmus-framework.json.
 set -euo pipefail
 
 # Pass the whole job environment to every srun step.
@@ -64,7 +64,7 @@ server_info() {
 for worker in "${WORKERS[@]}"; do
   read -r role index node host <<<"${worker}"
   name=${role}-${index}
-  srun --exact -N1 -n1 -w "${node}" --gres=gpu:4 --cpus-per-task=32 "${CONTAINER[@]}" "$(mounts "${name}")" /opt/sglang/bin/python "${ROOT}/scripts/basic-worker.py" "${ROOT}" "${role}" "${index}" "${host}" >"${ROOT}/logs/${name}.log" 2>&1 &
+  srun --exact -N1 -n1 -w "${node}" --gres=gpu:4 --cpus-per-task=32 "${CONTAINER[@]}" "$(mounts "${name}")" /opt/sglang/bin/python "${ROOT}/scripts/worker.py" "${ROOT}" "${role}" "${index}" "${host}" >"${ROOT}/logs/${name}.log" 2>&1 &
 done
 while IFS=$'\t' read -r name host port _; do
   wait_http "http://${host}:${port}/health"
@@ -89,8 +89,6 @@ srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=32 "${CONTAINER
 # ---- After the benchmark ----
 
 server_info
-# EAGLE acceptance statistics from the server info and logs (diagnostic; not part of the score).
-python3 "${ROOT}/scripts/collect-eagle-acceptance.py" --config "${CONFIG}" --endpoints "${ENDPOINTS}" --server-info-dir "${ROOT}/results" --log-dir "${ROOT}/logs" --output "${ROOT}/results/eagle-acceptance.json" --cluster firmus
 echo 'AIPERF ok'
 touch "${ROOT}/run-success"
 # Clear the workers' node-local compiler caches.

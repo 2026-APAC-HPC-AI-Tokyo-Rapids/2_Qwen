@@ -52,7 +52,7 @@ python3 "${repo}/submission/run/prepare_eagle.py" "${root}/draft" "${root}/sourc
 
 # ---- Job scripts ----
 
-cp "${repo}/submission/basic/submit.sbatch" "${repo}/scripts/basic-worker.py" "${repo}/scripts/collect-eagle-acceptance.py" "${repo}/submission/run/run-aiperf.py" "${repo}/submission/run/parse-aiperf-result.py" "${root}/scripts/"
+cp "${repo}/submission/basic/submit.sbatch" "${repo}/submission/basic/worker.py" "${repo}/submission/run/parse-aiperf-result.py" "${root}/scripts/"
 # The official benchmark command is unchanged; AIPerf only runs from the image's separate /opt/aiperf environment.
 sed 's|/opt/sglang/venv/bin/|/opt/aiperf/bin/|g' "${repo}/submission/run/official-aiperf.sh" >"${root}/scripts/official-aiperf.sh"
 # Keep the exact preparation scripts with the run's records.

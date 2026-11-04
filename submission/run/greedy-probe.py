@@ -1,4 +1,9 @@
-"""Collect post-benchmark greedy outputs through the official gateway."""
+"""Send eight fixed greedy prompts through the gateway after the benchmark and keep the outputs with token logprobs.
+
+The file lets the outputs of two configurations be compared token by token. It is not used for training.
+
+usage: greedy-probe.py RESULTS_DIR GATEWAY_URL MODEL
+"""
 import hashlib
 import json
 import sys
@@ -18,18 +23,31 @@ PROMPTS = [
 
 
 def main():
-    root = Path(sys.argv[1])
-    url = sys.argv[2]
-    model = sys.argv[3]
+    results, url, model = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
     responses = []
     for prompt in PROMPTS:
-        body = {'model': model, 'messages': [{'role': 'user', 'content': prompt}], 'temperature': 0, 'repetition_penalty': 1, 'max_tokens': 64, 'min_tokens': 64, 'ignore_eos': True, 'logprobs': True, 'stream': False}
+        body = {
+            'model': model,
+            'messages': [{'role': 'user', 'content': prompt}],
+            'temperature': 0,
+            'repetition_penalty': 1,
+            'max_tokens': 64,
+            'min_tokens': 64,
+            'ignore_eos': True,
+            'logprobs': True,
+            'stream': False,
+        }
         request = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(request, timeout=120) as response:
-            data = json.load(response)
-        responses.append({'request': body, 'response': data})
-    result = {'schema_version': 'qwen-greedy-parity/v1', 'phase': 'after official benchmark', 'prompt_sha256': hashlib.sha256(json.dumps(PROMPTS, ensure_ascii=False).encode()).hexdigest(), 'responses': responses, 'training_data': False}
-    (root / 'greedy-parity.json').write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+            responses.append({'request': body, 'response': json.load(response)})
+    record = {
+        'schema_version': 'qwen-greedy-parity/v1',
+        'phase': 'after official benchmark',
+        'prompt_sha256': hashlib.sha256(json.dumps(PROMPTS, ensure_ascii=False).encode()).hexdigest(),
+        'responses': responses,
+        'training_data': False,
+    }
+    (results / 'greedy-parity.json').write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')
 
 
 if __name__ == '__main__':

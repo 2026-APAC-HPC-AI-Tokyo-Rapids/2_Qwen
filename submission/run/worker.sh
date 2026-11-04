@@ -54,7 +54,7 @@ else
 fi
 export SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=${megamoe_tokens} SGLANG_OPT_FIX_MEGA_MOE_MEMORY=1
 
-# Kernel choices adopted by the in-job gates of Actions run 41573354672, one file per role (installed by prepare.sh).
+# Kernel choices adopted by the in-job gates of Actions run 41767886175, one file per role (installed by prepare.sh).
 set -a
 source "${runtime_dir}/source/${role}-kernels.env"
 set +a

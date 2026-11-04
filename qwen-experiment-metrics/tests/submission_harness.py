@@ -68,7 +68,7 @@ for i in "${{!args[@]}}"; do
       script=${{args[$i]}}
       sed -e "s#/opt/sglang/venv/bin/python#{harness}/bin/vpython#g" -e "s#/sys/class/infiniband#{harness}/ib#g" "$script" >"${{script%.sh}}.$key.harness.sh"
       HARNESS_KEY=$key CUDA_VISIBLE_DEVICES=0,1,2,3 exec bash "${{script%.sh}}.$key.harness.sh" "${{args[@]:$((i + 1))}}";;
-    */basic-worker.py|*/sglang-router|*/sgl-model-gateway) exec sleep 600;;
+    */worker.py|*/sglang-router|*/sgl-model-gateway) exec sleep 600;;
     */official-aiperf.sh) echo '{{}}' >"${{args[$((i + 1))]}}/results/score.json"; exit 0;;
     */greedy-probe.py) exit 0;;
   esac
@@ -115,12 +115,11 @@ def run_sbatch(kind, repo, harness):
         (harness / "expect-launch").write_text("")
     else:
         shutil.copy(repo / "configs/firmus-basic.json", root / "source/firmus-framework.json")
-        for name in ("basic-worker.py", "check-basic-server-info.py", "collect-eagle-acceptance.py"):
-            shutil.copy(repo / "scripts" / name, root / "scripts" / name)
+        shutil.copy(package / "basic/worker.py", root / "scripts/worker.py")
         shutil.copy(package / "basic/submit.sbatch", root / "scripts/submit.sbatch")
         shutil.copy(package / "run/official-aiperf.sh", root / "scripts/official-aiperf.sh")
         (harness / "gpus.csv").write_text("")
-        # The host-side readback and EAGLE collector need real servers; record their calls instead.
+        # Host-side Python helpers would need real servers; record their calls instead.
         stub(harness / "bin", "python3", f'printf "python3 %s\\n" "$*" >>{harness}/events.log')
     env = {"PATH": f"{harness}/bin:/usr/bin:/bin", "HOME": str(harness / "home"), "USER": "tester", "LOGNAME": "tester", "SLURM_SUBMIT_DIR": str(root), "SLURM_JOB_NODELIST": "g[1,4]", "SLURM_JOB_ID": "1"}
     # Servers still run when the job script ends; on a cluster Slurm then ends them with the job.
