@@ -465,3 +465,4 @@ if (( benchmark_status != 0 )); then exit "${benchmark_status}"; fi
 echo "AIPERF ok"
 touch "${ROOT}/run-success"
 # Round 37 submit: exact small-kernel bundle A/B/C with FC1 first-K pinned.
+# Round 38 submit: round 37 gate repaired, image 5018d322 reused without a build.
