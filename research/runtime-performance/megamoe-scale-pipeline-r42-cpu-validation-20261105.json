@@ -1,0 +1,94 @@
+{
+  "schema_version": "megamoe-scale-pipeline-r42-cpu-validation/1",
+  "date": "2026-11-05",
+  "parent_commit": "ede08bd",
+  "decision": "NO-GO",
+  "stopped_after_phase": 1,
+  "scope": "Precision-preserving EP1 T7988 E128 top8 H4096 I1536, FC1 first-K, four-stage lean split, two math warpgroups.",
+  "measured_whole_scale_path_upper_bound_us": 77.16095447540283,
+  "target_saving_us": 30,
+  "target_exposed_clocks_per_steady_cta_k128_range": [
+    17.02980592287538,
+    19.40326585898111
+  ],
+  "candidate_saving_us": null,
+  "candidate_prediction_error_us": null,
+  "reason": "Earlier scale scheduling retains accumulator waits and multiplies, may delay half-one issue at future stage waits, and does not establish the required net exposure reduction. The aggregate diagnostic bound does not identify the movable subpath share.",
+  "runtime_header_sha256": "1821ba235eddd2c1162a05418e282d22efd9095e4045731291a1e0c7699d81f3",
+  "raw_run": {
+    "actions_run": "41875058470",
+    "slurm_job": "28739",
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "elapsed": "00:14:44",
+    "compiler": "CUDA 13.0.88",
+    "production_jit_source_identity_ranks": 12,
+    "production_text_identity_ranks": 12,
+    "encoding_sha256": "92b487c8ca8e22d5268f42771c851f6535afc0f9ac9719b411cc0ad1b11810a3",
+    "encoding_bytes": 178560,
+    "registers": 168,
+    "max_register": 205,
+    "stack_bytes": 0,
+    "local_bytes": 0
+  },
+  "fresh_local_production_compile": {
+    "compiler": "CUDA 13.4.92",
+    "cuda_root": "/usr/local/cuda-13.4",
+    "target": "sm_90a",
+    "exit_code": 0,
+    "encoding_sha256": "f157a6dddb926f5944f751e46448afb69091eb9cfbcccd17e21fe852205e8c41",
+    "encoding_bytes": 181120,
+    "matches_r40_r41_proof": true,
+    "launch_registers": 168,
+    "math_register_budget": 224,
+    "max_register": 206,
+    "spill_store_bytes": 0,
+    "spill_load_bytes": 0,
+    "stack_bytes": 0,
+    "local_bytes": 0,
+    "c75xx_warnings": false
+  },
+  "dependency_audit": {
+    "static_k_blocks_per_compiler": 28,
+    "halves_per_block": 2,
+    "steady_accumulator_fmul_count_per_compiler": 3328,
+    "fc1_cyclic_entry_recorded_separately": true,
+    "dynamic_per_pc_exposure_us": null
+  },
+  "proof": {
+    "path": "research/runtime-performance/megamoe-scale-pipeline-r42-cpu-proof-20261105.tar.gz",
+    "size_bytes": 110000,
+    "sha256": "9496f6eb4b57aa098168b88de70860e2fc5ea4644b6d331b1af62fbf2907f89b",
+    "verified_member_hashes": 11
+  },
+  "checks": {
+    "pytest": {
+      "command": "uv run --project qwen-experiment-metrics --with 'numpy>=1.26,<3' --with pytest python -m pytest -q -p no:cacheprovider qwen-experiment-metrics/tests",
+      "exit_code": 0,
+      "sighup_reset_to_default": true,
+      "log": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r42/pytest.log",
+      "log_sha256": "1230c42572df4e51603e66e24bf4ae9df00b05248bd858ac97be8002d6e9ab3f"
+    },
+    "ruff": {
+      "command": "uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers",
+      "exit_code": 0,
+      "log": "/tmp/claude-1000/-home-USER-2026-APAC-HPC-AI-Tokyo-Rapids-2-Qwen/00000000-0000-0000-0000-000000000000/scratchpad/codex-scratch/r42/ruff.log",
+      "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    "proof_manifest": {
+      "exit_code": 0,
+      "verified_member_hashes": 11
+    },
+    "git_diff_check": {
+      "exit_code": 0
+    }
+  },
+  "candidate_implemented": false,
+  "new_gpu_execution": false,
+  "ssh_used": false,
+  "jobs_submitted_or_cancelled": false,
+  "image_built": false,
+  "commit_or_push": false,
+  "production_or_submission_modified": false,
+  "require_build": false
+}
