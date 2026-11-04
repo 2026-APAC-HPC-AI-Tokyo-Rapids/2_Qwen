@@ -24,7 +24,9 @@ or later from the inflight queue when bootstrap completes after prefill);
 a bootstrap that fails on one stage is aborted there at the release every stage applies at the
 same iteration; each result is applied pp_loop_size - 1 iterations after its
 launch on every stage with the last stage's tokens and EAGLE draft outputs,
-after the launch on stage 0 and before it on every later stage; the last stage
+after the launch on stage 0 and before it on every later stage; requests that
+ask for logprobs, alone or beside requests that do not, get the last stage's
+logprob outputs as host tensors on every stage; the last stage
 publishes a result no later than the iteration after its launch; every stage
 polls its KV transfers after its launch; release happens on every stage at the
 same iteration, exactly the consensus lag after the first iteration in which
@@ -271,6 +273,11 @@ FAILED_BOOTSTRAPS = {(0, "r0"), (2, "r5")}
 LATE_BOOTSTRAPS = {(0, "r1"): 12, (PP - 1, "r7"): 12}
 
 
+def logprob_request(rid):
+    """Requests that ask for logprobs (logprobs: true on the chat API)."""
+    return int(rid[1:]) % 4 == 2
+
+
 def fast_transfer(rid):
     """Requests whose KV transfer finishes during the next launch of the stage
     after its send (a few milliseconds on a GPU); the others take 2-5 iterations."""
@@ -332,7 +339,7 @@ class Sender:
 class Batch:
     def __init__(self, reqs):
         self.reqs = reqs
-        self.return_logprob = False
+        self.return_logprob = any(r.return_logprob for r in reqs)
         self.spec_info = None
         self.input_ids = torch.cat([torch.tensor(r.origin_input_ids) for r in reqs])
         self.req_pool_indices = torch.tensor([r.req_pool_idx for r in reqs])
@@ -424,7 +431,21 @@ def make_stage(rank, transport, classes, env):
     stage.free_rows = list(range(POOL_ROWS))
     stage.available = CAPACITY
     stage.token_to_kv_pool_allocator = NS(page_size=PAGE)
-    stage.batch_result_processor = NS(move_logprobs_to_cpu=lambda **kwargs: None)
+    def move_logprobs_to_cpu(batch, logits_output):
+        # BatchResultProcessor.move_logprobs_to_cpu: host tensors to lists.
+        if batch.return_logprob:
+            for value in (logits_output.next_token_logprobs, *logits_output.next_token_top_logprobs_val, *logits_output.next_token_top_logprobs_idx):
+                assert value.device.type == "cpu"
+            logits_output.next_token_logprobs = logits_output.next_token_logprobs.tolist()
+            logits_output.next_token_top_logprobs_val = [v.tolist() for v in logits_output.next_token_top_logprobs_val]
+            logits_output.next_token_top_logprobs_idx = [v.tolist() for v in logits_output.next_token_top_logprobs_idx]
+
+    def add_logprob_return_values(i, req, logprob_pt, next_token_ids, num_input_logprobs, output):
+        assert req.rid not in stage.logprobs
+        stage.logprobs[req.rid] = (next_token_ids[i], output.next_token_logprobs[i], output.next_token_top_logprobs_val[i], output.next_token_top_logprobs_idx[i], num_input_logprobs)
+
+    stage.logprobs = {}
+    stage.batch_result_processor = NS(move_logprobs_to_cpu=move_logprobs_to_cpu, logprob_result_processor=NS(add_logprob_return_values=add_logprob_return_values))
     stage.metrics_reporter = NS(report_prefill_stats=lambda **kwargs: None, enable_metrics=False)
     stage.enable_hicache_storage = False
 
@@ -483,7 +504,7 @@ def make_stage(rank, transport, classes, env):
         for rid, length in reqs:
             req = NS(
                 rid=rid, origin_input_ids=list(range(length)), output_ids=[], extend_range=NS(end=length),
-                start_send_idx=0, pending_bootstrap=True, inflight_middle_chunks=0, return_logprob=False,
+                start_send_idx=0, pending_bootstrap=True, inflight_middle_chunks=0, return_logprob=logprob_request(rid),
                 return_sampling_mask=False, grammar=None, finished_reason=None, bootstrap_host="host",
                 req_pool_idx=None, kv=None, mamba_pool_idx=None, metadata_buffer_index=-1, bootstrap_room=0,
                 time_stats=NS(**{name: (lambda: None) for name in (
@@ -542,7 +563,18 @@ def make_stage(rank, transport, classes, env):
             return result_cls(pp_hidden_states_proxy_tensors=env["PPProxyTensors"](proxy), can_run_cuda_graph=False)
         tokens = (hidden.sum(dim=1) + sum(v.sum(dim=1) for v in aux.values())).to(torch.int64)
         draft = NS(hidden_states=(hidden * 2).to(torch.bfloat16), topk_p=hidden[:, :1] / 100, topk_index=tokens[:, None] + 1, dsa_topk_indices=None)
-        return result_cls(next_token_ids=tokens, next_draft_input=draft, can_run_cuda_graph=False)
+        logits_output = lengths = None
+        if batch.return_logprob:
+            # Sampler outputs: a tensor and per-request lists of top-2 tensors.
+            # No input logprobs (start = input length), as on the chat API.
+            logprobs = -tokens.to(torch.float32) / 1000
+            logits_output = env["LogitsProcessorOutput"](
+                next_token_logits=None, next_token_logprobs=logprobs,
+                next_token_top_logprobs_val=[torch.stack([v, v - 1]) for v in logprobs],
+                next_token_top_logprobs_idx=[torch.stack([t, t + 1]) for t in tokens],
+            )
+            lengths = [len(r.origin_input_ids) for r in batch.reqs]
+        return result_cls(next_token_ids=tokens, next_draft_input=draft, logits_output=logits_output, extend_input_len_per_req=lengths, extend_logprob_start_len_per_req=lengths, can_run_cuda_graph=False)
 
     stage.run_batch = run_batch
 
@@ -693,6 +725,10 @@ def run(source, corrupt=False):
     env["PPProxyTensors"] = proxy_cls
     async_d2h, result_cls = extract(source, "managers/utils.py", ["_async_d2h", "GenerationBatchResult"], {**env, "dataclasses": dataclasses})
     env["GenerationBatchResult"] = result_cls
+    (logits_cls,) = extract(source, "layers/logits_processor.py", ["LogitsProcessorOutput"], {**env, "dataclasses": dataclasses})
+    env["LogitsProcessorOutput"] = logits_cls
+    names = ["get_logprob_dict_from_result", "get_logprob_from_pp_outputs"]
+    env.update(zip(names, extract(source, "managers/utils.py", names, dict(env))))
     extract(source, "managers/scheduler_pp_mixin.py", ["PPBatchMetadata", "_QWEN_PP_CONSENSUS_LAG", "_QWEN_PP_CE_VALIDATE", "_QwenPPCopyEngine", "_QwenPPLaunch", "_QwenPPLoop", "_QwenPPResultPublisher"], env)
     # Fewer validation launches than the server uses, so both phases run here.
     assert env["_QWEN_PP_CE_VALIDATE"] >= VALIDATE
@@ -822,6 +858,18 @@ def check(stages, transport, lag, corrupt):
             for actual, expected in zip((hidden, probs, index), reference[1:], strict=True):
                 torch.testing.assert_close(actual, expected, rtol=0, atol=0)
         assert reference[1].dtype == torch.bfloat16
+    # Every logprob request got the last stage's logprob outputs on every
+    # stage, including in microbatches beside requests without logprobs.
+    requested = sorted(rid for rid in admitted if logprob_request(rid))
+    assert any(len(rids) == 2 and logprob_request(rids[0]) != logprob_request(rids[1]) for rids in launched)
+    for rid in requested:
+        token = last.set_bufs[rid][0]
+        value = -torch.tensor(token).to(torch.float32) / 1000
+        expected = (token, value.item(), torch.stack([value, value - 1]).tolist(), [token, token + 1], 0)
+        assert last.logprobs[rid] == expected, (rid, last.logprobs[rid], expected)
+    for stage in stages:
+        assert sorted(stage.logprobs) == requested, stage.rank
+        assert stage.logprobs == last.logprobs, stage.rank
     # Release only after every stage finished its transfer, and all released.
     assert sorted(first.release_steps) == sorted(admitted)
     for stage in stages:
@@ -904,7 +952,7 @@ def main():
     for corrupt in (False, True):
         stages, transport, lag = run(source, corrupt)
         requests, batches = check(stages, transport, lag, corrupt)
-    print(f"PASS: four-stage direct-result PP loop, {STEPS} iterations, {batches} microbatches, {requests} requests: identical batches/state per iteration, stage-0 admission followed by every stage, KV only after each stage's own bootstrap (late stage-0 and last-stage bootstrap sent from the inflight queue, stage-0 and later-stage failure aborted at the common release), results at +{LOOP - 1} (stage 0 after its launch, later stages before it), threaded publish after completion, transfer poll after the launch, release {lag} after all four stages polled the transfer done (a transfer finished during the next launch released at result + {lag + 1}), bounded gloo sends, {LOOP} in flight, drained; proxies validated on both paths for {VALIDATE} launches, then copy engine (PyNccl after a corrupted slot)")
+    print(f"PASS: four-stage direct-result PP loop, {STEPS} iterations, {batches} microbatches, {requests} requests: identical batches/state per iteration, last-stage logprobs on every stage, stage-0 admission followed by every stage, KV only after each stage's own bootstrap (late stage-0 and last-stage bootstrap sent from the inflight queue, stage-0 and later-stage failure aborted at the common release), results at +{LOOP - 1} (stage 0 after its launch, later stages before it), threaded publish after completion, transfer poll after the launch, release {lag} after all four stages polled the transfer done (a transfer finished during the next launch released at result + {lag + 1}), bounded gloo sends, {LOOP} in flight, drained; proxies validated on both paths for {VALIDATE} launches, then copy engine (PyNccl after a corrupted slot)")
 
 
 if __name__ == "__main__":

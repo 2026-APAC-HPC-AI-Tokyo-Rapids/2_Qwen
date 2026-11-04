@@ -74,6 +74,8 @@ ARCHIVED_OVERLAYS = {
         "c08c6ba8b0805dca3e4e66b5be31c18c007a20267270b04ba82f479d8de627c5",
     ],
 }
+# Runtime overlays added after that run, appended in application order: the PP4 direct loop logprob relay.
+ADDED_OVERLAYS = {"sglang_overlay_patches": ["b311fd9a488015ee886e74027b7042c940a0893aa943b20d4862c2508c078c04"], "deep_gemm_overlay_patches": []}
 IMAGE = {"path": "/scratch/home/ACCOUNT/qwen/containers/41573354672.sqsh", "sha256": "a001f90142b571380894e9532e467c57b831397c9e2e9d613d9e04004c87def9", "size_bytes": 12298305536}
 # Config keys that only fed removed gates, diagnostics, overlay staging from the repository, or the vLLM path.
 DROPPED_KEYS = ("sglang_overlay_patches", "deep_gemm_overlay_patches", "kernel_settings_reference", "container_build_run_id", "container_sha256", "container_size_bytes", "container_source_commit", "profile_only", "decode_greedy_verify_gate")
@@ -94,11 +96,12 @@ ADDED_LINES = [
 ]
 
 
-@pytest.mark.parametrize("family,key,count", [("sglang", "sglang_overlay_patches", 32), ("deep-gemm", "deep_gemm_overlay_patches", 13)])
+@pytest.mark.parametrize("family,key,count", [("sglang", "sglang_overlay_patches", 33), ("deep-gemm", "deep_gemm_overlay_patches", 13)])
 def test_numbered_overlay_order_bytes_and_archived_hashes(family, key, count):
     copies = sorted((PACKAGE / "patches/overlay" / family).glob("*.patch"))
-    assert len(copies) == len(CONFIG[key]) == len(ARCHIVED_OVERLAYS[key]) == count
-    for index, (copy, original, digest) in enumerate(zip(copies, CONFIG[key], ARCHIVED_OVERLAYS[key], strict=True), 1):
+    digests = ARCHIVED_OVERLAYS[key] + ADDED_OVERLAYS[key]
+    assert len(copies) == len(CONFIG[key]) == len(digests) == count
+    for index, (copy, original, digest) in enumerate(zip(copies, CONFIG[key], digests, strict=True), 1):
         assert copy.name == f"{index:02d}-{Path(original).name}"
         assert copy.read_bytes() == (ROOT / original).read_bytes()
         assert hashlib.sha256(copy.read_bytes()).hexdigest() == digest
