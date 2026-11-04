@@ -349,10 +349,10 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.decode_greedy_verify_gate // false' "${
 fi
 # Decode greedy gate end.
 
-# Round 32 candidate / round 33 pooled gate; keep 660 s for serving and collection.
+# Round 32 candidate / round 33 pooled gate; keep 630 s for serving and collection (round 32 used 549 s after its gate).
 if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.megamoe_fc1_first_k_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
   mkdir -p "${ROOT}/results/prefill-megamoe-fc1-first-k"
-  if (( SECONDS + 105 + 660 <= 1020 )) && [[ -s "${ROOT}/results/prefill-fa3-prepack/selection.json" ]] && jq -e '.adopted == true' "${ROOT}/results/prefill-fa3-prepack/selection.json" >/dev/null; then
+  if (( SECONDS + 105 + 630 <= 1020 )) && [[ -s "${ROOT}/results/prefill-fa3-prepack/selection.json" ]] && jq -e '.adopted == true' "${ROOT}/results/prefill-fa3-prepack/selection.json" >/dev/null; then
     prefill_fc1_first_k_started=$(date +%s)
     prefill_fc1_first_k_ok=1
     prefill_fc1_first_k_selections=()
@@ -459,3 +459,4 @@ if (( benchmark_status != 0 )); then exit "${benchmark_status}"; fi
 echo "AIPERF ok"
 touch "${ROOT}/run-success"
 # Round 32 submit: FC1 first-K128 specialization with its twelve-GPU gate.
+# Round 33 submit: pooled FC1 first-K gate on the round 32 image.

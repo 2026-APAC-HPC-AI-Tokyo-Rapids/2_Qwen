@@ -117,6 +117,8 @@ HEAD2 worker同時起動はgateから**33.056/33.184秒**でtorchrun log、rank�
 
 round 33はworker deadlineをgate開始から **95秒**、kill grace **2秒**、aggregateまでの予算を **105秒**とする。HEADの約37秒の本体起動待ち＋約20秒の本体を見込み、残り約38秒を後始末とworker終了に確保する。95+2秒後から105秒まで約8秒を集約に残す。serving予約**660秒**と**1020秒**窓を保ち、実行時は必ず **`SECONDS + 105 + 660 <= 1020`**、すなわちSECONDS≤255の場合だけ開始する。round32の記録時刻に基づく推定では **250+105+660=1015秒≤1020秒**、HEAD同時起動遅延も105秒の中に含まれる。上記の保守上限でも **255+105+660=1020秒** と成立することを、READY前後の同一run時刻とsource順序から確認した。fixtureへこの時刻も入れて境界を検査する。次回も実行時のSECONDS判定を正本にし、条件が満たされなければ既存の不採用経路を使う。READY606秒や全体889秒から逆算してserving予約を削らない。
 
+**投入前の修正（Claude）**：上記の660秒予約ではgate開始の許容上限がSECONDS≤255になり、直近3 runのgate開始（r29 run 236秒、r30 run 255秒、r32 run 250秒、いずれもSlurm最初のlogとgate run_idから同一run内で算出）がその境界に張り付く。開始が数秒遅れるだけでgateが飛び、run 1回が無駄になる。round 32ではgateのtimeout終了（開始から約90秒）からjob終了（14:49=889秒）まで約549秒だったため、このgateに限りserving予約を**630秒**とし、条件を **`SECONDS + 105 + 630 <= 1020`**（SECONDS≤285）とする。549秒に対して81秒の余裕が残る。
+
 ### Round 32 image の一式pin
 
 build artifact `qwen-aws-container-build-41729881283-1/build-logs.tar.zst` の `logs/oci-manifest.json` のSHA256は `70bf5f49c01a97f376223252c66499ae78efc20e2c92dae94d64223971a0772c`、serving artifactの `container-sidecar.json` と一致。`image-manifest.json`、`sglang-image.sha256`、`provenance.json`、sidecarのsourceとimage情報も照合した。

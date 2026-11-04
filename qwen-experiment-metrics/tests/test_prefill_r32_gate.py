@@ -97,7 +97,7 @@ def test_worker_timeout_and_missing_p_reject(screen):
 def test_post_greedy_budget_and_staging():
     batch = (ROOT / "platforms/firmus/framework-comparison/sglang.sbatch").read_text()
     assert batch.index("# Decode greedy gate end.") < batch.index("# Round 32 candidate / round 33 pooled gate;") < batch.index('bash "${ROOT}/source/worker.sh" prefill-0')
-    assert "SECONDS + 105 + 660 <= 1020" in batch
+    assert "SECONDS + 105 + 630 <= 1020" in batch
     assert 'env DG_JIT_CACHE_DIR="/tmp/sglang-r32-' in batch and 'TRITON_CACHE_DIR="/tmp/sglang-r32-' in batch
     assert 'TVM_FFI_CACHE_DIR="/tmp/sglang-r32-' in batch
     assert '--env-output "${ROOT}/source/prefill-kernels.r32.env"' in batch
@@ -205,12 +205,12 @@ def test_round32_budget_with_head_container_delay():
     # First Slurm log 07:42:11+08, gate run_id 07:46:21+08.
     elapsed = fixture["gate_started_at"] - fixture["budget"]["slurm_first_log_at"]
     assert G["SECONDS"] == 95
-    assert elapsed + 105 + 660 == 1015
-    assert elapsed + 105 + 660 <= 1020
+    assert elapsed + 105 + 630 == 985
+    assert elapsed + 105 + 630 <= 1020
     # READY follows router startup on the same HEAD node. Allow one second
     # each for timestamp truncation and the shell SECONDS counter.
     upper = fixture["gate_started_at"] + 1 - fixture["budget"]["router_started_at"] + fixture["budget"]["ready_seconds"] + 2
-    assert upper == 255 and upper + 105 + 660 <= 1020
+    assert upper == 255 and upper + 105 + 630 <= 1020
     # HEAD torchrun appears after 33 s; rank body starts after about 36 s.
     for r in fixture["gpus"]:
         assert r["finished_at"] - fixture["gate_started_at"] < 56
