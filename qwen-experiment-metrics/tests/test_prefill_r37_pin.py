@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-PINS = {'DG_SM90_PREFILL_FC1_FIRST_K': [41767886175], 'DG_SM90_PREFILL_DENSE_FIRST_K': [41811427804]}
+PINS = {'DG_SM90_PREFILL_FC1_FIRST_K': [41767886175], 'DG_SM90_PREFILL_DENSE_FIRST_K': [41811427804], 'SGLANG_PREFILL_QKNORM_FIXED': [41822975123], 'SGLANG_PREFILL_ONEPASS_DIV448': [41822975123]}
 
 
 @pytest.mark.parametrize('key', PINS)
@@ -63,3 +63,29 @@ def test_dense_flag_requires_the_compiled_source_generator_contract():
     stage = (ROOT / 'scripts/stage-qwen-overlays.sh').read_text()
     assert 'stage_overlay deep-gemm deep_gemm_overlay_patches opt/sglang/venv/lib/python3.12/site-packages/deep_gemm deep_gemm' in stage
     assert 'csrc/jit_kernels' not in stage
+
+
+def test_r37_selection_is_retired_and_all_three_production_prewarms_stay():
+    config = json.loads((ROOT / 'configs/firmus-prefill-pp4.json').read_text())
+    shell = (ROOT / 'platforms/firmus/framework-comparison/sglang.sbatch').read_text()
+    provision = (ROOT / 'scripts/provision-firmus-framework.sh').read_text()
+    prepare = (ROOT / 'scripts/prepare-firmus-pp4-settings.py').read_text()
+    for text in (shell, provision, prepare, json.dumps(config)):
+        assert 'small_bundle_r37_gate' not in text
+        assert 'select-firmus-prefill-r37.py' not in text
+        assert 'run-firmus-prefill-r37.sh' not in text
+        assert 'prefill-kernels.r37.env' not in text
+    assert not (ROOT / 'scripts/select-firmus-prefill-r37.py').exists()
+    assert not (ROOT / 'scripts/run-firmus-prefill-r37.sh').exists()
+    assert not (ROOT / 'qwen-experiment-metrics/tests/test_prefill_r39_gate.py').exists()
+    assert shell.index('scripts/official-aiperf.sh') < shell.index('prefill-r37-dispatch-${worker}.txt')
+    assert "Prefill r37 [ABC] (prewarm done|using candidate|using control)" in shell
+    assert 'for worker in 0 1 2;' in shell
+    # This is the unchanged image-side hook, also executed with CPU doubles by
+    # test_prefill_r37_bundle; no scheduler or git history is needed.
+    patch = (ROOT / 'patches/sglang/prefill-small-bundle-r37.patch').read_text()
+    assert "('A', Dense," in patch and "('B', Writer," in patch and "('C', Onepass," in patch
+    assert 'case = factory(7988, weights)' in patch
+    assert patch.index("case.step('candidate')") < patch.index('torch.cuda.synchronize()') < patch.index('prewarm done')
+    assert 'self.server_args.disaggregation_mode == "prefill"' in patch
+    assert 'prewarm(self.model)' in patch

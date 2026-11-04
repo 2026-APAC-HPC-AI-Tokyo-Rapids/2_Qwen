@@ -149,8 +149,12 @@ install -m 0644 "${GITHUB_WORKSPACE}/kernels/fa3-verify/prefill-candidates.json"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-fa3.py" "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-kernels.sh" "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-megamoe.py" "${runtime_dir}/scripts/"
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/check-firmus-pp4-copy-engine.py" "${runtime_dir}/scripts/"
 # Independent Decode greedy gate; source changes require a fresh image build.
-install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-decode-greedy.py" "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-r37.py" "${GITHUB_WORKSPACE}/scripts/run-firmus-prefill-r37.sh" "${runtime_dir}/scripts/"
-cp "${runtime_dir}/scripts/select-firmus-decode-greedy.py" "${runtime_dir}/scripts/select-firmus-prefill-r37.py" "${runtime_dir}/scripts/run-firmus-prefill-r37.sh" "${runtime_dir}/source/"
+install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-decode-greedy.py" "${runtime_dir}/scripts/"
+cp "${runtime_dir}/scripts/select-firmus-decode-greedy.py" "${runtime_dir}/source/"
+# Round 41 upper-bound probe, separately timed before Prefill model startup.
+install -m 0644 "${GITHUB_WORKSPACE}/scripts/probe-firmus-megamoe-rescale.py" "${GITHUB_WORKSPACE}/scripts/run-firmus-megamoe-rescale-probe.sh" "${GITHUB_WORKSPACE}/scripts/launch-firmus-megamoe-rescale-probe.sh" "${runtime_dir}/scripts/"
+cp "${runtime_dir}/scripts/probe-firmus-megamoe-rescale.py" "${runtime_dir}/scripts/run-firmus-megamoe-rescale-probe.sh" "${runtime_dir}/scripts/launch-firmus-megamoe-rescale-probe.sh" "${runtime_dir}/source/"
+install -m 0644 "${GITHUB_WORKSPACE}/kernels/probes/megamoe-local-ep1-routing.npz" "${runtime_dir}/source/"
 # Round-17 P and optional P3 gate staging, independent of other optional gates.
 install -m 0644 "${GITHUB_WORKSPACE}/scripts/select-firmus-prefill-fa3-prepack.py" "${runtime_dir}/scripts/"
 cp "${runtime_dir}/scripts/select-firmus-prefill-fa3-prepack.py" "${runtime_dir}/source/"

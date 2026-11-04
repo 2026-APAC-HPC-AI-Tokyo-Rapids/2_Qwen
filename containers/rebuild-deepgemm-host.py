@@ -88,7 +88,7 @@ def main():
         shutil.copy2(built, target)
         # Load the real ABI in a fresh process without initializing a GPU.
         (temp / "libcuda.so.1").symlink_to("/usr/local/cuda/lib64/stubs/libcuda.so")
-        subprocess.run([sys.executable, "-c", "import deep_gemm; assert callable(deep_gemm.fp8_mega_moe); assert callable(deep_gemm.mega_moe_pre_dispatch_sm90)"], cwd=temp, env={**os.environ, "LD_LIBRARY_PATH": str(temp) + ":" + os.environ.get("LD_LIBRARY_PATH", "")}, check=True)
+        subprocess.run([sys.executable, "-c", "import deep_gemm; assert callable(deep_gemm.fp8_mega_moe); assert callable(deep_gemm.mega_moe_pre_dispatch_sm90); assert callable(deep_gemm._C.fp8_mega_moe_rescale_exposure_diagnostic)"], cwd=temp, env={**os.environ, "LD_LIBRARY_PATH": str(temp) + ":" + os.environ.get("LD_LIBRARY_PATH", "")}, check=True)
         assert sha256(header) == header_hash, "Host build must retain installed JIT header"
         result = {"source_commit": revision, "abi": "tvm-ffi", "entrypoint": "csrc/tvm_ffi_api.cpp", "patches": {name: sha256(patch) for name, patch in patches.items()}, "previous_extension_sha256": old_extension_hash, "extension_sha256": sha256(target), "retained_header_sha256": header_hash, "python": sys.version, "cuda_home": os.environ.get("CUDA_HOME", "/usr/local/cuda")}
         args.record.write_text(json.dumps(result, indent=2) + "\n")

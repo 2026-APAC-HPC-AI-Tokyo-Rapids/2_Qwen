@@ -1,0 +1,97 @@
+--- a/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
++++ b/csrc/jit_kernels/impls/sm90_fp8_mega_moe.hpp
+@@ -53,6 +53,7 @@
+         // And after that (DG_SM90_PREFILL_SPLIT_ACCUM, lean path without tail pairing), likewise.
+         bool prefill_split_accum;
+         bool prefill_fc1_first_k;
++        bool diagnostic_no_rescale = false;
+         MegaMoESM90Config config;
+ 
+         // Runtime arguments
+@@ -127,7 +128,9 @@
+     args.use_swap_ab ? "true" : "false",
+     args.prefill_split_accum ? ",\n        true,\n        false,\n        true" :
+         (args.prefill_tail_pair ? ",\n        true,\n        true" : (args.prefill_lean ? ",\n        true" : "")));
+-        return args.prefill_fc1_first_k ? "#define DG_SM90_PREFILL_FC1_FIRST_K 1\n" + source : source;
++        const auto production = args.prefill_fc1_first_k ? "#define DG_SM90_PREFILL_FC1_FIRST_K 1\n" + source : source;
++        // No environment switch: only the separate probe API instantiates this path.
++        return args.diagnostic_no_rescale ? "#define DG_R41_DIAGNOSTIC_NO_RESCALE 1\n#define sm90_fp8_mega_moe_impl sm90_fp8_mega_moe_rescale_exposure_diagnostic_impl\n" + production : production;
+     }
+ 
+     static void launch_impl(const KernelHandle& kernel, const LaunchConfigHandle& config, Args args) {
+@@ -149,6 +152,7 @@
+     }
+ };
+ 
++template <bool DiagnosticNoRescale = false>
+ static void sm90_fp8_mega_moe(
+     const torch::Tensor& y,
+     const torch::Tensor& l1_acts, const torch::Tensor& l1_acts_sf,
+@@ -221,6 +225,10 @@
+     // issue each warpgroup's accumulator as two m64n128 halves (sm90-prefill-split-accum.patch).
+     const bool prefill_split_accum = prefill_lean and not prefill_tail_pair and get_env<int>("DG_SM90_PREFILL_SPLIT_ACCUM", 0) != 0;
+     const bool prefill_fc1_first_k = prefill_split_accum and num_experts_per_rank == 128 and hidden == 4096 and intermediate_hidden == 1536 and get_env<int>("DG_SM90_PREFILL_FC1_FIRST_K", 0) != 0;
++
++    if constexpr (DiagnosticNoRescale) {
++        DG_HOST_ASSERT(prefill_fc1_first_k and num_tokens == 7988 and num_ranks == 1 and num_topk == 8);
++    }
+ 
+     // Tensormap construction
+     // Acts/weights: standard 2D TMA descriptors (FP8 K-major).
+@@ -319,6 +327,7 @@
+         .prefill_tail_pair = prefill_tail_pair,
+         .prefill_split_accum = prefill_split_accum,
+         .prefill_fc1_first_k = prefill_fc1_first_k,
++        .diagnostic_no_rescale = DiagnosticNoRescale,
+         .config = config,
+         .y = y.data_ptr(),
+         .cumulative_local_expert_recv_stats = cumulative_local_expert_recv_stats_ptr,
+--- a/csrc/apis/sm90_mega.hpp
++++ b/csrc/apis/sm90_mega.hpp
+@@ -137,6 +137,7 @@
+     return {reinterpret_cast<int64_t>(combine_token_buffer.get_end_ptr()), slice_input_buffers};
+ }
+ 
++template <bool DiagnosticNoRescale = false>
+ static void fp8_mega_moe(
+     const torch::Tensor& y,
+     const std::tuple<torch::Tensor, torch::Tensor>& l1_weights_tuple,
+@@ -204,7 +205,7 @@
+ 
+     const auto [x, x_sf, topk_idx, topk_weights, l1_acts, l1_acts_sf, l2_acts, l2_acts_sf] = slice(sym_buffer);
+ 
+-    sm90_fp8_mega_moe(y,
++    sm90_fp8_mega_moe<DiagnosticNoRescale>(y,
+                      l1_acts, l1_acts_sf,
+                      l2_acts, l2_acts_sf,
+                      l1_weights, l2_weights,
+--- a/csrc/tvm_ffi_api.cpp
++++ b/csrc/tvm_ffi_api.cpp
+@@ -769,6 +769,7 @@
+ }
+ 
+ 
++template <bool DiagnosticNoRescale = false>
+ void dg_fp8_mega_moe(TensorView y, TensorView l1_weights, TensorView l1_weights_sf, TensorView l2_weights, TensorView l2_weights_sf,
+                     Optional<TensorView> cumulative_local_expert_recv_stats, TensorView sym_buffer, Array<int64_t> sym_buffer_ptrs,
+                     int64_t rank_idx, int64_t num_max_tokens_per_rank, int64_t num_experts, int64_t num_topk,
+@@ -784,7 +785,7 @@
+     auto [recipe_a, recipe_b, recipe_c] = recipe;
+     auto recipe_val = std::make_tuple(static_cast<int>(recipe_a), static_cast<int>(recipe_b), static_cast<int>(recipe_c));
+ 
+-    mega::fp8_mega_moe(
++    mega::fp8_mega_moe<DiagnosticNoRescale>(
+         convert_to_torch_tensor(y),
+         std::make_pair(convert_to_torch_tensor(l1_weights), convert_to_torch_tensor(l1_weights_sf)),
+         std::make_pair(convert_to_torch_tensor(l2_weights), convert_to_torch_tensor(l2_weights_sf)),
+@@ -838,7 +839,9 @@
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(get_symm_buffer_size_for_sm90_mega_moe, dg_get_symm_buffer_size_for_sm90_mega_moe);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(fp8_fp4_mega_moe, dg_fp8_fp4_mega_moe);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(bf16_mega_moe, dg_bf16_mega_moe);
+-TVM_FFI_DLL_EXPORT_TYPED_FUNC(fp8_mega_moe, dg_fp8_mega_moe);
++// Serving is hardwired to false. The probe is the only caller of the separate symbol.
++TVM_FFI_DLL_EXPORT_TYPED_FUNC(fp8_mega_moe, dg_fp8_mega_moe<false>);
++TVM_FFI_DLL_EXPORT_TYPED_FUNC(fp8_mega_moe_rescale_exposure_diagnostic, dg_fp8_mega_moe<true>);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(mega_moe_pre_dispatch, dg_mega_moe_pre_dispatch);
+ TVM_FFI_DLL_EXPORT_TYPED_FUNC(mega_moe_pre_dispatch_sm90, dg_mega_moe_pre_dispatch_sm90);
+ 

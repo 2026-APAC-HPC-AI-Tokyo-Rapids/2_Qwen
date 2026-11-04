@@ -349,42 +349,26 @@ if [[ "${prefill_pp}" == 4 && "$(jq -r '.decode_greedy_verify_gate // false' "${
 fi
 # Decode greedy gate end.
 
+# Diagnostic only: the freed r37 window never writes a serving env/selection.
+if [[ "${prefill_pp}" == 4 ]]; then
+  mkdir -p "${ROOT}/results/megamoe-rescale-probe"
+  if (( SECONDS + 105 + 630 <= 1020 )); then
+    rescale_probe_run_id="${SLURM_JOB_ID}-$(date +%s)"
+    rescale_probe_status=0
+    timeout --signal=KILL 105 bash "${ROOT}/scripts/launch-firmus-megamoe-rescale-probe.sh" "${ROOT}" "${HEAD}" "${TAIL}" "${SGLANG}" "${rescale_probe_run_id}" "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" "$(mounts megamoe-rescale-0)" "$(mounts megamoe-rescale-1)" "$(mounts megamoe-rescale-2)" || rescale_probe_status=$?
+    if (( rescale_probe_status != 0 )); then
+      jq -n --arg run_id "${rescale_probe_run_id}" --argjson exit_code "${rescale_probe_status}" '{schema_version:"megamoe-rescale-exposure/v1",status:"incomplete",run_id:$run_id,exit_code:$exit_code,reason:"aggregate failed or 105 s hard timeout"}' >"${ROOT}/results/megamoe-rescale-probe/summary.json"
+    fi
+  else
+    printf '%s\n' '{"schema_version":"megamoe-rescale-exposure/v1","status":"skipped","reason":"insufficient remaining serving budget"}' >"${ROOT}/results/megamoe-rescale-probe/summary.json"
+  fi
+fi
+
 # FC1 first-K is pinned by prepare-firmus-pp4-settings.py after round 34.
 # Its native kernel still runs once per real Prefill process before readiness.
 
-# Round 37 reuses the retired FC1 budget. Three parallel worker groups, one torchrun each.
-# Dense first-K (A) is pinned after round 38; only B/C are evaluated here.
-# A still prewarms before readiness and is collected with the r37 dispatch logs.
-if [[ "${prefill_pp}" == 4 && "$(jq -r '.prefill.small_bundle_r37_gate // false' "${ROOT}/source/firmus-framework.json")" == true ]]; then
-  mkdir -p "${ROOT}/results/prefill-r37"
-  if (( SECONDS + 105 + 630 <= 1020 )); then
-    prefill_r37_started=$(date +%s)
-    prefill_r37_deadline=$((prefill_r37_started + 105))
-    prefill_r37_pids=()
-    prefill_r37_codes=()
-    for worker in 0 1 2; do
-      node=${HEAD}
-      if (( worker == 2 )); then node=${TAIL}; fi
-      timeout --kill-after=2 95 srun -N1 -n1 --exact -w "${node}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE --container-image="${SGLANG}" --container-mounts="$(mounts prefill-r37-${worker})" bash "${ROOT}/scripts/run-firmus-prefill-r37.sh" "${ROOT}" "${worker}" "${MODEL}" "${SLURM_JOB_ID}-${prefill_r37_started}" "$((prefill_r37_started + 95))" "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")" >"${ART}/prefill-r37-${worker}.log" 2>&1 &
-      prefill_r37_pids+=("$!")
-    done
-    for pid in "${prefill_r37_pids[@]}"; do
-      if wait "${pid}"; then prefill_r37_codes+=(0); else prefill_r37_codes+=("$?"); fi
-    done
-    prefill_r37_remaining=$((prefill_r37_deadline - $(date +%s)))
-    if (( prefill_r37_remaining > 0 )); then
-      cp "${ROOT}/source/prefill-kernels.env" "${ROOT}/source/prefill-kernels.r37.env"
-      if timeout --signal=KILL "${prefill_r37_remaining}" uv run --no-project --python 3.12 python "${ROOT}/scripts/select-firmus-prefill-r37.py" --aggregate "${ROOT}/results/prefill-r37" --output "${ROOT}/results/prefill-r37/selection.json" --env-output "${ROOT}/source/prefill-kernels.r37.env" --pair-selection "${ROOT}/results/prefill-fa3-pair/selection.json" --run-id "${SLURM_JOB_ID}-${prefill_r37_started}" --deadline "${prefill_r37_deadline}" --worker-exit-codes "${prefill_r37_codes[@]}" --image-sha256 "$(jq -r '.images.sglang.sha256' "${ROOT}/source/firmus-framework.json")"; then
-        mv "${ROOT}/source/prefill-kernels.r37.env" "${ROOT}/source/prefill-kernels.env"
-      fi
-      rm -f "${ROOT}/source/prefill-kernels.r37.env" "${ROOT}/source/prefill-kernels.r37.env.r37.tmp"
-    else
-      printf '%s\n' '{"candidates":{"B":{"adopted":false},"C":{"adopted":false}},"reason":"aggregate budget expired"}' >"${ROOT}/results/prefill-r37/selection.json"
-    fi
-  else
-    printf '%s\n' '{"candidates":{"B":{"adopted":false},"C":{"adopted":false}},"reason":"insufficient remaining serving budget"}' >"${ROOT}/results/prefill-r37/selection.json"
-  fi
-fi
+# A/B/C are pinned after rounds 38/39; no repeated kernel sweep or adoption gate.
+# All three still prewarm before readiness; post-aiperf dispatch collection stays.
 
 srun --exact -N1 -n1 -w "${HEAD}" --gres=gpu:4 --cpus-per-task=32 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts prefill-0)" bash "${ROOT}/source/worker.sh" prefill-0 30100 "${MODEL}" "${prefill_tp}" "${HEAD_IP}" "${speculation[@]}" "${tokenizer_args[@]}" "${prefill_args[@]}" --disaggregation-bootstrap-port 9000 >"${ART}/prefill-0.log" 2>&1 &
 worker_pids+=("$!")
