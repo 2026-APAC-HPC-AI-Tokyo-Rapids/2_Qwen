@@ -1,4 +1,4 @@
-"""CPU contracts for the fixed Firmus PP4 round 25 submission, independent of cluster access."""
+"""CPU contracts for the fixed Firmus PP4 round 34 submission, independent of cluster access."""
 from __future__ import annotations
 
 import hashlib
@@ -17,10 +17,10 @@ PACKAGE = ROOT / "submission"
 CONFIG_PATH = ROOT / "configs/firmus-prefill-pp4.json"
 CONFIG = json.loads(CONFIG_PATH.read_text())
 BATCH = PACKAGE / "run/submit.sbatch"
-EVIDENCE = PACKAGE / "results/41573354672"
-# Final env files the workers of Actions run 41573354672 sourced (source/source/*-kernels.env of its archive),
-# after the Prefill FA3 pair, Prefill FA3 prepack (P3) and Decode greedy gates adopted their candidates.
-PREFILL_ENV = "SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen-pipe+m192n96-pair-prepack-v3\nSGLANG_PREFILL_MOE_INPUT=onepass\nSGLANG_PREFILL_QKNORM=fp32\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_SPLIT_ACCUM=1\nSGLANG_PP4_PROXY_TRANSPORT=copy\n"
+EVIDENCE = PACKAGE / "results/41767886175"
+# Final env files the workers of Actions run 41767886175 sourced (source/source/*-kernels.env of its archive),
+# after the Prefill FA3 pair, Prefill FA3 prepack (P3), Decode greedy and Prefill FC1 first-K gates adopted their candidates.
+PREFILL_ENV = "SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen-pipe+m192n96-pair-prepack-v3\nSGLANG_PREFILL_MOE_INPUT=onepass\nSGLANG_PREFILL_QKNORM=fp32\nDG_SM90_PREFILL_4STAGE=1\nDG_SM90_PREFILL_LEAN=1\nDG_SM90_PREFILL_SPLIT_ACCUM=1\nSGLANG_PP4_PROXY_TRANSPORT=copy\nDG_SM90_PREFILL_FC1_FIRST_K=1\n"
 DECODE_ENV = "SGLANG_DECODE_FA3_VERIFY=p128split2-s3-fp8\nDG_SM90_1D2D_DECODE_CONFIG='QKV:128,144,5,1,0;QKV>128:192,80,5,1,0'\nSGLANG_DECODE_DENSE_GEMM_QKV=''\nSGLANG_DECODE_DENSE_GEMM_O=''\nSGLANG_DECODE_NORM_QUANT=wide\nSGLANG_DECODE_MOE_INPUT=fused\nSGLANG_DECODE_GREEDY_VERIFY=1\n"
 # Overlay SHA-256 values in application order, as recorded in that run's sglang-overlay.json and deep-gemm-overlay.json.
 ARCHIVED_OVERLAYS = {
@@ -57,6 +57,7 @@ ARCHIVED_OVERLAYS = {
         "2b7a7eef760fb862a438b2e666ecae1400b1b85938ba895d3f68858a224c4811",
         "9b0736da011b34b8e42cbc32e45b004be3ef0207d7bc1b44463d0ace9783cfa7",
         "0d9ea8b1ea34d34425f0e7bfa160c8ce040032c5bbdd8f9dc7a17939dde50189",
+        "d5cab287c80a2c3772598b617607e6696fff100da557aa4ac0c56f207fba9ff8",
     ],
     "deep_gemm_overlay_patches": [
         "d7738280f64f25feaa53f8cbb8d4b28f25a1b952c5f590974de87dd5073a5667",
@@ -72,17 +73,18 @@ ARCHIVED_OVERLAYS = {
         "703f3d7ef44c2e5f4b4bf29de67a3878e5aa03ef3ad06a04ead484b1c1d0fba6",
         "225026eb287ae95aeb38294aed51f0b42f69e04e06dcfc61a045d0127d33cf91",
         "c08c6ba8b0805dca3e4e66b5be31c18c007a20267270b04ba82f479d8de627c5",
+        "4a64fab225bd8a671631cdc34691f87492432e1179193dcfbb9c4912af7c4383",
     ],
 }
 # Runtime overlays added after that run, appended in application order: the PP4 direct loop logprob relay.
 ADDED_OVERLAYS = {"sglang_overlay_patches": ["b311fd9a488015ee886e74027b7042c940a0893aa943b20d4862c2508c078c04"], "deep_gemm_overlay_patches": []}
-IMAGE = {"path": "/scratch/home/ACCOUNT/qwen/containers/41573354672.sqsh", "sha256": "a001f90142b571380894e9532e467c57b831397c9e2e9d613d9e04004c87def9", "size_bytes": 12298305536}
+IMAGE = {"path": "/scratch/home/ACCOUNT/qwen/containers/41729881283.sqsh", "sha256": "3a47b757bb88f6bc14ad5f151e8405f645007f25f381f631d88046d9bd1b7b04", "size_bytes": 12296638464}
 # Config keys that only fed removed gates, diagnostics, overlay staging from the repository, or the vLLM path.
 DROPPED_KEYS = ("sglang_overlay_patches", "deep_gemm_overlay_patches", "kernel_settings_reference", "container_build_run_id", "container_sha256", "container_size_bytes", "container_source_commit", "profile_only", "decode_greedy_verify_gate")
-DROPPED_PREFILL_KEYS = ("gpu_sm_clock", "fa3_pair_gate", "fa3_prepack_gate", "fa3_v3_gate")
+DROPPED_PREFILL_KEYS = ("gpu_sm_clock", "fa3_pair_gate", "fa3_prepack_gate", "fa3_v3_gate", "megamoe_fc1_first_k_gate")
 
 
-@pytest.mark.parametrize("family,key,count", [("sglang", "sglang_overlay_patches", 33), ("deep-gemm", "deep_gemm_overlay_patches", 13)])
+@pytest.mark.parametrize("family,key,count", [("sglang", "sglang_overlay_patches", 34), ("deep-gemm", "deep_gemm_overlay_patches", 14)])
 def test_numbered_overlay_order_bytes_and_archived_hashes(family, key, count):
     copies = sorted((PACKAGE / "patches/overlay" / family).glob("*.patch"))
     digests = ARCHIVED_OVERLAYS[key] + ADDED_OVERLAYS[key]
@@ -112,14 +114,14 @@ def test_greedy_probe_changes_only_gateway_model_and_drops_its_check():
     assert (PACKAGE / "run/greedy-probe.py").read_text() == source
 
 
-def test_serving_configuration_matches_round25_config_and_image():
+def test_serving_configuration_matches_round34_config_and_image():
     expected = {key: value for key, value in CONFIG.items() if key not in DROPPED_KEYS}
     expected["prefill"] = {key: value for key, value in CONFIG["prefill"].items() if key not in DROPPED_PREFILL_KEYS}
     expected["images"] = {"sglang": {key: CONFIG["images"]["sglang"][key] for key in ("path", "sha256", "size_bytes")}}
     serving = json.loads((PACKAGE / "config/serving.json").read_text())
     assert serving == expected
     assert serving["images"]["sglang"] == IMAGE
-    assert CONFIG["container_build_run_id"] == 41573354672 and CONFIG["container_sha256"] == IMAGE["sha256"]
+    assert CONFIG["container_build_run_id"] == 41729881283 and CONFIG["container_sha256"] == IMAGE["sha256"]
     sidecar = json.loads((PACKAGE / "build/provenance.json").read_text())
     assert sidecar["container_artifact"]["sha256"] == IMAGE["sha256"] and sidecar["container_artifact"]["size_bytes"] == IMAGE["size_bytes"]
     assert sidecar["source_commits"] == {"qwen": CONFIG["container_source_commit"], "sglang": "fc275674a97d78553b22597ee72c8fd48f5420f4"}
@@ -142,34 +144,38 @@ def test_pinned_role_env_files_equal_archived_values():
 
 def test_pins_are_the_pp4_settings_plus_the_adopted_gate_outcomes(tmp_path):
     # Drift check: the provisioning settings script still produces the pre-gate env files, and the pins
-    # differ from them only by the three adopted gate outcomes recorded in the evidence.
+    # differ from them only by the four adopted gate outcomes recorded in the evidence.
     (tmp_path / "source").mkdir()
     (tmp_path / "results").mkdir()
     runpy.run_path(str(ROOT / "scripts/prepare-firmus-pp4-settings.py"))["prepare"](CONFIG, ROOT, tmp_path)
     pair = json.loads((EVIDENCE / "prefill-fa3-pair/selection.json").read_text())
     prepack = json.loads((EVIDENCE / "prefill-fa3-prepack/selection.json").read_text())
     greedy = json.loads((EVIDENCE / "decode-greedy/selection.json").read_text())
+    fc1 = json.loads((EVIDENCE / "prefill-megamoe-fc1-first-k/selection.json").read_text())
+    assert fc1["adopted"] is True
     assert pair["adopted"] is True and prepack["adopted"] is True and prepack["selected"] == "P3" and greedy["adopted"] is True and greedy["vocab_size"] == 151936
     prefill = (tmp_path / "source/prefill-kernels.env").read_text()
     decode = (tmp_path / "source/decode-kernels.env").read_text()
     assert "SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen-pipe\n" in prefill
     assert pair["env"] == {"SGLANG_PREFILL_FA3_VERIFY": "n192-direct-o-varlen-pipe+m192n96-pair"}
-    assert prefill.replace("SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen-pipe\n", "SGLANG_PREFILL_FA3_VERIFY=" + pair["env"]["SGLANG_PREFILL_FA3_VERIFY"] + "-prepack-v3\n") == PREFILL_ENV
+    assert prefill.replace("SGLANG_PREFILL_FA3_VERIFY=n192-direct-o-varlen-pipe\n", "SGLANG_PREFILL_FA3_VERIFY=" + pair["env"]["SGLANG_PREFILL_FA3_VERIFY"] + "-prepack-v3\n").replace("DG_SM90_PREFILL_FC1_FIRST_K=0\n", "DG_SM90_PREFILL_FC1_FIRST_K=1\n") == PREFILL_ENV
     assert decode.replace("SGLANG_DECODE_GREEDY_VERIFY=0\n", "SGLANG_DECODE_GREEDY_VERIFY=1\n") == DECODE_ENV
 
 
 # The package scripts were rewritten after the measured runs: for readability, and down to the steps of a
 # successful run (no argument, tool or input checks, traps, timeouts or fallbacks). The reference records are
-# submission_harness.py recordings of the scripts of commit a688495, which are the scripts of the standalone
-# run 41694678252 (Bonus) and of the measured Basic runs 41078642203 and 41093781934. They are compared with
-# exactly these documented differences:
+# submission_harness.py recordings of the scripts of commit a688495 (the scripts of the round 25 standalone run
+# 41694678252 and of the measured Basic runs 41078642203 and 41093781934), run with this package's current
+# configuration and overlays. They are compared with exactly these documented differences:
 #   - the Bonus worker launcher moved from a heredoc written to source/worker.sh to scripts/worker.sh;
 #   - removed checks: `git apply --check` before each overlay, and the in-job Basic server-info validator
-#     (check-basic-server-info.py, which the team workflow still runs on the collected files) and its copy.
+#     (check-basic-server-info.py, which the team workflow still runs on the collected files) and its copy;
+#   - added for round 34: the Bonus job records each Prefill worker's FC1 first-K dispatch lines.
 REFERENCE = ROOT / "qwen-experiment-metrics/tests/fixtures/submission-scripts"
 SCRIPT_FILES = {f"{directory}/{name}" for directory in ("scripts", "source") for name in ("submit.sbatch", "worker.sh", "prepare.sh", "greedy-probe.py")}
 REMOVED_EVENTS = {"bonus-prepare": re.compile(r"^git \S+ apply --check "), "basic-sbatch": re.compile(r"/check-basic-server-info\.py ")}
 REMOVED_FILES = {"basic-prepare": {"scripts/check-basic-server-info.py"}}
+ADDED_FILES = {"bonus-sbatch": {f"results/prefill-r32-dispatch-{worker}.txt" for worker in range(3)}}
 
 
 @pytest.mark.parametrize("kind", submission_harness.KINDS)
@@ -184,7 +190,8 @@ def test_scripts_do_what_the_measured_scripts_did(kind):
     assert actual["events"] == [event for event in expected["events"] if not (removed and removed.search(event))]
     # The same files with the same content, apart from the scripts themselves and the worker logs' banner lines.
     def files(tree):
-        return {path: None if path.startswith("logs/") and path.endswith(".log") else digest for path, digest in tree.items() if path not in SCRIPT_FILES | REMOVED_FILES.get(kind, set())}
+        return {path: None if path.startswith("logs/") and path.endswith(".log") else digest for path, digest in tree.items() if path not in SCRIPT_FILES | REMOVED_FILES.get(kind, set()) | ADDED_FILES.get(kind, set())}
+    assert ADDED_FILES.get(kind, set()) <= actual["tree"].keys()
     assert files(actual["tree"]) == files(expected["tree"])
 
 
@@ -239,7 +246,7 @@ def test_generic_launcher_shell_remains_byte_identical_to_parent():
 
 
 def test_curated_evidence_checksums_and_local_official_parser(tmp_path):
-    assert sorted(path.name for path in (PACKAGE / "results").iterdir()) == ["41573354672", "41694678252", "41766980300"]
+    assert sorted(path.name for path in (PACKAGE / "results").iterdir()) == ["41767886175"]
     checked = set()
     for line in (EVIDENCE / "SHA256SUMS").read_text().splitlines():
         digest, path = line.split("  ", 1)
@@ -252,10 +259,13 @@ def test_curated_evidence_checksums_and_local_official_parser(tmp_path):
     subprocess.run(["python3", str(PACKAGE / "run/parse-aiperf-result.py"), str(EVIDENCE / "profile_export_aiperf.json"), str(output), "--concurrency", str(CONFIG["concurrency"]), "--require-eligible", "--command", str(EVIDENCE / "aiperf-command.txt"), "--provenance", str(EVIDENCE / "aiperf-provenance.txt")], check=True)
     score = json.loads((EVIDENCE / "score.json").read_text())
     assert json.loads(output.read_text()) == score
-    assert round(score["good_output_tokens_per_second"], 2) == 10021.60 and score["request_count"] == 6320 and score["error_request_count"] == 0
-    assert (EVIDENCE / "logs/slurm-accounting.txt").read_text() == "28478|COMPLETED|0:0|00:13:22|2\n"
+    assert round(score["good_output_tokens_per_second"], 2) == 10054.49 and score["request_count"] == 6333 and score["error_request_count"] == 0
+    assert (EVIDENCE / "logs/slurm-accounting.txt").read_text() == "28660|COMPLETED|0:0|00:14:52|2\n"
     dispatch = re.findall(r"Decode greedy verify using fused kernels greedy_tiles/greedy_finish: rows=4 vocab=151936 stride=151936", (EVIDENCE / "logs/decode-0.log").read_text(errors="replace"))
     assert len(dispatch) == 4
+    for worker in range(3):
+        lines = (EVIDENCE / f"prefill-r32-dispatch-{worker}.txt").read_text().splitlines()
+        assert sum("prewarm done" in line for line in lines) == 4 and sum("using candidate" in line for line in lines) == 4
 
 
 def test_patch_inventory_lists_every_applied_patch_once_with_its_hash():
@@ -326,34 +336,3 @@ def test_basic_build_record_matches_pinned_image():
     assert sidecar["container_artifact"]["sha256"] == basic["container_sha256"] and sidecar["container_artifact"]["size_bytes"] == basic["container_size_bytes"]
     assert sidecar["source_commits"]["qwen"] == basic["container_source_commit"] and sidecar["applied_patches"] == []
     assert f"Successfully tagged localhost/apac-qwen-basic:{basic['container_source_commit']}" in (PACKAGE / "basic/build/build.log").read_text()
-
-
-def test_standalone_evidence_has_the_highest_score_and_the_probe_failure(tmp_path):
-    evidence = PACKAGE / "results/41694678252"
-    for line in (evidence / "SHA256SUMS").read_text().splitlines():
-        digest, path = line.split("  ", 1)
-        assert hashlib.sha256((evidence / path).read_bytes()).hexdigest() == digest
-    output = tmp_path / "score.json"
-    subprocess.run(["python3", str(PACKAGE / "run/parse-aiperf-result.py"), str(evidence / "profile_export_aiperf.json"), str(output), "--concurrency", str(CONFIG["concurrency"]), "--require-eligible", "--command", str(evidence / "aiperf-command.txt"), "--provenance", str(evidence / "aiperf-provenance.txt")], check=True)
-    score = json.loads((evidence / "score.json").read_text())
-    assert json.loads(output.read_text()) == score
-    assert round(score["good_output_tokens_per_second"], 2) == 10025.34 and score["request_count"] == 6316 and score["error_request_count"] == 0
-    assert (evidence / "logs/slurm-accounting.txt").read_text() == "28589|FAILED|1:0|00:13:05|2\n"
-    assert b"'NoneType' object has no attribute 'next_token_logprobs'" in (evidence / "logs/prefill-0.log").read_bytes()
-
-
-def test_final_standalone_run_served_logprob_requests(tmp_path):
-    evidence = PACKAGE / "results/41766980300"
-    for line in (evidence / "SHA256SUMS").read_text().splitlines():
-        digest, path = line.split("  ", 1)
-        assert hashlib.sha256((evidence / path).read_bytes()).hexdigest() == digest
-    output = tmp_path / "score.json"
-    subprocess.run(["python3", str(PACKAGE / "run/parse-aiperf-result.py"), str(evidence / "profile_export_aiperf.json"), str(output), "--concurrency", str(CONFIG["concurrency"]), "--require-eligible", "--command", str(evidence / "aiperf-command.txt"), "--provenance", str(evidence / "aiperf-provenance.txt")], check=True)
-    score = json.loads((evidence / "score.json").read_text())
-    assert json.loads(output.read_text()) == score
-    assert round(score["good_output_tokens_per_second"], 2) == 10016.33 and score["request_count"] == 6314 and score["error_request_count"] == 0
-    assert (evidence / "logs/slurm-accounting.txt").read_text() == "28658|COMPLETED|0:0|00:10:47|2\n"
-    probe = json.loads((evidence / "greedy-parity.json").read_text())
-    assert len(probe["responses"]) == 8 and all(len(r["response"]["choices"][0]["logprobs"]["content"]) == 64 for r in probe["responses"])
-    for name in ("prefill-0", "prefill-1", "prefill-2"):
-        assert b"next_token_logprobs" not in (evidence / f"logs/{name}.log").read_bytes()

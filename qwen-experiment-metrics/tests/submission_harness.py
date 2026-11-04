@@ -79,6 +79,8 @@ exit 0''')
   {PYTHON} -c 'import json,os,sys; skip={{"PWD","OLDPWD","SHLVL","_","PATH","HOME","LC_CTYPE"}}; json.dump({{"argv": sys.argv[2:], "env": {{k: v for k, v in os.environ.items() if k not in skip and not k.startswith("HARNESS")}}}}, open(sys.argv[1], "w"), indent=1, sort_keys=True)' "{harness}/launch/$HARNESS_KEY.json" "$@"
   # Each Decode rank logs once which greedy verify path it uses.
   if [[ "$HARNESS_KEY" == decode-0 ]]; then for rank in 0 1 2 3; do echo "Decode greedy verify using fused kernels greedy_tiles/greedy_finish: rows=4 vocab=151936 stride=151936"; done; fi
+  # Each Prefill stage logs its FC1 first-K prewarm and dispatch (prefill-megamoe-fc1-first-k-r32.patch).
+  if [[ "$HARNESS_KEY" == prefill-* ]]; then for stage in 0 1 2 3; do echo "Prefill r32 fc1-first-k prewarm done rows=7988 cap=8192"; echo "Prefill r32 fc1-first-k using candidate rows=4001 H=4096 I=1536"; done; fi
   exec sleep 600
 fi
 exec {PYTHON} "$@"''')

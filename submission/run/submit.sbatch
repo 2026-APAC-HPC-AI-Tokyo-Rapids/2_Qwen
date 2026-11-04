@@ -125,6 +125,8 @@ srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 "${CONTAINER[
 
 # Each Decode rank logs once whether it uses the fused greedy verify kernels.
 grep -a -h -o -E 'Decode greedy verify (using fused kernels|fallback).*' "${LOGS}/decode-0.log" | sort -u >"${RESULTS}/decode-greedy-dispatch.txt"
+# Each Prefill stage logs its FC1 first-K MegaMoE prewarm and which kernel it dispatches.
+for worker in 0 1 2; do grep -a -h -o -E 'Prefill r32 fc1-first-k (prewarm done|using candidate|using control).*' "${LOGS}/prefill-${worker}.log" >"${RESULTS}/prefill-r32-dispatch-${worker}.txt"; done
 while IFS=$'\t' read -r name address port _; do
   curl --fail --silent --show-error --max-time 15 "http://${address}:${port}/get_server_info" >"${RESULTS}/server-info-${name}.json"
 done <"${ENDPOINTS}"
