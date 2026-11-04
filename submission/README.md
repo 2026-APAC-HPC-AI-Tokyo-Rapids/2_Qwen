@@ -26,7 +26,7 @@ The kernel choices are fixed in `config/prefill-kernels.env` and `config/decode-
 ## What is here
 
 - `build/`: build entrypoint, public-source mirror reconstruction, three-commit Git bundle, and build 41573354672's original Buildah log and image sidecar.
-- `run/`: login-node preparation, one Slurm serving/benchmark job, unchanged AIPerf wrapper and local scorer, unchanged EAGLE preparation helper, unchanged PP4 GPU-order helper, and the post-benchmark greedy probe.
+- `run/`: login-node preparation (`prepare.sh`), the single Slurm serving/benchmark job (`submit.sbatch`) and the worker launcher it runs in the container (`worker.sh`), the unchanged AIPerf wrapper and local scorer, the unchanged EAGLE preparation helper, the unchanged PP4 GPU-order helper, and the post-benchmark greedy probe.
 - `config/`: serving settings, the pinned role env files and the PP4 GPU clock table.
 - [patches/README.md](patches/README.md): every image patch, kernel source and runtime overlay, with hashes, application points and numerical classifications (unestablished classes are marked `to confirm`).
 - `results/41694678252/`: curated evidence of the package's standalone run (highest score).
@@ -36,6 +36,8 @@ The kernel choices are fixed in `config/prefill-kernels.env` and `config/decode-
 The whole accompanying repository is required for rebuilding: `containers/`, `scripts/build-sglang-container.sh`, repository patches and `kernels/` are build inputs. Once an image exists, `submission/` is sufficient for preparation and execution of this Bonus package. Basic uses its separately documented whole-repository entrypoint. No private SGLang mirror, team credentials, GitHub Actions, or team-specific runtime directory is needed by the organisers.
 
 `run/official-aiperf.sh`, `run/run-aiperf.py`, `run/parse-aiperf-result.py`, `run/prepare_eagle.py` and `run/order-firmus-pp4-gpus.py` are byte-identical copies of `platforms/firmus/framework-comparison/official-aiperf.sh`, `scripts/run-aiperf.py`, `scripts/parse-aiperf-result.py`, `research/simulation/prepare_eagle.py` and `scripts/order-firmus-pp4-gpus.py`. `run/greedy-probe.py` is `research/simulation/greedy_probe.py` with only the gateway URL and model id turned into command-line arguments.
+
+`prepare.sh`, `submit.sbatch` and `worker.sh` were rewritten for readability after the standalone run (the worker launcher was a heredoc inside `submit.sbatch`, and branches for earlier configurations were removed). `test_scripts_do_exactly_what_the_measured_scripts_did` in `qwen-experiment-metrics/tests/test_submission_package.py` runs them with every cluster command stubbed and requires what the scripts of run 41694678252 did: the same srun steps and argv, the same `launch_server` argv and environment for every worker, the same ordered HTTP calls, the same image extractions and patch applications, and the same run-directory files.
 
 ## Build
 

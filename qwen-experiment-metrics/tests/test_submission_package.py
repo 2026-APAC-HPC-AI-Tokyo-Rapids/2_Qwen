@@ -10,13 +10,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import submission_harness
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "submission"
 CONFIG_PATH = ROOT / "configs/firmus-prefill-pp4.json"
 CONFIG = json.loads(CONFIG_PATH.read_text())
 BATCH = PACKAGE / "run/submit.sbatch"
-ORIGINAL = ROOT / "platforms/firmus/framework-comparison/sglang.sbatch"
 EVIDENCE = PACKAGE / "results/41573354672"
 # Final env files the workers of Actions run 41573354672 sourced (source/source/*-kernels.env of its archive),
 # after the Prefill FA3 pair, Prefill FA3 prepack (P3) and Decode greedy gates adopted their candidates.
@@ -80,20 +80,6 @@ IMAGE = {"path": "/scratch/home/ACCOUNT/qwen/containers/41573354672.sqsh", "sha2
 # Config keys that only fed removed gates, diagnostics, overlay staging from the repository, or the vLLM path.
 DROPPED_KEYS = ("sglang_overlay_patches", "deep_gemm_overlay_patches", "kernel_settings_reference", "container_build_run_id", "container_sha256", "container_size_bytes", "container_source_commit", "profile_only", "decode_greedy_verify_gate")
 DROPPED_PREFILL_KEYS = ("gpu_sm_clock", "fa3_pair_gate", "fa3_prepack_gate", "fa3_v3_gate")
-# Lines of submit.sbatch that are not lines of main's sglang.sbatch: submission paths, the pinned-env comment and the greedy probe.
-ADDED_LINES = [
-    "#SBATCH -o logs/slurm-%j.log",
-    "#SBATCH -e logs/slurm-%j.stderr.log",
-    'MODEL=$(jq -er .model.path "${ROOT}/source/model.json")',
-    "  local overlay_mount=",
-    "  # Patched packages staged by submission/run/prepare.sh.",
-    '  echo "/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,/dev/infiniband:/dev/infiniband${overlay_mount}"',
-    "# Kernel choices adopted by the in-job gates of Actions run 41573354672 (prefill-fa3-pair, prefill-fa3-prepack P3, decode-greedy);",
-    "# submission/run/prepare.sh installed the final env files those workers sourced. Workers source their role's file.",
-    'test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"',
-    "  # Team-side output check after the official benchmark (same gateway as the warm-up chat): eight fixed greedy prompts, 64 tokens each, with token logprobs.",
-    '  srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 --container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVIDIA_DISABLE_REQUIRE,MELLANOX_VISIBLE_DEVICES,MELLANOX_MOUNT_DRIVER --container-image="${SGLANG}" --container-mounts="$(mounts greedy-probe)" /opt/sglang/venv/bin/python "${ROOT}/scripts/greedy-probe.py" "${ROOT}/results" "http://${HEAD_IP}:${R_PORT}/v1/chat/completions" qwen >"${ART}/greedy-probe.log" 2>&1',
-]
 
 
 @pytest.mark.parametrize("family,key,count", [("sglang", "sglang_overlay_patches", 33), ("deep-gemm", "deep_gemm_overlay_patches", 13)])
@@ -172,76 +158,39 @@ def test_pins_are_the_pp4_settings_plus_the_adopted_gate_outcomes(tmp_path):
     assert decode.replace("SGLANG_DECODE_GREEDY_VERIFY=0\n", "SGLANG_DECODE_GREEDY_VERIFY=1\n") == DECODE_ENV
 
 
-def worker(text):
-    return text.split('cat >"${ROOT}/source/worker.sh" <<\'EOF\'\n', 1)[1].split("\nEOF\n", 1)[0]
+# The package scripts were rewritten for readability after the measured runs. The reference records were taken
+# with submission_harness.py from the scripts of commit a688495, which are the scripts of the standalone run
+# 41694678252 (Bonus) and of the measured Basic runs 41078642203 and 41093781934. The one path that moved,
+# the Bonus worker launcher (a heredoc written to source/worker.sh, now scripts/worker.sh), is normalised there.
+REFERENCE = ROOT / "qwen-experiment-metrics/tests/fixtures/submission-scripts"
+SCRIPT_FILES = {f"{directory}/{name}" for directory in ("scripts", "source") for name in ("submit.sbatch", "worker.sh", "prepare.sh")}
 
 
-def test_worker_is_unchanged_except_nsight_and_prefill_routing_capture():
-    expected = worker(ORIGINAL.read_text())
-    dormant = re.compile(r"if \[\[ -x /opt/nsys/bin/nsys \]\]; then\n.*?\nfi\n", re.DOTALL)
-    expected, count = dormant.subn("", expected)
-    assert count == 1
-    capture = re.compile(r"# Keep inherited diagnostic variables out of Decode and ordinary benchmark workers\.\n.*?\nfi\n", re.DOTALL)
-    expected, count = capture.subn("", expected)
-    assert count == 1
-    assert worker(BATCH.read_text()) == expected
+@pytest.mark.parametrize("kind", submission_harness.KINDS)
+def test_scripts_do_exactly_what_the_measured_scripts_did(kind):
+    expected = json.loads((REFERENCE / f"{kind}.json").read_text())
+    actual = submission_harness.record(kind, ROOT)
+    # Same srun steps with the same argv, same worker launch argv and environment, same ordered calls.
+    for key in ("srun", "cleanup_steps", "launch", "events"):
+        assert actual[key] == expected[key], key
+    # Same files with the same content, apart from the scripts themselves and the worker logs' banner lines.
+    def files(tree):
+        return {path: None if path.startswith("logs/") and path.endswith(".log") else digest for path, digest in tree.items() if path not in SCRIPT_FILES}
+    assert files(actual["tree"]) == files(expected["tree"])
 
 
-def test_diff_against_main_is_deletions_plus_listed_lines():
-    package = BATCH.read_text().splitlines()
-    original = ORIGINAL.read_text().splitlines()
-    assert [line for line in package if line not in original] == ADDED_LINES
-    # The remaining lines keep main's order: only deletions happened between them.
-    position = 0
-    for line in (line for line in package if line not in ADDED_LINES):
-        position = original.index(line, position) + 1
-
-
-def test_submission_has_no_selection_gate_telemetry_or_profile_execution():
-    text = BATCH.read_text()
+def test_bonus_job_has_no_selection_gate_telemetry_or_profile_step():
+    text = BATCH.read_text() + (PACKAGE / "run/worker.sh").read_text()
     active = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    for forbidden in ("PROFILE", "/opt/nsys", "profile_capture", "profiler_mount", "scripts/select-firmus-", "check-firmus-", "telemetry", "--loop", "collect-eagle-acceptance", "eagle-acceptance", "dense_selection", "fa3_selection", "--aggregate", "fa3_pair_gate", "fa3_prepack_gate", "decode_greedy_verify_gate", "profile_only", "routing_capture_samples", "SGLANG_PREFILL_ROUTING", "pp4-kernel-settings.json", "reused-kernel-selection", "timeout --", "torchrun", "uv run"):
+    for forbidden in ("PROFILE", "/opt/nsys", "profile_capture", "scripts/select-firmus-", "check-firmus-", "telemetry", "--loop", "collect-eagle-acceptance", "fa3_pair_gate", "fa3_prepack_gate", "decode_greedy_verify_gate", "profile_only", "routing_capture_samples", "SGLANG_PREFILL_ROUTING", "SGLANG_DECODE_ROUTING", "pp4-kernel-settings.json", "timeout --", "torchrun", "uv run"):
         assert forbidden not in active, forbidden
-    outside_worker = text.replace(worker(text), "")
-    assert "nvidia-smi" not in outside_worker
     for directive in ("#SBATCH -p hpcai", "#SBATCH -N 2", "#SBATCH -t 00:17:00", "#SBATCH --gres=gpu:8"):
         assert directive in text
-    assert 'ROOT=${SLURM_SUBMIT_DIR}' in text
-    assert 'SGLANG=${ROOT}/sglang.sqsh' in text
-    assert 'test -s "${ROOT}/source/prefill-kernels.env" && test -s "${ROOT}/source/decode-kernels.env"' in text
-
-
-def test_serving_launches_warmup_benchmark_and_probe_order():
-    def critical(text):
-        text = text.split('test -s "${ROOT}/results/score.json"', 1)[0]
-        return [line for line in text.splitlines() if line.startswith(("srun --exact", "srun --overlap -N1", "wait_http ", 'echo "READY', "  curl --fail", "curl --fail", "while IFS=$'\\t' read -r worker host port _; do curl"))]
-    assert critical(BATCH.read_text()) == critical(ORIGINAL.read_text())
-    text = BATCH.read_text()
-    marks = ['>"${ROOT}/results/server-info-${worker}.json"', '>"${ROOT}/results/sanity-chat.json"', "/freeze_gc", 'bash "${ROOT}/scripts/official-aiperf.sh"', 'test -s "${ROOT}/results/score.json"', "results/decode-greedy-dispatch.txt", "if (( benchmark_status == 0 )); then", '"${ROOT}/scripts/greedy-probe.py"', 'echo "AIPERF ok"']
-    positions = [text.index(mark) for mark in marks]
-    assert positions == sorted(positions)
-    assert text.count('"${ROOT}/scripts/greedy-probe.py"') == 1
-    assert text.count('bash "${ROOT}/scripts/official-aiperf.sh"') == 1
-    dispatch = next(line for line in ORIGINAL.read_text().splitlines() if "decode-greedy-dispatch.txt" in line)
-    assert "(using fused kernels|fallback).*'" in dispatch and dispatch in text
-
-
-def test_draft_precision_launch_and_runtime_check_match_canonical():
-    package = BATCH.read_text()
-    canonical = ORIGINAL.read_text()
-    def arguments(text):
-        return text.split("speculation=(", 1)[1].split("decode_graph=(", 1)[0]
-    assert arguments(package) == arguments(canonical)
-    precision_check = next(line for line in canonical.splitlines() if ".speculative_draft_model_quantization ==" in line)
-    assert precision_check in package
-    assert package.index(precision_check) < package.index('bash "${ROOT}/scripts/official-aiperf.sh"')
     assert json.loads((PACKAGE / "config/serving.json").read_text())["speculation"]["draft_quantization"] == "fp8"
 
 
-def test_prepare_stages_the_keep_actions_only():
+def test_bonus_prepare_stages_no_tuning_step():
     text = (PACKAGE / "run/prepare.sh").read_text()
-    for required in ('[[ $# -eq 4 ]]', 'mkdir "${runtime_dir}"', '.images.sglang.size_bytes', '.images.sglang.sha256', 'e156cb4efae43fbee1a1ab073f946a1377e6b969', '== 24 ]]', 'ac9c66cc9b46af7306746a9250f23d47083d689e', 'bf226a966868fe413a22e62e471aa1130bd94f17fd2c40d322b1c8b4def1ae86', 'stage_overlay sglang opt/sglang/source/python/sglang python/sglang', 'stage_overlay deep-gemm opt/sglang/venv/lib/python3.12/site-packages/deep_gemm deep_gemm', 'install -m 0644 "${package}/config/prefill-kernels.env" "${package}/config/decode-kernels.env" "${runtime_dir}/source/"', 'install -m 0644 "${package}/config/firmus-gpu-sm-clock.json" "${runtime_dir}/source/firmus-gpu-sm-clock.json"', '"${package}/run/order-firmus-pp4-gpus.py"', '"${package}/run/greedy-probe.py"', "sbatch scripts/submit.sbatch"):
-        assert required in text, required
     for forbidden in ("check-firmus-pp4-cpu", "check-firmus-image", "prepare-firmus-pp4-settings", "prefill-expert-location", "GITHUB_"):
         assert forbidden not in text, forbidden
 
