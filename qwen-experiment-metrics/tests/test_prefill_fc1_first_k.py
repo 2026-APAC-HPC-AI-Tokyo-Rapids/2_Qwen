@@ -119,9 +119,9 @@ def test_actual_overlay_stage_publish_and_half_initialization(tmp_path):
     subprocess.run([str(tmp_path / "schedule")], check=True, capture_output=True)
 
 
-def test_candidate_is_last_overlay_and_runtime_starts_disabled():
+def test_fc1_overlay_remains_and_runtime_is_pinned():
     config = json.loads((ROOT / "configs/firmus-prefill-pp4.json").read_text())
     assert config["deep_gemm_overlay_patches"][-1] == "patches/deep-gemm-overlay/sm90-prefill-fc1-first-k.patch"
-    assert config["prefill"]["megamoe_fc1_first_k_gate"] is True
+    assert "megamoe_fc1_first_k_gate" not in config["prefill"]
     assert (ROOT / "patches/deep-gemm-host/series").read_text().split()[-1] == "sm90-prefill-fc1-first-k.patch"
-    assert '"DG_SM90_PREFILL_FC1_FIRST_K": "0"' in (ROOT / "scripts/prepare-firmus-pp4-settings.py").read_text()
+    assert '"DG_SM90_PREFILL_FC1_FIRST_K": "1"' in (ROOT / "scripts/prepare-firmus-pp4-settings.py").read_text()

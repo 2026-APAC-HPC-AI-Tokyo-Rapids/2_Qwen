@@ -145,7 +145,7 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
     for sub in ('source', 'results'):
         (tmp_path / sub).mkdir()
     prepare['prepare'](config, ROOT, tmp_path)
-    # Literal final maps from 41040348302, with shell quoting decoded and the last assignment winning.
+    # Settled pins, including round 34 FC1; shell quoting decoded, last assignment wins.
     expected = {
         'prefill': {
             'SGLANG_PREFILL_MOE_INPUT': 'onepass',
@@ -153,7 +153,7 @@ def test_pp4_pins_the_repeated_selections_instead_of_screening(tmp_path):
             'DG_SM90_PREFILL_4STAGE': '1',
             'DG_SM90_PREFILL_LEAN': '1',
             'DG_SM90_PREFILL_SPLIT_ACCUM': '1',
-            'DG_SM90_PREFILL_FC1_FIRST_K': '0',
+            'DG_SM90_PREFILL_FC1_FIRST_K': '1',
             'SGLANG_PREFILL_FA3_VERIFY': 'n192-direct-o-varlen-pipe',
             'SGLANG_PP4_PROXY_TRANSPORT': 'copy',
         },

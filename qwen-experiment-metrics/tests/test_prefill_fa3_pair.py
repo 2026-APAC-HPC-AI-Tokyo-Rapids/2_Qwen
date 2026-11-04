@@ -229,7 +229,6 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     config['prefill']['fa3_prepack_gate'] = enabled
     config['prefill']['fa3_v3_gate'] = enabled
     config['decode_greedy_verify_gate'] = enabled
-    config['prefill']['megamoe_fc1_first_k_gate'] = enabled
     for name in ('source', 'results'):
         (tmp_path / name).mkdir()
     runpy.run_path(str(ROOT / 'scripts/prepare-firmus-pp4-settings.py'))['prepare'](config, ROOT, tmp_path)
@@ -239,7 +238,9 @@ def test_prepare_keeps_control_and_records_optional_gate(tmp_path, enabled):
     assert record['no_gpu_selection_rerun'] is not enabled
     assert record['fa3_prepack_gate'] is enabled and record['fa3_v3_gate'] is enabled
     assert record['decode_greedy_verify_gate'] is enabled
-    assert record['megamoe_fc1_first_k_gate'] is enabled
+    assert 'megamoe_fc1_first_k_gate' not in record
+    assert record['pp4_selected']['DG_SM90_PREFILL_FC1_FIRST_K'] == '1'
+    assert record['pp4_selected_runs']['DG_SM90_PREFILL_FC1_FIRST_K'] == [41767886175]
     assert 'SGLANG_DECODE_GREEDY_VERIFY=0\n' in (tmp_path/'source/decode-kernels.env').read_text()
 
 

@@ -44,7 +44,6 @@ import argparse
 import json
 import os
 import statistics
-import sys
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -370,29 +369,8 @@ if __name__ == "__main__":
     parser.add_argument("--env-output", type=Path)
     parser.add_argument("--endurance", type=Path, help="per-worker endurance results (aggregate), or the selection results to gate (endurance run)")
     parser.add_argument("--workers", type=int, choices=(2, 3), default=3)
-    parser.add_argument("--fc1-first-k", action="store_true")
-    parser.add_argument("--run-id")
-    parser.add_argument("--deadline", type=float)
-    parser.add_argument("--pair-selection", type=Path)
-    parser.add_argument("--image-sha256")
-    parser.add_argument("--worker-exit-codes", type=int, nargs="*")
-    parser.add_argument("--routing", type=Path)
     args = parser.parse_args()
-    if args.fc1_first_k:
-        import firmus_prefill_fc1_first_k
-
-        assert args.run_id and args.deadline and args.image_sha256
-        if args.aggregate:
-            assert args.env_output and args.pair_selection and args.worker_exit_codes is not None
-            result = firmus_prefill_fc1_first_k.aggregate(args.aggregate, args.env_output, args.pair_selection, args.run_id, args.deadline, args.worker_exit_codes, args.image_sha256)
-            args.output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
-            print(json.dumps({k: v for k, v in result.items() if k != "gpus"}), flush=True)
-        else:
-            assert args.routing
-            firmus_prefill_fc1_first_k.run(prepare, args.output, args.routing, args.run_id, args.deadline, args.image_sha256, reference_rows, errors)
-            # Temporary diagnostic at main return, after run() locals are released.
-            print(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] FC1 first-K rank={os.environ['LOCAL_RANK']} main returning", file=sys.stderr, flush=True)
-    elif args.aggregate:
+    if args.aggregate:
         assert args.env_output is not None and args.endurance is not None
         aggregate(args.aggregate, args.output, args.env_output, args.workers, args.endurance)
     elif args.endurance:

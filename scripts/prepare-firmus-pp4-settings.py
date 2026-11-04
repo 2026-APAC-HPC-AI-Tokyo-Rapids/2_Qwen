@@ -47,6 +47,9 @@ from pathlib import Path
 #   PP4 proxy: copy. Each run's decode-selection env files and copy-engine selection.json agree.
 # - Keep onepass and fp32: onepass-split lost 88.9 -> 90.2 us, fp32-heads4 lost 72.0 -> 81.0 us
 #   at 8064 rows, and fp32-heads8 was slower at 4032 rows in 41040348302.
+# Round 34, run 41767886175: all twelve GPUs passed the published-result gate,
+# all twelve serving processes prewarmed/dispatched first-K, official score 10054.49.
+# Retire the repeated FC1 gate; retain the process-local preparation and dispatch log.
 PP4_SELECTED = {
     "SGLANG_PREFILL_FA3_VERIFY": "n192-direct-o-varlen-pipe",
     "SGLANG_PREFILL_MOE_INPUT": "onepass",
@@ -55,6 +58,7 @@ PP4_SELECTED = {
     "DG_SM90_PREFILL_4STAGE": "1",
     "DG_SM90_PREFILL_LEAN": "1",
     "DG_SM90_PREFILL_SPLIT_ACCUM": "1",
+    "DG_SM90_PREFILL_FC1_FIRST_K": "1",
     "SGLANG_PP4_PROXY_TRANSPORT": "copy",
     "SGLANG_DECODE_MOE_INPUT": "fused",
     "DG_SM90_1D2D_DECODE_CONFIG": "QKV:128,144,5,1,0;QKV>128:192,80,5,1,0",
@@ -68,6 +72,7 @@ PP4_SELECTED_RUNS = {
     "DG_SM90_PREFILL_4STAGE": [41005872470, 41020974704, 41040348302],
     "DG_SM90_PREFILL_LEAN": [41005872470, 41020974704, 41040348302],
     "DG_SM90_PREFILL_SPLIT_ACCUM": [41005872470, 41020974704, 41040348302],
+    "DG_SM90_PREFILL_FC1_FIRST_K": [41767886175],
     "SGLANG_PP4_PROXY_TRANSPORT": [41005872470, 41020974704, 41040348302],
     "SGLANG_DECODE_MOE_INPUT": [41005872470, 41020974704, 41040348302],
     "DG_SM90_1D2D_DECODE_CONFIG": [41005872470, 41020974704, 41040348302],
@@ -102,7 +107,7 @@ def prepare(config, repo, runtime):
     # changes host dispatch and topology and is explicitly NOT a prior result.
     for entry in record["patches"] + record["extra_files"]:
         previous["file_sha"](repo, entry)
-    environment = {**record["environment"], **PP4_SELECTED, "SGLANG_DECODE_GREEDY_VERIFY": "0", "DG_SM90_PREFILL_FC1_FIRST_K": "0"}
+    environment = {**record["environment"], **PP4_SELECTED, "SGLANG_DECODE_GREEDY_VERIFY": "0"}
     for role in ("prefill", "decode"):
         names = {
             k: v
@@ -127,8 +132,7 @@ def prepare(config, repo, runtime):
     payload["fa3_v3_gate"] = p.get("fa3_v3_gate", False)
     assert not payload["fa3_v3_gate"] or payload["fa3_prepack_gate"], "V3 gate requires prepack gate"
     payload["decode_greedy_verify_gate"] = config.get("decode_greedy_verify_gate", False)
-    payload["megamoe_fc1_first_k_gate"] = p.get("megamoe_fc1_first_k_gate", False)
-    if payload["fa3_prepack_gate"] or payload["decode_greedy_verify_gate"] or payload["megamoe_fc1_first_k_gate"]:
+    if payload["fa3_prepack_gate"] or payload["decode_greedy_verify_gate"]:
         payload["no_gpu_selection_rerun"] = False
 
     for directory in ("source", "results"):
