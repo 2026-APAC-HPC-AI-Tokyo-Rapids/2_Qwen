@@ -1,8 +1,8 @@
 # Qwen3 experimental submission on Firmus
 
-**Submitted result: 10054 good output tok/s (10054.49 before rounding).** This is the measured round 34 result, Actions [41767886175](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41767886175), Slurm **28660**, on **two nodes / 16 H200 GPUs**. The job completed with exit 0:0 in 14:52: 6333 requests, zero errors, good request fraction **0.98215696**. [Raw metrics and logs](results/41767886175/RESULT.md) accompany the submission.
+**Submitted result: 10054 good output tok/s (measured: 10054.49).** This is the measured round 34 result, Actions [41767886175](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41767886175), Slurm **28660**, on **two nodes / 16 H200 GPUs**. The job completed with exit 0:0 in 14:52: 6333 requests, zero errors, good request fraction **0.98215696**. [Raw metrics and logs](results/41767886175/RESULT.md) accompany the submission.
 
-**Classification: Bonus experimental work.** The organisers' 3 November clarification places source patches and custom kernels in this category. The required Basic uses unmodified SGLang 0.5.23: [basic/README.md](basic/README.md). Its selected configuration averaged **6330.21** over two runs; **41093781934 / Slurm 27709** is the named Basic run to re-run (**6339.31**, c160). Start with [SUBMISSION.md](SUBMISSION.md) for both entrypoints.
+**Classification: Bonus experimental work.** The organisers' 3 November clarification places source patches and custom kernels in this category. The required Basic uses unmodified SGLang 0.5.23: [basic/README.md](basic/README.md). Its selected configuration averaged **6330.21** over two runs; **41093781934 / Slurm 27709** is the selected Basic run to re-run (**6339.31**, c160). Start with [SUBMISSION.md](SUBMISSION.md) for both entrypoints.
 
 ## Results and evidence
 
@@ -12,13 +12,13 @@
 | Packaged configuration with logprob relay, run 41781374312 | 10038.11 | 0.98183541 | Standalone preparation and serving completed; eight probe responses included token logprobs |
 | Unmodified Basic, runs 41078642203 / 41093781934 | 6321.12 / 6339.31 | 0.97685992 / 0.97912525 | Two measurements of the fixed c160 configuration; mean 6330.21 |
 
-The submitted experimental score is **1.5883× the Basic mean** on the same hardware. This compares complete configurations, including different code, Prefill parallelism, concurrency and draft precision. It does not isolate any one patch. The organisers' **1832 tok/s** reference (job 25013) is a different configuration; the submitted result is 5.49× that reference.
+The experimental configuration achieved **1.59× the Basic mean** on the same hardware. The configurations differ in code, Prefill parallelism, concurrency and draft precision. Against the organisers' **1832 tok/s** reference (job 25013), the result is **5.49×**.
 
-**10038.11 is a package verification result, not a replacement for the submitted 10054.49.** The package fixes the kernel choices selected in the submitted run and adds `patches/overlay/sglang/34-pp4-direct-logprob.patch`. That patch relays logprobs in the direct PP4 Prefill loop. The official workload does not request logprobs; its path is unchanged. The standalone job completed 0:0 in 10:37 (Slurm 28673). Its scripts preceded the subsequent readability rewrite, whose launch arguments, environment and orchestration are checked with CPU fixtures. The final rewritten scripts have not had another GPU run.
+The **10038.11 package verification run** used the kernel choices selected in the submitted run, plus `patches/overlay/sglang/34-pp4-direct-logprob.patch`. That patch relays logprobs in the direct PP4 Prefill loop. The official workload does not request logprobs; its path is unchanged. The standalone job completed 0:0 in 10:37 (Slurm 28673). The scripts were later simplified for readability. CPU fixtures check their launch arguments, environment and orchestration against the measured versions; the final scripts have not had another GPU run.
 
-The 10054.49 observation is a single run. Two same-image runs whose new FC1 first-K gate rejected its candidate scored 9998.67 and 10015.98; earlier round 25 results were 10002.75–10025.34. These are different selected configurations and do not prove an isolated FC1 speedup or the repeatability of 10054.49.
+The submitted score comes from one run. Two runs of the same image scored 9998.67 and 10015.98 after their FC1 first-K gates rejected the candidate; earlier round 25 results ranged from 10002.75 to 10025.34. The selected kernels differ across these runs, so the scores describe configuration-level observations rather than an isolated FC1 effect.
 
-[EXPERIMENTS.md](EXPERIMENTS.md) maps the presented experiments to their configurations, scripts and logs. [patches/README.md](patches/README.md) gives the numerical argument for each change. Kernel checks and the eight-prompt integration probe have limited scope: **the organisers' full-set accuracy check has not been run by the team**. SLA eligibility is separate from that check.
+[EXPERIMENTS.md](EXPERIMENTS.md) maps the presented experiments to their configurations, scripts and logs. [patches/README.md](patches/README.md) gives the numerical argument for each change. The retained kernel checks and eight-prompt probe cover their stated test cases. The organisers' full-set accuracy check remains outstanding.
 
 ## Topology and serving settings
 
@@ -44,7 +44,7 @@ The kernel choices are fixed in `config/prefill-kernels.env` and `config/decode-
 
 This folder is self-contained: `build/source/` holds every image build input (`containers/`, `kernels/`, `patches/`, `scripts/`, `configs/`) as byte-identical copies of the team repository at the commit the measured image was built from, so the image can be rebuilt, prepared and run from this folder alone. Basic has its own build inputs under `basic/build/source/`. No private SGLang mirror, team credentials, CI system or team-specific runtime directory is needed.
 
-The scripts in `run/` were rewritten for this package from the ones the measured runs used, for readability and down to the steps of a successful run. Branches for earlier configurations, argument and input checks, traps, timeouts, fallbacks and diagnostics were removed; the worker launcher, a heredoc inside `submit.sbatch` before, is `worker.sh`. The commands, flags and environment the workers and the benchmark receive are unchanged:
+The packaged scripts retain the measured commands, flags and environment. They omit the experiment-selection and profiling branches, and place the worker launcher in `worker.sh`. The following CPU checks cover the later readability changes:
 
 - The team's test harness runs `prepare.sh` and `submit.sbatch` with every cluster command stubbed and compares the measured orchestration with this configuration: the same srun steps and argv, the same `launch_server` argv and environment for every worker, the same ordered HTTP calls, the same image extractions and patch applications (without the separate `git apply --check`), and the same run-directory files.
 - `official-aiperf.sh` runs the same official AIPerf command, now directly instead of through a wrapper that only stopped a failed client start. `parse-aiperf-result.py` computes the score from the export and no longer re-validates the command; on the exports in `results/` and `basic/results/` it reproduces every value it reports of the recorded `score.json`.

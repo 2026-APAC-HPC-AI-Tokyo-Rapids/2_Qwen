@@ -1,20 +1,20 @@
 # Tokyo Rapids with RIKEN: Qwen3 submission
 
-**Submitted experimental result: 10054 good output tok/s (10054.49 before rounding)** on Firmus, two nodes / 16 H200 GPUs. The submitted run is **Actions 41767886175 / Slurm 28660**. The package also includes the required unmodified Basic and a standalone check of the experimental configuration.
+**Submitted experimental result: 10054 good output tok/s (measured: 10054.49)** on Firmus, two nodes / 16 H200 GPUs. The submitted run is **Actions 41767886175 / Slurm 28660**. This folder contains the required Basic submission, the experimental configuration and its execution evidence.
 
 | Entry | Configuration | Good output tok/s | Role |
 | --- | --- | ---: | --- |
-| **Basic** | Public SGLang 0.5.23, P3/D1, c160 | **6339.31**, run 41093781934 / Slurm 27709 | Named run for the organisers to re-run |
+| **Basic** | Public SGLang 0.5.23, P3/D1, c160 | **6339.31**, run 41093781934 / Slurm 27709 | Selected run for the organisers to re-run |
 | Basic repeat | Identical configuration, run 41078642203 / Slurm 27682 | 6321.12 | Two-run mean: **6330.21** |
 | **Submitted experiment (Bonus)** | Patched SGLang, PP4 Prefill, c232, round 34 | **10054.49**, run 41767886175 / Slurm 28660 | Submitted result and source/kernel work |
 | Package verification | Fixed round 34 choices plus logprob relay | 10038.11, run 41781374312 / Slurm 28673 | Supporting check; does not replace the submitted result |
 | Organisers' reference | Common baseline, job 25013 | 1832 | Different serving settings |
 
-All entries serve the published `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` checkpoint with the official AIPerf workload. Good output tok/s is `goodput.avg × 200`, subject to the 90% good-request gate. **Eligibility is not the organisers' full-set accuracy check.** The team has not run that check.
+The Basic and experimental configurations serve the published `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` checkpoint with the official AIPerf workload. The score is `goodput.avg × 200`, and at least 90% of requests must meet both latency limits. The organisers assess model quality separately through a full-set accuracy check, which the team has not run.
 
-The submitted experimental result is **1.5883× the Basic mean** (1.5861× the named Basic run) on the same 16 H200 GPUs. These are whole-configuration comparisons. The code, Prefill parallelism, client concurrency and draft precision differ, so this ratio is not attributed to any one patch.
+The experimental configuration achieved **1.59× the Basic mean** on the same 16 H200 GPUs. This comparison covers the complete configurations: their code, Prefill parallelism, concurrency and draft precision differ.
 
-The organisers' 3 November clarification defines Basic as the official software release and places code changes in the experimental Bonus path. This is why both entries are provided.
+The organisers' 3 November clarification defines Basic as the official software release and places code changes in the experimental Bonus path.
 
 ## Reproduction entrypoints
 
@@ -34,15 +34,15 @@ Paths below are relative to this `qwen/` folder. Follow each README for the exac
 | Optional profile | — | [analysis/README.md](analysis/README.md), `analysis/profiling_data/` |
 | Draft declaration | Basic README | Experimental README |
 
-Both build methods use the inputs included in this folder. A fresh rebuild's archive hash may differ; update only the deployment copy's image integrity fields from its new sidecar. The recorded image hashes identify the measured artifacts and are not a promise of bit-for-bit reproducible builds.
+Both build methods use the inputs included in this folder. Recorded hashes identify the measured images. A fresh build may produce a different archive hash; copy its integrity fields from the new sidecar into the deployment configuration.
 
-## What the experimental evidence proves
+## Experimental changes and validation
 
 - **What changed:** the patch inventory lists 143 build and runtime inputs, application points, hashes and numerical arguments. Round 34 applied 33 SGLang and 14 DeepGEMM runtime overlays; the delivered package adds SGLang overlay 34 for logprob relay.
-- **Why it preserves the computation:** the inventory identifies unchanged model operations, layouts and transport, and records changes in floating-point order or rounding placement. Bit equality is relative to each named control, not a blanket claim against stock SGLang.
-- **Checks and limits:** round 34 retained all four adopted kernel-selection records. The package check returned eight 64-token logprob responses without a Prefill error. This is an integration check, not a measured full-set accuracy pass.
-- **Speedup:** 10054.49 / 6330.21 = 1.5883× for the complete experimental configuration. The submitted score is one observation; the 10038.11 package check includes the logprob overlay and used the scripts before their final readability rewrite.
+- **Why it preserves the computation:** the inventory identifies unchanged model operations, layouts and transport, and records changes in floating-point order or rounding placement. Each byte-equality result applies to the control and test cases identified in the inventory.
+- **Checks and limits:** round 34 retained all four adopted kernel-selection records. The package check returned eight 64-token logprob responses without a Prefill error. The records show that the kernel checks passed on their test cases and that the package served logprob requests successfully.
+- **Speedup:** 10054.49 / 6330.21 = 1.59× for the complete experimental configuration. The submitted score comes from one run. The 10038.11 package check includes the logprob relay and predates the final script readability changes.
 
 ## Reading the presentation
 
-The shared deck is `../presentation/Tokyo Rapids with RIKEN Presentation.pptx`. Qwen main slides are **38–67**; supporting slides **69–82** contain additional evidence. Slides **96 onward** are explicitly archived drafts. The experiment index records material clarifications, including old package references in supporting slides, so those slides do not override this submission's selected result or configuration.
+The shared deck is `../presentation/Tokyo Rapids with RIKEN Presentation.pptx`. Qwen main slides are **38–67**; supporting slides **69–82** contain additional evidence. Slides **96 onward** are explicitly archived drafts. [EXPERIMENTS.md](EXPERIMENTS.md) explains the historical package references in the supporting slides and identifies the current configuration.

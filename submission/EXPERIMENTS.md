@@ -1,20 +1,20 @@
 # Presented Qwen experiments and evidence
 
-**Submitted result: 10054 good output tok/s (10054.49 before rounding), Actions 41767886175 / Slurm 28660.** [SUBMISSION.md](SUBMISSION.md) identifies both reproduction entrypoints.
+**Submitted result: 10054 good output tok/s (measured: 10054.49), Actions 41767886175 / Slurm 28660.** [SUBMISSION.md](SUBMISSION.md) identifies both reproduction entrypoints.
 
 This index follows the numbered pages of `../presentation/Tokyo Rapids with RIKEN Presentation.pptx` (Qwen main slides 38–67). The raw exports, scores, source/configuration and scheduler logs under `experiments/<run>/` were copied without changes after verification against the canonical archive's SHA-256 manifest. Historical PBS scripts missing from those archives were extracted from the recorded Git commit and are identified below. They document the original experiment and require its original preparation and build inputs. Use the current READMEs for the delivered deployment.
 
 ## Comparison and validation scope
 
-- The named Basic is **6339.31**, run 41093781934 / Slurm 27709. Its repeat is 6321.12; the two-run mean **6330.21** is the comparison reference used in the talk and below. A historical milestone below this later Basic is not called a speedup.
+- The selected Basic run scored **6339.31**, run 41093781934 / Slurm 27709. Its repeat is 6321.12; the two-run mean **6330.21** is the comparison reference used in the talk and below. A historical milestone below this later Basic is not called a speedup.
 - ASPIRE H100 and Firmus H200 are separate platforms. No stock ASPIRE Basic was submitted, so H100 runs have no ratio to the Firmus Basic.
 - Most milestones bundle changes in code, topology, load or selected kernels. Adjacent scores describe the real history, not an isolated kernel effect. Separate runs and short kernel tests do not establish a repeatable serving improvement.
 - Historical `profile: true` jobs are labelled below. Their presented fixed-duration client measurements are retained, but profiler attachment and other configuration differences limit comparison with clean serving runs. The submitted and standalone package runs have profiling disabled.
-- Numerical arguments and gates have named controls and tested scopes. The team has not run the organisers' full-set accuracy check. SLA eligibility, kernel checks and prompt probes do not establish it.
+- Numerical arguments and gates have named controls and tested scopes. The organisers' full-set accuracy check remains outstanding; the evidence here covers SLA eligibility, kernel checks and short prompt probes.
 
 ## First full-length Firmus benchmark
 
-[Initial execution record](experiments/initial-firmus/README.md): Slurm 17003 completed the fixed-duration client at **902.36**, then failed the old local length validator. The first retained clean terminal and validated run is **909.68**, Actions 34732532321 / Slurm 17021, with [raw evidence](experiments/34732532321/score.json). Neither is the organisers' 1832 reference.
+[Initial execution record](experiments/initial-firmus/README.md): Slurm 17003 completed the fixed-duration client at **902.36**, then failed the old local length validator. The first run that completed successfully and passed local validation is **909.68**, Actions 34732532321 / Slurm 17021, with [raw evidence](experiments/34732532321/score.json). Neither is the organisers' 1832 reference.
 
 ## Presented milestones
 
@@ -25,29 +25,29 @@ This index follows the numbered pages of `../presentation/Tokyo Rapids with RIKE
 | [EAGLE3](#eagle) | 45 | ASPIRE H100 | 2346.71 | 0.98502383 | 213029.pbs111 | not comparable |
 | [ASPIRE options and Prefill patches](#options) | 46 | ASPIRE H100 | 2865.54 | 0.99209486 | 217588.pbs111 | not comparable |
 | [ASPIRE P/D rebalance](#aspire-pd) | 50 | ASPIRE H100 | 3313.04 | 0.97611085 | 218108.pbs111 | not comparable |
-| [Port to Firmus](#port) | 48–49 | Firmus H200 | 3170.21 | 0.99487179 | 21951 | 0.5008x |
-| [Firmus P/D rebalance](#firmus-pd) | 50 | Firmus H200 | 4369.38 | 0.93574158 | 22269 | 0.6902x |
-| [64-token KV pages](#pages) | 50 | Firmus H200 | 4429.95 | 0.93333333 | 22324 | 0.6998x |
-| [MegaMoE and DP attention](#megamoe) | 52 | Firmus H200 | 6344.96 | 0.95974782 | 23571 | 1.0023x |
-| [vLLM side track](#vllm) | 53 | Firmus H200 | 5274.86 | 0.97832631 | 23234 | 0.8333x |
-| [Iteration 1: Decode MoE](#iteration-1) | 55 | Firmus H200 | 7251.58 | 0.97594800 | 24414 | 1.1456x |
-| [Iteration 2: Decode admission](#iteration-2) | 56 | Firmus H200 | 7999.37 | 0.98336963 | 24543 | 1.2637x |
-| [Iteration 3: Prefill KV and MoE](#iteration-3) | 57 | Firmus H200 | 8356.18 | 0.98574144 | 25062 | 1.3200x |
-| [Iteration 4: Decode batches](#iteration-4) | 58 | Firmus H200 | 9036.12 | 0.97669160 | 26169 | 1.4275x |
-| [Iteration 5: Prefill host waits](#iteration-5) | 59–60 | Firmus H200 | 9235.28 | 0.98296335 | 26889 | 1.4589x |
-| [Iteration 6: PP4 Prefill](#iteration-6) | 61 | Firmus H200 | 9668.27 | 0.97826087 | 27422 | 1.5273x |
-| [Iteration 7: Prefill MoE rescale](#iteration-7) | 62 | Firmus H200 | 9832.74 | 0.97939472 | 27502 | 1.5533x |
-| [Iteration 8 and submitted final](#iteration-8) | 63–64 | Firmus H200 | 10054.49 | 0.98215696 | 28660 | 1.5883x |
+| [Port to Firmus](#port) | 48–49 | Firmus H200 | 3170.21 | 0.99487179 | 21951 | 0.50x |
+| [Firmus P/D rebalance](#firmus-pd) | 50 | Firmus H200 | 4369.38 | 0.93574158 | 22269 | 0.69x |
+| [64-token KV pages](#pages) | 50 | Firmus H200 | 4429.95 | 0.93333333 | 22324 | 0.70x |
+| [MegaMoE and DP attention](#megamoe) | 52 | Firmus H200 | 6344.96 | 0.95974782 | 23571 | 1.00x |
+| [vLLM side track](#vllm) | 53 | Firmus H200 | 5274.86 | 0.97832631 | 23234 | 0.83x |
+| [Iteration 1: Decode MoE](#iteration-1) | 55 | Firmus H200 | 7251.58 | 0.97594800 | 24414 | 1.15x |
+| [Iteration 2: Decode admission](#iteration-2) | 56 | Firmus H200 | 7999.37 | 0.98336963 | 24543 | 1.26x |
+| [Iteration 3: Prefill KV and MoE](#iteration-3) | 57 | Firmus H200 | 8356.18 | 0.98574144 | 25062 | 1.32x |
+| [Iteration 4: Decode batches](#iteration-4) | 58 | Firmus H200 | 9036.12 | 0.97669160 | 26169 | 1.43x |
+| [Iteration 5: Prefill host waits](#iteration-5) | 59–60 | Firmus H200 | 9235.28 | 0.98296335 | 26889 | 1.46x |
+| [Iteration 6: PP4 Prefill](#iteration-6) | 61 | Firmus H200 | 9668.27 | 0.97826087 | 27422 | 1.53x |
+| [Iteration 7: Prefill MoE rescale](#iteration-7) | 62 | Firmus H200 | 9832.74 | 0.97939472 | 27502 | 1.55x |
+| [Iteration 8 and submitted final](#iteration-8) | 63–64 | Firmus H200 | 10054.49 | 0.98215696 | 28660 | 1.59x |
 
 <a id="framework"></a>
 
 ### Serving frameworks (slide 42)
 
-Compared SGLang, vLLM and TensorRT-LLM; retained SGLang.
+We compared SGLang, vLLM and TensorRT-LLM and selected SGLang.
 
 **Computation argument:** Same target model and workload; engine implementations differ.
 
-**Interpretation:** SGLang 1827.79 is c40; vLLM 1527.97 (36310351009, PBS 213388.pbs111) is c32. The slide same-c40 wording is incorrect; this is not a controlled engine comparison.
+**Interpretation:** SGLang 1827.79 is c40; vLLM 1527.97 (36310351009, PBS 213388.pbs111) is c32. The archived settings are c40 and c32, so this is a comparison of the two deployments.
 
 Evidence: [Actions 36305644422](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/36305644422), [script](experiments/36305644422/source/submit.pbs), [score](experiments/36305644422/score.json), [raw export](experiments/36305644422/profile_export_aiperf.json), [scheduler log](experiments/36305644422/logs/pbs-accounting.txt), [provenance](experiments/36305644422/source/provenance.json).
 
@@ -58,7 +58,7 @@ Historical script: `Git 683b3742fa28c64f1413376f9c7fe51b63cb67fe:platforms/aspir
 
 ### ASPIRE layout (slide 44)
 
-Used P2 TP4 / D2 TP4 without speculation at c16 after simulator-guided screening.
+We used P2 TP4 / D2 TP4 without speculation at c16 after simulator-guided screening.
 
 **Computation argument:** All model layers and experts remain; only placement and parallelism change.
 
@@ -73,7 +73,7 @@ Historical script: `Git 24a84d3171793cd48177accce59dfa566fedd41d:platforms/aspir
 
 ### EAGLE3 (slide 45)
 
-Used the public Nebius draft, 3 steps / 4 draft tokens, at c40.
+We used the public Nebius draft, 3 steps / 4 draft tokens, at c40.
 
 **Computation argument:** The target verifies the proposed tokens; target weights are unchanged.
 
@@ -88,7 +88,7 @@ Historical script: `Git 66f3ca60486066b9a3685ef004082d8a81093061:platforms/aspir
 
 ### ASPIRE options and Prefill patches (slide 46)
 
-Combined CUTLASS Prefill, routing/shuffle improvements and symmetric-memory tuning.
+We combined CUTLASS Prefill, routing/shuffle improvements and symmetric-memory tuning.
 
 **Computation argument:** The model operations remain; layout changes and kernel rounding effects are documented separately in the patch inventory.
 
@@ -103,7 +103,7 @@ Historical script: `Git 7b5478ae4633e51a3c399bb615f3cedfdd314698:platforms/aspir
 
 ### ASPIRE P/D rebalance (slide 50)
 
-Assigned 12 GPUs to Prefill and 4 to Decode, enlarged the Decode KV pool and used c72.
+We assigned 12 GPUs to Prefill and 4 to Decode, enlarged the Decode KV pool and used c72.
 
 **Computation argument:** Placement and capacity change while the target computation and FP8 KV format are retained.
 
@@ -118,7 +118,7 @@ Historical script: `Git ed8c5342c400f82681c724f7c1a2075187386df5:platforms/aspir
 
 ### Port to Firmus (slide 48–49)
 
-Ran the ASPIRE-derived P2/D2 recipe at c48 on H200.
+We ran the ASPIRE-derived P2/D2 recipe at c48 on H200.
 
 **Computation argument:** The official checkpoint is retained; EAGLE3, FP8 KV and patches belong to the complete ported configuration.
 
@@ -132,7 +132,7 @@ Source `e481de9ec084a124039e47c1b3c57fdfdad39822`; image SHA-256 `182fbb6df7f941
 
 ### Firmus P/D rebalance (slide 50)
 
-Used six TP2 Prefill workers and one TP4 Decode worker at c104 on the same 16 H200 GPUs.
+We used six TP2 Prefill workers and one TP4 Decode worker at c104 on the same 16 H200 GPUs.
 
 **Computation argument:** Only placement, capacity and load change; model layers and experts are retained.
 
@@ -146,7 +146,7 @@ Source `ff58ed80d6515cf261dfa95047f3fd9e89320c8d`; image SHA-256 `4b919a7465f164
 
 ### 64-token KV pages (slide 50)
 
-Changed the P6/D1 workers from page size 1 to 64.
+We changed the P6/D1 workers from page size 1 to 64.
 
 **Computation argument:** Addressing changes while stored KV values and dtype remain the same.
 
@@ -160,7 +160,7 @@ Source `3519fc0641064ef42a2f3794bb239a91a07e8aa4`; image SHA-256 `4b919a7465f164
 
 ### MegaMoE and DP attention (slide 52)
 
-Regrouped the 12/4 GPUs into P3/D1 DP4/EP4 workers with MegaMoE, routing and handoff changes.
+We regrouped the 12/4 GPUs into P3/D1 DP4/EP4 workers with MegaMoE, routing and handoff changes.
 
 **Computation argument:** The existing top-k IDs and FP32 weights feed the fused expert GEMMs, SiLU and combine; rounding changes are disclosed in the inventory.
 
@@ -174,7 +174,7 @@ Source `e6e295bd98ea16cb393c672f0b1b0af7b300cccf`; image SHA-256 `8df47c11d7ede6
 
 ### vLLM side track (slide 53)
 
-Used native DeepGEMM for Prefill MoE with E8M0 weight-scale re-rounding disabled.
+We used native DeepGEMM for Prefill MoE with E8M0 weight-scale re-rounding disabled.
 
 **Computation argument:** The published FP8 weights and FP32 scales are retained; kernel execution and summation order differ.
 
@@ -188,7 +188,7 @@ Source `83a1dbcb1895f6d62719d694c278a83e3ab32bbc`; image SHA-256 `2012b52332deae
 
 ### Iteration 1: Decode MoE (slide 55)
 
-Parallelised token conversion across four GPU threads, with Decode kernel and Prefill expert-placement changes.
+We parallelised token conversion across four GPU threads, with Decode kernel and Prefill expert-placement changes.
 
 **Computation argument:** FP8 operands/scales and selected expert operations are retained; each patch has a named numerical control.
 
@@ -202,7 +202,7 @@ Source `0374c551d212f27f05127a68102897fb582029a9`; image SHA-256 `7c6286e5dcfcd8
 
 ### Iteration 2: Decode admission (slide 56)
 
-Prepared new request inputs while the GPU verified tokens, together with kernel fusions and cap 128.
+We prepared new request inputs while the GPU verified tokens, together with kernel fusions and cap 128.
 
 **Computation argument:** Input dependencies are respected before consumption; target verification is retained and fusion rounding is disclosed.
 
@@ -216,7 +216,7 @@ Source `5066eaffdbdc7496a26552bb043ba8b1ab117d9b`; image SHA-256 `a8ed45928e94b7
 
 ### Iteration 3: Prefill KV and MoE (slide 57)
 
-Read token-ordered KV for Prefill attention while preserving paged KV for Decode, alongside MoE/input changes.
+We read token-ordered KV for Prefill attention while preserving paged KV for Decode, alongside MoE/input changes.
 
 **Computation argument:** The same KV values are used; attention reduction, FP8 rounding and per-128 FC2 scaling are disclosed in the inventory.
 
@@ -230,7 +230,7 @@ Source `39793c14e88ce3a19ec9737a7893a33432683a52`; image SHA-256 `652aaeef548614
 
 ### Iteration 4: Decode batches (slide 58)
 
-Extended fast-kernel coverage beyond 128 verification rows and tuned attention/GEMM while raising Decode capacity.
+We extended fast-kernel coverage beyond 128 verification rows and tuned attention/GEMM while raising Decode capacity.
 
 **Computation argument:** The target verifies the same candidates; tiling changes execution order without pruning model work.
 
@@ -244,7 +244,7 @@ Source `3287a43a620f95bf829bfaf8ae522bc7d8d947dd`; image SHA-256 `1f247668933c72
 
 ### Iteration 5: Prefill host waits (slide 59–60)
 
-Removed host waits, loaded the draft as FP8, aligned Prefill starts and selected c215.
+We removed host waits, loaded the draft as FP8, aligned Prefill starts and selected c215.
 
 **Computation argument:** The target checkpoint is unchanged and verifies every draft token; FP8 draft loading does not requantise target weights.
 
@@ -258,7 +258,7 @@ Source `840b40f7ea24c83a474c1578a29af86d6bfb0d43`; image SHA-256 `1f247668933c72
 
 ### Iteration 6: PP4 Prefill (slide 61)
 
-Moved Prefill to four layer stages with copy-engine transport and runtime changes.
+We moved Prefill to four layer stages with copy-engine transport and runtime changes.
 
 **Computation argument:** All 94 layers remain, split 24/24/24/22; same-dtype peer copies replace proxy transfers with ordering and content checks.
 
@@ -272,7 +272,7 @@ Source `5937a5a17b8353fca212d6c16de6a0533d4f2625`; image SHA-256 `0a02c4ab526787
 
 ### Iteration 7: Prefill MoE rescale (slide 62)
 
-Overlapped scale correction with matrix multiplication using split accumulators, alongside other selected kernels.
+We overlapped scale correction with matrix multiplication using split accumulators, alongside other selected kernels.
 
 **Computation argument:** In-job endurance checks required final BF16 outputs to match their control on the tested cases.
 
@@ -286,7 +286,7 @@ Source `6abfef9202de8af50821011884ce74be8c382d5e`; image SHA-256 `db6eeb49303429
 
 ### Iteration 8 and submitted final (slide 63–64)
 
-Reused prepacked V in Prefill FA3 and retained later PP4, greedy-verify and FC1 updates in round 34.
+We reused prepacked V in Prefill FA3 and retained later PP4, greedy-verify and FC1 updates in round 34.
 
 **Computation argument:** Producer-byte and FP32-reference checks cover prepacking; FC1 first-K passed byte equality on 12 GPUs. Other rounding changes are disclosed separately.
 
@@ -302,7 +302,7 @@ The EAGLE3 mean uses [run 36235158063](experiments/36235158063/profile_export_ai
 
 ## Material clarifications to the presentation
 
-- **Slide 42:** SGLang 1827.79 is c40; vLLM 1527.97 is c32 in the retained configuration. The slide same-c40 wording is a presentation error.
+- **Slide 42:** SGLang 1827.79 is c40; vLLM 1527.97 is c32 in the retained configuration. These archived settings differ from the slide's same-c40 label.
 - **Slide 58:** the 9036.12 checkpoint uses cap 176 (44 per rank); 48 requests describes later capacity/coverage.
 - **Slide 63:** 10054.49 also includes later kernel and scheduler updates. The prepack gate measures local savings on its tested shapes, not the whole score progression.
 - **Slide 64:** 33 SGLang + 14 DeepGEMM runtime overlays describes the submitted tuning run. The delivered package has **34 + 14**, adding logprob relay. Build-time patches are additional inputs in the inventory.

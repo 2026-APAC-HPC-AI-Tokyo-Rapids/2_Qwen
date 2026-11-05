@@ -2,7 +2,7 @@
 
 **Classification: Basic.** This is the submission the organisers re-run. It serves the official FP8 checkpoint with the unmodified public SGLang **0.5.23** release (upstream commit `297e54fd105e974cdf401e5b4d20253a22c16f90`) on Firmus, 2 nodes / 16 H200. Only built-in options, environment variables and deployment settings are tuned. SGLang, its kernels, DeepGEMM and the gateway are not patched, and no runtime overlay is applied. The team's submitted experimental result is **10054.49 good output tok/s**, documented separately in the [Bonus package](../README.md).
 
-**Named run to re-run:** Actions [41093781934](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41093781934), Slurm **27709**, **6339.31 good output tok/s**, good request fraction **0.97912525**, concurrency **160**. Use `basic/prepare.sh` and `basic/submit.sbatch` with `basic/config/firmus-basic.json`. The two-run mean below is a comparison reference, not a separate job.
+**Selected run to re-run:** Actions [41093781934](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41093781934), Slurm **27709**, **6339.31 good output tok/s**, good request fraction **0.97912525**, concurrency **160**. Use `basic/prepare.sh` and `basic/submit.sbatch` with `basic/config/firmus-basic.json`. The two-run mean below is a comparison reference, not a separate job.
 
 Two official measurements of this configuration (concurrency 160) scored **6321.12** and **6339.31 good output tok/s**, mean **6330.21**, with good request fractions of 97.69% and 97.91% and zero request errors:
 
