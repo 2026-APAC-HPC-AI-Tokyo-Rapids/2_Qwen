@@ -27,7 +27,7 @@ config=$(realpath "$5")
 sidecar=${image%.sqsh}.container-sidecar.json
 
 mkdir "${root}"
-install -d -m 0755 "${root}/source" "${root}/scripts" "${root}/logs" "${root}/results" "${root}/profile" "${root}/home"
+install -d -m 0755 "${root}/source" "${root}/scripts" "${root}/logs" "${root}/results" "${root}/home"
 
 # ---- Image and model ----
 
