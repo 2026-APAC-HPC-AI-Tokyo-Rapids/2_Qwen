@@ -62,7 +62,7 @@ The packaged scripts were simplified after the GPU runs while retaining the meas
 
 ## Build
 
-Use a root Linux build host with Buildah, Skopeo, Umoci, SquashFS tools (`mksquashfs`, `unsquashfs`), Git, jq, Python 3, GNU coreutils and tar. Buildah storage must be on local ext4 or XFS. The build uses `chroot` isolation, checks the OCI layout through Skopeo/Umoci, and produces an Enroot-compatible SquashFS. It does not require a GPU.
+Use a root Linux build host with Buildah, Skopeo, Umoci, SquashFS tools (`mksquashfs`, `unsquashfs`), Git, jq, Python 3, GNU coreutils and tar. `BUILD_DIR` must be a new path on local ext4 or XFS. The wrapper creates it and uses `${BUILD_DIR}/storage` exclusively for this build; `CONTAINER_ARCHIVE_DIR` must be outside it. The build uses `chroot` isolation, checks the OCI layout through Skopeo/Umoci, and produces an Enroot-compatible SquashFS. It does not require a GPU.
 
 Network access is needed to GitHub, PyPI/files.pythonhosted.org, flashinfer.ai, the PyTorch package hosts, Ubuntu/NVIDIA package repositories, and the Rust toolchain/crates registries. `build/source/containers/Dockerfile` uses **Docker Hub `docker.io/nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41cfc5d037f`**, rather than an NGC image.
 
@@ -91,7 +91,7 @@ mv config/serving.json.tmp config/serving.json
 
 ## Prepare and run
 
-Copy this folder, the built image and its sidecar to storage accessible to the dedicated account on Firmus. On the login node, preparation requires **unsquashfs, git, jq, python3, sha256sum, uvx**, GNU coreutils and network access to Hugging Face for the pinned public draft. Slurm, Pyxis/Enroot and the site GPU/InfiniBand drivers are required for execution. The image, model and new run directory must be readable on both allocated nodes; all generated overlays and caches are in that shared run directory.
+Copy this folder, the built image and its sidecar to storage accessible to the dedicated account on Firmus. On the login node, preparation requires **unsquashfs, git, jq, python3, sha256sum, uvx**, GNU coreutils and network access to Hugging Face for the pinned public draft. Slurm, Pyxis/Enroot and the site GPU/InfiniBand drivers are required for execution. The image, model and new run directory must be readable on both allocated nodes. Stage the complete model checkpoint as regular files; external shard symlinks are not supported. The job mounts the model read-only at its host path; overlays and the DeepGEMM cache are in that shared run directory. Triton and Inductor use node-local `/tmp` caches.
 
 `prepare.sh RUN_DIR IMAGE MODEL TOKENIZER_SNAPSHOT` stages the run directory before GPU allocation. It records image and tokenizer hashes, stages the tokenizer cache and pinned draft, applies 34 SGLang and 14 DeepGEMM overlays, installs the role environments and GPU clock table, and prints the submission command. Use a pre-staged tokenizer snapshot of `Qwen/Qwen3-235B-A22B-Instruct-2507` revision `ac9c66cc9b46af7306746a9250f23d47083d689e`.
 
@@ -105,20 +105,20 @@ sbatch scripts/submit.sbatch
 
 For a rebuild, substitute the new image's shared path and a tokenizer snapshot readable by the organisers' account. The model is the published `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8`, revision `e156cb4efae43fbee1a1ab073f946a1377e6b969`. Preparation happens before allocating GPUs; the compute job uses offline caches.
 
-The single job requests partition `hpcai`, two nodes, eight GPUs per node, and 17 minutes. It launches the workers and router, waits for readiness, records each worker's server info, sends one non-dataset connection warm-up chat through the gateway, freezes the startup heap of every server process (`/freeze_gc`), then runs the unchanged official AIPerf 0.12.0 command (60/120/30 seconds, seed 2026, closed-loop c232). After writing `score.json`, it records the Decode greedy verify and Prefill FC1 first-K dispatch lines, captures server info again, and runs the greedy probe. There is no profiling option.
+The single job requests partition `hpcai`, two nodes, eight GPUs per node, and 17 minutes. It launches the workers and router, waits for readiness, records each worker's server info, sends one non-dataset connection warm-up chat through the gateway, freezes the startup heap of every server process (`/freeze_gc`), then runs the unchanged official AIPerf 0.12.0 command (60/120/30 seconds, seed 2026, closed-loop c232). After writing `score.json`, it marks benchmark completion, extracts kernel dispatch lines and runs the greedy probe. A diagnostic failure is logged without changing the completed benchmark’s exit status. Server info is captured once, before the benchmark. There is no profiling option.
 
-Allow **about 11–13 minutes** for the job, excluding preparation and queue time. The standalone run of this package took 10:37 (READY after 265 s, then the 60/120/30 s benchmark and the greedy probe); earlier standalone runs of the previous configuration took 10:47 and 13:05. Cold startup and compilation time can vary.
+Allow **about 11–13 minutes** for the job, excluding preparation and queue time. The package verification run (41781374312, before the script simplification) took 10:37 (READY after 265 s, then the 60/120/30 s benchmark and the greedy probe); earlier standalone runs of the previous configuration took 10:47 and 13:05. Cold startup and compilation time can vary.
 
 ## Outputs
 
-Preserve `RUN_DIR/logs/`, `RUN_DIR/results/` and `RUN_DIR/source/` before deleting the run directory. On success, `logs/slurm-<job>.log` ends with `AIPERF ok` and the run directory contains `run-success`.
+Preserve `RUN_DIR/logs/`, `RUN_DIR/results/` and `RUN_DIR/source/` before deleting the run directory. `AIPERF ok` in `logs/slurm-<job>.log` and `run-success` mark completion of the official benchmark and scorer. Check `score.json` separately for SLA eligibility. The probe has a 60-second overall timeout and is skipped when less than 90 seconds remain or Slurm does not provide the allocation end time. Later diagnostic warnings do not invalidate the benchmark result; inspect `logs/greedy-probe.log` and the dispatch files for diagnostic completion.
 
 | Output | Contents |
 | --- | --- |
 | `results/profile_export_aiperf.json` | Official metrics; **good output tok/s = `goodput.avg × 200`** |
 | `results/score.json` | Score, SLA eligibility (good request fraction ≥ 0.90), request/error/OSL mismatch counts and length statistics |
 | `aiperf-command.txt`, `aiperf-provenance.txt` | Benchmark command and provenance |
-| Server-info files and warm-up chat response | Worker configuration and connection check |
+| Startup server-info files and warm-up chat response | Worker configuration and connection check |
 | `decode-greedy-dispatch.txt` | Selected or fallback kernels, vocabulary and stride, one line per Decode rank |
 | `prefill-r32-dispatch-{0,1,2}.txt` | FC1 first-K prewarm and kernel dispatch for all Prefill stages |
 | Draft provenance and overlay manifests | Downloaded weight hash and applied patch hashes |

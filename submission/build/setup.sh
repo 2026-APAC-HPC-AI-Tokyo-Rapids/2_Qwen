@@ -2,7 +2,7 @@
 # Build the Bonus serving image as SquashFS on a root Linux build host (Buildah chroot, Skopeo, Umoci, SquashFS tools).
 #
 # Run build/sglang-mirror.sh first. Environment:
-#   BUILD_DIR              empty temporary build directory
+#   BUILD_DIR              new directory on local ext4 or XFS (must not exist)
 #   CONTAINER_ARCHIVE_DIR  output directory for BUILD_ID.sqsh and BUILD_ID.container-sidecar.json
 #   GITHUB_RUN_ID          numeric build ID (BUILD_ID), GITHUB_RUN_ATTEMPT its attempt number
 #   GIT_MIRROR_DIR         the directory sglang-mirror.sh filled (holds 5_SGLang_Src.git)
@@ -11,6 +11,13 @@
 # build/source/ holds the build inputs (containers/, kernels/, patches/, scripts/, configs/) as byte-identical
 # copies of the team repository at Qwen 3f9124fd8afb, the commit the measured image was built from.
 set -euo pipefail
+
+# Give the frozen builder a new directory and storage owned only by this build.
+BUILD_DIR=$(realpath -m "${BUILD_DIR:?}")
+case "$(realpath -m "${CONTAINER_ARCHIVE_DIR:?}")/" in "${BUILD_DIR}/"*) echo "CONTAINER_ARCHIVE_DIR must be outside BUILD_DIR" >&2; exit 1;; esac
+test -d "${GIT_MIRROR_DIR:?}/5_SGLang_Src.git" || { echo "Run build/sglang-mirror.sh first: GIT_MIRROR_DIR has no 5_SGLang_Src.git" >&2; exit 1; }
+mkdir -- "${BUILD_DIR}"
+export BUILD_DIR BUILD_STORAGE_ROOT="${BUILD_DIR}/storage"
 
 GITHUB_WORKSPACE=$(cd "$(dirname "${BASH_SOURCE[0]}")/source" && pwd)
 # The image records the commit its build inputs come from.

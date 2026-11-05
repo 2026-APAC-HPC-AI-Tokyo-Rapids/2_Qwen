@@ -4,7 +4,7 @@
 # usage: prepare.sh RUN_DIR IMAGE MODEL TOKENIZER_SNAPSHOT
 #   RUN_DIR             new directory on storage both compute nodes can read
 #   IMAGE               the SquashFS serving image recorded in config/serving.json
-#   MODEL               Qwen/Qwen3-235B-A22B-Instruct-2507-FP8 at MODEL_REVISION (all 24 shards)
+#   MODEL               directory with regular files, Qwen/Qwen3-235B-A22B-Instruct-2507-FP8 at MODEL_REVISION (all 24 shards)
 #   TOKENIZER_SNAPSHOT  Qwen/Qwen3-235B-A22B-Instruct-2507 tokenizer files at TOKENIZER_REVISION
 #
 # Then: cd RUN_DIR && sbatch scripts/submit.sbatch
@@ -29,6 +29,8 @@ install -m 0644 "${config}" "${run_dir}/source/firmus-framework.json"
 # ---- Image, model and tokenizer ----
 
 sha256sum "${image}" >"${run_dir}/source/sglang-image.sha256"
+read -r image_sha256 _ <"${run_dir}/source/sglang-image.sha256"
+[[ "${image_sha256}" == "$(jq -er .images.sglang.sha256 "${config}")" ]] || { echo "Image SHA-256 differs from config/serving.json" >&2; exit 1; }
 ln -s "${image}" "${run_dir}/sglang.sqsh"
 jq -n --arg model_path "${model}" --arg model_revision "${MODEL_REVISION}" --arg tokenizer_repository "${TOKENIZER_REPOSITORY}" --arg tokenizer_revision "${TOKENIZER_REVISION}" '{model:{repository:"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",revision:$model_revision,path:$model_path,precision:"fp8",shards:24},tokenizer:{repository:$tokenizer_repository,revision:$tokenizer_revision}}' >"${run_dir}/source/model.json"
 
@@ -42,8 +44,10 @@ printf '%s' "${TOKENIZER_REVISION}" >"${tokenizer_cache}/refs/main"
 # ---- Draft: download, then declare the SGLang architecture and dtype in its config ----
 
 export HF_HUB_DISABLE_XET=1 UV_CONCURRENT_BUILDS=1 UV_CONCURRENT_DOWNLOADS=1 UV_CONCURRENT_INSTALLS=1
-uvx --from 'huggingface_hub==0.36.0' hf download "$(jq -er .speculation.draft_repository "${config}")" config.json README.md model.safetensors --revision "$(jq -er .speculation.draft_revision "${config}")" --local-dir "${run_dir}/draft" --max-workers 1
-python3 "${package}/run/prepare_eagle.py" "${run_dir}/draft" "${run_dir}/source"
+DRAFT_REPOSITORY=$(jq -er .speculation.draft_repository "${config}")
+DRAFT_REVISION=$(jq -er .speculation.draft_revision "${config}")
+uvx --from 'huggingface_hub==0.36.0' hf download "${DRAFT_REPOSITORY}" config.json README.md model.safetensors --revision "${DRAFT_REVISION}" --local-dir "${run_dir}/draft" --max-workers 1
+python3 "${package}/run/prepare_eagle.py" "${run_dir}/draft" "${run_dir}/source" "${DRAFT_REPOSITORY}" "${DRAFT_REVISION}"
 
 # ---- Patched packages: copy each package out of the image and apply its numbered overlays in order ----
 
@@ -64,7 +68,7 @@ stage_overlay() {
     cp "${patch}" "${run_dir}/source/${name}-overlay/"
   done
   # Record what was applied, in order, with hashes.
-  for patch in "${patches[@]}"; do jq -n --arg path "${patch#"${package}/"}" --arg sha "$(sha256sum "${patch}" | awk '{print $1}')" '{path:$path,sha256:$sha}'; done | jq -s --arg image "$(jq -er .images.sglang.sha256 "${config}")" --arg mount "/${image_path}" '{base_image_sha256:$image,mount:$mount,patches:.}' >"${run_dir}/source/${name}-overlay.json"
+  for patch in "${patches[@]}"; do jq -n --arg path "${patch#"${package}/"}" --arg sha "$(sha256sum "${patch}" | awk '{print $1}')" '{path:$path,sha256:$sha}'; done | jq -s --arg image "${image_sha256}" --arg mount "/${image_path}" '{base_image_sha256:$image,mount:$mount,patches:.}' >"${run_dir}/source/${name}-overlay.json"
 }
 stage_overlay sglang opt/sglang/source/python/sglang python/sglang
 stage_overlay deep-gemm opt/sglang/venv/lib/python3.12/site-packages/deep_gemm deep_gemm

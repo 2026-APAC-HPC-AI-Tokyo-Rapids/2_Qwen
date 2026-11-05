@@ -86,10 +86,9 @@ curl --fail --silent --show-error --max-time 120 -H 'Content-Type: application/j
 
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=32 "${CONTAINER[@]}" "$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${ROOT}/logs/aiperf.log" 2>&1
 
-# ---- After the benchmark ----
+# ---- Benchmark completion and cache cleanup ----
 
-server_info
 echo 'AIPERF ok'
 touch "${ROOT}/run-success"
 # Clear the workers' node-local compiler caches.
-for node in "${NODES[@]}"; do srun --overlap -N1 -n1 -w "${node}" --gres=gpu:0 --cpus-per-task=1 bash -c 'rm -rf -- /tmp/qwen-basic-"$SLURM_JOB_ID"-*'; done
+for node in "${NODES[@]}"; do srun --overlap -N1 -n1 -w "${node}" --gres=gpu:0 --cpus-per-task=1 bash -c 'rm -rf -- /tmp/qwen-basic-"$SLURM_JOB_ID"-*' || echo "Compiler cache cleanup failed on ${node}" >&2; done

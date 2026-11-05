@@ -3,7 +3,7 @@
 # build host (Buildah chroot, Skopeo, Umoci, SquashFS tools).
 #
 # Environment:
-#   BUILD_DIR              empty temporary build directory
+#   BUILD_DIR              new directory on local ext4 or XFS (must not exist)
 #   CONTAINER_ARCHIVE_DIR  output directory for BUILD_ID.sqsh and BUILD_ID.container-sidecar.json
 #   GITHUB_RUN_ID          numeric build ID (BUILD_ID), GITHUB_RUN_ATTEMPT its attempt number
 #   BUILD_CACHE_REPOSITORY optional writable OCI registry for Buildah layer caching
@@ -12,6 +12,12 @@
 # check are those of Qwen aa48ceeca33a, the commit the measured image was built from; the build script differs from
 # that commit only in making the registry cache optional.
 set -euo pipefail
+
+# Give the frozen builder a new directory and storage owned only by this build.
+BUILD_DIR=$(realpath -m "${BUILD_DIR:?}")
+case "$(realpath -m "${CONTAINER_ARCHIVE_DIR:?}")/" in "${BUILD_DIR}/"*) echo "CONTAINER_ARCHIVE_DIR must be outside BUILD_DIR" >&2; exit 1;; esac
+mkdir -- "${BUILD_DIR}"
+export BUILD_DIR BUILD_STORAGE_ROOT="${BUILD_DIR}/storage"
 
 GITHUB_WORKSPACE=$(cd "$(dirname "${BASH_SOURCE[0]}")/source" && pwd)
 # The image records the commit its build inputs come from.

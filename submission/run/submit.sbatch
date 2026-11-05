@@ -75,7 +75,7 @@ CONTAINER=(--container-env=NVIDIA_VISIBLE_DEVICES,NVIDIA_DRIVER_CAPABILITIES,NVI
 # and the SGLang and DeepGEMM packages patched by prepare.sh over the image's copies.
 mounts() {
   mkdir -p "${ROOT}/home/$1"
-  echo "--container-mounts=/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,/dev/infiniband:/dev/infiniband,${ROOT}/overlay/sglang/python/sglang:/opt/sglang/source/python/sglang,${ROOT}/overlay/deep-gemm/deep_gemm:/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm"
+  echo "--container-mounts=/scratch:/scratch,${ROOT}/home/$1:${HOME},${ROOT}:${ROOT},${ROOT}/draft:/draft,${MODEL}:${MODEL}:ro,/dev/infiniband:/dev/infiniband,${ROOT}/overlay/sglang/python/sglang:/opt/sglang/source/python/sglang,${ROOT}/overlay/deep-gemm/deep_gemm:/opt/sglang/venv/lib/python3.12/site-packages/deep_gemm"
 }
 wait_http() { until curl --fail --silent --max-time 2 -o /dev/null "$1"; do sleep 2; done; }
 
@@ -121,16 +121,22 @@ done <"${ENDPOINTS}"
 
 srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=4 "${CONTAINER[@]}" "$(mounts aiperf)" bash "${ROOT}/scripts/official-aiperf.sh" "${ROOT}" "${N}" >"${LOGS}/aiperf.log" 2>&1
 
-# ---- After the benchmark ----
-
-# Each Decode rank logs once whether it uses the fused greedy verify kernels.
-grep -a -h -o -E 'Decode greedy verify (using fused kernels|fallback).*' "${LOGS}/decode-0.log" | sort -u >"${RESULTS}/decode-greedy-dispatch.txt"
-# Each Prefill stage logs its FC1 first-K MegaMoE prewarm and which kernel it dispatches.
-for worker in 0 1 2; do grep -a -h -o -E 'Prefill r32 fc1-first-k (prewarm done|using candidate|using control).*' "${LOGS}/prefill-${worker}.log" >"${RESULTS}/prefill-r32-dispatch-${worker}.txt"; done
-while IFS=$'\t' read -r name address port _; do
-  curl --fail --silent --show-error --max-time 15 "http://${address}:${port}/get_server_info" >"${RESULTS}/server-info-${name}.json"
-done <"${ENDPOINTS}"
-# Team-side output check: eight fixed greedy prompts through the gateway, 64 tokens each, with token logprobs.
-srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 "${CONTAINER[@]}" "$(mounts greedy-probe)" /opt/sglang/venv/bin/python "${ROOT}/scripts/greedy-probe.py" "${RESULTS}" "http://${HEAD_IP}:${ROUTER_PORT}/v1/chat/completions" qwen >"${LOGS}/greedy-probe.log" 2>&1
 echo "AIPERF ok"
 touch "${ROOT}/run-success"
+
+# ---- Optional diagnostics after the completed benchmark ----
+
+# Each Decode rank logs once whether it uses the fused greedy verify kernels.
+grep -a -h -o -E 'Decode greedy verify (using fused kernels|fallback).*' "${LOGS}/decode-0.log" | sort -u >"${RESULTS}/decode-greedy-dispatch.txt" || echo "Decode dispatch extraction failed; see logs/decode-0.log" >&2
+# Each Prefill stage logs its FC1 first-K MegaMoE prewarm and which kernel it dispatches.
+for worker in 0 1 2; do grep -a -h -o -E 'Prefill r32 fc1-first-k (prewarm done|using candidate|using control).*' "${LOGS}/prefill-${worker}.log" >"${RESULTS}/prefill-r32-dispatch-${worker}.txt" || echo "Prefill dispatch extraction failed for worker ${worker}; see its log" >&2; done
+# Team-side output check: eight fixed greedy prompts through the gateway, 64 tokens each, with token logprobs.
+# A stalled diagnostic must finish before Slurm ends the allocation. SIGTERM to srun kills its tasks.
+# https://slurm.schedmd.com/srun.html (SIGNALS); leave 90 seconds for a 60-second probe and cleanup.
+if [[ -z "${SLURM_JOB_END_TIME:-}" ]]; then
+  echo "Skipping greedy probe: SLURM_JOB_END_TIME is unavailable" >&2
+elif (( SLURM_JOB_END_TIME - $(date +%s) >= 90 )); then
+  timeout --kill-after=5s 60s srun --overlap -N1 -n1 -w "${HEAD}" --gres=gpu:0 --cpus-per-task=2 "${CONTAINER[@]}" "$(mounts greedy-probe)" /opt/sglang/venv/bin/python "${ROOT}/scripts/greedy-probe.py" "${RESULTS}" "http://${HEAD_IP}:${ROUTER_PORT}/v1/chat/completions" qwen >"${LOGS}/greedy-probe.log" 2>&1 || echo "Greedy probe failed; see logs/greedy-probe.log" >&2
+else
+  echo "Skipping greedy probe: less than 90 seconds left in the allocation" >&2
+fi

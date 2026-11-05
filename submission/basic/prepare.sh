@@ -4,7 +4,7 @@
 # usage: prepare.sh RUN_DIR IMAGE MODEL TOKENIZER_SNAPSHOT CONFIG
 #   RUN_DIR             new directory on storage both compute nodes can read
 #   IMAGE               BUILD.sqsh from scripts/build-basic-container.sh, with BUILD.container-sidecar.json beside it
-#   MODEL               Qwen/Qwen3-235B-A22B-Instruct-2507-FP8 at revision e156cb4efae43fbee1a1ab073f946a1377e6b969
+#   MODEL               directory with regular files, Qwen/Qwen3-235B-A22B-Instruct-2507-FP8 at revision e156cb4efae43fbee1a1ab073f946a1377e6b969
 #   TOKENIZER_SNAPSHOT  Qwen/Qwen3-235B-A22B-Instruct-2507 tokenizer files at TOKENIZER_REVISION
 #   CONFIG              basic/config/firmus-basic.json (or a copy with a new build's image pins)
 #
@@ -15,8 +15,6 @@ set -euo pipefail
 MODEL_REVISION=e156cb4efae43fbee1a1ab073f946a1377e6b969
 TOKENIZER_REVISION=ac9c66cc9b46af7306746a9250f23d47083d689e
 TOKENIZER_FILES=(config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json)
-DRAFT_REPOSITORY=nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507
-DRAFT_REVISION=ff0f0c0999f6c86b21dfd2f5803eebc4ac712224
 
 package=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 root=$(realpath -m "$1")
@@ -31,6 +29,10 @@ install -d -m 0755 "${root}/source" "${root}/scripts" "${root}/logs" "${root}/re
 
 # ---- Image and model ----
 
+sha256sum "${image}" >"${root}/source/sglang-image.sha256"
+read -r image_sha256 _ <"${root}/source/sglang-image.sha256"
+image_size=$(stat -c '%s' "${image}")
+jq -e --arg sha "${image_sha256}" --argjson size "${image_size}" --slurpfile sidecar "${sidecar}" '.container_sha256 == $sha and .container_size_bytes == $size and $sidecar[0].container_artifact.sha256 == $sha and $sidecar[0].container_artifact.size_bytes == $size and .container_source_commit == $sidecar[0].source_commits.qwen and .sglang_commit == $sidecar[0].source_commits.sglang' "${config}" >/dev/null || { echo "Image, sidecar and Basic configuration do not match" >&2; exit 1; }
 ln -s "${image}" "${root}/sglang.sqsh"
 cp "${sidecar}" "${root}/source/container-sidecar.json"
 jq --arg path "${image}" --slurpfile sidecar "${sidecar}" '.images.sglang = {path:$path,sha256:$sidecar[0].container_artifact.sha256,size_bytes:$sidecar[0].container_artifact.size_bytes}' "${config}" >"${root}/source/firmus-framework.json"
@@ -46,9 +48,11 @@ printf '%s' "${TOKENIZER_REVISION}" >"${cache}/refs/main"
 # ---- Draft: download the public BF16 weights, then declare the SGLang architecture and dtype in its config ----
 
 export HF_HUB_DISABLE_XET=1
+DRAFT_REPOSITORY=$(jq -er .speculation.draft_repository "${config}")
+DRAFT_REVISION=$(jq -er .speculation.draft_revision "${config}")
 uvx --from huggingface_hub==0.36.0 hf download "${DRAFT_REPOSITORY}" config.json README.md model.safetensors --revision "${DRAFT_REVISION}" --local-dir "${root}/draft" --max-workers 1
 # Only the architecture selector and the dtype declaration change; the weights do not.
-python3 "${package}/run/prepare_eagle.py" "${root}/draft" "${root}/source"
+python3 "${package}/run/prepare_eagle.py" "${root}/draft" "${root}/source" "${DRAFT_REPOSITORY}" "${DRAFT_REVISION}"
 
 # ---- Job scripts ----
 

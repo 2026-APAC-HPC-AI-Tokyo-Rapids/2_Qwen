@@ -42,7 +42,7 @@ Both build methods use the inputs included in this folder. Recorded hashes ident
 
 The submitted run passed all four kernel-selection checks on their tested shapes and devices. The package verification run returned eight 64-token responses with token logprobs. These checks cover local numerical behavior and serving integration. They do not establish that the full stack is bit-identical to stock SGLang. Changes to floating-point order and rounding can affect generated tokens; the team has not run the organisers’ full-set accuracy check.
 
-The delivered Basic and Bonus scripts were simplified after the measured runs. CPU fixtures compare worker launch arguments, environment and the retained serving and benchmark steps with the recorded versions; the final scripts have not been run on GPUs.
+The delivered Basic and Bonus scripts were simplified after the measured runs. The current wrappers isolate build storage, and the jobs distinguish benchmark completion from optional diagnostics. CPU fixtures compare worker launch arguments, environment and the retained serving and benchmark steps with the recorded versions; the final scripts have not been run on GPUs.
 
 ## Reading the presentation
 

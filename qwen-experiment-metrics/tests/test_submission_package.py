@@ -144,7 +144,7 @@ def test_pins_are_the_pp4_settings_plus_the_adopted_gate_outcomes(tmp_path):
 
 
 # The package scripts were rewritten after the measured runs: for readability, and down to the steps of a
-# successful run (no argument, tool or input checks, traps, timeouts or fallbacks). The reference records are
+# successful run, with image integrity checked before staging. The reference records are
 # submission_harness.py recordings of the scripts of commit a688495 (the scripts of the round 25 standalone run
 # 41694678252 and of the measured Basic runs 41078642203 and 41093781934), run with this package's current
 # configuration and overlays. They are compared with exactly these documented differences:
@@ -156,18 +156,29 @@ def test_pins_are_the_pp4_settings_plus_the_adopted_gate_outcomes(tmp_path):
 #     gone, the Basic launcher scripts/basic-worker.py became submission/basic/worker.py (same argv and environment
 #     as each measured worker's launch record), and the Basic job no longer runs the diagnostic EAGLE collector.
 #   - Basic preparation no longer creates the unused, empty profile directory.
+#   - Bonus mounts the model explicitly; both jobs record server info once before the benchmark.
+#   - Draft provenance receives the repository/revision used by the download.
 REFERENCE = ROOT / "qwen-experiment-metrics/tests/fixtures/submission-scripts"
 SCRIPT_NAMES = ("submit.sbatch", "worker.sh", "worker.py", "basic-worker.py", "prepare.sh", "greedy-probe.py", "official-aiperf.sh", "parse-aiperf-result.py", "prepare_eagle.py", "order-firmus-pp4-gpus.py")
 SCRIPT_FILES = {f"{directory}/{name}" for directory in ("scripts", "source") for name in SCRIPT_NAMES}
 REMOVED_EVENTS = {"bonus-prepare": re.compile(r"^git \S+ apply --check "), "basic-sbatch": re.compile(r"/check-basic-server-info\.py |/collect-eagle-acceptance\.py ")}
 REMOVED_FILES = {"bonus-prepare": {"scripts/run-aiperf.py", "source/run-aiperf.py"}, "bonus-sbatch": {"scripts/run-aiperf.py"}, "basic-prepare": {"profile", "scripts/check-basic-server-info.py", "scripts/collect-eagle-acceptance.py", "scripts/run-aiperf.py"}, "basic-sbatch": {"scripts/check-basic-server-info.py", "scripts/collect-eagle-acceptance.py"}}
-ADDED_FILES = {"bonus-sbatch": {f"results/prefill-r32-dispatch-{worker}.txt" for worker in range(3)}}
+ADDED_FILES = {"basic-prepare": {"source/sglang-image.sha256"}, "bonus-sbatch": {f"results/prefill-r32-dispatch-{worker}.txt" for worker in range(3)}}
 
 
 @pytest.mark.parametrize("kind", submission_harness.KINDS)
 def test_scripts_do_what_the_measured_scripts_did(kind):
     expected = json.loads((REFERENCE / f"{kind}.json").read_text().replace("H/run/source/worker.sh", "H/run/scripts/worker.sh").replace("H/run/scripts/basic-worker.py", "H/run/scripts/worker.py"))
     actual = submission_harness.record(kind, ROOT)
+    if kind == "bonus-sbatch":
+        for args in expected["srun"].values():
+            args[:] = [arg.replace("H/run/draft:/draft,/dev/infiniband", "H/run/draft:/draft,H/model:H/model:ro,/dev/infiniband") for arg in args]
+    if kind.endswith("sbatch"):
+        benchmark = expected["events"].index("srun aiperf")
+        expected["events"] = [event for index, event in enumerate(expected["events"]) if not (index > benchmark and ("/get_server_info" in event or "/server_info" in event))]
+    else:
+        pins = json.loads((PACKAGE / ("config/serving.json" if kind == "bonus-prepare" else "basic/config/firmus-basic.json")).read_text())["speculation"]
+        expected["events"] = [event + " " + pins["draft_repository"] + " " + pins["draft_revision"] if "prepare_eagle.py " in event else event for event in expected["events"]]
     # Same srun steps with the same argv, and the same launch_server argv and environment for every worker.
     for key in ("srun", "cleanup_steps", "launch"):
         assert actual[key] == expected[key], key
@@ -185,7 +196,7 @@ def test_scripts_do_what_the_measured_scripts_did(kind):
 def test_bonus_job_has_no_selection_gate_telemetry_or_profile_step():
     text = BATCH.read_text() + (PACKAGE / "run/worker.sh").read_text()
     active = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    for forbidden in ("PROFILE", "/opt/nsys", "profile_capture", "scripts/select-firmus-", "check-firmus-", "telemetry", "--loop", "collect-eagle-acceptance", "fa3_pair_gate", "fa3_prepack_gate", "decode_greedy_verify_gate", "profile_only", "routing_capture_samples", "SGLANG_PREFILL_ROUTING", "SGLANG_DECODE_ROUTING", "pp4-kernel-settings.json", "timeout --", "torchrun", "uv run"):
+    for forbidden in ("PROFILE", "/opt/nsys", "profile_capture", "scripts/select-firmus-", "check-firmus-", "telemetry", "--loop", "collect-eagle-acceptance", "fa3_pair_gate", "fa3_prepack_gate", "decode_greedy_verify_gate", "profile_only", "routing_capture_samples", "SGLANG_PREFILL_ROUTING", "SGLANG_DECODE_ROUTING", "pp4-kernel-settings.json", "torchrun", "uv run"):
         assert forbidden not in active, forbidden
     for directive in ("#SBATCH -p hpcai", "#SBATCH -N 2", "#SBATCH -t 00:17:00", "#SBATCH --gres=gpu:8"):
         assert directive in text

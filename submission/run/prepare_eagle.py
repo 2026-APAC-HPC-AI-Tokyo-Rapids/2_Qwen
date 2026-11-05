@@ -3,7 +3,7 @@
 The pinned draft (nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507) declares LlamaForCausalLM. SGLang loads it with
 the LlamaForCausalLMEagle3 architecture, and the dtype is declared as bfloat16. The weights are not changed.
 
-usage: prepare_eagle.py DRAFT_DIR RECORD_DIR
+usage: prepare_eagle.py DRAFT_DIR RECORD_DIR REPOSITORY REVISION
 """
 import hashlib
 import json
@@ -22,7 +22,8 @@ def sha256(path):
 
 
 def main():
-    draft, records = map(Path, sys.argv[1:])
+    draft, records = map(Path, sys.argv[1:3])
+    repository, revision = sys.argv[3:5]
     config_path = draft / "config.json"
     weights = draft / "model.safetensors"
 
@@ -42,8 +43,8 @@ def main():
     (records / "draft-runtime-config.json").write_bytes(config_path.read_bytes())
     (records / "draft-README.md").write_bytes((draft / "README.md").read_bytes())
     provenance = {
-        "repository": "nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507",
-        "revision": "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224",
+        "repository": repository,
+        "revision": revision,
         "license": "CC-BY-4.0",
         "weight_sha256": sha256(weights),
         "weight_bytes": weights.stat().st_size,

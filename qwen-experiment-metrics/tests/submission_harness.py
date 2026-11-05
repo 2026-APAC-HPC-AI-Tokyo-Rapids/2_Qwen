@@ -39,7 +39,8 @@ def sbatch_stubs(harness):
     stub(bin_dir, "scontrol", 'printf "g1\\ng4\\n"')
     stub(bin_dir, "getent", 'case "$2" in g1) echo "10.0.0.1 STREAM g1";; g4) echo "10.0.0.4 STREAM g4";; esac')
     stub(bin_dir, "whoami", "echo tester")
-    stub(bin_dir, "date", "echo 2026-01-01T00:00:00+00:00")
+    stub(bin_dir, "date", 'if [[ "$1" == +%s ]]; then echo 1000; else echo 2026-01-01T00:00:00+00:00; fi')
+    stub(bin_dir, "timeout", f'printf "%s\\n" "$@" >{harness}/probe-timeout-argv; [[ "${{HARNESS_FAILURE:-}}" == probe-timeout ]] && exit 124; exec /usr/bin/timeout "$@"')
     stub(bin_dir, "nvidia-smi", f'if [[ "$*" == *index,uuid* ]]; then cat {harness}/gpus.csv; else echo "0, NVIDIA H200, 143771 MiB, 570.00, 700.00 W"; fi')
     # Every HTTP call succeeds and server info reports the FP8 draft. A Bonus worker's /health answers only
     # once its launch is recorded, so the job cannot stop a worker before it reaches launch_server.
@@ -69,24 +70,25 @@ for i in "${{!args[@]}}"; do
       sed -e "s#/opt/sglang/venv/bin/python#{harness}/bin/vpython#g" -e "s#/sys/class/infiniband#{harness}/ib#g" "$script" >"${{script%.sh}}.$key.harness.sh"
       HARNESS_KEY=$key CUDA_VISIBLE_DEVICES=0,1,2,3 exec bash "${{script%.sh}}.$key.harness.sh" "${{args[@]:$((i + 1))}}";;
     */worker.py|*/sglang-router|*/sgl-model-gateway) exec sleep 600;;
-    */official-aiperf.sh) echo '{{}}' >"${{args[$((i + 1))]}}/results/score.json"; exit 0;;
-    */greedy-probe.py) exit 0;;
+    */official-aiperf.sh) [[ "${{HARNESS_FAILURE:-}}" == aiperf ]] && exit 22; echo '{{}}' >"${{args[$((i + 1))]}}/results/score.json"; exit 0;;
+    */greedy-probe.py) [[ "${{HARNESS_FAILURE:-}}" == greedy ]] && exit 9; exit 0;;
   esac
 done
+[[ "${{HARNESS_FAILURE:-}}" == cleanup && "$key" == cleanup-* ]] && exit 7
 exit 0''')
     # The container Python: record the server launch, run anything else for real.
     stub(bin_dir, "vpython", f'''if [[ "$1" == -m && "$2" == sglang.launch_server ]]; then
-  {PYTHON} -c 'import json,os,sys; skip={{"PWD","OLDPWD","SHLVL","_","PATH","HOME","LC_CTYPE"}}; json.dump({{"argv": sys.argv[2:], "env": {{k: v for k, v in os.environ.items() if k not in skip and not k.startswith("HARNESS")}}}}, open(sys.argv[1], "w"), indent=1, sort_keys=True)' "{harness}/launch/$HARNESS_KEY.json" "$@"
+  {PYTHON} -c 'import json,os,sys; skip={{"PWD","OLDPWD","SHLVL","_","PATH","HOME","LC_CTYPE","SLURM_JOB_END_TIME"}}; json.dump({{"argv": sys.argv[2:], "env": {{k: v for k, v in os.environ.items() if k not in skip and not k.startswith("HARNESS")}}}}, open(sys.argv[1], "w"), indent=1, sort_keys=True)' "{harness}/launch/$HARNESS_KEY.json" "$@"
   # Each Decode rank logs once which greedy verify path it uses.
-  if [[ "$HARNESS_KEY" == decode-0 ]]; then for rank in 0 1 2 3; do echo "Decode greedy verify using fused kernels greedy_tiles/greedy_finish: rows=4 vocab=151936 stride=151936"; done; fi
+  if [[ "$HARNESS_KEY" == decode-0 && "${{HARNESS_FAILURE:-}}" != dispatch ]]; then for rank in 0 1 2 3; do echo "Decode greedy verify using fused kernels greedy_tiles/greedy_finish: rows=4 vocab=151936 stride=151936"; done; fi
   # Each Prefill stage logs its FC1 first-K prewarm and dispatch (prefill-megamoe-fc1-first-k-r32.patch).
-  if [[ "$HARNESS_KEY" == prefill-* ]]; then for stage in 0 1 2 3; do echo "Prefill r32 fc1-first-k prewarm done rows=7988 cap=8192"; echo "Prefill r32 fc1-first-k using candidate rows=4001 H=4096 I=1536"; done; fi
+  if [[ "$HARNESS_KEY" == prefill-* && "${{HARNESS_FAILURE:-}}" != dispatch ]]; then for stage in 0 1 2 3; do echo "Prefill r32 fc1-first-k prewarm done rows=7988 cap=8192"; echo "Prefill r32 fc1-first-k using candidate rows=4001 H=4096 I=1536"; done; fi
   exec sleep 600
 fi
 exec {PYTHON} "$@"''')
 
 
-def run_sbatch(kind, repo, harness):
+def run_sbatch(kind, repo, harness, failure=None, remaining=1000):
     root = harness / "run"
     for name in ("logs", "results", "scripts", "source", "home", "draft"):
         (root / name).mkdir(parents=True)
@@ -114,14 +116,18 @@ def run_sbatch(kind, repo, harness):
         (harness / "gpus.csv").write_text("".join(f"{i}, {uuid}\n" for i, uuid in enumerate(sorted(clock["gpus"])[:8])))
         (harness / "expect-launch").write_text("")
     else:
-        shutil.copy(repo / "configs/firmus-basic.json", root / "source/firmus-framework.json")
+        shutil.copy(package / "basic/config/firmus-basic.json", root / "source/firmus-framework.json")
         shutil.copy(package / "basic/worker.py", root / "scripts/worker.py")
         shutil.copy(package / "basic/submit.sbatch", root / "scripts/submit.sbatch")
         shutil.copy(package / "run/official-aiperf.sh", root / "scripts/official-aiperf.sh")
         (harness / "gpus.csv").write_text("")
         # Host-side Python helpers would need real servers; record their calls instead.
         stub(harness / "bin", "python3", f'printf "python3 %s\\n" "$*" >>{harness}/events.log')
-    env = {"PATH": f"{harness}/bin:/usr/bin:/bin", "HOME": str(harness / "home"), "USER": "tester", "LOGNAME": "tester", "SLURM_SUBMIT_DIR": str(root), "SLURM_JOB_NODELIST": "g[1,4]", "SLURM_JOB_ID": "1"}
+    env = {"PATH": f"{harness}/bin:/usr/bin:/bin", "HOME": str(harness / "home"), "USER": "tester", "LOGNAME": "tester", "SLURM_SUBMIT_DIR": str(root), "SLURM_JOB_NODELIST": "g[1,4]", "SLURM_JOB_ID": "1", "SLURM_JOB_END_TIME": str(1000 + (remaining or 0))}
+    if remaining is None:
+        env.pop("SLURM_JOB_END_TIME")
+    if failure:
+        env["HARNESS_FAILURE"] = failure
     # Servers still run when the job script ends; on a cluster Slurm then ends them with the job.
     with (harness / "sbatch.out").open("w") as output:
         job = subprocess.Popen(["bash", str(root / "scripts/submit.sbatch")], cwd=root, env=env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
@@ -135,7 +141,7 @@ def run_sbatch(kind, repo, harness):
     return root
 
 
-def run_prepare(kind, repo, harness):
+def run_prepare(kind, repo, harness, image_sha256=None, sidecar_sha256=None, basic_mismatch=None):
     work = harness / "repo"
     for name in ("submission", "scripts", "configs"):
         shutil.copytree(repo / name, work / name)
@@ -168,15 +174,19 @@ def run_prepare(kind, repo, harness):
     if kind == "bonus-prepare":
         serving = work / "submission/config/serving.json"
         config = json.loads(serving.read_text())
-        config["images"]["sglang"].update(sha256=digest, size_bytes=5)
+        config["images"]["sglang"].update(sha256=image_sha256 or digest, size_bytes=5)
         serving.write_text(json.dumps(config, indent=2) + "\n")
         command = ["bash", str(work / "submission/run/prepare.sh"), str(root), str(image), str(model), str(tokenizer)]
     else:
-        settings = work / "configs/firmus-basic.json"
+        settings = work / "submission/basic/config/firmus-basic.json"
         config = json.loads(settings.read_text())
-        config.update(container_sha256=digest, container_size_bytes=5)
+        config.update(container_sha256=image_sha256 or digest, container_size_bytes=5)
         settings.write_text(json.dumps(config, indent=2) + "\n")
-        sidecar = {"tier": "basic", "applied_patches": [], "source_commits": {"sglang": "297e54fd105e974cdf401e5b4d20253a22c16f90", "qwen": config["container_source_commit"]}, "container_artifact": {"sha256": digest, "size_bytes": 5}}
+        sidecar = {"tier": "basic", "applied_patches": [], "source_commits": {"sglang": "297e54fd105e974cdf401e5b4d20253a22c16f90", "qwen": config["container_source_commit"]}, "container_artifact": {"sha256": sidecar_sha256 or digest, "size_bytes": 5}}
+        if basic_mismatch == "size":
+            sidecar["container_artifact"]["size_bytes"] += 1
+        elif basic_mismatch == "commit":
+            sidecar["source_commits"]["qwen"] = "0" * 40
         (inputs / "BUILD.container-sidecar.json").write_text(json.dumps(sidecar))
         command = ["bash", str(work / "submission/basic/prepare.sh"), str(root), str(image), str(model), str(tokenizer), str(settings)]
     result = subprocess.run(command, env={"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(harness / "home")}, timeout=90, capture_output=True, text=True, check=False)

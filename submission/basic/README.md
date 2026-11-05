@@ -34,7 +34,7 @@ The sole draft is public [nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507](https://h
 
 The image is the official `lmsysorg/sglang` v0.5.23 linux/amd64 image, pinned by digest `sha256:f7876bef696ccf9cf75a2bf7ccb82970f5fac577f082fb8ca95c9a59d2160eb5` in [build/source/containers/basic.Dockerfile](build/source/containers/basic.Dockerfile). The recipe installs AIPerf 0.12.0 and `sglang-router` 0.3.2 in a separate `/opt/aiperf` environment, leaving the inference packages unchanged. It also adds a provenance manifest and an image self-check. Serving uses the gateway binary shipped in the official image.
 
-Build on a root Linux host with Buildah (`chroot` isolation), Skopeo, Umoci, SquashFS tools, Git and jq. From the package root (the folder holding `SUBMISSION.md`):
+Build on a root Linux host with Buildah (`chroot` isolation), Skopeo, Umoci, SquashFS tools, Git, jq and GNU coreutils. `BUILD_DIR` must be a new path on local ext4 or XFS. The wrapper uses `${BUILD_DIR}/storage` exclusively for this build; keep `CONTAINER_ARCHIVE_DIR` outside it. From the package root (the folder holding `SUBMISSION.md`):
 
 ```bash
 sudo env BUILD_DIR=/var/tmp/qwen-basic-build CONTAINER_ARCHIVE_DIR="$PWD/basic/build/output" GITHUB_RUN_ID=100001 GITHUB_RUN_ATTEMPT=1 basic/build/setup.sh
@@ -51,7 +51,7 @@ A new build has a different artifact identity. Copy `config/firmus-basic.json` a
 `prepare.sh` copies the worker, job script and shared AIPerf/draft helpers into the run directory. On the Firmus login node, stage these inputs on storage readable by both allocated nodes:
 
 - The image and its sidecar, side by side as `BUILD.sqsh` and `BUILD.container-sidecar.json`.
-- `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8`, revision `e156cb4efae43fbee1a1ab073f946a1377e6b969`: all 24 shards and metadata.
+- `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8`, revision `e156cb4efae43fbee1a1ab073f946a1377e6b969`: all 24 shards and metadata as regular files, without external symlinks.
 - A tokenizer snapshot of `Qwen/Qwen3-235B-A22B-Instruct-2507`, revision `ac9c66cc9b46af7306746a9250f23d47083d689e`: `config.json`, `generation_config.json`, `merges.txt`, `tokenizer.json`, `tokenizer_config.json` and `vocab.json`.
 
 Preparation downloads the pinned public draft and sets its SGLang architecture and dtype through `run/prepare_eagle.py`.
@@ -62,8 +62,8 @@ cd /scratch/home/ACCOUNT/qwen-basic-run
 sbatch --export=PATH,HOME,USER,LOGNAME scripts/submit.sbatch
 ```
 
-`prepare.sh` creates the run directory, links the image, writes the effective configuration with the image's pins, stages the tokenizer cache and the draft, and copies the job scripts. The single Slurm script (partition `hpcai`, two nodes, eight GPUs per node, 17 minutes) starts the P3/D1 workers and the public gateway, waits for readiness, records every worker's server info (release, layout and KV pools), sends one connection sanity chat, and then runs the unchanged official AIPerf command (60/120/30 seconds, seed 2026, closed-loop c160). AIPerf runs from the isolated `/opt/aiperf` environment. The partition and resource lines are for Firmus.
+`prepare.sh` creates the run directory, checks the image hash and size against the sidecar and configuration, links the image, writes the effective configuration with the image's pins, stages the tokenizer cache and the draft, and copies the job scripts. The single Slurm script (partition `hpcai`, two nodes, eight GPUs per node, 17 minutes) starts the P3/D1 workers and the public gateway, waits for readiness, records every worker's server info (release, layout and KV pools), sends one connection sanity chat, and then runs the unchanged official AIPerf command (60/120/30 seconds, seed 2026, closed-loop c160). AIPerf runs from the isolated `/opt/aiperf` environment. The partition and resource lines are for Firmus.
 
 ## Outputs
 
-Check the job's terminal state and exit code, then `results/score.json`: `eligible`, the good request fraction and request errors. **Good output tok/s = `goodput.avg × 200`** from `results/profile_export_aiperf.json`. `run-success` marks a job that ran to the end; the server info is recorded again after the benchmark. See [validation scope](../SUBMISSION.md#validation-scope) for the separate accuracy assessment. Preserve `source/`, `logs/` and `results/` of the run directory before deleting it.
+Check the job's terminal state and exit code, then `results/score.json`: `eligible`, the good request fraction and request errors. **Good output tok/s = `goodput.avg × 200`** from `results/profile_export_aiperf.json`. `run-success` marks completion of the official benchmark and scorer, independently of SLA eligibility. A later cache-cleanup failure is logged without invalidating the result. Server info is captured once, before the benchmark. See [validation scope](../SUBMISSION.md#validation-scope) for the separate accuracy assessment. Preserve `source/`, `logs/` and `results/` of the run directory before deleting it.
