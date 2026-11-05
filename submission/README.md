@@ -1,14 +1,24 @@
-# Qwen3 PD Bonus submission — Firmus, Tokyo Rapids
+# Qwen3 experimental submission on Firmus
 
-**Classification: Bonus.** This package contains team source and kernel changes. The separately tuned, unmodified SGLang Basic entrypoint is [basic/README.md](basic/README.md), with two selected c160 measurements averaging 6330.21 good output tok/s. Basic's public image and serving path are separate from the patches in this package.
+**Submitted result: 10054 good output tok/s (10054.49 before rounding).** This is the measured round 34 result, Actions [41767886175](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41767886175), Slurm **28660**, on **two nodes / 16 H200 GPUs**. The job completed with exit 0:0 in 14:52: 6333 requests, zero errors, good request fraction **0.98215696**. [Raw metrics and logs](results/41767886175/RESULT.md) accompany the submission.
 
-The package is the PP4 round 34 configuration, measured at **10054.49 good output tok/s**: Actions [41767886175](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41767886175), Slurm 28660, COMPLETED 0:0 in 14:52, 6333 requests, zero errors, good request fraction 0.98216, eligible. That is the team's highest score on Firmus and **1.59×** the team's Basic mean of 6330.21 on the same 16 H200 GPUs. Its text evidence, including the four in-job gate records behind the pinned env files, is in `results/41767886175/`. This is one measured run, not a repeatability claim: two runs of the same image in which the new FC1 first-K gate rejected its kernel scored 9998.67 and 10015.98, and round 25 (the previous configuration, without that kernel) scored 10002.75 to 10025.34.
+**Classification: Bonus experimental work.** The organisers' 3 November clarification places source patches and custom kernels in this category. The required Basic uses unmodified SGLang 0.5.23: [basic/README.md](basic/README.md). Its selected configuration averaged **6330.21** over two runs; **41093781934 / Slurm 27709** is the named Basic run to re-run (**6339.31**, c160). Start with [SUBMISSION.md](SUBMISSION.md) for both entrypoints.
 
-The package adds one runtime overlay to that run, `patches/overlay/sglang/34-pp4-direct-logprob.patch`. The team's direct PP4 Prefill loop did not relay the last stage's logprob outputs to the other stages, so a request with `logprobs: true` stopped the Prefill scheduler. The package's greedy probe found this on the round 25 configuration (Actions [41694678252](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41694678252), which scored 10025.34 before the probe). The overlay relays them with each result, as the upstream PP loop does. On round 25 it was then verified in Actions [41766980300](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41766980300) (10016.32, eligible, every probe response with 64 token logprobs, no Prefill error). Requests without logprobs, including the official AIPerf workload, take the unchanged path.
+## Results and evidence
 
-The package as shipped, including overlay 34, was then run standalone: Actions [41781374312](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41781374312), Slurm 28673, COMPLETED 0:0 in 10:37, **10038.11 good output tok/s**, 6331 requests, zero errors, good request fraction 0.98184, eligible; every greedy probe response carried 64 token logprobs. Its evidence is in `results/41781374312/`.
+| Record | Good output tok/s | Good request fraction | What it establishes |
+| --- | ---: | ---: | --- |
+| Submitted experimental result, run 41767886175 | **10054.49** | 0.98215696 | Highest measured result; four in-job selections adopted their candidates |
+| Packaged configuration with logprob relay, run 41781374312 | 10038.11 | 0.98183541 | Standalone preparation and serving completed; eight probe responses included token logprobs |
+| Unmodified Basic, runs 41078642203 / 41093781934 | 6321.12 / 6339.31 | 0.97685992 / 0.97912525 | Two measurements of the fixed c160 configuration; mean 6330.21 |
 
-Common baseline: **1,832 good output tok/s** on Firmus 2×8 H200 (official task `5. Common Baselines.md`, job 25013). The baseline uses different serving settings.
+The submitted experimental score is **1.5883× the Basic mean** on the same hardware. This compares complete configurations, including different code, Prefill parallelism, concurrency and draft precision. It does not isolate any one patch. The organisers' **1832 tok/s** reference (job 25013) is a different configuration; the submitted result is 5.49× that reference.
+
+**10038.11 is a package verification result, not a replacement for the submitted 10054.49.** The package fixes the kernel choices selected in the submitted run and adds `patches/overlay/sglang/34-pp4-direct-logprob.patch`. That patch relays logprobs in the direct PP4 Prefill loop. The official workload does not request logprobs; its path is unchanged. The standalone job completed 0:0 in 10:37 (Slurm 28673). Its scripts preceded the subsequent readability rewrite, whose launch arguments, environment and orchestration are checked with CPU fixtures. The final rewritten scripts have not had another GPU run.
+
+The 10054.49 observation is a single run. Two same-image runs whose new FC1 first-K gate rejected its candidate scored 9998.67 and 10015.98; earlier round 25 results were 10002.75–10025.34. These are different selected configurations and do not prove an isolated FC1 speedup or the repeatability of 10054.49.
+
+[EXPERIMENTS.md](EXPERIMENTS.md) maps the presented experiments to their configurations, scripts and logs. [patches/README.md](patches/README.md) gives the numerical argument for each change. Kernel checks and the eight-prompt integration probe have limited scope: **the organisers' full-set accuracy check has not been run by the team**. SLA eligibility is separate from that check.
 
 ## Topology and serving settings
 
@@ -27,15 +37,16 @@ The kernel choices are fixed in `config/prefill-kernels.env` and `config/decode-
 - `run/`: login-node preparation (`prepare.sh`), the single Slurm serving/benchmark job (`submit.sbatch`) and the worker launcher it runs in the container (`worker.sh`), the official AIPerf command and the local scorer (`official-aiperf.sh`, `parse-aiperf-result.py`), the draft config adapter (`prepare_eagle.py`), the PP4 GPU-order helper (`order-firmus-pp4-gpus.py`) and the post-benchmark greedy probe (`greedy-probe.py`).
 - `config/`: serving settings, the pinned role env files and the PP4 GPU clock table.
 - [patches/README.md](patches/README.md): every image patch, kernel source and runtime overlay, with hashes, application points and numerical classifications (bit-identical, FP-order, rounding-placement or no numeric effect, with the basis for each).
-- `results/41767886175/`: curated evidence of the round 34 run the package was frozen from.
-- `results/41781374312/`: curated evidence of the standalone run of this package.
+- `results/41767886175/`: curated evidence of the submitted round 34 result.
+- `results/41781374312/`: curated evidence of the standalone run before the script readability rewrite.
+- [EXPERIMENTS.md](EXPERIMENTS.md) and `experiments/`: the presented experiment index and selected historical evidence.
 - [analysis/README.md](analysis/README.md): the optional profiling data, the round 24 Nsight capture of the 10k configuration, with its relation to this configuration, its findings and the file list with checksums.
 
 This folder is self-contained: `build/source/` holds every image build input (`containers/`, `kernels/`, `patches/`, `scripts/`, `configs/`) as byte-identical copies of the team repository at the commit the measured image was built from, so the image can be rebuilt, prepared and run from this folder alone. Basic has its own build inputs under `basic/build/source/`. No private SGLang mirror, team credentials, CI system or team-specific runtime directory is needed.
 
 The scripts in `run/` were rewritten for this package from the ones the measured runs used, for readability and down to the steps of a successful run. Branches for earlier configurations, argument and input checks, traps, timeouts, fallbacks and diagnostics were removed; the worker launcher, a heredoc inside `submit.sbatch` before, is `worker.sh`. The commands, flags and environment the workers and the benchmark receive are unchanged:
 
-- The team's test harness runs `prepare.sh` and `submit.sbatch` with every cluster command stubbed and requires what the scripts of run 41694678252 (round 25) do on this configuration: the same srun steps and argv, the same `launch_server` argv and environment for every worker, the same ordered HTTP calls, the same image extractions and patch applications (without the separate `git apply --check`), and the same run-directory files.
+- The team's test harness runs `prepare.sh` and `submit.sbatch` with every cluster command stubbed and compares the measured orchestration with this configuration: the same srun steps and argv, the same `launch_server` argv and environment for every worker, the same ordered HTTP calls, the same image extractions and patch applications (without the separate `git apply --check`), and the same run-directory files.
 - `official-aiperf.sh` runs the same official AIPerf command, now directly instead of through a wrapper that only stopped a failed client start. `parse-aiperf-result.py` computes the score from the export and no longer re-validates the command; on the exports in `results/` and `basic/results/` it reproduces every value it reports of the recorded `score.json`.
 - `prepare_eagle.py` makes the same two config changes and the same records, without its input checks. `order-firmus-pp4-gpus.py` applies the same rule. `greedy-probe.py` sends the same requests.
 

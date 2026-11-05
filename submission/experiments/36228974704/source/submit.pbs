@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#PBS -l walltime=00:30:00
+set -euo pipefail
+: "${RUNTIME_DIR:?runtime directory required}"
+exec >"${RUNTIME_DIR}/logs/driver.log" 2>&1
+trap 'printf "pd_driver_failed line=%s status=%s\n" "${LINENO}" "$?" >&2' ERR
+printf 'pd_driver_started=%s host=%s\n' "$(date -u +%FT%TZ)" "$(hostname -s)"
+source "${HOME}/.local/.setenv"
+: "${PBS_NODEFILE:?PBS node file is required}"
+export QWEN_PLATFORM=aspire2ap GPUS_PER_NODE=8 NODE_COUNT=2
+export OUTPUT_DIR="${RUNTIME_DIR}" CONTAINER_IMAGE="${RUNTIME_DIR}/sglang.sqsh"
+export ENROOT_LIBRARY_PATH="${RUNTIME_DIR}/enroot-library" ENROOT_SYSCONF_PATH="${RUNTIME_DIR}/enroot-system" ENROOT_MOUNT_HOME=no
+export MODEL_PATH="$(jq -r '.model.path' "${RUNTIME_DIR}/source/model.json")"
+export TOKENIZER_PATH="${RUNTIME_DIR}/tokenizer-cache/hub/models--Qwen--Qwen3-235B-A22B-Instruct-2507/snapshots/ac9c66cc9b46af7306746a9250f23d47083d689e"
+exec "${RUNTIME_DIR}/scripts/submit.sbatch"

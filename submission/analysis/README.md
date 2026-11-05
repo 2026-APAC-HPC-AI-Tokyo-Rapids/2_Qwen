@@ -1,6 +1,6 @@
 # Profiling data (optional deliverable)
 
-The profile is Actions [41423181527](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41423181527) (PP4 round 24, Slurm 28300): one Nsight Systems 2025.3.2 capture of every Prefill and Decode worker of the 10k configuration, taken in a profile-only pass (no score) on image `c7804efb3180440281a2ec1ebcff19a092786641abbcf6d70b76f9777f565bff`. It is the only full-stack capture of the 10k configuration; no later round improved the score, so it was not repeated for this package.
+The profile is Actions [41423181527](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41423181527) (PP4 round 24, Slurm 28300): one Nsight Systems 2025.3.2 capture of every Prefill and Decode worker of the 10k configuration, taken in a profile-only pass (no score) on image `c7804efb3180440281a2ec1ebcff19a092786641abbcf6d70b76f9777f565bff`. It is the retained full-stack capture of the PP4 configuration near 10k. It predates the submitted round 34 result of 10054.49; no profile of that final run is included.
 
 ## Relation to the submitted configuration
 
@@ -17,7 +17,7 @@ The per-stage Prefill numbers below were derived from the reports with `analyze_
 
 - **Prefill** (12 GPUs, PP4 × 3 workers): kernels fill 98–99% of the 112–116 ms two-request pair cycle on every stage, so launch latency does not set the cycle. Per cycle on worker 0 PP0: MegaMoE 63.4 ms, QKV/O GEMM 23.4 ms, FA3 18.9 ms, MoE input 2.9 ms, writer/pack 2.1 ms, norm 1.5 ms. The GPUs sit at 685–691 W with SM clocks of 1410–1455 MHz, 12–15% below the same GPUs in the isolated gate, so the 700 W power cap sets the clock.
 - **Decode** (4 GPUs, TP4/DP4/EP4): the EAGLE3 step is 38.5 ms on average (MegaMoE 22.9, attention 7.3, dense GEMM 4.5, draft 1.3, sampling 0.2 ms), with 0.66 ms of GPU idle and no exposed launch gaps.
-- **Limit**: Prefill. In the scored round 22 run, completions were 52.41 req/s against 52.40 req/s of Prefill capacity derived from the pair cycle.
+- **Bottleneck evidence**: in the separate scored round 22 run, completions were 52.41 req/s against 52.40 req/s of Prefill capacity estimated from that run's pair cycle. This supports Prefill as the limiting stage for that configuration. The round 24 profile above explains kernel work; its timings are not combined with round 22 or round 34 to construct a synthetic serving timeline.
 
 ## Files
 

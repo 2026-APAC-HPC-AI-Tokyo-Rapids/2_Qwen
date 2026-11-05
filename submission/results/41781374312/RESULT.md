@@ -5,7 +5,7 @@ Image build: 41729881283; SHA-256 3a47b757bb88f6bc14ad5f151e8405f645007f25f381f6
 Good output tokens/s: 10038.107744896623 (goodput 50.19053872448311 requests/s times 200).
 Good request fraction: 0.981835413046912; 6331 requests, zero errors, zero OSL mismatches (output lengths 199 to 201).
 
-This run used this package exactly as shipped, with no tuning step: `run/prepare.sh` staged the run directory and `sbatch scripts/submit.sbatch` ran the single job. The job script, preparation script and helpers were the versions before the readability rewrite described in `../../README.md`; the rewrite keeps the same commands, flags and environment.
+This run used the packaged round 34 configuration, fixed kernel choices and logprob relay, with no tuning step: `run/prepare.sh` staged the run directory and `sbatch scripts/submit.sbatch` ran the single job. The job script, preparation script and helpers were the versions before the readability rewrite described in `../../README.md`; the rewrite keeps the same commands, flags and environment.
 
 - `source/prefill-kernels.env` and `source/decode-kernels.env` are byte-identical to `../../config/`.
 - `source/sglang-overlay.json` and `source/deep-gemm-overlay.json` list the 34 SGLang and 14 DeepGEMM overlays applied, in order, with SHA-256 values equal to `../../patches/overlay/`, on the image above.

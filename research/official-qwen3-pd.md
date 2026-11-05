@@ -1,6 +1,6 @@
 # 公式Qwen3 PD実装記録
 
-This document records the earlier generic launcher and its historical Firmus runs. The current 9120.51 submission package is documented in [submission/README.md](../submission/README.md); the unchanged generic launcher now lives at `platforms/shared/qwen-pd.sbatch`.
+This document records the earlier generic launcher and its historical Firmus runs. The current submission (10054.49 good output tok/s experimental result, with a separate unmodified Basic) is documented in [submission/README.md](../submission/README.md); the unchanged generic launcher now lives at `platforms/shared/qwen-pd.sbatch`.
 
 ## 正本
 

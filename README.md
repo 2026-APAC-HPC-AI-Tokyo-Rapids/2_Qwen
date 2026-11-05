@@ -1,10 +1,10 @@
 # Qwen3-235B PD inference on Firmus, Genkai, and ASPIRE 2A+
 
-## Basic and Bonus submissions (2026-10-30 policy)
+## Final Qwen submissions (2026-11-05)
 
 The source-modified, workload-tuned stack is **Bonus**. The existing [submission package](submission/README.md) reproduces a measured Bonus configuration; its results must not be labelled Basic.
 
-The newer PP4 source path in `main` is also Bonus. Its [round-8 record](research/runtime-performance/2026-10-31-pp4-round8-9883.md) reports 9883.36 good output tok/s from a different configuration; it is separate from the frozen standalone package.
+**Submitted experimental result: 10054 good output tok/s (10054.49 before rounding)**, Actions 41767886175 / Slurm 28660, round 34 on image `3a47b757`. The standalone package check scored 10038.11 and does not replace the submitted result. [Submission guide](submission/SUBMISSION.md) and [presented experiment index](submission/EXPERIMENTS.md) distinguish the two records and link their raw evidence. The organisers' 3 November clarification places source changes in the experimental Bonus path.
 
 **Basic** uses the latest public SGLang release when this campaign starts: **0.5.23**, upstream commit `297e54fd105e974cdf401e5b4d20253a22c16f90`. Its official linux/amd64 image is pinned by digest in `containers/basic.Dockerfile`. SGLang, its kernels, DeepGEMM and the gateway remain unmodified: only built-in options, environment variables and deployment settings are tuned. AIPerf uses a separate Python environment so installing it does not resolve or replace the upstream inference dependencies. Serving uses the gateway binary shipped in the same official image, rather than the older separately published gateway wheel.
 

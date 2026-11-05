@@ -1,34 +1,48 @@
-# Tokyo Rapids — Qwen3 PD submission (Firmus)
+# Tokyo Rapids with RIKEN: Qwen3 submission
 
-All results are on Firmus, 2 nodes / 16 H200, with the official `Qwen3-235B-A22B-Instruct-2507-FP8` checkpoint and the unchanged official AIPerf command.
+**Submitted experimental result: 10054 good output tok/s (10054.49 before rounding)** on Firmus, two nodes / 16 H200 GPUs. The submitted run is **Actions 41767886175 / Slurm 28660**. The package also includes the required unmodified Basic and a standalone check of the experimental configuration.
 
-| Tier | Configuration | Good output tok/s | Role |
+| Entry | Configuration | Good output tok/s | Role |
 | --- | --- | ---: | --- |
-| **Basic** | Public SGLang 0.5.23, options only, P3/D1, c160 | **6330.21** (mean of 6321.12 and 6339.31) | The submission to re-run and rank |
-| **Bonus** | Team source and kernel changes, PP4 Prefill, c232 (round 34) | **10054.49** | Experimental work, judged on proof |
-| Common baseline | Organisers' reference settings | 1,832 | Job 25013 |
+| **Basic** | Public SGLang 0.5.23, P3/D1, c160 | **6339.31**, run 41093781934 / Slurm 27709 | Named run for the organisers to re-run |
+| Basic repeat | Identical configuration, run 41078642203 / Slurm 27682 | 6321.12 | Two-run mean: **6330.21** |
+| **Submitted experiment (Bonus)** | Patched SGLang, PP4 Prefill, c232, round 34 | **10054.49**, run 41767886175 / Slurm 28660 | Submitted result and source/kernel work |
+| Package verification | Fixed round 34 choices plus logprob relay | 10038.11, run 41781374312 / Slurm 28673 | Supporting check; does not replace the submitted result |
+| Organisers' reference | Common baseline, job 25013 | 1832 | Different serving settings |
 
-The Bonus configuration is **1.59×** the team's own Basic mean on the same machine (10054.49 / 6330.21).
+All entries serve the published `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` checkpoint with the official AIPerf workload. Good output tok/s is `goodput.avg × 200`, subject to the 90% good-request gate. **Eligibility is not the organisers' full-set accuracy check.** The team has not run that check.
 
-## Where each deliverable is
+The submitted experimental result is **1.5883× the Basic mean** (1.5861× the named Basic run) on the same 16 H200 GPUs. These are whole-configuration comparisons. The code, Prefill parallelism, client concurrency and draft precision differ, so this ratio is not attributed to any one patch.
 
-Paths are relative to this folder, which is self-contained: both images are rebuilt from the build inputs copied into it (`build/source/` for Bonus, `basic/build/source/` for Basic).
+The organisers' 3 November clarification defines Basic as the official software release and places code changes in the experimental Bonus path. This is why both entries are provided.
 
-| Deliverable | Basic | Bonus |
+## Reproduction entrypoints
+
+Paths below are relative to this `qwen/` folder. Follow each README for the exact model, tokenizer, image and draft pins and the build-host and login-node prerequisites.
+
+| Step or evidence | Basic | Submitted experiment |
 | --- | --- | --- |
-| Overview and reproduction | [basic/README.md](basic/README.md) | [README.md](README.md) |
-| Software stack build method | `basic/build/setup.sh` with `basic/build/source/` | `build/sglang-mirror.sh`, `build/setup.sh` with `build/source/` |
-| Build log and image record | `basic/build/` | `build/build.log`, `build/provenance.json` |
-| Single Slurm job script | `basic/submit.sbatch` (prepared by `basic/prepare.sh`) | `run/submit.sbatch` (prepared by `run/prepare.sh`) |
-| AIPerf logs and `profile_export_aiperf.json` | `basic/results/41078642203/`, `41093781934/` | `results/41767886175/` (measured run), `41781374312/` (standalone run of the package) |
-| Patches as text | None (no source patch) | `patches/` with [the inventory](patches/README.md) |
-| Draft declaration | Basic README, "Draft declaration" | Bonus README, "Draft declaration" |
-| Profiling data (optional) | — | `analysis/` and `analysis/profiling_data/` |
-| Presentation slides | Team deck, submitted alongside this folder | (same deck) |
+| Read first | [basic/README.md](basic/README.md) | [README.md](README.md) |
+| Image build | `basic/build/setup.sh` and `basic/build/source/` | `build/sglang-mirror.sh`, `build/setup.sh` and `build/source/` |
+| Prepare on login node | `basic/prepare.sh`, `basic/config/firmus-basic.json` | `run/prepare.sh`, `config/serving.json`, pinned role env files |
+| Single allocation: serving then official benchmark | `basic/submit.sbatch` | `run/submit.sbatch` |
+| Build log and image provenance | `basic/build/build.log`, `basic/build/provenance.json` | `build/build.log`, `build/provenance.json` |
+| Submitted metrics and logs | [basic/results/41093781934/RESULT.md](basic/results/41093781934/RESULT.md), plus the repeat | [results/41767886175/RESULT.md](results/41767886175/RESULT.md) |
+| Package verification | CPU orchestration and recorded launch checks | [results/41781374312/RESULT.md](results/41781374312/RESULT.md), plus CPU orchestration checks after the readability rewrite |
+| Exact code changes and numerical arguments | No source patch | [patches/README.md](patches/README.md), with text patches and kernel sources |
+| Presented experiments and historical evidence | [EXPERIMENTS.md](EXPERIMENTS.md) | Same index, with scripts, configuration and logs per run |
+| Optional profile | — | [analysis/README.md](analysis/README.md), `analysis/profiling_data/` |
+| Draft declaration | Basic README | Experimental README |
 
-## Bonus proof (README Addendum R3)
+Both build methods use the inputs included in this folder. A fresh rebuild's archive hash may differ; update only the deployment copy's image integrity fields from its new sidecar. The recorded image hashes identify the measured artifacts and are not a promise of bit-for-bit reproducible builds.
 
-1. **What changed**: every image patch, kernel source and runtime overlay is listed with its SHA-256 and application point in `patches/README.md`; the runtime overlays are copied verbatim under `patches/overlay/`.
-2. **Why it is the same math**: the same inventory gives each change's numerical class (bit-identical, FP-order, rounding-placement, no numeric effect) with its basis, read from the patch text and the recorded evidence. No change approximates a function, lowers a number format below the checkpoint's FP8 blocks, or skips a computation whose result is used.
-3. **Evidence**: the organisers run the full-set accuracy check. The Bonus job also runs a fixed greedy probe after the official benchmark, written to `results/greedy-parity.json` of its run directory (`results/41781374312/greedy-parity.json` for the standalone run), so outputs can be compared before and after a change.
-4. **Speedup against our Basic**: 10054.49 against 6330.21 good output tok/s, both on Firmus 2 × 8 H200.
+## What the experimental evidence proves
+
+- **What changed:** the patch inventory lists 143 build and runtime inputs, application points, hashes and numerical arguments. Round 34 applied 33 SGLang and 14 DeepGEMM runtime overlays; the delivered package adds SGLang overlay 34 for logprob relay.
+- **Why it preserves the computation:** the inventory identifies unchanged model operations, layouts and transport, and records changes in floating-point order or rounding placement. Bit equality is relative to each named control, not a blanket claim against stock SGLang.
+- **Checks and limits:** round 34 retained all four adopted kernel-selection records. The package check returned eight 64-token logprob responses without a Prefill error. This is an integration check, not a measured full-set accuracy pass.
+- **Speedup:** 10054.49 / 6330.21 = 1.5883× for the complete experimental configuration. The submitted score is one observation; the 10038.11 package check includes the logprob overlay and used the scripts before their final readability rewrite.
+
+## Reading the presentation
+
+The shared deck is `../presentation/Tokyo Rapids with RIKEN Presentation.pptx`. Qwen main slides are **38–67**; supporting slides **69–82** contain additional evidence. Slides **96 onward** are explicitly archived drafts. The experiment index records material clarifications, including old package references in supporting slides, so those slides do not override this submission's selected result or configuration.

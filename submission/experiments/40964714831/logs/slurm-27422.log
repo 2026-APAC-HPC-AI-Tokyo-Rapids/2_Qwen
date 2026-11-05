@@ -1,0 +1,12 @@
+[2026-10-30T07:09:55+08:00] job=27422 user=ACCOUNT
+head=g1(198.18.151.51) tail=g4(198.18.151.54) model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8 isl=4000 osl=200 N=232 topology=P3-TP1-PP4-D1-TP4-DP4-EP4 kv=fp8_e4m3 speculation=EAGLE3 prefill=megamoe decode=megamoe router=live-prefill-min-load
+PP4 serving trial: retain prior kernel settings and the pinned PP4 selections; gate the EP1 MegaMoE variants, the one-pass Prefill MoE input and the two-heads-per-CTA Decode FA3 rows, the fused Decode MoE input and the Decode QKV BLOCK_M 192 tile against the pinned kernels.
+{"winner": "four-stage-lean", "reason": "fastest-eligible", "env": {"DG_SM90_PREFILL_4STAGE": "1", "DG_SM90_PREFILL_LEAN": "1"}, "four-stage": {"eligible": true, "reason": "faster-in-total", "total_median_us": 63023.28039550781}, "four-stage-lean": {"eligible": true, "reason": "faster-in-total", "total_median_us": 62990.46374511719}, "four-stage-lean-pair": {"eligible": false, "reason": "below-margin", "total_median_us": 69389.74438476562}}
+{"env": {"SGLANG_PREFILL_MOE_INPUT": "onepass"}, "moe_input": {"winner": "onepass", "reason": "all-gpus-faster"}}
+{"transport": "copy", "reason": "all-ranks-exact"}
+prefill-0 ready
+prefill-1 ready
+prefill-2 ready
+decode-0 ready
+READY after 532s
+{"decode_log_samples": {"accept_length_including_bonus": {"count": 462, "max": 2.39, "mean": 2.2126406926406927, "median": 2.21, "min": 2.06}, "accept_rate": {"count": 462, "max": 0.46, "mean": 0.4042207792207792, "median": 0.4, "min": 0.35}, "accepted_draft_length": {"count": 462, "max": 1.3900000000000001, "mean": 1.2126406926406927, "median": 1.21, "min": 1.06}}, "server_info_accept_length_including_bonus": {"count": 4, "max": 2.2161236488741687, "mean": 2.2123216537898807, "median": 2.2115546445052146, "min": 2.2100536772749244}, "server_info_accepted_draft_length": {"count": 4, "max": 1.2161236488741687, "mean": 1.2123216537898807, "median": 1.2115546445052146, "min": 1.2100536772749244}, "server_info_state_count": 4}
