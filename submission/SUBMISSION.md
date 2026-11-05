@@ -10,7 +10,7 @@
 | Package verification | Fixed round 34 choices plus logprob relay | 10038.11, run 41781374312 / Slurm 28673 | Supporting check; does not replace the submitted result |
 | Organisers' reference | Common baseline, job 25013 | 1832 | Different serving settings |
 
-The Basic and experimental configurations serve the published `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` checkpoint with the official AIPerf workload. The score is `goodput.avg × 200`, and at least 90% of requests must meet both latency limits. The organisers assess model quality separately through a full-set accuracy check, which the team has not run.
+The Basic and experimental configurations serve the published `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` checkpoint with the official AIPerf workload. The score is `goodput.avg × 200`, and at least 90% of requests must meet both latency limits. Model accuracy is assessed separately from this throughput score.
 
 The experimental configuration achieved **1.59× the Basic mean** on the same 16 H200 GPUs. This comparison covers the complete configurations: their code, Prefill parallelism, concurrency and draft precision differ.
 
@@ -36,12 +36,13 @@ Paths below are relative to this `qwen/` folder. Follow each README for the exac
 
 Both build methods use the inputs included in this folder. Recorded hashes identify the measured images. A fresh build may produce a different archive hash; copy its integrity fields from the new sidecar into the deployment configuration.
 
-## Experimental changes and validation
+## Validation scope
 
-- **What changed:** the patch inventory lists 143 build and runtime inputs, application points, hashes and numerical arguments. Round 34 applied 33 SGLang and 14 DeepGEMM runtime overlays; the delivered package adds SGLang overlay 34 for logprob relay.
-- **Why it preserves the computation:** the inventory identifies unchanged model operations, layouts and transport, and records changes in floating-point order or rounding placement. Each byte-equality result applies to the control and test cases identified in the inventory.
-- **Checks and limits:** round 34 retained all four adopted kernel-selection records. The package check returned eight 64-token logprob responses without a Prefill error. The records show that the kernel checks passed on their test cases and that the package served logprob requests successfully.
-- **Speedup:** 10054.49 / 6330.21 = 1.59× for the complete experimental configuration. The submitted score comes from one run. The 10038.11 package check includes the logprob relay and predates the final script readability changes.
+[patches/README.md](patches/README.md) lists 143 build and runtime inputs, with application points, hashes and numerical arguments. The submitted run used 33 SGLang and 14 DeepGEMM runtime overlays. The delivered package adds SGLang overlay 34 to relay logprobs.
+
+The submitted run passed all four kernel-selection checks on their tested shapes and devices. The package verification run returned eight 64-token responses with token logprobs. These checks cover local numerical behavior and serving integration. They do not establish that the full stack is bit-identical to stock SGLang. Changes to floating-point order and rounding can affect generated tokens; the team has not run the organisers’ full-set accuracy check.
+
+The delivered Basic and Bonus scripts were simplified after the measured runs. CPU fixtures compare worker launch arguments, environment and the retained serving and benchmark steps with the recorded versions; the final scripts have not been run on GPUs.
 
 ## Reading the presentation
 

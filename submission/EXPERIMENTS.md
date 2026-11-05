@@ -6,7 +6,7 @@ This index follows the numbered pages of `../presentation/Tokyo Rapids with RIKE
 
 ## Comparison and validation scope
 
-- The selected Basic run scored **6339.31**, run 41093781934 / Slurm 27709. Its repeat is 6321.12; the two-run mean **6330.21** is the comparison reference used in the talk and below. A historical milestone below this later Basic is not called a speedup.
+- The selected Basic run scored **6339.31**, run 41093781934 / Slurm 27709. Its repeat is 6321.12; the two-run mean **6330.21** is the comparison reference used in the talk and below. Ratios below 1 mean the historical configuration was slower than this later Basic.
 - ASPIRE H100 and Firmus H200 are separate platforms. No stock ASPIRE Basic was submitted, so H100 runs have no ratio to the Firmus Basic.
 - Most milestones bundle changes in code, topology, load or selected kernels. Adjacent scores describe the real history, not an isolated kernel effect. Separate runs and short kernel tests do not establish a repeatable serving improvement.
 - Historical `profile: true` jobs are labelled below. Their presented fixed-duration client measurements are retained, but profiler attachment and other configuration differences limit comparison with clean serving runs. The submitted and standalone package runs have profiling disabled.
@@ -37,7 +37,7 @@ This index follows the numbered pages of `../presentation/Tokyo Rapids with RIKE
 | [Iteration 5: Prefill host waits](#iteration-5) | 59–60 | Firmus H200 | 9235.28 | 0.98296335 | 26889 | 1.46x |
 | [Iteration 6: PP4 Prefill](#iteration-6) | 61 | Firmus H200 | 9668.27 | 0.97826087 | 27422 | 1.53x |
 | [Iteration 7: Prefill MoE rescale](#iteration-7) | 62 | Firmus H200 | 9832.74 | 0.97939472 | 27502 | 1.55x |
-| [Iteration 8 and submitted final](#iteration-8) | 63–64 | Firmus H200 | 10054.49 | 0.98215696 | 28660 | 1.59x |
+| [Iteration 8 and final submitted configuration](#iteration-8) | 63–64 | Firmus H200 | 10054.49 | 0.98215696 | 28660 | 1.59x |
 
 <a id="framework"></a>
 
@@ -45,14 +45,14 @@ This index follows the numbered pages of `../presentation/Tokyo Rapids with RIKE
 
 We compared SGLang, vLLM and TensorRT-LLM and selected SGLang.
 
-**Computation argument:** Same target model and workload; engine implementations differ.
+Same target model and workload; engine implementations differ.
 
-**Interpretation:** SGLang 1827.79 is c40; vLLM 1527.97 (36310351009, PBS 213388.pbs111) is c32. The archived settings are c40 and c32, so this is a comparison of the two deployments.
+SGLang scored 1827.79 at c40; vLLM scored 1527.97 at c32 (36310351009, PBS 213388.pbs111). The retained runs used different concurrency, despite the slide’s same-c40 label.
 
 Evidence: [Actions 36305644422](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/36305644422), [script](experiments/36305644422/source/submit.pbs), [score](experiments/36305644422/score.json), [raw export](experiments/36305644422/profile_export_aiperf.json), [scheduler log](experiments/36305644422/logs/pbs-accounting.txt), [provenance](experiments/36305644422/source/provenance.json).
 
 Source `683b3742fa28c64f1413376f9c7fe51b63cb67fe`; image SHA-256 `6b4d81eb6400fa33400e5725a2842f63565b700d579f9be812a7c229a80da3b5`; recorded profile flag `false`.
-Historical script: `Git 683b3742fa28c64f1413376f9c7fe51b63cb67fe:platforms/aspire2ap/run-qwen-pd.pbs; historical source, requires its original preparation`.
+Script recovered from Git `683b3742fa28c64f1413376f9c7fe51b63cb67fe:platforms/aspire2ap/run-qwen-pd.pbs`.
 
 <a id="layout"></a>
 
@@ -60,14 +60,14 @@ Historical script: `Git 683b3742fa28c64f1413376f9c7fe51b63cb67fe:platforms/aspir
 
 We used P2 TP4 / D2 TP4 without speculation at c16 after simulator-guided screening.
 
-**Computation argument:** All model layers and experts remain; only placement and parallelism change.
+All model layers and experts remain; only placement and parallelism change.
 
-**Interpretation:** 972.04 is H100 serving; simulator predictions are estimates, and there is no stock ASPIRE Basic in this submission.
+The measured result was 972.04 on H100; the simulator guided configuration selection.
 
 Evidence: [Actions 36228974704](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/36228974704), [script](experiments/36228974704/source/submit.pbs), [score](experiments/36228974704/score.json), [raw export](experiments/36228974704/profile_export_aiperf.json), [scheduler log](experiments/36228974704/logs/pbs-accounting.txt), [provenance](experiments/36228974704/source/provenance.json).
 
 Source `24a84d3171793cd48177accce59dfa566fedd41d`; image SHA-256 `6b4d81eb6400fa33400e5725a2842f63565b700d579f9be812a7c229a80da3b5`; recorded profile flag `false`.
-Historical script: `Git 24a84d3171793cd48177accce59dfa566fedd41d:platforms/aspire2ap/run-qwen-pd.pbs; historical source, requires its original preparation`.
+Script recovered from Git `24a84d3171793cd48177accce59dfa566fedd41d:platforms/aspire2ap/run-qwen-pd.pbs`.
 
 <a id="eagle"></a>
 
@@ -75,14 +75,14 @@ Historical script: `Git 24a84d3171793cd48177accce59dfa566fedd41d:platforms/aspir
 
 We used the public Nebius draft, 3 steps / 4 draft tokens, at c40.
 
-**Computation argument:** The target verifies the proposed tokens; target weights are unchanged.
+The target verifies the proposed tokens; target weights are unchanged.
 
-**Interpretation:** Two EAGLE runs 36234985587 / 36235158063 average 2330.95; target-only c40 controls 36230331081 / 36232258544 average 1839.42 (+26.7%). FP8 KV at -0.88% is a separate comparison.
+Two EAGLE runs 36234985587 / 36235158063 average 2330.95; target-only c40 controls 36230331081 / 36232258544 average 1839.42 (+26.7%). FP8 KV at -0.88% is a separate comparison.
 
 Evidence: [Actions 36234985587](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/36234985587), [script](experiments/36234985587/source/submit.pbs), [score](experiments/36234985587/score.json), [raw export](experiments/36234985587/profile_export_aiperf.json), [scheduler log](experiments/36234985587/logs/pbs-accounting.txt), [provenance](experiments/36234985587/source/provenance.json).
 
 Source `66f3ca60486066b9a3685ef004082d8a81093061`; image SHA-256 `6b4d81eb6400fa33400e5725a2842f63565b700d579f9be812a7c229a80da3b5`; recorded profile flag `false`.
-Historical script: `Git 66f3ca60486066b9a3685ef004082d8a81093061:platforms/aspire2ap/run-qwen-pd.pbs; historical source, requires its original preparation`.
+Script recovered from Git `66f3ca60486066b9a3685ef004082d8a81093061:platforms/aspire2ap/run-qwen-pd.pbs`.
 
 <a id="options"></a>
 
@@ -90,14 +90,14 @@ Historical script: `Git 66f3ca60486066b9a3685ef004082d8a81093061:platforms/aspir
 
 We combined CUTLASS Prefill, routing/shuffle improvements and symmetric-memory tuning.
 
-**Computation argument:** The model operations remain; layout changes and kernel rounding effects are documented separately in the patch inventory.
+The model operations remain; layout changes and kernel rounding effects are documented separately in the patch inventory.
 
-**Interpretation:** 2865.54 is a later milestone with different node pair and concurrency; its +23% over the EAGLE average is not an isolated patch effect.
+This configuration scored 2865.54, 23% above the EAGLE average, using a different node pair and concurrency.
 
 Evidence: [Actions 37741311522](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37741311522), [script](experiments/37741311522/source/submit.pbs), [score](experiments/37741311522/score.json), [raw export](experiments/37741311522/profile_export_aiperf.json), [scheduler log](experiments/37741311522/logs/pbs-accounting.txt), [provenance](experiments/37741311522/source/provenance.json).
 
 Source `7b5478ae4633e51a3c399bb615f3cedfdd314698`; image SHA-256 `182fbb6df7f941aa688a393dfc181bb269f3112a6d34c33f6007ddc5d09f0a42`; recorded profile flag `false`.
-Historical script: `Git 7b5478ae4633e51a3c399bb615f3cedfdd314698:platforms/aspire2ap/run-qwen-pd.pbs; historical source, requires its original preparation`.
+Script recovered from Git `7b5478ae4633e51a3c399bb615f3cedfdd314698:platforms/aspire2ap/run-qwen-pd.pbs`.
 
 <a id="aspire-pd"></a>
 
@@ -105,14 +105,14 @@ Historical script: `Git 7b5478ae4633e51a3c399bb615f3cedfdd314698:platforms/aspir
 
 We assigned 12 GPUs to Prefill and 4 to Decode, enlarged the Decode KV pool and used c72.
 
-**Computation argument:** Placement and capacity change while the target computation and FP8 KV format are retained.
+Placement and capacity change while the target computation and FP8 KV format are retained.
 
-**Interpretation:** 3313.04 uses H100 and different load from the earlier P2/D2 run; do not compare it with the H200 Basic.
+The result was 3313.04 on H100, at a different load from the earlier P2/D2 run.
 
 Evidence: [Actions 37915507286](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37915507286), [script](experiments/37915507286/source/submit.pbs), [score](experiments/37915507286/score.json), [raw export](experiments/37915507286/profile_export_aiperf.json), [scheduler log](experiments/37915507286/logs/pbs-accounting.txt), [provenance](experiments/37915507286/source/provenance.json).
 
 Source `ed8c5342c400f82681c724f7c1a2075187386df5`; image SHA-256 `182fbb6df7f941aa688a393dfc181bb269f3112a6d34c33f6007ddc5d09f0a42`; recorded profile flag `false`.
-Historical script: `Git ed8c5342c400f82681c724f7c1a2075187386df5:platforms/aspire2ap/run-qwen-pd.pbs; historical source, requires its original preparation`.
+Script recovered from Git `ed8c5342c400f82681c724f7c1a2075187386df5:platforms/aspire2ap/run-qwen-pd.pbs`.
 
 <a id="port"></a>
 
@@ -120,9 +120,9 @@ Historical script: `Git ed8c5342c400f82681c724f7c1a2075187386df5:platforms/aspir
 
 We ran the ASPIRE-derived P2/D2 recipe at c48 on H200.
 
-**Computation argument:** The official checkpoint is retained; EAGLE3, FP8 KV and patches belong to the complete ported configuration.
+The official checkpoint is retained; this run combines EAGLE3, FP8 KV and the patches documented in the inventory.
 
-**Interpretation:** 3170.21 versus the organiser reference 1832 is a whole-configuration comparison; it does not isolate the port or convert H100 performance to H200.
+The ported configuration scored 3170.21 against the organisers’ 1832 H200 reference. This compares the complete configurations and does not isolate the effect of the port.
 
 Evidence: [Actions 37868180304](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/37868180304), [script](experiments/37868180304/source/submit.sbatch), [score](experiments/37868180304/score.json), [raw export](experiments/37868180304/profile_export_aiperf.json), [scheduler log](experiments/37868180304/logs/slurm-accounting.txt), [provenance](experiments/37868180304/source/provenance.json).
 
@@ -134,9 +134,9 @@ Source `e481de9ec084a124039e47c1b3c57fdfdad39822`; image SHA-256 `182fbb6df7f941
 
 We used six TP2 Prefill workers and one TP4 Decode worker at c104 on the same 16 H200 GPUs.
 
-**Computation argument:** Only placement, capacity and load change; model layers and experts are retained.
+Only placement, capacity and load change; model layers and experts are retained.
 
-**Interpretation:** 4369.38 follows the real TP2 history. No matched Firmus P3×TP4 control was run before MegaMoE.
+The TP2 configuration scored 4369.38. No matched Firmus P3×TP4 control was run before MegaMoE.
 
 Evidence: [Actions 38020231725](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38020231725), [script](experiments/38020231725/source/submit.sbatch), [score](experiments/38020231725/score.json), [raw export](experiments/38020231725/profile_export_aiperf.json), [scheduler log](experiments/38020231725/logs/slurm-accounting.txt), [provenance](experiments/38020231725/source/provenance.json).
 
@@ -148,9 +148,9 @@ Source `ff58ed80d6515cf261dfa95047f3fd9e89320c8d`; image SHA-256 `4b919a7465f164
 
 We changed the P6/D1 workers from page size 1 to 64.
 
-**Computation argument:** Addressing changes while stored KV values and dtype remain the same.
+Addressing changes while stored KV values and dtype remain the same.
 
-**Interpretation:** 4429.95 versus 4369.38 is +1.39% in separate single runs; H100 did not show the same gain.
+4429.95 versus 4369.38 is +1.39% in separate single runs; H100 did not show the same gain.
 
 Evidence: [Actions 38034080121](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38034080121), [script](experiments/38034080121/source/submit.sbatch), [score](experiments/38034080121/score.json), [raw export](experiments/38034080121/profile_export_aiperf.json), [scheduler log](experiments/38034080121/logs/slurm-accounting.txt), [provenance](experiments/38034080121/source/provenance.json).
 
@@ -162,9 +162,9 @@ Source `3519fc0641064ef42a2f3794bb239a91a07e8aa4`; image SHA-256 `4b919a7465f164
 
 We regrouped the 12/4 GPUs into P3/D1 DP4/EP4 workers with MegaMoE, routing and handoff changes.
 
-**Computation argument:** The existing top-k IDs and FP32 weights feed the fused expert GEMMs, SiLU and combine; rounding changes are disclosed in the inventory.
+The existing top-k IDs and FP32 weights feed the fused expert GEMMs, SiLU and combine; rounding changes are disclosed in the inventory.
 
-**Interpretation:** 6344.96 bundles parallelism, kernels, routing, capacity and load. It does not isolate MegaMoE or establish that four-GPU groups are globally optimal.
+The result of 6344.96 combines changes to parallelism, kernels, routing, capacity and load.
 
 Evidence: [Actions 38664373784](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38664373784), [script](experiments/38664373784/source/submit.sbatch), [score](experiments/38664373784/score.json), [raw export](experiments/38664373784/profile_export_aiperf.json), [scheduler log](experiments/38664373784/logs/slurm-accounting.txt), [provenance](experiments/38664373784/source/provenance.json).
 
@@ -176,9 +176,9 @@ Source `e6e295bd98ea16cb393c672f0b1b0af7b300cccf`; image SHA-256 `8df47c11d7ede6
 
 We used native DeepGEMM for Prefill MoE with E8M0 weight-scale re-rounding disabled.
 
-**Computation argument:** The published FP8 weights and FP32 scales are retained; kernel execution and summation order differ.
+The published FP8 weights and FP32 scales are retained; kernel execution and summation order differ.
 
-**Interpretation:** 5274.86 used P6/D1, c112 and two proposals. None of this side-track code enters the submitted SGLang package.
+5274.86 used P6/D1, c112 and two proposals. None of this side-track code enters the submitted SGLang package.
 
 Evidence: [Actions 38485732174](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/38485732174), [script](experiments/38485732174/source/submit.sbatch), [score](experiments/38485732174/score.json), [raw export](experiments/38485732174/profile_export_aiperf.json), [scheduler log](experiments/38485732174/logs/slurm-accounting.txt), [provenance](experiments/38485732174/source/provenance.json).
 
@@ -190,9 +190,9 @@ Source `83a1dbcb1895f6d62719d694c278a83e3ab32bbc`; image SHA-256 `2012b52332deae
 
 We parallelised token conversion across four GPU threads, with Decode kernel and Prefill expert-placement changes.
 
-**Computation argument:** FP8 operands/scales and selected expert operations are retained; each patch has a named numerical control.
+FP8 operands/scales and selected expert operations are retained; the inventory names the reference implementation for each patch.
 
-**Interpretation:** 7251.58 is a bundle endpoint, with another run at 7185.18. The 21→12.5 microsecond local conversion timing does not explain the whole score gain.
+The combined changes scored 7251.58, with another run at 7185.18. Token conversion took 12.5 µs instead of 21 µs in the local kernel test.
 
 Evidence: [Actions 39070273796](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39070273796), [script](experiments/39070273796/source/submit.sbatch), [score](experiments/39070273796/score.json), [raw export](experiments/39070273796/profile_export_aiperf.json), [scheduler log](experiments/39070273796/logs/slurm-accounting.txt), [provenance](experiments/39070273796/source/provenance.json).
 
@@ -204,9 +204,9 @@ Source `0374c551d212f27f05127a68102897fb582029a9`; image SHA-256 `7c6286e5dcfcd8
 
 We prepared new request inputs while the GPU verified tokens, together with kernel fusions and cap 128.
 
-**Computation argument:** Input dependencies are respected before consumption; target verification is retained and fusion rounding is disclosed.
+Input dependencies are respected before consumption; target verification is retained and fusion rounding is disclosed.
 
-**Interpretation:** 7999.37 combines several changes. Cap 136 on the same image scored 7082.82 with a different kernel geometry; this is not a scheduling-only gain.
+7999.37 combines several changes. Cap 136 on the same image scored 7082.82 with a different kernel geometry; this is not a scheduling-only gain.
 
 Evidence: [Actions 39114949128](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39114949128), [script](experiments/39114949128/source/submit.sbatch), [score](experiments/39114949128/score.json), [raw export](experiments/39114949128/profile_export_aiperf.json), [scheduler log](experiments/39114949128/logs/slurm-accounting.txt), [provenance](experiments/39114949128/source/provenance.json).
 
@@ -218,9 +218,9 @@ Source `5066eaffdbdc7496a26552bb043ba8b1ab117d9b`; image SHA-256 `a8ed45928e94b7
 
 We read token-ordered KV for Prefill attention while preserving paged KV for Decode, alongside MoE/input changes.
 
-**Computation argument:** The same KV values are used; attention reduction, FP8 rounding and per-128 FC2 scaling are disclosed in the inventory.
+The same KV values are used; attention reduction, FP8 rounding and per-128 FC2 scaling are disclosed in the inventory.
 
-**Interpretation:** 8356.18 is cumulative, including two math warpgroups. Local attention and MoE timings are not additive estimates of serving speedup.
+8356.18 is cumulative, including two math warpgroups. Local attention and MoE timings are not additive estimates of serving speedup.
 
 Evidence: [Actions 39447708936](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39447708936), [script](experiments/39447708936/source/submit.sbatch), [score](experiments/39447708936/score.json), [raw export](experiments/39447708936/profile_export_aiperf.json), [scheduler log](experiments/39447708936/logs/slurm-accounting.txt), [provenance](experiments/39447708936/source/provenance.json).
 
@@ -232,9 +232,9 @@ Source `39793c14e88ce3a19ec9737a7893a33432683a52`; image SHA-256 `652aaeef548614
 
 We extended fast-kernel coverage beyond 128 verification rows and tuned attention/GEMM while raising Decode capacity.
 
-**Computation argument:** The target verifies the same candidates; tiling changes execution order without pruning model work.
+The target verifies the same candidates; tiling changes execution order without pruning model work.
 
-**Interpretation:** 9036.12 used cap 176, or 44 requests per rank. The slide illustration of 48 requests describes later coverage/cap.
+9036.12 used cap 176, or 44 requests per rank. The slide illustration of 48 requests describes later coverage/cap.
 
 Evidence: [Actions 40201493911](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40201493911), [script](experiments/40201493911/source/submit.sbatch), [score](experiments/40201493911/score.json), [raw export](experiments/40201493911/profile_export_aiperf.json), [scheduler log](experiments/40201493911/logs/slurm-accounting.txt), [provenance](experiments/40201493911/source/provenance.json).
 
@@ -246,9 +246,9 @@ Source `3287a43a620f95bf829bfaf8ae522bc7d8d947dd`; image SHA-256 `1f247668933c72
 
 We removed host waits, loaded the draft as FP8, aligned Prefill starts and selected c215.
 
-**Computation argument:** The target checkpoint is unchanged and verifies every draft token; FP8 draft loading does not requantise target weights.
+The target checkpoint is unchanged and verifies every draft token; FP8 draft loading does not requantise target weights.
 
-**Interpretation:** 9235.28 is a bundle endpoint. Idle-gap, clock and power observations belong to their own profiles, not a synthetic timeline for this run.
+The combined changes scored 9235.28. The slide’s idle-gap, clock and power measurements come from separate profiling runs.
 
 Evidence: [Actions 40630160781](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40630160781), [script](experiments/40630160781/source/submit.sbatch), [score](experiments/40630160781/score.json), [raw export](experiments/40630160781/profile_export_aiperf.json), [scheduler log](experiments/40630160781/logs/slurm-accounting.txt), [provenance](experiments/40630160781/source/provenance.json).
 
@@ -258,11 +258,11 @@ Source `840b40f7ea24c83a474c1578a29af86d6bfb0d43`; image SHA-256 `1f247668933c72
 
 ### Iteration 6: PP4 Prefill (slide 61)
 
-We moved Prefill to four layer stages with copy-engine transport and runtime changes.
+We moved Prefill to four layer stages with copy-engine transport.
 
-**Computation argument:** All 94 layers remain, split 24/24/24/22; same-dtype peer copies replace proxy transfers with ordering and content checks.
+All 94 layers remain, split 24/24/24/22; same-dtype peer copies replace proxy transfers with ordering and content checks.
 
-**Interpretation:** 9668.27 completed the fixed-duration client, but the job later TIMEOUT during an accidentally enabled profile pass. This is not a clean terminal-success example.
+The official-duration benchmark finished at 9668.27 good output tok/s. The job later timed out during an inadvertently enabled profiling pass.
 
 Evidence: [Actions 40964714831](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40964714831), [script](experiments/40964714831/source/submit.sbatch), [score](experiments/40964714831/score.json), [raw export](experiments/40964714831/profile_export_aiperf.json), [scheduler log](experiments/40964714831/logs/slurm-accounting.txt), [provenance](experiments/40964714831/source/provenance.json).
 
@@ -272,11 +272,11 @@ Source `5937a5a17b8353fca212d6c16de6a0533d4f2625`; image SHA-256 `0a02c4ab526787
 
 ### Iteration 7: Prefill MoE rescale (slide 62)
 
-We overlapped scale correction with matrix multiplication using split accumulators, alongside other selected kernels.
+We overlapped scale correction with matrix multiplication using split accumulators.
 
-**Computation argument:** In-job endurance checks required final BF16 outputs to match their control on the tested cases.
+In-job endurance checks required final BF16 outputs to match their control on the tested cases.
 
-**Interpretation:** 9832.74 is the H200 serving result. The slide H100 cycle experiment is kernel-only; its ratio is not converted into H200 throughput.
+9832.74 is the H200 serving result. The H100 timings on slide 62 are isolated kernel measurements.
 
 Evidence: [Actions 41005872470](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41005872470), [script](experiments/41005872470/source/submit.sbatch), [score](experiments/41005872470/score.json), [raw export](experiments/41005872470/profile_export_aiperf.json), [scheduler log](experiments/41005872470/logs/slurm-accounting.txt), [provenance](experiments/41005872470/source/provenance.json).
 
@@ -284,13 +284,13 @@ Source `6abfef9202de8af50821011884ce74be8c382d5e`; image SHA-256 `db6eeb49303429
 
 <a id="iteration-8"></a>
 
-### Iteration 8 and submitted final (slide 63–64)
+### Iteration 8 and final submitted configuration (slide 63–64)
 
 We reused prepacked V in Prefill FA3 and retained later PP4, greedy-verify and FC1 updates in round 34.
 
-**Computation argument:** Producer-byte and FP32-reference checks cover prepacking; FC1 first-K passed byte equality on 12 GPUs. Other rounding changes are disclosed separately.
+Producer-byte and FP32-reference checks cover prepacking; FC1 first-K passed byte equality on 12 GPUs. Other rounding changes are disclosed separately.
 
-**Interpretation:** 10054.49 is the submitted value. The progression from 9832.74 includes more than V prepacking. The added logprob relay was checked at 10038.11.
+10054.49 is the submitted value. The progression from 9832.74 includes more than V prepacking. The added logprob relay was checked at 10038.11.
 
 Evidence: [Actions 41767886175](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41767886175), [script](experiments/41767886175/source/submit.sbatch), [score](results/41767886175/score.json), [raw export](results/41767886175/profile_export_aiperf.json), [scheduler log](results/41767886175/logs/slurm-accounting.txt), [provenance](experiments/41767886175/source/provenance.json).
 
@@ -310,4 +310,4 @@ The EAGLE3 mean uses [run 36235158063](experiments/36235158063/profile_export_ai
 - **Slide 80:** local numerical gates do not certify the full final stack as bit-identical or establish end-to-end accuracy.
 - **Slides 96–145:** the deck labels this section Archive. Superseded source pins, counts and scores there do not select the current submission.
 
-The delivered scripts were simplified after the recorded GPU runs. CPU fixtures check launch arguments, environment, patch order and orchestration against archived references. There is no full GPU run of the final readability rewrite, and fresh image archives have not been shown bit-identical.
+For checks of the delivered scripts and their remaining validation limits, see [SUBMISSION.md](SUBMISSION.md#validation-scope).
