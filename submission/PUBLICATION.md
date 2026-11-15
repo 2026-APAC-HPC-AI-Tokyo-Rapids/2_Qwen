@@ -18,3 +18,7 @@ The GitHub repository secret `QWEN_ARTIFACT_ARCHIVE_ROOT` supplies the persisten
 The submitted presentation is distributed separately. The experiment index preserves its Qwen slide references.
 
 The cleanup has also been applied throughout the Git branch and tag history. Original commit IDs retained in experiment provenance still identify the recorded builds and runs; they have not been relabelled as builds of the rewritten commits. Recovery archives and the old-to-new commit map are stored privately outside this repository. GitHub-managed PR references, comments and historical Actions output require separate handling.
+
+## Issue references
+
+Issue and document navigation links use sanitized commit IDs. Additional historical snapshots referenced by those links are retained under `issue-history/<original-commit-id>` tags after applying the same redactions and updating their public checksum manifests. Author identities, timestamps, merge structure and numerical results are preserved; original source and image IDs recorded as measurement provenance remain unchanged.

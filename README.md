@@ -45,6 +45,8 @@ Before further kernel work, read the [kernel theory tracker](research/runtime-pe
 
 ## GitHub Actions and site setup
 
+GitHub Actions is currently disabled on the hosted repository. The workflow files document the automated execution path for a configured reproduction environment.
+
 The [Qwen workflow](.github/workflows/qwen.yml) controls builds and scheduler jobs. [Basic](.github/workflows/qwen-basic.yml) has its own Firmus path. Site access requires the configured runner labels and custom shells, cluster accounts, shared storage and the AWS repository variables referenced by the workflows. The automated Bonus builder also requires access to its configured SGLang source mirror; the standalone package reconstructs that source from public upstream and the supplied bundle.
 
 Set the repository secret `QWEN_ARTIFACT_ARCHIVE_ROOT` to the persistent archive directory visible to the archive runner. It is used by the regular and Basic archive jobs and the CPU-only Basic metrics publisher. Measurement subdirectories are `<Actions run>/<attempt>`. Archive summaries identify the measurement without publishing the server hostname or storage path; using a secret also masks the destination in Actions logs.
