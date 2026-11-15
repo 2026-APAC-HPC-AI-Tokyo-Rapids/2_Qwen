@@ -107,6 +107,11 @@ def test_serving_configuration_matches_round34_config_and_image():
     assert sidecar["container_artifact"]["sha256"] == IMAGE["sha256"] and sidecar["container_artifact"]["size_bytes"] == IMAGE["size_bytes"]
     assert sidecar["source_commits"] == {"qwen": CONFIG["container_source_commit"], "sglang": "fc275674a97d78553b22597ee72c8fd48f5420f4"}
     assert "sglang_revision=fc275674a97d78553b22597ee72c8fd48f5420f4\n" in (ROOT / "scripts/build-sglang-container.sh").read_text()
+    publication = json.loads((PACKAGE / "build/source-map.json").read_text())
+    assert publication["recorded_source"] == sidecar["source_commits"]["sglang"]
+    assert f"sglang_revision={publication['public_source']}\n" in (PACKAGE / "build/source/scripts/build-sglang-container.sh").read_text()
+    exported = subprocess.check_output(["git", "bundle", "list-heads", str(PACKAGE / "build/sglang-fc275674.bundle")], text=True)
+    assert exported == f"{publication['public_source']} refs/heads/publication-source\n"
 
 
 def test_static_inputs_match_repository_sources():
@@ -158,6 +163,7 @@ def test_pins_are_the_pp4_settings_plus_the_adopted_gate_outcomes(tmp_path):
 #   - Basic preparation no longer creates the unused, empty profile directory.
 #   - Bonus mounts the model explicitly; both jobs record server info once before the benchmark.
 #   - Draft provenance receives the repository/revision used by the download.
+#   - Site account paths and the corresponding staged-config digests are anonymized for publication.
 REFERENCE = ROOT / "qwen-experiment-metrics/tests/fixtures/submission-scripts"
 SCRIPT_NAMES = ("submit.sbatch", "worker.sh", "worker.py", "basic-worker.py", "prepare.sh", "greedy-probe.py", "official-aiperf.sh", "parse-aiperf-result.py", "prepare_eagle.py", "order-firmus-pp4-gpus.py")
 SCRIPT_FILES = {f"{directory}/{name}" for directory in ("scripts", "source") for name in SCRIPT_NAMES}

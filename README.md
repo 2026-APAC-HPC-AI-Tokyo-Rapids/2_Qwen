@@ -45,7 +45,11 @@ Before further kernel work, read the [kernel theory tracker](research/runtime-pe
 
 ## GitHub Actions and site setup
 
-Repository Actions remains enabled so historical logs are readable. Automatic triggers are removed from the current YAML, and every job has a literal false execution gate. Workflows are also disabled individually to prevent replaying historical definitions. The files retain the original routing conditions for reference.
+Repository Actions remains enabled for retained run metadata. Automatic triggers are removed from the current YAML, every job has a literal false execution gate, and file-backed workflows are disabled individually to prevent replaying historical definitions. The original routing conditions remain for reference.
+
+[Sanitized execution logs, artifact evidence and archived pull requests](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115) retain original IDs, conclusions and timestamps. Use these records for runs whose hosted logs or metadata were removed to avoid exposing site details. Complete originals are retained privately.
+
+Site account components in saved paths and configuration defaults are placeholders. Supply the paths for your reproduction account before using the archived execution scripts.
 
 The archived [Qwen workflow](.github/workflows/qwen.yml) records the build and scheduler path. [Basic](.github/workflows/qwen-basic.yml) records its separate Firmus path. Site access requires the configured runner labels and custom shells, cluster accounts, shared storage and the AWS repository variables referenced by the workflows. The automated Bonus builder also requires access to its configured SGLang source mirror; the standalone package reconstructs that source from public upstream and the supplied bundle.
 
