@@ -13,7 +13,7 @@ Unedited originals are retained in a private archive outside this repository. `S
 
 ## Local configuration
 
-The GitHub repository secret `QWEN_ARTIFACT_ARCHIVE_ROOT` supplies the persistent archive destination. The GPU-clock analysis helper accepts the same name as a local environment variable. Local source-mirror tests may use `SGLANG_SOURCE_MIRROR`; tests that require that optional mirror skip when it is not configured. Connection settings and personal operational instructions are local files excluded from Git tracking.
+The GitHub repository secret `QWEN_ARTIFACT_ARCHIVE_ROOT` supplies the persistent archive destination. The GPU-clock analysis helper accepts the same name as a local environment variable. Local source-mirror tests may use `SGLANG_SOURCE_MIRROR`; tests that require that optional mirror skip when it is not configured. Connection settings and personal operational instructions are local files excluded from Git tracking. The historical task checklist is retained with the same publication redactions.
 
 The submitted presentation is distributed separately. The experiment index preserves its Qwen slide references.
 

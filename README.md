@@ -39,6 +39,7 @@ The recorded images were built with Buildah `chroot` isolation, validated with S
 | [containers/](containers/) and [aws/](aws/) | Image recipes, dependencies and build infrastructure |
 | [qwen-experiment-metrics/](qwen-experiment-metrics/README.md) | Experiment metrics collection and publication |
 | [research/](research/) | Design decisions, experiment ledgers, profiles and rejected hypotheses |
+| [TASK_2026_10_03.md](TASK_2026_10_03.md) | Historical development checklist |
 
 Before further kernel work, read the [kernel theory tracker](research/runtime-performance/kernel-theory-tracker.md) and its [input model](research/runtime-performance/kernel-theory-model.json). ASPIRE's H100 results and Firmus's H200 results use different hardware and must be interpreted separately. The [ASPIRE migration record](research/runtime-performance/2026-10-26-aspire-firmus9120-port.json) documents the later 5925.07 / 6081.54 serving observations and their differing selected kernels.
 
