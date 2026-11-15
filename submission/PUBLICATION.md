@@ -30,3 +30,7 @@ Repository Actions remains enabled for retained run metadata. Current workflow Y
 [The publication archive](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115) contains sanitized downloadable logs, textual artifact evidence and pull-request conversations. The original run IDs, authors, timestamps, conclusions and measured values are retained. Complete raw originals are backed up privately before affected hosted copies are removed. Opaque profiler binaries and large reproducible model inputs remain in that private backup. Navigation links point to the retained public records.
 
 Seven historical CPU-proof archives have also been sanitized internally, including archive ownership and embedded debug paths. Their public manifests describe the revised bytes; executable ELF sections and numerical JSON evidence are unchanged.
+
+## Hosted revision history
+
+GitHub-managed PR references, cached commit views and Issue/comment revision history are separate from branch and tag history. Rewriting Git does not purge those hosted copies. Merged pull requests cannot use GitHub's archive operation. Complete the [hosted sensitive-data removal process](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) and remove affected [comment revisions](https://docs.github.com/en/communities/moderating-comments-and-conversations/tracking-changes-in-a-comment) before changing repository visibility.
