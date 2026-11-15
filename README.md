@@ -74,3 +74,7 @@ Build changes include source, toolchain, dependencies and image contents. Runtim
 ## Publication copies
 
 Local operational instructions, connection settings and working notes are excluded from Git tracking. [Publication redactions](submission/PUBLICATION.md) identify the changes to logs and private infrastructure identifiers. Performance evidence and fixed build inputs remain available in the submission package.
+
+## Task and research notes
+
+[The task and research index](research/README.md) links the current task checklist, earlier plans, kernel optimization candidates and dated capacity estimates. Historical proposals retain their date and are separate from measured serving results.
