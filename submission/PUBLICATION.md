@@ -17,4 +17,4 @@ The GitHub repository secret `QWEN_ARTIFACT_ARCHIVE_ROOT` supplies the persisten
 
 The submitted presentation is distributed separately. The experiment index preserves its Qwen slide references.
 
-These edits apply to the current working tree. They do not remove earlier commits, other branches, GitHub comments or historical Actions output.
+The cleanup has also been applied throughout the Git branch and tag history. Original commit IDs retained in experiment provenance still identify the recorded builds and runs; they have not been relabelled as builds of the rewritten commits. Recovery archives and the old-to-new commit map are stored privately outside this repository. GitHub-managed PR references, comments and historical Actions output require separate handling.
